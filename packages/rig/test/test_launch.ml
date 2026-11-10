@@ -34,8 +34,9 @@ let take run =
 (* Fresh Polled devices: a name opens once. *)
 let opened = Atomic.make 0
 
-let polled ?addresses name =
-  P.open_ ?addresses (strf "launch:%s-%d" name (Atomic.fetch_and_add opened 1))
+let polled ?addresses ?host_visible name =
+  P.open_ ?addresses ?host_visible
+    (strf "launch:%s-%d" name (Atomic.fetch_and_add opened 1))
 
 let le64 v =
   let b = Bytes.create 8 in
@@ -453,13 +454,13 @@ let refused_submit ~msg d f =
   equal (option string) ~msg:(msg ^ ": not lost") None (Rig.lost d)
 
 let test_submit_refusals () =
-  let d, _ = polled ~addresses:false "submit" in
+  let d, _ = polled ~addresses:false ~host_visible:false "submit" in
   let image = functions d in
   let s =
     Sub.make d [| launch image "main" ~params:8 ~refs:[| Sub.read 0 ~at:0 |] |]
   in
   let b = Sub.block s 0 in
-  let buffers = [| B.create ~memory:Mapped d 8 |] in
+  let buffers = [| B.create ~memory:Pinned d 8 |] in
   refused_submit ~msg:"a run no setter stored into" d (fun () ->
       submit ~buffers (Sub.take s));
   let geometry ?(groups = (1, 1, 1)) ?(threads = (1, 1, 1)) ?(shared = 0) () =

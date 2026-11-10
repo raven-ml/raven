@@ -261,23 +261,6 @@ static inline void full_fence(void) {
 
 struct rig_nv_edge;
 
-/* A word of a GPU's BAR that a submission reads before its doorbells, which
-   returns once the host's writes through that BAR reached the GPU, while
-   [count] regions written through it are live: the device's own BAR, or
-   the BAR of the GPU whose Mapped memory the device's views reach. [src] is
-   the edge of the device that owns the word. An entry whose count fell to
-   0 serves another word: its word is stored before its count, and a
-   submission reads the count first. The owner's stop takes its word out of
-   every other device's entries before its path unmaps it (rig_nv_drop). */
-struct flush {
-  const struct rig_nv_edge *src;
-  _Atomic(volatile const uint32_t *) word;
-  _Atomic long count;
-};
-
-/* The device's own BAR's word first, then other devices' BAR words. */
-#define FLUSHES 8
-
 /* Times
 
    A timed value's channels write stamps, each a release of the value with
@@ -379,10 +362,10 @@ struct device {
   int draining;
   /* the local memory word a submission last placed, 0 for none */
   uint64_t placed_local;
-  struct flush flushes[FLUSHES];
-  /* set while a submission reads [flushes]' words, from before its full
-     fence: a stop that took a word out waits until it clears */
-  _Atomic int flushing;
+  /* the path's flush word, a word of the GPU's BAR whose read returns once
+     the host's writes through that BAR reached the GPU, or NULL without one
+     (rig_nv_flush) */
+  volatile const uint32_t *flush;
   /* a notification's error fields */
   uint32_t info32_at, status_at;
   /* the stamp ring: its [slots] slots, a power of two, as the host reads
@@ -423,40 +406,18 @@ struct rig_nv_edge {
   const struct rig_driver *driver;
   _Atomic uint64_t *word;
   struct device *d;
-  /* Taken inside one stub, around [d]'s flushes and its free at the stop,
-     so no OCaml code runs while it is held. */
-  pthread_mutex_t flush_mu;
-  /* the path's flush word, NULL without one and from the device's stop:
-     no device takes an entry for it then */
-  _Atomic(volatile const uint32_t *) bar;
-  /* the next live edge (rig_nv_drop) */
-  struct rig_nv_edge *next;
 };
 
-/* Makes the host's writes through the BARs that [d]'s work may read reach
-   their GPUs before the doorbells that follow, a store fence otherwise:
-   each live word is read after a full fence, as is the device's own while
-   [launched], its launches lying in its BAR. [flushing] is set before the
-   fence and each word read after it, so a stop that took a word out either
-   finds [flushing] set and waits, or the word is read as NULL. */
+/* Makes the host's writes through [d]'s BAR reach the GPU before the
+   doorbells that follow while [launched], its launches lying in its BAR:
+   the flush word is read after a full fence. A store fence otherwise. */
 static inline void rig_nv_flush(struct device *d, int launched) {
-  int fenced = 0;
-  for (int i = 0; i < FLUSHES; i++) {
-    struct flush *f = &d->flushes[i];
-    if (atomic_load_explicit(&f->count, memory_order_acquire) <= 0 &&
-        !(i == 0 && launched))
-      continue;
-    if (!fenced) {
-      atomic_store_explicit(&d->flushing, 1, memory_order_relaxed);
-      full_fence();
-      fenced = 1;
-    }
-    volatile const uint32_t *w =
-        atomic_load_explicit(&f->word, memory_order_acquire);
-    if (w != NULL) (void)*w;
+  if (launched) {
+    full_fence();
+    (void)*d->flush;
+  } else {
+    store_fence();
   }
-  if (fenced) atomic_store_explicit(&d->flushing, 0, memory_order_release);
-  else store_fence();
 }
 
 /* Reads [d]'s timer against the host's clock into [*m], and the interval

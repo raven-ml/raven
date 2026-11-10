@@ -34,7 +34,8 @@
 #endif
 
 /* The host address of [b]'s first byte, or NULL if the host does not
-   address [b]'s memory. */
+   address [b]'s memory, as for Mapped memory, whose window the host writes
+   only inside rig's OCaml calls. */
 RIG_EXTERN void *rig_buffer_host(value b);
 
 /* The number of [b]'s bytes. */
@@ -151,8 +152,9 @@ RIG_EXTERN void rig_buffers_release(int n, const value *buffers);
 
    rig_counted () is the number of counted calls of any device that the
    calling thread is inside: from the count's start, before the driver's
-   call, to its end, the turn of a device that may block included
-   ([Dev.counted] in rig's sources). OCaml reads it through the external
+   call or the host's stores into a window that its flush follows, to its
+   end, the turn of a device that may block included ([Dev.counted] and
+   [Dev.stores] in rig's sources). OCaml reads it through the external
    caml_rig_counted, of type unit -> int. */
 RIG_EXTERN int rig_counted(void);
 

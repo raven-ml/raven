@@ -58,6 +58,7 @@ type t = {
          from its first queue to the stop for every later one *)
   mutable stopped : [ `Clean | `Lost | `Unknown ] option;
   hw : Rig_amd.Lock.t; (* the register sequences and page-table edits *)
+  combines : bool; (* the window on the GPU's memory combines *)
 }
 
 let space = Rig_pci.Space.create ~base:0x2000_0000_0000 (1 lsl 44)
@@ -609,6 +610,7 @@ let start ~gpus ~kept ~started f first =
       eops = [];
       stopped = None;
       hw = Rig_amd.Lock.create ();
+      combines = Window.combines vram;
     }
   in
   (* From here the GPU's registers are written: a failure stops it as lost. *)
@@ -650,6 +652,7 @@ let budget g = Page_table.main_pool g.tables
 let lock g = g.hw
 let host w off = if Window.mapped w then Some (Window.address w + off) else None
 let hdp g = host g.mmio (Gmc.hdp g.gmc)
+let combines g = g.combines
 
 (* Queues *)
 

@@ -62,9 +62,10 @@
     [NV_PMC_BOOT_42] register names them. An open needs the firmware files
     {!section-firmware} lists.
 
-    [Mapped] memory ({!Rig_nv.section-regions}) is the GPU's, through its
-    memory BAR (BAR 1), the range of the GPU's memory that the host
-    addresses over PCI. [Pinned] memory is the machine's system memory
+    [Bar] memory ({!Rig_nv.type-place}) is the GPU's, through its memory
+    BAR (BAR 1), the range of the GPU's memory that the host addresses over
+    PCI, mapped uncached, so a device makes no [Mapped] memory
+    ({!Rig_nv.field-combines}). [Pinned] memory is the machine's system memory
     ({!Rig_pci.Function.alloc_dma}). The GPUs' addresses and the process's
     addresses of system memory coincide, from 64 GiB to {!Rig_nv.windows},
     which the process reserves at its first open; every GPU it opens takes

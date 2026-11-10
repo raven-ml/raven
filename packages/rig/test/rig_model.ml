@@ -207,8 +207,9 @@ let pattern seed n =
 type state = Fine | Faulting | Lost
 
 (* Where a buffer's bytes are for a copy: memory the host addresses, an io
-   device's, or neither. *)
-type locality = Local | Io | Remote
+   device's, a window the host writes and a device reads ([Mapped] memory of
+   a device whose memory the host does not address), or none of these. *)
+type locality = Local | Io | Remote | Window
 
 type rdev = {
   id : int;
@@ -498,24 +499,28 @@ let maybe_write st d =
 let device_work r = match r.kind with Host | Disk -> false | _ -> true
 
 (* The stamps a copy leaves, by its route (rig.mli, Buffer.copy): the host
-   copies between memory it addresses and through io devices; otherwise the
-   destination's device when only the source is the host's, the source's
-   otherwise, directly or through staging memory, whose legs run on each side's
-   device. *)
+   copies between memory it addresses and through io devices, and from memory
+   it addresses into a window; otherwise the destination's device when only
+   the source is the host's, the source's otherwise, directly or through
+   staging memory, whose legs run on each side's device. A copy out of a
+   window is a device's. *)
 let copy_stamps src dst =
   let sd = src.on and dd = dst.on in
   let st = src.mem.stamps and dt = dst.mem.stamps in
   let on d f = if device_work d then f d in
   match (src.local, dst.local) with
-  | (Local | Io), (Local | Io) -> ()
+  | (Local | Io), (Local | Io) | Local, Window -> ()
   | Local, Remote ->
       on dd (maybe_use st);
       on dd (write dt)
   | Io, Remote -> on dd (write dt)
-  | Remote, (Local | Io) ->
+  (* Through staging, whose leg into the window the host or the device
+     runs. *)
+  | Io, Window -> on dd (maybe_write dt)
+  | (Remote | Window), (Local | Io) ->
       on sd (use st);
       on sd (maybe_write dt)
-  | Remote, Remote ->
+  | (Remote | Window), (Remote | Window) ->
       on sd (use st);
       on dd (maybe_use st);
       on sd (maybe_write dt);
@@ -560,7 +565,7 @@ let check_bytes b s =
 let counts m =
   match (m.owner.kind, m.mkind) with
   | Polled c, Owned _ when host_addresses c -> true
-  | Polled _, Owned B.Device -> true
+  | Polled _, Owned (B.Device | B.Mapped) -> true
   | _ -> false
 
 (* Whether an allocation of [n] bytes on [d] may be refused: past what [d]'s
@@ -589,13 +594,10 @@ let live_bytes w d =
       else n)
     0 d.made
 
-(* The bytes of [d]'s budget its memories may hold: [Mapped] memory counts where
-   the budget held it. *)
+(* The bytes of [d]'s budget its memories may hold. *)
 let made_bytes d =
   List.fold_left
-    (fun n m ->
-      if counts m || m.mkind = Owned B.Mapped then n + Bytes.length m.data
-      else n)
+    (fun n m -> if counts m then n + Bytes.length m.data else n)
     0 d.made
 
 (* Staging memory *)
@@ -1101,7 +1103,9 @@ let new_kept_sys w =
 let created d memory =
   match d.kind with
   | Polled cfg when memory = B.Device && not cfg.visible -> Remote
+  | Polled cfg when memory = B.Mapped && not (host_addresses cfg) -> Window
   | Gpu (Cuda | Nv | Amd) when memory = B.Device -> Remote
+  | Gpu (Nv | Amd) when memory = B.Mapped -> Window
   | Disk -> Io
   | _ -> Local
 
@@ -1113,16 +1117,26 @@ let addressed_all d =
   | Polled c -> host_addresses c
   | Disk | Gpu (Cuda | Nv | Amd) -> false
 
+(* Whether [d] makes no [Mapped] memory: CUDA makes none (rig_cuda.mli),
+   NV and AMD make it where their path offers it (Rig.offers), and Polled
+   makes it. *)
+let refuses_mapped d =
+  match d.kind with
+  | Gpu Cuda -> true
+  | Gpu ((Nv | Amd) as g) -> not (Rig.offers (gpu_device g) B.Mapped)
+  | _ -> false
+
 let create_ref (v : rdevv) memory n c outcome =
   let d = v.r and w = c.w in
   let vd = verdict () in
   uses vd [ d ];
   invalid_if vd (d.kind = Disk && n > 0);
   invalid_if vd (memory = B.Pinned && addressed_all d);
+  invalid_if vd (memory = B.Mapped && refuses_mapped d);
   let budgeted =
     match (d.kind, memory) with
     | Polled c, _ when host_addresses c -> n > 0
-    | Polled _, B.Device -> n > 0
+    | Polled _, (B.Device | B.Mapped) -> n > 0
     | _ -> false
   in
   (* On two domains the other's budgets and allocations change what [d] may hold
@@ -1192,6 +1206,8 @@ let maps d b : borrowed =
     match (d.kind, m.mkind) with
     | Disk, _ -> `None
     | _ when Bytes.length m.data = 0 -> `Either
+    (* The host addresses a window only inside rig's writes. *)
+    | (Host | Memory), Owned B.Mapped when m.home = Window -> `None
     | (Host | Memory), (Heap | Array) -> `Some
     | Polled { maps_host = false; _ }, (Heap | Array | File _) -> `None
     (* A GPU maps a file's pages where its kernel driver lets it: NVIDIA's maps
@@ -1214,6 +1230,7 @@ let borrowed d b =
       | (Host | Memory), _, _ -> Local
       | _, _, File _ -> Local
       | _ when b.local = Local -> Local
+      | _ when b.local = Window -> Window
       | Polled _, Polled cfg, _ when cfg.visible -> Local
       | _ -> Remote
     in
@@ -1374,8 +1391,9 @@ let read_ref last c outcome =
   judge ~lost c.w vd outcome (fun s ->
       Option.iter (staged c.w) stage;
       if
-        b.on.kind <> Host && b.local = Remote && device_work b.on
-        && b.length > 0
+        b.on.kind <> Host
+        && (b.local = Remote || b.local = Window)
+        && device_work b.on && b.length > 0
       then begin
         follows b.on vd;
         use b.mem.stamps b.on
@@ -1428,10 +1446,12 @@ let copy_judge ~invalid last src a b outcome =
   in
   judge ~lost w vd outcome (fun () ->
       if a.length > 0 then begin
+        let device_side l = l = Remote || l = Window in
         seen w "a copy the host makes"
-          (a.local <> Remote && b.local <> Remote
+          ((not (device_side a.local)) && b.local <> Remote
           && not (a.local = Io && b.local = Io));
-        seen w "a copy a device runs" (a.local = Remote || b.local = Remote);
+        seen w "a copy a device runs"
+          (device_side a.local || b.local = Remote);
         seen w "a copy between two devices"
           (device_work a.on && device_work b.on && a.on != b.on);
         seen w "a copy whose source is unreachable during it" last;

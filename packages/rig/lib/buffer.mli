@@ -66,8 +66,13 @@ val of_memory : Def.memory -> int -> t
 (** [of_memory m n] is a live buffer over the first [n] bytes of [m]. It
     checks nothing: [n <= m.bytes] must hold. *)
 
+val offers : device -> kind -> bool
+(** [offers d k] is {!Rig.offers}[ d k]. *)
+
 val create : ?memory:kind -> device -> int -> t
-(** [create ?memory d n] is {!Rig.Buffer.create}[ ?memory d n]. *)
+(** [create ?memory d n] is {!Rig.Buffer.create}[ ?memory d n]. [Mapped]
+    memory of a device whose memory the host addresses is the device's
+    [Device] memory. *)
 
 val of_io : device -> 'r im -> 'r -> access:access -> int -> t
 (** [of_io d m r ~access n] is {!Rig.Buffer.of_io}[ d m r ~access n]. *)
@@ -145,15 +150,18 @@ val alias : t -> int
     [0], or [0] if it has none ({!places}). It allocates nothing. *)
 
 val array :
+  window:bool ->
   string ->
   ('a, 'b) Bigarray.kind ->
   t ->
   ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
-(** [array fn k b] is [b]'s bytes as elements of [k], without a wait, a claim
-    or an export. An array over memory outside the host's heap and the
-    caller's bigarrays shares the allocation's proxy ({!Memory.proxy}), which
-    keeps the allocation from reuse while the array is reachable. Raises
-    [Invalid_argument], naming [fn], as {!Rig.Buffer.read}. *)
+(** [array ~window fn k b] is [b]'s bytes as elements of [k], without a wait,
+    a claim or an export: with [window], the bytes of [b]'s window where [b]
+    is {!windowed}, which the caller flushes after its writes. An array over
+    memory outside the host's heap and the caller's bigarrays shares the
+    allocation's proxy ({!Memory.proxy}), which keeps the allocation from
+    reuse while the array is reachable. Raises [Invalid_argument], naming
+    [fn], as {!Rig.Buffer.read}. *)
 
 val export :
   t -> ('a, 'b) Bigarray.kind -> ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
@@ -166,6 +174,16 @@ val of_string : string -> t
 val host_addressed : t -> bool
 (** [host_addressed b] is [true] iff this process's host addresses [b]'s
     memory ({!Rig.Buffer.section-host_access}). *)
+
+val windowed : t -> bool
+(** [windowed b] is [true] iff [b]'s memory is [Mapped] memory of a device of
+    this machine, which the host writes through its window
+    ({!Memory.window}) and does not address otherwise. *)
+
+val at_window : t -> t
+(** [at_window b] is [b] over its window, for {!blit_string} and
+    {!set_bytes} into a {!windowed} [b], which the caller runs with the
+    owner's flush as one counted call ({!Memory.stored}). *)
 
 val check_range : string -> string -> int -> int -> int -> unit
 (** [check_range fn what size at n] raises [Invalid_argument], naming [fn]

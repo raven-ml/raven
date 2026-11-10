@@ -56,9 +56,10 @@ let words s =
 
 (* [count] launches of the kernel [empty] over one thread, their descriptors and
    constant bank 0 in [Mapped] memory, as compiled code places them, a segment
-   scheduling each. The result is the loaded image, which stays loaded while
-   reachable, and the segments' ring entries, two words each. *)
+   scheduling each, all flushed. The result is the loaded image, which stays
+   loaded while reachable, and the segments' ring entries, two words each. *)
 let launches t count =
+  let mapped n = alloc t Mapped n in
   let c = get (Abi.Cubin.of_string (Lazy.force cubin)) in
   let k = Option.get (Abi.Cubin.kernel c "empty") in
   let p = get (Rig.Image.load t.d (Lazy.force cubin)) in
@@ -67,7 +68,7 @@ let launches t count =
   let l = get (Abi.Launch.make cap k) in
   get (cap.local (Abi.Launch.local_bytes l));
   let local = Abi.Local_memory.make cap (Abi.Launch.local_bytes l) in
-  let bank0 = S.mapped t.g 4096 in
+  let bank0 = mapped 4096 in
   let base = entry - k.code in
   let bank (b : Abi.Cubin.bank) =
     let at = if b.index = 0 then address bank0 else base + b.offset in
@@ -88,12 +89,12 @@ let launches t count =
   in
   H.write (host bank0) (Abi.Qmd.parameters l q).bytes;
   let stride = 512 in
-  let qmds = S.mapped t.g (count * stride) in
+  let qmds = mapped (count * stride) in
   for i = 0 to count - 1 do
     H.write (at qmds (i * stride)) (Abi.Qmd.make l q).bytes
   done;
   let segment_bytes = 256 in
-  let segment = S.mapped t.g (count * segment_bytes) in
+  let segment = mapped (count * segment_bytes) in
   let entry i =
     let qmd = address qmds + (i * stride) in
     let ws = (Abi.Method.schedule (Int qmd)).bytes in
@@ -104,7 +105,9 @@ let launches t count =
     in
     words e.bytes
   in
-  (p, Array.init count entry)
+  let entries = Array.init count entry in
+  N.flush t.g;
+  (p, entries)
 
 (* Rows *)
 

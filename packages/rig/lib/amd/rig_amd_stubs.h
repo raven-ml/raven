@@ -24,7 +24,6 @@
 
 /* The submissions a ring keeps the end of until their value is reached. */
 #define RIG_AMD_MARKS 4096
-#define RIG_AMD_HDPS 8
 
 /* The queues, in the order of Rig_amd's facts. */
 enum { RIG_AMD_COMPUTE, RIG_AMD_COPY, RIG_AMD_QUEUES };
@@ -261,21 +260,6 @@ struct rig_amd_grown {
   uint64_t desc_gpu;
 };
 
-struct rig_amd_edge;
-
-/* A register whose store flushes a GPU's host data path, and the regions
-   that need it: the device's BAR allocations, or its views of another
-   device's. [src] is the edge of the device that owns the register. An
-   entry for another device's register whose count fell to 0 serves another
-   register: its register is stored before its count, and a submission reads
-   the count first. The owner's stop takes its register out of every other
-   device's entries before its path unmaps it (caml_rig_amd_drop). */
-struct rig_amd_hdp {
-  const struct rig_amd_edge *src;
-  _Atomic(volatile uint32_t *) reg;
-  _Atomic int count;
-};
-
 /* Where a part of a submission runs: the ring that runs it; whether the
    driver's copy kernel runs it; whether a later part on the other ring
    runs after it; and the part before it on its queue, when that ran on
@@ -432,10 +416,11 @@ struct rig_amd {
   uint64_t max_fill;            /* the bytes one S_FILL sets */
   struct rig_amd_window window;
   const struct rig_amd_launch *copy_launch; /* owned until confirmed stop */
-  struct rig_amd_hdp hdps[RIG_AMD_HDPS];
-  /* set while a submission stores to [hdps]' registers, from before its
-     barrier: a stop that took a register out waits until it clears */
-  _Atomic int flushing;
+  /* the register whose store flushes the GPU's host data path, or NULL */
+  volatile uint32_t *hdp;
+  /* the regions another function was given, whose writes pass that path:
+     each submission flushes it while any is counted */
+  _Atomic int given;
   uint64_t ib_at;               /* the PM4 words not yet in an AQL packet */
   size_t ib_n;
   uint64_t scratch_gpu;         /* the scratch the launches name */
@@ -490,14 +475,6 @@ struct rig_amd_edge {
   const struct rig_driver *driver;
   _Atomic uint64_t *word;
   struct rig_amd *d;
-  /* Taken inside one stub, around [d]'s HDP entries and its free at the
-     stop, so no OCaml code runs while it is held. */
-  pthread_mutex_t hdp_mu;
-  /* the path's HDP register, NULL without one and from the device's stop:
-     no device takes an entry for it then */
-  _Atomic(volatile uint32_t *) hdp;
-  /* the next live edge (caml_rig_amd_drop) */
-  struct rig_amd_edge *next;
 };
 
 /* Takes [d]'s first measure of its clock: from its source, the first of

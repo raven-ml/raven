@@ -8,10 +8,14 @@
     and of the blits between a buffer and the host's values.
 
     A copy takes the first route that runs it in one transfer. The host
-    copies between memory of this machine it addresses, and between such
-    memory and an io device's, through the io library's read or write, row
-    by row where a box's rows are not one run. Memory an io device owns, a
-    borrow of its pages included, moves only through that read or write,
+    copies between memory of this machine it addresses, from such memory
+    into the window of [Mapped] memory ([Memory.window]), its moves and the
+    flush after them one counted call ([Memory.stored]), and between such memory and an io device's,
+    through the io library's read or write, row by row where a box's rows
+    are not one run. The host never reads a window: a copy out of [Mapped]
+    memory runs as one out of the device's other memory. Memory an io
+    device owns, a borrow of its pages included, moves only through that
+    read or write,
     which see writes through the pages ({!Rig_edge.Io.pages}); toward a
     device's copy engine it goes through staging memory, which the host's
     side of a copy with another machine's device also takes. A device's copy
@@ -72,14 +76,16 @@
     unfinished work of a lost device is replaced, so a loss reaches no later
     copy.
 
-    The host's values reach memory the host addresses by its own copy, and
-    other memory through staging memory, as a copy whose one side the host
-    fills or empties; the blits return once their bytes are where they go. A
-    fill sets memory the host addresses itself, writes memory an io device
-    owns through the io library's writes from host memory that holds the
-    byte, 1 MiB at a time, and sets any other memory with a fill part on the
-    copy engine of the device a copy of it would run on
-    ({!Submission.run_set}), staging nothing.
+    The host's values reach memory the host addresses, and the window of
+    [Mapped] memory, by its own copy, and other memory through staging
+    memory, as a copy whose one side the host fills or empties; the blits
+    return once their bytes are where they go. A fill sets memory the host
+    addresses, and a window, itself, writes memory an io device owns through
+    the io library's writes from host memory that holds the byte, 1 MiB at a
+    time, and sets any other memory with a fill part on the copy engine of
+    the device a copy of it would run on ({!Submission.run_set}), staging
+    nothing. The host's writes into a window and their flush are one counted
+    call, which ends before the call returns.
 
     A copy, blit or fill takes its read claims ({!Rig.Buffer.section-copying})
     before it checks its buffers and waits. The host moves bytes that no stamp

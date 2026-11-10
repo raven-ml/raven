@@ -171,7 +171,9 @@ val drop_values : device -> unit
     device whose stop had not returned at the fork ({!Rig.section-stops}).
     An Orphaned device's stop never runs, its word is never read, and its
     objects are forgotten without a call. Every other io device keeps its
-    state. *)
+    state. The child forgets the counted calls its thread was inside at the
+    fork, on every device: their ends, as the thread returns from them,
+    end nothing. *)
 
 val is_lost : device -> bool
 (** [is_lost d] is [true] iff [d] is lost. It is [false] for the host
@@ -241,6 +243,18 @@ val counted : device -> scope -> ('a -> 'b) -> 'a -> 'b
     stores the driver's answer in it before it returns ({!Memory}): an
     exception that lands once [f] returned, such as a signal's as the thread
     gets its mask back, leaves what the driver made recorded. *)
+
+val stores : device -> ('h -> unit) -> 'h -> ('a -> 'b) -> 'a -> 'b
+(** [stores d flush h f x] is [f x], the host's stores into [d]'s window,
+    then [flush h], as one counted call on [d], so [d]'s stop, which may
+    unmap the window, waits for both. [flush] runs as {!counted}'s call
+    does, with scope [Any], after [f] returns or raises. [f] runs with the
+    thread's mask as it stands, and its exceptions lose nothing: one passes
+    through after the flush, also where the flush raised. A signal pending
+    as [f] ends lands after the count. While the thread runs [f], {!close}
+    raises [Invalid_argument], as it would wait for this count. In a child
+    forked inside [f], [d] is Orphaned and [f]'s end calls no flush. Raises
+    {!Lost} without calling [f] if [d] is lost. *)
 
 val masked : (unit -> 'a) -> 'a
 (** [masked f] is [f ()] with the calling thread's signals blocked, as

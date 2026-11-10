@@ -265,7 +265,7 @@ let declared () =
 
 (* The host addresses every kind but Device memory. The GPU addresses the
    kinds the host addresses below the windows, and Device memory outside
-   them. *)
+   them. Mapped memory is made where the facts say. *)
 let kinds_of_memory () =
   S.with_driver @@ fun g ->
   List.iter
@@ -282,7 +282,11 @@ let kinds_of_memory () =
         at_least int ~msg:"Device: its first byte, its last past the windows"
           ~than:(1 lsl 40) first;
       N.free g r)
-    [ ("Device", Device); ("Pinned", Pinned); ("Mapped", Mapped) ];
+    (Rig_edge.[ ("Device", Device); ("Pinned", Pinned) ]
+    @ if (N.facts g).mapped then [ ("Mapped", Rig_edge.Mapped) ] else []);
+  if not (N.facts g).mapped then
+    is_none ~msg:"Mapped memory where the facts say none"
+      (N.alloc g Rig_edge.Mapped 4096);
   if (N.facts g).maps_host then begin
     let p = H.pages H.page in
     let r =
@@ -424,25 +428,11 @@ let views_of_mapped () =
   N.free t.g v';
   N.free a src
 
-(* A stopped device's Mapped memory lies behind a BAR word that no viewer's
-   submissions read any more, so nothing would order the host's writes
-   through it before a viewer's work: no view of it is made. *)
-let views_of_bar () =
-  let a = S.driver () in
-  let src = alloc a Mapped 4096 in
-  S.stop_driver a;
-  S.with_ @@ fun t ->
-  is_none ~msg:"a view of a stopped device's Mapped memory"
-    (maps (N.map_peer t.g a src));
-  N.free a src
-
 let memory =
   group ~timeout:120. "memory"
     [
       test "a view of memory its GPU maps lasts until its own free"
         views_of_mapped;
-      test "map_peer of a stopped device's Mapped memory is None"
-        views_of_bar;
       test "a copy longer than the copy engine's is the identity" long_copy;
       test
         "an allocation past the GPU's memory is None, and gives back what it \
@@ -1852,7 +1842,7 @@ let images () =
 (* A cubin loads where another one's code ran and was unloaded: its launch runs
    its own code. The second cubin is laid over the first one's region, so that
    its code is where the first one's ran whatever the allocator answers. Each
-   image goes to its region by a kernel that copies it from Mapped memory. *)
+   image goes to its region by a kernel that copies it from Pinned memory. *)
 let reloaded () =
   S.with_ @@ fun t ->
   let k = S.kernels t in
@@ -1860,7 +1850,7 @@ let reloaded () =
   let n = 1000 in
   let out = alloc t.g Pinned (4 * n) in
   let copy_in code bytes =
-    let staging = alloc t.g Mapped (String.length bytes) in
+    let staging = alloc t.g Pinned (String.length bytes) in
     H.write (host staging) bytes;
     S.run t
       [|
@@ -2263,7 +2253,7 @@ let short_of_notifiers armed =
   Rig_nv_nvidia.gpu_with 0 ~wrap:(fun p ->
       let given = ref [] in
       let alloc kind n =
-        if !armed && kind = Rig_edge.Pinned && n = notifier then None
+        if !armed && kind = N.Host && n = notifier then None
         else
           let m = p.alloc kind n in
           (match m with

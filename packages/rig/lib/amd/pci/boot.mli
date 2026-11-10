@@ -221,6 +221,11 @@ val hdp : t -> int option
 (** [hdp g] is the host address of the HDP flush register, if the register
     BAR is mapped into the process. *)
 
+val combines : t -> bool
+(** [combines g] is [true] iff the window on the GPU's memory, and so its
+    [Bar] memory's ({!Rig_pci.Memory.kind}), combines writes
+    ({!Rig_pci.Function.map}). *)
+
 val interrupts : t -> int
 (** [interrupts g] is [Rig_amd.path]'s [interrupts]: a count that moves each
     time a sleep consumes entries of the interrupt ring or records a fault. *)

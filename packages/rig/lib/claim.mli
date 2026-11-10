@@ -73,7 +73,10 @@ val write_bytes :
   ('a, 'b) Bigarray.kind ->
   (('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> 'c) ->
   'c
-(** [write_bytes b k f] is {!Rig.Buffer.write}[ b k f]. *)
+(** [write_bytes b k f] is {!Rig.Buffer.write}[ b k f]. [f] writes the
+    window of [Mapped] memory ({!Buffer.windowed}), which the owner's driver
+    flushes once [f] returns or raises, before the claim ends, the stores and
+    the flush one counted call ({!Memory.stored}). *)
 
 val wait : string -> Def.access -> Def.buffer -> unit
 (** [wait fn access b] takes a read claim on [b]'s memory for a call of [fn],
@@ -83,6 +86,14 @@ val wait : string -> Def.access -> Def.buffer -> unit
 
     Raises as {!reading} does, and {!Rig.Lost} as {!Rig.Buffer.wait} does,
     holding no claim. *)
+
+val stored : string -> Def.buffer -> ('a -> 'b) -> 'a -> 'b
+(** [stored fn b f x] is [f x], the host's stores into [b]'s window under a
+    read claim that it takes as {!wait}[ fn Read_write b] does, and the
+    owner's flush after them as one counted call ({!Memory.stored}), then the
+    claim's end, also where either raises. Nothing allocates between the
+    claim and the handler that ends it, so an asynchronous exception keeps
+    no claim: the caller builds [f] before the call. *)
 
 val reading : string -> Def.buffer -> (unit -> 'a) -> 'a
 (** [reading fn b f] is [f ()] under a read claim on [b]'s memory for a call of

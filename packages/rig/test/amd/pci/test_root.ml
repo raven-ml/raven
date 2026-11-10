@@ -13,9 +13,6 @@ open Windtrap
 let strf = Printf.sprintf
 let killed = "--killed"
 
-external fill : int -> int -> int -> unit = "rig_amd_pci_test_fill"
-external holds : int -> int -> int -> bool = "rig_amd_pci_test_holds"
-
 let firmware () =
   match Sys.getenv_opt "RIG_AMD_PCI_FIRMWARE" with
   | Some dirs when Unix.geteuid () = 0 -> String.split_on_char ':' dirs
@@ -53,32 +50,36 @@ let test_stop_twice () =
   Rig_amd.stop (open_ firmware) ~fault:None
 
 (* A device's memory is freed after the GPU it was on opened again: the frees
-   write nothing of the new device, whose memory keeps its bytes, and which goes
-   on allocating and stops clean. *)
-let pattern = 0x5a
+   write nothing of the new device, whose memory keeps its bytes, Mapped
+   memory where the device offers it, and which goes on allocating and stops
+   clean. *)
+let pattern = '\x5a'
 
 let test_free_after_reopen () =
   let firmware = firmware () in
   let g = open_ firmware in
-  let rs =
-    List.map
-      (fun k -> alloc g k)
-      [ Rig_edge.Device; Rig_edge.Pinned; Rig_edge.Mapped ]
+  let kinds =
+    Rig_edge.[ Device; Pinned ]
+    @ if (Rig_amd.facts g).mapped then [ Rig_edge.Mapped ] else []
   in
+  let rs = List.map (alloc g) kinds in
   Rig_amd.stop g ~fault:None;
-  let g' = open_ firmware in
-  let r' = alloc g' Rig_edge.Mapped in
-  let at =
-    match (Rig_amd.locate r').host with
-    | Some at -> at
-    | None -> fail "Mapped memory has no host address"
+  let d =
+    match Rig.open_ (Rig_amd_pci.gpu ~firmware 0) with
+    | Ok d -> d
+    | Error why -> failf "GPU 0 did not open again: %s" why
   in
-  fill at size pattern;
+  let memory = if Rig.offers d Mapped then Rig.Buffer.Mapped else Device in
+  let b = Rig.Buffer.create ~memory d size in
+  Rig.Buffer.fill b pattern;
   List.iter (Rig_amd.free g) rs;
-  equal ~msg:"the new device's bytes" bool true (holds at size pattern);
-  Rig_amd.free g' r';
-  Rig_amd.free g' (alloc g' Rig_edge.Pinned);
-  Rig_amd.stop g' ~fault:None;
+  let back = Bytes.create size in
+  Rig.Buffer.blit_to_bytes b 0 back 0 size;
+  equal ~msg:"the new device's bytes" string (String.make size pattern)
+    (Bytes.to_string back);
+  ignore (Rig.Buffer.free b : bool);
+  ignore (Rig.Buffer.free (Rig.Buffer.create ~memory:Pinned d size) : bool);
+  Rig.close d;
   Rig_amd.stop (open_ firmware) ~fault:None
 
 (* A child opens the GPU, takes system memory for it and dies by SIGKILL with

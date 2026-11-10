@@ -696,6 +696,7 @@ let open_ ~word i =
                     hang_ms = (if watchdog = 0 then Some hang_ms else None);
                     maps_host = registers <> 0;
                     host_addresses = false;
+                    mapped = false;
                     alignment = allocation_alignment;
                     cache_bytes = (if l2 > 0 then Some l2 else None);
                     counters = [];
@@ -990,6 +991,9 @@ let dma g (r : region) ~fn =
   | Word | Own_word | Locked _ | Peer _ ->
       invalid_arg "Rig_cuda.dma: a region alloc did not make"
 
+(* CUDA makes no [Mapped] memory. *)
+let flush _ = ()
+
 let free g (r : region) =
   match r.kind with
   | Device | Host ->
@@ -1156,6 +1160,7 @@ module Driver = struct
   let map_peer = map_peer
   let map_host = map_host
   let dma = dma
+  let flush = flush
   let image = image
   let entry = entry
   let prepare = prepare

@@ -138,6 +138,7 @@ type device = {
   alignment : int;  (** {!Rig.alignment}. *)
   cache_bytes : int option;  (** {!Rig.cache_bytes}. *)
   host_addresses : bool;  (** Whether the host addresses all its regions. *)
+  mapped_memory : bool;  (** Whether its driver makes [Mapped] memory. *)
   key : int;
       (** The uid of its driver's key, of rig's io key for an io device, and
           [-1] for the host. *)

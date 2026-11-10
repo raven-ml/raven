@@ -134,13 +134,20 @@
     {- [Device] memory is GPU memory, which the host does not address.}
     {- [Pinned] memory is host memory that the GPU addresses, which the host
        reads as fast as other memory.}
-    {- [Mapped] memory is GPU memory that the host addresses through the
-       GPU's memory BAR, write-combined, so the host writes it fast and reads
-       it slowly. The host's writes reach the work submitted after them.
-       {!val-alloc} returns [None] for it on a path without such memory or
-       whose [hdp] is [None] ({!type-path}).}}
+    {- [Mapped] memory is GPU memory that the host also addresses through
+       the GPU's memory BAR, write-combined. The device makes it ([mapped] in
+       {!Rig_edge.type-facts}) where its path declares its [Bar] memory fit
+       for it ({!field-combines}) and the host reaches the register that
+       flushes the host data path ({!field-hdp}). {!val-flush} drains the
+       calling thread's write-combining buffers with a full barrier, then
+       stores to that register and reads it back, after which the writes
+       before it are in the GPU's memory. Each submission's first compute
+       packet invalidates and writes back the GPU's L2 before its work reads,
+       and its copy engine reads the memory itself, so later work reads what
+       the host wrote. Submissions flush nothing for it.}}
 
-    {!val-alloc} returns [None] if the GPU or the host lacks the memory.
+    {!val-alloc} returns [None] if the GPU or the host lacks the memory, and
+    for [Mapped] memory where the device makes none or the BAR has no room.
     {!val-alloc} and {!val-map_host} raise [Invalid_argument] for fewer than
     one byte. Freeing a mapping ends the mapping alone, and the memory it
     maps stays.
@@ -152,21 +159,15 @@
 
     {!peer} and {!val-map_peer} return [true] and a view at the same GPU
     address iff paths of one [key] opened both devices and this device's
-    path reaches the other GPU's memory ([reaches] of {!type-path}). A
-    device flushes the host writes of at most 7 other GPUs, so
-    {!val-map_peer} returns [None] for [Mapped] memory of an eighth. A view
-    of [Mapped] memory flushes the other GPU's host writes before this
-    device's later work until the other device stops, and {!val-map_peer} of
-    a stopped device's [Mapped] memory is [None]. Peer
-    access between two GPUs, with the flushes of each other's host writes,
-    is untested, and so is a path whose [hdp] is [None].
+    path reaches the other GPU's memory ([reaches] of {!type-path}). Peer
+    access between two GPUs is untested.
 
     {!val-dma} is the path's answer ([dma] of {!type-path}), or [Error]
     where the path gives no register that flushes the GPU's host data path
     ([hdp] of {!type-path}), since another function's writes through the
     memory BAR pass it as the host's do. Once a region is given, each
-    submission flushes that path before the GPU reads, for the rest of the
-    process, so the device's later work reads what the function wrote. The
+    submission flushes that path before the GPU reads, for the device's
+    life, so the device's later work reads what the function wrote. The
     function reads what a value's work wrote once the value is reached,
     since its release writes the L2 back, and the host data path of the
     GPUs this driver drives keeps no read cache to invalidate.
@@ -487,6 +488,20 @@ type 'm memory = {
 }
 (** The type for memory a path gives a device. *)
 
+(** The type for where a path places memory. *)
+type place =
+  | Gpu  (** GPU memory, which the host does not address. *)
+  | Bar
+      (** GPU memory that the host addresses through the GPU's memory BAR,
+          with the caching of the path's mapping ({!field-combines}):
+          write-combined, so the host writes it fast and reads it slowly,
+          cached where the GPU's memory is coherent with the processor's,
+          or uncached. *)
+  | Host
+      (** Host memory the GPU addresses, cached for the host and snooped by
+          the GPU. The path owns it, so that no unmap of the process's memory
+          takes it from the GPU. *)
+
 (** The type for how a device reads the GPU's clock, the clock of its
     stamps, against the host's clock ({!section-c}). *)
 type clock =
@@ -535,17 +550,12 @@ type 'm path = {
   cache_bytes : int option;
       (** [Some n] with [n] the bytes of the GPU's L2 and its MALL (Infinity
           Cache) together, or [None] if the path does not know the L2's. *)
-  alloc : Rig_edge.memory -> int -> 'm memory option;
-      (** [alloc k n] is [n] new bytes of memory [k]:
-          {ul
-          {- [Device], GPU memory the host does not address;}
-          {- [Mapped], GPU memory the host addresses through the GPU's memory
-             BAR;}
-          {- [Pinned], host memory the GPU addresses, cached for the host and
-             snooped by the GPU. The path owns it, so that no unmap of the
-             process's memory takes it from the GPU.}}
-          It is [None] if the memory of [k] is exhausted, or if [Mapped]
-          memory does not exist. *)
+  alloc : place -> int -> 'm memory option;
+      (** [alloc k n] is [n] new bytes of memory placed at [k], or [None] if
+          that memory is exhausted, or if the GPU has no [Bar] memory. The
+          device asks [Gpu] for [Device] memory, [Host] for [Pinned] memory,
+          [Bar] for [Mapped] memory, and [Bar] for its traces, with [Host]
+          where it has none. *)
   map_host : (int -> int -> 'm memory option Rig_edge.mapping) option;
       (** [Some map] if the GPU maps host memory. [map a n] maps for the GPU
           the pages that hold the [n] bytes of host memory at [a] and must
@@ -611,10 +621,13 @@ type 'm path = {
       (** The host address of the 32-bit register whose store flushes the
           GPU's host data path, after which host writes through the memory BAR
           are in the GPU's memory; [None] if the host does not reach it. The
-          register must stay mapped until [stop] is called. Devices that view
-          the GPU's [Mapped] memory ([map_peer]) store to it too, until
-          {!val-stop}, which waits for their stores before it calls
-          [stop]. *)
+          register must stay mapped until [stop] is called. *)
+  combines : bool;
+      (** Whether the path declares its [Bar] memory fit for [Mapped]
+          memory: made, and mapped by the host write-combined, or cached
+          where the GPU's memory is coherent with the processor's. The
+          device does not check the declaration. It makes [Mapped] memory
+          only where it is [true] and [hdp] is [Some _]. *)
   interrupt : int;
       (** The nonzero context that the interrupt of a value's release
           carries, which wakes [sleep]. *)

@@ -656,8 +656,18 @@ let ranges_kept attempt =
 (* A walk over a call that takes memory, which allocates as it does. *)
 let landed n = at_least ~msg:"the landings" int ~than:1 n
 
+(* Skips a walk of [kind] where GPU 0 makes none of it, as NVIDIA's GPUs over
+   PCI make no Mapped memory. *)
+let makes kind =
+  needs_gpu ();
+  let d = rig_device 0 in
+  let made = Rig.offers d kind in
+  Rig.close d;
+  if not made then skip ~reason:"GPU 0 makes no memory of the kind" ()
+
 (* A buffer of [kind] on a device of GPU 0, collected before the close. *)
 let test_create kind () =
+  makes kind;
   landed @@ ranges_kept @@ fun n ->
   let d = rig_device 0 in
   let[@inline never] create () =
@@ -712,6 +722,7 @@ let test_borrow_peer () =
    back to the driver. A free that allocates nothing has nothing to land on,
    so the walk asks for no landing. *)
 let test_free kind () =
+  makes kind;
   ignore @@ ranges_kept
   @@ fun n ->
   let d = rig_device 0 in

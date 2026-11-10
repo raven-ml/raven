@@ -1146,28 +1146,16 @@ static void release(struct submission *s, int q) {
   r->released = s->v;
 }
 
-/* Hands the queues what was placed: the HDP flush the host's writes through
-   the BAR need, read back so that it completed, then each queue's write
-   position and doorbell. [flushing] is set before the barrier and each
-   register read after it, so a stop that took a register out either finds
-   [flushing] set and waits, or the register is read as NULL. */
+/* Hands the queues what was placed: the HDP flush another function's writes
+   through the BAR need, read back so that it completed, then each queue's
+   write position and doorbell. */
 static void hand_over(struct submission *s) {
   struct rig_amd *d = s->d;
-  int fenced = 0;
-  for (int i = 0; i < RIG_AMD_HDPS; i++)
-    if (atomic_load_explicit(&d->hdps[i].count, memory_order_acquire) > 0) {
-      if (!fenced) {
-        atomic_store_explicit(&d->flushing, 1, memory_order_relaxed);
-        fenced = 1;
-      }
-      rig_amd_barrier();
-      volatile uint32_t *reg =
-          atomic_load_explicit(&d->hdps[i].reg, memory_order_acquire);
-      if (reg == NULL) continue;
-      reg[0] = 0;
-      (void)reg[0];
-    }
-  if (fenced) atomic_store_explicit(&d->flushing, 0, memory_order_release);
+  if (atomic_load_explicit(&d->given, memory_order_acquire) > 0) {
+    rig_amd_barrier();
+    d->hdp[0] = 0;
+    (void)d->hdp[0];
+  }
   rig_amd_barrier();
   for (int q = 0; q < RIG_AMD_QUEUES; q++) {
     struct rig_amd_ring *r = &d->rings[q];

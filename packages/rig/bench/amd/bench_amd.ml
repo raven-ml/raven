@@ -110,9 +110,39 @@ let load t =
   let empty = Option.get (Rig.Image.resolve p "empty") in
   (p, Rig.Image.entry empty - (kernel "empty").descriptor)
 
+(* Questions *)
+
+(* [asked f] is [f ()]'s answer, asked in a child, which opens GPU 0 as a
+   row's worker does: [Ok b] answers [b], and [Error why] fails the suite. *)
+let asked f =
+  match Unix.fork () with
+  | 0 ->
+      let code =
+        match f () with
+        | Ok true -> 0
+        | Ok false -> 1
+        | Error why ->
+            prerr_endline why;
+            2
+        | exception e ->
+            prerr_endline (Printexc.to_string e);
+            2
+      in
+      Rig_amd_support.release ();
+      Unix._exit code
+  | pid -> (
+      match snd (Unix.waitpid [] pid) with
+      | WEXITED 0 -> true
+      | WEXITED 1 -> false
+      | _ -> failwith "a question asked of GPU 0 failed")
+
+(* Whether GPU 0 makes Mapped memory. *)
+let makes_mapped () = asked @@ fun () -> Ok (Rig.offers (dev ()).d Mapped)
+
 (* Rows *)
 
-let release_rows =
+(* The rows of releases, with [mapped] where GPU 0 makes Mapped memory. *)
+let release_rows ~mapped =
   let empty () =
     let t = dev () in
     (t, prepare t [||])
@@ -126,25 +156,30 @@ let release_rows =
     let t = dev () in
     (t, on_copy t)
   in
-  let mapped () =
+  (* Empty submissions of a device with live Mapped memory, which cost what
+     the driver's do: the host's writes into it are flushed by the writes. *)
+  let holding () =
     let t = dev () in
     (t, B.create ~memory:Mapped t.d 4096, prepare t [||])
   in
   Thumper.group "release"
-    [
-      row "driver" empty (fun (t, s) -> run t s);
-      row "switch" switching (fun (t, copy, none) ->
-          run t (if t.v land 1 = 0 then copy else none));
-      row "copy" copying (fun (t, s) -> run t s);
-      row "no-wait-100" empty (fun (t, s) ->
-          for _ = 1 to 100 do
-            submit t s
-          done;
-          wait t);
-      row "mapped" mapped (fun (t, _, s) -> run t s);
-    ]
+    ([
+       row "driver" empty (fun (t, s) -> run t s);
+       row "switch" switching (fun (t, copy, none) ->
+           run t (if t.v land 1 = 0 then copy else none));
+       row "copy" copying (fun (t, s) -> run t s);
+       row "no-wait-100" empty (fun (t, s) ->
+           for _ = 1 to 100 do
+             submit t s
+           done;
+           wait t);
+     ]
+    @ if mapped then [ row "mapped" holding (fun (t, _, s) -> run t s) ]
+      else [])
 
-let launch_rows =
+(* The rows of launches, with [1-mapped-args] where GPU 0 makes Mapped
+   memory. *)
+let launch_rows ~mapped =
   (* [n] launches of [empty] over one work-item, a part each. *)
   let launching n () =
     let t = dev () in
@@ -186,15 +221,14 @@ let launch_rows =
     Rig.Submission.Run.int64 r b 0 0L;
     (t, p, r, [| out |])
   in
-  let bar () =
+  (* [double_index] over 64 work-items, its arguments in Mapped memory, which
+     each step rewrites through Buffer.write, as compiled code would. *)
+  let mapped_args () =
     let t = dev () in
     let p, base = load t in
     let gpu = (A.capability t.g).gpu in
     let out = B.create t.d 256 in
-    let args =
-      try B.create ~memory:Mapped t.d 8
-      with Rig.Out_of_memory _ -> B.create ~memory:Pinned t.d 8
-    in
+    let args = B.create ~memory:Mapped t.d 8 in
     let encode args =
       encode (dispatch gpu (kernel "double_index") ~base ~args ~threads:64)
     in
@@ -208,10 +242,9 @@ let launch_rows =
     let address = Rig.Submission.(address (Run.submission s)) in
     let bytes = encode (address args) in
     B.blit_from_string bytes 0 ws 0 (String.length bytes);
-    (* The rows rewrite the arguments in place, as compiled code would. *)
-    (t, p, B.write args Bigarray.int64 Fun.id, address out, s)
+    (t, p, args, address out, s)
   in
-  Thumper.group "launch"
+  let rows =
     [
       row "1" (launching 1) (fun (t, _, s) -> run t s);
       row "64" (launching 64) (fun (t, _, s) -> run t s);
@@ -225,10 +258,14 @@ let launch_rows =
           let p = Rig.submit r ~buffers in
           t.v <- Rig.Point.value p;
           wait t);
-      row "1-bar-args" bar (fun (t, _, args, out, s) ->
-          args.{0} <- Int64.of_int out;
-          run t s);
     ]
+  in
+  let written (t, _, args, out, s) =
+    B.write args Bigarray.int64 (fun a -> a.{0} <- Int64.of_int out);
+    run t s
+  in
+  Thumper.group "launch"
+    (rows @ if mapped then [ row "1-mapped-args" mapped_args written ] else [])
 
 let copy_rows =
   let n = 256 * mib in
@@ -385,6 +422,9 @@ let () =
       if pci then Thumper.Config.(deadline pci_deadline default)
       else Thumper.Config.default
     in
+    let mapped = makes_mapped () in
+    let release_rows = release_rows ~mapped in
+    let launch_rows = launch_rows ~mapped in
     exit
     @@ Thumper.run ~config "rig_amd"
          ((if pci then [ open_rows ] else [])

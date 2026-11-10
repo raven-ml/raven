@@ -23,6 +23,11 @@ let io_owned m = Dev.is_io m.alloc.owner
 
 let host_address b = b.mem.host + b.offset
 
+(* Where the host writes [b]'s bytes: its window for [Mapped] memory. *)
+let dst_address b =
+  if b.mem.host >= 0 then host_address b
+  else Memory.window b.mem.alloc + b.offset
+
 (* A driver's device of another machine, which has no staging memory of its
    own: it reaches the host's only from a side the host moves ([hosted]). *)
 let far d = (not (Dev.same_machine d Dev.host)) && not (Dev.is_io d)
@@ -157,10 +162,12 @@ type transfer = Host of host | Queued | Staged
 (* Memory an io device owns moves only through that device's read or write,
    never through a borrow of its pages, so a file cut short raises in the read
    where a read of its pages would end the process, and no device maps the
-   pages for a copy. *)
+   pages for a copy. The host writes the window of [Mapped] memory and never
+   reads it, so a copy out of it runs on a copy engine. *)
 let transfer src dst =
   let si = io_owned src.mem and di = io_owned dst.mem in
-  if local src.mem && local dst.mem && not (si || di) then Host Move
+  if local src.mem && (local dst.mem || Buffer.windowed dst) && not (si || di)
+  then Host Move
   else if si && (not di) && local dst.mem then Host Io_read
   else if di && (not si) && local src.mem then Host Io_write
   else if si || di then Staged
@@ -168,7 +175,7 @@ let transfer src dst =
 
 let move_run fn transfer src s dst t n =
   match transfer with
-  | Move -> memmove (host_address dst + t) (host_address src + s) n
+  | Move -> memmove (dst_address dst + t) (host_address src + s) n
   | Io_read -> io_read fn src s dst t n
   | Io_write -> io_write fn src s dst t n
 
@@ -184,6 +191,29 @@ let move_box fn transfer src dst x =
         (x.dst_offset + (i * x.dst_pitch))
         x.width
     done
+
+(* The host's moves of [boxes]. *)
+let move_boxes fn transfer src dst boxes =
+  for i = 0 to Array.length boxes - 1 do
+    move_box fn transfer src dst (Array.unsafe_get boxes i)
+  done
+
+(* The host's moves into [dst]'s window and the owner's flush after them are
+   one counted call ([Memory.stored]), so its stop, which may unmap the
+   window, waits for both, and later work sees the bytes. *)
+let move_run_into fn transfer src s dst t n =
+  if Buffer.windowed dst then
+    Memory.stored dst.mem.alloc
+      (fun () -> move_run fn transfer src s dst t n)
+      ()
+  else move_run fn transfer src s dst t n
+
+let move_boxes_into fn transfer src dst boxes =
+  if Buffer.windowed dst then
+    Memory.stored dst.mem.alloc
+      (fun () -> move_boxes fn transfer src dst boxes)
+      ()
+  else move_boxes fn transfer src dst boxes
 
 (* The host's transfer's point, made once. *)
 let on_host_done = Some 0
@@ -202,9 +232,7 @@ let on_host fn ~waits ~into_half transfer src dst boxes =
   let ps = asking () in
   let start = asked ps in
   host_waits ~waits ~into_half src dst;
-  for i = 0 to Array.length boxes - 1 do
-    move_box fn transfer src dst (Array.unsafe_get boxes i)
-  done;
+  move_boxes_into fn transfer src dst boxes;
   record ps src dst (total boxes) start;
   on_host_done
 
@@ -214,7 +242,7 @@ let on_host_run fn ~waits ~into_half transfer src s dst t n =
   let ps = asking () in
   let start = asked ps in
   host_waits ~waits ~into_half src dst;
-  move_run fn transfer src s dst t n;
+  move_run_into fn transfer src s dst t n;
   record ps src dst n start;
   on_host_done
 
@@ -988,7 +1016,7 @@ let copied src dst n =
         let start = asked ps in
         Buffer.wait_points src Buffer.Read;
         Buffer.wait_points dst Buffer.Read_write;
-        move_run fn t src 0 dst 0 n;
+        move_run_into fn t src 0 dst 0 n;
         record ps src dst n start
     | Queued ->
         let d = runner (queue_side src dst) in
@@ -1070,7 +1098,8 @@ let host_moved b = Buffer.host_addressed b && not (io_owned b.mem)
 (* Where the host moves the buffer's bytes, the blits and [fill] claim and
    wait, move the bytes, and drop the claim. The move neither raises nor polls
    in native code, so no handler is needed and no asynchronous exception keeps
-   the claim. *)
+   the claim. Into a window, the stores and the owner's flush are one counted
+   call, and the claim ends after them ([Claim.stored]). *)
 let blit_from_string s i b j n =
   let fn = "Buffer.blit_from_string" in
   Dev.check_held fn;
@@ -1082,6 +1111,10 @@ let blit_from_string s i b j n =
     Buffer.blit_string s i b j n;
     Memory.claim_drop b
   end
+  else if Buffer.windowed b then
+    Claim.stored fn b
+      (fun () -> Buffer.blit_string s i (Buffer.at_window b) j n)
+      ()
   else begin
     (* The view would otherwise name itself for a dead buffer; the check that
        counts runs under the claim. *)
@@ -1153,19 +1186,29 @@ let filled fn ~waits b c =
     0
   end
 
-(* Where the host addresses [b], the host sets its bytes after the points of
-   [waits] and the work it follows, holding a read claim on [b]. *)
+(* Where the host addresses [b] or writes its window, the host sets its bytes
+   after the points of [waits] and the work it follows, holding a read claim
+   on [b]. *)
 let fill_host fn ~waits b c =
   wait_all waits;
-  Claim.wait fn Buffer.Read_write b;
-  Buffer.set_bytes b 0 (Buffer.length b) c;
-  Memory.claim_drop b
+  if Buffer.windowed b then
+    Claim.stored fn b
+      (fun () -> Buffer.set_bytes (Buffer.at_window b) 0 (Buffer.length b) c)
+      ()
+  else begin
+    Claim.wait fn Buffer.Read_write b;
+    Buffer.set_bytes b 0 (Buffer.length b) c;
+    Memory.claim_drop b
+  end
+
+(* Whether the host sets [b]'s bytes for a fill. *)
+let host_filled b = host_moved b || Buffer.windowed b
 
 let submit_fill ?(waits = [||]) b c =
   let fn = "Buffer.submit_fill" in
   Dev.check_held fn;
   writable fn b;
-  if host_moved b then begin
+  if host_filled b then begin
     fill_host fn ~waits b c;
     Submission.mark ()
   end
@@ -1178,7 +1221,7 @@ let fill b c =
   let fn = "Buffer.fill" in
   Dev.check_held fn;
   writable fn b;
-  if host_moved b then fill_host fn ~waits:[||] b c
+  if host_filled b then fill_host fn ~waits:[||] b c
   else begin
     Buffer.check_live fn b;
     Claim.reading fn b (fun () ->

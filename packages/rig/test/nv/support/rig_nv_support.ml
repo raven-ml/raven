@@ -111,11 +111,6 @@ let host r =
 let address r = Option.get (N.locate r).address
 let word g = (N.facts g).word
 
-let mapped g n =
-  match N.alloc g Mapped n with
-  | Some r -> r
-  | None -> require_some (N.alloc g Pinned n)
-
 (* Work through rig *)
 
 let run t ps = Rig.Point.wait (submit t ps)
@@ -192,7 +187,8 @@ let slots = 256
 
 type launches = { g : N.t; memory : N.region; mutable next : int }
 
-let launches g = { g; memory = mapped g (slots * slot); next = 0 }
+let launches g =
+  { g; memory = require_some (N.alloc g Pinned (slots * slot)); next = 0 }
 let reset l = l.next <- 0
 let free_launches l = N.free l.g l.memory
 

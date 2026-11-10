@@ -76,7 +76,9 @@ type memory =
           rig asks for none on a device that declares [host_addresses]. *)
   | Mapped
       (** The device's own memory, which the host also addresses through a
-          write-combined window. *)
+          write-combined window. rig asks for it only on a device that
+          declares [mapped], and stores into the window only inside its own
+          calls, each followed by {!Driver.flush}. *)
 
 (** The type for a driver's answer to a request to map memory
     ({!Driver.val-map_host}, {!Driver.val-map_peer}). *)
@@ -165,8 +167,14 @@ type 'region facts = {
   host_addresses : bool;
       (** Whether the host addresses every region the device allocates, with
           a [host] address in each one's location ({!Driver.locate}). The
-          host then reaches the device's memory and copies it, and rig asks
-          for none of the device's [Pinned] memory. *)
+          host then reaches the device's memory and copies it, rig asks for
+          none of the device's [Pinned] memory, and it asks for [Device]
+          memory where its caller asks for [Mapped] memory. *)
+  mapped : bool;
+      (** Whether {!Driver.alloc} makes [Mapped] memory, whose location's
+          [host] address is the window's ({!Driver.locate}). rig asks for
+          [Mapped] memory only where it is [true] and [host_addresses] is
+          [false]. *)
   alignment : int;
       (** The power of two that the address of every region {!Driver.alloc}
           makes is a multiple of, for every memory kind: its [address] and
@@ -209,8 +217,9 @@ type 'region facts = {
     [Copy], [hang_ms] or [cache_bytes] is below [1], [alignment] is not a power
     of two, [edge] is [0n], or the state's first member is [NULL]. rig
     checks nothing else of [edge]. A region {!Driver.alloc} makes that breaks
-    [host_addresses] or [alignment] is a fault of the device: rig frees the
-    region and loses the device, and the allocation raises [Rig.Lost]. *)
+    [host_addresses] or [alignment], or [Mapped] memory without a [host]
+    address, is a fault of the device: rig frees the region and loses the
+    device, and the allocation raises [Rig.Lost]. *)
 
 (** {1:calls The C functions}
 
@@ -444,10 +453,10 @@ type grown =
 
     Another exception that escapes {!Driver.val-alloc}, {!Driver.val-free},
     {!Driver.val-map_peer}, {!Driver.val-map_host}, {!Driver.val-dma},
-    {!Driver.val-image}, the function of a [Place], {!Driver.val-entry},
-    {!Driver.val-grow} or {!Driver.unload} on a device that is not lost also
-    loses it, with the exception's text, since the call may have left the
-    driver's state half changed. An
+    {!Driver.flush}, {!Driver.val-image}, the function of a [Place],
+    {!Driver.val-entry}, {!Driver.val-grow} or {!Driver.unload} on a device
+    that is not lost also loses it, with the exception's text, since the
+    call may have left the driver's state half changed. An
     [Invalid_argument] from [entry] loses nothing. Neither does any
     exception from {!Driver.val-facts}, {!Driver.locate} or {!Driver.peer},
     or one other than [Fault] from {!Driver.val-prepare}, {!Driver.sleep} or
@@ -497,9 +506,10 @@ type grown =
        made, on a device that is not lost;}
     {- it unloads each image once, and calls {!Driver.val-prepare} and
        {!Driver.val-entry} only on a loaded image;}
-    {- it allocates [Pinned] memory where [alloc] of [Mapped] returns
-       [None], or [Device] memory on a device that declares
-       [host_addresses];}
+    {- it stores into the window of [Mapped] memory only inside its own
+       calls, and calls {!Driver.flush} at the end of each, on the thread
+       that stored, and it calls {!Driver.val-stop} neither during the
+       stores nor during the flush;}
     {- it bounds hangs itself ([hang_ms]), so {!Driver.sleep} never times out
        work.}} *)
 module type Driver = sig
@@ -574,6 +584,17 @@ module type Driver = sig
       For [Bus], the driver must keep the memory where it is, out of any
       other allocation, and keep [d]'s function from any other open, until
       the process exits, whatever rig frees or stops meanwhile. *)
+
+  val flush : t -> unit
+  (** [flush d] makes the calling thread's earlier stores into the windows
+      of [d]'s [Mapped] memory visible to the work of every submission that
+      follows its return, on any device: it drains the thread's
+      write-combining buffers and pushes their writes into the device's
+      memory. On a device without [Mapped] memory it does nothing. rig calls
+      it on the thread that stored, at the end of each of its calls that
+      stored. Counted with the stores before it, so {!val-stop}, which may
+      unmap the windows, runs neither during the stores nor during the
+      flush. *)
 
   (** {1:driver_code Code} *)
 

@@ -161,10 +161,14 @@ host buffer as the channel's error notifier. On the RTX 5000 Ada:
 | Host time per submission | 0.25 µs | 1.14 µs |
 
 Rings in BAR1 save 0.2-0.5 µs of latency, since the GPU fetches from its own
-memory, and cost 0.9 µs of host time per submission: uncached stores, and the
-BAR1 read that makes them land before the doorbell. The NVIDIA driver keeps
-its rings in host memory, and pays the BAR1 read only while memory the host
-writes through BAR1 is live: 0.66 µs per submission.
+memory, and cost 0.9 µs of host time per submission: stores through BAR1,
+which the kernel driver maps write-combined whatever caching the mapping
+asks for, and the BAR1 read that makes them land before the doorbell. The
+NVIDIA driver keeps its rings in host memory and, where BAR1 has room, its
+launches' descriptors in BAR1, so a submission pays the BAR1 read, 0.66 µs,
+only when it places launches there. The host's writes into Mapped memory
+cost no submission: the call that made them, such as `Rig.Buffer.write`,
+ends with the same fence and read (`Rig_edge.Driver.flush`).
 
 ### Device-to-host copies run at 60% of the link
 
@@ -291,10 +295,12 @@ GPU memory that the host writes through the BAR passes the HDP, which can
 hold the writes. amdgpu flushes it by writing the remapped
 `HDP_MEM_FLUSH_CNTL` register and reading it back
 (`amdgpu_hdp_generic_flush`); the read returns once the write has landed. The
-AMD driver does the same before a doorbell, and only while memory the host
-writes through the BAR is live: its rings, words and segments live in host
-memory, which the HDP does not carry. Read in source; the R9700's host has no
-host-visible GPU memory (below).
+AMD driver does the same at the end of each of rig's host writes into
+`Mapped` memory. Another PCI function's writes through the BAR pass the HDP
+too: the driver flushes it before a doorbell once it has given a region to
+another function (`Rig.Buffer.dma`), and not otherwise, as its rings, words
+and segments live in host memory, which the HDP does not carry. Read in
+source; the R9700's host has no host-visible GPU memory (below).
 
 ### Without resizable BAR no GPU memory is host-visible
 
@@ -302,10 +308,9 @@ With resizable BAR off, the R9700's BAR0 is 256 MiB (512 MiB at most once
 resized, below) and KFD's topology lists no memory bank of the public heap
 type (`heap_type` 1), only private ones.
 Memory the host writes in GPU memory through the BAR does not exist on that
-machine, and a driver falls back to host memory: reading 1 MiB took 0.041 ms
-from both, where reading it across the bus would take milliseconds. A driver
-decides from the topology's heaps, and takes a BAR as small when it is smaller
-than the GPU's memory.
+machine, so the AMD driver offers no Mapped memory there through KFD
+(`Rig.offers`). A driver decides from the topology's heaps, and takes a BAR
+as small when it is smaller than the GPU's memory.
 
 ### An AQL packet is live once its header is
 
@@ -779,13 +784,17 @@ amdgpu:
    suffices (`sfence` on x86_64, `dsb st` on arm64: Linux's `wmb()`), and the
    AMD driver uses a full one;
 2. publish the write position (NVIDIA: `GP_PUT` in USERD);
-3. while memory the host writes through a BAR is live, a full fence and a
-   read through that BAR (NVIDIA: BAR1, after step 2), or the HDP flush and
-   its read back (AMD, before step 2);
+3. a full fence and a read through BAR1 where the submission wrote there
+   (NVIDIA: after step 2, when it places launches), or the HDP flush and its
+   read back once another function may write the GPU's memory through the
+   BAR (AMD: before step 2, after the device gave a region away);
 4. ring the doorbell (NVIDIA: the channel's work submit token, written to
    `NVC361_NOTIFY_CHANNEL_PENDING`).
 
-On the RTX 5000 Ada step 3 adds 0.66 µs per submission.
+On the RTX 5000 Ada step 3 adds 0.66 µs to a submission. The host's writes
+into Mapped memory are flushed at the end of each call that wrote them, with
+the same fence and read, or the HDP flush and its read back, so no
+submission flushes them.
 
 ### arm64 Device memory faults on the accesses memcpy makes
 

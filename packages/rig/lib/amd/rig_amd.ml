@@ -107,6 +107,7 @@ module Lock = struct
 end
 
 type 'm memory = { address : int; host : int option; data : 'm }
+type place = Gpu | Bar | Host
 type clock = Source of int | Round_trip
 
 type refusal = Lacking of string | Full of string | Refused of string
@@ -123,7 +124,7 @@ type 'm path = {
   wgps : int array array;
   budget : int;
   cache_bytes : int option;
-  alloc : Rig_edge.memory -> int -> 'm memory option;
+  alloc : place -> int -> 'm memory option;
   map_host : (int -> int -> 'm memory option Rig_edge.mapping) option;
   reaches : int -> bool;
   map_peer : 'm memory -> 'm memory option Rig_edge.mapping;
@@ -140,6 +141,7 @@ type 'm path = {
   retire : int -> unit;
   most_ring : [ `Pm4 | `Aql | `Sdma ] -> int;
   hdp : int option;
+  combines : bool;
   interrupt : int;
   hang_ms : int option;
   interrupts : unit -> int;
@@ -180,15 +182,9 @@ let free_mem (Mem c) =
 
 (* Memory *)
 
-type region = {
-  bytes : int;
-  mem : mem;
-  flush : int option;
-      (* the device whose HDP register this region keeps flushed, by its
-         [self] *)
-}
+type region = { bytes : int; mem : mem }
 
-let region ?flush n m = { bytes = n; mem = m; flush }
+let region n m = { bytes = n; mem = m }
 
 (* The path's functions over memory whose type the owner hides. Memory is made
    into a record [held] made, empty, before the path's call: [alloc m k n],
@@ -197,7 +193,7 @@ let region ?flush n m = { bytes = n; mem = m; flush }
    answer without its memory. *)
 type ops = {
   held : unit -> mem;
-  alloc : mem -> Rig_edge.memory -> int -> bool;
+  alloc : mem -> place -> int -> bool;
   map_host : (mem -> int -> int -> unit Rig_edge.mapping) option;
   map_peer : mem -> mem -> unit Rig_edge.mapping;
   dma : mem -> fn:string -> (Rig_edge.dma, string) result;
@@ -279,15 +275,15 @@ let ops (type m) (p : m path) =
 
 (* A region of [n] bytes over the memory [make m] makes in a new record [m], or
    [None] if it makes none. *)
-let answer ?flush ops n make =
+let answer ops n make =
   let m = ops.held () in
-  let r = Some (region ?flush n m) in
+  let r = Some (region n m) in
   if make m then r else None
 
 (* [answer] for a mapping, the path's refusal as it gave it. *)
-let mapped ?flush ops n make : region Rig_edge.mapping =
+let mapped ops n make : region Rig_edge.mapping =
   let m = ops.held () in
-  let r = Rig_edge.Maps (region ?flush n m) in
+  let r = Rig_edge.Maps (region n m) in
   match make m with
   | Rig_edge.Maps () -> r
   | Never -> Never
@@ -335,11 +331,10 @@ external set_stamps : int -> int -> int -> int -> int -> unit
   = "caml_rig_amd_stamps"
 
 external set_clock : int -> int -> bool = "caml_rig_amd_clock"
-external hdp_count : int -> int -> int -> bool = "caml_rig_amd_hdp"
-[@@noalloc]
+external given : int -> int -> unit = "caml_rig_amd_given" [@@noalloc]
 
 external set_hdp : int -> int -> unit = "caml_rig_amd_set_hdp" [@@noalloc]
-external drop_hdp : int -> unit = "caml_rig_amd_drop" [@@noalloc]
+external flush_hdp : int -> unit = "caml_rig_amd_flush" [@@noalloc]
 external zero : int -> int -> unit = "caml_rig_amd_zero"
 external poke32 : int -> int -> int -> unit = "caml_rig_amd_poke32"
 
@@ -440,6 +435,7 @@ type t = {
   lds : int;
   waves : int;
   hdp : int option;
+  mapped : bool; (* whether it offers [Bar] memory as [Mapped] memory *)
   budget : int;
   cache_bytes : int option;
   hang_ms : int option;
@@ -700,7 +696,7 @@ let grow_held self (ops : ops) (g : Abi.Gpu.t) ~aql st n =
   if have >= n then Served
   else
     let bytes = Abi.Scratch.size g n in
-    match alloc_mem ops Device bytes with
+    match alloc_mem ops Gpu bytes with
     | None -> Short bytes
     | Some m -> (
         (* [m] is this call's until it is published: it is freed if what the
@@ -778,8 +774,8 @@ let make_trace g =
       let b = ops.held () and e = ops.held () in
       l.trace_memory <- [ b; e ];
       let made =
-        (ops.alloc b Mapped n || ops.alloc b Pinned n)
-        && ops.alloc e Pinned (4 * trace_slots * engines)
+        (ops.alloc b Bar n || ops.alloc b Host n)
+        && ops.alloc e Host (4 * trace_slots * engines)
       in
       if made && mem_host b <> None && mem_host e <> None then begin
         let t =
@@ -841,6 +837,7 @@ let facts g =
     hang_ms = g.hang_ms;
     maps_host = g.maps_host;
     host_addresses = false;
+    mapped = g.mapped;
     alignment = region_alignment;
     cache_bytes = g.cache_bytes;
     capability = Abi.declare g.capability;
@@ -860,33 +857,12 @@ let live g =
 
 (* Memory *)
 
-(* Counts a region that needs the device [src]'s HDP register flushed before a
-   doorbell: [false] if the device keeps no more registers, or [src] has
-   stopped. *)
-let count_hdp g src delta = hdp_count g.self src delta
-
 let alloc g (kind : Rig_edge.memory) n =
   if n < 1 then invalid_argf "Rig_amd.alloc: %d bytes, expected at least 1" n;
   let ops = (live g).ops in
-  match kind with
-  | Device | Pinned -> answer ops n (fun m -> ops.alloc m kind n)
-  | Mapped -> (
-      match g.hdp with
-      | None -> None
-      | Some _ -> (
-          (* Counted before the path's call, which leaves nothing to do once
-             the path made the memory. *)
-          let counted = count_hdp g g.self 1 in
-          match
-            answer ~flush:g.self ops n (fun m -> ops.alloc m Mapped n)
-          with
-          | Some _ as r -> r
-          | None ->
-              if counted then ignore (count_hdp g g.self (-1));
-              None
-          | exception e ->
-              if counted then ignore (count_hdp g g.self (-1));
-              reraise e))
+  let place = match kind with Device -> Gpu | Pinned -> Host | Mapped -> Bar in
+  if place = Bar && not g.mapped then None
+  else answer ops n (fun m -> ops.alloc m place n)
 
 (* Gives back [m]: a free the path refuses loses the memory, which no caller can
    act on. *)
@@ -898,12 +874,7 @@ let give_back m = try free_mem m with Fault _ -> ()
    walk's own poll between two frees ends it, leaving the rest. *)
 let give_back_quietly ms = List.iter (fun m -> try free_mem m with _ -> ()) ms
 
-(* The region goes before its count: an exception from the free leaves the
-   count high, which costs flushes, where a count lowered first would let a
-   doorbell skip the flush of a region still written through the BAR. *)
-let free g r =
-  give_back r.mem;
-  Option.iter (fun src -> ignore (count_hdp g src (-1))) r.flush
+let free _ r = give_back r.mem
 
 (* The GPU names memory by address: the handle is the address. *)
 let locate r =
@@ -916,55 +887,44 @@ let locate r =
 
 let peer g g' = g.path = g'.path && g.reaches g'.index
 
-(* A view of a region that keeps [src]'s HDP register flushed is counted
-   before the path's call, as in [alloc]. *)
 let map_peer g _ r : region Rig_edge.mapping =
   let ops = (live g).ops in
-  let peer m = ops.map_peer m r.mem in
-  match r.flush with
-  | None -> mapped ops r.bytes peer
-  | Some src when not (count_hdp g src 1) -> Never
-  | Some src -> (
-      match mapped ?flush:r.flush ops r.bytes peer with
-      | Maps _ as view -> view
-      | (Never | No_room) as refused ->
-          ignore (count_hdp g src (-1));
-          refused
-      | exception e ->
-          ignore (count_hdp g src (-1));
-          reraise e)
+  mapped ops r.bytes (fun m -> ops.map_peer m r.mem)
 
 (* Another function's writes through the memory BAR pass the host data path
    (HDP) as the host's do, so every hand-over flushes it once a region is
-   given: the region counts for the process's life, as the function may write
-   it until then. Its reads through the BAR may hit the HDP's read cache, which
-   the kernel invalidates before its own reads (amdgpu_device.c,
-   amdgpu_device_aper_access) on HDP 4.0 to 4.2, 5.0 and 5.2.0 alone:
-   hdp_v4_0.c's invalidate_hdp returns at once on 4.4.0, 4.4.2 and 4.4.5, and
-   hdp_v5_2.c, hdp_v6_0.c and hdp_v7_0.c have none (amdgpu_discovery.c pairs
-   each version with its file). The GPUs this driver drives report HDP 4.4.2
-   (gfx942), 4.4.5 (gfx950), 6 (GFX 11) and 7 (GFX 12) in their discovery
-   tables, so their releases need no invalidation: a value's release writes
-   the L2 back, and the function reads what the work wrote once the value is
-   reached. *)
+   given: the region counts for the device's life, since the function may
+   write it while the device runs. Its reads through the BAR may hit the
+   HDP's read cache, which the kernel invalidates before its own reads
+   (amdgpu_device.c, amdgpu_device_aper_access) on HDP 4.0 to 4.2, 5.0 and
+   5.2.0 alone: hdp_v4_0.c's invalidate_hdp returns at once on 4.4.0, 4.4.2
+   and 4.4.5, and hdp_v5_2.c, hdp_v6_0.c and hdp_v7_0.c have none
+   (amdgpu_discovery.c pairs each version with its file). The GPUs this
+   driver drives report HDP 4.4.2 (gfx942), 4.4.5 (gfx950), 6 (GFX 11) and
+   7 (GFX 12) in their discovery tables, so their releases need no
+   invalidation: a value's release writes the L2 back, and the function
+   reads what the work wrote once the value is reached. *)
 let dma g r ~fn =
   match g.hdp with
   | None ->
       Error
         "the host reaches no register that flushes the GPU's host data path, \
          through which another function's writes reach the GPU's memory"
-  | Some _ ->
-      if not (count_hdp g g.self 1) then
-        Error "the device stopped, or flushes no more host data paths"
-      else
-        match (live g).ops.dma r.mem ~fn with
-        | Ok _ as answer -> answer
-        | Error _ as answer ->
-            ignore (count_hdp g g.self (-1));
-            answer
-        | exception e ->
-            ignore (count_hdp g g.self (-1));
-            reraise e
+  | Some _ -> (
+      let ops = (live g).ops in
+      given g.self 1;
+      match ops.dma r.mem ~fn with
+      | Ok _ as answer -> answer
+      | Error _ as answer ->
+          given g.self (-1);
+          answer
+      | exception e ->
+          given g.self (-1);
+          reraise e)
+
+(* rig counts the call, so the device's C state and the path's HDP register
+   outlive it. *)
+let flush g = flush_hdp g.self
 
 let map_host g a n =
   if n < 1 then invalid_argf "Rig_amd.map_host: %d bytes, expected at least 1" n;
@@ -1359,7 +1319,7 @@ let make (type m) ?measure ~word (p : m path) =
   let alloc what n =
     let m = ops.held () in
     taken := m :: !taken;
-    if ops.alloc m Pinned n then Ok m
+    if ops.alloc m Host n then Ok m
     else Error (strf "no memory for its %s" what)
   in
   let waits64 = waits64 p and aql = reads_aql p.gpu in
@@ -1475,9 +1435,8 @@ let make (type m) ?measure ~word (p : m path) =
     state := self;
     set_memory self word_host (mem_address word);
     set_segment self segment_host (mem_address segment) segment_bytes;
-    (* The GPU's own register takes the first of the empty table's slots, with
-       no region counted, so that its own [`Mapped] memory always finds one and
-       views of other GPUs' take at most the rest. *)
+    (* The register a submission stores to once the device has given a
+       region to another function ([dma]). *)
     Option.iter (set_hdp self) p.hdp;
     set_templates self p.gpu ~interrupt:p.interrupt ~waits64 ~aql;
     set_copy_launch self !copy_launch;
@@ -1520,6 +1479,7 @@ let make (type m) ?measure ~word (p : m path) =
         lds = p.lds;
         waves = p.waves;
         hdp = p.hdp;
+        mapped = p.combines && Option.is_some p.hdp;
         budget = p.budget;
         cache_bytes = p.cache_bytes;
         hang_ms = p.hang_ms;
@@ -1681,7 +1641,7 @@ let spare l sizes =
     | n :: rest ->
         let m = l.ops.held () in
         taken := m :: !taken;
-        if l.ops.alloc m Pinned n then take rest else Error n
+        if l.ops.alloc m Host n then take rest else Error n
   in
   let list () =
     let* () = take sizes in
@@ -1846,10 +1806,6 @@ let grow g =
 (* A queue the path could not destroy may still run, so its memory stays and its
    own releases raise the word. *)
 let halt g l ~fault =
-  (* No work on another device uses this GPU's memory once it is lost
-     ([Rig]'s loss section), so their submissions stop storing to its HDP
-     register before the path may unmap it. *)
-  drop_hdp g.self;
   match l.ops.stop ~fault with
   | exception Fault _ -> ()
   | `Unknown -> ()

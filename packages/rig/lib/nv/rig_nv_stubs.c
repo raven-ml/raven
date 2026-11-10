@@ -13,7 +13,6 @@
 #define _GNU_SOURCE
 
 #include <pthread.h>
-#include <sched.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -68,26 +67,6 @@ static int rig_nv_commit(void *self, uint64_t v, const char **failure) {
 static const struct rig_driver driver = {rig_nv_room, rig_nv_submit,
                                          rig_nv_commit, rig_nv_settle, NULL};
 
-/* The live edges, linked from their create to their end, under [edges_mu],
-   which no one takes while holding an edge's [flush_mu]. */
-static pthread_mutex_t edges_mu = PTHREAD_MUTEX_INITIALIZER;
-static struct rig_nv_edge *edges = NULL;
-
-static void link_edge(struct rig_nv_edge *e) {
-  pthread_mutex_lock(&edges_mu);
-  e->next = edges;
-  edges = e;
-  pthread_mutex_unlock(&edges_mu);
-}
-
-static void unlink_edge(struct rig_nv_edge *e) {
-  pthread_mutex_lock(&edges_mu);
-  struct rig_nv_edge **at = &edges;
-  while (*at != NULL && *at != e) at = &(*at)->next;
-  if (*at == e) *at = e->next;
-  pthread_mutex_unlock(&edges_mu);
-}
-
 /* A device whose timeline word is the host's 64-bit word at [v_word], the
    GPU's at [v_word_gpu], whose join words follow the GPU's word at
    [v_join_gpu], and whose notifications hold their error at [v_info32] and
@@ -98,13 +77,8 @@ value caml_rig_nv_create(value v_word, value v_word_gpu, value v_join_gpu,
                          value v_info32, value v_status) {
   struct rig_nv_edge *e = calloc(1, sizeof *e);
   struct device *d = calloc(1, sizeof *d);
-  if (e == NULL || d == NULL || pthread_mutex_init(&e->flush_mu, NULL) != 0) {
-    free(e);
-    free(d);
-    return Val_long(0);
-  }
-  if (pthread_mutex_init(&d->channels_mu, NULL) != 0) {
-    pthread_mutex_destroy(&e->flush_mu);
+  if (e == NULL || d == NULL ||
+      pthread_mutex_init(&d->channels_mu, NULL) != 0) {
     free(e);
     free(d);
     return Val_long(0);
@@ -123,7 +97,6 @@ value caml_rig_nv_create(value v_word, value v_word_gpu, value v_join_gpu,
     d->ch[q].owes_setup = 1;
     d->ch[q].released = base;
   }
-  link_edge(e);
   return Val_long((intnat)e);
 }
 
@@ -141,7 +114,6 @@ static void free_rings(struct device *d) {
 
 /* Frees the state of a device whose open failed: nothing holds it. */
 value caml_rig_nv_destroy(value v_self) {
-  unlink_edge(Edge_val(v_self));
   struct device *d = Device_val(v_self);
   for (int q = 0; q < CHANNELS; q++) free(d->ch[q].marks);
   free_rings(d);
@@ -150,7 +122,6 @@ value caml_rig_nv_destroy(value v_self) {
   free(d->timed);
   pthread_mutex_destroy(&d->channels_mu);
   free(d);
-  pthread_mutex_destroy(&Edge_val(v_self)->flush_mu);
   free(Edge_val(v_self));
   return Val_unit;
 }
@@ -552,94 +523,25 @@ value caml_rig_nv_entry(value v_self, value v_base, value v_word) {
   return Val_unit;
 }
 
-/* The word of the device's own BAR a submission reads (struct flush), the
-   path's flush word. */
+/* The path's flush word, which a submission reads while its launches lie in
+   the GPU's BAR (rig_nv_flush), as Rig_nv.flush does. */
 value caml_rig_nv_bar(value v_self, value v_at) {
-  struct rig_nv_edge *e = Edge_val(v_self);
-  volatile const uint32_t *at = Pointer_val(v_at);
-  e->d->flushes[0].src = e;
-  atomic_store_explicit(&e->d->flushes[0].word, at, memory_order_release);
-  atomic_store_explicit(&e->bar, at, memory_order_release);
+  Device_val(v_self)->flush = Pointer_val(v_at);
   return Val_unit;
 }
 
-/* Adds [delta] to the regions written through the BAR of [src]'s flush
-   word, taking a free entry for a new word: [0] if none is free, or if
-   [src] has stopped. A count down of a word that [src]'s stop took out
-   counts nothing. The caller holds [d]'s [flush_mu]. */
-static int count_flush(struct device *d, const struct rig_nv_edge *src,
-                       intnat delta) {
-  struct flush *free = NULL;
-  for (int i = 0; i < FLUSHES; i++) {
-    struct flush *f = &d->flushes[i];
-    if (f->src == src) {
-      atomic_fetch_add_explicit(&f->count, delta, memory_order_acq_rel);
-      return 1;
-    }
-    if (free == NULL && i > 0 &&
-        (atomic_load(&f->word) == NULL || atomic_load(&f->count) == 0))
-      free = f;
+/* Rig_nv.flush: the calling thread's earlier stores through the BAR reach
+   the GPU before it returns. The full fence drains the thread's
+   write-combining buffers and orders the read after them, and the read
+   returns once the writes before it reached the GPU. rig counts the call,
+   so the device's stop, after which the path may unmap the word, never
+   runs during it. */
+value caml_rig_nv_flush(value v_self) {
+  struct device *d = Device_val(v_self);
+  if (d->flush != NULL) {
+    full_fence();
+    (void)*d->flush;
   }
-  if (delta < 0) return 1;
-  volatile const uint32_t *word =
-      atomic_load_explicit(&src->bar, memory_order_seq_cst);
-  if (free == NULL || word == NULL) return 0;
-  free->src = src;
-  atomic_store_explicit(&free->word, word, memory_order_release);
-  atomic_store_explicit(&free->count, delta, memory_order_release);
-  return 1;
-}
-
-/* [count_flush] on [v_self] of [v_src]'s word, each of whose stops may run
-   on another domain: [true] once [v_self] has stopped. */
-value caml_rig_nv_flush(value v_self, value v_src, value v_delta) {
-  struct rig_nv_edge *e = Edge_val(v_self);
-  pthread_mutex_lock(&e->flush_mu);
-  int counted = e->d == NULL ||
-                count_flush(e->d, Edge_val(v_src), Long_val(v_delta));
-  pthread_mutex_unlock(&e->flush_mu);
-  return Val_bool(counted);
-}
-
-/* Whether [v_src]'s flush word is gone, as it is once [v_src] has stopped. */
-value caml_rig_nv_flush_stopped(value v_src) {
-  return Val_bool(atomic_load_explicit(&Edge_val(v_src)->bar,
-                                       memory_order_seq_cst) == NULL);
-}
-
-/* Takes [v_self]'s flush word out of every other live device's entries,
-   before its path unmaps it, and returns once no submission may still read
-   it. [bar] goes first, so no entry for the word starts after its walk
-   (count_flush reads it under the same lock), and each submission either
-   reads the entry's word as NULL or set [flushing] before this reads it
-   (rig_nv_flush). A device's [flush_mu] keeps its state from its end. */
-value caml_rig_nv_drop(value v_self) {
-  struct rig_nv_edge *self = Edge_val(v_self);
-  if (atomic_exchange_explicit(&self->bar, NULL, memory_order_seq_cst) ==
-      NULL)
-    return Val_unit;
-  pthread_mutex_lock(&edges_mu);
-  for (struct rig_nv_edge *e = edges; e != NULL; e = e->next) {
-    if (e == self) continue;
-    pthread_mutex_lock(&e->flush_mu);
-    struct device *d = e->d;
-    int took = 0;
-    for (int i = 1; d != NULL && i < FLUSHES; i++) {
-      struct flush *f = &d->flushes[i];
-      if (f->src != self) continue;
-      f->src = NULL;
-      atomic_store_explicit(&f->count, 0, memory_order_relaxed);
-      atomic_store_explicit(&f->word, NULL, memory_order_relaxed);
-      took = 1;
-    }
-    if (took) {
-      full_fence();
-      while (atomic_load_explicit(&d->flushing, memory_order_acquire))
-        sched_yield();
-    }
-    pthread_mutex_unlock(&e->flush_mu);
-  }
-  pthread_mutex_unlock(&edges_mu);
   return Val_unit;
 }
 
@@ -715,11 +617,8 @@ value caml_rig_nv_raise(value v_self) {
    stopped ([v_stopped]). */
 value caml_rig_nv_end(value v_self, value v_stopped) {
   struct rig_nv_edge *e = Edge_val(v_self);
-  unlink_edge(e);
-  pthread_mutex_lock(&e->flush_mu);
   struct device *d = e->d;
   e->d = NULL;
-  pthread_mutex_unlock(&e->flush_mu);
   if (d == NULL) return Val_unit;
   if (Bool_val(v_stopped)) {
     free(d->copy_launch);

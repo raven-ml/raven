@@ -565,11 +565,13 @@ let misplaced align (l : Rig_edge.location) =
 
 (* Why the [n]-byte region at [l] breaks the facts [d]'s driver states, if it
    does. *)
-let breaks d n (l : Rig_edge.location) =
+let breaks d kind n (l : Rig_edge.location) =
   if d.host_addresses && l.host = None then
     Some
       "a region without a host address, where its driver states the host \
        addresses its memory"
+  else if kind = Mapped && l.host = None then
+    Some "Mapped memory without a host address for its window"
   else
     match misplaced d.alignment l with
     | Some a ->
@@ -619,7 +621,7 @@ let make_region (e : entry) =
       | None -> ()
       | Some r -> (
           let l = D.locate r in
-          match breaks e.owner e.bytes l with
+          match breaks e.owner memory e.bytes l with
           | None -> b.location <- l
           | Some why ->
               c.r <- None;
@@ -912,6 +914,20 @@ let make_proxy (e : entry) =
   e.proxy
 
 let proxy (e : entry) = Dev.protect e.owner make_proxy e
+
+(* Windows *)
+
+let window (a : alloc) =
+  match a.entry.backing with
+  | Driver_memory { memory = Mapped; location = { host = Some w; _ }; _ } -> w
+  | Driver_memory _ | Io_memory _ | Kept _ -> -1
+
+let stored (a : alloc) f x =
+  match a.entry.backing with
+  | Driver_memory { region = Region { m; h; _ }; _ } ->
+      let module D = (val m) in
+      Dev.stores a.owner D.flush h f x
+  | Io_memory _ | Kept _ -> f x
 
 (* Whether a bigarray over [e]'s memory may be reachable, which keeps the memory
    from reuse and from its free. Once none is, the proxy is freed. *)
@@ -1828,22 +1844,21 @@ type home = Token | Code of entry ref
    GPU's [Pinned] memory, is the host's: it takes the room the host's budget
    has left beside the heap, and the live bytes host buffers pace by, so a
    GPU nearly full of its own memory does not hold dropped pinned memory
-   back from collection. A device's own memory is memory the host shares
-   where the host addresses memory of [kind]: mapped memory by its kind, and
-   a device's own memory where its driver states the host addresses all of
-   it; it takes [d]'s room and allocated bytes. A driver that states nothing
-   gives its device's memory a host address only for Polled with a
-   transport, which this paces as the device's own: the pace then differs
-   from the one the host address implies, which changes how soon the
-   collector runs, never a result. Raises [Lost] if [d]'s list is closed, as
-   it is once [d] has stopped. *)
+   back from collection. Memory the host shares, [Pinned] memory by its
+   kind and a device's own memory where its driver states the host
+   addresses all of it, takes [d]'s room and allocated bytes. A driver that
+   states nothing gives its device's memory a host address only for Polled
+   with a transport, which this paces as the device's own: the pace then
+   differs from the one the host address implies, which changes how soon
+   the collector runs, never a result. Raises [Lost] if [d]'s list is
+   closed, as it is once [d] has stopped. *)
 let try_token d kind n r =
   let l = d.live in
   let room, live =
     if budget_of d kind = Host_budget then
       (Int.max 0 (Dev.host.budget - heap_held ()), heap_live ())
     else
-      let shared = kind <> Device || d.host_addresses in
+      let shared = kind = Pinned || d.host_addresses in
       (room d, if shared then l.used else -1)
   in
   let t = token l.release (Memory r) n room live in
@@ -1872,10 +1887,14 @@ let let_go_try (r, t) =
     drop_stamps e
   end
 
-(* A memory record over the entry [e] of [d], with its token [t]. *)
+(* A memory record over the entry [e] of [d], with its token [t]. [Mapped]
+   memory has no host address in it: the host reaches its window only
+   inside rig's writes ([window]). *)
 let of_entry d (e : entry) t =
   let m =
     match e.backing with
+    | Driver_memory { memory = Mapped; location = l; _ } ->
+        make ?address:l.address ~handle:l.handle d e
     | Driver_memory { location = l; _ } ->
         make ?host:l.host ?address:l.address ~handle:l.handle d e
     | Io_memory _ | Kept _ -> make d e
@@ -1948,12 +1967,7 @@ let laddered d kind n home =
       let pool = if budget_of d kind = Host_budget then Dev.host else d in
       reclaiming d ~pool n (try_entry d kind n home)
 
-(* The kind that Mapped memory falls back to: Pinned, or the device's own
-   memory where the host addresses it, which has no Pinned memory. *)
-let fallback d = if d.host_addresses then Device else Pinned
-
 let alloc_entry d kind n home =
-  let kind = if kind = Mapped && whole n > d.budget then fallback d else kind in
   let limit =
     match budget_of d kind with
     | Device_budget -> d.budget
@@ -1963,13 +1977,7 @@ let alloc_entry d kind n home =
   if n > max_int - word || whole n > limit then
     raise (Dev.Out_of_memory (d, n));
   drain d;
-  if kind <> Mapped then laddered d kind n home
-  else
-    (* Mapped memory the window or the budget cannot hold is pinned memory,
-       which keeps its promises, and the cache stays. *)
-    match try_entry d Mapped n home () with
-    | Some e -> e
-    | None -> laddered d (fallback d) n home
+  laddered d kind n home
 
 let alloc d kind n =
   let e, t = alloc_entry d kind n Token in

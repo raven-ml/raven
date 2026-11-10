@@ -379,6 +379,7 @@ let open_ ~word i =
           hang_ms = None;
           maps_host = true;
           host_addresses = true;
+          mapped = false;
           alignment = region_align;
           (* No public API of Metal states the GPU's caches. *)
           cache_bytes = None;
@@ -636,6 +637,7 @@ let stop d ~fault:_ = locked d.guard halt d
 external grow_arena : int -> int = "caml_rig_metal_grow"
 
 let dma _ _ ~fn:_ = Error "Metal gives no other device DMA to its buffers"
+let flush _ = ()
 
 (* Its room answers RIG_GROW for parameters its arena does not hold. An arena
    Metal places off 256 bytes, where the launches' parameters start, faults
@@ -668,6 +670,7 @@ module Driver = struct
   let map_peer = map_peer
   let map_host = map_host
   let dma = dma
+  let flush = flush
   let image = image
   let entry = entry
   let prepare = prepare

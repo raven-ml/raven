@@ -41,7 +41,6 @@ let[@inline never] dropped_written ?memory s d n =
   ignore (Rig.submit (Sub.take s) ~buffers:[| b |]);
   Support.at b
 
-let last n l = List.filteri (fun i _ -> i >= List.length l - n) l
 let freed p at = List.exists (fun (a, _) -> a = at) (P.frees p)
 
 let allocs =
@@ -904,37 +903,9 @@ let test_pinned_own () =
     ];
   equal ~msg:"asked of the driver" allocs [] (P.allocs p)
 
-(* Mapped memory the window cannot hold is pinned memory, and the cache
-   stays; where the host addresses the device's memory, which has no pinned
-   memory, it is the device's own. *)
-let test_mapped_window host_visible =
-  let name = if host_visible then "memory:window-own" else "memory:window" in
-  let d, p = P.open_ ~host_visible ~window:(4 * kib) name in
-  let at = dropped d (4 * kib) in
-  collect d;
-  let b = B.create ~memory:Mapped d (8 * kib) in
-  equal ~msg:"the cached memory" bool false (freed p at);
-  let fallback = if host_visible then B.Device else B.Pinned in
-  equal allocs
-    [ (B.Mapped, 8 * kib, false); (fallback, 8 * kib, true) ]
-    (last 2 (P.allocs p));
-  ignore (Sys.opaque_identity b)
-
-(* Mapped memory that the device's budget cannot hold is pinned, and counts
-   where pinned memory counts: in the host's budget, for a device whose memory
-   the host does not address. *)
-let test_mapped_budget () =
-  let d, p = P.open_ ~host_visible:false "memory:mapped-budget" in
-  Rig.set_budget d (4 * kib);
-  let before = Rig.allocated d in
-  let b = B.create ~memory:Mapped d (8 * kib) in
-  equal allocs [ (B.Pinned, 8 * kib, true) ] (P.allocs p);
-  equal ~msg:"the device's allocated bytes" int before (Rig.allocated d);
-  ignore (Sys.opaque_identity b)
-
 (* A budget counts each buffer by its whole words: a 5-byte buffer holds 8
-   bytes, 5 bytes do not fit in 7, and 9 bytes of Mapped memory under a
-   budget of 10, whose words do not fit, are pinned. *)
+   bytes, 5 bytes do not fit in 7, and 9 bytes of Mapped memory, 12 in words,
+   do not fit in a budget of 10. *)
 let test_budget_words () =
   let d, p = P.open_ ~host_visible:false "memory:budget-words" in
   let before = Rig.allocated d in
@@ -947,15 +918,182 @@ let test_budget_words () =
   raises_match (out_of_memory d' 5) (fun () -> B.create d' 5);
   let d'', p'' = P.open_ ~host_visible:false "memory:budget-words-10" in
   Rig.set_budget d'' 10;
-  let m = B.create ~memory:Mapped d'' 9 in
-  equal allocs [ (B.Pinned, 12, true) ] (P.allocs p'');
-  ignore (Sys.opaque_identity m)
+  raises_match (out_of_memory d'' 9) (fun () -> B.create ~memory:Mapped d'' 9);
+  equal ~msg:"asked of the driver" allocs [] (P.allocs p'')
 
-let test_mapped () =
-  let d, p = P.open_ "memory:mapped" in
+(* Mapped memory *)
+
+(* [Rig.offers d k] is whether [B.create ~memory:k d] makes memory, of one
+   word and of none, on the host, a memory device, an io device and Polled
+   devices whose memory the host addresses or not, with Mapped memory or
+   without. Where it is [false], the create raises [Invalid_argument]. *)
+let test_offers () =
+  let m = Result.get_ok (Rig.memory_device "memory:offers-memory") in
+  let io = Result.get_ok (Rig.open_io "memory:offers-io") in
+  let polled ?transport ~host_visible ~mapped name =
+    fst (P.open_ ?transport ~host_visible ~mapped ("memory:offers-" ^ name))
+  in
+  let devices =
+    [
+      ("the host", Rig.host);
+      ("a memory device", m);
+      ("an io device", io);
+      ("addressed", polled ~host_visible:true ~mapped:true "addressed");
+      ("addressed, no Mapped", polled ~host_visible:true ~mapped:false "own");
+      ("hidden", polled ~host_visible:false ~mapped:true "hidden");
+      ("hidden, no Mapped", polled ~host_visible:false ~mapped:false "none");
+      ( "behind a transport",
+        polled ~transport:true ~host_visible:true ~mapped:true "transport" );
+    ]
+  in
+  let made d memory =
+    match B.create ~memory d 8 with
+    | b ->
+        ignore (Sys.opaque_identity b);
+        "made"
+    | exception Invalid_argument _ -> "refused"
+  in
+  List.iter
+    (fun (name, d) ->
+      List.iter
+        (fun (kind, memory) ->
+          let msg = name ^ ", " ^ kind in
+          let said = if Rig.offers d memory then "made" else "refused" in
+          equal ~msg string said (made d memory))
+        B.[ ("Device", Device); ("Pinned", Pinned); ("Mapped", Mapped) ])
+    devices;
+  let none = polled ~host_visible:false ~mapped:false "none-empty" in
+  raises_match ~msg:"no bytes of no Mapped memory"
+    (Exn.invalid_arg ~sub:"no Mapped memory")
+    (fun () -> B.create ~memory:Mapped none 0)
+
+(* Where the host addresses a device's memory, Mapped memory is its Device
+   memory: its driver is asked for Device memory, which the host reads, and no
+   write of it flushes, whether or not its driver makes Mapped memory. *)
+let test_mapped_own () =
+  List.iter
+    (fun mapped ->
+      let msg = if mapped then "with Mapped memory" else "without" in
+      let d, p =
+        P.open_ ~mapped (if mapped then "memory:mapped-own" else "memory:own")
+      in
+      let b = B.create ~memory:Mapped d (4 * kib) in
+      equal ~msg allocs [ (B.Device, 4 * kib, true) ] (P.allocs p);
+      B.write b Bigarray.char (fun a -> Bigarray.Array1.fill a 'm');
+      equal ~msg string (String.make 4 'm')
+        (B.read b Bigarray.char (fun a ->
+             String.init 4 (Bigarray.Array1.get a)));
+      equal ~msg (list string) []
+        (List.filter (String.equal "flush") (P.log p)))
+    [ true; false ]
+
+let bytes_of b =
+  let s = Bytes.create (B.length b) in
+  B.blit_to_bytes b 0 s 0 (B.length b);
+  Bytes.to_string s
+
+(* Mapped memory of a device whose memory the host does not address is the
+   driver's window memory. The host writes it through Buffer.write, the
+   blits, the fills and copies from memory it addresses, each of which calls
+   the driver's flush before it returns, and later work reads what they
+   wrote. A copy out of it runs on the device. The host neither reads it,
+   borrows it nor gives C its address. *)
+let test_mapped_window () =
+  let d, p = P.open_ ~host_visible:false "memory:mapped-window" in
+  let n = 4 * kib in
+  let m = B.create ~memory:Mapped d n in
+  equal ~msg:"asked of the driver" allocs [ (B.Mapped, n, true) ] (P.allocs p);
+  let flushes () = List.length (List.filter (String.equal "flush") (P.log p)) in
+  let copies () = List.length (P.copies p) in
+  let flushed ~msg f =
+    let before = flushes () in
+    f ();
+    equal ~msg:(msg ^ ": flushes") int (before + 1) (flushes ())
+  in
+  let pattern k = String.init n (fun i -> Char.chr (((i * k) + 1) land 255)) in
+  flushed ~msg:"Buffer.write" (fun () ->
+      B.write m Bigarray.char (fun a ->
+          String.iteri (fun i c -> Bigarray.Array1.set a i c) (pattern 3)));
+  let ran = copies () in
+  equal ~msg:"Buffer.write, then a copy out" string (pattern 3) (bytes_of m);
+  greater ~msg:"a copy out runs on the device" int ~than:ran (copies ());
+  flushed ~msg:"blit_from_string" (fun () ->
+      B.blit_from_string (pattern 5) 7 m 7 (n - 9));
+  equal ~msg:"blit_from_string, then a copy out" string
+    (String.sub (pattern 3) 0 7
+    ^ String.sub (pattern 5) 7 (n - 9)
+    ^ String.sub (pattern 3) (n - 2) 2)
+    (bytes_of m);
+  let ran = copies () in
+  flushed ~msg:"a copy in" (fun () ->
+      B.copy ~src:(B.of_string (pattern 7)) ~dst:m);
+  equal ~msg:"a copy in runs on the host" int ran (copies ());
+  equal ~msg:"a copy in, then a copy out" string (pattern 7) (bytes_of m);
+  flushed ~msg:"fill" (fun () -> B.fill m 'f');
+  equal ~msg:"fill, then a copy out" string (String.make n 'f') (bytes_of m);
+  flushed ~msg:"submit_fill" (fun () ->
+      Rig.Point.wait (B.submit_fill m 's'));
+  equal ~msg:"submit_fill, then a copy out" string (String.make n 's')
+    (bytes_of m);
+  flushed ~msg:"a write that raises" (fun () ->
+      raises ~msg:"its exception" (Failure "after a store") (fun () ->
+          B.write m Bigarray.char (fun a ->
+              Bigarray.Array1.set a 0 'r';
+              failwith "after a store")));
+  equal ~msg:"its store before the raise" string "rs"
+    (String.sub (bytes_of m) 0 2);
+  raises_match ~msg:"Buffer.read" Exn.invalid_arg (fun () ->
+      B.read m Bigarray.char Bigarray.Array1.dim);
+  is_none ~msg:"a borrow on the host" (B.borrow Rig.host m);
+  equal ~msg:"rig_buffer_host" int 0 (Support.Reader.host m)
+
+(* A close from the function of a write of Mapped memory, whose device's stop
+   would wait for the write, raises Invalid_argument and changes nothing: the
+   device stays open and the write flushes. *)
+let test_mapped_close () =
+  let d, p = P.open_ ~host_visible:false "memory:mapped-close" in
+  let m = B.create ~memory:Mapped d 64 in
+  raises_match ~msg:"a close inside the write"
+    (Exn.invalid_arg ~sub:"Rig.close")
+    (fun () -> B.write m Bigarray.char (fun _ -> Rig.close d));
+  is_none ~msg:"the device's loss" (Rig.lost d);
+  equal ~msg:"flushes" (list string) [ "flush" ]
+    (List.filter (String.equal "flush") (P.log p));
+  Rig.close d;
+  is_some ~msg:"the loss of a close after the write" (Rig.lost d)
+
+(* Mapped memory counts in its device's budget: a buffer of it adds its bytes
+   to the device's allocated bytes, and one past the budget raises
+   Out_of_memory, asking the driver nothing. *)
+let test_mapped_budget () =
+  let d, _ = P.open_ ~host_visible:false "memory:mapped-budget" in
+  let before = Rig.allocated d in
   let b = B.create ~memory:Mapped d (4 * kib) in
-  equal allocs [ (B.Mapped, 4 * kib, true) ] (P.allocs p);
-  equal bool true (Rig.equal d (B.device b))
+  equal ~msg:"the device's allocated bytes" int (before + (4 * kib))
+    (Rig.allocated d);
+  ignore (Sys.opaque_identity b);
+  let d', p' = P.open_ ~host_visible:false "memory:mapped-over" in
+  Rig.set_budget d' (4 * kib);
+  raises_match (out_of_memory d' (8 * kib)) (fun () ->
+      B.create ~memory:Mapped d' (8 * kib));
+  equal ~msg:"asked of the driver" allocs [] (P.allocs p')
+
+(* Mapped memory the window cannot hold raises Out_of_memory once the ladder
+   ran, and the device's cache it emptied, asking for no other kind. *)
+let test_mapped_room () =
+  let d, p = P.open_ ~host_visible:false ~window:(4 * kib) "memory:window" in
+  let at = dropped d (4 * kib) in
+  collect d;
+  raises_match (out_of_memory d (8 * kib)) (fun () ->
+      B.create ~memory:Mapped d (8 * kib));
+  equal ~msg:"the cached memory" bool true (freed p at);
+  let asked kind =
+    List.filter (fun (k, n, _) -> n = 8 * kib && kind k) (P.allocs p)
+  in
+  equal ~msg:"other kinds asked of the driver" allocs []
+    (asked (fun k -> k <> B.Mapped));
+  greater ~msg:"Mapped memory asked of the driver" int ~than:0
+    (List.length (asked (fun k -> k = B.Mapped)))
 
 (* Reclamation *)
 
@@ -1769,13 +1907,17 @@ let tests =
           test_pinned;
         test "a device whose memory the host addresses has no pinned memory"
           test_pinned_own;
-        cases
-          "mapped memory the window cannot hold is pinned, or the device's \
-           own where the host addresses it, the cache kept"
-          ~id:(fun v -> if v then "host addressed" else "hidden")
-          [ false; true ] test_mapped_window;
-        test "mapped memory the budget cannot hold is pinned" test_mapped_budget;
-        test "mapped memory is the device's" test_mapped;
+        test "offers is whether create makes memory of a kind" test_offers;
+        test "mapped memory where the host addresses a device's memory is its \
+              own" test_mapped_own;
+        test
+          "mapped memory is written through its window, each write flushed, \
+           and read through its device"
+          test_mapped_window;
+        test "a close inside a write of mapped memory raises" test_mapped_close;
+        test "mapped memory counts in its device's budget" test_mapped_budget;
+        test "mapped memory the window cannot hold raises once reclaimed"
+          test_mapped_room;
         test "a budget counts each buffer by its whole words"
           test_budget_words;
         test "pinned memory another device keeps returns to a refused one"

@@ -285,7 +285,8 @@ val capability : t -> Rig_cuda_abi.t
     {- for [Pinned], page-locked host memory that the host and every CUDA
        device address ([cuMemHostAlloc], portable and mapped). It is not
        write-combined, so the host reads it through its caches;}
-    {- for [Mapped], [None], since CUDA maps no GPU memory for the host.}}
+    {- for [Mapped], [None], since CUDA maps no GPU memory for the host:
+       its facts declare no [mapped], and {!flush} does nothing.}}
     An allocation is [None] if CUDA refuses it, such as for lack of memory.
     {!alloc} and {!map_host} raise [Invalid_argument] for fewer than one
     byte.

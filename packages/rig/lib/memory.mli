@@ -226,6 +226,19 @@ val proxy : entry -> int
     made at the first. The allocation is neither reused nor freed while one
     is reachable. *)
 
+val window : alloc -> int
+(** [window a] is the host address of [a]'s [Mapped] memory, in the
+    write-combined window through which the host writes it, or [-1] for
+    other memory. Its memory records have no host address: the host stores
+    into the window only inside rig's writes, each one {!stored} call. *)
+
+val stored : alloc -> ('a -> 'b) -> 'a -> 'b
+(** [stored a f x] is [f x], the calling thread's stores into [a]'s window,
+    then its owner's driver's {!Rig_edge.Driver.flush}, as one counted call
+    ({!Dev.stores}): the owner's stop, which may unmap the window, waits for
+    both. It is [f x] alone for memory no driver made. Raises {!Dev.Lost}
+    without calling [f] if the owner is lost. *)
+
 (** {1:claims Claim words}
 
     An allocation's [count] is one word, so that a claim, a donation, a hold
@@ -561,11 +574,10 @@ val alloc : device -> Rig_edge.memory -> int -> memory
     entry of [n] bytes of [d]'s memory of [kind], with its token. It drains
     [d], then takes the memory from [d]'s cache or from its driver within
     the budget the memory counts in, and on a refusal runs {!reclaiming}.
-    [Mapped] memory larger than [d]'s budget, or that a try refuses, is
-    [Pinned] memory instead. Memory from the driver is recorded in its token
-    before the driver is asked. Raises {!Dev.Out_of_memory} immediately if
-    [n] exceeds the budget the memory counts in, and {!Dev.Lost}, giving the
-    entry back, if [d]'s slot was freed meanwhile. *)
+    Memory from the driver is recorded in its token before the driver is
+    asked. Raises {!Dev.Out_of_memory} immediately if [n] exceeds the budget
+    the memory counts in, and {!Dev.Lost}, giving the entry back, if [d]'s
+    slot was freed meanwhile. *)
 
 val code_entry : device -> int -> ('a, 'r, 'i) loading -> entry
 (** [code_entry d n l] is a new entry of [n] bytes of [d]'s [Device] memory,

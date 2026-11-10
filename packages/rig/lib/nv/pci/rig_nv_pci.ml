@@ -247,12 +247,12 @@ let locate g h off =
       in
       Option.map (fun a -> (where, a)) (find off pages)
 
-let alloc g (kind : Rig_edge.memory) n =
+let alloc g (kind : Rig_nv.place) n =
   let kind =
     match kind with
-    | Device -> Memory.Gpu
-    | Mapped -> Memory.Bar
-    | Pinned -> Memory.Host
+    | Gpu -> Memory.Gpu
+    | Bar -> Memory.Bar
+    | Host -> Memory.Host
   in
   match protect g (fun () -> Memory.alloc g.memory kind n) with
   | Ok (Some r) -> Some (memory g r)
@@ -342,7 +342,7 @@ let device ~word ~on g ~gsp ~hold ~tables (c : Chip.t) =
   let* cache_bytes = Gsp.cache_bytes gsp rm ~subdevice in
   (* The flush word's page lives with the GPU's memory until the stop, which
      gives back its addresses, as a device that fails to make does at once. A
-     GPU whose BAR has no room for it opens without Mapped memory. *)
+     GPU whose BAR has no room for it opens placing nothing in the BAR. *)
   let* page = protect g (fun () -> Memory.alloc g.memory Memory.Bar 0x1000) in
   let free_page () =
     Option.iter (fun r -> protect g (fun () -> Memory.free g.memory r)) page
@@ -369,6 +369,8 @@ let device ~word ~on g ~gsp ~hold ~tables (c : Chip.t) =
         doorbell = Window.address c.regs + doorbell_at;
         clock = Registers (Window.address c.regs);
         flush;
+        (* [start] maps the memory BAR uncached. *)
+        combines = false;
         alloc = alloc g;
         (* A GPU taken physically would keep writing the process's pages after
            its death: it maps no host memory. *)

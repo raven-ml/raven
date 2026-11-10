@@ -86,10 +86,6 @@ val address : Rig_nv.region -> int
 val word : Rig_nv.t -> Rig_nv.region
 (** [word g] is [g]'s timeline word. *)
 
-val mapped : Rig_nv.t -> int -> Rig_nv.region
-(** [mapped g n] is [n] bytes of [g]'s [Mapped] memory, or of its [Pinned]
-    memory where it has no [Mapped] memory left, as rig allocates. *)
-
 val pattern : int -> int -> int -> unit
 (** [pattern a n seed] writes the [n] bytes at [a] with the pattern of [seed]:
     byte [i] a hash of [i] and [seed], so that a byte shifted, repeated or left

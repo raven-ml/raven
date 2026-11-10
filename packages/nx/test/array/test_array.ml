@@ -155,12 +155,12 @@ let memory_kind =
         | B.Mapped -> "Mapped"))
     ~equal:( = )
 
-(* [create ~memory] allocates [d]'s memory of that kind, [Device] by default:
-   the kind a Late device's driver is asked for. Every kind holds the array
-   [create] makes, on the host too, whose memory is of one kind, but [Pinned]
-   on a device whose memory the host addresses, which has none and raises as
-   {!Rig.Buffer.create} does. Each array has its own size, so none reuses
-   another's memory. *)
+(* [create ~memory] allocates [d]'s memory of that kind, [Device] by default.
+   Every kind holds the array [create] makes, on the host too, whose memory is
+   of one kind, but [Pinned] on a device whose memory the host addresses,
+   which has none and raises as {!Rig.Buffer.create} does. Such a device's
+   [Mapped] memory is its [Device] memory, the kind its driver is asked for.
+   Each array has its own size, so none reuses another's memory. *)
 let test_create_memory () =
   let d, driver = late () in
   let allocations () =
@@ -184,7 +184,7 @@ let test_create_memory () =
     [
       ("default", None, B.Device);
       ("Device", Some B.Device, B.Device);
-      ("Mapped", Some B.Mapped, B.Mapped);
+      ("Mapped", Some B.Mapped, B.Device);
     ];
   raises_match Exn.invalid_arg (fun () ->
       made ~msg:"Pinned" d (Some B.Pinned) 4);

@@ -18,6 +18,7 @@ let bus d = d.bus
 let computes d =
   match d.kind with Host | Driver _ -> true | Io -> false
 let runs_on_host d = Dev.is_host d || d.memory_device
+let offers = Buffer.offers
 let alignment d = d.alignment
 let cache_bytes d = d.cache_bytes
 let reaches = Dev.reaches

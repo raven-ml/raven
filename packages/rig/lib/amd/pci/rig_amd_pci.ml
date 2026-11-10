@@ -246,12 +246,12 @@ let reaches on ~index j =
    complete. A flush the hubs do not confirm is raised by the next sleep. *)
 let guard f = try f () with Regs.Stuck why -> raise (Amd.Fault why)
 
-let alloc g (kind : Rig_edge.memory) n =
+let alloc g (kind : Amd.place) n =
   let kind =
     match kind with
-    | Device -> Memory.Gpu
-    | Mapped -> Memory.Bar
-    | Pinned -> Memory.Host
+    | Gpu -> Memory.Gpu
+    | Bar -> Memory.Bar
+    | Host -> Memory.Host
   in
   match protect g (fun () -> Memory.alloc g.memory kind n) with
   | Ok (Some r) -> Some (memory r)
@@ -360,6 +360,7 @@ let path g h fn ~index : Memory.region Amd.path =
     retire = (fun bell -> guard (fun () -> Boot.retire g bell));
     most_ring = Boot.most_ring g;
     hdp = Boot.hdp g;
+    combines = Boot.combines g;
     interrupt;
     hang_ms = Some Driver.hang_ms;
     interrupts = (fun () -> Boot.interrupts g);

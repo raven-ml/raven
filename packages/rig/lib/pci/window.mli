@@ -41,6 +41,9 @@ val mapped : t -> bool
 (** [mapped w] is [true] iff [w] is mapped into the process, so that {!address}
     is an address of the process. *)
 
+val combines : t -> bool
+(** [combines w] is [true] iff [w] combines ({!section-accesses}). *)
+
 val sub : t -> int -> int -> t
 (** [sub w off n] is the [n] bytes of [w] from byte [off] on.
 

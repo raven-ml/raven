@@ -89,6 +89,7 @@ let path_of gpu : unit A.path =
     retire = (fun _ -> unused ());
     most_ring = (fun _ -> unused ());
     hdp = None;
+    combines = false;
     interrupt = 1;
     hang_ms = None;
     interrupts = unused;
@@ -1387,15 +1388,16 @@ let exported d fn ~memory n =
       | Some s -> equal ~msg:"its bytes, mapped" string (String.make n 'y') s
       | None -> fail "amdgpu maps no dma-buf of this memory")
 
-(* Pinned memory first: only an export of the GPU's memory, Device or Mapped,
-   checks the route, which a process without CAP_SYS_ADMIN may not tell. *)
+(* Pinned memory first: only an export of the GPU's memory, Device or Mapped
+   where the device makes it, checks the route, which a process without
+   CAP_SYS_ADMIN may not tell. *)
 let exports_dmabuf () =
   S.with_ @@ fun { d; _ } ->
   let fn = gpu_bus d in
   exported d fn ~memory:Pinned 4097;
   refuses_strangers d;
   List.iter (exported d fn ~memory:Device) dma_sizes;
-  exported d fn ~memory:Mapped 4097
+  if Rig.offers d Mapped then exported d fn ~memory:Mapped 4097
 
 (* In the child: the bytes at the ranges are the buffer's, through BAR 0, the
    memory BAR, and a reopen of the GPU in the process is refused. The export is
@@ -2349,15 +2351,17 @@ let one_gpu_shared ~second g =
   H.write (host staging') (String.make n '\000');
   go r' [| copy staging' theirs |];
   equal string ~msg:"the memory, its view unmapped" p (H.read (host staging') n);
-  (* A GPU whose BAR the host does not reach whole has no Mapped memory. *)
+  (* A device whose facts declare no Mapped memory makes none; the host's
+     writes into another's are seen once their owner flushed them. *)
   (match A.alloc g' Mapped n with
-  | None -> ()
+  | None -> equal bool ~msg:"Mapped memory" false (A.facts g').mapped
   | Some mapped' -> (
       match A.map_peer g g' mapped' with
       | Never | No_room -> fail "a device refused Mapped memory of its own GPU"
       | Maps view ->
           let p = pattern n 11 in
           H.write (host mapped') p;
+          A.flush g';
           equal string ~msg:"the host's writes, read through a view" p
             (read_through view);
           A.free g view;
@@ -2398,42 +2402,6 @@ let one_gpu () =
     one_gpu_shared
       ~second:(fun () -> S.open_gpu ~word:(Rig_gpu_support.Host.word ()))
       t.g
-
-(* A view of another device's Mapped memory flushes that device's host writes
-   until its stop: the viewer's work reads the host's bytes through the view,
-   the viewer submits after the stop as before, and a view of the stopped
-   device's Mapped memory is None, as nothing would flush the host's writes
-   before the viewer's work. *)
-let stopped_mapped () =
-  if S.driverless () then skip ~reason:"amdgpu does not hold the GPU" ();
-  S.with_ @@ fun t ->
-  let g = t.g in
-  let g' =
-    match S.open_gpu ~word:(Rig_gpu_support.Host.word ()) with
-    | Ok g' -> g'
-    | Error why -> fail why
-  in
-  let n = 4096 in
-  match A.alloc g' Mapped n with
-  | None ->
-      A.stop g' ~fault:None;
-      skip ~reason:"the GPU has no Mapped memory" ()
-  | Some m ->
-      let view = require_some ~msg:"a view" (maps (A.map_peer g g' m)) in
-      let r = device g in
-      let back = Option.get (A.alloc g Pinned n) in
-      let p = pattern n 13 in
-      H.write (host m) p;
-      go r [| E.copy ~dst:(address back) ~src:(address view) n |];
-      equal string ~msg:"the host's bytes, read through the view" p
-        (H.read (host back) n);
-      A.stop g' ~fault:None;
-      go r [||];
-      is_none ~msg:"a view of a stopped device's Mapped memory"
-        (maps (A.map_peer g g' m));
-      A.free g back;
-      A.free g view;
-      A.free g' m
 
 (* Every root shows this machine: a root that links to [/] reaches the same GPU,
    whose address space the process holds once, so devices opened through either
@@ -2589,10 +2557,6 @@ let two =
         "two devices of one GPU share its memory, mapping each page once, \
          where the path allows a second device"
         one_gpu;
-      test
-        "a view of Mapped memory lasts until its owner's stop, after which \
-         map_peer of it is None"
-        stopped_mapped;
       test "devices of one GPU opened through two roots share its memory"
         two_roots;
       test

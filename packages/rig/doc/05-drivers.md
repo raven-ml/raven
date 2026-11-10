@@ -71,8 +71,10 @@ driver.
    other devices' words. For the launch it copies the parameters into memory of
    its own, adding each buffer's address at its refs, and places a dispatch
    packet. On the last queue it places a release that writes *v* into the
-   timeline word. It then flushes the host's writes through the GPU's memory
-   window, if any `Mapped` memory is live on the device or mapped by it, sets
+   timeline word. It then flushes the GPU's host data path, if it gave one
+   of its regions to another PCI function, whose writes through the GPU's
+   BAR pass that path. The host's own writes into `Mapped` memory need no
+   flush here: each of rig's writes flushed them before it returned. It sets
    each queue's write position and rings its doorbell, and returns that every
    value up to *v* is committed.
 7. **The stamps.** Back in rig, whatever the driver's `submit` returned,

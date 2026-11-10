@@ -7,9 +7,9 @@
    written by [make], then by [room] and [submit], which rig calls one at a
    time for each device, and by [grow]; [local] holds the device's lock while
    it grows the local memory, [grow] while it makes rings and channels, and
-   [stop] while it drops the device's live state. The C state's own locks,
-   [flush_mu] and [channels_mu] (rig_nv_stubs.h), are leaves: no OCaml code
-   runs while one is held, and no other lock is taken inside it.
+   [stop] while it drops the device's live state. The C state's own lock,
+   [channels_mu] (rig_nv_stubs.h), is a leaf: no OCaml code runs while it is
+   held, and no other lock is taken inside it.
 
    Every lock of the driver's and of its paths is a [Mutex] taken through
    [take_lock], which counts it among the locks its thread holds (rig_hold in
@@ -200,6 +200,7 @@ type gpu = {
 }
 
 type 'm memory = { address : int; host : int option; handle : int; data : 'm }
+type place = Gpu | Bar | Host
 type clock = Source of int | Registers of int
 
 type 'm path = {
@@ -214,7 +215,8 @@ type 'm path = {
   cache_bytes : int option;
   doorbell : int;
   flush : int option;
-  alloc : Rig_edge.memory -> int -> 'm memory option;
+  combines : bool;
+  alloc : place -> int -> 'm memory option;
   map_host : (int -> int -> 'm memory option Rig_edge.mapping) option;
   reaches : int -> bool;
   map_peer : 'm memory -> 'm memory option Rig_edge.mapping;
@@ -250,9 +252,9 @@ let shared_window = windows + window_slot
    memory anywhere outside them. *)
 type reach = Below_windows | Outside_windows
 
-let reach_of : Rig_edge.memory -> reach = function
-  | Device -> Outside_windows
-  | Pinned | Mapped -> Below_windows
+let reach_of = function
+  | Gpu -> Outside_windows
+  | Host | Bar -> Below_windows
 
 (* The memory [m] of [n] bytes a path answered, where every path's interface
    promises it lies. *)
@@ -406,13 +408,7 @@ external set_template : int -> int -> string -> string -> unit
 
 external set_entry : int -> int -> int -> unit = "caml_rig_nv_entry" [@@noalloc]
 external set_flush : int -> int -> unit = "caml_rig_nv_bar" [@@noalloc]
-external count_flush : int -> int -> int -> bool = "caml_rig_nv_flush"
-[@@noalloc]
-
-external flush_stopped : int -> bool = "caml_rig_nv_flush_stopped"
-[@@noalloc]
-
-external drop_flush : int -> unit = "caml_rig_nv_drop" [@@noalloc]
+external flush_bar : int -> unit = "caml_rig_nv_flush" [@@noalloc]
 external zero : int -> int -> unit = "caml_rig_nv_zero" [@@noalloc]
 external copy_word : int -> int -> unit = "caml_rig_nv_copy_word" [@@noalloc]
 
@@ -544,12 +540,12 @@ type 'm dev = {
   cache_bytes : int option;
   hang_ms : int option;
   maps_host : bool;
+  mapped : bool; (* whether it offers [Bar] memory as [Mapped] memory *)
   key : 'm Type.Id.t;
   index : int;
   reaches : int -> bool; (* the path's *)
   bus : string option; (* the path's *)
   capability : Abi.Gpu.t;
-  flush : int option; (* the path's flush word *)
   word : 'm reg; (* kept, with the C state, for the process *)
   local_lock : lock;
       (* held by [grow_local], [grow] and the retirement of rings, and by stop
@@ -567,9 +563,6 @@ and 'm reg = {
   mutable mem : 'm memory option;
   free : 'm memory -> unit;
   bytes : int;
-  flush : int option;
-      (* the device whose BAR the host writes the memory through, by its
-         [self], for Mapped memory and views of it *)
 }
 
 type t = T : 'm dev -> t
@@ -620,6 +613,7 @@ let facts (T d) =
     hang_ms = d.hang_ms;
     maps_host = d.maps_host;
     host_addresses = false;
+    mapped = d.mapped;
     alignment = region_alignment;
     cache_bytes = d.cache_bytes;
     counters = [];
@@ -734,7 +728,7 @@ let grow_local d n =
       let need = Abi.Local_memory.make d.capability n in
       if need.per_thread <= l.per_thread then Served
       else
-        match path_alloc l.path Device need.bytes with
+        match path_alloc l.path Gpu need.bytes with
         | exception Fault why -> Failed why
         | None -> Short need.bytes
         | Some m ->
@@ -1152,7 +1146,7 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
     | None -> Error (strf "no memory for the %s" what)
     | Some m -> Ok m
   in
-  let* words = alloc Pinned page "join words" in
+  let* words = alloc Host page "join words" in
   let* words_host = host "join words" words in
   zero words_host words_bytes;
   (* The word rig gave, mapped from its chunk of the array, or, where the
@@ -1181,10 +1175,10 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
         (words_host, words)
   in
   let opened = [| entries; entries |] in
-  let* memory = channel_memory (alloc Pinned) opened in
-  let* segments = alloc Pinned (2 * segment_bytes) "segment rings" in
+  let* memory = channel_memory (alloc Host) opened in
+  let* segments = alloc Host (2 * segment_bytes) "segment rings" in
   let* segments_host = host "segment rings" segments in
-  let* stamps = alloc Pinned stamps_bytes "stamp ring" in
+  let* stamps = alloc Host stamps_bytes "stamp ring" in
   let* stamps_host = host "stamp ring" stamps in
   zero stamps_host stamps_bytes;
   (* The GPU reads a launch's descriptor and bank as the launch before it
@@ -1193,13 +1187,13 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
   let in_bar =
     match p.flush with
     | None -> None
-    | Some _ -> recorded (fun () -> path_alloc p Mapped launch_bytes)
+    | Some _ -> recorded (fun () -> path_alloc p Bar launch_bytes)
   in
   let* launches, launches_bar =
     match in_bar with
     | Some m -> Ok (m, true)
     | None ->
-        let* m = alloc Pinned launch_bytes "launch ring" in
+        let* m = alloc Host launch_bytes "launch ring" in
         Ok (m, false)
   in
   let* launches_host = host "launch ring" launches in
@@ -1243,7 +1237,7 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
        [Device] allocations, and a fill of as many bytes of one, run as these
        kernels on the compute channel (rig_nv_ring.c's [kernel_copies] and
        [route]). Smaller copies and fills, boxes of more rows, copies and
-       fills that touch host, [Pinned], [Mapped] or a peer's memory, and
+       fills that touch host, [Pinned] or a peer's memory, and
        every copy and fill on other architectures, run on the copy channel.
        The kernels' image takes [Cubin.size] bytes of [Pinned] memory, and
        their descriptors lie in host memory until the channels end. *)
@@ -1254,7 +1248,7 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
           let* c = Cubin.of_string bin in
           let k = Option.get (Cubin.kernel c "copy_bytes") in
           let f = Option.get (Cubin.kernel c "fill_bytes") in
-          let* code = alloc Pinned (Cubin.size c) "copy kernel" in
+          let* code = alloc Host (Cubin.size c) "copy kernel" in
           let* code_host = host "copy kernel" code in
           Ok (Some (c, k, f, code, code_host))
     in
@@ -1278,6 +1272,7 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
         cache_bytes = p.cache_bytes;
         hang_ms = p.hang_ms;
         maps_host = Option.is_some p.map_host;
+        mapped = Option.is_some p.flush && p.combines;
         key = p.key;
         index = p.index;
         reaches = p.reaches;
@@ -1300,9 +1295,7 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
             mem = Some word_mem;
             free = p.free;
             bytes = 8;
-            flush = None;
           };
-        flush = p.flush;
         local_lock = ranked local_rank;
         live =
           Some
@@ -1378,8 +1371,7 @@ let make ~word p =
    call, and no closure is made for the call. An asynchronous exception
    between the two would leave the path's memory made and no region over it,
    for the life of the process. *)
-let region d (p : _ path) flush bytes =
-  { dev = d; mem = None; free = p.free; bytes; flush }
+let region d (p : _ path) bytes = { dev = d; mem = None; free = p.free; bytes }
 
 (* [r], the [Some] made with [c] before the path's call, if the path made
    memory into [c], else [None]. *)
@@ -1399,11 +1391,6 @@ let stored (c : _ reg) reach n v : _ Rig_edge.mapping -> _ Rig_edge.mapping =
 let unmade () = invalid_arg "Rig_nv: memory its path did not make"
 let made (r : _ reg) = match r.mem with Some m -> m | None -> unmade ()
 
-(* Counts [delta] regions written through the BAR of the device [src]'s flush
-   word in [d]'s flushes: [false] if [d] has no free entry for it, or [src]
-   has stopped. *)
-let count d src delta = count_flush d.self src delta
-
 let alloc (T d) (memory : Rig_edge.memory) n =
   if n < 1 then invalid_argf "Rig_nv.alloc: %d bytes, expected at least 1" n;
   let l = live d in
@@ -1419,46 +1406,24 @@ let alloc (T d) (memory : Rig_edge.memory) n =
            retire_rings d l;
            retire_channels d l)
         : bool);
-  match memory with
-  | Device | Pinned ->
-      let c = region d p None n in
-      let r = Some (R c) in
-      c.mem <- path_alloc p memory n;
-      answered c r
-  | Mapped -> (
-      match d.flush with
-      | None -> None
-      | Some _ -> (
-          (* Counted before the path's call, which leaves nothing to do once
-             the path made the memory. The device's own word has its entry
-             from [make]. *)
-          let counted = count d d.self 1 in
-          let c = region d p (Some d.self) n in
-          let r = Some (R c) in
-          match c.mem <- path_alloc p Mapped n with
-          | () -> (
-              match answered c r with
-              | Some _ as r -> r
-              | None ->
-                  if counted then ignore (count d d.self (-1) : bool);
-                  None)
-          | exception e ->
-              if counted then ignore (count d d.self (-1) : bool);
-              reraise e))
+  let place =
+    match memory with Device -> Gpu | Pinned -> Host | Mapped -> Bar
+  in
+  if place = Bar && not d.mapped then None
+  else
+    let c = region d p n in
+    let r = Some (R c) in
+    c.mem <- path_alloc p place n;
+    answered c r
 
 (* A region holds its device: rig frees it on that device. Its memory leaves
-   the record, then its flush entry goes, with nothing allocated before the
-   path's free, so that a free the path fails leaves the count right and a
-   free an exception ends leaks the memory at worst and never frees it
-   twice. *)
+   the record before the path's free, so that a free an exception ends leaks
+   the memory at worst and never frees it twice. *)
 let free (T _) (R r) =
   match r.mem with
   | None -> ()
   | Some m ->
       r.mem <- None;
-      (match r.flush with
-      | Some src -> ignore (count r.dev src (-1) : bool)
-      | None -> ());
       r.free m
 
 let address (R r) = (made r).address
@@ -1475,31 +1440,15 @@ let peer (T d) (T d') =
   | Some Type.Equal -> d.reaches d'.index
   | None -> false
 
-(* [r] holds its device, the other one. A view of Mapped memory makes [d]'s
-   submissions flush the host's writes through the BAR behind it, which [d]'s
-   own doorbell does not order: it is counted before the path's call, as in
-   [alloc]. *)
+(* [r] holds its device, the other one. *)
 let map_peer (T d) (T _) (R r) : region Rig_edge.mapping =
   match Type.Id.provably_equal d.key r.dev.key with
   | None -> Never
-  | Some Type.Equal -> (
+  | Some Type.Equal ->
       let p = (live d).path in
-      let m = made r in
-      let c = region d p r.flush r.bytes in
+      let c = region d p r.bytes in
       let v = Rig_edge.Maps (R c) in
-      match r.flush with
-      | None -> stored c Outside_windows r.bytes v (p.map_peer m)
-      | Some src when not (count d src 1) ->
-          if flush_stopped src then Never else No_room
-      | Some src -> (
-          match stored c Outside_windows r.bytes v (p.map_peer m) with
-          | Maps _ as a -> a
-          | (Never | No_room) as refused ->
-              ignore (count d src (-1) : bool);
-              refused
-          | exception e ->
-              ignore (count d src (-1) : bool);
-              reraise e))
+      stored c Outside_windows r.bytes v (p.map_peer (made r))
 
 let map_host (T d) a n : region Rig_edge.mapping =
   if n < 1 then invalid_argf "Rig_nv.map_host: %d bytes, expected at least 1" n;
@@ -1507,7 +1456,7 @@ let map_host (T d) a n : region Rig_edge.mapping =
   match p.map_host with
   | None -> Never
   | Some map ->
-      let c = region d p None n in
+      let c = region d p n in
       let v = Rig_edge.Maps (R c) in
       stored c Below_windows n v (map a n)
 
@@ -1516,6 +1465,10 @@ let dma (T d) (R r) ~fn =
   match Type.Id.provably_equal d.key r.dev.key with
   | None -> invalid_arg "Rig_nv.dma: another driver's region"
   | Some Type.Equal -> (live d).path.dma (made r) ~fn
+
+(* rig counts the call, so the device's C state and the path's flush word
+   outlive it. *)
+let flush (T d) = flush_bar d.self
 
 (* Rings *)
 
@@ -1536,10 +1489,10 @@ let grown_bytes want =
    [Pinned] memory. [r] stays [None] without memory. *)
 let make_ring (p : _ path) i n r =
   if i = launch_ring && Option.is_some p.flush then
-    r.ring <- path_alloc p Mapped n;
+    r.ring <- path_alloc p Bar n;
   Option.is_some r.ring
   || begin
-    r.ring <- path_alloc p Pinned n;
+    r.ring <- path_alloc p Host n;
     false
   end
 
@@ -1576,7 +1529,7 @@ let grow_channels d l want =
     let alloc n what =
       let cell = ref None in
       taken (held_memory p cell);
-      cell := path_alloc p Pinned n;
+      cell := path_alloc p Host n;
       match !cell with
       | Some m -> Ok m
       | None ->
@@ -1930,10 +1883,6 @@ let halt d l =
         first := e;
         false
   in
-  (* No work on another device uses this GPU's memory once it is lost
-     ([Rig]'s loss section), so their submissions stop reading its flush word
-     before the path may unmap it. *)
-  drop_flush d.self;
   let path =
     match l.path.stop () with
     | path -> path

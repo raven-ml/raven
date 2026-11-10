@@ -40,6 +40,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- Add `Rig.offers d k`, whether `Rig.Buffer.create ~memory:k d` makes `d`'s
+  memory of kind `k`; where it is `false`, that create raises
+  `Invalid_argument`.
 - Add `Rig_program.footprint t devices`: the bytes a load of `t` makes on
   each device and the host, counted as `Rig.allocation` counts them,
   without loading.
@@ -60,7 +63,7 @@ All notable changes to this project will be documented in this file.
   another machine's, up to the alignment its allocation starts on, where it
   raised; `Tolk_engine.run` raised on every such buffer.
 - Dropped buffers of memory the host addresses (a memory device's, Metal's,
-  `Pinned`, `Mapped`) bring a major cycle only after half the host's
+  `Pinned`) bring a major cycle only after half the host's
   last-level cache (4 MiB at least), as host buffers do, unless their device
   nears its budget. A small heap ran one every few calls: a data-parallel
   step over 16 memory devices runs a quarter fewer instructions a call.

@@ -420,22 +420,22 @@ let undo fd handle at n step e =
   unmap_mem at n;
   fault step e
 
-(* [n] bytes of [kind] at addresses reserved in the process, mapped for the GPU,
-   and for the host unless they are [Device]. The answer is made before KFD's
-   allocation, so that nothing allocates or polls between it and the return,
-   and an exception as it is made gives the addresses back. *)
-let alloc fd g (kind : Rig_edge.memory) n : mem Amd.memory option =
-  if kind = Mapped && g.node.visible = 0 then None
+(* [n] bytes placed at [kind] at addresses reserved in the process, mapped for
+   the GPU, and for the host unless they are [Gpu] memory. The answer is made
+   before KFD's allocation, so that nothing allocates or polls between it and
+   the return, and an exception as it is made gives the addresses back. *)
+let alloc fd g (kind : Amd.place) n : mem Amd.memory option =
+  if kind = Amd.Bar && g.node.visible = 0 then None
   else
     let n = round_up n page in
     let at = check "reserving GPU addresses" (fun () -> reserve n) in
     let request : memory =
-      match kind with Device -> Gpu | Mapped -> Bar | Pinned -> System
+      match kind with Amd.Gpu -> Gpu | Bar -> Bar | Host -> System
     in
     let data, made =
       match
-        let host = if kind = Device then None else Some at in
-        let vram = kind <> Pinned in
+        let host = if kind = Amd.Gpu then None else Some at in
+        let vram = kind <> Amd.Host in
         let data = { handle = 0; bytes = n; at; kind = Own; owner = g; vram } in
         (data, Some { Amd.address = at; host; data })
       with
@@ -447,10 +447,10 @@ let alloc fd g (kind : Rig_edge.memory) n : mem Amd.memory option =
     match kfd_alloc fd g.node.gpu_id at n request with
     | exception Unix.Unix_error (e, _, _) ->
         unmap_mem at n;
-        if e = ENOMEM || (e = EINVAL && kind = Mapped) then None
+        if e = ENOMEM || (e = EINVAL && kind = Amd.Bar) then None
         else fault (strf "allocating %d bytes of GPU memory" n) e
     | handle, offset ->
-        (try if kind <> Device then ignore (map_file g.drm at n offset : int)
+        (try if kind <> Amd.Gpu then ignore (map_file g.drm at n offset : int)
          with Unix.Unix_error (e, _, _) ->
            undo fd handle at n "mapping GPU memory" e);
         (try map_gpu fd handle g.node.gpu_id true
@@ -815,7 +815,7 @@ let page_for fd g =
     match !event_page with
     | Some (handle, _, owner) -> (handle, owner)
     | None -> (
-        match alloc fd g Pinned event_page_bytes with
+        match alloc fd g Amd.Host event_page_bytes with
         | None -> raise (Amd.Fault "no memory for the event page")
         | Some m ->
             let page = Some (m.data.handle, m.address, g.node.gpu_id) in
@@ -953,7 +953,7 @@ let queue d kind ~ring ~bytes ~read ~write =
   let gpu_mem what n =
     if not compute then Ok None
     else
-      match alloc d.fd d.gpu Device n with
+      match alloc d.fd d.gpu Amd.Gpu n with
       | Some m -> Ok (Some m)
       | None -> Error (Amd.Lacking (strf "no GPU memory for a queue's %s" what))
   in
@@ -1209,6 +1209,12 @@ let path d ~gpus ~index : mem Amd.path =
     retire = retire d;
     most_ring;
     hdp = g.hdp;
+    (* KFD makes host-visible memory only where the BAR covers the GPU's
+       memory, which it then states as one public heap (kfd_crat.c,
+       kfd_dev_is_large_bar), and the kernel maps it write-combined, cached
+       only where the GPU's memory is coherent with the processor's
+       (amdgpu_vram_mgr.c). *)
+    combines = g.node.visible > 0;
     interrupt = d.events.(0);
     hang_ms = Some hang_ms;
     interrupts = (fun () -> Atomic.get d.age);

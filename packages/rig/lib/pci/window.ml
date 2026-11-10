@@ -111,6 +111,7 @@ let through tr address length =
 let address w = w.address
 let length w = w.length
 let mapped w = w.transport = 0
+let combines w = w.combines
 
 let width w = if w.combines then 16 else if w.prefetchable then 64 else 0
 

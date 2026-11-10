@@ -42,6 +42,7 @@ module D = struct
       hang_ms = None;
       maps_host = true;
       host_addresses = true;
+      mapped = false;
       alignment;
       (* Its memory is the host's, behind the host's caches. *)
       cache_bytes = Dev.host.Def.cache_bytes;
@@ -68,6 +69,7 @@ module D = struct
   (* rig asks no memory device: its memory is the host's. *)
   let dma _ _ ~fn:_ =
     Error "a memory device's memory is the process's own, which no driver gives"
+  let flush _ = ()
   let image _ _ = Error "a memory device loads no code"
   let entry () _ = Rig_edge.Absent
   let prepare () _ = ()

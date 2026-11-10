@@ -190,9 +190,10 @@ let fits g what s =
     let* () = Rm.check g.c what s in
     Ok true
 
-(* Maps the memory object [h] of [size] bytes into the process at [va],
-   uncached: [Ok false] if the GPU's window onto its memory (BAR1) has no room
-   or the process no file left. *)
+(* Maps the memory object [h] of [size] bytes into the process at [va], with
+   the caching the RM picks whatever the request, uncached for the GPU's
+   registers: [Ok false] if the GPU's window onto its memory (BAR1) has no
+   room or the process no file left. *)
 let map_to_cpu g h size va =
   Result.map (Option.value ~default:false) @@ with_file g
   @@ fun fd ->
@@ -206,7 +207,7 @@ let map_to_cpu g h size va =
   set w (at M.h_memory) h;
   set w (at M.length) size;
   set w (at M.flags)
-    (bits D.nvos33_flags_caching_type D.nvos33_flags_caching_type_uncached);
+    (bits D.nvos33_flags_caching_type D.nvos33_flags_caching_type_default);
   let what = "mapping GPU memory into the process" in
   let* () = Rm.escape g.c.ctl D.nv_esc_rm_map_memory w what in
   let* ok = fits g what (get w (at M.status)) in
@@ -539,8 +540,9 @@ let allocate r p =
   ignore (Sys.opaque_identity p);
   if not r.made then fitted g what s
 
-(* Maps [r]'s object into the process at [r]'s addresses, uncached. No room in
-   the GPU's window onto its memory (BAR1) is no memory. *)
+(* Maps [r]'s object into the process at [r]'s addresses, write-combined, the
+   caching the RM picks for video memory whatever the request. No room in the
+   GPU's window onto its memory (BAR1) is no memory. *)
 let map_bar r =
   let g = r.parent in
   let module W = D.Nvos33_with_fd in
@@ -554,7 +556,7 @@ let map_bar r =
   set w (at M.h_memory) r.memory;
   set w (at M.length) r.bytes;
   set w (at M.flags)
-    (bits D.nvos33_flags_caching_type D.nvos33_flags_caching_type_uncached);
+    (bits D.nvos33_flags_caching_type D.nvos33_flags_caching_type_default);
   open_file r;
   set w W.fd r.spare;
   ok (Rm.escape g.c.ctl D.nv_esc_rm_map_memory w what);
@@ -652,11 +654,11 @@ let alloc_video g ~cpu size =
   let r = range g ~naming:Rm_named ~space size in
   try video_steps r p ~cpu ~page_size with e -> unmade r e
 
-let alloc g (kind : Rig_edge.memory) n =
+let alloc g (kind : Rig_nv.place) n =
   match kind with
-  | Pinned -> alloc_host g (round_up n (Rm.host_page ()))
-  | Device -> alloc_video g ~cpu:false n
-  | Mapped -> alloc_video g ~cpu:true n
+  | Host -> alloc_host g (round_up n (Rm.host_page ()))
+  | Gpu -> alloc_video g ~cpu:false n
+  | Bar -> alloc_video g ~cpu:true n
 
 let ranges_lock = Rig_nv.Lock.create ()
 
@@ -1178,7 +1180,8 @@ let make_gpu c um ~dev ~index ~others bus =
         "registering the GPU's address space"
     in
     (* The flush word's page, kept with the GPU's objects. A GPU whose BAR
-       has no room for it has none, and its devices no Mapped memory. *)
+       has no room for it has none, and its devices place nothing in the
+       BAR. *)
     let* bar =
       match alloc_video g ~cpu:true page with
       | bar -> Ok bar
@@ -1232,6 +1235,7 @@ let path g =
     cache_bytes = g.cache_bytes;
     doorbell = g.doorbell + doorbell_at;
     flush = g.flush;
+    combines = true;
     alloc = alloc g;
     map_host = Some (map_host g);
     index = g.index;

@@ -35,6 +35,7 @@ module Polled : sig
     ?grows:int ->
     ?copies:bool ->
     ?host_visible:bool ->
+    ?mapped:bool ->
     ?addresses:bool ->
     ?transport:bool ->
     ?peers:bool ->
@@ -69,7 +70,10 @@ module Polled : sig
       takes words, and does nothing for them.
       Without [host_visible] (defaults to [true]) the host does not address
       its [Device] memory. Without [addresses] (defaults to [true]) its
-      [Device] memory has no address: its work names it by handle alone. With
+      [Device] memory has no address: its work names it by handle alone.
+      Without [mapped] (defaults to [true]) it makes no [Mapped] memory;
+      with it, its [Mapped] memory is host memory, its window, and its
+      [flush] logs ["flush"] ({!log}). With
       [transport] (defaults to [false]) the host does not address its word
       either, which is read through [signaled], as behind a transport. Its
       [host_addresses] fact holds with [host_visible] and without [transport].
@@ -124,6 +128,7 @@ module Polled : sig
     ?grows:int ->
     ?copies:bool ->
     ?host_visible:bool ->
+    ?mapped:bool ->
     ?addresses:bool ->
     ?transport:bool ->
     ?peers:bool ->
@@ -243,7 +248,8 @@ module Polled : sig
   (** [log d] is [d]'s driver calls, oldest first: ["alloc"], ["free"] (of
       a region or of the word), ["map_host"], ["map_peer"], ["unmap"] (a
       mapping's free), ["sleep"],
-      ["stop"], ["image"], ["entry"], ["unload"]. Consecutive sleeps are one
+      ["stop"], ["image"], ["entry"], ["unload"], ["flush"]. Consecutive
+      sleeps are one
       ["sleep"]; {!sleeps} counts them. *)
 
   val sleeps : t -> int
@@ -634,7 +640,9 @@ val counted : unit -> int
 (** [counted ()] is the number of counted calls the calling thread is inside
     ([rig_counted] in [rig.h]): calls of a driver that a device's stop never
     overlaps, inside a driver's call, where an exception may lose the
-    device. *)
+    device, and the host's stores into a window with the driver's flush
+    after them, such as the function of {!Rig.Buffer.write} on [Mapped]
+    memory, whose exceptions lose nothing. *)
 
 val inside_lock : (unit -> 'a) -> 'a
 (** [inside_lock f] is [f ()] run while the calling thread counts one more

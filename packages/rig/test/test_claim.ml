@@ -621,6 +621,63 @@ let test_signal_raised () =
       Rig_support.interrupt ();
       raise_notrace Raised)
 
+(* A signal pending as the function of a write of Mapped memory returns or
+   raises lands once the write's flush ran and its count and claim ended. *)
+let interrupted_window name f =
+  let d, p = P.open_ ~host_visible:false ("claim:signal-" ^ name) in
+  let m = B.create ~memory:Mapped d 8 in
+  let before =
+    Sys.signal Sys.sigint (Sys.Signal_handle (fun _ -> raise Exit))
+  in
+  Fun.protect
+    ~finally:(fun () -> Sys.set_signal Sys.sigint before)
+    (fun () ->
+      raises Exit (fun () ->
+          (match B.write m Bigarray.char f with
+          | () -> ()
+          | exception Raised -> ());
+          ignore (Sys.opaque_identity (ref ()))));
+  equal ~msg:"counted calls" int 0 (Rig_support.counted ());
+  equal ~msg:"donated" string "exclusive" (donation m);
+  equal ~msg:"flushes" (list string) [ "flush" ]
+    (List.filter (String.equal "flush") (P.log p))
+
+let test_signal_window_returned () =
+  interrupted_window "window-returned" (fun a ->
+      a.{0} <- 'w';
+      Rig_support.interrupt ())
+
+let test_signal_window_raised () =
+  interrupted_window "window-raised" (fun a ->
+      a.{0} <- 'w';
+      Rig_support.interrupt ();
+      raise_notrace Raised)
+
+(* An exception at any allocation of a blit or a fill into Mapped memory
+   outside its counted call, as an asynchronous one lands, leaves no claim
+   and no count. *)
+let walk_window name call =
+  let d, _ = P.open_ ~host_visible:false ("claim:walk-" ^ name) in
+  let m = B.create ~memory:Mapped d 8 in
+  let rec walk n =
+    let reached =
+      Rig_support.interrupted
+        ~from:(fun _ -> Rig_support.counted () = 0)
+        n
+        (fun () -> call m)
+    in
+    let msg = Printf.sprintf "landing at allocation %d" n in
+    equal ~msg int 0 (Rig_support.counted ());
+    equal ~msg string "exclusive" (donation m);
+    if reached then walk (n + 1) else n - 1
+  in
+  greater ~msg:"the landings" int ~than:0 (walk 1)
+
+let test_walk_blit () =
+  walk_window "blit" (fun m -> B.blit_from_string "blit" 0 m 2 4)
+
+let test_walk_fill () = walk_window "fill" (fun m -> B.fill m 'f')
+
 (* Claims of several buffers from C *)
 
 (* What a buffer of a case is to [rig_buffers_claim]: live, read or written;
@@ -1953,6 +2010,18 @@ let tests =
           test_signal_returned;
         test "a signal pending as with_'s function raises leaves no claim"
           test_signal_raised;
+        test "a signal pending as a Mapped write's function returns lands \
+              after its flush"
+          test_signal_window_returned;
+        test "a signal pending as a Mapped write's function raises lands \
+              after its flush"
+          test_signal_window_raised;
+        test "an exception at any allocation of a blit into Mapped memory \
+              leaves no claim"
+          test_walk_blit;
+        test "an exception at any allocation of a fill of Mapped memory \
+              leaves no claim"
+          test_walk_fill;
         test "a buffer's death is a fact with its reason" test_dead_fact;
         test "claims on memory a loss reaches raise and release"
           test_lost_claims;

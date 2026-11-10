@@ -88,6 +88,7 @@ let facts d =
     hang_ms = None;
     maps_host = false;
     host_addresses = false;
+    mapped = false;
     alignment = d.account.alignment;
     cache_bytes = d.account.cache_bytes;
     counters = [];
@@ -141,6 +142,9 @@ let map_host _ _ _ = Rig_edge.Never
 
 let dma _ _ ~fn:_ =
   Error "memory of another machine: its agent describes it there"
+
+(* The host stores into no window of another machine's memory. *)
+let flush _ = ()
 
 (* Code *)
 
@@ -227,6 +231,7 @@ module Driver = struct
   let map_peer = map_peer
   let map_host = map_host
   let dma = dma
+  let flush = flush
   let image = image
   let entry = entry
   let prepare = prepare

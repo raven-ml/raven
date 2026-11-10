@@ -82,6 +82,8 @@ external c_fail : string -> bool = "caml_rig_fail"
 external c_failed : unit -> string option = "caml_rig_failed"
 external c_first : unit -> int = "caml_rig_first" [@@noalloc]
 external c_enter : c -> int = "caml_rig_enter"
+external c_storing : int -> unit = "caml_rig_storing" [@@noalloc]
+external c_stores : unit -> int = "caml_rig_stores" [@@noalloc]
 external c_exit : c -> unit = "caml_rig_exit"
 external c_spin : c -> int -> int -> int = "caml_rig_spin"
 external c_producers : c -> int array = "caml_rig_producers"
@@ -157,8 +159,8 @@ let no_waits = { Rig_edge.stores = false; hosts = false }
 
 let make_device ~index ~name ~machine ~kind ~c ~arch ~bus ~queues ~copy_engine
     ~completion ~waits ~hang_ms ~maps_host ~alignment ~cache_bytes
-    ~host_addresses ~word ~word_region ~key ~memory_device ~fault ~capability
-    ~counters ~budget ~opened =
+    ~host_addresses ~mapped_memory ~word ~word_region ~key ~memory_device ~fault
+    ~capability ~counters ~budget ~opened =
   let live =
     {
       c;
@@ -201,6 +203,7 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~bus ~queues ~copy_engine
     alignment;
     cache_bytes;
     host_addresses;
+    mapped_memory;
     key;
     memory_device;
     capability;
@@ -231,7 +234,7 @@ let host =
       ~copy_engine:None ~completion:Rig_edge.Host ~waits:no_waits ~hang_ms:None
       ~maps_host:false ~alignment:malloc_alignment
       ~cache_bytes:(host_cache_bytes ()) ~host_addresses:false
-      ~word:(Nativeint.to_int (c_slot_word 0))
+      ~mapped_memory:false ~word:(Nativeint.to_int (c_slot_word 0))
       ~word_region:None ~key:(-1)
       ~memory_device:false
       ~fault:[%extension_constructor No_fault]
@@ -643,6 +646,48 @@ let counted d scope f x =
           raised d scope e;
           raise_lost d)
   | _ -> raise_lost d
+
+(* [f] runs unmasked inside the count, as the caller's code, and the thread
+   counts it ([c_storing]) so that a close from it refuses; the flush runs
+   masked as [counted]'s call does. Nothing polls between [f]'s end and the
+   mask, so a signal pending as [f] returns or raises lands after the count
+   ended. A flush that raises after [f] raised loses [d] as [counted] loses
+   it, and [f]'s exception passes. In a child forked inside [f], [d] is the
+   parent's, Orphaned: the child calls no driver on it, and the end of the
+   count, which the fork forgot, ends nothing. *)
+let stores d flush h f x =
+  if c_enter d.live.c <> 0 then raise_lost d;
+  c_storing 1;
+  match f x with
+  | r when orphaned d ->
+      c_storing (-1);
+      c_exit d.live.c;
+      r
+  | r -> (
+      c_storing (-1);
+      Rig_edge_primitive.mask ();
+      match flush h with
+      | () ->
+          c_exit d.live.c;
+          Rig_edge_primitive.unmask ();
+          r
+      | exception e ->
+          raised d Any e;
+          raise_lost d)
+  | exception e when orphaned d ->
+      c_storing (-1);
+      let bt = Printexc.get_raw_backtrace () in
+      c_exit d.live.c;
+      Printexc.raise_with_backtrace e bt
+  | exception e ->
+      c_storing (-1);
+      Rig_edge_primitive.mask ();
+      let bt = Printexc.get_raw_backtrace () in
+      (match flush h with
+      | () -> c_exit d.live.c
+      | exception lost -> ignore (c_raised d.live.c lost d.live.fault Any));
+      Rig_edge_primitive.unmask ();
+      Printexc.raise_with_backtrace e bt
 
 type given = Given | Later
 
@@ -1212,7 +1257,7 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
       ~completion:f.completion
       ~waits:f.waits ~hang_ms:f.hang_ms ~maps_host:f.maps_host
       ~alignment:f.alignment ~cache_bytes:f.cache_bytes
-      ~host_addresses:f.host_addresses ~word
+      ~host_addresses:f.host_addresses ~mapped_memory:f.mapped ~word
       ~word_region:(Some (Region { m; h; rid; r = Some f.word; mapped = Never }))
       ~key:(Type.Id.uid D.key) ~memory_device
       ~fault:[%extension_constructor D.Fault]
@@ -1280,7 +1325,8 @@ let open_io ~machine name =
     make_device ~index ~name:full ~machine ~kind:Io ~c ~arch:""
       ~bus:None ~queues:[||] ~copy_engine:None ~completion:Rig_edge.Host
       ~waits:no_waits ~hang_ms:None ~maps_host:false ~alignment:1
-      ~cache_bytes:None ~host_addresses:false ~word:0 ~word_region:None
+      ~cache_bytes:None ~host_addresses:false ~mapped_memory:false ~word:0
+      ~word_region:None
       ~key:io_key ~memory_device:false ~fault:[%extension_constructor No_fault]
       ~capability:None ~counters:[] ~budget:max_int ~opened
   in
@@ -1337,8 +1383,14 @@ let start_close (d : device) m =
 (* A machine's devices end before its host, so [host_of] of an open device is
    never closed: the machine stops taking opens, the opens in flight finish,
    then its devices close. *)
+(* A close inside [stores]'s function would wait for the write's count to
+   end: it refuses instead. *)
 let close d =
   check_held "close";
+  if c_stores () > 0 then
+    invalid_arg
+      "Rig.close: called inside the function of a write of Mapped memory, \
+       which the stop of its device waits for";
   if is_host d then invalid_arg "Rig.close: the host is never closed";
   match d.machine with
   | Here | On _ -> close_one d

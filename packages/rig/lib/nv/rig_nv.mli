@@ -277,16 +277,21 @@ val capability : t -> Rig_nv_abi.Gpu.t
     - [Pinned] memory is host memory that the GPU reads and writes
       coherently with the host.
     - [Mapped] memory is the GPU's, which the host also addresses through
-      the GPU's memory BAR. The host's stores to it reach the GPU before the
-      work of any later submission of the device reads it.
+      the GPU's memory BAR, write-combined. The device makes it ([mapped]
+      in {!Rig_edge.type-facts}) where its path declares its [Bar] memory
+      write-combined ({!field-combines}) and has a flush word
+      ({!field-flush}). {!val-flush} drains the calling thread's
+      write-combining buffers with a full fence, then reads the flush word,
+      whose read returns once the writes before it through the BAR have
+      reached the GPU. Submissions flush nothing for it.
 
-    {!val-alloc} returns [None] if the GPU or the host lacks the memory, and
-    for [Mapped] once the BAR has no room, or if it had none for the path's
-    flush word ({!field-flush}). {!val-alloc} and {!val-map_host}
-    raise [Invalid_argument] for fewer than one byte. The device itself
-    holds [Pinned] memory for its rings and its word, and 1 MiB for the
-    descriptors and constant banks of its launches, in the BAR where the BAR
-    had room at {!make} and in [Pinned] memory otherwise.
+    {!val-alloc} returns [None] if the GPU or the host lacks the memory,
+    and for [Mapped] memory where the device makes none or the BAR has no
+    room. {!val-alloc} and {!val-map_host} raise [Invalid_argument] for
+    fewer than one byte. The device itself holds [Pinned] memory for its
+    rings and its word, and 1 MiB for the descriptors and constant banks of
+    its launches, in the BAR where the BAR had room at {!make} and in
+    [Pinned] memory otherwise.
 
     {!locate} returns the address of a region's first byte in the GPU's
     virtual address space ({!Rig_nv_abi.Gpu}). Its handle is the same
@@ -298,13 +303,9 @@ val capability : t -> Rig_nv_abi.Gpu.t
 
     {!peer} is [true] iff paths of one [key] opened both devices and this
     device's path reaches the other GPU's memory ([reaches] of
-    {!type-path}), and {!val-map_peer} then maps it. A view of [Mapped]
-    memory orders the host's writes through the other GPU's BAR before this
-    device's later work until the other device stops. {!val-map_peer} of a
-    stopped device's [Mapped] memory is [Never], and is [No_room] where this
-    device has no entry left for that order. Peer access between GPUs is
-    untested. {!val-map_host} answers [Never] if the path maps no host
-    memory, and the path's refusal of the pages otherwise
+    {!type-path}), and {!val-map_peer} then maps it. Peer access between
+    GPUs is untested. {!val-map_host} answers [Never] if the path maps no
+    host memory, and the path's refusal of the pages otherwise
     ({!field-map_host}).
 
     {!val-dma} is the path's answer ({!field-dma}). Another function reads
@@ -508,9 +509,9 @@ type gpu = {
 type 'm memory = {
   address : int;
       (** The GPU address of its first byte. No byte of it lies from
-          {!windows} to [2{^40}]. [Pinned] and [Mapped] memory, and host
-          memory the path maps, lie below {!windows}, since the device's
-          rings, descriptors and semaphores lie in such memory
+          {!windows} to [2{^40}]. [Host] and [Bar] memory ({!type-place}),
+          and host memory the path maps, lie below {!windows}, since the
+          device's rings, descriptors and semaphores lie in such memory
           ({!Rig_nv_abi.Gpu}). A path may map host memory at a GPU address
           of its own, as the host's may lie higher. *)
   host : int option;
@@ -519,6 +520,15 @@ type 'm memory = {
   data : 'm;  (** The path's own data for it. *)
 }
 (** The type for memory a path gives a device. *)
+
+(** The type for where a path places memory. *)
+type place =
+  | Gpu  (** The GPU's memory, which the host does not address. *)
+  | Bar
+      (** The GPU's memory, which the host also addresses through the GPU's
+          memory BAR, with the caching of the path's mapping
+          ({!field-combines}). *)
+  | Host  (** Host memory that the GPU reads and writes coherently. *)
 
 (** The type for how a device reads the GPU's timer, the clock of its
     stamps, against the host's clock ({!section-submitting}). *)
@@ -553,17 +563,24 @@ type 'm path = {
           ([NVC361_NOTIFY_CHANNEL_PENDING]). *)
   flush : int option;
       (** [Some a] if the host address [a] is a 32-bit word of the GPU's
-          [Mapped] memory, which a device reads before waking its channels
-          so that the host's writes through the GPU's BAR reach the GPU
-          first; [None] if the BAR had no room for it, and the device then
-          has no [Mapped] memory. The word must stay mapped until [stop] is
-          called. Devices that view the GPU's [Mapped] memory ([map_peer])
-          read it too, until {!val-stop}, which waits for their reads before
-          it calls [stop]. *)
-  alloc : Rig_edge.memory -> int -> 'm memory option;
-      (** [alloc k n] is [n] new bytes of the kind [k] ({!section-regions}) at
-          an address aligned to 4 KiB, [Mapped] memory mapped uncached for the
-          host, or [None] if the GPU or the host lacks the memory. *)
+          [Bar] memory, whose read returns once the host's writes through
+          the GPU's BAR before it reached the GPU. A device reads it before
+          waking its channels while its launches lie in the BAR, and in
+          {!val-flush}. [None] if the BAR had no room for it, and the device
+          then places no memory in the BAR. The word must stay mapped until
+          [stop] is called. *)
+  combines : bool;
+      (** Whether the path declares the host's mapping of [Bar] memory
+          write-combined, as the kernel driver makes it whatever caching
+          its caller asks for. The device does not check the declaration.
+          It makes [Mapped] memory only where it is [true] and [flush] is
+          [Some _]. *)
+  alloc : place -> int -> 'm memory option;
+      (** [alloc k n] is [n] new bytes placed at [k] at an address aligned
+          to 4 KiB, or [None] if the GPU or the host lacks the memory, or,
+          for [Bar] memory, the BAR lacks the room. The device asks [Gpu]
+          for [Device] memory, [Host] for [Pinned] memory and [Bar] for
+          [Mapped] memory. *)
   map_host : (int -> int -> 'm memory option Rig_edge.mapping) option;
       (** [Some map] if the GPU maps host memory: [map a n] maps the [n] bytes
           of host memory at [a] for the GPU and must answer [Maps (Some m)],

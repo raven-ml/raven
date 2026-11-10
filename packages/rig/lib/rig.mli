@@ -195,10 +195,14 @@ val close : t -> unit
        again.}}
     A close is never the process's {!failure}.
 
-    Raises [Invalid_argument], leaving [d] as it was, if [d] is {!host}, or
-    if [d] is a machine's host and the call runs on the thread of an open on
+    Raises [Invalid_argument], leaving [d] as it was, if [d] is {!host}, if
+    [d] is a machine's host and the call runs on the thread of an open on
     that machine, from its opener's [make] or a callback inside it
-    ({!section-domains}). *)
+    ({!section-domains}), or if the call runs inside the function of a
+    {!Buffer.write} of [Mapped] memory, or in a callback, such as a
+    finaliser, that lands inside a blit, a fill or a copy into [Mapped]
+    memory, whatever [d]: a close of the written memory's device would wait
+    for that write. *)
 
 (** {2:properties Properties}
 
@@ -266,6 +270,24 @@ val runs_on_host : t -> bool
 (** [runs_on_host d] is [true] iff [d]'s work is this process's code, which
     holds for {!host} and a {!memory_device}. The host computes on such a
     device's memory as on its own. *)
+
+val offers : t -> Rig_edge.memory -> bool
+(** [offers d k] is [true] iff {!Buffer.create}[ ~memory:k d n] makes
+    [d]'s memory of the kind [k] ({!Buffer.kind}) for [n > 0]; where it is
+    [false], that call raises [Invalid_argument].
+    {ul
+    {- [Device] memory: every device but an io device, which makes none
+       ({!Buffer.of_io}).}
+    {- [Pinned] memory: a device whose memory the host does not address,
+       which excludes {!host}, a {!memory_device}, a Metal device and a
+       driver's device whose driver declares [host_addresses]
+       ({!Rig_edge.type-facts}), and is not an io device.}
+    {- [Mapped] memory: a device whose memory the host addresses, where it
+       is the device's own memory, and a driver's device whose driver makes
+       it ([mapped] in {!Rig_edge.type-facts}), such as an NVIDIA GPU
+       through its kernel driver.}}
+    It answers from what [d]'s driver stated at its open, also once [d] is
+    lost. *)
 
 val alignment : t -> int
 (** [alignment d] is the power of two that the first byte of every non-empty
@@ -672,8 +694,9 @@ val word : int
     stopped.
 
     From its loss on, a device's stop is {e owed} until a call runs it.
-    Only {!close}, after waiting for the device's driver calls in flight,
-    and an open of the device's name ({!section-opening}), once none is in
+    Only {!close}, after waiting for the device's driver calls in flight
+    and the host's writes into its [Mapped] memory ({!Buffer.write}), and an
+    open of the device's name ({!section-opening}), once none is in
     flight, run it. No other call does: neither the call that lost the
     device, nor a use of it, nor {!fail}, nor reclamation. A lost device
     that is never closed keeps its stop owed, and with it its memory, its
@@ -899,11 +922,11 @@ val failure : unit -> string option
        floors included, beside the bytes live in the host's budget at the
        last cycle; or
        sooner, once the dropped bytes reach [custom_major_ratio] / 150 of the
-       host's room. The memory of a {!memory_device}, of a driver's device
-       whose driver declares [host_addresses] ({!Rig_edge.type-facts}), and
-       a driver's device's [Mapped] memory brings a cycle as host buffers
-       do, floors included, with the device's {!allocated} bytes standing
-       for the host buffers live; or sooner, once the dropped bytes reach
+       host's room. The memory of a {!memory_device} and of a driver's
+       device whose driver declares [host_addresses]
+       ({!Rig_edge.type-facts}) brings a cycle as host buffers do, floors
+       included, with the device's {!allocated} bytes standing for the host
+       buffers live; or sooner, once the dropped bytes reach
        [custom_major_ratio] / 150 of the device's room, so a device nearing
        its budget collects in time. A device's other memory brings a cycle
        at that share of its room alone. Either amount is at least a page,
@@ -956,9 +979,7 @@ val charged : ?memory:Rig_edge.memory -> t -> t
     memory of kind [memory] (default [Device], {!Buffer.kind}) counts, as
     {!section-reclaim} states: [d] for its [Device] and [Mapped] memory, and
     for [Pinned] memory where the host addresses [d]'s memory; {!host} for
-    other [Pinned] memory. [Mapped] memory that [d]'s window or budget cannot
-    hold falls back at {!Buffer.create} to [Pinned] memory, or to [d]'s own,
-    which [charged] does not foresee. *)
+    other [Pinned] memory. *)
 
 val allocation : t -> int -> int
 (** [allocation d n] is the bytes a buffer of [n] bytes made on [d]
@@ -1058,14 +1079,25 @@ module Buffer : sig
             Metal device, has none ({!create}). Host memory reaches a device
             through {!borrow}. *)
     | Mapped
-        (** The device's own memory, which the host also addresses through a
-            write-combined window, and which counts in the device's {!budget}.
-            Work submitted after a host write sees it, and host reads are
-            slow. Where the device has no such window, or the window or the
-            device's budget has no room for the buffer, it is [Pinned]
-            memory, or, on a device whose memory the host addresses, the
-            device's own memory. rig falls back without first freeing the
-            device's cache. *)
+        (** The device's own memory, which counts in the device's {!budget}
+            and which the host writes through a write-combined window, such
+            as a GPU's memory BAR, so that work reads the bytes at the
+            device's speed with no copy on its queues. The host stores into
+            the window only inside rig's calls: {!write}, {!blit_from_string},
+            the fills, and copies from memory the host addresses
+            ({!section-copying}). Before it returns, each flushes the stores
+            the calling thread made in the window during the call, so the
+            work of every submission after it, on any device, sees the
+            bytes; other threads must not write through the array {!write}
+            gives. A {!Rig.close} of the device waits for these calls.
+            Elsewhere the host does not address it: {!read} refuses it, its
+            {!borrow} on {!host} is [None], and a copy out of it runs on a
+            copy engine, as one out of [Device] memory does. On a device
+            whose memory the host addresses, it is the device's [Device]
+            memory. {!create} raises [Invalid_argument] on a device that has
+            none ({!Rig.offers}), and {!Rig.Out_of_memory} where the window
+            or the budget has no room for it once reclamation ran
+            ({!Rig.section-reclaim}). *)
 
   val create : ?memory:kind -> device -> int -> t
   (** [create d n] is a buffer of [n] new bytes of [d]'s memory of kind
@@ -1079,9 +1111,10 @@ module Buffer : sig
       ones.
 
       Raises [Invalid_argument] if [n < 0], if [memory] is [Pinned] and the
-      host addresses [d]'s memory, or if [n > 0] and [d] is an io device,
-      which makes no memory ({!of_io}), and {!Lost} if [d] is lost or its
-      driver faults during the allocation. *)
+      host addresses [d]'s memory, if [memory] is [Mapped] and [d] has none
+      ({!Rig.offers}), or if [n > 0] and [d] is an io device, which makes
+      no memory ({!of_io}), and {!Lost} if [d] is lost or its driver faults
+      during the allocation. *)
 
   val of_string : string -> t
   (** [of_string s] is a buffer on {!host} holding [s]'s bytes, placed as
@@ -1230,17 +1263,20 @@ module Buffer : sig
       The host reads and writes a buffer's bytes in place where it
       {e addresses} the buffer's memory: memory on {!host}, a borrow on
       {!host} included, and memory of a device of this machine that has a
-      host address, such as a {!memory_device}'s. {!read} and {!write} take a
-      read claim on the memory, so that no donation writes it meanwhile
-      ({!Rig.section-claims}), wait for the work the access follows, call
-      their function on the bytes, then release the claim when it returns or
-      raises. The bytes are an array of [length b / Bigarray.kind_size_in_bytes
-      k] elements of kind [k], in the host's byte order, without a copy, and
-      are ordered only during the call. An empty buffer is an empty array,
-      whatever its memory. {!export} waits itself, and {!wait} orders other
-      host code. Host access takes no value and adds no point to the
-      stamps. The blits and {!fill} ({!section-copying}) copy bytes
-      to and from any memory, the host's or not.
+      host address, such as a {!memory_device}'s. {!write} also writes
+      [Mapped] memory of a device of this machine, through its window. {!read}
+      and {!write} take a read claim on the memory, so that no donation
+      writes it meanwhile ({!Rig.section-claims}), wait for the work the
+      access follows, call their function on the bytes, then release the
+      claim when it returns or raises, after the flush of a window {!write}
+      wrote. The bytes are an array of [length b /
+      Bigarray.kind_size_in_bytes k] elements of kind [k], in the host's byte
+      order, without a copy, and are ordered only during the call. An empty
+      buffer is an empty array, whatever its memory. {!export} waits itself,
+      and {!wait} orders other host code. Host access takes no value and
+      adds no point to the stamps. The blits and {!fill}
+      ({!section-copying}) copy bytes to and from any memory, the host's or
+      not.
 
       A wait covers only the work submitted before it returns
       ({!Rig.section-order}), and work submitted while the function of
@@ -1249,9 +1285,10 @@ module Buffer : sig
 
       {!read}, {!write} and {!export} raise [Invalid_argument] if [b] is
       dead, its bytes are not a whole number of elements of [k], [b] has
-      bytes that the host does not address or that do not start at a
-      multiple of the elements' size (of one component's size for complex
-      kinds), or a {!Claim.with_} holds the memory exclusive. *)
+      bytes that the host does not address, other than those of [Mapped]
+      memory for {!write}, or that do not start at a multiple of the
+      elements' size (of one component's size for complex kinds), or a
+      {!Claim.with_} holds the memory exclusive. *)
 
   val wait : t -> access -> unit
   (** [wait b access] returns once the work that a host access [access] of
@@ -1302,10 +1339,18 @@ module Buffer : sig
   (** [write b k f] is [f a], where [a] is [b]'s bytes as elements of [k],
       once every use of [b]'s memory is done. Work submitted after [write]
       returns sees [f]'s writes. [f] must not keep [a] after it returns,
-      since nothing orders a later access through it.
+      since nothing orders a later access through it. For [Mapped] memory,
+      [a] is its window, which the host writes fast and reads slowly. Once
+      [f] returns or raises, [write] flushes the stores the calling thread
+      made through [a] inside [f], and only those: other threads must not
+      write through [a], and a store through [a] after that reaches no later
+      work. A {!Rig.close} of [b]'s device waits for that flush, and one
+      called from [f] raises [Invalid_argument] ({!Rig.close}).
 
       Raises [Invalid_argument] also if [b] admits only [Read]
-      ({!val-access}). *)
+      ({!val-access}), and {!Lost} if [b]'s device is lost before [f] is
+      called or its driver faults in the flush. Where [f] and the flush both
+      raise, [f]'s exception passes. *)
 
   val export :
     t -> ('a, 'b) Bigarray.kind -> ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
@@ -1328,11 +1373,14 @@ module Buffer : sig
       A copy is ordered as work that reads its source and writes its
       destination. Where the host addresses both sides, or one side is an io
       device's memory and the host addresses the other, the host or the io
-      device copies. Otherwise a device copies on its {e copy engine}, the
-      queue that its driver names in [copy_engine] ({!Rig_edge.type-facts}),
-      and the copy takes the next value of that device's timeline
-      ({!Rig.submitted}). On another machine, a device of that machine
-      copies.
+      device copies. The host also copies from memory it addresses into
+      [Mapped] memory of this machine, through its window, which it flushes
+      before the copy returns; a copy out of [Mapped] memory is a device's,
+      as out of [Device] memory. Otherwise a device copies on its
+      {e copy engine}, the queue that its driver names in [copy_engine]
+      ({!Rig_edge.type-facts}), and the copy takes the next value of that
+      device's timeline ({!Rig.submitted}). On another machine, a device of
+      that machine copies.
 
       A borrow of an io device's memory is its pages, whose reads by the
       host or by work are as its io library states once the object behind
@@ -1412,7 +1460,8 @@ module Buffer : sig
       {!submit_fill} and {!fill} set a buffer's bytes. They are ordered as
       copies. Where the host addresses the buffer ({!section-host_access})
       and no io device owns its memory, the host copies or sets the bytes
-      once the work the copy follows is done. Otherwise the blits' bytes pass
+      once the work the copy follows is done, as it writes [Mapped] memory
+      for {!blit_from_string} and the fills. Otherwise the blits' bytes pass
       through staging memory, and a device copies them to or from the buffer
       as {!copy} does. A fill of memory an io device owns is its io library's
       writes from host memory that holds the byte. Any other fill runs on the
@@ -1534,11 +1583,11 @@ module Buffer : sig
   (** [submit_fill ~waits b c] sets every byte of [b] to [c], after the
       points of [waits] (defaults to [[||]]), and is a point that is reached
       once they are set, returned as {!submit_copy} returns it. The host sets
-      the bytes where it addresses [b], and writes them through the io
-      device for an io device's memory. Otherwise the copy engine of [b]'s
-      device sets them, reading no memory, or, where [b] is a borrow on a
-      device that runs no copy, the copy engine of the device whose memory it
-      borrows.
+      the bytes where it addresses [b] or [b] is [Mapped] memory of this
+      machine, and writes them through the io device for an io device's
+      memory. Otherwise the copy engine of [b]'s device sets them, reading
+      no memory, or, where [b] is a borrow on a device that runs no copy,
+      the copy engine of the device whose memory it borrows.
 
       Raises [Invalid_argument] if [b] is dead or admits only [Read], its
       memory is held exclusive, or [b] has bytes, the host does not address
@@ -1560,7 +1609,9 @@ module Buffer : sig
       [rig_buffer_host], [rig_buffer_bytes], [rig_buffer_span] and
       [rig_buffer_why], claims its memory with [rig_buffer_claim] and
       [rig_buffer_release], and waits under the claim with [rig_buffer_wait],
-      which runs {!wait}. All are declared in [rig.h].
+      which runs {!wait}. All are declared in [rig.h]. [rig_buffer_host] is
+      [NULL] for [Mapped] memory, which the host writes only through rig's
+      calls ({!kind}).
 
       Memory is {e handle-only} when its driver names it by a handle and
       gives it no address ({!Rig_edge.location}). *)

@@ -41,12 +41,14 @@
       RM freed its channels ({!Rig_nv.section-faults}). The GPU may then be
       opened again.
 
-    [Pinned] and [Mapped] memory lie at the same address for the host and
-    the GPU. [Mapped] memory lies in the GPU's BAR1, whose size the kernel
-    driver sets. [Device] memory lies at GPU addresses that the process
-    reserves for each allocation, with no access, wherever its address space
-    has room outside the client's reservation, so it may lie above
-    [2{^40}]. Host memory
+    [Pinned] and [Mapped] memory, and the rest of the memory the device
+    places in the GPU's BAR ({!Rig_nv.type-place}), lie at the same address
+    for the host and the GPU. The BAR is BAR1, whose size the kernel driver
+    sets, and which the kernel driver maps write-combined, whatever caching
+    the process asks for. [Device]
+    memory lies at GPU addresses that the process reserves for each
+    allocation, with no access, wherever its address space has room outside
+    the client's reservation, so it may lie above [2{^40}]. Host memory
     that {!Rig_nv.val-map_host} maps lies at a GPU address of its own, since
     the host's address may lie higher. The kernel driver pins those pages
     for writing while they are mapped, for the long term on x86-64. From

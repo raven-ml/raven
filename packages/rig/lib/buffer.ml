@@ -48,6 +48,18 @@ let host_addresses d =
   let h = Dev.host_of d in
   h == d || Dev.reaches h d
 
+(* Whether [d] makes [Mapped] memory: its own where the host addresses it,
+   else its driver's window memory. *)
+let has_mapped d = host_addresses d || d.mapped_memory
+
+let offers d (kind : kind) =
+  (not (Dev.is_io d))
+  &&
+  match kind with
+  | Device -> true
+  | Pinned -> not (host_addresses d)
+  | Mapped -> has_mapped d
+
 (* The host is never lost, so its buffers skip the check. *)
 let create ?(memory = Device) d n =
   Dev.check_held "Buffer.create";
@@ -57,6 +69,9 @@ let create ?(memory = Device) d n =
       "Rig.Buffer.create: the host addresses %s's memory, so it has no \
        Pinned memory; borrow host memory instead (Buffer.borrow)"
       d.name;
+  if memory = Mapped && (not (Dev.is_io d)) && not (has_mapped d) then
+    invalid_argf
+      "Rig.Buffer.create: %s has no Mapped memory (Rig.offers)" d.name;
   if n > 0 && Dev.is_io d then
     invalid_argf
       "Rig.Buffer.create: %s makes no memory; its library gives its buffers \
@@ -75,7 +90,12 @@ let create ?(memory = Device) d n =
         Memory.drain d;
         Memory.make ~address:0 d Memory.no_entry
       end
-      else Memory.alloc d memory n
+      else
+        (* Where the host addresses [d]'s memory, Mapped memory is its own. *)
+        let memory =
+          if memory = Mapped && host_addresses d then Device else memory
+        in
+        Memory.alloc d memory n
     in
     of_memory mem n
   end
@@ -211,6 +231,16 @@ let refuse_unaddressed fn b =
   invalid_argf "Rig.%s: the host does not address the buffer's memory, on %s" fn
     b.mem.alloc.owner.name
 
+(* Whether the host writes [b]'s bytes through a window: [b]'s memory is
+   [Mapped] memory of a device of this machine ([Memory.window]), which the
+   host addresses only inside rig's writes, each flushed after. *)
+let windowed b =
+  Dev.same_machine b.mem.alloc.owner Dev.host && Memory.window b.mem.alloc >= 0
+
+(* [b] over its window, for the host's write of its bytes. *)
+let at_window b =
+  { b with mem = { b.mem with host = Memory.window b.mem.alloc } }
+
 (* Bigarrays *)
 
 external bigarray_view :
@@ -241,12 +271,15 @@ let kind_code (type a b) (k : (a, b) Bigarray.kind) =
   | Bigarray.Char -> 12
   | Bigarray.Float16 -> 13
 
-(* [b]'s bytes as an array of [k], over the memory without a copy. The array
-   keeps the memory alive: the bytes of the allocation's heap, bigarray or
-   proxy. With [export], the memory first leaves the claims for good. *)
-let view_of fn ~export (type a b) (k : (a, b) Bigarray.kind) b :
+(* [b]'s bytes as an array of [k], over the memory without a copy, or over
+   its window with [window] where [b] is [windowed]. The array keeps the
+   memory alive: the bytes of the allocation's heap, bigarray or proxy. With
+   [export], the memory first leaves the claims for good. *)
+let view_of fn ~export ~window (type a b) (k : (a, b) Bigarray.kind) b :
     (a, b, Bigarray.c_layout) Bigarray.Array1.t =
-  if not (host_addressed b) then refuse_unaddressed fn b;
+  let window = window && windowed b in
+  let b = if window then at_window b else b in
+  if not (window || host_addressed b) then refuse_unaddressed fn b;
   let size = Bigarray.kind_size_in_bytes k in
   let unit =
     match k with
@@ -279,13 +312,13 @@ let view_of fn ~export (type a b) (k : (a, b) Bigarray.kind) b :
 
 (* An empty buffer has no byte to address, so its array is a new empty one,
    whatever its memory. An export of one still marks the host's memory. *)
-let array_of fn ~export k b =
+let array_of fn ~export ~window k b =
   check_live fn b;
   if b.length = 0 && not export then
     Bigarray.Array1.create k Bigarray.c_layout 0
-  else view_of fn ~export k b
+  else view_of fn ~export ~window k b
 
-let array fn k b = array_of fn ~export:false k b
+let array ~window fn k b = array_of fn ~export:false ~window k b
 
 let export b k =
   let fn = "Buffer.export" in
@@ -295,7 +328,7 @@ let export b k =
     invalid_argf "Rig.%s: the buffer is %s's memory, not the host's" fn
       b.mem.alloc.owner.name;
   wait b Read_write;
-  array_of fn ~export:true k b
+  array_of fn ~export:true ~window:false k b
 
 (* Strings *)
 

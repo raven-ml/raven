@@ -162,6 +162,7 @@ module Driver = struct
       hang_ms = None;
       maps_host = true;
       host_addresses = true;
+      mapped = false;
       (* [alloc] rounds each region's start up to 64 bytes. *)
       alignment = 64;
       cache_bytes = None;
@@ -200,6 +201,7 @@ module Driver = struct
   let map_host _ p _ = Rig_edge.Maps { at = p; raw = 0 }
 
   let dma _ _ ~fn:_ = Error "late gives no driver its memory"
+  let flush _ = ()
   let image _ _ = Error "late loads no code"
   let entry () _ = Rig_edge.Absent
   let prepare () _ = ()

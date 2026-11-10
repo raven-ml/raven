@@ -55,10 +55,11 @@ let get b =
 
 let both = Rig_gpu_support.both
 
-(* [memory] as [d] has it: [Pinned] drawn for a device whose memory the host
-   addresses is its own memory, as it has no Pinned memory. *)
+(* [memory] as [d] has it: a kind [d] makes none of ({!Rig.offers}), such
+   as Pinned memory where the host addresses [d]'s memory, is its Device
+   memory. *)
 let has d (memory : B.kind) =
-  if memory = Pinned && Rig.reaches Rig.host d then B.Device else memory
+  if Rig.offers d memory then memory else B.Device
 
 (* A buffer of [d]'s memory [memory] holding [s]. *)
 let filled ?memory d s =
@@ -218,7 +219,7 @@ let facts (module G : Gpu) () =
   is_some ~msg:"the word's host address" (G.D.locate f.word).host;
   equal int ~msg:"the word at open" (Rig.submitted t.d) (G.D.signaled t.g);
   (* Whether memory [memory] has a host address; [None] where the driver makes
-     none of it, as [Mapped] may be, which rig then allocates [Pinned]. *)
+     none of it. *)
   let host memory =
     match G.D.alloc t.g memory 64 with
     | None -> None
@@ -229,9 +230,16 @@ let facts (module G : Gpu) () =
   in
   equal (option bool) ~msg:"Pinned memory's host address" (Some true)
     (host Pinned);
-  (match host Mapped with
-  | Some h -> equal bool ~msg:"Mapped memory's host address" true h
-  | None -> ());
+  if f.mapped then
+    equal (option bool) ~msg:"Mapped memory's host address" (Some true)
+      (host Mapped);
+  equal bool ~msg:"Rig.offers Mapped"
+    (f.mapped || f.host_addresses)
+    (Rig.offers t.d Mapped);
+  if not (Rig.offers t.d Mapped) then
+    raises_match ~msg:"Mapped memory where none is offered"
+      (Exn.invalid_arg ~sub:"no Mapped memory") (fun () ->
+        B.create ~memory:Mapped t.d 64);
   equal bool ~msg:"Rig.reaches host" f.host_addresses (Rig.reaches Rig.host t.d);
   if f.host_addresses then
     equal (option bool) ~msg:"Device memory's host address" (Some true)
@@ -255,7 +263,7 @@ let facts (module G : Gpu) () =
   in
   List.iter
     (fun memory -> List.iter (starts memory) [ 1; 17; 255; 4097; 1 lsl 20 ])
-    Rig_edge.[ Device; Pinned; Mapped ]
+    (Rig_edge.[ Device; Pinned ] @ if f.mapped then [ Mapped ] else [])
 
 (* Each kind no queue of the device runs is refused by make, and no value is
    assigned. *)
@@ -1546,6 +1554,72 @@ let launch_order (module G : Gpu) =
       (Array.init n (fun k -> 7 + (3 * k)))
       (words (get o) ~at:0 n)
 
+(* Mapped memory *)
+
+(* Where the driver makes Mapped memory, a launch after each host write of
+   it reads that write, and a copy out of it, which runs on the copy engine,
+   reads the last: Buffer.write, a second Buffer.write, blit_from_string, a
+   copy from host memory and fill. Where the host does not address the
+   device's memory, it neither reads nor borrows Mapped memory. *)
+let mapped_writes (module G : Gpu) =
+  let launcher = launcher (module G) in
+  fun () ->
+    G.with_ @@ fun t ->
+    let f = G.D.facts t.g in
+    if not f.mapped then skip ~reason:"the driver makes no Mapped memory" ();
+    if f.copy_engine = None then
+      skip ~reason:"the device has no copy engine" ();
+    let l = launches_on launcher t in
+    let n = 16384 in
+    let m = B.create ~memory:Mapped t.d (4 * n) in
+    let write k =
+      B.write m Bigarray.int32 (fun a ->
+          for i = 0 to n - 1 do
+            a.{i} <- Int32.of_int ((k * i) + 1)
+          done)
+    in
+    let launched () =
+      let dst = filled t.d (String.make (4 * n) '\000') in
+      Rig.Point.wait
+        (submit t.d
+           [ twice l ~dst ~src:m n ~offset:0 ~c:1 ]
+           ~uses:[ (m, Rig.Read); (dst, Rig.Read_write) ]);
+      words (get dst) ~at:0 n
+    in
+    let doubled g = Array.init n (fun i -> u32 ((2 * g i) + 1)) in
+    write 3;
+    equal (array int) ~msg:"a launch after a write"
+      (doubled (fun i -> (3 * i) + 1))
+      (launched ());
+    write 5;
+    equal (array int) ~msg:"a launch after a rewrite"
+      (doubled (fun i -> (5 * i) + 1))
+      (launched ());
+    equal (array int) ~msg:"a copy out after the rewrite"
+      (Array.init n (fun i -> (5 * i) + 1))
+      (words (get m) ~at:0 n);
+    let p = le32s n (fun i -> (7 * i) + 2) in
+    B.blit_from_string p 0 m 0 (4 * n);
+    equal (array int) ~msg:"a launch after blit_from_string"
+      (doubled (fun i -> (7 * i) + 2))
+      (launched ());
+    equal octets ~msg:"a copy out after blit_from_string" p (get m);
+    let q = le32s n (fun i -> (11 * i) + 3) in
+    B.copy ~src:(B.of_string q) ~dst:m;
+    equal (array int) ~msg:"a launch after a copy in"
+      (doubled (fun i -> (11 * i) + 3))
+      (launched ());
+    equal octets ~msg:"a copy out after a copy in" q (get m);
+    B.fill m '\x01';
+    equal (array int) ~msg:"a launch after fill"
+      (doubled (fun _ -> 0x01010101))
+      (launched ());
+    if not f.host_addresses then begin
+      raises_match ~msg:"Buffer.read" Exn.invalid_arg (fun () ->
+          B.read m Bigarray.char Bigarray.Array1.dim);
+      is_none ~msg:"a borrow on the host" (B.borrow Rig.host m)
+    end
+
 (* Workspace *)
 
 (* Launches through one workspace, each over its first [k] KiB: a part copies
@@ -2003,7 +2077,7 @@ let peers (module G : Gpu) () =
   G.D.free g' h;
   G.D.free g' d
 
-(* A device that views another's Mapped memory submits as before once the
+(* A device that views another's Device memory submits as before once the
    other has stopped: nothing the viewer's submissions read goes with the
    other's stop. *)
 let views_past_stop (module G : Gpu) () =
@@ -2017,20 +2091,17 @@ let views_past_stop (module G : Gpu) () =
     end
   in
   Fun.protect ~finally:stop @@ fun () ->
-  match G.D.alloc g' Mapped 4096 with
-  | None -> skip ~reason:"the second device has no Mapped memory" ()
-  | Some m -> (
-      match G.D.map_peer t.g g' m with
-      | Never | No_room ->
-          G.D.free g' m;
-          skip ~reason:"the device does not view the second's Mapped memory"
-            ()
-      | Maps v ->
-          Rig.Point.wait (empty_point t.d);
-          stop ();
-          Rig.Point.wait (empty_point t.d);
-          G.D.free t.g v;
-          G.D.free g' m)
+  let m = require_some (G.D.alloc g' Device 4096) in
+  match G.D.map_peer t.g g' m with
+  | Never | No_room ->
+      G.D.free g' m;
+      skip ~reason:"the device does not view the second's Device memory" ()
+  | Maps v ->
+      Rig.Point.wait (empty_point t.d);
+      stop ();
+      Rig.Point.wait (empty_point t.d);
+      G.D.free t.g v;
+      G.D.free g' m
 
 (* [Rig.reaches] between two devices of the driver answers from what they
    learned when they opened: the same once either is closed. *)
@@ -2297,6 +2368,8 @@ let laws (module G : Gpu) =
         (extra_params g);
       test "a value's launches start once every earlier value's work completed"
         (launch_order g);
+      test "a launch and a copy out read each host write of Mapped memory"
+        (mapped_writes g);
       prop ~count:30 "a launch reads what its submission wrote into a workspace"
         launches (workspace g);
       test "an image names its kernels, and bytes no binary are an error"
@@ -2329,7 +2402,7 @@ let laws (module G : Gpu) =
       test "work runs after another device's point it waits for"
         (device_waits g);
       test "peer is whether map_peer maps Device memory" (peers g);
-      test "a device viewing another's Mapped memory submits after its stop"
+      test "a device viewing another's Device memory submits after its stop"
         (views_past_stop g);
       test "reaches between two devices answers the same once they close"
         (reaches_closed g);

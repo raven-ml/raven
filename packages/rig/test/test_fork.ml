@@ -24,12 +24,12 @@ let status = function
   | Unix.WSIGNALED n -> "killed by " ^ Sys.signal_to_string n
   | Unix.WSTOPPED n -> "stopped by " ^ Sys.signal_to_string n
 
-(* Runs [child] in a forked child and is what it returned: the child writes its
-   answer to a pipe and leaves without running this process's exit. *)
-let in_child child =
-  let r, w = Unix.pipe () in
-  Support.needs_fork ();
-  match Unix.fork () with
+(* After a fork that returned [pid], runs [child] in the child and is what
+   it returned, with the child's status: the child writes its answer to the
+   pipe [(r, w)] made before the fork and leaves without running this
+   process's exit. *)
+let answer (r, w) pid child =
+  match pid with
   | 0 ->
       Unix.close r;
       let lines = try child () with e -> [ Printexc.to_string e ] in
@@ -44,6 +44,12 @@ let in_child child =
       close_in ic;
       let _, status = Unix.waitpid [] pid in
       (lines, status)
+
+(* Runs [child] in a forked child, as [answer] does. *)
+let in_child child =
+  let pipe = Unix.pipe () in
+  Support.needs_fork ();
+  answer pipe (Unix.fork ()) child
 
 (* The child sees the device lost, calls no driver function and reads no word:
    memory dropped in it stays, even once the word reads every submitted value,
@@ -536,6 +542,81 @@ let test_word_maps () =
   equal ~msg:"the word's frees once the consumer closed" int 1 (P.word_frees p);
   equal ~msg:"Polled's violations" (list string) [] (P.violations ())
 
+(* A child forked inside the function of a write of Mapped memory makes no
+   driver call on the device, which is the parent's, and ends the write with
+   its counts at 0, so it closes a device of its own. The parent's write
+   flushes once. *)
+let test_mapped_write () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  Support.needs_fork ();
+  let d, p = P.open_ ~host_visible:false "fork:mapped-write" in
+  let m = B.create ~memory:Mapped d 64 in
+  let calls = P.log p in
+  let pipe = Unix.pipe () in
+  let pid =
+    B.write m Bigarray.char (fun a ->
+        a.{0} <- 'w';
+        Unix.fork ())
+  in
+  let lines, ended =
+    answer pipe pid (fun () ->
+        let n = List.length calls in
+        let since = List.filteri (fun i _ -> i >= n) (P.log p) in
+        let counted = Support.counted () in
+        let own = Result.get_ok (Rig.memory_device "fork:mapped-own") in
+        Rig.close own;
+        [
+          Printf.sprintf "driver calls since the fork: %s"
+            (String.concat " " since);
+          Printf.sprintf "counted calls: %d" counted;
+          Printf.sprintf "its own device closed: %b" (Rig.lost own <> None);
+        ])
+  in
+  equal string "exited 0" (status ended);
+  equal (list string)
+    [
+      "driver calls since the fork: ";
+      "counted calls: 0";
+      "its own device closed: true";
+    ]
+    lines;
+  equal ~msg:"the parent's flushes" (list string) [ "flush" ]
+    (List.filter (String.equal "flush") (P.log p))
+
+(* A child forked by a callback inside a driver's counted call, here an
+   allocation's, ends that call with its counts at 0, so it closes a device
+   of its own. *)
+let test_counted_call () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  Support.needs_fork ();
+  let d, p = P.open_ ~host_visible:false "fork:counted-call" in
+  let pipe = Unix.pipe () in
+  let pid = ref (-1) in
+  P.before p "alloc" (fun () -> pid := Unix.fork ());
+  let made =
+    match B.create d 64 with
+    | b ->
+        ignore (Sys.opaque_identity b);
+        "made"
+    | exception Rig.Lost _ -> "lost"
+  in
+  let lines, ended =
+    answer pipe !pid (fun () ->
+        let counted = Support.counted () in
+        let own = Result.get_ok (Rig.memory_device "fork:counted-own") in
+        Rig.close own;
+        [
+          Printf.sprintf "counted calls: %d" counted;
+          Printf.sprintf "its own device closed: %b" (Rig.lost own <> None);
+        ])
+  in
+  equal string "exited 0" (status ended);
+  equal (list string)
+    [ "counted calls: 0"; "its own device closed: true" ]
+    lines;
+  equal ~msg:"the parent's allocation" string "made" made;
+  equal ~msg:"the parent's counted calls" int 0 (Support.counted ())
+
 let tests =
   [
     group ~timeout "fork"
@@ -566,6 +647,10 @@ let tests =
           test_keep_drained;
         test "a forked child gives back no word its parent's devices hold"
           test_word_maps;
+        test "a child forked inside a write of Mapped memory calls no driver"
+          test_mapped_write;
+        test "a child forked inside a driver's counted call ends no count"
+          test_counted_call;
       ];
   ]
 

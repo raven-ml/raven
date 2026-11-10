@@ -382,6 +382,24 @@ static _Atomic(char *) failed;
    included, and not yet ended ([rig_counted] in rig.h). */
 static _Thread_local int counted_here;
 
+/* The writes of Mapped memory whose function the calling thread runs
+   ([Dev.stores]): a close there would wait for its own write's count. */
+static _Thread_local int storing_here;
+
+/* The counted calls the calling thread was inside when it forked this
+   process, which the child's fork forgot ([forked_child]). A thread ends
+   its counts in the order opposite to their starts, so the first ends it
+   makes once its own counts in the child ended are theirs. */
+static _Thread_local int forgotten_here;
+
+/* Whether the count the calling thread ends is one its fork forgot, which
+   ends nothing: the child's devices never held it. */
+static int forgotten(void) {
+  if (counted_here > 0 || forgotten_here == 0) return 0;
+  forgotten_here--;
+  return 1;
+}
+
 /* The reasons no line owns: a fork's, and the one a loss keeps when its own
    could not be copied. Windows has no fork. */
 #ifndef _WIN32
@@ -426,6 +444,7 @@ static void forked_child(void) {
     mutex_init(&l->mu);
     cond_init(&l->cv);
   }
+  forgotten_here += counted_here;
   counted_here = 0;
   int n = atomic_load(&top);
   for (int i = 0; i <= n; i++) {
@@ -980,6 +999,7 @@ static void spread(struct rig_device *p, char *shared) {
    lock is released here, after the caller read its values. */
 static int lose_ending(struct rig_device *d, char *why, int own, int counts,
                        int fault, int ending) {
+  if (ending && forgotten()) ending = 0;
   caml_enter_blocking_section_no_pending();
   mu_lock(d);
   int won = lose_locked(d, why, own, counts);
@@ -1002,6 +1022,7 @@ static int lose_ending(struct rig_device *d, char *why, int own, int counts,
 /* Ends a counted call on [d] that loses nothing. The last one out of an
    owed device wakes a close waiting to claim its stop. */
 static void leave_count(struct rig_device *d) {
+  if (forgotten()) return;
   int released = take(d);
   counted_here--;
   if (--d->inside == 0 && state(d) == RIG_OWED) cv_broadcast(d);
@@ -1203,6 +1224,16 @@ value caml_rig_counted(value unit) {
   return Val_int(counted_here);
 }
 
+value caml_rig_storing(value v_delta) {
+  storing_here += Int_val(v_delta);
+  return Val_unit;
+}
+
+value caml_rig_stores(value unit) {
+  (void)unit;
+  return Val_int(storing_here);
+}
+
 /* Ends a counted call on [d]. */
 value caml_rig_exit(value v_d) {
   leave_count(Device_val(v_d));
@@ -1309,8 +1340,10 @@ static void end_turn(struct rig_device *d) {
   if (!d->may_block) return;
   mu_lock(d);
   d->turn = 0;
-  d->inside--;
-  counted_here--;
+  if (!forgotten()) {
+    d->inside--;
+    counted_here--;
+  }
   cv_broadcast(d);
 }
 

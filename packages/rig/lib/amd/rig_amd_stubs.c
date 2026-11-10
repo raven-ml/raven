@@ -11,7 +11,6 @@
 #define _GNU_SOURCE
 
 #include <pthread.h>
-#include <sched.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -108,44 +107,17 @@ static int queue_of(value v_q) {
   return q;
 }
 
-/* The live edges, linked from their create to their end, under [edges_mu],
-   which no one takes while holding an edge's [hdp_mu]. */
-static pthread_mutex_t edges_mu = PTHREAD_MUTEX_INITIALIZER;
-static struct rig_amd_edge *edges = NULL;
-
-static void link_edge(struct rig_amd_edge *e) {
-  pthread_mutex_lock(&edges_mu);
-  e->next = edges;
-  edges = e;
-  pthread_mutex_unlock(&edges_mu);
-}
-
-static void unlink_edge(struct rig_amd_edge *e) {
-  pthread_mutex_lock(&edges_mu);
-  struct rig_amd_edge **at = &edges;
-  while (*at != NULL && *at != e) at = &(*at)->next;
-  if (*at == e) *at = e->next;
-  pthread_mutex_unlock(&edges_mu);
-}
-
 value caml_rig_amd_create(value unit) {
   (void)unit;
   struct rig_amd_edge *e = calloc(1, sizeof *e);
   struct rig_amd *d = calloc(1, sizeof *d);
-  if (e == NULL || d == NULL || pthread_mutex_init(&e->hdp_mu, NULL) != 0) {
-    free(e);
-    free(d);
-    caml_raise_out_of_memory();
-  }
-  if (pthread_mutex_init(&d->grown_mu, NULL) != 0) {
-    pthread_mutex_destroy(&e->hdp_mu);
+  if (e == NULL || d == NULL || pthread_mutex_init(&d->grown_mu, NULL) != 0) {
     free(e);
     free(d);
     caml_raise_out_of_memory();
   }
   e->driver = &driver;
   e->d = d;
-  link_edge(e);
   return Val_long((intnat)e);
 }
 
@@ -153,11 +125,8 @@ value caml_rig_amd_create(value unit) {
    word of its own. */
 value caml_rig_amd_end(value v_self) {
   struct rig_amd_edge *e = Edge_val(v_self);
-  unlink_edge(e);
-  pthread_mutex_lock(&e->hdp_mu);
   struct rig_amd *d = e->d;
   e->d = NULL;
-  pthread_mutex_unlock(&e->hdp_mu);
   rig_amd_counting_free(d->counting);
   free(d->grown);
   pthread_mutex_destroy(&d->grown_mu);
@@ -168,12 +137,10 @@ value caml_rig_amd_end(value v_self) {
 /* Frees the state of a device whose open failed: nothing holds it. */
 value caml_rig_amd_destroy(value v_self) {
   struct rig_amd_edge *e = Edge_val(v_self);
-  unlink_edge(e);
   rig_amd_counting_free(e->d->counting);
   free(e->d->grown);
   pthread_mutex_destroy(&e->d->grown_mu);
   free(e->d);
-  pthread_mutex_destroy(&e->hdp_mu);
   free(e);
   return Val_unit;
 }
@@ -630,89 +597,35 @@ value caml_rig_amd_window(value v_self, value v_w) {
   return Val_unit;
 }
 
-/* The device's own HDP register, the path's, which takes the first entry
-   for good with no region counted, so that the device's own [Mapped] memory
-   always finds one and views of other GPUs' take at most the rest. */
+/* The device's HDP register, the path's, set at open before any
+   submission. */
 value caml_rig_amd_set_hdp(value v_self, value v_reg) {
-  struct rig_amd_edge *e = Edge_val(v_self);
-  volatile uint32_t *reg = Host_val(v_reg);
-  e->d->hdps[0].src = e;
-  atomic_store_explicit(&e->d->hdps[0].reg, reg, memory_order_release);
-  atomic_store_explicit(&e->hdp, reg, memory_order_release);
+  Edge_val(v_self)->d->hdp = Host_val(v_reg);
   return Val_unit;
 }
 
-/* Adds [delta] to the regions of [d] that need [src]'s HDP register flushed,
-   taking a free entry for a new register: [0] if none is free, or if [src]
-   has stopped. A count down of a register that [src]'s stop took out counts
-   nothing. The caller holds [d]'s edge's [hdp_mu]. */
-static int count_hdp(struct rig_amd *d, const struct rig_amd_edge *src,
-                     int delta) {
-  struct rig_amd_hdp *free = NULL;
-  for (int i = 0; i < RIG_AMD_HDPS; i++) {
-    struct rig_amd_hdp *h = &d->hdps[i];
-    if (h->src == src) {
-      atomic_fetch_add_explicit(&h->count, delta, memory_order_acq_rel);
-      return 1;
-    }
-    if (free == NULL && i > 0 &&
-        (atomic_load(&h->reg) == NULL || atomic_load(&h->count) == 0))
-      free = h;
+/* Rig_amd.flush: the calling thread's earlier stores through the memory BAR
+   reach the GPU's memory before it returns. The full barrier drains the
+   thread's write-combining buffers before the store to the HDP register,
+   whose read back returns once the HDP wrote out what it held, as
+   hand_over's flush does. rig counts the call, so the device's stop, after
+   which the path may unmap the register, never runs during it. */
+value caml_rig_amd_flush(value v_self) {
+  struct rig_amd *d = Edge_val(v_self)->d;
+  if (d->hdp != NULL) {
+    rig_amd_barrier();
+    d->hdp[0] = 0;
+    (void)d->hdp[0];
   }
-  if (delta < 0) return 1;
-  volatile uint32_t *reg =
-      atomic_load_explicit(&src->hdp, memory_order_seq_cst);
-  if (free == NULL || reg == NULL) return 0;
-  free->src = src;
-  atomic_store_explicit(&free->reg, reg, memory_order_release);
-  atomic_store_explicit(&free->count, delta, memory_order_release);
-  return 1;
+  return Val_unit;
 }
 
-/* [count_hdp] on [v_self] of [v_src]'s register, each of whose stops may run
-   on another domain: [true] once [v_self] has stopped. */
-value caml_rig_amd_hdp(value v_self, value v_src, value v_delta) {
-  struct rig_amd_edge *e = Edge_val(v_self);
-  pthread_mutex_lock(&e->hdp_mu);
-  int counted =
-      e->d == NULL || count_hdp(e->d, Edge_val(v_src), Int_val(v_delta));
-  pthread_mutex_unlock(&e->hdp_mu);
-  return Val_bool(counted);
-}
-
-/* Takes [v_self]'s HDP register out of every other live device's entries,
-   before its path unmaps it, and returns once no submission may still store
-   to it. [hdp] goes first, so no entry for the register starts after its
-   walk (count_hdp reads it under the same lock), and each submission either
-   reads the entry's register as NULL or set [flushing] before this reads it
-   (hand_over). A device's [hdp_mu] keeps its state from its end. */
-value caml_rig_amd_drop(value v_self) {
-  struct rig_amd_edge *self = Edge_val(v_self);
-  if (atomic_exchange_explicit(&self->hdp, NULL, memory_order_seq_cst) ==
-      NULL)
-    return Val_unit;
-  pthread_mutex_lock(&edges_mu);
-  for (struct rig_amd_edge *e = edges; e != NULL; e = e->next) {
-    if (e == self) continue;
-    pthread_mutex_lock(&e->hdp_mu);
-    struct rig_amd *d = e->d;
-    int took = 0;
-    for (int i = 1; d != NULL && i < RIG_AMD_HDPS; i++) {
-      struct rig_amd_hdp *h = &d->hdps[i];
-      if (h->src != self) continue;
-      h->src = NULL;
-      atomic_store_explicit(&h->count, 0, memory_order_relaxed);
-      atomic_store_explicit(&h->reg, NULL, memory_order_relaxed);
-      took = 1;
-    }
-    if (took) {
-      rig_amd_barrier();
-      while (atomic_load_explicit(&d->flushing, memory_order_acquire))
-        sched_yield();
-    }
-    pthread_mutex_unlock(&e->hdp_mu);
-  }
-  pthread_mutex_unlock(&edges_mu);
+/* Adds [v_delta] to the regions of [v_self] another function was given
+   ([Rig_amd.dma]), whose writes reach the GPU's memory through its host data
+   path: a submission flushes that path while any is counted (hand_over). */
+value caml_rig_amd_given(value v_self, value v_delta) {
+  struct rig_amd *d = Edge_val(v_self)->d;
+  atomic_fetch_add_explicit(&d->given, Int_val(v_delta), memory_order_acq_rel);
   return Val_unit;
 }
 

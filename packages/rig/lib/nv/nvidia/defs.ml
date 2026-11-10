@@ -113,6 +113,7 @@ let nvos32_type_notifier = 0xd
 let nvos33_flags_caching_type_cached = 0
 let nvos33_flags_caching_type_uncached = 1
 let nvos33_flags_caching_type_writecombined = 2
+let nvos33_flags_caching_type_default = 6
 let nv0000_ctrl_cmd_system_get_build_version_v2 = 0x13e
 let nv0000_ctrl_cmd_gpu_get_id_info_v2 = 0x205
 let nv0080_ctrl_cmd_gpu_get_classlist = 0x800201

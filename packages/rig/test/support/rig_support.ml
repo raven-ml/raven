@@ -182,6 +182,7 @@ module Driver = struct
     mutable word_at : int;  (** The word's host address. *)
     copies : bool;
     host_visible : bool;
+    makes_mapped : bool;
     addresses : bool;
     transport : bool;
     peers : bool;
@@ -288,6 +289,7 @@ module Driver = struct
       hang_ms = d.hang_ms;
       maps_host = d.maps_host;
       host_addresses = d.host_visible && not d.transport;
+      mapped = d.makes_mapped;
       alignment = d.alignment;
       cache_bytes = d.cache_bytes;
       counters = d.counters;
@@ -457,6 +459,11 @@ module Driver = struct
         }
     end
 
+  (* Its windows are host memory, which needs no flush. *)
+  let flush d =
+    note d "flush";
+    run_before d "flush"
+
   (* Its memory reaches a function at its own addresses. *)
   let dma d r ~fn:_ =
     if counted d "dma" then Error "Polled: dma refused"
@@ -602,8 +609,9 @@ module Polled = struct
   include Driver
 
   let make ?(capacity = 1024) ?grows ?(copies = true)
-      ?(host_visible = true) ?(addresses = true) ?(transport = false)
-      ?(peers = true) ?(maps_host = true) ?(alignment = 4096) ?cache_bytes
+      ?(host_visible = true) ?(mapped = true) ?(addresses = true)
+      ?(transport = false) ?(peers = true) ?(maps_host = true)
+      ?(alignment = 4096) ?cache_bytes
       ?(counters = []) ?(budget = 1 lsl 30) ?(memory = max_int)
       ?(window = max_int)
       ?(may_block = false) ?(completion = `Host) ?(waits_on = [])
@@ -624,6 +632,7 @@ module Polled = struct
         word_at = polled_word_at c;
         copies;
         host_visible;
+        makes_mapped = mapped;
         addresses;
         transport;
         peers;
@@ -684,12 +693,12 @@ module Polled = struct
       make = (fun ~word -> Ok (bind ?start d ~word));
     }
 
-  let open_ ?capacity ?grows ?copies ?host_visible ?addresses
+  let open_ ?capacity ?grows ?copies ?host_visible ?mapped ?addresses
       ?transport ?peers ?maps_host ?alignment ?cache_bytes ?budget ?memory
       ?window ?may_block ?completion ?waits_on ?answer ?runs ?lag ?hang_ms ?bus
       ?arch name =
     let p =
-      make ?capacity ?grows ?copies ?host_visible ?addresses
+      make ?capacity ?grows ?copies ?host_visible ?mapped ?addresses
         ?transport ?peers ?maps_host ?alignment ?cache_bytes ?budget ?memory
         ?window ?may_block ?completion ?waits_on ?answer ?runs ?lag ?hang_ms
         ?bus ?arch ()

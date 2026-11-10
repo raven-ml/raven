@@ -64,23 +64,34 @@ let wait fn (access : access) b =
       Memory.claim_drop b;
       Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
-(* Host access to [b]'s bytes under a read claim: [f] runs on them once the
-   work [access] follows is done, and the claim ends as [f] returns or
-   raises. *)
-let scope fn access b k f =
-  wait fn access b;
-  match Buffer.array fn k b with
+let stored fn b f x =
+  wait fn Read_write b;
+  match Memory.stored b.mem.alloc f x with
+  | r ->
+      Memory.claim_drop b;
+      r
   | exception e ->
       Memory.claim_drop b;
       Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
-  | a -> (
-      match f a with
-      | r ->
-          Memory.claim_drop b;
-          r
-      | exception e ->
-          Memory.claim_drop b;
-          Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
+
+(* Host access to [b]'s bytes under a read claim: [f] runs on them once the
+   work [access] follows is done, and the claim ends as [f] returns or
+   raises. A write of [Mapped] memory runs on its window, its stores and the
+   flush after them one counted call, so a signal pending as [f] ends lands
+   after the flush. *)
+let scope fn access b k f =
+  wait fn access b;
+  let window = access = Read_write && Buffer.windowed b in
+  match
+    let a = Buffer.array ~window fn k b in
+    if window then Memory.stored b.mem.alloc f a else f a
+  with
+  | r ->
+      Memory.claim_drop b;
+      r
+  | exception e ->
+      Memory.claim_drop b;
+      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
 let read_bytes b k f =
   Dev.check_held "Buffer.read";
