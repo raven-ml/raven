@@ -97,6 +97,10 @@ An item leaves when its library fixes it, or when a design decides it stays.
   simpler layout than packed rows (today 1.9-98× slower).
 - Attention-probability dropout composes from existing ops, which is the
   dense path; a fused form is a speed item, not a missing capability.
+- `Rune.remat` inside a scan of two or more trips loses its memory saving
+  (89.1 MB with remat against 94.4 MB without; 43.0 MB at one trip), and
+  accumulating gradients in a scan's carry holds a second gradient buffer
+  (20 B/param, not 16). Found by the M4 skeptic; a fix track is open.
 - Each new pixel count or sequence length compiles again: 191 small cases
   took 100 s cold on the host (Clang, one process per kernel), and the
   port's length buckets will meet the same cost.
