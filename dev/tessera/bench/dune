@@ -9,7 +9,9 @@
 (executable
  (name bench_tessera)
  (libraries
+  tessera
   nx
+  nx.ragged
   rig
   rig.cuda
   rig.nv.nvidia

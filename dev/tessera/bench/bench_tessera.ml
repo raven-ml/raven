@@ -5,18 +5,19 @@
 
 (* raven's operations at TESSERA's shapes: every product of the four v2 students
    and of the 2B teacher, their attention, layer norm and softmax pooling, and
-   the products, attention and GRU pooling of a training step. A pixel is a
-   sequence of T observations, so a product has pixels × T rows. The students
-   run in float32, the teacher in bfloat16; a training case runs the forward
-   pass and the backward one, a pullback of a drawn cotangent.
+   the products, attention and GRU pooling of a training step; and each
+   student's embedding of a synthetic tile, end to end. A pixel is a sequence of
+   T observations, so a product has pixels × T rows. The students run in
+   float32, the teacher in bfloat16; a training case runs the forward pass and
+   the backward one, a pullback of a drawn cotangent.
 
    A case runs on the device TESSERA_DEVICE names: the host's eager kernels
    (cpu), or compiled by [Rune.jit] on the host (cpu-jit), a CUDA, NV, AMD or
    Metal GPU. Its inputs are normal draws made where it computes, and each call
    waits for its results. [rates] reports each case's time per call with its
-   rate in TFLOP/s and GB/s. A forward and backward pass counts three forward
-   passes of FLOPs, and its bytes are those of the arrays it reads and writes
-   once. *)
+   rate in TFLOP/s and GB/s, or pixels per second end to end, and the words it
+   allocates. A forward and backward pass counts three forward passes of FLOPs,
+   and its bytes are those of the arrays it reads and writes once. *)
 
 let f32 = Nx.float32
 let bf16 = Nx.bfloat16
@@ -45,6 +46,7 @@ type case = {
   shape : string; (* the fields shapes.json gives the case *)
   flops : float;
   bytes : float;
+  pixels : int; (* the pixels a call embeds, 0 for an operation *)
   call : make;
 }
 
@@ -115,6 +117,7 @@ let gemm name ~m ~k ~n ?(pass = Fwd) p =
         (precision_name p) (pass_name pass);
     flops = 2. *. fl m *. fl k *. fl n *. passes pass;
     bytes = size p *. fl ((m * k) + (k * n) + (m * n)) *. traffic pass;
+    pixels = 0;
     call = precise p make;
   }
 
@@ -175,6 +178,7 @@ let attention name ~batch ~len ~head_dim ?(bias = false) ?(pass = Fwd) p =
         batch heads len head_dim bias (precision_name p) (pass_name pass);
     flops = fl qkvo *. fl len *. passes pass;
     bytes = ((size p *. fl qkvo) +. (4. *. fl (batch * len))) *. traffic pass;
+    pixels = 0;
     call = precise p make;
   }
 
@@ -197,6 +201,7 @@ let layernorm name ~rows ~d =
     shape = Printf.sprintf "op=layernorm rows=%d d=%d dtype=f32 pass=fwd" rows d;
     flops = 0.;
     bytes = 8. *. fl (rows * d);
+    pixels = 0;
     call = { make };
   }
 
@@ -217,15 +222,16 @@ let softmax_pool name ~batch ~len ~d =
         batch len d;
     flops = 0.;
     bytes = 4. *. fl ((batch * len * (d + 1)) + (batch * d));
+    pixels = 0;
     call = { make };
   }
 
-(* v1's pooling: a GRU runs over the steps of the encoder's output [x], of
-   shape [[batch; len; d]]. Its reset gate applies before the candidate's
-   product: [tanh (W_ih x + W_hh (r ∘ h) + b_h)]. Its states, normalised,
-   score each step, and the softmax of the scores weighs [x]. The input
-   products of the three gates are one product over every step, the hidden
-   products of the reset and update gates one per step. *)
+(* v1's pooling: a GRU runs over the steps of the encoder's output [x], of shape
+   [[batch; len; d]]. Its reset gate applies before the candidate's product:
+   [tanh (W_ih x + W_hh (r ∘ h) + b_h)]. Its states, normalised, score each
+   step, and the softmax of the scores weighs [x]. The input products of the
+   three gates are one product over every step, the hidden products of the reset
+   and update gates one per step. *)
 module Gru_pool = struct
   type ('a, 'd) t = {
     input : ('a, 'd) Kaun.Linear.t;
@@ -303,6 +309,7 @@ let gru_pool name ~batch ~len ~d =
     (* The six d × d products a step, on each step of each pixel. *)
     flops = 12. *. fl (d * d) *. fl (batch * len) *. passes Fwd_bwd;
     bytes = 4. *. fl ((batch * len * d) + (batch * d)) *. traffic Fwd_bwd;
+    pixels = 0;
     call = { make };
   }
 
@@ -412,13 +419,125 @@ let barlow_twins ~pixels =
       gru_pool "train/v1/gru_pool/T40" ~batch:pixels ~len:40 ~d;
     ]
 
-(* Every case, with each count of pixels divided by [shrink]. *)
-let cases ~shrink =
+(* End to end *)
+
+(* The pixels of a synthetic tile: each pixel's counts of observations drawn as
+   the oracle's tiles draw them, Sentinel-2 n ~ Poisson (Gamma (4, 38/4)) and
+   Sentinel-1 n ~ Poisson (Gamma (9, 60/9)) (m0's make_tiles.py), with values
+   near the bands' means. *)
+let tile ~pixels =
+  let rng = Random.State.make [| 500 |] in
+  let uniform () = 1. -. Random.State.float rng 1. in
+  let gamma k theta =
+    let s = ref 0. in
+    for _ = 1 to k do
+      s := !s -. Float.log (uniform ())
+    done;
+    !s *. theta
+  in
+  let poisson l =
+    let limit = Float.exp (-.l) and k = ref 0 and p = ref (uniform ()) in
+    while !p > limit do
+      incr k;
+      p := !p *. uniform ()
+    done;
+    !k
+  in
+  let draw lo hi = lo + Random.State.int rng (hi - lo + 1) in
+  let rows dt counts cell =
+    let total = Array.fold_left ( + ) 0 counts in
+    let c = Array.length (cell 0 0) in
+    let values = Array.make (total * c) 0 in
+    let at = ref 0 in
+    Array.iter
+      (fun n ->
+        for k = 0 to n - 1 do
+          Array.iteri (fun i v -> values.((!at * c) + i) <- v) (cell n k);
+          incr at
+        done)
+      counts;
+    Nx_ragged.of_lengths
+      (Nx.create Nx.int64 [| pixels |] (Array.map Int64.of_int counts))
+      (Nx.create dt [| total; c |] values)
+  in
+  let n2 = Array.init pixels (fun _ -> poisson (gamma 4 (38. /. 4.))) in
+  let n1 = Array.init pixels (fun _ -> poisson (gamma 9 (60. /. 9.))) in
+  let s2 =
+    rows Nx.uint16 n2 (fun _ _ ->
+        Array.init 11 (fun i -> if i < 10 then draw 500 4000 else draw 1 365))
+  in
+  let s1 =
+    rows Nx.int16 n1 (fun n k ->
+        [|
+          draw 4000 8000;
+          draw 2000 5000;
+          draw 1 365;
+          (if 2 * k < n then 0 else 1);
+        |])
+  in
+  { Tessera.Pixels.s2; s1 }
+
+(* A model of random weights embedding the tile: packing, placing, computing and
+   reading back, as [Tessera.Embedding.encode] does, in batches of up to 4096
+   pixels of the typical shape. The model computes at [precision], cast on the
+   host. *)
+let encode name arch ~pixels precision =
+  let make (type d) (t : d target) =
+    let px = tile ~pixels in
+    let shape = Tessera.Batch.typical ~pixels:(min pixels 4096) ~slots:32 in
+    let run (type s) (m : ((float, s, Nx.host) Nx.t, Nx.host) Tessera.Model.t) =
+      let m = Nx.Ptree.place (module Tessera.Model) t.at m in
+      let f =
+        if not t.jit then Tessera.Model.apply m
+        else
+          let model = Nx.Ptree.instantiate (module Tessera.Model) in
+          let batch = Nx.Ptree.v Tessera.Batch.walk in
+          Rune.jit
+            Nx.Ptree.(model @-> batch @-> returns tensor)
+            Tessera.Model.apply m
+      in
+      fun () -> ignore (Tessera.Embedding.encode ~shape t.at f px)
+    in
+    let m = Tessera.Model.init ~key:(Nx.Rng.key 7) arch in
+    match precision with
+    | F32 | Tf32 -> run m
+    | Bf16 -> run (Nx.Ptree.cast (module Tessera.Model) bf16 m)
+  in
+  {
+    name = Printf.sprintf "e2e/%s/encode" name;
+    shape =
+      Printf.sprintf "op=encode model=%s pixels=%d dtype=%s pass=fwd" name
+        pixels (precision_name precision);
+    flops = 0.;
+    bytes = 0.;
+    pixels;
+    call = precise precision { make };
+  }
+
+(* The teacher, 2B parameters, runs on a GPU alone: its tile takes hours on the
+   CPU. *)
+let end_to_end ~pixels ~teacher_pixels ~gpu =
+  Tessera.Model.
+    [
+      encode "nano" nano ~pixels F32;
+      encode "small" small ~pixels F32;
+      encode "medium" medium ~pixels F32;
+      encode "large" large ~pixels F32;
+    ]
+  @
+  if gpu then
+    [ encode "teacher" Tessera.Model.teacher ~pixels:teacher_pixels Bf16 ]
+  else []
+
+(* Every case, with each count of pixels divided by [shrink]; the GPU's rows
+   with [gpu]. *)
+let cases ~shrink ~gpu =
   let pixels n = max 1 (n / shrink) in
   List.concat_map (student ~pixels:(pixels 4096)) students
   @ teacher ~pixels:(pixels 512)
   @ distillation ~pixels:(pixels 4096)
   @ barlow_twins ~pixels:(pixels 2048)
+  @ end_to_end ~pixels:(pixels 8192) ~teacher_pixels:(pixels 512) ~gpu
 
 (* Devices *)
 
@@ -476,7 +595,8 @@ let bench device c =
 
 let config =
   Thumper.Config.(
-    default |> deadline 900. |> metrics [ Thumper.Metric.wall_time ])
+    default |> deadline 900.
+    |> metrics Thumper.Metric.[ wall_time; alloc_words ])
 
 (* Whether [s] holds [sub]. *)
 let contains s sub =
@@ -512,14 +632,25 @@ let rates device cs =
   List.iter
     (fun c ->
       let id = device ^ "/" ^ c.name in
+      let words =
+        match Thumper.Run.exact run ~case:id Thumper.Metric.alloc_words with
+        | Some w -> Printf.sprintf "%12d words" w
+        | None -> ""
+      in
       match Thumper.Run.samples run ~case:id Thumper.Metric.wall_time with
       | None -> ()
+      | Some s when c.pixels > 0 ->
+          let t = median s in
+          Printf.printf "%-40s %10.3f ms %10.0f px/s %s\n%!" id (t *. 1e3)
+            (fl c.pixels /. t)
+            words
       | Some s ->
           let t = median s in
-          Printf.printf "%-40s %10.3f ms %8.2f TFLOP/s %8.1f GB/s\n%!" id
+          Printf.printf "%-40s %10.3f ms %8.2f TFLOP/s %8.1f GB/s %s\n%!" id
             (t *. 1e3)
             (c.flops /. t /. 1e12)
-            (c.bytes /. t /. 1e9))
+            (c.bytes /. t /. 1e9)
+            words)
     cs
 
 let usage =
@@ -543,17 +674,21 @@ let () =
     | "--shrink" :: k :: args -> (int_of_string k, args)
     | args -> (1, args)
   in
-  let cs = cases ~shrink in
+  let cases d = cases ~shrink ~gpu:(d <> "cpu" && d <> "cpu-jit") in
   match args with
   | [ "opens"; g ] ->
       exit (if Result.is_ok ((List.assoc g gpus) ()) then 0 else 1)
   | [ "cases" ] ->
-      List.iter (fun c -> Printf.printf "%s %s\n" c.name c.shape) cs
-  | "once" :: patterns -> once (device ()) (selected patterns cs)
+      List.iter (fun c -> Printf.printf "%s %s\n" c.name c.shape) (cases "gpu")
+  | "once" :: patterns ->
+      let d = device () in
+      once d (selected patterns (cases d))
   | "warm" :: patterns ->
       let d = device () in
-      if d <> "cpu" then once d (selected patterns cs)
-  | "rates" :: patterns -> rates (device ()) (selected patterns cs)
+      if d <> "cpu" then once d (selected patterns (cases d))
+  | "rates" :: patterns ->
+      let d = device () in
+      rates d (selected patterns (cases d))
   | ("-h" | "--help") :: _ -> print_endline usage
   | _ when shrink <> 1 ->
       (* A baseline's rows are the cases at their own shapes. *)
@@ -564,4 +699,4 @@ let () =
       let argv = Array.of_list (Sys.executable_name :: args) in
       exit
         (Thumper.run "tessera" ~config ~argv
-           [ Thumper.group d (List.map (bench d) cs) ])
+           [ Thumper.group d (List.map (bench d) (cases d)) ])
