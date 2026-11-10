@@ -249,6 +249,8 @@ p{margin:0}
 /* hero: the header and the whole hero fit a laptop's screen, 1280 by 720
    and up */
 .hero-split{display:flex;flex-wrap:wrap;gap:48px 56px;align-items:center;padding-top:clamp(32px,4vw,56px);padding-bottom:clamp(40px,4.5vw,64px)}
+/* Without JS the code panels stack, taller than the screen: the text stays at the top beside them. */
+html:not(.js) .hero-split{align-items:flex-start}
 .hero-text{display:flex;flex-direction:column;flex:1.1 1 500px;min-width:0;gap:24px}
 .hero-text .display{font-size:clamp(40px,4.3vw,60px)}
 .install-row{display:flex;flex-wrap:wrap;align-items:center;gap:12px 24px}
