@@ -408,6 +408,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit`'s attention skips a mask that reads an array in tiles of keys it
+  shows whole: a causal window wider than every key costs what no window
+  costs (22.2 against 24.2 ms at 16384 keys on an RTX 5000 Ada).
 - A compiled product of integer codes by block scales of values, as
   `Q8_0`'s, whose rows and outputs take a tensor core multiplies each
   block's partial sum by its scale. gpt-oss's attention

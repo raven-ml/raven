@@ -9,7 +9,8 @@
     pair loop's shape: a kernel folds each query row over its keys in tiles,
     with a running maximum, sum and accumulator of weighted values (online
     softmax), and divides at the end. A tile of keys that every pair of a
-    workgroup's rows hides is skipped.
+    workgroup's rows hides is skipped, and one whose every pair the mask
+    shows runs without evaluating it.
 
     {b Numerics.} Scores, their maxima and sums, the weights and [lse] compute
     in the accumulator, in base 2: each score is multiplied by [log₂ e] and

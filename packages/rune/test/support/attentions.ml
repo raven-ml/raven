@@ -14,6 +14,7 @@ type mask =
   | Blocks
   | Opaque
   | Spans
+  | Reach
 
 type t = {
   dtype : Nx.Dtype.any;
@@ -46,6 +47,7 @@ let mask_name = function
   | Blocks -> "blocks"
   | Opaque -> "opaque"
   | Spans -> "spans"
+  | Reach -> "reach"
 
 let pp ppf c =
   let (Nx.Dtype.Any dt) = c.dtype in
@@ -88,7 +90,9 @@ let gen dtypes =
   in
   let* mask =
     of_list
-      [ Unmasked; Causal; Window; Documents; Positions; Blocks; Opaque; Spans ]
+      [
+        Unmasked; Causal; Window; Documents; Positions; Blocks; Opaque; Spans; Reach;
+      ]
   in
   let* alibi = bool in
   let* rising = frequency [ (3, constant false); (1, constant true) ] in
@@ -212,6 +216,12 @@ let examples dtypes =
       { b with dtype = named "float16"; hk = b.hq; tq = 9; tk = 7 };
       { b with dtype = named "bfloat16"; hk = b.hq; tq = 7; tk = 9 };
       { b with dtype = named "bfloat16"; hk = b.hq; tq = 9; tk = 7 };
+      (* Tiles the mask shows whole, on a tensor core: their pairs hidden by
+         the row's length alone, by their page's entry alone, and a causal
+         window of 100 keys. *)
+      { b with dtype = named "bfloat16"; mask = Reach; seed = 4; lengths = Some [| 290 |] };
+      { b with dtype = named "float16"; mask = Reach; seed = 4; page = Some 16; holes = true; tk = 320 };
+      { b with dtype = named "bfloat16"; mask = Reach };
     ]
   @ List.map (fun dt -> { (base dt) with zeros = true; tq = 128; tk = 128 }) dtypes
 
@@ -224,6 +234,10 @@ let zeros_from = 64L
 
 (* A [Spans] query's keys: [span] of them, ending past its centre. *)
 let span = 160
+
+(* A [Reach] window of keys: wider than every position at an even seed. *)
+let reach seed = if seed land 1 = 0 then Int64.shift_left 1L 62 else 100L
+
 let zeros_under = 2000.
 
 (* Faint weights: every key's score but the first's [faint_under] below it,
@@ -279,6 +293,11 @@ let call (type a s d) (acc : (float, a) Nx.dtype) c ~table ~lengths ~docs
             (fun p ->
               let k = Nx.cast Nx.uint16 p.k in
               Nx.logical_and (Nx.less_equal lo k) (Nx.less k hi))
+    | Reach ->
+        let w = place (Nx.create Nx.int64 [||] [| reach c.seed |]) in
+        let near (p : d Nx.pair) = Nx.greater p.k (Nx.sub p.q w) in
+        if c.seed land 1 = 0 then Some near
+        else Some (fun p -> Nx.logical_and (Nx.causal p) (near p))
     | Opaque ->
         Some
           (fun p ->

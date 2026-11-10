@@ -1349,8 +1349,10 @@ let on_gpu g name c =
 
 (* Attention compiled: o of [hq] query heads over [hk] key heads of [tk]
    keys, [tq] query rows of 64, at [dt], accumulating in float32, under no
-   mask, a causal one or a causal window of 128 keys. *)
-type mask = Full | Causal | Window
+   mask, a causal one, a causal window of 128 keys, or a causal window read
+   from an array, wider than every key, as a model's full layers pass when
+   its others are windowed. *)
+type mask = Full | Causal | Window | Reach
 
 let attention_call (type s) (dt : (float, s) Nx.dtype) ~hq ~hk ~tq ~tk mask =
   {
@@ -1370,6 +1372,10 @@ let attention_call (type s) (dt : (float, s) Nx.dtype) ~hq ~hk ~tq ~tk mask =
               Some
                 (fun p ->
                   Nx.logical_and (Nx.causal p) (Nx.less p.q (Nx.add_s p.k 128L)))
+          | Reach ->
+              let w = Nx.place at (Nx.create Nx.int64 [||] [| Int64.max_int |]) in
+              Some
+                (fun p -> Nx.logical_and (Nx.causal p) (Nx.greater p.k (Nx.sub p.q w)))
         in
         let f =
           Rune.jit
@@ -1872,8 +1878,8 @@ let gpu_rows g =
               in
               fun () -> ignore (synced (f q k)));
         };
-      (* Attention: a prefill of 8 heads, 2048 and 4096 rows, full, causal
-         and in a window of 128 keys, and the gradient of one of 2048; a
+      (* Attention: a prefill of 8 heads, 2048 and 4096 rows, full, causal,
+         in a window of 128 keys and in one wider than the keys, and the gradient of one of 2048; a
          decode step of one row a head over 4096 keys; gpt-oss's decode, 64
          query heads over 8 key heads. *)
       on_gpu g "attention/jit-bf16-8x2048x64-full"
@@ -1884,6 +1890,8 @@ let gpu_rows g =
         (attention_call Nx.bfloat16 ~hq:8 ~hk:8 ~tq:4096 ~tk:4096 Causal);
       on_gpu g "attention/jit-bf16-8x4096x64-window128"
         (attention_call Nx.bfloat16 ~hq:8 ~hk:8 ~tq:4096 ~tk:4096 Window);
+      on_gpu g "attention/jit-bf16-8x4096x64-reach"
+        (attention_call Nx.bfloat16 ~hq:8 ~hk:8 ~tq:4096 ~tk:4096 Reach);
       on_gpu g "attention/jit-f32-8x2048x64-full"
         (attention_call f32 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Full);
       on_gpu g "attention/jit-grad-bf16-8x2048x64-full"

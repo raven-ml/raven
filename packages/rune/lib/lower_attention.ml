@@ -31,7 +31,8 @@ module Arith = Lower_arith
 
    A pair is visible where its key is before the row's length, its page's
    table entry is in range, and the program's output 0 holds. A tile whose
-   pairs are all hidden is skipped ([guard]). *)
+   pairs are all hidden is skipped ([guard]); a tile whose pairs the
+   program shows all runs without evaluating it ([skipping]). *)
 
 
 (* Problems *)
@@ -111,6 +112,7 @@ let slot_m = 100
 let slot_l = 101
 let slot_s = 102
 let slot_vote = 108
+let slot_seen = 109
 
 (* Arguments
 
@@ -224,36 +226,37 @@ let caps_at (loads : load array) bufs ~inside ~coord ~ok =
       Arith.parts l.dt (ld_gated (inside bufs.(c)) at ok))
     loads
 
-(* Whether the pair at [coord], read where [ok], of captures' parts [caps]
-   and score [s], scaled, in the accumulator, is visible, and its score in
-   base 2, [-∞] where hidden. *)
-let pair_of a ~coord ~ok ~caps s =
-  let acc = Arith.dtype a.acc in
-  let outs = Arith.scalar a.prog ~coord (Array.append [| [ s ] |] caps) in
-  let seen =
-    match outs.(0) with
-    | [ v ] ->
-        ok &&: Ops.ne v (Ops.const ~dtype:(Ops.dtype v) (`Int Bigint.zero))
-    | _ -> invalid_arg "Lower_attention: a mask of parts"
-  in
-  ( seen,
-    Ops.where seen
-      (Ops.mul (List.hd outs.(1)) (fl acc ln2e))
-      (fl acc Float.neg_infinity) )
-
-(* The pair of [row] and [key], read where [ok], of raw score [raw] in the
-   accumulator: whether it is visible, and its score in base 2. *)
-let pair a x ~inside ~b ~row ~key ~ok raw =
+(* The pair of [row] and [key] as the program reads it, its captures read
+   where [ok]: its coordinates, the captures' parts and the score [raw],
+   scaled, in the accumulator. *)
+let operands a x ~inside ~b ~row ~key ~ok raw =
   let coord = pair_coord a ~b ~row ~key in
   let caps = caps_at a.loads x.caps ~inside ~coord ~ok in
-  pair_of a ~coord ~ok ~caps (Ops.mul raw (fl (Arith.dtype a.acc) a.scale))
+  (coord, caps, Ops.mul raw (fl (Arith.dtype a.acc) a.scale))
 
-(* Whether the pair of [row] and [key], read where [ok], is visible. *)
-let seen a x ~inside ~b ~row ~key ~ok =
-  fst (pair a x ~inside ~b ~row ~key ~ok (fl (Arith.dtype a.acc) 0.))
+let outputs a (coord, caps, s) =
+  Arith.scalar a.prog ~coord (Array.append [| [ s ] |] caps)
 
-let score a x ~inside ~b ~row ~key ~ok raw =
-  snd (pair a x ~inside ~b ~row ~key ~ok raw)
+(* Whether the pair of [row] and [key], read where [ok], is visible: [ok]
+   and the program's output 0. *)
+let visible a x ~inside ~b ~row ~key ~ok =
+  let raw = fl (Arith.dtype a.acc) 0. in
+  match (outputs a (operands a x ~inside ~b ~row ~key ~ok raw)).(0) with
+  | [ v ] -> ok &&: Ops.ne v (Ops.const ~dtype:(Ops.dtype v) (`Int Bigint.zero))
+  | _ -> invalid_arg "Lower_attention: a mask of parts"
+
+(* The base-2 score of the program's outputs [outs] at a pair, [-∞] where
+   it is not [seen]. *)
+let base2 a ~seen outs =
+  let acc = Arith.dtype a.acc in
+  Ops.where seen
+    (Ops.mul (List.hd outs.(1)) (fl acc ln2e))
+    (fl acc Float.neg_infinity)
+
+(* The base-2 score of the pair of [row] and [key] of raw score [raw], [-∞]
+   where it is not [seen]: the program's output 0 is not evaluated. *)
+let score a x ~inside ~b ~row ~key ~seen raw =
+  base2 a ~seen (outputs a (operands a x ~inside ~b ~row ~key ~ok:seen raw))
 
 (* The first range id of the tile classes' reduces over a capture's
    queries, two a capture, past the kernels' own ids. *)
@@ -361,41 +364,86 @@ let classes a x ~inside ~b ~kh ~rows:(r0, r1) ~keys:(k0, k1) =
       in
       Some (Ops.logical_not (truth outs.(1)), truth outs.(0))
 
-(* [skipping a x ~at ~b ~kh ~rows ~keys ~vote ~ids body] is [body] in guards
-   that skip a tile its classes hide, and a tile of unknown class where
-   [vote], a workgroup's, finds no visible pair. The vote runs only on a tile
-   of unknown class, its result carried out of its guard in a register set
-   at each step of the ranges [at]. *)
-let skipping a x ~at ~b ~kh ~rows ~keys ~vote ~ids:(id0, id1, id2) body =
+(* [vote ~inside ~over seen] is whether a pair of [seen], a thread's, is
+   visible to some thread of the ranges [over], [[]] for the thread alone,
+   read inside the guard of a tile of unknown class. *)
+let vote ~inside ~over seen =
+  let any = inside (Array.fold_left Ops.bitwise_or (Ops.O.bool false) seen) in
+  if over = [] then any
+  else Ops.ne (Ops.reduce (Ops.cast any Int32) Max over) (Ops.int ~dtype:Int32 0)
+
+(* The range id of the guard of a tile's mask, past each kernel's own. *)
+let id_mask = 11
+
+(* [carried ~inside ~at ~shown ~read ~mask n] is the visibility of a
+   thread's [n] pairs, carried in a register set at each step of the ranges
+   [at]: [read inside], whether each pair's key is read, overwritten with
+   [mask inside], each pair's mask, under a guard on [not shown] that a
+   workgroup takes as one. *)
+let carried ~inside ~at ~shown ~read ~mask n =
+  let r = Shape.placeholder ~slot:slot_seen ~addrspace:Reg [ max 1 n ] Bool in
+  let set_all r vs = Ops.group (Array.to_list (Array.mapi (fun i v -> st r (int i) v) vs)) in
+  let reads = set_all (inside (Ops.after r at)) (read inside) in
+  let masked =
+    guard ~outer:inside id_mask (Ops.logical_not shown) (fun inside ->
+        set_all (inside (Ops.after r [ reads ])) (mask inside))
+  in
+  let seen = inside (Ops.after r [ reads; masked ]) in
+  Array.init n (fun i -> ld seen (int i))
+
+(* Whether the program's output 0 reads a capture. A guard holds back only
+   loads: a mask of the pair's coordinates alone is integer arithmetic on
+   ranges, which the kernel computes ahead of any guard around it, so it
+   gains nothing from one and would hold its values across the tile. *)
+let reads_capture (p : P.t) =
+  let reads = Array.make (Iarray.length p.nodes) false in
+  Iarray.iteri
+    (fun i (n : P.node) ->
+      reads.(i) <-
+        (match n with
+        | In j -> j > 0
+        | Coord _ | Const _ -> false
+        | Op1 (_, _, j) -> reads.(j)
+        | Op2 (_, j, k) -> reads.(j) || reads.(k)
+        | Op3 (_, j, k, l) -> reads.(j) || reads.(k) || reads.(l)))
+    p.nodes;
+  reads.(Iarray.get p.outs 0)
+
+(* [skipping a x ~at ~b ~kh ~len ~rows ~keys ~over ~ids pairs body] is
+   [body inside seen] in guards that skip a tile its classes hide, and a
+   tile of unknown class where no pair of the threads of the ranges [over]
+   is visible. [pairs] are a thread's [(row, key)] in the tile, and
+   [seen.(i)] whether pair [i] is visible. A mask that reads a capture runs
+   only in a tile of unknown class: in a tile its classes show, a pair is
+   visible where its key is read. The vote is carried out of its guard in a
+   register set at each step of the ranges [at]. *)
+let skipping a x ~at ~b ~kh ~len ~rows ~keys ~over ~ids:(id0, id1, id2) pairs
+    body =
+  let read inside =
+    Array.map
+      (fun ((row : row), key) ->
+        fst (key_at a x ~inside ~b ~kh ~within:(row.live &&: Ops.O.(key < len)) key))
+      pairs
+  in
+  let mask inside =
+    Array.map2
+      (fun (row, key) ok -> visible a x ~inside ~b ~row ~key ~ok)
+      pairs (read inside)
+  in
   match classes a x ~inside:Fun.id ~b ~kh ~rows ~keys with
-  | None -> guard id0 (Ops.O.bool true) body
+  | None -> guard id0 (Ops.O.bool true) (fun inside -> body inside (mask inside))
   | Some (hidden, shown) ->
       guard id0 (Ops.logical_not hidden) (fun inside ->
           let r = Shape.placeholder ~slot:slot_vote ~addrspace:Reg [ 1 ] Bool in
           let set = st (inside (Ops.after r at)) (int 0) shown in
           let voted =
             guard ~outer:inside id1 (Ops.logical_not shown) (fun inside ->
-                st (inside (Ops.after r [ set ])) (int 0) (vote inside))
+                st (inside (Ops.after r [ set ])) (int 0) (vote ~inside ~over (mask inside)))
           in
           let run = ld (Ops.after r [ set; voted ]) (int 0) in
-          guard ~outer:inside id2 run body)
-
-(* [vote a x ~inside ~b ~kh ~len ~over pairs] is whether a pair of
-   [pairs], each a [(row, key)] of a thread, is visible to some thread of
-   the ranges [over], [[]] for the thread alone. It reads inside the guard
-   of the tile's class, so that only a tile of unknown class votes. *)
-let vote a x ~inside ~b ~kh ~len ~over pairs =
-  let open Ops.O in
-  let any =
-    List.fold_left
-      (fun any ((row : row), key) ->
-        let ok, _ = key_at a x ~inside ~b ~kh ~within:(row.live &&: (key < len)) key in
-        Ops.bitwise_or any (seen a x ~inside ~b ~row ~key ~ok))
-      (Ops.O.bool false) pairs
-  in
-  let any = inside any in
-  if over = [] then any
-  else Ops.ne (Ops.reduce (Ops.cast any Int32) Max over) (Ops.int ~dtype:Int32 0)
+          guard ~outer:inside id2 run (fun inside ->
+              if not (reads_capture a.prog) then body inside (mask inside)
+              else body inside (carried ~inside ~at ~shown ~read ~mask (Array.length pairs))))
 
 (* The state [(m', α, p)] of a tile of base-2 scores [x2] over a row's old
    maximum [m]. *)
@@ -518,7 +566,7 @@ let simt ~local ~width ~splits a xs =
   in
   let sum_j = Ops.after sum (if a.dv = 0 then [ jr ] else [ sum0; jr ]) in
   let key i = (j * int bk) + int i in
-  let body inside =
+  let body inside seen =
     let keys =
       Array.init bk (fun i ->
           key_at a x ~inside ~b ~kh ~within:(live &&: (key i < len)) (key i))
@@ -551,8 +599,7 @@ let simt ~local ~width ~splits a xs =
     in
     let x2 =
       Array.init bk (fun i ->
-          score a x ~inside ~b ~row ~key:(key i) ~ok:(fst keys.(i))
-            (ld s (int i)))
+          score a x ~inside ~b ~row ~key:(key i) ~seen:seen.(i) (ld s (int i)))
     in
     let m_old = ld (inside m_j) (int 0) and l_old = ld (inside l_j) (int 0) in
     let m_new, alpha, p = softmax acc m_old x2 in
@@ -590,18 +637,17 @@ let simt ~local ~width ~splits a xs =
     Ops.group
       (values @ [ st (inside m_j) (int 0) m_new; st (inside l_j) (int 0) l_new ])
   in
-  (* A thread's vote: whether its row sees a key of the tile. *)
-  let vote inside =
-    vote a x ~inside ~b ~kh ~len ~over:(if local then [ l ] else [])
-      (List.init bk (fun i -> (row, key i)))
-  in
   let row_span =
     (gt * int bq, Ops.minimum ((gt * int bq) + int Stdlib.(bq - 1)) (int Stdlib.(gr - 1)))
   in
   let keys = (key 0, key Stdlib.(bk - 1)) in
   let loop =
     Ops.end_
-      (skipping a x ~at:(jr :: at) ~b ~kh ~rows:row_span ~keys ~vote ~ids:(6, 7, 8) body)
+      (skipping a x ~at:(jr :: at) ~b ~kh ~len ~rows:row_span ~keys
+         ~over:(if local then [ l ] else [])
+         ~ids:(6, 7, 8)
+         (Array.init bk (fun i -> (row, key i)))
+         body)
       [ jr ]
   in
   let m = ld (Ops.after m [ loop ]) (int 0) in
@@ -806,6 +852,11 @@ let facts (tc : Tc.t) =
     first_of;
   }
 
+(* A lane's pairs in a tile: [pair nt e] for element [e] of its
+   accumulator of each of [tiles] tiles of [N], [ec] elements each. *)
+let lane_pairs ~tiles ~ec pair =
+  Array.init (tiles * ec) (fun i -> pair (i / ec) (i mod ec))
+
 (* Slots of the tensor-core kernel's buffers. *)
 let slot_acc = 103
 let slot_ks = 104
@@ -945,7 +996,13 @@ let core c a xs =
     stage ~tid ~threads ~n:bk ~at src dst ~width ~first ~cols
   in
   let first_col = gc * int c.cols in
-  let body inside =
+  (* A lane's pairs: its accumulators' elements of each tile of [N] keys. *)
+  let pairs =
+    lane_pairs ~tiles:ntiles ~ec (fun nt e ->
+        let kl = int Stdlib.(nt * n_) + coord tc.frag_c Nb lane e in
+        (row_of (coord tc.frag_c Mb lane e), key kl))
+  in
+  let body inside seen =
     let ks_w = inside ks in
     let ks = Ops.after ks [ Ops.group (copy inside (inside x.k) ks_w ~width:a.dk ~first:(int 0) ~cols:dkp) ] in
     (* S = Q Kᵀ: the accumulator of each tile of [N] keys. *)
@@ -968,12 +1025,9 @@ let core c a xs =
     let x2 =
       Array.init ntiles (fun nt ->
           Array.init ec (fun e ->
-              let r = row_of (coord tc.frag_c Mb lane e) in
-              let ky = key (int Stdlib.(nt * n_) + coord tc.frag_c Nb lane e) in
-              let ok, _ =
-                key_at a x ~inside ~b ~kh ~within:(r.live &&: (ky < len)) ky
-              in
-              score a x ~inside ~b ~row:r ~key:ky ~ok
+              let i = Stdlib.((nt * ec) + e) in
+              let r, ky = pairs.(i) in
+              score a x ~inside ~b ~row:r ~key:ky ~seen:seen.(i)
                 (Ops.index s.(nt) [ Ops.int ~dtype:Int32 e ])))
     in
     let m_old = Array.init slots (fun s -> ld (inside m_j) (int s)) in
@@ -1065,22 +1119,14 @@ let core c a xs =
            List.init slots (fun s -> st (inside l_j) (int s) l_new.(s));
          ])
   in
-  (* A lane's vote: whether its rows see a key of the tile. *)
-  let vote inside =
-    vote a x ~inside ~b ~kh ~len ~over:[ warp; lane ]
-      (List.concat
-         (List.init ntiles (fun nt ->
-              List.init ec (fun e ->
-                  ( row_of (coord tc.frag_c Mb lane e),
-                    key (int Stdlib.(nt * n_) + coord tc.frag_c Nb lane e) )))))
-  in
   let rows =
     (gt * int bq, Ops.minimum ((gt * int bq) + int Stdlib.(bq - 1)) (int Stdlib.(gr - 1)))
   in
   let keys = (key (int 0), key (int Stdlib.(bk - 1))) in
   let loop =
     Ops.end_
-      (skipping a x ~at:(jr :: at) ~b ~kh ~rows ~keys ~vote ~ids:(7, 8, 9) body)
+      (skipping a x ~at:(jr :: at) ~b ~kh ~len ~rows ~keys ~over:[ warp; lane ]
+         ~ids:(7, 8, 9) pairs body)
       [ jr ]
   in
   let m_out = Ops.after m [ loop ] and l_out = Ops.after ls [ loop ] in
@@ -1342,16 +1388,13 @@ let dargs a ~outs xs =
       | _ -> invalid_arg "Lower_attention: the derivative's arguments")
   | _ -> invalid_arg "Lower_attention: the derivative's arguments"
 
-(* The pair of [row] and [key], read where [ok], of raw score [raw]: whether
-   it is visible, its score in base 2, and [back ds], the score's cotangent
-   [ds] read back to the scaled score by the program's transpose [tr], [0]
-   where hidden. *)
-let pair_back a x ~tr ~inside ~b ~row ~key ~ok raw =
+(* The pair of [row] and [key], [seen] where visible, of raw score [raw]:
+   its score in base 2, and [back ds], the score's cotangent [ds] read back
+   to the scaled score by the program's transpose [tr], [0] where hidden. *)
+let pair_back a x ~tr ~inside ~b ~row ~key ~seen raw =
   let acc = Arith.dtype a.acc in
-  let coord = pair_coord a ~b ~row ~key in
-  let caps = caps_at a.loads x.caps ~inside ~coord ~ok in
-  let s = Ops.mul raw (fl acc a.scale) in
-  let seen, x2 = pair_of a ~coord ~ok ~caps s in
+  let ((coord, caps, s) as ops) = operands a x ~inside ~b ~row ~key ~ok:seen raw in
+  let x2 = base2 a ~seen (outputs a ops) in
   let back ds =
     match tr with
     | None -> fl acc 0.
@@ -1361,7 +1404,7 @@ let pair_back a x ~tr ~inside ~b ~row ~key ~ok raw =
         in
         Ops.where seen (List.hd outs.(0)) (fl acc 0.)
   in
-  (seen, x2, back)
+  (x2, back)
 
 (* A pair's weight from its row's [lse], [0] where hidden or [lse] is
    [-∞]. *)
@@ -1497,7 +1540,12 @@ let core_dq c a tr xs =
     let ky = key kl in
     key_at a x ~inside ~b ~kh ~within:(within &&: (ky < len)) ky
   in
-  let body inside =
+  let pairs =
+    lane_pairs ~tiles:ntiles ~ec:f.ec (fun nt e ->
+        let kl = int Stdlib.(nt * n_) + coord tc.frag_c Nb lane e in
+        (row_of (coord tc.frag_c Mb lane e), key kl))
+  in
+  let body inside seen =
     let tile src dst width cols =
       Ops.after dst
         [
@@ -1521,15 +1569,12 @@ let core_dq c a tr xs =
       Array.init ntiles (fun nt ->
           Array.init f.ec (fun e ->
               let sl = f.slot_of e in
-              let r = row_of (coord tc.frag_c Mb lane e) in
-              let ky = key (int Stdlib.(nt * n_) + coord tc.frag_c Nb lane e) in
-              let ok, _ = key_at a x ~inside ~b ~kh ~within:(r.live &&: (ky < len)) ky in
+              let i = Stdlib.((nt * f.ec) + e) in
+              let r, ky = pairs.(i) and vis = seen.(i) in
               let el u = Ops.index u [ Ops.int ~dtype:Int32 e ] in
-              let seen, x2, back =
-                pair_back a x ~tr ~inside ~b ~row:r ~key:ky ~ok (el s.(nt))
-              in
-              let p = weight acc ~seen ~x2 ~lse:lses.(sl) in
-              back (Ops.where seen (p * (el dp.(nt) - deltas.(sl))) (fl acc 0.))))
+              let x2, back = pair_back a x ~tr ~inside ~b ~row:r ~key:ky ~seen:vis (el s.(nt)) in
+              let p = weight acc ~seen:vis ~x2 ~lse:lses.(sl) in
+              back (Ops.where vis (p * (el dp.(nt) - deltas.(sl))) (fl acc 0.))))
     in
     (* q̄ += r̄ K, [K] read along its keys. *)
     let g1 =
@@ -1552,18 +1597,13 @@ let core_dq c a tr xs =
                   st g_w (int Stdlib.((dt * f.ec) + e))
                     (Ops.index g1.(dt) [ Ops.int ~dtype:Int32 e ])))))
   in
-  let vote inside =
-    vote a x ~inside ~b ~kh ~len ~over:[ warp; lane ]
-      (List.concat
-         (List.init ntiles (fun nt ->
-              List.init f.ec (fun e ->
-                  ( row_of (coord tc.frag_c Mb lane e),
-                    key (int Stdlib.(nt * n_) + coord tc.frag_c Nb lane e) )))))
-  in
   let rows = (gt * int bq, Ops.minimum ((gt * int bq) + int Stdlib.(bq - 1)) (int Stdlib.(gr - 1))) in
   let keys = (key (int 0), key (int Stdlib.(bk - 1))) in
   let loop =
-    Ops.end_ (skipping a x ~at:(jr :: at) ~b ~kh ~rows ~keys ~vote ~ids:(7, 8, 9) body) [ jr ]
+    Ops.end_
+      (skipping a x ~at:(jr :: at) ~b ~kh ~len ~rows ~keys ~over:[ warp; lane ]
+         ~ids:(7, 8, 9) pairs body)
+      [ jr ]
   in
   let g_out = Ops.after g [ loop ] in
   let stores =
@@ -1642,7 +1682,12 @@ let core_dkdv ~(part : part) c a tr xs =
     let r = row rl in
     (within &&: r.live, r.index)
   in
-  let body inside =
+  let pairs =
+    lane_pairs ~tiles:ntiles ~ec:f.ec (fun nt e ->
+        let rl = int Stdlib.(nt * n_) + coord tc.frag_c Nb lane e in
+        (row rl, key_of_m (coord tc.frag_c Mb lane e)))
+  in
+  let body inside seen =
     let tile src dst width cols =
       Ops.after dst
         [
@@ -1663,24 +1708,21 @@ let core_dkdv ~(part : part) c a tr xs =
     in
     let s = scores qs dkp ksteps ka in
     let dp = if want_k then scores dos dvp csteps va else [||] in
-    let pairs =
+    let weights =
       Array.init ntiles (fun nt ->
           Array.init f.ec (fun e ->
-              let ky = key_of_m (coord tc.frag_c Mb lane e) in
-              let r = row (int Stdlib.(nt * n_) + coord tc.frag_c Nb lane e) in
-              let ok, _ = key_at a x ~inside ~b ~kh ~within:(r.live &&: (ky < len)) ky in
+              let i = Stdlib.((nt * f.ec) + e) in
+              let r, ky = pairs.(i) and vis = seen.(i) in
               let el u = Ops.index u [ Ops.int ~dtype:Int32 e ] in
-              let seen, x2, back =
-                pair_back a x ~tr ~inside ~b ~row:r ~key:ky ~ok (el s.(nt))
-              in
+              let x2, back = pair_back a x ~tr ~inside ~b ~row:r ~key:ky ~seen:vis (el s.(nt)) in
               let lse = ld_gated (inside x.lse) r.index r.live in
-              let p = weight acc ~seen ~x2 ~lse in
+              let p = weight acc ~seen:vis ~x2 ~lse in
               if not want_k then (p, p)
               else
                 let delta = ld_gated (inside d.delta) r.index r.live in
-                (p, back (Ops.where seen (p * (el dp.(nt) - delta)) (fl acc 0.)))))
+                (p, back (Ops.where vis (p * (el dp.(nt) - delta)) (fl acc 0.)))))
     in
-    let p = Array.map (Array.map fst) pairs and rbar = Array.map (Array.map snd) pairs in
+    let p = Array.map (Array.map fst) weights and rbar = Array.map (Array.map snd) weights in
     (* v̄ += Pᵀ ō and k̄ += r̄ᵀ Q, the staged rows read along the rows. *)
     let sums g_j tiles buf w ops =
       Array.init tiles (fun t ->
@@ -1706,18 +1748,13 @@ let core_dkdv ~(part : part) c a tr xs =
     Ops.group
       ((if want_v then put gv_j ctiles v1 else []) @ (if want_k then put gk_j dtiles k1 else []))
   in
-  let vote inside =
-    vote a x ~inside ~b ~kh ~len ~over:[ warp; lane ]
-      (List.concat
-         (List.init ntiles (fun nt ->
-              List.init f.ec (fun e ->
-                  ( row (int Stdlib.(nt * n_) + coord tc.frag_c Nb lane e),
-                    key_of_m (coord tc.frag_c Mb lane e) )))))
-  in
   let rows = (jr * int br, Ops.minimum ((jr * int br) + int Stdlib.(br - 1)) (int Stdlib.(gr - 1))) in
   let keys = (k0, k0 + int Stdlib.(bkk - 1)) in
   let loop =
-    Ops.end_ (skipping a x ~at:(jr :: at) ~b ~kh ~rows ~keys ~vote ~ids:(7, 8, 9) body) [ jr ]
+    Ops.end_
+      (skipping a x ~at:(jr :: at) ~b ~kh ~len ~rows ~keys ~over:[ warp; lane ]
+         ~ids:(7, 8, 9) pairs body)
+      [ jr ]
   in
   let gk_out = Ops.after gk [ loop ] and gv_out = Ops.after gv [ loop ] in
   let stores out g tiles width scale =

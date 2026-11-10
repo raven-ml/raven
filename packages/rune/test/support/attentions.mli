@@ -32,6 +32,11 @@ type mask =
           axes and the queries, rising with a jitter, of int64 for an even
           seed and uint16 for an odd one: tiles hidden, shown and in
           part. *)
+  | Reach
+      (** The keys within a captured scalar's reach of the query,
+          [k > q - w]: at an even seed [w] is [2{^62}], wider than every
+          position, so that the mask shows every pair; at an odd seed [w]
+          is [100] and the mask causal too. *)
 
 type t = {
   dtype : Nx.Dtype.any;  (** float16, bfloat16, float32 or float64. *)
@@ -84,8 +89,11 @@ val examples : Nx.Dtype.any list -> t list
     values of 72, keys and values of 96 and 128 dimensions, 1000 faint
     weights on positive values, which fails the
     bound where a product drops float16's subnormal weights, and rows and
-    keys of 7 and 9 with a key head a query head; and of each dtype a
-    prefill of 128 rows of sums of zeros. *)
+    keys of 7 and 9 with a key head a query head, and prefills of 300 rows
+    under [Reach], whose tiles the mask shows whole hide pairs by a row's
+    length, by page entries out of range over 320 keys, or by a causal
+    window of 100 keys; and of each dtype a prefill of 128 rows of sums of
+    zeros. *)
 
 val law : (module Nx.Devices) -> t -> unit
 (** [law s c] checks [c] compiled on [s]'s devices, and that the call is
