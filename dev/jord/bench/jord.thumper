@@ -1,0 +1,11 @@
+# thumper baseline v1
+# suite: jord
+
+# machine: 83e4f30ba5340e6b
+# host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.2 · 64-bit · release
+
+rasterize/centres/tile	alloc_words	exact	19251
+rasterize/centres/tile	wall_time	batch=1	n=20	7.984e-03	6.226e-03 6.233e-03 6.304e-03 7.228e-03 7.352e-03 7.889e-03 7.890e-03 7.912e-03 7.945e-03 7.953e-03 8.014e-03 8.098e-03 8.101e-03 8.665e-03 8.794e-03 8.794e-03 8.810e-03 8.813e-03 8.865e-03 8.887e-03
+rasterize/touched/tile	alloc_words	exact	38910
+rasterize/touched/tile	wall_time	batch=1	n=20	1.098e-02	8.693e-03 8.732e-03 8.782e-03 8.800e-03 9.343e-03 9.408e-03 1.083e-02 1.085e-02 1.091e-02 1.093e-02 1.102e-02 1.107e-02 1.117e-02 1.121e-02 1.122e-02 1.128e-02 1.128e-02 1.163e-02 1.166e-02 1.169e-02

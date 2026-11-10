@@ -1,0 +1,15 @@
+; jord's rows: each rasterizing rule over a GeoTessera tile's grid. Not
+; attached to runtest: run it with `dune build @dev/jord/bench/bench`, or run
+; the built exe (`list` prints the rows, `bless` records them).
+
+(executable
+ (name bench_jord)
+ (libraries jord nx thumper))
+
+(rule
+ (alias bench)
+ (locks %{workspace_root}/bench)
+ (deps
+  (glob_files *.thumper))
+ (action
+  (run %{exe:bench_jord.exe})))
