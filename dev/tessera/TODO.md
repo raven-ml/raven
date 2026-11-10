@@ -43,9 +43,6 @@ An item leaves when its library fixes it, or when a design decides it stays.
   round ties to even (numpy's `np.round`), and 23 of the oracle fixtures'
   15.7M codes differ. A rounding mode is a vocabulary question for nx
   (found by the tessera-stack audit).
-- No dropout of attention probabilities: TESSERA's distillation recipe drops
-  them at 0.1 inside attention, which `Nx.attention` cannot express today
-  (nx and rune; found by the tessera-stack audit).
 
 ## vega
 
@@ -78,6 +75,15 @@ An item leaves when its library fixes it, or when a design decides it stays.
   2 s at 60 rounds, 9 s at 240), once per n: about 7 s once per TESSERA run.
   Acceptable for now; the cause is in tolk (found by the streaming-data
   review).
+- No f32 attention derivative kernel, and none above head dim 128: those
+  cases fall back to a dense backward (packed rows 2.3× per-pixel buckets in
+  f32 training; TESSERA's large student, head dim 160, and the teacher,
+  1024, in bf16). Found by the stack's design skeptic.
+- A query tile's key loop visits every key tile and votes on each; limiting
+  it to the tile's visible key range would make flat segments (no rows) a
+  simpler layout than packed rows (today 1.9-98× slower).
+- Attention-probability dropout composes from existing ops, which is the
+  dense path; a fused form is a speed item, not a missing capability.
 - Each new pixel count or sequence length compiles again: 191 small cases
   took 100 s cold on the host (Clang, one process per kernel), and the
   port's length buckets will meet the same cost.
