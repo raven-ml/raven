@@ -5235,11 +5235,13 @@ module Rng : sig
       Threefry blocks.
 
       The keys select at most [2{^64}] of the [n!] orderings, which
-      {!permutation} draws from. The paper bounds how well a reader of at
-      most [(1 - ε) n] images tells the ordering from a uniform one, and
-      proves nothing of all [n]. Tests of whole orderings at small [n]
-      (position against image, adjacent pairs, parity) find no departure
-      from uniform.
+      {!permutation} draws from. At [r] rounds the paper's bound (§1, Eq. 1)
+      on telling the ordering from a uniform one is below 1 only for a
+      reader of fewer than about a tenth of the [n] images, and about [0.02]
+      for one image at [n = 4.65·10{^8}]. Past that, the orderings' quality
+      rests on tests of whole orderings at small [n] (position against
+      image, adjacent pairs, parity), which find no departure from
+      uniform.
 
       Epoch [e] of a stream of positions, positions [e n] to
       [(e + 1) n - 1], visits [\[0, n)] in an ordering of its own:
