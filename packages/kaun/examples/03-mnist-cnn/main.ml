@@ -103,15 +103,14 @@ let () =
         ((params, ostate), Nx.item [] l)
       in
 
-      (* Iterating the shuffled sequence once per epoch reshuffles each
-         epoch. *)
-      let batches =
-        Data.batches2 ~shuffle:true ~batch_size (train_x, train_y)
-      in
+      (* Each epoch takes the examples in an order of its own. *)
+      let n_train = Nx.dim 0 train_x in
       let state = ref (params, Vega.adamw_init cnn params) in
       for epoch = 1 to epochs do
         let losses = ref 0.0 and n = ref 0 in
-        batches
+        let order = Nx.Rng.permutation n_train in
+        let shuffled t = Nx.take ~axis:0 order t in
+        Data.batches2 ~batch_size (shuffled train_x, shuffled train_y)
         |> Seq.iter (fun batch ->
             let s, l = step !state batch in
             state := s;

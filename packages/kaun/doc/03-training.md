@@ -125,17 +125,21 @@ let () =
      pass ~drop_last:true to drop it. *)
 ```
 
-Without shuffling, batches are views of the data, not copies, in order. With `~shuffle:true`, each *traversal* of the sequence draws a fresh permutation from the RNG scope, where the data lies, so iterating the same sequence once per epoch reshuffles every epoch, `batches2` permutes inputs and targets together, and running the loop under `Nx.Rng.with_key` makes the whole schedule of permutations reproducible:
+Batches are views of the data, in order. A shuffled epoch takes the examples in an order drawn from a key, inputs and targets by the same order, then cuts them. Drawing epoch `e`'s order from `Nx.Rng.fold_in key e` makes the run reproducible, and lets a resumed run draw epoch `e` again on its own:
 
 <!-- $MDX skip -->
 ```ocaml
-Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
-let data = Data.batches2 ~shuffle:true ~batch_size:128 (train_x, train_y) in
+let key = Nx.Rng.key 42 in
 let state = ref (params, Vega.adamw_init mlp params) in
-for _epoch = 1 to 10 do
-  data |> Seq.iter (fun batch -> state := fst (step !state batch))
+for e = 0 to 9 do
+  let order = Nx.Rng.permutation ~key:(Nx.Rng.fold_in key e) (Nx.dim 0 train_x) in
+  let shuffled t = Nx.take ~axis:0 order t in
+  Data.batches2 ~batch_size:128 (shuffled train_x, shuffled train_y)
+  |> Seq.iter (fun batch -> state := fst (step !state batch))
 done
 ```
+
+A dataset too large to hold, or a run that resumes inside an epoch, reads the examples at the positions it is at: `Nx.Rng.permute` gives the example at each position of an epoch's order without the whole order (the Samplers section of [`nx.mli`](../../nx/lib/nx.mli)).
 
 The `kaun.datasets` library provides MNIST, Fashion-MNIST, and CIFAR-10 loaders returning plain tensors ready for `Data.batches2`.
 

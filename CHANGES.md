@@ -3411,6 +3411,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   against 1.25 s on an RTX 5000 Ada. Full layers, `window max_int`, pay a
   comparison per key: prefill +1.6% at 16,384 tokens (about +5% estimated at
   131,072), +3% words per step. `Rune.vmap` refuses a windowed index.
+- **Breaking:** `Data.batches` and `batches2` cut in order and lose
+  `?shuffle`, which drew each traversal's order from the ambient scope and so
+  resumed only by replaying every draw before it. Take the examples in an
+  order from `Nx.Rng.permutation` first, as `Data`'s preamble shows.
 - `Cache_index.visible` reads each key's column from the attention's pair,
   so a compiled attention skips the tiles a cache's causal mask hides: an
   8-head, 4096-token prefill's attention takes 278 us on an RTX 5000 Ada,

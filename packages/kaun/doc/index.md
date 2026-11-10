@@ -10,7 +10,7 @@ The glue is `Nx.Ptree`, the traversal interface from [nx](../../nx/doc/index.md)
 - **Stateless functions** — `Fn` activations (`relu`, `gelu`, `silu`, ...), `Pool` (max/avg 2-D pooling), `Dropout` with an explicit `~training` flag
 - **Initializers** — `Init`: Glorot/Xavier, He/Kaiming, LeCun, generic `variance_scaling`
 - **Losses** — `Loss`: MSE, MAE, Huber, `sigmoid_bce`, `softmax_cross_entropy` (dense or sparse labels), all evaluated in log space
-- **Data** — `Data.batches`/`batches2` cut in-memory tensors into a standard `Seq.t` of minibatches, with reproducible per-epoch shuffling
+- **Data** — `Data.batches`/`batches2` cut in-memory tensors into a standard `Seq.t` of minibatches, in order
 - **Metrics** — `Metric`: accuracy, top-k accuracy, confusion matrix, precision/recall/F1, AUC-ROC
 - **Saving** — a model's structure names its tensors, so `Nx_io.Archive.of_value` and `to_value` save and restore it as [safetensors](https://huggingface.co/docs/safetensors/)
 - **Pretrained models** — `kaun.hf` downloads HuggingFace Hub weights, and `Nx_io.Archive.float` and `tensor` read their entries by name into your own records

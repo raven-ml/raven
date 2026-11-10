@@ -10,7 +10,7 @@
 
     {[
     let train_x, train_y, test_x, test_y = Kaun_datasets.mnist () in
-    let batches = Data.batches2 ~shuffle:true ~batch_size:128 (train_x, train_y)
+    let batches = Data.batches2 ~batch_size:128 (train_x, train_y)
     ]}
 
     Datasets are downloaded on demand and cached locally under

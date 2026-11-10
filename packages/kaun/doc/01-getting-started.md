@@ -112,16 +112,17 @@ This is the complete program — it is [`examples/01-xor`](https://github.com/ra
 
 ## Scaling up: Minibatches
 
-For real datasets, `Data.batches2` cuts paired tensors into a `Seq.t` of minibatches, and the epoch loop is ordinary `Seq` iteration. With `~shuffle:true`, each traversal of the sequence draws a fresh permutation from the RNG scope that `Nx.Rng.with_key` opens, so iterating once per epoch reshuffles every epoch:
+For real datasets, `Data.batches2` cuts paired tensors into a `Seq.t` of minibatches, in order, and the epoch loop is ordinary `Seq` iteration. Each epoch below takes the examples in an order drawn by `Nx.Rng.permutation` from the scope that `Nx.Rng.with_key` opens, so every epoch has its own order and the run is reproducible:
 
 <!-- $MDX skip -->
 ```ocaml
 Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
 let train_x, train_y, test_x, test_y = Kaun_datasets.mnist () in
-let batches = Data.batches2 ~shuffle:true ~batch_size:128 (train_x, train_y) in
 let state = ref (params, Vega.adamw_init mlp params) in
 for _epoch = 1 to 3 do
-  batches
+  let order = Nx.Rng.permutation (Nx.dim 0 train_x) in
+  let shuffled t = Nx.take ~axis:0 order t in
+  Data.batches2 ~batch_size:128 (shuffled train_x, shuffled train_y)
   |> Seq.iter (fun (x, y) ->
       let s, _ = step !state (x, y) in
       state := s)

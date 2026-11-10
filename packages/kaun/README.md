@@ -60,7 +60,9 @@ And the training loop is ordinary `Seq` iteration over minibatches:
 
 ```ocaml
 let state = ref (params, Vega.adamw_init mlp params) in
-Data.batches2 ~shuffle:true ~batch_size:128 (train_x, train_y)
+let order = Nx.Rng.permutation (Nx.dim 0 train_x) in
+let shuffled t = Nx.take ~axis:0 order t in
+Data.batches2 ~batch_size:128 (shuffled train_x, shuffled train_y)
 |> Seq.iter (fun batch ->
     let s, l = step !state batch in
     state := s;
@@ -87,8 +89,8 @@ save, or swap.
   `softmax_cross_entropy` (dense or sparse labels), all evaluated in
   log space for stability
 - **Data** — `Data.batches`/`batches2` cut in-memory tensors into a
-  standard `Seq.t` of minibatches; shuffling reshuffles per epoch and is
-  reproducible under `Nx.Rng.with_key`
+  standard `Seq.t` of minibatches, in order; a shuffled epoch takes the
+  examples in the order of an `Nx.Rng.permutation`
 - **Metrics** — `Metric`: accuracy, top-k accuracy, confusion matrix,
   precision/recall/F1 (macro/micro), AUC-ROC
 - **Saving** — a model's structure names its tensors, so

@@ -167,11 +167,13 @@ for x, y in loader:
 
 <!-- $MDX skip -->
 ```ocaml
-let batches = Data.batches2 ~shuffle:true ~batch_size:128 (train_x, train_y) in
-batches |> Seq.iter (fun (x, y) -> ...)
+let order = Nx.Rng.permutation (Nx.dim 0 train_x) in
+let shuffled t = Nx.take ~axis:0 order t in
+Data.batches2 ~batch_size:128 (shuffled train_x, shuffled train_y)
+|> Seq.iter (fun (x, y) -> ...)
 ```
 
-Iterating the sequence again reshuffles — one sequence value serves every epoch. There is no worker pool or async prefetching; datasets are plain tensors (the `kaun.datasets` library loads MNIST, Fashion-MNIST, CIFAR-10 that way), and stdlib `Seq` combinators replace `DataLoader` options.
+The batches come in order; an epoch is shuffled by taking the examples in a drawn order first, and each epoch draws its own. There is no worker pool or async prefetching; datasets are plain tensors (the `kaun.datasets` library loads MNIST, Fashion-MNIST, CIFAR-10 that way), and stdlib `Seq` combinators replace `DataLoader` options.
 
 ---
 

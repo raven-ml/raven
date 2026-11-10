@@ -102,7 +102,9 @@ let () =
   let num_batches = n_train / batch_size in
   for epoch = 1 to epochs do
     let step = ref 0 in
-    Data.batches2 ~shuffle:true ~batch_size (x_train, y_train)
+    let order = Nx.Rng.permutation n_train in
+    let shuffled t = Nx.take ~axis:0 order t in
+    Data.batches2 ~batch_size (shuffled x_train, shuffled y_train)
     |> Seq.iter (fun (x, y) ->
         let params, ostate = !st in
         let loss, grads =

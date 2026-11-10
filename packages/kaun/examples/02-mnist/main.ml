@@ -56,10 +56,12 @@ let () =
         ((params, ostate), Nx.item [] l)
       in
 
-      (* One epoch over shuffled minibatches. *)
+      (* One epoch over minibatches of the examples in a shuffled order. *)
       let n_batches = (n_train + batch_size - 1) / batch_size in
+      let order = Nx.Rng.permutation n_train in
+      let shuffled t = Nx.take ~axis:0 order t in
       let batches =
-        Data.batches2 ~shuffle:true ~batch_size (train_x, train_y)
+        Data.batches2 ~batch_size (shuffled train_x, shuffled train_y)
       in
       let (params, _), _ =
         Seq.fold_left

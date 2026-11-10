@@ -202,8 +202,10 @@ let () =
     let loss_sum = ref 0. in
     let loss_count = ref 0 in
 
-    Data.batches2 ~shuffle:true ~drop_last:true ~batch_size:!batch_size
-      (x_train, y_train)
+    let order = Nx.Rng.permutation n_train in
+    let shuffled t = Nx.take ~axis:0 order t in
+    Data.batches2 ~drop_last:true ~batch_size:!batch_size
+      (shuffled x_train, shuffled y_train)
     |> Seq.iter (fun (x, y) ->
         incr global_step;
         let s = !global_step in

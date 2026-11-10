@@ -18,7 +18,6 @@ let elements seq =
   List.concat_map (fun b -> Array.to_list (Nx.to_array b)) (List.of_seq seq)
 
 let exact = float_exact
-let sorted l = List.sort Float.compare l
 
 (* Batch shapes *)
 
@@ -50,41 +49,7 @@ let test_exact_fit () =
 
 let test_empty_dataset () =
   let empty = Nx.create Nx.float32 [| 0; 2 |] [||] in
-  is_true ~msg:"no batches" (Seq.is_empty (Data.batches ~batch_size:4 empty));
-  is_true ~msg:"no shuffled batches"
-    (Seq.is_empty (Data.batches ~shuffle:true ~batch_size:4 empty))
-
-(* Shuffling *)
-
-let shuffled_elements ~seed =
-  Nx.Rng.with_key (Nx.Rng.key seed) @@ fun () ->
-  elements (Data.batches ~shuffle:true ~batch_size:4 (arange 10 1))
-
-let test_shuffle_deterministic () =
-  equal (list exact) (shuffled_elements ~seed:0) (shuffled_elements ~seed:0)
-
-let test_shuffle_is_permutation () =
-  let seen = shuffled_elements ~seed:0 in
-  not_equal (list exact)
-    (List.init 10 float_of_int)
-    seen ~msg:"order changed by seed 0";
-  equal (list exact)
-    (List.init 10 float_of_int)
-    (sorted seen) ~msg:"same multiset of examples"
-
-let test_shuffle_keeps_batch_shapes () =
-  Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
-  let data = Data.batches ~shuffle:true ~batch_size:4 (arange 10 3) in
-  equal (list (list int)) [ [ 4; 3 ]; [ 4; 3 ]; [ 2; 3 ] ] (shapes data)
-
-let test_epochs_reshuffle () =
-  Nx.Rng.with_key (Nx.Rng.key 1) @@ fun () ->
-  let data = Data.batches ~shuffle:true ~batch_size:4 (arange 32 1) in
-  let epoch1 = elements data in
-  let epoch2 = elements data in
-  not_equal (list exact) epoch1 epoch2 ~msg:"traversals reshuffle";
-  equal (list exact) (sorted epoch1) (sorted epoch2)
-    ~msg:"same multiset each epoch"
+  is_true ~msg:"no batches" (Seq.is_empty (Data.batches ~batch_size:4 empty))
 
 (* Paired datasets *)
 
@@ -108,9 +73,8 @@ let test_batches2_shapes () =
             (Array.to_list (Nx.shape xb), Array.to_list (Nx.shape yb)))
           data))
 
-let test_batches2_shuffle_keeps_pairing () =
-  Nx.Rng.with_key (Nx.Rng.key 3) @@ fun () ->
-  let data = Data.batches2 ~shuffle:true ~batch_size:4 (paired 10) in
+let test_batches2_keeps_pairing () =
+  let data = Data.batches2 ~batch_size:4 (paired 10) in
   let xs, ys =
     Seq.fold_left
       (fun (xs, ys) (xb, yb) ->
@@ -118,12 +82,10 @@ let test_batches2_shuffle_keeps_pairing () =
           ys @ Array.to_list (Nx.to_array yb) ))
       ([], []) data
   in
+  equal (list exact) (List.init 10 float_of_int) xs ~msg:"inputs in order";
   equal (list exact)
     (List.map (fun v -> 2. *. v) xs)
-    ys ~msg:"targets track their inputs";
-  equal (list exact)
-    (List.init 10 float_of_int)
-    (sorted xs) ~msg:"all examples visited once"
+    ys ~msg:"targets track their inputs"
 
 (* Composition with Seq *)
 
@@ -173,18 +135,10 @@ let tests =
         test "exact fit yields only full batches" test_exact_fit;
         test "empty dataset yields no batches" test_empty_dataset;
       ];
-    group "shuffling"
-      [
-        test "same seed gives the same order" test_shuffle_deterministic;
-        test "shuffling permutes without loss" test_shuffle_is_permutation;
-        test "shuffling keeps batch shapes" test_shuffle_keeps_batch_shapes;
-        test "re-traversal reshuffles each epoch" test_epochs_reshuffle;
-      ];
     group "paired datasets"
       [
         test "pairs input and target slices" test_batches2_shapes;
-        test "shuffling keeps examples paired"
-          test_batches2_shuffle_keeps_pairing;
+        test "keeps examples paired, in order" test_batches2_keeps_pairing;
       ];
     group "composition"
       [
