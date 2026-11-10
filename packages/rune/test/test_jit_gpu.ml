@@ -298,6 +298,44 @@ let one_kernel { operands; reduce } { f } =
   in
   equal ~msg:"kernels" Testable.int (given + 1) reduced
 
+(* A reduction that a program returns and another reduction reads is stored
+   once, into the result: the program compiles to the kernels of the reading
+   reduction alone, and returns the reduction and its sum within [1e-5] of
+   each compiled apart, relative to their magnitudes. *)
+let returned { operands; reduce } () =
+  let _, (module S : Nx.Devices) = on_gpu () in
+  let draw i s =
+    Nx.place S.on (Nx.Rng.normal ~key:(Nx.Rng.key i) Nx.float32 s)
+  in
+  let zs = List.mapi (fun i s -> draw (i + 2) s) operands in
+  let zs_t = Nx.Ptree.(list tensor) in
+  let kernels g =
+    List.length (snd (Tolk.Realize.kernels (fun () -> Nx.sync (g ()))))
+  in
+  let host x = Nx.place Nx.Host.on x in
+  let summed () =
+    Rune.jit Nx.Ptree.(zs_t @-> returns tensor) (fun zs -> Nx.sum (reduce zs)) zs
+  in
+  let both () =
+    Rune.jit
+      Nx.Ptree.(zs_t @-> returns (pair tensor tensor))
+      (fun zs ->
+        let y = reduce zs in
+        (y, Nx.sum y))
+      zs
+  in
+  equal ~msg:"kernels" Testable.int (kernels summed)
+    (kernels (fun () -> snd (both ())));
+  let y, total = both () in
+  let alone = host (Rune.jit Nx.Ptree.(zs_t @-> returns tensor) reduce zs) in
+  let off a b =
+    Nx.item [] (Nx.max (Nx.abs (Nx.sub a b)))
+    /. Float.max 1. (Nx.item [] (Nx.max (Nx.abs b)))
+  in
+  at_most ~msg:"the reduction" float_exact ~than:1e-5 (off (host y) alone);
+  at_most ~msg:"its sum" float_exact ~than:1e-5
+    (off (host total) (host (summed ())))
+
 (* A reduction runs inside the one that reads it below [2{^21}] terms, or of
    at most 32 terms an element, which cost little there: a weighted sum of the
    last axis's sums of [z] compiles to the kernels of the weighted sum over
@@ -1976,6 +2014,10 @@ let () =
                (inside [| 128; 128; 64 |]);
              test "of 32 terms an element stays inside the one that reads it"
                (inside [| 256; 256; 32 |]);
+             Windtrap.cases "returned too is stored once"
+               ~id:(fun (r, _) -> r)
+               reductions
+               (fun (_, r) -> returned r ());
            ];
          group "linear algebra"
            [

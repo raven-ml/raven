@@ -1892,6 +1892,31 @@ let gpu_rows g =
               in
               fun () -> ignore (synced (f x)));
         };
+      (* A model's logits and their loss: a contraction of [2048 x 1024 x
+         8192] products, returned, and the mean of its rows' log-sum-exp,
+         which reads it stored. Stored once, into the result, the logits cost
+         no copy. *)
+      on_gpu g "logits-and-loss-2048x1024x8192"
+        {
+          at =
+            (fun at ->
+              let draw i s = Nx.place at (Nx.Rng.normal ~key:(Nx.Rng.key i) f32 s) in
+              let x = draw 94 [| 2048; 1024 |] and w = draw 95 [| 1024; 8192 |] in
+              let p = Nx.Pattern.v "i j, j k -> i k | j" in
+              let loss l =
+                let m = Nx.max ~axes:[ 1 ] ~keepdims:true l in
+                let e = Nx.exp (Nx.sub l m) in
+                Nx.mean (Nx.add m (Nx.log (Nx.sum ~axes:[ 1 ] ~keepdims:true e)))
+              in
+              let f =
+                Rune.jit
+                  Nx.Ptree.(t @-> t @-> returns (pair t t))
+                  (fun x w ->
+                    let l = Nx.contract f32 p x w in
+                    (l, loss l))
+              in
+              fun () -> ignore (synced2 (f x w)));
+        };
       (* A histogram: 2^20 updates added into 16 targets. *)
       on_gpu g "scatter-add-1048576-into-16"
         {

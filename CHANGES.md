@@ -1223,6 +1223,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 - `Memory.memory_plan_rewrite` plans the buffers that only one loop's calls
   take within a trip: such buffers share bytes where their lives in a trip
   do not overlap, where every buffer a loop took lived for the whole loop.
+- A value stored for its readers and returned whole is stored once, into
+  the output: `Rune.jit` of a contraction and its sum, or of logits and
+  their loss, copied it into the output with a kernel of its own.
 - An `Ops.end_` of an `Ops.group` of stores outside a kernel raises the
   message of a loop that runs more than one call: it was refused as two
   writes over one state, or raised "ranges leak out of the called body".

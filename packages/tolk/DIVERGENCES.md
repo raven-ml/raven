@@ -9889,3 +9889,41 @@ kept in ordered sets, change no source and belong to D466.
   laws (`› laws`), that buffers whose lives meet share no byte and that
   each recorded plan's arena is at most tinygrad's; the recorded plans
   whose places differ carry this entry in their `.tolk`.
+
+## D476. An output that stores a stage whole holds it
+
+- **tinygrad:** `schedule/rangeify.py` (`bufferize_to_store`, which gives
+  every stage storage of its own, `UOp.alloc`); `schedule/prepare.py`
+  (`forward_call_outputs`, which makes an output the storage of a `STAGE`
+  stored into it, and of no other value). tinygrad's own outputs never meet
+  this: `Tensor.linear_with_vars` stores a realized tensor into storage and
+  makes every reader read that storage. An assign of a value another reader
+  stores apart copies it: `out.assign(c)` of a 256 x 64 x 256 contraction
+  `c`, realized with `c.sum()`, is 4 kernels, `c` realized with its sum 3
+  (6b7b018da, `DEV=CPU`).
+- **tolk:** `Rangeify.buffers`, `Rangeify.bufferize_to_store` and the
+  store rule of `Rangeify.pm_add_buffers`.
+- **Differs:** a stage that an item of the graph, `AFTER(b, STORE(b, s))`,
+  stores whole into `b`, in the stage's order, at its type and device, is
+  stored into `b` where `b` is storage that nothing else in the graph reads
+  or writes, its state after the store included, and that the stage's value
+  does not read; the store, then a copy of `b` into itself, is dropped. A
+  stage stored narrower than its readers read it (`Rangeify.widens`) keeps
+  its storage. Where tinygrad stores the stage apart and copies it into
+  `b`, tolk writes `b` once. tinygrad's own fix, every reader of a returned
+  value reading its output, belongs to rune's lowering; there it would make
+  a reader of a cheap value, such as a sum of a broadcast, read the whole
+  output where it now computes from the operands, and wait for the output's
+  kernel. Here the rule acts only where rangeify stores the value anyway.
+- **Reason:** (d): rune hands tolk each output as such a store into fresh
+  storage, and its readers read the value, so a returned value that another
+  reader needs stored, a contraction a sum reads or logits their loss reads,
+  was copied whole into its output. On fudge's RTX 5000 Ada, rune's
+  `Cuda/logits-and-loss-2048x1024x8192` takes 2.06 ms copied and 1.83
+  stored once, and a 4096 x 512 x 4096 contraction returned with its sum
+  1.26 and 1.02.
+- **Pinned by:** the `Tolk.Schedule` suite's `create_linear_with_vars ›
+  outputs that hold a stored value` (an output holds the row sums its other
+  reader reads, and keeps its copy where the value reads its old elements or
+  another output reads it, as it was or once stored); rune's `Rune.jit on a GPU › a reduction another
+  reads › returned too is stored once`; the row above.

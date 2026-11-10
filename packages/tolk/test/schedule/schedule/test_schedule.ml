@@ -4388,6 +4388,65 @@ let boundary =
           computes big);
     ]
 
+(* Outputs that hold a stored value
+
+   A value stored for readers that index it differently is stored once: where
+   a program also stores it whole into an output, in its order, that output
+   holds it, unless something else reads or writes the output. Here [o] takes
+   the row sums of the 4 x 4 [x], which [x] less them, into [o'], reads
+   broadcast. *)
+let kernels_of big =
+  List.length
+    (List.filter
+       (fun n -> Ops.op n = Call && Ops.op (Ops.nth n 0) = Sink)
+       (Ops.toposort ~calls:Skip (unplanned big)))
+
+let row_sums ?(o = f32 ~n:4 2) ?(o' = f32 ~n:16 3) read () =
+  let x = Shape.reshape (f32 ~n:16 1) [ Int 4; Int 4 ] in
+  let sums = Shape.rop (read o x) Add [ 1 ] in
+  let less = Ops.O.(x - Shape.expand sums [ Int 4; Int 4 ]) in
+  Ops.sink
+    [
+      assign o (Shape.reshape sums [ Int 4 ]);
+      assign o' (Shape.reshape less [ Int 16 ]);
+    ]
+
+let outputs =
+  group "create_linear_with_vars › outputs that hold a stored value"
+    [
+      test "an output holds the row sums its other reader reads stored"
+        (fun () ->
+          let big = row_sums (fun _ x -> x) () in
+          equal int ~msg:"kernels" 2 (kernels_of big);
+          computes big);
+      test "an output whose old elements the value reads keeps its copy"
+        (fun () ->
+          let read o x =
+            Ops.O.(x + Shape.expand (Shape.reshape o [ Int 4; Int 1 ]) [ Int 4; Int 4 ])
+          in
+          let big = row_sums read () in
+          equal int ~msg:"kernels" 3 (kernels_of big);
+          computes big);
+      test "an output another output also reads keeps its copy" (fun () ->
+          let o = f32 ~n:4 2 and o'' = f32 ~n:4 4 in
+          let big = row_sums ~o (fun _ x -> x) () in
+          let big =
+            Ops.sink (Ops.src big @ [ assign o'' Ops.O.(o + fl 1.) ])
+          in
+          equal int ~msg:"kernels" 4 (kernels_of big);
+          computes big);
+      test "an output another output reads once stored keeps its copy"
+        (fun () ->
+          let o = f32 ~n:4 2 and o'' = f32 ~n:4 4 in
+          let big = row_sums ~o (fun _ x -> x) () in
+          let stored = List.hd (Ops.src big) in
+          let big =
+            Ops.sink (Ops.src big @ [ assign o'' Ops.O.(stored + fl 1.) ])
+          in
+          equal int ~msg:"kernels" 4 (kernels_of big);
+          computes big);
+    ]
+
 (* Two writes over one state
 
    Two writes over one state, neither listed over the state the other makes
@@ -4655,6 +4714,7 @@ let () =
          relation;
          writes;
          boundary;
+         outputs;
          siblings;
          call_writes;
          group "create_linear_with_vars › laws" [ values_law; sink_order_law ];

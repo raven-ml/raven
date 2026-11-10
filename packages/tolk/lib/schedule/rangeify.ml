@@ -816,6 +816,58 @@ let widens x =
   && Dtype.itemsize s < Dtype.itemsize d
   && Dtype.can_lossless_cast s d
 
+(* A stage that an output of the graph stores whole, in the stage's order and
+   type, into storage nothing else reads or writes is stored there: stored
+   apart, the output would be a copy of it. A stage stored narrow keeps its
+   own storage, which its readers read at half the bytes. [homes] maps the
+   value of each such stage to its output's storage, and [copies] holds the
+   stores of the copies spared. *)
+type buffers = { slot : int ref; homes : t Tbl.t; copies : unit Tbl.t }
+
+let buffers ~slot tsink =
+  let ctx = { slot; homes = Tbl.create 4; copies = Tbl.create 4 } in
+  let items = src tsink in
+  let flat stage rs =
+    Indexing.apply_movement_op [ numel stage ] (Reshape (shape stage)) rs
+  in
+  (* The store [st] of [stage], read at [rs], into [b] at [at], which the item
+     [item] makes. *)
+  let home item b st at stage rs =
+    let value = nth stage 0 in
+    let others () = Ops.sink (List.filter (fun o -> o != item) items) in
+    if
+      (op b = Op.Param || op b = Op.Buffer)
+      && (opts stage).addrspace = Dtype.Global
+      && Option.equal String.equal (opts stage).device (device b)
+      && max_numel stage = max_numel b
+      && Dtype.equal (commit_dtype stage) (Ops.dtype b)
+      && not ((not (kept_whole stage)) && widens value)
+      && List.equal ( == ) at (flat stage rs)
+      && (not (Tbl.mem ctx.homes value))
+      && (not (reaches ~calls:Skip value b))
+      && not (reaches ~calls:Skip (others ()) b)
+    then begin
+      Tbl.replace ctx.homes value b;
+      Tbl.replace ctx.copies st ()
+    end
+  in
+  let item u =
+    match src u with
+    | [ b; e ] when op u = Op.After -> (
+        let st = if op e = Op.End then nth e 0 else e in
+        match (op st, src st) with
+        | Op.Store, [ dst; x ]
+          when op dst = Op.Index
+               && nth dst 0 == b
+               && op x = Op.Index
+               && op (nth x 0) = Op.Stage ->
+            home u b st (List.tl (src dst)) (nth x 0) (List.tl (src x))
+        | _ -> ())
+    | _ -> ()
+  in
+  List.iter item items;
+  ctx
+
 let bufferize_to_store ctx x idx =
   let dtype = commit_dtype x in
   let rngs = sorted_ranges (Nodes.to_list (ranges idx)) in
@@ -860,14 +912,20 @@ let bufferize_to_store ctx x idx =
            bytes of bfloat16 widened to float32, and a reader's float32 product
            of such values is one of bfloat16 values, which a tensor core
            multiplies. A value stored whole keeps its type. *)
+        let home = Tbl.find_opt ctx.homes value in
         let value, dtype =
           if (not (kept_whole x)) && widens value then
             (nth value 0, commit_dtype (nth value 0))
           else (value, dtype)
         in
-        let slot = !ctx in
-        incr ctx;
-        let buf = alloc ~slot ?device [ Int (max_numel x) ] dtype in
+        let buf =
+          match home with
+          | Some t -> t
+          | None ->
+              let slot = !(ctx.slot) in
+              incr ctx.slot;
+              alloc ~slot ?device [ Int (max_numel x) ] dtype
+        in
         let do_store =
           end_ (store (index buf [ idx ]) (cast value dtype)) rngs
         in
@@ -951,7 +1009,10 @@ let pm_add_buffers =
                      (List.map
                         (fun x -> if op x = Op.Reshape then nth x 0 else x)
                         (src k))));
-          (* Invalid writes are dropped. *)
+          (* A store that copies a stage into the storage holding it, and
+             invalid writes, are dropped. *)
+          rule_ctx (Upat.op Op.Store ~name:"s") (fun ctx m ->
+              if Tbl.mem ctx.copies (m "s") then Some (v Op.Noop) else None);
           rule
             (Upat.op Op.Store
                ~src:[ Upat.wild; Upat.op Op.Const ~arg:(Const `Invalid) ])
@@ -1380,10 +1441,10 @@ let get_kernel_graph tsink =
         match (op x, arg x) with Op.Alloc, Param p -> Some p.slot | _ -> None)
       (toposort ~calls:Skip tsink)
   in
-  let next_slot = ref (1 + List.fold_left max (-1) slots) in
+  let slot = ref (1 + List.fold_left max (-1) slots) in
   let tsink =
-    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:next_slot tsink
-      (Before_sources pm_add_buffers)
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(buffers ~slot tsink)
+      tsink (Before_sources pm_add_buffers)
   in
   let tsink =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() tsink
