@@ -18,16 +18,23 @@ no CHANGES entry).
   Hugging Face (`geotessera/*`). Tests use synthetic tiles. Fixtures are
   generated outside the repository by the upstream reference at a pinned
   commit; each records that commit and the command that made it.
-- `lib/` is the library `tessera`: `Pixels` (a tile's valid observations),
-  `Batch` (the v2 counts and packed rows), `Model` (the released v2
-  students and teacher), `Embedding` (encoding, GeoTessera's files: npy, and
-  GeoTIFF on a jord grid).
-  `test/` holds its laws on synthetic pixels and small models.
+- `lib/` is the library `tessera`: `Pixels` (a tile's valid observations,
+  corpora on disk), `Batch` (the v2 counts, packed rows, duplicate filling),
+  `Model` (the released v2 students and teacher, and their training forward
+  with dropout), `Embedding` (encoding, GeoTessera's files: npy, and GeoTIFF
+  on a jord grid), `Distil` (Matryoshka distillation and its compiled
+  step), `Checkpoint` (a run's state on disk). `test/` holds its laws on
+  synthetic pixels and small models.
 - `bin/main.exe encode` embeds a tile, as a GeoTIFF on its landmask's grid
   with `--landmask`; `bin/main.exe validate --weights DIR --fixtures DIR`
-  compares the four released students (the teacher with `--models teacher`)
-  with the upstream reference's fixtures, which live outside the repository
-  with the weights. A CUDA run needs `NVRTC_PATH`.
+  compares the four released students (the teacher with `--models
+  teacher`) with the upstream reference's fixtures, which live outside the
+  repository with the weights. A CUDA run needs `NVRTC_PATH`.
+- `bin/main.exe corpus` shuffles tiles' pixels into a corpus, `targets`
+  writes a model's embeddings of a corpus (the teacher's, for
+  distillation), and `distil` trains a student on them, checkpointed and
+  resumable. `validate --training DIR` compares a step's loss and gradients
+  with `_plans/tessera-port/gen/grads.py`'s, dropout masks fed to it.
 - `bench/` times raven's operations at TESSERA's shapes, beside PyTorch's
   timings of the same cases. It measures real shapes, not regression rows,
   so it runs far longer than a package suite (about an hour on a CPU).

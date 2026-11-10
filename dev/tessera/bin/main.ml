@@ -16,6 +16,11 @@ open Tessera
 let usage =
   {|usage: main.exe encode --model FILE --tile DIR --out NAME [OPTION...]
        main.exe validate --weights DIR --fixtures DIR [OPTION...]
+       main.exe validate --training DIR --tile DIR [--masks] [--device D] [--bf16]
+       main.exe corpus --tiles DIR[,DIR...] --out DIR [--seed N] [--bytes B]
+       main.exe targets --teacher FILE --corpus DIR --out FILE [OPTION...]
+       main.exe distil --corpus DIR --targets FILE --out DIR
+                       (--init FILE [--heads FILE] | --arch A) [OPTION...]
 
 encode options:
   --device D    cpu (eager, the default), cpu-jit, cuda, nv, amd or metal
@@ -33,6 +38,41 @@ validate options:
   --models M    comma-separated, of nano, small, medium, large, teacher
                 (default the four students)
   --bf16        validate the teacher in bfloat16 too
+
+validate --training compares one distillation step's loss and gradients
+with gen/grads.py's on a small student, dropout masks fed to it; --masks
+writes raven's tokens and masks for it first.
+
+corpus writes the pixels of the tiles with an observation, shuffled by
+--seed, in runs of --bytes (default 1 GiB).
+
+targets options:
+  --device D, --bf16, --pixels N (default 512), --slots S
+                as for encode
+  --fp16        write float16 targets (default float32)
+  --chunk N     pixels a block of the file (default 8192)
+
+distil options:
+  --init FILE   a student checkpoint, its heads from --heads FILE (npz of
+                PyTorch's k.weight and k.bias) or drawn
+  --arch A      a student drawn from --seed: nano, small, medium or large
+  --device D    as for encode
+  --steps N     (default 1000), --groups G (default 1) per step, --pixels N
+                per group (default 2048), --slots S (default 32)
+  --seed N      the run's key: corpus order after the first epoch, dropout,
+                and a drawn student's and heads' parameters (default 0)
+  --lr X (8e-4), --warmup F (0.05 of the steps), --decay X (1e-4, every
+                leaf), --clip X (1.0), --dropout X (0.1), --reducer-dropout X
+                (0.2): v2 App. J, Table 9
+  --bf16        compute the products in bfloat16, parameters float32
+  --memory B    refuse a step whose footprint, state and groups pass B bytes
+  --every K     write OUT/state.safetensors every K steps (default 100)
+  --until N     stop after step N of the --steps the schedule spans
+  --resume      continue from OUT/state.safetensors, with the options of
+                the run that wrote it (a run without --resume refuses an
+                OUT that holds one)
+  --heldout C:T report each prefix's mean cosine to the targets T of the
+                corpus C after the last step
 
 Memory grows linearly with --pixels. At 4096 pixels a batch takes about
 7.7 GB for medium and 11.4 GB for large eager on the CPU, and 3.8 GB and
@@ -453,6 +493,666 @@ let validate_blocks (type s d) (t : d target)
             else "")))
     blocks
 
+(* Training *)
+
+let float_opt opts name default =
+  match opt opts name with
+  | None -> default
+  | Some v -> (
+      match float_of_string_opt v with
+      | Some x -> x
+      | None -> die "%s: %S" name v)
+
+let now = Unix.gettimeofday
+
+(* Words the program allocated so far. *)
+let words () =
+  let s = Gc.quick_stat () in
+  s.minor_words +. s.major_words -. s.promoted_words
+
+let host_f32 a name =
+  match Nx_io.Archive.find name a with
+  | None -> die "%s: no entry" name
+  | Some (Nx.P x) -> Nx_io.Archive.float ~shape:(Nx.shape x) Nx.float32 name a
+
+(* A student's heads in PyTorch's layout, [k.weight] [[d; k]] and [k.bias]. *)
+let load_heads file prefixes =
+  let a = Nx_io.load_npz file in
+  List.map
+    (fun k ->
+      let w = Nx.matrix_transpose (host_f32 a (Printf.sprintf "%d.weight" k)) in
+      let b = host_f32 a (Printf.sprintf "%d.bias" k) in
+      (k, [ { Kaun.Linear.w; b = Some b } ]))
+    prefixes
+
+(* Pixels at the corpus indices [indices]. *)
+let take_pixels (px : Nx.host Pixels.t) indices =
+  {
+    Pixels.s2 = Nx_ragged.take ~indices px.s2;
+    s1 = Nx_ragged.take ~indices px.s1;
+  }
+
+(* Each place's key: the run's dropout key indexed by the place's stream
+   position, the first position at an empty place. *)
+let place_keys key ~first (b : Nx.host Batch.t) =
+  let p =
+    Nx.add_s (Nx.maximum b.pixel (Nx.scalar Nx.int64 0L)) (Int64.of_int first)
+  in
+  Nx.Rng.fold_in_tensor key p
+
+(* corpus *)
+
+let corpus opts =
+  let tiles = String.split_on_char ',' (req opts "--tiles") in
+  let out = req opts "--out" in
+  let key = Nx.Rng.key (int_opt opts "--seed" 0) in
+  let bytes = int_opt opts "--bytes" (1 lsl 30) in
+  if not (Sys.file_exists out) then Sys.mkdir out 0o755;
+  let parts =
+    List.mapi
+      (fun i tile ->
+        let px, _ = Pixels.of_tile tile in
+        let l2 = Nx.to_array (Nx_ragged.lengths px.s2) in
+        let l1 = Nx.to_array (Nx_ragged.lengths px.s1) in
+        let kept =
+          List.filter
+            (fun p -> l2.(p) > 0L || l1.(p) > 0L)
+            (List.init (Pixels.length px) Fun.id)
+        in
+        let indices =
+          Nx.create Nx.int64
+            [| List.length kept |]
+            (Array.of_list (List.map Int64.of_int kept))
+        in
+        let dir = Filename.concat out (Printf.sprintf "part%d" i) in
+        Pixels.save dir (take_pixels px indices);
+        Printf.printf "%s: %d pixels, %d with an observation\n%!" tile
+          (Pixels.length px) (List.length kept);
+        dir)
+      tiles
+  in
+  let n = Pixels.shuffle ~key ~bytes out parts in
+  List.iter
+    (fun d ->
+      Array.iter (fun f -> Sys.remove (Filename.concat d f)) (Sys.readdir d);
+      Sys.rmdir d)
+    parts;
+  Printf.printf "%s: %d pixels, shuffled\n" out n
+
+(* targets *)
+
+let targets opts =
+  let teacher = req opts "--teacher" and dir = req opts "--corpus" in
+  let out = req opts "--out" in
+  let device = Option.value ~default:"cpu" (opt opts "--device") in
+  let chunk = int_opt opts "--chunk" 8192 in
+  let shape =
+    Batch.typical
+      ~pixels:(int_opt opts "--pixels" 512)
+      ~slots:(int_opt opts "--slots" 32)
+  in
+  let px = Pixels.load dir in
+  let n = Pixels.length px in
+  let m = Model.load teacher in
+  on device
+    {
+      run =
+        (fun t ->
+          let f =
+            if flag opts "--bf16" then forward t (place t (bf16 m))
+            else forward t (place t m)
+          in
+          let start = now () in
+          let block pos =
+            let len = min chunk (n - pos) in
+            let e = Embedding.encode ~shape t.at f (Pixels.sub px ~pos ~len) in
+            Printf.printf "targets: %d / %d pixels, %.0f px/s\n%!" (pos + len) n
+              (Float.of_int (pos + len) /. (now () -. start));
+            e
+          in
+          let blocks =
+            Seq.map block
+              (Seq.init ((n + chunk - 1) / chunk) (fun i -> i * chunk))
+          in
+          let d = Model.dims m in
+          if flag opts "--fp16" then
+            Nx_io.save_npy_concat out Nx.float16 [| d |]
+              (Seq.map (Nx.cast Nx.float16) blocks)
+          else Nx_io.save_npy_concat out Nx.float32 [| d |] blocks);
+    }
+
+(* distil *)
+
+(* A run's keys: the corpus order of each epoch after the first, and
+   dropout's. *)
+let epoch_site = 0
+let dropout_site = 1
+let heads_site = 2
+let init_site = 3
+
+(* The corpus index of each stream position of [p, p + len): epoch [e]'s
+   ordering of [n], the corpus's own for epoch 0. *)
+let indices key ~n p len =
+  let pos = Nx.arange Nx.int64 p (p + len) 1 in
+  let n' = Int64.of_int n in
+  let e = Nx.div_s pos n' and i = Nx.mod_s pos n' in
+  let shuffled =
+    Nx.Rng.permute
+      ~key:(Nx.Rng.fold_in_tensor (Nx.Rng.fold_in key epoch_site) e)
+      ~n i
+  in
+  Nx.where (Nx.equal_s e 0L) i shuffled
+
+(* The pixels a step's groups hold: from position [p], each group packed from
+   where the previous one stopped, and the positions they took. *)
+let step_groups ~key ~shape ~groups corpus targets p =
+  let n = Pixels.length corpus in
+  let window = groups * shape.Batch.pixels in
+  let idx = indices key ~n p window in
+  let px = take_pixels corpus idx in
+  let px, counts = Batch.expand px (Batch.v2_counts px) in
+  let dkey = Nx.Rng.fold_in key dropout_site in
+  let rec go g from acc =
+    if g = groups then (List.rev acc, from)
+    else
+      let b, next = Batch.pack shape px counts ~from in
+      let places = Nx.maximum b.pixel (Nx.scalar Nx.int64 0L) in
+      let keys = place_keys dkey ~first:p b in
+      let t = Nx.take ~axis:0 (Nx.take ~axis:0 places idx) targets in
+      go (g + 1) next ({ Distil.batch = b; keys; targets = t } :: acc)
+  in
+  let gs, taken = go 0 0 [] in
+  let stack f = Nx.stack (List.map f gs) in
+  ( {
+      Distil.batch =
+        Batch.stack (List.map (fun (g : _ Distil.group) -> g.batch) gs);
+      keys =
+        Nx.Rng.of_tensor
+          (stack (fun (g : _ Distil.group) -> Nx.Rng.to_tensor g.keys));
+      targets = stack (fun (g : _ Distil.group) -> g.targets);
+    },
+    taken )
+
+let tree_bytes s x = Nx.Ptree.fold s (fun _ a acc -> acc + Nx.nbytes a) x 0
+
+(* Mean cosine of each prefix's head to the teacher over [px]. *)
+let fidelity (type d) (t : d target) shape
+    (st : (d Nx.float32_t, d) Distil.state) px targets =
+  let e = Embedding.encode ~shape t.at (forward t st.model) px in
+  let host =
+    Nx.Ptree.place
+      (module Distil.Params)
+      Nx.Host.on
+      { Distil.net = st.model.net; heads = st.heads }
+  in
+  let c = Distil.cosines host.heads e ~targets in
+  let mean = Nx.to_array (Nx.mean ~axes:[ 0 ] c) in
+  List.mapi (fun i (p, _) -> (p, mean.(i))) host.heads
+
+let distil opts =
+  let dir = req opts "--corpus" and out = req opts "--out" in
+  let device = Option.value ~default:"cpu" (opt opts "--device") in
+  let seed = int_opt opts "--seed" 0 in
+  let key = Nx.Rng.key seed in
+  let steps = int_opt opts "--steps" 1000 in
+  let until = min steps (int_opt opts "--until" steps) in
+  let groups = int_opt opts "--groups" 1 in
+  let every = int_opt opts "--every" 100 in
+  let lr = float_opt opts "--lr" 8e-4 in
+  let warmup = float_opt opts "--warmup" 0.05 in
+  let decay = float_opt opts "--decay" 1e-4 in
+  let clip = float_opt opts "--clip" 1.0 in
+  let dropout =
+    {
+      Model.layers = float_opt opts "--dropout" 0.1;
+      reducer = float_opt opts "--reducer-dropout" 0.2;
+    }
+  in
+  let corpus = Pixels.load dir in
+  let targets =
+    match Nx_io.load_npy (req opts "--targets") with
+    | Nx.P x -> Nx.cast Nx.float32 x
+  in
+  let d_t = Nx.dim 1 targets in
+  let m, heads =
+    match (opt opts "--init", opt opts "--arch") with
+    | Some file, _ ->
+        let m = Model.load file in
+        let heads =
+          match opt opts "--heads" with
+          | Some h -> load_heads h m.prefixes
+          | None ->
+              Distil.heads
+                ~key:(Nx.Rng.fold_in key heads_site)
+                ~prefixes:m.prefixes d_t
+        in
+        (m, heads)
+    | None, Some a ->
+        let arch =
+          match a with
+          | "nano" -> Model.nano
+          | "small" -> Model.small
+          | "medium" -> Model.medium
+          | "large" -> Model.large
+          | a -> die "--arch %S: nano, small, medium or large" a
+        in
+        let m = Model.init ~key:(Nx.Rng.fold_in key init_site) arch in
+        ( m,
+          Distil.heads
+            ~key:(Nx.Rng.fold_in key heads_site)
+            ~prefixes:m.prefixes d_t )
+    | None, None -> die "--init or --arch is required\n%s" usage
+  in
+  (* Rows for the duplicate-filled tokens of the corpus's first pixels. *)
+  let pixels = int_opt opts "--pixels" 2048
+  and slots = int_opt opts "--slots" 32 in
+  let width = 256 in
+  let shape =
+    let sample =
+      Pixels.sub corpus ~pos:0 ~len:(min 4096 (Pixels.length corpus))
+    in
+    let _, c = Batch.expand sample (Batch.v2_counts sample) in
+    let mean x =
+      Float.of_int (Nx.numel x) /. Float.of_int (Pixels.length sample)
+    in
+    let rows tokens =
+      max 1
+        (Float.to_int
+           (Float.ceil
+              (1.05 *. tokens *. Float.of_int pixels /. Float.of_int width))
+        + 1)
+    in
+    {
+      Batch.pixels;
+      s2_rows = rows (mean c.s2);
+      s1_rows = rows (mean c.s1);
+      slots;
+      width;
+    }
+  in
+  let warmup_steps =
+    max 1 (Float.to_int (Float.round (warmup *. Float.of_int steps)))
+  in
+  let sched () =
+    Vega.Schedule.warmup_cosine_decay ~init_value:0. ~peak_value:lr
+      ~warmup_steps
+      ~decay_steps:(max 1 (steps - warmup_steps))
+      ()
+  in
+  let compute_bf16 = flag opts "--bf16" in
+  let heldout =
+    match opt opts "--heldout" with
+    | None -> None
+    | Some s -> (
+        match String.split_on_char ':' s with
+        | [ c; t ] ->
+            let px = Pixels.load c in
+            let t =
+              match Nx_io.load_npy t with Nx.P x -> Nx.cast Nx.float32 x
+            in
+            Some (px, t)
+        | _ -> die "--heldout CORPUS:TARGETS")
+  in
+  if not (Sys.file_exists out) then Sys.mkdir out 0o755;
+  let ckpt = Filename.concat out "state.safetensors" in
+  let log_file = Filename.concat out "log.tsv" in
+  let resume = flag opts "--resume" in
+  if resume && not (Sys.file_exists ckpt) then die "%s: no state to resume" ckpt;
+  if (not resume) && (Sys.file_exists ckpt || Sys.file_exists log_file) then
+    die "%s holds a run: --resume it, or write to another --out" out;
+  (* The options a resume must repeat: every one that changes the steps. *)
+  let run =
+    String.concat " "
+      ([
+         Printf.sprintf "--corpus %s --targets %s" dir (req opts "--targets");
+         (match (opt opts "--init", opt opts "--arch") with
+         | Some f, _ ->
+             Printf.sprintf "--init %s --heads %s" f
+               (Option.value ~default:"drawn" (opt opts "--heads"))
+         | None, a -> "--arch " ^ Option.value ~default:"" a);
+         Printf.sprintf
+           "--seed %d --steps %d --groups %d --pixels %d --slots %d --lr %h \
+            --warmup %h --decay %h --clip %h --dropout %h --reducer-dropout %h"
+           seed steps groups pixels slots lr warmup decay clip dropout.layers
+           dropout.reducer;
+       ]
+      @ if compute_bf16 then [ "--bf16" ] else [])
+  in
+  (* A resumed run's log keeps the steps its state holds. *)
+  let kept_log =
+    if not resume then []
+    else
+      In_channel.with_open_bin log_file In_channel.input_all
+      |> String.split_on_char '\n'
+      |> List.filter (fun l -> l <> "")
+  in
+  let log = open_out log_file in
+  let keep_log upto =
+    List.iter
+      (fun l ->
+        match String.split_on_char '\t' l with
+        | s :: _ when int_of_string s <= upto -> output_string log (l ^ "\n")
+        | _ -> ())
+      kept_log;
+    flush log
+  in
+  Printf.printf
+    "distil: %d pixels, shape {pixels %d; s2_rows %d; s1_rows %d; slots %d; \
+     width %d}, %d groups, dropout %g/%g, %s\n\
+     %!"
+    (Pixels.length corpus) shape.pixels shape.s2_rows shape.s1_rows shape.slots
+    shape.width groups dropout.layers dropout.reducer
+    (if compute_bf16 then "bf16" else "f32");
+  on device
+    {
+      run =
+        (fun (type d) (t : d target) ->
+          let st_ptree = Nx.Ptree.instantiate (module Distil.State) in
+          let group = Nx.Ptree.instantiate (module Distil.Group) in
+          let fresh =
+            Nx.Ptree.place
+              (module Distil.Params)
+              t.at
+              { Distil.net = m.net; heads }
+          in
+          let start =
+            Distil.init
+              { (Nx.Ptree.place (module Model) t.at m) with net = fresh.net }
+              fresh.heads
+          in
+          let st, position =
+            if resume then begin
+              let st, k, position, saved =
+                Checkpoint.load ckpt (module Distil.State) ~like:start
+              in
+              if saved <> run then
+                die "%s is a run of\n  %s\nnot of\n  %s" ckpt saved run;
+              if
+                Nx.to_array (Nx.Rng.to_tensor k)
+                <> Nx.to_array (Nx.Rng.to_tensor key)
+              then die "%s: the run's key is not --seed %d's" ckpt seed;
+              (st, position)
+            end
+            else (start, 0)
+          in
+          let sched = sched () in
+          let step_fn
+              (g :
+                (d Nx.float32_t, d) Distil.group
+                * (d Nx.float32_t, d) Distil.state) :
+              d Nx.float32_t * (d Nx.float32_t, d) Distil.state =
+            if compute_bf16 then
+              Distil.step ~compute:Nx.bfloat16 ~dropout ~lr:sched
+                ~weight_decay:(Vega.rate decay) ~clip g
+            else
+              Distil.step ~compute:Nx.float32 ~dropout ~lr:sched
+                ~weight_decay:(Vega.rate decay) ~clip g
+          in
+          let signature :
+              ( (d Nx.float32_t, d) Distil.group
+                * (d Nx.float32_t, d) Distil.state ->
+                d Nx.float32_t * (d Nx.float32_t, d) Distil.state,
+                d )
+              Nx.Ptree.fn =
+            Nx.Ptree.(pair group st_ptree @-> returns (pair tensor st_ptree))
+          in
+          let step = if t.jit then Rune.jit signature step_fn else step_fn in
+          let first =
+            Int32.to_int (Nx.item [] (Nx.place Nx.Host.on st.opt.step))
+          in
+          keep_log first;
+          let gs0, taken0 =
+            step_groups ~key ~shape ~groups corpus targets position
+          in
+          let gs0 = Nx.Ptree.place (module Distil.Group) t.at gs0 in
+          if t.jit then begin
+            let fp = Rune.footprint signature step_fn (gs0, st) in
+            let live = tree_bytes st_ptree st + tree_bytes group gs0 in
+            List.iter
+              (fun (r, b) ->
+                Printf.printf
+                  "footprint: %s %.2f GB, with the state and a step's groups \
+                   %.2f GB\n\
+                   %!"
+                  (Rig.name r)
+                  (Float.of_int b /. 1e9)
+                  (Float.of_int (b + live) /. 1e9))
+              fp;
+            match opt opts "--memory" with
+            | None -> ()
+            | Some s ->
+                let budget = float_of_string s in
+                List.iter
+                  (fun (r, b) ->
+                    if Rig.name r <> "host" && Float.of_int (b + live) > budget
+                    then
+                      die "%s needs %.2f GB, above --memory %.2f GB"
+                        (Rig.name r)
+                        (Float.of_int (b + live) /. 1e9)
+                        (budget /. 1e9))
+                  fp
+          end;
+          let rec go st position i ~gs =
+            if i >= until then (st, position)
+            else begin
+              let t0 = now () and w0 = words () in
+              let gs, taken =
+                match gs with
+                | Some g -> g
+                | None ->
+                    let g, taken =
+                      step_groups ~key ~shape ~groups corpus targets position
+                    in
+                    (Nx.Ptree.place (module Distil.Group) t.at g, taken)
+              in
+              (* A compiled step writes the new state over the old one. *)
+              let st = if t.jit then Nx.Ptree.donate st_ptree st else st in
+              let loss, st = step (gs, st) in
+              let loss = Nx.item [] (Nx.place Nx.Host.on loss) in
+              let dt = now () -. t0 and dw = words () -. w0 in
+              let filled =
+                Nx.to_array (Nx.place Nx.Host.on gs.batch.pixel)
+                |> Array.fold_left (fun a p -> if p >= 0L then a + 1 else a) 0
+              in
+              Printf.fprintf log "%d\t%d\t%d\t%d\t%.9g\t%.4f\t%.0f\n%!" (i + 1)
+                position taken filled loss dt dw;
+              if (i + 1) mod 10 = 0 || i < 3 then
+                Printf.printf
+                  "step %d position %d pixels %d loss %.6f %.3f s %.0f words\n\
+                   %!"
+                  (i + 1) position filled loss dt dw;
+              let position = position + taken in
+              if (i + 1) mod every = 0 || i + 1 = until then
+                Checkpoint.save ckpt
+                  (module Distil.State)
+                  st ~key ~position ~run;
+              go st position (i + 1) ~gs:None
+            end
+          in
+          let st, _ = go st position first ~gs:(Some (gs0, taken0)) in
+          match heldout with
+          | None -> ()
+          | Some (px, tg) ->
+              let shape = Batch.typical ~pixels:4096 ~slots:32 in
+              List.iter
+                (fun (k, c) ->
+                  Printf.printf "fidelity: prefix %d mean cos %.6f\n" k c)
+                (fidelity t shape st px tg));
+    };
+  close_out log
+
+(* validate --training *)
+
+(* The oracle's distillation: the student [student.pt], its heads [heads.npz],
+   the targets and the tile's pixels [pixels.npy] of [gen/grads.py init], at
+   v2's dropout, keyed by each pixel's index there. *)
+let training_inputs dir tile =
+  let file f = Filename.concat dir f in
+  let m = Model.load (file "student.pt") in
+  let heads = load_heads (file "heads.npz") m.prefixes in
+  let targets = Nx.unpack Nx.float32 (Nx_io.load_npy (file "targets.npy")) in
+  let px, _ = Pixels.of_tile tile in
+  let px =
+    take_pixels px (Nx.unpack Nx.int64 (Nx_io.load_npy (file "pixels.npy")))
+  in
+  let px, counts = Batch.expand px (Batch.v2_counts px) in
+  (m, heads, targets, px, counts)
+
+let oracle_key = Nx.Rng.key 0
+
+(* float32's spacing relative to its value, at most. *)
+let f32_ulp = Float.ldexp 1. (-23)
+
+(* Writes the tokens and masks of each pixel, one a row, for the oracle. *)
+let write_masks dir tile =
+  let m, _, _, px, counts = training_inputs dir tile in
+  let n = Pixels.length px in
+  let shape =
+    { Batch.pixels = n; s2_rows = n; s1_rows = n; slots = 1; width = 256 }
+  in
+  let b, _ = Batch.pack shape px counts ~from:0 in
+  let keys = place_keys oracle_key ~first:0 b in
+  let masks = Model.masks ~dropout:Model.v2_dropout ~keys m b in
+  List.iter
+    (fun (name, x) ->
+      Nx_io.save_npy
+        (Filename.concat dir ("mask_" ^ name ^ ".npy"))
+        (Nx.cast Nx.uint8 x))
+    masks;
+  let blocks = Model.blocks m b in
+  List.iter
+    (fun s ->
+      Nx_io.save_npy
+        (Filename.concat dir ("raven_" ^ s ^ ".npy"))
+        (List.assoc s blocks))
+    [ "s2_in"; "s1_in" ];
+  let len (r : Nx.host Batch.rows) =
+    Nx.cast Nx.int64 (Nx.slice [ Nx.A; Nx.I 0 ] r.stop)
+  in
+  Nx_io.save_npy
+    (Filename.concat dir "raven_lengths.npy")
+    (Nx.stack ~axis:1 [ len b.s2; len b.s1 ]);
+  Out_channel.with_open_bin (Filename.concat dir "raven_masks.json") (fun oc ->
+      Printf.fprintf oc "{\"order\": [%s]}\n"
+        (String.concat ", "
+           (List.map (fun (k, _) -> Printf.sprintf "%S" k) masks)));
+  Printf.printf "%s: %d masks of %d pixels\n" dir (List.length masks) n
+
+let leaves s x =
+  List.rev
+    (Nx.Ptree.fold s
+       (fun p a acc ->
+         ( Nx.Ptree.Path.to_string p,
+           Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on a)) )
+         :: acc)
+       x [])
+
+let rel a b =
+  let d = ref 0. and n = ref 0. in
+  Array.iteri
+    (fun i x ->
+      d := !d +. ((x -. b.(i)) ** 2.);
+      n := !n +. (b.(i) ** 2.))
+    a;
+  Float.sqrt (!d /. Float.max !n 1e-300)
+
+let validate_training opts =
+  let dir = req opts "--training" and tile = req opts "--tile" in
+  if flag opts "--masks" then write_masks dir tile
+  else begin
+    let device = Option.value ~default:"cpu" (opt opts "--device") in
+    let prec = if flag opts "--bf16" then "bf16" else "f32" in
+    let m, heads, targets, px, counts = training_inputs dir tile in
+    let n = Pixels.length px in
+    let shape =
+      { Batch.pixels = n; s2_rows = n; s1_rows = n; slots = 4; width = 256 }
+    in
+    let b, _ = Batch.pack shape px counts ~from:0 in
+    let keys = place_keys oracle_key ~first:0 b in
+    let host = Nx.Ptree.instantiate (module Distil.Params) in
+    let file f = Filename.concat dir f in
+    let oracle prec =
+      let g = Model.load (file ("grads_" ^ prec ^ ".pt")) in
+      let h = load_heads (file ("heads_grads_" ^ prec ^ ".npz")) m.prefixes in
+      let loss =
+        Nx.item []
+          (Nx.unpack Nx.float64
+             (Nx_io.load_npy (file ("loss_" ^ prec ^ ".npy"))))
+      in
+      (loss, leaves host { Distil.net = g.net; heads = h })
+    in
+    let l64, g64 = oracle "f64" in
+    let lref, gref = oracle prec in
+    on device
+      {
+        run =
+          (fun (type d) (t : d target) ->
+            let params =
+              Nx.Ptree.place
+                (module Distil.Params)
+                t.at
+                { Distil.net = m.net; heads }
+            in
+            let mt = Nx.Ptree.place (module Model) t.at m in
+            let p = Nx.Ptree.instantiate (module Distil.Params) in
+            let f (params, b, keys, targets) =
+              let objective (type c) (dt : (float, c) Nx.dtype) q =
+                let q = Nx.Ptree.cast (module Distil.Params) dt q in
+                Nx.div_s
+                  (Distil.loss ~dropout:Model.v2_dropout ~keys mt q b ~targets)
+                  (Float.of_int n)
+              in
+              if prec = "bf16" then
+                Rune.value_and_grad p (objective Nx.bfloat16) params
+              else Rune.value_and_grad p (objective Nx.float32) params
+            in
+            let args =
+              ( params,
+                Batch.place t.at b,
+                Nx.Rng.place t.at keys,
+                Nx.place t.at targets )
+            in
+            let loss, grads =
+              if not t.jit then f args
+              else
+                Rune.jit
+                  Nx.Ptree.(
+                    quad p (v Batch.walk) Nx.Rng.ptree tensor
+                    @-> returns (pair tensor p))
+                  f args
+            in
+            let loss = Nx.item [] (Nx.place Nx.Host.on loss) in
+            let mine = leaves p grads in
+            let lrel = Float.abs (loss -. l64) /. Float.abs l64 in
+            (* The oracle sums its pixels' losses in float64; raven's is one
+               float32 value, which its rounding alone can move by an ulp. *)
+            let lbound =
+              Float.max (2. *. Float.abs (lref -. l64) /. Float.abs l64) f32_ulp
+            in
+            report
+              ~name:(Printf.sprintf "training/%s/%s/loss" device prec)
+              ~pass:(lrel <= lbound)
+              (Printf.sprintf
+                 "raven %.10g  torch f64 %.10g  rel %.3g  bound %.3g" loss l64
+                 lrel lbound);
+            let worst = ref 0. in
+            List.iter2
+              (fun (path, g) ((path', r64), (_, rp)) ->
+                if path <> path' then die "%s against %s" path path';
+                let mine = rel g r64 and theirs = rel rp r64 in
+                let ratio = mine /. (2. *. theirs) in
+                worst := Float.max !worst ratio;
+                report
+                  ~name:(Printf.sprintf "training/%s/%s/%s" device prec path)
+                  ~pass:(ratio <= 1.)
+                  (Printf.sprintf "rel %.3g  torch %s rel %.3g  ratio %.2f" mine
+                     prec theirs ratio))
+              mine (List.combine g64 gref);
+            Printf.printf "worst ratio to twice torch's %s spread: %.3f\n" prec
+              !worst);
+      }
+  end
+
 (* Main *)
 
 (* The teacher's reference has one float32 fixture and two bfloat16 ones of
@@ -506,7 +1206,16 @@ let validate_student (type d) (t : d target) m ~fixtures ~shape ~device name =
     tiles;
   if name = "medium" then validate_blocks t m ~fixtures ~device
 
+let summary () =
+  Printf.printf "%d checks, %d failed\n" !checks (List.length !failed);
+  List.iter (Printf.printf "failed: %s\n") (List.rev !failed);
+  exit (if !failed = [] then 0 else 1)
+
 let validate opts =
+  if opt opts "--training" <> None then begin
+    validate_training opts;
+    summary ()
+  end;
   let weights = req opts "--weights" and fixtures = req opts "--fixtures" in
   let device = Option.value ~default:"cpu" (opt opts "--device") in
   let models =
@@ -543,9 +1252,7 @@ let validate opts =
               Gc.full_major ())
             models);
     };
-  Printf.printf "%d checks, %d failed\n" !checks (List.length !failed);
-  List.iter (Printf.printf "failed: %s\n") (List.rev !failed);
-  exit (if !failed = [] then 0 else 1)
+  summary ()
 
 let () =
   match List.tl (Array.to_list Sys.argv) with
@@ -566,7 +1273,7 @@ let () =
            args)
   | "validate" :: args ->
       validate
-        (parse ~flags:[ "--bf16" ]
+        (parse ~flags:[ "--bf16"; "--masks" ]
            ~options:
              [
                "--weights";
@@ -575,6 +1282,56 @@ let () =
                "--models";
                "--pixels";
                "--slots";
+               "--training";
+               "--tile";
+             ]
+           args)
+  | "corpus" :: args ->
+      corpus
+        (parse ~flags:[]
+           ~options:[ "--tiles"; "--out"; "--seed"; "--bytes" ]
+           args)
+  | "targets" :: args ->
+      targets
+        (parse ~flags:[ "--bf16"; "--fp16" ]
+           ~options:
+             [
+               "--teacher";
+               "--corpus";
+               "--out";
+               "--device";
+               "--chunk";
+               "--pixels";
+               "--slots";
+             ]
+           args)
+  | "distil" :: args ->
+      distil
+        (parse ~flags:[ "--bf16"; "--resume" ]
+           ~options:
+             [
+               "--corpus";
+               "--targets";
+               "--out";
+               "--init";
+               "--heads";
+               "--arch";
+               "--device";
+               "--seed";
+               "--steps";
+               "--groups";
+               "--pixels";
+               "--slots";
+               "--every";
+               "--lr";
+               "--warmup";
+               "--decay";
+               "--clip";
+               "--dropout";
+               "--reducer-dropout";
+               "--memory";
+               "--heldout";
+               "--until";
              ]
            args)
   | ("-h" | "--help" | "help") :: _ -> print_endline usage

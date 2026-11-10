@@ -16,4 +16,7 @@
   rig.nv.nvidia
   rig.amd.amdgpu
   rig.metal
-  rune))
+  rune
+  vega
+  kaun
+  unix))

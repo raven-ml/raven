@@ -1,0 +1,9 @@
+; distil.t runs main.exe's distil on a synthetic corpus: the stream of
+; positions, resuming and the groups through the executable.
+
+(executable
+ (name make_corpus)
+ (libraries tessera synth nx nx.io))
+
+(cram
+ (deps make_corpus.exe ../../bin/main.exe))
