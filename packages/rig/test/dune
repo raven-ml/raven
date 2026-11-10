@@ -72,9 +72,12 @@
   (run %{dep:test_readers.exe})))
 
 ; The bytecode run checks that rig's stubs resolve when ocamlrun loads them
-; from CAML_LD_LIBRARY_PATH, as rig installs them: dune's
+; from CAML_LD_LIBRARY_PATH, as rig installs them: the action's
 ; CAML_LD_LIBRARY_PATH names the stublibs directory its packages install
-; into.
+; into. The shell puts the support library's, which is not installed, in
+; front of it: windtrap's workers run the bytecode again under ocamlrun
+; without its options, so an -I would not reach them, and %{env:...}
+; expands to the value without the directories of (package rig).
 
 (rule
  (alias runtest)
@@ -87,10 +90,8 @@
   (package rig)
   support/dllrig_support_stubs.so)
  (action
-  (setenv
-   CAML_LD_LIBRARY_PATH
-   "support:%{env:CAML_LD_LIBRARY_PATH=}"
-   (run %{dep:test_readers.bc}))))
+  (system
+   "CAML_LD_LIBRARY_PATH=\"support:$CAML_LD_LIBRARY_PATH\" %{bin:ocamlrun} %{dep:test_readers.bc}")))
 
 (tests
  (names test_model test_model_fork)
