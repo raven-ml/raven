@@ -26,6 +26,7 @@
 # forced: blessed order/unique-i64-1M-runs-of-4 under load 13.1 on 14 cores
 # forced: blessed order/positions-bool-1M order/positions-i64-1M-counts under load 14.3 on 14 cores
 # forced: blessed statistics/var-f32-1M statistics/std-f32-1024x1024-rows statistics/var-f32-8192x4096-rows statistics/var-bf16-8192x4096-rows statistics/var-f32-1024x1024-cols statistics/var-bf16-1M statistics/var-f64-1M-top statistics/std-f64-1M-tiny statistics/std-f32-1024x1024-rows-constant under load 37.5 on 14 cores
+# forced: blessed rng/permute-16K-of-1.4e10 under load 14.3 on 14 cores
 
 attention/decode-f32-64x8x4096x64	alloc_words	exact	902
 attention/decode-f32-64x8x4096x64	wall_time	batch=1	n=20	1.364e-03	9.401e-04 9.802e-04 9.986e-04 9.990e-04 1.039e-03 1.198e-03 1.219e-03 1.260e-03 1.295e-03 1.346e-03 1.383e-03 1.600e-03 1.727e-03 2.126e-03 2.527e-03 3.246e-03 3.993e-03 3.993e-03 5.491e-03 1.163e-02
@@ -286,13 +287,19 @@ ranges/moments-f64-64K-w365	alloc_words	exact	149380
 ranges/sum-f64-64K-w365	alloc_words	exact	35721
 rng/bernoulli-f32-1Kx1K	alloc_words	exact	1220
 rng/bernoulli-f32-1M	alloc_words	exact	1148
-rng/beta-f32-1	alloc_words	exact	13501
+rng/beta-f32-1	alloc_words	exact	11964
+rng/beta-f32-1	wall_time	batch=1	n=20	4.219e-05	4.091e-05 4.112e-05 4.114e-05 4.117e-05 4.134e-05 4.136e-05 4.160e-05 4.167e-05 4.186e-05 4.203e-05 4.235e-05 4.239e-05 4.250e-05 4.321e-05 4.346e-05 4.360e-05 4.767e-05 4.884e-05 5.244e-05 3.547e-04
 rng/bits-1M	alloc_words	exact	446
 rng/gamma-f32-64K	alloc_words	exact	7055
-rng/normal-f32-1	alloc_words	exact	576
-rng/normal-f32-1M	alloc_words	exact	601
+rng/normal-f32-1	alloc_words	exact	494
+rng/normal-f32-1	wall_time	batch=2048	n=20	2.761e-06	2.731e-06 2.733e-06 2.735e-06 2.747e-06 2.748e-06 2.749e-06 2.749e-06 2.750e-06 2.753e-06 2.757e-06 2.764e-06 2.767e-06 2.771e-06 2.775e-06 2.776e-06 2.787e-06 2.790e-06 2.791e-06 2.821e-06 2.857e-06
+rng/normal-f32-1M	alloc_words	exact	608
+rng/normal-f32-1M	wall_time	batch=1	n=20	5.797e-04	4.930e-04 4.976e-04 4.994e-04 5.151e-04 5.649e-04 5.701e-04 5.717e-04 5.742e-04 5.749e-04 5.783e-04 5.811e-04 5.846e-04 6.148e-04 6.320e-04 6.361e-04 6.363e-04 6.373e-04 6.402e-04 6.665e-04 7.390e-04
+rng/permute-16K-of-1.4e10	alloc_words	exact	1470
+rng/permute-16K-of-1.4e10	wall_time	batch=1	n=20	1.234e-02	1.088e-02 1.113e-02 1.185e-02 1.190e-02 1.208e-02 1.215e-02 1.219e-02 1.227e-02 1.228e-02 1.233e-02 1.235e-02 1.251e-02 1.266e-02 1.288e-02 1.309e-02 1.321e-02 1.339e-02 1.361e-02 1.409e-02 1.438e-02
 rng/poisson-f32-64K	alloc_words	exact	39262
-rng/randint-1M	alloc_words	exact	815
+rng/randint-1M	alloc_words	exact	1602
+rng/randint-1M	wall_time	batch=1	n=20	8.947e-04	8.343e-04 8.344e-04 8.362e-04 8.409e-04 8.413e-04 8.415e-04 8.435e-04 8.442e-04 8.571e-04 8.819e-04 9.075e-04 9.513e-04 9.521e-04 1.242e-03 1.279e-03 1.282e-03 1.284e-03 1.294e-03 1.309e-03 1.317e-03
 rng/threefry-1M-direct	alloc_words	exact	54
 rng/uniform-f32-1M	alloc_words	exact	479
 rng/uniform-f64-1M	alloc_words	exact	431

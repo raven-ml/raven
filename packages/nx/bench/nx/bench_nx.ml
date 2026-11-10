@@ -448,6 +448,19 @@ let threefry_direct (c, one_key) =
   | Done -> dst
   | refusal -> A.refused "threefry-1M-direct" refusal [ A.Any dst; A.Any c ]
 
+(* An epoch's order at TESSERA v2's size, 1.4e10 examples in 204 rounds:
+   16K positions across an epoch's end, each keyed by its epoch, as
+   [Nx.Rng.permute]'s doc composes it. *)
+let epoch_n = 14_000_000_000
+
+let epoch_positions () =
+  Nx.arange D.Int64 (epoch_n - 8192) (epoch_n + 8192) 1
+
+let epoch_order key p =
+  let n = Int64.of_int epoch_n in
+  let epoch = Nx.Rng.fold_in_tensor key (Nx.div_s p n) in
+  Nx.Rng.permute ~key:epoch ~n:epoch_n (Nx.mod_s p n)
+
 let rng_rows =
   Thumper.group "rng"
     [
@@ -480,6 +493,9 @@ let rng_rows =
           draw (Nx.Rng.normal ~key D.Float32 [| 1 |]));
       Thumper.bench_with_setup "beta-f32-1" ~setup:(keyed [| 1 |] 2.)
         (fun (key, one) -> draw (Nx.Rng.beta ~key one one));
+      Thumper.bench_with_setup "permute-16K-of-1.4e10"
+        ~setup:(fun () -> (key (), epoch_positions ()))
+        (fun (key, p) -> draw (epoch_order key p));
     ]
 
 (* Contractions, each beside its kernel called directly, so that the
