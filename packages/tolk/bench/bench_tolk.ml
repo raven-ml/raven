@@ -128,26 +128,62 @@ let warm keys =
         (fun () -> failwith ("bench: no entry " ^ key)))
     keys
 
+(* A stage whose allocation the collector decides is two cases: its time, and
+   [<stage>-fresh], its words with a full collection before each call, apart
+   so that the time does not count the collection. Finding a node that still
+   exists allocates little and building one much, so a stage that builds nodes
+   allocates according to which nodes of earlier calls the collector has not
+   yet reclaimed; the arrays a walk over a graph takes are held weakly too, and
+   made anew once collected. After a full collection every call builds its
+   nodes and arrays anew, but a shard of the table of nodes is still rebuilt
+   as it fills, at a point that the nodes' ids, through their hashes, and the
+   slots of earlier calls' collected nodes decide. Calls of one trial differ by
+   up to 4.4% (cumsum/prepare) and calls of one process by up to 5.0%
+   (attention/codegen), which [fresh_spread] holds, and thumper may record a
+   count as exact in one run and sampled in the next. A table whose rebuilds depend on neither would cost
+   the compiler more than the exact count is worth. *)
+let timed = [ Thumper.Metric.wall_time ]
+let fresh_spread = 0.05
+
+let staged ~setup name f =
+  [
+    Thumper.bench_with_setup ~metrics:timed ~setup name f;
+    Thumper.bench_with_setup
+      ~metrics:[ Thumper.Metric.alloc_words ]
+      ~budgets:[ Thumper.Budget.no_more_alloc_than fresh_spread ]
+      ~setup (name ^ "-fresh")
+      (fun x ->
+        Gc.full_major ();
+        f x);
+  ]
+
 let program name =
   let bench = Thumper.bench_with_setup in
   Thumper.group name
-    [
-      bench ~setup:(fun () -> graph name) "prepare" Prepare.prepare_rangeify;
-      bench
-        ~setup:(fun () -> prepared name)
-        "kernel_graph" Rangeify.get_kernel_graph;
-      bench
-        ~setup:(fun () -> kernel_graph name)
-        "schedule" Schedule.create_schedule;
-      bench ~setup:(fun () -> kernels name) "codegen" (List.map lower);
-      bench
-        ~setup:(fun () -> List.map lower (kernels name))
-        "linearize" (List.map linearize);
-      bench
-        ~setup:(fun () -> instructions name)
-        "render" (List.map renderer.render);
-      bench ~setup:(fun () -> kept name) "warm" warm;
-    ]
+    (List.concat
+       [
+         staged
+           ~setup:(fun () -> graph name)
+           "prepare" Prepare.prepare_rangeify;
+         staged
+           ~setup:(fun () -> prepared name)
+           "kernel_graph" Rangeify.get_kernel_graph;
+         [
+           bench
+             ~setup:(fun () -> kernel_graph name)
+             "schedule" Schedule.create_schedule;
+         ];
+         staged ~setup:(fun () -> kernels name) "codegen" (List.map lower);
+         [
+           bench
+             ~setup:(fun () -> List.map lower (kernels name))
+             "linearize" (List.map linearize);
+           bench
+             ~setup:(fun () -> instructions name)
+             "render" (List.map renderer.render);
+           bench ~setup:(fun () -> kept name) "warm" warm;
+         ];
+       ])
 
 (* Lorenz kernels *)
 
@@ -414,13 +450,11 @@ let candidates cuda_renderer kernel text =
   |> List.map (fun (_, c) ->
       Postrange.Scheduler.get_optimized_ast ~name_override:"test" c)
 
-(* Only the time is measured. What a lowering allocates depends on which nodes
-   of earlier calls the collector has not yet reclaimed, since building a node
-   that still exists allocates nothing: from one call to the next it moves by
-   about 2%, and no count is constant for thumper to prove exact. *)
+(* Only the time is measured: what a lowering allocates depends on the
+   collector, as [staged] says, and [<program>/codegen-fresh] counts the words
+   of lowerings. *)
 let linearize_candidates cuda_renderer =
-  Thumper.group "linearize"
-    ~metrics:[ Thumper.Metric.wall_time ]
+  Thumper.group "linearize" ~metrics:timed
     (List.map
        (fun (kernel, text) ->
          Thumper.bench_with_setup
@@ -632,10 +666,8 @@ let summed () =
 let chains =
   let bench = Thumper.bench_with_setup in
   Thumper.group "chains"
-    [
-      bench ~setup:affine_chain "linearize" Linearizer.linearize;
-      bench ~setup:summed "render-sum" (fun l -> renderer.render l);
-    ]
+    (staged ~setup:affine_chain "linearize" Linearizer.linearize
+    @ [ bench ~setup:summed "render-sum" (fun l -> renderer.render l) ])
 
 let suite () =
   List.map (fun (name, _) -> program name) Programs.all
