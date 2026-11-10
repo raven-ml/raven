@@ -1304,14 +1304,13 @@ val remat : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     [f x], bit for bit. Every transformation sees [remat s f] as it sees [f]:
     its derivatives in either mode, and its map, are [f]'s. An addition to a
     {!Total} that [f] makes counts once, however often the backward pass
-    computes [f] again. Inside a {!val-jit}, the backward pass computes again each
-    of [f]'s intermediate values that reads a value the program computes, among
-    [f]'s arguments and captures, once the cotangents of [f]'s results are
-    computed, so the program keeps none of them from one pass to the other. A
-    value [f] computes from the program's arguments and constants alone is the
-    forward pass's, kept for the backward pass, and so is one [f] computes in a
-    {!scan}'s or an {!iterate}'s step from the step's captures alone, which the
-    loop computes once.
+    computes [f] again. Inside a {!val-jit} this holds as stated: from one pass
+    to the other the program keeps of [f] its arguments and the values it
+    captures alone, and the backward pass computes every other value of [f]
+    again once the cotangents of [f]'s results are computed, those [f] computes
+    from the program's arguments, constants or a loop's captures included. A
+    value the caller wants kept is computed outside [f] and passed to it. A
+    remat in a {!scan}'s or an {!iterate}'s step computes again in each trip.
 
     A {!callback} that [f] calls outside a custom rule's derivative runs once:
     the backward pass keeps the results of each construct of [f] that runs

@@ -346,9 +346,9 @@ and construct =
           sums start from [seeds], as a scan's. Its default evaluates [body].
           [differentiated] is whether [body] is a part a differentiation
           derived, which computes the function's values again: compiled, it
-          reads those of [args] the program computes through a barrier, so
-          that what it computes from them shares no value with the program
-          around it and runs once every one of them is computed. *)
+          is a call of its own over [args], so that what it computes from them
+          shares no value with the program around it and runs once every one
+          of them is computed. *)
   | Switch : switch -> construct
       (** The branch at [index] applied to [captures]; the others run nothing.
           Its sums are every branch's, as a loop's. A branch that does not run

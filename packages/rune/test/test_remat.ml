@@ -191,77 +191,185 @@ let test_scan_residuals () =
   (* Held to the end, so that no measurement sees them collected. *)
   ignore (Sys.opaque_identity (x, xs))
 
-(* A compiled gradient through residual blocks [a + relu (a w1) w2], from the
-   sine of the argument: the plain program keeps each block's pre-activations
-   for the backward pass, where under remats it keeps each block's argument,
-   and computes one block's pre-activations at a time, in the backward pass.
-   The bytes a compiled function holds are its program's storage: under remats
-   no more than the blocks' arguments, two blocks' pre-activations and four
-   rows of cotangents, and no copy of the weights, strided arguments of the
-   program that the blocks capture. Each call
-   runs compiled, as an evaluated one would hold nothing, and gives eager's
-   gradient but for the order of its sums. *)
-let test_compiled () =
-  let layers = 8 and dim = 32 and batch = 256 in
-  let hidden = 8 * dim in
-  (* Each stack is a transposed view, which the program reads in place. *)
-  let w r c =
-    Nx.matrix_transpose
-      (Nx.mul_s (Nx.Rng.normal ~key:(Nx.Rng.key r) f32 [| layers; c; r |]) 0.05)
-  in
-  let ws = (w dim hidden, w hidden dim) in
-  let block (w1, w2) a =
-    let h = Nx.matmul a w1 in
-    Nx.add a (Nx.matmul (Nx.maximum h (Nx.zeros_like h)) w2)
-  in
-  let loss remat (w1, w2) a =
-    Nx.sum
-      (List.fold_left
-         (fun a i ->
-           let w = (Nx.get [ i ] w1, Nx.get [ i ] w2) in
-           if remat then Rune.remat T.(tensor @-> returns tensor) (block w) a
-           else block w a)
-         (Nx.sin a) (List.init layers Fun.id))
-  in
-  let host = Rig.host in
-  let settled () =
-    for _ = 1 to 4 do
-      Gc.full_major ();
-      ignore (Rig.Buffer.create host 0);
-      Rig.free_cache host
-    done;
-    Rig.allocated host
-  in
-  let a = Nx.ones f32 [| batch; dim |] in
+(* Compiled gradients through residual blocks [a + relu (a w1) w2], over
+   stacks of weights that are transposed views, which a program reads in place.
+   Under remats the backward pass computes every value a block computes again,
+   so a compiled gradient keeps of each block its argument alone, an argument
+   of the program being one its caller holds. The bytes a compiled function
+   holds are its program's storage and its result: under remats no more than
+   the blocks' arguments, two blocks' pre-activations and four rows of
+   cotangents, whatever a block computes from its weights. Each call runs
+   compiled, as an evaluated one would hold nothing, and gives eager's gradient
+   but for the order of its sums. *)
+
+let layers = 8 and dim = 32 and batch = 256
+let hidden = 8 * dim
+let row = 4 * batch * dim
+let bound blocks = ((blocks + 4) * row) + (2 * 4 * batch * hidden)
+
+let stack r c =
+  Nx.matrix_transpose
+    (Nx.mul_s (Nx.Rng.normal ~key:(Nx.Rng.key r) f32 [| layers; c; r |]) 0.05)
+
+let ws = (stack dim hidden, stack hidden dim)
+
+let block ?(prep = Fun.id) (w1, w2) a =
+  let h = Nx.matmul a (prep w1) in
+  Nx.add a (Nx.matmul (Nx.maximum h (Nx.zeros_like h)) (prep w2))
+
+let rm f = Rune.remat T.(tensor @-> returns tensor) f
+let layer (w1, w2) i = (Nx.get [ i ] w1, Nx.get [ i ] w2)
+
+(* The blocks in a chain from [from a], each under a remat where [remat]. *)
+let chain ?prep ~from remat ws a =
+  Nx.sum
+    (List.fold_left
+       (fun a i ->
+         let b = block ?prep (layer ws i) in
+         if remat then rm b a else b a)
+       (from a) (List.init layers Fun.id))
+
+let host_settled () =
+  for _ = 1 to 4 do
+    Gc.full_major ();
+    ignore (Rig.Buffer.create Rig.host 0);
+    Rig.free_cache Rig.host
+  done;
+  Rig.allocated Rig.host
+
+let a = Nx.ones f32 [| batch; dim |]
+
+(* The bytes the compiled gradient of [loss remat ws] at [a] holds after a
+   warm call, its gradient checked against eager's without remats. *)
+let held ?(ws = ws) loss remat =
   let expected = Nx.to_array (Nx.flatten (Rune.grad' (loss false ws) a)) in
-  let held remat =
-    let measure () =
-      let g =
-        Rune.jit
-          T.(pair tensor tensor @-> tensor @-> returns tensor)
-          (fun ws a -> Rune.grad' (loss remat ws) a)
-      in
-      let before = settled () and calls = Rune.evaluations () in
-      let r = g ws a in
-      let held = settled () - before in
-      equal ~msg:"evaluated calls" int 0 (Rune.evaluations () - calls);
-      equal ~msg:"the gradient"
-        (array (float_rel ~rel:1e-5 ~abs:1e-6))
-        expected
-        (Nx.to_array (Nx.flatten r));
-      ignore (Sys.opaque_identity (g, r));
-      held
+  let measure () =
+    let g =
+      Rune.jit
+        T.(pair tensor tensor @-> tensor @-> returns tensor)
+        (fun ws a -> Rune.grad' (loss remat ws) a)
     in
-    ignore (measure ());
-    measure ()
+    let before = host_settled () and calls = Rune.evaluations () in
+    let r = g ws a in
+    let held = host_settled () - before in
+    equal ~msg:"evaluated calls" int 0 (Rune.evaluations () - calls);
+    equal ~msg:"the gradient"
+      (array (float_rel ~rel:1e-5 ~abs:1e-6))
+      expected
+      (Nx.to_array (Nx.flatten r));
+    ignore (Sys.opaque_identity (g, r));
+    held
   in
-  let row = 4 * batch * dim in
-  let bound = ((layers + 4) * row) + (2 * 4 * batch * hidden) in
-  let plain = held false and recomputed = held true in
-  less ~msg:"without remats" int ~than:plain bound;
+  ignore (measure ());
+  measure ()
+
+let at_most ~msg loss blocks =
+  let plain = held loss false and recomputed = held loss true in
+  less ~msg:(msg ^ ", without remats") int ~than:plain (bound blocks);
   less
-    ~msg:(Printf.sprintf "%d bytes under remats, %d without" recomputed plain)
-    int ~than:bound recomputed
+    ~msg:
+      (Printf.sprintf "%s: %d bytes under remats, %d without" msg recomputed
+         plain)
+    int ~than:(bound blocks) recomputed
+
+(* From the sine of the argument: each block's argument is a value the program
+   computes. *)
+let test_compiled () = at_most ~msg:"a chain" (chain ~from:Nx.sin) layers
+
+(* The first block's argument is the program's: it costs nothing to keep, so
+   the chain holds no more than the one from its sine. *)
+let test_argument () =
+  let from_argument = held (chain ~from:Fun.id) true in
+  let from_sine = held (chain ~from:Nx.sin) true in
+  less
+    ~msg:
+      (Printf.sprintf "%d bytes from the argument, %d from its sine"
+         from_argument from_sine)
+    int ~than:(from_sine + 1) from_argument
+
+(* Blocks that each read the argument keep nothing they compute. *)
+let test_over_argument () =
+  let summed remat ws a =
+    List.fold_left
+      (fun s i ->
+        let b = block (layer ws i) in
+        Nx.add s (Nx.sum (if remat then rm b a else b a)))
+      (Nx.scalar f32 0.) (List.init layers Fun.id)
+  in
+  at_most ~msg:"blocks over the argument" summed layers
+
+(* What a block computes from the weights it captures is computed again. *)
+let test_transformed () =
+  at_most ~msg:"weights transformed in each block"
+    (chain ~prep:Nx.tanh ~from:Nx.sin)
+    layers
+
+(* A scan of the blocks over the stacks, its step under a remat, keeps what
+   the chain written out keeps: each step's carry. *)
+let test_scanned () =
+  let scanned remat (w1s, w2s) a =
+    let step c w =
+      let b = block w in
+      ((if remat then rm b c else b c), ())
+    in
+    Nx.sum
+      (fst
+         (Rune.scan T.tensor T.(pair tensor tensor) T.unit step ~init:(Nx.sin a)
+            (w1s, w2s)))
+  in
+  at_most ~msg:"a scan over the stacks" scanned layers;
+  (* Each row of a transposed stack is read where it lies, as a contiguous
+     stack's is. *)
+  let contiguous = (Nx.copy (fst ws), Nx.copy (snd ws)) in
+  let strided = held scanned true in
+  let copied = held ~ws:contiguous scanned true in
+  less
+    ~msg:(Printf.sprintf "%d bytes over views, %d over copies" strided copied)
+    int ~than:(copied + 1) strided
+
+(* Donation *)
+
+(* A result that takes a donated argument's memory is stored over it after the
+   remat's backward pass reads it: the gradient through the remat plus [b],
+   donated, takes [b]'s memory, and plus [a], donated, which the backward pass
+   reads at every element, gives the same values either way. *)
+let test_donated () =
+  let w = (Nx.get [ 0 ] (fst ws), Nx.get [ 0 ] (snd ws)) in
+  let grad a = Rune.grad' (fun a -> Nx.sum (rm (block w) a)) a in
+  let address x = Nx.Repr.read x Nx_array.buffer in
+  let memory_t =
+    Testable.make
+      ~pp:(fun ppf b -> Format.fprintf ppf "byte %d" (Rig.Buffer.offset b))
+      ~equal:Rig.Buffer.overlaps
+  in
+  let x () = Nx.Rng.normal ~key:(Nx.Rng.key 5) f32 [| batch; dim |] in
+  let b () = Nx.full f32 [| batch; dim |] 0.5 in
+  let expected = Nx.to_array (Nx.add (grad (x ())) (b ())) in
+  let plus_b =
+    Rune.jit
+      T.(tensor @-> tensor @-> returns tensor)
+      (fun a b -> Nx.add (grad a) b)
+  in
+  let plus_a =
+    Rune.jit T.(tensor @-> returns tensor) (fun a -> Nx.add (grad a) a)
+  in
+  for call = 0 to 1 do
+    let msg = Printf.sprintf "call %d" call in
+    let donated = b () in
+    let before = address donated in
+    let calls = Rune.evaluations () in
+    let r = plus_b (x ()) (Nx.donate donated) in
+    equal ~msg:(msg ^ ": compiled") int 0 (Rune.evaluations () - calls);
+    equal ~msg:(msg ^ ": in b's memory") memory_t before (address r);
+    equal ~msg:(msg ^ ": plus b")
+      (array (float_rel ~rel:1e-5 ~abs:1e-6))
+      expected (Nx.to_array r);
+    let r = plus_a (Nx.donate (x ())) in
+    equal ~msg:(msg ^ ": plus a")
+      (array (float_rel ~rel:1e-5 ~abs:1e-6))
+      (Nx.to_array (Nx.add (grad (x ())) (x ())))
+      (Nx.to_array r)
+  done
 
 (* Interface *)
 
@@ -342,6 +450,16 @@ let () =
              test "a checkpointed step" test_scan_residuals;
              test "a compiled gradient keeps the blocks' arguments alone"
                test_compiled;
+             test "a block over the program's argument keeps it alone"
+               test_argument;
+             test "blocks over the argument keep nothing they compute"
+               test_over_argument;
+             test "weights a block transforms are transformed again"
+               test_transformed;
+             test "a scan's checkpointed step keeps its carry alone"
+               test_scanned;
+             test "a result takes a donated argument after the backward pass"
+               test_donated;
            ];
          group "interface"
            [

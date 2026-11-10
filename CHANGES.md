@@ -419,6 +419,13 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- **Breaking:** under `Rune.jit`, the backward pass of `Rune.remat s f`
+  computes every value of `f` again, those it computes from the program's
+  arguments, constants or a loop's captures included, and keeps of `f` its
+  arguments and captures alone, inside a scan's step too. Such values were
+  kept, so 8 blocks over the argument held 2,392,176 bytes, more than
+  without remats, where they now hold 589,936. Compute a value outside `f`
+  and pass it in to keep it.
 - A compiled `scan` over a strided stack of rows, as layer weights stacked and
   transposed, reads each row where it lies, and a switch branch reads a
   strided capture in place: both copied the whole stack first (852,096
