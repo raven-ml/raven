@@ -50,7 +50,7 @@
 <section id="goal" class="section stack" style="gap: 32px">
 <div class="eyebrow-gap">
 <p class="label">01 — the goal post</p>
-<h2 class="h2">jit-compiled gpt-oss, at least as fast as four baselines.</h2></div>
+<h2 class="h2">JIT-compiled gpt-oss, at least as fast as four baselines.</h2></div>
 <p class="body" style="max-width: 40rem; font-size: 18px">Beta 1's goal post, JIT compilation on GPU, is met. The next goal post on the road to 1.0: <strong style="font-weight: 500; color: var(--text-0)">gpt-oss-20b, compiled by Rune.jit, at least as fast as tinygrad, JAX, llama.cpp and vLLM</strong> on NVIDIA (through CUDA and through NVIDIA's kernel driver directly) and on AMD. We are not there yet, and this table is where we track it.</p>
 <div class="scroll" tabindex="0" role="region" aria-label="Goal post">
 <table class="tbl" style="min-width: 760px"><caption class="sr">Goal post: gpt-oss-20b decode against each baseline</caption>
@@ -117,7 +117,7 @@
 <h3 class="caption" style="margin: 0; font-weight: 400">where decode's time goes</h3><span class="small" style="color: var(--text-2)">Expert products take 5.4 ms at 212–254 GB/s, against llama.cpp's 3.0. Top-k's 20-kernel sort and about 37 small kernels a layer take about 1.5 ms; the argmax over the logits 0.63 ms.</span></div>
 <div class="card" style="gap: 8px">
 <h3 class="caption" style="margin: 0; font-weight: 400">where prefill's time goes</h3><span class="small" style="color: var(--text-2)">Expert products take 326 ms on WMMA at 7–8 TFLOPS, against 177. The out projection takes no WMMA: 52 ms, against q's 10.</span></div></div>
-<p class="caption note-line" style="margin: 0">Machine “nonnormal” (gfx1201) at 502431b668, the new nx and rune; attention on WMMA. First call: 1.03 s when compiling kernels, of which lowering and linking the first block take 69–131 ms on the host; llama.cpp 2.19 s without Mesa's shader cache. llama.cpp's ROCm build needs HIP libraries this machine lacks.</p></section>
+<p class="caption note-line" style="margin: 0">Machine “nonnormal” (gfx1201) at 502431b668; attention on WMMA. First call: 1.03 s when compiling kernels, of which lowering and linking the first block take 69–131 ms on the host; llama.cpp 2.19 s without Mesa's shader cache. llama.cpp's ROCm build needs HIP libraries this machine lacks.</p></section>
 <section id="rig" class="section stack" style="gap: 32px">
 <div class="eyebrow-gap">
 <p class="label">04 — measured · 2026-10-11</p>

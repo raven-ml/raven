@@ -3,6 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(** The toplevel printer for arrays. [#require "nx.top"] installs [Nx.pp], so
+    the toplevel and utop show an array's values. *)
+
 (* The toplevel lets loaded code call Toploop and Topprinters but not Longident
    or Location, so the identifier is built as data. *)
 let noloc txt =

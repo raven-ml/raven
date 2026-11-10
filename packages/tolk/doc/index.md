@@ -20,7 +20,7 @@ Tolk follows a layered compilation pipeline:
 3. **Codegen** — optimizes kernel structure (range simplification, GPU dims, beam search)
 4. **Lowering** — lowers to linear program IR (devectorization, expansion, decompositions)
 5. **Renderer** — emits backend-specific source code (C, Metal, CUDA, HIP)
-6. **Runtime** — compiles and dispatches kernels on target devices
+6. **Engine** — runs the compiled kernels on [rig](../../rig/doc/index.md)'s devices (`tolk.engine`)
 
 ## Libraries
 
