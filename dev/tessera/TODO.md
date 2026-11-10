@@ -74,7 +74,11 @@ An item leaves when its library fixes it, or when a design decides it stays.
 - `Nx.Rng.permute` compiles in about 37 ms per round under `Rune.jit` (about
   2 s at 60 rounds, 9 s at 240), once per n: about 7 s once per TESSERA run.
   Acceptable for now; the cause is in tolk (found by the streaming-data
-  review).
+  review). It compiles once per n, not once per round count: `n` is a 0-d
+  operand, but under a trace the compiler folds it into the kernel as a
+  constant and specialises on it. One compile per round count needs either
+  a traced integer argument or tolk not specialising on folded constants
+  (rune/tolk).
 - No f32 attention derivative kernel, and none above head dim 128: those
   cases fall back to a dense backward (packed rows 2.3× per-pixel buckets in
   f32 training; TESSERA's large student, head dim 160, and the teacher,
