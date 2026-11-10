@@ -3,13 +3,15 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+type 'd f32 = 'd Nx.float32_t
+
 type ('a, 'd) layer = {
   attn : ('a, 'd) Kaun.Attention.t;
-  qk : ('a * 'a) option;
-  norm1 : ('a, 'd) Kaun.Layer_norm.t;
+  qk : ('d f32 * 'd f32) option;
+  norm1 : ('d f32, 'd) Kaun.Layer_norm.t;
   ffn1 : ('a, 'd) Kaun.Linear.t;
   ffn2 : ('a, 'd) Kaun.Linear.t;
-  norm2 : ('a, 'd) Kaun.Layer_norm.t;
+  norm2 : ('d f32, 'd) Kaun.Layer_norm.t;
 }
 
 type ('a, 'd) backbone = {
@@ -20,7 +22,7 @@ type ('a, 'd) backbone = {
 
 type ('a, 'd) reducer = {
   up : ('a, 'd) Kaun.Linear.t;
-  norm : ('a, 'd) Kaun.Layer_norm.t;
+  norm : ('d f32, 'd) Kaun.Layer_norm.t;
   down : ('a, 'd) Kaun.Linear.t;
 }
 
@@ -33,7 +35,7 @@ type ('a, 'd) net =
   | Pre_ln of {
       s2 : ('a, 'd) backbone;
       s1 : ('a, 'd) backbone;
-      modality : 'a;
+      modality : 'd f32;
       fusion : ('a, 'd) layer list;
       reducer : ('a, 'd) reducer;
     }
@@ -54,19 +56,22 @@ type ('a, 'd) t = {
 
 (* Structure *)
 
+(* Norms' parameters are fixed float32 arrays: a cast keeps them. *)
+let norm c n = Nx.Ptree.Walk.(under Kaun.Layer_norm.walk tensor) c n
+
 let walk_layer c l =
   let open Nx.Ptree.Walk in
   let attn = field c "attn" Kaun.Attention.walk l.attn in
   let pair c (q, k) =
-    let q = index c 0 leaf q in
-    let k = index c 1 leaf k in
+    let q = index c 0 tensor q in
+    let k = index c 1 tensor k in
     (q, k)
   in
   let qk = field c "qk" (option pair) l.qk in
-  let norm1 = field c "norm1" Kaun.Layer_norm.walk l.norm1 in
+  let norm1 = field c "norm1" norm l.norm1 in
   let ffn1 = field c "ffn1" Kaun.Linear.walk l.ffn1 in
   let ffn2 = field c "ffn2" Kaun.Linear.walk l.ffn2 in
-  let norm2 = field c "norm2" Kaun.Layer_norm.walk l.norm2 in
+  let norm2 = field c "norm2" norm l.norm2 in
   { attn; qk; norm1; ffn1; ffn2; norm2 }
 
 let walk_backbone c b =
@@ -81,7 +86,7 @@ let walk_backbone c b =
 let walk_reducer c r =
   let open Nx.Ptree.Walk in
   let up = field c "up" Kaun.Linear.walk r.up in
-  let norm = field c "norm" Kaun.Layer_norm.walk r.norm in
+  let norm = field c "norm" norm r.norm in
   let down = field c "down" Kaun.Linear.walk r.down in
   { up; norm; down }
 
@@ -98,7 +103,7 @@ let walk_net c =
       case c "pre_ln";
       let s2 = field c "s2" walk_backbone s2 in
       let s1 = field c "s1" walk_backbone s1 in
-      let modality = field c "modality" leaf modality in
+      let modality = field c "modality" tensor modality in
       let fusion = field c "fusion" (list walk_layer) fusion in
       let reducer = field c "reducer" walk_reducer reducer in
       Pre_ln { s2; s1; modality; fusion; reducer }
@@ -110,6 +115,12 @@ let walk_norm c n =
   let s1_mean = field c "s1_mean" tensor n.s1_mean in
   let s1_std = field c "s1_std" tensor n.s1_std in
   { s2_mean; s2_std; s1_mean; s1_std }
+
+module Net = struct
+  type nonrec ('a, 'd) t = ('a, 'd) net
+
+  let walk = walk_net
+end
 
 let walk c m =
   let open Nx.Ptree.Walk in
@@ -189,56 +200,230 @@ let eps = 1e-5
 
 (* float32's machine epsilon, [nn.RMSNorm]'s eps for float32 inputs. *)
 let qk_eps = Float.ldexp 1. (-23)
+let product = Product.apply
 
 (* A linear layer at its parameters' dtype, on and to float32. *)
-let linear (p : ((float, 's, 'd) Nx.t, 'd) Kaun.Linear.t) x =
-  Nx.cast f32 (Kaun.Linear.apply p (Nx.cast (Nx.dtype p.w) x))
+let linear p x = Nx.cast f32 (product p x)
 
-let layer_norm (p : ((float, 's, 'd) Nx.t, 'd) Kaun.Layer_norm.t) x =
-  Nx.standardize ~eps ~scale:(Nx.cast f32 p.gamma) ~shift:(Nx.cast f32 p.beta) x
+let layer_norm (p : ('d f32, 'd) Kaun.Layer_norm.t) x =
+  Nx.standardize ~eps ~scale:p.gamma ~shift:p.beta x
 
 let relu x = Nx.maximum x (Nx.scalar_like x 0.)
 
-let ffn l ~record x =
-  let h = linear l.ffn1 x in
-  record "linear1" (fun () -> h);
-  linear l.ffn2 (relu h)
+(* Dropout *)
 
-(* Self-attention of [x], [[batch; seq; d]], at the parameters' dtype. *)
-let attention ~heads l ?mask ?score x =
+type dropout = { layers : float; reducer : float }
+
+let v2_dropout = { layers = 0.1; reducer = 0.2 }
+let no_dropout = { layers = 0.; reducer = 0. }
+
+(* One call's dropout: its rates, each pixel place's key, and where its masks
+   are reported. *)
+type 'd drop = {
+  rates : dropout;
+  keys : 'd Nx.Rng.key;
+  mask : string -> (unit -> 'd Nx.bool_t) -> unit;
+}
+
+(* A mask's site: the sensor (0 for Sentinel-2, 1 for Sentinel-1, 2 for the
+   fusion), the layer and the layer's site, or the reducer alone. *)
+let attn_p = 0
+let attn_out = 1
+let ffn_hidden = 2
+let ffn_out = 3
+let fusion = 2
+let reducer_site = 3
+let site keys path = List.fold_left Nx.Rng.fold_in keys path
+
+(* Each token's key, [[r; t; 2]]: the key of its pixel's place [place] ([[r;
+   t]]), indexed by its [index] in its slot. *)
+let token_keys keys ~place ~index =
+  let r = Nx.dim 0 place and t = Nx.dim 1 place in
+  let words =
+    Nx.take ~axis:0 (Nx.reshape [| r * t |] place) (Nx.Rng.to_tensor keys)
+  in
+  Nx.Rng.fold_in_tensor
+    (Nx.Rng.of_tensor (Nx.reshape [| r; t; 2 |] words))
+    index
+
+(* Keeps [x]'s elements where [m] holds, scaled by [1 / (1 − rate)]. *)
+let keep ~rate m x =
+  Nx.where m (Nx.mul_s x (1. /. (1. -. rate))) (Nx.scalar_like x 0.)
+
+(* A mask over [x], one key of [keys] per element of [x]'s leading axes, shaped
+   as they are followed by ones. *)
+let draw ~rate keys x =
+  let p =
+    Nx.broadcast_to (Nx.shape x) (Nx.cast f32 (Nx.scalar_like x (1. -. rate)))
+  in
+  Nx.Rng.bernoulli ~key:keys p
+
+(* A token site's mask over [x], [[r; t; c]], from token keys [[r; t; 2]]. *)
+let token_mask ~rate k x =
+  let r = Nx.dim 0 x and t = Nx.dim 1 x in
+  draw ~rate
+    (Nx.Rng.of_tensor (Nx.reshape [| r; t; 1; 2 |] (Nx.Rng.to_tensor k)))
+    x
+
+(* The attention probabilities' mask, [[r; h; t; t]], one key per pair of tokens
+   drawing each head: the query's key indexed by the key's [index]. *)
+let pair_mask ~rate k ~index p =
+  let r = Nx.dim 0 p and t = Nx.dim 2 p in
+  let q = Nx.Rng.of_tensor (Nx.reshape [| r; t; 1; 2 |] (Nx.Rng.to_tensor k)) in
+  let pairs = Nx.Rng.fold_in_tensor q (Nx.reshape [| r; 1; t |] index) in
+  draw ~rate
+    (Nx.Rng.of_tensor (Nx.reshape [| r; 1; t; t; 2 |] (Nx.Rng.to_tensor pairs)))
+    p
+
+(* The tokens a layer reads: the bounds of each query's keys, [[r; t]], each
+   token's pixel place and index in its slot, and where its masks come from. *)
+type 'd tokens = {
+  start : 'd Nx.int32_t;
+  stop : 'd Nx.int32_t;
+  bias : 'd f32; (* [[r; t]]: each key's [log count]. *)
+  place : 'd Nx.int64_t;
+  index : 'd Nx.int64_t;
+  drop : ('d drop * int) option; (* With the sensor's site. *)
+}
+
+(* Layer [i]'s dropout: its rate, each site's token keys, and where its masks
+   are reported. *)
+type 'd sites = {
+  rate : float;
+  keys : int -> 'd Nx.Rng.key;
+  report : string -> (unit -> 'd Nx.bool_t) -> unit;
+}
+
+let sites tk i =
+  match tk.drop with
+  | Some (d, sensor) when d.rates.layers > 0. ->
+      let keys k =
+        token_keys
+          (site d.keys [ sensor; i; k ])
+          ~place:tk.place ~index:tk.index
+      in
+      let report n m = d.mask (Printf.sprintf "layer%d_%s" i n) m in
+      Some { rate = d.rates.layers; keys; report }
+  | _ -> None
+
+let masked ds ~name k x =
+  match ds with
+  | None -> x
+  | Some s ->
+      let m = token_mask ~rate:s.rate (s.keys k) x in
+      s.report name (fun () -> m);
+      keep ~rate:s.rate m x
+
+(* Keys [k] with [start_q ≤ k < stop_q], the bounds [[rows; 1; queries; 1]]. *)
+let within start stop =
+  let n = Nx.dim 0 start and q = Nx.dim 1 start in
+  let start = Nx.reshape [| n; 1; q; 1 |] start
+  and stop = Nx.reshape [| n; 1; q; 1 |] stop in
+  fun (p : 'd Nx.pair) ->
+    let k = Nx.cast Nx.int32 p.k in
+    Nx.logical_and (Nx.greater_equal k start) (Nx.less k stop)
+
+let key_bias b =
+  let n = Nx.dim 0 b and k = Nx.dim 1 b in
+  let b = Nx.reshape [| n; 1; 1; k |] b in
+  fun _ s -> Nx.add s b
+
+let scores = Nx.Pattern.v "r h q d, r h k d -> r h q k | d"
+let mix = Nx.Pattern.v "r h q k, r h k d -> r h q d | k"
+
+(* Attention with its probabilities dropped, composed: float32 scores and
+   softmax over each query's visible keys, the kept probabilities rounded to
+   [v]'s dtype for the value product. *)
+let dense (tk : 'd tokens) s q k v =
+  let r = Nx.dim 0 q and t = Nx.dim 2 q in
+  let dt = Nx.dtype v in
+  let scale = 1. /. Float.sqrt (Float.of_int (Nx.dim (-1) q)) in
+  let x = Nx.mul_s (Nx.contract f32 scores q k) scale in
+  let x = Nx.add x (Nx.reshape [| r; 1; 1; t |] tk.bias) in
+  let col =
+    Nx.reshape [| 1; 1; 1; t |]
+      (Nx.arange_at (Nx.beside tk.start) Nx.int32 0 t 1)
+  in
+  let bound b = Nx.reshape [| r; 1; t; 1 |] b in
+  let visible =
+    Nx.logical_and
+      (Nx.greater_equal col (bound tk.start))
+      (Nx.less col (bound tk.stop))
+  in
+  let p = Nx.softmax ~where:visible x in
+  let m = pair_mask ~rate:s.rate (s.keys attn_p) ~index:tk.index p in
+  s.report "attn_p" (fun () -> m);
+  Nx.contract dt mix (Nx.cast dt (keep ~rate:s.rate m p)) v
+
+let split ~heads (p : ((float, 's, 'd) Nx.t, 'd) Kaun.Linear.t) x =
+  let b = Nx.dim 0 x and t = Nx.dim 1 x and d = Nx.dim 1 p.w in
+  Nx.swapaxes 1 2 (Nx.reshape [| b; t; heads; d / heads |] (product p x))
+
+let merge (p : ((float, 's, 'd) Nx.t, 'd) Kaun.Linear.t) o =
+  let b = Nx.dim 0 o and h = Nx.dim 1 o and t = Nx.dim 2 o and d = Nx.dim 3 o in
+  linear p (Nx.reshape [| b; t; h * d |] (Nx.swapaxes 1 2 o))
+
+(* Self-attention of [x], [[r; t; d]], at the parameters' dtype. *)
+let attention ~heads l (tk : 'd tokens) ds x =
   let p = l.attn in
   let dt = Nx.dtype p.q.w in
-  let head_dim = Nx.dim (-1) x / heads in
-  let split (w : ((float, 's, 'd) Nx.t, 'd) Kaun.Linear.t) =
-    Kaun.Attention.split ~head_dim w (Nx.cast dt x)
-  in
-  let q = split p.q and k = split p.k and v = split p.v in
+  let x = Nx.cast dt x in
+  let q = split ~heads p.q x
+  and k = split ~heads p.k x
+  and v = split ~heads p.v x in
   let q, k =
     match l.qk with
     | None -> (q, k)
     | Some (gq, gk) ->
         let norm g x =
-          Nx.cast dt
-            (Nx.rms_norm ~eps:qk_eps ~scale:(Nx.cast f32 g) (Nx.cast f32 x))
+          Nx.cast dt (Nx.rms_norm ~eps:qk_eps ~scale:g (Nx.cast f32 x))
         in
         (norm gq q, norm gk k)
   in
-  let o, _ = Nx.attention ?mask ?score ~acc:f32 ~kv:(Nx.Dense { k; v }) q in
-  Nx.cast f32 (Kaun.Attention.merge p.out o)
+  let o =
+    match ds with
+    | Some s -> dense tk s q k v
+    | None ->
+        let mask = within tk.start tk.stop and score = key_bias tk.bias in
+        fst (Nx.attention ~mask ~score ~acc:f32 ~kv:(Nx.Dense { k; v }) q)
+  in
+  merge p.out o
 
-let layer ~pre_ln ~heads ?mask ?score ~record x l =
-  let attend x = attention ~heads l ?mask ?score x in
+let ffn l ds ~record x =
+  let h = linear l.ffn1 x in
+  record "linear1" (fun () -> h);
+  let h = masked ds ~name:"ffn_hidden" ffn_hidden (relu h) in
+  masked ds ~name:"ffn" ffn_out (linear l.ffn2 h)
+
+let layer ~pre_ln ~heads tk ~record i x l =
+  let ds = sites tk i in
+  let record name v = record (Printf.sprintf "layer%d_%s" i name) v in
+  let attend x = masked ds ~name:"attn" attn_out (attention ~heads l tk ds x) in
   if pre_ln then begin
     let x = Nx.add x (attend (layer_norm l.norm1 x)) in
-    Nx.add x (ffn l ~record (layer_norm l.norm2 x))
+    Nx.add x (ffn l ds ~record (layer_norm l.norm2 x))
   end
   else begin
     let a = attend x in
     record "attn" (fun () -> a);
     let x = layer_norm l.norm1 (Nx.add x a) in
     record "norm1" (fun () -> x);
-    layer_norm l.norm2 (Nx.add x (ffn l ~record x))
+    layer_norm l.norm2 (Nx.add x (ffn l ds ~record x))
   end
+
+(* A stack of layers, each computed again in the backward pass with [remat]. *)
+let layers ~pre_ln ~heads ~remat tk ~record x ls =
+  List.fold_left
+    (fun (i, x) l ->
+      let f x = layer ~pre_ln ~heads tk ~record i x l in
+      let x =
+        if remat then Rune.remat Nx.Ptree.(tensor @-> returns tensor) f x
+        else f x
+      in
+      record (Printf.sprintf "layer%d" i) (fun () -> x);
+      (i + 1, x))
+    (0, x) ls
+  |> snd
 
 (* The sinusoid's base and standardisation's guard (tessera_infer_v2
    student/model.py:47-63, infer.py:161). *)
@@ -279,43 +464,38 @@ let s1_inputs norm (r : 'd Batch.rows) =
   in
   Nx.where (Nx.equal_s source 1.) (z 1) (z 0)
 
-(* Keys [k] with [start_q ≤ k < stop_q], the bounds [[rows; 1; queries; 1]]. *)
-let within start stop =
-  let n = Nx.dim 0 start and q = Nx.dim 1 start in
-  let start = Nx.reshape [| n; 1; q; 1 |] start
-  and stop = Nx.reshape [| n; 1; q; 1 |] stop in
-  fun (p : 'd Nx.pair) ->
-    let k = Nx.cast Nx.int32 p.k in
-    Nx.logical_and (Nx.greater_equal k start) (Nx.less k stop)
-
-let key_bias b =
-  let n = Nx.dim 0 b and k = Nx.dim 1 b in
-  let b = Nx.reshape [| n; 1; 1; k |] b in
-  fun _ s -> Nx.add s b
-
 (* One query per slot over the slot's tokens, [x] [[rows; width; d]], each score
-   [w · x + b + log count]. *)
-let pool (p : ((float, 's, 'd) Nx.t, 'd) Kaun.Linear.t) (r : 'd Batch.rows) x =
+   [w · x + b] at the products' dtype plus [log count], the softmax and the
+   weighted sum in float32. *)
+let pool (r : 'd Batch.rows) logits x =
   let rows = Nx.dim 0 x and width = Nx.dim 1 x and d = Nx.dim 2 x in
   let slots = Nx.dim 1 r.slot_start in
-  let w = Nx.reshape [| 1; 1; 1; d |] (Nx.cast f32 p.w) in
-  let q = Nx.broadcast_to [| rows; 1; slots; d |] w in
-  let kv = Nx.reshape [| rows; 1; width; d |] x in
-  let logits =
-    match p.b with
-    | None -> r.log_count
-    | Some b -> Nx.add r.log_count (Nx.reshape [| 1; 1 |] (Nx.cast f32 b))
+  let k =
+    Nx.reshape [| 1; 1; width |]
+      (Nx.arange_at (Nx.beside r.slot_start) Nx.int32 0 width 1)
   in
-  let o, _ =
-    Nx.attention ~scale:1.
-      ~mask:(within r.slot_start r.slot_stop)
-      ~score:(key_bias logits) ~acc:f32
-      ~kv:(Nx.Dense { k = kv; v = kv })
-      q
+  let bound b = Nx.reshape [| rows; slots; 1 |] b in
+  let inside =
+    Nx.logical_and
+      (Nx.greater_equal k (bound r.slot_start))
+      (Nx.less k (bound r.slot_stop))
   in
+  let scores =
+    Nx.broadcast_to [| rows; slots; width |]
+      (Nx.reshape [| rows; 1; width |] (Nx.add logits r.log_count))
+  in
+  let o = Nx.matmul (Nx.softmax ~where:inside scores) x in
   Nx.take ~axis:0 r.at (Nx.reshape [| rows * slots; d |] o)
 
-let backbone ~pre_ln ~heads ~record b (r : 'd Batch.rows) z =
+(* Each token's index in its slot, [[rows; width]]. *)
+let slot_index (r : 'd Batch.rows) =
+  let w = Nx.dim 1 r.start in
+  let col =
+    Nx.reshape [| 1; w |] (Nx.arange_at (Nx.beside r.start) Nx.int64 0 w 1)
+  in
+  Nx.sub col (Nx.cast Nx.int64 r.start)
+
+let backbone ~pre_ln ~heads ~remat ~record ~drop b (r : 'd Batch.rows) z =
   let doy = Nx.squeeze ~axes:[ 2 ] (channel r.tokens (Nx.dim 2 z)) in
   record "in" (fun () ->
       Nx.concatenate ~axis:2 [ z; channel r.tokens (Nx.dim 2 z) ]);
@@ -326,34 +506,43 @@ let backbone ~pre_ln ~heads ~record b (r : 'd Batch.rows) z =
   record "pe" (fun () -> pe);
   let x = Nx.add x pe in
   record "encoder_in" (fun () -> x);
-  let mask = within r.start r.stop and score = key_bias r.log_count in
-  let x =
-    List.fold_left
-      (fun (i, x) l ->
-        let record name v =
-          record
-            (Printf.sprintf "layer%d%s" i
-               (if name = "" then "" else "_" ^ name))
-            v
-        in
-        let x = layer ~pre_ln ~heads ~mask ~score ~record x l in
-        record "" (fun () -> x);
-        (i + 1, x))
-      (0, x) b.layers
-    |> snd
+  let tk =
+    {
+      start = r.start;
+      stop = r.stop;
+      bias = r.log_count;
+      place = r.place;
+      index = slot_index r;
+      drop;
+    }
   in
-  record "pool_logits" (fun () -> Nx.squeeze ~axes:[ 2 ] (linear b.pool x));
-  let v = pool b.pool r x in
+  let x = layers ~pre_ln ~heads ~remat tk ~record x b.layers in
+  let logits = Nx.squeeze ~axes:[ 2 ] (linear b.pool x) in
+  record "pool_logits" (fun () -> logits);
+  let v = pool r logits x in
   record "pooled" (fun () -> v);
   v
 
-let reduce ~record r x =
+let reduce ~record ~drop r x =
   let x = linear r.up x in
   record "reducer0_linear0" (fun () -> x);
   let x = layer_norm r.norm x in
   record "reducer1_ln1" (fun () -> x);
   let x = relu x in
   record "reducer2_relu" (fun () -> x);
+  let x =
+    match drop with
+    | Some d when d.rates.reducer > 0. ->
+        let p = Nx.dim 0 x in
+        let k = site d.keys [ reducer_site ] in
+        let k =
+          Nx.Rng.of_tensor (Nx.reshape [| p; 1; 2 |] (Nx.Rng.to_tensor k))
+        in
+        let m = draw ~rate:d.rates.reducer k x in
+        d.mask "reducer" (fun () -> m);
+        keep ~rate:d.rates.reducer m x
+    | _ -> x
+  in
   let x = linear r.down x in
   record "reducer4_linear4" (fun () -> x);
   let x = Nx.standardize ~eps x in
@@ -361,35 +550,83 @@ let reduce ~record r x =
   record "embedding" (fun () -> x);
   x
 
-let forward ~record m (b : 'd Batch.t) =
+let forward ~record ?drop ~remat m (b : 'd Batch.t) =
   let heads = m.heads in
-  let sensor name pre_ln bb rows z =
-    backbone ~pre_ln ~heads
+  let sensor name i pre_ln bb rows z =
+    let drop =
+      Option.map
+        (fun d -> ({ d with mask = (fun n v -> d.mask (name ^ "_" ^ n) v) }, i))
+        drop
+    in
+    backbone ~pre_ln ~heads ~remat
       ~record:(fun n v -> record (name ^ "_" ^ n) v)
-      bb rows z
+      ~drop bb rows z
   in
   let z2 = s2_inputs m.norm b.s2 and z1 = s1_inputs m.norm b.s1 in
   match m.net with
   | Post_ln { s2; s1; reducer } ->
-      let v2 = sensor "s2" false s2 b.s2 z2 in
-      let v1 = sensor "s1" false s1 b.s1 z1 in
-      reduce ~record reducer (Nx.concatenate ~axis:1 [ v2; v1 ])
-  | Pre_ln { s2; s1; modality; fusion; reducer } ->
-      let v2 = sensor "s2" true s2 b.s2 z2 in
-      let v1 = sensor "s1" true s1 b.s1 z1 in
-      let x = Nx.add (Nx.stack ~axis:1 [ v2; v1 ]) (Nx.cast f32 modality) in
-      let skip _ _ = () in
-      let x =
-        List.fold_left (layer ~pre_ln:true ~heads ~record:skip) x fusion
-      in
+      let v2 = sensor "s2" 0 false s2 b.s2 z2 in
+      let v1 = sensor "s1" 1 false s1 b.s1 z1 in
+      reduce ~record ~drop reducer (Nx.concatenate ~axis:1 [ v2; v1 ])
+  | Pre_ln { s2; s1; modality; fusion = layers_; reducer } ->
+      let v2 = sensor "s2" 0 true s2 b.s2 z2 in
+      let v1 = sensor "s1" 1 true s1 b.s1 z1 in
+      let x = Nx.add (Nx.stack ~axis:1 [ v2; v1 ]) modality in
       let p = Nx.dim 0 x and d = Nx.dim 2 x in
-      reduce ~record reducer (Nx.reshape [| p; 2 * d |] x)
+      let at = Nx.beside b.pixel in
+      let tk =
+        {
+          start = Nx.zeros_at at Nx.int32 [| p; 2 |];
+          stop = Nx.full_at at Nx.int32 [| p; 2 |] 2l;
+          bias = Nx.zeros_at at f32 [| p; 2 |];
+          place =
+            Nx.broadcast_to [| p; 2 |]
+              (Nx.reshape [| p; 1 |] (Nx.arange_at at Nx.int64 0 p 1));
+          index =
+            Nx.broadcast_to [| p; 2 |]
+              (Nx.reshape [| 1; 2 |] (Nx.arange_at at Nx.int64 0 2 1));
+          drop =
+            Option.map
+              (fun d ->
+                ({ d with mask = (fun n v -> d.mask ("fusion_" ^ n) v) }, fusion))
+              drop;
+        }
+      in
+      let skip _ _ = () in
+      let x = layers ~pre_ln:true ~heads ~remat tk ~record:skip x layers_ in
+      reduce ~record ~drop reducer (Nx.reshape [| p; 2 * d |] x)
 
-let apply m b = forward ~record:(fun _ _ -> ()) m b
+let ignore_record _ _ = ()
+let apply m b = forward ~record:ignore_record ~remat:false m b
+
+let check_dropout fn (r : dropout) keys (b : 'd Batch.t) =
+  let bad x = not (x >= 0. && x < 1.) in
+  if bad r.layers || bad r.reducer then
+    invalid_arg (Printf.sprintf "Tessera.Model.%s: a rate outside [0, 1)" fn);
+  let pixels = Nx.dim 0 b.pixel in
+  if Nx.shape (Nx.Rng.to_tensor keys) <> [| pixels; 2 |] then
+    invalid_arg
+      (Printf.sprintf "Tessera.Model.%s: keys of shape [%d; 2] expected" fn
+         pixels)
+
+let train ~dropout ~remat ~keys m b =
+  check_dropout "train" dropout keys b;
+  let drop = { rates = dropout; keys; mask = ignore_record } in
+  forward ~record:ignore_record ~drop ~remat m b
 
 let blocks m b =
   let acc = ref [] in
-  ignore (forward ~record:(fun n v -> acc := (n, v ()) :: !acc) m b);
+  ignore
+    (forward ~record:(fun n v -> acc := (n, v ()) :: !acc) ~remat:false m b);
+  List.rev !acc
+
+let masks ~dropout ~keys m b =
+  check_dropout "masks" dropout keys b;
+  let acc = ref [] in
+  let drop =
+    { rates = dropout; keys; mask = (fun n v -> acc := (n, v ()) :: !acc) }
+  in
+  ignore (forward ~record:ignore_record ~drop ~remat:false m b);
   List.rev !acc
 
 (* Loading *)

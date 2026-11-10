@@ -31,15 +31,17 @@
     scores; the attention's scale is [1 / √head_dim]. [ffn] is
     [Linear → ReLU → Linear].
 
-    The products of the linear layers and the attention of the encoder and
-    fusion layers compute in the parameters' dtype. Standardisation, layer and
-    QK norms, pooling, sums of residuals and the embedding compute in float32,
-    from parameters cast to float32.
-    [Nx.Ptree.cast (module Model) Nx.bfloat16 m] rounds every parameter of [m]
-    to bfloat16, its layer norms' and QK norms' scales and the fusion's learned
-    vectors included, and its pooling query computes in float32. It thus differs
-    from PyTorch's bfloat16 autocast, which keeps every parameter in float32 and
-    rounds the operands of each product, the pooling query's included.
+    The products of the linear layers, the pooling query's included, and the
+    attention of the encoder and fusion layers compute in the dtype of the
+    products' parameters, each product's sum and bias rounded once. Every other
+    value computes in float32: standardisation, layer and QK norms, the
+    pooling's softmax and weighted sum, sums of residuals and the embedding. The
+    norms' parameters and the fusion's learned vectors are float32 arrays at
+    every dtype, so [Nx.Ptree.cast (module Model) Nx.bfloat16 m] rounds the
+    products' parameters alone, as PyTorch's bfloat16 autocast does. A product's
+    sum and bias are rounded once, where autocast's attention rounds its scores
+    to bfloat16 too: the cast model is closer to the float32 one than
+    autocast's. Train at float32 parameters and cast them inside the objective.
 
     A student's embedding is Matryoshka-ordered (Kusupati et al. 2022): its
     first [k] values, for [k] in its {!prefixes}, are an embedding of their own,
@@ -50,11 +52,12 @@
 
 type ('a, 'd) layer = {
   attn : ('a, 'd) Kaun.Attention.t;
-  qk : ('a * 'a) option;  (** QK norm's scales of queries and keys. *)
-  norm1 : ('a, 'd) Kaun.Layer_norm.t;
+  qk : ('d Nx.float32_t * 'd Nx.float32_t) option;
+      (** QK norm's scales of queries and keys. *)
+  norm1 : ('d Nx.float32_t, 'd) Kaun.Layer_norm.t;
   ffn1 : ('a, 'd) Kaun.Linear.t;
   ffn2 : ('a, 'd) Kaun.Linear.t;
-  norm2 : ('a, 'd) Kaun.Layer_norm.t;
+  norm2 : ('d Nx.float32_t, 'd) Kaun.Layer_norm.t;
 }
 (** The type for encoder layers. *)
 
@@ -67,7 +70,7 @@ type ('a, 'd) backbone = {
 
 type ('a, 'd) reducer = {
   up : ('a, 'd) Kaun.Linear.t;
-  norm : ('a, 'd) Kaun.Layer_norm.t;
+  norm : ('d Nx.float32_t, 'd) Kaun.Layer_norm.t;
   down : ('a, 'd) Kaun.Linear.t;
 }
 (** The type for reducers. *)
@@ -82,7 +85,8 @@ type ('a, 'd) net =
   | Pre_ln of {
       s2 : ('a, 'd) backbone;
       s1 : ('a, 'd) backbone;
-      modality : 'a;  (** [[2; d]]: added to the S2 and S1 vectors. *)
+      modality : 'd Nx.float32_t;
+          (** [[2; d]]: added to the S2 and S1 vectors. *)
       fusion : ('a, 'd) layer list;
       reducer : ('a, 'd) reducer;
     }  (** Every layer has QK norm. *)
@@ -104,10 +108,18 @@ type ('a, 'd) t = {
 }
 (** The type for models. *)
 
+module Net : Nx.Ptree.S with type ('a, 'd) t = ('a, 'd) net
+(** The trained part of a model: its parameters, the norms' and the fusion's as
+    fixed arrays, which {!Nx.Ptree.cast} keeps and a gradient and an optimizer's
+    step change as they change the others. {!Nx.Ptree.Payload}'s maps and folds
+    skip fixed arrays, so a payload per parameter misses the norms. Its walk
+    reports the form and the lists' lengths. *)
+
 val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> ('a, 'd) t -> ('b, 'e) t
-(** [walk c m] walks [m]'s parameters and statistics, and reports its form, its
-    [heads] and its lists' lengths. It is the model's {!Nx.Ptree.S} instance,
-    and keeps [prefixes]. *)
+(** [walk c m] walks [m]'s net, as {!Net} does, at ["net"], reports its [heads],
+    and walks its statistics as fixed arrays. It is the model's {!Nx.Ptree.S}
+    instance, and keeps [prefixes]. Training differentiates and steps a function
+    of the net alone ({!Net}), so the statistics stay as they are. *)
 
 val dims : ((float, 's, 'd) Nx.t, 'd) t -> int
 (** [dims m] is the length of [m]'s embeddings, 128 for the students and 1024
@@ -172,6 +184,57 @@ val apply : ((float, 's, 'd) Nx.t, 'd) t -> 'd Batch.t -> 'd Nx.float32_t
     places. An empty place holds a finite vector, for finite parameters: a slot
     or query that sees no key pools zeros, never NaN. *)
 
+(** {1:train Training} *)
+
+type dropout = {
+  layers : float;
+      (** At each of an encoder or fusion layer's four sites: its attention
+          probabilities after the softmax, its attention's result before the
+          residual sum, its feed-forward's hidden values after the ReLU, and its
+          feed-forward's result before the residual sum. *)
+  reducer : float;  (** Between the reducer's ReLU and its last product. *)
+}
+(** The type for dropout rates, the sites of PyTorch's
+    [nn.TransformerEncoderLayer], which the upstream layers are built as. *)
+
+val v2_dropout : dropout
+(** [v2_dropout] is [{ layers = 0.1; reducer = 0.2 }]: v2's distillation rate
+    (v2 App. J, Table 9), which the paper does not place, and the reducer's rate
+    the upstream model fixes. *)
+
+val no_dropout : dropout
+(** [no_dropout] is the rates [0]. *)
+
+val train :
+  dropout:dropout ->
+  remat:bool ->
+  keys:'d Nx.Rng.key ->
+  ((float, 's, 'd) Nx.t, 'd) t ->
+  'd Batch.t ->
+  'd Nx.float32_t
+(** [train ~dropout ~remat ~keys m b] is {!apply} with dropout, as a training
+    step computes it. [keys] is [[pixels; 2]], row [i] the key of [b]'s place
+    [i]. Each site drops a value with its rate and scales a kept one by
+    [1 / (1 − rate)]. At a rate above [0] a layer's attention computes its
+    probabilities whole, [[rows; heads; width; width]] in float32, where
+    {!apply} computes them a tile at a time.
+
+    A mask is a function of the place's key, the site, and the index in its slot
+    of each token the value reads, so a pixel's embedding is the same in any
+    row, slot, batch or group, on any device, eager or compiled. A token of
+    count [m] shares its mask among the [m] copies it stands for: train on
+    tokens of count [1] ({!Batch.expand}), whose copies drop independently.
+
+    At rates [0] the result is [apply m b] bit for bit. [remat] computes each
+    encoder and fusion layer again in the backward pass ([Rune.remat]): a
+    differentiated [train] keeps each layer's input, not its intermediate
+    values, where it is not inside a loop of two or more trips; inside one, as a
+    step that scans several groups calls it, [Rune.remat] keeps today nearly
+    what no remat keeps. The result does not change.
+
+    Raises [Invalid_argument] if a rate is outside \[[0]; [1]), or if [keys] is
+    not [[pixels; 2]]. *)
+
 (**/**)
 
 val blocks :
@@ -183,3 +246,16 @@ val blocks :
     and [s_pooled]; then [reducer0_linear0], [reducer1_ln1], [reducer2_relu],
     [reducer4_linear4], [reducer5_output] and [embedding]. Token values are
     [[rows; width; …]], pixel values [[pixels; …]]. *)
+
+val masks :
+  dropout:dropout ->
+  keys:'d Nx.Rng.key ->
+  ((float, 's, 'd) Nx.t, 'd) t ->
+  'd Batch.t ->
+  (string * 'd Nx.bool_t) list
+(** [masks ~dropout ~keys m b] is the masks of {!train}, [true] where a value is
+    kept: per sensor [s] and layer [i], [s_layer{i}_attn_p]
+    ([[rows; heads; width; width]]), [s_layer{i}_attn], [s_layer{i}_ffn_hidden]
+    and [s_layer{i}_ffn] ([[rows; width; …]]); [fusion_layer{i}_…] for the
+    fusion's, over [[pixels; 2; …]]; and [reducer] ([[pixels; …]]). A site of
+    rate [0] has none. *)

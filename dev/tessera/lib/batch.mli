@@ -43,6 +43,17 @@ val v2_counts : Nx.host Pixels.t -> counts
 
     Cost: one pass over [px]'s offsets. *)
 
+val expand : Nx.host Pixels.t -> counts -> Nx.host Pixels.t * counts
+(** [expand px c] is [px] with each observation repeated as many times as it
+    counts, each copy counting [1]: the duplicate-filled pixels a model trains
+    on, as copies dropped out independently. A row lays out its copies in
+    passes, pass [k] holding in order the observations of count at least [k], so
+    [expand px (v2_counts px)] fills each row in the order TESSERA v2's
+    reference does: every observation once, then the fill.
+
+    Raises [Invalid_argument] if [c] does not have a count for each of [px]'s
+    observations. *)
+
 (** {1:batches Batches} *)
 
 type shape = {
@@ -74,6 +85,9 @@ type 'd rows = {
   stop : 'd Nx.int32_t;  (** [[rows; width]]: the slot's last key, plus 1. *)
   slot_start : 'd Nx.int32_t;  (** [[rows; slots]]: each slot's first key. *)
   slot_stop : 'd Nx.int32_t;  (** [[rows; slots]]: its last key, plus 1. *)
+  place : 'd Nx.int64_t;
+      (** [[rows; width]]: the place in {!field-pixel} of the token's pixel, [0]
+          at padding. *)
   at : 'd Nx.int64_t;
       (** [[pixels]]: each pixel's slot, [row · slots + slot]. *)
 }
@@ -109,3 +123,11 @@ val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> 'd t -> 'e t
 
 val place : 'e Nx.Placement.t -> 'd t -> 'e t
 (** [place at b] is [b] with each array at [at], as {!Nx.place}. *)
+
+val stack : 'd t list -> 'd t
+(** [stack bs] is the batches [bs], of one shape, each array stacked along a new
+    axis [0]: row [i] of each array is [bs]'s [i]-th batch's, as a [Rune.scan]
+    over the batches passes them.
+
+    Raises [Invalid_argument] if [bs] is empty or two batches differ in shape.
+*)

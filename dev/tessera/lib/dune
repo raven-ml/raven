@@ -1,6 +1,7 @@
-; tessera: TESSERA v2's embeddings of tiles. Never published.
+; tessera: TESSERA v2 embeddings of tiles and training of its students. Never
+; published.
 
 (library
  (name tessera)
- (private_modules flat)
- (libraries nx nx.array nx.io nx.ragged kaun jord))
+ (private_modules flat product)
+ (libraries nx nx.array nx.io nx.ragged kaun rune jord))

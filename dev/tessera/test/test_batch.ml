@@ -198,10 +198,97 @@ let refusals =
               Batch.pack (shape ()) uneven counts ~from:0));
     ]
 
+(* Expanding and stacking *)
+
+let cells r =
+  let o = Array.map Int64.to_int (Nx.to_array (Nx_ragged.offsets r)) in
+  let v = Nx.to_array (Nx_ragged.values r) in
+  let c = Nx.dim 1 (Nx_ragged.values r) in
+  Array.init (Nx_ragged.length r) (fun p ->
+      Array.init (o.(p + 1) - o.(p)) (fun k -> Array.sub v ((o.(p) + k) * c) c))
+
+(* A row's cells in passes: pass [k] the cells of count at least [k]. *)
+let passes row counts =
+  let most = Array.fold_left max 0 counts in
+  List.concat
+    (List.init most (fun k ->
+         List.filteri (fun i _ -> counts.(i) > k) (Array.to_list row)))
+
+let sensor_counts r c =
+  let o = Array.map Int64.to_int (Nx.to_array (Nx_ragged.offsets r)) in
+  let c = Array.map Int32.to_int (Nx.to_array c) in
+  Array.init (Nx_ragged.length r) (fun p ->
+      Array.sub c o.(p) (o.(p + 1) - o.(p)))
+
+let expanding =
+  prop "expand repeats each observation as it counts, in passes"
+    (Synth.spec ~long:true ()) (fun spec ->
+      let px = Synth.pixels spec in
+      let counts = Batch.v2_counts px in
+      let px', ones = Batch.expand px counts in
+      let check name r c r' ones =
+        let expected =
+          Array.map2 passes (cells r) (sensor_counts r c) |> Array.to_list
+        in
+        equal ~msg:name
+          (list (list (array int)))
+          expected
+          (Array.to_list (Array.map Array.to_list (cells r')));
+        equal ~msg:name (array int32)
+          (Array.make (Nx.numel ones) 1l)
+          (Nx.to_array ones)
+      in
+      cover "an observation counted more than once"
+        (List.exists (fun n -> n > 0 && n mod 8 <> 0 && n < 256) spec.s2);
+      check "s2" px.s2 counts.s2 px'.s2 ones.s2;
+      check "s1" px.s1 counts.s1 px'.s1 ones.s1)
+
+(* The reference's fill order of [n] observations ([_pad_pattern]). *)
+let fill_order =
+  test "expand fills a row as the reference does" (fun () ->
+      List.iter
+        (fun (n, order) ->
+          let px = Synth.pixels { Synth.s2 = [ n ]; s1 = [ 0 ]; seed = 1 } in
+          let px', _ = Batch.expand px (Batch.v2_counts px) in
+          let row = (cells px.s2).(0) in
+          let at i = row.(i) in
+          equal
+            (list (array int))
+            (List.map at order)
+            (Array.to_list (cells px'.s2).(0)))
+        [
+          (3, [ 0; 1; 2; 0; 1; 2; 0; 1 ]);
+          (* [array_split (arange 5) 3] runs' middles: 1, 3, 4. *)
+          (5, [ 0; 1; 2; 3; 4; 1; 3; 4 ]);
+          (8, List.init 8 Fun.id);
+        ])
+
+let stacking =
+  test "stack's rows are its batches" (fun () ->
+      let px =
+        Synth.pixels { Synth.s2 = [ 3; 9; 1 ]; s1 = [ 2; 0; 4 ]; seed = 5 }
+      in
+      let counts = Batch.v2_counts px in
+      let b0, next = Batch.pack (shape ~pixels:2 ()) px counts ~from:0 in
+      let b1, _ = Batch.pack (shape ~pixels:2 ()) px counts ~from:next in
+      let s = Batch.stack [ b0; b1 ] in
+      let d = Nx.Ptree.v Batch.walk in
+      let arrays b =
+        Nx.Ptree.fold d
+          (fun _ a acc -> Nx.to_array (Nx.cast Nx.float64 a) :: acc)
+          b []
+      in
+      let row i = Nx.Ptree.map d (fun _ a -> Nx.slice [ Nx.I i ] a) s in
+      equal (list (array float_exact)) (arrays b0) (arrays (row 0));
+      equal (list (array float_exact)) (arrays b1) (arrays (row 1));
+      raises (Invalid_argument "Tessera.Batch.stack: no batch") (fun () ->
+          Batch.stack []))
+
 let () =
   exit
     (run "tessera.batch"
        [
          group "counts" [ fill_rule; fill_total ];
          group "pack" [ packing; refusals ];
+         group "train" [ expanding; fill_order; stacking ];
        ])

@@ -64,6 +64,64 @@ let sensor_counts (type v s) (r : (v, s, Nx.host) Nx_ragged.t) =
 let v2_counts (px : Nx.host Pixels.t) =
   { s2 = sensor_counts px.s2; s1 = sensor_counts px.s1 }
 
+(* Duplicate filling *)
+
+(* A pixel's tokens in passes: pass [k] holds, in order, its observations of
+   count at least [k]. Under v2's counts this is the reference's fill order,
+   every observation once and then the fill ([_pad_pattern]'s [concatenate
+   ([arange n], fill)]). *)
+let expand_sensor (type s) kind dt (r : (int, s, Nx.host) Nx_ragged.t)
+    (c : Nx.host Nx.int32_t) =
+  let n = Nx_ragged.length r in
+  let cells = Nx.dim 1 (Nx_ragged.values r) in
+  let o' = Flat.create int64 (n + 1) 0L in
+  let v' =
+    Flat.read (Nx_ragged.offsets r) @@ fun o ->
+    Flat.read c @@ fun c ->
+    for p = 0 to n - 1 do
+      let t = ref o'.{p} in
+      for j = Int64.to_int o.{p} to Int64.to_int o.{p + 1} - 1 do
+        t := Int64.add !t (Int64.of_int32 c.{j})
+      done;
+      o'.{p + 1} <- !t
+    done;
+    let v' = Flat.create kind (Int64.to_int o'.{n} * cells) 0 in
+    Flat.read (Nx_ragged.values r) @@ fun v ->
+    let at = ref 0 in
+    for p = 0 to n - 1 do
+      let lo = Int64.to_int o.{p} and hi = Int64.to_int o.{p + 1} in
+      let most = ref 0l in
+      for j = lo to hi - 1 do
+        if c.{j} > !most then most := c.{j}
+      done;
+      for k = 1 to Int32.to_int !most do
+        for j = lo to hi - 1 do
+          if Int32.to_int c.{j} >= k then begin
+            for ch = 0 to cells - 1 do
+              v'.{(!at * cells) + ch} <- v.{(j * cells) + ch}
+            done;
+            incr at
+          end
+        done
+      done
+    done;
+    v'
+  in
+  let total = Int64.to_int o'.{n} in
+  ( Nx_ragged.v
+      ~offsets:(Flat.wrap Nx.int64 [| n + 1 |] o')
+      (Flat.wrap dt [| total; cells |] v'),
+    Nx.ones Nx.int32 [| total |] )
+
+let expand (px : Nx.host Pixels.t) (c : counts) =
+  if
+    Nx.shape c.s2 <> [| Nx.dim 0 (Nx_ragged.values px.s2) |]
+    || Nx.shape c.s1 <> [| Nx.dim 0 (Nx_ragged.values px.s1) |]
+  then invalid_arg "Tessera.Batch.expand: one count per observation expected";
+  let s2, c2 = expand_sensor int16_unsigned Nx.uint16 px.s2 c.s2 in
+  let s1, c1 = expand_sensor int16_signed Nx.int16 px.s1 c.s1 in
+  (({ s2; s1 } : Nx.host Pixels.t), ({ s2 = c2; s1 = c1 } : counts))
+
 (* Batches *)
 
 type shape = {
@@ -81,6 +139,7 @@ type 'd rows = {
   stop : 'd Nx.int32_t;
   slot_start : 'd Nx.int32_t;
   slot_stop : 'd Nx.int32_t;
+  place : 'd Nx.int64_t;
   at : 'd Nx.int64_t;
 }
 
@@ -101,6 +160,7 @@ type builder = {
   stops : (int32, int32_elt) Flat.t;
   slot_starts : (int32, int32_elt) Flat.t;
   slot_stops : (int32, int32_elt) Flat.t;
+  token_places : (int64, int64_elt) Flat.t;
   places : (int64, int64_elt) Flat.t;
   fill : int array;
   used : int array;
@@ -127,6 +187,7 @@ let builder shape ~rows ~bands =
     stops = Flat.create int32 (rows * w) 0l;
     slot_starts = Flat.create int32 (rows * shape.slots) 0l;
     slot_stops = Flat.create int32 (rows * shape.slots) 0l;
+    token_places = Flat.create int64 (rows * w) 0L;
     places = Flat.create int64 shape.pixels 0L;
     fill = Array.make rows 0;
     used = Array.make rows 0;
@@ -160,7 +221,8 @@ let put (type s) shape b r ~place ~(values : (int, s) Flat.t)
   for k = 0 to n - 1 do
     let i = (r * w) + first + k in
     b.starts.{i} <- start;
-    b.stops.{i} <- stop
+    b.stops.{i} <- stop;
+    b.token_places.{i} <- Int64.of_int place
   done;
   if t = 0 then b.toks.{(((r * w) + first) * c) + c - 1} <- -1.
   else begin
@@ -195,6 +257,7 @@ let rows_of shape b =
     stop = int32 w b.stops;
     slot_start = int32 shape.slots b.slot_starts;
     slot_stop = int32 shape.slots b.slot_stops;
+    place = Flat.wrap Nx.int64 [| b.rows; w |] b.token_places;
     at = Flat.wrap Nx.int64 [| shape.pixels |] b.places;
   }
 
@@ -271,8 +334,9 @@ let walk_rows c r =
   let stop = field c "stop" tensor r.stop in
   let slot_start = field c "slot_start" tensor r.slot_start in
   let slot_stop = field c "slot_stop" tensor r.slot_stop in
+  let place = field c "place" tensor r.place in
   let at = field c "at" tensor r.at in
-  { tokens; log_count; start; stop; slot_start; slot_stop; at }
+  { tokens; log_count; start; stop; slot_start; slot_stop; place; at }
 
 let walk c b =
   let open Nx.Ptree.Walk in
@@ -288,6 +352,31 @@ module Structure = struct
 end
 
 let place at b = Nx.Ptree.place (module Structure) at b
+
+(* Each batch's arrays by path, then the first's arrays replaced by the stack of
+   every batch's at their path. *)
+let stack = function
+  | [] -> invalid_arg "Tessera.Batch.stack: no batch"
+  | first :: _ as bs ->
+      let s = Nx.Ptree.v walk in
+      let arrays b =
+        Nx.Ptree.fold s
+          (fun p a acc -> (Nx.Ptree.Path.to_string p, Nx.P a) :: acc)
+          b []
+      in
+      let all = List.map arrays bs in
+      Nx.Ptree.map s
+        (fun p a ->
+          let name = Nx.Ptree.Path.to_string p in
+          let row t =
+            let x = Nx.unpack (Nx.dtype a) (List.assoc name t) in
+            if Nx.shape x <> Nx.shape a then
+              invalid_arg
+                ("Tessera.Batch.stack: " ^ name ^ ": batches of two shapes");
+            x
+          in
+          Nx.stack (List.map row all))
+        first
 
 (* Shapes *)
 
