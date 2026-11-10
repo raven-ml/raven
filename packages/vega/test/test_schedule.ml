@@ -10,7 +10,7 @@ open Windtrap
 module S = Vega.Schedule
 
 let test_constant () =
-  let sched = S.constant 0.1 in
+  let sched = Vega.rate 0.1 in
   equal (float 1e-6) 0.1 (S.eval sched 0);
   equal (float 1e-6) 0.1 (S.eval sched 1000)
 
@@ -111,7 +111,7 @@ let test_piecewise_constant_validation () =
 
 let test_join () =
   let s =
-    S.join [ (10, S.constant 1.0); (10, S.constant 2.0); (10, S.constant 3.0) ]
+    S.join [ (10, Vega.rate 1.0); (10, Vega.rate 2.0); (10, Vega.rate 3.0) ]
   in
   equal ~msg:"segment 1" (float 1e-6) 1.0 (S.eval s 5);
   equal ~msg:"segment 2" (float 1e-6) 2.0 (S.eval s 15);
@@ -139,7 +139,7 @@ let test_join_step_reset () =
 let test_join_validation () =
   raises_match Exn.invalid_arg (fun () -> ignore (S.join [] : Nx.host S.t));
   raises_match Exn.invalid_arg (fun () ->
-      ignore (S.join [ (0, S.constant 1.0) ] : Nx.host S.t))
+      ignore (S.join [ (0, Vega.rate 1.0) ] : Nx.host S.t))
 
 let test_cosine_decay_restarts () =
   let s = S.cosine_decay_restarts ~init_value:1.0 ~decay_steps:100 () in
@@ -204,10 +204,10 @@ let () =
              test "cosine_decay_restarts t_mul" test_cosine_decay_restarts_t_mul;
              test "cosine_decay_restarts m_mul" test_cosine_decay_restarts_m_mul;
              test "one_cycle" test_one_cycle;
-             prop "constant is constant at any step"
+             prop "a constant rate is constant at any step"
                Gen.(pair float nat)
                (fun (v, step) ->
-                 let s = S.constant v in
+                 let s = Vega.rate (Float.abs v) in
                  equal float_exact (S.eval s 0) (S.eval s step));
              prop "cosine_decay bounded" Gen.nat (fun step ->
                  let s = S.cosine_decay ~init_value:1.0 ~decay_steps:100 () in

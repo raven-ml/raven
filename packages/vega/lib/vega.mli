@@ -303,8 +303,8 @@ end
     rate track correctly under [Rune.jit]. *)
 
 val rate : float -> 'd Schedule.t
-(** [rate v] is the constant rate [v], {!Schedule.constant}[ v], which serves
-    any parameter dtype and set, as a learning rate or as a weight decay:
+(** [rate v] is the schedule that always returns [v], which serves any
+    parameter dtype and set, as a learning rate or as a weight decay:
     [Vega.adamw_step p ~lr:(Vega.rate 1e-3) ~weight_decay:(Vega.rate 0.01)].
 
     Raises [Invalid_argument] if [v] is negative. *)

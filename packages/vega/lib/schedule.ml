@@ -25,8 +25,6 @@ let clamp_ratio ~steps s =
     (Nx.minimum_s s (float_of_int steps))
     (float_of_int steps)
 
-let constant value step = Nx.scalar_like (to_f32 step) value
-
 let linear ~init_value ~end_value ~steps =
   if steps <= 0 then invalid_arg "Schedule.linear: steps must be positive";
   fun step ->

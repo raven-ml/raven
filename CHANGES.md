@@ -268,16 +268,17 @@ All notable changes to this project will be documented in this file.
 
 ### Vega (new)
 
-- `lars_step`, `adamw_step`, `lamb_step` and `adan_step` take `~decays`, a
+- `lars_step`, `adamw_step`, `lamb_step` and `adan_step` take `?decays`, a
   rule on each leaf's path and shape, to leave biases and normalisation
   parameters undecayed. A leaf it rejects steps as under `adam_step` for AdamW.
-- **Breaking:** the `~weight_decay` of `lars_step`, `adamw_step`, `lamb_step`
+- **Breaking:** the `?weight_decay` of `lars_step`, `adamw_step`, `lamb_step`
   and `adan_step` is a function of the counter, as `~lr` is, so a scheduled
   decay is computed inside the step and a bfloat16 parameter decays under it.
   The decay applied after the step that the schedules guide taught moved none.
 - **Breaking:** `Vega.lr` is `Vega.rate`, the constant for a learning rate or a
-  weight decay, and raises on a negative value. A float64 leaf decays by the
-  float32 constant, as it steps by the float32 rate.
+  weight decay, and raises on a negative value. `Vega.Schedule.constant` is
+  removed for it. A float64 leaf decays by the float32 constant, as it steps
+  by the float32 rate.
 - Vega's argument errors write each float as the shortest decimal that reads
   back, the same text on every system: `got -1000000` where they wrote
   `got -1e+06`, or `-1e+006` under Windows.
@@ -296,7 +297,7 @@ All notable changes to this project will be documented in this file.
   `('p, 'd) adam_state` over an `('p, 'd) Nx.Ptree.t`. Each `*_init` makes
   the step counter beside the parameters and raises when they hold no array.
 - **Breaking:** a step's `~lr` is a function of its state's counter, which the
-  step applies: pass a `Vega.Schedule` or `Vega.lr v`, no longer
+  step applies: pass a `Vega.Schedule` or `Vega.rate v`, no longer
   `sched st.step`. `Vega.Schedule.t` takes the set, `'d Schedule.t`.
 - **Breaking:** `Vega.Loss_scale.static` and `dynamic` take the placement of
   the scale, and `Loss_scale.ptree` is `Loss_scale.walk`.
@@ -343,8 +344,8 @@ All notable changes to this project will be documented in this file.
   built-in `1e-3 / sqrt t`, with `?decay_rate` for `?b2_decay` (a constant β2
   is gone) and `?factored` moved to `adafactor_init`.
 - `sgd_step`, `adam_step` and `adamw_step` raise `Invalid_argument` on a
-  momentum or `b1`/`b2` outside `[0, 1)`, a non-positive `eps` or a negative
-  `weight_decay`, where `b1 = 1.` used to divide by zero and return NaNs.
+  momentum or `b1`/`b2` outside `[0, 1)` or a non-positive `eps`, where
+  `b1 = 1.` used to divide by zero and return NaNs.
 - Add `lion_step`, `radam_step`, `lamb_step`, `lars_step`, `adafactor_step`,
   `adan_step`, `rmsprop_step` and `adagrad_step`, each with its `*_init` and a
   state whose structure lets it ride a `Rune.jit`-compiled step as arguments.
@@ -375,7 +376,7 @@ All notable changes to this project will be documented in this file.
   carries nothing the counter does not determine, so checkpoints hold the
   moments plus one scalar.
 - **Breaking:** the structural step functions take the learning rate as a
-  scalar tensor: `~lr:(float, 'b) Nx.t`, cast to each leaf's dtype. `Vega.lr
+  scalar tensor: `~lr:(float, 'b) Nx.t`, cast to each leaf's dtype. `Vega.rate
   v` is the constant-rate helper (`Nx.scalar Nx.float32 v`; any float dtype
   is accepted, so `float64` loops can pass a `float64` rate); a scheduled
   rate is the schedule applied to the state's `step` leaf. The per-element

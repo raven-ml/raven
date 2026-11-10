@@ -455,7 +455,7 @@ end
 
 let rate v =
   validate_non_negative "Vega.rate" "v" v;
-  Schedule.constant v
+  fun step -> Nx.scalar_like (Nx.cast Nx.float32 step) v
 
 (* Shared arithmetic of the steps *)
 

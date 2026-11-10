@@ -99,7 +99,7 @@ Transformations of the gradients are functions applied before the step.
 
 | Optax | Vega |
 |-------|------|
-| `constant_schedule(lr)` | `Schedule.constant lr` |
+| `constant_schedule(lr)` | `Vega.rate lr` |
 | `linear_schedule(init, end, steps)` | `Schedule.linear ~init_value ~end_value ~steps` |
 | `cosine_decay_schedule(init, steps)` | `Schedule.cosine_decay ~init_value ~decay_steps ()` |
 | `exponential_decay(init, steps, rate)` | `Schedule.exponential_decay ~init_value ~decay_rate ~decay_steps` |

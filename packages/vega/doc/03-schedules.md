@@ -14,7 +14,7 @@ step number:
 
 <!-- $MDX skip -->
 ```ocaml
-let lr = Vega.Schedule.constant 0.001 in
+let lr = Vega.rate 0.001 in
 Printf.printf "step 1:   %f\n" (Vega.Schedule.eval lr 1);    (* 0.001 *)
 Printf.printf "step 100: %f\n" (Vega.Schedule.eval lr 100)   (* 0.001 *)
 ```
@@ -31,11 +31,11 @@ Vega.adam_step model ~lr:sched st ~params ~grads
 
 ### constant
 
-A fixed learning rate:
+A fixed rate is `Vega.rate`, which rejects a negative value:
 
 <!-- $MDX skip -->
 ```ocaml
-Vega.Schedule.constant 0.001
+Vega.rate 0.001
 ```
 
 ### linear

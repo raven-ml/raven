@@ -24,7 +24,7 @@ let () =
   Printf.printf "--- Schedule values at steps %s ---\n"
     (String.concat ", " (List.map string_of_int sample));
 
-  print_schedule "constant 0.01" (S.constant 0.01) sample;
+  print_schedule "constant 0.01" (Vega.rate 0.01) sample;
 
   print_schedule "cosine_decay"
     (S.cosine_decay ~init_value:0.01 ~decay_steps:100 ())

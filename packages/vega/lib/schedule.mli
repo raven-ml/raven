@@ -41,10 +41,9 @@ val eval : Nx.host t -> int -> float
     OCaml float. Use it for logging a schedule, plotting one, or driving an
     eager loop from its own [int] counter. *)
 
-(** {1:basic Basic} *)
+(** {1:basic Basic}
 
-val constant : float -> 'd t
-(** [constant v] is the schedule that always returns [v]. *)
+    The constant schedule is {!Vega.rate}. *)
 
 val linear : init_value:float -> end_value:float -> steps:int -> 'd t
 (** [linear ~init_value ~end_value ~steps] interpolates linearly from

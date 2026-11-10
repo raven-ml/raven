@@ -10,7 +10,7 @@ dune exec packages/vega/examples/03-learning-rate-schedules/main.exe
 ## What You'll Learn
 
 - That a schedule is simply a function from a step-counter tensor to a learning-rate tensor, read on the host with `Schedule.eval`
-- How `constant`, `cosine_decay`, `warmup_cosine_decay`, `one_cycle`, and
+- How `Vega.rate`, `cosine_decay`, `warmup_cosine_decay`, `one_cycle`, and
   `piecewise_constant` shape the learning rate curve
 - Composing schedules end-to-end with `Schedule.join`
 - Deriving a step's `~lr` from the optimizer state's own counter
@@ -19,7 +19,7 @@ dune exec packages/vega/examples/03-learning-rate-schedules/main.exe
 
 | Function                | Purpose                                          |
 | ----------------------- | ------------------------------------------------ |
-| `Schedule.constant`     | Fixed learning rate                              |
+| `Vega.rate`             | Fixed learning rate                              |
 | `Schedule.cosine_decay` | Cosine annealing to zero (or `alpha * init`)     |
 | `Schedule.warmup_cosine_decay` | Linear warmup then cosine decay            |
 | `Schedule.one_cycle`    | 1cycle: linear warmup then cosine decay          |
@@ -30,7 +30,7 @@ dune exec packages/vega/examples/03-learning-rate-schedules/main.exe
 
 | Schedule | Shape |
 | -------- | ----- |
-| `constant` | Flat line |
+| `Vega.rate` | Flat line |
 | `cosine_decay` | Smooth decrease following a cosine curve |
 | `warmup_cosine_decay` | Ramp up, then smooth decrease |
 | `one_cycle` | Ramp up to peak, then cosine back down to near zero |
