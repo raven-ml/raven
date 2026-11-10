@@ -1,4 +1,4 @@
-# The Tokenization Pipeline
+# The tokenization pipeline
 
 Brot processes text through up to 6 stages, each optional and independently
 configurable:
@@ -199,7 +199,7 @@ model, which then runs in the same C kernel as GPT-2's. `Pre_tokenizer.pp` shows
 path. Recognition is by the exact text of the pattern, so an equivalent pattern
 written differently runs on the automaton.
 
-## Tokenization Algorithms
+## Tokenization algorithms
 
 The algorithm maps pre-tokenized pieces to token IDs using the vocabulary.
 Brot supports 5 algorithms:
@@ -321,7 +321,7 @@ let text2 = Decoder.decode seq [ "_Hello"; "_world" ]
 When using `Brot.decode`, the tokenizer looks up token strings from the
 vocabulary and then applies the configured decoder automatically.
 
-## Complete Example
+## Complete example
 
 Here is a complete BERT-style tokenizer using all 5 pipeline stages:
 

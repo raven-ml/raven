@@ -1,4 +1,4 @@
-# Getting Started
+# Getting started
 
 This page builds a table, queries it, reads files, and shows what happens
 when a query is wrong.
@@ -19,7 +19,7 @@ Add the libraries you use to your `dune` file:
  (libraries talon talon.csv talon.parquet))
 ```
 
-## A Table
+## A table
 
 A table is a list of named columns of equal length. `Column.v` makes a column
 of a type from an OCaml array, and `Column.of_options` does the same with a
@@ -58,7 +58,7 @@ table 5 rows × 4 columns
 `Column.of_tensor` makes a column of a 1-D nx tensor, sharing it; a `bool`
 tensor is packed into bits once. In quill, tables print the same way.
 
-## Types and Kinds
+## Types and kinds
 
 A column's **type** is what it stores: `float32`, `int16`, `date`,
 `datetime[ms, UTC]`, `list[string]`. Its **kind** is the OCaml type its values
@@ -75,7 +75,7 @@ let temps : float option array = Column.options Kind.float temp
 
 `Column.values` is the same for a column without nulls, and raises on a null.
 
-## A Query
+## A query
 
 A query describes a table to compute. It starts from a table or a file and
 goes through verbs, written inside `Query.( … )`, with expressions written
@@ -128,7 +128,7 @@ The filter dropped `lima`'s second day: its temperature is null, so
 predicate is `true`. The literals in `temp *. 1.8 +. 32.` took the type of the
 column they meet, so `temp_f` is `float32`.
 
-## Getting Values Out
+## Getting values out
 
 `Query.values` evaluates an expression on each row and decodes it to OCaml.
 `const f $ x $ y` applies an OCaml function to the values of a row:
@@ -151,7 +151,7 @@ let m = Talon.to_tensor Nx.float32 [ "temp"; "temp_f" ] warm_table
 let rain = Column.to_tensor Nx.bit (Talon.column warm_table "rain")
 ```
 
-## Reading Files
+## Reading files
 
 `Talon_csv.file` and `Talon_parquet.file` return a **source**: a file whose
 columns are known and whose rows a query reads when it runs. A CSV file's
@@ -195,7 +195,7 @@ sort [desc "mean_delay"]
   └ parquet "carriers.parquet" (2 columns, 8 rows)
 ```
 
-## When Something Is Wrong
+## When something is wrong
 
 A query fails in one of two ways.
 

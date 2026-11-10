@@ -1,4 +1,4 @@
-# Saving and Pretrained Weights
+# Saving and pretrained weights
 
 A trained model is a set of tensors. Saving writes them to a file, each under a name, and loading reads them back into the program's values. A kaun model is a record with a structure, an `Nx.Ptree.t`, and the structure names every tensor of the record, so it is all that saving and loading need. Files are [SafeTensors](https://huggingface.co/docs/safetensors/), which `nx.io` reads and writes as an `Nx_io.Archive.t`: an immutable collection of tensors keyed by distinct, non-empty names. Weights published by others have their own names and layouts, and an ordinary function reads them by name into the model's record. This guide covers both.
 
@@ -26,7 +26,7 @@ let mlp = Nx.Ptree.instantiate (module Mlp)
 
 Each layer's `walk` names its own fields (`w`, and `b` when the layer has a bias), so `mlp`'s tensors are `l1.w`, `l1.b`, `l2.w` and `l2.b`. A list element adds its index, so a model's third block is under `blocks.2`. An archive puts a whole structure under a prefix: `Nx_io.Archive.of_value ~prefix:"model" mlp` names the same tensors `model.l1.w`, ..., `model.l2.b`. Tensors may have different dtypes: each keeps its own in the file, and loading checks it. A tensor of a fixed type, walked with `Nx.Ptree.Walk.tensor`, is saved like the others.
 
-## Saving and Loading
+## Saving and loading
 
 `Nx_io.Archive.of_value` turns a value into the archive of its tensors, and `Nx_io.save_safetensors` writes it. Reading back takes a value of the same shape, which a restart already holds: `Nx_io.Archive.to_value ~like` replaces its tensors with the archive's entries of the same names. `like` supplies the record, the list lengths, the options that are present, and each tensor's dtype, shape and placement, where the entry is placed; its tensors' elements are not read:
 
@@ -64,13 +64,13 @@ A value owns the names under its prefix, `model` here, and every name when it ha
 
 Nothing is converted: `like` states the dtype it expects, so a restart that names the wrong dtype fails instead of narrowing its state.
 
-## The Rule About Files
+## The rule about files
 
 Loading reads the file's header. Where the system can map the file, each aligned entry is a host value over the file's pages, read when it is first used. Loading a 2.5 GB file takes milliseconds and allocates nothing.
 
 **A file must not change while a tensor read from it is alive.** Truncating or rewriting it in place changes the tensors' values or kills the process. Replace a file by writing a new one and renaming it over the old one, which is what `Nx_io.save_safetensors` does: saving over the path you loaded from is safe. `Nx.copy` gives a tensor that no longer depends on its file. The file stays mapped until the garbage collector has collected the last tensor over it, which can be later than the last use; on Windows it cannot be deleted until then. Keep weight files on a local disk.
 
-## One File, Several Sections
+## One file, several sections
 
 Entries outside a value's prefix are ignored, so one file holds model parameters and optimizer state side by side, each under its own prefix, and `Nx_io.Archive.union` puts their archives together. An optimizer state is a structure too, `Vega.adam_ptree mlp`, whose tensors are `mu.l1.w`, ..., `nu.l2.b` and `step`. Saving and restoring the full training state:
 
@@ -111,7 +111,7 @@ The optimizer moments are named after the model's paths because their structure 
 
 A section can be read into part of a model. A classifier saved under `model`, with fields `backbone` and `head`, gives its backbone to a new model through `Nx_io.Archive.to_value ~prefix:"model.backbone" backbone`: that value owns the names under `model.backbone`, and the old head's entries are left alone.
 
-## Pretrained Weights
+## Pretrained weights
 
 Weights produced elsewhere are named and laid out by their exporter's conventions. Two functions read one entry by name:
 
@@ -157,7 +157,7 @@ let () =
 
 Each name is written at the field it fills. A rename is a different string at the field, a transpose is `Nx.matrix_transpose`, and a fused tensor is cut with `Nx.split`; both are views. Structure comes from the configuration and the dtype is an argument: at the file's own dtype every tensor is the file's entry and nothing is copied, and at another one each is cast as it is read. An importer allocates no model to start from. An importer that ties two weights binds the tensor once and uses it twice.
 
-## Placing Weights on a Device
+## Placing weights on a device
 
 A loaded archive holds host values. `Nx.place p x` is `x` at the placement `p` of a device set, a value with the same elements; the source is unchanged. A set is minted from rig devices with `Nx.devices`, as `module Gpu = (val Nx.devices [ gpu ])` for the GPU `Rig.open_ (Rig_metal.gpu 0)` opens, and its brand types every value placed there, so a model on the GPU cannot be mixed with host values by mistake. A GPU set computes under `Rune.jit`: prefill, decode and any other compiled function over the placed model read its arrays in place and share one copy. An importer places each leaf as it builds it:
 
@@ -182,7 +182,7 @@ let mlp_of_file at dt weights =
 
 Each leaf is read, cast if asked, transposed and placed before the next is touched, so the host holds at most one leaf's cast at a time and the model ends up as one copy, on the device. Placing on the GPU set is `mlp_of_file Gpu.on dt weights`, and keeping it on the host `mlp_of_file Nx.Host.on dt weights`. The examples' importers take the placement as a function of each leaf's role (a column or row projection, or experts) and of the axis that role's cut runs along in the leaf, so a placement that splits a model over several devices can cut each weight where it belongs. One device is `fun _ ~axis:_ -> p`. Their cache builders take the same function, with a `Kv_heads` role for the pools. Outside a compiled function, a GPU set without kernels computes nothing, so transpose and cast each leaf on the host and place its final form.
 
-## Fetching From the Hub: kaun.hf
+## Fetching from the Hub: kaun.hf
 
 The `kaun.hf` library fetches files from [HuggingFace Hub](https://huggingface.co) repositories into a local cache and loads a model's SafeTensors weights, single-file or sharded, as an `Nx_io.Archive.t`. Downloading shells out to `curl` (it must be on `PATH`). A download is written beside its cache path and renamed once complete, and cached files are served without touching the network.
 
@@ -195,7 +195,7 @@ List.iter print_endline (Nx_io.Archive.names weights)
 
 `Kaun_hf.load_config` fetches and parses the repository's `config.json`, from which an example builds its configuration record.
 
-## The GPT-2 Story
+## The GPT-2 story
 
 [`examples/04-gpt2`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/04-gpt2) runs the whole pipeline: it defines GPT-2 as a record of kaun layers, loads the real weights, and generates text. Its importer is about fifty lines and differs from the two-layer one above in one way: the file stores each block's query, key and value projections as one `c_attn` tensor of shape `[n_embd; 3 * n_embd]`, where the model has three `Linear` layers. `Nx.split` cuts the fused weight and bias into three views:
 
@@ -224,7 +224,7 @@ let params = Gpt2.of_hf cfg Nx.float32 (Kaun_hf.load_safetensors "gpt2")
 
 There is no per-architecture loader in the library. [`examples/05-llama`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/05-llama) imports Llama 3.2 the same way, transposing every projection, and its `--dtype` defaults to the file's `bfloat16`, so the default run casts nothing.
 
-## Next Steps
+## Next steps
 
 - [PyTorch Comparison](05-pytorch-comparison.md): `state_dict`, `torch.save`, and `from_pretrained` in kaun terms
 - [Layers and Models](02-layers-and-models.md): where the names come from

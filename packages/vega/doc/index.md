@@ -11,7 +11,7 @@ Vega provides gradient-based optimizers for OCaml. An optimizer steps a whole pa
 - **Gradient transformations** — `clip_by_global_norm`, `clip_by_value`
 - **Loss scaling** — `Loss_scale` for float16 training
 
-## Quick Start
+## Quick start
 
 <!-- $MDX skip -->
 ```ocaml
@@ -33,7 +33,7 @@ let () =
 
 `Nx.Ptree.tensor` is the structure of a single tensor. A model's parameters are usually a record, whose structure `Nx.Ptree.instantiate` builds from its `walk` ([Getting Started](01-getting-started.md)).
 
-## Jit-Compiled Training Steps
+## JIT-compiled training steps
 
 The optimizers take the parameters' structure, an `Nx.Ptree.t` that
 `Nx.Ptree.instantiate` builds from the model's module. A state's structure is
@@ -85,7 +85,7 @@ a counter); a step passes them through unchanged.
 Schedules are tensor arithmetic over the counter, so the same schedule drives an
 eager loop; `Schedule.eval` reads one at a host step number for logging.
 
-## Next Steps
+## Next steps
 
 - [Getting Started](01-getting-started.md) — installation, parameters as a structure, your first optimizer
 - [Optimizers](02-optimizers.md) — training steps, choosing an optimizer, states as structures

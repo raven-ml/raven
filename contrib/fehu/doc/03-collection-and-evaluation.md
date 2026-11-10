@@ -1,9 +1,9 @@
-# Collection, Buffers, and Evaluation
+# Collection, buffers, and evaluation
 
 This guide covers trajectory collection, replay buffers, generalized advantage
 estimation, and policy evaluation.
 
-## Trajectory Collection
+## Trajectory collection
 
 `Collect` gathers agent-environment interactions into structure-of-arrays form
 for batch processing.
@@ -50,7 +50,7 @@ When the policy returns `Some log_prob` or `Some value`, those are collected
 into `log_probs` and `values`. When any return is `None`, the corresponding
 field is `None` for the entire trajectory.
 
-### Policy Signature
+### Policy signature
 
 The policy function has the signature:
 
@@ -102,7 +102,7 @@ let total_rewards = List.map (fun traj ->
 Each episode runs until termination, truncation, or `max_steps` (default
 1000).
 
-### Concatenating Trajectories
+### Concatenating trajectories
 
 `Collect.concat` merges multiple trajectories into one:
 
@@ -113,12 +113,12 @@ let combined = Collect.concat [traj1; traj2; traj3]
 
 Optional fields (`log_probs`, `values`) are kept only if present in all inputs.
 
-## Replay Buffers
+## Replay buffers
 
 `Buffer` provides a fixed-capacity circular buffer for off-policy experience
 storage. It stores individual transitions and supports uniform random sampling.
 
-### Creating and Filling
+### Creating and filling
 
 <!-- $MDX skip -->
 ```ocaml
@@ -174,7 +174,7 @@ let (observations, actions, rewards,
 Buffer.clear buf  (* removes all transitions, keeps storage allocated *)
 ```
 
-## Generalized Advantage Estimation
+## Generalized advantage estimation
 
 `Gae` computes advantages and returns for policy gradient methods. It correctly
 handles the distinction between terminated and truncated episodes:
@@ -184,7 +184,7 @@ handles the distinction between terminated and truncated episodes:
 - **Truncated**: the episode was cut short (e.g., time limit). Bootstrap value
   comes from `next_values`.
 
-### Computing Advantages
+### Computing advantages
 
 <!-- $MDX skip -->
 ```ocaml
@@ -219,7 +219,7 @@ let advantages, returns = Gae.compute
   ~lambda:0.95
 ```
 
-### Monte Carlo Returns
+### Monte Carlo returns
 
 For simpler algorithms that do not need advantages:
 
@@ -232,7 +232,7 @@ let rets = Gae.returns
   ~gamma:0.99
 ```
 
-### Normalizing Advantages
+### Normalizing advantages
 
 Normalize to zero mean and unit variance for training stability:
 
@@ -243,7 +243,7 @@ let normalized = Gae.normalize advantages
 let normalized = Gae.normalize ~eps:1e-6 advantages
 ```
 
-## Policy Evaluation
+## Policy evaluation
 
 `Eval.run` runs a deterministic or stochastic policy over multiple episodes
 and reports summary statistics:
@@ -280,7 +280,7 @@ only returns an action, not log-probs or value estimates:
 `Eval.run` resets the environment between episodes. Default `n_episodes` is 10
 and default `max_steps` is 1000.
 
-## Putting It Together
+## Putting it together
 
 A typical PPO-style training iteration using these utilities:
 
@@ -318,7 +318,7 @@ let stats = Eval.run env
   ~n_episodes:10 ()
 ```
 
-## Next Steps
+## Next steps
 
 - [Getting Started](01-getting-started.md) -- installation, environments, spaces, step loop
 - [Environments and Wrappers](02-environments.md) -- custom environments, wrappers, rendering, vectorized environments

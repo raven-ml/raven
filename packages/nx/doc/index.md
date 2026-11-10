@@ -19,7 +19,7 @@ the Raven ecosystem.
 - **Devices**: arrays lie on the host or on a set of devices, and an operation
   computes where its operands lie
 
-## Quick Start
+## Quick start
 
 ```ocaml
 let () =
@@ -56,7 +56,7 @@ independent keys from it. `Nx.Rng.uniform ~key dtype shape` draws values in
 [0, 1) from its key, so the same key always gives the same matrix.
 `Nx.matmul` is the matrix product, and `Nx.pp_shape` prints a shape.
 
-## Next Steps
+## Next steps
 
 - [Getting Started](01-getting-started.md): installation, dtypes, slicing, broadcasting
 - [Array Operations](02-array-operations.md): reshaping, views, joining, splitting

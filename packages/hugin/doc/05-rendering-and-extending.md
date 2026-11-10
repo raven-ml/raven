@@ -1,4 +1,4 @@
-# Rendering and Extending
+# Rendering and extending
 
 `save` hides three stages. This page opens them up: what each stage
 computes, how to inspect and reuse its output, how a viewer's settings reach
@@ -12,7 +12,7 @@ let loss = Nx.add_s (Nx.exp (Nx.mul_s steps (-0.05))) 0.1
 let fig = line ~x:(num steps) ~y:(num loss) ()
 ```
 
-## Three Stages
+## Three stages
 
 ```text
            view                   size, theme             density
@@ -63,7 +63,7 @@ let again = resolve ~prev:resolved fig
 - : bool = true
 ```
 
-## Output Without Files
+## Output without files
 
 `Drawing.renderable` is the picture on its page. The renderers of
 `hugin.vg.raster`, `hugin.vg.svg` and `hugin.vg.pdf` turn it into pixels or
@@ -112,7 +112,7 @@ Views live outside figures and keys are identified by their names, so a
 figure rebuilt by the same code reads the values a viewer set on the
 previous one.
 
-## Writing a Mark
+## Writing a mark
 
 A mark is a list of channel bindings and a function that draws one panel's
 rows as a picture. `Mark.v` makes one, and the built-in marks are made the

@@ -1,4 +1,4 @@
-# Getting Started
+# Getting started
 
 This guide walks through the whole kaun pattern once: define a model as a record, write the training step yourself, run the loop, evaluate. Everything else in the library is a refinement of this page.
 
@@ -28,7 +28,7 @@ Add to your `dune` file:
 
 Note the layering: kaun's library depends only on nx. Differentiation comes from [rune](../../rune/doc/index.md) and optimizers from [vega](../../vega/doc/index.md), which you depend on directly and compose in your own code — there is no trainer in between.
 
-## A Model Is a Record
+## A model is a record
 
 A kaun layer is a plain record with a payload hole and an `apply` function; `('a, 'd) Linear.t` holds a weight matrix and an optional bias, arrays of type `'a` on the device set `'d` ([`Nx.host`](../../nx/doc/index.md) for the process's own memory). A model is a record of layers with one function, `walk`, that visits each field with the field's own `walk` and names it. `Nx.Ptree.instantiate` turns the module into a structure at its tensor type, which every Raven transformation, optimizer and saved file takes:
 
@@ -52,7 +52,7 @@ let mlp = Nx.Ptree.instantiate (module Mlp)
 
 `apply` is just a function — no base class, no forward method, no parameter registry. `walk` is what lets `Rune` differentiate your parameter values, `Vega` step them, and `Nx_io.Archive` save them under the names it gives (`l1.w`, `l1.b`, `l2.w`, `l2.b`). [Writing structures](../../nx/doc/06-structures.md) covers `walk` in full.
 
-## Initialize Parameters
+## Initialize parameters
 
 Constructors take `~key`, an `Nx.Rng.key`, and draw from it: equal keys give equal parameters, and the parameters lie where the key lies. `Nx.Rng.split` derives independent keys from one. `Linear.init` gives Glorot-uniform weights and zero bias:
 
@@ -110,7 +110,7 @@ This is the complete program — it is [`examples/01-xor`](https://github.com/ra
 - **The step is yours.** Want gradient clipping? Insert `Vega.clip_by_global_norm mlp ~max_norm:1.0 grads` before the update. A learning-rate schedule? Evaluate one at your step counter. Nothing is hidden behind a trainer.
 - **`Nx.Ptree.instantiate (module Mlp)` is the only plumbing.** Bind the structure once; it drives differentiation, optimization and saving.
 
-## Scaling Up: Minibatches
+## Scaling up: Minibatches
 
 For real datasets, `Data.batches2` cuts paired tensors into a `Seq.t` of minibatches, and the epoch loop is ordinary `Seq` iteration. With `~shuffle:true`, each traversal of the sequence draws a fresh permutation from the RNG scope that `Nx.Rng.with_key` opens, so iterating once per epoch reshuffles every epoch:
 
@@ -143,7 +143,7 @@ let step (params, ostate) (x, y) =
 
 [`examples/02-mnist`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/02-mnist) runs this end to end, reaching ~97% test accuracy in one epoch.
 
-## Next Steps
+## Next steps
 
 - [Layers and Models](02-layers-and-models.md) — the full layer catalog, nesting records, stateful layers
 - [Training](03-training.md) — losses, data, metrics, clipping, schedules

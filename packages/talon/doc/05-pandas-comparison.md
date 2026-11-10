@@ -28,7 +28,7 @@ let delay = Col.int "dep_delay"
 let distance = Col.int "distance"
 ```
 
-## Key Differences
+## Key differences
 
 | | pandas | Talon |
 |---|---|---|
@@ -40,7 +40,7 @@ let distance = Col.int "distance"
 | Wrong column name | `KeyError` at the line that uses it | every problem of a verb in one report, before any data is read |
 | Bad data in a file | often a silent `NaN` or an `object` column | an `Error` with the file, line and column |
 
-## Creating and Reading
+## Creating and reading
 
 ```python
 df = pd.DataFrame({"carrier": ["AA", "DL"], "dep_delay": [4, None]})
@@ -66,7 +66,7 @@ let files () =
 A file is a source: nothing is read until a query that uses it runs, and
 then only the columns the query needs.
 
-## Selecting and Filtering
+## Selecting and filtering
 
 | pandas | Talon |
 |---|---|
@@ -91,7 +91,7 @@ A comparison with a null is null, and `filter` keeps only the rows where its
 predicate is `true`, so a missing delay is dropped by `delay > int 15` and by
 `not (delay > int 15)` alike.
 
-## Derived Columns
+## Derived columns
 
 ```python
 df["hours"] = df.dep_delay / 60
@@ -117,7 +117,7 @@ null where the input's delay is, although `dep_delay` is filled in the
 result. Integer division stays integer, so the delay is cast to a float
 first.
 
-## Group By
+## Group by
 
 ```python
 df.groupby("carrier").agg(mean_delay=("dep_delay", "mean"), flights=("dep_delay", "size"))
@@ -145,7 +145,7 @@ let counts = Kit.value_counts "dep_delay" flights
   nulls, as pandas skips NaN.
 - `Kit.value_counts` counts null as a value of its own.
 
-## Sorting and Ranking
+## Sorting and ranking
 
 | pandas | Talon |
 |---|---|
@@ -158,7 +158,7 @@ let counts = Kit.value_counts "dep_delay" flights
 Sorting is stable and puts nulls last in both directions, unless
 `Order.nulls_first`.
 
-## Joins and Concatenation
+## Joins and concatenation
 
 | pandas | Talon |
 |---|---|
@@ -206,7 +206,7 @@ in [`talon.mli`](../lib/talon.mli).
 | `df.dep_delay.nunique()` | `Query.aggregate ~by:[] Expr.[ "n" := n_unique delay ]` |
 | `pd.get_dummies(df.carrier)` | `Kit.one_hot "carrier"`, after `Kit.categorize [ "carrier" ]` |
 
-## Text and Dates
+## Text and dates
 
 | pandas | Talon |
 |---|---|
@@ -223,7 +223,7 @@ in [`talon.mli`](../lib/talon.mli).
 | `t.dt.floor("D")` | `Expr.Temporal.floor (Time.Days 1) (Expr.Temporal.wall zone t)` |
 | `t + pd.Timedelta(minutes=90)` | `Expr.(Temporal.add t (span (Time.Span.minutes 90)))` |
 
-## To Arrays
+## To arrays
 
 | pandas | Talon |
 |---|---|

@@ -6,7 +6,7 @@ Our ambition is to make scientific computing in OCaml feel as natural as it does
 
 If successful, Raven would establish OCaml as a genuine alternative in the scientific computing landscape. It's an ambitious undertaking, but one we believe is both necessary and achievable.
 
-## Why Not Just Use Python?
+## Why not just use Python?
 
 Today, Python has an effective monopoly on scientific computing. Unlike web development, where we can choose between multiple mature ecosystems, numerical computing offers essentially one realistic option. This lack of choice is unfortunate.
 
@@ -20,7 +20,7 @@ The scientific community deserves better options than being forced into one lang
 
 In the AI era, we believe OCaml has an important role to play. If you're generating 80% of your code with AI assistance, wouldn't you prefer a language that catches errors at compile time rather than runtime? The productivity gains from AI coding are amplified when you have a type system that gives you stronger guarantees about your generated code. Raven is our contribution to putting OCaml in the spotlight for scientific computing in this new era.
 
-## What Does Success Look Like?
+## What does success look like?
 
 Our goal isn't just to build OCaml versions of Python libraries: it's to create a compelling alternative for busy developers who just want the best tool for the job.
 
@@ -38,7 +38,7 @@ We measure success across five key dimensions:
 
 We believe this is achievable through focused execution and strategic choices. We're prioritizing the 80% that matter most, focusing on one blessed workflow per use-case, and building modular components that encourage ecosystem growth, rather than trying to match Python everywhere from day one.
 
-## Why Not Just Use Owl?
+## Why not just use Owl?
 
 Owl deserves credit for the amount of work and love that has been poured into it. It demonstrated that serious numerical computing in OCaml was possible, spanning everything from statistics and signal processing to basic linear algebra and neural networks, and more.
 
@@ -52,7 +52,7 @@ There's also the ecosystem question. Despite Owl's technical achievements, it ha
 
 Raven is designed from the ground up to (1) compete with Python's scientific computing stack on performance and (2) build the flourishing ecosystem that OCaml's scientific computing community deserves.
 
-## What We're Building
+## What we're building
 
 Raven is a comprehensive ecosystem that spans the entire scientific computing stack. Here's what we're building:
 

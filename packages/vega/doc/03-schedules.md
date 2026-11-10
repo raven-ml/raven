@@ -1,10 +1,10 @@
-# Learning Rate Schedules
+# Learning rate schedules
 
 A learning rate schedule controls how the learning rate changes over the
 course of training. In Vega, a schedule is simply a function from step
 counter to learning rate.
 
-## How Schedules Work
+## How schedules work
 
 `Schedule.t` maps a scalar `int32` step tensor to a scalar `float32` rate
 tensor — tensor arithmetic, so a schedule computes eagerly and traces inside
@@ -27,7 +27,7 @@ let sched = Vega.Schedule.cosine_decay ~init_value:1e-3 ~decay_steps:10000 () in
 Vega.adam_step model ~lr:sched st ~params ~grads
 ```
 
-## Basic Schedules
+## Basic schedules
 
 ### constant
 
@@ -49,7 +49,7 @@ Vega.Schedule.linear ~init_value:0.0 ~end_value:0.001 ~steps:1000
 (* step 1: ~0.0, step 500: ~0.0005, step 1000: 0.001, step 2000: 0.001 *)
 ```
 
-## Decay Schedules
+## Decay schedules
 
 ### cosine_decay
 
@@ -90,7 +90,7 @@ Vega.Schedule.polynomial_decay ~init_value:0.01 ~end_value:0.0 ~decay_steps:1000
   ~power:2.0 ()
 ```
 
-## Warmup Schedules
+## Warmup schedules
 
 ### warmup_cosine
 
@@ -118,7 +118,7 @@ Vega.Schedule.warmup_cosine_decay
   ()
 ```
 
-## Warm Restarts
+## Warm restarts
 
 ### cosine_decay_restarts
 
@@ -180,7 +180,7 @@ Vega.Schedule.join [
 ]
 ```
 
-### Custom Schedules
+### Custom schedules
 
 Since `Schedule.t` is just a function on a scalar step tensor, you can write
 arbitrary ones with `Nx` arithmetic:
@@ -193,7 +193,7 @@ let step_decay : Vega.Schedule.t = fun step ->
   Nx.mul_s (Nx.rpow_s 0.5 k) 0.01
 ```
 
-## Using Schedules with Optimizers
+## Using schedules with optimizers
 
 Every step takes its learning rate as `~lr`, a function of the state's `step`
 counter, as a schedule is; the step applies it inside its own arithmetic:
@@ -230,7 +230,7 @@ let params' =
     params' params
 ```
 
-## Next Steps
+## Next steps
 
 - [Optimizers](02-optimizers.md) — training steps, choosing an optimizer, states as structures
 - [Getting Started](01-getting-started.md) — parameters as a structure, your first optimizer

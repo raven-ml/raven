@@ -1,4 +1,4 @@
-# Brot vs. HuggingFace Tokenizers -- A Practical Comparison
+# Brot vs. HuggingFace Tokenizers -- a practical comparison
 
 This guide explains how Brot relates to Python's [HuggingFace Tokenizers](https://github.com/huggingface/tokenizers), focusing on:
 
@@ -10,7 +10,7 @@ If you already use HuggingFace Tokenizers, this should be enough to become produ
 
 ---
 
-## 1. Big-Picture Differences
+## 1. Big-picture differences
 
 | Aspect             | HuggingFace Tokenizers (Python)                      | Brot (OCaml)                                                                  |
 | ------------------ | ---------------------------------------------------- | ----------------------------------------------------------------------------- |
@@ -36,7 +36,7 @@ If you already use HuggingFace Tokenizers, this should be enough to become produ
 
 ---
 
-## 2. Loading Pretrained Tokenizers
+## 2. Loading pretrained tokenizers
 
 ### 2.1 From a tokenizer.json file
 
@@ -100,7 +100,7 @@ Brot.save_pretrained tokenizer ~path:"./my_tokenizer"
 
 ---
 
-## 3. Encoding Text
+## 3. Encoding text
 
 ### 3.1 Basic encoding
 
@@ -244,7 +244,7 @@ come out of `DecodeStream`. See `decode_step` in
 
 ---
 
-## 5. Batch Encoding
+## 5. Batch encoding
 
 **HuggingFace**
 
@@ -276,7 +276,7 @@ Both return a list of encoding objects, one per input.
 
 ---
 
-## 6. Padding and Truncation
+## 6. Padding and truncation
 
 ### 6.1 Padding
 
@@ -357,7 +357,7 @@ The key difference: Brot passes these as arguments, so different calls can use d
 
 ---
 
-## 7. Sentence Pairs
+## 7. Sentence pairs
 
 **HuggingFace**
 
@@ -388,7 +388,7 @@ Brot uses the `~pair` optional argument on `encode` for single pairs and a dedic
 
 ---
 
-## 8. Special Tokens
+## 8. Special tokens
 
 ### 8.1 Defining special tokens
 
@@ -485,7 +485,7 @@ encoded by the same tokenizer.
 
 ---
 
-## 9. Pipeline Components
+## 9. Pipeline components
 
 Both libraries use the same four-stage pipeline: normalizer, pre-tokenizer, post-processor, decoder. The difference is how they are configured.
 
@@ -712,7 +712,7 @@ Brot returns `option` for each stage, since any stage can be absent.
 
 ---
 
-## 10. Training Tokenizers
+## 10. Training tokenizers
 
 ### 10.1 BPE training
 
@@ -867,7 +867,7 @@ The `~init` parameter on training functions lets you extend an existing tokenize
 
 ---
 
-## 11. Vocabulary Inspection
+## 11. Vocabulary inspection
 
 **HuggingFace**
 
@@ -892,7 +892,7 @@ let token = Brot.id_to_token tokenizer 101       (* string option *)
 
 ---
 
-## 12. Quick Cheat Sheet
+## 12. Quick cheat sheet
 
 | Task                | HuggingFace Tokenizers                                      | Brot                                                             |
 | ------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------- |

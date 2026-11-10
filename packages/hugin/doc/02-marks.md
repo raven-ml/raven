@@ -56,7 +56,7 @@ constant such as `const Symbol.diamond`. A dot mark with tens of thousands of
 rows in a panel is drawn as one image of its rows, so a large scatter stays
 cheap to render and to store.
 
-## Lines and Areas
+## Lines and areas
 
 `line` draws a curve through the points of each *series* of its rows. A
 series is one index along every axis but the last, split further by the

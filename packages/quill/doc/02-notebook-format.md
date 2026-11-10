@@ -1,11 +1,11 @@
-# Notebook Format
+# Notebook format
 
 A Quill notebook is a CommonMark markdown file. Fenced code blocks marked
 `{.run}` after their language become code cells. Everything else becomes
 text cells. This page explains the mapping and the output serialization
 format.
 
-## Cell Types
+## Cell types
 
 A notebook contains two kinds of cells:
 
@@ -50,7 +50,7 @@ Users do not need to manage cell IDs. They are preserved by `quill clean`
 and `quill run --inplace`. Deleting them is harmless — fresh IDs are
 assigned on the next load.
 
-## Output Format
+## Output format
 
 After executing a code cell, outputs are stored between marker comments:
 
@@ -124,7 +124,7 @@ A reference to another path, or to a missing file, is an error that names
 the notebook and the cell. The rules are in the Files section of
 [`quill_markdown.mli`](../lib/markdown/quill_markdown.mli).
 
-## Why HTML Comments?
+## Why HTML comments?
 
 The output format uses HTML comments for several reasons:
 
@@ -140,7 +140,7 @@ The output format uses HTML comments for several reasons:
    pass. `quill run --inplace` regenerates them. This makes it easy to
    commit clean notebooks and regenerate outputs in CI.
 
-## Code Blocks That Do Not Run
+## Code blocks that do not run
 
 A code block without the `{.run}` mark is part of the text and never
 runs, whatever its language:
@@ -168,7 +168,7 @@ A cell in a language that no kernel runs, such as ```` ```bash {.run} ````
 in a notebook whose kernel runs OCaml, gets an error output when it is
 run, and the cells after it still run.
 
-## Migrating Older Notebooks
+## Migrating older notebooks
 
 Notebooks written before the `{.run}` mark ran every ```` ```ocaml ````
 block, and older Quill wrote a `<!-- quill:cell -->` comment above each
@@ -189,7 +189,7 @@ A block in another language that older Quill ran as a cell, such as a
 `bash` block under a cell comment, is left as it is. Delete its comment
 to keep it as text. The migrated cells keep their ids and outputs.
 
-## Roundtrip Guarantees
+## Roundtrip guarantees
 
 Loading a notebook with `Quill_markdown.load` and saving it back with
 `Quill_markdown.save`, in the storage `load` reports, preserves:

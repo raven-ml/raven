@@ -1,4 +1,4 @@
-# Sowilo vs. OpenCV -- A Practical Comparison
+# Sowilo vs. OpenCV -- a practical comparison
 
 This guide explains how Sowilo's image processing model relates to Python's [OpenCV](https://docs.opencv.org/), focusing on:
 
@@ -10,7 +10,7 @@ If you already use OpenCV, this should be enough to become productive in Sowilo 
 
 ---
 
-## 1. Big-Picture Differences
+## 1. Big-picture differences
 
 | Aspect           | OpenCV (Python)                                      | Sowilo (OCaml)                                                |
 | ---------------- | ---------------------------------------------------- | ------------------------------------------------------------- |
@@ -33,7 +33,7 @@ If you already use OpenCV, this should be enough to become productive in Sowilo 
 
 ---
 
-## 2. Image Representation
+## 2. Image representation
 
 ### 2.1 Loading and layout
 
@@ -81,7 +81,7 @@ let out = Sowilo.to_uint8 img   (* clips to [0, 1], scales to [0, 255], casts to
 
 ---
 
-## 3. Type Conversion and Preprocessing
+## 3. Type conversion and preprocessing
 
 ### 3.1 Normalization
 
@@ -125,7 +125,7 @@ Sowilo's `threshold` returns a boolean mask, `true` where `img > t`. OpenCV's `c
 
 ---
 
-## 4. Color Space Conversion
+## 4. Color space conversion
 
 **OpenCV**
 
@@ -152,7 +152,7 @@ Differences:
 
 ---
 
-## 5. Image Adjustments
+## 5. Image adjustments
 
 OpenCV has no built-in brightness/contrast/saturation functions. The standard approach is manual arithmetic. Sowilo provides dedicated functions for these.
 
@@ -259,7 +259,7 @@ let inverted = Sowilo.invert img
 
 ---
 
-## 6. Geometric Transforms
+## 6. Geometric transforms
 
 ### 6.1 Resize
 
@@ -360,7 +360,7 @@ Sowilo supports constant padding only. OpenCV also has reflect, replicate, and w
 
 ---
 
-## 7. Spatial Filtering
+## 7. Spatial filtering
 
 ### 7.1 Gaussian blur
 
@@ -461,7 +461,7 @@ let sharpened = Sowilo.unsharp_mask ~sigma:1.0 ~amount:1.5 img
 
 ---
 
-## 8. Morphological Operations
+## 8. Morphological operations
 
 ### 8.1 Structuring elements
 
@@ -530,7 +530,7 @@ OpenCV also has `MORPH_TOPHAT`, `MORPH_BLACKHAT`, and `MORPH_HITMISS`. Sowilo do
 
 ---
 
-## 9. Edge Detection
+## 9. Edge detection
 
 ### 9.1 Sobel
 
@@ -610,7 +610,7 @@ Differences:
 
 ---
 
-## 10. Differentiable Pipelines
+## 10. Differentiable pipelines
 
 This is Sowilo's key advantage over OpenCV. Because operations are expressed as Nx tensor computations, they compose with `Rune.grad'` and `Rune.vmap'`.
 
@@ -681,7 +681,7 @@ let blurred_batch = blur_batch batch   (* batch shape: [N; H; W; C] *)
 
 ---
 
-## 11. What Sowilo Doesn't Have
+## 11. What Sowilo doesn't have
 
 Sowilo is a focused library for differentiable image processing primitives. It does not cover:
 
@@ -704,7 +704,7 @@ If you need these, use OpenCV from Python or a dedicated OCaml binding. Sowilo f
 
 ---
 
-## 12. Quick Cheat Sheet
+## 12. Quick cheat sheet
 
 | Task                   | OpenCV                                          | Sowilo                                                       |
 | ---------------------- | ----------------------------------------------- | ------------------------------------------------------------ |

@@ -15,7 +15,7 @@ benchmarks.
 - **Training**: train BPE, WordPiece, Unigram, and word-level tokenizers from scratch
 - **Performance**: 1.3-6x faster than HuggingFace tokenizers (Rust native)
 
-## Quick Start
+## Quick start
 
 Build a BPE tokenizer from a vocabulary and merge rules, encode text,
 and decode it back:
@@ -68,7 +68,7 @@ let size = vocab_size tokenizer
 let ids = encode_ids tokenizer "The quick fox"
 ```
 
-## Next Steps
+## Next steps
 
 - [Getting Started](01-getting-started.md) — encode, decode, pipeline basics, training
 - [The Tokenization Pipeline](02-pipeline.md) — how the 5 pipeline stages work

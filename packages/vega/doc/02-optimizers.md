@@ -5,7 +5,7 @@ and the optimizer state: compute the gradients, transform them, step. Each
 stage is an ordinary function call, so composing optimizers is writing that
 function.
 
-## A Training Step
+## A training step
 
 <!-- $MDX skip -->
 ```ocaml
@@ -36,7 +36,7 @@ The gradients flow through each stage in order:
 Everything in `step` is tensor arithmetic, so the same function runs eagerly
 and compiles under `Rune.jit` ([States Are Structures](#states-are-structures)).
 
-## Gradient Transformations
+## Gradient transformations
 
 A gradient transformation maps a gradient structure to another, and goes
 between the backward pass and the step:
@@ -62,7 +62,7 @@ let centralize p grads =
     grads
 ```
 
-## Choosing an Optimizer
+## Choosing an optimizer
 
 | Situation | Optimizer |
 |-----------|-----------|
@@ -78,7 +78,7 @@ Weight decay in `adamw_step`, `lamb_step`, `lars_step` and `adan_step` is
 decoupled: it is added to the update, where the adaptive scaling does not
 touch it, and applies to every float leaf.
 
-## States Are Structures
+## States are structures
 
 An optimizer state is a record whose parameter-shaped fields have the
 parameters' structure, plus a `step` counter as a scalar `int32` tensor. Each
@@ -124,7 +124,7 @@ parts, each with its own state, against the conjugate of `Rune.grad`'s
 gradient: `sgd_step` moves `z` to `z - lr * conj g`, which descends the real
 objective.
 
-## Skipping Overflowed Steps
+## Skipping overflowed steps
 
 In float16 training, the loss is multiplied by a scale before the backward
 pass and the gradients are divided by it in the step. `Vega.Loss_scale.step`
@@ -146,7 +146,7 @@ The step is tensor arithmetic, so it compiles. A scale is made where the
 parameters lie, `Vega.Loss_scale.dynamic Nx.Host.on` on the host. With
 `Loss_scale.static at 1.0` it only skips the steps whose gradients are not finite.
 
-## Next Steps
+## Next steps
 
 - [Learning Rate Schedules](03-schedules.md) — decay, warmup, restarts, and composition
 - [Getting Started](01-getting-started.md) — parameters as a structure, your first optimizer

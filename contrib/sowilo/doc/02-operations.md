@@ -1,9 +1,9 @@
-# Operations Reference
+# Operations reference
 
 Every operation in sowilo, organized by category. All functions operate on
 Nx float32 tensors with values in [0, 1] unless otherwise noted.
 
-## Type Conversion and Preprocessing
+## Type conversion and preprocessing
 
 ### to_float
 
@@ -55,7 +55,7 @@ the threshold.
 let binary = Sowilo.threshold 0.5 gray_img
 ```
 
-## Color Space Conversion and Adjustment
+## Color space conversion and adjustment
 
 ### to_grayscale
 
@@ -143,7 +143,7 @@ Inverts the image: `1.0 - img`.
 let negative = Sowilo.invert img
 ```
 
-## Geometric Transforms
+## Geometric transforms
 
 ### resize
 
@@ -214,7 +214,7 @@ let padded = Sowilo.pad (10, 10, 20, 20) img
 let white_padded = Sowilo.pad ~value:1.0 (5, 5, 5, 5) img
 ```
 
-## Spatial Filtering
+## Spatial filtering
 
 ### gaussian_blur
 
@@ -278,7 +278,7 @@ let sharp = Sowilo.unsharp_mask ~sigma:1.0 img
 let very_sharp = Sowilo.unsharp_mask ~sigma:1.0 ~amount:2.0 img
 ```
 
-## Morphological Operations
+## Morphological operations
 
 ### structuring_element
 
@@ -340,7 +340,7 @@ let kernel = Sowilo.structuring_element Rect (3, 3) in
 let edges = Sowilo.morphological_gradient ~kernel img
 ```
 
-## Edge Detection
+## Edge detection
 
 All edge detection operations require grayscale input (C = 1).
 
@@ -396,7 +396,7 @@ let edges = Sowilo.canny ~low:0.2 ~high:0.6 gray
 let tight = Sowilo.canny ~low:0.3 ~high:0.7 ~sigma:1.0 gray
 ```
 
-## Differentiability Summary
+## Differentiability summary
 
 Most operations are differentiable because they are built from standard
 Nx tensor operations. The exceptions are:

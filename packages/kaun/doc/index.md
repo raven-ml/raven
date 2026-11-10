@@ -16,7 +16,7 @@ The glue is `Nx.Ptree`, the traversal interface from [nx](../../nx/doc/index.md)
 - **Pretrained models** — `kaun.hf` downloads HuggingFace Hub weights, and `Nx_io.Archive.float` and `tensor` read their entries by name into your own records
 - **Datasets** — `kaun.datasets`: MNIST, Fashion-MNIST, CIFAR-10 loaders returning plain tensors
 
-## Quick Start
+## Quick start
 
 Train a two-layer network on XOR — the model is a record, the training step is `value_and_grad` plus one optimizer update, and the loop is a plain `for` loop:
 
@@ -77,7 +77,7 @@ let () =
 | `Kaun_hf` | `kaun.hf` | HuggingFace Hub download and weight loading |
 | `Kaun_datasets` | `kaun.datasets` | MNIST, Fashion-MNIST, CIFAR-10 loaders |
 
-## Next Steps
+## Next steps
 
 - [Getting Started](01-getting-started.md) — installation and the model/step/loop pattern
 - [Layers and Models](02-layers-and-models.md) — the layer catalog and models as records

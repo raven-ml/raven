@@ -1,4 +1,4 @@
-# Expressions and Frames
+# Expressions and frames
 
 An expression computes values from the columns of a **frame**: the ordered
 rows that a verb, or an enclosing expression, gives it. This page covers how
@@ -72,7 +72,7 @@ run string, step int32, loss float64, next int32, half float64, one int64
 value outside the target's range, fails the run, and the error names the
 value and the row.
 
-## Nulls and Comparisons
+## Nulls and comparisons
 
 Elementwise operations are null where an operand is null. Integer division
 and `mod` are also null where the divisor is zero.
@@ -306,7 +306,7 @@ section of `Expr` in [`talon.mli`](../lib/talon.mli) states the rules of
 in `talon.mli` states which rows those are. A window to reuse is a function,
 such as `let week r = window ~on:ts ~before:(span week) r`.
 
-## Many Columns at Once
+## Many columns at once
 
 A selector chooses columns by name, type or kind, and a verb resolves it
 against its input: `Sel.all`, `Sel.names`, `Sel.prefix`, `Sel.suffix`,
@@ -333,7 +333,7 @@ let nulls =
          Expr.[ each Sel.all { column = (fun n x -> n := rows - count x) } ])
 ```
 
-## OCaml Functions
+## OCaml functions
 
 `const f $ x $ y` applies an OCaml function to each row's values, and is null
 where an argument is. `option x` passes nulls as `None`, and `of_option`
@@ -473,7 +473,7 @@ let site_time =
          ])
 ```
 
-## How a Query Runs
+## How a query runs
 
 `Query.run` optimizes the plan first, and `Query.optimize` shows the result:
 

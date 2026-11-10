@@ -1,4 +1,4 @@
-# Getting Started
+# Getting started
 
 This guide shows you how to describe parameters, initialize an optimizer's
 state, and run optimization steps.
@@ -27,7 +27,7 @@ Add to your `dune` file:
  (libraries vega nx))
 ```
 
-## Your First Optimizer
+## Your first optimizer
 
 Vega optimizers turn gradients into parameter updates. Here we minimize
 `f(x) = 0.5 * ||x||²` (whose gradient is simply `x`) using SGD:
@@ -67,7 +67,7 @@ Key points:
 - The step returns both the updated parameters and the new state; the loop
   threads them
 
-## Parameters as a Structure
+## Parameters as a structure
 
 A model's parameters are usually a record of tensors. Its structure comes from
 a `walk` that names each field, and `Nx.Ptree.instantiate` turns the module
@@ -134,7 +134,7 @@ deterministic objective minimised to a tolerance, such as a full-batch fit or
 a maximum a posteriori estimate, is jera's `Jera.Minimize`, whose L-BFGS
 searches its step length and whose minimum has a derivative.
 
-## Next Steps
+## Next steps
 
 - [Optimizers](02-optimizers.md) — training steps, choosing an optimizer, states as structures
 - [Learning Rate Schedules](03-schedules.md) — decay, warmup, restarts, and composition

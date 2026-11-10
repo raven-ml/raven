@@ -5,7 +5,7 @@ read tensors through channels, scales place the values, and axes and legends
 follow from the scales. Figures render to PNG, SVG and PDF with a bundled
 font, and a figure renders to the same bytes every time.
 
-## Quick Start
+## Quick start
 
 Five noisy training curves, one tensor of shape `[5; 200]`, drawn as five
 lines coloured by run:
@@ -33,7 +33,7 @@ let () =
 `num` reads a tensor as quantities and `dim 0` reads the index along axis 0
 as a category, so each run gets its own colour and the legend lists the runs.
 
-## How Hugin Works
+## How Hugin works
 
 - **A figure is a value.** `Hugin.t` describes what to draw. Building one
   reads no data, so a figure can be stored, compared with `equal` and
@@ -72,7 +72,7 @@ as a category, so each run gets its own colour and the legend lists the runs.
 `Hugin` re-exports the modules of the lower libraries that figures use, so
 most programs link `hugin` alone.
 
-## Next Steps
+## Next steps
 
 - [Getting Started](01-getting-started.md): a first figure, channels and
   data, saving, notebooks, errors and warnings

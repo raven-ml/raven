@@ -1,4 +1,4 @@
-# Optax Comparison
+# Optax comparison
 
 This page maps [Optax](https://github.com/google-deepmind/optax) concepts
 and API to their Vega equivalents. In both libraries an optimizer's state is a
@@ -7,7 +7,7 @@ gradient transformations into one `GradientTransformation`; Vega gives each
 optimizer as a step function, and a training step composes them by calling
 one after the other.
 
-## Creating Optimizers
+## Creating optimizers
 
 Each Optax optimizer is a Vega `*_init` and `*_step` pair, and its
 hyperparameters are the step's optional arguments. The learning rate moves to
@@ -36,7 +36,7 @@ above. `optax.lamb` defaults to `eps=1e-6` where `lamb_step` uses `1e-8`.
 Vega's `adafactor_step` factors every leaf of two or more axes, whatever their
 sizes, and does not scale updates by the parameters' root mean square.
 
-## Init and Update
+## Init and update
 
 **Optax:**
 
@@ -62,7 +62,7 @@ let params, state =
 pytree structure JAX infers from the value. A step returns the new parameters
 directly, with no separate updates to apply.
 
-## Chaining Transforms
+## Chaining transforms
 
 **Optax:**
 
@@ -84,7 +84,7 @@ let step (params, st) grads =
 
 Transformations of the gradients are functions applied before the step.
 
-## Gradient Transformations
+## Gradient transformations
 
 | Optax | Vega |
 |-------|------|
@@ -108,7 +108,7 @@ Transformations of the gradients are functions applied before the step.
 | `piecewise_constant_schedule(...)` | `Schedule.piecewise_constant ~boundaries ~values` |
 | `join_schedules(...)` | `Schedule.join segments` |
 
-## Key Differences
+## Key differences
 
 | Aspect | Optax | Vega |
 |--------|-------|------|

@@ -1,4 +1,4 @@
-# Nx vs NumPy Comparison
+# Nx vs NumPy comparison
 
 This document compares the Nx library (OCaml) with NumPy (Python), highlighting similarities, differences, and providing equivalent code examples.
 
@@ -31,9 +31,9 @@ Nx is a numerical computing library for OCaml, close to NumPy in its names and i
 
 If you notice an undocumented difference, please open an issue; it's probably a bug.
 
-## 2. Array Creation
+## 2. Array creation
 
-### Basic Array Creation
+### Basic array creation
 
 **Nx:**
 ```ocaml
@@ -71,7 +71,7 @@ range_array = np.arange(0, 10, 1)
 identity = np.identity(3)
 ```
 
-### Advanced Array Creation
+### Advanced array creation
 
 **Nx:**
 ```ocaml
@@ -94,9 +94,9 @@ arr = np.array(data).reshape(2, 2)
 init_arr = np.fromfunction(lambda i, j: i + j, (3, 3))
 ```
 
-## 3. Array Operations
+## 3. Array operations
 
-### Basic Operations
+### Basic operations
 
 **Nx:**
 <!-- $MDX skip -->
@@ -126,7 +126,7 @@ scaled = arr * 2.0
 matmul_result = arr1 @ arr2  # or np.matmul(arr1, arr2)
 ```
 
-### Array Manipulation
+### Array manipulation
 
 **Nx:**
 <!-- $MDX skip -->
@@ -159,7 +159,7 @@ flattened = arr.flatten()
 concat = np.concatenate([arr1, arr2], axis=0)
 ```
 
-## 4. Element Access and Slicing
+## 4. Element access and slicing
 
 **Nx:**
 <!-- $MDX skip -->
@@ -186,7 +186,7 @@ arr[0, 1] = 5.0
 slice = arr[0]
 ```
 
-## 5. Statistical Functions
+## 5. Statistical functions
 
 `Nx.quantile` sorts NaN last, so a NaN reaches only the upper quantiles, where
 `np.quantile` gives NaN for every quantile of a lane that holds one.
@@ -230,7 +230,7 @@ axis_sum = np.sum(arr, axis=0)
 quartiles = np.quantile(arr, [0.25, 0.5, 0.75], axis=0)
 ```
 
-## 6. Linear Algebra
+## 6. Linear algebra
 
 **Nx:**
 <!-- $MDX skip -->
@@ -284,7 +284,7 @@ broadcasted = np.broadcast_to(smaller_arr, (3, 3))
 result = matrix + vector
 ```
 
-## 8. Conditional Operations
+## 8. Conditional operations
 
 **Nx:**
 <!-- $MDX skip -->
@@ -305,7 +305,7 @@ mask = arr > 0.5
 result = np.where(mask, arr1, arr2)
 ```
 
-### Masks, Sorting and Grouping
+### Masks, sorting and grouping
 
 Rows of keys sort column `0` first, where `np.lexsort` sorts by its last key
 first. `Nx.unique` numbers groups in order of first appearance, where
@@ -357,7 +357,7 @@ m = base.copy(); np.maximum.at(m, indices, values)
 counts = np.bincount(ids, minlength=k)
 ```
 
-## 9. Random Number Generation
+## 9. Random number generation
 
 **Nx:**
 ```ocaml
@@ -401,7 +401,7 @@ b = rng.standard_normal(3)
 shuffled = rng.permutation(a)
 ```
 
-## 10. Real-World Example: Linear Regression
+## 10. Real-world example: Linear regression
 
 **Nx:**
 ```ocaml

@@ -1,9 +1,9 @@
-# Pipelines and Integration
+# Pipelines and integration
 
 Sowilo operations are pure functions on Nx tensors. They compose naturally
 with `|>`, work in batches, and integrate with Kaun training loops.
 
-## Composing Operations
+## Composing operations
 
 Chain operations with the pipe operator:
 
@@ -47,7 +47,7 @@ let enhance img =
 let full_pipeline img = img |> preprocess |> enhance
 ```
 
-## Batch Processing
+## Batch processing
 
 All operations handle both single images `[H; W; C]` and batches
 `[N; H; W; C]`. Stack images into a batch, process in one call:
@@ -75,7 +75,7 @@ let process_batch paths =
   processed
 ```
 
-## Deep Learning Preprocessing
+## Deep learning preprocessing
 
 Prepare images for neural networks with standard preprocessing:
 
@@ -94,7 +94,7 @@ let imagenet_preprocess img =
       ~std:[0.229; 0.224; 0.225]
 ```
 
-## Differentiable Augmentation
+## Differentiable augmentation
 
 Since most sowilo operations are differentiable, you can use them as
 augmentations inside a training loop and gradients will flow through:
@@ -148,7 +148,7 @@ let train_data =
     (preprocess x, fun logits -> Loss.cross_entropy_sparse logits y))
 ```
 
-## Feature Extraction
+## Feature extraction
 
 Combine edge detection with morphological operations to extract features:
 
@@ -189,7 +189,7 @@ let visualize_pipeline img =
   |> Hugin.save ~size:(Hugin.Size.panels 240. 240.) "pipeline.png"
 ```
 
-## Color Space Manipulation
+## Color space manipulation
 
 Adjust colors through HSV for more precise control:
 

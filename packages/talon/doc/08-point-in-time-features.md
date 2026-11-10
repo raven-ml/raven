@@ -1,4 +1,4 @@
-# Point-in-Time Features
+# Point-in-time features
 
 A model that predicts from an event's features may use only what was known
 when the event happened. A training table therefore asks, for each labelled
@@ -43,7 +43,7 @@ let at = Col.instant "at"
 let amount = Col.float "amount"
 ```
 
-## Features at Each Transaction
+## Features at each transaction
 
 A feature here is each customer's rolling total over the previous seven days,
 one value per transaction. `over ~by` makes one frame per customer. A window
@@ -83,7 +83,7 @@ table 7 rows × 4 columns
 On day 9, customer `a` has spent 25 over the last week, on days 3 and 9. The
 transaction on day 1 is eight days earlier and outside the window.
 
-## Joining as of the Event
+## Joining as of the event
 
 `Kit.join_asof` gives each left row its pick among the right rows of the same
 customer, the feature row with the latest timestamp not after the label's.
@@ -111,7 +111,7 @@ table 4 rows × 6 columns
 `c`'s label comes before any transaction. `a`'s label on day 20 picks day 9:
 its `spend_7d` is the total of the week ending on day 9, as it stood then.
 
-## Features Too Old to Count
+## Features too old to count
 
 A feature computed weeks before a label may be stale. A tolerance is a
 comparison on the pick's timestamp, here its age at the label. `each` applies
@@ -149,7 +149,7 @@ Customer `b`'s transaction on day 15 is 15 days old on day 30, a day past the
 limit, so the pick's columns are null. Where a row has no pick, `fresh` is
 null, and `if_` reads null as false, so that row stays null too.
 
-## A Matrix and a Split
+## A matrix and a split
 
 An absent feature is information, so a flag records it and zero stands in for
 the value. A customer's rows must stay in one fold, or a model would be tested

@@ -1,4 +1,4 @@
-# Getting Started
+# Getting started
 
 This guide covers the REPL, creating a notebook, executing it in
 different modes, and viewing results.
@@ -44,7 +44,7 @@ Enter to evaluate. All Raven packages are pre-loaded — try
 Quill also works in pipes: `echo 'print_endline "hello"' | quill`
 executes the input and prints the result.
 
-## Your First Notebook
+## Your first notebook
 
 Create a notebook with a starter template:
 
@@ -72,7 +72,7 @@ Or open an existing notebook:
 quill note notebook.md
 ```
 
-## Creating a Notebook
+## Creating a notebook
 
 A Quill notebook is a `.md` file. Its cells are the code blocks marked
 `{.run}` after their language, as in ```` ```ocaml {.run} ````. Create a
@@ -123,7 +123,7 @@ Runs every cell and writes outputs back into the file as HTML comments.
 The file now contains `<!-- quill:output -->` sections below each cell.
 The notebook remains valid, readable markdown.
 
-## Watch Mode
+## Watch mode
 
 <!-- $MDX skip -->
 ```bash
@@ -176,7 +176,7 @@ in another editor, the TUI reloads automatically.
 Quitting with unsaved changes requires pressing `q` twice, or `s` to
 save first.
 
-## Running with the Web UI
+## Running with the web UI
 
 Start the web frontend:
 
@@ -204,7 +204,7 @@ quill serve --port 9000 notebook.md
 The web UI shares the same markdown notebook format and Raven kernel as
 the TUI and batch evaluator.
 
-## Stripping Outputs
+## Stripping outputs
 
 Remove all outputs from a notebook:
 
@@ -218,7 +218,7 @@ This strips the outputs from the file itself.
 Useful before committing to git for clean diffs, or to get a fresh start
 before re-execution.
 
-## Persistent State
+## Persistent state
 
 Code cells execute sequentially in a shared OCaml toplevel. Variables
 and functions defined in one cell are available in all subsequent cells:
@@ -234,14 +234,14 @@ and functions defined in one cell are available in all subsequent cells:
 
 This mirrors the behavior of the OCaml toplevel (`ocaml` REPL).
 
-## Raven Packages
+## Raven packages
 
 All Raven packages are pre-loaded automatically. Your first code cell
 can immediately use `open Nx`, `open Rune`, `open Hugin`, etc. without
 any setup. Pretty-printers for Nx and Rune tensors are installed
 automatically.
 
-## Next Steps
+## Next steps
 
 - [Notebook Format](02-notebook-format.md) — how markdown maps to cells,
   how outputs are serialized

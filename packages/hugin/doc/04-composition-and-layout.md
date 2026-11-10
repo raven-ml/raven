@@ -1,4 +1,4 @@
-# Composition and Layout
+# Composition and layout
 
 Figures combine into figures. This page covers drawing figures over one
 another, arranging them in grids and facets, deciding which parts share a
@@ -54,7 +54,7 @@ let () =
   |> save ~size:(Size.figure 420. 300.) "spans.png"
 ```
 
-## Which Scales Are Shared
+## Which scales are shared
 
 The cells of a grid keep their own x and y scales, and every other scale is
 shared by the whole figure, so a figure has one colour legend however it is
@@ -93,7 +93,7 @@ A band scale with `~wrap` wraps the panels into rows of that many:
 A mark without facet channels, layered with a faceted one, is drawn in every
 panel, so a reference line appears in each.
 
-## Titles and Coordinates
+## Titles and coordinates
 
 `title` sets a bold title above a figure, aligned with the left edge of its
 data areas by default. Titles nest, and a grid of titled cells labels each

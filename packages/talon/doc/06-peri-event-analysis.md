@@ -1,4 +1,4 @@
-# Peri-Event Analysis
+# Peri-event analysis
 
 An electrophysiology session records when each neuron, or unit, fired and when
 each trial's events happened. A peri-event analysis asks how firing changes
@@ -44,7 +44,7 @@ let trials =
     ]
 ```
 
-## Spikes as Rows
+## Spikes as rows
 
 `Query.unnest` makes one row per element of a list and repeats the row's other
 columns, so a join can pair each spike with a trial. An empty list gives no
@@ -59,7 +59,7 @@ let spikes =
     |> select Expr.[ keep Sel.(names [ "unit"; "time" ]) ])
 ```
 
-## Good Periods
+## Good periods
 
 The animal was running in two periods, and an artifact spoilt part of one. A
 table of `s` and `e` columns is a set of periods, each holding its start and
@@ -88,7 +88,7 @@ table 3 rows × 2 columns
  3.800000  5.00000
 ```
 
-## Trials Inside the Good Periods
+## Trials inside the good periods
 
 A trial counts when its whole window lies inside one good period. Two
 comparisons state that, and a `Semi` join keeps each trial that has a match,
@@ -133,7 +133,7 @@ let binned =
     |> aggregate ~by:[ "trial"; "unit"; "bin" ] Expr.[ "spikes" := rows ])
 ```
 
-## Bins With No Spikes
+## Bins with no spikes
 
 A combination of trial, unit and bin with no spike has no row in `binned`, and
 a mean over `binned` would average only the bins that fired. The grid holds
@@ -163,7 +163,7 @@ The grid comes from `units`, `windows` and `bins`. `Kit.complete` builds the
 combinations of the values a query already holds, so over `binned` it would
 miss a unit or bin with no spike.
 
-## From Counts to Rates
+## From counts to rates
 
 With zeros in place, a unit's peri-stimulus time histogram is the mean over
 trials of each bin's count, divided by the width of a bin:
@@ -197,7 +197,7 @@ Only trial 0 remains on the left, and trials 1 and 3 are on the right. In bin
 1, unit 0 fired once in trial 3 and not in trial 1, a mean count of `0.5` and
 a rate of `0.5 / 0.1 = 5` spikes per second.
 
-## The Tensor
+## The tensor
 
 `Talon.to_dense` scatters a column into a tensor, one axis per key column. Its
 axes take integers from zero. `trial_i` and `bin` hold those, and so does

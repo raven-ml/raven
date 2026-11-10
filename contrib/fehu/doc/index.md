@@ -21,7 +21,7 @@ and training loops.
 - **Vectorized environments**: run multiple environments with batched step and auto-reset
 - **Built-in environments**: CartPole, MountainCar, GridWorld, RandomWalk
 
-## Quick Start
+## Quick start
 
 Create an environment, run a random agent, and evaluate:
 
@@ -49,7 +49,7 @@ let () = Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   in ()
 ```
 
-## Next Steps
+## Next steps
 
 - [Getting Started](01-getting-started.md) -- installation, environments, spaces, step loop
 - [Environments and Wrappers](02-environments.md) -- custom environments, wrappers, rendering, vectorized environments

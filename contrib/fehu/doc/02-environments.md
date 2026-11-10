@@ -1,9 +1,9 @@
-# Environments and Wrappers
+# Environments and wrappers
 
 This guide covers creating custom environments, composing wrappers, rendering,
 and running vectorized environments.
 
-## The Env.t Type
+## The Env.t type
 
 An environment `('obs, 'act, 'render) Env.t` is parameterized by its
 observation type, action type, and render type. The type system ensures that
@@ -19,7 +19,7 @@ The lifecycle is strict:
 Calling `step` before `reset`, or after a terminal step without resetting,
 raises `Invalid_argument`.
 
-## Creating Custom Environments
+## Creating custom environments
 
 Use `Env.create` to build an environment from `reset` and `step` functions.
 Both receive the environment handle as their first argument, which provides
@@ -51,7 +51,7 @@ let make_counter () =
     ()
 ```
 
-### RNG Management
+### RNG management
 
 Environments draw random keys from the implicit RNG scope established by
 `Nx.Rng.with_key`. Any call to `Space.sample` or other random operations inside
@@ -164,7 +164,7 @@ Enforce a maximum episode length. When the limit is reached, the step's
 let env = Env.time_limit ~max_episode_steps:200 env
 ```
 
-### Custom Wrappers with Env.wrap
+### Custom wrappers with Env.wrap
 
 For transformations that need full control over reset and step, use `Env.wrap`.
 The wrapper shares the inner environment's lifecycle (RNG, closed flag, reset
@@ -212,7 +212,7 @@ match Env.render env with
 | _ -> ()
 ```
 
-### Render Rollout
+### Render rollout
 
 `Render.rollout` runs a policy and feeds rendered frames to a sink function:
 
@@ -241,7 +241,7 @@ let env = Render.on_render
   env
 ```
 
-## Vectorized Environments
+## Vectorized environments
 
 `Vec_env` runs multiple environment instances with batched inputs and outputs.
 Terminated or truncated episodes are automatically reset.
@@ -275,7 +275,7 @@ All environments must have structurally identical observation and action spaces
 observation is stored in the step info under `"final_observation"` as a packed
 `Value.t`, and the terminal info under `"final_info"`.
 
-## Next Steps
+## Next steps
 
 - [Getting Started](01-getting-started.md) -- installation, environments, spaces, step loop
 - [Collection and Evaluation](03-collection-and-evaluation.md) -- trajectory collection, replay buffers, GAE, evaluation

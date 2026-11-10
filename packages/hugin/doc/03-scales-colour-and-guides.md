@@ -1,4 +1,4 @@
-# Scales, Colour and Guides
+# Scales, colour and guides
 
 A scale maps data values to the interval `[0, 1]`, and a role maps that
 interval to what it draws: a position across the panel, a colour, an area.
@@ -12,7 +12,7 @@ let steps = Nx.linspace Nx.float64 1. 1000. 200
 let loss = Nx.add_s (Nx.div (Nx.ones_like steps) (Nx.sqrt steps)) 0.02
 ```
 
-## Finding a Scale
+## Finding a scale
 
 Every channel reads a scale by name. Without a name, it reads the scale of
 its role: a channel on `~y` reads `"y"`, one on `~fill` or `~stroke` reads
@@ -29,7 +29,7 @@ The marks of a panel read one x and one y scale, and the scale's domain is
 fitted to the values of every channel that reads it. A `layer` of a line and
 a dot mark therefore shares its axes.
 
-## Scale Constructors
+## Scale constructors
 
 `Hugin.Scale` makes specifications of each kind:
 
@@ -110,7 +110,7 @@ and padding on its band scale. A property set on a channel overrides what a
 mark implies, and two channels setting one property to different values
 raise `Invalid_argument` when the figure is resolved.
 
-## Sharing a Scale by Name
+## Sharing a scale by name
 
 A name of your own denotes one scale wherever it appears in the figure. Two
 panels that colour by the same quantity read the same scale, and the figure
@@ -185,7 +185,7 @@ let () =
   |> save "contrast.png"
 ```
 
-## Axes and Legends
+## Axes and legends
 
 Each position scale gets an axis on its panel, and each other scale a
 legend: a colour bar for a continuous colour scale, and one entry per

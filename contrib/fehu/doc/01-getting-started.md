@@ -1,4 +1,4 @@
-# Getting Started
+# Getting started
 
 This guide covers the basics: creating environments, running the step loop,
 understanding spaces, and using the built-in environments.
@@ -18,7 +18,7 @@ git clone https://github.com/raven-ml/raven
 cd raven && dune build fehu
 ```
 
-## Creating an Environment
+## Creating an environment
 
 Environments are created via factory functions in `Fehu_envs`. Randomness is
 provided by the implicit RNG scope from `Nx.Rng.with_key`:
@@ -34,7 +34,7 @@ let () = Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
 The seed controls all randomness in the scope. Use the same seed to get
 the same episode sequence.
 
-## The Step Loop
+## The step loop
 
 An environment follows a strict lifecycle: `reset` must be called before the
 first `step`, and again after any terminal step (terminated or truncated).
@@ -120,7 +120,7 @@ let _low, _high = Space.Box.bounds space
 let _obs = Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () -> Space.sample space
 ```
 
-### Other Space Types
+### Other space types
 
 - **Multi_binary**: binary vectors of fixed length (multi-label scenarios)
 - **Multi_discrete**: multiple discrete axes with independent cardinalities
@@ -132,7 +132,7 @@ let _obs = Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () -> Space.sample space
 All spaces support `contains`, `sample`, `pack`/`unpack` (to/from the
 universal `Value.t` type), and `boundary_values`.
 
-## Available Environments
+## Available environments
 
 ### CartPole
 
@@ -185,7 +185,7 @@ boundaries or after 200 steps.
 let _env = Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () -> Fehu_envs.Random_walk.make ()
 ```
 
-## Render Modes
+## Render modes
 
 Environments can optionally render their state. Pass `~render_mode` when
 creating the environment:
@@ -209,7 +209,7 @@ let () = Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
 Supported render modes vary by environment: `Ansi` for text output,
 `Rgb_array` for pixel frames, `Human` for interactive display.
 
-## Next Steps
+## Next steps
 
 - [Environments and Wrappers](02-environments.md) -- custom environments, wrappers, rendering, vectorized environments
 - [Collection and Evaluation](03-collection-and-evaluation.md) -- trajectory collection, replay buffers, GAE, evaluation

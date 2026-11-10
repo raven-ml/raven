@@ -1,4 +1,4 @@
-# Getting Started
+# Getting started
 
 This guide covers the basics: encoding text to token IDs, decoding back
 to text, configuring the pipeline, and training tokenizers from scratch.
@@ -18,7 +18,7 @@ git clone https://github.com/raven-ml/raven
 cd raven && dune build brot
 ```
 
-## Encoding and Decoding
+## Encoding and decoding
 
 A tokenizer converts text to token IDs and back. Build one from a
 vocabulary and merge rules, then encode and decode:
@@ -65,7 +65,7 @@ let tokenizer =
 let ids = encode_ids tokenizer "hello world" (* [| 11; 4; 15 |] *)
 ```
 
-## Encoding Output
+## Encoding output
 
 An `Encoding.t` carries more than just token IDs. Every field is a
 parallel array of the same length:
@@ -110,7 +110,7 @@ let word_ids = Encoding.word_ids enc
 See [Batch Processing](04-batch-processing.md) for a deeper look at encoding
 metadata, sentence pairs, padding, and truncation.
 
-## The Pipeline
+## The pipeline
 
 Tokenization proceeds through up to 5 configurable stages:
 
@@ -175,7 +175,7 @@ let enc = encode tokenizer "The quick fox"
 See [Choosing an Algorithm](05-algorithms.md) for guidance on which algorithm
 to use and how to configure training.
 
-## Loading Pretrained Tokenizers
+## Loading pretrained tokenizers
 
 Load a HuggingFace `tokenizer.json` file:
 
@@ -203,7 +203,7 @@ let tokenizer =
 See [Pretrained Tokenizers](03-pretrained.md) for complete pipeline
 configurations for BERT, GPT-2, and SentencePiece-style models.
 
-## Batch Processing
+## Batch processing
 
 Encode multiple texts at once with padding to uniform length:
 
@@ -232,7 +232,7 @@ let lengths = List.map Encoding.length encodings
 See [Batch Processing](04-batch-processing.md) for padding strategies,
 truncation, sentence pairs, and offset alignment.
 
-## Next Steps
+## Next steps
 
 - [The Tokenization Pipeline](02-pipeline.md) — how the 5 pipeline stages work
 - [Pretrained Tokenizers](03-pretrained.md) — loading, saving, and building known model pipelines

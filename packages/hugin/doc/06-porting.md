@@ -1,4 +1,4 @@
-# Porting from the First Hugin
+# Porting from the first Hugin
 
 The first hugin built a plot from mark functions with options per mark,
 then set titles, labels, limits and scales on the plot with functions of
@@ -14,7 +14,7 @@ let x = Nx.linspace Nx.float64 0. 6.28 100
 let y = Nx.sin x
 ```
 
-## A Ported Plot
+## A ported plot
 
 A line with a label, axis labels, a limit, a log scale and a legend in a
 corner:
@@ -112,7 +112,7 @@ band scale (`strings`, `cat ~labels`, `dim ~labels`). A legend set below its
 panels with `` ~side:`Bottom `` wraps its entries into rows unless `~ncol`
 fixes them.
 
-## Layout and Output
+## Layout and output
 
 | First hugin | Current hugin |
 |---|---|
@@ -125,7 +125,7 @@ fixes them.
 | `render_to_buffer f` | `Hugin_vg_raster.png ~density:2. (Drawing.renderable (draw ~density:2. (layout size (resolve f))))` |
 | `pp` | `pp` |
 
-## Themes and Colours
+## Themes and colours
 
 | First hugin | Current hugin |
 |---|---|

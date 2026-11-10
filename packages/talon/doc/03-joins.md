@@ -54,7 +54,7 @@ uses, where NaN equals NaN and `-0.` equals `0.`. A null key is one more key,
 so null keys on both sides match each other. The two columns of an `eq` must
 meet at a common type, as operands of an expression do.
 
-## Ranges and Periods
+## Ranges and periods
 
 A comparison matches as the expression comparing the two columns would, in
 the total order that sorting uses, and never at a null. Trial windows on the
@@ -159,7 +159,7 @@ table 2 rows × 3 columns
 
 A right join is a left join with the arguments swapped.
 
-## Columns and Order
+## Columns and order
 
 The result has the left columns, then the right columns except the right
 side of each equality atom: the key of `eq "subject" "id"` appears once, as
@@ -175,7 +175,7 @@ already in order, and searches it for each row of the other side. The Algorithms
 section of `Join` in [`talon.mli`](../lib/talon.mli) states the costs, the
 `Join` preamble the order of the rows, and `Query.join` when a join blocks.
 
-## Asserting Matches
+## Asserting matches
 
 `~each_left` and `~each_right` state how many matches each row of a side must
 have: `Any`, the default, `At_most_one`, `One` or `At_least_one`. A row with

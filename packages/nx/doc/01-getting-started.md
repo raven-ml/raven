@@ -1,4 +1,4 @@
-# Getting Started
+# Getting started
 
 This guide covers installation, data types, array creation, slicing, broadcasting, and basic operations.
 
@@ -26,7 +26,7 @@ Add to your `dune` file:
  (libraries nx))
 ```
 
-## Operators and Opens
+## Operators and opens
 
 The examples on these pages name every function with its module, `Nx.zeros`.
 The arithmetic operators on arrays, `+`, `-`, `*`, `/`, `**` and their scalar
@@ -36,7 +36,7 @@ inside the parentheses alone, and `Nx.(Infix.(sin x * x +$ 1.))` also
 reaches `Nx`'s functions. Inside such an open, integer arithmetic is
 `Stdlib.( + )` ([nx.mli, Operators](../lib/nx.mli)).
 
-## Creating Arrays
+## Creating arrays
 
 An array made from a dtype, a shape and numbers is a host array: it lies in
 the host's memory, and the host computes on it.
@@ -73,7 +73,7 @@ A sampler such as `Nx.Rng.uniform` draws from the key it is given as `~key`,
 or else from the next key of the enclosing `Nx.Rng.with_key` scope, so a
 program that fixes its keys draws the same numbers on every run.
 
-## Data Types
+## Data types
 
 Every array has a `dtype` that determines its element type. Common dtypes:
 
@@ -96,7 +96,7 @@ let () =
   Nx.print y   (* float32 [3] [1, 2, 3] *)
 ```
 
-## Array Properties
+## Array properties
 
 ```ocaml
 let () =
@@ -107,7 +107,7 @@ let () =
   Format.printf "dtype: %a@." Nx.pp_dtype (Nx.dtype x)     (* float32 *)
 ```
 
-## Element-wise Operations
+## Element-wise operations
 
 Binary operations work element-wise and support broadcasting:
 
@@ -153,7 +153,7 @@ let () =
   Nx.print row_sums                          (* [6, 15] *)
 ```
 
-## Slicing and Indexing
+## Slicing and indexing
 
 ### Basic indexing
 
@@ -212,7 +212,7 @@ let () =
   Nx.print result
 ```
 
-## Matrix Multiplication
+## Matrix multiplication
 
 ```ocaml
 let () =
@@ -223,7 +223,7 @@ let () =
     (Nx.dim 0 a) (Nx.dim 1 a) (Nx.dim 0 b) (Nx.dim 1 b) (Nx.dim 0 c) (Nx.dim 1 c)
 ```
 
-## Next Steps
+## Next steps
 
 - [Array Operations](02-array-operations.md): reshaping, views, joining, transposing
 - [Linear Algebra](03-linear-algebra.md): decompositions, solvers, FFT

@@ -1,10 +1,10 @@
-# Batch Processing
+# Batch processing
 
 Real-world usage requires encoding multiple texts into uniform-length
 sequences for model input. This guide covers encoding metadata, sentence
 pairs, batch encoding, padding, truncation, and offset alignment.
 
-## Encoding Metadata
+## Encoding metadata
 
 `Encoding.t` carries parallel arrays that all share the same length. Each
 field serves a specific purpose in model input preparation:
@@ -45,7 +45,7 @@ let word_ids = Encoding.word_ids enc
    "play" and "##ing" share word index 2 *)
 ```
 
-## Sentence Pairs
+## Sentence pairs
 
 Many NLP tasks (question answering, natural language inference, sentence
 similarity) operate on pairs of sentences. Use `encode ~pair` to encode
@@ -76,7 +76,7 @@ Type IDs distinguish the two sentences: 0 for the first sequence
 (including `[CLS]` and first `[SEP]`), 1 for the second (including
 final `[SEP]`).
 
-## Batch Encoding
+## Batch encoding
 
 Encode multiple texts at once with `encode_batch`, or multiple sentence
 pairs with `encode_batch_pairs`:
@@ -155,7 +155,7 @@ to `Domain.recommended_domain_count ()` sets, so a batch starts warm on
 any domain; an encoding that finds them all in use runs without one.
 They are freed with the tokenizer.
 
-## Flat ID Buffers
+## Flat ID buffers
 
 `encode_batch` builds one `Encoding.t` per text, carrying tokens,
 offsets and masks. When the IDs are all you need — feeding a model, or
@@ -310,7 +310,7 @@ let added_single = Post_processor.added_tokens post ~is_pair:false (* 2 *)
 let added_pair = Post_processor.added_tokens post ~is_pair:true    (* 3 *)
 ```
 
-## Padding and Truncation Together
+## Padding and truncation together
 
 The common pattern for model input: truncate long sequences and pad short
 ones to a uniform length:
@@ -339,7 +339,7 @@ let encodings =
 let masks = List.map Encoding.attention_mask encodings
 ```
 
-## Offsets and Alignment
+## Offsets and alignment
 
 `Encoding.offsets` maps each token back to its `(start, end)` byte span
 in the original text. This is useful for tasks like named entity

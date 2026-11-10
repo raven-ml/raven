@@ -1,4 +1,4 @@
-# Getting Started
+# Getting started
 
 This guide covers loading images, understanding image conventions, building
 your first processing pipeline, and saving results.
@@ -18,7 +18,7 @@ git clone https://github.com/raven-ml/raven
 cd raven && dune build sowilo
 ```
 
-## Loading Images
+## Loading images
 
 Sowilo operates on Nx tensors. Load an image with `Nx_io`, then convert it
 to float32:
@@ -38,7 +38,7 @@ four and a grey file one, which `to_grayscale` refuses as already grey.
 `to_float` divides by 255 and casts to float32. This is the standard input
 format for all sowilo operations.
 
-## Image Conventions
+## Image conventions
 
 **Layout.** Images use channels-last layout:
 - Single image: `[H; W; C]` (height, width, channels)
@@ -58,7 +58,7 @@ let float_img = to_float uint8_img
 let uint8_img = to_uint8 float_img
 ```
 
-## Your First Pipeline
+## Your first pipeline
 
 Load an image, convert to grayscale, blur, and detect edges:
 
@@ -84,7 +84,7 @@ Operations compose naturally with `|>`. Each takes a tensor and returns a
 tensor, so you can chain as many as you need. `canny` and `threshold` return
 boolean masks, which `Nx.cast` turns into float32 images.
 
-## Color Adjustments
+## Color adjustments
 
 Adjust brightness, contrast, saturation, hue, and gamma:
 
@@ -106,7 +106,7 @@ let () =
   ignore (bright, contrasted, saturated, warm, gamma, negative)
 ```
 
-## Geometric Transforms
+## Geometric transforms
 
 Resize, crop, flip, rotate, and pad:
 
@@ -132,7 +132,7 @@ let () =
 `resize` defaults to bilinear interpolation. Pass `~interpolation:Nearest`
 for nearest-neighbor.
 
-## Morphological Operations
+## Morphological operations
 
 Build structuring elements and apply morphological operations:
 
@@ -162,7 +162,7 @@ dtype of their image: here each result is a mask. Three kernel shapes are
 available: `Rect` (full rectangle), `Cross` (cross-shaped), and `Ellipse`
 (elliptical). The size must be a pair of positive odd integers.
 
-## Edge Detection
+## Edge detection
 
 Sowilo provides four edge detection methods:
 
@@ -192,7 +192,7 @@ let () =
 `sobel` and `scharr` return `(gx, gy)` tuples. All edge detectors require
 grayscale input (C = 1).
 
-## Saving Results
+## Saving results
 
 Convert back to uint8 and use `Nx_io.save_png`:
 
@@ -218,7 +218,7 @@ let () =
   |> Hugin.save ~size:(Hugin.Size.panels 240. 240.) "edges.png"
 ```
 
-## Next Steps
+## Next steps
 
 - [Operations Reference](02-operations.md) -- every operation with detailed examples
 - [Pipelines and Integration](03-pipelines.md) -- composing pipelines, batch processing, deep learning

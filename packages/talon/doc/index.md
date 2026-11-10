@@ -5,7 +5,7 @@ missing value is null, a state of its own that no number stands for, and rows
 have no labels. Columns are laid out over nx buffers, so a numeric column
 becomes an nx tensor without a copy.
 
-## Quick Start
+## Quick start
 
 Read flights from a CSV file and carriers from a Parquet file, average the
 late departures per carrier, and name each carrier:
@@ -45,7 +45,7 @@ table 7 rows × 4 columns
 
 `∅` is null: the carriers file has no name for `OO`.
 
-## How Talon Works
+## How Talon works
 
 - **A table is data.** `Talon.t` holds columns, each a typed array with a
   bitmap of the rows that are null.
@@ -70,7 +70,7 @@ table 7 rows × 4 columns
 | `talon.json` | `Talon_json` | JSON and NDJSON files: sniffing, reading and writing |
 | `talon.parquet` | `Talon_parquet` | Parquet files, read mapped in memory and written from queries |
 
-## Next Steps
+## Next steps
 
 - [Getting Started](01-getting-started.md): tables, a first query, reading
   files and handling mistakes

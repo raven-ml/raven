@@ -1,4 +1,4 @@
-# Fehu vs. Gymnasium -- A Practical Comparison
+# Fehu vs. Gymnasium -- a practical comparison
 
 This guide explains how Fehu's reinforcement learning API relates to Python's [Gymnasium](https://gymnasium.farama.org/) (and [Stable Baselines3](https://stable-baselines3.readthedocs.io/) for collection/buffer/GAE), focusing on:
 
@@ -10,7 +10,7 @@ If you already use Gymnasium, this should be enough to become productive in Fehu
 
 ---
 
-## 1. Big-Picture Differences
+## 1. Big-picture differences
 
 | Aspect                | Gymnasium (Python)                                 | Fehu (OCaml)                                                         |
 | --------------------- | -------------------------------------------------- | -------------------------------------------------------------------- |
@@ -172,7 +172,7 @@ let space =
 
 Composite space elements use `Value.t` for heterogeneous data: `Tuple.element = Value.t list`, `Dict.element = (string * Value.t) list`.
 
-### 2.6 Sequence and Text
+### 2.6 Sequence and text
 
 **Gymnasium**
 
@@ -210,7 +210,7 @@ let edges = Space.boundary_values space
 
 ---
 
-## 3. Creating Environments
+## 3. Creating environments
 
 ### 3.1 From a registry
 
@@ -271,7 +271,7 @@ Env.step_result ~observation:obs ()
 
 ---
 
-## 4. Step Loop
+## 4. Step loop
 
 ### 4.1 Basic episode
 
@@ -492,7 +492,7 @@ let env =
 
 ---
 
-## 6. Vectorized Environments
+## 6. Vectorized environments
 
 ### 6.1 Synchronous vectorization
 
@@ -538,7 +538,7 @@ Key differences:
 
 ---
 
-## 7. Trajectory Collection
+## 7. Trajectory collection
 
 ### 7.1 Fixed-step rollout
 
@@ -630,7 +630,7 @@ let all_transitions = Collect.concat episode_list
 
 ---
 
-## 8. Replay Buffers
+## 8. Replay buffers
 
 ### 8.1 Standard replay buffer
 
@@ -681,9 +681,9 @@ let ()      = Buffer.clear buf      (* remove all transitions, keep storage *)
 
 ---
 
-## 9. GAE and Returns
+## 9. GAE and returns
 
-### 9.1 Generalized Advantage Estimation
+### 9.1 Generalized advantage estimation
 
 **Stable Baselines3** (internal)
 
@@ -772,7 +772,7 @@ let normalized_custom     = Gae.normalize ~eps:1e-5 advantages
 
 ---
 
-## 10. Policy Evaluation
+## 10. Policy evaluation
 
 **Gymnasium + Stable Baselines3**
 
@@ -877,7 +877,7 @@ let recording_env =
 
 ---
 
-## 12. Info Dictionaries
+## 12. Info dictionaries
 
 **Gymnasium** uses plain Python dicts for info:
 
@@ -905,7 +905,7 @@ let is_empty = Info.is_empty info
 
 ---
 
-## 13. Quick Cheat Sheet
+## 13. Quick cheat sheet
 
 | Task                 | Gymnasium / SB3                                   | Fehu                                                                              |
 | -------------------- | ------------------------------------------------- | --------------------------------------------------------------------------------- |

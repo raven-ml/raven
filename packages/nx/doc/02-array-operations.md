@@ -1,10 +1,10 @@
-# Array Operations
+# Array operations
 
 This guide covers reshaping, broadcasting, joining, slicing, and the views that let Nx rearrange arrays without copying them.
 
 The examples name every function with its module. The index constructors, such as `R` and `A`, are `Nx`'s too, so a slice is written inside a local open, `Nx.(slice [ R (0, 2); A ] x)`.
 
-## Views and Copies
+## Views and copies
 
 A **movement** rearranges an array's elements without computing on them. Many movements return a **view**: an array over its operand's memory, with another shape, strides or offset, made in constant time without copying any element. An array never changes, so a view and a copy read the same elements. Whether a movement makes a view is a cost, and never changes a result.
 
@@ -108,7 +108,7 @@ Shapes are compatible when, aligned from the right, every dimension pair is eith
 [|      3|]  +  [|   4|]  →  error        ✗
 ```
 
-## Transposing and Permuting
+## Transposing and permuting
 
 ### transpose
 
@@ -149,7 +149,7 @@ let mirrored = Nx.flip ~axes:[1] x    (* mirror columns *)
 let reversed = Nx.flip x              (* reverse all dimensions *)
 ```
 
-## Indexing and Slicing
+## Indexing and slicing
 
 ### get
 
@@ -212,7 +212,7 @@ Index types:
 A position written in the program (`I`, `L`) raises outside its axis, a range
 is cut to it, and a position held in an array (`T`) reads zero outside it.
 
-## Joining and Splitting
+## Joining and splitting
 
 ### concatenate
 
@@ -250,7 +250,7 @@ its extent allows:
 let parts = Nx.split ~axis:0 2 x    (* split into 2 along axis 0 *)
 ```
 
-## Tiling and Repeating
+## Tiling and repeating
 
 ### tile
 
@@ -282,7 +282,7 @@ Pad with a constant value:
 Nx.pad [|(1, 2); (0, 1)|] 0. x
 ```
 
-## Next Steps
+## Next steps
 
 - [Linear Algebra](03-linear-algebra.md): matrix operations, decompositions, FFT
 - [Input/Output](04-io.md): reading and writing images, npy, npz files

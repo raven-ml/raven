@@ -1,11 +1,11 @@
-# Choosing a Tokenization Algorithm
+# Choosing a tokenization algorithm
 
 Brot supports 5 tokenization algorithms. The three subword algorithms
 (BPE, WordPiece, Unigram) handle open vocabulary by splitting rare words
 into smaller pieces. Word-level and character-level are simpler
 alternatives.
 
-## BPE (Byte Pair Encoding)
+## BPE (byte pair encoding)
 
 BPE starts with individual characters and iteratively merges the most
 frequent adjacent pairs. The merge rules, learned during training, define
@@ -228,7 +228,7 @@ let tokens = Encoding.tokens enc (* [| "H"; "i"; "!" |] *)
 let ids = Encoding.ids enc       (* [| 72; 105; 33 |] *)
 ```
 
-## Quick Reference
+## Quick reference
 
 | Algorithm       | Splitting strategy                        | Typical vocab | Notable models            | Constructor  | Trainer           |
 | --------------- | ----------------------------------------- | ------------- | ------------------------- | ------------ | ----------------- |

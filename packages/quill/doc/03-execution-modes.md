@@ -1,4 +1,4 @@
-# Execution Modes
+# Execution modes
 
 Quill provides five execution modes: the interactive REPL, the terminal
 notebook UI, a web frontend, batch execution (with optional watch), and clean.
@@ -22,7 +22,7 @@ The REPL provides:
 - **Type inspection** — Ctrl-T shows the type at the cursor
 - **Interrupt** — Ctrl-C clears input (idle) or interrupts execution
 
-### Piped Mode
+### Piped mode
 
 When stdin is not a terminal, Quill reads code from stdin, executes it,
 and prints the output:
@@ -56,7 +56,7 @@ The TUI displays three areas:
   rendered markdown.
 - **Footer**: keybinding hints and error messages.
 
-### Navigating and Executing
+### Navigating and executing
 
 Navigate between cells with `j`/`k` or the arrow keys. The focused cell
 is highlighted with a distinct background and border.
@@ -68,7 +68,7 @@ execute all code cells top-to-bottom. During execution, a spinner and
 Pressing `Enter` on a text cell shows an error — only code cells are
 executable.
 
-### Cell Management
+### Cell management
 
 | Key | Action |
 | --- | --- |
@@ -81,7 +81,7 @@ executable.
 | c | Clear the focused cell's outputs |
 | Ctrl-L | Clear all outputs |
 
-### File Watching
+### File watching
 
 The TUI checks the file for external modifications every second. If the
 file changes on disk (e.g., you edit it in vim or another editor), the
@@ -102,7 +102,7 @@ bar shows: "Unsaved changes. Press q again to quit, s to save."
 Press `Ctrl-C` to interrupt a running execution. This sends an
 interrupt signal to the kernel.
 
-## Web Frontend
+## Web frontend
 
 Start the web notebook server:
 
@@ -135,7 +135,7 @@ The web UI provides a full notebook interface in the browser:
 - **Cell management** — insert, delete, move, and toggle cells between
   code and text
 
-### Keyboard Shortcuts
+### Keyboard shortcuts
 
 | Key | Action |
 | --- | --- |
@@ -149,14 +149,14 @@ The web UI provides a full notebook interface in the browser:
 | Ctrl-S | Save |
 | Ctrl-C | Interrupt execution |
 
-### Connection Status
+### Connection status
 
 The web UI automatically reconnects if the server restarts or the
 connection drops. A banner appears during disconnection with the
 reconnection status. Reconnection uses exponential backoff (up to 30
 seconds).
 
-## Batch Execution
+## Batch execution
 
 Non-interactive execution of all code cells:
 
@@ -193,7 +193,7 @@ later runs keep it there (see [Images](02-notebook-format.md#images)):
 quill run --inplace --figures notebook.md
 ```
 
-## Watch Mode
+## Watch mode
 
 <!-- $MDX skip -->
 ```bash
@@ -208,7 +208,7 @@ re-evaluation:
 
 Watch mode runs until interrupted with `Ctrl-C`.
 
-### The Live Editing Workflow
+### The live editing workflow
 
 `quill run -w` creates a live notebook experience using your own editor:
 
@@ -241,7 +241,7 @@ Use cases:
 - **Fresh start**: remove stale outputs before a full re-run
 - **Sharing**: send a clean notebook without outputs
 
-## Creating Notebooks
+## Creating notebooks
 
 Create a new notebook from a starter template:
 
@@ -254,7 +254,7 @@ quill new analysis.md       # creates analysis.md
 The starter template includes working examples of Nx arrays, Hugin
 plotting, and Rune automatic differentiation.
 
-## Raven Packages
+## Raven packages
 
 All execution modes (REPL, TUI, web, run, and watch) use the Raven kernel,
 which loads each of these packages that is installed:

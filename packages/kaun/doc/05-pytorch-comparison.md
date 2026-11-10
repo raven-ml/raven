@@ -1,4 +1,4 @@
-# Kaun vs. PyTorch — A Practical Comparison
+# Kaun vs. PyTorch — a practical comparison
 
 This guide explains how kaun relates to PyTorch, focusing on:
 
@@ -10,7 +10,7 @@ The main shift is from mutable objects to immutable records: a PyTorch model is 
 
 ---
 
-## 1. Big-Picture Differences
+## 1. Big-picture differences
 
 | Aspect | PyTorch | kaun (OCaml) |
 | --- | --- | --- |
@@ -32,7 +32,7 @@ The main shift is from mutable objects to immutable records: a PyTorch model is 
 
 ---
 
-## 2. Defining Models
+## 2. Defining models
 
 **PyTorch**
 
@@ -88,7 +88,7 @@ One deliberate difference: layer *hyper*-parameters that do not change the param
 
 ---
 
-## 3. The Training Step
+## 3. The training step
 
 **PyTorch** — gradients and parameters mutate in place:
 
@@ -127,7 +127,7 @@ Note the layering: `Vega` is an independent package composed in user code — ka
 
 ---
 
-## 4. Train/Eval Mode and Buffers
+## 4. Train/eval mode and buffers
 
 **PyTorch** — mode and running statistics are hidden module state:
 
@@ -153,7 +153,7 @@ let pred, _ = Net.forward params stats ~training:false x in
 
 ---
 
-## 5. Data Loading
+## 5. Data loading
 
 **PyTorch**
 
@@ -210,7 +210,7 @@ let params =
 
 ---
 
-## 7. Pretrained Models
+## 7. Pretrained models
 
 **PyTorch / transformers**
 
@@ -230,7 +230,7 @@ Inside the importer a rename is the file's name at the field it fills, `Nx.matri
 
 ---
 
-## 8. What Kaun Does Not Have
+## 8. What Kaun does not have
 
 | PyTorch feature | Status in kaun |
 | --- | --- |
@@ -243,7 +243,7 @@ Inside the importer a rename is the file's name at the field it fills, `Nx.matri
 
 ---
 
-## 9. Quick Cheat Sheet
+## 9. Quick cheat sheet
 
 | Task | PyTorch | kaun |
 | --- | --- | --- |

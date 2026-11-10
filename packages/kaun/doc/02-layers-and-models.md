@@ -1,8 +1,8 @@
-# Layers and Models
+# Layers and models
 
 Kaun has no layer abstraction. A layer is a plain record of tensors with an `apply` function; a model is a record of layers with a hand-written `walk`, one line per field. This guide covers the built-in layers, the model-as-record pattern, and stateful layers.
 
-## The Layer Pattern
+## The layer pattern
 
 Every parameterized layer module follows the same shape, with `Linear` as the reference:
 
@@ -25,7 +25,7 @@ let () =
 
 There is nothing else to a layer: `layer.w` is an ordinary tensor you can read, and `{ layer with w = ... }` an ordinary record update.
 
-## The Catalog
+## The catalog
 
 | Module | Parameters | Apply |
 |--------|-----------|-------|
@@ -47,7 +47,7 @@ Stateless companions, all pure functions:
 
 Every `apply` is differentiable through rune, in both reverse and forward mode.
 
-## Models Are Records of Layers
+## Models are records of layers
 
 Records nest into records. A model's `walk` visits each field with the field's own `walk`, under the field's name, so each leaf's path is the field name followed by the layer's path:
 
@@ -150,7 +150,7 @@ let () =
 
 For autoregressive decoding, `Attention.cached` runs causal self-attention of a few new tokens over a functional key-value cache. The cache (`Attention.Cache`) is a flat pool of slots with no batch axis, and a `Cache_index.t`, built on the host and moved with `Cache_index.place`, says where the call's tokens sit: each token's position and the slot holding each position of each sequence. One contiguous run per sequence (`Cache_index.rows`), paged allocation and a prefix shared by two sequences are all values of a cache index, and the layer is the same for each. Over `Cache_index.whole`, which reads and keeps nothing, the same function is plain causal attention, so a model has one forward pass for training and decoding. Positions and slots enter as tensors, so a generation step keeps fixed shapes and compiles once; compiled with `Rune.jit` on `Nx.Ptree.(tensor @-> v Cache_index.walk @-> caches @-> returns (pair tensor caches))` and called with the caches donated (`Nx.Ptree.donate`), the old caches are consumed. A prompt fed whole, in chunks or token by token gives the same outputs.
 
-## Stateful Layers: Batch_norm
+## Stateful layers: Batch_norm
 
 `Batch_norm` is the one layer with non-parameter state. It is two structures: trainable parameters (`Batch_norm.t`, the affine `gamma` and `beta` — differentiated and optimized like any other parameters) and running statistics (`Batch_norm.Stats.t`, per-feature mean and variance — never differentiated, updated by every training forward).
 
@@ -241,7 +241,7 @@ let () =
 
 The named families (Glorot/Xavier, He/Kaiming, LeCun) are instances of `Init.variance_scaling`; any function of the right type is an initializer, so custom schemes need no registration. Random initializers draw from the key they are given, so equal keys give equal parameters.
 
-## Next Steps
+## Next steps
 
 - [Training](03-training.md) — the composable training step, data, and metrics
 - [Saving and Pretrained Weights](04-saving-and-pretrained.md) — names, safetensors, the Hub

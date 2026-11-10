@@ -2,7 +2,7 @@
 
 This page maps Python scientific computing concepts to their Raven equivalents. It assumes you already know OCaml basics.
 
-## Library Mapping
+## Library mapping
 
 | Python | Raven | Notes |
 |--------|-------|-------|
@@ -15,9 +15,9 @@ This page maps Python scientific computing concepts to their Raven equivalents. 
 | Matplotlib | [Hugin](../../packages/hugin/doc/index.md) | Figures from tensors, rendered to PNG, SVG and PDF |
 | Jupyter + IPython | [Quill](../../packages/quill/doc/index.md) | Interactive REPL and markdown notebooks |
 
-## Key Differences
+## Key differences
 
-### Explicit Types
+### Explicit types
 
 NumPy casts types silently. Nx does not.
 
@@ -38,7 +38,7 @@ let a_f = Nx.cast Nx.float32 a
 let b = Nx.add_s a_f 1.5
 ```
 
-### Array Literals
+### Array literals
 
 NumPy uses Python lists. Nx uses OCaml arrays with `[| |]` syntax.
 
@@ -68,7 +68,7 @@ Nx.(slice [ A; I 1 ] x)               (* second column *)
 Nx.(slice [ Rs (0, dim 0 x, 2) ] x)   (* every other row *)
 ```
 
-### No Separate Tensor Type
+### No separate tensor type
 
 In PyTorch, `torch.Tensor` is different from `numpy.ndarray`. In Raven, Rune operates directly on `Nx.t` values. There is no wrapper type.
 
@@ -86,7 +86,7 @@ let x = Nx.create Nx.float32 [| 2 |] [| 1.0; 2.0 |]
 let gradient = Rune.grad' (fun x -> Nx.sum (Nx.mul x x)) x
 ```
 
-### Functional Transformations
+### Functional transformations
 
 JAX users will find Rune familiar. PyTorch users: think of `grad` as a function transformer, not a method on tensors.
 
@@ -113,7 +113,7 @@ let loss, grads = Rune.value_and_grad params_ptree loss_fn params
 
 Where JAX registers pytrees, Rune takes a structure: `Params` implements `Nx.Ptree.S` with one function, `walk`, over your record's fields, `Nx.Ptree.instantiate` makes it a value, and gradients come back with the same type as the parameters.
 
-### Module-Based Layers
+### Module-based layers
 
 Kaun layers are plain records with `init` and `apply` functions, not classes with `forward` — and a model is a record you define, not a container object.
 
@@ -140,7 +140,7 @@ let params =
 
 Parameters are plain data (records of Nx tensors), not hidden inside objects. A constructor draws them from the key it is given.
 
-### Random Numbers
+### Random numbers
 
 NumPy and PyTorch draw from a global generator that a seed resets. Nx draws from keys: a draw is a function of its key, dtype and shape. A sampler takes `~key`, or else the next key of the enclosing `Nx.Rng.with_key` scope; outside every scope, the next key of the domain's own, seeded from the system's entropy. `Nx.Rng.split` makes independent keys from one ([nx.mli, Rng](../../packages/nx/lib/nx.mli)).
 
@@ -198,7 +198,7 @@ let with_bmi df =
   Talon.Query.(df |> derive Talon.Expr.[ "bmi" := weight /. (height *. height) ])
 ```
 
-## Detailed Comparisons
+## Detailed comparisons
 
 Each library has a dedicated comparison page with side-by-side code examples:
 

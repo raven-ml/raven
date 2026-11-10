@@ -1,4 +1,4 @@
-# Getting Started
+# Getting started
 
 This page draws a first figure, explains how a mark turns tensors into rows,
 saves figures to files, shows them in a notebook, and reads the errors and
@@ -23,7 +23,7 @@ Add the library to your `dune` file:
 Hugin needs no system library: it draws text with its bundled Inter faces
 and writes PNG, SVG and PDF itself.
 
-## A First Figure
+## A first figure
 
 ```ocaml
 open Hugin
@@ -73,7 +73,7 @@ it lives until the figure is rendered. A constant takes the range of its
 role, so `~stroke:(const Color.red)` is a colour and `~x:(const 0.5)` is the
 middle of the panel.
 
-## Rows and Shapes
+## Rows and shapes
 
 The channels of a mark broadcast together, as the operands of an nx
 operation do, into the mark's *shape*. Each element of the shape is one
@@ -142,7 +142,7 @@ let fig = Hugin.(line ~y:(num curves) ())
 anywhere else, such as in a terminal toplevel, it is a one-line summary:
 `hugin figure`.
 
-## Errors and Warnings
+## Errors and warnings
 
 Mistakes in a figure's structure raise `Invalid_argument` as early as they
 can be found: a tensor of the wrong dtype when the channel is made, channels

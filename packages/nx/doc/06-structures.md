@@ -2,7 +2,7 @@
 
 A model, an optimizer state or a decoding cache is an ordinary OCaml record of arrays. `Nx.Ptree` lets code that knows nothing about your record walk its arrays: gradients, optimizer updates, saved files, dtype casts, placement and compiled functions all work on it once the record has a `walk`. This page shows how to write that function, how to use the structure it defines, and how to test it.
 
-## A Record Is One Function
+## A record is one function
 
 A structure is a module with a type `('a, 'd) t` and one function, `walk`, whose parameter `'a` marks where the arrays go. The second parameter, `'d`, is the device set of the record's arrays of a fixed type; a record whose every array is at `'a` ignores it. A dense layer holds a weight and an optional bias:
 
@@ -28,7 +28,7 @@ Every other operation of `Nx.Ptree` runs this function, so they all visit the pa
 
 `leaf` turns the parameter's type from the cursor's input to its output, so the compiler rejects a `walk` that forgets a field of type `'a`: the record it rebuilds would not have type `('b, _) t`.
 
-## Using a Structure
+## Using a structure
 
 `Nx.Ptree.instantiate` fixes the parameter to arrays and gives a description, a value that transformations, optimizers and saving take. A description is at one dtype and one device set, which its first use fixes:
 
@@ -50,7 +50,7 @@ let layer =
 
 A path is a list of segments, `Field name` for a named part and `Index i` for a numbered one. `Path.to_string` joins them with `"."`, which is the name of the array in a saved file (see [Input/Output](04-io.md)).
 
-## Nesting, Lists and Options
+## Nesting, lists and options
 
 A record of layers walks each layer with the layer's own `walk`, so each path starts with the field name. `list` walks a list's elements at `Index 0`, `Index 1`, ... and records its length:
 
@@ -79,7 +79,7 @@ let params =
 
 Its arrays are at `layers.0.w`, `layers.0.b`, `layers.1.w`, `layers.1.b` and `out.w`.
 
-## Masks and Plans by Path
+## Masks and plans by path
 
 A path's segments are a variant, so a per-array decision is a pattern match. Freezing the first layer zeroes its gradients:
 
@@ -103,7 +103,7 @@ Invalid_argument
  "Nx.Ptree.map2: out.b: None in the first value, Some in the second".
 ```
 
-## Changing the Payload
+## Changing the payload
 
 `walk` also changes what the parameter's positions hold, which is how a model is cast and how metadata shaped like the model is built. These operations take the structure's module, since only a module names the type constructor:
 
@@ -128,7 +128,7 @@ let count = Nx.Ptree.Payload.fold (module Mlp) (fun _ n acc -> n + acc) sizes 0
 
 `Nx.Ptree.place` moves every array of a value to a placement on another device set, and changes the set in the value's type: `Nx.Ptree.place (module Mlp) Gpu.on params` for a set `Gpu` minted by `Nx.devices`.
 
-## Fixed Arrays, Integers and Cases
+## Fixed arrays, integers and cases
 
 A part that is an array of one fixed type, such as a step counter, is walked with `tensor`; its set is the type's second parameter. An integer that changes what a compiled program computes, such as an attention window, is reported with `int`, and a bool is reported as `0` or `1`:
 
@@ -173,7 +173,7 @@ end
 
 A dictionary reports its size with `int` and each key with `case` before walking that key's value with `field`.
 
-## Tuples, Lists and Records Without Names
+## Tuples, lists and records without names
 
 The combinators are descriptions at one type: `Nx.Ptree.tensor` and `unit`, and `pair`, `triple`, `quad`, `option` and `list`, which build one from others. A pair walks its sides at `0` and `1`:
 
@@ -206,7 +206,7 @@ A key, or a batch of keys, is `Nx.Rng.ptree`: one array at the root, rebuilt thr
 - : string list = ["the root: a leaf"]
 ```
 
-## Records of Structures
+## Records of structures
 
 A record of a fixed type, such as a training state saved as one file or the result of a compiled function, has no parameter. Its parts often have a structure at one type and no module of their own: an optimizer state over a model, a cache index, or a list of models. `structure` walks such a part at the cursor's path, and `Nx.Ptree.v` makes the record's description from its walk:
 
@@ -228,7 +228,7 @@ let train =
 
 Its arrays are at `params.layers.0.w`, ..., `snapshots.0.layers.0.w`, ... A description is at one device set, so a walk that calls `structure` is too, and `Nx.Ptree.place` cannot move what it walks. A record that moves between sets is a module whose walk walks each part with the part's own walk, as `Nx.Rng.walk` walks a key.
 
-## Testing a Structure with visits
+## Testing a structure with visits
 
 The compiler checks the parameter's positions and nothing else: a `walk` that returns a fixed array without walking it, forgets to report an integer or a case, or reuses a case tag still compiles. A compiled function then freezes the array into its first program, or replays a program traced for other data. `Nx.Ptree.visits` lists what `walk` visits, each array and each report with its path, and a test compares it with what the structure should walk:
 
@@ -252,7 +252,7 @@ window: int 4
 
 A structure's test checks these lines for each shape its values take: a present and an absent option, each case of a variant, an empty and a non-empty list. It also checks the round trip: `Nx.Ptree.rebuild s ~like:x (fst (Nx.Ptree.flatten s x))` is `x`.
 
-## Deriving a Walk
+## Deriving a walk
 
 The `ppx_ptree` package writes `walk` from the type. `[@@deriving ptree]` reads the type's parameters by position, the payload then the set, and walks each field under its name and each part by its type: the payload with `leaf`, a tensor type on the set with `tensor`, a key with `Nx.Rng.walk`, a module's `('a, 'd) M.t` with `M.walk`, options, lists and tuples as above, and a variant's case under the constructor's name. An `int` or a `bool` must say whether a compiled program depends on it: `[@ptree.int]` reports it, and `[@ptree.skip]` leaves data such as a name out of the walk.
 
@@ -273,7 +273,7 @@ let block = Nx.Ptree.instantiate (module Block)
 
 This `Block` visits what the hand-written one visits, and its test is the same; ppx_ptree's own tests compare the two. The deriver generates the walk and no description: `Nx.Ptree.instantiate (module Block)` makes one where it is used, as for a hand-written module, and a type of fixed arrays alone, `'d t`, is described by `Nx.Ptree.v walk`. A structure nested at the positions of another, such as an optimizer state over a model, `(('a, 'd) Mlp.t, 'd) Vega.Adam_state.t`, is walked with `under Vega.Adam_state.walk Mlp.walk`, so `Nx.Ptree.place` moves the whole state. The declarations, the rules for each part, the attributes and the errors are in the Declarations, How a part is walked, Attributes and Errors sections of [`ppx_ptree.mli`](../../ppx_ptree/lib/ppx_ptree.mli).
 
-## Next Steps
+## Next steps
 
 - [Rune's transformations](../../rune/doc/02-derivatives.md) take structures, and `Rune.jit` takes a signature built from them, such as `Nx.Ptree.(tensor @-> caches @-> returns (pair tensor caches))`. A caller gives up an argument's arrays by donating them at the call, `Nx.Ptree.donate caches c`.
 - [Kaun's layers](../../kaun/doc/02-layers-and-models.md) each have a `walk`, and a model's is one line per field.

@@ -139,7 +139,7 @@ let () =
   done
 ```
 
-## Step 4: Compiling the Step
+## Step 4: Compiling the step
 
 `Rune.jit` compiles a function, given its signature: one structure per argument, joined by `@->`, and the result's after `returns`. The step's code runs once, when the first call traces it, and later calls run the compiled program. Donating the state at the call, with `Nx.Ptree.donate`, lets the step write the next state into its memory. In Step 3, replace the step and the loop with:
 
@@ -168,7 +168,7 @@ The Predict block is unchanged. A donated value is dead once the call has read i
 
 The same step runs on a GPU. `Nx.devices` mints a device set from a GPU that rig opens, `Nx.place` and `Nx.Ptree.place` put the data and the parameters there, and the step compiles for that device. A set minted without `~kernels` over GPUs computes nothing eagerly, and an operation there raises, so work there runs under `Rune.jit`, one device per compiled program. [Compilation](../../packages/rune/doc/06-compilation.md) covers devices.
 
-## Next Steps
+## Next steps
 
 - **[Nx](../../packages/nx/doc/01-getting-started.md)** — full guide to arrays, slicing, broadcasting, linear algebra
 - **[Rune](../../packages/rune/doc/index.md)** — all transformations: grad, jvp, vmap, and more

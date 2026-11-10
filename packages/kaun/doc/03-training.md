@@ -2,11 +2,11 @@
 
 Kaun has no trainer. A training step is a function you write: it composes `Rune.value_and_grad` with one optimizer update, and the training loop is ordinary `Seq` iteration over minibatches. This guide covers each ingredient — the step, optimizers, losses, data, and metrics — and how they compose.
 
-## The Layering
+## The layering
 
 Kaun's library depends only on nx; you differentiate with rune in your own code. Optimizers come from [vega](../../vega/doc/index.md), an independent package that also sits directly on nx: you add `vega` to your own project's dependencies and compose it in your code. The three libraries meet in the one record type you define — all of them operate on any `Nx.Ptree.S` structure, so there is no adapter layer and nothing to configure.
 
-## Anatomy of a Training Step
+## Anatomy of a training step
 
 Every training step in kaun has the same three lines: a loss closing over the batch, a `value_and_grad`, an optimizer update.
 
@@ -184,7 +184,7 @@ let () =
 
 **Warning.** `auc_roc` and macro-averaged scores do not decompose over batches: averaging per-batch values is not the dataset-level metric. Compute them once over the full evaluation set.
 
-## Train vs. Eval Mode
+## Train vs. eval mode
 
 There is no `model.train()`/`model.eval()`; mode is an explicit `~training` argument on the functions that care:
 
@@ -193,13 +193,13 @@ There is no `model.train()`/`model.eval()`; mode is an explicit `~training` argu
 
 A model forward that takes `~training` serves both phases; evaluation is the same function with `~training:false`.
 
-## Going Further
+## Going further
 
 Because the step is an ordinary function of ordinary values, rune's other transformations apply directly: per-sample gradients are `Rune.vmap` of `Rune.grad` over the batch (see the [maps page of rune's guide](../../rune/doc/03-maps.md)), and `Rune.value_and_grad_aux` returns any auxiliary output of the objective (predictions for logging, updated statistics), given its structure.
 
 For complete programs, see [`examples/02-mnist`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/02-mnist) (MLP, AdamW, accuracy evaluation) and [`examples/03-mnist-cnn`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/03-mnist-cnn) (CNN, dropout, saving the training state).
 
-## Next Steps
+## Next steps
 
 - [Saving and Pretrained Weights](04-saving-and-pretrained.md) — persisting parameters and optimizer state
 - [PyTorch Comparison](05-pytorch-comparison.md) — the same concepts in PyTorch vocabulary

@@ -234,7 +234,7 @@ Writing section. A duration has no unit a Parquet file can record, so
 `Talon_parquet.format` refuses it: select its ticks first with
 `Expr.cast Type.int64 (Col.span "d")`, and record the unit in the column's name.
 
-## Many Files as One Table
+## Many files as one table
 
 A dataset is often a directory of Parquet files, such as
 `year=2024/month=01/part-0.parquet`, one per partition. A query over them is a
@@ -429,7 +429,7 @@ Parquet row group, the byte range, and the raw text that failed. `Error.pp`
 prints them coarsest first, as in `flights.csv:48213:12: "NA": …`, and
 `Error.get_ok` raises `Failure` with that text.
 
-## Your Own Source
+## Your own source
 
 `Source.v` makes a source of anything that yields tables: a format talon does
 not ship, a database cursor, a simulation. It takes a name, a schema, and a

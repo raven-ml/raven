@@ -16,7 +16,7 @@ web frontend, or batch evaluator.
 - **Output format**: cell outputs stored as `<!-- quill:output -->` HTML comments, invisible in rendered markdown
 - **Raven integrated**: Nx, Rune, Vega, Norn, Kaun, Hugin, Sowilo, Talon, Brot, and Fehu are pre-loaded when installed
 
-## Quick Start
+## Quick start
 
 Launch the REPL:
 
@@ -46,7 +46,7 @@ Or execute from the command line:
 quill run notebook.md
 ```
 
-## Next Steps
+## Next steps
 
 - [Getting Started](01-getting-started.md) — REPL, notebooks, execution modes
 - [Notebook Format](02-notebook-format.md) — how markdown becomes cells, how outputs are stored

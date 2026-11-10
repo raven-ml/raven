@@ -7,7 +7,7 @@ tensor operations. Filters, edge detectors, morphological operations, color
 transforms, and geometric transforms -- all compatible with `Rune.grad'`
 and `Rune.vmap'`.
 
-## Image Conventions
+## Image conventions
 
 Images are `Nx.t` tensors with channels-last layout:
 
@@ -23,7 +23,7 @@ its kernels and constants are made beside the image, and its result is on
 the image's set, as the Device sets section of
 [`sowilo.mli`](../lib/sowilo.mli) states.
 
-## What's Included
+## What's included
 
 - **Type conversion**: `to_float`, `to_uint8`, `normalize`, `threshold`
 - **Color**: `to_grayscale`, `rgb_to_hsv`, `hsv_to_rgb`, brightness, contrast, saturation, hue, gamma, `invert`
@@ -32,7 +32,7 @@ the image's set, as the Device sets section of
 - **Morphology**: `structuring_element`, `erode`, `dilate`, `opening`, `closing`, `morphological_gradient`
 - **Edge detection**: `sobel`, `scharr`, `laplacian`, `canny`
 
-## Quick Start
+## Quick start
 
 <!-- $MDX skip -->
 ```ocaml
@@ -54,7 +54,7 @@ let () =
   Nx_io.save_png "edges.png" (to_uint8 (Nx.cast Nx.float32 edges))
 ```
 
-## Learn More
+## Learn more
 
 - [Getting Started](01-getting-started.md) -- installation, image conventions, first pipeline
 - [Operations Reference](02-operations.md) -- every operation with examples

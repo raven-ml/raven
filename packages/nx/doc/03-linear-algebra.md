@@ -1,10 +1,10 @@
-# Linear Algebra
+# Linear algebra
 
 Nx provides linear algebra over batches of matrices and Fourier transforms. This guide covers the most commonly used operations.
 
 A function whose result is real while its operand may be complex, such as singular values, the eigenvalues of a Hermitian matrix, a norm or a log-determinant, takes that result's dtype first: `Nx.svd Nx.float64 a`. So does a function whose result is complex while its operand may be real, such as `Nx.eig` or `Nx.rfft`.
 
-## Matrix Multiplication
+## Matrix multiplication
 
 ### matmul
 
@@ -128,7 +128,7 @@ let eigenvalues, eigenvectors = Nx.eigh Nx.float64 a
 let eigenvalues_only = Nx.eigvalsh Nx.float64 a
 ```
 
-## Solving Linear Systems
+## Solving linear systems
 
 ### solve
 
@@ -169,7 +169,7 @@ let a_inv = Nx.inv a          (* square; NaN for a matrix with a zero pivot *)
 let a_pinv = Nx.pinv a        (* works for any shape *)
 ```
 
-## When a Matrix Fails
+## When a matrix fails
 
 No linear-algebra function raises on the values of a matrix. A matrix on which a function is undefined, such as one that is not positive-definite given to `cholesky`, one with a zero pivot given to `solve` or `inv`, or one holding NaN or an infinity given to `svd`, `eig` or `eigh`, has NaN in every element of its float results, and a rank of -1 from `matrix_rank` or `lstsq`. Each matrix of a batch is computed on its own, so one failing matrix leaves the others unchanged, and any one element of a matrix's result tells whether it failed:
 
@@ -190,7 +190,7 @@ let () =
 
 Outside a function's stated precondition, NaN or an infinity in an operand propagates through the arithmetic to some elements of the results.
 
-## Norms and Properties
+## Norms and properties
 
 ### Norms
 
@@ -294,7 +294,7 @@ let rebuilt =
 `real` and `imag` compute the cartesian parts as new arrays of the dtype they
 take first, and `conjugate` negates the imaginary parts.
 
-## Next Steps
+## Next steps
 
 - [Array Operations](02-array-operations.md): reshaping, broadcasting, slicing
 - [Input/Output](04-io.md): reading and writing files

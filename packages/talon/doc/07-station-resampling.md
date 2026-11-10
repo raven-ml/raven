@@ -1,4 +1,4 @@
-# Station Resampling
+# Station resampling
 
 A weather station reports once a day, and an analysis often wants months. A
 daily archive holds sentinels for missing readings, quality flags and one row
@@ -25,7 +25,7 @@ let show q = Format.printf "%a@." Talon.pp (Error.get_ok (Query.run q))
 let path = "data/ghcn_daily.csv"
 ```
 
-## Reading Sentinels as Null
+## Reading sentinels as null
 
 `-9999` is a number the file writes in place of a reading it lacks. Naming it
 in `~nulls` makes it null as the file is read, so no arithmetic can use it. A
@@ -44,7 +44,7 @@ let daily = Error.get_ok (Talon_csv.file ~nulls:[ "-9999" ] path)
 station string, date date, element string, value int64, qflag string
 ```
 
-## Quality and Units
+## Quality and units
 
 A row with a flag failed a check, and the filter drops it. `value` counts
 tenths of a degree, so a cast and a division turn it into degrees:
@@ -61,7 +61,7 @@ let clean =
          ])
 ```
 
-## One Column per Element
+## One column per element
 
 `Kit.wider` gives each element its own column, one row per station and date.
 Its columns are the categories of the key's categorical type, so the plan's
@@ -86,7 +86,7 @@ An element missing from `elements` fails the run, and the error names the step
 and the row. A cell of `wide` is null when its reading was flagged or was the
 sentinel, and a date the file lacks has no row.
 
-## Months With Enough Days
+## Months with enough days
 
 `Expr.Temporal.floor` moves a date to the first day of its calendar month, and
 the month is a group key. `count tmax` is the number of non-null values, the
@@ -131,7 +131,7 @@ sentinels and one flagged reading, so its `tmax` is null and the row stays in
 the table. `tmin_days` differs from `tmax_days` because `TMIN` has neither
 flags nor sentinels in this file.
 
-## Rolling Over Gaps
+## Rolling over gaps
 
 `over ~by` makes one frame per station, and `window ~on` keys it by date, so
 it reduces the rows of the previous seven calendar days: dates after the row's

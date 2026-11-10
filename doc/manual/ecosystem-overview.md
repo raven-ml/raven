@@ -1,10 +1,10 @@
-# The Raven Ecosystem
+# Ecosystem overview
 
 Raven's libraries share one data type: `Nx.t`, the
 n-dimensional array. Each library does one thing, and they compose
 through tensors.
 
-## How the Libraries Fit Together
+## How the libraries fit together
 
 ```
  ┌──────────┐  ┌───────────┐
@@ -48,7 +48,7 @@ differentiates. **Norn** builds on both for probabilistic inference.
 **Talon**, **Brot**, **Hugin**, and **Quill** each use Nx directly for
 their domain.
 
-## Which Library Do I Need?
+## Which library do I need?
 
 | I want to... | Use |
 |---|---|
@@ -65,7 +65,7 @@ their domain.
 
 ---
 
-## Nx: N-Dimensional Arrays
+## Nx: N-dimensional arrays
 
 Nx provides the numerical foundation for the entire ecosystem:
 operations on n-dimensional arrays with 21 data types (4-bit floats
@@ -110,7 +110,7 @@ let () = Rig.Buffer.copy ~src:file ~dst:weights
 
 [Rig documentation →](../../packages/rig/doc/index.md)
 
-## Rune: Automatic Differentiation
+## Rune: Automatic differentiation
 
 Functional transformations for Nx tensors: reverse-mode AD (grad,
 vjp), forward-mode AD (jvp), and vectorising maps (vmap). Operates on
@@ -135,7 +135,7 @@ computation moves it ([rune.mli, jit](../../packages/rune/lib/rune.mli)).
 
 [Rune documentation →](../../packages/rune/doc/index.md)
 
-## Kaun: Neural Networks
+## Kaun: Neural networks
 
 Building blocks for neural networks: layers as plain records with pure
 apply functions, losses, initializers, data batching, metrics, and
@@ -159,7 +159,7 @@ let params =
 
 [Kaun documentation →](../../packages/kaun/doc/index.md)
 
-## Jera: Numerical Methods
+## Jera: Numerical methods
 
 Linear and nonlinear systems, minima with bounds, integrals,
 interpolation, and ordinary, stiff, differential-algebraic, delay and
@@ -184,7 +184,7 @@ let q, _ =
 
 [Jera documentation →](../../packages/jera/doc/index.md)
 
-## Norn: Probabilistic Inference
+## Norn: Probabilistic inference
 
 Distributions, bijectors, and samplers (NUTS, HMC, ensemble, nested
 sampling, tempered SMC) over a structure of your own type, with
@@ -258,7 +258,7 @@ let () =
 
 [Hugin documentation →](../../packages/hugin/doc/index.md)
 
-## Quill: Interactive Computing
+## Quill: Interactive computing
 
 Interactive REPL and markdown notebooks. Launch `quill` for a toplevel
 with syntax highlighting, completion, and history, or open a markdown
@@ -275,7 +275,7 @@ quill run notebook.md    # batch evaluation
 
 [Quill documentation →](../../packages/quill/doc/index.md)
 
-## Contrib Packages
+## Contrib packages
 
 The repository's [`contrib/`](https://github.com/raven-ml/raven/tree/main/contrib) directory holds packages built on the
 core libraries that release on their own schedule and install separately
@@ -285,7 +285,7 @@ from `opam install raven`:
 - [Sowilo](https://github.com/raven-ml/raven/tree/main/contrib/sowilo): differentiable computer vision
 - [Ymir](https://github.com/raven-ml/raven/tree/main/contrib/ymir): astronomy: units, frames, FITS, photometry, cosmology
 
-## Getting Started
+## Getting started
 
 1. **New to Raven?** Start with the [Quickstart](quickstart.md)
 2. **Coming from Python?** Read [Coming from Python](coming-from-python.md)

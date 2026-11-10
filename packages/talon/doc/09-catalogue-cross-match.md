@@ -1,4 +1,4 @@
-# Catalogue Cut and Cross-Match
+# Catalogue cut and cross-match
 
 A sky survey catalogue holds one row per detected source. To find the objects
 a second survey also saw, this page cuts the first catalogue to well-measured
@@ -45,7 +45,7 @@ let wise =
     ]
 ```
 
-## Cuts and Derived Columns
+## Cuts and derived columns
 
 Cuts are filters on measured columns. A parallax much larger than its error
 gives a reliable distance, and a small `ruwe` means the astrometric fit was
@@ -74,7 +74,7 @@ let selected =
          ])
 ```
 
-## The Sky Join
+## The sky join
 
 Two sources match when their angular separation is within a radius. A join's
 conditions compare columns, so a range join narrows the candidates and a
@@ -140,7 +140,7 @@ let in_radius =
     |> filter Expr.(Col.float "sep_arcsec" <= float radius_arcsec))
 ```
 
-## The Nearest Candidate
+## The nearest candidate
 
 A source may have several candidates inside the radius, and `s1` has two.
 `over ~by` computes each source's minimum separation, and the filter keeps the
@@ -172,7 +172,7 @@ table 3 rows × 6 columns
  s6         w5         0.358630  9.01030  0.800000  15.1000
 ```
 
-## The Unmatched
+## The unmatched
 
 An `Anti` join keeps each selected source with no row in `matches`:
 

@@ -29,7 +29,7 @@ opam install brot        # tokenization
 opam install talon       # dataframes
 ```
 
-## Building from Source
+## Building from source
 
 ```bash
 git clone https://github.com/raven-ml/raven
@@ -44,13 +44,13 @@ dune build packages/nx            # just nx
 dune build packages/kaun          # kaun + its dependencies
 ```
 
-## System Dependencies
+## System dependencies
 
 Raven builds and installs with no system dependencies beyond OCaml.
 
 Compiling kernels at run time, with `Rune.jit`, uses the platform's compiler: `clang` on the CPU, NVRTC (from the CUDA toolkit) on NVIDIA, and comgr (from ROCm) on AMD; macOS includes Metal's. Kernels already in the on-disk cache need none of them, and eager code on the host needs nothing.
 
-## Using Raven in Your Project
+## Using Raven in your project
 
 Add libraries to your `dune-project`:
 
@@ -73,7 +73,7 @@ And your `dune` file:
  (libraries nx rune))
 ```
 
-## Verify Your Installation
+## Verify your installation
 
 Create a file `main.ml`:
 
@@ -91,7 +91,7 @@ dune exec ./main.exe
 
 You should see five evenly-spaced values printed.
 
-## Using Raven in a Toplevel
+## Using Raven in a toplevel
 
 In the `ocaml` toplevel, findlib loads a library with its dependencies, and
 `nx.top` makes the toplevel print arrays:
@@ -108,7 +108,7 @@ Load the libraries one way or the other, never both: the second load fails
 with `rig is already loaded in this process`, and the toplevel must then be
 restarted.
 
-## Editor Setup
+## Editor setup
 
 For the best development experience, use an editor with OCaml LSP support:
 

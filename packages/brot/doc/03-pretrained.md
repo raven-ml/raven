@@ -1,4 +1,4 @@
-# Pretrained Tokenizers
+# Pretrained tokenizers
 
 Most users start by loading an existing tokenizer rather than building one
 from scratch. Brot reads and writes HuggingFace `tokenizer.json` files and
@@ -30,7 +30,7 @@ let tokenizer =
   | Error msg -> failwith msg
 ```
 
-## Loading from Model Files
+## Loading from model files
 
 Older models ship separate `vocab.json` and `merges.txt` files instead
 of a single `tokenizer.json`. Use `from_model_file`:
@@ -59,7 +59,7 @@ WordPiece is used. The pipeline stages (normalizer, pre-tokenizer,
 post-processor, decoder) must be configured explicitly since model files
 do not include them.
 
-## Building Known Pipelines
+## Building known pipelines
 
 When you need full control over the pipeline or want to understand what
 each stage does, build the tokenizer from scratch with an inline
@@ -154,7 +154,7 @@ let tokenizer =
 let enc = encode tokenizer "the cat is playing"
 ```
 
-## Saving Tokenizers
+## Saving tokenizers
 
 Save a tokenizer in HuggingFace format for later use or sharing:
 
@@ -172,7 +172,7 @@ Brot.export_tiktoken tokenizer
   ~vocab_path:"./tiktoken_vocab.txt"
 ```
 
-## Training from Scratch
+## Training from scratch
 
 Train a tokenizer from a text corpus. Configure the full pipeline
 alongside the training parameters:
