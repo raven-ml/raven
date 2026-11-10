@@ -2921,7 +2921,6 @@ let link ~beam ~parallel ~storage rigs l =
       let linear, vars =
         Engine.compile ?beam ~search:(search rigs ~parallel)
           ~devices:(named rigs)
-          ~by_storage:(storage = Engine.Per_run)
           ~held_bufs:(List.map fst l.bound) ~inputs:(List.rev !order) sink
       in
       let schedule =

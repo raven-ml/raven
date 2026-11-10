@@ -41,11 +41,17 @@ val memory_plan_rewrite : ?held_bufs:Ops.t list -> Ops.t -> Ops.t
     devices the executor orders work by allocation: where a device whose work
     the host runs reuses bytes a GPU's copy touched, its work, and the run
     that submits it, wait for the GPU's earlier work. The arena is an
-    {!Op.Buffer} of {!Dtype.Int8} as large as its buffers need at once. A buffer's size and
-    phase ({!Ops.type-param_arg}) together are rounded up to 256 bytes, and its
-    place is found by a {!Support_memory.Tlsf_allocator}, the buffers ending at
-    a call freed before those starting there are placed. Each planned buffer is
-    replaced wherever [linear] reaches it outside call bodies, inside views
+    {!Op.Buffer} of {!Dtype.Int8} as large as its placed buffers reach. A
+    buffer's size and phase ({!Ops.type-param_arg}) together are rounded up to
+    256 bytes. Buffers are placed largest first, ties in the order they first
+    appear: each at the start of the smallest gap that holds it between the
+    buffers already placed whose lives meet its, else past the last byte of
+    those, two lives meeting where one's first call is at or before the
+    other's last; placing keeps the placed buffers sorted by offset, so a lane
+    of [b] buffers costs [O(b²)]. Placed so, an arena is often exactly the
+    bytes its buffers take at once, the least any placement needs, though
+    never promised to be. Each planned buffer is replaced wherever [linear]
+    reaches it outside call bodies, inside views
     included, by the bytes of its arena from its phase past its place
     ({!Shape.shrink}), viewed as its type ({!Ops.bitcast}), so that it keeps
     its phase. New arenas take the next slots ({!Ops.unique_num}).

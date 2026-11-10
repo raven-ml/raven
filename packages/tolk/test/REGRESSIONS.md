@@ -1382,32 +1382,22 @@ reason.
 
 ## Support_memory
 
-The suite is `Tolk.Support_memory` (`runtime/support/support_memory/`),
-written `SM` below. `SM › traces.golden` replays 40 random traces recorded from
-tinygrad's `TLSFAllocator`, one allocator each, and checks every address an
-allocation returns. `SM › Tlsf_allocator › laws` holds a stateful test against
-a model of the live blocks: each block lies in the range, aligned from the
-base, and overlaps no live block, and an allocation is `None` exactly when no
-free stretch holds the smallest subdivision that fits it. A property states
-that freeing every block restores a fresh allocator. Four mutants survive, all
-equivalent: the two updates of the per-level counts, which only let a search
-skip empty levels; `block_size <= 0` as `< 0`, since a zero block size has
-fewer bits than any level count and is refused by the next check; and
-`size > 0` as `>= 0`, which inserts a block of no address that no allocation
-can take.
+tolk has no allocator of addresses: the memory planner places its buffers
+largest first between those whose lives meet (D477), so tinygrad's
+`TLSFAllocator` and its tests have no counterpart.
 
 ### tinygrad
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: external/external_test_tlsf.py::TestTLSFAllocator::test_basic_alloc_free | blocks in address order, a freed one handed out again | `SM › Tlsf_allocator › blocks are handed out in address order, and a freed one again` |
-| tinygrad: external/external_test_tlsf.py::TestTLSFAllocator::test_merge_blocks | freed neighbours merge | `SM › Tlsf_allocator › freed neighbours merge` |
-| tinygrad: external/external_test_tlsf.py::TestTLSFAllocator::test_split_blocks | a freed block splits | `SM › Tlsf_allocator › a freed block splits` |
-| tinygrad: external/external_test_tlsf.py::TestTLSFAllocator::test_out_of_memory | `MemoryError` past the range | `SM › Tlsf_allocator › a block larger than the range is None` (`None` for tinygrad's `MemoryError`) |
-| tinygrad: external/external_test_tlsf.py::TestTLSFAllocator::test_fragmentation_handling | freeing alternate blocks | the stateful law and `traces.golden` |
-| tinygrad: external/external_test_tlsf.py::TestTLSFAllocator::test_block_size_alignment | blocks of 20 and 35 addresses start at multiples of 16 | `SM › Tlsf_allocator › a block is at least the block size`. The upstream test fails at HEAD: a block is `max block_size n` addresses, so the second starts at 20 |
-| tinygrad: external/external_test_tlsf.py::TestTLSFAllocator::test_custom_start_address, test_block_tracking | a base address, the block table | `SM › Tlsf_allocator › addresses start at the base`, `a block past the base is freed by its address`. Both upstream tests error at HEAD: they use `start_addr`, which `TLSFAllocator` no longer has, and the block table is private |
-| tinygrad: external/external_fuzz_tlsf.py | random allocations and frees never corrupt each other's bytes | `SM › Tlsf_allocator › laws › blocks fit, align and never overlap, and None means no room` (blocks that never overlap cannot corrupt each other); `traces.golden` |
+| tinygrad: external/external_test_tlsf.py::TestTLSFAllocator::test_basic_alloc_free | blocks in address order, a freed one handed out again | dropped: no allocator of addresses (D477) |
+| tinygrad: external/external_test_tlsf.py::TestTLSFAllocator::test_merge_blocks | freed neighbours merge | dropped: no allocator of addresses (D477) |
+| tinygrad: external/external_test_tlsf.py::TestTLSFAllocator::test_split_blocks | a freed block splits | dropped: no allocator of addresses (D477) |
+| tinygrad: external/external_test_tlsf.py::TestTLSFAllocator::test_out_of_memory | `MemoryError` past the range | dropped: no allocator of addresses (D477) |
+| tinygrad: external/external_test_tlsf.py::TestTLSFAllocator::test_fragmentation_handling | freeing alternate blocks | dropped: no allocator of addresses (D477) |
+| tinygrad: external/external_test_tlsf.py::TestTLSFAllocator::test_block_size_alignment | blocks of 20 and 35 addresses start at multiples of 16 | dropped: no allocator of addresses (D477) |
+| tinygrad: external/external_test_tlsf.py::TestTLSFAllocator::test_custom_start_address, test_block_tracking | a base address, the block table | dropped: no allocator of addresses (D477) |
+| tinygrad: external/external_fuzz_tlsf.py | random allocations and frees never corrupt each other's bytes | dropped: no allocator of addresses (D477) |
 
 ## Memory
 

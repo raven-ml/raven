@@ -2785,7 +2785,6 @@ renderer/tc/refused.golden
 renderer/tc/tensor_cores.golden
 runtime/support/c/findlib_trees.golden
 runtime/support/compiler_cpu/kernels.golden
-runtime/support/support_memory/traces.golden
 schedule/indexing/add.golden
 schedule/indexing/add_rangeified.golden
 schedule/indexing/arange.golden

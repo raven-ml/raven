@@ -1201,6 +1201,12 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- **Breaking:** `Schedule.create_schedule`, `create_linear_with_vars` and
+  `Tolk_engine.compile` lose `~by_storage`: every schedule runs ready kernels
+  by their number, one that frees storage first.
+- `Memory.memory_plan_rewrite` places buffers largest first, each in the
+  smallest gap that holds it, so an arena is mostly the bytes live at once;
+  `Support_memory.Tlsf_allocator` is removed.
 - `Memory.memory_plan_rewrite` plans the buffers that only one loop's calls
   take within a trip: such buffers share bytes where their lives in a trip
   do not overlap, where every buffer a loop took lived for the whole loop.

@@ -16,23 +16,25 @@
 
 (** {1:linear Linearizing} *)
 
-val create_schedule : ?by_storage:bool -> Ops.t -> Ops.t
-(** [create_schedule ~by_storage sched_sink] is the {!Op.Linear} of the kernel
+val create_schedule : Ops.t -> Ops.t
+(** [create_schedule sched_sink] is the {!Op.Linear} of the kernel
     calls of the kernel graph [sched_sink] ({!Rangeify.get_kernel_graph}), in
     an order that runs each kernel after those that write the storage it
     reads, and before those that overwrite the storage it reads. The order
     depends on the graph alone, the order of a node's sources included, and
-    on nothing the process built before it. Ready kernels run in the order
-    they become ready, those ready at the start in the order the graph reaches
-    them, unless [by_storage] (default [false]),
-    for a schedule whose storage is made at each run: then a ready kernel runs
-    in the order the graph reaches it, after any ready kernel that frees
-    storage, being the last to take storage a kernel wrote: first one that
-    makes no storage, then one that on no device makes more storage than it
-    frees, storage living from the first kernel that takes it to the last
-    ({!Memory.taken}). Each call's arguments are the storage of its
-    reads and writes, or the views of it that move with the loops the call runs in. A
-    loop of a call, an {!Op.End} of the call over {!Ops.Axis_type.Loop} ranges,
+    on nothing the process built before it. A kernel's number is its place in
+    the order {!Ops.toposort} of the graph meets it, each node after its
+    sources in their order. Of the ready kernels, one that frees storage,
+    being the last to take storage a kernel wrote, runs first: the lowest
+    numbered of those that make no storage, else of those that on no device
+    make more storage than they free, bytes counted unrounded, storage living
+    from the first kernel that takes it to the last ({!Memory.taken}).
+    Otherwise the lowest numbered runs. So where the walk reaches a value's
+    readers right after the value, it is made just before them, and the
+    pieces of one value are each read before the next is made. The order is
+    this rule, and no promise of the least storage. Each call's arguments
+    are the storage of its reads and writes, or the views of it that move with
+    the loops the call runs in. A loop of a call, an {!Op.End} of the call over {!Ops.Axis_type.Loop} ranges,
     stays such an end around the call, or around an {!Op.Linear} of the copies
     it makes as each trip starts and the call, and a back edge of a call
     ({!Ops.backedge}) stays a back edge, its condition the storage it reads.
@@ -126,8 +128,8 @@ val numbered : Ops.t -> numbering
     left as it is. *)
 
 val create_linear_with_vars :
-  ?capturing:bool -> ?by_storage:bool -> Ops.t -> Ops.t * (string * int) list
-(** [create_linear_with_vars ~capturing ~by_storage big_sink] is the schedule
+  ?capturing:bool -> Ops.t -> Ops.t * (string * int) list
+(** [create_linear_with_vars ~capturing big_sink] is the schedule
     that realizes the values of [big_sink], whose results are stored into
     buffers ({!Op.Buffer}), with the value of each variable it reads, by name:
 
@@ -137,8 +139,7 @@ val create_linear_with_vars :
       bound variables, each replaced in the body by a parameter; call-local
       storage is numbered by its order in each body, so equal graphs schedule
       alike;
-    + each such call's body is scheduled ({!create_schedule}, [by_storage]
-      default [false]), once per body and order
+    + each such call's body is scheduled ({!create_schedule}), once per body
       when the setting {!Setting.scache} is [1] or more: a call that asks for a
       body another domain is scheduling waits for it. From [2], the default,
       schedules are also kept on disk ({!Helpers.Diskcache}, table

@@ -1,4 +1,4 @@
-# tolk D163 golden=3493cad5ee1edc0d8bac98c96505aed5
+# tolk D163 D183 golden=3493cad5ee1edc0d8bac98c96505aed5
 0 Ops.CONST dtypes.weakint [] 256
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 8
@@ -66,54 +66,54 @@
 64 Ops.STORE dtypes.void [56, 63]
 65 Ops.END dtypes.void [64, 12, 8, 3]
 66 Ops.SINK dtypes.void [65] KernelInfo()
-67 Ops.SHRINK dtypes.i8 [42, 44, 13]
-68 Ops.BITCAST dtypes.f32 [67] dtypes.f32
-69 Ops.CALL dtypes.void [66, 68, 46] CallInfo()
-70 Ops.PARAM dtypes.f32 [22] ParamArg(slot=2, dtype=dtypes.f32)
-71 Ops.INDEX dtypes.f32 [70, 55]
-72 Ops.CONST dtypes.weakfloat [] -1.0
-73 Ops.MUL dtypes.f32 [71, 72]
-74 Ops.ADD dtypes.f32 [62, 73]
-75 Ops.CONST dtypes.weakfloat [] 1.4426950408889634
-76 Ops.MUL dtypes.f32 [74, 75]
-77 Ops.EXP2 dtypes.f32 [76]
-78 Ops.REDUCE dtypes.f32 [77, 58] (Ops.ADD, 0)
-79 Ops.STORE dtypes.void [56, 78]
-80 Ops.END dtypes.void [79, 12, 8, 3]
-81 Ops.SINK dtypes.void [80] KernelInfo()
-82 Ops.CONST dtypes.weakint [] 1280
-83 Ops.SHRINK dtypes.i8 [42, 82, 13]
-84 Ops.BITCAST dtypes.f32 [83] dtypes.f32
-85 Ops.CALL dtypes.void [81, 84, 46, 68] CallInfo()
-86 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 2)
-87 Ops.MUL dtypes.weakint [86, 2]
-88 Ops.ADD dtypes.weakint [87, 3]
-89 Ops.ADD dtypes.weakint [88, 25]
-90 Ops.RANGE dtypes.weakint [7] (AxisType.WEAK, 0)
-91 Ops.MUL dtypes.weakint [90, 13]
-92 Ops.ADD dtypes.weakint [89, 91]
-93 Ops.INDEX dtypes.f32 [1, 92]
-94 Ops.INDEX dtypes.f32 [57, 92]
-95 Ops.MUL dtypes.weakint [12, 2]
-96 Ops.ADD dtypes.weakint [95, 86]
-97 Ops.MUL dtypes.weakint [90, 53]
-98 Ops.ADD dtypes.weakint [96, 97]
-99 Ops.INDEX dtypes.f32 [70, 98]
-100 Ops.MUL dtypes.f32 [99, 72]
-101 Ops.ADD dtypes.f32 [94, 100]
-102 Ops.MUL dtypes.f32 [101, 75]
-103 Ops.EXP2 dtypes.f32 [102]
-104 Ops.PARAM dtypes.f32 [22] ParamArg(slot=3, dtype=dtypes.f32)
-105 Ops.INDEX dtypes.f32 [104, 98]
-106 Ops.RECIP dtypes.f32 [105]
-107 Ops.MUL dtypes.f32 [103, 106]
-108 Ops.STORE dtypes.void [93, 107]
-109 Ops.END dtypes.void [108, 90, 12, 86, 3]
-110 Ops.SINK dtypes.void [109] KernelInfo()
-111 Ops.CONST dtypes.weakint [] 1536
-112 Ops.SHRINK dtypes.i8 [42, 111, 44]
+67 Ops.CONST dtypes.weakint [] 2048
+68 Ops.SHRINK dtypes.i8 [42, 67, 13]
+69 Ops.BITCAST dtypes.f32 [68] dtypes.f32
+70 Ops.CALL dtypes.void [66, 69, 46] CallInfo()
+71 Ops.PARAM dtypes.f32 [22] ParamArg(slot=2, dtype=dtypes.f32)
+72 Ops.INDEX dtypes.f32 [71, 55]
+73 Ops.CONST dtypes.weakfloat [] -1.0
+74 Ops.MUL dtypes.f32 [72, 73]
+75 Ops.ADD dtypes.f32 [62, 74]
+76 Ops.CONST dtypes.weakfloat [] 1.4426950408889634
+77 Ops.MUL dtypes.f32 [75, 76]
+78 Ops.EXP2 dtypes.f32 [77]
+79 Ops.REDUCE dtypes.f32 [78, 58] (Ops.ADD, 0)
+80 Ops.STORE dtypes.void [56, 79]
+81 Ops.END dtypes.void [80, 12, 8, 3]
+82 Ops.SINK dtypes.void [81] KernelInfo()
+83 Ops.CONST dtypes.weakint [] 2304
+84 Ops.SHRINK dtypes.i8 [42, 83, 13]
+85 Ops.BITCAST dtypes.f32 [84] dtypes.f32
+86 Ops.CALL dtypes.void [82, 85, 46, 69] CallInfo()
+87 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 2)
+88 Ops.MUL dtypes.weakint [87, 2]
+89 Ops.ADD dtypes.weakint [88, 3]
+90 Ops.ADD dtypes.weakint [89, 25]
+91 Ops.RANGE dtypes.weakint [7] (AxisType.WEAK, 0)
+92 Ops.MUL dtypes.weakint [91, 13]
+93 Ops.ADD dtypes.weakint [90, 92]
+94 Ops.INDEX dtypes.f32 [1, 93]
+95 Ops.INDEX dtypes.f32 [57, 93]
+96 Ops.MUL dtypes.weakint [12, 2]
+97 Ops.ADD dtypes.weakint [96, 87]
+98 Ops.MUL dtypes.weakint [91, 53]
+99 Ops.ADD dtypes.weakint [97, 98]
+100 Ops.INDEX dtypes.f32 [71, 99]
+101 Ops.MUL dtypes.f32 [100, 73]
+102 Ops.ADD dtypes.f32 [95, 101]
+103 Ops.MUL dtypes.f32 [102, 76]
+104 Ops.EXP2 dtypes.f32 [103]
+105 Ops.PARAM dtypes.f32 [22] ParamArg(slot=3, dtype=dtypes.f32)
+106 Ops.INDEX dtypes.f32 [105, 99]
+107 Ops.RECIP dtypes.f32 [106]
+108 Ops.MUL dtypes.f32 [104, 107]
+109 Ops.STORE dtypes.void [94, 108]
+110 Ops.END dtypes.void [109, 91, 12, 87, 3]
+111 Ops.SINK dtypes.void [110] KernelInfo()
+112 Ops.SHRINK dtypes.i8 [42, 44, 44]
 113 Ops.BITCAST dtypes.f32 [112] dtypes.f32
-114 Ops.CALL dtypes.void [110, 113, 46, 68, 84] CallInfo()
+114 Ops.CALL dtypes.void [111, 113, 46, 69, 85] CallInfo()
 115 Ops.PARAM dtypes.f32 [13] ParamArg(slot=0, dtype=dtypes.f32)
 116 Ops.RANGE dtypes.weakint [18] (AxisType.WEAK, 4)
 117 Ops.ADD dtypes.weakint [19, 116]
@@ -133,5 +133,5 @@
 131 Ops.BUFFER dtypes.f32 [13] ParamArg(slot=6, dtype=dtypes.f32, device="CPU")
 132 Ops.BUFFER dtypes.f32 [13] ParamArg(slot=5, dtype=dtypes.f32, device="CPU")
 133 Ops.CALL dtypes.void [130, 131, 113, 132] CallInfo()
-134 Ops.LINEAR dtypes.void [49, 69, 85, 114, 133]
+134 Ops.LINEAR dtypes.void [49, 70, 86, 114, 133]
 

@@ -1,4 +1,4 @@
-# tolk D25 D80 D141 D151 golden=15bf2976ef611f2b9aebb1e12b38c3d2
+# tolk D25 D80 D141 D151 D183 golden=15bf2976ef611f2b9aebb1e12b38c3d2
 0 Ops.CONST dtypes.weakint [] 80
 1 Ops.CONST dtypes.weakint [] 40
 2 Ops.PARAM dtypes.u8 [1] ParamArg(slot=0, dtype=dtypes.u8, name="args")
@@ -220,7 +220,7 @@
 218 Ops.PARAM dtypes.i32 [101] ParamArg(slot=2, dtype=dtypes.i32, vmin_vmax=(0, 2), name="block_lo", addrspace=AddrSpace.ALU)
 219 Ops.PARAM dtypes.i32 [101] ParamArg(slot=3, dtype=dtypes.i32, vmin_vmax=(0, 2), name="block_hi", addrspace=AddrSpace.ALU)
 220 Ops.PROGRAM dtypes.void [212, 213, 214, 215] ProgramInfo(global_size=(2, 1, 1), params=(%216, %217, %218, %219, %206), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
-221 Ops.CONST dtypes.weakint [] 512
+221 Ops.CONST dtypes.weakint [] 1024
 222 Ops.SHRINK dtypes.i8 [121, 221, 209]
 223 Ops.BITCAST dtypes.f32 [222] dtypes.f32
 224 Ops.CALL dtypes.void [220, 223, 123] CallInfo()
@@ -413,7 +413,7 @@
 411 Ops.PARAM dtypes.i32 [101] ParamArg(slot=3, dtype=dtypes.i32, vmin_vmax=(0, 2), name="block_lo", addrspace=AddrSpace.ALU)
 412 Ops.PARAM dtypes.i32 [101] ParamArg(slot=4, dtype=dtypes.i32, vmin_vmax=(0, 2), name="block_hi", addrspace=AddrSpace.ALU)
 413 Ops.PROGRAM dtypes.void [406, 407, 408, 409] ProgramInfo(global_size=(2, 1, 1), params=(%216, %217, %410, %411, %412, %401), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CPU", arch="x86_64,x86-64"))
-414 Ops.CONST dtypes.weakint [] 768
+414 Ops.CONST dtypes.weakint [] 1280
 415 Ops.SHRINK dtypes.i8 [121, 414, 209]
 416 Ops.BITCAST dtypes.f32 [415] dtypes.f32
 417 Ops.CALL dtypes.void [413, 416, 123, 223] CallInfo()
@@ -575,7 +575,7 @@
 573 Ops.PARAM dtypes.i32 [101] ParamArg(slot=4, dtype=dtypes.i32, vmin_vmax=(0, 10), name="block_lo", addrspace=AddrSpace.ALU)
 574 Ops.PARAM dtypes.i32 [101] ParamArg(slot=5, dtype=dtypes.i32, vmin_vmax=(0, 10), name="block_hi", addrspace=AddrSpace.ALU)
 575 Ops.PROGRAM dtypes.void [568, 569, 570, 571] ProgramInfo(global_size=(%102, 1, 1), params=(%114, %217, %410, %572, %573, %574), globals=(0, 1, 2, 3), outs=(0,), ins=(1, 2, 3), target=Target(device="CPU", arch="x86_64,x86-64"))
-576 Ops.CONST dtypes.weakint [] 1024
+576 Ops.CONST dtypes.weakint [] 512
 577 Ops.SHRINK dtypes.i8 [121, 576, 60]
 578 Ops.BITCAST dtypes.f32 [577] dtypes.f32
 579 Ops.CALL dtypes.void [575, 578, 123, 223, 416] CallInfo()

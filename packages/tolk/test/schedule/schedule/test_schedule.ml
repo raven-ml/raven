@@ -982,12 +982,12 @@ let bound_argument () =
     [ copies ~into:x ~from:y ]
     (Ops.src (Schedule.create_schedule kg))
 
-(* Order by storage
+(* Order
 
-   Ordered by storage, a ready kernel runs by its number, the order the walk of
-   the sink meets it, and one that frees storage and on no device makes more
-   than it frees runs before it; otherwise ready kernels run as they become
-   ready. Storage that kernels write lives from the first kernel that takes
+   Of the ready kernels, the first by number that frees storage and makes none
+   runs, else the first that frees storage and on no device makes more than it
+   frees, else the first by number, the order the depth-first walk of the sink
+   meets it. Storage that kernels write lives from the first kernel that takes
    it to the last. Each parameter below holds as many elements as [y]. *)
 
 let param slot = like_y slot
@@ -1002,19 +1002,30 @@ let frees_first () =
   let kg = Ops.sink [ Ops.after t [ a ]; Ops.after w [ c ]; Ops.after z [ b ] ] in
   equal (list uop)
     [ a; copies ~into:z ~from:t; c ]
-    (Ops.src (Schedule.create_schedule ~by_storage:true kg));
+    (Ops.src (Schedule.create_schedule kg));
   keeps kg
 
-(* {!frees_first}'s kernels, ordered as they become ready: [b] waits for [a],
-   which [c] does not. *)
-let as_ready () =
-  let t = param 4 and w = param 5 and z = param 6 in
-  let a = copies ~into:t ~from:y in
-  let c = copies ~into:w ~from:y in
-  let b = copies ~into:z ~from:(Ops.after t [ a ]) in
-  let kg = Ops.sink [ Ops.after t [ a ]; Ops.after w [ c ]; Ops.after z [ b ] ] in
+(* Two chains, [a1] then [b1] and [a2] then [b2], each kernel making a value
+   from the one before: [a1] and [a2] are ready at the start, and [b1], which
+   frees [t1], runs before [a2], so each chain runs to its end before the
+   other begins. Ordered as they become ready, both values would live at
+   once. *)
+let chains_apart () =
+  let t1 = param 4 and z1 = param 5 and t2 = param 6 and z2 = param 7 in
+  let a1 = copies ~into:t1 ~from:y and a2 = copies ~into:t2 ~from:y in
+  let b1 = copies ~into:z1 ~from:(Ops.after t1 [ a1 ]) in
+  let b2 = copies ~into:z2 ~from:(Ops.after t2 [ a2 ]) in
+  let kg =
+    Ops.sink
+      [
+        Ops.after t1 [ a1 ];
+        Ops.after z1 [ b1 ];
+        Ops.after t2 [ a2 ];
+        Ops.after z2 [ b2 ];
+      ]
+  in
   equal (list uop)
-    [ a; c; copies ~into:z ~from:t ]
+    [ a1; copies ~into:z1 ~from:t1; a2; copies ~into:z2 ~from:t2 ]
     (Ops.src (Schedule.create_schedule kg));
   keeps kg
 
@@ -1040,7 +1051,7 @@ let pieces_interleave () =
       copies ~into:s2 ~from:p;
       copies ~into:o2 ~from:s2;
     ]
-    (Ops.src (Schedule.create_schedule ~by_storage:true kg));
+    (Ops.src (Schedule.create_schedule kg));
   keeps kg
 
 (* [ms] makes [s] from [t], then [k] reads [t] last and makes [n], and [r]
@@ -1068,11 +1079,11 @@ let only_frees_first () =
       copies ~into:o ~from:s;
       copies ~into:n ~from:t;
     ]
-    (Ops.src (Schedule.create_schedule ~by_storage:true kg));
+    (Ops.src (Schedule.create_schedule kg));
   keeps kg
 
-let by_storage =
-  group "create_schedule › order by storage"
+let order =
+  group "create_schedule › order"
     [
       test "a kernel that frees storage runs before one that only makes it"
         frees_first;
@@ -1080,7 +1091,8 @@ let by_storage =
         only_frees_first;
       test "pieces of one value are each read before the next is made"
         pieces_interleave;
-      test "without it, ready kernels run as they become ready" as_ready;
+      test "chains the walk reaches whole run one after the other"
+        chains_apart;
     ]
 
 let ordering =
@@ -4623,7 +4635,7 @@ let () =
          spec;
          cache;
          ordering;
-         by_storage;
+         order;
          flatten;
          store_after;
          views;

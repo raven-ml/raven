@@ -7,7 +7,6 @@
 
 open Ops
 open Shape
-module Tlsf = Support_memory.Tlsf_allocator
 
 let collect_bufs u = if op u = Op.Buffer then [ u ] else []
 
@@ -55,8 +54,6 @@ let taken si =
         args)
     (uses si);
   List.rev !acc
-
-type lane = { mutable peak : int; tlsf : Tlsf.t }
 
 (* Each call of the schedule [linear] at its place in the order calls run, a
    loop's once, at the steps [first] to [last]: the arguments it takes, those
@@ -156,54 +153,78 @@ let memory_plan_rewrite ?(held_bufs = []) linear =
       let phase b = match arg b with Param p -> p.phase | _ -> 0 in
       let size b = phase b + (max_numel b * element_size b) in
       let rounded b = Helpers.round_up (size b) block_size in
-      let events =
-        List.stable_sort
-          (fun (t0, o0, _) (t1, o1, _) ->
-            match Int.compare t0 t1 with 0 -> Bool.compare o0 o1 | c -> c)
-          (List.map (fun b -> (Tbl.find first b, true, b)) bufs
-          @ List.map
-              (fun b -> (Tbl.find last b + 1, false, b))
-              bufs)
-      in
-      let total_memory = 2 * List.fold_left (fun n b -> n + rounded b) 0 bufs in
-      let lanes = ref [] in
-      let lane k =
-        match List.find_opt (fun (k', _) -> String.equal k k') !lanes with
-        | Some (_, l) -> l
-        | None ->
-            let l =
-              {
-                peak = 0;
-                tlsf = Tlsf.create ~block_size ~lv2_cnt:32 total_memory;
-              }
-            in
-            lanes := !lanes @ [ (k, l) ];
-            l
+      (* A lane's buffers are placed largest first, each in the smallest gap
+         that fits it between the buffers already placed whose lives meet its,
+         else above the highest of them: placed so, a lane often needs no more
+         than the bytes its buffers live at once, where placing each as its
+         life starts can leave a gap too small for a later one. The placed
+         buffers are kept sorted by offset, each inserted in its place, so a
+         lane of [b] buffers costs [O(b²)]. *)
+      let meets b b' =
+        Tbl.find first b <= Tbl.find last b'
+        && Tbl.find first b' <= Tbl.find last b
       in
       let offsets = Tbl.create 64 in
-      List.iter
-        (fun (_, is_open, b) ->
-          let l = lane (key b) in
-          if is_open then
-            match Tlsf.alloc l.tlsf (rounded b) with
-            | Some off -> Tbl.replace offsets b off
-            | None -> invalid_arg "the memory plan outgrew its arena"
-          else Tlsf.free l.tlsf (Tbl.find offsets b);
-          l.peak <- max l.peak (Tbl.find offsets b + size b))
-        events;
+      let place placed b =
+        let n = rounded b in
+        let around =
+          List.filter_map
+            (fun (o, b') -> if meets b b' then Some (o, rounded b') else None)
+            placed
+        in
+        let fit (best, top) (o, m) =
+          let gap = o - top in
+          let best =
+            match best with
+            | Some (_, g) when g <= gap -> best
+            | _ when gap >= n -> Some (top, gap)
+            | _ -> best
+          in
+          (best, max top (o + m))
+        in
+        let off =
+          match List.fold_left fit (None, 0) around with
+          | Some (o, _), _ -> o
+          | None, top -> top
+        in
+        Tbl.replace offsets b off;
+        let rec insert = function
+          | (o, _) :: _ as rest when off < o -> (off, b) :: rest
+          | p :: rest -> p :: insert rest
+          | [] -> [ (off, b) ]
+        in
+        insert placed
+      in
+      let lanes =
+        List.fold_left
+          (fun ks b -> if List.mem (key b) ks then ks else ks @ [ key b ])
+          [] bufs
+      in
+      let lanes =
+        List.map
+          (fun k ->
+            let mine = List.filter (fun b -> String.equal (key b) k) bufs in
+            let largest =
+              List.stable_sort
+                (fun a b -> Int.compare (rounded b) (rounded a))
+                mine
+            in
+            ignore (List.fold_left place [] largest);
+            let top b = Tbl.find offsets b + size b in
+            (k, List.fold_left (fun p b -> max p (top b)) 0 mine))
+          lanes
+      in
       (* Each buffer becomes a view of its lane's arena, at its offset. *)
       let arenas =
-        List.rev
-          (List.fold_left
-             (fun acc (d, l) ->
-               (l, new_buffer d (Helpers.round_up l.peak block_size) Dtype.Int8)
-               :: acc)
-             [] !lanes)
+        List.map
+          (fun (d, peak) ->
+            (d, new_buffer d (Helpers.round_up peak block_size) Dtype.Int8))
+          lanes
       in
       let replace_map =
         List.map
           (fun b ->
-            let arena = List.assq (lane (key b)) arenas in
+            let arena = List.assoc (key b) arenas in
             let off = Tbl.find offsets b + phase b in
             ( b,
               bitcast
@@ -217,8 +238,8 @@ let memory_plan_rewrite ?(held_bufs = []) linear =
         and nmem =
           mb
             (List.fold_left
-               (fun n (_, l) -> n + Helpers.round_up l.peak block_size)
-               0 !lanes)
+               (fun n (_, peak) -> n + Helpers.round_up peak block_size)
+               0 lanes)
         in
         if omem <> nmem then
           Printf.printf

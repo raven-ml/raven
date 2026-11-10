@@ -1704,11 +1704,11 @@ let kept ?beam () =
   && not (Setting.value Setting.check_oob)
   && not (Realize.collecting ())
 
-let compile ?beam ?search ~devices ~by_storage ~held_bufs ~inputs sink =
+let compile ?beam ?search ~devices ~held_bufs ~inputs sink =
   let targets name = target (devices name) in
   let make () =
     let linear, vars =
-      Schedule.create_linear_with_vars ~capturing:true ~by_storage sink
+      Schedule.create_linear_with_vars ~capturing:true sink
     in
     ( Jit.jit_lower ?beam ?search ~targets ~held_bufs ~inputs ~input_vars:vars
         linear,
@@ -1721,7 +1721,7 @@ let compile ?beam ?search ~devices ~by_storage ~held_bufs ~inputs sink =
       let positions l = List.map (fun u -> string_of_int (n.position u)) l in
       let key =
         String.concat "\n"
-          ([ source_digest; Jit.source_digest; n.key; string_of_bool by_storage ]
+          ([ source_digest; Jit.source_digest; n.key ]
           @ devices
           @ [
               String.concat " " (positions inputs);

@@ -268,15 +268,14 @@ val compile :
   ?beam:int ->
   ?search:(int -> Postrange.Scheduler.t -> Postrange.Scheduler.t) ->
   devices:(string -> Rig.t) ->
-  by_storage:bool ->
   held_bufs:Ops.t list ->
   inputs:Ops.t list ->
   Ops.t ->
   Ops.t * (string * int) list
-(** [compile ~beam ~search ~devices ~by_storage ~held_bufs ~inputs sink] is the
+(** [compile ~beam ~search ~devices ~held_bufs ~inputs sink] is the
     schedule {!link} takes: what {!Tolk.Jit.jit_lower} makes of [sink]'s
     schedule ({!Tolk.Schedule.create_linear_with_vars}
-    [~capturing:true ~by_storage]), and the variables of its capture, compiled
+    [~capturing:true]), and the variables of its capture, compiled
     for each device name's device. A later process that compiles an equal
     [sink], up to the numbers of its ranges and storage
     ({!Tolk.Schedule.numbered}), with the same inputs and held buffers in the

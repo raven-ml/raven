@@ -5889,53 +5889,72 @@ and an initial value is added after it (D260).
   several devices › programs` and `› maps over a cut axis › partials give
   eager's bits, their programs do not grow`, and `rune jit › fully sharded`.
 
-## D183. In a schedule made per run, ready kernels run by their number, those that free storage first
+## D183. Ready kernels run by their number, those that free storage first
 
 `Schedule.storage_order` keeps both parts.
 
-### In a schedule made per run, ready kernels run by their number, and one that frees storage first
+### Ready kernels run by their number, and one that frees storage first
 
 - **tinygrad:** `schedule/__init__.py` (`create_schedule`'s linearize:
   Kahn's algorithm over a FIFO `deque`, so ready kernels run in the order
   they became ready).
-- **tolk:** `Schedule.storage_order`, chosen by `create_schedule
-  ~by_storage` and `create_linear_with_vars ~by_storage`, and the storage
-  `Schedule.schedule` sees written; `Memory.taken`, the storage an entry
-  takes as the memory plan counts it; rune's `Compile.link`, which asks for
-  it for a schedule linked per run.
-- **Differs:** in a schedule whose storage is made at each run (D173), a ready
-  kernel runs by its number, the order the walk of the sink meets it, so a
-  value is consumed soon after it is made, as the program wrote it. A schedule
-  linked once, as rune links every program it does not split, keeps tinygrad's
-  order, and scheduling it costs what it did. A ready kernel that frees
-  storage, being the last to take storage an earlier kernel made, and that on
-  no device makes more than it frees, runs before the others. The storage a
-  kernel writes lives from the first kernel that takes it to the last; storage
-  only kernels read lives throughout. tinygrad runs every kernel whose inputs
-  are ready breadth first: a closing slices its whole partial into every piece
-  before any is copied or summed, and computes a partial gradient before the
-  last reader of the gathered weights. Picking costs one pass over each ready
-  kernel's storage, so a schedule of `k` kernels costs `O(k²)` at worst.
+- **tolk:** `Schedule.storage_order`, the one order of `create_schedule`
+  and `create_linear_with_vars`, and the storage `Schedule.schedule` sees
+  written; `Memory.taken`, the storage an entry takes as the memory plan
+  counts it.
+- **Differs:** a ready kernel runs by its number, its place in the order
+  `Ops.toposort` of the kernel graph meets it (each kernel after what it
+  reads), so where the walk reaches a value's readers right after it, the
+  value is made just before them. A ready kernel that frees storage, being the
+  last to take storage an earlier kernel made, and that on no device makes
+  more than it frees, runs before the others, bytes counted unrounded. The
+  storage a kernel writes lives from the first kernel that takes it to the
+  last; storage only kernels read lives throughout. Where the walk reaches
+  each of two independent chains whole, as from a sum of their results, each
+  runs to its end before the other begins; where the sink lists their parts
+  interleaved, the numbers interleave them too. The order is a postorder that
+  takes a node's sources in their order, and no promise of the least storage:
+  on a tree, Liu (SIAM J. Alg. Disc. Meth. 8(3), 1987, §3.3) shows the
+  postorder that takes subtrees by decreasing peak is the least, which tolk
+  does not sort for. tinygrad runs every kernel whose inputs are ready breadth
+  first: a closing slices its whole partial into every piece before any is
+  copied or summed, computes a partial gradient before the last reader of the
+  gathered weights, and starts every independent chain before any ends.
+  Picking costs one pass over each ready kernel's storage, so a schedule of
+  `k` kernels costs `O(k²)` at worst. Every schedule takes this order, linked
+  once or made per run.
 - **Reason:** (b): rune's fully sharded training (RFC 0005's memory bound),
-  whose split programs' storage is planned by each buffer's life (D173). With
-  the split assembly as storage and copies landing in place (D182), the
-  backward call of one layer at d = 512 held 2.625, 2.312 and 2.156 layers
-  beside its arguments over 2, 4 and 8 memory devices in tinygrad's order,
-  3.625, 3.312 and 3.156 by number alone, and 1.812, 1.531 and 1.391 in this
-  order, as much as with each buffer of its own, against the bound of 1.875,
-  1.562 and 1.406 (`rune jit › fully sharded`). The order interleaves
-  devices, so a data-parallel step over 16 memory devices makes 1411
-  `Submit` steps where tinygrad's makes 84; preferring, among each kind of
-  ready kernel, one on the last kernel's device made 1016, and raised four
-  of rune's five `fully sharded` cases over their bounds. Grouping a
-  device's work at link instead keeps the bounds but lengthens a
+  whose split programs' storage is planned by each buffer's life (D173).
+  With the split assembly as storage and copies landing in place (D182),
+  the backward call of one layer at d = 512 held 2.625, 2.312 and 2.156
+  layers beside its arguments over 2, 4 and 8 memory devices in tinygrad's
+  order, 3.625, 3.312 and 3.156 by number alone, and 1.812, 1.531 and
+  1.391 in this order, as much as with each buffer of its own, against the
+  bound of 1.875, 1.562 and 1.406 (`rune jit › fully sharded`). Ordering
+  ties by the kernel that became ready last instead makes every piece of a
+  gathered value before any is read, and holds 2,759,680 bytes against the
+  bound of 2,293,760 over two devices. And rune's compiled gradients on one
+  device, with the placement of D477: on the host, k independent chains of
+  4 remat'd blocks held 491,632, 884,848 and 1,671,280 bytes for k = 1, 2
+  and 4 in tinygrad's order and hold 458,864, 491,632 and 557,168; their
+  plain gradients 2,228,336 and 4,391,024 for k = 2 and 4, and 1,441,904
+  and 2,031,728; 8 remat'd blocks 622,704 and 589,936. The order
+  interleaves devices, so a data-parallel step over 16 memory devices
+  makes 1411 `Submit` steps where tinygrad's makes 84; preferring, among
+  each kind of ready kernel, one on the last kernel's device made 1016, and
+  raised four of rune's five `fully sharded` cases over their bounds.
+  Grouping a device's work at link instead keeps the bounds but lengthens a
   GPU-faithful critical path 8 times under rig's one point per submission.
+  On a GPU, the launches of one device's work the order groups are
+  unmeasured on fudge.
 - **Pinned by:** the Schedule suite (`test/schedule/schedule`):
-  `create_schedule › order by storage › a kernel that frees storage runs
-  before one that only makes it`, `› pieces of one value are each read
-  before the next is made` and `› without it, ready kernels run as they
-  become ready`; rune's `fully sharded` tests. Any other schedule keeps
-  tinygrad's order, as every recorded schedule does.
+  `create_schedule › order › a kernel that frees storage runs before one
+  that only makes it`, `› pieces of one value are each read before the
+  next is made` and `› chains the walk reaches whole run one after the
+  other`; rune's `fully sharded` tests and `rune remat › memory ›
+  independent chains are computed one at a time`. The
+  recorded schedules whose order differs carry this entry in their
+  `.tolk`.
 
 ### A ready kernel that only frees runs before one that also makes storage (D185)
 
@@ -8778,8 +8797,8 @@ reason and its pins.
   shared across members, as fused kernels did, since `Schedule.schedule` keeps
   each kernel's own compute shared by D137 before kernels exist.
 
-  A schedule ordered by its storage (`by_storage`, a program over several
-  devices) and a program made per run are launches of what they make: storage
+  A schedule, ordered by its storage (D183), and a program made per run are
+  launches of what they make: storage
   is live only from a member's first use, so a piece's store waits for the
   value it reads and no launch of them holds every piece's value at once.
 
@@ -9830,3 +9849,41 @@ kept in ordered sets, change no source and belong to D466.
   gradient plans each trip`, and, for the precondition, rune's scan law
   `compiled › carries through nested loops, branches and scatters`, which
   compiles drawn loops against eager.
+
+## D477. Buffers are placed largest first, each in the smallest gap that holds it
+
+- **tinygrad:** `schedule/memory.py` (`memory_plan_rewrite`: a
+  `TLSFAllocator` per lane allocates each buffer as its life starts and
+  frees it as its life ends); `runtime/support/memory.py`
+  (`TLSFAllocator`).
+- **tolk:** `Memory.memory_plan_rewrite`; tolk has no TLSF allocator.
+- **Differs:** a lane's buffers are placed largest first, ties in the
+  order they first appear, each at the start of the smallest gap that
+  holds it between the buffers already placed whose lives meet its, else
+  past the last byte of those (Pisarchyk and Lee, "Efficient Memory
+  Management for Deep Neural Net Inference", 2020, §5.2, Greedy by Size
+  for Offset Calculation). The lifetimes, rounding, lanes and arenas are
+  tinygrad's (D41, D476). Placing each buffer as its life starts can leave
+  a gap below a long-lived buffer too small for a later, larger one, and
+  the arena then exceeds the bytes live at once. Placing costs `O(b²)` for
+  `b` buffers of a lane.
+- **Reason:** (b): rune's compiled gradients of remat'd blocks, with the
+  order of D183. On the host, the gradient of a chain of 8 remat'd blocks
+  (batch 256, width 32, hidden 256) takes 557,056 bytes live at once; the
+  TLSF placed them in an arena of 786,432, and this placement in 557,056
+  (589,936 bytes allocated against 819,312, over the 655,360 that `rune
+  remat › memory › a chain's backward pass computes one block at a time`
+  allows). Over the 31 recorded tinygrad schedules no arena is larger than
+  tinygrad's and 8 are smaller, by the sum of each schedule's arenas. On
+  random schedules it is no promise: of 1,000 (60 buffers, 40 calls),
+  greedy reached the bytes live at once on 737 and TLSF on 12, and greedy
+  was larger on 15, by up to 20.6%. Placing keeps the placed buffers
+  sorted by offset, inserting each, as Algorithm 3 does: `O(b²)` for `b`
+  buffers of a lane, 1.09 s for 8,114.
+- **Pinned by:** the Memory suite (`test/schedule/memory`):
+  `memory_plan_rewrite › rules › buffers are placed largest first`; rune's
+  `rune remat › memory › a chain's backward pass computes one block at a
+  time`; the
+  laws (`› laws`), that buffers whose lives meet share no byte and that
+  each recorded plan's arena is at most tinygrad's; the recorded plans
+  whose places differ carry this entry in their `.tolk`.

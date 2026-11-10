@@ -527,18 +527,12 @@ let peak big linear =
   List.fold_left max 0 (List.init (Array.length entries) live)
 
 (* A launch never makes storage live longer than the schedule's order does:
-   ordered by storage, each value is made and freed in turn, one at a time,
-   however the stores could run together; in the schedule's own order the
-   values are made first, and their stores run as one launch. *)
+   each value is made and freed in turn, one at a time, however the stores
+   could run together. *)
 let storage_order_holds () =
   let big = made_first () in
-  let scheduled ~by_storage =
-    fst (Schedule.create_linear_with_vars ~capturing:true ~by_storage big)
-  in
-  equal int ~msg:"values live at once, ordered by storage" 1
-    (peak big (scheduled ~by_storage:true));
-  equal int ~msg:"launches in the schedule's order" 1
-    (List.length (launches (scheduled ~by_storage:false)))
+  let linear = fst (Schedule.create_linear_with_vars ~capturing:true big) in
+  equal int ~msg:"values live at once" 1 (peak big linear)
 
 (* The launch of [sixteen kind Float32]'s program on the host, split for a
    renderer with [f]'s limits, as lengths of the launches it becomes. *)

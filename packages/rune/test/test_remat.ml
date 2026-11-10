@@ -276,6 +276,40 @@ let at_most ~msg loss blocks =
    computes. *)
 let test_compiled () = at_most ~msg:"a chain" (chain ~from:Nx.sin) layers
 
+(* Its backward pass computes one block again at a time, so it holds one
+   block's pre-activation beside the blocks' arguments and four rows. *)
+let test_one_block () =
+  let one = ((layers + 4) * row) + (4 * batch * hidden) in
+  let recomputed = held (chain ~from:Nx.sin) true in
+  less
+    ~msg:(Printf.sprintf "%d bytes under remats" recomputed)
+    int ~than:one recomputed
+
+(* Independent chains of remat'd blocks, summed: the backward pass finishes
+   one chain before it starts the next, so [k] chains hold what one does and
+   a row for each other chain's cotangent. *)
+let test_chains () =
+  let blocks = 4 in
+  let chains k remat ws a =
+    List.fold_left
+      (fun s c ->
+        let from a = Nx.sin (Nx.add_s a (Float.of_int c)) in
+        let a =
+          List.fold_left
+            (fun a i ->
+              let b = block (layer ws ((c * blocks) + i)) in
+              if remat then rm b a else b a)
+            (from a)
+            (List.init blocks Fun.id)
+        in
+        Nx.add s (Nx.sum a))
+      (Nx.scalar f32 0.) (List.init k Fun.id)
+  in
+  let one = held (chains 1) true and two = held (chains 2) true in
+  less
+    ~msg:(Printf.sprintf "%d bytes for two chains, %d for one" two one)
+    int ~than:(one + row + 1) two
+
 (* The first block's argument is the program's: it costs nothing to keep, so
    the chain holds no more than the one from its sine. *)
 let test_argument () =
@@ -492,6 +526,9 @@ let () =
              test "a checkpointed step" test_scan_residuals;
              test "a compiled gradient keeps the blocks' arguments alone"
                test_compiled;
+             test "a chain's backward pass computes one block at a time"
+               test_one_block;
+             test "independent chains are computed one at a time" test_chains;
              test "a block over the program's argument keeps it alone"
                test_argument;
              test "blocks over the argument keep nothing they compute"

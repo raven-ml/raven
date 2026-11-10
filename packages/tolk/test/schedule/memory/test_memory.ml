@@ -82,6 +82,23 @@ let recorded =
              numbered_as (Golden.sink file) (schedule name) (plan name)))
        cases)
 
+(* Each recorded schedule's arenas take no more bytes, summed, than
+   tinygrad's plan of it: the placement of D477 against its TLSF. *)
+let no_larger =
+  group "memory_plan_rewrite › arenas no larger than tinygrad's"
+    (List.map
+       (fun name ->
+         test name (fun () ->
+             let linear = schedule name in
+             let bytes u =
+               List.fold_left
+                 (fun n a -> n + Shape.max_numel a)
+                 0 (arenas linear u)
+             in
+             let upstream = Golden.upstream (name ^ "_planned.golden") in
+             at_most int ~than:(bytes upstream) (bytes (plan name))))
+       cases)
+
 let chomp s =
   if String.ends_with ~suffix:"\n" s then String.sub s 0 (String.length s - 1)
   else s
@@ -227,6 +244,20 @@ let rules =
             (List.for_all (fun s -> not (List.mem s first)) second));
       test "a schedule on a disk is itself" (fun () ->
           equal uop (schedule "disk") (plan "disk"));
+      (* [x] lives over the first two calls, [y] over the last two, [z] over
+         the last. Placed as each life starts, [z] would find only [x]'s 256
+         bytes free below [y]; placed largest first, [x] takes bytes that [z],
+         whose life it does not meet, takes too, and the arena is the 1280
+         bytes [y] and [z] take at once. *)
+      test "buffers are placed largest first" (fun () ->
+          let x = buf 256 and y = buf 512 and z = buf 768 in
+          let call args = Ops.call (Ops.sink args) args in
+          let linear =
+            Ops.v Linear ~src:[ call [ x ]; call [ x; y ]; call [ y; z ] ]
+          in
+          equal (list int) [ 1280 ]
+            (List.map Shape.max_numel
+               (arenas linear (Memory.memory_plan_rewrite linear))));
       test "a copy's buffer is free from the call after its last" (fun () ->
           let held = buf 256 and c1 = buf 256 and c2 = buf 256 in
           let linear =
@@ -567,4 +598,6 @@ let laws =
     [ prop "a plan places live buffers apart, each at its bytes" drawn plans ]
 
 let () =
-  exit (run "Tolk.Memory" [ recorded; printouts; taken; loops; rules; laws ])
+  exit
+    (run "Tolk.Memory"
+       [ recorded; no_larger; printouts; taken; loops; rules; laws ])

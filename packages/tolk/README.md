@@ -49,7 +49,6 @@ The modules not named after their file:
 | `codegen/opt/__init__.py` | `lib/codegen/opt/opt.ml` | `Opt` |
 | `renderer/__init__.py` | `lib/renderer/renderer.ml` | `Renderer` |
 | `schedule/__init__.py` | `lib/schedule/schedule.ml` | `Schedule` |
-| `runtime/support/memory.py` (its `TLSFAllocator`) | `lib/runtime/support/support_memory.ml` | `Support_memory` (`schedule/memory.py`) |
 | `runtime/ops_metal.py`, its `MetalCompiler` | `lib/runtime/support/compiler_metal.ml` | `Compiler_metal` (DIVERGENCES D4) |
 
 The mixins have no files: the methods `UOp` keeps from `mixin/*.py` are
@@ -77,7 +76,7 @@ is scope, not a divergence: the part left out is listed here, and
 | `tqdm`, `fetch` and `fetch_fw` in `helpers.py` | progress bars and downloads belong to the programs and packages that need them. |
 | The profile events of `helpers.py` and `device.py` | rig's `Profile` records them. |
 | The runtime: drivers, allocators, `Program`, memory, ELF loading, each `runtime/ops_*.py` but `MetalCompiler`, with the AMD and NV definitions in `runtime/autogen/*` that `ops_amd.py` and `ops_nv.py` encode, and `runtime/support/elf.py` | rig owns it, and `tolk.engine` drives it (see D3, D146). |
-| `runtime/support/memory.py` but its `TLSFAllocator`: `MMIOInterface`, `BumpAllocator`, `AddrSpace`, `VirtMapping`, `PageTableTraverseContext`, `MemoryManager` | they map and allocate device memory, which is rig's (see D3). The TLSF stays, as `Support_memory.Tlsf_allocator`, since the memory planner places buffers with it. |
+| `runtime/support/memory.py`: `TLSFAllocator`, `MMIOInterface`, `BumpAllocator`, `AddrSpace`, `VirtMapping`, `PageTableTraverseContext`, `MemoryManager` | they map and allocate device memory, which is rig's (see D3); the memory planner places its buffers without an allocator (D477). |
 | `renderer/{ptx,llvmir,nir,wgsl}.py` | no raven target renders with them by default. |
 | `pm_validate_wmma_rdna3`, `pm_validate_wmma_rdna4` and `pm_validate_wmma_cdna` in `renderer/tc.py` | only `renderer/llvmir.py`, excluded above, applies them. |
 | A node as the shift count of `shl` and `shr` in `codegen/decomp/transcendental.py` | every caller shifts by a number. |

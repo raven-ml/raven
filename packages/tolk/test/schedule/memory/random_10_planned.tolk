@@ -1,0 +1,49 @@
+# tolk D477 golden=d3e9ca2d9b9c21255c8a0ece2e815d55
+0 Ops.CONST dtypes.weakint [] 4096
+1 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 256
+3 Ops.BUFFER dtypes.f32 [2] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+4 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+5 Ops.CONST dtypes.weakint [] 255
+6 Ops.BUFFER dtypes.f32 [5] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
+7 Ops.SINK dtypes.void [1, 3, 4, 6]
+8 Ops.CONST dtypes.weakint [] 4868096
+9 Ops.BUFFER dtypes.i8 [8] ParamArg(slot=11, dtype=dtypes.i8, device="CPU")
+10 Ops.CONST dtypes.weakint [] 4851712
+11 Ops.CONST dtypes.weakint [] 16384
+12 Ops.SHRINK dtypes.i8 [9, 10, 11]
+13 Ops.BITCAST dtypes.f32 [12] dtypes.f32
+14 Ops.CONST dtypes.weakint [] 1024
+15 Ops.SHRINK dtypes.i8 [9, 11, 14]
+16 Ops.BITCAST dtypes.f32 [15] dtypes.f32
+17 Ops.CONST dtypes.weakint [] 0
+18 Ops.SHRINK dtypes.i8 [9, 17, 11]
+19 Ops.BITCAST dtypes.f32 [18] dtypes.f32
+20 Ops.CONST dtypes.weakint [] 17408
+21 Ops.CONST dtypes.weakint [] 1020
+22 Ops.SHRINK dtypes.i8 [9, 20, 21]
+23 Ops.BITCAST dtypes.f32 [22] dtypes.f32
+24 Ops.CALL dtypes.void [7, 13, 16, 19, 23] CallInfo()
+25 Ops.CONST dtypes.weakint [] 3688033
+26 Ops.BUFFER dtypes.i8 [25] ParamArg(slot=4, dtype=dtypes.i8, device="CPU")
+27 Ops.CONST dtypes.weakint [] 257
+28 Ops.BUFFER dtypes.i8 [27] ParamArg(slot=5, dtype=dtypes.i8, device="CPU")
+29 Ops.CONST dtypes.weakint [] 1163410
+30 Ops.BUFFER dtypes.i8 [29] ParamArg(slot=6, dtype=dtypes.i8, device="CPU")
+31 Ops.SINK dtypes.void [1, 26, 28, 30]
+32 Ops.SHRINK dtypes.i8 [9, 17, 25]
+33 Ops.CONST dtypes.weakint [] 3688192
+34 Ops.SHRINK dtypes.i8 [9, 33, 29]
+35 Ops.CALL dtypes.void [31, 13, 32, 28, 34] CallInfo()
+36 Ops.BUFFER dtypes.i8 [2] ParamArg(slot=7, dtype=dtypes.i8, device="CPU")
+37 Ops.BUFFER dtypes.i8 [0] ParamArg(slot=8, dtype=dtypes.i8, device="CPU")
+38 Ops.BUFFER dtypes.i8 [2] ParamArg(slot=9, dtype=dtypes.i8, device="CPU")
+39 Ops.BUFFER dtypes.i8 [2] ParamArg(slot=10, dtype=dtypes.i8, device="CPU")
+40 Ops.SINK dtypes.void [36, 37, 38, 39]
+41 Ops.SHRINK dtypes.i8 [9, 0, 2]
+42 Ops.SHRINK dtypes.i8 [9, 17, 0]
+43 Ops.CONST dtypes.weakint [] 4352
+44 Ops.SHRINK dtypes.i8 [9, 43, 2]
+45 Ops.CALL dtypes.void [40, 41, 42, 44, 39] CallInfo()
+46 Ops.LINEAR dtypes.void [24, 35, 45]
+

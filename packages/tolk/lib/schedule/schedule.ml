@@ -343,40 +343,20 @@ module Iset = Set.Make (Int)
 exception Cycle
 
 (* The kernels in an order of the graph [children], [in_degree] counting the
-   kernels each waits for: each as it becomes ready. *)
-let ready_order ~entry ~children in_degree =
-  let queue = Queue.create () in
-  List.iter
-    (fun (k, d) -> if d = 0 then Queue.push k queue)
-    (Ordered.bindings in_degree);
-  let linearized = ref [] in
-  while not (Queue.is_empty queue) do
-    let rk = Queue.pop queue in
-    linearized := entry rk :: !linearized;
-    List.iter
-      (fun x ->
-        let d = Option.get (Ordered.find_opt in_degree x) - 1 in
-        Ordered.replace in_degree x d;
-        if d = 0 then Queue.push x queue)
-      (List.rev (Option.value (Tbl.find_opt children rk) ~default:[]))
-  done;
-  if List.exists (fun (_, d) -> d <> 0) (Ordered.bindings in_degree) then
-    raise Cycle;
-  v Op.Linear ~src:(List.rev !linearized)
-
-(* The kernels in an order of the graph [children], [in_degree] counting the
    kernels each waits for and numbering them in the order the walk of the sink
-   meets them.
+   meets them, the toposort that numbers a kernel after the kernels whose
+   storage it reads.
 
-   A ready kernel runs by its number, so that a value is consumed soon after it
-   is made, as the program wrote it, and one that frees storage and on no device
-   makes more than it frees runs before it. The storage a kernel writes,
-   [written], lives from the first kernel that takes it to the last
-   ({!Memory.taken}); other storage, which only kernels read, lives throughout.
-   So a closing that slices a partial for each device sums each slice before it
-   makes the next, and the last reader of a gathered value runs before the
-   kernels that make more. A pick walks the ready kernels: [O(k²)] for [k]
-   kernels at worst. *)
+   Of the ready kernels, the first by number that frees storage and makes none
+   runs; else the first that frees storage and on no device makes more than it
+   frees, bytes counted unrounded; else the first by number. The storage a
+   kernel writes, [written], lives from the first kernel that takes it to the
+   last ({!Memory.taken}); other storage, which only kernels read, lives
+   throughout. So where the walk reaches a value's readers right after it, the
+   value is made just before them, a closing that slices a partial for each
+   device sums each slice before it makes the next, and the last reader of a
+   gathered value runs before the kernels that make more. A pick walks the
+   ready kernels: [O(k²)] for [k] kernels at worst. *)
 let storage_order ~entry ~written ~children in_degree =
   let kernels = Array.of_list (List.map fst (Ordered.bindings in_degree)) in
   let count = Array.length kernels in
@@ -456,17 +436,15 @@ let storage_order ~entry ~written ~children in_degree =
     raise Cycle;
   v Op.Linear ~src:(List.rev !linearized)
 
-let linearize ~entry ~by_storage ~children sched_sink in_degree =
-  if not by_storage then ready_order ~entry ~children in_degree
-  else
-    (* The storage the kernels write. *)
-    let written = Tbl.create 16 in
-    List.iter
-      (fun u ->
-        if op u = Op.After && not (is_join u) then
-          Tbl.replace written (buf_uop u) ())
-      (toposort ~calls:Skip ~gate:in_graph sched_sink);
-    storage_order ~entry ~written ~children in_degree
+let linearize ~entry ~children sched_sink in_degree =
+  (* The storage the kernels write. *)
+  let written = Tbl.create 16 in
+  List.iter
+    (fun u ->
+      if op u = Op.After && not (is_join u) then
+        Tbl.replace written (buf_uop u) ())
+    (toposort ~calls:Skip ~gate:in_graph sched_sink);
+  storage_order ~entry ~written ~children in_degree
 
 (* A read that a write over its state must follow: the kernel [reader] reads
    [state]. *)
@@ -670,11 +648,11 @@ let copy_off_start_reads nodes sink =
       | [] -> None
       | hazards -> Some (copy_before_overwrites sink hazards)
 
-let rec schedule ~by_storage ~copies sched_sink =
+let rec schedule ~copies sched_sink =
   let nodes = toposort ~calls:Skip ~gate:in_graph sched_sink in
   match if copies then copy_off_start_reads nodes sched_sink else None with
-  | Some sink -> schedule ~by_storage ~copies sink
-  | None -> kernels ~by_storage ~copies nodes sched_sink
+  | Some sink -> schedule ~copies sink
+  | None -> kernels ~copies nodes sched_sink
 
 (* The relation over chains
 
@@ -687,7 +665,7 @@ let rec schedule ~by_storage ~copies sched_sink =
    argument while writing over it through another reads it as it was: a
    cycle of one kernel. Where these orders form a cycle, one read on it reads
    a copy. *)
-and kernels ~by_storage ~copies nodes sched_sink =
+and kernels ~copies nodes sched_sink =
   let children = Tbl.create 64 and in_degree = Ordered.create () in
   let edges = ref [] in
   let add_child ?war t k =
@@ -812,7 +790,7 @@ and kernels ~by_storage ~copies nodes sched_sink =
     (List.rev !reads);
   let order = List.rev in_degree.Ordered.keys in
   let entry = tagged nodes in
-  match linearize ~entry ~by_storage ~children sched_sink in_degree with
+  match linearize ~entry ~children sched_sink in_degree with
   | linear -> linear
   | exception Cycle -> (
       match cuts ~copies ~order (List.rev !edges) with
@@ -823,12 +801,11 @@ and kernels ~by_storage ~copies nodes sched_sink =
             | Some ks -> List.memq w.reader ks
             | None -> false
           in
-          schedule ~by_storage ~copies:false
+          schedule ~copies:false
             (copy_before_overwrites sched_sink
                (List.map (fun w -> (w.reader, w.state, overwrites w)) cut)))
 
-let create_schedule ?(by_storage = false) sched_sink =
-  schedule ~by_storage ~copies:true sched_sink
+let create_schedule sched_sink = schedule ~copies:true sched_sink
 
 (* A linear in a linear is inlined into it. Disjoint writes are numbered per
    schedule ({!tagged}), so each inlined linear's calls move past the numbers
@@ -1060,9 +1037,9 @@ type numbering = {
    ([in_order]), every setting and variable that shapes what compilation makes
    ([Setting.shaping]), and the digest of this library's sources, of which a
    schedule is a function. *)
-let schedule_key ~by_storage fn_key =
+let schedule_key fn_key =
   String.concat "\n"
-    ([ Source_digest.digest; fn_key; string_of_bool by_storage ]
+    ([ Source_digest.digest; fn_key ]
     @ List.map (fun (k, v) -> k ^ "=" ^ v) (Setting.shaping ()))
 
 (* [fn]'s numbering by its own order ({!numbering}): [fn] with its placeholders
@@ -1098,7 +1075,7 @@ let numbered fn =
     position = (fun u -> Option.value ~default:(-1) (Tbl.find_opt rank u));
   }
 
-let lower_sink_to_linear ~by_storage call =
+let lower_sink_to_linear call =
   let fn = body call in
   let precompile = match arg call with Call c -> c.precompile | _ -> false in
   match (op fn, arg fn) with
@@ -1107,7 +1084,7 @@ let lower_sink_to_linear ~by_storage call =
       let start = Unix.gettimeofday () in
       let numbering = numbered fn in
       let cache_key =
-        Digest.BLAKE256.string (schedule_key ~by_storage numbering.key)
+        Digest.BLAKE256.string (schedule_key numbering.key)
       in
       (* Whether neither memory nor disk had the schedule. *)
       let made = ref false in
@@ -1119,7 +1096,7 @@ let lower_sink_to_linear ~by_storage call =
           ignore (Prepare.sequence fn);
           Spec.type_verify ~calls:Skip Spec.tensor fn);
         numbering.place
-          (schedule ~by_storage ~copies:true
+          (schedule ~copies:true
              (Rangeify.get_kernel_graph (Prepare.prepare_rangeify fn)))
       in
       let read_or_make () =
@@ -1147,8 +1124,8 @@ let lower_sink_to_linear ~by_storage call =
 let pm_schedule =
   Pattern_matcher.v
     (fun () -> [
-      rule_ctx (Upat.op Op.Call ~name:"call") (fun by_storage m ->
-          lower_sink_to_linear ~by_storage (m "call"));
+      rule_ctx (Upat.op Op.Call ~name:"call") (fun () m ->
+          lower_sink_to_linear (m "call"));
     ])
 
 (* Copies *)
@@ -2139,13 +2116,12 @@ let launches ~held linear =
 
 (* Schedules *)
 
-let create_linear_with_vars ?(capturing = false) ?(by_storage = false) big_sink
-    =
+let create_linear_with_vars ?(capturing = false) big_sink =
   let several = bound_several big_sink in
   let big_sink = transform_to_call (Prepare.sequence big_sink) in
   (* The call's sources are the values to realize. *)
   let linear_call =
-    graph_rewrite ~calls:Enter ~pass:Fixed_point ~ctx:by_storage big_sink
+    graph_rewrite ~calls:Enter ~pass:Fixed_point ~ctx:() big_sink
       (After_sources pm_schedule)
   in
   (* The linear call is resolved recursively, and its storage allocated. *)
