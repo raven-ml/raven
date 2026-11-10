@@ -128,5 +128,11 @@ An item leaves when its library fixes it, or when a design decides it stays.
 - `bench/` cannot meet the 2-minute rule for a package's suite: its shapes
   are the point. Undecided: an exemption for `dev/`, a short default run
   with the full run behind an explicit command, or an alias of its own.
+- nx's CUDA suites hold only dune's workspace lock, not the machine's GPU
+  lock (`AGENTS.local.md`'s `~/wt/nx-cuda-GPU.lock`), so `dune build
+  @packages/nx/runtest` can use the GPU while another run holds it. A
+  machine rule that a suite cannot follow is a gap between the two: either
+  the GPU suites take the lock themselves, or the rule says how a runtest
+  that reaches the GPU is wrapped (found by the remat track).
 - A dune rule cannot pass the device choice through the passive build
   server, so a run on a chosen device runs the executable by hand.
