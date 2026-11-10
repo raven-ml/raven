@@ -1,0 +1,7 @@
+; jord: arrays placed on the Earth. Never published. Jsont is the type of
+; Geojson's input, as it is brot's and kaun.hf's.
+
+(library
+ (name jord)
+ (private_modules wkt points)
+ (libraries nx jsont))
