@@ -90,12 +90,12 @@ An item leaves when its library fixes it, or when a design decides it stays.
 ## tolk
 
 - tolk compiles reductions that read the same operand over the same axes
-  as separate kernels: compiled `Nx.layer_norm` reads its input five times
+  as separate kernels: compiled `Nx.standardize` reads its input five times
   (Max for the overflow rescue, Σx, Σd, Σd², then the map) where nx.cpu reads
   it three times, and `rms_norm` three. Fusing such reductions would cut
-  layer_norm to three reads and let a fixed-scale accumulation (Blue's, as
+  standardize to three reads and let a fixed-scale accumulation (Blue's, as
   LAPACK's dnrm2.f90 after Anderson, ACM TOMS 2017) drop the Max pass from
-  layer_norm, rms_norm, var and std together. GPU wall time unmeasured
+  standardize, rms_norm, var and std together. GPU wall time unmeasured
   (found by the layer-norm review).
 - TF32 is reached from user code as a compiler setting
   (`Tolk.Setting.context [B (allow_tf32, true)]`), NVIDIA only, and silently
