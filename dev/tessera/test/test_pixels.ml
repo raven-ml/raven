@@ -98,4 +98,94 @@ let tiles =
                   Pixels.of_tile dir)));
     ]
 
-let () = exit (run "tessera.pixels" [ tiles ])
+(* Corpora *)
+
+let rm_rf dir =
+  let rec go d =
+    Array.iter
+      (fun n ->
+        let f = Filename.concat d n in
+        if Sys.is_directory f then go f else Sys.remove f)
+      (Sys.readdir d);
+    Sys.rmdir d
+  in
+  if Sys.file_exists dir then go dir
+
+let with_dir f =
+  let dir = Filename.temp_dir "tessera" "corpus" in
+  Fun.protect ~finally:(fun () -> rm_rf dir) (fun () -> f dir)
+
+let pixel_rows px = List.combine (rows px.Pixels.s2) (rows px.Pixels.s1)
+
+let round_trip =
+  prop "a saved corpus loads as its pixels" ~count:20 (Synth.spec ~long:true ())
+    (fun spec ->
+      let px = Synth.pixels spec in
+      let n = Pixels.length px in
+      let pos = n / 3 in
+      let part = Pixels.sub px ~pos ~len:(n - pos) in
+      cover "a part that starts past its values' first row" (pos > 0);
+      with_dir (fun dir ->
+          let d = Filename.concat dir "c" in
+          Pixels.save d part;
+          let back = Pixels.load d in
+          equal
+            (list (pair (list (list int)) (list (list int))))
+            (pixel_rows part) (pixel_rows back)))
+
+let shuffled =
+  prop "a shuffle puts pixel j at position permute j" ~count:40
+    Gen.(
+      triple (Synth.spec ()) (Synth.spec ())
+        (frequency
+           [
+             (1, int_range 1 21); (1, int_range 22 100); (1, int_range 101 200);
+           ]))
+    (fun (a, b, bytes) ->
+      let pa = Synth.pixels a and pb = Synth.pixels b in
+      with_dir (fun dir ->
+          let part name px =
+            let d = Filename.concat dir name in
+            Pixels.save d px;
+            d
+          in
+          let parts = [ part "a" pa; part "b" pb ] in
+          let out = Filename.concat dir "out" in
+          let key = Nx.Rng.key 3 in
+          let n = Pixels.shuffle ~key ~bytes out parts in
+          equal int (Pixels.length pa + Pixels.length pb) n;
+          let all = Array.of_list (pixel_rows pa @ pixel_rows pb) in
+          let dest =
+            Nx.to_array (Nx.Rng.permute ~key ~n (Nx.arange Nx.int64 0 n 1))
+          in
+          let expected = Array.make n ([], []) in
+          Array.iteri (fun j q -> expected.(Int64.to_int q) <- all.(j)) dest;
+          cover "runs of several pixels" (bytes > 100);
+          cover "a pixel larger than a run" (bytes < 22);
+          equal
+            (list (pair (list (list int)) (list (list int))))
+            (Array.to_list expected)
+            (pixel_rows (Pixels.load out))))
+
+let corpora =
+  group "corpora"
+    [
+      round_trip;
+      shuffled;
+      test "refuses a run of no byte" (fun () ->
+          raises
+            (Invalid_argument "Tessera.Pixels.shuffle: bytes is not positive")
+            (fun () -> Pixels.shuffle ~key:(Nx.Rng.key 0) ~bytes:0 "x" []));
+      test "refuses a corpus of other cells" (fun () ->
+          with_dir (fun dir ->
+              Nx_io.save_npy
+                (Filename.concat dir "s2.npy")
+                (Nx.zeros Nx.uint16 [| 2; 3 |]);
+              Nx_io.save_npy
+                (Filename.concat dir "s2_offsets.npy")
+                (Nx.zeros Nx.int64 [| 1 |]);
+              raises_match (Exn.invalid_arg ~sub:"s2.npy") (fun () ->
+                  Pixels.load dir)));
+    ]
+
+let () = exit (run "tessera.pixels" [ tiles; corpora ])

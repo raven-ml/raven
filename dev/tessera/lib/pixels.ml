@@ -170,3 +170,168 @@ let of_tile dir =
       [ ("sar_ascending", 0); ("sar_descending", 1) ]
   in
   ({ s2 = s2 ~t ~n bands mask days; s1 = s1 ~n orbits }, (h, w))
+
+(* Corpora *)
+
+let sub px ~pos ~len =
+  {
+    s2 = Nx_ragged.sub px.s2 ~offset:pos ~length:len;
+    s1 = Nx_ragged.sub px.s1 ~offset:pos ~length:len;
+  }
+
+let file dir sensor = Filename.concat dir (sensor ^ ".npy")
+let offsets_file dir sensor = Filename.concat dir (sensor ^ "_offsets.npy")
+
+(* A sensor's rows from offset [0]: its values from the first offset to the
+   last, and the offsets less the first. *)
+let rebase (type s) (r : (int, s, Nx.host) Nx_ragged.t) =
+  let o = Nx_ragged.offsets r in
+  let n = Nx_ragged.length r in
+  let lo = Nx.item [ 0 ] o and hi = Nx.item [ n ] o in
+  ( Nx.slice [ Nx.R (Int64.to_int lo, Int64.to_int hi) ] (Nx_ragged.values r),
+    Nx.sub_s o lo )
+
+let save dir px =
+  if not (Sys.file_exists dir) then Sys.mkdir dir 0o755;
+  let one name r =
+    let v, o = rebase r in
+    Nx_io.save_npy (file dir name) v;
+    Nx_io.save_npy (offsets_file dir name) o
+  in
+  one "s2" px.s2;
+  one "s1" px.s1
+
+let load dir =
+  let get name dt cells =
+    let fail file m = invalid_arg ("Tessera.Pixels.load: " ^ file ^ ": " ^ m) in
+    let read file dt =
+      match Nx.unpack dt (Nx_io.load_npy file) with
+      | x -> x
+      | exception (Invalid_argument m | Failure m) -> fail file m
+    in
+    let v = read (file dir name) dt in
+    let o = read (offsets_file dir name) Nx.int64 in
+    if Nx.ndim v <> 2 || Nx.dim 1 v <> cells then
+      fail (file dir name) (Printf.sprintf "cells of %d values expected" cells);
+    Nx_ragged.v ~offsets:o v
+  in
+  let s2 = get "s2" Nx.uint16 (s2_bands + 1) in
+  let s1 = get "s1" Nx.int16 (s1_bands + 2) in
+  if Nx_ragged.length s2 <> Nx_ragged.length s1 then
+    invalid_arg
+      ("Tessera.Pixels.load: " ^ dir ^ ": sensors of different lengths");
+  { s2; s1 }
+
+(* Shuffling *)
+
+(* One sensor of a [t] and its values' dtype. *)
+type 's t_sensor = {
+  get : Nx.host t -> (int, 's, Nx.host) Nx_ragged.t;
+  dtype : (int, 's) Nx.dtype;
+}
+
+(* Bytes of a Sentinel-2 and a Sentinel-1 observation. *)
+let s2_bytes = 2 * (s2_bands + 1)
+let s1_bytes = 2 * (s1_bands + 2)
+
+(* A host copy of [x]'s elements. *)
+let copy x =
+  Flat.read x (fun b ->
+      let c =
+        Bigarray.Array1.create (Bigarray.Array1.kind b) Bigarray.c_layout
+          (Bigarray.Array1.dim b)
+      in
+      Bigarray.Array1.blit b c;
+      c)
+
+let lengths r = copy (Nx_ragged.lengths r)
+
+let shuffle ~key ~bytes dir parts =
+  if bytes <= 0 then invalid_arg "Tessera.Pixels.shuffle: bytes is not positive";
+  let parts = Array.of_list (List.map load parts) in
+  let l2 = Array.map (fun p -> lengths p.s2) parts in
+  let l1 = Array.map (fun p -> lengths p.s1) parts in
+  let n = Array.fold_left (fun a p -> a + length p) 0 parts in
+  (* Pixel [j] of the concatenation goes to position [dest j]; position [q]
+     holds the part's pixel [src_part.(q)], [src_row.(q)]. *)
+  let dest =
+    if n = 0 then Bigarray.Array1.create Bigarray.int64 Bigarray.c_layout 0
+    else copy (Nx.Rng.permute ~key ~n (Nx.arange Nx.int64 0 n 1))
+  in
+  let src_part = Array.make n 0 and src_row = Array.make n 0 in
+  let size = Array.make n 0 in
+  let j = ref 0 in
+  Array.iteri
+    (fun k p ->
+      for i = 0 to length p - 1 do
+        let q = Int64.to_int dest.{!j} in
+        src_part.(q) <- k;
+        src_row.(q) <- i;
+        size.(q) <-
+          (Int64.to_int l2.(k).{i} * s2_bytes)
+          + (Int64.to_int l1.(k).{i} * s1_bytes);
+        incr j
+      done)
+    parts;
+  (* Buckets: runs of positions of at most [bytes], or one pixel. *)
+  let buckets =
+    let rec go acc start pos total =
+      if pos = n then
+        List.rev (if pos > start then (start, pos) :: acc else acc)
+      else if pos > start && total + size.(pos) > bytes then
+        go ((start, pos) :: acc) pos pos 0
+      else go acc start (pos + 1) (total + size.(pos))
+    in
+    go [] 0 0 0
+  in
+  (* A bucket's rows of one sensor in position order: each part's rows taken in
+     that order, then the parts' rows interleaved. *)
+  let block (type s) (sensor : s t_sensor) (lo, hi) : (int, s, Nx.host) Nx.t =
+    let picks = Array.map (fun _ -> ref []) parts in
+    let order = Array.make (hi - lo) 0 in
+    for q = hi - 1 downto lo do
+      picks.(src_part.(q)) := src_row.(q) :: !(picks.(src_part.(q)))
+    done;
+    let base = Array.make (Array.length parts) 0 in
+    let total = ref 0 in
+    Array.iteri
+      (fun k l ->
+        base.(k) <- !total;
+        total := !total + List.length !l)
+      picks;
+    let seen = Array.make (Array.length parts) 0 in
+    for q = lo to hi - 1 do
+      let k = src_part.(q) in
+      order.(q - lo) <- base.(k) + seen.(k);
+      seen.(k) <- seen.(k) + 1
+    done;
+    let taken =
+      Array.to_list parts
+      |> List.mapi (fun k p ->
+          let indices =
+            Nx.create Nx.int64
+              [| List.length !(picks.(k)) |]
+              (Array.of_list (List.map Int64.of_int !(picks.(k))))
+          in
+          Nx_ragged.take ~indices (sensor.get p))
+    in
+    let all = Nx_ragged.concat taken in
+    let indices =
+      Nx.create Nx.int64 [| hi - lo |] (Array.map Int64.of_int order)
+    in
+    Nx_ragged.values (Nx_ragged.take ~indices all)
+  in
+  if not (Sys.file_exists dir) then Sys.mkdir dir 0o755;
+  let write (type s) name (sensor : s t_sensor) cells
+      (l : (int64, Bigarray.int64_elt) Flat.t array) =
+    let o = Flat.create Bigarray.int64 (n + 1) 0L in
+    for q = 0 to n - 1 do
+      o.{q + 1} <- Int64.add o.{q} l.(src_part.(q)).{src_row.(q)}
+    done;
+    Nx_io.save_npy (offsets_file dir name) (Flat.wrap Nx.int64 [| n + 1 |] o);
+    Nx_io.save_npy_concat (file dir name) sensor.dtype [| cells |]
+      (Seq.map (block sensor) (List.to_seq buckets))
+  in
+  write "s2" { get = (fun p -> p.s2); dtype = Nx.uint16 } (s2_bands + 1) l2;
+  write "s1" { get = (fun p -> p.s1); dtype = Nx.int16 } (s1_bands + 2) l1;
+  n
