@@ -27,47 +27,47 @@ let project dir =
   Printf.printf "%d features, %d points\n" (Polygons.count p)
     (Nx.dim 0 p.points)
 
-(* A tile's tags, one per line: the tag, the TIFF type and the values. *)
-let tags file =
-  List.filter_map
-    (fun line ->
-      match String.split_on_char ' ' (String.trim line) with
-      | tag :: ty :: values when line <> "" -> (
-          let tag = int_of_string tag in
-          let ints () = Array.of_list (List.map int_of_string values) in
-          let floats () = Array.of_list (List.map float_of_string values) in
-          match int_of_string ty with
-          | 2 -> Some (tag, Geotiff.Ascii (String.concat " " values))
-          | 3 -> Some (tag, Geotiff.Short (ints ()))
-          | 4 -> Some (tag, Geotiff.Long (ints ()))
-          | 12 -> Some (tag, Geotiff.Double (floats ()))
-          | _ -> None)
-      | _ -> None)
-    (String.split_on_char '\n' (read file))
+(* A landmask's grid and nodata, from its first IFD's tags. *)
+let landmask file =
+  let ifd = List.hd (Nx_io.load_tiff file) in
+  let tags = Nx_io.Tiff.tags ifd in
+  match (Geotiff.grid tags, Geotiff.nodata tags) with
+  | Ok g, Ok nodata -> (ifd, g, nodata)
+  | Error e, _ | _, Error e -> failwith (file ^ ": " ^ e)
+
+let describe file =
+  let ifd, (g : Grid.t), nodata = landmask file in
+  let (ox, oy), (_, ry), (cx, _) = (g.origin, g.row_step, g.col_step) in
+  let mask = Nx.unpack Nx.uint8 (Nx_io.Tiff.samples ifd) in
+  let ones =
+    Array.fold_left (fun n v -> if v = 1 then n + 1 else n) 0 (Nx.to_array mask)
+  in
+  Format.printf
+    "%s: %a, %d × %d cells, origin (%.17g, %.17g), steps %g, %g, nodata %s, %d \
+     land cells@."
+    (Filename.basename file) Crs.pp g.crs g.rows g.cols ox oy cx ry
+    (Option.fold ~none:"none" ~some:string_of_float nodata)
+    ones
 
 let owner (g : Grid.t) (feature, cell) =
   let none = Nx.full Nx.int64 [| g.rows * g.cols |] (-1L) in
   Nx.to_array (Nx.scatter ~axis:0 cell feature none)
 
-let compare dir =
+let compare dir masks =
   let p = labels dir in
   let tiles =
     List.sort Stdlib.compare
       (List.filter_map
          (fun f ->
-           if Filename.check_suffix f ".tags" then
-             Some (Filename.chop_suffix f ".tags")
+           if Filename.check_suffix f ".tiff" then
+             Some (Filename.chop_suffix f ".tiff")
            else None)
-         (Array.to_list (Sys.readdir dir)))
+         (Array.to_list (Sys.readdir masks)))
   in
   List.iter
     (fun tile ->
       let path ext = Filename.concat dir (tile ^ ext) in
-      let g =
-        match Geotiff.grid (tags (path ".tags")) with
-        | Ok g -> g
-        | Error e -> failwith e
-      in
+      let _, g, _ = landmask (Filename.concat masks (tile ^ ".tiff")) in
       let (ox, oy), (_, ry), (cx, _) = (g.origin, g.row_step, g.col_step) in
       Printf.printf "%s: %d × %d cells, origin (%.17g, %.17g), steps %g, %g\n"
         tile g.rows g.cols ox oy cx ry;
@@ -99,7 +99,10 @@ let compare dir =
 let () =
   match Sys.argv with
   | [| _; "project"; dir |] -> project dir
-  | [| _; "compare"; dir |] -> compare dir
+  | [| _; "compare"; dir; masks |] -> compare dir masks
+  | a when Array.length a >= 3 && a.(1) = "landmask" ->
+      Array.iter describe (Array.sub a 2 (Array.length a - 2))
   | _ ->
-      prerr_endline "usage: parity.exe (project | compare) DIR";
+      prerr_endline
+        "usage: parity.exe (project DIR | compare DIR MASKS | landmask FILE...)";
       exit 2
