@@ -259,6 +259,9 @@ type state = {
   dsts : dst Ops.Tbl.t;
       (** The storage each scatter that combines in a kernel of its own
           combines into, by its result's node without reshapes. *)
+  carries : Ops.t Ops.Tbl.t;
+      (** The buffer each loop carries a value in, by the value's node after
+          the loop without reshapes: storage of the loop's own. *)
 }
 
 let view_of st u = Ops.Tbl.replace st.views (Ops.base u) ()
@@ -2449,6 +2452,15 @@ and repeat ?(into = [||]) st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip
   if Option.is_some flag then
     cs.failed <- Ops.maximum cs.failed finals.(ncarried);
   check_finals cs made (Array.sub finals (ncarried + 1) (k - ncarried - 1));
+  (* After the loop each carried value lies in its buffer, which a result may
+     take as its own. *)
+  Array.iteri
+    (fun i c ->
+      match c with
+      | Some (b, _, _) when i < ncarried ->
+          Ops.Tbl.replace st.carries (unshaped finals.(i)) b
+      | _ -> ())
+    carried;
   let storage i =
     Option.map (fun (b, _, _) -> (b, Ops.after b [ e ])) carried.(i)
   in
@@ -2557,6 +2569,7 @@ let lower ~rigs ~split ~uploads (p : Program.t) (forms : form array) ~layouts
       uploads;
       views = Ops.Tbl.create 8;
       dsts = Ops.Tbl.create 4;
+      carries = Ops.Tbl.create 4;
     }
   in
   let env = env_of ~split:st.split ~donated p in
@@ -2677,17 +2690,35 @@ let lower ~rigs ~split ~uploads (p : Program.t) (forms : form array) ~layouts
     if packed dt then Ops.new_buffer device (D.bytes dt n) Uint8
     else Ops.new_buffer device (n * parts dt) (tdtype dt)
   in
-  (* A scatter's own storage is its result, once: nothing else holds it. *)
+  (* A scatter's own storage is its result, once: nothing else holds it. So
+     is the buffer a loop carries a value in, where it holds the result as
+     {!store} would, which spares a copy of the size of the carry. *)
   let taken = Ops.Tbl.create 4 in
+  let own (F f) u =
+    let n = numel (shape_of f) in
+    let device = device_at st f.placement in
+    let holds b =
+      (not (packed f.dtype))
+      && Tolk.Dtype.equal (Ops.dtype b) (tdtype f.dtype)
+      && Shape.max_numel b = n * parts f.dtype
+      && Ops.device b = Some device
+    in
+    match Ops.Tbl.find_opt st.dsts (unshaped u) with
+    | Some d -> Some d.buf
+    | None -> (
+        match Ops.Tbl.find_opt st.carries (unshaped u) with
+        | Some b when holds b -> Some b
+        | _ -> None)
+  in
   let stored (F f) u =
     let n = numel (shape_of f) in
     if n = 0 then Empty
     else
-      match Ops.Tbl.find_opt st.dsts (unshaped u) with
-      | Some d when not (Ops.Tbl.mem taken d.buf) ->
-          Ops.Tbl.replace taken d.buf ();
+      match own (F f) u with
+      | Some b when not (Ops.Tbl.mem taken b) ->
+          Ops.Tbl.replace taken b ();
           stores := Ops.base u :: !stores;
-          Stored d.buf
+          Stored b
       | _ ->
           let o = buffer ~device:(device_at st f.placement) f.dtype n in
           stores := store f.dtype o u :: !stores;

@@ -429,6 +429,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled loop's final carry that is a result is returned in the
+  storage the loop carries it in, where it was copied into a result of its
+  own: a scan summing a gradient in its carry holds one gradient, a 64 MB
+  parameter's 67.4 MB where it held 134.5 MB.
 - Add `Rune.footprint s f x`: for each device and the host, the bytes the
   first call of `Rune.jit s f` over `x` allocates there, its storage, loop
   words, constants' copies and results, computed by tolk's engine without

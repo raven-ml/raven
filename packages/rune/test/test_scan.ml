@@ -2276,6 +2276,68 @@ let test_strided_rows () =
     ~msg:(Printf.sprintf "%d bytes, the stacks %d" held stacks)
     int ~than:((4 * row) + (4 * batch * hidden)) held
 
+(* A scan whose carry sums the gradient of each row's loss in the weights
+   holds one gradient: the loop updates the carry in place and the result
+   takes the carry's memory. Beside it the program holds a step's product and
+   its loss. On the host what the first call holds is its footprint. *)
+let test_summed_gradients () =
+  let dim = 256 and rows = 16 in
+  let w = Nx.mul_s (Nx.Rng.normal ~key:(Nx.Rng.key 1) f32 [| dim; dim |]) 0.01 in
+  let loss w x =
+    let y = Nx.matmul x w in
+    Nx.sum (Nx.mul y y)
+  in
+  let s = T.(pair tensor tensor @-> returns (pair tensor tensor)) in
+  let f (w, xs) =
+    let step (l, sum) x =
+      let v, g = Rune.value_and_grad T.tensor (fun w -> loss w x) w in
+      ((Nx.add l v, Nx.add sum g), ())
+    in
+    fst
+      (Rune.scan T.(pair tensor tensor) T.tensor T.unit step
+         ~init:(Nx.scalar f32 0., Nx.zeros_like w)
+         xs)
+  in
+  let settled () =
+    for _ = 1 to 4 do
+      Gc.full_major ();
+      ignore (Rig.Buffer.create Rig.host 0);
+      Rig.free_cache Rig.host
+    done;
+    Rig.allocated Rig.host
+  in
+  let gradient = Rig.allocation Rig.host (4 * dim * dim) in
+  List.iter
+    (fun k ->
+      let xs = Nx.Rng.normal ~key:(Nx.Rng.key 2) f32 [| k; rows; dim |] in
+      ignore (Rune.jit s f (w, xs));
+      let g = Rune.jit s f in
+      let before = settled () in
+      let r = g (w, xs) in
+      let held = settled () - before in
+      let l, sum = f (w, xs) in
+      equal
+        ~msg:(Printf.sprintf "%d rows: the loss" k)
+        (float_rel ~rel:1e-5 ~abs:0.)
+        (Nx.item [] l) (Nx.item [] (fst r));
+      equal
+        ~msg:(Printf.sprintf "%d rows: the gradient" k)
+        (array (float_rel ~rel:1e-5 ~abs:1e-5))
+        (Nx.to_array (Nx.flatten sum))
+        (Nx.to_array (Nx.flatten (snd r)));
+      ignore (Sys.opaque_identity (g, r));
+      let on_host (r, _) = Rig.equal r Rig.host in
+      equal
+        ~msg:(Printf.sprintf "%d rows: the footprint" k)
+        int held
+        (snd (List.find on_host (Rune.footprint s f (w, xs))));
+      less
+        ~msg:(Printf.sprintf "%d rows: %d bytes, a gradient %d" k held gradient)
+        int
+        ~than:(gradient + (4 * rows * dim) + 1024)
+        held)
+    [ 1; 2; 4 ]
+
 (* A step that reads its row of a strided stack, which it reads in place at
    the trip's index, in a scan of its own over the row and through a view the
    inner step captures: each inner call is passed the outer trip's index. *)
@@ -2397,5 +2459,7 @@ let () =
              test "what reverse mode keeps" test_residuals;
              test "a strided stack is read in place" test_strided_rows;
              test "a strided row read in a nested scan" test_strided_row_nested;
+             test "a carry that sums gradients holds one gradient"
+               test_summed_gradients;
            ];
        ])
