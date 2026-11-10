@@ -654,6 +654,76 @@ let test_path_keys () =
   same "nor its nu" st2.nu.b st3.nu.b;
   same "nor a" two.a three.a
 
+(* A model of two parts with equal fields, stepped whole, and stepped part by
+   part as [vega.mli]'s parts section does, over descriptions that keep the
+   model's paths. *)
+module Block = struct
+  type ('a, _) t = { w : 'a; b : 'a }
+
+  let walk c { w; b } =
+    let open Nx.Ptree.Walk in
+    let w = field c "w" leaf w in
+    let b = field c "b" leaf b in
+    { w; b }
+end
+
+module Model = struct
+  type ('a, 'd) t = { trunk : ('a, 'd) Block.t; head : ('a, 'd) Block.t }
+
+  let walk c { trunk; head } =
+    let open Nx.Ptree.Walk in
+    let trunk = field c "trunk" Block.walk trunk in
+    let head = field c "head" Block.walk head in
+    { trunk; head }
+end
+
+type block = (Nx.host Nx.bfloat16_t, Nx.host) Block.t
+
+let part name p =
+  Nx.Ptree.v (fun c x -> Nx.Ptree.Walk.(field c name (structure p)) x)
+
+(* Each part's stores are those of the whole step, bit for bit, under a decay
+   rule written against the model's paths; the two parts, equal but for their
+   paths, round apart. *)
+let test_parts_draw_as_one () =
+  let block : (block, Nx.host) Nx.Ptree.t = Nx.Ptree.instantiate (module Block)
+  and model : ((Nx.host Nx.bfloat16_t, Nx.host) Model.t, Nx.host) Nx.Ptree.t =
+    Nx.Ptree.instantiate (module Model)
+  in
+  let trunk = part "trunk" block and head = part "head" block in
+  let make v : block =
+    {
+      w = Nx.full Nx.bfloat16 [| 64; 256 |] v;
+      b = Nx.full Nx.bfloat16 [| 256 |] v;
+    }
+  in
+  let params = { Model.trunk = make 1.0; head = make 1.0 } in
+  let grads = { Model.trunk = make 1e-3; head = make 1e-3 } in
+  let decays path _ =
+    match List.rev (Nx.Ptree.Path.segments path) with
+    | Field "w" :: _ -> true
+    | _ -> false
+  in
+  let step p params grads =
+    let st = { (Vega.adamw_init p params) with step = counter 5 } in
+    Vega.adamw_step p ~lr:(Vega.rate midway) ~decays st ~params ~grads
+  in
+  let whole, st = step model params grads in
+  let t, st_t = step trunk params.trunk grads.trunk in
+  let h, st_h = step head params.head grads.head in
+  let check name (w : block) (x : block) =
+    same (name ^ ".w") w.w x.w;
+    same (name ^ ".b") w.b x.b
+  in
+  check "trunk" whole.trunk t;
+  check "mu.trunk" st.mu.trunk st_t.mu;
+  check "nu.trunk" st.nu.trunk st_t.nu;
+  check "head" whole.head h;
+  check "mu.head" st.mu.head st_h.mu;
+  check "nu.head" st.nu.head st_h.nu;
+  greater ~msg:"elements that the two parts round apart" int ~than:0
+    (differ t.w h.w)
+
 (* A bfloat16 vector alone on a device of a set of two, and a matrix split
    along either axis of the set: the draws are the same at every placement, so
    the stores are the host's. *)
@@ -819,6 +889,8 @@ let tests =
         test "the counter keys the draws" test_counter_keys;
         stores_draw_apart;
         test "the path keys the draws" test_path_keys;
+        test "parts stepped apart draw as the whole step"
+          test_parts_draw_as_one;
         test "the draws are the same at every placement" test_placement;
       ];
     group "float16"
