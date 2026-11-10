@@ -8,7 +8,7 @@
    prefills of 512 and 12 tokens, over random weights at bfloat16 with the
    experts packed as MXFP4, a decode step with the attention projections and
    the head packed as Q8_0 too, quantised in its case's setup, and one layer's
-   experts at prefills of 512 and 536 tokens. 12 tokens route 48 positions over
+   experts, after its norm, at prefills of 512 and 536 tokens. 12 tokens route 48 positions over
    32 experts in blocks of 4, each block reading its expert's matrices once
    for its rows. 536 tokens fill 65 blocks of 64 rows, a
    count 5 divides, where a warp of 5 tiles of rows would cross two blocks.
@@ -261,10 +261,14 @@ let one_layer = { config with vocab_size = 1024; layers = [ Gpt_oss.Sliding ] }
 (* One layer's experts, [Moe.apply] of {!one_layer}'s, compiled at a prefill
    of [prompt] tokens: random bfloat16 activations, routed by the router of
    random logits from a fixed key, as the tensor cores multiply the MXFP4
-   weights. *)
+   weights. The experts read the block's norm of the activations, as in the
+   model: the norm's scaling is computed as the rows are gathered by expert,
+   into a buffer the first product reads in order and stages through shared
+   memory. Read from an input, the gather would fuse into that product, a
+   kernel the model never runs. *)
 let experts prompt =
   let module G = (val Nx.devices [ gpu () ]) in
-  let moe = (List.hd (load G.on one_layer (entries one_layer)).blocks).moe in
+  let block = List.hd (load G.on one_layer (entries one_layer)).blocks in
   let logits =
     Nx.Rng.normal ~key:(Nx.Rng.key 7) Nx.float32 [| prompt; config.experts |]
   in
@@ -278,7 +282,9 @@ let experts prompt =
   let f =
     Rune.jit
       Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
-      (fun ids w x -> Moe.apply ~limit:config.swiglu_limit moe (ids, w) x)
+      (fun ids w x ->
+        let h = Rms_norm.apply ~eps:config.norm_eps block.ffn_norm x in
+        Moe.apply ~limit:config.swiglu_limit block.moe (ids, w) h)
   in
   let call () = ignore (Nx.item [ 0; 0 ] (f ids w x)) in
   (* The host entries and the rest of the model are garbage, collected here

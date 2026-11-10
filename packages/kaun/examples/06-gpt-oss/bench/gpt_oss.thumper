@@ -8,7 +8,8 @@
 
 GptOss/decode-step-Q8_0-cache-1024	alloc_words	exact	124544
 GptOss/decode-step-cache-1024	alloc_words	batch=1	n=20	1.219e+05	1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.220e+05 1.220e+05
-GptOss/experts-at-prefill-512	alloc_words	exact	1287
+GptOss/experts-at-prefill-512	alloc_words	exact	1215
+GptOss/experts-at-prefill-536	alloc_words	exact	1215
 GptOss/prefill-12	alloc_words	batch=1	n=20	1.218e+05	1.218e+05 1.218e+05 1.218e+05 1.218e+05 1.218e+05 1.218e+05 1.218e+05 1.218e+05 1.218e+05 1.218e+05 1.218e+05 1.218e+05 1.218e+05 1.218e+05 1.218e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05
 GptOss/prefill-512	alloc_words	exact	121747
 
