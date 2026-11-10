@@ -187,17 +187,19 @@ let map ev ~by ?at shape prog dt loads =
   in
   x
 
-(* The flat index in C order, a uint64 node, of each element in the last
-   [Array.length s] axes, of extents [s], of a shape of rank [rank]. *)
-let position ~rank s =
-  let r = Array.length s in
+(* The flat index in C order, a uint64 node, of each element of [shape]
+   among the elements that share its key: over the axes where [keys], the
+   extents of the key's batch in [shape]'s axes, is 1. *)
+let position shape keys =
   let flat = ref None and weight = ref 1 in
-  for c = r - 1 downto 0 do
-    let at = E.coord (rank - r + c) in
-    let w = E.const D.Int64 (Int64.of_int !weight) in
-    let term = if !weight = 1 then at else E.(at * w) in
-    flat := Some (match !flat with None -> term | Some f -> E.(f + term));
-    weight := !weight * s.(c)
+  for a = Array.length shape - 1 downto 0 do
+    if keys.(a) = 1 && shape.(a) > 1 then begin
+      let at = E.coord a in
+      let w = E.const D.Int64 (Int64.of_int !weight) in
+      let term = if !weight = 1 then at else E.(at * w) in
+      flat := Some (match !flat with None -> term | Some f -> E.(f + term));
+      weight := !weight * shape.(a)
+    end
   done;
   match !flat with None -> u64 0L | Some f -> E.bitcast D.Uint64 f
 
@@ -262,31 +264,40 @@ let read_at ~by p w =
   else if holds ~by q p w then Eval.place ~by p w
   else misplaced ~by q p
 
-(* A draw of [dt] and shape [s] per key of [source], by the sampler program
-   [prog]: one map over the key's batch then [s], each element reading its
-   key, its position in [s], and [params], each stretched to the draw's
-   shape. A draw at [at] reads its key there; with no load it is a creation
-   at [at]. *)
+(* The shape of a draw from a key of batch [batch]: [batch] then [s] for a
+   sampler without parameters, whose shape is [s], and their broadcast for
+   one with parameters of broadcast shape [s]. *)
+let drawn_shape ~by ~params batch s =
+  if params then Prim.broadcast_shape ~by batch s else Array.append batch s
+
+(* A draw of [dt] by the sampler program [prog], of {!drawn_shape}: one map
+   whose elements each read their key, their position among the elements
+   that share it, and [params], each stretched to the draw's shape. A draw
+   at [at] reads its key there; with no load it is a creation at [at]. *)
 let drawn ~by ~params ?at source dt s prog =
   let batch = source_batch source in
-  let shape = Array.append batch s in
+  let shape = drawn_shape ~by ~params:(params <> [||]) batch s in
   Prim.check_shape ~by (Iarray.of_array shape);
   let params =
     Array.map
       (fun (Value.Any x) -> Value.Any (Eval.broadcast ~by shape x))
       params
   in
-  let position = position ~rank:(Array.length shape) s in
-  let prog = bind prog position_operand (E.any position) in
+  (* The key's batch in the draw's axes: leading the shape of a sampler
+     without parameters, right-aligned with the parameters otherwise. *)
+  let rank = Array.length shape and b = Array.length batch in
+  let first = if params = [||] then 0 else rank - b in
+  let keys =
+    Array.init rank (fun a ->
+        if a < first || a >= first + b then 1 else batch.(a - first))
+  in
+  let prog = bind prog position_operand (E.any (position shape keys)) in
   match source with
   | Words w ->
       let prog = bind prog key_operand (E.any (u64 w)) in
       map dispatched ~by ?at shape prog dt params
   | Key k ->
-      let ones = Array.make (Array.length s) 1 in
-      let w =
-        Eval.reshape ~by (Array.append batch ones) (pack dispatched ~by k)
-      in
+      let w = Eval.reshape ~by keys (pack dispatched ~by k) in
       let w = Eval.broadcast ~by shape w in
       let w = match at with None -> w | Some p -> read_at ~by p w in
       map dispatched ~by shape prog dt (Array.append [| Value.Any w |] params)
@@ -1495,7 +1506,7 @@ let dirichlet ?key a =
   let key = resolve ~by (Prim.placement a) key in
   let dt = Prim.dtype a in
   let (Carrier { c; p; lit }) = carrier dt in
-  let shape = Array.append (source_batch key) s in
+  let shape = drawn_shape ~by ~params:true (source_batch key) s in
   if s.(r - 1) = 0 then
     (* No element: zeros where [a] lies, whole on each of its devices. *)
     let at = Devices.uncut (Prim.placement a) in
@@ -1602,7 +1613,7 @@ let categorical ?key ?(axis = -1) logits =
       (Value.Reduce
          {
            layout = Nx_array.Layout.contiguous (Iarray.of_array shape);
-           axes = [| Array.length (source_batch key) + a |];
+           axes = [| Array.length shape - Array.length s + a |];
            prog = Prim.identity c;
            reductions = Value.[ Arg (Nx_kernel.Max, 0, c) ];
            loads = [| Value.Plain noisy |];

@@ -314,7 +314,7 @@ let keys_group =
             (words (carried 1000 (Rng.key 3))));
       test "a placed batch carried through fold_in costs a draw what one does"
         (fun () ->
-          let half = Nx.full_at Count.on Nx.float32 [| 4 |] 0.5 in
+          let half = Nx.full_at Count.on Nx.float32 [| 3 |] 0.5 in
           let draw k = Rng.bernoulli ~key:k half in
           let batch = Rng.split_batch ~n:3 (Rng.key 3) in
           let rec carried n k =
@@ -501,58 +501,103 @@ let ptree_group =
 (* Draws *)
 
 (* Each sampler at fixed parameters, its draw of a shape read as floats. *)
-let samplers =
+let sampler_list =
   let of_ints xs = Array.map Int32.to_float xs in
   let full dt s v = host_of dt s (Array.make (numel s) v) in
   let counts s = host_of Nx.int32 s (Array.make (numel s) 40l) in
+  [
+    ("bits", fun k s -> of_ints (read (Rng.bits ~key:k s)));
+    ("uniform", fun k s -> read (Rng.uniform ~key:k Nx.float16 s));
+    ("normal", fun k s -> read (Rng.normal ~key:k Nx.float32 s));
+    ("exponential", fun k s -> read (Rng.exponential ~key:k Nx.float64 s));
+    ("gumbel", fun k s -> read (Rng.gumbel ~key:k Nx.float32 s));
+    ( "randint",
+      fun k s ->
+        of_ints
+          (read (Rng.randint ~key:k ~low:(full Nx.int32 s (-9l))
+                   (full Nx.int32 s 1000l))) );
+    ( "bernoulli",
+      fun k s ->
+        Array.map Bool.to_float
+          (read (Rng.bernoulli ~key:k (full Nx.float32 s 0.3))) );
+    ("gamma", fun k s -> read (Rng.gamma ~key:k (full Nx.float32 s 0.7)));
+    ( "beta",
+      fun k s ->
+        read (Rng.beta ~key:k (full Nx.float64 s 2.) (full Nx.float64 s 0.5))
+    );
+    ( "von_mises",
+      fun k s -> read (Rng.von_mises ~key:k (full Nx.float32 s 3.)) );
+    ( "poisson",
+      fun k s -> of_ints (read (Rng.poisson ~key:k (full Nx.float64 s 30.)))
+    );
+    ( "binomial",
+      fun k s ->
+        of_ints
+          (read (Rng.binomial ~key:k (counts s) (full Nx.float32 s 0.25))) );
+    ( "truncated_normal",
+      fun k s ->
+        read
+          (Rng.truncated_normal ~key:k (full Nx.float32 s (-1.))
+             (full Nx.float32 s 2.)) );
+    ( "dirichlet",
+      fun k s ->
+        let a = full Nx.float64 (Array.append s [| 3 |]) 0.7 in
+        read (Rng.dirichlet ~key:k a) );
+    ( "categorical",
+      fun k s ->
+        let logits = full Nx.float32 (Array.append s [| 4 |]) 0. in
+        Array.map Int64.to_float (read (Rng.categorical ~key:k logits)) );
+    ( "permutation",
+      fun k s ->
+        Array.map Int64.to_float (read (Rng.permutation ~key:k (numel s))) );
+  ]
+
+let samplers =
   Gen.of_list
     ~pp:(fun ppf (name, _) -> Format.pp_print_string ppf name)
-    [
-      ("bits", fun k s -> of_ints (read (Rng.bits ~key:k s)));
-      ("uniform", fun k s -> read (Rng.uniform ~key:k Nx.float16 s));
-      ("normal", fun k s -> read (Rng.normal ~key:k Nx.float32 s));
-      ("exponential", fun k s -> read (Rng.exponential ~key:k Nx.float64 s));
-      ("gumbel", fun k s -> read (Rng.gumbel ~key:k Nx.float32 s));
-      ( "randint",
-        fun k s ->
-          of_ints
-            (read (Rng.randint ~key:k ~low:(full Nx.int32 s (-9l))
-                     (full Nx.int32 s 1000l))) );
-      ( "bernoulli",
-        fun k s ->
-          Array.map Bool.to_float
-            (read (Rng.bernoulli ~key:k (full Nx.float32 s 0.3))) );
-      ("gamma", fun k s -> read (Rng.gamma ~key:k (full Nx.float32 s 0.7)));
-      ( "beta",
-        fun k s ->
-          read (Rng.beta ~key:k (full Nx.float64 s 2.) (full Nx.float64 s 0.5))
-      );
-      ( "von_mises",
-        fun k s -> read (Rng.von_mises ~key:k (full Nx.float32 s 3.)) );
-      ( "poisson",
-        fun k s -> of_ints (read (Rng.poisson ~key:k (full Nx.float64 s 30.)))
-      );
-      ( "binomial",
-        fun k s ->
-          of_ints
-            (read (Rng.binomial ~key:k (counts s) (full Nx.float32 s 0.25))) );
-      ( "truncated_normal",
-        fun k s ->
-          read
-            (Rng.truncated_normal ~key:k (full Nx.float32 s (-1.))
-               (full Nx.float32 s 2.)) );
-      ( "dirichlet",
-        fun k s ->
-          let a = full Nx.float64 (Array.append s [| 3 |]) 0.7 in
-          read (Rng.dirichlet ~key:k a) );
-      ( "categorical",
-        fun k s ->
-          let logits = full Nx.float32 (Array.append s [| 4 |]) 0. in
-          Array.map Int64.to_float (read (Rng.categorical ~key:k logits)) );
-      ( "permutation",
-        fun k s ->
-          Array.map Int64.to_float (read (Rng.permutation ~key:k (numel s))) );
-    ]
+    sampler_list
+
+(* The samplers with array parameters of the draw's shape, and dirichlet and
+   categorical, whose parameters add an axis of components or categories. *)
+let rows = [ "dirichlet"; "categorical" ]
+
+let shape_only =
+  [ "bits"; "uniform"; "normal"; "exponential"; "gumbel"; "permutation" ]
+
+let sampled names =
+  Gen.of_list
+    ~pp:(fun ppf (name, _) -> Format.pp_print_string ppf name)
+    (List.filter (fun (name, _) -> names name) sampler_list)
+
+let elementwise =
+  sampled (fun n -> not (List.mem n rows || List.mem n shape_only))
+
+let rowwise = sampled (fun n -> List.mem n rows)
+
+(* A shape of rank up to 3 with no empty axis, and the axes that share a
+   key. *)
+let sharing =
+  let open Gen in
+  (let* s = array ~size:(int_range 0 3) (int_range 1 3) in
+   let+ shared = array ~size:(constant (Array.length s)) bool in
+   (s, shared))
+  |> with_pp (fun ppf (s, _) -> pp_shape ppf s)
+
+(* Keys of batch shape [ks]: row [i] of [split_batch] of [k] at the [i]th
+   place in C order. *)
+let keyed k ks =
+  Rng.of_tensor
+    (Nx.reshape (Array.append ks [| 2 |])
+       (Rng.to_tensor (Rng.split_batch ~n:(numel ks) k)))
+
+(* [n] keys of batch shape [[n; 1; 1; 1]]. *)
+let leading n k = keyed k [| n; 1; 1; 1 |]
+
+(* The place in C order of the index [at] of shape [s]. *)
+let flat s at =
+  let p = ref 0 in
+  Array.iteri (fun a x -> p := (!p * s.(a)) + x) at;
+  !p
 
 (* The words [w] at their uniform's precision [p] of 24 or less: their low [p]
    bits scaled by [2^-p]. *)
@@ -745,7 +790,9 @@ let draws =
                     (Rng.split ~n k)))
           in
           equal (array float_exact) each batch);
-      prop "a batch of keys draws each key's draw, for every sampler"
+      (* Keys of shape [n; 1; 1; 1] lead every draw here, a sampler's
+         parameters having at most three axes. *)
+      prop "a batch of keys that leads draws each key's draw, for every sampler"
         (Gen.triple keys (Gen.int_range 1 3) samplers)
         (fun (k, n, (_, draw)) ->
           let s = [| 2; 3 |] in
@@ -753,7 +800,42 @@ let draws =
             Array.concat
               (Array.to_list (Array.map (fun k -> draw k s) (Rng.split ~n k)))
           in
-          equal (array float_exact) each (draw (Rng.split_batch ~n k) s));
+          equal (array float_exact) each (draw (leading n k) s));
+      prop "a key broadcast with the parameters draws, over the elements it \
+            reaches, what it alone draws there"
+        (Gen.triple keys elementwise sharing)
+        (fun (k, (_, draw), (s, shared)) ->
+          let ks = Array.mapi (fun a d -> if shared.(a) then 1 else d) s in
+          let over = Array.mapi (fun a d -> if shared.(a) then d else 1) s in
+          cover "a key per element" (ks = s && numel s > 1);
+          cover "a key along some axes"
+            (Array.exists (( < ) 1) ks && Array.exists (( < ) 1) over);
+          (* Element [i]'s key is [i] with the shared axes at 0, and its draw
+             is that key's alone over the shared axes, at [i]'s place
+             there. *)
+          let alone =
+            Array.map (fun k -> draw k over) (Rng.split ~n:(numel ks) k)
+          in
+          let want =
+            Array.init (numel s) (fun i ->
+                let at = index s i in
+                let part keep =
+                  Array.mapi (fun a x -> if shared.(a) = keep then x else 0) at
+                in
+                alone.(flat ks (part false)).(flat over (part true)))
+          in
+          equal (array float_exact) want (draw (keyed k ks) s));
+      prop "a key per row draws dirichlet's and categorical's rows as it alone \
+            does"
+        (Gen.triple keys rowwise sharing)
+        (fun (k, (_, draw), (s, _)) ->
+          let n = numel s in
+          let each =
+            Array.map (fun k -> draw k [||]) (Rng.split ~n k)
+            |> Array.to_list |> Array.concat
+          in
+          equal (array float_exact) each
+            (draw (keyed k (Array.append s [| 1 |])) s));
       prop "a narrow float uniform is the low p bits of bits, scaled"
         (Gen.pair keys floats)
         (fun (k, (F dt, p)) ->

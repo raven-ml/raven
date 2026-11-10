@@ -4945,10 +4945,20 @@ module Rng : sig
       shape lacks, and where a device of [p] does not hold [key], naming the
       {!place} to write. A sampler with array parameters draws where they
       lie, reading [key] beside them as an operation reads its operands
-      ({!Nx.section-routing}). A key with batch axes [b] draws
-      [b] followed by the draw's shape, one draw per key, each the draw that
-      key alone gives. Float draws compute at float64 for float64 and at
-      float32 for the other floats, and round once to their dtype.
+      ({!Nx.section-routing}). Float draws compute at float64 for float64
+      and at float32 for the other floats, and round once to their dtype.
+
+      A batch of keys broadcasts with a sampler's array parameters, as an
+      operation's operands broadcast, and the shape a sampler takes as an
+      argument follows: a draw's shape is the broadcast of the keys' batch
+      shape and the parameters' shapes, then that shape. So a batch [b]
+      draws [b] followed by the shape of a sampler without parameters, and
+      keys of a parameter's shape give each of its elements a key of its
+      own. A key draws, over the elements it reaches, what it alone draws
+      over them: its draw [j] is the element at place [j] in C order among
+      them. Keys of batch shape [b] followed by a [1] for each axis of the
+      parameters draw [b] followed by the parameters' shape, one draw per
+      key.
 
       A donated key reaching a sampler is lent ({!Nx.section-moving}), and
       lives on.
@@ -5178,8 +5188,9 @@ module Rng : sig
   (** [categorical logits] is a position along [axis] of each row of [logits],
       drawn with probability proportional to the exponential of its logit:
       [axis] is the last by default, a negative one counted from the end. A
-      logit of [-inf] is never drawn. The result has [logits]' shape without
-      [axis]; broadcast [logits] for several draws of one row.
+      logit of [-inf] is never drawn. The result has [logits]' shape, broadcast
+      with a batch of keys, without [axis]; broadcast [logits] for several
+      draws of one row.
 
       It is the {!argmax} of the logits plus Gumbel noise [-log e], computed at
       float64 for float64 and float32 for the other floats, [e] an exponential
@@ -5210,9 +5221,9 @@ module Rng : sig
   (** [permute ~n i] is the image of each element of [i] under a bijection
       of [\[0, n)] that the key selects, computed from that element alone:
       [permute ~n (Nx.arange Nx.int64 0 n 1)] orders [\[0, n)], and a few
-      elements cost a few elements' work. A batch of keys gives a bijection
-      per key, broadcast with [i] as {!fold_in_tensor} broadcasts, and the
-      images lie where [key] and [i] lie together.
+      elements cost a few elements' work. A batch of keys broadcasts with
+      [i] as a sampler's broadcasts with its parameters, a bijection per
+      key, and the images lie where [key] and [i] lie together.
 
       It is the swap-or-not shuffle of Hoang, Morris and Rogaway ("An
       Enciphering Scheme Based on a Card Shuffle", CRYPTO 2012) in

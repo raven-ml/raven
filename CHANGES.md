@@ -2744,6 +2744,13 @@ word comes from its lock and from samples the dashboard saw arrive.
   `Nx_io.Pytorch.tensors` names them by their state dict's keys.
 - `Nx_io.load_npz` loads an entry whose stated CRC-32 is 0 unchecked, as
   writers told to compute no checksum state it, and refused it before.
+- **Breaking:** a batch of keys broadcasts with a sampler's array
+  parameters, as `Nx.Rng.permute`'s does with its indices, where it drew the
+  batch followed by the parameters' shape, so a key per element draws each
+  element from its own key. `bernoulli`, `randint`, `gamma`, `beta`,
+  `von_mises`, `poisson`, `binomial`, `truncated_normal`, `dirichlet` and
+  `categorical` change; keys reshaped to `[b; 1; …]` draw what they drew.
+  A sampler without parameters keeps the batch, then its shape.
 - `Nx_io.save_npy_concat path dt cell blocks` writes one npy file from a
   sequence of blocks joined along axis 0, holding one block at a time, so a
   file larger than memory is written from blocks that fit, mapped ones
