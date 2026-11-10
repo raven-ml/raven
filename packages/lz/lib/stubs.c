@@ -37,6 +37,7 @@
 #include "deflate_enc.h"
 #include "lz.h"
 #include "lz4.h"
+#include "lzw.h"
 #include "snappy.h"
 #include "zstd.h"
 #include "zstd_dec_paths.h"
@@ -64,6 +65,13 @@
 #define RELEASE_LZ4_ENCODE (8 * 1024)
 #define RELEASE_SNAPPY_DECODE (16 * 1024)
 #define RELEASE_SNAPPY_ENCODE (8 * 1024)
+/* LZW's vendor is timed outside vendor_table, which links no LZW:
+   imagecodecs 2025.8.2 decodes the bench's text at 282 MB/s (fudge,
+   2026-11-10, 1.5 to 6.2 times slower than lz across the corpora), whose
+   work, input and output, runs at a fifth of deflate's vendor's. Since an
+   LZW decode reports only each 32 KiB of work, any threshold up to that
+   releases at the same report. */
+#define RELEASE_LZW_DECODE (2 * 1024)
 
 void *lz_alloc(size_t n) { return caml_stat_alloc_noexc(n); }
 
@@ -748,6 +756,10 @@ CAMLprim value lz_snappy_encode_stub(value src, value dst) {
 
 CAMLprim value lz_snappy_bound_stub(value n) {
   return bound_val(lz_snappy_bound(Long_val(n)));
+}
+
+CAMLprim value lz_lzw_decode_stub(value src, value dst) {
+  return simple_decode(lz_lzw_decode, RELEASE_LZW_DECODE, src, dst);
 }
 
 /* Checksums. A checksum's work is its input, known before it starts: a

@@ -15,6 +15,7 @@ chooses. Each format's rules are in its module in
 | LZ4 frames | `Lz.Lz4.Frame` | no | none | header checksum; block checksums, content checksum and content size where present, the last two of which lz writes | at the input's end |
 | LZ4 blocks | `Lz.Lz4.Block` | no | none | nothing | at the input's end |
 | Snappy blocks | `Lz.Snappy` | no | none | the decoded length | at the input's end |
+| TIFF's LZW, decoded only | `Lz.Lzw` | no | none | nothing | at an exact byte |
 
 ## Where each is found
 
@@ -24,7 +25,8 @@ the `Content-Encoding: gzip` of HTTP. Zstandard is the `.zst` file, and
 one of the compressions Parquet and Arrow offer. LZ4 frames are the
 `.lz4` file. LZ4 blocks and Snappy blocks carry no checksum and no end
 mark, and live inside containers that state each block's length, such
-as Parquet pages.
+as Parquet pages. LZW compresses the strips and tiles of TIFF images, as
+does zlib.
 
 ## For data of your own
 
@@ -44,7 +46,8 @@ LZ4 and Snappy take no level, and write more bytes than the others. lz
 has whole-buffer calls for them and no decoders or encoders, so a program
 holds the whole block or frame. [The bench
 README](../bench/README.md#lz-against-the-vendors) times each format and
-level, and gives the bytes each encoder wrote.
+level against its vendor, LZW apart, and gives the bytes each encoder
+wrote.
 
 ## Checksums
 

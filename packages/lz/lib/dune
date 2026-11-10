@@ -15,6 +15,7 @@
    zstd_encode
    lz4
    snappy
+   lzw
    zstd_dec_fse
    zstd_dec_lit
    zstd_dec_seq

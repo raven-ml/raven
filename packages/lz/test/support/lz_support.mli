@@ -197,6 +197,33 @@ val deflate_enc_paths : deflate_enc_path list
 (** [deflate_enc_paths] is every path, the generic one first and the one
     {!Lz.Deflate} takes last. *)
 
+(** {1 LZW}
+
+    lz has no LZW encoder: the suites and the benches encode with this one,
+    written from the encoder of TIFF 6.0's section 13. A code is a value
+    and its width in bits. *)
+
+val lzw_codes : ?last:int -> ?flush:bool -> string -> (int * int) list
+(** [lzw_codes ~last ~flush s] is the codes of the LZW stream of [s], in
+    order: ClearCode (256), the codes of [s]'s strings, EndOfInformation
+    (257). Each code is 9 bits wide until the encoder has added entry 511,
+    10 until 1023, 11 until 2047 and 12 after, and a code written without
+    adding an entry counts as one that adds, as the section asks. After
+    adding entry [last] (default 4094, the section's) the encoder writes
+    ClearCode and empties its table. The byte it holds then becomes the
+    first code after ClearCode, or with [~flush:true] a code before it,
+    which the section allows after entry 4093. A [last] of 4095 widens
+    ClearCode past 12 bits, so it is written at 12.
+
+    Raises [Invalid_argument] unless [last] is in \[258, 4095\]. *)
+
+val lzw_pack : (int * int) list -> string
+(** [lzw_pack codes] is [codes] packed most significant bit first, the
+    last byte padded with zero bits. *)
+
+val lzw : string -> string
+(** [lzw s] is [lzw_pack (lzw_codes s)]. *)
+
 (** {1 Testables} *)
 
 val why : Lz.why Windtrap.testable

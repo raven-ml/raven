@@ -232,6 +232,78 @@ let large =
       [ Corpus (Text, 5 * mib); Match { distance = mib; length = 65536; seed = 1 } ];
   ]
 
+(* LZW *)
+
+let clear = 256
+let eoi = 257
+let first = 258
+
+(* The encoder's width when its next entry is [next]: it switches after
+   adding entries 511, 1023 and 2047. *)
+let lzw_width next =
+  if next < 512 then 9 else if next < 1024 then 10 else if next < 2048 then 11
+  else 12
+
+(* The section's encoder: [w] is the code of the string held, or -1 for
+   the empty string; [table] maps a string's code and a byte to the code
+   of the string they make. *)
+let lzw_codes ?(last = 4094) ?(flush = false) s =
+  if last < first || last > 4095 then
+    invalid_arg (Printf.sprintf "Lz_support.lzw_codes: last %d" last);
+  let table = Hashtbl.create 4096 in
+  let codes = ref [ (clear, 9) ] in
+  let next = ref first in
+  let write c = codes := (c, lzw_width !next) :: !codes in
+  let w = ref (-1) in
+  String.iter
+    (fun ch ->
+      let k = Char.code ch in
+      if !w < 0 then w := k
+      else
+        match Hashtbl.find_opt table (!w, k) with
+        | Some c -> w := c
+        | None ->
+            write !w;
+            Hashtbl.replace table (!w, k) !next;
+            incr next;
+            w := k;
+            if !next > last then begin
+              if flush then begin
+                write !w;
+                incr next;
+                w := -1
+              end;
+              write clear;
+              Hashtbl.reset table;
+              next := first
+            end)
+    s;
+  if !w >= 0 then begin
+    write !w;
+    incr next
+  end;
+  write eoi;
+  List.rev !codes
+
+let lzw_pack codes =
+  let b = Buffer.create 64 in
+  let acc = ref 0 and bits = ref 0 in
+  List.iter
+    (fun (c, n) ->
+      acc := (!acc lsl n) lor c;
+      bits := !bits + n;
+      while !bits >= 8 do
+        bits := !bits - 8;
+        Buffer.add_char b (Char.chr ((!acc lsr !bits) land 0xff))
+      done;
+      acc := !acc land ((1 lsl !bits) - 1))
+    codes;
+  if !bits > 0 then
+    Buffer.add_char b (Char.chr ((!acc lsl (8 - !bits)) land 0xff));
+  Buffer.contents b
+
+let lzw s = lzw_pack (lzw_codes s)
+
 (* Bounds *)
 
 let has_bound bound n =

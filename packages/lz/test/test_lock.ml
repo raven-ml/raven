@@ -259,6 +259,25 @@ let blocks =
           let dst = Lz_support.create mib in
           equal int ~msg:"releases" 1
             (count (fun () -> ok_produced mib (Lz.Snappy.decode src dst))));
+      (* An LZW stream reports after each 32 KiB of input and output, its
+         first report past the threshold: 16 KiB of text compresses to
+         less than 16 KiB. *)
+      cases "an LZW stream of text"
+        ~id:(fun (n, _) -> Printf.sprintf "decoding %d bytes" n)
+        [ (16 * kib, 0); (mib, 1) ]
+        (fun (n, k) ->
+          let src = Lz_support.of_string (Lz_support.lzw (text n)) in
+          let dst = Lz_support.create n in
+          equal int ~msg:"releases" k
+            (count (fun () -> ok_produced n (Lz.Lzw.decode src dst))));
+      test "an LZW stream of ClearCodes past the threshold releases" (fun () ->
+          (* 30,000 ClearCodes of 9 bits, 33,750 bytes past 32 KiB of
+             input, write nothing. *)
+          let codes = List.init 30_000 (fun _ -> (256, 9)) @ [ (257, 9) ] in
+          let src = Lz_support.of_string (Lz_support.lzw_pack codes) in
+          let dst = Lz_support.create 0 in
+          equal int ~msg:"releases" 1
+            (count (fun () -> ok_produced 0 (Lz.Lzw.decode src dst))));
     ]
 
 (* Work from a short input *)

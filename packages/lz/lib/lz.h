@@ -70,7 +70,8 @@
      those since its last report before each block it begins (Zstandard
      once they reach 4 KiB, which spares a stream of small blocks a
      report each), before each LZ4 frame after its call's first, and each
-     time its fast loop has written LZ_WORK_SPAN bytes since. Before it
+     time its fast loop has written LZ_WORK_SPAN bytes since (LZW: taken
+     and written, since a run of ClearCodes writes nothing). Before it
      copies a literal run, a match or a stored block of LZ_WORK_SPAN
      bytes or more, an LZ4 or Snappy decoder also reports them and calls
      [lz_ahead] with the copy's work, so that it releases before a copy

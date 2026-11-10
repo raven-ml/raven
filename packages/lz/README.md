@@ -1,10 +1,10 @@
 # lz
 
 lz compresses and decompresses bytes from OCaml: deflate with its zlib and
-gzip wrappers, Zstandard, LZ4 and Snappy, and CRC-32. Its formats are
-written in C inside the library and depend on nothing outside the OCaml
-distribution, so a program needs no system zlib or libzstd. Its calls
-work on byte bigarrays. A program decodes a whole buffer into a
+gzip wrappers, Zstandard, LZ4 and Snappy, TIFF's LZW, and CRC-32. Its
+formats are written in C inside the library and depend on nothing outside
+the OCaml distribution, so a program needs no system zlib or libzstd. Its
+calls work on byte bigarrays. A program decodes a whole buffer into a
 destination it sizes, or decodes and encodes in steps that lend each
 step's output from the decoder's or encoder's memory. A failed decode
 returns the reason and the offset of the first input byte of what is
@@ -50,6 +50,7 @@ more is an error, `Too_long`, and the decode allocates no buffer of its own
 | Zstandard | `Lz.Zstd` | `.zst` files, Parquet pages, and data of your own |
 | LZ4 frames and blocks | `Lz.Lz4.Frame`, `Lz.Lz4.Block` | `.lz4` files, and blocks inside a container |
 | Snappy blocks | `Lz.Snappy` | blocks inside a container, such as Parquet pages |
+| TIFF's LZW, decode only | `Lz.Lzw` | the strips and tiles of TIFF images |
 | CRC-32 | `Lz.Crc32` | the checksum of gzip, PNG and ZIP |
 
 Deflate, zlib, gzip and Zstandard also have decoders and encoders that
@@ -57,8 +58,8 @@ take their input in steps. `lz.bytesrw`, built where bytesrw is
 installed, wraps them as bytesrw filters.
 
 lz declines dictionaries, zlib's preset ones and Zstandard's and LZ4's,
-and LZ4's legacy frame. It has no Snappy framing format, xz, bzip2 or
-Brotli.
+LZ4's legacy frame, and LZW codes least significant bit first. It has no
+LZW encoder, Snappy framing format, xz, bzip2 or Brotli.
 
 ## Where next
 

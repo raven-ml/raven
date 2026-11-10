@@ -2766,6 +2766,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Lz (new)
 
+- Add `Lz.Lzw.decode`, TIFF 6.0's LZW: codes of 9 to 12 bits, most
+  significant bit first, widened one entry before the encoder widens.
+  Streams of codes least significant bit first are `Unsupported`.
 - Add `lz`, compression between bigarrays by raven's own C kernels, held to
   the reference implementations' single-threaded speed: deflate, zlib and
   gzip (levels 1-9), Zstandard (levels 1-12), LZ4 blocks and frames, Snappy,

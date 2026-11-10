@@ -10,6 +10,7 @@
   test_zstd_enc
   test_lz4
   test_snappy
+  test_lzw
   test_checksum
   test_step
   test_hostile

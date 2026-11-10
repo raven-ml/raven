@@ -309,6 +309,13 @@ module Snappy = struct
     stage ~bound ~encode s
 end
 
+(* LZW *)
+
+module Lzw = struct
+  external decode : bigbytes -> bigbytes -> (progress, error) result
+    = "lz_lzw_decode_stub"
+end
+
 (* Checksums *)
 
 (* From this many bytes a checksum of a bigarray releases the runtime lock:

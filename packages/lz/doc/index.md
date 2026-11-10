@@ -1,9 +1,9 @@
 # lz
 
 lz compresses and decompresses bytes from OCaml: deflate with its zlib and
-gzip wrappers, Zstandard, LZ4 and Snappy, and CRC-32. Its formats are
-written in C inside the library, so a program needs no system zlib or
-libzstd. Its calls read and write byte bigarrays, whose bytes the
+gzip wrappers, Zstandard, LZ4 and Snappy, TIFF's LZW, and CRC-32. Its
+formats are written in C inside the library, so a program needs no system
+zlib or libzstd. Its calls read and write byte bigarrays, whose bytes the
 collector never moves, so a decode or an encode that has done its
 format's threshold of work, 4 to 16 KiB, lets the domain's other threads
 run during the rest of it (the Buffers and the domain lock section of

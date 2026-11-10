@@ -1,5 +1,5 @@
 (** Lossless compression between byte bigarrays: deflate with its zlib and
-    gzip wrappers, Zstandard, LZ4 and Snappy, and CRC-32.
+    gzip wrappers, Zstandard, LZ4, Snappy and TIFF's LZW, and CRC-32.
 
     Every buffer is a {!bigbytes}, a byte bigarray, whose bytes the
     collector never moves. A {e stream} is the bytes that encode one input,
@@ -93,8 +93,8 @@
     step includes input that earlier steps took ({!Encoder}), and for a
     Zstandard encoder step also the bytes of its window it moves to make
     room for new input, over 4 MiB at levels 9 to 12. The threshold is
-    8 KiB, except 4 KiB when deflate, zlib or gzip encodes and 16 KiB when
-    LZ4 or Snappy decodes. So a short call holds the lock whatever the
+    8 KiB, except 4 KiB when deflate, zlib or gzip encodes, 16 KiB when
+    LZ4 or Snappy decodes and 2 KiB when LZW decodes. So a short call holds the lock whatever the
     size of its input and destination, and a long one releases it
     whatever the size of its input: a decode of a few KiB that writes
     megabytes releases it, and a step on a few bytes that writes a few
@@ -103,10 +103,10 @@
     then waits on return until that thread yields it.
 
     A call checks its work between the units it works in: a format's
-    blocks and members, and each 32 KiB of a decode's output. An LZ4 or
-    Snappy decode also checks before it copies 32 KiB or more, and
-    releases the lock before the copy when the copy would bring its work
-    to the threshold. A call may thus go on for one unit past its
+    blocks and members, and each 32 KiB of a decode's output, or of an LZW
+    decode's input and output. An LZ4 or Snappy decode also checks before
+    it copies 32 KiB or more, and releases the lock before the copy when
+    the copy would bring its work to the threshold. A call may thus go on for one unit past its
     threshold before it releases the lock, and a call whose last unit
     takes it past the threshold holds the lock to its end. *)
 
@@ -143,17 +143,19 @@ type why =
   | Unsupported of string
       (** The stream is well formed and uses a feature that lz
           {e declines}: a dictionary, a Zstandard window size above a
-          decoder's bound ({!Zstd.decoder}), or an LZ4 {e legacy frame},
-          which is the LZ4 frame format's older form ({!Lz4.Frame}). It is
-          at the field that names the feature. *)
+          decoder's bound ({!Zstd.decoder}), an LZ4 {e legacy frame},
+          which is the LZ4 frame format's older form ({!Lz4.Frame}), or
+          LZW codes in the opposite bit order ({!Lzw}). It is at the field
+          that names the feature. *)
 (** The type for the reasons a decode refuses an input. A message comes
     from a fixed set per format: the zlib library's messages and
     ["preset dictionary"] for deflate, zlib and gzip; for Zstandard,
     phrases that name the RFC 8878 field at fault, such as
-    ["Window_Size above the decoder's limit"]; and lz's own for LZ4 and
-    Snappy, such as ["incorrect block checksum"]. A message is a constant
-    string and holds no byte of the input. Messages are for printing and
-    may change in a later version, so a program must not parse them. *)
+    ["Window_Size above the decoder's limit"]; and lz's own for LZ4,
+    Snappy and LZW, such as ["incorrect block checksum"]. A message is a
+    constant string and holds no byte of the input. Messages are for
+    printing and may change in a later version, so a program must not
+    parse them. *)
 
 type error = { at : int; why : why }
 (** The type for decode errors: the offset [at] and the reason [why]. *)
@@ -178,11 +180,12 @@ val pp_error : Format.formatter -> error -> unit
 type progress = { consumed : int; produced : int }
 (** The type for whole-buffer decode results. [produced] counts the bytes
     written to [dst], and [consumed] the bytes read from [src]. A raw
-    deflate or zlib stream ends at an exact byte, and [consumed] counts up
-    to and including the byte that holds its last bit, so whatever follows
-    the stream begins at [consumed]. Every other format is read to the end
-    of [src], members one after another and an LZ4 or Snappy block, which
-    has no end mark, whole, and [consumed] is [src]'s length. *)
+    deflate, zlib or LZW stream ends at an exact byte, and [consumed]
+    counts up to and including the byte that holds its last bit, so
+    whatever follows the stream begins at [consumed]. Every other format
+    is read to the end of [src], members one after another and an LZ4 or
+    Snappy block, which has no end mark, whole, and [consumed] is [src]'s
+    length. *)
 
 (** {2:encoding Encoding}
 
@@ -330,11 +333,12 @@ end
 (** {1:formats Formats}
 
     Each format's module has the whole-buffer calls ({!section-whole}),
-    and for deflate, zlib, gzip and Zstandard a [decoder] and an [encoder]
-    ({!section-steps}). Its [encode], [encode_string] and [encoder] take a
-    [?level] where the format has levels. Its preamble lists what a decode
-    refuses, each item [Malformed] at the first byte of the field or code
-    it names unless it names another byte or reason.
+    LZW's [decode] alone, and for deflate, zlib, gzip and Zstandard a
+    [decoder] and an [encoder] ({!section-steps}). Its [encode],
+    [encode_string] and [encoder] take a [?level] where the format has
+    levels. Its preamble lists what a decode refuses, each item [Malformed]
+    at the first byte of the field or code it names unless it names another
+    byte or reason.
 
     A stream's bytes depend only on its decoded bytes, its level and, for
     Zstandard, on whether [encode] or an encoder wrote it ({!Zstd}). They
@@ -651,6 +655,34 @@ module Snappy : sig
   (** [encode_string s] is the block of [s].
 
       Raises [Invalid_argument] as [encode] does. *)
+end
+
+(** TIFF's LZW streams, decoded whole. TIFF 6.0
+    ({{:https://www.itu.int/itudoc/itu-t/com16/tiff-fx/docs/tiff6.pdf}
+     TIFF Revision 6.0}, section 13) compresses each strip or tile of an
+    image into one stream of codes of 9 to 12 bits, packed most significant
+    bit first. A code below 256 is that byte, 256 is ClearCode and 257
+    EndOfInformation. Each code after the first since a ClearCode adds an
+    entry to a table of strings, numbered from 258: the string of the code
+    before it and the first byte of its own. A code is 9 bits wide until
+    the table holds entry 510, 10 bits until it holds 1022, 11 until it
+    holds 2046 and 12 after, one entry before the encoder widens, as the
+    section states for decoders. A stream begins with ClearCode, which
+    empties the table and sets the width to 9, and ends with
+    EndOfInformation.
+
+    A decode refuses:
+    {ul
+    {- a first code other than ClearCode;}
+    {- a code above the table's next entry, or equal to it after ClearCode;}
+    {- a code that would add an entry past 4095, the table's last.}}
+    A stream whose first two bytes hold ClearCode least significant bit
+    first is [Unsupported] at its first byte. Output past [dst]'s end is
+    [Too_long] at the code that asks for it. *)
+module Lzw : sig
+  val decode : bigbytes -> bigbytes -> (progress, error) result
+  (** [decode src dst] decodes the LZW stream at [src]'s start
+      ({!section-decoding}). *)
 end
 
 (** {1:checksums Checksums} *)

@@ -18,6 +18,12 @@ or run `bench_lz.exe` from this directory (`list` prints the rows,
 
 ## lz against the vendors
 
+The table has no LZW row: `compare/vendor_table.c` links C libraries, and
+libtiff decodes LZW only inside a TIFF file. Timed outside it, on fudge
+on 2026-11-10 under load 8 to 22, lz decodes the three corpora as
+imagecodecs 2025.8.2 encodes them (text, columns, random) at 1745, 1055
+and 656 MB/s, and imagecodecs' own decoder at 282, 483 and 428.
+
 Whole-buffer encode and decode of Silesia (its twelve files concatenated,
 211,938,580 bytes) by lz and by the vendors, one thread each. MB/s counts
 uncompressed bytes. Each row is the faster of two runs of
