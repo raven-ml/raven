@@ -3,12 +3,19 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Zip archives of npy files, as npz holds them. *)
+(** Zip archives, as npz files hold them. *)
 
-(** {1:reading Reading} *)
+(** {1:reading Reading}
+
+    A read checks an entry against the CRC-32 the archive states for it,
+    unless that is 0, which PyTorch states when told to compute none
+    ([Nx_io]'s preamble). *)
 
 type in_file
 (** The type for archives read from a file. *)
+
+type entry
+(** The type for an archive's entries. *)
 
 val open_in : Rig.Buffer.t -> in_file
 (** [open_in file] is the archive of the disk buffer [file], whose central
@@ -17,15 +24,26 @@ val open_in : Rig.Buffer.t -> in_file
 
     Raises [Failure] if they are malformed. *)
 
-val read_npys : in_file -> (string * Nx.host Nx.packed) list
-(** [read_npys a] is the arrays of [a]'s entries whose names end in [.npy],
-    named without the suffix, in the central directory's order: a value over the
-    archive's bytes for a stored entry, over inflated bytes for a compressed
-    one. Other entries are not read.
+val entries : in_file -> entry list
+(** [entries a] is [a]'s entries, in the central directory's order. *)
 
-    Raises [Failure] if such an entry is encrypted, compressed by a method other
-    than DEFLATE, or has a flag npz does not use, or if its checksum does not
-    match or its data is malformed. *)
+val find : in_file -> string -> entry option
+(** [find a name] is [a]'s entry [name], if any. *)
+
+val name : entry -> string
+(** [name e] is [e]'s name. *)
+
+(** The type for an entry's bytes: a view of the archive's bytes for a stored
+    entry, and new host memory nothing else reads for a compressed one. *)
+type data = Stored of Rig.Buffer.t | Inflated of Rig.Buffer.t
+
+val read : in_file -> entry -> data
+(** [read a e] is [e]'s bytes, once checked against its CRC-32.
+
+    Raises [Failure] naming [e] if it is encrypted, compressed by a method
+    other than DEFLATE, or has a flag other than a data descriptor's, UTF-8's
+    and DEFLATE's options, or if its checksum does not match or its DEFLATE
+    data is malformed. *)
 
 (** {1:writing Writing} *)
 

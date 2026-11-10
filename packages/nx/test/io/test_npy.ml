@@ -335,6 +335,18 @@ let npz =
           in
           let path = file (flip_byte s (crc 0)) in
           fails ~path (fun () -> Nx_io.load_npz path));
+      test "an entry whose stated checksum is 0 loads unchecked" (fun () ->
+          let x = Nx.P (Nx.arange Nx.int16 0 5 1) in
+          let b = Bytes.of_string (read (saved ".npz" save_npz [ ("w", x) ])) in
+          (* The CRC-32 of the data descriptor and of the central directory. *)
+          let rec zero signature at i =
+            if Bytes.sub_string b i 4 = signature then
+              Bytes.set_int32_le b (i + at) 0l
+            else zero signature at (i + 1)
+          in
+          zero "PK\007\008" 4 0;
+          zero "PK\001\002" 16 0;
+          equal packed x (find (Nx_io.load_npz (file (Bytes.to_string b))) "w"));
       test
         "a deflated entry that declares more data than deflate can expand to \
          fails" (fun () ->

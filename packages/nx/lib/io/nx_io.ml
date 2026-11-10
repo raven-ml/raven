@@ -9,11 +9,14 @@ module Archive = Archive
 
 (* NumPy *)
 
+let npy_header b =
+  let read pos n = Storage.string b ~pos n in
+  Npy.header read ~length:(Rig.Buffer.length b)
+
 let load_npy path =
   Fail.file path @@ fun () ->
   let file = Storage.open_file path in
-  let read pos n = Storage.string file ~pos n in
-  Npy.value (Npy.header read ~length:(Rig.Buffer.length file)) file
+  Npy.value (npy_header file) file
 
 let save_npy path x =
   let by = "Nx_io.save_npy" in
@@ -25,14 +28,27 @@ let save_npy path x =
   Save.string fd header;
   Save.bytes fd data
 
+(* The array of an npy stream: over the archive's bytes for a stored entry. The
+   inflated bytes of a compressed one are the entry's alone: its value owns a
+   copy, in memory rig may hand to a donation, which a bigarray's never is. *)
+let npy_entry = function
+  | Zip.Stored b -> Npy.value (npy_header b) b
+  | Zip.Inflated b -> Npy.copied (npy_header b) b
+
 let load_npz path =
   Fail.file path @@ fun () ->
   let zip = Zip.open_in (Storage.open_file path) in
+  let suffix = ".npy" in
   List.fold_left
-    (fun archive (name, x) ->
-      if name = "" then failwith {|the entry ".npy" has no name before .npy|};
-      Archive.add name x archive)
-    Archive.empty (Zip.read_npys zip)
+    (fun archive e ->
+      let name = Zip.name e in
+      if not (String.ends_with ~suffix name) then archive
+      else
+        let n = String.length name - String.length suffix in
+        let key = String.sub name 0 n in
+        if key = "" then failwith {|the entry ".npy" has no name before .npy|};
+        Archive.add key (npy_entry (Zip.read zip e)) archive)
+    Archive.empty (Zip.entries zip)
 
 let save_npz path archive =
   let by = "Nx_io.save_npz" in
@@ -167,3 +183,4 @@ let save_jpeg path x =
     with_pixels ~by ~channels:[ 1; 3 ] ~side:jpeg_side x Image.jpeg_encode
   in
   Save.write path (fun fd -> Save.bytes fd file)
+

@@ -2732,6 +2732,8 @@ word comes from its lock and from samples the dashboard saw arrive.
 - nx.cuda's results depend on its operands' values and extents, never on
   their layouts, and its `Sum` and `Prod` reductions associate as nx.cpu's.
   `nx_cuda.mli` states each kernel's association, bound and GPU memory.
+- `Nx_io.load_npz` loads an entry whose stated CRC-32 is 0 unchecked, as
+  writers told to compute no checksum state it, and refused it before.
 - **Breaking:** `Nx_cpu` no longer promises `Wrong_dtype` or
   `Shape_mismatch` for a call that does not fit, only some refusal.
 - `Nx_kernel.S`'s caller must pass a call that fits; for one that does

@@ -28,6 +28,13 @@
     nx lacks loads as its bytes at [uint8], at the shape its format's section
     states, and an entry with no elements is an empty array of that shape.
 
+    An npz file is a zip archive. A load checks each zip entry it reads against
+    the CRC-32 the archive states for it, as
+    {{:https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT}APPNOTE}
+    4.1.5 requires, mapped entries included, so it reads the bytes of each such
+    entry once. An entry whose stated CRC-32 is 0 is read unchecked, since a
+    writer such as PyTorch's states 0 when told to compute none.
+
     A mapped value keeps its file mapped while it is reachable, and reads the
     file that was opened, so a save to its path leaves it its elements.
     {b The file must not change in place while a mapped value from it is
@@ -221,8 +228,7 @@ val load_npz : string -> Nx.host Archive.t
 (** [load_npz path] is the entries of the npz file [path]. Each zip entry whose
     name ends in [.npy] holds one, named by the part before [.npy], which must
     not be empty. Entries of other names are not read; their records must still
-    be well-formed. It reads every npy entry's bytes, since each entry's
-    checksum covers all of them.
+    be well-formed.
 
     Raises [Failure] as {!section-errors} states, and if a checksum does not
     match its entry, if an entry's name is [.npy] alone, or if an entry whose

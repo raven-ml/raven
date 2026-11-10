@@ -2,11 +2,12 @@
   Copyright (c) 2026 The Raven authors. All rights reserved.
   SPDX-License-Identifier: ISC
 
-  The zip subset npz uses: stored and DEFLATE entries, data descriptors, UTF-8
-  names, and ZIP64 sizes and offsets. Archives over several disks are refused,
-  and so are npy entries that are encrypted or of another method. The other
-  entries are not read. Of them, only the records' bounds and agreement and the
-  names' distinctness are checked, since a name is only an archive's key.
+  The zip subset npz files and PyTorch checkpoints use: stored and DEFLATE
+  entries, data descriptors, UTF-8 names, and ZIP64 sizes and offsets.
+  Archives over several disks are refused, and so is a read of an entry that
+  is encrypted or of another method. Of the entries a caller does not read,
+  only the records' bounds and agreement and the names' distinctness are
+  checked, since a name is only an archive's key.
   ---------------------------------------------------------------------------*)
 
 open Bigarray
@@ -36,18 +37,19 @@ let marker16 = 0xffff
 let marker32 = 0xffffffff
 let zip64_tag = 0x0001
 
-(* The flags npz uses (4.4.4): the sizes in a descriptor after the data, a UTF-8
-   name and DEFLATE's two option bits; and encryption, which it refuses. *)
+(* The flags a read accepts (4.4.4): the sizes in a descriptor after the data,
+   a UTF-8 name and DEFLATE's two option bits; and encryption, which it
+   refuses. *)
 let descriptor_flag = 0x0008
 let utf8_flag = 0x0800
 let deflate_options = 0x0006
 let encrypted_flag = 0x0001
 
-(* The compression methods of npy entries (4.4.5). *)
+(* The compression methods a read accepts (4.4.5). *)
 let stored = 0
 let deflated = 8
 
-type entry = {
+type record = {
   name : string;
   method_ : int;
   flags : int;
@@ -57,16 +59,24 @@ type entry = {
   local_offset : int;
 }
 
-(* [file] is the archive's bytes on the host. [entries] pairs each entry with
-   the offset of its data in [file]. *)
-type in_file = { file : Rig.Buffer.t; entries : (entry * int) list }
+(* An entry is its central record and the offset of its data in the
+   archive's bytes. *)
+type entry = { record : record; data : int }
+
+(* [file] is the archive's bytes on the host. [entries] are in the central
+   directory's order, and [names] finds them by name. *)
+type in_file = {
+  file : Rig.Buffer.t;
+  entries : entry list;
+  names : (string, entry) Hashtbl.t;
+}
 
 (* One deflate encoder writes every entry's stream: after a stream ends it
    begins the next with the tables it has. *)
 type out_file = {
   fd : Unix.file_descr;
   mutable offset : int;
-  mutable entries_rev : entry list;
+  mutable entries_rev : record list;
   deflate : Lz.Encoder.t Lazy.t;
 }
 
@@ -334,7 +344,7 @@ let validate_local_entry data ~central_offset entry =
    offset of its data, once their names are found distinct and their records
    disjoint. *)
 let validate_entries data ~central_offset entries =
-  let names = Hashtbl.create (List.length entries) in
+  let names = Hashtbl.create ~random:true (List.length entries) in
   List.iter
     (fun entry ->
       if Hashtbl.mem names entry.name then
@@ -355,7 +365,7 @@ let validate_entries data ~central_offset entries =
         disjoint finish rest
   in
   disjoint 0 spans;
-  List.map (fun (e, (payload, _)) -> (e, payload)) located
+  List.map (fun (record, (data, _)) -> { record; data }) located
 
 let open_in file =
   let file = Storage.pages file in
@@ -374,88 +384,76 @@ let open_in file =
   if central_offset > eocd || central_size > eocd - central_offset then
     Fail.failf "ZIP central directory overlaps its end record";
   let entries = parse_entries data ~count ~central_size ~central_offset in
-  { file; entries = validate_entries data ~central_offset entries }
+  let entries = validate_entries data ~central_offset entries in
+  let names = Hashtbl.create ~random:true (List.length entries) in
+  List.iter (fun e -> Hashtbl.add names e.record.name e) entries;
+  { file; entries; names }
+
+let entries archive = archive.entries
+let find archive name = Hashtbl.find_opt archive.names name
+let name e = e.record.name
+
+type data = Stored of Rig.Buffer.t | Inflated of Rig.Buffer.t
+
+(* [check r] fails unless the entry [r] is stored or deflated, with no flag but
+   a data descriptor, UTF-8 and DEFLATE's options. *)
+let check r =
+  if r.flags land encrypted_flag <> 0 then
+    Fail.failf "ZIP entry %S is encrypted" r.name;
+  let allowed_flags =
+    if r.method_ = stored then descriptor_flag lor utf8_flag
+    else if r.method_ = deflated then
+      descriptor_flag lor utf8_flag lor deflate_options
+    else Fail.failf "ZIP entry %S: compression method %d" r.name r.method_
+  in
+  if r.flags land lnot allowed_flags <> 0 then
+    Fail.failf "ZIP entry %S: flags 0x%04x" r.name r.flags;
+  if r.method_ = stored && r.compressed_size <> r.uncompressed_size then
+    Fail.failf "stored ZIP entry %S has inconsistent sizes" r.name
+
+(* A writer that computes no CRC-32 states 0, as PyTorch's does when told to
+   compute none: such an entry is read unchecked. *)
+let check_crc r (bytes : bytes) =
+  if r.crc32 <> 0 && Crc32.bigbytes bytes <> r.crc32 then
+    Fail.failf "CRC-32 mismatch in ZIP entry %S" r.name
+
+let inflate r (src : bytes) =
+  let len = r.compressed_size in
+  (* Deflate expands at most 1032 times: 258 bytes from two bits. *)
+  if r.uncompressed_size / 1032 > len then
+    Fail.failf "ZIP entry %S declares more data than its DEFLATE data holds"
+      r.name;
+  let size = r.uncompressed_size in
+  let inflated = Array1.create int8_unsigned c_layout size in
+  (* The DEFLATE data decodes into the declared size and ends at the declared
+     compressed size. *)
+  (match Lz.Deflate.decode src inflated with
+  | Ok { Lz.produced; _ } when produced <> size ->
+      Fail.failf "invalid DEFLATE data in ZIP entry %S: %d bytes, %d declared"
+        r.name produced size
+  | Ok { Lz.consumed; _ } when consumed <> len ->
+      Fail.failf "invalid DEFLATE data in ZIP entry %S: %d bytes after its end"
+        r.name (len - consumed)
+  | Ok _ -> ()
+  | Error e ->
+      Fail.failf "invalid DEFLATE data in ZIP entry %S: %s" r.name
+        (Format.asprintf "%a" Lz.pp_error e));
+  inflated
+
+let read archive { record = r; data = off } =
+  check r;
+  let len = r.compressed_size in
+  Storage.read archive.file @@ fun data ->
+  let src = Array1.sub data off len in
+  if r.method_ = stored then (
+    check_crc r src;
+    Stored (Rig.Buffer.view archive.file ~first:off ~length:len))
+  else
+    let inflated = inflate r src in
+    check_crc r inflated;
+    Inflated (Rig.Buffer.of_bigarray inflated)
 
 let npy_suffix = ".npy"
-
-(* The bytes of an entry: where they lie in the archive, or inflated. *)
-type data = Stored of int * int | Inflated of bytes
-
-(* [check_npy entry] fails unless the npy entry [entry] is stored or deflated,
-   with no flag but a data descriptor, UTF-8 and DEFLATE's options. Only an npy
-   entry is checked so: the archive's other entries are not read. *)
-let check_npy entry =
-  if entry.flags land encrypted_flag <> 0 then
-    Fail.failf "encrypted ZIP entries are unsupported";
-  let allowed_flags =
-    if entry.method_ = stored then descriptor_flag lor utf8_flag
-    else if entry.method_ = deflated then
-      descriptor_flag lor utf8_flag lor deflate_options
-    else Fail.failf "unsupported ZIP compression method %d" entry.method_
-  in
-  if entry.flags land lnot allowed_flags <> 0 then
-    Fail.failf "unsupported ZIP flags 0x%04x" entry.flags;
-  if entry.method_ = stored && entry.compressed_size <> entry.uncompressed_size
-  then Fail.failf "stored ZIP entry %S has inconsistent sizes" entry.name
-
-(* The array of the npy entry [entry], whose data starts at [off]. *)
-let read_npy (archive : in_file) (entry, off) =
-  check_npy entry;
-  let len = entry.compressed_size in
-  let data =
-    Storage.read archive.file @@ fun data ->
-    let src = Array1.sub data off len in
-    if entry.method_ = stored then (
-      if Crc32.bigbytes src <> entry.crc32 then
-        Fail.failf "CRC-32 mismatch in ZIP entry %S" entry.name;
-      Stored (off, len))
-    else (
-      (* Deflate expands at most 1032 times: 258 bytes from two bits. *)
-      if entry.uncompressed_size / 1032 > len then
-        Fail.failf "ZIP entry %S declares more data than its DEFLATE data holds"
-          entry.name;
-      let size = entry.uncompressed_size in
-      let inflated = Array1.create int8_unsigned c_layout size in
-      (* The DEFLATE data decodes into the declared size and ends at the
-         declared compressed size. *)
-      (match Lz.Deflate.decode src inflated with
-      | Ok { Lz.produced; _ } when produced <> size ->
-          Fail.failf
-            "invalid DEFLATE data in ZIP entry %S: %d bytes, %d declared"
-            entry.name produced size
-      | Ok { Lz.consumed; _ } when consumed <> len ->
-          Fail.failf
-            "invalid DEFLATE data in ZIP entry %S: %d bytes after its end"
-            entry.name (len - consumed)
-      | Ok _ -> ()
-      | Error e ->
-          Fail.failf "invalid DEFLATE data in ZIP entry %S: %s" entry.name
-            (Format.asprintf "%a" Lz.pp_error e));
-      if Crc32.bigbytes inflated <> entry.crc32 then
-        Fail.failf "CRC-32 mismatch in ZIP entry %S" entry.name;
-      Inflated inflated)
-  in
-  let entry b value =
-    let read pos n = Storage.string b ~pos n in
-    value (Npy.header read ~length:(Rig.Buffer.length b)) b
-  in
-  match data with
-  | Stored (first, length) ->
-      entry (Rig.Buffer.view archive.file ~first ~length) Npy.value
-  | Inflated a ->
-      (* The inflated bytes are the entry's alone: its value owns a copy, in
-         memory rig may hand to a donation, which a bigarray's never is. *)
-      entry (Rig.Buffer.of_bigarray a) Npy.copied
-
-let read_npys (archive : in_file) =
-  let n = String.length npy_suffix in
-  List.filter_map
-    (fun ((e, _) as located) ->
-      if String.ends_with ~suffix:npy_suffix e.name then
-        let name = String.sub e.name 0 (String.length e.name - n) in
-        Some (name, read_npy archive located)
-      else None)
-    archive.entries
 
 (* [le n value] is the [n] bytes of [value], little-endian. *)
 let le n value =
