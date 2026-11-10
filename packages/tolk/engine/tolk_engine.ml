@@ -1623,7 +1623,7 @@ let device_keys ~targets sink =
         | None -> raise_notrace Exit
         | Some c ->
             String.concat " "
-              [ d; ren.name; Format.asprintf "%a" Helpers.Target.pp t; c ])
+              [ d; ren.name; Helpers.Target.key t; c ])
   in
   match List.map one devices with
   | keys -> Some keys

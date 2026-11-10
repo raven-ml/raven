@@ -455,12 +455,22 @@ sign is unspecified, and rune hands tolk no 8-bit float, so
 - **tinygrad:** `uop/ops.py` (`key`, the SHA-256 of
   `str((op, dtype, arg))` followed by the keys of the sources).
 - **tolk:** `Ops.key`.
-- **Differs:** the same text is digested with BLAKE2b-256.
-- **Reason:** (a). No key is ever compared with a key tinygrad computed: keys
-  name compiled programs in caches that tolk alone writes, so the digest
-  is free to differ, and tolk takes the one OCaml's standard library
-  has, which has MD5 and BLAKE2 but not SHA-256.
-- **Pinned by:** `Tolk.Ops › key › tells arguments apart`.
+- **Differs:** the digest is BLAKE2b-256, of a writing of the operation, type
+  and argument that tells every two arguments apart, field by field, where
+  tinygrad's `str` writes every NaN `nan` and tolk's repr prints an `Argument`
+  stage as a `Whole` one (D27, D465): a float enters by its bits, a node an
+  argument holds by its key, a call's write marks not at all.
+- **Reason:** (a) for the digest. No key is ever compared with a key tinygrad
+  computed: keys name compiled programs in caches that tolk alone writes, so
+  the digest is free to differ, and tolk takes the one OCaml's standard
+  library has, which has MD5 and BLAKE2 but not SHA-256. (e) for the writing:
+  a key that two different nodes share serves one's schedule or program to
+  the other, and tinygrad's `str` writes alike NaNs of different bits, and so
+  did tolk's repr an `Argument` stage and a `Whole` one, and a program's
+  target whose fields split one text two ways.
+- **Pinned by:** `Tolk.Ops › key › tells arguments apart`, `› two nodes of one
+  key are one node, but for a call's marks`, `› tells apart arguments a repr
+  prints alike`; `Graph › a graph of any argument reads back as itself`.
 
 ## D13. Folding reads and writes committed constants at their width
 
@@ -988,13 +998,14 @@ Each part is one layer of the head's NaN rule: a float constant is its bits
   `uop/symbolic.py` (`fold_bitcast` converts the constant with
   `truncate` before reading its bits).
 - **tolk:** `Dtype.equal_const`, `Dtype.hash_const` and `Dtype.const`;
-  `Ops.arg_key`, which `Ops.key` reads; `Shape.fold_bitcast`.
+  `Ops.key`; `Shape.fold_bitcast`.
 - **Differs:** a float constant is its bits. `Dtype.const` keeps a NaN's sign
   and the payload its type holds, a signalling NaN staying one, in a float of 16
   bits or more (an 8-bit float's NaN is the one its storage holds, D10 and D20),
   and constants compare and hash by their bits, so NaNs of different bits are
   different nodes, with different keys: a schedule cached under one NaN's key is
-  never the schedule of another's. No golden reads a key; tinygrad's writes
+  never the schedule of another's; a parameter's bounds and value key by their
+  bits too. No golden reads a key; tinygrad's writes
   every NaN `nan`. `fold_bitcast` reads a float constant as its type stores it,
   where tinygrad's conversion quiets a signalling NaN and makes an 8-bit NaN
   canonical. So folding `bitcast(bitcast(0x7d01, half), uint16)` gives `0x7d01`,
@@ -6299,8 +6310,8 @@ into D183, which holds its rule, its reason and its pins.
 A string or bytes argument entered a key as its digest, for the profile key
 `Device.Tiny_elf.of_program` computed over a program's source and binary. Its
 one consumer was gone: nothing read that key, and the digest changed no
-compile's words or instructions. `Ops.key` writes every argument as its repr,
-as tinygrad does, and `of_program` and `Tiny_elf.t` went with it.
+compile's words or instructions. `Ops.key` writes every argument field by
+field (D12), and `of_program` and `Tiny_elf.t` went with it.
 
 ## D194. A running operation scans chunks of 16 at every level
 
@@ -9167,16 +9178,22 @@ a view names its storage again (D426).
 - **Differs:** a stage made because a custom kernel reads a view is
   `Argument`: kept whole, as `Whole`, but a store through the same node of the
   view writes the storage, the stage's own index inlined. A stage the user
-  materialises stays `Whole` and is written as asked. `Ops.repr` and the
-  serialized graph print both as `removable=False`, as tinygrad does; a graph
-  read back has no `Argument`, none surviving a schedule.
+  materialises stays `Whole` and is written as asked. `Ops.repr` prints both
+  as `removable=False`, as tinygrad does; `Ops.key` (D12) and the serialized
+  graph, which writes `argument=True` after tinygrad's fields, tell them apart,
+  so a graph a user builds with an `Argument` stage keys apart from one with a
+  `Whole` stage and reads back as itself.
 - **Reason:** (e): `b1 = after b [store v (v + 2)]` beside a call reading the
   same node `v` as its argument lost the store: the store's target was the
   stage that holds the read, and `b` kept its old elements, a silent wrong
   value. The call still reads `v` as it was, through the stage.
 - **Pinned by:** `Tolk_engine › calls of views › a store through a run a call
   reads lands`, `› a store through a reshape of a run a call reads lands`, `› a
-  loop reading a run of the state under a store through it keeps the store`.
+  loop reading a run of the state under a store through it keeps the store`;
+  `Graph › a graph of any argument reads back as itself`; `Tolk.Ops › key ›
+  tells apart arguments a repr prints alike`; `Tolk.Indexing › run_rangeify ›
+  recorded graphs › custom_kernel_rangeified.golden`, whose `.tolk` writes
+  the stage `argument=True`.
 
 ## D434. A scalar value has no axis of its consumers, and stores join over what they write
 

@@ -460,8 +460,11 @@ val structure_ranks : t -> t -> int
 
 val key : t -> string
 (** [key u] is a digest of [u]'s operation, type, argument and sources,
-    recursively: equal for equal graphs, whenever and wherever they are built,
-    and different for NaN constants of different bits.
+    recursively, a node an argument holds entering by its own key: equal for
+    equal graphs, whenever and wherever they are built, and different for
+    different ones, but for the marks of a call's writes ([call_info]'s
+    [write]), which it leaves out. Other nodes that {!pp} prints alike, as NaNs
+    of different bits are, key apart.
 
     Raises as {!pp_arg} does on an argument of [u]. *)
 

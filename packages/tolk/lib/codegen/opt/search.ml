@@ -312,7 +312,7 @@ let beam_search ~link ~time ?allow_test_size amt s =
          string_of_int amt;
          string_of_bool allow_test_size;
          ren.name;
-         Format.asprintf "%a" Helpers.Target.pp ren.target;
+         Helpers.Target.key ren.target;
          Option.value (Renderer.Compiler.cachekey ren.compiler) ~default:"";
        ]
       @ List.map (fun (k, v) -> k ^ "=" ^ v) (Setting.shaping ()))

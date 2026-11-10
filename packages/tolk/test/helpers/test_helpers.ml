@@ -218,6 +218,19 @@ let gen_target =
    Target.{ device; renderer; arch; interface; indices })
   |> Gen.with_pp pp_target
 
+(* Targets whose fields hold separators and pieces of each other, so that
+   two of them often join into one text. *)
+let gen_split =
+  (let open Gen in
+   let few l = of_list ~pp:Format.pp_print_string l in
+   let split = few [ ""; "a"; "b"; "ab"; "a:"; ":" ] in
+   let+ renderer = few [ ""; "Y" ]
+   and+ arch = few [ ""; "Z" ]
+   and+ interface = split
+   and+ indices = split in
+   Target.{ device = "X"; renderer; arch; interface; indices })
+  |> Gen.with_pp pp_target
+
 let parsed_like_tinygrad cell =
   let input = cell "input" in
   match Target.of_string input with
@@ -244,6 +257,13 @@ let targets =
       prop "of_string reads back what pp writes" gen_target
         (Law.round_trip target_w string (Format.asprintf "%a" Target.pp)
            (fun s -> require_ok ~pp:Format.pp_print_string (Target.of_string s)));
+      prop ~count:3000 "key tells targets apart, as pp does not"
+        (Gen.pair gen_split gen_split) (fun (t0, t1) ->
+          let text t = Format.asprintf "%a" Target.pp t in
+          cover "one target" (t0 = t1);
+          cover "two targets pp writes alike"
+            (t0 <> t1 && String.equal (text t0) (text t1));
+          equal bool (t0 = t1) (String.equal (Target.key t0) (Target.key t1)));
     ]
 
 (* Integers and lists *)

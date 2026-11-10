@@ -74,6 +74,13 @@ module Target = struct
     let fst = join [ t.interface; t.indices ] in
     if fst <> "" then Format.fprintf ppf "%s+" fst;
     Format.pp_print_string ppf (join [ t.device; t.renderer; t.arch ])
+
+  (* Each field after its length, so that no two targets write alike. *)
+  let key { device; renderer; arch; interface; indices } =
+    String.concat ""
+      (List.map
+         (fun s -> string_of_int (String.length s) ^ ":" ^ s)
+         [ device; renderer; arch; interface; indices ])
 end
 
 (* Integers and lists *)

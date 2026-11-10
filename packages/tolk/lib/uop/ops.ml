@@ -1628,35 +1628,229 @@ let structure_ranks u =
   ignore (List.fold_left (fun root x -> join root 0 x) 0 nodes);
   label
 
-(* An argument as [key] reads it. A NaN constant enters with its bits, since
-   NaNs of different bits are different nodes and a repr writes every NaN [nan].
-   Any other enters as its repr, which [repr] gives. *)
-let key_of_arg repr = function
-  | Const (`Float x) when Float.is_nan x ->
-      strf "ConstFloat(nan 0x%Lx)" (Int64.bits_of_float x)
-  | _ -> repr ()
+(* A node as [key] reads it: its operation, type and argument written so
+   that different nodes write differently, then its sources' keys, each of a
+   fixed length. Every field is tagged or of a fixed length, a string or a
+   list is preceded by its length and a number ends at a comma, so no two
+   writings run into each other. A float is its bits, a node an argument holds
+   is its key and a stage writes what it keeps by constructor. A call's write
+   marks are left out ({!call_info}). Each record is matched whole, so that a
+   field added to one does not compile until it is written. *)
 
-let arg_key n = key_of_arg (fun () -> arg_repr n) n.arg
+let add_int b n =
+  Buffer.add_string b (string_of_int n);
+  Buffer.add_char b ','
 
-(* A node's digest from its argument's key and its sources' digests. *)
-let rec add_keys b src_key = function
-  | [] -> ()
-  | s :: rest ->
-      Buffer.add_string b (src_key s);
-      add_keys b src_key rest
+let add_bool b x = Buffer.add_char b (if x then 't' else 'f')
 
-let digest n arg_key src_key =
+let add_str b s =
+  add_int b (String.length s);
+  Buffer.add_string b s
+
+let add_option f b = function
+  | None -> Buffer.add_char b 'n'
+  | Some x ->
+      Buffer.add_char b 's';
+      f b x
+
+let add_list f b l =
+  add_int b (List.length l);
+  List.iter (f b) l
+
+let add_const b (c : Dtype.const) =
+  match c with
+  | `Invalid -> Buffer.add_char b 'v'
+  | `Bool x ->
+      Buffer.add_char b 'b';
+      add_bool b x
+  | `Int z ->
+      Buffer.add_char b 'i';
+      add_str b (Bigint.to_string z)
+  | `Float x ->
+      Buffer.add_char b 'f';
+      Buffer.add_int64_le b (Int64.bits_of_float x)
+
+let add_value b (v : Dtype.value) = add_const b (v :> Dtype.const)
+let add_dtype b dt = add_str b (Dtype.name dt)
+
+let add_addrspace b (a : Dtype.addr_space) =
+  Buffer.add_char b
+    (match a with Global -> 'g' | Local -> 'l' | Reg -> 'r' | Alu -> 'a')
+
+let add_sint node_key b = function
+  | Int n ->
+      Buffer.add_char b 'i';
+      add_int b n
+  | Sym u ->
+      Buffer.add_char b 'k';
+      Buffer.add_string b (node_key u)
+
+let add_opt b (o : Opt.t) =
+  match o with
+  | Tc { axis; tc_select; tc_opt; use_tc } ->
+      Buffer.add_char b 'c';
+      List.iter (add_int b) [ axis; tc_select; tc_opt; use_tc ]
+  | Split { axis; amount; target; top } ->
+      Buffer.add_char b 's';
+      add_int b axis;
+      add_int b amount;
+      Buffer.add_char b (match target with Upcast -> 'u' | Local -> 'l');
+      add_bool b top
+  | Padto { axis; amount } ->
+      Buffer.add_char b 'p';
+      add_int b axis;
+      add_int b amount
+  | Swap { axis; with_axis } ->
+      Buffer.add_char b 'w';
+      add_int b axis;
+      add_int b with_axis
+
+let add_wmma_axis b ((t, ids), size) =
+  add_int b (Axis_type.to_int t);
+  add_list add_int b ids;
+  add_int b size
+
+let add_arg node_key b = function
+  | No_arg -> Buffer.add_char b '-'
+  | Const c ->
+      Buffer.add_char b 'C';
+      add_const b c
+  | Dtype dt ->
+      Buffer.add_char b 'D';
+      add_dtype b dt
+  | Param
+      {
+        slot;
+        dtype;
+        vmin_vmax;
+        name;
+        addrspace;
+        device;
+        volatile;
+        bind_on_realize;
+        bound;
+        phase;
+        align;
+      } ->
+      Buffer.add_char b 'P';
+      add_int b slot;
+      add_dtype b dtype;
+      add_option
+        (fun b (lo, hi) ->
+          add_value b lo;
+          add_value b hi)
+        b vmin_vmax;
+      add_option add_str b name;
+      add_addrspace b addrspace;
+      add_option add_str b device;
+      add_bool b volatile;
+      add_bool b bind_on_realize;
+      add_option add_value b bound;
+      add_int b phase;
+      add_int b align
+  | Range { axis_type; axis_id } ->
+      Buffer.add_char b 'R';
+      add_int b (Axis_type.to_int axis_type);
+      add_list add_int b axis_id
+  | Reduce { op; num_axes } ->
+      Buffer.add_char b 'r';
+      add_int b (Op.to_int op);
+      add_int b num_axes
+  | Device d ->
+      Buffer.add_char b 'd';
+      add_str b d
+  | String s ->
+      Buffer.add_char b 'S';
+      add_str b s
+  | Bytes s ->
+      Buffer.add_char b 'B';
+      add_str b s
+  | Code { code; dtype } ->
+      Buffer.add_char b 'I';
+      add_str b code;
+      add_dtype b dtype
+  | Bufferize { device; addrspace; keep } ->
+      Buffer.add_char b 'Z';
+      add_option add_str b device;
+      add_addrspace b addrspace;
+      Buffer.add_char b
+        (match keep with
+        | Removable -> 'r'
+        | Broadcast -> 'b'
+        | Whole -> 'w'
+        | Argument -> 'a')
+  | Kernel
+      {
+        name;
+        applied_opts;
+        opts_to_apply;
+        estimates;
+        beam;
+        optimized;
+        kernel;
+        split;
+      } ->
+      Buffer.add_char b 'K';
+      add_str b name;
+      add_list add_opt b applied_opts;
+      add_option (add_list add_opt) b opts_to_apply;
+      add_option
+        (fun b { ops; lds; mem } ->
+          List.iter (add_sint node_key b) [ ops; lds; mem ])
+        b estimates;
+      add_int b beam;
+      add_bool b optimized;
+      add_bool b kernel;
+      add_option
+        (fun b { iterations; lo; hi } ->
+          add_sint node_key b iterations;
+          add_int b lo;
+          add_int b hi)
+        b split
+  | Program
+      { global_size; local_size; params; globals; outs; ins; target } ->
+      Buffer.add_char b 'G';
+      add_list (add_sint node_key) b global_size;
+      add_list (add_sint node_key) b local_size;
+      add_list (fun b u -> Buffer.add_string b (node_key u)) b params;
+      List.iter (add_list add_int b) [ globals; outs; ins ];
+      add_str b (Helpers.Target.key target)
+  | Custom_function { name; dtype; fmt } ->
+      Buffer.add_char b 'F';
+      add_str b name;
+      add_dtype b dtype;
+      add_bool b fmt
+  | Call { name; precompile; inline; write = _ } ->
+      Buffer.add_char b 'L';
+      add_option add_str b name;
+      add_bool b precompile;
+      add_bool b inline
+  | Wmma { dims = m, n, k; dtype_in; threads; upcast_axes } ->
+      Buffer.add_char b 'W';
+      List.iter (add_int b) [ m; n; k ];
+      add_dtype b dtype_in;
+      add_int b threads;
+      add_option
+        (fun b (x, y, z) -> List.iter (add_list add_wmma_axis b) [ x; y; z ])
+        b upcast_axes
+  | Disjoint -> Buffer.add_char b 'J'
+
+(* A node's digest with the argument [arg], its arguments' nodes and its
+   sources keyed by [node_key] and [src_key]. *)
+let digest n arg ~node_key ~src_key =
   let b = Buffer.create 128 in
-  Buffer.add_string b
-    (repr_tuple [ "Ops." ^ Op.name n.op; repr_dtype n.dtype; arg_key ]);
-  add_keys b src_key n.src;
+  add_int b (Op.to_int n.op);
+  add_dtype b n.dtype;
+  add_arg node_key b arg;
+  List.iter (fun s -> Buffer.add_string b (src_key s)) n.src;
   Digest.BLAKE256.string (Buffer.contents b)
 
-let key u =
+let rec key u =
   memoized ~calls:Enter ~unset:unset_string
     ~get:(fun n -> n.memos.key_memo)
     ~set:(fun n k -> (own_memos n).key_memo <- k)
-    ~compute:(fun n -> digest n (arg_key n) (fun s -> s.memos.key_memo))
+    ~compute:(fun n ->
+      digest n n.arg ~node_key:key ~src_key:(fun s -> s.memos.key_memo))
     u
 
 (* The nodes [arg] gives an argument and those above them differ from their
@@ -1671,12 +1865,10 @@ let key_with ~arg u =
   List.iter
     (fun n ->
       match arg n with
-      | Some a ->
-          let text = key_of_arg (fun () -> repr_arg a) a in
-          Tbl.replace moved n (digest n text src_key)
+      | Some a -> Tbl.replace moved n (digest n a ~node_key:key ~src_key)
       | None ->
           if List.exists is_moved n.src then
-            Tbl.replace moved n (digest n (arg_key n) src_key)
+            Tbl.replace moved n (digest n n.arg ~node_key:key ~src_key)
           else ignore (key n))
     (toposort ~calls:Enter u);
   src_key u

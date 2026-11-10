@@ -692,6 +692,77 @@ let keys =
               ("sign", 0xFFF8_0000_0000_0000L);
             ];
           equal string (Ops.key quiet) (Ops.key (nan 0x7FF8_0000_0000_0000L)));
+      (* A node redrawn in one field of its argument keys apart, but for a
+         call's write marks, which the key leaves out. *)
+      prop ~count:4000 "two nodes of one key are one node, but for a call's marks"
+        Args.neighbours (fun (field, u, v) ->
+          List.iter (fun f -> cover f (String.equal f field && u != v))
+            Args.field_names;
+          let same = u == v || String.equal field "call.write" in
+          equal bool same (String.equal (Ops.key u) (Ops.key v)));
+      prop ~count:3000 "two nodes drawn apart share a key only as one node"
+        Args.pairs (fun (u, v) ->
+          let unmarked w =
+            match Ops.arg w with
+            | Call c -> Ops.replace w ~arg:(Call { c with write = [] })
+            | _ -> w
+          in
+          let one = unmarked u == unmarked v in
+          cover "one node, but for a call's marks" one;
+          cover "two nodes of one kind" (not one);
+          equal bool one (String.equal (Ops.key u) (Ops.key v)));
+      test "tells apart arguments a repr prints alike" (fun () ->
+          let open Args in
+          let stage keep =
+            Ops.v ~src:[ buffer ]
+              ~arg:(Bufferize { device = None; addrspace = Global; keep })
+              Stage
+          in
+          let program ?(params = []) ?(interface = "") ?(indices = "") () =
+            let one = [ Ops.Int 1; Int 1; Int 1 ] in
+            let target : Helpers.Target.t =
+              { device = "CPU"; renderer = ""; arch = ""; interface; indices }
+            in
+            Ops.v
+              ~arg:
+                (Program
+                   {
+                     global_size = one;
+                     local_size = one;
+                     params;
+                     globals = [];
+                     outs = [];
+                     ins = [];
+                     target;
+                   })
+              Program
+          in
+          let estimated u =
+            Ops.sink
+              ~kernel:
+                (Ops.kernel_info
+                   ~estimates:{ ops = Sym u; lds = Int 0; mem = Int 0 }
+                   ())
+              [ x ]
+          in
+          List.iter
+            (fun (what, u, v) -> not_equal ~msg:what string (Ops.key u) (Ops.key v))
+            [
+              ("a parameter's NaNs", bounded quiet, bounded signalling);
+              ("what a stage keeps", stage Whole, stage Argument);
+              ( "a program's parameter",
+                program ~params:[ bounded quiet ] (),
+                program ~params:[ bounded signalling ] () );
+              ( "a kernel's estimate",
+                estimated (bounded quiet),
+                estimated (bounded signalling) );
+              ( "a program's target",
+                program ~interface:"a:b" (),
+                program ~interface:"a" ~indices:"b" () );
+              ( "where a program's target's fields end",
+                program ~interface:"ab" (),
+                program ~interface:"a" ~indices:"b" () );
+            ]);
     ]
 
 (* [u] with each node [arg] gives an argument taking it. *)

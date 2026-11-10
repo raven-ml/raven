@@ -2480,7 +2480,7 @@ let suffix (ren : Renderer.t) =
         String.concat "\n"
           ([
              ren.name;
-             Format.asprintf "%a" Helpers.Target.pp ren.target;
+             Helpers.Target.key ren.target;
              Option.value (Renderer.Compiler.cachekey ren.compiler) ~default:"";
            ]
           @ List.map (fun (k, v) -> k ^ "=" ^ v) shaping)

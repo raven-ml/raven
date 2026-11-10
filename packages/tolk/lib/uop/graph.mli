@@ -14,6 +14,7 @@ val to_string : Ops.t -> string
 
 val of_string : string -> Ops.t
 (** [of_string text] is the sink of the graph [text], the node of its last line.
+    [of_string (to_string g)] is [g]: two graphs of one text are one graph.
     Reading takes the graph's numbers: every number {!Ops.unique_num} returns
     afterwards is greater than each slot of the graph and each number of its
     ranges' axes.

@@ -33,8 +33,14 @@ module Target : sig
       more than two [:], naming that part. *)
 
   val pp : Format.formatter -> t -> unit
-  (** [pp] formats a target as {!of_string} reads it, without trailing
-      separators. *)
+  (** [pp] formats a target in the text {!of_string} reads, without trailing
+      separators, so two targets can format alike: those read from [a:b:+X]
+      and from [a:b+X] both format as [a:b+X], and reading it back gives the
+      second. *)
+
+  val key : t -> string
+  (** [key t] is a text of [t]'s fields, different for different targets, for
+      the keys of what is compiled for a target. *)
 end
 
 (** {1:lists Integers and lists} *)

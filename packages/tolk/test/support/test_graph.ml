@@ -158,6 +158,26 @@ let round_trip =
   cases "a graph reads back as itself" ~id:fst kinds (fun (_, u) ->
       equal node u (Graph.of_string (Graph.to_string u)))
 
+(* A schedule kept on disk is its graph's text: the text reads back as the
+   graph, so two graphs of one text are one graph. *)
+let reads_back =
+  prop ~count:2000 "a graph of any argument reads back as itself" Args.node
+    (fun u ->
+      cover "a stage of a custom kernel's argument"
+        (match Ops.arg u with
+        | Bufferize { keep = Argument; _ } -> true
+        | _ -> false);
+      cover "a parameter holding a NaN"
+        (match Ops.arg u with
+        | Param { vmin_vmax; bound; _ } ->
+            let nan = function `Float x -> Float.is_nan x | _ -> false in
+            Option.fold ~none:false
+              ~some:(fun (a, b) -> nan a || nan b)
+              vmin_vmax
+            || Option.fold ~none:false ~some:nan bound
+        | _ -> false);
+      Law.round_trip node Windtrap.string Graph.to_string Graph.of_string u)
+
 (* The text *)
 
 let text =
@@ -439,6 +459,7 @@ let () =
        [
          goldens;
          round_trip;
+         reads_back;
          text;
          numbers;
          damaged_text;

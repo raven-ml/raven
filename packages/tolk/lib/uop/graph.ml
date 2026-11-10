@@ -657,9 +657,13 @@ let program_info : Ops.program_info codec =
   |> finish
 
 let bufferize_opts : Ops.bufferize_opts codec =
-  let make device addrspace removable broadcast : Ops.bufferize_opts =
+  let make device addrspace removable broadcast argument : Ops.bufferize_opts
+      =
     let keep : Ops.keep =
-      if not removable then Whole
+      if argument && (removable || broadcast) then
+        fail "an argument's stage is neither removable nor broadcast"
+      else if argument then Argument
+      else if not removable then Whole
       else if broadcast then Broadcast
       else Removable
     in
@@ -673,6 +677,7 @@ let bufferize_opts : Ops.bufferize_opts codec =
   |> field "removable" ~default:true bool
        (get (fun b -> b.keep = Removable || b.keep = Broadcast))
   |> field "broadcast" ~default:false bool (get (fun b -> b.keep = Broadcast))
+  |> field "argument" ~default:false bool (get (fun b -> b.keep = Argument))
   |> finish
 
 (* A call that precompiles its backward pass differentiates, which tolk does

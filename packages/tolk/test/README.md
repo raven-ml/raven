@@ -250,9 +250,9 @@ The records, with their fields in order:
 | `Estimates` | `ops`, `lds`, `mem`: each an integer or a node |
 | `ProgramInfo` | `global_size` and `local_size` tuples of integers, `vars` a tuple of nodes, `globals`, `outs` and `ins` tuples of integers, `target` `Target` |
 | `Target` | `device`, `renderer`, `arch`, `interface`, `indices`: strings |
-| `CallInfo` | `grad_fxn` (never written), `name` string or none, `precompile`, `precompile_backward` and `inline` booleans, `aux` (never written) |
+| `CallInfo` | `grad_fxn` (never written), `name` string or none, `precompile`, `precompile_backward` and `inline` booleans, `aux` (never written), `write` pairs of integers |
 | `CustomFunction` | `name` string, `dtype` data type, `fmt` boolean |
-| `BufferizeOpts` | `device` a device or none, `addrspace` `AddrSpace`, `removable` and `broadcast` booleans |
+| `BufferizeOpts` | `device` a device or none, `addrspace` `AddrSpace`, `removable`, `broadcast` and `argument` booleans |
 
 A device is a string. The enumerations are `Ops`, `AxisType`, `AddrSpace` and `OptOps`. A tag is a
 boolean, an integer, a string, bytes (Metal's indirect command buffers tag
