@@ -1,0 +1,32 @@
+; raven's operations at TESSERA's shapes, on the device TESSERA_DEVICE names,
+; the first GPU that opens by default. Not attached to runtest: run it with
+; `dune build @dev/tessera/bench/bench`, or run the built exe from this
+; directory under _build/default. [warm] calls every case once on a GPU, in
+; a process of its own, into tolk's disk cache: a worker forked to measure a
+; case on the Mac cannot reach Metal's compiler. On the CPU the suite runs
+; for most of an hour and its largest case holds 14 GB.
+
+(executable
+ (name bench_tessera)
+ (libraries
+  nx
+  rig
+  rig.cuda
+  rig.nv.nvidia
+  rig.amd.amdgpu
+  rig.metal
+  rune
+  kaun
+  tolk
+  thumper
+  unix))
+
+(rule
+ (alias bench)
+ (locks %{workspace_root}/bench %{workspace_root}/gpu)
+ (deps
+  (glob_files *.thumper))
+ (action
+  (progn
+   (run %{exe:bench_tessera.exe} warm)
+   (run %{exe:bench_tessera.exe}))))
