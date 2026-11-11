@@ -202,6 +202,10 @@ external heap_reserve : int -> int -> bool = "caml_rig_heap_reserve" [@@noalloc]
 type bytes_ba =
   (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
 
+(* Smaller ones of a line or more start on one (rig_heap.c), so threads that
+   write pieces of whole lines share none: on fudge (Core Ultra 5 235) a 64³
+   float32 product, one 16-column sliver a thread, took 2.4 us with its
+   output 16 bytes past a line against 1.7 on one. *)
 external heap_bytes : int -> bytes_ba = "caml_rig_heap_bytes"
 external heap_footprint : int -> int = "caml_rig_heap_footprint" [@@noalloc]
 external heap_drop : unit -> unit = "caml_rig_heap_drop"
@@ -233,13 +237,6 @@ let () = heap_init aligned_from
 external let_go : unit -> unit = "caml_rig_let_go" [@@noalloc]
 
 external let_go_count : unit -> int = "caml_rig_let_go_count" [@@noalloc]
-
-(* Smaller ones of a line or more start on one (rig_heap.c), so threads that
-   write pieces of whole lines share none: on fudge (Core Ultra 5 235) a 64³
-   float32 product, one 16-column sliver a thread, took 2.4 us with its
-   output 16 bytes past a line against 1.7 on one. *)
-let heap_bytes n =
-  if n > max_int - page then raise Stdlib.Out_of_memory else heap_bytes n
 
 (* Memory records *)
 
@@ -462,8 +459,8 @@ let whole n = (n + word - 1) land -word
 
 (* The device whose budget [d]'s memory of [kind] counts in, and the bytes a
    buffer of [n] bytes of it counts there: on the host, what the heap takes
-   ([heap_reserved]); in a device's or the host's budget, whole words
-   ([take_room]). *)
+   ([host_buffer]); in a device's or the host's budget, whole words
+   ([new_counted]). *)
 let budget_device ?(memory = Device) d =
   if d == Dev.host then d
   else
@@ -474,22 +471,6 @@ let budget_device ?(memory = Device) d =
 let allocation d n =
   if n < 0 then invalid_argf "Rig.allocation: %d bytes is negative" n;
   if d == Dev.host then heap_footprint n else whole n
-
-let take_device_room (d, n) =
-  let l = d.live in
-  l.used + n <= d.budget
-  && begin
-    l.used <- l.used + n;
-    true
-  end
-
-(* Takes [n] bytes of the room of [budget] on [d], if it has them. *)
-let take_room d budget n =
-  let n = whole n in
-  match budget with
-  | Device_budget -> Dev.protect d take_device_room (d, n)
-  | Host_budget -> heap_reserve n Dev.host.budget
-  | No_budget -> true
 
 let give_room d budget n =
   let n = whole n in
@@ -1907,37 +1888,56 @@ let of_entry d (e : entry) t =
    allocations never both fit the last room, and given back if the driver
    makes nothing. Once the driver's call returned the memory into the entry's
    record, the room is the entry's, which gives it back with the memory: an
-   exception then leaves both to the entry's free. Nothing polls between the
-   host's count of made memory and the end of the section it closes. *)
+   exception then leaves both to the entry's free. The take of the room and
+   the host's count of made memory are each marked by the store after them,
+   with nothing that polls between, for the handler. *)
 let new_counted d kind n ((r, _) as s) =
   let budget = budget_of d kind in
-  if Dev.is_host d || not (take_room d budget n) then no_entry
+  let room = whole n in
+  let taken = ref false and counted = ref false in
+  if Dev.is_host d then no_entry
   else
     match
-      let e = fresh_entry d kind n in
-      r := e;
-      e
+      (match budget with
+      | Device_budget ->
+          let l = d.live in
+          Lock.hold l.lock;
+          if l.used + room <= d.budget then begin
+            l.used <- l.used + room;
+            taken := true
+          end;
+          Lock.release l.lock
+      | Host_budget -> taken := heap_reserve room Dev.host.budget
+      | No_budget -> taken := true);
+      if not !taken then no_entry
+      else begin
+        let e = fresh_entry d kind n in
+        r := e;
+        make_memory d e;
+        if budget = Host_budget && made_memory e then begin
+          heap_made room;
+          counted := true
+        end;
+        if made_memory e then e
+        else begin
+          refuse_room d budget n;
+          taken := false;
+          no_entry
+        end
+      end
     with
+    | e -> e
     | exception x ->
-        refuse_room d budget n;
-        raise x
-    | e -> (
-        match
-          make_memory d e;
-          if budget = Host_budget && made_memory e then heap_made (whole n)
-        with
-        | () ->
-            if made_memory e then e
-            else begin
-              refuse_room d budget n;
-              no_entry
-            end
-        | exception x ->
-            let bt = Printexc.get_raw_backtrace () in
-            if not (made_memory e) then refuse_room d budget n
-            else if budget = Host_budget then heap_made (whole n);
-            let_go_try s;
-            Printexc.raise_with_backtrace x bt)
+        (* The handler's first steps: a call there that polls could take a
+           second exception first. *)
+        let e = !r in
+        if not !taken then ()
+        else if e == no_entry || not (made_memory e) then
+          refuse_room d budget n
+        else if budget = Host_budget && not !counted then heap_made room;
+        let bt = Printexc.get_raw_backtrace () in
+        let_go_try s;
+        Printexc.raise_with_backtrace x bt
 
 (* One try at [n] bytes of [d]'s memory of [kind], recorded in [home] before
    it takes the memory: from its cache, else from its driver within the
@@ -1985,30 +1985,12 @@ let alloc d kind n =
 let code_entry d n (l : _ loading) = fst (alloc_entry d Device n (Code l.code))
 let reserve n () = if heap_reserve n Dev.host.budget then Some () else None
 
-(* Reserves what a host buffer of [n] bytes takes of the heap; a refusal
-   names [n], the allocation's bytes. *)
-let heap_reserved n =
-  let footprint = heap_footprint n in
-  match reserve footprint () with
-  | Some () -> ()
-  | None -> reclaiming Dev.host ~pool:Dev.host n (reserve footprint)
-
-(* [n] reserved bytes of the heap. A refusal of the C library runs the ladder,
-   and after its rounds gives the reservation back. *)
-let bytes n () =
-  match heap_bytes n with
-  | ba -> Some ba
+(* The ladder's attempt at [n] reserved bytes of the heap, stored in [made]
+   by the step that makes them. *)
+let bytes n made () =
+  match made := heap_bytes n with
+  | () -> Some ()
   | exception Stdlib.Out_of_memory -> None
-
-let host_bytes n =
-  match heap_bytes n with
-  | ba -> ba
-  | exception Stdlib.Out_of_memory -> (
-      match reclaiming Dev.host ~pool:Dev.host n (bytes n) with
-      | ba -> ba
-      | exception x ->
-          heap_refuse (heap_footprint n);
-          raise x)
 
 (* What every host buffer of no bytes keeps: nothing to free. *)
 let empty = Bigarray.Array1.create Bigarray.char Bigarray.c_layout 0
@@ -2054,10 +2036,32 @@ let host_buffer n =
     (* What the C library is asked for, up to a page more ([heap_size] in
        rig_heap.c), must fit an [int]. *)
     if n > max_int - page then raise (Dev.Out_of_memory (Dev.host, n));
-    heap_reserved n;
-    let ba = host_bytes n in
-    let addr = ba_address ba in
-    host_records (Heap ba) addr n
+    let footprint = heap_footprint n in
+    (* The reservation of what the buffer takes of the heap, whose refusal
+       names [n], the allocation's bytes. The finaliser of the bytes' array
+       gives it back from the step that makes them, and until then these
+       handlers: nothing polls between. A refusal of the C library runs the
+       ladder, holding the reservation through its rounds, which stores the
+       bytes in [made] as it makes them; [made] is made under a handler
+       too, so the first try allocates nothing. *)
+    if not (heap_reserve footprint Dev.host.budget) then
+      reclaiming Dev.host ~pool:Dev.host n (reserve footprint);
+    let ba =
+      match heap_bytes n with
+      | ba -> ba
+      | exception Stdlib.Out_of_memory -> (
+          match ref empty with
+          | exception x ->
+              heap_refuse footprint;
+              raise x
+          | made -> (
+              match reclaiming Dev.host ~pool:Dev.host n (bytes n made) with
+              | () -> !made
+              | exception x ->
+                  if !made == empty then heap_refuse footprint;
+                  raise x))
+    in
+    host_records (Heap ba) (ba_address ba) n
   end
 
 (* Borrows *)
