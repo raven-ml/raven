@@ -280,7 +280,9 @@ let () =
        [
          group ~timeout "every failing call ends as rig.mli states"
            (let boxes, through = queued in
-            List.map (fun op -> test op.name (walk op)) (ops @ [ boxes ])
+            List.map
+              (fun op -> test op.name (walk op))
+              (ops @ [ boxes; wait_for ])
             @ List.map
                 (fun op ->
                   test op.name

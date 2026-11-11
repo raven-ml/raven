@@ -450,6 +450,181 @@ let test_hang_held_read () =
   equal (option string) ~msg:"the wait's loss" None (Domain.join waiting);
   equal (option string) ~msg:"the loss" None (Rig.lost d)
 
+(* Bounded waits *)
+
+let names = Atomic.make 0
+
+let fresh what =
+  Printf.sprintf "submit:%s-%d" what (Atomic.fetch_and_add names 1)
+
+let still_ns = 200_000_000
+
+(* What a bounded wait may take past its time on a loaded machine: one still
+   interval. *)
+let tolerance_ns = still_ns
+
+let lost_on d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
+
+(* A bounded wait on work that runs long answers [false] no sooner than [ns],
+   and within the tolerance after it. The work runs on: once the stall ends a
+   wait reaches it, and nothing was lost. *)
+let wait_for_late ns =
+  cover "under a millisecond" (ns < 1_000_000);
+  cover "a millisecond or more" (ns >= 1_000_000);
+  let d, p = P.open_ (fresh "wait-for-late") in
+  let pt = submit (empty d) in
+  P.stall p max_int;
+  let t0 = Rig.Profile.now () in
+  let answer = Rig.Point.wait_for ~ns pt in
+  let waited = Rig.Profile.now () - t0 in
+  equal ~msg:"the answer" bool false answer;
+  at_least ~msg:"the wait, in ns" int ~than:ns waited;
+  less ~msg:"the wait past ns, in ns" int ~than:tolerance_ns (waited - ns);
+  P.stall p 0;
+  equal ~msg:"once the stall ends" bool true
+    (Rig.Point.wait_for ~ns:1_000_000_000 pt);
+  equal (option string) ~msg:"the loss" None (Rig.lost d);
+  Rig.close d
+
+let late_ns =
+  Gen.one_of [ Gen.int_range 1 999_999; Gen.int_range 1_000_000 50_000_000 ]
+
+(* An [ns] past the clock's range waits as [wait] does: over two stalled
+   sleeps of a still interval each, and no sooner. *)
+let test_wait_for_unbounded ns =
+  let d, p = P.open_ (fresh "wait-for-unbounded") in
+  let pt = submit (empty d) in
+  P.stall p 2;
+  let t0 = Rig.Profile.now () in
+  let answer = Rig.Point.wait_for ~ns pt in
+  let waited = Rig.Profile.now () - t0 in
+  equal ~msg:"the answer" bool true answer;
+  at_least ~msg:"the wait, in ns" int ~than:(2 * still_ns) waited;
+  equal ~msg:"sleeps" int 3 (P.sleeps p);
+  Rig.close d
+
+(* A bounded wait raises [Lost] where [wait] does, whatever [ns]: for a point
+   its lost device never reached, and not for one reached before the loss. *)
+let test_wait_for_lost ns =
+  let d, _ = P.open_ (fresh "wait-for-lost") in
+  let a = submit (empty d) in
+  Rig.Point.wait a;
+  let b = submit (empty d) in
+  Rig.lose d "given up";
+  raises_match ~msg:"wait, on the dropped point" (lost_on d) (fun () ->
+      Rig.Point.wait b);
+  raises_match ~msg:"wait_for, on the dropped point" (lost_on d) (fun () ->
+      Rig.Point.wait_for ~ns b);
+  Rig.Point.wait a;
+  equal ~msg:"wait_for, on the point reached before the loss" bool true
+    (Rig.Point.wait_for ~ns a);
+  Rig.close d
+
+(* A loss during a bounded wait raises it, as during [wait]. *)
+let test_wait_for_lost_during () =
+  let d, p = P.open_ "submit:wait-for-lost-during" in
+  let pt = submit (empty d) in
+  P.fault p "the engine hung";
+  raises_match (lost_on d) (fun () ->
+      Rig.Point.wait_for ~ns:1_000_000_000 pt);
+  equal (option string) ~msg:"the loss" (Some "the engine hung") (Rig.lost d);
+  Rig.close d
+
+(* Inside a lock a bounded wait raises [Invalid_argument] as it starts,
+   whatever [ns], and the point waits as before once outside. *)
+let test_wait_for_in_lock ns =
+  let d, _ = P.open_ (fresh "wait-for-in-lock") in
+  let pt = submit (empty d) in
+  raises_match Exn.invalid_arg (fun () ->
+      Support.inside_lock (fun () -> Rig.Point.wait_for ~ns pt));
+  Rig.Point.wait pt;
+  Rig.close d
+
+(* With no time a bounded wait answers as [reached]: from twin devices in one
+   state, the two answer alike and leave the same committed work. *)
+type state = Reached | Committed | Uncommitted | Lost_before
+
+let pp_state ppf s =
+  Format.pp_print_string ppf
+    (match s with
+    | Reached -> "reached"
+    | Committed -> "committed"
+    | Uncommitted -> "uncommitted"
+    | Lost_before -> "lost")
+
+(* A device in [state], whose one point is its first submit's: its driver
+   commits each value as it takes it, but for [Uncommitted], and runs only
+   what a sleep or the test runs. *)
+let in_state state =
+  let lag = match state with Uncommitted -> 2 | _ -> 1 in
+  let d, p = P.open_ ~lag (fresh "no-time") in
+  let pt = submit (empty d) in
+  (match state with
+  | Reached -> ignore (P.run p)
+  | Committed | Uncommitted -> ()
+  | Lost_before -> Rig.lose d "given up");
+  (d, p, pt)
+
+let answered f pt =
+  match f pt with r -> Ok r | exception Rig.Lost (_, why) -> Error why
+
+let no_time (state, ns) =
+  cover "reached" (state = Reached);
+  cover "committed" (state = Committed);
+  cover "uncommitted" (state = Uncommitted);
+  cover "lost" (state = Lost_before);
+  let d, p, pt = in_state state in
+  let twin, twin_p, twin_pt = in_state state in
+  let got = answered (Rig.Point.wait_for ~ns) pt in
+  let want = answered Rig.Point.reached twin_pt in
+  equal (result bool string) want got;
+  equal ~msg:"the work that runs after" int (P.run twin_p) (P.run p);
+  Rig.close d;
+  Rig.close twin
+
+let no_time_gen =
+  Gen.pair
+    (Gen.of_list ~pp:pp_state [ Reached; Committed; Uncommitted; Lost_before ])
+    (Gen.one_of
+       [
+         Gen.constant 0; Gen.int_range (-1_000_000) (-1); Gen.constant min_int;
+       ])
+
+(* [Point.submitted d] is the point of [d]'s last submitted value, and a wait
+   on it leaves every earlier point reached. With nothing submitted it is
+   reached at once, of no device. *)
+let submitted_point n =
+  cover "nothing submitted" (n = 0);
+  let d, _ = P.open_ (fresh "submitted") in
+  let points = List.init n (fun _ -> submit (empty d)) in
+  let s = Rig.Point.submitted d in
+  if n = 0 then begin
+    equal ~msg:"its device" (option device) None (Rig.Point.device s);
+    equal ~msg:"reached" bool true (Rig.Point.reached s)
+  end
+  else begin
+    equal ~msg:"its device" (option device) (Some d) (Rig.Point.device s);
+    equal ~msg:"its value" int (Rig.submitted d) (Rig.Point.value s)
+  end;
+  Rig.Point.wait s;
+  List.iteri
+    (fun i pt ->
+      equal ~msg:(Printf.sprintf "point %d" i) bool true (Rig.Point.reached pt))
+    points;
+  Rig.close d
+
+(* The host's work is done when its submit returns, so its submitted point
+   is reached at once, before and after a submit. *)
+let test_submitted_host () =
+  let before = Rig.Point.submitted Rig.host in
+  equal ~msg:"before a submit" bool true (Rig.Point.reached before);
+  Rig.Point.wait before;
+  ignore (submit (Sub.make Rig.host [||]));
+  let after = Rig.Point.submitted Rig.host in
+  equal ~msg:"its value" int (Rig.submitted Rig.host) (Rig.Point.value after);
+  equal ~msg:"after a submit" bool true (Rig.Point.reached after);
+  equal ~msg:"wait_for" bool true (Rig.Point.wait_for ~ns:1 after)
+
 let test_refusals () =
   let d = memory "submit:refusals" in
   raises_match Exn.invalid_arg (fun () ->
@@ -1998,6 +2173,41 @@ let tests =
           test_hang_in_queue;
         test "a word that moved while a wait was held loses nothing"
           test_hang_held_read;
+      ];
+    group ~timeout "bounded waits"
+      [
+        prop ~count:20 ~examples:[ 1; 999_999; 1_000_000; 50_000_000 ]
+          "false comes no sooner than ns, within a still interval after, and \
+           the work runs on"
+          late_ns wait_for_late;
+        cases ~id:string_of_int "an ns past the clock's range waits as wait"
+          [ max_int; max_int - 1; max_int / 2 ]
+          test_wait_for_unbounded;
+        cases ~id:string_of_int "a bounded wait raises Lost where wait does"
+          [ min_int; 0; 1; 1_000_000; max_int ]
+          test_wait_for_lost;
+        test "a loss during a bounded wait raises it" test_wait_for_lost_during;
+        cases ~id:string_of_int
+          "a bounded wait inside a lock is refused, whatever ns"
+          [ min_int; 0; 1; max_int ]
+          test_wait_for_in_lock;
+        prop ~count:60
+          ~examples:
+            [
+              (Reached, 0);
+              (Committed, 0);
+              (Uncommitted, min_int);
+              (Lost_before, -1);
+            ]
+          "with no time a bounded wait answers as reached" no_time_gen no_time;
+      ];
+    group ~timeout "submitted points"
+      [
+        prop ~count:20 ~examples:[ 0; 1 ]
+          "a wait on the submitted point reaches every earlier point"
+          (Gen.int_range 0 8) submitted_point;
+        test "the host's submitted point is reached at once"
+          test_submitted_host;
       ];
     group ~timeout "runs"
       [

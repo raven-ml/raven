@@ -57,6 +57,10 @@ val queued : op * op list
 (** [queued] are the queued copies and fill, each waited for: a copy of boxes
     on a device's copy engine, and those through staging memory. *)
 
+val wait_for : op
+(** [wait_for] submits work and waits for it with {!Rig.Point.wait_for}: for
+    1 ns, which ends before the work runs, then long enough for it. *)
+
 val count : string -> Rig_support.Polled.t -> int
 (** [count call p] is the number of [p]'s logged calls named [call]. *)
 

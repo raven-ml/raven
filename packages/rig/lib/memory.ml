@@ -1245,7 +1245,8 @@ let take_picked (l, k, pick) =
 
 (* Waits for [d]'s value [v] on behalf of memory, never of [d]'s caller: a loss
    the wait finds is [d]'s alone, whose memory then returns once it stopped. *)
-let wait_for d v = try Dev.wait d v with Dev.Lost (d', _) when d' == d -> ()
+let memory_wait d v =
+  try Dev.wait d v with Dev.Lost (d', _) when d' == d -> ()
 
 (* Whether [d]'s work up to [v] is done, or [d] is lost: its frees then wait for
    its stop themselves. *)
@@ -1308,7 +1309,7 @@ let release_cache_if ~wait d pick =
   if (not (Dev.is_lost d)) || Dev.stopped d then begin
     let v = Dev.submitted d in
     if wait && (not (Dev.is_lost d)) && Dev.protect d any_picked (d.live, pick)
-    then wait_for d v;
+    then memory_wait d v;
     release_picked d pick v
   end
 
@@ -1721,7 +1722,7 @@ let reclaim_round pool round seen =
   if Dev.is_host pool then heap_drop ();
   Dev.iter (fun d ->
       if Dev.protect d holds_back (pool, d.live) && not (Dev.is_lost d) then
-        wait_for d (Dev.submitted d);
+        memory_wait d (Dev.submitted d);
       release_cache_if ~wait:true d (charged pool));
   drain_all ();
   if round < 2 then seen
@@ -2385,7 +2386,7 @@ let make_room () =
   Dev.iter (fun d ->
       if Dev.same_machine d Dev.host then begin
         if not (reached_or_lost d (Dev.submitted d)) then
-          wait_for d (Dev.submitted d);
+          memory_wait d (Dev.submitted d);
         release_cache_if ~wait:true d pinned
       end);
   drain_all ()

@@ -64,6 +64,23 @@ module Point = struct
 
   let reached = Dev.reached_point
 
+  (* [now + ns] saturates: an [ns] near [max_int] would wrap and answer at
+     once. *)
+  let wait_for ~ns p =
+    Dev.check_held "Point.wait_for";
+    if ns <= 0 then Dev.reached_point p
+    else
+      let now = Rig_edge_primitive.now () in
+      let until = if ns > max_int - now then max_int else now + ns in
+      Dev.wait_point_by 0 true p until
+
+  (* A device's base is a value of its slot's earlier devices, which may be a
+     lost device's dropped point: with nothing submitted since, the point is
+     [0], which is done. *)
+  let submitted (d : device) =
+    let v = Dev.submitted d in
+    if v <= d.base then 0 else Point.make d.index v
+
   let pp ppf p =
     match device p with
     | Some d -> Format.fprintf ppf "%s:%d" d.name (value p)

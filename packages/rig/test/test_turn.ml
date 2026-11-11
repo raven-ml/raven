@@ -277,6 +277,14 @@ let test_break_in_wait () =
   equal bool true (breaks (fun () -> Rig.Point.wait first));
   still_works d p ~last:first
 
+let test_break_in_wait_for () =
+  let d, p = P.open_ "turn:break-wait-for" in
+  let first = point (empty_run d) in
+  P.interrupt p;
+  equal ~msg:"the wait" bool true
+    (breaks (fun () -> Rig.Point.wait_for ~ns:1_000_000_000 first));
+  still_works d p ~last:first
+
 (* A Ctrl-C during a driver's wait raises inside it: its handler runs in the
    sleep it came in. *)
 let test_break_ends_sleep () =
@@ -650,6 +658,7 @@ let tests =
     group ~timeout "interruptions"
       [
         test "Sys.Break in a wait loses nothing" test_break_in_wait;
+        test "Sys.Break in a bounded wait loses nothing" test_break_in_wait_for;
         test "a Ctrl-C during a driver's wait raises inside it"
           test_break_ends_sleep;
         test "a Ctrl-C during a driver's call outside its waits raises as it \

@@ -209,6 +209,27 @@ let test_reached_commits () =
   Support.await "the last point reached" (fun () -> Rig.Point.reached last);
   equal ~msg:"signaled" int (base + lag - 1) (Rig.signaled d)
 
+(* A bounded wait commits what it waits for before its time can pass: after
+   one call, whatever it answered, the device runs the work with no other
+   wait. A lag of 2 never commits a lone value on its own, and the driver's
+   thread runs what is committed. *)
+let bounded_commits ns =
+  cover "one ns" (ns = 1);
+  let d, _ = P.open_ ~lag:2 ~runs:`Itself (fresh "bounded-commits") in
+  let pt = submit (empty d) in
+  ignore (Rig.Point.wait_for ~ns pt : bool);
+  Support.await "the work run" (fun () ->
+      Rig.signaled d >= Rig.Point.value pt);
+  Rig.close d
+
+(* A loop of the shortest bounded waits ends: each commits before its time
+   passes. *)
+let test_short_waits_end () =
+  let d, _ = P.open_ ~lag:2 ~runs:`Itself (fresh "short-waits") in
+  let pt = submit (empty d) in
+  Support.await "a short wait's true" (fun () -> Rig.Point.wait_for ~ns:1 pt);
+  Rig.close d
+
 (* Loss *)
 
 (* The device is lost by an allocation, which waits for nothing, so its stop
@@ -272,6 +293,9 @@ let tests =
         test "a driver commits within its bound" test_lag_bounded;
         test "signaled commits nothing" test_signaled_reads;
         test "a poll of reached commits" test_reached_commits;
+        prop ~count:30 ~examples:[ 1 ] "a bounded wait commits before its time"
+          (Gen.int_range 1 1_000_000) bounded_commits;
+        test "a loop of the shortest bounded waits ends" test_short_waits_end;
       ];
     group ~timeout "loss"
       [

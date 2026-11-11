@@ -726,6 +726,10 @@ let probes () =
       locks "set_budget" (fun () -> Rig.set_budget d (Rig.budget d));
       locks "free_cache" (fun () -> Rig.free_cache d);
       locks "Point.wait" (fun () -> Rig.Point.wait pt);
+      locks "Point.wait_for" (fun () ->
+          ignore (Rig.Point.wait_for ~ns:max_int pt));
+      locks ~what:"Point.wait_for with no time" "Point.wait_for" (fun () ->
+          ignore (Rig.Point.wait_for ~ns:0 pt));
       locks "Buffer.create" (fun () -> ignore (B.create d 8));
       locks "Buffer.of_string" (fun () -> ignore (B.of_string "x"));
       locks "Buffer.borrow" (fun () -> ignore (B.borrow d h));
@@ -757,6 +761,7 @@ let probes () =
       free "lost" (fun () -> ignore (Rig.lost victim));
       free "failure" (fun () -> ignore (Rig.failure ()));
       free "Point.reached" (fun () -> ignore (Rig.Point.reached pt));
+      free "Point.submitted" (fun () -> ignore (Rig.Point.submitted d));
       free "Buffer.view" (fun () -> ignore (B.view b ~first:0 ~length:1));
       free "Buffer.reached" (fun () -> ignore (B.reached b Rig.Read_write));
       free "Buffer.of_bigarray" (fun () -> ignore (B.of_bigarray ba));

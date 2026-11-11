@@ -59,3 +59,37 @@ A lost: closed
 lost: closed, failure: false
 A again: same device false, submitted 0
 ```
+
+## Giving up on work
+
+rig loses a device for the time its work runs only where the device's
+driver declares a hang bound, as a GPU driven over PCI does. A program
+bounds a wait itself with `Rig.Point.wait_for`, which answers `false` once
+its time has passed and leaves the work running. To give up on the work,
+the program loses the device with `Rig.lose` and closes it: the close runs
+the device's stop, which ends the work as the driver's documentation
+states. `Rig.lose` takes no lock and waits for nothing, so another thread
+may call it while a wait blocks on the device, and the wait then raises
+`Rig.Lost`.
+
+A close bounded in time waits for the device's last point, then gives the
+device up if its work is still running:
+
+```ocaml
+# let close_within ~ns d =
+    (match Point.wait_for ~ns (Point.submitted d) with
+     | true -> ()
+     | false -> lose d "its work did not end in time"
+     | exception Lost _ -> ());
+    close d;;
+val close_within : ns:int -> t -> unit = <fun>
+# let () =
+    let c = Result.get_ok (software "C") in
+    close_within ~ns:1_000_000_000 c;
+    print_endline (Option.value (lost c) ~default:"live");;
+closed
+```
+
+A device whose work ended in time closes as any other, with the reason
+`"closed"`. One given up keeps the reason given to `Rig.lose`, and its loss
+is the process's failure if none came before.

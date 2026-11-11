@@ -406,11 +406,12 @@ module Point : sig
   val device : t -> device option
   (** [device p] is [Some d], [p]'s device [d], until [d] has stopped and a
       later device took its slot ({!section-opening}), and [None] from
-      then on. *)
+      then on. It is [None] from the start for the point {!submitted} gives
+      on a device with no work submitted. *)
 
   val value : t -> int
   (** [value p] is [p]'s value, above the value its device's timeline
-      started after ({!submitted}). *)
+      started after ({!Rig.submitted}). *)
 
   val wait : t -> unit
   (** [wait p] returns once [p]'s device has reached [p]'s value. It commits
@@ -432,6 +433,29 @@ module Point : sig
       a driver that declares [may_block] commits.
 
       Raises {!Lost} if the device was lost before it reached [p]'s value. *)
+
+  val wait_for : ns:int -> t -> bool
+  (** [wait_for ~ns p] waits as {!wait} does, for at most [ns] nanoseconds.
+      It is [true] once [p]'s device has reached [p]'s value, and [false] if
+      [ns] passed first. [false] loses nothing, and the work runs on. An [ns]
+      past the clock's range waits as {!wait} does. [false] comes no sooner
+      than [ns] after the call, and later by at most one round of the wait:
+      its commit, which waits up to 200 ms for another submit or commit on
+      the device and blocks while a driver that declares [may_block] commits
+      ({!reached}), its look for faults of the devices whose work the
+      device's queue waits for ({!section-hangs}), and one sleep of the
+      device's driver. With [ns <= 0] it answers as {!reached} does.
+
+      Raises {!Lost} as {!wait} does, and [Invalid_argument] inside a lock
+      ({!section-domains}), whatever [ns]. *)
+
+  val submitted : device -> t
+  (** [submitted d] is the point of the last value submitted on [d]
+      ({!Rig.submitted}). It is reached once all the work submitted on [d]
+      before the call is done, at once on {!host}, whose work is done when
+      its submit returns. For a device with no work submitted since it
+      opened, also one that took the slot of a lost device, it is a point
+      whose {!val-device} is [None], reached at once. *)
 
   val pp : Format.formatter -> t -> unit
   (** [pp] formats a point as [NAME:v], or [ended:v] once {!val-device} is
@@ -584,7 +608,8 @@ val word : int
     {!capability},
     {!host_of}, {!reaches}, {!submitted}, {!lost}, {!failure},
     {!budget}, {!allocated}, {!Point.val-device}, {!Point.value},
-    {!Point.reached}, {!Point.pp}, the properties and low-level values of
+    {!Point.reached}, {!Point.submitted}, {!Point.pp}, the properties and
+    low-level values of
     {!Buffer}, {!Buffer.view}, {!Buffer.reached}, {!Buffer.of_bigarray},
     {!Image.val-device}, {!Image.name}, {!Image.image}, {!Image.params},
     {!Image.threads}, {!Image.entry}, {!Submission}'s refs and parts,
@@ -677,7 +702,20 @@ val word : int
     queue waiting for another device's unreached point. A device whose clock
     passes the bound is lost with the reason ["no progress for n ms"]. Only
     a wait checks the clock, so no device is lost to a hang while nothing
-    waits for it. *)
+    waits for it.
+
+    A program bounds a wait with {!Point.wait_for}. To give up on a
+    device's work, it loses the device ({!lose}) and closes it, and the
+    device's stop ends the work as its driver states ({!section-stops}).
+    A close bounded in time:
+    {[
+      let close_within ~ns d =
+        (match Rig.Point.wait_for ~ns (Rig.Point.submitted d) with
+        | true -> ()
+        | false -> Rig.lose d "its work did not end in time"
+        | exception Rig.Lost _ -> ());
+        Rig.close d
+    ]} *)
 
 (** {2:stops Stops and forks}
 

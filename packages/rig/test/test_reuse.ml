@@ -802,6 +802,34 @@ let test_last_value () =
   let later, _ = P.open_ "reuse:after-last-value" in
   less ~msg:"a later device's base" int ~than:(1 lsl 46) (Rig.submitted later)
 
+(* A device that took the slot of a device lost with unreached work starts
+   after the values the loss dropped: with nothing submitted, its submitted
+   point is reached at once, and no wait on it raises the earlier loss. The
+   process's first failure keeps its slot, so another device fails first. *)
+let test_submitted_after_reopen () =
+  if Rig.failure () = None then begin
+    let first, _ = P.open_ "reuse:first-failure" in
+    Rig.lose first "the process's first failure"
+  end;
+  let name = "reuse:submitted-reopen" in
+  let d, _ = P.open_ name in
+  let dropped = submit (Sub.make d [||]) in
+  Rig.lose d "given up";
+  Rig.close d;
+  Rig.free_cache d;
+  let d', _ = P.open_ name in
+  equal ~msg:"the dropped point's device once its slot passed on"
+    (option bool) None
+    (Option.map (fun _ -> true) (Rig.Point.device dropped));
+  let s = Rig.Point.submitted d' in
+  equal ~msg:"reached" bool true (Rig.Point.reached s);
+  Rig.Point.wait s;
+  equal ~msg:"wait_for" bool true (Rig.Point.wait_for ~ns:1_000_000 s);
+  raises_match ~msg:"the dropped point"
+    (function Rig.Lost (l, _) -> Rig.equal d l | _ -> false)
+    (fun () -> Rig.Point.wait dropped);
+  Rig.close d'
+
 let tests =
   [
     group ~timeout "reuse"
@@ -840,6 +868,8 @@ let tests =
           test_retired_unmap_raises;
         test "a replaced mapping outlives the submit holding the turn"
           test_replaced_in_turn;
+        test "a device on a lost device's slot has its submitted point reached"
+          test_submitted_after_reopen;
         stateful ~count:40 ~domains:2
           "a slot taken again answers an earlier device's points and stamps"
           cycle_commands;

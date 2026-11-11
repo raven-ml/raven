@@ -121,6 +121,27 @@ let submit =
         Rig.Point.wait (once ~buffers run);
         equal string "\001\000\000\000\000\000\000\000" (bytes arg))
 
+(* A bound on the second wait of [wait_for], far past the time its work
+   takes. *)
+let long_ns = 10_000_000_000
+
+(* A submit waited for twice with a bound in time: for 1 ns, which ends before
+   the work runs, as Polled runs work only in a sleep, then for [long_ns],
+   whose sleep runs it. *)
+let wait_for =
+  op "wait for" (fun d ->
+      let arg = B.create d 8 in
+      B.write arg Bigarray.char (fun a -> Bigarray.Array1.fill a '\000');
+      let s = Sub.make d [| bump |] in
+      let run = Sub.take s and buffers = [| arg |] in
+      Sub.Run.int64 run (Sub.block s 0) 0 0L;
+      fun _ ->
+        let p = once ~buffers run in
+        equal ~msg:"a wait of 1 ns" bool false (Rig.Point.wait_for ~ns:1 p);
+        equal ~msg:"a wait of 10 s" bool true
+          (Rig.Point.wait_for ~ns:long_ns p);
+        equal string "\001\000\000\000\000\000\000\000" (bytes arg))
+
 (* A device whose memory the host does not address, which copied through the
    staging memory both ways once, its mappings of host memory refused: what it
    made for those copies lasts as long as the staging memory, for good. *)

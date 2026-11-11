@@ -889,29 +889,41 @@ let rec spin_held (d : device) v until =
   end
 
 (* Waits for [d]'s value [v], the word having read [seen] since [since],
-   until the word reads [v] or [d] is lost. Until [v] is committed, each round
-   commits [d]'s work unless another holds [d]'s turn throughout the still
-   interval, such as a submit blocked in its driver, whose earlier work runs
-   without another call, so the turn frees and a later round commits. Top
-   level, so a wait that finds its value reached allocates nothing. *)
-let rec wait_from d v seen since =
+   until the word reads [v], [d] is lost, or the clock passes [until], in ns
+   on [Rig_edge_primitive.now]'s clock: whether it ended before [until].
+   Until [v] is committed, each round commits [d]'s work unless another holds
+   [d]'s turn throughout the still interval, such as a submit blocked in its
+   driver, whose earlier work runs without another call, so the turn frees
+   and a later round commits. The commit comes before the deadline's check, so
+   that a loop of short waits commits what it waits for. A sleep or a spin
+   lasts at most the time left, rounded up to whole ms, so the wait never
+   answers before [until]. Top level, so a wait that finds its value reached
+   allocates nothing. *)
+let rec wait_from d v seen since until =
   let w = word d in
-  if w < v && not (is_lost d) then begin
+  if w >= v || is_lost d then true
+  else begin
     if committed d < v then ignore (commit_once d : bool);
     let now = now_ms () in
     let since = if w <> seen then now else since in
     let still = now - since in
-    let l = d.live in
-    (match l.completion with
-    | Rig_edge.Host -> sleep d ~seen:w ~still_ms
-    | Store when l.word = 0 -> sleep d ~seen:w ~still_ms
-    | Store when still >= still_ms ->
-        look_at_producers d;
-        sleep d ~seen:w ~still_ms
-    | Store ->
-        if spin_held d v (Rig_edge_primitive.now () + held_ns) < v then
-          ignore (c_spin l.c v (still_ms - still)));
-    wait_from d v w since
+    let left = until - Rig_edge_primitive.now () in
+    if left <= 0 then false
+    else begin
+      let ms = Int.min still_ms (((left - 1) / 1_000_000) + 1) in
+      let l = d.live in
+      (match l.completion with
+      | Rig_edge.Host -> sleep d ~seen:w ~still_ms:ms
+      | Store when l.word = 0 -> sleep d ~seen:w ~still_ms:ms
+      | Store when still >= still_ms ->
+          look_at_producers d;
+          sleep d ~seen:w ~still_ms:ms
+      | Store ->
+          let held = Int.min until (Rig_edge_primitive.now () + held_ns) in
+          if spin_held d v held < v then
+            ignore (c_spin l.c v (Int.min (still_ms - still) ms)));
+      wait_from d v w since until
+    end
   end
 
 (* How a wait blocks depends on who writes the word. A word the host writes
@@ -922,7 +934,8 @@ let rec wait_from d v seen since =
    in the driver between reads. *)
 let wait_value d v =
   let w = word d in
-  if w < v && not (is_lost d) then wait_from d v w (now_ms ());
+  if w < v && not (is_lost d) then
+    ignore (wait_from d v w (now_ms ()) max_int : bool);
   if is_lost d then raise_lost d
 
 let wait d v =
@@ -930,10 +943,11 @@ let wait d v =
   if v > s then invalid_argf "Rig: %d is beyond %s's last value %d" v d.name s;
   wait_value d v
 
-(* Waits for [d]'s value [v] from the word [w], until [d] is lost: a loss its
-   sleep raises is judged by the caller. *)
-let wait_until_lost d v w =
-  try wait_from d v w (now_ms ()) with Lost (d', _) when d' == d -> ()
+(* Waits for [d]'s value [v] from the word [w], until [d] is lost or the clock
+   passes [until]: whether it ended before [until]. A loss its sleep raises is
+   judged by the caller. *)
+let wait_until_lost d v w until =
+  try wait_from d v w (now_ms ()) until with Lost (d', _) when d' == d -> true
 
 (* Points
 
@@ -960,18 +974,30 @@ let check p = if c_lost p then raise_point_lost p
    word the stop raised shows the loss. Before it blocks, it raises the loss of
    any point of the stamps [st] a lost device did not reach, so that it waits
    out no work ahead of a loss. *)
-let wait_point st every p =
+let wait_point_by st every p until =
   let d = of_index (Point.index p) in
-  if not (owns d p) then check p
+  if not (owns d p) then begin
+    check p;
+    true
+  end
   else
     let v = Point.value p in
     let w = live_word d in
-    if w < v && not (is_lost d) then begin
-      let q = c_stamps_lost st every in
-      if q <> 0 then raise_point_lost q;
-      wait_until_lost d v w
-    end;
-    if is_lost d then check p
+    let ended =
+      if w >= v || is_lost d then true
+      else begin
+        let q = c_stamps_lost st every in
+        if q <> 0 then raise_point_lost q;
+        wait_until_lost d v w until
+      end
+    in
+    if is_lost d then begin
+      check p;
+      true
+    end
+    else ended
+
+let wait_point st every p = ignore (wait_point_by st every p max_int : bool)
 
 (* The word is read before the loss is, as [wait_point] reads them. *)
 let is_done p =
