@@ -1,0 +1,6 @@
+; jord.geojson: GeoJSON's polygons. Jsont is the type of its input, as it is
+; brot's and kaun.hf's.
+
+(library
+ (name jord_geojson)
+ (libraries jord nx jsont))

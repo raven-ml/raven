@@ -151,8 +151,8 @@ let read_geotiff file =
     | Some (Nx_io.Tiff.Ascii s) -> s
     | _ -> failf "%s: no GDAL_METADATA text" file
   in
-  ( ok (Jord.Geotiff.grid tags),
-    ok (Jord.Geotiff.nodata tags),
+  ( ok (Jord_geotiff.grid tags),
+    ok (Jord_geotiff.nodata tags),
     descriptions,
     Nx.unpack Nx.float32 samples )
 
@@ -221,10 +221,10 @@ let geotiff =
               let rows, cols = tile_shape (Pixels.length px) in
               let landmask = Filename.concat dir "landmask.tiff" in
               Nx_io.save_tiff
-                ~tags:(Jord.Geotiff.tags (grid ~rows ~cols))
+                ~tags:(Jord_geotiff.tags (grid ~rows ~cols))
                 landmask
                 (Nx.ones Nx.uint8 [| rows; cols; 1 |]);
-              let g = ok (Jord.Geotiff.grid (fst (read_tiff landmask))) in
+              let g = ok (Jord_geotiff.grid (fst (read_tiff landmask))) in
               let e = Embedding.encode ~shape Nx.Host.on (Model.apply model) px in
               let e = Nx.reshape [| rows; cols; 16 |] e in
               let name = Filename.concat dir "tile" in

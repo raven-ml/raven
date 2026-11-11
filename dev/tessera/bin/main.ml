@@ -234,7 +234,7 @@ let bf16 m = Nx.Ptree.cast (module Model) Nx.bfloat16 m
    refuse it after. *)
 let landmask ~tile:(h, w) file =
   let tags = Nx_io.Tiff.tags (List.hd (Nx_io.load_tiff file)) in
-  match Jord.Geotiff.grid tags with
+  match Jord_geotiff.grid tags with
   | Error e -> die "%s: %s" file e
   | Ok (g : Jord.Grid.t) when g.rows <> h || g.cols <> w ->
       die "%s: a grid of %d × %d, and the tile is %d × %d" file g.rows g.cols h
@@ -1992,7 +1992,7 @@ let probe opts =
       Result.bind
         (Jsont_bytesrw.decode_string Jsont.json
            (In_channel.with_open_bin labels In_channel.input_all))
-        Jord.Geojson.polygons
+        Jord_geojson.polygons
     with
     | Ok x -> x
     | Error e -> die "%s: %s" labels e

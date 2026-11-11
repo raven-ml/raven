@@ -6,14 +6,15 @@
 (** GeoJSON's polygons, by RFC 7946.
 
     GeoJSON's positions are longitude and latitude in degrees on WGS 84 (§4), so
-    its features are in {!Crs.lonlat}. GeoJSON 2008 let a [crs] member name
-    another system; RFC 7946 dropped it (Appendix B), but files still carry it.
-    A [crs] member, on any object, must name OGC's CRS84, as
+    its features are in {!Jord.Crs.lonlat}. GeoJSON 2008 let a [crs] member
+    name another system; RFC 7946 dropped it (Appendix B), but files still
+    carry it. A [crs] member, on any object, must name OGC's CRS84, as
     [urn:ogc:def:crs:OGC::CRS84] (RFC 7946's spelling) or
     [urn:ogc:def:crs:OGC:1.3:CRS84]. Any other is refused, since reading its
     positions as longitude and latitude would place them wrongly. *)
 
-val polygons : Jsont.json -> (Polygons.t * Jsont.json array, string) result
+val polygons :
+  Jsont.json -> (Jord.Polygons.t * Jsont.json array, string) result
 (** [polygons json] is the features of the GeoJSON text [json], decoded by the
     caller ([Jsont_bytesrw.decode_string Jsont.json]), and each feature's
     [properties] ([Jsont.Json.null] when absent). A FeatureCollection gives its

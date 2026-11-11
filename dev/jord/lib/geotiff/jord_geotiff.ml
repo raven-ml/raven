@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Jord
+
 module T = Nx_io.Tiff
 
 exception Refused of string

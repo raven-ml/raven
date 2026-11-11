@@ -111,7 +111,7 @@ let save_geotiff name ~(grid : Jord.Grid.t) e =
          (Nx.dim 0 e) (Nx.dim 1 e) grid.rows grid.cols);
   let tags =
     (gdal_metadata, Nx_io.Tiff.Ascii (descriptions (Nx.dim 2 e)))
-    :: Jord.Geotiff.tags ~nodata:Float.nan grid
+    :: Jord_geotiff.tags ~nodata:Float.nan grid
   in
   Nx_io.save_tiff ~tile:geotiff_tile ~compression:Nx_io.Tiff.Deflate ~tags
     (name ^ ".tiff") e

@@ -9,37 +9,43 @@ no CHANGES entry). Its design is the eo-library adjudication of the tessera
 campaign.
 
 - The same rules as raven's libraries: `doc/dev/design.md`, AGENTS.md's code
-  style, raven's public interfaces only (`Geotiff`'s tags are nx.io's
+  style, raven's public interfaces only (`Jord_geotiff`'s tags are nx.io's
   `Tiff.value`). The one dependency outside raven is `jsont`, because
-  `Jsont.json` is `Geojson.polygons`'s input, as it is brot's and
+  `Jsont.json` is `Jord_geojson.polygons`'s input, as it is brot's and
   kaun.hf's. No Python, weights or data in the repository beyond small
   test fixtures, each recording its source and the command that cut it
   (`test/tm_coords.dat`).
 - jord does no I/O. Readers take bytes or values (a shapefile's bytes, a
   `Jsont.json`, a `.prj`'s text, TIFF tags) and return `Error` for data
   that breaks their format; misuse raises `Invalid_argument`.
-- `lib/` is the library `jord`: `Crs` (WGS 84 and its UTM zones, ETRS89's
-  TM35FIN, Krüger's series to n⁶, `of_epsg`, `of_wkt`), `Grid` (an affine
-  map in (row, col) order, GeoTIFF's corner convention), `Polygons`
-  (GeoArrow's layout, even-odd regions), `Shapefile`, `Geojson`,
-  `Rasterize` (the (feature, cell) relation of `centres` and `touched`),
-  `Geotiff` (tags to and from a grid, GDAL's nodata), `Warp` (a grid's
-  centres in another system, pixel points, the nearest and bilinear
-  samplers, the source window they read). `Wkt` and `Points` are private.
-- `test/` holds the laws and the spec's values, with a cut of Karney's
-  test set and GDAL's warps of small rasters onto finer grids
-  (`test/warp_gdal.dat`, cut outside the repository by the script its
-  header names).
+- `lib/` is the library `jord`, which links nx alone: `Crs` (WGS 84 and its
+  UTM zones, ETRS89's TM35FIN, Krüger's series to n⁶, `of_epsg`, `of_wkt`,
+  WKT being a system's own text form), `Grid` (an affine map in (row, col)
+  order, GeoTIFF's corner convention), `Polygons` (GeoArrow's layout,
+  even-odd regions), `Rasterize` (the (feature, cell) relation of `centres`
+  and `touched`), `Warp` (a grid's centres in another system, pixel points,
+  the nearest and bilinear samplers, the source window they read). `Wkt`
+  and `Points` are private.
+- Each file or document format is a library of its own, `lib/<format>/`,
+  named `jord_<format>` (`jord.<format>` once jord has a package):
+  `jord_geotiff` (nx.io: tags to and from a grid, GDAL's nodata),
+  `jord_geojson` (jsont), `jord_shapefile` (no dependency). `jord` never
+  depends on them, so a compiled step links no file reader; its dune file
+  holds that.
+- `test/` holds the laws and the spec's values, each sub-library's suite in
+  `test/<format>/`, with a cut of Karney's test set and GDAL's warps of
+  small rasters onto finer grids (`test/warp_gdal.dat`, cut outside the
+  repository by the script its header names).
   `test/rasterio/parity.exe` compares the rules with rasterio on
   tessera-eval's Austria labels and GeoTessera's landmasks, which live
   outside the repository, so no test runs it; `parity.exe landmask` reads
-  real landmasks through `Nx_io.load_tiff` and `Geotiff`. `bench/` times
+  real landmasks through `Nx_io.load_tiff` and `Jord_geotiff`. `bench/` times
   each rule on a tile (`dune build @dev/jord/bench/bench`).
 
 ## Boundaries
 
 - **nx.io** owns the TIFF container (directories, strips and tiles,
-  codecs, BigTIFF). `Geotiff` reads and makes `Nx_io.Tiff.value` tags:
+  codecs, BigTIFF). `Jord_geotiff` reads and makes `Nx_io.Tiff.value` tags:
   `Nx_io.load_tiff` gives them, `Nx_io.save_tiff ~tags` writes them, and
   nothing in jord parses a TIFF file.
 - **ymir** is astronomy's; jord does not depend on it. Its `Region`

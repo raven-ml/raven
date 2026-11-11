@@ -17,7 +17,7 @@
     on the hull of the cells' centres, half a cell inside; the cells' area is
     kept instead, as the sample space its §8.2.2 describes, so that nearest and
     bilinear share one footprint and source tiles warped one at a time leave no
-    seam between them. A raster of postings that {!Geotiff.grid} reads as
+    seam between them. A raster of postings that [Jord_geotiff.grid] reads as
     PixelIsPoint is read the same way: a posting's value holds over the cell
     centred on it, half a cell past the outermost postings.
 

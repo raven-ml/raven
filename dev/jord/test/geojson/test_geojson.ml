@@ -8,7 +8,7 @@ open Jord
 
 let decode s =
   match Jsont_bytesrw.decode_string Jsont.json s with
-  | Ok j -> Geojson.polygons j
+  | Ok j -> Jord_geojson.polygons j
   | Error e -> failwith e
 
 let layout (p : Polygons.t) = (Nx.to_array p.points, p.rings, p.features)

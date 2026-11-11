@@ -6,7 +6,7 @@
 open Windtrap
 open Jord
 open Nx_io.Tiff
-open Geotiff
+open Jord_geotiff
 
 let grid_t =
   Testable.make

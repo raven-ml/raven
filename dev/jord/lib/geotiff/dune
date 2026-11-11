@@ -1,0 +1,6 @@
+; jord.geotiff: the GeoTIFF tags of a grid. nx.io's Tiff.value is its input
+; and output type, and nx.io links the file I/O jord itself never links.
+
+(library
+ (name jord_geotiff)
+ (libraries jord nx nx.io))

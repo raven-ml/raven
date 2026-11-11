@@ -9,13 +9,13 @@
     attributes, one record per shape in the same order, as the ESRI Shapefile
     Technical Description (1998) defines them. jord reads Polygon, PolygonZ and
     PolygonM shapes (it drops z and m) and Null shapes. The [.prj] file beside
-    the main file states the system, in WKT ({!Crs.of_wkt}). *)
+    the main file states the system, in WKT ({!Jord.Crs.of_wkt}). *)
 
 val read :
-  Crs.t ->
+  Jord.Crs.t ->
   shp:string ->
   dbf:string ->
-  (Polygons.t * (string * string array) list, string) result
+  (Jord.Polygons.t * (string * string array) list, string) result
 (** [read crs ~shp ~dbf] is the features of the main file's bytes [shp] in
     [crs], one per shape in order, a Null shape a feature with no ring, and the
     table's fields from the bytes [dbf], each named and holding one text per

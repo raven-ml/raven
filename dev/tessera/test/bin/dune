@@ -4,7 +4,7 @@
 
 (executables
  (names make_corpus make_labelled)
- (libraries tessera synth nx nx.io jord))
+ (libraries tessera synth nx nx.io jord jord_geotiff))
 
 (cram
  (deps make_corpus.exe make_labelled.exe ../../bin/main.exe))

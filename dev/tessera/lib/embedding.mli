@@ -51,7 +51,7 @@ val save_int8 : string -> Nx.host Nx.float32_t -> unit
 val save_geotiff : string -> grid:Jord.Grid.t -> Nx.host Nx.float32_t -> unit
 (** [save_geotiff name ~grid e] writes [e], a tile's embedding [[h; w; dims]]
     on [grid], to [name.tiff] as GeoTessera's GeoTIFF of a tile writes it: the
-    file carries [grid]'s tags ({!Jord.Geotiff.tags}), and value [k] of each
+    file carries [grid]'s tags ({!Jord_geotiff.tags}), and value [k] of each
     pixel is float32 band [k + 1], described as [Tessera_Band_k] in GDAL's
     metadata (tag 42112). The nodata value is NaN, so a pixel with no embedding
     has no data in every band. The raster is cut into tiles of 256 × 256
@@ -64,7 +64,7 @@ val save_geotiff : string -> grid:Jord.Grid.t -> Nx.host Nx.float32_t -> unit
 
     {[
       let tags = Nx_io.Tiff.tags (List.hd (Nx_io.load_tiff landmask)) in
-      let grid = Result.get_ok (Jord.Geotiff.grid tags) in
+      let grid = Result.get_ok (Jord_geotiff.grid tags) in
       Embedding.save_geotiff name ~grid e
     ]}
 

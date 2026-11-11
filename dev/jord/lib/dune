@@ -1,8 +1,9 @@
-; jord: arrays placed on the Earth. Never published. Jsont is the type of
-; Geojson's input, as it is brot's and kaun.hf's; nx.io's Tiff.value is
-; Geotiff's.
+; jord: arrays placed on the Earth. Never published. It links nx alone, so a
+; compiled step links no file reader; each file or document format is a
+; library of its own under lib/<format>/, which depends on jord, never the
+; reverse.
 
 (library
  (name jord)
  (private_modules wkt points)
- (libraries nx nx.io jsont))
+ (libraries nx))

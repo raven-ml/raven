@@ -118,7 +118,7 @@ let read_polygons =
   test "polygons, holes and null shapes, one feature each" (fun () ->
       let p, cols =
         Result.get_ok
-          (Shapefile.read utm
+          (Jord_shapefile.read utm
              ~shp:
                (shp
                   [
@@ -149,7 +149,7 @@ let z_and_m =
     (fun kind ->
       let p, _ =
         Result.get_ok
-          (Shapefile.read utm
+          (Jord_shapefile.read utm
              ~shp:(shp ~kind [ Poly [ square 2. ] ])
              ~dbf:(dbf fields [ (' ', [ "a"; "1" ]) ]))
       in
@@ -161,7 +161,7 @@ let deleted =
   test "a deleted record is dropped with its shape" (fun () ->
       let p, cols =
         Result.get_ok
-          (Shapefile.read utm
+          (Jord_shapefile.read utm
              ~shp:(shp [ Poly [ square 0. ]; Poly [ square 5. ] ])
              ~dbf:
                (dbf fields [ ('*', [ "gone"; "1" ]); (' ', [ "kept"; "2" ]) ]))
@@ -196,7 +196,7 @@ let refusals =
         (shp [ Poly [ square 0. ] ], String.sub table 0 70, "the table") );
     ]
     (fun (_, (shp, dbf, sub)) ->
-      match Shapefile.read utm ~shp ~dbf with
+      match Jord_shapefile.read utm ~shp ~dbf with
       | Ok _ -> fail "read"
       | Error e -> contains ~sub e)
 
@@ -207,7 +207,7 @@ let parts =
          part and point counts. *)
       Bytes.set_int32_le s (100 + 8 + 44) 1l;
       match
-        Shapefile.read utm ~shp:(Bytes.to_string s)
+        Jord_shapefile.read utm ~shp:(Bytes.to_string s)
           ~dbf:(dbf fields [ (' ', [ "a"; "1" ]) ])
       with
       | Ok _ -> fail "read"

@@ -10,4 +10,4 @@
 
 (executable
  (name parity)
- (libraries jord nx nx.io jsont jsont.bytesrw))
+ (libraries jord jord_geotiff jord_geojson nx nx.io jsont jsont.bytesrw))

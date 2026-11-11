@@ -11,7 +11,9 @@ let read file = In_channel.with_open_bin file In_channel.input_all
 let labels dir =
   let text = read (Filename.concat dir "austria_crops.geojson") in
   match
-    Result.bind (Jsont_bytesrw.decode_string Jsont.json text) Geojson.polygons
+    Result.bind
+      (Jsont_bytesrw.decode_string Jsont.json text)
+      Jord_geojson.polygons
   with
   | Ok (p, _) -> p
   | Error e -> failwith e
@@ -31,7 +33,7 @@ let project dir =
 let landmask file =
   let ifd = List.hd (Nx_io.load_tiff file) in
   let tags = Nx_io.Tiff.tags ifd in
-  match (Geotiff.grid tags, Geotiff.nodata tags) with
+  match (Jord_geotiff.grid tags, Jord_geotiff.nodata tags) with
   | Ok g, Ok nodata -> (ifd, g, nodata)
   | Error e, _ | _, Error e -> failwith (file ^ ": " ^ e)
 

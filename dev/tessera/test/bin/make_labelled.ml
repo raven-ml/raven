@@ -55,7 +55,7 @@ let () =
       ~col_step:(res, 0.)
   in
   Nx_io.save_tiff
-    ~tags:(Jord.Geotiff.tags grid)
+    ~tags:(Jord_geotiff.tags grid)
     (file "landmask.tiff")
     (Nx.ones Nx.uint8 [| rows; cols; 1 |]);
   (* A field's ring of pixel points (row, col), in CRS84. *)

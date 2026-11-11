@@ -7,4 +7,15 @@
   test_train
   test_barlow
   test_eval)
- (libraries tessera synth nx nx.io nx.ragged kaun rune vega jord windtrap))
+ (libraries
+  tessera
+  synth
+  nx
+  nx.io
+  nx.ragged
+  kaun
+  rune
+  vega
+  jord
+  jord_geotiff
+  windtrap))

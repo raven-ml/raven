@@ -8,6 +8,8 @@
  (libraries
   tessera
   jord
+  jord_geotiff
+  jord_geojson
   nx
   nx.io
   nx.ragged
