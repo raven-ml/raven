@@ -158,6 +158,43 @@ let work part keep =
   in
   { work = { (Rig_gpu_support.work part) with init }; keep }
 
+(* A program of one step, a launch of [ids] of [binary] over one thread, which
+   writes the first word of its input of 4 bytes. Its parameters but the
+   input's address are 0. *)
+let one_launch arch binary =
+  let module G = Rig_program in
+  let one n = (G.Fixed n, G.Fixed 1, G.Fixed 1) in
+  let ids =
+    G.Launch
+      {
+        image = 0;
+        name = "ids";
+        params = { G.bytes = String.make 24 '\000'; holes = [||] };
+        refs = [| { G.slot = 0; at = 0; use = Write } |];
+        groups = one 1;
+        threads = one 1;
+        shared = G.Fixed 0;
+      }
+  in
+  {
+    G.devices = [| arch |];
+    ints = 0;
+    memory = [||];
+    images =
+      [| { G.device = 0; binary = { G.bytes = binary; holes = [||] } } |];
+    inputs = [| { G.device = 0; bytes = 4 } |];
+    steps =
+      [|
+        G.Submit
+          {
+            device = 0;
+            slots = [| G.Input 0 |];
+            fixed = [||];
+            parts = [| ids |];
+          };
+      |];
+  }
+
 (* A GPU's submits through rig. [empty] and [cost] submit no work and wait for
    each submit or every [drain]; [wait/reached] waits for a value reached;
    [kernel] submits the part [kernel] makes over three buffers and waits every
@@ -165,10 +202,12 @@ let work part keep =
    parameters, each run waiting for its copy's last run: with no part, and with
    the part [kernel] makes, a launch of the vendor's smallest kernel. With
    [graph], the graph row does the same with the part [graph] makes, the launch
-   of a recorded step of 64 such kernels. Each case opens its GPU in its own
-   worker with [opened], so that no process forks after a vendor library
-   started. *)
-let gpu_rows ?graph v ~opened ~kernel =
+   of a recorded step of 64 such kernels. The time rows run the program of one
+   launch of [ids] of the binary [launch] gives and wait for it, or time it:
+   their difference is what a time of the step costs. Each case opens its GPU
+   in its own worker with [opened], so that no process forks after a vendor
+   library started. *)
+let gpu_rows ?graph v ~opened ~kernel ~launch =
   let rig () =
     let g, _ = opened () in
     (g, Sub.take (Sub.make g [||]), ref 0)
@@ -203,6 +242,13 @@ let gpu_rows ?graph v ~opened ~kernel =
       { grun; gargs; gbuffers }
     in
     ({ gcopies = Array.init depth (fun _ -> copy ()); keep }, ref 0)
+  in
+  (* The program of one launch, loaded, and its frame. *)
+  let program () =
+    let g, _ = opened () in
+    let t = one_launch (Rig.arch g) (launch ()) in
+    let p = ok (Rig_program.load t [| g |]) in
+    (p,{ Rig_program.inputs = [| B.create g 4 |]; ints = [||] })
   in
   let replaying () = replay (fst (opened ())) [] ignore in
   let part_replaying make () =
@@ -394,6 +440,12 @@ let gpu_rows ?graph v ~opened ~kernel =
               keep ()
             end);
       ];
+    Thumper.group (strf "time/%s" v)
+      [
+        row "run-1" program (fun (p, f) ->
+            Array.iter Rig.Point.wait (Rig_program.run p f));
+        row "time-1" program (fun (p, f) -> Rig_program.time p f);
+      ];
     Thumper.group (strf "replay/%s" v)
       ([
          row "params-24" replaying run;
@@ -409,6 +461,13 @@ let gpu_rows ?graph v ~opened ~kernel =
 
 (* The fixtures of [vendor]'s suite. *)
 let fixtures vendor = "../test/" ^ vendor ^ "/fixtures"
+
+(* The file [name] of [vendor]'s fixtures that holds the kernel [ids], read
+   when the time rows' case opens its GPU. *)
+let launch vendor name () =
+  In_channel.with_open_bin
+    (Filename.concat (fixtures vendor) name)
+    In_channel.input_all
 
 (* [bump] over one thread as a launch, loaded by rig, its parameters left 0: a
    count of 0 bytes, so it writes nothing. A case runs in a forked child, which
@@ -493,22 +552,25 @@ let gpus =
       (if Rig_metal_support.present () then
          gpu_rows "metal"
            ~opened:(fixture (module Rig_metal_support))
-           ~kernel:metal_kernel
+           ~kernel:metal_kernel ~launch:(launch "metal" "launch.metallib")
        else []);
       (if Rig_cuda_support.present () then
          gpu_rows "cuda"
            ~opened:(fixture (module Rig_cuda_support))
            ~kernel:cuda_kernel ~graph:cuda_graph
+           ~launch:(launch "cuda" "launch.ptx")
        else []);
       (if Rig_nv_support.present () then
          gpu_rows "nv"
            ~opened:(fixture (module Rig_nv_support))
            ~kernel:nv_kernel
+           ~launch:(launch "nv" "launch_sm89.cubin")
        else []);
       (if Rig_amd_support.present () then
          gpu_rows "amd"
            ~opened:(fixture (module Rig_amd_support))
            ~kernel:amd_kernel
+           ~launch:(launch "amd" "launch_gfx1201.hsaco")
        else []);
     ]
 
