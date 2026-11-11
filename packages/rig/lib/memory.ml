@@ -920,8 +920,8 @@ let viewed (e : entry) =
 
 (* Puts [e] in its owner's cache, for reuse. A key's array allocates only as
    it grows past the most entries it held, so a drain of a size cached before
-   allocates nothing. Each step allocates before it stores. The owner's lock
-   is held. *)
+   allocates nothing. Each step allocates and applies its helpers before it
+   stores. The owner's lock is held. *)
 let cache (e : entry) =
   let l = e.owner.live and k = cache_key e in
   let c =
@@ -932,7 +932,7 @@ let cache (e : entry) =
         Cache.replace l.cache k c;
         c
   in
-  let n = c.n in
+  let n = c.n and w = whole e.bytes in
   if n = Array.length c.entries then begin
     let a = Array.make (Int.max 8 (2 * n)) no_entry in
     Array.blit c.entries 0 a 0 n;
@@ -940,16 +940,17 @@ let cache (e : entry) =
   end;
   c.entries.(n) <- e;
   c.n <- n + 1;
-  l.cached <- l.cached + whole e.bytes
+  l.cached <- l.cached + w
 
 (* Under the owner's lock: the latest entry of [c], which holds one, taken
    out of the cache. Its key stays bound. *)
 let uncache l (c : cached) =
   let n = c.n - 1 in
   let e = c.entries.(n) in
+  let w = whole e.bytes in
   c.entries.(n) <- no_entry;
   c.n <- n;
-  l.cached <- l.cached - whole e.bytes;
+  l.cached <- l.cached - w;
   e
 
 (* Puts [e] among its owner's retiring memory. The owner's lock is held. *)
@@ -1214,15 +1215,15 @@ let judge d =
 let cache_keys l = Cache.fold (fun k _ ks -> k :: ks) l.cache []
 
 (* Under [l]'s lock: takes the first entry of [l]'s cache under the key [k]
-   if [pick] holds of it. Entries of one key share their owner and their
-   kind of memory, so [pick] answers alike for each. *)
+   if [pick] holds of it, or is [no_entry]. Entries of one key share their
+   owner and their kind of memory, so [pick] answers alike for each. *)
 let take_picked (l, k, pick) =
   match Cache.find l.cache k with
   | c when c.n = 0 ->
       Cache.remove l.cache k;
-      None
-  | c when pick c.entries.(c.n - 1) -> Some (uncache l c)
-  | _ | (exception Not_found) -> None
+      no_entry
+  | c when pick c.entries.(c.n - 1) -> uncache l c
+  | _ | (exception Not_found) -> no_entry
 
 (* Waits for [d]'s value [v] on behalf of memory, never of [d]'s caller: a loss
    the wait finds is [d]'s alone, whose memory then returns once it stopped. *)
@@ -1251,14 +1252,16 @@ let rec next_picked x =
   | [] -> no_entry
   | k :: rest -> (
       let d = x.from in
-      match Dev.protect d take_picked (d.live, k, x.pick) with
-      | None ->
-          x.keys <- rest;
-          next_picked x
-      | Some e when not (reached_or_lost d x.upto) ->
-          defer d (Free e);
-          next_picked x
-      | Some e -> e)
+      let e = Dev.protect d take_picked (d.live, k, x.pick) in
+      if e == no_entry then begin
+        x.keys <- rest;
+        next_picked x
+      end
+      else if not (reached_or_lost d x.upto) then begin
+        defer d (Free e);
+        next_picked x
+      end
+      else e)
 
 let free_picked x e =
   ignore (free_entry e : Dev.given);
@@ -1317,8 +1320,9 @@ let pop_words_map l =
   l.words <- -1;
   match l.word_maps with
   | r :: rest ->
+      let taken = Some r in
       l.word_maps <- rest;
-      Some r
+      taken
   | [] -> None
 
 let undecided = { occupant = -1; way = -1; word_map = None }
@@ -1860,11 +1864,12 @@ let slot d kind n = function
    memory for leaves the image and its stamps go; made code memory is the
    image's. *)
 let let_go_try (r, t) =
-  token_link t;
   let e = !r in
-  if t == no_token && e != no_entry && not (made_memory e) then begin
+  let unmade = t == no_token && e != no_entry && not (made_memory e) in
+  token_link t;
+  if unmade then begin
     r := no_entry;
-    drop_stamps e
+    if e.stamps <> 0 then stamps_unref e.stamps
   end
 
 (* A memory record over the entry [e] of [d], with its token [t]. [Mapped]
@@ -2132,19 +2137,25 @@ type settled = Located | Beaten of mapping | Taken
 
 (* Locates [mp] at [l], unless its device located another mapping of [e]
    first, or its drain took [mp]. The mapping located is taken for [how] in
-   the same hold of the lock, so no release of a last hold comes between. *)
+   the same hold of the lock, so no release of a last hold comes between.
+   The answer and the address are made first, and the take is written in
+   line: nothing polls between the stores and the return. *)
 let settle_map ((e : entry), mp, (l : Rig_edge.location), how) =
   if not (List.memq mp e.maps) then Taken
   else
     match find_map (e, mp.on) with
     | Some other ->
+        let beaten = Beaten other in
         take other how;
-        Beaten other
+        beaten
     | None ->
-        mp.at <- Option.value ~default:(-1) l.address;
+        let at = Option.value ~default:(-1) l.address in
+        mp.at <- at;
         mp.by <- l.handle;
         mp.located <- true;
-        take mp how;
+        (match how with
+        | Hold -> mp.holds <- mp.holds + 1
+        | Keep -> mp.kept <- true);
         Located
 
 (* A record of a region the counted call [make] makes: it stores the

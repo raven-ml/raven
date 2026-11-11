@@ -1276,13 +1276,14 @@ let set_pair (d, (p : device), way, map) =
     Taken Memory.undecided
   else begin
     let cell = { occupant = p.opened; way; word_map = map } in
+    let decided = if known.occupant >= 0 then Replaced cell else Decided cell in
     if i >= Array.length l.pairs then grow l i;
     (* The releases' store ends [settle_word_locked], and the cell's follows
        it with nothing that allocates or polls between: an exception finds
        [map] in one of the two. *)
     Memory.settle_word_locked d map known.word_map;
     l.pairs.(i) <- cell;
-    if known.occupant >= 0 then Replaced cell else Decided cell
+    decided
   end
 
 (* [l.pairs] is replaced whole under [d]'s lock and its cells are immutable
