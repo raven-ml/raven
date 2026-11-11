@@ -188,7 +188,7 @@ let test_core_dtypes () =
         float64")
     (fun () ->
       let x = Nx.zeros Nx.float8_e4m3fn [| 1; 1; 1; 2 |] in
-      Attention.attend x x x)
+      Attention.attend x (Nx.Dense { k = x; v = x }))
 
 (* Attention is total: a query that sees no key yields zero. *)
 
@@ -639,7 +639,9 @@ let check_case (type b) c (dt : (float, b) Nx.dtype) ~uq ~tiny ~tiny_weight =
   cover "a row that sees no key" !empty;
   cover "keys of no feature" (d = 0 && dv > 0);
   cover "zero-size" (b = 0 || heads = 0 || n = 0 || m = 0 || dv = 0);
-  let attend q = Attention.attend ?mask ?scale:c.scale ?sinks q k v in
+  let attend q =
+    Attention.attend ?mask ?scale:c.scale ?sinks q (Nx.Dense { k; v })
+  in
   within ~msg:"attend" (attend q);
   let groups = Array.init heads (fun h -> Int64.of_int (h / c.groups)) in
   let repeat t = Nx.take ~axis:1 (Nx.create Nx.int64 [| heads |] groups) t in
@@ -671,7 +673,7 @@ let check_float64 c =
   in
   let bits t = Array.map Int64.bits_of_float (Nx.to_array t) in
   equal ~msg:"attend at float64" (array int64) (bits expected)
-    (bits (Attention.attend ?mask ?scale:c.scale ?sinks q k v))
+    (bits (Attention.attend ?mask ?scale:c.scale ?sinks q (Nx.Dense { k; v })))
 
 let law_core c =
   match c.dtype with
@@ -696,7 +698,9 @@ let test_attend_gradients () =
     }
   in
   let loss { Qkvs64.q; k; v; sinks } =
-    let y = Attention.attend ~mask:Nx.causal ~scale:0.8 ~sinks q k v in
+    let y =
+      Attention.attend ~mask:Nx.causal ~scale:0.8 ~sinks q (Nx.Dense { k; v })
+    in
     Nx.sum (Nx.mul y y)
   in
   grads_ok (Rune.check_grads qkvs64 loss p)
@@ -1078,9 +1082,9 @@ let test_index_select () =
   equal
     ~msg:
       "the mask hides what the token does not see; an unallocated column is a \
-       hole, a zero row it sees"
+       hole, which no token sees"
     (list bool)
-    [ true; false; true; false; true; false; false; true; true; true ]
+    [ true; false; true; false; true; false; false; true; true; false ]
     (bools (Cache_index.mask selected));
   let _, stored = Cache_index.extend index tokens_2_4 pool in
   values_are ~msg:"what is stored does not change" ~tol:0. (flat stored) pool';
@@ -1090,7 +1094,7 @@ let test_index_select () =
     [| 2.; 0.; 30.; 0.; 2.; 0.; 0.; 0.; 50.; 0. |]
     seen;
   equal ~msg:"and is masked" (list bool)
-    [ true; false; true; false; true; false; false; false; true; true ]
+    [ true; false; true; false; true; false; false; false; true; false ]
     (bools (Cache_index.mask windowed));
   raises
     (Invalid_argument
@@ -2475,6 +2479,461 @@ let test_draft_compiled () =
     [ [| -1; 0; 0; 1 |]; [| -1; 0; 1; 1 |] ];
   equal ~msg:"two trees, one compiled trace and two eager runs" int 3 !traces
 
+(* Paged reads. {!Attention.cached} reads its pools in place through
+   {!Cache_index.pages}: a column whose entry is [-1], or a slot outside the
+   pool, is no key. *)
+
+(* [pages] at fixed indices, as its .mli states it: the table's slot at each
+   column a token of the lane may see, [-1] at an unallocated column, one past
+   every position, and one below the window of every token; under a draft, the
+   table before the lane's least position, then the slots the call's tokens
+   store at. *)
+let test_index_pages () =
+  let pages index =
+    Option.map
+      (fun t -> Array.to_list (Nx.to_array t))
+      (Cache_index.pages index)
+  in
+  let some l = Some (List.map Int64.of_int l) in
+  let ints = option (list int64) in
+  let index =
+    index_at ~pos:[| [| 2; 3 |] |] ~slots:[| [| 4; -1; 99; 5; 1; 0 |] |]
+  in
+  equal ~msg:"past every position" ints (some [ 4; -1; 99; 5; -1; -1 ])
+    (pages index);
+  equal ~msg:"below every token's window" ints
+    (some [ -1; -1; 99; 5; -1; -1 ])
+    (pages (Cache_index.window 2 index));
+  equal ~msg:"a lane of padding" ints
+    (some [ -1; -1; -1; -1 ])
+    (pages (index_at ~pos:[| [| -1; -1 |] |] ~slots:[| [| 0; 1; 2; 3 |] |]));
+  let rows = Cache_index.rows ~every:[ 2 ] ~context:6 [| 5; 2 |] in
+  equal ~msg:"in blocks: block 2 stands at 5, past position 4" ints
+    (some [ 0; 1; -1; 3; -1; -1 ])
+    (pages (Cache_index.every 2 rows));
+  (* [extend] reads the pool through them, in blocks and over rows too. *)
+  let reads ~msg index ~slots =
+    let batch = Cache_index.batch index and seq = Cache_index.seq index in
+    let pool = Nx.zeros Nx.float32 [| slots; 1 |] in
+    let seen, pool =
+      Cache_index.extend index (numbered ~batch ~from:0 seq) pool
+    in
+    equal ~msg (array float_exact) (flat seen)
+      (flat (Nx.take ~axis:0 (Option.get (Cache_index.pages index)) pool))
+  in
+  reads ~msg:"in blocks, extend reads through pages"
+    (Cache_index.every 2 rows) ~slots:6;
+  let draft =
+    Cache_index.draft
+      ~slots:(int64s [| 1; 3 |] [| 6; -1; 5 |])
+      ~sees:(tree_sees [| -1; 0; 1 |])
+      (index_at ~pos:[| [| 2; 3; 4 |] |] ~slots:[| [| 3; 0; 2; 1 |] |])
+  in
+  equal ~msg:"a draft: the table before position 2, then its slots" ints
+    (some [ 3; 0; -1; -1; 6; -1; 5 ])
+    (pages draft);
+  let lanes =
+    Cache_index.make
+      ~row:(int64s [| 2 |] [| 1; 3 |])
+      ~pos:(int64s [| 2; 1 |] [| 1; 1 |])
+      ~table:(int64s [| 2; 3 |] [| 0; 1; 2; 3; 4; 5 |])
+      ()
+  in
+  equal ~msg:"lanes read their rows; a lane of no row is padding" ints
+    (some [ 3; 4; -1; -1; -1; -1 ])
+    (pages lanes);
+  reads ~msg:"over rows, extend reads through pages" lanes ~slots:6;
+  equal ~msg:"a whole index" ints None
+    (pages (Cache_index.whole ~batch:1 ~seq:2 ()));
+  equal ~msg:"a selection" ints None
+    (pages (Cache_index.select (int64s [| 1; 2; 1 |] [| 0; 1 |]) index))
+
+(* Two lanes of three tokens over tables of six columns and a pool of 24
+   slots. Lane [b]'s table names slots [8b] to [8b + 7] in some order, with
+   holes ([-1]) and slots outside the pool; under a draft, token [i] of lane
+   [b] stores at slot [16 + 4b + i], or at [-1] or outside the pool. *)
+type paged = {
+  index : Nx.host Cache_index.t;
+  table : int array array;
+  pos : int array array;
+  window : int option;
+  draft : int array array option;
+  sees : Nx.host Nx.bool_t option;
+}
+
+(* The index of [s]'s fields. *)
+let paged_index ~table ~pos ~window ~draft ~sees =
+  let index = index_at ~pos ~slots:table in
+  let index =
+    match (draft, sees) with
+    | Some slots, Some sees ->
+        Cache_index.draft
+          ~slots:(int64s [| 2; 3 |] (Array.concat (Array.to_list slots)))
+          ~sees index
+    | _ -> index
+  in
+  Option.fold ~none:index ~some:(fun w -> Cache_index.window w index) window
+
+let paged_width = 6
+and paged_slots = 24
+
+let pp_paged ppf s =
+  let ints a =
+    String.concat ";" (Array.to_list (Array.map string_of_int a))
+  in
+  let lanes a = String.concat " | " (Array.to_list (Array.map ints a)) in
+  Format.fprintf ppf "table %s pos %s window %s draft %s" (lanes s.table)
+    (lanes s.pos)
+    (Option.fold ~none:"none" ~some:string_of_int s.window)
+    (Option.fold ~none:"none" ~some:lanes s.draft)
+
+let paged_gen =
+  let open Gen in
+  let lane_table b =
+    let* order = permutation (List.init 8 (fun i -> (8 * b) + i)) in
+    let* entries =
+      list ~size:(constant paged_width)
+        (frequency [ (6, constant false); (2, constant true); (1, bool) ])
+    in
+    let order = Array.of_list order in
+    constant
+      (Array.of_list
+         (List.mapi
+            (fun j bad ->
+              if not bad then order.(j) else if j mod 2 = 0 then -1 else 99)
+            entries))
+  in
+  let* t0 = lane_table 0 in
+  let* t1 = lane_table 1 in
+  let* window = option (int_range 1 4) in
+  let* drafted = bool in
+  let* pos, draft, sees =
+    if not drafted then
+      (* [n] tokens from [p0], padded on the left, within the table. *)
+      let lane =
+        let* n = frequency [ (1, constant 0); (6, int_range 1 3) ] in
+        let+ p0 = int_range 0 (paged_width - max n 1) in
+        Array.init 3 (fun i -> if i < 3 - n then -1 else p0 + i - (3 - n))
+      in
+      let+ l0 = lane and+ l1 = lane in
+      ([| l0; l1 |], None, None)
+    else
+      (* A tree of three tokens from the lane's least position [p0], or of
+         two after a token of padding. *)
+      let lane b =
+        let* p0 = int_range 0 paged_width in
+        let* p2 = int_range 0 1 in
+        let* padded = frequency [ (3, constant false); (1, constant true) ] in
+        let parents = if padded then [| -1; -1; 1 |] else [| -1; 0; p2 |] in
+        let+ slots =
+          list ~size:(constant 3)
+            (frequency [ (4, constant true); (1, constant false); (1, bool) ])
+        in
+        let slots =
+          Array.of_list
+            (List.mapi
+               (fun i ok ->
+                 if ok then 16 + (4 * b) + i else if i = 1 then -1 else 99)
+               slots)
+        in
+        let pos = Array.map (fun d -> p0 + d) (depths parents) in
+        if padded then pos.(0) <- -1;
+        (pos, slots, parents)
+      in
+      let+ p0, s0, a0 = lane 0 and+ p1, s1, a1 = lane 1 in
+      let sees = Nx.concatenate ~axis:0 [ tree_sees a0; tree_sees a1 ] in
+      ([| p0; p1 |], Some [| s0; s1 |], Some sees)
+  in
+  let table = [| t0; t1 |] in
+  let index = paged_index ~table ~pos ~window ~draft ~sees in
+  constant { index; table; pos; window; draft; sees }
+
+(* The pages the .mli states for [s], a row per lane: the lane's table at
+   each column that no test hides, the draft's slots after it. *)
+let expected_pages s =
+  Array.init 2 (fun b ->
+      let real = List.filter (fun p -> p >= 0) (Array.to_list s.pos.(b)) in
+      let last = List.fold_left max (-1) real in
+      let least = List.fold_left min max_int real in
+      let upto = if s.draft = None then last else min (least - 1) last in
+      let below j =
+        match s.window with Some w -> j <= least - w | None -> false
+      in
+      let table =
+        Array.mapi
+          (fun j t -> if j > upto || below j then -1 else t)
+          s.table.(b)
+      in
+      match s.draft with
+      | None -> table
+      | Some slots ->
+          Array.append table
+            (Array.mapi
+               (fun i slot -> if s.pos.(b).(i) >= 0 then slot else -1)
+               slots.(b)))
+
+(* Whether a token of [s] may see a hole: a column its lane's pages keep
+   whose table entry is unallocated or outside the pool. *)
+let sees_a_hole s =
+  let allocated = Array.map (Array.map (fun _ -> 0)) s.table in
+  let live = expected_pages { s with table = allocated } in
+  let hole t = t < 0 || t >= paged_slots in
+  Array.exists Fun.id
+    (Array.init (2 * paged_width) (fun c ->
+         let b = c / paged_width and j = c mod paged_width in
+         live.(b).(j) = 0 && hole s.table.(b).(j)))
+
+let law_pages s =
+  Nx.Rng.with_key (Nx.Rng.key 65) @@ fun () ->
+  cover "a draft" (s.draft <> None);
+  cover "a padded draft token"
+    (s.draft <> None && Array.exists (fun pos -> pos.(0) < 0) s.pos);
+  cover "a window" (s.window <> None);
+  cover "a hole a token may see" (sees_a_hole s);
+  let expected = Array.concat (Array.to_list (expected_pages s)) in
+  let expected = List.map Int64.of_int (Array.to_list expected) in
+  let pages = Option.get (Cache_index.pages s.index) in
+  equal ~msg:"pages" (list int64) expected (Array.to_list (Nx.to_array pages));
+  let values = Nx.Rng.normal Nx.float32 [| 2; 3; 2 |] in
+  let pool = Nx.Rng.normal Nx.float32 [| paged_slots; 2 |] in
+  let seen, pool' = Cache_index.extend s.index values pool in
+  equal ~msg:"store is extend's pool" (array float_exact) (flat pool')
+    (flat (Cache_index.store s.index values pool));
+  equal ~msg:"seen is the pool read through pages" (array float_exact)
+    (flat seen)
+    (flat (Nx.take ~axis:0 pages pool'))
+
+let paged_step =
+  lazy
+    (let p = Nx.Rng.with_key (Nx.Rng.key 60) (fun () -> layer Nx.float32) in
+     let step { x; index; c } =
+       let y, c = call p c index x in
+       { x = y; index; c }
+     in
+     (step, Rune.jit Nx.Ptree.(step_ptree @-> returns step_ptree) step))
+
+(* A slot that no entry of [pages] names is never read: NaN there changes no
+   output, eager or compiled, and the compiled step gives eager's outputs. *)
+let law_paged_reads s =
+  Nx.Rng.with_key (Nx.Rng.key 66) @@ fun () ->
+  cover "a draft" (s.draft <> None);
+  cover "a window" (s.window <> None);
+  cover "a hole a token may see" (sees_a_hole s);
+  let draft_hole =
+    match s.draft with
+    | Some slots ->
+        Array.exists (Array.exists (fun t -> t < 0 || t >= paged_slots)) slots
+    | None -> false
+  in
+  cover "a draft token that stores nothing" draft_hole;
+  let step, compiled = Lazy.force paged_step in
+  let read = Array.concat (Array.to_list (expected_pages s)) in
+  let pool () = Nx.Rng.normal Nx.float32 [| paged_slots; 2; 2 |] in
+  let c = { Attention.Cache.keys = pool (); values = pool () } in
+  let unread = Nx.full Nx.float32 [| 1; 2; 2 |] Float.nan in
+  let poison t =
+    List.fold_left
+      (fun t slot ->
+        if Array.mem slot read then t
+        else Nx.set [ Nx.R (slot, slot + 1) ] unread t)
+      t
+      (List.init paged_slots Fun.id)
+  in
+  let poisoned =
+    { Attention.Cache.keys = poison c.keys; values = poison c.values }
+  in
+  let x = Nx.Rng.normal Nx.float32 [| 2; 3; 8 |] in
+  let run f c = (f { x; index = s.index; c }).x in
+  let eager = run step c in
+  equal ~msg:"eager: no output reads an unread slot" (array float_exact)
+    (flat eager)
+    (flat (run step poisoned));
+  let jitted = run compiled c in
+  equal ~msg:"compiled: no output reads an unread slot" (array float_exact)
+    (flat jitted)
+    (flat (run compiled poisoned));
+  close ~msg:"compiled = eager" eager jitted
+
+(* Both ways of reading a cache attend alike: {!Cache_index.extend}'s reads
+   under {!Cache_index.mask} give the outputs of {!Attention.cached}'s read
+   through {!Cache_index.pages}, holes and draft tokens that store nothing
+   included. Slots outside the pool are drawn as [-1]: the mask cannot tell
+   them, as it reads no pool. *)
+let law_paths_agree s =
+  Nx.Rng.with_key (Nx.Rng.key 67) @@ fun () ->
+  let unallocated =
+    Array.map (Array.map (fun t -> if t >= paged_slots then -1 else t))
+  in
+  let table = unallocated s.table and draft = Option.map unallocated s.draft in
+  let s = { s with table; draft } in
+  let index =
+    paged_index ~table ~pos:s.pos ~window:s.window ~draft ~sees:s.sees
+  in
+  cover "a draft" (draft <> None);
+  cover "a hole a token may see" (sees_a_hole s);
+  let p = layer Nx.float32 in
+  let pool () = Nx.Rng.normal Nx.float32 [| paged_slots; 2; 2 |] in
+  let c = { Attention.Cache.keys = pool (); values = pool () } in
+  let x = Nx.Rng.normal Nx.float32 [| 2; 3; 8 |] in
+  let pos = Cache_index.positions index in
+  let q = Rope.apply rope ~pos (Attention.split ~head_dim p.Attention.q x) in
+  let k = Rope.apply rope ~pos (Attention.split ~head_dim p.k x) in
+  let v = Attention.split ~head_dim p.v x in
+  let read t pool =
+    Nx.swapaxes 1 2 (fst (Cache_index.extend index (Nx.swapaxes 1 2 t) pool))
+  in
+  let m = Cache_index.mask index in
+  let m = Nx.reshape [| Nx.dim 0 m; 1; Nx.dim 1 m; Nx.dim 2 m |] m in
+  let dense =
+    Attention.merge p.out
+      (Attention.attend ~mask:(captured m) q
+         (Nx.Dense { k = read k c.keys; v = read v c.values }))
+  in
+  close ~msg:"extend under mask = cached through pages" dense
+    (fst (call p c index x))
+
+(* A hole, an unallocated column or one naming a slot outside the pool, that a
+   token may see is no key: the outputs are attention over the columns the
+   token sees, without the hole, from the keys {!Cache_index.extend} reads. *)
+let test_cached_hole_is_hidden () =
+  Nx.Rng.with_key (Nx.Rng.key 61) @@ fun () ->
+  let p = layer Nx.float32 in
+  let x = Nx.Rng.normal Nx.float32 [| 1; 2; 8 |] in
+  let pool () = Nx.Rng.normal Nx.float32 [| 6; 2; 2 |] in
+  let c = { Attention.Cache.keys = pool (); values = pool () } in
+  let table = [| 4; -1; 99; 5; 1 |] in
+  let index = index_at ~pos:[| [| 0; 3 |] |] ~slots:[| table |] in
+  let y, _ = call p c index x in
+  let pos = Cache_index.positions index in
+  let q = Rope.apply rope ~pos (Attention.split ~head_dim p.Attention.q x) in
+  let k = Rope.apply rope ~pos (Attention.split ~head_dim p.k x) in
+  let v = Attention.split ~head_dim p.v x in
+  let read t pool =
+    Nx.swapaxes 1 2 (fst (Cache_index.extend index (Nx.swapaxes 1 2 t) pool))
+  in
+  let allocated =
+    Nx.create Nx.bool [| 1; 1; 1; 5 |]
+      (Array.map (fun t -> t >= 0 && t < 6) table)
+  in
+  let mask =
+    Nx.logical_and allocated
+      (Nx.reshape [| 1; 1; 2; 5 |] (Cache_index.mask index))
+  in
+  let expected =
+    Attention.merge p.out
+      (Attention.attend ~mask:(captured mask) q
+         (Nx.Dense { k = read k c.keys; v = read v c.values }))
+  in
+  close ~msg:"a hole is no key" expected y;
+  let compiled =
+    Rune.jit
+      Nx.Ptree.(step_ptree @-> returns step_ptree)
+      (fun { x; index; c } ->
+        let y, c = call p c index x in
+        { x = y; index; c })
+  in
+  close ~msg:"compiled" expected (compiled { x; index; c }).x
+
+(* A draft token that stores nothing, at [-1] or outside the pool, is seen by
+   no token, itself included: the outputs are those of the draft whose [sees]
+   hides it from every token, and [extend] reads zero at its column. *)
+let test_draft_storing_nothing () =
+  Nx.Rng.with_key (Nx.Rng.key 62) @@ fun () ->
+  let p_layer = layer Nx.float32 in
+  let c =
+    after_prefix ~window:None p_layer (Nx.Rng.normal Nx.float32 [| 1; 3; 8 |]) 3
+  in
+  let x = Nx.Rng.normal Nx.float32 [| 1; 3; 8 |] in
+  let table = index_at ~pos:[| [| 3; 4; 5 |] |] ~slots:[| draft_table |] in
+  let chain = tree_sees [| -1; 0; 1 |] in
+  let unseen =
+    Nx.logical_and chain
+      (Nx.create Nx.bool [| 1; 1; 3 |] [| true; false; true |])
+  in
+  let draft slot sees =
+    Cache_index.draft ~slots:(int64s [| 1; 3 |] [| 12; slot; 14 |]) ~sees table
+  in
+  let compiled =
+    Rune.jit
+      Nx.Ptree.(step_ptree @-> returns step_ptree)
+      (fun { x; index; c } ->
+        let y, c = call p_layer c index x in
+        { x = y; index; c })
+  in
+  List.iter
+    (fun slot ->
+      let msg = Printf.sprintf "slot %d" slot in
+      let y, _ = call p_layer c (draft slot chain) x in
+      let expected, _ = call p_layer c (draft 13 unseen) x in
+      close ~msg:(msg ^ ": seen by no token") expected y;
+      close ~msg:(msg ^ ": compiled") expected
+        (compiled { x; index = draft slot chain; c }).x;
+      let seen, _ =
+        Cache_index.extend (draft slot chain)
+          (Nx.Rng.normal Nx.float32 [| 1; 3; 2; 2 |])
+          c.Attention.Cache.keys
+      in
+      values_are ~msg:(msg ^ ": extend reads zero at its column") ~tol:0.0
+        [| 0.; 0.; 0.; 0. |]
+        (Nx.slice [ A; I 13 ] seen))
+    [ -1; 99 ]
+
+(* Gradients through a tabled cache under a window and over a hole, which
+   rune differentiates through the paged read. *)
+let test_cached_gradients_paged () =
+  Nx.Rng.with_key (Nx.Rng.key 63) @@ fun () ->
+  let x = Nx.Rng.normal Nx.float64 [| 1; 4; 8 |] in
+  let p = layer Nx.float64 in
+  let loss p =
+    let slots = [| [| 2; -1; 0; 3; 1 |] |] in
+    let windowed pos = Cache_index.window 2 (index_at ~pos ~slots) in
+    let y1, c =
+      call p (cache_at Nx.float64 4)
+        (windowed [| [| 0; 1; 2 |] |])
+        (Nx.slice [ A; R (0, 3) ] x)
+    in
+    let y2, _ =
+      call p c (windowed [| [| 3 |] |]) (Nx.slice [ A; R (3, 4) ] x)
+    in
+    Nx.add (Nx.sum (Nx.mul y1 y1)) (Nx.sum (Nx.mul y2 y2))
+  in
+  grads_ok (Rune.check_grads attention64 loss p)
+
+(* [Rune.vmap] over steps of their own caches and indices is each step. *)
+let test_cached_vmap () =
+  Nx.Rng.with_key (Nx.Rng.key 64) @@ fun () ->
+  let p = layer Nx.float32 in
+  let pool () = Nx.Rng.normal Nx.float32 [| 2; 6; 2; 2 |] in
+  let c = { Attention.Cache.keys = pool (); values = pool () } in
+  let x = Nx.Rng.normal Nx.float32 [| 2; 1; 2; 8 |] in
+  let indices =
+    [
+      index_at ~pos:[| [| 1; 2 |] |] ~slots:[| [| 3; -1; 0; 1 |] |];
+      index_at ~pos:[| [| 0; 1 |] |] ~slots:[| [| 5; 2; 4; 9 |] |];
+    ]
+  in
+  let index =
+    Nx.Ptree.map2
+      (Nx.Ptree.v Cache_index.walk)
+      (fun _ a b -> Nx.stack [ a; b ])
+      (List.nth indices 0) (List.nth indices 1)
+  in
+  let mapped =
+    Rune.vmap
+      Nx.Ptree.(step_ptree @-> returns tensor)
+      (fun { x; index; c } -> fst (call p c index x))
+      { x; index; c }
+  in
+  List.iteri
+    (fun i index ->
+      let at t = Nx.slice [ I i ] t in
+      let c = { Attention.Cache.keys = at c.keys; values = at c.values } in
+      close
+        ~msg:(Printf.sprintf "step %d" i)
+        (fst (call p c index (at x)))
+        (at mapped))
+    indices
+
 (* Packed lanes *)
 
 let test_packed_mask () =
@@ -2618,8 +3077,8 @@ let test_packed_compiled () =
   equal ~msg:"two packings, one compiled trace and two eager runs" int 3 !traces
 
 (* [visible] is [mask] read at each pair: attention under either gives the same
-   bits, over each kind of index. Keys and values are drawn over the mask's
-   columns. *)
+   bits, over each kind of index without a hole, which [visible] shows. Keys
+   and values are drawn over the mask's columns. *)
 let test_visible_is_mask () =
   Nx.Rng.with_key (Nx.Rng.key 48) @@ fun () ->
   let rows = Cache_index.rows ~every:[ 2 ] ~context:6 [| 4; 2 |] in
@@ -2645,15 +3104,23 @@ let test_visible_is_mask () =
     let k = Nx.Rng.normal Nx.float32 [| batch; 2; columns; 2 |] in
     let v = Nx.Rng.normal Nx.float32 [| batch; 2; columns; 3 |] in
     equal ~msg:name (array float_exact)
-      (flat (Attention.attend ~mask:(captured m) q k v))
-      (flat (Attention.attend ~mask:(Cache_index.visible index) q k v));
+      (flat (Attention.attend ~mask:(captured m) q (Nx.Dense { k; v })))
+      (flat
+         (Attention.attend
+            ~mask:(Cache_index.visible index)
+            q
+            (Nx.Dense { k; v })));
     let compiled =
       Rune.jit
         Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
-        (fun q k v -> Attention.attend ~mask:(Cache_index.visible index) q k v)
+        (fun q k v ->
+          Attention.attend
+            ~mask:(Cache_index.visible index)
+            q
+            (Nx.Dense { k; v }))
     in
     close ~msg:(name ^ ", compiled")
-      (Attention.attend ~mask:(Cache_index.visible index) q k v)
+      (Attention.attend ~mask:(Cache_index.visible index) q (Nx.Dense { k; v }))
       (compiled q k v)
   in
   List.iter agrees
@@ -2718,7 +3185,7 @@ let widest_attend =
     Nx.Ptree.(
       v Cache_index.walk @-> tensor @-> tensor @-> tensor @-> returns tensor)
     (fun index q k v ->
-      Attention.attend ~mask:(Cache_index.visible index) q k v)
+      Attention.attend ~mask:(Cache_index.visible index) q (Nx.Dense { k; v }))
 
 let widest_extend =
   Rune.jit
@@ -2750,7 +3217,11 @@ let test_widest_window (case, past) =
   let eager index =
     let seen, pool = Cache_index.extend index values pool in
     [
-      flat (Attention.attend ~mask:(Cache_index.visible index) q k v);
+      flat
+        (Attention.attend
+           ~mask:(Cache_index.visible index)
+           q
+           (Nx.Dense { k; v }));
       flat seen;
       flat pool;
     ]
@@ -2931,7 +3402,10 @@ let test_visible_checks_the_keys () =
   List.iter
     (fun (name, index, message) ->
       raises ~msg:name (Invalid_argument message) (fun () ->
-          Attention.attend ~mask:(Cache_index.visible index) q k k))
+          Attention.attend
+            ~mask:(Cache_index.visible index)
+            q
+            (Nx.Dense { k; v = k })))
     [
       ( "rows",
         index_at ~pos:[| [| 0; 1; 2 |] |] ~slots:[| Array.init 6 Fun.id |],
@@ -2950,9 +3424,9 @@ let composed ?scale ?sinks p c index x =
   let q = Rope.apply rope ~pos (Attention.split ~head_dim p.Attention.q x) in
   let k = Rope.apply rope ~pos (Attention.split ~head_dim p.k x) in
   let v = Attention.split ~head_dim p.v x in
-  let k, v, c = Attention.Cache.extend index c k v in
+  let kv, c = Attention.Cache.extend index c k v in
   let mask = Cache_index.visible index in
-  (Attention.merge p.out (Attention.attend ~mask ?scale ?sinks q k v), c)
+  (Attention.merge p.out (Attention.attend ~mask ?scale ?sinks q kv), c)
 
 let test_pieces_compose_cached () =
   Nx.Rng.with_key (Nx.Rng.key 47) @@ fun () ->
@@ -2995,9 +3469,10 @@ let test_attend_sinks_per_query_head () =
       q (repeat k) (repeat v)
   in
   same ~msg:"2 key-value heads serving 4 query heads" direct
-    (Attention.attend ~mask:Nx.causal ~scale:0.8 ~sinks q k v);
+    (Attention.attend ~mask:Nx.causal ~scale:0.8 ~sinks q (Nx.Dense { k; v }));
   same ~msg:"one key-value head per query head" direct
-    (Attention.attend ~mask:Nx.causal ~scale:0.8 ~sinks q (repeat k) (repeat v))
+    (Attention.attend ~mask:Nx.causal ~scale:0.8 ~sinks q
+       (Nx.Dense { k = repeat k; v = repeat v }))
 
 let test_composed_sinks_chunking () =
   Nx.Rng.with_key (Nx.Rng.key 45) @@ fun () ->
@@ -3054,14 +3529,12 @@ let test_pieces_reject_bad_shapes () =
     (fun () ->
       Attention.attend
         (t [| 1; 4; 2; 2 |])
-        (t [| 1; 3; 2; 2 |])
-        (t [| 1; 3; 2; 2 |]));
+        (Nx.Dense { k = t [| 1; 3; 2; 2 |]; v = t [| 1; 3; 2; 2 |] }));
   raises (Invalid_argument "Attention.attend: sinks must have shape [4]")
     (fun () ->
       Attention.attend ~sinks:(t [| 2 |])
         (t [| 1; 4; 2; 2 |])
-        (t [| 1; 2; 2; 2 |])
-        (t [| 1; 2; 2; 2 |]));
+        (Nx.Dense { k = t [| 1; 2; 2; 2 |]; v = t [| 1; 2; 2; 2 |] }));
   raises
     (Invalid_argument
        "Attention.merge: y must have shape [batch; heads; seq; d]") (fun () ->
@@ -3293,6 +3766,10 @@ let () =
              test "eager and compiled runs agree on what addresses nothing"
                test_cached_out_of_range_under_jit;
              test "gradients flow through the cache" test_cached_gradients;
+             test "gradients flow through a windowed cache with a hole"
+               test_cached_gradients_paged;
+             test "vmap over steps of their own caches is each step"
+               test_cached_vmap;
              test "heads, extend, attend and merge compose cached"
                test_pieces_compose_cached;
              test "attend takes sinks per query head, grouped or not"
@@ -3318,5 +3795,24 @@ let () =
              test "a packed lane masks within each sequence" test_packed_mask;
              test_packed_alone;
              test "a compiled packing equals eager" test_packed_compiled;
+           ];
+         group "paged reads"
+           [
+             test "pages names the slots a lane may read" test_index_pages;
+             prop ~count:200 "extend reads the pool through pages"
+               (Gen.with_pp pp_paged paged_gen)
+               law_pages;
+             prop ~count:100
+               "no output reads a slot pages does not name, eager or compiled"
+               (Gen.with_pp pp_paged paged_gen)
+               law_paged_reads;
+             prop ~count:100
+               "extend under mask attends as cached through pages"
+               (Gen.with_pp pp_paged paged_gen)
+               law_paths_agree;
+             test "a hole a token may see is no key"
+               test_cached_hole_is_hidden;
+             test "a draft token that stores nothing is seen by no token"
+               test_draft_storing_nothing;
            ];
        ])

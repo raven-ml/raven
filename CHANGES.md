@@ -3528,6 +3528,15 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- **Breaking:** `Attention.Cache.extend` returns an `Nx.kv`, read in place
+  through the new `Cache_index.pages` over a table, and `Attention.attend`
+  takes one. `Cache_index.store` is `extend`'s write alone.
+- **Breaking:** a hole (an unallocated column) and a draft token stored at
+  `-1` take no weight where they were zero keys, and `Cache_index.mask` hides
+  them. Under a draft, `Cache_index.extend` reads the draft's slots.
+- A gradient through `Attention.cached` over a table is slower: 2.69 to 3.01
+  ms a compiled step at 4 lanes of 256 tokens, 8 heads of 64, RTX 5000 Ada.
+  `Cache_index.whole` keeps dense attention.
 - **Breaking:** `Layer_norm.apply` is `Nx.standardize` and `Rms_norm.apply`
   is `Nx.rms_norm`, their affine applied before the one rounding to the
   input's dtype. Results change at every dtype; a constant vector now maps

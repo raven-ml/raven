@@ -65,9 +65,9 @@ let check_dtype : type b. fn:string -> (float, b) Nx.dtype -> unit =
    score [σ] and value zero: it scales a row's softmax over its keys by
    [Σ e^s / (Σ e^s + e^σ)], which is [sigmoid (lse - σ)], [0] for a row that
    sees no key. The product computes in the accumulator and rounds once. *)
-let attention (type b) ?mask ?scale ?sinks (q : (float, b, _) Nx.t) k v =
+let attention (type b) ?mask ?scale ?sinks (q : (float, b, _) Nx.t) kv =
   let within (type a) (acc : (float, a) Nx.dtype) =
-    let o, lse = Nx.attention ?scale ?mask ~acc ~kv:(Nx.Dense { k; v }) q in
+    let o, lse = Nx.attention ?scale ?mask ~acc ~kv q in
     match sinks with
     | None -> o
     | Some sinks ->
@@ -129,8 +129,11 @@ let scaled_dot_product_attention ?mask ?scale ?sinks q k v =
   let o =
     attention ?mask ?scale ?sinks
       (stretch q [| n; qs.(qr - 1) |])
-      (stretch k [| m; ks.(kr - 1) |])
-      (stretch v [| m; vs.(vr - 1) |])
+      (Nx.Dense
+         {
+           k = stretch k [| m; ks.(kr - 1) |];
+           v = stretch v [| m; vs.(vr - 1) |];
+         })
   in
   Nx.reshape (Array.append lead [| n; vs.(vr - 1) |]) o
 
@@ -175,10 +178,35 @@ let split ~head_dim l x =
   let batch = Nx.dim 0 y and seq = Nx.dim 1 y in
   Nx.swapaxes 1 2 (Nx.reshape [| batch; seq; width / head_dim; head_dim |] y)
 
+(* The key-value heads of [kv] for [q] of [batch] lanes and [d] features: the
+   keys' heads, read from the pools when they are paged. *)
+let kv_heads ~batch ~d (kv : _ Nx.kv) =
+  match kv with
+  | Dense { k; v } -> (
+      match (Nx.shape k, Nx.shape v) with
+      | [| b; h; m; d' |], [| b'; h'; m'; _ |]
+        when b = batch && b' = batch && h = h' && m = m' && d' = d ->
+          h
+      | _ ->
+          Printf.ksprintf invalid_arg
+            "Attention.attend: k must have shape [%d; kv_heads; m; %d] and v \
+             [%d; kv_heads; m; dv]"
+            batch d batch)
+  | Paged { k; v; table } -> (
+      match (Nx.shape k, Nx.shape v, Nx.shape table) with
+      | [| n; h; p; d' |], [| n'; h'; p'; _ |], [| b; _ |]
+        when n = n' && h = h' && p = p' && d' = d && b = batch ->
+          h
+      | _ ->
+          Printf.ksprintf invalid_arg
+            "Attention.attend: paged k must have shape [pages; kv_heads; page; \
+             %d], v [pages; kv_heads; page; dv] and the table [%d; max_pages]"
+            d batch)
+
 (* Key-value head [h] serves query heads [h * groups] to
    [h * groups + groups - 1], as {!Nx.attention} reads them: no key is
    repeated. *)
-let attend ?mask ?scale ?sinks q k v =
+let attend ?mask ?scale ?sinks q kv =
   check_dtype ~fn:"attend" (Nx.dtype q);
   let batch, heads, d =
     match Nx.shape q with
@@ -186,17 +214,7 @@ let attend ?mask ?scale ?sinks q k v =
     | _ ->
         invalid_arg "Attention.attend: q must have shape [batch; heads; n; d]"
   in
-  let kv_heads =
-    match (Nx.shape k, Nx.shape v) with
-    | [| b; h; m; d' |], [| b'; h'; m'; _ |]
-      when b = batch && b' = batch && h = h' && m = m' && d' = d ->
-        h
-    | _ ->
-        Printf.ksprintf invalid_arg
-          "Attention.attend: k must have shape [%d; kv_heads; m; %d] and v \
-           [%d; kv_heads; m; dv]"
-          batch d batch
-  in
+  let kv_heads = kv_heads ~batch ~d kv in
   if (kv_heads = 0 && heads <> 0) || (kv_heads > 0 && heads mod kv_heads <> 0)
   then
     Printf.ksprintf invalid_arg
@@ -213,7 +231,7 @@ let attend ?mask ?scale ?sinks q k v =
         Nx.reshape [| heads; 1 |] sinks)
       sinks
   in
-  attention ?mask ?scale ?sinks q k v
+  attention ?mask ?scale ?sinks q kv
 
 let merge ?sum l y =
   match Nx.shape y with
@@ -251,7 +269,7 @@ let apply ~head_dim ?mask ?rope ?sum p x =
         let pos = Nx.reshape [| 1; seq |] (Nx.arange_at at Nx.int64 0 seq 1) in
         (Rope.apply t ~pos q, Rope.apply t ~pos k)
   in
-  Nx.reshape shape (merge ?sum p.out (attend ?mask q k v))
+  Nx.reshape shape (merge ?sum p.out (attend ?mask q (Nx.Dense { k; v })))
 
 (* Key-value cache *)
 
@@ -268,15 +286,29 @@ module Cache = struct
     { keys = pool (); values = pool () }
 
   (* Pools hold tokens first, [batch; seq; kv_heads; head_dim]; heads come first
-     everywhere else. *)
+     everywhere else. A pool is paged as pages of one slot, a view. *)
   let extend index cache k v =
-    let through pool t =
-      let seen, pool = Cache_index.extend index (Nx.swapaxes 1 2 t) pool in
-      (Nx.swapaxes 1 2 seen, pool)
-    in
-    let k, keys = through cache.keys k in
-    let v, values = through cache.values v in
-    (k, v, { keys; values })
+    match Cache_index.pages index with
+    | Some table ->
+        let store pool t = Cache_index.store index (Nx.swapaxes 1 2 t) pool in
+        let keys = store cache.keys k and values = store cache.values v in
+        let paged pool =
+          match Nx.shape pool with
+          | [| slots; h; d |] -> Nx.reshape [| slots; h; 1; d |] pool
+          | _ ->
+              invalid_arg
+                "Attention.Cache.extend: a pool must have shape [slots; \
+                 kv_heads; head_dim]"
+        in
+        (Nx.Paged { k = paged keys; v = paged values; table }, { keys; values })
+    | None ->
+        let through pool t =
+          let seen, pool = Cache_index.extend index (Nx.swapaxes 1 2 t) pool in
+          (Nx.swapaxes 1 2 seen, pool)
+        in
+        let k, keys = through cache.keys k in
+        let v, values = through cache.values v in
+        (Nx.Dense { k; v }, { keys; values })
 
   let walk c { keys; values } =
     let open Nx.Ptree.Walk in
@@ -314,5 +346,5 @@ let cached ~head_dim ?rope ?sum p cache index x =
         let pos = Cache_index.positions index in
         (Rope.apply t ~pos q, Rope.apply t ~pos k)
   in
-  let k, v, cache = Cache.extend index cache k v in
-  (merge ?sum p.out (attend ~mask:(Cache_index.visible index) q k v), cache)
+  let kv, cache = Cache.extend index cache k v in
+  (merge ?sum p.out (attend ~mask:(Cache_index.visible index) q kv), cache)

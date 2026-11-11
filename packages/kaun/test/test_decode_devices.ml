@@ -325,11 +325,11 @@ let test_attention_over_heads () =
     Array.map Int64.bits_of_float
       (Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on x)))
   in
-  let one = Attention.attend ~mask:Nx.causal q k v in
+  let one = Attention.attend ~mask:Nx.causal q (Nx.Dense { k; v }) in
   let cut = Four.split ~axis:1 in
   let four =
-    Attention.attend ~mask:Nx.causal (Nx.place cut q) (Nx.place cut k)
-      (Nx.place cut v)
+    Attention.attend ~mask:Nx.causal (Nx.place cut q)
+      (Nx.Dense { k = Nx.place cut k; v = Nx.place cut v })
   in
   equal ~msg:"one device's bits" (array int64) (bits one) (bits four)
 
@@ -375,6 +375,48 @@ let law_conv (c, seed) =
   let tol = (2. *. gamma (2. *. (k +. 1.)) *. k) +. (2. *. u32 *. (k +. 1.)) in
   within ~msg:"conv" ~tol one four
 
+(* A cache whose pools are cut along their slots attends as on one device,
+   eager and compiled: each device reads the slots the table names from the
+   devices that hold them. *)
+let test_pools_cut_along_slots () =
+  let p =
+    Attention.make ~key:(Nx.Rng.key 3) ~bias:false ~kv_dim:8 ~embed_dim:dim
+      Nx.float32
+  in
+  let x = Nx.Rng.with_key (Nx.Rng.key 4) (fun () ->
+      Nx.Rng.normal Nx.float32 [| 1; 3; dim |])
+  in
+  let run ~jit at at_pools =
+    let p = Nx.Ptree.place (module Attention) at p in
+    let c =
+      Attention.Cache.make ~slots:8 ~kv_heads:4 ~head_dim Nx.float32 at_pools
+    in
+    let index =
+      Cache_index.place at
+        (Cache_index.make
+           ~pos:(Nx.create Nx.int64 [| 1; 3 |] [| 0L; 1L; 2L |])
+           ~table:(Nx.create Nx.int64 [| 1; 4 |] [| 6L; 1L; 4L; -1L |])
+           ())
+    in
+    let call p c index x = fst (Attention.cached ~head_dim p c index x) in
+    let call =
+      if not jit then call
+      else
+        Rune.jit
+          Nx.Ptree.(
+            instantiate (module Attention)
+            @-> instantiate (module Attention.Cache)
+            @-> v Cache_index.walk @-> tensor @-> returns tensor)
+          call
+    in
+    Nx.to_array (call p c index (Nx.place at x))
+  in
+  let one = run ~jit:false Nx.Host.on Nx.Host.on in
+  equal ~msg:"one device's bits" (array float_exact) one
+    (run ~jit:false Four.on (Four.split ~axis:0));
+  equal ~msg:"compiled" (array (float 1e-5)) one
+    (run ~jit:true Four.on (Four.split ~axis:0))
+
 let () =
   exit
     (run "kaun decode over devices"
@@ -389,9 +431,15 @@ let () =
              test "a bfloat16 row projection's sum rounds each term"
                test_row_projection;
            ];
+         group "a cache cut along its slots"
+           [
+             test "attends as on one device, eager and compiled"
+               test_pools_cut_along_slots;
+           ];
          group "a cut contracting axis"
            [
              test "attention reads q and k whole" test_attention_refuses_a_cut;
+
              prop "a convolution gives one device's result within its roundings"
                (Gen.pair
                   (Gen.map (fun b -> if b then 4 else 8) Gen.bool)

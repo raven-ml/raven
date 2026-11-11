@@ -338,6 +338,15 @@ let chosen index columns =
   in
   Nx.where (inside ~below:context columns) at (Nx.full_like at (-1L))
 
+(* Each lane's table at the index's stride, [batch; width], whose
+   unallocated columns are holes, seen by no token. [None] without a
+   table. *)
+let lane_tables index =
+  match index.tokens with
+  | Whole _ | Packed _ -> None
+  | Tabled { row; table; blocks; _ } ->
+      Some (lanes ~row (table_of index ~table ~blocks))
+
 (* Which of its chosen columns each token sees, [batch; seq; k]. *)
 let sees_chosen index columns =
   let pos = pos index in
@@ -354,7 +363,27 @@ let sees_chosen index columns =
       let token = Nx.clamp ~min:0L ~max:(Int64.of_int (s - 1)) columns in
       Nx.logical_and seen
         (Nx.equal (Nx.sub token keys) (Nx.reshape [| b; s; 1 |] (start pos)))
-  | Whole _ | Packed _ | Tabled _ -> seen
+  | Whole _ | Packed _ -> seen
+  | Tabled { row; table; blocks; _ } ->
+      (* A chosen hole is seen by no token. *)
+      let table = lanes ~row (table_of index ~table ~blocks) in
+      let b = Nx.dim 0 columns and s = Nx.dim 1 columns in
+      let k = Nx.dim 2 columns in
+      let last = Int64.of_int (Nx.dim 1 table - 1) in
+      let at =
+        Nx.reshape [| b; s * k |] (Nx.clamp ~min:0L ~max:last columns)
+      in
+      let named = Nx.greater_equal_s (Nx.take_along_axis ~axis:1 at table) 0L in
+      Nx.logical_and seen (Nx.reshape [| b; s; k |] named)
+
+(* [m], [batch; seq; width] over a lane's table columns, and the columns that
+   are not holes. *)
+let held index m =
+  match lane_tables index with
+  | None -> m
+  | Some t ->
+      let t = Nx.reshape [| Nx.dim 0 t; 1; Nx.dim 1 t |] t in
+      Nx.logical_and m (Nx.greater_equal_s t 0L)
 
 let mask index =
   let pos = pos index and window = index.window in
@@ -362,8 +391,9 @@ let mask index =
   | Some columns, _, _ -> sees_chosen index columns
   | None, (Whole _ | Packed _), _ when index.every = 1 ->
       among ?window ~related:(runs pos) pos
-  | None, _, Some { sees = related; _ } ->
-      (* The table holds what came before the call's least position. *)
+  | None, _, Some { sees = related; slots } ->
+      (* The table holds what came before the call's least position. A draft
+         token that stores nothing is a hole. *)
       let width = context index - seq index in
       let keys =
         Nx.reshape [| 1; 1; width |] (column ~like:pos ~context:width)
@@ -371,15 +401,88 @@ let mask index =
       let before =
         Nx.less keys (Nx.reshape [| Nx.dim 0 pos; 1; 1 |] (least pos))
       in
+      let named t = Nx.reshape [| Nx.dim 0 t; 1; Nx.dim 1 t |] t in
+      let stored = named (Nx.greater_equal_s slots 0L) in
       Nx.concatenate ~axis:2
         [
-          Nx.logical_and before (sees ?window ~keys pos);
-          among ?window ~related pos;
+          Nx.logical_and before (sees ?window ~keys pos)
+          |> held index;
+          Nx.logical_and stored (among ?window ~related pos);
         ]
   | None, _, None ->
       let context = context index in
       let keys = stands ~every:index.every (column ~like:pos ~context) in
-      sees ?window ~keys:(Nx.reshape [| 1; 1; context |] keys) pos
+      held index (sees ?window ~keys:(Nx.reshape [| 1; 1; context |] keys) pos)
+
+(* Pages *)
+
+(* The column that stands at each token's position, or [-1]: at stride [m] only
+   a block's last position has one. *)
+let own ~every pos =
+  if every = 1 then pos
+  else
+    let m = Int64.of_int every in
+    let closes =
+      Nx.logical_and
+        (Nx.greater_equal_s pos 0L)
+        (Nx.equal_s (Nx.mod_s (Nx.add_s pos 1L) m) 0L)
+    in
+    Nx.where closes (Nx.div_s pos m) (Nx.full_like pos (-1L))
+
+(* The slot the table names at each token's column [at], [-1] where it has
+   none. *)
+let targets ~at table =
+  let slot = Nx.take_along_axis ~axis:1 at table in
+  Nx.where (inside ~below:(Nx.dim 1 table) at) slot (Nx.full_like slot (-1L))
+
+(* [table], [batch; context], with [-1] at the columns no token of the lane
+   sees: those standing past [upto], [batch; 1], or below the window of the
+   lane's least position. *)
+let live ?window ~every ~upto ~pos table =
+  let context = Nx.dim 1 table in
+  let column = stands ~every (column ~like:table ~context) in
+  let seen =
+    let upto = Nx.less_equal column upto in
+    match window with
+    | None -> upto
+    | Some w -> Nx.logical_and upto (Nx.greater column (Nx.sub (least pos) w))
+  in
+  Nx.where seen table (Nx.full_like table (-1L))
+
+(* The slot each of the call's tokens stores at, [batch; seq]: under a draft
+   the draft's, else the one its table names at its own column. Padding
+   stores nothing. *)
+let target index ~table =
+  let pos = pos index in
+  match index.draft with
+  | Some { slots; _ } ->
+      Nx.where (Nx.greater_equal_s pos 0L) slots (Nx.full_like slots (-1L))
+  | None -> targets ~at:(own ~every:index.every pos) table
+
+(* The table of each lane at the index's stride. *)
+let lane_table index ~row ~table ~blocks =
+  lanes ~row (table_of index ~table ~blocks)
+
+(* {!pages} of a tabled index without a selection. *)
+let tabled_pages index ~row ~table ~blocks =
+  let pos = pos index and window = index.window in
+  let every = index.every in
+  let table = lane_table index ~row ~table ~blocks in
+  let last = Nx.max ~axes:[ 1 ] ~keepdims:true pos in
+  match index.draft with
+  | None -> live ?window ~every ~upto:last ~pos table
+  | Some _ ->
+      (* The table is read below the lane's least position, the call's tokens
+         following it at their slots. *)
+      let upto = Nx.minimum (Nx.sub_s (least pos) 1L) last in
+      let before = live ?window ~every ~upto ~pos table in
+      Nx.concatenate ~axis:1 [ before; target index ~table ]
+
+let pages index =
+  match (index.tokens, index.columns) with
+  | Tabled { row; table; blocks; _ }, None ->
+      Some (tabled_pages index ~row ~table ~blocks)
+  | (Whole _ | Packed _), _ | Tabled _, Some _ -> None
 
 (* [mask] over an attention's pairs, [batch; heads; seq; context]. A program
    reads the pair's key as its column, which a compiled attention bounds over
@@ -402,6 +505,8 @@ let visible index =
         let seen = within ?window ~keys:p.k p.q in
         wide ~context (Nx.logical_and (Nx.less_equal start p.k) seen)
   | None, _, None ->
+      (* The table is not read: a hole, which {!mask} hides, shows here, and
+         a read through {!pages} hides it by its entry. *)
       let query = rows pos and context = context index in
       let every = index.every in
       fun (p : _ Nx.pair) ->
@@ -421,22 +526,9 @@ let tail pool =
 
 let ones tail = Array.map (fun _ -> 1) tail
 
-(* The column that stands at each token's position, or [-1]: at stride [m] only
-   a block's last position has one. *)
-let own ~every pos =
-  if every = 1 then pos
-  else
-    let m = Int64.of_int every in
-    let closes =
-      Nx.logical_and
-        (Nx.greater_equal_s pos 0L)
-        (Nx.equal_s (Nx.mod_s (Nx.add_s pos 1L) m) 0L)
-    in
-    Nx.where closes (Nx.div_s pos m) (Nx.full_like pos (-1L))
-
 (* [pool] with [values] at the slots [target], [batch; seq]. A store at [-1] is
    dropped. *)
-let store ~target values pool =
+let put ~target values pool =
   let tail = tail pool in
   let tokens = Nx.dim 0 target * Nx.dim 1 target in
   let indices =
@@ -446,29 +538,6 @@ let store ~target values pool =
   in
   let values = Nx.reshape (Array.append [| tokens |] tail) values in
   Nx.scatter ~axis:0 indices values pool
-
-(* The slot the table names at each token's column [at], [-1] where it has
-   none. *)
-let targets ~at table =
-  let slot = Nx.take_along_axis ~axis:1 at table in
-  Nx.where (inside ~below:(Nx.dim 1 table) at) slot (Nx.full_like slot (-1L))
-
-(* [pool] at each lane's columns, zero at the columns no token of the lane sees:
-   those standing past [upto], [batch; 1], or below the window of the lane's
-   least position. An unallocated column reads zero from the gather. *)
-let read ?window ~every ~upto ~pos ~table pool =
-  let tail = tail pool in
-  let batch = Nx.dim 0 table and context = Nx.dim 1 table in
-  let column = stands ~every (column ~like:table ~context) in
-  let seen =
-    let upto = Nx.less_equal column upto in
-    match window with
-    | None -> upto
-    | Some w -> Nx.logical_and upto (Nx.greater column (Nx.sub (least pos) w))
-  in
-  let live = Nx.reshape (Array.append [| batch; context |] (ones tail)) seen in
-  let gathered = Nx.take ~axis:0 table pool in
-  Nx.where live gathered (Nx.zeros_like gathered)
 
 (* The rows a selection reads, [batch; seq; k] then [tail], zero where a token
    does not see its column. [fetch flat] is the rows at the columns [flat],
@@ -510,13 +579,23 @@ let closing ~every ~pos flat =
 let from_pool table pool flat =
   Nx.take ~axis:0 (Nx.take_along_axis ~axis:1 flat table) pool
 
+let check ~fn index values pool =
+  if Nx.shape values <> Array.append [| batch index; seq index |] (tail pool)
+  then
+    invalid "Cache_index.%s: values must have shape [%d; %d] then the pool's" fn
+      (batch index) (seq index)
+
+let store index values pool =
+  check ~fn:"store" index values pool;
+  match index.tokens with
+  | Whole _ | Packed _ -> pool
+  | Tabled { row; table; blocks; _ } ->
+      let table = lane_table index ~row ~table ~blocks in
+      put ~target:(target index ~table) values pool
+
 let extend index values pool =
-  let tail = tail pool in
-  if Nx.shape values <> Array.append [| batch index; seq index |] tail then
-    invalid
-      "Cache_index.extend: values must have shape [%d; %d] then the pool's"
-      (batch index) (seq index);
-  let every = index.every in
+  check ~fn:"extend" index values pool;
+  let tail = tail pool and every = index.every in
   match (index.tokens, index.columns) with
   | (Whole _ | Packed _), None when every = 1 -> (values, pool)
   | (Whole pos | Packed pos), None ->
@@ -533,38 +612,13 @@ let extend index values pool =
         rows_at ~tail values token
       in
       (read_chosen index columns ~tail fetch, pool)
-  | Tabled { row; table; blocks; _ }, columns -> (
-      let pos = pos index in
-      let window = index.window in
-      let table = lanes ~row (table_of index ~table ~blocks) in
-      match (index.draft, columns) with
-      | Some { slots; _ }, _ ->
-          (* Padding stores nothing, and the table is read below the lane's
-             least position, the call's tokens following it. *)
-          let target =
-            Nx.where
-              (Nx.greater_equal_s pos 0L)
-              slots (Nx.full_like slots (-1L))
-          in
-          let pool = store ~target values pool in
-          let upto =
-            Nx.minimum
-              (Nx.sub_s (least pos) 1L)
-              (Nx.max ~axes:[ 1 ] ~keepdims:true pos)
-          in
-          let before = read ?window ~every ~upto ~pos ~table pool in
-          (Nx.concatenate ~axis:1 [ before; values ], pool)
-      | None, None ->
-          let pool =
-            store ~target:(targets ~at:(own ~every pos) table) values pool
-          in
-          let upto = Nx.max ~axes:[ 1 ] ~keepdims:true pos in
-          (read ?window ~every ~upto ~pos ~table pool, pool)
-      | None, Some columns ->
-          let pool =
-            store ~target:(targets ~at:(own ~every pos) table) values pool
-          in
-          (read_chosen index columns ~tail (from_pool table pool), pool))
+  | Tabled { row; table; blocks; _ }, None ->
+      let pool = store index values pool in
+      (Nx.take ~axis:0 (tabled_pages index ~row ~table ~blocks) pool, pool)
+  | Tabled { row; table; blocks; _ }, Some columns ->
+      let pool = store index values pool in
+      let table = lane_table index ~row ~table ~blocks in
+      (read_chosen index columns ~tail (from_pool table pool), pool)
 
 (* Structure *)
 

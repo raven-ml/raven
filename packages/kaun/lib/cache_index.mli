@@ -15,7 +15,8 @@
     all values of an index, and a layer is the same for each. A model passes the
     index it was given to every layer and never looks inside; a layer calls
     {!extend} on each of its pools and attends under {!visible}, or weighs
-    them under {!mask}. A layer that keeps one entry per block of positions
+    them under {!mask}, or stores with {!store} and reads its pools in place
+    through {!pages}. A layer that keeps one entry per block of positions
     reads its pools through {!val-every}, and one that attends to a few
     columns per token through {!select}. {!walk} is an index's structure,
     which a compiled step's signature names.
@@ -35,12 +36,17 @@
       once. What a layer stores may depend on the position and on every token
       before it (a rotated key above the first block), so two sequences share a
       slot only at the same column, after the same tokens. Every column a token
-      sees names a slot that this call or an earlier one stored; a hole inside
-      that range reads as a zero key with the weight of a zero score. A column
-      is freed and becomes [-1] once it is below every reach still to be fed. A
-      layer's reach through a table is the furthest back any of its reads looks:
-      its window, its selections, and a closing token's read of its block's
-      positions.
+      sees names a slot that this call or an earlier one stored. A {e hole} is
+      a column inside that range that is unallocated. {!mask} hides it,
+      {!extend} reads zero there and {!pages} holds [-1]. {!visible} reads no
+      table and shows it, so an attention under {!visible} hides a hole only
+      through {!pages}. A column that names a
+      slot outside the pool reads as zero in {!extend}'s [seen] and addresses
+      nothing through {!pages}; {!mask}, which reads no pool, shows it. A
+      column is freed and becomes [-1] once it is below every reach still to
+      be fed. A layer's reach through a table is the furthest back any of its
+      reads looks: its window, its selections, and a closing token's read of
+      its block's positions.
     + {b [-1] addresses nothing.} A position of [-1] is padding, a table entry
       of [-1] is an unallocated column, and a lane whose [row] is [-1] is
       padding throughout. A slot outside the pool and a row outside the table
@@ -60,15 +66,17 @@
       stores, and an eager and a compiled run may differ there; every other slot
       is exact. These are obligations on the table alone.
     + {b Padding stores nothing.}
-    + {b A column no token of its lane sees contributes exactly zero,} whatever
-      its slot holds: {!extend} replaces it by zero before any weight multiplies
-      it. That covers an unallocated column, a column that stands past every
-      position of the lane (under a {!draft}, a table column at or past the
-      lane's least position), and a column below the index's {!window} for every
-      token of the lane. The zeroing and the {!mask} read one window, the
-      index's, so a layer cannot zero with one and mask with another. Under a
-      selection ({!select}) this holds per chosen column, and a column the token
-      did not choose is not read.
+    + {b A column [-1] in {!pages} is never read,} whatever its slot holds:
+      one that is unallocated, that stands past every position of the lane
+      (under a {!draft}, a table column at or past the lane's least
+      position), or that stands below the index's {!window} for every token
+      of the lane. {!extend} reads zero there before any weight multiplies it,
+      and an attention through {!pages} reads no key there. Under a {!draft},
+      the column of a token that stores nothing addresses nothing either.
+      {!pages} and the {!mask} read one window, the index's, so a layer cannot
+      hide with one and mask with another. Under a selection ({!select}) this
+      holds per chosen column, and a column the token did not choose is not
+      read.
     + {b Values vary, shapes do not.} Positions, tables, the tables of blocks
       included, and the size of a {!window} are tensors: under [Rune.jit] they
       are inputs of the step, and one compiled program serves every position,
@@ -176,11 +184,11 @@ val select : 'd Nx.int64_t -> 'd t -> 'd t
     the column it chose [c]-th, and {!mask} has shape [[| batch; seq; k |]].
     Both read the selection from the index, as they read its window. A chosen
     column the token does not see (after its position, below the window, outside
-    the context) reads as zero and is masked; an unallocated one reads as zero,
-    a hole as without a selection. A column chosen twice is read twice. What is
-    stored does not change. It keeps [index]'s window and replaces any selection
-    [index] had. On a whole index a column is a token of the lane, as in
-    {!mask}, or a block of the lane under {!val-every}.
+    the context) reads as zero and is masked, and so is a chosen hole. A
+    column chosen twice is read twice. What is stored does not change. It
+    keeps [index]'s window and replaces any selection [index] had. On a whole
+    index a column is a token of the lane, as in {!mask}, or a block of the
+    lane under {!val-every}.
 
     A layer that attends to a few columns per token, chosen from scores or fixed
     as the last [w] positions, reads [k] rows per token whatever the context,
@@ -308,7 +316,7 @@ val extend :
       selection it is each token's chosen columns, of shape
       [[| batch; seq; k; ... |]] (see {!select}). Under a {!draft} the draft's
       tokens store at its slots, and [seen] is the table's columns followed by
-      [values].
+      the draft's slots, zero at a token that stores nothing.
 
     On a whole index [seen] is [values], the values of the tokens that close
     each block under {!val-every}, or the chosen ones under a selection, and
@@ -327,24 +335,47 @@ val extend :
 
     Raises [Invalid_argument] if [values] does not have that shape. *)
 
+val store : 'd t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
+(** [store index values pool] is {!extend}'s [pool'], [pool] with [values]
+    stored where the call's tokens sit, without the read. On a whole index it
+    is [pool].
+
+    Raises [Invalid_argument] if [values] does not have the shape {!extend}
+    takes. *)
+
+val pages : 'd t -> 'd Nx.int64_t option
+(** [pages index] is [Some p] on an index with a table and no selection:
+    [p], of shape [[| batch; context |]], holds at [p.(b).(j)] the slot lane
+    [b] reads at column [j], and [-1] at the columns the laws list as never
+    read. Under a {!draft} its last [seq] columns are the slots the
+    call's tokens store at, [-1] for padding. It is a page table of pages of
+    one slot, as {!Nx.val-attention}'s [Paged] reads a pool, and {!extend}'s
+    [seen] is [Nx.take ~axis:0 p pool']. It is [None] on a whole or packed
+    index, whose columns are the call's tokens, and under a selection, whose
+    tokens each read their own columns. *)
+
 val mask : 'd t -> 'd Nx.bool_t
 (** [mask index], of shape [[| batch; seq; context |]], is which columns of
     {!extend}'s [seen] each token sees: those that stand at or before its
     position, and under the index's {!window} only the last of them. On a whole
     index the columns are the call's tokens, and a token sees those of its own
-    sequence ({!packed}); padded ones are hidden. Under a {!draft} its last
-    [seq] columns are the call's tokens, seen as {!draft} says. A padded token
-    sees none. Under a selection it has shape [[| batch; seq; k |]] and says
+    sequence ({!packed}); padded ones are hidden. A hole is hidden. Under a
+    {!draft} its last [seq] columns are the call's tokens, seen as {!draft}
+    says, and a draft token that stores at [-1] is hidden. A padded token sees
+    none. Under a selection it has shape [[| batch; seq; k |]] and says
     which of its chosen columns each token sees. *)
 
 val visible : 'd t -> 'd Nx.pair -> 'd Nx.bool_t
 (** [visible index] is {!mask} as the mask of {!Nx.val-attention} over
     [[| batch; heads; seq; context |]], [k] in place of [context] under a
     selection: at a pair it holds where [mask index] holds at the pair's
-    lane, token and column, whatever the heads. {!Attention.cached} attends
+    lane, token and column, whatever the heads, except at a hole, which it
+    shows (below). {!Attention.cached} attends
     under it. Without a selection or a {!draft} it reads the pair's
     coordinates and the tokens' positions, so no array of
-    [[| batch; seq; context |]] is stored; with one it reads [mask index].
+    [[| batch; seq; context |]] is stored, and holds at a hole, whose entry
+    of {!pages} hides it from an attention that reads through them; with
+    one it reads [mask index].
     Either way the attention raises unless its keys are [context] wide, [k]
     under a selection, as {!extend}'s [seen] are. *)
 

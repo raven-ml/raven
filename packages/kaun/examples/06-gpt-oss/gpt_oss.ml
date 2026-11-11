@@ -145,11 +145,11 @@ let attention cfg b cache index x =
   let q = Rope.apply cfg.rope ~pos (split ~head_dim b.attn.q x) in
   let k = Rope.apply cfg.rope ~pos (split ~head_dim b.attn.k x) in
   let v = split ~head_dim b.attn.v x in
-  let k, v, cache = Attention.Cache.extend index cache k v in
+  let kv, cache = Attention.Cache.extend index cache k v in
   let y =
     Attention.attend
       ~mask:(Cache_index.visible index)
-      ~scale:cfg.attention_scale ~sinks:b.sinks q k v
+      ~scale:cfg.attention_scale ~sinks:b.sinks q kv
   in
   (merge b.attn.out y, cache)
 

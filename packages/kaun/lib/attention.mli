@@ -182,17 +182,20 @@ module Cache : sig
     ((float, 'b, 'd) Nx.t, 'd) t ->
     (float, 'b, 'd) Nx.t ->
     (float, 'b, 'd) Nx.t ->
-    (float, 'b, 'd) Nx.t * (float, 'b, 'd) Nx.t * ((float, 'b, 'd) Nx.t, 'd) t
-  (** [extend index cache k v] is [(k', v', cache')]: [cache] with the call's
+    (float, 'b, 'd) Nx.kv * ((float, 'b, 'd) Nx.t, 'd) t
+  (** [extend index cache k v] is [(kv, cache')]: [cache] with the call's
       keys [k] and values [v] stored, both of shape
-      [[| batch; kv_heads; seq; head_dim |]], and what the call's tokens attend
-      over, of shape [[| batch; kv_heads; context; head_dim |]]. It is
-      {!Cache_index.extend} on each pool, which holds tokens before heads, with
-      the two axes exchanged on the way in and out. On a whole index [k'] is
-      [k], [v'] is [v] and [cache'] is [cache].
+      [[| batch; kv_heads; seq; head_dim |]], and the [context] keys and
+      values the call's tokens attend over. Where {!Cache_index.pages} gives a
+      table [p], [kv] is [Paged] of [cache']'s pools, each viewed as
+      [[| slots; kv_heads; 1; head_dim |]], read through [p] ({!Nx.kv}): a
+      column whose entry addresses nothing is hidden from every token.
+      Otherwise [kv] is [Dense] of {!Cache_index.extend} on each pool, which
+      holds tokens before heads, with the two axes exchanged on the way in and
+      out; on a whole index that is [k] and [v], and [cache'] is [cache].
 
       Raises [Invalid_argument] if [k] or [v] does not have that shape for
-      [index] and [cache]. *)
+      [index] and [cache], or a pool does not have three axes. *)
 end
 
 val cached :
@@ -212,19 +215,24 @@ val cached :
     this call included, and under the index's {!Cache_index.window} only the
     last of them; under a {!Cache_index.draft}, the sequence before the call and
     the draft tokens it sees: a prompt fed whole, in chunks, or token by token
-    gives the same outputs up to floating-point reassociation. With [rope],
-    queries and keys are rotated at the index's positions before the keys are
-    stored. A padded token's output is the output projection of zero. [sum]
-    is as {!apply} takes it.
+    gives the same outputs up to floating-point reassociation. A hole
+    ({!Cache_index.section-laws}) takes no weight, and neither does a draft
+    token that stores nothing. With [rope], queries and keys are rotated
+    at the index's positions before the keys are stored. A padded token's
+    output is the output projection of zero. [sum] is as {!apply} takes it.
 
-    The layer extends each leaf with {!Cache_index.extend} and attends once over
-    what that returns, under {!Cache_index.visible}. On a whole index the tokens
+    The layer extends its cache with {!Cache.extend} and attends once over what
+    that returns, under {!Cache_index.visible}. On a whole index the tokens
     attend over themselves and [cache] is returned as it is, at the cost of
     {!apply}: a model's whole-sequence forward pass is this function over
-    {!Cache_index.whole}. Otherwise each leaf costs one scatter of the call's
-    tokens and one gather of its context; both trace once under [Rune.jit]
-    whatever the index holds. Consumed by a compiled step that lends it the
-    pools' memory, the step's cost does not depend on the size of the cache.
+    {!Cache_index.whole}. Over a table without a selection each leaf costs one
+    scatter of the call's tokens, and the attention reads the pools through a
+    table of [context] slots per lane ({!Cache_index.pages}), in place unless
+    the pools are cut along their slots; under a selection, one gather of
+    each token's chosen columns. Both trace once under [Rune.jit] whatever
+    the index holds. Consumed by a compiled step that
+    lends it the pools' memory, the step's cost does not depend on the size
+    of the cache.
     Differentiable through Rune.
 
     Raises [Invalid_argument] if [x]'s dtype is a float8 or float4 format, [x]
@@ -246,9 +254,9 @@ val cached :
       let q = Rope.apply rope ~pos (Attention.split ~head_dim p.q x) in
       let k = Rope.apply rope ~pos (Attention.split ~head_dim p.k x) in
       let v = Attention.split ~head_dim p.v x in
-      let k, v, cache = Attention.Cache.extend index cache k v in
+      let kv, cache = Attention.Cache.extend index cache k v in
       let mask = Cache_index.visible index in
-      (Attention.merge p.out (Attention.attend ~mask q k v), cache)
+      (Attention.merge p.out (Attention.attend ~mask q kv), cache)
     ]}
 
     Between the pieces a tensor has shape [[| batch; heads; seq; head_dim |]],
@@ -273,13 +281,15 @@ val attend :
   ?scale:float ->
   ?sinks:(float, 'b, 'd) Nx.t ->
   (float, 'b, 'd) Nx.t ->
-  (float, 'b, 'd) Nx.t ->
-  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.kv ->
   (float, 'b, 'd) Nx.t
-(** [attend q k v] is grouped-query attention of [q], of shape
-    [[| batch; heads; n; d |]], over [k] and [v], of shape
-    [[| batch; kv_heads; m; d |]] and [[| batch; kv_heads; m; dv |]]: the result
-    has shape [[| batch; heads; n; dv |]]. [kv_heads] divides [heads], and
+(** [attend q kv] is grouped-query attention of [q], of shape
+    [[| batch; heads; n; d |]], over the keys and values [kv]: [Dense] ones of
+    shape [[| batch; kv_heads; m; d |]] and [[| batch; kv_heads; m; dv |]], or
+    [Paged] pools of shape [[| pages; kv_heads; page; d |]] and
+    [[| pages; kv_heads; page; dv |]] read through a table of shape
+    [[| batch; max_pages |]], where [m] is [max_pages * page]. The result has
+    shape [[| batch; heads; n; dv |]]. [kv_heads] divides [heads], and
     key-value head [h] serves query heads [h * groups] to
     [h * groups + groups - 1], where [groups] is [heads / kv_heads]. No key is
     repeated. With:
@@ -294,7 +304,7 @@ val attend :
     - [sinks], of shape [[| heads |]]: one attention-sink logit per query head,
       as for {!scaled_dot_product_attention}.
 
-    It is {!Nx.val-attention} of [q] over [k] and [v], with sinks as
+    It is {!Nx.val-attention} of [q] over [kv], with sinks as
     {!scaled_dot_product_attention} adds them, and shares that function's
     dtypes, precision and totality.
 
