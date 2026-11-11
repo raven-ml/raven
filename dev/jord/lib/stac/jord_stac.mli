@@ -56,7 +56,8 @@
     [classification:bitfields], or in an asset with them, is a [Bitfield]
     band. Microsoft's Planetary Computer, for one, states no scale or offset
     for Sentinel-2 L2A: its bands read here decode to DNs, and the product's
-    own metadata states its offsets. *)
+    own metadata states its offsets ([Jord_safe.l2a],
+    {!Jord.Sentinel2.reflectance}). *)
 
 (** {1:time Time} *)
 

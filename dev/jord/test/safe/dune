@@ -1,0 +1,15 @@
+; mtd_n0300.xml and mtd_n0510.xml are the MTD_MSIL2A.xml (asset
+; product-metadata) of two Sentinel-2 L2A items of Microsoft's Planetary
+; Computer on tile 33UUU, fetched unchanged on 2026-11-11 by
+;   T=$(curl -s https://planetarycomputer.microsoft.com/api/sas/v1/token/sentinel-2-l2a |
+;     sed -e 's/.*"token": *"\([^"]*\)".*/\1/' -e 's/\\u0026/\&/g')
+;   curl -o F "URL?$T"
+; with F, URL:
+;   mtd_n0300.xml, https://sentinel2l2a01.blob.core.windows.net/sentinel2-l2/33/U/UU/2021/06/27/S2B_MSIL2A_20210627T100559_N0300_R022_T33UUU_20210628T031702.SAFE/MTD_MSIL2A.xml
+;   mtd_n0510.xml, https://sentinel2l2a01.blob.core.windows.net/sentinel2-l2/33/U/UU/2024/06/29/S2A_MSIL2A_20240629T102021_N0510_R065_T33UUU_20240629T161811.SAFE/MTD_MSIL2A.xml
+
+(test
+ (name test_safe)
+ (libraries jord jord_safe nx windtrap)
+ (deps
+  (glob_files *.xml)))

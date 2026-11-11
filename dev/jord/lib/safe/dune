@@ -1,0 +1,6 @@
+; jord.safe: ESA's Sentinel-2 product metadata, from the bytes of its XML,
+; which xmlm reads.
+
+(library
+ (name jord_safe)
+ (libraries jord xmlm))

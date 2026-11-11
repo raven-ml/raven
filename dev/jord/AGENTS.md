@@ -11,11 +11,12 @@ campaign.
 
 - The same rules as raven's libraries: `doc/dev/design.md`, AGENTS.md's code
   style, raven's public interfaces only (`Jord_geotiff`'s tags are nx.io's
-  `Tiff.value`). The one dependency outside raven is `jsont`, because
-  `Jsont.json` is `Jord_geojson`'s and `Jord_stac`'s input, as it is
-  brot's and kaun.hf's. No Python, weights or data in the repository beyond
-  small test fixtures, each recording its source and the command that cut
-  it (`test/tm_coords.dat`).
+  `Tiff.value`). Two dependencies come from outside raven: `jsont`,
+  because `Jsont.json` is `Jord_geojson`'s and `Jord_stac`'s input, as it
+  is brot's and kaun.hf's; and `xmlm`, which `Jord_safe` reads ESA's
+  metadata with, and whose types it does not expose. No Python, weights or
+  data in the repository beyond small test fixtures, each recording its
+  source and the command that cut it (`test/tm_coords.dat`).
 - jord does no I/O. Readers take bytes or values (a shapefile's bytes, a
   `Jsont.json`, a `.prj`'s text, TIFF tags) and return `Error` for data
   that breaks their format; misuse raises `Invalid_argument`.
@@ -37,14 +38,16 @@ campaign.
   `jord_geojson` (jsont), `jord_shapefile` (no dependency), `jord_stac`
   (jsont: items, their assets' grids and bands, in STAC 1.0's and 1.1's
   spellings; an item's footprint is `Jord_geojson.polygons` of the same
-  JSON, so it needs no `jord_geojson`). `jord` never depends on them, so a
+  JSON, so it needs no `jord_geojson`), `jord_safe` (xmlm: ESA's Sentinel-2
+  product metadata, `MTD_MSIL2A.xml`'s offsets and special values into
+  `Sentinel2.metadata`). `jord` never depends on them, so a
   compiled step links no file reader; its dune file holds that.
 - `test/` holds the laws and the spec's values, each sub-library's suite in
   `test/<format>/`, with a cut of Karney's test set and GDAL's warps of
   small rasters onto finer grids (`test/warp_gdal.dat`, cut outside the
   repository by the script its header names), and items of Microsoft's
-  Planetary Computer (`test/stac/`, fetched by the command its dune file
-  names).
+  Planetary Computer (`test/stac/` and `test/safe/`, fetched by the
+  commands their dune files name).
   `test/rasterio/parity.exe` compares the rules with rasterio on
   tessera-eval's Austria labels and GeoTessera's landmasks, which live
   outside the repository, so no test runs it; `parity.exe landmask` reads
