@@ -399,9 +399,11 @@ val wait_point : int -> bool -> int -> unit
 val wait_point_by : int -> bool -> int -> int -> bool
 (** [wait_point_by st every p until] is {!wait_point}[ st every p], which
     stops once the clock passes [until], in ns on
-    {!Rig_edge_primitive.now}'s clock: [true] if [p] is done, [false] if
-    [until] passed first. Each round of its wait commits before it checks
-    [until], and then sleeps or spins at most the time left. *)
+    {!Rig_edge_primitive.now}'s clock: its last round's answer, [true] if
+    that round found [p] done, also once [until] passed, and [false] if it
+    found [p] not done and [until] passed. Each round of its wait commits
+    before it checks [until], and then sleeps or spins at most the time
+    left. *)
 
 val is_done : int -> bool
 (** [is_done p] is [true] iff [p] is done. It never raises {!Lost}, since a

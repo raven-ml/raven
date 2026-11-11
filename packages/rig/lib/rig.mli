@@ -435,16 +435,19 @@ module Point : sig
       Raises {!Lost} if the device was lost before it reached [p]'s value. *)
 
   val wait_for : ns:int -> t -> bool
-  (** [wait_for ~ns p] waits as {!wait} does, for at most [ns] nanoseconds.
-      It is [true] once [p]'s device has reached [p]'s value, and [false] if
-      [ns] passed first. [false] loses nothing, and the work runs on. An [ns]
-      past the clock's range waits as {!wait} does. [false] comes no sooner
-      than [ns] after the call, and later by at most one round of the wait:
-      its commit, which waits up to 200 ms for another submit or commit on
-      the device and blocks while a driver that declares [may_block] commits
-      ({!reached}), its look for faults of the devices whose work the
-      device's queue waits for ({!section-hangs}), and one sleep of the
-      device's driver. With [ns <= 0] it answers as {!reached} does.
+  (** [wait_for ~ns p] waits as {!wait} does, for at most [ns] nanoseconds,
+      in rounds that each look at [p]'s value, then at the clock. It is the
+      last round's answer: [true] if that round found [p]'s device had
+      reached [p]'s value, also once [ns] passed, and [false] if it found
+      the value unreached and [ns] passed. [false] loses nothing, and the
+      work runs on. An [ns] past the clock's range waits as {!wait} does.
+      [false] comes no sooner than [ns] after the call, and an answer comes
+      at most one round of the wait after [ns]: its commit, which waits up
+      to 200 ms for another submit or commit on the device and blocks while
+      a driver that declares [may_block] commits ({!reached}), its look for
+      faults of the devices whose work the device's queue waits for
+      ({!section-hangs}), and one sleep of the device's driver. With
+      [ns <= 0] it answers as {!reached} does.
 
       Raises {!Lost} as {!wait} does, and [Invalid_argument] inside a lock
       ({!section-domains}), whatever [ns]. *)
