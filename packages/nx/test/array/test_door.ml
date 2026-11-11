@@ -13,7 +13,8 @@ module S = Nx_array_support
 let strf = Printf.sprintf
 let f32 = D.Float32
 
-(* Whether no claim holds a live array of [arrays]. *)
+(* Whether no claim holds a live array of [arrays]: a take of each succeeds,
+   which kills it. *)
 let released arrays =
   Array.iter
     (fun (A.Any a) ->
@@ -108,13 +109,7 @@ let test_door_buffers () =
   let off = A.to_device (S.off_host ()) x in
   let z = zeros [| 2 |] in
   equal ~msg:"off the host" answer A.Off_host (S.add z x off);
-  released [| A.Any z; A.Any x; A.Any off |];
-  let held = zeros [| 2 |] in
-  Rig.Claim.with_ ~read:[]
-    ~donate:[ A.buffer held ]
-    (fun c ->
-      equal bool true (Rig.Claim.exclusive c (A.buffer held));
-      equal ~msg:"exclusive" answer A.Held_exclusive (S.add (zeros [| 2 |]) x held))
+  released [| A.Any z; A.Any x; A.Any off |]
 
 (* The door reads up to max_operands operands, more than a loop takes among
    them, and refuses more as Shape_mismatch; a refusal after some claims leaves
@@ -157,10 +152,6 @@ let test_door_reasons () =
   reason ~sub:"dead" (S.add (zeros [| 2 |]) x d);
   let off = A.to_device (S.off_host ()) x in
   reason ~sub:"host does not address" (S.add (zeros [| 2 |]) x off);
-  let held = zeros [| 2 |] in
-  Rig.Claim.with_ ~read:[]
-    ~donate:[ A.buffer held ]
-    (fun _ -> reason ~sub:"held exclusive" (S.add (zeros [| 2 |]) x held));
   let r = Option.get (A.move (M.Broadcast [| 2 |]) (zeros [| 1 |])) in
   reason ~sub:"element twice" (S.add r x x);
   let b = A.buffer (zeros [| 3 |]) in
@@ -188,7 +179,7 @@ let test_door_releases () =
 let test_door_moving_gc () =
   let x = floats32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
   equal answer A.Done (S.collect x);
-  equal bool true (unclaimed (A.buffer x));
+  let x = retaken x in
   equal (values f32) [| 1.; 2.; 3.; 4. |] (A.to_array x)
 
 (* The OCaml door *)
@@ -290,12 +281,11 @@ let test_ocaml_door_late_refusals () =
 
 (* Two faults of one call, each in arrays of its own: the door answers the
    same refusal with few arrays as with more than max_operands, the second
-   fault's arrays then claimed and checked in a later run. Dead_buffer,
-   Held_exclusive and Read_only come before the others. *)
+   fault's arrays then claimed and checked in a later run. Dead_buffer and
+   Read_only come before the others. *)
 let test_ocaml_door_many_refusals () =
   let dead = zeros [| 2 |] in
   kill (A.buffer dead);
-  let held = zeros [| 2 |] in
   let ro = A.v f32 (L.contiguous [| 3 |]) (S.read_only 12) in
   let repeated = Option.get (A.move (M.Broadcast [| 2 |]) (zeros [| 1 |])) in
   let b = A.buffer (zeros [| 4 |]) in
@@ -303,35 +293,31 @@ let test_ocaml_door_many_refusals () =
   let faults =
     [
       ("dead", A.Dead_buffer, ([||], [| A.Any dead |]));
-      ("exclusive", A.Held_exclusive, ([||], [| A.Any held |]));
       ("read-only", A.Read_only, ([| A.Any ro |], [||]));
       ("repeated", A.Repeated_elements, ([| A.Any repeated |], [||]));
       ("overlapping", A.Overlapping, ([| at 0 |], [| at 1 |]));
     ]
   in
-  let claims = [ A.Dead_buffer; A.Held_exclusive; A.Read_only ] in
+  let claims = [ A.Dead_buffer; A.Read_only ] in
   let pad () = Array.init (A.max_operands + 1) (fun _ -> A.Any (zeros [| 2 |])) in
   let pads = (pad (), pad ()) in
   let calls =
-    Rig.Claim.with_ ~read:[]
-      ~donate:[ A.buffer held ]
-      (fun _ ->
-        List.concat_map
-          (fun (n1, r1, (w1, x1)) ->
-            List.filter_map
-              (fun (n2, r2, (w2, x2)) ->
-                if n1 = n2 then None
-                else
-                  let few = ocaml_door (Array.append w1 w2) (Array.append x1 x2) in
-                  let pw, px = pads in
-                  let many =
-                    ocaml_door
-                      (Array.concat [ w1; pw; w2 ])
-                      (Array.concat [ x1; px; x2 ])
-                  in
-                  Some (strf "%s then %s" n1 n2, (r1, r2), few, many))
-              faults)
+    List.concat_map
+      (fun (n1, r1, (w1, x1)) ->
+        List.filter_map
+          (fun (n2, r2, (w2, x2)) ->
+            if n1 = n2 then None
+            else
+              let few = ocaml_door (Array.append w1 w2) (Array.append x1 x2) in
+              let pw, px = pads in
+              let many =
+                ocaml_door
+                  (Array.concat [ w1; pw; w2 ])
+                  (Array.concat [ x1; px; x2 ])
+              in
+              Some (strf "%s then %s" n1 n2, (r1, r2), few, many))
           faults)
+      faults
   in
   List.iter
     (fun (msg, (r1, r2), few, many) ->
@@ -343,40 +329,38 @@ let test_ocaml_door_many_refusals () =
           (List.mem r claims))
     calls;
   let pw, px = pads in
-  released (Array.concat [ pw; px; [| A.Any held; A.Any repeated; at 0 |] ])
+  released (Array.concat [ pw; px; [| A.Any repeated; at 0 |] ])
 
+(* [refuses] takes the arrays it checks, so each case makes its own. *)
 let test_ocaml_door_refuses () =
-  let x = floats32 [| 3 |] [| 1.; 2.; 3. |] in
+  let x () = floats32 [| 3 |] [| 1.; 2.; 3. |] in
   let refuses ~msg r written read =
     equal ~msg (pair answer (option bool)) (r, None) (ocaml_door written read);
     released (Array.append written read)
   in
-  refuses ~msg:"written twice" A.Overlapping [| A.Any x; A.Any x |] [||];
-  let b = A.buffer (zeros [| 8 |]) in
-  let at offset = A.v f32 (L.v ~offset ~strides:[| 1 |] [| 3 |]) b in
-  refuses ~msg:"z overlaps y" A.Overlapping
-    [| A.Any (at 0) |]
-    [| A.Any (at 2) |];
+  let twice = A.Any (x ()) in
+  refuses ~msg:"written twice" A.Overlapping [| twice; twice |] [||];
+  let eight () =
+    let b = A.buffer (zeros [| 8 |]) in
+    fun offset -> A.Any (A.v f32 (L.v ~offset ~strides:[| 1 |] [| 3 |]) b)
+  in
+  let at = eight () in
+  refuses ~msg:"z overlaps y" A.Overlapping [| at 0 |] [| at 2 |];
+  let at = eight () in
   equal ~msg:"z beside y" (pair answer (option bool)) (A.Done, Some true)
-    (ocaml_door [| A.Any (at 0) |] [| A.Any (at 3) |]);
+    (ocaml_door [| at 0 |] [| at 3 |]);
   let r = Option.get (A.move (M.Broadcast [| 3 |]) (zeros [| 1 |])) in
-  refuses ~msg:"z broadcast" A.Repeated_elements [| A.Any r |] [| A.Any x |];
+  refuses ~msg:"z broadcast" A.Repeated_elements
+    [| A.Any r |]
+    [| A.Any (x ()) |];
   let d = zeros [| 3 |] in
   kill (A.buffer d);
   refuses ~msg:"dead" A.Dead_buffer
     [| A.Any (zeros [| 3 |]) |]
-    [| A.Any x; A.Any d |];
-  let held = zeros [| 3 |] in
-  Rig.Claim.with_ ~read:[]
-    ~donate:[ A.buffer held ]
-    (fun _ ->
-      equal ~msg:"exclusive"
-        (pair answer (option bool))
-        (A.Held_exclusive, None)
-        (ocaml_door [| A.Any (zeros [| 3 |]) |] [| A.Any x; A.Any held |]));
+    [| A.Any (x ()); A.Any d |];
   let ro = A.v f32 (L.contiguous [| 3 |]) (S.read_only 12) in
   equal ~msg:"read-only" (pair answer (option bool)) (A.Read_only, None)
-    (ocaml_door [| A.Any ro |] [| A.Any x |]);
+    (ocaml_door [| A.Any ro |] [| A.Any (x ()) |]);
   equal ~msg:"read-only, read" (pair answer (option bool)) (A.Done, Some true)
     (ocaml_door [| A.Any (zeros [| 3 |]) |] [| A.Any ro |]);
   (* A dead array is refused as dead before any overlap is compared. *)
@@ -394,7 +378,8 @@ let test_ocaml_door_identical () =
   equal ~msg:"x into x" door (A.Done, Some true) (ocaml_door [| x |] [| x |]);
   equal ~msg:"x into x, read twice" door (A.Done, Some true)
     (ocaml_door [| x |] [| x; x |]);
-  released [| x |];
+  let xa = retaken xa in
+  let x = A.Any xa in
   let bytes = A.Any (Option.get (A.bitcast D.Uint8 xa)) in
   equal ~msg:"another width" door (A.Overlapping, None)
     (ocaml_door [| x |] [| bytes |]);
@@ -690,9 +675,9 @@ let test_ocaml_door_pending () =
   no_claim x
 
 (* Two domains: kernels that read an array on a Late device, against submits
-   that write it and donations that consume it. Every submit stores ones, so a
-   kernel that ran reads ones. A kernel refuses the array as dead, or as held
-   exclusive by a donation that then consumes it, and for no other reason. *)
+   that write it and donations that take it. Every submit stores ones, so a
+   kernel that ran reads ones. A kernel refuses the array as dead and for no
+   other reason: one that meets a take under way waits for it to end. *)
 type shared = { mutable dead : bool }
 
 let shared =
@@ -705,7 +690,7 @@ let judge_kernel r = function
   | Ok (A.Done, z) ->
       equal ~msg:"dead" bool false r.dead;
       equal ~msg:"x + x" (values f32) (Array.make 4 2.) z
-  | Ok ((A.Dead_buffer | A.Held_exclusive), _) ->
+  | Ok (A.Dead_buffer, _) ->
       equal ~msg:"dead" bool true r.dead
   | Ok (e, _) -> failf "the kernel answered %a" (Testable.pp answer) e
   | Error e -> raise e
@@ -734,17 +719,12 @@ let read x =
     (A.read x (fun g ->
          Array.init 4 (fun i -> Bigarray.Genarray.get g [| i |])))
 
+(* A submit under a keep, so that no take kills [x] while it runs. *)
 let submit x =
-  Rig.Claim.with_ ~read:[ A.buffer x ] ~donate:[] (fun _ -> pending x ones)
+  let k = B.keep [ A.buffer x ] in
+  Fun.protect ~finally:(fun () -> B.release k) (fun () -> pending x ones)
 
-let donate x =
-  let b = A.buffer x in
-  Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-      Rig.Claim.exclusive c b
-      && begin
-        ignore (Rig.Claim.consume c ~why:"donated" b);
-        true
-      end)
+let donate x = Option.is_some (B.take ~why:"donated" [ A.buffer x ])
 
 let door_commands =
   [
@@ -771,7 +751,7 @@ let tests =
         test "a written operand must be distinct and alone" test_door_written;
         test "a written operand may be identical to read ones"
           test_door_identical;
-        test "dead, foreign and exclusive buffers are refused" test_door_buffers;
+        test "dead and foreign buffers are refused" test_door_buffers;
         test "reads up to max_operands operands and refuses more"
           test_door_arity;
         test "refused names the reason of each refusal the door answers"

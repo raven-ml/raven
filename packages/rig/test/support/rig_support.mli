@@ -707,16 +707,17 @@ val allocated_bytes : (unit -> unit) -> int
     for every number of calls in [f]. *)
 
 val donated : Rig.Buffer.t -> Rig.Buffer.t option
-(** [donated b] donates [b] alone with the reason ["donated"]: the buffer
-    {!Rig.Claim.consume} returns where the donation held [b]'s memory
-    exclusive, and [None], changing nothing, otherwise. *)
+(** [donated b] takes [b] alone with the reason ["donated"]: the buffer
+    {!Rig.Buffer.take} returns, or [None], changing nothing, where the take
+    is [None]. *)
 
 val io : string -> Rig.t
 (** [io name] is the io device named [name], opened unless it is open. *)
 
-val io_buffer : Rig.t -> int -> Rig.Buffer.t
-(** [io_buffer d n] is a buffer of [n] bytes on the io device [d], over a
-    region of an io library whose memory holds nothing. *)
+val io_buffer : ?access:Rig.access -> Rig.t -> int -> Rig.Buffer.t
+(** [io_buffer ~access d n] is a buffer of [n] bytes on the io device [d],
+    over a region of an io library whose memory holds nothing, which admits
+    [access] (defaults to [Read_write]). *)
 
 val machine : string -> Rig.t
 (** [machine m] is the host of the machine named [m], a {!Polled} device whose
@@ -735,7 +736,7 @@ module Reader : sig
   (** [why b] is [rig_buffer_why b], [None] for [NULL]. *)
 
   (** The answers of [rig_buffer_claim], in [enum rig_claim]'s order. *)
-  type answer = Claimed | Wait | Lost | Dead | Exclusive | Read_only
+  type answer = Claimed | Wait | Lost | Dead | Read_only
 
   val pp_answer : Format.formatter -> answer -> unit
 

@@ -550,24 +550,6 @@ let test_dead_access () =
   fails (fun () -> A.bitcast D.Uint32 a);
   fails (fun () -> A.bitcast D.Uint8 a)
 
-(* Memory held exclusive is refused by every function that reads it on the
-   host. *)
-let test_exclusive () =
-  let a = floats32 [| 2 |] [| 1.; 2. |] in
-  Rig.Claim.with_ ~read:[]
-    ~donate:[ A.buffer a ]
-    (fun c ->
-      equal bool true (Rig.Claim.exclusive c (A.buffer a));
-      let fails what f =
-        raises_match ~msg:what (Exn.invalid_arg ~sub:"exclusive") f
-      in
-      fails "get" (fun () -> A.get a [| 0 |]);
-      fails "set" (fun () -> A.set a [| 0 |] 0.);
-      fails "to_array" (fun () -> A.to_array a);
-      fails "copy" (fun () -> A.copy a);
-      fails "to_device" (fun () -> A.to_device Rig.host a);
-      fails "bigarray" (fun () -> A.bigarray a))
-
 let test_dead_bigarray () =
   let a = A.to_device (S.off_host ()) (floats32 [| 2 |] [| 1.; 2. |]) in
   kill (A.buffer a);
@@ -1778,7 +1760,7 @@ let read_fails ?msg substring f =
    elements, on the host and on a software device, and refuses a strided one and
    a dtype Bigarray has no kind for. It leaves no claim. *)
 let law_read (Case (a, m)) =
-  let check : type v s. (v, s) A.t -> unit =
+  let check : type v s. (v, s) A.t -> Rig.Buffer.t =
    fun a ->
     let l = A.layout a in
     let contiguous = L.is_contiguous l in
@@ -1802,21 +1784,28 @@ let law_read (Case (a, m)) =
         equal ints s dims;
         equal (values (A.dtype a)) (A.to_array a) xs
     | Some _ -> read_fails "contiguous" (fun () -> A.read a ignore));
-    equal ~msg:"released" bool true (unclaimed (A.buffer a))
+    A.buffer (retaken a)
   in
   let a =
     match Option.bind m (fun m -> A.move m a) with Some b -> b | None -> a
   in
-  check a;
-  check (Option.get (A.borrow (Lazy.force memory) a));
+  (* Each check takes the memory, which [a] then reads through the buffer
+     the take gave. *)
+  let over b = A.v (A.dtype a) (A.layout a) b in
+  let a = over (check a) in
   (* The elements after the first as a vector: C-contiguous at an offset. *)
   let l = A.layout a in
   let n = L.numel l in
-  if L.is_contiguous l && n >= 2 then
-    check
-      (A.v (A.dtype a)
-         (L.v ~offset:(L.offset l + 1) ~strides:[| 1 |] [| n - 1 |])
-         (A.buffer a))
+  let a =
+    if L.is_contiguous l && n >= 2 then
+      over
+        (check
+           (A.v (A.dtype a)
+              (L.v ~offset:(L.offset l + 1) ~strides:[| 1 |] [| n - 1 |])
+              (A.buffer a)))
+    else a
+  in
+  ignore (check (Option.get (A.borrow (Lazy.force memory) a)))
 
 (* [write] passes a bigarray of a C-contiguous array's shape over its own
    bytes: it reads the array's elements, and what it stores is the array's
@@ -1871,9 +1860,9 @@ let test_write_claim () =
   let a = floats32 [| 2 |] [| 1.; 2. |] in
   let inside = A.write a (fun _ -> unclaimed (A.buffer a)) in
   equal ~msg:"claimed while f runs" bool false inside;
-  equal ~msg:"released" bool true (unclaimed (A.buffer a));
+  let a = retaken a in
   raises Raised (fun () -> A.write a (fun _ -> raise Raised));
-  equal ~msg:"released after a raise" bool true (unclaimed (A.buffer a))
+  ignore (retaken ~msg:"released after a raise" a)
 
 (* [host] makes a C-contiguous array of the shape on the host, which [write]
    fills. *)
@@ -1894,9 +1883,9 @@ let test_read_claim () =
   let a = floats32 [| 2 |] [| 1.; 2. |] in
   let inside = A.read a (fun _ -> unclaimed (A.buffer a)) in
   equal ~msg:"claimed while f runs" bool false inside;
-  equal ~msg:"released" bool true (unclaimed (A.buffer a));
+  let a = retaken a in
   raises Raised (fun () -> A.read a (fun _ -> raise Raised));
-  equal ~msg:"released after a raise" bool true (unclaimed (A.buffer a))
+  ignore (retaken ~msg:"released after a raise" a)
 
 let test_read_refuses () =
   let off = A.to_device (S.off_host ()) (floats32 [| 2 |] [| 1.; 2. |]) in
@@ -1906,12 +1895,6 @@ let test_read_refuses () =
   kill (A.buffer dead);
   read_fails ~msg:"dead" "consumed by the test" (fun () ->
       A.read dead ignore);
-  let held = floats32 [| 2 |] [| 1.; 2. |] in
-  Rig.Claim.with_ ~read:[]
-    ~donate:[ A.buffer held ]
-    (fun _ ->
-      read_fails ~msg:"held exclusive" "exclusive" (fun () ->
-          A.read held ignore));
   let a = A.create Rig.host D.Uint8 (Iarray.init 16 (Fun.const 1)) in
   equal ~msg:"16 axes" ints (Array.make 16 1)
     (A.read a Bigarray.Genarray.dims);
@@ -2003,7 +1986,6 @@ let tests =
         test "memory the host does not address is refused"
           test_off_host_refuses;
         test "a dead buffer is refused" test_dead_access;
-        test "memory held exclusive is refused" test_exclusive;
         test "bigarray refuses a dead buffer off the host" test_dead_bigarray;
         test "to_device and to_array refuse a dead buffer under no element"
           test_dead_empty;

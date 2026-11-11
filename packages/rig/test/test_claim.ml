@@ -5,7 +5,6 @@
 
 open Windtrap
 module B = Rig.Buffer
-module Claim = Rig.Claim
 module P = Rig_support.Polled
 module R = Rig_support.Reader
 
@@ -31,6 +30,26 @@ let claim_wait b a =
 let submit ?(buffers = [||]) ?waits s =
   Rig.submit ?waits (Rig.Submission.take s) ~buffers
 
+let write d m =
+  let s =
+    Rig.Submission.make d [| Rig_support.touching [| Rig.Submission.write |] |]
+  in
+  ignore (submit s ~buffers:[| m |])
+
+let read d m =
+  let s =
+    Rig.Submission.make d [| Rig_support.touching [| Rig.Submission.read |] |]
+  in
+  ignore (submit s ~buffers:[| m |])
+
+let lost = function Rig.Lost _ -> true | _ -> false
+let lost_by d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
+
+(* Loses [d]: its next submit fails. *)
+let lose d p =
+  P.fail p;
+  try ignore (submit (Rig.Submission.make d [||])) with Rig.Lost _ -> ()
+
 let timeout = 60.
 
 (* The cases of each law that covers labels. The rarest label marks about one
@@ -39,269 +58,358 @@ let timeout = 60.
 let law_cases = 300
 let answer = Testable.make ~pp:R.pp_answer ~equal:( = )
 
-(* Claims through views of one memory, against a model *)
+let access =
+  Testable.make
+    ~pp:(fun ppf a ->
+      Format.pp_print_string ppf
+        (match a with Rig.Read -> "Read" | Rig.Read_write -> "Read_write"))
+    ~equal:( = )
 
-type role = Read | Donate | Skip
+let dead why = Exn.invalid_arg ~sub:why
+let live bs = List.for_all (fun b -> Option.is_none (B.dead b)) bs
 
-(* How the memory is put outside the claims first: not at all, by an array
-   exported over it, or by a share through a view of its last byte. *)
-type outside = Inside | Exported | Shared
+let text b =
+  let s = Bytes.create (B.length b) in
+  B.blit_to_bytes b 0 s 0 (B.length b);
+  Bytes.to_string s
 
-(* A case: the memory's bytes, its views with what [with_] does with each,
-   whether a reader claims the memory first, how it is put outside the claims
-   first, and whether [f] raises. *)
-type case = {
-  n : int;
-  views : (int * int * role) list;
-  claimed : bool;
-  outside : outside;
-  raises : bool;
-}
+let filled n c =
+  let b = B.create Rig.host n in
+  B.fill b c;
+  b
+
+(* The buffer a take of [b] alone gives, with the reason [why]. *)
+let taken ?(why = "donated") b =
+  match B.take ~why [ b ] with
+  | Some [ b' ] -> b'
+  | Some bs -> failf "a take of one buffer gave %d" (List.length bs)
+  | None -> fail "a take of memory nothing claims was refused"
+
+(* Whether a take of [b] alone succeeds, which kills [b]. *)
+let takes b = Option.is_some (Rig_support.donated b)
+
+(* Whether a claim holds [m]'s memory: a take of it alone is [None], which
+   changes nothing. Where none does, the take kills [m]. *)
+let claimed m = not (takes m)
+
+(* Takes of views of several memories, against a model *)
+
+(* What uses a memory before the take: nothing, a read claim, a keep, an
+   export, or a share through a view of its last byte. *)
+type use = Unused | Read_claim | Kept | Exported | Shared
+
+(* A case: the bytes of each memory, each memory's use, and the take's
+   buffers, each a view of a memory: its index, first byte and length. *)
+type case = { n : int; uses : use list; views : (int * int * int) list }
+
+let pp_use ppf u =
+  Format.pp_print_string ppf
+    (match u with
+    | Unused -> "unused"
+    | Read_claim -> "read"
+    | Kept -> "kept"
+    | Exported -> "exported"
+    | Shared -> "shared")
 
 let pp_case ppf c =
-  let role = function Read -> "read" | Donate -> "donate" | Skip -> "-" in
-  let outside = function
-    | Inside -> "inside"
-    | Exported -> "exported"
-    | Shared -> "shared"
-  in
-  Format.fprintf ppf "%d bytes, claimed %b, %s, raises %b, views %s" c.n
-    c.claimed (outside c.outside) c.raises
+  Format.fprintf ppf "%d bytes, uses [%a], views %s" c.n
+    (Format.pp_print_list ~pp_sep:Format.pp_print_space pp_use)
+    c.uses
     (String.concat " "
        (List.map
-          (fun (o, l, r) -> Printf.sprintf "[%d,+%d %s]" o l (role r))
+          (fun (m, o, l) -> Printf.sprintf "[%d: %d,+%d]" m o l)
           c.views))
 
 let case =
   let open Gen in
-  let view roles n =
-    bind (int_range 0 n) (fun o ->
-        triple
-          (constant ~pp:Format.pp_print_int o)
-          (int_range 0 (n - o))
-          (of_list
-             ~pp:(fun ppf _ -> Format.pp_print_string ppf "role")
-             roles))
+  let unused k = List.init k (fun _ -> Unused) in
+  let wholes n k = List.init k (fun m -> (m, 0, n)) in
+  (* Memories nothing uses, each named once by a view of all of it. *)
+  let clean n =
+    map (fun k -> { n; uses = unused k; views = wholes n k }) (int_range 0 3)
   in
-  let views size roles n =
-    bind
-      (list ~size (view roles n))
-      (fun vs ->
-        (* The whole memory, donated, often enough to be alone. *)
-        map (fun whole -> if whole then (0, n, Donate) :: vs else vs) bool)
-  in
-  let outside =
-    of_list
-      ~pp:(fun ppf _ -> Format.pp_print_string ppf "outside")
-      [ Inside; Exported; Shared ]
-  in
-  let any ?(size = int_range 0 24) ?(roles = [ Read; Donate; Skip ]) n =
-    map
-      (fun (views, (claimed, outside), raises) ->
-        { n; views; claimed; outside; raises })
-      (triple (views size roles n) (pair bool outside) bool)
-  in
-  (* Nine donated views or more, which [with_] checks by sorting them all,
-     drawn as one case in four from nine views or more, three in five of them
-     donated: [any] reaches them in about one case in eighteen. *)
-  let many n =
-    any ~size:(int_range 9 24) ~roles:[ Read; Donate; Donate; Donate; Skip ] n
-  in
-  (* The whole memory donated with no other view, drawn by construction as one
-     case in four: [any] reaches it in one of about thirty. Half of these have
-     no other claim, the one case held exclusive; the others are claimed or
-     outside the claims, which holds the donation for reading. *)
-  let alone n =
-    map
-      (fun ((claimed, outside), raises) ->
-        { n; views = [ (0, n, Donate) ]; claimed; outside; raises })
-      (pair
-         (frequency [ (1, pair (constant false) (constant Inside));
-                      (1, pair bool outside) ])
-         bool)
-  in
-  (* A donation and a read view that abut inside a word, which only their
-     word shares: [any] reaches a refusal that the word alone decides in few
-     cases. *)
-  let abut n =
-    bind (int_range 1 (n - 1)) (fun m ->
-        let m = if m mod Rig.word = 0 then m - 1 else m in
+  (* One memory of several used. *)
+  let used n =
+    bind (int_range 1 3) (fun k ->
         map
-          (fun ((l, raises), claimed) ->
+          (fun (i, u) ->
             {
               n;
-              views = [ (0, m, Donate); (m, l, Read) ];
-              claimed;
-              outside = Inside;
-              raises;
+              uses = List.init k (fun j -> if j = i then u else Unused);
+              views = wholes n k;
             })
-          (pair (pair (int_range 1 (n - m)) bool) bool))
+          (pair (int_range 0 (k - 1))
+             (of_list [ Read_claim; Kept; Exported; Shared ])))
+  in
+  (* The first memory named twice. *)
+  let twice n =
+    map
+      (fun k -> { n; uses = unused k; views = (0, 0, n) :: wholes n k })
+      (int_range 1 3)
+  in
+  (* The first memory named by a view of part of it, which a memory of no
+     bytes has none of. *)
+  let part n =
+    if n = 0 then clean n
+    else
+      bind (pair (int_range 1 3) (int_range 0 n)) (fun (k, o) ->
+          map
+            (fun l ->
+              let l = if o = 0 && l = n then n - 1 else l in
+              { n; uses = unused k; views = (0, o, l) :: List.tl (wholes n k) })
+            (int_range 0 (n - o)))
+  in
+  let use =
+    frequency
+      [
+        (4, constant Unused);
+        (1, constant Read_claim);
+        (1, constant Kept);
+        (1, constant Exported);
+        (1, constant Shared);
+      ]
+  in
+  let view n k =
+    bind (int_range 0 (k - 1)) (fun m ->
+        frequency
+          [
+            (3, constant (m, 0, n));
+            ( 1,
+              bind (int_range 0 n) (fun o ->
+                  map (fun l -> (m, o, l)) (int_range 0 (n - o))) );
+          ])
+  in
+  let any n =
+    bind (list ~size:(int_range 1 4) use) (fun uses ->
+        map
+          (fun views -> { n; uses; views })
+          (list ~size:(int_range 0 4) (view n (List.length uses))))
   in
   with_pp pp_case
-    (bind (int_range 1 32) (fun n ->
-         bind (int_range 0 4) (fun k ->
-             if k = 0 then alone n
-             else if k = 1 then many n
-             else if k = 4 && n >= 2 then abut n
-             else any n)))
+    (bind
+       (frequency [ (1, constant 0); (1, constant 1); (2, int_range 2 32) ])
+       (fun n ->
+         frequency
+           [ (2, clean n); (2, used n); (1, twice n); (1, part n); (2, any n) ]))
 
-(* Whether two views share memory: bytes of one word, the [Rig.word] bytes at
-   a multiple of it from the memory's first byte, which starts on one. *)
-let overlap (o, l, _) (o', l', _) =
-  let w = Rig.word in
-  let lo o = o / w * w and hi o l = (o + l + w - 1) / w * w in
-  l > 0 && l' > 0 && lo o < hi o' l' && lo o' < hi o l
+let spans_all c = List.for_all (fun (_, o, l) -> o = 0 && l = c.n) c.views
 
-let share_byte (o, l, _) (o', l', _) =
-  l > 0 && l' > 0 && o < o' + l' && o' < o + l
+let named_once c =
+  let named = List.map (fun (m, _, _) -> m) c.views in
+  List.length (List.sort_uniq Int.compare named) = List.length named
 
-(* What [with_] must do: refuse when a donated view overlaps another claimed
-   one; otherwise hold a donated view exclusive iff it spans the memory, nothing
-   else claims it and it is not outside the claims. *)
-let refused ?(meet = overlap) c =
-  let claimed = List.filter (fun (_, _, r) -> r <> Skip) c.views in
-  let indexed = List.mapi (fun i v -> (i, v)) claimed in
-  let others i = List.filter (fun (j, _) -> j <> i) indexed in
-  List.exists
-    (fun (i, ((_, _, r) as v)) ->
-      r = Donate && List.exists (fun (_, w) -> meet v w) (others i))
-    indexed
+let named_use c u = List.exists (fun (m, _, _) -> List.nth c.uses m = u) c.views
 
-let expected c =
-  let claimed = List.filter (fun (_, _, r) -> r <> Skip) c.views in
-  let indexed = List.mapi (fun i v -> (i, v)) claimed in
-  let others i = List.filter (fun (j, _) -> j <> i) indexed in
-  let refused = refused c in
-  if refused then None
-  else
-    Some
-      (List.filter_map
-         (fun (i, (o, l, r)) ->
-           if r <> Donate then None
-           else
-             Some
-               (o = 0 && l = c.n && (not c.claimed) && c.outside = Inside
-               && others i = []))
-         indexed)
+(* What a take must do: take every memory when each view spans its memory,
+   no memory is named twice, and nothing uses a memory named. *)
+let takes_all c =
+  spans_all c && named_once c
+  && List.for_all (fun (m, _, _) -> List.nth c.uses m = Unused) c.views
 
-let law c =
-  let b = B.create Rig.host c.n in
-  let views =
-    List.filter_map
-      (fun (o, l, r) ->
-        if r = Skip then None else Some (B.view b ~first:o ~length:l, r))
+let take_law c =
+  let made i = Char.chr (Char.code 'a' + i) in
+  let memories = List.mapi (fun i _ -> filled c.n (made i)) c.uses in
+  (* Starts [u] on [b]'s memory, and is how it ends: an export or a share
+     lasts for good. *)
+  let start u b =
+    match u with
+    | Unused -> ignore
+    | Read_claim ->
+        claim_read b;
+        fun () -> claim_release b
+    | Kept ->
+        let k = B.keep [ b ] in
+        fun () -> B.release k
+    | Exported ->
+        ignore (B.export b Bigarray.char);
+        ignore
+    | Shared ->
+        B.share (B.view b ~first:(max 0 (c.n - 1)) ~length:(min c.n 1));
+        ignore
+  in
+  let ends = List.map2 start c.uses memories in
+  let buffers =
+    List.map
+      (fun (m, first, length) -> B.view (List.nth memories m) ~first ~length)
       c.views
   in
-  let read =
-    List.filter_map (fun (v, r) -> if r = Read then Some v else None) views
+  let named m = List.exists (fun (m', _, _) -> m' = m) c.views in
+  let e = takes_all c in
+  let whole = spans_all c && named_once c in
+  let unused =
+    List.for_all (fun (m, _, _) -> List.nth c.uses m = Unused) c.views
   in
-  let donated =
-    List.filter_map (fun (v, r) -> if r = Donate then Some v else None) views
-  in
-  if c.claimed then claim_read b;
-  (match c.outside with
-  | Inside -> ()
-  | Exported -> ignore (B.export b Bigarray.char)
-  | Shared -> Claim.share (B.view b ~first:(c.n - 1) ~length:1));
-  let seen = ref [] in
-  let got =
-    match
-      Claim.with_ ~read
-        ~donate:donated
-        (fun cl ->
-          seen := List.map (Claim.exclusive cl) donated;
-          if c.raises then raise Exit)
-    with
-    | () | (exception Exit) -> Some !seen
-    | exception Invalid_argument _ -> None
-  in
-  let e = expected c in
-  cover "a donation refused" (e = None);
-  cover "a donation refused for a word it shares and no byte"
-    (refused c && not (refused ~meet:share_byte c));
-  cover "a donation held exclusive"
-    (Option.fold ~none:false ~some:(List.mem true) e);
-  cover "a donation of all the memory held for reading"
-    (List.exists (fun (o, l, r) -> r = Donate && o = 0 && l = c.n) c.views
-    && Option.fold ~none:false ~some:(fun ex -> not (List.mem true ex)) e);
-  cover "nine or more donated buffers"
-    (List.length (List.filter (fun (_, _, r) -> r = Donate) c.views) >= 9);
-  cover "a claim of no bytes"
-    (List.exists (fun (_, l, r) -> l = 0 && r <> Skip) c.views);
-  let alone = List.exists (fun (o, l, r) -> r = Donate && o = 0 && l = c.n) in
-  cover "an exported memory alone"
-    (c.outside = Exported && (not c.claimed) && alone c.views);
-  cover "a shared memory alone"
-    (c.outside = Shared && (not c.claimed) && alone c.views);
-  equal (option (list bool)) e got;
-  (* Every claim [with_] took is released: only the first reader is left. *)
-  if c.claimed then claim_release b;
+  cover "several memories taken" (e && List.length c.views >= 2);
+  cover "no buffer taken" (c.views = []);
+  cover "a memory of no bytes taken" (e && c.n = 0 && c.views <> []);
+  cover "refused for a view of part of a memory"
+    ((not (spans_all c)) && named_once c && unused);
+  cover "refused for a memory named twice"
+    (spans_all c && (not (named_once c)) && unused);
+  cover "refused by a read claim" (whole && named_use c Read_claim);
+  cover "refused by a keep" (whole && named_use c Kept);
+  cover "refused outside the claims"
+    (whole && (named_use c Exported || named_use c Shared));
+  let got = B.take ~why:"taken" buffers in
+  equal ~msg:"taken" bool e (Option.is_some got);
+  (match got with
+  | None ->
+      List.iteri
+        (fun i b ->
+          let msg = Printf.sprintf "memory %d" i in
+          equal ~msg (option string) None (B.dead b);
+          equal ~msg string (String.make c.n (made i)) (text b))
+        memories
+  | Some bs ->
+      List.iteri
+        (fun i b ->
+          equal
+            ~msg:(Printf.sprintf "memory %d's buffer" i)
+            (option string)
+            (if named i then Some "taken" else None)
+            (B.dead b))
+        memories;
+      List.iter
+        (fun v ->
+          equal ~msg:"a view taken" (option string) (Some "taken") (B.dead v))
+        buffers;
+      equal ~msg:"the buffers given" int (List.length buffers)
+        (List.length bs);
+      List.iter2
+        (fun (m, _, _) b ->
+          let msg = Printf.sprintf "memory %d's new buffer" m in
+          equal ~msg string (String.make c.n (made m)) (text b);
+          equal ~msg bool true (B.spans b);
+          equal ~msg access Rig.Read_write (B.access b))
+        c.views bs);
+  List.iter (fun f -> f ()) ends;
+  (* A refused take left no claim: each memory still live, its use ended,
+     takes alone unless it is outside the claims. *)
+  List.iteri
+    (fun i b ->
+      if B.dead b = None then
+        equal
+          ~msg:(Printf.sprintf "memory %d taken alone after" i)
+          bool
+          (match List.nth c.uses i with
+          | Exported | Shared -> false
+          | Unused | Read_claim | Kept -> true)
+          (takes b))
+    memories
 
-  Claim.with_ ~read:[] ~donate:[ b ] (fun cl ->
-      equal ~msg:"alone again" bool (c.outside = Inside) (Claim.exclusive cl b))
+(* Takes *)
 
-(* Cases *)
+(* A take of [c] and [b] that a use of [b]'s memory refuses: [None], with
+   both live and their bytes as they were. [use b] starts the use and is how
+   it ends, if it does: the take then succeeds, so the refused one left no
+   claim. A use that lasts leaves [c] alone to take. *)
+let refused name make use =
+  let c = filled 8 'c' and b = make () in
+  let ended = use b in
+  is_none ~msg:name (B.take ~why:"taken" [ c; b ]);
+  equal ~msg:(name ^ ": live") bool true (live [ c; b ]);
+  equal ~msg:(name ^ ": c's bytes") string "cccccccc" (text c);
+  match ended with
+  | Some ended ->
+      ended ();
+      is_some ~msg:(name ^ ", once it ended") (B.take ~why:"taken" [ c; b ])
+  | None -> is_some ~msg:(name ^ ", c alone") (B.take ~why:"taken" [ c ])
 
-(* Donations that share a word are refused, with nothing else claimed: views
-   that share a byte, or only a word. *)
-let test_donations_overlap () =
-  let b = B.create Rig.host 16 in
-  let view first length = B.view b ~first ~length in
-  raises_match Exn.invalid_arg (fun () ->
-      Claim.with_ ~read:[] ~donate:[ view 0 8; view 4 8 ] ignore);
-  raises_match Exn.invalid_arg (fun () ->
-      Claim.with_ ~read:[] ~donate:[ view 0 5; view 5 3 ] ignore);
-  Claim.with_ ~read:[] ~donate:[ view 0 8; view 8 8 ] (fun c ->
-      equal ~msg:"apart, neither spans" (pair bool bool) (false, false)
-        (Claim.exclusive c (view 0 8), Claim.exclusive c (view 8 8)))
+let host () = filled 8 'b'
 
-(* Memories of one device that has no address of them share no byte: two are
-   donated together, and views of one that overlap are refused. *)
-let test_no_address_spans () =
+let test_take_refused () =
+  refused "a keep" host (fun b ->
+      let k = B.keep [ b ] in
+      Some (fun () -> B.release k));
+  refused "a share" host (fun b ->
+      B.share b;
+      None);
+  refused "an export" host (fun b ->
+      ignore (B.export b Bigarray.char);
+      None);
+  refused "a read claim in progress" host (fun b ->
+      claim_read b;
+      Some (fun () -> claim_release b));
+  let io = Rig_support.io "claim:take-read-only" in
+  refused "memory that admits only reads"
+    (fun () -> Rig_support.io_buffer ~access:Rig.Read io 8)
+    (fun _ -> None)
+
+(* A take inside a read of one of its buffers, whose claim lasts the call, is
+   refused, and succeeds once the read returned. *)
+let test_take_reading () =
+  let c = filled 8 'c' and b = filled 8 'b' in
+  B.read b Bigarray.char (fun _ ->
+      is_none ~msg:"inside the read" (B.take ~why:"taken" [ c; b ]));
+  equal ~msg:"live" bool true (live [ c; b ]);
+  is_some ~msg:"once it returned" (B.take ~why:"taken" [ c; b ])
+
+(* Two buffers of a take over one memory each claim the other's: [None], and
+   every buffer stays live, whether the second is the same buffer, a view of
+   all of the memory or a borrow of it. A view of part of the memory does not
+   span it. *)
+let test_take_overlap () =
+  let d = Result.get_ok (Rig.software "claim:take-overlap") in
+  let n = 1 lsl 16 in
+  let c = filled 8 'c' and b = B.create Rig.host n in
+  List.iter
+    (fun (msg, b') ->
+      is_none ~msg (B.take ~why:"taken" [ c; b; b' ]);
+      equal ~msg:(msg ^ ": live") bool true (live [ c; b; b' ]))
+    [
+      ("the buffer twice", b);
+      ("a view of all of it", B.view b ~first:0 ~length:n);
+      ("a borrow of it", require_some (B.borrow d b));
+    ];
+  is_none ~msg:"a view of part of it"
+    (B.take ~why:"taken" [ c; B.view b ~first:0 ~length:8 ]);
+  is_some ~msg:"each once" (B.take ~why:"taken" [ c; b ])
+
+(* A take of several memories takes each: every earlier buffer over them is
+   dead with its reason, a view included, and the take gives one live buffer
+   per memory, in order, which admits writes. A take of none succeeds. *)
+let test_take () =
+  let a = filled 8 'a' and b = filled 8 'b' in
+  let view = B.view b ~first:2 ~length:4 in
+  (match B.take ~why:"taken" [ a; b ] with
+  | Some [ a'; b' ] ->
+      equal ~msg:"the earlier buffers" (list (option string))
+        [ Some "taken"; Some "taken"; Some "taken" ]
+        [ B.dead a; B.dead b; B.dead view ];
+      equal ~msg:"in order" (pair string string) ("aaaaaaaa", "bbbbbbbb")
+        (text a', text b');
+      B.fill a' 'x';
+      B.fill b' 'y';
+      equal ~msg:"written in place" (pair string string)
+        ("xxxxxxxx", "yyyyyyyy") (text a', text b')
+  | Some bs -> failf "%d buffers taken of 2" (List.length bs)
+  | None -> fail "two memories nothing claims refused");
+  equal ~msg:"none" (option int) (Some 0)
+    (Option.map List.length (B.take ~why:"taken" []))
+
+(* Memories of one device that has no address of them are told apart all the
+   same: two are taken together, one twice is refused. *)
+let test_no_address () =
   let d, _ =
     P.open_ ~addresses:false ~host_visible:false "claim:no-address"
   in
   equal ~msg:"the host addresses none" bool false (Rig.reaches Rig.host d);
   let a = B.create d 64 and b = B.create d 64 in
-  Claim.with_ ~read:[] ~donate:[ a; b ] (fun cl ->
-      equal ~msg:"both" (pair bool bool) (true, true)
-        (Claim.exclusive cl a, Claim.exclusive cl b));
-  raises_match ~msg:"views of one" Exn.invalid_arg (fun () ->
-      Claim.with_
-        ~read:[ B.view a ~first:0 ~length:32 ]
-        ~donate:[ B.view a ~first:16 ~length:32 ]
-        ignore)
+  is_none ~msg:"one twice" (B.take ~why:"taken" [ a; B.view a ~first:0 ~length:64 ]);
+  is_some ~msg:"both" (B.take ~why:"taken" [ a; b ])
 
-let test_claims () =
-  let b = B.create Rig.host 8 in
-  claim_read b;
-  claim_release b;
-
-  Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-      equal bool true (Claim.exclusive c b);
-      raises_match Exn.invalid_arg (fun () ->
-          Claim.with_ ~read:[ b ] ~donate:[] ignore))
-
-(* A donor uses memory it holds exclusive only through the buffer that
-   consumes it. Before the consumption, the host's reads and writes in place
-   and every copy, blit or fill, whether the host, a device or staging memory
-   runs it, are refused. After it, each of them runs on the consumed
-   buffer. *)
-let test_exclusive_writes () =
-  let d, _ = P.open_ ~host_visible:false "claim:exclusive-writes" in
+(* A taker uses the memory it took through the buffer the take gives. The
+   host's reads and writes through an earlier buffer and every copy, blit or
+   fill of one, whether the host, a device or staging memory runs it, raise
+   with the take's reason, and each of them runs on the new buffer. *)
+let test_taken_writes () =
+  let d, _ = P.open_ ~host_visible:false "claim:taken-writes" in
   let staging, _ =
-    P.open_ ~maps_host:false ~host_visible:false "claim:exclusive-staged"
+    P.open_ ~maps_host:false ~host_visible:false "claim:taken-staged"
   in
   let src = B.of_string "abcdefgh" in
-  let written b =
-    let s = Bytes.create 8 in
-    B.blit_to_bytes b 0 s 0 8;
-    Bytes.to_string s
-  in
-  let refused msg f =
-    raises_match ~msg (Exn.invalid_arg ~sub:"held exclusive") f
-  in
-  let unconsumed b =
+  let refused msg f = raises_match ~msg (dead "donated") f in
+  let earlier b =
     refused "a read" (fun () -> B.read b Bigarray.char ignore);
     refused "a write" (fun () -> B.write b Bigarray.char ignore);
     refused "a copy into it" (fun () -> B.copy ~src ~dst:b);
@@ -314,60 +422,49 @@ let test_exclusive_writes () =
         B.blit_to_bytes b 0 (Bytes.create 8) 0 8);
     refused "a fill" (fun () -> B.fill b 'z')
   in
-  let consumed b =
-    B.copy ~src ~dst:b;
-    B.blit_from_string "ijkl" 0 b 4 4;
-    B.fill (B.view b ~first:0 ~length:2) 'z';
+  let used b =
+    let b' = taken b in
+    earlier b;
+    B.copy ~src ~dst:b';
+    B.blit_from_string "ijkl" 0 b' 4 4;
+    B.fill (B.view b' ~first:0 ~length:2) 'z';
     let s = B.create staging 8 in
-    B.copy ~src:b ~dst:s;
-    B.copy ~src:s ~dst:b;
-    b
+    B.copy ~src:b' ~dst:s;
+    B.copy ~src:s ~dst:b';
+    text b'
   in
-  let donated b =
-    Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-        equal ~msg:"exclusive" bool true (Claim.exclusive c b);
-        unconsumed b;
-        consumed (Claim.consume c ~why:"donated" b))
-  in
-  let h = donated (B.create Rig.host 8) in
-  equal string ~msg:"host memory" "zzcdijkl" (written h);
-  let m = donated (B.create d 8) in
-  equal string ~msg:"memory the host does not address" "zzcdijkl" (written m)
+  equal string ~msg:"host memory" "zzcdijkl" (used (B.create Rig.host 8));
+  equal string ~msg:"memory the host does not address" "zzcdijkl"
+    (used (B.create d 8))
 
-(* A borrow of memory a donation holds exclusive raises: it claims the
-   memory while it maps it, so that no free returns the memory meanwhile. *)
-let test_borrow_exclusive () =
-  let d = Result.get_ok (Rig.software "claim:borrow-exclusive") in
-  let b = B.create Rig.host (1 lsl 16) in
-  Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-      equal ~msg:"exclusive" bool true (Claim.exclusive c b);
-      raises_match (Exn.invalid_arg ~sub:"held exclusive") (fun () ->
-          B.borrow d b));
-  is_some ~msg:"once the donation returned" (B.borrow d b)
-
-(* A borrow and the memory it maps share one count. *)
+(* A borrow and the memory it maps share one count: a claim through the
+   borrow refuses a take of the memory until it ends. *)
 let test_borrow_counts () =
   let d = Result.get_ok (Rig.software "claim:borrow") in
   let b = B.create Rig.host (1 lsl 16) in
   let borrowed = require_some (B.borrow d b) in
   claim_read borrowed;
-  Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-      equal bool false (Claim.exclusive c b));
-  claim_release borrowed
+  is_none ~msg:"under the claim" (B.take ~why:"taken" [ b ]);
+  claim_release borrowed;
+  is_some ~msg:"once it ended" (B.take ~why:"taken" [ b ])
+
+(* A borrow of a buffer a take killed raises with the take's reason, and one
+   of the buffer it gave maps the memory. *)
+let test_borrow_taken () =
+  let d = Result.get_ok (Rig.software "claim:borrow-taken") in
+  let b = B.create Rig.host (1 lsl 16) in
+  let b' = taken b in
+  raises_match (dead "donated") (fun () -> B.borrow d b);
+  is_some ~msg:"the taken buffer" (B.borrow d b')
 
 let test_of_bigarray () =
   let b =
     B.of_bigarray (Bigarray.Array1.create Bigarray.char Bigarray.c_layout 8)
   in
-  Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-      equal bool false (Claim.exclusive c b))
+  is_none (B.take ~why:"taken" [ b ]);
+  equal ~msg:"live" (option string) None (B.dead b)
 
-(* Releasing a bigarray's memory that holds no read claim raises: the claim its
-   holder keeps outside the claims stays, and the memory is never exclusive. *)
-let donated_exclusive b =
-  Claim.with_ ~read:[] ~donate:[ b ] (fun c -> Claim.exclusive c b)
-
-(* Memory shared through one buffer is never exclusive through another: a view,
+(* Memory shared through one buffer is never taken through another: a view,
    a borrow, the buffer itself. Sharing it again changes nothing, and readers
    claim and release it as before. *)
 let test_share_covers () =
@@ -377,58 +474,124 @@ let test_share_covers () =
     (b, B.view b ~first:0 ~length:8, require_some (B.borrow d b))
   in
   let b, view, borrowed = fresh () in
-  equal ~msg:"unshared" bool true (donated_exclusive b);
-  Claim.share view;
-  equal ~msg:"shared through a view, the buffer" bool false
-    (donated_exclusive b);
-  equal ~msg:"shared through a view, the borrow" bool false
-    (donated_exclusive borrowed);
-  Claim.share view;
-  Claim.share b;
-  equal ~msg:"shared again" bool false (donated_exclusive b);
+  B.share view;
+  equal ~msg:"shared through a view, the buffer" bool false (takes b);
+  equal ~msg:"shared through a view, the borrow" bool false (takes borrowed);
+  B.share view;
+  B.share b;
+  equal ~msg:"shared again" bool false (takes b);
   claim_read b;
   claim_release b;
-
   let b, _, borrowed = fresh () in
-  Claim.share borrowed;
-  equal ~msg:"shared through the borrow" bool false (donated_exclusive b);
+  B.share borrowed;
+  equal ~msg:"shared through the borrow" bool false (takes b);
   let b, _, borrowed = fresh () in
-  Claim.share b;
-  equal ~msg:"shared through the buffer" bool false (donated_exclusive borrowed)
+  B.share b;
+  equal ~msg:"shared through the buffer" bool false (takes borrowed);
+  let b, _, _ = fresh () in
+  equal ~msg:"unshared" bool true (takes b)
 
-(* Each buffer of a donation is held exclusive on its own: a value of several
-   buffers is donated when each of them is. *)
+(* A take of memories of two devices takes both, or neither while one is
+   claimed. *)
 let test_shards () =
   let d = Result.get_ok (Rig.software "claim:shards") in
   let a = B.create Rig.host 8 and b = B.create d 8 in
-  Claim.with_ ~read:[]
-    ~donate:[ a; b ]
-    (fun c -> equal bool true (Claim.exclusive c a && Claim.exclusive c b));
   claim_read b;
-  Claim.with_ ~read:[]
-    ~donate:[ a; b ]
-    (fun c ->
-      equal (pair bool bool) (true, false)
-        (Claim.exclusive c a, Claim.exclusive c b));
-  claim_release b
+  is_none ~msg:"one claimed" (B.take ~why:"taken" [ a; b ]);
+  equal ~msg:"both live" bool true (live [ a; b ]);
+  claim_release b;
+  is_some ~msg:"neither claimed" (B.take ~why:"taken" [ a; b ])
 
-(* Consumption *)
+(* An export of taken memory is the taker's: refused through the earlier
+   buffer, made through the new one, and the memory is outside the claims
+   after it. *)
+let test_export_taken () =
+  let b = B.create Rig.host 16 in
+  let b' = taken b in
+  raises_match ~msg:"the earlier buffer" (dead "donated") (fun () ->
+      B.export b Bigarray.char);
+  Bigarray.Array1.fill (B.export b' Bigarray.char) 'x';
+  equal ~msg:"its bytes" string (String.make 16 'x') (text b');
+  equal ~msg:"outside the claims" bool false (takes b')
 
-let dead why = Exn.invalid_arg ~sub:why
+(* A taker submits work on the buffer the take gave: the work writes the
+   memory in place, and the host reads the write. *)
+let test_taker_submits () =
+  let module Sub = Rig.Submission in
+  let d, _ = P.open_ "claim:taker-submits" in
+  let b = B.create d 8 in
+  Rig_support.store (R.host b) 0;
+  let b' = taken b in
+  let s =
+    Sub.make ~fixed:[ (b', Rig.Read_write) ] d
+      [| Sub.fill Rig_support.poke ~params:16 |]
+  in
+  let run = Sub.take s in
+  Sub.Run.int64 run (Sub.block s 0) 0 (Int64.of_int (Sub.address s b'));
+  Sub.Run.int64 run (Sub.block s 0) 8 42L;
+  Rig.Point.wait (Rig.submit run ~buffers:[||]);
+  equal ~msg:"the word the work stored" int 42
+    (B.read b' Bigarray.int64 (fun a -> Int64.to_int a.{0}))
 
-(* Memory consumed twice lives while the last buffer over it is reachable, and
+(* The buffer a take gives *)
+
+type place = Host | Addressed | Unaddressed
+
+let pp_place ppf = function
+  | Host -> Format.pp_print_string ppf "host"
+  | Addressed -> Format.pp_print_string ppf "addressed"
+  | Unaddressed -> Format.pp_print_string ppf "unaddressed"
+
+let addressed = lazy (fst (P.open_ "claim:taken-addressed"))
+
+let unaddressed =
+  lazy (fst (P.open_ ~host_visible:false "claim:taken-unaddressed"))
+
+let device = function
+  | Host -> Rig.host
+  | Addressed -> Lazy.force addressed
+  | Unaddressed -> Lazy.force unaddressed
+
+let taken_cases =
+  List.concat_map
+    (fun place -> List.map (fun n -> (place, n)) [ 0; 1; 8; 4096 ])
+    [ Host; Addressed; Unaddressed ]
+
+let taken_name (place, n) =
+  Format.asprintf "%a memory of %d bytes" pp_place place n
+
+(* The buffer a take gives is used as any buffer its holder made: work
+   submitted on it, the host's reads and writes, a copy a device runs, a
+   share. *)
+let taken_law (place, n) =
+  let d = device place in
+  let b = B.create d n in
+  let other = B.create (device Unaddressed) n in
+  let b' = taken ~why:"taken" b in
+  equal ~msg:"the earlier buffer" (option string) (Some "taken") (B.dead b);
+  if place <> Host then write d b';
+  (* A device's memory of no bytes has no host address. *)
+  if place = Host || (place = Addressed && n > 0) then begin
+    B.write b' Bigarray.char (fun a -> Bigarray.Array1.fill a 'w');
+    equal ~msg:"read back" string (String.make n 'w')
+      (B.read b' Bigarray.char (fun a ->
+           String.init (Bigarray.Array1.dim a) (Bigarray.Array1.get a)))
+  end
+  else B.fill b' 'w';
+  B.copy ~src:b' ~dst:other;
+  B.share b';
+  equal ~msg:"the copy" string (String.make n 'w') (text other);
+  equal ~msg:"shared for good" bool false (takes b')
+
+(* Taken memory *)
+
+(* Memory taken twice lives while the last buffer over it is reachable, and
    every earlier buffer is dead. *)
-let test_consume_twice () =
+let test_take_twice () =
   let b = B.create Rig.host (1 lsl 16) in
   let view = B.view b ~first:0 ~length:8 in
-  let b' =
-    Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-        Claim.consume c ~why:"first" b)
-  in
-  let b'' =
-    Claim.with_ ~read:[] ~donate:[ b' ] (fun c ->
-        Claim.consume c ~why:"second" b')
-  in
+  let b' = taken ~why:"first" b in
+  let b'' = taken ~why:"second" b' in
   raises_match Exn.invalid_arg (fun () -> B.wait b Rig.Read);
   raises_match Exn.invalid_arg (fun () -> B.wait view Rig.Read);
   raises_match (dead "second") (fun () -> B.wait b' Rig.Read);
@@ -438,72 +601,15 @@ let test_consume_twice () =
   ignore (Sys.opaque_identity (B.create Rig.host (1 lsl 16)));
   equal char 'c' (B.read b'' Bigarray.char (fun a -> a.{(1 lsl 16) - 1}))
 
-(* A consumption of memory that another claim reads kills every earlier buffer
-   as any other, and the buffer it gives admits only reads, through its views
-   too, so the reader's bytes are never written in place. Consumed again where
-   the donation holds it exclusive, the memory admits writes again. *)
-let test_consume_read () =
-  let access =
-    Testable.make
-      ~pp:(fun ppf a ->
-        Format.pp_print_string ppf
-          (match a with Rig.Read -> "Read" | Rig.Read_write -> "Read_write"))
-      ~equal:( = )
-  in
-  let reads msg f =
-    raises_match ~msg (Exn.invalid_arg ~sub:"admits only reads") f
-  in
-  let b = B.create Rig.host 8 in
-  B.fill b 'a';
-  let b' =
-    Claim.with_ ~read:[ b ] ~donate:[] (fun _ ->
-        Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-            equal ~msg:"exclusive" bool false (Claim.exclusive c b);
-            let b' = Claim.consume c ~why:"donated" b in
-            reads "a write under the reader's claim" (fun () ->
-                B.write b' Bigarray.char ignore);
-            b'))
-  in
-  equal ~msg:"the earlier buffer" (option string) (Some "donated") (B.dead b);
-  equal ~msg:"the consumed buffer's access" access Rig.Read (B.access b');
-  equal ~msg:"a view's access" access Rig.Read
-    (B.access (B.view b' ~first:0 ~length:4));
-  reads "a write" (fun () -> B.write b' Bigarray.char ignore);
-  reads "a fill" (fun () -> B.fill b' 'z');
-  reads "a copy into it" (fun () -> B.copy ~src:(B.of_string "12345678") ~dst:b');
-  equal ~msg:"a claim from C to write" answer R.Read_only
-    (R.claim b' Rig.Read_write);
-  equal ~msg:"its bytes" char 'a' (B.read b' Bigarray.char (fun a -> a.{7}));
-  let b'' =
-    Claim.with_ ~read:[] ~donate:[ b' ] (fun c ->
-        equal ~msg:"exclusive again" bool true (Claim.exclusive c b');
-        Claim.consume c ~why:"again" b')
-  in
-  equal ~msg:"consumed exclusive" access Rig.Read_write (B.access b'');
-  B.fill b'' 'z';
-  equal ~msg:"written" char 'z' (B.read b'' Bigarray.char (fun a -> a.{7}))
-
-let test_consume_refusals () =
-  let b = B.create Rig.host 16 in
-  let part = B.view b ~first:0 ~length:8 in
-  Claim.with_ ~read:[] ~donate:[ part ] (fun c ->
-      raises_match Exn.invalid_arg (fun () -> Claim.consume c ~why:"part" part));
-  let other = B.create Rig.host 16 in
-  Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-      raises_match Exn.invalid_arg (fun () ->
-          Claim.consume c ~why:"unclaimed" other))
-
-(* A consumed memory's dead buffers refuse claims, and a release accepts
-   them. *)
+(* A taken memory's dead buffers refuse claims from C and raise for a read
+   and a keep. The buffer the take gave is claimed. *)
 let test_dead_claims () =
   let b = B.create Rig.host 8 in
-  claim_read b;
-  let live =
-    Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-        Claim.consume c ~why:"donated" b)
-  in
-  claim_release b;
-  raises_match (dead "donated") (fun () -> Claim.with_ ~read:[ b ] ~donate:[] ignore);
+  let live = taken b in
+  equal ~msg:"a claim from C" answer R.Dead (R.claim b Rig.Read);
+  raises_match ~msg:"a read" (dead "donated") (fun () ->
+      B.read b Bigarray.char ignore);
+  raises_match ~msg:"a keep" (dead "donated") (fun () -> B.keep [ b ]);
   claim_read live;
   claim_release live
 
@@ -527,78 +633,55 @@ let test_closed_slot_claim () =
   equal ~msg:"the C claim" answer R.Lost (R.claim b Rig.Read);
   Rig.close later
 
-(* Sharing a dead buffer, or memory claims hold exclusive, raises and changes
-   nothing. The buffer a consumption gives is shared as any other. *)
+(* Sharing a dead buffer raises and changes nothing. The buffer a take gives
+   is shared as any other. *)
 let test_share_refused () =
   let b = B.create Rig.host 16 in
-  Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-      raises_match ~msg:"held" Exn.invalid_arg (fun () -> Claim.share b);
-      equal ~msg:"held, after the refusal" bool true (Claim.exclusive c b));
-  equal ~msg:"unshared" bool true (donated_exclusive b);
-  let b' =
-    Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-        Claim.consume c ~why:"donated" b)
-  in
-  raises_match ~msg:"dead" (dead "donated") (fun () -> Claim.share b);
-  equal ~msg:"the live buffer" bool true (donated_exclusive b');
-  Claim.share b';
-  equal ~msg:"the live buffer, shared" bool false (donated_exclusive b');
-  raises_match ~msg:"dead, its memory shared" (dead "donated") (fun () ->
-      Claim.share b);
+  let b' = taken b in
+  raises_match ~msg:"dead" (dead "donated") (fun () -> B.share b);
+  let b'' = taken ~why:"again" b' in
+  B.share b'';
+  raises_match ~msg:"dead, its memory shared" (dead "again") (fun () ->
+      B.share b');
+  equal ~msg:"the live buffer, shared" bool false (takes b'')
+
+(* A buffer's death is a fact with its reason: none while it lives, the take's
+   reason once its memory is taken; the buffer the take gives lives. *)
+let test_dead_fact () =
   let b = B.create Rig.host 16 in
-  let b' =
-    Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-        let b' = Claim.consume c ~why:"consumed" b in
-        Claim.share b';
-        b')
-  in
-  equal ~msg:"shared while consumed" bool false (donated_exclusive b')
+  equal ~msg:"live" (option string) None (B.dead b);
+  let b' = taken b in
+  equal ~msg:"taken" (option string) (Some "donated") (B.dead b);
+  equal ~msg:"its successor" (option string) None (B.dead b')
 
-(* Claims that outlive their with_ hold nothing: beside a live with_ over the
-   same memory, a stale claim is not exclusive and consumes nothing. *)
-let test_stale_returned () =
-  let b = B.create Rig.host 64 in
-  let stale = Claim.with_ ~read:[] ~donate:[ b ] Fun.id in
-  equal ~msg:"alone" bool false (Claim.exclusive stale b);
-  Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-      equal ~msg:"the live claim" bool true (Claim.exclusive c b);
-      equal ~msg:"beside a live claim" bool false (Claim.exclusive stale b);
-      raises_match Exn.invalid_arg (fun () ->
-          Claim.consume stale ~why:"stale" b);
-      ignore (Claim.consume c ~why:"live" b))
+(* A take of a lost device's memory raises Lost wherever the buffer lies in
+   the list, and takes nothing. A claim on another buffer of the take makes
+   it [None] instead, in either order: it would take nothing. *)
+let test_lost_take () =
+  let d, p = P.open_ "claim:lost" in
+  let m = B.create d 64 in
+  write d m;
+  lose d p;
+  let h = B.create Rig.host 64 in
+  raises_match ~msg:"alone" lost (fun () -> B.take ~why:"taken" [ m ]);
+  raises_match ~msg:"after a live buffer" lost (fun () ->
+      B.take ~why:"taken" [ h; m ]);
+  raises_match ~msg:"before a live buffer" lost (fun () ->
+      B.take ~why:"taken" [ m; h ]);
+  claim_read h;
+  is_none ~msg:"before a claimed buffer" (B.take ~why:"taken" [ m; h ]);
+  is_none ~msg:"after a claimed buffer" (B.take ~why:"taken" [ h; m ]);
+  claim_release h;
+  equal ~msg:"the live buffer" bool true (takes h)
 
-(* A with_ whose [f] raised ends its claims too: beside a reader, the stale
-   claim is not exclusive and consumes nothing. *)
-let test_stale_raised () =
-  let b = B.create Rig.host 64 in
-  let stale = ref None in
-  raises (Failure "f") (fun () ->
-      Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-          stale := Some c;
-          failwith "f"));
-  let stale = require_some !stale in
-  claim_read b;
-  equal bool false (Claim.exclusive stale b);
-  raises_match Exn.invalid_arg (fun () -> Claim.consume stale ~why:"stale" b);
-  claim_release b;
-  equal ~msg:"the buffer stays live" (option string) None (B.dead b)
-
-(* What a donation of [b] alone finds: its memory exclusive, shared by another
-   claim, or the refusal of a with_. *)
-let donation b =
-  match donated_exclusive b with
-  | true -> "exclusive"
-  | false -> "shared"
-  | exception Invalid_argument m -> m
-
-(* A signal pending as [f] returns or raises lands after with_ has ended its
-   claims. [f]'s last act raises SIGINT, which the runtime records; its
-   handler raises [Exit] at the next poll point, which the allocation after
-   the call places if with_ has none left. *)
+(* A signal pending as a read's function returns or raises lands after the
+   read ended its claim. [f]'s last act raises SIGINT, which the runtime
+   records; its handler raises [Exit] at the next poll point, which the
+   allocation after the call places if the read has none left. *)
 exception Raised
 
 let interrupted_at_end f =
-  let r = B.create Rig.host 8 and b = B.create Rig.host 8 in
+  let b = B.create Rig.host 8 in
   let before =
     Sys.signal Sys.sigint (Sys.Signal_handle (fun _ -> raise Exit))
   in
@@ -606,12 +689,11 @@ let interrupted_at_end f =
     ~finally:(fun () -> Sys.set_signal Sys.sigint before)
     (fun () ->
       raises Exit (fun () ->
-          (match Claim.with_ ~read:[ r ] ~donate:[ b ] f with
+          (match B.read b Bigarray.char f with
           | () -> ()
           | exception Raised -> ());
           ignore (Sys.opaque_identity (ref ()))));
-  equal ~msg:"read, donated" (pair string string) ("exclusive", "exclusive")
-    (donation r, donation b)
+  equal ~msg:"taken" bool true (takes b)
 
 let test_signal_returned () =
   interrupted_at_end (fun _ -> Rig_support.interrupt ())
@@ -638,7 +720,7 @@ let interrupted_window name f =
           | exception Raised -> ());
           ignore (Sys.opaque_identity (ref ()))));
   equal ~msg:"counted calls" int 0 (Rig_support.counted ());
-  equal ~msg:"donated" string "exclusive" (donation m);
+  equal ~msg:"taken" bool true (takes m);
   equal ~msg:"flushes" (list string) [ "flush" ]
     (List.filter (String.equal "flush") (P.log p))
 
@@ -655,11 +737,11 @@ let test_signal_window_raised () =
 
 (* An exception at any allocation of a blit or a fill into Mapped memory
    outside its counted call, as an asynchronous one lands, leaves no claim
-   and no count. *)
+   and no count. Each landing's check takes the memory, and the next landing
+   uses the buffer the take gave. *)
 let walk_window name call =
   let d, _ = P.open_ ~host_visible:false ("claim:walk-" ^ name) in
-  let m = B.create ~memory:Mapped d 8 in
-  let rec walk n =
+  let rec walk m n =
     let reached =
       Rig_support.interrupted
         ~from:(fun _ -> Rig_support.counted () = 0)
@@ -668,22 +750,49 @@ let walk_window name call =
     in
     let msg = Printf.sprintf "landing at allocation %d" n in
     equal ~msg int 0 (Rig_support.counted ());
-    equal ~msg string "exclusive" (donation m);
-    if reached then walk (n + 1) else n - 1
+    let m = require_some ~msg (Rig_support.donated m) in
+    if reached then walk m (n + 1) else n - 1
   in
-  greater ~msg:"the landings" int ~than:0 (walk 1)
+  greater ~msg:"the landings" int ~than:0
+    (walk (B.create ~memory:Mapped d 8) 1)
 
 let test_walk_blit () =
   walk_window "blit" (fun m -> B.blit_from_string "blit" 0 m 2 4)
 
 let test_walk_fill () = walk_window "fill" (fun m -> B.fill m 'f')
 
+(* An exception at any allocation of a take, as an asynchronous one lands,
+   leaves both of its buffers live with no claim: the take allocates nothing
+   once it has taken the memory. A take no exception ended kills both. *)
+let test_walk_take () =
+  let rec walk n =
+    let a = filled 8 'a' and b = filled 8 'b' in
+    let reached =
+      Rig_support.interrupted n (fun () ->
+          ignore (B.take ~why:"taken" [ a; b ]))
+    in
+    let msg = Printf.sprintf "landing at allocation %d" n in
+    let dead = (B.dead a, B.dead b) in
+    if reached then begin
+      equal ~msg (pair (option string) (option string)) (None, None) dead;
+      is_some ~msg (B.take ~why:"again" [ a; b ]);
+      walk (n + 1)
+    end
+    else begin
+      equal ~msg
+        (pair (option string) (option string))
+        (Some "taken", Some "taken") dead;
+      n - 1
+    end
+  in
+  greater ~msg:"the landings" int ~than:0 (walk 1)
+
 (* Claims of several buffers from C *)
 
 (* What a buffer of a case is to [rig_buffers_claim]: live, read or written;
-   with a write it must wait for; dead; held exclusive; or admitting only
-   reads, claimed to write. *)
-type state = Live of Rig.access | Pending | Dead | Held | Read_only
+   with a write it must wait for; dead; or admitting only reads, claimed to
+   write. *)
+type state = Live of Rig.access | Pending | Dead | Read_only
 
 let state =
   Gen.of_list
@@ -694,48 +803,35 @@ let state =
         | Live Rig.Read_write -> "written"
         | Pending -> "pending"
         | Dead -> "dead"
-        | Held -> "held"
         | Read_only -> "read-only"))
-    [ Live Rig.Read; Live Rig.Read_write; Pending; Dead; Held; Read_only ]
+    [ Live Rig.Read; Live Rig.Read_write; Pending; Dead; Read_only ]
 
 let states = Gen.list ~size:(Gen.int_range 0 6) state
 
 let refusal = function
   | Dead -> Some R.Dead
-  | Held -> Some R.Exclusive
   | Read_only -> Some R.Read_only
   | Live _ | Pending -> None
 
 let claims_device = lazy (P.open_ "claim:claim-all")
+let read_only = lazy (Rig_support.io "claim:claim-all-read-only")
 
-(* A buffer in [s], the access it is claimed for, and whether its memory
-   should donate once the claims end. *)
+(* A buffer in [s] and the access it is claimed for. *)
 let buffer_in s =
   let d, _ = Lazy.force claims_device in
-  let consumed b = Rig_support.donated b |> Option.get in
   match s with
   | Live a -> (B.create Rig.host 8, a)
   | Pending ->
       let b = B.create d 8 in
-      let s =
-        Rig.Submission.make d
-          [| Rig_support.touching [| Rig.Submission.write |] |]
-      in
-      ignore (submit s ~buffers:[| b |]);
+      write d b;
       (b, Rig.Read)
   | Dead ->
       let b = B.create Rig.host 8 in
-      ignore (consumed b);
+      ignore (taken b);
       (b, Rig.Read)
-  | Held -> (B.create Rig.host 8, Rig.Read)
   | Read_only ->
-      let b = B.create Rig.host 8 in
-      let b' =
-        Claim.with_ ~read:[ b ] ~donate:[] (fun _ ->
-            Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-                Claim.consume c ~why:"consumed" b))
-      in
-      (b', Rig.Read_write)
+      ( Rig_support.io_buffer ~access:Rig.Read (Lazy.force read_only) 8,
+        Rig.Read_write )
 
 (* [rig_buffers_claim] claims every buffer or none: it refuses at the first
    buffer that [rig_buffer_claim] would refuse, holding nothing, and otherwise
@@ -745,28 +841,12 @@ let claim_all_law ss =
   let bs = List.map buffer_in ss in
   let buffers = Array.of_list (List.map fst bs) in
   let access = Array.of_list (List.map snd bs) in
-  let held =
-    List.filter_map (fun (s, (b, _)) -> if s = Held then Some b else None)
-      (List.combine ss bs)
-  in
-  let free () =
-    List.iter2
-      (fun s (b, _) ->
-        match s with
-        | Live _ | Pending ->
-            equal ~msg:"no claim left" bool true (donated_exclusive b)
-        | Dead | Held | Read_only -> ())
-      ss bs
-  in
   let expected =
     List.find_mapi
       (fun i s -> Option.map (fun a -> (i, a)) (refusal s))
       ss
   in
-  let outcome = Claim.with_ ~read:[] ~donate:held (fun _ ->
-      R.claim_all buffers access)
-  in
-  (match (outcome, expected) with
+  (match (R.claim_all buffers access, expected) with
   | R.Refused (i, a), Some (i', a') ->
       cover "a refusal after a claim" (i > 0);
       equal ~msg:"the refused buffer" (pair int answer) (i', a') (i, a)
@@ -776,166 +856,162 @@ let claim_all_law ss =
         (Array.of_list
            (List.map (function Pending -> R.Wait | _ -> R.Claimed) ss))
         answers;
-      List.iter2
-        (fun s (b, _) ->
-          if s <> Held then
-            equal ~msg:"claimed" bool false (donated_exclusive b))
-        ss bs;
+      List.iter
+        (fun (b, _) -> equal ~msg:"claimed" bool true (claimed b))
+        bs;
       R.release_all buffers
   | R.All _, Some _ -> fail "every buffer claimed past a refusal"
   | R.Refused (i, a), None ->
       failf "buffer %d refused (%a) with none to refuse" i R.pp_answer a);
-  free ();
+  List.iter2
+    (fun s (b, _) ->
+      match s with
+      | Live _ | Pending -> equal ~msg:"no claim left" bool true (takes b)
+      | Dead | Read_only -> ())
+    ss bs;
   ignore (P.run (snd (Lazy.force claims_device)))
 
-(* Holds *)
+(* Keeps *)
 
-(* After the holds over a memory are unreachable, a call that moves collected
-   memory releases them: a donation then finds the memory exclusive. *)
-let collect_holds () =
+(* After the keeps of a memory are unreachable, a call that moves collected
+   memory ends them: a take then succeeds. *)
+let collect_keeps () =
   Gc.full_major ();
   Gc.full_major ();
   ignore (Sys.opaque_identity (B.create Rig.host 8))
 
-(* A hold keeps its memory live through donations, which stay read claims and
-   consume nothing, while reads and writes go on. Once the hold is collected,
-   the first call that moves collected memory, on any device, releases it. *)
-let test_hold () =
-  let d, _ = P.open_ "claim:hold" in
+(* A keep holds its memory live through takes and frees, which change
+   nothing, while reads and writes go on. Once the keep is collected, the
+   first call that moves collected memory, on any device, ends it. *)
+let test_keep () =
+  let d, _ = P.open_ "claim:keep" in
   let a = B.create Rig.host 64 and b = B.create d 64 in
-  let h = Claim.hold [ a; b ] in
-  Claim.with_ ~read:[] ~donate:[ a; b ] (fun c ->
-      equal ~msg:"exclusive" (pair bool bool) (false, false)
-        (Claim.exclusive c a, Claim.exclusive c b);
-      equal ~msg:"consumable" (pair bool bool) (false, false)
-        (Claim.consumable c a, Claim.consumable c b);
-      raises_match ~msg:"a consumption" (Exn.invalid_arg ~sub:"held") (fun () ->
-          Claim.consume c ~why:"donated" a));
-  equal ~msg:"live" (option string) None (B.dead a);
+  let k = B.keep [ a; b ] in
+  is_none ~msg:"a take of both" (B.take ~why:"taken" [ a; b ]);
+  is_none ~msg:"a take of one" (B.take ~why:"taken" [ a ]);
+  equal ~msg:"a free" bool false (B.free a);
+  equal ~msg:"live" bool true (live [ a; b ]);
   B.fill a 'h';
-  equal ~msg:"written under the hold" char 'h'
+  equal ~msg:"written under the keep" char 'h'
     (B.read a Bigarray.char (fun x -> x.{0}));
-  ignore (Sys.opaque_identity h);
-  collect_holds ();
-  Claim.with_ ~read:[] ~donate:[ a; b ] (fun c ->
-      equal ~msg:"exclusive once collected" (pair bool bool) (true, true)
-        (Claim.exclusive c a, Claim.exclusive c b))
+  ignore (Sys.opaque_identity k);
+  collect_keeps ();
+  is_some ~msg:"a take once collected" (B.take ~why:"taken" [ a; b ])
 
-(* A release ends a hold at once: while the hold is still reachable and
-   nothing was collected, a donation finds its memory exclusive and consumes
-   it. *)
+(* A release ends a keep at once: while the keep is still reachable and
+   nothing was collected, a take succeeds. *)
 let test_release () =
   let d, _ = P.open_ "claim:release" in
   let a = B.create Rig.host 64 and b = B.create d 64 in
-  let h = Claim.hold [ a; b ] in
-  Claim.release h;
-  Claim.with_ ~read:[] ~donate:[ a; b ] (fun c ->
-      equal ~msg:"exclusive" (pair bool bool) (true, true)
-        (Claim.exclusive c a, Claim.exclusive c b);
-      ignore (Claim.consume c ~why:"donated" a));
-  equal ~msg:"consumed" (option string) (Some "donated") (B.dead a);
-  ignore (Sys.opaque_identity h)
+  let k = B.keep [ a; b ] in
+  B.release k;
+  is_some ~msg:"a take" (B.take ~why:"taken" [ a; b ]);
+  ignore (Sys.opaque_identity k)
 
-(* A later release of a hold, and its collection, end nothing: another hold of
-   the same memory holds it until its own release. *)
+(* A later release of a keep, and its collection, end nothing: another keep
+   of the same memory holds it until its own release. *)
 let test_release_once () =
   let a = B.create Rig.host 64 in
-  let h1 = Claim.hold [ a ] and h2 = Claim.hold [ a ] in
-  Claim.release h1;
-  Claim.release h1;
-  equal ~msg:"after a second release" bool false (donated_exclusive a);
-  ignore (Sys.opaque_identity h1);
-  collect_holds ();
-  equal ~msg:"after the collection" bool false (donated_exclusive a);
-  Claim.release h2;
-  equal ~msg:"after the other's release" bool true (donated_exclusive a);
-  Claim.release (Claim.hold []);
-  ignore (Sys.opaque_identity h2)
+  let k1 = B.keep [ a ] and k2 = B.keep [ a ] in
+  B.release k1;
+  B.release k1;
+  is_none ~msg:"after a second release" (B.take ~why:"taken" [ a ]);
+  ignore (Sys.opaque_identity k1);
+  collect_keeps ();
+  is_none ~msg:"after the collection" (B.take ~why:"taken" [ a ]);
+  B.release k2;
+  B.release (B.keep []);
+  ignore (Sys.opaque_identity k2);
+  equal ~msg:"after the other's release" bool true (takes a)
 
-(* Two domains: releases of one hold over two memories, beside drops of the
-   hold, which release it, collections and donations of both memories. Another
-   hold keeps the second memory to the end. A release after the first ends
-   nothing, so the first memory is exclusive once the hold is released and
-   the second never is. A drop beside a release releases the hold twice on two
-   domains, and a collection after it runs the drain of the hold's record
+(* Two domains: releases of one keep of two memories, beside drops of the
+   keep, which release it, collections and takes of each memory. Another keep
+   holds the second memory to the end. A release after the first ends
+   nothing, so the first memory is taken only once the keep is released, and
+   the second never is. A drop beside a release releases the keep twice on
+   two domains, and a collection after it runs the drain of the keep's record
    beside the other domain's release. *)
-type releases = { mutable released : bool }
+type releases = { mutable released : bool; mutable took : bool }
 
-type held_pair = {
+type kept_pair = {
   first : B.t;
   second : B.t;
-  hold : Claim.hold option Atomic.t;
-  keeper : Claim.hold;
+  keep : B.keep option Atomic.t;
+  keeper : B.keep;
 }
 
-let held_pair =
+let kept_pair =
   abstract
-    ~pp:(fun ppf r -> Format.fprintf ppf "released %b" r.released)
+    ~pp:(fun ppf r ->
+      Format.fprintf ppf "released %b, taken %b" r.released r.took)
     ~release:(fun p -> ignore (Sys.opaque_identity p.keeper))
     "p"
 
 let make_pair () =
   let first = B.create Rig.host 64 and second = B.create Rig.host 64 in
-  let hold = Atomic.make (Some (Claim.hold [ first; second ])) in
-  { first; second; hold; keeper = Claim.hold [ second ] }
+  let keep = Atomic.make (Some (B.keep [ first; second ])) in
+  { first; second; keep; keeper = B.keep [ second ] }
 
-let release_pair p = Option.iter Claim.release (Atomic.get p.hold)
-let drop_pair p = Option.iter Claim.release (Atomic.exchange p.hold None)
+let release_pair p = Option.iter B.release (Atomic.get p.keep)
+
+(* A drop releases the keep before it empties the cell, so a release that
+   finds the cell empty follows the drop's. *)
+let drop_pair p =
+  match Atomic.get p.keep with
+  | None -> ()
+  | Some k ->
+      B.release k;
+      Atomic.set p.keep None
 
 (* A collection that drains: a minor collection finalises a token dropped
    while young, and the allocation drains the list of holds, on which a
-   release or the finaliser put the hold's record. *)
-let collect_pair (_ : held_pair) =
+   release or the finaliser put the keep's record. *)
+let collect_pair (_ : kept_pair) =
   Gc.minor ();
   ignore (Sys.opaque_identity (B.create Rig.host 8))
 
-let donate_pair p =
-  Claim.with_ ~read:[]
-    ~donate:[ p.first; p.second ]
-    (fun c -> (Claim.exclusive c p.first, Claim.exclusive c p.second))
-
 let release_model r = r.released <- true
 
-(* The kept memory is never exclusive, and the first only once the hold is
-   released. Two donations side by side may each find the other's read claim
-   on the first and get a read claim, or one holds it exclusive and the other
-   raises. *)
-let judge_donation r = function
-  | Ok (first, second) ->
-      equal ~msg:"the kept memory exclusive" bool false second;
-      if not r.released then equal ~msg:"held, exclusive" bool false first
-  | Error (Invalid_argument _) -> equal ~msg:"released" bool true r.released
+(* A take of the first memory succeeds only once the keep is released. It
+   may be refused after a release beside another domain's: of two releases
+   of one keep, one ends each hold, and the other can return before it
+   has. *)
+let judge_take_first r = function
+  | Ok true ->
+      equal ~msg:"released, taken" (pair bool bool) (true, false)
+        (r.released, r.took);
+      r.took <- true
+  | Ok false -> equal ~msg:"taken" bool false r.took
+  | Error (Invalid_argument _) -> equal ~msg:"taken" bool true r.took
   | Error e -> raise e
 
 let release_commands =
   [
-    command "make" (Gen.unit @-> makes held_pair)
-      (fun () -> { released = false })
+    command "make"
+      (Gen.unit @-> makes kept_pair)
+      (fun () -> { released = false; took = false })
       make_pair;
-    command "release"
-      (held_pair ^-> returns unit)
-      release_model release_pair;
-    command "drop"
-      (held_pair ^-> returns unit)
-      release_model drop_pair;
-    command "collect" (held_pair ^-> returns unit) ignore collect_pair;
-    command "donate"
-      (held_pair ^-> judges (pair bool bool))
-      judge_donation donate_pair;
+    command "release" (kept_pair ^-> returns unit) release_model release_pair;
+    command "drop" (kept_pair ^-> returns unit) release_model drop_pair;
+    command "collect" (kept_pair ^-> returns unit) ignore collect_pair;
+    command "take"
+      (kept_pair ^-> judges bool)
+      judge_take_first
+      (fun p -> Option.is_some (B.take ~why:"taken" [ p.first ]));
+    command "take kept"
+      (kept_pair ^-> returns bool)
+      (fun _ -> false)
+      (fun p -> Option.is_some (B.take ~why:"taken" [ p.second ]));
   ]
 
-(* A submission holds its fixed memory and the buffers its parts name, which
-   every run reads, as a hold does: none of them donates while the submission
-   is reachable, and each does once it is collected. Slots hold nothing. *)
-let test_submission_holds () =
-  let d, _ = P.open_ "claim:submission-holds" in
+(* A submission keeps its fixed memory and the buffers its parts name, which
+   every run reads, as a keep does: none of them is taken while the
+   submission is reachable, and each is once it is collected. Slots keep
+   nothing. *)
+let test_submission_keeps () =
+  let d, _ = P.open_ "claim:submission-keeps" in
   let fixed = B.create d 8 and src = B.create d 8 and dst = B.create d 8 in
   let ws = B.create Rig.host 8 and slot = B.create d 8 in
-  let all = [ fixed; src; dst; ws; slot ] in
-  let exclusive () =
-    Claim.with_ ~read:[] ~donate:all (fun c ->
-        List.map (Claim.exclusive c) all)
-  in
   let s =
     Rig.Submission.(
       make
@@ -949,373 +1025,87 @@ let test_submission_holds () =
   in
   equal ~msg:"while the submission is reachable" (list bool)
     [ false; false; false; false; true ]
-    (exclusive ());
-  ignore (Sys.opaque_identity (submit s ~buffers:[| slot |]));
-  collect_holds ();
-  equal ~msg:"once it is collected" (list bool)
-    [ true; true; true; true; true ]
-    (exclusive ())
+    (List.map takes [ fixed; src; dst; ws; slot ]);
+  ignore (Sys.opaque_identity (submit s ~buffers:[| B.create d 8 |]));
+  collect_keeps ();
+  equal ~msg:"once it is collected" (list bool) [ true; true; true; true ]
+    (List.map takes [ fixed; src; dst; ws ])
 
-(* A hold of a dead buffer, or of memory held exclusive, raises and holds none
-   of the buffers it was given. *)
-let test_hold_refusals () =
+(* A keep of a dead buffer raises and keeps none of the buffers it was
+   given. *)
+let test_keep_refusals () =
   let a = B.create Rig.host 8 and b = B.create Rig.host 8 in
-  Claim.with_ ~read:[] ~donate:[ b ] (fun _ ->
-      raises_match ~msg:"held exclusive" (Exn.invalid_arg ~sub:"held exclusive")
-        (fun () -> Claim.hold [ a; b ]));
-  ignore (require_some (Rig_support.donated b));
-  raises_match ~msg:"dead" (dead "donated") (fun () -> Claim.hold [ a; b ]);
-  equal ~msg:"the other buffer" bool true (donated_exclusive a)
+  ignore (taken b);
+  raises_match ~msg:"dead" (dead "donated") (fun () -> B.keep [ a; b ]);
+  equal ~msg:"the other buffer" bool true (takes a)
 
-(* [consumable c b] says whether [consume c b] succeeds: for memory [c]
-   claims, live, spanned by [b] and not held, read by another claim or not. *)
-let test_consumable () =
-  let b = B.create Rig.host 16 and other = B.create Rig.host 16 in
-  let part = B.view b ~first:0 ~length:8 in
-  Claim.with_ ~read:[ b ] ~donate:[] (fun c ->
-      equal ~msg:"a view" bool false (Claim.consumable c part);
-      equal ~msg:"unclaimed" bool false (Claim.consumable c other);
-      claim_read b;
-      equal ~msg:"read by another claim" bool true (Claim.consumable c b);
-      claim_release b;
-      ignore (Claim.consume c ~why:"consumed" b);
-      equal ~msg:"dead" bool false (Claim.consumable c b));
-  let stale = Claim.with_ ~read:[ other ] ~donate:[] Fun.id in
-  equal ~msg:"ended" bool false (Claim.consumable stale other)
+(* Two domains: keeps of a memory against takes of it. A take succeeds only
+   while no keep holds the memory, and kills it; a keep of a taken memory
+   raises. *)
+type kept = { mutable taken : bool; mutable keeps : int }
 
-(* Two domains: holds of a memory against consumptions of it under a read
-   claim. A consumption succeeds only while no hold holds the memory, and kills
-   it; a hold of a consumed memory raises. Whole calls interleave here: the
-   window between a consumption's check for holds and its raise of the
-   generation lies inside one C call with no poll point, which no test can
-   hold, so its order is argued in claim.mli. *)
-type held = { mutable consumed : bool; mutable holds : int }
-
-let held_memory =
+let kept_memory =
   abstract
-    ~pp:(fun ppf r ->
-      Format.fprintf ppf "consumed %b, holds %d" r.consumed r.holds)
+    ~pp:(fun ppf r -> Format.fprintf ppf "taken %b, keeps %d" r.taken r.keeps)
     "m"
 
-(* The holds taken, kept reachable to the end of the run. *)
-let kept : Claim.hold list Atomic.t = Atomic.make []
+(* The keeps made, reachable to the end of the run. *)
+let keeps : B.keep list Atomic.t = Atomic.make []
 
-let rec keep h =
-  let hs = Atomic.get kept in
-  if not (Atomic.compare_and_set kept hs (h :: hs)) then keep h
+let rec retain k =
+  let ks = Atomic.get keeps in
+  if not (Atomic.compare_and_set keeps ks (k :: ks)) then retain k
 
-let take_hold b = keep (Claim.hold [ b ])
+let keep_one b = retain (B.keep [ b ])
 
-let judge_hold r = function
+let judge_keep r = function
   | Ok () ->
-      equal ~msg:"consumed" bool false r.consumed;
-      r.holds <- r.holds + 1
-  | Error (Invalid_argument _) -> equal ~msg:"consumed" bool true r.consumed
+      equal ~msg:"taken" bool false r.taken;
+      r.keeps <- r.keeps + 1
+  | Error (Invalid_argument _) -> equal ~msg:"taken" bool true r.taken
   | Error e -> raise e
 
-(* What a consumption under a read claim found: the memory consumed, held, or
-   the buffer dead. A held memory is never consumed later, as the holds are
-   kept, so a refusal of a buffer still live is a hold's. *)
-let consume_read b =
-  match
-    Claim.with_ ~read:[ b ] ~donate:[] (fun c ->
-        ignore (Claim.consume c ~why:"consumed" b))
-  with
-  | () -> "consumed"
-  | exception Invalid_argument _ -> if B.dead b = None then "held" else "dead"
-
-let judge_consume r = function
-  | Ok "consumed" ->
-      equal ~msg:"consumed, held" (pair bool int) (false, 0)
-        (r.consumed, r.holds);
-      r.consumed <- true
-  | Ok "held" ->
-      equal ~msg:"consumed" bool false r.consumed;
-      greater ~msg:"holds" int ~than:0 r.holds
-  | Ok "dead" -> equal ~msg:"consumed" bool true r.consumed
-  | Ok what -> failf "a consumption found %s" what
-  | Error e -> raise e
-
-let hold_commands =
-  [
-    command "make"
-      (Gen.unit @-> makes held_memory)
-      (fun () -> { consumed = false; holds = 0 })
-      (fun () -> B.create Rig.host 64);
-    command "hold" (held_memory ^-> judges unit) judge_hold take_hold;
-    command "consume"
-      (held_memory ^-> judges string)
-      judge_consume consume_read;
-  ]
-
-(* Two domains: with_ of a group of two memories, against a read of the second
-   that ends in the same call. Whatever the order, no claim outlives its call:
-   at the end the group is exclusive again. *)
-type group = { b1 : B.t; b2 : B.t }
-
-let release_group g =
-  Claim.with_ ~read:[]
-    ~donate:[ g.b1; g.b2 ]
-    (fun c ->
-      equal ~msg:"exclusive at the end" (pair bool bool) (true, true)
-        (Claim.exclusive c g.b1, Claim.exclusive c g.b2))
-
-let two = abstract ~release:release_group "g"
-let make_group () = { b1 = B.create Rig.host 64; b2 = B.create Rig.host 64 }
-
-let with_group g =
-  Claim.with_ ~read:[]
-    ~donate:[ g.b1; g.b2 ]
-    (fun c -> Claim.exclusive c g.b1)
-
-let read_group g =
-  claim_read g.b2;
-  claim_release g.b2
-
-(* A call during another domain's with_ may find the memory held exclusive, and
-   a with_ during a read finds the group read. *)
-let judge_any () = function
-  | Ok _ | Error (Invalid_argument _) -> ()
-  | Error e -> raise e
-
-let group_commands =
-  [
-    command "make" (Gen.unit @-> makes two) ignore make_group;
-    command "with_" (two ^-> judges bool) judge_any with_group;
-    command "read" (two ^-> judges unit) judge_any read_group;
-  ]
-
-(* Two domains: reads, exports and shares against a donation that consumes the
-   memory when it holds it exclusive, and writes it in place through the buffer
-   the consumption gives, or a free, which consumes it as a donation does. A
-   read, an export or a share before the donation keeps it a read; one after a
-   consumption finds the buffer dead. A donation may also stay a read while
-   another domain's claims hold the memory. *)
-type memory = { mutable dead : bool; mutable reads : int; mutable out : bool }
-
-let memory =
-  abstract
-    ~pp:(fun ppf r ->
-      Format.fprintf ppf "dead %b, reads %d, outside %b" r.dead r.reads r.out)
-    "m"
-
-let judge_read r = function
-  | Ok () ->
-      equal ~msg:"dead" bool false r.dead;
-      r.reads <- r.reads + 1
-  | Error (Invalid_argument _) -> equal ~msg:"dead" bool true r.dead
-  | Error e -> raise e
-
-let judge_outside r = function
-  | Ok () ->
-      equal ~msg:"dead" bool false r.dead;
-      r.out <- true
-  | Error (Invalid_argument _) -> equal ~msg:"dead" bool true r.dead
-  | Error e -> raise e
-
-let judge_donate r = function
-  | Ok consumed ->
-      equal ~msg:"dead" bool false r.dead;
-      if consumed then
-        equal ~msg:"reads, outside" (pair int bool) (0, false) (r.reads, r.out);
-      r.dead <- consumed
-  | Error (Invalid_argument _) -> equal ~msg:"dead" bool true r.dead
-  | Error e -> raise e
-
-(* A free consumes as a donation does. One that keeps the memory found
-   another claim on it, such as another domain's donation holding it
-   exclusive before it consumes, which no order of whole calls shows. *)
-let judge_free r = function
+let judge_take_kept r = function
   | Ok true ->
-      equal ~msg:"dead, reads, outside" (triple bool int bool)
-        (false, 0, false) (r.dead, r.reads, r.out);
-      r.dead <- true
-  | Ok false -> ()
-  | Error (Invalid_argument _) -> equal ~msg:"dead" bool true r.dead
+      equal ~msg:"taken, keeps" (pair bool int) (false, 0) (r.taken, r.keeps);
+      r.taken <- true
+  | Ok false ->
+      equal ~msg:"taken" bool false r.taken;
+      greater ~msg:"keeps" int ~than:0 r.keeps
+  | Error (Invalid_argument _) -> equal ~msg:"taken" bool true r.taken
   | Error e -> raise e
 
-let judge_c_claim r = function
-  | Ok R.Claimed ->
-      equal ~msg:"dead" bool false r.dead;
-      r.reads <- r.reads + 1
-  | Ok (R.Dead | R.Exclusive) -> equal ~msg:"dead" bool true r.dead
-  | Ok a -> failf "claim answered %a" R.pp_answer a
-  | Error e -> raise e
-
-let export b = ignore (B.export b Bigarray.char)
-
-let donate b =
-  match Rig_support.donated b with
-  | None -> false
-  | Some b' ->
-      B.write b' Bigarray.char (fun a -> Bigarray.Array1.fill a 'd');
-      true
-
-let donation_commands =
+let keep_commands =
   [
     command "make"
-      (Gen.unit @-> makes memory)
-      (fun () -> { dead = false; reads = 0; out = false })
+      (Gen.unit @-> makes kept_memory)
+      (fun () -> { taken = false; keeps = 0 })
       (fun () -> B.create Rig.host 64);
-    command "read" (memory ^-> judges unit) judge_read claim_read;
-    command "claim from C"
-      (memory ^-> judges answer)
-      judge_c_claim
-      (fun b -> R.claim b Rig.Read);
-    command "export" (memory ^-> judges unit) judge_outside export;
-    command "share" (memory ^-> judges unit) judge_outside Claim.share;
-    command "donate" (memory ^-> judges bool) judge_donate donate;
-    command "free" (memory ^-> judges bool) judge_free B.free;
+    command "keep" (kept_memory ^-> judges unit) judge_keep keep_one;
+    command "take"
+      (kept_memory ^-> judges bool)
+      judge_take_kept
+      (fun b -> Option.is_some (B.take ~why:"taken" [ b ]));
   ]
-
-(* Two domains: a donor that hands its claims to another domain and returns at
-   once, consumptions through those claims there, and donations of the same
-   memory. A consumption through the handed claims succeeds only before their
-   with_ has returned, and raises after. A donation's own consumption never
-   finds its buffer dead, and the memory is consumed at most once. A with_
-   beside another's may find the memory held exclusive or read, which no order
-   of whole calls shows, so those refusals and reads are accepted in any
-   state. So is a hand-over that finds claims handed: another domain's
-   hand-over puts them in the cell before its with_ returns, and a
-   consumption through them may follow. *)
-type handed = { x : B.t; cell : Claim.t option Atomic.t }
-type handing = { mutable handed : bool; mutable live : bool }
-
-let handing =
-  abstract
-    ~pp:(fun ppf r ->
-      Format.fprintf ppf "handed %b, live %b" r.handed r.live)
-    "h"
-
-let hand h =
-  if Option.is_some (Atomic.get h.cell) then "already"
-  else
-    match
-      Claim.with_ ~read:[] ~donate:[ h.x ] (fun c ->
-          Atomic.compare_and_set h.cell None (Some c))
-    with
-    | true -> "handed"
-    | false -> "already"
-    | exception Invalid_argument _ -> "refused"
-
-let consume_handed h =
-  match Atomic.get h.cell with
-  | None -> "none"
-  | Some c -> (
-      match Claim.consume c ~why:"handed" h.x with
-      | _ -> "consumed"
-      | exception Invalid_argument _ -> "refused")
-
-let donate_handed h =
-  let own c =
-    if not (Claim.exclusive c h.x) then "shared"
-    else
-      match Claim.consume c ~why:"donated" h.x with
-      | _ -> "consumed"
-      | exception Invalid_argument _ -> "own consumption refused"
-  in
-  match Claim.with_ ~read:[] ~donate:[ h.x ] own with
-  | s -> s
-  | exception Invalid_argument _ -> "refused"
-
-let judge_hand r = function
-  | Ok "handed" ->
-      equal ~msg:"handed before" bool false r.handed;
-      r.handed <- true
-  | Ok ("already" | "refused") -> ()
-  | Ok s -> failf "the hand-over answered %s" s
-  | Error e -> raise e
-
-let judge_handed_consume r = function
-  | Ok "none" -> equal ~msg:"handed" bool false r.handed
-  | Ok "consumed" ->
-      equal ~msg:"handed, live" (pair bool bool) (false, true)
-        (r.handed, r.live);
-      r.live <- false
-  | Ok "refused" -> equal ~msg:"handed or dead" bool true (r.handed || not r.live)
-  | Ok s -> failf "the consumption answered %s" s
-  | Error e -> raise e
-
-let judge_handed_donate r = function
-  | Ok "consumed" ->
-      equal ~msg:"live" bool true r.live;
-      r.live <- false
-  | Ok "shared" -> equal ~msg:"live" bool true r.live
-  | Ok "refused" -> ()
-  | Ok s -> failf "the donation answered %s" s
-  | Error e -> raise e
-
-let handed_commands =
-  [
-    command "make"
-      (Gen.unit @-> makes handing)
-      (fun () -> { handed = false; live = true })
-      (fun () -> { x = B.create Rig.host 64; cell = Atomic.make None });
-    command "hand" (handing ^-> judges string) judge_hand hand;
-    command "consume handed"
-      (handing ^-> judges string)
-      judge_handed_consume consume_handed;
-    command "donate" (handing ^-> judges string) judge_handed_donate
-      donate_handed;
-  ]
-
-(* An export under an exclusive claim is the consumer's: refused before the
-   consumption, made after it, and the memory is outside the claims once they
-   are released. *)
-let test_export_exclusive () =
-  let b = B.create Rig.host 16 in
-  let b' =
-    Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-        equal ~msg:"exclusive" bool true (Claim.exclusive c b);
-        raises_match ~msg:"before the consumption" Exn.invalid_arg (fun () ->
-            B.export b Bigarray.char);
-        let b' = Claim.consume c ~why:"donated" b in
-        Bigarray.Array1.fill (B.export b' Bigarray.char) 'x';
-        b')
-  in
-  Claim.with_ ~read:[] ~donate:[ b' ] (fun c ->
-      equal ~msg:"after the release" bool false (Claim.exclusive c b'))
 
 (* Claims from C *)
 
-(* A claim from C is a read claim: it sits beside other readers, keeps a
-   donation a read until it is released, and is refused under an exclusive claim
-   and on a dead buffer, where it leaves no claim behind. The buffer a
-   consumption gives is claimed at once. *)
+(* A claim from C is a read claim: it sits beside other readers, refuses a
+   take until it is released, and is refused on a dead buffer, where it
+   leaves no claim behind. The buffer a take gives is claimed at once. *)
 let test_c_claims () =
   let b = B.create Rig.host 16 in
   equal ~msg:"for reading" answer R.Claimed (R.claim b Rig.Read);
   equal ~msg:"for writing" answer R.Claimed (R.claim b Rig.Read_write);
-  Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-      equal ~msg:"donated under two claims" bool false (Claim.exclusive c b));
+  is_none ~msg:"a take under two claims" (B.take ~why:"taken" [ b ]);
   R.release b;
   R.release b;
-  let b' =
-    Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-        equal ~msg:"donated once released" bool true (Claim.exclusive c b);
-        equal ~msg:"under an exclusive claim" answer R.Exclusive
-          (R.claim b Rig.Read);
-        let b' = Claim.consume c ~why:"donated" b in
-        equal ~msg:"the consumed buffer" answer R.Claimed (R.claim b' Rig.Read);
-        R.release b';
-        b')
-  in
+  let b' = taken b in
+  equal ~msg:"the taken buffer" answer R.Claimed (R.claim b' Rig.Read);
+  R.release b';
   equal ~msg:"dead" answer R.Dead (R.claim b Rig.Read);
   equal ~msg:"its reason" (option string) (Some "donated") (R.why b);
-  Claim.with_ ~read:[] ~donate:[ b' ] (fun c ->
-      equal ~msg:"no claim left" bool true (Claim.exclusive c b'))
-
-let write d m =
-  let s = Rig.Submission.make d [| Rig_support.touching [| Rig.Submission.write |] |] in
-  ignore (submit s ~buffers:[| m |])
-
-let read d m =
-  let s = Rig.Submission.make d [| Rig_support.touching [| Rig.Submission.read |] |] in
-  ignore (submit s ~buffers:[| m |])
-
-(* Whether a claim holds [m]'s memory: a donation of it stays a read. *)
-let claimed m =
-  Claim.with_ ~read:[] ~donate:[ m ] (fun c -> not (Claim.exclusive c m))
+  equal ~msg:"no claim left" bool true (takes b')
 
 (* A claim waits for nothing: it answers Wait while a point the access must
    follow is unreached, the last write for reading and every use for writing,
@@ -1357,15 +1147,6 @@ let test_c_transport () =
   equal ~msg:"after a wait" answer R.Claimed (R.claim m Rig.Read);
   R.release m
 
-let lost = function Rig.Lost _ -> true | _ -> false
-let lost_by d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
-
-(* Loses [d]: its next submit fails. *)
-let lose d p =
-  P.fail p;
-  try ignore (submit (Rig.Submission.make d [||]))
-  with Rig.Lost _ -> ()
-
 (* A lost device's memory answers Lost even once its work on it was reached,
    holding the claim: the wait under it raises Lost. *)
 let test_c_lost () =
@@ -1402,145 +1183,13 @@ let test_wait () =
     (fun () ->
       Rig_support.await "a claim waiting at the gate" (fun () ->
           P.sleepers p = 1);
-      Claim.with_ ~read:[] ~donate:[ m ] (fun c ->
-          equal ~msg:"a donation while the wait is blocked" bool false
-            (Claim.exclusive c m)));
+      is_none ~msg:"a take while the wait is blocked"
+        (B.take ~why:"taken" [ m ]));
   equal ~msg:"the write is done" answer R.Claimed (R.claim m Rig.Read);
   R.release m;
-  Claim.with_ ~read:[] ~donate:[ m ] (fun c ->
-      equal bool ~msg:"a donation under the claim" false (Claim.exclusive c m));
+  is_none ~msg:"a take under the claim" (B.take ~why:"taken" [ m ]);
   claim_release m;
-  Claim.with_ ~read:[] ~donate:[ m ] (fun c ->
-      equal bool ~msg:"a donation once released" true (Claim.exclusive c m))
-
-(* Hold submit at a foreign wait, after it has collected the source's uses. A
-   donation must not overwrite the source before that submit publishes its own
-   use, whether the submission names the source as fixed memory or a copy part
-   names it. *)
-let test_submit_donation (name, kind) () =
-  let module Sub = Rig.Submission in
-  let producer, pp = P.open_ ("claim:submit-producer:" ^ name) in
-  let d, p = P.open_ ("claim:submit:" ^ name) in
-  let src = B.create d 8 and dst = B.create d 8 in
-  Rig_support.store (R.host src) 42;
-  Rig_support.store (R.host dst) 0;
-  let part work = work in
-  let run, buffers =
-    match kind with
-    | `Copy ->
-        ( Sub.take
-            (Sub.make d [| part Sub.(copy ~src:(Slot 0) ~dst:(Slot 1)) |]),
-          [| src; dst |] )
-    | `Fixed ->
-        let fill =
-          Sub.fill Rig_support.carry ~params:24
-        in
-        let s =
-          Sub.make
-            ~fixed:[ (src, Rig.Read); (dst, Rig.Read_write) ]
-            d
-            [| part fill |]
-        in
-        let run = Sub.take s and block = Sub.block s 0 in
-        Sub.Run.int64 run block 0 (Int64.of_int (Sub.address s dst));
-        Sub.Run.int64 run block 8 (Int64.of_int (Sub.address s src));
-        Sub.Run.int64 run block 16 8L;
-        (* The submit runs on another domain. *)
-        Sub.Run.release run;
-        (run, [||])
-  in
-  (* A submission holds its fixed memory for its life, and claims a run's
-     buffers only while a submit runs. *)
-  let free = kind = `Copy in
-  equal ~msg:"the source once the submission is made" bool free
-    (donated_exclusive src);
-  let point = submit (Sub.make producer [||]) in
-  P.gate pp;
-  let waiting =
-    Domain.spawn (fun () -> Rig.submit run ~waits:[| point |] ~buffers)
-  in
-  let exclusive = ref false in
-  Fun.protect
-    ~finally:(fun () ->
-      P.open_gate pp;
-      Rig.Point.wait (Domain.join waiting))
-    (fun () ->
-      Rig_support.await "submit waiting at the producer's gate" (fun () ->
-          P.sleepers pp = 1);
-      Claim.with_ ~read:[] ~donate:[ src ] (fun c ->
-          exclusive := Claim.exclusive c src;
-          if !exclusive then begin
-            let replacement = Claim.consume c ~why:"reused" src in
-            B.wait replacement Rig.Read_write;
-            Rig_support.store (R.host replacement) 99
-          end));
-  equal ~msg:"donation and the submitted copy's result" (pair bool int)
-    (false, 42)
-    (!exclusive, Rig_support.load (R.host dst));
-  equal ~msg:"the submitted work completed" int 0 (P.queued p);
-  equal ~msg:"the source after hand-over" bool free (donated_exclusive src)
-
-(* A submit refused for a run's buffer releases every claim it took on the
-   others, each buffer passed in two slots. *)
-let test_run_claim_refusals () =
-  let module Sub = Rig.Submission in
-  let d, p = P.open_ "claim:run-refusals" in
-  let buffers () = Array.init 5 (fun _ -> B.create d 8) in
-  let s = Sub.make d [| Rig_support.touching (Array.make 10 Sub.read) |] in
-  let slots bs = Array.init 10 (fun i -> bs.(i / 2)) in
-  let check bs =
-    Array.iteri
-      (fun i b ->
-        equal ~msg:(Printf.sprintf "buffer %d has no claim left" i) bool true
-          (donated_exclusive b))
-      bs
-  in
-  let bs = buffers () in
-  Array.iter
-    (fun b ->
-      Claim.with_ ~read:[] ~donate:[ b ] (fun _ ->
-          raises_match (Exn.invalid_arg ~sub:"held exclusive") (fun () ->
-              submit s ~buffers:(slots bs)));
-      check bs)
-    bs;
-  ignore (submit s ~buffers:(slots bs));
-  check bs;
-  for i = 0 to Array.length bs - 1 do
-    let bs = buffers () in
-    let replacement =
-      Claim.with_ ~read:[] ~donate:[ bs.(i) ] (fun c ->
-          Claim.consume c ~why:"replaced" bs.(i))
-    in
-    raises_match (Exn.invalid_arg ~sub:"replaced") (fun () ->
-        submit s ~buffers:(slots bs));
-    bs.(i) <- replacement;
-    check bs
-  done;
-  ignore (P.run p)
-
-(* A submit whose wait raises releases the claims on its run's buffers. *)
-let test_run_wait_raises () =
-  let module Sub = Rig.Submission in
-  let producer, pp = P.open_ "claim:run-raises-producer" in
-  let d, p = P.open_ "claim:run-raises" in
-  let a = B.create d 8 and b = B.create d 8 in
-  let s = Sub.make d [| Rig_support.touching (Array.make 3 Sub.read) |] in
-  let buffers = [| a; b; a |] in
-  let run = Sub.take s in
-  let point = submit (Sub.make producer [||]) in
-  P.interrupt pp;
-  let before =
-    Sys.signal Sys.sigint (Sys.Signal_handle (fun _ -> raise Exit))
-  in
-  Fun.protect
-    ~finally:(fun () -> Sys.set_signal Sys.sigint before)
-    (fun () ->
-      raises Exit (fun () -> Rig.submit run ~waits:[| point |] ~buffers));
-  equal ~msg:"both claims released" (pair bool bool) (true, true)
-    (donated_exclusive a, donated_exclusive b);
-  ignore (P.run pp);
-  ignore (Rig.submit run ~waits:[| point |] ~buffers);
-  ignore (P.run p)
+  is_some ~msg:"a take once released" (B.take ~why:"taken" [ m ])
 
 (* A read whose wait raises leaves no claim: a signal handler's exception
    during the wait. *)
@@ -1549,7 +1198,9 @@ let test_wait_raises () =
   let m = B.create d 64 in
   write d m;
   P.interrupt p;
-  let before = Sys.signal Sys.sigint (Sys.Signal_handle (fun _ -> raise Exit)) in
+  let before =
+    Sys.signal Sys.sigint (Sys.Signal_handle (fun _ -> raise Exit))
+  in
   Fun.protect
     ~finally:(fun () -> Sys.set_signal Sys.sigint before)
     (fun () -> raises Exit (fun () -> B.read m Bigarray.char ignore));
@@ -1636,65 +1287,243 @@ let test_c_fixed () =
   equal ~msg:"reached" answer R.Claimed (R.claim m Rig.Read);
   R.release m
 
-(* Claims on a lost device's memory raise Lost, and with_ releases what it took
-   first. *)
-let test_lost_claims () =
-  let d, p = P.open_ "claim:lost" in
-  let m = B.create d 64 in
-  let w = Rig.Submission.make d [| Rig_support.touching [| Rig.Submission.write |] |] in
-  ignore (submit w ~buffers:[| m |]);
-  P.fail p;
-  (try ignore (submit (Rig.Submission.make d [||])) with Rig.Lost _ -> ());
-  raises_match lost (fun () -> Claim.with_ ~read:[ m ] ~donate:[] ignore);
-  let h = B.create Rig.host 64 in
-  raises_match lost (fun () -> Claim.with_ ~read:[ h; m ] ~donate:[] ignore);
-  Claim.with_ ~read:[] ~donate:[ h ] (fun c ->
-      equal ~msg:"h's claims released" bool true (Claim.exclusive c h))
+(* Domains *)
 
-(* A buffer's death is a fact with its reason: none while it lives, the
-   consumption's reason once its memory is consumed; the buffer consume gives
-   lives. *)
-let test_dead_fact () =
-  let b = B.create Rig.host 16 in
-  equal ~msg:"live" (option string) None (B.dead b);
-  let b' =
-    Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-        Claim.consume c ~why:"donated" b)
+(* Hold submit at a foreign wait, after it has collected the source's uses. A
+   take must not overwrite the source before that submit publishes its own
+   use, whether the submission names the source as fixed memory or a copy
+   part names it. *)
+let test_submit_take (name, kind) () =
+  let module Sub = Rig.Submission in
+  let producer, pp = P.open_ ("claim:submit-producer:" ^ name) in
+  let d, p = P.open_ ("claim:submit:" ^ name) in
+  let src = B.create d 8 and dst = B.create d 8 in
+  Rig_support.store (R.host src) 42;
+  Rig_support.store (R.host dst) 0;
+  let run, buffers =
+    match kind with
+    | `Copy ->
+        ( Sub.take (Sub.make d [| Sub.(copy ~src:(Slot 0) ~dst:(Slot 1)) |]),
+          [| src; dst |] )
+    | `Fixed ->
+        let s =
+          Sub.make
+            ~fixed:[ (src, Rig.Read); (dst, Rig.Read_write) ]
+            d
+            [| Sub.fill Rig_support.carry ~params:24 |]
+        in
+        let run = Sub.take s and block = Sub.block s 0 in
+        Sub.Run.int64 run block 0 (Int64.of_int (Sub.address s dst));
+        Sub.Run.int64 run block 8 (Int64.of_int (Sub.address s src));
+        Sub.Run.int64 run block 16 8L;
+        (* The submit runs on another domain. *)
+        Sub.Run.release run;
+        (run, [||])
   in
-  equal ~msg:"consumed" (option string) (Some "donated") (B.dead b);
-  equal ~msg:"its successor" (option string) None (B.dead b')
-
-(* Host copies beside a donation *)
-
-let text b =
-  let s = Bytes.create (B.length b) in
-  B.blit_to_bytes b 0 s 0 (B.length b);
-  Bytes.to_string s
-
-let filled n c =
-  let b = B.create Rig.host n in
-  B.fill b c;
-  b
-
-(* A copy, blit or fill the host runs claims its memory before it waits. In
-   another domain, [access] waits at [p]'s gate for work on memory of [p]'s
-   device; meanwhile [b] is donated, and a donation that holds its memory
-   exclusive gives [donor] the consumed buffer to write in place. It is that
-   buffer if the donation held the memory, and how [access] ended. *)
-let donate_while_waiting p b access donor =
-  P.gate p;
-  let ended =
-    Domain.spawn (fun () ->
-        match access () with
-        | () -> "returned"
-        | exception e -> Printexc.to_string e)
+  (* A submission keeps its fixed memory for its life, and claims a run's
+     buffers only while a submit runs. *)
+  if kind = `Fixed then
+    equal ~msg:"the source once the submission is made" bool true
+      (claimed src);
+  let point = submit (Sub.make producer [||]) in
+  P.gate pp;
+  let waiting =
+    Domain.spawn (fun () -> Rig.submit run ~waits:[| point |] ~buffers)
   in
-  Rig_support.await "the host access waiting at the gate" (fun () ->
-      P.sleepers p = 1);
-  let donated = Rig_support.donated b in
-  Option.iter donor donated;
-  P.open_gate p;
-  (donated, Domain.join ended)
+  let took = ref false in
+  Fun.protect
+    ~finally:(fun () ->
+      P.open_gate pp;
+      Rig.Point.wait (Domain.join waiting))
+    (fun () ->
+      Rig_support.await "submit waiting at the producer's gate" (fun () ->
+          P.sleepers pp = 1);
+      match Rig_support.donated src with
+      | None -> ()
+      | Some replacement ->
+          took := true;
+          B.wait replacement Rig.Read_write;
+          Rig_support.store (R.host replacement) 99);
+  equal ~msg:"the take and the submitted copy's result" (pair bool int)
+    (false, 42)
+    (!took, Rig_support.load (R.host dst));
+  equal ~msg:"the submitted work completed" int 0 (P.queued p);
+  equal ~msg:"the source after hand-over" bool (kind = `Copy) (takes src)
+
+(* A submit refused for a run's buffer releases every claim it took on the
+   others, each buffer passed in two slots. *)
+let test_run_claim_refusals () =
+  let module Sub = Rig.Submission in
+  let d, p = P.open_ "claim:run-refusals" in
+  let buffers () = Array.init 5 (fun _ -> B.create d 8) in
+  let s = Sub.make d [| Rig_support.touching (Array.make 10 Sub.read) |] in
+  let slots bs = Array.init 10 (fun i -> bs.(i / 2)) in
+  let check bs =
+    Array.iteri
+      (fun i b ->
+        equal ~msg:(Printf.sprintf "buffer %d has no claim left" i) bool true
+          (takes b))
+      bs
+  in
+  let bs = buffers () in
+  ignore (submit s ~buffers:(slots bs));
+  check bs;
+  for i = 0 to 4 do
+    let bs = buffers () in
+    let replacement = taken ~why:"replaced" bs.(i) in
+    raises_match (dead "replaced") (fun () -> submit s ~buffers:(slots bs));
+    bs.(i) <- replacement;
+    check bs
+  done;
+  ignore (P.run p)
+
+(* A submit whose wait raises releases the claims on its run's buffers. *)
+let test_run_wait_raises () =
+  let module Sub = Rig.Submission in
+  let producer, pp = P.open_ "claim:run-raises-producer" in
+  let d, p = P.open_ "claim:run-raises" in
+  let a = B.create d 8 and b = B.create d 8 in
+  let s = Sub.make d [| Rig_support.touching (Array.make 3 Sub.read) |] in
+  let run = Sub.take s in
+  let point = submit (Sub.make producer [||]) in
+  P.interrupt pp;
+  let before =
+    Sys.signal Sys.sigint (Sys.Signal_handle (fun _ -> raise Exit))
+  in
+  Fun.protect
+    ~finally:(fun () -> Sys.set_signal Sys.sigint before)
+    (fun () ->
+      raises Exit (fun () ->
+          Rig.submit run ~waits:[| point |] ~buffers:[| a; b; a |]));
+  let a = Rig_support.donated a and b = Rig_support.donated b in
+  equal ~msg:"both claims released" (pair bool bool) (true, true)
+    (Option.is_some a, Option.is_some b);
+  let a = require_some a and b = require_some b in
+  ignore (P.run pp);
+  ignore (Rig.submit run ~waits:[| point |] ~buffers:[| a; b; a |]);
+  ignore (P.run p)
+
+(* Two domains: takes of a group of two memories, in either order, against a
+   read of the second that ends in the same call. Whatever the order, no
+   claim outlives its call: at the end the group is taken unless a take took
+   it. A take beside a read may find the read's claim and answer [None],
+   which no order of whole calls shows: a read's claim spans its call. *)
+type grouped = { mutable both : bool }
+type group = { b1 : B.t; b2 : B.t }
+
+let end_group g =
+  if B.dead g.b1 = None then
+    is_some ~msg:"taken at the end" (B.take ~why:"ended" [ g.b1; g.b2 ])
+
+let two =
+  abstract
+    ~pp:(fun ppf r -> Format.fprintf ppf "taken %b" r.both)
+    ~release:end_group "g"
+
+let make_group () = { b1 = B.create Rig.host 64; b2 = B.create Rig.host 64 }
+let take_group g = Option.is_some (B.take ~why:"taken" [ g.b1; g.b2 ])
+
+(* A take in the other order, which meets the first's step at its second
+   word, holding one, as two such takes on two domains do. *)
+let take_reversed g = Option.is_some (B.take ~why:"taken" [ g.b2; g.b1 ])
+
+let read_group g =
+  claim_read g.b2;
+  claim_release g.b2
+
+let judge_take_group r = function
+  | Ok taken ->
+      equal ~msg:"taken" bool false r.both;
+      r.both <- taken
+  | Error (Invalid_argument _) -> equal ~msg:"taken" bool true r.both
+  | Error e -> raise e
+
+let judge_read_group r = function
+  | Ok () -> equal ~msg:"taken" bool false r.both
+  | Error (Invalid_argument _) -> equal ~msg:"taken" bool true r.both
+  | Error e -> raise e
+
+let group_commands =
+  [
+    command "make" (Gen.unit @-> makes two) (fun () -> { both = false })
+      make_group;
+    command "take" (two ^-> judges bool) judge_take_group take_group;
+    command "take reversed" (two ^-> judges bool) judge_take_group
+      take_reversed;
+    command "read" (two ^-> judges unit) judge_read_group read_group;
+  ]
+
+(* Two domains: reads, claims from C, exports and shares against a take that
+   writes the memory in place through the buffer it gives, or a free, which
+   takes the memory as a take does. A read, an export or a share before the
+   take refuses it; one after it finds the buffer dead. *)
+type memory = { mutable dead : bool; mutable reads : int; mutable out : bool }
+
+let memory =
+  abstract
+    ~pp:(fun ppf r ->
+      Format.fprintf ppf "dead %b, reads %d, outside %b" r.dead r.reads r.out)
+    "m"
+
+let judge_read r = function
+  | Ok () ->
+      equal ~msg:"dead" bool false r.dead;
+      r.reads <- r.reads + 1
+  | Error (Invalid_argument _) -> equal ~msg:"dead" bool true r.dead
+  | Error e -> raise e
+
+let judge_outside r = function
+  | Ok () ->
+      equal ~msg:"dead" bool false r.dead;
+      r.out <- true
+  | Error (Invalid_argument _) -> equal ~msg:"dead" bool true r.dead
+  | Error e -> raise e
+
+(* A take and a free end the memory's buffer alike. *)
+let judge_take r = function
+  | Ok true ->
+      equal ~msg:"dead, reads, outside" (triple bool int bool)
+        (false, 0, false) (r.dead, r.reads, r.out);
+      r.dead <- true
+  | Ok false ->
+      equal ~msg:"dead" bool false r.dead;
+      equal ~msg:"read or outside" bool true (r.reads > 0 || r.out)
+  | Error (Invalid_argument _) -> equal ~msg:"dead" bool true r.dead
+  | Error e -> raise e
+
+let judge_c_claim r = function
+  | Ok R.Claimed ->
+      equal ~msg:"dead" bool false r.dead;
+      r.reads <- r.reads + 1
+  | Ok R.Dead -> equal ~msg:"dead" bool true r.dead
+  | Ok a -> failf "claim answered %a" R.pp_answer a
+  | Error e -> raise e
+
+let export b = ignore (B.export b Bigarray.char)
+
+let take_write b =
+  match Rig_support.donated b with
+  | None -> false
+  | Some b' ->
+      B.write b' Bigarray.char (fun a -> Bigarray.Array1.fill a 'd');
+      true
+
+let take_commands =
+  [
+    command "make"
+      (Gen.unit @-> makes memory)
+      (fun () -> { dead = false; reads = 0; out = false })
+      (fun () -> B.create Rig.host 64);
+    command "read" (memory ^-> judges unit) judge_read claim_read;
+    command "claim from C"
+      (memory ^-> judges answer)
+      judge_c_claim
+      (fun b -> R.claim b Rig.Read);
+    command "export" (memory ^-> judges unit) judge_outside export;
+    command "share" (memory ^-> judges unit) judge_outside B.share;
+    command "take" (memory ^-> judges bool) judge_take take_write;
+    command "free" (memory ^-> judges bool) judge_take B.free;
+  ]
 
 (* Two domains: a wait held at its device's point while a free on the other
    kills its buffer, and the memory returns once the work ran. The wait
@@ -1743,18 +1572,38 @@ let test_free_beside_borrow () =
   equal ~msg:"the borrow" string "borrowed" (Domain.join borrowed);
   equal ~msg:"a free once it returned" bool true (B.free h)
 
+(* A copy, blit or fill the host runs claims its memory before it waits. In
+   another domain, [access] waits at [p]'s gate for work on memory of [p]'s
+   device; meanwhile [b] is taken, and a take that succeeds gives [taker]
+   the buffer to write in place. It is that buffer if the take succeeded,
+   and how [access] ended. *)
+let take_while_waiting p b access taker =
+  P.gate p;
+  let ended =
+    Domain.spawn (fun () ->
+        match access () with
+        | () -> "returned"
+        | exception e -> Printexc.to_string e)
+  in
+  Rig_support.await "the host access waiting at the gate" (fun () ->
+      P.sleepers p = 1);
+  let got = Rig_support.donated b in
+  Option.iter taker got;
+  P.open_gate p;
+  (got, Domain.join ended)
+
 (* The copy reads the source after the wait for its destination's last use. *)
 let test_host_copy_source () =
   let d, p = P.open_ "claim:host-copy-source" in
   let src = filled 64 's' and dst = B.create d 64 in
   write d dst;
-  let donated, ended =
-    donate_while_waiting p src
+  let got, ended =
+    take_while_waiting p src
       (fun () -> B.copy ~src ~dst)
       (fun b -> B.fill b 'X')
   in
   equal ~msg:"the copy" string "returned" ended;
-  equal ~msg:"donated during the copy" bool false (Option.is_some donated);
+  equal ~msg:"taken during the copy" bool false (Option.is_some got);
   equal ~msg:"the copy's bytes" string (String.make 64 's') (text dst)
 
 (* The copy writes the destination after the wait for its source's last
@@ -1765,24 +1614,26 @@ let test_host_copy_destination () =
   B.fill src 's';
   write d src;
   let dst = filled 64 'd' in
-  let donated, ended =
-    donate_while_waiting p dst
+  let got, ended =
+    take_while_waiting p dst
       (fun () -> B.copy ~src ~dst)
       (fun b -> B.fill b 'X')
   in
   Option.iter
-    (fun b -> equal ~msg:"the donor's bytes" string (String.make 64 'X') (text b))
-    donated;
+    (fun b ->
+      equal ~msg:"the taker's bytes" string (String.make 64 'X') (text b))
+    got;
   equal ~msg:"the copy" string "returned" ended;
-  equal ~msg:"donated during the copy" bool false (Option.is_some donated);
+  equal ~msg:"taken during the copy" bool false (Option.is_some got);
   equal ~msg:"the copy's bytes" string (String.make 64 's') (text dst)
 
 (* A blit or fill on memory of [d] the host addresses waits for the work on
-   it, and keeps a donation to a read claim meanwhile. *)
+   it, and refuses a take meanwhile. *)
 let host_accesses =
   [
     ("a blit to bytes", fun b -> B.blit_to_bytes b 0 (Bytes.create 64) 0 64);
-    ("a blit from a string", fun b -> B.blit_from_string (String.make 64 'a') 0 b 0 64);
+    ( "a blit from a string",
+      fun b -> B.blit_from_string (String.make 64 'a') 0 b 0 64 );
     ("a fill", fun b -> B.fill b 'f');
   ]
 
@@ -1792,103 +1643,18 @@ let test_host_access_claims () =
       let d, p = P.open_ ("claim:host-access-" ^ name) in
       let b = B.create d 64 in
       write d b;
-      let donated, ended =
-        donate_while_waiting p b (fun () -> access b) ignore
-      in
+      let got, ended = take_while_waiting p b (fun () -> access b) ignore in
       equal ~msg:(name ^ " returned") string "returned" ended;
-      equal ~msg:(name ^ ", donated during it") bool false
-        (Option.is_some donated))
+      equal ~msg:(name ^ ", taken during it") bool false (Option.is_some got))
     host_accesses
 
-(* A donor submits work on the buffer it consumed before its with_ returns:
-   the work writes the memory in place, and the host reads the write. *)
-let test_donor_submits () =
-  let module Sub = Rig.Submission in
-  let d, _ = P.open_ "claim:donor-submits" in
-  let b = B.create d 8 in
-  Rig_support.store (R.host b) 0;
-  let b' =
-    Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-        let b' = Claim.consume c ~why:"donated" b in
-        let s =
-          Sub.make ~fixed:[ (b', Rig.Read_write) ] d
-            [| Sub.fill Rig_support.poke ~params:16 |]
-        in
-        let run = Sub.take s in
-        Sub.Run.int64 run (Sub.block s 0) 0 (Int64.of_int (Sub.address s b'));
-        Sub.Run.int64 run (Sub.block s 0) 8 42L;
-        Rig.Point.wait (Rig.submit run ~buffers:[||]);
-        b')
-  in
-  equal ~msg:"the word the work stored" int 42
-    (B.read b' Bigarray.int64 (fun a -> Int64.to_int a.{0}))
-
-(* The consumed buffer *)
-
-type place = Host | Addressed | Unaddressed
-
-let pp_place ppf = function
-  | Host -> Format.pp_print_string ppf "host"
-  | Addressed -> Format.pp_print_string ppf "addressed"
-  | Unaddressed -> Format.pp_print_string ppf "unaddressed"
-
-let addressed = lazy (fst (P.open_ "claim:consumed-addressed"))
-
-let unaddressed =
-  lazy (fst (P.open_ ~host_visible:false "claim:consumed-unaddressed"))
-
-let device = function
-  | Host -> Rig.host
-  | Addressed -> Lazy.force addressed
-  | Unaddressed -> Lazy.force unaddressed
-
-let consumed_cases =
-  List.concat_map
-    (fun place -> List.map (fun n -> (place, n)) [ 0; 1; 8; 4096 ])
-    [ Host; Addressed; Unaddressed ]
-
-let consumed_name (place, n) =
-  Format.asprintf "%a memory of %d bytes" pp_place place n
-
-(* [exclusive c b] holds until [c] consumes [b], and is false after it for
-   both buffers. The consumed buffer is then used as any buffer its holder
-   made: work submitted on it, the host's reads and writes, a copy a device
-   runs, a share. *)
-let consumed_law (place, n) =
-  let d = device place in
-  let b = B.create d n in
-  let other = B.create (device Unaddressed) n in
-  let b' =
-    Claim.with_ ~read:[] ~donate:[ b ] @@ fun c ->
-    equal ~msg:"before the consumption" bool true (Claim.exclusive c b);
-    let b' = Claim.consume c ~why:"consumed" b in
-    equal ~msg:"after, the consumed buffer" (pair bool bool) (false, false)
-      (Claim.exclusive c b, Claim.exclusive c b');
-    if place <> Host then write d b';
-    (* A device's memory of no bytes has no host address. *)
-    if place = Host || (place = Addressed && n > 0) then begin
-      B.write b' Bigarray.char (fun a -> Bigarray.Array1.fill a 'w');
-      equal ~msg:"read back" string (String.make n 'w')
-        (B.read b' Bigarray.char (fun a ->
-             String.init (Bigarray.Array1.dim a) (Bigarray.Array1.get a)))
-    end
-    else B.fill b' 'w';
-    B.copy ~src:b' ~dst:other;
-    Claim.share b';
-    b'
-  in
-  equal ~msg:"the copy" string (String.make n 'w') (text other);
-  equal ~msg:"shared for good" bool false (donated_exclusive b')
-
-(* Two domains: host copies, blits and fills of a memory beside donations of
-   it. A donation that holds the memory exclusive consumes it, fills the
-   buffer it gets and reads it back. Every access writes or reads the byte the
-   memory was made with, so while the memory is live they agree whatever their
-   order. An access after a consumption finds the buffer dead; one beside a
-   donation may find it held exclusive, which an order with the donation first
-   explains. A donation may also find the memory read by an access beside it
-   and answer [None], in any state, which no order of whole calls shows: an
-   access's claim spans its call. *)
+(* Two domains: host copies, blits and fills of a memory beside takes of it.
+   A take that succeeds fills the buffer it gets and reads it back. Every
+   access writes or reads the byte the memory was made with, so while the
+   memory is live they agree whatever their order. An access after a take
+   finds the buffer dead. A take may also find the memory read by an access
+   beside it and answer [None], in any state, which no order of whole calls
+   shows: an access's claim spans its call. *)
 type copied = { mutable gone : bool }
 
 let copied =
@@ -1908,11 +1674,11 @@ let judge_access r = function
   | Error (Invalid_argument _) -> equal ~msg:"dead" bool true r.gone
   | Error e -> raise e
 
-let judge_donor r = function
+let judge_taker r = function
   | Ok None -> equal ~msg:"dead" bool false r.gone
   | Ok (Some s) ->
       equal ~msg:"dead" bool false r.gone;
-      equal ~msg:"the donor's bytes" string (String.make 64 'X') s;
+      equal ~msg:"the taker's bytes" string (String.make 64 'X') s;
       r.gone <- true
   | Error (Invalid_argument _) -> equal ~msg:"dead" bool true r.gone
   | Error e -> raise e
@@ -1934,9 +1700,9 @@ let copy_commands =
         B.blit_from_string (String.make 64 made) 0 b 0 64);
     command "fill" (copied ^-> judges unit) judge_access (fun b ->
         B.fill b made);
-    command "donate"
+    command "take"
       (copied ^-> judges (option string))
-      judge_donor
+      judge_taker
       (fun b ->
         Rig_support.donated b
         |> Option.map (fun b' ->
@@ -1946,69 +1712,48 @@ let copy_commands =
 
 let tests =
   [
-    group ~timeout "claims"
+    group ~timeout "takes"
       [
         prop ~count:law_cases
-          ~examples:
-            [
-              (* A donation overlapping a read that begins before a shorter
-                 read: the overlap is not with the read next to it in memory
-                 order. *)
-              {
-                n = 27;
-                views =
-                  [ (0, 0, Read); (19, 1, Donate); (2, 1, Read); (0, 20, Read) ];
-                claimed = false;
-                outside = Inside;
-                raises = false;
-              };
-            ]
-          "with_ refuses overlapping donations and holds what spans alone" case
-          law;
-        test "donations that overlap each other are refused"
-          test_donations_overlap;
-        test "memories with no address are claimed apart"
-          test_no_address_spans;
-        test "readers share a memory, an exclusive claim excludes them"
-          test_claims;
-        test "a donor uses memory it holds exclusive once it consumes it"
-          test_exclusive_writes;
+          "a take takes the memory of every buffer or of none" case take_law;
+        test "a take is refused by any claim and leaves its buffers live"
+          test_take_refused;
+        test "a take inside a read of one of its buffers is refused"
+          test_take_reading;
+        test "buffers of a take over one memory refuse it" test_take_overlap;
+        test "a take takes every memory and kills every earlier buffer"
+          test_take;
+        test "memories with no address are told apart" test_no_address;
+        test "a taker uses the memory through the buffer the take gives"
+          test_taken_writes;
         test "a borrow and the memory it maps share one count"
           test_borrow_counts;
-        test "a borrow of memory held exclusive raises" test_borrow_exclusive;
-        test "a bigarray's memory is never exclusive" test_of_bigarray;
-        test "memory shared through any of its buffers is never exclusive"
+        test "a borrow of a taken buffer raises" test_borrow_taken;
+        test "a bigarray's memory is never taken" test_of_bigarray;
+        test "memory shared through any of its buffers is never taken"
           test_share_covers;
-        test "each buffer of a donation is exclusive on its own"
+        test "a take of memories of two devices takes both or neither"
           test_shards;
-        test "an export under an exclusive claim waits for the consumption"
-          test_export_exclusive;
-        test "a donor submits work on the consumed buffer inside with_"
-          test_donor_submits;
-        cases
-          "exclusive holds until the consumption, and the consumed buffer is \
-           used as any other"
-          ~id:consumed_name consumed_cases consumed_law;
+        test "an export of taken memory is the taker's" test_export_taken;
+        test "a taker submits work on the buffer the take gives"
+          test_taker_submits;
+        cases "the buffer a take gives is used as any other" ~id:taken_name
+          taken_cases taken_law;
       ];
-    group ~timeout "consumption"
+    group ~timeout "taken memory"
       [
-        test "memory consumed twice lives while its last buffer does"
-          test_consume_twice;
-        test "a buffer consumed while another claim reads admits only reads"
-          test_consume_read;
-        test "only a claimed buffer that spans its memory is consumed"
-          test_consume_refusals;
-        test "a dead buffer refuses claims and accepts a release"
-          test_dead_claims;
+        test "memory taken twice lives while its last buffer does"
+          test_take_twice;
+        test "a dead buffer refuses claims and keeps" test_dead_claims;
         test "the C claim of a closed device's buffer answers its loss"
           test_closed_slot_claim;
-        test "sharing a dead buffer or memory held exclusive is refused"
-          test_share_refused;
-        test "a claim whose with_ returned holds nothing" test_stale_returned;
-        test "a claim whose with_ raised holds nothing" test_stale_raised;
-        test "a signal pending as with_'s function returns leaves no claim"
+        test "sharing a dead buffer is refused" test_share_refused;
+        test "a buffer's death is a fact with its reason" test_dead_fact;
+        test "a take of memory a loss reaches raises and takes nothing"
+          test_lost_take;
+        test "a signal pending as a read's function returns leaves no claim"
           test_signal_returned;
-        test "a signal pending as with_'s function raises leaves no claim"
+        test "a signal pending as a read's function raises leaves no claim"
           test_signal_raised;
         test "a signal pending as a Mapped write's function returns lands \
               after its flush"
@@ -2022,29 +1767,26 @@ let tests =
         test "an exception at any allocation of a fill of Mapped memory \
               leaves no claim"
           test_walk_fill;
-        test "a buffer's death is a fact with its reason" test_dead_fact;
-        test "claims on memory a loss reaches raise and release"
-          test_lost_claims;
+        test "an exception at any allocation of a take takes all or none"
+          test_walk_take;
       ];
-    group ~timeout "holds"
+    group ~timeout "keeps"
       [
-        test "a hold keeps memory from donation until it is collected"
-          test_hold;
-        test "a hold of a dead buffer or memory held exclusive holds nothing"
-          test_hold_refusals;
-        test "a release ends a hold before its collection" test_release;
-        test "a later release and the collection of a released hold end \
+        test "a keep holds memory from takes until it is collected" test_keep;
+        test "a keep of a dead buffer keeps nothing" test_keep_refusals;
+        test "a release ends a keep before its collection" test_release;
+        test "a later release and the collection of a released keep end \
               nothing"
           test_release_once;
         stateful ~domains:2
-          "releases of one hold on two domains beside its collection end it \
+          "releases of one keep on two domains beside its collection end it \
            once"
           release_commands;
-        test "a submission holds the memory every run reads" test_submission_holds;
-        test "consumable says whether a consumption succeeds" test_consumable;
+        test "a submission keeps the memory every run reads"
+          test_submission_keeps;
         stateful ~domains:2
-          "holds beside consumptions of one memory are ordered with them"
-          hold_commands;
+          "keeps beside takes of one memory are ordered with them"
+          keep_commands;
       ];
     group ~timeout "claims from C"
       [
@@ -2076,39 +1818,34 @@ let tests =
       ];
     group ~timeout "domains"
       [
-        test "fixed memory prevents donation during submit"
-          (test_submit_donation ("fixed", `Fixed));
-        test "a run's buffers prevent donation during submit"
-          (test_submit_donation ("copy", `Copy));
+        test "fixed memory refuses a take during submit"
+          (test_submit_take ("fixed", `Fixed));
+        test "a run's buffers refuse a take during submit"
+          (test_submit_take ("copy", `Copy));
         test "a run's refused buffer releases every claim the submit took"
           test_run_claim_refusals;
         test "an exceptional submit wait releases its run's claims"
           test_run_wait_raises;
         stateful ~domains:2
-          "with_ of a group and reads of its memory leave no claim behind"
+          "takes of a group and reads of its memory leave no claim behind"
           group_commands;
         stateful ~domains:2
-          "reads, exports and shares beside a consuming donation are ordered \
+          "reads, exports and shares beside a take or a free are ordered \
            with it"
-          donation_commands;
+          take_commands;
         test "a wait beside a free walks the stamps it began on"
           test_free_beside_wait;
         test "a free beside a borrow that maps changes nothing"
           test_free_beside_borrow;
-        test "a host copy waiting holds its source from a donation"
+        test "a host copy waiting holds its source from a take"
           test_host_copy_source;
-        test "a host copy waiting holds its destination from a donation"
+        test "a host copy waiting holds its destination from a take"
           test_host_copy_destination;
-        test "a host blit or fill waiting holds its memory from a donation"
+        test "a host blit or fill waiting holds its memory from a take"
           test_host_access_claims;
         stateful ~domains:2
-          "host copies, blits and fills beside donations are ordered with \
-           them"
+          "host copies, blits and fills beside takes are ordered with them"
           copy_commands;
-        stateful ~domains:2
-          "a consumption through handed claims beside their return and \
-           donations is ordered with them"
-          handed_commands;
       ];
   ]
 

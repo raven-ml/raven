@@ -38,7 +38,6 @@ type answer =
   | Wrong_dtype
   | Dead_buffer
   | Off_host
-  | Held_exclusive
   | Read_only
   | Repeated_elements
   | Overlapping
@@ -49,7 +48,6 @@ let reason = function
   | Wrong_dtype -> "an operand's dtype is not the one the kernel loads"
   | Dead_buffer -> "an operand's buffer is dead"
   | Off_host -> "the host does not address an operand's memory"
-  | Held_exclusive -> "an operand's memory is held exclusive"
   | Read_only -> "a written operand's memory is read-only"
   | Repeated_elements -> "a written operand reaches an element twice"
   | Overlapping -> "a written operand shares bytes with another operand"
@@ -58,9 +56,8 @@ let reason = function
 let pp_operand ppf (Any a) =
   Format.fprintf ppf "%a %a" Dtype.pp a.dtype Shape.pp (Layout.shape a.layout)
 
-(* The reason a [Dead_buffer] or [Held_exclusive] gives: each operand dead by
-   now, in [operands]' order, with the reason its consumer gave. A holder of
-   exclusive memory consumes it, or releases it unread. *)
+(* The reason a [Dead_buffer] gives: each operand dead, in [operands]' order,
+   with the reason its taker gave. *)
 let dead answer operands =
   let was (Any a as x) =
     Option.map
@@ -74,7 +71,7 @@ let dead answer operands =
 let refused name answer operands =
   let why =
     match answer with
-    | Dead_buffer | Held_exclusive -> dead answer operands
+    | Dead_buffer -> dead answer operands
     | _ -> reason answer
   in
   invalid_argf "%s: %s (%a)" name why

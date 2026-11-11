@@ -207,7 +207,7 @@ val place :
   by:string -> 'e Devices.placement -> ('v, 's, 'd) t -> ('v, 's, 'e) t
 (** [place ~by p x] is {!eval} of [Place (p, x)]. With no live [Extent], a
     live value on one device already at [p] answers at once, over its array,
-    whose memory it marks shared ({!Rig.Claim.share}). *)
+    whose memory it marks shared ({!Rig.Buffer.share}). *)
 
 val move : by:string -> Nx_array.Move.t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [move ~by mv x] is {!eval} of [Move (mv, x)]. With no live [Extent], a

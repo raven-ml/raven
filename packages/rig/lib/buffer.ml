@@ -17,8 +17,8 @@ type access = Def.access = Read | Read_write
 
 let generation (a : alloc) = Atomic.Loc.get [%atomic.loc a.generation]
 
-(* A buffer is dead once its memory is consumed, or its borrow's lease
-   ended. *)
+(* A buffer is dead once a take or a free raised its memory's generation, or
+   its borrow's lease ended. *)
 let is_live b =
   b.generation = generation b.mem.alloc && not (Memory.lease_ended b.mem)
 
@@ -178,8 +178,7 @@ let borrow d b =
   else begin
     (* A read claim keeps a free from returning the memory while it maps: the
        claim, then the checks under it, as every claim does. *)
-    if not (Memory.claim_add b) then
-      invalid_argf "Rig.Buffer.borrow: the memory is held exclusive";
+    Memory.claim_add b;
     match
       check_live "Buffer.borrow" b;
       Memory.check b.mem;
@@ -294,10 +293,9 @@ let view_of fn ~export ~window (type a b) (k : (a, b) Bigarray.kind) b :
        elements"
       fn bytes b.offset size;
   if export then begin
-    if not (Memory.mark_outside b.mem.alloc) then
-      invalid_argf "Rig.%s: the memory is held exclusive" fn;
-    (* A consumption between the first check and the export killed [b]: the
-       memory stays marked, which costs only its donations. *)
+    Memory.mark_outside b.mem.alloc;
+    (* A take between the first check and the mark killed [b]: the memory
+       stays marked, which costs only its takes. *)
     check_live fn b
   end;
   let a = b.mem.alloc in
@@ -385,8 +383,8 @@ let aligned b ~at n =
 
 (* The driver answers for the allocation's own region, whichever device's
    buffer [b] is. The memory leaves the claims before the driver is asked, so
-   that no donation writes what the function may read; a refusal leaves it
-   outside, which costs only its donations. *)
+   that no take writes what the function may read; a refusal leaves it
+   outside, which costs only its takes. *)
 let dma b ~fn =
   let name = "Buffer.dma" in
   Dev.check_held name;
@@ -397,8 +395,7 @@ let dma b ~fn =
   | Driver_memory { region = Region { m; h; r = Some r; _ }; _ }
     when not a.owner.software ->
       let module D = (val m) in
-      if not (Memory.mark_outside a) then
-        invalid_argf "Rig.%s: the memory is held exclusive" name;
+      Memory.mark_outside a;
       check_live name b;
       let answer = Dev.counted a.owner Dev.Any (fun () -> D.dma h r ~fn) () in
       if Result.is_ok answer then Memory.mark_reached e;

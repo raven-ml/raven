@@ -19,9 +19,9 @@
     it, as a 0-d view, and position [0]. On the host, {!issue} reads the
     reduction and raises at once. On another set it leaves the reduction
     unread and adds the check to the calling domain's {e pending} checks on
-    the set, which the domain's systhreads share. A pending check holds its
+    the set, which the domain's systhreads share. A pending check keeps its
     data's memory and its reduction's, a flag's own memory for one flag
-    ({!Rig.Claim.val-hold}), so that no donation writes what its failure
+    ({!Rig.Buffer.val-keep}), so that no donation writes what its failure
     reports. A {!wait} on the set drains them: it reads them oldest first
     and raises the first failure. A failing check's exception is built by
     its [fail], which may read the values it receives and so wait on the
@@ -82,7 +82,7 @@ val traced : by:string -> Value.interpretation -> 'a
 val wait : by:string -> ('v, 's, 'd) Value.t -> unit
 (** [wait ~by x] waits for the work [x]'s arrays depend on, then drains the
     calling domain's pending checks on [x]'s set as stated above. Each
-    drained check's hold on its data ends then ({!Rig.Claim.release}).
+    drained check's keep of its data ends then ({!Rig.Buffer.release}).
 
     Raises the first failure among them, and [Invalid_argument] naming [by]
     for a traced [x]. *)

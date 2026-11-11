@@ -85,9 +85,9 @@ val link :
     - Each storage node ({!Tolk.Op.Buffer}) is bound to its buffer in [bound]
       (default [[]]), of its device, and is made otherwise as [storage]
       (default {!Linked}) says, starting at its phase ({!run}). The schedule
-      holds the memory of every bound buffer a kernel or copy accesses
-      ({!Rig.Claim.val-hold}) while it is reachable, so no call consumes it. A
-      link that raises holds none of them.
+      keeps the memory of every bound buffer a kernel or copy accesses
+      ({!Rig.Buffer.val-keep}) while it is reachable, so no call takes it. A
+      link that raises keeps none of them.
     - A kernel is launched on the device of its first argument. A host program
       splits its loop over the host's cores where the program splits one
       ({!Tolk.Ops.kernel_info.split}), by the operations and bytes of memory
@@ -119,10 +119,10 @@ val link :
     its devices are of several machines, if a kernel's device is of another
     kind than its program's target, if [bound] binds a node that is not storage,
     or a buffer of another device or of fewer bytes than the node's, a buffer
-    a kernel or copy accesses that is dead or whose memory is held exclusive,
-    or a buffer a kernel accesses that does not start at the node's phase ({!run}),
-    if a computing device starts its memory on fewer bytes ({!Rig.alignment})
-    than the alignment of a storage node made there at link, if kernels
+    a kernel or copy accesses that is dead, or a buffer a kernel accesses that
+    does not start at the node's phase ({!run}), if a computing device starts
+    its memory on fewer bytes ({!Rig.alignment}) than the alignment of a
+    storage node made there at link, if kernels
     access a parameter at two alignments or phases, if a value under a range
     moves with its trips in another way than above, if a back edge's flag
     moves with the run's words, or if [linear] is not a compiled schedule;

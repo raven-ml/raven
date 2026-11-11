@@ -1052,11 +1052,7 @@ let allocated_bytes f =
   let b2 = Gc.allocated_bytes () in
   int_of_float (b2 -. b1 -. (b1 -. b0))
 
-let donated b =
-  Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-      if Rig.Claim.exclusive c b then
-        Some (Rig.Claim.consume c ~why:"donated" b)
-      else None)
+let donated b = Option.map List.hd (Rig.Buffer.take ~why:"donated" [ b ])
 
 (* Io devices and machines *)
 
@@ -1071,7 +1067,8 @@ module Empty = struct
 end
 
 let io name = match Rig.open_io name with Ok d -> d | Error e -> failwith e
-let io_buffer d n = Rig.Buffer.of_io d (module Empty) () ~access:Read_write n
+let io_buffer ?(access = Rig.Read_write) d n =
+  Rig.Buffer.of_io d (module Empty) () ~access n
 
 let machine m =
   let make ~word =
@@ -1092,7 +1089,7 @@ module Reader = struct
   external bytes : Rig.Buffer.t -> int = "rig_test_reader_bytes"
   external why : Rig.Buffer.t -> string option = "rig_test_reader_why"
 
-  type answer = Claimed | Wait | Lost | Dead | Exclusive | Read_only
+  type answer = Claimed | Wait | Lost | Dead | Read_only
 
   let pp_answer ppf a =
     Format.pp_print_string ppf
@@ -1101,7 +1098,6 @@ module Reader = struct
       | Wait -> "Wait"
       | Lost -> "Lost"
       | Dead -> "Dead"
-      | Exclusive -> "Exclusive"
       | Read_only -> "Read_only")
 
   external claim : Rig.Buffer.t -> Rig.access -> answer
@@ -1139,7 +1135,7 @@ module Reader = struct
         | exception e ->
             release b;
             raise e)
-    | (Dead | Exclusive | Read_only) as a ->
+    | (Dead | Read_only) as a ->
         invalid_arg (Format.asprintf "a read claim answered %a" pp_answer a)
 end
 

@@ -379,14 +379,23 @@ let floats32 s xs = Nx_array.of_array Nx_array.Dtype.Float32 s xs
 
 (* Claims and answers *)
 
-(* Kills [b]: a donation consumes its memory, giving [why]. *)
+(* Kills [b]: a take of its memory, giving [why]. *)
 let kill ?(why = "consumed by the test") b =
-  Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-      ignore (Rig.Claim.consume c ~why b))
+  ignore (require_some ~msg:"a take" (Rig.Buffer.take ~why [ b ]))
 
-(* Whether no claim holds [b]'s memory: a donation of it is exclusive. *)
+(* Whether nothing claims [b]'s memory: whether a take of it succeeds, which
+   kills [b]. *)
 let unclaimed b =
-  Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c -> Rig.Claim.exclusive c b)
+  Option.is_some (Rig.Buffer.take ~why:"consumed by the test" [ b ])
+
+(* [a] over the buffer a take of its memory gives, which must succeed:
+   nothing claims [a]'s memory. [a] is dead from then on. *)
+let retaken ?(msg = "released") a =
+  let taken =
+    Rig.Buffer.take ~why:"consumed by the test" [ Nx_array.buffer a ]
+  in
+  let b = List.hd (require_some ~msg taken) in
+  Nx_array.v (Nx_array.dtype a) (Nx_array.layout a) b
 
 (* Answers, by their names. *)
 let answer = Testable.make ~pp:Nx_array_support.pp_answer ~equal:( = )
@@ -422,11 +431,10 @@ let on_late d xs =
   Rig.Buffer.wait (Nx_array.buffer a) Rig.Read_write;
   a
 
-(* Whether no claim holds [a]'s memory: a donation of it is held exclusive. *)
+(* Whether no claim holds [a]'s memory: a take of it succeeds, which kills
+   [a]. *)
 let no_claim a =
-  let b = Nx_array.buffer a in
-  equal ~msg:"no claim left" bool true
-    (Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c -> Rig.Claim.exclusive c b))
+  equal ~msg:"no claim left" bool true (unclaimed (Nx_array.buffer a))
 
 (* Whether [e] is a device's loss. *)
 let lost = function Rig.Lost _ -> true | _ -> false

@@ -49,7 +49,7 @@ let ran ~by answer dsts ops =
 (* A view made over [a]'s memory, outside any handle chain: the memory is shared
    from then on, so that no donation of [a]'s value writes what the view
    reads. *)
-let view_of a = Rig.Claim.share (A.buffer a)
+let view_of a = Rig.Buffer.share (A.buffer a)
 
 (* The device of a placement on one device. *)
 let rig_of p =
@@ -576,7 +576,7 @@ let rec overlaps_any xs b i =
 let placed_one (type v s d e) (at : d Devices.placement) (a : (v, s) A.t)
     (p : e Devices.placement) : (v, s, e) Value.t =
   let b = one_array at a p in
-  if overlaps a b then Rig.Claim.share (A.buffer b);
+  if overlaps a b then Rig.Buffer.share (A.buffer b);
   Value.Array { at = p; a = b; dead = Value.Live }
 
 (* Creations *)
@@ -688,7 +688,7 @@ let place : type v s d e.
       let xs = Prim.arrays x and ys = Prim.arrays y in
       for j = 0 to Iarray.length ys - 1 do
         let b = Iarray.get ys j in
-        if overlaps_any xs b 0 then Rig.Claim.share (A.buffer b)
+        if overlaps_any xs b 0 then Rig.Buffer.share (A.buffer b)
       done;
       y
 

@@ -17,7 +17,6 @@ module B = Rig.Buffer
 module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
-module Claim = Rig.Claim
 
 let strf = Printf.sprintf
 
@@ -477,33 +476,34 @@ let buffer_rows =
 let claim_rows =
   Thumper.group "claim"
     [
-      row "with-24"
-        (fun () -> (List.init slots (fun _ -> host 16), [ host 16 ]))
-        (fun (read, donate) -> Claim.with_ ~read ~donate ignore);
-      (* A donation of one buffer, the call an operation makes per donated
-         operand. *)
-      row "with-donate-1"
-        (fun () ->
-          let b = host 16 in
-          ([ b ], fun c -> Claim.exclusive c b))
-        (fun (donate, f) -> Claim.with_ ~read:[] ~donate f);
-      (* A donation's answer on memory no one shared, a thousand times under one
-         with_. *)
-      row "exclusive-1000"
+      (* A take of one buffer, the call an operation makes for the operand it
+         writes over, each of the buffer the last take gave. *)
+      row "take-1"
+        (fun () -> ref (host 16))
+        (fun r ->
+          match B.take ~why:"taken" [ !r ] with
+          | Some [ b ] -> r := b
+          | _ -> invalid_arg "take-1: refused");
+      (* A take of an operation's three operands, whole or not at all. *)
+      row "take-3"
+        (fun () -> ref [ host 16; host 16; host 16 ])
+        (fun r ->
+          match B.take ~why:"taken" !r with
+          | Some bs -> r := bs
+          | None -> invalid_arg "take-3: refused");
+      (* A keep for the length of one call, as a library keeps the buffers it
+         reads over a call: a token the collector finalises and a record. *)
+      row "keep-release-1"
         (fun () -> host 16)
-        (fun b ->
-          Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-              for _ = 1 to 1000 do
-                ignore (Sys.opaque_identity (Claim.exclusive c b))
-              done));
+        (fun b -> B.release (B.keep [ b ]));
       (* A share of memory already shared, as a library makes on each value it
          hands out over the same memory. *)
       row "share-shared"
         (fun () ->
           let b = host 16 in
-          Claim.share b;
+          B.share b;
           b)
-        Claim.share;
+        B.share;
       row "c-read-release-3"
         (fun () -> (host 16, host 16, host 16))
         (fun (a, b, c) -> claim_3 a b c);

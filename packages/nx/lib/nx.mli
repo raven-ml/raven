@@ -5426,14 +5426,14 @@ module Repr : sig
 
       Unlike {!array}, it leaves [x]'s memory unshared, so a donation of [x]
       after [f] returns may write its result there ({!donate}). [a]'s memory
-      is claimed for the extent of [f]: a donation of [x] meanwhile computes
-      into fresh memory. [f] must not write through [a], and must not keep
-      [a], or a bigarray over it, after it returns. [x] stays reachable until
-      [f] returns.
+      is kept for the extent of [f] ({!Rig.Buffer.val-keep}): a donation of [x]
+      meanwhile computes into fresh memory. Each call's keep costs a value
+      the collector finalises. [f] must not write through [a], and must not
+      keep [a], or a bigarray over it, after it returns. [x] stays reachable
+      until [f] returns.
 
       Raises [Invalid_argument] naming [Nx.Repr.read] for a dead or a traced
-      [x], or if [x]'s memory is held exclusive, and a failed check as a wait
-      does. *)
+      [x], and a failed check as a wait does. *)
 
   val of_shards :
     'd Placement.t -> ('v, 's) Nx_array.t iarray -> ('v, 's, 'd) t

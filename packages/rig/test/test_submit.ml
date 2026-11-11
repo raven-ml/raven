@@ -462,8 +462,7 @@ let test_make_refusals () =
   let arg = B.create Rig.host 8 in
   let unseen = B.create d 8 and other = B.create d 16 in
   let dead = B.create d 8 in
-  Rig.Claim.with_ ~read:[] ~donate:[ dead ] (fun c ->
-      ignore (Rig.Claim.consume c ~why:"donated" dead));
+  ignore (require_some (Support.donated dead));
   let copy src dst =
     Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
   in
@@ -550,21 +549,20 @@ let test_cleared_on_raise () =
     (fun () -> submit ~run s ~buffers:[| b |] ~waits:[| point |]);
   equal int (base + 1) (Rig.Point.value (submit ~run s ~buffers:[| b |]))
 
-(* A run's buffer whose memory was consumed through another buffer refuses the
+(* A run's buffer whose memory was taken through another buffer refuses the
    submit. *)
 let test_dead_slot () =
   let d = memory "submit:dead-slot" in
   let base = Rig.submitted d in
   let b = B.create Rig.host 8 in
   let s = empty ~uses:[| Sub.read |] d and borrowed = on d b in
-  Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-      ignore (Rig.Claim.consume c ~why:"donated" b));
+  ignore (require_some (Support.donated b));
   raises_match Exn.invalid_arg (fun () -> submit s ~buffers:[| borrowed |]);
   equal int base (Rig.submitted d)
 
-(* A submission holds the buffers it was made with, whatever the caller's
-   parts array holds later: a donation of a part's buffer stays a read claim,
-   and one of the buffer the array names since is exclusive. *)
+(* A submission keeps the buffers it was made with, whatever the caller's
+   parts array holds later: a take of a part's buffer is refused, and one of
+   the buffer the array names since succeeds. *)
 let test_parts_changed () =
   let d = memory "submit:parts-changed" in
   let a = B.create d 8 and b = B.create d 8 and dst = B.create d 8 in
@@ -574,11 +572,9 @@ let test_parts_changed () =
   let parts = [| copy a |] in
   let s = Sub.make d parts in
   parts.(0) <- copy b;
-  let exclusive x =
-    Rig.Claim.with_ ~read:[] ~donate:[ x ] (fun c -> Rig.Claim.exclusive c x)
-  in
+  let takes x = Option.is_some (Support.donated x) in
   equal ~msg:"the part's buffer, the array's" (pair bool bool) (false, true)
-    (exclusive a, exclusive b);
+    (takes a, takes b);
   Rig.Point.wait (submit s)
 
 (* A submission keeps its parts' buffers after the caller's array changes. *)
@@ -1094,27 +1090,25 @@ let test_bare_reentrant () =
   equal ~msg:"the waiting submit" int (base + 2) (Rig.Point.value outer);
   equal ~msg:"take" bool true (Sub.take (Sub.Run.submission run) == run)
 
-(* A submit claims its buffers while it runs: a donation inside its wait is no
-   write in place, one before or after it is, and a buffer held exclusive is
-   refused. *)
+(* A submit claims its buffers while it runs: a take of each inside its wait
+   is refused, and one after it succeeds. *)
 let test_claims () =
   let producer, pp = P.open_ "submit:claims-producer" in
   let d, _ = P.open_ "submit:claims" in
   let buffers = Array.init 5 (fun _ -> B.create d 64) in
   let s = empty ~uses:(Array.make 5 Sub.read) d in
   let point = submit (empty producer) in
-  let donated () =
-    let donate = Array.to_list buffers in
-    Rig.Claim.with_ ~read:[] ~donate (fun c ->
-        Array.to_list (Array.map (Rig.Claim.exclusive c) buffers))
+  let takes () =
+    Array.to_list
+      (Array.map
+         (fun b -> Option.is_some (B.take ~why:"taken" [ b ]))
+         buffers)
   in
-  let exclusive = List.init 5 (fun _ -> true) in
-  equal ~msg:"before the submit" (list bool) exclusive (donated ());
   let during = ref None in
   P.interrupt pp;
   let before =
     Sys.signal Sys.sigint
-      (Sys.Signal_handle (fun _ -> during := Some (donated ())))
+      (Sys.Signal_handle (fun _ -> during := Some (takes ())))
   in
   Fun.protect
     ~finally:(fun () -> Sys.set_signal Sys.sigint before)
@@ -1123,18 +1117,9 @@ let test_claims () =
     (option (list bool))
     (Some (List.init 5 (fun _ -> false)))
     !during;
-  equal ~msg:"after the submit" (list bool) exclusive (donated ());
-  Array.iteri
-    (fun i m ->
-      Rig.Claim.with_ ~read:[] ~donate:[ m ] (fun c ->
-          equal ~msg:"held exclusive" bool true (Rig.Claim.exclusive c m);
-          raises_match ~msg:"a submit of it"
-            (Exn.invalid_arg ~sub:"held exclusive") (fun () ->
-              submit s ~buffers));
-      equal
-        ~msg:(Printf.sprintf "after refusal at buffer %d" i)
-        (list bool) exclusive (donated ()))
-    buffers
+  equal ~msg:"after the submit" (list bool)
+    (List.init 5 (fun _ -> true))
+    (takes ())
 
 (* A copy on a device that runs no copies is refused where the caller can act:
    when the submission is made. *)

@@ -22,7 +22,7 @@ let unsafe_of_array ~by s a =
 let of_array ~by s a =
   let x = unsafe_of_array ~by s a in
   (* Its caller keeps the array: no donation writes this memory. *)
-  Rig.Claim.share (A.buffer a);
+  Rig.Buffer.share (A.buffer a);
   x
 
 let unsafe_of_shards ~by p arrays =
@@ -77,7 +77,7 @@ let unsafe_of_shards ~by p arrays =
 let of_shards ~by p arrays =
   let x = unsafe_of_shards ~by p arrays in
   (* Its caller keeps the arrays: no donation writes this memory. *)
-  Iarray.iter (fun a -> Rig.Claim.share (A.buffer a)) arrays;
+  Iarray.iter (fun a -> Rig.Buffer.share (A.buffer a)) arrays;
   x
 
 (* [x]'s arrays, handed to a caller: their memory leaves the claims for good, so
@@ -90,7 +90,7 @@ let crossing (type v s d) ~by (x : (v, s, d) Value.t) : (v, s) A.t iarray =
       invalid_argf "%s: a value traced by %s has no bytes" by owner.name
   | Value.Array _ | Value.Shards _ | Value.Handle _ ->
       let arrays = Prim.arrays x in
-      Iarray.iter (fun a -> Rig.Claim.share (A.buffer a)) arrays;
+      Iarray.iter (fun a -> Rig.Buffer.share (A.buffer a)) arrays;
       arrays
 
 let array x =

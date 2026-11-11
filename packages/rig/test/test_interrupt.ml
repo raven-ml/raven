@@ -585,6 +585,8 @@ let probes () =
   P.fault own_p "the engine hung";
   (try Rig.Point.wait own_pt with Rig.Lost _ -> ());
   let b = B.create d 64 and b' = B.create d 64 and h = B.create Rig.host 64 in
+  (* A buffer for the take alone, which kills it. *)
+  let taken = B.create d 64 in
   let run = Sub.take (Sub.make d [||]) in
   let pt = Rig.submit run ~buffers:[||] in
   let set = Rig.Local.new_key (fun _ -> 0) in
@@ -647,9 +649,8 @@ let probes () =
       free "Buffer.view" (fun () -> ignore (B.view b ~first:0 ~length:1));
       free "Buffer.reached" (fun () -> ignore (B.reached b Rig.Read_write));
       free "Buffer.of_bigarray" (fun () -> ignore (B.of_bigarray ba));
-      free "Claim.with_" (fun () ->
-          Rig.Claim.with_ ~read:[ b ] ~donate:[] ignore);
-      free "Claim.release" (fun () -> Rig.Claim.release (Rig.Claim.hold [ h ]));
+      free "Buffer.take" (fun () -> ignore (B.take ~why:"probed" [ taken ]));
+      free "Buffer.release" (fun () -> B.release (B.keep [ h ]));
       free "Image.name" (fun () -> ignore (Rig.Image.name fill));
       free "Image.image" (fun () -> ignore (Rig.Image.image fill));
       free "Image.params" (fun () -> ignore (Rig.Image.params fill));

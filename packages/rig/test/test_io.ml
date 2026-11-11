@@ -133,10 +133,6 @@ let test_overlaps () =
     (B.overlaps shared wrapped, B.overlaps wrapped shared);
   equal ~msg:"adjacent bytes" (pair bool bool) (false, false)
     (B.overlaps disjoint wrapped, B.overlaps wrapped disjoint);
-  raises_match ~msg:"claims reject the same overlap"
-    (Exn.invalid_arg ~sub:"a donated buffer overlaps another") (fun () ->
-      Rig.Claim.with_ ~read:[ wrapped ] ~donate:[ shared ] (fun _ -> ()));
-  Rig.Claim.with_ ~read:[ wrapped ] ~donate:[ disjoint ] (fun _ -> ());
   equal ~msg:"inspection reuses the mapping" int 1 (count "pages" t)
 
 (* rig_buffers_overlap of two byte ranges answers whether they share a byte,
@@ -341,22 +337,6 @@ let test_borrow_back () =
   equal
     (quad (option nativeint) int (pair int int) bool)
     (coordinates m) (coordinates back)
-
-(* Nine donations use the sorted check. Each io memory keeps its identity span
-   as well as the host range through which a bigarray aliases it. *)
-let test_sorted_overlaps () =
-  let io, t = open_pages () in
-  let memories = List.init 9 (fun _ -> create io t page_bytes) in
-  let target = List.hd memories in
-  let host = require_some (B.borrow Rig.host target) in
-  let ba = B.read host Bigarray.char Fun.id in
-  let wrapped first = B.of_bigarray (Bigarray.Array1.sub ba first 8) in
-  let donate = List.map (fun m -> B.view m ~first:8 ~length:16) memories in
-  raises_match ~msg:"sorted claims reject an aliased host range"
-    (Exn.invalid_arg ~sub:"a donated buffer overlaps another") (fun () ->
-      Rig.Claim.with_ ~read:[ wrapped 12 ] ~donate (fun _ -> ()));
-  Rig.Claim.with_ ~read:[ wrapped 24 ] ~donate (fun _ -> ());
-  equal ~msg:"the sorted check maps no other memory" int 1 (count "pages" t)
 
 let test_empty_host_borrow () =
   let io, t = open_pages () in
@@ -684,7 +664,7 @@ let test_borrow_failure () =
   equal ~msg:"the host" (option string) None (Rig.lost Rig.host)
 
 (* A region an io library made is a buffer of an io device only, never
-   exclusive. *)
+   taken. *)
 let test_of_io () =
   let io, t = open_pages () in
   let d, _ = P.open_ "io:not-io" in
@@ -694,8 +674,8 @@ let test_of_io () =
   raises_match Exn.invalid_arg (fun () ->
       B.of_io io (module Pages) r ~access:Read_write (-1));
   let b = B.of_io io (module Pages) r ~access:Read_write page_bytes in
-  Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-      equal bool false (Rig.Claim.exclusive c b))
+  is_none (B.take ~why:"taken" [ b ]);
+  equal ~msg:"live" (option string) None (B.dead b)
 
 (* A closed io device makes no buffer of a region, also once a later device
    took its slot and its record may be gone. A software device's last value,
@@ -877,7 +857,6 @@ let tests =
           overlap_case overlap_law;
         test "rig_buffers_overlap of ranges at a buffer's bounds"
           test_overlap_bounds;
-        test "sorted claims check cached io aliases" test_sorted_overlaps;
         test "a borrow back on the io device is its memory" test_borrow_back;
         test "an empty io borrow keeps its host address without mapping"
           test_empty_host_borrow;

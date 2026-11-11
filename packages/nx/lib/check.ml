@@ -33,7 +33,7 @@ let on_host : type v s d. by:string -> (v, s, d) Value.t -> (v, s) A.t =
    A check off the host reduces its flags where they lie and leaves the result
    there unread, since reading it would make the host wait for the set. Each
    domain lists the checks it issued, by set, and a wait on a set drains that
-   set's, oldest first, up to the first that fails. A pending check holds its
+   set's, oldest first, up to the first that fails. A pending check keeps its
    data's memory, so that no donation writes the elements its failure
    reports. *)
 
@@ -51,14 +51,14 @@ type ('d, 'e) issued = {
   fail : int array -> 'e -> exn;
 }
 
-(* A check found failing, and the hold on its data's memory, while its
+(* A check found failing, and the keep of its data's memory, while its
    exception is built ({!built}). *)
-type failing = Failing : ('d, 'e) issued * Rig.Claim.hold -> failing
+type failing = Failing : ('d, 'e) issued * Rig.Buffer.keep -> failing
 
-(* A check and the hold on its data's memory, a check found failing, or the
+(* A check and the keep of its data's memory, a check found failing, or the
    exception of one that failed before any wait read it. *)
 type pending =
-  | Pending : ('d, 'e) issued * Rig.Claim.hold -> pending
+  | Pending : ('d, 'e) issued * Rig.Buffer.keep -> pending
   | Marked of failing
   | Raised : exn -> pending
 
@@ -91,9 +91,9 @@ let pend n p =
       if List.exists fails l then (sets, false)
       else (Sets.add n (p :: l) sets, true))
 
-(* Ends a check's hold. *)
+(* Ends a check's keep. *)
 let release = function
-  | Pending (_, h) | Marked (Failing (_, h)) -> Rig.Claim.release h
+  | Pending (_, k) | Marked (Failing (_, k)) -> Rig.Buffer.release k
   | Raised _ -> ()
 
 (* [a] in memory the host addresses: itself where the host addresses its
@@ -193,7 +193,7 @@ let outcome ~by c = if get_on_host c.holds then None else Some (failure ~by c)
    [Building f] for its mark [f], so that a wait inside it leaves the mark
    alone. A wait on another systhread meanwhile takes the mark off and
    builds the exception itself, inside a build of its own, then raises it.
-   Whoever takes the mark off the list, under {!update}, ends the hold, once:
+   Whoever takes the mark off the list, under {!update}, ends the keep, once:
    the builder that puts the exception in the mark's place, or a wait. *)
 type _ Effect.t += Building : failing -> bool Effect.t
 
@@ -243,7 +243,7 @@ let drained n =
       | taken, left -> (Sets.add n (List.rev left) sets, taken))
 
 (* Reads [checks], oldest first, up to the first that fails, which raises: the
-   later ones go unread. Every check's hold ends then, so that a donation of its
+   later ones go unread. Every check's keep ends then, so that a donation of its
    data right after the wait may reuse the memory. *)
 let settle ~by checks =
   let failure = function
@@ -255,9 +255,9 @@ let settle ~by checks =
       Option.iter raise (List.find_map failure checks))
 
 (* Builds the exception of [f], marked on set [n], and puts it in the mark's
-   place, where the next wait raises it, ending the hold. A wait on another
+   place, where the next wait raises it, ending the keep. A wait on another
    systhread that took the mark off meanwhile raises its own build and ends
-   the hold, and this build's exception goes. A [fail] that raises takes the
+   the keep, and this build's exception goes. A [fail] that raises takes the
    mark off, if it is still there, and its exception passes on. *)
 let record ~by n f =
   (* Replaces the mark by [r], or takes it off for [None]: [true] where it
@@ -281,7 +281,7 @@ let record ~by n f =
       Printexc.raise_with_backtrace x bt
 
 (* Settles set [n]'s earlier checks whose flags are computed, so that a domain
-   that never waits on the set holds only the data of the checks still
+   that never waits on the set keeps only the data of the checks still
    running: a passing check goes, a failing one keeps only its exception, and
    the checks after it go, since no wait can raise them. It reads them oldest
    first and stops at the first still running, so it asks rig of one check
@@ -389,7 +389,7 @@ let issue : type d e.
     let one = Array.for_all (( = ) 1) shape in
     if not (Devices.on_host_set p) then begin
       (* The set's earlier checks settle first, so that a raise there leaves
-         this check unissued and none of its data held. A set that holds a
+         this check unissued and none of its data kept. A set that holds a
          failure keeps no later check, which then computes nothing. *)
       let set = Devices.set p in
       let n = Devices.number set in
@@ -398,7 +398,7 @@ let issue : type d e.
         (* One reduction gives both whether every flag holds and the first
            false, so that the check leaves only scalars to read later. The
            mark follows the copy [readable] submits, which, for one flag,
-           no reduction orders. The hold keeps a donation from writing a
+           no reduction orders. The keep stops a donation from writing a
            flag read in place. *)
         let holds, first =
           if one then (element ok, None)
@@ -410,9 +410,9 @@ let issue : type d e.
         let holds = readable holds in
         let mark = Rig.submitted on in
         let data = kept data in
-        let held = Rig.Claim.hold (A.buffer holds :: data_buffers data) in
+        let keep = Rig.Buffer.keep (A.buffer holds :: data_buffers data) in
         let c = { holds; on; mark; first; shape; data; fail } in
-        if not (pend n (Pending (c, held))) then Rig.Claim.release held
+        if not (pend n (Pending (c, keep))) then Rig.Buffer.release keep
       end
     end
     else begin

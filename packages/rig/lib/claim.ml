@@ -6,16 +6,9 @@
 open Def
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
-let count (a : alloc) = Atomic.Loc.get [%atomic.loc a.count]
-let swap (a : alloc) w w' =
-  Atomic.Loc.compare_and_set [%atomic.loc a.count] w w'
-
-let read_claim fn b =
-  if not (Memory.claim_add b) then
-    invalid_argf "Rig.%s: the memory is held exclusive" fn
 
 let reading fn b f =
-  read_claim fn b;
+  Memory.claim_add b;
   match
     Buffer.check_live fn b;
     f ()
@@ -29,31 +22,27 @@ let reading fn b f =
 
 (* [reading] of two buffers with no closure, for a staged copy's sides. *)
 let reading2 fn a b f x =
-  read_claim fn a;
-  match read_claim fn b with
+  Memory.claim_add a;
+  Memory.claim_add b;
+  match
+    Buffer.check_live fn a;
+    Buffer.check_live fn b;
+    f a b x
+  with
+  | r ->
+      Memory.claim_drop a;
+      Memory.claim_drop b;
+      r
   | exception e ->
       Memory.claim_drop a;
-      raise e
-  | () -> (
-      match
-        Buffer.check_live fn a;
-        Buffer.check_live fn b;
-        f a b x
-      with
-      | r ->
-          Memory.claim_drop a;
-          Memory.claim_drop b;
-          r
-      | exception e ->
-          Memory.claim_drop a;
-          Memory.claim_drop b;
-          Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
+      Memory.claim_drop b;
+      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
 (* [Buffer.wait]'s checks and wait under a read claim. A loss raises where the
    wait for [access] meets it, so a read depends on every device's last write
    alone. *)
 let wait fn (access : access) b =
-  read_claim fn b;
+  Memory.claim_add b;
   match
     Buffer.check_live fn b;
     Memory.check_owner b.mem;
@@ -106,18 +95,17 @@ let write_bytes b k f =
   scope fn Read_write b k f
 
 let mark b =
-  Buffer.check_live "Claim.share" b;
-  if not (Memory.mark_outside b.mem.alloc) then
-    invalid_arg "Rig.Claim.share: the memory is held exclusive by claims";
-  (* A consumption between the check and the mark killed [b]: the memory stays
-     marked, which costs only its donations. *)
-  Buffer.check_live "Claim.share" b
+  Buffer.check_live "Buffer.share" b;
+  Memory.mark_outside b.mem.alloc;
+  (* A take between the check and the mark killed [b]: the memory stays
+     marked, which costs only its takes. *)
+  Buffer.check_live "Buffer.share" b
 
 (* Memory a library hands out again is marked already: loads answer, the word
-   unheld and marked, then [b] live, with no call. *)
+   marked and no step holding it, then [b] live, with no call. *)
 let share b =
   let c = b.mem.alloc in
-  let n = count c in
+  let n = Atomic.Loc.get [%atomic.loc c.count] in
   if
     n < 0
     || n land Memory.outside = 0
@@ -125,198 +113,51 @@ let share b =
     || Memory.lease_ended b.mem
   then mark b
 
-(* The buffers [with_] was given, which it holds for reading. [state] is twice
-   the consumptions under way, plus 1 once [f] has returned or raised. From then
-   on the buffers hold nothing. A donated memory is held exclusive iff its claim
-   word is negative: the read claim [with_] keeps on it lets no other holder
-   make it so. The C stubs read the fields by position. *)
-type t = {
-  read : buffer list;
-  donate : buffer list;
-  mutable state : int; [@atomic]
-}
+(* Takes *)
 
-let ended c = Atomic.Loc.get [%atomic.loc c.state] land 1 = 1
-
-let refuse () = invalid_arg "Rig.Claim.with_: a donated buffer overlaps another"
-
-(* Up to this many donated buffers, comparing each with every other buffer
-   costs less than sorting them all, and allocates nothing. *)
-let pairwise = 8
-
-let rec clear_of b = function
-  | [] -> ()
-  | b' :: bs ->
-      if Buffer.overlaps b b' then refuse ();
-      clear_of b bs
-
-(* Each donated buffer against every read buffer and every donated one after
-   it. *)
-let rec clear_pairs read = function
+let rec check_live fn = function
   | [] -> ()
   | b :: bs ->
-      clear_of b read;
-      clear_of b bs;
-      clear_pairs read bs
+      Buffer.check_live fn b;
+      check_live fn bs
 
-(* Orders spans by space, then first byte; the polymorphic compare took 40% of
-   [with_]. *)
-let by_place ((s, a, _), _) ((s', a', _), _) =
-  if s <> s' then Int.compare s s' else Int.compare a a'
+let rec spans_all = function
+  | [] -> true
+  | b :: bs -> Buffer.spans b && spans_all bs
 
-(* Each buffer's spans are its places ({!Buffer.places}), rounded out to
-   whole words. *)
-let sort_overlaps read donate =
-  let tag d b =
-    List.map
-      (fun (s, a) ->
-        let lo, hi = Buffer.words a b.length in
-        ((s, lo, hi - lo), d))
-      (Buffer.places b)
-  in
-  let all =
-    List.concat_map (tag false) read
-    @ List.concat_map (tag true) donate
-    |> List.sort by_place
-  in
-  (* In each space, a buffer overlaps an earlier one iff it starts before the
-     furthest end of those: [ends] is that end over every earlier buffer,
-     [donated] over the donated ones. *)
-  let rec sweep space ends donated = function
-    | [] -> ()
-    | ((s, a, n), d) :: rest ->
-        let ends, donated =
-          if s = space then (ends, donated) else (min_int, min_int)
-        in
-        if a < donated || (d && a < ends) then refuse ();
-        sweep s
-          (Int.max ends (a + n))
-          (if d then Int.max donated (a + n) else donated)
-          rest
-  in
-  sweep (-1) min_int min_int all
+let raised b = { b with generation = b.generation + 2 }
 
-(* Refuses a buffer of [donate] that overlaps another buffer. *)
-let refuse_overlaps read donate =
-  let n = List.length donate in
-  if n = 0 then ()
-  else if n <= pairwise then clear_pairs read donate
-  else sort_overlaps read donate
+(* [take]'s step: -1 if it took every buffer of [bs], -2 if a claim, a hold
+   or a bit held a word or a memory is twice in [bs], or the index of a
+   buffer it found dead or lost, having changed nothing. It waits out
+   another take or free of the memory. It runs no OCaml code and allocates
+   nothing, but records the reason with [caml_modify], so it is no
+   [noalloc] external. *)
+external took : buffer list -> string -> int = "caml_rig_buffers_take"
 
-let rec check_live = function
-  | [] -> ()
-  | b :: bs ->
-      Buffer.check_live "Claim.with_" b;
-      check_live bs
+(* The result is built before the step, so that no allocation after it, where
+   an asynchronous exception lands, leaves the memory taken and no buffer
+   over it. The buffer [took] names raises: dead, or lost, which the check
+   finds under a read claim, so that no free returns the stamps it walks. A
+   buffer that passes both now, as when the step met a loss the check sees
+   otherwise, is tried again. *)
+let rec take ~why bs =
+  let fn = "Buffer.take" in
+  check_live fn bs;
+  if not (spans_all bs) then None
+  else
+    let taken = Some (List.map raised bs) in
+    match took bs why with
+    | -1 -> taken
+    | -2 -> None
+    | i ->
+        let b = List.nth bs i in
+        Buffer.check_live fn b;
+        reading fn b (fun () -> Memory.check b.mem);
+        take ~why bs
 
-(* [claim_all read donate] is -1, or the index across [read] then [donate]
-   of the buffer that refused its claim, every claim undone. *)
-external claim_all : buffer list -> buffer list -> int = "caml_rig_claim_all"
-[@@noalloc]
-
-external release_all : buffer list -> buffer list -> unit
-  = "caml_rig_claim_release_all"
-[@@noalloc]
-
-(* Waits until no consumption of [c] is under way, a few instructions of
-   another domain at most. *)
-external await_consumed : t -> unit = "caml_rig_claim_await" [@@noalloc]
-
-(* [consume]'s effects, as one step against [finish], holds and other
-   consumptions of the memory: the new generation, or -1 if [c] has ended,
-   -2 if [b] is dead, or -3 if a hold holds the memory. *)
-external consumed : t -> buffer -> string -> int = "caml_rig_claim_consume"
-
-(* Holds each buffer of [donate] exclusive that spans its memory and has no
-   other claim on it: its own read claim is the only one. *)
-let rec hold_all = function
-  | [] -> ()
-  | b :: bs ->
-      if Buffer.spans b then
-        ignore (swap b.mem.alloc Memory.one_claim Memory.exclusive : bool);
-      hold_all bs
-
-(* Ends [c]: it holds nothing from the end on, before any claim is released. A
-   consumption under way completes first. The compiler checks that nothing in
-   it polls. *)
-let[@poll error] finish c =
-  if Atomic.Loc.fetch_and_add [%atomic.loc c.state] 1 <> 0 then
-    await_consumed c;
-  release_all c.read c.donate
-
-(* The [i]th buffer of [c]'s read buffers followed by its donated ones. *)
-let nth c i =
-  let n = List.length c.read in
-  if i < n then List.nth c.read i else List.nth c.donate (i - n)
-
-(* Raises why [b] refused its claim for a call of [fn], or returns once the
-   refusal has passed, as when the with_ that held it exclusive has ended. *)
-let refusal fn b =
-  if count b.mem.alloc < 0 then
-    invalid_argf "Rig.%s: the memory is held exclusive" fn;
-  Buffer.check_live fn b
-
-(* Takes [c]'s claims, or raises why a buffer refused its claim. *)
-let rec claim c =
-  let i = claim_all c.read c.donate in
-  if i >= 0 then begin
-    let b = nth c i in
-    refusal "Claim.with_" b;
-    (* A loss refused it: the check that raises it walks the stamps under a
-       read claim, so that no free returns them meanwhile. *)
-    reading "Claim.with_" b (fun () -> Memory.check b.mem);
-    claim c
-  end
-
-let with_ ~read ~donate f =
-  check_live read;
-  check_live donate;
-  refuse_overlaps read donate;
-  let c = { read; donate; state = 0 } in
-  claim c;
-  (* Nothing may go between [claim c] and the handler: the compiler does not
-     check that no poll point lies there. *)
-  match
-    hold_all donate;
-    f c
-  with
-  | r ->
-      finish c;
-      r
-  | exception e ->
-      finish c;
-      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
-
-let rec names cl = function
-  | [] -> false
-  | b :: bs -> b.mem.alloc == cl || names cl bs
-
-let exclusive c b =
-  let cl = b.mem.alloc in
-  (not (ended c)) && count cl < 0 && names cl c.donate
-
-let refuse_ended () =
-  invalid_arg "Rig.Claim.consume: the claims' with_ returned"
-
-(* The claims hold [b]'s memory until they end, so a word exclusive is theirs;
-   [consumed] moves it only while they have not ended. The generation it
-   raises to says what the buffer admits ({!Memory.admits}). *)
-let consume c ~why b =
-  if ended c then refuse_ended ();
-  let cl = b.mem.alloc in
-  if not (names cl c.read || names cl c.donate) then
-    invalid_arg "Rig.Claim.consume: the claims do not hold the memory";
-  Buffer.check_live "Claim.consume" b;
-  if not (Buffer.spans b) then
-    invalid_arg "Rig.Claim.consume: the buffer is part of its memory";
-  match consumed c b why with
-  | -1 -> refuse_ended ()
-  | -2 -> Buffer.refuse_dead "Claim.consume" b
-  | -3 -> invalid_arg "Rig.Claim.consume: the memory is held"
-  | g -> { b with generation = g }
-
-(* [free]'s step: 1 if it consumed [b]'s memory, 0 if a claim, a hold or a
-   bit of the word kept it, 2 if [b] is dead. *)
+(* [free]'s step: 1 if it freed [b]'s memory, 0 if a claim, a hold or a bit
+   of the word kept it, 2 if [b] is dead. *)
 external freed : buffer -> string -> int = "caml_rig_buffer_free"
 
 let free ?(why = "freed") b =
@@ -356,36 +197,24 @@ let unborrow ?(why = "unborrowed") b =
       true
   | _ -> Buffer.refuse_dead fn b
 
-let consumable c b =
-  let cl = b.mem.alloc in
-  (not (ended c))
-  && (names cl c.read || names cl c.donate)
-  && Buffer.spans b && Buffer.is_live b
-  && not (Memory.held cl)
+(* Keeps *)
 
-(* Holds *)
-
-(* A hold keeps its token: collected, the token puts the record on the list of
-   holds, whose next drain releases them. The record is made and the token over it
-   before the holds are taken, in one C step that marks each taken in the
-   record, so an asynchronous exception anywhere leaves either no hold or a
-   token that releases them. *)
-type hold = { token : token; record : holds }
+(* A keep keeps its token: collected, the token puts the record on the list
+   of holds, whose next drain releases them. The record is made and the token
+   over it before the holds are taken, in one C step that marks each taken in
+   the record, so an asynchronous exception anywhere leaves either no hold or
+   a token that releases them. *)
+type keep = { token : token; record : holds }
 
 let no_record =
   { allocs = Weak.create 0; leases = Weak.create 0; taken = Bytes.empty }
 
+(* Holds the memory of each buffer of [bs] and marks it in [taken]: -1, or
+   the index of a dead buffer, holding nothing. *)
 external take_holds : buffer array -> Bytes.t -> int = "caml_rig_claim_holds"
 [@@noalloc]
 
-let rec take_all fn bs taken =
-  let i = take_holds bs taken in
-  if i >= 0 then begin
-    refusal fn bs.(i);
-    take_all fn bs taken
-  end
-
-let held fn bs =
+let kept fn bs =
   Array.iter (Buffer.check_live fn) bs;
   let n = Array.length bs in
   if n = 0 then { token = Memory.no_hold; record = no_record }
@@ -397,9 +226,10 @@ let held fn bs =
     done;
     let record = { allocs; leases; taken = Bytes.make n '\000' } in
     let token = Memory.hold_token record in
-    take_all fn bs record.taken;
+    let i = take_holds bs record.taken in
+    if i >= 0 then Buffer.refuse_dead fn bs.(i);
     { token; record }
   end
 
-let hold bs = held "Claim.hold" (Array.of_list bs)
-let release h = Memory.release_hold_now h.token h.record
+let keep bs = kept "Buffer.keep" (Array.of_list bs)
+let release k = Memory.release_hold_now k.token k.record

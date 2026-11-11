@@ -99,7 +99,6 @@ static int claim_code(enum rig_claim c) {
     case RIG_WAIT:
     case RIG_LOST: return NX_OK;
     case RIG_DEAD: return NX_DEAD;
-    case RIG_EXCLUSIVE: return NX_EXCLUSIVE;
     case RIG_READ_ONLY: return NX_READ_ONLY;
   }
   caml_fatal_error("nx_read: rig_buffer_claim answered %d", (int)c);
@@ -280,7 +279,7 @@ static inline __attribute__((always_inline)) int read_runs(
    claimed before anything else is checked: the claim checks under it that
    the buffer lives, so a dead operand is refused as dead whatever else is
    wrong with it, and before any wait, so a wait runs under every claim and
-   no donation on another domain consumes an operand while the call waits.
+   no donation on another domain takes an operand while the call waits.
    Past NX_MAX_OPERANDS operands each run follows another, the last run
    read or the run claimed before it, so each lets other domains collect
    first. */

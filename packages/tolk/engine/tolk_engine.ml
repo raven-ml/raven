@@ -199,9 +199,9 @@ type word_kind = Computed of (env -> int) | Trip
 (* Inputs *)
 
 (* An input of the program, a buffer a run is given: a parameter's buffer, by
-   slot, or a buffer bound at link, with its hold, which keeps every call from
-   consuming what each run accesses while the schedule lives. *)
-type input = Slot of int | Bound of Rig.Buffer.t * Rig.Claim.hold
+   slot, or a buffer bound at link, with its keep, which stops every take of
+   what each run accesses while the schedule lives. *)
+type input = Slot of int | Bound of Rig.Buffer.t * Rig.Buffer.keep
 
 type storage = Linked | Per_run
 
@@ -401,10 +401,10 @@ let slot_input b ~slot d n =
       Hashtbl.replace b.slot_inputs slot i;
       i
 
-(* A hold of the bound [buf], refused in the link's name. *)
-let hold b buf =
-  match Rig.Claim.hold [ buf ] with
-  | h -> h
+(* A keep of the bound [buf], refused in the link's name. *)
+let keep b buf =
+  match Rig.Buffer.keep [ buf ] with
+  | k -> k
   | exception Invalid_argument why -> fail b.fn "a bound buffer: %s" why
 
 let bound_input b buf =
@@ -412,7 +412,7 @@ let bound_input b buf =
   | Some i -> i
   | None ->
       let i =
-        add_input b (Bound (buf, hold b buf))
+        add_input b (Bound (buf, keep b buf))
           {
             device = device_index b (Rig.Buffer.device buf);
             bytes = Rig.Buffer.length buf;
@@ -960,11 +960,11 @@ let assemble b entries =
   | Ok l -> l
   | Error why -> failwith (b.fn ^ ": " ^ why)
 
-(* Ends the holds of the buffers bound in [b], whose link raised, so that a
-   donation right after the raise consumes their memory. *)
+(* Ends the keeps of the buffers bound in [b], whose link raised, so that a
+   take right after the raise finds their memory free. *)
 let release_bound (b : builder) =
   Dynarray.iter
-    (function Bound (_, h), _ -> Rig.Claim.release h | Slot _, _ -> ())
+    (function Bound (_, k), _ -> Rig.Buffer.release k | Slot _, _ -> ())
     b.inputs
 
 let builder ~fn ~separate ~devices bound =

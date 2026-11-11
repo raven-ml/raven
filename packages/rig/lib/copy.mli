@@ -89,7 +89,7 @@
 
     A copy, blit or fill takes its read claims ({!Rig.Buffer.section-copying})
     before it checks its buffers and waits. The host moves bytes that no stamp
-    orders, so a donation meanwhile would write them, or kill the buffer the
+    orders, so a take meanwhile would write them, or kill the buffer the
     next leg names. A queued copy or fill returns a point of {!Dev.host}
     ({!Submission.mark}) where the host made its last transfer. *)
 

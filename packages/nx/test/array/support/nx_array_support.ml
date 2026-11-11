@@ -18,7 +18,6 @@ let answers =
       ("Wrong_dtype", Wrong_dtype);
       ("Dead_buffer", Dead_buffer);
       ("Off_host", Off_host);
-      ("Held_exclusive", Held_exclusive);
       ("Read_only", Read_only);
       ("Repeated_elements", Repeated_elements);
       ("Overlapping", Overlapping);

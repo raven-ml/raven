@@ -75,7 +75,6 @@ enum {
   NX_DTYPE,        /* an operand's dtype is not the one named */
   NX_DEAD,         /* an operand's buffer is dead */
   NX_NOT_HOST,     /* the host does not address an operand's memory */
-  NX_EXCLUSIVE,    /* an operand's memory is held exclusive */
   NX_READ_ONLY,    /* a written operand's memory is Read */
   NX_NOT_DISTINCT, /* a written operand reaches a position twice */
   NX_OVERLAP,      /* a written operand shares a byte with another written
@@ -168,9 +167,8 @@ NX_ARRAY_EXTERN int nx_array_layout(value v, int64_t *dim, int64_t *offset);
    Such a call reads its operands through nx_read_each. It allocates
    nothing. It checks in this order and answers the first refusal: each
    operand's dtype; then each operand's claim of its memory, for writing if
-   written: NX_DEAD if its buffer is dead, NX_EXCLUSIVE if the memory is
-   held exclusive, NX_READ_ONLY if a written operand's buffer admits only
-   Read; then, per operand, that a written one is NX_DISTINCT and that the
+   written: NX_DEAD if its buffer is dead, NX_READ_ONLY if a written
+   operand's buffer admits only Read; then, per operand, that a written one is NX_DISTINCT and that the
    host addresses one with an element; then that a written operand shares
    no byte with another written operand, nor with a read operand unless the
    two are identical: one width, and every index at one byte (equal extents

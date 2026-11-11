@@ -738,7 +738,7 @@ let place ~by p x =
   match x with
   | Array r when r.at == p && r.dead == Live && quiet () ->
       (* A second value over the memory shares it. *)
-      Rig.Claim.share (Nx_array.buffer r.a);
+      Rig.Buffer.share (Nx_array.buffer r.a);
       Array { at = p; a = r.a; dead = Live }
   | Array _ | Shards _ | Handle _ | Traced _ ->
       eval ~by (Place (p, x))

@@ -242,7 +242,7 @@ let test_access_orders () =
   equal ~msg:"the host's write" string (String.make n 'w') (bytes h)
 
 (* An export waits for the memory's work and puts it outside the claims: it is
-   never donated again. Only host memory exports. *)
+   never taken again. Only host memory exports. *)
 let test_export () =
   let d, p = P.open_ "buffer:export" in
   let n = 1 lsl 16 in
@@ -254,7 +254,7 @@ let test_export () =
   let a = B.export h Bigarray.char in
   equal ~msg:"the work ran" int 0 (P.queued p);
   equal ~msg:"its bytes" char 'x' a.{n - 1};
-  is_none ~msg:"never donated" (Support.donated h);
+  is_none ~msg:"never taken" (Support.donated h);
   raises_match (Exn.invalid_arg ~sub:"not the host's") (fun () ->
       ignore (B.export src Bigarray.char));
   raises_match (Exn.invalid_arg ~sub:"not the host's") (fun () ->
@@ -266,22 +266,18 @@ let cases_of pred l =
 
 let test_dead () =
   let b = B.create Rig.host 8 in
-  Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-      ignore (Rig.Claim.consume c ~why:"donated" b));
+  ignore (require_some (Support.donated b));
   raises_match (Exn.invalid_arg ~sub:"donated") (fun () -> B.wait b Rig.Read);
   raises_match (Exn.invalid_arg ~sub:"donated") (fun () -> B.reached b Rig.Read)
 
-(* Every function that reaches a dead buffer's bytes refuses it with the
-   consumption's reason; [release] accepts it (claim suite). *)
+(* Every function that reaches a dead buffer's bytes or claims its memory
+   refuses it with the take's reason. *)
 let test_dead_refused () =
   let d, _ = P.open_ "buffer:dead" in
-  let consumed b =
-    Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-        ignore (Rig.Claim.consume c ~why:"donated" b))
-  in
+  let taken b = ignore (require_some (Support.donated b)) in
   let h = B.create Rig.host (1 lsl 16) and m = B.create d 64 in
-  consumed h;
-  consumed m;
+  taken h;
+  taken m;
   let dead = Exn.invalid_arg ~sub:"donated" in
   let other = B.create Rig.host (1 lsl 16) in
   cases_of dead
@@ -298,10 +294,9 @@ let test_dead_refused () =
       ("blit_to_bytes", fun () -> B.blit_to_bytes h 0 (Bytes.create 1) 0 1);
       ("fill", fun () -> B.fill h 'f');
       ("borrow", fun () -> ignore (B.borrow d h));
-      ( "consume",
-        fun () ->
-          Rig.Claim.with_ ~read:[ h ] ~donate:[] (fun c ->
-              ignore (Rig.Claim.consume c ~why:"again" h)) );
+      ("take", fun () -> ignore (B.take ~why:"again" [ h ]));
+      ("keep", fun () -> ignore (B.keep [ h ]));
+      ("share", fun () -> B.share h);
     ]
 
 (* A view starts its offset into its buffer's memory, at its address plus that
@@ -361,23 +356,23 @@ let test_unborrow () =
     (B.read b' Bigarray.char (fun a -> Bigarray.Array1.get a 0));
   raises_match ~msg:"an ended borrow" Exn.invalid_arg (fun () -> B.unborrow b)
 
-(* A hold through a borrow keeps it from ending, as a prepared submission that
+(* A keep through a borrow keeps it from ending, as a prepared submission that
    fixes it does for its life, since the submission's addresses are made; a
-   hold of the memory through another buffer does not. *)
-let test_unborrow_holds () =
-  let d, _ = P.open_ "buffer:unborrow-holds" in
+   keep of the memory through another buffer does not. *)
+let test_unborrow_keeps () =
+  let d, _ = P.open_ "buffer:unborrow-keeps" in
   let h = B.create Rig.host (1 lsl 16) in
   let b = require_some (B.borrow d h) in
-  let hold = Rig.Claim.hold [ b ] in
-  equal ~msg:"under a hold through it" bool false (B.unborrow b);
-  Rig.Claim.release hold;
+  let k = B.keep [ b ] in
+  equal ~msg:"under a keep through it" bool false (B.unborrow b);
+  B.release k;
   let s = Sub.make ~fixed:[ (b, Rig.Read) ] d [||] in
   equal ~msg:"under a prepared submission" bool false (B.unborrow b);
   ignore (Sys.opaque_identity s);
   let other = require_some (B.borrow d h) in
-  let owner = Rig.Claim.hold [ h ] in
-  equal ~msg:"under a hold of the memory itself" bool true (B.unborrow other);
-  Rig.Claim.release owner
+  let owner = B.keep [ h ] in
+  equal ~msg:"under a keep of the memory itself" bool true (B.unborrow other);
+  B.release owner
 
 (* A claim through a borrow keeps it from ending; claims of its memory through
    other buffers neither keep it nor see its end. *)
@@ -385,9 +380,10 @@ let test_unborrow_claims () =
   let d, _ = P.open_ "buffer:unborrow-claims" in
   let h = B.create Rig.host (1 lsl 16) in
   let b = require_some (B.borrow d h) in
-  Rig.Claim.with_ ~read:[ b ] ~donate:[] (fun _ ->
-      equal ~msg:"under a claim through it" bool false (B.unborrow b));
-  Rig.Claim.with_ ~read:[ h ] ~donate:[] (fun _ ->
+  Support.Reader.read b;
+  equal ~msg:"under a claim through it" bool false (B.unborrow b);
+  Support.Reader.release b;
+  B.read h Bigarray.char (fun _ ->
       equal ~msg:"under a claim of the memory itself" bool true
         (B.unborrow b);
       B.write h Bigarray.char (fun a -> Bigarray.Array1.fill a 'c'));
@@ -407,16 +403,13 @@ let test_unborrow_outside () =
   equal ~msg:"the bigarray's buffer" (option string) None (B.dead h)
 
 (* A free of a borrow returns its memory, as a free of any buffer that spans
-   it does: also of the buffer a consumption of the borrow gave. Every buffer
-   over the memory is then dead, and its mappings go once its work is done. *)
+   it does: also of the buffer a take of the borrow gave. Every buffer over
+   the memory is then dead, and its mappings go once its work is done. *)
 let test_borrow_free () =
   let d, p = P.open_ "buffer:borrow-free" in
   let h = B.create Rig.host (1 lsl 16) in
   let b = require_some (B.borrow d h) in
-  let b' =
-    Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-        Rig.Claim.consume c ~why:"donated" b)
-  in
+  let b' = require_some (Support.donated b) in
   equal ~msg:"freed" bool true (B.free b');
   equal ~msg:"its memory dead" bool true (Option.is_some (B.dead h));
   ignore (B.create Rig.host 0);
@@ -1485,7 +1478,7 @@ let test_staging_gives_back () =
       bool true
       (breaks (fun () -> copy 2 dst));
     is_some
-      ~msg:(Printf.sprintf "copy %d's destination donated after it" i)
+      ~msg:(Printf.sprintf "copy %d's destination taken after it" i)
       (Support.donated dst)
   done;
   let copied = Atomic.make false in
@@ -1564,13 +1557,12 @@ let test_staging_nested_reads () =
   List.iter Thread.join copiers
 
 (* A transfer through staging memory holds a read claim on its buffers until it
-   returns, so a donation on another domain meanwhile gets a read claim only.
-   [donate_during p b transfer donor] runs [transfer] on another domain until
-   it waits at [p]'s gate for a leg, with legs still to run, then donates [b]:
-   a donation that holds [b]'s memory exclusive gives [donor] the consumed
-   buffer to write in place. It is that buffer if the donation held the
-   memory, and how [transfer] ended. *)
-let donate_during p b transfer donor =
+   returns, so a take on another domain meanwhile is refused.
+   [take_during p b transfer taker] runs [transfer] on another domain until
+   it waits at [p]'s gate for a leg, with legs still to run, then takes [b]:
+   a take that succeeds gives [taker] the buffer to write in place. It is
+   that buffer if the take succeeded, and how [transfer] ended. *)
+let take_during p b transfer taker =
   P.gate p;
   let ended =
     Domain.spawn (fun () ->
@@ -1579,10 +1571,10 @@ let donate_during p b transfer donor =
         | exception e -> Printexc.to_string e)
   in
   Support.await "the transfer waiting for a leg" (fun () -> P.sleepers p > 0);
-  let donated = Support.donated b in
-  Option.iter donor donated;
+  let got = Support.donated b in
+  Option.iter taker got;
   P.open_gate p;
-  (donated, Domain.join ended)
+  (got, Domain.join ended)
 
 (* Three pieces of staging memory, whose halves hold 32 MiB each: the host's
    leg of the third reads the source after the device ran the first's leg out
@@ -1599,49 +1591,49 @@ let differ c b =
       done;
       !wrong)
 
-(* The host's leg reads the source, which a donation would write. *)
+(* The host's leg reads the source, which a taker would write. *)
 let test_staged_source_claimed () =
   let d, p = staging_device "buffer:staged-source" in
   let src = filled three_pieces 's' and dst = B.create d three_pieces in
-  let donated, ended =
-    donate_during p src
+  let got, ended =
+    take_during p src
       (fun () -> B.copy ~src ~dst)
       (fun b -> B.fill b 'X')
   in
   equal ~msg:"the copy" string "returned" ended;
   equal ~msg:"bytes not the source's" int 0 (differ 's' dst);
-  equal ~msg:"donated during the copy" bool false (Option.is_some donated)
+  equal ~msg:"taken during the copy" bool false (Option.is_some got)
 
-(* The host's leg writes the destination, which a donation would write too. *)
+(* The host's leg writes the destination, which a taker would write too. *)
 let test_staged_destination_claimed () =
   let d, p = staging_device "buffer:staged-destination" in
   let src = B.create d 64 in
   B.fill src 's';
   let dst = filled 64 'd' in
-  let donated, ended =
-    donate_during p dst
+  let got, ended =
+    take_during p dst
       (fun () -> B.copy ~src ~dst)
       (fun b -> B.fill b 'X')
   in
   Option.iter
-    (fun b -> equal ~msg:"bytes not the donor's" int 0 (differ 'X' b))
-    donated;
+    (fun b -> equal ~msg:"bytes not the taker's" int 0 (differ 'X' b))
+    got;
   equal ~msg:"the copy" string "returned" ended;
   equal ~msg:"bytes not the source's" int 0 (differ 's' dst);
-  equal ~msg:"donated during the copy" bool false (Option.is_some donated)
+  equal ~msg:"taken during the copy" bool false (Option.is_some got)
 
-(* A blit's legs into the buffer run after the donation, which consumed it. *)
+(* A blit's legs into the buffer hold it from a take until they ran. *)
 let test_staged_blit_claimed () =
   let d, p = staging_device "buffer:staged-blit" in
   let s = String.make three_pieces 's' and b = B.create d three_pieces in
-  let donated, ended =
-    donate_during p b
+  let got, ended =
+    take_during p b
       (fun () -> B.blit_from_string s 0 b 0 three_pieces)
       ignore
   in
   equal ~msg:"the blit" string "returned" ended;
   equal ~msg:"bytes not the string's" int 0 (differ 's' b);
-  equal ~msg:"donated during the blit" bool false (Option.is_some donated)
+  equal ~msg:"taken during the blit" bool false (Option.is_some got)
 
 (* Bigarrays *)
 
@@ -2133,7 +2125,7 @@ let pp_dma ppf = function
 let dma_answer = result (Testable.make ~pp:pp_dma ~equal:( = )) string
 
 (* A view's answer describes the allocation it lies in, and the memory leaves
-   the claims, so no donation writes what the function reads. *)
+   the claims, so no take writes what the function reads. *)
 let test_dma () =
   let d, p = P.open_ "buffer:dma" in
   let b = B.create d 4096 in
@@ -2142,7 +2134,7 @@ let test_dma () =
     (Ok (Rig_edge.Bus [ (Support.at b, 4096) ]))
     (B.dma v ~fn);
   equal ~msg:"asked of the driver" int 1 (count "dma" p);
-  is_none ~msg:"never donated" (Support.donated b);
+  is_none ~msg:"never taken" (Support.donated b);
   let other = B.create d 64 in
   P.fail_at p 1 (`Refuse 1);
   equal ~msg:"the driver's refusal" dma_answer (Error "Polled: dma refused")
@@ -2198,13 +2190,6 @@ let dma_refusals =
 
 let test_dma_refused (_, make) = raises_match Exn.invalid_arg (dma (make ()))
 
-let test_dma_exclusive () =
-  let d, _ = P.open_ "buffer:dma-exclusive" in
-  let held = B.create d 64 in
-  Rig.Claim.with_ ~read:[] ~donate:[ held ] (fun c ->
-      equal ~msg:"held exclusive" bool true (Rig.Claim.exclusive c held);
-      raises_match ~msg:"memory held exclusive" Exn.invalid_arg (dma held))
-
 let test_dma_lost () =
   let d, p = P.open_ "buffer:dma-lost" in
   let b = B.create d 64 in
@@ -2249,8 +2234,8 @@ let tests =
         test "a borrow of memory outside the claims ends" test_unborrow_outside;
         test "only a claim through a borrow keeps it from ending"
           test_unborrow_claims;
-        test "a hold through a borrow keeps it from ending" test_unborrow_holds;
-        test "a free of a borrow returns its memory, also once consumed"
+        test "a keep through a borrow keeps it from ending" test_unborrow_keeps;
+        test "a free of a borrow returns its memory, also once taken"
           test_borrow_free;
         test "borrows of one allocation share one mapping until the last goes"
           test_borrows_share;
@@ -2353,11 +2338,11 @@ let tests =
         test
           "copies from io reads inside staged copies on two threads land"
           test_staging_nested_reads;
-        test "a staged copy holds its source against a donation"
+        test "a staged copy holds its source against a take"
           test_staged_source_claimed;
-        test "a staged copy holds its destination against a donation"
+        test "a staged copy holds its destination against a take"
           test_staged_destination_claimed;
-        test "a staged blit holds its buffer against a donation"
+        test "a staged blit holds its buffer against a take"
           test_staged_blit_claimed;
       ];
     cases ~timeout
@@ -2441,7 +2426,6 @@ let tests =
           test_dma_uncached;
         cases "dma refuses memory no driver gives" ~id:fst dma_refusals
           test_dma_refused;
-        test "dma refuses memory held exclusive" test_dma_exclusive;
         test "dma of a lost device's memory raises Lost" test_dma_lost;
         test "bus is the driver's fact" test_bus;
       ];

@@ -1474,22 +1474,19 @@ let test_borrowed_host_elsewhere () =
   Gc.full_major ();
   equal ~msg:"its memory, reused" int at (Support.at (B.create Rig.host n))
 
-(* A hold collected after its domain ended lasts until a host buffer's
-   creation on this one, which releases it: a donation then finds its memory
-   exclusive. *)
-let test_hold_elsewhere () =
+(* A keep collected after its domain ended lasts until a host buffer's
+   creation on this one, which ends it: a take of its memory then
+   succeeds. *)
+let test_keep_elsewhere () =
   let a = B.create Rig.host 64 in
-  let exclusive () =
-    Rig.Claim.with_ ~read:[] ~donate:[ a ] (fun c -> Rig.Claim.exclusive c a)
-  in
-  let hold () = ignore (Sys.opaque_identity (Rig.Claim.hold [ a ])) in
-  Domain.join (Domain.spawn hold);
+  let keep () = ignore (Sys.opaque_identity (B.keep [ a ])) in
+  Domain.join (Domain.spawn keep);
   Gc.full_major ();
   Gc.full_major ();
-  equal ~msg:"collected, before a call that moves memory" bool false
-    (exclusive ());
+  is_none ~msg:"collected, before a call that moves memory"
+    (B.take ~why:"taken" [ a ]);
   ignore (Sys.opaque_identity (B.create Rig.host 8));
-  equal ~msg:"after a host buffer's creation" bool true (exclusive ())
+  is_some ~msg:"after a host buffer's creation" (B.take ~why:"taken" [ a ])
 
 (* A bigarray a device borrowed through of_bigarray stays reachable until that
    device's queued work on it ran. *)
@@ -1793,10 +1790,9 @@ let test_free_host () =
   at_most ~msg:"once the work ran" int ~than:(before - n) (settle ());
   ignore (Sys.opaque_identity h)
 
-(* A free that cannot take the memory exclusive is [false] and changes
-   nothing: of a part of the memory, of memory another claim reads or holds or
-   a donation holds exclusive, and of memory outside the claims. A free of a
-   dead buffer raises. *)
+(* A free where a take would be [None] is [false] and changes nothing: of a
+   part of the memory, of memory a claim reads or a keep holds, and of memory
+   outside the claims. A free of a dead buffer raises. *)
 let test_free_refused () =
   let d, _ = P.open_ "memory:free-refused" in
   let kept msg b =
@@ -1810,14 +1806,11 @@ let test_free_refused () =
   | _ -> fail "a claim of a new buffer");
   kept "read by a claim" b;
   Support.Reader.release b;
-  let h = Rig.Claim.hold [ b ] in
-  kept "held" b;
-  ignore (Sys.opaque_identity h);
-  let x = B.create d 64 in
-  Rig.Claim.with_ ~read:[] ~donate:[ x ] (fun _ ->
-      kept "held exclusive" x);
+  let k = B.keep [ b ] in
+  kept "kept" b;
+  ignore (Sys.opaque_identity k);
   let shared = B.create Rig.host 64 in
-  Rig.Claim.share shared;
+  B.share shared;
   kept "shared" shared;
   kept "a bigarray's"
     (B.of_bigarray (Bigarray.Array1.create Bigarray.char Bigarray.c_layout 8));
@@ -1833,7 +1826,7 @@ let tests =
         test "a free given a reason kills with it" test_free_why;
         test "freed host memory returns once a device's work on it ran"
           test_free_host;
-        test "a free that cannot take the memory exclusive changes nothing"
+        test "a free where a take would be refused changes nothing"
           test_free_refused;
       ];
     group ~timeout "budget"
@@ -1987,8 +1980,8 @@ let tests =
           test_borrowed_host;
         test "host memory borrowed on another domain returns at a host creation"
           test_borrowed_host_elsewhere;
-        test "a hold collected from another domain ends at a host creation"
-          test_hold_elsewhere;
+        test "a keep collected from another domain ends at a host creation"
+          test_keep_elsewhere;
         test "a bigarray a device borrowed lives until its work ran"
           test_borrowed_bigarray;
         test "host memory an idle device borrowed returns to an allocation"

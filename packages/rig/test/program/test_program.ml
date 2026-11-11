@@ -3755,10 +3755,21 @@ let host_frame p d =
     step_points = G.step_points p;
   }
 
-let check_donation expected b =
-  Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun claims ->
-      equal ~msg:"the buffer can be donated" bool expected
-        (Rig.Claim.exclusive claims b))
+(* Whether no claim holds [b]: a take of it alone succeeds, which kills it. *)
+let check_take expected b =
+  equal ~msg:"the buffer can be taken" bool expected
+    (Option.is_some (Rig_support.donated b))
+
+(* Takes each input of [frame], which no claim may hold, and puts the buffer
+   the take gives in its place. *)
+let retake frame =
+  Array.iteri
+    (fun i b ->
+      frame.G.inputs.(i) <-
+        require_some
+          ~msg:(Printf.sprintf "input %d taken" i)
+          (Rig_support.donated b))
+    frame.G.inputs
 
 (* The launch names the same buffer twice; both claims must end together, after
    the linked code returns. *)
@@ -3777,8 +3788,8 @@ let test_host_claim_call () =
     (fun () ->
       Rig_support.await "the code running" (fun () ->
           Rig_support.load (at + 8) = 1);
-      check_donation false x);
-  check_donation true x
+      check_take false x);
+  check_take true x
 
 (* The claim starts before the host waits for the preceding device write. *)
 let test_host_claim_wait () =
@@ -3808,23 +3819,22 @@ let test_host_claim_wait () =
       Domain.join runner)
     (fun () ->
       Rig_support.await "the host launch waiting" (fun () -> P.sleepers pd > 0);
-      check_donation false frame.inputs.(0));
-  check_donation true frame.inputs.(0)
+      check_take false frame.inputs.(0));
+  check_take true frame.inputs.(0)
 
-(* A later buffer can refuse its claim after the earlier ones were taken. *)
+(* A later buffer can refuse its claim, being dead, after the earlier ones
+   were claimed, and the run ends their claims. *)
 let test_host_claim_refusal index =
   let d, _ = polled "host-claims-refusal" in
   let t = host_program d (Iarray.init 3 (fun i -> G.Input i)) (Fixed 0) in
   let p = load_ok t [ d; Rig.host ] in
   let frame = host_frame p d in
-  Rig.Claim.with_ ~read:[]
-    ~donate:[ frame.inputs.(index) ]
-    (fun claims ->
-      equal bool true (Rig.Claim.exclusive claims frame.inputs.(index));
-      raises_match Exn.invalid_arg (fun () -> G.run p frame));
-  Array.iter (check_donation true) frame.inputs;
+  let live = require_some (Rig_support.donated frame.inputs.(index)) in
+  raises_match Exn.invalid_arg (fun () -> G.run p frame);
+  frame.inputs.(index) <- live;
+  retake frame;
   ignore (G.run p frame);
-  Array.iter (check_donation true) frame.inputs
+  retake frame
 
 (* A launch the host never runs, of no group, releases its claims. *)
 let test_host_claim_grid_refusal () =
@@ -3834,10 +3844,10 @@ let test_host_claim_grid_refusal () =
   let frame = host_frame p d in
   frame.ints.(0) <- 0;
   raises_match Exn.invalid_arg (fun () -> G.run p frame);
-  check_donation true frame.inputs.(0);
+  retake frame;
   frame.ints.(0) <- 1;
   ignore (G.run p frame);
-  check_donation true frame.inputs.(0)
+  retake frame
 
 (* run keeps its inputs until it returns: while a host launch runs on input 0,
    the frame holds another buffer there and the input is collected. Its memory

@@ -381,10 +381,10 @@ and alloc = {
   mutable count : int; [@atomic]
       (** The claim word ({!Memory.section-claims}). *)
   mutable generation : int; [@atomic]
-      (** Raised by each consumption, which kills the buffers of older
+      (** Raised by each take or free, which kills the buffers of older
           ones. Its low bit is set iff the buffers of the generation admit
           only reads ({!Memory.admits}). *)
-  mutable why : string;  (** The last consumption's reason. *)
+  mutable why : string;  (** The last take's or free's reason. *)
   mutable entry : entry; [@atomic]
       (** The allocation's entry, {!Memory.no_entry} for host memory no
           device borrowed and once a free let it go ({!Rig.Buffer.free}). Set
@@ -460,9 +460,9 @@ and half = {
 }
 
 type holds = { allocs : alloc Weak.t; leases : lease Weak.t; taken : Bytes.t }
-(** The type for the allocations a {!Rig.Claim.hold} holds, by the index of
+(** The type for the allocations a {!Rig.Buffer.val-keep} holds, by the index of
     its buffer, and whether each hold is taken, ['\001'], which the C steps
-    that take and release a hold set. The allocations are weak, so a hold
+    that take and release a hold set. The allocations are weak, so a keep
     keeps no memory from its return: a collected allocation needs no
     release. [leases] holds the lease, also weakly, of each buffer that is
     a borrow's, whose count the hold's release ends. *)

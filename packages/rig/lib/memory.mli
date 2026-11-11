@@ -241,20 +241,19 @@ val stored : alloc -> ('a -> 'b) -> 'a -> 'b
 
 (** {1:claims Claim words}
 
-    An allocation's [count] is one word, so that a claim, a donation, a hold
+    An allocation's [count] is one word, so that a claim, a take, a hold
     and an export are each one compare-and-set with one winner. A word from
-    zero up holds three bits and two counts. Bit 0 ({!outside}) is set once
+    zero up holds two bits and two counts. Bit 0 ({!outside}) is set once
     something outside the claims reaches the memory: the bigarray
     {!Rig.Buffer.of_bigarray} was given, an io library's region, an array
-    {!Rig.Buffer.export} made, or a value {!Rig.Claim.share} marked. Bit 1
-    ({!read_only}) is set for memory that admits only reads. Bit 2 is set
-    while a consumption of memory not held exclusive checks that no hold
-    holds it and raises the generation, a few instructions in C, which a
-    hold waits out. The read claims count in steps of {!one_claim} from bit
-    3, and the holds ({!Rig.Claim.hold}) in steps of {!one_hold} from bit
-    32. Only the word {!one_claim}, one claim and no bit or hold, may become
-    {!exclusive}, and it is {!one_claim} again once the claims have consumed
-    the memory. {!make} sets the bits. *)
+    {!Rig.Buffer.export} made, or a value {!Rig.Buffer.share} marked. Bit 1
+    ({!read_only}) is set for memory that admits only reads. The read claims
+    count in steps of {!one_claim} from bit 2, and the holds of
+    {!Rig.Buffer.val-keep} in steps of {!one_hold} from bit 32. A take or a
+    free ({!Rig.Buffer.take}, {!Rig.Buffer.free}) turns only the word 0 into
+    -1, for one C call that checks its buffers, raises their generations
+    and gives each word back 0; a claim, hold or mark that meets -1 waits
+    the call out. {!make} sets the bits. *)
 
 val outside : int
 (** [outside] is bit 0, set for memory outside the claims. *)
@@ -262,9 +261,7 @@ val outside : int
 val admits : int -> access
 (** [admits g] is what the buffers of the generation [g] admit: [Read] iff
     [g] is odd. The first generation of memory that admits only reads is 1,
-    others' 0; a consumption raises the generation to the next even one
-    where its claims held the memory exclusive, and to the next odd one
-    otherwise ([caml_rig_claim_consume]). *)
+    others' 0, and a take or a free raises it by 2. *)
 
 val read_only : int
 (** [read_only] is bit 1, set for memory that admits only reads. *)
@@ -274,9 +271,6 @@ val one_claim : int
 
 val one_hold : int
 (** [one_hold] is the step of one hold. *)
-
-val held : alloc -> bool
-(** [held a] is [true] iff a hold holds [a]'s memory. *)
 
 val hold_token : holds -> token
 (** [hold_token h] is a token that puts [h] on the list of holds once
@@ -301,24 +295,20 @@ val release_early : alloc -> unit
     keeps a reference on the entry's stamps until it is collected, so a walk
     of them that began before the release reads live memory. *)
 
-val exclusive : int
-(** [exclusive] is the word of memory one {!Claim.with_} holds exclusive. *)
-
-val claim_add : buffer -> bool
+val claim_add : buffer -> unit
 (** [claim_add b] adds a read claim to [b]'s memory, with no check of [b],
-    unless the memory is held exclusive: whether it did. A borrow's claim
-    counts on its lease too ({!section-leases}). It tries one
-    compare-and-set and retries in C, so in native code nothing in it polls
-    or allocates, contended or not, and a sequence of takes needs no
-    handler between them. *)
+    waiting out a take or free under way. A borrow's claim counts on its
+    lease too ({!section-leases}). It tries one compare-and-set and retries
+    in C, so in native code nothing in it polls or allocates, contended or
+    not, and a sequence of claims needs no handler between them. *)
 
 external claim_drop : buffer -> unit = "caml_rig_claim_drop" [@@noalloc]
 (** [claim_drop b] ends a read claim on [b]'s memory, in C, so no poll point
     comes between a section's end and the claim's. *)
 
-val mark_outside : alloc -> bool
-(** [mark_outside a] marks [a]'s memory outside the claims for good. It is
-    [false], changing nothing, while claims hold the memory exclusive. *)
+val mark_outside : alloc -> unit
+(** [mark_outside a] marks [a]'s memory outside the claims for good, waiting
+    out a take or free under way. *)
 
 val mark_reached : entry -> unit
 (** [mark_reached e] keeps [e] out of its owner's cache for good, since
@@ -490,11 +480,11 @@ val of_io : device -> io_region -> access:access -> int -> memory
 
 val return_half : buffer -> unit
 (** [return_half b] returns [b], a staging half's buffer ({!Def.half}) that
-    its half no longer holds, as {!Rig.Buffer.free} returns memory: [b] is consumed, and
-    its memory goes back once the work that uses it is done, through its
-    device's retiring memory, so a leg still queued on it finishes first. A
-    half that a claim holds is left to its collection. The caller holds no
-    lock. *)
+    its half no longer holds, as {!Rig.Buffer.free} returns memory: [b] is
+    dead, and its memory goes back once the work that uses it is done,
+    through its device's retiring memory, so a leg still queued on it
+    finishes first. A half that a claim holds is left to its collection. The
+    caller holds no lock. *)
 
 val drain : device -> unit
 (** [drain d] releases the collected holds ({!hold_token}) and drains each

@@ -436,8 +436,7 @@ let test_constructor_refusals () =
   let b = B.create d 16 in
   let view first length = Sub.Buffer (B.view b ~first ~length) in
   let dead = B.create d 8 in
-  Rig.Claim.with_ ~read:[] ~donate:[ dead ] (fun c ->
-      ignore (Rig.Claim.consume c ~why:"donated" dead));
+  ignore (require_some (Rig_support.donated dead));
   refused "copy" (fun () -> Sub.copy ~src:(Slot 0) ~dst:(Slot 0));
   refused "copy" (fun () -> Sub.copy ~src:(view 0 8) ~dst:(view 8 4));
   refused "copy" (fun () -> Sub.copy ~src:(view 0 8) ~dst:(view 4 8));

@@ -36,7 +36,7 @@ also commits. The steps before the driver's `submit` are the same for every
 driver.
 
 1. **Checks and claims.** `Rig.submit` checks the run and its buffers, and
-   takes a read claim on every allocation the work uses, so that no donation
+   takes a read claim on every allocation the work uses, so that no take
    writes one in place while the submit runs.
 2. **Points to follow.** It reads the stamps of every allocation the work
    uses and collects the points the work must follow, by the rules of

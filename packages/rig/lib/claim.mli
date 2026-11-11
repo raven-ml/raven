@@ -3,61 +3,41 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Claims: the implementation of {!Rig.Claim}.
+(** Claims: reads, takes and keeps of an allocation's memory, which
+    {!Rig.section-claims} states.
 
     Each lifetime of an allocation has one claim, in its {!Def.alloc}, which
     every memory record over it shares: a claim word
     ({!Memory.section-claims}), a generation, and the reason of the last
-    consumption. A read claim adds
-    {!Memory.one_claim} to the word by compare-and-set, and is refused while
-    the word is negative, that is while the memory is held exclusive.
+    take or free. A read claim adds {!Memory.one_claim} to the word by
+    compare-and-set, and a keep's hold {!Memory.one_hold}.
 
-    {!with_} takes a read claim on every buffer it is given. Then, for each
-    donated buffer that spans its memory, it turns the word, if it holds that
-    one claim and no bit, into {!Memory.exclusive}. {!consume} raises the
-    generation from its buffer's own, which kills every buffer made before,
-    then gives an exclusive word back to the one read claim, so the buffer
-    it returns is claimed as any other. When {!with_}'s function returns or
-    raises, each word still exclusive goes back to one read claim, and every
-    read claim is released.
+    {!take} makes its checks and its effects in one C step. It turns the
+    word of each buffer's memory from 0, no claim, hold or bit, into -1,
+    checks each buffer live and its work no lost device's, then raises
+    each generation by 2 from its buffer's own, which kills every buffer
+    made before, and gives each word back 0. Where a word holds a claim,
+    hold or bit, it gives back the words it turned and answers [None]. Two
+    buffers over one memory find the word the step turned already, so they
+    answer [None]. A claim or hold that meets -1 spins until the step ends.
+    A step that meets another's -1 gives back the words it turned, spins
+    until that word is given back, and tries again: it waits only holding
+    no word, so every step ends whatever the spinners hold. A claim is
+    taken before its buffer is checked live: its compare-and-set reads the
+    word the step gave back, or a later one, so its check sees the new
+    generation.
 
-    {!consume} makes its check and its effects in one C step. The end of the
-    claims waits for a step under way, so a consumption that races the end
-    completes before any release, or raises. Of two consumptions of one
-    buffer, the step lets one raise the generation, and the other raises.
-
-    A claim is taken before the buffer is checked live. A consumption on
-    another domain raises the generation before it gives the word back, so a
-    compare-and-set that reads the word given back, or any later one, is
-    followed by a check that sees the new generation. Every path that claims
-    checks under its claim, since a check before the claim would pass a
-    buffer that a consumption kills between the two. A claim refused by
-    memory held exclusive that its with_ has since released is tried again.
-
-    A hold ({!hold}) adds {!Memory.one_hold} to the word unless it is
-    exclusive. A consumption of memory not held exclusive sets the word's
-    lock bit if no hold holds the memory, raises the generation, and clears
-    the bit; a hold waits while the bit is set and checks its buffer live
-    once it holds. So a consumption either finds the hold and raises, or
-    the hold finds the buffer dead. A release ({!release}) clears each
-    hold's mark in its record and takes {!Memory.one_hold} off the word in
-    one C step, so each hold ends once, whichever release, on any domain,
-    or drain after the hold's collection comes first.
-
-    {!with_} takes its claims in one C call, the last step before its
-    function's handler. Both exits begin with [finish], which ends the
-    claims by an atomic addition, waits in C for a consumption under way,
-    and releases the claims in one C call; the compiler checks that it holds
-    no poll point.
-    In native code no poll point lies between the last claim and the
-    handler, or between [f]'s return or raise and the release, so an
-    asynchronous exception, such as [Sys.Break] or a signal handler's,
-    leaves no claim behind.
+    A keep ({!val-keep}) adds {!Memory.one_hold} to each word, then checks its
+    buffer live, so either a take finds the hold and answers [None], or the
+    keep finds the buffer dead and raises. A release ({!release}) clears
+    each hold's mark in its record and takes {!Memory.one_hold} off the word
+    in one C step, so each hold ends once, whichever release, on any
+    domain, or drain after the keep's collection comes first.
 
     {!Submission.submit} takes read claims of its own, with
     {!Memory.claim_add}, on the buffers of a run, and releases them once the
-    driver's [submit] has returned. A submission holds its fixed memory
-    ({!hold}) for its life. A copy, blit or fill ({!Copy}) holds read claims
+    driver's [submit] has returned. A submission keeps its fixed memory
+    ({!kept}) for its life. A copy, blit or fill ({!Copy}) holds read claims
     on its buffers until it returns ({!reading2}, {!wait}). *)
 
 val read_bytes :
@@ -97,11 +77,10 @@ val stored : string -> Def.buffer -> ('a -> 'b) -> 'a -> 'b
 
 val reading : string -> Def.buffer -> (unit -> 'a) -> 'a
 (** [reading fn b f] is [f ()] under a read claim on [b]'s memory for a call of
-    [fn]. It checks [b] live under the claim, as {!with_} does, and the claim
-    ends in C as [f] returns or raises.
+    [fn]. It checks [b] live under the claim, and the claim ends in C as [f]
+    returns or raises.
 
-    Raises [Invalid_argument] naming [fn] if the memory is held exclusive or
-    [b] is dead. *)
+    Raises [Invalid_argument] naming [fn] if [b] is dead. *)
 
 val reading2 :
   string ->
@@ -117,49 +96,36 @@ val reading2 :
     Raises as {!reading} does, for either buffer. *)
 
 val share : Def.buffer -> unit
-(** [share b] is {!Rig.Claim.share}[ b]. Memory already outside the claims
+(** [share b] is {!Rig.Buffer.share}[ b]. Memory already outside the claims
     costs two loads and no call. *)
 
-type t
-(** The type for the claims of one {!with_}: its buffers, and whether its
-    function returned or raised, after which the claims hold nothing. *)
-
-val with_ : read:Def.buffer list -> donate:Def.buffer list -> (t -> 'a) -> 'a
-(** [with_ ~read ~donate f] is {!Rig.Claim.with_}[ ~read ~donate f]. *)
-
-val exclusive : t -> Def.buffer -> bool
-(** [exclusive c b] is {!Rig.Claim.exclusive}[ c b]. *)
-
-val consume : t -> why:string -> Def.buffer -> Def.buffer
-(** [consume c ~why b] is {!Rig.Claim.consume}[ c ~why b]. *)
+val take : why:string -> Def.buffer list -> Def.buffer list option
+(** [take ~why bs] is {!Rig.Buffer.take}[ ~why bs]. *)
 
 val free : ?why:string -> Def.buffer -> bool
-(** [free ~why b] is {!Rig.Buffer.free}[ ~why b]. One C step takes a read claim,
-    holds the memory exclusive if that claim is its only one, and consumes
-    it, so a claim that follows finds [b] dead. A borrow maps under a read
-    claim, so no free returns memory that a borrow maps meanwhile. *)
+(** [free ~why b] is {!Rig.Buffer.free}[ ~why b]. Its C step is {!take}'s
+    for one buffer, without the check for a loss, and waits out another take
+    or free of the memory under way. A borrow maps under a read claim, so no
+    free returns memory that a borrow maps meanwhile. *)
 
 val unborrow : ?why:string -> Def.buffer -> bool
 (** [unborrow ~why b] is {!Rig.Buffer.unborrow}[ ~why b]. A claim or a hold
     through a borrow counts on its lease as well as on its memory's word
     ({!Memory.claim_add}, [rig_buffer_claim]), and one C step moves the
-    lease's count from no claims or holds to its end, so a claim through the borrow
-    that follows finds its buffers dead. The memory's word is not
+    lease's count from no claims or holds to its end, so a claim through the
+    borrow that follows finds its buffers dead. The memory's word is not
     touched. *)
 
-val consumable : t -> Def.buffer -> bool
-(** [consumable c b] is {!Rig.Claim.consumable}[ c b]. *)
-
-type hold
-(** The type for holds: a token whose collection releases them
+type keep
+(** The type for keeps: a token whose collection releases their holds
     ({!Memory.hold_token}), and their record. *)
 
-val held : string -> Def.buffer array -> hold
-(** [held fn bs] is {!Rig.Claim.hold}[ bs] for a call of [fn], which its
+val kept : string -> Def.buffer array -> keep
+(** [kept fn bs] is {!Rig.Buffer.val-keep}[ bs] for a call of [fn], which its
     errors name. *)
 
-val hold : Def.buffer list -> hold
-(** [hold bs] is {!held}[ "Claim.hold" bs]. *)
+val keep : Def.buffer list -> keep
+(** [keep bs] is {!kept}[ "Buffer.keep" bs]. *)
 
-val release : hold -> unit
-(** [release h] is {!Rig.Claim.release}[ h]. *)
+val release : keep -> unit
+(** [release k] is {!Rig.Buffer.release}[ k]. *)

@@ -1229,18 +1229,6 @@ let descriptors =
 
 (* Barriers *)
 
-let test_barrier_dead () =
-  let path = new_path () in
-  removing [ path ] @@ fun () ->
-  let f = create_file path 4 in
-  let file = Rig_disk.buffer f in
-  ignore
-    (Rig.Claim.with_ ~read:[ file ] ~donate:[] (fun c ->
-         Rig.Claim.consume c ~why:"gone" file));
-  raises_match
-    (Exn.invalid_arg ~sub:"Rig_disk.barrier: the buffer is dead: gone")
-    (fun () -> Rig_disk.barrier f)
-
 (* A barrier first waits for the work that writes the file through a borrow:
    work of a Polled device, unrun, which the device's loss drops. The barrier
    raises that loss, and the disk is not lost. *)
@@ -1441,7 +1429,6 @@ let barriers =
       test "barrier returns on a file opened for reading" (fun () ->
           let path = make_file "abc" in
           removing [ path ] @@ fun () -> Rig_disk.barrier (open_file path));
-      test "barrier refuses a dead buffer" test_barrier_dead;
       test "barrier raises the loss of a device whose work writes the file"
         test_barrier_lost;
       test "every barrier on a file raises once one failed to write its bytes"

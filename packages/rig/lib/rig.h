@@ -69,7 +69,7 @@ RIG_EXTERN void rig_buffer_span(value b, intnat *space, intnat *first);
 RIG_EXTERN int rig_buffers_overlap(value a, intnat a_first, intnat a_bytes,
                                    value b, intnat b_first, intnat b_bytes);
 
-/* The reason the consumption of [b] gave if [b] is dead, as a C string in
+/* The reason [b] is dead, as Rig.Buffer.dead gives it, as a C string in
    the OCaml heap; NULL if [b] is live. Like String_val's, the pointer holds
    only until the caller next allocates, runs OCaml code or releases the
    domain lock, any of which may move the string. A caller that keeps the
@@ -80,31 +80,30 @@ RIG_EXTERN const char *rig_buffer_why(value b);
 /* Claims
 
    Host code that reads or writes a buffer's bytes claims its memory
-   first, as Rig.Buffer.read does, so that no donation on another domain
-   holds it exclusive while the code runs. It then reads or writes if the
-   claim answers RIG_CLAIMED, and after rig_buffer_wait if it answers
-   RIG_WAIT; on RIG_LOST, whose wait raises, it touches nothing. Memory the
-   caller holds exclusive (Rig.Claim.with_) is claimed already; claiming it
-   again answers RIG_EXCLUSIVE until the caller consumes it. The buffer
-   Rig.Claim.consume returns is claimed as any other. */
+   first, as Rig.Buffer.read does, so that no take on another domain
+   (Rig.Buffer.take) writes it while the code runs. It then reads or writes
+   if the claim answers RIG_CLAIMED, and after rig_buffer_wait if it answers
+   RIG_WAIT; on RIG_LOST, whose wait raises, it touches nothing. A claim
+   that meets a take or a free under way on another domain spins until that
+   step ends: one C call that runs no OCaml code, about as long as a claim
+   of each buffer it takes. */
 
 enum rig_access { RIG_READ, RIG_READ_WRITE };
 
 enum rig_claim {
-  RIG_CLAIMED,   /* claimed, and the work the access must follow is done */
-  RIG_WAIT,      /* claimed: call rig_buffer_wait before the access */
-  RIG_LOST,      /* claimed: rig_buffer_wait answers Rig.Lost at once,
-                    waiting for no work */
-  RIG_DEAD,      /* not claimed: rig_buffer_why gives the reason */
-  RIG_EXCLUSIVE, /* not claimed: the memory is held exclusive */
-  RIG_READ_ONLY  /* not claimed: RIG_READ_WRITE of a buffer that admits
-                    only reads (Rig.Buffer.access) */
+  RIG_CLAIMED,  /* claimed, and the work the access must follow is done */
+  RIG_WAIT,     /* claimed: call rig_buffer_wait before the access */
+  RIG_LOST,     /* claimed: rig_buffer_wait answers Rig.Lost at once,
+                   waiting for no work */
+  RIG_DEAD,     /* not claimed: rig_buffer_why gives the reason */
+  RIG_READ_ONLY /* not claimed: RIG_READ_WRITE of a buffer that admits
+                   only reads (Rig.Buffer.access) */
 };
 
 /* Claims [b]'s memory for [access]. It claims, then checks [b] under the
-   claim, and undoes the claim on RIG_DEAD, RIG_EXCLUSIVE and
-   RIG_READ_ONLY. It is RIG_CLAIMED if the work submitted before the claim
-   that the access must follow is done, as Rig.Buffer.wait states it; work
+   claim, and undoes the claim on RIG_DEAD and RIG_READ_ONLY. It is
+   RIG_CLAIMED if the work submitted before the claim that the access must
+   follow is done, as Rig.Buffer.wait states it; work
    submitted after it is the caller's to exclude. It is RIG_WAIT, holding
    the claim, if every point the access must follow that is not reached as
    the host last read its device's word is a live device's. It is RIG_LOST,
@@ -137,7 +136,7 @@ RIG_EXTERN void rig_buffer_release(value b);
    as rig_buffer_claim claims each in turn. It is -1 if it claimed every
    buffer, with answer[k] RIG_CLAIMED, RIG_WAIT or RIG_LOST for each;
    otherwise it is the index of the first buffer refused, answer[that] says
-   why (RIG_DEAD, RIG_EXCLUSIVE, RIG_READ_ONLY), and nothing is held. It
+   why (RIG_DEAD, RIG_READ_ONLY), and nothing is held. It
    allocates nothing and never releases the runtime, so [buffers] may point
    into an OCaml block. A buffer may appear more than once: claims count. */
 RIG_EXTERN int rig_buffers_claim(int n, const value *buffers,

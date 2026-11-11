@@ -598,9 +598,9 @@ let wide_twos () =
 let make_sys xs = Nx.mul (on_gate xs) (on_gate (Array.make 4 1.))
 let make_ref xs = { xs; dead = None }
 
-(* What a refusal says: a decline, the function a value went to, or that a
-   kernel met memory a consumer in flight holds exclusive before it consumed
-   it, naming no one ([taken]). *)
+(* What a refusal says: a decline, or the function a value went to. A kernel
+   that meets memory a consumer in flight is taking waits for the take, and
+   names the consumer if the take took the memory. *)
 let named m =
   let has s i =
     i + String.length s <= String.length m
@@ -621,7 +621,6 @@ let named m =
       String.sub m i (j - i)
   | None ->
       if Option.is_some (find "does not compute" 0) then "declined"
-      else if Option.is_some (find "held exclusive" 0) then "taken"
       else "refused: " ^ m
 
 let outcome f =
@@ -638,11 +637,6 @@ let seen x f = if x.dead <> f then fail "a donor seen in another state"
 
 (* A call [by] on [h] that raised naming [e], its donor's consumer. *)
 let lost by e h = if h.x.dead <> Some e then fail (by ^ " raised naming " ^ e)
-
-(* As [lost], or, on two domains, a call that met [h]'s memory [taken] by a
-   consumer in flight. *)
-let lost_raced by e h =
-  match (e, h.x.dead) with "taken", Some _ -> () | _ -> lost by e h
 
 let donate_ref x =
   if Option.is_some x.dead then invalid_arg "dead";
@@ -847,7 +841,7 @@ let raced_decline by h = function
   | Ok (Error "declined") ->
       lives h;
       h.x.dead <- Some by
-  | Ok (Error e) -> lost_raced by e h
+  | Ok (Error e) -> lost by e h
 
 let raced_sys f h = outcome (fun () -> elements (f h))
 
@@ -856,20 +850,13 @@ let raced_sys f h = outcome (fun () -> elements (f h))
 let raced_moved h = function
   | Error e -> raise e
   | Ok (Ok _) -> lives h
-  | Ok (Error e) -> lost_raced "Nx.reshape" e h
+  | Ok (Error e) -> lost "Nx.reshape" e h
 
 (* The movement's handle, which no command reads. *)
 let moved_sys f h =
   outcome (fun () ->
       ignore (f h);
       [||])
-
-(* A read on two domains may meet the donor's memory taken by a consumer in
-   flight. *)
-let read_judge x = function
-  | Ok (Error "taken") ->
-      if Option.is_none x.dead then fail "a read lost to no one"
-  | out -> read_ref x out
 
 let raced =
   [
@@ -900,13 +887,13 @@ let raced =
            Nx.cast D.Float32 (Nx.less h (Nx.scalar_like h 2.))));
     command "mul"
       (handle ^-> judges outcomes)
-      (consumer lost_raced "Nx.mul" double)
+      (consumer lost "Nx.mul" double)
       mul_sys;
     command "sum"
       (handle ^-> judges outcomes)
-      (consumer lost_raced "Nx.sum" total)
+      (consumer lost "Nx.sum" total)
       sum_sys;
-    command "read" (donor ^-> judges outcomes) read_judge read_sys;
+    command "read" (donor ^-> judges outcomes) read_ref read_sys;
   ]
 
 (* [f ()] raises naming [by] and the consumer [consumer]. *)
@@ -1240,15 +1227,13 @@ let creations =
             (fun () -> Nx.zeros_at Dec.on D.Float32 [| 2 |]));
     ]
 
-(* Kills [x]'s memory, as a donation consumes it. *)
-let kill x =
-  let b = A.buffer (Option.get (Nx.Repr.array x)) in
-  Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-      ignore (Rig.Claim.consume c ~why:"consumed by the test" b))
-
+(* A value whose memory a take killed, as a donation's does: the value owns
+   [a]'s memory, which a take then finds inside the claims. *)
 let test_zeros_like_reads_nothing () =
-  let x = to_count (on_host Plain D.Float32 [| 2 |] [| 1.; 2. |]) in
-  kill x;
+  let a = A.to_device (m 0) (lay Plain D.Float32 [| 2 |] [| 1.; 2. |]) in
+  let x = Nx.Repr.unsafe_of_array Count.v a in
+  let taken = Rig.Buffer.take ~why:"consumed by the test" [ A.buffer a ] in
+  ignore (require_some ~msg:"a take" taken);
   invalid ~by:"Nx.add" (fun () -> Nx.add x x);
   C.reset ();
   let z = Nx.zeros_like x in

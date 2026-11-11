@@ -273,41 +273,35 @@ let outside = 1
 let read_only = 2
 
 (* A generation's low bit is set iff its buffers admit only reads: the first
-   one of memory that admits only reads, and the one a consumption of memory
-   not held exclusive raises to. Each buffer carries its generation, so it
-   carries its access in no word of its own. *)
+   one of memory that admits only reads, which no take raises. Each buffer
+   carries its generation, so it carries its access in no word of its
+   own. *)
 let admits g : access = if g land 1 = 1 then Read else Read_write
 let first_generation (e : entry) = if e.access = Read then 1 else 0
 
-let one_claim = 8
+let one_claim = 4
 let one_hold = 1 lsl 32
-let exclusive = -1
 
-(* Bit 2 is set while a consumption of memory that is not held exclusive
-   checks for holds and raises the generation, in C. *)
-let held (a : alloc) = Atomic.Loc.get [%atomic.loc a.count] >= one_hold
-
-external claim_retry : buffer -> bool = "caml_rig_claim_add" [@@noalloc]
+external claim_retry : buffer -> unit = "caml_rig_claim_add" [@@noalloc]
 
 (* One compare-and-set in OCaml: with one domain running, the runtime's is a
    plain store, which a C take's locked one is not. A retry, after another
-   domain's claim beat it, loops in C, since an OCaml loop's back edge
-   polls. *)
+   domain's claim beat it or while a take or free holds the word, loops in
+   C, since an OCaml loop's back edge polls. *)
 let claim_add b =
   let a = b.mem.alloc in
   let w = Atomic.Loc.get [%atomic.loc a.count] in
-  w >= 0
-  && (Atomic.Loc.compare_and_set [%atomic.loc a.count] w (w + one_claim)
-     || claim_retry b)
-  && begin
-    (* A claim through a borrow counts on its lease too, which an unborrow
-       waits on, as C's claims do ([lease_take] in rig_memory.c). *)
-    (match b.mem.lease with
-    | Some l ->
-        ignore (Atomic.Loc.fetch_and_add [%atomic.loc l.lease_count] 1 : int)
-    | None -> ());
-    true
-  end
+  if
+    not
+      (w >= 0
+      && Atomic.Loc.compare_and_set [%atomic.loc a.count] w (w + one_claim))
+  then claim_retry b;
+  (* A claim through a borrow counts on its lease too, which an unborrow
+     waits on, as C's claims do ([lease_take] in rig_memory.c). *)
+  match b.mem.lease with
+  | Some l ->
+      ignore (Atomic.Loc.fetch_and_add [%atomic.loc l.lease_count] 1 : int)
+  | None -> ()
 
 external claim_drop : buffer -> unit = "caml_rig_claim_drop" [@@noalloc]
 
@@ -326,12 +320,17 @@ let claim_word keep (e : entry) =
   (if reached then outside else 0)
   lor if e.access = Read then read_only else 0
 
+(* A take or free holds the word for one C call: the mark waits it out. *)
 let rec mark_outside (a : alloc) =
   let w = Atomic.Loc.get [%atomic.loc a.count] in
-  w >= 0
-  && (w land outside <> 0
-     || Atomic.Loc.compare_and_set [%atomic.loc a.count] w (w lor outside)
-     || mark_outside a)
+  if w < 0 then begin
+    Domain.cpu_relax ();
+    mark_outside a
+  end
+  else if
+    w land outside = 0
+    && not (Atomic.Loc.compare_and_set [%atomic.loc a.count] w (w lor outside))
+  then mark_outside a
 
 (* Leases *)
 
@@ -1035,7 +1034,7 @@ let rec route_released d = if Dev.protect d route_one d then route_released d
 
 (* Holds
 
-   The holds of {!Rig.Claim.hold} go on one list of no device, so that any
+   The holds of {!Rig.Buffer.keep} go on one list of no device, so that any
    drain releases those collected, under [hold_lock]. Releasing them waits
    for no work: work holds no claim. *)
 

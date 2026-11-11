@@ -63,11 +63,11 @@ val is_handle : ('v, 's, 'd) Value.t -> bool
 
 val lent : ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
 (** [lent x] is the arrays of a handle as a live value, which its reader may
-    keep or return: their memory is shared ({!Rig.Claim.share}), so no later
+    keep or return: their memory is shared ({!Rig.Buffer.share}), so no later
     donation writes there, and the handle's donor lives on. Any other value is
     itself.
 
-    Raises [Invalid_argument] as {!Rig.Claim.share} does if a consumer took
+    Raises [Invalid_argument] as {!Rig.Buffer.share} does if a consumer took
     the memory meanwhile. *)
 
 val read : by:string -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
@@ -133,8 +133,8 @@ val reuse :
     device, its array of [dt] and [l] over all of its memory, each operand at
     a position outside [own] apart from that memory, each at a position of
     [own] reading it as the handle's array does, the memory no other value
-    reads (rig holds it exclusive), and no earlier [reuse] of [c] having taken
-    it. The memory is then consumed for [c]'s consumer, and the answer is the
+    reads, and no earlier [reuse] of [c] having taken it. The memory is then
+    taken for [c]'s consumer ({!Rig.Buffer.take}), and the answer is the
     handle's buffer, dead from then on, and an array of [dt] and [l] over the
     memory, the result's. [None] otherwise.
 
@@ -156,10 +156,10 @@ val reuse_cut :
     the memory of the first handle [c] claimed at a position of [own] whose
     shards each hold that device's window of [dt] laid out so, over all of
     their memory, no two sharing memory, every other operand apart from it
-    as {!reuse} asks and rig holding every shard's memory exclusive. All of
-    its shards' memory is then consumed for [c]'s consumer, and the answer
-    is each shard's buffer, dead from then on, with the array over its
-    memory the result takes there. [None] otherwise, consuming nothing. *)
+    as {!reuse} asks and no other value reading any shard's memory. All of
+    its shards' memory is then taken at once for [c]'s consumer, and the
+    answer is each shard's buffer, dead from then on, with the array over
+    its memory the result takes there. [None] otherwise, taking nothing. *)
 
 val value :
   'd claim -> int -> ('v, 's) Nx_array.Dtype.t -> ('v, 's, 'd) Value.t

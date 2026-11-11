@@ -26,8 +26,7 @@ let test_view () =
 
 let test_dead () =
   let b = B.create Rig.host 8 in
-  Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-      ignore (Rig.Claim.consume c ~why:"donated" b));
+  ignore (require_some (Rig_support.donated b));
   equal (option string) (Some "donated") (R.why b)
 
 (* A claim from C resolves and claims, and its release ends it. *)
@@ -36,8 +35,7 @@ let test_claim () =
   let answer = Testable.make ~pp:R.pp_answer ~equal:( = ) in
   equal ~msg:"claimed" answer R.Claimed (R.claim b Rig.Read);
   R.release b;
-  Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-      equal ~msg:"released" bool true (Rig.Claim.exclusive c b))
+  is_some ~msg:"released" (B.take ~why:"taken" [ b ])
 
 (* Spans *)
 

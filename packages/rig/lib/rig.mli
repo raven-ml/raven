@@ -15,9 +15,9 @@
     ({!section-machines}).
 
     Most programs need only {!open_}, {!Buffer} and {!Buffer.copy}. {!Image},
-    {!Submission}, {!submit}, {!Local} and {!Claim} are for libraries that
-    run compiled code, keep values per device or write results over their
-    inputs.
+    {!Submission}, {!submit}, {!Local} and {!Buffer.section-taking} are for
+    libraries that run compiled code, keep values per device or write
+    results over their inputs.
 
     Work on a GPU runs asynchronously. The call that submits it returns
     before the work has run. So that the host can tell what has run, rig
@@ -48,10 +48,10 @@
     A function may write its result over the memory of an argument it no
     longer needs, which is called {e donation}. A {e claim} records that
     something reads an allocation, so that a donation writes only memory
-    that nothing else reads ({!section-claims}). A donor writes over memory
-    that it holds {e exclusive}, by the only claim on it. It first
-    {e consumes} that memory, so every buffer made over the memory until
-    then is {e dead} from then on ({!Claim.consume}).
+    that nothing else reads ({!section-claims}). A donor first {e takes}
+    that memory, which succeeds only where nothing else claims it, so every
+    buffer made over the memory until then is {e dead} from then on
+    ({!Buffer.take}).
 
     A device is {e lost} when it can run no more work, for good, such as
     after a fault of its driver ({!section-loss}). Unless a function's doc
@@ -82,8 +82,9 @@
     {!section-loss} what a lost device leaves, and {!section-reclaim} when
     memory returns. The module reference comes after them: {!Buffer} for
     memory and host access, {!section-submitting} for compiled code,
-    {!Local} for values a library keeps per device, and {!Claim} for writing
-    over an argument. A driver implements {!Rig_edge}. *)
+    {!Local} for values a library keeps per device, and
+    {!Buffer.section-taking} for writing over an argument. A driver
+    implements {!Rig_edge}. *)
 
 (** {1:devices Devices}
 
@@ -588,7 +589,8 @@ val word : int
     {!Image.val-device}, {!Image.name}, {!Image.image}, {!Image.params},
     {!Image.threads}, {!Image.entry}, {!Submission}'s refs and parts,
     {!Submission.val-block}, {!Submission.address}, {!Submission.Run},
-    {!Claim}, {!Profile} but {!Profile.take}, {!Local.new_key}, and
+    {!Buffer.share}, {!Buffer.val-keep}, {!Buffer.release}, {!Buffer.take},
+    {!Profile} but {!Profile.take}, {!Local.new_key}, and
     {!Local.get} of a value already made for the device. Nor do
     {!signaled} and {!fail}.
     Outside a lock, a call from a callback runs as any call does.
@@ -641,9 +643,7 @@ val word : int
     {- A use through an {!Submission.unordered} ref depends on no point.}
     {- Every other use depends on every point of the stamps, such as a
        write, a borrow, {!Buffer.wait}[ b Read_write], {!Buffer.write},
-       {!Buffer.export}, and a claim that {!Claim.with_} takes. A
-       {!Claim.with_} claim names no access, so it depends on what a write
-       would.}}
+       {!Buffer.export}, and a take ({!Buffer.take}).}}
 
     After a loss, these raise {!Lost}:
     {ul
@@ -872,8 +872,8 @@ val failure : unit -> string option
     submitted on the device before the first such call after the collection
     is done, also when they then raise {!Lost}. {!free_cache} moves memory
     on its device, reclamation on every device, and a lost device's stop on
-    its own. Each of these moves first releases the holds collected on any
-    device ({!Claim.val-hold}), and moves the memory and lets go of the kept
+    its own. Each of these moves first releases the keeps collected on any
+    device ({!Buffer.val-keep}), and moves the memory and lets go of the kept
     values collected on any device whose stop returned, such as a closed
     one. Memory collected while a domain blocks returns through other
     domains' calls. A device reports its values up to [k] values late
@@ -1122,12 +1122,12 @@ module Buffer : sig
       {!create} places a host buffer. *)
 
   val of_bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> t
-  (** [of_bigarray ba] is a buffer on {!host} over [ba]'s bytes, without a
-      copy. It keeps [ba] reachable, and its memory is outside the claims
-      ({!Claim}). Each call makes a new allocation with stamps of its own,
-      even over bytes another call wraps, so rig does not order work through
-      one such buffer with work through the other. Wrap an array once and
-      share the buffer through {!view} and {!borrow}. *)
+  (** [of_bigarray ba] is a buffer on {!host} over [ba]'s bytes, without a copy.
+      It keeps [ba] reachable, and its memory is outside the claims
+      ({!Rig.section-claims}). Each call makes a new allocation with stamps of
+      its own, even over bytes another call wraps, so rig does not order work
+      through one such buffer with work through the other. Wrap an array once
+      and share the buffer through {!view} and {!borrow}. *)
 
   val of_io :
     device ->
@@ -1141,8 +1141,8 @@ module Buffer : sig
       memory as its library represents it, such as an open file. Its memory
       admits [access], which is [Read] for a region given for reading, such
       as a file opened read-only. Its memory is outside the claims
-      ({!Claim}), and [r] returns to [I.free] ({!Rig_edge.Io.free}) once
-      unreachable.
+      ({!Rig.section-claims}), and [r] returns to [I.free]
+      ({!Rig_edge.Io.free}) once unreachable.
 
       Raises [Invalid_argument] if [d] is not an io device or [n < 0], and
       {!Lost} if [d] is lost or closed. *)
@@ -1164,8 +1164,7 @@ module Buffer : sig
       work through it is ordered as work on [b], and a borrow of a borrow
       maps the memory the first one maps.
 
-      Raises [Invalid_argument] if [b] is dead or, on a device other than
-      [b]'s, a {!Claim.with_} holds its memory exclusive; {!Lost} if [d] is
+      Raises [Invalid_argument] if [b] is dead; {!Lost} if [d] is
       lost or its driver faults during the borrow; {!Rig.Out_of_memory} if
       [d]'s driver has no room for the mapping ({!Rig.section-reclaim}); and
       [Sys_error] if asking an io library for [b]'s pages fails transiently
@@ -1173,15 +1172,15 @@ module Buffer : sig
 
   val free : ?why:string -> t -> bool
   (** [free ~why b] tries to return [b]'s memory early, and is [false],
-      changing nothing, if [b] does not span its memory ({!spans}), another
-      claim holds it, or it is outside the claims ({!Rig.section-claims}).
-      Otherwise it takes the memory exclusive and consumes it with the reason
-      [why] (["freed"] by default), which {!dead} then answers, so every
-      buffer over it is dead, the memory returns once the work using it is
-      done, as collected memory does ({!Rig.section-reclaim}), and it is
-      [true]. A library that consumed [b] for an operation passes the reason
-      it consumed with, so that a later refusal of the memory names that
-      operation.
+      changing nothing, where {!take}[ ~why [b]] would be [None]: [b] does
+      not span its memory ({!spans}), something else claims it, it is
+      outside the claims, or it admits only [Read] ({!Rig.section-claims}).
+      Otherwise every buffer over the memory is dead with the reason [why]
+      (["freed"] by default), which {!dead} then answers, the memory returns
+      once the work using it is done, as collected memory does
+      ({!Rig.section-reclaim}), and it is [true]. A library that took [b]
+      for an operation passes the reason it took with, so that a later
+      refusal of the memory names that operation.
 
       Raises [Invalid_argument] if [b] is dead. *)
 
@@ -1190,7 +1189,7 @@ module Buffer : sig
       changing nothing, if a claim or a hold through the borrow or one of
       its views keeps it, such as a host access or a submit through it on
       another domain, or a prepared submission that names it
-      ({!Claim.val-hold}). Otherwise every buffer of the borrow,
+      ({!val-keep}). Otherwise every buffer of the borrow,
       its views included, is dead with the reason [why] (["unborrowed"] by
       default), which {!dead} then answers, the memory and its other
       buffers live on, the borrow's hold of its mapping ends as at its
@@ -1210,7 +1209,7 @@ module Buffer : sig
   (** [device b] is the device [b] is on: [d] for a buffer that {!create},
       {!of_io} or {!borrow} made on [d], {!host} for one that {!of_string} or
       {!of_bigarray} made, and its buffer's device for a {!view} and for
-      {!Claim.consume}'s result. *)
+      each buffer {!take} returns. *)
 
   val length : t -> int
   (** [length b] is the number of [b]'s bytes. *)
@@ -1241,9 +1240,8 @@ module Buffer : sig
   val access : t -> access
   (** [access b] is the access [b] admits, which its views and borrows
       admit too. It is what [b]'s memory admits: [Read_write] for memory
-      {!create}, {!of_string} and {!of_bigarray} make, and what {!of_io} was
-      given. A buffer {!Claim.consume} returned from memory its claims did
-      not hold exclusive admits only [Read] ({!Rig.section-claims}).
+      {!create}, {!of_string} and {!of_bigarray} make, what {!of_io} was
+      given, and [Read_write] for each buffer {!take} returns.
 
       rig never writes through a [Read] buffer, and refuses a copy or work
       that would ({!copy}, {!Submission.make}, {!submit}), and {!write} of
@@ -1254,8 +1252,8 @@ module Buffer : sig
 
   val dead : t -> string option
   (** [dead b] is [Some why] if [b] is dead, where [why] is the reason its
-      memory was consumed with ({!Claim.consume}), or its borrow ended with
-      ({!unborrow}), and [None] otherwise. A
+      memory was taken or freed with ({!take}, {!free}), or its borrow ended
+      with ({!unborrow}), and [None] otherwise. A
       library that receives a buffer checks it first, so that it reports the
       error itself. *)
 
@@ -1266,7 +1264,7 @@ module Buffer : sig
       {!host} included, and memory of a device of this machine that has a
       host address, such as a {!software} device's. {!write} also writes
       [Mapped] memory of a device of this machine, through its window. {!read}
-      and {!write} take a read claim on the memory, so that no donation
+      and {!write} take a read claim on the memory, so that no take
       writes it meanwhile ({!Rig.section-claims}), wait for the work the
       access follows, call their function on the bytes, then release the
       claim when it returns or raises, after the flush of a window {!write}
@@ -1288,8 +1286,7 @@ module Buffer : sig
       dead, its bytes are not a whole number of elements of [k], [b] has
       bytes that the host does not address, other than those of [Mapped]
       memory for {!write}, or that do not start at a multiple of the
-      elements' size (of one component's size for complex kinds), or a
-      {!Claim.with_} holds the memory exclusive. *)
+      elements' size (of one component's size for complex kinds). *)
 
   val wait : t -> access -> unit
   (** [wait b access] returns once the work that a host access [access] of
@@ -1301,7 +1298,7 @@ module Buffer : sig
          where a device borrowed them.}
       {- It does not wait for work through {!Submission.unordered} refs,
          which the caller orders.}
-      {- It takes no claim, so a donation on another domain may write the
+      {- It takes no claim, so a take on another domain may write the
          memory once it returns, which {!read}, {!write}, the copies, the
          blits and {!fill} prevent.}}
 
@@ -1358,7 +1355,7 @@ module Buffer : sig
   (** [export b k] is [b]'s bytes as elements of [k] for good, once every use
       of [b]'s memory is done, for code that keeps them, such as a library's
       array. The array keeps the memory alive while it is reachable. From
-      then on the memory is outside the claims ({!Claim}), and the caller
+      then on the memory is outside the claims ({!share}), and the caller
       orders access through the array with later work, as for
       {!of_bigarray}. The array reads without any check of loss
       ({!Rig.section-loss_memory}).
@@ -1476,9 +1473,9 @@ module Buffer : sig
       they go.
 
       A copy, blit or fill holds a read claim on its buffers' memory until it
-      returns, so that no donation writes the memory meanwhile
+      returns, so that no take writes the memory meanwhile
       ({!Rig.section-claims}). Work that a copy left queued on a device holds
-      none, as no work on a device does: the stamps order a donation's write
+      none, as no work on a device does: the stamps order a taker's write
       after it. *)
 
   type box = {
@@ -1540,22 +1537,20 @@ module Buffer : sig
       its point is reached, so a program orders its own access through such
       an array after the point.
 
-      Raises [Invalid_argument] if [src] or [dst] is dead, they share a byte
-      of memory, a box does not fit them, [dst] admits only [Read], one
-      side is an io device's memory and the other a borrow of it, a side's
-      memory is held exclusive, the copy has bytes and no device can copy
-      between the two sides, or one row of a box fits in no submission of
-      the device's driver. Raises {!Lost} if a device that runs a transfer
-      is lost before its submission, or its submission loses it, or while
-      the host waits for a transfer it moves bytes after, or if a point of
+      Raises [Invalid_argument] if [src] or [dst] is dead, they share a byte of
+      memory, a box does not fit them, [dst] admits only [Read], one side is an
+      io device's memory and the other a borrow of it, the copy has bytes and no
+      device can copy between the two sides, or one row of a box fits in no
+      submission of the device's driver. Raises {!Lost} if a device that runs a
+      transfer is lost before its submission, or its submission loses it, or
+      while the host waits for a transfer it moves bytes after, or if a point of
       [waits] is a lost device's and that device never reached it;
       {!Out_of_memory} if staging memory cannot be allocated or mapped
-      ({!Rig.section-reclaim}), or
-      the device's queues must grow for a submission and it has no memory
-      for the growth ({!Rig.submit}); and what an io library's read or write
-      raises. Where it raises after it queued some of the copy's
-      submissions, those still run, so [dst] may hold some of the copy's
-      bytes. *)
+      ({!Rig.section-reclaim}), or the device's queues must grow for a
+      submission and it has no memory for the growth ({!Rig.submit}); and what
+      an io library's read or write raises. Where it raises after it queued some
+      of the copy's submissions, those still run, so [dst] may hold some of the
+      copy's bytes. *)
 
   val copy : src:t -> dst:t -> unit
   (** [copy ~src ~dst] copies [src]'s bytes into [dst] and returns once they
@@ -1590,10 +1585,9 @@ module Buffer : sig
       no memory, or, where [b] is a borrow on a device that runs no copy,
       the copy engine of the device whose memory it borrows.
 
-      Raises [Invalid_argument] if [b] is dead or admits only [Read], its
-      memory is held exclusive, or [b] has bytes, the host does not address
-      it and no device sets them. Raises {!Lost} as {!submit_copy} does, and
-      what an io library's write raises. *)
+      Raises [Invalid_argument] if [b] is dead or admits only [Read], or [b] has
+      bytes, the host does not address it and no device sets them. Raises
+      {!Lost} as {!submit_copy} does, and what an io library's write raises. *)
 
   val fill : t -> char -> unit
   (** [fill b c] sets every byte of [b] to [c] and returns once they are
@@ -1602,6 +1596,60 @@ module Buffer : sig
 
       Raises as {!submit_fill} raises, and {!Lost} also if the fill is lost
       during the wait. *)
+
+  (** {1:taking Taking and keeping}
+
+      For libraries that write a result over an input, or that hold buffers
+      they do not own over calls ({!Rig.section-claims}). *)
+
+  val share : t -> unit
+  (** [share b] puts [b]'s memory outside the claims for good, through every
+      view and borrow. A library calls it before it hands out a value over
+      the memory that its own claims do not track, so that no take writes
+      what that value reads. {!export} does the same to the memory it
+      exports.
+
+      Raises [Invalid_argument] if [b] is dead. *)
+
+  type keep
+  (** The type for keeps: claims on memory that last until they are
+      released or their value is unreachable. *)
+
+  val keep : t list -> keep
+  (** [keep bs] claims the memory of each of [bs] until {!release} ends the
+      keep or, once the keep is unreachable, until the first call that
+      moves collected memory after its collection ({!Rig.section-reclaim}).
+      No {!take} or {!free} of that memory succeeds meanwhile. A library
+      that holds buffers it does not own over calls, such as a linked
+      program's inputs, keeps them. Each keep allocates a value that the
+      collector finalises and a record in the C heap, so a claim for the
+      length of one call costs more as a keep than as {!read}'s.
+
+      Raises [Invalid_argument], claiming none of [bs], if a buffer is
+      dead. *)
+
+  val release : keep -> unit
+  (** [release k] ends [k]'s claims now, so a take that starts after it
+      returns finds none of them. A later release of [k], and [k]'s
+      collection, then end nothing. It takes no lock, so it may run on any
+      domain and in a callback inside a lock ({!Rig.section-domains}). If an
+      asynchronous exception interrupts it, the claims it has not ended last
+      until a later release or [k]'s collection. *)
+
+  val take : why:string -> t list -> t list option
+  (** [take ~why bs] takes the memory of every buffer of [bs], or of none
+      ({!Rig.section-claims}). It is [Some bs'] if each buffer {!spans} its
+      memory and nothing else claims any of that memory: no read claim or
+      keep, and no memory outside the claims or that admits only [Read].
+      Every buffer made over that memory until then is dead with the reason
+      [why], which {!dead} then answers, and [bs'] holds, in [bs]'s order,
+      the one live buffer over each memory, which admits writes. It is
+      [None] otherwise, and changes nothing. Two buffers of [bs] over one
+      memory each claim the other's, so [take] is [None] for them.
+
+      Raises [Invalid_argument] if a buffer of [bs] is dead, and {!Lost}
+      where it would take memory that is a lost device's, or whose work a
+      lost device did not reach. *)
 
   (** {1:low Low level}
 
@@ -1658,7 +1706,7 @@ module Buffer : sig
       [Error why] where that driver cannot ({!Rig_edge.Driver.val-dma}). A
       borrow's answer is its memory's owner's.
 
-      The memory is then outside the claims for good ({!Claim.share}), also
+      The memory is then outside the claims for good ({!share}), also
       where the driver refused, and once described the allocation never
       returns to its device's cache.
 
@@ -1672,8 +1720,8 @@ module Buffer : sig
       caller's to close.
 
       Raises [Invalid_argument] if [b] is dead or empty, or is {!host}'s, a
-      software device's or an io device's memory, or if a {!Claim.with_} holds
-      it exclusive, and {!Lost} if the device whose memory it is is lost. *)
+      software device's or an io device's memory, and {!Lost} if the device
+      whose memory it is is lost. *)
 
   val handle : t -> nativeint
   (** [handle b] is the driver's object for [b]'s memory
@@ -2044,9 +2092,9 @@ end
     [keep] for its image, since an image unloads only once the work
     submitted before the image became unreachable is done ({!Image.load}).
     Every run reads its fixed memory and the buffers its parts name, so it
-    holds them for its life as {!Claim.val-hold} does: no donation writes them
-    and no consumption ends them. {!Rig.section-claims} says when it claims
-    the buffers of a run. *)
+    keeps them for its life as {!Buffer.val-keep} does: no take writes them or
+    ends them. {!Rig.section-claims} says when it claims the buffers of a
+    run. *)
 module Submission : sig
   type device := t
 
@@ -2329,25 +2377,24 @@ end
 (** {3:valid Valid submissions}
 
     A submission is {e valid} when its device runs submitted work and has a
-    queue for each of its parts, as {!Rig.Submission} places them; its
-    images are live; its parts' buffers and its fixed memory are live, held
-    exclusive by no {!Claim.with_}, and on the device, but as
-    {!Submission.copy} admits; no fixed buffer it writes admits only [Read];
-    every slot below the highest is named, and none by both an
+    queue for each of its parts, as {!Rig.Submission} places them; its images
+    are live; its parts' buffers and its fixed memory are live and on the
+    device, but as {!Submission.copy} admits; no fixed buffer it writes admits
+    only [Read]; every slot below the highest is named, and none by both an
     {!Submission.unordered} ref and an ordered use; and the blocks of its
-    launches and fills fit a run of [2{^32} - 1] bytes, each block 32 bytes
-    and twice its parameters rounded up to a multiple of 16.
-    {!Submission.make} raises for each.
+    launches and fills fit a run of [2{^32} - 1] bytes, each block 32 bytes and
+    twice its parameters rounded up to a multiple of 16. {!Submission.make}
+    raises for each.
 
     A submit is valid when it passes one buffer per slot; no buffer its work
-    uses is dead or held exclusive ({!Claim}); each buffer is on the device
-    ({!Buffer.borrow}), but as {!Submission.copy} admits; it writes through
-    no [Read] buffer ({!Buffer.val-access}); each copy's two buffers have one
-    length and share no byte; no ref names handle-only memory
-    ({!Buffer.section-low}); and its driver can run the work
-    ({!Rig_edge.section-calls}). A driver may bound the words one submission
-    places on its queues, its own packets' included, where its queues cannot
-    grow past a size, as its interface states. {!submit} raises for each. *)
+    uses is dead; each buffer is on the device ({!Buffer.borrow}), but as
+    {!Submission.copy} admits; it writes through no [Read] buffer
+    ({!Buffer.val-access}); each copy's two buffers have one length and share no
+    byte; no ref names handle-only memory ({!Buffer.section-low}); and its
+    driver can run the work ({!Rig_edge.section-calls}). A driver may bound the
+    words one submission places on its queues, its own packets' included, where
+    its queues cannot grow past a size, as its interface states. {!submit}
+    raises for each. *)
 
 (** {2:submits Submitting}
 
@@ -2439,169 +2486,74 @@ module Local : sig
       Raises {!Lost} if [d] is lost. *)
 end
 
-(** {1:claims Claims} *)
+(** {1:claims Claims}
 
-(** Claims on memory.
-
-    A function may donate an input that dies with the call, such as an array
-    operation's. A donation is safe only if nothing else reads the memory, and
-    claims record what does. A claim lasts as long as its holder keeps it, and
-    every view and borrow of an allocation shares the allocation's claims.
+    A function may write its result over an input that dies with the call,
+    such as an array operation's: it {e donates} the input. A donation is
+    safe only if nothing else reads the memory, and claims record what does.
+    Every view and borrow of an allocation shares the allocation's claims.
     {ul
     {- A {e read claim} marks an allocation as being read. The host holds
-       one during {!Buffer.read} and {!Buffer.write}, and {!Claim.with_} on
-       every buffer it is given. A {e hold} ({!Claim.val-hold}) is a read claim
-       that lasts until {!Claim.release} ends it or its value is
-       unreachable, and that no consumption ends. {!submit} holds one on
-       every allocation the work uses until it returns, and a copy, blit or
-       fill ({!Buffer.section-copying}) on its buffers until it returns.
-       Work on a device holds none, since the stamps order a write in place
-       after that work.}
-    {- Only {!Claim.with_} holds memory exclusive, for an input its call
-       donates, until it consumes the memory. Every other claim is a read
-       claim.}
+       one during {!Buffer.read} and {!Buffer.write}, {!submit} on every
+       allocation the work uses until it returns, and a copy, blit or fill
+       ({!Buffer.section-copying}) on its buffers until it returns. Work on
+       a device holds none, since the stamps order a write in place after
+       that work.}
+    {- A {e keep} ({!Buffer.val-keep}) is a claim that lasts until
+       {!Buffer.release} ends it or its value is unreachable.}
     {- Memory that something outside rig can read or write is
-       {e outside the claims}
-       and never exclusive. This holds for memory {!Buffer.of_bigarray} and
-       {!Buffer.of_io} make, memory {!Buffer.export} exported, memory
-       {!Buffer.val-dma} described or refused, and memory {!Claim.share}
-       marked. Memory that admits only [Read]
-       ({!Buffer.val-access}) is never exclusive either.}
-    {- {!Claim.consume} consumes an allocation. A call that uses a dead
-       buffer's bytes raises [Invalid_argument] with the reason given to the
-       consumption. Consuming frees nothing, and the memory lives on in the
-       buffer that {!Claim.consume} returns. Where the memory was held
-       exclusive, that buffer admits writes, its holder may write it in
-       place, and no holder of a buffer made before the consumption sees the
-       write. Code that the holder hands the new buffer sees the write, so
-       the holder must order that code's accesses as for a buffer it made.
-       Otherwise another claim reads the memory, and the buffer admits only
-       [Read] ({!Buffer.val-access}), so the bytes that claim reads are never
-       written through it.}}
+       {e outside the claims}, for good. This holds for memory
+       {!Buffer.of_bigarray} and {!Buffer.of_io} make, memory
+       {!Buffer.export} exported, memory {!Buffer.val-dma} described or
+       refused, and memory {!Buffer.share} marked.}
+    {- A {e take} ({!Buffer.take}) of memory succeeds where no claim holds
+       it, it is not outside the claims, and it admits writes
+       ({!Buffer.val-access}). Every buffer made over the memory before the
+       take is dead from then on, and a call that uses a dead buffer's
+       bytes raises [Invalid_argument] with the reason given to the take.
+       Taking frees nothing: the memory lives on in the buffer the take
+       returns, which admits writes. Its taker may write it in place, and no
+       holder of a buffer made before the take sees the write. Code that the
+       taker hands the new buffer sees the write, so the taker orders that
+       code's accesses as for a buffer it made.}}
 
-    Taking a claim never waits. A read claim on memory held exclusive raises
-    [Invalid_argument], and a donated input whose memory another claim holds
-    gets a read claim only.
+    A read claim or keep of a live buffer is never refused. A take is one C
+    step that runs no OCaml code, and a claim, keep, {!Buffer.share}, take
+    or {!Buffer.free} on another domain that meets it spins until it ends:
+    for a take of [n] buffers, about as long as [n] read claims take.
 
     Which inputs a function donates is part of that function's contract, and
     the function decides alone. A caller that passes a buffer to such a
-    function and still needs its bytes holds a read claim on it across the
-    call. The donation then stays a read claim, the function writes its
-    result elsewhere, and the bytes stay as they were. Whether the caller's
-    buffer stays live is the function's contract too: a function that
-    consumes its input kills the buffer under any claim.
+    function and still needs its bytes keeps it across the call
+    ({!Buffer.val-keep}). The take then answers [None], the function writes its
+    result elsewhere, and the buffer stays live with its bytes.
 
-    A host reader of memory that another domain may donate uses
+    A host reader of memory that another domain may take uses
     {!Buffer.read}, which claims before it waits, since a claim taken after
-    {!Buffer.wait} returns leaves a moment in which the donation writes the
-    memory. Host code over several buffers waits for them ({!Buffer.wait})
-    inside a {!Claim.with_} that reads them. Where no
-    other domain may donate the memory, the reader may use {!Buffer.wait}.
+    {!Buffer.wait} returns leaves a moment in which a take writes the
+    memory. Host code over several buffers keeps them ({!Buffer.val-keep}) and
+    waits for them ({!Buffer.wait}) under the keep. Where no other domain
+    may take the memory, the reader may use {!Buffer.wait} alone.
 
-    A prepared submission holds its fixed memory and the buffers its parts
+    A prepared submission keeps its fixed memory and the buffers its parts
     name for its life ({!Submission.make}). It claims the buffers of a run
-    only while a submit runs. A donation between two submits can consume one
-    of them, and the next submit with it then raises [Invalid_argument] for
-    the dead buffer. A library that keeps buffers it does not own over its
-    submits holds them ({!Claim.val-hold}) for as long as it keeps them, or
-    passes their memory to {!Claim.share}.
+    only while a submit runs. A take between two submits can kill one of
+    them, and the next submit with it then raises [Invalid_argument] for the
+    dead buffer. A library that holds buffers it does not own over its
+    submits keeps them ({!Buffer.val-keep}) for as long as it holds them, or
+    passes their memory to {!Buffer.share}.
 
-    A donor takes its inputs with {!Claim.with_}. It consumes an input it
-    holds exclusive before it uses it, since every call that touches the
-    bytes of memory held exclusive raises [Invalid_argument]. While its
-    function runs, the donor uses the buffer that {!Claim.consume} returns as
-    a buffer it made. It may write it from the host, copy into it, submit
-    work on it, export it or share it. A donor of one input, or of an input
-    whose buffers lie on several devices, consumes it only where it holds
-    every buffer exclusive:
+    A donor takes its inputs ({!Buffer.take}) before it writes over them,
+    and uses the buffers the take returns as buffers it made: it may write
+    them from the host, copy into them, submit work on them, export them or
+    share them. An input whose buffers lie on several devices, such as the
+    shards of an array split across GPUs, is taken whole or not at all, in
+    one call:
     {[
-      Claim.with_ ~read:[] ~donate:bs (fun c ->
-          if List.for_all (Claim.exclusive c) bs then
-            Some (List.map (Claim.consume c ~why) bs)
-          else None)
-    ]}
-    The buffers {!Claim.consume} returns may be written in place after
-    {!Claim.with_} returns. *)
-module Claim : sig
-  val share : Buffer.t -> unit
-  (** [share b] puts [b]'s memory outside the claims for good, through every
-      view and borrow. A library calls it before it hands out a value over
-      the memory that its own claims do not track, so that no donation writes
-      what that value reads. {!Buffer.export} does the same to the memory it
-      exports.
-
-      Raises [Invalid_argument] if [b] is dead, or a {!with_} holds its
-      memory exclusive. *)
-
-  type t
-  (** The type for the claims of a {!with_}. *)
-
-  val with_ : read:Buffer.t list -> donate:Buffer.t list -> (t -> 'a) -> 'a
-  (** [with_ ~read ~donate f] takes claims [c] and is [f c]. It takes a read
-      claim on the memory of every buffer in [read] and [donate]. The claim
-      of a buffer of [donate] becomes exclusive if the buffer {!Buffer.spans}
-      its memory and no other claim holds that memory. An input whose buffers
-      lie on several devices, such as the shards of an array split across
-      GPUs, is donated when each of them is {!exclusive}.
-
-      Every claim is released when [f] returns or raises, and [c] then holds
-      nothing. A {!consume} on another domain that overlaps the return
-      completes before the release or raises [Invalid_argument]. Any other
-      use of [c] on another domain must finish before [f] returns. rig does
-      not detect one that overlaps the return, which races the memory's next
-      holder.
-
-      Raises [Invalid_argument] before calling [f], releasing what it took,
-      if a buffer is dead, an allocation is held exclusive, or a buffer of
-      [donate] overlaps another of [read] or [donate]. *)
-
-  val exclusive : t -> Buffer.t -> bool
-  (** [exclusive c b] is [true] iff [c] holds [b]'s memory exclusive, so
-      that the caller may consume it and write the buffer {!consume} returns
-      in place ({!Rig.section-claims}). It is [false] once [c] has consumed
-      the memory. *)
-
-  val consume : t -> why:string -> Buffer.t -> Buffer.t
-  (** [consume c ~why b] consumes [b]'s memory with the reason [why], so [b]
-      and every buffer made over that memory until then are dead. It is a live
-      buffer over the same memory, the only one. It admits writes if [c]
-      held the memory exclusive ({!exclusive}), and only [Read] otherwise
-      ({!Buffer.val-access}). [c] no longer holds the memory exclusive, and
-      the buffer is claimed as any other.
-
-      Raises [Invalid_argument] if [c]'s {!with_} has returned or raised, [c]
-      does not claim [b]'s memory, [b] is dead or does not {!Buffer.spans}
-      its memory, or a {!val-hold} holds the memory. *)
-
-  val consumable : t -> Buffer.t -> bool
-  (** [consumable c b] is [true] iff [c]'s {!with_} is running, [c] claims
-      [b]'s memory, [b] is live and {!Buffer.spans} it, and no {!val-hold} holds
-      it: {!consume}[ c b] then succeeds, unless another domain holds the
-      memory meanwhile. *)
-
-  type hold
-  (** The type for claims that keep buffers in use until they are released
-      or their value is unreachable. *)
-
-  val hold : Buffer.t list -> hold
-  (** [hold bs] takes a read claim on the memory of each of [bs] that no
-      donation writes and no {!consume} ends ({!consumable}). The claims last
-      until {!release} ends them or, once the hold is unreachable, until the
-      first call that moves collected memory after its collection
-      ({!Rig.section-reclaim}). A library that keeps buffers it does not own
-      over calls, such as a linked program's inputs, holds them.
-
-      Raises [Invalid_argument], holding none of [bs], if a buffer is dead or
-      its memory is held exclusive. *)
-
-  val release : hold -> unit
-  (** [release h] ends [h]'s claims now, so a {!with_} that starts after it
-      returns finds none of them. A later release of [h], and [h]'s
-      collection, then end nothing. It takes no lock, so it may run on any
-      domain and in a callback inside a lock ({!Rig.section-domains}). If an
-      asynchronous exception interrupts it, the claims it has not ended last
-      until a later release or [h]'s collection. *)
-end
+      match Rig.Buffer.take ~why bs with
+      | Some bs -> write_in_place bs
+      | None -> write_into (List.map fresh bs)
+    ]} *)
 
 (** {1:profiles Profiles} *)
 

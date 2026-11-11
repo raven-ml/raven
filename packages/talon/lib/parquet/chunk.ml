@@ -279,7 +279,7 @@ let width (l : Leaf.t) =
   | Byte_array -> 0
 
 (* The offsets of every table of fixed-width values, which has none: an
-   array of no element, which no claim holds exclusive. *)
+   array of no element, which no take kills. *)
 let no_offsets = fresh Nx.int64 0
 
 let table width ~values ~data =

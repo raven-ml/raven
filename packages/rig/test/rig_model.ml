@@ -346,8 +346,8 @@ let whole m local on =
 let dead b = b.gen < b.mem.generation
 let spans b = b.first = 0 && b.length = Bytes.length b.mem.data
 
-(* Memory outside the claims, or [Read] memory, is never exclusive. *)
-let never_exclusive m = match m.mkind with Array | File _ -> true | _ -> false
+(* Memory outside the claims, or [Read] memory, is never taken. *)
+let never_taken m = match m.mkind with Array | File _ -> true | _ -> false
 
 let read_only m = m.mkind = File false
 
@@ -1017,8 +1017,8 @@ let demands =
     "a submit whose slots are unreachable during it";
     "a submission's copy whose buffers overlap";
     "a fill copies its read slot into its write slot";
-    "a donation held exclusive";
-    "a memory consumed";
+    "two memories taken";
+    "a memory taken";
   ]
 
 let start_ref two forks () =
@@ -1877,9 +1877,7 @@ let claim_ref c outcome =
   invalid_if vd (dead b);
   owned vd b;
   waits_all vd b.mem;
-  match outcome with
-  | Error (Invalid_argument _) when c.w.two && not (dead b) -> ()
-  | _ -> judge c.w vd outcome (fun () -> b.mem.readers <- b.mem.readers + 1)
+  judge c.w vd outcome (fun () -> b.mem.readers <- b.mem.readers + 1)
 
 let claim_sys c =
   let sb = get c in
@@ -1906,78 +1904,93 @@ let rec release_sys c =
   if Atomic.compare_and_set sb.m.claims n (n - 1) then
     guard c.sw @@ fun () -> S.Reader.release sb.b
   else release_sys c
-let exclusive b =
-  spans b && b.mem.readers = 0 && b.mem.holds = 0
-  && not (never_exclusive b.mem)
 
-let with_ref r d outcome =
+(* Whether a take finds [b]'s memory free: [b] spans it, and nothing claims
+   or keeps it or puts it outside the claims. *)
+let free_to_take b =
+  spans b && b.mem.readers = 0 && b.mem.holds = 0 && not (never_taken b.mem)
+
+(* The verdict of a take of [bs], which takes every memory where [takes]:
+   [Invalid_argument] for a dead buffer, and where it takes, the losses of a
+   use that writes the memory. A held memory refuses the take before any
+   loss, so where a hold the model does not see may remain ([dropped]), and
+   on two domains, whose other claims are not the model's, the take may
+   report those losses either way. *)
+let take_verdict w bs ~dropped takes =
+  let vd = verdict () in
+  invalid_if vd (List.exists dead bs);
+  List.iter
+    (fun b ->
+      let devs = [ b.on; b.mem.owner ] in
+      if takes && not dropped then owned vd b
+      else if takes || w.two then uses ~maybe:true vd devs;
+      if takes || w.two then waits_all vd b.mem)
+    bs;
+  vd
+
+(* Whether a take of [b] uses a device the model knows lost. *)
+let lost_use b = List.exists (fun r -> r.state = Lost) [ b.on; b.mem.owner ]
+
+(* A take that the model expects and the system refuses is a fault on one
+   domain; on two, another domain's call may hold a claim its whole length,
+   which no order of whole calls shows. A take that a lost device's use
+   reaches raises, whatever holds remain. *)
+let check_take w ~label ~expected ~dropped ~lost got =
+  seen w label got;
+  if got && not expected then fail "a take against its claims";
+  if got && lost then fail "a take of memory a lost device uses";
+  if expected && (not got) && (not w.two) && not dropped then
+    fail "a take refused with no claim"
+
+(* Puts in [c] the live buffer a take of [b] gave. *)
+let taken_into c b =
+  b.mem.generation <- b.mem.generation + 1;
+  c.rb <- Some { b with gen = b.mem.generation }
+
+let take_two_ref r d outcome =
   with_buf r outcome @@ fun a ->
   with_buf d outcome @@ fun b ->
-  let vd = verdict () in
-  invalid_if vd (dead a || dead b || overlaps a b);
-  owned vd a;
-  owned vd b;
-  waits_all vd a.mem;
-  waits_all vd b.mem;
-  match outcome with
-  | Error (Invalid_argument _)
-    when r.w.two && not (dead a || dead b || overlaps a b) ->
-      ()
-  | _ ->
-      judge r.w vd outcome (fun got ->
-          seen r.w "a donation held exclusive" got;
-          let expected = a.mem != b.mem && exclusive b in
-          if got && not expected then
-            fail "a donation held exclusive against its claims";
-          if expected && (not got) && (not r.w.two) && not b.mem.dropped then
-            fail "a donation refused with no other claim")
+  let expected = a.mem != b.mem && free_to_take a && free_to_take b in
+  let dropped = a.mem.dropped || b.mem.dropped in
+  let vd = take_verdict r.w [ a; b ] ~dropped expected in
+  judge r.w vd outcome (fun got ->
+      check_take r.w ~label:"two memories taken" ~expected ~dropped
+        ~lost:(lost_use a || lost_use b)
+        got;
+      if got then begin
+        taken_into r a;
+        taken_into d b
+      end)
 
-(* A with_ holds the donated memory exclusive while it runs, which a host
-   access of that memory meanwhile would meet and no order of whole calls
-   explains. The memory's lock orders the two, as it orders host accesses. *)
-let with_sys r d =
+let take_two_sys r d =
   guard r.sw @@ fun () ->
   let sa = get r and sb = get d in
-  locked [ sa.m; sb.m ] @@ fun () ->
-  Rig.Claim.with_ ~read:[ sa.b ] ~donate:[ sb.b ] (fun c ->
-      Rig.Claim.exclusive c sb.b)
+  match B.take ~why:"taken" [ sa.b; sb.b ] with
+  | Some [ a; b ] ->
+      Atomic.set r.cell (Some { sa with b = a });
+      Atomic.set d.cell (Some { sb with b });
+      true
+  | Some bs -> failf "a take of two buffers gave %d" (List.length bs)
+  | None -> false
 
-let consume_ref src dst outcome =
+let take_ref src dst outcome =
   with_buf src outcome @@ fun b ->
-  let vd = verdict () in
-  invalid_if vd (dead b);
-  owned vd b;
-  waits_all vd b.mem;
-  match outcome with
-  | Error (Invalid_argument _) when src.w.two && not (dead b) -> ()
-  | _ ->
-      judge src.w vd outcome (fun got ->
-          seen src.w "a memory consumed" got;
-          let expected = exclusive b in
-          if got && not expected then
-            fail "a memory consumed while not exclusive";
-          if expected && (not got) && (not src.w.two) && not b.mem.dropped then
-            fail "a memory with no claim was not consumed";
-          if got then begin
-            b.mem.generation <- b.mem.generation + 1;
-            dst.rb <- Some { b with gen = b.mem.generation }
-          end)
+  let expected = free_to_take b in
+  let dropped = b.mem.dropped in
+  let vd = take_verdict src.w [ b ] ~dropped expected in
+  judge src.w vd outcome (fun got ->
+      check_take src.w ~label:"a memory taken" ~expected ~dropped
+        ~lost:(lost_use b) got;
+      if got then taken_into dst b)
 
-(* Under the memory's lock, as [with_sys]. *)
-let consume_sys src dst =
+let take_sys src dst =
   let sb = get src in
   guard src.sw @@ fun () ->
-  let b = sb.b in
-  locked [ sb.m ] @@ fun () ->
-  match
-    Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-        if Rig.Claim.exclusive c b then
-          Some (Rig.Claim.consume c ~why:"consumed" b)
-        else None)
-  with
-  | Some b' ->
-      Atomic.set dst.cell (Some { sb with b = b' });
+  match B.take ~why:"taken" [ sb.b ] with
+  | Some [ b ] ->
+      Atomic.set dst.cell (Some { sb with b });
       true
+  | Some bs -> failf "a take of one buffer gave %d" (List.length bs)
   | None -> false
 
 (* Waits *)
@@ -2298,7 +2311,7 @@ let exercise ~fork =
       step (fun () -> ignore (submit_sys false (c i) (c (i + 1)) fill));
       step (fun () -> claim_sys (c i));
       step (fun () -> release_sys (c i));
-      step (fun () -> ignore (with_sys (c i) (c (i + 1))));
+      step (fun () -> ignore (take_two_sys (c i) (c (i + 1))));
       step (fun () -> wait_sys Rig.Read_write (c i)))
     devs;
   let disk = List.nth devs 2 in
@@ -2597,19 +2610,19 @@ let commands ~two ~fork =
       release_ref
       (fun c -> one c (fun () -> release_sys c))
   in
-  let with_ =
-    command "with"
+  let take_two =
+    command "take two"
       (cell ^-> cell ^-> judges bool)
-      (fun a b o -> one_world [ a.w; b.w ] o (fun () -> with_ref a b o))
+      (fun a b o -> one_world [ a.w; b.w ] o (fun () -> take_two_ref a b o))
       (fun a b ->
-        cells ~ws:[ a.sw; b.sw ] [ a.cl; b.cl ] (fun () -> with_sys a b))
+        cells ~ws:[ a.sw; b.sw ] [ a.cl; b.cl ] (fun () -> take_two_sys a b))
   in
-  let consume =
-    command "consume"
+  let take =
+    command "take"
       (cell ^-> cell ^-> judges bool)
-      (fun a b o -> one_world [ a.w; b.w ] o (fun () -> consume_ref a b o))
+      (fun a b o -> one_world [ a.w; b.w ] o (fun () -> take_ref a b o))
       (fun a b ->
-        cells ~ws:[ a.sw; b.sw ] [ a.cl; b.cl ] (fun () -> consume_sys a b))
+        cells ~ws:[ a.sw; b.sw ] [ a.cl; b.cl ] (fun () -> take_sys a b))
   in
   let wait =
     command "wait"
@@ -2685,7 +2698,7 @@ let commands ~two ~fork =
   (* A major collection marks the whole heap: it costs most of a program's
      time, so one draw in four collects. It collects every value dropped
      before it, and the drain after it releases the holds of the submissions
-     among them: on one domain, memory such a submission held donates again.
+     among them: on one domain, memory such a submission held is taken again.
      On two domains it stops both, and on a loaded machine each of its stops
      waits for a domain the system has descheduled. Its [pre] keeps it to
      the prefix, which runs on one domain: a command with a [pre] is drawn
@@ -2731,8 +2744,8 @@ let commands ~two ~fork =
       (if two then [] else times 2 make_held);
       times 6 submit;
       times 5 keep;
-      List.concat_map (times 2) [ claim; with_; wait; facts ];
-      List.concat_map (times 3) [ release; consume; wait_device ];
+      List.concat_map (times 2) [ claim; take_two; wait; facts ];
+      List.concat_map (times 3) [ release; take; wait_device ];
       times 2 run;
       List.concat_map (times 2) [ fault; fail_; budget; free_cache; barrier ];
       times 3 drop;

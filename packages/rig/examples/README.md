@@ -14,7 +14,7 @@ devices, and host code. `14-machines` uses another machine's devices.
 | [`05-stamps`](./05-stamps/) | Work across devices, ordered by the memory it touches | `reaches`, `Buffer.borrow`, `Buffer.read`, `Buffer.write` |
 | [`06-steps`](./06-steps/) | A step made once and run many times | `Submission.fill`, `Submission.make ~keep ~fixed`, `Submission.address` |
 | [`07-reclamation`](./07-reclamation/) | Memory that returns without a free | `budget`, `set_budget`, `allocated`, `Out_of_memory` |
-| [`08-claims`](./08-claims/) | Writing a donated input in place | `Claim.with_`, `exclusive`, `consume`, `Buffer.export` |
+| [`08-claims`](./08-claims/) | Writing a donated input in place | `Buffer.take`, `keep`, `release`, `export` |
 | [`09-loss`](./09-loss/) | A device that fails, and what goes on | `Lost`, `lost`, `signaled` |
 | [`10-profiles`](./10-profiles/) | What every device did while a function ran | `Profile.take`, `span`, `output_chrome_trace` |
 | [`11-elf`](./11-elf/) | An ELF object read into its image | `Rig_elf.of_string`, `symbol` |

@@ -39,7 +39,7 @@ let lent (type v s d) (x : (v, s, d) Value.t) : (v, s, d) Value.t =
   match x with
   | Value.Handle _ ->
       let y = live x in
-      Iarray.iter (fun a -> Rig.Claim.share (A.buffer a)) (Prim.arrays y);
+      Iarray.iter (fun a -> Rig.Buffer.share (A.buffer a)) (Prim.arrays y);
       y
   | Value.Array _ | Value.Shards _ | Value.Traced _ -> x
 
@@ -159,13 +159,10 @@ let holds dt layout a =
   && L.equal (A.layout a) layout
   && Rig.Buffer.spans (A.buffer a)
 
-(* [b]'s memory consumed for [by], where rig holds it exclusive: no other value
-   reads it. The live buffer over it, if so. *)
+(* [b]'s memory taken for [by] where no other value reads it: the live buffer
+   over it, if so. *)
 let take_memory ~by b =
-  Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-      if Rig.Claim.exclusive c b then
-        Some (Rig.Claim.consume c ~why:("donated to " ^ by) b)
-      else None)
+  Option.map List.hd (Rig.Buffer.take ~why:("donated to " ^ by) [ b ])
 
 let has_bytes (type v s d) (x : (v, s, d) Value.t) =
   match x with
@@ -229,8 +226,9 @@ let reuse c ~own dt layout = reuse_at c ~own ~at:One dt layout
 (* The memory of the first handle [c] claimed at a position of [own] over
    shards on several devices, each array of [dt] laid out as [layouts]
    gives its device's window, over all of its memory, every other operand
-   apart from each of them as {!reuse} asks: all of it consumed at once, or
-   none. *)
+   apart from each of them as {!reuse} asks: all of it taken at once, or
+   none. Shards that share memory, as borrows of one allocation do, read
+   each other's, so the take refuses them. *)
 let reuse_cut (type w r d) (c : d claim) ~own (dt : (w, r) D.t) layouts :
     (Rig.Buffer.t * (w, r) A.t) array option =
   unended c;
@@ -256,20 +254,8 @@ let reuse_cut (type w r d) (c : d claim) ~own (dt : (w, r) D.t) layouts :
           && alone (j + 1)
         in
         let fit j a = holds dt layouts.(j) a && unconsumed (A.buffer a) in
-        let bufs = Array.map A.buffer arrays in
-        let distinct =
-          let rec go i =
-            i = Array.length bufs
-            || (not
-                  (Array.exists
-                     (fun b -> b != bufs.(i) && Rig.Buffer.overlaps b bufs.(i))
-                     bufs))
-               && go (i + 1)
-          in
-          go 0
-        in
-        if distinct && Array.for_all Fun.id (Array.mapi fit arrays) && alone 0
-        then Some bufs
+        if Array.for_all Fun.id (Array.mapi fit arrays) && alone 0 then
+          Some (Array.map A.buffer arrays)
         else None
     | Value.Handle _ | Value.Array _ | Value.Shards _ | Value.Traced _ -> None
   in
@@ -279,14 +265,7 @@ let reuse_cut (type w r d) (c : d claim) ~own (dt : (w, r) D.t) layouts :
       | None -> None
       | Some bufs -> (
           let why = "donated to " ^ c.by in
-          let all = Array.to_list bufs in
-          let taken =
-            Rig.Claim.with_ ~read:[] ~donate:all (fun cl ->
-                if List.for_all (Rig.Claim.exclusive cl) all then
-                  Some (List.map (Rig.Claim.consume cl ~why) all)
-                else None)
-          in
-          match taken with
+          match Rig.Buffer.take ~why (Array.to_list bufs) with
           | None -> None
           | Some bs ->
               c.taken <- bs @ c.taken;
@@ -301,31 +280,19 @@ let reuse_cut (type w r d) (c : d claim) ~own (dt : (w, r) D.t) layouts :
 let buffers (Value.Any x) =
   List.filter unconsumed (Iarray.to_list (Iarray.map A.buffer (Prim.arrays x)))
 
-(* Whether no two of [bufs] share memory. Shards placed by borrowing lie in
-   one allocation, where each reads the memory the other holds. *)
-let rec apart = function
-  | [] -> true
-  | b :: rest -> (not (List.exists (Rig.Buffer.overlaps b) rest)) && apart rest
-
 (* The memory of each handle that no other value reads, every live shard of
-   it or none, is consumed and then freed, so that it returns to its device
+   it or none, is taken and then freed, so that it returns to its device
    once the work on it is done. Memory a result took is dead, and so is
-   memory an earlier handle's ending consumed, which the second of two
-   handles over one memory finds: each memory is consumed once. Shards that
-   share memory with one another are not consumed: each is read by the
-   other, and rig donates no two buffers over one memory together. *)
+   memory an earlier handle's ending took, which the second of two handles
+   over one memory finds: each memory is taken once. Shards that share
+   memory with one another, as borrows of one allocation do, are not taken:
+   each reads the other's memory, so the take refuses them. *)
 let consumed c =
   c.ended <- true;
   let why = "donated to " ^ c.by in
+  let free b = ignore (Rig.Buffer.free ~why b : bool) in
   List.iter
-    (fun h ->
-      let bufs = buffers h in
-      if apart bufs then
-        Rig.Claim.with_ ~read:[] ~donate:bufs (fun cl ->
-            if List.for_all (Rig.Claim.exclusive cl) bufs then
-              List.map (Rig.Claim.consume cl ~why) bufs
-            else [])
-        |> List.iter (fun b -> ignore (Rig.Buffer.free ~why b : bool)))
+    (fun h -> Option.iter (List.iter free) (Rig.Buffer.take ~why (buffers h)))
     c.handles
 
 (* Consumers *)
@@ -382,7 +349,7 @@ let value (type v s d) (c : d claim) i (dt : (v, s) D.t) : (v, s, d) Value.t =
     Prim.of_arrays (Prim.placement x) ~shape:(Prim.shape x) arrays
   in
   if not (is_handle x && apart 0) then
-    Iarray.iter (fun a -> Rig.Claim.share (A.buffer a)) arrays;
+    Iarray.iter (fun a -> Rig.Buffer.share (A.buffer a)) arrays;
   Prim.expect dt (Value.Any y)
 
 (* A result written over operand [i] reads it, at any index, through the

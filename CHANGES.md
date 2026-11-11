@@ -2503,11 +2503,11 @@ its lock and from samples the dashboard saw arrive.
   the kernels without one.
 - The disk cache keeps a `Codegen.to_program` program up to its source and
   takes its binary from the compiler's table, so each binary is stored once.
-- A `Tolk_engine.link` that raises ends the holds it took on bound buffers
-  (`Rig.Claim.release`), so a donation right after it reuses their memory.
-- `Tolk_engine.link` holds the memory of every bound buffer a kernel or
-  copy accesses (`Rig.Claim.hold`) while the schedule is reachable, so no
-  call consumes it between runs. A bound buffer that died between two runs
+- A `Tolk_engine.link` that raises ends the keeps it took on bound buffers
+  (`Rig.Buffer.release`), so a donation right after it reuses their memory.
+- `Tolk_engine.link` keeps the memory of every bound buffer a kernel or
+  copy accesses (`Rig.Buffer.keep`) while the schedule is reachable, so no
+  call takes it between runs. A bound buffer that died between two runs
   made the next one raise.
 - `Tolk_engine.run`, `time` and `link` raise `Invalid_argument` for a buffer
   a kernel accesses that does not start at its parameter's phase, such as
@@ -2851,6 +2851,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_array.answer` loses `Held_exclusive`, and `nx_array.h` loses
+  `NX_EXCLUSIVE`: a kernel that meets memory a donation is taking waits for
+  the take, and refuses the operand as `Dead_buffer` if the take took it.
 - `Nx.attention` reads `Paged` pools cut along their key heads in place, and
   pools cut along their pages as a dense call over the keys the table names;
   both raised before.

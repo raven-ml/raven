@@ -113,9 +113,8 @@ value nx_array_support_codes(value unit) {
   CAMLparam1(unit);
   CAMLlocal1(r);
   static const int codes[] = {
-      NX_OK,      NX_DECLINED,    NX_DTYPE,       NX_DEAD,
-      NX_NOT_HOST, NX_EXCLUSIVE,  NX_READ_ONLY,   NX_NOT_DISTINCT,
-      NX_OVERLAP, NX_SHAPE,
+      NX_OK,        NX_DECLINED,     NX_DTYPE,   NX_DEAD, NX_NOT_HOST,
+      NX_READ_ONLY, NX_NOT_DISTINCT, NX_OVERLAP, NX_SHAPE,
   };
   int n = sizeof codes / sizeof codes[0];
   r = caml_alloc_tuple(n);

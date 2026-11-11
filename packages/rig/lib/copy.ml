@@ -957,7 +957,7 @@ let check fn src dst =
   if Buffer.access dst = Read then
     invalid_argf "Rig.%s: the destination admits only reads" fn
 
-(* Under read claims on both sides, which keep a donation from writing either
+(* Under read claims on both sides, which keep a take from writing either
    while the copy routes and the host moves bytes. The claims' release after
    it keeps the buffers reachable: a read, a write or a move hands over
    addresses only, and a collection could otherwise free their memory under

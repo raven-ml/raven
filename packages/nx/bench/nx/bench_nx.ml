@@ -6,8 +6,9 @@
 (* nx's per-call costs above the array layer, each row what a user calls: an
    operation on one-element host values, its kernel called as nx calls it and
    directly, a decode step's cache update, a view, creations, an operation
-   over two devices, reading a value's shape, placing, operations beside and
-   under interpretations, an npz save and a TIFF load.
+   over two devices, reading a value's shape and its array, placing,
+   operations beside and under interpretations, an npz save and a TIFF
+   load.
 
    Each row builds its inputs in its setup, in the worker that times it, so
    that a worker holds one row's inputs. *)
@@ -107,6 +108,10 @@ let dispatch_rows =
   Thumper.group "dispatch"
     [
       Thumper.bench_with_setup "shape" ~setup:one Nx.shape;
+      (* A read of a value's array, which keeps its memory for the call: a
+         value the collector finalises and a record in the C heap. *)
+      Thumper.bench_with_setup "repr-read-1" ~setup:one (fun x ->
+          Nx.Repr.read x A.layout);
       Thumper.bench_with_setup "add-1" ~setup:one (fun x -> Nx.add x x);
       Thumper.bench_with_setup "sin-1" ~setup:one Nx.sin;
       Thumper.bench_with_setup "prim-eval-sin-1"

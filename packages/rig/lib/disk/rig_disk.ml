@@ -598,11 +598,6 @@ let sync_due f = if f.unsynced || Option.is_some f.pages then synced f
 let sync_file f = protect (sync_lock f) sync_due f
 
 let sync_handle h () =
-  (* The message is formatted only on failure: a partial application of a format
-     builds its closure at every call. *)
-  (match Rig.Buffer.dead h.buffer with
-  | Some why -> invalid_argf "Rig_disk.barrier: the buffer is dead: %s" why
-  | None -> ());
   let f = h.region in
   (* Nothing writes a file opened for reading or a file of no bytes. *)
   if f.writable && f.size > 0 then begin

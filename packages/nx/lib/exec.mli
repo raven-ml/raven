@@ -132,7 +132,7 @@ val place :
   ('v, 's, 'e) Value.t
 (** [place ~by p x] is {!value}[ ~by p x]. It settles no check on [x]'s
     set. An array of the result over memory of [x]'s, kept or borrowed,
-    marks that memory shared ({!Rig.Claim.share}), so that no donation of
+    marks that memory shared ({!Rig.Buffer.share}), so that no donation of
     either value writes what the other reads. *)
 
 (** {1:fast Fast paths}
@@ -151,7 +151,7 @@ val beside : ('v, 's, 'd) Value.t -> ('w, 'r, 'd) Value.t -> bool
     placement and [y] is live. It allocates nothing. *)
 
 val view_of : ('v, 's) Nx_array.t -> unit
-(** [view_of a] marks [a]'s memory shared ({!Rig.Claim.share}), as a view
+(** [view_of a] marks [a]'s memory shared ({!Rig.Buffer.share}), as a view
     over it made outside any handle chain needs: no donation of [a]'s value
     may then write what the view reads. *)
 

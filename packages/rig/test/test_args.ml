@@ -230,8 +230,7 @@ let test_dead_address () =
   let d, _ = P.open_ "args:dead-address" in
   let b = B.create d 8 and dead = B.create d 8 in
   let s = Sub.make ~fixed:[ (b, Rig.Read) ] d [||] in
-  Rig.Claim.with_ ~read:[] ~donate:[ dead ] (fun c ->
-      ignore (Rig.Claim.consume c ~why:"reused" dead));
+  ignore (require_some (Rig.Buffer.take ~why:"reused" [ dead ]));
   raises_match (Exn.invalid_arg ~sub:"reused") (fun () -> Sub.address s dead)
 
 let () =

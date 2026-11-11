@@ -9,9 +9,9 @@
     A buffer is a range of a memory record ({!Def.memory}): the offset of its
     first byte, its length, and the claim generation it was made in. It is
     live while that generation is its claim's and its borrow's lease has not
-    ended ({!Def.lease}), and dead once {!Claim.consume} has raised the
-    claim's generation. Every view and borrow of an allocation shares its
-    claim, so a consumption kills every buffer over the allocation made
+    ended ({!Def.lease}), and dead once {!Claim.take} or {!Claim.free} has
+    raised the claim's generation. Every view and borrow of an allocation
+    shares its claim, so a take kills every buffer over the allocation made
     before it; an unborrow kills only the borrow and its views.
 
     The host's buffers lie in bigarrays of the host's heap
@@ -46,8 +46,8 @@ type dma = Rig_edge.dma =
 type access = Def.access = Read | Read_write
 
 val is_live : t -> bool
-(** [is_live b] is [true] iff no consumption of [b]'s memory came after [b]
-    was made. *)
+(** [is_live b] is [true] iff no take or free of [b]'s memory came after [b]
+    was made, and [b]'s borrow, if any, has not ended. *)
 
 val dead : t -> string option
 (** [dead b] is {!Rig.Buffer.dead}[ b]. *)

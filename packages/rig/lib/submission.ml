@@ -265,9 +265,9 @@ type t = {
   kept : token option;
       (** The token of the value the submission keeps, kept reachable: its
           collection lets the value go once the work is done. *)
-  held : Claim.hold;
-      (** The hold of [fixed], which every run reads, released once the
-          submission is collected. *)
+  held : Claim.keep;
+      (** The keep of [fixed] ({!Claim.kept}), which every run reads,
+          released once the submission is collected. *)
   blocks : block array;
       (** Each part's block, [no_block] for no launch or fill. *)
   span : (string * string) option;
@@ -1017,7 +1017,7 @@ let make ?keep ?(fixed = []) d parts =
   Dev.check_held fn;
   let parts = Array.copy parts in
   let named = named_buffers fixed parts in
-  let held = Claim.held fn (fst named) in
+  let held = Claim.kept fn (fst named) in
   match build keep ~fixed ~named ~held d parts with
   | s -> s
   | exception e ->
@@ -1423,27 +1423,12 @@ let rec hand_over s c run round lacked seen =
     Dev.raise_point_lost (call_producer c)
   else Dev.raise_lost d
 
-let held_exclusive () = invalid_arg "Rig.submit: the memory is held exclusive"
-
-(* Read claims on the [m] buffers of a frame, [m] from 1 to 4, taken in order:
-   one that fails releases those taken before it. *)
+(* Read claims on the [m] buffers of a frame, [m] from 1 to 4. *)
 let hold_frame m b0 b1 b2 b3 =
-  if not (Memory.claim_add b0) then held_exclusive ();
-  if m > 1 && not (Memory.claim_add b1) then begin
-    Memory.claim_drop b0;
-    held_exclusive ()
-  end;
-  if m > 2 && not (Memory.claim_add b2) then begin
-    Memory.claim_drop b0;
-    Memory.claim_drop b1;
-    held_exclusive ()
-  end;
-  if m > 3 && not (Memory.claim_add b3) then begin
-    Memory.claim_drop b0;
-    Memory.claim_drop b1;
-    Memory.claim_drop b2;
-    held_exclusive ()
-  end
+  Memory.claim_add b0;
+  if m > 1 then Memory.claim_add b1;
+  if m > 2 then Memory.claim_add b2;
+  if m > 3 then Memory.claim_add b3
 
 let release_frame m b0 b1 b2 b3 =
   Memory.claim_drop b0;
@@ -1455,7 +1440,7 @@ let release_frame m b0 b1 b2 b3 =
    buffer is read once from its array and stays reachable in a frame until the
    hand-over returned: the C slots hold its stamps without a reference, and the
    caller's array may change meanwhile. The frame holds a read claim on each
-   until then too, so that no donation writes one in place while the submit
+   until then too, so that no take writes one in place while the submit
    runs. A frame keeps four buffers, so the rooting costs a call per four. *)
 let rec go s c run buffers waits k =
   let n = Array.length s.uses in
@@ -1656,8 +1641,8 @@ let submit_run s run buffers waits =
   match
     t := taking s buffers;
     call_timed c (!t != untaken);
-    (* The submission holds its fixed and part-owned buffers, so they are live
-       and no donation writes them: only their devices may be lost. *)
+    (* The submission keeps its fixed and part-owned buffers, so they are live
+       and no take writes them: only their devices may be lost. *)
     for i = 0 to Array.length s.fixed - 1 do
       check_owner s (Array.unsafe_get s.fixed i)
     done;

@@ -322,7 +322,7 @@ let test_others_go_on () =
   P.fail p;
   raises_match (lost d) (fun () -> submit (empty d));
   B.wait named Rig.Read_write;
-  Rig.Claim.with_ ~read:[ named ] ~donate:[] ignore;
+  let named = require_some ~msg:"a take" (Support.donated named) in
   let w = Sub.make e [| Support.touching [| Sub.write |] |] in
   Rig.Point.wait (submit w ~buffers:[| named |]);
   equal (option string) None (Rig.lost e)
@@ -343,8 +343,7 @@ let test_unreached () =
       B.wait h Rig.Read_write);
   raises_match ~msg:"a write" (lost d) (fun () ->
       B.write h Bigarray.char ignore);
-  raises_match ~msg:"a claim" (lost d) (fun () ->
-      Rig.Claim.with_ ~read:[ h ] ~donate:[] ignore)
+  raises_match ~msg:"a take" (lost d) (fun () -> B.take ~why:"taken" [ h ])
 
 (* A use a loss dropped stays in its memory until its device has stopped:
    devices that read the memory after it, through borrows taken before it,
@@ -425,12 +424,14 @@ let test_stop_reaches_nothing () =
 (* A lost device's memory raises its loss whatever its points, also with no
    work ever on it, through any buffer: its own, a borrow on the host, and a
    borrow on another device, whether a submit names it in a slot, as fixed
-   memory or in a copy. *)
+   memory or in a copy. A take raises it for memory nothing keeps, since a
+   kept memory refuses the take first. *)
 let test_own_memory () =
   let d, p = P.open_ ~copies:false "loss:own" in
   let e, _ = P.open_ "loss:own-peer" in
   let m = B.create d 64 in
   let h = require_some (B.borrow Rig.host m) in
+  let unkept = require_some (B.borrow Rig.host (B.create d 64)) in
   let b = require_some (B.borrow e m) in
   let dst = B.create Rig.host 64 in
   let fixed = Sub.make ~fixed:[ (b, Rig.Read) ] e [||] in
@@ -445,7 +446,7 @@ let test_own_memory () =
       ("a wait", fun () -> B.wait m Rig.Read);
       ("a wait on the host's borrow", fun () -> B.wait h Rig.Read);
       ("a read", fun () -> B.read h Bigarray.char ignore);
-      ("a claim", fun () -> Rig.Claim.with_ ~read:[ h ] ~donate:[] ignore);
+      ("a take", fun () -> ignore (B.take ~why:"taken" [ unkept ]));
       ("a copy", fun () -> B.copy ~src:h ~dst);
       ("a borrow", fun () -> ignore (B.borrow Rig.host m));
       ( "a submit on another device",

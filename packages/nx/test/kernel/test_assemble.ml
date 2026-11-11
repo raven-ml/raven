@@ -311,9 +311,9 @@ let law_refuses (b : Support.backend) c =
       K.assemble ~fill:0. ~dst:(A.expect D.Float32 ds.(0))
         (Iarray.map (fun (r, x) -> (r, g.Misfit.g x)) pieces))
 
-(* Whether no claim holds [b]'s memory: a donation of it is exclusive. *)
-let unclaimed b =
-  Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c -> Rig.Claim.exclusive c b)
+(* Whether no claim holds [b]'s memory: whether a take of it succeeds, which
+   kills [b]. *)
+let unclaimed b = Option.is_some (Rig.Buffer.take ~why:"taken" [ b ])
 
 (* A refusal of a piece read in a later run than the destination's leaves
    no claim on any operand. *)

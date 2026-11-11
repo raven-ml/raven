@@ -152,11 +152,10 @@ val barrier : file -> unit
     and so does every later one. The system reports such a failure once, and
     the bytes it could not store may be lost.
 
-    Raises [Invalid_argument] if [f]'s buffer is dead ({!Rig.Buffer.dead}),
-    or from a callback inside a lock ({!descriptors}). Raises [Sys_error]
-    for a failure to store the file's bytes, as above, or if the file cannot
-    be reopened ({!descriptors}), and {!Rig.Lost} if work it waits for is on
-    a lost device. *)
+    Raises [Invalid_argument] from a callback inside a lock
+    ({!descriptors}). Raises [Sys_error] for a failure to store the file's
+    bytes, as above, or if the file cannot be reopened ({!descriptors}), and
+    {!Rig.Lost} if work it waits for is on a lost device. *)
 
 (** {1:borrows Borrows}
 

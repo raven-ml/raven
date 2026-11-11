@@ -466,20 +466,20 @@ module Repr = struct
   let shards = Repr.shards
 
   (* A read's array: [Check.on_host] shares no memory, so the value's next
-     donation may still write into it once [f] returns. Until then a read claim
-     holds the memory, so a donation meanwhile computes into fresh memory, and
-     [x] stays reachable, so its memory is not collected under [f]. *)
+     donation may still write into it once [f] returns. Until then a keep
+     claims the memory, so a donation meanwhile computes into fresh memory,
+     and [x] stays reachable, so its memory is not collected under [f]. Each
+     call's keep costs a value the collector finalises and a record in the C
+     heap. *)
   let read x f =
     let by = "Nx.Repr.read" in
     let a = read ~by x in
-    let entered = ref false in
+    let k =
+      try Rig.Buffer.keep [ Nx_array.buffer a ]
+      with Invalid_argument m -> invalid_argf "%s: %s" by m
+    in
     let r =
-      try
-        Rig.Claim.with_ ~read:[ Nx_array.buffer a ] ~donate:[] (fun _ ->
-            entered := true;
-            f a)
-      with Invalid_argument m when not !entered ->
-        invalid_argf "%s: %s" by m
+      Fun.protect ~finally:(fun () -> Rig.Buffer.release k) (fun () -> f a)
     in
     ignore (Sys.opaque_identity x);
     r

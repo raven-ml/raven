@@ -147,9 +147,8 @@ val bitcast : ('w, 'r) Dtype.t -> ('v, 's) t -> ('w, 'r) t option
     A function that reads or writes bytes on the host claims the buffer's
     memory, waits for the device work the access must follow
     ({!Rig.Buffer.wait}), and holds the claim while it runs. It raises
-    [Invalid_argument] if the buffer is dead, its memory is held exclusive, or
-    the host does not address its memory, and {!Rig.Lost} as {!Rig.Buffer.wait}
-    does. *)
+    [Invalid_argument] if the buffer is dead or the host does not address its
+    memory, and {!Rig.Lost} as {!Rig.Buffer.wait} does. *)
 
 val get : ('v, 's) t -> int iarray -> 'v
 (** [get a i] is [a]'s element at index [i].
@@ -208,20 +207,18 @@ val to_device : Rig.t -> ('v, 's) t -> ('v, 's) t
     stride, an axis of stride [0] keeps [0], and the least position is at
     [0]. Shape [[3; 2]] at strides [[2; 2]] gets strides [[2; 1]].
 
-    Raises [Invalid_argument] if [a]'s buffer is dead or its memory is held
-    exclusive. *)
+    Raises [Invalid_argument] if [a]'s buffer is dead. *)
 
 val transfer : src:('v, 's) t -> dst:('v, 's) t -> unit
 (** [transfer ~src ~dst] stores [src]'s elements into [dst], of the same shape.
     It writes [dst]'s elements and no other bit of its buffer, a sub-byte
     neighbour included.
 
-    Raises [Invalid_argument] if the shapes differ, a buffer is dead or its
-    memory is held exclusive, [dst] reaches an element twice
-    ({!Layout.is_distinct}), [dst]'s elements are narrower than a byte and
-    the host does not address its memory, [dst]'s memory is [Read], or
-    [dst] shares a byte with [src] without being identical to it
-    ({!section-kernels}). *)
+    Raises [Invalid_argument] if the shapes differ, a buffer is dead, [dst]
+    reaches an element twice ({!Layout.is_distinct}), [dst]'s elements are
+    narrower than a byte and the host does not address its memory, [dst]'s
+    memory is [Read], or [dst] shares a byte with [src] without being
+    identical to it ({!section-kernels}). *)
 
 val copy : ('v, 's) t -> ('v, 's) t
 (** [copy a] is a fresh C-contiguous array on [a]'s device holding [a]'s
@@ -249,18 +246,17 @@ val borrow : Rig.t -> ('v, 's) t -> ('v, 's) t option
     ({!Dtype.to_bigarray_kind}), which its type fixes. They raise
     [Invalid_argument] unless the array [a] they take is C-contiguous
     ({!Layout.is_contiguous}) and of rank at most 16, the most axes a Bigarray
-    has, if [a]'s dtype has no Bigarray kind, and if [a]'s buffer is dead or
-    its memory is held exclusive. They raise {!Rig.Lost} as
-    {!Rig.Buffer.wait} does. *)
+    has, if [a]'s dtype has no Bigarray kind, and if [a]'s buffer is dead.
+    They raise {!Rig.Lost} as {!Rig.Buffer.wait} does. *)
 
 val bigarray : ('v, 's) t -> ('v, 's, Bigarray.c_layout) Bigarray.Genarray.t
 (** [bigarray a] is a bigarray of [a]'s shape over [a]'s own bytes. Writes
     through it write [a], and are allowed only if [a]'s memory admits them
     ({!Rig.Buffer.val-access}). It waits once for the work on [a]'s memory, and
-    from then on that memory is never held exclusive again
-    ({!Rig.Buffer.export}). Access through the bigarray follows later device
-    work only after {!Rig.Buffer.wait}. A format Bigarray lacks is bitcast
-    first to one of its width ({!bitcast}).
+    from then on that memory is never taken ({!Rig.Buffer.export}). Access
+    through the bigarray follows later device work only after
+    {!Rig.Buffer.wait}. A format Bigarray lacks is bitcast first to one of its
+    width ({!bitcast}).
 
     Reads and writes through the bigarray are Bigarray's: an [int] out of range
     keeps its low bits, and a [float] stored into a [Float16] bigarray is
@@ -276,8 +272,8 @@ val read :
     bytes; an [a] with no element gives an empty [b], whatever its memory. It
     claims [a]'s memory for reading, waits for the device work a read must
     follow ({!Rig.Buffer.wait}), and ends the claim when [f] returns or raises.
-    The memory stays inside the claims, so a donation can hold it exclusive once
-    [f] returns, which {!bigarray} prevents for good.
+    The memory stays inside the claims, so a donation can take it once [f]
+    returns ({!Rig.Buffer.take}), which {!bigarray} prevents for good.
 
     [f] must not write through [b], since work that reads the memory may still
     run, and must not keep [b] after it returns, since a donation or
@@ -338,8 +334,8 @@ val max_operands : int
 (** The type for what a kernel answers, and the door. A kernel answers [Done]
     once its work is done on the host or queued on the device's timeline,
     [Declined] for a case it does not compute, and otherwise, before any write,
-    a refusal: what is wrong with an operand. [Dead_buffer], [Held_exclusive]
-    and [Read_only], which claiming an operand answers, come before [Off_host],
+    a refusal: what is wrong with an operand. [Dead_buffer] and [Read_only],
+    which claiming an operand answers, come before [Off_host],
     [Repeated_elements] and [Overlapping], so a dead operand is [Dead_buffer]
     whatever else is wrong with it. C answers [Val_int] of [nx_array.h]'s code,
     whose enum lists the constructors in this order. *)
@@ -349,7 +345,6 @@ type answer =
   | Wrong_dtype  (** An operand's dtype is not the one the kernel loads. *)
   | Dead_buffer  (** An operand's buffer is dead. *)
   | Off_host  (** The host does not address an operand's memory. *)
-  | Held_exclusive  (** An operand's memory is held exclusive. *)
   | Read_only  (** A written operand's memory is [Read]. *)
   | Repeated_elements  (** A written operand reaches an element twice. *)
   | Overlapping
@@ -367,9 +362,8 @@ val door :
     [read] for reading, every claim or none, runs [f x], and releases the claims
     when [f] returns or raises, before an exception of [f] propagates. It waits
     for no device work. It answers [Done] once [f] returns, and otherwise,
-    without running [f] or holding a claim, [Dead_buffer] or [Held_exclusive]
-    for an array, or [Read_only], [Repeated_elements] or [Overlapping] for a
-    written one.
+    without running [f] or holding a claim, [Dead_buffer] for an array, or
+    [Read_only], [Repeated_elements] or [Overlapping] for a written one.
 
     [f] must touch the arrays' elements only through work it submits with
     {!Rig.submit}, naming each array of [written] in its writes and each of
@@ -383,10 +377,9 @@ val refused : string -> answer -> any list -> 'a
 (** [refused name r operands] raises [Invalid_argument] for the refusal [r]
     that a kernel answered for [operands], naming [name], the reason [r] gives,
     and each operand's dtype and shape. [name] is the function the user called,
-    as ["Nx.add"]. For [Dead_buffer], and for [Held_exclusive] once the
-    holder consumed the memory, the reason names each operand whose buffer is
-    dead, in [operands]' order, as [<dtype> <shape> was <why>], [why] the
-    reason its consumer gave ({!Rig.Buffer.dead}):
+    as ["Nx.add"]. For [Dead_buffer] the reason names each operand whose
+    buffer is dead, in [operands]' order, as [<dtype> <shape> was <why>],
+    [why] the reason its taker gave ({!Rig.Buffer.dead}):
     [Nx.add: float32 [3] was donated to Nx.mul (float32 [3], …)].
     For [Done] and [Declined] it raises [Invalid_argument] saying they refuse
     nothing. *)

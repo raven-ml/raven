@@ -6033,31 +6033,26 @@ let with_bound k f () =
 
 let floats_on d n = Run.buffer (device d) Float32 (Array.make n (`Float 0.))
 
-(* A buffer a donation consumed. *)
-let consumed_floats () =
+(* A buffer a take killed. *)
+let taken_floats () =
   let b = floats_on "CPU" 16 in
-  ignore
-    (Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-         Rig.Claim.consume c ~why:"donated" b));
+  ignore (require_some ~msg:"a take" (Rig.Buffer.take ~why:"donated" [ b ]));
   b
 
-(* A linked schedule holds each bound buffer its runs read: a donation of one
-   is never exclusive, and no consumption ends it. *)
-let holds_bound () =
+(* A linked schedule keeps each bound buffer its runs read: a take of one is
+   refused. *)
+let keeps_bound () =
   let b = floats_on "CPU" 16 in
   let s = with_bound 2 (fun _ -> b) () in
-  Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-      equal ~msg:"exclusive" bool false (Rig.Claim.exclusive c b);
-      equal ~msg:"consumable" bool false (Rig.Claim.consumable c b));
+  is_none ~msg:"a take" (Rig.Buffer.take ~why:"taken" [ b ]);
   ignore (Sys.opaque_identity s)
 
-(* A link that raises holds none of its bound buffers: a donation of their
-   memory right after it finds the memory exclusive. *)
-let refusal_holds_nothing () =
+(* A link that raises keeps none of its bound buffers: a take of their memory
+   right after it succeeds. *)
+let refusal_keeps_nothing () =
   let b = Buffer.create host (64 + 15) in
   raises_match off_its_phase (with_bound 2 (fun _ -> view_at_phase b 4 64));
-  Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-      equal ~msg:"exclusive" bool true (Rig.Claim.exclusive c b))
+  is_some ~msg:"a take" (Rig.Buffer.take ~why:"taken" [ b ])
 
 let refusals =
   group "refusals"
@@ -6077,13 +6072,13 @@ let refusals =
       link_refuses "storage bound to fewer bytes than it holds"
         (with_bound 4 (fun _ -> floats_on "CPU" 15));
       link_refuses "storage a kernel reads bound to a dead buffer"
-        (with_bound 2 (fun _ -> consumed_floats ()));
-      test "link holds the bound buffers its runs read" holds_bound;
+        (with_bound 2 (fun _ -> taken_floats ()));
+      test "link keeps the bound buffers its runs read" keeps_bound;
       test "link refuses storage a kernel reads bound off its phase" (fun () ->
           raises_match off_its_phase
             (with_bound 2 (fun _ -> at_phase host 4 64)));
-      test "a refused link holds none of its bound buffers"
-        refusal_holds_nothing;
+      test "a refused link keeps none of its bound buffers"
+        refusal_keeps_nothing;
       link_refuses "a bound node that is no storage" (fun () ->
           let storage = storage_of (program "add") in
           let bound =

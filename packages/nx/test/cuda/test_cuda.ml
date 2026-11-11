@@ -1428,8 +1428,8 @@ let dead_buffers_refused () =
     (fun (which, operand) ->
       let a, _, _, y, p = contract g c () in
       let (o : S.operand) = match which with `Y -> y | `A -> a in
-      Rig.Claim.with_ ~read:[] ~donate:[ o.buffer ] (fun claims ->
-          ignore (Rig.Claim.consume claims ~why:"donated" o.buffer));
+      let taken = Rig.Buffer.take ~why:"donated" [ o.buffer ] in
+      ignore (require_some ~msg:"a take" taken);
       let prefix = strf "Nx_cuda.contract: %s was donated" operand in
       raises_match ~msg:prefix
         (function

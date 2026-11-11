@@ -113,9 +113,15 @@ module Buffer = struct
   let fill = Copy.fill
   let free = Claim.free
   let unborrow = Claim.unborrow
+  let share = Claim.share
+
+  type keep = Claim.keep
+
+  let keep = Claim.keep
+  let release = Claim.release
+  let take = Claim.take
 end
 
-module Claim = Claim
 module Submission = Submission
 
 let submit = Submission.submit
