@@ -356,11 +356,6 @@ val undecided : pair
 (** [undecided] is the pair of no device: its [occupant] is [-1], it waits
     on the host and holds no mapping. *)
 
-val hold_word : device -> bool
-(** [hold_word p] counts a mapping of [p]'s word about to be made, and is
-    [false], counting nothing, once [p]'s count reached [0]: [p] has
-    stopped and its points are done. *)
-
 val word_unmapped : device -> unit
 (** [word_unmapped p] takes one off [p]'s count, and at [0], if [p]'s word
     is its driver's own, leaves the word to the next drain. It calls no
@@ -374,24 +369,25 @@ val unmap_word : device -> region * device -> Dev.given
 val record_word : device -> region * device -> bool
 (** [record_word d (r, p)] records [d]'s mapping [r] of [p]'s word, about to
     be made, among [d]'s pending releases until [d]'s stop, with one of
-    [p]'s word unmaps ({!hold_word}), and is [false], recording nothing,
-    once [p]'s count reached [0]. Raises {!Dev.Lost} if [d]'s stop
-    returned. *)
+    [p]'s word unmaps, in one step, and is [false], recording nothing, once
+    [p]'s count reached [0]: [p] has stopped and its points are done.
+    Raises {!Dev.Lost} if [d]'s stop returned. *)
 
 val drop_word : device -> region * device -> unit
 (** [drop_word d m] takes the mapping [m] that {!record_word} recorded out
     of [d]'s pending releases and gives it back ({!unmap_word}), unless
     [d]'s stop's drain took it first. *)
 
-val settle_word_locked :
-  device -> (region * device) option -> (region * device) option -> unit
-(** [settle_word_locked d made retired] takes [made], if any, a mapping
-    {!record_word} recorded, out of [d]'s pending releases, and puts
-    [retired], if any, among them at {!Dev.next_value}[ d]: [retired] goes
-    back once [d]'s queue ran every submit that may wait through it. Its
-    last step is the store of the releases, so a store the caller makes
-    right after it, with nothing that allocates between, goes with it. The
-    caller holds [d]'s lock. *)
+val settled_words :
+  device ->
+  (region * device) option ->
+  (region * device) option ->
+  (int * pending) list * (int * pending) list
+(** [settled_words d made retired] is [d]'s pending releases without
+    [made], if any, a mapping {!record_word} recorded, and with [retired],
+    if any, at {!Dev.next_value}[ d]: [retired] goes back once [d]'s queue
+    ran every submit that may wait through it. The caller holds [d]'s lock
+    for the call and for the store of the result. *)
 
 val give_retired : device -> unit
 (** [give_retired d] gives back [d]'s retired mappings whose value [d]

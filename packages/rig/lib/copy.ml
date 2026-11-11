@@ -436,7 +436,7 @@ let rec find_room l need i found =
 
 (* Under [l]'s lock: [h] held from now, its lap restarted at byte 0 if
    [restart], its holder waiting for its uses first if [waits]; is [h]. *)
-let hold l ~restart ~waits h =
+let[@poll error] hold l ~restart ~waits h =
   h.held <- true;
   h.last <- l.takes;
   h.waits <- waits;
@@ -449,7 +449,7 @@ let hold l ~restart ~waits h =
 
 (* Under [l]'s lock: publishes [halves], whose last is the new half [h],
    held; is [h]. *)
-let publish l halves h =
+let[@poll error] publish l halves h =
   l.halves <- halves;
   h
 
@@ -515,7 +515,7 @@ let no_half =
 (* Under their stage's lock: gives back [h0] and [h1], either [no_half],
    their cursors set by their holder, which reads them no more, in one
    step. *)
-let give_halves h0 h1 =
+let[@poll error] give_halves h0 h1 =
   if h0 != no_half then h0.held <- false;
   if h1 != no_half then h1.held <- false
 

@@ -55,26 +55,30 @@ struct
     Array.iter (copy_into buckets) t.buckets;
     t.buckets <- buckets
 
-  (* A new binding grows the table first, then links its cell: the link is
-     the last store, so the call has bound [k] only once it returns. *)
+  (* Links [cell] at the head of the bucket [i], counted. *)
+  let[@poll error] link t i cell =
+    t.size <- t.size + 1;
+    t.buckets.(i) <- cell
+
+  (* A new binding grows the table first, then links its cell. *)
   let replace t k v =
     match cell k t.buckets.(index t.buckets k) with
     | Cell c -> c.v <- v
     | Nil ->
         if t.size >= 2 * Array.length t.buckets then grow t;
         let i = index t.buckets k in
-        let cell = Cell { key = k; v; next = t.buckets.(i) } in
-        t.size <- t.size + 1;
-        t.buckets.(i) <- cell
+        link t i (Cell { key = k; v; next = t.buckets.(i) })
+
+  (* Unlinks the cell after [prev] in the bucket [i], or its first if [prev]
+     is [Nil], leaving [next] in its place, counted. *)
+  let[@poll error] unlinked t i prev next =
+    (match prev with Nil -> t.buckets.(i) <- next | Cell p -> p.next <- next);
+    t.size <- t.size - 1
 
   (* Unlinks [k]'s cell from the bucket whose cell [prev] precedes [cell]. *)
   let rec unlink t i k prev = function
     | Nil -> ()
-    | Cell c when K.equal c.key k ->
-        (match prev with
-        | Nil -> t.buckets.(i) <- c.next
-        | Cell p -> p.next <- c.next);
-        t.size <- t.size - 1
+    | Cell c when K.equal c.key k -> unlinked t i prev c.next
     | Cell c as cell -> unlink t i k cell c.next
 
   let remove t k =
@@ -88,9 +92,11 @@ struct
   let fold f t acc =
     Array.fold_left (fun acc cell -> fold_cells f acc cell) acc t.buckets
 
-  let reset t =
-    t.buckets <- Array.make 8 Nil;
+  let[@poll error] emptied t buckets =
+    t.buckets <- buckets;
     t.size <- 0
+
+  let reset t = emptied t (Array.make 8 Nil)
 
   let trim t = if t.size = 0 && Array.length t.buckets > 8 then reset t
 end

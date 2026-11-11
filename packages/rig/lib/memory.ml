@@ -284,7 +284,7 @@ external claim_retry : buffer -> unit = "caml_rig_claim_add" [@@noalloc]
    plain store, which a C take's locked one is not. A retry, after another
    domain's claim beat it or while a take or free holds the word, loops in
    C, since an OCaml loop's back edge polls. *)
-let claim_add b =
+let[@poll error] claim_add b =
   let a = b.mem.alloc in
   let w = Atomic.Loc.get [%atomic.loc a.count] in
   if
@@ -624,14 +624,21 @@ let drop_stamps (e : entry) = if e.stamps <> 0 then stamps_unref e.stamps
 
 (* Words *)
 
-(* Takes one of [p]'s word unmaps for a mapping about to be made: false once
-   [p]'s slot is freed and no mapping is left, when its points are done and
-   its word may be gone. *)
-let rec hold_word p =
+(* Takes one of [p]'s [n] word unmaps for a mapping about to be made and
+   stores [q] as [l]'s pending releases, in one step: whether no other
+   change of the count came first. *)
+let[@poll error] record_held l q p n =
+  Atomic.Loc.compare_and_set [%atomic.loc p.live.word_unmaps] n (n + 1)
+  && begin
+    l.pending <- q;
+    true
+  end
+
+(* [record_held] until it takes an unmap: false once [p]'s slot is freed and
+   no mapping is left, when its points are done and its word may be gone. *)
+let rec hold_word l q p =
   let n = Atomic.Loc.get [%atomic.loc p.live.word_unmaps] in
-  n > 0
-  && (Atomic.Loc.compare_and_set [%atomic.loc p.live.word_unmaps] n (n + 1)
-     || hold_word p)
+  n > 0 && (record_held l q p n || hold_word l q p)
 
 (* The devices whose words of their drivers' own lost their last mapping,
    which the next drain gives back: a submit gives back mappings of words,
@@ -683,18 +690,13 @@ let at_stop = max_int
 (* Under [d]'s lock: records [m], [d]'s mapping of [p]'s word about to be
    made, among [d]'s pending releases until its stop, with one of [p]'s word
    unmaps, unless [p]'s unmaps ended: whether it recorded it. The queue is
-   made first, so nothing allocates between the unmap's count and the store
-   that records it. Raises [Lost] once [d]'s stop returned, as its drain may
-   have given back its pending releases. *)
+   made first, and the unmap's count and the store that records it are one
+   step. Raises [Lost] once [d]'s stop returned, as its drain may have given
+   back its pending releases. *)
 let record_word_locked (d, ((_, p) as m)) =
   let l = d.live in
   if Dev.stop_returned d then Dev.raise_lost d;
-  let q = insert l.pending at_stop (Unmap_word m) in
-  hold_word p
-  && begin
-    l.pending <- q;
-    true
-  end
+  hold_word l (insert l.pending at_stop (Unmap_word m)) p
 
 let record_word d m = Dev.protect d record_word_locked (d, m)
 
@@ -716,16 +718,13 @@ let take_word_map ((d : device), m) =
     true
   end
 
-let settle_word_locked d made retired =
+let settled_words d made retired =
   let l = d.live in
   let q = match made with Some m -> without l.pending m | None -> l.pending in
   let q = if fst q == [] then (List.rev (snd q), []) else q in
-  let q =
-    match retired with
-    | Some r -> insert q (Dev.next_value d) (Unmap_word r)
-    | None -> q
-  in
-  l.pending <- q
+  match retired with
+  | Some r -> insert q (Dev.next_value d) (Unmap_word r)
+  | None -> q
 
 external reraise : exn -> 'a = "%reraise"
 
@@ -930,7 +929,7 @@ let stored (a : alloc) f x =
 
 (* Whether a bigarray over [e]'s memory may be reachable, which keeps the memory
    from reuse and from its free. Once none is, the proxy is freed. *)
-let viewed (e : entry) =
+let[@poll error] viewed (e : entry) =
   if e.proxy = 0 then false
   else if proxy_drop e.proxy then begin
     e.proxy <- 0;
@@ -938,11 +937,11 @@ let viewed (e : entry) =
   end
   else true
 
-(* Puts [e] in its owner's cache, for reuse. A key's array allocates only as
-   it grows past the most entries it held, so a drain of a size cached before
-   allocates nothing. Each step allocates and applies its helpers before it
-   stores. The owner's lock is held. *)
-let cache (e : entry) =
+(* The entries of [e]'s key in its owner's cache, with room for one more. A
+   key's array allocates only as it grows past the most entries it held, so
+   a drain of a size cached before allocates nothing. The owner's lock is
+   held. *)
+let cache_room (e : entry) =
   let l = e.owner.live and k = cache_key e in
   let c =
     match Cache.find l.cache k with
@@ -952,26 +951,44 @@ let cache (e : entry) =
         Cache.replace l.cache k c;
         c
   in
-  let n = c.n and w = whole e.bytes in
+  let n = c.n in
   if n = Array.length c.entries then begin
     let a = Array.make (Int.max 8 (2 * n)) no_entry in
     Array.blit c.entries 0 a 0 n;
     c.entries <- a
   end;
-  c.entries.(n) <- e;
-  c.n <- n + 1;
+  c
+
+(* Puts [e], of [w] bytes, in [l]'s cache, at the end of [c]. *)
+let[@poll error] put l (c : cached) (e : entry) w =
+  c.entries.(c.n) <- e;
+  c.n <- c.n + 1;
   l.cached <- l.cached + w
+
+(* Puts [e] in its owner's cache, for reuse. The owner's lock is held. *)
+let cache (e : entry) =
+  let c = cache_room e in
+  put e.owner.live c e (whole e.bytes)
+
+(* Takes the latest entry of [c], at [n], of [w] bytes, out of [l]'s
+   cache. *)
+let[@poll error] unput l (c : cached) n w =
+  c.entries.(n) <- no_entry;
+  c.n <- n;
+  l.cached <- l.cached - w
 
 (* Under the owner's lock: the latest entry of [c], which holds one, taken
    out of the cache. Its key stays bound. *)
 let uncache l (c : cached) =
   let n = c.n - 1 in
   let e = c.entries.(n) in
-  let w = whole e.bytes in
-  c.entries.(n) <- no_entry;
-  c.n <- n;
-  l.cached <- l.cached - w;
+  unput l c n (whole e.bytes);
   e
+
+(* Puts [e] among [l]'s retiring memory at [n], its end. *)
+let[@poll error] retire l (e : entry) n =
+  l.retiring.(n) <- e;
+  l.nretiring <- n + 1
 
 (* Puts [e] among its owner's retiring memory. The owner's lock is held. *)
 let retire_entry (e : entry) =
@@ -982,8 +999,7 @@ let retire_entry (e : entry) =
     Array.blit l.retiring 0 a 0 n;
     l.retiring <- a
   end;
-  l.retiring.(n) <- e;
-  l.nretiring <- n + 1
+  retire l e n
 
 let to_cache (e : entry) = Dev.protect e.owner cache e
 
@@ -1091,7 +1107,7 @@ let release_hold_now t h =
    a walk of the stamps that began before keeps reading them. An entry of
    host memory keeps its bytes, so [a] lets it go; another entry stays, so
    that a dead buffer keeps its place ({!Rig.Buffer.overlaps}). *)
-let release_locked ((a : alloc), kept) =
+let[@poll error] release_locked ((a : alloc), kept) =
   token_link a.token;
   a.token <- kept;
   a.keep <- Nothing;
@@ -1182,6 +1198,25 @@ let fate d ~lost ~free_lost (e : entry) =
   else if reached e.stamps then Cached
   else Stays
 
+(* Takes the retiring entry at [i] out of [l]'s, moving the last into its
+   place. *)
+let[@poll error] unretire l i =
+  let last = l.nretiring - 1 in
+  l.retiring.(i) <- l.retiring.(last);
+  l.retiring.(last) <- no_entry;
+  l.nretiring <- last
+
+(* Moves the retiring entry [e] at [i], of [w] bytes, into [l]'s cache at
+   the end of [c], in one step: as [put], then [unretire]. *)
+let[@poll error] recache l (c : cached) (e : entry) w i =
+  c.entries.(c.n) <- e;
+  c.n <- c.n + 1;
+  l.cached <- l.cached + w;
+  let last = l.nretiring - 1 in
+  l.retiring.(i) <- l.retiring.(last);
+  l.retiring.(last) <- no_entry;
+  l.nretiring <- last
+
 (* Under [d]'s lock: from the retiring entry [judged] on, caches each whose
    uses are reached, up to the first to free: whether there is one, at
    [judged]. Its judgement reads [freeing] at each entry, and [d]'s loss, a
@@ -1200,11 +1235,7 @@ let rec judged_from d lost =
       l.judged <- i + 1;
       judged_from d lost
   | Cached ->
-      cache e;
-      let last = l.nretiring - 1 in
-      l.retiring.(i) <- l.retiring.(last);
-      l.retiring.(last) <- no_entry;
-      l.nretiring <- last;
+      recache l (cache_room e) e (whole e.bytes) i;
       judged_from d lost
   | Freed -> true
 
@@ -1216,18 +1247,16 @@ let take_freed d =
   if not (due_free d) then no_entry
   else
     let l = d.live in
-    let i = l.judged and last = l.nretiring - 1 in
+    let i = l.judged in
     let e = l.retiring.(i) in
-    l.retiring.(i) <- l.retiring.(last);
-    l.retiring.(last) <- no_entry;
-    l.nretiring <- last;
+    unretire l i;
     e
 
 (* Under [l]'s lock: a pass starts at the first retiring entry, the second
    on a device found lost and Stopped. *)
 let start_pass l = l.judged <- 0
 
-let start_freeing l =
+let[@poll error] start_freeing l =
   l.freeing <- true;
   l.judged <- 0
 
@@ -1577,11 +1606,16 @@ let drain_own d =
 
 let is_let_go = function _, Let_go _ -> true | _ -> false
 
+(* Stores [q] as [l]'s pending releases and lets go of a value, in one
+   step. *)
+let[@poll error] dropped_let_go l q =
+  l.pending <- q;
+  let_go ()
+
 let drop_let_go l =
   let front, back = l.pending in
-  l.pending <-
-    (List.filter (fun p -> not (is_let_go p)) (front @ List.rev back), []);
-  let_go ()
+  dropped_let_go l
+    (List.filter (fun p -> not (is_let_go p)) (front @ List.rev back), [])
 
 (* A forked child keeps nothing for an orphaned device: it routes the records
    the device's list gave and lets go of the values pending on it. Nothing
@@ -1663,18 +1697,27 @@ let () = Dev.answered := drain
 
 (* The cache *)
 
+(* Takes the latest entry [e] of [c], at [n], of [w] bytes, out of [l]'s
+   cache into [r], in one step: as [unput], then [r]'s store, so an
+   exception leaves [e] in one of the two. Every old use has settled, so
+   [e]'s stamps are cleared: the new buffer has no dependencies on its
+   memory's previous lifetime, an unordered use included. *)
+let[@poll error] unput_into l (c : cached) n w (e : entry) r =
+  c.entries.(n) <- no_entry;
+  c.n <- n;
+  l.cached <- l.cached - w;
+  stamps_clear e.stamps;
+  r := e
+
 (* Under [l]'s lock: the latest entry of the key [k] taken out of the cache
-   into [r], or [no_entry]. Nothing allocates between the cache's store and
-   [r]'s, so an exception leaves the entry in one of the two. *)
+   into [r] ([unput_into]), or [no_entry]. *)
 let take_cached_key (l, k, r) =
   match Cache.find l.cache k with
   | c when c.n = 0 -> no_entry
   | c ->
-      let e = uncache l c in
-      (* Every old use has settled. The new buffer has no dependencies on
-         its memory's previous lifetime, an unordered use included. *)
-      stamps_clear e.stamps;
-      r := e;
+      let n = c.n - 1 in
+      let e = c.entries.(n) in
+      unput_into l c n (whole e.bytes) e r;
       e
   | exception Not_found -> no_entry
 
@@ -1909,6 +1952,13 @@ let slot d kind n = function
       (r, try_token d kind n r)
   | Code r -> (r, no_token)
 
+(* Links [t] and takes [e], an image's code that its driver made no memory
+   for, out of [r] with its stamps, in one step. *)
+let[@poll error] let_go_unmade r t (e : entry) =
+  token_link t;
+  r := no_entry;
+  if e.stamps <> 0 then stamps_unref e.stamps
+
 (* Lets go of what a try recorded in [r] with [t] and returns to nobody: [t]
    puts its entry on its list now, as its collection would, so the next drain
    gives back what the entry holds and its device frees its slot without
@@ -1917,12 +1967,9 @@ let slot d kind n = function
    image's. *)
 let let_go_try (r, t) =
   let e = !r in
-  let unmade = t == no_token && e != no_entry && not (made_memory e) in
-  token_link t;
-  if unmade then begin
-    r := no_entry;
-    if e.stamps <> 0 then stamps_unref e.stamps
-  end
+  if t == no_token && e != no_entry && not (made_memory e) then
+    let_go_unmade r t e
+  else token_link t
 
 (* A memory record over the entry [e] of [d], with its token [t]. [Mapped]
    memory has no host address in it: the host reaches its window only
@@ -2123,6 +2170,11 @@ let host_buffer n =
 
 (* Borrows *)
 
+(* Records the entry [e] and its token [t] in [a], in one step. *)
+let[@poll error] set_entry (a : alloc) e t =
+  a.entry <- e;
+  a.token <- t
+
 let make_entry (a : alloc) =
   if a.entry == no_entry then begin
     let d = a.owner in
@@ -2132,8 +2184,7 @@ let make_entry (a : alloc) =
       stamps_unref e.stamps;
       Dev.raise_lost d
     end;
-    a.entry <- e;
-    a.token <- t
+    set_entry a e t
   end
 
 let ensure_entry (a : alloc) = Dev.protect a.owner make_entry a
@@ -2165,12 +2216,15 @@ let find_taken ((e : entry), d, how) =
       found
   | None -> None
 
-(* Counts [mp] in [e] and adds it to [e]'s mappings. The list is made first:
-   nothing allocates between the count and its store. *)
-let add_map ((e : entry), mp) =
-  let maps = mp :: e.maps in
-  Atomic.Loc.incr [%atomic.loc e.unmaps];
+(* Counts a mapping in [e] and stores [maps] as [e]'s mappings, in one
+   step. *)
+let[@poll error] counted_map (e : entry) maps =
+  ignore (Atomic.Loc.fetch_and_add [%atomic.loc e.unmaps] 1 : int);
   e.maps <- maps
+
+(* Counts [mp] in [e] and adds it to [e]'s mappings. The list is made
+   first. *)
+let add_map ((e : entry), mp) = counted_map e (mp :: e.maps)
 
 (* Notes [mp], [d]'s mapping of [e], among [d]'s, unless [d]'s stop returned,
    whose drains may have given back its mappings already: whether it noted
@@ -2187,11 +2241,17 @@ let note_mapped (d, (e : entry), mp) =
    mappings by its device's drain once Stopped, which gave it back. *)
 type settled = Located | Beaten of mapping | Taken
 
+(* Locates [mp] at [at] by [by], taken for [how], in one step. *)
+let[@poll error] located mp at by how =
+  mp.at <- at;
+  mp.by <- by;
+  mp.located <- true;
+  match how with Hold -> mp.holds <- mp.holds + 1 | Keep -> mp.kept <- true
+
 (* Locates [mp] at [l], unless its device located another mapping of [e]
    first, or its drain took [mp]. The mapping located is taken for [how] in
    the same hold of the lock, so no release of a last hold comes between.
-   The answer and the address are made first, and the take is written in
-   line: nothing polls between the stores and the return. *)
+   The answer and the address are made first. *)
 let settle_map ((e : entry), mp, (l : Rig_edge.location), how) =
   if not (List.memq mp e.maps) then Taken
   else
@@ -2201,13 +2261,7 @@ let settle_map ((e : entry), mp, (l : Rig_edge.location), how) =
         take other how;
         beaten
     | None ->
-        let at = Option.value ~default:(-1) l.address in
-        mp.at <- at;
-        mp.by <- l.handle;
-        mp.located <- true;
-        (match how with
-        | Hold -> mp.holds <- mp.holds + 1
-        | Keep -> mp.kept <- true);
+        located mp (Option.value ~default:(-1) l.address) l.handle how;
         Located
 
 (* A record of a region the counted call [make] makes: it stores the

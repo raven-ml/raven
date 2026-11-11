@@ -1264,6 +1264,12 @@ let grow l i =
 
 type decided = Decided of pair | Replaced of pair | Taken of pair
 
+(* Stores [d]'s pending releases [q] and the pair [cell] at [i], in one
+   step: an exception finds a mapping in one of the two. *)
+let[@poll error] store_pair l q i cell =
+  l.pending <- q;
+  l.pairs.(i) <- cell
+
 (* Sets [d]'s pair of [p] to [way] with its mapping [map], unless a decision
    for [p] or a later device of its slot came first, or [d]'s stop returned,
    after which its drain owns its pairs and pending releases: then the pair
@@ -1271,8 +1277,8 @@ type decided = Decided of pair | Replaced of pair | Taken of pair
    releases into the cell. A pair decided for an earlier device of the slot
    is replaced, and its mapping goes among [d]'s pending releases at the
    value after every submit that may wait through it ({!Dev.next_value}), in
-   the same section, so that a drain finds each mapping in the cell or among
-   them. Nothing allocates between the two stores. *)
+   the same step, so that a drain finds each mapping in the cell or among
+   them. *)
 let set_pair (d, (p : device), way, map) =
   let l = d.live and i = p.index in
   let known = known_pair l.pairs i in
@@ -1283,11 +1289,7 @@ let set_pair (d, (p : device), way, map) =
     let cell = { occupant = p.opened; way; word_map = map } in
     let decided = if known.occupant >= 0 then Replaced cell else Decided cell in
     if i >= Array.length l.pairs then grow l i;
-    (* The releases' store ends [settle_word_locked], and the cell's follows
-       it with nothing that allocates or polls between: an exception finds
-       [map] in one of the two. *)
-    Memory.settle_word_locked d map known.word_map;
-    l.pairs.(i) <- cell;
+    store_pair l (Memory.settled_words d map known.word_map) i cell;
     decided
   end
 

@@ -873,21 +873,36 @@ let rec raise_since (l : live) now =
   if now > s && not (Atomic.Loc.compare_and_set [%atomic.loc l.since] s now)
   then raise_since l now
 
+(* Restarts [l]'s still clock, in one step: stores [m] as [seen] if it still
+   reads [seen], and then tries once to raise [since] to [now]. Whether
+   [seen] took [m]. *)
+let[@poll error] restart (l : live) seen m now =
+  Atomic.Loc.compare_and_set [%atomic.loc l.seen] seen m
+  && begin
+    let s = l.since in
+    if now > s then
+      ignore (Atomic.Loc.compare_and_set [%atomic.loc l.since] s now : bool);
+    true
+  end
+
 (* How long, in whole ms, [d]'s word has stood at [w] as of [now], in ns on
    [Rig_edge_primitive.now]'s clock, by [d]'s still clock. The clock runs in
    ns, so it reads [still_ms] only once that much time has passed. A read
    above the clock's restarts it: the word moved, or work came to a device
    whose word had reached all its work. A read at or below it, the same
-   stillness or a stale read, leaves it. [since] is raised after the
-   compare-and-set on [seen], so a reader between them sees the clock long
-   for a round, and a reader whose [now] predates another's restart reads 0
-   for a round, as a time below 0 counts as none. *)
+   stillness or a stale read, leaves it. [restart] stores [seen] and tries
+   [since] in one step, which no exception cuts; [raise_since] retries only
+   if a racing restart moved [since] first, so an exception there leaves
+   that restart's time. A reader on another domain between the two stores
+   sees the clock long for a round, and a reader whose [now] predates
+   another's restart reads 0 for a round, as a time below 0 counts as
+   none. *)
 let rec observe d w now =
   let l = d.live in
   let m = if committed d > w then (2 * w) + 1 else 2 * w in
   let seen = l.seen in
   if m <= seen then Int.max 0 (now - l.since) / 1_000_000
-  else if Atomic.Loc.compare_and_set [%atomic.loc l.seen] seen m then begin
+  else if restart l seen m now then begin
     raise_since l now;
     0
   end
