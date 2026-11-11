@@ -49,9 +49,11 @@ val table : mode -> row list
 val bindings : mode -> (Mosaic.Shortcut.t * Model.action) list
 (** [bindings mode] is what [mode]'s keys do. *)
 
-val hints : Model.t -> (string * string) list
-(** [hints m] is the status bar's keys at [m]: each label with its word,
-    without the keys that act on a run when no run is under the cursor. *)
+val hints : Model.t -> (string * string) list * (string * string) option
+(** [hints m] is the status bar's keys at [m], each label with its word,
+    without the keys that act on a run when no run is under the cursor: the
+    hints in the order the status bar drops them, from the last, and the
+    help key's, which it never drops. *)
 
 val group_name : group -> string
 (** [group_name g] is [g]'s title in help. *)

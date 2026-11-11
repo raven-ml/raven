@@ -48,7 +48,7 @@
 37 |
 38 |
 39 |
-40 | ? keys   q quit
+40 | q quit   ? keys
    |ahcccccaaahcccccaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 cursor hidden
 a bg=Rgb(22,26,32)

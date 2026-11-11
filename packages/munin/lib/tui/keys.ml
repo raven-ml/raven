@@ -111,14 +111,19 @@ let table = function
 
 let bindings mode = List.concat_map (fun r -> r.keys) (table mode)
 
+let opens_help r = List.exists (fun (_, a) -> a = Model.Help) r.keys
+
 let hints m =
   let d : place = match Model.frame m with Panes _ -> (depth m :> place) | _ -> `Bare in
   let run = Model.focus m <> None in
-  List.filter_map
-    (fun r ->
-      if r.on_run && not run then None
-      else Option.map (fun w -> (r.label, w)) (List.assoc_opt d r.hints))
-    (table (mode m))
+  let shown =
+    List.filter
+      (fun r -> (run || not r.on_run) && List.mem_assoc d r.hints)
+      (table (mode m))
+  in
+  let hint r = (r.label, List.assoc d r.hints) in
+  let help, others = List.partition opens_help shown in
+  (List.map hint others, Option.map hint (List.nth_opt help 0))
 
 let group_name = function
   | Move -> "move"

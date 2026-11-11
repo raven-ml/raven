@@ -16,7 +16,8 @@
     cursor's run in every chart, each in a colour it keeps for the session.
 
     The status bar names the depth and the keys that act at it
-    ({!section-keys}). Colour repeats what a glyph or a word says, so a terminal
+    ({!section-keys}); where they do not fit, they leave from the last, and
+    [? keys], which lists the rest, stays. Colour repeats what a glyph or a word says, so a terminal
     without colour, or [NO_COLOR], shows every fact: bold and faint remain, the
     cursor's row is reverse video, and each overlay's line ends in its letter.
     The colours follow the terminal's background, dark or light.

@@ -40,8 +40,8 @@
    |       lllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll
 23 |        0      2.5k      5k      7.5k     10k    12.5k     15k     17.5k  step
    |        f      ffff      ff      ffff     fff    fffff     fff     fffff  ffff
-24 | charts › strips › zoom   ↑↓ run   ←→ metric   enter strips   space overlay
-   |ammmmmmnnnddddddnnnddddaaammddddaaammdddddddaaammmmmdddddddaaammmmmddddddddaaaaa
+24 | charts › strips › zoom   ↑↓ run   ←→ metric   enter strips   ? keys
+   |ammmmmmnnnddddddnnnddddaaammddddaaammdddddddaaammmmmdddddddaaamdddddaaaaaaaaaaaa
 cursor hidden
 a bg=Rgb(22,26,32)
 b fg=Rgb(143,152,165) bg=Rgb(22,26,32) bold

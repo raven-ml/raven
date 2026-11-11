@@ -2830,6 +2830,69 @@ let hint_test =
         (pairs (fun (_, w) -> meaning ~from w))
         (pairs does))
 
+(* The status bar at any width: the hints that fit, leaving from the last,
+   and [? keys] always. *)
+let hints_fit =
+  let store = lazy (Fixture.make ~child (Filename.concat home "hints-fit") Fixture.runs) in
+  let bar cols = hints (show ~cols ~rows:24 (Lazy.force store) Munin_tui.Runs []) in
+  let all = lazy (bar 200) in
+  cases ~id:string_of_int "the status bar keeps ? keys and drops hints from the last"
+    [ 60; 70; 80; 90; 100; 120; 160 ]
+    (fun cols ->
+      let shown = bar cols in
+      let all = Lazy.force all in
+      let keys = ("?", "keys") in
+      if not (List.mem keys all) then fail "no ? keys at 200 columns";
+      let others = List.filter (( <> ) keys) all in
+      let rec prefix = function
+        | [], _ -> true
+        | x :: a, y :: b -> x = y && prefix (a, b)
+        | _ :: _, [] -> false
+      in
+      equal ~msg:"the last hint" (option (pair string string)) (Some keys)
+        (List.nth_opt shown (List.length shown - 1));
+      let rest = List.filter (( <> ) keys) shown in
+      if not (prefix (rest, others)) then
+        failf "%s is not a prefix of %s"
+          (String.concat ", " (List.map fst rest))
+          (String.concat ", " (List.map fst others)))
+
+(* A hint shows once the bar has room for it whole: at the width that holds
+   the first three hints and [? keys] exactly, all four show, and one column
+   less drops the third. *)
+let hints_exact =
+  let store = lazy (Fixture.make ~child (Filename.concat home "hints-exact") Fixture.runs) in
+  let screen cols = show ~cols ~rows:24 (Lazy.force store) Munin_tui.Runs [] in
+  test "a hint that fits whole shows" (fun () ->
+      let wide = screen 200 in
+      let all = hints wide in
+      let others = List.filter (( <> ) ("?", "keys")) all in
+      let w (k, word) = Munin_tui.Numbers.width (k ^ " " ^ word) in
+      let row = String.trim (T.Screen.row wide (T.Screen.rows wide - 1)) in
+      let dropped = List.filteri (fun i _ -> i >= 3) others in
+      let exact =
+        Munin_tui.Numbers.width row - List.fold_left (fun n h -> n + 3 + w h) 0 dropped
+      in
+      (* The bar's padding, a column each side. *)
+      let cols = exact + 2 in
+      let first n = List.filteri (fun i _ -> i < n) others @ [ ("?", "keys") ] in
+      equal ~msg:(Printf.sprintf "at %d columns" cols) (list (pair string string)) (first 3)
+        (hints (screen cols));
+      equal ~msg:(Printf.sprintf "at %d columns" (cols - 1)) (list (pair string string)) (first 2)
+        (hints (screen (cols - 1))))
+
+(* Below 100 columns, a run without another metric with a goal has no line
+   of values: its tabs follow the line that names it, a blank row apart. *)
+let no_values_line =
+  test "a run without values has no line of them" (fun () ->
+      with_store ~name:"no-values" [] @@ fun store ->
+      ignore
+        (write_log store ~declare:[ metric_record "score" ]
+           (List.init 20 (fun i -> values_record i [ ("score", Float.of_int i) ])));
+      let screen = show ~cols:80 ~rows:24 store Munin_tui.Runs [] in
+      let row text = match T.Screen.find screen text with (y, _) :: _ -> Some y | [] -> None in
+      equal (option int) (Option.map (( + ) 2) (row "‹ ")) (row "score"))
+
 (* [y] asks for the other scale of the metric shown, and of no other: zoom's
    title says [log] while the metric is drawn on one. [m] rises over three
    decades and [w] within one, so [m] starts on a log scale and [w] on a
@@ -2906,5 +2969,8 @@ let () =
          strips_scroll;
          data_path_test;
          hint_test;
+         hints_fit;
+         hints_exact;
+         no_values_line;
          long_values;
        ])

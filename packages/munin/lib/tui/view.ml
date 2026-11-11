@@ -678,43 +678,61 @@ let info th (m : M.t) scroll (f : Facts.run) =
 
 (* Status bar *)
 
+(* The blank columns between the bar's items, and each side of the bar. *)
+let hint_gap = 3
+let bar_padding = 1
+
 let status_bar th (m : M.t) =
   let bar items =
     box ~flex_direction:Row ~size:one ~flex_shrink:0. ?background:(Th.bg th Raise)
-      ~padding:(padding_xy 1 0) items
+      ~padding:(padding_xy bar_padding 0) ~overflow:{ x = Hidden; y = Hidden } items
   in
   match m.notice with
   | Some n -> bar [ line [ frag ~bold:true th Fail n ] ]
   | None ->
+      let sep = " › " in
       let crumbs =
         match (m.layer, M.frame m) with
-        | Screen, Panes _ ->
-            let on = Keys.depth m in
-            let crumb (d, word) =
-              frag ~bold:(d = on) th (if d = on then Hi else Dim) word
-            in
-            let sep = frag th Line2 " › " in
-            [
-              rich_text ~wrap:`None ~flex_shrink:0. ~margin:(margin_lrtb 0 3 0 0)
-                [ crumb (`Charts, "charts"); sep; crumb (`Strips, "strips"); sep; crumb (`Zoom, "zoom") ];
-            ]
+        | Screen, Panes _ -> [ (`Charts, "charts"); (`Strips, "strips"); (`Zoom, "zoom") ]
         | _ -> []
       in
-      let hints =
-        List.map
-          (fun (k, w) ->
-            rich_text ~wrap:`None ~flex_shrink:0. ~margin:(margin_lrtb 0 3 0 0)
-              [ frag ~bold:true th Hi k; frag th Dim (" " ^ w) ])
-          (Keys.hints m)
+      let crumbs_w =
+        List.fold_left (fun w (_, word) -> w + Numbers.width word) 0 crumbs
+        + (Numbers.width sep * max 0 (List.length crumbs - 1))
       in
-      (* The hints wrap into a line of one row that hides what wraps, so that
-         they leave whole from the end. *)
-      bar
-        (crumbs
-        @ [
-            box ~flex_direction:Row ~flex_wrap:Wrap ~flex_grow:1. ~flex_basis:(px 0) ~size:one
-              ~overflow:{ x = Hidden; y = Hidden } hints;
-          ])
+      let crumb_frags =
+        let on = Keys.depth m in
+        List.concat
+          (List.mapi
+             (fun i (d, word) ->
+               (if i = 0 then [] else [ frag th Line2 sep ])
+               @ [ frag ~bold:(d = on) th (if d = on then Hi else Dim) word ])
+             crumbs)
+      in
+      let hint (k, w) = [ frag ~bold:true th Hi k; frag th Dim (" " ^ w) ] in
+      let hint_w (k, w) = Numbers.width k + 1 + Numbers.width w in
+      let others, help = Keys.hints m in
+      (* The items' widths and the gaps between them: the crumbs and the
+         help key always, then the hints that fit, whole, leaving from the
+         last. *)
+      let fixed = (if crumbs = [] then [] else [ crumbs_w ]) @ Option.to_list (Option.map hint_w help) in
+      let used = List.fold_left ( + ) 0 fixed + (hint_gap * max 0 (List.length fixed - 1)) in
+      let room =
+        match m.size with Some (w, _) -> w - (2 * bar_padding) - used | None -> 0
+      in
+      let rec fit room ~alone = function
+        | h :: rest ->
+            let cost = hint_w h + if alone then 0 else hint_gap in
+            if cost > room then [] else h :: fit (room - cost) ~alone:false rest
+        | [] -> []
+      in
+      let items =
+        (if crumbs = [] then [] else [ crumb_frags ])
+        @ List.map hint (fit room ~alone:(fixed = []) others)
+        @ Option.to_list (Option.map hint help)
+      in
+      let gap = F.text (String.make hint_gap ' ') in
+      bar [ line (List.concat (List.mapi (fun i x -> if i = 0 then x else gap :: x) items)) ]
 
 (* Help *)
 

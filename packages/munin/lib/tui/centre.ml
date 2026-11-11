@@ -268,10 +268,12 @@ let facts_line th (m : M.t) (f : Facts.run) ~width =
     | (frags, w) :: rest when w <= room -> frags :: fit (room - w - part_gap) rest
     | _ -> []
   in
-  let gap = frag th Dim (String.make part_gap ' ') in
-  let parts = fit width (List.filter_map part keys) in
-  box ~flex_shrink:0. ~margin:(margin_lrtb 0 0 1 1)
-    [ line (List.concat (List.mapi (fun i p -> if i = 0 then p else gap :: p) parts)) ]
+  match fit width (List.filter_map part keys) with
+  | [] -> box ~flex_shrink:0. ~margin:(margin_lrtb 0 0 1 0) []
+  | parts ->
+      let gap = frag th Dim (String.make part_gap ' ') in
+      box ~flex_shrink:0. ~margin:(margin_lrtb 0 0 1 1)
+        [ line (List.concat (List.mapi (fun i p -> if i = 0 then p else gap :: p) parts)) ]
 
 (* Charts *)
 

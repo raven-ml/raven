@@ -82,7 +82,9 @@ lists the runs under their experiments; its cursor, the row starting
 with `▌`, picks the run the rest of the screen shows. The centre draws
 that run's metrics. The run pane at the right states the run: its state,
 its progress, its params, its machine and its source. The status bar
-names the depth the centre is at and the keys that act there.
+names the depth the centre is at and the keys that act there; on a narrow
+terminal they leave from the last, and `? keys`, which lists them all,
+stays.
 
 The panes take their widths from the terminal's. On a narrower terminal
 the side panes give way to the centre, and `1` and `3` bring either back
