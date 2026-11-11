@@ -663,6 +663,16 @@ let () =
                 ~id:(fun (Nx.Dtype.Any dt) -> Nx.Dtype.name dt)
                 Nx.Dtype.[ Any Nx.float32; Any Nx.bfloat16; Any Nx.float16 ]
                 (Rune_support.Attentions.zero_sums (module Nx.Host));
+              (* float32 alone: the host's kernel computes every dtype in
+                 its accumulator alike. *)
+              prop ~examples:Rune_support.Paged_attentions.host_examples
+                ~count:4 "paged keys and values give dense ones' bits"
+                (Gen.with_pp Rune_support.Paged_attentions.pp
+                   (Gen.map
+                      (fun c ->
+                        { c with Rune_support.Paged_attentions.dtype = Nx.Dtype.Any Nx.float32 })
+                      Rune_support.Paged_attentions.gen))
+                (Rune_support.Paged_attentions.law (module Nx.Host));
             ]);
          group "jit over keys cut across two devices"
            (three ~examples 12 (law_cut f32 f32) (law_cut f64 f64)

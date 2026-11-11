@@ -428,6 +428,14 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit`'s attention over `Nx.Paged` keys reads each key's page table
+  entry once a tile and decides skips from the lengths and the mask alone:
+  gpt-oss's prefill of 512 rows over 1024 slots takes 48.5 µs where it took
+  59.4 on an RTX 5000 Ada, and a paged call gives the bits of the dense call
+  over the same rows.
+- `Rune.jit`'s attention counts every buffer its kernel keeps in a
+  workgroup's memory: bfloat16 keys of 272 dimensions and values of 64,
+  under a mask, at 32768 rows or more failed to compile on CUDA.
 - `Rune.jit` over software devices (`Rig.software`) runs each device's
   kernels on that device, where they ran on the host: a profile records
   them as the device's work.

@@ -14,7 +14,8 @@
    and a program over the GPU and a software device, devices of two targets,
    compiles to eager's values with replicas equal bit for bit, a running
    operation of a prefix is the prefix of its result, attention holds its
-   bound against a float64 reference and gives +0 for a sum of zeros, a sum
+   bound against a float64 reference and gives +0 for a sum of zeros, paged
+   keys and values give dense ones' bits, a sum
    of a contraction's result holds its bound, exp
    holds its bound in ulps of the correctly rounded result, and a range
    gather and its gradient compile to eager's bits, and an argmax or argmin
@@ -130,6 +131,9 @@ let attention c =
   let d, s = on_gpu () in
   if c.Attentions.dtype = Nx.Dtype.Any Nx.float64 then assume (has_float64 d);
   Attentions.law s c
+
+(* The law of paged attention against dense on the GPU. *)
+let paged_attention c = Paged_attentions.law (snd (on_gpu ())) c
 
 (* The gradient law on the GPU, compiled or mapped by vmap. *)
 let attention_grad ~vmap c =
@@ -2438,6 +2442,10 @@ let () =
                Nx.Dtype.[ Any Nx.float32; Any Nx.bfloat16; Any Nx.float16 ]
                (fun dt -> Attentions.zero_sums (snd (on_gpu ())) dt);
              test "forward mode of a summed loss holds its bound" attention_jvp;
+             prop ~count:4 ~examples:Paged_attentions.examples
+               "paged keys and values give dense ones' bits"
+               (Gen.with_pp Paged_attentions.pp Paged_attentions.gen)
+               paged_attention;
            ];
          group "a reduction another reads"
            [

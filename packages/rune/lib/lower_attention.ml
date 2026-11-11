@@ -31,8 +31,10 @@ module Arith = Lower_arith
 
    A pair is visible where its key is before the row's length, its page's
    table entry is in range, and the program's output 0 holds. A tile whose
-   pairs are all hidden is skipped ([guard]); a tile whose pairs the
-   program shows all runs without evaluating it ([skipping]). *)
+   pairs the lengths and the program hide is skipped ([guard]); a tile
+   whose pairs the program shows all runs without evaluating it
+   ([skipping]). The page table decides no skip: a tile's body reads it as
+   it copies the tile's rows. *)
 
 
 (* Problems *)
@@ -377,13 +379,13 @@ let id_mask = 11
 
 (* [carried ~inside ~at ~shown ~read ~mask n] is the visibility of a
    thread's [n] pairs, carried in a register set at each step of the ranges
-   [at]: [read inside], whether each pair's key is read, overwritten with
-   [mask inside], each pair's mask, under a guard on [not shown] that a
+   [at]: [read], whether each pair is within its row's length, overwritten
+   with [mask inside], each pair's mask, under a guard on [not shown] that a
    workgroup takes as one. *)
 let carried ~inside ~at ~shown ~read ~mask n =
   let r = Shape.placeholder ~slot:slot_seen ~addrspace:Reg [ max 1 n ] Bool in
   let set_all r vs = Ops.group (Array.to_list (Array.mapi (fun i v -> st r (int i) v) vs)) in
-  let reads = set_all (inside (Ops.after r at)) (read inside) in
+  let reads = set_all (inside (Ops.after r at)) read in
   let masked =
     guard ~outer:inside id_mask (Ops.logical_not shown) (fun inside ->
         set_all (inside (Ops.after r [ reads ])) (mask inside))
@@ -411,24 +413,21 @@ let reads_capture (p : P.t) =
 
 (* [skipping a x ~at ~b ~kh ~len ~rows ~keys ~over ~ids pairs body] is
    [body inside seen] in guards that skip a tile its classes hide, and a
-   tile of unknown class where no pair of the threads of the ranges [over]
-   is visible. [pairs] are a thread's [(row, key)] in the tile, and
-   [seen.(i)] whether pair [i] is visible. A mask that reads a capture runs
-   only in a tile of unknown class: in a tile its classes show, a pair is
-   visible where its key is read. The vote is carried out of its guard in a
-   register set at each step of the ranges [at]. *)
+   tile of unknown class where the lengths and the mask show no pair of the
+   threads of the ranges [over]. [pairs] are a thread's [(row, key)] in the
+   tile, and [seen.(i)] whether the lengths and the mask show pair [i]; the
+   body ands it with the pair's table entry, which it reads with the tile's
+   rows. A mask that reads a capture runs only in a tile of unknown class:
+   in a tile its classes show, a pair is shown where its key is within the
+   length. The vote is carried out of its guard in a register set at each
+   step of the ranges [at]. *)
 let skipping a x ~at ~b ~kh ~len ~rows ~keys ~over ~ids:(id0, id1, id2) pairs
     body =
-  let read inside =
-    Array.map
-      (fun ((row : row), key) ->
-        fst (key_at a x ~inside ~b ~kh ~within:(row.live &&: Ops.O.(key < len)) key))
-      pairs
-  in
+  let read = Array.map (fun ((row : row), key) -> row.live &&: Ops.O.(key < len)) pairs in
   let mask inside =
     Array.map2
       (fun (row, key) ok -> visible a x ~inside ~b ~row ~key ~ok)
-      pairs (read inside)
+      pairs read
   in
   match classes a x ~inside:Fun.id ~b ~kh ~rows ~keys with
   | None -> guard id0 (Ops.O.bool true) (fun inside -> body inside (mask inside))
@@ -599,7 +598,10 @@ let simt ~local ~width ~splits a xs =
     in
     let x2 =
       Array.init bk (fun i ->
-          score a x ~inside ~b ~row ~key:(key i) ~seen:seen.(i) (ld s (int i)))
+          let seen =
+            match a.paged with None -> seen.(i) | Some _ -> seen.(i) &&: fst keys.(i)
+          in
+          score a x ~inside ~b ~row ~key:(key i) ~seen (ld s (int i)))
     in
     let m_old = ld (inside m_j) (int 0) and l_old = ld (inside l_j) (int 0) in
     let m_new, alpha, p = softmax acc m_old x2 in
@@ -863,6 +865,7 @@ let slot_ks = 104
 let slot_vs = 105
 let slot_red = 106
 let slot_sum = 107
+let slot_checks = 110
 
 (* The padding of a row of a tile in workgroup memory, in elements. *)
 let pad = 8
@@ -985,9 +988,10 @@ let core c a xs =
   let ks = Shape.placeholder ~slot:slot_ks ~addrspace:Local [ Stdlib.(bk * (dkp + pad)) ] vt in
   let vs = Shape.placeholder ~slot:slot_vs ~addrspace:Local [ Stdlib.(bk * (dcp + pad)) ] vt in
   let red = Shape.placeholder ~slot:slot_red ~addrspace:Local [ Stdlib.(bq * sharers) ] acc in
+  let checks = Shape.placeholder ~slot:slot_checks ~addrspace:Local [ bk ] Bool in
   let key i = (j * int bk) + i in
   (* [copy inside src dst ~width ~first ~cols] stages the tile's keys of
-     [src] ({!stage}). *)
+     [src] ({!stage}), reading the table through [inside]. *)
   let copy inside src dst ~width ~first ~cols =
     let at ~within kl =
       let ky = key kl in
@@ -996,15 +1000,41 @@ let core c a xs =
     stage ~tid ~threads ~n:bk ~at src dst ~width ~first ~cols
   in
   let first_col = gc * int c.cols in
-  (* A lane's pairs: its accumulators' elements of each tile of [N] keys. *)
+  (* A lane's pairs: its accumulators' elements of each tile of [N] keys,
+     their keys within the tile [kls]. *)
+  let kls =
+    lane_pairs ~tiles:ntiles ~ec (fun nt e -> int Stdlib.(nt * n_) + coord tc.frag_c Nb lane e)
+  in
   let pairs =
     lane_pairs ~tiles:ntiles ~ec (fun nt e ->
-        let kl = int Stdlib.(nt * n_) + coord tc.frag_c Nb lane e in
-        (row_of (coord tc.frag_c Mb lane e), key kl))
+        (row_of (coord tc.frag_c Mb lane e), key kls.(Stdlib.((nt * ec) + e))))
   in
   let body inside seen =
     let ks_w = inside ks in
-    let ks = Ops.after ks [ Ops.group (copy inside (inside x.k) ks_w ~width:a.dk ~first:(int 0) ~cols:dkp) ] in
+    (* Each key's table check, staged beside its row, one thread a key: the
+       pairs read it there rather than the table. *)
+    let marks =
+      match a.paged with
+      | None -> []
+      | Some _ ->
+          List.init (ceil_div bk threads) (fun i ->
+              let kl = tid + int Stdlib.(i * threads) in
+              let in_tile = kl < int bk in
+              let ky = key kl in
+              let ok, _ = key_at a x ~inside ~b ~kh ~within:(in_tile &&: (ky < len)) ky in
+              Ops.store (Ops.index (inside checks) [ Ops.where in_tile kl Ops.invalid ]) ok)
+    in
+    let staged =
+      Ops.group (copy inside (inside x.k) ks_w ~width:a.dk ~first:(int 0) ~cols:dkp @ marks)
+    in
+    let ks = Ops.after ks [ staged ] in
+    let seen =
+      match a.paged with
+      | None -> seen
+      | Some _ ->
+          let checks = Ops.after checks [ staged ] in
+          Array.mapi (fun i s -> s &&: ld checks kls.(i)) seen
+    in
     (* S = Q Kᵀ: the accumulator of each tile of [N] keys. *)
     let s =
       Array.init ntiles (fun nt ->
@@ -1070,10 +1100,12 @@ let core c a xs =
                       (fun e -> if slot_of e = s then Some p.(nt).(e) else None)
                       (List.init ec Fun.id)))))
     in
-    (* V's tile, copied once the row maximum's loads have read [red]. *)
-    let vs_w = Ops.after (inside vs) [ red_r ] in
+    (* V's tile, copied once the row maximum's loads have read [red]. Its
+       copy reads the table again there: entries kept from K's copy would
+       live across the scores and the softmax. *)
+    let late buf = Ops.after (inside buf) [ red_r ] in
     let vs =
-      Ops.after vs [ Ops.group (copy inside (inside x.v) vs_w ~width:a.dv ~first:first_col ~cols:dcp) ]
+      Ops.after vs [ Ops.group (copy late (inside x.v) (late vs) ~width:a.dv ~first:first_col ~cols:dcp) ]
     in
     (* P, rounded once to the values' dtype, as each step's operand A. *)
     let pa =
@@ -1290,9 +1322,9 @@ let combine ~local ~width ~splits a xs =
    as it is or transposed. It holds [warps]
    of 8 while the launch keeps the renderer's [local_workgroups] workgroups,
    else 4, as many warps as balance a part's units (FlashAttention-2 §3.3:
-   query rows split across warps); tiles of 64 keys while the copies of a
-   tile's keys and values fit the workgroup's memory, else 32; and the
-   values' columns 64 at a time, so that a lane's accumulators stay in its
+   query rows split across warps); tiles of 64 keys while what the kernel
+   declares in workgroup memory fits there, else 32; and the values'
+   columns 64 at a time, so that a lane's accumulators stay in its
    registers. *)
 let plan (r : Renderer.t) a =
   let vt = Arith.dtype a.vt in
@@ -1318,12 +1350,6 @@ let plan (r : Renderer.t) a =
       let n, m, k = Tc.dims tc in
       let cols = min (max a.dv 1) 64 in
       let dkp = ceil_div a.dk k * k and dcp = ceil_div cols n * n in
-      let bytes keys = keys * (dkp + pad + dcp + pad) * Dtype.itemsize vt in
-      (* The rows' maxima and sums take 4096 bytes beside the tiles. *)
-      let fits keys = bytes keys + 4096 <= r.shared_max in
-      if not (fits 32) then None
-      else
-      let keys = if fits 64 then 64 else 32 in
       let workgroups warps =
         numel a.lead * a.hk * ceil_div (grouped a) (warps * m)
         * max 1 (ceil_div a.dv cols)
@@ -1331,9 +1357,23 @@ let plan (r : Renderer.t) a =
       let warps = if workgroups 8 >= r.local_workgroups then 8 else 4 in
       (* Few rows take fewer warps: a decode step's one query of each head. *)
       let warps = min warps (ceil_div (grouped a) m) in
+      (* What {!core} declares in workgroup memory: a tile's rows of keys and
+         values and a byte a key for their table checks, and beside them the
+         rows' maxima and sums, [bq · sharers] floats each, and the vote's
+         [int] a thread. The checks and the vote count where the kernel has
+         neither, so that keys paged or dense, under any mask, take the same
+         tiles. *)
+      let sharers = 1 lsl count Nb tc.frag_c.lanes in
+      let threads = warps * Tc.threads tc in
+      let beside = (2 * warps * m * sharers * 4) + (threads * 4) in
+      let bytes keys = keys * (((dkp + pad + dcp + pad) * Dtype.itemsize vt) + 1) in
+      let fits keys = bytes keys + beside <= r.shared_max in
+      if not (fits 32) then None
+      else
+      let keys = if fits 64 then 64 else 32 in
       let splits =
         splits_for ~stream:r.stream_threads ~workgroups:(workgroups warps)
-          ~threads:(warps * Tc.threads tc) ~tiles:(ceil_div a.tk keys)
+          ~threads ~tiles:(ceil_div a.tk keys)
       in
       Some { tc; transposed; warps; keys; cols; splits }
   | _ -> None

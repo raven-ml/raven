@@ -1692,7 +1692,12 @@ val jit :
     results hold {!Nx.val-attention}'s bound with [ε] the bound of a compiled
     {!Nx.logsumexp} of [tk] terms above. On a tensor core, float16 and
     bfloat16 weights are rounded once to [v]'s dtype for the value product,
-    as {!Nx.val-attention} allows. Its derivatives recompute each pair's weight
+    as {!Nx.val-attention} allows. On one device, a paged call's [o] and
+    [lse] have the bits of a dense call's whose keys and values are the
+    pool entries its table names and whose mask hides the keys of entries
+    out of range, where the values at the keys either call hides within a
+    row's length are finite.
+    Its derivatives recompute each pair's weight
     from [lse] and sum their products by contractions and maps of the whole
     pair loop, each within its row above. Where the forward runs on a
     tensor core, reverse mode, for float16 and bfloat16 keys and values of

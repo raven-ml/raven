@@ -8,9 +8,11 @@
     {!lower} computes {!Nx.Prim.Attention} without storing anything of the
     pair loop's shape: a kernel folds each query row over its keys in tiles,
     with a running maximum, sum and accumulator of weighted values (online
-    softmax), and divides at the end. A tile of keys that every pair of a
-    workgroup's rows hides is skipped, and one whose every pair the mask
-    shows runs without evaluating it.
+    softmax), and divides at the end. A tile of keys whose every pair of
+    a workgroup's rows the lengths and the mask hide is skipped, and one
+    whose every pair the mask shows runs without evaluating it. The page
+    table skips no tile: a tile where the lengths and the mask show a pair
+    runs, reading the pages of its keys whose entries are in range.
 
     {b Numerics.} Scores, their maxima and sums, the weights and [lse] compute
     in the accumulator, in base 2: each score is multiplied by [log₂ e] and
