@@ -2006,15 +2006,25 @@ let create_pair () =
     live = [];
   }
 
+(* The tree goes even when a step before raises. The slot goes back only when
+   the pair holds nothing: memory a release left, raising or not, lies in the
+   slot's addresses, where the next pair to take the slot would find another
+   machine's. *)
 let release_pair s =
-  List.iter (fun (i, r) -> Memory.free s.gpus.(i).t_memory r) s.live;
-  s.live <- [];
-  Array.iter (fun x -> Function.release x.t_fn) s.gpus;
-  Function.free_dma s.lender s.lent;
-  Function.release s.lender;
-  equal ~msg:"system memory held once all is given back" int 0
-    (held_bytes s.root);
-  give_slot s.slot
+  let held =
+    Fun.protect
+      ~finally:(fun () -> Tree.remove s.root)
+      (fun () ->
+        List.iter (fun (i, r) -> Memory.free s.gpus.(i).t_memory r) s.live;
+        s.live <- [];
+        Array.iter (fun x -> Function.release x.t_fn) s.gpus;
+        Function.free_dma s.lender s.lent;
+        Function.release s.lender;
+        let held = held_bytes s.root in
+        if held = 0 then give_slot s.slot;
+        held)
+  in
+  equal ~msg:"system memory held once all is given back" int 0 held
 
 let pairs = abstract "t" ~release:release_pair
 let regions = abstract "r"

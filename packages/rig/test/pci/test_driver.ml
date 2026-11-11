@@ -931,6 +931,7 @@ type hold_ref = {
 }
 
 type vendor_sys = {
+  root : string;  (** Its tree. *)
   g : Driver.t;
   m : Machine.t;
   resets : int Atomic.t;
@@ -987,13 +988,18 @@ let held_buses v =
    vendor's calls reach no state the first's do not. *)
 let vendors = Atomic.make 0
 
-(* A program's GPUs are stopped when it ends, so that no take outlives it. *)
+(* A program's GPUs are stopped when it ends, so that no take outlives it, and
+   its tree removed, even when a stop raises: a test of thousands of programs
+   would otherwise hold thousands of trees until its exit. *)
 let vendor_t =
   abstract "v"
     ~release:(fun s ->
       Atomic.decr vendors;
-      List.iter stop (Atomic.get s.holds);
-      Array.iter Unix.close s.configs)
+      Fun.protect
+        ~finally:(fun () ->
+          Array.iter Unix.close s.configs;
+          Tree.remove s.root)
+        (fun () -> List.iter stop (Atomic.get s.holds)))
     ~invariant:(fun v s ->
       let taken =
         List.filteri
@@ -1019,6 +1025,7 @@ let vendor_sys () =
   in
   let s =
     {
+      root;
       g = gpus ~reset ();
       m = Machine.at root;
       resets;

@@ -193,7 +193,7 @@ end
 
 (** A machine's files as Linux shows them, for {!Rig_pci.Machine.at}, written
     under a temporary directory of the process's own, which it removes at its
-    exit: no two runs share a tree.
+    exit, or each alone ({!Tree.remove}): no two runs share a tree.
 
     A function's directory holds [vendor], [device] and [class] in hexadecimal,
     [enable], [resource] (one line per BAR: start, end and flags), the first 64
@@ -270,6 +270,12 @@ module Tree : sig
       [sys/bus/pci/devices]. Configuration files hold 64 bytes, as a reader
       without [CAP_SYS_ADMIN] sees them, or 4096 with [~privileged:true]
       (defaults to [false]). *)
+
+  val remove : string -> unit
+  (** [remove root] removes the tree [root] and every file added to it, which
+      the process otherwise removes at its exit. A test that makes a tree for
+      each of thousands of runs removes each as its run ends, so that the
+      trees do not fill the memory file system they lie on. *)
 
   val device_number : string -> string
   (** [device_number file] is the number of the character device at [file], as a

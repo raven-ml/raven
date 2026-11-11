@@ -722,7 +722,7 @@ module Tree = struct
 
   (* Linux unbinds a function it removes. A rescan brings it back as new,
      with no override. *)
-  let remove k bus =
+  let remove_function k bus =
     unbind k bus;
     let dir = Unix.realpath (fn_dir k bus) in
     let away = k.root / "removed" / bus in
@@ -755,7 +755,7 @@ module Tree = struct
           raise (Unix.Unix_error (ENODEV, "write", file));
         unbind k named
     | "drivers_probe" -> probe k named
-    | "remove" -> remove k (Filename.basename (Filename.dirname file))
+    | "remove" -> remove_function k (Filename.basename (Filename.dirname file))
     | "rescan" -> rescan k
     | _ -> ()
 
