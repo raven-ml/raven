@@ -2338,6 +2338,28 @@ let test_summed_gradients () =
         held)
     [ 1; 2; 4 ]
 
+(* A step that adds into its carry a stack of rows it computes adds each row
+   into its region of the carry's storage: beside the carry it holds no
+   storage of the carry's size. *)
+let test_stacked_rows () =
+  let rows = 8 and dim = 4096 and trips = 4 in
+  let s = T.(pair tensor tensor @-> returns tensor) in
+  let f (c, xs) =
+    let row x i = Nx.mul_s (Nx.sin x) (Float.of_int (i + 1)) in
+    let step c x =
+      (Nx.add c (Nx.stack (List.init rows (row x))), Nx.sum x)
+    in
+    fst (Rune.scan' step ~init:c xs)
+  in
+  let c = Nx.zeros f32 [| rows; dim |] in
+  let xs = Nx.Rng.normal ~key:(Nx.Rng.key 3) f32 [| trips; dim |] in
+  let on_host (r, _) = Rig.equal r Rig.host in
+  let held = snd (List.find on_host (Rune.footprint s f (c, xs))) in
+  let carry = 4 * rows * dim in
+  less
+    ~msg:(Printf.sprintf "%d bytes, a carry %d" held carry)
+    int ~than:(2 * carry) held
+
 (* A step that reads its row of a strided stack, which it reads in place at
    the trip's index, in a scan of its own over the row and through a view the
    inner step captures: each inner call is passed the outer trip's index. *)
@@ -2461,5 +2483,7 @@ let () =
              test "a strided row read in a nested scan" test_strided_row_nested;
              test "a carry that sums gradients holds one gradient"
                test_summed_gradients;
+             test "a carry that sums a stack of rows holds no other"
+               test_stacked_rows;
            ];
        ])

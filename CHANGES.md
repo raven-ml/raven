@@ -434,6 +434,8 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` adds an assembly, as `Nx.stack`'s, into a loop's carry region
+  by region in the carry's storage, where it stored the assembly apart.
 - `Rune.jit`'s attention compiles kernels whose code does not grow with
   `dk` and `dv`. On a tensor core it computes each tile of scores once
   whatever `dv` and runs heads of any size, where past about 600 bfloat16

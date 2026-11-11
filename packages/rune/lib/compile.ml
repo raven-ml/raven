@@ -230,7 +230,9 @@ type lowered = {
 }
 
 (* The storage a scatter combines into ({!Lower_index.scatter}): its buffer,
-   the node that holds the target there, and the target's node. *)
+   the node that holds the target there, and the target's node; or a carry's
+   update ({!update}): the carry's storage, the update's state of it, the
+   carry's node. And the nodes of what it reads beside the target. *)
 type dst = { buf : Ops.t; filled : Ops.t; into : Ops.t; reads : Ops.t list }
 
 (* The form on whose set a call issues its checks: its first argument's, or
@@ -259,6 +261,10 @@ type state = {
   dsts : dst Ops.Tbl.t;
       (** The storage each scatter that combines in a kernel of its own
           combines into, by its result's node without reshapes. *)
+  updates : dst Ops.Tbl.t;
+      (** Each map that may update a loop's carry in place ({!update}): the
+          carry's storage, the update's last state, the carry's node and the
+          assembly's pieces, by the map's node without reshapes. *)
   carries : Ops.t Ops.Tbl.t;
       (** The buffer each loop carries a value in, by the value's node after
           the loop without reshapes: storage of the loop's own. *)
@@ -860,6 +866,15 @@ let check st cs env (type d e) (ok : (bool, _, d) Nx.t)
       { shape; first; data; fail = (fun i a -> fail i (read a)); rig }
   end
 
+(* Whether variable [base] is the next value of the loop's carry, variable
+   [v]. *)
+let is_next env base v =
+  let next j =
+    let (V y) = env.p.outputs.(j) in
+    env.p.params.(j) = v && var env y = base
+  in
+  List.exists next (List.init env.carried Fun.id)
+
 (* Whether a scatter's result, variable [base], may take its target [into]'s
    own storage, where it writes only its updates: where [into] is a loop's
    carry and the result its next value, or [into] a donated argument and the
@@ -868,14 +883,10 @@ let check st cs env (type d e) (ok : (bool, _, d) Nx.t)
    replaces by [into]'s own where their rules let the result take it. *)
 let may_take env base into =
   let v = var env into in
-  let next j =
-    let (V y) = env.p.outputs.(j) in
-    env.p.params.(j) = v && var env y = base
-  in
   let donated k = env.donated.(k) && env.p.params.(k) = v in
   let output (Program.V y) = var env y = base in
   v >= 0
-  && (List.exists next (List.init env.carried Fun.id)
+  && (is_next env base v
      || List.exists donated (List.init (Array.length env.donated) Fun.id)
         && Array.exists output env.p.outputs)
 
@@ -967,24 +978,10 @@ let moving x (rs : A.Move.range array) u =
    lie, and their kernel knows of a start what all of theirs share, its
    alignment included. *)
 
-(* A region along an axis, ascending: its first index, its count, its step,
-   [1] where it holds one element, and whether the piece runs backwards. *)
-type axis = { first : int; count : int; step : int; back : bool }
+open Region
 
-let axis (r : A.Move.range) =
-  if r.count <= 1 then
-    { first = r.start; count = r.count; step = 1; back = false }
-  else
-    let step = abs r.step and back = r.step < 0 in
-    let first = if back then r.start + ((r.count - 1) * r.step) else r.start in
-    { first; count = r.count; step; back }
-
-let axes (rs : A.Move.range iarray) = Array.map axis (Iarray.to_array rs)
-let extent a = ((a.count - 1) * a.step) + 1
 let dense b = Array.for_all (fun a -> a.step = 1) b
 let elements b = Array.fold_left (fun k a -> k * a.count) 1 b
-
-let rec gcd a b = if b = 0 then abs a else gcd b (a mod b)
 
 (* Whether a piece's region holds an element. *)
 let holds ((rs : A.Move.range iarray), _) =
@@ -993,16 +990,6 @@ let holds ((rs : A.Move.range iarray), _) =
 (* Whether the region [b] holds each element of a value of shape [s]. *)
 let covers s b =
   Array.for_all2 (fun a n -> a.first = 0 && a.count = n && a.step = 1) b s
-
-(* Whether two regions may share an element: along every axis their spans
-   meet and their steps leave a common index. *)
-let meet b c =
-  Array.for_all2
-    (fun x y ->
-      x.first < y.first + extent y
-      && y.first < x.first + extent x
-      && (y.first - x.first) mod gcd x.step y.step = 0)
-    b c
 
 (* Whether the regions [bs] hold each element of a value of shape [s] once. *)
 let tile s bs =
@@ -1308,6 +1295,119 @@ let assembled ~device ~one_gpu (type v s) (dt : (v, s) D.t) (fill : v) shape
   in
   (whole filled, buf, filled, permuted)
 
+(* Updates of carries
+
+   A loop's next carry that is an elementwise map of the carry and an
+   assembly, as the sum [Nx.add carry g] of a gradient [g] of a stack read by
+   slices, may be built in the carry's storage: each piece's region holds the
+   map of the carry's region and the piece, and each region no piece holds
+   the map of the carry's and the fill, so that each element is written once
+   from the carry's own. A map of the whole would read the assembly from
+   storage of its own, beside the carry's. It applies where the pieces are
+   dense and pairwise disjoint, so that their stores are one state; where
+   the map reads no position, since each region's map sees the region's
+   own; and where the map's result is the next carry alone, which else would
+   be computed both ways. A kernel that reads the carry's old value, a
+   piece's included, runs before the stores or reads a copy, as tolk orders
+   every read of a state before its overwrite. *)
+
+(* Whether variable [n] is read by no equation and is one output alone. *)
+let alone env n =
+  let p = env.p in
+  let reads = function
+    | Program.Op { op; _ } -> List.exists (fun (k, _) -> k = n) (repeated p op)
+    | Do { c; _ } ->
+        List.exists (fun (Program.V x) -> slot p x = n) (Program.operands c)
+  in
+  let output (Program.V y) = slot p y = n in
+  (not (Array.exists reads p.eqns))
+  && List.length (List.filter output (Array.to_list p.outputs)) = 1
+
+let positional (prog : Nx_kernel.Prog.t) =
+  Iarray.exists
+    (function Nx_kernel.Prog.Coord _ -> true | _ -> false)
+    prog.nodes
+
+(* The update of carry [c] that the map [prog] over [vars], each its load's
+   variable, of shape [s], is, where the other variable is an assembly that
+   it may build. Each region's store reads the carry through the view it
+   writes, so that its kernel updates the carry in place. *)
+let updating st env s prog vars c =
+  let other = List.filter (( <> ) c) (Array.to_list vars) in
+  match List.sort_uniq Int.compare other with
+  | [ a ] when a >= 0 -> (
+      let defines = function
+        | Program.Op { base; _ } -> base = a
+        | Do _ -> false
+      in
+      match Array.find_opt defines env.p.eqns with
+      | Some (Op { op = Assemble { dtype; fill; pieces; _ }; _ }) ->
+          let read (r, x) = (r, node st env x) in
+          let pieces = visible s (List.map read pieces) in
+          let bs = List.map (fun (r, _) -> axes r) pieces in
+          let plain b = Array.for_all (fun a -> a.step = 1 && not a.back) b in
+          let one_state =
+            List.length (states (List.map (fun b -> (b, ())) bs)) = 1
+          in
+          let (D.Any cd) =
+            Nx_kernel.Prog.dtype prog (Iarray.get prog.outs 0)
+          in
+          let simple (type v w) (dt : (v, w) D.t) =
+            parts dt = 1 && not (packed dt)
+          in
+          if
+            pieces = []
+            || (not (List.for_all plain bs))
+            || (not one_state)
+            || not (simple cd && simple dtype)
+          then None
+          else
+            let u = Option.get env.nodes.(c) in
+            let buf = unshaped u in
+            let whole = Shape.reshape buf (ints (Array.to_list s)) in
+            let held b = elements b > 0 in
+            let gaps = List.filter held (complement s bs) in
+            let all = gaps @ bs in
+            let counts b = Array.map (fun a -> a.count) b in
+            let store b v =
+              let bounds = region ~fixed:false ~step:(steps all b) s b in
+              let target = Shape.shrink whole bounds in
+              let ins = Array.map (fun k -> if k = c then target else v) vars in
+              Ops.store target (Arith.prog prog (counts b) ins).(0)
+            in
+            let gap b =
+              let n = Iarray.of_array (counts b) in
+              store b (Lower_index.assemble dtype fill n [])
+            in
+            let piece b (_, v) = store b v in
+            let stores = List.map gap gaps @ List.map2 piece bs pieces in
+            let filled = Ops.after_disjoint buf stores in
+            Some { buf; filled; into = u; reads = List.map snd pieces }
+      | _ -> None)
+  | _ -> None
+
+(* Records [y], the node of the map [op], variable [base], as an update of
+   the carry it maps, where it may be one. *)
+let update st env base (type r) (op : r Nx.Prim.t) y =
+  match op with
+  | Map { layout; prog; loads; outs = [ _ ]; at = None }
+    when (not st.split) && not (positional prog) -> (
+      let s = Iarray.to_array (L.shape layout) in
+      let var_of (l : _ Nx.Prim.load) =
+        match l with
+        | Plain x when Nx.shape x = s -> var env x
+        | Plain _ | Padded _ -> -1
+      in
+      let vars = Array.map var_of (Iarray.to_array loads) in
+      let carry v = v >= 0 && is_next env base v in
+      match Array.find_opt carry vars with
+      | Some c when alone env base ->
+          Option.iter
+            (Ops.Tbl.replace st.updates (unshaped y))
+            (updating st env s prog vars c)
+      | _ -> ())
+  | _ -> ()
+
 (* [ys], the nodes of a value placed at [q], each a copy where it lies on
    another device. *)
 let placed st env q x ys =
@@ -1431,6 +1531,7 @@ let issue st cs env (type r) base (op : r Nx.Prim.t) =
       | Scatter { into; idx; updates; _ }, Some (buf, filled) ->
           let reads = [ read idx; read updates ] and into = read into in
           Ops.Tbl.replace st.dsts (unshaped ys.(0)) { buf; filled; into; reads }
+      | Map _, _ -> update st env base op ys.(0)
       | _ -> ());
       let r = combine (operand_reaches { get = (fun x -> reach env x) } op) in
       let scatter = match op with Scatter _ -> true | _ -> false in
@@ -2363,6 +2464,19 @@ and repeat ?(into = [||]) st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip
         else false
     | None -> false
   in
+  (* A carry whose next value is an update of it ({!update}) is built in its
+     storage: the trip stores the update's state. *)
+  let updated p v =
+    match Ops.Tbl.find_opt st.updates (unshaped v) with
+    | Some d when unshaped d.into == unshaped p -> Some d.filled
+    | _ -> None
+  in
+  let updates =
+    Array.mapi
+      (fun i c ->
+        match c with Some (_, _, p) -> updated p nexts.(i) | None -> None)
+      carried
+  in
   let finals =
     Array.mapi
       (fun i c ->
@@ -2370,6 +2484,9 @@ and repeat ?(into = [||]) st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip
         | None -> fun _ -> inits.(i)
         | Some (b, _, p) when takes i p nexts.(i) ->
             stores := Ops.base nexts.(i) :: !stores;
+            fun e -> Shape.reshape (Ops.after b [ e ]) (Shape.shape inits.(i))
+        | Some (b, _, _) when Option.is_some updates.(i) ->
+            stores := Option.get updates.(i) :: !stores;
             fun e -> Shape.reshape (Ops.after b [ e ]) (Shape.shape inits.(i))
         | Some (b, _, p) ->
             let u = inits.(i) and v = nexts.(i) in
@@ -2569,6 +2686,7 @@ let lower ~rigs ~split ~uploads (p : Program.t) (forms : form array) ~layouts
       uploads;
       views = Ops.Tbl.create 8;
       dsts = Ops.Tbl.create 4;
+      updates = Ops.Tbl.create 4;
       carries = Ops.Tbl.create 4;
     }
   in
