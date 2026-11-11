@@ -96,6 +96,33 @@ let landmasks =
       equal (result grid_t string) (Ok g) (grid tags);
       equal (result (option float_exact) string) (Ok (Some 0.)) (nodata tags))
 
+(* The tags of Luke's MS-NFI 2023 site-type COG (kasvupaikka_vmi1x_1923.tif,
+   read from its first IFD): the landmasks' GeoKeys with ProjectedCRSGeoKey
+   3067, and no GeodeticCRSGeoKey. *)
+let ms_nfi =
+  test "MS-NFI's tags state a TM35FIN grid" (fun () ->
+      let tags =
+        [
+          (256, Short [| 42240 |]);
+          (257, Long [| 73472 |]);
+          (33550, Double [| 16.; 16.; 0. |]);
+          (33922, Double [| 0.; 0.; 0.; 57632.; 7778304.; 0. |]);
+          (34735, Short (landmask_keys 3067));
+          (34737, Ascii "ETRS89 / TM35FIN(E,N)|ETRS89|");
+          (42113, Ascii "32767");
+        ]
+      in
+      let tm35fin = Result.get_ok (Crs.of_epsg 3067) in
+      let g =
+        Grid.v tm35fin ~rows:73472 ~cols:42240 ~origin:(57632., 7778304.)
+          ~row_step:(0., -16.) ~col_step:(16., 0.)
+      in
+      equal (result grid_t string) (Ok g) (grid tags);
+      equal
+        (result (option float_exact) string)
+        (Ok (Some 32767.))
+        (nodata tags))
+
 let replace k v tags =
   List.map (fun (t, x) -> if t = k then (t, v) else (t, x)) tags
 
@@ -132,6 +159,18 @@ let geographic =
       in
       let g = Result.get_ok (grid (replace 34735 (Short keys) base)) in
       equal bool true (Crs.equal Crs.lonlat g.crs))
+
+let base_system =
+  cases "a projected system's GeodeticCRSGeoKey is not read"
+    ~id:(fun (p, _) -> string_of_int p)
+    [ (3067, "ETRS89 / TM35FIN(E,N)"); (32633, "WGS 84 / UTM zone 33N") ]
+    (fun (projected, name) ->
+      let keys =
+        [| 1; 1; 1; 3; 1024; 0; 1; 1; 2048; 0; 1; 4258; 3072; 0; 1; projected |]
+      in
+      match grid (replace 34735 (Short keys) base) with
+      | Ok g -> equal string name (Format.asprintf "%a" Crs.pp g.crs)
+      | Error e -> failf "refused: %s" e)
 
 let integer_types =
   test "the size may be of any unsigned integer type" (fun () ->
@@ -172,14 +211,6 @@ let refusals =
       ("a geocentric model", (with_key 1024 3, "model type 3"));
       ("feet", (with_key 3076 9002, "unit 9002"));
       ("another angular unit", (with_key 2054 9105, "unit 9105"));
-      ( "another base system",
-        ( replace 34735
-            (Short
-               [|
-                 1; 1; 1; 3; 1024; 0; 1; 1; 2048; 0; 1; 4258; 3072; 0; 1; 32633;
-               |])
-            base,
-          "4258" ) );
       ("a reserved raster type", (with_key 1025 3, "raster type 3"));
       ( "version 2",
         ( replace 34735 (Short (Array.append [| 2; 1; 0; 0 |] [||])) base,
@@ -230,8 +261,10 @@ let grids =
     let* crs =
       map
         (fun z ->
-          if z = 0 then Crs.lonlat else Crs.utm ~zone:z ~north:(z mod 2 = 0))
-        (int_range 0 60)
+          if z = 0 then Crs.lonlat
+          else if z = 61 then Result.get_ok (Crs.of_epsg 3067)
+          else Crs.utm ~zone:z ~north:(z mod 2 = 0))
+        (int_range 0 61)
     in
     let+ rows = int_range 0 2000
     and+ cols = int_range 0 2000
@@ -319,9 +352,11 @@ let () =
          group "grid"
            [
              landmasks;
+             ms_nfi;
              raster_types;
              transformation;
              geographic;
+             base_system;
              integer_types;
              refusals;
            ];

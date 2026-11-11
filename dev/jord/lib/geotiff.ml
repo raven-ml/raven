@@ -34,7 +34,6 @@ let pixel_is_area = 1
 let pixel_is_point = 2
 let metre = 9001
 let degrees = [ 9102; 9122 ]
-let wgs84 = 4326
 
 let tag_names =
   [
@@ -131,10 +130,6 @@ let crs keys =
   unit geog_angular_units degrees "the degree (9102, 9122)";
   match key keys gt_model_type with
   | Some m when m = model_projected ->
-      (match key keys geodetic_crs with
-      | Some g when g <> wgs84 ->
-          refuse "GeoKey %d: %d is not WGS 84 (4326)" geodetic_crs g
-      | _ -> ());
       let c = code projected_crs in
       if Crs.equal c Crs.lonlat then
         refuse "GeoKey %d: 4326 is not projected" projected_crs;
@@ -315,7 +310,7 @@ let tags ?nodata (g : Grid.t) =
   let model, key =
     match g.crs with
     | Crs.Lonlat -> (model_geographic, geodetic_crs)
-    | Crs.Utm _ -> (model_projected, projected_crs)
+    | Crs.Utm _ | Crs.Tm35fin -> (model_projected, projected_crs)
   in
   let dir =
     [|

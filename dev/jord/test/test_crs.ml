@@ -265,6 +265,77 @@ let domain =
               fwd (utm 33 true) [ (15., 0.); (80., 0.) ]));
     ]
 
+(* ETRS89 / TM35FIN *)
+
+let tm35fin = Result.get_ok (Crs.of_epsg 3067)
+
+(* PROJ 9.8.1's values, by pyproj 3.8.0's [Transformer.from_crs(4258, 3067,
+   always_xy=True)]: longitude, latitude, easting and northing. Finland, then
+   points far from the central meridian, 27°E, up to 40° from it. The two
+   agree within the module's 6 nm. *)
+let proj_3067 =
+  [
+    (27.0, 0.0, 500000., 0.);
+    (27.0, 60.0, 500000., 6651411.1902396968);
+    (19.1, 59.7, 56067.374780836166, 6644489.2385817179);
+    (31.6, 70.1, 674601.95931652351, 7783619.7566124396);
+    (27.1, 67.8, 504216.53648683161, 7520569.7576776287);
+    (24.94, 60.17, 385700.4213849057, 6672126.7430107333);
+    (21.0, 64.5, 212114.30440762581, 7166354.8078900082);
+    (29.9, 62.6, 648861.98541712528, 6944369.3374234671);
+    (60.0, 30.0, 3769012.0396767617, 3825335.874026651);
+    (-10.0, 45.0, -2402392.4144947589, 5695276.6705876384);
+    (67.0, 0.0, 5367577.9377075108, 0.);
+    (27.0, 89.0, 500000., 9886315.7555686962);
+    (27.0, -45.0, 500000., -4982950.4001068529);
+  ]
+
+let tm35fin_id (lon, lat, _, _) = Printf.sprintf "%g, %g" lon lat
+
+let tm35fin_forward =
+  cases "forward is PROJ's" ~id:tm35fin_id proj_3067 (fun (lon, lat, x, y) ->
+      let gx, gy = List.hd (fwd tm35fin [ (lon, lat) ]) in
+      equal ~msg:"easting" (float 6e-9) x gx;
+      equal ~msg:"northing" (float 6e-9) y gy)
+
+let tm35fin_inverse =
+  cases "inverse is PROJ's" ~id:tm35fin_id proj_3067 (fun (lon, lat, x, y) ->
+      let back = List.hd (inv tm35fin [ (x, y) ]) in
+      equal ~msg:"metres away" (float 6e-9) 0. (metres (lon, lat) back))
+
+(* PROJ's [Transformer.from_crs(3067, 32635, always_xy=True)], whose pipeline
+   is TM35FIN's inverse on GRS80 and UTM 35N's projection on WGS 84, with EPSG
+   1149's null step between. Two projections, each within 6 nm. *)
+let proj_32635 =
+  [
+    (500000.0, 6651411.0, 500000., 6651411.0001230193);
+    (56067.0, 6644489.0, 56067.000005450624, 6644489.0001228247);
+    (674602.0, 7783620.0, 674601.99999745633, 7783620.000114413);
+    (504216.5, 7520569.75, 504216.49999994045, 7520569.7501170915);
+    (212114.3, 7166354.8, 212114.30000386306, 7166354.8001199793);
+  ]
+
+let to_utm35 =
+  cases "TM35FIN to UTM 35N is PROJ's null datum step" ~id:tm35fin_id
+    proj_32635 (fun (x, y, x', y') ->
+      let p = points [ (x, y) ] in
+      let gx, gy =
+        List.hd (pairs (Crs.transform ~src:tm35fin ~dst:(utm 35 true) p))
+      in
+      equal ~msg:"easting" (float 12e-9) x' gx;
+      equal ~msg:"northing" (float 12e-9) y' gy)
+
+let tm35fin_system =
+  test "TM35FIN is not WGS 84's zone 35N" (fun () ->
+      equal bool false (Crs.equal tm35fin (utm 35 true));
+      equal bool true (Crs.equal tm35fin tm35fin))
+
+let tm35fin_domain =
+  test "TM35FIN's domain is 40° from 27°E" (fun () ->
+      ignore (fwd tm35fin [ (67., 10.); (-13., 0.) ]);
+      refuse tm35fin true [ (67.000001, 10.) ];
+      refuse tm35fin true [ (-13.000001, 10.) ])
+
 (* Zones and codes *)
 
 let utm_at =
@@ -298,7 +369,7 @@ let refusals =
           Crs.utm_at ~lon:Float.infinity ~lat:0.))
 
 let every_system =
-  Crs.lonlat
+  Crs.lonlat :: tm35fin
   :: List.concat_map (fun z -> [ utm z true; utm z false ]) (List.init 60 succ)
 
 let epsg =
@@ -310,10 +381,10 @@ let epsg =
               equal (result crs string) (Ok c) (Crs.of_epsg (Crs.epsg c)))
             every_system);
       cases "codes" ~id:string_of_int
-        [ 4326; 32601; 32631; 32660; 32701; 32760 ] (fun code ->
+        [ 4326; 32601; 32631; 32660; 32701; 32760; 3067 ] (fun code ->
           equal int code (Crs.epsg (Result.get_ok (Crs.of_epsg code))));
       cases "other codes are refused" ~id:string_of_int
-        [ 0; 4258; 3857; 32600; 32661; 32700; 32761 ] (fun code ->
+        [ 0; 4258; 3857; 32600; 32661; 32700; 32761; 25835 ] (fun code ->
           is_error (Crs.of_epsg code));
     ]
 
@@ -439,7 +510,8 @@ let printing =
         (Format.asprintf "%a" Crs.pp (utm 33 true));
       equal string "WGS 84 / UTM zone 1S"
         (Format.asprintf "%a" Crs.pp (utm 1 false));
-      equal string "WGS 84" (Format.asprintf "%a" Crs.pp Crs.lonlat))
+      equal string "WGS 84" (Format.asprintf "%a" Crs.pp Crs.lonlat);
+      equal string "ETRS89 / TM35FIN(E,N)" (Format.asprintf "%a" Crs.pp tm35fin))
 
 let () =
   exit
@@ -452,6 +524,14 @@ let () =
            ];
          poles;
          domain;
+         group "tm35fin"
+           [
+             tm35fin_forward;
+             tm35fin_inverse;
+             to_utm35;
+             tm35fin_system;
+             tm35fin_domain;
+           ];
          group "zones" [ utm_at; refusals ];
          epsg;
          group "wkt" [ wkt_accepts; wkt_refuses ];

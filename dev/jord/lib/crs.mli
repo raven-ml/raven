@@ -3,18 +3,24 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Coordinate reference systems on WGS 84, and the transforms between them.
+(** Coordinate reference systems, and the transforms between them.
 
     A {e coordinate reference system} (CRS) says what a pair of numbers means on
-    the Earth. jord knows the systems Earth-observation data on WGS 84 use.
-    [Lonlat] is geographic longitude and latitude in degrees, in that order:
-    OGC's CRS84, which is EPSG:4326 with its axes swapped. [Utm] is WGS 84 /
-    UTM, easting and northing in metres. It is the transverse Mercator
-    projection about the {e central meridian} [6 zone - 183] degrees east, with
-    scale 0.9996 on it, false easting 500000 m, and false northing 0 in the
-    northern hemisphere or 10000000 m in the southern one. These are EPSG:326zz
-    and EPSG:327zz for zone [zz]. No other system or datum can be stated, so a
-    reader refuses data in another system rather than treat it as one of these.
+    the Earth. jord knows the systems Earth-observation data use. [Lonlat] is
+    geographic longitude and latitude on WGS 84 in degrees, in that order: OGC's
+    CRS84, which is EPSG:4326 with its axes swapped. [Utm] is WGS 84 / UTM,
+    easting and northing in metres. It is the transverse Mercator projection
+    about the {e central meridian} [6 zone - 183] degrees east, with scale
+    0.9996 on it, false easting 500000 m, and false northing 0 in the northern
+    hemisphere or 10000000 m in the southern one. These are EPSG:326zz and
+    EPSG:327zz for zone [zz]. [Tm35fin] is ETRS89 / TM35FIN(E,N), EPSG:3067,
+    Finland's national grid: zone 35N's projection on ETRS89's ellipsoid,
+    GRS80, of inverse flattening 298.257222101 (WGS 84's is 298.257223563).
+    ETRS89's longitudes and latitudes are taken as WGS 84's, as EPSG's
+    transformation 1149 states them, to 1 m, and as PROJ applies it by default:
+    a transform between [Tm35fin] and a WGS 84 system is accurate to that metre.
+    No other system or datum can be stated, so a reader refuses data in another
+    system rather than treat it as one of these.
 
     A {e point} is the last axis of a float64 tensor, [[...; 2]], in its
     system's axis order: (longitude, latitude) or (easting, northing). It is the
@@ -29,12 +35,14 @@
     within 6 nm across the transforms' domain ({!section-transforms}). That
     domain is 40° of longitude from the central meridian, the range IOGP's
     Guidance Note 7-2 (§3.2.3.1) states for Krüger's formulas, and reaches 4450
-    km on the equator. Karney's published test set bounds both. Float32 would
-    err by metres, so the transforms take float64 only. On a device set without
-    float64, such as Metal's, the caller places the points on the host. *)
+    km on the equator. Karney's published test set bounds both. GRS80's
+    flattening is WGS 84's to 5 parts in 10⁹, so the bounds hold on it too.
+    Float32 would err by metres, so the transforms take float64 only. On a
+    device set without float64, such as Metal's, the caller places the points
+    on the host. *)
 
 (** The type for coordinate reference systems. [zone] is in [1..60]. *)
-type t = private Lonlat | Utm of { zone : int; north : bool }
+type t = private Lonlat | Utm of { zone : int; north : bool } | Tm35fin
 
 val lonlat : t
 (** [lonlat] is [Lonlat]. *)
@@ -55,11 +63,13 @@ val utm_at : lon:float -> lat:float -> t
     90\]. *)
 
 val epsg : t -> int
-(** [epsg c] is [c]'s EPSG code: 4326, 326zz or 327zz. *)
+(** [epsg c] is [c]'s EPSG code: 4326, 326zz, 327zz or 3067. *)
 
 val of_epsg : int -> (t, string) result
 (** [of_epsg code] is the system of [code], [lonlat] for 4326. [Error] names the
-    code for any code other than 4326, 32601 to 32660 and 32701 to 32760. *)
+    code for any code other than 4326, 32601 to 32660, 32701 to 32760 and 3067.
+    ETRS89 / UTM zone 35N (25835) is refused too, though EPSG remarks that it
+    is the same system in Finland. *)
 
 val of_wkt : string -> (t, string) result
 (** [of_wkt s] is the system that the WKT 1 text [s] (a shapefile's [.prj])
@@ -83,25 +93,26 @@ val equal : t -> t -> bool
 (** [equal a b] is [true] iff [a] and [b] are the same system. *)
 
 val pp : Format.formatter -> t -> unit
-(** [pp] formats a system by its EPSG name, as [WGS 84 / UTM zone 33N]. *)
+(** [pp] formats a system by its EPSG name, as [WGS 84 / UTM zone 33N] or
+    [ETRS89 / TM35FIN(E,N)]. *)
 
 (** {1:transforms Transforms}
 
     A transform maps points from one system to another, each point alone.
-    Between two UTM zones it passes through [Lonlat]. A longitude out of
-    [Lonlat] lies in \[-180, 180\].
+    Between two projected systems it passes through [Lonlat]. A longitude out
+    of [Lonlat] lies in \[-180, 180\].
 
     A point with a NaN coordinate maps to NaN. Every other point must lie in the
     domain of each projection it goes through: a latitude φ in \[-90, 90\] and a
-    longitude λ within 40° of the zone's central meridian λ₀, across the
+    longitude λ within 40° of the projection's central meridian λ₀, across the
     antimeridian included, or past it by at most 12 nm along the parallel: (|λ -
-    λ₀| - 40°) · a · cos φ ≤ 12 nm, [a] being WGS 84's equatorial radius and the
-    angle in radians. 12 nm is twice the transforms' error, the most a round
-    trip moves a point, so a point of the boundary passes both ways, and so does
-    a pole, where every longitude names one point. A UTM point must be the image
-    of such a point. The inverse applies the rule to the point it finds, and
-    refuses a northing more than half a meridian from the equator, which is no
-    point's image. *)
+    λ₀| - 40°) · a · cos φ ≤ 12 nm, [a] being the equatorial radius, 6378137 m
+    on both ellipsoids, and the angle in radians. 12 nm is twice the transforms'
+    error, the most a round trip moves a point, so a point of the boundary
+    passes both ways, and so does a pole, where every longitude names one point.
+    A projected point must be the image of such a point. The inverse applies the
+    rule to the point it finds, and refuses a northing more than half a meridian
+    from the equator, which is no point's image. *)
 
 val transform : src:t -> dst:t -> 'd Nx.float64_t -> 'd Nx.float64_t
 (** [transform ~src ~dst p] is the points [p] of [src] in [dst], computed where

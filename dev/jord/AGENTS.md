@@ -18,12 +18,13 @@ campaign.
 - jord does no I/O. Readers take bytes or values (a shapefile's bytes, a
   `Jsont.json`, a `.prj`'s text, TIFF tags) and return `Error` for data
   that breaks their format; misuse raises `Invalid_argument`.
-- `lib/` is the library `jord`: `Crs` (WGS 84 and its UTM zones, Krüger's
-  series to n⁶, `of_epsg`, `of_wkt`), `Grid` (an affine map in (row, col)
-  order, GeoTIFF's corner convention), `Polygons` (GeoArrow's layout,
-  even-odd regions), `Shapefile`, `Geojson`, `Rasterize` (the (feature,
-  cell) relation of `centres` and `touched`), `Geotiff` (tags to and from
-  a grid, GDAL's nodata). `Wkt` and `Points` are private.
+- `lib/` is the library `jord`: `Crs` (WGS 84 and its UTM zones, ETRS89's
+  TM35FIN, Krüger's series to n⁶, `of_epsg`, `of_wkt`), `Grid` (an affine
+  map in (row, col) order, GeoTIFF's corner convention), `Polygons`
+  (GeoArrow's layout, even-odd regions), `Shapefile`, `Geojson`,
+  `Rasterize` (the (feature, cell) relation of `centres` and `touched`),
+  `Geotiff` (tags to and from a grid, GDAL's nodata). `Wkt` and `Points`
+  are private.
 - `test/` holds the laws and the spec's values, with a cut of Karney's
   test set. `test/rasterio/parity.exe` compares the rules with rasterio on
   tessera-eval's Austria labels and GeoTessera's landmasks, which live

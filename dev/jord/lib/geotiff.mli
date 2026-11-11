@@ -29,12 +29,12 @@
 
     The system is GTModelTypeGeoKey's: projected (1), named by
     ProjectedCRSGeoKey (3072), or geographic (2), named by GeodeticCRSGeoKey
-    (2048), as {!Crs.of_epsg} reads them. With a projected system, a
-    GeodeticCRSGeoKey must be 4326. A unit key that is present must be the metre
-    (9001) for ProjLinearUnitsGeoKey (3076) and GeogLinearUnitsGeoKey (2052), or
-    the degree (9102 or 9122) for GeogAngularUnitsGeoKey (2054). These keys are
-    read from the GeoKeyDirectory (34735), and no other key is, since a
-    registered system is its code (§7.4). *)
+    (2048), as {!Crs.of_epsg} reads them. A unit key that is present must be the
+    metre (9001) for ProjLinearUnitsGeoKey (3076) and GeogLinearUnitsGeoKey
+    (2052), or the degree (9102 or 9122) for GeogAngularUnitsGeoKey (2054).
+    These keys are read from the GeoKeyDirectory (34735), and no other key is,
+    since a registered system is its code (§7.4): a projected system's
+    GeodeticCRSGeoKey is not read. *)
 
 val grid : (int * Nx_io.Tiff.value) list -> (Grid.t, string) result
 (** [grid tags] is the grid that [tags] state. An integer tag may be BYTE, SHORT

@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type t = Lonlat | Utm of { zone : int; north : bool }
+type t = Lonlat | Utm of { zone : int; north : bool } | Tm35fin
 
 let strf = Printf.sprintf
 let lonlat = Lonlat
@@ -21,12 +21,18 @@ let utm_at ~lon ~lat =
   let k = int_of_float (Float.floor ((lon +. 180.) /. 6.)) in
   Utm { zone = (((k mod 60) + 60) mod 60) + 1; north = lat >= 0. }
 
+(* EPSG:3067, ETRS89 / TM35FIN(E,N), is UTM zone 35N's projection on GRS80. *)
+let tm35fin_epsg = 3067
+let tm35fin_zone = 35
+
 let epsg = function
   | Lonlat -> 4326
   | Utm { zone; north } -> (if north then 32600 else 32700) + zone
+  | Tm35fin -> tm35fin_epsg
 
 let of_epsg code =
   if code = 4326 then Ok Lonlat
+  else if code = tm35fin_epsg then Ok Tm35fin
   else if code > 32600 && code <= 32660 then
     Ok (Utm { zone = code - 32600; north = true })
   else if code > 32700 && code <= 32760 then
@@ -34,15 +40,16 @@ let of_epsg code =
   else
     Error
       (strf
-         "EPSG:%d is not WGS 84 (4326) or WGS 84 / UTM (32601-32660, \
-          32701-32760)"
+         "EPSG:%d is not WGS 84 (4326), WGS 84 / UTM (32601-32660, \
+          32701-32760) or ETRS89 / TM35FIN(E,N) (3067)"
          code)
 
 let equal a b =
   match (a, b) with
   | Lonlat, Lonlat -> true
   | Utm a, Utm b -> a.zone = b.zone && a.north = b.north
-  | (Lonlat | Utm _), _ -> false
+  | Tm35fin, Tm35fin -> true
+  | (Lonlat | Utm _ | Tm35fin), _ -> false
 
 let hemisphere north = if north then "N" else "S"
 
@@ -50,6 +57,7 @@ let pp ppf = function
   | Lonlat -> Format.pp_print_string ppf "WGS 84"
   | Utm { zone; north } ->
       Format.fprintf ppf "WGS 84 / UTM zone %d%s" zone (hemisphere north)
+  | Tm35fin -> Format.pp_print_string ppf "ETRS89 / TM35FIN(E,N)"
 
 (* WKT *)
 
@@ -138,8 +146,8 @@ let of_wkt s =
 
 (* Transverse Mercator *)
 
-(* WGS 84's flattening and UTM's parameters. *)
-let flattening = 1. /. 298.257223563
+(* UTM's parameters, which TM35FIN shares, and both ellipsoids' semi-major
+   axis. *)
 let false_easting = 500000.
 let false_northing_south = 10000000.
 let semi_major = 6378137.
@@ -151,29 +159,20 @@ let max_offset = 40.
    both ways. *)
 let boundary_slack = 12e-9
 let deg = Float.pi /. 180.
-let n = flattening /. (2. -. flattening)
-let e2 = flattening *. (2. -. flattening)
-let e = Float.sqrt e2
 
-(* [series j cs] is n^j (c_j + c_(j+1) n + ... ), cs from the n^j term up, in
+(* [series n j cs] is n^j (c_j + c_(j+1) n + ... ), cs from the n^j term up, in
    Horner form as Karney advises. Each step is one fused multiply-add and the
    power a product, so every system computes the same bits (OCaml's arm64
    backend would fuse [c +. n *. acc] on its own, and libm's [**] varies). *)
-let series j cs =
+let series n j cs =
   let h = List.fold_right (fun c acc -> Float.fma n acc c) cs 0. in
   let rec pow k = if k = 0 then 1. else n *. pow (k - 1) in
   h *. pow j
 
-(* k0 A, metres per radian of ξ and η: A of Karney eq. (29) to n¹⁰ for these
-   parameters, in exact rational arithmetic, rounded once. Evaluating eq. (29)
-   in float64 lands 2 ulps away, which moves a northing near the pole by 2
-   nm. *)
-let k0_a = 0x1.847b98aa272e2p+22
-
 (* Karney eq. (35), α1..α6. *)
-let alpha =
+let alpha n =
   [
-    series 1
+    series n 1
       [
         1. /. 2.;
         -2. /. 3.;
@@ -182,7 +181,7 @@ let alpha =
         -127. /. 288.;
         7891. /. 37800.;
       ];
-    series 2
+    series n 2
       [
         13. /. 48.;
         -3. /. 5.;
@@ -190,17 +189,17 @@ let alpha =
         281. /. 630.;
         -1983433. /. 1935360.;
       ];
-    series 3
+    series n 3
       [ 61. /. 240.; -103. /. 140.; 15061. /. 26880.; 167603. /. 181440. ];
-    series 4 [ 49561. /. 161280.; -179. /. 168.; 6601661. /. 7257600. ];
-    series 5 [ 34729. /. 80640.; -3418889. /. 1995840. ];
-    series 6 [ 212378941. /. 319334400. ];
+    series n 4 [ 49561. /. 161280.; -179. /. 168.; 6601661. /. 7257600. ];
+    series n 5 [ 34729. /. 80640.; -3418889. /. 1995840. ];
+    series n 6 [ 212378941. /. 319334400. ];
   ]
 
 (* Karney eq. (36), β1..β6. *)
-let beta =
+let beta n =
   [
-    series 1
+    series n 1
       [
         1. /. 2.;
         -2. /. 3.;
@@ -209,20 +208,46 @@ let beta =
         -81. /. 512.;
         96199. /. 604800.;
       ];
-    series 2
+    series n 2
       [
         1. /. 48.; 1. /. 15.; -437. /. 1440.; 46. /. 105.; -1118711. /. 3870720.;
       ];
-    series 3 [ 17. /. 480.; -37. /. 840.; -209. /. 4480.; 5569. /. 90720. ];
-    series 4 [ 4397. /. 161280.; -11. /. 504.; -830251. /. 7257600. ];
-    series 5 [ 4583. /. 161280.; -108847. /. 3991680. ];
-    series 6 [ 20648693. /. 638668800. ];
+    series n 3 [ 17. /. 480.; -37. /. 840.; -209. /. 4480.; 5569. /. 90720. ];
+    series n 4 [ 4397. /. 161280.; -11. /. 504.; -830251. /. 7257600. ];
+    series n 5 [ 4583. /. 161280.; -108847. /. 3991680. ];
+    series n 6 [ 20648693. /. 638668800. ];
   ]
+
+(* An ellipsoid's numbers for Krüger's series: e, e², k0 A (metres per radian
+   of ξ and η) and α and β of its third flattening n. *)
+type ellipsoid = {
+  e : float;
+  e2 : float;
+  k0_a : float;
+  alpha : float list;
+  beta : float list;
+}
+
+let ellipsoid ~flattening ~k0_a =
+  let n = flattening /. (2. -. flattening) in
+  let e2 = flattening *. (2. -. flattening) in
+  { e = Float.sqrt e2; e2; k0_a; alpha = alpha n; beta = beta n }
+
+(* k0 A is A of Karney eq. (29) to n¹⁰ for each ellipsoid and UTM's scale, in
+   exact rational arithmetic, rounded once. Evaluating eq. (29) in float64
+   lands 2 ulps away, which moves a northing near the pole by 2 nm. GRS80's
+   flattening is EPSG's (ellipsoid 7019). *)
+let wgs84 =
+  ellipsoid ~flattening:(1. /. 298.257223563) ~k0_a:0x1.847b98aa272e2p+22
+
+let grs80 =
+  ellipsoid ~flattening:(1. /. 298.257222101) ~k0_a:0x1.847b98aa19753p+22
 
 let hypot1 x = Nx.sqrt (Nx.add_s (Nx.square x) 1.)
 
 (* τ' = tan φ' from τ = tan φ, Karney eqs. (7)-(9). *)
-let taup tau =
+let taup ell tau =
+  let e = ell.e in
   let s = Nx.mul_s (Nx.atanh (Nx.mul_s (Nx.div tau (hypot1 tau)) e)) e in
   let sigma = Nx.sinh s in
   Nx.sub (Nx.mul tau (hypot1 sigma)) (Nx.mul sigma (hypot1 tau))
@@ -247,45 +272,60 @@ let clenshaw cs xi eta =
 let central_meridian zone = float_of_int ((6 * zone) - 183)
 let false_northing north = if north then 0. else false_northing_south
 
+(* A projected system's transverse Mercator: its ellipsoid, central meridian
+   and false northing. *)
+type tm = { ell : ellipsoid; lon0 : float; northing : float }
+
+let projection = function
+  | Lonlat -> None
+  | Utm { zone; north } ->
+      Some
+        {
+          ell = wgs84;
+          lon0 = central_meridian zone;
+          northing = false_northing north;
+        }
+  | Tm35fin ->
+      Some { ell = grs80; lon0 = central_meridian tm35fin_zone; northing = 0. }
+
 (* [d] reduced to [-180, 180). *)
 let wrap d =
   Nx.sub d (Nx.mul_s (Nx.floor (Nx.div_s (Nx.add_s d 180.) 360.)) 360.)
 
-(* The easting, northing and the longitude from the central meridian of each
-   point (lon, lat), Karney eqs. (7)-(13). *)
-let forward ~zone ~north lon lat =
-  let dlon = wrap (Nx.sub_s lon (central_meridian zone)) in
-  let lam = Nx.mul_s dlon deg in
-  let tp = taup (Nx.tan (Nx.mul_s lat deg)) in
+(* The easting and northing of each point (lon, lat), Karney eqs. (7)-(13). *)
+let forward tm lon lat =
+  let lam = Nx.mul_s (wrap (Nx.sub_s lon tm.lon0)) deg in
+  let tp = taup tm.ell (Nx.tan (Nx.mul_s lat deg)) in
   let cl = Nx.cos lam in
   let xi' = Nx.atan2 tp cl in
   let eta' = Nx.asinh (Nx.div (Nx.sin lam) (Nx.hypot tp cl)) in
-  let sr, si = clenshaw alpha xi' eta' in
-  let x = Nx.add_s (Nx.mul_s (Nx.add eta' si) k0_a) false_easting in
-  let y = Nx.add_s (Nx.mul_s (Nx.add xi' sr) k0_a) (false_northing north) in
-  (x, y, dlon)
+  let sr, si = clenshaw tm.ell.alpha xi' eta' in
+  let x = Nx.add_s (Nx.mul_s (Nx.add eta' si) tm.ell.k0_a) false_easting in
+  let y = Nx.add_s (Nx.mul_s (Nx.add xi' sr) tm.ell.k0_a) tm.northing in
+  (x, y)
 
 (* The longitude, latitude and longitude from the central meridian of each point
    (x, y), and its ξ, Karney eqs. (15)-(22) with two Newton steps. The series
    are odd in ξ and η, so the point is taken to the first quadrant and a point
    past the pole (ξ > π/2) folded back, as GeographicLib's Reverse does. At the
    pole cos ξ' can round below 0, and is clamped. *)
-let inverse ~zone ~north x y =
-  let xi0 = Nx.div_s (Nx.sub_s y (false_northing north)) k0_a in
-  let eta0 = Nx.div_s (Nx.sub_s x false_easting) k0_a in
+let inverse tm x y =
+  let ell = tm.ell in
+  let xi0 = Nx.div_s (Nx.sub_s y tm.northing) ell.k0_a in
+  let eta0 = Nx.div_s (Nx.sub_s x false_easting) ell.k0_a in
   let back = Nx.greater_s (Nx.abs xi0) (Float.pi /. 2.) in
   let xi = Nx.where back (Nx.rsub_s Float.pi (Nx.abs xi0)) (Nx.abs xi0) in
   let eta = Nx.abs eta0 in
-  let sr, si = clenshaw beta xi eta in
+  let sr, si = clenshaw ell.beta xi eta in
   let xi' = Nx.sub xi sr and eta' = Nx.sub eta si in
   let s = Nx.sinh eta' and c = Nx.maximum_s (Nx.cos xi') 0. in
   let r = Nx.hypot s c in
   let pole = Nx.equal_s r 0. in
   let tp = Nx.div (Nx.sin xi') r in
   let newton tau =
-    let tpi = taup tau in
-    let num = Nx.add_s (Nx.mul_s (Nx.square tau) (1. -. e2)) 1. in
-    let den = Nx.mul_s (hypot1 tau) (1. -. e2) in
+    let tpi = taup ell tau in
+    let num = Nx.add_s (Nx.mul_s (Nx.square tau) (1. -. ell.e2)) 1. in
+    let den = Nx.mul_s (hypot1 tau) (1. -. ell.e2) in
     Nx.add tau (Nx.mul (Nx.div (Nx.sub tp tpi) (hypot1 tpi)) (Nx.div num den))
   in
   (* Where r is 0 the point is the pole, latitude 90, longitude 0. *)
@@ -295,7 +335,7 @@ let inverse ~zone ~north x y =
   let lam = Nx.where back (Nx.rsub_s 180. lam) lam in
   let lat = Nx.where (Nx.less_s xi0 0.) (Nx.neg lat) lat in
   let dlon = Nx.where (Nx.less_s eta0 0.) (Nx.neg lam) lam in
-  let lon = Nx.add_s dlon (central_meridian zone) in
+  let lon = Nx.add_s dlon tm.lon0 in
   let lon =
     Nx.where (Nx.greater_s lon 180.) (Nx.sub_s lon 360.)
       (Nx.where (Nx.less_s lon (-180.)) (Nx.add_s lon 360.) lon)
@@ -330,13 +370,20 @@ let near offset lat =
   in
   Nx.less_equal_s metres boundary_slack
 
+(* Whether each point (lon, lat) is in the domain of the transforms into [c]. *)
+let inside c lon lat =
+  let valid = Nx.less_equal_s (Nx.abs lat) 90. in
+  match projection c with
+  | None -> Nx.logical_and valid (Nx.isfinite lon)
+  | Some tm -> Nx.logical_and valid (near (wrap (Nx.sub_s lon tm.lon0)) lat)
+
 let transform (type d) ~src ~dst (p : d Nx.float64_t) : d Nx.float64_t =
   let batch, a, b = Points.split "Jord.Crs.transform" p in
   let to_lonlat c a b =
-    match c with
-    | Lonlat -> (a, b)
-    | Utm { zone; north } ->
-        let lon, lat, offset, xi = inverse ~zone ~north a b in
+    match projection c with
+    | None -> (a, b)
+    | Some tm ->
+        let lon, lat, offset, xi = inverse tm a b in
         (* Beyond half a meridian from the equator, a point is no point's
            image. *)
         let image = Nx.less_equal_s (Nx.abs xi) Float.pi in
@@ -344,13 +391,11 @@ let transform (type d) ~src ~dst (p : d Nx.float64_t) : d Nx.float64_t =
         (lon, lat)
   in
   let of_lonlat c lon lat =
-    match c with
-    | Lonlat -> (lon, lat)
-    | Utm { zone; north } ->
-        let x, y, offset = forward ~zone ~north lon lat in
-        let valid = Nx.less_equal_s (Nx.abs lat) 90. in
-        require ~batch c lon lat (Nx.logical_and (near offset lat) valid);
-        (x, y)
+    match projection c with
+    | None -> (lon, lat)
+    | Some tm ->
+        require ~batch c lon lat (inside c lon lat);
+        forward tm lon lat
   in
   if equal src dst then p
   else
