@@ -945,6 +945,12 @@ let ink ?colour g =
   done;
   !acc
 
+(* [braille g i] is the dots of [g]'s cell [i] as their bits, [0] for a
+   cell of another glyph. *)
+let braille g i =
+  let cp = Matrix.Grid.get_codepoint g i in
+  if cp >= 0x2800 && cp <= 0x28FF then cp - 0x2800 else 0
+
 (* [rows ink] is, for each dot column inked, its least and greatest row,
    by column. *)
 let rows ink =
@@ -1323,6 +1329,87 @@ let x_domain =
     (fun (_, runs, expected) ->
       let fs = List.map (fun (steps, last) -> facts ?steps last) runs in
       equal (pair float_exact float_exact) (0., expected) (Plot.domain fs))
+
+(* Zoom's step cursor: its rule shows on every row of the plot that no
+   dots take, the raw extent's included, and its step label on the x axis is a chip of the step padded by a blank
+   each side, which the tick labels keep a blank cell from. The cursor stays
+   left of the axis's end, where [step] is the chip's neighbour. *)
+let zoom_cursor =
+  (* Many noisy samples a dot column, so that the raw extent is tall. *)
+  let gen =
+    let open Gen in
+    let* n = int_range 200 2000 in
+    let* values = list ~size:(constant n) (float_range (-50.) 50.) in
+    let* width = int_range 60 140 in
+    let* height = int_range 6 30 in
+    let* at = float_range 0. 0.8 in
+    let samples = List.mapi (fun i v -> (i, v)) values in
+    constant ({ width; height; guides = `Both; samples }, at)
+  in
+  let gen =
+    Gen.with_pp
+      (fun ppf (c, at) -> Format.fprintf ppf "%dx%d, %d samples, cursor at %g" c.width c.height
+         (List.length c.samples) at)
+      gen
+  in
+  prop "zoom's cursor rule shows where no dots are, its label clear of the ticks" gen
+    (fun (c, at) ->
+      let lo, hi = domain c.samples in
+      let v = Float.floor (lo +. (at *. (hi -. lo))) in
+      let ch = { (chart (lo, hi)) with cursor = Some v; extents = true } in
+      let g = drawn truecolor ch ~width:c.width ~height:c.height [ (me, 0, series_of c.samples) ] in
+      let at x y = Matrix.Grid.idx g ~x ~y in
+      let rule = fg (Munin_tui.Theme.fg truecolor Mid) in
+      let axis_row =
+        match
+          List.find_opt
+            (fun y -> List.exists (fun x -> Matrix.Grid.get_text g (at x y) = "└") (List.init c.width Fun.id))
+            (List.init c.height Fun.id)
+        with
+        | Some y -> y
+        | None -> fail "no x axis"
+      in
+      let ruled x y =
+        Matrix.Grid.get_text g (at x y) = "│" && Matrix.Ansi.Color.equal (Matrix.Grid.get_fg g (at x y)) rule
+      in
+      (* The rule's column, from the chart drawn without a line. *)
+      let alone = drawn truecolor ch ~width:c.width ~height:c.height [] in
+      let columns =
+        List.filter
+          (fun x ->
+            List.exists
+              (fun y ->
+                let i = Matrix.Grid.idx alone ~x ~y in
+                Matrix.Grid.get_text alone i = "│"
+                && Matrix.Ansi.Color.equal (Matrix.Grid.get_fg alone i) rule)
+              (List.init axis_row Fun.id))
+          (List.init c.width Fun.id)
+      in
+      let x = match columns with [ x ] -> x | _ -> failf "the rule's columns: %d" (List.length columns) in
+      let bare = drawn truecolor { ch with cursor = None } ~width:c.width ~height:c.height
+          [ (me, 0, series_of c.samples) ] in
+      let band = fg (Munin_tui.Theme.faint_run truecolor 0) in
+      cover "the raw extent on the rule's column"
+        (List.exists
+           (fun y -> Matrix.Ansi.Color.equal (Matrix.Grid.get_fg bare (Matrix.Grid.idx bare ~x ~y)) band)
+           (List.init axis_row Fun.id));
+      List.iter
+        (fun y ->
+          if not (ruled x y || braille g (at x y) <> 0) then
+            failf "row %d of the rule's column shows %S" y (Matrix.Grid.get_text g (at x y)))
+        (List.init axis_row Fun.id);
+      (* The chip: the cells of the label row on the cursor's background. *)
+      let row = axis_row + 1 in
+      let chip = Option.get (Munin_tui.Theme.bg truecolor Raise) in
+      let on x = Matrix.Ansi.Color.equal (Matrix.Grid.get_bg g (at x row)) chip in
+      let xs = List.filter on (List.init c.width Fun.id) in
+      let first = List.fold_left min c.width xs and last = List.fold_left max (-1) xs in
+      if xs = [] then fail "no step label";
+      let text a b = String.concat "" (List.init (b - a + 1) (fun x -> Matrix.Grid.get_text g (at (a + x) row))) in
+      equal ~msg:"the chip" string (" " ^ Munin_tui.Numbers.count (Float.to_int v) ^ " ") (text first last);
+      let blank x = x < 0 || x >= c.width || String.trim (Matrix.Grid.get_text g (at x row)) = "" in
+      equal ~msg:"the cells beside the chip are blank" (list bool) [ true; true ]
+        [ blank (first - 1); blank (last + 1) ])
 
 (* Law 9: a live run's latest step has its [now] rule wherever it is in the
    x domain, which is closed: a run whose latest step is the domain's end,
@@ -2586,7 +2673,7 @@ let () =
            ];
          group "charts"
            [
-             binned; rising; spike; non_finite; cursor_wins; letters; exact_labels; tick_labels; x_domain; now_rule; bounds;
+             binned; rising; spike; non_finite; cursor_wins; zoom_cursor; letters; exact_labels; tick_labels; x_domain; now_rule; bounds;
              ticks_of;
              log_choice; y_per_metric; values_printed; rounding_shown;
              filled;

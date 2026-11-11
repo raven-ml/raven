@@ -159,7 +159,11 @@ let figure th c ~y ~log ?(ticks = []) marks =
         let step = (snd c.x, Ansi.span "step") in
         let at =
           match c.cursor with
-          | Some v -> [ (v, Ansi.span ~style:(cursor_style th) (Numbers.count (Float.to_int v))) ]
+          | Some v ->
+              (* A chip, a blank each side, so that the ticks, which keep a
+                 cell from it, never read as its digits. *)
+              let chip = " " ^ Numbers.count (Float.to_int v) ^ " " in
+              [ (v, Ansi.span ~style:(cursor_style th) chip) ]
           | None -> []
         in
         axis ~format:(fun _ v -> Numbers.compact v) ~labels:(step :: at) "x"

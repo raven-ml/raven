@@ -107,8 +107,9 @@ val draw : Theme.t -> t -> Matrix_grid.t -> unit
     - On a chart with axes, from the first column of the cursor's run with
       a sample that is not finite to the plot's right edge, a faint hatch,
       labelled.
-    - A dotted rule at [c.now] labelled [now], and a rule at [c.cursor]
-      whose step the x axis labels.
+    - A dotted rule at [c.now] labelled [now], and a rule at [c.cursor],
+      whose step the x axis labels with a blank each side, so that the tick
+      labels, which keep a cell from it, stay clear of its digits.
     - Without colour, each overlay's letter one cell right of its last
       point in the plot, or on it at the plot's edge.
     - A label starts one cell right of its point, moved inside the plot
