@@ -2415,16 +2415,13 @@ let one_gpu () =
 
 (* Every root shows this machine: a root that links to [/] reaches the same GPU,
    whose address space the process holds once, so devices opened through either
-   root share its memory, whichever opens first. The link lives in the suite's
-   working directory only while the test runs: one left in a source tree, where
-   the suite runs on a GPU host, has dune walk the whole filesystem. *)
-let mirror = "mirror"
-
+   root share its memory, whichever opens first. The link lives in a fresh
+   directory, and the test unlinks it before the runner removes the directory,
+   so nothing walks it: one left in a source tree, from which a cached test is
+   run again, has dune walk the whole filesystem. *)
 let two_roots () =
   if S.driverless () then skip ~reason:"amdgpu does not hold the GPU" ();
-  (match Unix.lstat mirror with
-  | _ -> Unix.unlink mirror
-  | exception Unix.Unix_error (Unix.ENOENT, _, _) -> ());
+  let mirror = Filename.concat (temp_dir ()) "mirror" in
   Unix.symlink "/" mirror;
   Fun.protect ~finally:(fun () -> Unix.unlink mirror) @@ fun () ->
   let through_mirror () =
