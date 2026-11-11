@@ -174,8 +174,13 @@ let frames ?(wait = 0.) fd =
   in
   go wait []
 
+(* The seconds between a peer's beats, and between its thread's looks at
+   whether to stop. *)
+let beat_every = 0.5
+let look_every = 0.02
+
 (* Writes a beat to [fd] each half second until the result is called: a peer
-   alive whatever it reads. *)
+   alive whatever it reads. The call returns once the thread has looked. *)
 let beating fd =
   let on = Atomic.make true in
   let t =
@@ -183,7 +188,10 @@ let beating fd =
       (fun () ->
         while Atomic.get on do
           (try write fd beat with Unix.Unix_error _ -> ());
-          Thread.delay 0.5
+          let next = Unix.gettimeofday () +. beat_every in
+          while Atomic.get on && Unix.gettimeofday () < next do
+            Thread.delay look_every
+          done
         done)
       ()
   in
