@@ -65,16 +65,6 @@ An item leaves when its library fixes it, or when a design decides it stays.
   the call says so: bf16 rows on the CPU time f32 kernels plus conversions.
 - `Nx.split` returns a list, so taking a GRU's three gates needs a
   non-exhaustive match or slices.
-- A long contraction accumulates in one float32 register, sequentially:
-  nx.cpu's over all its terms, and tolk's kernels (tinygrad's heuristic at
-  these shapes) in chunks of 4. A weight gradient of `validate --training`
-  sums 16384 rows, which puts it 2-5 times further from float64 than
-  PyTorch's blocked sums (5.5e-7 compiled, 1.1e-6 eager, 2.4e-7 PyTorch,
-  1e-7 pairwise; `_plans/tessera-port/compiled-f32-grads.md`). It fails no
-  check but costs margin: eager's worst leaf sits at 0.975 of the bound,
-  CUDA's at 0.921, where a blocked or pairwise sum would put them near 0.5.
-  The fix is nx.cpu's contraction and, in tolk, a choice beyond tinygrad's.
-
 - `Nx.round` rounds halves away from zero; GeoTessera's int8 embedding codes
   round ties to even (numpy's `np.round`), and 23 of the oracle fixtures'
   15.7M codes differ. A rounding mode is a vocabulary question for nx
@@ -227,12 +217,6 @@ An item leaves when its library fixes it, or when a design decides it stays.
   precision stated on the contraction, refused where no unit has it.
 
 ## kaun
-
-- `Kaun.Linear.apply` rounds twice at bfloat16: the product, then the bias
-  added to it, where a product rounding its sum plus bias once is what
-  PyTorch's autocast linear computes (`Nx.contract ~init` can). The fix
-  changes float32 bits slightly too. tessera rounds once in its private
-  `Product` meanwhile, its one copy. Found by the M4 training design.
 
 - No GRU in kaun. TESSERA's v1.0 and v1.1 checkpoints hold tessera-util's
   `CustomGRUCell` (Chung et al.'s form, reset gate applied before the
