@@ -371,8 +371,9 @@ let test_unborrow () =
   raises_match ~msg:"an ended borrow" Exn.invalid_arg (fun () -> B.unborrow b)
 
 (* A keep through a borrow keeps it from ending, as a prepared submission that
-   fixes it does for its life, since the submission's addresses are made; a
-   keep of the memory through another buffer does not. *)
+   fixes it does for its life, since the submission's addresses are made, until
+   the keep is released, or collected and a call that moves collected memory
+   ran; a keep of the memory through another buffer does not. *)
 let test_unborrow_keeps () =
   let d, _ = P.open_ "buffer:unborrow-keeps" in
   let h = B.create Rig.host (1 lsl 16) in
@@ -386,7 +387,20 @@ let test_unborrow_keeps () =
   let other = require_some (B.borrow d h) in
   let owner = B.keep [ h ] in
   equal ~msg:"under a keep of the memory itself" bool true (B.unborrow other);
-  B.release owner
+  B.release owner;
+  let released = require_some (B.borrow d h) in
+  B.release (B.keep [ released ]);
+  equal ~msg:"once a keep through it is released" bool true
+    (B.unborrow released);
+  let collected = require_some (B.borrow d h) in
+  ignore (Sys.opaque_identity (B.keep [ collected ]));
+  equal ~msg:"unreachable, before a call that moves memory" bool false
+    (B.unborrow collected);
+  Gc.full_major ();
+  Gc.full_major ();
+  ignore (B.create d 0);
+  equal ~msg:"once a keep through it is collected" bool true
+    (B.unborrow collected)
 
 (* A claim through a borrow keeps it from ending; claims of its memory through
    other buffers neither keep it nor see its end. *)
@@ -415,6 +429,75 @@ let test_unborrow_outside () =
   ignore (B.create d 0);
   equal ~msg:"its mapping gone" int 0 (P.mapped p);
   equal ~msg:"the bigarray's buffer" (option string) None (B.dead h)
+
+(* Borrows that hold no mapping, each a memory and the device that borrows
+   it: a software device's borrow of another's memory, the host's of a
+   software device's, and a software device's of host memory of no bytes. *)
+let unmapped_borrows =
+  [
+    ( "a software device's borrow of another's memory",
+      fun () ->
+        (B.create (memory "buffer:unborrow-of") 64, memory "buffer:unborrow-on")
+    );
+    ( "the host's borrow of a software device's memory",
+      fun () -> (B.create (memory "buffer:unborrow-host") 64, Rig.host) );
+    ( "a software device's borrow of empty host memory",
+      fun () -> (B.create Rig.host 0, memory "buffer:unborrow-empty") );
+  ]
+
+(* A borrow that holds no mapping ends as one that holds one does: a claim or
+   a keep through it keeps it until the claim ends, the keep is released, or
+   the keep is collected and a call that moves collected memory ran, and a
+   claim or a keep of its memory through the memory's own buffer does not.
+   Once ended, it and its views are dead with its reason, as C reads them,
+   and its memory lives. *)
+let test_unborrow_unmapped (_, make) =
+  let m, d = make () in
+  let borrow () = require_some (B.borrow d m) in
+  let b = borrow () in
+  let n = B.length b in
+  let v = B.view b ~first:(n / 2) ~length:(n - (n / 2)) in
+  raises_match ~msg:"the memory's own buffer" Exn.invalid_arg (fun () ->
+      B.unborrow m);
+  (* A borrow of no bytes has no view of part. *)
+  if n > 0 then
+    raises_match ~msg:"a view of part of it" Exn.invalid_arg (fun () ->
+        B.unborrow v);
+  Support.Reader.read b;
+  equal ~msg:"under a claim through it" bool false (B.unborrow b);
+  Support.Reader.release b;
+  let k = B.keep [ b ] in
+  equal ~msg:"under a keep through it" bool false (B.unborrow b);
+  B.release k;
+  equal ~msg:"once the keep is released" bool true
+    (B.unborrow ~why:"done with it" b);
+  equal ~msg:"the borrow and its view dead"
+    (pair (option string) (option string))
+    (Some "done with it", Some "done with it")
+    (B.dead b, B.dead v);
+  equal ~msg:"its memory live" (option string) None (B.dead m);
+  equal ~msg:"the reason C reads" (option string) (Some "done with it")
+    (Support.Reader.why b);
+  let answer = Testable.make ~pp:Support.Reader.pp_answer ~equal:( = ) in
+  equal ~msg:"a claim from C" answer Support.Reader.Dead
+    (Support.Reader.claim b Rig.Read);
+  raises_match ~msg:"an ended borrow" Exn.invalid_arg (fun () -> B.unborrow b);
+  let collected = borrow () in
+  ignore (Sys.opaque_identity (B.keep [ collected ]));
+  equal ~msg:"unreachable, before a call that moves memory" bool false
+    (B.unborrow collected);
+  Gc.full_major ();
+  Gc.full_major ();
+  ignore (B.create d 0);
+  equal ~msg:"once a keep through it is collected" bool true
+    (B.unborrow collected);
+  let other = borrow () in
+  Support.Reader.read m;
+  let owner = B.keep [ m ] in
+  equal ~msg:"under a claim and a keep of its memory" bool true
+    (B.unborrow other);
+  B.release owner;
+  Support.Reader.release m
 
 (* A free of a borrow returns its memory, as a free of any buffer that spans
    it does: also of the buffer a take of the borrow gave. Every buffer over
@@ -2250,6 +2333,8 @@ let tests =
         test "only a claim through a borrow keeps it from ending"
           test_unborrow_claims;
         test "a keep through a borrow keeps it from ending" test_unborrow_keeps;
+        cases "a borrow that holds no mapping ends as one that holds one does"
+          ~id:fst unmapped_borrows test_unborrow_unmapped;
         test "a free of a borrow returns its memory, also once taken"
           test_borrow_free;
         test "borrows of one allocation share one mapping until the last goes"
