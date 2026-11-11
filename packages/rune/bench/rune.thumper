@@ -10,9 +10,16 @@
 # forced: blessed Cuda/cat-16-columns-of-exp-64x64 under load 7.5 on 14 cores
 # forced: blessed CudaWords/remat-chains-2x4-grad-hit under load 22.1 on 14 cores
 # forced: blessed JitFootprint/stacked-grad-scan-k4-replay under load 13.2 on 14 cores
+# forced: blessed Cuda/attention/jit-bf16-8x2048x110-full Cuda/attention/jit-grad-bf16-8x2048x110-full Cuda/attention/jit-grad-bf16-8x2048x256-full Cuda/attention/jit-bf16-2048x40x1024-full Cuda/attention/jit-grad-bf16-2048x40x1024-full under load 7.8 on 14 cores
 
 Bodies/grad-scan-in-a-rule-in-a-total-scope-eager	alloc_words	exact	52718
 Bodies/grad-scan-in-a-rule-in-a-total-scope-eager	wall_time	batch=32	n=20	2.070e-04	2.020e-04 2.025e-04 2.025e-04 2.028e-04 2.033e-04 2.034e-04 2.037e-04 2.057e-04 2.057e-04 2.061e-04 2.079e-04 2.088e-04 2.093e-04 2.095e-04 2.101e-04 2.105e-04 2.108e-04 2.108e-04 2.109e-04 2.116e-04
+Cuda/attention/jit-bf16-2048x40x1024-full	wall_time	batch=4	n=20	2.044e-03	2.037e-03 2.040e-03 2.040e-03 2.041e-03 2.042e-03 2.042e-03 2.042e-03 2.044e-03 2.044e-03 2.044e-03 2.044e-03 2.044e-03 2.047e-03 2.054e-03 2.081e-03 2.137e-03 2.194e-03 2.321e-03 2.321e-03 2.462e-03
+Cuda/attention/jit-bf16-8x2048x110-full	wall_time	batch=32	n=20	2.097e-04	2.043e-04 2.043e-04 2.045e-04 2.053e-04 2.070e-04 2.092e-04 2.093e-04 2.093e-04 2.094e-04 2.096e-04 2.098e-04 2.102e-04 2.104e-04 2.121e-04 2.134e-04 2.164e-04 2.412e-04 2.424e-04 2.452e-04 2.482e-04
+Cuda/attention/jit-f32-8x2048x64-full	wall_time	batch=8	n=20	1.053e-03	1.046e-03 1.047e-03 1.047e-03 1.050e-03 1.052e-03 1.052e-03 1.053e-03 1.053e-03 1.053e-03 1.053e-03 1.054e-03 1.054e-03 1.055e-03 1.084e-03 1.084e-03 1.086e-03 1.090e-03 1.092e-03 1.092e-03 1.112e-03
+Cuda/attention/jit-grad-bf16-2048x40x1024-full	wall_time	batch=1	n=20	1.425e-02	1.384e-02 1.387e-02 1.390e-02 1.394e-02 1.405e-02 1.419e-02 1.422e-02 1.423e-02 1.423e-02 1.424e-02 1.426e-02 1.426e-02 1.428e-02 1.431e-02 1.434e-02 1.434e-02 1.442e-02 1.533e-02 1.550e-02 1.581e-02
+Cuda/attention/jit-grad-bf16-8x2048x110-full	wall_time	batch=8	n=20	1.058e-03	1.013e-03 1.015e-03 1.022e-03 1.029e-03 1.039e-03 1.056e-03 1.057e-03 1.057e-03 1.057e-03 1.058e-03 1.058e-03 1.059e-03 1.059e-03 1.059e-03 1.136e-03 1.138e-03 1.139e-03 1.140e-03 1.146e-03 1.179e-03
+Cuda/attention/jit-grad-bf16-8x2048x256-full	wall_time	batch=2	n=20	3.840e-03	3.636e-03 3.657e-03 3.706e-03 3.709e-03 3.729e-03 3.790e-03 3.817e-03 3.818e-03 3.819e-03 3.835e-03 3.845e-03 3.854e-03 3.854e-03 3.867e-03 3.874e-03 3.922e-03 3.933e-03 3.935e-03 3.937e-03 4.127e-03
 Cuda/cat-16-columns-of-exp-64x64	wall_time	batch=1024	n=20	7.171e-06	7.095e-06 7.097e-06 7.135e-06 7.153e-06 7.155e-06 7.158e-06 7.159e-06 7.162e-06 7.164e-06 7.167e-06 7.174e-06 7.176e-06 7.178e-06 7.181e-06 7.181e-06 7.186e-06 7.187e-06 7.211e-06 7.231e-06 7.313e-06
 Cuda/kv-append-4096	wall_time	batch=1024	n=20	8.666e-06	8.444e-06 8.487e-06 8.585e-06 8.592e-06 8.599e-06 8.602e-06 8.629e-06 8.634e-06 8.664e-06 8.665e-06 8.667e-06 8.677e-06 8.680e-06 8.684e-06 8.686e-06 8.705e-06 8.792e-06 8.833e-06 9.134e-06 1.011e-05
 Cuda/kv-append-4096-copied	wall_time	batch=128	n=20	5.583e-05	2.327e-05 2.335e-05 2.342e-05 2.351e-05 2.367e-05 2.475e-05 5.421e-05 5.436e-05 5.463e-05 5.582e-05 5.585e-05 5.588e-05 5.608e-05 5.655e-05 8.092e-05 8.400e-05 1.097e-04 1.849e-04 2.527e-04 3.107e-04

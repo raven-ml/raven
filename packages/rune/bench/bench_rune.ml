@@ -2254,10 +2254,10 @@ let gpu_rows g =
         (attention_grad_call Nx.bfloat16 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Causal);
       on_gpu g "attention/jit-grad-bf16-8x2048x128-full"
         (attention_grad_call ~d:128 Nx.bfloat16 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Full);
-      (* Heads past 64 dimensions: 110, a block of values past 64 columns in
-         tiles of 32 keys; 256, two chunks a head, where the gradient's
-         kernels before chunks took 7.1 ms against the default's 4.3; a
-         teacher's 1024 dimensions over 40 keys, 2048 heads of 40 rows. *)
+      (* Heads past 64 dimensions: 110, one block of values in tiles of 64
+         keys and the gradient's kernels in a launch each; 256, two blocks
+         of values a head and the derivative's default; a teacher's 1024
+         dimensions over 40 keys, 2048 heads of 40 rows. *)
       on_gpu g "attention/jit-bf16-8x2048x110-full"
         (attention_call ~d:110 Nx.bfloat16 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Full);
       on_gpu g "attention/jit-grad-bf16-8x2048x110-full"
