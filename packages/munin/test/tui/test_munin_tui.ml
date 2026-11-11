@@ -256,11 +256,11 @@ let metric_record ?(goal = "") ?(step_metric = "") key =
     (if step_metric = "" then ""
      else Printf.sprintf {|,"step_metric":"%s"|} step_metric)
 
-let write_log store ?goal ?steps ?declare ?(started = 1) ?(experiment = "law") ?(params = "{}")
-    records =
+let write_log store ?goal ?steps ?declare ?(started = 1) ?(experiment = "law") ?name ?id
+    ?(params = "{}") records =
   let declare = Option.value declare ~default:[ metric_record ?goal "m" ] in
   incr law_runs;
-  let id = Printf.sprintf "20261101T000000Z-%08x" !law_runs in
+  let id = match id with Some i -> i | None -> Printf.sprintf "20261101T000000Z-%08x" !law_runs in
   let dir = Filename.concat (Store.root store) "runs" in
   List.iter
     (fun d -> if not (Sys.file_exists d) then Sys.mkdir d 0o755)
@@ -268,8 +268,9 @@ let write_log store ?goal ?steps ?declare ?(started = 1) ?(experiment = "law") ?
   Sys.mkdir (Filename.concat dir id) 0o755;
   let start =
     Printf.sprintf
-      {|{"type":"start","time":%d.0,"format":1,"experiment":"%s",%s"params":%s,"provenance":{"command":["t"],"cwd":"/","pid":1,"ocaml":"5","raven":"t","os":"t","arch":"t","seeds":{},"env":{}}}|}
+      {|{"type":"start","time":%d.0,"format":1,"experiment":"%s",%s%s"params":%s,"provenance":{"command":["t"],"cwd":"/","pid":1,"ocaml":"5","raven":"t","os":"t","arch":"t","seeds":{},"env":{}}}|}
       started experiment
+      (match name with Some n -> Printf.sprintf {|"name":"%s",|} n | None -> "")
       (match steps with
       | Some n -> Printf.sprintf {|"steps":%d,|} n
       | None -> "")
@@ -2562,6 +2563,58 @@ let no_others =
       equal ~msg:"before r, its hint" int 1 (others before_r);
       equal ~msg:"after r" int 0 (others after_r))
 
+(* Runs of one name, listed or drawn, each end in the end of its id, the
+   shortest that tells them apart, at least four characters; a run of a
+   name of its own has none. The ids differ in their last character. *)
+let same_names =
+  test "runs of one name are told apart by their ids" (fun () ->
+      with_store ~name:"same-names" [] @@ fun store ->
+      let run ?name () =
+        fst (write_log store ?name (List.init 20 (fun i -> sample_record (i, Float.of_int i))))
+      in
+      let ids = List.init 3 (fun _ -> run ~name:"cnn-adam" ()) in
+      let lone = run ~name:"lone" () in
+      (* The cursor on the newest, lone; down to each cnn-adam to overlay
+         it, the last under the cursor. *)
+      let keys = [ char 'j'; Text " "; char 'j'; Text " "; char 'j'; Text " " ] in
+      let screen = show ~cols:160 ~rows:48 store Munin_tui.Runs keys in
+      let tail id = String.sub id (String.length id - 4) 4 in
+      List.iter
+        (fun id ->
+          let label = "cnn-adam " ^ tail id in
+          (* The legend's entry, whole, and the runs pane's row, left of
+             column 42, whose name gives way to the id's end. *)
+          let pane = List.filter (fun (_, x) -> x < 42) (T.Screen.find screen (" " ^ tail id)) in
+          equal ~msg:label bool true (List.exists (fun (_, x) -> x >= 42) (T.Screen.find screen label));
+          equal ~msg:(tail id) int 1 (List.length pane))
+        ids;
+      equal ~msg:"lone" int 0 (List.length (T.Screen.find screen ("lone " ^ tail lone))))
+
+(* Two runs of one name whose ids share their last five characters take
+   six: the fewest that tell them apart. The strips' header keeps the
+   suffix whole and cuts the name. *)
+let long_suffixes =
+  test "same-named runs whose ids end alike take longer suffixes" (fun () ->
+      with_store ~name:"long-suffixes" [] @@ fun store ->
+      let run id =
+        ignore
+          (write_log store ~name:"cnn-adam" ~id
+             (List.init 20 (fun i -> sample_record (i, Float.of_int i))))
+      in
+      run "20261101T000000Z-00a12345";
+      run "20261101T000000Z-00b12345";
+      (* Overlay the newest, then the cursor to the other, and strips. *)
+      let screen = show ~cols:120 ~rows:40 store Munin_tui.Runs [ Text " "; char 'j'; Key Enter ] in
+      let has s = T.Screen.find screen s <> [] in
+      let vs =
+        List.filter_map
+          (fun (y, x) -> Some (from x (T.Screen.row screen y)))
+          (T.Screen.find screen "vs ")
+      in
+      equal (list bool) [ true; true ] [ has "cnn-adam a12345"; has "cnn-adam b12345" ];
+      equal ~msg:"the header's overlay" (list bool) [ true ]
+        (List.map (fun r -> before r "b12345" <> None) vs))
+
 (* Cut text *)
 
 (* A run whose texts outgrow their columns: a long name, host, command,
@@ -2974,7 +3027,7 @@ let () =
              matching; cadence;
            ];
          group "runs" [ filter; stars; nav_count ];
-         group "run" [ all_orphans; short_of_steps; paired; cut_text; no_sample; no_others ];
+         group "run" [ all_orphans; short_of_steps; paired; cut_text; no_sample; no_others; same_names ];
          group "held" [ held; kept_pane; ended_away; ended_between; watch_test ];
          depth_test;
          hidden_filter;
@@ -2984,5 +3037,6 @@ let () =
          hints_fit;
          hints_exact;
          no_values_line;
+         long_suffixes;
          long_values;
        ])

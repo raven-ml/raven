@@ -52,7 +52,10 @@
     that counts its runs and its failed or live ones, and a line per run of an
     open experiment: its name, its state glyph ({!section-states}), its
     experiment's key metric drawn over its steps, and its best value of it,
-    with [★] on the best of its experiment among the runs shown. Beyond 30
+    with [★] on the best of its experiment among the runs shown. Runs that
+    share a name among those listed or drawn each follow it with the end of
+    their id, the fewest of its last characters, four at the least, that
+    tell them apart, as [cnn-adam 130c], wherever a name is shown. Beyond 30
     runs, the experiments start folded but the cursor's. The cursor stops at
     each run of an open experiment and at the header of a folded one. Runs
     are newest first, or by their best key metric, or by name ([o]).

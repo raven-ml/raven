@@ -84,7 +84,7 @@ let nav_line th (m : M.t) =
             [
               frag th Dim "‹ ";
               Centre.glyph th f;
-              frag ~bold:true th Hi (" " ^ name f);
+              frag ~bold:true th Hi (" " ^ M.label m f);
               frag th Dim " ›";
               frag th Dim
                 (Printf.sprintf "  %d of %d · %s" (i + 1) (List.length kept) (Run.experiment f.run));
@@ -109,12 +109,16 @@ type row =
       colour : int;
       drawn : bool;
       name : string;
+      suffix : string;  (** The end of its id, when its name is shared. *)
       glyph : string;
       glyph_tok : Th.token;
       name_tok : Th.token;
       best : (Th.token * bool * string) option;
       star : bool;
     }
+
+(* The cells of a run's name, its id's end included. *)
+let name_w = 11
 
 (* A row; one shown draws its run's trend. *)
 let row ?trend (look, width, row) =
@@ -160,7 +164,10 @@ let row ?trend (look, width, row) =
         ([
            bar r.here r.colour;
            cell 2 [ F.text " "; swatch ];
-           cell 12 [ F.text " "; frag ~bold:r.here th r.name_tok r.name ];
+           cell (name_w + 1)
+             (let room = name_w - (if r.suffix = "" then 0 else 1 + Numbers.width r.suffix) in
+              [ F.text " "; frag ~bold:r.here th r.name_tok (Numbers.cut room r.name) ]
+              @ if r.suffix = "" then [] else [ frag th Dim (" " ^ r.suffix) ]);
            (* A blank after the name, so that a cut name's […] keeps off the
               glyph. *)
            cell 3 [ F.text " "; frag ~bold:true th r.glyph_tok r.glyph ];
@@ -175,6 +182,7 @@ let rows (m : M.t) =
   let overlaid o = List.exists (fun (_, x) -> x = o) (M.Overlays.runs m.overlays) in
   let colour o = Option.value (M.colour m o) ~default:0 in
   let lines = M.lines m in
+  let suffixes = M.suffixes m in
   let stars = Hashtbl.create 8 in
   let star e runs =
     match Hashtbl.find_opt stars e with
@@ -238,6 +246,7 @@ let rows (m : M.t) =
                 colour = colour o;
                 drawn;
                 name = name f;
+                suffix = Option.value (M.Smap.find_opt o suffixes) ~default:"";
                 glyph = Facts.glyph f;
                 glyph_tok = Centre.state_token f;
                 name_tok;
@@ -435,7 +444,7 @@ let state th (m : M.t) (f : Facts.run) =
   let first =
     box ~flex_direction:Row ~size:one ~flex_shrink:0.
       [
-        line ~grow:false [ Centre.glyph th f; frag ~bold:true th Hi (" " ^ name f) ];
+        line ~grow:false [ Centre.glyph th f; frag ~bold:true th Hi (" " ^ M.label m f) ];
         rich_text ~wrap:`None ~flex_shrink:0.
           [ frag th (Centre.state_token f) ("  " ^ Watch.word f.state) ];
       ]
@@ -666,7 +675,7 @@ let info th (m : M.t) scroll (f : Facts.run) =
       split
         [
           Centre.glyph th f;
-          frag ~bold:true th Hi (" " ^ name f);
+          frag ~bold:true th Hi (" " ^ M.label m f);
           frag th Dim ("  " ^ Run.experiment f.run ^ "  everything");
         ]
         [ frag ~bold:true th Hi "esc"; frag th Dim " close" ];
@@ -805,7 +814,7 @@ let tiny th (m : M.t) =
     rich_text ~wrap:`None ~truncate:true
       [
         Centre.glyph th f;
-        frag ~bold:true th Hi (" " ^ name f);
+        frag ~bold:true th Hi (" " ^ M.label m f);
         frag th Dim (match f.latest with Some s -> "  " ^ Numbers.count s | None -> "");
       ]
   in

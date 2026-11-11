@@ -74,7 +74,6 @@ let arrow = function Some `Minimize -> "↓" | Some `Maximize -> "↑" | None ->
 (* Values *)
 
 let id (f : Facts.run) = Run.id f.run
-let name (f : Facts.run) = Facts.name f.run
 
 let value_tok x tok : Th.token = if Float.is_finite x then tok else Fail
 
@@ -351,7 +350,7 @@ let legend th (m : M.t) (c : M.chart) =
         in
         Some
           (rich_text ~wrap:`None ~flex_shrink:0.
-             [ mark; frag ~bold:here th (if here then Hi else Mid) (name f ^ " "); value ])
+             [ mark; frag ~bold:here th (if here then Hi else Mid) (M.label m f ^ " "); value ])
   in
   let marked = List.filter (fun (r, _) -> r <> Plot.Context) c.runs in
   let context = List.length c.runs - List.length marked in
@@ -444,19 +443,22 @@ let strips th (m : M.t) (f : Facts.run) ~width =
   let colour = Option.value (M.colour m (id f)) ~default:0 in
   let header =
     split
-      ([ F.text ~style:(Th.run th colour) "━ "; frag ~bold:true th Hi (name f) ]
+      ([ F.text ~style:(Th.run th colour) "━ "; frag ~bold:true th Hi (M.label m f) ]
       @
       match first with
       | Some o ->
           [
             F.text ~style:(Th.run th (Option.value (M.colour m (id o)) ~default:0)) "   ━ ";
-            frag th Mid (name o);
+            frag th Mid (M.label m o);
           ]
       | None -> [])
       [
         frag th Dim
-          ("latest"
-          ^ match first with Some o when vw = 22 -> "   vs " ^ Numbers.elide 8 (name o) | _ -> "");
+          (match first with
+          | Some o when vw = 22 ->
+              let head = "latest   vs " in
+              head ^ M.label_in m o (vw - Numbers.width head)
+          | _ -> "latest");
       ]
   in
   let on = M.strip m in
@@ -545,7 +547,7 @@ let zoom th (m : M.t) (f : Facts.run) =
               line
                 [
                   F.text ~style:(Th.run th colour) "━ ";
-                  frag ~bold:here th (if here then Hi else Fg) (name x);
+                  frag ~bold:here th (if here then Hi else Fg) (M.label m x);
                 ];
               line
                 ([

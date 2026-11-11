@@ -13,8 +13,8 @@
    |                e        aaaaaa    bbbbb      bbbbbbbbbb
 08 |  · brisk-wren  ✓ ⠢⣀⣀⣀⣀  0.4071  │
    |  b             e bbbbb
-09 |  · calm-lynx   ✓ ⠢⣀⣀⣀⣀  0.3942  │ ━ tidy-otter   ━ amber-fox                                      latest   vs amber-f…
-   |  b             e bbbbb              aaaaaaaaaa                                                    bbbbbbbbbbbbbbbbbbbb
+09 |  · calm-lynx   ✓ ⠢⣀⣀⣀⣀  0.3942  │ ━ tidy-otter   ━ amber-fox                                     latest   vs amber-fox
+   |  b             e bbbbb              aaaaaaaaaa                                                   bbbbbbbbbbbbbbbbbbbbb
 10 |  ■ dusty-mole  × ⢢⡀     0.7665  │
    |                a
 11 |  · eager-hawk  ✗ ⠄       1.670  │  train/loss      ⠉⠒⠤⢄⣀⡀                                           0.2642        +11%

@@ -245,6 +245,54 @@ let drawn m =
       @ List.map (fun (l, o) -> (Plot.Overlay l, o)) overlays
       @ [ (Plot.Cursor, me) ]
 
+(* Names *)
+
+(* The fewest characters of an id's end that tell a run apart. *)
+let suffix_least = 4
+
+let suffixes m =
+  let named =
+    List.filter_map
+      (fun (r, o) -> if r = Plot.Context then None else Data.run m.data o)
+      (drawn m)
+  in
+  let runs = List.sort_uniq (fun a b -> String.compare (id a) (id b)) (kept m @ named) in
+  let by_name = Hashtbl.create 16 in
+  List.iter
+    (fun f ->
+      let n = Facts.name f.Facts.run in
+      Hashtbl.replace by_name n (id f :: Option.value (Hashtbl.find_opt by_name n) ~default:[]))
+    runs;
+  let tail k s = if k >= String.length s then s else String.sub s (String.length s - k) k in
+  Hashtbl.fold
+    (fun _ ids acc ->
+      match ids with
+      | [] | [ _ ] -> acc
+      | _ ->
+          (* The least [k] whose ends differ, else the whole ids. *)
+          let longest = List.fold_left (fun w i -> max w (String.length i)) 0 ids in
+          let rec find k =
+            let ends = List.map (tail k) ids in
+            if k >= longest || List.length (List.sort_uniq String.compare ends) = List.length ids
+            then k
+            else find (k + 1)
+          in
+          let k = find suffix_least in
+          List.fold_left (fun acc i -> Smap.add i (tail k i) acc) acc ids)
+    by_name Smap.empty
+
+let label m f =
+  let n = Facts.name f.Facts.run in
+  match Smap.find_opt (id f) (suffixes m) with Some s -> n ^ " " ^ s | None -> n
+
+let label_in m f w =
+  let n = Facts.name f.Facts.run in
+  match Smap.find_opt (id f) (suffixes m) with
+  | None -> Numbers.cut w n
+  | Some s ->
+      let room = w - 1 - Numbers.width s in
+      if room >= 1 then Numbers.cut room n ^ " " ^ s else Numbers.cut w s
+
 (* The charts *)
 
 type chart = {

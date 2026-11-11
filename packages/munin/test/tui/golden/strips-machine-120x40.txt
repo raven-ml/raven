@@ -14,8 +14,8 @@
    |  q rrrrrrrrr   s qqqqq  jjjjjj tf gggggrrrrrrgggggggggg
 08 |  · brisk-wren  ✓ ⠢⣀⣀⣀⣀  0.4071  │
    |  u vvvvvvvvvv  s wwwww  vvvvvv  f
-09 |  · calm-lynx   ✓ ⠢⣀⣀⣀⣀  0.3942  │ ━ tidy-otter   ━ amber-fox                                      latest   vs amber-f…
-   |  u vvvvvvvvv   s wwwww  vvvvvv  f xxjjjjjjjjjjqqqqqvvvvvvvvv                                      gggggggggggggggggggg
+09 |  · calm-lynx   ✓ ⠢⣀⣀⣀⣀  0.3942  │ ━ tidy-otter   ━ amber-fox                                     latest   vs amber-fox
+   |  u vvvvvvvvv   s wwwww  vvvvvv  f xxjjjjjjjjjjqqqqqvvvvvvvvv                                     ggggggggggggggggggggg
 10 |  ■ dusty-mole  × ⢢⡀     0.7665  │
    |  y rrrrrrrrrr  z yy     vvvvvv  f
 11 |  · eager-hawk  ✗ ⠄       1.670  │  ↓ min               ⠉⠒⠒⠒⠒⠢⠤⠤⠤⠤⠤⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⡀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀

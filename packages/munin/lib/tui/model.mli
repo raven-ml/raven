@@ -249,6 +249,19 @@ val drawn : t -> (Plot.role * string) list
 (** [drawn m] is the runs the charts draw, in drawing order: the other runs
     of the experiment with [r], the overlays, the focus. *)
 
+val suffixes : t -> string Smap.t
+(** [suffixes m] is, by id, the end of the id of each run whose name another
+    run listed or drawn shares: the fewest of its last characters, four at
+    the least, that tell the runs of that name apart. *)
+
+val label : t -> Facts.run -> string
+(** [label m f] is [f]'s name, followed by its {!suffixes} entry when it has
+    one. *)
+
+val label_in : t -> Facts.run -> int -> string
+(** [label_in m f w] is [label m f] in at most [w] cells: the name is cut,
+    ending in […], before its suffix is. *)
+
 type chart = {
   slot : slot;
   key : string;
