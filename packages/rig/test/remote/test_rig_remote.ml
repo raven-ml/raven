@@ -704,12 +704,16 @@ let op_g =
 
 let device_of = function There (d, _) -> Some d | Here _ -> None
 
+(* Up to 32 copies: the rarest cover, a copy from here after a copy into it
+   from another device, then marks three cases in five, and 20 cases all miss
+   it about once in 10^8 runs. Up to 12 copies marked three in ten, missed in
+   one run of 900. *)
 let copies_g =
   let open Gen in
   let init =
     array ~size:(constant 5) (string_of ~size:(constant buffer_size) char)
   in
-  let ops = list ~size:(int_range 1 12) (with_pp pp_op op_g) in
+  let ops = list ~size:(int_range 1 32) (with_pp pp_op op_g) in
   pair init ops
 
 let copies_law (init, ops) =
