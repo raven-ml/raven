@@ -1908,6 +1908,35 @@ let experts_call tokens =
         fun () -> ignore (synced (f ids x w)));
   }
 
+(* The same projection with MXFP4 experts, [5760; 2880] matrices of codes,
+   every block's scale 1, through [Nx_quant.apply_experts]. *)
+let experts_mxfp4_call tokens =
+  {
+    at =
+      (fun at ->
+        let k = 2880 and n = 5760 in
+        let w =
+          Nx_quant.place at
+            (Nx_quant.mxfp4
+               ~scales:(Nx.full Nx.uint8 [| 32; n; k / 32 |] 127)
+               (Nx.full Nx.uint8 [| 32; n; k / 2 |] 0x5a))
+        in
+        let ids =
+          Nx.place at
+            (Nx.init Nx.int64 [| tokens; 4 |] (fun i ->
+                 Int64.of_int (((i.(0) * 7) + (i.(1) * 8)) mod 32)))
+        in
+        let x =
+          Nx.place at
+            (Nx.cast Nx.bfloat16
+               (Nx.Rng.uniform ~key:(Nx.Rng.key 96) f32 [| tokens; 1; k |]))
+        in
+        let f =
+          Rune.jit (pair_fn ()) (fun ids x -> Nx_quant.apply_experts ~ids w x)
+        in
+        fun () -> ignore (synced (f ids x)));
+  }
+
 let gpu_rows g =
   if not (opens g) then []
   else
@@ -2028,10 +2057,16 @@ let gpu_rows g =
               fun () -> ignore (synced (f x)));
         };
       (* gpt-oss's gate and up projection with bfloat16 experts at prompts
-         of 64 and 512 tokens, routed into blocks of 8 and of 64 rows for a
+         of 64 and 512 tokens, routed into blocks of 48 and of 64 rows for a
          tensor core, each block reading its rows through a row map. *)
       on_gpu g "experts-bfloat16-64x4of32-2880x5760" (experts_call 64);
       on_gpu g "experts-bfloat16-512x4of32-2880x5760" (experts_call 512);
+      (* 12 tokens, 1.5 rows an expert: bfloat16 experts on a tensor core in
+         blocks of 48, where blocks of 4 streamed took 2.05 ms against 1.60. *)
+      on_gpu g "experts-bfloat16-12x4of32-2880x5760" (experts_call 12);
+      (* 18 tokens, 2.25 rows an expert, past which MXFP4 experts take a
+         tensor core in blocks of 48 where blocks of 4 streamed. *)
+      on_gpu g "experts-mxfp4-18x4of32-2880x5760" (experts_mxfp4_call 18);
       (* gpt-oss's router at a decode step and at a prompt of 512 tokens: the
          first 4 of 32 logits of each token. *)
       on_gpu g "top-k-4-of-1x32" (top_k_at ~k:4 [| 1; 32 |]);
