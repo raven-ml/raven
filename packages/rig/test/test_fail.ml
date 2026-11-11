@@ -108,6 +108,22 @@ let test_fail_first =
   lose d p;
   [ failure () ]
 
+(* A lose that comes first is the failure, as Lost prints it; a lose after a
+   fail keeps the fail's reason, which stays the failure. *)
+let test_lose_first =
+  child_case [ "fail:given-up lost: given up" ] @@ fun () ->
+  let d, _ = P.open_ "fail:given-up" in
+  Rig.lose d "given up";
+  Rig.fail "the world failed";
+  [ failure () ]
+
+let test_lose_after_fail =
+  child_case [ "the world failed"; "the world failed" ] @@ fun () ->
+  let d, _ = P.open_ "fail:given-up-after" in
+  Rig.fail "the world failed";
+  Rig.lose d "given up";
+  [ Option.value ~default:"not lost" (Rig.lost d); failure () ]
+
 (* An exception other than a fault escaping a driver's counted call loses the
    device with the exception's constructor's name, and is the process's
    failure; the call raises it, and the device stops once, at its close.
@@ -310,6 +326,8 @@ let tests =
         test "a close is no failure, a loss is" test_close_no_failure;
         test "the first loss stays the failure" test_first_loss;
         test "a fail that comes first is the failure" test_fail_first;
+        test "a lose that comes first is the failure" test_lose_first;
+        test "a lose after a fail keeps the fail's reason" test_lose_after_fail;
         test "a fail loses every device and refuses every open" test_fail;
         test "a device lost through its waits keeps the fail's reason"
           test_fail_spread;

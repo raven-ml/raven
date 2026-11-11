@@ -62,7 +62,10 @@ external c_raise_word : int -> int -> unit = "caml_rig_raise_word" [@@noalloc]
    none. *)
 external c_stamps_lost : int -> bool -> int = "caml_rig_stamps_lost"
 [@@noalloc]
-external c_lose : c -> string -> bool -> bool = "caml_rig_lose"
+(* Loses a device, the process's failure if [counts] and a fault of a
+   counted call if [fault]: whether this call lost it. *)
+external c_lose : c -> string -> counts:bool -> fault:bool -> bool
+  = "caml_rig_lose"
 
 (* [caml_rig_raised] reads a scope as [Faults] 0, [Any] 1, or [Any_but]'s
    block. *)
@@ -608,10 +611,16 @@ let own_stop d =
     true
   end
 
-(* A hang a wait found: loses [d] for [why] and raises its loss. *)
-let lose d why =
-  ignore (c_lose d.live.c why true);
+(* A hang a wait found: loses [d] for [why], as a fault, and raises its
+   loss. *)
+let hung d why =
+  ignore (c_lose d.live.c why ~counts:true ~fault:true);
   raise_lost d
+
+let lose d why =
+  match d.kind with
+  | Host -> invalid_arg "Rig.lose: the host is never lost"
+  | Driver _ | Io -> ignore (c_lose d.live.c why ~counts:true ~fault:false)
 
 (* Ends the counted call on [d] that raised [e], which ran masked. Its first
    step is one C call that loses [d] for a fault or an exception in [scope]
@@ -785,7 +794,7 @@ let bounded (d : device) w ~still_ms hang =
   end
   else
     let left = p.since + hang - now in
-    if left <= 0 then lose d (strf "no progress for %d ms" hang);
+    if left <= 0 then hung d (strf "no progress for %d ms" hang);
     Int.min still_ms left
 
 (* A counted call, written out so that a wait's sleep without a hang bound
@@ -1015,7 +1024,7 @@ let close_one d =
   | Driver _ when not (is_lost d) -> (
       try wait d (submitted d) with Lost (d', _) when d' == d -> ())
   | _ -> ());
-  ignore (c_lose d.live.c "closed" false);
+  ignore (c_lose d.live.c "closed" ~counts:false ~fault:false);
   await_stop d
 
 (* Opening *)

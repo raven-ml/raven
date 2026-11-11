@@ -1960,6 +1960,55 @@ let hung (module G : Gpu) () =
       G.close t;
       G.with_ @@ fun t -> Rig.Point.wait (G.submit t [||])
 
+(* How long the law of a device given up spins: 4 s, or 400 ms on Metal,
+   under the 0.52 s or so after which macOS ends a command buffer of a GPU
+   that drives a display. *)
+let given_up_spin_ns class_ =
+  if class_ = "METAL" then 400_000_000 else 4_000_000_000
+
+(* The most a wait takes to see a loss: one still interval, 200 ms, for its
+   sleep or spin to return, and as much again for a loaded machine. *)
+let seen_within_ns = 400_000_000
+
+(* Work that runs long ends its wait once another domain loses the device,
+   100 ms in, within a still interval; the close then runs the stop, and the
+   word reaches the work's value once the stop ended the work or it ended, as
+   the driver's interface states. The GPU opens again. AMD skips through
+   amdgpu, as [hung] does. *)
+let given_up (module G : Gpu) () =
+  if G.class_ = "AMD" && not (Rig_amd_support.driverless ()) then
+    skip
+      ~reason:
+        "a failed preemption makes amdgpu reset the GPU for every process on \
+         it"
+      ();
+  let t = G.open_ () in
+  let p = submit t.d [ G.spin t ~ns:(given_up_spin_ns G.class_) ] ~uses:[] in
+  let why = "given up" in
+  let loser =
+    Domain.spawn (fun () ->
+        Unix.sleepf 0.1;
+        let at = Rig.Profile.now () in
+        Rig.lose t.d why;
+        at)
+  in
+  let raised =
+    match Rig.Point.wait p with
+    | () -> None
+    | exception Rig.Lost (_, w) -> Some (w, Rig.Profile.now ())
+  in
+  let lost_at = Domain.join loser in
+  (match raised with
+  | None -> fail "the wait returned"
+  | Some (w, raised_at) ->
+      equal string ~msg:"the reason" why w;
+      less ~msg:"from the lose to the raise, in ns" int ~than:seen_within_ns
+        (raised_at - lost_at));
+  G.close t;
+  await "the word reached the given-up value" (fun () ->
+      Rig.signaled t.d >= Rig.Point.value p);
+  G.with_ @@ fun t -> Rig.Point.wait (G.submit t [||])
+
 (* Waits *)
 
 (* A submission that waits for a producer's point runs no work before it: the
@@ -2397,6 +2446,10 @@ let laws (module G : Gpu) =
         (loss g);
       test "work past the hang bound loses the device, which opens again"
         (hung g);
+      test
+        "a device given up during long work ends its wait, closes and opens \
+         again"
+        (given_up g);
       test "work runs after a Polled device's point it waits for"
         (polled_waits g);
       test "work runs after another device's point it waits for"

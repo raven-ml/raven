@@ -826,8 +826,152 @@ let test_reached_at_loss () =
   Rig.close d;
   Rig.close consumer
 
+(* Giving a device up *)
+
+(* A lose marks the device lost with its reason, which every later use
+   raises; a second lose keeps the first reason. *)
+let test_lose () =
+  let d, p = P.open_ "loss:lose" in
+  let pt = submit (empty d) in
+  Rig.lose d "given up";
+  Rig.lose d "given up again";
+  equal (option string) (Some "given up") (Rig.lost d);
+  raises_match
+    (function Rig.Lost (d', "given up") -> Rig.equal d d' | _ -> false)
+    (fun () -> B.create d 8);
+  raises_match (lost d) (fun () -> Rig.Point.wait pt);
+  equal ~msg:"stops before the close" int 0 (count "stop" p);
+  Rig.close d;
+  equal ~msg:"stops after the close" int 1 (count "stop" p);
+  equal (option string) ~msg:"the stop's fault" None (P.stop_fault p)
+
+let test_lose_host () =
+  raises_match Exn.invalid_arg (fun () -> Rig.lose Rig.host "given up")
+
+(* The most a waiter takes to see a loss: one still interval, 200 ms, for its
+   sleep to return, and as much again for a loaded machine. *)
+let seen_within_ns = 400_000_000
+
+(* A waiter on another domain, in a sleep over work that runs long, raises the
+   loss once its sleep returns. *)
+let test_lose_waiter () =
+  let d, p = P.open_ "loss:lose-waiter" in
+  let pt = submit (empty d) in
+  P.stall p max_int;
+  let waiter =
+    Domain.spawn (fun () ->
+        match Rig.Point.wait pt with
+        | () -> Error "returned"
+        | exception Rig.Lost (_, why) -> Ok (why, Rig.Profile.now ()))
+  in
+  Support.await "the waiter's sleep" (fun () -> P.sleeps p > 0);
+  let lost_at = Rig.Profile.now () in
+  Rig.lose d "given up";
+  match Domain.join waiter with
+  | Error e -> failf "the wait %s" e
+  | Ok (why, raised_at) ->
+      equal string ~msg:"the reason" "given up" why;
+      less ~msg:"from the lose to the raise, in ns" int ~than:seen_within_ns
+        (raised_at - lost_at)
+
+(* A close that another domain blocks in, over work that runs long, returns
+   once the device is lost, and runs the stop once, with no fault. *)
+let test_lose_close () =
+  let d, p = P.open_ "loss:lose-close" in
+  ignore (submit (empty d));
+  P.stall p max_int;
+  let closer = Domain.spawn (fun () -> Rig.close d) in
+  Support.await "the close's sleep" (fun () -> P.sleeps p > 0);
+  equal ~msg:"stops while the close waits" int 0 (P.stops p);
+  Rig.lose d "given up";
+  Domain.join closer;
+  equal (option string) (Some "given up") (Rig.lost d);
+  equal ~msg:"stops" int 1 (P.stops p);
+  equal (option string) ~msg:"the stop's fault" None (P.stop_fault p)
+
+(* A device whose queue waits on a device given up is lost with it. *)
+let test_lose_spread () =
+  let producer, _ = P.open_ "loss:lose-producer" in
+  let consumer, _ = P.open_ ~waits_on:[ `Host ] "loss:lose-consumer" in
+  let a = submit (empty producer) in
+  ignore (submit (empty consumer) ~waits:[| a |]);
+  Rig.lose producer "given up";
+  equal (option string) (Some "loss:lose-producer lost") (Rig.lost consumer)
+
+(* A lose races a fault the producer's driver recorded, which a wait on the
+   producer raises: one of the two loses the producer, and its reason is the
+   one every wait raises. The stop sees the fault only if the fault won. Its
+   consumer, whose queue waits on the producer, is lost by either, as the
+   producer's close shows, which returns once the loss has spread. *)
+type race = { mutable why : string option }
+
+let fault_why = "the engine hung"
+let given_up = "given up"
+let races = Atomic.make 0
+
+let race_open () =
+  let n = Atomic.fetch_and_add races 1 in
+  let pd, pp = P.open_ (Printf.sprintf "loss:race-producer-%d" n) in
+  let c, _ =
+    P.open_ ~waits_on:[ `Host ] (Printf.sprintf "loss:race-consumer-%d" n)
+  in
+  let a = submit (empty pd) in
+  ignore (submit (empty c) ~waits:[| a |]);
+  P.fault pp fault_why;
+  (pd, pp, c, a)
+
+let race_lose r = if r.why = None then r.why <- Some given_up
+
+let race_wait r =
+  if r.why = None then r.why <- Some fault_why;
+  Option.get r.why
+
+let race_waited (_, _, _, a) =
+  match Rig.Point.wait a with
+  | () -> "returned"
+  | exception Rig.Lost (_, why) -> why
+
+let race_close r =
+  if r.why = None then r.why <- Some fault_why;
+  ((if r.why = Some fault_why then Some fault_why else None), true)
+
+let race_closed (pd, pp, c, _) =
+  Rig.close pd;
+  (P.stop_fault pp, Rig.lost c = Some (Rig.name pd ^ " lost"))
+
+let race_release (pd, _, c, _) =
+  Rig.close pd;
+  Rig.close c
+
+let race_commands =
+  let world = abstract "w" ~release:race_release in
+  [
+    command "open" (Gen.unit @-> makes world) (fun () -> { why = None })
+      race_open;
+    command "lose" (world ^-> returns unit) race_lose (fun (pd, _, _, _) ->
+        Rig.lose pd given_up);
+    command "wait" (world ^-> returns string) race_wait race_waited;
+    command "close"
+      (world ^-> returns (pair (option string) bool))
+      race_close race_closed;
+  ]
+
 let tests =
   [
+    group ~timeout "lose"
+      [
+        test "a lose gives the reason every later use raises" test_lose;
+        test "the host is never lost" test_lose_host;
+        test "a waiter on another domain raises the loss once its sleep returns"
+          test_lose_waiter;
+        test "a close blocked on long work returns once the device is lost"
+          test_lose_close;
+        test "a queue waiting on a device given up is lost" test_lose_spread;
+        stateful ~domains:2 ~count:20 ~steps:6
+          "a lose racing a recorded fault loses the producer once, for one \
+           reason"
+          race_commands;
+      ];
     group ~timeout "loss"
       [
         test "a reached point stays done when its device's word read loses it"

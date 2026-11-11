@@ -1029,15 +1029,15 @@ static void leave_count(struct rig_device *d) {
   give(d, released);
 }
 
-/* Loses [d] for the reason [v_why], a fault of a counted call and a
-   failure of the process if [v_fault]: whether this call lost it. [v_why]
-   is copied before the runtime is released. */
-value caml_rig_lose(value v_d, value v_why, value v_fault) {
+/* Loses [d] for the reason [v_why], a failure of the process if [v_counts]
+   and a fault of a counted call if [v_fault]: whether this call lost it.
+   [v_why] is copied before the runtime is released. */
+value caml_rig_lose(value v_d, value v_why, value v_counts, value v_fault) {
   struct rig_device *d = Device_val(v_d);
-  int fault = Bool_val(v_fault);
+  int counts = Bool_val(v_counts), fault = Bool_val(v_fault);
   char *why = strdup(String_val(v_why));
   if (why == NULL) caml_raise_out_of_memory();
-  return Val_bool(lose_ending(d, why, 1, fault, fault, 0));
+  return Val_bool(lose_ending(d, why, 1, counts, fault, 0));
 }
 
 /* Ends the counted call on [v_d] that raised [v_exn], losing [v_d] first

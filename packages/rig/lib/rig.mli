@@ -592,7 +592,7 @@ val word : int
     {!Buffer.share}, {!Buffer.val-keep}, {!Buffer.release}, {!Buffer.take},
     {!Profile} but {!Profile.take}, {!Local.new_key}, and
     {!Local.get} of a value already made for the device. Nor do
-    {!signaled} and {!fail}.
+    {!signaled}, {!fail} and {!lose}.
     Outside a lock, a call from a callback runs as any call does.
     If the callback lets the exception escape, it ends the interrupted call as
     an asynchronous exception ({!section-errors}). The callback must not block
@@ -611,6 +611,7 @@ val word : int
        device's memory or code ({!section-errors});}
     {- its progress stands still past its hang bound ({!section-hangs});}
     {- its queue waits for a value that a lost device never reached;}
+    {- {!lose} loses it;}
     {- {!close} ends it;}
     {- {!fail} fails the process;}
     {- in a child of [fork], it is a driver's device the child inherited
@@ -699,12 +700,12 @@ val word : int
     and the host's writes into its [Mapped] memory ({!Buffer.write}), and an
     open of the device's name ({!section-opening}), once none is in
     flight, run it. No other call does: neither the call that lost the
-    device, nor a use of it, nor {!fail}, nor reclamation. A lost device
-    that is never closed keeps its stop owed, and with it its memory, its
-    slot and the values its submissions keep. Until its stop, the work its
-    driver took may go on running: a GPU driven over PCI, with no kernel
-    driver to end its work, may keep running it, reading and writing the
-    memory it addresses. So a program that has no more use for a lost
+    device, nor a use of it, nor {!lose}, nor {!fail}, nor reclamation. A
+    lost device that is never closed keeps its stop owed, and with it its
+    memory, its slot and the values its submissions keep. Until its stop, the
+    work its driver took may go on running: a GPU driven over PCI, with no
+    kernel driver to end its work, may keep running it, reading and writing
+    the memory it addresses. So a program that has no more use for a lost
     device closes it, and the device's memory returns once it has stopped.
     A GPU driven over PCI whose memory another GPU maps still, or may still
     write, stays taken past its stop, its own work ended: an open of its name
@@ -813,6 +814,7 @@ exception Lost of t * string
     {- ["NAME lost"] for a device lost because its queue waited for the lost
        device named [NAME];}
     {- ["closed"] for a device {!close} ended;}
+    {- the reason given to {!lose};}
     {- the reason given to {!fail};}
     {- ["forked"] in a child of [fork];}
     {- ["out of memory"] when the C heap had no room for the reason.}}
@@ -830,6 +832,17 @@ val fail : string -> unit
     returns [Error why] without calling its opener, and one that races
     [fail] makes a lost device. [fail] runs no stop: each device's runs at
     its close ({!section-stops}). Only the first call acts. *)
+
+val lose : t -> string -> unit
+(** [lose d why] loses [d] with the reason [why] at once. A [d] already lost
+    keeps its reason. [lose] runs no stop: [d]'s work may run on until
+    {!close} runs it ({!section-stops}). A wait for [d]'s work on another
+    thread raises {!Lost}, and a {!close}'s wait goes on to the stop, once
+    its current sleep or driver call returns. The loss spreads along queue
+    waits ({!section-loss}) and is the process's {!failure} if none came
+    before. [lose] takes no lock and waits for nothing.
+
+    Raises [Invalid_argument] if [d] is {!host}. *)
 
 val failure : unit -> string option
 (** [failure ()] is the process's first failure, if any: the first loss of a
@@ -964,7 +977,9 @@ val failure : unit -> string option
     {- A growth of a device's queues ({!submit}) that its driver has no
        memory for reclaims as an allocation does, both the device's budget
        and the host's, as the driver may grow them in memory that counts in
-       either.}} *)
+       either.}}
+    An allocation may wait, without bound, for the work of any device that
+    holds memory back. Losing that device ({!lose}) ends the wait. *)
 
 val budget : t -> int
 (** [budget d] is [d]'s budget ({!section-reclaim}). It starts at [max_int]

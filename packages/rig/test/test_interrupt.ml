@@ -876,6 +876,37 @@ let test_fail_in () =
   in
   greater ~msg:"fails inside a lock" int ~than:0 (from 1 0)
 
+(* Loses a device from a [Gc.Memprof] callback at each allocation of an open.
+   [lose] returns, inside a lock and outside every lock, and runs no stop: the
+   device's stop runs once, at its close. *)
+let test_lose_in () =
+  let seen = S.seen () in
+  let rec from n =
+    let at = Printf.sprintf "lost at allocation %d" n in
+    let d, p = P.open_ (fresh "lose-in:polled") in
+    let stops = ref (-1) and opened = ref None in
+    let call () =
+      Rig.lose d "lost in a callback";
+      stops := P.stops p
+    in
+    let landing, landed = S.landing seen "Rig.lose: " call in
+    let reached =
+      S.interrupted ~landing n (fun () ->
+          opened := Some (Rig.software (fresh "lose-in")))
+    in
+    (match S.returned at landed with
+    | None -> ()
+    | Some _ ->
+        equal ~msg:at (option string) (Some "lost in a callback") (Rig.lost d);
+        equal ~msg:(at ^ ", stops as the lose returned") int 0 !stops);
+    Rig.close d;
+    equal ~msg:(at ^ ", stops after the close") int 1 (P.stops p);
+    Option.iter (fun o -> Rig.close (Result.get_ok o)) !opened;
+    if reached then from (n + 1)
+  in
+  from 1;
+  S.covered seen
+
 (* Whether [why] refuses an open because its thread is opening the name. *)
 let opening_here why =
   String.ends_with ~suffix:" is opening on the calling thread" why
@@ -1261,6 +1292,7 @@ let () =
                test "a callback's calls inside a drain"
                  (test_reentry drain_cache);
                test "a callback's fail" test_fail_in;
+               test "a callback's lose" test_lose_in;
                test "a lock counted through the edge" test_counted;
                test "a callback that opens the name an open is opening"
                  test_reentry_own;

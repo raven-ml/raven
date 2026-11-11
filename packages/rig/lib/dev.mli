@@ -149,21 +149,21 @@ val drop_values : device -> unit
     any state, in a forked child, for a device whose work is the parent's
       ─> Orphaned
     v}
-    {!lose}, {!close}, {!fail} and a failure of the driver's [submit] or
-    [commit] lose a device. The first loss records its reason and the value
-    the word read at the loss, then spreads along queue waits as
-    {!Rig.section-loss} states, with the reasons {!Rig.Lost} lists. The stop
-    is then owed. Only {!close} and an open of the device's name run it,
-    once no counted call on the device is in flight, then {!answered}: never
-    the call that lost the device, where the exception that lost it may land
-    again. A fault of the stop is dropped, and another exception it raises
-    is raised again once the state has moved on, without {!answered}. An
-    Ended device is {e Stopped} once its word reads its last submitted
-    value, the stopped of {!Rig.section-stops}. An io device is Stopped as
-    soon as it is Ended, since its reads and writes run inside the calls
-    that ask for them. Work a driver's device took before the
-    loss may run until then, so only then are its memory and objects given
-    back. Its word, records and line stay for the process.
+    {!lose}, {!close}, {!fail}, a wait past a hang bound and a failure of
+    the driver's [submit] or [commit] lose a device. The first loss records
+    its reason and the value the word read at the loss, then spreads along
+    queue waits as {!Rig.section-loss} states, with the reasons {!Rig.Lost}
+    lists. The stop is then owed. Only {!close} and an open of the device's
+    name run it, once no counted call on the device is in flight, then
+    {!answered}: never the call that lost the device, where the exception
+    that lost it may land again. A fault of the stop is dropped, and another
+    exception it raises is raised again once the state has moved on, without
+    {!answered}. An Ended device is {e Stopped} once its word reads its last
+    submitted value, the stopped of {!Rig.section-stops}. An io device is
+    Stopped as soon as it is Ended, since its reads and writes run inside the
+    calls that ask for them. Work a driver's device took before the loss may
+    run until then, so only then are its memory and objects given back. Its
+    word, records and line stay for the process.
 
     A forked child makes every lock anew ({!Lock}). A device whose work is
     the parent's is Orphaned: each driver's device the child inherited,
@@ -221,10 +221,8 @@ val answered : (device -> unit) ref
 (** [answered] is called with each device whose stop returned, by the call
     that ran the stop. {!Memory} sets it to {!Memory.drain}. *)
 
-val lose : device -> string -> 'a
-(** [lose d why] loses [d] for the reason [why] if [d] is live, which makes
-    the loss the process's {!failure} if none came before, and raises
-    {!Lost} with the reason of [d]'s first loss. *)
+val lose : device -> string -> unit
+(** [lose d why] is {!Rig.lose}[ d why]. *)
 
 (** Which exceptions besides a fault lose a device when they escape a counted
     call: none, every one, or every one but a constructor's, which are the

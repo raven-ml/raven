@@ -80,6 +80,7 @@ let lost = Dev.lost
 let close d =
   Profile.read_closing d;
   Dev.close d
+let lose = Dev.lose
 let fail = Dev.fail
 let failure = Dev.failure
 
