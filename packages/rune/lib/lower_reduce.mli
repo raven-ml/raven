@@ -13,9 +13,19 @@
     A float result computes in its {e accumulator}, which is the carrier
     ({!Nx_kernel.carrier}) of a reduction or a scan and [acc] of a contraction.
     [u] is the accumulator's unit roundoff, its parts' for a complex one, and
-    [γ(k) = k u / (1 - k u)], as {!Nx_kernel.section-bounds} defines it. Each
-    bound holds barring overflow and underflow, before the rounding into the
-    destination, which adds its own.
+    [γ(k) = k u / (1 - k u)] and [β(n) = ⌈5 min(n, 256) / 4⌉ + ⌈n / 128⌉], as
+    {!Nx_kernel.section-bounds} defines them. Each bound holds barring overflow
+    and underflow, before the rounding into the destination, which adds its
+    own.
+
+    tolk adds at most 256 terms of a float sum, a tensor core's products
+    counted, into one running sum before adding that sum into another, in
+    order. Two kinds of sum keep one running sum: a sum over a range whose
+    trip count is not a constant, and, on a GPU, any sum whose accumulators
+    pass 320 bytes a thread, [float32] past 80 accumulators and [float64]
+    past 40, a staged tensor core's tile among them. Their bounds are a
+    single chain's: those stated here with [n - 1] in place of [β(n)] and
+    [2K + 1] in place of [β(K)].
 
     {1:monoids Monoids and Arg}
 
@@ -24,9 +34,10 @@
       are any and all.
     - {b Integer sums and products} wrap and are exact.
     - {b Float sums and products} add or multiply their terms in the accumulator
-      in an association tolk chooses. A sum of [n] terms, those of a reduction
-      or those up to a scan's result with its carry, is within [γ(n - 1) Σ|x|]
-      of the exact one, and a product within a relative [γ(n - 1)]. A sum whose
+      in an association tolk chooses. A sum of a reduction's [n] terms is
+      within [γ(β(n)) Σ|x|] of the exact one, a sum of the [n] terms up to a
+      scan's result with its carry within [γ(n - 1) Σ|x|], and a product within
+      a relative [γ(n - 1)]. A sum whose
       terms are all [-0] is [+0], except a scan's result with a carry, which is
       [-0] where the carry and every term up to it are [-0]. The sum of no term
       is [+0] and the product [1]. A complex sum adds each part as a float sum.
@@ -53,9 +64,11 @@
     {t
       | result | bound |
       |:--|:--|
-      | [Logsumexp] [r] | [(1.37 (n - 1) + 2E + 1 + (2L + 1) ln n) u + u|r|] |
-      | mean [μ] | [B = (n + 1) u M] |
-      | variance [V] | [(n + 4) u V + 2 n u B √V + 3 (n + 2) u B²] | }
+      | [Logsumexp] [r] | [(1.37 β + 2E + 1 + (2L + 1) ln n) u + u|r|] |
+      | mean [μ] | [B = (β + 2) u M] |
+      | variance [V] | [(β + 5) u V + 2 (β + 1) u B √V + 3 (β + 3) u B²] | }
+
+    with [β = β(n)].
 
     A [Logsumexp] or [Moments] scan combines its terms by the odd/even network
     ({!Nx_kernel.section-network}). The scan's output at index [i], of
@@ -113,20 +126,23 @@ val scan :
 
     A contraction stores each operand into [acc] and, where the operand has a
     block scale ({!type-scale}), multiplies each element by its block's scale
-    read into [acc]. It sums the products and [init] in [acc] and rounds the sum
-    once to [out]. An integer [acc] wraps and is exact. A float32 contraction
-    of integer codes whose [Value] scale runs along its first contracted axes
-    with a narrow float of a type that holds every code, where
-    {!Tolk.Heuristic.core_fits} holds, sums the products along its last
-    contracted axis, multiplies each partial sum by its block's scale, then
-    sums the blocks: a tensor core multiplies only its narrow operands.
+    read into [acc]. It sums the products from [+0] in [acc], then adds
+    [init], and rounds the sum once to [out]. An integer [acc] wraps and is
+    exact. A float32 contraction of integer codes whose [Value] scale runs
+    along its first contracted axes with a narrow float of a type that holds
+    every code, where {!Tolk.Heuristic.core_fits} holds, sums the products
+    along its last contracted axis, multiplies each partial sum by its
+    block's scale, then sums the blocks: a tensor core multiplies only its
+    narrow operands.
 
-    A float [acc]'s result of [K] products is within
-    [γ(2K + 2 + 2s) (|init| + Σ|a||b|)] of the exact sum, where [s] is the
-    number of scaled operands: {!Nx.contract}'s bound where [s] is [0]. A complex [acc]'s real part is within
-    [γ(K + 2) (|init| + Σ(|ar br| + |ai bi|))] of the exact one, and its
-    imaginary part within [γ(K + 2) (|init| + Σ(|ar bi| + |ai br|))], [|init|]
-    that part's. *)
+    A float [acc]'s result [r] of [K] products is within
+    [u|r| + (1 + u) γ(β(K) + 1 + s) Σ|a||b|] of the exact [r], where [s] is
+    the number of scaled operands, and the [u|r|] term is [0] without [init]:
+    {!Nx.contract}'s bound with [β(K) + 1 + s] for [β(K)]. A complex
+    [acc]'s real part is within
+    [u|r| + (1 + u) γ(β(K) + 2) Σ(|ar br| + |ai bi|)] of the exact one, and
+    its imaginary part within
+    [u|r| + (1 + u) γ(β(K) + 2) Σ(|ar bi| + |ai br|)], [r] that part. *)
 
 (** The type for a contraction operand's block scale ({!Nx_kernel.type-scale}):
     the node of an array of its rank whose extents divide the operand's. *)

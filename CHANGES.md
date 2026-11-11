@@ -436,6 +436,9 @@ All notable changes to this project will be documented in this file.
 
 - `Rune.jit ~beam` searches kernels on another machine's device, where it
   raised `Invalid_argument`: the candidates are timed where they run.
+- `Rune.jit` states its float sums' and contractions' bounds in `β`, as
+  `Nx_kernel` defines it (`Lower_reduce`): tighter past 324 terms, and
+  looser below, where `β` carries a matrix unit's 5/4.
 - `rune.mli` states that a `Rune.jit` variant gives the same bits at every
   call, and the same kernels when compiled again by the same raven and
   compiler in any process or domain; a searched variant is the exception.

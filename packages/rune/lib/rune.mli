@@ -1655,21 +1655,23 @@ val jit :
     {!Nx.contract}'s, and [u] is the accumulator's. It combines terms in an
     order the compiler chooses and rounds once into its dtype, which adds its
     own error. Barring overflow and underflow, a result of [n] terms is
-    within this bound of the exact one:
+    within this bound of the exact one, [β = β(n)] as
+    {!Nx_kernel.section-bounds} defines it:
 
     {v
       function             bound
-      Nx.sum, Nx.cumsum    γ(n - 1) Σ|x|
+      Nx.sum               γ(β) Σ|x|
+      Nx.cumsum            γ(n - 1) Σ|x|
       Nx.prod, Nx.cumprod  relative γ(n - 1)
       Nx.matmul, ...       Nx.contract's
-        complex real       γ(n + 2) (|init| + Σ(|ar br| + |ai bi|))
-        complex imaginary  γ(n + 2) (|init| + Σ(|ar bi| + |ai br|))
+        complex real       u|r| + (1 + u) γ(β + 2) Σ(|ar br| + |ai bi|)
+        complex imaginary  u|r| + (1 + u) γ(β + 2) Σ(|ar bi| + |ai br|)
       Nx.scatter by Add    γ(n) (|x| + Σ|ui|)
       Nx.combine_patches   γ(n - 1) Σ|x|
-      Nx.logsumexp r       (1.37 (n - 1) + 2E + 1 + (2L + 1) ln n) u + u|r|
+      Nx.logsumexp r       (1.37 β + 2E + 1 + (2L + 1) ln n) u + u|r|
       Nx.logcumsumexp r    ((2E + 3) D + (2L + 2) ln n) u + u|r|
-      Nx.var V             (n + 4) u V + 2 n u B √V + 3 (n + 2) u B²
-      Nx.standardize y     (F / 2s + 11u/2) |y| + n u A / √s
+      Nx.var V             (β + 5) u V + 2 (β + 1) u B √V + 3 (β + 3) u B²
+      Nx.standardize y     (F / 2s + 11u/2) |y| + (β + 1) u A / √s
       Nx.rms_norm          relative k u / (1 - 4 k u)
     v}
 
@@ -1678,11 +1680,20 @@ val jit :
     {!Nx.contract}) holds {!Nx.contract}'s bound, and each part of a complex
     one the bound of its row. A scatter adds [n] updates [ui] to [x]. [E] and
     [L] are the ulp bounds of {!Nx.exp} and {!Nx.log},
-    [D = max 0 (2⌈log₂ n⌉ - 1)], [B = (n + 1) u M] for [M] the mean of the
-    terms' magnitudes. {!Nx.logcumsumexp}'s bound needs [n] exact in the
+    [D = max 0 (2⌈log₂ n⌉ - 1)], [B = (β + 2) u M] for [M] the mean of the
+    terms' magnitudes. A part [r] of a complex result is that part with
+    [init]. {!Nx.logcumsumexp}'s bound needs [n] exact in the
     accumulator, and {!Nx.var}'s [V] precedes its [ddof] scale, which rounds
     once more. {!Nx.standardize}'s [F] is {!Nx.var}'s bound, and its [s], [A]
-    and affine terms and {!Nx.rms_norm}'s [k] are as their docs state. A product asked for its sum ([~sum:true],
+    and affine terms and {!Nx.rms_norm}'s [k] are as their docs state. The
+    compiler adds at most 256 terms of a float sum, a tensor core's products
+    counted, into one running sum before adding that sum into another, in
+    order. Two kinds of sum keep one running sum: a sum over a range whose
+    trip count is not a constant, and, on a GPU, any sum whose accumulators
+    pass 320 bytes a thread, [float32] past 80 accumulators and [float64]
+    past 40, a staged tensor core's tile among them. Their bounds are a
+    single chain's: those stated here with [n - 1] in place of [β(n)] and
+    [2K + 1] in place of [β(K)]. A product asked for its sum ([~sum:true],
     {!Nx.section-contraction}) rounds each of its [t] terms into its dtype,
     and its closing adds them there: closed, it is within the contraction's
     bound plus [γ(t, v) Σ|term|], [v] the dtype's unit roundoff, as eager

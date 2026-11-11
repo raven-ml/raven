@@ -16,7 +16,8 @@
    operation of a prefix is the prefix of its result, attention holds its
    bound against a float64 reference and gives +0 for a sum of zeros, paged
    keys and values give dense ones' bits, a sum
-   of a contraction's result holds its bound, exp
+   of a contraction's result holds its bound, a long sum and a weight
+   gradient hold the blocked bound, exp
    holds its bound in ulps of the correctly rounded result, and a range
    gather and its gradient compile to eager's bits, and an argmax or argmin
    over a length 16 does not divide gives nx's position, a sum and a product
@@ -190,6 +191,39 @@ let sum_of_broadcast () =
   Nx.sync (f a b);
   at_most ~msg:"the bytes the call holds" Testable.int ~than:(16 * 1024 * 1024)
     (Rig.allocated gpu - before)
+
+(* A long float32 sum and a weight gradient over 16384 rows hold the blocked
+   bound, [γ(β(n)) Σ|x|], [β(n) = ⌈5 min(n, 256) / 4⌉ + ⌈n / 128⌉], against
+   float64. The terms make a single running sum lose half an ulp each: [1],
+   then [1.5] ulps of [1] at every fourth position, which one running sum near
+   [1] rounds to [2] ulps. *)
+let blocked_sums () =
+  let _, (module S : Nx.Devices) = on_gpu () in
+  let n = 16384 and c = 64 in
+  let t i = if i = 0 then 1. else if i mod 4 = 0 then 1.5 *. 0x1p-23 else 0. in
+  let exact = ref 0. in
+  for i = 0 to n - 1 do
+    exact := !exact +. t i
+  done;
+  let u = 0x1p-24 and b = ((5 * 256) + 3) / 4 + ((n + 127) / 128) in
+  let bound = Float.of_int b *. u /. (1. -. (Float.of_int b *. u)) *. !exact in
+  let x = Nx.place S.on (Nx.init Nx.float32 [| n; c |] (fun i -> t i.(0))) in
+  let dy = Nx.place S.on (Nx.ones Nx.float32 [| n; c |]) in
+  let p = Nx.Pattern.v "n i, n o -> i o | n" in
+  let host y = Nx.to_array (Nx.place Nx.Host.on y) in
+  let sum = host (Rune.jit' (fun x -> Nx.sum ~axes:[ 0 ] x) x) in
+  let dw =
+    host
+      (Rune.jit
+         Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+         (fun x dy -> Nx.contract Nx.float32 p x dy)
+         x dy)
+  in
+  let within msg y =
+    at_most ~msg float_exact ~than:bound (Float.abs (y -. !exact))
+  in
+  Array.iter (within "the sum") sum;
+  Array.iter (within "the weight gradient") dw
 
 (* Forward mode of a loss over attention, whose tangent sums the pair loop's
    contractions (8 heads, 64 rows, 128 keys of 64 dimensions) and is summed
@@ -2423,6 +2457,8 @@ let () =
                (Gen.with_pp Int_casts.pp Int_casts.gen)
                int_casts;
            ];
+         test "a long sum and a weight gradient hold the blocked bound"
+           blocked_sums;
          group "running operations"
            [
              prop ~count:4 ~examples:Prefixes.examples

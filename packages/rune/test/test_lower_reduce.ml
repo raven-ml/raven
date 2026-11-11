@@ -533,9 +533,12 @@ let exact ~scan c =
   let e, l = results dt ~scan c in
   same_values dt e l
 
-(* Each part of the eager and the lowered results of a float sum or product of
-   at most [n] terms, the carry's included, is within [γ(n - 1) Σ|x|] of the
-   exact sum, a relative [γ(n - 1)] of the exact product: [Σ|x|] is eager's
+(* Each part of the eager and the lowered results of a float sum of a
+   reduction's [n] terms is within [γ(β(n)) Σ|x|] of the exact sum,
+   [β(n) = ⌈5 min(n, 256) / 4⌉ + ⌈n / 128⌉], the kernel contract's bound, that
+   of a scan's terms up to a result, the carry's included, within
+   [γ(n - 1) Σ|x|], and a product within a relative [γ(n - 1)] of the exact
+   product: [Σ|x|] is eager's
    float64 sum of the terms' magnitudes. A zero sum keeps its sign where it is
    the carrier's, or where every term is a zero: the rounding into a narrower
    destination gives a zero of the carrier sum's sign, which within the bound
@@ -567,7 +570,10 @@ let bounded ~scan c =
   in
   let terms = List.fold_left (fun n a -> n * c.shape.(a)) 1 c.axes in
   let n = if c.carry = None then terms else terms + 1 in
-  let g = gamma (carrier_roundoff c.dt) (n - 1) in
+  let beta n = ((5 * min n 256) + 3) / 4 + ((n + 127) / 128) in
+  let u = carrier_roundoff c.dt in
+  let g = gamma u (n - 1) in
+  let gs = if scan then g else gamma u (beta n) in
   let bits = part_bits dt and round = rounding_of dt in
   let check (e, l) (x, carry) =
     let mags = magnitudes x carry in
@@ -577,7 +583,7 @@ let bounded ~scan c =
         let bound =
           match c.m with
           | Prod -> 2.01 *. g *. Float.max (Float.abs e) (Float.abs l)
-          | _ -> 2. *. g *. mags.(o)
+          | _ -> 2. *. gs *. mags.(o)
         in
         let zeros = c.m <> Sum || (not narrow) || mags.(o) = 0. in
         near ~zeros ~bits ~bound:(bound +. round e l) e l)
@@ -1754,9 +1760,11 @@ let subnormal (D.Any dt) =
   | _ -> Float.ldexp 1. (-149)
 
 (* Integers give eager's bits. A float result of [K] contracted terms is within
-   [γ(K + 1 + s, 2u) (|init| + Σ|a·b|)] of the exact one on each side, [s] its
-   scaled operands, a complex result's part within [γ(K + 2)] of that part's
-   magnitudes, and each of its roundings errs by a subnormal step more where
+   [γ(β(K) + 1 + s) (|init| + Σ|a·b|)] of the exact one on each side, [s] its
+   scaled operands and [β(K) = ⌈5 min(K, 256) / 4⌉ + ⌈K / 128⌉] the kernel
+   contract's, a complex result's part within [γ(β(2K) + 2)] of that part's
+   magnitudes, as a kernel library sums a part's [2K] terms, and each of its
+   roundings errs by a subnormal step more where
    it underflows. With an init, a zero result's sign follows the order of
    summation, which the bound leaves open: [+0] added last, or a [-0] init
    first; so does that of a result with a nonzero product, by whether tolk fuses
@@ -1769,9 +1777,10 @@ let contract_check c =
       let k = numel c.ek in
       let s = Bool.to_int (c.sa <> None) + Bool.to_int (c.sb <> None) in
       let complex = D.is D.Complex dt in
-      let depth = s + if complex then k + 2 else k + 1 in
+      let beta n = ((5 * min n 256) + 3) / 4 + ((n + 127) / 128) in
+      let depth = s + if complex then beta (2 * k) + 2 else beta k + 1 in
       let u = carrier_roundoff c.acc in
-      let g = gamma (if complex then u else 2. *. u) depth in
+      let g = gamma u depth in
       let under = 2. *. Float.of_int (depth + 1) *. subnormal c.acc in
       let bits = part_bits dt and round = rounding_of dt in
       let products = nonzero_products c a b in

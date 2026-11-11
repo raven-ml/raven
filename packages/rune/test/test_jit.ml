@@ -830,13 +830,17 @@ let test_zero_selection (Nx.Dtype.Any dt, c, f) =
   | Float -> zero_selection dt c f
   | _ -> assert false
 
-(* A sum of [n] terms is within [γ(n - 1) Σ|x|] of the exact one, eagerly and
-   compiled, so the two are within twice that of each other. A sum whose terms
-   are not all finite is the same special value in both. *)
+(* A sum of [n] terms is within [γ(β(n)) Σ|x|] of the exact one, eagerly and
+   compiled, with [β(n) = ⌈5 min(n, 256) / 4⌉ + ⌈n / 128⌉], the kernel
+   contract's bound, so the two are within twice that of each other. A sum
+   whose terms are not all finite is the same special value in both. *)
 let gamma ~wide k =
   let u = if wide then Float.ldexp 1. (-53) else Float.ldexp 1. (-24) in
   let k = Float.of_int k in
   k *. u /. (1. -. (k *. u))
+
+let ceil_div a b = (a + b - 1) / b
+let beta n = ceil_div (5 * min n 256) 4 + ceil_div n 128
 
 (* Finite terms whose magnitudes overflow are compared at [scale], where they do
    not. Where the finite terms' magnitudes pass the width's greatest float, a
@@ -850,7 +854,7 @@ let sums_within ~wide ~terms ~magnitudes ~scaled ~finite =
   in
   let close i x y =
     let m = magnitudes.(i) and ms = scaled.(i) in
-    let g = 2. *. gamma ~wide (terms - 1) in
+    let g = 2. *. gamma ~wide (beta terms) in
     let special x = not (Float.is_finite x) in
     if finite.(i) > greatest && (special x || special y) then true
     else if Float.is_nan x || Float.is_nan y then
@@ -904,6 +908,49 @@ let law_sum (Sum_case (dt, s, axis, xo)) =
     (outcome_t (sums_within ~wide ~terms:s.(axis) ~magnitudes ~scaled ~finite))
     (Value (Nx.to_array (sum x)))
     y
+
+(* Long sums. Terms that a single running sum loses half an ulp of each:
+   [1], then, at every fourth position, [1.5] ulps of [1], so that each
+   trip's chunk of four adds [1.5] ulps to a running sum near [1], which
+   rounds to [2]. Over [n] terms one running sum errs by [n / 8] ulps, past
+   [γ(β(n)) Σ|x|] for [n = 16384]; sums of blocks of 256 from [+0] err by at
+   most [32] ulps in the first block and an ulp a block after it. *)
+let stagnating n =
+  Array.init n (fun i ->
+      if i = 0 then 1. else if i mod 4 = 0 then 1.5 *. Float.ldexp 1. (-23)
+      else 0.)
+
+let blocked_within ~msg ~n y exact magnitude =
+  let bound = gamma ~wide:false (beta n) *. magnitude in
+  less ~msg float_exact ~than:bound (Float.abs (y -. exact))
+
+(* A compiled float32 sum of 16384 terms is within the blocked bound of its
+   exact value, float64's sum of the same terms. *)
+let test_long_sum () =
+  let n = 16384 in
+  let t = stagnating n in
+  let x = Nx.init f32 [| n; 2 |] (fun i -> t.(i.(0))) in
+  let y = Nx.to_array (Rune.jit' (fun x -> Nx.sum ~axes:[ 0 ] x) x) in
+  let exact = Array.fold_left ( +. ) 0. t in
+  Array.iter (fun y -> blocked_within ~msg:"sum" ~n y exact exact) y
+
+(* A compiled weight gradient, [xᵀ dy] of 64 × 64 over 16384 rows, is within
+   the blocked bound of each output's exact value, and has the same bits on a
+   second run. *)
+let test_long_contraction () =
+  let n = 16384 and c = 64 in
+  let t = stagnating n in
+  let x = Nx.init f32 [| n; c |] (fun i -> t.(i.(0))) in
+  let dy = Nx.ones f32 [| n; c |] in
+  let p = Nx.Pattern.v "n i, n o -> i o | n" in
+  let f = Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) (fun x dy ->
+      Nx.contract f32 p x dy)
+  in
+  let y = Nx.to_array (f x dy) in
+  let exact = Array.fold_left ( +. ) 0. t in
+  Array.iter (fun y -> blocked_within ~msg:"output" ~n y exact exact) y;
+  let bits a = Array.map Int64.bits_of_float a in
+  equal ~msg:"a second run" (array int64) (bits y) (bits (Nx.to_array (f x dy)))
 
 (* Reads and draws *)
 
@@ -5632,6 +5679,9 @@ let () =
              prop "a function of one kind is within its bounds" unary_cases
                law_unary;
              prop "a sum is within its bound" sum_cases law_sum;
+             test "a long sum holds the blocked bound" test_long_sum;
+             test "a weight gradient holds the blocked bound"
+               test_long_contraction;
              prop ~count:24
                ~examples:(segmented_examples (Nx.Dtype.Any f32))
                "a segmented contraction gives eager's values"
