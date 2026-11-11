@@ -180,17 +180,29 @@ let rail_rows =
    socket. *)
 
 (* [rig agent], the binary built in packages/rig/bin, serving at a port it chooses:
-   its process, its standard input, which ends it once closed, and its port. *)
+   its process, its standard input, which ends it once closed, and its port.
+
+   An agent holds a lock in [TMPDIR], one agent of a user on a machine at a
+   time, and a connect row runs two: each gets a [TMPDIR] of its own. The
+   agent takes its lock before it listens and holds it by its descriptor, so
+   the directory goes once the agent listens. *)
 let agent () =
   let exe =
     Filename.concat (Filename.dirname Sys.executable_name) "../../bin/main.exe"
   in
+  let dir = Filename.temp_dir "rig-bench-agent" "" in
+  let env =
+    Unix.environment () |> Array.to_list
+    |> List.filter (fun v -> not (String.starts_with ~prefix:"TMPDIR=" v))
+    |> List.cons ("TMPDIR=" ^ dir)
+    |> Array.of_list
+  in
   let key_r, key_w = Unix.pipe ~cloexec:true () in
   let out_r, out_w = Unix.pipe ~cloexec:true () in
   let pid =
-    Unix.create_process exe
+    Unix.create_process_env exe
       [| exe; "agent"; "127.0.0.1:0" |]
-      key_r out_w Unix.stderr
+      env key_r out_w Unix.stderr
   in
   Unix.close key_r;
   Unix.close out_w;
@@ -207,6 +219,8 @@ let agent () =
   in
   let port = port () in
   close_in ic;
+  Array.iter (fun f -> Sys.remove (Filename.concat dir f)) (Sys.readdir dir);
+  Sys.rmdir dir;
   match port with
   | Some port -> (pid, key_w, port)
   | None ->
