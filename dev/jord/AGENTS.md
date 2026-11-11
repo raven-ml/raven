@@ -24,8 +24,9 @@ campaign.
   order, GeoTIFF's corner convention), `Polygons` (GeoArrow's layout,
   even-odd regions), `Rasterize` (the (feature, cell) relation of `centres`
   and `touched`), `Warp` (a grid's centres in another system, pixel points,
-  the nearest and bilinear samplers, the source window they read). `Wkt`
-  and `Points` are private.
+  the nearest and bilinear samplers, the source window they read), `Band`
+  (STAC's band: scale, offset, nodata and saturated values, one decode,
+  never applied to bitfield bands). `Wkt` and `Points` are private.
 - Each file or document format is a library of its own, `lib/<format>/`,
   named `jord_<format>` (`jord.<format>` once jord has a package):
   `jord_geotiff` (nx.io: tags to and from a grid, GDAL's nodata),
