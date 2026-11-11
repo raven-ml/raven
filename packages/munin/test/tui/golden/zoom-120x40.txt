@@ -14,70 +14,70 @@
    |  v ppppppppp   w vvvvv  iiiiii xf       y                    m          yggg                 f hhhhhhhhhhhhh
 08 |  · brisk-wren  ✓ ⠢⣀⣀⣀⣀  0.4071  │      2┤⡆                   │          ┊                    │
    |  y mmmmmmmmmm  w zzzzz  mmmmmm  f ggggggyA                   m          y                    f
-09 |  · calm-lynx   ✓ ⠢⣀⣀⣀⣀  0.3942  │       │⢇                   │          ┊                    │ ━ tidy-otter
+09 |  · calm-lynx   ✓ ⠢⣀⣀⣀⣀  0.3942  │       │⢧                   │          ┊                    │ ━ tidy-otter
    |  y mmmmmmmmm   w zzzzz  mmmmmm  f       yA                   m          y                    f AAiiiiiiiiii
 10 |  ■ dusty-mole  × ⢢⡀     0.7665  │       │⢸                   │          ┊                    │   0.4641
    |  B pppppppppp  C BB     mmmmmm  f       yA                   m          y                    f ggiiiiii
 11 |  · eager-hawk  ✗ ⠄       1.670  │    1.8┤⢸                   │          ┊                    │
    |  y pppppppppp  C z       mmmmm  f ggggggyA                   m          y                    f
-12 | ▾ mnist-mlp  2         val/loss │       │⠈⡆                  │          ┊                    │ ━ dusty-mole
+12 | ▾ mnist-mlp  2         val/loss │       │⠈⡇                  │          ┊                    │ ━ dusty-mole
    | ggjjjjjjjjjggg         gggggggg f       yAA                  m          y                    f BBpppppppppp
 13 |  · mlp-wide    ✓ ⠈⢆⣀⣀⣀ 0.05831 ★│       │ ⡇                  │          ┊                    │   NaN
    |  y mmmmmmmm    w zzzzz iiiiiii xf       y A                  m          y                    f ggCCC
-14 |  · mlp-base    ✗ ⠈⢆⣀⡀  0.06576  │       │ ⢱                  │          ┊                    │
+14 |  · mlp-base    ✗ ⠈⢆⣀⡀  0.06576  │       │ ⢹                  │          ┊                    │
    |  y pppppppp    C zzzz  mmmmmmm  f       y A                  m          y                    f
-15 |                                 │    1.6┤ ⠘⡄                 │          ┊                    │ ━ amber-fox
+15 |                                 │    1.6┤ ⠘⡆                 │          ┊                    │ ━ amber-fox
    |                                 f ggggggy AA                 m          y                    f vvppppppppp
-16 |                                 │       │  ⡇                 │          ┊                    │   0.4468
+16 |                                 │       │  ⣇                 │          ┊                    │   0.4468
    |                                 f       y  A                 m          y                    f ggjjjjjj
 17 |                                 │       │  ⢸                 │          ┊                    │
    |                                 f       y  A                 m          y                    f
-18 |                                 │    1.4┤  ⠘⡄                │          ┊                    │
+18 |                                 │    1.4┤  ⠸⡆                │          ┊                    │
    |                                 f ggggggy  AA                m          y                    f
-19 |                                 │       │   ⡇                │          ┊                    │
+19 |                                 │       │   ⣇                │          ┊                    │
    |                                 f       y   A                m          y                    f
-20 |                                 │       │   ⢱                │          ┊                    │
+20 |                                 │       │   ⢹                │          ┊                    │
    |                                 f       y   A                m          y                    f
-21 |                                 │       │   ⠘⡄               │          ┊                    │
+21 |                                 │       │   ⠘⡇               │          ┊                    │
    |                                 f       y   AA               m          y                    f
-22 |                                 │    1.2┤    ⢣               │          ┊                    │
+22 |                                 │    1.2┤    ⢻               │          ┊                    │
    |                                 f ggggggy    A               m          y                    f
-23 |                                 │       │    ⠘⡄              │          ┊                    │
+23 |                                 │       │    ⠘⣇              │          ┊                    │
    |                                 f       y    AA              m          y                    f
-24 |                                 │       │     ⢣⡀             │          ┊                    │
+24 |                                 │       │     ⢻⡀             │          ┊                    │
    |                                 f       y     AB             m          y                    f
-25 |                                 │      1┤     ⠘⡄             │          ┊                    │
+25 |                                 │      1┤     ⠘⣇             │          ┊                    │
    |                                 f ggggggy     AA             m          y                    f
-26 |                                 │       │      ⢣⡆            │          ┊                    │
+26 |                                 │       │      ⢫⡆            │          ┊                    │
    |                                 f       y      AB            m          y                    f
-27 |                                 │       │       ⢣⡀           │          ┊                    │
+27 |                                 │       │       ⢿⡀           │          ┊                    │
    |                                 f       y       AB           m          y                    f
-28 |                                 │       │       ⠈⡆⡀          │          ┊                    │
+28 |                                 │       │       ⠘⡷⡀          │          ┊                    │
    |                                 f       y       AAB          m          y                    f
-29 |                                 │    0.8┤        ⠱⡀⡀         │          ┊                    │
+29 |                                 │    0.8┤        ⠱⡱⡀         │          ┊                    │
    |                                 f ggggggy        AAB         m          y                    f
-30 |                                 │       │         ⠘⢄         │          ┊                    │
+30 |                                 │       │         ⠹⣄         │          ┊                    │
    |                                 f       y         AA         m          y                    f
-31 |                                 │       │          ⠈⢆        │          ┊                    │
+31 |                                 │       │          ⠘⣆        │          ┊                    │
    |                                 f       y          AA        m          y                    f
-32 |                                 │    0.6┤           ⠈⠣⣀      │          ┊                    │
-   |                                 f ggggggy           vAA      m          y                    f
-33 |                                 │       │             ⠉⠱⡀    │          ┊                    │
-   |                                 f       y             vAA    m          y                    f
-34 |                                 │       │               ⠈⠑⠤⣀ │          ┊                    │
+32 |                                 │    0.6┤           ⠈⢧⣀      │          ┊                    │
+   |                                 f ggggggy           DAA      m          y                    f
+33 |                                 │       │             ⠉⢳⡀    │          ┊                    │
+   |                                 f       y             DAA    m          y                    f
+34 |                                 │       │               ⠙⠳⣦⣀ │          ┊                    │
    |                                 f       y               AAAA m          y                    f
-35 |                                 │       │                  ⠈⠉⠉⠒⠤⠤⠤⣀⣀⣀⡀  ┊                    │
+35 |                                 │       │                  ⠈⠙⠛⠶⣤⣤⣤⣀⣀⣀⣀  ┊                    │
    |                                 f       y                  vAAAAAAAAAA  y                    f
-36 |                                 │    0.4┤                    │    ⠉⠉⠉⠈⠉⠉⠒⠢⠔⠒⠒⠤⠤⠤⠤⠤⠤⠔⠒⠤⠤⠤⠤⠤⠤⠒ │
+36 |                                 │    0.4┤                    │    ⠉⠉⠉⠙⠛⠛⠒⠢⠔⠒⠒⠤⠤⠤⠤⠤⠤⠔⠒⠤⠤⠤⠤⠤⠤⠒ │
    |                                 f ggggggy                    m    vvvAAAvvvvvvvvvvvvvvvvvvvv f
 37 |                                 │       │                    │          ┊                    │
    |                                 f       y                    m          y                    f
 38 |                                 │       └┬───────────┬────────────┬────────────┬───────────┬ │
    |                                 f       yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy f
 39 |                                 │        0           5k    8,000              15k       step │ showing 0 – 20,000
-   |                                 f        g           gg   DDDDDDD             ggg       gggg f ggggggg ggg gggggg
+   |                                 f        g           gg   EEEEEEE             ggg       gggg f ggggggg ggg gggggg
 40 | charts › strips › zoom   ←→ step   esc strips   s smooth   + − zoom   ? keys
-   |accccccEEEccccccEEEDDDDaaaDDcccccaaaDDDcccccccaaaDcccccccaaaDDDcccccaaaDcccccaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+   |accccccFFFccccccFFFEEEEaaaEEcccccaaaEEEcccccccaaaEcccccccaaaEEEcccccaaaEcccccaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 cursor hidden
 a bg=Rgb(22,26,32)
 b fg=Rgb(143,152,165) bg=Rgb(22,26,32) bold
@@ -108,5 +108,6 @@ z fg=Rgb(48,52,58)
 A fg=Rgb(108,182,255)
 B fg=Rgb(180,190,254)
 C fg=Rgb(255,107,107) bold
-D fg=Rgb(238,241,245) bg=Rgb(22,26,32) bold
-E fg=Rgb(50,57,68) bg=Rgb(22,26,32)
+D fg=Rgb(54,91,128)
+E fg=Rgb(238,241,245) bg=Rgb(22,26,32) bold
+F fg=Rgb(50,57,68) bg=Rgb(22,26,32)

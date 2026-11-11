@@ -175,8 +175,8 @@ where each overlay's line ends in its letter:
 ```
 
 `dusty-mole`'s line stops at its first NaN. Where two lines cross a
-cell, the cursor's run is drawn last and wins it. `c` clears the
-overlays, and so does Esc at the charts.
+cell, both show, in the colour of the one drawn later; the cursor's run
+is drawn last. `c` clears the overlays, and so does Esc at the charts.
 
 ## Strips and zoom
 
@@ -188,13 +188,13 @@ step both logged:
 
 <!-- $MDX skip -->
 ```text
-│ ━ tidy-otter   ━ amber-fox                                      latest   vs amber-f…
+│ ━ tidy-otter   ━ amber-fox                                     latest   vs amber-fox
 │
 │  train/loss      ⠉⠒⠤⢄⣀⡀                                           0.2642        +11%
-│  ↓ min                ⠈⠉⠑⠒⠒⠢⠤⠤⠤⠤⠤⠤⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀
+│  ↓ min                ⠈⠉⠓⠒⠒⠦⠤⠤⠤⠤⢤⣤⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀
 │
 │ ▌val/loss        ⠑⠢⢄⣀                                             0.4077       +3.5%
-│  ↓ min               ⠉⠉⠒⠒⠢⠤⠤⠤⠤⠤⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⡀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀
+│  ↓ min               ⠉⠉⠒⠒⠢⠤⠤⠤⠤⠤⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀
 ```
 
 While the run is live, its machine's readings end the list, each filled
@@ -203,8 +203,8 @@ down to its floor:
 <!-- $MDX skip -->
 ```text
 │ machine ────────────────────────────────────────────────────────────────────────────
-│  GPU busy        ⣼⣾⣾⣾⣿⣿⣿⣿⣷⣷⣷⣷⣿⣿⣾⣿⣿⣾⣾⣾⣷⣷⣿⣿⣿⣷⡇⣿⣾⣾⣾⣿⣿⣿⣿⣷⣷⣷⣷⣿⣿           97%
-│                  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+│  GPU busy        ⣼⣾⣾⣾⣿⣿⣿⣿⣷⣷⣷⣷⣿⣿⣾⣿⣿⣿⣾⣾⣷⣷⣿⣿⣿⣷⣿⣿⣾⣾⣾⣿⣿⣿⣿⣷⣷⣷⣷⣿⣿           97%
+│                  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
 ```
 
 `up` and `down` move between the strips, and Enter on one zooms it: the

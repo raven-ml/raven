@@ -34,25 +34,25 @@
    |                                 f       wBB                           w                    f gggggg tt
 18 |                                 │       │ ⢱                           ┊                    │ wd     0.05000
    |                                 f       w B                           w                    f gg     ttttttt
-19 |                                 │    1.5┤ ⠈⡆                          ┊                    │ +1 more   i: all
+19 |                                 │    1.5┤ ⠈⣆                          ┊                    │ +1 more   i: all
    |                                 f ggggggw BB                          w                    f gggggggggggggggg
-20 |                                 │       │  ⠘⡄                         ┊                    │
+20 |                                 │       │  ⠘⣆                         ┊                    │
    |                                 f       w  BB                         w                    f
-21 |                                 │       │   ⠸⡀                        ┊                    │ machine ─────────────────
+21 |                                 │       │   ⠸⡄                        ┊                    │ machine ─────────────────
    |                                 f       w   BB                        w                    f hhhhhhh fffffffffffffffff
-22 |                                 │       │    ⠱⡀                       ┊                    │ GPU  ━━━━━━━━━━━━━━━╸ 97%
+22 |                                 │       │    ⠹⣄                       ┊                    │ GPU  ━━━━━━━━━━━━━━━╸ 97%
    |                                 f       w    BB                       w                    f ggg  xxxxxxxxxxxxxxxx ttt
-23 |                                 │      1┤     ⠘⢄                      ┊                    │ VRAM ━━━━━━━━━━─ 21.3/24G
+23 |                                 │      1┤     ⠘⢦                      ┊                    │ VRAM ━━━━━━━━━━─ 21.3/24G
    |                                 f ggggggw     BB                      w                    f gggg xxxxxxxxxxw tttttttt
-24 |                                 │       │      ⠈⢢⡀                    ┊                    │ CPU  ━━━━━━━━━━━╸──── 71%
+24 |                                 │       │      ⠈⢷⡀                    ┊                    │ CPU  ━━━━━━━━━━━╸──── 71%
    |                                 f       w      BBz                    w                    f ggg  xxxxxxxxxxxxwwww ttt
-25 |                                 │       │        ⠑⠢⡀                  ┊                    │ RAM  ━━━━╸──── 33.0/62.7G
+25 |                                 │       │        ⠙⢷⡀                  ┊                    │ RAM  ━━━━╸──── 33.0/62.7G
    |                                 f       w        BBB                  w                    f ggg  xxxxxwwww tttttttttt
-26 |                                 │       │          ⠈⠒⢄⡀               ┊                    │ 71°C  274 W
+26 |                                 │       │          ⠙⠲⢄⡀               ┊                    │ 71°C  274 W
    |                                 f       w          BBBB               w                    f kkkkggggggg
-27 |                                 │    0.5┤             ⠈⠉⠒⠒⠢⠤⢄⣀⣀⣀⡀     ┊                    │
+27 |                                 │    0.5┤             ⠈⠉⠒⠶⠦⢤⣄⣀⣀⣀⡀     ┊                    │
    |                                 f ggggggw             BBBBBBBBBBB     w                    f
-28 |                                 │       │                     ⠉⠉⠈⠉⠉⠉⠉⠉⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒  │ source ──────────────────
+28 |                                 │       │                     ⠉⠉⠉⠉⠉⠉⠛⠛⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒  │ source ──────────────────
    |                                 f       w                     ssBBBBBBsssssssssssssssssss  f hhhhhh ffffffffffffffffff
 29 |                                 │       └┬───────────┬───────────┬───────────┬──────────┬  │ 5eaf82b dirty
    |                                 f       wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww  f tttttttvvvvvv
@@ -62,19 +62,19 @@
    |                                 f                                                          f
 32 |                                 │ train/loss                   train/acc                   │
    |                                 f hhhhhhhhhh                   hhhhhhhhh                   f
-33 |                                 │       │⡄           ┊now            │      ⢀⣀⣀⠤⠤⠤⠄now⠒⠒⠒⠒ │
+33 |                                 │       │⡄           ┊now            │      ⢀⣀⣤⠤⠴⠶⠖now⠒⠒⠒⠒ │
    |                                 f       wB           wggg            w      sBBBBBBgggssss f
-34 |                                 │      2┤⠸⡀          ┊               │    ⢠⠔⠉     ┊        │
+34 |                                 │      2┤⠼⡀          ┊               │    ⣠⠞⠉     ┊        │
    |                                 f ggggggwBB          w               w    BBB     w        f
-35 |                                 │       │⠐⢱          ┊            0.8┤  ⠄⡔⠁       ┊        │
+35 |                                 │       │⠐⢳          ┊            0.8┤  ⠄⡴⠁       ┊        │
    |                                 f       wFB          w         ggggggw  FBB       w        f
 36 |                                 │       │ ⢁⢣         ┊               │ ⡐⡜         ┊        │
    |                                 f       w FB         w               w FB         w        f
-37 |                                 │      1┤  ⠂⠣⡀       ┊            0.6┤⠠⡸          ┊        │
+37 |                                 │      1┤  ⠂⢳⡀       ┊            0.6┤⠠⡸          ┊        │
    |                                 f ggggggw  FBB       w         ggggggwFB          w        f
-38 |                                 │       │    ⠑⠤⣀     ┊               │⢰⠁          ┊        │
+38 |                                 │       │    ⠑⢤⣀     ┊               │⢰⠁          ┊        │
    |                                 f       w    BBB     w               wBB          w        f
-39 |                                 │       │      ⠈⠉⠑⠒⠒⠒⠂⠤⠤⠤⠤⠤⠤⠤        │⠃           ┊        │
+39 |                                 │       │      ⠈⠙⠓⠒⠶⠶⠦⠤⠤⠤⠤⠤⠤⠤        │⠃           ┊        │
    |                                 f       w      sBBBBBBsssssss        wB           w        f
 40 | charts › strips › zoom   ↑↓ run   ←→ metric   enter strips   space overlay   / filter   ? keys
    |aGGGGGGHHHccccccHHHccccaaaGGccccaaaGGcccccccaaaGGGGGcccccccaaaGGGGGccccccccaaaGcccccccaaaGcccccaaaaaaaaaaaaaaaaaaaaaaaaa

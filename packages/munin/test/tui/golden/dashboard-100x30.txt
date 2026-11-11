@@ -46,11 +46,11 @@
    |                                 f       sz     sggg        s   zzzzggg f gggg tttttttttts xxxxxxxx
 24 |                                 │      2┤⢣     ┊           │  ⡰⠁  ┊    │ CPU  ━━━━━━━━━━━╸──── 71%
    |                                 f ggggggsz     s           s  zz  s    f ggg  ttttttttttttssss xxx
-25 |                                 │       │⢸     ┊        0.8┤ ⢰⠁   ┊    │ RAM  ━━━━╸──── 33.0/62.7G
+25 |                                 │       │⢺     ┊        0.8┤ ⢲⠁   ┊    │ RAM  ━━━━╸──── 33.0/62.7G
    |                                 f       sz     s     ggggggs zz   s    f ggg  tttttssss xxxxxxxxxx
 26 |                                 │       │⢀⡇    ┊           │⠈⡇    ┊    │ 71°C  274 W
    |                                 f       sAz    s           sAz    s    f jjjjggggggg
-27 |                                 │      1┤ ⠸⡀   ┊        0.6┤⢸     ┊    │
+27 |                                 │      1┤ ⡸⡀   ┊        0.6┤⢼     ┊    │
    |                                 f ggggggs zz   s     ggggggsz     s    f
 28 |                                 │       │  ⠱⡀  ┊           │⡜     ┊    │ source ──────────────────
    |                                 f       s  zz  s           sz     s    f hhhhhh ffffffffffffffffff

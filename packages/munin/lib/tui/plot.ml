@@ -382,10 +382,8 @@ let draw th c g =
       in
       let rule (s : Ansi.Style.t) dash v = Mc.attrs s.attrs (Mc.vline ~dash ?color:s.fg v) in
       let now = match c.now with Some v when in_x v -> Some v | _ -> None in
-      let rules =
-        Option.to_list (Option.map (rule (Th.fg th Line2) `Dotted) now)
-        @ Option.to_list (Option.map (rule (Th.fg th Mid) `Solid) c.cursor)
-      in
+      let now_rule = Option.to_list (Option.map (rule (Th.fg th Line2) `Dotted) now) in
+      let cursor_rule = Option.to_list (Option.map (rule (Th.fg th Mid) `Solid) c.cursor) in
       let spiky =
         match cursor with
         | Some (l, r, _) when not c.extents ->
@@ -418,7 +416,12 @@ let draw th c g =
       let overlays = of_role (function Overlay _ -> true | _ -> false) in
       let mine = of_role (( = ) Cursor) in
       let labels = labels th c ~top ~event ~now line_points in
-      let marks = hatched @ rules @ spiky @ context @ banded @ overlays @ mine @ labels in
+      (* Rules under every mark of dots. Dots that share a cell merge and
+         take the later's colour, so the cursor's run, its spikes and raw
+         extent included, colours each cell it shares. *)
+      let marks =
+        hatched @ now_rule @ cursor_rule @ context @ overlays @ spiky @ banded @ mine @ labels
+      in
       let most = max 2 (1 + (((Mc.Layout.plot sk).height - 1) / tick_rows)) in
       let ticks = y_ticks ~log ~most y in
       Mc.draw (layout th c ~width ~height ~y ~log ~ticks marks) g ~x:0 ~y:0

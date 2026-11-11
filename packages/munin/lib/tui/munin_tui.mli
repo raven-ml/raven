@@ -126,7 +126,10 @@
     + On a chart with axes, from the cursor's run's first sample that is not
       finite, the plot is hatched and labelled [× NaN], [× inf] or [× -inf].
     + The other runs of the experiment ([r]) are drawn first, in grey, then the
-      overlays, then the cursor's run, which wins a cell it shares.
+      overlays, then the cursor's run, its spikes and raw extent with it. Runs
+      that share a cell all show there, in the colour of the run drawn later.
+      A rule shows where no dots are; at zoom, the chip on the x axis marks
+      the cursor's step.
     + Without colour each overlay's line ends in its letter, [a] to [d].
     + While the run is live a faint rule marks its latest step, [now], on a
       chart with axes.

@@ -110,6 +110,13 @@ val draw : Theme.t -> t -> Matrix_grid.t -> unit
     - A dotted rule at [c.now] labelled [now], and a rule at [c.cursor],
       whose step the x axis labels with a blank each side, so that the tick
       labels, which keep a cell from it, stay clear of its digits.
+    - A cell shows one glyph in one colour. A rule is context and dots are
+      data: a cell that dots take, a line's, a spike's or the raw
+      extent's, shows them, never a rule, so a rule shows where no dots
+      are. Dots that share a cell all show, in the colour of the run drawn
+      later. The cursor's run, its spikes and raw extent with it, is drawn
+      last and colours every cell it shares: where its line crosses its
+      own raw extent or a spike, those dots show in the line's colour.
     - Without colour, each overlay's letter one cell right of its last
       point in the plot, or on it at the plot's edge.
     - A label starts one cell right of its point, moved inside the plot

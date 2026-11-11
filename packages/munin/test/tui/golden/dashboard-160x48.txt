@@ -82,11 +82,11 @@
    |                                         f       sz          sggg            s      zzzzzzggg            s     zzzzzzzggg     f
 42 |                                         │      2┤⠸⡀         ┊               │    ⡰⠊     ┊               │   ⡠⠊⠁     ┊        │
    |                                         f ggggggszz         s               s    zz     s               s   zzz     s        f
-43 |                                         │       │⠐⢣         ┊            0.8┤  ⢀⠜       ┊               │  ⡜        ┊        │
+43 |                                         │       │⠐⢣         ┊            0.8┤  ⢄⠜       ┊               │  ⡜        ┊        │
    |                                         f       sAz         s         ggggggs  zz       s               s  z        s        f
 44 |                                         │       │ ⢂⢇        ┊               │ ⠌⡎        ┊            0.5┤ ⡜         ┊        │
    |                                         f       s Az        s               s Az        s         ggggggs z         s        f
-45 |                                         │      1┤  ⠈⢆       ┊            0.6┤⠠⡜         ┊               │⢰⠁         ┊        │
+45 |                                         │      1┤  ⠊⢆       ┊            0.6┤⠠⡜         ┊               │⢰⠁         ┊        │
    |                                         f ggggggs  zz       s         ggggggsAz         s               szz         s        f
 46 |                                         │       │    ⠣⢄     ┊               │⢰⠁         ┊               │⡜          ┊        │
    |                                         f       s    zz     s               szz         s               sz          s        f

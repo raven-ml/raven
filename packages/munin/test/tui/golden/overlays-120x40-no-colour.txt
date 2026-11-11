@@ -62,7 +62,7 @@
    |                                   aaaaaaaaaa                   aaaaaaaaa
 33 |                                 │       │⡄           ┊now            │      ⢀⣀⣤⠤⠴⠶⠖now⠒⠒⠒a │
    |                                         b            bbbb            b             bbb   a
-34 |                                 │      2┤⠸⡀          ┊               │    ⣠⠞⠉     ┊        │
+34 |                                 │      2┤⠼⡀          ┊               │    ⣠⠞⠉     ┊        │
    |                                   bbbbbbb            b               b            b
 35 |                                 │       │⠐⢳          ┊            0.8┤  ⠄⡴⠁b      ┊        │
    |                                         bb           b         bbbbbbb  b  a      b

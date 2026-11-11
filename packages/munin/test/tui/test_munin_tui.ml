@@ -954,6 +954,8 @@ let braille g i =
   let cp = Matrix.Grid.get_codepoint g i in
   if cp >= 0x2800 && cp <= 0x28FF then cp - 0x2800 else 0
 
+let colour = Windtrap.Testable.make ~pp:Matrix.Ansi.Color.pp ~equal:Matrix.Ansi.Color.equal
+
 (* [rows ink] is, for each dot column inked, its least and greatest row,
    by column. *)
 let rows ink =
@@ -1035,6 +1037,11 @@ let last_step samples = List.fold_left (fun m (s, _) -> max m s) 0 samples
 let domain samples = (0., Float.of_int (last_step samples + 1))
 let me = Munin_tui.Plot.Cursor
 let mine = fg (Munin_tui.Theme.run truecolor 0)
+
+(* A run drawn in the cursor's colour without its spikes: an overlay. A
+   spike's dot takes the cursor's line's colour in a cell it shares with
+   the line, so a law of the line alone reads it from this run. *)
+let plain = Munin_tui.Plot.Overlay 'a'
 
 (* The value a y label names, with its suffix. *)
 let label_value s =
@@ -1128,7 +1135,7 @@ let rising =
       let ch = chart ~log ~guides:c.guides (domain samples) in
       let g =
         drawn truecolor ch ~width:c.width ~height:c.height
-          [ (me, 0, series_of samples) ]
+          [ (plain, 0, series_of samples) ]
       in
       let rec check = function
         | (k, (top, bottom)) :: ((k', (top', bottom')) :: _ as rest) ->
@@ -1220,19 +1227,49 @@ let non_finite =
         ~than:(List.fold_left min max_int hatch)
         (List.fold_left max 0 line))
 
-(* Law 7: the cursor's run is drawn last and wins every cell it shares. *)
+(* Law 7: the cursor's run is drawn last, its spikes included: a cell it
+   shares with another run's line shows the dots of both, in the cursor's
+   run's colour. The other run logs the cursor's values in reverse, so the
+   two share a y domain and each draws alone as it draws with the other. *)
 let cursor_wins =
-  prop "the cursor's run wins the cells an overlay shares with it"
-    (gen_draw_case ())
-    (fun c ->
-      let s = series_of c.samples in
+  prop "the cursor's run colours a cell it shares"
+    (Gen.with_pp
+       (fun ppf (c, other) ->
+         Format.fprintf ppf "%a, %s" pp_draw_case c
+           (match other with `Context -> "a grey run" | `Overlay -> "an overlay"))
+       (Gen.pair (gen_draw_case ()) (Gen.of_list [ `Context; `Overlay ])))
+    (fun (c, other) ->
+      let steps, values = List.split c.samples in
+      let s = series_of c.samples
+      and r = series_of (List.combine steps (List.rev values)) in
+      let role = match other with `Context -> Munin_tui.Plot.Context | `Overlay -> Overlay 'a' in
       let ch = chart ~guides:c.guides (domain c.samples) in
-      let g =
-        drawn truecolor ch ~width:c.width ~height:c.height
-          [ (Munin_tui.Plot.Overlay 'a', 1, s); (me, 0, s) ]
-      in
-      let other = fg (Munin_tui.Theme.run truecolor 1) in
-      equal (list (pair int int)) [] (ink ~colour:other g))
+      let draw runs = drawn truecolor ch ~width:c.width ~height:c.height runs in
+      let g = draw [ (role, 1, r); (me, 0, s) ]
+      and theirs = draw [ (role, 1, r) ]
+      and ours = draw [ (me, 0, s) ] in
+      let spike = fg (Munin_tui.Theme.faint_run truecolor 0) in
+      let shared = ref 0 and spiked = ref 0 in
+      for y = 0 to c.height - 1 do
+        for x = 0 to c.width - 1 do
+          let i = Matrix.Grid.idx g ~x ~y in
+          let a = braille theirs i and b = braille ours i in
+          if a lor b <> 0 then begin
+            if a <> 0 && b <> 0 then begin
+              incr shared;
+              if Matrix.Ansi.Color.equal (Matrix.Grid.get_fg ours i) spike then incr spiked
+            end;
+            let expected = Matrix.Grid.get_fg (if b <> 0 then ours else theirs) i in
+            equal ~msg:(Printf.sprintf "cell %d,%d: dots, colour" x y) (pair int colour)
+              (a lor b, expected)
+              (braille g i, Matrix.Grid.get_fg g i)
+          end
+        done
+      done;
+      cover "a cell both runs ink" (!shared > 0);
+      cover ~share:0.05 "a spike in a cell the other run inks" (!spiked > 0);
+      cover "a grey run" (other = `Context);
+      cover "an overlay" (other = `Overlay))
 
 (* Law 8: without colour, each overlay ends in its letter. *)
 let letters =
@@ -1436,6 +1473,105 @@ let now_rule =
         else (if String.sub text i 3 = "now" then 1 else 0) + count (i + 1)
       in
       equal ~msg:"the now labels" int 1 (count 0))
+
+(* A rule is context and dots are data: on the [now] rule's or zoom's
+   cursor rule's column, a cell that dots take, a line's, a spike's or the
+   raw extent's, shows them as it shows without the rule, and a cell no
+   dots take shows the rule. With two runs at zoom, the cursor's raw extent
+   shares the rule's column with the other run's line, and the cursor's run,
+   drawn last, colours the cells they share. *)
+let lines_over_rules =
+  let gen =
+    let open Gen in
+    let* role =
+      one_of
+        (List.map constant
+           [ `Context; `Overlay; `Cursor; `Band_and `Context; `Band_and `Overlay ])
+    in
+    let band = match role with `Band_and _ -> true | _ -> false in
+    (* Many samples a dot column and a gentle slope make a tall extent. *)
+    let* n = if band then int_range 1000 3000 else int_range 20 400 in
+    let* slope = if band then float_range (-0.01) 0.01 else float_range (-5.) 5. in
+    let* noise = list ~size:(constant n) (float_range (-1.) 1.) in
+    let* width = int_range 30 120 in
+    let* height = int_range 6 24 in
+    let* at = float_range 0.05 0.95 in
+    let* zoom = if band then constant true else bool in
+    let+ off = float_range (-8.) 8. in
+    let samples = List.mapi (fun i e -> (i, (slope *. Float.of_int i) +. (10. *. e))) noise in
+    (samples, width, height, at, zoom, role, off)
+  in
+  let name = function
+    | `Context -> "grey run"
+    | `Overlay -> "overlay"
+    | `Cursor -> "cursor's run"
+    | `Band_and `Context -> "cursor's run and a grey run"
+    | `Band_and `Overlay -> "cursor's run and an overlay"
+  in
+  let pp ppf (s, w, h, at, zoom, role, off) =
+    Format.fprintf ppf "%dx%d, %d samples, %s rule at %g, %s, the other %+g" w h (List.length s)
+      (if zoom then "cursor" else "now") at (name role) off
+  in
+  prop "dots win the cells they share with a rule" (Gen.with_pp pp gen)
+    (fun (samples, width, height, at, zoom, role, off) ->
+      let lo, hi = domain samples in
+      let v = Float.floor (lo +. (at *. (hi -. lo))) in
+      let base = { (chart (lo, hi)) with extents = zoom } in
+      let ch = if zoom then { base with cursor = Some v } else { base with now = Some v } in
+      let other r =
+        match r with
+        | `Context -> (Munin_tui.Plot.Context, 0, fg (Munin_tui.Theme.faint truecolor Dim))
+        | `Overlay -> (Munin_tui.Plot.Overlay 'a', 1, fg (Munin_tui.Theme.run truecolor 1))
+      in
+      let shifted = List.map (fun (i, y) -> (i, y +. off)) samples in
+      let runs, theirs =
+        match role with
+        | (`Context | `Overlay) as r ->
+            let role, colour, _ = other r in
+            ([ (role, colour, series_of samples) ], None)
+        | `Cursor -> ([ (me, 0, series_of samples) ], None)
+        | `Band_and r ->
+            let role, colour, line = other r in
+            ([ (role, colour, series_of shifted); (me, 0, series_of samples) ], Some line)
+      in
+      let g = drawn truecolor ch ~width ~height runs
+      and bare = drawn truecolor base ~width ~height runs
+      and alone = drawn truecolor ch ~width ~height []
+      and no_band = drawn truecolor { base with extents = false } ~width ~height runs in
+      let band = fg (Munin_tui.Theme.faint_run truecolor 0) in
+      let rule_glyph s = s = "│" || s = "┊" in
+      let cell = pair string colour in
+      let shared = ref 0 and ruled = ref 0 and taken = ref 0 in
+      for y = 0 to height - 1 do
+        for x = 0 to width - 1 do
+          let i = Matrix.Grid.idx g ~x ~y in
+          let shown g = (Matrix.Grid.get_text g i, Matrix.Grid.get_fg g i) in
+          let msg = Printf.sprintf "cell %d,%d" x y in
+          if rule_glyph (Matrix.Grid.get_text alone i) then
+            if braille bare i <> 0 then begin
+              incr shared;
+              (* The band takes a cell the other run's line crosses. *)
+              (match theirs with
+               | Some line
+                 when Matrix.Ansi.Color.equal (Matrix.Grid.get_fg no_band i) line
+                      && braille no_band i <> 0
+                      && Matrix.Ansi.Color.equal (Matrix.Grid.get_fg bare i) band ->
+                   incr taken
+               | _ -> ());
+              equal ~msg cell (shown bare) (shown g)
+            end
+            else if String.trim (Matrix.Grid.get_text bare i) = "" then begin
+              incr ruled;
+              equal ~msg cell (shown alone) (shown g)
+            end
+        done
+      done;
+      cover "dots on the rule" (!shared > 0);
+      cover "the rule where no dots are" (!ruled > 0);
+      cover "a grey run's line" (role = `Context);
+      cover "an overlay's line" (role = `Overlay);
+      cover "zoom's cursor rule" zoom;
+      cover ~share:0.1 "the band takes a cell another run's line crosses, on the rule" (!taken > 0))
 
 (* Round numbers are the floats nearest their decimal values, on every
    system: law 1's end is the least of 1, 2 or 5 times a power of ten at or
@@ -1652,7 +1788,7 @@ let filled =
     (gen_draw_case ~value:(Gen.float_range (-50.) 50.) ())
     (fun c ->
       let ch = { (chart ~guides:`None (domain c.samples)) with fill = true } in
-      let g = drawn truecolor ch ~width:c.width ~height:c.height [ (me, 0, series_of c.samples) ] in
+      let g = drawn truecolor ch ~width:c.width ~height:c.height [ (plain, 0, series_of c.samples) ] in
       let ink = ink ~colour:mine g in
       let floor = (4 * c.height) - 1 in
       cover "several columns" (List.length (rows ink) > 1);
@@ -1708,7 +1844,7 @@ let cadence =
       let f s = offset +. (scale *. exp (-.Float.of_int s /. rate)) in
       let every k = List.init ((n / k) + 1) (fun i -> (i * k, f (i * k))) in
       let ch = chart ~smooth:true ~guides:`Both (0., Float.of_int n) in
-      let line k = rows (ink ~colour:mine (drawn truecolor ch ~width ~height:12 [ (me, 0, series_of (every k)) ])) in
+      let line k = rows (ink ~colour:mine (drawn truecolor ch ~width ~height:12 [ (plain, 0, series_of (every k)) ])) in
       let a = line 1 and b = line 50 in
       equal ~msg:"dot columns" Windtrap.(list int) (List.map fst a) (List.map fst b);
       List.iter2
@@ -3091,7 +3227,7 @@ let () =
            ];
          group "charts"
            [
-             binned; rising; spike; non_finite; cursor_wins; zoom_cursor; letters; exact_labels; tick_labels; x_domain; now_rule; bounds;
+             binned; rising; spike; non_finite; cursor_wins; zoom_cursor; lines_over_rules; letters; exact_labels; tick_labels; x_domain; now_rule; bounds;
              ticks_of;
              log_choice; y_per_metric; cut_law; values_printed; rounding_shown;
              filled;

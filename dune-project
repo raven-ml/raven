@@ -29,7 +29,7 @@
 
 (pin
  (url
-  "git+https://github.com/tmattio/mosaic.git#66da2fdde6790351b9bc16561a97249bb92d1a31")
+  "git+https://github.com/invariant-hq/mosaic.git#75f374107e7bae09b8e6c9fd87e2b6279c237535")
  (package
   (name mosaic))
  (package
