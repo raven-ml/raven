@@ -275,3 +275,23 @@ val compile : Ops.t -> Renderer.t -> Ops.t
 
     Raises [Invalid_argument] if [prg] is not a program {!linearize} made, and
     {!Renderer.Compiler.Compile_error} if the compiler rejects the source. *)
+
+(**/**)
+
+val blocked_sums :
+  ?optimize:bool ->
+  ?beam:(int -> Postrange.Scheduler.t -> Postrange.Scheduler.t) ->
+  Ops.t ->
+  Renderer.t ->
+  Ops.t
+(** [blocked_sums ~optimize ~beam ast ren] is [ast] lowered as
+    {!full_rewrite_to_sink} lowers it, up to its reductions: each float sum of
+    more than 256 terms a thread nested into blocks of at most 256 terms,
+    whose sums an outer reduce adds in order. *)
+
+val unblocked : Renderer.t -> Ops.t -> Ops.t list
+(** [unblocked ren sink] is each float [Add] reduce of [sink], a
+    {!blocked_sums} result, whose running sum takes more than 256 terms a
+    thread and is neither an outer sum of blocks nor a stated exception: a
+    range of trips no literal states, or accumulators past 320 bytes a thread
+    on a renderer with local threads. For the tests. *)

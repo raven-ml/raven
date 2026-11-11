@@ -10121,3 +10121,52 @@ kept in ordered sets, change no source and belong to D466.
   rune's bench rows `Cuda/scatter-4096-rows-into-donated-bf16-8192x512`,
   `Cuda/scatter-16384-rows-into-donated-bf16-32768x512` and
   `Cuda/logsumexp-float32-4096x2880` (baselines to record).
+
+## D480. A float sum adds at most 256 terms into one running sum
+
+- **tinygrad:** `codegen/__init__.py` (`lower_reduce`), which gives each
+  reduce one register accumulator over all of its ranges, however many
+  terms they take: a 64 × 64 weight gradient over 16384 rows,
+  `r_16_4_16_4_4096_4` on the host, adds 4096 chunks of 4 products into one
+  running sum.
+- **tolk:** `Codegen.nest_chains`, which `Codegen.full_rewrite_to_sink`
+  applies after the expander, before `pm_reduce_local`; `Codegen.chain`,
+  `Codegen.held`.
+- **Differs:** a float `Add` reduce whose ranges, its unrolled lanes and a
+  tensor core's products counted, take more than 256 terms a thread
+  becomes an inner reduce over its innermost ranges, at most 256 terms from
+  `+0`, inside an outer one over the rest, which adds the inner sums in
+  order. A range that does not fit splits at its greatest divisor that
+  fills at least half the room left, else at the room, its last block's
+  trips past the range gated off (`4096` trips of 4 lanes are 64 blocks of
+  64; `16381` trips are 64 blocks of 256, the last of 253). Every reduce
+  over one range splits it alike, at the least room any of them leaves, so
+  siblings keep one loop. A reduce whose lanes leave no room, past 128,
+  nests with no range inside: each trip's lanes sum from `+0`, in blocks of
+  256, and the outer reduce adds them. Two kinds of sum keep one running
+  sum, and their bounds are a single chain's: a sum over a range whose trip
+  count is not a constant, and, on a renderer with local threads, any sum
+  whose accumulators pass 320 bytes a thread, float32 past 80 and float64
+  past 40, a staged tensor core's tile among them, since a second set would
+  spill the thread's registers (on CUDA the staged tile's 128 float32
+  accumulators take 228 registers alone, and nested 255 with 560 bytes of
+  spills). The kernel's name, which its optimisations give, does not
+  change.
+- **Reason:** (e) and (b): nx's kernel contract bounds a float sum of `n`
+  terms by `γ(β(n)) Σ|x|`, `β(n) = ⌈5 min(n, 256) / 4⌉ + ⌈n / 128⌉`, on
+  every library (`Nx_kernel`'s error bounds), and one running sum exceeds
+  it past 324 terms. tessera's `validate --training` derives its
+  margins from that bound, and its float32 weight gradients over 16384
+  rows sat at 0.975 of the old one. Measured against float64 at 64 × 64 ×
+  16384, normal operands, the relative Frobenius error goes from 1.15e-6 to
+  2.15e-7 on the host and CUDA; positive ones, 9.8e-7 to 1.27e-7. A
+  bfloat16 product of 1760 × 440 × 16384 on CUDA goes from 2.37e-5 to
+  2.86e-7.
+- **Pinned by:** rune's `rune jit › classes › a long sum holds the blocked
+  bound` and `› a weight gradient holds the blocked bound`, which fail with
+  one running sum (terms that lose half an ulp each in it), and `Rune.jit on
+  a GPU › a long sum and a weight gradient hold the blocked bound`; the
+  `codegen` suite's `stages › every long float sum is in blocks of 256
+  terms`, over every kernel it lowers; the `codegen` goldens `readout_*`,
+  `sum_all_clang`, `matvec_clang` and `linearizer_fail_1_clang`, whose
+  `.tolk` hold the blocked loops.

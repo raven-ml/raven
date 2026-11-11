@@ -79,6 +79,44 @@ let lowered row =
 let program row =
   under row (fun () -> Codegen.to_program (kernel row) (renderer_of_row row))
 
+(* Every float sum of a lowered kernel past 256 terms a thread is in blocks,
+   or one of the exceptions the lowering states. *)
+let blocked row =
+  let k = kernel row and ren = renderer_of_row row in
+  under row (fun () ->
+      let sink = Codegen.blocked_sums ~optimize:(optimize k) k ren in
+      let left =
+        List.map (Format.asprintf "%a" Ops.pp) (Codegen.unblocked ren sink)
+      in
+      equal ~msg:"sums left in one chain" (list string) [] left)
+
+(* A float32 sum of 480 terms a row, unrolled by 32 then 3: 96 lanes a trip
+   over 5 trips. The lanes leave room for 2 trips a block, and no divisor of 5
+   above 1 fits it, so the range pads to blocks of 2. A block of 1 trip would
+   be the range itself, whose split would contain itself. *)
+let odd_trips_sum =
+  let rows = 4 and terms = 480 in
+  let c = Shape.param ~shape:[ Ops.Int rows ] 0 Float32
+  and a = Shape.param ~shape:[ Ops.Int (rows * terms) ] 1 Float32 in
+  let open Ops.O in
+  let i = Ops.range ~axis_type:Weak (Int rows) [ 0 ]
+  and r = Ops.range ~axis_type:Weak (Int terms) [ 1 ] in
+  let sum = Ops.reduce (Ops.index a [ (i * int terms) + r ]) Add [ r ] in
+  let unroll amount =
+    Opt.Split { axis = 1; amount; target = Upcast; top = false }
+  in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply:[ unroll 32; unroll 3 ] ())
+    [ Ops.end_ (Ops.store (Ops.index c [ i ]) sum) [ i ] ]
+
+let pads_odd_trips () =
+  let sink = Codegen.blocked_sums odd_trips_sum clang in
+  let left =
+    List.map (Format.asprintf "%a" Ops.pp) (Codegen.unblocked clang sink)
+  in
+  equal ~msg:"sums left in one chain" (list string) [] left;
+  ignore (Codegen.full_rewrite_to_sink odd_trips_sum clang)
+
 (* The golden of a case is a sink of the lowered kernel and the program, less
    its binary. *)
 let recorded row = Golden.sink (row "name" ^ ".golden")
@@ -229,6 +267,9 @@ let stages =
            ~only:(fun row -> compiles row && not (d9 row))
            programs_as_tinygrad);
       group "each program is rendered as recorded" sources;
+      group "every long float sum is in blocks of 256 terms"
+        (test "96 lanes over 5 trips pad to blocks of 2 trips" pads_odd_trips
+        :: per_row ~only:compiles blocked);
       group "an emulated float8 program launches as recorded"
         (per_row ~only:d9 launches_as_tinygrad);
       group "an optimisation that does not apply raises tinygrad's error"

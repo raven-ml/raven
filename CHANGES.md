@@ -1302,6 +1302,13 @@ its lock and from samples the dashboard saw arrive.
   takes 16 threads an output: on an RTX 5000 Ada `Nx.logsumexp` of 4096 rows
   of 2880 runs 5.9x faster and a float32 sum of 4096 rows of 4096 6.1x. A
   float sum's bits change there.
+- A float sum adds at most 256 terms into one running sum, then adds that
+  sum into an outer one in order, after the kernel's optimisations: a
+  64 × 64 float32 weight gradient over 16384 rows errs 5 times less
+  (1.1e-6 to 2.1e-7). On a GPU, a sum whose running sums pass 320 bytes a
+  thread, as a staged tensor core's tile's do, keeps one, as does a sum over
+  a range whose trip count is not a constant.
+
 - `Tolk_engine.link` launches a software device's kernels (`Rig.software`)
   on that device, where it launched them on the host, so `Tolk_engine.time`
   times them there.

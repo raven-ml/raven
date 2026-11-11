@@ -611,6 +611,228 @@ let devectorizer2 =
              else None);
        ])
 
+(* Chains
+
+   A float sum adds at most [chain] terms into one running sum before that sum
+   is added into another: a sum's error bound grows with the longest chain of
+   roundings a term passes, and a running sum of [n] terms passes [n - 1].
+   After the kernel's optimisations, which fix how many terms each thread's
+   accumulator takes, a float [Add] reduce whose serial ranges, its unrolled
+   lanes counted, take more than [chain] terms becomes an inner reduce over
+   its innermost ranges, at most [chain] terms from [+0], inside an outer one
+   over the rest, which adds the inner sums in order. Where the innermost
+   ranges that fit leave room, the next range splits at its greatest divisor
+   that fits: [4096] trips of [4] lanes are [64] blocks of [64] trips; where
+   none fills half the room, at the room, its last block padded.
+
+   A term so passes at most [chain] additions in its block, a tensor core's
+   step, which adds its products at once by aligning and truncating them,
+   counting [5/4] a product; then one per later block of its thread, a block
+   at least half the room, so at most [⌈t / 128⌉] blocks; then one per later
+   partial of its workgroup's [G] threads, at most [256], which a group adds
+   in order; then, where the scheduler splits a long sum into two kernels,
+   those of the second kernel's reduce of the partials, itself in blocks.
+   With [t] terms a thread, that is at most
+   [⌈5 min(t, 256) / 4⌉ + ⌈t / 128⌉ + G - 2] before the split, within
+   [β(t G) = ⌈5 min(t G, 256) / 4⌉ + ⌈t G / 128⌉], the bound the kernel
+   contract states, for every [t] up to [2{^20}] and [G] up to [256], and
+   beyond, where [t G / 128] grows faster than [t / 128 + G]; with a split's
+   [s - 1] more, its [8] to [256] partials added in order, for the [32768]
+   terms and more the scheduler splits. *)
+
+let chain = 256
+
+(* A GPU thread's registers hold its accumulators, a nested sum two of each:
+   past [held] bytes of them a thread's registers spill. On CUDA (255 a
+   thread), a staged core's 128 float32 accumulators take 228 registers
+   alone and spilled 560 bytes nested; a core's 80 took 240 nested, a
+   blocked float32 tile's 64 took 207. Such a sum keeps its one running sum,
+   and its bound is a single chain's. *)
+let held = 320
+
+let serial u =
+  match axis_type u with
+  | Axis_type.Weak | Loop | Upcast -> true
+  | Global | Local | Warp | Placeholder -> false
+
+(* The trips of [r], if they are a literal. *)
+let trips r =
+  if not (is_literal (nth r 0)) then None
+  else
+    let n = Bigint.succ (Dtype.Value.to_z (vmax r)) in
+    if Bigint.fits_int n then Some (Bigint.to_int n) else None
+
+(* The products a core adds into its accumulator at once. *)
+let rec core_terms x =
+  match (op x, arg x) with
+  | Op.Wmma, Wmma w ->
+      let _, _, k = w.dims in
+      k
+  | (Op.Reshape | Op.Permute | Op.Cast), _ -> core_terms (nth x 0)
+  | _ -> 1
+
+(* The terms one trip of [r]'s ranges adds: its unrolled lanes, which it
+   reduces in place, each a core's products where it is a core's. *)
+let lane_terms r =
+  let _, num_axes = reduce_arg r in
+  let lanes = List.filteri (fun a _ -> a < num_axes) (max_shape (nth r 0)) in
+  List.fold_left ( * ) (core_terms (nth r 0)) lanes
+
+(* Whether [r] is a float sum whose running sums a thread holds on [ren]. *)
+let caps (ren : Renderer.t) r =
+  let op, _ = reduce_arg r in
+  let bytes =
+    List.fold_left
+      (fun n -> function Int k -> n * k | Sym _ -> n)
+      (Dtype.itemsize (dtype r)) (shape r)
+  in
+  Op.equal op Op.Add
+  && Dtype.is_float (dtype r)
+  && ((not ren.has_local) || bytes <= held)
+
+(* [r]'s serial ranges, innermost first: ranges nest by axis type, then
+   identity. *)
+let innermost r =
+  List.filter serial (srcs r)
+  |> List.sort (fun a b ->
+      let c = Axis_type.compare (axis_type b) (axis_type a) in
+      if c <> 0 then c else Stdlib.compare (axis_id b) (axis_id a))
+
+(* The innermost ranges of [r] whose trips fit [chain] with its lanes', and
+   the range after them with the trips left to fit, where there is one:
+   [None] where they all fit. *)
+let inner r =
+  let rec go p taken = function
+    | [] -> None
+    | x :: rest -> (
+        match trips x with
+        | Some n when p * n <= chain -> go (p * n) (x :: taken) rest
+        | _ -> Some (List.rev taken, x, chain / p))
+  in
+  go (lane_terms r) [] (innermost r)
+
+let greatest_divisor n most =
+  let rec go d = if n mod d = 0 then d else go (d - 1) in
+  go (min n most)
+
+(* Each range a capped reduce must split, as [(range, trips, amount)]. Every
+   reduce over a range splits it alike, so that siblings still share a loop,
+   at the least room any of them leaves: a core's sum beside a plain one over
+   the same range takes the core's. A range splits at its greatest divisor
+   that fits where that is not 1 and fills at least half the room, else at
+   the room,
+   padded: its last block's trips past the range read nothing and add [+0].
+   A range of trips no literal states, as one a loaded count bounds, stays
+   whole. *)
+let splits ren sink =
+  let wanted = ref [] in
+  List.iter
+    (fun r ->
+      if is Op.Reduce r && caps ren r then
+        match inner r with
+        | Some (_, x, room) when room >= 2 && Option.is_some (trips x) -> (
+            match List.assq_opt x !wanted with
+            | Some least when least <= room -> ()
+            | _ -> wanted := (x, room) :: List.remove_assq x !wanted)
+        | _ -> ())
+    (toposort ~calls:Skip sink);
+  List.rev_map
+    (fun (x, room) ->
+      let n = Option.get (trips x) in
+      let d = greatest_divisor n room in
+      (x, n, if d > 1 && 2 * d >= room then d else room))
+    !wanted
+
+(* [sink] with the range [x] of [n] trips read in blocks of [d], at [o d + b]
+   for a range [o] of [⌈n / d⌉] trips and [b] of [d]. Where [d] does not
+   divide [n], the trips past [n] index no memory and add [+0] to each sum
+   over [x]. *)
+let split ren sink (x, n, d) =
+  let o =
+    replace x
+      ~src:[ const_like (nth x 0) (`Int (Bigint.of_int ((n + d - 1) / d))) ]
+  in
+  (* The block nests just inside the blocks, outside the ranges after them,
+     so that the terms keep the order of their memory. *)
+  let b =
+    range ~axis_type:(axis_type x) ~dtype:(dtype x) (Int d)
+      (axis_id x @ [ chain ])
+  in
+  let at = O.((o * int d) + b) in
+  let sink =
+    if n mod d = 0 then sink
+    else
+      let inside = O.(at < nth x 0) in
+      let zero u = const ~dtype:(dtype u) (identity_element Op.Add (dtype u)) in
+      let gate u =
+        match op u with
+        | Op.Index
+          when List.length (src u) = 2 && Nodes.mem x (ranges (nth u 1)) ->
+            let i = nth u 1 in
+            let i = valid (get_idx i) O.(inside land get_valid i) in
+            Some (u, replace u ~src:[ nth u 0; i ])
+        | Op.Reduce when caps ren u && List.memq x (srcs u) ->
+            (* A product's operands are gated, so that it stays a product
+               its sum fuses. *)
+            let t = nth u 0 in
+            let t =
+              let gated a = where inside a (zero a) in
+              if is Op.Mul t then replace t ~src:(List.map gated (src t))
+              else gated t
+            in
+            Some (u, replace u ~src:(t :: srcs u))
+        | _ -> None
+      in
+      substitute ~calls:Skip ~pass:Once sink
+        (List.filter_map gate (toposort ~calls:Skip sink))
+  in
+  substitute
+    ~extra_pm:(Pattern_matcher.with_ctx Simplify.pm_flatten_range)
+    ~calls:Skip ~pass:Fixed_point sink [ (x, at) ]
+
+(* [sink] with each capped reduce of more than [chain] terms a thread nested.
+   Where a trip's lanes leave no room for a range, past [chain / 2], the inner
+   reduce takes no range: each trip's lanes sum from [+0], in blocks of
+   [chain] ([lower_reduce]), and the outer reduce adds them. *)
+let nest_chains ren sink =
+  let sink = List.fold_left (split ren) sink (splits ren sink) in
+  let nested r =
+    if not (is Op.Reduce r && caps ren r) then None
+    else
+      match inner r with
+      | Some (taken, _, room) when taken <> [] || room < 2 ->
+          let outer = List.filter (fun x -> not (List.memq x taken)) (srcs r) in
+          let op, _ = reduce_arg r in
+          Some (r, reduce (replace r ~src:(nth r 0 :: taken)) op outer)
+      | _ -> None
+  in
+  match List.filter_map nested (toposort ~calls:Skip sink) with
+  | [] -> sink
+  | subs -> substitute ~calls:Skip ~pass:Once sink subs
+
+(* The reduce under [x]'s reshapes and permutes, which the expander leaves
+   between an outer sum and its blocks. *)
+let rec under x =
+  match op x with
+  | Op.Reduce -> Some x
+  | Op.Reshape | Op.Permute -> under (nth x 0)
+  | _ -> None
+
+let unblocked ren sink =
+  let long r =
+    let outer =
+      match under (nth r 0) with Some x -> caps ren x | None -> false
+    in
+    let rngs = List.filter serial (srcs r) in
+    let ts = List.map trips rngs in
+    let lanes = lane_terms r and plain = core_terms (nth r 0) = 1 in
+    caps ren r && (not outer)
+    && List.for_all Option.is_some ts
+    && (if rngs = [] && plain then false
+        else List.fold_left (fun n t -> n * Option.get t) lanes ts > chain)
+  in
+  List.filter (fun r -> is Op.Reduce r && long r) (toposort ~calls:Skip sink)
+
 (* Reductions *)
 
 let fix_group_for_reduce x =
@@ -776,13 +998,28 @@ let lower_reduce (slots, ren) r =
     let u = alu x op [ y ] in
     if fused then mark_fusable u else u
   in
+  (* A float sum of its lanes adds them in blocks of [chain], each from its
+     first lane, the blocks' sums in order. *)
+  let rec blocks = function
+    | [] -> []
+    | vs ->
+        let block = List.filteri (fun i _ -> i < chain) vs in
+        block :: blocks (List.filteri (fun i _ -> i >= chain) vs)
+  in
+  let fold = function
+    | v0 :: vals -> List.fold_left add v0 vals
+    | [] -> assert false
+  in
   let ret =
     if num_axes = 0 then inp
     else
       let sizes = List.filteri (fun a _ -> a < num_axes) (max_shape inp) in
-      match List.map (index_ints inp) (product sizes) with
-      | v0 :: vals -> List.fold_left add v0 vals
-      | [] -> assert false
+      let vals = List.map (index_ints inp) (product sizes) in
+      if not (Op.equal op Op.Add && Dtype.is_float (dtype r)) then fold vals
+      else
+        match List.map fold (blocks vals) with
+        | s0 :: sums -> List.fold_left (fun a b -> alu a op [ b ]) s0 sums
+        | [] -> assert false
   in
   (* A sum of cores' values adds each core's term in order, the running sum
      entering each core as its accumulator. *)
@@ -1492,7 +1729,8 @@ let lift_uniform_gates sink =
     ~ctx:(lazy (Uniform.varying sink), lazy (consumers sink))
     sink (After_sources pm_lift_uniform_gates)
 
-let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
+(* [ast] lowered up to its reductions, each float sum in blocks. *)
+let blocked_sums ?(optimize = true) ?beam ast ren =
   if setting Setting.debug >= 5 then
     print_endline (Render.render_uir (toposort ~calls:Enter ast));
   check_spec Spec.tensor ast;
@@ -1546,6 +1784,10 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(build_range_map sink) sink
       (After_sources expander)
   in
+  nest_chains ren sink
+
+let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
+  let sink = blocked_sums ~optimize ?beam ast ren in
   let slots =
     let next =
       List.fold_left
