@@ -712,6 +712,11 @@ let image ?(of_ = kernels) t =
   | Ok p -> p
   | Error why -> fail why
 
+let gfx1201_only (t : gpu) =
+  let c = A.capability t.g in
+  if c.gpu.target <> (12, 0, 1) then
+    skip ~reason:(Gpu.processor c.gpu ^ " runs no gfx1201 code") ()
+
 (* Fixed-address packets are encoded after their submission owns the memory. The
    words' count is independent of the addresses placed in them. *)
 let encoded_words ~units ~fixed encode =
@@ -1130,6 +1135,392 @@ let growth_commands =
       copies_on;
   ]
 
+(* The lap law
+
+   Every group of every launch reads the arguments its submit wrote. The
+   device's argument plane reuses its bytes lap after lap, and the GPU's L2
+   may keep their lines from an earlier lap, so a launch reads its own only
+   if they are invalidated after the host wrote them. A case laps a first
+   segment of 32 KiB 8 times, grows it, and laps the grown one twice, with
+   each kind of wait a submission's first dispatch may follow: the
+   dispatches before it, a copy of its own submission, a value the copy
+   queue released. *)
+
+let args_code = code_of (lazy (read_fixture "args_gfx1201.hsaco"))
+
+(* [lap]'s parameters: [out] at 0, [seq] at 8, [groups] at 12, then
+   [lap_words] words. Group [g] stores [seq] at word [g] of [out] if each
+   word [i] is [(seq lsl 12) lor i] and its grid is [groups] groups of 32
+   (fixtures/args.cl). *)
+let lap_params = 4096
+let lap_words = 1020
+let lap_groups = 1024
+
+(* The bytes a launch of [lap] stores. *)
+let window = 4 * lap_groups
+
+(* [lap8]'s parameters: [out] at 0, [seq] at 8, then [lap8_words] words. Its
+   one group stores [seq] at word 0 of [out] if each word [i] is
+   [(seq lsl 12) lor i], and the low 32 bits of its arguments' address at
+   word 1. *)
+let lap8_params = 44
+let lap8_words = 8
+
+(* The bytes of a line of GFX12's L2 (Mesa's ac_gpu_info.c). Consecutive
+   [lap8] arguments lie 128 bytes apart, so that two in one aligned span of
+   these bytes share a line, and a dispatch fetches its successor's
+   arguments with its own, only if the L2 fills a whole line on a miss,
+   which no source states. *)
+let l2_line = 256
+
+(* A copy the device runs with its copy kernel: one row of 2 MiB within its
+   Device memory. *)
+let kernel_copy_bytes = 2 lsl 20
+
+(* The size of a device's first rings unless a test sets it
+   ([A.set_first_sizes]). *)
+let default_ring_bytes = 16 lsl 20
+
+type lap_step =
+  | Wide of int (* a submission of [n] launches of [lap] *)
+  | Joined (* a copy into the first launch's output, then two launches *)
+  | Filled of { head : int; words : int; tail : int; byte : char }
+    (* a fill of Device memory, then a launch *)
+  | Kernel_copy (* a fill, then a copy the copy kernel runs *)
+  | Adjacent of int (* [k] submissions of one launch of [lap8] *)
+
+let pp_lap_step ppf = function
+  | Wide n -> Format.fprintf ppf "Wide %d" n
+  | Joined -> Format.pp_print_string ppf "Joined"
+  | Filled { head; words; tail; byte } ->
+      Format.fprintf ppf
+        "Filled { head = %d; words = %d; tail = %d; byte = %C }" head words
+        tail byte
+  | Kernel_copy -> Format.pp_print_string ppf "Kernel_copy"
+  | Adjacent k -> Format.fprintf ppf "Adjacent %d" k
+
+(* A round: each kind of step once, in any order. A fill's first [head] and
+   last [tail] bytes lie outside whole words, one byte at least. *)
+let lap_round =
+  let open Gen in
+  let* n = int_range 1 3 in
+  let* head = int_range 0 3 in
+  let* tail = int_range (if head = 0 then 1 else 0) 3 in
+  let* words = int_range 0 8 in
+  let* byte = char_range 'a' 'z' in
+  let* k = int_range 16 32 in
+  permutation ~pp:pp_lap_step
+    [
+      Wide n;
+      Joined;
+      Filled { head; words; tail; byte };
+      Kernel_copy;
+      Adjacent k;
+    ]
+
+let lap_schedule = Gen.list ~size:(Gen.int_range 2 4) lap_round
+
+(* A submission of launches of [lap], and their blocks. *)
+type laps = { sub : Sub.t; blocks : Sub.block array }
+
+(* A case's device, what its steps submit, and what they reached. *)
+type lapper = {
+  dev : S.t;
+  wides : laps array; (* [wides.(n - 1)] holds [n] launches *)
+  joined : laps;
+  four : laps; (* past half the first segment *)
+  small : Sub.t; (* one launch of [lap8] *)
+  out : Rig.Buffer.t; (* 4 windows, one per launch *)
+  smalls : Rig.Buffer.t; (* [lap8]'s two words *)
+  fills : Rig.Buffer.t; (* Device memory *)
+  filled : Bytes.t; (* what [fills] holds *)
+  source : Rig.Buffer.t; (* Device memory, holding [counting] *)
+  counting : string;
+  target : Rig.Buffer.t; (* Device memory *)
+  mutable seq : int; (* the last launch's *)
+  mutable bytes : int; (* the parameters launched since the phase began *)
+  mutable copies : int;
+  mutable runs : Sub.Run.t list; (* each run taken *)
+  mutable kept : bool;
+  mutable slot_waited : bool;
+  mutable copy_released : bool;
+  mutable kernel_copied : bool;
+  mutable shared_span : bool;
+}
+
+let u32 s i = Int32.to_int (String.get_int32_le s (4 * i)) land 0xffff_ffff
+
+(* The index of the first byte where [a] and [b] differ, if any. *)
+let differs a b =
+  let n = min (String.length a) (String.length b) in
+  let rec from i =
+    if i = n then if String.length a = String.length b then None else Some n
+    else if a.[i] <> b.[i] then Some i
+    else from (i + 1)
+  in
+  from 0
+
+(* [n] bytes whose 32-bit word [w] holds [w], so that two windows at
+   different offsets differ. *)
+let indices n =
+  String.init n (fun b -> Char.chr (((b / 4) lsr (8 * (b land 3))) land 0xff))
+
+(* A submission of [n] launches of [lap], launch [i] storing through slot
+   [i], after a copy of [junk] into slot 0 if given: the first launch then
+   waits for the copy. *)
+let laps ?junk (t : S.t) lap n =
+  let launch i =
+    Sub.launch ~refs:[| Sub.write i ~at:0 |] lap ~params:lap_params
+  in
+  let copy =
+    match junk with
+    | None -> []
+    | Some b -> [ Sub.(copy ~src:(Buffer b) ~dst:(Slot 0)) ]
+  in
+  let sub = Sub.make t.d (Array.of_list (copy @ List.init n launch)) in
+  let first = List.length copy in
+  { sub; blocks = Array.init n (fun i -> Sub.block sub (first + i)) }
+
+let lapper (t : S.t) =
+  let p = image ~of_:args_code t in
+  let fn name = Option.get (Rig.Image.resolve p name) in
+  let lap = fn "lap" in
+  let junk = buffer ~memory:Pinned t window in
+  Rig.Buffer.fill junk '\xee';
+  let out = buffer ~memory:Pinned t (4 * window) in
+  Rig.Buffer.fill out '\xff';
+  let fills = buffer t 64 in
+  Rig.Buffer.fill fills '\000';
+  let source = buffer t (kernel_copy_bytes + 4096) in
+  let counting = indices (Rig.Buffer.length source) in
+  put source counting;
+  let refs = [| Sub.write 0 ~at:0 |] in
+  {
+    dev = t;
+    wides = Array.init 3 (fun n -> laps t lap (n + 1));
+    joined = laps ~junk t lap 2;
+    four = laps t lap 4;
+    small = Sub.make t.d [| Sub.launch ~refs (fn "lap8") ~params:lap8_params |];
+    out;
+    smalls = buffer ~memory:Pinned t 8;
+    fills;
+    filled = Bytes.make 64 '\000';
+    source;
+    counting;
+    target = buffer t kernel_copy_bytes;
+    seq = 0;
+    bytes = 0;
+    copies = 0;
+    runs = [];
+    kept = false;
+    slot_waited = false;
+    copy_released = false;
+    kernel_copied = false;
+    shared_span = false;
+  }
+
+(* [s]'s run, noting whether an earlier step took it. *)
+let take x s =
+  let r = Sub.take s in
+  if List.memq r x.runs then x.kept <- true else x.runs <- r :: x.runs;
+  r
+
+let next_seq x =
+  x.seq <- x.seq + 1;
+  x.seq
+
+(* Stores into block [b] of [r] a launch of [lap] that checks [seq]. *)
+let set_lap r b seq =
+  Sub.Run.groups r b lap_groups 1 1;
+  Sub.Run.threads r b 32 1 1;
+  Sub.Run.int64 r b 0 0L;
+  Sub.Run.int32 r b 8 seq;
+  Sub.Run.int32 r b 12 lap_groups;
+  for i = 0 to lap_words - 1 do
+    Sub.Run.int32 r b (16 + (4 * i)) ((seq lsl 12) lor i)
+  done
+
+(* A submit of launches, their windows from [from] on, and their seqs. *)
+type submitted = { point : Rig.Point.t; from : int; seqs : int array }
+
+(* Submits [l] after [waits], each launch with a new seq, launch [i] storing
+   into window [from + i] of [x.out]. *)
+let submit_laps ?waits ?(from = 0) x l =
+  let r = take x l.sub in
+  let seqs =
+    Array.map
+      (fun b ->
+        let seq = next_seq x in
+        set_lap r b seq;
+        seq)
+      l.blocks
+  in
+  x.bytes <- x.bytes + (lap_params * Array.length seqs);
+  let windows =
+    Array.mapi (fun i _ -> view x.out (window * (from + i)) window) seqs
+  in
+  { point = Rig.submit ?waits r ~buffers:windows; from; seqs }
+
+(* Fails with [msg] unless each launch of [l] stored its seq in every
+   group's word: else at most 8 of the words that differ. *)
+let check_laps x msg l =
+  Rig.Point.wait l.point;
+  let got =
+    get (view x.out (window * l.from) (window * Array.length l.seqs))
+  in
+  let wrong w =
+    let seq = l.seqs.(w / lap_groups) in
+    if u32 got w = seq then None
+    else
+      Some (strf "seq %d, group %d: 0x%x" seq (w mod lap_groups) (u32 got w))
+  in
+  let words = List.init (String.length got / 4) Fun.id in
+  let wrong = List.filter_map wrong words in
+  equal (list string) ~msg [] (List.filteri (fun i _ -> i < 8) wrong)
+
+(* [k] submissions of one launch of [lap8], each submitted once the one
+   before it is reached: where the L2 fills whole lines ([l2_line]), its
+   dispatch read the line that the next one's arguments share with its own,
+   before the host wrote them. *)
+let adjacent x k =
+  let b = Sub.block x.small 0 in
+  let addresses = Array.make k 0 and wrong = ref [] in
+  for j = 0 to k - 1 do
+    let r = take x x.small in
+    let seq = next_seq x in
+    Sub.Run.groups r b 1 1 1;
+    Sub.Run.threads r b 32 1 1;
+    Sub.Run.int64 r b 0 0L;
+    Sub.Run.int32 r b 8 seq;
+    for i = 0 to lap8_words - 1 do
+      Sub.Run.int32 r b (12 + (4 * i)) ((seq lsl 12) lor i)
+    done;
+    x.bytes <- x.bytes + lap8_params;
+    Rig.Point.wait (Rig.submit r ~buffers:[| x.smalls |]);
+    let got = get x.smalls in
+    if u32 got 0 <> seq then
+      wrong := strf "seq %d: 0x%x" seq (u32 got 0) :: !wrong;
+    addresses.(j) <- u32 got 1
+  done;
+  for j = 1 to k - 1 do
+    if addresses.(j - 1) / l2_line = addresses.(j) / l2_line then
+      x.shared_span <- true
+  done;
+  equal (list string)
+    ~msg:(strf "%d submissions of a launch of 44 bytes" k)
+    [] (List.rev !wrong)
+
+(* A fill of [x.fills] whose first [head] and last [tail] bytes lie outside
+   whole words, alone on the copy engine, then a launch: its submission's
+   first dispatch follows a value the copy queue released. *)
+let filled x ~head ~words ~tail ~byte =
+  let first = 8 + ((4 - head) land 3) and length = head + (4 * words) + tail in
+  let fill = view x.fills first length in
+  ignore (Rig.Buffer.submit_fill fill byte : Rig.Point.t);
+  Bytes.fill x.filled first length byte;
+  x.copy_released <- true;
+  check_laps x "a launch after a fill" (submit_laps x x.wides.(0));
+  equal (option int) ~msg:"the first byte of the fills that differs" None
+    (differs (Bytes.to_string x.filled) (get x.fills))
+
+(* A copy the copy kernel runs, into [x.target], which a fill cleared, from
+   an offset of [x.source] other than the copies' before it: its dispatch
+   follows a value the copy queue released. A submission of a copy on SDMA
+   places no word on the compute ring, so words the copy's submit placed
+   there are the copy kernel's dispatch. *)
+let kernel_copy x =
+  let at = 16 * (x.copies land 255) in
+  x.copies <- x.copies + 1;
+  ignore (Rig.Buffer.submit_fill x.target '\000' : Rig.Point.t);
+  let src = view x.source at kernel_copy_bytes in
+  let placed () = fst (A.ring x.dev.g "COMPUTE:0") in
+  let before = placed () in
+  Rig.Point.wait
+    (S.submit x.dev [| Sub.(copy ~src:(Buffer src) ~dst:(Buffer x.target)) |]);
+  if placed () > before then x.kernel_copied <- true;
+  equal (option int) ~msg:"the first byte of the kernel's copy that differs"
+    None
+    (differs (String.sub x.counting at kernel_copy_bytes) (get x.target))
+
+let run_step x = function
+  | Wide n ->
+      check_laps x
+        (strf "a submission of %d launches" n)
+        (submit_laps x x.wides.(n - 1))
+  | Joined ->
+      x.slot_waited <- true;
+      check_laps x "two launches after a copy into the first's output"
+        (submit_laps x x.joined)
+  | Filled { head; words; tail; byte } -> filled x ~head ~words ~tail ~byte
+  | Kernel_copy -> kernel_copy x
+  | Adjacent k -> adjacent x k
+
+(* Runs [schedule]'s rounds in turn, its first again after its last, until
+   the launches took [target] bytes of parameters. *)
+let lap_until x target schedule =
+  let rounds = Array.of_list schedule and i = ref 0 in
+  while x.bytes < target do
+    List.iter (run_step x) rounds.(!i mod Array.length rounds);
+    incr i
+  done
+
+(* Four submissions of one launch. Where the GPU's queue waits on a word of
+   the host, the first waits on a gate that opens once all four are
+   submitted, so that each writes its arguments while the values before it
+   are unreached. Only there is that case covered. *)
+let lap_prefix x =
+  let f = A.facts x.dev.g in
+  let one = x.wides.(0) in
+  if not (f.waits.stores && f.maps_host) then
+    for from = 0 to 3 do
+      check_laps x "a submission of one launch" (submit_laps ~from x one)
+    done
+  else begin
+    let gate, gp = Rig_support.Polled.open_ "amd:lap-gate" in
+    Fun.protect ~finally:(fun () -> Rig.close gate) @@ fun () ->
+    let q = Rig.submit (Sub.take (Sub.make gate [||])) ~buffers:[||] in
+    let first = submit_laps ~waits:[| q |] x one in
+    let rest = List.map (fun from -> submit_laps ~from x one) [ 1; 2; 3 ] in
+    cover "submits while the values before them are unreached"
+      (not (Rig.Point.reached first.point));
+    ignore (Rig_support.Polled.run gp : int);
+    List.iter (check_laps x "a submission behind a gate") (first :: rest)
+  end
+
+let lap_law schedule =
+  let was =
+    A.set_first_sizes ~compute:default_ring_bytes ~copy:default_ring_bytes
+      ~segment:segment_bytes
+  in
+  let t =
+    Fun.protect
+      ~finally:(fun () ->
+        let compute, copy, segment = was in
+        ignore (A.set_first_sizes ~compute ~copy ~segment : int * int * int))
+      S.open_
+  in
+  Fun.protect ~finally:(fun () -> S.close t) @@ fun () ->
+  gfx1201_only t;
+  equal int ~msg:"the first segment" segment_bytes (A.segment t.g);
+  let x = lapper t in
+  lap_prefix x;
+  lap_until x (8 * segment_bytes) schedule;
+  let first_held = A.segment t.g = segment_bytes in
+  check_laps x "four launches, past half the segment" (submit_laps x x.four);
+  let grown = A.segment t.g in
+  x.bytes <- 0;
+  lap_until x (2 * grown) schedule;
+  cover "the launches lapped the first segment 8 times" first_held;
+  cover "the segment grew" (grown > segment_bytes);
+  cover "the launches lapped the grown segment twice"
+    (grown > segment_bytes && A.segment t.g = grown);
+  cover "a first dispatch after a copy of its submission" x.slot_waited;
+  cover "a first dispatch after the copy queue's release" x.copy_released;
+  cover "a copy by the copy kernel, on the compute ring" x.kernel_copied;
+  cover "a run an earlier submit used" x.kept;
+  cover "consecutive values' arguments within one aligned 256 B span"
+    x.shared_span
+
 let launching =
   group ~timeout:60. "launching"
     [
@@ -1145,6 +1536,9 @@ let launching =
         growth_commands;
       cases "a launch's dynamic LDS follows the kernel's own" ~id:string_of_int
         [ 64; 4096; 16320 ] (fun n -> lds_launch n ());
+      prop ~count:2
+        "every group of every launch reads the arguments its submit wrote"
+        lap_schedule lap_law;
     ]
 
 (* rig finds the record the device's facts declare, and none on the host. *)
@@ -2670,11 +3064,6 @@ let undisturbed (values, _) =
   let s = sums values in
   unpreempted (List.nth s 2);
   s
-
-let gfx1201_only (t : gpu) =
-  let c = A.capability t.g in
-  if c.gpu.target <> (12, 0, 1) then
-    skip ~reason:(Gpu.processor c.gpu ^ " runs no gfx1201 code") ()
 
 (* The device's trace buffers. Making them holds the GPU's stable power state,
    which counting needs too. *)

@@ -10,6 +10,13 @@ typedef struct {
   uint w[LAP_WORDS];
 } lap_words;
 
+/* The words after lap8's header, which make its arguments 44 bytes. */
+#define LAP8_WORDS 8
+
+typedef struct {
+  uint w[LAP8_WORDS];
+} lap8_words;
+
 typedef struct {
   uint w[62];
 } scalar_words;
@@ -56,6 +63,19 @@ kernel void lap(global uint *out, uint seq, uint groups, lap_words p) {
           ? LAP_GRID
       : least < LAP_WORDS ? LAP_WORD | least
                           : seq;
+}
+
+/* Checks its 8 words as lap does, and reads no implicit argument: one group
+   stores out[0], which is seq if each word p.w[i] is (seq << 12) | i, else
+   LAP_WORD | i for the least i whose word differs, and out[1], the low 32
+   bits of its arguments' address. */
+kernel void lap8(global uint *out, uint seq, lap8_words p) {
+  const constant uint *args =
+      (const constant uint *)__builtin_amdgcn_kernarg_segment_ptr();
+  uint least = least_wrong(args + 3, seq, LAP8_WORDS);
+  if (lane() != 0) return;
+  out[0] = least < LAP8_WORDS ? LAP_WORD | least : seq;
+  out[1] = (uint)(ulong)args;
 }
 
 /* Group g stores out[g] = the sum of p's words, which its waves read by
