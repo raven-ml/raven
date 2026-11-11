@@ -6,6 +6,7 @@
   test_rasterize
   test_geojson
   test_shapefile
-  test_geotiff)
+  test_geotiff
+  test_warp)
  (libraries jord nx nx.io jsont jsont.bytesrw windtrap)
- (deps tm_coords.dat))
+ (deps tm_coords.dat warp_gdal.dat))

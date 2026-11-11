@@ -23,14 +23,18 @@ campaign.
   map in (row, col) order, GeoTIFF's corner convention), `Polygons`
   (GeoArrow's layout, even-odd regions), `Shapefile`, `Geojson`,
   `Rasterize` (the (feature, cell) relation of `centres` and `touched`),
-  `Geotiff` (tags to and from a grid, GDAL's nodata). `Wkt` and `Points`
-  are private.
+  `Geotiff` (tags to and from a grid, GDAL's nodata), `Warp` (a grid's
+  centres in another system, pixel points, the nearest and bilinear
+  samplers, the source window they read). `Wkt` and `Points` are private.
 - `test/` holds the laws and the spec's values, with a cut of Karney's
-  test set. `test/rasterio/parity.exe` compares the rules with rasterio on
+  test set and GDAL's warps of small rasters onto finer grids
+  (`test/warp_gdal.dat`, cut outside the repository by the script its
+  header names).
+  `test/rasterio/parity.exe` compares the rules with rasterio on
   tessera-eval's Austria labels and GeoTessera's landmasks, which live
   outside the repository, so no test runs it; `parity.exe landmask` reads
-  real landmasks through `Nx_io.load_tiff` and `Geotiff`. `bench/` times each rule on
-  a tile (`dune build @dev/jord/bench/bench`).
+  real landmasks through `Nx_io.load_tiff` and `Geotiff`. `bench/` times
+  each rule on a tile (`dune build @dev/jord/bench/bench`).
 
 ## Boundaries
 
@@ -48,12 +52,17 @@ campaign.
   rule, the UTM zone exceptions of its ROI script, STAC, masking, scaling,
   time. A tile's grid comes from its landmask's tags, never from its
   corners (they differ by up to 1 µm).
-- Later, in their own campaigns: the warp, ranged COG reads, overlap
-  weights as a rule. Never: TLS or HTTP, GeoPackage, PROJ pipelines and
-  datum grids, GDAL bit parity.
+- Later, in their own campaigns: ranged COG reads, overlap weights as a
+  rule, and the area rules (mean, mode) that would use them. Never: TLS
+  or HTTP, GeoPackage, PROJ pipelines and datum grids, GDAL bit parity.
 
 ## Traps
 
 - The transforms are float64 by design: float32 errs by metres.
 - `Grid.equal` is exact; grids computed from corners are not equal to the
   landmasks' by design.
+- A warp takes a source's pixel points by `Warp.pixel`, not `Grid.pixel`:
+  only it wraps a `Lonlat` source's longitudes into the grid's 360°.
+- `Warp.centres` skips the transform for equal systems. A round trip
+  through `Lonlat` moves points by about 1e-9 m, which breaks the exact
+  1/4 and 3/4 weights of a lattice-aligned warp.
