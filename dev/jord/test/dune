@@ -6,6 +6,7 @@
   test_rasterize
   test_warp
   test_band
-  test_sentinel2)
+  test_sentinel2
+  test_sentinel1)
  (libraries jord nx rune windtrap)
  (deps tm_coords.dat warp_gdal.dat))

@@ -30,8 +30,9 @@ campaign.
   (STAC's band: scale, offset, nodata and saturated values, one decode,
   never applied to bitfield bands), `Sentinel2` (ESA's Level-2A: bands and
   resolutions, scene classes, reflectance as a `Band` from the product's
-  stated offset, the acquisition key of a datastrip). `Wkt` and `Points`
-  are private.
+  stated offset, the acquisition key of a datastrip), `Sentinel1` (RTC γ⁰
+  as linear power, stated per provider; polarisations; no decibel or σ⁰
+  conversion). `Wkt` and `Points` are private.
 - Each file or document format is a library of its own, `lib/<format>/`,
   named `jord_<format>` (`jord.<format>` once jord has a package):
   `jord_geotiff` (nx.io: tags to and from a grid, GDAL's nodata),
