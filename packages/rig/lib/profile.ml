@@ -53,7 +53,7 @@ type event = Def.event =
 (* Taking *)
 
 type t = {
-  events : (int * event) list option Atomic.t;
+  mutable events : (int * event) list option; [@atomic]
       (* [None] is closed. Closing detaches history from pending callbacks. *)
   pending : intake Atomic.t;
 }
@@ -74,7 +74,7 @@ let now = Rig_edge_primitive.now
 let profiles : t list Atomic.t = Atomic.make []
 let numbers = Atomic.make 0
 let active () = Atomic.get profiles
-let is_open p = Option.is_some (Atomic.get p.events)
+let is_open p = Option.is_some (Atomic.Loc.get [%atomic.loc p.events])
 
 let enabled () =
   match Atomic.get profiles with [] -> false | ps -> List.exists is_open ps
@@ -104,18 +104,20 @@ let rec change f =
     change f
 
 let start () =
-  let p = { events = Atomic.make (Some []); pending = Atomic.make (Open []) } in
+  let p = { events = Some []; pending = Atomic.make (Open []) } in
   change (fun ps -> ps @ [ p ]);
   p
 
-(* The exchange is the stop: an exception that ends the call after it, at an
-   allocation or a poll, leaves [p] in the list stopped, with the entries it
-   did not drop, and the next change drops them and [p]. *)
-let stop p =
-  let events = Atomic.exchange p.events None in
+(* Ends [p], stopped by the exchange of its [events], and is the events it
+   took. The exchange is the stop, written in line where [p] stops: in
+   bytecode the application of a function polls before its first step. An
+   exception that ends the call after it, at an allocation or a poll, leaves
+   [p] in the list stopped, with the entries it did not drop, and the next
+   change drops them and [p]. *)
+let finish p events =
   close p;
   change Fun.id;
-  match events with None -> [] | Some events -> events
+  Option.value ~default:[] events
 
 let rec pend_one p e =
   match Atomic.get p.pending with
@@ -148,17 +150,21 @@ let rec pop p =
       if Atomic.compare_and_set p.pending before (Reading l) then e else pop p
   | Open _ | Reading [] | Closed -> no_pending
 
-let rec push a x =
-  match Atomic.get a with
+let rec push p x =
+  match Atomic.Loc.get [%atomic.loc p.events] with
   | None -> ()
   | Some l as before ->
-      if not (Atomic.compare_and_set a before (Some (x :: l))) then push a x
+      if
+        not
+          (Atomic.Loc.compare_and_set [%atomic.loc p.events] before
+             (Some (x :: l)))
+      then push p x
 
 let rec push_all ps x =
   match ps with
   | [] -> ()
   | p :: ps ->
-      push p.events x;
+      push p x;
       push_all ps x
 
 (* The numbered event is made once and pushed by a loop of its own, so that
@@ -201,7 +207,7 @@ let recorded_order (n, e) (n', e') =
    raises [Lost] if its device is lost before they are read. An entry leaves
    [p] as its wait starts and is dropped however its read ends, so an
    exception, such as [Lost] or [Sys.Break] in the wait, leaves the rest in
-   [p] for [stop] to drop. *)
+   [p] for [finish] to drop. *)
 let rec read_all p =
   let e = pop p in
   if e != no_pending then begin
@@ -285,12 +291,14 @@ let take f =
     r
   with
   | r ->
-      let events = stop p in
+      let events = Atomic.Loc.exchange [%atomic.loc p.events] None in
+      let events = finish p events in
       (r, List.map snd (List.stable_sort recorded_order events))
   | exception e ->
-      (* Stopped before the backtrace is taken, whose allocation an
+      (* Stopped first, before the backtrace is taken, whose allocation an
          asynchronous exception may interrupt. *)
-      ignore (stop p);
+      let events = Atomic.Loc.exchange [%atomic.loc p.events] None in
+      ignore (finish p events);
       Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
 let span name f =
