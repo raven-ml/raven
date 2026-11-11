@@ -103,12 +103,13 @@ An item leaves when its library fixes it, or when a design decides it stays.
   simpler layout than packed rows (today 1.9-98× slower).
 - Attention-probability dropout composes from existing ops, which is the
   dense path; a fused form is a speed item, not a missing capability.
-- `Rune.remat` inside a scan of two or more trips loses its memory saving
-  (89.1 MB with remat against 94.4 MB without; 43.0 MB at one trip): tolk's
-  launch grouping lets a loop body's recompute kernels join the trip's first
-  launch. The first fix cost NUTS on CUDA ~55% a step, so the launch rule is
-  being redesigned as one rule for loops and the top level. (The scan
-  carry's second gradient buffer is fixed on main, a8074dc6df.)
+- tolk's loop-body launch rule (main 1ab249a3d3, which fixed remat inside a
+  scan of two or more trips: 87.0 → 41.9 MB) allows no byte above the
+  trip's peak and counts a one-element buffer as a 256-byte block, so loop
+  bodies of small storage lose launches (1000 chained scalar calls stay at
+  1000 dispatches where the old rule ran 500; jera's test_ode 619 → 686,
+  test_root 41 → 48). Measure jera's loops on a GPU, then decide whether
+  small-storage bodies need the top level's one-element exception (tolk).
 - A stacked parameter (`Nx.get` from `[layers; …]`) still costs a second
   gradient in a scan's carry: its gradient is assembled into its own buffer
   before the add (1,171,476 B against 780,052 B for separate arrays at k = 4
