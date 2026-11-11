@@ -14,6 +14,17 @@
     table skips no tile: a tile where the lengths and the mask show a pair
     runs, reading the pages of its keys whose entries are in range.
 
+    A kernel's code, registers and workgroup memory are bounded by its tiles,
+    whatever [dk] and [dv]: it loops over the keys' tiles and the head's
+    dimensions. The kernel that folds a row's runs of keys holds one term a
+    run: at most the row's tiles of keys, and the least power of two that
+    reaches the target's [stream_threads] over a workgroup's threads, its
+    [local_workgroups] on the host: 256 on CUDA with 128 threads. A tile's scores are computed once, then its weights multiply the
+    values a block of columns at a time. On a tensor core the dimensions go in
+    chunks of at most 128, the weights stay in the registers of the product they
+    chain into, and past one block of columns each row's accumulator adds in
+    device memory between tiles, which a second kernel divides by the row's sum.
+
     {b Numerics.} Scores, their maxima and sums, the weights and [lse] compute
     in the accumulator, in base 2: each score is multiplied by [log₂ e] and
     exponentiated by [exp2], and [lse] is [(m + log₂ l) ln 2] for the row's

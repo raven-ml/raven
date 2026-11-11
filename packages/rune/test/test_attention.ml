@@ -633,6 +633,14 @@ let tile_steps () =
       check (Tc.transpose tc))
     cores
 
+(* Heads of every size, in float32 and bfloat16. *)
+let heads =
+  Rune_support.Attentions.heads Nx.Dtype.[ Any Nx.float32; Any Nx.bfloat16 ]
+
+let head_id (c : Rune_support.Attentions.t) =
+  let (Nx.Dtype.Any dt) = c.dtype in
+  Printf.sprintf "%s dk %d dv %d" (Nx.Dtype.name dt) c.dk c.dv
+
 let () =
   let case = Gen.with_pp pp_case case in
   (* Each law in float32, in float64, and for a float32 query in a float64
@@ -663,6 +671,15 @@ let () =
                 ~id:(fun (Nx.Dtype.Any dt) -> Nx.Dtype.name dt)
                 Nx.Dtype.[ Any Nx.float32; Any Nx.bfloat16; Any Nx.float16 ]
                 (Rune_support.Attentions.zero_sums (module Nx.Host));
+              Windtrap.cases
+                "heads of 36 to 1024 dimensions, against the composition"
+                ~id:head_id heads
+                (Rune_support.Attentions.law ~composed:true (module Nx.Host));
+              test "a kernel's instructions do not grow with its head"
+                (fun () ->
+                  Rune_support.Attentions.sizes
+                    (module Nx.Host)
+                    (Nx.Dtype.Any Nx.float32));
               (* float32 alone: the host's kernel computes every dtype in
                  its accumulator alike. *)
               prop ~examples:Rune_support.Paged_attentions.host_examples

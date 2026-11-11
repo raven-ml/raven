@@ -95,10 +95,19 @@ val examples : Nx.Dtype.any list -> t list
     window of 100 keys; and of each dtype a prefill of 128 rows of sums of
     zeros. *)
 
-val law : (module Nx.Devices) -> t -> unit
+val heads : Nx.Dtype.any list -> t list
+(** [heads dts] is cases of each of [dts] whose keys and values have [36], [64],
+    [110], [160], [256] and [1024] dimensions, then [256] over [36] and [64]
+    over [1024], each under a mask of its own and with lengths, over two tiles
+    of keys and of rows. Dense keys only. *)
+
+val law : ?composed:bool -> (module Nx.Devices) -> t -> unit
 (** [law s c] checks [c] compiled on [s]'s devices, and that the call is
     compiled, not evaluated. Where an element of [o] is a sum of zeros,
-    every [p |v|] of the reference zero, it is [+0]. *)
+    every [p |v|] of the reference zero, it is [+0]. Where [composed]
+    (default [false]), the reference is the softmax of [c]'s dense scores,
+    masked and rewritten, times [v], in float64, of dense keys only, and
+    the law makes no demand of {!Windtrap.cover}. *)
 
 val zero_sums : (module Nx.Devices) -> Nx.Dtype.any -> unit
 (** [zero_sums s dt] checks that each of 32768 rows of [dt], float32 or
@@ -108,12 +117,20 @@ val zero_sums : (module Nx.Devices) -> Nx.Dtype.any -> unit
     others' [-0]. With so many rows, every target runs each row's keys in
     one kernel, which no combine of key splits follows. *)
 
-val grad_law : (module Nx.Devices) -> vmap:bool -> t -> unit
+val grad_law : ?composed:bool -> (module Nx.Devices) -> vmap:bool -> t -> unit
 (** [grad_law s ~vmap c] checks the gradient in the query, keys and values of
     a loss over [c]'s [o] and [lse], compiled on [s]'s devices, against the
     host's eager float64 gradient within the bound rune.mli's numerics
     compose, and that the call is compiled. Where [vmap], the compiled
     gradient is that of each lead index, mapped by {!Rune.vmap}.
 
+    Where [composed], the reference is {!law}'s composition's.
+
     Raises [Invalid_argument] if [vmap] and [c] has pages, lengths or a
     [Spans] mask, whose arrays vary along the lead axes. *)
+
+val sizes : (module Nx.Devices) -> Nx.Dtype.any -> unit
+(** [sizes s dt] checks that the kernels of attention's own that {!grad_law}
+    compiles on [s]'s devices for [dt], keys and values of [256] dimensions
+    each, list as many loads, stores and matrix products each as with either or
+    both of [1024]: a kernel's code is bounded by its tiles. *)

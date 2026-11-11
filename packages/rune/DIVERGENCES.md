@@ -1262,7 +1262,11 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Differs:** one kernel folds each query row over its keys in tiles of
   32 or 64 with a running maximum, sum and accumulator in base 2 (online
   softmax), never storing a score; the rows of a group of query heads
-  share each tile of keys. On a target whose tensor core of a narrow
+  share each tile of keys. Its code is bounded by its tiles: it loops over
+  the head's dimensions, on a tensor core in chunks of at most 128,
+  computes a tile's scores once and multiplies the values a block of
+  columns at a time, and past one block adds each row's accumulator in
+  device memory, which the combine divides. On a target whose tensor core of a narrow
   float's products into float32 chains its accumulator into its own
   operand, float16 and bfloat16 attention computes both products on the
   core and rounds each weight once to the values' dtype: CUDA's from
@@ -1320,7 +1324,11 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   `Attention/causal-8x256x64-grad-compiled` on the host 2.31-2.53 to
   2.06-2.31 ms, 699 words a call in both.
 - **Pinned by:** `rune attention › jit within nx's bound of a float64
-  reference › every dtype`; `Rune.jit on a GPU › attention › jit holds nx's
-  bound against a float64 reference`, `› its compiled gradient holds
-  rune's bound against a float64 reference` and `› its gradient mapped by
-  vmap holds rune's bound against a float64 reference`; the rows above.
+  reference › every dtype`, `› heads of 36 to 1024 dimensions, against the
+  composition` and `› a kernel's instructions do not grow with its head`;
+  `Rune.jit on a GPU › attention › jit holds nx's bound against a float64
+  reference`, `› its compiled gradient holds rune's bound against a
+  float64 reference`, `› its gradient mapped by vmap holds rune's bound
+  against a float64 reference`, `› heads of 36 to 1024 dimensions hold
+  nx's bound against the composition` and `› a kernel's instructions do
+  not grow with its head`; the rows above.

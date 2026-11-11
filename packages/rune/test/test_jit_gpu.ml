@@ -393,6 +393,14 @@ let inside shape () =
 let attention_dtypes =
   Nx.Dtype.[ Any Nx.float16; Any Nx.bfloat16; Any Nx.float32; Any Nx.float64 ]
 
+(* Heads of every size, on the SIMT kernel in float32 and on the target's tensor
+   core in bfloat16. *)
+let heads = Attentions.heads Nx.Dtype.[ Any Nx.float32; Any Nx.bfloat16 ]
+
+let head_id (c : Attentions.t) =
+  let (Nx.Dtype.Any dt) = c.dtype in
+  Printf.sprintf "%s dk %d dv %d" (Nx.Dtype.name dt) c.dk c.dv
+
 (* The gradient law's examples: the forward's, and its bfloat16 prefill
    with lse's cotangent alone. *)
 let grad_examples =
@@ -2441,6 +2449,15 @@ let () =
                ~id:(fun (Nx.Dtype.Any dt) -> Nx.Dtype.name dt)
                Nx.Dtype.[ Any Nx.float32; Any Nx.bfloat16; Any Nx.float16 ]
                (fun dt -> Attentions.zero_sums (snd (on_gpu ())) dt);
+             Windtrap.cases
+               "heads of 36 to 1024 dimensions hold nx's bound against the \
+                composition"
+               ~id:head_id heads
+               (fun c -> Attentions.law ~composed:true (snd (on_gpu ())) c);
+             Windtrap.cases "a kernel's instructions do not grow with its head"
+               ~id:(fun (Nx.Dtype.Any dt) -> Nx.Dtype.name dt)
+               Nx.Dtype.[ Any Nx.float32; Any Nx.bfloat16 ]
+               (fun dt -> Attentions.sizes (snd (on_gpu ())) dt);
              test "forward mode of a summed loss holds its bound" attention_jvp;
              prop ~count:4 ~examples:Paged_attentions.examples
                "paged keys and values give dense ones' bits"

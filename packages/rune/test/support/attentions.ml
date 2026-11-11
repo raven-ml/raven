@@ -255,9 +255,9 @@ let draw c salt shape =
   Nx.create Nx.float32 shape
     (Array.init n (fun _ -> Random.State.float st 2. -. 1.))
 
-(* The case's call over [q], [k] and [v], of any device, in [acc]. *)
-let call (type a s d) (acc : (float, a) Nx.dtype) c ~table ~lengths ~docs
-    ~positions ~spans ~blocks ~slopes (q : (float, s, d) Nx.t) k v =
+(* The case's mask and score programs, their captures placed beside [q]. *)
+let programs (type a s d) (acc : (float, a) Nx.dtype) c ~docs ~positions ~spans
+    ~blocks ~slopes (q : (float, s, d) Nx.t) =
   let place x = Nx.place (Nx.beside q) x in
   let mask : (d Nx.pair -> d Nx.bool_t) option =
     match c.mask with
@@ -327,12 +327,80 @@ let call (type a s d) (acc : (float, a) Nx.dtype) c ~table ~lengths ~docs
               Nx.where before (Nx.sub_s s zeros_under) s
             else s)
   in
+  (mask, score)
+
+(* The case's call over [q], [k] and [v], of any device, in [acc]. *)
+let call (type a s d) (acc : (float, a) Nx.dtype) c ~table ~lengths ~docs
+    ~positions ~spans ~blocks ~slopes (q : (float, s, d) Nx.t) k v =
+  let place x = Nx.place (Nx.beside q) x in
+  let mask, score = programs acc c ~docs ~positions ~spans ~blocks ~slopes q in
   let kv : (float, s, d) Nx.kv =
     match (c.page, table) with
     | Some _, Some t -> Paged { k; v; table = place t }
     | _ -> Dense { k; v }
   in
   Nx.attention ?lengths:(Option.map place lengths) ?mask ?score ~acc ~kv q
+
+(* The case's call composed of arrays of [[lead; hq; tq; tk]], of dense keys:
+   the scores [scale q kᵀ] in [acc], rewritten by the score program, [-∞] at a
+   pair the mask or the row's length hides, their softmax, its [lse], and its
+   product with [v] rounded to [q]'s dtype. The row's maximum shifts the
+   exponentials without a derivative of its own, and a row of no visible key is
+   [o = 0] and [lse = -∞]. *)
+let dense (type a s d) (acc : (float, a) Nx.dtype) c ~lengths ~docs ~positions
+    ~spans ~blocks ~slopes (q : (float, s, d) Nx.t) k v =
+  let mask, score = programs acc c ~docs ~positions ~spans ~blocks ~slopes q in
+  let place x = Nx.place (Nx.beside q) x in
+  let g = c.hq / max 1 c.hk in
+  let heads x d =
+    Nx.reshape
+      [| c.lead; c.hq; c.tk; d |]
+      (Nx.broadcast_to
+         [| c.lead; c.hk; g; c.tk; d |]
+         (Nx.reshape [| c.lead; c.hk; 1; c.tk; d |] (Nx.cast acc x)))
+  in
+  let coords n shape = place (Nx.reshape shape (Nx.arange Nx.int64 0 n 1)) in
+  let len =
+    match lengths with
+    | Some l ->
+        let tk = Int64.of_int c.tk in
+        Nx.reshape [| c.lead; 1; 1; 1 |]
+          (Nx.minimum_s (Nx.maximum_s (place l) 0L) tk)
+    | None -> place (Nx.full Nx.int64 [| 1; 1; 1; 1 |] (Int64.of_int c.tk))
+  in
+  let p : d Nx.pair =
+    {
+      q = coords c.tq [| 1; 1; c.tq; 1 |];
+      k = coords c.tk [| 1; 1; 1; c.tk |];
+      len;
+      tq = c.tq;
+    }
+  in
+  let scale = 1. /. Float.sqrt (Float.of_int c.dk) in
+  let s =
+    Nx.mul_s
+      (Nx.matmul (Nx.cast acc q) (Nx.matrix_transpose (heads k c.dk)))
+      scale
+  in
+  let s = match score with None -> s | Some f -> f p s in
+  let seen = Nx.less p.k len in
+  let seen =
+    match mask with None -> seen | Some m -> Nx.logical_and seen (m p)
+  in
+  let seen = Nx.broadcast_to (Nx.shape s) seen in
+  let s = Nx.where seen s (Nx.full_like s Float.neg_infinity) in
+  let m = Rune.detach (Nx.max ~axes:[ 3 ] ~keepdims:true s) in
+  let m = Nx.where (Nx.isfinite m) m (Nx.zeros_like m) in
+  let l = Nx.sum ~axes:[ 3 ] ~keepdims:true (Nx.exp (Nx.sub s m)) in
+  let empty = Nx.equal l (Nx.zeros_like l) in
+  let lse =
+    Nx.where empty
+      (Nx.full_like l Float.neg_infinity)
+      (Nx.add m (Nx.log (Nx.where empty (Nx.ones_like l) l)))
+  in
+  let w = Nx.exp (Nx.sub s (Nx.where empty (Nx.zeros_like lse) lse)) in
+  let o = Nx.matmul w (heads v c.dv) in
+  (Nx.cast (Nx.dtype q) o, Nx.reshape [| c.lead; c.hq; c.tq |] lse)
 
 let unit_roundoff (Nx.Dtype.Any dt) =
   match Nx.Dtype.name dt with
@@ -473,7 +541,22 @@ let inputs c =
   in
   { q; k; v; table; lengths; docs; spans; positions; blocks; slopes; poisoned }
 
-let law (module S : Nx.Devices) c =
+(* The reference's call: the case's eager call, or [dense]'s composition where
+   [composed]. *)
+let reference ~composed c ~table ~lengths ~docs ~positions ~spans ~blocks
+    ~slopes q k v =
+  if composed then
+    dense Nx.float64 c ~lengths ~docs ~positions ~spans ~blocks ~slopes q k v
+  else
+    call Nx.float64 c ~table ~lengths ~docs ~positions ~spans ~blocks ~slopes q
+      k v
+
+(* A law's demands on the cases drawn, which a composed reference's fixed cases
+   do not meet. *)
+let demand ~composed label cond = if not composed then cover label cond
+
+let law ?(composed = false) (module S : Nx.Devices) c =
+  let cover = demand ~composed in
   cover "paged" (c.page <> None);
   cover "lengths" (c.lengths <> None);
   cover (mask_name c.mask) true;
@@ -497,7 +580,8 @@ let law (module S : Nx.Devices) c =
   let f64 x = Nx.cast Nx.float64 x in
   let reference v =
     let o, lse =
-      call Nx.float64 c ~table ~lengths ~docs ~positions ~spans ~blocks ~slopes (f64 q) (f64 k) (f64 v)
+      reference ~composed c ~table ~lengths ~docs ~positions ~spans ~blocks
+        ~slopes (f64 q) (f64 k) (f64 v)
     in
     (Nx.to_array o, Nx.to_array lse)
   in
@@ -645,7 +729,8 @@ let zero_sums (module S : Nx.Devices) dtype =
    [q̄] and [B] add [tk g], [k̄] and [v̄] [n g], and each result [λ] for
    its rounding. *)
 
-let grad_law (module S : Nx.Devices) ~vmap c =
+let grad_law ?(composed = false) (module S : Nx.Devices) ~vmap c =
+  let cover = demand ~composed in
   if vmap && (c.page <> None || c.lengths <> None || c.mask = Spans) then
     invalid_arg "Attentions.grad_law: a mapped case of pages, lengths or spans";
   let (F dt) = float_dtype c.dtype in
@@ -678,21 +763,26 @@ let grad_law (module S : Nx.Devices) ~vmap c =
   let wo = rounded (draw c 4 [| c.lead; c.hq; c.tq; c.dv |]) in
   let wo = if lse_alone then Nx.zeros_like wo else wo in
   let wl = rounded (draw c 5 [| c.lead; c.hq; c.tq |]) in
-  let loss (type a s d) (acc : (float, a) Nx.dtype) ~lengths
+  let loss (type a s d) (acc : (float, a) Nx.dtype) ~composed ~lengths
       (wo : (float, s, d) Nx.t) wl q k v =
-    let o, lse = call acc c ~table ~lengths ~docs ~positions ~spans ~blocks ~slopes q k v in
+    let o, lse =
+      if composed then
+        dense acc c ~lengths ~docs ~positions ~spans ~blocks ~slopes q k v
+      else
+        call acc c ~table ~lengths ~docs ~positions ~spans ~blocks ~slopes q k v
+    in
     let finite x = Nx.where (Nx.isfinite x) x (Nx.zeros_like x) in
     Nx.add
       (Nx.sum (Nx.mul (Nx.cast acc wo) (Nx.cast acc o)))
       (Nx.sum (Nx.mul (Nx.cast acc wl) (finite lse)))
   in
-  let grad (type a s d) (acc : (float, a) Nx.dtype) ~lengths
+  let grad (type a s d) (acc : (float, a) Nx.dtype) ~composed ~lengths
       (xs : (float, s, d) Nx.t list) =
     match xs with
     | [ q; k; v; wo; wl ] ->
         Rune.grad Nx.Ptree.(list tensor)
           (function
-            | [ q; k; v ] -> loss acc ~lengths wo wl q k v
+            | [ q; k; v ] -> loss acc ~composed ~lengths wo wl q k v
             | _ -> invalid_arg "grad")
           [ q; k; v ]
     | _ -> invalid_arg "grad"
@@ -700,8 +790,11 @@ let grad_law (module S : Nx.Devices) ~vmap c =
   let compiled (type a) (acc : (float, a) Nx.dtype) =
     let place x = Nx.place S.on (Nx.cast dt x) in
     let f =
-      if vmap then Rune.vmap Nx.Ptree.(list tensor @-> returns (list tensor)) (grad acc ~lengths:None)
-      else grad acc ~lengths
+      if vmap then
+        Rune.vmap
+          Nx.Ptree.(list tensor @-> returns (list tensor))
+          (grad acc ~composed:false ~lengths:None)
+      else grad acc ~composed:false ~lengths
     in
     let g = Rune.jit Nx.Ptree.(list tensor @-> returns (list tensor)) f in
     let before = Rune.evaluations () in
@@ -710,11 +803,16 @@ let grad_law (module S : Nx.Devices) ~vmap c =
     List.map (fun x -> Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on x))) gs
   in
   let f64 x = Nx.cast Nx.float64 x in
-  let reference wo wl = grad Nx.float64 ~lengths [ f64 q; f64 k; f64 v; wo; wl ] in
-  let refs = List.map Nx.to_array (reference (f64 wo) (f64 wl)) in
+  let reference_grad wo wl =
+    grad Nx.float64 ~composed ~lengths [ f64 q; f64 k; f64 v; wo; wl ]
+  in
+  let refs = List.map Nx.to_array (reference_grad (f64 wo) (f64 wl)) in
   let gs = if wide then compiled Nx.float64 else compiled Nx.float32 in
   let o_ref, lse_ref =
-    let o, lse = call Nx.float64 c ~table ~lengths ~docs ~positions ~spans ~blocks ~slopes (f64 q) (f64 k) (f64 v) in
+    let o, lse =
+      reference ~composed c ~table ~lengths ~docs ~positions ~spans ~blocks
+        ~slopes (f64 q) (f64 k) (f64 v)
+    in
     (Nx.to_array o, Nx.to_array lse)
   in
   (* The forward law's constants, by row. *)
@@ -781,7 +879,7 @@ let grad_law (module S : Nx.Devices) ~vmap c =
   (* [Σ_i p x_i] as the reference's [v̄] of the cotangent [x]. *)
   let summed x =
     let x = Nx.create Nx.float64 [| c.lead; c.hq; c.tq; c.dv |] x in
-    Nx.to_array (List.nth (reference x (Nx.zeros_like (f64 wl))) 2)
+    Nx.to_array (List.nth (reference_grad x (Nx.zeros_like (f64 wl))) 2)
   in
   let k_terms =
     summed
@@ -822,3 +920,69 @@ let grad_law (module S : Nx.Devices) ~vmap c =
       check "v̄" rv cv (fun j ->
           v_terms.(j) +. ((floor +. under) *. Float.of_int n))
   | _ -> invalid_arg "Attentions.grad_law"
+
+(* Heads of every size
+
+   Each head dimension once per dtype, keys and values alike, then wide keys
+   over narrow values and the reverse, each under its own mask and with lengths,
+   over 70 keys and 70 rows a head: two tiles of 64 keys, and of a group's
+   rows. *)
+
+let head_dims = [ 36; 64; 110; 160; 256; 1024 ]
+
+let heads dtypes =
+  let masks = [| Causal; Window; Documents; Positions; Spans; Reach |] in
+  let case dt i (dk, dv) =
+    {
+      (base dt) with
+      lead = 2;
+      hq = 4;
+      hk = 2;
+      tq = 70;
+      tk = 70;
+      dk;
+      dv;
+      mask = masks.(i mod Array.length masks);
+      lengths = Some [| 70; 45 |];
+      seed = i;
+    }
+  in
+  let dims = List.map (fun d -> (d, d)) head_dims @ [ (256, 36); (64, 1024) ] in
+  List.concat_map (fun dt -> List.mapi (case dt) dims) dtypes
+
+(* The loads, stores and matrix products of each kernel of attention's own, by
+   name, that [f ()] compiles, as its instructions list them. The instructions
+   of index arithmetic are left out: how many a product of indices takes depends
+   on the range of its values. *)
+let kernel_sizes f =
+  let (), ks = Tolk.Realize.kernels f in
+  let counted u = List.mem (Tolk.Ops.op u) Tolk.Op.[ Load; Store; Wmma ] in
+  List.sort compare
+    (List.filter_map
+       (fun (k : Tolk.Realize.kernel) ->
+         if not (String.starts_with ~prefix:"attention" k.name) then None
+         else
+           let p = Tolk.Codegen.linearize k.ast k.renderer in
+           let instructions = Tolk.Ops.src (Tolk.Ops.nth p 1) in
+           Some (k.name, List.length (List.filter counted instructions)))
+       ks)
+
+let sizes s dtype =
+  let at (dk, dv) =
+    let c = { (List.hd (heads [ dtype ])) with dk; dv; tq = 40; tk = 40 } in
+    let run () = grad_law ~composed:true s ~vmap:false c in
+    (Printf.sprintf "dk %d dv %d" dk dv, kernel_sizes run)
+  in
+  let first = at (256, 256) in
+  at_least ~msg:"attention's kernels" Testable.int ~than:1
+    (List.length (snd first));
+  List.iter
+    (fun (dk, dv) ->
+      let name, ks = at (dk, dv) in
+      equal
+        ~msg:
+          (Printf.sprintf "kernels' loads, stores and products at %s against %s"
+             name (fst first))
+        Testable.(list (pair string int))
+        (snd first) ks)
+    [ (1024, 256); (256, 1024); (1024, 1024) ]
