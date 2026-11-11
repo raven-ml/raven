@@ -526,6 +526,10 @@ let staged ~closed n () =
   done;
   (B.create Rig.host n, B.create (unaddressed ()) n)
 
+(* [n] bytes of host memory, written, borrowed on [d]: a copy on [d]'s queue
+   reads memory the host pages only through a borrow on [d]. *)
+let borrowed d n = Option.get (B.borrow d (host_written n))
+
 let copy_rows =
   let pair d n () = (B.create d n, B.create d n) in
   let copy (src, dst) = B.copy ~src ~dst in
@@ -538,7 +542,8 @@ let copy_rows =
       row "memory-4K" (fun () -> pair (memory ()) (4 * kib) ()) copy;
       row "queue-64K"
         (fun () ->
-          (host_written (64 * kib), B.create (unaddressed ()) (64 * kib)))
+          let d = unaddressed () in
+          (borrowed d (64 * kib), B.create d (64 * kib)))
         copy;
       (* Another domain copying on the same device until the row ends: both
          submit the device's one copier run at once. *)
@@ -548,13 +553,13 @@ let copy_rows =
           let stop = Atomic.make false in
           let rival =
             Domain.spawn (fun () ->
-                let src = host_written (64 * kib)
+                let src = borrowed d (64 * kib)
                 and dst = B.create d (64 * kib) in
                 while not (Atomic.get stop) do
                   B.copy ~src ~dst
                 done)
           in
-          ((host_written (64 * kib), B.create d (64 * kib)), stop, rival))
+          ((borrowed d (64 * kib), B.create d (64 * kib)), stop, rival))
         ~teardown:(fun (_, stop, rival) ->
           Atomic.set stop true;
           Domain.join rival)
