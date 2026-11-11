@@ -229,9 +229,10 @@ val v1_recipe : recipe
     projector of six linear layers of [16384], AdamW at [2e-3] with [0.1]
     warmup, decay [0] (the decay the run applied, see {!decays}), clip [2.0],
     and dropout [0.1] at the encoder layers. v1.0's reducer had no dropout; the
-    reducer's rate is [0.2], the rate v2's models fix. The projector's state
-    alone is 16 GB in float32, so the recipe needs more than one 32 GB device.
-*)
+    reducer's rate is [0.2], the rate v2's models fix. A compiled float32 step
+    of it holds about 38 GB (35 with remat): the projector's state of 16 GB,
+    its gradient, and the activations of both views and the mixed one, more
+    than one 32 GB device. *)
 
 val step :
   compute:(float, 'c) Nx.dtype ->

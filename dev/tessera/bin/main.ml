@@ -96,8 +96,8 @@ pretrain options (Barlow Twins with mixup, TESSERA v1.0's objective):
                 teacher
   --projector W,...
                 the projector's widths after the model's (default six of
-                16384, v1.0's, whose state alone is 16 GB in float32: the
-                default needs more than one 32 GB device)
+                16384, v1.0's: a compiled float32 step of the default
+                holds about 38 GB, more than one 32 GB device)
   --device D    as for encode
   --steps N (1000), --groups G (1) per step, --pixels B (2048, at least
                 2) a group, --length L (40) observations of each sensor a
@@ -831,7 +831,11 @@ let train (type d) (t : d target) opts files ~key ~seed ~run ~until ~every
   files.keep first;
   let gs0 = groups position in
   if t.jit then begin
-    let fp = Rune.footprint signature step_fn (fst gs0, st) in
+    (* Over the donated state, as the step runs: the new state then takes the
+       old one's storage. *)
+    let fp =
+      Rune.footprint signature step_fn (fst gs0, Nx.Ptree.donate st_ptree st)
+    in
     let live = tree_bytes st_ptree st + tree_bytes group (fst gs0) in
     List.iter
       (fun (r, b) ->
