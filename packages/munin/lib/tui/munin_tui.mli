@@ -25,10 +25,12 @@
     A text cut to its column ends in […] and keeps a blank before the next
     column, and a number is never cut: a run's name, a param's key or a
     command gives way first. The run pane prints a param's number as values
-    print, and [i] gives it as logged. The line of values keeps the values
-    that fit whole. The banner gives an error's first line, with […] when it
-    has more, and [i] the rest; both wrap at their words, and [i] keeps a
-    command's arguments whole.
+    print, and [i] gives it as logged. Param keys take the longest key's
+    width, up to half the run pane, and a strip's key up to a quarter of the
+    centre. The line of values keeps the values that fit whole. The banner
+    gives an error's first line, with […] when it has more, and [i] the
+    rest; both wrap at their words, and [i] keeps a command's arguments
+    whole.
 
     The dashboard reads a run as its library does ({!Munin.Store_format}).
     Unless a section says otherwise, a value shown is the run's as last read,

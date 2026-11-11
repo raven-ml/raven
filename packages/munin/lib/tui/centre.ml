@@ -398,7 +398,11 @@ let charts th (m : M.t) (f : Facts.run) ~width =
 
 (* Strips *)
 
+(* A strip's key column: the longest key and a blank, at least
+   [strip_label] and at most a [strip_share]th of the centre, so that the
+   plot keeps its room. *)
 let strip_label = 16
+let strip_share = 4
 
 let goal_word = function
   | Some `Minimize -> "↓ min"
@@ -463,6 +467,11 @@ let strips th (m : M.t) (f : Facts.run) ~width =
   in
   let on = M.strip m in
   let charts = M.charts m in
+  let label_w =
+    let shown (c : M.chart) = if c.axis = Data.Time then machine_label c.key else c.key in
+    let longest = List.fold_left (fun w c -> max w (Numbers.width (shown c))) 0 charts in
+    max strip_label (min (longest + 1) (width / strip_share))
+  in
   let strip (c : M.chart) =
     let here = Some c.key = on in
     let machine = c.axis = Data.Time in
@@ -471,7 +480,7 @@ let strips th (m : M.t) (f : Facts.run) ~width =
       if machine then [ line [ frag th Fg (machine_label c.key) ] ]
       else
         [
-          line [ frag ~bold:here th (if here then Hi else Fg) (Numbers.elide (strip_label - 1) c.key) ];
+          line [ frag ~bold:here th (if here then Hi else Fg) (Numbers.elide (label_w - 1) c.key) ];
           line [ frag th Dim (goal_word (Facts.goal f c.key)) ];
         ]
     in
@@ -486,7 +495,7 @@ let strips th (m : M.t) (f : Facts.run) ~width =
       ~margin:(margin_lrtb 0 0 0 M.strip_gap)
       [
         cell 1 (if here then [ F.text ~style:(Th.run th colour) "▌" ] else []);
-        box ~flex_direction:Column ~size:(size_wh (px strip_label) (px M.strip_height))
+        box ~flex_direction:Column ~size:(size_wh (px label_w) (px M.strip_height))
           ~flex_shrink:0. label;
         plot th m c;
         box ~flex_direction:Row ~size:(size_wh (px vw) (px 1)) ~flex_shrink:0.

@@ -1577,6 +1577,7 @@ let values_printed =
       ("1234.56", (1234.56, "1.235k"));
       ("348513.5", (348513.5, "348.5k"));
       ("1234567", (1234567., "1.235e+06"));
+      ("0.0015", (0.0015, "0.001500"));
     ]
     (fun (_, (x, expected)) -> equal string expected (Munin_tui.Numbers.value x))
 
@@ -2958,6 +2959,19 @@ let no_values_line =
       let row text = match T.Screen.find screen text with (y, _) :: _ -> Some y | [] -> None in
       equal (option int) (Option.map (( + ) 2) (row "‹ ")) (row "score"))
 
+(* A strip's key takes the longest key's width, up to a share of the
+   centre that leaves the plot its room. *)
+let strip_keys =
+  test "a strip's key is whole when the centre has room for it" (fun () ->
+      with_store ~name:"strip-keys" [] @@ fun store ->
+      let keys = [ "train/samples_per_s"; "m" ] in
+      ignore
+        (write_log store ~declare:(List.map (fun k -> metric_record k) keys)
+           (List.init 20 (fun i -> values_record i (List.map (fun k -> (k, Float.of_int i)) keys))));
+      let screen = show ~cols:120 ~rows:40 store Munin_tui.Runs [ Key Enter ] in
+      equal (list bool) [ true; false ]
+        [ T.Screen.find screen "train/samples_per_s " <> []; T.Screen.find screen "train/samples_…" <> [] ])
+
 (* [y] asks for the other scale of the metric shown, and of no other: zoom's
    title says [log] while the metric is drawn on one. [m] rises over three
    decades and [w] within one, so [m] starts on a log scale and [w] on a
@@ -3039,4 +3053,5 @@ let () =
          no_values_line;
          long_suffixes;
          long_values;
+         strip_keys;
        ])
