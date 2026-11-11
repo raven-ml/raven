@@ -1281,7 +1281,7 @@ let work =
           equal int ~msg:"alignment" 4096 f.alignment;
           equal bool ~msg:"waits on words as on the host" f.waits.hosts
             f.waits.stores;
-          equal (option int) ~msg:"hang bound" (Some 30_000) f.hang_ms;
+          equal (option int) ~msg:"hang bound" None f.hang_ms;
           greater int ~msg:"clock" ~than:0 c.clock_hz;
           equal int ~msg:"shader engines"
             (c.gpu.shader_engines * c.gpu.xccs)

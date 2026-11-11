@@ -129,33 +129,13 @@ let once () =
   in
   Rig_nv.stop g' ~fault:None
 
-(* Whether GPU [bus] shows a display, as nvidia-smi reports it, or [None]
-   where nvidia-smi does not answer. *)
-let display_active bus =
-  let cmd =
-    Filename.quote_command "nvidia-smi"
-      [ "--query-gpu=display_active"; "--format=csv,noheader"; "-i"; bus ]
-  in
-  let ic = Unix.open_process_in cmd in
-  let line = In_channel.input_line ic in
-  match (Unix.close_process_in ic, line) with
-  | WEXITED 0, Some "Enabled" -> Some true
-  | WEXITED 0, Some "Disabled" -> Some false
-  | _ -> None
-
-(* The RM's watchdog does not run on a GPU without a display: rig then loses
-   the device once its work has made no progress for 30 s. *)
-let hang_bound () =
+(* Nothing bounds a GPU's work in time, display or none. *)
+let no_hang_bound () =
   if counted () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
   let g = require_ok (Rig_gpu_support.opened (N.gpu 0)) in
   let hang_ms = (Rig_nv.facts g).hang_ms in
   Rig_nv.stop g ~fault:None;
-  mem (option int) ~msg:"hang_ms" hang_ms [ None; Some 30_000 ];
-  match display_active (List.hd (listed ())) with
-  | None -> skip ~reason:"nvidia-smi does not answer" ()
-  | Some true -> ()
-  | Some false ->
-      equal (option int) ~msg:"without a display" (Some 30_000) hang_ms
+  equal (option int) ~msg:"hang_ms" None hang_ms
 
 (* Every root shows this machine: a root that links to [/] names the same
    GPUs, so a GPU open through one is open through the other. The link lives
@@ -364,7 +344,7 @@ let () =
              test "an open inside a lock of its thread's raises" inside_lock;
              test "a GPU has one device until it is stopped" once;
              test "a GPU has one device whatever the root" other_root;
-             test "a GPU without a display bounds hangs at 30 s" hang_bound;
+             test "a GPU's work has no hang bound" no_hang_bound;
              test "opening and stopping a GPU keeps a device's mappings each"
                reopen;
              test

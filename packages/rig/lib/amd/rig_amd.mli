@@ -239,8 +239,7 @@ val capability : t -> Rig_amd_abi.Capability.t
        words ({!section-order});}
     {- [may_block], [false], since the C functions write memory and call no
        system function;}
-    {- [hang_ms], the path's [hang_ms], [None] on a path whose kernel driver
-       bounds how long work runs;}
+    {- [hang_ms], the path's [hang_ms];}
     {- [maps_host], [true] iff the path maps host memory ([map_host] of
        {!type-path});}
     {- [host_addresses], [false], since the host does not address [Device]
@@ -641,10 +640,10 @@ type 'm path = {
       (** The nonzero context that the interrupt of a value's release
           carries, which wakes [sleep]. *)
   hang_ms : int option;
-      (** [Some n] if work whose word has not moved for [n] milliseconds hung,
-          where nothing else bounds the GPU's work; [None] where the path's
-          kernel driver does. It is the [hang_ms] of the device's facts
-          ({!Rig_edge.type-facts}). *)
+      (** [Some n] where the path drives the GPU without a kernel driver:
+          work whose word has not moved for [n] milliseconds hung. [None]
+          where a kernel driver owns the GPU. It is the [hang_ms] of the
+          device's facts ({!Rig_edge.type-facts}). *)
   interrupts : unit -> int;
       (** [interrupts ()] is the path's count of the interrupts its sleeps
           took and the faults they recorded, as [sleep] compares it. *)

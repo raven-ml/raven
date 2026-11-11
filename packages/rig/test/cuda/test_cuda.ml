@@ -237,9 +237,7 @@ let facts () =
   equal (list bool) ~msg:"waits on stores, hosts" [ true; true ]
     [ f.waits.stores; f.waits.hosts ];
   equal bool ~msg:"submit may block" true f.may_block;
-  equal (option int) ~msg:"the hang bound, where no display's watchdog bounds"
-    (if S.attribute watchdog = 0 then Some 30_000 else None)
-    f.hang_ms;
+  equal (option int) ~msg:"the hang bound" None f.hang_ms;
   equal nativeint ~msg:"the word's handle is its host address"
     (Nativeint.of_int (word g))
     (C.locate f.word).handle;
@@ -993,21 +991,16 @@ let spans_after_idle () =
   Unix.sleepf 8.5;
   within "after the idle"
 
-(* The hang bound of the devices of {!own_word_after_running}. *)
-let own_hang_ms = 300
+(* How long {!own_word_after_running} waits for its kernel before it gives
+   the device up. *)
+let give_up_ns = 300_000_000
 
-(* A device on a word of its own, lost past its hang bound while a kernel
-   runs, gives its word back once that work ended, which writes the last
-   value, and a drain found it stopped. The GPU's next open asks whether the
-   stopped device's work ended, and reads the value its edge kept, never the
-   freed word. *)
+(* A device on a word of its own, given up while a kernel runs, gives its
+   word back once that work ended, which writes the last value, and a drain
+   found it stopped. The GPU's next open asks whether the stopped device's
+   work ended, and reads the value its edge kept, never the freed word. *)
 let own_word_after_running () =
   let module W = Rig_gpu_support.Watch (C) in
-  let module Capped = struct
-    include W
-
-    let facts h = { (W.facts h) with hang_ms = Some own_hang_ms }
-  end in
   (* The process's first failure keeps its slot, and so its word: a Polled
      device fails first. *)
   if Rig.failure () = None then begin
@@ -1018,7 +1011,7 @@ let own_word_after_running () =
   end;
   let rounds = 3 in
   for i = 1 to rounds do
-    let t = S.open_own (module Capped) in
+    let t = S.open_own (module W) in
     if S.attribute watchdog <> 0 then begin
       S.close t;
       skip ~reason:"a display watchdog ends long kernels" ()
@@ -1032,9 +1025,9 @@ let own_word_after_running () =
       S.spinning (kernel "spin") ~flag:(address flag) ~ns:(10 * second)
     in
     let p = S.submit_work t [ S.part t.d spinning ] in
-    raises_match ~msg:"the wait past the hang bound"
-      (function Rig.Lost _ -> true | _ -> false)
-      (fun () -> Rig.Point.wait p);
+    equal ~msg:"the bounded wait for the spinning kernel" bool false
+      (Rig.Point.wait_for ~ns:give_up_ns p);
+    Rig.lose t.d "given up";
     S.close t;
     H.set64 (host flag) 1;
     (* The submission's record holds the slot until it is collected. *)

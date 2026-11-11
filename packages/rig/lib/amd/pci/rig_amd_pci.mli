@@ -156,7 +156,12 @@ val count : ?machine:Rig_pci.Machine.t -> unit -> (int, string) result
     bounds the GPU's work, so the device declares [hang_ms]
     ({!Rig_edge.type-facts}) of {!Rig_pci.Driver.hang_ms}. A device stopped
     with the fault it was lost for, a hang included, leaves its GPU lost,
-    since its stop does not wait for the queues to leave.
+    since its stop does not wait for the queues to leave. A device the
+    program gave up ({!Rig.lose}) stops as a closed one does: the stop
+    takes each active compute queue off with its waves reset, and waits up
+    to 10 s for each to leave, so a close after the loss of a GPU whose
+    queues do not leave takes 20 to 30 s. A queue that stays leaves the GPU
+    lost. This stop has not run on hardware.
 
     {b Domains.} Any domain may call any value. Opens, resets and changes to
     the machine of AMD GPUs run one at a time, so a boot delays the

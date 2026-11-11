@@ -166,7 +166,7 @@ val capability : t -> Rig_cuda_abi.t
       | [completion]     | [Store]                                          |
       | [waits]          | [stores] and [hosts]; [most] [max_int]           |
       | [may_block]      | [true]                                           |
-      | [hang_ms]        | [Some 30_000], or [None] under a watchdog        |
+      | [hang_ms]        | [None]                                           |
       | [maps_host]      | [CU_DEVICE_ATTRIBUTE_HOST_REGISTER_SUPPORTED]    |
       | [host_addresses] | [false]                                          |
       | [alignment]      | [256], as CUDA aligns every allocation           |
@@ -194,9 +194,10 @@ val capability : t -> Rig_cuda_abi.t
 
     The streams wait on any aligned 64-bit word the device's work addresses,
     whoever writes it. A submission's waits go to its stream in batches, as
-    many as it carries. [hang_ms] is [None] where a display's watchdog
-    bounds the GPU's kernels ([CU_DEVICE_ATTRIBUTE_KERNEL_EXEC_TIMEOUT]),
-    and [Some 30_000], 30 s, where nothing does ({!section-failure}). *)
+    many as it carries. On a GPU that drives a display, the display's
+    watchdog ends a kernel that runs too long
+    ([CU_DEVICE_ATTRIBUTE_KERNEL_EXEC_TIMEOUT]). Nothing else bounds the
+    GPU's work in time ({!section-failure}). *)
 
 (** {1:work Work}
 
@@ -406,10 +407,6 @@ val capability : t -> Rig_cuda_abi.t
     must be terminated and relaunched. So the GPU cannot be opened again,
     and every other CUDA device of the process is lost at its first call
     that CUDA answers with the fault's error ({!Rig.section-loss}).
-
-    On a GPU whose kernels no display's watchdog bounds, rig also loses the
-    device once its work has kept the word still for 30 s, even work that
-    would have ended later.
 
     Before a fault, {!alloc}, {!map_host}, {!val-image} and {!entry} return
     CUDA's refusals as their result, [None], [Never] or [No_room], [Error]

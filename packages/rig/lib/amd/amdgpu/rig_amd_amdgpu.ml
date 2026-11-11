@@ -222,12 +222,6 @@ let quietly f = try f () with Unix.Unix_error _ -> ()
 let page = 4096
 let round_up n a = (n + a - 1) / a * a
 
-(* The kernel driver bounds no work on a user queue: it resets a queue only when
-   the queue fails to stop, and a running kernel stops by saving its waves. Work
-   that has not advanced for 30 s is hung, the bound of a GPU driven without a
-   kernel driver. *)
-let hang_ms = 30_000
-
 let opened path what =
   match open_file path with
   | fd -> Ok fd
@@ -1292,7 +1286,10 @@ let path d ~gpus ~index : mem Amd.path =
        (amdgpu_vram_mgr.c). *)
     combines = g.node.visible > 0;
     interrupt = d.events.(0);
-    hang_ms = Some hang_ms;
+    (* The kernel driver bounds no work on a user queue: it resets a queue
+       only when the queue fails to stop, and a running kernel stops by
+       saving its waves. *)
+    hang_ms = None;
     interrupts = (fun () -> Atomic.get d.age);
     sleep = sleep d;
     stable_power = stable_power d;

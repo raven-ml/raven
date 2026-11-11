@@ -121,7 +121,6 @@ let attribute_pci_device_id = 34
 let attribute_pci_domain_id = 50
 let attribute_can_use_64_bit_stream_mem_ops = 122
 let attribute_host_register_supported = 99
-let attribute_kernel_exec_timeout = 17
 let attribute_l2_cache_size = 38
 
 (* The most parameter bytes of a kernel CUDA launches: 32,764 on Volta
@@ -134,10 +133,6 @@ let attribute_l2_cache_size = 38
 let large_params = 32764
 let small_params = 4096
 let large_params_major = 7
-
-(* Work that no display's watchdog bounds is hung once it has not advanced for
-   30 s, the bound of a GPU driven without a kernel driver. *)
-let hang_ms = 30_000
 
 (* A CUDA failure with [status], in the step form "[step]: NAME: text". *)
 let fault step status = raise (Fault (strf "%s: %s" step (error status)))
@@ -627,18 +622,17 @@ let open_ ~word i =
         get (a attribute_compute_capability_major),
         get (a attribute_compute_capability_minor),
         get (a attribute_host_register_supported),
-        get (a attribute_kernel_exec_timeout),
         get (a attribute_l2_cache_size),
         get (total_memory d) )
     with
     | exception Fault why -> Error why
-    | 0, _, _, _, _, _, _, _ ->
+    | 0, _, _, _, _, _, _ ->
         Error
           (strf "the GPU lacks 64-bit stream memory operations under %s"
              (driver ()))
-    | _, 0, _, _, _, _, _, _ ->
+    | _, 0, _, _, _, _, _ ->
         Error (strf "the GPU lacks unified addressing under %s" (driver ()))
-    | _, _, major, minor, registers, watchdog, l2, budget -> (
+    | _, _, major, minor, registers, l2, budget -> (
         let held = g.held.(i) in
         let opened = ref (-1) in
         (* An exception after the claim gives it back, stopping the device if
@@ -693,7 +687,7 @@ let open_ ~word i =
                        many as it carries. *)
                     waits = { stores = true; hosts = true };
                     may_block = true;
-                    hang_ms = (if watchdog = 0 then Some hang_ms else None);
+                    hang_ms = None;
                     maps_host = registers <> 0;
                     host_addresses = false;
                     mapped = false;

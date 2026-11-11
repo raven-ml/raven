@@ -53,10 +53,6 @@ let va_size = 0x1fffffb000000
 let round_up n a = (n + a - 1) / a * a
 let bits = Rm.bits
 
-(* Work that the RM's watchdog does not bound is hung once it has not advanced
-   for 30 s, the bound of a GPU driven without a kernel driver. *)
-let hang_ms = 30_000
-
 (* GPUs *)
 
 type gpu = {
@@ -74,7 +70,6 @@ type gpu = {
   facts : Rig_nv.gpu;
   budget : int;
   cache_bytes : int option;
-  hang_ms : int option; (* [None] while the RM's watchdog bounds its work *)
   clock : int; (* its timer's reader, for the process *)
   index : int; (* its number, in bus order *)
   mutable channels : (int * int) list; (* registered, with their ranges *)
@@ -938,17 +933,6 @@ let l2_bytes c subdevice =
   let* n = fb_fact c subdevice D.nv2080_ctrl_fb_info_index_l2cache_size in
   Ok (if n > 0 then Some n else None)
 
-(* The path's hang bound: [None] while the RM's watchdog runs on the GPU and
-   ends work that holds it too long. It does not run on a GPU without a
-   display. *)
-let hang_bound c subdevice =
-  let module W = D.Watchdog_info in
-  let p = params W.sizeof in
-  let* () = Rm.control c subdevice D.nv2080_ctrl_cmd_rc_get_watchdog_info p in
-  let running = D.nv2080_ctrl_rc_get_watchdog_info_flags_running in
-  if get p W.watchdog_status_flags land running <> 0 then Ok None
-  else Ok (Some hang_ms)
-
 (* The GPUs made, by bus address, under [gpus_lock]. *)
 let gpus : (string * gpu) list ref = ref []
 
@@ -1089,7 +1073,6 @@ let make_gpu c um ~dev ~index ~others bus =
     in
     let* budget = fb_info c subdevice D.nv2080_ctrl_fb_info_index_heap_size in
     let* cache_bytes = l2_bytes c subdevice in
-    let* hang_ms = hang_bound c subdevice in
     let module Gi = D.Gid_info in
     let gid = params Gi.sizeof in
     set gid Gi.flags
@@ -1135,7 +1118,6 @@ let make_gpu c um ~dev ~index ~others bus =
           };
         budget;
         cache_bytes;
-        hang_ms;
         clock = clock c.ctl Rm.control_request c.root subdevice;
         index;
         channels = [];
@@ -1249,7 +1231,7 @@ let path g =
     (* The RM reports the GPU's faults through the channels; channels the
        device could not free may still run. *)
     check = ignore;
-    hang_ms = g.hang_ms;
+    hang_ms = None;
     clock = Rig_nv.Source g.clock;
     (* Allocates nothing, so that an exception that ended the device's stop
        before it still lets the GPU open again. *)

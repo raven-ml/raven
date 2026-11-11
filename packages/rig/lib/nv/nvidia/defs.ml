@@ -135,8 +135,6 @@ let nv2080_ctrl_cmd_perf_get_gpumon_perfmon_util_samples_v2 = 0x20802096
 let nv2080_ctrl_gpumon_sample_type_perfmon_util = 2
 let nv2080_ctrl_perf_gpumon_sample_count_perfmon_util = 0x48
 let nv2080_ctrl_cmd_timer_get_time = 0x20800403
-let nv2080_ctrl_cmd_rc_get_watchdog_info = 0x20802209
-let nv2080_ctrl_rc_get_watchdog_info_flags_running = 2
 let nvc36f_ctrl_cmd_gpfifo_get_work_submit_token = 0xc36f0108
 let nva06c_ctrl_cmd_gpfifo_schedule = 0xa06c0101
 let nv2080_ctrl_cmd_perf_boost = 0x2080200a
@@ -446,11 +444,6 @@ module Uvm_unmap_external = struct
   let length = (8, 8)
   let gpu_uuid = (0x10, 0x10)
   let rm_status = (0x20, 4)
-end
-
-module Watchdog_info = struct
-  let sizeof = 4
-  let watchdog_status_flags = (0, 4)
 end
 
 module Work_submit_token = struct

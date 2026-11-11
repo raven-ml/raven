@@ -11,11 +11,9 @@
     memory into the GPU's address space through the driver's unified memory
     module, [/dev/nvidia-uvm]. The kernel driver owns the GPU and shares it
     with other programs. The RM reports the faults of the GPU's work
-    ({!Rig_nv.section-faults}). While the RM's watchdog runs on the GPU, it
-    ends work that holds the GPU too long, and the device's [hang_ms] is
-    [None]. The watchdog does not run on a GPU without a display. There the
-    device's [hang_ms] is 30 s, and rig loses the device once its work has
-    made no progress for that long.
+    ({!Rig_nv.section-faults}). The device's [hang_ms] is [None]. The RM's
+    watchdog runs only on a GPU with a display, where it ends work that
+    holds the GPU too long; elsewhere nothing bounds the work in time.
 
     A program opens GPU [i] ({!Rig_nv.is_gpu}) with its opener:
     {[

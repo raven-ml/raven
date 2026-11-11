@@ -266,7 +266,6 @@ NVIDIA = Defs(
         "ctrl0080gr.h": SDK + "ctrl/ctrl0080/ctrl0080gr.h",
         "ctrl2080gr.h": SDK + "ctrl/ctrl2080/ctrl2080gr.h",
         "ctrl2080fb.h": SDK + "ctrl/ctrl2080/ctrl2080fb.h",
-        "ctrl2080rc.h": SDK + "ctrl/ctrl2080/ctrl2080rc.h",
         "ctrla06c.h": SDK + "ctrl/ctrla06c.h",
         "ctrlc36f.h": SDK + "ctrl/ctrlc36f.h",
         "ctrl2080perf.h": SDK + "ctrl/ctrl2080/ctrl2080perf.h",
@@ -318,7 +317,6 @@ NVIDIA = Defs(
         "NV2080_CTRL_FB_INFO_INDEX_L2CACHE_SIZE",
         "NV2080_CTRL_CMD_PERF_GET_GPUMON_PERFMON_UTIL_SAMPLES_V2", "NV2080_CTRL_GPUMON_SAMPLE_TYPE_PERFMON_UTIL",
         "NV2080_CTRL_PERF_GPUMON_SAMPLE_COUNT_PERFMON_UTIL", "NV2080_CTRL_CMD_TIMER_GET_TIME",
-        "NV2080_CTRL_CMD_RC_GET_WATCHDOG_INFO", "NV2080_CTRL_RC_GET_WATCHDOG_INFO_FLAGS_RUNNING",
         "NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN", "NVA06C_CTRL_CMD_GPFIFO_SCHEDULE",
         "NV2080_CTRL_CMD_PERF_BOOST", "NV83DE_CTRL_CMD_DEBUG_READ_ALL_SM_ERROR_STATES",
         "NV83DE_CTRL_CMD_DEBUG_READ_MMU_FAULT_INFO", "NV2080_CTRL_PERF_BOOST_FLAGS_CMD_BOOST_TO_MAX",
@@ -386,7 +384,6 @@ NVIDIA = Defs(
         "UvmGpuMappingAttributes": ("Uvm_gpu_mapping", ["gpuUuid", "gpuMappingType"]),
         "UVM_UNMAP_EXTERNAL_PARAMS": ("Uvm_unmap_external", ["base", "length", "gpuUuid", "rmStatus"]),
         "NV2080_CTRL_FB_GET_INFO_V2_PARAMS": ("Fb_get_info", ["fbInfoListSize", "fbInfoList"]),
-        "NV2080_CTRL_RC_GET_WATCHDOG_INFO_PARAMS": ("Watchdog_info", ["watchdogStatusFlags"]),
         "NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS": ("Work_submit_token", ["workSubmitToken"]),
         "NV2080_CTRL_PERF_BOOST_PARAMS": ("Perf_boost", ["flags", "duration"]),
         "NV2080_CTRL_PERF_GET_GPUMON_PERFMON_UTIL_SAMPLES_V2_PARAMS": ("Util_samples", [

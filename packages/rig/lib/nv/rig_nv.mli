@@ -363,13 +363,13 @@ val capability : t -> Rig_nv_abi.Gpu.t
     RM's refusal to read them; an MMU line names the faulting address and
     access.
 
-    While no notifier holds an error, a sleep asks only the path. A fault
-    the RM records without writing a notifier, or a refusal of the RM to
-    read the faults, is then not raised by a sleep. A channel the RM stopped
-    so keeps the word still: where the path bounds progress
-    ({!field-hang_ms}), rig loses the device with ["no progress for n ms"],
-    without the RM's lines, and where the RM's watchdog runs ([hang_ms] is
-    [None]), the wait does not end. Work that completes after such a fault
+    While no notifier holds an error, a sleep asks only the path. The RM
+    writes a channel's notifier when it stops the channel, when its GSP
+    fails, and when it finds the GPU off the bus, and a sleep raises it. A
+    GPU loss the RM has not found keeps the word still: where the path
+    bounds progress ({!field-hang_ms}), rig loses the device with
+    ["no progress for n ms"], and elsewhere the wait lasts until the program
+    gives the device up ({!Rig.lose}). Work that completes after a fault
     raises nothing.
 
     A wait for work that runs long lasts until the work ends, unless the
@@ -620,9 +620,9 @@ type 'm path = {
           the GPU's configuration space, a round trip where the GPU is on
           another machine. *)
   hang_ms : int option;
-      (** [Some n] if work whose timeline word has not moved for [n]
-          milliseconds hung, where nothing else bounds the GPU's work; [None]
-          where the path's kernel driver bounds it. It is the [hang_ms] of
+      (** [Some n] where the path drives the GPU without a kernel driver:
+          work whose timeline word has not moved for [n] milliseconds hung.
+          [None] where a kernel driver owns the GPU. It is the [hang_ms] of
           the device's facts ({!Rig_edge.type-facts}). *)
   clock : clock;
       (** How a device reads the GPU's timer against the host's clock. *)

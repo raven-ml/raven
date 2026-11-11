@@ -149,9 +149,10 @@ val gpu : ?measure:Rig_amd.measure -> int -> Rig_amd.t Rig_edge.opener
     {b Faults.} The kernel driver reports a fault of the GPU's work, a page
     fault or a hardware exception such as a reset, with its address or
     cause, and {!Rig_amd.val-sleep} raises it. The kernel driver bounds no
-    work on a KFD queue, so the device's [hang_ms] is 30 s
-    ({!Rig_edge.type-facts}), and rig loses the device once its work has
-    made no progress for that long.
+    work on a KFD queue in time, nor does rig: the device's [hang_ms] is
+    [None] ({!Rig_edge.type-facts}). A program that gives up on the work
+    loses the device ({!Rig.lose}), and its stop destroys the device's
+    queues, which ends their waves.
 
     {b Tracing.} A device's first thread trace takes the GPU's stable power
     state ({!section-stable}), and fails while another process holds it or
