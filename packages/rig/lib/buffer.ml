@@ -132,7 +132,7 @@ let view b ~first ~length =
       length first b.length;
   { b with offset = b.offset + first; length }
 
-let spans b = b.offset = 0 && b.length = Memory.size b.mem.alloc
+let spans b = b.offset = 0 && b.length = b.mem.alloc.size
 
 external meet : t -> t -> bool -> bool = "caml_rig_buffer_meet" [@@noalloc]
 
@@ -306,7 +306,7 @@ let view_of fn ~export ~window (type a b) (k : (a, b) Bigarray.kind) b :
   | Bigarray ba -> bigarray_view ba code at n
   | Nothing ->
       let p = Memory.proxy a.entry in
-      bigarray_view (proxy_bytes p b.mem.host (Memory.size a)) code b.offset n
+      bigarray_view (proxy_bytes p b.mem.host a.size) code b.offset n
 
 (* An empty buffer has no byte to address, so its array is a new empty one,
    whatever its memory. An export of one still marks the host's memory. *)

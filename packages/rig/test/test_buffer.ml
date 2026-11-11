@@ -55,6 +55,20 @@ let test_views () =
   equal bool true (B.overlaps b v);
   equal bool false (B.overlaps (B.view b ~first:0 ~length:4) v)
 
+(* A free changes no buffer's bytes or memory, so a buffer spans its memory
+   once freed as it did before, the host's memory and a device's alike. *)
+let test_spans_freed () =
+  let d, _ = P.open_ "buffer:spans-freed" in
+  List.iter
+    (fun dev ->
+      let msg = Rig.name dev in
+      let b = B.create dev 64 in
+      let part = B.view b ~first:0 ~length:32 in
+      equal ~msg bool true (B.free b);
+      equal ~msg bool true (B.spans b);
+      equal ~msg bool false (B.spans part))
+    [ Rig.host; d ]
+
 (* A host buffer of 64 KiB or more starts on a page: an address [at] bytes
    past a view into it, inside the view or outside it, lies at a multiple of a
    power of two up to the page iff its offset from the page is one. *)
@@ -2211,6 +2225,7 @@ let tests =
         test "a buffer holds its elements' bytes" test_create;
         test "a buffer refuses bounds it cannot hold" test_refusals;
         test "a view shares its buffer's memory" test_views;
+        test "a freed buffer spans its memory as it did" test_spans_freed;
         prop "an address is aligned to a power of two, in or out of the buffer"
           aligned_case aligned_law;
         prop "a host buffer of 128 bytes to 64 KiB starts on 128 bytes" line_case

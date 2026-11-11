@@ -339,6 +339,14 @@ let lease_ended m =
   | None -> false
   | Some l -> Atomic.Loc.get [%atomic.loc l.lease_count] >= lease_end
 
+(* Host memory's size is its bigarray's, other memory's its entry's:
+   [no_entry], of no bytes, for memory of no bytes. *)
+let keep_size keep (e : entry) =
+  match keep with
+  | Heap ba -> Bigarray.Array1.dim ba
+  | Bigarray ba -> Bigarray.Array1.size_in_bytes ba
+  | Nothing -> e.bytes
+
 let make ?(keep = Nothing) ?(host = -1) ?(address = -1) ?(handle = 0n) dev
     entry =
   let alloc =
@@ -351,20 +359,13 @@ let make ?(keep = Nothing) ?(host = -1) ?(address = -1) ?(handle = 0n) dev
       entry;
       token = no_token;
       keep;
+      size = keep_size keep entry;
     }
   in
   { dev; host; address; handle; alloc; lease = None }
 
 let memory_of ?lease alloc dev ~host ~address ~handle =
   { dev; host; address; handle; alloc; lease }
-
-(* Host memory's size is its bigarray's, other memory's its entry's:
-   [no_entry], of no bytes, for memory of no bytes. *)
-let size (a : alloc) =
-  match a.keep with
-  | Heap ba -> Bigarray.Array1.dim ba
-  | Bigarray ba -> Bigarray.Array1.size_in_bytes ba
-  | Nothing -> a.entry.bytes
 
 (* Where [r] lies, which its driver made. *)
 let locate (Region { m; r; mapped; _ }) =
@@ -2030,6 +2031,7 @@ let[@inline] host_records keep addr n =
       entry = no_entry;
       token = no_token;
       keep;
+      size = n;
     }
   in
   let mem =
@@ -2062,7 +2064,7 @@ let host_buffer n =
 let make_entry (a : alloc) =
   if a.entry == no_entry then begin
     let d = a.owner in
-    let e = entry d (Kept a.keep) (size a) (stamps_new ()) in
+    let e = entry d (Kept a.keep) a.size (stamps_new ()) in
     let t = token d.live.release (Memory (ref e)) 0 max_int (-1) in
     if t == no_token then begin
       stamps_unref e.stamps;
@@ -2209,7 +2211,7 @@ let map_new d (a : alloc) host how : mapping Rig_edge.mapping =
      host addresses, as host memory. *)
   let making =
     if peer_memory d a then peer_of d a
-    else if host >= 0 then host_making d host (size a)
+    else if host >= 0 then host_making d host a.size
     else peer_of d a
   in
   match making with
@@ -2304,7 +2306,7 @@ let[@inline] reach d (a : alloc) host =
   if o == d then Itself
   else if Dev.is_io d || (Dev.is_io o && host < 0) then Cannot
   else if (not (Dev.same_machine o d)) && not (Dev.is_io o) then Cannot
-  else if size a = 0 then
+  else if a.size = 0 then
     (* Before the host's answer: memory of no bytes has no host address. *)
     Empty
   else if Dev.is_host d then if host >= 0 then At_host else Cannot
@@ -2318,7 +2320,7 @@ let[@inline] reach d (a : alloc) host =
 (* Whether [a] is io memory of no bytes, which every other device borrows over
    no pages. *)
 let[@inline] empty_io d (a : alloc) =
-  is_io_memory a.entry && size a = 0 && a.owner != d
+  is_io_memory a.entry && a.size = 0 && a.owner != d
 
 let[@inline] host_of (a : alloc) =
   if is_io_memory a.entry then pages a else a.host
@@ -2396,7 +2398,7 @@ let rec mapped d (a : alloc) host how ~ladder ~retried =
   | Maps mp -> Some mp
   | Never -> None
   | No_room when not ladder -> None
-  | No_room when retried -> raise (Dev.Out_of_memory (d, size a))
+  | No_room when retried -> raise (Dev.Out_of_memory (d, a.size))
   | No_room ->
       make_room ();
       if Dev.is_lost d then Dev.raise_lost d;

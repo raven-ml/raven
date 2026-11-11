@@ -1473,7 +1473,7 @@ let allocation =
         test_sub_byte_tail;
       test "an add of one-element host values allocates its budget" (fun () ->
           let a = on_host Plain D.Float32 [| 1 |] [| 1. |] in
-          at_most (float 0.5) ~than:51. (words (fun () -> Nx.add a a)));
+          at_most (float 0.5) ~than:52. (words (fun () -> Nx.add a a)));
       test "an add_s of a one-element host value allocates its budget"
         (fun () ->
           let a = on_host Plain D.Float32 [| 1 |] [| 1. |] in
@@ -1489,12 +1489,12 @@ let allocation =
       test "a copy of a one-element host value allocates its baseline"
         (fun () ->
           let a = on_host Plain D.Float32 [| 1 |] [| 1. |] in
-          expect (allocated (fun () -> Nx.copy a)) @@ __POS_OF__ {| 87 words |});
+          expect (allocated (fun () -> Nx.copy a)) @@ __POS_OF__ {| 88 words |});
       test "a matmul of 4x4 float32 host values allocates its baseline"
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
           expect (allocated (fun () -> Nx.matmul a a))
-          @@ __POS_OF__ {| 162 words |});
+          @@ __POS_OF__ {| 163 words |});
       test "a slice of a 4x4 host value by ranges allocates its baseline"
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
@@ -1509,24 +1509,24 @@ let allocation =
         (fun () ->
           let a = on_host Plain D.Float32 [| 16 |] (Array.make 16 1.) in
           expect (allocated (fun () -> Nx.sum a))
-          @@ __POS_OF__ {| 134 words |});
+          @@ __POS_OF__ {| 135 words |});
       test "a cumsum of 16 float32 host elements allocates its baseline"
         (fun () ->
           let a = on_host Plain D.Float32 [| 16 |] (Array.make 16 1.) in
           expect (allocated (fun () -> Nx.cumsum a))
-          @@ __POS_OF__ {| 114 words |});
+          @@ __POS_OF__ {| 115 words |});
       test "a take of 3 rows of a 4x4 host value allocates its baseline"
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
           let ids = on_host Plain D.Int64 [| 3 |] [| 0L; 2L; 3L |] in
           expect (allocated (fun () -> Nx.take ~axis:0 ids a))
-          @@ __POS_OF__ {| 174 words |});
+          @@ __POS_OF__ {| 175 words |});
       test "a set of a row of a 4x4 host value allocates its baseline"
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
           let v = on_host Plain D.Float32 [| 4 |] (Array.make 4 2.) in
           expect (allocated (fun () -> Nx.set Nx.[ I 1 ] v a))
-          @@ __POS_OF__ {| 343 words |});
+          @@ __POS_OF__ {| 344 words |});
     ]
 
 (* A scatter's results lie at the union of its operands' cuts, as any

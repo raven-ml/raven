@@ -397,6 +397,9 @@ and alloc = {
   mutable keep : keep;
       (** The host memory it keeps reachable, until a free lets it go
           ({!Rig.Buffer.free}). *)
+  size : int;
+      (** Its bytes: its bigarray's for host memory, its entry's otherwise.
+          A free that lets [keep] and [entry] go leaves it. *)
 }
 (** The type for one lifetime of an allocation, which every memory record
     over it shares: its claim, and the token that releases its entry. A

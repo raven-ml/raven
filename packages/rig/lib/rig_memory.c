@@ -535,12 +535,14 @@ static void raise_generation(value b, value why) {
 }
 
 /* Holds the empty [word] at CLAIM_TAKING: whether it was empty. Otherwise
-   [*seen] is the word it found. */
+   [*seen] is the word it found. Both reads acquire, so the caller's check of
+   its buffer sees the raise of any step whose word it read: a claim that
+   [*seen] counts may follow a free. */
 static int hold_empty(_Atomic value *word, value *seen) {
   *seen = Val_long(0);
   return atomic_compare_exchange_strong_explicit(
       word, seen, Val_long(CLAIM_TAKING), memory_order_acquire,
-      memory_order_relaxed);
+      memory_order_acquire);
 }
 
 static void give_back(_Atomic value *word) {

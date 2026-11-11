@@ -175,12 +175,9 @@ val make :
   entry ->
   memory
 (** [make d e] is the owner's memory record of a new lifetime of [e] on [d],
-    with no token and a claim word whose bits come from [keep] and [e].
-    [host] and [address] default to [-1], and [handle] to [0n]. *)
-
-val size : alloc -> int
-(** [size a] is the number of [a]'s bytes: its bigarray's for host memory,
-    its entry's otherwise. *)
+    with no token, a claim word whose bits come from [keep] and [e], and the
+    size of [keep]'s bigarray, or [e]'s for [Nothing]. [host] and [address]
+    default to [-1], and [handle] to [0n]. *)
 
 val word : int
 (** [word] is {!Rig.word}, the bytes of the unit rig orders memory by. *)
