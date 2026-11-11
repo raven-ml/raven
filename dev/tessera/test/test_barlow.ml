@@ -156,22 +156,37 @@ let batch_norm =
 (* Nx.standardize's stated bound (nx.mli) on an element of exact value [y] of a
    float32 lane of [n ≤ 1024] elements, after the affine: [|γ| ((F / 2s + 11u/2)
    |y| + (L + D + 1) u A / √s) + u |γ y| + u |γ y + β|], [s] the exact variance
-   [V] plus eps, [A] the lane's mean absolute deviation, [L = ⌈n / 16⌉ + 3] and
-   [D = 0] nx.cpu's for its moments (nx_cpu.mli, Moments), and [F] the
-   variance's error, [(L + D + 5) u V] to first order in [u]. Computed in
-   float64 from the lane's float32 values. *)
+   [V] plus eps, [A] the lane's mean absolute deviation, and [F], [L] and [D]
+   nx.cpu's for the moments of the lane's elements (nx_cpu.mli, Moments), with
+   [μ] the lane's mean and [M] its mean magnitude:
+
+   [L = ⌈n / 16⌉ + 3], [D = 0], [E = (L + D) u M + u |μ|],
+
+   [F = (L + D + 5) u V + 2 (L + D + 1) u E √V + (3L + 3D + 7) u E²].
+
+   Computed in float64 from the lane's float32 values. *)
 let standardize_bound ~eps (bn : _ Kaun.Batch_norm.t) x =
   let u = Float.ldexp 1. (-24) in
   let n = Nx.dim 0 x in
   let l = Float.of_int (((min n 1024 + 15) / 16) + 3) and dd = 0. in
   let x = Nx.cast Nx.float64 x in
   let col f = Nx.mean ~axes:[ 0 ] ~keepdims:true f in
-  let dev = Nx.sub x (col x) in
+  let mu = col x in
+  let dev = Nx.sub x mu in
   let v = col (Nx.square dev) and a = col (Nx.abs dev) in
   let s = Nx.add_s v eps in
   let y = Nx.div dev (Nx.sqrt s) in
   let g = Nx.cast Nx.float64 bn.gamma and bt = Nx.cast Nx.float64 bn.beta in
-  let f = Nx.mul_s v ((l +. dd +. 5.) *. u) in
+  let e =
+    Nx.add (Nx.mul_s (col (Nx.abs x)) ((l +. dd) *. u)) (Nx.mul_s (Nx.abs mu) u)
+  in
+  let f =
+    Nx.add
+      (Nx.mul_s v ((l +. dd +. 5.) *. u))
+      (Nx.add
+         (Nx.mul_s (Nx.mul e (Nx.sqrt v)) (2. *. (l +. dd +. 1.) *. u))
+         (Nx.mul_s (Nx.square e) (((3. *. l) +. (3. *. dd) +. 7.) *. u)))
+  in
   let rel = Nx.add_s (Nx.div f (Nx.mul_s s 2.)) (5.5 *. u) in
   let own =
     Nx.add

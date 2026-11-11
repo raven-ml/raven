@@ -47,11 +47,6 @@ An item leaves when its library fixes it, or when a design decides it stays.
   same fact that an operand is file pages.
 - Floats narrower than float32 compute in float32 on the CPU, and nothing at
   the call says so: bf16 rows on the CPU time f32 kernels plus conversions.
-- `Nx.standardize`'s error bound (`nx.mli`) names `F`, `L` and `D` as
-  "nx.cpu's for its moments", but `nx_cpu.mli` (Moments) defines `L` and
-  `D` alone; tessera's batch-normalisation law reads `F` as the variance's
-  bound there, `(L + D + 5) u V` to first order. Found by the M4b review's
-  tolerance derivation.
 - `Nx.split` returns a list, so taking a GRU's three gates needs a
   non-exhaustive match or slices.
 - A long contraction accumulates in one float32 register, sequentially:
