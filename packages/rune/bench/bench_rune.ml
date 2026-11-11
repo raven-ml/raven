@@ -1385,13 +1385,15 @@ let on_gpu g name c =
     (fun call -> call ())
 
 (* Attention compiled: o of [hq] query heads over [hk] key heads of [tk]
-   keys, [tq] query rows of 64, at [dt], accumulating in float32, under no
+   keys, [tq] query rows of [d] (default 64), at [dt], accumulating in
+   float32, under no
    mask, a causal one, a causal window of 128 keys, or a causal window read
    from an array, wider than every key, as a model's full layers pass when
    its others are windowed. *)
 type mask = Full | Causal | Window | Reach
 
-let attention_call (type s) (dt : (float, s) Nx.dtype) ~hq ~hk ~tq ~tk mask =
+let attention_call (type s) ?(d = 64) (dt : (float, s) Nx.dtype) ~hq ~hk ~tq ~tk
+    mask =
   {
     at =
       (fun (type d) (at : d Nx.Placement.t) ->
@@ -1399,8 +1401,8 @@ let attention_call (type s) (dt : (float, s) Nx.dtype) ~hq ~hk ~tq ~tk mask =
           Nx.place at
             (Nx.cast dt (Nx.Rng.normal ~key:(Nx.Rng.key i) f32 s))
         in
-        let q = draw 80 [| 1; hq; tq; 64 |] in
-        let k = draw 81 [| 1; hk; tk; 64 |] and v = draw 82 [| 1; hk; tk; 64 |] in
+        let q = draw 80 [| 1; hq; tq; d |] in
+        let k = draw 81 [| 1; hk; tk; d |] and v = draw 82 [| 1; hk; tk; d |] in
         let mask : (d Nx.pair -> d Nx.bool_t) option =
           match mask with
           | Full -> None
@@ -2125,6 +2127,20 @@ let gpu_rows g =
         (attention_grad_call Nx.bfloat16 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Causal);
       on_gpu g "attention/jit-grad-bf16-8x2048x128-full"
         (attention_grad_call ~d:128 Nx.bfloat16 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Full);
+      (* Heads past 64 dimensions: 110, a block of values past 64 columns in
+         tiles of 32 keys; 256, two chunks a head, where the gradient's
+         kernels before chunks took 7.1 ms against the default's 4.3; a
+         teacher's 1024 dimensions over 40 keys, 2048 heads of 40 rows. *)
+      on_gpu g "attention/jit-bf16-8x2048x110-full"
+        (attention_call ~d:110 Nx.bfloat16 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Full);
+      on_gpu g "attention/jit-grad-bf16-8x2048x110-full"
+        (attention_grad_call ~d:110 Nx.bfloat16 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Full);
+      on_gpu g "attention/jit-grad-bf16-8x2048x256-full"
+        (attention_grad_call ~d:256 Nx.bfloat16 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Full);
+      on_gpu g "attention/jit-bf16-2048x40x1024-full"
+        (attention_call ~d:1024 Nx.bfloat16 ~hq:2048 ~hk:2048 ~tq:40 ~tk:40 Full);
+      on_gpu g "attention/jit-grad-bf16-2048x40x1024-full"
+        (attention_grad_call ~d:1024 Nx.bfloat16 ~hq:2048 ~hk:2048 ~tq:40 ~tk:40 Full);
       on_gpu g "attention/jit-jvp-bf16-8x2048x64-full"
         (attention_jvp_call Nx.bfloat16 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048);
       on_gpu g "attention/jit-bf16-decode-8x4096x64"
