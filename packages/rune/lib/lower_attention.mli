@@ -47,9 +47,14 @@
     {!linear} computes the derivative's transpose as three kernels: [δ] by
     rows, then [q̄] by query rows over their keys and [k̄] and [v̄] by keys
     over their group's rows, each pair's weight recomputed from [lse] and
-    no sum split across workgroups. Each product runs on the tensor core,
-    the weights and the scores' cotangents rounded once to the operands'
-    dtype; each sum adds in a fixed order of the shapes and the target. *)
+    no sum split across workgroups. Past 64 dimensions of keys or values,
+    [k̄] and [v̄] take a kernel each, four kernels in all, which compute
+    eight products a tile of pairs: [S], [dP] and [q̄] for [q̄], [S], [dP] and
+    [k̄] for [k̄], and [S] and [v̄] for [v̄]. Each product runs on the tensor
+    core, the weights and the scores' cotangents rounded once to the
+    operands' dtype; each sum adds in a fixed order of the shapes and the
+    target. Past 128 dimensions of its own, a cotangent adds in device
+    memory between tiles. *)
 
 open Tolk
 
@@ -80,8 +85,8 @@ val linear :
 (** [linear ~device ~renderer spec ~transposed data args] is the nodes of
     {!Attention.linear}'s results, computed on [device] by kernels [renderer]
     renders, where it has them: transposed, dense keys, [o] of the query's
-    dtype, no load [spec.tangents] marks, keys and values of [1] to [128]
-    dimensions, rows and keys, and a float16 or bfloat16 query on a tensor
+    dtype, no load [spec.tangents] marks, keys and values of at least one
+    dimension, rows and keys, and a float16 or bfloat16 query on a tensor
     core that chains its accumulator, as {!lower}'s. Elsewhere it is
     [None], and the derivative computes as its default. *)
 

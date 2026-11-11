@@ -750,10 +750,10 @@ let grad_law ?(composed = false) (module S : Nx.Devices) ~vmap c =
      run. *)
   cover "a narrow float of the kernels' shapes"
     (narrow && c.page = None && (not c.alibi) && c.tq > 0 && c.tk > 0
-     && c.dk <= 128 && c.dv > 0 && c.dv <= 128);
+     && c.dk > 0 && c.dv > 0);
   cover "heads of the kernels past 64 dimensions"
     (narrow && c.page = None && (not c.alibi) && c.tq > 0 && c.tk > 0
-     && c.dk <= 128 && c.dv <= 128 && (c.dk > 64 || c.dv > 64));
+     && (c.dk > 64 || c.dv > 64));
   let lse_alone = c.seed mod 4 = 1 in
   cover "lse's cotangent alone" lse_alone;
   let { q; k; v; table; lengths; docs; spans; positions; blocks; slopes; poisoned } =

@@ -2454,6 +2454,12 @@ let () =
                 composition"
                ~id:head_id heads
                (fun c -> Attentions.law ~composed:true (snd (on_gpu ())) c);
+             Windtrap.cases
+               "their gradient holds rune's bound against the composition's"
+               ~id:head_id heads
+               (fun c ->
+                 Attentions.grad_law ~composed:true (snd (on_gpu ()))
+                   ~vmap:false c);
              Windtrap.cases "a kernel's instructions do not grow with its head"
                ~id:(fun (Nx.Dtype.Any dt) -> Nx.Dtype.name dt)
                Nx.Dtype.[ Any Nx.float32; Any Nx.bfloat16 ]

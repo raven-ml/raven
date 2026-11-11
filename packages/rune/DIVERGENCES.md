@@ -1280,15 +1280,16 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   runs where a workgroup's vote finds a visible pair. Few workgroups, or on the host
   few rows, split each row's keys into runs, folded in order by a second
   kernel; a host thread adds a vector of its row's columns at a time.
-  Reverse mode on such a core, for keys and values of at most 128
-  dimensions with no float capture or page table, runs three kernels in
-  place of tinygrad's differentiated composition, which stores the
-  scores and the weights: [δ = ō·o - l̄se] by rows, [q̄] by query rows
-  over their keys and [k̄] and [v̄] by keys over their group's rows, each
-  weight recomputed from [lse], the weights and the scores' cotangents
-  rounded once to the operands' dtype for their products, no atomics;
-  past 64 dimensions [k̄] and [v̄] run in a launch each, so that each sum
-  keeps its accumulators in registers.
+  Reverse mode on such a core, with no float capture or page table, runs
+  three kernels in place of tinygrad's differentiated composition, which
+  stores the scores and the weights: [δ = ō·o - l̄se] by rows, [q̄] by
+  query rows over their keys and [k̄] and [v̄] by keys over their group's
+  rows, each weight recomputed from [lse], the weights and the scores'
+  cotangents rounded once to the operands' dtype for their products, no
+  atomics; past 64 dimensions [k̄] and [v̄] run in a launch each, so that
+  each sum keeps its accumulators in registers, four kernels and eight
+  products a tile; past 128 a cotangent adds in device memory between
+  tiles.
 - **nx:** `nx_kernel.mli` (attention: the pair program, visibility,
   [o] and [lse]), `nx.mli` (`attention`: the bound, the weights rounded
   once to [v]'s dtype for float16 and bfloat16, and a skipped hidden key's
@@ -1330,5 +1331,6 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   reference`, `› its compiled gradient holds rune's bound against a
   float64 reference`, `› its gradient mapped by vmap holds rune's bound
   against a float64 reference`, `› heads of 36 to 1024 dimensions hold
-  nx's bound against the composition` and `› a kernel's instructions do
-  not grow with its head`; the rows above.
+  nx's bound against the composition`, `› their gradient holds rune's
+  bound against the composition's` and `› a kernel's instructions do not
+  grow with its head`; the rows above.

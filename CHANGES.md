@@ -437,7 +437,9 @@ All notable changes to this project will be documented in this file.
 - `Rune.jit`'s attention compiles kernels whose code does not grow with
   `dk` and `dv`. On a tensor core it computes each tile of scores once
   whatever `dv` and runs heads of any size, where past about 600 bfloat16
-  dimensions it ran the SIMT kernel. GPU timings are pending.
+  dimensions it ran the SIMT kernel. Past 128 dimensions it computes
+  `Nx.attention`'s gradient in kernels of its own, which store no weights.
+  GPU timings are pending.
 - `Rune.jit`'s attention over `Nx.Paged` keys reads each key's page table
   entry once a tile and decides skips from the lengths and the mask alone:
   gpt-oss's prefill of 512 rows over 1024 slots takes 48.5 µs where it took
