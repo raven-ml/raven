@@ -19,7 +19,10 @@
    else a register at a time where they lie on 64, else through the 64-byte
    lines that hold them (tile). Each output adds a[i]·b[j] fused, in
    increasing k: the chain NEON's kernels compute, bit for bit on every
-   result but a NaN, which the unit gives as the default NaN.
+   result but a NaN, which the unit gives as the default NaN. The driver
+   calls either for each block of a chain (cpu.h's NX_CPU_CHAIN_TERMS),
+   so that a product has one association on both, whichever its threads
+   choose (gemm.c's fastest).
 
    A sliver of n columns, L ≤ n < 2L, is a tile whose column halves are
    its first L columns and its last L, read in place and stored straight
@@ -31,10 +34,11 @@
    The kernel and the pack run in a live state of the unit that enter makes
    and leave ends, once per body of the driver's jobs (gemm.c): a state per
    call drained the unit at each end. A thread holds none between jobs. A
-   call of a whole KC block is 4,096 outer products, against which the
-   tile's stores from Z cost about 3%; a first block starts from +0, which
-   four outer products write, so that a product of at most KC steps loads
-   no tile. An M1 has one unit per cluster of cores, which every core of
+   call of a chain's block, 256 steps of k, is 1,024 outer products,
+   against which the tile's stores from Z cost about 12%, four times the
+   3% measured for a call of a KC block of 1024 steps; each call starts
+   from +0, which four outer products write, so that no call loads a
+   tile. An M1 has one unit per cluster of cores, which every core of
    the cluster feeds: products run on all the performance cores, which on
    the M1 Max beat one thread per unit (1024³ float32: 1.09 against 2.02
    ms).

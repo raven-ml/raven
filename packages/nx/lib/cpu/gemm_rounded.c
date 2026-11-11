@@ -8,7 +8,9 @@
    A dst of another dtype than acc takes the sum in acc rounded once, as a
    cast of it would round it: R is scratch in acc, laid out C-contiguous
    over the batch's, rows' and columns' runs, and a cast walk takes it
-   into dst once every product is in. A 4-bit acc sums in 8 bits
+   into dst once every product is in. A dst that is its own init past a
+   chain's block takes R so too, init then read from dst, and the walk
+   copies (gemm.h's donated). A 4-bit acc sums in 8 bits
    (summed_in): R is then narrowed to acc, by a cast into dst where dst
    is of acc, else into scratch of acc cast into dst in turn. */
 
@@ -71,8 +73,7 @@ static __attribute__((noinline)) int store_rounded(
 }
 
 /* The contraction of [r]'s groups over [op] in [acc], summed in [sum],
-   into op[DST] of another dtype than [sum], through scratch R: 0 if an
-   allocation failed. */
+   into op[DST] through scratch R: 0 if an allocation failed. */
 int nx_gemm_rounded_on(int acc, int sum, int order, nx_contract_runs *r,
                        const nx_array *const *op, const scale *s) {
   /* The loop the cast walks, over the runs of more than one element:

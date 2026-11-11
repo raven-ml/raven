@@ -611,7 +611,7 @@ void nx_cpu_cast_loop(const nx_array *dst, const nx_array *src,
                       const nx_loop *l, double per) {
   nx_array pair[2] = {*dst, *src};
   if (dst->dtype == src->dtype)
-    nx_cpu_walk(2, pair, l, COPY_MOST, per, copy_block, pair);
+    copy_walk(pair, l, per);
   else
     nx_cpu_walk(2, pair, l, cast_most(src->dtype, dst->dtype), per,
                 cast_block, pair);

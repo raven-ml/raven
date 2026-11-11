@@ -690,6 +690,8 @@ static nx_cpu_gemm integers(nx_cpu_kernel f, int nr, double speed) {
 }
 
 void nx_cpu_set_avx2(nx_cpu_target *t) {
+  /* float32's KC is one chain's block (cpu.h), as float64's: each block
+     of k is one call of the kernel from +0. */
   t->gemm[NX_FLOAT32] = (nx_cpu_gemm){
       .kernel = {.f = kernel_f32,
                  .mr = MR,
@@ -699,7 +701,7 @@ void nx_cpu_set_avx2(nx_cpu_target *t) {
                  .flops_per_byte = SPEED32,
                  .shared = 1},
       .mc = MC,
-      .kc = 384,
+      .kc = NX_CPU_CHAIN_TERMS,
       .nc = 3072,
       .few = FEW};
   t->gemm[NX_FLOAT64] = (nx_cpu_gemm){

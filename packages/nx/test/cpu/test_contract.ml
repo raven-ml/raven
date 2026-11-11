@@ -84,21 +84,21 @@ let[@inline] fma64 a b c =
     if Float.abs r >= Float.min_float && Float.abs (a *. b) >= 0x1p-968 then r
     else Exact.fma a b c
 
-(* The fused chain from [init] over the products of [av] and [bv], and
-   block [x]'s products added into the 16 lanes of [l], term t into lane
-   t mod 16; by fma32 and by fma64, which each calls directly and inlines
-   with its floats unboxed: through a closure, each product boxed its
-   operands and its result, 9 of the order law's 11 billion words. *)
-let chain32 init av bv =
-  let acc = ref init in
-  for t = 0 to Array.length av - 1 do
+(* The fused chain from +0 over the products [lo] to [hi - 1] of [av] and
+   [bv], and block [x]'s products added into the 16 lanes of [l], term t
+   into lane t mod 16; by fma32 and by fma64, which each calls directly and
+   inlines with its floats unboxed: through a closure, each product boxed
+   its operands and its result, 9 of the order law's 11 billion words. *)
+let chain32 av bv lo hi =
+  let acc = ref 0. in
+  for t = lo to hi - 1 do
     acc := fma32 (Array.unsafe_get av t) (Array.unsafe_get bv t) !acc
   done;
   !acc
 
-let chain64 init av bv =
-  let acc = ref init in
-  for t = 0 to Array.length av - 1 do
+let chain64 av bv lo hi =
+  let acc = ref 0. in
+  for t = lo to hi - 1 do
     acc := fma64 (Array.unsafe_get av t) (Array.unsafe_get bv t) !acc
   done;
   !acc
@@ -119,10 +119,15 @@ let block64 av bv x l =
          (Array.unsafe_get l q))
   done
 
-(* [o]'s result in [acc], in chain order where [chain], one fused chain
-   from init or +0; or in lane order, blocks of 1024 terms in 16 lanes,
-   summed by trees, then init, with no term init as it is. Given [chain]
-   and [acc], it takes its dtype's functions once for every output. *)
+(* nx_cpu.mli's block of chain order. *)
+let chain_terms = 256
+
+(* [o]'s result in [acc], in chain order where [chain], a fused chain from
+   +0 a block of 256 products, each block's sum added into the sum of those
+   before it, then init; or in lane order, blocks of 1024 terms in 16
+   lanes, summed by trees, then init; with no term init as it is. Given
+   [chain] and [acc], it takes its dtype's functions once for every
+   output. *)
 let ordered ~chain acc =
   let f32 = part_of acc = D.Any D.Float32 in
   let add = if f32 then add32 else ( +. ) in
@@ -130,7 +135,19 @@ let ordered ~chain acc =
   let block_of = if f32 then block32 else block64 in
   fun o ->
     let k = Array.length o.av in
-    if chain then chain_of (Option.value ~default:0. o.init) o.av o.bv
+    if chain then begin
+      let sum = ref 0. in
+      let lo = ref 0 in
+      while !lo < k do
+        let hi = min k (!lo + chain_terms) in
+        let b = chain_of o.av o.bv !lo hi in
+        sum := if !lo = 0 then b else add !sum b;
+        lo := hi
+      done;
+      match o.init with
+      | None -> !sum
+      | Some i -> if k = 0 then i else add !sum i
+    end
     else begin
       let block x =
         let l = Array.make 16 0. in
@@ -196,6 +213,25 @@ let deep_examples =
         (Some v) 1)
     [ (f32, 4097); (f32, 200003); (f64, 4097); (f64, 200003) ]
 
+(* Chain order either side of its blocks of 256 products and over several,
+   past every target's KC: 64 × 64 outputs, which the threads share by
+   tiles, with and without init, in both accs. *)
+let chain_block_examples =
+  let v = Elements.plain 2 in
+  List.concat_map
+    (fun acc ->
+      List.concat_map
+        (fun k ->
+          List.map
+            (fun init ->
+              make ~acc ~out:acc ([||], [| 64 |], [| 64 |], [| k |]) (acc, v)
+                (acc, v)
+                (if init then Some v else None)
+                k)
+            [ false; true ])
+        [ 255; 256; 257; 513; 2049 ])
+    D.[ Any Float32; Any Float64 ]
+
 (* A contraction on the job's threads has the bits of the same contraction
    on one thread. *)
 let law_threads b c =
@@ -204,6 +240,7 @@ let law_threads b c =
   cover "float64" (c.acc = D.Any D.Float64);
   cover "a depth of 4097" (k = 4097);
   cover "a depth of 200003" (k = 200003);
+  cover "chain order over several blocks" (order c = Chain && k > 256);
   cover "init" (c.init <> None);
   match (run b c, Nx_cpu.one_thread (fun () -> run b c)) with
   | Some y, Some y' ->
@@ -2319,12 +2356,12 @@ let cpu (b : Support.backend) =
         ~examples:
           (examples @ large_examples @ order_edges @ unroll_examples
          @ few_rows_examples @ edge_examples @ by_columns_examples
-         @ depth_one_examples)
+         @ depth_one_examples @ chain_block_examples)
         "each output adds its products in the order nx_cpu.mli states"
         computed (run (law_order b));
       prop "a product of a depth of one has the same bits into any dst"
         depth_one_draws (run (law_depth_one_dst b));
-      prop ~count:16 ~examples:deep_examples
+      prop ~count:16 ~examples:(deep_examples @ chain_block_examples)
         "a contraction on the job's threads has one thread's bits" deep_cases
         (run (law_threads b));
       prop ~examples:(List.concat_map regimes integer_accs @ byte_examples)

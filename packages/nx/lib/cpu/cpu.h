@@ -130,6 +130,14 @@ static inline nx_cpu_run nx_cpu_convert(int s, int d) {
     JOIN;                          \
   }
 
+/* The most products chain order adds in one fused chain of a float sum
+   (gemm.c): each output's products fall in blocks of NX_CPU_CHAIN_TERMS
+   consecutive k, each block a chain from +0 whose sum is added into the
+   output's. One constant for every target, so that the kernels a host
+   dispatches between, as the M1's matrix unit and its cores' vector
+   units, keep one association. */
+#define NX_CPU_CHAIN_TERMS 256
+
 /* Where a microkernel's sums start: the tile's outputs, or +0, the tile
    then only written. */
 typedef enum { NX_CPU_FROM_TILE, NX_CPU_FROM_ZERO } nx_cpu_from;
@@ -260,7 +268,10 @@ typedef struct {
 /* A contraction's kernels for chain order in one accumulator dtype. */
 typedef struct nx_cpu_gemm {
   nx_cpu_micro kernel;
-  int64_t mc, kc, nc;    /* the driver's blocks of rows, of k and of columns */
+  int64_t mc, kc, nc;    /* the driver's blocks of rows, of k and of
+                            columns; a float kc a multiple of
+                            NX_CPU_CHAIN_TERMS, so that no block of a
+                            chain spans two of k */
   int64_t few;           /* the rows at most which a product may stream b
                             past all of a (gemm.c's streams) */
   nx_cpu_pack pack;      /* or NULL: operands pack through the stage */

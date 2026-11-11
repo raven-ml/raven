@@ -107,13 +107,25 @@
 (** {2:contraction_order Order}
 
     A float or complex contraction adds its products, numbered as
-    {!Nx_kernel.section-contraction} numbers them, in {e chain order}, one
-    chain in increasing number from [init] or [+0], where its rows, [a]'s
-    free extents multiplied, and its columns, [b]'s, are both above 4 and
-    multiply to at least 64, and its depth, the contracted extent, is below
-    128 times their product. It adds them in lane order, then [init],
-    otherwise, so that the
-    threads share the depth of a contraction of few outputs. A segmented
+    {!Nx_kernel.section-contraction} numbers them, in {e chain order}
+    where its rows, [a]'s free extents multiplied, and its columns, [b]'s,
+    are both above 4 and multiply to at least 64, and its depth, the
+    contracted extent, is below 128 times their product: the terms fall in
+    blocks of 256 consecutive numbers from [0], each block a chain in
+    increasing number from [+0], and each block's sum is added into the
+    sum of the blocks before it, in increasing number; then [init] is
+    added. It adds them in lane order, then [init], otherwise, so that the
+    threads share the depth of a contraction of few outputs. Every host,
+    and every kernel one host runs a contraction on, keeps these orders.
+    A complex contraction's terms are its parts'
+    ({!Nx_kernel.section-contraction}).
+
+    A contraction in chain order whose [init] is its [dst], as a donated
+    [init] is, of more than 256 terms, sums into scratch of [dst]'s
+    elements in [acc], then copies them into [dst]: [dst]'s elements times
+    [w] bytes, [w] those of an element of [acc], 64 MiB for a
+    [4096 × 4096] [float32] result. Of at most 256 terms it adds into
+    [dst] in place. A segmented
     contraction chooses one order for the whole call, from its rows,
     columns and depth as above, [Rows]' columns those of one index along
     [b_axis], [Contracting]'s depth the pair's whole extent; each output
@@ -126,27 +138,27 @@
 
 (** {2:contraction_bound Bound}
 
-    nx.cpu's error factor ({!Nx_kernel.section-bounds}) is [γ(K + 1)] for
-    a real [acc] and [γ(2K + 2)] for a complex one, [K] an output's
-    products and [u] the unit roundoff of [acc], its parts' for a complex
-    one. An integer sum is exact modulo [2^w] ({!section-contractions}).
+    nx.cpu's error factor ({!Nx_kernel.section-bounds}) is
+    [γ(min(K, 256) + ⌈K/256⌉ - 1)] for a real [acc] in chain order,
+    [γ(⌈min(K, 1024)/16⌉ + ⌈log₂ min(K, 16)⌉ + ⌈log₂ ⌈K/1024⌉⌉)] in
+    lane order, and for a complex [acc] [√2] times the real factor of
+    [2K] in its order, [K] an output's products and [u] the unit roundoff
+    of [acc], its parts' for a complex one: each at most the contract's.
+    An integer sum is exact modulo [2^w] ({!section-contractions}).
 
     Each fused multiply-add and each addition rounds once, so a real term
-    that passes [r] roundings is within [γ(r)] of itself. Chain order
-    rounds [K] times, its first fused multiply-add rounding a product
-    where the chain starts from [+0]. In lane order, with [B] the blocks, a
-    term passes at most [⌈K/16⌉] roundings in its lane,
-    [⌈log₂ min(K, 16)⌉] in the lanes' tree, [⌈log₂ B⌉] in the blocks' tree
-    and one for [init]: at most [K + 1].
+    that passes [r] roundings is within [γ(r)] of itself. In chain order a
+    term passes at most [min(K, 256)] roundings in its block's chain, its
+    first fused multiply-add rounding a product, and [⌈K/256⌉ - 1] as the
+    blocks add. In lane order, with [B] the blocks, a term passes at most
+    [⌈K/16⌉] roundings in its lane, [⌈log₂ min(K, 16)⌉] in the lanes'
+    tree and [⌈log₂ B⌉] in the blocks' tree.
 
-    A complex rounding errs by at most [u] times the modulus of the
-    partial sum it rounds, both parts at once, and a partial sum of any of
-    the terms has a modulus of at most [|init| + Σ|a||b|]. Chain order
-    rounds [2K] times. Lane order holds a product's two terms in
-    neighbouring lanes until lane 0 takes lane 1. Until then, a term passes
-    at most [⌈2K/16⌉ + ⌈log₂ min(2K, 16)⌉ - 1] roundings and a product's
-    two weigh at most [√2 |a||b|]; after, at most [⌈log₂ B⌉ + 2]. The
-    first count times [√2] plus the second is at most [2K + 2]. *)
+    A complex contraction sums each part of an output as a real one of
+    [2K] terms in the same order, the two terms of a product's part
+    weighing at most [|a||b|] together. Each part so errs by at most the
+    real factor of [2K] times [Σ|a||b|], and the modulus by [√2] times
+    that. *)
 
 (** {1:reductions Reductions and scans}
 
@@ -202,11 +214,11 @@
     Both are a NaN where [c] is.
 
     For a [Logsumexp] or [Moments] reduction of [n] terms, let
-    [L = ⌈min (n, 1024) / 16⌉ + 3], the most roundings of a block's sum a
-    term takes, [D = ⌈log₂ ⌈n / 1024⌉⌉], the depth of the blocks' tree,
-    and [u] the carrier's unit roundoff; the rounding into a narrower
-    destination adds its own. Barring overflow and
-    underflow, to first order in [u], a [Logsumexp] [r] is within
+    [L = ⌈min (n, 1024) / 16⌉ + min (3, n - 1)], the most roundings of a
+    block's sum a term takes, [D = ⌈log₂ ⌈n / 1024⌉⌉], the depth of the
+    blocks' tree, and [u] the carrier's unit roundoff; the rounding into a
+    narrower destination adds its own. Barring overflow and underflow, to
+    first order in [u], a [Logsumexp] [r] is within
     [(L + D + 5 + 6 ln n) u + u|r|] of the exact one. A [Moments] mean is
     within [E = (L + D) u M + u|μ|] of the exact [μ], [M] the mean of the
     terms' magnitudes, and its variance within
@@ -429,7 +441,7 @@
 
     A score's [q·k] rounds [dk] times, and [o]'s sum rounds a term once at
     each visible pair's fused product from its own on, so both are within
-    nx.cpu's error factor ({!section-contraction_bound}). The value product
+    [γ(k + 1)], [k] their terms. The value product
     takes the weights in the accumulator. *)
 
 (** {1:matrices Matrices}

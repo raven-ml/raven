@@ -22,12 +22,16 @@
    from a call's M, N and K, a segmented call's once from the whole
    call's, so that its offsets never change a bit:
 
-   - Chain order: one fused multiply-add chain per output, in increasing
-     k, from init or +0. The microkernels of every target add each product
-     fused, and the blocking stores and reloads the sum in acc exactly, so
-     tile shapes, block sizes and threads change no bit. A single chain
-     runs at one fused add per latency: many rows and columns keep every
-     target's pipes full.
+   - Chain order: the products fall into blocks of NX_CPU_CHAIN_TERMS
+     consecutive k (cpu.h), each block a fused multiply-add chain from +0
+     in increasing k; the first block's sum starts R, each later one's is
+     added into R in increasing k, and then init is added. The microkernels
+     of every target add each product fused, a call of one a block, and
+     the blocking stores and reloads R in acc exactly, so tile shapes,
+     block sizes and threads change no bit, and every target sums in one
+     association. An integer sum, exact in any order, chains along all of
+     k from init or +0. A chain runs at one fused add per latency: many
+     rows and columns keep every target's pipes full.
    - Lane order: the products fall into blocks of FOLD_BLOCK consecutive k
      and, within a block, into LANES lanes by k modulo LANES, each lane a
      fused chain from +0; a fixed balanced tree sums the lanes, the
@@ -72,8 +76,11 @@
 
    R, the sum in acc, is dst itself where dst is of acc's dtype, and
    otherwise scratch in acc that a cast walk rounds into dst once every
-   product is in (gemm_rounded.c). Each tile starts as init, or +0, when
-   its first KC block is computed.
+   product is in (gemm_rounded.c). A float tile's first block writes it
+   from +0, and its last adds init. An init that is dst itself is R's
+   start, each block added into it: one addition of init where the
+   products are one block, and a contraction of more is computed into
+   scratch (gemm.h's computed).
 
    The derived contractions have a file each: complex numbers
    (gemm_complex.c), 8-bit quads (gemm_quads.c), groups of several runs
@@ -281,15 +288,22 @@ static void stage_at(const problem *p, int o, int64_t e, int64_t i,
   }
 }
 
+/* Whether [p] sums in chain order's blocks: a float acc. */
+static int blocked(const problem *p) {
+  return p->acc == NX_FLOAT32 || p->acc == NX_FLOAT64;
+}
+
 /* Sets R's rows [i0, i1) × columns [j0, j1) of element [e] to init, or
-   to +0 where k is empty: with k and no init, the kernels start the first
-   block from +0 themselves. An init that is dst itself is already there:
-   copying it onto itself would be a memcpy whose source and destination
-   overlap. */
+   to +0 where k is empty: with k, the kernels start the first block from
+   +0 themselves, and a float sum adds init after the last (finish). An
+   init that is dst itself is already there: copying it onto itself would
+   be a memcpy whose source and destination overlap. */
 static void start(const problem *p, int64_t e, int64_t i0, int64_t i1,
                   int64_t j0, int64_t j1) {
   const int64_t *s = p->op[DST].st;
-  if (p->init_is_dst || (p->op[INIT].x == NULL && p->ext[CON] > 0)) return;
+  if (p->init_is_dst ||
+      (p->ext[CON] > 0 && (blocked(p) || p->op[INIT].x == NULL)))
+    return;
   for (int64_t i = i0; i < i1; i++) {
     if (p->op[INIT].x) {
       const int64_t *t = p->op[INIT].st;
@@ -307,7 +321,7 @@ static void start(const problem *p, int64_t e, int64_t i0, int64_t i1,
   }
 }
 
-/* Where R's tiles start in the block of k from [pc]. */
+/* Where an integer sum's tiles start in the block of k from [pc]. */
 static nx_cpu_from from(const problem *p, int64_t pc) {
   return pc == 0 && p->op[INIT].x == NULL ? NX_CPU_FROM_ZERO
                                           : NX_CPU_FROM_TILE;
@@ -599,18 +613,90 @@ static __attribute__((noinline)) void tile_apart(
   }
 }
 
-/* Adds the products of a's rows [i, i + m) and b's columns [j, j + n) of
-   element [e], the kernel reading them from [a] and [b], over the block of
-   k from [pc] to R with [k]'s kernel: in place where R's columns are
-   adjacent, else through a buffer. */
-static void tile(const problem *p, nx_cpu_micro k, int64_t pc, int64_t kc,
-                 src a, src b, int64_t e, int64_t i, int64_t j, int64_t m,
-                 int64_t n) {
+/* The kernel's sums of a's rows [i, i + m) and b's columns [j, j + n) of
+   element [e] over [kc] steps of k from [a] and [b], started as [f] says:
+   in place where R's columns are adjacent, else through a buffer. */
+static void put(const problem *p, nx_cpu_micro k, nx_cpu_from f, int64_t kc,
+                src a, src b, int64_t e, int64_t i, int64_t j, int64_t m,
+                int64_t n) {
   const int64_t *s = p->op[DST].st;
-  nx_cpu_from f = from(p, pc);
   if (s[COL] == 1 || n == 1)
     k.f(m, n, kc, a.at, a.row, a.k, b.at, b.k, at_r(p, e, i, j), s[ROW], f);
   else tile_apart(p, k, f, kc, a, b, e, i, j, m, n);
+}
+
+/* Adds the [n] sums at [t] into R's outputs at [r], [step] elements
+   apart. */
+static void add_row(const problem *p, uint8_t *r, int64_t step,
+                    const uint8_t *t, int64_t n) {
+  if (p->acc == NX_FLOAT32) {
+    float *y = (float *)r;
+    const float *x = (const float *)t;
+    for (int64_t j = 0; j < n; j++) y[j * step] += x[j];
+  } else {
+    double *y = (double *)r;
+    const double *x = (const double *)t;
+    for (int64_t j = 0; j < n; j++) y[j * step] += x[j];
+  }
+}
+
+/* Adds a block's sums into R: the kernel computes them from +0 into a
+   buffer, MR rows at a time, each row then added into R's. Apart from
+   tile, as tile_apart is, for its buffer. */
+static __attribute__((noinline)) void joined(const problem *p,
+                                             nx_cpu_micro k, int64_t kc,
+                                             src a, src b, int64_t e,
+                                             int64_t i, int64_t j, int64_t m,
+                                             int64_t n) {
+  _Alignas(ALIGN) uint8_t t[NX_CPU_TILE];
+  int w = p->w;
+  for (int64_t r0 = 0; r0 < m; r0 += k.mr) {
+    int64_t rows = min64(k.mr, m - r0);
+    k.f(rows, n, kc, a.at + r0 * a.row * w, a.row, a.k, b.at, b.k, t, k.nr,
+        NX_CPU_FROM_ZERO);
+    for (int64_t r = 0; r < rows; r++)
+      add_row(p, at_r(p, e, i + r0 + r, j), p->op[DST].st[COL],
+              t + r * k.nr * w, n);
+  }
+}
+
+/* Adds init into R's rows [i, i + m) × columns [j, j + n) of element [e],
+   n at most a kernel's NR, each row staged into acc. */
+static __attribute__((noinline)) void finish(const problem *p, int64_t e,
+                                             int64_t i, int64_t j, int64_t m,
+                                             int64_t n) {
+  _Alignas(ALIGN) uint8_t t[NX_CPU_TILE];
+  const int64_t *s = p->op[INIT].st;
+  for (int64_t r = i; r < i + m; r++) {
+    stage_acc(p, INIT, pos(p, INIT, e, r, j, 0), s[COL], 0, n, 1, t, 0);
+    add_row(p, at_r(p, e, r, j), p->op[DST].st[COL], t, n);
+  }
+}
+
+/* Adds the products of a's rows [i, i + m) and b's columns [j, j + n) of
+   element [e], the kernel reading them from [a] and [b], over the block of
+   k from [pc] to R with [k]'s kernel. A float sum takes each block of
+   NX_CPU_CHAIN_TERMS (cpu.h) in a call of its own from +0, the first
+   writing R and each later one added into it, then adds init after the
+   last block of k. */
+static void tile(const problem *p, nx_cpu_micro k, int64_t pc, int64_t kc,
+                 src a, src b, int64_t e, int64_t i, int64_t j, int64_t m,
+                 int64_t n) {
+  if (!blocked(p)) {
+    put(p, k, from(p, pc), kc, a, b, e, i, j, m, n);
+    return;
+  }
+  int w = p->w;
+  for (int64_t q = 0; q < kc; q += NX_CPU_CHAIN_TERMS) {
+    int64_t len = min64(NX_CPU_CHAIN_TERMS, kc - q);
+    src aq = {a.at + q * a.k * w, a.row, a.k};
+    src bq = {b.at + q * b.k * w, b.row, b.k};
+    if (pc + q == 0 && !p->init_is_dst)
+      put(p, k, NX_CPU_FROM_ZERO, len, aq, bq, e, i, j, m, n);
+    else joined(p, k, len, aq, bq, e, i, j, m, n);
+  }
+  if (pc + kc == p->ext[CON] && p->op[INIT].x && !p->init_is_dst)
+    finish(p, e, i, j, m, n);
 }
 
 /* A unit's work: each of its slivers of b against its block of a, the
@@ -1396,8 +1482,8 @@ static void lanes(problem *p) {
 
 /* Depth one */
 
-/* A product of a depth of one in chain order: R's rows, each the axpy of
-   its row's element of a and b's row, fused from init or +0, along R's
+/* A product of a depth of one and no init in chain order: R's rows, each
+   the axpy of its row's element of a and b's row, fused from +0, along R's
    adjacent axis (the product transposed where that is its rows). a and b
    are read in place where they are raw and, b, adjacent, else staged a
    band and a row at a time; a unit is a band of an element's rows. On
@@ -1420,7 +1506,6 @@ static void outer_unit(int64_t lo, int64_t hi, int worker, void *ctx) {
   int a_in = raw(p, A), b_in = adjacent(p, B, COL);
   uint8_t *s = scratch(p, (b_in ? 0 : n) * w + (a_in ? 0 : f->rows) * w);
   if (s == NULL) return;
-  nx_cpu_from zero = from(p, 0);
   for (int64_t u = lo; u < hi; u++) {
     int64_t e = u / f->bands, i0 = u % f->bands * f->rows;
     int64_t r = min64(f->rows, m - i0);
@@ -1430,22 +1515,24 @@ static void outer_unit(int64_t lo, int64_t hi, int worker, void *ctx) {
     else stage_at(p, B, e, 0, 0, 0, COL, CON, n, 1, s, n);
     if (a_in) a = oa->x->base + pos(p, A, e, i0, 0, 0) * w, lda = oa->st[ROW];
     else stage_at(p, A, e, i0, 0, 0, ROW, CON, r, 1, (uint8_t *)a, r);
-    start(p, e, i0, i0 + r, 0, n);
     if (od->sp[ROW] == NULL)
-      f->axpy(a, lda, r, b, n, at_r(p, e, i0, 0), od->st[ROW], zero);
+      f->axpy(a, lda, r, b, n, at_r(p, e, i0, 0), od->st[ROW],
+              NX_CPU_FROM_ZERO);
     else
       for (int64_t i = 0; i < r; i++)
-        f->axpy(a + i * lda * w, 1, 1, b, n, at_r(p, e, i0 + i, 0), 0, zero);
+        f->axpy(a + i * lda * w, 1, 1, b, n, at_r(p, e, i0 + i, 0), 0,
+                NX_CPU_FROM_ZERO);
   }
   nx_cpu_give(s);
 }
 
-/* Whether [p] runs as axpys: a float of a depth of one, R adjacent along
-   its columns or its rows, which it then transposes to its columns. */
+/* Whether [p] runs as axpys: a float of a depth of one and no init, R
+   adjacent along its columns or its rows, which it then transposes to its
+   columns. With init, chain order's tiles add it after the product. */
 static int outer(problem *p) {
   nx_cpu_axpy axpy = nx_cpu_table->axpy[p->acc];
   const operand *d = &p->op[DST];
-  if (p->ext[CON] != 1 || axpy == NULL) return 0;
+  if (p->ext[CON] != 1 || axpy == NULL || p->op[INIT].x) return 0;
   int cols = d->st[COL] == 1 && d->sp[COL] == NULL;
   int rows = d->st[ROW] == 1 && d->sp[ROW] == NULL;
   if (!cols && !rows) return 0;

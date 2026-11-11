@@ -309,16 +309,40 @@ value nx_gemm_contract_segmented(
     value vbatch, value vcontracting, value vacc, value vdst, value vi,
     value va, value vb, value vsa, value vsb, value vseg);
 
+/* Whether a contraction in [acc] and [order] of [op], of [k] products,
+   has an init that is dst itself and more than one chain's block of
+   real terms (gemm.c): chain order adds init after its blocks, so that
+   the sum takes scratch beside dst. */
+static inline int donated(int acc, int order, const nx_array *const *op,
+                          double k) {
+  int r = part_of(acc);
+  return order == NX_CPU_CHAIN && (r == NX_FLOAT32 || r == NX_FLOAT64) &&
+         op[INIT] != NULL && op[INIT]->base == op[DST]->base &&
+         k * (r == acc ? 1 : 2) > NX_CPU_CHAIN_TERMS;
+}
+
+/* The products of an output of the view [v], or of the runs [r] where
+   [runs]. */
+static inline double depth_of(int runs, const nx_contract_view *v,
+                              const nx_contract_runs *r) {
+  if (!runs) return (double)v->extent[CON];
+  double k = 1;
+  for (int i = 0; i < r->runs[CON]; i++) k *= (double)r->extent[CON][i];
+  return k;
+}
+
 /* The contraction of the view [v], or of the runs [r] where [runs], over
    [op] in [acc], a of dtype dts[0] and b of dts[1], into dst of dtype
    [out], a and b scaled by [s] where it is not NULL: 0 if an allocation
-   failed. */
+   failed. A dst of another dtype, or one that is its own init past a
+   chain's block, takes the sum through scratch (gemm_rounded.c). */
 static inline __attribute__((always_inline)) int computed(
     int acc, int order, int out, const int *dts, int runs,
     nx_contract_view *v, nx_contract_runs *r, const nx_array *const *op,
     const scale *s) {
   int sum = summed_in(acc);
-  if (out != acc || sum != acc) {
+  if (out != acc || sum != acc ||
+      donated(acc, order, op, depth_of(runs, v, r))) {
     if (!runs) nx_gemm_runs_of_view(r, v);
     return nx_gemm_rounded_on(acc, sum, order, r, op, s);
   }
