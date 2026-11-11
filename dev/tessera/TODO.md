@@ -178,6 +178,10 @@ An item leaves when its library fixes it, or when a design decides it stays.
   blocks the wrong axis. It blocks training with dropout and f32 gradients
   on CUDA. Diagnosed; being fixed within the M2 GEMM track, which edits the
   same heuristic.
+- tolk's `Heuristic.block` ignores upcasts made before it by
+  `upcast_masked`: a materialised `[b; h; i; j]` mask gave 256 accumulators a
+  thread. Values were correct; the cost is registers and occupancy (found by
+  the second M2 GEMM review, pre-existing on main).
 - tolk compiles reductions that read the same operand over the same axes
   as separate kernels: compiled `Nx.standardize` reads its input five times
   (Max for the overflow rescue, Σx, Σd, Σd², then the map) where nx.cpu reads
