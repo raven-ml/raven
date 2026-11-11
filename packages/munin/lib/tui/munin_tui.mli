@@ -162,11 +162,14 @@
 
 (** {1:numbers Numbers}
 
-    - A value prints with four significant digits, its trailing zeros kept, as
-      [0.4077], [2196] or [6.200], in scientific notation below [1e-4] and from
-      [1e6] in magnitude; an accuracy, a metric with [acc] in its key and a
-      value in [[0;1]], prints as a percentage with two decimals. NaN prints
-      [NaN], and the infinities [inf] and [-inf].
+    - A whole value of six digits or fewer prints in full, as [348513]. Any
+      other value prints with four significant digits, its trailing zeros
+      kept, as [0.4077] or [6.200], with the suffix [k] from a thousand up, as
+      [2.196k], and in scientific notation below [1e-4] and from [1e6] in
+      magnitude: a value that does not read back as logged shows a decimal
+      point, a [k] or an exponent. An accuracy, a metric with [acc] in its
+      key and a value in [[0;1]], prints as a percentage with two decimals.
+      NaN prints [NaN], and the infinities [inf] and [-inf].
     - A step or a count prints with separators, as [12,400], and compactly on
       an axis, as [12k].
     - A difference prints relative, as [-6.0%], or in points for an accuracy,

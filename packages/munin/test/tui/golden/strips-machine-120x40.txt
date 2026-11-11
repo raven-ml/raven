@@ -52,8 +52,8 @@
    |                                 f                  xxxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq
 27 |                                 │
    |                                 f
-28 |                                 │  train/samples_s ⢄⠁⠈ ⠉ ⣀⣀⣀⣀⡀⣀⡀⣀⢀⣀⣀⣀⠈⠈⢀⡀⣀⣀⣀⣀⣀⣀    ⣀⡀  ⣀⣀⣀⣀⣀⣀⣀⣀⡀      2196       +0.8%
-   |                                 f  rrrrrrrrrrrrrrr xBB B xxxxxqqqxxxxBBqqqqxqxx    qq  qqqqqqqqq      kkkk       ggggg
+28 |                                 │  train/samples_s ⢄⠁⠈ ⠉ ⣀⣀⣀⣀⡀⣀⡀⣀⢀⣀⣀⣀⠈⠈⢀⡀⣀⣀⣀⣀⣀⣀    ⣀⡀  ⣀⣀⣀⣀⣀⣀⣀⣀⡀    2.196k       +0.8%
+   |                                 f  rrrrrrrrrrrrrrr xBB B xxxxxqqqxxxxBBqqqqxqxx    qq  qqqqqqqqq    kkkkkk       ggggg
 29 |                                 │                  ⠈⠊⠉⠉⠉⠉⢀ ⠈⠉⠈⠉⠉⠉⠁⢀⡀⠈⠉⠉⠒⠉⠉⠉ ⠉ ⠈⠉⠉⠉⠉ ⠈⠉⠉        ⠈
    |                                 f                  xxxxxxB qqxxxxxBBqxxxxxx x qqqqq qqq        q
 30 |                                 │

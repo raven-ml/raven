@@ -1441,18 +1441,67 @@ let values_printed =
     [
       ("0.254", (0.254, "0.2540"));
       ("2150", (2150., "2150"));
-      ("10", (10., "10.00"));
+      ("10", (10., "10"));
+      ("10.5", (10.5, "10.50"));
       ("-1.5", (-1.5, "-1.500"));
       ("5.116e-05", (5.116e-5, "5.116e-05"));
       ("9.9996", (9.9996, "10.00"));
       ("0.99996", (0.99996, "1.000"));
-      ("999.96", (999.96, "1000"));
+      ("999.96", (999.96, "1.000k"));
       ("999999.6", (999999.6, "1.000e+06"));
       ("9.99996e-05", (9.99996e-5, "0.0001000"));
       ("9.998e-05", (9.998e-5, "9.998e-05"));
       ("NaN", (Float.nan, "NaN"));
+      ("348513", (348513., "348513"));
+      ("-999999", (-999999., "-999999"));
+      ("348500", (348500., "348500"));
+      ("1234.56", (1234.56, "1.235k"));
+      ("348513.5", (348513.5, "348.5k"));
+      ("1234567", (1234567., "1.235e+06"));
     ]
     (fun (_, (x, expected)) -> equal string expected (Munin_tui.Numbers.value x))
+
+(* A printed value reads back to the value, or shows that it is rounded: by a
+   decimal point, a suffix or an exponent. A whole value of six digits or
+   fewer reads back, NaN and the infinities as their words, and [-0.] as
+   [0]. *)
+let rounding_shown =
+  let whole n = Gen.map Float.of_int (Gen.int_range (-n) n) in
+  let gen =
+    Gen.frequency
+      [
+        (4, whole 999_999);
+        (2, whole 1_000_000_000);
+        (2, Gen.float_range (-1e6) 1e6);
+        (2, Gen.any_float);
+        (2, Gen.one_of (List.map Gen.constant [ Float.nan; Float.infinity; Float.neg_infinity ]));
+        (2, Gen.one_of (List.map Gen.constant [ 0.; -0. ]));
+      ]
+  in
+  let read = function
+    | "NaN" -> Some Float.nan
+    | "inf" -> Some Float.infinity
+    | "-inf" -> Some Float.neg_infinity
+    | s -> Munin_float_text.Float_read.of_string s
+  in
+  prop "a printed value reads back or shows it is rounded" gen (fun x ->
+      let s = Munin_tui.Numbers.value x in
+      let exact =
+        match read s with
+        | Some y -> Float.equal y x
+        | None -> false
+      in
+      let marked = String.exists (fun c -> String.contains ".kMGe" c) s in
+      let six = Float.is_integer x && Float.abs x < 1e6 in
+      cover "whole, six digits or fewer" six;
+      cover "whole, past six digits" (Float.is_integer x && not six);
+      cover "rounded, from a thousand" ((not exact) && Float.abs x >= 1000. && Float.abs x < 1e6);
+      cover ~share:0.05 "not finite" (not (Float.is_finite x));
+      cover ~share:0.1 "negative" (x < 0.);
+      cover ~share:0.03 "-0." (Float.sign_bit x && x = 0.);
+      if (six || not (Float.is_finite x)) && not exact then
+        failf "%h prints %s, which does not read back" x s;
+      if not (exact || marked) then failf "%h prints %s, rounded without a mark" x s)
 
 (* An axis's labels, in one notation: plain while every tick fits six
    cells, else the suffix, else the exponent. *)
@@ -1876,7 +1925,7 @@ let ended_away =
       in
       (* The last 50 samples, all 9, are what the legend gives at the run's
          last step. *)
-      equal bool true (T.Screen.find screen "late-end 9.000" <> []);
+      equal bool true (T.Screen.find screen "late-end 9 " <> []);
       equal bool true (T.Screen.find screen "late-end  finished" <> []))
 
 (* A run ends between two timer polls after logging its last samples, while
@@ -2539,7 +2588,7 @@ let () =
            [
              binned; rising; spike; non_finite; cursor_wins; letters; exact_labels; tick_labels; x_domain; now_rule; bounds;
              ticks_of;
-             log_choice; y_per_metric; values_printed;
+             log_choice; y_per_metric; values_printed; rounding_shown;
              filled;
              matching; cadence;
            ];

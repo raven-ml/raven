@@ -56,8 +56,8 @@
    |                                 f             ggggggggggggggmmmmmmggggggggggggggggggmmmmm  f hhhhhh ffffffffffffffffff
 29 |                                 │             train/lr  9.908e-05 at 12,400              │ │ 5eaf82b dirty
    |                                 f             ggggggggggmmmmmmmmmggggggggggggg             f mmmmmmmwwwwww
-30 |                                 │             train/samples_s  2196 at 12,400            │ │ train.exe --lr 0.0003 --…
-   |                                 f             gggggggggggggggggmmmmggggggggggggg           f ggggggggggggggggggggggggg
+30 |                                 │             train/samples_s  2.196k at 12,400          │ │ train.exe --lr 0.0003 --…
+   |                                 f             gggggggggggggggggmmmmmmggggggggggggg         f ggggggggggggggggggggggggg
 31 |                                 │             val/acc ↑  94.18% at 12,000   best 94.18% a│ │
    |                                 f             gggggggggggmmmmmmggggggggggggggggggmmmmmmgg  f
 32 |                                 │             val/ece ↓  0.02243 at 12,000   best 0.02218│ │

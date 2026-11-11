@@ -27,11 +27,18 @@ val decade : float -> int
     than zero. *)
 
 val value : float -> string
-(** [value x] is [x] rounded to four significant digits and printed with
-    its trailing zeros, as [0.2540], [2150] or [10.00] (for [9.9996]); in
+(** [value x] is [x] as it reads back, or with a mark that it is rounded.
+
+    A whole value of six digits or fewer prints in full, as [2150] or
+    [348513]. Any other is rounded to four significant digits and printed
+    with its trailing zeros, as [0.2540] or [10.00] (for [9.9996]): with the
+    suffix [k] from a thousand up, as [348.5k] (for [348513.5]); in
     scientific notation when the rounded value is below [1e-4] or from [1e6]
-    in magnitude, as [5.116e-05]; or [NaN], [inf], [-inf]. A value that is
-    not zero never prints as [0]. *)
+    in magnitude, as [5.116e-05]. NaN and the infinities print [NaN], [inf]
+    and [-inf], and [-0.] prints [0]. So a printed value either reads back as
+    [x], NaN and the infinities as their words and [-0.] as [0.], or holds a
+    decimal point, a [k] or an exponent, and a value that is not zero never
+    prints as [0]. *)
 
 val metric : string -> float -> string
 (** [metric key x] is [x] as {!value} prints it, or, for an accuracy in

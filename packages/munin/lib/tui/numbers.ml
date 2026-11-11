@@ -59,12 +59,19 @@ let exponential d e =
   let p = string_of_int (abs lead) in
   m ^ "e" ^ (if lead < 0 then "-" else "+") ^ (if String.length p < 2 then "0" ^ p else p)
 
+(* The largest whole value printed in full. *)
+let whole_most = 999_999.
+
 (* Four significant digits, counted once [x] is rounded to them, with
    trailing zeros kept, so that values in a column line up digit for
-   digit. *)
+   digit. Four digits from a thousand up read as a whole number, as [3485]
+   for 3485.2 or [348500] for 348513: a whole value up to six digits prints
+   in full, and any other takes the suffix [k], as [3.485k]. *)
 let value x =
   if not (Float.is_finite x) then non_finite x
   else if x = 0. then "0"
+  else if Float.is_integer x && Float.abs x <= whole_most then
+    string_of_int (Float.to_int x)
   else
     let d, e = Float_text.significant 4 x in
     let lead = String.length d - 1 + e in
@@ -72,6 +79,7 @@ let value x =
     let d4 = d ^ String.make (4 - String.length d) '0' and e4 = lead - 3 in
     let sign = if Float.sign_bit x then "-" else "" in
     if lead < -4 || lead >= 6 then sign ^ exponential d4 e4
+    else if lead >= 3 then sign ^ positional d4 (e4 - 3) ^ "k"
     else sign ^ positional d4 e4
 
 let accuracy key =
