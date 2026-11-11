@@ -9,20 +9,22 @@ type series = Series.t
 
 let length (s : series) = s.length
 
-let check (s : series) i =
-  if i < 0 || i >= s.length then
-    invalid_arg
-      (Printf.sprintf "Metric: index %d out of [0;%d]" i (s.length - 1))
+(* The failure is out of line, so that an accessor is small enough to be
+   inlined where it is called: its float is then read unboxed. *)
+let[@inline never] out_of_bounds (s : series) i =
+  invalid_arg (Printf.sprintf "Metric: index %d out of [0;%d]" i (s.length - 1))
 
-let step (s : series) i =
+let[@inline] check (s : series) i = if i < 0 || i >= s.length then out_of_bounds s i
+
+let[@inline] step (s : series) i =
   check s i;
   Array.unsafe_get s.steps i
 
-let time (s : series) i =
+let[@inline] time (s : series) i =
   check s i;
   Float.Array.unsafe_get s.times i
 
-let value (s : series) i =
+let[@inline] value (s : series) i =
   check s i;
   Float.Array.unsafe_get s.values i
 
