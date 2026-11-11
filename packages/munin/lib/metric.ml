@@ -16,6 +16,8 @@ let[@inline never] out_of_bounds (s : series) i =
 
 let[@inline] check (s : series) i = if i < 0 || i >= s.length then out_of_bounds s i
 
+let ordered (s : series) = s.ordered
+
 let[@inline] step (s : series) i =
   check s i;
   Array.unsafe_get s.steps i

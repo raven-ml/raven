@@ -246,6 +246,41 @@ let gen_ev =
 
 let gen_evs = Gen.list ~size:(Gen.int_range 0 60) (Gen.with_pp pp_ev gen_ev)
 
+(* [gen_evs] half the time; a third of the time a log whose last record
+   resumes below every step of one key, so that each of its samples is an
+   orphan: its steps move up one, past step 0, and it gets a sample if it had
+   none; and otherwise a log that ends with a sample that is not finite and
+   two whose sum passes the largest float. *)
+let gen_orphaning_evs =
+  let orphan_all k evs =
+    let evs =
+      List.map (function Sample (k', s, v) when k' = k -> Sample (k', s + 1, v) | e -> e) evs
+    in
+    let steps = List.filter_map (function Sample (k', s, _) when k' = k -> Some s | _ -> None) evs in
+    let evs, least =
+      match steps with
+      | [] -> (evs @ [ Sample (k, 1, 0.) ], 1)
+      | s :: rest -> (evs, List.fold_left min s rest)
+    in
+    evs @ [ Resume (least - 1) ]
+  in
+  let pp = Format.pp_print_list ~pp_sep:Format.pp_print_space pp_ev in
+  Gen.(
+    with_pp pp
+      (frequency
+         [
+           (3, gen_evs);
+           ( 2,
+             let* k = of_list [ "a"; "b" ] in
+             let+ evs = gen_evs in
+             orphan_all k evs );
+           ( 1,
+             let* v = of_list [ Float.nan; Float.infinity; Float.neg_infinity ] in
+             let* s = int_range 0 20 in
+             let+ evs = gen_evs in
+             evs @ [ Sample ("a", s, v); Sample ("a", s, Float.max_float); Sample ("a", s, Float.max_float) ] );
+         ]))
+
 let check_stats ~msg (expected : Metric.sample list) (got : Metric.stats option)
     =
   match (expected, got) with
@@ -303,6 +338,14 @@ let check_stats ~msg (expected : Metric.sample list) (got : Metric.stats option)
           equal ~msg:(msg ^ " first non-finite") sample s first
       | _ -> fail (msg ^ ": non-finite statistics disagree"))
 
+(* Whether no sample's step is below the one before. *)
+let ordered samples =
+  let rec go = function
+    | (a : Metric.sample) :: (b :: _ as rest) -> a.step <= b.step && go rest
+    | _ -> true
+  in
+  go samples
+
 let check_history ~msg evs h =
   List.iter
     (fun k ->
@@ -311,6 +354,8 @@ let check_history ~msg evs h =
         ~msg:(msg ^ " series " ^ k)
         (list sample) expected
         (samples_of (History.series h k));
+      equal ~msg:(msg ^ " ordered " ^ k) bool (ordered expected)
+        (Metric.ordered (History.series h k));
       check_stats ~msg:(msg ^ " " ^ k) expected (History.stats h k))
     [ "a"; "b"; "r" ];
   let with_samples = List.filter (fun k -> reference_samples evs k <> []) in
@@ -568,7 +613,7 @@ let fold_tests =
             (* Equal values whose rounded mean can fall a ulp below them. *)
             List.init 5 (fun _ -> Sample ("a", 0, Float.max_float));
           ]
-        gen_evs
+        gen_orphaning_evs
         (fun evs ->
           cover "a resume orphans a sample"
             (List.exists (function Resume _ -> true | _ -> false) evs
@@ -577,6 +622,12 @@ let fold_tests =
                    (List.filter
                       (function Sample ("a", _, _) -> true | _ -> false)
                       evs));
+          cover "a key's series is out of order"
+            (not (ordered (reference_samples evs "a")));
+          cover "a key's series is ordered, with samples a resume orphaned"
+            (ordered (reference_samples evs "a")
+            && List.exists (function Resume _ -> true | _ -> false) evs
+            && List.length (reference_samples evs "a") > 1);
           cover "a non-finite sample"
             (List.exists
                (function

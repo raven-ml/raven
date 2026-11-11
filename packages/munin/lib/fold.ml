@@ -23,7 +23,9 @@ type arrays = {
 }
 
 type store = { arrays : arrays Atomic.t; used : int Atomic.t }
-type col = { store : store; len : int }
+(* [ordered] is whether no step of the first [len] is below the one before,
+   [last] the step of sample [len - 1]: a push keeps it in one comparison. *)
+type col = { store : store; len : int; last : int; ordered : bool }
 
 let alloc cap =
   {
@@ -40,15 +42,21 @@ let copy_prefix a len cap =
   b
 
 let empty_col () =
-  { store = { arrays = Atomic.make (alloc 0); used = Atomic.make 0 }; len = 0 }
+  {
+    store = { arrays = Atomic.make (alloc 0); used = Atomic.make 0 };
+    len = 0;
+    last = 0;
+    ordered = true;
+  }
 
 let write a i (s : Metric.sample) =
   Array.unsafe_set a.steps i s.step;
   Float.Array.unsafe_set a.times i s.time;
   Float.Array.unsafe_set a.values i s.value
 
-let push c s =
+let push c (s : Metric.sample) =
   let st = c.store in
+  let ordered = c.ordered && (c.len = 0 || s.step >= c.last) in
   if Atomic.compare_and_set st.used c.len (c.len + 1) then begin
     let a = Atomic.get st.arrays in
     let a =
@@ -59,7 +67,7 @@ let push c s =
         b
     in
     write a c.len s;
-    { c with len = c.len + 1 }
+    { c with len = c.len + 1; last = s.step; ordered }
   end
   else begin
     let a =
@@ -69,12 +77,20 @@ let push c s =
     {
       store = { arrays = Atomic.make a; used = Atomic.make (c.len + 1) };
       len = c.len + 1;
+      last = s.step;
+      ordered;
     }
   end
 
 let col_series c =
   let a = Atomic.get c.store.arrays in
-  { Series.steps = a.steps; times = a.times; values = a.values; length = c.len }
+  {
+    Series.steps = a.steps;
+    times = a.times;
+    values = a.values;
+    length = c.len;
+    ordered = c.ordered;
+  }
 
 let sample_at c i : Metric.sample =
   let a = Atomic.get c.store.arrays in
@@ -534,6 +550,7 @@ let empty_series =
     times = Float.Array.create 0;
     values = Float.Array.create 0;
     length = 0;
+    ordered = true;
   }
 
 let series st k =

@@ -8,4 +8,5 @@ type t = {
   times : Float.Array.t;
   values : Float.Array.t;
   length : int;
+  ordered : bool;
 }

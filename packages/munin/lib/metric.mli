@@ -40,6 +40,12 @@ type series = Series.t
 val length : series -> int
 (** [length s] is the number of samples of [s]. *)
 
+val ordered : series -> bool
+(** [ordered s] is [true] iff no step of [s] is below the one before it. A
+    program may log its steps in any order, and a series of a run that went
+    back without a resume is not ordered. The reader keeps this as it reads,
+    so asking costs nothing. *)
+
 val step : series -> int -> int
 (** [step s i] is the step of [s]'s [i]th sample. *)
 

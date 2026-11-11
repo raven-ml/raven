@@ -12,4 +12,5 @@ type t = {
   times : Float.Array.t;
   values : Float.Array.t;
   length : int;
+  ordered : bool;  (** Whether no step of the first [length] is below the one before. *)
 }

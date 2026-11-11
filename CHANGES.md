@@ -1198,6 +1198,8 @@ All notable changes to this project will be documented in this file.
 
 ### Munin (new)
 
+- `Metric.ordered` tells whether no step of a series is below the one before,
+  kept by the reader as it reads.
 - **Breaking:** `History.best` is removed: pass `History.goal` and
   `History.stats` to `Metric.best`.
 - `Store.set_notes`, `Store.remove_tags`, `Store.delete_run`, `Session.resume`
