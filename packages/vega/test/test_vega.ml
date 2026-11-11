@@ -535,40 +535,43 @@ let test_radam_trajectory =
       |],
       [| 0.83270485829882479; -1.7250794297474281; 0.31456176161030008 |] )
 
+(* Expected values of LAMB and LARS: optax 0.2.8 in float64, [optax.lamb(lr,
+   eps=1e-8, weight_decay=wd)] and [optax.lars(lr, weight_decay=wd,
+   momentum=m, nesterov=n)], at [lr] and [wd] the float32 rates. LAMB's moved
+   from the per-tensor implementation's by under 1e-7 when its trust ratio
+   dropped a [1e-6] term that optax and the paper lack. LARS's moved when its
+   trust coefficient left [lr]: at [0.001] and [lr = 0.1] each step is a
+   thousandth of the per-tensor implementation's. Optax applies the rate before
+   the momentum, which at a constant rate is vega's step. *)
 let test_lamb_trajectory =
   follows ~init:Vega.lamb_init
     ~step:(fun st ->
       Vega.lamb_step Wb.ptree ~lr:(Vega.rate 0.01)
         ~weight_decay:(Vega.rate 0.01) st)
     ( [|
-        0.4076288911828635;
-        -1.1064478293192996;
-        1.9056372630040368;
-        -0.20747395071242003;
-        0.70683175651562802;
-        1.4062769980333993;
+        0.4076288550616717;
+        -1.10644779246419;
+        1.9056372257988259;
+        -0.2074739143520593;
+        0.7068317198180435;
+        1.4062769611596102;
       |],
-      [| 0.89842985775586015; -1.8973554242093986; 0.35000475942674164 |] )
+      [| 0.8984298008243073; -1.8973553666336027; 0.3500048152739399 |] )
 
-(* LARS's momentum accumulates the trust-scaled update, as in the paper. The
-   per-tensor implementation's LARS took the trust ratio of the accumulated
-   gradient instead, so with momentum the expected values are its decay, trust
-   ratio, momentum and rate transforms chained in the paper's order, and without
-   momentum its LARS itself. *)
 let test_lars_trajectory =
   follows ~init:Vega.lars_init
     ~step:(fun st ->
       Vega.lars_step Wb.ptree ~lr:(Vega.rate 0.1) ~weight_decay:(Vega.rate 0.01)
         st)
     ( [|
-        -0.10311105473850804;
-        0.90676805714082909;
-        -1.4613330099492292;
-        0.75113640978280594;
-        -1.1539299762342272;
-        0.14019060335384598;
+        0.49894889709894935;
+        -1.1963283212945548;
+        1.9939675833502377;
+        -0.298168077800859;
+        0.7965946877439345;
+        1.4976301220306594;
       |],
-      [| -1.1027388508197593; 1.4655109505693997; 1.0500890496290238 |] )
+      [| 0.9967106261755478; -1.9945788032571368; 0.25125160191721124 |] )
 
 let test_lars_nesterov_trajectory =
   follows ~init:Vega.lars_init
@@ -576,14 +579,14 @@ let test_lars_nesterov_trajectory =
       Vega.lars_step Wb.ptree ~lr:(Vega.rate 0.1) ~weight_decay:(Vega.rate 0.01)
         ~nesterov:true st)
     ( [|
-        0.0022904246280579807;
-        0.5385830136729276;
-        -0.85642017182001073;
-        0.56743668858435314;
-        -0.81245536976550736;
-        0.37783493259799195;
+        0.4987617873879502;
+        -1.1956747156953593;
+        1.9928937363131538;
+        -0.29784197230451653;
+        0.7959884987671391;
+        1.4972082535518418;
       |],
-      [| -1.1133674069043227; 1.4830278083976729; 1.0541331996352461 |] )
+      [| 0.9961250685622695; -1.9936137493607802; 0.25147440573049906 |] )
 
 let test_lars_no_momentum_trajectory =
   follows ~init:Vega.lars_init
@@ -591,14 +594,35 @@ let test_lars_no_momentum_trajectory =
       Vega.lars_step Wb.ptree ~lr:(Vega.rate 0.1) ~weight_decay:(Vega.rate 0.01)
         ~momentum:0.0 st)
     ( [|
-        0.28644449346382289;
-        -0.45401480198034716;
-        0.77437709287124723;
-        0.072196739996935169;
-        0.10813321604287521;
-        1.0185052865274873;
+        0.4997073751289269;
+        -1.1989778122515609;
+        1.9983205876963797;
+        -0.2994899966532262;
+        0.799051968119488;
+        1.4993402308807784;
       |],
-      [| 0.32932873062805601; -0.89467081119719283; 0.50518943463478394 |] )
+      [| 0.9990842464616005; -1.9984907522329227; 0.25034844287865177 |] )
+
+(* A zero leaf's ratio is 1, without the trust coefficient: its first step is
+   momentum SGD's, [-lr * g]. *)
+let test_lars_zero_leaf () =
+  let params = vec [| 0.0; 0.0; 0.0 |] and grads = vec [| 1.0; -2.0; 3.0 |] in
+  let p = Vec.ptree in
+  let params, _ =
+    Vega.lars_step p ~lr:(rate64 0.5) (Vega.lars_init p params) ~params ~grads
+  in
+  check_vec ~eps:0. [| -0.5; 1.0; -1.5 |] params
+
+(* A gradient that cancels the decay, [g = -wd * p], is a zero update: the leaf
+   keeps its value, where [eta * |p| / |u|] would make it NaN. *)
+let test_lars_zero_update () =
+  let params = vec [| 2.0; -4.0 |] and grads = vec [| -1.0; 2.0 |] in
+  let p = Vec.ptree in
+  let params, _ =
+    Vega.lars_step p ~lr:(rate64 0.5) ~weight_decay:(rate64 0.5)
+      (Vega.lars_init p params) ~params ~grads
+  in
+  check_vec ~eps:0. [| 2.0; -4.0 |] params
 
 let test_adan_trajectory =
   follows ~init:Vega.adan_init
@@ -700,8 +724,8 @@ let test_adafactor_carries_an_int_leaf () =
    steps that average squared gradients refuse float16 leaves. At the leaf's
    dtype, Adam's [eps] rounds to zero in float16 and [b2] to one in bfloat16,
    either of which makes a zero-gradient element NaN; steps compute at float32
-   and round once. The rate is 0.1 so that a move exceeds bfloat16's spacing at
-   3. *)
+   and round once. The rate is 0.1, and LARS's trust coefficient 1, so that a
+   move exceeds bfloat16's spacing at 3. *)
 let low_precision (type b) (dt : (float, b) Nx.dtype) () =
   let p = Nx.Ptree.tensor and lr = Vega.rate 0.1 in
   let params = Nx.create dt [| 3 |] [| 1.0; 2.0; 3.0 |] in
@@ -721,7 +745,9 @@ let low_precision (type b) (dt : (float, b) Nx.dtype) () =
   in
   check "sgd"
     (Vega.sgd_step p ~lr ~momentum:0.9 (Vega.sgd_init p params) ~params ~grads);
-  check "lars" (Vega.lars_step p ~lr (Vega.lars_init p params) ~params ~grads);
+  check "lars"
+    (Vega.lars_step p ~lr ~trust_coefficient:1.0 (Vega.lars_init p params)
+       ~params ~grads);
   check "lion" (Vega.lion_step p ~lr (Vega.lion_init p params) ~params ~grads);
   match dt with
   | Float16 -> ()
@@ -825,6 +851,12 @@ let test_ported_steps_validate () =
     (Vega.radam_step p ~lr ~b2:(-0.1) (Vega.radam_init p params));
   rejects "lars momentum"
     (Vega.lars_step p ~lr ~momentum:1.0 (Vega.lars_init p params));
+  List.iter
+    (fun c ->
+      rejects
+        (Printf.sprintf "lars trust_coefficient %h" c)
+        (Vega.lars_step p ~lr ~trust_coefficient:c (Vega.lars_init p params)))
+    [ 0.0; -0.0; -0.001; Float.infinity; Float.nan ];
   rejects "adafactor eps"
     (Vega.adafactor_step p ~lr ~eps:0.0 (Vega.adafactor_init p params));
   rejects "adan b3" (Vega.adan_step p ~lr ~b3:1.0 (Vega.adan_init p params));
@@ -1759,6 +1791,8 @@ let tests =
           test_lars_nesterov_trajectory;
         test "lars without momentum follows its trajectory"
           test_lars_no_momentum_trajectory;
+        test "lars steps a zero leaf at the rate" test_lars_zero_leaf;
+        test "lars keeps a leaf whose update is zero" test_lars_zero_update;
         test "adan follows its trajectory" test_adan_trajectory;
         test "adafactor follows its trajectory" test_adafactor_trajectory;
         test "unfactored adafactor follows its trajectory"

@@ -39,6 +39,11 @@ let validate_unit_interval ctx name value =
   if value < 0.0 || value >= 1.0 then
     invalid_argf "%s: expected 0.0 <= %s < 1.0, got %s" ctx name (num value)
 
+let validate_positive_finite ctx name value =
+  if not (value > 0.0 && Float.is_finite value) then
+    invalid_argf "%s: expected 0.0 < %s < infinity, got %s" ctx name
+      (num value)
+
 (* Optimizers over parameter structures (Nx.Ptree.t). Optimizer state is itself
    parameter-shaped, and every scalar that changes across steps — the bias
    corrections, the step counter — is a tensor leaf, so a training step is a
@@ -487,15 +492,16 @@ let decayed wd w ~decays x u =
 (* [ema b m x] is [b * m + (1 - b) * x]: the moving average [m] after [x]. *)
 let ema b m x = Nx.add (Nx.mul_s m b) (Nx.mul_s x (1.0 -. b))
 
-(* The layer-wise trust ratio of LARS and LAMB: [|x| / (|u| + 1e-6)] for the
-   leaf [x] and its update [u], or [1] when either norm is zero, as a scalar at
-   [x]'s dtype. *)
-let trust_ratio x u =
+(* The layer-wise trust ratio of LARS and LAMB: [coefficient * |x| / |u|] for
+   the leaf [x] and its update [u], or [1] when either norm is zero, as a scalar
+   at [x]'s dtype. The guard keeps the division defined: a zero leaf takes the
+   plain step, and a zero update stays zero. *)
+let trust_ratio ~coefficient x u =
   let norm t = Nx.sqrt (Nx.sum (Nx.mul t t)) in
   let xn = norm x and un = norm u in
   Nx.where
     (Nx.logical_and (Nx.greater_s xn 0.0) (Nx.greater_s un 0.0))
-    (Nx.div xn (Nx.add_s un 1e-6))
+    (Nx.div (Nx.mul_s xn coefficient) un)
     (Nx.ones_like xn)
 
 (* SGD and LARS *)
@@ -548,15 +554,16 @@ let sgd_step p ~lr ?(momentum = 0.0) st ~params ~grads =
 
 let lars_init p params = velocity_init "Vega.lars_init" p params
 
-let lars_step p ~lr ?(momentum = 0.9) ?weight_decay ?decays
-    ?(nesterov = false) st ~params ~grads =
+let lars_step p ~lr ?(momentum = 0.9) ?(trust_coefficient = 0.001)
+    ?weight_decay ?decays ?(nesterov = false) st ~params ~grads =
   let fn = "Vega.lars_step" in
   let lr = lr st.step in
   let wd = decay_at ~default:0.01 weight_decay st.step in
   validate_unit_interval fn "momentum" momentum;
+  validate_positive_finite fn "trust_coefficient" trust_coefficient;
   let f ~decays w x g s =
     let u = decayed wd w ~decays x g in
-    let u = Nx.mul u (trust_ratio x u) in
+    let u = Nx.mul u (trust_ratio ~coefficient:trust_coefficient x u) in
     let v = Nx.add (Nx.mul_s s.(0) momentum) u in
     let d = if nesterov then Nx.add u (Nx.mul_s v momentum) else v in
     (descend ~lr x d, [| v |])
@@ -713,7 +720,7 @@ let lamb_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) ?weight_decay
   validate_adam fn ~b1 ~b2 ~eps;
   let apply ~decays w x mu_hat nu_hat =
     let u = decayed wd w ~decays x (adam_direction ~eps mu_hat nu_hat) in
-    descend ~lr x (Nx.mul u (trust_ratio x u))
+    descend ~lr x (Nx.mul u (trust_ratio ~coefficient:1.0 x u))
   in
   adam_update ?decays fn p ~b1 ~b2 ~apply st ~params ~grads
 

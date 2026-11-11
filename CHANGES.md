@@ -277,6 +277,12 @@ All notable changes to this project will be documented in this file.
 
 ### Vega (new)
 
+- **Breaking:** `lars_step` takes LARS's trust coefficient as
+  `?trust_coefficient` (default `0.001`), and `~lr` is the paper's global
+  rate. Multiply a former `~lr` by 1000 to keep the steps of leaves with
+  nonzero weights; a zero leaf now steps at `lr`, as Optax's and TensorFlow's
+  LARS do, where it stepped 1000 times less. The trust ratio of `lars_step`
+  and `lamb_step` drops its `1e-6` term, which biased small updates.
 - `lars_step`, `adamw_step`, `lamb_step` and `adan_step` take `?decays`, a
   rule on each leaf's path and shape, to leave biases and normalisation
   parameters undecayed. A leaf it rejects steps as under `adam_step` for AdamW.

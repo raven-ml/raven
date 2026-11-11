@@ -785,6 +785,8 @@ let float16_refused =
              float16 inside the objective"))
         (fun () -> step (Nx.ones Nx.float16 [| 3 |])))
 
+(* The rate is 0.1, and LARS's trust coefficient 1, so that a move exceeds
+   float16's spacing below 1. *)
 let test_float16_accepted () =
   let x = Nx.ones Nx.float16 [| 3 |] and lr = Vega.rate 0.1 in
   let moved name w =
@@ -793,7 +795,9 @@ let test_float16_accepted () =
   moved "sgd"
     (fst (Vega.sgd_step p ~lr (Vega.sgd_init p x) ~params:x ~grads:x));
   moved "lars"
-    (fst (Vega.lars_step p ~lr (Vega.lars_init p x) ~params:x ~grads:x));
+    (fst
+       (Vega.lars_step p ~lr ~trust_coefficient:1.0 (Vega.lars_init p x)
+          ~params:x ~grads:x));
   moved "lion"
     (fst (Vega.lion_step p ~lr (Vega.lion_init p x) ~params:x ~grads:x));
   moved "lbfgs" (Vega.lbfgs_step p ~lr x (Vega.lbfgs_init p x)).params

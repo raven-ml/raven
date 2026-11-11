@@ -21,7 +21,7 @@ the step, as `~lr`.
 | `optax.adamw(1e-3, weight_decay=0.01)` | `Vega.adamw_step p ~lr:(Vega.rate 1e-3) ~weight_decay:(Vega.rate 0.01)` |
 | `optax.radam(1e-3)` | `Vega.radam_step p ~lr:(Vega.rate 1e-3)` |
 | `optax.lamb(1e-3)` | `Vega.lamb_step p ~lr:(Vega.rate 1e-3)` |
-| `optax.lars(0.1)` | `Vega.lars_step p ~lr:(Vega.rate 1e-4)` |
+| `optax.lars(0.1)` | `Vega.lars_step p ~lr:(Vega.rate 0.1)` |
 | `optax.rmsprop(1e-3)` | `Vega.rmsprop_step p ~lr:(Vega.rate 1e-3)` |
 | `optax.adagrad(0.01)` | `Vega.adagrad_step p ~lr:(Vega.rate 0.01)` |
 | `optax.adan(1e-3)` | `Vega.adan_step p ~lr:(Vega.rate 1e-3)` |
@@ -30,9 +30,7 @@ the step, as `~lr`.
 
 Defaults can differ. Vega's `lars_step` and `lamb_step` default to a weight
 decay of `0.01` and its `adan_step` to `0.02`, where Optax's default to none.
-Vega's `lars_step` has no trust coefficient: the paper's η (Optax's
-`trust_coefficient`, default `0.001`) is folded into `~lr`, hence the rate
-above. `optax.lamb` defaults to `eps=1e-6` where `lamb_step` uses `1e-8`.
+`optax.lamb` defaults to `eps=1e-6` where `lamb_step` uses `1e-8`.
 Vega's `adafactor_step` factors every leaf of two or more axes, whatever their
 sizes, and does not scale updates by the parameters' root mean square.
 

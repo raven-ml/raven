@@ -451,6 +451,7 @@ val lars_step :
   ('p, 'd) Nx.Ptree.t ->
   lr:('d Nx.int32_t -> (float, 'b, 'd) Nx.t) ->
   ?momentum:float ->
+  ?trust_coefficient:float ->
   ?weight_decay:('d Nx.int32_t -> (float, 'c, 'd) Nx.t) ->
   ?decays:(Nx.Ptree.Path.t -> int array -> bool) ->
   ?nesterov:bool ->
@@ -461,25 +462,33 @@ val lars_step :
 (** [lars_step p ~lr st ~params ~grads] is [(params', st')] after one LARS step
     (You, Gitman and Ginsburg, 2017), for large-batch SGD: each leaf is a layer
     whose step is scaled by the ratio of its weights' norm to its update's norm.
-    Per leaf, with [|x|] the L2 norm over the leaf's elements:
+    Per leaf, with [|x|] the L2 norm over the leaf's elements and [eta] the
+    trust coefficient:
 
     {v
     u  = g + wd * p
-    r  = |p| / (|u| + 1e-6), or 1 if |p| = 0 or |u| = 0
+    r  = eta * |p| / |u|, or 1 if |p| = 0 or |u| = 0
     v' = momentum * v + r * u
     p' = p - lr * v'
     v}
 
     With [nesterov], the last line is [p' = p - lr * (r * u + momentum * v')].
-    [wd] is the weight decay at the counter ({!section-decay}); a leaf that
-    does not decay takes [u = g], in the ratio as in the step. [momentum]
-    defaults to [0.9], [weight_decay] to [Vega.rate 0.01], [nesterov] to
-    [false]. The learning rate scales the velocity rather than entering it, as
-    in {!sgd_step}, and the paper's trust coefficient is folded into [lr].
+    [wd] is the weight decay at the counter ({!section-decay}); a leaf that does
+    not decay takes [u = g], in the ratio as in the step. The ratio takes the
+    norm of the decayed update, as LAMB does (You et al., 2020), where the 2017
+    paper's eq. 6 divides by [|g| + wd * |p|]; the two agree where the decay is
+    small against the gradient. A leaf whose weights are zero, such as a bias at
+    initialisation, takes [r = 1], the momentum SGD step at [lr], and a zero
+    update stays zero.
 
-    Raises [Invalid_argument] if [momentum] is outside \[[0];[1]\), or as
-    {!section-structures} states if [grads] or [st.velocity] does not have
-    [params]' skeleton. *)
+    [lr] is the paper's global rate and [trust_coefficient] its [eta],
+    defaulting to [0.001]. [momentum] defaults to [0.9], [weight_decay] to
+    [Vega.rate 0.01], [nesterov] to [false]. The learning rate scales the
+    velocity rather than entering it, as in {!sgd_step}.
+
+    Raises [Invalid_argument] if [momentum] is outside \[[0];[1]\), if
+    [trust_coefficient] is not positive and finite, or as {!section-structures}
+    states if [grads] or [st.velocity] does not have [params]' skeleton. *)
 
 (** {1:adam Adam and AdamW} *)
 
@@ -631,12 +640,12 @@ val lamb_step :
   'p * ('p, 'd) adam_state
 (** [lamb_step p ~lr st ~params ~grads] is [(params', st')] after one LAMB step
     (You et al., 2020), for large-batch training: {!adamw_step}'s update, scaled
-    per leaf by LARS's trust ratio ({!lars_step}). With [d] Adam's
-    bias-corrected direction:
+    per leaf by the trust ratio ({!lars_step}). With [d] Adam's bias-corrected
+    direction:
 
     {v
     u  = d + wd * p
-    r  = |p| / (|u| + 1e-6), or 1 if |p| = 0 or |u| = 0
+    r  = |p| / |u|, or 1 if |p| = 0 or |u| = 0
     p' = p - lr * r * u
     v}
 
