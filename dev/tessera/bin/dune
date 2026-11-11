@@ -19,4 +19,6 @@
   rune
   vega
   kaun
+  jsont
+  jsont.bytesrw
   unix))

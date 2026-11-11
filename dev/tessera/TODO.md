@@ -47,6 +47,11 @@ An item leaves when its library fixes it, or when a design decides it stays.
   same fact that an operand is file pages.
 - Floats narrower than float32 compute in float32 on the CPU, and nothing at
   the call says so: bf16 rows on the CPU time f32 kernels plus conversions.
+- `Nx.standardize`'s error bound (`nx.mli`) names `F`, `L` and `D` as
+  "nx.cpu's for its moments", but `nx_cpu.mli` (Moments) defines `L` and
+  `D` alone; tessera's batch-normalisation law reads `F` as the variance's
+  bound there, `(L + D + 5) u V` to first order. Found by the M4b review's
+  tolerance derivation.
 - `Nx.split` returns a list, so taking a GRU's three gates needs a
   non-exhaustive match or slices.
 
@@ -150,7 +155,11 @@ An item leaves when its library fixes it, or when a design decides it stays.
   relative 1.9-2.3e-6 against PyTorch's 5.0-6.0e-7 (up to 2.2 times the
   validation's bound of twice PyTorch's), the heads' at 4.6-6.0e-7 against
   2.3-2.4e-7; eager nx.cpu meets the bound (0.95 of it at worst). The cause
-  (the compiled exp, the sums' order) is unexamined.
+  (the compiled exp, the sums' order) is unexamined. A pretraining group's
+  gradient (Barlow Twins with mixup on a small teacher, `main.exe validate
+  --barlow DIR --device cpu-jit`) shows the same: 17 of 150 tensors past the
+  bound, at most 1.38 times it (queries', keys' and QK norms' parameters,
+  layer norms, the pooling query), where eager meets it at 0.78 of it.
 
 - On fudge's RTX 5000, float32 products whose output is 440 wide, the
   medium student's width, run at 4.6-6.6 TFLOP/s (bench op rows

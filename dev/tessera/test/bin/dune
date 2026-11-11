@@ -1,9 +1,10 @@
-; distil.t runs main.exe's distil on a synthetic corpus: the stream of
-; positions, resuming and the groups through the executable.
+; distil.t, pretrain.t and probe.t run main.exe's distil, pretrain and probe
+; on synthetic corpora and tiles: the stream of positions, resuming, the
+; groups, and the probe's labels through the executable.
 
-(executable
- (name make_corpus)
- (libraries tessera synth nx nx.io))
+(executables
+ (names make_corpus make_labelled)
+ (libraries tessera synth nx nx.io jord))
 
 (cram
- (deps make_corpus.exe ../../bin/main.exe))
+ (deps make_corpus.exe make_labelled.exe ../../bin/main.exe))

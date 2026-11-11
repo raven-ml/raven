@@ -3,13 +3,16 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* main.exe: embeddings of TESSERA tiles by the released v2 models, and their
-   check against the upstream reference's outputs.
+(* main.exe: embeddings of TESSERA tiles by the released v2 models, training,
+   and their checks against the upstream reference's outputs.
 
    encode reads a tile, embeds its pixels and writes GeoTessera's files.
    validate embeds the fixture tiles with each released model and compares the
    result with the reference's, embedding by embedding and, for medium, block by
-   block against its layer dumps. *)
+   block against its layer dumps; with --training or --barlow it compares one
+   training objective's gradients with the reference's. corpus, targets, distil
+   and pretrain train models; probe scores a model's embeddings on a labelled
+   tile. *)
 
 open Tessera
 
@@ -21,6 +24,12 @@ let usage =
        main.exe targets --teacher FILE --corpus DIR --out FILE [OPTION...]
        main.exe distil --corpus DIR --targets FILE --out DIR
                        (--init FILE [--heads FILE] | --arch A) [OPTION...]
+       main.exe pretrain --corpus DIR --out DIR
+                       (--init FILE [--projector-weights FILE] | --arch A)
+                       [OPTION...]
+       main.exe validate --barlow DIR --tile DIR [--masks] [--device D]
+       main.exe probe (--model FILE | --arch A) --tile DIR --landmask FILE
+                       --labels FILE [OPTION...]
 
 encode options:
   --device D    cpu (eager, the default), cpu-jit, cuda, nv, amd or metal
@@ -43,8 +52,9 @@ validate --training compares one distillation step's loss and gradients
 with gen/grads.py's on a small student, dropout masks fed to it; --masks
 writes raven's tokens and masks for it first.
 
-corpus writes the pixels of the tiles with an observation, shuffled by
---seed, in runs of --bytes (default 1 GiB).
+corpus writes the pixels of the tiles with an observation, or with --min N
+of each sensor (v1.0 pretrains on pixels of 10), shuffled by --seed, in runs
+of --bytes (default 1 GiB).
 
 targets options:
   --device D, --bf16, --pixels N (default 512), --slots S
@@ -73,6 +83,58 @@ distil options:
                 OUT that holds one)
   --heldout C:T report each prefix's mean cosine to the targets T of the
                 corpus C after the last step
+
+pretrain options (Barlow Twins with mixup, TESSERA v1.0's objective):
+  --init FILE   a model checkpoint, its projector from --projector-weights
+                FILE (npz of PyTorch's net.i.weight and net.i.bias) or drawn
+  --arch A      a model drawn from --seed: nano, small, medium, large or
+                teacher
+  --projector W,...
+                the projector's widths after the model's (default six of
+                16384, v1.0's, whose state alone is 16 GB in float32: the
+                default needs more than one 32 GB device)
+  --device D    as for encode
+  --steps N (1000), --groups G (1) per step, --pixels B (2048, at least
+                2) a group, --length L (40) observations of each sensor a
+                view
+  --seed N      the run's key: corpus order after the first epoch, views,
+                dropout, mixing, and a drawn model's and projector's
+                parameters (default 0)
+  --lr X (2e-3), --warmup F (0.1), --decay X (0, on linear layers'
+                weights: v1.0's code writes 1e-6, and its run applied 0),
+                --clip X (2.0), --dropout X (0.1), --reducer-dropout X
+                (0.2): v1.0's recipe (Barlow.v1_recipe)
+  --bf16, --memory B, --every K, --until N, --resume
+                as for distil
+  --remat       recompute each encoder layer in the backward pass
+  --rankme N    after the last step, print RankMe of the projector's and the
+                representation's values of the stream's first N pixels
+A group of B pixels is the objective's batch, and every pixel of the corpus
+needs an observation of each sensor (corpus --min).
+
+validate --barlow compares one pretraining group's loss and gradients
+with gen/grads.py barlow-oracle's on a small teacher or student, dropout
+masks fed to it; --masks writes raven's views and masks for it first.
+
+probe embeds a tile with a model and labels each pixel by the GeoJSON
+feature whose region holds its centre, on the grid of the tile's landmask,
+as v1.0's in-training probe rasterises its fields (rasterio's default).
+tessera-eval's downstream tasks label every cell a field touches (rasterio's
+all_touched); the probe does not, since a cell on a shared edge would then
+take the label of whichever field comes last, and a test field's edge could
+take a training field's. Within each class (--property, default class) the
+smallest fields go to training until they hold --share (0.3) of the class's
+pixels, as v1.0 splits its fields, and the others to testing; a pixel with
+no observation is left out:
+  --model FILE  a model checkpoint, or
+  --arch A      the model pretrain --arch A --seed 0 starts from
+  --state FILE  the model of a distil or pretrain run's state, of --model's
+                or --arch's structure
+  --c X         the probe's inverse penalty (default 0.1)
+  --dims K      probe the Matryoshka prefix of K values
+  --device D, --pixels N, --slots S
+                as for encode
+  --out PREFIX  write the rows, labels and probe as PREFIX_*.npy
 
 Memory grows linearly with --pixels. At 4096 pixels a batch takes about
 7.7 GB for medium and 11.4 GB for large eager on the CPU, and 3.8 GB and
@@ -547,6 +609,7 @@ let corpus opts =
   let out = req opts "--out" in
   let key = Nx.Rng.key (int_opt opts "--seed" 0) in
   let bytes = int_opt opts "--bytes" (1 lsl 30) in
+  let least = int_opt opts "--min" 0 in
   if not (Sys.file_exists out) then Sys.mkdir out 0o755;
   let parts =
     List.mapi
@@ -554,11 +617,13 @@ let corpus opts =
         let px, _ = Pixels.of_tile tile in
         let l2 = Nx.to_array (Nx_ragged.lengths px.s2) in
         let l1 = Nx.to_array (Nx_ragged.lengths px.s1) in
-        let kept =
-          List.filter
-            (fun p -> l2.(p) > 0L || l1.(p) > 0L)
-            (List.init (Pixels.length px) Fun.id)
+        let keep p =
+          if least = 0 then l2.(p) > 0L || l1.(p) > 0L
+          else
+            let m = Int64.of_int least in
+            l2.(p) >= m && l1.(p) >= m
         in
+        let kept = List.filter keep (List.init (Pixels.length px) Fun.id) in
         let indices =
           Nx.create Nx.int64
             [| List.length kept |]
@@ -566,8 +631,8 @@ let corpus opts =
         in
         let dir = Filename.concat out (Printf.sprintf "part%d" i) in
         Pixels.save dir (take_pixels px indices);
-        Printf.printf "%s: %d pixels, %d with an observation\n%!" tile
-          (Pixels.length px) (List.length kept);
+        Printf.printf "%s: %d pixels, %d kept\n%!" tile (Pixels.length px)
+          (List.length kept);
         dir)
       tiles
   in
@@ -674,6 +739,127 @@ let step_groups ~key ~shape ~groups corpus targets p =
     taken )
 
 let tree_bytes s x = Nx.Ptree.fold s (fun _ a acc -> acc + Nx.nbytes a) x 0
+
+(* A run's files under [out]: its state, and its log, which a resumed run keeps
+   up to the steps its state holds. A run without [--resume] refuses an [out]
+   that holds either. *)
+type files = {
+  ckpt : string;
+  log : out_channel;
+  keep : int -> unit;
+  resume : bool;
+}
+
+let run_files opts out =
+  if not (Sys.file_exists out) then Sys.mkdir out 0o755;
+  let ckpt = Filename.concat out "state.safetensors" in
+  let log_file = Filename.concat out "log.tsv" in
+  let resume = flag opts "--resume" in
+  if resume && not (Sys.file_exists ckpt) then die "%s: no state to resume" ckpt;
+  if (not resume) && (Sys.file_exists ckpt || Sys.file_exists log_file) then
+    die "%s holds a run: --resume it, or write to another --out" out;
+  let kept =
+    if not resume then []
+    else
+      In_channel.with_open_bin log_file In_channel.input_all
+      |> String.split_on_char '\n'
+      |> List.filter (fun l -> l <> "")
+  in
+  let log = open_out log_file in
+  let keep upto =
+    List.iter
+      (fun l ->
+        match String.split_on_char '\t' l with
+        | s :: _ when int_of_string s <= upto -> output_string log (l ^ "\n")
+        | _ -> ())
+      kept;
+    flush log
+  in
+  { ckpt; log; keep; resume }
+
+(* The steps of a run from [start], or from the state [files] holds, to step
+   [until]: each step's groups from the position the previous one stopped at,
+   its log line, and the state every [every] steps and at the last. Compiled,
+   its footprint is reported and checked against [--memory]. *)
+let train (type d) (t : d target) opts files ~key ~seed ~run ~until ~every
+    (module S : Nx.Ptree.S) (module G : Nx.Ptree.S)
+    ~(start : (d Nx.float32_t, d) S.t)
+    ~(counter : (d Nx.float32_t, d) S.t -> d Nx.int32_t)
+    ~(groups : int -> (d Nx.float32_t, d) G.t * int)
+    ~(filled : (d Nx.float32_t, d) G.t -> int)
+    (step_fn :
+      (d Nx.float32_t, d) G.t * (d Nx.float32_t, d) S.t ->
+      d Nx.float32_t * (d Nx.float32_t, d) S.t) =
+  let st_ptree = Nx.Ptree.instantiate (module S) in
+  let group = Nx.Ptree.instantiate (module G) in
+  let st, position =
+    if files.resume then begin
+      let st, k, position, saved =
+        Checkpoint.load files.ckpt (module S) ~like:start
+      in
+      if saved <> run then
+        die "%s is a run of\n  %s\nnot of\n  %s" files.ckpt saved run;
+      if Nx.to_array (Nx.Rng.to_tensor k) <> Nx.to_array (Nx.Rng.to_tensor key)
+      then die "%s: the run's key is not --seed %d's" files.ckpt seed;
+      (st, position)
+    end
+    else (start, 0)
+  in
+  let signature =
+    Nx.Ptree.(pair group st_ptree @-> returns (pair tensor st_ptree))
+  in
+  let step = if t.jit then Rune.jit signature step_fn else step_fn in
+  let first = Int32.to_int (Nx.item [] (Nx.place Nx.Host.on (counter st))) in
+  files.keep first;
+  let gs0 = groups position in
+  if t.jit then begin
+    let fp = Rune.footprint signature step_fn (fst gs0, st) in
+    let live = tree_bytes st_ptree st + tree_bytes group (fst gs0) in
+    List.iter
+      (fun (r, b) ->
+        Printf.printf
+          "footprint: %s %.2f GB, with the state and a step's groups %.2f GB\n\
+           %!"
+          (Rig.name r)
+          (Float.of_int b /. 1e9)
+          (Float.of_int (b + live) /. 1e9))
+      fp;
+    match opt opts "--memory" with
+    | None -> ()
+    | Some s ->
+        let budget = float_of_string s in
+        List.iter
+          (fun (r, b) ->
+            if Rig.name r <> "host" && Float.of_int (b + live) > budget then
+              die "%s needs %.2f GB, above --memory %.2f GB" (Rig.name r)
+                (Float.of_int (b + live) /. 1e9)
+                (budget /. 1e9))
+          fp
+  end;
+  let rec go st position i ~gs =
+    if i >= until then st
+    else begin
+      let t0 = now () and w0 = words () in
+      let gs, taken = match gs with Some g -> g | None -> groups position in
+      (* A compiled step writes the new state over the old one. *)
+      let st = if t.jit then Nx.Ptree.donate st_ptree st else st in
+      let loss, st = step (gs, st) in
+      let loss = Nx.item [] (Nx.place Nx.Host.on loss) in
+      let dt = now () -. t0 and dw = words () -. w0 in
+      let filled = filled gs in
+      Printf.fprintf files.log "%d\t%d\t%d\t%d\t%.9g\t%.4f\t%.0f\n%!" (i + 1)
+        position taken filled loss dt dw;
+      if (i + 1) mod 10 = 0 || i < 3 then
+        Printf.printf
+          "step %d position %d pixels %d loss %.6f %.3f s %.0f words\n%!"
+          (i + 1) position filled loss dt dw;
+      let position = position + taken in
+      if (i + 1) mod every = 0 || i + 1 = until then
+        Checkpoint.save files.ckpt (module S) st ~key ~position ~run;
+      go st position (i + 1) ~gs:None
+    end
+  in
+  go st position first ~gs:(Some gs0)
 
 (* Mean cosine of each prefix's head to the teacher over [px]. *)
 let fidelity (type d) (t : d target) shape
@@ -793,13 +979,7 @@ let distil opts =
             Some (px, t)
         | _ -> die "--heldout CORPUS:TARGETS")
   in
-  if not (Sys.file_exists out) then Sys.mkdir out 0o755;
-  let ckpt = Filename.concat out "state.safetensors" in
-  let log_file = Filename.concat out "log.tsv" in
-  let resume = flag opts "--resume" in
-  if resume && not (Sys.file_exists ckpt) then die "%s: no state to resume" ckpt;
-  if (not resume) && (Sys.file_exists ckpt || Sys.file_exists log_file) then
-    die "%s holds a run: --resume it, or write to another --out" out;
+  let files = run_files opts out in
   (* The options a resume must repeat: every one that changes the steps. *)
   let run =
     String.concat " "
@@ -818,24 +998,6 @@ let distil opts =
        ]
       @ if compute_bf16 then [ "--bf16" ] else [])
   in
-  (* A resumed run's log keeps the steps its state holds. *)
-  let kept_log =
-    if not resume then []
-    else
-      In_channel.with_open_bin log_file In_channel.input_all
-      |> String.split_on_char '\n'
-      |> List.filter (fun l -> l <> "")
-  in
-  let log = open_out log_file in
-  let keep_log upto =
-    List.iter
-      (fun l ->
-        match String.split_on_char '\t' l with
-        | s :: _ when int_of_string s <= upto -> output_string log (l ^ "\n")
-        | _ -> ())
-      kept_log;
-    flush log
-  in
   Printf.printf
     "distil: %d pixels, shape {pixels %d; s2_rows %d; s1_rows %d; slots %d; \
      width %d}, %d groups, dropout %g/%g, %s\n\
@@ -847,8 +1009,6 @@ let distil opts =
     {
       run =
         (fun (type d) (t : d target) ->
-          let st_ptree = Nx.Ptree.instantiate (module Distil.State) in
-          let group = Nx.Ptree.instantiate (module Distil.Group) in
           let fresh =
             Nx.Ptree.place
               (module Distil.Params)
@@ -859,21 +1019,6 @@ let distil opts =
             Distil.init
               { (Nx.Ptree.place (module Model) t.at m) with net = fresh.net }
               fresh.heads
-          in
-          let st, position =
-            if resume then begin
-              let st, k, position, saved =
-                Checkpoint.load ckpt (module Distil.State) ~like:start
-              in
-              if saved <> run then
-                die "%s is a run of\n  %s\nnot of\n  %s" ckpt saved run;
-              if
-                Nx.to_array (Nx.Rng.to_tensor k)
-                <> Nx.to_array (Nx.Rng.to_tensor key)
-              then die "%s: the run's key is not --seed %d's" ckpt seed;
-              (st, position)
-            end
-            else (start, 0)
           in
           let sched = sched () in
           let step_fn
@@ -888,88 +1033,25 @@ let distil opts =
               Distil.step ~compute:Nx.float32 ~dropout ~lr:sched
                 ~weight_decay:(Vega.rate decay) ~clip g
           in
-          let signature :
-              ( (d Nx.float32_t, d) Distil.group
-                * (d Nx.float32_t, d) Distil.state ->
-                d Nx.float32_t * (d Nx.float32_t, d) Distil.state,
-                d )
-              Nx.Ptree.fn =
-            Nx.Ptree.(pair group st_ptree @-> returns (pair tensor st_ptree))
+          let groups position =
+            let g, taken =
+              step_groups ~key ~shape ~groups corpus targets position
+            in
+            (Nx.Ptree.place (module Distil.Group) t.at g, taken)
           in
-          let step = if t.jit then Rune.jit signature step_fn else step_fn in
-          let first =
-            Int32.to_int (Nx.item [] (Nx.place Nx.Host.on st.opt.step))
+          let filled (g : (d Nx.float32_t, d) Distil.group) =
+            Nx.to_array (Nx.place Nx.Host.on g.batch.pixel)
+            |> Array.fold_left (fun a p -> if p >= 0L then a + 1 else a) 0
           in
-          keep_log first;
-          let gs0, taken0 =
-            step_groups ~key ~shape ~groups corpus targets position
+          let st =
+            train t opts files ~key ~seed ~run ~until ~every
+              (module Distil.State)
+              (module Distil.Group)
+              ~start
+              ~counter:(fun (st : (d Nx.float32_t, d) Distil.state) ->
+                st.opt.step)
+              ~groups ~filled step_fn
           in
-          let gs0 = Nx.Ptree.place (module Distil.Group) t.at gs0 in
-          if t.jit then begin
-            let fp = Rune.footprint signature step_fn (gs0, st) in
-            let live = tree_bytes st_ptree st + tree_bytes group gs0 in
-            List.iter
-              (fun (r, b) ->
-                Printf.printf
-                  "footprint: %s %.2f GB, with the state and a step's groups \
-                   %.2f GB\n\
-                   %!"
-                  (Rig.name r)
-                  (Float.of_int b /. 1e9)
-                  (Float.of_int (b + live) /. 1e9))
-              fp;
-            match opt opts "--memory" with
-            | None -> ()
-            | Some s ->
-                let budget = float_of_string s in
-                List.iter
-                  (fun (r, b) ->
-                    if Rig.name r <> "host" && Float.of_int (b + live) > budget
-                    then
-                      die "%s needs %.2f GB, above --memory %.2f GB"
-                        (Rig.name r)
-                        (Float.of_int (b + live) /. 1e9)
-                        (budget /. 1e9))
-                  fp
-          end;
-          let rec go st position i ~gs =
-            if i >= until then (st, position)
-            else begin
-              let t0 = now () and w0 = words () in
-              let gs, taken =
-                match gs with
-                | Some g -> g
-                | None ->
-                    let g, taken =
-                      step_groups ~key ~shape ~groups corpus targets position
-                    in
-                    (Nx.Ptree.place (module Distil.Group) t.at g, taken)
-              in
-              (* A compiled step writes the new state over the old one. *)
-              let st = if t.jit then Nx.Ptree.donate st_ptree st else st in
-              let loss, st = step (gs, st) in
-              let loss = Nx.item [] (Nx.place Nx.Host.on loss) in
-              let dt = now () -. t0 and dw = words () -. w0 in
-              let filled =
-                Nx.to_array (Nx.place Nx.Host.on gs.batch.pixel)
-                |> Array.fold_left (fun a p -> if p >= 0L then a + 1 else a) 0
-              in
-              Printf.fprintf log "%d\t%d\t%d\t%d\t%.9g\t%.4f\t%.0f\n%!" (i + 1)
-                position taken filled loss dt dw;
-              if (i + 1) mod 10 = 0 || i < 3 then
-                Printf.printf
-                  "step %d position %d pixels %d loss %.6f %.3f s %.0f words\n\
-                   %!"
-                  (i + 1) position filled loss dt dw;
-              let position = position + taken in
-              if (i + 1) mod every = 0 || i + 1 = until then
-                Checkpoint.save ckpt
-                  (module Distil.State)
-                  st ~key ~position ~run;
-              go st position (i + 1) ~gs:None
-            end
-          in
-          let st, _ = go st position first ~gs:(Some (gs0, taken0)) in
           match heldout with
           | None -> ()
           | Some (px, tg) ->
@@ -979,7 +1061,225 @@ let distil opts =
                   Printf.printf "fidelity: prefix %d mean cos %.6f\n" k c)
                 (fidelity t shape st px tg));
     };
-  close_out log
+  close_out files.log
+
+(* pretrain *)
+
+(* A pretraining's key of its groups' draws. *)
+let views_site = 1
+
+(* A step's [groups] groups of [pixels] from stream position [p], their views
+   drawn by their positions, and the positions they take. *)
+let barlow_groups ~key ~length ~pixels ~groups corpus p =
+  let n = Pixels.length corpus in
+  let gkey = Nx.Rng.fold_in key views_site in
+  let group g =
+    let first = p + (g * pixels) in
+    Barlow.group ~key:gkey ~length ~first
+      (take_pixels corpus (indices key ~n first pixels))
+  in
+  (Barlow.stack (List.init groups group), groups * pixels)
+
+(* A projector in PyTorch's layout ([net.i.weight] and [net.i.bias] of a
+   sequence of linear, batch-norm and ReLU modules), from an npz. *)
+let load_projector file =
+  let a = Nx_io.load_npz file in
+  (* The modules with parameters, in order; ReLUs have none. *)
+  let modules =
+    List.filter_map
+      (fun n ->
+        match String.split_on_char '.' n with
+        | [ "net"; i; "weight" ] -> int_of_string_opt i
+        | _ -> None)
+      (Nx_io.Archive.names a)
+    |> List.sort compare
+  in
+  let layer i =
+    let name f = Printf.sprintf "net.%d.%s" i f in
+    let w = host_f32 a (name "weight") and b = host_f32 a (name "bias") in
+    if Nx.ndim w = 2 then
+      `Linear { Kaun.Linear.w = Nx.matrix_transpose w; b = Some b }
+    else `Norm { Kaun.Batch_norm.gamma = w; beta = b }
+  in
+  let rec build = function
+    | [ `Linear out ] -> ([], out)
+    | `Linear l :: `Norm n :: rest ->
+        let hidden, out = build rest in
+        ((l, n) :: hidden, out)
+    | _ -> die "%s: not a projector of linear and batch-norm layers" file
+  in
+  let hidden, out = build (List.map layer modules) in
+  { Barlow.hidden; out }
+
+let arch_named = function
+  | "nano" -> Model.nano
+  | "small" -> Model.small
+  | "medium" -> Model.medium
+  | "large" -> Model.large
+  | "teacher" -> Model.teacher
+  | a -> die "--arch %S: nano, small, medium, large or teacher" a
+
+(* RankMe of the projector's and the representation's values of [v]'s first
+   views, without dropout. *)
+let rankmes (st : (Nx.host Nx.float32_t, Nx.host) Barlow.state)
+    (v : Nx.host Barlow.views) =
+  let e = Model.apply st.model v.a1 in
+  let z = Barlow.project st.projector e in
+  (Eval.rankme z, Eval.rankme e)
+
+let pretrain opts =
+  let dir = req opts "--corpus" and out = req opts "--out" in
+  let device = Option.value ~default:"cpu" (opt opts "--device") in
+  let seed = int_opt opts "--seed" 0 in
+  let key = Nx.Rng.key seed in
+  let steps = int_opt opts "--steps" 1000 in
+  let until = min steps (int_opt opts "--until" steps) in
+  let groups = int_opt opts "--groups" 1 in
+  let v1 = Barlow.v1_recipe in
+  let pixels = int_opt opts "--pixels" v1.pixels in
+  if pixels < 2 then die "--pixels %d: a group needs 2 pixels or more" pixels;
+  let length = int_opt opts "--length" v1.length in
+  let every = int_opt opts "--every" 100 in
+  let lr = float_opt opts "--lr" v1.lr in
+  let warmup = float_opt opts "--warmup" v1.warmup in
+  let decay = float_opt opts "--decay" v1.weight_decay in
+  let clip = float_opt opts "--clip" v1.clip in
+  let remat = flag opts "--remat" in
+  let dropout =
+    {
+      Model.layers = float_opt opts "--dropout" v1.dropout.layers;
+      reducer = float_opt opts "--reducer-dropout" v1.dropout.reducer;
+    }
+  in
+  let corpus = Pixels.load dir in
+  let m =
+    match (opt opts "--init", opt opts "--arch") with
+    | Some file, _ -> Model.load file
+    | None, Some a ->
+        Model.init ~key:(Nx.Rng.fold_in key init_site) (arch_named a)
+    | None, None -> die "--init or --arch is required\n%s" usage
+  in
+  let projector =
+    match opt opts "--projector-weights" with
+    | Some file -> load_projector file
+    | None ->
+        let widths =
+          match opt opts "--projector" with
+          | None -> v1.projector
+          | Some l -> List.map int_of_string (String.split_on_char ',' l)
+        in
+        Barlow.projector
+          ~key:(Nx.Rng.fold_in key heads_site)
+          (Model.dims m :: widths)
+  in
+  let warmup_steps =
+    max 1 (Float.to_int (Float.round (warmup *. Float.of_int steps)))
+  in
+  let sched () =
+    Vega.Schedule.warmup_cosine_decay ~init_value:0. ~peak_value:lr
+      ~warmup_steps
+      ~decay_steps:(max 1 (steps - warmup_steps))
+      ()
+  in
+  let compute_bf16 = flag opts "--bf16" in
+  let files = run_files opts out in
+  let run =
+    String.concat " "
+      ([
+         Printf.sprintf "--corpus %s" dir;
+         (match (opt opts "--init", opt opts "--arch") with
+         | Some f, _ ->
+             Printf.sprintf "--init %s --projector-weights %s" f
+               (Option.value ~default:"drawn" (opt opts "--projector-weights"))
+         | None, a -> "--arch " ^ Option.value ~default:"" a);
+         Printf.sprintf
+           "--projector %s --seed %d --steps %d --groups %d --pixels %d \
+            --length %d --lr %h --warmup %h --decay %h --clip %h --dropout %h \
+            --reducer-dropout %h"
+           (String.concat ","
+              (List.map
+                 (fun (l, _) -> string_of_int (Nx.dim 1 l.Kaun.Linear.w))
+                 projector.hidden
+              @ [ string_of_int (Nx.dim 1 projector.out.w) ]))
+           seed steps groups pixels length lr warmup decay clip dropout.layers
+           dropout.reducer;
+       ]
+      @ (if compute_bf16 then [ "--bf16" ] else [])
+      @ if remat then [ "--remat" ] else [])
+  in
+  Printf.printf
+    "pretrain: %d pixels, %d groups of %d, %d observations a view, projector \
+     %s, dropout %g/%g, %s\n\
+     %!"
+    (Pixels.length corpus) groups pixels length
+    (String.concat "→"
+       (List.map string_of_int
+          (Model.dims m
+           :: List.map (fun (l, _) -> Nx.dim 1 l.Kaun.Linear.w) projector.hidden
+          @ [ Nx.dim 1 projector.out.w ])))
+    dropout.layers dropout.reducer
+    (if compute_bf16 then "bf16" else "f32");
+  on device
+    {
+      run =
+        (fun (type d) (t : d target) ->
+          let fresh =
+            Nx.Ptree.place
+              (module Barlow.Params)
+              t.at
+              { Barlow.net = m.net; projector }
+          in
+          let start =
+            Barlow.init
+              { (Nx.Ptree.place (module Model) t.at m) with net = fresh.net }
+              fresh.projector
+          in
+          let sched = sched () in
+          let step_fn
+              (g :
+                (d Nx.float32_t, d) Barlow.group
+                * (d Nx.float32_t, d) Barlow.state) :
+              d Nx.float32_t * (d Nx.float32_t, d) Barlow.state =
+            let weight_decay = Vega.rate decay in
+            if compute_bf16 then
+              Barlow.step ~compute:Nx.bfloat16 Barlow.v1_weights ~dropout ~remat
+                ~lr:sched ~weight_decay ~decays:Barlow.decays ~clip g
+            else
+              Barlow.step ~compute:Nx.float32 Barlow.v1_weights ~dropout ~remat
+                ~lr:sched ~weight_decay ~decays:Barlow.decays ~clip g
+          in
+          let groups_at position =
+            let g, taken =
+              barlow_groups ~key ~length ~pixels ~groups corpus position
+            in
+            (Nx.Ptree.place (module Barlow.Group) t.at g, taken)
+          in
+          let st =
+            train t opts files ~key ~seed ~run ~until ~every
+              (module Barlow.State)
+              (module Barlow.Group)
+              ~start
+              ~counter:(fun (st : (d Nx.float32_t, d) Barlow.state) ->
+                st.opt.step)
+              ~groups:groups_at
+              ~filled:(fun _ -> groups * pixels)
+              step_fn
+          in
+          (* RankMe of the stream's first pixels as a group, on the host. *)
+          let n = int_opt opts "--rankme" 0 in
+          if n > 0 then begin
+            let host = Nx.Ptree.place (module Barlow.State) Nx.Host.on st in
+            let first =
+              Barlow.group
+                ~key:(Nx.Rng.fold_in key views_site)
+                ~length ~first:0
+                (take_pixels corpus (indices key ~n:(Pixels.length corpus) 0 n))
+            in
+            let z, e = rankmes host first in
+            Printf.printf "rankme: projector %.6f representation %.6f\n" z e
+          end);
+    };
+  close_out files.log
 
 (* validate --training *)
 
@@ -1153,6 +1453,340 @@ let validate_training opts =
       }
   end
 
+(* validate --barlow *)
+
+(* The oracle's pretraining: the small teacher or student [model.pt] and the
+   projector [projector.npz] of [gen/grads.py barlow-init], its group of the
+   tile's pixels [pixels.npy], its mixing weight and permutation, and the views
+   raven draws of them at [length] observations, keyed by each pixel's index. *)
+let barlow_inputs dir tile =
+  let file f = Filename.concat dir f in
+  let m = Model.load (file "model.pt") in
+  let projector = load_projector (file "projector.npz") in
+  let px, _ = Pixels.of_tile tile in
+  let px =
+    take_pixels px (Nx.unpack Nx.int64 (Nx_io.load_npy (file "pixels.npy")))
+  in
+  let length =
+    Int64.to_int
+      (Nx.item [] (Nx.unpack Nx.int64 (Nx_io.load_npy (file "length.npy"))))
+  in
+  let v = Barlow.group ~key:oracle_key ~length ~first:0 px in
+  let v =
+    {
+      v with
+      alpha = Nx.unpack Nx.float32 (Nx_io.load_npy (file "alpha.npy"));
+      perm = Nx.unpack Nx.int64 (Nx_io.load_npy (file "perm.npy"));
+    }
+  in
+  (m, projector, v)
+
+(* A leaf of exact gradient 0: its float64 norm, rounding alone, below this
+   share of the whole gradient's (1e-15 to 2e-14 of 600-1600 in the
+   fixtures). *)
+let zero_leaf = 1e-12
+
+(* The oracle's dropout: the reference's encoder layers and its reducer's. *)
+let barlow_dropout = Model.v2_dropout
+
+let write_views dir tile =
+  let m, _, v = barlow_inputs dir tile in
+  let save name x = Nx_io.save_npy (Filename.concat dir name) x in
+  let keys i = Nx.Rng.of_tensor (Nx.get [ i ] (Nx.Rng.to_tensor v.keys)) in
+  let order = ref [] in
+  List.iteri
+    (fun i b ->
+      let blocks = Model.blocks m (Model.inputs m b) in
+      List.iter
+        (fun s ->
+          save
+            (Printf.sprintf "raven_a%d_%s.npy" (i + 1) s)
+            (List.assoc s blocks))
+        [ "s2_in"; "s1_in" ])
+    [ v.a1; v.a2 ];
+  (* The mixed view's masks are drawn on the first view's layout. *)
+  List.iteri
+    (fun i b ->
+      let masks = Model.masks ~dropout:barlow_dropout ~keys:(keys i) m b in
+      order := List.map fst masks;
+      List.iter
+        (fun (name, x) ->
+          save (Printf.sprintf "mask_v%d_%s.npy" i name) (Nx.cast Nx.uint8 x))
+        masks)
+    [ v.a1; v.a2; v.a1 ];
+  Out_channel.with_open_bin (Filename.concat dir "raven_masks.json") (fun oc ->
+      Printf.fprintf oc "{\"order\": [%s]}\n"
+        (String.concat ", " (List.map (Printf.sprintf "%S") !order)));
+  Printf.printf "%s: views of %d pixels, %d masks a view\n" dir
+    (Nx.dim 0 v.perm) (List.length !order)
+
+let validate_barlow opts =
+  let dir = req opts "--barlow" and tile = req opts "--tile" in
+  if flag opts "--masks" then write_views dir tile
+  else begin
+    let device = Option.value ~default:"cpu" (opt opts "--device") in
+    let m, projector, v = barlow_inputs dir tile in
+    let host = Nx.Ptree.instantiate (module Barlow.Params) in
+    let file f = Filename.concat dir f in
+    let oracle prec =
+      let g = Model.load (file ("grads_" ^ prec ^ ".pt")) in
+      let pr = load_projector (file ("projector_grads_" ^ prec ^ ".npz")) in
+      let loss =
+        Nx.item []
+          (Nx.unpack Nx.float64
+             (Nx_io.load_npy (file ("loss_" ^ prec ^ ".npy"))))
+      in
+      (loss, leaves host { Barlow.net = g.net; projector = pr })
+    in
+    let l64, g64 = oracle "f64" in
+    let l32, g32 = oracle "f32" in
+    on device
+      {
+        run =
+          (fun (type d) (t : d target) ->
+            let p = Nx.Ptree.instantiate (module Barlow.Params) in
+            let params =
+              Nx.Ptree.place
+                (module Barlow.Params)
+                t.at
+                { Barlow.net = m.net; projector }
+            in
+            let mt = Nx.Ptree.place (module Model) t.at m in
+            let f (params, v) =
+              Rune.value_and_grad p
+                (fun q ->
+                  Barlow.loss Barlow.v1_weights ~dropout:barlow_dropout
+                    ~remat:false mt q v)
+                params
+            in
+            let args = (params, Nx.Ptree.place (module Barlow.Group) t.at v) in
+            let loss, grads =
+              if not t.jit then f args
+              else
+                Rune.jit
+                  Nx.Ptree.(
+                    pair p (instantiate (module Barlow.Group))
+                    @-> returns (pair tensor p))
+                  f args
+            in
+            let loss = Nx.item [] (Nx.place Nx.Host.on loss) in
+            let lrel = Float.abs (loss -. l64) /. Float.abs l64 in
+            let lbound =
+              Float.max (2. *. Float.abs (l32 -. l64) /. Float.abs l64) f32_ulp
+            in
+            report
+              ~name:(Printf.sprintf "barlow/%s/loss" device)
+              ~pass:(lrel <= lbound)
+              (Printf.sprintf
+                 "raven %.10g  torch f64 %.10g  rel %.3g  bound %.3g" loss l64
+                 lrel lbound);
+            let worst = ref 0. in
+            let norm a =
+              Float.sqrt (Array.fold_left (fun s x -> s +. (x *. x)) 0. a)
+            in
+            let dist a b = norm (Array.map2 ( -. ) a b) in
+            let scale =
+              Float.sqrt
+                (List.fold_left (fun s (_, a) -> s +. (norm a ** 2.)) 0. g64)
+            in
+            List.iter2
+              (fun (path, g) ((path', r64), (_, r32)) ->
+                if path <> path' then die "%s against %s" path path';
+                (* A leaf whose exact gradient is 0, by the softmax's or the
+                   batch normalisation's invariance to a shift, holds rounding
+                   alone, and the ratio of two roundings says nothing: it is
+                   judged by its distance against float32's spacing at the
+                   gradient's norm. *)
+                if norm r64 <= zero_leaf *. scale then begin
+                  let d = dist g r64 /. scale in
+                  let ratio = d /. f32_ulp in
+                  worst := Float.max !worst ratio;
+                  report
+                    ~name:(Printf.sprintf "barlow/%s/%s" device path)
+                    ~pass:(ratio <= 1.)
+                    (Printf.sprintf
+                       "exact 0: distance %.3g of the gradient's norm, torch \
+                        f32 %.3g, bound %.3g"
+                       d
+                       (dist r32 r64 /. scale)
+                       f32_ulp)
+                end
+                else begin
+                  let mine = rel g r64 and theirs = rel r32 r64 in
+                  let ratio = mine /. (2. *. theirs) in
+                  worst := Float.max !worst ratio;
+                  report
+                    ~name:(Printf.sprintf "barlow/%s/%s" device path)
+                    ~pass:(ratio <= 1.)
+                    (Printf.sprintf "rel %.3g  torch f32 rel %.3g  ratio %.2f"
+                       mine theirs ratio)
+                end)
+              (leaves p grads) (List.combine g64 g32);
+            Printf.printf "worst ratio to twice torch's f32 spread: %.3f\n"
+              !worst);
+      }
+  end
+
+(* probe *)
+
+(* Each feature's label, its [property] as text, from GeoJSON properties. *)
+let labels_of ~property file props =
+  Array.mapi
+    (fun i (p : Jsont.json) ->
+      let value =
+        match p with
+        | Object (ms, _) -> Option.map snd (Jsont.Json.find_mem property ms)
+        | _ -> None
+      in
+      match value with
+      | Some (String (s, _)) -> s
+      | Some (Number (x, _)) -> Printf.sprintf "%g" x
+      | _ -> die "%s: feature %d has no %S" file i property)
+    props
+
+(* The owner of each cell of [grid]: the feature whose region holds the cell's
+   centre, or -1. Fields that tile the plane edge to edge hold each centre once,
+   so the owner does not depend on the features' order. v1.0 rasterises its
+   probe's fields with rasterio's default, this rule (tessera-util@290feaf
+   src/utils/convert_shp_to_tiff.py:42-49); tessera-eval@9274405
+   tessera_eval/rasterize.py:37-44 passes all_touched. *)
+let owners grid polys =
+  let feature, cell = Jord.Rasterize.centres grid polys in
+  let none = Nx.full Nx.int64 [| grid.Jord.Grid.rows * grid.cols |] (-1L) in
+  Nx.to_array (Nx.scatter ~axis:0 cell feature none)
+
+(* v1.0's split of a class's fields: the smallest by area first, each taken
+   while the fields taken hold less than [share] of the class's area
+   (utils/metrics.py@290feaf:553-561). The first is always taken. [fields] are
+   (field, area) pairs; ties go by field index. *)
+let training_fields ~share fields =
+  let total = List.fold_left (fun a (_, n) -> a + n) 0 fields in
+  let target = share *. Float.of_int total in
+  let sorted = List.sort (fun (f, n) (g, m) -> compare (n, f) (m, g)) fields in
+  let rec take acc = function
+    | (f, n) :: rest when Float.of_int acc < target -> f :: take (acc + n) rest
+    | _ -> []
+  in
+  take 0 sorted
+
+let probe opts =
+  let tile = req opts "--tile" and labels = req opts "--labels" in
+  let property = Option.value ~default:"class" (opt opts "--property") in
+  let device = Option.value ~default:"cpu" (opt opts "--device") in
+  let c = float_opt opts "--c" 0.1 in
+  let share = float_opt opts "--share" 0.3 in
+  let m =
+    match (opt opts "--model", opt opts "--arch") with
+    | Some file, _ -> Model.load file
+    | None, Some a ->
+        Model.init ~key:(Nx.Rng.fold_in (Nx.Rng.key 0) init_site) (arch_named a)
+    | None, None -> die "--model or --arch is required\n%s" usage
+  in
+  let m =
+    match opt opts "--state" with
+    | None -> m
+    | Some st -> Checkpoint.part st (module Model) ~path:"model" ~like:m
+  in
+  let px, (h, w) = Pixels.of_tile tile in
+  let grid = landmask ~tile:(h, w) (req opts "--landmask") in
+  let polys, props =
+    match
+      Result.bind
+        (Jsont_bytesrw.decode_string Jsont.json
+           (In_channel.with_open_bin labels In_channel.input_all))
+        Jord.Geojson.polygons
+    with
+    | Ok x -> x
+    | Error e -> die "%s: %s" labels e
+  in
+  let names = labels_of ~property labels props in
+  let owner = owners grid (Jord.Polygons.to_crs grid.crs polys) in
+  let shape =
+    Batch.typical
+      ~pixels:(int_opt opts "--pixels" 4096)
+      ~slots:(int_opt opts "--slots" 32)
+  in
+  let e =
+    let r = ref None in
+    on device
+      {
+        run =
+          (fun t ->
+            r := Some (Embedding.encode ~shape t.at (forward t (place t m)) px));
+      };
+    Option.get !r
+  in
+  let e =
+    match opt opts "--dims" with
+    | None -> e
+    | Some k -> Nx.slice [ Nx.A; Nx.R (0, int_of_string k) ] e
+  in
+  (* A pixel with no observation embeds as NaN, and is left out. *)
+  let finite = Nx.to_array (Nx.all ~axes:[ 1 ] (Nx.logical_not (Nx.isnan e))) in
+  let labelled =
+    List.filter (fun i -> owner.(i) >= 0L) (List.init (h * w) Fun.id)
+  in
+  let cells, empty = List.partition (fun i -> finite.(i)) labelled in
+  let field i = Int64.to_int owner.(i) in
+  let classes =
+    List.sort_uniq compare (List.map (fun i -> names.(field i)) cells)
+  in
+  let id n =
+    let rec go k = function
+      | x :: _ when x = n -> k
+      | _ :: r -> go (k + 1) r
+      | [] -> assert false
+    in
+    go 0 classes
+  in
+  let area = Array.make (Array.length names) 0 in
+  List.iter (fun i -> area.(field i) <- area.(field i) + 1) cells;
+  let training = Array.make (Array.length names) false in
+  List.iter
+    (fun cl ->
+      let fields =
+        List.filter
+          (fun (f, n) -> n > 0 && names.(f) = cl)
+          (List.mapi (fun f n -> (f, n)) (Array.to_list area))
+      in
+      let taken = training_fields ~share fields in
+      List.iter (fun f -> training.(f) <- true) taken;
+      let pixels l = List.fold_left (fun a f -> a + area.(f)) 0 l in
+      Printf.printf
+        "probe: class %s: %d fields, %d pixels, %d training fields of %d pixels\n"
+        cl (List.length fields)
+        (pixels (List.map fst fields))
+        (List.length taken) (pixels taken))
+    classes;
+  let train, test = List.partition (fun i -> training.(field i)) cells in
+  let rows l =
+    Nx.create Nx.int64
+      [| List.length l |]
+      (Array.of_list (List.map Int64.of_int l))
+  in
+  let y l = rows (List.map (fun i -> id names.(field i)) l) in
+  let x l = Nx.take ~axis:0 (rows l) e in
+  Printf.printf
+    "probe: %d classes, %d training pixels, %d test pixels, %d labelled pixels \
+     without an observation left out, c %g\n"
+    (List.length classes) (List.length train) (List.length test)
+    (List.length empty) c;
+  let probe = Eval.fit ~c (x train) (y train) in
+  let s = Eval.score ~predicted:(Eval.predict probe (x test)) (y test) in
+  Printf.printf "probe: accuracy %.6f weighted F1 %.6f\n" s.accuracy s.f1;
+  Printf.printf "rankme: %.9f over the labelled pixels\n"
+    (Eval.rankme (x cells));
+  match opt opts "--out" with
+  | None -> ()
+  | Some out ->
+      let save n a = Nx_io.save_npy (out ^ "_" ^ n ^ ".npy") a in
+      save "x_train" (x train);
+      save "y_train" (y train);
+      save "x_test" (x test);
+      save "y_test" (y test);
+      save "w" probe.w;
+      save "b" probe.b
+
 (* Main *)
 
 (* The teacher's reference has one float32 fixture and two bfloat16 ones of
@@ -1214,6 +1848,10 @@ let summary () =
 let validate opts =
   if opt opts "--training" <> None then begin
     validate_training opts;
+    summary ()
+  end;
+  if opt opts "--barlow" <> None then begin
+    validate_barlow opts;
     summary ()
   end;
   let weights = req opts "--weights" and fixtures = req opts "--fixtures" in
@@ -1283,13 +1921,14 @@ let () =
                "--pixels";
                "--slots";
                "--training";
+               "--barlow";
                "--tile";
              ]
            args)
   | "corpus" :: args ->
       corpus
         (parse ~flags:[]
-           ~options:[ "--tiles"; "--out"; "--seed"; "--bytes" ]
+           ~options:[ "--tiles"; "--out"; "--seed"; "--bytes"; "--min" ]
            args)
   | "targets" :: args ->
       targets
@@ -1332,6 +1971,57 @@ let () =
                "--memory";
                "--heldout";
                "--until";
+             ]
+           args)
+  | "pretrain" :: args ->
+      pretrain
+        (parse
+           ~flags:[ "--bf16"; "--resume"; "--remat" ]
+           ~options:
+             [
+               "--corpus";
+               "--out";
+               "--init";
+               "--projector-weights";
+               "--arch";
+               "--projector";
+               "--device";
+               "--seed";
+               "--steps";
+               "--groups";
+               "--pixels";
+               "--length";
+               "--every";
+               "--lr";
+               "--warmup";
+               "--decay";
+               "--clip";
+               "--dropout";
+               "--reducer-dropout";
+               "--memory";
+               "--until";
+               "--rankme";
+             ]
+           args)
+  | "probe" :: args ->
+      probe
+        (parse ~flags:[]
+           ~options:
+             [
+               "--model";
+               "--arch";
+               "--tile";
+               "--landmask";
+               "--labels";
+               "--state";
+               "--property";
+               "--device";
+               "--c";
+               "--share";
+               "--dims";
+               "--pixels";
+               "--slots";
+               "--out";
              ]
            args)
   | ("-h" | "--help" | "help") :: _ -> print_endline usage

@@ -23,8 +23,10 @@ no CHANGES entry).
   `Model` (the released v2 students and teacher, and their training forward
   with dropout), `Embedding` (encoding, GeoTessera's files: npy, and GeoTIFF
   on a jord grid), `Distil` (Matryoshka distillation and its compiled
-  step), `Checkpoint` (a run's state on disk). `test/` holds its laws on
-  synthetic pixels and small models.
+  step), `Barlow` (v1.0's Barlow Twins with mixup, its projector and
+  compiled step), `Eval` (a linear probe and RankMe), `Checkpoint` (a run's
+  state on disk). `test/` holds its laws on synthetic pixels and small
+  models.
 - `bin/main.exe encode` embeds a tile, as a GeoTIFF on its landmask's grid
   with `--landmask`; `bin/main.exe validate --weights DIR --fixtures DIR`
   compares the four released students (the teacher with `--models
@@ -33,8 +35,12 @@ no CHANGES entry).
 - `bin/main.exe corpus` shuffles tiles' pixels into a corpus, `targets`
   writes a model's embeddings of a corpus (the teacher's, for
   distillation), and `distil` trains a student on them, checkpointed and
-  resumable. `validate --training DIR` compares a step's loss and gradients
-  with `_plans/tessera-port/gen/grads.py`'s, dropout masks fed to it.
+  resumable. `pretrain` trains a model by Barlow Twins with mixup on a
+  corpus of pixels with observations of each sensor (`corpus --min`).
+  `validate --training DIR` and `validate --barlow DIR` compare a step's
+  loss and gradients with `_plans/tessera-port/gen/grads.py`'s, dropout
+  masks fed to it. `probe` scores a model's embeddings of a tile by a linear
+  probe on a GeoJSON's labels rasterised on the tile's landmask grid.
 - `bench/` times raven's operations at TESSERA's shapes, beside PyTorch's
   timings of the same cases. It measures real shapes, not regression rows,
   so it runs far longer than a package suite (about an hour on a CPU).
