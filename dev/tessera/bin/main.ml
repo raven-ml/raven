@@ -20,7 +20,7 @@ let usage =
   {|usage: main.exe encode --model FILE --tile DIR --out NAME [OPTION...]
        main.exe validate --weights DIR --fixtures DIR [OPTION...]
        main.exe validate --training DIR --tile DIR [--masks | --signs]
-                [--device D] [--bf16]
+                [--device D] [--bf16] [--out DIR]
        main.exe corpus --tiles DIR[,DIR...] --out DIR [--seed N] [--bytes B]
        main.exe targets --teacher FILE --corpus DIR --out FILE [OPTION...]
        main.exe distil --corpus DIR --targets FILE --out DIR
@@ -29,7 +29,7 @@ let usage =
                        (--init FILE [--projector-weights FILE] | --arch A)
                        [OPTION...]
        main.exe validate --barlow DIR --tile DIR [--masks | --signs]
-                [--device D]
+                [--device D] [--out DIR]
        main.exe probe (--model FILE | --arch A) --tile DIR --landmask FILE
                        --labels FILE [OPTION...]
 
@@ -55,7 +55,10 @@ with gen/grads.py's on a small student, dropout masks fed to it; --masks
 writes raven's tokens and masks for it first. --signs writes the signs of
 the inputs of the device's ReLUs to DIR/DEVICE-PREC (cuda-f32),
 which the oracle multiplies its own by; the run then compares its gradients
-on that branch, and judges each sign that differs from float64's apart.
+on that branch, and judges each sign that differs from float64's apart,
+listing them in OUT/flips-FIXTURE-BRANCH.tsv for --out OUT (default the
+working directory, made if absent). A comparison only reads the fixture's
+directory.
 
 corpus writes the pixels of the tiles with an observation, or with --min N
 of each sensor (v1.0 pretrains on pixels of 10), shuffled by --seed, in runs
@@ -1477,13 +1480,26 @@ let check_branch dir ps =
         die "%s: the run's signs differ from the ones the oracle was fed" file)
     ps
 
+(* Where a comparison of fixture [dir] on [branch] lists its flips: in
+   [--out], made here if absent so that a bad path fails before the run, the
+   working directory by default; named for the fixture and the branch, so runs
+   of others keep theirs. Never the fixture's directory, which a comparison
+   only reads. *)
+let flips_file opts dir branch =
+  let out = Option.value ~default:"." (opt opts "--out") in
+  (try if not (Sys.file_exists out) then Sys.mkdir out 0o755
+   with Sys_error e -> die "--out: %s" e);
+  Filename.concat out
+    (Printf.sprintf "flips-%s-%s.tsv" (Filename.basename dir)
+       (Filename.basename branch))
+
 (* Each flip of [ps], a value where raven's sign is not float64's on raven's
    branch, by the oracle's [preact_f64_*] in [dir]. A flip passes where the
    float64 pre-activation's magnitude is at most the largest distance of the
    reference's own pre-activation at the run's precision ([preact_<prec>_*])
    from float64 over the layer's tokens: a sign the reference's rounding could
-   have given. The flips go to [dir/flips.tsv]. *)
-let check_flips ~label ~prec dir ps =
+   have given. The flips go to [out]. *)
+let check_flips ~label ~prec ~out dir ps =
   let load p pr =
     let file =
       Filename.concat dir (Printf.sprintf "preact_%s_%s.npy" pr p.name)
@@ -1534,7 +1550,7 @@ let check_flips ~label ~prec dir ps =
             %.3f"
            !flips !n prec sigma !bound !worst))
     ps;
-  Out_channel.with_open_text (Filename.concat dir "flips.tsv") (fun oc ->
+  Out_channel.with_open_text out (fun oc ->
       output_string oc
         "layer\tpixel\ttoken\tunit\tf64\traven\ttorch\tsigma\tbound\t|f64|/bound\n";
       List.iter (fun l -> output_string oc (l ^ "\n")) (List.rev !rows))
@@ -1661,6 +1677,7 @@ let validate_training opts =
     let device = Option.value ~default:"cpu" (opt opts "--device") in
     let prec = if flag opts "--bf16" then "bf16" else "f32" in
     let branch = branch_dir dir ~device ~prec in
+    let flips = flips_file opts dir branch in
     let m, heads, targets, px, counts = training_inputs dir tile in
     let n = Pixels.length px in
     let shape =
@@ -1756,7 +1773,7 @@ let validate_training opts =
                 ~files:[ embedding ];
               check_leaves ~label ~prec (leaves p grads) ~r64:(ref_grads "f64")
                 ~rref:(ref_grads prec) ~terms:(ref_grads "zero");
-              check_flips ~label ~prec branch ps
+              check_flips ~label ~prec ~out:flips branch ps
             end);
       }
   end
@@ -1829,6 +1846,7 @@ let validate_barlow opts =
   else begin
     let device = Option.value ~default:"cpu" (opt opts "--device") in
     let branch = branch_dir dir ~device ~prec:"f32" in
+    let flips = flips_file opts dir branch in
     let m, projector, v = barlow_inputs dir tile in
     let host = Nx.Ptree.instantiate (module Barlow.Params) in
     let file f = Filename.concat branch f in
@@ -1910,7 +1928,7 @@ let validate_barlow opts =
               check_leaves ~label ~prec:"f32" (leaves p grads)
                 ~r64:(ref_grads "f64") ~rref:(ref_grads "f32")
                 ~terms:(ref_grads "zero");
-              check_flips ~label ~prec:"f32" branch ps
+              check_flips ~label ~prec:"f32" ~out:flips branch ps
             end);
       }
   end
@@ -2212,6 +2230,7 @@ let () =
                "--training";
                "--barlow";
                "--tile";
+               "--out";
              ]
            args)
   | "corpus" :: args ->
