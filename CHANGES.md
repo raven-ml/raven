@@ -1281,6 +1281,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- An operand counts as decoded only where it converts integers loaded from
+  integer storage: ReLU of a bfloat16, a float's bits through an integer, no
+  longer sends a product to the stream a decoded matrix takes on a GPU.
 - `Tolk_engine.link` launches a software device's kernels (`Rig.software`)
   on that device, where it launched them on the host, so `Tolk_engine.time`
   times them there.

@@ -698,11 +698,26 @@ let tile (ren : Renderer.t) ast (w : wmma) ~core_threads ~workgroups
 
 (* Decoded panels on the host *)
 
+(* Codes are integers that a load of integer storage gives, through integer
+   arithmetic alone. A float's bits read as an integer, as a selection by sign
+   computes ReLU of a bfloat16, are no codes. *)
 let decoded o =
+  let coded = Tbl.create 16 in
+  let rec codes u =
+    match Tbl.find_opt coded u with
+    | Some b -> b
+    | None ->
+        let b =
+          Dtype.is_int (dtype u)
+          && (op u = Op.Index || List.exists codes (src u))
+        in
+        Tbl.add coded u b;
+        b
+  in
   let converts u =
     (op u = Op.Cast || op u = Op.Bitcast)
     && Dtype.is_float (dtype u)
-    && Dtype.is_int (dtype (nth u 0))
+    && codes (nth u 0)
   in
   List.exists converts
     (toposort ~calls:Skip ~gate:(fun u -> op u <> Op.Index) o)

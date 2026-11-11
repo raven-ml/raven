@@ -916,6 +916,40 @@ let decoded_kernel ?(codes = Dtype.Uint8) ?opts_to_apply p =
     ~kernel:(Ops.kernel_info ?opts_to_apply ())
     [ Ops.end_ store [ i; j ] ]
 
+(* Operands over [r], each with whether it is decoded: codes are integers
+   loaded from integer storage, through integer arithmetic. *)
+let decoded_operands =
+  let r = Ops.range ~axis_type:Weak (Ops.Int 64) [ 0 ] in
+  let param slot dt = Shape.param ~shape:[ Ops.Int 64 ] slot dt in
+  let read slot dt = Ops.index (param slot dt) [ r ] in
+  let f32 u = Ops.cast u Float32 and u32 n = Ops.int ~dtype:Uint32 n in
+  let h = f32 (read 0 Bfloat16) in
+  (* ReLU as nx computes it on a bfloat16: its bits through an integer, the
+     sign selected. *)
+  let sign = Ops.where (Ops.lt (Ops.float 0.) h) (u32 0xffffffff) (u32 0) in
+  let relu =
+    Ops.bitcast (Ops.bitwise_and (Ops.bitcast h Uint32) sign) Float32
+  in
+  let codes = read 1 Uint8 in
+  let scale = Ops.bitcast (Ops.shl (Ops.cast codes Uint32) (u32 23)) Float32 in
+  [
+    ("a byte code", f32 codes, true);
+    ("an int8 code by a scale", Ops.mul (f32 (read 2 Int8)) (read 3 Float32),
+      true);
+    ("an E8M0 scale's bits", scale, true);
+    ("a widened bfloat16", h, false);
+    ("ReLU of a bfloat16", relu, false);
+    ("a range's position", f32 r, false);
+    ("a gather at loaded positions",
+      Ops.index (param 4 Float32) [ read 5 Int32 ], false);
+  ]
+
+let decoded_kinds =
+  cases "a decoded operand converts integer codes it loads"
+    ~id:(fun (name, _, _) -> name)
+    decoded_operands
+    (fun (_, o, decoded) -> equal bool decoded (Stage.decoded o))
+
 let host_target = Tolk_engine.target Rig.host
 let host = lazy (Cstyle.clang host_target)
 
@@ -1255,6 +1289,7 @@ let () =
          sources;
          group "decoded panels"
            [
+             decoded_kinds;
              decoded_law;
              decoded_cases;
              decoded_stage_off;

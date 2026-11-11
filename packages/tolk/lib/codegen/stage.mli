@@ -126,8 +126,10 @@ val layout : itemsize:int -> cols:int -> Ops.t -> Ops.t -> Ops.t
     v} *)
 
 val decoded : Ops.t -> bool
-(** [decoded o] is [true] iff [o] converts integers it reads into floats, by a
-    cast or a bitcast, outside any access's address. *)
+(** [decoded o] is [true] iff [o] converts integer codes into floats, by a cast
+    or a bitcast, outside any access's address: integers that a load of
+    integer storage gives, through integer arithmetic alone. A float's bits
+    read as an integer, as a bfloat16's sign is selected, are no codes. *)
 
 val decodes : Renderer.t -> Ops.t -> Ops.t
 (** [decodes ren sink] is the kernel [sink], whose optimisations are applied,

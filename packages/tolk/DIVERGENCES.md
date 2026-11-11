@@ -2800,9 +2800,12 @@ host's accumulators in its vector registers.
   where it reads it only as `r / d`, is upcast, later axes first, by the
   largest amount up to 16 that divides the axis and one such operand's `f`
   and keeps the kernel within the host's budget (D186's registers and D241's
-  conversions and iteration). An operand is decoded when its value converts integers it
-  reads into floats, by a cast or a bitcast, outside any access's address.
-  The axis's lanes then share one decode of each value. A host renderer
+  conversions and iteration). An operand is decoded when its value converts
+  integer codes into floats, by a cast or a bitcast, outside any access's
+  address: integers that a load of integer storage gives, through integer
+  arithmetic alone. A float's bits read as an integer, as ReLU of a bfloat16
+  selects its sign, are no codes, and such an operand takes no decoded rule
+  here, in D230's stream or in D348's panel. The axis's lanes then share one decode of each value. A host renderer
   that does not know its registers takes at most 4. On a GPU a streamed contraction takes the
   same reuse as a term of the operand's reuse (D89), whatever the operand's
   type; one that does not stream takes no run.
@@ -2831,8 +2834,10 @@ host's accumulators in its vector registers.
   `routed_*_cpu` and `routed_*_avx2`; `the host's decodes`: the
   decodes of products of 1 to 512 rows on four register files and on a host
   without registers, blocks of 16 to 128 rows on four files, and a larger
-  file decoding no more times; `the hand-coded optimisations keep a
-  kernel's writes › large kernels › routed_blocks_*` (slow); on fudge,
+  file decoding no more times; `streaming › a product of ReLU of bfloat16
+  values is not streamed`; the Stage suite's `decoded panels › a decoded
+  operand converts integer codes it loads`; `the hand-coded optimisations
+  keep a kernel's writes › large kernels › routed_blocks_*` (slow); on fudge,
   kaun's `Quant/host/mxfp4-product-of-1024-*` and
   `Quant/host/routed-product-64-tokens`, and rune's
   `Jit/experts-mxfp4-512x4of32-256`.
