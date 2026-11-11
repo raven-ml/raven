@@ -17,14 +17,14 @@
    |  b             e bbbbb              aaaaaaaaaa                                                   bbbbbbbbbbbbbbbbbbbbb
 10 |  ■ dusty-mole  × ⢢⡀     0.7665  │
    |                a
-11 |  · eager-hawk  ✗ ⠄       1.670  │  train/loss      ⠉⠒⠤⢄⣀⡀                                           0.2642        +11%
-   |  b             a b                                                                                  aaaaaa
+11 |  · eager-hawk  ✗ ⠑⠢⠤⢄⣀   1.670  │  train/loss      ⠉⠒⠤⢄⣀⡀                                           0.2642        +11%
+   |  b             a bbbbb                                                                              aaaaaa
 12 | ▾ mnist-mlp  2         val/loss │  ↓ min                ⠈⠉⠓⠒⠒⠦⠤⠤⠤⠤⢤⣤⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀a
    | bbaaaaaaaaabbb         bbbbbbbb    bbbbb                                                       a
 13 |  · mlp-wide    ✓ ⠈⢆⣀⣀⣀ 0.05831 ★│
    |  b             e bbbbb aaaaaaa
-14 |  · mlp-base    ✗ ⠈⢆⣀⡀  0.06576  │ ▌val/loss        ⠑⠢⢄⣀                                             0.4077       +3.5%
-   |  b             a bbbb             cddddddddcccccccccccccccccccccccccccccccccccccccccccccccccccccccccddddddcccccccccccc
+14 |  · mlp-base    ✗ ⠈⠢⣀⣀⣀ 0.06576  │ ▌val/loss        ⠑⠢⢄⣀                                             0.4077       +3.5%
+   |  b             a bbbbb            cddddddddcccccccccccccccccccccccccccccccccccccccccccccccccccccccccddddddcccccccccccc
 15 |                                 │  ↓ min               ⠉⠉⠒⠒⠢⠤⠤⠤⠤⠤⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀a
    |                                   cfffffcccccccccccccccccccccccccccccccccccccccccccccccccccccccdcccccccccccccccccccccc
 16 |                                 │

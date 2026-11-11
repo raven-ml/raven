@@ -126,10 +126,14 @@ the tabs name the run's metrics, `left` and `right` move between them,
 and the large chart draws the one chosen; small charts of the other goal
 metrics follow when the terminal has the room.
 
-A chart's x axis runs to the run's declared `steps`, so the blank right
-part of the chart is the work left; the dotted rule `now` marks the
-latest step of a live run. A line is one value per braille dot column,
-the mean of the samples in it, and a raw sample far from the line stays
+A chart's x axis runs to the largest step of the runs drawn. While a
+run may still log (it is starting, running, live, stalled or writing),
+its end is rounded up to 1, 2 or 5 times a power of ten, and to no more
+than its declared `steps`, so the axis changes at most three times a
+decade as the run grows, and not at a pause; the dotted rule `now` marks
+the latest step of a live run, and the run pane says how many steps are
+left. A line is one value per
+braille dot column, the mean of the samples in it, and a raw sample far from the line stays
 on screen as a faint dot, so a spike is never averaged away. A metric
 under `train/` is smoothed by default; `s` turns smoothing off and on. `y` switches the metric between a linear and a log scale. Each
 y label is a round value that its digits give exactly, so a label never

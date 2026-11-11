@@ -18,14 +18,14 @@
    |  s ttttttttt   u vvvvv  tttttt  f g   llllllll   ggggggggg   g         f jjjjjjgggggggggggggggg
 10 |  · dusty-mole  × ⢢⡀     0.7665  │     ▔▔▔▔▔▔▔▔                         │ 59m 11s left · ends 13:17
    |  s xxxxxxxxxx  y vv     tttttt  f     zzzzzzzz                         f jjjjjjjgggggggggggggggggg
-11 |  · eager-hawk  ✗ ⠄       1.670  │                                      │ 2.1 steps/s · 1h 37m in
-   |  s xxxxxxxxxx  y v       ttttt  f                                      f jjjgggggggggggggggggggg
+11 |  · eager-hawk  ✗ ⠑⠢⠤⢄⣀   1.670  │                                      │ 2.1 steps/s · 1h 37m in
+   |  s xxxxxxxxxx  y vvvvv   ttttt  f                                      f jjjgggggggggggggggggggg
 12 | ▾ mnist-mlp  2         val/loss │ ━ tidy-otter 0.4077   r others       │
    | ggjjjjjjjjjggg         gggggggg f iilllllllllllllllll   hhgggggg       f
 13 |  · mlp-wide    ✓ ⠈⢆⣀⣀⣀ 0.05831 ★│                                      │ params ──────────────────
    |  s tttttttt    u vvvvv lllllll wf                                      f hhhhhh ffffffffffffffffff
-14 |  · mlp-base    ✗ ⠈⢆⣀⡀  0.06576  │      2┤⢣                ┊now         │ lr     0.0003000   varies
-   |  s xxxxxxxx    y vvvv  ttttttt  f ggggggsz                sggg         f gg     lllllllll   gggggg
+14 |  · mlp-base    ✗ ⠈⠢⣀⣀⣀ 0.06576  │      2┤⢣                ┊now         │ lr     0.0003000   varies
+   |  s xxxxxxxx    y vvvvv ttttttt  f ggggggsz                sggg         f gg     lllllllll   gggggg
 15 |                                 │       │⠈⢆               ┊            │ warmup 500         varies
    |                                 f       szz               s            f gggggg lll         gggggg
 16 |                                 │       │ ⠈⠢⡀             ┊            │ batch  256

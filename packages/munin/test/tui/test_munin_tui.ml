@@ -1338,36 +1338,59 @@ let exact_labels =
         (List.sort_uniq (fun a b -> Float.compare b a) values)
         values)
 
-(* Law 1's x domain: from 0 to the greatest end of the runs drawn, a run's
-   [steps], or, without them or past them, its largest step rounded up to 1,
-   2 or 5 times a power of ten. [facts ?steps last] is what a poll knows of a
-   run that logged its samples up to the step [last]. *)
-let facts ?steps last =
+(* Law 1's x domain: from 0 to the greatest end of the runs drawn. A run
+   that may still log ends at its latest step rounded up to 1, 2 or 5 times
+   a power of ten, capped at its [steps]; any other at its largest step.
+   These runs have no writer a reader can probe: one is writing when a
+   sample arrived, silent when none did, or ended. [facts ?steps life last]
+   is what a poll knows of a run that logged samples at step 0 and [last]. *)
+type life = Writing | Ended | Silent
+
+let life_name = function Writing -> "writing" | Ended -> "ended" | Silent -> "silent"
+
+let facts ?steps life last =
   let store = Lazy.force laws in
-  let id, _ =
-    write_log store ?steps (List.map (fun st -> sample_record (st, 1.)) (List.init (last + 1) Fun.id))
+  let samples =
+    List.map (fun st -> sample_record (st, 1.)) (List.sort_uniq compare [ 0; last ])
   in
+  let ended =
+    match life with Ended -> [ Fixture.end_record ~time:4. `Finished ] | Writing | Silent -> []
+  in
+  let id, _ = write_log store ?steps (samples @ ended) in
   let r = Option.get (Store.run store id) in
-  Munin_tui.Facts.of_run ~now:0. ~history:(Some (History.read r)) ~hint:None ~watch:None
+  (* An arrival at the poll's time: the run reads [writing]. *)
+  let watch =
+    match life with
+    | Writing -> Some (Watch.observe (Watch.start ~samples:0) ~now:0. ~samples:2)
+    | Ended | Silent -> None
+  in
+  Munin_tui.Facts.of_run ~now:0. ~history:(Some (History.read r)) ~hint:None ~watch
     ~pauses:[] r
 
 let x_domain =
   cases
     ~id:(fun (name, _, _) -> name)
-    "the x domain is the runs' steps, else their largest step rounded up"
+    "the x domain ends at a run's last step, a growing run's rounded up"
     [
-      ("declared, not reached", [ (Some 100, 50) ], 100.);
-      ("declared, reached", [ (Some 100, 100) ], 100.);
-      ("past the declared", [ (Some 100, 150) ], 200.);
-      ("a power of ten", [ (None, 10_000) ], 10_000.);
-      ("just past one", [ (None, 10_001) ], 20_000.);
-      ("to a five", [ (None, 2_001) ], 5_000.);
-      ("to a two", [ (None, 1_500) ], 2_000.);
-      ("one step", [ (None, 1) ], 1.);
-      ("the greatest of two", [ (Some 300, 10); (None, 400) ], 500.);
+      ("ended short of its steps", [ (Ended, Some 3000, 2812) ], 2812.);
+      ("ended without steps", [ (Ended, None, 2812) ], 2812.);
+      ("ended past its steps", [ (Ended, Some 100, 150) ], 150.);
+      ("ended at step 0", [ (Ended, None, 0) ], 1.);
+      ("silent short of its steps", [ (Silent, Some 3000, 80) ], 80.);
+      ("writing short of its steps", [ (Writing, Some 3000, 80) ], 100.);
+      ("writing, capped at its steps", [ (Writing, Some 3000, 2900) ], 3000.);
+      ("writing at its steps", [ (Writing, Some 100, 100) ], 100.);
+      ("writing past its steps", [ (Writing, Some 100, 150) ], 200.);
+      ("writing, a power of ten", [ (Writing, None, 10_000) ], 10_000.);
+      ("writing, just past one", [ (Writing, None, 10_001) ], 20_000.);
+      ("writing, to a five", [ (Writing, None, 2_001) ], 5_000.);
+      ("writing, to a two", [ (Writing, None, 1_500) ], 2_000.);
+      ("writing, one step", [ (Writing, None, 1) ], 1.);
+      ("writing at step 0", [ (Writing, Some 3000, 0) ], 1.);
+      ("the greatest of two", [ (Writing, Some 300, 10); (Ended, None, 400) ], 400.);
     ]
     (fun (_, runs, expected) ->
-      let fs = List.map (fun (steps, last) -> facts ?steps last) runs in
+      let fs = List.map (fun (life, steps, last) -> facts ?steps life last) runs in
       equal (pair float_exact float_exact) (0., expected) (Plot.domain fs))
 
 (* Zoom's step cursor: its rule shows on every row of the plot that no
@@ -1450,6 +1473,63 @@ let zoom_cursor =
       let blank x = x < 0 || x >= c.width || String.trim (Matrix.Grid.get_text g (at x row)) = "" in
       equal ~msg:"the cells beside the chip are blank" (list bool) [ true; true ]
         [ blank (first - 1); blank (last + 1) ])
+
+(* [x_end life ~steps last] is the end law 1 gives one run. *)
+let x_end life ~steps last =
+  let l = Float.of_int last in
+  match (life, steps) with
+  | (Ended | Silent), _ -> Float.max 1. l
+  | Writing, Some n when last <= n -> Float.min (Float.of_int n) (Munin_tui.Facts.bound l)
+  | Writing, _ -> Munin_tui.Facts.bound l
+
+let gen_life =
+  Gen.of_list ~pp:(fun ppf l -> Format.pp_print_string ppf (life_name l)) [ Writing; Ended; Silent ]
+
+(* A run's steps and last step: short of them, at them, or past them. *)
+let gen_steps =
+  let open Gen in
+  let* steps = option (int_range 1 5000) in
+  let+ last =
+    match steps with
+    | None -> int_range 0 5000
+    | Some n -> frequency [ (3, int_range 0 n); (1, constant n); (1, int_range n (2 * n)) ]
+  in
+  (steps, last)
+
+let pp_run ppf (life, steps, last) =
+  Format.fprintf ppf "%s %d of %s" (life_name life) last
+    (match steps with Some n -> string_of_int n | None -> "-")
+
+let gen_runs =
+  Gen.(
+    with_pp (Format.pp_print_list ~pp_sep:Format.pp_print_space pp_run)
+      (list ~size:(int_range 1 3)
+         (let* life = gen_life in
+          let+ steps, last = gen_steps in
+          (life, steps, last))))
+
+let x_domain_law =
+  prop "the x domain is the furthest end of the runs" gen_runs (fun runs ->
+      let short (_, steps, last) = match steps with Some n -> last < n | None -> false in
+      let past (_, steps, last) = match steps with Some n -> last > n | None -> false in
+      let rounds_past (_, steps, last) =
+        match steps with
+        | Some n -> last <= n && Munin_tui.Facts.bound (Float.of_int last) > Float.of_int n
+        | None -> false
+      in
+      let is life (l, _, _) = l = life in
+      let some p = List.exists p runs in
+      cover "a writing run short of its steps" (some (fun r -> is Writing r && short r));
+      cover "a writing run's rounding passes its steps" (some (fun r -> is Writing r && rounds_past r));
+      cover "a writing run without steps" (some (fun ((_, s, _) as r) -> is Writing r && s = None));
+      cover "an ended run short of its steps" (some (fun r -> is Ended r && short r));
+      cover "a run past its steps" (some past);
+      cover "a silent run" (some (is Silent));
+      let fs = List.map (fun (life, steps, last) -> facts ?steps life last) runs in
+      let ends = List.map (fun (life, steps, last) -> x_end life ~steps last) runs in
+      equal (pair float_exact float_exact)
+        (0., List.fold_left Float.max 0. ends)
+        (Plot.domain fs))
 
 (* Law 9: a live run's latest step has its [now] rule wherever it is in the
    x domain, which is closed: a run whose latest step is the domain's end,
@@ -1610,6 +1690,30 @@ let x_labels_clear =
       | [ "step" ] -> ()
       | [] when not far -> ()
       | ws -> failf "the label row %S reads %s" (row (axis_row + 1)) (String.concat ", " ws))
+
+(* A run whose writer holds its lock may log again after a pause, so a
+   stalled run keeps its rounded end and its axis does not change when
+   samples arrive again. *)
+let stalled_end =
+  test "a stalled run keeps its rounded end" (fun () ->
+      let r =
+        Fixture.sweep_run ~id:"20261101T120000Z-5a11ed00" ~name:"paused"
+          ~started:(Fixture.now -. 100.) ~pid:4242 ~commit:Fixture.commit ~dirty:false ~tags:[]
+          Fixture.base ~upto:150 ~ended:None ~status:`Running ()
+      in
+      let store = Fixture.make ~child (Filename.concat home "stalled") [ r ] in
+      let run = Option.get (Store.run store r.id) in
+      (* Samples arrived at 0 and 1 s, and none for 999 s since. *)
+      let watch =
+        Watch.observe (Watch.observe (Watch.start ~samples:0) ~now:0. ~samples:2) ~now:1.
+          ~samples:4
+      in
+      let f =
+        Munin_tui.Facts.of_run ~now:1000. ~history:(Some (History.read run)) ~hint:None
+          ~watch:(Some watch) ~pauses:[] run
+      in
+      equal ~msg:"its state" string "stalled" (Watch.word f.state);
+      equal ~msg:"its end, 150 rounded up" float_exact 200. f.x_end)
 
 (* Round numbers are the floats nearest their decimal values, on every
    system: law 1's end is the least of 1, 2 or 5 times a power of ten at or
@@ -3265,7 +3369,7 @@ let () =
            ];
          group "charts"
            [
-             binned; rising; spike; non_finite; cursor_wins; zoom_cursor; x_labels_clear; lines_over_rules; letters; exact_labels; tick_labels; x_domain; now_rule; bounds;
+             binned; rising; spike; non_finite; cursor_wins; zoom_cursor; x_labels_clear; lines_over_rules; letters; exact_labels; tick_labels; x_domain; x_domain_law; stalled_end; now_rule; bounds;
              ticks_of;
              log_choice; y_per_metric; cut_law; values_printed; rounding_shown;
              filled;

@@ -20,8 +20,8 @@
    |  u vvvvvvvvv   w xxxxx  vvvvvv  f     zzzzzzzz                                             f nnnnnnngggggggggggggggggg
 11 |  · dusty-mole  × ⢢⡀     0.7665  │                                                          │ 2.1 steps/s · 1h 37m in
    |  u tttttttttt  A xx     vvvvvv  f                                                          f nnngggggggggggggggggggg
-12 |  · eager-hawk  ✗ ⠄       1.670  │ ━ tidy-otter 0.4077   r others                           │
-   |  u tttttttttt  A x       vvvvv  f jjkkkkkkkkkkkkkkkkk   hhgggggg                           f
+12 |  · eager-hawk  ✗ ⠑⠢⠤⢄⣀   1.670  │ ━ tidy-otter 0.4077   r others                           │
+   |  u tttttttttt  A xxxxx   vvvvv  f jjkkkkkkkkkkkkkkkkk   hhgggggg                           f
 13 |                                 │                                                          │ params ──────────────────
    |                                 f                                                          f hhhhhh ffffffffffffffffff
 14 |                                 │      2┤⡄                            ┊now                 │ lr     0.0003000   varies

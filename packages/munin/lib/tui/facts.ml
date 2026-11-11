@@ -194,16 +194,30 @@ let of_run ~now ~history ~hint ~watch ~pauses r =
   in
   let active = active_at pauses ~started:(Run.started_at r) until in
   let latest = latest_step stats in
+  let state = Watch.state (Run.status r) watch ~now in
+  (* A run that may grow is rounded up so that it rescales at most three
+     times a decade, through its pauses too; one that does not grow ends
+     where its samples end. A held lock says the run may grow; where the
+     lock cannot be probed, samples still arriving say it. *)
+  let grows =
+    match Run.status r with
+    | `Running -> true
+    | `Silent -> state = Watch.Writing
+    | `Crashed | `Finished | `Failed _ | `Killed -> false
+  in
   let x_end =
-    match (Run.steps r, latest) with
-    | Some n, Some l when n > 0 && l <= n -> Float.of_int n
-    | Some n, None when n > 0 -> Float.of_int n
-    | _, Some l -> bound (Float.of_int l)
-    | _, None -> 1.
+    match latest with
+    | None -> 1.
+    | Some l when not grows -> Float.max 1. (Float.of_int l)
+    | Some l -> (
+        let b = bound (Float.of_int l) in
+        match Run.steps r with
+        | Some n when n > 0 && l <= n -> Float.min b (Float.of_int n)
+        | _ -> b)
   in
   {
     run = r;
-    state = Watch.state (Run.status r) watch ~now;
+    state;
     stats;
     metrics = order stats;
     latest;

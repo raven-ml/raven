@@ -17,14 +17,14 @@
    |  b             e bbbbb            b   aaaaaaaa   bbbbbbbbb   bbbbbbb   bbbbbbb   b           aaaaaabbbbbbbbbbbbbbbb
 10 |  ■ dusty-mole  × ⢢⡀     0.7665  │     ▔▔▔▔▔▔▔▔                                             │ 59m 11s left · ends 13:17
    |                a                                                                             aaaaaaabbbbbbbbbbbbbbbbbb
-11 |  · eager-hawk  ✗ ⠄       1.670  │                                                          │ 2.1 steps/s · 1h 37m in
-   |  b             a b                                                                           aaabbbbbbbbbbbbbbbbbbbb
+11 |  · eager-hawk  ✗ ⠑⠢⠤⢄⣀   1.670  │                                                          │ 2.1 steps/s · 1h 37m in
+   |  b             a bbbbb                                                                       aaabbbbbbbbbbbbbbbbbbbb
 12 | ▾ mnist-mlp  2         val/loss │ ━ tidy-otter 0.4077   b dusty-mole NaN                   │
    | bbaaaaaaaaabbb         bbbbbbbb   aaaaaaaaaaaaaaaaaaa   aa
 13 |  · mlp-wide    ✓ ⠈⢆⣀⣀⣀ 0.05831 ★│ a amber-fox 0.3939   r others                            │ params ──────────────────
    |  b             e bbbbb aaaaaaa    aa                   aabbbbbb                              aaaaaa
-14 |  · mlp-base    ✗ ⠈⢆⣀⡀  0.06576  │                                                          │ lr     0.0003000   varies
-   |  b             a bbbb                                                                        bb     aaaaaaaaa   bbbbbb
+14 |  · mlp-base    ✗ ⠈⠢⣀⣀⣀ 0.06576  │                                                          │ lr     0.0003000   varies
+   |  b             a bbbbb                                                                       bb     aaaaaaaaa   bbbbbb
 15 |                                 │      2┤⡄                            ┊now                 │ warmup 500         varies
    |                                   bbbbbbb                             bbbb                   bbbbbb aaa         bbbbbb
 16 |                                 │       │⢱                            ┊                    │ batch  256

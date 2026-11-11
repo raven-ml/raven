@@ -27,8 +27,10 @@ type run = {
           its active time, once that window holds 60 s; known only for a run
           whose every key was read. *)
   x_end : float;
-      (** The end of its x domain: its [steps] when no step passes them,
-          else {!bound} of its greatest step, and [1.] without a step. *)
+      (** The end of its x domain. While a writer holds its lock, or, where
+          the lock is not probed, while it is [Writing], {!bound} of its
+          greatest step, at most its [steps] when no step passes them; else
+          its greatest step. At least [1.], and [1.] without a step. *)
 }
 (** The type for what a poll knows of a run. *)
 

@@ -6,12 +6,15 @@
 (** What a chart draws and over which steps.
 
     {b The x domain} of a chart is the step, from [0] to the greatest end
-    of the runs drawn ({!Facts.run.x_end}): a run's declared steps, or, when
-    none are declared or a step passes them, its largest step rounded up to
-    1, 2 or 5 times a power of ten. Every chart and strip on screen shares
-    it, so a reduction made for it stays valid while the runs log within
-    it. At the zoom depth the chart shows a window of it: the domain halved
-    [n] times, the part of that size that holds the zoom's cursor. *)
+    of the runs drawn ({!Facts.run.x_end}): the largest step of a run that
+    has ended, crashed or gone silent, or, for a run that is starting,
+    running, live, stalled or writing, its largest step rounded up to 1, 2
+    or 5 times a power of ten, at most its declared steps. Every chart and
+    strip on screen shares it. A growing run logs within it until its
+    latest step passes the rounding, so a reduction made for it stays valid
+    that long. At the zoom depth the
+    chart shows a window of it: the domain halved [n] times, the part of
+    that size that holds the zoom's cursor. *)
 
 type role =
   | Context  (** A run of the cursor's experiment, in grey. *)

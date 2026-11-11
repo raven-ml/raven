@@ -18,14 +18,14 @@
    |  s ttttttttt   u vvvvv  tttttt  f g   jjjjjjjj   ggggggggg   ggggggg   ggggggg   g         f kkkkkkgggggggggggggggg
 10 |  · dusty-mole  × ⢢⡀     0.7665  │     ▔▔▔▔▔▔▔▔                                             │ 59m 11s left · ends 13:17
    |  s xxxxxxxxxx  y vv     tttttt  f     zzzzzzzz                                             f kkkkkkkgggggggggggggggggg
-11 |  · eager-hawk  ✗ ⠄       1.670  │                                                          │ 2.1 steps/s · 1h 37m in
-   |  s xxxxxxxxxx  y v       ttttt  f                                                          f kkkgggggggggggggggggggg
+11 |  · eager-hawk  ✗ ⠑⠢⠤⢄⣀   1.670  │                                                          │ 2.1 steps/s · 1h 37m in
+   |  s xxxxxxxxxx  y vvvvv   ttttt  f                                                          f kkkgggggggggggggggggggg
 12 | ▾ mnist-mlp  2         val/loss │ ━ tidy-otter 0.4077   r others                           │
    | ggkkkkkkkkkggg         gggggggg f iijjjjjjjjjjjjjjjjj   hhgggggg                           f
 13 |  · mlp-wide    ✓ ⠈⢆⣀⣀⣀ 0.05831 ★│                                                          │ params ──────────────────
    |  s tttttttt    u vvvvv jjjjjjj wf                                                          f hhhhhh ffffffffffffffffff
-14 |  · mlp-base    ✗ ⠈⢆⣀⡀  0.06576  │      2┤⡄                            ┊now                 │ lr     0.0003000   varies
-   |  s xxxxxxxx    y vvvv  ttttttt  f ggggggsz                            sggg                 f gg     jjjjjjjjj   gggggg
+14 |  · mlp-base    ✗ ⠈⠢⣀⣀⣀ 0.06576  │      2┤⡄                            ┊now                 │ lr     0.0003000   varies
+   |  s xxxxxxxx    y vvvvv ttttttt  f ggggggsz                            sggg                 f gg     jjjjjjjjj   gggggg
 15 |                                 │       │⢱                            ┊                    │ warmup 500         varies
    |                                 f       sz                            s                    f gggggg jjj         gggggg
 16 |                                 │       │⠘⡄                           ┊                    │ batch  256

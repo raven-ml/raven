@@ -104,13 +104,17 @@
     A chart draws a metric of the cursor's run over the step, and each overlay
     beside it.
 
-    + The x axis is the step, from [0] to the greatest end of the runs drawn:
-      a run's [steps], or, without them or past them, the least of 1, 2 or 5
-      times a power of ten at or above its largest step, so that a run that
-      ended at step 10,000 is drawn on [0] to 10,000. A machine's strip is
-      over the run's active time, to the same rounding of it. Zoom shows a
-      window of the domain: halved by each [+], the part that holds its
-      cursor.
+    + The x axis is the step, from [0] to the greatest end of the runs drawn.
+      A run that has ended, crashed or gone silent ends at its largest step,
+      so that one that stopped at step 2,812 of 3,000 is drawn on [0] to
+      2,812. A run that is starting, running, live, stalled or writing ends
+      at the least of 1, 2 or 5 times a power of ten at or above its latest
+      step, at most its [steps] while it is within them, so that at step 80
+      of 3,000 it is drawn on [0] to 100 and the axis changes at most three
+      times a decade as it grows, a pause included. The run pane says how
+      many steps are left. A machine's strip is over the run's active time, to
+      the same rounding of it. Zoom shows a window of the domain: halved by
+      each [+], the part that holds its cursor.
     + A line is one value per braille dot column, the mean of the column's
       samples, joined to the next column's.
     + A column's least and greatest raw samples of the cursor's run, where

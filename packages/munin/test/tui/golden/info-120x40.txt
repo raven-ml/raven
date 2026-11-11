@@ -18,14 +18,14 @@
    |  t lllllllll   u vvvvv  llllll  f             ggggg       mmmmmmgggggggggg                 f kkkkkkgggggggggggggggg
 10 |  · dusty-mole  × ⢢⡀     0.7665  │                                                        █ │ 59m 11s left · ends 13:17
    |  t mmmmmmmmmm  x vv     llllll  f                                                          f kkkkkkkgggggggggggggggggg
-11 |  · eager-hawk  ✗ ⠄       1.670  │ source      command     ./train.exe --lr 0.0003        █ │ 2.1 steps/s · 1h 37m in
-   |  t mmmmmmmmmm  x v       lllll  f llllll      ggggggg     mmmmmmmmmmm mmmm mmmmmm          f kkkgggggggggggggggggggg
+11 |  · eager-hawk  ✗ ⠑⠢⠤⢄⣀   1.670  │ source      command     ./train.exe --lr 0.0003        █ │ 2.1 steps/s · 1h 37m in
+   |  t mmmmmmmmmm  x vvvvv   lllll  f llllll      ggggggg     mmmmmmmmmmm mmmm mmmmmm          f kkkgggggggggggggggggggg
 12 | ▾ mnist-mlp  2         val/loss │                         --warmup 500                   █ │
    | ggkkkkkkkkkggg         gggggggg f                         mmmmmmmm mmm                     f
 13 |  · mlp-wide    ✓ ⠈⢆⣀⣀⣀ 0.05831 ★│             in          /home/ada/src/resnet           █ │ params ──────────────────
    |  t llllllll    u vvvvv jjjjjjj wf             gg          mmmmmmmmmmmmmmmmmmmm             f hhhhhh ffffffffffffffffff
-14 |  · mlp-base    ✗ ⠈⢆⣀⡀  0.06576  │             host        gpu-01 · pid 48211             █ │ lr     0.0003000   varies
-   |  t mmmmmmmm    x vvvv  lllllll  f             gggg        mmmmmm ggggggggggg               f gg     jjjjjjjjj   gggggg
+14 |  · mlp-base    ✗ ⠈⠢⣀⣀⣀ 0.06576  │             host        gpu-01 · pid 48211             █ │ lr     0.0003000   varies
+   |  t mmmmmmmm    x vvvvv lllllll  f             gggg        mmmmmm ggggggggggg               f gg     jjjjjjjjj   gggggg
 15 |                                 │             commit      5eaf82b  dirty: the work tree  █ │ warmup 500         varies
    |                                 f             gggggg      mmmmmmmwwwwwwwwwwwwwwwwwwwwww    f gggggg jjj         gggggg
 16 |                                 │                         had changes                    █ │ batch  256

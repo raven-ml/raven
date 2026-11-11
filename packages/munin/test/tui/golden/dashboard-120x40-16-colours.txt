@@ -18,14 +18,14 @@
    |  l             m bbbbb          e b   aaaaaaaa   bbbbbbbbb   bbbbbbb   bbbbbbb   b         e aaaaaabbbbbbbbbbbbbbbb
 10 |  · dusty-mole  × ⢢⡀     0.7665  │     ▔▔▔▔▔▔▔▔                                             │ 59m 11s left · ends 13:17
    |  l             o bb             e     pppppppp                                             e aaaaaaabbbbbbbbbbbbbbbbbb
-11 |  · eager-hawk  ✗ ⠄       1.670  │                                                          │ 2.1 steps/s · 1h 37m in
-   |  l             o b              e                                                          e aaabbbbbbbbbbbbbbbbbbbb
+11 |  · eager-hawk  ✗ ⠑⠢⠤⢄⣀   1.670  │                                                          │ 2.1 steps/s · 1h 37m in
+   |  l             o bbbbb          e                                                          e aaabbbbbbbbbbbbbbbbbbbb
 12 | ▾ mnist-mlp  2         val/loss │ ━ tidy-otter 0.4077   r others                           │
    | bbaaaaaaaaabbb         bbbbbbbb e ffaaaaaaaaaaaaaaaaa   aabbbbbb                           e
 13 |  · mlp-wide    ✓ ⠈⢆⣀⣀⣀ 0.05831 ★│                                                          │ params ──────────────────
    |  l             m bbbbb aaaaaaa ne                                                          e aaaaaa eeeeeeeeeeeeeeeeee
-14 |  · mlp-base    ✗ ⠈⢆⣀⡀  0.06576  │      2┤⡄                            ┊now                 │ lr     0.0003000   varies
-   |  l             o bbbb           e bbbbbblp                            lbbb                 e bb     aaaaaaaaa   bbbbbb
+14 |  · mlp-base    ✗ ⠈⠢⣀⣀⣀ 0.06576  │      2┤⡄                            ┊now                 │ lr     0.0003000   varies
+   |  l             o bbbbb          e bbbbbblp                            lbbb                 e bb     aaaaaaaaa   bbbbbb
 15 |                                 │       │⢱                            ┊                    │ warmup 500         varies
    |                                 e       lp                            l                    e bbbbbb aaa         bbbbbb
 16 |                                 │       │⠘⡄                           ┊                    │ batch  256

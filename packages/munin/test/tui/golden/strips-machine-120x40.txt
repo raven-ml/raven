@@ -18,14 +18,14 @@
    |  u vvvvvvvvv   s wwwww  vvvvvv  f xxjjjjjjjjjjqqqqqvvvvvvvvv                                     ggggggggggggggggggggg
 10 |  ■ dusty-mole  × ⢢⡀     0.7665  │
    |  y rrrrrrrrrr  z yy     vvvvvv  f
-11 |  · eager-hawk  ✗ ⠄       1.670  │  ↓ min               ⠉⠛⠒⠒⠲⠦⠤⠤⠤⠤⠤⣤⣤⣄⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀
-   |  u rrrrrrrrrr  z w       vvvvv  f  ggggg               xxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq
+11 |  · eager-hawk  ✗ ⠑⠢⠤⢄⣀   1.670  │  ↓ min               ⠉⠛⠒⠒⠲⠦⠤⠤⠤⠤⠤⣤⣤⣄⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀
+   |  u rrrrrrrrrr  z wwwww   vvvvv  f  ggggg               xxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq
 12 | ▾ mnist-mlp  2         val/loss │
    | ggkkkkkkkkkggg         gggggggg f
 13 |  · mlp-wide    ✓ ⠈⢆⣀⣀⣀ 0.05831 ★│  val/top5            ⣀⣀⠤⠤⠔⠒⠒⠒⠒⠒⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉    0.9968       -0.1%
    |  u vvvvvvvv    s wwwww jjjjjjj tf  rrrrrrrr            xxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq    kkkkkk       AAAAA
-14 |  · mlp-base    ✗ ⠈⢆⣀⡀  0.06576  │  ↑ max           ⡠⠔⠊⠉
-   |  u rrrrrrrr    z wwww  vvvvvvv  f  ggggg           xxxx
+14 |  · mlp-base    ✗ ⠈⠢⣀⣀⣀ 0.06576  │  ↑ max           ⡠⠔⠊⠉
+   |  u rrrrrrrr    z wwwww vvvvvvv  f  ggggg           xxxx
 15 |                                 │
    |                                 f
 16 |                                 │  epoch                                 ⢀⣀⣀⣀⣀⣀⡠⠤⠤⠤⠤⠤⠤⠒⠒⠒⠒⠒⠒⠉⠉⠉⠉     6.200        same
