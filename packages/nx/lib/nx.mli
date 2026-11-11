@@ -1033,6 +1033,10 @@ val split : axis:int -> int -> ('v, 's, 'd) t -> ('v, 's, 'd) t list
     elements, in order. With [d] the extent, the first [d mod n] runs have
     [d / n + 1] elements and the others [d / n]. Views.
 
+    Parts whose number and width a layout fixes, such as a layer's gates of
+    width [h] along axis [1], are slices: gate [k] is
+    [slice [ A; R (k * h, (k + 1) * h) ] x].
+
     Raises [Invalid_argument] if [axis] is not [x]'s or [n < 1]. *)
 
 val split_at : axis:int -> int list -> ('v, 's, 'd) t -> ('v, 's, 'd) t list

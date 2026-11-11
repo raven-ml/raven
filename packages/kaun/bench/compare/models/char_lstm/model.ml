@@ -101,21 +101,20 @@ let state model = Nx.Ptree.pair model (Vega.sgd_ptree model)
 let logits spec p ids =
   let x = Kaun.Embedding.apply p.Lstm.emb ids in
   let xg = Kaun.Linear.apply p.Lstm.ih x in
-  let zero = Nx.zeros_like (Nx.slice [ A; I 0; R (0, spec.hidden) ] xg) in
+  let hidden = spec.hidden in
+  let zero = Nx.zeros_like (Nx.slice [ A; I 0; R (0, hidden) ] xg) in
   let h = ref zero and c = ref zero in
   let outputs = ref [] in
   for t = 0 to spec.seq_len - 1 do
     let gates =
       Nx.add (Nx.slice [ A; I t ] xg) (Kaun.Linear.apply p.Lstm.hh !h)
     in
-    match Nx.split ~axis:1 4 gates with
-    | [ gi; gf; gg; go ] ->
-        let i = Nx.sigmoid gi and f = Nx.sigmoid gf in
-        let g = Nx.tanh gg and o = Nx.sigmoid go in
-        c := Nx.add (Nx.mul f !c) (Nx.mul i g);
-        h := Nx.mul o (Nx.tanh !c);
-        outputs := !h :: !outputs
-    | _ -> assert false
+    let gate k = Nx.slice [ A; R (k * hidden, (k + 1) * hidden) ] gates in
+    let i = Nx.sigmoid (gate 0) and f = Nx.sigmoid (gate 1) in
+    let g = Nx.tanh (gate 2) and o = Nx.sigmoid (gate 3) in
+    c := Nx.add (Nx.mul f !c) (Nx.mul i g);
+    h := Nx.mul o (Nx.tanh !c);
+    outputs := !h :: !outputs
   done;
   Kaun.Linear.apply p.Lstm.head (Nx.stack ~axis:1 (List.rev !outputs))
 

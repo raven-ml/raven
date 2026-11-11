@@ -179,7 +179,7 @@ let logits cfg p h =
    The file names its tensors h.{i}.attn.c_attn.weight, h.{i}.mlp.c_fc.bias, ...
    and fuses the q, k and v projections into c_attn, [n_embd; 3 * n_embd]. Its
    weights are already [inputs; outputs], so only the fused projection is cut,
-   with [Nx.split], into three views. *)
+   into three slices of [n_embd] outputs, which are views. *)
 
 let of_hf ~placement cfg dt weights =
   let place role ~axis x = Nx.place (placement role ~axis) x in
@@ -212,20 +212,20 @@ let of_hf ~placement cfg dt weights =
   let block i =
     let at leaf = Printf.sprintf "h.%d.%s" i leaf in
     let fused = stored ~inputs:d ~outputs:(3 * d) (at "attn.c_attn") in
-    let q, k, v =
-      match
-        List.map2
-          (fun w b -> column { Linear.w; b = Some b })
-          (Nx.split ~axis:1 3 fused.w)
-          (Nx.split ~axis:0 3 (Option.get fused.b))
-      with
-      | [ q; k; v ] -> (q, k, v)
-      | _ -> assert false
+    let part j =
+      let w = Nx.slice [ A; R (j * d, (j + 1) * d) ] fused.w in
+      let b = Option.map (Nx.slice [ R (j * d, (j + 1) * d) ]) fused.b in
+      column { Linear.w; b }
     in
     {
       ln1 = layer_norm (at "ln_1");
       attn =
-        { q; k; v; out = row (stored ~inputs:d ~outputs:d (at "attn.c_proj")) };
+        {
+          q = part 0;
+          k = part 1;
+          v = part 2;
+          out = row (stored ~inputs:d ~outputs:d (at "attn.c_proj"));
+        };
       ln2 = layer_norm (at "ln_2");
       fc = column (stored ~inputs:d ~outputs:cfg.n_inner (at "mlp.c_fc"));
       proj = row (stored ~inputs:cfg.n_inner ~outputs:d (at "mlp.c_proj"));
