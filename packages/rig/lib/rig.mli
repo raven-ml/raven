@@ -797,10 +797,11 @@ val word : int
     [Stdlib.Out_of_memory], or an exception from a signal handler, a
     finaliser or a [Gc.Memprof] callback, or where a function of the call
     starts, as [Stack_overflow] is. It may leak the memory of the call it
-    interrupts, but none that a driver's call made for it, nor memory an
-    allocation took from the cache: an exception once the driver's call
-    returned leaves it to return as it would have, once unreachable or at
-    the device's stop, and loses no device. One that
+    interrupts, and a region the call was moving to the cache or the driver
+    ({!section-reclaim}), but none that a driver's call made for it, nor
+    memory an allocation took from the cache to reuse: an exception once the
+    driver's call returned leaves it to return as it would have, once
+    unreachable or at the device's stop, and loses no device. One that
     interrupts a driver's stop ({!section-stops}) may
     leave that device never stopped, holding its memory and its slot for
     the rest of the process.
@@ -816,9 +817,10 @@ val word : int
     driver's wait runs its handler before the wait returns, and its exception
     ends the call as an asynchronous one. Reclamation ({!section-reclaim})
     that gives memory back to a driver one region at a time blocks signals
-    from its first region on, rig's own code between the regions included,
-    and gives the thread its mask back after every 64 regions and at its
-    end: a signal waits for at most 64 regions, and a finaliser or
+    from before it takes its first region, rig's own code between the
+    regions included, and gives the thread its mask back after every 64
+    regions, holding none, and at its end: a signal waits for at most 64
+    regions, and a finaliser or
     [Gc.Memprof] callback that runs at a poll point among them runs with
     signals blocked. A function of a driver's library that
     a program calls directly, such as an opener or a function of a
@@ -922,8 +924,9 @@ val failure : unit -> string option
        device holds more than its budget skips the cache, as does an io
        device's memory, and returns to the driver. A lost
        device's memory returns as {!section-stops} states.}}
-    Memory that an asynchronous exception leaked ({!section-errors}) may
-    never take these steps.
+    Memory that an asynchronous exception leaked ({!section-errors}), the
+    interrupted call's or a region on its way to the cache or the driver,
+    may never take the steps it had left.
 
     Collected memory moves to the cache or the driver only inside rig's
     calls, on any domain. {!Buffer.create}, {!Buffer.of_string},

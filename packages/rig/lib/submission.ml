@@ -1149,11 +1149,16 @@ let take_words (d, r) =
     true
   end
 
+let words_of x = Dev.protect (fst x) take_words x
+
+let unmap_words (d, r) (_ : bool) =
+  ignore (Memory.unmap d r : Dev.given);
+  false
+
 (* Gives back [d]'s mapping [r] of the array, unless [d]'s stop's drain took
-   it first. *)
-let drop_words d r =
-  if Lock.protect d.live.lock take_words (d, r) then
-    ignore (Memory.unmap d r : Dev.given)
+   it first, taken and given back with the thread's signals blocked
+   ([Dev.batch]). *)
+let drop_words d r = Dev.batch words_of unmap_words (d, r) ~stop:false
 
 (* Decides how [d]'s queues read the array, [at], unless another decision
    came first: that one, then. *)

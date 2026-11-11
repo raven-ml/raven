@@ -341,24 +341,25 @@ let masked f =
 (* The steps of a batch that one mask covers. *)
 let batch_steps = 64
 
-(* Runs [step x] from [v] until it is [stop] or [n] steps ran: the value
-   reached. *)
-let rec steps step x v ~stop n =
-  if v == stop || n = 0 then v else steps step x (step x v) ~stop (n - 1)
+(* Takes and frees values of [x] until a take is [stop], a free is [false]
+   or [n] were freed: whether [n] were. *)
+let rec steps take free x ~stop n =
+  n = 0
+  ||
+  let v = take x in
+  v != stop && free x v && steps take free x ~stop (n - 1)
 
-let rec batch step x v ~stop =
-  if v != stop then begin
-    Rig_edge_primitive.mask ();
-    match steps step x v ~stop batch_steps with
-    | v when v == stop -> Rig_edge_primitive.unmask ()
-    | v ->
-        Rig_edge_primitive.unmask ();
-        (* Outside every pair, [block] blocks nothing: it runs what a poll
-           point runs, the handlers of the signals pending included. *)
-        Rig_edge_primitive.block ();
-        batch step x v ~stop
-    | exception e -> unmask_raise e
-  end
+let rec batch take free x ~stop =
+  Rig_edge_primitive.mask ();
+  match steps take free x ~stop batch_steps with
+  | false -> Rig_edge_primitive.unmask ()
+  | true ->
+      Rig_edge_primitive.unmask ();
+      (* Outside every pair, [block] blocks nothing: it runs what a poll
+         point runs, the handlers of the signals pending included. *)
+      Rig_edge_primitive.block ();
+      batch take free x ~stop
+  | exception e -> unmask_raise e
 
 let refuse_held fn =
   invalid_arg
