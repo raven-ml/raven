@@ -293,7 +293,8 @@ val claim_add : buffer -> unit
     waiting out a take or free under way. A borrow's claim counts on its
     lease too ({!section-leases}). It tries one compare-and-set and retries
     in C, so in native code nothing in it polls or allocates, contended or
-    not, and a sequence of claims needs no handler between them. *)
+    not. In bytecode its application polls before it claims, so a handler
+    that drops a sequence of claims counts those taken. *)
 
 external claim_drop : buffer -> unit = "caml_rig_claim_drop" [@@noalloc]
 (** [claim_drop b] ends a read claim on [b]'s memory, in C, so no poll point

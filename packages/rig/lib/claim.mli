@@ -46,7 +46,7 @@ val read_bytes :
   (('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> 'c) ->
   'c
 (** [read_bytes b k f] is {!Rig.Buffer.read}[ b k f]. Its claim ends in C as
-    [f] returns or raises, with no poll point before it. *)
+    [f] returns or raises, in native code with no poll point before it. *)
 
 val write_bytes :
   Def.buffer ->
@@ -61,8 +61,10 @@ val write_bytes :
 val wait : string -> Def.access -> Def.buffer -> unit
 (** [wait fn access b] takes a read claim on [b]'s memory for a call of [fn],
     then checks [b] under it and waits as {!Rig.Buffer.wait}[ b access] does.
-    The caller ends the claim with {!Memory.claim_drop}. It allocates nothing
-    when the work the access follows is done.
+    The caller ends the claim with {!Memory.claim_drop}, also from a handler
+    whose trap is its next step: an OCaml function it applied first would
+    poll in bytecode. It allocates nothing when the work the access follows
+    is done.
 
     Raises as {!reading} does, and {!Rig.Lost} as {!Rig.Buffer.wait} does,
     holding no claim. *)

@@ -20,11 +20,16 @@ let reading fn b f =
       Memory.claim_drop b;
       Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
-(* [reading] of two buffers with no closure, for a staged copy's sides. *)
+(* [reading] of two buffers with no closure, for a staged copy's sides. The
+   claims are counted by the store after each, for the handler: a call of an
+   OCaml function polls at its entry in bytecode. *)
 let reading2 fn a b f x =
-  Memory.claim_add a;
-  Memory.claim_add b;
+  let held = ref 0 in
   match
+    Memory.claim_add a;
+    held := 1;
+    Memory.claim_add b;
+    held := 2;
     Buffer.check_live fn a;
     Buffer.check_live fn b;
     f a b x
@@ -34,13 +39,15 @@ let reading2 fn a b f x =
       Memory.claim_drop b;
       r
   | exception e ->
-      Memory.claim_drop a;
-      Memory.claim_drop b;
+      if !held > 0 then Memory.claim_drop a;
+      if !held > 1 then Memory.claim_drop b;
       Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
-(* [Buffer.wait]'s checks and wait under a read claim. A loss raises where the
-   wait for [access] meets it, so a read depends on every device's last write
-   alone. *)
+(* [Buffer.wait]'s checks and wait under a read claim, which it returns
+   holding. A loss raises where the wait for [access] meets it, so a read
+   depends on every device's last write alone. The caller's next step is the
+   trap whose handler drops the claim: an OCaml function applied before it
+   polls in bytecode. *)
 let wait fn (access : access) b =
   Memory.claim_add b;
   match
@@ -70,8 +77,8 @@ let stored fn b f x =
    after the flush. *)
 let scope fn access b k f =
   wait fn access b;
-  let window = access = Read_write && Buffer.windowed b in
   match
+    let window = access = Read_write && Buffer.windowed b in
     let a = Buffer.array ~window fn k b in
     if window then Memory.stored b.mem.alloc f a else f a
   with

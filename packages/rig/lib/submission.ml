@@ -1424,15 +1424,10 @@ let rec hand_over s c run round lacked seen =
     Dev.raise_point_lost (call_producer c)
   else Dev.raise_lost d
 
-(* Read claims on the [m] buffers of a frame, [m] from 1 to 4. *)
-let hold_frame m b0 b1 b2 b3 =
-  Memory.claim_add b0;
-  if m > 1 then Memory.claim_add b1;
-  if m > 2 then Memory.claim_add b2;
-  if m > 3 then Memory.claim_add b3
-
+(* Drops the read claims on the first [m] buffers of a frame, [m] from 0 to
+   4. *)
 let release_frame m b0 b1 b2 b3 =
-  Memory.claim_drop b0;
+  if m > 0 then Memory.claim_drop b0;
   if m > 1 then Memory.claim_drop b1;
   if m > 2 then Memory.claim_drop b2;
   if m > 3 then Memory.claim_drop b3
@@ -1455,8 +1450,24 @@ let rec go s c run buffers waits k =
     let b1 = if m > 1 then Array.unsafe_get buffers (k + 1) else b0 in
     let b2 = if m > 2 then Array.unsafe_get buffers (k + 2) else b0 in
     let b3 = if m > 3 then Array.unsafe_get buffers (k + 3) else b0 in
-    hold_frame m b0 b1 b2 b3;
+    let held = ref 0 in
     match
+      (* Each claim counted by the store after it, for the handler: a call
+         of an OCaml function polls at its entry in bytecode. *)
+      Memory.claim_add b0;
+      held := 1;
+      if m > 1 then begin
+        Memory.claim_add b1;
+        held := 2
+      end;
+      if m > 2 then begin
+        Memory.claim_add b2;
+        held := 3
+      end;
+      if m > 3 then begin
+        Memory.claim_add b3;
+        held := 4
+      end;
       let a = s.uses in
       name_one s c (Array.unsafe_get a k) k b0;
       if m > 1 then name_one s c (Array.unsafe_get a (k + 1)) (k + 1) b1;
@@ -1468,7 +1479,7 @@ let rec go s c run buffers waits k =
         release_frame m b0 b1 b2 b3;
         p
     | exception e ->
-        release_frame m b0 b1 b2 b3;
+        release_frame !held b0 b1 b2 b3;
         raise e
 
 (* What each copy part of [s] moves, read at the submit from the run's

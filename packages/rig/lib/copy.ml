@@ -1096,10 +1096,10 @@ let download fn src take =
 let host_moved b = Buffer.host_addressed b && not (io_owned b.mem)
 
 (* Where the host moves the buffer's bytes, the blits and [fill] claim and
-   wait, move the bytes, and drop the claim. The move neither raises nor polls
-   in native code, so no handler is needed and no asynchronous exception keeps
-   the claim. Into a window, the stores and the owner's flush are one counted
-   call, and the claim ends after them ([Claim.stored]). *)
+   wait, move the bytes, and drop the claim, which a handler drops too: the
+   move polls in bytecode, where an applied OCaml function does. Into a
+   window, the stores and the owner's flush are one counted call, and the
+   claim ends after them ([Claim.stored]). *)
 let blit_from_string s i b j n =
   let fn = "Buffer.blit_from_string" in
   Dev.check_held fn;
@@ -1108,8 +1108,11 @@ let blit_from_string s i b j n =
   writable fn b;
   if host_moved b then begin
     Claim.wait fn Buffer.Read_write b;
-    Buffer.blit_string s i b j n;
-    Memory.claim_drop b
+    match Buffer.blit_string s i b j n with
+    | () -> Memory.claim_drop b
+    | exception e ->
+        Memory.claim_drop b;
+        reraise e
   end
   else if Buffer.windowed b then
     Claim.stored fn b
@@ -1130,8 +1133,11 @@ let blit_to_bytes b i s j n =
   Buffer.check_range fn "bytes" (Bytes.length s) j n;
   if host_moved b then begin
     Claim.wait fn Buffer.Read b;
-    Buffer.blit_bytes b i s j n;
-    Memory.claim_drop b
+    match Buffer.blit_bytes b i s j n with
+    | () -> Memory.claim_drop b
+    | exception e ->
+        Memory.claim_drop b;
+        reraise e
   end
   else begin
     Buffer.check_live fn b;
@@ -1197,8 +1203,11 @@ let fill_host fn ~waits b c =
       ()
   else begin
     Claim.wait fn Buffer.Read_write b;
-    Buffer.set_bytes b 0 (Buffer.length b) c;
-    Memory.claim_drop b
+    match Buffer.set_bytes b 0 (Buffer.length b) c with
+    | () -> Memory.claim_drop b
+    | exception e ->
+        Memory.claim_drop b;
+        reraise e
   end
 
 (* Whether the host sets [b]'s bytes for a fill. *)
