@@ -210,7 +210,7 @@
     [(L + D + 5 + 6 ln n) u + u|r|] of the exact one. A [Moments] mean is
     within [E = (L + D) u M + u|μ|] of the exact [μ], [M] the mean of the
     terms' magnitudes, and its variance within
-    [(L + D + 5) u V + 2 (L + D + 1) u E √V + (3L + 3D + 7) u E²] of the
+    [F = (L + D + 5) u V + 2 (L + D + 1) u E √V + (3L + 3D + 7) u E²] of the
     exact [V]. *)
 
 (** {2:state_scans Logsumexp and Moments scans}

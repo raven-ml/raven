@@ -2478,9 +2478,10 @@ val standardize :
     and before a narrow float's rounding, an element of exact value [y] is
     within [(F / 2s + 11u/2) |y| + (L + D + 1) u A / √s], [s] the exact
     [v + eps], [A] the lane's mean absolute deviation, and [F], [L] and [D]
-    nx.cpu's for its moments ({!Nx_cpu.section-states}), or as {!var}
-    states them over cut axes. [scale] multiplies that by [|scale|], and
-    the affine adds [u |scale · y|] and [u |scale · y + shift|].
+    nx.cpu's for the moments of the lane's elements
+    ({!Nx_cpu.section-states}), or as {!var} states them over cut axes.
+    [scale] multiplies that by [|scale|], and the affine adds [u |scale · y|]
+    and [u |scale · y + shift|].
 
     A lane whose squares would overflow, or with [~eps:0.] underflow to
     [0], is normalised as its elements times a power of two, [eps] scaled

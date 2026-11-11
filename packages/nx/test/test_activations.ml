@@ -1246,7 +1246,8 @@ let terms n =
 
 (* The bound [standardize]'s doc states for an element of exact value [y]
    of a lane of [n] terms, before the narrow rounding and the affine:
-   [(F / 2s + 11u/2) |y| + (L + D + 1) u A / √s]. *)
+   [(F / 2s + 11u/2) |y| + (L + D + 1) u A / √s], [F] nx.cpu's variance
+   bound. *)
 let z_bound u n eps (mu, v, dev, mag) y =
   let l, d = terms n in
   let e = ((l +. d) *. u *. mag) +. (u *. Float.abs mu) in
