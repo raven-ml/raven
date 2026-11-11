@@ -166,6 +166,7 @@ let figure th c ~y ~log ?(ticks = []) marks =
               [ (v, Ansi.span ~style:(cursor_style th) chip) ]
           | None -> []
         in
+        (* The later label wins where two meet: the chip, over the title. *)
         axis ~format:(fun _ v -> Numbers.compact v) ~labels:(step :: at) "x"
     | `Y | `None -> axis ~show:false "x"
   in

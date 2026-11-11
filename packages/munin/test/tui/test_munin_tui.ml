@@ -1573,6 +1573,44 @@ let lines_over_rules =
       cover "zoom's cursor rule" zoom;
       cover ~share:0.1 "the band takes a cell another run's line crosses, on the rule" (!taken > 0))
 
+(* The x axis's program labels, the [step] title and zoom's cursor, keep
+   clear of each other: the row reads [step] whole or not at all, wherever
+   the cursor is, and whole while the cursor is far from it. *)
+let x_labels_clear =
+  let gen =
+    let open Gen in
+    let* last = int_range 5 2000 in
+    let* width = int_range 30 140 in
+    let* height = int_range 6 20 in
+    let+ at =
+      frequency [ (1, float_range 0. 1.); (1, float_range 0. 0.5); (2, float_range 0.85 1.) ]
+    in
+    (last, width, height, at)
+  in
+  let pp ppf (last, w, h, at) = Format.fprintf ppf "%d steps, %dx%d, cursor at %g" last w h at in
+  prop "the step title and the cursor's chip keep clear of each other" (Gen.with_pp pp gen)
+    (fun (last, width, height, at) ->
+      let samples = List.init (last + 1) (fun i -> (i, Float.of_int (i mod 7))) in
+      let lo, hi = (0., Float.of_int last) in
+      let v = Float.round (at *. hi) in
+      let ch = { (chart (lo, hi)) with cursor = Some v; extents = true } in
+      let g = drawn truecolor ch ~width ~height [ (me, 0, series_of samples) ] in
+      let row y = String.concat "" (List.init width (fun x -> Matrix.Grid.get_text g (Matrix.Grid.idx g ~x ~y))) in
+      let axis_row =
+        match List.find_opt (fun y -> holds "└" (row y)) (List.init height Fun.id) with
+        | Some y -> y
+        | None -> fail "no x axis"
+      in
+      let words = List.filter (( <> ) "") (String.split_on_char ' ' (row (axis_row + 1))) in
+      let lettered w = String.exists (fun c -> String.contains "step" c) w in
+      let far = at <= 0.5 && width >= 60 in
+      cover "the cursor near the title" (at >= 0.95);
+      cover "the cursor far from the title" far;
+      match List.filter lettered words with
+      | [ "step" ] -> ()
+      | [] when not far -> ()
+      | ws -> failf "the label row %S reads %s" (row (axis_row + 1)) (String.concat ", " ws))
+
 (* Round numbers are the floats nearest their decimal values, on every
    system: law 1's end is the least of 1, 2 or 5 times a power of ten at or
    above the largest step, tried at powers of ten and the floats beside
@@ -3227,7 +3265,7 @@ let () =
            ];
          group "charts"
            [
-             binned; rising; spike; non_finite; cursor_wins; zoom_cursor; lines_over_rules; letters; exact_labels; tick_labels; x_domain; now_rule; bounds;
+             binned; rising; spike; non_finite; cursor_wins; zoom_cursor; x_labels_clear; lines_over_rules; letters; exact_labels; tick_labels; x_domain; now_rule; bounds;
              ticks_of;
              log_choice; y_per_metric; cut_law; values_printed; rounding_shown;
              filled;

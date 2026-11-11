@@ -141,7 +141,8 @@
       where no such value falls has no label. An axis's labels share one
       notation: plain, as [0.25] or [12500], if each fits; else with the
       suffix [k], [M] or [G], as [1.5M]; else with an exponent, as [2e-05].
-      x labels are compact steps, and [step] ends the axis.
+      x labels are compact steps, and [step] ends the axis, except where
+      zoom's step cursor meets it.
 
     A chart is drawn from a reduction of each series to its dot columns,
     made off the loop by the poll for the chart's x domain and size, so that

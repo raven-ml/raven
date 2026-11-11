@@ -125,4 +125,5 @@ val draw : Theme.t -> t -> Matrix_grid.t -> unit
       the finest step of 1, 2 or 5 times a power of ten whose labels give
       their values exactly in six columns ({!Numbers.tick}), or at powers
       of ten on a log scale; a domain where no such value falls has no y
-      label. x labels compact, [step] at the end. *)
+      label. x labels compact, [step] at the end, left out where the
+      cursor's label would meet it. *)
