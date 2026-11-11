@@ -8,7 +8,8 @@
    the axis, a target's updates in C order, a narrow float's sum in float32
    rounded once, any NaN for a NaN result; at every dtype and through
    strided, reversed, permuted and broadcast views; the same bits on one
-   thread as on the job's, and the refusals. *)
+   thread as on the job's; a float Add's element unmoved by the other
+   elements, their updates and the other slabs; and the refusals. *)
 
 open Windtrap
 module A = Nx_array
@@ -872,6 +873,402 @@ let sorted_adds =
          (1, narrow_adds);
        ])
 
+(* Element-locality *)
+
+(* How a call runs: on the job's threads, on the calling thread alone, or on
+   the job's threads sorting a float Add's updates by target. *)
+type mode = Pool | One | Sorting
+
+let mode_name = function
+  | Pool -> "the job's threads"
+  | One -> "one thread"
+  | Sorting -> "threads that sort"
+
+let in_mode mode f =
+  match mode with
+  | Pool -> f ()
+  | One -> Nx_cpu.one_thread f
+  | Sorting -> Nx_cpu.with_cache 0 f
+
+let pp_mode ppf m = Format.pp_print_string ppf (mode_name m)
+let mode_gen = Gen.of_list ~pp:pp_mode [ Pool; One; Sorting ]
+
+(* [n] addends of the float or complex [d] whose sums round: each part a
+   sign, a fraction and a binary exponent within 20 of 0, within 6 for a
+   narrow float, which is cast to it; and one in 64 any element
+   ({!element}), a NaN or an infinity among them. *)
+let addends (D.Any dt as d) rs n =
+  let part span =
+    let f = 1. +. Random.State.float rs 1. in
+    let f = if Random.State.bool rs then f else -.f in
+    ldexp f (Random.State.int rs ((2 * span) + 1) - span)
+  in
+  let narrow () =
+    let shape = Iarray.of_array [| n |] in
+    let src = A.of_array D.Float32 shape (Array.init n (fun _ -> part 6)) in
+    let dst = A.create Rig.host dt shape in
+    match Support.map1 (module Nx_cpu) Cast ~dst src with
+    | A.Done -> elements (A.Any dst)
+    | r -> failf "a cast answered %a" Nx_array_support.pp_answer r
+  in
+  let es =
+    match dt with
+    | _ when n = 0 -> [||]
+    | D.Float32 -> Array.init n (fun _ -> f32 (part 20))
+    | D.Float64 -> Array.init n (fun _ -> f64 (part 20))
+    | D.Complex64 -> Array.init n (fun _ -> f32 (part 20) ^ f32 (part 20))
+    | D.Complex128 -> Array.init n (fun _ -> f64 (part 20) ^ f64 (part 20))
+    | _ -> narrow ()
+  in
+  Array.map (fun e -> if Random.State.int rs 64 = 0 then element d rs else e) es
+
+let bits64 p =
+  let b = Bytes.create 8 in
+  Bytes.set_int64_le b 0 p;
+  Bytes.to_string b
+
+(* [m1] trues and [m2] falses in a random order. *)
+let shuffled rs m1 m2 =
+  let a = Array.init (m1 + m2) (fun q -> q < m1) in
+  for q = m1 + m2 - 1 downto 1 do
+    let k = Random.State.int rs (q + 1) in
+    let t = a.(q) in
+    a.(q) <- a.(k);
+    a.(k) <- t
+  done;
+  a
+
+(* The elements, in C order, of arrays [a1] of shape [s1] and [a2] of shape
+   [s2], equal but along [axis], joined along it: index [q] along it is the
+   next of [a1]'s where [order.(q)], else the next of [a2]'s. *)
+let merge axis order s1 a1 s2 a2 =
+  let rank = Array.make (Array.length order) 0 in
+  let n1 = ref 0 and n2 = ref 0 in
+  Array.iteri
+    (fun q first ->
+      let n = if first then n1 else n2 in
+      rank.(q) <- !n;
+      incr n)
+    order;
+  let s = along s1 axis (Array.length order) in
+  Array.init (total s) (fun k ->
+      let i = index_of s k in
+      let q = i.(axis) in
+      i.(axis) <- rank.(q);
+      if order.(q) then a1.(flat s1 i) else a2.(flat s2 i))
+
+(* A float Add's shapes: [into]'s, the axis, the updates along it a whole
+   call draws, and the axes along which its positions broadcast. *)
+type regime = {
+  name : string;
+  ts : int array;
+  axis : int;
+  ms : int Gen.t;
+  broadcast : int list;
+}
+
+(* Few updates into shapes of rank [ranks], extents 0 to 5. *)
+let few_updates ranks =
+  let open Gen in
+  let* ts = array ~size:ranks (int_range 0 5) in
+  let r = Array.length ts in
+  let* axis = int_range 0 (r - 1) in
+  let+ bc = array ~size:(constant r) bool in
+  let broadcast =
+    List.filter (fun a -> bc.(a) && a <> axis) (List.init r Fun.id)
+  in
+  { name = "few updates"; ts; axis; ms = int_range 0 24; broadcast }
+
+(* The shapes of nx.cpu's threaded Adds: one slice of more updates than
+   2^16, or of twice that, which parts of the whole call fall below or not;
+   slices of positions of their own; more targets than updates; an
+   embedding gradient's rows; and rows cut into pieces. *)
+let one_slice =
+  {
+    name = "one slice";
+    ts = [| 1000 |];
+    axis = 0;
+    ms = Gen.int_range 70_000 140_000;
+    broadcast = [];
+  }
+
+let own_slices =
+  {
+    name = "slices of positions of their own";
+    ts = [| 3; 7 |];
+    axis = 1;
+    ms = Gen.int_range 70_000 100_000;
+    broadcast = [];
+  }
+
+let more_targets =
+  {
+    name = "more targets than updates";
+    ts = [| 200_000 |];
+    axis = 0;
+    ms = Gen.int_range 66_000 70_000;
+    broadcast = [];
+  }
+
+let row_slices =
+  {
+    name = "rows of slices";
+    ts = [| 300; 5 |];
+    axis = 0;
+    ms = Gen.int_range 65_536 70_000;
+    broadcast = [ 1 ];
+  }
+
+let row_pieces =
+  {
+    name = "rows cut into pieces";
+    ts = [| 40; 600 |];
+    axis = 0;
+    ms = Gen.constant 600;
+    broadcast = [ 1 ];
+  }
+
+(* A whole Add and its two parts: each element of [into] is [owned] or not;
+   [first]'s updates land only on owned elements, or outside the axis, and
+   [second]'s on the others, and each part's [into] holds the whole's
+   elements where its updates may land and others elsewhere. The whole
+   call's updates are the parts', interleaved along the axis, each part's in
+   its order. *)
+type local_case = {
+  regime : string;
+  broadcast : int list;
+  whole : scatter_case;
+  first : scatter_case;
+  second : scatter_case;
+  owned : bool array;
+}
+
+let pp_local ppf c =
+  Format.fprintf ppf "%s: %a, of parts %a and %a" c.regime pp_scatter c.whole
+    pp_ints (shape_of c.first.updates) pp_ints (shape_of c.second.updates)
+
+(* The local case of [d] in regime [g] whose parts take [m1] and [m2]
+   updates, drawn from [seed]. Positions broadcast along [g.broadcast], so
+   an element is owned as its index with those axes at 0 is. *)
+let local_case d g ~m1 ~m2 seed =
+  let rs = Random.State.make [| seed |] in
+  let ts = g.ts and axis = g.axis in
+  let r = Array.length ts and n = total ts and dx = g.ts.(g.axis) in
+  let broadcast a = List.mem a g.broadcast in
+  let red = Array.mapi (fun a e -> if broadcast a then 1 else e) ts in
+  let mask = Array.init (total red) (fun _ -> Random.State.bool rs) in
+  let owned =
+    Array.init n (fun e ->
+        let i = index_of ts e in
+        let i = Array.mapi (fun a x -> if broadcast a then 0 else x) i in
+        mask.(flat red i))
+  in
+  (* For each line along the axis, by its index at 0 along it, the targets
+     whose ownership is [own]. *)
+  let targets own =
+    Array.init (total red) (fun k ->
+        let i = index_of red k in
+        if i.(axis) <> 0 then [||]
+        else
+          Array.of_list
+            (List.filter
+               (fun p ->
+                 i.(axis) <- p;
+                 mask.(flat red i) = own)
+               (List.init dx Fun.id)))
+  in
+  let dropped =
+    Int64.[| -1L; of_int dx; of_int (dx + 3); min_int; max_int |]
+  in
+  let positions own m =
+    let lines = targets own and ms = along red axis m in
+    Array.init (total ms) (fun k ->
+        let i = index_of ms k in
+        i.(axis) <- 0;
+        let c = if dx = 0 then [||] else lines.(flat red i) in
+        if Array.length c = 0 || Random.State.int rs 16 = 0 then
+          dropped.(Random.State.int rs (Array.length dropped))
+        else Int64.of_int c.(Random.State.int rs (Array.length c)))
+  in
+  let p1 = positions true m1 and p2 = positions false m2 in
+  let u1 = addends d rs (total (along ts axis m1)) in
+  let u2 = addends d rs (total (along ts axis m2)) in
+  let xs = addends d rs n and others = addends d rs n in
+  let order = shuffled rs m1 m2 in
+  let pw = merge axis order (along red axis m1) p1 (along red axis m2) p2 in
+  let uw = merge axis order (along ts axis m1) u1 (along ts axis m2) u2 in
+  let iv = { (plain r) with broadcast = g.broadcast } in
+  let case into ps us m =
+    {
+      combine = Nx_kernel.Add;
+      saxis = axis;
+      into = of_elements d ts into;
+      sidx =
+        operand (D.Any D.Int64) (along ts axis m) iv (fun k -> bits64 ps.(k));
+      updates = of_elements d (along ts axis m) us;
+      sviews = (if g.broadcast = [] then [] else [ "idx broadcast" ]);
+    }
+  in
+  let keep own =
+    Array.init n (fun e -> if owned.(e) = own then xs.(e) else others.(e))
+  in
+  {
+    regime = g.name;
+    broadcast = g.broadcast;
+    whole = case xs pw uw (m1 + m2);
+    first = case (keep true) p1 u1 m1;
+    second = case (keep false) p2 u2 m2;
+    owned;
+  }
+
+let local_gen regimes =
+  let open Gen in
+  let* d = of_list ~pp:pp_dtype float_dtypes in
+  let* g = regimes in
+  let* m = g.ms in
+  let* m1 = int_range 0 m in
+  let+ seed = int in
+  local_case d g ~m1 ~m2:(m - m1) seed
+
+let pp_modes ppf (w, p) =
+  Format.fprintf ppf "the whole on %a, the parts on %a" pp_mode w pp_mode p
+
+let local_adds =
+  Gen.with_pp
+    (fun ppf (c, m) -> Format.fprintf ppf "%a; %a" pp_local c pp_modes m)
+    (Gen.pair
+       (local_gen
+          (Gen.frequency
+             [
+               (3, few_updates (Gen.int_range 1 3));
+               ( 2,
+                 Gen.of_list
+                   [
+                     one_slice; own_slices; more_targets; row_slices; row_pieces;
+                   ] );
+             ]))
+       (Gen.pair mode_gen mode_gen))
+
+(* One case of each regime and of the parts at 2^16 updates or more, at a
+   float, narrow floats and complex numbers. *)
+let local_examples =
+  List.map
+    (fun (d, g, m1, m2, modes) -> (local_case d g ~m1 ~m2 1, modes))
+    D.
+      [
+        (Any Float32, one_slice, 70_000, 70_000, (Pool, One));
+        (Any Float16, one_slice, 90_000, 10_000, (One, Pool));
+        (Any Complex64, own_slices, 40_000, 40_000, (Sorting, One));
+        (Any Float64, more_targets, 60_000, 8_000, (Pool, Sorting));
+        (Any Bfloat16, row_slices, 30_000, 40_000, (Pool, One));
+        (Any Float8_e4m3fn, row_pieces, 300, 300, (Sorting, Pool));
+      ]
+
+(* A float Add's element is the Add of that element of into and of the
+   updates that land on it, in their order: the other elements of into, and
+   updates that land on other elements, change none of its bits, whatever
+   the threads, any NaN for a NaN. *)
+let law_own_updates (b : Support.backend) (c, (mw, mp)) =
+  let d = dtype_of c.whole.into and axis = c.whole.saxis in
+  let m1 = (shape_of c.first.updates).(axis) in
+  let m2 = (shape_of c.second.updates).(axis) in
+  let at_least n = n >= 1 lsl 16 in
+  cover c.regime true;
+  cover "a narrow float" (is_narrow d);
+  cover "complex numbers" (let (D.Any dt) = d in D.is D.Complex dt);
+  cover "the whole of 2^16 updates or more, a part of fewer"
+    (at_least (m1 + m2) && not (at_least m1 && at_least m2));
+  cover "parts of 2^16 updates or more" (at_least m1 && at_least m2);
+  cover "the whole and the parts on other threads" (mw <> mp);
+  let on mode c = in_mode mode (fun () -> Option.get (scatter_on b c)) in
+  let y = on mw c.whole in
+  let y1 = elements (on mp c.first) and y2 = elements (on mp c.second) in
+  let want = Array.mapi (fun e own -> if own then y1.(e) else y2.(e)) c.owned in
+  matching
+    (fun d -> Testable.equal (same d))
+    [| of_elements d (shape_of c.whole.into) want |]
+    [| y |]
+
+(* Cuts of an axis other than a case's own: the axis, the first index and
+   the count. *)
+type slab = { across : int; start : int; count : int }
+
+let slab_gen =
+  let open Gen in
+  let* c =
+    local_gen
+      (frequency
+         [
+           (3, few_updates (int_range 2 3));
+           (2, of_list [ own_slices; row_slices; row_pieces ]);
+         ])
+  in
+  let ts = shape_of c.whole.into in
+  let axes =
+    List.filter
+      (fun a -> a <> c.whole.saxis)
+      (List.init (Array.length ts) Fun.id)
+  in
+  let* across = of_list axes in
+  let* start = int_range 0 ts.(across) in
+  let+ count = int_range 0 (ts.(across) - start) in
+  (c, { across; start; count })
+
+let pp_slab ppf (c, s) =
+  Format.fprintf ppf "%a; %d of axis %d from %d" pp_local c s.count s.across
+    s.start
+
+let slabs =
+  Gen.with_pp
+    (fun ppf (c, m) -> Format.fprintf ppf "%a; %a" pp_slab c pp_modes m)
+    (Gen.pair slab_gen (Gen.pair mode_gen mode_gen))
+
+let slab_examples =
+  List.map
+    (fun (d, g, m, s, modes) ->
+      ((local_case d g ~m1:m ~m2:0 1, s), modes))
+    D.
+      [
+        ( Any Float32, own_slices, 70_000,
+          { across = 0; start = 1; count = 1 }, (Pool, One) );
+        ( Any Bfloat16, row_slices, 66_000,
+          { across = 1; start = 2; count = 2 }, (One, Pool) );
+        ( Any Complex128, row_slices, 66_000,
+          { across = 1; start = 0; count = 4 }, (Pool, Sorting) );
+        ( Any Float4_e2m1fn, row_pieces, 600,
+          { across = 1; start = 100; count = 250 }, (Sorting, Pool) );
+      ]
+
+(* A float Add over a slab of an axis other than its own, into, the
+   positions and the updates each cut to the slab, is that slab of the whole
+   Add, whatever the threads, any NaN for a NaN. *)
+let law_slab (b : Support.backend) ((c, s), (mw, mp)) =
+  let w = c.whole in
+  let n = (shape_of w.into).(s.across) in
+  let cut (A.Any x) =
+    let rs =
+      Iarray.mapi
+        (fun a e ->
+          if a = s.across then { M.start = s.start; count = s.count; step = 1 }
+          else { M.start = 0; count = e; step = 1 })
+        (L.shape (A.layout x))
+    in
+    A.Any (Option.get (A.move (M.Slice rs) x))
+  in
+  cover c.regime true;
+  cover "a narrow float" (is_narrow (dtype_of w.into));
+  cover "a slab of one" (s.count = 1);
+  cover "a slab of all but one" (n > 1 && s.count = n - 1);
+  cover "positions broadcast along the slab's axis"
+    (List.mem s.across c.broadcast);
+  cover "the whole and the slab on other threads" (mw <> mp);
+  let part =
+    { w with into = cut w.into; sidx = cut w.sidx; updates = cut w.updates }
+  in
+  let y = in_mode mw (fun () -> Option.get (scatter_on b w)) in
+  let y' = in_mode mp (fun () -> Option.get (scatter_on b part)) in
+  matching (fun d -> Testable.equal (same d)) [| cut y |] [| y' |]
+
 (* Guard pages *)
 
 let covers_views ~after views =
@@ -976,6 +1373,16 @@ let cpu (b : Support.backend) =
         "a float Add that sorts its updates has one thread's bits"
         sorted_adds
         (sorted (law_threads b));
+      prop ~count:30 ~examples:local_examples
+        "a float Add's element is that of its element of into and the \
+         updates that land on it, in their order"
+        local_adds
+        (run (law_own_updates b));
+      prop ~count:30 ~examples:slab_examples
+        "a float Add over a slab of another axis is that slab of the whole \
+         Add"
+        slabs
+        (run (law_slab b));
       test "boolean extremes are of truths" (fun () ->
           b.around (test_bool_extremes b));
       test "a float16 sum runs in float32 and rounds once" (fun () ->
