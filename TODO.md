@@ -5,6 +5,15 @@ Where it stands, with every measurement: doc/performance.md.
 
 ## tolk
 
+- gpt-oss's MoE block on CUDA takes 2537 us at 64 tokens and 3195 at 96,
+  against 1352 at 128: below 128 tokens the 8-row blocks have no tensor
+  cores (gate_up 2076 us at 96 against 687 at 128)
+  (_plans/perf-campaign/expertpf/skeptic.md)
+- gpt-oss's prefill scatters gate_up's padded rows back to token rows for
+  the bias and activation, then gathers them again for down: about 4 ms at
+  512 tokens. A rangeify rule that inlines it slows 32-127 tokens; storing
+  the routed product's row operand at its own rows (rune) gets most of the
+  gain (_plans/perf-campaign/expertpf/adjudication.md)
 - rune splits a GPU `Set` scatter's election into about sqrt(k) parts
   in two kernels itself, because tolk's grouping of a long reduce falls
   off past 2048 rows (10x to 1.25x); a reduce split in tolk
