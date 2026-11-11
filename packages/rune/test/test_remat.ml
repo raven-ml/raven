@@ -481,9 +481,13 @@ let test_summed_step () =
 
 (* The stacks read by rows against separate arrays: each row's gradient is
    its region of the stack's, so the gradient alone holds no more over the
-   stacks, with or without remats. A step that sums it in its carry over [k]
-   chunks without remats adds each row's gradient into its region of the
-   carry, in the carry's storage, so it holds no more either. *)
+   stacks, with or without remats. Under remats that does not hold yet: an
+   array apart is the storage the remat's call wrote, where a stack stores
+   that storage into its region, until such a call writes into the stack's
+   region itself. Until then the stack holds more, by one weight at most. A
+   step that sums it in its carry over [k] chunks without remats adds each
+   row's gradient into its region of the carry, in the carry's storage, so
+   it holds no more either. *)
 let test_stacked_step () =
   let pd = T.(list (pair tensor tensor)) and pt = T.(pair tensor tensor) in
   let apart =
@@ -519,8 +523,14 @@ let test_stacked_step () =
           (fun (ws, a) -> Rune.grad pt (fun ws -> loss remat (rows ws) a) ws)
           (ws, a)
       in
-      no_more (Printf.sprintf "the gradient, remats %b" remat) ~apart:x
-        ~stacked:y)
+      let msg = Printf.sprintf "the gradient, remats %b" remat in
+      if not remat then no_more msg ~apart:x ~stacked:y
+      else begin
+        let weight = Rig.allocation Rig.host (4 * dim * hidden) in
+        let bytes = Printf.sprintf "%s: %d bytes stacked, %d apart" msg y x in
+        less ~msg:bytes int ~than:y x;
+        less ~msg:bytes int ~than:(x + weight + 1) y
+      end)
     [ false; true ];
   let chunks k a = Nx.reshape [| k; batch / k; dim |] a in
   let f_apart k (ws, a) =

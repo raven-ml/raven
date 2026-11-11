@@ -434,6 +434,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A `Rune.jit` result that a kernel of its own computes, as `Nx.attention`'s,
+  is the storage that kernel wrote, no longer copied once more before the call
+  returns: bfloat16 attention over 4096 x 4 heads of 64 rows of 256 takes
+  4.09 ms of kernels on an RTX 5000 Ada, from 6.31, and with its gradient
+  19.7 ms, from 22.0.
 - A `Rune.jit` call that donates no argument allocates fewer words: the end
   of its donation claim allocates nothing.
 - A compiled routed product (`Nx_quant.apply_experts`, `Nx.matmul_segments`)

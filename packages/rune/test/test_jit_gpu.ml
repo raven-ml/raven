@@ -2813,6 +2813,15 @@ let () =
                ~id:(fun (Nx.Dtype.Any dt) -> Nx.Dtype.name dt)
                Nx.Dtype.[ Any Nx.float32; Any Nx.bfloat16 ]
                (fun dt -> Attentions.sizes (snd (on_gpu ())) dt);
+             Windtrap.cases "results are the storage the kernels wrote"
+               ~id:(fun (Nx.Dtype.Any dt) -> Nx.Dtype.name dt)
+               Nx.Dtype.[ Any Nx.float32; Any Nx.bfloat16 ]
+               (fun dt ->
+                 Attentions.uncopied (snd (on_gpu ()))
+                   ~grad:(dt = Nx.Dtype.Any Nx.bfloat16)
+                   dt);
+             test "results returned twice are apart" (fun () ->
+                 Attentions.apart (snd (on_gpu ())) (Nx.Dtype.Any Nx.bfloat16));
              test "forward mode of a summed loss holds its bound" attention_jvp;
              prop ~count:4 ~examples:Paged_attentions.examples
                "paged keys and values give dense ones' bits"

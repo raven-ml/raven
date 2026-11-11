@@ -1393,7 +1393,11 @@ val jit :
     another device, which [f] places where the program computes, is copied there
     once per program, which holds the copy. A program on one device holds the
     storage of the values it computes from its first call on, so that a call
-    allocates only its results.
+    allocates only its results. A result that a kernel of its own computes, as
+    {!Nx.val-attention}'s and a scatter's are, is the storage that kernel
+    writes, once: a second result of that value is a copy, as is a result
+    that takes the memory of a donated argument it does not read
+    ({!section-donation}).
 
     An {e assembly} is a value made of pieces at regions of it, as {!Nx.stack},
     {!Nx.concatenate}, {!Nx.set} and {!Nx.pad} make one. On one device, an

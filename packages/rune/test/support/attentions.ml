@@ -986,3 +986,82 @@ let sizes s dtype =
         Testable.(list (pair string int))
         (snd first) ks)
     [ (1024, 256); (256, 1024); (1024, 1024) ]
+
+(* Results as their kernels wrote them
+
+   rune.mli: a result that a kernel of its own computes lies in the storage
+   that kernel writes. A call of attention, and on a tensor core of its
+   fused gradient, so compiles attention's kernels alone. *)
+
+let uncopied (module S : Nx.Devices) ~grad dtype =
+  let (F dt) = float_dtype dtype in
+  let c = base dtype in
+  let shape = [| 2; 4; 64; 64 |] in
+  let place salt = Nx.place S.on (Nx.cast dt (draw c salt shape)) in
+  let q = place 1 and k = place 2 and v = place 3 and g = place 4 in
+  let qkv = Nx.Ptree.(triple tensor tensor tensor) in
+  let attend (q, k, v) =
+    fst (Nx.attention ~acc:Nx.float32 ~kv:(Dense { k; v }) q)
+  in
+  let names f =
+    let (), ks = Tolk.Realize.kernels f in
+    List.map (fun (k : Tolk.Realize.kernel) -> k.name) ks
+  in
+  let own msg ks =
+    equal ~msg
+      Testable.(list string)
+      []
+      (List.filter (fun n -> not (String.starts_with ~prefix:"attention" n)) ks)
+  in
+  let forward = Rune.jit Nx.Ptree.(qkv @-> returns tensor) attend in
+  own "the forward's other kernels"
+    (names (fun () -> Nx.sync (forward (q, k, v))));
+  if grad then
+    (* Cotangents of [o] and [lse] both, which the derivative's kernels
+       read: one of [lse] alone would be zeros, stored by a kernel of
+       their own. *)
+    let l = Nx.place S.on (draw c 5 (Array.sub shape 0 3)) in
+    let both (q, k, v) = Nx.attention ~acc:Nx.float32 ~kv:(Dense { k; v }) q in
+    let two = Nx.Ptree.(pair tensor tensor) in
+    let step x g = snd (Rune.vjp qkv two both x) g in
+    let backward = Rune.jit Nx.Ptree.(qkv @-> two @-> returns qkv) step in
+    own "the gradient's other kernels"
+      (names (fun () ->
+           let a, b, d = backward (q, k, v) (g, l) in
+           Nx.sync a;
+           Nx.sync b;
+           Nx.sync d))
+
+(* A call returning one attention's [o] twice, and transposed, returns
+   three arrays of [o]'s elements that share no memory. *)
+let apart (module S : Nx.Devices) dtype =
+  let (F dt) = float_dtype dtype in
+  let c = base dtype in
+  let shape = [| 1; 2; 16; 32 |] in
+  let place salt = Nx.place S.on (Nx.cast dt (draw c salt shape)) in
+  let q = place 1 and k = place 2 and v = place 3 in
+  let swap = Nx.transpose ~axes:[ 0; 1; 3; 2 ] in
+  let f q k v =
+    let o, _ = Nx.attention ~acc:Nx.float32 ~kv:(Dense { k; v }) q in
+    (o, o, swap o)
+  in
+  let three = Nx.Ptree.(triple tensor tensor tensor) in
+  let g =
+    Rune.jit Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns three) f
+  in
+  let a, b, t = g q k v in
+  let host x = Nx.to_array (Nx.cast Nx.float32 (Nx.place Nx.Host.on x)) in
+  let o = host a in
+  equal ~msg:"the second" (Testable.array Testable.float_exact) o (host b);
+  equal ~msg:"the transposed"
+    (Testable.array Testable.float_exact)
+    o
+    (host (swap t));
+  let memory y = Nx_array.buffer (Option.get (Nx.Repr.array y)) in
+  let shared x y = Rig.Buffer.overlaps (memory x) (memory y) in
+  equal ~msg:"the first and the second share memory" Testable.bool false
+    (shared a b);
+  equal ~msg:"the first and the transposed share memory" Testable.bool false
+    (shared a t);
+  equal ~msg:"the second and the transposed share memory" Testable.bool false
+    (shared b t)

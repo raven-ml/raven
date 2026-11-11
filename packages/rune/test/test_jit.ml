@@ -2900,6 +2900,20 @@ let test_long_twice () =
        (List.filter (fun r -> Rig.Buffer.overlaps b (memory r)) [ y; z ]));
   equal ~msg:"apart" bool false (Rig.Buffer.overlaps (memory y) (memory z))
 
+(* A scatter into a fresh target combines in the storage of its result: the
+   first call holds the result alone. *)
+let test_scatter_held () =
+  let n = 4096 and k = 8 in
+  let at j = Int64.of_int (j * 509) in
+  let p = Nx.create Nx.int64 [| k |] (Array.init k at) in
+  let u = Nx.create f32 [| k |] (Array.init k Float.of_int) in
+  let s = T.(pair tensor tensor @-> returns tensor) in
+  let f (p, u) = Nx.scatter ~axis:0 p u (Nx.zeros f32 [| n |]) in
+  let on_host (r, _) = Rig.equal r Rig.host in
+  equal ~msg:"the bytes the first call allocates" int
+    (Rig.allocation Rig.host (4 * n))
+    (snd (List.find on_host (Rune.footprint s f (p, u))))
+
 (* A scatter's target lends to the scatter, first. *)
 let test_scatter_lends () =
   let p = Nx.create Nx.int64 [| 2 |] [| 2L; 0L |] in
@@ -5842,6 +5856,8 @@ let () =
                "a scatter keeps the bits of each element no update lands on"
                Unreached.cases
                (Unreached.law (module Nx.Host));
+             test "a scatter into a fresh target holds its result alone"
+               test_scatter_held;
              test "a scatter combines in a donated target" test_long_donated;
              test "a scatter returned twice takes a donated target once"
                test_long_twice;

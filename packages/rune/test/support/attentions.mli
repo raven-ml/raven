@@ -134,3 +134,15 @@ val sizes : (module Nx.Devices) -> Nx.Dtype.any -> unit
     compiles on [s]'s devices for [dt], keys and values of [256] dimensions
     each, list as many loads, stores and matrix products each as with either or
     both of [1024]: a kernel's code is bounded by its tiles. *)
+
+val uncopied : (module Nx.Devices) -> grad:bool -> Nx.Dtype.any -> unit
+(** [uncopied s ~grad dt] checks that a compiled call of attention over
+    [dt] on [s]'s devices, and where [grad] its compiled gradient in the
+    query, keys and values of [o] and [lse], compile only kernels of
+    attention's own:
+    each result is the storage its kernel wrote, uncopied. *)
+
+val apart : (module Nx.Devices) -> Nx.Dtype.any -> unit
+(** [apart s dt] checks that a compiled call returning one attention's [o]
+    twice, and transposed, on [s]'s devices, returns three arrays of [o]'s
+    elements, no two sharing memory. *)

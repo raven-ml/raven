@@ -711,6 +711,15 @@ let () =
            ];
          group "past a row's length"
            [ test "the derivative reads no key or value there" test_past_length ];
+         group "results"
+           [
+             test "are the storage the kernels wrote" (fun () ->
+                 Rune_support.Attentions.uncopied (module Nx.Host) ~grad:false
+                   (Nx.Dtype.Any Nx.float32));
+             test "returned twice are apart" (fun () ->
+                 Rune_support.Attentions.apart (module Nx.Host)
+                   (Nx.Dtype.Any Nx.float32));
+           ];
          group "the derivative's tiles"
            [ test "hold whole steps of each tensor core" tile_steps ];
          group "gradients by central differences"
