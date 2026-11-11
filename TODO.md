@@ -5,6 +5,15 @@ Where it stands, with every measurement: doc/performance.md.
 
 ## tolk
 
+- Since D479 groups starved reduces, a GPU `Set` election of 16384 and
+  24576 rows runs 1.4x and 1.9x slower than rune's former split, and
+  elections over several indices near `stream_threads` outputs up to 3.5x;
+  a split decided where the renderer is known would close the gap
+  (_plans/consolidate/groupgate/adjudication.md)
+- tolk's "launches > a schedule does not depend on what the process built
+  before it" can pass its 60 s limit under load: it runs after
+  `order_independent`, whose schedule cache stays live, so its 200 full
+  collections take 10-18 s; running `order_independent` uncached fixes it
 - rune's paged attention with pages of 16 keys runs at 168 registers on
   CUDA, one workgroup an SM; its values spilled for a tile are refilled
   every tile, skipped ones included, which keeps K's copy from moving
