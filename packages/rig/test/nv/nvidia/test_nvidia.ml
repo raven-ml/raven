@@ -23,23 +23,14 @@ let rec mkdir_p d =
     Sys.mkdir d 0o755
   end
 
-let rec remove path =
-  if Sys.file_exists path then
-    if Sys.is_directory path then begin
-      Array.iter (fun f -> remove (Filename.concat path f)) (Sys.readdir path);
-      Sys.rmdir path
-    end
-    else Sys.remove path
-
 (* A machine whose PCI functions are [functions], each a bus address and its
    [vendor] and [class] files' contents, [None] for a file it lacks, as Linux's
-   sysfs shows them, under a directory beside the suite in _build, which a
-   killed run may leave. Bus addresses hold colons, which some file systems
-   refuse, so the tree is made here, and Windows file names refuse them. *)
+   sysfs shows them, in a fresh directory that the runner removes once the test
+   ends. Bus addresses hold colons, which some file systems refuse, so the test
+   makes the tree as it runs; Windows file names refuse them. *)
 let tree name functions =
   if Sys.win32 then skip ~reason:"Windows file names hold no PCI address" ();
-  let root = Filename.concat "trees" name in
-  remove root;
+  let root = temp_dir ~prefix:name () in
   let put bus file contents =
     let dir = Filename.concat root ("sys/bus/pci/devices/" ^ bus) in
     mkdir_p dir;
@@ -139,16 +130,14 @@ let no_hang_bound () =
 
 (* Every root shows this machine: a root that links to [/] names the same
    GPUs, so a GPU open through one is open through the other. The link lives
-   beside the suite in _build; it is unlinked, never walked. *)
-let mirror = Filename.concat "trees" "mirror"
-
+   in a fresh directory, and the test unlinks it before the runner removes the
+   directory, so nothing walks it: one left in a source tree, from which a
+   cached test is run again, has dune walk the whole filesystem. *)
 let other_root () =
   if counted () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
-  mkdir_p "trees";
-  (match Unix.lstat mirror with
-  | _ -> Unix.unlink mirror
-  | exception Unix.Unix_error (Unix.ENOENT, _, _) -> ());
+  let mirror = Filename.concat (temp_dir ()) "mirror" in
   Unix.symlink "/" mirror;
+  Fun.protect ~finally:(fun () -> Unix.unlink mirror) @@ fun () ->
   equal (list string) (listed ()) (listed ~root:mirror ());
   let g = require_ok (Rig_gpu_support.opened (N.gpu 0)) in
   let e =
