@@ -435,7 +435,7 @@ let rec find_room l need i found =
     find_room l need (i + 1) found
 
 (* Under [l]'s lock: [h] held from now, its lap restarted at byte 0 if
-   [restart], its holder waiting for its uses first if [waits]. *)
+   [restart], its holder waiting for its uses first if [waits]; is [h]. *)
 let hold l ~restart ~waits h =
   h.held <- true;
   h.last <- l.takes;
@@ -447,6 +447,12 @@ let hold l ~restart ~waits h =
   end;
   h
 
+(* Under [l]'s lock: publishes [halves], whose last is the new half [h],
+   held; is [h]. *)
+let publish l halves h =
+  l.halves <- halves;
+  h
+
 (* Under [d]'s lock: a half of [d]'s staging memory for the pieces [writer]
    writes, held now. A piece of [need] bytes that the host writes, [need]
    positive, takes the free half with room after its cursor whose lap started
@@ -456,9 +462,10 @@ let hold l ~restart ~waits h =
    Otherwise a half is taken at its start: a free one whose uses are done, one
    with a buffer first; for the host, else the free half whose lap started
    first, whose uses its holder waits for; else a new half, so no copy waits for
-   a hold. A new half is published by the last store, so an asynchronous
-   exception before it changes nothing. It makes no buffer, whose creation can
-   run the out-of-memory ladder, which takes every device's lock. *)
+   a hold. The half is held, and a new half published, by the step that
+   returns it, and its holder stores it in its cell with nothing between that
+   polls ([holding]). It makes no buffer, whose creation can run the
+   out-of-memory ladder, which takes every device's lock. *)
 let take_locked d writer need =
   let l = d.live in
   l.takes <- l.takes + 1;
@@ -488,41 +495,34 @@ let take_locked d writer need =
             stage = d;
           }
         in
-        l.halves <- Array.append l.halves [| h |];
-        h
+        publish l (Array.append l.halves [| h |]) h
       end
 
-(* [take_locked] under [d]'s lock, its arguments in no tuple. *)
-let take d writer need =
-  let lock = d.live.lock in
-  Lock.hold lock;
-  match take_locked d writer need with
-  | h ->
-      Lock.release lock;
-      h
-  | exception e ->
-      Lock.release lock;
-      reraise e
+(* The half that a holder's cell names until a take stores the half it
+   took there. No take takes it. *)
+let no_half =
+  {
+    buffer = None;
+    held = false;
+    names = [];
+    cursor = half_bytes;
+    lap = 0;
+    last = 0;
+    waits = false;
+    stage = Dev.host;
+  }
 
-let release h = h.held <- false
+(* Under their stage's lock: gives back [h0] and [h1], either [no_half],
+   their cursors set by their holder, which reads them no more, in one
+   step. *)
+let give_halves h0 h1 =
+  if h0 != no_half then h0.held <- false;
+  if h1 != no_half then h1.held <- false
 
-(* Gives [h] back, its cursor set by its holder, which reads it no more.
-   Allocates nothing, so no asynchronous exception keeps the half. *)
-let give h = Dev.protect h.stage release h
-
-(* Gives [h] back with its uses unknown: no piece is packed into it until its
-   lap restarts. *)
-let abandon h =
-  h.cursor <- half_bytes;
-  give h
-
-(* Under [d]'s lock: gives [h0] and [h1] back, as [give] does, then takes
-   out the buffers of [d]'s free halves that no take took within the last
-   takes, as many as [d] has halves, each list cell made before the stores.
-   Nothing allocates until the halves are given. *)
-let give_locked d h0 h1 =
-  release h0;
-  release h1;
+(* Under [d]'s lock: takes out the buffers of [d]'s free halves that no take
+   took within the last takes, as many as [d] has halves, each list cell
+   made before the stores. *)
+let idle_buffers d =
   let l = d.live in
   let n = Array.length l.halves in
   let bs = ref [] in
@@ -537,24 +537,6 @@ let give_locked d h0 h1 =
     | Some _ | None -> ()
   done;
   !bs
-
-(* Gives [h0] and [h1] back, the same half for one, and returns the buffers
-   of [d]'s idle halves as memory returns free halves ([Memory.return_half]),
-   outside the lock, in one hold of it. Copies that keep a half busy, one
-   after another or in lockstep on several threads, take it within every
-   window and keep its buffer; the extra halves of a burst go idle once as
-   many later takes as there are halves have passed them by. An exception
-   meanwhile leaves the buffers it took to their collection. *)
-let give_back d h0 h1 =
-  let lock = d.live.lock in
-  Lock.hold lock;
-  match give_locked d h0 h1 with
-  | bs ->
-      Lock.release lock;
-      List.iter Memory.return_half bs
-  | exception e ->
-      Lock.release lock;
-      reraise e
 
 (* The buffer of [h], made where it is missing or names a lost device's work,
    outside every lock. A half whose take did not see its uses done ([waits])
@@ -804,23 +786,58 @@ let piece_base base0 k = if k = 0 then base0 else 0
 
 (* [f h0 h1] on two halves of [d]'s staging memory that [writer] writes, or
    one, [h0] and [h1] the same, unless [two]; the halves given back once it
-   returns or raises. A half [f] returns normally has its cursor set by [f].
-   Nothing allocates between a take and the handler that gives it back. *)
+   returns or raises. A half [f] returns normally has its cursor set by [f];
+   one it raises from goes back with its uses unknown, so no piece is packed
+   into it until its lap restarts. The buffers of [d]'s idle halves go back
+   as memory returns free halves ([Memory.return_half]), outside the lock.
+   Copies that keep a half busy, one after another or in lockstep on several
+   threads, take it within every window and keep its buffer; the extra
+   halves of a burst go idle once as many later takes as there are halves
+   have passed them by. An exception after the give leaves the buffers it
+   took to their collection. *)
 let holding d writer need ~two f =
-  let h0 = take d writer need in
-  match if two then take d writer 0 else h0 with
+  let lock = d.live.lock in
+  let c0 = ref no_half and c1 = ref no_half and locked = ref false in
+  match
+    (* The sections under [d]'s lock end in this handler, which reads
+       [locked], stored right after each take of the lock and right before
+       each give. Each half goes into its cell as its take returns, and
+       leaves it as its give returns, with nothing between that polls. The
+       cells are local, so in native code they allocate nothing. *)
+    Lock.hold lock;
+    locked := true;
+    c0 := take_locked d writer need;
+    if two then c1 := take_locked d writer 0;
+    locked := false;
+    Lock.release lock;
+    let p = f !c0 (if two then !c1 else !c0) in
+    Lock.hold lock;
+    locked := true;
+    give_halves !c0 !c1;
+    c0 := no_half;
+    c1 := no_half;
+    let bs = idle_buffers d in
+    locked := false;
+    Lock.release lock;
+    List.iter Memory.return_half bs;
+    p
+  with
+  | p -> p
   | exception e ->
-      abandon h0;
+      (* The handler's first steps, in line: a call there could take a
+         second exception first. [Lock.hold] polls nowhere in native code. *)
+      if not !locked then Lock.hold lock;
+      let h0 = !c0 and h1 = !c1 in
+      if h0 != no_half then begin
+        h0.cursor <- half_bytes;
+        h0.held <- false
+      end;
+      if h1 != no_half then begin
+        h1.cursor <- half_bytes;
+        h1.held <- false
+      end;
+      Lock.release lock;
       reraise e
-  | h1 -> (
-      match f h0 h1 with
-      | p ->
-          give_back d h0 h1;
-          p
-      | exception e ->
-          abandon h0;
-          if two then abandon h1;
-          reraise e)
 
 (* The point [p] of a leg of a copy of [n] pieces, committed on its device
    if a device runs it and the copy has more: the host waits for such a leg
