@@ -1423,6 +1423,48 @@ let attention_call (type s) (dt : (float, s) Nx.dtype) ~hq ~hk ~tq ~tk mask =
         fun () -> ignore (synced (f q k v)));
   }
 
+(* Attention compiled over paged keys, as a key cache holds them: [hq] query
+   heads over [hk] key heads of 64 dimensions, in pools of [slots] pages of
+   one key, whose table names page [j] at key [j] before the length [len]
+   and [-1] from it on; [tq] query rows, the last at position [len - 1],
+   under a causal mask or a causal window of 128 keys. *)
+let paged_attention_call (type s) (dt : (float, s) Nx.dtype) ~hq ~hk ~tq ~len ~slots
+    mask =
+  {
+    at =
+      (fun (type d) (at : d Nx.Placement.t) ->
+        let draw i s =
+          Nx.place at
+            (Nx.cast dt (Nx.Rng.normal ~key:(Nx.Rng.key i) f32 s))
+        in
+        let q = draw 80 [| 1; hq; tq; 64 |] in
+        let k = draw 81 [| slots; hk; 1; 64 |] and v = draw 82 [| slots; hk; 1; 64 |] in
+        let table =
+          Nx.place at
+            (Nx.init Nx.int64 [| 1; slots |] (fun i ->
+                 if i.(1) < len then Int64.of_int i.(1) else -1L))
+        in
+        let lengths = Nx.place at (Nx.create Nx.int64 [| 1 |] [| Int64.of_int len |]) in
+        let mask (p : d Nx.pair) =
+          match mask with
+          | Window ->
+              let pos = Nx.add p.q (Nx.sub_s p.len (Int64.of_int p.tq)) in
+              Nx.logical_and (Nx.causal p) (Nx.less pos (Nx.add_s p.k 128L))
+          | Causal -> Nx.causal p
+          | Full | Reach -> invalid_arg "paged_attention_call: a mask"
+        in
+        let f =
+          Rune.jit
+            Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+            (fun q k v ->
+              fst
+                (Nx.attention ~lengths ~mask ~acc:f32
+                   ~kv:(Nx.Paged { k; v; table })
+                   q))
+        in
+        fun () -> ignore (synced (f q k v)));
+  }
+
 (* Attention's gradient compiled: the query's, keys' and values' of
    [Σ w∘o] over {!attention_call}'s call, [w] drawn as the operands are. *)
 let attention_grad_call (type s) ?(d = 64) (dt : (float, s) Nx.dtype) ~hq ~hk ~tq ~tk mask =
@@ -2063,7 +2105,8 @@ let gpu_rows g =
       (* Attention: a prefill of 8 heads, 2048 and 4096 rows, full, causal,
          in a window of 128 keys and in one wider than the keys, and the gradient of one of 2048; a
          decode step of one row a head over 4096 keys; gpt-oss's decode, 64
-         query heads over 8 key heads. *)
+         query heads over 8 key heads, and its prefill of 512 rows and decode
+         step over keys paged in a cache of 1024. *)
       on_gpu g "attention/jit-bf16-8x2048x64-full"
         (attention_call Nx.bfloat16 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Full);
       on_gpu g "attention/jit-bf16-8x2048x64-causal"
@@ -2090,6 +2133,12 @@ let gpu_rows g =
         (attention_call f32 ~hq:8 ~hk:8 ~tq:1 ~tk:4096 Full);
       on_gpu g "attention/jit-bf16-gqa-64x8x4096x64-decode"
         (attention_call Nx.bfloat16 ~hq:64 ~hk:8 ~tq:1 ~tk:4096 Full);
+      on_gpu g "attention/jit-bf16-paged-64x8x512x64-causal"
+        (paged_attention_call Nx.bfloat16 ~hq:64 ~hk:8 ~tq:512 ~len:512 ~slots:1024 Causal);
+      on_gpu g "attention/jit-bf16-paged-64x8x512x64-window128"
+        (paged_attention_call Nx.bfloat16 ~hq:64 ~hk:8 ~tq:512 ~len:512 ~slots:1024 Window);
+      on_gpu g "attention/jit-bf16-paged-64x8x1024x64-decode"
+        (paged_attention_call Nx.bfloat16 ~hq:64 ~hk:8 ~tq:1 ~len:513 ~slots:1024 Causal);
       on_gpu g "kv-append-4096" (kv_append ~donated:true);
       on_gpu g "kv-append-4096-copied" (kv_append ~donated:false);
     ]
