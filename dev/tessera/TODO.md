@@ -227,6 +227,13 @@ An item leaves when its library fixes it, or when a design decides it stays.
 - Its docs show a `Kaun.Data.prepare ~shuffle` that does not exist (found by
   the streaming-data review).
 
+## jord
+
+- `test_crs.ml`'s Karney tests check a distance with `less ~than`, which
+  windtrap passes for NaN (it orders NaN below every float), so a NaN
+  coordinate would pass them. Check with `equal (float eps)` instead, as
+  the TM35FIN tests do. Found by the jord warp review.
+
 ## Repository
 
 - OCaml's arm64 backend contracts `a +. b *. c` (and the subtract forms)
