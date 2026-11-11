@@ -728,7 +728,7 @@ value caml_rig_claim_unhold(value v_taken, value v_i, value v_alloc,
       (_Atomic unsigned char *)(Bytes_val(v_taken) + Long_val(v_i));
   unsigned char seen = HOLD_TAKEN;
   if (!atomic_compare_exchange_strong_explicit(mark, &seen, HOLD_ENDING,
-                                               memory_order_relaxed,
+                                               memory_order_acquire,
                                                memory_order_acquire)) {
     while (atomic_load_explicit(mark, memory_order_acquire) == HOLD_ENDING)
       relax();
