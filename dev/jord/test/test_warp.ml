@@ -492,6 +492,111 @@ let refusals =
       raises_match (Exn.invalid_arg ~sub:"not a real dtype") (fun () ->
           Warp.bilinear p (Nx.zeros Nx.bool [| 3; 4 |])))
 
+(* Gradients *)
+
+(* A smooth source of [n × n] cells. *)
+let sines n =
+  Nx.init Nx.float64 [| n; n |] (fun a ->
+      let i = float_of_int a.(0) and j = float_of_int a.(1) in
+      sin (0.45 *. i) +. cos (0.3 *. j) +. (0.5 *. sin (0.2 *. (i +. j))))
+
+let truth = (0.3, -0.2)
+let shift (r, c) = Nx.create Nx.float64 [| 2 |] [| r; c |]
+
+(* A pair of images: [x] at the centres of its cells 4 in from its edges, and
+   [x] at those centres moved by [truth]. [loss s] is their squared distance
+   with the first's points moved by [s] instead. *)
+let loss x =
+  let margin = 4 in
+  let m = Nx.dim 0 x - (2 * margin) in
+  let centres =
+    Nx.init Nx.float64 [| m; m; 2 |] (fun a ->
+        float_of_int (a.(a.(2)) + margin) +. 0.5)
+  in
+  let sample s =
+    fst (Warp.bilinear (Nx.add centres (Nx.reshape [| 1; 1; 2 |] s)) x)
+  in
+  let target = sample (shift truth) in
+  fun s ->
+    let d = Nx.sub (sample s) target in
+    Nx.sum (Nx.mul d d)
+
+let centre_gradient =
+  test "the gradient on the centres is the right-hand derivative" (fun () ->
+      let x = sines 24 in
+      List.iter
+        (fun (name, x) ->
+          let loss = loss x in
+          let l s = Nx.item [] (loss (shift s)) and h = 1e-7 in
+          let steps = [| (h, 0.); (0., h) |] in
+          Array.iteri
+            (fun k g ->
+              let msg = Printf.sprintf "%s, axis %d" name k in
+              let right = (l steps.(k) -. l (0., 0.)) /. h in
+              greater ~msg float_exact ~than:1. (Float.abs g);
+              equal ~msg (float (1e-5 *. Float.abs g)) right g)
+            (Nx.to_array (Rune.grad' loss (shift (0., 0.)))))
+        [
+          ("one band", x);
+          ("three bands", Nx.stack ~axis:2 [ x; Nx.mul_s x 2.; Nx.neg x ]);
+        ])
+
+(* Channel 0 of a 4 × 4 source, 10 i + j² with NaN at [nans], as the first of
+   two channels whose second has NaN at [other] too; [holes] are not valid.
+   [at p] is channel 0's value at the point [p] moved by [s]. *)
+let nan_source ~nans ~other ~holes =
+  let x =
+    Nx.init Nx.float64 [| 4; 4; 2 |] (fun a ->
+        let c = (a.(0), a.(1)) in
+        if List.mem c nans || (a.(2) = 1 && List.mem c other) then Float.nan
+        else float_of_int ((10 * a.(0)) + (a.(1) * a.(1))))
+  in
+  let valid =
+    Nx.init Nx.bool [| 4; 4 |] (fun a -> not (List.mem (a.(0), a.(1)) holes))
+  in
+  fun (r, c) s ->
+    let p = Nx.add (pixels [ (r, c) ]) (Nx.reshape [| 1; 2 |] s) in
+    Nx.sum (Nx.slice [ A; I 0 ] (fst (Warp.bilinear ~valid p x)))
+
+let nan_neighbours =
+  cases ~id:(fun (name, _, _, _, _, _) -> name)
+    "a NaN left out leaves the gradient of the cells kept"
+    [
+      (* Point (1.5, 1.5) is cell (1, 1)'s centre: its far cells, row 2 and
+         column 2, have weight 0. *)
+      ("NaN on the diagonal", [ (2, 2) ], [], [], (1.5, 1.5), [ None; None ]);
+      ("NaN in a hole", [ (2, 2) ], [], [ (2, 2) ], (1.7, 1.7), [ None; None ]);
+      ( "NaN in another channel",
+        [],
+        [ (2, 1) ],
+        [],
+        (1.5, 1.5),
+        [ None; None ] );
+      (* Along its own axis a NaN neighbour gives 0, as a hole does. *)
+      ("NaN along an axis", [ (2, 1) ], [], [], (1.5, 1.5), [ Some 0.; None ]);
+    ]
+    (fun (_, nans, other, holes, p, want) ->
+      let at = nan_source ~nans ~other ~holes p in
+      let l s = Nx.item [] (at (shift s)) and h = 1e-7 in
+      let steps = [| (h, 0.); (0., h) |] in
+      let g = Nx.to_array (Rune.grad' at (shift (0., 0.))) in
+      List.iteri
+        (fun k want ->
+          let right = (l steps.(k) -. l (0., 0.)) /. h in
+          let want = Option.value want ~default:right in
+          equal ~msg:(Printf.sprintf "axis %d" k) (float 1e-5) want g.(k))
+        want)
+
+let descent =
+  test "descent from the centres finds a sub-pixel shift" (fun () ->
+      let loss = loss (sines 24) in
+      let s = ref (shift (0., 0.)) in
+      for _ = 1 to 300 do
+        s := Nx.sub !s (Nx.mul_s (Rune.grad' loss !s) 0.002)
+      done;
+      let r, c = truth in
+      equal (array (float 1e-6)) [| r; c |] (Nx.to_array !s))
+
 (* Systems *)
 
 let utm33 = north_up (utm 33 true) ~rows:4 ~cols:5 ~x:500000. ~y:5300000. 10.
@@ -611,6 +716,7 @@ let () =
              shapes;
              refusals;
            ];
+         group "gradient" [ centre_gradient; nan_neighbours; descent ];
          group "systems" [ equal_systems; no_source; own_domain ];
          group "antimeridian" [ any_360; in_range ];
          group "windows" [ window_cases; windowed ];

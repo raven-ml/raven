@@ -91,9 +91,11 @@ val bilinear :
   ('v, 's, 'd) Nx.t * 'd Nx.bool_t
 (** [bilinear ?valid p x] interpolates between the centres of the four cells
     around each point, weighted as ISO 19123 §C.6 gives in pixel coordinates.
-    A cell outside the grid, not [valid], or of weight 0 is left out, by
-    selection, so a NaN there never reaches the result; the other weights are
-    divided by their sum. The value is computed in float64. Its mask is
+    A cell outside the grid or not [valid] is left out, by selection, and so
+    is a cell of weight 0 whose value is NaN or infinite, so that value never
+    reaches the result; the other weights are divided by their sum. A cell of
+    weight 0 whose value is finite is kept and adds 0, whose sign can make a
+    mean of 0 read as -0. The value is computed in float64. Its mask is
     {!nearest}'s: the containing cell has weight at least 1/4, so the value is
     a mean of valid values around the point, and at the grid's edge it is the
     edge's values interpolated along it. A NaN of a valid cell of positive
@@ -103,6 +105,20 @@ val bilinear :
     the value v becomes ⌊v + ½⌋ in float64 arithmetic, GDAL's rule, on every
     sign (-2.5 gives -2); it lies between valid values, so it never
     saturates. Integers past 2⁵³ in magnitude are rounded to float64 first.
+
+    {b Gradient.} The value is nx arithmetic in the points, so rune
+    differentiates it in [p] for a float [x]; an integer value is rounded, and
+    has none, so a caller decodes integers to floats first. The gradient is
+    the derivative of the mean over the cells kept at the point. A cell left
+    out (outside the grid, not valid, or of weight 0 and not finite) adds
+    nothing to it, so along that cell's axis the derivative is 0, as at the
+    grid's edge: a NaN neighbour of weight 0 gives 0, as a hole does, and its
+    NaN reaches the value once the point moves toward it. The four cells come
+    from ⌊row - ½⌋ and ⌊col - ½⌋, so a point on the line through a row or
+    column of centres belongs to the span after it, whose far cells have
+    weight 0. Where they are kept, that is the right-hand derivative, toward
+    them. So descent in the points moves from a start on the centres, as the
+    centres of a grid in the source's own system are.
 
     Raises [Invalid_argument] as the samplers do, and if [x] holds booleans
     or complex numbers. *)

@@ -1,4 +1,4 @@
 (tests
  (names test_crs test_grid test_polygons test_rasterize test_warp)
- (libraries jord nx windtrap)
+ (libraries jord nx rune windtrap)
  (deps tm_coords.dat warp_gdal.dat))

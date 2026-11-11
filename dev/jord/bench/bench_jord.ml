@@ -53,6 +53,19 @@ let fields =
     ~rings:(Array.init (n + 1) (fun k -> 4 * k))
     ~features:(Array.init (n + 1) Fun.id)
 
+(* A 1024² source of 4 float32 bands, read at 1024² pixel points, a third of
+   them on cell centres, where bilinear keeps its weight-0 taps. *)
+let side = 1024
+
+let bands =
+  Nx.init Nx.float32 [| side; side; 4 |] (fun a ->
+      sin (float_of_int ((a.(0) * 7) + (a.(1) * 3) + a.(2))))
+
+let points =
+  Nx.init Nx.float64 [| side; side; 2 |] (fun a ->
+      let off = if (a.(0) + a.(1)) mod 3 = 0 then 0.5 else 0.75 in
+      float_of_int a.(a.(2)) +. off)
+
 let () =
   Thumper.run "jord"
     [
@@ -60,6 +73,11 @@ let () =
         [
           Thumper.bench "centres/tile" (fun () -> Rasterize.centres grid fields);
           Thumper.bench "touched/tile" (fun () -> Rasterize.touched grid fields);
+        ];
+      Thumper.group "warp"
+        [
+          Thumper.bench "bilinear/4-bands" (fun () ->
+              Warp.bilinear points bands);
         ];
     ]
   |> exit

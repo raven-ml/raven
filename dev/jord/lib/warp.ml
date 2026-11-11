@@ -119,15 +119,25 @@ let bilinear ?valid p x =
   let i0 = Nx.floor u and j0 = Nx.floor v in
   let a = Nx.sub u i0 and b = Nx.sub v j0 in
   let along i0 a = [ (i0, Nx.rsub_s 1. a); (Nx.add_s i0 1., a) ] in
-  (* A tap left out is selected away, never multiplied by 0: NaN · 0 is NaN. *)
+  (* A tap left out is selected away, never multiplied by 0: NaN · 0 is NaN,
+     in the value and in the gradient, so its value is replaced by 0 before
+     the product and the product selected away after it. A tap of weight 0
+     whose value is finite is kept, adding 0 to the value but its weight's
+     derivative to the gradient: on a centre line, where a neighbour's weight
+     is 0, the mean then moves toward that neighbour. Whether a value is
+     finite differs from channel to channel, so the weights are per
+     channel. *)
   let tap (i, wi) (j, wj) =
-    let w = Nx.mul wi wj in
     let inside, k = cell ~rows ~cols i j in
-    let use = Nx.logical_and (data k inside) (Nx.greater_s w 0.) in
     let xk = Nx.cast Nx.float64 (Nx.take ~axis:0 k x) in
-    let wx = Nx.mul (lift n rank w) xk in
-    ( Nx.where (lift n rank use) wx (Nx.zeros_like wx),
-      Nx.where use w (Nx.zeros_like w) )
+    let w = Nx.broadcast_to (Nx.shape xk) (lift n rank (Nx.mul wi wj)) in
+    let use =
+      Nx.logical_and
+        (lift n rank (data k inside))
+        (Nx.logical_or (Nx.greater_s w 0.) (Nx.isfinite xk))
+    in
+    let wx = Nx.mul w (Nx.where use xk (Nx.zeros_like xk)) in
+    (Nx.where use wx (Nx.zeros_like wx), Nx.where use w (Nx.zeros_like w))
   in
   let taps =
     List.concat_map (fun i -> List.map (tap i) (along j0 b)) (along i0 a)
@@ -136,7 +146,7 @@ let bilinear ?valid p x =
   let sum = total (List.map fst taps) and weight = total (List.map snd taps) in
   let inside, k = cell ~rows ~cols (Nx.floor r) (Nx.floor c) in
   let ok = data k inside in
-  let mean = Nx.div sum (lift n rank weight) in
+  let mean = Nx.div sum weight in
   let mean = Nx.where (lift n rank ok) mean (Nx.zeros_like mean) in
   ( Nx.reshape (Array.append batch rest) (Nx.cast dtype (round mean)),
     Nx.reshape batch ok )
