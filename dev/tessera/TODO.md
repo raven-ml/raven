@@ -36,6 +36,15 @@ An item leaves when its library fixes it, or when a design decides it stays.
 
 ## nx
 
+- nx keeps one compiled program per scalar operation and dtype for its last
+  literal (`prim.ml:2502-2523`, `nx.ml:613-628`), so two `mul_s` (or
+  `add_s`) of different literals in one step rebuild each other every
+  step: LARS's η beside momentum's 0.9 costs 85 allocated words a step
+  (vega's bench, main 68b574ca1d). The Adam family, LARS, RMSprop, Adan,
+  Lion and Adafactor alternate literals; SGD and Adagrad do not. A literal
+  belongs in the program's data or its key, not in a one-slot cache (found
+  by the LARS review).
+
 - A random draw on a GPU set needs a compiled program (one per shape and
   dtype), or a draw on the host placed over, which doubles host memory
   (8 GB of q, k, v at large's T = 256). Wanted: draws at a kernel-less
@@ -88,11 +97,6 @@ An item leaves when its library fixes it, or when a design decides it stays.
   recipe's biases and norms step more slowly than in its source. vega's
   per-leaf `?decays` predicate is the likely shape (found by the LARS
   review; TESSERA's released runs use AdamW).
-
-- LARS's trust ratio is not eq. 6 of You, Gitman & Ginsburg, "Large Batch
-  Training of Convolutional Networks" (2017), found by the per-leaf decay
-  skeptic: a pass of its own decides whether vega's form is a stated
-  deviation or a defect.
 
 - nx's ragged suite has a flaky cover ("a text of 9 bytes"): windtrap draws
   a random root seed each run and some seeds never reach the case. A cover
