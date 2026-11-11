@@ -679,6 +679,14 @@ let drain_rows =
       allocation "allocate-4K/closed-devices-1024" (closed_devices 1024);
     ]
 
+(* [among] software devices open: an open of one of their names answers its
+   device, at a cost that does not grow with the others. *)
+let among = 4096
+
+let open_among () =
+  List.init among (fun k ->
+      Result.get_ok (Rig.software (strf "bench:among:%d" k)))
+
 (* An open of a software device, one submit, and its close: a closed device's
    slot goes to the next open, so a run makes as many opens as it likes at
    one cost. *)
@@ -689,6 +697,9 @@ let device_rows =
           let d = Result.get_ok (Rig.software "bench:open-close") in
           ignore (submit (Sub.take (Sub.make d [||])));
           Rig.close d);
+      Thumper.bench_with_setup ~setup:open_among ~teardown:(List.iter Rig.close)
+        "open-again/among-4096" (fun _ ->
+          ignore (Rig.software "bench:among:0"));
     ]
 
 let wait_rows =

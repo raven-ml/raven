@@ -490,6 +490,12 @@ end)
 let table : slot Names.t = Names.create 16
 let opens = Atomic.make 1
 
+(* The opens an exception ended, counted as each marks itself ended and
+   uncounted once ended, so that an open reads the table for them only while
+   there are some: a table of thousands of open devices costs every open a
+   walk of it otherwise. *)
+let interrupted = Atomic.make 0
+
 (* Under the table's lock: removes [d]'s names, so an open of them makes a new
    device. A stop removes them, so the table holds the devices whose stop has
    not returned. *)
@@ -1038,12 +1044,19 @@ let end_open (r, result) =
 
 (* Under the table's lock: ends the opens an exception ended, as they stand:
    a device one published stays open under its name, and otherwise its name
-   is free. *)
+   is free. An open counts itself after it marks itself ended, so the walk
+   after a read of the count sees every open the count held. The count goes
+   down by what it read only once those are ended, so that an exception
+   before leaves them to the next call. *)
 let end_interrupted () =
-  let ended _ slot rs =
-    match slot with Opening r when r.ended -> r :: rs | _ -> rs
-  in
-  List.iter (fun r -> end_open (r, made r)) (Names.fold ended table [])
+  let n = Atomic.get interrupted in
+  if n > 0 then begin
+    let ended _ slot rs =
+      match slot with Opening r when r.ended -> r :: rs | _ -> rs
+    in
+    List.iter (fun r -> end_open (r, made r)) (Names.fold ended table []);
+    ignore (Atomic.fetch_and_add interrupted (-n))
+  end
 
 (* A machine has one host, open or opening. *)
 let check_host r =
@@ -1178,11 +1191,12 @@ let open_named ~fn ~machine ~name ~key make =
   with
   | result -> result
   | exception e when r.opening ->
-      (* Marks [r] ended for the next open or close to end, with no call to an
-         OCaml function, where a second exception may arise. The table's lock
-         is not taken: a waiter reads [ended] when it wakes, at least every
-         200 ms. *)
+      (* Marks [r] ended, then counts it, for the next open or close to end,
+         with no call to an OCaml function, where a second exception may
+         arise. The table's lock is not taken: a waiter reads [ended] when it
+         wakes, at least every 200 ms. *)
       r.ended <- true;
+      ignore (Atomic.fetch_and_add interrupted 1);
       Lock.broadcast table_lock;
       Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 

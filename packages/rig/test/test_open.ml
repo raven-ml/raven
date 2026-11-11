@@ -1147,6 +1147,22 @@ let test_close_ends_interrupted_open () =
   equal ~msg:"the open" string "raised Exit" !first;
   equal ~msg:"the host" (option string) (Some "closed") (Rig.lost far)
 
+(* An open on a machine that its opener's exception ended, with no open after
+   it, is no open in flight: the close of the machine's host returns. *)
+let test_close_after_raised_open () =
+  let far =
+    require_ok ~pp:Format.pp_print_string (open_host "close-raised" "CPU")
+  in
+  raises Exit (fun () ->
+      Rig.open_ ~machine:far
+        {
+          name = "open:close-raised";
+          driver = (module P);
+          make = (fun ~word:_ -> raise Exit);
+        });
+  Rig.close far;
+  equal ~msg:"the host" (option string) (Some "closed") (Rig.lost far)
+
 (* A lost device's name opens again only once its stop returned: before, the
    open is an [Error]. The stop runs in a close. *)
 let test_reopen_early () =
@@ -1685,6 +1701,8 @@ let tests =
         test_ended_wakes_waiter;
       test "a close ends an open in flight that an exception ended"
         test_close_ends_interrupted_open;
+      test "a close ends an open on its machine that an exception ended"
+        test_close_after_raised_open;
       test "a closed device answers as it did before its close" test_ended;
       test "a point names its device after the program let go of it"
         test_points_name_device;
