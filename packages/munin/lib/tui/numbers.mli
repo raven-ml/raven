@@ -9,6 +9,10 @@
 val width : string -> int
 (** [width s] is the cells [s] takes on a terminal. *)
 
+val cut : int -> string -> string
+(** [cut w s] is [s] in at most [w] cells, ending in […] when it is cut, and
+    [""] when [w <= 0]. *)
+
 val elide : int -> string -> string
 (** [elide w key] is [key] in at most [w] cells. A key that does not fit keeps
     its last [/] segment whole when it can and loses the middle, as

@@ -36,7 +36,19 @@ let right frags =
 
 let split left right =
   box ~flex_direction:Row ~flex_grow:1. ~flex_shrink:0. ~max_size:(size_wh auto (px 1))
+    ~gap:(gap 1)
     [ line left; rich_text ~wrap:`None ~flex_shrink:0. right ]
+
+(* An item wider than the line has a line of its own and wraps there. *)
+let groups items =
+  box ~flex_direction:Row ~flex_wrap:Wrap ~gap:(gap_xy 1 0) ~flex_shrink:1.
+    ~min_size:(size_wh (px 0) auto)
+    (List.map
+       (fun frags -> rich_text ~wrap:`Word ~flex_shrink:1. ~min_size:(size_wh (px 0) auto) frags)
+       items)
+
+let label w frags =
+  box ~size:(size ~width:w ~height:1) ~flex_shrink:0. [ cell (max 0 (w - 1)) frags ]
 
 let rule th =
   box ~flex_grow:1. ~min_size:shrinks ~size:(size_wh auto (px 1)) ~border:true
@@ -101,12 +113,20 @@ let hero_key (m : M.t) (f : Facts.run) =
 
 (* Banner *)
 
+(* An error's first line, with [ …] when more follow: [i] gives them. *)
+let first_line e =
+  match String.index_opt e '\n' with
+  | Some k when String.trim (String.sub e k (String.length e - k)) <> "" -> String.sub e 0 k ^ " …"
+  | Some k -> String.sub e 0 k
+  | None -> e
+
+(* The banner wraps at its words, so that it says the error whole. *)
 let banner th (f : Facts.run) =
   let at = Numbers.count (Option.value f.latest ~default:0) in
   let says =
     match (f.state, Run.status f.run) with
-    | Failed, `Failed e -> Some ("✗ failed at step " ^ at ^ " ", e)
-    | Crashed, _ -> Some ("✗ crashed at step " ^ at ^ " ", "the writer exited without an end")
+    | Failed, `Failed e -> Some ("✗ failed at step " ^ at ^ ": ", first_line e)
+    | Crashed, _ -> Some ("✗ crashed at step " ^ at ^ ": ", "the writer exited without an end")
     | _ -> (
         match f.non_finite with
         | Some (k, s, n) ->
@@ -121,7 +141,10 @@ let banner th (f : Facts.run) =
   | Some (head, rest) ->
       box ~flex_shrink:0. ?background:(Th.tint th) ~padding:(padding_xy 1 0)
         ~margin:(margin_lrtb 0 0 0 1)
-        [ line [ frag ~bold:true th Fail head; frag th Fail rest ] ]
+        [
+          rich_text ~wrap:`Word ~min_size:(size_wh (px 0) auto)
+            [ frag ~bold:true th Fail head; frag th Fail rest ];
+        ]
 
 (* Hero *)
 
@@ -227,16 +250,28 @@ let hero th (m : M.t) (f : Facts.run) n ~width =
             ~overflow:{ x = Hidden; y = Hidden } ~margin:(margin_lrtb 0 0 1 0) others;
         ]
 
-let facts_line th (m : M.t) (f : Facts.run) =
+(* The blank columns between the line's values. *)
+let part_gap = 3
+
+let facts_line th (m : M.t) (f : Facts.run) ~width =
   let part k =
     Option.map
       (fun (v, _) ->
-        [ frag th Dim (k ^ " "); frag ~bold:true th (value_tok v Hi) (Numbers.metric k v); frag th Dim "   " ])
+        let s = Numbers.metric k v in
+        ( [ frag th Dim (k ^ " "); frag ~bold:true th (value_tok v Hi) s ],
+          Numbers.width k + 1 + Numbers.width s ))
       (hero_value m f k)
   in
   let keys = List.filteri (fun i _ -> i < 4) (goal_metrics f) in
+  (* The parts that fit whole, leaving from the last. *)
+  let rec fit room = function
+    | (frags, w) :: rest when w <= room -> frags :: fit (room - w - part_gap) rest
+    | _ -> []
+  in
+  let gap = frag th Dim (String.make part_gap ' ') in
+  let parts = fit width (List.filter_map part keys) in
   box ~flex_shrink:0. ~margin:(margin_lrtb 0 0 1 1)
-    [ line (List.concat (List.filter_map part keys)) ]
+    [ line (List.concat (List.mapi (fun i p -> if i = 0 then p else gap :: p) parts)) ]
 
 (* Charts *)
 
@@ -551,7 +586,7 @@ let view th (m : M.t) (p : M.panes) f =
     match (m.depth, p.hero) with
     | Zoom _, _ -> empty
     | _, Big n -> hero th m f n ~width
-    | _, Line -> facts_line th m f
+    | _, Line -> facts_line th m f ~width
   in
   let body =
     match m.depth with

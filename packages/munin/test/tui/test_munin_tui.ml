@@ -256,7 +256,8 @@ let metric_record ?(goal = "") ?(step_metric = "") key =
     (if step_metric = "" then ""
      else Printf.sprintf {|,"step_metric":"%s"|} step_metric)
 
-let write_log store ?goal ?steps ?declare ?(started = 1) ?(experiment = "law") records =
+let write_log store ?goal ?steps ?declare ?(started = 1) ?(experiment = "law") ?(params = "{}")
+    records =
   let declare = Option.value declare ~default:[ metric_record ?goal "m" ] in
   incr law_runs;
   let id = Printf.sprintf "20261101T000000Z-%08x" !law_runs in
@@ -267,11 +268,12 @@ let write_log store ?goal ?steps ?declare ?(started = 1) ?(experiment = "law") r
   Sys.mkdir (Filename.concat dir id) 0o755;
   let start =
     Printf.sprintf
-      {|{"type":"start","time":%d.0,"format":1,"experiment":"%s",%s"params":{},"provenance":{"command":["t"],"cwd":"/","pid":1,"ocaml":"5","raven":"t","os":"t","arch":"t","seeds":{},"env":{}}}|}
+      {|{"type":"start","time":%d.0,"format":1,"experiment":"%s",%s"params":%s,"provenance":{"command":["t"],"cwd":"/","pid":1,"ocaml":"5","raven":"t","os":"t","arch":"t","seeds":{},"env":{}}}|}
       started experiment
       (match steps with
       | Some n -> Printf.sprintf {|"steps":%d,|} n
       | None -> "")
+      params
   in
   let log = Filename.concat (Filename.concat dir id) "events.jsonl" in
   Out_channel.with_open_bin log (fun oc ->
@@ -1523,6 +1525,35 @@ let log_choice =
 (* A value prints in four significant digits, counted after rounding: a
    value that rounds up to the next power of ten keeps four, and its notation
    is that of the rounded value. *)
+(* [cut w s] is [s] when it fits, else a prefix of [s] and […] in at most
+   [w] cells, and [""] for [w <= 0]: over wide glyphs, combining marks and
+   tabs. *)
+let cut_law =
+  let gen =
+    let open Gen in
+    let piece = one_of (List.map constant [ "a"; "b"; "漢"; "字"; "é"; "\t"; "é"; " " ]) in
+    let* pieces = list ~size:(int_range 0 12) piece in
+    let s = String.concat "" pieces in
+    let+ w = int_range (-1) (Munin_tui.Numbers.width s + 1) in
+    (w, s)
+  in
+  let gen = Gen.with_pp (fun ppf (w, s) -> Format.fprintf ppf "%d, %S" w s) gen in
+  prop "a cut text fits, and ends in … when it is cut" gen (fun (w, s) ->
+      let module N = Munin_tui.Numbers in
+      let r = N.cut w s in
+      let ell = "…" in
+      at_most ~msg:"its width" int ~than:(max 0 w) (N.width r);
+      cover "whole" (N.width s <= w);
+      if N.width s <= w then equal ~msg:"whole" string s r
+      else if w <= 0 then equal ~msg:"no room" string "" r
+      else begin
+        if not (String.ends_with ~suffix:ell r) then failf "%S does not end in …" r;
+        let p = String.sub r 0 (String.length r - String.length ell) in
+        if not (String.starts_with ~prefix:p s) then failf "%S is not a prefix of %S" p s;
+        cover "cut" true;
+        cover "a wide glyph left out at the edge" (N.width p < w - 1)
+      end)
+
 let values_printed =
   cases ~id:fst "a value prints in four significant digits"
     [
@@ -2492,6 +2523,167 @@ let data_path_test =
         (call `Release);
     ]
 
+(* Cut text *)
+
+(* A run whose texts outgrow their columns: a long name, host, command,
+   directory, param keys and error. *)
+let long_run =
+  let w =
+    { Fixture.seed = 5; lr = 1e-3; warmup = 100; floor = 0.3; val_floor = 0.4; overfit = 0.;
+      rate = 2.; nan_from = None }
+  in
+  {
+    (Fixture.sweep_run ~id:"20261101T020000Z-0c0c0c0c" ~name:"conservative-baseline"
+       ~started:1793500000.0 ~pid:9610 ~commit:Fixture.commit ~dirty:false ~tags:[] w ~upto:1130
+       ~ended:
+         (Some
+            ( `Failed
+                "Rig.Lost (CUDA:0, \"out of memory\") while allocating 2.0 GiB for the activations of conv12",
+              false ))
+       ())
+    with
+    host = "build-node-with-a-long-name.cluster.internal";
+    command =
+      [ "/home/ada/src/resnet/_build/default/examples/train/train.exe"; "--learning-rate"; "0.001" ];
+    cwd = "/home/ada/src/resnet/experiments/cifar/a/rather/deep/directory";
+    params =
+      [ ("step_size", `Float 0.001); ("max_iterations", `Int 50); ("batch_size", `Int 64) ];
+  }
+
+(* The info's value column, from [label]'s row to [next]'s: the rows' text
+   between the column and the next border, joined without blanks. *)
+let info_values screen label next =
+  let y, x = match T.Screen.find screen label with p :: _ -> p | [] -> failf "no %s" label in
+  let y_end = match T.Screen.find screen next with (y', _) :: _ -> y' | [] -> failf "no %s" next in
+  let value y =
+    let rest = from (x + 12) (T.Screen.row screen y) in
+    let rest = Option.value (before rest "│") ~default:rest in
+    String.concat ""
+      (List.filter (fun c -> not (List.mem c [ " "; "█"; "▀"; "▄" ])) (chars rest))
+  in
+  String.concat "" (List.init (y_end - y) (fun i -> value (y + i)))
+
+let no_blanks s = String.concat "" (String.split_on_char ' ' s)
+
+(* Rule: a cut text ends in […] and keeps a blank before the next column; a
+   number and the info's facts are never cut. *)
+let cut_text =
+  let screens =
+    lazy
+      (with_store ~name:"long" [ long_run; Fixture.amber_fox ] @@ fun store ->
+       let at = Munin_tui.Run (Some long_run.id) in
+       List.map
+         (fun (name, cols, rows, keys) -> (name, show ~cols ~rows store at keys))
+         [
+           ("160x48", 160, 48, []);
+           ("120x40", 120, 40, []);
+           ("info 120x40", 120, 40, [ char 'i' ]);
+           ("info 80x24", 80, 24, [ char 'i' ]);
+         ])
+  in
+  let screen name = List.assoc name (Lazy.force screens) in
+  let holds name sub = T.Screen.find (screen name) sub <> [] in
+  let claims =
+    [
+      ( "info gives the pid whole",
+        fun () -> equal (list bool) [ true; true ] [ holds "info 120x40" "pid 9610"; holds "info 80x24" "pid 9610" ] );
+      ( "info gives the command and the directory whole",
+        fun () ->
+          List.iter
+            (fun name ->
+              equal ~msg:name string
+                (no_blanks (String.concat "" long_run.command ^ long_run.cwd))
+                (info_values (screen name) "command" "host"))
+            [ "info 120x40"; "info 80x24" ] );
+      ( "the banner gives the error whole, after the step",
+        fun () ->
+          equal (list bool) [ true; true ]
+            [ holds "120x40" "at step 1,100: Rig.Lost"; holds "120x40" "conv12" ] );
+      ( "a param key takes the longest key's width",
+        fun () ->
+          equal (list bool) [ true; true ] [ holds "160x48" "max_iterations "; holds "160x48" "step_size " ] );
+      ( "a cut text keeps a blank before the next column",
+        fun () ->
+          List.iter
+            (fun (name, sc) ->
+              List.iter
+                (fun (y, x) ->
+                  let next = from (x + 1) (T.Screen.row sc y) in
+                  match chars next with
+                  | [] | (" " | "│") :: _ -> ()
+                  | c :: _ -> failf "%s, row %d: … touches %S" name y c)
+                (T.Screen.find sc "…"))
+            (Lazy.force screens) );
+    ]
+  in
+  cases ~id:fst "a cut text is marked, and a number never cut" claims (fun (_, f) -> f ())
+
+(* A run whose values outgrow their columns: sampled floats as params, and
+   four metrics with a goal under long keys. A number shows whole: the run
+   pane prints a param by the value rule, info gives it exactly, and the line
+   of values keeps the metrics that fit. *)
+let long_values =
+  let keys =
+    [ "validation/loss_total"; "validation/accuracy_top1"; "train/loss_total"; "train/accuracy_top1" ]
+  in
+  let screens =
+    lazy
+      (with_store ~name:"long-values" [] @@ fun store ->
+       ignore
+         (write_log store
+            ~params:{|{"learning_rate":0.0004213752718364,"weight_decay":0.00031622776601683794}|}
+            ~declare:
+              (List.map
+                 (fun k -> metric_record ~goal:(if holds "loss" k then "minimize" else "maximize") k)
+                 keys)
+            (List.init 40 (fun i ->
+                 let s = Float.of_int (i + 1) in
+                 values_record ((i + 1) * 100)
+                   (List.map (fun k -> (k, if holds "loss" k then 1. /. s else 0.9 -. (0.5 /. s))) keys))));
+       List.map
+         (fun (name, cols, rows, keys) -> (name, show ~cols ~rows store Munin_tui.Runs keys))
+         [
+           ("120x40", 120, 40, []);
+           ("80x24", 80, 24, []);
+           ("info", 120, 40, [ char 'i' ]);
+           ("help", 80, 24, [ char '?' ]);
+         ])
+  in
+  let screen name = List.assoc name (Lazy.force screens) in
+  let shows name sub = T.Screen.find (screen name) sub <> [] in
+  cases ~id:fst "a number shows whole"
+    [
+      ( "the run pane's params",
+        fun () ->
+          (* Each number in the pane, up to the blank after it. *)
+          let sc = screen "120x40" in
+          let numbers =
+            List.filter_map
+              (fun (y, x) ->
+                if x < 90 then None
+                else
+                  let rest = from x (T.Screen.row sc y) in
+                  Some (List.hd (String.split_on_char ' ' rest)))
+              (T.Screen.find sc "0.000")
+          in
+          equal (list string) [ "0.0004214"; "0.0003162" ] numbers );
+      ("info's params", fun () -> equal bool true (shows "info" "0.0004213752718364"));
+      ( "the line of values",
+        fun () ->
+          let sc = screen "80x24" in
+          match List.sort compare (T.Screen.find sc "train/") with
+          | (y, _) :: _ -> equal ~msg:(T.Screen.row sc y) bool false (holds "…" (T.Screen.row sc y))
+          | [] -> fail "no line of values" );
+      ( "help at 80 columns",
+        fun () ->
+          let sc = screen "help" in
+          let top = match T.Screen.find sc "keys" with (y, _) :: _ -> y | [] -> fail "no help" in
+          List.iter
+            (fun y -> if holds "…" (T.Screen.row sc y) then failf "row %d: %s" y (T.Screen.row sc y))
+            (List.init (T.Screen.rows sc - top) (fun k -> top + k)) );
+    ]
+    (fun (_, f) -> f ())
+
 (* The status bar's hints *)
 
 (* [hints screen] is the status bar's hints, each its keys, in bold, and its
@@ -2675,16 +2867,17 @@ let () =
            [
              binned; rising; spike; non_finite; cursor_wins; zoom_cursor; letters; exact_labels; tick_labels; x_domain; now_rule; bounds;
              ticks_of;
-             log_choice; y_per_metric; values_printed; rounding_shown;
+             log_choice; y_per_metric; cut_law; values_printed; rounding_shown;
              filled;
              matching; cadence;
            ];
          group "runs" [ filter; stars; nav_count ];
-         group "run" [ all_orphans; short_of_steps; paired ];
+         group "run" [ all_orphans; short_of_steps; paired; cut_text ];
          group "held" [ held; kept_pane; ended_away; ended_between; watch_test ];
          depth_test;
          hidden_filter;
          strips_scroll;
          data_path_test;
          hint_test;
+         long_values;
        ])

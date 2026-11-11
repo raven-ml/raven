@@ -38,19 +38,19 @@ older runs of an MLP, on a terminal of 120 columns:
  ¹ runs                          │ val/loss ↓                                               │ ³ run
                                  │ █▀█   █ █ █▀█ ▀▀█ ▀▀█      train/loss  0.2762  smoothed  │
  ▾ cifar-resnet  6      val/loss │ █ █   ▀▀█ █ █   █   █      train/acc   95.40%  smoothed  │ ● tidy-otter  live
-▌ ■ tidy-otter ● ⠢⣀⣀⣀    0.4077  │ ▀▀▀ ▀   ▀ ▀▀▀   ▀   ▀      val/acc     94.18%            │ last sample 0s ago
-  · amber-fox  ✓ ⠢⣀⣀⣀⣀⣀  0.3841 ★│ best 0.4077 at 12,000                                    │
-  · brisk-wren ✓ ⠢⣀⣀⣀⣀⣀  0.4071  │                                                          │ ━━━━━━━━━━━━━──────── 62%
-  · calm-lynx  ✓ ⠢⣀⣀⣀⣀⣀  0.3942  │ ‹   val/loss   train/acc   val/acc   val/ece   ›         │ 12,400 of 20,000 steps
-  · dusty-mole × ⢢⡀      0.7665  │     ▔▔▔▔▔▔▔▔                                             │ 59m 11s left · ends 13:17
-  · eager-hawk ✗ ⠄        1.670  │                                                          │ 2.1 steps/s · 1h 37m in
+▌ ■ tidy-otter  ● ⠢⣀⣀⡀   0.4077  │ ▀▀▀ ▀   ▀ ▀▀▀   ▀   ▀      val/acc     94.18%            │ last sample 0s ago
+  · amber-fox   ✓ ⠢⣀⣀⣀⣀  0.3841 ★│ best 0.4077 at 12,000                                    │
+  · brisk-wren  ✓ ⠢⣀⣀⣀⣀  0.4071  │                                                          │ ━━━━━━━━━━━━━──────── 62%
+  · calm-lynx   ✓ ⠢⣀⣀⣀⣀  0.3942  │ ‹   val/loss   train/acc   val/acc   val/ece   ›         │ 12,400 of 20,000 steps
+  · dusty-mole  × ⢢⡀     0.7665  │     ▔▔▔▔▔▔▔▔                                             │ 59m 11s left · ends 13:17
+  · eager-hawk  ✗ ⠄       1.670  │                                                          │ 2.1 steps/s · 1h 37m in
  ▾ mnist-mlp  2         val/loss │ ━ tidy-otter 0.4077   r others                           │
-  · mlp-wide   ✓ ⠈⢆⣀⣀⣀⣀ 0.05831 ★│                                                          │ params ──────────────────
-  · mlp-base   ✗ ⠈⢆⣀⣀   0.06576  │      2┤⡄                            ┊now                 │ lr       0.0003    varies
-                                 │       │⢱                            ┊                    │ warmup   500       varies
-                                 │       │⠘⡄                           ┊                    │ batch    256
-                                 │       │ ⢣                           ┊                    │ epochs   10
-                                 │    1.5┤ ⠘⡄                          ┊                    │ wd       0.05
+  · mlp-wide    ✓ ⠈⢆⣀⣀⣀ 0.05831 ★│                                                          │ params ──────────────────
+  · mlp-base    ✗ ⠈⢆⣀⡀  0.06576  │      2┤⡄                            ┊now                 │ lr     0.0003000   varies
+                                 │       │⢱                            ┊                    │ warmup 500         varies
+                                 │       │⠘⡄                           ┊                    │ batch  256
+                                 │       │ ⢣                           ┊                    │ epochs 10
+                                 │    1.5┤ ⠘⡄                          ┊                    │ wd     0.05000
                                  │       │  ⢣                          ┊                    │ +1 more   i: all
                                  │       │   ⢣                         ┊                    │
                                  │       │   ⠈⢆                        ┊                    │ machine ─────────────────

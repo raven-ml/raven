@@ -8,32 +8,32 @@
    |                                 f iiiiiiiiiiiiiiiiiiiii                f
 05 | ▾ cifar-resnet  6      val/loss │ █ █   ▀▀█ █ █   █   █                │ ● tidy-otter  live
    | ggjjjjjjjjjjjjggg      gggggggg f iiiiiiiiiiiiiiiiiiiii                f klllllllllllmmmmmm
-06 |▌ ■ tidy-otter ● ⠢⣀⣀⣀    0.4077  │ ▀▀▀ ▀   ▀ ▀▀▀   ▀   ▀                │ last sample 0s ago
-   |nonoppppppppppoqonnnnoooorrrrrroof iiiiiiiiiiiiiiiiiiiii                f gggggggggggggggggg
-07 |  · amber-fox  ✓ ⠢⣀⣀⣀⣀⣀  0.3841 ★│ best 0.4077 at 12,000                │
-   |  s ttttttttt  u vvvvvv  llllll wf gggggxxxxxxgggggggggg                f
-08 |  · brisk-wren ✓ ⠢⣀⣀⣀⣀⣀  0.4071  │                                      │ ━━━━━━━━━━━━━──────── 62%
-   |  s tttttttttt u vvvvvv  tttttt  f                                      f mmmmmmmmmmmmmssssssss xxx
-09 |  · calm-lynx  ✓ ⠢⣀⣀⣀⣀⣀  0.3942  │ ‹   val/loss   train/acc   ›         │ 12,400 of 20,000 steps
-   |  s ttttttttt  u vvvvvv  tttttt  f g   llllllll   ggggggggg   g         f jjjjjjgggggggggggggggg
-10 |  · dusty-mole × ⢢⡀      0.7665  │     ▔▔▔▔▔▔▔▔                         │ 59m 11s left · ends 13:17
-   |  s xxxxxxxxxx y vv      tttttt  f     zzzzzzzz                         f jjjjjjjgggggggggggggggggg
-11 |  · eager-hawk ✗ ⠄        1.670  │                                      │ 2.1 steps/s · 1h 37m in
-   |  s xxxxxxxxxx y v        ttttt  f                                      f jjjgggggggggggggggggggg
+06 |▌ ■ tidy-otter  ● ⠢⣀⣀⡀   0.4077  │ ▀▀▀ ▀   ▀ ▀▀▀   ▀   ▀                │ last sample 0s ago
+   |nonoppppppppppooqonnnnooorrrrrroof iiiiiiiiiiiiiiiiiiiii                f gggggggggggggggggg
+07 |  · amber-fox   ✓ ⠢⣀⣀⣀⣀  0.3841 ★│ best 0.4077 at 12,000                │
+   |  s ttttttttt   u vvvvv  llllll wf gggggxxxxxxgggggggggg                f
+08 |  · brisk-wren  ✓ ⠢⣀⣀⣀⣀  0.4071  │                                      │ ━━━━━━━━━━━━━──────── 62%
+   |  s tttttttttt  u vvvvv  tttttt  f                                      f mmmmmmmmmmmmmssssssss xxx
+09 |  · calm-lynx   ✓ ⠢⣀⣀⣀⣀  0.3942  │ ‹   val/loss   train/acc   ›         │ 12,400 of 20,000 steps
+   |  s ttttttttt   u vvvvv  tttttt  f g   llllllll   ggggggggg   g         f jjjjjjgggggggggggggggg
+10 |  · dusty-mole  × ⢢⡀     0.7665  │     ▔▔▔▔▔▔▔▔                         │ 59m 11s left · ends 13:17
+   |  s xxxxxxxxxx  y vv     tttttt  f     zzzzzzzz                         f jjjjjjjgggggggggggggggggg
+11 |  · eager-hawk  ✗ ⠄       1.670  │                                      │ 2.1 steps/s · 1h 37m in
+   |  s xxxxxxxxxx  y v       ttttt  f                                      f jjjgggggggggggggggggggg
 12 | ▾ mnist-mlp  2         val/loss │ ━ tidy-otter 0.4077   r others       │
    | ggjjjjjjjjjggg         gggggggg f iilllllllllllllllll   hhgggggg       f
-13 |  · mlp-wide   ✓ ⠈⢆⣀⣀⣀⣀ 0.05831 ★│                                      │ params ──────────────────
-   |  s tttttttt   u vvvvvv lllllll wf                                      f hhhhhh ffffffffffffffffff
-14 |  · mlp-base   ✗ ⠈⢆⣀⣀   0.06576  │      2┤⢣                ┊now         │ lr       0.0003    varies
-   |  s xxxxxxxx   y vvvv   ttttttt  f ggggggsz                sggg         f gg       llllll    gggggg
-15 |                                 │       │⠈⢆               ┊            │ warmup   500       varies
-   |                                 f       szz               s            f gggggg   lll       gggggg
-16 |                                 │       │ ⠈⠢⡀             ┊            │ batch    256
-   |                                 f       s zzz             s            f ggggg    xxx
-17 |                                 │      1┤   ⠈⠢⣀           ┊            │ epochs   10
-   |                                 f ggggggs   zzz           s            f gggggg   xx
-18 |                                 │       │      ⠉⠑⠒⠢⠤⠤⠤⠤⠤⠤⢄┊            │ wd       0.05
-   |                                 f       s      zzzzzzzzzzzs            f gg       xxxx
+13 |  · mlp-wide    ✓ ⠈⢆⣀⣀⣀ 0.05831 ★│                                      │ params ──────────────────
+   |  s tttttttt    u vvvvv lllllll wf                                      f hhhhhh ffffffffffffffffff
+14 |  · mlp-base    ✗ ⠈⢆⣀⡀  0.06576  │      2┤⢣                ┊now         │ lr     0.0003000   varies
+   |  s xxxxxxxx    y vvvv  ttttttt  f ggggggsz                sggg         f gg     lllllllll   gggggg
+15 |                                 │       │⠈⢆               ┊            │ warmup 500         varies
+   |                                 f       szz               s            f gggggg lll         gggggg
+16 |                                 │       │ ⠈⠢⡀             ┊            │ batch  256
+   |                                 f       s zzz             s            f ggggg  xxx
+17 |                                 │      1┤   ⠈⠢⣀           ┊            │ epochs 10
+   |                                 f ggggggs   zzz           s            f gggggg xx
+18 |                                 │       │      ⠉⠑⠒⠢⠤⠤⠤⠤⠤⠤⢄┊            │ wd     0.05000
+   |                                 f       s      zzzzzzzzzzzs            f gg     xxxxxxx
 19 |                                 │       └┬─────────────┬────────────┬  │ +1 more   i: all
    |                                 f       sssssssssssssssssssssssssssss  f gggggggggggggggg
 20 |                                 │        0            10k        step  │

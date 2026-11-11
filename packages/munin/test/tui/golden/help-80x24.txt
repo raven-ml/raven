@@ -6,10 +6,10 @@
    |faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaf
 04 |│  move                                   find                                 │
    |faabbbbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaf
-05 |│  ↑↓ k j   run; metric in strips         /        filter: name, state, lr<0…  │
+05 |│  ↑↓ k j   run; metric in strips         /        filter: name, tag, lr<0.05  │
    |faagghhhhaaaiiiiiiiiiiiiiiiiiiiiiaaaaaaaaagaaaaaaaaiiiiiiiiiiiiiiiiiiiiiiiiiiaaf
-06 |│  ←→ h l   metric; step in zoom, ⇧ ×…    o        order: started, best, name  │
-   |faagghhhhaaaiiiiiiiiiiiiiiiiiiiiiiiiiiaaaagaaaaaaaaiiiiiiiiiiiiiiiiiiiiiiiiiiaaf
+06 |│  ←→ h l   metric; zoom step, ⇧ ×10      o        order: started, best, name  │
+   |faagghhhhaaaiiiiiiiiiiiiiiiiiiiiiiiiaaaaaagaaaaaaaaiiiiiiiiiiiiiiiiiiiiiiiiiiaaf
 07 |│  [ ]      previous, next run            e        fold, open the experiment   │
    |faagggaaaaaaiiiiiiiiiiiiiiiiiiaaaaaaaaaaaagaaaaaaaaiiiiiiiiiiiiiiiiiiiiiiiiiaaaf
 08 |│  g G      first, last run                                                    │
@@ -32,7 +32,7 @@
    |faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaf
 17 |│  compare                                                                     │
    |faabbbbbbbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaf
-18 |│  space    overlay the run (4 at mos…                                         │
+18 |│  space    overlay the run, 4 at most                                         │
    |faagggggaaaaiiiiiiiiiiiiiiiiiiiiiiiiiiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaf
 19 |│  r        the other runs, in grey                                            │
    |faagaaaaaaaaiiiiiiiiiiiiiiiiiiiiiiiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaf

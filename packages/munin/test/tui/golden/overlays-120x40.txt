@@ -8,32 +8,32 @@
    |                                 f iiiiiiiiiiiiiiiiiiiii      gggggggggg  jjjjjjgggggggggg  f
 05 | ▾ cifar-resnet  6      val/loss │ █ █   ▀▀█ █ █   █   █      train/acc   95.40%  smoothed  │ ● tidy-otter  live
    | ggkkkkkkkkkkkkggg      gggggggg f iiiiiiiiiiiiiiiiiiiii      ggggggggg   jjjjjjgggggggggg  f ljjjjjjjjjjjmmmmmm
-06 |▌ ■ tidy-otter ● ⠢⣀⣀⣀    0.4077  │ ▀▀▀ ▀   ▀ ▀▀▀   ▀   ▀      val/acc     94.18%            │ last sample 7s ago
-   |nonoppppppppppoqonnnnoooorrrrrroof iiiiiiiiiiiiiiiiiiiii      ggggggg     jjjjjj            f gggggggggggggggggg
-07 |  ■ amber-fox  ✓ ⠢⣀⣀⣀⣀⣀  0.3841 ★│ best 0.4077 at 12,000                                    │
-   |  s ttttttttt  u ssssss  jjjjjj vf gggggttttttgggggggggg                                    f
-08 |  · brisk-wren ✓ ⠢⣀⣀⣀⣀⣀  0.4071  │                                                          │ ━━━━━━━━━━━━━──────── 62%
-   |  w xxxxxxxxxx u yyyyyy  xxxxxx  f                                                          f mmmmmmmmmmmmmwwwwwwww ttt
-09 |  · calm-lynx  ✓ ⠢⣀⣀⣀⣀⣀  0.3942  │ ‹   val/loss   train/acc   val/acc   val/ece   ›         │ 12,400 of 20,000 steps
-   |  w xxxxxxxxx  u yyyyyy  xxxxxx  f g   jjjjjjjj   ggggggggg   ggggggg   ggggggg   g         f kkkkkkgggggggggggggggg
-10 |  ■ dusty-mole × ⢢⡀      0.7665  │     ▔▔▔▔▔▔▔▔                                             │ 59m 11s left · ends 13:17
-   |  z tttttttttt A zz      xxxxxx  f     BBBBBBBB                                             f kkkkkkkgggggggggggggggggg
-11 |  · eager-hawk ✗ ⠄        1.670  │                                                          │ 2.1 steps/s · 1h 37m in
-   |  w tttttttttt A y        xxxxx  f                                                          f kkkgggggggggggggggggggg
+06 |▌ ■ tidy-otter  ● ⠢⣀⣀⡀   0.4077  │ ▀▀▀ ▀   ▀ ▀▀▀   ▀   ▀      val/acc     94.18%            │ last sample 7s ago
+   |nonoppppppppppooqonnnnooorrrrrroof iiiiiiiiiiiiiiiiiiiii      ggggggg     jjjjjj            f gggggggggggggggggg
+07 |  ■ amber-fox   ✓ ⠢⣀⣀⣀⣀  0.3841 ★│ best 0.4077 at 12,000                                    │
+   |  s ttttttttt   u sssss  jjjjjj vf gggggttttttgggggggggg                                    f
+08 |  · brisk-wren  ✓ ⠢⣀⣀⣀⣀  0.4071  │                                                          │ ━━━━━━━━━━━━━──────── 62%
+   |  w xxxxxxxxxx  u yyyyy  xxxxxx  f                                                          f mmmmmmmmmmmmmwwwwwwww ttt
+09 |  · calm-lynx   ✓ ⠢⣀⣀⣀⣀  0.3942  │ ‹   val/loss   train/acc   val/acc   val/ece   ›         │ 12,400 of 20,000 steps
+   |  w xxxxxxxxx   u yyyyy  xxxxxx  f g   jjjjjjjj   ggggggggg   ggggggg   ggggggg   g         f kkkkkkgggggggggggggggg
+10 |  ■ dusty-mole  × ⢢⡀     0.7665  │     ▔▔▔▔▔▔▔▔                                             │ 59m 11s left · ends 13:17
+   |  z tttttttttt  A zz     xxxxxx  f     BBBBBBBB                                             f kkkkkkkgggggggggggggggggg
+11 |  · eager-hawk  ✗ ⠄       1.670  │                                                          │ 2.1 steps/s · 1h 37m in
+   |  w tttttttttt  A y       xxxxx  f                                                          f kkkgggggggggggggggggggg
 12 | ▾ mnist-mlp  2         val/loss │ ━ tidy-otter 0.4077   ━ dusty-mole NaN                   │
    | ggkkkkkkkkkggg         gggggggg f iijjjjjjjjjjjjjjjjj   CCxxxxxxxxxxxDDD                   f
-13 |  · mlp-wide   ✓ ⠈⢆⣀⣀⣀⣀ 0.05831 ★│ ━ amber-fox 0.3939   r others                            │ params ──────────────────
-   |  w xxxxxxxx   u yyyyyy jjjjjjj vf EExxxxxxxxxxtttttt   hhgggggg                            f hhhhhh ffffffffffffffffff
-14 |  · mlp-base   ✗ ⠈⢆⣀⣀   0.06576  │                                                          │ lr       0.0003    varies
-   |  w tttttttt   A yyyy   xxxxxxx  f                                                          f gg       jjjjjj    gggggg
-15 |                                 │      2┤⡄                            ┊now                 │ warmup   500       varies
-   |                                 f ggggggwB                            wggg                 f gggggg   jjj       gggggg
-16 |                                 │       │⢱                            ┊                    │ batch    256
-   |                                 f       wB                            w                    f ggggg    ttt
-17 |                                 │       │⠈⡆                           ┊                    │ epochs   10
-   |                                 f       wBB                           w                    f gggggg   tt
-18 |                                 │       │ ⢱                           ┊                    │ wd       0.05
-   |                                 f       w B                           w                    f gg       tttt
+13 |  · mlp-wide    ✓ ⠈⢆⣀⣀⣀ 0.05831 ★│ ━ amber-fox 0.3939   r others                            │ params ──────────────────
+   |  w xxxxxxxx    u yyyyy jjjjjjj vf EExxxxxxxxxxtttttt   hhgggggg                            f hhhhhh ffffffffffffffffff
+14 |  · mlp-base    ✗ ⠈⢆⣀⡀  0.06576  │                                                          │ lr     0.0003000   varies
+   |  w tttttttt    A yyyy  xxxxxxx  f                                                          f gg     jjjjjjjjj   gggggg
+15 |                                 │      2┤⡄                            ┊now                 │ warmup 500         varies
+   |                                 f ggggggwB                            wggg                 f gggggg jjj         gggggg
+16 |                                 │       │⢱                            ┊                    │ batch  256
+   |                                 f       wB                            w                    f ggggg  ttt
+17 |                                 │       │⠈⡆                           ┊                    │ epochs 10
+   |                                 f       wBB                           w                    f gggggg tt
+18 |                                 │       │ ⢱                           ┊                    │ wd     0.05000
+   |                                 f       w B                           w                    f gg     ttttttt
 19 |                                 │    1.5┤ ⠈⡆                          ┊                    │ +1 more   i: all
    |                                 f ggggggw BB                          w                    f gggggggggggggggg
 20 |                                 │       │  ⠘⡄                         ┊                    │

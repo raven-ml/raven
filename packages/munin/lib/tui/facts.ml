@@ -38,6 +38,11 @@ let value : Value.t -> string = function
   | `String s -> s
   | `Bool b -> string_of_bool b
 
+let printed : Value.t -> string = function
+  | `Float x -> Numbers.value x
+  | `Int n -> Numbers.value (Float.of_int n)
+  | v -> value v
+
 let starts_with p s = String.starts_with ~prefix:p s
 let ends_with p s = String.ends_with ~suffix:p s
 

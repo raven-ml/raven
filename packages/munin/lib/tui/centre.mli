@@ -28,7 +28,16 @@ val right : Mosaic.Text.fragment list -> Model.msg Mosaic.t
 val split :
   Mosaic.Text.fragment list -> Mosaic.Text.fragment list -> Model.msg Mosaic.t
 (** [split left right] is one line of [left], cut, with [right] at its
-    right end. *)
+    right end, a blank from it at the least. *)
+
+val groups : Mosaic.Text.fragment list list -> Model.msg Mosaic.t
+(** [groups items] is [items] on a line, a blank apart, each whole: an item
+    that does not fit goes on the next line, and one wider than a line wraps
+    at its words. *)
+
+val label : int -> Mosaic.Text.fragment list -> Model.msg Mosaic.t
+(** [label w frags] is [frags] in [w] cells, cut a blank before the next
+    column. *)
 
 val rule : Theme.t -> Model.msg Mosaic.t
 (** [rule th] is a horizontal rule that takes the width given. *)

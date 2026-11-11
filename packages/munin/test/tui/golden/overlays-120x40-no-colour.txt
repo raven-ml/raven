@@ -7,31 +7,31 @@
    |                                   aaaaaaaaaaaaaaaaaaaaa      bbbbbbbbbb  aaaaaabbbbbbbbbb
 05 | ▾ cifar-resnet  6      val/loss │ █ █   ▀▀█ █ █   █   █      train/acc   95.40%  smoothed  │ ● tidy-otter  live
    | bbaaaaaaaaaaaabbb      bbbbbbbb   aaaaaaaaaaaaaaaaaaaaa      bbbbbbbbb   aaaaaabbbbbbbbbb    aaaaaaaaaaaa
-06 |▌ ■ tidy-otter ● ⠢⣀⣀⣀    0.4077  │ ▀▀▀ ▀   ▀ ▀▀▀   ▀   ▀      val/acc     94.18%            │ last sample 7s ago
-   |ccccddddddddddcdccccccccccccccccc  aaaaaaaaaaaaaaaaaaaaa      bbbbbbb     aaaaaa              bbbbbbbbbbbbbbbbbb
-07 |  ■ amber-fox  ✓ ⠢⣀⣀⣀⣀⣀  0.3841 ★│ best 0.4077 at 12,000                                    │
-   |               e         aaaaaa    bbbbb      bbbbbbbbbb
-08 |  · brisk-wren ✓ ⠢⣀⣀⣀⣀⣀  0.4071  │                                                          │ ━━━━━━━━━━━━━──────── 62%
-   |  b            e bbbbbb
-09 |  · calm-lynx  ✓ ⠢⣀⣀⣀⣀⣀  0.3942  │ ‹   val/loss   train/acc   val/acc   val/ece   ›         │ 12,400 of 20,000 steps
-   |  b            e bbbbbb            b   aaaaaaaa   bbbbbbbbb   bbbbbbb   bbbbbbb   b           aaaaaabbbbbbbbbbbbbbbb
-10 |  ■ dusty-mole × ⢢⡀      0.7665  │     ▔▔▔▔▔▔▔▔                                             │ 59m 11s left · ends 13:17
-   |               a                                                                              aaaaaaabbbbbbbbbbbbbbbbbb
-11 |  · eager-hawk ✗ ⠄        1.670  │                                                          │ 2.1 steps/s · 1h 37m in
-   |  b            a b                                                                            aaabbbbbbbbbbbbbbbbbbbb
+06 |▌ ■ tidy-otter  ● ⠢⣀⣀⡀   0.4077  │ ▀▀▀ ▀   ▀ ▀▀▀   ▀   ▀      val/acc     94.18%            │ last sample 7s ago
+   |ccccddddddddddccdcccccccccccccccc  aaaaaaaaaaaaaaaaaaaaa      bbbbbbb     aaaaaa              bbbbbbbbbbbbbbbbbb
+07 |  ■ amber-fox   ✓ ⠢⣀⣀⣀⣀  0.3841 ★│ best 0.4077 at 12,000                                    │
+   |                e        aaaaaa    bbbbb      bbbbbbbbbb
+08 |  · brisk-wren  ✓ ⠢⣀⣀⣀⣀  0.4071  │                                                          │ ━━━━━━━━━━━━━──────── 62%
+   |  b             e bbbbb
+09 |  · calm-lynx   ✓ ⠢⣀⣀⣀⣀  0.3942  │ ‹   val/loss   train/acc   val/acc   val/ece   ›         │ 12,400 of 20,000 steps
+   |  b             e bbbbb            b   aaaaaaaa   bbbbbbbbb   bbbbbbb   bbbbbbb   b           aaaaaabbbbbbbbbbbbbbbb
+10 |  ■ dusty-mole  × ⢢⡀     0.7665  │     ▔▔▔▔▔▔▔▔                                             │ 59m 11s left · ends 13:17
+   |                a                                                                             aaaaaaabbbbbbbbbbbbbbbbbb
+11 |  · eager-hawk  ✗ ⠄       1.670  │                                                          │ 2.1 steps/s · 1h 37m in
+   |  b             a b                                                                           aaabbbbbbbbbbbbbbbbbbbb
 12 | ▾ mnist-mlp  2         val/loss │ ━ tidy-otter 0.4077   b dusty-mole NaN                   │
    | bbaaaaaaaaabbb         bbbbbbbb   aaaaaaaaaaaaaaaaaaa   aa
-13 |  · mlp-wide   ✓ ⠈⢆⣀⣀⣀⣀ 0.05831 ★│ a amber-fox 0.3939   r others                            │ params ──────────────────
-   |  b            e bbbbbb aaaaaaa    aa                   aabbbbbb                              aaaaaa
-14 |  · mlp-base   ✗ ⠈⢆⣀⣀   0.06576  │                                                          │ lr       0.0003    varies
-   |  b            a bbbb                                                                         bb       aaaaaa    bbbbbb
-15 |                                 │      2┤⡄                            ┊now                 │ warmup   500       varies
-   |                                   bbbbbbb                             bbbb                   bbbbbb   aaa       bbbbbb
-16 |                                 │       │⢱                            ┊                    │ batch    256
+13 |  · mlp-wide    ✓ ⠈⢆⣀⣀⣀ 0.05831 ★│ a amber-fox 0.3939   r others                            │ params ──────────────────
+   |  b             e bbbbb aaaaaaa    aa                   aabbbbbb                              aaaaaa
+14 |  · mlp-base    ✗ ⠈⢆⣀⡀  0.06576  │                                                          │ lr     0.0003000   varies
+   |  b             a bbbb                                                                        bb     aaaaaaaaa   bbbbbb
+15 |                                 │      2┤⡄                            ┊now                 │ warmup 500         varies
+   |                                   bbbbbbb                             bbbb                   bbbbbb aaa         bbbbbb
+16 |                                 │       │⢱                            ┊                    │ batch  256
    |                                         b                             b                      bbbbb
-17 |                                 │       │⠈⡆                           ┊                    │ epochs   10
+17 |                                 │       │⠈⡆                           ┊                    │ epochs 10
    |                                         b                             b                      bbbbbb
-18 |                                 │       │ ⢱                           ┊                    │ wd       0.05
+18 |                                 │       │ ⢱                           ┊                    │ wd     0.05000
    |                                         b                             b                      bb
 19 |                                 │    1.5┤ ⠈⣆                          ┊                    │ +1 more   i: all
    |                                   bbbbbbb                             b                      bbbbbbbbbbbbbbbb

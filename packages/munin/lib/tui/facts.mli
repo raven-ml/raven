@@ -77,6 +77,10 @@ val commit : Munin.Provenance.t -> string option
 val value : Munin.Value.t -> string
 (** [value v] is a param's value as the program gave it. *)
 
+val printed : Munin.Value.t -> string
+(** [printed v] is [v] as a column prints it: a number as {!Numbers.value}
+    prints it, in a few cells, and any other value as {!value}. *)
+
 val bound : float -> float
 (** [bound x] is the least of 1, 2 or 5 times a power of ten at or above
     [x], the largest float past them, and [1.] for [x <= 0.]. *)

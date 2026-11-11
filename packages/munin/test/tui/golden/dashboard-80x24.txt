@@ -4,7 +4,7 @@
    | ffghhhhhhhhhhhfffffffffffffffffffffffff                          fffffffffffff
 03 |
 04 | train/loss 0.2762   val/loss 0.4077   train/acc 95.40%   val/acc 94.18%
-   | fffffffffffhhhhhhffffffffffffhhhhhhfffffffffffffhhhhhhfffffffffffhhhhhhfff
+   | fffffffffffhhhhhhffffffffffffhhhhhhfffffffffffffhhhhhhfffffffffffhhhhhh
 05 |
 06 | ‹   val/loss   train/acc   val/acc   val/ece   val/top5   epoch   ›
    | f   hhhhhhhh   fffffffff   fffffff   fffffff   ffffffff   fffff   f

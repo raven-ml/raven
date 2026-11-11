@@ -16,6 +16,7 @@ let cell = Centre.cell
 let split = Centre.split
 let full = size_wh (pct 100) (pct 100)
 let one = size_wh auto (px 1)
+let shrinks = size_wh (px 0) (px 1)
 let id (f : Facts.run) = Run.id f.run
 let name (f : Facts.run) = Facts.name f.run
 
@@ -160,7 +161,9 @@ let row ?trend (look, width, row) =
            bar r.here r.colour;
            cell 2 [ F.text " "; swatch ];
            cell 12 [ F.text " "; frag ~bold:r.here th r.name_tok r.name ];
-           cell 2 [ frag ~bold:true th r.glyph_tok r.glyph ];
+           (* A blank after the name, so that a cut name's […] keeps off the
+              glyph. *)
+           cell 3 [ F.text " "; frag ~bold:true th r.glyph_tok r.glyph ];
          ]
         @ rest)
 
@@ -367,6 +370,10 @@ let machine th (f : Facts.run) =
   | [] -> []
   | rows -> (Centre.section th "machine" :: rows) @ heat @ [ line [] ]
 
+(* The share of the run pane's width, in percent, that param keys may take,
+   leaving the rest to the values. *)
+let key_share = 50
+
 let params th (m : M.t) (f : Facts.run) =
   let all = Run.params f.run in
   if all = [] then []
@@ -379,13 +386,24 @@ let params th (m : M.t) (f : Facts.run) =
     let varies, others = List.partition (fun (k, _) -> List.mem k vary) all in
     let shown = varies @ List.filteri (fun i _ -> i < 3) others in
     let shown = List.filteri (fun i _ -> i < 6) shown in
+    let longest = List.fold_left (fun w (k, _) -> max w (Numbers.width k)) 0 shown in
     let param (k, v) =
       let varies = List.mem k vary in
+      (* A number is never cut: it prints by the value rule, and the key
+         and [varies] give way to it. *)
+      let number = match v with `Int _ | `Float _ -> true | _ -> false in
       box ~flex_direction:Row ~size:one ~flex_shrink:0. ~gap:(gap 1)
         [
-          cell 8 [ frag th Dim k ];
-          line [ frag ~bold:varies th (if varies then Hi else Fg) (Facts.value v) ];
-          (if varies then rich_text ~wrap:`None ~flex_shrink:0. [ frag th Dim "varies" ] else empty);
+          rich_text ~wrap:`None ~truncate:true ~size:(size_wh (px longest) (px 1))
+            ~max_size:(size_wh (pct key_share) (px 1)) ~flex_shrink:1. ~min_size:shrinks
+            [ frag th Dim k ];
+          rich_text ~wrap:`None ~truncate:true ~flex_grow:1.
+            ~flex_shrink:(if number then 0. else 1.) ~min_size:shrinks
+            [ frag ~bold:varies th (if varies then Hi else Fg) (Facts.printed v) ];
+          (if varies then
+             rich_text ~wrap:`None ~truncate:true ~min_size:shrinks
+               [ frag th Dim "varies" ]
+           else empty);
         ]
     in
     let more = List.length all - List.length shown in
@@ -413,22 +431,25 @@ let state th (m : M.t) (f : Facts.run) =
   let now = Data.time m.data in
   let ago t = Numbers.span (now -. t) ^ " ago" in
   let at = Numbers.count (Option.value f.latest ~default:0) in
+  (* The name gives way to the state word. *)
   let first =
-    line
+    box ~flex_direction:Row ~size:one ~flex_shrink:0.
       [
-        Centre.glyph th f;
-        frag ~bold:true th Hi (" " ^ name f);
-        frag th (Centre.state_token f) ("  " ^ Watch.word f.state);
+        line ~grow:false [ Centre.glyph th f; frag ~bold:true th Hi (" " ^ name f) ];
+        rich_text ~wrap:`None ~flex_shrink:0.
+          [ frag th (Centre.state_token f) ("  " ^ Watch.word f.state) ];
       ]
   in
   let second =
-    if Watch.live f.state then
-      match f.last_arrival with
-      | Some a -> frag th Dim ("last sample " ^ ago a)
-      | None -> frag th Dim ("last write " ^ ago (Run.updated_at f.run))
-    else if Watch.broken f.state || f.state = Killed then
-      frag th Dim (Printf.sprintf "%s · stopped at %s" (Numbers.span f.active) at)
-    else frag th Dim (Printf.sprintf "%s · %s steps" (Numbers.span f.active) at)
+    let dim s = [ frag th Dim s ] in
+    Centre.groups
+      (if Watch.live f.state then
+         match f.last_arrival with
+         | Some a -> [ dim ("last sample " ^ ago a) ]
+         | None -> [ dim ("last write " ^ ago (Run.updated_at f.run)) ]
+       else if Watch.broken f.state || f.state = Killed then
+         [ dim (Numbers.span f.active); dim ("· stopped at " ^ at) ]
+       else [ dim (Numbers.span f.active); dim ("· " ^ at ^ " steps") ])
   in
   let progress =
     match (f.latest, Run.steps f.run) with
@@ -465,7 +486,7 @@ let state th (m : M.t) (f : Facts.run) =
         @ rate @ [ line [] ]
     | _ -> []
   in
-  [ first; line [ second ]; line [] ] @ progress
+  [ first; second; line [] ] @ progress
 
 let run_pane th (m : M.t) (f : Facts.run) =
   [ line [ frag th Dim "³ "; frag ~bold:true th Mid "run" ]; line [] ]
@@ -492,8 +513,15 @@ let side_pane th (m : M.t) side =
 
 let label_w = 12
 
+(* A fact of the info, whole: it wraps at its words. *)
+let para frags =
+  rich_text ~wrap:`Word ~flex_grow:1. ~flex_shrink:1. ~min_size:(size_wh (px 0) auto) frags
+
 let info_sections th (m : M.t) (f : Facts.run) =
-  let field l x = box ~flex_direction:Row ~size:one ~flex_shrink:0. [ cell label_w [ frag th Dim l ]; line x ] in
+  let field l x =
+    box ~flex_direction:Row ~flex_shrink:0. [ Centre.label label_w [ frag th Dim l ]; para x ]
+  in
+  let line = para in
   let plain s = [ frag th Fg s ] in
   let r = f.run in
   let p = Run.provenance r in
@@ -517,10 +545,23 @@ let info_sections th (m : M.t) (f : Facts.run) =
   in
   let source =
     [
-      field "command" (plain (String.concat " " p.command));
+      (* An argument wraps whole, so that a command copied from the screen
+         keeps its arguments. *)
+      box ~flex_direction:Row ~flex_shrink:0.
+        [
+          Centre.label label_w [ frag th Dim "command" ];
+          Centre.groups (List.map (fun a -> [ frag th Fg a ]) p.command);
+        ];
       field "in" (plain p.cwd);
-      field "host"
-        [ frag th Fg (Option.value p.hostname ~default:"—"); frag th Dim (Printf.sprintf " · pid %d" p.pid) ];
+      box ~flex_direction:Row ~flex_shrink:0.
+        [
+          Centre.label label_w [ frag th Dim "host" ];
+          Centre.groups
+            [
+              [ frag th Fg (Option.value p.hostname ~default:"—") ];
+              [ frag th Dim (Printf.sprintf "· pid %d" p.pid) ];
+            ];
+        ];
       field "commit"
         ([ frag th Fg (Option.value (Facts.commit p) ~default:"—") ]
         @
@@ -530,28 +571,50 @@ let info_sections th (m : M.t) (f : Facts.run) =
       field "built" (plain (Printf.sprintf "OCaml %s · raven %s · %s %s" p.ocaml p.raven p.os p.arch));
     ]
   in
-  let params = List.map (fun (k, v) -> field k (plain (Facts.value v))) (List.sort compare (Run.params r)) in
+  (* The keys take the longest's width and a blank, up to a share of the
+     row. *)
+  let params =
+    let all = List.sort compare (Run.params r) in
+    let longest = List.fold_left (fun w (k, _) -> max w (Numbers.width k)) 0 all in
+    let key k =
+      rich_text ~wrap:`None ~truncate:true
+        ~size:(size_wh (px (max (label_w - 1) longest)) (px 1))
+        ~max_size:(size_wh (pct key_share) (px 1)) ~flex_shrink:1. ~min_size:shrinks
+        ~margin:(margin_lrtb 0 1 0 0) [ frag th Dim k ]
+    in
+    List.map
+      (fun (k, v) -> box ~flex_direction:Row ~flex_shrink:0. [ key k; para (plain (Facts.value v)) ])
+      all
+  in
+  (* The values wrap under each other, right of the key. *)
   let metric (k, (s : History.key_stats)) =
     let arrow = match Centre.arrow s.goal with "" -> "" | a -> " " ^ a in
-    line
+    box ~flex_direction:Row ~flex_shrink:0.
+      [
+        rich_text ~wrap:`None ~flex_shrink:0. [ frag th Dim (k ^ arrow ^ "  ") ];
+        Centre.groups
       ([
-         frag th Dim (k ^ arrow ^ "  ");
-         frag th Fg (Numbers.metric k s.stats.last.value);
-         frag th Dim (" at " ^ Numbers.count s.stats.last.step ^ "   ");
+         [
+           frag th Fg (Numbers.metric k s.stats.last.value);
+           frag th Dim (" at " ^ Numbers.count s.stats.last.step ^ "  ");
+         ];
        ]
       @ (match Option.bind s.goal (fun g -> Metric.best g s.stats) with
         | Some b ->
             [
-              frag th Dim "best ";
-              frag th Fg (Numbers.metric k b.value);
-              frag th Dim (" at " ^ Numbers.count b.step);
+              [
+                frag th Dim "best ";
+                frag th Fg (Numbers.metric k b.value);
+                frag th Dim (" at " ^ Numbers.count b.step ^ "  ");
+              ];
             ]
         | None -> [])
       @
       match s.stats.non_finite with
       | Some (n, x) ->
-          [ frag th Fail (Printf.sprintf "  %s not finite from %s" (Numbers.count n) (Numbers.count x.step)) ]
-      | None -> [])
+          [ [ frag th Fail (Printf.sprintf "%s not finite from %s" (Numbers.count n) (Numbers.count x.step)) ] ]
+      | None -> []);
+      ]
   in
   let metrics = List.map metric (List.filter (fun (_, (s : History.key_stats)) -> s.kind = `Metric) f.stats) in
   let none = [ line [ frag th Dim "—" ] ] in
@@ -593,7 +656,8 @@ let info th (m : M.t) scroll (f : Facts.run) =
     box ~flex_direction:Row ~flex_shrink:0. ~margin:(margin_lrtb 0 0 0 1)
       [
         cell 10 [ frag th Mid title ];
-        box ~flex_direction:Column ~flex_grow:1. ~margin:(margin_lrtb 2 0 0 0) rows;
+        box ~flex_direction:Column ~flex_grow:1. ~min_size:(size_wh (px 0) auto)
+          ~margin:(margin_lrtb 2 0 0 0) rows;
       ]
   in
   box ~flex_direction:Column ~position:Absolute ~inset:(inset 0) ~z_index:1
@@ -663,11 +727,14 @@ let help th =
       (line [ frag ~bold:true th Mid (Keys.group_name g) ]
       :: List.map
            (fun (r : Keys.row) ->
-             box ~flex_direction:Row ~size:one
+             (* The words wrap rather than cut, on a terminal narrower than
+                help. *)
+             box ~flex_direction:Row ~flex_shrink:0.
                [
                  cell 9
                    [ frag ~bold:true th Hi r.label; frag th Hi (if r.alt = "" then "" else " " ^ r.alt) ];
-                 line [ frag th Fg r.help ];
+                 rich_text ~wrap:`Word ~flex_grow:1. ~flex_shrink:1. ~min_size:(size_wh (px 0) auto)
+                   [ frag th Fg r.help ];
                ])
            mine)
   in

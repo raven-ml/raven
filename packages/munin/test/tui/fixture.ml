@@ -91,6 +91,7 @@ type run = {
   steps : int option;
   params : (string * Value.t) list;
   command : string list;
+  cwd : string;
   host : string;
   pid : int;
   commit : string;
@@ -108,7 +109,7 @@ let provenance r =
   obj
     [
       member "command" ("[" ^ String.concat "," (List.map str r.command) ^ "]");
-      member "cwd" (str "/home/ada/src/resnet");
+      member "cwd" (str r.cwd);
       member "hostname" (str r.host);
       member "pid" (string_of_int r.pid);
       member "ocaml" (str "5.4.0");
@@ -383,6 +384,7 @@ let sweep_run ~id ~name ~started ~pid ~commit ~dirty ~tags ?notes w ~upto ~ended
         "--warmup";
         string_of_int w.warmup;
       ];
+    cwd = "/home/ada/src/resnet";
     host = "gpu-01";
     pid;
     commit;
@@ -560,6 +562,7 @@ let mlp ~id ~name ~started ~pid ~hidden ~seed ~floor ~upto ~ended =
         ("opt", `String "sgd");
       ];
     command = [ "./mlp.exe"; "--hidden"; string_of_int hidden ];
+    cwd = "/home/ada/src/resnet";
     host = "gpu-01";
     pid;
     commit;

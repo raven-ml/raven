@@ -8,24 +8,24 @@
    |                                 f iiiiiiiiiiiiiiiiiiiii      gggggggggg  jjjjjjgggggggggg
 05 | ▾ cifar-resnet  6      val/loss │ █ █   ▀▀█ █ █   █   █      train/acc   95.40%  smoothed
    | ggkkkkkkkkkkkkggg      gggggggg f iiiiiiiiiiiiiiiiiiiii      ggggggggg   jjjjjjgggggggggg
-06 |▌ ■ tidy-otter ● ⠢⣀⣀⣀    0.4077  │ ▀▀▀ ▀   ▀ ▀▀▀   ▀   ▀      val/acc     94.18%
-   |lmlmnnnnnnnnnnmomllllmmmmppppppmmf iiiiiiiiiiiiiiiiiiiii      ggggggg     jjjjjj
-07 |  ■ amber-fox  ✓ ⠢⣀⣀⣀⣀⣀  0.3841 ★│ best 0.4077 at 12,000
-   |  q rrrrrrrrr  s qqqqqq  jjjjjj tf gggggrrrrrrgggggggggg
-08 |  · brisk-wren ✓ ⠢⣀⣀⣀⣀⣀  0.4071  │
-   |  u vvvvvvvvvv s wwwwww  vvvvvv  f
-09 |  · calm-lynx  ✓ ⠢⣀⣀⣀⣀⣀  0.3942  │ ━ tidy-otter   ━ amber-fox                                      latest   vs amber-f…
-   |  u vvvvvvvvv  s wwwwww  vvvvvv  f xxjjjjjjjjjjqqqqqvvvvvvvvv                                      gggggggggggggggggggg
-10 |  ■ dusty-mole × ⢢⡀      0.7665  │
-   |  y rrrrrrrrrr z yy      vvvvvv  f
-11 |  · eager-hawk ✗ ⠄        1.670  │  train/loss      ⠉⠒⠤⢄⣀⡀                                           0.2642        +11%
-   |  u rrrrrrrrrr z w        vvvvv  f  rrrrrrrrrr      xxxxxx                                           kkkkkk        AAAA
+06 |▌ ■ tidy-otter  ● ⠢⣀⣀⡀   0.4077  │ ▀▀▀ ▀   ▀ ▀▀▀   ▀   ▀      val/acc     94.18%
+   |lmlmnnnnnnnnnnmmomllllmmmppppppmmf iiiiiiiiiiiiiiiiiiiii      ggggggg     jjjjjj
+07 |  ■ amber-fox   ✓ ⠢⣀⣀⣀⣀  0.3841 ★│ best 0.4077 at 12,000
+   |  q rrrrrrrrr   s qqqqq  jjjjjj tf gggggrrrrrrgggggggggg
+08 |  · brisk-wren  ✓ ⠢⣀⣀⣀⣀  0.4071  │
+   |  u vvvvvvvvvv  s wwwww  vvvvvv  f
+09 |  · calm-lynx   ✓ ⠢⣀⣀⣀⣀  0.3942  │ ━ tidy-otter   ━ amber-fox                                      latest   vs amber-f…
+   |  u vvvvvvvvv   s wwwww  vvvvvv  f xxjjjjjjjjjjqqqqqvvvvvvvvv                                      gggggggggggggggggggg
+10 |  ■ dusty-mole  × ⢢⡀     0.7665  │
+   |  y rrrrrrrrrr  z yy     vvvvvv  f
+11 |  · eager-hawk  ✗ ⠄       1.670  │  train/loss      ⠉⠒⠤⢄⣀⡀                                           0.2642        +11%
+   |  u rrrrrrrrrr  z w       vvvvv  f  rrrrrrrrrr      xxxxxx                                           kkkkkk        AAAA
 12 | ▾ mnist-mlp  2         val/loss │  ↓ min                ⠈⠉⠑⠒⠒⠢⠤⠤⠤⠤⠤⠤⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀
    | ggkkkkkkkkkggg         gggggggg f  ggggg                xxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq
-13 |  · mlp-wide   ✓ ⠈⢆⣀⣀⣀⣀ 0.05831 ★│
-   |  u vvvvvvvv   s wwwwww jjjjjjj tf
-14 |  · mlp-base   ✗ ⠈⢆⣀⣀   0.06576  │ ▌val/loss        ⠑⠢⢄⣀                                             0.4077       +3.5%
-   |  u rrrrrrrr   z wwww   vvvvvvv  f lnnnnnnnnmmmmmmmmllllmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmnnnnnnmmmmmmmBBBBB
+13 |  · mlp-wide    ✓ ⠈⢆⣀⣀⣀ 0.05831 ★│
+   |  u vvvvvvvv    s wwwww jjjjjjj tf
+14 |  · mlp-base    ✗ ⠈⢆⣀⡀  0.06576  │ ▌val/loss        ⠑⠢⢄⣀                                             0.4077       +3.5%
+   |  u rrrrrrrr    z wwww  vvvvvvv  f lnnnnnnnnmmmmmmmmllllmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmnnnnnnmmmmmmmBBBBB
 15 |                                 │  ↓ min               ⠉⠉⠒⠒⠢⠤⠤⠤⠤⠤⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⡀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀
    |                                 f mCCCCCmmmmmmmmmmmmmmmllllllllllllllllllllllllDDDDDDDDDDDDDDDDDmmmmmmmmmmmmmmmmmmmmmm
 16 |                                 │

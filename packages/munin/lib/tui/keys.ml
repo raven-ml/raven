@@ -40,7 +40,7 @@ let screen =
     row Move "↑↓" "run; metric in strips" ~alt:"k j" ~on_run:true
       ~hints:[ (`Charts, "run"); (`Strips, "metric") ]
       [ (S.up, Vertical (-1)); (S.down, Vertical 1); (c 'k', Vertical (-1)); (c 'j', Vertical 1) ];
-    row Move "←→" "metric; step in zoom, ⇧ ×10" ~alt:"h l" ~on_run:true
+    row Move "←→" "metric; zoom step, ⇧ ×10" ~alt:"h l" ~on_run:true
       ~hints:[ (`Charts, "metric"); (`Zoom, "step") ]
       [
         (S.left, Horizontal (-1));
@@ -63,7 +63,7 @@ let screen =
       "back a depth, or clear"
       ~hints:[ (`Strips, "charts"); (`Zoom, "strips") ]
       [ (S.escape, Back) ];
-    row Compare "space" "overlay the run (4 at most)" ~on_run:true
+    row Compare "space" "overlay the run, 4 at most" ~on_run:true
       ~hints:[ (`Charts, "overlay") ]
       [ (S.space, Overlay) ];
     row Compare "r" "the other runs, in grey" [ (c 'r', Others) ];
@@ -74,7 +74,7 @@ let screen =
     row Look "+ −" "narrow, widen the steps" ~on_run:true
       ~hints:[ (`Zoom, "zoom") ]
       [ (c '+', Narrow); (c '-', Widen) ];
-    row Find "/" "filter: name, state, lr<0.05" ~hints:[ (`Charts, "filter") ] [ (c '/', Filter) ];
+    row Find "/" "filter: name, tag, lr<0.05" ~hints:[ (`Charts, "filter") ] [ (c '/', Filter) ];
     row Find "o" "order: started, best, name" [ (c 'o', Order) ];
     row Find "e" "fold, open the experiment" ~on_run:true [ (c 'e', Fold) ];
     row Panes "i" "everything about the run" ~on_run:true [ (c 'i', Info) ];

@@ -8,32 +8,32 @@
    |                                 f iiiiiiiiiiiiiiiiiiiii      gggggggggg  jjjjjjgggggggggg  f
 05 | ▾ cifar-resnet  6      val/loss │ █ █   ▀▀█ █ █   █   █      train/acc   95.40%  smoothed  │ ● tidy-otter  live
    | ggkkkkkkkkkkkkggg      gggggggg f iiiiiiiiiiiiiiiiiiiii      ggggggggg   jjjjjjgggggggggg  f ljjjjjjjjjjjmmmmmm
-06 |▌ ■ tidy-otter ● ⠢⣀⣀⣀    0.4077  │ ▀▀▀ ▀   ▀ ▀▀▀   ▀   ▀      val/acc     94.18%            │ last sample 1s ago
-   |nonoppppppppppoqonnnnoooorrrrrroof iiiiiiiiiiiiiiiiiiiii      ggggggg     jjjjjj            f gggggggggggggggggg
-07 |  · amber-fox  ✓ ⠢⣀⣀⣀⣀⣀  0.3841 ★│ best 0.4077 at 12,000                                    │
-   |  s ttttttttt  u vvvvvv  jjjjjj wf gggggxxxxxxgggggggggg                                    f
-08 |  · brisk-wren ✓ ⠢⣀⣀⣀⣀⣀  0.4071  │                                                          │ ━━━━━━━━━━━━━──────── 62%
-   |  s tttttttttt u vvvvvv  tttttt  f                                                          f mmmmmmmmmmmmmssssssss xxx
-09 |  · calm-lynx  ✓ ⠢⣀⣀⣀⣀⣀  0.3942  │ ‹   val/loss   train/acc   val/acc   val/ece   ›         │ 12,400 of 20,000 steps
-   |  s ttttttttt  u vvvvvv  tttttt  f g   jjjjjjjj   ggggggggg   ggggggg   ggggggg   g         f kkkkkkgggggggggggggggg
-10 |  · dusty-mole × ⢢╭─keys─────────────────────────────────────────────────────────────────────────────╮left · ends 13:17
-   |  s xxxxxxxxxx y vzzAAAAzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzggggggggggggggggg
-11 |  · eager-hawk ✗ ⠄│                                                                                  │s/s · 1h 37m in
-   |  s xxxxxxxxxx y vzaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaazggggggggggggggg
+06 |▌ ■ tidy-otter  ● ⠢⣀⣀⡀   0.4077  │ ▀▀▀ ▀   ▀ ▀▀▀   ▀   ▀      val/acc     94.18%            │ last sample 1s ago
+   |nonoppppppppppooqonnnnooorrrrrroof iiiiiiiiiiiiiiiiiiiii      ggggggg     jjjjjj            f gggggggggggggggggg
+07 |  · amber-fox   ✓ ⠢⣀⣀⣀⣀  0.3841 ★│ best 0.4077 at 12,000                                    │
+   |  s ttttttttt   u vvvvv  jjjjjj wf gggggxxxxxxgggggggggg                                    f
+08 |  · brisk-wren  ✓ ⠢⣀⣀⣀⣀  0.4071  │                                                          │ ━━━━━━━━━━━━━──────── 62%
+   |  s tttttttttt  u vvvvv  tttttt  f                                                          f mmmmmmmmmmmmmssssssss xxx
+09 |  · calm-lynx   ✓ ⠢⣀⣀⣀⣀  0.3942  │ ‹   val/loss   train/acc   val/acc   val/ece   ›         │ 12,400 of 20,000 steps
+   |  s ttttttttt   u vvvvv  tttttt  f g   jjjjjjjj   ggggggggg   ggggggg   ggggggg   g         f kkkkkkgggggggggggggggg
+10 |  · dusty-mole  × ╭─keys─────────────────────────────────────────────────────────────────────────────╮left · ends 13:17
+   |  s xxxxxxxxxx  y zzAAAAzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzggggggggggggggggg
+11 |  · eager-hawk  ✗ │                                                                                  │s/s · 1h 37m in
+   |  s xxxxxxxxxx  y zaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaazggggggggggggggg
 12 | ▾ mnist-mlp  2   │  move                                     find                                   │
    | ggkkkkkkkkkggg   zaabbbbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaz
-13 |  · mlp-wide   ✓ ⠈│  ↑↓ k j   run; metric in strips           /        filter: name, state, lr<0.05  │─────────────────
-   |  s tttttttt   u vzaaAABBBBaaaCCCCCCCCCCCCCCCCCCCCCaaaaaaaaaaaAaaaaaaaaCCCCCCCCCCCCCCCCCCCCCCCCCCCCaazfffffffffffffffff
-14 |  · mlp-base   ✗ ⠈│  ←→ h l   metric; step in zoom, ⇧ ×10     o        order: started, best, name    │ 0.0003    varies
-   |  s xxxxxxxx   y vzaaAABBBBaaaCCCCCCCCCCCCCCCCCCCCCCCCCCCaaaaaAaaaaaaaaCCCCCCCCCCCCCCCCCCCCCCCCCCaaaaz jjjjjj    gggggg
-15 |                  │  [ ]      previous, next run              e        fold, open the experiment     │ 500       varies
-   |                  zaaAAAaaaaaaCCCCCCCCCCCCCCCCCCaaaaaaaaaaaaaaAaaaaaaaaCCCCCCCCCCCCCCCCCCCCCCCCCaaaaaz jjj       gggggg
-16 |                  │  g G      first, last run                                                        │ 256
-   |                  zaaAAAaaaaaaCCCCCCCCCCCCCCCaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaz xxx
-17 |                  │  enter    charts › strips › zoom          panes                                  │ 10
-   |                  zaaAAAAAaaaaCCCCCCCCCCCCCCCCCCCCCCaaaaaaaaaabbbbbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaz xx
-18 |                  │  esc      back a depth, or clear          i        everything about the run      │ 0.05
-   |                  zaaAAAaaaaaaCCCCCCCCCCCCCCCCCCCCCCaaaaaaaaaaAaaaaaaaaCCCCCCCCCCCCCCCCCCCCCCCCaaaaaaz xxxx
+13 |  · mlp-wide    ✓ │  ↑↓ k j   run; metric in strips           /        filter: name, tag, lr<0.05    │─────────────────
+   |  s tttttttt    u zaaAABBBBaaaCCCCCCCCCCCCCCCCCCCCCaaaaaaaaaaaAaaaaaaaaCCCCCCCCCCCCCCCCCCCCCCCCCCaaaazfffffffffffffffff
+14 |  · mlp-base    ✗ │  ←→ h l   metric; zoom step, ⇧ ×10        o        order: started, best, name    │.0003000   varies
+   |  s xxxxxxxx    y zaaAABBBBaaaCCCCCCCCCCCCCCCCCCCCCCCCaaaaaaaaAaaaaaaaaCCCCCCCCCCCCCCCCCCCCCCCCCCaaaazjjjjjjjj   gggggg
+15 |                  │  [ ]      previous, next run              e        fold, open the experiment     │00         varies
+   |                  zaaAAAaaaaaaCCCCCCCCCCCCCCCCCCaaaaaaaaaaaaaaAaaaaaaaaCCCCCCCCCCCCCCCCCCCCCCCCCaaaaazjj         gggggg
+16 |                  │  g G      first, last run                                                        │56
+   |                  zaaAAAaaaaaaCCCCCCCCCCCCCCCaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaazxx
+17 |                  │  enter    charts › strips › zoom          panes                                  │0
+   |                  zaaAAAAAaaaaCCCCCCCCCCCCCCCCCCCCCCaaaaaaaaaabbbbbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaazx
+18 |                  │  esc      back a depth, or clear          i        everything about the run      │.05000
+   |                  zaaAAAaaaaaaCCCCCCCCCCCCCCCCCCCCCCaaaaaaaaaaAaaaaaaaaCCCCCCCCCCCCCCCCCCCCCCCCaaaaaazxxxxxx
 19 |                  │                                           1 3      runs, run pane                │  i: all
    |                  zaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaAAAaaaaaaCCCCCCCCCCCCCCaaaaaaaaaaaaaaaazgggggggg
 20 |                  │  look                                     ?        these keys                    │
@@ -48,8 +48,8 @@
    |                  zaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaztttttttttssss xxx
 25 |                  │  compare                                                                         │━╸──── 33.0/62.7G
    |                  zaabbbbbbbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaazttssss xxxxxxxxxx
-26 |                  │  space    overlay the run (4 at most)                                            │4 W
-   |                  zaaAAAAAaaaaCCCCCCCCCCCCCCCCCCCCCCCCCCCaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaazggg
+26 |                  │  space    overlay the run, 4 at most                                             │4 W
+   |                  zaaAAAAAaaaaCCCCCCCCCCCCCCCCCCCCCCCCCCaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaazggg
 27 |                  │  r        the other runs, in grey                                                │
    |                  zaaAaaaaaaaaCCCCCCCCCCCCCCCCCCCCCCCaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaz
 28 |                  │  c        clear overlays                                                         │─────────────────

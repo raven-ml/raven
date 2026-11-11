@@ -8,24 +8,24 @@
    |                                 f
 05 | ▾ cifar-resnet  6      val/loss │ ━ tidy-otter 0.4641   ━ dusty-mole NaN   ━ amber-fox 0.4468   r others
    | ggjjjjjjjjjjjjggg      gggggggg f kkiiiiiiiiiiiiiiiii   llmmmmmmmmmmmnnn   oommmmmmmmmmpppppp   hhgggggg
-06 |▌ ■ tidy-otter ● ⠢⣀⣀⣀    0.4077  │
-   |qrqrssssssssssrtrqqqqrrrruuuuuurrf
-07 |  ■ amber-fox  ✓ ⠢⣀⣀⣀⣀⣀  0.3841 ★│       │                    │          ┊now                 │ at step 8,000
-   |  v ppppppppp  w vvvvvv  iiiiii xf       y                    m          yggg                 f hhhhhhhhhhhhh
-08 |  · brisk-wren ✓ ⠢⣀⣀⣀⣀⣀  0.4071  │      2┤⡆                   │          ┊                    │
-   |  y mmmmmmmmmm w zzzzzz  mmmmmm  f ggggggyA                   m          y                    f
-09 |  · calm-lynx  ✓ ⠢⣀⣀⣀⣀⣀  0.3942  │       │⢇                   │          ┊                    │ ━ tidy-otter
-   |  y mmmmmmmmm  w zzzzzz  mmmmmm  f       yA                   m          y                    f AAiiiiiiiiii
-10 |  ■ dusty-mole × ⢢⡀      0.7665  │       │⢸                   │          ┊                    │   0.4641
-   |  B pppppppppp C BB      mmmmmm  f       yA                   m          y                    f ggiiiiii
-11 |  · eager-hawk ✗ ⠄        1.670  │    1.8┤⢸                   │          ┊                    │
-   |  y pppppppppp C z        mmmmm  f ggggggyA                   m          y                    f
+06 |▌ ■ tidy-otter  ● ⠢⣀⣀⡀   0.4077  │
+   |qrqrssssssssssrrtrqqqqrrruuuuuurrf
+07 |  ■ amber-fox   ✓ ⠢⣀⣀⣀⣀  0.3841 ★│       │                    │          ┊now                 │ at step 8,000
+   |  v ppppppppp   w vvvvv  iiiiii xf       y                    m          yggg                 f hhhhhhhhhhhhh
+08 |  · brisk-wren  ✓ ⠢⣀⣀⣀⣀  0.4071  │      2┤⡆                   │          ┊                    │
+   |  y mmmmmmmmmm  w zzzzz  mmmmmm  f ggggggyA                   m          y                    f
+09 |  · calm-lynx   ✓ ⠢⣀⣀⣀⣀  0.3942  │       │⢇                   │          ┊                    │ ━ tidy-otter
+   |  y mmmmmmmmm   w zzzzz  mmmmmm  f       yA                   m          y                    f AAiiiiiiiiii
+10 |  ■ dusty-mole  × ⢢⡀     0.7665  │       │⢸                   │          ┊                    │   0.4641
+   |  B pppppppppp  C BB     mmmmmm  f       yA                   m          y                    f ggiiiiii
+11 |  · eager-hawk  ✗ ⠄       1.670  │    1.8┤⢸                   │          ┊                    │
+   |  y pppppppppp  C z       mmmmm  f ggggggyA                   m          y                    f
 12 | ▾ mnist-mlp  2         val/loss │       │⠈⡆                  │          ┊                    │ ━ dusty-mole
    | ggjjjjjjjjjggg         gggggggg f       yAA                  m          y                    f BBpppppppppp
-13 |  · mlp-wide   ✓ ⠈⢆⣀⣀⣀⣀ 0.05831 ★│       │ ⡇                  │          ┊                    │   NaN
-   |  y mmmmmmmm   w zzzzzz iiiiiii xf       y A                  m          y                    f ggCCC
-14 |  · mlp-base   ✗ ⠈⢆⣀⣀   0.06576  │       │ ⢱                  │          ┊                    │
-   |  y pppppppp   C zzzz   mmmmmmm  f       y A                  m          y                    f
+13 |  · mlp-wide    ✓ ⠈⢆⣀⣀⣀ 0.05831 ★│       │ ⡇                  │          ┊                    │   NaN
+   |  y mmmmmmmm    w zzzzz iiiiiii xf       y A                  m          y                    f ggCCC
+14 |  · mlp-base    ✗ ⠈⢆⣀⡀  0.06576  │       │ ⢱                  │          ┊                    │
+   |  y pppppppp    C zzzz  mmmmmmm  f       y A                  m          y                    f
 15 |                                 │    1.6┤ ⠘⡄                 │          ┊                    │ ━ amber-fox
    |                                 f ggggggy AA                 m          y                    f vvppppppppp
 16 |                                 │       │  ⡇                 │          ┊                    │   0.4468
