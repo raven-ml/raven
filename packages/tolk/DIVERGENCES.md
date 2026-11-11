@@ -7030,17 +7030,28 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
 
 - **tinygrad:** `codegen/opt/heuristic.py`
   (`hand_coded_optimizations`: the upcast loop takes each axis once, by 3 or
-  4, while fewer than 32 lanes are upcast; the unroll needs fewer than 64; the
-  locals stop at 128 threads; the same at `6b7b018da`).
-- **tolk:** `Heuristic.block`, `Heuristic.upcast_more`, `Heuristic.locals` and
-  `Heuristic.general`.
+  4, 3 first where both divide it, while fewer than 32 lanes are upcast; the
+  unroll needs fewer than 64; the locals stop at 128 threads; the same at
+  `6b7b018da`).
+- **tolk:** `Heuristic.four_first`, `Heuristic.block`, `Heuristic.upcast_more`,
+  `Heuristic.blocked_threads`, `Heuristic.locals` and `Heuristic.general`.
 - **Differs:** on a renderer with local indices, a contraction summed in 4
   bytes or fewer whose upcast loop took two axes, each by 4 and leaving part
   of its axis, each unread by some operand, takes a second upcast of each by 2
   when 2 divides both and what is left of them holds a SIMD group of 32
   threads in powers of two; its last unrollable axis is then unrolled by 4
   where 4 divides it, and its workgroup takes at most 32 threads. A thread
-  then holds 8 by 8 outputs, and each element it loads feeds 8 of them.
+  then holds 8 by 8 outputs, and each element it loads feeds 8 of them. Where
+  one of the two upcasts took its axis whole, the output axis that the same
+  operands read takes its second upcast. The
+  workgroup's threads are the local loop's where it lays a power of two of
+  them, at least 2, along the later of the two axes; else 16 or 8 lie along
+  the later axis, whichever pads it less, and the rest along the other, each
+  axis padded to its threads (PADTO) where they do not divide it, unless a pad
+  is refused. Only for such a contraction, where its two reused output axes
+  would pass that guard once upcast by 4 and its blocked threads, a 64th of
+  its outputs, number at least the renderer's `core_threads`, does the
+  upcast loop take an axis by 4 before 3.
 - **Reason:** (d): float32 contractions on fudge's RTX 5000 Ada, which take no
   tensor core (TF32 is off), ran at 6 TFLOP/s of the part's 65 with 4 by 4
   outputs a thread in workgroups of 128 threads. More outputs a thread cover
@@ -7060,15 +7071,38 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   unmeasured, as fudge has neither. Under `--fmad=false` (D25) the unrolled
   reduce renders a multiply and three fused multiply-adds per four products,
   which caps these kernels below the part's peak whatever their layout.
+  4 before 3 and the padding: tinygrad's 3 first left products whose output
+  axes 3 divides at 4 by 3 outputs a thread, and blocked products whose
+  halved axis holds no power of two of threads (440 columns, 55 runs of 8)
+  took the SIMD group along the other axis. GPU kernel time on fudge,
+  minimum of 3 interleaved runs a side at load 11-36: 262144 x 440 x 1320
+  53.6 to 14.1 ms, 262144 x 256 x 768 17.7 to 4.57 ms, 262144 x 144 x 144
+  1.93 to 0.71 ms, 262144 x 440 x 440 20.6 to 4.85 ms (15-24.4 TFLOP/s,
+  against cuBLAS's 15.0, 4.51, 0.64 and 5.5 ms); products the loop laid
+  already (2048 cubed, 262144 x 256 x 1024) and products of 48 rows by
+  1024 keep their kernels. The width that takes the heads' second upcast:
+  a projection of 16384 rows by 440 into 4 heads of 110 took 331 us, 2549 at
+  4 by 4 and 859 where main's stale index doubled it; attention's scores
+  with biases that skip the heads, whose queries the same operands do not
+  read, keep 4 by 4 (138 us). The pad adds work: 440 columns to 448, 1320 to
+  1344, 432 to 448, 144 to 192 (a third), 72 to 128; PADTO refuses past four
+  times, and the rule does not choose the least.
 - **Pinned by:** `Tolk.Heuristic`'s `a contraction in registers` cases
   (`matmul`, `matmul_256` and `scores` blocked on CUDA, `matmul_256` on AMD;
-  `matmul_1000`, whose halved axes hold one thread, and `scores_biased`, whose
-  upcasts take its 4 heads whole, not blocked), with the
+  `matmul_768`, upcast by 4, and `matmul_440`, padded, blocked; `matmul_1000`,
+  whose halved axes hold one thread, `matmul_48`, whose blocked threads would
+  be too few, and `scores_biased` and `scores_biased_first`, whose upcasts
+  take their 4 heads whole, not blocked; `heads_projection` blocked over the
+  heads' width), with the
   layouts in the suite's `.tolk` files; rune's
   `test_jit_gpu` `products › a float32 matmul is within its bound of the exact
-  product` at extents of 64 and 128 summed over 13 and 52, on the machine's
-  first GPU; the tolk bench's `contract/f32-2048` and `contract/qk-f32-2048`
-  rows on fudge, their baselines pending the scheduled re-record. A sum in 8
+  product` at extents of 64 and 128 summed over 13 and 52, and padded at
+  256 x 13 x 40, `a blocked product padded to its threads, plus a bias` and
+  `a projection into heads, blocked over their width, is within its bound`,
+  on the machine's first GPU; the tolk bench's `contract/f32-2048` and
+  `contract/qk-f32-2048` rows and rune's `Cuda/matmul-float32-16384x440x1320`
+  and `Cuda/matmul-float32-heads-16384x440x4x110` on fudge, their baselines
+  pending the scheduled re-record. A sum in 8
   bytes is not blocked: 64 accumulators of 8 bytes and their operands would
   pass a thread's 255 registers.
 

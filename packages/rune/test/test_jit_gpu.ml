@@ -1660,7 +1660,11 @@ let products_gen =
 
 (* Float32 products on a GPU's registers: extents of 64 and 128 on both output
    axes block a thread's outputs 8 by 8, and unroll a sum of 52 by 4; a sum
-   of 13 is not unrolled. *)
+   of 13 is not unrolled. 40 columns of 256 rows leave 5 runs of 8 outputs,
+   which the blocked threads take padded; 40 rows of 512 columns leave 5
+   runs of rows, and a workgroup of 16 threads. *)
+let padded_products = [ (256, 13, 40); (40, 13, 512) ]
+
 let float32_products_gen =
   let outputs = Gen.of_list [ 1; 13; 64; 128 ] in
   let blocked = Gen.of_list [ 64; 128 ] in
@@ -1669,6 +1673,7 @@ let float32_products_gen =
       [
         (1, Gen.triple outputs (Gen.of_list [ 1; 13; 64 ]) outputs);
         (2, Gen.triple blocked (Gen.of_list [ 13; 52 ]) blocked);
+        (1, Gen.of_list padded_products);
       ]
   in
   Gen.with_pp pp_product
@@ -1713,7 +1718,43 @@ let float32_law ((_, (m, k, n), _) as c) =
   let blocked = m mod 64 = 0 && n mod 64 = 0 && m > 0 && n > 0 in
   cover "outputs that 64 divides, a sum that 4 divides" (blocked && k = 52);
   cover "outputs that 64 divides, a sum of 13" (blocked && k = 13);
+  cover "columns padded to the blocked threads" ((m, k, n) = (256, 13, 40));
+  cover "rows that leave a blocked workgroup 16 threads"
+    ((m, k, n) = (40, 13, 512));
   within_bound c
+
+(* A padded blocked product with a bias of each column, which its kernel adds
+   to each output: within the bound of a sum of [k + 1] terms. *)
+let test_padded_bias () =
+  let _, (module S) = on_gpu () in
+  let m = 256 and k = 52 and n = 440 in
+  let draw seed s =
+    let x = Nx.Rng.uniform ~key:(Nx.Rng.key seed) Nx.float32 s in
+    Nx.sub_s (Nx.mul_s x 4.) 2.
+  in
+  let a = draw 1 [| m; k |] and b = draw 2 [| k; n |] and c = draw 3 [| n |] in
+  let y =
+    Rune.jit
+      Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+      (fun a b c -> Nx.add (Nx.matmul a b) c)
+      (Nx.place S.on a) (Nx.place S.on b) (Nx.place S.on c)
+  in
+  let y = Nx.to_array (Nx.cast Nx.float64 (host y)) in
+  let d x = Nx.cast Nx.float64 x in
+  let exact = Nx.to_array (Nx.add (Nx.matmul (d a) (d b)) (d c)) in
+  let mass =
+    Nx.to_array
+      (Nx.add (Nx.matmul (Nx.abs (d a)) (Nx.abs (d b))) (Nx.abs (d c)))
+  in
+  let u = 0x1p-24 in
+  Array.iteri
+    (fun i z ->
+      let e = product (k + 2) *. mass.(i) in
+      less
+        ~msg:(Printf.sprintf "[%d; %d]" (i / n) (i mod n))
+        float_exact ~than:(e +. (u *. (Float.abs z +. e)))
+        (Float.abs (y.(i) -. z)))
+    exact
 
 (* Sixteen products of [1] by [1; t; ...; t], [t = 255 2^-31] just under
    float32's [u], every value a bfloat16: rows of ones by columns of these
@@ -1809,6 +1850,40 @@ let test_dense_grad () =
   in
   close "x" gx ex;
   close "wq" gq eq
+
+(* A projection of 16 by 256 rows into attention's 4 heads of 110, its output
+   laid out by head: the upcasts take the heads whole and the width, which the
+   same operands read, takes their second upcast, padded to its threads.
+   Within the bound of a sum of [k] terms. *)
+let test_heads_projection () =
+  let _, (module S) = on_gpu () in
+  let b = 16 and t = 256 and k = 52 and h = 4 and d = 110 in
+  let draw seed s =
+    let x = Nx.Rng.uniform ~key:(Nx.Rng.key seed) Nx.float32 s in
+    Nx.sub_s (Nx.mul_s x 4.) 2.
+  in
+  let x = draw 1 [| b; t; k |] and w = draw 2 [| k; h; d |] in
+  let heads = Nx.Pattern.v "b t k, k h d -> b h t d | k" in
+  let y =
+    Rune.jit
+      Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+      (Nx.contract Nx.float32 heads)
+      (Nx.place S.on x) (Nx.place S.on w)
+  in
+  let y = Nx.to_array (Nx.cast Nx.float64 (host y)) in
+  let f x = Nx.cast Nx.float64 x in
+  let exact = Nx.to_array (Nx.contract Nx.float64 heads (f x) (f w)) in
+  let mass =
+    Nx.to_array (Nx.contract Nx.float64 heads (Nx.abs (f x)) (Nx.abs (f w)))
+  in
+  let u = 0x1p-24 in
+  Array.iteri
+    (fun i z ->
+      let e = product (k + 1) *. mass.(i) in
+      less ~msg:(string_of_int i) float_exact
+        ~than:(e +. (u *. (Float.abs z +. e)))
+        (Float.abs (y.(i) -. z)))
+    exact
 
 (* A routed expert at a prompt of 12 tokens: each token goes through the
    experts its logits rank first, 4 of 32, as gpt-oss-20b's do, each expert
@@ -2301,10 +2376,22 @@ let () =
                 product"
                products_gen product_law;
              prop ~count:24
+               ~examples:
+                 (List.map
+                    (fun s -> (Narrow (Nx.float32, 0x1p-24, 0x1p-149), s, 7))
+                    padded_products)
                "a float32 matmul is within its bound of the exact product"
                float32_products_gen float32_law;
              test "sixteen terms under float32's unit hold the bound"
                test_sixteen_terms;
+             test
+               "a blocked product padded to its threads, plus a bias, is \
+                within its bound"
+               test_padded_bias;
+             test
+               "a projection into heads, blocked over their width, is within \
+                its bound"
+               test_heads_projection;
              test
                "a dense attention step's gradient is the host's within \
                 float32's rounding"

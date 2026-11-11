@@ -1836,6 +1836,36 @@ let gpu_rows g =
          or consecutive columns. *)
       on_gpu g "sum-rows-float32-2048x8192" (sum_at [| 2048; 8192 |] 1);
       on_gpu g "sum-columns-float32-16384x2048" (sum_at [| 16384; 2048 |] 0);
+      (* A float32 product of 16384 rows of 440 by 1320 columns, an attention's
+         fused projection: 3 divides the columns, and 8 outputs a thread leave
+         165 runs of them, which no power of two of threads divides. *)
+      on_gpu g "matmul-float32-16384x440x1320"
+        {
+          at =
+            (fun at ->
+              let draw i s =
+                Nx.place at (Nx.Rng.uniform ~key:(Nx.Rng.key i) f32 s)
+              in
+              let x = draw 60 [| 16384; 440 |] and w = draw 61 [| 440; 1320 |] in
+              let f = Rune.jit (pair_fn ()) Nx.matmul in
+              fun () -> ignore (synced (f x w)));
+        };
+      (* The same product laid out by attention's 4 heads of 110, as an
+         encoder's projection writes it: the heads, upcast whole, lend their
+         second upcast to the width the same operands read. *)
+      on_gpu g "matmul-float32-heads-16384x440x4x110"
+        {
+          at =
+            (fun at ->
+              let draw i s =
+                Nx.place at (Nx.Rng.uniform ~key:(Nx.Rng.key i) f32 s)
+              in
+              let x = draw 62 [| 64; 256; 440 |]
+              and w = draw 63 [| 440; 4; 110 |] in
+              let heads = Nx.Pattern.v "b t k, k h d -> b h t d | k" in
+              let f = Rune.jit (pair_fn ()) (Nx.contract f32 heads) in
+              fun () -> ignore (synced (f x w)));
+        };
       (* The position of the greatest of gpt-oss's 201088 bfloat16 logits, a
          greedy decode step's last call: two reductions, each split into 128
          runs of 1571, a prime, that a workgroup's threads read together. *)

@@ -224,7 +224,9 @@ type t = private {
       (** The threads a kernel keeps once a tensor core's splits apply: a
           split applies only while [core_threads / t] workgroups of the core's
           [t] threads remain ({!Heuristic}). Fewer leave memory short of loads
-          in flight; more refuse reuse. It is a bound fitted to the products
+          in flight; more refuse reuse. A float32 contraction's blocking reads
+          it too: it takes 4 before 3 only where a 64th of its outputs number
+          at least [core_threads]. It is a bound fitted to the products
           timed on one part of a target: 16384 on an RTX 5000 Ada (sm_89),
           and Metal's 32768 on an M1 Max, other Apple parts unmeasured. It
           moves the order of a sum, so it is fixed per target, never read

@@ -1398,14 +1398,32 @@ let workgroup c =
 let blocks =
   group "a contraction in registers"
     [
+      (* 768 columns, which 3 divides, are upcast by 4; 440 columns are 55
+         runs of 8 outputs, which hold a SIMD group only padded; a projection
+         into 4 heads of 110, its heads upcast whole, lends their second
+         upcast to the width, padded. *)
       cases "on a GPU, both upcast axes reused, a thread holds 8 by 8 outputs \
-             in a workgroup of at most 32 threads"
+             in a workgroup of one SIMD group"
         ~id:Fun.id
-        [ "matmul_cuda"; "matmul_256_cuda"; "matmul_256_amd"; "scores_cuda" ]
+        [
+          "matmul_cuda";
+          "matmul_256_cuda";
+          "matmul_256_amd";
+          "scores_cuda";
+          "matmul_768_cuda";
+          "matmul_440_cuda";
+          "heads_projection_cuda";
+          "heads_projection_amd";
+        ]
         (fun name ->
           let c = recorded name in
           equal ~msg:"outputs" int 64 (lane_outputs c);
-          at_most ~msg:"threads" int ~than:32 (workgroup c));
+          equal ~msg:"threads" int 32 (workgroup c));
+      (* Blocked, 48 rows by 1024 columns would keep 768 threads. *)
+      cases "a thread holds 4 by 3 outputs where its blocked kernel would keep \
+             too few threads"
+        ~id:Fun.id [ "matmul_48_cuda" ]
+        (fun name -> equal int 12 (lane_outputs (recorded name)));
       cases "a thread holds 4 by 4 outputs where halved axes hold no SIMD \
              group"
         ~id:Fun.id

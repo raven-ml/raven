@@ -1238,6 +1238,14 @@ word comes from its lock and from samples the dashboard saw arrive.
 - `Tolk_engine.link` launches a software device's kernels (`Rig.software`)
   on that device, where it launched them on the host, so `Tolk_engine.time`
   times them there.
+- On a GPU, float32 contractions of at least 2^20 outputs whose output axes
+  3 divides hold 8 by 8 outputs a thread, blocked products whose halved axis
+  holds no power of two of threads are padded to them, and one whose upcast
+  takes an output axis whole is blocked over the output axis the same
+  operands read, as a projection into attention's heads over their width. On
+  an RTX 5000 Ada fused attention projections of 262144 rows into 432 to 1920
+  columns run 3.3-4.2x faster in GPU time, at 19-24 TFLOP/s, and a projection
+  into 4 heads of 110 runs 2.6x faster.
 - On a GPU a float32 contraction whose upcasts take one of its output axes
   whole, as attention's scores over 4 heads plus a bias of each key, compiles.
   It raised `Invalid_argument` naming an UPCAST axis, so `Rune.jit` of

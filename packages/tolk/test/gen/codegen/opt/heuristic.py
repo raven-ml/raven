@@ -137,10 +137,18 @@ KERNELS = {
     "matmul_bf16_5760": lambda: last(empty(512, 2880, dtype=dtypes.bfloat16).float() @ empty(2880, 5760, dtype=dtypes.bfloat16).float()),
     "matmul_half_1280x2560": lambda: last(empty(1280, 64, dtype=dtypes.half).matmul(empty(64, 2560, dtype=dtypes.half), dtype=dtypes.float)),
     # float32 contractions on a GPU's registers: a product whose rows and columns each one operand does not read holds 8 by 8 outputs
-    # a thread, attention's scores per head likewise; a product of 1000 by 1000 leaves its halved axes no power of two of threads
+    # a thread, attention's scores per head likewise; a product of 1000 by 1000 leaves its halved axes no power of two of threads;
+    # 768 columns, which 3 divides, are upcast by 4 where the blocked kernel keeps its threads, 48 rows by 1024 columns are not;
+    # 440 columns, 55 runs of 8 outputs, are padded to the threads across them
     "matmul_256": lambda: last(empty(256, 64) @ empty(64, 256)),
     "scores": lambda: last(empty(8, 128, 16) @ empty(8, 128, 16).transpose(1, 2)),
     "matmul_1000": lambda: last(empty(1000, 16) @ empty(16, 1000)),
+    "matmul_768": lambda: last(empty(2048, 16) @ empty(16, 768)),
+    "matmul_48": lambda: last(empty(48, 64) @ empty(64, 1024)),
+    "matmul_440": lambda: last(empty(256, 64) @ empty(64, 440)),
+    # a projection into attention's 4 heads of 110: the heads, upcast whole, lend their second upcast to the width the same
+    # operands read
+    "heads_projection": lambda: last((empty(16, 1, 256, 1, 64) * empty(64, 4, 110).permute(1, 2, 0).reshape(1, 4, 1, 110, 64)).sum(-1)),
     # attention's scores per head plus a bias of each key and two of each query that no head reads, as a key bias and the
     # bounds of the visible keys: the upcasts take the keys by 4, then the 4 heads whole, which leaves no axis of heads to block
     "scores_biased": lambda: last(empty(64, 256, 4, 16).permute(0, 2, 1, 3) @ empty(64, 256, 4, 16).permute(0, 2, 3, 1)

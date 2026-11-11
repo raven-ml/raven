@@ -155,13 +155,19 @@
     - While the upcastable axes hold at least 1024 elements and fewer than 32
       lanes are upcast, one more axis is upcast by 3 or 4, chosen among axes
       some access does not index while indexing every upcast axis, least
-      indexed and of least stride first.
+      indexed and of least stride first, 3 before 4 of one axis; 4 before 3
+      for a contraction that the next rule would block once its two output
+      axes some operand does not index are upcast by 4, and whose blocked
+      threads, a 64th of its outputs, number at least [core_threads].
     - On a renderer with local indices, a contraction summed in 4 bytes or
-      fewer whose loop upcast two axes, each by 4, is blocked when an operand
-      does not index each, 2 divides each, and what is left of them once
-      halved holds a SIMD group of 32 threads in powers of two: each axis is
-      upcast again by 2, the last unrollable axis is unrolled by 4 when 4
-      divides it, and the workgroup takes at most 32 threads.
+      fewer whose loop upcast two axes, each by 4 and each leaving part of
+      its axis, is blocked when an operand does not index each, 2 divides
+      each, and what is left of them once halved holds a SIMD group of 32
+      threads in powers of two: each axis is upcast again by 2, the last
+      unrollable axis is unrolled by 4 when 4 divides it, and the workgroup
+      takes at most 32 threads. Where one of the two upcasts took its axis
+      whole, the output axis that the same accesses index takes its place, as
+      the width of a projection's heads takes the heads'.
     - The last unrollable axis is unrolled whole if of size at most 32 (and
       a second one if both are at most 3), or else by 4, when at most 4
       lanes are upcast or no reduce axis is, and fewer than 64.
@@ -171,7 +177,12 @@
       size that take threads ({!Postrange.Scheduler.threadless}) become
       local: up to three axes, those some access does not index first, split
       by the first of 32 (axis [0] only), 16, 8, 4, 3 and 2 that divides them
-      while the workgroup stays within 128 threads, or 32 when blocked.
+      while the workgroup stays within 128 threads, or 32 when blocked. A
+      blocked contraction keeps that split where it lays a power of two of at
+      least 2 threads along the later of its two axes; else 16 or 8 threads,
+      whichever pads it less, lie along the later axis and the rest along the
+      other, each axis padded to its threads ({!Opt.t.Padto}), unless one takes
+      no threads or a pad is refused.
 
     {1:host The host}
 

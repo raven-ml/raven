@@ -810,13 +810,67 @@ let upcast_masked k =
 let enough_work k =
   Sint.resolve Sint.(prod_at k (K.upcastable_dims k) >= Int 1024)
 
+(* Whether [k]'s contraction sums in 4 bytes or fewer: 64 accumulators of 8
+   bytes and their operands would pass a thread's registers. *)
+let narrow k =
+  match contraction k with
+  | Some (m, _) -> Dtype.itemsize (dtype m) <= 4
+  | None -> false
+
+(* Whether some operand of [k] does not read its axis [axis], so that the
+   outputs along it share that operand's loads. *)
+let reused k axis =
+  let r = List.nth (K.rngs k) axis in
+  List.exists (fun b -> not (indexes r b)) (K.bufs k)
+
+(* The threads that [n] outputs left of an axis upcast by 4 hold once doubled,
+   in a power of two (as {!block} counts them). *)
+let doubled_threads n =
+  let rec pow2 cap =
+    if cap <= 1 || n mod cap = 0 then cap else pow2 (cap / 2)
+  in
+  pow2 (2 * lanes) / 2
+
+(* Whether [k]'s upcasts take an axis by 4 before 3: a narrow contraction on a
+   renderer with local indices whose two output axes, each unread by some
+   operand, would pass {!block}'s guard once upcast by 4, and whose blocked
+   threads, a 64th of its outputs, number at least [core_threads]. tinygrad
+   takes 3 first, which leaves such a product at 4 by 3 outputs a thread: on an
+   RTX 5000 Ada float32 products of 163840 rows into 432 to 1920 columns, which
+   3 divides, ran at 5.3-5.6 TFLOP/s so, and at 15-19 blocked. A product of 48
+   rows by 1024 columns blocked kept 768 threads, and took 105 us against 76
+   at 4 by 3. *)
+let four_first ~core_threads k =
+  (K.ren k).has_local && narrow k
+  &&
+  match List.filter (reused k) (K.upcastable_dims k) with
+  | [ a; b ] -> (
+      let size axis =
+        match known_size (shape_at k axis) with
+        | Some n when Bigint.fits_int n -> Some (Bigint.to_int n)
+        | _ -> None
+      in
+      let threads =
+        match known_size (prod_at k (K.upcastable_dims k)) with
+        | Some n -> Bigint.fdiv n (Bigint.of_int 64)
+        | None -> Bigint.zero
+      in
+      match (size a, size b) with
+      | Some x, Some y ->
+          x mod 8 = 0 && y mod 8 = 0
+          && doubled_threads (x / 4) * doubled_threads (y / 4) >= lanes
+          && Bigint.geq threads (Bigint.of_int core_threads)
+      | _ -> false)
+  | _ -> false
+
 (* potentially do more upcasts of non reduce axes based on a heuristic; on the
-   host, after the contiguous axis, while the accumulators fit. The ranges its
-   loop upcast, each with its amount, latest first: what an upcast leaves of a
-   range keeps its axis id, and an upcast that takes the whole range leaves
-   none. *)
-let upcast_more k =
+   host, after the contiguous axis, while the accumulators fit. The upcasts
+   of its loop, latest first, each as the range it split, the upcast range it
+   made and its amount: what a split leaves of a range keeps its axis id, and
+   one that takes the whole range leaves none. *)
+let upcast_more ~core_threads k =
   if budgeted k then upcast_contiguous k;
+  let four_first = four_first ~core_threads k in
   let rec loop upcasted =
     let upcasted_axis = List.map (fun (axis, _, _) -> axis) upcasted in
     if budgeted k || (enough_work k && holds Sint.(K.upcast_size k < Int 32))
@@ -883,18 +937,22 @@ let upcast_more k =
         | [] when budgeted k -> choices ~fill:true [ 2 ]
         | xb_choices -> xb_choices
       in
-      match List.sort Stdlib.compare xb_choices with
+      let key (n, s, axis, amount) =
+        (n, s, axis, if four_first then -amount else amount)
+      in
+      let by_key a b = Stdlib.compare (key a) (key b) in
+      match List.sort by_key xb_choices with
       | (_, _, axis, amount) :: _ ->
           if debug () >= 4 then
             Format.eprintf "more upcast axis : %d by %d@." axis amount;
           let r = List.nth (K.rngs k) axis in
-          ignore (split k axis amount Opt.Upcast);
-          loop ((axis, r, amount) :: upcasted)
+          let up = List.nth (split k axis amount Opt.Upcast) 1 in
+          loop ((axis, (r, up), amount) :: upcasted)
       | [] -> upcasted
     end
     else upcasted
   in
-  List.map (fun (_, r, amount) -> (r, amount)) (loop [])
+  List.map (fun (_, (r, up), amount) -> (r, up, amount)) (loop [])
 
 (* if last reduce dim is small(ish), loop unroll the reduce. NOTE: this can fail
    on multireduce with mismatching dimensions, this is okay *)
@@ -936,65 +994,116 @@ let upcast_one k =
         ignore (split k axis 4 Opt.Upcast)
 
 (* A contraction on a GPU, summed in 4 bytes or fewer, whose two upcast
-   output axes are each reused, an operand not reading it, is blocked: each axis, upcast by 4, takes a second
-   upcast by 2, so that a thread holds 8 by 8 outputs and each element it loads
-   feeds 8 of them, its reduce is unrolled by 4, and its workgroup takes one
-   SIMD group, [lanes] threads. More outputs a thread hide the loads' latency
-   with fewer threads in flight. On an RTX 5000 Ada a float32 product of 2048
-   cubed took 2.8 ms with 4 by 4 outputs a thread in workgroups of 128 threads,
-   0.84 ms blocked; workgroups of 64 and 128 threads blocked took 0.93 and 1.6
-   ms. Whether it blocked. *)
+   output axes are each reused, an operand not reading it, is blocked: each
+   axis, upcast by 4, takes a second upcast by 2, so that a thread holds 8 by 8
+   outputs and each element it loads feeds 8 of them, its reduce is unrolled by
+   4, and its workgroup takes one SIMD group, [lanes] threads. More outputs a
+   thread hide the loads' latency with fewer threads in flight. On an RTX 5000
+   Ada a float32 product of 2048 cubed took 2.8 ms with 4 by 4 outputs a thread
+   in workgroups of 128 threads, 0.84 ms blocked; workgroups of 64 and 128
+   threads blocked took 0.93 and 1.6 ms. An upcast that took its axis whole
+   lends its second upcast to the output axis the same operands read, the
+   other part of one axis: a projection of 16384 rows into 4 heads of 110
+   took 331 us so and 2549 at 4 by 4. Attention's scores, whose queries the
+   operands that read the heads do not all read, keep 4 by 4. The ranges of
+   the two axes it doubled, if it blocked. *)
 let block k upcasted =
-  let reused (axis, _) =
-    let r = List.nth (K.rngs k) axis in
-    List.exists (fun b -> not (indexes r b)) (K.bufs k)
-  in
-  let doubles (axis, _) = divisible (shape_at k axis) 2 in
+  let doubles axis = divisible (shape_at k axis) 2 in
   (* The threads the axes leave a workgroup once doubled. *)
   let threads axes =
     List.fold_left
-      (fun n (axis, _) ->
+      (fun n axis ->
         n * (pow2_dividing (List.nth (K.rngs k) axis) (2 * lanes) / 2))
       1 axes
   in
-  (* 64 accumulators of 8 bytes and their operands would pass a thread's
-     registers. *)
-  let narrow =
-    match contraction k with
-    | Some (m, _) -> Dtype.itemsize (dtype m) <= 4
-    | None -> false
+  let outputs () = List.map (List.nth (K.rngs k)) (K.upcastable_dims k) in
+  (* For an upcast that took its range whole, the output axis besides
+     [other] that the same operands read: the other part of an axis the
+     kernel splits in two, as a projection's heads and their width. *)
+  let lent (_, up, _) other =
+    match rest_of k up with
+    | None -> None
+    | Some up ->
+        let same x =
+          axis_id x <> axis_id other
+          && List.for_all (fun b -> indexes x b = indexes up b) (K.bufs k)
+        in
+        List.find_opt same (outputs ())
   in
-  (* The axis of what an upcast left of its range, if it left any. *)
-  let rest (r, amount) =
-    Option.map (fun u -> (axis_of k u, amount)) (rest_of k r)
+  let axes =
+    match List.rev upcasted with
+    | [ ((r0, _, 4) as e0); ((r1, _, 4) as e1) ] -> (
+        match (rest_of k r0, rest_of k r1) with
+        | Some a, Some b -> Some (a, b)
+        | None, Some b -> Option.map (fun a -> (a, b)) (lent e0 b)
+        | Some a, None -> Option.map (fun b -> (a, b)) (lent e1 a)
+        | None, None -> None)
+    | _ -> None
   in
-  match List.map rest (List.rev upcasted) with
-  | [ Some ((_, 4) as a); Some ((_, 4) as b) ]
-    when (K.ren k).has_local
-         && narrow
-         && List.for_all reused [ a; b ]
-         && List.for_all doubles [ a; b ]
+  match axes with
+  | Some (ra, rb)
+    when (K.ren k).has_local && narrow k
+         &&
+         let a = axis_of k ra and b = axis_of k rb in
+         reused k a && reused k b && doubles a && doubles b
          && threads [ a; b ] >= lanes ->
-      (* A split that takes the whole axis moves the axes after it down. *)
-      List.iter
-        (fun (r, _) -> ignore (split k (axis_of k r) 2 Opt.Upcast))
-        (List.rev upcasted);
+      List.iter (fun r -> ignore (split k (axis_of k r) 2 Opt.Upcast)) [ ra; rb ];
       (match K.upcastable_dims ~reduce:true k with
       | [] -> ()
       | dims ->
           let axis = last dims in
           if divisible (shape_at k axis) 4 then
             ignore (try_split k axis 4 Opt.Upcast));
-      true
-  | _ -> false
+      Some (ra, rb)
+  | _ -> None
 
-(* The threads of a workgroup the local splits make at most, and of a blocked
-   contraction's. *)
+(* The threads of a workgroup the local splits make at most. *)
 let workgroup_threads = 128
 
+(* The threads of a blocked contraction's SIMD group along the two axes [rs]
+   that {!block} doubled: [greedy]'s where it lays a power of two of them, at
+   least 2, along the later axis; else [across] along the later axis and the
+   rest of [lanes] along the other, each axis padded to its threads, with
+   [across] 16 or 8, whichever pads the later axis less. A product of 262144
+   rows by 440 columns, 55 runs of 8 that no power of two divides, took its 32
+   threads along the rows and ran at 4.6 TFLOP/s, and padded to 448 columns at
+   17.2; 144 columns, 18 runs, ran so at 13.6-14.9 padded to 192, a third more
+   work. An axis that takes no threads, as [ranked] omits it, or a pad, which
+   refuses past four times the work, that would be refused leaves [greedy]'s.
+   *)
+let blocked_threads k ranked greedy (ra, rb) =
+  match (rest_of k ra, rest_of k rb) with
+  | Some ua, Some ub ->
+      let a0 = axis_of k ua and a1 = axis_of k ub in
+      let later = max a0 a1 and earlier = min a0 a1 in
+      let on axis = Option.value ~default:1 (List.assoc_opt axis greedy) in
+      let pow2 n = n >= 2 && n land (n - 1) = 0 in
+      if pow2 (on later) then greedy
+      else if not (List.mem later ranked && List.mem earlier ranked) then greedy
+      else
+        let waste n =
+          match known_size (shape_at k later) with
+          | Some s ->
+              let n = Bigint.of_int n in
+              Bigint.sub (Bigint.mul (Bigint.cdiv s n) n) s
+          | None -> Bigint.zero
+        in
+        let across = if Bigint.leq (waste 16) (waste 8) then 16 else 8 in
+        let plan = [ (later, across); (earlier, lanes / across) ] in
+        let pads k =
+          List.for_all
+            (fun (axis, amount) ->
+              divisible (shape_at k axis) amount
+              || Result.is_ok (K.apply_opt k (Opt.Padto { axis; amount })))
+            plan
+        in
+        if pads (K.copy k) && pads k then plan else greedy
+  | _ -> greedy
+
 (* prioritize making expand axes local, of those every call and custom code
-   reads *)
-let locals ~threads k =
+   reads; a blocked contraction's ({!block}) take one SIMD group *)
+let locals ?blocked k =
+  let threads = if Option.is_some blocked then lanes else workgroup_threads in
   let ranking =
     List.filter_map
       (fun axis ->
@@ -1007,7 +1116,7 @@ let locals ~threads k =
   let order (e0, a0) (e1, a1) =
     match Bool.compare e1 e0 with 0 -> Int.compare a1 a0 | c -> c
   in
-  let to_local =
+  let greedy =
     List.fold_left
       (fun to_local (_, axis) ->
         let local_size = Helpers.prod (List.map snd to_local) in
@@ -1023,6 +1132,11 @@ let locals ~threads k =
         | None -> to_local)
       []
       (List.stable_sort order ranking)
+  in
+  let to_local =
+    match blocked with
+    | Some rs -> blocked_threads k (List.map snd ranking) greedy rs
+    | None -> greedy
   in
   let first_three = List.filteri (fun i _ -> i < 3) to_local in
   ignore
@@ -1124,7 +1238,7 @@ let stream k (s, l) =
   | `Columns c -> columns_layout c
 
 (* The rules for a kernel that is not streamed and takes no tensor core. *)
-let general k =
+let general ~core_threads k =
   (* make a copy so it does not mutate the input *)
   let k = K.copy k in
   if on_host k then
@@ -1136,17 +1250,16 @@ let general k =
     let blocked =
       if host_elementwise k then begin
         upcast_vectors k;
-        false
+        None
       end
       else begin
-        let blocked = block k (upcast_more k) in
+        let blocked = block k (upcast_more ~core_threads k) in
         unroll k;
         upcast_one k;
         blocked
       end
     in
-    if (K.ren k).has_local then
-      locals ~threads:(if blocked then lanes else workgroup_threads) k
+    if (K.ren k).has_local then locals ?blocked k
   end;
   k
 
@@ -1198,7 +1311,8 @@ let hand_coded_with ~core_threads k =
     | None -> (
         match Lazy.force core with
         | Some (tk, _) -> tk
-        | None -> ( match late () with Some k -> k | None -> general k))
+        | None -> (
+            match late () with Some k -> k | None -> general ~core_threads k))
 
 let hand_coded_optimizations k =
   hand_coded_with ~core_threads:(K.ren k).core_threads k
