@@ -12,6 +12,7 @@ let strf = Printf.sprintf
 let kib = 1024
 let mib = 1 lsl 20
 let gib = 1 lsl 30
+let huge = 2 * mib
 let round_up n a = (n + a - 1) / a * a
 let is_pow2 n = n > 0 && n land (n - 1) = 0
 
@@ -828,3 +829,117 @@ module Tree = struct
   let events k = List.rev k.events
   let writes k = k.writes
 end
+
+(* Memory a dead process left *)
+
+let frames root a n =
+  let page = Rig_pci.Machine.page Rig_pci.Machine.this in
+  let lo = a / huge * huge and hi = round_up (a + n) huge in
+  let first block = 0x10_0000 + (block / huge land 0xfff * (huge / page)) in
+  let rec give block =
+    if block < hi then begin
+      Tree.pagemap root ~page block
+        (List.init (huge / page) (fun i -> first block + i));
+      give (block + huge)
+    end
+  in
+  give lo;
+  List.init
+    ((n + page - 1) / page)
+    (fun i ->
+      let p = a + (i * page) in
+      (first (p / huge * huge) * page) + (p mod huge))
+
+let memory_files root =
+  Sys.readdir (Filename.concat root "dev/hugepages")
+  |> Array.to_list
+  |> List.filter (fun f ->
+      String.starts_with ~prefix:"rig-pci-" f && not (String.contains f '.'))
+
+let fixture_gpus ?(reset = fun _ -> Ok ()) ?(ready = fun _ -> Ok ()) () =
+  Rig_pci.Driver.make ~name:"fixture" ~memory_bar:(Some 0)
+    ~siblings:Rig_pci.Driver.Remove
+    ~nodes:(fun ~root:_ _ -> [])
+    ~unreleased:(fun ~root:_ _ -> None)
+    ~teardown_ms:0 ~reset ~ready
+    (fun (id : Rig_pci.Machine.id) -> id.class_ lsr 16 = 0x03)
+
+let holding = "--hold-memory"
+let refused_code = 3
+
+let hold_memory how root bus va =
+  let open Rig_pci in
+  let ok = function Ok x -> x | Error _ -> exit refused_code in
+  if how = "renew-die" then begin
+    (* Opens the GPU, allocates its memory, renews it, and dies. *)
+    let g = fixture_gpus () in
+    ignore
+      (Driver.open_ g (Machine.at root) 0 (fun h f ->
+           ok (Machine.reserve (Function.machine f) ~base:free_base (8 * mib));
+           if Option.is_none (ok (Function.alloc_dma ~va f mib)) then
+             exit refused_code;
+           ok (Driver.renew h);
+           Unix.kill (Unix.getpid ()) Sys.sigkill;
+           Ok ()))
+  end;
+  let f = ok (Function.take (Machine.at root) bus) in
+  ok (Machine.reserve (Function.machine f) ~base:free_base (8 * mib));
+  if Option.is_none (ok (Function.alloc_dma ~va f mib)) then exit refused_code;
+  if String.starts_with ~prefix:"released-" how then Function.release f;
+  match how with
+  | "die" | "released-die" -> Unix.kill (Unix.getpid ()) Sys.sigkill
+  | _ ->
+      print_endline "holding";
+      ignore (In_channel.input_all stdin);
+      exit 0
+
+let holder how root bus va =
+  let exe = Sys.executable_name in
+  let input, feed = Unix.pipe ~cloexec:true () in
+  let said, output = Unix.pipe ~cloexec:true () in
+  let pid =
+    Unix.create_process exe
+      [| exe; holding; how; root; bus; string_of_int va |]
+      input output Unix.stderr
+  in
+  Unix.close input;
+  Unix.close output;
+  (pid, feed, said)
+
+let wait_exit pid =
+  let status = ref None in
+  let exited () =
+    match Unix.waitpid [ WNOHANG ] pid with
+    | 0, _ -> false
+    | _, s ->
+        status := Some s;
+        true
+  in
+  if not (poll exited) then begin
+    Unix.kill pid Sys.sigkill;
+    failf "the process %d did not exit" pid
+  end;
+  match !status with
+  | Some (WEXITED c) when c = refused_code ->
+      skip ~reason:"the machine refused the function's memory" ()
+  | Some s -> s
+  | None -> assert false
+
+let death root (fn : Tree.fn) =
+  let open Rig_pci in
+  let va = free_base + (6 * mib) in
+  ignore (frames root va mib);
+  let pid, feed, said = holder "die" root fn.bus va in
+  Unix.close feed;
+  Unix.close said;
+  (match wait_exit pid with
+  | WSIGNALED s when s = Sys.sigkill -> ()
+  | _ -> fail "the process holding the function did not die by SIGKILL");
+  let left = memory_files root in
+  equal ~msg:"left by the dead process" int 1 (List.length left);
+  let m = Machine.at root in
+  Function.release (require_ok (Function.take m fn.bus));
+  equal ~msg:"kept through a take and a release" (list string) left
+    (memory_files root);
+  require_ok (Driver.reset (fixture_gpus ()) m 0);
+  equal ~msg:"gone once the GPU is reset" (list string) [] (memory_files root)

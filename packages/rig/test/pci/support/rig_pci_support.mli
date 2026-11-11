@@ -11,6 +11,9 @@ val kib : int
 val mib : int
 val gib : int
 
+val huge : int
+(** [huge] is 2 MiB, the size of a huge page. *)
+
 val round_up : int -> int -> int
 (** [round_up n a] is the least multiple of [a] at or above [n], for [n >= 0]
     and [a > 0]. *)
@@ -392,3 +395,67 @@ module Tree : sig
   val writes : kernel -> int
   (** [writes k] is the number of writes [k] acted on or refused. *)
 end
+
+(** {1:dead Memory a dead process left}
+
+    A function taken physically keeps writing memory after its process dies:
+    its memory lies in huge pages of files under the machine's
+    [dev/hugepages], which keep their pages until no function reaches them. A
+    test makes such a process of its own executable, whose main hands the
+    arguments that start with {!holding} to {!hold_memory}. *)
+
+val frames : string -> int -> int -> int list
+(** [frames root a n] gives the 2 MiB blocks of addresses that hold the [n]
+    bytes at [a] frames in the page map of the tree [root], one block of
+    frames each, from a frame no other block of a test uses. It is the
+    physical addresses of the pages of the [n] bytes. *)
+
+val memory_files : string -> string list
+(** [memory_files root] is the names of the memory files under the tree
+    [root]'s [dev/hugepages], without the markers beside them. *)
+
+val fixture_gpus :
+  ?reset:(Rig_pci.Function.t -> (unit, string) result) ->
+  ?ready:(Rig_pci.Function.t -> (unit, string) result) ->
+  unit ->
+  Rig_pci.Driver.t
+(** [fixture_gpus ()] is the driver of a tree's display controllers, base
+    class [0x03]. It reaches their memory through BAR 0, removes the other
+    functions of their device at a detach, serves them through no device
+    node, and finds no kernel driver holding them. [reset] and [ready] are
+    its reset and its check after one (both default to [Ok ()]). *)
+
+val holding : string
+(** [holding] is ["--hold-memory"], the first argument of {!hold_memory}'s
+    process: [exe holding how root bus va]. *)
+
+val refused_code : int
+(** [refused_code] is the code {!hold_memory} exits with when the machine
+    refuses it the function's memory. *)
+
+val hold_memory : string -> string -> string -> int -> unit
+(** [hold_memory how root bus va] takes the function at [bus] of the tree
+    [root] and allocates its memory at [va], whose frames the tree's page map
+    gives, which it never frees. With [how] ["renew-die"] it opens the tree's
+    GPU 0 with {!fixture_gpus} instead and renews it after the allocation,
+    then dies by SIGKILL. With [how] ["die"] it then dies by SIGKILL, which
+    runs no exit function; with ["wait"] it prints ["holding"], waits for its
+    standard input to close and exits. ["released-die"] and
+    ["released-wait"] release the function first. *)
+
+val holder :
+  string -> string -> string -> int -> int * Unix.file_descr * Unix.file_descr
+(** [holder how root bus va] starts {!hold_memory}'s process of this
+    executable: its pid, the pipe on its standard input, and the pipe of its
+    standard output, whose first line waits until it holds. *)
+
+val wait_exit : int -> Unix.process_status
+(** [wait_exit pid] is the status of the child [pid] once it exits. It kills
+    the child and fails the test if it has not exited within {!patience}, and
+    skips the test if it exited with {!refused_code}. *)
+
+val death : string -> Tree.fn -> unit
+(** [death root fn] checks that the memory a killed process left stays
+    through another take and release of [fn], a function of the tree [root],
+    which do not reset it, and goes once its GPU is reset. The process takes
+    [fn], allocates its memory, and dies by SIGKILL. *)

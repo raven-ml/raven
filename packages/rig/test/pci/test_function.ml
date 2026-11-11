@@ -40,248 +40,6 @@ let not_buses =
     "0000:01:00";
   ]
 
-(* This machine *)
-
-let sysfs bus file =
-  Filename.concat (Filename.concat "/sys/bus/pci/devices" bus) file
-
-(* What a take must not change: the function's driver and whether it is
-   enabled. *)
-let state bus =
-  let driver =
-    match Unix.readlink (sysfs bus "driver") with
-    | l -> Some (Filename.basename l)
-    | exception Unix.Unix_error _ -> None
-  in
-  let enabled =
-    match
-      In_channel.with_open_text (sysfs bus "enable") In_channel.input_all
-    with
-    | s -> Some (String.trim s)
-    | exception Sys_error _ -> None
-  in
-  (driver, enabled)
-
-let test_refused_here () =
-  if on_linux then skip ~reason:"this machine has /sys/bus/pci" ();
-  match Function.take Machine.this "0000:00:00.0" with
-  | Ok _ -> fail "a function taken on a machine without PCI functions"
-  | Error why -> contains ~msg:"names the bus" ~sub:"0000:00:00.0" why
-
-(* Listing and taking change nothing on the machine. Only GPUs are taken:
-   another class of function may be another user's device. *)
-let test_changes_nothing () =
-  if not on_linux then skip ~reason:"this machine has no /sys/bus/pci" ();
-  let buses = List.map (fun (d : Machine.id) -> d.bus) (this_gpus ()) in
-  let before = List.map state buses in
-  List.iter
-    (fun bus ->
-      match Function.take Machine.this bus with
-      | Ok f -> Function.release f
-      | Error _ -> ())
-    buses;
-  let state_w = pair (option string) (option string) in
-  equal
-    (list (pair string state_w))
-    (List.combine buses before)
-    (List.combine buses (List.map state buses))
-
-let takeable () =
-  this_gpus ()
-  |> List.find_map (fun (d : Machine.id) ->
-      match Function.take Machine.this d.bus with
-      | Ok f ->
-          Function.release f;
-          Some d
-      | Error _ -> None)
-
-(* One process holds a function at a time, this one included. *)
-let test_held_here () =
-  if not on_linux then skip ~reason:"this machine has no /sys/bus/pci" ();
-  let d =
-    match takeable () with
-    | Some d -> d
-    | None -> skip ~reason:"no function this process may take" ()
-  in
-  let f = Result.get_ok (Function.take Machine.this d.bus) in
-  is_error ~msg:"held" (Function.take Machine.this d.bus);
-  Function.release f;
-  let g = Result.get_ok (Function.take Machine.this d.bus) in
-  Function.release g
-
-let vfio_function () =
-  if not (Sys.file_exists "/dev/vfio") then skip ~reason:"no /dev/vfio" ();
-  this_gpus ()
-  |> List.find_map (fun (d : Machine.id) ->
-      match Function.take Machine.this d.bus with
-      | Ok f when Function.addressing f = Iommu -> Some (d, f)
-      | Ok f ->
-          Function.release f;
-          None
-      | Error _ -> None)
-  |> function
-  | Some x -> x
-  | None -> skip ~reason:"no function this process may take behind an IOMMU" ()
-
-(* Behind an IOMMU, a function needs no root. *)
-let test_vfio () =
-  let d, f = vfio_function () in
-  Fun.protect ~finally:(fun () -> Function.release f) @@ fun () ->
-  equal ~msg:"its vendor" int d.vendor (Function.config16 f 0);
-  equal ~msg:"its device" int d.device (Function.config16 f 2);
-  let page = Machine.page Machine.this in
-  let allocs = List.map (fun n -> alloc_dma f n) [ 1; 3 * page; 2 * mib ] in
-  List.iter
-    (fun (w, runs) ->
-      equal ~msg:"one run of its bytes" (list int)
-        [ Window.length w ]
-        (List.map snd runs))
-    allocs;
-  let runs = List.sort compare (List.concat_map snd allocs) in
-  List.iter2
-    (fun (a, n) (b, _) ->
-      at_most ~msg:"device addresses apart" int ~than:b (a + n))
-    (List.filteri (fun i _ -> i < List.length runs - 1) runs)
-    (List.tl runs);
-  let w, _ = List.hd allocs in
-  let pinned = pin f (Window.address w) (Window.length w) in
-  equal ~msg:"a pin is one run" int 1 (List.length pinned);
-  Function.unpin f (Window.address w) (Window.length w);
-  List.iter (fun (w, _) -> Function.free_dma f w) allocs
-
-let entry_limit = "/sys/module/vfio_iommu_type1/parameters/dma_entry_limit"
-
-(* Each page alloc_dma gives or pin pins behind an IOMMU is one of the
-   container's [dma_entry_limit] mappings and counts against the process's
-   locked-memory limit: whichever runs out first, the next alloc_dma and pin
-   are [Ok None]. *)
-let test_vfio_limit () =
-  let _, f = vfio_function () in
-  Fun.protect ~finally:(fun () -> Function.release f) @@ fun () ->
-  let limit =
-    In_channel.with_open_bin entry_limit In_channel.input_all
-    |> String.trim |> int_of_string
-  in
-  let page = Machine.page Machine.this in
-  let own = round_up (memory (2 * page)) page in
-  let rec fill ws k =
-    match Function.alloc_dma f page with
-    | Ok (Some (w, _)) when k < limit -> fill (w :: ws) (k + 1)
-    | r -> (r, ws)
-  in
-  let last, ws = fill [] 0 in
-  Fun.protect ~finally:(fun () -> List.iter (Function.free_dma f) ws)
-  @@ fun () ->
-  (match require_ok ~msg:"alloc_dma: a limit is no refusal" last with
-  | None -> ()
-  | Some (w, _) ->
-      Function.free_dma f w;
-      failf "%d mappings, beyond the limit of %d" (limit + 1) limit);
-  match
-    require_ok ~msg:"pin: a limit is no refusal" (Function.pin f own page)
-  with
-  | None -> ()
-  | Some _ ->
-      Function.unpin f own page;
-      failf "a pin beyond the limit"
-
-(* The functions behind one machine's IOMMU share its container: pages pinned
-   for two of them map once, at one device address. *)
-let test_vfio_shared () =
-  if not (Sys.file_exists "/dev/vfio") then skip ~reason:"no /dev/vfio" ();
-  let fns =
-    this_gpus ()
-    |> List.filter_map (fun (d : Machine.id) ->
-        match Function.take Machine.this d.bus with
-        | Ok f when Function.addressing f = Iommu -> Some f
-        | Ok f ->
-            Function.release f;
-            None
-        | Error _ -> None)
-  in
-  Fun.protect ~finally:(fun () -> List.iter Function.release fns) @@ fun () ->
-  match fns with
-  | f :: g :: _ ->
-      let page = Machine.page Machine.this in
-      let a = round_up (memory (2 * page)) page in
-      let runs = pin f a page in
-      equal ~msg:"pinned for another function, at the same device address"
-        (list (pair hex int))
-        runs (pin g a page);
-      Function.unpin f a page;
-      Function.unpin g a page
-  | _ ->
-      skip
-        ~reason:"fewer than two GPUs this process may take behind an IOMMU" ()
-
-(* Behind an IOMMU, the process places a function's device addresses below
-   its bound, which starts above the 4 GiB they start from. *)
-let test_vfio_bits () =
-  let _, f = vfio_function () in
-  Fun.protect ~finally:(fun () -> Function.release f) @@ fun () ->
-  Function.set_dma_bits f 34;
-  let w, runs = alloc_dma f (2 * mib) in
-  List.iter
-    (fun (a, n) -> less ~msg:"a run's end" int ~than:(1 + (1 lsl 34)) (a + n))
-    runs;
-  Function.free_dma f w;
-  Function.set_dma_bits f 32;
-  is_none ~msg:"below 4 GiB"
-    (require_ok (Function.alloc_dma f (2 * mib)))
-
-(* The GPUs this machine has behind an IOMMU, by bus. *)
-let vfio_buses () =
-  if not (Sys.file_exists "/dev/vfio") then skip ~reason:"no /dev/vfio" ();
-  this_gpus ()
-  |> List.filter_map (fun (d : Machine.id) ->
-      match Function.take Machine.this d.bus with
-      | Ok f ->
-          let iommu = Function.addressing f = Iommu in
-          Function.release f;
-          if iommu then Some d.bus else None
-      | Error _ -> None)
-
-(* A child of fork that takes another GPU behind the IOMMU maps its memory in
-   a container of its own: the parent's next allocation, at the device
-   address the child's would take in a shared one, still maps. *)
-let test_vfio_fork () =
-  match vfio_buses () with
-  | b :: b' :: _ ->
-      let f = require_ok (Function.take Machine.this b) in
-      Fun.protect ~finally:(fun () -> Function.release f) @@ fun () ->
-      let w, _ = alloc_dma f mib in
-      let ready_r, ready_w = Unix.pipe () and done_r, done_w = Unix.pipe () in
-      let child =
-        match Unix.fork () with
-        | 0 ->
-            let ok =
-              match Function.take Machine.this b' with
-              | Ok g -> (
-                  match Function.alloc_dma g mib with
-                  | Ok (Some _) -> true
-                  | Ok None | Error _ -> false)
-              | Error _ -> false
-            in
-            ignore (Unix.write_substring ready_w (if ok then "y" else "n") 0 1);
-            ignore (Unix.read done_r (Bytes.create 1) 0 1);
-            Unix._exit 0
-        | pid -> pid
-      in
-      let answer = Bytes.create 1 in
-      ignore (Unix.read ready_r answer 0 1);
-      let parent = Function.alloc_dma f mib in
-      ignore (Unix.write_substring done_w "x" 0 1);
-      ignore (Unix.waitpid [] child);
-      List.iter Unix.close [ ready_r; ready_w; done_r; done_w ];
-      equal ~msg:"the child's allocation" string "y" (Bytes.to_string answer);
-      (match require_ok ~msg:"the parent's allocation" parent with
-      | Some (w', _) -> Function.free_dma f w'
-      | None -> fail "the parent's allocation found no memory");
-      Function.free_dma f w
-  | _ ->
-      skip
-        ~reason:"fewer than two GPUs this process may take behind an IOMMU" ()
-
 (* A machine's files *)
 
 (* [take_on fns bus] takes [bus] on a machine whose functions are [fns]. *)
@@ -594,16 +352,6 @@ let test_set_bus_master =
         (if on then before lor bus_master else before land lnot bus_master)
         (command_in root fn.bus))
 
-(* Behind an IOMMU a write reaches the function: its bus master bit reads back
-   as set_bus_master sets it. *)
-let test_vfio_bus_master () =
-  let _, f = vfio_function () in
-  Fun.protect ~finally:(fun () -> Function.release f) @@ fun () ->
-  Function.set_bus_master f true;
-  equal ~msg:"set" hex bus_master (Function.config16 f command land bus_master);
-  Function.set_bus_master f false;
-  equal ~msg:"cleared" hex 0 (Function.config16 f command land bus_master)
-
 (* A function taken physically, with no interrupt route through VFIO, signals no
    legacy interrupt while taken: nothing handles it, and bus mastering does not
    gate it. Release gives its INTx back as it found it. *)
@@ -781,28 +529,6 @@ let with_fixtures n f =
     (fun () -> f root fns)
 
 let with_fixture f = with_fixtures 1 (fun root fns -> f root (List.hd fns))
-let huge = 2 * mib
-
-(* Frames the fixture's page map gives the 2 MiB blocks of addresses that hold
-   the [n] bytes at [a], one block of frames each, from a frame no other block
-   of a test uses; and the physical addresses of the pages of the [n] bytes. *)
-let frames root a n =
-  let page = Machine.page Machine.this in
-  let lo = a / huge * huge and hi = round_up (a + n) huge in
-  let first block = 0x10_0000 + (block / huge land 0xfff * (huge / page)) in
-  let rec give block =
-    if block < hi then begin
-      Tree.pagemap root ~page block
-        (List.init (huge / page) (fun i -> first block + i));
-      give (block + huge)
-    end
-  in
-  give lo;
-  List.init
-    ((n + page - 1) / page)
-    (fun i ->
-      let p = a + (i * page) in
-      (first (p / huge * huge) * page) + (p mod huge))
 
 (* The runs of pages [pas]: those that follow each other merged. *)
 let runs_of pas =
@@ -863,12 +589,6 @@ let test_contiguous () =
    memory lies in huge pages of files under the machine's [dev/hugepages], which
    keep their pages until no function reaches them. Each function that reaches a
    file is named by an empty file beside it, [<file>.reach-<bus>]. *)
-
-let memory_files root =
-  Sys.readdir (Filename.concat root "dev/hugepages")
-  |> Array.to_list
-  |> List.filter (fun f ->
-      String.starts_with ~prefix:"rig-pci-" f && not (String.contains f '.'))
 
 let memory_file root =
   match memory_files root with
@@ -1002,86 +722,6 @@ let test_memory_machines () =
   Function.free_dma f' w';
   Function.free_dma f w
 
-let fixture_gpus ?(reset = fun _ -> Ok ()) ?(ready = fun _ -> Ok ()) () =
-  Driver.make ~name:"fixture" ~memory_bar:(Some 0) ~siblings:Remove
-    ~nodes:(fun ~root:_ _ -> [])
-    ~unreleased:(fun ~root:_ _ -> None)
-    ~teardown_ms:0 ~reset ~ready
-    (fun (id : Machine.id) -> id.class_ lsr 16 = 0x03)
-
-(* The test's executable, run with [holding], is [hold_memory]'s process. *)
-let holding = "--hold-memory"
-
-(* The code [hold_memory] exits with when the machine refuses it the function's
-   memory. *)
-let refused_code = 3
-
-(* Takes the fixture's function at [bus] and allocates its memory at [va], whose
-   frames the tree's page map gives, which it never frees. With [how]
-   ["renew-die"] it opens the fixture's GPU 0 instead and renews it after the
-   allocation, then dies by SIGKILL. With [how] ["die"] it then dies by SIGKILL,
-   which runs no exit function; with ["wait"] it waits for its standard input to
-   close and exits. ["released-die"] and ["released-wait"] release the function
-   first. *)
-let hold_memory how root bus va =
-  let ok = function Ok x -> x | Error _ -> exit refused_code in
-  if how = "renew-die" then begin
-    (* Opens the GPU, allocates its memory, renews it, and dies. *)
-    let g = fixture_gpus () in
-    ignore
-      (Driver.open_ g (Machine.at root) 0 (fun h f ->
-           ok (Machine.reserve (Function.machine f) ~base:free_base (8 * mib));
-           if Option.is_none (ok (Function.alloc_dma ~va f mib)) then
-             exit refused_code;
-           ok (Driver.renew h);
-           Unix.kill (Unix.getpid ()) Sys.sigkill;
-           Ok ()))
-  end;
-  let f = ok (Function.take (Machine.at root) bus) in
-  ok (Machine.reserve (Function.machine f) ~base:free_base (8 * mib));
-  if Option.is_none (ok (Function.alloc_dma ~va f mib)) then exit refused_code;
-  if String.starts_with ~prefix:"released-" how then Function.release f;
-  match how with
-  | "die" | "released-die" -> Unix.kill (Unix.getpid ()) Sys.sigkill
-  | _ ->
-      print_endline "holding";
-      ignore (In_channel.input_all stdin);
-      exit 0
-
-(* [holder how root bus va] starts [hold_memory]: its pid, the pipe on its
-   standard input, and its first line of output, which waits until it holds. *)
-let holder how root bus va =
-  let exe = Sys.executable_name in
-  let input, feed = Unix.pipe ~cloexec:true () in
-  let said, output = Unix.pipe ~cloexec:true () in
-  let pid =
-    Unix.create_process exe
-      [| exe; holding; how; root; bus; string_of_int va |]
-      input output Unix.stderr
-  in
-  Unix.close input;
-  Unix.close output;
-  (pid, feed, said)
-
-let wait_exit pid =
-  let status = ref None in
-  let exited () =
-    match Unix.waitpid [ WNOHANG ] pid with
-    | 0, _ -> false
-    | _, s ->
-        status := Some s;
-        true
-  in
-  if not (poll exited) then begin
-    Unix.kill pid Sys.sigkill;
-    failf "the process %d did not exit" pid
-  end;
-  match !status with
-  | Some (WEXITED c) when c = refused_code ->
-      skip ~reason:"the machine refused the function's memory" ()
-  | Some s -> s
-  | None -> assert false
-
 (* The root of a fixture tree whose one GPU a child that allocated its memory
    left by dying of SIGKILL. *)
 let left_by_death ?(how = "die") () =
@@ -1113,26 +753,6 @@ let kept h =
 let open_held g m = Driver.open_ g m 0 (fun h _ -> kept h)
 let stop h = ignore (Driver.stop h : [ `Stopped | `Unknown ])
 
-(* What a process that died left stays through another take and release, which
-   does not reset the GPU, and goes once its GPU is reset. *)
-let death root (fn : Tree.fn) =
-  let va = free_base + (6 * mib) in
-  ignore (frames root va mib);
-  let pid, feed, said = holder "die" root fn.bus va in
-  Unix.close feed;
-  Unix.close said;
-  (match wait_exit pid with
-  | WSIGNALED s when s = Sys.sigkill -> ()
-  | _ -> fail "the process holding the function did not die by SIGKILL");
-  let left = memory_files root in
-  equal ~msg:"left by the dead process" int 1 (List.length left);
-  let m = Machine.at root in
-  Function.release (require_ok (Function.take m fn.bus));
-  equal ~msg:"kept through a take and a release" (list string) left
-    (memory_files root);
-  require_ok (Driver.reset (fixture_gpus ()) m 0);
-  equal ~msg:"gone once the GPU is reset" (list string) [] (memory_files root)
-
 let test_death () =
   if not flocks then skip ~reason:"locking a function's file needs flock" ();
   let fn = Tree.gpu "0000:03:00.0" in
@@ -1160,55 +780,6 @@ let test_not_ready () =
   equal ~msg:"gone though not ready" (list string) [] (memory_files root);
   ignore (open_held g m);
   equal ~msg:"the next open resets it" int 2 (Atomic.get resets)
-
-(* A directory of its own on this machine's hugetlbfs of 2 MiB pages at
-   /dev/hugepages, if it has a free page and this process may write it. A
-   hugetlbfs refuses write(2), which an ordinary file system's file accepts, so
-   only it shows that what the memory files record survives that refusal. *)
-let hugetlbfs_dir () =
-  let mounted line =
-    match String.split_on_char ' ' line with
-    | _ :: "/dev/hugepages" :: "hugetlbfs" :: options :: _ ->
-        List.mem "pagesize=2M" (String.split_on_char ',' options)
-    | _ -> false
-  in
-  let free line =
-    match String.split_on_char ':' line with
-    | [ "HugePages_Free"; n ] -> int_of_string (String.trim n) > 0
-    | _ -> false
-  in
-  let lines file = In_channel.with_open_text file In_channel.input_lines in
-  if not (on_linux && List.exists mounted (lines "/proc/self/mounts")) then None
-  else if not (List.exists free (lines "/proc/meminfo")) then None
-  else
-    let dir = strf "/dev/hugepages/rig-pci-test-%d" (Unix.getpid ()) in
-    match Unix.mkdir dir 0o700 with
-    | () -> Some dir
-    | exception Unix.Unix_error _ -> None
-
-(* As [test_death], with the machine's memory files on a real hugetlbfs. *)
-let test_death_hugetlbfs () =
-  if not flocks then skip ~reason:"locking a function's file needs flock" ();
-  match hugetlbfs_dir () with
-  | None ->
-      skip
-        ~reason:
-          "no hugetlbfs of 2 MiB pages at /dev/hugepages with a free page this \
-           process may write"
-        ()
-  | Some dir ->
-      let fn = Tree.gpu "0000:03:00.0" in
-      let root = Tree.make [ fn ] in
-      let hugepages = Filename.concat root "dev/hugepages" in
-      Unix.rmdir hugepages;
-      Unix.symlink dir hugepages;
-      let clear () =
-        Array.iter
-          (fun f -> Sys.remove (Filename.concat dir f))
-          (Sys.readdir dir);
-        Unix.rmdir dir
-      in
-      Fun.protect ~finally:clear (fun () -> death root fn)
 
 (* A reset of a GPU another process holds is refused, its memory untouched; the
    holder's exit gives the memory back. *)
@@ -1558,10 +1129,6 @@ let system_memory =
         "memory a killed process left stays through a release and goes at its \
          GPU's reset (SIGKILL in a child)"
         test_death;
-      test
-        "memory a killed process left on a hugetlbfs stays through a release \
-         and goes at its GPU's reset (SIGKILL in a child)"
-        test_death_hugetlbfs;
       test
         "a reset of a function its driver finds not ready gives back what a \
          killed process left and loses it (SIGKILL in a child)"
@@ -2820,28 +2387,6 @@ let interrupts =
         ~id:fst under_give_back test_under_give_back;
     ]
 
-let this_machine =
-  group ~timeout:patience "this machine"
-    [
-      test "this machine without /sys/bus/pci refuses a take, naming the bus"
-        test_refused_here;
-      test "listing functions and taking GPUs change nothing on this machine"
-        test_changes_nothing;
-      test "a GPU taken here refuses a second take until released"
-        test_held_here;
-      test "a GPU behind an IOMMU reaches its memory at one run apart" test_vfio;
-      test "a GPU behind an IOMMU out of mappings or locked memory gets none"
-        test_vfio_limit;
-      test "GPUs behind one IOMMU map the pages pinned for both once"
-        test_vfio_shared;
-      test "a child of fork maps its GPU's memory apart from its parent's"
-        test_vfio_fork;
-      test "a GPU behind an IOMMU gets device addresses below its DMA bound"
-        test_vfio_bits;
-      test "a GPU behind an IOMMU masters the bus as set_bus_master sets it"
-        test_vfio_bus_master;
-    ]
-
 let () =
   match Sys.argv with
   | [| _; arg; root; bus |] when arg = exiting -> exit_mastering root bus
@@ -2861,5 +2406,4 @@ let () =
              tree_files;
              system_memory;
              interrupts;
-             this_machine;
            ]

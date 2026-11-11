@@ -7,23 +7,22 @@
   test_page_table
   test_firmware
   test_tables)
- (modules :standard \ test_function test_driver)
+ (modules :standard \ test_function test_driver test_function_here)
  (libraries rig_edge_primitive rig_pci rig_pci_support rig_support unix
   windtrap))
 
-; test_driver's GPUs are on machines it makes of files.
+; test_function and test_driver take GPUs of machines they make of files.
 
-(test
- (name test_driver)
- (modules test_driver)
+(tests
+ (names test_function test_driver)
+ (modules test_function test_driver)
  (libraries rig_edge_primitive rig_pci rig_pci_support rig_support
   threads.posix unix windtrap))
 
-; test_function takes this machine's GPUs.
+; test_function_here takes this machine's GPUs and huge pages.
 
 (test
- (name test_function)
- (modules test_function)
+ (name test_function_here)
+ (modules test_function_here)
  (locks %{workspace_root}/gpu)
- (libraries rig_edge_primitive rig_pci rig_pci_support rig_support
-  threads.posix unix windtrap))
+ (libraries rig_pci rig_pci_support unix windtrap))
