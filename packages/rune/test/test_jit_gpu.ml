@@ -18,7 +18,8 @@
    holds its bound in ulps of the correctly rounded result, and a range
    gather and its gradient compile to eager's bits, and an argmax or argmin
    over a length 16 does not divide gives nx's position, a sum and a product
-   their exact values. It skips without a GPU,
+   their exact values, and a first k of a sort gives eager's values and
+   positions bit for bit. It skips without a GPU,
    or without the compiler the GPU's kernels need. *)
 
 open Windtrap
@@ -487,6 +488,252 @@ let folds n =
   equal ~msg:"sum" Testable.float_exact (Float.of_int n) (Nx.item [] sum);
   let prod = Rune.jit' (Nx.prod ~axes:[ 0 ]) signed in
   equal ~msg:"product" Testable.float_exact (-1.) (Nx.item [] prod)
+
+(* Top k
+
+   A first [k] of a sort keeps keys of at most 32 bits by one of three paths:
+   comparing every pair of keys where the whole array's [k n²] comparisons are
+   at most [selection_comparisons], else [k] rounds where [k] is at most the
+   network's [s(s+1)/2] compare steps for [n <= 2^s], else the network, as wider
+   keys always do. The draws reach each path, at slices of 17 to 40 keys and
+   enough rows to pass the selection's bound. *)
+
+type top = {
+  t_dt : Nx.Dtype.any;
+  t_shape : int array;
+  t_axis : int;
+  t_k : int;
+  t_operand : Operand.t;
+}
+
+let pp_top ppf c =
+  let (Nx.Dtype.Any dt) = c.t_dt in
+  Format.fprintf ppf "%s %a axis %d k %d %a [%a]" (Nx.Dtype.name dt)
+    Operand.pp_shape c.t_shape c.t_axis c.t_k Operand.pp_view c.t_operand.view
+    (Format.pp_print_seq
+       ~pp_sep:(fun ppf () -> Format.pp_print_char ppf ' ')
+       Operand.pp_value)
+    (Array.to_seq c.t_operand.values)
+
+let narrow_keys =
+  Nx.Dtype.
+    [
+      Any Nx.float32;
+      Any Nx.float16;
+      Any Nx.bfloat16;
+      Any Nx.float8_e4m3fn;
+      Any Nx.int8;
+      Any Nx.uint16;
+      Any Nx.int32;
+      Any Nx.uint32;
+      Any Nx.bool;
+    ]
+
+let wide_keys = Nx.Dtype.[ Any Nx.float64; Any Nx.int64; Any Nx.complex64 ]
+let selection_comparisons = 1 lsl 16
+
+let rec bit_length n = if n = 0 then 0 else 1 + bit_length (n lsr 1)
+
+(* The network's compare steps over [n] keys. *)
+let steps n =
+  let s = bit_length (n - 1) in
+  s * (s + 1) / 2
+
+type path = Trivial | Selection | Rounds | Past_steps | Wide
+
+let path c =
+  let n = c.t_shape.(c.t_axis) and size = Operand.numel c.t_shape in
+  if c.t_k = 0 || n <= 1 || size = 0 then Trivial
+  else if List.mem c.t_dt wide_keys then Wide
+  else if c.t_k * n * size <= selection_comparisons then Selection
+  else if c.t_k <= steps n then Rounds
+  else Past_steps
+
+(* [laid ~rows n] is a shape of at least [rows] slices of [n] and the slices'
+   axis: the last, the first, or the middle of three. *)
+let laid ~rows n =
+  let open Gen in
+  let* rows = int_range rows (rows + 8) in
+  one_of
+    [
+      constant ([| rows; n |], 1);
+      constant ([| n; rows |], 0);
+      map (fun a -> ([| a; n; (rows + a - 1) / a |], 1)) (int_range 2 4);
+    ]
+
+(* The rows that put a first [k] of [n] past the selection's bound. *)
+let past_selection ~k n = (selection_comparisons / (k * n * n)) + 1
+
+let top_gen =
+  let open Gen in
+  let small =
+    let* r = int_range 1 3 in
+    let* s =
+      array ~size:(constant r)
+        (frequency [ (1, constant 0); (2, constant 1); (4, int_range 2 4) ])
+    in
+    let* axis = int_range 0 (r - 1) in
+    let* long = option (int_range 9 17) in
+    let s =
+      match long with
+      | None -> s
+      | Some n -> Array.mapi (fun i e -> if i = axis then n else e) s
+    in
+    let* dt = of_list (narrow_keys @ wide_keys) in
+    let+ k = int_range 0 s.(axis) in
+    (dt, s, axis, k)
+  in
+  let rounds =
+    let* n = int_range 17 40 in
+    let* k = int_range 1 (Int.min n (steps n)) in
+    let* dt = of_list narrow_keys in
+    let+ s, axis = laid ~rows:(past_selection ~k n) n in
+    (dt, s, axis, k)
+  in
+  let past_steps =
+    let* n = int_range 17 32 in
+    let* k = int_range (steps n + 1) n in
+    let* dt = of_list narrow_keys in
+    let+ s, axis = laid ~rows:(past_selection ~k n) n in
+    (dt, s, axis, k)
+  in
+  let wide =
+    let* n = int_range 2 17 in
+    let* k = int_range 1 n in
+    let* dt = of_list wide_keys in
+    let+ s, axis = laid ~rows:1 n in
+    (dt, s, axis, k)
+  in
+  let* dt, s, axis, k =
+    frequency [ (2, small); (2, rounds); (1, past_steps); (1, wide) ]
+  in
+  let+ o = Operand.draw s in
+  { t_dt = dt; t_shape = s; t_axis = axis; t_k = k; t_operand = o }
+
+(* Plain operands cycling through the pool, whose specials then repeat in a
+   slice: each path, gpt-oss's router at one and 512 rows among them, rounds
+   down to a slice's last key, and the edges of [k] and of the shape. *)
+let top_examples =
+  let example d s axis k =
+    let values =
+      Array.init (Operand.numel s) (fun i ->
+          Operand.pool.(i mod Array.length Operand.pool))
+    in
+    {
+      t_dt = d;
+      t_shape = s;
+      t_axis = axis;
+      t_k = k;
+      t_operand = { Operand.view = Plain; values };
+    }
+  in
+  Nx.Dtype.
+    [
+      example (Any Nx.float32) [| 1; 32 |] 1 4;
+      example (Any Nx.float32) [| 512; 32 |] 1 4;
+      example (Any Nx.bfloat16) [| 4; 20; 60 |] 1 3;
+      example (Any Nx.int8) [| 70; 10 |] 1 10;
+      example (Any Nx.int32) [| 8; 32 |] 1 16;
+      example (Any Nx.float64) [| 3; 9 |] 1 3;
+      example (Any Nx.complex64) [| 6; 2 |] 0 2;
+      example (Any Nx.float16) [| 3; 5 |] 1 0;
+      example (Any Nx.bfloat16) [| 2; 17 |] 1 17;
+      example (Any Nx.int8) [| 4; 1 |] 1 1;
+      example (Any Nx.float32) [| 0; 5 |] 1 2;
+      example (Any Nx.uint32) [| 3; 17; 4 |] 1 5;
+    ]
+
+(* [raw x] is [x]'s codes, a float's and a complex number's parts read as
+   unsigned integers of their width, so that a NaN's sign and payload count. *)
+let raw (type v s) (x : (v, s, Nx.host) Nx.t) =
+  let dt = Nx.dtype x in
+  let width =
+    match Nx.Dtype.kind dt with
+    | Complex -> Nx.Dtype.bits dt / 2
+    | Float -> Nx.Dtype.bits dt
+    | Signed | Unsigned | Boolean -> 0
+  in
+  match width with
+  | 0 -> codes x
+  | 8 -> codes (Nx.bitcast Nx.uint8 x)
+  | 16 -> codes (Nx.bitcast Nx.uint16 x)
+  | 32 -> codes (Nx.bitcast Nx.uint32 x)
+  | _ -> codes (Nx.bitcast Nx.uint64 x)
+
+(* Whether two elements of a slice of [x] along [axis] are equal in the sort
+   order. A complex number's are not looked for. *)
+let ties (type v s) (x : (v, s, Nx.host) Nx.t) axis =
+  let s = Nx.shape x in
+  let n = s.(axis) in
+  let inner = Operand.numel (Array.sub s (axis + 1) (Array.length s - axis - 1)) in
+  match Nx.Dtype.kind (Nx.dtype x) with
+  | Complex -> false
+  | Float | Signed | Unsigned | Boolean ->
+      let keys = Nx.to_array (Nx.order_key Nx.uint64 x) in
+      let seen = Hashtbl.create 64 in
+      let tie = ref false in
+      Array.iteri
+        (fun j key ->
+          let at = (j / (n * inner), j mod inner, key) in
+          if Hashtbl.mem seen at then tie := true else Hashtbl.add seen at ())
+        keys;
+      !tie
+
+(* [specials x] is whether [x] holds a NaN, both zeros, an infinity, and an
+   integer's least or greatest value. *)
+let specials (type v s) (x : (v, s, Nx.host) Nx.t) =
+  let dt = Nx.dtype x in
+  let xs = Nx.to_array x in
+  let has p = Array.exists p xs in
+  match Nx.Dtype.kind dt with
+  | Float ->
+      let zero negative v = v = 0. && Float.sign_bit v = negative in
+      ( has Float.is_nan,
+        has (zero true) && has (zero false),
+        has (fun v -> Float.abs v = Float.infinity),
+        false )
+  | Signed | Unsigned ->
+      let least = Operand.value dt Operand.Least
+      and greatest = Operand.value dt Operand.Greatest in
+      (false, false, false, has (fun v -> v = least || v = greatest))
+  | Complex | Boolean -> (false, false, false, false)
+
+(* [Nx.top_k] compiled on the GPU gives eager's values and positions, bit for
+   bit. A float64 case is discarded where the GPU's kernels lack float64. *)
+let top_k c =
+  let d, (module S) = on_gpu () in
+  let (Nx.Dtype.Any dt) = c.t_dt in
+  let path = path c and n = c.t_shape.(c.t_axis) in
+  let x = Operand.make dt c.t_shape c.t_operand in
+  let nan, zeros, infinite, extreme = specials x in
+  cover "a first k by selection" (path = Selection);
+  cover "a first k by rounds" (path = Rounds);
+  cover "k = n by rounds" (path = Rounds && c.t_k = n);
+  cover "a first k past the rounds' steps by the network" (path = Past_steps);
+  cover "a first k of 64-bit or complex keys by the network" (path = Wide);
+  cover "k = 0" (c.t_k = 0);
+  cover "k = n" (c.t_k = n && n > 1);
+  cover "n = 1" (n = 1);
+  cover "zero rows" (n > 0 && Operand.numel c.t_shape = 0);
+  cover "a middle axis"
+    (c.t_axis > 0 && c.t_axis < Array.length c.t_shape - 1);
+  cover "a view" (c.t_operand.view <> Plain);
+  cover "equal elements" (ties x c.t_axis);
+  cover "NaN" nan;
+  cover "-0 and +0" zeros;
+  cover "an infinity" infinite;
+  cover "an integer's least or greatest" extreme;
+  if c.t_dt = Nx.Dtype.Any Nx.float64 then assume (has_float64 d);
+  let f x = Nx.top_k ~k:c.t_k ~axis:c.t_axis x in
+  let values, positions = f x in
+  let values', positions' =
+    Rune.jit
+      Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+      f (Nx.place S.on x)
+  in
+  let host x = Nx.place Nx.Host.on x in
+  equal ~msg:"positions" codes_t (codes positions) (codes (host positions'));
+  equal ~msg:"values" codes_t (raw values) (raw (host values'))
 
 (* A stack of 64 rows of 64, each computed on the GPU, compiles to the host's
    eager bits. Doubling is exact, a [-0.] kept. *)
@@ -1915,6 +2162,13 @@ let () =
            ~id:string_of_int
            [ 33; 47; 1571; 4099; 128 * 257; 151936; 201088 ]
            folds;
+         group "top k"
+           [
+             prop ~count:24 ~examples:top_examples
+               "a first k compiles to eager's values and positions"
+               (Gen.with_pp pp_top top_gen)
+               top_k;
+           ];
          group "assemblies"
            [
              test "a stack of computed rows compiles to eager's bits"

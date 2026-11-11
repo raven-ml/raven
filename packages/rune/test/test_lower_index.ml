@@ -1550,19 +1550,35 @@ let pp_sort ppf c =
     (raws_text c.o_raws)
 
 (* A sort's slices are at most 4 elements long, or 9 to 17 a quarter of the
-   time, so that the network has 4 or 5 stages. *)
+   time, so that the network has 4 or 5 stages. One sort in five instead has
+   240 to 300 slices of 17 to 33, so that a first k of any of them compares
+   more than [2^16] pairs, past the selection. *)
 let sort_case =
   let open Gen in
   let* d = all_dtypes in
-  let* s = shape in
-  let* axis = int_range 0 (Array.length s - 1) in
-  let* long =
-    frequency [ (3, constant None); (1, map Option.some (int_range 9 17)) ]
+  let* rows =
+    frequency
+      [
+        (4, constant None);
+        (1, map Option.some (pair (int_range 17 33) (int_range 240 300)));
+      ]
   in
-  let s =
-    match long with
-    | None -> s
-    | Some n -> Array.mapi (fun i e -> if i = axis then n else e) s
+  let* s, axis =
+    match rows with
+    | Some (n, r) -> of_list [ ([| r; n |], 1); ([| n; r |], 0) ]
+    | None ->
+        let* s = shape in
+        let* axis = int_range 0 (Array.length s - 1) in
+        let+ long =
+          frequency
+            [ (3, constant None); (1, map Option.some (int_range 9 17)) ]
+        in
+        let s =
+          match long with
+          | None -> s
+          | Some n -> Array.mapi (fun i e -> if i = axis then n else e) s
+        in
+        (s, axis)
   in
   let* view = among views in
   let* descending = bool in
@@ -1597,8 +1613,9 @@ let ties c =
     xs;
   !found
 
-(* Each dtype, whose specials repeat, an empty slice, and slices of 17 and 9
-   elements, whose networks have 5 and 4 stages. *)
+(* Each dtype, whose specials repeat, an empty slice, slices of 17 and 9
+   elements, whose networks have 5 and 4 stages, and a first k by rounds, of 2
+   and of a whole slice. *)
 let sort_examples =
   let each i d =
     let s = [| 3; 4 |] and view = List.nth views (i mod 4) in
@@ -1628,8 +1645,31 @@ let sort_examples =
   in
   empty
   :: long (D.Any D.Float32) [| 2; 17 |] 1
+  :: long (D.Any D.Float16) [| 17; 256 |] 0
+  :: { (long (D.Any D.Int8) [| 70; 10 |] 1) with o_k = Some 10 }
   :: { (long (D.Any D.Int64) [| 9; 2 |] 0) with o_descending = true }
   :: List.mapi each D.all
+
+(* A first k of keys of at most 32 bits compares every pair where the whole
+   array's [k n²] comparisons are at most [selection_comparisons], else takes
+   [k] rounds where [k] is at most the network's [s(s+1)/2] compare steps for
+   [n <= 2^s]. [first c] is the path [c] takes, if either. *)
+let selection_comparisons = 1 lsl 16
+
+let first c =
+  let n = c.o_shape.(c.o_axis) and size = numel c.o_shape in
+  let wide =
+    List.mem c.o_dt
+      D.[ Any Float64; Any Int64; Any Uint64; Any Complex64; Any Complex128 ]
+  in
+  let rec bits m = if m = 0 then 0 else 1 + bits (m lsr 1) in
+  let s = bits (n - 1) in
+  match c.o_k with
+  | Some k when k > 0 && n > 1 && size > 0 && not wide ->
+      if k * n * size <= selection_comparisons then Some `Selection
+      else if k <= s * (s + 1) / 2 then Some `Rounds
+      else None
+  | _ -> None
 
 let sorts =
   prop ~count:40 ~examples:sort_examples
@@ -1649,20 +1689,10 @@ let sorts =
         (List.mem c.o_dt
            D.[ Any Float64; Any Int64; Any Uint64; Any Complex64 ]);
       cover "complex128" (c.o_dt = D.Any D.Complex128);
-      cover "a first k by selection"
-        (Option.is_some c.o_k
-        && Option.get c.o_k > 0
-        && c.o_shape.(c.o_axis) > 1
-        && not
-             (List.mem c.o_dt
-                D.
-                  [
-                    Any Float64;
-                    Any Int64;
-                    Any Uint64;
-                    Any Complex64;
-                    Any Complex128;
-                  ]));
+      cover "a first k by selection" (first c = Some `Selection);
+      cover "a first k by rounds" (first c = Some `Rounds);
+      cover "k = n by rounds"
+        (first c = Some `Rounds && c.o_k = Some c.o_shape.(c.o_axis));
       let x = operand dt c.o_view c.o_shape c.o_raws in
       let op () =
         P.eval ~by:"t"
