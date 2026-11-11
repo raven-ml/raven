@@ -1745,6 +1745,71 @@ let test_sixteen_terms () =
         (Float.abs (y -. exact)))
     (Nx.to_array (host y))
 
+(* A dense attention layer's step, as an Earth-observation encoder trains it:
+   projections into 4 heads, scores with a bias of each key and the bounds of
+   the keys each query sees, none of which reads the heads, dropped
+   probabilities, and the heads merged and projected. Its gradient is the
+   host's eager one within float32's rounding: the upcasts of the scores' 64
+   pixels by 4 heads by 256 queries by 256 keys take the 4 heads whole. *)
+let dense_grad (module S : Nx.Devices) ~jit =
+  let r = 64 and t = 256 and heads = 4 and dm = 64 in
+  let draw i s = Nx.place S.on (Nx.Rng.normal ~key:(Nx.Rng.key i) Nx.float32 s) in
+  let x = draw 1 [| r; t; dm |] in
+  let w i = draw i [| dm; dm |] in
+  let bias = draw 6 [| r; t |] in
+  let start = Nx.place S.on (Nx.zeros Nx.int32 [| r; t |]) in
+  let stop =
+    Nx.place S.on (Nx.full Nx.int32 [| r; t |] (Int32.of_int (t - 1)))
+  in
+  let keep =
+    Nx.place S.on
+      (Nx.cast Nx.float32
+         (Nx.greater_s
+            (Nx.Rng.uniform ~key:(Nx.Rng.key 7) Nx.float32 [| r; heads; t; t |])
+            0.1))
+  in
+  let col =
+    Nx.place S.on (Nx.reshape [| 1; 1; 1; t |] (Nx.arange Nx.int32 0 t 1))
+  in
+  let split w x =
+    Nx.swapaxes 1 2 (Nx.reshape [| r; t; heads; dm / heads |] (Nx.matmul x w))
+  in
+  let loss (x, (wq, wk, wv, wo)) =
+    let q = split wq x and k = split wk x and v = split wv x in
+    let s =
+      Nx.contract Nx.float32 (Nx.Pattern.v "r h q d, r h k d -> r h q k | d") q k
+    in
+    let s = Nx.add (Nx.mul_s s 0.25) (Nx.reshape [| r; 1; 1; t |] bias) in
+    let bound b = Nx.reshape [| r; 1; t; 1 |] b in
+    let visible =
+      Nx.logical_and (Nx.greater_equal col (bound start)) (Nx.less col (bound stop))
+    in
+    let p = Nx.mul (Nx.softmax ~where:visible s) keep in
+    let o =
+      Nx.contract Nx.float32 (Nx.Pattern.v "r h q k, r h k d -> r h q d | k") p v
+    in
+    Nx.sum (Nx.matmul (Nx.reshape [| r; t; dm |] (Nx.swapaxes 1 2 o)) wo)
+  in
+  let w4 = Nx.Ptree.(quad tensor tensor tensor tensor) in
+  let p = Nx.Ptree.(pair tensor w4) in
+  let g = Rune.grad p loss in
+  let g = if jit then Rune.jit Nx.Ptree.(p @-> returns p) g else g in
+  let gx, (gq, _, _, _) = g (x, (w 2, w 3, w 4, w 5)) in
+  (Nx.to_array (host gx), Nx.to_array (host gq))
+
+let test_dense_grad () =
+  let _, s = on_gpu () in
+  let gx, gq = dense_grad s ~jit:true in
+  let ex, eq = dense_grad (module Nx.Host) ~jit:false in
+  let close name a e =
+    let m = Array.fold_left (fun m v -> Float.max m (Float.abs v)) 0. e in
+    let d = ref 0. in
+    Array.iteri (fun i v -> d := Float.max !d (Float.abs (v -. e.(i)))) a;
+    less ~msg:name float_exact ~than:(1e-4 *. m) !d
+  in
+  close "x" gx ex;
+  close "wq" gq eq
+
 (* A routed expert at a prompt of 12 tokens: each token goes through the
    experts its logits rank first, 4 of 32, as gpt-oss-20b's do, each expert
    an MXFP4 projection up, a nonlinearity and an MXFP4 projection down. 48
@@ -2240,6 +2305,10 @@ let () =
                float32_products_gen float32_law;
              test "sixteen terms under float32's unit hold the bound"
                test_sixteen_terms;
+             test
+               "a dense attention step's gradient is the host's within \
+                float32's rounding"
+               test_dense_grad;
              Windtrap.cases
                "an MXFP4 product is within its bound of the exact one"
                ~id:(Format.asprintf "%a" Mxfp4_products.pp)

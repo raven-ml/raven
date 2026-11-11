@@ -141,6 +141,14 @@ KERNELS = {
     "matmul_256": lambda: last(empty(256, 64) @ empty(64, 256)),
     "scores": lambda: last(empty(8, 128, 16) @ empty(8, 128, 16).transpose(1, 2)),
     "matmul_1000": lambda: last(empty(1000, 16) @ empty(16, 1000)),
+    # attention's scores per head plus a bias of each key and two of each query that no head reads, as a key bias and the
+    # bounds of the visible keys: the upcasts take the keys by 4, then the 4 heads whole, which leaves no axis of heads to block
+    "scores_biased": lambda: last(empty(64, 256, 4, 16).permute(0, 2, 1, 3) @ empty(64, 256, 4, 16).permute(0, 2, 3, 1)
+                                  + empty(64, 1, 1, 256) + empty(64, 1, 256, 1) * empty(64, 1, 256, 1)),
+    # the same with a second bias of each key: the heads, now read by fewer buffers than the keys, are upcast first, whole
+    "scores_biased_first": lambda: last(empty(64, 256, 4, 16).permute(0, 2, 1, 3) @ empty(64, 256, 4, 16).permute(0, 2, 3, 1)
+                                        + empty(64, 1, 1, 256) + empty(64, 1, 1, 256)
+                                        + empty(64, 1, 256, 1) * empty(64, 1, 256, 1)),
     # gpt-oss-20b's attention values at a decode step: 64 by 64 outputs over 1024 slots, from bfloat16 widened
     "attention_values": lambda: last(empty(64, 1024, dtype=dtypes.bfloat16).float() @ empty(1024, 64, dtype=dtypes.bfloat16).float()),
     # products a variable counts: the workgroups are not known, and every split applies

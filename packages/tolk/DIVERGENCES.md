@@ -7035,12 +7035,12 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
 - **tolk:** `Heuristic.block`, `Heuristic.upcast_more`, `Heuristic.locals` and
   `Heuristic.general`.
 - **Differs:** on a renderer with local indices, a contraction summed in 4
-  bytes or fewer whose upcast loop took two axes, each by 4, each unread by
-  some operand, takes a second upcast of each by 2 when 2 divides both and
-  what is left of them holds a SIMD group of 32 threads in powers of two; its
-  last unrollable axis is then unrolled by 4 where 4 divides it, and its
-  workgroup takes at most 32 threads. A thread then holds 8 by 8 outputs, and
-  each element it loads feeds 8 of them.
+  bytes or fewer whose upcast loop took two axes, each by 4 and leaving part
+  of its axis, each unread by some operand, takes a second upcast of each by 2
+  when 2 divides both and what is left of them holds a SIMD group of 32
+  threads in powers of two; its last unrollable axis is then unrolled by 4
+  where 4 divides it, and its workgroup takes at most 32 threads. A thread
+  then holds 8 by 8 outputs, and each element it loads feeds 8 of them.
 - **Reason:** (d): float32 contractions on fudge's RTX 5000 Ada, which take no
   tensor core (TF32 is off), ran at 6 TFLOP/s of the part's 65 with 4 by 4
   outputs a thread in workgroups of 128 threads. More outputs a thread cover
@@ -7062,7 +7062,8 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   which caps these kernels below the part's peak whatever their layout.
 - **Pinned by:** `Tolk.Heuristic`'s `a contraction in registers` cases
   (`matmul`, `matmul_256` and `scores` blocked on CUDA, `matmul_256` on AMD;
-  `matmul_1000`, whose halved axes hold one thread, not blocked), with the
+  `matmul_1000`, whose halved axes hold one thread, and `scores_biased`, whose
+  upcasts take its 4 heads whole, not blocked), with the
   layouts in the suite's `.tolk` files; rune's
   `test_jit_gpu` `products › a float32 matmul is within its bound of the exact
   product` at extents of 64 and 128 summed over 13 and 52, on the machine's

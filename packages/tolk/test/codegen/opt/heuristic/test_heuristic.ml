@@ -1411,6 +1411,17 @@ let blocks =
         ~id:Fun.id
         [ "matmul_1000_cuda" ]
         (fun name -> equal int 16 (lane_outputs (recorded name)));
+      (* The upcasts take the keys by 4, then the 4 heads whole, or the heads
+         first. *)
+      cases "a thread holds 4 by 4 outputs where an upcast takes an axis whole"
+        ~id:Fun.id
+        [
+          "scores_biased_cuda";
+          "scores_biased_amd";
+          "scores_biased_first_cuda";
+          "scores_biased_first_amd";
+        ]
+        (fun name -> equal int 16 (lane_outputs (recorded name)));
     ]
 
 (* The host's lanes *)

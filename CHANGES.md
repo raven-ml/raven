@@ -1238,6 +1238,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 - `Tolk_engine.link` launches a software device's kernels (`Rig.software`)
   on that device, where it launched them on the host, so `Tolk_engine.time`
   times them there.
+- On a GPU a float32 contraction whose upcasts take one of its output axes
+  whole, as attention's scores over 4 heads plus a bias of each key, compiles.
+  It raised `Invalid_argument` naming an UPCAST axis, so `Rune.jit` of
+  `Rune.grad` over a dense attention layer failed on CUDA.
 - A loop's calls run as one launch only where the trip then holds no more
   memory at its peak, so a remat in a compiled loop's step keeps its saving;
   a NUTS transition's loops run as many launches as before.

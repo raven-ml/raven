@@ -811,12 +811,14 @@ let enough_work k =
   Sint.resolve Sint.(prod_at k (K.upcastable_dims k) >= Int 1024)
 
 (* potentially do more upcasts of non reduce axes based on a heuristic; on the
-   host, after the contiguous axis, while the accumulators fit. The axes its
-   loop upcast, each with its amount, latest first. *)
+   host, after the contiguous axis, while the accumulators fit. The ranges its
+   loop upcast, each with its amount, latest first: what an upcast leaves of a
+   range keeps its axis id, and an upcast that takes the whole range leaves
+   none. *)
 let upcast_more k =
   if budgeted k then upcast_contiguous k;
   let rec loop upcasted =
-    let upcasted_axis = List.map fst upcasted in
+    let upcasted_axis = List.map (fun (axis, _, _) -> axis) upcasted in
     if budgeted k || (enough_work k && holds Sint.(K.upcast_size k < Int 32))
     then begin
       let choice ~fill axis upcast_amount =
@@ -885,13 +887,14 @@ let upcast_more k =
       | (_, _, axis, amount) :: _ ->
           if debug () >= 4 then
             Format.eprintf "more upcast axis : %d by %d@." axis amount;
+          let r = List.nth (K.rngs k) axis in
           ignore (split k axis amount Opt.Upcast);
-          loop ((axis, amount) :: upcasted)
+          loop ((axis, r, amount) :: upcasted)
       | [] -> upcasted
     end
     else upcasted
   in
-  loop []
+  List.map (fun (_, r, amount) -> (r, amount)) (loop [])
 
 (* if last reduce dim is small(ish), loop unroll the reduce. NOTE: this can fail
    on multireduce with mismatching dimensions, this is okay *)
@@ -961,13 +964,21 @@ let block k upcasted =
     | Some (m, _) -> Dtype.itemsize (dtype m) <= 4
     | None -> false
   in
-  match List.rev upcasted with
-  | [ (_, 4); (_, 4) ] as axes
+  (* The axis of what an upcast left of its range, if it left any. *)
+  let rest (r, amount) =
+    Option.map (fun u -> (axis_of k u, amount)) (rest_of k r)
+  in
+  match List.map rest (List.rev upcasted) with
+  | [ Some ((_, 4) as a); Some ((_, 4) as b) ]
     when (K.ren k).has_local
          && narrow
-         && List.for_all reused axes && List.for_all doubles axes
-         && threads axes >= lanes ->
-      List.iter (fun (axis, _) -> ignore (split k axis 2 Opt.Upcast)) axes;
+         && List.for_all reused [ a; b ]
+         && List.for_all doubles [ a; b ]
+         && threads [ a; b ] >= lanes ->
+      (* A split that takes the whole axis moves the axes after it down. *)
+      List.iter
+        (fun (r, _) -> ignore (split k (axis_of k r) 2 Opt.Upcast))
+        (List.rev upcasted);
       (match K.upcastable_dims ~reduce:true k with
       | [] -> ()
       | dims ->
