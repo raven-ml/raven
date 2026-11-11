@@ -26,6 +26,7 @@ depends: [
   "munin" {= version}
   "hugin" {= version}
   "quill" {= version}
+  "xmlm" {with-test & >= "1.4.0"}
   "odoc" {with-doc}
 ]
 build: [

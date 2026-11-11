@@ -546,6 +546,12 @@
   (hugin
    (= :version))
   (quill
-   (= :version)))
+   (= :version))
+  ; dev/jord's jord_safe reads ESA's product metadata with it; dev/ has no
+  ; package of its own until jord moves to contrib/
+  (xmlm
+   (and
+    :with-test
+    (>= 1.4.0))))
  (tags
   (machine-learning data-science numerical-computation)))
