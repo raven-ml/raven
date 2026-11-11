@@ -25,8 +25,15 @@ no CHANGES entry).
   on a jord grid), `Distil` (Matryoshka distillation and its compiled
   step), `Barlow` (v1.0's Barlow Twins with mixup, its projector and
   compiled step), `Eval` (a linear probe and RankMe), `Checkpoint` (a run's
-  state on disk). `test/` holds its laws on synthetic pixels and small
-  models.
+  state on disk), `Stac` (Microsoft's Planetary Computer: items by area and
+  days, and the window of an asset's raster a warp reads, by byte ranges,
+  with a session holding MPC's SAS tokens), and the private `Fetch` (curl,
+  https only: JSON, ranges, tokens, bounded retries).
+  `test/` holds its laws on synthetic pixels and small models; `test/http/`
+  a stand-in for curl and recorded MPC answers, so no test reaches the
+  network. `test/mpc/mpc.exe DIR` reads a real Sentinel-2 and Sentinel-1
+  window from MPC, to compare with GDAL's reading outside the repository,
+  so no test runs it.
 - `bin/main.exe encode` embeds a tile, as a GeoTIFF on its landmask's grid
   with `--landmask`; `bin/main.exe validate --weights DIR --fixtures DIR`
   compares the four released students (the teacher with `--models

@@ -19,3 +19,23 @@
   jord
   jord_geotiff
   windtrap))
+
+; test_stac.exe runs Stac's requests through http/curl.exe, on recorded
+; answers and generated files.
+
+(test
+ (name test_stac)
+ (libraries
+  tessera
+  jord
+  jord_geotiff
+  jord_stac
+  nx
+  nx.io
+  jsont
+  jsont.bytesrw
+  unix
+  windtrap)
+ (deps
+  http/curl.exe
+  (glob_files http/*.http)))

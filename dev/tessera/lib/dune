@@ -3,5 +3,19 @@
 
 (library
  (name tessera)
- (private_modules flat)
- (libraries nx nx.array nx.io nx.ragged kaun rune vega jera jord jord_geotiff))
+ (private_modules flat fetch)
+ (libraries
+  nx
+  nx.array
+  nx.io
+  nx.ragged
+  kaun
+  rune
+  vega
+  jera
+  jord
+  jord_geotiff
+  jord_stac
+  jsont
+  jsont.bytesrw
+  unix))

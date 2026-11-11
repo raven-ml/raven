@@ -1,0 +1,16 @@
+; mpc.exe reads a window of a 15-bit Sentinel-2 band and one of a Sentinel-1
+; RTC band from Microsoft's Planetary Computer, over the network, so no test
+; runs it: `mpc.exe DIR` writes DIR/s2.npy and DIR/s1.npy and prints a line
+; `NAME HREF ROW COL ROWS COLS` for each. GDAL's reading of the same windows
+; is the oracle, compared outside the repository with rasterio 1.5.2 on GDAL
+; 3.12 (uv, `python -I`): for each line, with TOKEN the "token" of
+;   https://planetarycomputer.microsoft.com/api/sas/v1/token/<account>/<container>
+; of HREF's host and first path segment,
+;   rasterio.open(HREF + "?" + TOKEN).read(1, window=Window(COL, ROW, COLS, ROWS))
+; equals numpy.load("DIR/NAME.npy")[:, :, 0] in dtype, shape and every byte.
+; On 2026-11-11 both windows were identical (S2 NBITS 15, 101 × 101 uint16;
+; S1 65 × 65 float32), each crossing four tiles.
+
+(executable
+ (name mpc)
+ (libraries tessera jord jord_stac nx nx.io))
