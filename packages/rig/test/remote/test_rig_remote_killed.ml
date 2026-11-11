@@ -63,29 +63,29 @@ let controller_first () =
   reports ~msg:"the other agent" root (finish other)
 
 (* The controller, support/controller.exe, is stopped: the other agent notices
-   first. *)
+   first. The other agent reports its failure on its standard output as soon
+   as it has its root cause, and its serve returns only once the controller
+   has ended its side of their connection, so the controller resumes once
+   the report has come. *)
 let agent_first () =
   with_key_file @@ fun file ->
-  let agents = List.init 2 (fun _ -> start file) in
-  let c = start_controller file "watch" agents in
+  let victim = start file in
+  let other = start ~vars:[ ("RIG_REMOTE_REPORT", "1") ] file in
+  let c = start_controller file "watch" [ victim; other ] in
   Fun.protect
-    ~finally:(fun () -> List.iter kill (c :: agents))
+    ~finally:(fun () -> List.iter kill [ c; victim; other ])
     (fun () ->
-      let victim = List.hd agents and other = List.nth agents 1 in
       equal ~msg:"the controller" string "connected" (input_line c.out);
-      let why =
+      let report =
         stopped c (fun () ->
             kill victim;
-            match finish other with
-            | 2, [ line ] -> line
-            | code, lines ->
-                failf "the other agent exited %d, printing [%s]" code
-                  (String.concat "; " lines))
+            input_line other.out)
       in
       starts_with ~msg:"names the killed agent's machine"
-        ~prefix:("failed: " ^ machine victim)
-        why;
-      let cause = String.sub why 8 (String.length why - 8) in
+        ~prefix:("failed " ^ machine victim)
+        report;
+      let cause = String.sub report 7 (String.length report - 7) in
+      reports ~msg:"the other agent" cause (finish other);
       reports ~msg:"the controller" cause (finish c))
 
 let () =
