@@ -377,6 +377,10 @@ let inside c lon lat =
   | None -> Nx.logical_and valid (Nx.isfinite lon)
   | Some tm -> Nx.logical_and valid (near (wrap (Nx.sub_s lon tm.lon0)) lat)
 
+let in_domain (type d) c (p : d Nx.float64_t) : d Nx.bool_t =
+  let batch, lon, lat = Points.split "Jord.Crs.in_domain" p in
+  Nx.reshape batch (inside c lon lat)
+
 let transform (type d) ~src ~dst (p : d Nx.float64_t) : d Nx.float64_t =
   let batch, a, b = Points.split "Jord.Crs.transform" p in
   let to_lonlat c a b =

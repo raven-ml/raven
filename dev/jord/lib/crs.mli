@@ -120,3 +120,13 @@ val transform : src:t -> dst:t -> 'd Nx.float64_t -> 'd Nx.float64_t
 
     Raises [Invalid_argument] if [p]'s last axis is not 2, and through
     {!Nx.check}, naming the first point, where a point is outside the domain. *)
+
+val in_domain : t -> 'd Nx.float64_t -> 'd Nx.bool_t
+(** [in_domain c p] is whether each point [p] of [Lonlat], [[...; 2]], lies in
+    the domain of the transforms into [c], computed where [p] lies: a latitude
+    in \[-90, 90\] and a finite longitude, within the rule above for a projected
+    [c]. A point with a NaN coordinate is not in it. For a projected [c],
+    [transform ~src:lonlat ~dst:c] refuses exactly the points without a NaN
+    coordinate that are not in it.
+
+    Raises [Invalid_argument] if [p]'s last axis is not 2. *)

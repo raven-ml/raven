@@ -336,6 +336,69 @@ let tm35fin_domain =
       refuse tm35fin true [ (67.000001, 10.) ];
       refuse tm35fin true [ (-13.000001, 10.) ])
 
+(* in_domain *)
+
+let lon0 = function
+  | Crs.Utm { zone; _ } -> float_of_int ((6 * zone) - 183)
+  | _ -> 27.
+
+(* A projected system and a point within 1e-6° of its domain's edge, 40° from
+   its central meridian or at a pole, on either side. *)
+let near_edge =
+  Gen.(
+    let+ c =
+      frequency
+        [
+          (1, constant tm35fin);
+          (3, map (fun (z, north) -> utm z north) (pair zone bool));
+        ]
+    and+ side = of_list [ -40.; 40. ]
+    and+ d = float_range (-1e-6) 1e-6
+    and+ pole = bool
+    and+ lat = float_range (-89.) 89. in
+    let lon, lat =
+      if pole then (lon0 c, Float.copy_sign (90. +. d) lat)
+      else (lon0 c +. side +. d, lat)
+    in
+    (c, (Float.rem (lon +. 540.) 360. -. 180., lat)))
+
+let in_domain_law =
+  prop "in_domain is where a transform into the system passes" near_edge
+    (fun (c, (lon, lat)) ->
+      let p = points [ (lon, lat) ] in
+      let inside = Nx.item [ 0 ] (Crs.in_domain c p) in
+      cover "inside" inside;
+      cover "outside" (not inside);
+      let passes =
+        match Crs.transform ~src:Crs.lonlat ~dst:c p with
+        | _ -> true
+        | exception Invalid_argument _ -> false
+      in
+      equal bool inside passes)
+
+let in_domain_points =
+  test "in_domain holds no NaN, no infinity and nothing past a pole" (fun () ->
+      let p =
+        points
+          [
+            (540., 90.);
+            (0., 90.000001);
+            (Float.infinity, 0.);
+            (Float.nan, 0.);
+            (0., Float.nan);
+          ]
+      in
+      List.iter
+        (fun c ->
+          equal ~msg:(Format.asprintf "%a" Crs.pp c) (array bool)
+            [| true; false; false; false; false |]
+            (Nx.to_array (Crs.in_domain c p)))
+        [ Crs.lonlat; utm 33 true; tm35fin ];
+      let q = Nx.create Nx.float64 [| 2; 1; 2 |] [| 15.; 48.; 80.; 47. |] in
+      equal (array bool) [| true; false |]
+        (Nx.to_array (Crs.in_domain (utm 33 true) q));
+      equal (array int) [| 2; 1 |] (Nx.shape (Crs.in_domain (utm 33 true) q)))
+
 (* Zones and codes *)
 
 let utm_at =
@@ -532,6 +595,7 @@ let () =
              tm35fin_system;
              tm35fin_domain;
            ];
+         group "in_domain" [ in_domain_law; in_domain_points ];
          group "zones" [ utm_at; refusals ];
          epsg;
          group "wkt" [ wkt_accepts; wkt_refuses ];
