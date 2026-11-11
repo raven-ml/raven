@@ -134,9 +134,13 @@ val sort :
     Each slice sorts by a bitonic network over its keys packed above their
     positions, one pass per 32 bits of key: [O(n log² n)] work and about
     [log² n / 2] kernels a pass for [n] elements, two passes for a 64-bit
-    dtype or [complex64], four for [complex128]. A first [k] of keys of at most 32
-    bits, when the whole array's [k n²] comparisons are few, compares every
-    pair instead: two kernels for its positions.
+    dtype or [complex64], four for [complex128]. A first [k] of keys of at most
+    32 bits, when the whole array's [k n²] comparisons are few, compares every
+    pair instead: two kernels for its positions. Otherwise, with [k] at most
+    the network's [s(s+1)/2] compare steps, [s] the least with [n <= 2{^s}],
+    it takes [k] rounds, each the least key past the last round's: [O(k n)]
+    work and a kernel a round for its positions, two where tolk splits a long
+    slice's reduction.
 
     Raises {!Lower_arith.Unlowered} for an axis of more than [2{^31}]
     elements. *)

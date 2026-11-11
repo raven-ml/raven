@@ -815,9 +815,9 @@ let ranked axis h =
    is the one exactly [r] keys precede. Comparing every pair of keys is one
    kernel of [k·n²] comparisons, in place of a network's kernels, one per stage
    and each a launch. [selection_comparisons] bounds the comparisons of the
-   whole array: past it a GPU's launches no longer matter (a prefill of 512
-   rows gains nothing measurable) and the host's network is faster (30% at
-   2^21). It divides so that a shape's product cannot overflow. *)
+   whole array: past it the comparisons outweigh the launches they save, and
+   [rounds] or the network take the first [k]. It divides so that a shape's
+   product cannot overflow. *)
 
 let selection_comparisons = 1 lsl 16
 
@@ -904,6 +904,43 @@ let keys (D.Any dt as d) ~descending u =
   in
   List.concat_map split ks
 
+(* Past the selection's bound a first [k] still need not sort: the [r]th of the
+   packed keys, which are distinct, is the least above the one before it, a
+   reduction over the slice. [k] rounds are [k·n] comparisons and [k] kernels,
+   where the network makes a pass of [n] and a kernel at each of its [s(s+1)/2]
+   compare steps, [s] the least with [n <= 2^s]: rounds take a first [k]
+   wherever [k] is at most those steps. The count weighs a round as a step,
+   which holds for many rows; on a GPU a round over few rows, a reduction with
+   few outputs, is slower than a step: over one row of 4096 rounds take 1.5
+   times the network's kernel time at [k = 16] and 3.2 times at [k = 64]. tolk
+   reduces by [Max], so a round takes the greatest of the complements [m - p]
+   below the last round's, [m] the greatest [int64]. *)
+
+let rounding ~k n =
+  let s = bit_length (n - 1) in
+  k <= s * (s + 1) / 2
+
+(* [rounds axis k h] is the int64 positions of the [k] leading keys of the sort
+   of [h], in sort order, as [ranked] would give them. *)
+let rounds axis k h =
+  let s = extents h in
+  let low = bit_length (List.nth s axis - 1) in
+  let c = Ops.sub (most h) (packed axis h) in
+  let one = List.mapi (fun i e -> if i = axis then 1 else e) s in
+  let round = function
+    | [] -> Shape.rop c Op.Max [ axis ]
+    | last :: _ ->
+        let below = Ops.lt c (Shape.expand last (dims s)) in
+        Shape.rop (Ops.where below c (least c)) Op.Max [ axis ]
+  in
+  let rec go r acc =
+    if r = k then List.rev acc
+    else go (r + 1) (Shape.reshape (round acc) (dims one) :: acc)
+  in
+  let ms = go 0 [] in
+  let m = Shape.cat ~axis (List.hd ms) (List.tl ms) in
+  Ops.bitwise_and (Ops.sub (most m) m) (int m ((1 lsl low) - 1))
+
 let sort d ~axis ~descending ~k x =
   let s = extents (List.hd (Arith.parts d x)) in
   let n = List.nth s axis in
@@ -935,6 +972,9 @@ let sort d ~axis ~descending ~k x =
     match (k, ks) with
     | Some k, [ h ] when k > 0 && selecting ~k s axis ->
         let positions = selected axis k h in
+        (gathered positions, positions)
+    | Some k, [ h ] when k > 0 && rounding ~k n ->
+        let positions = rounds axis k h in
         (gathered positions, positions)
     | None, _ ->
         let positions = sorted () in

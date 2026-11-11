@@ -429,6 +429,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` compiles a `Nx.top_k` of many rows, with keys of at most 32 bits
+  and a small `k`, to one reduction per entry kept where it ran the sorting
+  network: gpt-oss's router at 512 tokens, 4 of 32 experts, takes 4 kernels
+  where it took 20.
 - A `Rune.remat` in the step of a compiled `scan` or `iterate` of two trips
   or more saves its memory, as at one trip: four remat'd layers under
   `value_and_grad` in a scan held 87.0 MB at 2 and 4 trips, near the 92.3

@@ -634,8 +634,8 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Reference:** `mixin/op.py:936` (`sort`: a bitonic network of the values,
   each position recovered by matching equal values and their counts), `:988`
   (`argsort`).
-- **Raven:** `lower_index.ml` (`bitonic`, `ranked`, `selected`, `key`, `keys`,
-  `sort`).
+- **Raven:** `lower_index.ml` (`bitonic`, `ranked`, `selected`, `rounds`,
+  `rounding`, `key`, `keys`, `sort`).
 - **Differs:** tinygrad's network sorts order keys, each the unsigned integer
   of its width with R3's ordering, every NaN the greatest, complemented for a
   descending sort, packed in an `int64` above its position. Packed integers
@@ -646,14 +646,30 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   its network compares floats. A sort that keeps the first `k` of one 32-bit
   key each, up to `selection_comparisons` comparisons, compares every pair of
   packed keys in one kernel instead of running the network, which is a launch
-  per stage (tinygrad's `topk`, `mixin/op.py:999`, sorts then keeps `k`).
+  per stage. Past them, with `k` at most the network's `s(s+1)/2` compare
+  steps for `n <= 2^s`, it takes `k` reductions, each the least packed key
+  above the last: `k` kernels of `n` comparisons a slice (tinygrad's `topk`,
+  `mixin/op.py:999`, sorts then keeps `k`).
 - **nx:** `nx_kernel.mli`, `sort`: stable, `-0` below `+0` and every NaN above
   `+inf`, reversed when descending, bits unchanged.
 - **Class:** exact.
-- **Reason:** (b).
+- **Reason:** (b) for the packed keys. (d) for the selection and the rounds,
+  by gpt-oss's router, the first 4 of 32 logits a token: `Cuda/top-k-4-of-1x32`
+  (the selection), `Cuda/top-k-4-of-512x32` and `Jit/top-k-4-of-512x32` (the
+  rounds) in `rune.thumper`, and `GptOss/decode-step-cache-1024` and
+  `GptOss/prefill-512` in `gpt_oss.thumper`; the `rune.thumper` rows'
+  baselines wait for the next scheduled re-record. On an RTX 5000 Ada, in
+  one MoE layer, the router at 512 tokens is 4 kernels, 6.3-6.5 µs of kernel
+  time, where the network was 20 and 23.3 µs; at one token the selection
+  keeps its 2 kernels, 4.35 µs, where rounds would be 4 and 4.5 µs. Rounds
+  lose to the network where few rows hold long slices: over one row of 4096
+  they take 1.5 times the network's kernel time at `k = 16` and 3.2 times at
+  `k = 64` on that GPU, the second timed by `Cuda/top-k-64-of-1x4096`.
 - **Pinned by:** `Lower_index › sorts › sorts give eager's values and
-  positions`, and for the selection `a first k of 32 keys is two kernels` and
-  `a first k selects up to its bound of comparisons`.
+  positions`, for the selection `a first k of 32 keys is two kernels` and `a
+  first k selects up to its bound of comparisons`, for the rounds `a first k
+  past the selection's bound is k kernels at any rows`, and on a GPU `Rune.jit
+  on a GPU › top k › a first k compiles to eager's values and positions`.
 
 ### R6. Complex reductions, scans and contractions by parts
 

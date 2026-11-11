@@ -1742,6 +1742,27 @@ let selection_wide =
       in
       at_least int ~than:3 (Lowered.kernels ids))
 
+(* Past the selection's bound a first k of 32-bit keys takes a round per
+   element kept, each one kernel whatever the number of rows, up to the
+   network's 15 compare steps for 32 keys; past them it keeps the network, a
+   kernel per step. *)
+let rounds_kernels =
+  let kernels rows k =
+    let x = Nx.broadcast_to [| rows; 32 |] (Nx.scalar D.Float32 0.) in
+    Lowered.kernels (fun () ->
+        snd
+          (P.eval ~by:"t"
+             (P.Sort { axis = 1; descending = true; k = Some k; x })))
+  in
+  test "a first k past the selection's bound is k kernels at any rows"
+    (fun () ->
+      equal int 1 (kernels 512 1);
+      equal int 4 (kernels 17 4);
+      equal int 4 (kernels 512 4);
+      equal int 4 (kernels (1 lsl 47) 4);
+      equal int 15 (kernels 512 15);
+      at_least int ~than:17 (kernels 512 16))
+
 (* Numbering *)
 
 (* A numbering of [n] rows of keys of no columns, which hold no element, so
@@ -1771,6 +1792,12 @@ let () =
            [ gathers; scatters_moved; scatter_adds; unreached ];
          group "folds and assemblies" [ folds; assemblies ];
          group "sorts"
-           [ sorts; selection_kernels; selection_bound; selection_wide ];
+           [
+             sorts;
+             selection_kernels;
+             selection_bound;
+             selection_wide;
+             rounds_kernels;
+           ];
          group "numbering" wide_unique;
        ])
