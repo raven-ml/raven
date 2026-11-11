@@ -289,11 +289,17 @@ let buffers (Value.Any x) =
    each reads the other's memory, so the take refuses them. *)
 let consumed c =
   c.ended <- true;
-  let why = "donated to " ^ c.by in
-  let free b = ignore (Rig.Buffer.free ~why b : bool) in
-  List.iter
-    (fun h -> Option.iter (List.iter free) (Rig.Buffer.take ~why (buffers h)))
-    c.handles
+  (* A claim of no handle, which a call that donates nothing makes, ends
+     allocating nothing. *)
+  match c.handles with
+  | [] -> ()
+  | handles ->
+      let why = "donated to " ^ c.by in
+      let free b = ignore (Rig.Buffer.free ~why b : bool) in
+      List.iter
+        (fun h ->
+          Option.iter (List.iter free) (Rig.Buffer.take ~why (buffers h)))
+        handles
 
 (* Consumers *)
 

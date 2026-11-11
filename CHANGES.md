@@ -434,6 +434,8 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A `Rune.jit` call that donates no argument allocates fewer words: the end
+  of its donation claim allocates nothing.
 - `Rune.jit ~beam` searches kernels on another machine's device, where it
   raised `Invalid_argument`: the candidates are timed where they run.
 - `Rune.jit` states its float sums' and contractions' bounds in `β`, as
