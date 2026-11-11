@@ -1346,7 +1346,10 @@ let hand_coded_with ~core_threads k =
 let hand_coded_optimizations k =
   hand_coded_with ~core_threads:(K.ren k).core_threads k
 
-let core_fits (ren : Renderer.t) ~dtype_in ~dtype_out ~rows ~outputs ~block =
+(* The cores of [ren] that {!Opt.Tc} takes for a contraction of [dtype_in]
+   operands accumulated in [dtype_out], summed over [block] of them at a
+   time, whatever its extents. *)
+let cores (ren : Renderer.t) ~dtype_in ~dtype_out ~block =
   let device = ren.target.device in
   (* TF32 rounds float32's inputs: {!Opt.Tc} takes it only when allowed. *)
   let tf32 (tc : Tc.t) =
@@ -1354,14 +1357,12 @@ let core_fits (ren : Renderer.t) ~dtype_in ~dtype_out ~rows ~outputs ~block =
     && Dtype.equal tc.dtype_in Dtype.Float32
     && not (setting Setting.allow_tf32)
   in
-  let fits (tc : Tc.t) =
-    let n, m, k = Tc.dims tc in
+  let takes (tc : Tc.t) =
+    let _, _, k = Tc.dims tc in
     (not (tf32 tc))
     && Dtype.equal tc.dtype_in dtype_in
     && Dtype.equal tc.dtype_out dtype_out
     && block mod k = 0
-    && ((rows mod m = 0 && outputs mod n = 0)
-       || (rows mod n = 0 && outputs mod m = 0))
   in
   (* A selected core the target lacks is none, as {!Opt.Tc} refuses it. *)
   let cores =
@@ -1371,8 +1372,28 @@ let core_fits (ren : Renderer.t) ~dtype_in ~dtype_out ~rows ~outputs ~block =
     | _ -> []
   in
   (* [TC=2] lays out a core's shape without its instruction. *)
-  setting Setting.use_tc = 1
-  && min rows outputs > stream_first
-  && List.exists fits cores
+  if setting Setting.use_tc = 1 then List.filter takes cores else []
+
+let core_fits ren ~dtype_in ~dtype_out ~rows ~outputs ~block =
+  let fits (tc : Tc.t) =
+    let n, m, _ = Tc.dims tc in
+    (rows mod m = 0 && outputs mod n = 0)
+    || (rows mod n = 0 && outputs mod m = 0)
+  in
+  min rows outputs > stream_first
+  && List.exists fits (cores ren ~dtype_in ~dtype_out ~block)
+
+let core_rows ren ~dtype_in ~dtype_out ~outputs ~block =
+  (* The least multiple of the core's M past [stream_first]. *)
+  let least (tc : Tc.t) =
+    let n, m, _ = Tc.dims tc in
+    if outputs > stream_first && outputs mod n = 0 then
+      Some (((stream_first / m) + 1) * m)
+    else None
+  in
+  List.fold_left
+    (fun acc r -> Some (Option.fold ~none:r ~some:(min r) acc))
+    None
+    (List.filter_map least (cores ren ~dtype_in ~dtype_out ~block))
 
 let held_registers = held_registers

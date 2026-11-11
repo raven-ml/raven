@@ -2439,6 +2439,63 @@ let core_fits_settings =
       equal bool ~msg:"a selected core the host lacks" false (selected "cpu" 0);
       equal bool ~msg:"a selected core past CUDA's" false (selected "cuda" 99))
 
+(* [core_rows]
+
+   The fewest rows a core takes along its [M]: the least multiple of [M]
+   past the reuse that streams first, 32, of a core of the operand's dtypes
+   whose [N] divides the outputs and whose [K] divides the block. *)
+let core_rows ?(ren = "cuda") ?(outputs = 256) ?(block = 64)
+    ?(dtype_in = Dtype.Bfloat16) ?(dtype_out = Dtype.Float32) () =
+  Heuristic.core_rows (renderer ren) ~dtype_in ~dtype_out ~outputs ~block
+
+let core_rows_cases =
+  cases "core_rows names the fewest rows a core takes" ~id:fst
+    [
+      ("CUDA's 16-row tile", (core_rows (), Some 48));
+      ("RDNA3's 16-row tile", (core_rows ~ren:"amd" (), Some 48));
+      ("Metal's 8-row tile", (core_rows ~ren:"metal" (), Some 40));
+      ("float16 into float32", (core_rows ~dtype_in:Dtype.Float16 (), Some 48));
+      ("outputs at the reuse that streams", (core_rows ~outputs:32 (), None));
+      ("outputs N does not divide", (core_rows ~outputs:36 (), None));
+      ("a block K does not divide", (core_rows ~block:17 (), None));
+      ( "float32 operands without TF32 allowed",
+        (core_rows ~dtype_in:Dtype.Float32 (), None) );
+      ("the host has no core", (core_rows ~ren:"cpu" (), None));
+    ]
+    (fun (_, (actual, want)) -> equal (option int) want actual)
+
+(* A core takes the rows core_rows names. *)
+let core_rows_fit =
+  let gen =
+    let open Gen in
+    let+ ren = of_list [ "cuda"; "amd"; "metal"; "cpu" ]
+    and+ dtype_in = of_list [ Dtype.Bfloat16; Dtype.Float16; Dtype.Float32 ]
+    and+ outputs = of_list [ 8; 32; 33; 40; 48; 256; 2880 ]
+    and+ block = of_list [ 16; 17; 32; 2880 ] in
+    (ren, dtype_in, outputs, block)
+  in
+  let pp ppf (ren, dt, outputs, block) =
+    Format.fprintf ppf "%s, %a, %d outputs, block %d" ren Dtype.pp dt outputs
+      block
+  in
+  prop "core_fits holds of core_rows' rows" (Gen.with_pp pp gen)
+    (fun (ren, dtype_in, outputs, block) ->
+      let ren = renderer ren and dtype_out = Dtype.Float32 in
+      match Heuristic.core_rows ren ~dtype_in ~dtype_out ~outputs ~block with
+      | None -> cover "no core" true
+      | Some rows ->
+          cover "a core" true;
+          equal bool true
+            (Heuristic.core_fits ren ~dtype_in ~dtype_out ~rows ~outputs
+               ~block))
+
+let core_rows_settings =
+  test "core_rows reads the core settings" (fun () ->
+      equal (option int) ~msg:"cores off" None
+        (Setting.context [ Setting.B (Setting.use_tc, 0) ] core_rows);
+      equal (option int) ~msg:"a core's shape without its instruction" None
+        (Setting.context [ Setting.B (Setting.use_tc, 2) ] core_rows))
+
 let () =
   exit
     (Windtrap.run "Tolk.Heuristic"
@@ -2446,6 +2503,9 @@ let () =
          chosen;
          core_fits_cases;
          core_fits_settings;
+         core_rows_cases;
+         core_rows_fit;
+         core_rows_settings;
          leaves_its_argument;
          blocks;
          starved;

@@ -1292,6 +1292,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Tolk.Heuristic.core_rows` gives the fewest rows of a contraction that a
+  target's tensor core takes, for a caller that cuts rows into blocks.
 - A tensor core reading rows through a row map, as routed products do, stages
   them once a workgroup (`Stage.operands`): gpt-oss-20b's MXFP4 gate and up
   projection at 512 tokens takes 931 µs where it took 1271 on an RTX 5000 Ada.

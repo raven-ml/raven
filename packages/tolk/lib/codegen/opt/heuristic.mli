@@ -261,6 +261,23 @@ val core_fits :
     A caller that writes a contraction asks it to choose a form for the layout
     the kernel will take. *)
 
+val core_rows :
+  Renderer.t ->
+  dtype_in:Dtype.t ->
+  dtype_out:Dtype.t ->
+  outputs:int ->
+  block:int ->
+  int option
+(** [core_rows ren ~dtype_in ~dtype_out ~outputs ~block] is the fewest rows of
+    a contraction as {!core_fits} takes it, of [outputs] outputs, that a
+    tensor core of [ren] takes with the rows along its [M]: the least multiple
+    of a core's [M] past the reuse that streams first ({!section-streaming}),
+    the least over the cores {!core_fits} would try whose [N] divides
+    [outputs]. It is [None] where no such core is tried or [outputs] is not
+    past that reuse. {!core_fits} holds of these rows. A caller that cuts rows
+    into blocks asks it for the smallest block a core takes with the rows
+    along its [M]. *)
+
 val held_registers : Postrange.Scheduler.t -> Renderer.registers -> int
 (** [held_registers k file] is the registers of [file] that [k]'s reduces'
     accumulators take: one accumulator for each output lane of each reduce. A
