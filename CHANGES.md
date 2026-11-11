@@ -434,6 +434,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `rune.mli` states that a `Rune.jit` variant gives the same bits at every
+  call, and the same kernels when compiled again by the same raven and
+  compiler in any process or domain; a searched variant is the exception.
 - A slice's cotangent, or that of windows sharing no element, reaches its
   region alone: an element one read reaches keeps its sign of zero, as the
   Sums rule states, and a stack read by `Nx.get` costs one gradient.

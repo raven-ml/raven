@@ -12,6 +12,13 @@ type ('v, 's, 'd) Nx.Prim.payload +=
   | Node : Ops.t -> ('v, 's, 'd) Nx.Prim.payload
 
 let cpu = "CPU"
+
+(* Where a graph computes: its device, the renderer of its kernels and
+   whether they compile for the host's processors. *)
+type place = { device : string; renderer : Renderer.t Lazy.t; host : bool }
+
+let on_host =
+  { device = cpu; renderer = lazy (Tolk_engine.renderer Rig.host); host = true }
 let numel s = Array.fold_left ( * ) 1 s
 
 (* The elements' bytes as a node holds them: one element of [L.dtype] per
@@ -66,11 +73,11 @@ let strided a flat =
 (* [bind ~direct bound x] binds [x]'s storage; where [direct], an array laid
    out contiguously from its storage's start is read as the storage itself,
    as a compiled call reads its argument. *)
-let bind (type v s d) ~direct bound (x : (v, s, d) Nx.t) =
+let bind (type v s d) ~direct ~device bound (x : (v, s, d) Nx.t) =
   let dt = Nx.dtype x and shape = Nx.shape x in
   let tdt = L.dtype (D.Any dt) and k = parts dt in
   let leaf bytes n =
-    let u = Ops.new_buffer cpu (max 1 n) tdt in
+    let u = Ops.new_buffer device (max 1 n) tdt in
     bound := (u, host_buffer bytes) :: !bound;
     u
   in
@@ -127,25 +134,27 @@ let decode (type v s) (dt : (v, s) D.t) shape (bytes : Bytes.t) : v array =
 
 (* Lowering *)
 
-let rule ~direct ~local bound i ~by (type r) (op : r Nx.Prim.t) : r =
+let rule ~direct ~local ~place bound i ~by (type r) (op : r Nx.Prim.t) : r =
   let node : type v s d. (v, s, d) Nx.t -> Ops.t =
    fun x ->
     match Nx.Prim.payload i x with
     | Some (Node u) -> u
     | Some _ -> invalid_arg "Lowered: a value of another payload"
-    | None -> bind ~direct bound x
+    | None -> bind ~direct ~device:place.device bound x
   in
-  let renderer = lazy (Tolk_engine.renderer Rig.host) in
-  let ys = Rune.Lower.op ~renderer ~device:cpu ~host:true ~local node op in
+  let ys =
+    Rune.Lower.op ~renderer:place.renderer ~device:place.device
+      ~host:place.host ~local node op
+  in
   Nx.Prim.results ~by (fun k f -> Nx.Prim.traced i f (Node ys.(k))) op
 
 (* [f ()]'s graph, the storage it binds and its result's elements. *)
-let lowered (type v s d) ?(direct = false) ?(local = true)
+let lowered (type v s d) ?(direct = false) ?(local = true) ?(place = on_host)
     (f : unit -> (v, s, d) Nx.t) =
   let bound = ref [] in
   let y, u =
     Nx.Prim.interpret ~name:"Lowered" Nx.Prim.Extent
-      (fun i ~by op -> rule ~direct ~local bound i ~by op)
+      (fun i ~by op -> rule ~direct ~local ~place bound i ~by op)
       (fun i ->
         let y = f () in
         match Nx.Prim.payload i y with
@@ -202,3 +211,32 @@ let kernels (type v s d) (f : unit -> (v, s, d) Nx.t) =
   let compiled, _ = compiled u o (max 1 n) in
   List.length
     (List.filter (fun c -> Op.equal (Ops.op c) Op.Call) (Ops.src compiled))
+
+let sources (type v s d) ~(target : Helpers.Target.t)
+    (f : unit -> (v, s, d) Nx.t) =
+  let renderer = Cstyle.without_compiler target in
+  let place =
+    { device = target.device; renderer = Lazy.from_val renderer; host = false }
+  in
+  let _, u, dt, _, n = lowered ~direct:true ~local:false ~place f in
+  let o = Ops.new_buffer place.device (max 1 n) (L.dtype (D.Any dt)) in
+  let sink =
+    Ops.sink
+      [ Ops.after o [ Ops.store o (Shape.reshape u [ Ops.Int (max 1 n) ]) ] ]
+  in
+  let linear, _ = Schedule.create_linear_with_vars sink in
+  (* A call of a kernel's sink, rendered. *)
+  let render c =
+    if not (Op.equal (Ops.op c) Op.Call) then None
+    else
+      let ast = Ops.body c in
+      match (Ops.op ast, Ops.arg ast) with
+      | Op.Sink, Kernel _ ->
+          let p = Codegen.linearize ast renderer in
+          let name =
+            match Ops.arg (Ops.nth p 0) with Kernel k -> k.name | _ -> ""
+          in
+          Some (name, ast, renderer.render (Ops.src (Ops.nth p 1)))
+      | _ -> None
+  in
+  List.filter_map render (Ops.toposort ~calls:Skip linear)

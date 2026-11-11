@@ -1553,6 +1553,17 @@ val jit :
     [k u / (1 - k u)]. A function is {e exact} when it agrees with eager bit
     for bit.
 
+    A variant ({!section-compiled}) gives the same bits at every call with
+    the same arguments: its kernels fix the order in which each sum combines
+    its terms. Compiled again, in this process or another, on any domain and
+    whatever the process compiled before, it has the same kernels where the
+    same version of raven and the same compiler compile it: the system's
+    Clang on the host, NVRTC on NVIDIA GPUs, MTLCompiler on Apple's and comgr
+    on AMD's, each at one version. A variant whose kernels are searched
+    ({!section-search}) is the exception: a search chooses by timing, so two
+    searches may choose kernels that combine a sum's terms in different
+    orders.
+
     Moves of elements, such as {!Nx.take}, {!Nx.concatenate}, {!Nx.sort} and a
     {!Nx.scatter} by [Set], keep a NaN's bits too. Casts, bitcasts, {!Nx.where},
     comparisons, extremes ({!Nx.max}, {!Nx.argmax}) and integer and boolean

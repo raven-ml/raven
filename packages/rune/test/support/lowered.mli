@@ -23,3 +23,14 @@ val work : (unit -> ('v, 's, 'd) Nx.t) -> int * int
 
 val kernels : (unit -> ('v, 's, 'd) Nx.t) -> int
 (** [kernels f] is the number of kernels of {!run}'s schedule for [f]. *)
+
+val sources :
+  target:Tolk.Helpers.Target.t ->
+  (unit -> ('v, 's, 'd) Nx.t) ->
+  (string * Tolk.Ops.t * string) list
+(** [sources ~target f] is each kernel of the schedule that computes [f ()]
+    on [target]'s device, lowered as for a device whose work is not this
+    process's code: its name, the sink it was compiled from and the source
+    [target]'s renderer writes for it, made without the target's toolchain
+    ({!Tolk.Cstyle.without_compiler}), in the order the schedule calls
+    them. *)

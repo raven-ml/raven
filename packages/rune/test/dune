@@ -64,6 +64,14 @@
   tolk
   windtrap))
 
+; A variant compiled again in processes of other histories: the test runs
+; itself once for each.
+
+(test
+ (name test_recompile)
+ (modules test_recompile)
+ (libraries lowered nx rune tolk unix windtrap))
+
 ; Programs on another machine's host, served by rig's test agent over the
 ; loopback.
 
