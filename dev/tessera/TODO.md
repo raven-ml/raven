@@ -27,6 +27,13 @@ An item leaves when its library fixes it, or when a design decides it stays.
   bench, gpt-oss's bench, `bench/` and `bin/main.exe`. Wanted: opening a
   device by name, and asking whether it opens, in rig.
 
+- rig's NV launch sets a kernel's shared-memory carveout to at least 32 KiB
+  (`rig/lib/nv/abi/launch.ml:24` offers only 32, 64 and 100 KiB), so a
+  kernel using no shared memory still gives up 32 KiB of L1, where CUDA picks
+  the smallest carveout: NV's well-factored f32 GEMMs run at ~10 TFLOP/s
+  against CUDA's ~17 (M0). An 8/16 KiB configuration is unmeasured. Found by
+  the M2 GEMM review.
+
 ## nx
 
 - A random draw on a GPU set needs a compiled program (one per shape and
