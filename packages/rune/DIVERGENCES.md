@@ -1098,10 +1098,13 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   row's id, clamped into `[0, g - 1]`, where `n < g` or `g` passes a
   slice's elements. Otherwise it routes the rows by counting (a one-hot of the ids, its running sum, each
   group's count and the scan of its blocks, each slot's row by a binary
-  search of its group's running count) into blocks of rows of one group, 4
-  below 5 rows a group, 8 below 16 and 64 from 16:
-  a block reads its group's slice, its rows at their slots, a slot of none
-  reading `0`, and each row reads its slot's stored output. A row reads its
+  search of its group's running count) into blocks of rows of one group:
+  where a tensor core takes a block (`Tolk.Heuristic.core_rows`, its fewest
+  rows `r`), 4 up to 2 rows a group for a scaled operand, then `r` while 3
+  times the mean rows a group stays under `r`, then 64; elsewhere 4 below 5
+  rows a group, 8 below 16 and 64 from 16. A block reads its group's slice,
+  its rows at their slots, a slot of none reading `0`, and each row reads
+  its slot's stored output. A row reads its
   own group's slice alone, its bits exact, a NaN's payload and `-0.`
   included. A `Contracting` pair is routed alike and cuts each group into
   blocks of `c` indices from its first, each position a load at its index,
@@ -1115,7 +1118,8 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   alone; an output without products is its `init`.
 - **Class:** exact for the `Rows` read and on integers; a rounded sum on
   floats, its association one of those the bound allows and a function of
-  the shapes and the group's own count, a zero result's sign open.
+  the shapes, the dtypes, the target's tensor cores and the group's own
+  count, a zero result's sign open.
 - **Reason:** (b).
 - **Pinned by:** `Lower_reduce › contractions › segmented contractions give
   eager's integers and hold their bound`, `› contracting pairs in blocks give
@@ -1131,7 +1135,9 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   groups works in blocks`, `Jit › classes › a segmented contraction gives
   eager's values`, `› a segmented contraction's gradients give eager's
   values`, `› a group's weight gradient keeps its bits whatever the other
-  groups' counts`, `› experts applied give eager's values`.
+  groups' counts`, `› experts applied give eager's values`, `Rune.jit on
+  a GPU › products › a routed product of exact sums gives eager's bits`,
+  `› a routed product takes a tensor core and its blocks at their edges`.
 
 ### L8. Eigenvalues by two-sided Jacobi rotations
 

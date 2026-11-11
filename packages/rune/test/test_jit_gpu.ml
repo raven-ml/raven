@@ -5,25 +5,27 @@
 
 (* Rune.jit on this machine's first GPU: a scatter and an assembly of any
    pieces give the host's eager values, a scatter keeps the bits of each
-   element no update lands on, a Set scatter of rows gives eager's bits and
-   a numbering of repeated keys eager's counts, a cast between float32 and a
+   element no update lands on, a Set scatter of rows gives eager's bits and a
+   numbering of repeated keys eager's counts, a cast between float32 and a
    16-bit float gives eager's bits at every code and tie, as does a cast of
    an integer to a float at the ties of every exponent, a product of narrow
-   floats or of MXFP4 weights holds its bound, a narrow float's fma rounds once, a call's check raises at the next wait, so the
-   call returns while its work runs, a key split there has the host's words,
-   and a program over the GPU and a software device, devices of two targets,
-   compiles to eager's values with replicas equal bit for bit, a running
-   operation of a prefix is the prefix of its result, attention holds its
-   bound against a float64 reference and gives +0 for a sum of zeros, paged
-   keys and values give dense ones' bits, a sum
-   of a contraction's result holds its bound, a long sum and a weight
-   gradient hold the blocked bound, exp
-   holds its bound in ulps of the correctly rounded result, and a range
-   gather and its gradient compile to eager's bits, and an argmax or argmin
-   over a length 16 does not divide gives nx's position, a sum and a product
-   their exact values, and a first k of a sort gives eager's values and
-   positions bit for bit. It skips without a GPU,
-   or without the compiler the GPU's kernels need. *)
+   floats or of MXFP4 weights holds its bound, a routed product of MXFP4 or
+   bfloat16 experts of exact sums gives eager's bits in blocks of 4, 48 and
+   64 rows and takes a tensor core and its blocks at the edges the lowering
+   states, a narrow float's fma rounds once, a call's check raises at the
+   next wait, so the call returns while its work runs, a key split there has
+   the host's words, and a program over the GPU and a software device,
+   devices of two targets, compiles to eager's values with replicas equal bit
+   for bit, a running operation of a prefix is the prefix of its result,
+   attention holds its bound against a float64 reference and gives +0 for a
+   sum of zeros, paged keys and values give dense ones' bits, a sum of a
+   contraction's result holds its bound, a long sum and a weight gradient
+   hold the blocked bound, exp holds its bound in ulps of the correctly
+   rounded result, and a range gather and its gradient compile to eager's
+   bits, and an argmax or argmin over a length 16 does not divide gives nx's
+   position, a sum and a product their exact values, and a first k of a sort
+   gives eager's values and positions bit for bit. It skips without a GPU, or
+   without the compiler the GPU's kernels need. *)
 
 open Windtrap
 open Rune_support
@@ -2150,6 +2152,200 @@ let test_routed_prompt () =
         (K.axes_of ~reduce:true o [ Local ]))
     products
 
+(* A routed product at a prompt of [tokens]: each token's row of [x] goes to
+   4 of 32 experts, as gpt-oss-20b's do, each expert a matrix of
+   [routed_outputs] by [routed_inputs] of MXFP4 codes or of bfloat16. Every
+   product and sum is exact in float32: [x]'s elements are multiples of 1/2 up
+   to 4 in magnitude, an MXFP4 weight's values multiples of 1/2 up to 6 times
+   2^-1, 1 or 2 and a bfloat16 weight's multiples of 1/2 up to 6, so a sum of
+   64 products is a multiple of 1/8 of at most 3072 in magnitude, 2^15
+   eighths, in any association. Compiled, the product so gives eager's bits
+   however its rows are routed into blocks. A GPU without a bfloat16 tensor
+   core whose fewest rows past streaming are 48 skips. *)
+type weights = Mxfp4 | Bfloat16
+type routed = { weights : weights; tokens : int; seed : int }
+
+let weights_name = function Mxfp4 -> "MXFP4" | Bfloat16 -> "bfloat16"
+
+let pp_routed ppf c =
+  Format.fprintf ppf "%s, %d tokens, seed %d" (weights_name c.weights) c.tokens
+    c.seed
+
+let routed_inputs = 64
+let routed_outputs = 256
+
+(* The fewest rows a tensor core of [ren] takes of the routed product. *)
+let routed_core ren =
+  Tolk.Heuristic.core_rows ren ~dtype_in:Tolk.Dtype.Bfloat16
+    ~dtype_out:Tolk.Dtype.Float32 ~outputs:routed_outputs ~block:routed_inputs
+
+(* The rows of a block of the routed product's [n] rows over [g] groups on
+   [ren], as Rune.Lower_reduce.contract states them: [1] for each row reading
+   its own slice. *)
+let routed_block ren weights ~n ~g =
+  if n < g then 1
+  else
+    match routed_core ren with
+    | Some _ when weights = Mxfp4 && n <= 2 * g -> 4
+    | Some c -> if 3 * n < c * g then c else max c 64
+    | None -> if n < 5 * g then 4 else if n < 16 * g then 8 else 64
+
+(* Whether a kernel took a tensor core. *)
+let on_core (k : Tolk.Realize.kernel) =
+  List.exists (function Tolk.Opt.Tc _ -> true | _ -> false) k.opts
+
+(* The routed product [c] compiled on the GPU, eagerly, and the kernels its
+   compiled call built. Each token's 4 experts are distinct: the first of a
+   shuffle of the 32. *)
+let routed_run c =
+  let d, (module S) = on_gpu () in
+  if routed_core (Tolk_engine.renderer d) <> Some 48 then
+    skip ~reason:"no bfloat16 tensor core takes blocks from 48 rows" ();
+  let st = Random.State.make [| c.seed |] in
+  let draws n f = Array.init n (fun _ -> f ()) in
+  let halves n lo hi =
+    Nx.create Nx.float32 n
+      (draws (Array.fold_left ( * ) 1 n) (fun () ->
+           Float.of_int (lo + Random.State.int st (hi - lo + 1)) /. 2.))
+  in
+  let x =
+    Nx.cast Nx.bfloat16 (halves [| c.tokens; 1; routed_inputs |] (-8) 8)
+  in
+  let ids =
+    Array.concat
+      (List.init c.tokens (fun _ ->
+           let order = Array.init experts Fun.id in
+           for i = experts - 1 downto 1 do
+             let j = Random.State.int st (i + 1) in
+             let t = order.(i) in
+             order.(i) <- order.(j);
+             order.(j) <- t
+           done;
+           Array.map Int64.of_int (Array.sub order 0 per_token)))
+  in
+  let ids = Nx.create Nx.int64 [| c.tokens; per_token |] ids in
+  let compiled f w =
+    Tolk.Realize.kernels (fun () ->
+        host
+          (Rune.jit
+             Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+             (f w) (Nx.place S.on ids) (Nx.place S.on x)))
+  in
+  match c.weights with
+  | Mxfp4 ->
+      let codes =
+        Nx.create Nx.uint8
+          [| experts; routed_outputs; routed_inputs / 2 |]
+          (draws (experts * routed_outputs * routed_inputs / 2) (fun () ->
+               Random.State.int st 256))
+      in
+      let scales =
+        Nx.create Nx.uint8
+          [| experts; routed_outputs; routed_inputs / 32 |]
+          (draws (experts * routed_outputs * routed_inputs / 32) (fun () ->
+               126 + Random.State.int st 3))
+      in
+      let w = Nx_quant.mxfp4 ~scales codes in
+      let product w ids x = Nx_quant.apply_experts ~ids w x in
+      let y, kernels = compiled product (Nx_quant.place S.on w) in
+      (product w ids x, y, kernels)
+  | Bfloat16 ->
+      let w =
+        Nx.cast Nx.bfloat16
+          (halves [| experts; routed_inputs; routed_outputs |] (-12) 12)
+      in
+      let product w ids x = Nx.matmul_segments ids x w in
+      let y, kernels = compiled product (Nx.place S.on w) in
+      (product w ids x, y, kernels)
+
+let routed_law c =
+  let eager, y, kernels = routed_run c in
+  let d, _ = on_gpu () in
+  let block =
+    routed_block (Tolk_engine.renderer d) c.weights
+      ~n:(c.tokens * per_token) ~g:experts
+  in
+  List.iter
+    (fun w -> cover (weights_name w) (c.weights = w))
+    [ Mxfp4; Bfloat16 ];
+  List.iter
+    (fun b -> cover (Printf.sprintf "blocks of %d" b) (block = b))
+    [ 1; 4; 48; 64 ];
+  cover "a product on a tensor core" (List.exists on_core kernels);
+  equal bits_t (bits eager) (bits y)
+
+(* The examples reach each edge of the form and the block from both sides:
+   MXFP4 at 2 rows an expert, 16 and 17 tokens; bfloat16 at 1 row, 7 and 8
+   tokens; both at 16 rows, 127 and 128 tokens. *)
+let routed_examples =
+  List.mapi
+    (fun seed (weights, tokens) -> { weights; tokens; seed })
+    [
+      (Mxfp4, 12); (Mxfp4, 16); (Mxfp4, 17); (Mxfp4, 64); (Mxfp4, 127);
+      (Mxfp4, 128); (Bfloat16, 7); (Bfloat16, 8); (Bfloat16, 127);
+      (Bfloat16, 128);
+    ]
+
+let routed_gen =
+  let open Gen in
+  let+ weights = of_list [ Mxfp4; Bfloat16 ]
+  and+ tokens = int_range 1 160
+  and+ seed = int_range 0 1_000_000 in
+  { weights; tokens; seed }
+
+(* The one kernel of [kernels] that sums a product. *)
+let product_kernel kernels =
+  match
+    List.filter
+      (fun (k : Tolk.Realize.kernel) -> sums_product k.ast k.renderer)
+      kernels
+  with
+  | [ k ] -> k
+  | ks -> failf "%d kernels sum a product" (List.length ks)
+
+(* The outputs of [k]: its slots, or its rows where each reads its own slice,
+   times [routed_outputs]. *)
+let outputs (k : Tolk.Realize.kernel) =
+  let s = K.v k.ast k.renderer in
+  K.convert_loop_to_global s;
+  List.fold_left
+    (fun n i ->
+      match List.nth (K.full_shape s) i with
+      | Tolk.Ops.Int e -> n * e
+      | Sym _ -> failf "%s: a symbolic output extent" k.name)
+    1
+    (K.axes_of s [ Global ])
+
+(* The form at each edge, on CUDA: a decoded slice streams blocks of 4 up to
+   2 rows an expert and takes a core past them, a bfloat16 slice takes a core
+   from 1 row, and a core's blocks hold 48 rows while 3 times the mean rows an
+   expert stays under 48, then 64. [n] rows over [g] experts in blocks of [c]
+   take [B c] slots, [B = m + ⌊(n - m) / c⌋] for [m = min n g]. *)
+let routed_edge (weights, tokens, block, cored) =
+  let d, _ = on_gpu () in
+  (match (Tolk_engine.target d).Tolk.Helpers.Target.device with
+  | "CUDA" | "NV" -> ()
+  | _ -> skip ~reason:"the edges were measured on CUDA alone" ());
+  let _, _, kernels = routed_run { weights; tokens; seed = tokens } in
+  let k = product_kernel kernels in
+  let n = tokens * per_token in
+  let m = min n experts in
+  let slots = if block = 1 then n else (m + ((n - m) / block)) * block in
+  equal ~msg:"the product on a tensor core" bool cored (on_core k);
+  equal ~msg:"its outputs" int (slots * routed_outputs) (outputs k)
+
+let routed_edges =
+  [
+    (Mxfp4, 16, 4, false);
+    (Mxfp4, 17, 48, true);
+    (Mxfp4, 127, 48, true);
+    (Mxfp4, 128, 64, true);
+    (Bfloat16, 7, 1, false);
+    (Bfloat16, 8, 48, true);
+    (Bfloat16, 127, 48, true);
+    (Bfloat16, 128, 64, true);
+  ]
+
 (* Quantised products
 
    [Nx_quant.apply] by one row of [x], as a decode step multiplies each
@@ -2561,6 +2757,17 @@ let () =
                "a routed MXFP4 expert of 12 tokens streams its matrices across \
                 threads"
                test_routed_prompt;
+             prop ~count:4 ~examples:routed_examples
+               "a routed product of exact sums gives eager's bits"
+               (Gen.with_pp pp_routed routed_gen)
+               routed_law;
+             Windtrap.cases
+               "a routed product takes a tensor core and its blocks at their \
+                edges"
+               ~id:(fun (w, t, b, _) ->
+                 Printf.sprintf "%s, %d tokens, blocks of %d" (weights_name w)
+                   t b)
+               routed_edges routed_edge;
            ];
          (* Each case compiles programs of its own shapes. The examples reach
             every cover, each mask and each dtype, on every run; four draws

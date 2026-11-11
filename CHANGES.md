@@ -436,6 +436,11 @@ All notable changes to this project will be documented in this file.
 
 - A `Rune.jit` call that donates no argument allocates fewer words: the end
   of its donation claim allocates nothing.
+- A compiled routed product (`Nx_quant.apply_experts`, `Nx.matmul_segments`)
+  takes a GPU's tensor core in blocks of its fewest rows, MXFP4 experts past
+  2 rows an expert and bfloat16 experts from 1, where blocks of 4 and 8
+  streamed: gpt-oss-20b's experts layer takes 1.2-1.3 ms at 17-127 tokens on
+  an RTX 5000 Ada, from 1.2-3.9. Results there take the core's bits.
 - `Rune.jit ~beam` searches kernels on another machine's device, where it
   raised `Invalid_argument`: the candidates are timed where they run.
 - `Rune.jit` states its float sums' and contractions' bounds in `β`, as

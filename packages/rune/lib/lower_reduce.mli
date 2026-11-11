@@ -191,15 +191,27 @@ val contract :
     products of the contraction of one slice, in one kernel. Otherwise it
     routes the rows by counting, in work [n g] and [S ⌈log2 (n + 1)⌉], into
     [S = B c] slots of blocks of [c] rows of one group,
-    [B = m + ⌊(n - m) / c⌋] for [m = min n g], [c] 4 below 5 rows a group on
-    average, 8 below 16 and 64 from 16: each block loads its group's slice,
-    the rows enter at their slots, and each row reads its slot's stored
-    output. A row's sum runs over the contracted extent in the kernel's
-    order whatever its slot, and the form is chosen from the shapes, so a
-    row's bits are a function of the
-    shapes, its row and its group's slice; with [b]'s groups cut over
-    devices, [g] is each device's, so the order follows the count of
-    groups.
+    [B = m + ⌊(n - m) / c⌋] for [m = min n g]: each block loads its group's
+    slice, the rows enter at their slots, and each row reads its slot's
+    stored output.
+
+    [c] follows the fewest rows [r] a tensor core takes of a block,
+    {!Tolk.Heuristic.core_rows} on [renderer] of the dtype both operands
+    enter a core in, accumulated in [acc], [b]'s one free extent past 1 as
+    the outputs and [b]'s last contracted extent, past 0, as the block. That dtype is bfloat16 for
+    unscaled bfloat16 rows against [float4_e2m1fn] codes of an [Exponent]
+    scale into [float32], or an unscaled pair's shared dtype; for other
+    operands no core takes a block. Where a core takes one, [c] is 4 while
+    [n <= 2 g] and an operand is scaled, else [r] while [3 n < r g], else the
+    greater of [r] and 64. Where none does, [c] is 4 below 5 rows a group on
+    average, 8 below 16 and 64 from 16.
+
+    A row's sum runs over the contracted extent in the kernel's order
+    whatever its slot, and the form is chosen from the shapes, the dtypes,
+    [renderer] and the tensor-core settings {!Tolk.Heuristic.core_rows}
+    reads, so a row's bits are a function of those, its row and its group's
+    slice; with [b]'s groups cut over devices, [g] is each device's, so the
+    order follows the count of groups.
 
     A [Contracting] contraction of [g] groups over a pair of [n] indices
     routes the indices as [Rows] does and cuts each group into blocks of [c]

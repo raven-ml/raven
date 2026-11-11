@@ -789,34 +789,74 @@ let split { dtype; node; scale } axis parts =
 let gathered dt u axis p =
   Arith.of_parts dt (List.map (fun u -> Bits.take u axis p) (Arith.parts dt u))
 
-(* [block_rows ~n ~g] is the rows of a block of [n] rows over [g] groups, or
-   [1] for each row reading its own slice. Per row, a group's slice is
-   streamed once for each of its rows; a block of one group's rows reads it
-   once, at the cost of routing kernels and padding rows. Rows share slices
-   from one row a group on average: blocks of 4 from there, of 8 from 5 rows
-   a group, and of 64, a tensor core's workgroup, from 16. Measured on
-   gpt-oss-20b's MXFP4 experts layer, 32 experts, on an RTX 5000 Ada, in ms
-   for its two products, rows routed uniformly at random:
+(* Routed blocks
 
-     rows a group   per row   blocks of 2      4      8     64
-     1/2               0.42          0.49
-     1                 0.80          0.71   0.82
-     1.5               1.18          0.93   0.94
-     2                               1.15   1.04
-     4                 3.09          1.99   1.51   1.60
-     6                                      2.20   2.00
-     8                 6.47                 2.58   2.35   2.62
-     12                                            3.08   2.65
+   A block of one group's rows reads the group's slice once: a group of [k]
+   rows reads it [⌈k / c⌉] times in blocks of [c], and [n] rows over [g]
+   groups give each [n / g] on average, the mean. A tensor core multiplies a
+   block of rows at once from the fewest it takes along its [M]
+   ({!Tolk.Heuristic.core_rows}, 48 on CUDA); blocks of 4 stream, each reading
+   its slice at the memory's rate. Measured on an RTX 5000 Ada. *)
 
-   A model's routing crowds rows into fewer groups, which favours blocks
-   further: gpt-oss-20b's 12-token prefill, 1.5 rows an expert, takes 52 ms
-   per row, 30 in blocks of 2 and 29 in blocks of 4. Blocks of 64 wait for
-   16 rows a group because padding rows cost as much as real ones on the
-   host, where this layer at 1.5 rows a group takes 106 ms per row against
-   83 in blocks of 4, and at 12 rows 306 in blocks of 4 against 273 in
-   blocks of 8. *)
-let block_rows ~n ~g =
-  if n < g then 1 else if n < 5 * g then 4 else if n < 16 * g then 8 else 64
+(* The rows of a streamed block. *)
+let stream_rows = 4
+
+(* A decoded slice streams blocks of {!stream_rows} while they hold
+   [stream_held] times the mean, to 2 rows a group, as a group's rows then
+   seldom spill into a second read of its slice. A core decodes the slice in
+   its warps before each multiply, 0.37 SM-cycles a weight against a
+   stream's 0.25, below the memory's rate: while blocks of 4 hold twice the
+   mean both forms read each used slice about once and the stream wins, and
+   past it the stream's re-reads outgrow the core's premium. gpt-oss-20b's
+   experts layer at 17 to 19 tokens, 2.1 to 2.4 rows a group, takes 3.5-6.2%
+   less on the core. A slice the core reads as stored pays no premium and
+   takes the core from one row a group. *)
+let stream_held = 2
+
+(* A core's block holds its fewest rows while they hold [core_held] times
+   the mean, then {!warp_rows}. A group that spills past its block doubles
+   its reads, against 3-4% that a read in blocks of 48 saves over 64. A
+   model's routing crowds rows into some groups: on gpt-oss-20b's own
+   routing blocks of 48 lose to 64 from 2.4 to 2.5 times the mean, its
+   experts' products 1.2-5.8% slower at 160 to 288 tokens, where routing
+   drawn uniformly favours 48 there by 3.5%. 3 holds the crossover with a
+   margin. *)
+let core_held = 3
+
+(* The rows of a staged warp's tile ({!Tolk.Stage.tile}), the most a core
+   takes in one warp. Blocks of 80 read 10-13% slower than 64 at equal reads
+   of their slices. *)
+let warp_rows = 64
+
+(* [block_rows ~core ~decoded ~n ~g] is the rows of a block of [n] rows over
+   [g] groups, or [1] for each row reading its own slice, as rows share
+   slices from one row a group on average. [core] is the fewest rows a core
+   takes of the product, if one does, and [decoded] whether a slice is
+   decoded. Without a core every block streams and padding rows cost as much
+   as real ones: blocks of 4 from one row a group, of 8 from 5 and of 64 from
+   16, the fastest of 2, 4, 8 and 64 on gpt-oss-20b's MXFP4 experts layer
+   streamed, rows routed uniformly at random (4 rows a group: 1.99 ms in
+   blocks of 4, 1.51 of 8, 1.60 of 64), and on the host (1.5 rows a group:
+   83 ms in blocks of 4 against 106 per row; 12 rows: 273 of 8 against 306 of
+   4). *)
+let block_rows ~core ~decoded ~n ~g =
+  if n < g then 1
+  else
+    match Lazy.force core with
+    | Some _ when decoded && stream_held * n <= stream_rows * g -> stream_rows
+    | Some c -> if core_held * n < c * g then c else max c warp_rows
+    | None -> if n < 5 * g then 4 else if n < 16 * g then 8 else 64
+
+(* [core_in acc x y] is the dtype a tensor core multiplies the rows [x] and
+   the slices [y] in, if one may: bfloat16 for unscaled bfloat16 rows against
+   codes whose scaled values a bfloat16 holds ({!entered}), else an unscaled
+   pair's shared dtype. *)
+let core_in acc x y =
+  match (x.dtype, x.scale, y.dtype, y.scale) with
+  | D.Any D.Bfloat16, None, _, Some s when bfloat16_values y.dtype s acc ->
+      Some Dtype.Bfloat16
+  | D.Any d, None, D.Any e, None when D.equal d e -> Some (Arith.dtype x.dtype)
+  | _ -> None
 
 (* [Rows]: row [r] of [a]'s [a_axis] reads [b] at its group along [b_axis],
    which then holds [a]'s rows, a batch pair whose axis moves back among [a]'s
@@ -831,10 +871,25 @@ let block_rows ~n ~g =
    once; its output is stored, and each row reads its slot's. A slot of no
    index reads [a] as zeros against a real slice, so that it may compute
    [0 · ∞]; no row reads it. A row in no group takes the no-product rule. *)
-let rows ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
+let rows ~renderer ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
   let shape x = extents (List.hd (Arith.parts x.dtype x.node)) in
   let sa = shape a and sb = shape b in
   let n = List.nth sa a_axis and g = List.nth sb b_axis in
+  (* The fewest rows a core takes of a block, asked as {!partial} asks: [b]'s
+     one free extent past 1 is the core's outputs, its last contracted extent
+     the core's block. *)
+  let core =
+    lazy
+      (let bound = b_axis :: List.map snd (batch @ contracting) in
+       let fb = free (List.length sb) bound in
+       let outputs = List.filter (fun e -> e > 1) (List.map (List.nth sb) fb) in
+       match (outputs, List.rev contracting, core_in acc a b) with
+       | [ outputs ], (_, kb) :: _, Some dtype_in when List.nth sb kb > 0 ->
+           Tolk.Heuristic.core_rows (Lazy.force renderer) ~dtype_in
+             ~dtype_out:(Arith.dtype acc) ~outputs ~block:(List.nth sb kb)
+       | _ -> None)
+  in
+  let decoded = Option.is_some a.scale || Option.is_some b.scale in
   let nb = List.length batch in
   let fa = free (List.length sa) (List.map fst (batch @ contracting)) in
   let j = nb + Option.get (List.find_index (Int.equal a_axis) fa) in
@@ -853,7 +908,9 @@ let rows ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
       (List.filteri (fun i _ -> i <> b_axis && not (List.mem i b_sides)) sb)
   in
   let r =
-    let c = if g = 0 || g > slice then 1 else block_rows ~n ~g in
+    let c =
+      if g = 0 || g > slice then 1 else block_rows ~core ~decoded ~n ~g
+    in
     if c = 1 then
       let id = Ops.where inside o (int o 0) in
       let b' = picked ~clamped:true b b_axis (spread id sb b_sides b_axis) in
@@ -1120,7 +1177,7 @@ let contract ~renderer ~batch ~contracting ~segments ~acc ~out a b init =
           let a, b = entered () in
           sum ~batch ~contracting ~acc ~out a b init)
   | Some (Rows { ids; a_axis; b_axis }) ->
-      rows ~batch ~contracting ~acc ~out a b init ids ~a_axis ~b_axis
+      rows ~renderer ~batch ~contracting ~acc ~out a b init ids ~a_axis ~b_axis
   | Some (Contracting { ids; groups; pair }) -> (
       let a, b = entered () in
       let n = Bits.extent (List.hd a) (fst (List.nth contracting pair)) in

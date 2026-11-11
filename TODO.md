@@ -18,9 +18,34 @@ Where it stands, with every measurement: doc/performance.md.
   CUDA, one workgroup an SM; its values spilled for a tile are refilled
   every tile, skipped ones included, which keeps K's copy from moving
   before the mask
-- gpt-oss's MoE block on CUDA takes 2537 us at 64 tokens and 3195 at 96,
-  against 1352 at 128: below 128 tokens the 8-row blocks have no tensor
-  cores (gate_up 2076 us at 96 against 687 at 128)
+- tolk's tensor core decodes MXFP4 in its warps before each multiply, 0.37
+  SM-cycles a weight against a stream's 0.25, below the memory's rate. A
+  decode into packed halves from an offline layout (Marlin, arXiv
+  2408.11743 §3.4) would keep it at that rate: rune's routed blocks would
+  then take the core from one row an expert, as bfloat16 slices do, where
+  they stream blocks of 4 up to 2 rows, and Mixtral-like experts would
+  lose nothing at 9-12 tokens
+- A tensor core's kernel sums its whole reduce in each thread, so a grid
+  of few blocks by few outputs reads its operand more slowly than a
+  stream: on Mixtral-like experts (8 of 14336 by 4096, top 2) rune's
+  routed blocks of 48 take the down product about 20% longer than blocks
+  of 4 at 9-12 tokens, the MoE block 1-2% longer. A split of such a
+  kernel's reduce would remove it
+- Under expert-parallel placement each device's routed product holds its
+  `g / D` experts and every row, those routed elsewhere in no group, and
+  rune's `block_rows` reads all `n` rows over the local `g`: its rule sees
+  `D` times the mean rows an expert. On 2 devices gpt-oss-20b takes the
+  core from 9 tokens and blocks of 64 from 64, where one device takes
+  them from 17 and 128. rune should count the rows routed to its own
+  groups
+- gpt-oss's router product takes 620-635 us at 16 tokens against 99 at
+  12 (`r_2_8_16_2_2880`), and 85 at 127 against 39 at 128
+- tolk streams a routed block of 32 rows, which `core_fits` refuses: such
+  blocks took gpt-oss's MoE block 6071 us at 24 tokens
+- gpt-oss's non-expert kernels take 41.7 ms over 24 layers at a 68-token
+  prompt against 29.4 at 108: the attention projections at a count with a
+  factor 17, `r_8_17_8_16_4_4_720_4` and `r_17_8_16_4_4_720_4`, take 13.9
+  and 8.5 ms
 - gpt-oss's prefill scatters gate_up's padded rows back to token rows for
   the bias and activation, then gathers them again for down: about 4 ms at
   512 tokens. A rangeify rule that inlines it slows 32-127 tokens; storing
