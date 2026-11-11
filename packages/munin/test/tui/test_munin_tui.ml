@@ -2523,6 +2523,33 @@ let data_path_test =
         (call `Release);
     ]
 
+(* A run without a metric sample: one without an end says the charts are
+   to come, an ended one that it logged none, each on the row of the runs
+   pane's heading, as the hero is. *)
+let no_sample =
+  cases
+    ~id:(fun (name, _, _) -> name)
+    "a run without a metric sample says why the charts are missing"
+    [
+      ("without an end", [], "no metric sample yet");
+      ("ended", [ {|{"type":"end","time":4.0,"status":"finished"}|} ], "the run logged no metric");
+    ]
+    (fun (_, records, says) ->
+      with_store ~name:"no-sample" [] @@ fun store ->
+      ignore (write_log store ~declare:[] records);
+      let screen = show ~cols:120 ~rows:40 store Munin_tui.Runs [] in
+      let row text = match T.Screen.find screen text with (y, _) :: _ -> Some y | [] -> None in
+      equal (option int) (row "¹ runs") (row says);
+      equal ~msg:"the sentence ends there" (option string) (Some "")
+        (Option.map
+           (fun y ->
+             (* What follows the sentence, up to the run pane's border. *)
+             let r = T.Screen.row screen y in
+             let at = String.length (Option.get (before r says)) + String.length says in
+             let tail = String.sub r at (String.length r - at) in
+             String.trim (Option.value (before tail "│") ~default:tail))
+           (row says)))
+
 (* Cut text *)
 
 (* A run whose texts outgrow their columns: a long name, host, command,
@@ -2872,7 +2899,7 @@ let () =
              matching; cadence;
            ];
          group "runs" [ filter; stars; nav_count ];
-         group "run" [ all_orphans; short_of_steps; paired; cut_text ];
+         group "run" [ all_orphans; short_of_steps; paired; cut_text; no_sample ];
          group "held" [ held; kept_pane; ended_away; ended_between; watch_test ];
          depth_test;
          hidden_filter;

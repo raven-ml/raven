@@ -367,7 +367,14 @@ let legend th (m : M.t) (c : M.chart) =
 
 let charts th (m : M.t) (f : Facts.run) ~width =
   match M.charts m with
-  | [] -> line [ frag th Dim "no metric sample yet: the charts appear with the first" ]
+  | [] ->
+      (* On the hero's row, which a run without a sample lacks. *)
+      let ended = match f.state with Finished | Killed | Crashed | Failed -> true | _ -> false in
+      box ~flex_shrink:0. ~margin:(margin_lrtb 0 0 1 0)
+        [
+          rich_text ~wrap:`Word ~min_size:(size_wh (px 0) auto)
+            [ frag th Dim (if ended then "the run logged no metric" else "no metric sample yet") ];
+        ]
   | large :: smalls ->
       let small (c : M.chart) =
         box ~flex_direction:Column ~flex_grow:1. ~flex_basis:(px 0)
