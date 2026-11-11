@@ -36,6 +36,13 @@ An item leaves when its library fixes it, or when a design decides it stays.
 
 ## nx
 
+- `Nx.contract` resolves its pattern on every call, about 175 allocated
+  words an eager call that `Nx.matmul` does not spend; `Kaun.Linear.apply`,
+  which rounds once through `contract ~init` (reductions R4), pays it: kaun's
+  `Linear/linear-fwd` 261 -> 409 words. A pattern resolved once per shape
+  (or `matmul ~init`) removes it; a compiled call traces once and is
+  unaffected (reductions review R5).
+
 - nx keeps one compiled program per scalar operation and dtype for its last
   literal (`prim.ml:2502-2523`, `nx.ml:613-628`), so two `mul_s` (or
   `add_s`) of different literals in one step rebuild each other every
