@@ -3622,6 +3622,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- `Linear.apply` rounds `x · w + b` once, the bias added to the products'
+  sum in the accumulator, where at bfloat16 and float16 it rounded the
+  product and then the sum. float32 and float64 results keep their bits.
 - **Breaking:** `Attention.Cache.extend` returns an `Nx.kv`, read in place
   through the new `Cache_index.pages` over a table, and `Attention.attend`
   takes one. `Cache_index.store` is `extend`'s write alone.

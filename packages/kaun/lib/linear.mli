@@ -90,9 +90,12 @@ val apply :
   (float, 'b, 'd) Nx.t ->
   (float, 'b, 'd) Nx.t
 (** [apply p x] is [x @ p.w + p.b] (the shift is omitted when [p.b] is
-    [None]). [x]'s last axis must have size [inputs]; leading axes are
-    treated as batch axes, so the result has [x]'s shape with the last axis
-    replaced by [outputs]. Differentiable through Rune.
+    [None]), each output [round (b + Σ x w)]: the products summed in the
+    dtype's accumulator as {!Nx.contract} sums them, [b] added there, and
+    the result rounded once into the dtype. [x]'s last axis must have size
+    [inputs]; leading axes are treated as batch axes, so the result has
+    [x]'s shape with the last axis replaced by [outputs]. Differentiable
+    through Rune.
 
     With [~sum:true], where devices cut the summed axis, [x]'s last or
     [p.w]'s first, the result is the sum of the devices' terms, the shift

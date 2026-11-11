@@ -82,6 +82,35 @@ let test_linear_batched_apply () =
   let x = Nx.zeros Nx.float32 [| 2; 3; 4 |] in
   shape_is ~msg:"leading axes are batch axes" [| 2; 3; 2 |] (Linear.apply p x)
 
+(* At bfloat16, [Σ x w = 1 + 2^-8] rounds to [1], a tie to even, and [1 +
+   2^-9] then to [1]; rounded once, [1 + 2^-8 + 2^-9] is [1 + 2^-7]. *)
+let test_linear_rounds_once () =
+  let p =
+    {
+      Linear.w = Nx.create Nx.bfloat16 [| 2; 1 |] [| 1.; 0x1p-8 |];
+      b = Some (Nx.create Nx.bfloat16 [| 1 |] [| 0x1p-9 |]);
+    }
+  in
+  let x = Nx.create Nx.bfloat16 [| 1; 2 |] [| 1.; 1. |] in
+  values_are ~msg:"round (b + Σ x w)" ~tol:0. [| 1. +. 0x1p-7 |]
+    (Linear.apply p x)
+
+(* At float32 the sum is in the dtype, so rounding once gives the bits of
+   the product, then the bias added: on either side of a block of the
+   contraction's products. *)
+let test_linear_float32_bits () =
+  Nx.Rng.with_key (Nx.Rng.key 6) @@ fun () ->
+  List.iter
+    (fun k ->
+      let x = Nx.Rng.normal Nx.float32 [| 64; k |] in
+      let w = Nx.Rng.normal Nx.float32 [| k; 40 |] in
+      let b = Nx.mul_s (Nx.Rng.normal Nx.float32 [| 40 |]) 10. in
+      let p = { Linear.w; b = Some b } in
+      values_are ~msg:(Printf.sprintf "depth %d" k) ~tol:0.
+        (Nx.to_array (Nx.add (Nx.matmul x w) b))
+        (Linear.apply p x))
+    [ 144; 300 ]
+
 let test_linear_custom_inits () =
   let p =
     Linear.make ~key:(Nx.Rng.next_key ()) ~w_init:(Init.constant 2.0)
@@ -385,6 +414,9 @@ let () =
              test "apply matches the affine map" test_linear_apply_affine;
              test "bias:false drops the bias parameter" test_linear_no_bias;
              test "leading axes are batch axes" test_linear_batched_apply;
+             test "apply rounds b + Σ x w once" test_linear_rounds_once;
+             test "float32 apply has the bits of the product plus the bias"
+               test_linear_float32_bits;
              test "make respects w_init and bias_init" test_linear_custom_inits;
              test "names follow walk order" test_linear_names;
              test "gradients agree with finite differences"
