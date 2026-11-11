@@ -1,0 +1,12 @@
+; The mpc_*.json files are pages of one item from Microsoft's Planetary
+; Computer, fetched unchanged on 2026-11-11 by
+;   curl -X POST -H 'Content-Type: application/json' \
+;     -d '{"collections":["C"],"limit":1,"bbox":[13.3,52.4,13.5,52.6],"datetime":"2024-06-01T00:00:00Z/2024-06-30T00:00:00Z"}' \
+;     https://planetarycomputer.microsoft.com/api/stac/v1/search
+; with C sentinel-2-l2a, sentinel-1-rtc and landsat-c2-l2.
+
+(test
+ (name test_stac)
+ (libraries jord jord_stac nx jsont jsont.bytesrw windtrap)
+ (deps
+  (glob_files *.json)))
