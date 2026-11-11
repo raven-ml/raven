@@ -37,7 +37,16 @@ let fresh =
     Printf.sprintf "walk:%s:%d" what !k
 
 let page = 1 lsl 16
-let pattern n = String.init n (fun i -> Char.chr (i land 0xff))
+let staged_bytes = 1 lsl 12
+
+(* The byte loops apply no closure, which bytecode's walks would pay for
+   at each byte of a check. *)
+let pattern n =
+  let s = Bytes.create n in
+  for i = 0 to n - 1 do
+    Bytes.unsafe_set s i (Char.unsafe_chr (i land 0xff))
+  done;
+  Bytes.unsafe_to_string s
 
 let collect () =
   Gc.full_major ();
@@ -45,12 +54,18 @@ let collect () =
 
 let bytes b =
   B.read b Bigarray.char (fun ba ->
-      String.init (Bigarray.Array1.dim ba) (Bigarray.Array1.get ba))
+      let s = Bytes.create (Bigarray.Array1.dim ba) in
+      for i = 0 to Bytes.length s - 1 do
+        Bytes.unsafe_set s i (Bigarray.Array1.unsafe_get ba i)
+      done;
+      Bytes.unsafe_to_string s)
 
 let filled n =
   let b = B.create Rig.host n in
   B.write b Bigarray.char (fun a ->
-      String.iteri (Bigarray.Array1.set a) (pattern n));
+      for i = 0 to n - 1 do
+        Bigarray.Array1.unsafe_set a i (Char.unsafe_chr (i land 0xff))
+      done);
   b
 
 let op ?(opener = fun name -> P.open_ name) ?(raises = false) name prepare =
@@ -125,21 +140,38 @@ let submit =
    takes. *)
 let long_ns = 10_000_000_000
 
-(* A submit waited for twice with a bound in time: for 1 ns, which ends before
-   the work runs, as Polled runs work only in a sleep, then for [long_ns],
-   whose sleep runs it. *)
+(* The devices [wait_for] opened, with their drivers. *)
+let stallable = ref []
+
+let open_stallable name =
+  let opened = P.open_ name in
+  stallable := opened :: !stallable;
+  opened
+
+let driver_of d = snd (List.find (fun (d', _) -> Rig.equal d d') !stallable)
+
+(* A submit waited for twice with a bound in time: for 1 ns, over work that
+   its driver's next sleep does not run, as work that runs long, then for
+   [long_ns], whose sleep runs it. The 1 ns wait answers [false] whether or
+   not it sleeps: a wait whose clock read no time passed sleeps once, for
+   1 ms, and the stalled sleep leaves the work unrun. A stalled sleep counts
+   as no fallible call, so the op makes as many as a failure walk counted. *)
 let wait_for =
-  op "wait for" (fun d ->
+  op "wait for" ~opener:open_stallable (fun d ->
       let arg = B.create d 8 in
       B.write arg Bigarray.char (fun a -> Bigarray.Array1.fill a '\000');
       let s = Sub.make d [| bump |] in
       let run = Sub.take s and buffers = [| arg |] in
       Sub.Run.int64 run (Sub.block s 0) 0 0L;
+      let p = driver_of d in
       fun _ ->
-        let p = once ~buffers run in
-        equal ~msg:"a wait of 1 ns" bool false (Rig.Point.wait_for ~ns:1 p);
+        let v = once ~buffers run in
+        P.stall p 1;
+        let ended = Rig.Point.wait_for ~ns:1 v in
+        P.stall p 0;
+        equal ~msg:"a wait of 1 ns" bool false ended;
         equal ~msg:"a wait of 10 s" bool true
-          (Rig.Point.wait_for ~ns:long_ns p);
+          (Rig.Point.wait_for ~ns:long_ns v);
         equal string "\001\000\000\000\000\000\000\000" (bytes arg))
 
 (* A device whose memory the host does not address, which copied through the
@@ -147,11 +179,11 @@ let wait_for =
    made for those copies lasts as long as the staging memory, for good. *)
 let staging name =
   let d, p = P.open_ ~host_visible:false name in
-  let on_d = B.create d page in
+  let on_d = B.create d staged_bytes in
   P.fail_at p 1 (`Refuse 1);
-  B.copy ~src:(B.create Rig.host page) ~dst:on_d;
+  B.copy ~src:(B.create Rig.host staged_bytes) ~dst:on_d;
   P.fail_at p 1 (`Refuse 1);
-  B.copy ~src:on_d ~dst:(B.create Rig.host page);
+  B.copy ~src:on_d ~dst:(B.create Rig.host staged_bytes);
   (d, p)
 
 (* Copies between the host and [d], whose memory the host does not address: [d]
@@ -162,30 +194,30 @@ let copy direction =
     match direction with `Into -> "copy into" | `Out_of -> "copy out of"
   in
   op name ~opener:staging (fun d ->
-      let on_d = B.create d page in
+      let on_d = B.create d staged_bytes in
       let src, dst =
         match direction with
-        | `Into -> (filled page, on_d)
+        | `Into -> (filled staged_bytes, on_d)
         | `Out_of ->
-            B.copy ~src:(filled page) ~dst:on_d;
-            (on_d, B.create Rig.host page)
+            B.copy ~src:(filled staged_bytes) ~dst:on_d;
+            (on_d, B.create Rig.host staged_bytes)
       in
       fun _ ->
         B.copy ~src ~dst;
-        let back = B.create Rig.host page in
+        let back = B.create Rig.host staged_bytes in
         B.copy ~src:dst ~dst:back;
-        equal string (pattern page) (bytes back))
+        equal string (pattern staged_bytes) (bytes back))
 
 (* A fill of [d]'s memory, which the host does not address: one fill part on
    [d]'s copy engine, read back through the staging memory. *)
 let fill =
   op "fill" ~opener:staging (fun d ->
-      let on_d = B.create d page in
+      let on_d = B.create d staged_bytes in
       fun _ ->
         B.fill on_d 'f';
-        let back = B.create Rig.host page in
+        let back = B.create Rig.host staged_bytes in
         B.copy ~src:on_d ~dst:back;
-        equal string (String.make page 'f') (bytes back))
+        equal string (String.make staged_bytes 'f') (bytes back))
 
 (* A queued copy between the host and [d], waited for: as [copy], returning
    once queued. *)
@@ -196,30 +228,30 @@ let submit_copy direction =
     | `Out_of -> "submit copy out of"
   in
   op name ~opener:staging (fun d ->
-      let on_d = B.create d page in
+      let on_d = B.create d staged_bytes in
       let src, dst =
         match direction with
-        | `Into -> (filled page, on_d)
+        | `Into -> (filled staged_bytes, on_d)
         | `Out_of ->
-            B.copy ~src:(filled page) ~dst:on_d;
-            (on_d, B.create Rig.host page)
+            B.copy ~src:(filled staged_bytes) ~dst:on_d;
+            (on_d, B.create Rig.host staged_bytes)
       in
       fun _ ->
-        Rig.Point.wait (B.submit_copy ~src ~dst [| B.row page |]);
-        let back = B.create Rig.host page in
+        Rig.Point.wait (B.submit_copy ~src ~dst [| B.row staged_bytes |]);
+        let back = B.create Rig.host staged_bytes in
         B.copy ~src:dst ~dst:back;
-        equal string (pattern page) (bytes back))
+        equal string (pattern staged_bytes) (bytes back))
 
 (* A queued fill of [d]'s memory, waited for, read back through the staging
    memory. *)
 let submit_fill =
   op "submit fill" ~opener:staging (fun d ->
-      let on_d = B.create d page in
+      let on_d = B.create d staged_bytes in
       fun _ ->
         Rig.Point.wait (B.submit_fill on_d 'g');
-        let back = B.create Rig.host page in
+        let back = B.create Rig.host staged_bytes in
         B.copy ~src:on_d ~dst:back;
-        equal string (String.make page 'g') (bytes back))
+        equal string (String.make staged_bytes 'g') (bytes back))
 
 (* A queued copy of two boxes between buffers of [d], whose memory the host
    does not address: one submission of a part per box on [d]'s copy engine. *)

@@ -16,8 +16,6 @@
   test_claim
   test_image
   test_io
-  test_walk
-  test_interrupt
   test_point
   test_local
   test_limit
@@ -25,7 +23,7 @@
   test_copy_parts
   test_copy)
  (modules :standard \ test_profile test_readers test_model test_model_fork
-  rig_model test_arch)
+  rig_model test_arch test_walk test_interrupt ops)
  (libraries rig rig_edge rig_edge_primitive rig_support rig_gpu_support
   threads.posix unix windtrap)
  ; The C library scribbles over the memory it frees (MallocScribble on macOS,
@@ -39,6 +37,37 @@
     MALLOC_PERTURB_
     85
     (run %{test})))))
+
+; The walks share their operations, and each runs in four processes. In
+; bytecode every application of an OCaml function polls, so test_interrupt
+; runs its poll walk there too, from a byte_complete executable, whose stubs
+; are linked in: the tests stanza runs the native one alone.
+
+(tests
+ (names test_walk test_interrupt)
+ (modules test_walk test_interrupt ops)
+ (modes exe byte_complete)
+ (libraries rig rig_edge rig_edge_primitive rig_support rig_gpu_support
+  threads.posix unix windtrap)
+ (action
+  (setenv
+   MallocScribble
+   1
+   (setenv
+    MALLOC_PERTURB_
+    85
+    (run %{test} -j 4)))))
+
+(rule
+ (alias runtest)
+ (action
+  (setenv
+   MallocScribble
+   1
+   (setenv
+    MALLOC_PERTURB_
+    85
+    (run %{dep:test_interrupt.bc.exe} -j 4)))))
 
 ; test_arch's stub runs the instructions of the host's arch in a forked child;
 ; the test runs macOS's sysctl through unix.

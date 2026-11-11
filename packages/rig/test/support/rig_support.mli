@@ -430,7 +430,9 @@ module Polled : sig
 
   val stall : t -> int -> unit
   (** [stall d n] makes [d]'s next [n] sleeps return after their still interval
-      without running the queue, as over work that runs long. *)
+      without running the queue, as over work that runs long. A stalled sleep
+      counts as no fallible call ({!fail_at}, {!steps}), and an {!interrupt}
+      waits for the next sleep that does not stall. *)
 end
 
 val noop : nativeint

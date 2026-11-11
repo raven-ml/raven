@@ -41,6 +41,15 @@ val fresh : string -> string
 val page : int
 (** [page] is the size of the operations' larger buffers. *)
 
+val staged_bytes : int
+(** [staged_bytes] is the size of the buffers that the copies and the fill
+    through staging memory move, 4 KiB: each moves them through one piece of
+    a half, as a larger copy up to a half does. *)
+
+val filled : int -> Rig.Buffer.t
+(** [filled n] is a host buffer of [n] bytes whose byte [i] is
+    [i land 0xff]. *)
+
 val collect : unit -> unit
 (** [collect ()] runs two full collections, so chains of finalisers run. *)
 
@@ -59,7 +68,8 @@ val queued : op * op list
 
 val wait_for : op
 (** [wait_for] submits work and waits for it with {!Rig.Point.wait_for}: for
-    1 ns, which ends before the work runs, then long enough for it. *)
+    1 ns, over work its driver's next sleep does not run, which ends before
+    the work runs, then long enough for it. *)
 
 val count : string -> Rig_support.Polled.t -> int
 (** [count call p] is the number of [p]'s logged calls named [call]. *)

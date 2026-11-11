@@ -138,16 +138,36 @@ module Driver = struct
 
   external reraise : exn -> 'a = "%reraise"
 
-  (* [take m] takes [m], counted from before the take, so that a signal handler
-     that runs inside a contended take sees it held. An exception that ends the
-     take gives the count back first, having taken nothing: one a handler
-     raised, or the error-checking [Mutex]'s [Sys_error] for a take by the
-     thread that holds [m], which only a call that skipped its check makes and
-     which raises [Invalid_argument]. *)
-  let take m =
+  (* [Mutex]'s own primitives: in bytecode an application of [Mutex.lock] or
+     [Mutex.unlock] polls before it takes or gives. *)
+  external lock : Mutex.t -> unit = "caml_ml_mutex_lock"
+  external unlock : Mutex.t -> unit = "caml_ml_mutex_unlock"
+
+  (* [protect m f] is [f ()] with [m] taken, counted from before the take, so
+     that a signal handler that runs inside a contended take sees it held. An
+     exception that ends the take gives the count back, having taken nothing:
+     one a handler raised, or the error-checking mutex's [Sys_error] for a take
+     by the thread that holds [m], which only a call that skipped its check
+     makes and which raises [Invalid_argument]. However [f] ends, [m] goes back,
+     then its count, with nothing before or between that polls: in bytecode the
+     end of a [match] polls, inside its handler, and [taken] tells the handler
+     whether the take returned. *)
+  let protect m f =
+    let taken = ref false in
     Rig_edge_primitive.hold ();
-    match Mutex.lock m with
-    | () -> ()
+    match
+      lock m;
+      taken := true;
+      f ()
+    with
+    | x ->
+        unlock m;
+        Rig_edge_primitive.unhold ();
+        x
+    | exception e when !taken ->
+        unlock m;
+        Rig_edge_primitive.unhold ();
+        reraise e
     | exception e -> (
         Rig_edge_primitive.unhold ();
         match e with
@@ -156,22 +176,6 @@ module Driver = struct
               "Polled: a lock taken again by the thread that holds it, from a \
                signal handler, finaliser or Gc.Memprof callback"
         | e -> reraise e)
-
-  (* Gives [m] back, then its count, with nothing between that allocates or
-     polls. *)
-  let give m =
-    Mutex.unlock m;
-    Rig_edge_primitive.unhold ()
-
-  let protect m f =
-    take m;
-    match f () with
-    | x ->
-        give m;
-        x
-    | exception e ->
-        give m;
-        reraise e
 
   let rec push a x =
     let l = Atomic.get a in
@@ -548,13 +552,13 @@ module Driver = struct
     at_gate d;
     match d.fault with
     | Some why -> `Fault why
+    | None when d.stalls > 0 ->
+        d.stalls <- d.stalls - 1;
+        `Stall
     | None when polled_step d.c = 2 -> `Fault (Atomic.get d.failure)
     | None when d.interrupt_next ->
         d.interrupt_next <- false;
         `Interrupt
-    | None when d.stalls > 0 ->
-        d.stalls <- d.stalls - 1;
-        `Stall
     | None -> `Run
 
   (* Consecutive sleeps are one entry of the log: two domains' waits sleep

@@ -17,7 +17,15 @@
    it, and it runs the operation again and closes. Either way its name then
    opens a device that runs the operation. rig promises no return of memory
    after an asynchronous exception but what a driver's call made, which the
-   walks of records before calls check, so this walk checks none. *)
+   walks of records before calls check, so this walk checks none.
+
+   Poll walks. A call runs once for each poll point it reaches, in native
+   code and in bytecode, where every application of an OCaml function and
+   every exit from a handler polls too, with a SIGINT whose handler raises
+   at that point ([polling]). After it rig is consistent as above, and on a
+   device that ran the call before, the device and the host hold what they
+   held before and the buffers the caller keeps free: the call leaks
+   neither memory that a driver's call made nor a claim. *)
 
 open Windtrap
 open Ops
@@ -163,6 +171,126 @@ let interrupting a site f =
       stop ();
       raise e
 
+(* The signals the calling thread blocks. *)
+let blocked () = Thread.sigmask SIG_BLOCK []
+
+let bytecode = Sys.backend_type <> Native
+
+(* [polling n f] is [f ()] with SIGINT's handler run at each poll point of
+   the calling thread from [f]'s start on, and raising [Injected] at the
+   [n]-th, as a Ctrl-C lands at a poll point. Allocations poll, and in
+   bytecode so does every application of an OCaml function and every exit
+   from a handler. The handler counts the poll points: it sends the signal
+   again each time it runs, which the runtime blocks until the handler
+   returns, so the next poll point runs it once more. rig blocks signals
+   across its calls to a driver but in the driver's waits, so the walk lands
+   only where a Ctrl-C can. Is whether [f] reached the [n]-th poll point.
+   The handler is left in place, for a forked child: the signal it sent last
+   lands at a later poll point, where it does nothing.
+
+   In native code every poll point from the [n]-th on raises until [f]
+   returns, so handlers that poll meet it again, as the allocation walk's
+   do: a handler's first step must not poll. In bytecode, where every
+   application polls, the walk raises once, as one Ctrl-C does: a handler
+   gives back what its call took by applying a function, under a lock that
+   only an application takes.
+
+   In bytecode the exit from a handler runs pending handlers again until
+   none is pending, so a handler that sends its signal again would run
+   there for good. A run at the call stack of the run before it is such a
+   repeat, or the next turn of a loop whose body neither applies nor
+   allocates. It sends nothing, and the next allocation counts and sends
+   again, from a memory profile: the walk lands at the exit once, then at
+   the allocation. The poll points between them, applications, go
+   unwalked: a poll runs a pending signal's handler, a finaliser or a
+   memory profile's callback, and a signal pending at the exit runs there,
+   a finaliser after a collection, a callback at an allocation, so none
+   runs first at the next application. Native code polls every turn of
+   such a loop. *)
+let polling n f =
+  let me = Thread.id (Thread.self ()) in
+  let left = ref n and armed = ref true in
+  (* Counts a poll point and sends the signal for the next, or raises at
+     the [n]-th. *)
+  let reach () =
+    if !left > 1 then begin
+      decr left;
+      S.interrupt ()
+    end
+    else begin
+      left := 0;
+      if bytecode then armed := false else S.interrupt ();
+      raise Injected
+    end
+  in
+  (* The handler's call stack when it last ran, its own frame first, and
+     whether it sent nothing since. *)
+  let last = ref [||] and paused = ref false in
+  let handle _ =
+    if !armed then
+      if Thread.id (Thread.self ()) <> me then S.interrupt ()
+      else if bytecode then begin
+        let here =
+          Printexc.raw_backtrace_entries (Printexc.get_callstack max_int)
+        in
+        if here = !last then paused := true
+        else begin
+          last := here;
+          reach ()
+        end
+      end
+      else reach ()
+  in
+  (* An allocation where a Ctrl-C could land resumes: neither the handler's
+     own, of its call stack, which [last] begins with while paused, nor one
+     under rig's mask, as within a call of a driver. *)
+  let resume (a : Gc.Memprof.allocation) =
+    let s = Printexc.raw_backtrace_entries a.callstack in
+    if !paused && !armed
+       && Thread.id (Thread.self ()) = me
+       && not (Array.length s > 0 && s.(0) = !last.(0))
+       && not (List.mem Sys.sigint (blocked ()))
+    then begin
+      paused := false;
+      last := [||];
+      reach ()
+    end;
+    None
+  in
+  let profile =
+    if not bytecode then None
+    else
+      let tracker =
+        {
+          Gc.Memprof.null_tracker with
+          alloc_minor = resume;
+          alloc_major = resume;
+        }
+      in
+      Some (Gc.Memprof.start ~sampling_rate:1. ~callstack_size:1 tracker)
+  in
+  let stop () =
+    Option.iter
+      (fun p ->
+        Gc.Memprof.stop ();
+        Gc.Memprof.discard p)
+      profile
+  in
+  Sys.set_signal Sys.sigint (Sys.Signal_handle handle);
+  S.interrupt ();
+  (* [armed] is cleared first, in line: in bytecode the application of
+     [stop] polls. *)
+  match f () with
+  | () ->
+      armed := false;
+      stop ();
+      !left = 0
+  | exception e ->
+      armed := false;
+      stop ();
+      if e != Injected then raise e;
+      true
+
 (* [in_child what f] is [f ()], run in a forked child, which starts from this
    process's state: what one attempt leaves, such as memory an interrupt leaks,
    never changes the next one's allocations. It fails with the child's
@@ -228,8 +356,10 @@ let in_child what (f : unit -> 'a) : 'a =
 
 (* The device an interrupted operation runs on: one just opened, or one the
    operation ran on once, which made what the device keeps for good, and whose
-   memory from that run the collector took, which the interrupted run drains. *)
-type device = Fresh | Used
+   memory from that run the collector took, which the interrupted run drains
+   ([Used]) or which went back before it ([Settled]), its caches freed: the
+   run then makes its memory anew. *)
+type device = Fresh | Used | Settled
 
 (* Whether [name] answers [d]: an open of it returns [d] without calling its
    opener. *)
@@ -246,6 +376,57 @@ let held = ref []
 (* The producers [waiting] opened, with their drivers. *)
 let producers = ref []
 
+(* Checks that rig is consistent once a call of [op] on [d], the device of
+   [p] opened as [name], was interrupted: no profile is left taken, [d] is
+   either lost by an exception that escaped a call of its driver, its stop
+   owed until its close runs it once, or live, its name answering it, and it
+   runs [op] again and closes; then [name] opens a device that runs [op]. *)
+let consistent op name d p =
+  equal ~msg:"profiles" bool false (Rig.Profile.enabled ());
+  (match Rig.lost d with
+  | Some why ->
+      equal ~msg:"the loss" string (Printexc.to_string Injected) why;
+      (* The close runs the stop, which the interrupted call left owed. *)
+      equal ~msg:"stops before the close" int 0 (P.stops p);
+      Rig.close d;
+      equal ~msg:"stops" int 1 (P.stops p)
+  | None ->
+      equal ~msg:"its name answers it" bool true (answers name d);
+      op.prepare d None;
+      Rig.close d;
+      equal ~msg:"closed" (option string) (Some "closed") (Rig.lost d);
+      equal ~msg:"stops" int 1 (count "stop" p));
+  let d, _ = op.opener name in
+  op.prepare d None;
+  if !held <> [] then begin
+    (* The borrowing devices close before the memory they mapped goes, over
+       a few rounds of collections and drains. *)
+    Rig.close d;
+    for _ = 1 to 4 do
+      settle d
+    done;
+    held := [];
+    for _ = 1 to 4 do
+      settle d
+    done
+  end;
+  if !producers <> [] then begin
+    (* The waiting device and the producers close, each stopped once. *)
+    Rig.close d;
+    List.iter (fun (p, _) -> Rig.close p) !producers;
+    List.iter
+      (fun (_, pp) -> equal ~msg:"a producer's stops" int 1 (P.stops pp))
+      !producers
+  end
+
+(* What [d] holds once its work is done and what the caller dropped has
+   settled: the bytes it and the host hold in their budgets, and the regions
+   its driver [p] holds. *)
+let census d p =
+  Rig.Point.wait (once (Sub.take (Sub.make d [||])));
+  settle d;
+  (Rig.allocated d, Rig.allocated Rig.host, List.sort compare (P.outstanding p))
+
 (* Runs [op] interrupted from the allocation [a], then from the same
    allocation again, and checks that rig is consistent after it, failing
    with [at] added. Is whether the run raised, and the call stack of the
@@ -254,7 +435,8 @@ let interrupt start op ~at a =
   in_child at (fun () ->
       let name = fresh op.name in
       let d, p = op.opener name in
-      if start = Used then op.prepare d None;
+      if start <> Fresh then op.prepare d None;
+      if start = Settled then ignore (census d p : int * int * int list);
       Gc.full_major ();
       (* Twice, as a resource of two, such as a staging memory's slots, runs
          out only after two runs left one held. *)
@@ -269,43 +451,109 @@ let interrupt start op ~at a =
       let landed = !site in
       if Rig.lost d = None then
         Option.iter (fun s -> ignore (run (Site s))) landed;
-      equal ~msg:"profiles" bool false (Rig.Profile.enabled ());
-      (match Rig.lost d with
-      | Some why ->
-          equal ~msg:"the loss" string (Printexc.to_string Injected) why;
-          (* The close runs the stop, which the interrupted call left owed. *)
-          equal ~msg:"stops before the close" int 0 (P.stops p);
-          Rig.close d;
-          equal ~msg:"stops" int 1 (P.stops p)
-      | None ->
-          equal ~msg:"its name answers it" bool true (answers name d);
-          op.prepare d None;
-          Rig.close d;
-          equal ~msg:"closed" (option string) (Some "closed") (Rig.lost d);
-          equal ~msg:"stops" int 1 (count "stop" p));
-      let d, _ = op.opener name in
-      op.prepare d None;
-      if !held <> [] then begin
-        (* The borrowing devices close before the memory they mapped goes,
-           over a few rounds of collections and drains. *)
-        Rig.close d;
-        for _ = 1 to 4 do
-          settle d
-        done;
-        held := [];
-        for _ = 1 to 4 do
-          settle d
-        done
-      end;
-      if !producers <> [] then begin
-        (* The waiting device and the producers close, each stopped once. *)
-        Rig.close d;
-        List.iter (fun (p, _) -> Rig.close p) !producers;
-        List.iter
-          (fun (_, pp) -> equal ~msg:"a producer's stops" int 1 (P.stops pp))
-          !producers
-      end;
+      consistent op name d p;
       (raised, landed))
+
+(* A call that a poll walk interrupts: [made op d] is the buffers that the
+   call of [op] on [d] reads and writes, which its caller keeps, and [ready op
+   d bs] that call on them, made ready outside the walk: what [op] makes
+   first is the walk of another operation. *)
+type call = {
+  made : op -> Rig.t -> B.t list;
+  ready : op -> Rig.t -> B.t list -> unit -> unit;
+}
+
+let call =
+  {
+    made = (fun _ _ -> []);
+    ready =
+      (fun op d _ ->
+        let c = op.prepare d in
+        fun () -> c None);
+  }
+
+(* The copies and the fill through the staging memory, whose checks read
+   their bytes one at a time, each read a poll point: a poll walk interrupts
+   the copy or the fill alone, and the check runs after, in [consistent]. *)
+let staged_call =
+  let made op d =
+    let on_d = B.create d staged_bytes in
+    match op.name with
+    | "copy into" -> [ filled staged_bytes; on_d ]
+    | "copy out of" ->
+        B.copy ~src:(filled staged_bytes) ~dst:on_d;
+        [ on_d; B.create Rig.host staged_bytes ]
+    | _ -> [ on_d ]
+  in
+  let ready _ _ = function
+    | [ src; dst ] -> fun () -> B.copy ~src ~dst
+    | [ b ] -> fun () -> B.fill b 'f'
+    | _ -> invalid_arg "staged_call: one or two buffers"
+  in
+  { made; ready }
+
+(* [call] of [op] on [d] and [bs] interrupted from its [n]-th poll point:
+   what the call made is unreachable once it returns. *)
+let[@inline never] polled n call op d bs =
+  let f = call.ready op d bs in
+  Gc.full_major ();
+  polling n f
+
+(* A device opened for [op]'s call [call] as [start] says, its name, its
+   driver, the call's buffers, and on a device that ran [op] once what it
+   holds before the call, as [census] reads it: read now on a [Settled]
+   one, and on a [Used] one, which a census would settle, [used]. *)
+let opened_for start op call ~used =
+  let name = fresh op.name in
+  let d, p = op.opener name in
+  let bs = call.made op d in
+  if start <> Fresh then op.prepare d None;
+  let before =
+    match start with
+    | Fresh -> None
+    | Used -> used
+    | Settled -> Some (census d p)
+  in
+  (name, d, p, bs, before)
+
+(* What a device that ran [op] once holds with the buffers of [call] kept, as
+   [census] reads it, from a child of its own: the runs of a poll walk from a
+   [Used] device compare with it, and leave their device's memory from that
+   run to the interrupted call to drain. *)
+let held_once op call =
+  in_child ", reading what a device that ran it holds" (fun () ->
+      let _, _, _, bs, before = opened_for Settled op call ~used:None in
+      ignore (Sys.opaque_identity bs);
+      Option.get before)
+
+(* Runs [op]'s call [call] interrupted from its [n]-th poll point, and checks
+   that the thread's signal mask is as before and that rig is consistent
+   after it. On a device that ran [op] once, which made what it keeps for
+   good, it checks too that a live device holds what such a device held
+   ([opened_for]), once what the call made has settled: an asynchronous
+   exception may leak the memory of the call it interrupts, but none that a
+   driver made for it, nor memory taken from the cache, and the buffers the
+   caller keeps free. Is whether the run reached that poll point. *)
+let interrupt_polls start op call ~used n =
+  let at = Printf.sprintf ", interrupted from poll point %d" n in
+  in_child at (fun () ->
+      let name, d, p, bs, before = opened_for start op call ~used in
+      let mask = blocked () in
+      let reached = polled n call op d bs in
+      equal ~msg:"the thread's mask" (list int) mask (blocked ());
+      (match before with
+      | Some before when Rig.lost d = None ->
+          equal ~msg:"what the device and the host hold"
+            (triple int int (list int))
+            before (census d p);
+          (* No claim of the call outlives it. *)
+          List.iter
+            (fun b ->
+              equal ~msg:"a buffer of the call frees" bool true (B.free b))
+            bs
+      | _ -> ());
+      consistent op name d p;
+      reached)
 
 (* Where a walk lands: at each allocation of the operation, or at the first
    allocation of each of its call stacks. A run of a stack walk lands at the
@@ -336,6 +584,17 @@ let interrupts ?(walk = Each_allocation) start op () =
         | None -> ()
       in
       walk ()
+
+(* Walks [op] by its poll points, from the first until a run returns before
+   it reaches its own. *)
+let polls ?(call = call) start op () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  S.needs_fork ();
+  let used = if start = Used then Some (held_once op call) else None in
+  let rec from n =
+    if interrupt_polls start op call ~used n then from (n + 1)
+  in
+  from 1
 
 (* More operations *)
 
@@ -555,8 +814,6 @@ let regions_per_mask = 64
 
 (* The buffers a release walk frees: enough for two masks. *)
 let released_buffers = 100
-
-let blocked () = Thread.sigmask SIG_BLOCK []
 
 (* A SIGINT raised at the [n]-th allocation of [release], which gives back
    the memory of collected buffers to the driver one region at a time. Its
@@ -1265,10 +1522,341 @@ let caches =
       collect ();
       ignore (B.create d 0))
 
+(* Gives back memory of buffers dropped as the call is made ready: [release]
+   of [d] frees it from the cache, or, under a budget of [budget] bytes, as
+   a drain judges it. The drops fit the budget an earlier run left. *)
+let freeing ?budget name release =
+  op name (fun d ->
+      Rig.set_budget d max_int;
+      let[@inline never] drop () =
+        for _ = 1 to 3 do
+          ignore (Sys.opaque_identity (B.create d 64))
+        done
+      in
+      drop ();
+      Gc.full_major ();
+      (match budget with
+      | Some n -> Rig.set_budget d n
+      | None -> ignore (Sys.opaque_identity (B.create d 0)));
+      fun _ -> release d)
+
+(* The host's moves of the bytes of a buffer it addresses, under a read
+   claim. *)
+let moves =
+  let s = String.make page 'p' and bytes = Bytes.create page in
+  [
+    ("blit from a string", fun b -> B.blit_from_string s 0 b 0 page);
+    ("blit to bytes", fun b -> B.blit_to_bytes b 0 bytes 0 page);
+    ("fill by the host", fun b -> B.fill b 'h');
+    ("read", fun b -> B.read b Bigarray.char ignore);
+  ]
+
+let host_moves =
+  List.map
+    (fun (name, move) ->
+      op name (fun d ->
+          let b = B.create d page in
+          fun _ -> move b))
+    moves
+
+(* [host_moves]' calls, on a buffer the caller keeps. *)
+let host_call =
+  let ready op _ = function
+    | [ b ] ->
+        let move = List.assoc op.name moves in
+        fun () -> move b
+    | _ -> invalid_arg "host_call: one buffer"
+  in
+  { made = (fun _ d -> [ B.create d page ]); ready }
+
+(* Frees [d]'s cache while work it was handed is not done, which defers each
+   free until the work is, then waits for the work: the call is the drain
+   that runs the frees deferred. *)
+let deferred =
+  op "a drain that runs deferred frees" (fun d ->
+      let[@inline never] drop () =
+        for _ = 1 to 3 do
+          ignore (Sys.opaque_identity (B.create d 64))
+        done
+      in
+      drop ();
+      Gc.full_major ();
+      let v = once (Sub.take (Sub.make d [||])) in
+      Rig.free_cache d;
+      Rig.Point.wait v;
+      fun _ -> ignore (Sys.opaque_identity (B.create d 0)))
+
+let freeings =
+  [
+    freeing "free_cache" Rig.free_cache;
+    freeing ~budget:64 "a drain that frees" (fun d ->
+        ignore (Sys.opaque_identity (B.create d 0)));
+    deferred;
+  ]
+
+(* A run of [d] whose copy names two buffers, both of which a submit's frame
+   claims. *)
+let copy_run d =
+  Sub.take (Sub.make d [| Sub.copy ~src:(Slot 0) ~dst:(Slot 1) |])
+
+let submit_two =
+  op "submit of two buffers" (fun d ->
+      let run = copy_run d and buffers = [| B.create d 8; B.create d 8 |] in
+      fun _ -> Rig.Point.wait (once ~buffers run))
+
+(* [submit_two]'s call, on buffers the caller keeps. *)
+let two_call =
+  let ready _ d = function
+    | [ a; b ] ->
+        let run = copy_run d and buffers = [| a; b |] in
+        fun () -> Rig.Point.wait (once ~buffers run)
+    | _ -> invalid_arg "two_call: two buffers"
+  in
+  { made = (fun _ d -> [ B.create d 8; B.create d 8 ]); ready }
+
+(* Submits a copy of two buffers on [d], which its work runs later, and
+   drops the buffers. *)
+let[@inline never] leave_busy d =
+  ignore (once ~buffers:[| B.create d 8; B.create d 8 |] (copy_run d))
+
+let[@inline never] drop d n = ignore (Sys.opaque_identity (B.create d n))
+
+(* Opens [name] as a device that holds what its stop's drain gives back,
+   then loses it to a fault: memory retiring behind work it has not run, a
+   free deferred until that work is done, memory in its cache, its mapping
+   of a producer's word, its mapping of a peer's memory that a borrow keeps,
+   and one whose borrow was collected. Is the device, its driver and the
+   borrow it keeps. *)
+let lost_holding name =
+  let producer, _ = P.open_ (fresh "producer") in
+  let d, p = P.open_ ~maps_host:false ~waits_on:[ `Host ] name in
+  let v = once (Sub.take (Sub.make producer [||])) in
+  Rig.Point.wait
+    (Rig.submit (Sub.take (Sub.make d [||])) ~buffers:[||] ~waits:[| v |]);
+  let kept = B.borrow d (B.create (peer ()) 64) in
+  ignore (Sys.opaque_identity (B.borrow d (B.create (peer ()) 64)));
+  leave_busy d;
+  drop d 64;
+  collect ();
+  Rig.free_cache d;
+  drop d 256;
+  collect ();
+  drop d 0;
+  P.fault p "lost";
+  (match B.create d 1024 with
+  | _ -> fail "a create on a faulted device returned"
+  | exception Rig.Lost _ -> ());
+  (d, p, kept)
+
+(* Runs a close of a lost device that holds memory ([lost_holding]), or an
+   open of its name, which runs its stop and its drain first, interrupted
+   from its [n]-th poll point. Then the thread's mask is as before, a close
+   ends the device, whose stop ran once, and once what it held has settled
+   its driver holds nothing: neither its stop nor its drain left the stop
+   claimed or leaked what the device held. Is whether the run reached that
+   poll point. *)
+let interrupt_stop how n =
+  let at = Printf.sprintf ", interrupted from poll point %d" n in
+  in_child at (fun () ->
+      let name = fresh "lost" in
+      let d, p, kept = lost_holding name in
+      let call () =
+        match how with
+        | `Close -> Rig.close d
+        | `Open -> ignore (P.open_ name : Rig.t * P.t)
+      in
+      Gc.full_major ();
+      let mask = blocked () in
+      let reached = polling n call in
+      equal ~msg:"the thread's mask" (list int) mask (blocked ());
+      Rig.close d;
+      equal ~msg:"stops" int 1 (P.stops p);
+      settle d;
+      equal ~msg:"what its driver holds" (list int) [ 0; 0; 0; 0; 0 ] (held p);
+      ignore (Sys.opaque_identity kept);
+      reached)
+
+(* A producer opened in the slot of [last], closed first, with its driver,
+   and the submit on [d] that waits on its value through [d]'s mapping of
+   its word. *)
+let producing ?last d =
+  Option.iter Rig.close last;
+  let producer, pp = P.open_ (fresh "producer") in
+  let v = once (Sub.take (Sub.make producer [||])) in
+  let run = Sub.take (Sub.make d [||]) in
+  ((producer, pp), fun () -> Rig.submit run ~buffers:[||] ~waits:[| v |])
+
+(* Runs a submit on a device whose queue waited on two producers of one
+   slot, then a drain, interrupted from its [n]-th poll point. The device's
+   last submit before, on the second producer, replaced the slot's pair, and
+   retired its mapping of the first producer's word among its releases,
+   which that submit's end made due; the call's submit, on a third producer
+   of the slot, replaces the pair again, gives that mapping back, and
+   retires the second's, which the drain gives back. A mapping that the
+   call made may return at the device's stop instead ({!Rig.section-errors}),
+   so the checks follow the close of the device and of the producers: the
+   thread's mask is as before, and once what they held has settled their
+   drivers hold nothing, a mapping of a producer's word included. Is whether
+   the run reached that poll point. *)
+let interrupt_reopen n =
+  let at = Printf.sprintf ", interrupted from poll point %d" n in
+  in_child at (fun () ->
+      let d, p =
+        P.open_ ~maps_host:false ~waits_on:[ `Host ] (fresh "reopen")
+      in
+      let first, submit = producing d in
+      Rig.Point.wait (submit ());
+      let second, submit = producing ~last:(fst first) d in
+      let point = submit () in
+      let third, submit = producing ~last:(fst second) d in
+      Rig.Point.wait point;
+      let call () =
+        Rig.Point.wait (submit ());
+        ignore (Sys.opaque_identity (B.create d 0))
+      in
+      Gc.full_major ();
+      let mask = blocked () in
+      let reached = polling n call in
+      equal ~msg:"the thread's mask" (list int) mask (blocked ());
+      Rig.close d;
+      Rig.close (fst third);
+      settle d;
+      List.iter
+        (fun (what, driver) ->
+          equal ~msg:("what holds " ^ what) (list int) [ 0; 0; 0; 0; 0 ]
+            (held driver))
+        [
+          ("its driver", p);
+          ("a producer", snd first);
+          ("a producer", snd second);
+          ("a producer", snd third);
+        ];
+      reached)
+
+let reopens () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  S.needs_fork ();
+  let rec from n = if interrupt_reopen n then from (n + 1) in
+  from 1
+
+(* Runs a borrow of a host buffer on a device whose driver never maps it,
+   interrupted from its [n]-th poll point. rig records the mapping in the
+   buffer's memory and on the device before the driver's call, and takes
+   both back once the driver refused. Then the thread's mask is as before,
+   and once the buffer is freed the device and the host hold what they held
+   before it: the records kept no memory. Is whether the run reached that
+   poll point. *)
+let interrupt_refused n =
+  let at = Printf.sprintf ", interrupted from poll point %d" n in
+  in_child at (fun () ->
+      let d, p = P.open_ (fresh "refused") in
+      P.never_map p true;
+      is_none ~msg:"a refused borrow" (B.borrow d (B.create Rig.host page));
+      let before = census d p in
+      let h = B.create Rig.host page in
+      let call () = ignore (B.borrow d h : B.t option) in
+      Gc.full_major ();
+      let mask = blocked () in
+      let reached = polling n call in
+      equal ~msg:"the thread's mask" (list int) mask (blocked ());
+      equal ~msg:"the buffer frees" bool true (B.free h);
+      equal ~msg:"what the device and the host hold"
+        (triple int int (list int))
+        before (census d p);
+      Rig.close d;
+      reached)
+
+let refusals () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  S.needs_fork ();
+  let rec from n = if interrupt_refused n then from (n + 1) in
+  from 1
+
+(* Runs a submit on a device whose driver never maps a producer's word,
+   waiting on a new producer's value, interrupted from its [n]-th poll
+   point. rig records the mapping among the device's releases, with one of
+   the producer's word unmaps, before the driver's call, and drops both once
+   the driver refused: the submit waits on the host. Then the thread's mask
+   is as before, and once the device and the producer closed and what they
+   held settled, the producer's word went back once: no unmap of it
+   outlived them. Is whether the run reached that poll point. *)
+let interrupt_unmapped n =
+  let at = Printf.sprintf ", interrupted from poll point %d" n in
+  in_child at (fun () ->
+      let d, p =
+        P.open_ ~maps_host:false ~waits_on:[ `Host ] (fresh "unmapped")
+      in
+      P.never_map p true;
+      let producer, pp = P.open_ ~transport:true (fresh "producer") in
+      let v = once (Sub.take (Sub.make producer [||])) in
+      let run = Sub.take (Sub.make d [||]) in
+      let call () =
+        Rig.Point.wait (Rig.submit run ~buffers:[||] ~waits:[| v |])
+      in
+      Gc.full_major ();
+      let mask = blocked () in
+      let reached = polling n call in
+      equal ~msg:"the thread's mask" (list int) mask (blocked ());
+      Rig.close d;
+      Rig.close producer;
+      settle d;
+      equal ~msg:"the producer's word frees" int 1 (P.word_frees pp);
+      List.iter
+        (fun (what, driver) ->
+          equal ~msg:("what holds " ^ what) (list int) [ 0; 0; 0; 0; 0 ]
+            (held driver))
+        [ ("its driver", p); ("the producer", pp) ];
+      reached)
+
+let unmapped_words () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  S.needs_fork ();
+  let rec from n = if interrupt_unmapped n then from (n + 1) in
+  from 1
+
+let stops how () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  S.needs_fork ();
+  let rec from n = if interrupt_stop how n then from (n + 1) in
+  from 1
+
+(* The poll walks from each of [starts]. Bytecode walks from devices that
+   ran the operation alone, whose census shows what the call leaks: a walk
+   there polls at every application, and from a fresh device it would walk
+   each turn of the loops that make a device's tables. A walk from a [Used]
+   device and one from a [Settled] device reach different steps: the first
+   finds the earlier run's memory on its way to the cache, the second finds
+   none and makes its memory anew. *)
+let poll_walks starts =
+  let name op = function
+    | Fresh -> op.name
+    | Used -> op.name ^ ", on a device it ran on"
+    | Settled -> op.name ^ ", on a device it ran on, settled"
+  in
+  group ~timeout "a SIGINT at any poll point leaves rig consistent"
+    (List.concat_map
+       (fun (call, op) ->
+         List.map (fun s -> test (name op s) (polls ~call s op)) starts)
+       (List.map (fun op -> (call, op)) (ops @ (wait_for :: freeings))
+       @ [ (two_call, submit_two) ]
+       @ List.map (fun op -> (staged_call, op)) staged
+       @ List.map (fun op -> (host_call, op)) host_moves)
+    @ [
+        test "a submit waiting on a producer in a reopened slot" reopens;
+        test "a borrow whose mapping its driver refuses" refusals;
+        test "a submit whose mapping of a producer's word its driver refuses"
+          unmapped_words;
+        test "close of a lost device that holds memory" (stops `Close);
+        test "open of a lost device's name" (stops `Open);
+      ])
+
 let () =
+  if Sys.backend_type <> Native then
+    exit @@ run "rig.interrupt" [ poll_walks [ Used; Settled ] ];
   exit
   @@ run "rig.interrupt"
        [
+         poll_walks [ Fresh; Used; Settled ];
          group ~timeout "an exception at any allocation leaves rig consistent"
            (List.concat_map
               (fun (walk, op) ->
