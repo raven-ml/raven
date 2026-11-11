@@ -21,6 +21,12 @@ val open_file : string -> Rig.Buffer.t
 
     Raises [Sys_error] starting with [path] if it cannot be opened. *)
 
+val within : length:int -> pos:int -> int -> unit
+(** [within ~length ~pos n] is [()] if the [n] bytes from byte [pos] lie in
+    a file of [length] bytes.
+
+    Raises [Failure] naming the file's end otherwise. *)
+
 val string : Rig.Buffer.t -> pos:int -> int -> string
 (** [string b ~pos n] is the [n] bytes of [b] from byte [pos].
 

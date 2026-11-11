@@ -18,10 +18,13 @@ let open_file path =
   | Ok f -> Rig_disk.buffer f
   | Error why -> raise (Sys_error why)
 
+let within ~length ~pos n =
+  if pos < 0 || n < 0 || pos > length - n then
+    Fail.failf "the file ends at byte %d, before byte %d" length
+      (if pos < 0 || n < 0 then 0 else pos + n)
+
 let string b ~pos n =
-  if pos < 0 || n < 0 || pos > B.length b - n then
-    Fail.failf "the file ends at byte %d, before byte %d" (B.length b)
-      (if pos < 0 || n < 0 then 0 else pos + n);
+  within ~length:(B.length b) ~pos n;
   let s = Bytes.create n in
   B.blit_to_bytes b pos s 0 n;
   Bytes.unsafe_to_string s

@@ -234,6 +234,12 @@ let load_tiff path =
 
 let save_tiff = Tiff.save
 
+(* Partial files *)
+
+module Partial = Partial
+
+let decode_tiff = Tiff.decode
+
 (* PyTorch *)
 
 module Pytorch = Pytorch

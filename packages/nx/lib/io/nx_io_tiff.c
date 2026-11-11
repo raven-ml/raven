@@ -115,15 +115,16 @@ static void floating_point(uint8_t *row, uint8_t *planes, size_t n,
   }
 }
 
-/* [caml_nx_io_tiff_unpredict buf scratch rows n spp bytes predictor big]
-   turns the first [rows] rows of [n] samples of [buf], as a file of byte
-   order [big] stores them with [predictor], into samples in the host's
-   byte order. [scratch] holds a row. */
-CAMLprim value caml_nx_io_tiff_unpredict(value vbuf, value vscratch,
-                                         value vrows, value vn, value vspp,
-                                         value vbytes, value vpredictor,
-                                         value vbig) {
-  uint8_t *buf = Caml_ba_data_val(vbuf), *scratch = Caml_ba_data_val(vscratch);
+/* [caml_nx_io_tiff_unpredict buf at scratch rows n spp bytes predictor
+   big] turns the [rows] rows of [n] samples of [buf] from byte [at], as a
+   file of byte order [big] stores them with [predictor], into samples in
+   the host's byte order. [scratch] holds a row. */
+CAMLprim value caml_nx_io_tiff_unpredict(value vbuf, value vat,
+                                         value vscratch, value vrows,
+                                         value vn, value vspp, value vbytes,
+                                         value vpredictor, value vbig) {
+  uint8_t *buf = (uint8_t *)Caml_ba_data_val(vbuf) + Long_val(vat);
+  uint8_t *scratch = Caml_ba_data_val(vscratch);
   size_t rows = Long_val(vrows), n = Long_val(vn), spp = Long_val(vspp);
   int bytes = Int_val(vbytes), predictor = Int_val(vpredictor);
   int swapped = Bool_val(vbig) != HOST_BIG;
@@ -143,7 +144,8 @@ CAMLprim value caml_nx_io_tiff_unpredict(value vbuf, value vscratch,
 CAMLprim value caml_nx_io_tiff_unpredict_byte(value *argv, int argn) {
   (void)argn;
   return caml_nx_io_tiff_unpredict(argv[0], argv[1], argv[2], argv[3],
-                                   argv[4], argv[5], argv[6], argv[7]);
+                                   argv[4], argv[5], argv[6], argv[7],
+                                   argv[8]);
 }
 
 /* [caml_nx_io_tiff_predict buf scratch rows n spp bytes predictor] turns

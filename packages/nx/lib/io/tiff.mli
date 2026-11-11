@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** TIFF files. {!Nx_io.Tiff}, {!Nx_io.load_tiff} and {!Nx_io.save_tiff}
-    document them. An IFD keeps its file's disk buffer, from which
-    {!samples} reads. *)
+(** TIFF files. {!Nx_io.Tiff}, {!Nx_io.load_tiff}, {!Nx_io.decode_tiff} and
+    {!Nx_io.save_tiff} document them. An IFD keeps its file's disk buffer or
+    its partial file, from which {!window} and {!samples} read. *)
 
 type value =
   | Byte of int array
@@ -31,10 +31,24 @@ val read : string -> Rig.Buffer.t -> t list
 
     Raises [Failure] without the path as {!Nx_io.load_tiff} states. *)
 
+val decode : Partial.t -> (t list, (int * int) list) result
+(** Raises [Failure] starting with the partial file's name as
+    {!Nx_io.decode_tiff} states. *)
+
 val tags : t -> (int * value) list
 
+val window :
+  t ->
+  row:int ->
+  col:int ->
+  rows:int ->
+  cols:int ->
+  (Nx.host Nx.packed, (int * int) list) result
+(** Raises [Invalid_argument] naming [Nx_io.Tiff.window], and [Failure]
+    starting with the IFD's name, as {!Nx_io.Tiff.window} states. *)
+
 val samples : t -> Nx.host Nx.packed
-(** Raises [Failure] starting with the IFD's path as {!Nx_io.Tiff.samples}
+(** Raises [Failure] starting with the IFD's name as {!Nx_io.Tiff.samples}
     states. *)
 
 val save :

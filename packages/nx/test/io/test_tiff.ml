@@ -940,13 +940,414 @@ let gdal =
         (Nx_io.load_npy (fixture (name ^ ".npy")))
         (load_one (fixture (name ^ ".tif"))))
 
+(* Partial files *)
+
+module P = Nx_io.Partial
+
+(* The partial file "part" of [whole] that holds the bytes [held] marks,
+   added in pieces of at most 61 bytes, so that a chunk often spans
+   several. *)
+let partial whole held =
+  let n = String.length whole in
+  let rec from i p =
+    if i = n then p
+    else if not held.(i) then from (i + 1) p
+    else begin
+      let j = ref i in
+      while !j < n && held.(!j) && !j - i < 61 do
+        incr j
+      done;
+      from !j (P.add p ~at:i (String.sub whole i (!j - i)))
+    end
+  in
+  from 0 (P.v ~name:"part" ~length:n)
+
+(* What a call did: returned, lacked ranges, or raised, its message past
+   its file's name. A call on a whole file returns [Ok]. *)
+type 'a outcome =
+  | Done of 'a
+  | Lacks of (int * int) list
+  | Raised of string
+  | Refused of string
+
+let past name m =
+  let prefix = name ^ ": " in
+  let k = String.length prefix in
+  if String.starts_with ~prefix m then String.sub m k (String.length m - k)
+  else m
+
+let outcome name f =
+  match f () with
+  | Ok x -> Done x
+  | Error rs -> Lacks rs
+  | exception Failure m -> Raised (past name m)
+  | exception Invalid_argument m -> Refused m
+
+let outcomes t =
+  let pp ppf = function
+    | Done x -> Format.fprintf ppf "Done %a" (Testable.pp t) x
+    | Lacks rs ->
+        Format.fprintf ppf "Lacks [%s]"
+          (String.concat "; "
+             (List.map (fun (a, n) -> Printf.sprintf "(%d, %d)" a n) rs))
+    | Raised m -> Format.fprintf ppf "Raised %S" m
+    | Refused m -> Format.fprintf ppf "Refused %S" m
+  in
+  let equal a b =
+    match (a, b) with
+    | Done x, Done y -> Testable.equal t x y
+    | Done _, _ | _, Done _ -> false
+    | _ -> a = b
+  in
+  Testable.make ~pp ~equal
+
+let ifds = outcomes (list (list (pair int value)))
+let windowed = outcomes packed
+let decoded_tags = List.map T.tags
+
+let tags = function
+  | Done ds -> Done (decoded_tags ds)
+  | Lacks rs -> Lacks rs
+  | Raised m -> Raised m
+  | Refused m -> Refused m
+
+(* A partial file's IFDs, and a window of an IFD, as outcomes. *)
+let decode_of p = outcome "part" (fun () -> Nx_io.decode_tiff p)
+
+let window_of name d (row, rows, col, cols) =
+  outcome name (fun () -> T.window d ~row ~col ~rows ~cols)
+
+(* The same on the whole file [whole]. *)
+let whole_of whole k win =
+  let path = file whole in
+  let ds = outcome path (fun () -> Ok (Nx_io.load_tiff path)) in
+  let w =
+    match ds with
+    | Done ds when k < List.length ds ->
+        Some (window_of path (List.nth ds k) win)
+    | _ -> None
+  in
+  (tags ds, w)
+
+(* [rs] is a list of ranges of a file of [n] bytes in normal form: not
+   empty, each of a byte or more, sorted, apart, and lacking from
+   [held]. *)
+let check_ranges ~held n rs =
+  if rs = [] then failf "no range";
+  ignore
+    (List.fold_left
+       (fun prev (at, len) ->
+         if len <= 0 || at < prev || at + len > n then
+           failf "range (%d, %d) after byte %d, in %d bytes" at len prev n;
+         for i = at to at + len - 1 do
+           if held.(i) then failf "range (%d, %d) holds byte %d" at len i
+         done;
+         at + len + 1)
+       0 rs
+      : int)
+
+let hold held rs = List.iter (fun (at, n) -> Array.fill held at n true) rs
+
+(* Drawn partial files: a file of one or two IFDs of a raster built from
+   the specifications, packed samples among them, half with a byte flipped,
+   anywhere or in the first IFD; the bytes held, none or all but a few
+   holes, and a few ranges more; an IFD, and a window of its raster: whole,
+   of no pixel or any. *)
+type drawn = {
+  whole : string;
+  r : raster;
+  l : layout;
+  count : int;
+  held : bool array;
+  more : (int * int) list;
+  k : int;
+  win : int * int * int * int;
+}
+
+let pp_drawn ppf d =
+  let holes = Array.fold_left (fun n h -> if h then n else n + 1) 0 d.held in
+  let row, rows, col, cols = d.win in
+  Format.fprintf ppf
+    "%d by %d by %d of %d bits, %a, %d IFDs, %d of %d bytes lacking, IFD %d, \
+     %d rows from %d, %d columns from %d"
+    d.r.h d.r.w d.r.c d.r.bits pp_layout d.l d.count holes
+    (String.length d.whole) d.k rows row cols col
+
+let span n =
+  let open Gen in
+  frequency
+    [
+      (1, constant (0, n));
+      (1, map (fun a -> (a, 0)) (int_range 0 n));
+      ( 4,
+        let* a = int_range 0 (n - 1) in
+        let+ k = int_range 1 (n - a) in
+        (a, k) );
+    ]
+
+let built_raster =
+  let open Gen in
+  let* x = rasters in
+  let+ l = layouts x in
+  (raster x, l)
+
+let drawn =
+  let open Gen in
+  let* r, l = frequency [ (3, built_raster); (1, packed_files) ] in
+  let* count = frequency [ (3, constant 1); (1, constant 2) ] in
+  let encoded rows = encode l r rows (Array.length rows.(0)) in
+  let blobs = List.map encoded (cut l r) in
+  let built = build l.form (List.init count (fun _ -> ifd l r blobs)) in
+  let n = String.length built in
+  (* The first IFD's offset, from the header, and its first 200 bytes. *)
+  let first =
+    match (l.form.bigtiff, l.form.mm) with
+    | false, false -> Int32.to_int (String.get_int32_le built 4)
+    | false, true -> Int32.to_int (String.get_int32_be built 4)
+    | true, false -> Int64.to_int (String.get_int64_le built 8)
+    | true, true -> Int64.to_int (String.get_int64_be built 8)
+  in
+  let* flip =
+    frequency
+      [
+        (2, constant None);
+        (1, map Option.some (int_range 0 (n - 1)));
+        (1, map Option.some (int_range first (Int.min (n - 1) (first + 200))));
+      ]
+  in
+  let whole = match flip with None -> built | Some i -> flip_byte built i in
+  let range =
+    let* at = int_range 0 (n - 1) in
+    let+ len = int_range 1 (Int.max 1 (n / 8)) in
+    (at, Int.min len (n - at))
+  in
+  let* held =
+    frequency
+      [
+        (1, constant (Array.make n false));
+        ( 4,
+          let+ holes = list ~size:(int_range 0 4) range in
+          let held = Array.make n true in
+          List.iter (fun (at, len) -> Array.fill held at len false) holes;
+          held );
+      ]
+  in
+  let* more = list ~size:(int_range 0 3) range in
+  let* k = int_range 0 (count - 1) in
+  let+ row, rows = span r.h and+ col, cols = span r.w in
+  { whole; r; l; count; held; more; k; win = (row, rows, col, cols) }
+
+let drawn = Gen.with_pp pp_drawn drawn
+
+(* [fill whole p rs] is [p] holding [whole]'s bytes of the ranges [rs]. *)
+let fill whole p rs =
+  List.fold_left (fun p (at, n) -> P.add p ~at (String.sub whole at n)) p rs
+
+let raised = function Raised _ -> true | _ -> false
+
+let covers_layout d =
+  cover "two IFDs" (d.count = 2);
+  cover "packed samples" (is_packed d.r.bits);
+  cover "tiles" (match d.l.chunks with Tiles _ -> true | Strips _ -> false);
+  cover "LZW" (d.l.codec = 5);
+  cover "Deflate" (d.l.codec = 8);
+  cover "horizontal differencing" (d.l.predictor = 2);
+  cover "the floating point predictor" (d.l.predictor = 3);
+  cover "MM" d.l.form.mm;
+  cover "BigTIFF" d.l.form.bigtiff
+
+let agreement =
+  prop ~count:400
+    "a partial file decodes as its whole file, once it holds the ranges it \
+     names"
+    drawn (fun d ->
+      let n = String.length d.whole and held = Array.copy d.held in
+      let decoded, window = whole_of d.whole d.k d.win in
+      (* Each call's ranges are added until it returns or raises: a round
+         adds a byte or more, so a file takes at most a round a byte. *)
+      let rounds = ref 0 in
+      let rec loop p call =
+        incr rounds;
+        if !rounds > n + 2 then failf "%d rounds for %d bytes" !rounds n;
+        match call p with
+        | Lacks rs ->
+            check_ranges ~held n rs;
+            hold held rs;
+            loop (fill d.whole p rs) call
+        | o -> (o, p)
+      in
+      let o, p = loop (partial d.whole d.held) decode_of in
+      covers_layout d;
+      cover "nothing held at first" (Array.for_all not d.held);
+      cover "raised" (raised o);
+      equal ifds decoded (tags o);
+      let first = !rounds in
+      let window_at p =
+        match decode_of p with
+        | Done ds -> window_of "part" (List.nth ds d.k) d.win
+        | o -> failf "decoded once, then %a" (Testable.pp ifds) (tags o)
+      in
+      match (o, window) with
+      | Done ds, Some window when d.k < List.length ds ->
+          let w, _ = loop p window_at in
+          let _, rows, _, cols = d.win in
+          cover "a window that lacked a chunk" (!rounds > first + 1);
+          cover "a window of no pixel" (rows = 0 || cols = 0);
+          equal windowed window w
+      | _ -> ())
+
+let unread =
+  prop ~count:300 "no result depends on a byte the partial file lacks" drawn
+    (fun d ->
+      let n = String.length d.whole in
+      let flip i c =
+        if d.held.(i) then c else Char.chr (Char.code c lxor 0xff)
+      in
+      let other = String.mapi flip d.whole in
+      let decoded, window = whole_of d.whole d.k d.win in
+      let decoded', window' = whole_of other d.k d.win in
+      let lacking = Array.exists not d.held in
+      let o = decode_of (partial d.whole d.held) in
+      let w =
+        match o with
+        | Lacks rs ->
+            check_ranges ~held:d.held n rs;
+            None
+        | o -> (
+            equal ifds decoded (tags o);
+            equal ifds decoded' (tags o);
+            match o with
+            | Done ds when d.k < List.length ds -> (
+                match window_of "part" (List.nth ds d.k) d.win with
+                | Lacks rs ->
+                    check_ranges ~held:d.held n rs;
+                    None
+                | w ->
+                    equal (option windowed) window (Some w);
+                    equal (option windowed) window' (Some w);
+                    Some w)
+            | _ -> None)
+      in
+      cover "IFDs decoded beside a hole"
+        (lacking && match o with Done _ -> true | _ -> false);
+      cover "a window beside a hole" (lacking && Option.is_some w);
+      cover "a raise beside a hole"
+        (lacking && (raised o || Option.fold ~none:false ~some:raised w)))
+
+let monotone =
+  prop ~count:300 "adding bytes never turns a result into Error" drawn
+    (fun d ->
+      let p = partial d.whole d.held in
+      let q = fill d.whole p d.more in
+      match decode_of p with
+      | Done ds when d.k < List.length ds -> (
+          let ds' =
+            match decode_of q with
+            | Done ds' -> ds'
+            | o -> failf "decoded, then %a" (Testable.pp ifds) (tags o)
+          in
+          equal ifds (Done (decoded_tags ds)) (Done (decoded_tags ds'));
+          let old = List.nth ds d.k and fresh = List.nth ds' d.k in
+          match window_of "part" old d.win with
+          | Done x ->
+              cover "a window, then more bytes" (d.more <> []);
+              equal windowed (Done x) (window_of "part" fresh d.win)
+          | Lacks rs ->
+              (* The IFD decoded before the ranges were added never reads
+                 them; one decoded after does. *)
+              let q = fill d.whole q rs in
+              let fresh = List.nth (Result.get_ok (Nx_io.decode_tiff q)) d.k in
+              cover "an IFD decoded before its ranges were added" true;
+              equal windowed (Lacks rs) (window_of "part" old d.win);
+              if window_of "part" fresh d.win = Lacks rs then
+                failf "the ranges added, the same ranges again"
+          | Raised _ | Refused _ -> ())
+      | _ -> ())
+
+(* [small]'s file: its two strips of 60 bytes at bytes 8 and 68, then its
+   IFD. *)
+let strips = tiff plain (raster small)
+let strips_held lo hi =
+  Array.init (String.length strips) (fun i -> i < lo || i >= hi)
+let lacks rs = Lacks rs
+
+let partial_cases =
+  group "partial files"
+    [
+      test "ranges merge where they touch and name a chunk's tail" (fun () ->
+          let win p rows =
+            match Nx_io.decode_tiff p with
+            | Ok [ d ] -> window_of "part" d (0, rows, 0, 5)
+            | _ -> failf "not one IFD"
+          in
+          let p = partial strips (strips_held 8 128) in
+          equal windowed (lacks [ (8, 120) ]) (win p 4);
+          equal windowed (lacks [ (8, 60) ]) (win p 2);
+          let p = partial strips (strips_held 18 128) in
+          equal windowed (lacks [ (18, 110) ]) (win p 4));
+      test "a header, then an IFD's entry count, then its entries" (fun () ->
+          let p = P.v ~name:"part" ~length:(String.length strips) in
+          equal ifds (lacks [ (0, 8) ]) (tags (decode_of p));
+          let p = fill strips p [ (0, 8) ] in
+          equal ifds (lacks [ (128, 2) ]) (tags (decode_of p));
+          let p = fill strips p [ (128, 2) ] in
+          let n = String.get_uint16_le strips 128 in
+          equal ifds (lacks [ (130, (12 * n) + 4) ]) (tags (decode_of p)));
+      test "a BigTIFF header's offset after its first 8 bytes" (fun () ->
+          let l = { plain with form = { f with bigtiff = true } } in
+          let whole = tiff l (raster small) in
+          let p = partial whole (Array.init (String.length whole) (( > ) 8)) in
+          equal ifds (lacks [ (8, 8) ]) (tags (decode_of p)));
+      test "a file shorter than a header" (fun () ->
+          equal ifds
+            (Raised "the file ends at byte 5, before byte 8")
+            (tags (decode_of (P.v ~name:"part" ~length:5))));
+      test "a window of no row reads no chunk" (fun () ->
+          let p = partial strips (strips_held 8 128) in
+          let d = List.hd (Result.get_ok (Nx_io.decode_tiff p)) in
+          let (Nx.P s) = small in
+          let none = Nx.P (Nx.slice [ Nx.R (0, 0) ] s) in
+          equal windowed (Done none) (window_of "part" d (4, 0, 0, 5)));
+      test "samples raise naming the first range lacking" (fun () ->
+          let p = partial strips (strips_held 30 40) in
+          let d = List.hd (Result.get_ok (Nx_io.decode_tiff p)) in
+          raises (Failure "part: the partial file lacks bytes 30 to 39")
+            (fun () -> T.samples d));
+      test "a window outside the raster" (fun () ->
+          let d = List.hd (Nx_io.load_tiff (file strips)) in
+          List.iter
+            (fun (row, rows, col, cols) ->
+              invalid ~by:"Nx_io.Tiff.window" (fun () ->
+                  T.window d ~row ~col ~rows ~cols))
+            [ (0, 5, 0, 5); (-1, 1, 0, 5); (0, 4, 1, 5); (0, 4, 0, -1) ]);
+      test "added bytes that agree, and bytes that differ" (fun () ->
+          let p = P.v ~name:"part" ~length:10 in
+          let p = P.add (P.add p ~at:0 "abcd") ~at:2 "cdef" in
+          let q = P.add p ~at:6 "gh" in
+          raises (Failure "part: byte 3 differs from the byte already held")
+            (fun () -> P.add q ~at:3 "xy");
+          let invalid f = invalid ~by:"Nx_io.Partial.add" f in
+          invalid (fun () -> P.add p ~at:(-1) "a");
+          invalid (fun () -> P.add p ~at:8 "abc");
+          raises_match (Exn.invalid_arg ~sub:"Nx_io.Partial.v: ") (fun () ->
+              P.v ~name:"part" ~length:(-1)));
+      test "an add leaves the partial file it was given as it was" (fun () ->
+          let p = partial strips (strips_held 8 128) in
+          let before = tags (decode_of p) in
+          ignore (fill strips p [ (8, 120) ] : P.t);
+          equal ifds before (tags (decode_of p)));
+    ]
+
 (* A Sentinel-2 file *)
 
 (* Bytes of a cloud-optimised GeoTIFF of the Microsoft Planetary Computer,
    Sentinel-2 L2A tile T31UCT's B04 band of 2025-07-01 (baseline N05.11),
-   246,755,406 bytes: its first 6556, which hold its five IFDs and their
-   values, and tile 348 of its first IFD, a Deflate stream of 512 by 512
-   samples of 15 bits, partly nodata. cut/NOTICE gives their source. *)
+   [s2_length] bytes: its first 6556, which hold its five IFDs and their
+   values, and tile 348 of its first IFD, at [s2_at], a Deflate stream of
+   512 by 512 samples of 15 bits, partly nodata. cut/NOTICE gives their
+   source. *)
+let s2_length = 246_755_406
+let s2_at = 207_111_118
 let s2_head = Filename.concat "cut" "s2_b04_head.bin"
 let s2_tile = Filename.concat "cut" "s2_b04_tile348.bin"
 
@@ -1000,10 +1401,26 @@ let sentinel =
       let path = file (build f [ ([ tile ], fields) ]) in
       equal digest s2_expected (s2_digest (load_one path)))
 
+let sentinel_ranges =
+  test "a tile of a Sentinel-2 file read by its ranges" (fun () ->
+      let p = P.add (P.v ~name:"s2" ~length:s2_length) ~at:0 (read s2_head) in
+      let ds = Result.get_ok (Nx_io.decode_tiff p) in
+      equal (list (list (pair int value)))
+        (decoded_tags (Nx_io.load_tiff s2_head))
+        (decoded_tags ds);
+      (* Tile 348 is row 15 and column 18 of 22 tiles a row. *)
+      let tile d = window_of "s2" d (15 * 512, 512, 18 * 512, 512) in
+      equal windowed (lacks [ (s2_at, 6141) ]) (tile (List.hd ds));
+      let p = P.add p ~at:s2_at (read s2_tile) in
+      match tile (List.hd (Result.get_ok (Nx_io.decode_tiff p))) with
+      | Done x -> equal digest s2_expected (s2_digest x)
+      | o -> failf "%a" (Testable.pp windowed) o)
+
 let () =
   exit
     (run "nx.io TIFF"
        [
          reading; packs; variants; refusals; headers; corrupted; round_trips;
-         save_refusals; gdal; sentinel;
+         save_refusals; gdal; sentinel; agreement; unread; monotone;
+         partial_cases; sentinel_ranges;
        ])

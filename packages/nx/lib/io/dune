@@ -16,6 +16,7 @@
   archive
   pickle
   pytorch
+  partial
   tiff)
  (libraries nx nx_array rig rig.disk unix lz)
  (foreign_stubs

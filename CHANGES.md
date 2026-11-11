@@ -2859,6 +2859,9 @@ its lock and from samples the dashboard saw arrive.
 - `Nx_array.answer` loses `Held_exclusive`, and `nx_array.h` loses
   `NX_EXCLUSIVE`: a kernel that meets memory a donation is taking waits for
   the take, and refuses the operand as `Dead_buffer` if the take took it.
+- Add `Nx_io.Partial`, a file read by byte ranges such as a cloud-optimised
+  GeoTIFF: `decode_tiff` and `Nx_io.Tiff.window` return IFDs and a window's
+  samples, or the ranges they lack.
 - `Nx_io.Tiff.samples` reads unsigned samples of 1 to 32 bits but 24,
   packed as TIFF 6.0 states, into the narrowest unsigned dtype, so
   Sentinel-2's 15-bit bands since 2025 load as `uint16`.

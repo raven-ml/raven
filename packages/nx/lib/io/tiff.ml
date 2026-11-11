@@ -6,13 +6,17 @@
   Design"), Deflate (Adobe Photoshop TIFF Technical Notes, 2002) and the
   floating point predictor (Adobe Photoshop TIFF Technical Note 3, 2005).
 
-  A load reads the tags of every IFD. [samples] plans one IFD's chunks,
-  checks each against the file before it allocates, then decodes each with
-  lz, undoes its predictor and byte order in nx_io_tiff.c and copies its
-  rows into place. A save writes a placeholder of its header, IFD and tag
-  values, its chunks after them, then the directory again with the chunks'
-  offsets and counts: the directory's length depends on its entries' types
-  and counts alone.
+  A load reads the tags of every IFD, from a file or a partial file, and
+  names the ranges a partial file lacks. [window] plans one IFD's chunks,
+  checks each against the file before it allocates, names the ranges of
+  the chunks it covers that a partial file lacks, then decodes each with
+  lz, undoes its predictor and byte order or unpacks its samples in
+  nx_io_tiff.c, and copies its rows in the window into place. [samples] is
+  the window of the whole raster, or a value over the file's pages.
+
+  A save writes a placeholder of its header, IFD and tag values, its chunks
+  after them, then the directory again with the chunks' offsets and counts:
+  the directory's length depends on its entries' types and counts alone.
   ---------------------------------------------------------------------------*)
 
 open Bigarray
@@ -39,9 +43,19 @@ type value =
 
 type compression = Uncompressed | Deflate
 
-(* An IFD: its tags in file order, its file's byte order, and the file, from
-   which [samples] reads. *)
-type t = { path : string; file : B.t; big : bool; tags : (int * value) list }
+(* Where an IFD's bytes are: a file, or a partial file. *)
+type source = File of B.t | Part of Partial.t
+
+let length = function File b -> B.length b | Part p -> Partial.length p
+
+(* An IFD: its tags in file order, its file's byte order, and the file or
+   partial file, named [name], from which [window] and [samples] read. *)
+type t = {
+  name : string;
+  source : source;
+  big : bool;
+  tags : (int * value) list;
+}
 
 let tags t = t.tags
 
@@ -180,34 +194,55 @@ let decode f code n s =
   | 16 -> Long8 (ints (fun k -> i64 f s (8 * k)))
   | _ -> Slong8 (ints (fun k -> i64 f s (8 * k)))
 
-(* [take file taken n] counts [n] more bytes of IFDs and values in
-   [taken], and refuses the file once they pass its length: IFDs and
+(* [take length taken n] counts [n] more bytes of IFDs and values in
+   [taken], and refuses the file once they pass its [length]: IFDs and
    values may not share bytes past it, so what a load reads is linear in
    the file's length. *)
-let take file taken n =
+let take length taken n =
   taken := !taken + n;
-  if !taken > B.length file then
+  if !taken > length then
     Fail.failf "the IFDs and their values take more than the file's %d bytes"
-      (B.length file)
+      length
+
+let ( let* ) = Option.bind
+let ( let+ ) x f = Option.map f x
+
+(* The [n] bytes of [source] from byte [pos], or [None] where a partial
+   file lacks some of them, whose ranges [need] then gains. Raises
+   [Failure] if they do not lie in the file. *)
+let get source need ~pos n =
+  match source with
+  | File b -> Some (Storage.string b ~pos n)
+  | Part p -> (
+      Storage.within ~length:(Partial.length p) ~pos n;
+      match Partial.lacking p ~pos n with
+      | [] -> Some (Partial.string p ~pos n)
+      | rs ->
+          need := rs @ !need;
+          None)
 
 (* The IFD at [at]: its tags and the offset of the next IFD, 0 after the
-   last. A value is in its entry's last field when it fits there, and at
-   the offset that field holds otherwise. [taken] counts the bytes read. *)
-let ifd file f taken at =
-  let length = B.length file in
+   last, or [None] where a partial file lacks its entries. A value is in
+   its entry's last field when it fits there, and at the offset that field
+   holds otherwise; a value a partial file lacks is left out, and [need]
+   gains its range. [taken] counts the bytes read. *)
+let ifd source f taken need at =
+  let length = length source in
   let wide = word_size f and entry = entry_size f in
-  let n, first =
+  let* n, first =
     if f.bigtiff then
-      ( address "an entry count" (i64 f (Storage.string file ~pos:at 8) 0),
-        at + 8 )
-    else (u16 f (Storage.string file ~pos:at 2) 0, at + 2)
+      let+ s = get source need ~pos:at 8 in
+      (address "an entry count" (i64 f s 0), at + 8)
+    else
+      let+ s = get source need ~pos:at 2 in
+      (u16 f s 0, at + 2)
   in
   if n > (length - first) / entry then
     Fail.failf "the IFD at byte %d states %d entries, past the file's end" at
       n;
-  take file taken (first - at + (n * entry) + wide);
-  let es = Storage.string file ~pos:first (n * entry) in
-  let next = word f (Storage.string file ~pos:(first + (n * entry)) wide) 0 in
+  take length taken (first - at + (n * entry) + wide);
+  let+ es = get source need ~pos:first ((n * entry) + wide) in
+  let next = word f es (n * entry) in
   let seen = Hashtbl.create n in
   let rec entries k acc =
     if k = n then List.rev acc
@@ -229,13 +264,15 @@ let ifd file f taken at =
             count;
         let bytes = count * size and value = e + 4 + wide in
         let s =
-          if bytes <= wide then String.sub es value bytes
+          if bytes <= wide then Some (String.sub es value bytes)
           else begin
-            take file taken bytes;
-            Storage.string file ~pos:(word f es value) bytes
+            take length taken bytes;
+            get source need ~pos:(word f es value) bytes
           end
         in
-        entries (k + 1) ((tag, decode f code count s) :: acc)
+        match s with
+        | Some s -> entries (k + 1) ((tag, decode f code count s) :: acc)
+        | None -> entries (k + 1) acc
       end
   in
   (entries 0 [], next)
@@ -243,8 +280,8 @@ let ifd file f taken at =
 (* The header (TIFF 6.0, section 2; BigTIFF Design): the byte order, 42 or
    43, BigTIFF's offset size and reserved zeros ("If they're not, a reader
    should give up"), then the first IFD's offset. *)
-let header file =
-  let s = Storage.string file ~pos:0 8 in
+let header source need =
+  let* s = get source need ~pos:0 8 in
   let big =
     match String.sub s 0 2 with
     | "II" -> false
@@ -253,29 +290,52 @@ let header file =
   in
   let f = { big; bigtiff = false } in
   match u16 f s 2 with
-  | 42 -> (f, u32 f s 4)
+  | 42 -> Some (f, u32 f s 4)
   | 43 ->
       if u16 f s 4 <> 8 || u16 f s 6 <> 0 then
         failwith "a BigTIFF header whose offsets are not of 8 bytes";
       let f = { big; bigtiff = true } in
-      (f, word f (Storage.string file ~pos:8 8) 0)
+      let+ s = get source need ~pos:8 8 in
+      (f, word f s 0)
   | v -> Fail.failf "TIFF version %d, neither 42 nor BigTIFF's 43" v
 
-let read path file =
-  let f, first = header file in
-  if first = 0 then failwith "the file has no IFD";
-  let seen = Hashtbl.create 8 and taken = ref 0 in
-  let rec chain at acc =
-    if at = 0 then List.rev acc
-    else begin
-      if Hashtbl.mem seen at then
-        Fail.failf "the IFDs' chain comes back to byte %d" at;
-      Hashtbl.add seen at ();
-      let tags, next = ifd file f taken at in
-      chain next ({ path; file; big = f.big; tags } :: acc)
-    end
+(* The IFDs of [source], or the ranges a partial file lacks of the bytes
+   the chain's reading reads next: the header, an IFD's entries, and the
+   values of every IFD it reaches. It follows the chain past an IFD whose
+   values the partial file lacks, which only adds ranges: every check
+   reads only bytes held, and no value's bytes can fail one. *)
+let chain name source =
+  let need = ref [] in
+  let ifds =
+    match header source need with
+    | None -> []
+    | Some (f, first) ->
+        if first = 0 then failwith "the file has no IFD";
+        let seen = Hashtbl.create 8 and taken = ref 0 in
+        let rec walk at acc =
+          if at = 0 then List.rev acc
+          else begin
+            if Hashtbl.mem seen at then
+              Fail.failf "the IFDs' chain comes back to byte %d" at;
+            Hashtbl.add seen at ();
+            match ifd source f taken need at with
+            | None -> List.rev acc
+            | Some (tags, next) ->
+                walk next ({ name; source; big = f.big; tags } :: acc)
+          end
+        in
+        walk first []
   in
-  chain first []
+  match !need with [] -> Ok ifds | rs -> Error (Partial.ranges rs)
+
+let read path file =
+  match chain path (File file) with
+  | Ok ds -> ds
+  | Error _ -> assert false (* A file holds every byte. *)
+
+let decode p =
+  let name = Partial.name p in
+  Fail.file name (fun () -> chain name (Part p))
 
 (* Plans *)
 
@@ -488,18 +548,18 @@ let decoded p k =
 
 (* Every chunk lies in the file and holds its rows' bytes, or a stream
    that could decode to them, and the chunks' bytes total at most the
-   file's, so that a raster takes at most the codec's ratio times the
-   file's length. *)
-let check_chunks p file =
+   file's [length], so that a raster takes at most the codec's ratio times
+   the file's length. *)
+let check_chunks p length =
   Array.iteri
     (fun k off ->
       let count = p.counts.(k) in
       if count = 0 then
         Fail.failf "%s: %s %d has no byte, as GDAL's sparse files leave it"
           (field (counts_tag p)) (unit p) k;
-      if off > B.length file - count then
+      if off > length - count then
         Fail.failf "%s %d at byte %d ends past the file's %d bytes" (unit p) k
-          off (B.length file);
+          off length;
       let need = decoded p k in
       let ratio =
         match p.codec with 1 -> 1 | 5 -> lzw_ratio | _ -> deflate_ratio
@@ -514,15 +574,16 @@ let check_chunks p file =
     (Array.fold_left
        (fun total count ->
          let total = total + count in
-         if total > B.length file then
+         if total > length then
            Fail.failf "%s: the %ss take more than the file's %d bytes"
-             (field (counts_tag p)) (unit p) (B.length file);
+             (field (counts_tag p)) (unit p) length;
          total)
        0 p.counts
       : int);
 
 external unpredict :
   Storage.bytes ->
+  int ->
   Storage.bytes ->
   int ->
   int ->
@@ -597,61 +658,136 @@ let contiguous p =
   && Array.for_all Fun.id
        (Array.mapi (fun k off -> off = p.offsets.(0) + (k * stride)) p.offsets)
 
-let read_samples t =
-  let p = plan t in
-  check_chunks p t.file;
+(* [with_chunks source f] is [f bytes], [bytes at n] the bytes [at] to
+   [at + n - 1] of [source], which a partial file must hold: the file's
+   pages, which the host borrows for the extent of [f], or the partial
+   file's own. *)
+let with_chunks source f =
+  match source with
+  | File b ->
+      Storage.read (Storage.pages b) (fun file ->
+          f (fun at n -> Array1.sub file at n))
+  | Part p -> f (fun at n -> Partial.bytes p ~pos:at n)
+
+(* Along a side of [side] pixels a chunk, the [n] pixels from pixel [at]
+   lie in [over side at n] chunks from chunk [first side at]. A window
+   covers [across] chunks a row from chunk row [r0] and chunk column [c0],
+   and [chunk p ~r0 ~c0 ~across i] is the [i]th, in the file's order. *)
+let first side at = at / side
+
+let over side at n =
+  if n = 0 then 0 else ((at + n - 1) / side) - first side at + 1
+
+let chunk p ~r0 ~c0 ~across i =
+  ((r0 + (i / across)) * p.across) + c0 + (i mod across)
+
+(* The window's samples, from the chunks it covers, all held. Each chunk is
+   decoded whole; its rows in the window are swapped or unpredicted, row by
+   row as the predictors work, and copied or unpacked into place. *)
+let decode_window (t : t) p ~row ~col ~rows ~cols =
   let (D.Any dt) = p.dt in
-  let layout = L.contiguous (Iarray.of_array [| p.h; p.w; p.spp |]) in
-  let total = p.h * p.w * p.spp * p.bytes in
   let packed = packed p.bits in
   let swapped = t.big <> Sys.big_endian && p.bytes > 1 && not packed in
-  if contiguous p then
-    let first = p.offsets.(0) in
-    let x = Storage.value (B.view t.file ~first ~length:total) dt layout in
-    Nx.P (if swapped then Storage.byteswap x else x)
-  else begin
-    let out = B.create Rig.host total in
-    let row = p.w * p.spp * p.bytes and crow = chunk_row p in
-    (* [check_chunks] bounds each chunk's decoded bytes by the file's. *)
-    let largest = ref 0 in
-    for k = 0 to Array.length p.offsets - 1 do
-      largest := Int.max !largest (decoded p k)
-    done;
-    let buf = create !largest and scratch = create crow in
-    B.write out int8_unsigned (fun dst ->
-        Storage.read (Storage.pages t.file) (fun file ->
-            for k = 0 to Array.length p.offsets - 1 do
-              let r, c, rows, cols = place p k in
-              let src = Array1.sub file p.offsets.(k) p.counts.(k) in
-              (* An uncompressed chunk of packed samples or in the host's
-                 byte order is read in place; any other is decoded or copied
-                 into [buf] first. *)
-              let data =
-                if p.codec <> 1 then (
-                  inflate p k src buf;
-                  buf)
-                else if swapped then (
-                  Array1.blit
-                    (Array1.sub src 0 (rows * crow))
-                    (Array1.sub buf 0 (rows * crow));
-                  buf)
-                else src
-              in
-              let at = (r * row) + (c * p.spp * p.bytes) in
-              if packed then
-                unpack data 0 crow 0 dst at row rows (cols * p.spp) p.bits
-                  p.bytes
-              else begin
-                if data == buf then
-                  unpredict buf scratch rows (p.cols * p.spp) p.spp p.bytes
-                    p.predictor t.big;
-                copy data 0 crow dst at row rows (cols * p.spp * p.bytes)
-              end
-            done));
-    Nx.P (Nx.Repr.unsafe_of_array Nx.Host.v (A.v dt layout out))
-  end
+  let px = p.spp * p.bytes and crow = chunk_row p in
+  let orow = cols * px in
+  let out = B.create Rig.host (rows * orow) in
+  let r0 = first p.rows row and c0 = first p.cols col in
+  let down = over p.rows row rows and across = over p.cols col cols in
+  (* Chunk 0 has the most rows, so it decodes to the most bytes, which
+     [check_chunks] bounds by the file's. *)
+  let largest = if down * across = 0 then 0 else decoded p 0 in
+  let buf = create largest and scratch = create crow in
+  B.write out int8_unsigned (fun dst ->
+      with_chunks t.source (fun bytes ->
+          for i = 0 to (down * across) - 1 do
+            let k = chunk p ~r0 ~c0 ~across i in
+            let r, c, krows, kcols = place p k in
+            let src = bytes p.offsets.(k) p.counts.(k) in
+            (* The chunk's rows [y0 - r] to [y1 - r - 1] and columns
+               [x0 - c] to [x1 - c - 1] lie in the window. *)
+            let y0 = Int.max r row and x0 = Int.max c col in
+            let y1 = Int.min (r + krows) (row + rows)
+            and x1 = Int.min (c + kcols) (col + cols) in
+            let first = (y0 - r) * crow and n = y1 - y0 in
+            let span = (x1 - x0) * p.spp in
+            (* An uncompressed chunk of packed samples or in the host's
+               byte order is read in place; any other is decoded or copied
+               into [buf] first. *)
+            let data =
+              if p.codec <> 1 then (
+                inflate p k src buf;
+                buf)
+              else if swapped then (
+                Array1.blit
+                  (Array1.sub src first (n * crow))
+                  (Array1.sub buf first (n * crow));
+                buf)
+              else src
+            in
+            let at = ((y0 - row) * orow) + ((x0 - col) * px) in
+            if packed then
+              unpack data first crow ((x0 - c) * p.spp) dst at orow n span
+                p.bits p.bytes
+            else begin
+              if data == buf then
+                unpredict buf first scratch n (p.cols * p.spp) p.spp p.bytes
+                  p.predictor t.big;
+              copy data (first + ((x0 - c) * px)) crow dst at orow n
+                (span * p.bytes)
+            end
+          done));
+  let layout = L.contiguous (Iarray.of_array [| rows; cols; p.spp |]) in
+  Nx.P (Nx.Repr.unsafe_of_array Nx.Host.v (A.v dt layout out))
 
-let samples t = Fail.file t.path (fun () -> read_samples t)
+(* The ranges a partial file lacks of the chunks a window covers, none for
+   a file, after the checks of every chunk. *)
+let lacking (t : t) p ~row ~col ~rows ~cols =
+  check_chunks p (length t.source);
+  match t.source with
+  | File _ -> []
+  | Part q ->
+      let r0 = first p.rows row and c0 = first p.cols col in
+      let across = over p.cols col cols in
+      let lacks i =
+        let k = chunk p ~r0 ~c0 ~across i in
+        Partial.lacking q ~pos:p.offsets.(k) p.counts.(k)
+      in
+      Partial.ranges
+        (List.concat (List.init (over p.rows row rows * across) lacks))
+
+let window (t : t) ~row ~col ~rows ~cols =
+  Fail.file t.name @@ fun () ->
+  let p = plan t in
+  if row < 0 || rows < 0 || row > p.h - rows then
+    Fail.invalid_argf
+      "Nx_io.Tiff.window: %d rows from row %d lie outside the %d rows" rows
+      row p.h;
+  if col < 0 || cols < 0 || col > p.w - cols then
+    Fail.invalid_argf
+      "Nx_io.Tiff.window: %d columns from column %d lie outside the %d \
+       columns"
+      cols col p.w;
+  match lacking t p ~row ~col ~rows ~cols with
+  | [] -> Ok (decode_window t p ~row ~col ~rows ~cols)
+  | rs -> Error rs
+
+let samples (t : t) =
+  Fail.file t.name @@ fun () ->
+  let p = plan t in
+  match t.source with
+  | File file when contiguous p ->
+      check_chunks p (B.length file);
+      let (D.Any dt) = p.dt in
+      let total = p.h * p.w * p.spp * p.bytes and first = p.offsets.(0) in
+      let layout = L.contiguous (Iarray.of_array [| p.h; p.w; p.spp |]) in
+      let x = Storage.value (B.view file ~first ~length:total) dt layout in
+      let swapped = t.big <> Sys.big_endian && p.bytes > 1 in
+      Nx.P (if swapped then Storage.byteswap x else x)
+  | File _ | Part _ -> (
+      match lacking t p ~row:0 ~col:0 ~rows:p.h ~cols:p.w with
+      | [] -> decode_window t p ~row:0 ~col:0 ~rows:p.h ~cols:p.w
+      | (at, n) :: _ ->
+          Fail.failf "the partial file lacks bytes %d to %d" at (at + n - 1))
 
 (* Saving *)
 

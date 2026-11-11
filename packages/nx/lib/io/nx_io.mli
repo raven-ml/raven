@@ -71,8 +71,9 @@
 
     {b Defaults.} A load blocks until it has read the file's header and the
     elements of each value it returns that is not mapped. {!Tiff.samples}
-    blocks until it has read its IFD's chunks, from the file {!load_tiff}
-    opened. A save blocks until
+    and {!Tiff.window} block until they have read their IFD's chunks, from
+    the file {!load_tiff} opened or the partial file {!decode_tiff} read.
+    A save blocks until
     the value's set has computed it and the new file is at its path. Domains may
     load one path concurrently. Concurrent saves to one path each write a whole
     file, and the last rename wins.
@@ -833,9 +834,10 @@ module Tiff : sig
         (** SLONG8 (17), BigTIFF's: signed 64-bit integers. *)
 
   type t
-  (** The type for one IFD of a TIFF file. It keeps the file it was read
-      from, as a mapped value does, and {b the file must not change in
-      place while it is reachable}. *)
+  (** The type for one IFD of a TIFF file. It keeps the bytes it was read
+      from: the file, as a mapped value does, and {b the file must not
+      change in place while it is reachable}; or a partial file
+      ({!section-partial}), which never changes. *)
 
   val tags : t -> (int * value) list
   (** [tags d] is [d]'s tags, each by its number, in file order. *)
@@ -849,12 +851,39 @@ module Tiff : sig
       raster that follow each other from a multiple of a sample's bytes.
       Otherwise each call reads the file again, into memory of its own.
 
+      For an IFD decoded from a partial file, it is {!window} of the whole
+      raster, in memory of its own.
+
       Raises [Failure] as {!section-errors} states, naming the tag, if a
       tag the section lists is missing, of another type, or of a value or
       count the section does not read, or if a chunk lies past the file's
       end, has too few bytes or does not decode to its rows, as in
       ["l.tif: Compression (259) 5: tile 3 at byte 1024: malformed at
-       byte 7: invalid code"]. *)
+       byte 7: invalid code"], and naming the first range a partial file
+      lacks of its chunks. *)
+
+  val window :
+    t ->
+    row:int ->
+    col:int ->
+    rows:int ->
+    cols:int ->
+    (Nx.host Nx.packed, (int * int) list) result
+  (** [window d ~row ~col ~rows ~cols] is [Ok x], [x] the samples of [d]'s
+      rows [row] to [row + rows - 1] and columns [col] to [col + cols - 1],
+      of shape [[|rows; cols; c|]] at {!samples}'s dtype, in memory of its
+      own; or [Error rs], [rs] the ranges ({!section-partial}) of the chunks
+      the window covers that [d]'s partial file lacks. It reads each chunk
+      the window covers, whole, and no other: [x] is
+      [Nx.slice [R (row, row + rows); R (col, col + cols)] (samples d)]
+      where {!samples} returns, and [window] may return where {!samples}
+      raises for a chunk the window does not cover. A window of no row or
+      no column reads no chunk. An IFD {!load_tiff} read is never [Error].
+
+      Raises [Invalid_argument] if the window does not lie in [d]'s raster,
+      and [Failure] as {!samples} does, for its tags and every chunk's
+      offset and count, and for each chunk the window covers that does not
+      decode. *)
 
   (** The type for how {!save_tiff} stores chunks. *)
   type compression =
@@ -897,6 +926,89 @@ val save_tiff :
     or a tile's side is not a positive multiple of 16, and naming the tag
     if a tag is not a SHORT, is the save's own or is given twice, or holds
     no value or one its type does not, such as a [Float] of 0.1. *)
+
+(** {1:partial Partial files}
+
+    A {e partial file} is what a program holds of a file it reads in
+    pieces, such as a remote file read by byte ranges: the file's length,
+    and its bytes at some of its offsets. {!decode_tiff} and {!Tiff.window}
+    read only the bytes a partial file holds, and return the bytes it lacks
+    as {e ranges}: [(offset, length)] pairs sorted by offset, disjoint,
+    merged where they touch, and never empty, the same list for the same
+    bytes. The caller fetches the ranges, adds them, and calls again. No
+    byte a partial file lacks is read as any value. How many bytes to
+    fetch first, whether to merge ranges across gaps, and how to fetch
+    them are the caller's.
+
+    Two laws tie a partial file to the whole file it holds part of:
+    {ul
+    {- {e Agreement.} {!decode_tiff} or {!Tiff.window} on a partial file
+       returns [Error] with ranges, or returns or raises exactly as on the
+       whole file.
+       Which of the last two it does never depends on a byte the partial
+       file lacks.}
+    {- {e Monotony.} Adding bytes never turns a result into [Error]: once
+       {!decode_tiff} returns IFDs, or {!Tiff.window} samples, a partial
+       file that holds more of the same file returns the same.}}
+
+    An IFD keeps the partial file it was decoded from, and {b never reads
+    bytes added after it was decoded}. After adding bytes, decode the new
+    partial file again, which reads only bytes already held, and take the
+    IFD at the same position, which monotony keeps. A window of an IFD
+    decoded before the bytes were added returns the same [Error] again.
+
+    This reads a window of the first IFD of a remote TIFF file, given
+    [get at n], which returns the [n] bytes of the file from byte [at]:
+    {[
+    let fill p rs =
+      List.fold_left
+        (fun p (at, n) -> Nx_io.Partial.add p ~at (get at n))
+        p rs
+
+    let rec window p ~row ~col ~rows ~cols =
+      match Nx_io.decode_tiff p with
+      | Error rs -> window (fill p rs) ~row ~col ~rows ~cols
+      | Ok ds -> (
+          match Nx_io.Tiff.window (List.hd ds) ~row ~col ~rows ~cols with
+          | Ok x -> x
+          | Error rs -> window (fill p rs) ~row ~col ~rows ~cols)
+    ]} *)
+
+(** Partial files. *)
+module Partial : sig
+  type t
+  (** The type for partial files. A partial file is immutable, and may be
+      shared between domains. *)
+
+  val v : name:string -> length:int -> t
+  (** [v ~name ~length] is the partial file of a file of [length] bytes
+      that holds none of them. [name] starts the messages of failures
+      reading it, as a path does.
+
+      Raises [Invalid_argument] if [length] is negative. *)
+
+  val add : t -> at:int -> string -> t
+  (** [add p ~at s] is [p] holding the bytes [s] at offsets [at] to
+      [at + String.length s - 1] as well. [p] is unchanged. [add] copies
+      the bytes of [s] that [p] lacks, once, and shares [p]'s.
+
+      Raises [Invalid_argument] if [at] is negative or [s] ends past [p]'s
+      length, and [Failure] starting with [p]'s name and naming the offset
+      if [s] differs from a byte [p] holds. The bytes are then of two
+      versions of the file, and no partial file that holds both is
+      consistent: start again from {!v}. *)
+end
+
+val decode_tiff : Partial.t -> (Tiff.t list, (int * int) list) result
+(** [decode_tiff p] is [Ok ds], [ds] the IFDs {!load_tiff} reads from the
+    whole file [p] holds part of, or [Error rs], [rs] the ranges
+    ({!section-partial}) [p] lacks of the bytes it reads next: the header,
+    an IFD's entries, and the values of every IFD it reaches, since it
+    follows the IFDs' chain past an IFD whose values [p] lacks. It reads
+    no sample. Each IFD keeps [p], from which {!Tiff.window} and
+    {!Tiff.samples} read.
+
+    Raises [Failure] starting with [p]'s name as {!load_tiff} does. *)
 
 (** {1:errors Errors}
 
