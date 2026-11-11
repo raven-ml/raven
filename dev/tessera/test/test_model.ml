@@ -230,6 +230,98 @@ let standardisation =
         (Array.append (standard [| 5000.; 4000. |] ascending) [| 60. |])
         (token "s1_in" 1 3))
 
+(* The encoding *)
+
+let round32 x = Int32.float_of_bits (Int32.bits_of_float x)
+
+let ulp32 x =
+  if x = 0. then Float.ldexp 1. (-149)
+  else
+    let _, e = Float.frexp x in
+    Float.ldexp 1. (e - 24)
+
+(* Two pixels of S2 tokens on every day from 0 to 366. *)
+let every_day () =
+  let row d = Array.append (Array.init 10 (fun i -> 500 + (300 * i))) [| d |] in
+  let half = 184 in
+  let days = Array.init 367 Fun.id in
+  let s2 =
+    Nx_ragged.of_lengths
+      (Nx.create Nx.int64 [| 2 |]
+         [| Int64.of_int half; Int64.of_int (367 - half) |])
+      (Nx.create Nx.uint16 [| 367; 11 |]
+         (Array.concat (Array.to_list (Array.map row days))))
+  in
+  let s1 =
+    Nx_ragged.of_lengths
+      (Nx.create Nx.int64 [| 2 |] [| 0L; 0L |])
+      (Nx.create Nx.int16 [| 0; 4 |] [||])
+  in
+  let px = { Pixels.s2; s1 } in
+  fst
+    (Batch.pack
+       (shape ~pixels:2 ~rows:2 ~slots:1 ~width:256 ())
+       px (Batch.v2_counts px) ~from:0)
+
+(* The frequency [div = exp (−2k ln 10⁴ / d)] rounds once to float32, which
+   moves the angle [day · div] by [day · ulp(div) / 2] at most, the product
+   rounds once, [ulp(angle) / 2], and sin and cos round once more, within [2⁻²³]
+   here: each value of the encoding lies within their sum of the float64
+   sinusoid at the float64 frequency. *)
+let encoding_law =
+  test "the encoding is the sinusoid of its frequencies rounded once" (fun () ->
+      let wide =
+        Model.init ~key:(Nx.Rng.key 3) { (arch false) with width = 64 }
+      in
+      let b = every_day () in
+      List.iter
+        (fun (m, jit) ->
+          let blocks =
+            if not jit then Model.blocks m (Model.inputs m b)
+            else
+              let names = ref [] in
+              let f =
+                Rune.jit
+                  Nx.Ptree.(
+                    instantiate (module Model)
+                    @-> v Batch.walk
+                    @-> returns (list tensor))
+                  (fun m b ->
+                    let l = Model.blocks m (Model.inputs m b) in
+                    names := List.map fst l;
+                    List.map snd l)
+              in
+              let vs = f m b in
+              List.combine !names vs
+          in
+          let pe = List.assoc "s2_pe" blocks
+          and input = List.assoc "s2_in" blocks in
+          let d = Nx.dim 2 pe and width = Nx.dim 1 pe in
+          let rate = -.Float.log 10000. /. Float.of_int d in
+          let worst = ref 0. in
+          for r = 0 to Nx.dim 0 pe - 1 do
+            for c = 0 to width - 1 do
+              let day = Nx.item [ r; c; 10 ] input in
+              for k = 0 to (d / 2) - 1 do
+                let div = Float.exp (Float.of_int (2 * k) *. rate) in
+                let div32 = round32 div in
+                let angle = round32 (day *. div32) in
+                let tol =
+                  (((day *. ulp32 div32) +. ulp32 angle) /. 2.)
+                  +. Float.ldexp 1. (-23)
+                in
+                let exact = day *. div in
+                List.iter
+                  (fun (ch, f) ->
+                    let e = Float.abs (Nx.item [ r; c; ch ] pe -. f exact) in
+                    worst := Float.max !worst (e /. tol))
+                  [ (2 * k, Float.sin); ((2 * k) + 1, Float.cos) ]
+              done
+            done
+          done;
+          at_most float_exact ~than:1. !worst)
+        [ (post_ln, false); (wide, false); (wide, true) ])
+
 (* Loading *)
 
 module Pt = Nx_io.Pytorch
@@ -429,6 +521,7 @@ let () =
              normalised;
              empty_places;
              standardisation;
+             encoding_law;
            ];
          structure;
          loading;

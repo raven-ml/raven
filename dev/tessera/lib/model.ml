@@ -430,11 +430,15 @@ let layers ~pre_ln ~heads ~remat tk ~record x ls =
 let wavelength = 10000.
 let std_guard = 1e-9
 
-(* The sinusoid of [doy], [[rows; width]], over [d] channels. *)
+(* The sinusoid of [doy], [[rows; width]], over [d] channels. Its frequencies
+   [exp (−2k ln wavelength / d)] are constants, computed on the host in float64
+   and rounded once to float32: a day up to 366 multiplies a frequency's last
+   bit, so the encoding depends on a device only through [sin] and [cos]. *)
 let encoding d doy =
   let shape = Nx.shape doy in
-  let i = Nx.arange_at (Nx.beside doy) f32 0 d 2 in
-  let div = Nx.exp (Nx.mul_s i (-.(Float.log wavelength /. Float.of_int d))) in
+  let rate = -.Float.log wavelength /. Float.of_int d in
+  let freq k = Float.exp (Float.of_int (2 * k.(0)) *. rate) in
+  let div = Nx.place (Nx.beside doy) (Nx.init f32 [| d / 2 |] freq) in
   let angle = Nx.mul (Nx.reshape (Array.append shape [| 1 |]) doy) div in
   let pe = Nx.stack ~axis:(-1) [ Nx.sin angle; Nx.cos angle ] in
   Nx.reshape (Array.append shape [| d |]) pe
