@@ -104,8 +104,8 @@ type backing =
   | Kept of keep
 
 (** The type for the word as a wait under a hang bound last saw it: its
-    value, whether the device was idle then, and since when, in milliseconds
-    of the monotonic clock. *)
+    value, whether the device was idle then, and since when, in nanoseconds
+    of [Rig_edge_primitive.now]'s clock. *)
 type progress = { seen : int; idle : bool; since : int }
 
 type c

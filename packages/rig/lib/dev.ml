@@ -782,20 +782,29 @@ let now_ms () = Rig_edge_primitive.now () / 1_000_000
    unreached value counts as idle: its own work may not have started. The word
    is read again here, through the driver where it has no host address: [w]
    was read before a commit that may have waited for the turn as long as the
-   still interval. *)
+   still interval. The clock runs in ns, so the loss comes no sooner than
+   [hang] ms after the restart, and the sleep is rounded up to whole ms, so
+   it does not wake just short of the bound. A bound beyond [max_int] ns,
+   about 146 years, counts as [max_int] ns. A restart another waiter stored
+   after this one read the clock counts as no time passed: the time since it
+   would be negative, and the time left would wrap past [max_int] and lose
+   [d] at once. *)
 let bounded (d : device) w ~still_ms hang =
   let w = Int.max w (word d) in
   let l = d.live in
-  let now = now_ms () and p = l.progress in
+  let now = Rig_edge_primitive.now () and p = l.progress in
   let idle = committed d <= w || c_waits_in_queue l.c in
   if idle || p.idle || p.seen <> w then begin
     l.progress <- { seen = w; idle; since = now };
     if idle then still_ms else Int.min still_ms hang
   end
   else
-    let left = p.since + hang - now in
+    let hang_ns =
+      if hang > max_int / 1_000_000 then max_int else hang * 1_000_000
+    in
+    let left = hang_ns - Int.max 0 (now - p.since) in
     if left <= 0 then hung d (strf "no progress for %d ms" hang);
-    Int.min still_ms left
+    Int.min still_ms (((left - 1) / 1_000_000) + 1)
 
 (* A counted call, written out so that a wait's sleep without a hang bound
    allocates nothing. *)

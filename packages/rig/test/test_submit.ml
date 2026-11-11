@@ -625,6 +625,33 @@ let test_submitted_host () =
   equal ~msg:"after a submit" bool true (Rig.Point.reached after);
   equal ~msg:"wait_for" bool true (Rig.Point.wait_for ~ns:1 after)
 
+(* Two waiters on one stalled device: each raises the bound's loss no sooner
+   than the bound after the stall began. *)
+let test_hang_two_waiters () =
+  let d, p = P.open_ ~hang_ms (fresh "hang-two-waiters") in
+  let pt = submit (empty d) in
+  P.stall p max_int;
+  let t0 = Rig.Profile.now () in
+  let wait () =
+    match Rig.Point.wait pt with
+    | () -> Error "returned"
+    | exception Rig.Lost (_, why) -> Ok (why, Rig.Profile.now ())
+  in
+  let other = Domain.spawn wait in
+  let mine = wait () in
+  let theirs = Domain.join other in
+  let why = Printf.sprintf "no progress for %d ms" hang_ms in
+  List.iter
+    (fun (who, r) ->
+      match r with
+      | Error e -> failf "%s: the wait %s" who e
+      | Ok (w, raised_at) ->
+          equal string ~msg:(who ^ ": the reason") why w;
+          at_least ~msg:(who ^ ": the wait, in ms") int ~than:hang_ms
+            ((raised_at - t0) / 1_000_000))
+    [ ("this domain", mine); ("the other", theirs) ];
+  Rig.close d
+
 let test_refusals () =
   let d = memory "submit:refusals" in
   raises_match Exn.invalid_arg (fun () ->
@@ -2173,6 +2200,7 @@ let tests =
           test_hang_in_queue;
         test "a word that moved while a wait was held loses nothing"
           test_hang_held_read;
+        test "the bound comes no sooner with two waiters" test_hang_two_waiters;
       ];
     group ~timeout "bounded waits"
       [
