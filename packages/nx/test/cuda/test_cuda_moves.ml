@@ -375,20 +375,33 @@ let test_loop_set (b : Support.backend) () =
       done_ (K.scatter Set ~unique:false ~axis:0 ~dst ~into idx u);
       Rig.Buffer.wait (A.buffer dst) Read_write)
 
+(* GPU 0 through CUDA and through rig.nv, opened at a test's first call;
+   a test skips without its GPU. *)
+let cuda () =
+  match Support.gpus () with
+  | b :: _ -> b
+  | [] -> skip ~reason:"CUDA sees no GPU" ()
+
+let nv () =
+  match Support.nv () with
+  | Some b -> b
+  | None -> skip ~reason:"rig.nv sees no GPU" ()
+
 let () =
   exit
     (Windtrap.run "nx.cuda moves"
        (List.map
-          (fun (b : Support.backend) ->
-            group b.name
+          (fun (name, b) ->
+            let on f x = f (b ()) x in
+            group name
               [
                 prop
                   "a float Add is x + S, S the position tree's sum of the \
                    updates"
-                  cases (law b);
+                  cases (on law);
                 test "moves complex64 aligned to 4 bytes as nx.cpu does"
-                  (test_misaligned b);
+                  (on test_misaligned);
                 test "scatters in a loop hold one scatter's workspace"
-                  (test_loop_set b);
+                  (on test_loop_set);
               ])
-          (Support.gpus () @ Option.to_list (Support.nv ()))))
+          [ ("cuda", cuda); ("cuda/nv", nv) ]))

@@ -471,40 +471,59 @@ let law_batch (b : Support.backend) c =
   in
   List.iter (fun check -> check ()) checks
 
-let laws (b : Support.backend) =
+(* GPU 0 through CUDA and through rig.nv, opened at a test's first call;
+   a test skips without its GPU. *)
+let cuda_name = "cuda"
+let nv_name = "cuda/nv"
+
+let cuda () =
+  match Support.gpus () with
+  | b :: _ -> b
+  | [] -> skip ~reason:"CUDA sees no GPU" ()
+
+let nv () =
+  match Support.nv () with
+  | Some b -> b
+  | None -> skip ~reason:"rig.nv sees no GPU" ()
+
+let laws ~name b =
+  let on f x = f (b ()) x in
   let cases name f =
-    cases name ~id:(Format.asprintf "%a" pp_dtype) dtypes (fun dt -> f b dt)
+    cases name ~id:(Format.asprintf "%a" pp_dtype) dtypes (fun dt ->
+        f (b ()) dt)
   in
-  group b.name
+  group name
     [
       group "each result meets its relation within its bound"
         [
-          prop "Cholesky's factor within γ(n + 1)" case (law_cholesky bounds b);
+          prop "Cholesky's factor within γ(n + 1)" case
+            (on (law_cholesky bounds));
           prop "the Upper factor is the Lower one's conjugate transpose" case
-            (law_upper b);
-          prop "a triangular solve within γ(n + 2)" case (law_solve bounds b);
-          prop "LU's factors within γ(k + 2)" case (law_lu bounds b);
+            (on law_upper);
+          prop "a triangular solve within γ(n + 2)" case
+            (on (law_solve bounds));
+          prop "LU's factors within γ(k + 2)" case (on (law_lu bounds));
           test "LU of a pivot whose reciprocal is subnormal"
-            (test_huge_pivot bounds b);
+            (on (test_huge_pivot bounds));
           test "QR of matrices scaled to the ends of the exponent range"
-            (test_qr_scaled b);
-          prop "QR's factors within γ(k(2m + 10))" case (law_qr b);
+            (on test_qr_scaled);
+          prop "QR's factors within γ(k(2m + 10))" case (on law_qr);
           cases "past every blocking" test_large;
-          prop "eigh's results within γ(16n)" case (law_eigh bounds b);
+          prop "eigh's results within γ(16n)" case (on (law_eigh bounds));
           prop "svd's results within γ(16 max (m, n) + 100)" case
-            (law_svd bounds b);
+            (on (law_svd bounds));
           prop
             "svd's results on parts at the least subnormal, below the least \
              normal and near 1"
-            spread (law_svd_spread bounds b);
+            spread (on (law_svd_spread bounds));
           test
             "svd's results on a row whose rest is below the least normal \
              number over u"
-            (test_svd_tiny_rows b);
+            (on test_svd_tiny_rows);
           test "svd's results at every small shape that shares a group"
-            (test_svd_shapes b);
+            (on test_svd_shapes);
           test "svd's results on a row whose rest is the least subnormal"
-            (test_svd_spread_row bounds b);
+            (on (test_svd_spread_row bounds));
           cases
             "svd's results on matrices of rank 10 at 2^400 over rows of the \
              least subnormal"
@@ -513,45 +532,45 @@ let laws (b : Support.backend) =
             (test_svd_pairs bounds);
           prop
             "eig's results within γ(16n), its vectors positive at their largest"
-            case (law_eig bounds b);
-          test "eig's results on a graded cycle" (test_eig_graded_cycle b);
+            case (on (law_eig bounds));
+          test "eig's results on a graded cycle" (on test_eig_graded_cycle);
           test "eig's results on a subnormal matrix with a complex pair"
-            (test_eig_subnormal_pair b);
+            (on test_eig_subnormal_pair);
           test
             "eigh's, qr's and svd's results on matrices scaled below the least \
              normal number and near the largest"
-            (test_scaled bounds b);
+            (on (test_scaled bounds));
         ];
       group "each spectrum is within its bound of the exact one"
         [
           prop "eigh's eigenvalues within γ(16n) ‖a‖₂" case
-            (law_eigh_spectrum b);
-          test "eigh's eigenvalues at large orders" (test_eigh_large b);
+            (on law_eigh_spectrum);
+          test "eigh's eigenvalues at large orders" (on test_eigh_large);
           test
             "eigh's eigenvalues of a secular equation with a root beside its \
              pole"
-            (test_eigh_secular b);
+            (on test_eigh_secular);
           prop "svd's values within γ(16 max (m, n) + 100) ‖a‖₂" case
-            (law_svd_spectrum b);
-          test "svd's values at large orders" (test_svd_large b);
+            (on law_svd_spectrum);
+          test "svd's values at large orders" (on test_svd_large);
           prop "eig's eigenvalues of a normal matrix within γ(16n) ‖a‖_F" case
-            (law_eig_spectrum b);
+            (on law_eig_spectrum);
           test "eig's eigenvalues of a graded matrix, balanced"
-            (test_eig_balanced b);
+            (on test_eig_balanced);
           test
             "eig's eigenvalues of a matrix spanning the exponent range, \
              balanced before it is scaled"
-            (test_eig_extremes b);
+            (on test_eig_extremes);
           test "eig's eigenvalues of Wilkinson's matrices are eigh's"
-            (test_wilkinson b);
+            (on test_wilkinson);
         ];
       group "bits are a function of the values alone"
         [
           prop "LU's, Cholesky's and a solve's are the unblocked algorithm's"
-            case (law_unblocked b);
-          prop "whatever the layout" case (law_layouts b);
+            case (on law_unblocked);
+          prop "whatever the layout" case (on law_layouts);
           (* Each case makes 40 calls. *)
-          prop ~count:25 "whatever the batch" case (law_batch b);
+          prop ~count:25 "whatever the batch" case (on law_batch);
         ];
     ]
 
@@ -665,29 +684,26 @@ let test_shared_agrees ~first b () =
       |> agree ~first b)
     dtypes
 
-let agreement ~first (b : Support.backend) =
+let agreement ~first b =
   let cases name f =
     cases name ~id:(Format.asprintf "%a" pp_dtype) dtypes (fun dt -> f dt)
   in
-  group b.name
+  group nv_name
     [
       group
-        (Printf.sprintf "bits are %s's" first.Support.name)
+        (Printf.sprintf "bits are %s's" cuda_name)
         [
           (* One routine a case, so that each is drawn often. *)
           prop ~count:300 "on the suite's cases" (Gen.pair case routine)
-            (law_agrees ~first b);
-          cases "past every blocking" (fun dt -> agree ~first b (large dt));
-          test "at every small shape that shares a group"
-            (test_shared_agrees ~first b);
+            (fun c -> law_agrees ~first:(first ()) (b ()) c);
+          cases "past every blocking" (fun dt ->
+              agree ~first:(first ()) (b ()) (large dt));
+          test "at every small shape that shares a group" (fun () ->
+              test_shared_agrees ~first:(first ()) (b ()) ());
         ];
     ]
 
 let () =
-  let tests =
-    match (Support.gpus (), Support.nv ()) with
-    | [], _ -> []
-    | first :: _, None -> [ laws first ]
-    | first :: _, Some nv -> [ laws first; agreement ~first nv ]
-  in
-  exit (Windtrap.run "nx.cuda linalg" tests)
+  exit
+    (Windtrap.run "nx.cuda linalg"
+       [ laws ~name:cuda_name cuda; agreement ~first:cuda nv ])
