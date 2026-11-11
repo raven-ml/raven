@@ -114,26 +114,23 @@ let () =
   let last_acc = ref 0. in
 
   for epoch = 1 to epochs do
-    let num_batches = n_train / batch_size in
+    (* The last batch holds the remainder, so an epoch is the batches
+       rounded up, and each advances the global step by one. *)
+    let num_batches = (n_train + batch_size - 1) / batch_size in
     let loss_sum = ref 0. in
     let loss_count = ref 0 in
 
     let order = Nx.Rng.permutation n_train in
     let shuffled t = Nx.take ~axis:0 order t in
     Data.batches2 ~batch_size (shuffled x_train, shuffled y_train)
-    |> Seq.fold_left
-         (fun step batch ->
-           let loss = train_step batch in
-           let s = !global_step + step in
-           loss_sum := !loss_sum +. loss;
-           incr loss_count;
-           Munin.Session.log_metrics session ~step:s
-             [ (train_loss, loss); (epoch_metric, Float.of_int epoch) ];
-           Printf.printf "\r  batch %d/%d  loss: %.4f%!" step num_batches loss;
-           step + 1)
-         1
-    |> ignore;
-    global_step := !global_step + num_batches;
+    |> Seq.iteri (fun i batch ->
+        let loss = train_step batch in
+        incr global_step;
+        loss_sum := !loss_sum +. loss;
+        incr loss_count;
+        Munin.Session.log_metrics session ~step:!global_step
+          [ (train_loss, loss); (epoch_metric, Float.of_int epoch) ];
+        Printf.printf "\r  batch %d/%d  loss: %.4f%!" (i + 1) num_batches loss);
     Printf.printf "\n%!";
 
     (* Evaluate. *)
