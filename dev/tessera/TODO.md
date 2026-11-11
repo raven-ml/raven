@@ -149,6 +149,13 @@ An item leaves when its library fixes it, or when a design decides it stays.
 
 ## tolk
 
+- A bf16 weight read by products inside a compiled scan is stored narrow
+  only on GPU targets (main, gemm2 step 1, form (b)): on the host, widening
+  at every read costs 1.29-1.43x the stored-wide form (the dW kernel 263 M
+  -> 750 M instructions), whatever `converted_lanes` allows. One rule for
+  every target needs a host panel that widens both operands once per tile;
+  with it, form (a) replaces (b) (design/gemm2/adjudication.md).
+
 - A distillation step end to end (medium, 4096 pixels in 4 groups, bf16,
   fused attention) takes 8.04 s on fudge's RTX 5000 against PyTorch's
   1.744 s (m0-baselines.md §2.3, which drops out at 0.1); unprofiled. The
