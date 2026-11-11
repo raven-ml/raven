@@ -1541,6 +1541,16 @@ value caml_rig_times_give(value v_d, value v_v) {
   return Val_unit;
 }
 
+/* The number of the device [v_d]'s pairs that are taken: given to a value
+   and not given back, the owed ones included. */
+value caml_rig_times_taken(value v_d) {
+  struct rig_times *t = &Device_val(v_d)->times;
+  mutex_lock(&t->mu);
+  int n = t->nchunks * RIG_TIMES - t->nfree;
+  mutex_unlock(&t->mu);
+  return Val_int(n);
+}
+
 /* Asks [d]'s driver for room for [s]; once the parts fit, assigns the next
    value, stores it as submitted, hands the work over with the call [r]'s
    waits and the blocks [args], and raises the stamps, but for the host.

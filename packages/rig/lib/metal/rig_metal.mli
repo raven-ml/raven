@@ -273,12 +273,12 @@ val capability : t -> Rig_metal_abi.t
     It also refuses parts whose parameters take more than [maxBufferLength]
     together.
 
-    {2:profiles Profiles}
+    {2:times Times}
 
-    While a profile is taken, [rig_metal_submit] commits the open command
+    For a value rig times, [rig_metal_submit] commits the open command
     buffer, runs the value's work in command buffers of its own and commits
     them immediately. The value's times are the first one's [GPUStartTime]
-    and the last one's [GPUEndTime]. Profiling therefore costs the device its
+    and the last one's [GPUEndTime]. Timing therefore costs the device its
     batching. *)
 
 (** {1:memory Memory}

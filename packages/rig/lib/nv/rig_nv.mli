@@ -238,7 +238,7 @@ val capability : t -> Rig_nv_abi.Gpu.t
     device to commit. A submission of no parts writes its value after its
     waits and every earlier value.
 
-    While a profile is taken, each channel a value's work enters writes a
+    For a value rig times, each channel the value's work enters writes a
     stamp of the GPU's timer after the value's waits, and the channel that
     releases the value writes one before the release
     ({!Rig_nv_abi.Method.release_stamp}). On COMPUTE a stamp waits for the

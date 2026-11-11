@@ -246,13 +246,14 @@ type 'region facts = {
        returns, all of the value's work is on the queues, though the device
        may hold it until it is committed. It returns [RIG_COMMITTED] if every
        value up to its own is committed, [RIG_OK] if its value is only
-       encoded, and [RIG_FAILED] if it failed, which loses the device. While a
-       profile is taken, it is given a pair of times, where it must write
-       when the value's work started and ended on the device, on the host's
-       clock ([rig_now_ns] in [rig_edge.h]), or leave both [0] for work it
-       cannot time. It writes them before the word shows the value if
-       [settle] is [NULL], and before [settle] of the value returns
-       otherwise. rig gives the pair to no other value until then.}
+       encoded, and [RIG_FAILED] if it failed, which loses the device. For a
+       value rig times, for a profile or for a run's times, it is given a
+       pair of times, where it must write when the value's work started and
+       ended on the device, on the host's clock ([rig_now_ns] in
+       [rig_edge.h]), or leave both [0] for work it cannot time. It writes
+       them before the word shows the value if [settle] is [NULL], and before
+       [settle] of the value returns otherwise. rig gives the pair to no other
+       value until then.}
     {- [commit] is given a value [v] no greater than the last value given to
        [submit], and lets the work up to [v] run. Once that work has
        completed, the device writes [v] or a later value into the word.

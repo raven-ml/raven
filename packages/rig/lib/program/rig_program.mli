@@ -95,9 +95,9 @@
 
     {1:domains Domains}
 
-    {!load} and {!run} may be called from any domain. Runs of one loaded
-    program share its memory, so a run waits for the previous one to return
-    before its first step. *)
+    {!load}, {!run} and {!time} may be called from any domain. Runs of one
+    loaded program share its memory, so a run waits until the previous one
+    has run its steps before its first step. *)
 
 (** {1:descriptions Descriptions} *)
 
@@ -488,6 +488,28 @@ val run : ?waits:Rig.Point.t array -> loaded -> frame -> Rig.Point.t array
        past its input's bytes, and as {!Rig.submit} and
        {!Rig.Buffer.submit_copy} raise.}}
     Raises {!Rig.Lost} as the devices raise it. *)
+
+val time : ?waits:Rig.Point.t array -> loaded -> frame -> int array
+(** [time ~waits p f] runs [p] over [f] as {!run} does, with the work of its
+    steps timed, and returns once that work is done. It is, for each of [p]'s
+    steps in step order, the time in nanoseconds its device took for the
+    step's work: from when the device started the work of the step's
+    submission to when it ended it, on the host's clock ({!Rig.Profile.now}),
+    as exact as the device's driver correlates the device's clock with the
+    host's, which its interface states. A step whose device did not time its
+    work, as its driver's interface states, has [-1]. A step with no work to
+    time, a [Move] or a [Submit] whose submission has no parts, has [0], and
+    a timed step may have [0] too.
+
+    Only the submits of the run's steps are timed, so other runs and domains
+    pay nothing for it. Timing costs each device what its driver's interface
+    states. On a device whose driver measures its launches' counters, a
+    timed launch is measured too.
+
+    Raises [Invalid_argument], before any step runs, if [p] has a [Loop]
+    step or is loaded on another machine. Raises as {!run} does, and
+    {!Rig.Lost} if a device is lost, or closed ({!Rig.close}), before [time]
+    has read its times. *)
 
 (** {1:machines Programs of another machine}
 

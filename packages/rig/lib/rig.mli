@@ -2722,6 +2722,46 @@ end
 
 (**/**)
 
+(** The times of a run's steps, which [Rig_program.time] reads. *)
+module Timer : sig
+  type t
+  (** The type for the times of a run's steps: for each step, the value of
+      the submit that timed its work, if any. *)
+
+  val make : int -> t
+  (** [make n] times [n] steps, none given work yet. *)
+
+  val submit :
+    t ->
+    int ->
+    ?waits:Point.t array ->
+    Submission.Run.t ->
+    buffers:Buffer.t array ->
+    Point.t
+  (** [submit t i ~waits r ~buffers] is {!submit}[ ~waits r ~buffers] with its
+      work timed as step [i] of [t], replacing the work [i] had, whether or
+      not a profile is being taken. A profile taken at the submit records
+      the work with the same times. A submission with no parts times
+      nothing. *)
+
+  val read : t -> int array
+  (** [read t] waits for each step's work and is, for each step, the time
+      in nanoseconds from when its device started the work to when it ended
+      it, as its driver wrote them, [0] for a step given no work and [-1]
+      where the driver did not time it. It gives back what [t] holds.
+
+      Raises {!Lost} if a step's device is lost, or closed ({!close}), before
+      [read] has read its times, having given back what [t] holds. *)
+
+  val drop : t -> unit
+  (** [drop t] gives back what [t] holds, unread, as after a run that
+      raised. *)
+end
+
+val time_pairs : t -> int
+(** [time_pairs d] is the number of [d]'s pairs of times that are taken: given
+    to a value its driver times and not given back. *)
+
 val on_host_exchange : (int -> unit) -> unit
 (** [on_host_exchange f] makes the next load that links host code call [f a]
     once, [a] being the new link's first address, after the load found no link

@@ -132,7 +132,9 @@ type op =
   | Kcopy of { dev : int; src : loc; dst : loc; bytes : int }
   | Pcopy of { dev : int; copy : copy }
   | Move of copy
+  | Empty of { dev : int }  (* A submission of no parts. *)
 
+(* With [loop], the steps run in a loop of one trip. *)
 type case = {
   mem_dev : int array;
   two : bool array;
@@ -140,6 +142,7 @@ type case = {
   in_dev : int array;
   inputs : string array;
   ops : op list;
+  loop : bool;
 }
 
 let pp_loc ppf = function
@@ -160,12 +163,14 @@ let pp_op ppf = function
         bytes
   | Pcopy { dev; copy } -> Format.fprintf ppf "copy part@%d %a" dev pp_copy copy
   | Move copy -> Format.fprintf ppf "move %a" pp_copy copy
+  | Empty { dev } -> Format.fprintf ppf "no part@%d" dev
 
 let pp_case ppf c =
-  Format.fprintf ppf "memory on [%s] two [%s]; inputs on [%s]; [%a]"
+  Format.fprintf ppf "memory on [%s] two [%s]; inputs on [%s]; %s[%a]"
     (String.concat ";" (Array.to_list (Array.map string_of_int c.mem_dev)))
     (String.concat ";" (Array.to_list (Array.map string_of_bool c.two)))
     (String.concat ";" (Array.to_list (Array.map string_of_int c.in_dev)))
+    (if c.loop then "a loop of " else "")
     (Format.pp_print_list ~pp_sep:(fun ppf () -> Format.fprintf ppf "; ") pp_op)
     c.ops
 
@@ -229,6 +234,7 @@ let gen_case =
           let+ dev = dev and+ copy = copy in
           Pcopy { dev; copy } );
         (2, map (fun c -> Move c) copy);
+        (1, map (fun dev -> Empty { dev }) dev);
       ]
   in
   let bytes = string_of ~size:(constant size) char in
@@ -237,8 +243,9 @@ let gen_case =
   and+ init = array ~size:(constant 3) bytes
   and+ in_dev = array ~size:(constant 2) dev
   and+ inputs = array ~size:(constant 2) bytes
-  and+ ops = list ~size:(int_range 1 6) op in
-  { mem_dev; two; init; in_dev; inputs; ops }
+  and+ ops = list ~size:(int_range 1 6) op
+  and+ loop = frequency [ (3, constant false); (1, constant true) ] in
+  { mem_dev; two; init; in_dev; inputs; ops; loop }
 
 let gen_case = Gen.with_pp pp_case gen_case
 
@@ -268,7 +275,7 @@ let copy_ints c =
       | Pcopy { copy = { src_at; dst_at; _ }; _ } | Move { src_at; dst_at; _ }
         ->
           (if w land 1 = 0 then src_at else dst_at) / 2
-      | Fill _ | Kcopy _ -> 0)
+      | Fill _ | Kcopy _ | Empty _ -> 0)
 
 (* The device that holds [l]: a move runs on its source's, whose copy engine
    reaches the other device's memory. *)
@@ -312,7 +319,9 @@ let describe c =
             dst_offset = copy_offset ~per_run ((2 * i) + 1) dst_at;
             length;
           }
+    | Empty { dev } -> submit dev [||]
   in
+  let steps = Iarray.of_list (List.mapi step c.ops) in
   let a, b = Lazy.force hidden in
   {
     G.devices = [| Rig.arch a; Rig.arch b |];
@@ -331,7 +340,10 @@ let describe c =
       Iarray.map
         (fun device -> { G.device; bytes = size })
         (Iarray.of_array c.in_dev);
-    steps = Iarray.of_list (List.mapi step c.ops);
+    steps =
+      (if c.loop then
+         [| Loop { trips = Fixed 1; trip = None; flag = None; body = steps } |]
+       else steps);
   }
 
 (* The model: memory of two copies is one per run parity. *)
@@ -356,17 +368,65 @@ let model c =
             done
         | Kcopy { src; dst; bytes; _ } ->
             Bytes.blit (cell src) 0 (cell dst) 0 bytes
-        | Pcopy { copy = c; _ } | Move c -> copy c)
+        | Pcopy { copy = c; _ } | Move c -> copy c
+        | Empty _ -> ())
       c.ops;
     Array.map Bytes.to_string inputs
 
 (* The device each op runs on, none for a move of no bytes, which the host
    makes. *)
 let op_dev c = function
-  | Fill { dev; _ } | Kcopy { dev; _ } | Pcopy { dev; _ } -> Some dev
+  | Fill { dev; _ } | Kcopy { dev; _ } | Pcopy { dev; _ } | Empty { dev } ->
+      Some dev
   | Move { length = 0; _ } -> None
   | Move { src; _ } -> Some (loc_dev c src)
 
+(* The device whose submission of parts an op is, which [time] times. *)
+let timed_dev = function
+  | Fill { dev; _ } | Kcopy { dev; _ } | Pcopy { dev; _ } -> Some dev
+  | Move _ | Empty _ -> None
+
+(* A run answers the last point of each device that ran, in their order. *)
+let ends_law c ds points =
+  let ran =
+    List.filter
+      (fun d -> List.exists (fun op -> op_dev c op = Some d) c.ops)
+      [ 0; 1 ]
+  in
+  equal ~msg:"one point per device that ran, in their order" (list string)
+    (List.map
+       (fun d -> strf "%s:%d" (Rig.name ds.(d)) (Rig.submitted ds.(d)))
+       ran)
+    (List.map
+       (fun pt -> Format.asprintf "%a" Rig.Point.pp pt)
+       (Array.to_list points))
+
+(* A time has a duration per step: [0] for a move and a submission of no
+   parts, and for the others, which Polled times on the host's clock, at
+   least [0] and on each device at most the host's time around the call
+   together. *)
+let times_law c time =
+  let t0 = Rig.Profile.now () in
+  let times = time () in
+  let window = Rig.Profile.now () - t0 in
+  let ops = Array.of_list c.ops in
+  let steps = List.init (Array.length ops) Fun.id in
+  equal ~msg:"one per step" int (Array.length ops) (Array.length times);
+  let untimed = List.filter (fun i -> timed_dev ops.(i) = None) steps in
+  equal ~msg:"a move's and a submission's of no parts" (list int)
+    (List.map (fun _ -> 0) untimed)
+    (List.map (fun i -> times.(i)) untimed);
+  for d = 0 to 1 do
+    let mine = List.filter (fun i -> timed_dev ops.(i) = Some d) steps in
+    List.iter
+      (fun i -> at_least ~msg:(strf "step %d's time" i) int ~than:0 times.(i))
+      mine;
+    at_most ~msg:(strf "device %d's times together" d) int ~than:window
+      (List.fold_left (fun s i -> s + times.(i)) 0 mine)
+  done
+
+(* Runs 0 and 2 are times, which a loop refuses before any work: a run
+   runs it then. *)
 let model_law c =
   let a, b = Lazy.force hidden in
   let ds = [| a; b |] in
@@ -374,21 +434,19 @@ let model_law c =
   let expect = model c in
   for n = 0 to 2 do
     let xs = Array.map2 (fun d s -> of_bytes ds.(d) s) c.in_dev c.inputs in
-    let points =
-      G.run p { inputs = xs; ints = copy_ints c; step_points = G.step_points p }
-    in
-    let ran =
-      List.filter
-        (fun d -> List.exists (fun op -> op_dev c op = Some d) c.ops)
-        [ 0; 1 ]
-    in
-    equal ~msg:"one point per device that ran, in their order" (list string)
-      (List.map
-         (fun d -> strf "%s:%d" (Rig.name ds.(d)) (Rig.submitted ds.(d)))
-         ran)
-      (List.map
-         (fun pt -> Format.asprintf "%a" Rig.Point.pp pt)
-         (Array.to_list points));
+    let f = { inputs = xs; ints = copy_ints c; step_points = G.step_points p } in
+    if n = 1 then ends_law c ds (G.run p f)
+    else if not c.loop then times_law c (fun () -> G.time p f)
+    else begin
+      let before = Array.map Rig.submitted ds in
+      raises_match ~msg:"a loop" (Exn.invalid_arg ~sub:"Rig_program.time")
+        (fun () -> G.time p f);
+      equal ~msg:"no work before the refusal" (array int) before
+        (Array.map Rig.submitted ds);
+      equal ~msg:"the inputs it refused" (array string) c.inputs
+        (Array.map read xs);
+      ends_law c ds (G.run p f)
+    end;
     equal
       ~msg:(strf "the inputs after run %d" n)
       (array string) (expect n) (Array.map read xs)
@@ -403,6 +461,7 @@ let model_law c =
           | Kcopy { src; dst; _ } | Pcopy { copy = { src; dst; _ }; _ }
           | Move { src; dst; _ } ->
               ([ src ], [ dst ])
+          | Empty _ -> ([], [])
         in
         let dev = op_dev c op in
         let seen l =
@@ -421,6 +480,14 @@ let model_law c =
   let moves f = List.exists (function Move m -> f m | _ -> false) c.ops in
   cover "a step follows another device's step" (crossed [] c.ops);
   cover "memory of two copies" (Array.exists Fun.id c.two);
+  cover "a loop refused" c.loop;
+  cover "a time of a submission of no parts"
+    ((not c.loop) && List.exists (function Empty _ -> true | _ -> false) c.ops);
+  cover "a time of both devices' steps"
+    ((not c.loop)
+    && List.for_all
+         (fun d -> List.exists (fun op -> timed_dev op = Some d) c.ops)
+         [ 0; 1 ]);
   cover "an input another device borrows"
     (List.exists
        (function
@@ -464,6 +531,218 @@ let model_law c =
              per_run && src_at + dst_at > 0
          | _ -> false)
        c.ops)
+
+(* Times *)
+
+(* On device 0: a fill of memory 0, a move of it into input 0, a submission
+   of no parts, and a copy part of memory 0's first word into memory 1 at the
+   byte word 0 of the run's ints holds, which a run refuses past memory 1's
+   last word. *)
+let timed_program d =
+  {
+    G.devices = [| Rig.arch d |];
+    ints = 1;
+    memory = [| alloc 0 size; alloc 0 size |];
+    images = [| { device = 0; binary = functions } |];
+    inputs = [| { G.device = 0; bytes = size } |];
+    steps =
+      [|
+        submit 0
+          ~buffers:[| (all 0, Rig.Read_write) |]
+          [| fill ~image:0 ~groups:1 7 |];
+        move (all 0) (Input 0) size;
+        submit 0 [||];
+        submit 0
+          ~buffers:[| (all 0, Rig.Read); (all 1, Rig.Read_write) |]
+          [| pcopy ~dst_offset:[| (G.Int 0, 1) |] 8 |];
+      |];
+  }
+
+(* [timed_program]'s fill and copy part alone, which wait for nothing on the
+   host. *)
+let fill_and_copy d =
+  let t = timed_program d in
+  {
+    t with
+    inputs = [||];
+    steps = [| Iarray.get t.steps 0; Iarray.get t.steps 3 |];
+  }
+
+let timed_frame ?(at = 0) p inputs =
+  { G.inputs; ints = [| at |]; step_points = G.step_points p }
+
+(* A device that times no work has [-1] for each step of parts, and a move
+   and a submission of no parts have [0]. *)
+let test_time_untimed () =
+  let d, _ =
+    P.open_ ~timed:false
+      (strf "program:untimed-%d" (Atomic.fetch_and_add opened 1))
+  in
+  let p = load_ok (timed_program d) [ d ] in
+  equal (array int) [| -1; 0; 0; -1 |]
+    (G.time p (timed_frame p [| B.create d size |]))
+
+(* A profile taken around a time records each timed step's work with the
+   time's own times. *)
+let test_time_profiled () =
+  let d, _ = polled "time-profiled" in
+  let p = load_ok (timed_program d) [ d ] in
+  let times, events =
+    Rig.Profile.take (fun () -> G.time p (timed_frame p [| B.create d size |]))
+  in
+  let spans =
+    List.filter_map
+      (function
+        | Rig.Profile.Work w when Rig.equal w.device d ->
+            Some (w.stop - w.start)
+        | _ -> None)
+      events
+  in
+  mem ~msg:"the fill's time" int times.(0) spans;
+  mem ~msg:"the copy part's time" int times.(3) spans
+
+(* A close of a device whose work a time waits for makes the time raise the
+   loss: the time's sleep holds until the close has lost the device. *)
+let test_time_closed () =
+  let d, dp = polled "time-closed" in
+  let p = load_ok (fill_and_copy d) [ d ] in
+  let sleeping = Atomic.make false in
+  P.before dp "sleep" (fun () ->
+      Atomic.set sleeping true;
+      Rig_support.await "the close's loss" (fun () -> Rig.lost d <> None));
+  let timing = Domain.spawn (fun () -> G.time p (timed_frame p [||])) in
+  Rig_support.await "the time's sleep" (fun () -> Atomic.get sleeping);
+  Rig.close d;
+  raises_match
+    (function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false)
+    (fun () -> Domain.join timing);
+  equal ~msg:"its loss" (option string) (Some "closed") (Rig.lost d)
+
+(* The pairs of times a device holds, against the pairs a time that raised
+   left owed: a time that raises gives its pairs back once their work is
+   done, at the device's next timed submit, and a time that returns gives
+   back its own. Polled runs a time's work when the time waits for it, and
+   the work a raised time left at the next time's wait. *)
+type owed = { mutable reached : int; mutable unreached : int }
+
+let timing = abstract "p" ~release:(fun (d, _) -> Rig.close d)
+
+let pairs_commands =
+  [
+    command "load"
+      (Gen.unit @-> makes timing)
+      (fun () -> { reached = 0; unreached = 0 })
+      (fun () ->
+        let d, _ = polled "pairs" in
+        (d, load_ok (fill_and_copy d) [ d ]));
+    command "time"
+      (timing ^-> returns int)
+      (fun o ->
+        o.reached <- o.unreached;
+        o.unreached <- 0;
+        o.reached)
+      (fun (d, p) ->
+        let times = G.time p (timed_frame p [||]) in
+        Array.iteri
+          (fun i t -> at_least ~msg:(strf "step %d's time" i) int ~than:0 t)
+          times;
+        Rig.time_pairs d);
+    command "time that raises"
+      (timing ^-> returns int)
+      (fun o ->
+        o.reached <- 0;
+        o.unreached <- o.unreached + 1;
+        o.unreached)
+      (fun (d, p) ->
+        raises_match
+          (Exn.invalid_arg ~sub:"a copy of 8 bytes from byte 64")
+          (fun () -> G.time p (timed_frame ~at:size p [||]));
+        equal ~msg:"no pair reused before a settle" (list string) []
+          (P.violations ());
+        Rig.time_pairs d);
+  ]
+
+(* The most groups of a sized fill, and the most groups a core runs in a
+   nanosecond: Polled calls its [fill] once per group, and no core makes more
+   than one call a cycle at 8 GHz. A fill of [large] groups thus takes at least
+   [large / per_ns] ns. *)
+let large = 1 lsl 14
+let per_ns = 8
+
+(* A launch of Polled's [fill] over the groups the run's int [w] holds. *)
+let fill_at w base =
+  G.Launch
+    {
+      image = 0;
+      name = "fill";
+      params = data (String.make 8 '\000' ^ le64 base);
+      refs = [| { G.slot = 0; at = 0; use = Write } |];
+      groups = (G.Int w, G.Fixed 1, G.Fixed 1);
+      threads = (G.Fixed 1, G.Fixed 1, G.Fixed 1);
+      shared = G.Fixed 0;
+    }
+
+(* On device 0: a fill of memory 0, of [large] words, over the groups word 0
+   of the run's ints holds, then a copy part of its first word into memory
+   1. *)
+let sized_fill d =
+  let words = G.Memory { memory = 0; offset = 0; length = 8 * large } in
+  {
+    G.devices = [| Rig.arch d |];
+    ints = 1;
+    memory = [| alloc 0 (8 * large); alloc 0 size |];
+    images = [| { device = 0; binary = functions } |];
+    inputs = [||];
+    steps =
+      [|
+        submit 0 ~buffers:[| (words, Rig.Read_write) |] [| fill_at 0 7 |];
+        submit 0
+          ~buffers:[| (all 0, Rig.Read); (all 1, Rig.Read_write) |]
+          [| pcopy 8 |];
+      |];
+  }
+
+(* Times of one program from two domains each answer their own run's times,
+   within the host's window around their call. A large time's fill is timed,
+   at least [large / per_ns] ns: one that answered another run's times, or
+   left its fill untimed (0), falls short of it, as a fill of one group does
+   unless the machine stalls it. *)
+let shared_device = lazy (fst (polled "time-shared"))
+let shared = abstract "q"
+
+let shared_time ~least = function
+  | Error e -> failf "raised %s" (Printexc.to_string e)
+  | Ok (times, window) ->
+      equal ~msg:"one per step" int 2 (Array.length times);
+      Array.iteri
+        (fun i t -> at_least ~msg:(strf "step %d's time" i) int ~than:0 t)
+        times;
+      at_least ~msg:"the fill's time" int ~than:least times.(0);
+      at_most ~msg:"the times together" int ~than:window
+        (times.(0) + times.(1))
+
+let time_fill groups p =
+  let t0 = Rig.Profile.now () in
+  let times = G.time p (timed_frame ~at:groups p [||]) in
+  (times, Rig.Profile.now () - t0)
+
+let shared_commands =
+  [
+    command "load"
+      (Gen.unit @-> makes shared)
+      (fun () -> ())
+      (fun () ->
+        let d = Lazy.force shared_device in
+        load_ok (sized_fill d) [ d ]);
+    command "time"
+      (shared ^-> judges (pair (array int) int))
+      (fun () -> shared_time ~least:0)
+      (time_fill 1);
+    command "time large"
+      (shared ^-> judges (pair (array int) int))
+      (fun () -> shared_time ~least:(large / per_ns))
+      (time_fill large);
+  ]
 
 (* Holes *)
 
@@ -3947,8 +4226,27 @@ let tests =
         prop
           "a run leaves the bytes of its steps run in order, on any device, \
            copies at the offsets they state, memory of two copies alternating \
-           by run, and answers one point per device that ran"
+           by run, and answers one point per device that ran; a time does the \
+           same and answers each step's time within its window, or refuses a \
+           loop before any work"
           gen_case model_law;
+      ];
+    group ~timeout "times"
+      [
+        test
+          "a device that times nothing has -1 for a step of parts, and a move \
+           and no parts have 0"
+          test_time_untimed;
+        test "a profile around a time records the time's own times"
+          test_time_profiled;
+        test "a close while a time waits makes it raise the loss"
+          test_time_closed;
+        stateful ~steps:8
+          "a time gives back its pairs, and one that raised gives them back \
+           once their work is done"
+          pairs_commands;
+        stateful ~domains:2 "times of one program from two domains"
+          shared_commands;
       ];
     group ~timeout "holes"
       [

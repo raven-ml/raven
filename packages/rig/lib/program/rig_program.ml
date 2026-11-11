@@ -1105,8 +1105,15 @@ type prepared = {
 }
 
 type lstep =
-  | Lsubmit of { spec : submit; copies : prepared array; index : int }
-    (* [index] numbers the [Submit] steps in step order. *)
+  | Lsubmit of {
+      spec : submit;
+      copies : prepared array;
+      index : int;
+      step : int;
+    }
+    (* [index] numbers the [Submit] steps in step order, and [step] is the
+       index among the description's steps of the step, or of the loop that
+       holds it. *)
   | Lmove of {
       src : slot;
       src_offset : (known * int) array;
@@ -1631,7 +1638,7 @@ let rec lstep p next i = function
       let copies = Array.init n (fun k -> submission p i k s) in
       let index = !next in
       incr next;
-      Lsubmit { spec = s; copies; index }
+      Lsubmit { spec = s; copies; index; step = i }
   | Move { src; src_offset; dst; dst_offset; length } ->
       (* An offset names no leaf, so its terms are those of every copy. *)
       let terms o =
@@ -2010,8 +2017,9 @@ let set_last (p : here) d point =
 (* The program's lock admits one run at a time, so the step's run is free
    and is its submission's one run, which a take returns: a submit frees it
    as it returns or raises, and a run that raises frees every step's run
-   ([release_runs]). *)
-let submit_step p k waits (spec : submit) copies index =
+   ([release_runs]). With a [timer], a run of [time]'s, the submit is timed
+   as its [step]. *)
+let submit_step p timer k waits (spec : submit) copies index step =
   let q = copies.(if Array.length copies = 2 then k else 0) in
   let d = spec.device in
   (match
@@ -2023,7 +2031,11 @@ let submit_step p k waits (spec : submit) copies index =
       Sub.Run.release q.srun;
       raise e);
   let waits = if p.ran.(d) then None else waits in
-  match Rig.submit ?waits q.srun ~buffers:q.buffers with
+  match
+    match timer with
+    | None -> Rig.submit ?waits q.srun ~buffers:q.buffers
+    | Some t -> Rig.Timer.submit t step ?waits q.srun ~buffers:q.buffers
+  with
   | point ->
       unpass q;
       set_last p d point;
@@ -2159,10 +2171,11 @@ let flag_holds p k (slot, at) =
   B.blit_to_bytes b first p.flag 0 1;
   Bytes.get p.flag 0 <> '\000'
 
-let rec exec (p : here) k waits = function
+let rec exec (p : here) timer k waits = function
   | Lmove { src; src_offset; dst; dst_offset; boxes } ->
       move_step p k waits ~src ~src_offset ~dst ~dst_offset boxes
-  | Lsubmit { spec; copies; index } -> submit_step p k waits spec copies index
+  | Lsubmit { spec; copies; index; step } ->
+      submit_step p timer k waits spec copies index step
   | Lloop { trips; trip; flag; body } ->
       (* A loop without closures: a run allocates only its answer. *)
       let n = run_value p k trips.(k) in
@@ -2172,7 +2185,7 @@ let rec exec (p : here) k waits = function
       do
         (match trip with None -> () | Some w -> set_trip p k w !i);
         for s = 0 to Array.length body - 1 do
-          exec p k waits body.(s)
+          exec p timer k waits body.(s)
         done;
         incr i
       done
@@ -2194,7 +2207,7 @@ let ends (p : here) =
     a
   end
 
-let run_steps ~waits (p : here) (f : frame) =
+let run_steps ~waits ~timer (p : here) (f : frame) =
   bind p f;
   let k = p.runs land 1 in
   p.runs <- p.runs + 1;
@@ -2208,7 +2221,7 @@ let run_steps ~waits (p : here) (f : frame) =
   done;
   Array.fill p.ran 0 (Array.length p.ran) false;
   for s = 0 to Array.length p.steps - 1 do
-    exec p k waits p.steps.(s)
+    exec p timer k waits p.steps.(s)
   done;
   ends p
 
@@ -2243,7 +2256,7 @@ let lock m =
    answer. *)
 let run_here ~waits (p : here) (f : frame) =
   lock p.lock;
-  match run_steps ~waits p f with
+  match run_steps ~waits ~timer:None p f with
   | points ->
       unbind p;
       Mutex.unlock p.lock;
@@ -2253,6 +2266,42 @@ let run_here ~waits (p : here) (f : frame) =
       Array.iter release_runs p.steps;
       Mutex.unlock p.lock;
       raise e
+
+(* Timing *)
+
+let is_loop = function Loop _ -> true | Submit _ | Move _ -> false
+
+(* Refuses a program with a loop, a step of which a run may submit once per
+   trip, before any work. *)
+let check_unlooped (t : t) =
+  if Iarray.exists is_loop t.steps then
+    invalid_arg "Rig_program.time: a program with a loop"
+
+(* [run_here] with each step's submit timed, once the run's work is done: its
+   ends and its steps' times. Without a loop each step submits at most once.
+   The lock covers the steps alone, so another run of [p] may start while
+   this one's work is waited for. *)
+let time_here ~waits (p : here) (f : frame) =
+  let timer = Rig.Timer.make (Iarray.length p.t.steps) in
+  lock p.lock;
+  match run_steps ~waits ~timer:(Some timer) p f with
+  | exception e ->
+      unbind p;
+      Array.iter release_runs p.steps;
+      Mutex.unlock p.lock;
+      Rig.Timer.drop timer;
+      raise e
+  | ends -> (
+      unbind p;
+      Mutex.unlock p.lock;
+      match
+        Array.iter Rig.Point.wait ends;
+        Rig.Timer.read timer
+      with
+      | times -> (ends, times)
+      | exception e ->
+          Rig.Timer.drop timer;
+          raise e)
 
 (* Programs of another machine *)
 
@@ -2461,6 +2510,18 @@ let run_there ~waits p (f : frame) =
 
 let run ?waits p f =
   match p with Here p -> run_here ~waits p f | There p -> run_there ~waits p f
+
+let time ?waits p f =
+  match p with
+  | Here p ->
+      check_unlooped p.t;
+      snd (time_here ~waits p f)
+  | There p ->
+      check_unlooped p.t;
+      invalid_arg
+        ("Rig_program.time: a program of "
+        ^ Rig.name (Rig.host_of p.devices.(0))
+        ^ ", another machine's host")
 
 let step_points = function Here { t; _ } | There { t; _ } -> fresh_points t
 

@@ -265,6 +265,24 @@ let profile =
         ignore
           (Rig.Profile.take (fun () -> Rig.Point.wait (once ~buffers run))))
 
+(* A submission with a part timed outside a profile: its hand-over takes a
+   time pair that the timer alone holds, and the timer's read settles it once
+   the value is reached, or the timer gives it back where the submit
+   raised. *)
+let time =
+  op "time" (fun d ->
+      let arg = B.create d 8 in
+      let s = Sub.make d [| bump |] in
+      let run = Sub.take s and buffers = [| arg |] in
+      Sub.Run.int64 run (Sub.block s 0) 0 0L;
+      fun _ ->
+        let t = Rig.Timer.make 1 in
+        match Rig.Timer.submit t 0 run ~buffers with
+        | _ -> ignore (Rig.Timer.read t)
+        | exception e ->
+            Rig.Timer.drop t;
+            raise e)
+
 (* The memory a function reaches never returns to the cache, so each attempt
    makes its own. *)
 let dma =
@@ -288,6 +306,7 @@ let ops =
     wait_transport;
     keep;
     profile;
+    time;
     dma;
   ]
 

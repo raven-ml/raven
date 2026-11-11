@@ -371,7 +371,7 @@ val capability : t -> Rig_amd_abi.Capability.t
     its packet. rig gives [submit] no waits where the compute queue cannot
     wait, as the device's facts state ({!Rig_edge.type-facts}).
 
-    {b Times.} While a profile is taken, each queue a value's work enters
+    {b Times.} For a value rig times, each queue the value's work enters
     writes the GPU's clock after the value's waits, and the queue that
     releases the value writes it before the release: on ["COMPUTE:0"] once
     the dispatches before it have completed (PM4's [COPY_DATA] of the
@@ -415,7 +415,7 @@ val capability : t -> Rig_amd_abi.Capability.t
     shift every time by the move: a conversion that puts a value's start
     before its [submit], or its end after the conversion, by more than
     1 ms leaves both its times [0], as for work the device cannot time, so
-    a profile records no [Work] for it ({!Rig.Profile.type-event}). A late
+    rig has no times for it ({!Rig.Profile.type-event}). A late
     read of the source, as KFD's under preemption, does the same. With
     {!Round_trip} the device measures at open only, and its times drift
     from the host's clock at the clock's rate error since open.
@@ -442,7 +442,7 @@ val capability : t -> Rig_amd_abi.Capability.t
 (** {2:measures Measures}
 
     A device made with [measure] ({!make}) counts [measure.counters] around
-    each launch of a value a profile times. It takes the GPU's stable power
+    each launch of a value rig times. It takes the GPU's stable power
     state ([stable_power] of {!type-path}) and holds it as its path states,
     so every process's work on the GPU runs at its stable clocks
     meanwhile. Of the 8 SQ counters a GFX12 SQ counts at once, it counts at
@@ -454,8 +454,8 @@ val capability : t -> Rig_amd_abi.Capability.t
     stored. Its submission's [Work] covers both. A copy part of the same
     value runs on the copy queue and waits only for what its [after] names,
     so it may run during the launch, and a counter of cycles or waits may
-    then include its contention for memory. Work submitted while no profile is
-    taken is not measured.
+    then include its contention for memory. Work rig does not time is not
+    measured.
 
     Its [Counters] event has the launch's own start and stop and each
     counter's values as {!Rig_amd_abi.Counter.t} lays them out. The values

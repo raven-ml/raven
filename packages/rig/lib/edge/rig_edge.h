@@ -190,9 +190,10 @@ typedef int rig_room_fn(void *self, int nwaits, const struct rig_part *parts,
    functions: [submit]). [args] holds the launches' and fills' blocks, of
    which the driver writes only their places (rig_place), and [slots] the
    address of each of the run's [nslots] buffers, as the device's work
-   addresses it, for their refs. [times] is NULL unless a profile is being
-   taken; otherwise the driver stores at [times[0]] and [times[1]] the
-   times of rig_now_ns at which [v]'s work started and ended on the device.
+   addresses it, for their refs. [times] is NULL unless rig times [v]'s
+   work, for a profile or for a run's times; otherwise the driver stores at
+   [times[0]] and [times[1]] the times of rig_now_ns at which [v]'s work
+   started and ended on the device.
    A failure sets [*failure] to the driver's message, which must live as
    long as the device. */
 typedef int rig_submit_fn(void *self, uint64_t v, const struct rig_wait *waits,

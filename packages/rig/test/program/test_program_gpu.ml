@@ -4,9 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* A description on each GPU driver the machine has that runs launches: it
-   leaves the bytes the same submission leaves when made by hand. Kernels come
-   from the driver's conformance fixtures
-   (Rig_gpu_support.Conformance.launch_binary). *)
+   leaves the bytes the same submission leaves when made by hand, and its time
+   lies within the host's times around it. Kernels come from the driver's
+   conformance fixtures (Rig_gpu_support.Conformance.launch_binary). *)
 
 open Windtrap
 module B = Rig.Buffer
@@ -112,14 +112,15 @@ let described d binary =
       |];
   }
 
+let launches (module Gpu : Gpu) =
+  match Gpu.launch_binary () with
+  | Some b -> b
+  | None -> skip ~reason:"the driver runs no launch" ()
+
 let same_bytes (module Gpu : Gpu) () =
   Gpu.with_ @@ fun t ->
   let d = t.d in
-  let binary =
-    match Gpu.launch_binary () with
-    | Some b -> b
-    | None -> skip ~reason:"the driver runs no launch" ()
-  in
+  let binary = launches (module Gpu) in
   let image = Result.get_ok (Rig.Image.load d binary) in
   let x = B.create d (4 * words) and y = B.create d (4 * words) in
   by_hand d image x y;
@@ -137,6 +138,36 @@ let same_bytes (module Gpu : Gpu) () =
   equal string ~msg:"ids, described" (get x) (get x');
   equal string ~msg:"twice, described" (get y) (get y')
 
+(* A time of the described program has its step's duration, which lies within
+   the host's times around the call up to the error its driver states
+   (Gpu.clock_error), or [-1] where the driver timed none of the step's work.
+   Of four times, at least one has the step timed. *)
+let timed (module Gpu : Gpu) () =
+  let opened = Rig.Profile.now () in
+  Gpu.with_ @@ fun t ->
+  let d = t.d in
+  let binary = launches (module Gpu) in
+  let p =
+    require_ok ~pp:Format.pp_print_string
+      (G.load (described d binary) [| d |])
+  in
+  let time () =
+    let inputs = Array.init 2 (fun _ -> B.create d (4 * words)) in
+    let t0 = Rig.Profile.now () in
+    let times =
+      G.time p { inputs; ints = [||]; step_points = G.step_points p }
+    in
+    let t1 = Rig.Profile.now () in
+    let error = Gpu.clock_error ~since:(t1 - opened) in
+    equal int ~msg:"one per step" 1 (Array.length times);
+    at_least int ~msg:"the step's time" ~than:(-1) times.(0);
+    at_most int ~msg:"the step's time" ~than:(t1 - t0 + (2 * error)) times.(0);
+    times.(0)
+  in
+  let times = List.init 4 (fun _ -> time ()) in
+  at_least int ~msg:"the most of four times" ~than:0
+    (List.fold_left max (-1) times)
+
 let gpus : (module Gpu) list =
   [
     (module Rig_metal_support);
@@ -148,11 +179,18 @@ let gpus : (module Gpu) list =
 let () =
   exit
     (run "rig.program.gpu"
-       (List.map
+       (List.concat_map
           (fun (module Gpu : Gpu) ->
-            test ~timeout:120.
-              (Gpu.class_
-             ^ ": a description leaves the bytes of its submission made by hand"
-              )
-              (same_bytes (module Gpu)))
+            [
+              test ~timeout:120.
+                (Gpu.class_
+               ^ ": a description leaves the bytes of its submission made by \
+                  hand")
+                (same_bytes (module Gpu));
+              test ~timeout:120.
+                (Gpu.class_
+               ^ ": a time has its step's duration, within the host's times \
+                  around it")
+                (timed (module Gpu));
+            ])
           gpus))

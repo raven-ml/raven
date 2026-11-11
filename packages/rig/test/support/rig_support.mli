@@ -103,7 +103,7 @@ module Polled : sig
       committed submissions, and a sleep that finds only uncommitted ones
       queued, its word unmoved, raises [Failure "Polled: nothing committed"], as
       a wait for work nobody committed would hang. Without [timed] (defaults
-      to [true]) its work leaves the times a profile gives it [0], as a
+      to [true]) its work leaves the times rig gives it [0], as a
       driver's that cannot time its work. With [hang_ms] its facts
       bound hangs to that many milliseconds (defaults to no bound). Its facts
       declare [capability] (defaults to [()] under {!capability_key}), and

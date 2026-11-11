@@ -368,10 +368,10 @@ val commit : device -> int -> unit
 
 val settle : device -> int -> bool
 (** [settle d v] is [true] iff [d]'s driver wrote the times of [d]'s value
-    [v], which its submit was given while a profile was taken. It has the
-    driver write them, waiting while another call is submitting or
-    committing on [d]. [v] must be reached. A settle that fails loses [d];
-    on a lost device it does nothing and is [false]. *)
+    [v], whose submit timed it. It has the driver write them, waiting while
+    another call is submitting or committing on [d]. [v] must be reached. A
+    settle that fails loses [d]; on a lost device it does nothing and is
+    [false]. *)
 
 val signaled : device -> int
 (** [signaled d] is {!Rig.signaled}[ d]. *)
@@ -421,10 +421,10 @@ val measures :
   (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t ->
   bool
 (** [measures d v out] is [true] iff [d]'s driver wrote into [out], zeroed,
-    the measures of [d]'s value [v], which its submit was given while a
-    profile was taken ([measures] of {!Rig_edge.section-calls}), or measures
-    nothing. It waits as {!settle} does. [v] must be reached. A call that
-    fails loses [d]; on a lost device it does nothing and is [false]. *)
+    the measures of [d]'s value [v], whose submit timed it ([measures] of
+    {!Rig_edge.section-calls}), or measures nothing. It waits as {!settle}
+    does. [v] must be reached. A call that fails loses [d]; on a lost device
+    it does nothing and is [false]. *)
 
 val forget_measures : device -> int -> bool
 (** [forget_measures d v] has [d]'s driver free its measures of [v], which no

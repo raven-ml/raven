@@ -139,6 +139,9 @@ let open_io ?machine name = Dev.open_io ~machine:(Dev.machine_of machine) name
 
 let software = Software.open_
 
+module Timer = Submission.Timer
+
+let time_pairs = Submission.time_pairs
 let on_host_exchange = Host_code.on_exchange
 let x86_levels = Cpu.x86_levels
 

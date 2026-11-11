@@ -63,7 +63,9 @@
     part. It leaves each profile an entry ({!Profile.pending}) that the
     profile's {!Profile.take} reads once the value is reached: its [Work]
     and a copy per copy part, with the driver's times, or, where the driver
-    wrote none, from the submit to that read. *)
+    wrote none, from the submit to that read. A submit of a {!Timer}'s step
+    asks for the times too, and the step and the entries share the value's
+    pair of times, which the last of them to end gives back. *)
 
 open Def
 
@@ -203,6 +205,29 @@ val take : t -> Run.t
 
 val submit : ?waits:int array -> Run.t -> buffers:buffer array -> int
 (** [submit ~waits r ~buffers] is {!Rig.submit}[ ~waits r ~buffers]. *)
+
+(** {!Rig.Timer}. *)
+module Timer : sig
+  type t
+  (** {!Rig.Timer.t}. *)
+
+  val make : int -> t
+  (** [make n] is {!Rig.Timer.make}[ n]. *)
+
+  val submit :
+    t -> int -> ?waits:int array -> Run.t -> buffers:buffer array -> int
+  (** [submit t i ~waits r ~buffers] is {!Rig.Timer.submit}[ t i ~waits r
+      ~buffers]. *)
+
+  val read : t -> int array
+  (** [read t] is {!Rig.Timer.read}[ t]. *)
+
+  val drop : t -> unit
+  (** [drop t] is {!Rig.Timer.drop}[ t]. *)
+end
+
+val time_pairs : device -> int
+(** [time_pairs d] is {!Rig.time_pairs}[ d]. *)
 
 val run_copy : device -> waits:int array -> src:buffer -> dst:buffer -> int
 (** [run_copy d ~waits ~src ~dst] submits a copy of [src] into [dst] on [d]'s

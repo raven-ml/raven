@@ -234,7 +234,7 @@ val capability : t -> Rig_cuda_abi.t
     timed submit that measures blocks for its round trips, tens of
     microseconds, and one timed 1,024 values after an unconverted value
     waits for that value.
-    While a profile is taken, [rig_cuda_submit] records a timing event on
+    For a value rig times, [rig_cuda_submit] records a timing event on
     each stream a value's work enters, after the value's waits, and one
     after its work on the stream it ends on, into one of 1,024 stamps,
     whose events it makes at the stamp's first use. It waits for the value

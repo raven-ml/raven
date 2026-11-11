@@ -231,6 +231,7 @@ external times_owe : Def.c -> int -> int -> unit = "caml_rig_times_owe"
 
 external times_due : Def.c -> int = "caml_rig_times_due" [@@noalloc]
 external times_give : Def.c -> int -> unit = "caml_rig_times_give" [@@noalloc]
+external times_taken : Def.c -> int = "caml_rig_times_taken" [@@noalloc]
 
 (* A launch's or a fill's block, as the setters' C reads it: the id of its
    submission's C form, where it starts in a run, its parameter bytes, and the
@@ -1507,16 +1508,59 @@ let rec give_owed d =
     give_owed d
   end
 
-(* The holds of a time pair, one per profile's entry, and whether a read
-   settled its value, after which its driver writes it no more. *)
-type holds = { mutable left : int; [@atomic] mutable settled : bool [@atomic] }
+(* A timed value of [device] and its time pair, [-1] where its submit took
+   none, which its holders share: an entry of each profile taken at its
+   submit, and the step of a timer that timed it. [left] counts the holders
+   that have not dropped it, [settled] whether a read settled the value,
+   after which its driver writes the pair no more, and [measured] whether
+   its driver measures its launches. *)
+type timed = {
+  device : device;
+  value : int;
+  pair : int;
+  measured : bool;
+  mutable left : int [@atomic];
+  mutable settled : bool [@atomic];
+}
 
-(* Gives back the time pair [pair] of the value [v] of the device whose C
-   record is [c], once [h]'s last hold ended: at once if a read settled [v],
-   and otherwise owed, since the device may still write it, until
-   [give_owed] finds [v] reached. Allocates nothing. *)
-let give_pair c h v pair =
-  if pair >= 0 then if h.settled then times_free c pair else times_owe c pair v
+(* What a timer's step holds while it has no timed value. *)
+let nothing =
+  {
+    device = Dev.host;
+    value = 0;
+    pair = -1;
+    measured = false;
+    left = 0;
+    settled = false;
+  }
+
+(* Gives back [x]'s time pair: at once if a read settled its value, and
+   otherwise owed, since the device may still write it, until [give_owed]
+   finds the value reached. Allocates nothing. *)
+let give_pair x =
+  if x.pair >= 0 then
+    let c = x.device.live.c in
+    if x.settled then times_free c x.pair else times_owe c x.pair x.value
+
+(* Ends one hold of [x]. The last gives back its pair and has its driver
+   forget its measures. *)
+let drop_timed x =
+  if Atomic.Loc.fetch_and_add [%atomic.loc x.left] (-1) = 1 then begin
+    give_pair x;
+    if x.measured then ignore (Dev.forget_measures x.device x.value)
+  end
+
+(* The times [x]'s driver wrote for its value, which its device reached,
+   [(0, 0)] where it timed nothing or the submit took no pair. It settles the
+   value first. Raises [Lost] if the settle failed or found the device
+   lost. *)
+let read_timed x =
+  if x.pair < 0 then (0, 0)
+  else begin
+    if not (Dev.settle x.device x.value) then Dev.raise_lost x.device;
+    x.settled <- true;
+    times_read x.device.live.c x.pair
+  end
 
 (* Reads into [prof] the measures of [s]'s value [v] from its driver: a
    [Counters] per measured launch, its times within [work]'s where the work
@@ -1562,27 +1606,15 @@ let counters s prof v work =
     Profile.add [ prof ] (Unmeasured { device; time; runs = !unmeasured })
 
 (* Leaves to each profile of [t.ps] an entry that reads into it the work of
-   [s]'s value [p] and a copy per move of [t.moves] once [p] is reached, from
-   the time pair [pair] its driver wrote, which the last entry to end gives back
-   ([give_pair]). A driver that left the pair 0, or no pair, timed nothing: no
-   work, and the copies run from [t.asked] to when the host saw [p] reached, now
-   if the device ran the work in its submit, and otherwise at the read. A settle
-   that failed or found the device lost records nothing and raises [Lost]. An
-   asynchronous exception in the call may leave the pair held by profiles that
-   never took the entry: the pair is then never given back, and never reused,
-   as rig.mli allows of the memory of an interrupted call. *)
-let record s (lane, name) { ps; moves; asked } p pair =
+   [s]'s value [p], [x]'s value, and a copy per move of [t.moves] once [p] is
+   reached, from the time pair its driver wrote. A driver that left the pair
+   0, or no pair, timed nothing: no work, and the copies run from [t.asked] to
+   when the host saw [p] reached, now if the device ran the work in its
+   submit, and otherwise at the read. A settle that failed or found the device
+   lost records nothing and raises [Lost]. *)
+let record s (lane, name) { ps; moves; asked } p x =
   let device = s.dev in
-  let c = device.live.c and value = Point.value p in
   let seen = if Dev.is_done p then Profile.now () else -1 in
-  let h = { left = List.length ps; settled = false } in
-  let measured = device.counters <> [] && Array.length s.launches > 0 in
-  let drop () =
-    if Atomic.Loc.fetch_and_add [%atomic.loc h.left] (-1) = 1 then begin
-      give_pair c h value pair;
-      if measured then ignore (Dev.forget_measures device value)
-    end
-  in
   let read prof =
     let copies start stop =
       Array.iter
@@ -1591,34 +1623,59 @@ let record s (lane, name) { ps; moves; asked } p pair =
             (Copy { src; dst; bytes; point = Some p; start; stop }))
         moves
     in
-    if not (pair < 0 || Dev.settle device value) then Dev.raise_lost device;
-    h.settled <- true;
-    match if pair < 0 then (0, 0) else times_read c pair with
+    match read_timed x with
     | 0, 0 ->
         copies asked (if seen >= 0 then seen else Profile.now ());
-        if measured then counters s prof value None
+        if x.measured then counters s prof x.value None
     | start, stop ->
         Profile.add [ prof ]
           (Work { point = p; device; lane; name; start; stop });
         copies start stop;
-        if measured then counters s prof value (Some (start, stop))
+        if x.measured then counters s prof x.value (Some (start, stop))
   in
-  let e = { Profile.device; value; read; drop } in
-  Profile.pend ps e
+  let drop () = drop_timed x in
+  Profile.pend ps { Profile.device; value = x.value; read; drop }
 
-(* The taking of a submit of [s] with [buffers], which first gives back
-   the device's owed pairs it can. The last profile may stop between the two
-   reads: the work is then untimed, since no entry would give its time pair
-   back. *)
-let taking s buffers =
+(* Leaves the time pair [pair] of [s]'s value [p] to its holders: an entry of
+   each profile of [t.ps] and, with [timer = Some (steps, i)], step [i] of
+   [steps], which drops the value the step held. The last to drop it gives it
+   back. An asynchronous exception in the call may leave the pair held by
+   holders that never took it: the pair is then never given back, and never
+   reused, as rig.mli allows of the memory of an interrupted call. *)
+let hold s span t p pair timer =
+  let device = s.dev in
+  let x =
+    {
+      device;
+      value = Point.value p;
+      pair;
+      measured = device.counters <> [] && Array.length s.launches > 0;
+      left = List.length t.ps + Bool.to_int (Option.is_some timer);
+      settled = false;
+    }
+  in
+  (match timer with
+  | None -> ()
+  | Some (steps, i) ->
+      let old = steps.(i) in
+      steps.(i) <- x;
+      if old != nothing then drop_timed old);
+  match t.ps with [] -> () | _ -> record s span t p x
+
+(* The taking of a submit of [s] with [buffers], timed where [timed] or a
+   profile is taken, which first gives back the device's owed pairs it can.
+   The last profile may stop between the two reads: the work is then untimed,
+   unless [timed], since no entry would give its time pair back. *)
+let taking s buffers timed =
   match s.span with
-  | Some _ when Profile.enabled () -> (
-      match Profile.active () with
-      | [] -> untaken
+  | None -> untaken
+  | Some _ -> (
+      match if Profile.enabled () then Profile.active () else [] with
+      | [] when not timed -> untaken
       | ps ->
           give_owed s.dev;
-          { ps; moves = moves_of s buffers; asked = Profile.now () })
-  | _ -> untaken
+          let moves = match ps with [] -> [||] | _ -> moves_of s buffers in
+          { ps; moves; asked = Profile.now () })
 
 external submit_begin : Run.t -> c -> int = "caml_rig_submit_begin"
 external submit_end : Run.t -> call -> unit = "caml_rig_submit_end" [@@noalloc]
@@ -1631,15 +1688,16 @@ external submit_end : Run.t -> call -> unit = "caml_rig_submit_end" [@@noalloc]
    handed over with the work: the device may still write it, and it stays
    with the device. The C submit reads [s]'s C form, the run's blocks, and
    the stamps and templates they name without a reference, with the runtime
-   released: their owners stay reachable until the submit ends. While a
-   profile is taken, a submission with parts times its value. *)
-let submit_run s run buffers waits =
+   released: their owners stay reachable until the submit ends. A
+   submission with parts times its value while a profile is taken, and for
+   [timer]'s step ([hold]). *)
+let submit_run ?timer s run buffers waits =
   let c = submit_begin run s.c in
   if c = -1 then invalid_argf "Rig.%s: another thread took the run" fn;
   if c = -2 then invalid_argf "Rig.%s: another submit is using the run" fn;
   let t = ref untaken in
   match
-    t := taking s buffers;
+    t := taking s buffers (Option.is_some timer);
     call_timed c (!t != untaken);
     (* The submission keeps its fixed and part-owned buffers, so they are live
        and no take writes them: only their devices may be lost. *)
@@ -1652,7 +1710,7 @@ let submit_run s run buffers waits =
       let pair = call_pair c in
       submit_end run c;
       (match s.span with
-      | Some span when !t != untaken -> record s span !t p pair
+      | Some span when !t != untaken -> hold s span !t p pair timer
       | _ -> ());
       ignore (Sys.opaque_identity s.c);
       ignore (Sys.opaque_identity s.fixed);
@@ -1669,13 +1727,13 @@ let submit_run s run buffers waits =
    exception included, frees the run its thread took: [Run.release] does
    nothing to a run the thread does not hold, such as one a raising
    [submit_run] already freed. *)
-let submit ?(waits = [||]) (run : Run.t) ~buffers =
+let submit_with ?timer waits (run : Run.t) ~buffers =
   match
     Dev.check_held "submit";
     let s = run.sub in
     if Dev.is_lost s.dev then Dev.raise_lost s.dev;
     check_count s buffers;
-    submit_run s run buffers waits
+    submit_run ?timer s run buffers waits
   with
   | p -> p
   | exception Never why ->
@@ -1684,6 +1742,56 @@ let submit ?(waits = [||]) (run : Run.t) ~buffers =
   | exception e ->
       Run.release run;
       raise e
+
+let submit ?(waits = [||]) run ~buffers = submit_with waits run ~buffers
+
+module Timer = struct
+  (* By step, the timed value of its submit, or [nothing]. *)
+  type t = timed array
+
+  let make n = Array.make n nothing
+
+  let submit t i ?(waits = [||]) run ~buffers =
+    submit_with ~timer:(t, i) waits run ~buffers
+
+  let drop t =
+    for i = 0 to Array.length t - 1 do
+      let x = t.(i) in
+      if x != nothing then begin
+        t.(i) <- nothing;
+        drop_timed x
+      end
+    done
+
+  (* Each step's value leaves [t] as its wait starts and is dropped however
+     its read ends, so an exception leaves the rest in [t] for [drop]. *)
+  let read t =
+    let times = Array.make (Array.length t) 0 in
+    for i = 0 to Array.length t - 1 do
+      let x = t.(i) in
+      if x != nothing then begin
+        t.(i) <- nothing;
+        match
+          Dev.wait x.device x.value;
+          read_timed x
+        with
+        | 0, 0 ->
+            drop_timed x;
+            times.(i) <- -1
+        | start, stop ->
+            drop_timed x;
+            times.(i) <- stop - start
+        | exception e ->
+            let bt = Printexc.get_raw_backtrace () in
+            drop_timed x;
+            drop t;
+            Printexc.raise_with_backtrace e bt
+      end
+    done;
+    times
+end
+
+let time_pairs (d : device) = times_taken d.live.c
 
 (* Each device's run of one copy from slot 0 into slot 1, which [make]
    places on its copy engine. The submission has no launch or fill, so its
