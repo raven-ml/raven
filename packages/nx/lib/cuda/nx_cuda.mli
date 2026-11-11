@@ -81,9 +81,10 @@
 (** {2:states Logsumexp and Moments}
 
     A [Logsumexp] or a [Moments] reduction of [n] terms runs two passes,
-    each summing in lane order. Let [R = ⌈min (n, 1024) / 16⌉ + 3], the
-    most roundings of a tile's sum a term takes, [T = ⌈log₂ ⌈n / 1024⌉⌉],
-    the depth of the tiles' tree, and [u] the carrier's unit roundoff. The
+    each summing in lane order. Let
+    [R = ⌈min (n, 1024) / 16⌉ + min (3, n - 1)], the most roundings of a
+    tile's sum a term takes, [T = ⌈log₂ ⌈n / 1024⌉⌉], the depth of the
+    tiles' tree, and [u] the carrier's unit roundoff. The
     bounds below hold barring overflow and underflow, to first order in
     [u] and before the rounding into a narrower destination. *)
 
@@ -250,21 +251,26 @@
     {- [S = max 1 (min 16 ⌊r / 16⌋)] where [m] or [n] is at most 4, or the
        outputs, the batch elements times [m n], number at most [2{^18}];}
     {- [S = max 1 (min 16 ⌊r / 256⌋)] otherwise.}}
-    The first range's sum starts from [init], the others' from [+0]. A
-    range adds its products in increasing k, 8 at a time on a matrix unit.
-    The ranges' sums are added in increasing k, and the result rounds once
-    into [dst]. The error factor is [γ(K + 2⌈K/8⌉)]. *)
+    A range adds its products in increasing k, 8 at a time on a matrix
+    unit, in blocks of 256 from its start, each from [+0]: the blocks' sums
+    are added in order. The ranges' sums are added in increasing k, then
+    [init], and the result rounds once into [dst]. A block of [b] products
+    errs as a chain of [b + 2⌈b/8⌉] roundings, so the error factor is
+    [γ(B + 2⌈B/8⌉ + ⌈K/256⌉ + S - 2)], [B = min(K, 256)]. *)
 
 (** {2:fused Fused multiply-adds}
 
     Every other float sum cuts each output's [k] into at most 64 ranges of
     whole spans of 32 terms. How many follows from the call's dtypes and
     extents by a model of its speed, and may differ between the outputs of
-    one call. Each range is summed from [+0] in increasing k, one fused
-    multiply-add a term. The ranges' sums are added in increasing k, then
-    [init], and the result rounds once into [dst]. The error factor is
-    [γ(K + 1 + σ)] for a real accumulator, [σ] its scaled operands, and
-    [γ(2K + 1)] for a complex one. *)
+    one call. Each range is summed in increasing k, one fused multiply-add a
+    term, in blocks of 256 from its start, each from [+0]: the blocks' sums
+    are added in order. The ranges' sums are added in increasing k, then
+    [init], and the result rounds once into [dst]. A term of a sum of [t]
+    so passes at most [d(t) = min(t, 256) + ⌈t/256⌉ + min(64, ⌈t/32⌉) - 2]
+    roundings, and the error factor is [γ(d(K) + σ)] for a real
+    accumulator, [σ] its scaled operands, and [√2 γ(d(2K))] for a complex
+    one, each of whose parts sums [2K] terms. *)
 
 (** {2:windows Windows}
 
@@ -291,8 +297,10 @@
     or [init]'s axes of one kind of stride 0 once, and contracted ones of
     stride 0 past 128 elements as 128 copies. A complex call's [b] is
     copied as each element's 2 x 2 real matrix [[re, -im], [im, re]], twice
-    its bytes. A sum cut into ranges of k holds each range's sums of a tile
-    of outputs. *)
+    its bytes. A sum cut into ranges of k, or whose ranges pass 256 terms,
+    holds a tile of outputs' sums for each range of each tile: for a float
+    sum past 256 terms in one range, about [dst]'s elements in the
+    accumulator's dtype. *)
 
 (** {1:matrices Matrices}
 

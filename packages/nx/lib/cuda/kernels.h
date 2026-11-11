@@ -297,7 +297,9 @@ enum {
    in [s1] ranges of k, the others in [s2], each range a block; the split
    tiles' ranges' sums go to [partials] and [tickets] holds a zero word a
    tile. The mma kernels cut k into [s1] ranges, blocks (tile, range,
-   batch element). NX_CONTRACT_ bits in [flags].
+   batch element). [partials] holds a tile's sums for each block, in
+   block order, where a call splits or a float range passes
+   NX_CONTRACT_BLOCK terms. NX_CONTRACT_ bits in [flags].
 
    Rows segments: a's rows grouped by their ids (ROWS); [desc] a row tile
    each, four words (batch element, group, first, count), [ntiles] of
@@ -338,8 +340,9 @@ enum {
   NX_CONTRACT_Y_VECTORS = 1,
   NX_CONTRACT_K_PAIRS = 2,
   /* An unsegmented FMA call's first range of k sums from init, the others
-     from +0, and init is not added after: with one range, each output is
-     init then its products in increasing k, one fused multiply-add each */
+     from +0, each range one chain, in no blocks, and init is not added
+     after: with one range, each output is init then its products in
+     increasing k, one fused multiply-add each */
   NX_CONTRACT_INIT_FIRST = 4,
   /* An unsegmented FMA call computes no tile whose outputs (i, j) all have
      i < j (LOWER) or all i > j (UPPER), j a complex column on a complex
@@ -355,6 +358,12 @@ enum {
    and an mma kernel's. */
 #define NX_CONTRACT_RUN 32
 #define NX_MMA_RUN 128
+
+/* The most terms a float range's running sum takes from one chain: a
+   longer range sums in blocks of this many from its start, each from +0,
+   added in order into a running sum in the block's slot of [partials]
+   (combine.cuh's fold). */
+#define NX_CONTRACT_BLOCK 256
 
 /* gemv's rows at most, its threads, and the k of a's rows a block holds
    at once. Its dynamic shared memory: a's rows, m x NX_GEMV_STRETCH

@@ -1356,15 +1356,15 @@ let fma_launches b c ~o ~ct ~cx ~k' ~a ~bv ~init ~y ~ystep plans =
           set64 w P.syg ystep;
           set64 w P.sig_ (match init with Some (_, st) -> st | None -> 0)
   in
-  (* The split tiles' partials, the most any window takes, and their
-     tickets. *)
+  (* The partials, a tile's sums for each block, where a call splits or
+     a float range passes a block (combine.cuh's fold), the most any window
+     takes, and the split tiles' tickets. *)
   let bytes = ct_bytes ct in
+  let blocked = ct_float ct && (not o.init_first) && k' > K.contract_block in
   let split_of (p : plan) =
-    let split =
-      (if p.s1 > 1 then p.main * p.s1 else 0)
-      + if p.s2 > 1 then (p.tiles - p.main) * p.s2 else 0
-    in
-    (split * p.i.bm * p.i.bn * bytes, if split > 0 then 4 * p.tiles else 0)
+    let splits = p.s1 > 1 || p.s2 > 1 in
+    ( (if splits || blocked then blocks p * p.i.bm * p.i.bn * bytes else 0),
+      if splits then 4 * p.tiles else 0 )
   in
   let part_bytes = most (fun (_, p) -> fst (split_of p)) in
   let partials = if part_bytes > 0 then take b part_bytes else 0 in
@@ -1401,10 +1401,9 @@ let fma_launches b c ~o ~ct ~cx ~k' ~a ~bv ~init ~y ~ystep plans =
       set32 w P.main p.main;
       set32 w P.s1 p.s1;
       set32 w P.s2 p.s2;
-      if fst (split_of p) > 0 then begin
-        address refs w P.partials ws_slot partials ~write:true;
-        address refs w P.tickets tickets_slot 0 ~write:true
-      end;
+      let part, tickets = split_of p in
+      if part > 0 then address refs w P.partials ws_slot partials ~write:true;
+      if tickets > 0 then address refs w P.tickets tickets_slot 0 ~write:true;
       seg win p w refs;
       let shared = if p.i.ld = 3 then gemv_shared ct ~m:nm else p.i.smem in
       launch b ~kernel:p.i.kernel ~gx:(blocks p) ~threads:p.i.threads ~shared w
@@ -1709,8 +1708,12 @@ let mma b c (kind : K.kind) =
     nb * ceil_div nm sh.bm * ceil_div nn sh.bn
   in
   let most = List.fold_left (fun t w -> Int.max t (tiles w)) 0 ws in
+  (* A tile's sums for each range, where the call splits or a float range
+     passes a block (combine.cuh's fold). *)
+  let blocked = kind <> K.S8 && c.k > K.contract_block in
   let partials =
-    if splits > 1 then take b (most * splits * sh.bm * sh.bn * 4) else 0
+    if splits > 1 || blocked then take b (most * splits * sh.bm * sh.bn * 4)
+    else 0
   in
   if splits > 1 then b.ticket_bytes <- Int.max b.ticket_bytes (4 * most);
   let threads = sh.bm / sh.wm * (sh.bn / sh.wn) * 32 in
@@ -1733,10 +1736,9 @@ let mma b c (kind : K.kind) =
       set32 w P.main (nb * tm * tn);
       set32 w P.s1 splits;
       set32 w P.s2 1;
-      if splits > 1 then begin
+      if splits > 1 || blocked then
         address refs w P.partials ws_slot partials ~write:true;
-        address refs w P.tickets tickets_slot 0 ~write:true
-      end;
+      if splits > 1 then address refs w P.tickets tickets_slot 0 ~write:true;
       launch b ~kernel ~gx:(tm * tn) ~gy:splits ~gz:nb ~threads
         ~shared:(sh.stages * (sh.bm + sh.bn) * sh.bkb)
         w refs)

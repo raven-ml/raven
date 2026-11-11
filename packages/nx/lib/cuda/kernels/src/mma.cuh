@@ -4,30 +4,32 @@
   ---------------------------------------------------------------------------*/
 
 /* The mma kernels: bfloat16 or float16 operands summed in float32, int8 in
-   int32, on mma.sync. An output's accumulator starts from its init (+0
-   without), in the first of the plan's ranges of k (+0 in the others), and
-   each range sums its k in steps of 16 (32 for int8) in increasing k, one
-   mma.sync a step. The unit adds a step's products in groups of 8 (16 for
-   int8, whose sums are exact), each group with the accumulator, aligned to
-   the largest exponent among them in a window of 25 bits, and truncates
-   the group's sum to float32: a group of g products errs by less than
-   (g + 2) u times the sum of the accumulator's and the products'
-   magnitudes, u = 2^-24. The ranges' sums then add in order, s0 + s1 +
-   ..., and the result rounds once to y's dtype.
+   int32, on mma.sync. Each of the plan's ranges of k sums its k in steps
+   of 16 (32 for int8) in increasing k, one mma.sync a step, a float
+   range in blocks of NX_CONTRACT_BLOCK from its start, each from +0, the
+   blocks' sums added in order (combine.cuh's fold). The unit adds a step's
+   products in groups of 8 (16 for int8, whose sums are exact), each group
+   with the accumulator, aligned to the largest exponent among them in a
+   window of 25 bits, and truncates the group's sum to float32: a group of
+   g products errs by less than (g + 2) u times the sum of the
+   accumulator's and the products' magnitudes, u = 2^-24. The ranges' sums
+   then add in order, s0 + s1 + ..., then init, as the accumulator holds
+   it, and the result rounds once to y's dtype.
 
      global --cp.async 16 B (zero past the extents)--> shared ring of
      STAGES k-tiles, 16-byte chunks swizzled --ldmatrix (.trans for an
      operand whose free axis is contiguous)--> fragments --mma.sync-->
-     accumulators (from init) --> combine (splits) --> y
+     accumulators (from +0) --> blocks' sums --> combine (splits) --> + init
+     --> y
 
    Part of contract.cu's translation unit, in its namespace. */
 
 #ifndef NX_CUDA_MMA_CUH
 #define NX_CUDA_MMA_CUH
 
-/* Eight outputs (z, i, j + e), e < 8, of [v], in shared memory, init
-   already in them, into y of the accumulator's dtype, or of bfloat16 or
-   float16 from float32 (the plan casts into another y): with
+/* Eight outputs (z, i, j + e), e < 8, of [v], in shared memory, into y
+   of the accumulator's dtype, or of bfloat16 or float16 from float32 (the
+   plan casts into another y): with
    NX_CONTRACT_Y_VECTORS one 16-byte store, rounding to nearest even as
    nx_dtype.h's encoders do (only a NaN's payload may differ); an output
    at a time by those encoders otherwise. */
@@ -66,11 +68,25 @@ __device__ void store8(const contract_params &p, int z, int i, int j,
   }
 }
 
-/* The block's BM x BN outputs, held in the mma accumulator layout,
-   stored through shared memory ([CAP] bytes at [smem], the pipeline's) in
-   passes of whole warp rows: a pass's warps write their accumulators,
-   then every thread stores 8 outputs at a time. No accumulator is live
-   across a call, and y's stores are whole rows. */
+/* init's element (z, i, j) as the accumulator U holds it: of U's dtype,
+   or bfloat16 or float16 into float32 by nx_dtype.h's decoders (the plan
+   casts another init into U's). */
+template <typename U>
+__device__ __forceinline__ U mma_init(const contract_params &p, int z, int i, int j) {
+  const int64_t at = z * p.si[0] + (int64_t)i * p.si[1] + (int64_t)j * p.si[2];
+  if constexpr (is_float<U>) {
+    if (p.init_dtype == NX_BFLOAT16) return nx_bf16_to_float(((const uint16_t *)p.init)[at]);
+    if (p.init_dtype == NX_FLOAT16) return nx_f16_to_float(((const uint16_t *)p.init)[at]);
+  }
+  return ((const U *)p.init)[at];
+}
+
+/* The block's BM x BN outputs, held in the mma accumulator layout, init
+   added to each output's sum (an output of no products, k = 0, is init
+   itself), stored through shared memory ([CAP] bytes at [smem], the
+   pipeline's) in passes of whole warp rows: a pass's warps write their
+   accumulators, then every thread adds init to 8 outputs and stores them.
+   No accumulator is live across a call, and y's stores are whole rows. */
 template <typename Acc, int BM, int BN, int WM, int WN, int THREADS, int CAP>
 __device__ void mma_epilogue(const contract_params &p, uint8_t *smem,
                                 const Acc (&acc)[WM / 16][WN / 8][4], int z,
@@ -78,6 +94,7 @@ __device__ void mma_epilogue(const contract_params &p, uint8_t *smem,
   constexpr int LD = BN + 8;
   constexpr int ROWS = CAP / (LD * (int)sizeof(Acc)) / WM * WM;
   static_assert(ROWS >= WM, "a pass holds a warp row");
+  typedef typename std::conditional<is_float<Acc>, float, uint32_t>::type U;
   Acc *st = (Acc *)smem;
   const int tid = threadIdx.x, lane = tid & 31, g = lane >> 2, t4 = lane & 3;
 #pragma unroll
@@ -97,60 +114,14 @@ __device__ void mma_epilogue(const contract_params &p, uint8_t *smem,
     const int rows = min(ROWS, BM - base);
     for (int e = tid; e < rows * (BN / 8); e += THREADS) {
       const int r = e / (BN / 8), c = e % (BN / 8) * 8;
-      store8(p, z, m0 + base + r, n0 + c, st + r * LD + c);
+      Acc *v = st + r * LD + c;
+      if (p.init && m0 + base + r < p.m)
+        for (int q = 0; q < 8 && n0 + c + q < p.n; q++) {
+          const Acc x = (Acc)mma_init<U>(p, z, m0 + base + r, n0 + c + q);
+          v[q] = p.k > 0 ? v[q] + x : x;
+        }
+      store8(p, z, m0 + base + r, n0 + c, v);
     }
-  }
-}
-
-/* init's element (z, i, j) as the accumulator U holds it: of U's dtype,
-   or bfloat16 or float16 into float32 by nx_dtype.h's decoders (the plan
-   casts another init into U's). */
-template <typename U>
-__device__ __forceinline__ U mma_init(const contract_params &p, int z, int i, int j) {
-  const int64_t at = z * p.si[0] + (int64_t)i * p.si[1] + (int64_t)j * p.si[2];
-  if constexpr (is_float<U>) {
-    if (p.init_dtype == NX_BFLOAT16) return nx_bf16_to_float(((const uint16_t *)p.init)[at]);
-    if (p.init_dtype == NX_FLOAT16) return nx_f16_to_float(((const uint16_t *)p.init)[at]);
-  }
-  return ((const U *)p.init)[at];
-}
-
-/* The block's init, as the accumulator holds it, into its accumulators
-   [acc] through shared memory ([CAP] bytes at [smem], the pipeline's, free
-   until it starts) in passes of whole warp rows, as mma_epilogue stores
-   them: every thread reads init's elements of a pass, then its warps take
-   their accumulators. */
-template <typename Acc, int BM, int BN, int WM, int WN, int THREADS, int CAP>
-__device__ void mma_prologue(const contract_params &p, uint8_t *smem,
-                             Acc (&acc)[WM / 16][WN / 8][4], int z, int m0,
-                             int n0, int wm0, int wn0) {
-  constexpr int LD = BN + 8;
-  constexpr int ROWS = CAP / (LD * (int)sizeof(Acc)) / WM * WM;
-  typedef typename std::conditional<is_float<Acc>, float, uint32_t>::type U;
-  Acc *st = (Acc *)smem;
-  const int tid = threadIdx.x, lane = tid & 31, g = lane >> 2, t4 = lane & 3;
-#pragma unroll 1
-  for (int base = 0; base < BM; base += ROWS) {
-    const int rows = min(ROWS, BM - base);
-#pragma unroll 1
-    for (int e = tid; e < rows * BN; e += THREADS) {
-      const int r = m0 + base + e / BN, c = n0 + e % BN;
-      U x = 0;
-      if (r < p.m && c < p.n) x = mma_init<U>(p, z, r, c);
-      st[e / BN * LD + e % BN] = (Acc)x;
-    }
-    __syncthreads();
-    if (wm0 >= base && wm0 < base + ROWS)
-#pragma unroll
-      for (int i = 0; i < WM / 16; i++)
-#pragma unroll
-        for (int h = 0; h < 2; h++)
-#pragma unroll
-          for (int j = 0; j < WN / 8; j++) {
-            const Acc *d = st + (wm0 - base + i * 16 + g + h * 8) * LD + wn0 + j * 8 + t4 * 2;
-            acc[i][j][2 * h] = d[0], acc[i][j][2 * h + 1] = d[1];
-          }
-    __syncthreads();
   }
 }
 
@@ -364,12 +335,18 @@ __device__ void mma_contract(const contract_params &p) {
     }
   };
 
-  /* The first range's accumulators start from init, as the accumulator
-     holds it: the unit adds it with the first group, never apart. */
+  /* Each range's accumulators start from +0. A float range of more than
+     one block folds each block's sums into its slot of the partials. */
   Acc acc[MI][NI][4] = {};
-  if (p.init && split == 0)
-    mma_prologue<Acc, BM, BN, WM, WN, THREADS, STAGES * (BM + BN) * BKB>(
-        p, smem, acc, z, m0, n0, wm0, wn0);
+  constexpr int N = MI * NI * 4;
+  Acc(&flat)[N] = *reinterpret_cast<Acc(*)[N]>(acc);
+  static_assert(NX_CONTRACT_BLOCK % BK == 0, "a block is whole k-tiles");
+  constexpr int PER = NX_CONTRACT_BLOCK / BK;
+  constexpr bool FLOAT = is_float<Acc>;
+  /* The block's slot: tile (blockIdx.z, blockIdx.x), range blockIdx.y. */
+  auto own = [&] {
+    return ((int64_t)blockIdx.z * gridDim.x + blockIdx.x) * gridDim.y + blockIdx.y;
+  };
   uint32_t fa[2][MI][4], fb[2][NI][2];
 
 #pragma unroll
@@ -413,12 +390,13 @@ __device__ void mma_contract(const contract_params &p) {
         for (int j = 0; j < NI; j++)
           mma<KIND>(acc[i][j], fa[ks & 1][i], fb[ks & 1][j]);
     }
+    if (FLOAT && (kt + 1) % PER == 0 && kt + 1 < KT)
+      fold<Acc, N, THREADS>(flat, p.partials, own(), kt + 1 == PER);
   }
   cp_wait<0>();
+  if (FLOAT && KT > PER) close<Acc, N, THREADS>(flat, p.partials, own());
 
   if (splits > 1) {
-    constexpr int N = MI * NI * 4;
-    Acc(&flat)[N] = *reinterpret_cast<Acc(*)[N]>(acc);
     const int64_t tile = (int64_t)blockIdx.z * gridDim.x + blockIdx.x;
     if (!combine<Acc, N, THREADS>(flat, (Acc *)p.partials + tile * splits * N * THREADS,
                                   p.tickets + tile, split, splits))

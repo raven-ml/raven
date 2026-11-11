@@ -75,4 +75,37 @@ __device__ bool combine(T (&v)[N], T *part, uint32_t *ticket, int split,
   return true;
 }
 
+/* A range's blocks. A float range of more than NX_CONTRACT_BLOCK terms
+   sums its terms in blocks of that many from its start, each block from
+   +0 in the thread's [v]; its running sum, the blocks' sums added in
+   order, the first as it is, lies in slot [s] of [partials] (N * THREADS
+   values a slot, as combine lays them out), so that it takes no
+   register. fold() adds [v], the first [live] of them computed, into it
+   and sets [v] to +0 for the next block; close() gives [v] the running
+   sum plus the last block's. Each thread reads only what it wrote. */
+template <typename T, int N, int THREADS>
+__device__ void fold(T (&v)[N], void *partials, int64_t s, bool first,
+                     int live = N) {
+  const int tid = threadIdx.x;
+  T *mine = (T *)partials + s * N * THREADS;
+#pragma unroll
+  for (int f = 0; f < N; f++) {
+    if (f < live) {
+      T *at = mine + f * THREADS + tid;
+      __stcg(at, first ? v[f] : __ldcg(at) + v[f]);
+    }
+    v[f] = T(0);
+  }
+}
+
+template <typename T, int N, int THREADS>
+__device__ void close(T (&v)[N], const void *partials, int64_t s,
+                      int live = N) {
+  const int tid = threadIdx.x;
+  const T *mine = (const T *)partials + s * N * THREADS;
+#pragma unroll
+  for (int f = 0; f < N; f++)
+    if (f < live) v[f] = __ldcg(mine + f * THREADS + tid) + v[f];
+}
+
 #endif

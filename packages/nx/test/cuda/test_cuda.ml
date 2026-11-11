@@ -988,54 +988,70 @@ let batch_cases =
 
 (* The matrix units *)
 
-(* bfloat16 bits of [x], a value bfloat16 holds, little-endian. *)
-let bf16 x =
-  let b = Int32.to_int (Int32.shift_right_logical (Int32.bits_of_float x) 16) in
-  String.init 2 (fun i -> Char.chr ((b lsr (8 * i)) land 255))
+(* Blocked sums. nx_cuda.mli's error factors, each [γ(d)] of a depth
+   [d]: on the matrix units, with [S] their ranges, and of the fused
+   multiply-adds, real, at most 64 ranges of whole spans of 32. *)
+let mma_ranges ~batch ~m ~n k =
+  let r = (k + 127) / 128 in
+  let few = m <= 4 || n <= 4 || batch * m * n <= 1 lsl 18 in
+  let per = if few then 16 else 256 in
+  Int.max 1 (Int.min 16 (r / per))
 
-(* Inputs that make the matrix units err most against their error factor:
-   [a] and [b]'s rows by their index in k, init by its row, each value
-   bfloat16 holds. Products below the truncation of an init of 1, which a
-   group adds to nothing, 2 rows of 64 columns over 8192 terms cut k into
-   4 ranges, 64 rows over 4096 into 2; and over K = 1 to 16 terms, where
-   the factor is tightest, the same with one product of nearly 2 u, of
-   which a group keeps u and the sum's truncation to float32 loses it
-   again: an error of about (0.99 K + 1) u against the factor's
-   (K + 2⌈K/8⌉) u. *)
-let tiny = Float.ldexp (1. -. Float.ldexp 1. (-8)) (-12)
-let near_two = Float.ldexp (1. +. (53. /. 128.)) (-12)
+let mma_depth ~batch ~m ~n k =
+  let b = Int.min k 256 in
+  b + (2 * ((b + 7) / 8)) + ((k + 255) / 256) + mma_ranges ~batch ~m ~n k - 2
 
-let mma_cases =
-  [
-    ( "tiny products into 1, 2 rows",
-      (2, 64, 8192, (fun _ -> tiny), (fun _ -> tiny), Some 1.) );
-    ( "tiny products into 1, 64 rows",
-      (64, 64, 4096, (fun _ -> tiny), (fun _ -> tiny), Some 1.) );
-  ]
-  @ List.concat_map
-      (fun k ->
-        let f q = if q = 0 then near_two else tiny in
-        List.map
-          (fun m ->
-            (strf "%d terms into 1, %d rows" k m, (m, 64, k, f, f, Some 1.)))
-          [ 2; 64 ])
-      (List.init 16 (fun k -> k + 1))
+let fma_depth k =
+  Int.min k 256 + ((k + 255) / 256) + Int.min 64 ((k + 31) / 32) - 2
 
-(* Each output of a bfloat16 contraction into float32 is within
-   γ(K + 2⌈K/8⌉) (|init| + Σ|a||b|) of the exact sum, nx_cuda.mli's
-   factor for the matrix units. *)
-let mma_factor (_, (m, n, k, av, bv, start)) =
-  let g = S.gpu () in
-  let bf = D.Any D.Bfloat16 and fl = D.Any D.Float32 in
-  let rows f r =
-    String.concat "" (List.init (r * k) (fun i -> bf16 (f (i mod k))))
-  in
-  let a =
-    operand g bf (rows av m) ~batch:1 ~rows:m ~k ~layout:`K ~skip:0 ~pad:0
-  in
+let gamma d u =
+  let t = float_of_int d *. u in
+  t /. (1. -. t)
+
+(* The bits of [x], a value [dt] holds, little-endian: float32, or a
+   bfloat16 or float16 of a normal or zero value. *)
+let half_bits (D.Any d as dt) x =
+  let s = if Float.sign_bit x then 0x8000 else 0 and a = Float.abs x in
   let b =
-    operand g bf (rows bv n) ~batch:1 ~rows:n ~k ~layout:`K ~skip:0 ~pad:0
+    match d with
+    | D.Bfloat16 ->
+        Int32.to_int (Int32.shift_right_logical (Int32.bits_of_float x) 16)
+    | _ when a = 0. -> s
+    | _ ->
+        let m, e = Float.frexp a in
+        s lor ((e + 14) lsl 10) lor (int_of_float (m *. 2048.) - 1024)
   in
+  if width dt = 4 then put32 [ x ]
+  else String.init 2 (fun i -> Char.chr ((b lsr (8 * i)) land 255))
+
+(* [x] rounded to a value [dt] holds: bfloat16 toward zero, float16 to a
+   multiple of 2^-10 below 2 in magnitude. *)
+let held (D.Any d) x =
+  match d with
+  | D.Bfloat16 ->
+      Int32.float_of_bits (Int32.logand (Int32.bits_of_float x) 0xffff0000l)
+  | D.Float16 ->
+      Float.round (Float.max (-2047.) (Float.min 2047. (x *. 1024.))) /. 1024.
+  | _ -> Int32.float_of_bits (Int32.bits_of_float x)
+
+(* [m] x [k] values drawn by [f] from a seeded state, as [dt] holds them. *)
+let drawn dt ~seed ~rows ~k f =
+  let st = Random.State.make [| seed |] in
+  Array.init (rows * k) (fun _ -> held dt (f st))
+
+let gaussian st =
+  let u = 1. -. Random.State.float st 1. and v = Random.State.float st 1. in
+  sqrt (-2. *. log u) *. cos (2. *. Float.pi *. v)
+
+(* y = init + a·b, a [m × k] and b [n × k], k contiguous, of [dt] into
+   float32, init float32 where given, as the GPU computes it. *)
+let contract32 g dt ~m ~n ~k ?init av bv =
+  let bytes v = String.concat "" (Array.to_list (Array.map (half_bits dt) v)) in
+  let op v rows =
+    operand g dt (bytes v) ~batch:1 ~rows ~k ~layout:`K ~skip:0 ~pad:0
+  in
+  let a = op av m and b = op bv n in
+  let fl = D.Any D.Float32 in
   let y =
     {
       S.buffer = S.buffer g (4 * m * n);
@@ -1049,9 +1065,9 @@ let mma_factor (_, (m, n, k, av, bv, start)) =
     Option.map
       (fun v ->
         let buffer = S.buffer g (4 * m * n) in
-        S.write buffer (put32 (List.init (m * n) (fun _ -> v)));
+        S.write buffer (put32 (Array.to_list v));
         { y with buffer })
-      start
+      init
   in
   (match
      S.contract g ~a ~b ?init ~y
@@ -1061,27 +1077,171 @@ let mma_factor (_, (m, n, k, av, bv, start)) =
    with
   | None -> fail "the plan declines"
   | Some _ -> ());
-  let exact = ref (Option.value ~default:0. start) in
-  let mag = ref (Float.abs !exact) in
-  for q = 0 to k - 1 do
-    exact := !exact +. (av q *. bv q);
-    mag := !mag +. Float.abs (av q *. bv q)
-  done;
-  let u = Float.ldexp 1. (-24) in
-  let t = float_of_int (k + (2 * ((k + 7) / 8))) in
-  let bound = t *. u /. (1. -. (t *. u)) *. !mag in
-  let ys = S.read y.buffer in
+  S.read y.buffer
+
+(* Each output of [y] against its exact [r = init + Σ a·b], in float64:
+   the largest ratio of its error to [u|r| + (1 + u) γ(d) Σ|a||b|], the
+   bound nx_cuda.mli states with [init] added last, float64's own
+   rounding of the reference allowed for. *)
+let worst_ratio ~m ~n ~k ~d ?init av bv ys =
+  let u = Float.ldexp 1. (-24) and w = Float.ldexp 1. (-53) in
   let worst = ref 0. in
-  for i = 0 to (m * n) - 1 do
-    worst := Float.max !worst (Float.abs (f32 ys i -. !exact))
+  for i = 0 to m - 1 do
+    for j = 0 to n - 1 do
+      let s = ref 0. and mag = ref 0. in
+      for q = 0 to k - 1 do
+        let p = av.((i * k) + q) *. bv.((j * k) + q) in
+        s := !s +. p;
+        mag := !mag +. Float.abs p
+      done;
+      let c = match init with Some v -> v.((i * n) + j) | None -> 0. in
+      let r = !s +. c in
+      let err = Float.abs (f32 ys ((i * n) + j) -. r) in
+      let allow =
+        (match init with Some _ -> u *. Float.abs r | None -> 0.)
+        +. ((1. +. u) *. gamma d u *. !mag)
+        +. (gamma (k + 1) w *. (!mag +. Float.abs c))
+      in
+      worst := Float.max !worst (err /. allow)
+    done
   done;
-  at_most ~msg:"the largest error" float_exact ~than:bound !worst;
-  (* Over 16 terms or fewer, each output is the truncations' 1. *)
-  if k <= 16 then
-    no_difference
-      (differences (m * n)
-         (fun i -> f32 ys i = 1.)
-         (fun i -> strf "output %d: %h" i (f32 ys i)))
+  !worst
+
+(* Sums of up to 16384 products, the weight gradient's 64 × 64 over
+   16384 rows among them, on the fused multiply-adds (float32, its tiles
+   and its few-rows path) and on the matrix units (bfloat16, float16),
+   each output within its stated bound. *)
+let dt_name (D.Any d) = D.name d
+
+let long_sums =
+  let f32 = D.Any D.Float32 and bf = D.Any D.Bfloat16 in
+  let h = D.Any D.Float16 in
+  List.concat_map
+    (fun (dt, m, n, k) ->
+      List.map
+        (fun (draw, f) ->
+          (strf "%s %dx%dx%d %s" (dt_name dt) m n k draw, (dt, m, n, k, f)))
+        [
+          ("normal", gaussian); ("positive", fun st -> Float.abs (gaussian st));
+        ])
+    [
+      (f32, 64, 64, 16384); (f32, 64, 64, 4096); (f32, 2, 512, 16384);
+      (f32, 200, 257, 1000); (bf, 128, 128, 16384); (h, 128, 128, 16384);
+      (bf, 128, 128, 300);
+    ]
+
+let long_sum (_, (dt, m, n, k, f)) =
+  let g = S.gpu () in
+  let av = drawn dt ~seed:1 ~rows:m ~k f in
+  let bv = drawn dt ~seed:2 ~rows:n ~k f in
+  let ys = contract32 g dt ~m ~n ~k av bv in
+  let d =
+    if dt = D.Any D.Float32 then fma_depth k else mma_depth ~batch:1 ~m ~n k
+  in
+  at_most ~msg:"the largest error over its bound" float_exact ~than:1.
+    (worst_ratio ~m ~n ~k ~d av bv ys)
+
+(* An init far larger than the products' sum joins after it: products
+   of magnitude about 1 into inits about 2^20 keep their low bits, where
+   an init in the running sum would take a unit of 2^-3 a block. *)
+let large_inits =
+  List.map
+    (fun (dt, m, n, k) ->
+      (strf "%s %dx%dx%d" (dt_name dt) m n k, (dt, m, n, k)))
+    [
+      (D.Any D.Float32, 64, 64, 4096); (D.Any D.Float32, 2, 512, 4096);
+      (D.Any D.Bfloat16, 128, 128, 4096);
+    ]
+
+let large_init (_, (dt, m, n, k)) =
+  let g = S.gpu () in
+  let f st = (2. *. Random.State.float st 1.) -. 1. in
+  let av = drawn dt ~seed:3 ~rows:m ~k f in
+  let bv = drawn dt ~seed:4 ~rows:n ~k f in
+  let init =
+    Array.init (m * n) (fun i -> Float.ldexp 1. 20 +. Float.of_int i)
+  in
+  let ys = contract32 g dt ~m ~n ~k ~init av bv in
+  let d =
+    if dt = D.Any D.Float32 then fma_depth k else mma_depth ~batch:1 ~m ~n k
+  in
+  at_most ~msg:"the largest error over its bound" float_exact ~than:1.
+    (worst_ratio ~m ~n ~k ~d ~init av bv ys)
+
+(* An init of -0 and products that sum to +0 give +0: init is added to
+   the sum, which starts from +0. *)
+let zero_inits =
+  [
+    ("float32 tiles", (D.Any D.Float32, 64, 64, 300));
+    ("float32 few rows", (D.Any D.Float32, 2, 512, 300));
+    ("bfloat16 matrix units", (D.Any D.Bfloat16, 128, 128, 300));
+  ]
+
+let zero_init (_, (dt, m, n, k)) =
+  let g = S.gpu () in
+  let zeros r = Array.make (r * k) 0. in
+  let init = Array.make (m * n) (-0.) in
+  let ys = contract32 g dt ~m ~n ~k ~init (zeros m) (zeros n) in
+  no_difference
+    (differences (m * n)
+       (fun i -> String.get_int32_le ys (4 * i) = 0l)
+       (fun i -> strf "output %d: %h" i (f32 ys i)))
+
+(* Inputs that once made the matrix units err most, an init of 1 in the
+   running sum truncating products below it: [a] and [b]'s rows by their
+   index in k, each value bfloat16 holds, 2 rows of 64 columns over 8192
+   terms cutting k into 4 ranges, 64 rows over 4096 into 2, and K = 1 to
+   16 terms with one product of nearly 2 u. init now joins after the
+   products, so each output is within u|r| + (1 + u) γ(d) Σ|a||b|. *)
+let tiny = Float.ldexp (1. -. Float.ldexp 1. (-8)) (-12)
+let near_two = Float.ldexp (1. +. (53. /. 128.)) (-12)
+
+let mma_cases =
+  [
+    ("tiny products into 1, 2 rows", (2, 64, 8192, fun _ -> tiny));
+    ("tiny products into 1, 64 rows", (64, 64, 4096, fun _ -> tiny));
+  ]
+  @ List.concat_map
+      (fun k ->
+        let f q = if q = 0 then near_two else tiny in
+        List.map
+          (fun m -> (strf "%d terms into 1, %d rows" k m, (m, 64, k, f)))
+          [ 2; 64 ])
+      (List.init 16 (fun k -> k + 1))
+
+let mma_factor (_, (m, n, k, f)) =
+  let g = S.gpu () in
+  let bf = D.Any D.Bfloat16 in
+  let rows r = Array.init (r * k) (fun i -> f (i mod k)) in
+  let av = rows m and bv = rows n and init = Array.make (m * n) 1. in
+  let ys = contract32 g bf ~m ~n ~k ~init av bv in
+  at_most ~msg:"the largest error over its bound" float_exact ~than:1.
+    (worst_ratio ~m ~n ~k ~d:(mma_depth ~batch:1 ~m ~n k) ~init av bv ys)
+
+(* The matrix units' truncation at its worst, with no init: a product of
+   1 starts each block of 256, one of [near_two²] each later group of 8,
+   [tiny²] the rest. Each group then aligns its products to the block's
+   running sum near 1 and loses up to 2 u a group, so each output errs
+   near its factor, which is why β counts a block's terms 5/4 each: at
+   K = 256 the error passes [γ(K + ⌈K/128⌉) Σ|a||b|]. *)
+let truncation_cases =
+  List.map (fun k -> (strf "64 x 64 over %d terms" k, k)) [ 16; 64; 256 ]
+
+let truncation (_, k) =
+  let g = S.gpu () and m = 64 and n = 64 in
+  let f q =
+    if q mod 256 = 0 then 1. else if q mod 8 = 0 then near_two else tiny
+  in
+  let av = Array.init (m * k) (fun i -> f (i mod k)) in
+  let bv = Array.init (n * k) (fun i -> f (i mod k)) in
+  let ys = contract32 g (D.Any D.Bfloat16) ~m ~n ~k av bv in
+  let ratio d = worst_ratio ~m ~n ~k ~d av bv ys in
+  at_most ~msg:"the largest error over its bound" float_exact ~than:1.
+    (ratio (mma_depth ~batch:1 ~m ~n k));
+  if k = 256 then
+    at_least ~msg:"the largest error over γ(K + ⌈K/128⌉)" float_exact
+      ~than:1.
+      (ratio (k + ((k + 127) / 128)))
 
 (* Every dtype quadruple *)
 
@@ -1225,7 +1385,9 @@ let quadruples =
 (* A call whose scratch is past the GPU's memory. a's rows, 2^21 of them,
    lie along two axes, one of stride 0, which do not form one run of
    strides, so the call packs them: 2^21 rows of 2^14 bfloat16, 64 GiB of
-   scratch, more than the GPU holds. *)
+   scratch, more than the GPU holds. Its sums of 2^14 terms, past a block,
+   also hold a tile's sums a block of the matrix units: 2^21 rows of the
+   tile's 64 columns of float32, 512 MiB more. *)
 let past_memory g () =
   let n = 16 and k = 1 lsl 14 in
   let bf16 = D.code D.Bfloat16 in
@@ -1251,7 +1413,9 @@ let past_memory g () =
 (* Out of memory raises: the plan never declines a call for want of it. *)
 let scratch_out_of_memory () =
   raises_match
-    (function Rig.Out_of_memory (_, bytes) -> bytes = 1 lsl 36 | _ -> false)
+    (function
+      | Rig.Out_of_memory (_, bytes) -> bytes = (1 lsl 36) + (1 lsl 29)
+      | _ -> false)
     (past_memory (S.gpu ()))
 
 (* Calls *)
@@ -1512,6 +1676,12 @@ let arithmetic =
       nan_init;
     cases ~id:fst "the matrix units keep their stated error factor" mma_cases
       mma_factor;
+    cases ~id:fst "the matrix units' truncation stays within its factor"
+      truncation_cases truncation;
+    cases ~id:fst "long sums within their stated bound" long_sums long_sum;
+    cases ~id:fst "a large init joins after the products" large_inits
+      large_init;
+    cases ~id:fst "a -0 init and +0 products give +0" zero_inits zero_init;
     prop ~count:400 "every dtype quadruple computes within the bound" quadruples
       every_quadruple;
   ]

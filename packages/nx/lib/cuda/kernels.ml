@@ -303,6 +303,7 @@ let contract_upper = 16
 let contract_k_wide = 32
 let contract_run = 32
 let mma_run = 128
+let contract_block = 256
 let gemv_rows = 8
 let gemv_threads = 256
 let gemv_stretch = 256

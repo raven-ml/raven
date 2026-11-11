@@ -18,11 +18,14 @@
    plan gives each tile S ranges of k (S = s1 for the call's first [main]
    tiles, s2 for the others), whole runs of NX_CONTRACT_RUN terms shared
    out in order, as k_range computes. A range sums its terms in increasing
-   k from +0, one fused multiply-add each; the ranges' sums add in
-   increasing k; then init; then one rounding into y. An output without
-   products is init itself. With NX_CONTRACT_INIT_FIRST (the matrix
-   routines' products) the first range sums from init instead, and init is
-   not added after. Loads, layouts and packs change no bit beyond
+   k, in blocks of NX_CONTRACT_BLOCK from its start, each from +0, one
+   fused multiply-add a term, the blocks' sums added in order
+   (combine.cuh's fold); the ranges' sums add in increasing k; then init;
+   then one rounding into y. An output without products is init itself.
+   With NX_CONTRACT_INIT_FIRST (the matrix routines' products) each range
+   is one chain, the first from init, and init is not added after: the
+   unblocked algorithms' chains, whose bounds the routines state. Loads,
+   layouts and packs change no bit beyond
    the values the terms take: the plan chooses the tiles and S from the
    dtypes and the extents alone.
 
@@ -337,14 +340,13 @@ __device__ Work schedule(const contract_params &p) {
     w.tile = p.main + (b - head) / p.s2, w.split = (int)((b - head) % p.s2),
     w.splits = p.s2;
   k_range<NX_CONTRACT_RUN>(p.k, w.split, w.splits, w.k0, w.k1);
-  /* Split tiles' partials, in tile order: the main tiles' if s1 > 1, then
-     the others' if s2 > 1. */
+  /* A split tile's partials: one slot a block, in block order. */
   if (w.splits == 1)
     w.part = -1;
   else if (w.tile < p.main)
     w.part = w.tile * p.s1;
   else
-    w.part = (p.s1 > 1 ? head : 0) + (w.tile - p.main) * p.s2;
+    w.part = head + (w.tile - p.main) * p.s2;
   return w;
 }
 
@@ -728,15 +730,18 @@ template <class C, int LOAD> __device__ void gemm(const contract_params &p) {
   };
 
   /* Two stages: k-tile kt + 1's loads are in flight while kt sums, then
-     stored into the stage kt - 1 left; one barrier a k-tile. */
+     stored into the stage kt - 1 left; one barrier a k-tile. A float
+     range of more than one block folds each block's sums into its slot. */
   const int64_t KT = (w.k1 - w.k0 + BK - 1) / BK;
+  static_assert(NX_CONTRACT_BLOCK % BK == 0, "a block is whole k-tiles");
+  constexpr int64_t PER = NX_CONTRACT_BLOCK / BK;
+  T(&flat)[TM * TN] = *reinterpret_cast<T(*)[TM * TN]>(acc);
   if (KT > 0) {
     load(w.k0);
     put(0, w.k0);
   }
   __syncthreads();
-#pragma unroll 1
-  for (int64_t kt = 0; kt < KT; kt++) {
+  auto tile = [&](int64_t kt) {
     const int s = (int)(kt & 1);
     const int64_t kn = w.k0 + (kt + 1) * BK;
     if (kt + 1 < KT) load(kn);
@@ -753,10 +758,27 @@ template <class C, int LOAD> __device__ void gemm(const contract_params &p) {
     }
     if (kt + 1 < KT) put(s ^ 1, kn);
     __syncthreads();
+  };
+  if constexpr (!is_float<T>) {
+#pragma unroll 1
+    for (int64_t kt = 0; kt < KT; kt++) tile(kt);
+  } else {
+    /* The k-tiles block by block, each fold between two blocks, outside
+       the loop of the sums. */
+    const int64_t per =
+        p.flags & NX_CONTRACT_INIT_FIRST ? max(KT, (int64_t)1) : PER;
+#pragma unroll 1
+    for (int64_t kb = 0; kb < KT; kb += per) {
+      if (kb > 0)
+        fold<T, TM * TN, THREADS>(flat, p.partials, blockIdx.x, kb == per);
+      const int64_t ke = min(KT, kb + per);
+#pragma unroll 1
+      for (int64_t kt = kb; kt < ke; kt++) tile(kt);
+    }
+    if (KT > per) close<T, TM * TN, THREADS>(flat, p.partials, blockIdx.x);
   }
 
   if (w.splits > 1) {
-    T(&flat)[TM * TN] = *reinterpret_cast<T(*)[TM * TN]>(acc);
     if (!combine<T, TM * TN, THREADS>(flat, (T *)p.partials +
                                                   w.part * TM * TN * THREADS,
                                       p.tickets + w.tile, w.split, w.splits))
@@ -925,8 +947,15 @@ template <typename T> __device__ void gemv(const contract_params &p) {
   T acc[NX_GEMV_ROWS];
 #pragma unroll
   for (int i = 0; i < NX_GEMV_ROWS; i++) acc[i] = T(0);
+  /* A stretch is a block: a float range of more than one folds each
+     stretch's sums into the block's slot. */
+  static_assert(NX_GEMV_STRETCH == NX_CONTRACT_BLOCK, "a stretch is a block");
+  constexpr bool FLOAT = is_float<T>;
 
   for (int64_t k0 = w.k0; k0 < w.k1; k0 += NX_GEMV_STRETCH) {
+    if (FLOAT && k0 > w.k0 && !(p.flags & NX_CONTRACT_INIT_FIRST))
+      fold<T, NX_GEMV_ROWS, NX_GEMV_THREADS>(acc, p.partials, blockIdx.x,
+                                             k0 == w.k0 + NX_GEMV_STRETCH, m);
     const int len = (int)min((int64_t)NX_GEMV_STRETCH, w.k1 - k0);
     __syncthreads();
     /* a's rows over the stretch, in T as a cast stores them. */
@@ -1025,6 +1054,9 @@ template <typename T> __device__ void gemv(const contract_params &p) {
     }
   }
 
+  if (FLOAT && w.k1 - w.k0 > NX_GEMV_STRETCH &&
+      !(p.flags & NX_CONTRACT_INIT_FIRST))
+    close<T, NX_GEMV_ROWS, NX_GEMV_THREADS>(acc, p.partials, blockIdx.x, m);
   if (w.splits > 1 &&
       !combine<T, NX_GEMV_ROWS, NX_GEMV_THREADS>(
           acc, (T *)p.partials + w.part * NX_GEMV_ROWS * NX_GEMV_THREADS,
