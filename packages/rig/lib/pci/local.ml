@@ -332,7 +332,7 @@ let map t ~combine i off n =
         in
         let fd =
           Fail.step ("opening " ^ file) (fun () ->
-              Unix.openfile file [ O_RDWR; O_SYNC; O_CLOEXEC ] 0)
+              Unix.openfile file [ O_RDWR; O_CLOEXEC ] 0)
         in
         Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
         (* An access past a mapped file's end raises SIGBUS, which ends the
@@ -533,7 +533,7 @@ let take_iommu files fds bus bars prefetchable =
 let take_physical l fds u bars prefetchable =
   let files = Sysfs.files l and bus = Sysfs.bus l in
   let file = Sysfs.path files bus "config" in
-  (match Unix.openfile file [ O_RDWR; O_SYNC; O_CLOEXEC ] 0 with
+  (match Unix.openfile file [ O_RDWR; O_CLOEXEC ] 0 with
   | fd -> Vfio.opened fds fd
   | exception Unix.Unix_error (((EACCES | EPERM) as e), _, _) ->
       Fail.fail
