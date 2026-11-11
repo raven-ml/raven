@@ -725,6 +725,45 @@ let test_staging_halves () =
     [ (B.Pinned, half, true); (B.Pinned, half, true) ]
     (pinned ())
 
+(* A device that maps no host memory, and whose own memory the host addresses,
+   stages through that memory, in its budget. A copy between host memory and
+   its borrow of a peer's memory that the host does not address stages, so a
+   budget of 0 refuses it, but for a copy into [Mapped] memory, which the host
+   writes through its window. *)
+type way = Out_of | Into
+
+let staged_borrows =
+  [
+    ("out of Device memory", B.Device, Out_of);
+    ("into Device memory", B.Device, Into);
+    ("out of Mapped memory", B.Mapped, Out_of);
+    ("into Mapped memory", B.Mapped, Into);
+  ]
+
+let test_staged_borrow (row, kind, way) =
+  let slug = String.map (fun c -> if c = ' ' then '-' else c) row in
+  let name = "memory:staged-" ^ slug in
+  let owner, _ = P.open_ ~host_visible:false (name ^ "-owner") in
+  let d, _ = P.open_ ~maps_host:false name in
+  let on_d = require_some (B.borrow d (B.create ~memory:kind owner 1)) in
+  let host = B.of_string "w" in
+  let copy () =
+    match way with
+    | Out_of -> B.copy ~src:on_d ~dst:host
+    | Into -> B.copy ~src:host ~dst:on_d
+  in
+  let budget = Rig.budget d in
+  Rig.set_budget d 0;
+  match (kind, way) with
+  | B.Mapped, Into ->
+      copy ();
+      Rig.set_budget d budget;
+      let back = B.create Rig.host 1 in
+      B.copy ~src:on_d ~dst:back;
+      equal string "w"
+        (B.read back Bigarray.char (fun a -> String.make 1 a.{0}))
+  | _ -> raises_match (out_of_memory d (32 * kib * kib)) copy
+
 let test_host_budget () = equal int max_int (Rig.budget Rig.host)
 
 (* Kinds *)
@@ -1843,6 +1882,11 @@ let tests =
           test_staging_refused;
         test "staging memory makes a half at the first piece that needs it"
           test_staging_halves;
+        cases
+          "a copy through a borrow on a device that maps no host memory \
+           stages in its budget, but into Mapped memory"
+          ~id:(fun (row, _, _) -> row)
+          staged_borrows test_staged_borrow;
         stateful ~count:16 ~steps:1 ~domains:2
           "two domains' allocations stay within the budget" budget_commands;
         test "an allocation the driver refuses releases the cache, then raises"

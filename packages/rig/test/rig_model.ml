@@ -610,15 +610,25 @@ let made_bytes d =
    under a piece, so a copy needs the first half of its slot alone. *)
 let half_bytes = 32 * 1024 * 1024
 
-(* The device whose own staging memory a copy between [b] and host memory goes
+(* How a copy meets a buffer: as its source, or as its destination from memory
+   of the given locality. *)
+type side = Out_of | Into of locality
+
+(* The device whose own staging memory a copy that meets [b] on [side] may go
    through, where its halves count in that device's budget. Memory the host
-   addresses the host copies. A copy of other memory runs on [b]'s device, or
-   on its memory's where [b]'s runs no copy, and a device that maps no host
-   memory stages through memory of its own that the host addresses, which
-   counts in its budget where the host addresses its memory (rig.mli,
-   Buffer.copy and budgets). *)
-let own_stage b =
-  if b.local <> Remote then None
+   addresses the host copies, and the host writes a window from memory it
+   addresses. A copy of other memory, out of a window included, runs on [b]'s
+   device, or on its memory's where [b]'s runs no copy, and a device that maps
+   no host memory stages through memory of its own that the host addresses,
+   which counts in its budget where the host addresses its memory (rig.mli,
+   Buffer.copy, Buffer.Mapped and budgets). *)
+let own_stage side b =
+  let by_device =
+    match (b.local, side) with
+    | Remote, _ | Window, (Out_of | Into (Io | Remote | Window)) -> true
+    | (Local | Io), _ | Window, Into Local -> false
+  in
+  if not by_device then None
   else
     let runner =
       match b.on.kind with
@@ -629,6 +639,11 @@ let own_stage b =
     | Polled ({ maps_host = false; _ } as c) when host_addresses c ->
         Some runner
     | _ -> None
+
+(* The devices whose own staging memory a copy of [a] into [b] may go
+   through. *)
+let copy_stages a b =
+  List.filter_map Fun.id [ own_stage Out_of a; own_stage (Into a.local) b ]
 
 (* The halves of [r]'s own staging memory known made: none once a device whose
    work may name them may be lost, as rig replaces a half whose stamps name a
@@ -1318,7 +1333,7 @@ let fill_ref seed last c outcome =
     owned vd b;
     if b.on.kind = Host then waits_all vd b.mem
     else if b.length > 0 then waits_all vd b.mem;
-    let stage = if b.length > 0 then own_stage b else None in
+    let stage = if b.length > 0 then own_stage (Into Local) b else None in
     Option.iter (fun r -> stages c.w vd r []) stage;
     let lost () =
       unknown b;
@@ -1385,7 +1400,7 @@ let read_ref last c outcome =
   invalid_if vd (dead b);
   owned vd b;
   if b.on.kind = Host || b.length > 0 then reads vd b.mem;
-  let stage = if b.length > 0 then own_stage b else None in
+  let stage = if b.length > 0 then own_stage Out_of b else None in
   Option.iter (fun r -> stages c.w vd r []) stage;
   let lost () = if device_work b.on then maybe_use b.mem.stamps b.on in
   judge ~lost c.w vd outcome (fun s ->
@@ -1432,7 +1447,7 @@ let copy_judge ~invalid last src a b outcome =
        side: the allowance holds whichever route it takes. *)
     List.iter
       (fun r -> stages w vd r [ a.on; a.mem.owner; b.on; b.mem.owner ])
-      (List.filter_map own_stage [ a; b ])
+      (copy_stages a b)
   end;
   let lost () =
     unknown b;
@@ -1478,7 +1493,7 @@ let queued_copy_ref last src dst outcome =
   with_buf src outcome @@ fun a ->
   with_buf dst outcome @@ fun b ->
   let invalid = dead a || dead b || overlaps a b || own_pages a b in
-  List.iter (fun r -> r.queued <- true) (List.filter_map own_stage [ a; b ]);
+  List.iter (fun r -> r.queued <- true) (copy_stages a b);
   if invalid then copy_judge ~invalid last src a b outcome
   else
     let a', b' = prefixes a b in
