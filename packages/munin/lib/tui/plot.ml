@@ -10,10 +10,10 @@ type role = Context | Overlay of char | Cursor
 
 let smoothable key = String.starts_with ~prefix:"train/" key
 
-let domain runs =
-  match runs with
-  | [] -> (0., 1.)
-  | _ -> (0., List.fold_left (fun e (f : Facts.run) -> Float.max e f.x_end) 0. runs)
+let domain ?key runs =
+  let has (f : Facts.run) = match key with None -> true | Some k -> Facts.stats f k <> None in
+  let ends = List.filter_map (fun (f : Facts.run) -> if has f then Some f.x_end else None) runs in
+  match ends with [] -> (0., 1.) | _ -> (0., List.fold_left Float.max 0. ends)
 
 let tau (lo, hi) = (hi -. lo) /. 30.
 

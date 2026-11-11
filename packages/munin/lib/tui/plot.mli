@@ -6,15 +6,16 @@
 (** What a chart draws and over which steps.
 
     {b The x domain} of a chart is the step, from [0] to the greatest end
-    of the runs drawn ({!Facts.run.x_end}): the largest step of a run that
-    has ended, crashed or gone silent, or, for a run that is starting,
-    running, live, stalled or writing, its largest step rounded up to 1, 2
-    or 5 times a power of ten, at most its declared steps. Every chart and
-    strip on screen shares it. A growing run logs within it until its
+    of the runs it draws ({!Facts.run.x_end}) that have samples of its
+    metric: the largest step of a run that has ended, crashed or gone
+    silent, or, for a run that is starting, running, live, stalled or
+    writing, its largest step rounded up to 1, 2 or 5 times a power of
+    ten, at most its declared steps. The strips share one domain, the
+    greatest end of the runs they draw, metric or not, so that a column is
+    one moment in every strip. A growing run logs within its end until its
     latest step passes the rounding, so a reduction made for it stays valid
-    that long. At the zoom depth the
-    chart shows a window of it: the domain halved [n] times, the part of
-    that size that holds the zoom's cursor. *)
+    that long. At the zoom depth the chart shows a window of it: the domain
+    halved [n] times, the part of that size that holds the zoom's cursor. *)
 
 type role =
   | Context  (** A run of the cursor's experiment, in grey. *)
@@ -26,9 +27,10 @@ val smoothable : string -> bool
 (** [smoothable key] is [true] iff [key] is smoothed by default: it starts
     with [train/]. *)
 
-val domain : Facts.run list -> float * float
-(** [domain runs] is [(0., e)], [e] the greatest {!Facts.run.x_end} of
-    [runs], and [1.] for no run. *)
+val domain : ?key:string -> Facts.run list -> float * float
+(** [domain ?key runs] is [(0., e)], [e] the greatest {!Facts.run.x_end} of
+    the [runs], of those with a sample of [key] if given, and [1.] for
+    none. *)
 
 val tau : float * float -> float
 (** [tau (lo, hi)] is smoothing's time constant over the x domain

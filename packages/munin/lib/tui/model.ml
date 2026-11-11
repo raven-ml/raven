@@ -308,6 +308,9 @@ type chart = {
 
 let facts m runs = List.filter_map (fun (_, o) -> Data.run m.data o) runs
 
+(* The x domain of a chart of [key] over [runs]. *)
+let domain m key runs = Plot.domain ~key (facts m runs)
+
 let chart m slot key axis x runs =
   let log = Plot.log (facts m runs) key <> Sset.mem key m.scales in
   let smooth = m.smooth && Plot.smoothable key in
@@ -323,16 +326,15 @@ let zoom_step m =
 
 let zoom_window m =
   match m.depth with
-  | Zoom { narrow; _ } ->
+  | Zoom { narrow; metric; _ } ->
       let at = Float.of_int (Option.value (zoom_step m) ~default:0) in
-      Some (Plot.window (Plot.domain (facts m (drawn m))) ~at ~narrow)
+      Some (Plot.window (domain m metric (drawn m)) ~at ~narrow)
   | Charts | Strips _ -> None
 
 let charts m =
   match (frame m, focus m) with
   | Panes p, Some f -> (
       let drawn = drawn m in
-      let x = Plot.domain (facts m drawn) in
       match m.depth with
       | Charts -> (
           match metric m with
@@ -340,14 +342,16 @@ let charts m =
           | Some k ->
               let others = List.filter (( <> ) k) (goal_metrics f) in
               let smalls = List.filteri (fun i _ -> i < p.smalls) others in
-              chart m Large k Step x drawn
-              :: List.mapi (fun i s -> chart m (Small i) s Step x (marked drawn)) smalls)
+              let small i s = chart m (Small i) s Step (domain m s (marked drawn)) (marked drawn) in
+              chart m Large k Step (domain m k drawn) drawn :: List.mapi small smalls)
       | Strips _ ->
           let first = match marked drawn with ((Plot.Overlay _, _) as o) :: _ -> [ o ] | _ -> [] in
           let runs = first @ [ (Plot.Cursor, id f) ] in
+          (* One axis for every strip, so that a column is one moment in each. *)
+          let shared = Plot.domain (facts m runs) in
           List.map
             (fun (k, axis) ->
-              let x = match axis with Data.Step -> x | Time -> (0., Facts.bound f.active) in
+              let x = match axis with Data.Step -> shared | Time -> (0., Facts.bound f.active) in
               chart m Strip k axis x runs)
             (strips m)
       | Zoom { metric; _ } -> (
@@ -432,8 +436,7 @@ let legend m =
   let runs = List.map snd (marked drawn) in
   let at key at x = { Data.key; runs; at; tau = Plot.tau x } in
   match (m.depth, focus m) with
-  | Charts, Some f ->
-      Option.map (fun k -> at k (Data.Latest (id f)) (Plot.domain (facts m drawn))) (metric m)
+  | Charts, Some f -> Option.map (fun k -> at k (Data.Latest (id f)) (domain m k drawn)) (metric m)
   | Zoom { metric; _ }, Some _ -> (
       match (zoom_step m, zoom_window m) with
       | Some s, Some w -> Some (at metric (Data.At s) w)
@@ -444,11 +447,17 @@ let hero m =
   match (m.depth, focus m) with
   | Zoom _, _ | _, None -> []
   | _, Some f ->
-      let tau = Plot.tau (Plot.domain (facts m (drawn m))) in
+      (* Smoothed as the chart that draws it, or as a small chart would. *)
+      let shown = charts m in
+      let x key =
+        match List.find_opt (fun (c : chart) -> c.key = key) shown with
+        | Some c -> c.x
+        | None -> domain m key (marked (drawn m))
+      in
       List.filter_map
         (fun key ->
           if m.smooth && Plot.smoothable key then
-            Some { Data.key; runs = [ id f ]; at = Latest (id f); tau }
+            Some { Data.key; runs = [ id f ]; at = Latest (id f); tau = Plot.tau (x key) }
           else None)
         (goal_metrics f)
 

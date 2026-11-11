@@ -1338,60 +1338,77 @@ let exact_labels =
         (List.sort_uniq (fun a b -> Float.compare b a) values)
         values)
 
-(* Law 1's x domain: from 0 to the greatest end of the runs drawn. A run
-   that may still log ends at its latest step rounded up to 1, 2 or 5 times
-   a power of ten, capped at its [steps]; any other at its largest step.
-   These runs have no writer a reader can probe: one is writing when a
-   sample arrived, silent when none did, or ended. [facts ?steps life last]
-   is what a poll knows of a run that logged samples at step 0 and [last]. *)
+(* Law 1's x domain of a chart: from 0 to the greatest end of the runs
+   drawn that have samples of the chart's metric. A run that may still log
+   ends at its latest step rounded up to 1, 2 or 5 times a power of ten,
+   capped at its [steps]; any other at its largest step. These runs have no
+   writer a reader can probe: one is writing when a sample arrived, silent
+   when none did, or ended. *)
 type life = Writing | Ended | Silent
 
 let life_name = function Writing -> "writing" | Ended -> "ended" | Silent -> "silent"
 
-let facts ?steps life last =
+(* A run that logged samples at step 0 and [last], of the metric [m] when
+   [has], else of another. *)
+type law_run = { life : life; steps : int option; last : int; has : bool }
+
+let law_run ?steps ?(has = true) life last = { life; steps; last; has }
+
+let pp_law_run ppf r =
+  Format.fprintf ppf "%s %d of %s%s" (life_name r.life) r.last
+    (match r.steps with Some n -> string_of_int n | None -> "-")
+    (if r.has then "" else " without m")
+
+let facts r =
   let store = Lazy.force laws in
+  let key = if r.has then "m" else "n" in
   let samples =
-    List.map (fun st -> sample_record (st, 1.)) (List.sort_uniq compare [ 0; last ])
+    List.map
+      (fun st ->
+        Printf.sprintf {|{"type":"metrics","time":2.0,"step":%d,"values":{"%s":1}}|} st key)
+      (List.sort_uniq compare [ 0; r.last ])
   in
   let ended =
-    match life with Ended -> [ Fixture.end_record ~time:4. `Finished ] | Writing | Silent -> []
+    match r.life with Ended -> [ Fixture.end_record ~time:4. `Finished ] | Writing | Silent -> []
   in
-  let id, _ = write_log store ?steps (samples @ ended) in
-  let r = Option.get (Store.run store id) in
+  let declare = [ metric_record "m"; metric_record "n" ] in
+  let id, _ = write_log store ?steps:r.steps ~declare (samples @ ended) in
+  let run = Option.get (Store.run store id) in
   (* An arrival at the poll's time: the run reads [writing]. *)
   let watch =
-    match life with
+    match r.life with
     | Writing -> Some (Watch.observe (Watch.start ~samples:0) ~now:0. ~samples:2)
     | Ended | Silent -> None
   in
-  Munin_tui.Facts.of_run ~now:0. ~history:(Some (History.read r)) ~hint:None ~watch
-    ~pauses:[] r
+  Munin_tui.Facts.of_run ~now:0. ~history:(Some (History.read run)) ~hint:None ~watch
+    ~pauses:[] run
 
 let x_domain =
   cases
     ~id:(fun (name, _, _) -> name)
     "the x domain ends at a run's last step, a growing run's rounded up"
     [
-      ("ended short of its steps", [ (Ended, Some 3000, 2812) ], 2812.);
-      ("ended without steps", [ (Ended, None, 2812) ], 2812.);
-      ("ended past its steps", [ (Ended, Some 100, 150) ], 150.);
-      ("ended at step 0", [ (Ended, None, 0) ], 1.);
-      ("silent short of its steps", [ (Silent, Some 3000, 80) ], 80.);
-      ("writing short of its steps", [ (Writing, Some 3000, 80) ], 100.);
-      ("writing, capped at its steps", [ (Writing, Some 3000, 2900) ], 3000.);
-      ("writing at its steps", [ (Writing, Some 100, 100) ], 100.);
-      ("writing past its steps", [ (Writing, Some 100, 150) ], 200.);
-      ("writing, a power of ten", [ (Writing, None, 10_000) ], 10_000.);
-      ("writing, just past one", [ (Writing, None, 10_001) ], 20_000.);
-      ("writing, to a five", [ (Writing, None, 2_001) ], 5_000.);
-      ("writing, to a two", [ (Writing, None, 1_500) ], 2_000.);
-      ("writing, one step", [ (Writing, None, 1) ], 1.);
-      ("writing at step 0", [ (Writing, Some 3000, 0) ], 1.);
-      ("the greatest of two", [ (Writing, Some 300, 10); (Ended, None, 400) ], 400.);
+      ("ended short of its steps", [ law_run Ended ~steps:3000 2812 ], 2812.);
+      ("ended without steps", [ law_run Ended 2812 ], 2812.);
+      ("ended past its steps", [ law_run Ended ~steps:100 150 ], 150.);
+      ("ended at step 0", [ law_run Ended 0 ], 1.);
+      ("silent short of its steps", [ law_run Silent ~steps:3000 80 ], 80.);
+      ("writing short of its steps", [ law_run Writing ~steps:3000 80 ], 100.);
+      ("writing, capped at its steps", [ law_run Writing ~steps:3000 2900 ], 3000.);
+      ("writing at its steps", [ law_run Writing ~steps:100 100 ], 100.);
+      ("writing past its steps", [ law_run Writing ~steps:100 150 ], 200.);
+      ("writing, a power of ten", [ law_run Writing 10_000 ], 10_000.);
+      ("writing, just past one", [ law_run Writing 10_001 ], 20_000.);
+      ("writing, to a five", [ law_run Writing 2_001 ], 5_000.);
+      ("writing, to a two", [ law_run Writing 1_500 ], 2_000.);
+      ("writing, one step", [ law_run Writing 1 ], 1.);
+      ("writing at step 0", [ law_run Writing ~steps:3000 0 ], 1.);
+      ("the greatest of two", [ law_run Writing ~steps:300 10; law_run Ended 400 ], 400.);
+      ("an overlay without the metric", [ law_run Ended 10; law_run Ended ~has:false 150 ], 10.);
+      ("no run with the metric", [ law_run Ended ~has:false 150 ], 1.);
     ]
     (fun (_, runs, expected) ->
-      let fs = List.map (fun (life, steps, last) -> facts ?steps life last) runs in
-      equal (pair float_exact float_exact) (0., expected) (Plot.domain fs))
+      equal (pair float_exact float_exact) (0., expected) (Plot.domain ~key:"m" (List.map facts runs)))
 
 (* Zoom's step cursor: its rule shows on every row of the plot that no
    dots take, the raw extent's included, and its step label on the x axis is a chip of the step padded by a blank
@@ -1474,62 +1491,55 @@ let zoom_cursor =
       equal ~msg:"the cells beside the chip are blank" (list bool) [ true; true ]
         [ blank (first - 1); blank (last + 1) ])
 
-(* [x_end life ~steps last] is the end law 1 gives one run. *)
-let x_end life ~steps last =
-  let l = Float.of_int last in
-  match (life, steps) with
+(* [x_end r] is the end law 1 gives one run. *)
+let x_end r =
+  let l = Float.of_int r.last in
+  match (r.life, r.steps) with
   | (Ended | Silent), _ -> Float.max 1. l
-  | Writing, Some n when last <= n -> Float.min (Float.of_int n) (Munin_tui.Facts.bound l)
+  | Writing, Some n when r.last <= n -> Float.min (Float.of_int n) (Munin_tui.Facts.bound l)
   | Writing, _ -> Munin_tui.Facts.bound l
 
-let gen_life =
-  Gen.of_list ~pp:(fun ppf l -> Format.pp_print_string ppf (life_name l)) [ Writing; Ended; Silent ]
-
 (* A run's steps and last step: short of them, at them, or past them. *)
-let gen_steps =
+let gen_law_run =
   let open Gen in
+  let* life = of_list [ Writing; Ended; Silent ] in
+  let* has = frequency [ (3, constant true); (1, constant false) ] in
   let* steps = option (int_range 1 5000) in
   let+ last =
     match steps with
     | None -> int_range 0 5000
     | Some n -> frequency [ (3, int_range 0 n); (1, constant n); (1, int_range n (2 * n)) ]
   in
-  (steps, last)
+  { life; steps; last; has }
 
-let pp_run ppf (life, steps, last) =
-  Format.fprintf ppf "%s %d of %s" (life_name life) last
-    (match steps with Some n -> string_of_int n | None -> "-")
-
-let gen_runs =
+let gen_law_runs =
   Gen.(
-    with_pp (Format.pp_print_list ~pp_sep:Format.pp_print_space pp_run)
-      (list ~size:(int_range 1 3)
-         (let* life = gen_life in
-          let+ steps, last = gen_steps in
-          (life, steps, last))))
+    with_pp
+      (Format.pp_print_list ~pp_sep:Format.pp_print_space pp_law_run)
+      (list ~size:(int_range 1 3) gen_law_run))
 
 let x_domain_law =
-  prop "the x domain is the furthest end of the runs" gen_runs (fun runs ->
-      let short (_, steps, last) = match steps with Some n -> last < n | None -> false in
-      let past (_, steps, last) = match steps with Some n -> last > n | None -> false in
-      let rounds_past (_, steps, last) =
-        match steps with
-        | Some n -> last <= n && Munin_tui.Facts.bound (Float.of_int last) > Float.of_int n
+  prop "the x domain is the furthest end of the runs with the metric" gen_law_runs (fun runs ->
+      let short r = match r.steps with Some n -> r.last < n | None -> false in
+      let past r = match r.steps with Some n -> r.last > n | None -> false in
+      let rounds_past r =
+        match r.steps with
+        | Some n -> r.last <= n && Munin_tui.Facts.bound (Float.of_int r.last) > Float.of_int n
         | None -> false
       in
-      let is life (l, _, _) = l = life in
       let some p = List.exists p runs in
-      cover "a writing run short of its steps" (some (fun r -> is Writing r && short r));
-      cover "a writing run's rounding passes its steps" (some (fun r -> is Writing r && rounds_past r));
-      cover "a writing run without steps" (some (fun ((_, s, _) as r) -> is Writing r && s = None));
-      cover "an ended run short of its steps" (some (fun r -> is Ended r && short r));
+      cover "a writing run short of its steps" (some (fun r -> r.life = Writing && short r));
+      cover "a writing run's rounding passes its steps" (some (fun r -> r.life = Writing && rounds_past r));
+      cover "a writing run without steps" (some (fun r -> r.life = Writing && r.steps = None));
+      cover "an ended run short of its steps" (some (fun r -> r.life = Ended && short r));
       cover "a run past its steps" (some past);
-      cover "a silent run" (some (is Silent));
-      let fs = List.map (fun (life, steps, last) -> facts ?steps life last) runs in
-      let ends = List.map (fun (life, steps, last) -> x_end life ~steps last) runs in
-      equal (pair float_exact float_exact)
-        (0., List.fold_left Float.max 0. ends)
-        (Plot.domain fs))
+      cover "a silent run" (some (fun r -> r.life = Silent));
+      cover "a run without the metric beside one with it"
+        (some (fun r -> r.has) && some (fun r -> not r.has));
+      cover "no run with the metric" (not (some (fun r -> r.has)));
+      let ends = List.map x_end (List.filter (fun r -> r.has) runs) in
+      let expected = match ends with [] -> 1. | _ -> List.fold_left Float.max 0. ends in
+      equal (pair float_exact float_exact) (0., expected) (Plot.domain ~key:"m" (List.map facts runs)))
 
 (* Law 9: a live run's latest step has its [now] rule wherever it is in the
    x domain, which is closed: a run whose latest step is the domain's end,
@@ -2709,6 +2719,60 @@ let strips_scroll =
            moves);
       cover "a move scrolls" !scrolled)
 
+(* [strip_ends screen] is, for each strip whose two rows are above the
+   status bar, its label and the rightmost cell of either row whose braille
+   is in the cursor's colour. The cursor's colour is that of the strip
+   [only], which no other run draws. *)
+let strip_ends ~only screen =
+  let last = T.Screen.rows screen - 2 in
+  let at row col = fst (T.Screen.cell screen ~row ~col) in
+  let label row = String.trim (String.concat "" (List.init 16 (fun i -> at row (strip_col + 1 + i)))) in
+  let firsts =
+    List.filter
+      (fun row ->
+        List.mem (at row strip_col) [ " "; "▌" ]
+        && not (List.mem (at row (strip_col + 1)) [ " "; ""; "↓"; "↑" ]))
+      (List.init last Fun.id)
+  in
+  let braille row col =
+    let ch, style = T.Screen.cell screen ~row ~col in
+    let cp = Uchar.to_int (String.get_utf_8_uchar ch 0 |> Uchar.utf_decode_uchar) in
+    if ch <> "" && cp >= 0x2800 && cp <= 0x28FF then style.Matrix.Ansi.Style.fg else None
+  in
+  let cols = List.init (T.Screen.cols screen) Fun.id in
+  let inked row = List.filter_map (fun col -> Option.map (fun c -> (col, c)) (braille row col)) cols in
+  let strip = List.map (fun row -> (label row, inked row @ inked (row + 1))) firsts in
+  let colour = match List.assoc_opt only strip with Some ((_, c) :: _) -> Some c | _ -> None in
+  List.map
+    (fun (l, ink) ->
+      let mine = List.filter (fun (_, c) -> Some c = colour) ink in
+      (l, List.fold_left (fun e (col, _) -> max e col) (-1) mine))
+    strip
+
+(* Law 1: the strips share one x axis, so that a column is one moment in
+   each. The cursor's run ended at step 3,000 with [m] and [n]; the overlay
+   ended at 5,000 with [m] alone. The cursor's line ends in one column in
+   both strips, though no overlay widens [n]'s. *)
+let shared_axis =
+  test "the strips share one x axis" (fun () ->
+      with_store ~name:"shared" [] @@ fun store ->
+      let declare = [ metric_record "m"; metric_record "n" ] in
+      let ended = Fixture.end_record ~time:4. `Finished in
+      ignore
+        (write_log store ~declare ~started:1
+           (List.init 51 (fun k -> values_record (k * 100) [ ("m", 1.) ]) @ [ ended ]));
+      ignore
+        (write_log store ~declare ~started:2
+           (List.init 31 (fun k -> values_record (k * 100) [ ("m", 0.); ("n", 0.) ]) @ [ ended ]));
+      (* The cursor's run, the newest, is the first row: overlay the second,
+         come back and open the strips. *)
+      let screen =
+        show ~cols:120 ~rows:40 store Munin_tui.Runs [ char 'j'; Text " "; char 'k'; Key Enter ]
+      in
+      let ends = strip_ends ~only:"n" screen in
+      equal ~msg:"the strips" (list string) [ "m"; "n" ] (List.map fst ends);
+      equal ~msg:"the cursor's last column in m, in n" int (List.assoc "n" ends) (List.assoc "m" ends))
+
 (* The data path *)
 
 (* One poll at a time. A poll asked for while one runs waits for it, and the
@@ -3381,6 +3445,7 @@ let () =
          depth_test;
          hidden_filter;
          strips_scroll;
+         shared_axis;
          data_path_test;
          hint_test;
          hints_fit;

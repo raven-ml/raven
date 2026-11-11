@@ -126,9 +126,10 @@ the tabs name the run's metrics, `left` and `right` move between them,
 and the large chart draws the one chosen; small charts of the other goal
 metrics follow when the terminal has the room.
 
-A chart's x axis runs to the largest step of the runs drawn. While a
-run may still log (it is starting, running, live, stalled or writing),
-its end is rounded up to 1, 2 or 5 times a power of ten, and to no more
+A chart's x axis runs to the largest step of the runs it draws that
+logged its metric. While a run may still log (it is starting, running,
+live, stalled or writing), its end is rounded up to 1, 2 or 5 times a
+power of ten, and to no more
 than its declared `steps`, so the axis changes at most three times a
 decade as the run grows, and not at a pause; the dotted rule `now` marks
 the latest step of a live run, and the run pane says how many steps are
@@ -185,8 +186,9 @@ is drawn last. `c` clears the overlays, and so does Esc at the charts.
 ## Strips and zoom
 
 Enter goes one depth deeper. At the strips depth every metric of the run
-is a strip two lines high on the same steps, so reading down a column
-reads one step across every metric. Right of each is its latest value
+is a strip two lines high on one step axis, the largest end of the runs
+the strips draw, so reading down a column reads one step across every
+metric. Right of each is its latest value
 and, with an overlay, the difference to the first overlay at the latest
 step both logged:
 
