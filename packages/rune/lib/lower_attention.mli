@@ -19,11 +19,13 @@
     dimensions. The kernel that folds a row's runs of keys holds one term a
     run: at most the row's tiles of keys, and the least power of two that
     reaches the target's [stream_threads] over a workgroup's threads, its
-    [local_workgroups] on the host: 256 on CUDA with 128 threads. A tile's scores are computed once, then its weights multiply the
-    values a block of columns at a time. On a tensor core the dimensions go in
-    chunks of at most 128, the weights stay in the registers of the product they
-    chain into, and past one block of columns each row's accumulator adds in
-    device memory between tiles, which a second kernel divides by the row's sum.
+    [local_workgroups] on the host: 256 on CUDA with 128 threads. Without a
+    tensor core a tile's scores are computed once, then its weights multiply
+    the values a few columns at a time. On a tensor core the keys'
+    dimensions go in chunks of at most 128 and the values' columns in blocks
+    of at most 128, a block a workgroup, which computes the tile's scores for
+    itself; the weights stay in the registers of the product they chain
+    into, and so do the block's sums.
 
     {b Numerics.} Scores, their maxima and sums, the weights and [lse] compute
     in the accumulator, in base 2: each score is multiplied by [log₂ e] and
@@ -53,8 +55,16 @@
     [k̄] for [k̄], and [S] and [v̄] for [v̄]. Each product runs on the tensor
     core, the weights and the scores' cotangents rounded once to the
     operands' dtype; each sum adds in a fixed order of the shapes and the
-    target. Past 128 dimensions of its own, a cotangent adds in device
-    memory between tiles. *)
+    target. Past 128 dimensions of keys or values the derivative's default
+    computes it, as products over the stored weights: on an RTX 5000 Ada
+    over 64 and 2048 keys it took 0.54 to 0.85 times as long as kernels of
+    their own at 160 and 256 dimensions, and 0.11 to 0.28 times at 1024.
+    Those kernels' times were taken with other jobs on the GPU and include
+    a copy of each cotangent after its kernel, which the default does not
+    pay, so the bound is provisional until measured clean. The weights cost
+    memory: the gradient's [Rune.footprint] of 64 batches of 4 heads of
+    256 bfloat16 rows is 5.05 bytes a pair of a head at 128 dimensions and
+    12.05 at 129. *)
 
 open Tolk
 
@@ -85,8 +95,8 @@ val linear :
 (** [linear ~device ~renderer spec ~transposed data args] is the nodes of
     {!Attention.linear}'s results, computed on [device] by kernels [renderer]
     renders, where it has them: transposed, dense keys, [o] of the query's
-    dtype, no load [spec.tangents] marks, keys and values of at least one
-    dimension, rows and keys, and a float16 or bfloat16 query on a tensor
+    dtype, no load [spec.tangents] marks, keys and values of 1 to 128
+    dimensions, rows and keys, and a float16 or bfloat16 query on a tensor
     core that chains its accumulator, as {!lower}'s. Elsewhere it is
     [None], and the derivative computes as its default. *)
 

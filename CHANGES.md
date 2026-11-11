@@ -463,11 +463,10 @@ All notable changes to this project will be documented in this file.
 - `Rune.jit` adds an assembly, as `Nx.stack`'s, into a loop's carry region
   by region in the carry's storage, where it stored the assembly apart.
 - `Rune.jit`'s attention compiles kernels whose code does not grow with
-  `dk` and `dv`. On a tensor core it computes each tile of scores once
-  whatever `dv` and runs heads of any size, where past about 600 bfloat16
-  dimensions it ran the SIMT kernel. Past 128 dimensions it computes
-  `Nx.attention`'s gradient in kernels of its own, which store no weights.
-  GPU timings are pending.
+  `dk` and `dv`, and on a tensor core runs heads of any size, where past
+  about 600 bfloat16 dimensions it ran the SIMT kernel. On an RTX 5000 Ada
+  bfloat16 attention of 1024 dimensions over 40 keys compiles in 0.5 s
+  where it took 445 s and runs in 2.19 ms where it took 15.3.
 - `Rune.jit`'s attention over `Nx.Paged` keys reads each key's page table
   entry once a tile and decides skips from the lengths and the mask alone:
   gpt-oss's prefill of 512 rows over 1024 slots takes 48.5 µs where it took

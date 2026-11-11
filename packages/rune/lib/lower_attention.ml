@@ -504,11 +504,15 @@ let simt_rows = 64
 let rows_of a = if grouped a <= 32 then 32 else simt_rows
 let simt_keys = 32
 
-(* The values' columns a SIMT thread adds at a time: one on a GPU, whose
-   threads are its vector, and on the host as many as fill one of its
-   vector registers. Each column's sum keeps its order at any width. *)
+(* The values' columns a SIMT thread adds at a time: on the host as many as
+   fill one of its vector registers, and on a GPU 4, as are the dimensions
+   of a score, so that a thread's loads of a row are 4 elements wide. Each
+   sum keeps its order at any width. On fudge's RTX 5000 Ada, 4 heads of
+   4096 batches of 64 rows of 64 float32 dimensions took 3.05 ms so, and
+   5.27 ms a dimension and a column at a time, where more rows in flight
+   missed the L1 cache on their loads. *)
 let simt_width (r : Renderer.t) a =
-  if r.has_local then 1
+  if r.has_local then 4
   else
     match r.registers () with
     | Some { bytes; _ } -> max 1 (bytes / Dtype.itemsize (Arith.dtype a.acc))
@@ -580,7 +584,8 @@ let simt ~local ~width ~splits a xs =
           key_at a x ~inside ~b ~kh ~within:(live &&: (key i < len)) (key i))
     in
     let qs = inside x.q and ks = inside x.k and vs = inside x.v in
-    (* Scores: Σ_d q_d k_d in the accumulator, each product widened. *)
+    (* Scores: Σ_d q_d k_d in the accumulator, each product widened, on a GPU
+       [width] dimensions at a time. *)
     let s = Shape.placeholder ~slot:slot_s ~addrspace:Reg [ bk ] acc in
     let here = inside (Ops.after s (jr :: at)) in
     let s_init =
@@ -589,19 +594,30 @@ let simt ~local ~width ~splits a xs =
     let s =
       if a.dk = 0 then Ops.after s [ s_init ]
       else
-        let d = range Loop (Int a.dk) 4 in
-        let s_d = Ops.after s [ s_init; d ] in
-        let qd = Ops.cast (ld_gated qs ((row.index * int a.dk) + d) live) acc in
+        let sw = if local then width else 1 in
+        let dg = range Loop (Int (ceil_div a.dk sw)) 4 in
+        let s_d = Ops.after s [ s_init; dg ] in
+        (* The step's dimensions, each product added in turn. *)
+        let ds = List.init sw (fun e -> (dg * int sw) + int e) in
+        let qds =
+          List.map
+            (fun d ->
+              let ok = live &&: (d < int a.dk) in
+              Ops.cast (ld_gated qs ((row.index * int a.dk) + d) ok) acc)
+            ds
+        in
         let s_end =
           Ops.end_
             (Ops.group
                (List.init bk (fun i ->
                     let ok, at = keys.(i) in
-                    let kd =
+                    let kd d =
+                      let ok = ok &&: (d < int a.dk) in
                       Ops.cast (ld_gated ks ((at * int a.dk) + d) ok) acc
                     in
-                    st s_d (int i) (ld s_d (int i) + (qd * kd)))))
-            [ d ]
+                    let add s d qd = s + (qd * kd d) in
+                    st s_d (int i) (List.fold_left2 add (ld s_d (int i)) ds qds))))
+            [ dg ]
         in
         Ops.after s [ s_end ]
     in
@@ -693,19 +709,18 @@ let simt ~local ~width ~splits a xs =
    Apple's, or into [B], as RDNA 4's: the kernel then names the transposed
    core ({!Tc.transpose}), whose accumulator chains as [A], and gives the
    hardware each product's operands in the other order. A warp
-   holds [M] rows of a group of heads, a workgroup [warps] warps, and each
-   tile of [keys] keys is copied into workgroup memory a chunk of its
-   dimensions at a time ({!split}), its rows padded by 8 elements. Per
-   tile, a warp's scores [S = Q Kᵀ] are the core's accumulators in
-   registers, carried across [K]'s chunks, [Q]'s operands of one chunk
-   loaded once; each row's maximum goes through workgroup memory to the
-   lanes that share the row; [P], rounded once to the values' dtype, is
-   the [A] operand of [P V] from the accumulators it chains from, each
-   warp's its own, for each block of [V]'s columns in turn; and each block
-   of [V] is copied
-   after the row maximum's barrier, so that its operands' loads wait on it
-   rather than live across the softmax. Coordinates of each lane's elements are
-   the core's fragments' ({!Tc.frag_coords}). *)
+   holds [M] rows of a group of heads, a workgroup [warps] warps and a block
+   of [V]'s columns, and each tile of [keys] keys is copied into workgroup
+   memory a chunk of its dimensions at a time ({!split}), its rows padded by
+   8 elements. Per tile, a warp's scores [S = Q Kᵀ] are the core's
+   accumulators in registers, carried across [K]'s chunks, [Q]'s operands of
+   one chunk loaded once; each row's maximum goes through workgroup memory
+   to the lanes that share the row; [P], rounded once to the values' dtype,
+   is the [A] operand of [P V] from the accumulators it chains from; and the
+   block of [V] is copied after the row maximum's barrier, so that its
+   operands' loads wait on it rather than live across the softmax.
+   Coordinates of each lane's elements are the core's fragments'
+   ({!Tc.frag_coords}). *)
 
 type pick = Mb | Nb | Kb
 
@@ -951,30 +966,22 @@ let zeros_c f acc = Shape.stack (List.init f.ec (fun _ -> fl acc 0.))
 
 (* Head dimensions
 
-   A tensor-core kernel takes the head's dimensions in chunks of at most
-   [stage_dims], a loop over them, so that its code, registers and workgroup
-   memory are those of one chunk whatever [dk] and [dv]. A sum over the
-   dimensions, as [S = Q Kᵀ], carries its accumulators across the chunks in
-   registers; the products into the dimensions, as [P V], run a block of columns
-   at a time ({!sums}). *)
+   The tensor-core forward takes the keys' dimensions in chunks of at most
+   [stage_dims], a loop over them whose sum [S = Q Kᵀ] carries its
+   accumulators in registers, and the values' columns in blocks of at most
+   [stage_dims], a block a workgroup, whose sums stay in its registers: its
+   code, registers and workgroup memory are those of one chunk and one block
+   whatever [dk] and [dv], and each block's workgroup computes the tile's
+   scores again. *)
 
 let stage_dims = 128
 
-(* [split ~step d] is [(n, w)]: [d] dimensions in the fewest [n] chunks of at
-   most [stage_dims], each of [w], the least multiple of [step] that holds
-   [d / n]: under one step of padding a chunk on average, where chunks of
-   [stage_dims] would leave the last one mostly padding. *)
-let split ~step d =
-  let n = max 1 (ceil_div d stage_dims) in
+(* [split ~most ~step d] is [(n, w)]: [d] dimensions in the fewest [n] chunks
+   of at most [most], each of [w], the least multiple of [step] that holds
+   [d / n]: equal widths, under one step of padding a chunk on average. *)
+let split ~most ~step d =
+  let n = max 1 (ceil_div d most) in
   (n, ceil_div (ceil_div d n) step * step)
-
-(* [over n id body] is [body i] at each [i] of a loop of [n] trips and range id
-   [id], or [body (int 0)] for one trip. *)
-let over n id body =
-  if n = 1 then body (int 0)
-  else
-    let i = range Loop (Int n) id in
-    Ops.end_ (body i) [ i ]
 
 (* A lane's product unit, its tensor core: the core's fragment facts, the core
    as the kernel names it, whether that is the hardware's transposed ({!wmma}),
@@ -1029,84 +1036,49 @@ let dots u ~acc ~slot ~id ~inside ~at ~tiles (n, w) a b =
     let r = Ops.after r [ Ops.end_ (Ops.group put) [ c ] ] in
     Array.init tiles (fun t -> Array.init f.ec (fun e -> ld r (at t e)))
 
-(* A lane's sums over the tiles of keys or rows, of [blocks] blocks of columns
-   of [size] elements each: in registers where one block holds them all, else in
-   [mem], a buffer of the accumulator's type where the lane's element [i] of
-   block [cb] is at [elem cb i] = [(ok, index)], no other lane's, set to zero
-   before the tiles. [old inside cb i] and [put inside cb i v] read and write
-   the lane's element in a tile, [out loop cb i] reads it after the tiles'
-   [loop]. *)
+(* A lane's sums over the tiles of keys or rows: [size] elements in registers
+   [slot], set to zero at each step of the ranges [at]. [old inside i] and
+   [put inside i v] read and write element [i] in a step of the tiles' loop
+   [jr], [out loop i] reads it after the tiles' [loop]. *)
 type sums = {
-  old : (Ops.t -> Ops.t) -> Ops.t -> int -> Ops.t;
-  put : (Ops.t -> Ops.t) -> Ops.t -> int -> Ops.t -> Ops.t;
-  out : Ops.t -> Ops.t -> int -> Ops.t;
+  old : (Ops.t -> Ops.t) -> int -> Ops.t;
+  put : (Ops.t -> Ops.t) -> int -> Ops.t -> Ops.t;
+  out : Ops.t -> int -> Ops.t;
 }
 
-let sums acc ~slot ~id ~size ~blocks ~at ~jr ~elem mem =
-  if blocks = 1 then
-    let r, init = reg slot size acc (fl acc 0.) ~at in
-    let r_j = Ops.after r [ init; jr ] in
-    {
-      old = (fun inside _ i -> ld (inside r_j) (int i));
-      put = (fun inside _ i v -> st (inside r_j) (int i) v);
-      out = (fun loop _ i -> ld (Ops.after r [ loop ]) (int i));
-    }
-  else
-    let mem =
-      match mem with
-      | Some m -> m
-      | None -> invalid_arg "Lower_attention: sums past a block"
-    in
-    let store buf cb i v =
-      let ok, at = elem cb i in
-      Ops.store (Ops.index buf [ Ops.where ok at Ops.invalid ]) v
-    in
-    let zero =
-      over blocks id (fun cb ->
-          Ops.group (List.init size (fun i -> store mem cb i (fl acc 0.))))
-    in
-    let m_j = Ops.after mem [ zero; jr ] in
-    let read buf cb i =
-      let ok, at = elem cb i in
-      ld_gated buf at ok
-    in
-    {
-      old = (fun inside cb i -> read (inside m_j) cb i);
-      put = (fun inside cb i v -> store (inside m_j) cb i v);
-      out = (fun loop cb i -> read (Ops.after mem [ loop ]) cb i);
-    }
+let sums acc ~slot ~size ~at ~jr =
+  let r, init = reg slot size acc (fl acc 0.) ~at in
+  let r_j = Ops.after r [ init; jr ] in
+  {
+    old = (fun inside i -> ld (inside r_j) (int i));
+    put = (fun inside i v -> st (inside r_j) (int i) v);
+    out = (fun loop i -> ld (Ops.after r [ loop ]) (int i));
+  }
 
-(* [accumulate u s ~inside ~id ~tiles ~steps (n, w) ~scale p b] adds to the sums
-   [s], for each of [n] blocks of [w] columns in a loop of range id [id], [P B]
-   over [steps] steps of [K]: [p kk] is step [kk]'s [A] operand, and [b first]
-   stages the block from column [first] and reads it at [~row ~col]. Each old
-   element [i] is [scale i] times its value. *)
-let accumulate u s ~inside ~id ~tiles ~steps (n, w) ~scale p b =
+(* [accumulate u s ~inside ~tiles ~steps ~scale p read] adds to the sums [s]
+   [P B] for a block of [tiles] tiles of [N] columns, over [steps] steps of
+   [K]: [p kk] is step [kk]'s [A] operand, and [read ~row ~col] reads [B]'s
+   block, staged. Each old element [i] is [scale i] times its value. *)
+let accumulate u s ~inside ~tiles ~steps ~scale p read =
   let f = u.f in
-  over n id (fun cb ->
-      let read = b Ops.O.(cb * int w) in
-      Ops.group
-        (List.concat
-           (List.init tiles (fun t ->
-                let at e = Stdlib.((t * f.ec) + e) in
-                let acc0 =
-                  Shape.stack
-                    (List.init f.ec (fun e ->
-                         scale (at e) (s.old inside cb (at e))))
-                in
-                let d =
-                  mma u.tc ~transposed:u.transposed ~lane:u.lane ~steps p
-                    (fun kk ~k ~n ->
-                      read
-                        ~row:
-                          Ops.O.(
-                            int Stdlib.(kk * f.k_) + key_of f.keymap f.k_ k)
-                        ~col:Ops.O.(int Stdlib.(t * f.n_) + n))
-                    ~acc:acc0
-                in
-                List.init f.ec (fun e ->
-                    s.put inside cb (at e)
-                      (Ops.index d [ Ops.int ~dtype:Int32 e ]))))))
+  Ops.group
+    (List.concat
+       (List.init tiles (fun t ->
+            let at e = Stdlib.((t * f.ec) + e) in
+            let acc0 =
+              Shape.stack
+                (List.init f.ec (fun e -> scale (at e) (s.old inside (at e))))
+            in
+            let d =
+              mma u.tc ~transposed:u.transposed ~lane:u.lane ~steps p
+                (fun kk ~k ~n ->
+                  read
+                    ~row:Ops.O.(int Stdlib.(kk * f.k_) + key_of f.keymap f.k_ k)
+                    ~col:Ops.O.(int Stdlib.(t * f.n_) + n))
+                ~acc:acc0
+            in
+            List.init f.ec (fun e ->
+                s.put inside (at e) (Ops.index d [ Ops.int ~dtype:Int32 e ])))))
 
 (* [reader buf ~w] reads a tile staged in [buf] with rows of [w] elements and
    [pad] more, at [~row] and the column [~dim] or [~col]. *)
@@ -1123,9 +1095,8 @@ type core = {
 }
 
 (* Whether {!core} leaves each row's [m], [l] and accumulator unnormalised for
-   {!combine}: with key splits, and with blocks of values past one, whose
-   accumulators it sums in the [sums] {!combine} reads. *)
-let raw c = c.splits > 1 || fst c.vdims > 1
+   {!combine}: with key splits. *)
+let raw c = c.splits > 1
 
 let core c a xs =
   let x = args ~scratch:false a xs in
@@ -1150,6 +1121,11 @@ let core c a xs =
   let gt = int Stdlib.(tiles_q - 1) - gtr in
   let splits = c.splits in
   let gs = if Stdlib.(splits > 1) then Some (range Global (Int splits) 6) else None in
+  (* The workgroup's block of the values' columns. *)
+  let gc =
+    if Stdlib.(blocks = 1) then None else Some (range Global (Int blocks) 2)
+  in
+  let first_col = match gc with Some g -> g * int cols | None -> int 0 in
   let warp = range Local (Int c.warps) 3 in
   let lane = range Warp (Int lanes) 4 in
   let u = { f; tc; transposed; lane } in
@@ -1161,7 +1137,9 @@ let core c a xs =
   let first, tiles = run_tiles ~tk:a.tk ~bk ~splits ~gs len in
   let jr = range Loop (Sym tiles) 5 in
   let j = first + jr in
-  let at = [ gh; gtr ] @ Option.to_list gs @ [ warp; lane ] in
+  let at =
+    [ gh; gtr ] @ Option.to_list gs @ Option.to_list gc @ [ warp; lane ]
+  in
   let part r =
     (r.index * int splits) + Option.value gs ~default:(int 0)
   in
@@ -1180,24 +1158,16 @@ let core c a xs =
               | _ -> [])
             tc.frag_c.lanes))
   in
-  (* The lane's element [i] of [o]'s block [cb]: its row and column. *)
-  let o_elem cb i =
+  (* The lane's element [i] of the workgroup's block of [o]: its row and
+     column. *)
+  let o_elem i =
     let e = Stdlib.(i mod ec) and ot = Stdlib.(i / ec) in
     let r = row_of (coord tc.frag_c Mb lane e) in
-    (r, (cb * int cols) + int Stdlib.(ot * n_) + coord tc.frag_c Nb lane e)
+    (r, first_col + int Stdlib.(ot * n_) + coord tc.frag_c Nb lane e)
   in
   let m, m_init = reg slot_m slots acc (fl acc Float.neg_infinity) ~at in
   let ls, l_init = reg slot_l slots acc (fl acc 0.) ~at in
-  (* Past one block the accumulators sum in the runs' [sums], [x.o]. *)
-  let o =
-    sums acc ~slot:slot_acc ~id:12
-      ~size:Stdlib.(otiles * ec)
-      ~blocks ~at ~jr
-      ~elem:(fun cb i ->
-        let r, col = o_elem cb i in
-        (r.live &&: (col < int a.dv), (part r * int a.dv) + col))
-      (Some x.o)
-  in
+  let o = sums acc ~slot:slot_acc ~size:Stdlib.(otiles * ec) ~at ~jr in
   let m_j = Ops.after m [ m_init; jr ] and l_j = Ops.after ls [ l_init; jr ] in
   let ks = Shape.placeholder ~slot:slot_ks ~addrspace:Local [ Stdlib.(bk * (kw + pad)) ] vt in
   let vs = Shape.placeholder ~slot:slot_vs ~addrspace:Local [ Stdlib.(bk * (cols + pad)) ] vt in
@@ -1311,22 +1281,21 @@ let core c a xs =
                       (fun e -> if slot_of e = s then Some p.(nt).(e) else None)
                       (List.init ec Fun.id)))))
     in
-    (* o = α o + P V, a block of V's columns at a time, P rounded once to the
-       values' dtype as each step's operand A. Each block of V is copied once
-       the row maximum's loads have read [red]. Its copy reads the table again
-       there: entries kept from K's copy would live across the scores and the
-       softmax. *)
+    (* o = α o + P V over the workgroup's block of V's columns, P rounded
+       once to the values' dtype as each step's operand A. The block is
+       copied once the row maximum's loads have read [red]. Its copy reads
+       the table again there: entries kept from K's copy would live across
+       the scores and the softmax. *)
     let late buf = Ops.after (inside buf) [ red_r ] in
     let values =
-      accumulate u o ~inside ~id:14 ~tiles:otiles ~steps:vsteps c.vdims
+      let staged =
+        copy late (inside x.v) (late vs) ~width:a.dv ~first:first_col ~cols
+      in
+      let vs = Ops.after vs [ Ops.group staged ] in
+      accumulate u o ~inside ~tiles:otiles ~steps:vsteps
         ~scale:(fun i v -> v * alpha.(slot_of Stdlib.(i mod ec)))
         (chain_a f vt p)
-        (fun first ->
-          let staged =
-            copy late (inside x.v) (late vs) ~width:a.dv ~first ~cols
-          in
-          let vs = Ops.after vs [ Ops.group staged ] in
-          fun ~row ~col -> reader vs ~w:cols ~row ~dim:col)
+        (fun ~row ~col -> reader vs ~w:cols ~row ~dim:col)
     in
     Ops.group
       ((values :: List.init slots (fun s -> st (inside m_j) (int s) mx.(s)))
@@ -1357,34 +1326,30 @@ let core c a xs =
   in
   let out = Arith.dtype a.out in
   let raw = raw c in
-  (* One block's accumulators, in registers, stored; past one block they are in
-     [x.o] already. *)
   let o_stores =
-    if Stdlib.(blocks > 1) then []
-    else
-      List.init
-        Stdlib.(otiles * ec)
-        (fun i ->
-          let r, col = o_elem (int 0) i in
-          let ok = r.live &&: (col < int a.dv) in
-          let v = o.out loop (int 0) i in
-          if raw then
-            Ops.store
-              (Ops.index x.o
-                 [ Ops.where ok ((part r * int a.dv) + col) Ops.invalid ])
-              v
-          else
-            let v = o_of acc ~l:total.(slot_of Stdlib.(i mod ec)) v in
-            Ops.store
-              (Ops.index x.o
-                 [ Ops.where ok ((r.index * int a.dv) + col) Ops.invalid ])
-              (Ops.cast v out))
+    List.init
+      Stdlib.(otiles * ec)
+      (fun i ->
+        let r, col = o_elem i in
+        let ok = r.live &&: (col < int a.dv) in
+        let v = o.out loop i in
+        if raw then
+          Ops.store
+            (Ops.index x.o [ Ops.where ok ((part r * int a.dv) + col) Ops.invalid ])
+            v
+        else
+          let v = o_of acc ~l:total.(slot_of Stdlib.(i mod ec)) v in
+          Ops.store
+            (Ops.index x.o [ Ops.where ok ((r.index * int a.dv) + col) Ops.invalid ])
+            (Ops.cast v out))
   in
   let lse_stores =
     List.concat
       (List.init slots (fun s ->
            let r = row_of (coord tc.frag_c Mb lane (first_of s)) in
-           let first = r.live &&: Ops.eq share (int 0) in
+           let first =
+             r.live &&: Ops.eq share (int 0) &&: Ops.eq first_col (int 0)
+           in
            let m = ld m_out (int s) in
            if raw then
              [
@@ -1506,14 +1471,20 @@ let combine ~local ~width ~splits a xs =
    as it is or transposed. It holds [warps]
    of 8 while the launch keeps the renderer's [local_workgroups] workgroups,
    else 4, as many warps as balance a part's units (FlashAttention-2 §3.3:
-   query rows split across warps); the keys' dimensions and the values'
-   columns in chunks of at most {!stage_dims} ({!split}), so that a lane's
-   operands of [Q] and accumulators of [o] stay in its registers; and tiles
-   of 64 keys while what the kernel declares in workgroup memory fits there
-   and a block of values holds at most 64 columns, else 32, the rule of
-   {!derivative_tile}. On sm_89 a block of 112 columns took 255 registers
-   and spilled 112 bytes with tiles of 64, and 228 registers with tiles of
-   32 (ptxas). *)
+   query rows split across warps); the keys' dimensions in chunks and the
+   values' columns in blocks of at most {!stage_dims} ({!split}), so that a
+   lane's operands of [Q] and accumulators of [o] stay in its registers; and
+   tiles of 64 keys while what the kernel declares in workgroup memory fits
+   there, else 32. On fudge's RTX 5000 Ada, a call of 4 heads of 4096
+   batches of 64 rows (512 batches at 1024) took 3.94, 6.32 and 3.28 ms at
+   160, 256 and 1024 bfloat16 dimensions, against 3.96, 6.32 and 4.76 ms in
+   blocks of 64 columns, measured together; over 8 heads of 2048 rows,
+   0.36, 0.65 and 6.8 ms against 0.50, 0.93 and 11.1 ms. Where one
+   workgroup took every block and summed past one in device memory, a call
+   took 8.0, 14.4 and 11.4 ms over 64 rows, against 4.56, 6.31 and 3.53 in
+   the same session. At 110 dimensions over 64 rows the kernel spills with tiles of 64
+   keys, 255 MB of local loads at 4096 batches, and takes the time it took
+   with 32. *)
 let plan (r : Renderer.t) a =
   let vt = Arith.dtype a.vt in
   let chains (tc : Tc.t) =
@@ -1536,9 +1507,10 @@ let plan (r : Renderer.t) a =
     when narrow && r.has_local && r.has_shared
          && Dtype.equal (Arith.dtype a.acc) Float32 ->
       let n, m, k = Tc.dims tc in
-      let kdims = split ~step:k a.dk and vdims = split ~step:n a.dv in
+      let kdims = split ~most:stage_dims ~step:k a.dk in
+      let vdims = split ~most:stage_dims ~step:n a.dv in
       let workgroups warps =
-        numel a.lead * a.hk * ceil_div (grouped a) (warps * m)
+        numel a.lead * a.hk * ceil_div (grouped a) (warps * m) * fst vdims
       in
       let warps = if workgroups 8 >= r.local_workgroups then 8 else 4 in
       (* Few rows take fewer warps: a decode step's one query of each head. *)
@@ -1558,7 +1530,7 @@ let plan (r : Renderer.t) a =
       let fits keys = bytes keys + beside <= r.shared_max in
       if not (fits 32) then None
       else
-      let keys = if fits 64 && snd vdims <= 64 then 64 else 32 in
+      let keys = if fits 64 then 64 else 32 in
       let splits =
         splits_for ~stream:r.stream_threads ~workgroups:(workgroups warps)
           ~threads ~tiles:(ceil_div a.tk keys)
@@ -1679,31 +1651,17 @@ type dcore = {
   wide : bool;
       (* Keys or values past 64 dimensions: [dkdv]'s two sums each run in a
          launch of its own, so that each has its own registers. *)
-  dkdims : int * int;  (* The keys' and queries' chunks of dimensions. *)
-  dvdims : int * int;  (* The values' and [ō]'s chunks of dimensions. *)
+  kw : int;  (* The keys' and queries' dimensions, in whole steps of [K]. *)
+  vw : int;  (* The values' and [ō]'s dimensions, in whole steps of [K]. *)
 }
-
-(* [once ~blocks f] is [f]: [f first] stages a tile from dimension [first] and
-   reads it. A tile of one chunk is staged once, for every product that reads
-   it. Past one, a second product into the dimensions that reads the operand
-   copies its chunks into the same buffer again, ordered after the sum's
-   reads. *)
-let once ~blocks f =
-  if blocks = 1 then
-    let r = f (int 0) in
-    fun _ -> r
-  else f
 
 (* By rows: [q̄] of the rows a workgroup holds, over each tile of keys. A
    warp holds [M] rows, their [Q] and [ō] operands in registers a chunk of
    dimensions at a time; the tile's keys and values are staged in
-   workgroup memory, a chunk at a time. Past one chunk of [K]'s dimensions
-   [q̄] sums in a buffer of the accumulator's type, the argument after it
-   ({!sums}). Arguments: [q̄], that buffer where it takes one, then
-   {!dargs}'s. *)
+   workgroup memory. Arguments: [q̄], then {!dargs}'s. *)
 let core_dq c a tr xs =
-  let kblocks, kw = c.dkdims and vw = snd c.dvdims in
-  let os, d = dargs a ~outs:(if kblocks > 1 then 2 else 1) xs in
+  let kw = c.kw and vw = c.vw in
+  let os, d = dargs a ~outs:1 xs in
   let x = d.x in
   let tc = c.dtc and transposed = c.dtransposed and bk = c.qkeys in
   let f = facts tc in
@@ -1748,18 +1706,15 @@ let core_dq c a tr xs =
         ld_gated buf r.index r.live)
   in
   let lses = per_slot x.lse and deltas = per_slot d.delta in
-  (* The lane's element [i] of [q̄]'s block [cb]. *)
-  let elem cb i =
+  (* The lane's element [i] of [q̄]. *)
+  let elem i =
     let e = Stdlib.(i mod f.ec) and t = Stdlib.(i / f.ec) in
     let r = row_of (coord tc.frag_c Mb lane e) in
-    let col = (cb * int kw) + int Stdlib.(t * n_) + coord tc.frag_c Nb lane e in
+    let col = int Stdlib.(t * n_) + coord tc.frag_c Nb lane e in
     (r.live &&: (col < int a.dk), (r.index * int a.dk) + col)
   in
   let size = Stdlib.(dtiles * f.ec) in
-  let g =
-    sums acc ~slot:slot_acc ~id:12 ~size ~blocks:kblocks ~at ~jr ~elem
-      (if Stdlib.(kblocks > 1) then Some os.(1) else None)
-  in
+  let g = sums acc ~slot:slot_acc ~size ~at ~jr in
   let ks =
     Shape.placeholder ~slot:slot_ks ~addrspace:Local
       [ Stdlib.(bk * (kw + pad)) ]
@@ -1781,21 +1736,21 @@ let core_dq c a tr xs =
         (row_of (coord tc.frag_c Mb lane e), key kl))
   in
   let body inside seen =
-    let tile src dst width w first =
+    let tile src dst width w =
       let staged =
         stage ~tid ~threads ~n:bk ~at:(keys_at inside) (inside src) (inside dst)
-          ~width ~first ~cols:w
+          ~width ~first:(int 0) ~cols:w
       in
       reader (Ops.after dst [ Ops.group staged ]) ~w
     in
-    let k_tile = once ~blocks:kblocks (tile x.k ks a.dk kw) in
-    let v_tile first = tile x.v vs a.dv vw first in
+    let k_tile = tile x.k ks a.dk kw and v_tile = tile x.v vs a.dv vw in
     (* S = Q Kᵀ and dP = ō Vᵀ, each tile of [N] keys an accumulator. *)
-    let dots slot id dims ops tile =
-      dots u ~acc ~slot ~id ~inside ~at:(jr :: at) ~tiles:ntiles dims ops tile
+    let dots slot id w ops tile =
+      dots u ~acc ~slot ~id ~inside ~at:(jr :: at) ~tiles:ntiles (1, w) ops
+        (fun _ -> tile)
     in
-    let s = dots slot_s 13 c.dkdims qa k_tile in
-    let dp = dots slot_dp 14 c.dvdims oa v_tile in
+    let s = dots slot_s 13 kw qa k_tile in
+    let dp = dots slot_dp 14 vw oa v_tile in
     let rbar =
       Array.init ntiles (fun nt ->
           Array.init f.ec (fun e ->
@@ -1808,18 +1763,11 @@ let core_dq c a tr xs =
               let p = weight acc ~seen:vis ~x2 ~lse:lses.(sl) in
               back (Ops.where vis (p * (dp.(nt).(e) - deltas.(sl))) (fl acc 0.))))
     in
-    (* q̄ += r̄ K, [K] read along its keys, copied again past one chunk once S
-       has read the last. *)
-    let k_again =
-      if Stdlib.(kblocks = 1) then k_tile
-      else tile x.k (Ops.after ks [ s.(0).(0) ]) a.dk kw
-    in
-    accumulate u g ~inside ~id:15 ~tiles:dtiles ~steps:vsteps c.dkdims
+    (* q̄ += r̄ K, [K] read along its keys. *)
+    accumulate u g ~inside ~tiles:dtiles ~steps:vsteps
       ~scale:(fun _ v -> v)
       (chain_a f vt rbar)
-      (fun first ->
-        let read = k_again first in
-        fun ~row ~col -> read ~row ~dim:col)
+      (fun ~row ~col -> k_tile ~row ~dim:col)
   in
   let rows = (gt * int bq, Ops.minimum ((gt * int bq) + int Stdlib.(bq - 1)) (int Stdlib.(gr - 1))) in
   let keys = (key (int 0), key (int Stdlib.(bk - 1))) in
@@ -1830,14 +1778,11 @@ let core_dq c a tr xs =
       [ jr ]
   in
   let stores =
-    over kblocks 16 (fun cb ->
-        Ops.group
-          (List.init size (fun i ->
-               let ok, at = elem cb i in
-               let v = g.out loop cb i * fl acc a.scale in
-               Ops.store
-                 (Ops.index os.(0) [ Ops.where ok at Ops.invalid ])
-                 (Ops.cast v vt))))
+    Ops.group
+      (List.init size (fun i ->
+           let ok, at = elem i in
+           let v = g.out loop i * fl acc a.scale in
+           Ops.store (Ops.index os.(0) [ Ops.where ok at Ops.invalid ]) (Ops.cast v vt)))
   in
   let kernel = Ops.kernel_info ~name:"attention_dq" ~opts_to_apply:[] () in
   Ops.sink ~kernel [ Ops.end_ stores at ]
@@ -1848,18 +1793,12 @@ type part = Both | Keys | Values
 (* By keys: [k̄] and [v̄] of the keys a workgroup holds, over each tile of
    their group's rows. A warp holds [M] keys, their [K] and [V] operands in
    registers a chunk of dimensions at a time; the tile's query rows and
-   their [ō] are staged in workgroup memory, a chunk at a time. Past one
-   chunk of its dimensions a sum adds in a buffer of the accumulator's type,
-   the argument after the launch's output ({!sums}). Arguments: [k̄] and
-   [v̄], or the one the launch computes and that buffer where it takes one,
-   then {!dargs}'s. *)
+   their [ō] are staged in workgroup memory. Arguments: [k̄] and [v̄], or the
+   one the launch computes, then {!dargs}'s. *)
 let core_dkdv ~(part : part) c a tr xs =
   let want_k = part <> Values and want_v = part <> Keys in
-  let kblocks, kw = c.dkdims and vblocks, vw = c.dvdims in
-  let mem = (want_k && kblocks > 1) || (want_v && vblocks > 1) in
-  let outs = (if part = Both then 2 else 1) + Bool.to_int mem in
-  let os, d = dargs a ~outs xs in
-  let scratch = if mem then Some os.(outs - 1) else None in
+  let kw = c.kw and vw = c.vw in
+  let os, d = dargs a ~outs:(if part = Both then 2 else 1) xs in
   let os = if part = Both then os else [| os.(0); os.(0) |] in
   let x = d.x in
   let tc = c.dtc and transposed = c.dtransposed and br = c.krows in
@@ -1901,30 +1840,16 @@ let core_dkdv ~(part : part) c a tr xs =
            ld_gated buf ((at * int width) + col) (ok &&: (col < int width))))
   in
   let ka = operands x.k a.dk and va = operands x.v a.dv in
-  (* The lane's element [i] of block [cb] of an output of [width] columns in
-     blocks of [w]. *)
-  let elem width w cb i =
+  (* The lane's element [i] of an output of [width] columns. *)
+  let elem width i =
     let e = Stdlib.(i mod f.ec) and t = Stdlib.(i / f.ec) in
     let ky = key_of_m (coord tc.frag_c Mb lane e) in
-    let col = (cb * int w) + int Stdlib.(t * n_) + coord tc.frag_c Nb lane e in
+    let col = int Stdlib.(t * n_) + coord tc.frag_c Nb lane e in
     ( ky < int a.tk &&: (col < int width),
       (((gh * int a.tk) + ky) * int width) + col )
   in
-  let sums_of ~slot ~id ~tiles ~blocks ~width ~w =
-    sums acc ~slot ~id
-      ~size:Stdlib.(tiles * f.ec)
-      ~blocks ~at ~jr ~elem:(elem width w) scratch
-  in
-  let gk =
-    lazy
-      (sums_of ~slot:slot_acc ~id:12 ~tiles:dtiles ~blocks:kblocks ~width:a.dk
-         ~w:kw)
-  in
-  let gv =
-    lazy
-      (sums_of ~slot:slot_sum ~id:17 ~tiles:ctiles ~blocks:vblocks ~width:a.dv
-         ~w:vw)
-  in
+  let gk = lazy (sums acc ~slot:slot_acc ~size:Stdlib.(dtiles * f.ec) ~at ~jr) in
+  let gv = lazy (sums acc ~slot:slot_sum ~size:Stdlib.(ctiles * f.ec) ~at ~jr) in
   let qs =
     Shape.placeholder ~slot:slot_ks ~addrspace:Local
       [ Stdlib.(br * (kw + pad)) ]
@@ -1946,22 +1871,21 @@ let core_dkdv ~(part : part) c a tr xs =
         (row rl, key_of_m (coord tc.frag_c Mb lane e)))
   in
   let body inside seen =
-    let tile src dst width w first =
+    let tile src dst width w =
       let staged =
         stage ~tid ~threads ~n:br ~at:rows_at (inside src) (inside dst) ~width
-          ~first ~cols:w
+          ~first:(int 0) ~cols:w
       in
       reader (Ops.after dst [ Ops.group staged ]) ~w
     in
-    let q_tile = once ~blocks:kblocks (tile x.q qs a.dk kw) in
-    (* [ō] is read twice only by [Both], at one chunk. *)
-    let o_tile = once ~blocks:vblocks (tile d.bo dos a.dv vw) in
+    let q_tile = tile x.q qs a.dk kw and o_tile = tile d.bo dos a.dv vw in
     (* Sᵀ = K Qᵀ and dPᵀ = V ōᵀ, each tile of [N] rows an accumulator. *)
-    let dots slot id dims ops tile =
-      dots u ~acc ~slot ~id ~inside ~at:(jr :: at) ~tiles:ntiles dims ops tile
+    let dots slot id w ops tile =
+      dots u ~acc ~slot ~id ~inside ~at:(jr :: at) ~tiles:ntiles (1, w) ops
+        (fun _ -> tile)
     in
-    let s = dots slot_s 13 c.dkdims ka q_tile in
-    let dp = if want_k then dots slot_dp 14 c.dvdims va o_tile else [||] in
+    let s = dots slot_s 13 kw ka q_tile in
+    let dp = if want_k then dots slot_dp 14 vw va o_tile else [||] in
     let weights =
       Array.init ntiles (fun nt ->
           Array.init f.ec (fun e ->
@@ -1978,28 +1902,16 @@ let core_dkdv ~(part : part) c a tr xs =
                 (p, back (Ops.where vis (p * (dp.(nt).(e) - delta)) (fl acc 0.)))))
     in
     let p = Array.map (Array.map fst) weights and rbar = Array.map (Array.map snd) weights in
-    (* v̄ += Pᵀ ō and k̄ += r̄ᵀ Q, the staged rows read along the rows, Q
-       copied again past one chunk once Sᵀ has read the last. *)
-    let q_again =
-      if Stdlib.(kblocks = 1) then q_tile
-      else tile x.q (Ops.after qs [ s.(0).(0) ]) a.dk kw
-    in
-    let add s ~id ~tiles dims ops tile =
-      accumulate u s ~inside ~id ~tiles ~steps:rsteps dims
+    (* v̄ += Pᵀ ō and k̄ += r̄ᵀ Q, the staged rows read along the rows. *)
+    let add s ~tiles ops read =
+      accumulate u s ~inside ~tiles ~steps:rsteps
         ~scale:(fun _ v -> v)
         (chain_a f vt ops)
-        (fun first ->
-          let read = tile first in
-          fun ~row ~col -> read ~row ~dim:col)
+        (fun ~row ~col -> read ~row ~dim:col)
     in
     Ops.group
-      ((if want_v then
-          [ add (Lazy.force gv) ~id:15 ~tiles:ctiles c.dvdims p o_tile ]
-        else [])
-      @
-      if want_k then
-        [ add (Lazy.force gk) ~id:16 ~tiles:dtiles c.dkdims rbar q_again ]
-      else [])
+      ((if want_v then [ add (Lazy.force gv) ~tiles:ctiles p o_tile ] else [])
+      @ if want_k then [ add (Lazy.force gk) ~tiles:dtiles rbar q_tile ] else [])
   in
   let rows = (jr * int br, Ops.minimum ((jr * int br) + int Stdlib.(br - 1)) (int Stdlib.(gr - 1))) in
   let keys = (k0, k0 + int Stdlib.(bkk - 1)) in
@@ -2009,16 +1921,15 @@ let core_dkdv ~(part : part) c a tr xs =
          ~ids:(7, 8, 9) pairs body)
       [ jr ]
   in
-  let stores out g ~id ~tiles ~blocks ~width ~w scale =
-    over blocks id (fun cb ->
-        Ops.group
-          (List.init
-             Stdlib.(tiles * f.ec)
-             (fun i ->
-               let ok, at = elem width w cb i in
-               let v = g.out loop cb i in
-               let v = match scale with Some s -> v * fl acc s | None -> v in
-               Ops.store (Ops.index out [ Ops.where ok at Ops.invalid ]) (Ops.cast v vt))))
+  let stores out g ~tiles ~width scale =
+    Ops.group
+      (List.init
+         Stdlib.(tiles * f.ec)
+         (fun i ->
+           let ok, at = elem width i in
+           let v = g.out loop i in
+           let v = match scale with Some s -> v * fl acc s | None -> v in
+           Ops.store (Ops.index out [ Ops.where ok at Ops.invalid ]) (Ops.cast v vt)))
   in
   let kernel = Ops.kernel_info ~name:"attention_dkdv" ~opts_to_apply:[] () in
   Ops.sink ~kernel
@@ -2026,17 +1937,11 @@ let core_dkdv ~(part : part) c a tr xs =
       Ops.end_
         (Ops.group
            ((if want_k then
-               [
-                 stores os.(0) (Lazy.force gk) ~id:18 ~tiles:dtiles
-                   ~blocks:kblocks ~width:a.dk ~w:kw (Some a.scale);
-               ]
+               [ stores os.(0) (Lazy.force gk) ~tiles:dtiles ~width:a.dk (Some a.scale) ]
              else [])
            @
            if want_v then
-             [
-               stores os.(1) (Lazy.force gv) ~id:19 ~tiles:ctiles
-                 ~blocks:vblocks ~width:a.dv ~w:vw None;
-             ]
+             [ stores os.(1) (Lazy.force gv) ~tiles:ctiles ~width:a.dv None ]
            else []))
         at;
     ]
@@ -2052,7 +1957,7 @@ let derivative_tile tc ~wide =
 (* [dplan renderer a] is the derivative's kernels' shape for [a] on
    [renderer]'s target, if it takes them: {!plan}'s core, dense keys, [o] of
    the query's dtype, no load whose cotangent is asked for, and keys and
-   values of at least one dimension. To 64 a warp holds its operands, its
+   values of 1 to {!stage_dims} dimensions. To 64 a warp holds its operands, its
    accumulators and those of a tile of 32 keys or rows in registers, up to
    250 of them on sm_89 with no spill, and two workgroups of 4 warps share a
    compute unit. Past 64, [k̄] and [v̄] take a launch each, so that each holds
@@ -2060,13 +1965,27 @@ let derivative_tile tc ~wide =
    On fudge's RTX 5000 Ada, 8 heads of 2048 rows of 128 dimensions took 5.5
    ms in one launch and tiles of 32, which spilled, 1.3 ms so split, and 2.8
    ms in the derivative's default. Tiles of 64 at 64 dimensions spilled and
-   took up to 2.1 times as long, 8 warps 1.1 to 1.25 times. Past 128 each
-   kernel takes the dimensions in chunks of at most 128 ({!split}), in no
-   more registers than at 128, and a cotangent past one chunk sums in
-   device memory ({!sums}). The kernels these replace held every dimension
-   in registers, spilled at 256, and took 7.1 ms there against the
-   default's 4.3 ms; the chunked kernels' time at 256 and 1024 is the
-   [Cuda/attention/jit-grad-bf16-*] rows' to record.
+   took up to 2.1 times as long, 8 warps 1.1 to 1.25 times.
+
+   Past 128 the default computes it, faster than any layout of these
+   kernels measured. On fudge's RTX 5000 Ada, the gradient's kernels after
+   the forward's at 160, 256 and 1024 bfloat16 dimensions took 12.9, 15.7
+   and 7.6 ms in the default over 4 heads of 4096 batches of 64 rows (512
+   batches at 1024), and 2.9, 3.0 and 8.7 ms over 8 heads of 2048 rows;
+   kernels of a block of 128 of a cotangent's columns a workgroup, which
+   computed [S] and [dP] for each block, 15.2, 23.4 and 26.7 ms and 3.6, 5.6
+   and 82 ms; and kernels that summed a cotangent's chunks in device memory
+   between tiles 36.2, 56.3 and 58.2 ms and 5.8, 8.6 and 140 ms. Kernels
+   that held every dimension in registers spilled at 256 and took 7.1 ms
+   there over 8 heads of 2048 rows, against the default's 4.3. The fused
+   times were taken with other jobs on the GPU and include a copy of each
+   cotangent after its kernel, 5.3 ms of the block kernels' at 160 over 64
+   rows, which the default does not pay; without it they took 11.2 and 16.9
+   ms at 160 and 256 against the default's 12.9 and 15.7. The bound is
+   provisional until they are measured clean. It trades memory for time:
+   the default stores the weights, a gradient's footprint of 64 batches of
+   4 heads of 256 bfloat16 rows going from 5.05 bytes a pair of a head at
+   128 dimensions to 12.05 at 129.
 
    Elsewhere the default's contractions compute it. A page's keys sum over
    every lead index that reads the page, and a float load's cotangent has any
@@ -2091,7 +2010,7 @@ let dplan (r : Renderer.t) a ~marked =
     when Option.is_none a.paged
          && (not (Array.exists Fun.id marked))
          && Dtype.equal (Arith.dtype a.out) vt
-         && a.dk > 0 && a.dv > 0 ->
+         && a.dk > 0 && a.dv > 0 && a.dk <= stage_dims && a.dv <= stage_dims ->
       let n, m, k = Tc.dims c.tc in
       let step = max n k in
       let wide = a.dk > 64 || a.dv > 64 in
@@ -2106,8 +2025,8 @@ let dplan (r : Renderer.t) a ~marked =
           kwarps = warps a.tk;
           krows = tile;
           wide;
-          dkdims = split ~step a.dk;
-          dvdims = split ~step a.dv;
+          kw = ceil_div a.dk step * step;
+          vw = ceil_div a.dv step * step;
         }
   | _ -> None
 
@@ -2409,25 +2328,20 @@ let linear ~device ~(renderer : Renderer.t) (spec : Attention.spec) ~transposed
           @ [ flat (arg device lse_node); bo; delta ]
         in
         let tr = Attention.score_transpose spec in
-        (* An output of [n] elements, with the buffer it sums in past one chunk
-           of its dimensions. *)
-        let output (blocks, _) n =
-          buf vt n :: (if blocks > 1 then [ buf acc n ] else [])
-        in
         let dq =
           Shape.custom_kernel
-            (output c.dkdims (rows * dk) @ call)
+            (buf vt (rows * dk) :: call)
             (core_dq c a tr)
         in
         let bk, bv =
           if c.wide then
             let k =
               Shape.custom_kernel
-                (output c.dkdims (nkeys * dk) @ call)
+                (buf vt (nkeys * dk) :: call)
                 (core_dkdv ~part:Keys c a tr)
             and v =
               Shape.custom_kernel
-                (output c.dvdims (nkeys * dv) @ call)
+                (buf vt (nkeys * dv) :: call)
                 (core_dkdv ~part:Values c a tr)
             in
             (List.hd k, List.hd v)

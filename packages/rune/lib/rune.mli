@@ -1723,13 +1723,16 @@ val jit :
     Its derivatives recompute each pair's weight
     from [lse] and sum their products by contractions and maps of the whole
     pair loop, each within its row above. Where the forward runs on a
-    tensor core, reverse mode, for float16 and bfloat16 keys and values, a
-    float32 accumulator, [o] in the query's dtype, no float capture and no
-    page table, sums them in kernels of its own on
+    tensor core, reverse mode, for float16 and bfloat16 keys and values of
+    at most 128 dimensions, a float32 accumulator, [o] in the query's dtype,
+    no float capture and no page table, sums them in kernels of its own on
     that core instead: each weight and each score's cotangent rounds once to
     the operands' dtype before its product, which adds that dtype's unit
     roundoff times the product's magnitude, and for float16 at most
-    [2{^-25}] times the other factor's for a value below [2{^-14}]. A tile
+    [2{^-25}] times the other factor's for a value below [2{^-14}]. Past 128
+    dimensions the contractions store the weights: the gradient's
+    {!footprint} of 64 batches of 4 heads of 256 bfloat16 rows on CUDA is
+    5.05 bytes a pair of a head at 128 dimensions and 12.05 at 129. A tile
     of keys that the mask hides from every row a workgroup computes is
     skipped, so a NaN or an infinity in a value at a key hidden from a row
     within its length may make that row's [o] a NaN, where nx.cpu's eager

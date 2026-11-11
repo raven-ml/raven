@@ -1269,10 +1269,10 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   32 or 64 with a running maximum, sum and accumulator in base 2 (online
   softmax), never storing a score; the rows of a group of query heads
   share each tile of keys. Its code is bounded by its tiles: it loops over
-  the head's dimensions, on a tensor core in chunks of at most 128,
-  computes a tile's scores once and multiplies the values a block of
-  columns at a time, and past one block adds each row's accumulator in
-  device memory, which the combine divides. On a target whose tensor core of a narrow
+  the head's dimensions, on a tensor core the keys' in chunks of at most
+  128, where a workgroup holds a block of at most 128 of the values'
+  columns in registers and computes the tile's scores for itself. On a
+  target whose tensor core of a narrow
   float's products into float32 chains its accumulator into its own
   operand, float16 and bfloat16 attention computes both products on the
   core and rounds each weight once to the values' dtype: CUDA's from
@@ -1286,16 +1286,16 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   runs where a workgroup's vote finds a visible pair. Few workgroups, or on the host
   few rows, split each row's keys into runs, folded in order by a second
   kernel; a host thread adds a vector of its row's columns at a time.
-  Reverse mode on such a core, with no float capture or page table, runs
-  three kernels in place of tinygrad's differentiated composition, which
-  stores the scores and the weights: [δ = ō·o - l̄se] by rows, [q̄] by
-  query rows over their keys and [k̄] and [v̄] by keys over their group's
-  rows, each weight recomputed from [lse], the weights and the scores'
-  cotangents rounded once to the operands' dtype for their products, no
-  atomics; past 64 dimensions [k̄] and [v̄] run in a launch each, so that
-  each sum keeps its accumulators in registers, four kernels and eight
-  products a tile; past 128 a cotangent adds in device memory between
-  tiles.
+  Reverse mode on such a core, for keys and values of at most 128
+  dimensions with no float capture or page table, runs three kernels in
+  place of tinygrad's differentiated composition, which stores the
+  scores and the weights: [δ = ō·o - l̄se] by rows, [q̄] by query rows
+  over their keys and [k̄] and [v̄] by keys over their group's rows, each
+  weight recomputed from [lse], the weights and the scores' cotangents
+  rounded once to the operands' dtype for their products, no atomics;
+  past 64 dimensions [k̄] and [v̄] run in a launch each, so that each sum
+  keeps its accumulators in registers, four kernels and eight products a
+  tile.
 - **nx:** `nx_kernel.mli` (attention: the pair program, visibility,
   [o] and [lse]), `nx.mli` (`attention`: the bound, the weights rounded
   once to [v]'s dtype for float16 and bfloat16, and a skipped hidden key's
