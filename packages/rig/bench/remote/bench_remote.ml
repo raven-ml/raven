@@ -269,4 +269,39 @@ let copy_rows =
            ])
          sizes)
 
-let () = exit @@ Thumper.run "rig_remote" [ request_rows; copy_rows; rail_rows ]
+(* Connects: a connect to two agents [rig agent] in other processes over
+   loopback, with its close. Each run starts its own agents, since an agent
+   serves one job, so its floor starts and ends the same agents without a
+   job. *)
+
+let ended_agents agents =
+  List.iter
+    (fun (pid, input, _) ->
+      Unix.close input;
+      reap pid)
+    agents
+
+let connected_agents () =
+  let agents = [ agent (); agent () ] in
+  let addresses = List.map (fun (_, _, port) -> ("127.0.0.1", port)) agents in
+  match
+    Rig_remote.connect ~key:(Result.get_ok (Rig_remote.key key)) addresses
+  with
+  | Ok job ->
+      Rig_remote.close job;
+      ended_agents agents
+  | Error why ->
+      ended_agents agents;
+      failwith why
+
+let connect_rows =
+  Thumper.group "connect"
+    [
+      Thumper.bench "two-agents" connected_agents;
+      Thumper.bench "floor" (fun () -> ended_agents [ agent (); agent () ]);
+    ]
+
+let () =
+  exit
+  @@ Thumper.run "rig_remote"
+       [ request_rows; copy_rows; rail_rows; connect_rows ]

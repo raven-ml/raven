@@ -295,6 +295,7 @@ type t = {
           inside one that calls [serve] raises [Invalid_argument]. *)
   lock : Mutex.t;
   changes : changes;
+      (** Counts each change of [phase], [accepted]'s additions and [broken]. *)
   mutable phase : phase;  (** Read once [claimed]. *)
   mutable accepted : Unix.file_descr Ids.t;
       (** Connections of the job's agents before this one, admitted, waiting for
@@ -481,7 +482,8 @@ let shake a st fd =
         if a.stopped || Ids.mem i a.accepted || Ids.mem i a.peers then give fd
         else begin
           a.accepted <- Ids.add i fd a.accepted;
-          st.handed <- true
+          st.handed <- true;
+          change a.changes
         end
     | _, Some job ->
         Link.close job;
@@ -900,14 +902,22 @@ let join s agents =
     | Some why -> raise (Refused why)
     | None -> List.iter (function Ok d -> link d | Error _ -> ()) dialled );
   (* The agents before this one dial it; their handshakes run on the acceptor's
-     threads. *)
+     threads, each counting a change once it accepts its agent. The count is
+     read with the accepted, so an accept after the read ends the wait. *)
   let before = List.filteri (fun i _ -> i + 1 < s.self) agents in
-  let accepted () =
-    Mutex.protect a.lock (fun () -> Ids.cardinal a.accepted)
+  let unaccepted () =
+    Mutex.protect a.lock @@ fun () ->
+    if Ids.cardinal a.accepted < List.length before then count a.changes
+    else -1
   in
-  while accepted () < List.length before && Unix.gettimeofday () < until do
-    unblocked Thread.delay 0.01
-  done;
+  let rec await_before () =
+    let n = unaccepted () in
+    if n >= 0 && Unix.gettimeofday () < until then begin
+      unblocked (await a.changes) n;
+      await_before ()
+    end
+  in
+  await_before ();
   let missing =
     Mutex.protect a.lock @@ fun () ->
     List.concat

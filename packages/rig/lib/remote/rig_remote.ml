@@ -308,7 +308,9 @@ let join_answer_s = Agent.join_s +. 1.
 (* Joins every agent at once, each named as [ms] names it: each waits for the
    ones before it to connect. The first refusal fails the job, which ends the
    other requests, and so does an agent that does not answer within
-   [join_answer_s]. *)
+   [join_answer_s]. Each request counts a change as it ends, answered or
+   failed, and the wait reads the count before the answers, so a request
+   that ends after the read ends the wait. *)
 let join job agents ms =
   let agents =
     List.map2
@@ -316,14 +318,17 @@ let join job agents ms =
       ms agents
   in
   let answers = Array.init (List.length ms) (fun _ -> Atomic.make None) in
+  let ended = Agent.changes () in
   let ask i m =
-    match request m (Wire.Join { agents }) with
+    (match request m (Wire.Join { agents }) with
     | Ok a -> Atomic.set answers.(i) (Some a)
-    | Error why -> Link.fail job why
+    | Error why -> Link.fail job why);
+    Agent.change ended
   in
   let threads = List.mapi (fun i m -> Agent.spawn (ask i) m) ms in
   let until = Unix.gettimeofday () +. join_answer_s in
   let rec wait () =
+    let n = Agent.count ended in
     let unanswered =
       List.filteri (fun i _ -> Option.is_none (Atomic.get answers.(i))) ms
     in
@@ -332,7 +337,11 @@ let join job agents ms =
     | m :: _ when Unix.gettimeofday () >= until ->
         Link.fail job
           (strf "%s: no answer to its join within %.0f s" m.name join_answer_s)
-    | _ -> if Link.wait job ~ms:10 = Link.Open then wait ()
+    | _ ->
+        if Link.wait job ~ms:0 = Link.Open then begin
+          Agent.unblocked (Agent.await ended) n;
+          wait ()
+        end
   in
   wait ();
   List.iter (Agent.unblocked Thread.join) threads;

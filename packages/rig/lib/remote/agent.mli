@@ -59,6 +59,27 @@ val settled : ('a -> 'b -> 'c) -> 'a -> 'b -> 'c
     inside [f], under its handler, so that a [Sys.Break] at any poll point
     is made again. *)
 
+(** {1:changes Changes} *)
+
+type changes
+(** The type for counts of changes, which threads wait on. *)
+
+val changes : unit -> changes
+(** [changes ()] counts no change. Raises [Out_of_memory] if the C heap has no
+    room for it. *)
+
+val change : changes -> unit
+(** [change c] counts one more change and wakes [c]'s waits. It allocates
+    nothing. *)
+
+val count : changes -> int
+(** [count c] is the number of changes [c] counted. *)
+
+val await : changes -> int -> unit
+(** [await c n] returns once [c] counts more than [n] changes, or after at
+    most 200 ms, where a pending signal's handler runs: OCaml's [Condition]
+    has no timed wait. It releases the runtime while it waits. *)
+
 (** {1:reports Reports to a launcher} *)
 
 type report
