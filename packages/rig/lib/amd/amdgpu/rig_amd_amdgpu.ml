@@ -43,8 +43,9 @@ external clock : int -> int -> int = "caml_rig_amd_amdgpu_clock"
 
 (* The kinds of memory the path allocates: GPU memory, GPU memory the host maps
    through the BAR, system memory the kernel driver owns, the process's own
-   memory, and the page of registers the driver remaps. *)
-type memory = Gpu | Bar | System | Userptr | Mmio
+   memory, the page of registers the driver remaps, and system memory the
+   kernel driver owns whose lines the GPU's L2 may keep. *)
+type memory = Gpu | Bar | System | Userptr | Mmio | Cached
 
 (* The kinds of events: a signal, a memory exception, a hardware exception. *)
 type event = Signal | Memory | Hardware
@@ -95,10 +96,12 @@ external kfd_acquire_vm : int -> int -> int -> unit
 external kfd_runtime_enable : int -> unit
   = "caml_rig_amd_amdgpu_runtime_enable"
 
-(* [kfd_alloc kfd gpu va bytes m] allocates [bytes] bytes of [m] for GPU [gpu]
-   at the address [va]: its handle and the offset to map it at. *)
-external kfd_alloc : int -> int -> int -> int -> memory -> int * int64
-  = "caml_rig_amd_amdgpu_alloc"
+(* [kfd_alloc kfd gpu va bytes m ~writable] allocates [bytes] bytes of [m] for
+   GPU [gpu] at the address [va], which the GPU may write if [writable]: its
+   handle and the offset to map it at. *)
+external kfd_alloc :
+  int -> int -> int -> int -> memory -> writable:bool -> int * int64
+  = "caml_rig_amd_amdgpu_alloc_byte" "caml_rig_amd_amdgpu_alloc"
 
 external kfd_free : int -> int -> unit = "caml_rig_amd_amdgpu_free"
 
@@ -430,6 +433,21 @@ let undo fd handle at n step e =
   unmap_mem at n;
   fault step e
 
+(* The GC versions on which [Host_read] memory is [Cached]: KFD's GTT memory
+   without COHERENT or UNCACHED, which the GPU reaches snooped through its L2
+   (MTYPE NC), since on them the acquire at system scope before a
+   submission's first compute part drops its lines. A version enters once
+   the lap law (test_amd.ml) passed on it through this path and the launch
+   rows showed the gain. GC 12.0.1: the R9700. Elsewhere [Host_read] is
+   [System], as [Host].
+
+   [Cached] memory is read-only for the GPU, so that a store of the GPU's
+   to launch arguments faults rather than sits in a line of the L2: without
+   WRITABLE, KFD clears the write bit of the GPU's page table entries
+   (amdgpu_amdkfd_gpuvm.c's get_pte_flags). The host maps it writable
+   through the render node, as any other. *)
+let caches_reads = [ (12, 0, 1) ]
+
 (* [n] bytes placed at [kind] at addresses reserved in the process, mapped for
    the GPU, and for the host unless they are [Gpu] memory. The answer is made
    before KFD's allocation, so that nothing allocates or polls between it and
@@ -440,12 +458,20 @@ let alloc fd g (kind : Amd.place) n : mem Amd.memory option =
     let n = round_up n page in
     let at = check "reserving GPU addresses" (fun () -> reserve n) in
     let request : memory =
-      match kind with Amd.Gpu -> Gpu | Bar -> Bar | Host -> System
+      match kind with
+      | Amd.Gpu -> Gpu
+      | Bar -> Bar
+      | Host -> System
+      | Host_read ->
+          if List.mem g.node.gpu.gc caches_reads then Cached else System
     in
+    let writable = request <> Cached in
     let data, made =
       match
         let host = if kind = Amd.Gpu then None else Some at in
-        let vram = kind <> Amd.Host in
+        let vram =
+          match kind with Amd.Gpu | Bar -> true | Host | Host_read -> false
+        in
         let data = { handle = 0; bytes = n; at; kind = Own; owner = g; vram } in
         (data, Some { Amd.address = at; host; data })
       with
@@ -454,7 +480,7 @@ let alloc fd g (kind : Amd.place) n : mem Amd.memory option =
           unmap_mem at n;
           reraise e
     in
-    match kfd_alloc fd g.node.gpu_id at n request with
+    match kfd_alloc fd g.node.gpu_id at n request ~writable with
     | exception Unix.Unix_error (e, _, _) ->
         unmap_mem at n;
         if e = ENOMEM || (e = EINVAL && kind = Amd.Bar) then None
@@ -537,7 +563,7 @@ let map_host fd g a n : mem Amd.memory option Rig_edge.mapping =
       let e = { gpu_id; start; bytes; handle = 0; maps = 1 } in
       let m = data e in
       let listed = e :: !registry and r = region m in
-      match kfd_alloc fd gpu_id start bytes Userptr with
+      match kfd_alloc fd gpu_id start bytes Userptr ~writable:true with
       | exception Unix.Unix_error (err, _, _) -> refusal err
       | handle, _ -> (
           match map_gpu fd handle gpu_id true with
@@ -649,7 +675,7 @@ let remap_hdp fd gpu_id =
   match reserve page with
   | exception Unix.Unix_error _ -> None
   | at -> (
-      match kfd_alloc fd gpu_id at page Mmio with
+      match kfd_alloc fd gpu_id at page Mmio ~writable:true with
       | exception Unix.Unix_error _ ->
           unmap_mem at page;
           None

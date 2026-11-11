@@ -129,8 +129,9 @@ value caml_rig_amd_amdgpu_runtime_enable(value v_kfd) {
 
 /* The flags of the memory type's constructors, in order: GPU memory, GPU
    memory the host maps through the BAR, system memory the kernel driver
-   owns, the process's own memory, and the page of registers the driver
-   remaps. */
+   owns, the process's own memory, the page of registers the driver
+   remaps, and system memory the kernel driver owns whose lines the GPU's
+   L2 may keep. */
 #define SHARED                                                           \
   (KFD_IOC_ALLOC_MEM_FLAGS_COHERENT | KFD_IOC_ALLOC_MEM_FLAGS_UNCACHED | \
    KFD_IOC_ALLOC_MEM_FLAGS_PUBLIC)
@@ -139,27 +140,35 @@ static const uint32_t memories[] = {
     KFD_IOC_ALLOC_MEM_FLAGS_VRAM | KFD_IOC_ALLOC_MEM_FLAGS_PUBLIC,
     KFD_IOC_ALLOC_MEM_FLAGS_GTT | SHARED,
     KFD_IOC_ALLOC_MEM_FLAGS_USERPTR | SHARED,
-    KFD_IOC_ALLOC_MEM_FLAGS_MMIO_REMAP};
+    KFD_IOC_ALLOC_MEM_FLAGS_MMIO_REMAP,
+    KFD_IOC_ALLOC_MEM_FLAGS_GTT | KFD_IOC_ALLOC_MEM_FLAGS_PUBLIC};
 #define USERPTR 3
 #define MMIO 4
 
 /* Allocates [v_bytes] bytes of the memory kind [v_m] for GPU [v_gpu] at
-   the address [v_va]: [(handle, mmap_offset)]. All but the registers are
-   executable. */
+   the address [v_va], which the GPU may write if [v_writable]:
+   [(handle, mmap_offset)]. All but the registers are executable. */
 value caml_rig_amd_amdgpu_alloc(value v_kfd, value v_gpu, value v_va,
-                                value v_bytes, value v_m) {
+                                value v_bytes, value v_m, value v_writable) {
   int m = Int_val(v_m);
   struct kfd_ioctl_alloc_memory_of_gpu_args a = {
       .va_addr = Long_val(v_va),
       .size = Long_val(v_bytes),
       .gpu_id = Int_val(v_gpu),
-      .flags = memories[m] | KFD_IOC_ALLOC_MEM_FLAGS_WRITABLE |
+      .flags = memories[m] |
+               (Bool_val(v_writable) ? KFD_IOC_ALLOC_MEM_FLAGS_WRITABLE : 0) |
                KFD_IOC_ALLOC_MEM_FLAGS_NO_SUBSTITUTE |
                (m == MMIO ? 0 : KFD_IOC_ALLOC_MEM_FLAGS_EXECUTABLE)};
   /* The process's own memory is named by its address. */
   if (m == USERPTR) a.mmap_offset = a.va_addr;
   check(call(Int_val(v_kfd), AMDKFD_IOC_ALLOC_MEMORY_OF_GPU, &a));
   return with64((long)a.handle, a.mmap_offset);
+}
+
+value caml_rig_amd_amdgpu_alloc_byte(value *argv, int argn) {
+  (void)argn;
+  return caml_rig_amd_amdgpu_alloc(argv[0], argv[1], argv[2], argv[3], argv[4],
+                                   argv[5]);
 }
 
 value caml_rig_amd_amdgpu_free(value v_kfd, value v_handle) {

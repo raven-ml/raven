@@ -19,10 +19,11 @@
    the dispatches before it; the first, and any after a slot wait, also
    follows a cache acquire, and any other launch an invalidation of the
    caches above the L2, so that it reads what the dispatches before it
-   wrote. A launch's parameters go in the segment. A submission without
-   compute parts invalidates no cache: none of its work reads. It then
-   flushes the host data path if the host wrote GPU memory through the BAR,
-   and rings the doorbells.
+   wrote. A launch's arguments go in the argument plane (Arguments), the
+   bytes its shaders alone read; what a queue reads or the GPU writes, in
+   the segment. A submission without compute parts invalidates no cache:
+   none of its work reads. It then flushes the host data path if the host
+   wrote GPU memory through the BAR, and rings the doorbells.
 
    A timed value also places its stamps (rig_amd_stubs.h's Times). At open
    a device measures its clock with a stamp the compute queue writes
@@ -251,8 +252,9 @@ static uint64_t arguments(const struct rig_amd_launch *l, uint64_t params) {
   return params > l->kernarg ? params : l->kernarg;
 }
 
-/* The words part [p] places itself, and in [args] the bytes of arguments it
-   takes from the segment; [kernel] says whether the copy kernel runs it. */
+/* The words part [p] places itself, and in [args] the bytes it takes of the
+   segment's offsets, for arguments in the plane or a fill's ends in the
+   segment; [kernel] says whether the copy kernel runs it. */
 static uint64_t part_words(const struct rig_amd *d, const struct rig_part *p,
                            int kernel, uint64_t *args) {
   *args = 0;
@@ -274,9 +276,9 @@ static uint64_t part_words(const struct rig_amd *d, const struct rig_part *p,
 }
 
 /* What a submission takes of the device's room: words of the compute ring,
-   words of the copy ring, and bytes of the segment. On an AQL ring the
-   writer's own PM4 words lie in the segment, each indirect buffer of them
-   aligned. */
+   words of the copy ring, and bytes of the segment's offsets, in the
+   segment or the plane. On an AQL ring the writer's own PM4 words lie in
+   the segment, each indirect buffer of them aligned. */
 struct cost {
   uint64_t compute, copy, bytes;
 };
@@ -357,7 +359,7 @@ static uint64_t slot_bytes(int n) {
 
 /* Counters: what a bracket takes */
 
-/* The segment bytes of a filter wave's arguments. */
+/* The bytes of a filter wave's arguments, in the plane. */
 static uint64_t filter_bytes(const struct rig_amd_counting *c) {
   return align_up(arguments(&c->filter, 8), SEGMENT_ALIGN);
 }
@@ -502,14 +504,16 @@ static int holds(const struct cost *room, const struct cost *k) {
 }
 
 /* Installs what [g] made in [d], which reached every value submitted: the
-   segment, and each ring with its queue, whose AQL descriptor takes the
-   scratch the old one's last value left. */
+   segment with its plane, and each ring with its queue, whose AQL
+   descriptor takes the scratch the old one's last value left. */
 static void install(struct rig_amd *d, const struct rig_amd_grown *g) {
   if (g->size > 0) {
     struct rig_amd_segment *s = &d->segment;
     s->host = g->host;
     s->gpu = g->gpu;
     s->size = g->size;
+    s->plane = g->plane;
+    s->plane_gpu = g->plane_gpu;
     s->put = s->free = 0;
     s->marks.head = s->marks.count = 0;
     d->installed[0] = g->gpu;
@@ -849,7 +853,8 @@ static void wait_slot(struct submission *s, int q, int j) {
    first part the pending scratch writes, which then change the descriptor
    while no dispatch runs, then its slot waits, then, for the first part or
    after a slot wait, the cache acquire, so that it reads what the host, the
-   copy queue and other devices wrote. Answers whether it placed the
+   copy queue and other devices wrote. The first part's acquire is the one
+   the argument plane rests on (Arguments). Answers whether it placed the
    acquire. */
 static int prepare(struct submission *s, const struct rig_part *parts, int i,
                    int first) {
@@ -980,6 +985,26 @@ static inline void store_le(uint8_t *p, uint64_t v, int n) {
   }
 }
 
+/* Arguments
+
+   A launch's arguments, the copy kernel's and a filter wave's go in the
+   argument plane: memory of the segment's size, used at the segment's
+   offsets, so that the segment's room, marks and growth serve it. Only
+   shaders read the plane, and nothing on the GPU writes it, which a path
+   may enforce by mapping it read-only. A byte that the GPU writes, or that
+   the CP or SDMA reads, stays in the segment.
+
+   The GPU's L2 may keep the plane's lines (Rig_amd's Host_read), so a
+   dispatch reads the arguments the host wrote only if the run's plane
+   lines in L2 are invalidated after the host's last write to them and
+   before the run's first dispatch. The host writes a submission's
+   arguments before its doorbell and never after, and the submission's
+   first compute part follows the completion of every earlier value's
+   dispatches, then an acquire that invalidates the L2 (prepare). A change
+   that writes arguments after a doorbell, lets a dispatch run before its
+   submission's acquire, or places a run's packets again without it,
+   breaks this. */
+
 /* Writes into [args] the implicit arguments [l] reads, of a launch of
    block [b]: its grid of whole groups starts at thread 0. */
 static void implicit(const struct rig_amd_launch *l, const struct rig_block *b,
@@ -998,17 +1023,17 @@ static void implicit(const struct rig_amd_launch *l, const struct rig_block *b,
       store_le(args + l->hidden[i], v[i], rig_amd_hidden_bytes[i]);
 }
 
-/* Places [l]'s dispatch of block [b], whose arguments begin at segment offset
-   [at], with its groups' LDS in their resources. A PM4 dispatch follows the invalidation,
-   unless [acquired]; an AQL packet acquires at system scope and waits for
-   the packets before it itself. */
+/* Places [l]'s dispatch of block [b], whose arguments begin at plane offset
+   [at], with its groups' LDS in their resources. A PM4 dispatch follows the
+   invalidation, unless [acquired]; an AQL packet acquires at system scope
+   and waits for the packets before it itself. */
 static void dispatch(struct submission *s, const struct rig_amd_launch *l,
                      const struct rig_block *b, uint64_t at, int acquired) {
   struct rig_amd *d = s->d;
   struct rig_amd_ring *r = &d->rings[RIG_AMD_COMPUTE];
   struct rig_amd_segment *g = &d->segment;
   if (!acquired && !l->packet) emit(d, r, T_INVALIDATE, 0, 0, 0);
-  uint64_t a[L_GRID] = {g->gpu + at, d->scratch_gpu};
+  uint64_t a[L_GRID] = {g->plane_gpu + at, d->scratch_gpu};
   for (int k = 0; k < 3; k++) {
     a[L_THREADS + k] = b->threads[k];
     a[L_GROUPS + k] = b->groups[k];
@@ -1023,7 +1048,7 @@ static void launch(struct submission *s, const struct rig_part *p,
   const struct rig_amd_launch *l = p->launch.launch;
   const struct rig_block *b = (const void *)(args + p->launch.args.block);
   uint64_t at = g->put % g->size;
-  uint8_t *params = g->host + at;
+  uint8_t *params = g->plane + at;
   rig_params(params, &p->launch.args, args, slots);
   implicit(l, b, params);
   g->put += align_up(arguments(l, p->launch.args.params), SEGMENT_ALIGN);
@@ -1048,8 +1073,8 @@ static void copy_compute(struct submission *s, const struct rig_part *p,
   uint64_t at = g->put % g->size;
   uint64_t params[3] = {p->copy.dst + p->copy.dst_offset,
                         p->copy.src + p->copy.src_offset, p->copy.width};
-  memcpy(g->host + at, params, sizeof params);
-  implicit(l, &b, g->host + at);
+  memcpy(g->plane + at, params, sizeof params);
+  implicit(l, &b, g->plane + at);
   g->put += align_up(arguments(l, sizeof params), SEGMENT_ALIGN);
   dispatch(s, l, &b, at, acquired);
 }
@@ -1094,8 +1119,8 @@ static int filter(struct submission *s, uint64_t address, int acquired,
   else {
     struct rig_block b = {.groups = {1, 1, 1}, .threads = {1, 1, 1}};
     uint64_t at = g->put % g->size;
-    memcpy(g->host + at, &address, sizeof address);
-    implicit(&c->filter, &b, g->host + at);
+    memcpy(g->plane + at, &address, sizeof address);
+    implicit(&c->filter, &b, g->plane + at);
     g->put += filter_bytes(c);
     dispatch(s, &c->filter, &b, at, acquired);
   }

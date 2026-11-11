@@ -207,6 +207,15 @@ value caml_rig_amd_segment(value v_self, value v_host, value v_gpu,
   return Val_unit;
 }
 
+/* The argument plane, at open: the segment's bytes at the host address
+   [v_host] and the GPU's [v_gpu]. */
+value caml_rig_amd_plane(value v_self, value v_host, value v_gpu) {
+  struct rig_amd *d = Device_val(v_self);
+  d->segment.plane = Host_val(v_host);
+  d->segment.plane_gpu = (uint64_t)Long_val(v_gpu);
+  return Val_unit;
+}
+
 /* The compute queue's AQL descriptor, at open: at the host address
    [v_host] and the GPU's [v_gpu]. */
 value caml_rig_amd_descriptor(value v_self, value v_host, value v_gpu) {
@@ -253,11 +262,12 @@ enum { q_words, q_bytes, q_write, q_doorbell, q_id, q_fields };
 /* Hands the next room that needs it what a growth made, in place of what
    one handed before and no room installed, whose parts it keeps where this
    one makes none: [v_segment], the segment's host and GPU addresses and
-   bytes, 0 bytes for none; [v_rings], for each queue, a new queue's ring's
-   host address and bytes, its write-position word's and doorbell's host
-   addresses and its name, 0 bytes for none; and [v_desc], the host and GPU
-   addresses of a new AQL compute queue's descriptor, or 0. [false] without
-   host memory for its record. Under the device's growth lock. */
+   bytes, then its plane's host and GPU addresses, 0 bytes for none;
+   [v_rings], for each queue, a new queue's ring's host address and bytes,
+   its write-position word's and doorbell's host addresses and its name, 0
+   bytes for none; and [v_desc], the host and GPU addresses of a new AQL
+   compute queue's descriptor, or 0. [false] without host memory for its
+   record. Under the device's growth lock. */
 value caml_rig_amd_hand(value v_self, value v_segment, value v_rings,
                         value v_desc) {
   struct rig_amd *d = Device_val(v_self);
@@ -271,6 +281,8 @@ value caml_rig_amd_hand(value v_self, value v_segment, value v_rings,
     g->host = Host_val(Field(v_segment, 0));
     g->gpu = (uint64_t)at(v_segment, 1);
     g->size = (uint64_t)at(v_segment, 2);
+    g->plane = Host_val(Field(v_segment, 3));
+    g->plane_gpu = (uint64_t)at(v_segment, 4);
   }
   for (int q = 0; q < RIG_AMD_QUEUES; q++) {
 #define F(i) at(v_rings, q * q_fields + (i))

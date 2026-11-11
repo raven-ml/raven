@@ -107,7 +107,7 @@ module Lock = struct
 end
 
 type 'm memory = { address : int; host : int option; data : 'm }
-type place = Gpu | Bar | Host
+type place = Gpu | Bar | Host | Host_read
 type clock = Source of int | Round_trip
 
 type refusal = Lacking of string | Full of string | Refused of string
@@ -304,6 +304,7 @@ external end_state : int -> unit = "caml_rig_amd_end" [@@noalloc]
 external set_memory : int -> int -> int -> unit = "caml_rig_amd_memory"
 
 external set_segment : int -> int -> int -> int -> unit = "caml_rig_amd_segment"
+external set_plane : int -> int -> int -> unit = "caml_rig_amd_plane"
 
 external set_ring :
   int -> int -> int -> int -> int -> int -> int -> int -> int -> unit
@@ -397,12 +398,12 @@ type scratch = {
   mutable retired : retired list;
 }
 
-(* What a growth made, or the device's first of its kind: a segment, or a
-   queue, by its doorbell, with its ring and positions. It is named by the
-   GPU address of the segment or the ring, as the C state's growth names it
-   (rig_amd_stubs.h). A queue's [doorbell] is its host address, stored with
-   nothing between it and the path's answer that allocates or polls; [0]
-   for a segment, or a queue not yet made. *)
+(* What a growth made, or the device's first of its kind: a segment with its
+   plane, or a queue, by its doorbell, with its ring and positions. It is
+   named by the GPU address of the segment or the ring, as the C state's
+   growth names it (rig_amd_stubs.h). A queue's [doorbell] is its host
+   address, stored with nothing between it and the path's answer that
+   allocates or polls; [0] for a segment, or a queue not yet made. *)
 type part = { id : int; mems : mem list; mutable doorbell : int }
 
 (* What only a running device uses, under the device's guard but for
@@ -1331,12 +1332,13 @@ let make (type m) ?measure ~word (p : m path) =
   in
   (* Memory goes into [taken] before the path's call, so that an exception
      leaves it to [undo]. *)
-  let alloc what n =
+  let alloc_at place what n =
     let m = ops.held () in
     taken := m :: !taken;
-    if ops.alloc m Host n then Ok m
+    if ops.alloc m place n then Ok m
     else Error (strf "no memory for its %s" what)
   in
+  let alloc = alloc_at Host in
   let waits64 = waits64 p and aql = reads_aql p.gpu in
   let open_device () =
     (* The word rig gave, in the device's mapping of rig's whole array of
@@ -1371,6 +1373,7 @@ let make (type m) ?measure ~word (p : m path) =
     let compute, copy, segment_bytes = Atomic.get first_sizes in
     let first_ring = first_ring p ~compute ~copy in
     let* segment = alloc "argument segment" segment_bytes in
+    let* plane = alloc_at Host_read "argument plane" segment_bytes in
     let compute_kind = if aql then `Aql else `Pm4 in
     let* compute = alloc "compute ring" (first_ring compute_kind) in
     let* copy = alloc "copy ring" (first_ring `Sdma) in
@@ -1380,6 +1383,7 @@ let make (type m) ?measure ~word (p : m path) =
     zero stamps_host stamps_bytes;
     let* word_host = host_of "timeline word" word in
     let* segment_host = host_of "argument segment" segment in
+    let* plane_host = host_of "argument plane" plane in
     let* pointers_host = host_of "queue positions" pointers in
     let* compute_host = host_of "compute ring" compute in
     let* copy_host = host_of "copy ring" copy in
@@ -1450,6 +1454,7 @@ let make (type m) ?measure ~word (p : m path) =
     state := self;
     set_memory self word_host (mem_address word);
     set_segment self segment_host (mem_address segment) segment_bytes;
+    set_plane self plane_host (mem_address plane);
     (* The register a submission stores to once the device has given a
        region to another function ([dma]). *)
     Option.iter (set_hdp self) p.hdp;
@@ -1539,7 +1544,7 @@ let make (type m) ?measure ~word (p : m path) =
                 [
                   {
                     id = mem_address segment;
-                    mems = [ segment ];
+                    mems = [ segment; plane ];
                     doorbell = 0;
                   };
                   {
@@ -1601,10 +1606,10 @@ let sleep g ~seen ~still_ms =
 
 (* Growth
 
-   A growth makes a larger argument segment, or new queues of the path's on
-   larger rings, each with positions of its own, and hands them to the C state,
-   whose next room that needs them installs them at idle (rig_amd_ring.c's
-   Growth). *)
+   A growth makes a larger argument segment and plane, or new queues of the
+   path's on larger rings, each with positions of its own, and hands them to
+   the C state, whose next room that needs them installs them at idle
+   (rig_amd_ring.c's Growth). *)
 
 external needed : int -> int * int * int = "caml_rig_amd_needed"
 
@@ -1647,7 +1652,7 @@ let rec retire ?(keep = []) g l =
       l.parts <- List.filter (fun p' -> p' != p) l.parts;
       retire ~keep g l
 
-(* New [Pinned] memory for a growth, of each of [sizes] bytes, listed in
+(* New memory for a growth, of each of [sizes]' bytes at its place, listed in
    [l.parts] as one part named by the first before anything else may raise,
    with its host addresses, or [Error n] for [n] bytes the path lacked, having
    given back what it took. Each memory goes into [taken] before the path's
@@ -1657,10 +1662,10 @@ let spare l sizes =
   let taken = ref [] and listed = ref false in
   let rec take = function
     | [] -> Ok ()
-    | n :: rest ->
+    | (place, n) :: rest ->
         let m = l.ops.held () in
         taken := m :: !taken;
-        if l.ops.alloc m Host n then take rest else Error n
+        if l.ops.alloc m place n then take rest else Error n
   in
   let list () =
     let* () = take sizes in
@@ -1703,7 +1708,7 @@ type made = {
 (* The memory of a queue of kind [kind] on a ring of [bytes] bytes, its
    positions zeroed, or [Error bytes] for the bytes the path lacked. *)
 let queue_memory (g : t) l q kind bytes =
-  let* part, hosts = spare l [ bytes; pointers_bytes ] in
+  let* part, hosts = spare l [ (Host, bytes); (Host, pointers_bytes) ] in
   let words = List.nth hosts 0 and host = List.nth hosts 1 in
   let gpu = mem_address (List.nth part.mems 1) in
   init_pointers g.gpu ~aql:(kind = `Aql) ~waves:g.waves host;
@@ -1744,13 +1749,16 @@ let grow g =
   if segment = 0 && compute = 0 && copy = 0 then Rig_edge.Grown
   else
     let memory =
+      (* The segment's part, and the segment and its plane as [hand] takes
+         them. *)
       let* s =
         if segment = 0 then Ok None
         else
           let n = grown_bytes segment in
-          Result.map
-            (fun (p, hosts) -> Some (p, List.hd hosts, n))
-            (spare l [ n ])
+          let* p, hosts = spare l [ (Host, n); (Host_read, n) ] in
+          let host = List.nth hosts 0 and plane = List.nth hosts 1 in
+          let plane_gpu = mem_address (List.nth p.mems 1) in
+          Ok (Some (p, [| host; p.id; n; plane; plane_gpu |]))
       in
       let ring q want =
         if want = 0 then Ok None
@@ -1784,7 +1792,7 @@ let grow g =
             List.iter (fun m -> unhand g.self m.q) queues;
             let keep =
               List.map (fun m -> m.part.id) queues
-              @ Option.to_list (Option.map (fun (p, _, _) -> p.id) s)
+              @ Option.to_list (Option.map (fun (p, _) -> p.id) s)
             in
             retire ~keep g l;
             let again m =
@@ -1794,9 +1802,7 @@ let grow g =
             in
             List.iter again full;
             let segment =
-              match s with
-              | Some (p, host, n) -> [| host; p.id; n |]
-              | None -> [| 0; 0; 0 |]
+              match s with Some (_, a) -> a | None -> [| 0; 0; 0; 0; 0 |]
             in
             let ring q =
               match List.find_opt (fun m -> m.q = q) queues with

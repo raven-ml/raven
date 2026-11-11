@@ -19,8 +19,12 @@
     compute engine reads, and ["COPY:0"] a ring of SDMA packets that a copy
     engine reads. Both rings lie in [Pinned] memory, so the driver's
     [submit] places packets and rings the queues' doorbells with plain
-    stores. The {e argument segment} is [Pinned] memory into which [submit]
-    copies each launch's arguments. The last packet of a value's work is
+    stores. The {e argument segment} is [Pinned] memory for the bytes the
+    queues read or the GPU writes, such as the words through which one
+    queue waits for the other. Its {e argument plane}, memory of the
+    segment's size used at the segment's offsets ([Host_read] of
+    {!type-place}), holds the arguments [submit] copies for each launch,
+    which only kernels read. The last packet of a value's work is
     its {e release}, which writes the value into the timeline word, the
     eight bytes of host memory that the opener's [make] is given, once the
     work has completed, and raises the
@@ -42,9 +46,9 @@
     A device's life goes like this:
     {ol
     {- A path's opener reaches the GPU and fills a {!type-path}.}
-    {- {!make} makes the device's rings and argument segment, and maps its
-       timeline word, through the path. [Rig.open_] runs these two steps through the
-       opener's [make].}
+    {- {!make} makes the device's rings, argument segment and plane, and
+       maps its timeline word, through the path. [Rig.open_] runs these two
+       steps through the opener's [make].}
     {- rig gives each submission to the driver's [room] and [submit]
        ({!section-c}). The GPU runs its parts and releases its value.}
     {- Once rig loses or closes the device, {!val-stop} ends it
@@ -124,7 +128,10 @@
     cache of the GPU, its L2 included, after the L2 is written back. Any
     other launch follows at least an invalidation of the caches above the
     L2. A launch therefore reads what the host, the copy queue, other devices
-    and the launches before it wrote. A value's release writes the L2 back,
+    and the launches before it wrote. Its arguments are among them: the L2
+    may keep lines of the argument plane, and the host writes a
+    submission's arguments before that first invalidation, which drops the
+    lines earlier values left. A value's release writes the L2 back,
     so the host and other devices read what its work wrote once the value is
     reached. *)
 
@@ -293,7 +300,7 @@ val capability : t -> Rig_amd_abi.Capability.t
     {- words, whole packets of the queue's kind: PM4, or AQL in multiples of
        16 words, on ["COMPUTE:0"], and SDMA on ["COPY:0"];}
     {- on ["COMPUTE:0"], a launch. [submit] writes the kernel's arguments
-       into the argument segment: the launch's parameters, each ref's
+       into the argument plane: the launch's parameters, each ref's
        address added, then the implicit arguments the kernel reads
        ({!Rig_amd_abi.Code_object.type-hidden}) for a grid of whole groups
        that starts at work-item 0. A group takes the kernel's group segment
@@ -314,43 +321,44 @@ val capability : t -> Rig_amd_abi.Capability.t
        of one row.}}
 
     A submission takes fewer words than the compute ring holds, at most
-    half the copy ring and at most half the argument segment, since its SDMA
-    packets and argument bytes never wrap. The segment also holds 8 bytes
-    per part, the word through which a part of one queue orders a part of
-    the other. [room] returns [RIG_NEVER] for parts that exceed the largest
-    rings the path makes ([most_ring] of {!type-path}: 2 GiB through
-    [Rig_amd_amdgpu]; through [Rig_amd_pci] 16 GiB for the compute queue and
-    8 GiB for the copy queue, but 16 MiB on SDMA 4, whose one queue that
-    path programs keeps the ring the device opens with), or that the device
-    does not run, and [RIG_GROW] for parts that exceed its rings or its
-    segment. On SDMA 4 over [Rig_amd_pci], a submission of copies past half
-    that ring, about 170,000 linear copies of one packet each, never fits,
-    and [Rig.Buffer.submit_copy] then submits a box of that many rows that
+    half the copy ring and at most half the argument segment, whose offsets
+    its arguments take in the plane, since its SDMA packets and argument
+    bytes never wrap. The segment also holds 8 bytes per part, the word
+    through which a part of one queue orders a part of the other. [room]
+    returns [RIG_NEVER] for parts that exceed the largest rings the path
+    makes ([most_ring] of {!type-path}: 2 GiB through [Rig_amd_amdgpu];
+    through [Rig_amd_pci] 16 GiB for the compute queue and 8 GiB for the
+    copy queue, but 16 MiB on SDMA 4, whose one queue that path programs
+    keeps the ring the device opens with), or that the device does not run,
+    and [RIG_GROW] for parts that exceed its rings or its segment. On SDMA 4
+    over [Rig_amd_pci], a submission of copies past half that ring, about
+    170,000 linear copies of one packet each, never fits, and
+    [Rig.Buffer.submit_copy] then submits a box of that many rows that
     sub-windows do not copy in several submissions.
 
     {!val-grow} then makes, of [Pinned] memory of the first power of two
     from 4096 bytes that holds twice what the parts need and at most
-    [most_ring], a segment, or for each ring they exceed a new queue of the
-    path's on a new ring, with read and write positions of its own at 0
-    ([queue] of {!type-path}). The next [room] that needs them installs them
-    once the device reached every value submitted, and every [room] answers
-    [RIG_LATER] until then, so the device's work ends while other threads
-    submit: later work goes to the new queue, whose doorbell is another,
-    and the replaced queue, which read every packet, runs beside it until
-    the next growth or {!val-stop} destroys it ([retire] of {!type-path})
-    and gives back its ring. A growth whose parts need more than a queue a
-    growth made and no [room] installed replaces that queue, which ran no
-    work. It makes the new queue first and then destroys the one it
-    replaces. Where the path answers [Full] for the new one, as over
-    [Rig_amd_pci], it destroys the old one first and makes the new one in
-    its slot, so over [Rig_amd_pci] a path holds at most two queues of a
-    kind. Segments and rings never shrink. {!val-grow} answers [Short n] if
-    the path lacks [n] bytes of memory, or another resource for a queue,
-    having made nothing that stays and kept what a growth handed, and
-    raises {!Fault} if the path refuses a queue for another reason. A copy
-    in linear copies takes a packet for each 1 GiB of each row it moves
-    (4 MiB on SDMA engines before 4.4.2 and on 5.0 and 5.1). The device does
-    not run:
+    [most_ring], a segment, with its plane of [Host_read] memory, or for
+    each ring they exceed a new queue of the path's on a new ring, with read
+    and write positions of its own at 0 ([queue] of {!type-path}). The next
+    [room] that needs them installs them once the device reached every
+    value submitted, and every [room] answers [RIG_LATER] until then, so
+    the device's work ends while other threads submit: later work goes to
+    the new queue, whose doorbell is another, and the replaced queue, which
+    read every packet, runs beside it until the next growth or {!val-stop}
+    destroys it ([retire] of {!type-path}) and gives back its ring. A growth
+    whose parts need more than a queue a growth made and no [room] installed
+    replaces that queue, which ran no work. It makes the new queue first
+    and then destroys the one it replaces. Where the path answers [Full]
+    for the new one, as over [Rig_amd_pci], it destroys the old one first
+    and makes the new one in its slot, so over [Rig_amd_pci] a path holds at
+    most two queues of a kind. Segments and rings never shrink.
+    {!val-grow} answers [Short n] if the path lacks [n] bytes of memory, or
+    another resource for a queue, having made nothing that stays and kept
+    what a growth handed, and raises {!Fault} if the path refuses a queue
+    for another reason. A copy in linear copies takes a packet for each
+    1 GiB of each row it moves (4 MiB on SDMA engines before 4.4.2 and on
+    5.0 and 5.1). The device does not run:
     {ul
     {- a copy of one byte or more on ["COMPUTE:0"];}
     {- words on an AQL queue that are not whole packets;}
@@ -509,6 +517,15 @@ type place =
       (** Host memory the GPU addresses, cached for the host and snooped by
           the GPU. The path owns it, so that no unmap of the process's memory
           takes it from the GPU. *)
+  | Host_read
+      (** [Host] memory that the GPU only reads. The GPU must never write
+          it: where a path maps it writable, nothing reports such a store.
+          A path lets the GPU's L2 keep its lines only on a GPU where it
+          knows that an acquire at system scope, such as the one before a
+          submission's first part on the compute engine ({!section-order}),
+          drops them, and places it as [Host] elsewhere. A path may map it
+          read-only for the GPU, so that a store of the GPU's to it
+          faults. *)
 
 (** The type for how a device reads the GPU's clock, the clock of its
     stamps, against the host's clock ({!section-c}). *)
@@ -562,8 +579,8 @@ type 'm path = {
       (** [alloc k n] is [n] new bytes of memory placed at [k], or [None] if
           that memory is exhausted, or if the GPU has no [Bar] memory. The
           device asks [Gpu] for [Device] memory, [Host] for [Pinned] memory,
-          [Bar] for [Mapped] memory, and [Bar] for its traces, with [Host]
-          where it has none. *)
+          [Bar] for [Mapped] memory, [Host_read] for its argument plane, and
+          [Bar] for its traces, with [Host] where it has none. *)
   map_host : (int -> int -> 'm memory option Rig_edge.mapping) option;
       (** [Some map] if the GPU maps host memory. [map a n] maps for the GPU
           the pages that hold the [n] bytes of host memory at [a] and must
@@ -687,13 +704,13 @@ type 'm path = {
 val make : ?measure:measure -> word:nativeint -> 'm path -> (t, string) result
 (** [make ~word p] is a device of the GPU [p] reaches, whose timeline word is
     the 8 bytes at the host address [word] ({!Rig_edge.type-opener}). It
-    makes, through [p], the device's queues and argument segment, maps its
-    word, and loads the kernel the device copies with; with [measure], it
-    measures those counters ({!section-measures}), and loads the kernel
-    that reads its VMID. A failed [make] gives back what it took once
-    [p]'s [stop] returns [`Stopped], and keeps it otherwise. It calls [stop]
-    only if it made a queue, or if [p]'s [queue] raised, which may have made
-    one.
+    makes, through [p], the device's queues, argument segment and plane,
+    maps its word, and loads the kernel the device copies with; with
+    [measure], it measures those counters ({!section-measures}), and loads
+    the kernel that reads its VMID. A failed [make] gives back what it took
+    once [p]'s [stop] returns [`Stopped], and keeps it otherwise. It calls
+    [stop] only if it made a queue, or if [p]'s [queue] raised, which may
+    have made one.
 
     The result is [Error msg]:
     {ul
@@ -701,7 +718,8 @@ val make : ?measure:measure -> word:nativeint -> 'm path -> (t, string) result
        registers for its GC, naming the processor;}
     {- if [p] refuses a queue, with [p]'s message;}
     {- if [p] lacks the memory the device needs, naming what it was for;}
-    {- if [p]'s [Pinned] memory has no host address;}
+    {- if [p]'s [Pinned] memory, or the [Host_read] memory of the argument
+       plane, has no host address;}
     {- if this library's copy kernel for the GPU's processor does not load,
        naming the kernel and the processor and saying why;}
     {- if [p.clock] cannot read the GPU's clock, or, with {!Round_trip},

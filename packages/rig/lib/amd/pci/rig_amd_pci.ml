@@ -246,12 +246,14 @@ let reaches on ~index j =
    complete. A flush the hubs do not confirm is raised by the next sleep. *)
 let guard f = try f () with Regs.Stuck why -> raise (Amd.Fault why)
 
+(* [Host_read] is [Memory.Host], which the GPU reaches uncached
+   (Memory.alloc), so that its L2 keeps none of its lines. *)
 let alloc g (kind : Amd.place) n =
   let kind =
     match kind with
     | Gpu -> Memory.Gpu
     | Bar -> Memory.Bar
-    | Host -> Memory.Host
+    | Host | Host_read -> Memory.Host
   in
   match protect g (fun () -> Memory.alloc g.memory kind n) with
   | Ok (Some r) -> Some (memory r)

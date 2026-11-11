@@ -231,24 +231,31 @@ struct rig_amd_ring {
   struct rig_amd_marks marks;
 };
 
+/* The argument segment, and its argument plane (rig_amd_ring.c's Arguments)
+   of [size] bytes at the host address [plane] and the GPU's [plane_gpu],
+   used at the segment's offsets. */
 struct rig_amd_segment {
   uint8_t *host;
   uint64_t gpu, size;
+  uint8_t *plane;
+  uint64_t plane_gpu;
   uint64_t put, free;           /* bytes, as a ring's positions */
   struct rig_amd_marks marks;
 };
 
 /* What a growth made (rig_amd_ring.c's Growth): an argument segment of
    [size] bytes at the host address [host] and the GPU's [gpu], which also
-   names it, of 0 bytes for none; for each queue, a new queue of the path's
-   on a ring of [size] words at [words], with its write-position word and
-   doorbell, named by [id], the ring's GPU address, of 0 words for none;
-   and for a new compute queue that reads AQL packets, its descriptor, at
-   the host address [desc] and the GPU's [desc_gpu]. A new queue's read and
-   write positions are 0. */
+   names it, with its plane at [plane] and [plane_gpu], of 0 bytes for none;
+   for each queue, a new queue of the path's on a ring of [size] words at
+   [words], with its write-position word and doorbell, named by [id], the
+   ring's GPU address, of 0 words for none; and for a new compute queue
+   that reads AQL packets, its descriptor, at the host address [desc] and
+   the GPU's [desc_gpu]. A new queue's read and write positions are 0. */
 struct rig_amd_grown {
   uint8_t *host;
   uint64_t gpu, size;
+  uint8_t *plane;
+  uint64_t plane_gpu;
   struct {
     volatile uint32_t *words;
     uint64_t size;
