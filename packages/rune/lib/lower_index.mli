@@ -50,6 +50,7 @@ type dst =
 val scatter :
   ?dst:dst ->
   host:bool ->
+  unique:bool ->
   Renderer.t ->
   Ops.device ->
   Nx_array.Dtype.any ->
@@ -59,13 +60,14 @@ val scatter :
   updates:Ops.t ->
   Ops.t ->
   Ops.t
-(** [scatter ~dst ~host ren device d combine ~axis ~idx ~updates into] is
-    [into], a value of [d], with [updates] combined by [combine] at the
-    positions [idx] holds along [axis], as {!Nx_kernel.S.scatter} states, for
-    a program on [device], whose kernels compile for the host's processors
-    where [host] holds ({!Tolk_engine.target}) and are rendered by [ren].
-    Under [Set], the last update in C order of [updates] wins, whether or not
-    the targets are promised distinct.
+(** [scatter ~dst ~host ~unique ren device d combine ~axis ~idx ~updates
+    into] is [into], a value of [d], with [updates] combined by [combine] at
+    the positions [idx] holds along [axis], as {!Nx_kernel.S.scatter}
+    states, for a program on [device], whose kernels compile for the host's
+    processors where [host] holds ({!Tolk_engine.target}) and are rendered
+    by [ren]. [unique] is the caller's promise that no two updates target
+    one element: where two do, the result there is unspecified. Without it,
+    under [Set], the last update in C order of [updates] wins.
 
     For [n] positions and [k] updates along [axis], nx's kernel stores [n + k]
     elements. The scatter combines the updates in a kernel of its own, into
@@ -83,6 +85,20 @@ val scatter :
     each chunk's updates in C order, the chunks' sums in order. A narrow
     float's [Add] sums in a [float32] copy of [into] and marks where updates
     land in a byte per element of [into].
+
+    On a GPU, updates that target distinct elements take no walk: a thread
+    for each combines it into its element, [n + k] work. That holds under
+    [unique], for every combine but a narrow float's [Add], and for a [Set]
+    of rows, positions an expansion repeats along every axis after [axis],
+    where the walk would take one chunk and within the bounds {!election}
+    states. Such a [Set] first elects its rows: in a kernel or two, each
+    row's position is compared with those of the later rows at its index of
+    the axes before [axis], [p k{^2}] comparisons for [p] such indices, and
+    each row a later one overwrites is dropped. Each target then takes one
+    update, the last in C order, as the walk gives it. A chunked walk is
+    about as short as the election; below the bounds the walk is shorter
+    than the election's launch, and above them the comparisons outnumber
+    the walk's steps. The host always walks.
 
     Other combines combine into [dst]'s storage, and the result is that
     storage once combined. The scatter writes over it, so no value but the
@@ -164,3 +180,14 @@ val plan :
 (** [plan ~host ren ~p ~n ~q ~k] is the runs of positions and the chunks of
     updates that {!scatter} takes for [into] of [p·n·q] elements, an axis of
     [n] between [p] and [q], under [p·k·q] updates. *)
+
+val election :
+  Renderer.t -> p:int -> n:int -> q:int -> k:int -> int option
+(** [election ren ~p ~n ~q ~k] is [Some c] where a GPU's [Set] {!scatter} of
+    rows into [into] of [p·n·q] elements, an axis of [n] between [p] and
+    [q], under [k] rows of [q] updates at each of the [p] indices, elects its
+    rows, and [None] where it walks. It elects where {!plan} takes one chunk,
+    from 16 rows to [2{^30}] comparisons [p k{^2}]. Each row's [k]
+    comparisons are cut in [c] parts, compared in one kernel and reduced in
+    a second, where that shortens a thread's [k] comparisons by more than
+    the second kernel's launch costs. *)

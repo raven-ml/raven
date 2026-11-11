@@ -5,10 +5,11 @@
 
 (* Rune.jit on this machine's first GPU: a scatter and an assembly of any
    pieces give the host's eager values, a scatter keeps the bits of each
-   element no update lands on, a cast between float32 and a 16-bit float gives
-   eager's bits at every code and tie, as does a cast of an integer to a float
-   at the ties of every exponent, a product of narrow floats or of MXFP4
-   weights holds its bound, a narrow float's fma rounds once, a call's check raises at the next wait, so the
+   element no update lands on, a Set scatter of rows gives eager's bits and
+   a numbering of repeated keys eager's counts, a cast between float32 and a
+   16-bit float gives eager's bits at every code and tie, as does a cast of
+   an integer to a float at the ties of every exponent, a product of narrow
+   floats or of MXFP4 weights holds its bound, a narrow float's fma rounds once, a call's check raises at the next wait, so the
    call returns while its work runs, a key split there has the host's words,
    and a program over the GPU and a memory device, devices of two targets,
    compiles to eager's values with replicas equal bit for bit, a running
@@ -99,6 +100,28 @@ let int_casts c =
   Int_casts.law s c
 
 let unreached c = Unreached.law (snd (on_gpu ())) c
+
+(* A numbering of 4096 keys of 5 values, compiled on the GPU, gives eager's
+   ids, first rows, counts and count: each count adds about 800 ones at one
+   entry. *)
+let repeated_keys () =
+  let _, (module S : Nx.Devices) = on_gpu () in
+  let key i = Int32.of_int (i.(0) * 7 mod 5) in
+  let x = Nx.init Nx.int32 [| 4096 |] key in
+  let f x =
+    let g = Nx.unique ~size:8 x in
+    Nx.concatenate ~axis:0
+      [ g.ids; g.first; g.counts; Nx.reshape [| 1 |] g.count ]
+  in
+  let y = Nx.place Nx.Host.on (Rune.jit' f (Nx.place S.on x)) in
+  equal codes_t (codes (f x)) (codes y)
+
+(* The law of Set scatters of rows on the GPU, a float64 case discarded where
+   its kernels lack float64. *)
+let row_set c =
+  let d, s = on_gpu () in
+  assume (c.Row_sets.dtype <> Nx.Dtype.Any Nx.float64 || has_float64 d);
+  Row_sets.law (Tolk_engine.renderer d) s c
 let casts16 dt () = Casts16.law (snd (on_gpu ())) dt
 
 (* The attention law on the GPU, a float64 case discarded where its kernels
@@ -2132,6 +2155,12 @@ let () =
              Windtrap.cases ~id:(Format.asprintf "%a" Unreached.pp)
                "a scatter keeps the bits of each element no update lands on"
                Unreached.cases unreached;
+             test "a numbering of repeated keys compiles to eager's counts"
+               repeated_keys;
+             prop ~count:8 ~examples:Row_sets.examples
+               "a Set scatter of rows compiles to eager's bits"
+               (Gen.with_pp Row_sets.pp Row_sets.gen)
+               row_set;
            ];
          group "integers"
            [

@@ -1952,6 +1952,33 @@ let gpu_rows g =
               let f = Rune.jit (tri_fn ()) histogram in
               fun () -> ignore (synced (f p u into)));
         };
+      (* A prefill's keys: 512 rows of 512 bfloat16 set into a donated pool
+         of 1024 rows, each call taking the last one's result. *)
+      on_gpu g "scatter-512-rows-into-donated-bf16-1024x512"
+        {
+          at =
+            (fun at ->
+              let rows = 512 and slots = 1024 and width = 512 in
+              let draw i s =
+                Nx.place at
+                  (Nx.cast Nx.bfloat16
+                     (Nx.Rng.uniform ~key:(Nx.Rng.key i) f32 s))
+              in
+              let u = draw 60 [| rows; width |] in
+              let i =
+                Nx.place at
+                  (Nx.create Nx.int64 [| rows; 1 |]
+                     (Array.init rows (fun r -> Int64.of_int (2 * r))))
+              in
+              let write pool u i =
+                Nx.scatter ~axis:0 (Nx.broadcast_to [| rows; width |] i) u pool
+              in
+              let f = Rune.jit (tri_fn ()) write in
+              let pool = ref (f (Nx.donate (draw 61 [| slots; width |])) u i) in
+              fun () ->
+                pool := f (Nx.donate !pool) u i;
+                ignore (synced !pool));
+        };
       (* Attention's scores of 8 heads of 64 at 2048 positions in float32,
          [h i d, h j d -> h i j]: its kernel keeps the heads apart from the
          queries, along which the keys repeat. *)

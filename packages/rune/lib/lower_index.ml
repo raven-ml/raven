@@ -88,6 +88,25 @@ let gather d ~axis idx x =
    comparison of every update with every target took 2.8 ms, the walk in one
    run a target 64.5 ms, and the chunked walk 63 µs.
 
+   On a GPU, updates whose targets are distinct take no walk: a thread per
+   update combines it into its element, and no two threads write one. The
+   targets of a [Set] of rows, positions an expansion repeats along every
+   axis after the axis as a model writes rows of its cache, are made
+   distinct by an election. It compares each row's position with those of
+   the later rows of its index of the axes before the axis, [p·k²]
+   comparisons in one or two reduces, and replaces by [-1] each position a
+   later row shares: each target keeps its last row in C order, so the
+   result is eager's bit for bit, with no atomic store, which tolk lacks.
+   It elects where the walk takes [k] steps a thread, in one chunk, from
+   [elect_least] rows to [elect_work] comparisons: below, the walk is
+   shorter than the election's launch, and above, the election's
+   comparisons outgrow it. Positions the caller promises distinct
+   ([unique]) take the threads with no election, under any combine. On an
+   RTX 5000 Ada, 512 rows of 512 bfloat16 into 1024 took the walk 35.2 µs,
+   and the election 3.13 and the threads 2.27. The host always walks: one
+   thread's walk there does [k·q] work, the stores' own, and the election
+   would add [k²].
+
    A narrow float's Add sums in a [float32] copy and marks where updates land
    in a byte per element, so that elsewhere the result keeps [into]'s bits,
    which a trip through [float32] quiets. *)
@@ -419,6 +438,68 @@ let merge ren ~host ~dt ~w ~p ~m ~chunks f args =
     Ops.sink ~kernel [ ends ]
   end
 
+(* [push ren ~rows ~w ~p ~n ~q ~k f args] is the kernel over [args] =
+   [y; i; u] with a thread per update: each combines by [f] its update, [w]
+   parts an element, into the element of [y] it lands on. Where [rows], [i]
+   holds one position per row of [q] updates. No two updates that land may
+   share an element: a thread neither walks nor orders its store. *)
+let push ren ~rows ~w ~p ~n ~q ~k f args =
+  let idx, threads, live = lanes ren ~id:0 [ p; k; q ] in
+  let a, j, b = (List.nth idx 0, List.nth idx 1, List.nth idx 2) in
+  let y, i, u = match args with [ y; i; u ] -> (y, i, u) | _ -> assert false in
+  let open Ops.O in
+  let row = (a * int k) + j in
+  let update = (row * int q) + b in
+  let pos = ld i (gated live (if rows then row else update)) in
+  let u64 v = Ops.const ~dtype:Uint64 (`Int (Bigint.of_int v)) in
+  (* Unsigned, a negative position lies past every bound. *)
+  let inside = Ops.bitcast pos Uint64 < u64 n in
+  let ok =
+    match live with None -> inside | Some l -> Ops.bitwise_and l inside
+  in
+  let e = (((a * int n) + Ops.cast pos Weak_int) * int q) + b in
+  let at o c = Ops.where ok ((o * int w) + int c) Ops.invalid in
+  let us = List.init w (fun c -> ld u (at update c)) in
+  let olds = List.init w (fun c -> ld y (at e c)) in
+  let stores = List.mapi (fun c v -> st y (at e c) v) (f olds us) in
+  let kernel = Ops.kernel_info ~name:"scatter_push" ~opts_to_apply:[] () in
+  Ops.sink ~kernel [ Ops.end_ (Ops.group stores) threads ]
+
+(* [elected ~p ~k ~c i] is the positions [i] of [p·k] rows, [k] for each
+   index of the axes before the axis, with [-1], outside every axis, at each
+   row that a later row of its index targets at the same position: each
+   target keeps its last row in C order. A row compares its position with
+   the [k] of its index in [c] parts of [ceil (k / c)], each part's result
+   stored, then those [c] reduced: a thread's comparisons are then about
+   [k / c + c] whatever threads tolk gives a reduce. The last part pads with
+   [-1], which only a position outside the axis equals. *)
+let elected ~p ~k ~c i =
+  let s = ceil_div k c in
+  let pos = Shape.reshape i (dims [ p; k ]) in
+  let cube = [ p; k; c; s ] in
+  let mine =
+    Shape.expand (Shape.reshape pos (dims [ p; k; 1; 1 ])) (dims cube)
+  in
+  let padded =
+    let m1 = `Int (Bigint.of_int (-1)) in
+    Shape.pad ~value:m1 pos [ None; Some (Ops.Int 0, Ops.Int ((c * s) - k)) ]
+  in
+  let theirs =
+    Shape.expand (Shape.reshape padded (dims [ p; 1; c; s ])) (dims cube)
+  in
+  let j = laid cube 1 (Shape.arange ~dtype:Int64 k) in
+  let later =
+    Shape.reshape (Shape.arange ~dtype:Int64 (c * s)) (dims [ 1; 1; c; s ])
+  in
+  let later = Shape.expand later (dims cube) in
+  let clash = Ops.bitwise_and (Ops.eq mine theirs) (Ops.lt j later) in
+  let some = Shape.rop (Ops.cast clash Uint8) Op.Max [ 3 ] in
+  let some =
+    if c = 1 then some else Shape.rop (Ops.contiguous some) Op.Max [ 2 ]
+  in
+  let some = Shape.reshape some (dims [ p; k ]) in
+  Shape.reshape (Ops.where (marked some) (int pos (-1)) pos) (dims [ p * k ])
+
 (* [fresh device v] is a buffer of [device] once [v] is stored into it. *)
 let fresh device v =
   let b = Ops.new_buffer device (Shape.max_numel v) (Ops.dtype v) in
@@ -426,7 +507,40 @@ let fresh device v =
 
 type dst = Filled of (Ops.t -> Ops.t) | Holding of Ops.t
 
-let looped ~dst ~host (ren : Renderer.t) device (D.Any dt as d)
+(* The election's bounds, on an RTX 5000 Ada, for [k] rows of 512 bfloat16
+   into twice as many positions, [p = 1]; the walk against the election
+   and its stores:
+   - at 16 rows, 2.02 µs against 1.02 and 1.15: about even alone, a gain
+     where the keys' and values' scatters of a model's layer share their
+     election; at 32 rows, 3.04 against 1.06 and 1.22;
+   - at 512, 35.2 against 3.13 and 2.27; at 8192, 540 against 77.6 and
+     21.4; at 32768, 2162 against 590 and 122, [2{^30}] comparisons;
+   - past [elect_work] comparisons, unmeasured: they grow as [k²], the
+     walk's steps as [k], and the gain fell from 5.5 times at 8192 rows to
+     3 at 32768. *)
+let elect_least = 16
+let elect_work = 1 lsl 30
+
+(* [election ren ~p ~n ~q ~k] is [Some c] where a GPU's [Set] of [k] rows at
+   each of [p] indices elects, its comparisons cut in [c] parts. It elects
+   where the walk takes one chunk, [k] steps a thread: a chunked walk takes
+   about [2 √k], as the parts do, and needs no election. The parts are
+   about [√k], and taken where they shorten a thread's [k] comparisons,
+   each about a walk's step, by more than their second kernel's launch:
+   tolk may spread one reduce's comparisons over threads, but the election
+   does not count on it. Parts cost that launch where it does: at 512 rows,
+   3.13 µs against one reduce's 1.98; at 2048, 11.45 against 7.26; at 4096,
+   where one thread took each row, 29.7 against 203. The marks between the
+   parts' kernels are [p·k·c] bytes, at most [elect_work / 7] where
+   [c > 1]. *)
+let election ren ~p ~n ~q ~k =
+  let _, chunks = plan ~host:false ren ~p ~n ~q ~k in
+  if k < elect_least || chunks > 1 || p * k * k > elect_work then None
+  else
+    let c = isqrt k in
+    if k - (2 * c) > gpu_launch_steps then Some c else Some 1
+
+let looped ~dst ~host ~unique (ren : Renderer.t) device (D.Any dt as d)
     (c : Nx_kernel.combine) ~axis ~idx ~updates into =
   let s = extents (List.hd (Arith.parts d into)) and t = extents idx in
   let r = List.length s in
@@ -482,53 +596,75 @@ let looped ~dst ~host (ren : Renderer.t) device (D.Any dt as d)
     | Filled f -> f (flat into)
     | Holding s -> s
   in
-  let runs, chunks = plan ~host ren ~p ~n ~q ~k in
-  (* A GPU's thread that carries its element in registers writes its mark
-     whether or not an update landed, as does a GPU's merge: their marks need
-     no fill. *)
-  let owns = (not host) && ceil_div n runs = 1 in
-  let marks_of m =
-    if owns then Ops.new_buffer device m Uint8 else fresh (zeros Uint8 [ m ])
+  (* On a GPU, distinct targets, promised or elected, take a thread per
+     update. *)
+  let distinct =
+    if host || narrow then None
+    else if unique then Some (arg i)
+    else if c = Set && rows then
+      let elect parts = arg (elected ~p ~k ~c:parts (arg i)) in
+      Option.map elect (election ren ~p ~n ~q ~k)
+    else None
   in
-  let hit =
-    if not narrow then []
-    else if (not host) && chunks > 1 then
-      [ Ops.new_buffer device (numel s) Uint8 ]
-    else [ marks_of (numel s) ]
-  in
-  let flat_updates = flat updates in
-  let dt = Ops.dtype flat_updates in
-  let walk = walk ren ~host ~rows ~dt ~w ~p ~n ~q ~k ~runs ~chunks combined in
-  let i = arg i and u = arg flat_updates in
-  let outs =
-    if chunks = 1 then Shape.custom_kernel ([ y; i; u ] @ hit) walk
-    else
-      let m = p * n * q in
-      let parts =
-        Ops.new_buffer device (w * m * chunks) (Ops.dtype flat_updates)
+  match distinct with
+  | Some i ->
+      let kernel = push ren ~rows ~w ~p ~n ~q ~k combined in
+      let u = arg (flat updates) in
+      let y = List.hd (Shape.custom_kernel [ y; i; u ] kernel) in
+      Shape.reshape y (Arith.dims ca (Array.of_list s))
+  | None ->
+      let runs, chunks = plan ~host ren ~p ~n ~q ~k in
+      (* A GPU's thread that carries its element in registers writes its
+         mark whether or not an update landed, as does a GPU's merge: their
+         marks need no fill. *)
+      let owns = (not host) && ceil_div n runs = 1 in
+      let marks_of m =
+        if owns then Ops.new_buffer device m Uint8
+        else fresh (zeros Uint8 [ m ])
       in
-      let marks = marks_of (m * chunks) in
-      let parts, marks =
-        match Shape.custom_kernel [ parts; i; u; marks ] walk with
-        | [ parts; _; _; marks ] -> (parts, marks)
-        | _ -> assert false
+      let hit =
+        if not narrow then []
+        else if (not host) && chunks > 1 then
+          [ Ops.new_buffer device (numel s) Uint8 ]
+        else [ marks_of (numel s) ]
       in
-      Shape.custom_kernel
-        ([ y; parts; marks ] @ hit)
-        (merge ren ~host ~dt ~w ~p ~m:(n * q) ~chunks combined)
-  in
-  let y = Shape.reshape (List.hd outs) (Arith.dims ca (Array.of_list s)) in
-  if not narrow then y
-  else
-    let hit = Shape.reshape (List.nth outs 3) (dims s) in
-    Ops.where (Ops.ne hit (int hit 0)) (Arith.cast ~src:ca d y) into
+      let flat_updates = flat updates in
+      let dt = Ops.dtype flat_updates in
+      let walk =
+        walk ren ~host ~rows ~dt ~w ~p ~n ~q ~k ~runs ~chunks combined
+      in
+      let i = arg i and u = arg flat_updates in
+      let outs =
+        if chunks = 1 then Shape.custom_kernel ([ y; i; u ] @ hit) walk
+        else
+          let m = p * n * q in
+          let parts =
+            Ops.new_buffer device (w * m * chunks) (Ops.dtype flat_updates)
+          in
+          let marks = marks_of (m * chunks) in
+          let parts, marks =
+            match Shape.custom_kernel [ parts; i; u; marks ] walk with
+            | [ parts; _; _; marks ] -> (parts, marks)
+            | _ -> assert false
+          in
+          Shape.custom_kernel
+            ([ y; parts; marks ] @ hit)
+            (merge ren ~host ~dt ~w ~p ~m:(n * q) ~chunks combined)
+      in
+      let y =
+        Shape.reshape (List.hd outs) (Arith.dims ca (Array.of_list s))
+      in
+      if not narrow then y
+      else
+        let hit = Shape.reshape (List.nth outs 3) (dims s) in
+        Ops.where (Ops.ne hit (int hit 0)) (Arith.cast ~src:ca d y) into
 
-let scatter ?dst ~host ren device d c ~axis ~idx ~updates into =
+let scatter ?dst ~host ~unique ren device d c ~axis ~idx ~updates into =
   let s = extents (List.hd (Arith.parts d into)) and t = extents idx in
   if List.nth s axis = 0 || numel t = 0 then into
   else
     let dst = Option.value dst ~default:(Filled (fresh device)) in
-    looped ~dst ~host ren device d c ~axis ~idx ~updates into
+    looped ~dst ~host ~unique ren device d c ~axis ~idx ~updates into
 
 (* Folds
 
@@ -1040,8 +1176,12 @@ let unique ~host ren device ~size keys =
     let scan m x =
       List.hd (Lower_reduce.scan (Monoid m) 0 ~carry:None ~src:i64 i64 x)
     in
-    let scatter c ~idx ~updates into =
-      scatter ~host ren device i64 c ~axis:0 ~idx ~updates into
+    (* The positions of [flags], [ids] and [first] are distinct inside
+       their axis: [p] a permutation, and [target] the ranks of the rows
+       that open a run, [-1] elsewhere. Those of [counts], the ids, repeat
+       for each key a group holds. *)
+    let scatter ?(unique = true) c ~idx ~updates into =
+      scatter ~host ~unique ren device i64 c ~axis:0 ~idx ~updates into
     in
     let start = scan Max (Ops.mul fresh i) in
     let flags = scatter Set ~idx:p ~updates:fresh (zeros Int64 [ n ]) in
@@ -1054,7 +1194,8 @@ let unique ~host ren device ~size keys =
     in
     let first = scatter Set ~idx:target ~updates:i (fill n [ size ]) in
     let counts =
-      scatter Add ~idx:ids ~updates:(fill 1 [ n ]) (zeros Int64 [ size ])
+      scatter ~unique:false Add ~idx:ids ~updates:(fill 1 [ n ])
+        (zeros Int64 [ size ])
     in
     let k = Lower_reduce.reduce (Monoid Sum) [ 0 ] ~src:i64 i64 flags in
     [| ids; first; counts; List.hd k |]

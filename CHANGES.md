@@ -433,6 +433,13 @@ All notable changes to this project will be documented in this file.
   and a small `k`, to one reduction per entry kept where it ran the sorting
   network: gpt-oss's router at 512 tokens, 4 of 32 experts, takes 4 kernels
   where it took 20.
+- A compiled `Nx.scatter` by `Set` of rows on a GPU, a position for each
+  row as a model writes its key and value caches, writes each row with a
+  thread per element once an election has dropped the rows a later row
+  overwrites, where each thread walked every update: gpt-oss-20b's prefill
+  of 512 tokens writes its caches in 0.18 ms a step on an RTX 5000 Ada, from
+  1.66. Results keep their bits. `Nx.set` at written positions or a window,
+  which are distinct, takes the threads with no election.
 - A `Rune.remat` in the step of a compiled `scan` or `iterate` of two trips
   or more saves its memory, as at one trip: four remat'd layers under
   `value_and_grad` in a scan held 87.0 MB at 2 and 4 trips, near the 92.3

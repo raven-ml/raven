@@ -25,8 +25,9 @@
   wraps
   int_casts
   assemblies
-  unreached)
- (libraries nx nx_array nx_kernel nx_quant nx_support rig rune windtrap))
+  unreached
+  row_sets)
+ (libraries nx nx_array nx_kernel nx_quant nx_support rig rune tolk windtrap))
 
 ; rig's test agent, beside the suite that starts it through Remote_job.
 

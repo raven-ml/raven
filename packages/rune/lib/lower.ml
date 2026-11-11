@@ -308,9 +308,9 @@ let op ?dst ~renderer ~device ~host ~local
   | Place (_, x) -> [| node x |]
   | Gather { axis; idx; x } ->
       [| Lower_index.gather (D.Any (Nx.dtype x)) ~axis (node idx) (node x) |]
-  | Scatter { combine; unique = _; axis; idx; updates; into } ->
+  | Scatter { combine; unique; axis; idx; updates; into } ->
       [|
-        Lower_index.scatter ?dst ~host (Lazy.force renderer) device
+        Lower_index.scatter ?dst ~host ~unique (Lazy.force renderer) device
           (D.Any (Nx.dtype into))
           combine ~axis ~idx:(node idx) ~updates:(node updates) (node into);
       |]
@@ -335,3 +335,4 @@ let op ?dst ~renderer ~device ~host ~local
   | Check _ -> unlowered (P.name o)
 
 let scatter_plan = Lower_index.plan
+let scatter_election = Lower_index.election
