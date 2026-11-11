@@ -550,6 +550,7 @@ let jit_rows () =
   let scan_rows = between f32 40 0. 1. [| 64; scan_k |] in
   let scan_carry = host (Nx.zeros f32 [| scan_n |]) in
   let xs = floats n and ps = positions n n and g = floats n in
+  let logits = between f32 62 (-4.) 4. [| 512; 32 |] in
   let into = floats 1024 and us = floats 16 and qs = positions 16 1024 in
   let stacked =
     List.init 64 (fun i -> between f32 (100 + i) (-1.) 1. [| 64 |])
@@ -686,6 +687,11 @@ let jit_rows () =
     warm "sort-with-positions-4096"
       (fun () -> Rune.jit (split_fn ()) (fun x -> Nx.sort x))
       (fun f -> synced2 (f xs));
+    (* gpt-oss's router at a prompt of 512 tokens: the first 4 of 32 logits of
+       each. *)
+    warm "top-k-4-of-512x32"
+      (fun () -> Rune.jit (split_fn ()) (fun x -> Nx.top_k ~k:4 x))
+      (fun f -> synced2 (f logits));
     (* A compiled variance and root, which scale every lane. *)
     warm "var-float64-1M"
       (fun () -> Rune.jit' Nx.var)
@@ -1557,6 +1563,17 @@ let sum_at shape axis =
         fun () -> ignore (synced (f x)));
   }
 
+(* The first [k] along the last axis of uniform float32 values of [shape], and
+   their positions. *)
+let top_k_at ~k shape =
+  {
+    at =
+      (fun at ->
+        let x = Nx.place at (Nx.Rng.uniform ~key:(Nx.Rng.key 63) f32 shape) in
+        let f = Rune.jit (split_fn ()) (fun x -> Nx.top_k ~k x) in
+        fun () -> ignore (synced2 (f x)));
+  }
+
 (* A product of two uniform float32 [1024; 1024] matrices compiled with a beam
    search of width 2 on 8 domains, searched in each trial, the beam's cache
    ignored: the kernel the search keeps decides the call's time. *)
@@ -1803,6 +1820,13 @@ let gpu_rows g =
               let f = Rune.jit' (Nx.argmax ~axis:0) in
               fun () -> ignore (synced (f x)));
         };
+      (* gpt-oss's router at a decode step and at a prompt of 512 tokens: the
+         first 4 of 32 logits of each token. *)
+      on_gpu g "top-k-4-of-1x32" (top_k_at ~k:4 [| 1; 32 |]);
+      on_gpu g "top-k-4-of-512x32" (top_k_at ~k:4 [| 512; 32 |]);
+      (* The first 64 of one row of 4096, where a round, a reduction of one
+         output, costs more than a step of the sorting network. *)
+      on_gpu g "top-k-64-of-1x4096" (top_k_at ~k:64 [| 1; 4096 |]);
       (* Running sums: rows of 400 and of 1024, whose time is mostly one
          launch per stage, and long rows of 50500. *)
       on_gpu g "cumsum-float32-100x400" (cumsum_at f32 [| 100; 400 |]);
