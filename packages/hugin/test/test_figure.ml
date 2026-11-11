@@ -587,8 +587,8 @@ let pairs =
       fun () -> (line ~y:(num v) (), line ~curve:Curve.linear ~y:(num v) ()) );
   ]
 
-(* Ruling: every built-in mark rebuilt from the same tensors and values is equal
-   to the first. *)
+(* Every built-in mark rebuilt from the same tensors and values is equal to
+   the first. *)
 let builtins =
   [
     ("dot", fun () -> dot ~x:(num v) ~y:(num v) ~size:(num v) ());

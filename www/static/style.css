@@ -1,5 +1,5 @@
-/* raven-ml.dev: the one stylesheet. The tokens and components are the A″
-   v4 design system, unchanged; the landing page's own classes follow them. */
+/* raven-ml.dev: the one stylesheet. The design tokens and components come
+   first; the pages' own classes follow them. */
 
 @font-face{font-family:Geist;src:url(/fonts/Geist-Regular.woff2) format("woff2");font-weight:400;font-display:swap}
 @font-face{font-family:Geist;src:url(/fonts/Geist-Medium.woff2) format("woff2");font-weight:500;font-display:swap}

@@ -2,11 +2,10 @@
    Neal's funnel, non-centred, at 1024 chains. The law is Recovery's; the test
    suite holds it on a few cells, this sweep on all 31.
 
-   It is outside runtest by the maintainer's decision of 2026-10-11: runtest
-   holds a small calibrated law, test_posteriordb, and this executable the full
-   sweep, whose 31 inference runs take seven to twelve minutes, beyond the
-   minute a test has. Run it after a change to a sampler or a diagnostic, from
-   the repository root:
+   It is outside runtest because its 31 inference runs take seven to twelve
+   minutes, beyond the minute a test has: runtest holds a small calibrated
+   law, test_posteriordb, and this executable the full sweep. Run it after a
+   change to a sampler or a diagnostic, from the repository root:
 
    cd packages/norn/test/model && dune exec ./posteriordb_sweep.exe *)
 

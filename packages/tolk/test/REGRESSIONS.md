@@ -35,7 +35,7 @@ below, and that of the settings, which tinygrad keeps in `helpers.py`, is
 | tinygrad: null/test_helpers.py::TestCeilDiv::test_int | `ceildiv` on integers | Helpers › integers › divide as tinygrad does (`division.golden`) |
 | tinygrad: null/test_helpers.py::TestCeilDiv::test_symbolic, test_symbolic_negative_offset | `ceildiv` on UOps | dropped: `ceildiv` on nodes has no reader among the ported files; `Helpers.ceildiv` is on integers |
 | tinygrad: null/test_helpers.py::TestCount (2 tests) | `count` and its pickling | dropped: not ported, a counter reference (README exclusions) |
-| tinygrad: null/test_helpers.py::TestFetch (9 tests) | `fetch` | dropped: url fetch is not ported (plan, L0 scope) |
+| tinygrad: null/test_helpers.py::TestFetch (9 tests) | `fetch` | dropped: url fetch is not ported |
 | tinygrad: null/test_helpers.py::TestFullyFlatten (2 tests) | `fully_flatten` | dropped: not ported, it serves Python's typing (README exclusions) |
 | tinygrad: null/test_helpers.py::TestMemoryview (3 tests) | `from_mv`, `to_mv`, `mv_address` | dropped: the ctypes helpers are not ported (README exclusions) |
 | tinygrad: null/test_helpers.py::TestGetShape (2 tests) | `get_shape` | dropped: not ported (README exclusions) |
@@ -66,7 +66,7 @@ below, and that of the settings, which tinygrad keeps in `helpers.py`, is
 | tinygrad: null/test_device.py::TestDevice::test_run_as_module | `python -m tinygrad.device` runs `device.py` again as a script | dropped: the device registry and `device.py`'s script are not ported (README exclusions) |
 | tinygrad: null/test_device.py::TestCompiler (3 tests) | the compiler cache follows CCACHE | dropped: `Compiler` belongs to `Device`'s suite |
 | tinygrad: null/test_hashing.py::TestKeccak::test_shape_keeping | `Tensor.keccak` | dropped: the `Tensor` surface; the frontend is nx |
-| tinygrad: null/test_tqdm.py (all) | `tqdm` | dropped: not ported (plan, L0 scope) |
+| tinygrad: null/test_tqdm.py (all) | `tqdm` | dropped: not ported |
 
 ## Dtype
 
@@ -93,7 +93,7 @@ its input cells, such as `D › truncate › truncation.golden › dtype=dtypes.
 | tinygrad: null/test_dtype_spec.py::TestHelpers::test_float_to_fp16 | half rounds and overflows at 65520 | `D › truncate › truncation.golden` (dtype=dtypes.half) |
 | tinygrad: null/test_dtype_spec.py::TestHelpers::test_float_to_bf16 | bfloat16 rounding of torch's cases, overflow to ±inf | `D › truncate › truncation.golden` (dtype=dtypes.bfloat16) |
 | tinygrad: null/test_dtype_spec.py::TestHelpers::test_float_to_bf16_nan | NaN of any payload stays NaN | `D › truncate › truncation.golden` (value=nan, -nan); `D › truncate › bfloat16 rounding is odd` (draws NaN payloads) |
-| tinygrad: null/test_dtype_spec.py::TestHelpers::test_float_to_bf16_round | ties to even, through float32 | `D › truncate › truncation.golden` (values 0x3F807000, 0x3F80C000, 0x3F808000, 0x3F818000, 0x41238000, 0xC1468000 as floats); `D › truncate › bfloat16 rounds once, to the nearest, ties to even`. By ruling, a float rounds once to bfloat16: the golden rows where the float32 step lands on a tie (1.0039062500000002, 1+2^-8+2^-40) are stated in code |
+| tinygrad: null/test_dtype_spec.py::TestHelpers::test_float_to_bf16_round | ties to even, through float32 | `D › truncate › truncation.golden` (values 0x3F807000, 0x3F80C000, 0x3F808000, 0x3F818000, 0x41238000, 0xC1468000 as floats); `D › truncate › bfloat16 rounds once, to the nearest, ties to even`. tolk rounds a float to bfloat16 once, where tinygrad rounds through float32 first: the golden rows where the float32 step lands on a tie (1.0039062500000002, 1+2^-8+2^-40) are stated in code |
 | tinygrad: null/test_dtype_spec.py::TestHelpers::test_float_to_bf16_boundary | rounding at the largest finite bfloat16 | `D › truncate › truncation.golden` (values 0x7F7F7FFF, 0x7F7F8000, 0x7F7FC000) |
 | tinygrad: null/test_dtype_spec.py::TestHelpers::test_truncate_fp8e4m3, test_truncate_fp8e5m2 | 8-bit rounding matches torch, saturates, NaN on infinities | `D › truncate › truncation.golden`; `D › truncate › truncation is idempotent`; `D › truncate › a finite float stays finite in an 8-bit float`; `D › truncate › rounding to a float is monotone` |
 | tinygrad: null/test_dtype_spec.py::TestHelpers::test_finfo | `finfo` of the floats | `D › data types › finfo.golden`; `D › data types › finfo rejects every data type but the floats of known width` |
@@ -158,7 +158,7 @@ its input cells, such as `D › truncate › truncation.golden › dtype=dtypes.
 The suite is `Tolk.Ops` (`uop/ops/`), written `O` below. A golden
 check is named after its golden, and a table golden's rows are tests keyed by
 their input cells. Graph goldens are the `O › graphs` group, one test per
-golden. `L2` marks the mixin tests folded into this module (plan §9, L2).
+golden. `L2` marks the mixin tests folded into this module.
 
 Tests of tinygrad that run a later module's rewrites (`sym`, `symbolic`,
 `full_rewrite`, `to_uops_list`, `pm_mops`, the renderers, `Estimates`) belong
@@ -331,7 +331,7 @@ has no `Tensor`, so each kept method's UOp graph is a golden instead.
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpBinop::test_mul_float_int, test_mul_bool_int | mixed types promote with a cast | `O › elementwise › a binary operation promotes its operands to their least upper type`; `UOp.arange` is dropped (not kept) |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpBinop::test_add_scalar_float_on_int | a float literal on an int | `O › graphs › weak_promotion.golden` |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpBinop::test_div_tensor_by_tensor, test_div_int_by_int, test_div_broadcast_tensor_by_tensor | true division | `O › graphs › division.golden`; `O › graphs › constant_division.golden` |
-| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpBinop::test_div_sum_by_sum, test_isclose | `sum`, `isclose` | dropped: not kept (plan §3, L2) |
+| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpBinop::test_div_sum_by_sum, test_isclose | `sum`, `isclose` | dropped: not kept |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpBinop::test_floordiv_int, test_floordiv_float, test_rfloordiv_int, test_mod_int, test_mod_float, test_div_trunc_int, test_div_trunc_float, test_fmod_int, test_fmod_float, test_floordiv_bool, test_mod_bool, test_fmod_bool | rounding divisions by type | `O › graphs › constant_division.golden` |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpClone::test_clone | `clone` | `O › graphs › clones.golden` |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpClone::test_clone_deviceless_const | a clone of a constant goes to the default device | dropped: there is no default device (RFC 0010 Law 9); `O › storage › a clone of a weak value commits its type` |
@@ -341,13 +341,13 @@ has no `Tensor`, so each kept method's UOp graph is a golden instead.
 | tinygrad: runtime/test_flip.py::TestFlip::test_symbolic_zero_and_singleton | a flip of an axis of every size from 0, the size a variable's | `O › movement › a flip reverses each axis it names and keeps the others` (sizes from 0, one to three axes, flipped in either order), `› a flip of a view of variable size reverses it at each size` (0 to 4); the kernels are Rangeify's `variable_staged`, `variable_flipped_store` |
 | tinygrad: runtime/test_flip.py::TestFlip::test_gradient, test_symbolic_gradient, test_partial_store_gradient | the gradient of a flip, its arithmetic and traffic linear in the size | dropped: rune owns differentiation; the kernel a flip compiles to is Codegen's `flip_<target>.golden` |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpGetitem (all) | `__getitem__` | dropped: not ported (README exclusions) |
-| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpCumalu, TestTensorUOpCumMinMax, TestTensorUOpArgMinMax, TestTensorUOpSequential, TestTensorUOpOneHot, TestTensorUOpSort, TestTensorUOpAllclose, TestTensorUOpRand, TestTensorUOpGather, TestTensorUOpInterpolate, TestTensorUOpLoss, TestTensorUOpScatter, TestTensorUOpScatterReduce, TestTensorUOpMaskedSelect, TestTensorUOpNonzero, TestTensorUOpPool, TestTensorUOpConv2d, TestTensorUOpHashing, TestTensorUOpEinsum, TestTensorUOpSoftmax, TestTensorUOpQR, TestTensorUOpSVD | the other `Tensor` methods | dropped: not kept (plan §3, L2); rune's lowering |
+| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpCumalu, TestTensorUOpCumMinMax, TestTensorUOpArgMinMax, TestTensorUOpSequential, TestTensorUOpOneHot, TestTensorUOpSort, TestTensorUOpAllclose, TestTensorUOpRand, TestTensorUOpGather, TestTensorUOpInterpolate, TestTensorUOpLoss, TestTensorUOpScatter, TestTensorUOpScatterReduce, TestTensorUOpMaskedSelect, TestTensorUOpNonzero, TestTensorUOpPool, TestTensorUOpConv2d, TestTensorUOpHashing, TestTensorUOpEinsum, TestTensorUOpSoftmax, TestTensorUOpQR, TestTensorUOpSVD | the other `Tensor` methods | dropped: not kept; rune's lowering |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpCast::test_cast_str_dtype, TestTensorUOpBitcast::test_bitcast_str_dtype | a type named by a string | dropped: types are `Dtype.t` values; reading a name is `Dtype.of_string` (Dtype's section) |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpBitcast::test_bitcast_same_dtype | a bitcast to the same type is the node | `O › elementwise › a cast or bitcast to the node's own type is the node` |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpBitcast::test_bitcast_same_and_diff_size | bitcasts that keep, widen or narrow the element | `O › graphs › bitcasts.golden`; `O › shapes › a bitcast rescales the last axis, and rejects a size that does not divide` |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpCat (4 tests) | `cat` along each axis, three inputs, a negative axis | `O › graphs › concatenation.golden` |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpPad::test_pad_flat, test_pad_flat_negative, test_pad_grouped_none | constant padding, negative, `None` axes | `O › graphs › padding.golden` (the flat spelling is `Tensor` syntax; the interface takes one pair per axis) |
-| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpPad::test_pad_circular, test_pad_circular_zero_after, test_pad_reflect, test_pad_reflect_negative, test_pad_replicate, test_pad_replicate_negative | other padding modes | dropped: only constant padding is kept (plan §3, L2) |
+| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpPad::test_pad_circular, test_pad_circular_zero_after, test_pad_reflect, test_pad_reflect_negative, test_pad_replicate, test_pad_replicate_negative | other padding modes | dropped: only constant padding is kept |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpStack::test_stack_dim0, test_stack_dim1, test_stack_3tensors, test_stack_new_last, test_stack_mixed_dtype | `stack` | `O › graphs › stacks.golden` |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpStack::test_stack_index_dtype | a stack of weak constants | `O › graphs › bitcasts.golden` (its last node) |
 | tinygrad: null/test_tensor_uop_mixin.py::TestUOpEmpty::test_empty_dtype_string | a type named by a string | dropped: types are values |
@@ -355,7 +355,7 @@ has no `Tensor`, so each kept method's UOp graph is a golden instead.
 | tinygrad: null/test_tensor_uop_mixin.py::TestUOpEmpty::test_empty_like_sharded_to_single_device | a sharded value's `empty_like` on one device | dropped: the multi-device rewrite is excluded (README) |
 | tinygrad: null/test_tensor_uop_mixin.py::TestUOpEmpty::test_empty_direct_singleton_tuple_device | a one-device tuple canonicalizes | dropped: canonicalizing devices is Device's (L6) |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpCreation::test_empty, test_empty_like | `empty`, `empty_like` | `O › graphs › clones.golden` |
-| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpCreation::test_full, test_full_kwargs, test_full_symbolic_fill, test_zeros, test_ones, test_invalids, test_arange, test_arange_empty, test_arange_step, test_linspace, test_linspace_one_step, test_eye, test_eye_rect, test_triu, test_triu_diagonal, test_tril, test_tril_diagonal | other creation methods | dropped: not kept (plan §3, L2) |
+| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpCreation::test_full, test_full_kwargs, test_full_symbolic_fill, test_zeros, test_ones, test_invalids, test_arange, test_arange_empty, test_arange_step, test_linspace, test_linspace_one_step, test_eye, test_eye_rect, test_triu, test_triu_diagonal, test_tril, test_tril_diagonal | other creation methods | dropped: not kept |
 | tinygrad: null/test_dtype_weak.py::TestWeakPromotion::test_uop_scalar_const_lifts_kind | a scalar constant takes the kind of the other operand's type and stays weak, its value converted to that kind; a bare weak constant node and the scalar build one node | `O › elementwise › a weak constant takes the other operand's kind and stays weak`; `O › graphs › weak_promotion.golden` (`a + 1`, `a + 1.5`, `x + 2`); `O › constants › a constant without a type is its weak literal` |
 | tinygrad: null/test_dtype_weak.py::TestWeakPromotion::test_weak_int_binop (the dtype lines) | shifts and bitwise operations of weak and committed integers keep the left operand's type, and floats are refused | `O › data types › dtypes_of.golden` (op=Ops.SHL, Ops.SHR, Ops.AND, Ops.OR, Ops.XOR) |
 | tinygrad: null/test_tensor_uop_representation.py (5 tests) | a realized `Tensor` is a BUFFER | the engine's section (L7): realization is `tolk.engine`'s |
@@ -373,7 +373,7 @@ entering calls. Each table's nodes are the sources of the sink of its
 
 tinygrad hands the accesses its bounds do not prove to z3, which tolk
 does not have (README exclusions); the generator stands in a z3 that cannot
-decide, so each `checked` verdict is tinygrad's under the ruling that an
+decide, so each `checked` verdict is tinygrad's under the rule that an
 unproved access fails.
 
 | Source | Behaviour | Outcome |
@@ -707,7 +707,7 @@ it check that each result is the machine's value instead, and name D13.
 | tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_equality | equal expressions are one node, and operand order counts | `S › tinygrad's other tests › equal expressions are the same node, and operand order counts` |
 | tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_divide_exact_not | `divide_exact` gives up | `S › tinygrad's other tests › divide_exact gives up on what does not divide` |
 | tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_div_mod_zero | a division or remainder by 0 raises | `DM › zero divisors` (Divandmod's section) |
-| tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_variable_divmod | a variable bounded by another | dropped: a variable's bounds are numbers (plan, L3 ruling) |
+| tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_variable_divmod | a variable bounded by another | dropped: a variable's bounds are numbers |
 | tinygrad: null/test_uop_symbolic.py::TestSymbolicPickle (2 tests) | a variable survives pickling | dropped: pickling is Python's; a graph's text form round-trips in the graph format (test support's `Graph` suite) |
 | tinygrad: null/test_uop_symbolic.py::TestSymbolicNumeric (9 tests) | a rewrite of a constant is its value, and bounds hold every value | `S › tinygrad › tests.golden › TestSymbolicNumeric.<test>`; `S › laws › sym keeps the value of an integer expression where nothing wraps` |
 | tinygrad: null/test_uop_symbolic.py::TestSymbolicVariables::test_simple, test_compound, test_dedup | `variables` lists each variable once, sorted | `S › tinygrad's other tests › variables lists each variable once, sorted by name` |
@@ -951,7 +951,7 @@ the same kernels.
 | tinygrad: `runtime/test_tensor_cores.py::test_tensor_cores_padto_unroll`, `test_tensor_cores_padto_masked_operand`, `test_tc_shape_padded`, `test_tc_padto_full_upcast` | | `tc_<renderer>_padto_unroll`, `_padto_shifted_operand`, `_padto_masked_operand`, `_shape_padded`, `_padto_full_upcast` |
 | tinygrad: `runtime/test_tensor_cores.py::test_tensor_cores_multi_reduce` | the nine choices of axes of a convolution | `tc_metal_conv_0` to `_8` |
 | tinygrad: `runtime/test_tensor_cores.py::test_tensor_cores_unroll_phi`, `test_tensor_cores_unroll_casted_phi`, `test_tensor_cores_unroll_casted_phi_with_children` | an unroll after a tensor core | `tc_<renderer>_unroll`, `tc_<renderer>_unroll_relu`; where the accumulator lives is the expander's (L4, Codegen) |
-| tinygrad: `runtime/test_tensor_cores.py::test_tensor_cores_nan`, `test_tensor_cores_emulated_half`, `test_tensor_cores_partial_sum_in_accumulator` | values computed on a device | dropped here: execution (plan §4, slow, L5) |
+| tinygrad: `runtime/test_tensor_cores.py::test_tensor_cores_nan`, `test_tensor_cores_emulated_half`, `test_tensor_cores_partial_sum_in_accumulator` | values computed on a device | dropped here: execution on a device |
 | tinygrad: `ALLOW_TF32` on CUDA (`postrange.py` `Scheduler._apply_tc_opt`) | a float tensor core only with TF32 allowed | `tc_cuda_5_basic` (allowed), `tc_cuda_float_without_tf32` (refused) |
 | tinygrad: `null/test_custom_kernel.py::test_gemm_group_refused`, `test_gemm_unroll_refused`, `test_loop_acc_gemm_tc_refused` | a serial loop cannot be grouped or upcast, and takes no tensor core | `custom_gemm_group`, `custom_gemm_unroll`, `tc_amd_loop_acc_tc` |
 | tinygrad: `null/test_postrange.py::TestReductionAxes::test_weak_reduction_membership` | a reduction's role comes from the reduction that closes its range, whatever its type or identity: axes, reduce ranges and upcastable axes of both roles | `axes.golden` (every row: `axis_types`, `reduce_axes`, `upcastable_dims`, `upcastable_reduce_dims`); `PR › apply_opts › hand-optimises a kernel that asks for nothing, after making its weak outputs global` |
@@ -1142,7 +1142,7 @@ engine (`support/run.ml`), which compiles each kernel with rig's host entry
 | tinygrad: `null/test_compile_failures.py::TestDisassembly::test_float16_alu` | Clang on arm64 adds halves without converting | dropped here: disassembly is `Compiler_cpu`'s; that each `__fp16` operation rounds to a half is `CS › execution on the host › rounds each operation on halves to a half` |
 | tinygrad: `device/cpu/test_cpu.py::TestCPU::test_arch_feats` | the architecture's features reach the compiled code (`vmov` with `avx`) | dropped here: the compiler's flags are `Compiler_cpu`'s; `CS › declarations › cachekey` pins that Clang's cache table is named after the architecture |
 | tinygrad: `device/metal/test_metal.py::TestMetal::test_compile_success`, `test_compile_error` | Metal compiles a kernel, and refuses bad source | slow: `CS › every GPU kernel compiles with its target's toolchain › metal_*` (49 kernels); the refusal is `Compiler_metal`'s |
-| tinygrad: `device/metal/test_metal.py::TestMetal::test_alloc_oom`, `test_failed_newLibraryWithData`, `test_free` | Metal memory and pipelines | dropped: the device's, rig and `tolk.engine` (plan §1a) |
+| tinygrad: `device/metal/test_metal.py::TestMetal::test_alloc_oom`, `test_failed_newLibraryWithData`, `test_free` | Metal memory and pipelines | dropped: the device's, rig and `tolk.engine` |
 | tinygrad: `renderer/cstyle.py` CUDA and HIP sources through NVRTC and comgr (no test) | the sources compile | slow: `CS › every GPU kernel compiles with its target's toolchain › cuda_*`, `hip_*`, skipped where the library is absent |
 | tinygrad: `device/cpu/test_call.py::TestExternalCall::test_call_out_param`, `test_call_ret` | a call of an external function by its symbol, `frexp` with an out parameter or `sqrt` for its result | `CS › sources › clang_call_out`, `clang_call_ret`; `CG › calls in a kernel › an external function writes through its pointer argument`, `› an external function returns its value` |
 | tinygrad: `null/test_call.py::TestCallCodegen::test_call_stack_pointer` | a call whose argument is the address of a register | `CS › sources › clang_call_stack` (holds `(unsigned int*)((buf0+0))`) |
@@ -1314,7 +1314,7 @@ itself skip elsewhere than on macOS.
 |---|---|---|
 | tinygrad: `device/metal/test_metal.py::TestMetal::test_compile_success` | a kernel compiles to a library | `M › MTLCompiler › compiles a kernel to a Metal library` |
 | tinygrad: `device/metal/test_metal.py::TestMetal::test_compile_error` | `CompileError` on bad source | `M › MTLCompiler › a rejected source raises Compile_error with the compiler's message` |
-| tinygrad: `device/metal/test_metal.py::TestMetal::test_alloc_oom`, `test_failed_newLibraryWithData`, `test_free` | the device's memory and pipelines | dropped: the device is rig's and `tolk.engine`'s (plan §1a) |
+| tinygrad: `device/metal/test_metal.py::TestMetal::test_alloc_oom`, `test_failed_newLibraryWithData`, `test_free` | the device's memory and pipelines | dropped: the device is rig's and `tolk.engine`'s |
 | tinygrad: `runtime/ops_metal.py` `MetalCompiler.compile` (no test) | the reply's data starts after the header and the warnings | `M › MTLCompiler › a source that draws warnings compiles to a Metal library` |
 | tinygrad: `runtime/ops_metal.py` `MetalCompiler.compile` (no test) | the Metal version by macOS, `-fno-fast-math` | `M › MTLCompiler › the language is the latest the running macOS compiles kernels of`, `fast math is off` |
 | tinygrad: `runtime/ops_metal.py` `MetalCompiler.__reduce__` | one compiler per forked process | dropped: no pickling; `MF › a forked process` (2 tests) pins that a forked process compiles with processes of its own |
@@ -1732,8 +1732,8 @@ returns, and `calls.golden`, each call's reading by `get_call_*`,
 | tinygrad: engine/realize.py `get_call_arg_uops`, `get_call_kernel_args`, `get_call_outs_ins`, `get_call_name`, `estimate_uop` | what a call does | `R › calls of recorded schedules › calls.golden` (the calls of 15 programs), and `R › get_call_arg_uops`, `› get_call_kernel_args`, `› get_call_outs_ins`, `› get_call_name`, `› estimate_uop` (20 tests) |
 | tinygrad: engine/realize.py `lower_and_compile` | kernels compiled once, in parallel unless one asks for a beam | `R › lower_and_compile of recorded schedules` (14 goldens), `R › lower_and_compile` (8 tests), `R › lower_and_compile with a beam search`, `R › lower_and_compile in parallel` |
 | tinygrad: engine/realize.py `pm_beam`, `compile_linear`'s `BEAM` | a kernel asking for no beam asks for `BEAM`'s | `JB › JITBEAM unset › a kernel is searched with BEAM's width` |
-| tinygrad: engine/realize.py `get_call_kernels`, `track_stats`, `ExecContext`, `exec_*`, `runtime_cache`, `run_linear`, `time_call`, `link_linear`, `capturing` | running a linear | dropped here: the run half is `tolk.engine`'s (plan §1a); its execution is `EN › link and run` |
-| tinygrad: engine/realize.py `pm_validate`, `exec_validate`, `VALIDATE_WITH_CPU` | | dropped: excluded (ruling) |
+| tinygrad: engine/realize.py `get_call_kernels`, `track_stats`, `ExecContext`, `exec_*`, `runtime_cache`, `run_linear`, `time_call`, `link_linear`, `capturing` | running a linear | dropped here: the run half is `tolk.engine`'s; its execution is `EN › link and run` |
+| tinygrad: engine/realize.py `pm_validate`, `exec_validate`, `VALIDATE_WITH_CPU` | | dropped: validation against the CPU is excluded (README) |
 | tinygrad: engine/realize.py `get_call_name`'s `encdec` and `get_call_outs_ins`'s | | dropped: the video decoder queue is excluded |
 | tinygrad: engine/realize.py the `HCQInfo` branches of `get_call_outs_ins` and `estimate_uop` | | dropped: a call that submits queues is excluded (README) |
 | tinygrad: null/test_call.py::TestCallCodegen::test_compiled_scalar_slots_are_not_call_slots | a compiled program keeps its own variable slots | `R › get_call_kernel_args › is the variable a call binds to each name, in the program's order` (a program's variables are read by name, whatever the call's slots) |

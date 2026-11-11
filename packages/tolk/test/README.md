@@ -12,7 +12,7 @@
   output.
 - `gen/` generates the goldens from tinygrad.
 - `REGRESSIONS.md` maps each tinygrad test to the test that keeps its
-  behaviour, or to why it is dropped. `../DIVERGENCES.md` is the divergence ledger.
+  behaviour, or to why it is dropped. `../DIVERGENCES.md` lists where tolk differs from tinygrad.
 
 A suite's stanza:
 
@@ -124,7 +124,7 @@ its body and a final newline. A golden check is one line:
   the whole table, such as that it has no column the suite does not check.
 
 A golden is tinygrad's output, with each kernel body's parameters written
-without a device (`gen/graph.py`, D170), and is never edited by hand. When a ledger entry
+without a device (`gen/graph.py`, D170), and is never edited by hand. When a divergence
 changes an output, the test that compares it states the difference in code and
 names the entry, and it is that entry's pinning test.
 

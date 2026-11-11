@@ -1,5 +1,5 @@
 (* Blog posts: each doc/blog/<date>-<slug>.md rendered into the post
-   layout of A″ v4 at /blog/<slug>/, inside the head, header and footer of
+   layout at /blog/<slug>/, inside the head, header and footer of
    the blog's page, and the feed of them all. A post is a record of its
    date: a note above it says so. *)
 

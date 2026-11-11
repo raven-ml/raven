@@ -1,5 +1,5 @@
 (* The docs: the manual, and each library's page and guides, rendered
-   from the repository's Markdown into the docs layout of A″ v4, inside
+   from the repository's Markdown into the site's docs layout, inside
    the head, header and footer of pages/docs.html.
 
    - doc/manual/<name>.md is /docs/manual/<name>/.

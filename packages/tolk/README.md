@@ -150,7 +150,7 @@ is scope, not a divergence: the part left out is listed here, and
 | The setting `ALLOW_DEVICE_USAGE` of `helpers.py`, and the contexts that set it (`do_to_program` in `codegen/__init__.py`, `apply_opts` in `codegen/opt/postrange.py`, `_init_worker` in `engine/worker.py`, `__call__` in `function.py`) | the guard is structural: tolk cannot open a device. |
 | The other settings of `helpers.py` whose readers are not ported: `IMAGE`, `JIT`, `WINO`, `TRAINING`, `LRU`, `FUSE_OPTIM`, `USE_ATOMICS`, `CAPTURE_PROCESS_REPLAY`, `NULL_ALLOW_COPYOUT`, `VIZ`, `PROFILE`, `HCQ_RUNTIME_DEV`; the `PYTEST_XDIST_WORKER_COUNT` share of `PARALLEL`'s default; the `{DEV}_CC` migration check, and the `{DEV}_{RENDERER}` one of `Compiled._select_renderer` in `device.py` | image paths, the `Tensor` frontend and `TinyJit`, rig's allocators, the device that runs host programs of command queues (`device.py`, excluded above), `nn`, process replay, the NULL device, viz and profiling are excluded above; raven never read `{DEV}_CC` or `{DEV}_{RENDERER}`. |
 
-## Tests and ledgers
+## Tests and divergences
 
 `test/README.md` describes the suites, how they run and the goldens
 recorded from tinygrad. `DIVERGENCES.md` lists every place where tolk

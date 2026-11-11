@@ -1,7 +1,7 @@
 # Divergences from tinygrad
 
 tolk follows the tinygrad commit `TINYGRAD` in `test/gen/generate.py` pins. This
-ledger lists every place where it does something else. An entry is admitted
+file lists every place where it does something else. An entry is admitted
 for one of five reasons only:
 
 - **(a) an OCaml constraint:** acyclic modules, static types, the GC, domains;
@@ -8377,7 +8377,7 @@ C's undefined behaviour.
   189 and 749 ms decoded per tile and 69.3, 145 and 532 ms staged, so the
   bound is the stack the panel lies on: rig's pool workers have 8 MiB, the
   calling thread its own, 512 KiB for a secondary thread on macOS. The
-  scheduler stays target-free (D92's ruling): the panel is the host's
+  scheduler stays target-free (D92): the panel is the host's
   codegen. On fudge, one P-core, interleaved, load 15-17, two undisturbed
   rounds of 41 runs, medians: float32 rows of 10 2.37-2.38 to 1.66-1.67 ms,
   of 64 13.2-13.3 to 9.8-10.4 ms, beside 10.2-10.3 ms for the stored decode;

@@ -1,7 +1,6 @@
 # www
 
-raven-ml.dev, built by one small OCaml program. It implements the A″ v4
-design.
+raven-ml.dev, built by one small OCaml program.
 
 ```sh
 dune build www/site          # build; warns about stale pages
@@ -9,7 +8,7 @@ dune build @www/check        # fails on a stale page; run before a release
 python3 -m http.server -d _build/default/www/site
 ```
 
-## The design
+## How it works
 
 1. **Pages are HTML.** Each page in `pages/` is a complete document, head,
    header and footer included, written by hand. The build serves it as it
@@ -94,6 +93,20 @@ python3 -m http.server -d _build/default/www/site
    - an unknown slot;
    - a malformed source tag.
 
+## What a change keeps
+
+- Every page works without JavaScript and reflows at 320 CSS pixels
+  without horizontal scrolling (WCAG 2.2, SC 1.4.10).
+- The tabs follow the WAI-ARIA tabs pattern: arrow keys with wrap, Home
+  and End, and activation on focus.
+- Fonts are self-hosted subsets, so a page makes no request to another
+  host.
+- Code is highlighted at build time by `gen/highlight.ml`, following the
+  OCaml manual's lexical conventions; no highlighting library runs at build
+  or in the browser.
+- The generator writes HTML as OCaml strings with explicit escaping. Slots
+  are its only template mechanism.
+
 ## Files
 
 - `dune`: the site rule, and the `check` alias. The site rule depends on
@@ -119,25 +132,8 @@ python3 -m http.server -d _build/default/www/site
     order of the manual;
   - `highlight.ml`: OCaml source as highlighted HTML, at build time;
   - `html.ml`: escaping, and a library's glyph.
-- `static/`: the stylesheet (the A″ v4 design system, then the pages'
-  classes), `site.js`, `raven.svg`, and the fonts. The fonts are Geist and
-  Geist Mono, subset to the characters the site uses, and Noto Sans Runic,
-  subset to the library glyphs: 24 KB in all, under the SIL Open Font License.
-
-## Decisions
-
-Checked against `doc/dev/design.md`. Citations were read for this
-document. Visual decisions are the A″ ledger's, and are not reopened here,
-except the code palette (9).
-
-| # | Decision | Why | Reference |
-| --- | --- | --- | --- |
-| 1 | Pages are complete, hand-written HTML documents; Markdown is the source for roadmap, performance and sponsor, and pages follow it at release, with a stale check. | Generating designed pages from Markdown forced the design into Markdown conventions and the generator to parse prose; two copies with a check keep both useful. | maintainer, 2026-11-10 |
-| 2 | Slots fill only what would otherwise be copied by hand: tested code, the packages, the posts, the release. | Code on a page must run; a package list must match the packages. | A″ ledger, decision 4 |
-| 3 | The generator writes HTML as OCaml strings with explicit escaping, and has no template language beyond slots. | A slot is a named, closed set of functions; anything more is a second language. | `design.md`, "Argue for the most elegant shape" |
-| 4 | cmarkit parses Markdown. | The docs are CommonMark; cmarkit already ships with raven through quill. | `design.md`, "Hard constraints" |
-| 5 | Pages work without JS; JS builds the tab list from the panels' headings. | "make your page work with HTML first"; "The JavaScript layer is not fault-tolerant." | GOV.UK Service Manual, "Building a resilient frontend using progressive enhancement", <https://www.gov.uk/service-manual/technology/using-progressive-enhancement> |
-| 6 | Tabs follow the APG pattern: `tablist`, `tab`, `tabpanel`, `aria-selected`, `aria-controls`, arrows with wrap, Home, End, activation on focus. | "It is recommended that tabs activate automatically when they receive focus" | WAI-ARIA APG, Tabs pattern, "Keyboard Interaction", <https://www.w3.org/WAI/ARIA/apg/patterns/tabs/> |
-| 7 | Every page reflows at 320px. | "without requiring scrolling in two dimensions for … a width equivalent to 320 CSS pixels" | WCAG 2.2, SC 1.4.10 Reflow, <https://www.w3.org/WAI/WCAG22/Understanding/reflow.html> |
-| 8 | Fonts are self-hosted subsets; no third-party requests. | No other host stands between a reader and a page. | `design.md`, "Hard constraints" |
-| 9 | Code is highlighted at build time by a lexer of our own, following the manual's token classes; no highlighting library at build or run time. | One page of code, and no dependency; a reader's browser runs nothing to colour code. | OCaml manual, "Lexical conventions", <https://ocaml.org/manual/5.3/lex.html>: "Nested comments are handled correctly." |
+- `static/`: the stylesheet (the design tokens and components, then the
+  pages' classes), `site.js`, `raven.svg`, and the fonts. The fonts are
+  Geist and Geist Mono, subset to the characters the site uses, and Noto
+  Sans Runic, subset to the library glyphs: 24 KB in all, under the SIL
+  Open Font License.
