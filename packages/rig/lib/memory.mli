@@ -241,19 +241,18 @@ val stored : alloc -> ('a -> 'b) -> 'a -> 'b
 
 (** {1:claims Claim words}
 
-    An allocation's [count] is one word, so that a claim, a take, a hold
-    and an export are each one compare-and-set with one winner. A word from
-    zero up holds two bits and two counts. Bit 0 ({!outside}) is set once
-    something outside the claims reaches the memory: the bigarray
-    {!Rig.Buffer.of_bigarray} was given, an io library's region, an array
-    {!Rig.Buffer.export} made, or a value {!Rig.Buffer.share} marked. Bit 1
-    ({!read_only}) is set for memory that admits only reads. The read claims
-    count in steps of {!one_claim} from bit 2, and the holds of
-    {!Rig.Buffer.val-keep} in steps of {!one_hold} from bit 32. A take or a
-    free ({!Rig.Buffer.take}, {!Rig.Buffer.free}) turns only the word 0 into
-    -1, for one C call that checks its buffers, raises their generations
-    and gives each word back 0; a claim, hold or mark that meets -1 waits
-    the call out. {!make} sets the bits. *)
+    An allocation's [count] is one word, so that a claim, a take, a hold and an
+    export are each one compare-and-set with one winner. A word from zero up
+    holds a bit and two counts. Bit 0 ({!outside}) is set once something outside
+    the claims reaches the memory: the bigarray {!Rig.Buffer.of_bigarray} was
+    given, an io library's region, which is the only memory that admits only
+    reads, an array {!Rig.Buffer.export} made, or a value {!Rig.Buffer.share}
+    marked. The read claims count in steps of {!one_claim} from bit 1, and the
+    holds of {!Rig.Buffer.val-keep} in steps of {!one_hold} from bit 32. A take
+    or a free ({!Rig.Buffer.take}, {!Rig.Buffer.free}) turns only the word 0
+    into -1, for one C call that checks its buffers, raises their generations
+    and gives each word back 0; a claim, hold or mark that meets -1 waits the
+    call out. {!make} sets the bit. *)
 
 val outside : int
 (** [outside] is bit 0, set for memory outside the claims. *)
@@ -262,9 +261,6 @@ val admits : int -> access
 (** [admits g] is what the buffers of the generation [g] admit: [Read] iff
     [g] is odd. The first generation of memory that admits only reads is 1,
     others' 0, and a take or a free raises it by 2. *)
-
-val read_only : int
-(** [read_only] is bit 1, set for memory that admits only reads. *)
 
 val one_claim : int
 (** [one_claim] is the step of one read claim. *)

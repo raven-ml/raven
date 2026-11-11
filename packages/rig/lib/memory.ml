@@ -270,7 +270,6 @@ let no_entry = entry Dev.host (Kept Nothing) 0 0
 (* Claim words *)
 
 let outside = 1
-let read_only = 2
 
 (* A generation's low bit is set iff its buffers admit only reads: the first
    one of memory that admits only reads, which no take raises. Each buffer
@@ -279,7 +278,7 @@ let read_only = 2
 let admits g : access = if g land 1 = 1 then Read else Read_write
 let first_generation (e : entry) = if e.access = Read then 1 else 0
 
-let one_claim = 4
+let one_claim = 2
 let one_hold = 1 lsl 32
 
 external claim_retry : buffer -> unit = "caml_rig_claim_add" [@@noalloc]
@@ -306,8 +305,8 @@ let claim_add b =
 external claim_drop : buffer -> unit = "caml_rig_claim_drop" [@@noalloc]
 
 (* The claim word of a new lifetime of [e] that keeps [keep]: outside the
-   claims for the caller's bigarray and an io library's region, read-only for
-   memory that admits only reads. *)
+   claims for the caller's bigarray and an io library's region. Only an io
+   library's region admits only reads, so no take reaches such memory. *)
 let claim_word keep (e : entry) =
   let reached =
     match keep with
@@ -317,8 +316,7 @@ let claim_word keep (e : entry) =
         | Io_memory _ -> true
         | Driver_memory _ | Kept _ -> false)
   in
-  (if reached then outside else 0)
-  lor if e.access = Read then read_only else 0
+  if reached then outside else 0
 
 (* A take or free holds the word for one C call: the mark waits it out. *)
 let rec mark_outside (a : alloc) =

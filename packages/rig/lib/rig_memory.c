@@ -87,12 +87,11 @@ enum { ALLOC_OWNER, ALLOC_HOST, ALLOC_COUNT, ALLOC_GEN, ALLOC_WHY,
 enum { ENTRY_OWNER, ENTRY_BACKING, ENTRY_BYTES, ENTRY_ACCESS, ENTRY_STAMPS,
        ENTRY_MAPS, ENTRY_UNMAPS, ENTRY_PAGES };
 
-/* The claim word as rig's Memory module lays it out: from 0 up, bits for
-   memory outside the claims and memory that admits only reads, the step per
-   read claim from bit 2 and the step per hold from bit 32; CLAIM_TAKING
-   while a take or a free holds the memory, which only an empty word
-   becomes. */
-#define CLAIM_ONE 4
+/* The claim word as rig's Memory module lays it out: from 0 up, a bit for
+   memory outside the claims, the step per read claim from bit 1 and the step
+   per hold from bit 32; CLAIM_TAKING while a take or a free holds the
+   memory, which only an empty word becomes. */
+#define CLAIM_ONE 2
 #define CLAIM_HOLD ((intnat)1 << 32)
 #define CLAIM_TAKING (-1)
 
