@@ -2171,17 +2171,24 @@ unrolled reduce`).
   to 479; symo's tutorial step on kimchi took 962 ms and 161 ms. The cost is
   memory: attention keeps its exponentials, one more buffer the size of the
   scores (tokens by tokens by heads) while the call runs, at every length;
-  at 2048 tokens 1.10 GB and 2.17 GB were allocated. On fudge's RTX 5000 Ada
+  at 2048 tokens 1.10 GB and 2.17 GB were allocated. Since rune lowers
+  `Nx.attention` to kernels of its own, gpt-oss's attention no longer meets
+  this rule; the rest of its layers still do. On fudge's RTX 5000 Ada
   (gpt-oss's bench, `kaun/examples/06-gpt-oss/bench`, medians of 11, two
-  interleaved runs each, with the rule then without), `GptOss/prefill-512`
-  takes 185 ms against 228 ms in both runs, and
-  `GptOss/decode-step-cache-1024` 10.2 ms against 14.1 and 14.2 ms.
+  interleaved runs each on a loaded machine, the second under nsys, with
+  the rule then without), `GptOss/prefill-512` takes 132 ms against 265 ms
+  in both runs and `GptOss/prefill-512-Q8_0` 141 ms against 274 and
+  277 ms. A decode step's kernels run 16.9 ms against 20.5 ms (nsys); its
+  wall time, 19.3-20.5 ms against 22.0-22.2 ms, is within the row's noise.
+  The prefill rows' fudge wall-time baselines are pending the scheduled
+  quiet re-record.
 - **Pinned by:** the Rangeify suite's `swiglu_down`, `attention`,
   `exp_dead_axis` (a kept exponential of a row expanded to a matrix is
   stored as the row), `exp_cheap_consumer` (a value that reads a kept
   exponential is inlined) and `rope_decode` (a decode step's rotated query
   reads its gathered rows of a cosine table and is not stored) rows of
-  `kernel_counts.golden` and their kernel goldens.
+  `kernel_counts.golden` and their kernel goldens; kaun's
+  `GptOss/prefill-512` and `GptOss/prefill-512-Q8_0`.
 
 ## D79. A chain of one operation keeps its right operand's grouping
 
