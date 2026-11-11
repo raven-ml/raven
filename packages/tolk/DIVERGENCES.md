@@ -9518,9 +9518,15 @@ one reads what the other left, and then they form a chain (D474).
   `Cast(float32, Cast(bfloat16, int8))` is `Cast(float32, int8)`.
 - **Reason:** (d): a Q8_0 product's codes (rune's L9). An `int8` times a
   `bfloat16` is exact in float32 barring overflow, as the float32 product of
-  the program is.
+  the program is. On fudge's RTX 5000 Ada, kaun's `GptOss/prefill-512-Q8_0`
+  takes 141 ms against 2.11 s with the codes cast to float32 and the
+  products off the cores (medians of 11, two interleaved runs each on a
+  loaded machine, the second under nsys). The decode step's Q8_0 products
+  take no core and are unchanged. The row's fudge wall-time baseline is
+  pending the scheduled quiet re-record.
 - **Pinned by:** the Heuristic suite's `rows_codes_{metal,cuda,amd}`,
-  `q8_0_partial_{metal,cuda,amd}`; rune's `Jit_gpu › quantised products`.
+  `q8_0_partial_{metal,cuda,amd}`; rune's `Jit_gpu › quantised products`;
+  kaun's `GptOss/prefill-512-Q8_0`.
 
 ## D467. A group pads a long reduce axis that 16 does not divide
 
