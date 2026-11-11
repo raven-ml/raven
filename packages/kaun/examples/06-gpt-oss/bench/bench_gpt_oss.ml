@@ -8,10 +8,13 @@
    prefills of 512 and 12 tokens, over random weights at bfloat16 with the
    experts packed as MXFP4, a decode step with the attention projections and
    the head packed as Q8_0 too, quantised in its case's setup, and one layer's
-   experts, after its norm, at prefills of 512 and 536 tokens. 12 tokens route 48 positions over
-   32 experts in blocks of 4, each block reading its expert's matrices once
-   for its rows. 536 tokens fill 65 blocks of 64 rows, a
-   count 5 divides, where a warp of 5 tiles of rows would cross two blocks.
+   experts, after its norm, at prefills of 32, 96, 512 and 536 tokens. 12
+   tokens route 48 positions over 32 experts in blocks of 4, each block
+   reading its expert's matrices once for its rows. 32 and 96 tokens route 4
+   and 12 rows an expert on average into blocks of 48 for a tensor core,
+   where blocks of 4 and 8 streamed took 1.4 and 2.5 times as long. 536
+   tokens fill 65 blocks of 64 rows, a count 5 divides, where a warp of 5
+   tiles of rows would cross two blocks.
    [first call 12] times a later process's first 12-token call over a warm
    disk cache ([first_config]), and the cold rows a first call that compiles
    every kernel.
@@ -58,6 +61,7 @@ let config =
 let context = 1024
 let prompt = 512
 let short_prompt = 12
+let routed_prompts = [ 32; 96 ]
 let blocked_prompt = 536
 
 (* Bytes drawn per array before they repeat. With all 10 GB of expert bytes
@@ -427,9 +431,9 @@ let kinds =
     `Prefill prompt;
     `Prefill_q8_0 prompt;
     `Prefill short_prompt;
-    `Experts prompt;
-    `Experts blocked_prompt;
   ]
+  @ List.map (fun n -> `Experts n) routed_prompts
+  @ [ `Experts prompt; `Experts blocked_prompt ]
 
 (* [full] is the full model's entries, forced by the steps alone. *)
 let setup full = function
@@ -488,7 +492,7 @@ let () =
       end;
       (* A trial's deadline covers its setup, which for a step builds the
          13.8 GB of entries and loads them onto the GPU, its warmup and its
-         samples: the seven trials take 100 s together on fudge's RTX 5000
+         samples: the nine trials take 90 s together on fudge's RTX 5000
          Ada. *)
       let code =
         Thumper.run "gpt_oss"
