@@ -5,6 +5,10 @@ Where it stands, with every measurement: doc/performance.md.
 
 ## tolk
 
+- On gpt-oss's cold first call, rangeify's reshape substitution
+  (`Indexing`, the `apply_reshape` over placeholder ranges) allocates 8.5%
+  of the call's words on the calling domain, before the parallel render
+  wave starts (_plans/perf-campaign/renderpar/DECISION.md)
 - AMD thread traces are not collected in a profile, and tracing through KFD
   is parked: after a GPU fault KFD runs none of the process's queues, so
   nothing can stop a running trace (one stayed on past its process's exit on
