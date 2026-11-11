@@ -1882,6 +1882,32 @@ let assembly_rows () =
       else Some (warm name (fun () -> c.at Nx.Host.on) (fun call -> call ())))
     assembly_calls
 
+(* gpt-oss's gate and up projection at a prompt of [tokens] with bfloat16
+   experts, compiled: each token's row by the [2880; 5760] matrices of 4 of
+   32 experts, distinct and spread over all of them. A core's speed does not
+   depend on the weights' values, so they are constant. *)
+let experts_call tokens =
+  {
+    at =
+      (fun at ->
+        let k = 2880 and n = 5760 in
+        let w = Nx.place at (Nx.full Nx.bfloat16 [| 32; k; n |] (1. /. 64.)) in
+        let ids =
+          Nx.place at
+            (Nx.init Nx.int64 [| tokens; 4 |] (fun i ->
+                 Int64.of_int (((i.(0) * 7) + (i.(1) * 8)) mod 32)))
+        in
+        let x =
+          Nx.place at
+            (Nx.cast Nx.bfloat16
+               (Nx.Rng.uniform ~key:(Nx.Rng.key 96) f32 [| tokens; 1; k |]))
+        in
+        let f =
+          Rune.jit (tri_fn ()) (fun ids x w -> Nx.matmul_segments ids x w)
+        in
+        fun () -> ignore (synced (f ids x w)));
+  }
+
 let gpu_rows g =
   if not (opens g) then []
   else
@@ -2001,6 +2027,11 @@ let gpu_rows g =
               let f = Rune.jit' (Nx.argmax ~axis:0) in
               fun () -> ignore (synced (f x)));
         };
+      (* gpt-oss's gate and up projection with bfloat16 experts at prompts
+         of 64 and 512 tokens, routed into blocks of 8 and of 64 rows for a
+         tensor core, each block reading its rows through a row map. *)
+      on_gpu g "experts-bfloat16-64x4of32-2880x5760" (experts_call 64);
+      on_gpu g "experts-bfloat16-512x4of32-2880x5760" (experts_call 512);
       (* gpt-oss's router at a decode step and at a prompt of 512 tokens: the
          first 4 of 32 logits of each token. *)
       on_gpu g "top-k-4-of-1x32" (top_k_at ~k:4 [| 1; 32 |]);
