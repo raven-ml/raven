@@ -328,6 +328,17 @@ let tabs th (m : M.t) (f : Facts.run) ~width key =
     @ List.map tab shown
     @ if b < List.length ms - 1 then [ line ~grow:false [ frag th Dim "›" ] ] else [])
 
+let machine_value k x =
+  if String.ends_with ~suffix:"used_bytes" k then Numbers.gib x ^ " GiB" else Numbers.percent x
+
+(* Whether [c] draws a reading of the machine, at any depth. *)
+let machine (m : M.t) (c : M.chart) = List.mem (c.key, Data.Time) (M.strips m)
+
+(* [printed m c v] is a value of [c] as the screen prints it: a reading of
+   the machine in its unit, a metric as {!Numbers.metric} prints it. *)
+let printed m (c : M.chart) v =
+  if machine m c then machine_value c.key v else Numbers.metric c.key v
+
 let legend th (m : M.t) (c : M.chart) =
   let mono = not (Th.coloured th) in
   let item (role, run) =
@@ -345,7 +356,7 @@ let legend th (m : M.t) (c : M.chart) =
         let tok = if here then Th.Hi else Fg in
         let value =
           match legend_value m ~smooth:c.smooth run with
-          | Some v -> frag ~bold:here th (value_tok v tok) (Numbers.metric c.key v)
+          | Some v -> frag ~bold:here th (value_tok v tok) (printed m c v)
           | None -> frag ~bold:here th tok "—"
         in
         Some
@@ -415,9 +426,6 @@ let machine_label k =
   else if String.ends_with ~suffix:"used_bytes" k then "VRAM"
   else k
 
-let machine_value k x =
-  if String.ends_with ~suffix:"used_bytes" k then Numbers.gib x ^ " GiB" else Numbers.percent x
-
 (* The strip's difference to the first overlay, coloured by the goal. *)
 let difference th (m : M.t) (f : Facts.run) key =
   match M.compare m with
@@ -468,13 +476,13 @@ let strips th (m : M.t) (f : Facts.run) ~width =
   let on = M.strip m in
   let charts = M.charts m in
   let label_w =
-    let shown (c : M.chart) = if c.axis = Data.Time then machine_label c.key else c.key in
-    let longest = List.fold_left (fun w c -> max w (Numbers.width (shown c))) 0 charts in
+    let label (c : M.chart) = if machine m c then machine_label c.key else c.key in
+    let longest = List.fold_left (fun w c -> max w (Numbers.width (label c))) 0 charts in
     max strip_label (min (longest + 1) (width / strip_share))
   in
   let strip (c : M.chart) =
     let here = Some c.key = on in
-    let machine = c.axis = Data.Time in
+    let machine = machine m c in
     let surface = if here then Some Theme.Cursor else None in
     let label =
       if machine then [ line [ frag th Fg (machine_label c.key) ] ]
@@ -487,8 +495,7 @@ let strips th (m : M.t) (f : Facts.run) ~width =
     let value =
       match latest f c.key with
       | Some v ->
-          let s = if machine then machine_value c.key v else Numbers.metric c.key v in
-          [ frag ~bold:(not machine) th (value_tok v (if here then Hi else Fg)) s ]
+          [ frag ~bold:(not machine) th (value_tok v (if here then Hi else Fg)) (printed m c v) ]
       | None -> []
     in
     box ~flex_direction:Row ~size:(size_wh auto (px M.strip_height)) ~flex_shrink:0. ?surface
@@ -503,8 +510,7 @@ let strips th (m : M.t) (f : Facts.run) ~width =
           @ if vw = 22 && not machine then [ rcell 12 (difference th m f c.key) ] else []);
       ]
   in
-  let metrics = List.filter (fun (c : M.chart) -> c.axis = Data.Step) charts in
-  let machine = List.filter (fun (c : M.chart) -> c.axis = Data.Time) charts in
+  let machine, metrics = List.partition (machine m) charts in
   (* A scroll box shrinks below its content: the room it is given is the
      viewport it reports. *)
   box ~flex_direction:Column ~flex_grow:1. ~min_size:(size_wh (px 0) (px 0))
@@ -563,13 +569,13 @@ let zoom th (m : M.t) (f : Facts.run) =
                    frag th Dim "  ";
                    (let tok = if here then Th.Hi else Fg in
                     match shown with
-                    | Some v -> frag ~bold:true th (value_tok v tok) (Numbers.metric c.key v)
+                    | Some v -> frag ~bold:true th (value_tok v tok) (printed m c v)
                     | None -> frag ~bold:true th tok "—");
                  ]
                 @
                 match raw with
                 | Some v when c.smooth ->
-                    [ frag th Dim "  raw "; frag th (value_tok v Dim) (Numbers.metric c.key v) ]
+                    [ frag th Dim "  raw "; frag th (value_tok v Dim) (printed m c v) ]
                 | _ -> []);
               line [];
             ]

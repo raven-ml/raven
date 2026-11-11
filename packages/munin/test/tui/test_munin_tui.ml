@@ -2972,6 +2972,24 @@ let strip_keys =
       equal (list bool) [ true; false ]
         [ T.Screen.find screen "train/samples_per_s " <> []; T.Screen.find screen "train/samples_…" <> [] ])
 
+(* Zoom on a reading of the machine gives its values in the reading's unit,
+   as its strip does: VRAM in GiB, a busy share in percent. *)
+let zoom_units =
+  cases ~id:(fun (name, _, _) -> name) "zoom gives a reading in its unit"
+    [ ("used_bytes", [ Key Up ], " GiB"); ("cpu_busy_pct", [], "%") ]
+    (fun (key, up, unit) ->
+      with_store Fixture.runs @@ fun store ->
+      let script _ = feed store Fixture.tidy_otter ~step:12400 in
+      (* The machine's strips end the list: the last is CPU busy, VRAM before. *)
+      let keys = [ Key Enter ] @ times 30 (Key Down) @ up @ [ Key Enter ] in
+      let screen = show ~script ~cols:120 ~rows:40 store Munin_tui.Runs keys in
+      let rows = List.init (T.Screen.rows screen) (T.Screen.row screen) in
+      let title = List.exists (fun r -> holds key r) rows in
+      let raw = List.exists (fun r -> holds "e+" r) rows in
+      let readout = List.filter (fun r -> holds unit r) rows in
+      equal ~msg:"the zoomed reading, a raw byte count, values in its unit" (triple bool bool bool)
+        (true, false, true) (title, raw, List.length readout >= 2))
+
 (* [y] asks for the other scale of the metric shown, and of no other: zoom's
    title says [log] while the metric is drawn on one. [m] rises over three
    decades and [w] within one, so [m] starts on a log scale and [w] on a
@@ -3054,4 +3072,5 @@ let () =
          long_suffixes;
          long_values;
          strip_keys;
+         zoom_units;
        ])
