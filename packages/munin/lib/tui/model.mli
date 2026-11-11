@@ -96,7 +96,7 @@ type t = {
   runs_pane : pane;
   run_pane : pane;
   top : int;  (** The first line the runs pane shows. *)
-  strips_top : int;  (** The first line the strips show. *)
+  strips_first : int;  (** The index of the first strip shown. *)
   notice : string option;  (** Why the last key did nothing. *)
 }
 (** The type for the dashboard's state. *)
@@ -150,8 +150,6 @@ val resized : int -> int -> t -> t
 val scrolled_rows : Mosaic.Scroll.t -> t -> t
 (** [scrolled_rows s m] is [m] with the runs pane scrolled to [s]. *)
 
-val scrolled_strips : Mosaic.Scroll.t -> t -> t
-(** [scrolled_strips s m] is [m] with the strips scrolled to [s]. *)
 
 val sized : slot -> int -> int -> t -> t
 (** [sized s w h m] is [m] with [s] of [w] by [h] cells. *)
@@ -180,7 +178,6 @@ type msg =
   | Submitted
   | Info_scrolled of Mosaic.Scroll.t
   | Rows_scrolled of Mosaic.Scroll.t
-  | Strips_scrolled of Mosaic.Scroll.t
   | Palette of Mosaic.Ansi.Palette.t
   | Styling of Mosaic.Ansi.Styling.t
 (** The type for the program's messages. *)
@@ -302,6 +299,14 @@ val strip_height : int
 
 val strip_gap : int
 (** [strip_gap] is the lines between two strips. *)
+
+val strips_shown : t -> string list * int
+(** [strips_shown m] is the keys of the strips the strips' lines show, in
+    order, and the number of strips that follow them. The strips shown are
+    those from the first, {!t.strips_first}, that the lines show whole, with
+    the machine's header over the first of its strips and, when strips
+    follow, a line under them that says how many. Before the lines' size is
+    known, every strip from the first. *)
 
 val zoom_step : t -> int option
 (** [zoom_step m] is the step under zoom's cursor. *)

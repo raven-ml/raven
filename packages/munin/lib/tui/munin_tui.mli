@@ -90,10 +90,13 @@
     the difference to the first overlay at the latest step at which both
     logged a finite value; for a run that recorded readings of its machine,
     live or ended, strips of those the run pane gives end the list, over the
-    same steps. At the {e zoom} depth one metric fills the
-    centre with each column's raw extent faint behind the smoothed line, a
-    step cursor and a readout of each drawn run at the cursor. Enter goes one
-    depth deeper and Esc one back.
+    same steps. The list shows whole strips, as many as fit from its first,
+    and moves by whole strips, the least that shows the cursor's strip; a
+    line under them, such as [+6 more], counts the strips that follow. At
+    the {e zoom} depth one metric fills the centre with each column's raw
+    extent faint behind the smoothed line, a step cursor and a readout of
+    each drawn run at the cursor. Enter goes one depth deeper and Esc one
+    back.
 
     [i] shows everything about the run over the centre: its params, notes,
     tags, source, every metric's latest and best values, the artifact versions

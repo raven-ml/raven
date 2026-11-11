@@ -72,10 +72,10 @@
    |                                 f                       xxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq
 37 |                                 │
    |                                 f
-38 |                                 │  train/lr         ⡰⠒⠉⠉⠉⠉⠉⠉⠉⠉⠒⠒⠒⠒⠒⠢⠤⠤⠤⢄⣀⣀⣀⡀                     9.908e-05        -70%
-   |                                 f  rrrrrrrr         qqqqqqqqqqqqqqqqqqqqqqqq                     kkkkkkkkk        gggg
-39 |                                 │                  ⡴⠕⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠤⠤⠤⠤⠤⠤⠤⠬⠭⠭⠭⠑⠒⠒⠒⠢⠤⠤⠤⠤⠤⣀⣀⣀⣀⣀⣀⣀
-   |                                 f                  xxxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq
+38 |                                 │ +6 more
+   |                                 f ggggggg
+39 |                                 │
+   |                                 f
 40 | charts › strips › zoom   ↑↓ metric   [ ] run   enter zoom   esc charts   ? keys
    |accccccFFFGGGGGGFFFccccaaaGGcccccccaaaGGGccccaaaGGGGGcccccaaaGGGcccccccaaaGcccccaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 cursor hidden

@@ -18,64 +18,64 @@
    |  u vvvvvvvvv   s wwwww  vvvvvv  f xxjjjjjjjjjjqqqqqvvvvvvvvv                                     ggggggggggggggggggggg
 10 |  ■ dusty-mole  × ⢢⡀     0.7665  │
    |  y rrrrrrrrrr  z yy     vvvvvv  f
-11 |  · eager-hawk  ✗ ⠑⠢⠤⢄⣀   1.670  │  ↑ max           ⡠⠔⠊⠉
-   |  u rrrrrrrrrr  z wwwww   vvvvv  f  ggggg           xxxx
-12 | ▾ mnist-mlp  2         val/loss │
-   | ggkkkkkkkkkggg         gggggggg f
-13 |  · mlp-wide    ✓ ⠈⢆⣀⣀⣀ 0.05831 ★│  epoch                                 ⢀⣀⣀⣀⣀⣀⡠⠤⠤⠤⠤⠤⠤⠒⠒⠒⠒⠒⠒⠉⠉⠉⠉     6.200        same
-   |  u vvvvvvvv    s wwwww jjjjjjj tf  rrrrr                                 xxxxxxqqqqqqqqqqqqqqqqq     kkkkk        gggg
-14 |  · mlp-base    ✗ ⠈⠢⣀⣀⣀ 0.06576  │                  ⣀⣀⣀⣀⠤⠤⠤⠤⠤⠤⠒⠒⠒⠒⠒⠒⠊⠉⠉⠉⠉⠉⠁
-   |  u rrrrrrrr    z wwwww vvvvvvv  f                  xxxxxxxxxxxxxxxxxxxxxxx
-15 |                                 │
-   |                                 f
-16 |                                 │  train/data_ms       ⠊     ⠁     ⠈                                 4.758       +4.5%
-   |                                 f  rrrrrrrrrrrrr       A     A     A                                 kkkkk       ggggg
-17 |                                 │                  ⣀⣀⣀⣀⠤⣤⣀⣠⣄⣀⠤⠤⢤⣀⣀⣤⣤⣤⣄⣠⣤⣤⣄⣀⣠⣄⣠⣤⣀⣀⣀⣀⠤⠤⢄⣀⣀⣀⣀⣀⣀⡠⠤⠤⠤
+11 |  · eager-hawk  ✗ ⠑⠢⠤⢄⣀   1.670  │  epoch                                 ⢀⣀⣀⣀⣀⣀⡠⠤⠤⠤⠤⠤⠤⠒⠒⠒⠒⠒⠒⠉⠉⠉⠉     6.200        same
+   |  u rrrrrrrrrr  z wwwww   vvvvv  f  rrrrr                                 xxxxxxqqqqqqqqqqqqqqqqq     kkkkk        gggg
+12 | ▾ mnist-mlp  2         val/loss │                  ⣀⣀⣀⣀⠤⠤⠤⠤⠤⠤⠒⠒⠒⠒⠒⠒⠊⠉⠉⠉⠉⠉⠁
+   | ggkkkkkkkkkggg         gggggggg f                  xxxxxxxxxxxxxxxxxxxxxxx
+13 |  · mlp-wide    ✓ ⠈⢆⣀⣀⣀ 0.05831 ★│
+   |  u vvvvvvvv    s wwwww jjjjjjj tf
+14 |  · mlp-base    ✗ ⠈⠢⣀⣀⣀ 0.06576  │  train/data_ms       ⠊     ⠁     ⠈                                 4.758       +4.5%
+   |  u rrrrrrrr    z wwwww vvvvvvv  f  rrrrrrrrrrrrr       A     A     A                                 kkkkk       ggggg
+15 |                                 │                  ⣀⣀⣀⣀⠤⣤⣀⣠⣄⣀⠤⠤⢤⣀⣀⣤⣤⣤⣄⣠⣤⣤⣄⣀⣠⣄⣠⣤⣀⣀⣀⣀⠤⠤⢄⣀⣀⣀⣀⣀⣀⡠⠤⠤⠤
    |                                 f                  xxxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq
-18 |                                 │
+16 |                                 │
    |                                 f
-19 |                                 │  train/grad_norm ⠙⠒⠤⢄⣀⡀                                            1.020        -20%
+17 |                                 │  train/grad_norm ⠙⠒⠤⢄⣀⡀                                            1.020        -20%
    |                                 f  rrrrrrrrrrrrrrr xxxxxx                                            kkkkk        gggg
-20 |                                 │                       ⠈⠉⠉⠒⠒⠒⠶⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⣤⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀
+18 |                                 │                       ⠈⠉⠉⠒⠒⠒⠶⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⣤⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀
    |                                 f                       xxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq
-21 |                                 │
+19 |                                 │
    |                                 f
-22 |                                 │  train/lr         ⡰⠒⠉⠉⠉⠉⠉⠉⠉⠉⠒⠒⠒⠒⠒⠢⠤⠤⠤⢄⣀⣀⣀⡀                     9.908e-05        -70%
+20 |                                 │  train/lr         ⡰⠒⠉⠉⠉⠉⠉⠉⠉⠉⠒⠒⠒⠒⠒⠢⠤⠤⠤⢄⣀⣀⣀⡀                     9.908e-05        -70%
    |                                 f  rrrrrrrr         qqqqqqqqqqqqqqqqqqqqqqqq                     kkkkkkkkk        gggg
-23 |                                 │                  ⡴⠕⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠤⠤⠤⠤⠤⠤⠤⠬⠭⠭⠭⠑⠒⠒⠒⠢⠤⠤⠤⠤⠤⣀⣀⣀⣀⣀⣀⣀
+21 |                                 │                  ⡴⠕⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠤⠤⠤⠤⠤⠤⠤⠬⠭⠭⠭⠑⠒⠒⠒⠢⠤⠤⠤⠤⠤⣀⣀⣀⣀⣀⣀⣀
    |                                 f                  xxxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq
-24 |                                 │
+22 |                                 │
    |                                 f
-25 |                                 │  train/samples_s ⢄⠁⠈ ⠉ ⣀⣀⣀⣀⣀⣁⡈⣀⣁⣀⣀⣀⠈⠈⢀⡁⣉⣀⣀⣀⣀⣀    ⣀⡀  ⣀⣀⣀⣀⣀⣀⣀⣀⡀    2.196k       +0.8%
+23 |                                 │  train/samples_s ⢄⠁⠈ ⠉ ⣀⣀⣀⣀⣀⣁⡈⣀⣁⣀⣀⣀⠈⠈⢀⡁⣉⣀⣀⣀⣀⣀    ⣀⡀  ⣀⣀⣀⣀⣀⣀⣀⣀⡀    2.196k       +0.8%
    |                                 f  rrrrrrrrrrrrrrr xAA A xxxxxAAqxxxxAAqAAqxqxx    qq  qqqqqqqqq    kkkkkk       ggggg
-26 |                                 │                  ⠞⠚⠛⠉⠉⠉⢀ ⡈⢉⡈⠉⠉⠉⠁⢀⡀⠈⠉⠉⠓⠉⠉⠉ ⠉ ⠈⠉⠉⠉⠉ ⠈⠉⠉        ⠈
+24 |                                 │                  ⠞⠚⠛⠉⠉⠉⢀ ⡈⢉⡈⠉⠉⠉⠁⢀⡀⠈⠉⠉⠓⠉⠉⠉ ⠉ ⠈⠉⠉⠉⠉ ⠈⠉⠉        ⠈
    |                                 f                  xxxxxxA AAxxxxxAAqxxxxxx x qqqqq qqq        q
-27 |                                 │
+25 |                                 │
    |                                 f
-28 |                                 │ machine ────────────────────────────────────────────────────────────────────────────
+26 |                                 │ machine ────────────────────────────────────────────────────────────────────────────
    |                                 f hhhhhhh ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
-29 |                                 │  GPU busy        ⣼⣿⣾⣾⣿⣿⣿⣿⣿⣿⣿⣿⣷⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣾⣷⣷⣷⣿⣾⣾⣷⣷⣷⣿⣿⣾⣾⣿⣿⣿       97%
+27 |                                 │  GPU busy        ⣼⣿⣾⣾⣿⣿⣿⣿⣿⣿⣿⣿⣷⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣾⣷⣷⣷⣿⣾⣾⣷⣷⣷⣿⣿⣾⣾⣿⣿⣿       97%
    |                                 f  rrrrrrrr        xxxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq       rrr
-30 |                                 │                  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+28 |                                 │                  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
    |                                 f                  xxxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq
-31 |                                 │
+29 |                                 │
    |                                 f
-32 |                                 │  VRAM            ⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿  21.3 GiB
+30 |                                 │  VRAM            ⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿  21.3 GiB
    |                                 f  rrrr            xxxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq  rrrrrrrr
-33 |                                 │                  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+31 |                                 │                  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
    |                                 f                  xxxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq
-34 |                                 │
+32 |                                 │
    |                                 f
-35 |                                 │  CPU busy        ⣼⣾⣾⣾⣷⣷⣷⣿⣿⣾⣿⣿⣷⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣾⣷⣷⣷⣿⣾⣾⣷⣷⣷⣿⣾⣾⣾⣷⣷⣿       71%
+33 |                                 │  CPU busy        ⣼⣾⣾⣾⣷⣷⣷⣿⣿⣾⣿⣿⣷⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣾⣷⣷⣷⣿⣾⣾⣷⣷⣷⣿⣾⣾⣾⣷⣷⣿       71%
    |                                 f  rrrrrrrr        xxxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq       rrr
-36 |                                 │                  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+34 |                                 │                  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
    |                                 f                  xxxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq
-37 |                                 │
+35 |                                 │
    |                                 f
-38 |                                 │ ▌RAM             ⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿  33.0 GiB
+36 |                                 │ ▌RAM             ⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿  33.0 GiB
    |                                 f lBBBmmmmmmmmmmmmmllllllllllllllllllllllllllllCCCCCCCCCCCCCCCCCmmDDDDDDDDmmmmmmmmmmmm
-39 |                                 │                  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+37 |                                 │                  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
    |                                 f mmmmmmmmmmmmmmmmmllllllllllllllllllllllllllllCCCCCCCCCCCCCCCCCmmmmmmmmmmmmmmmmmmmmmm
+38 |                                 │
+   |                                 f
+39 |                                 │
+   |                                 f
 40 | charts › strips › zoom   ↑↓ metric   [ ] run   enter zoom   esc charts   ? keys
    |accccccEEEFFFFFFEEEccccaaaFFcccccccaaaFFFccccaaaFFFFFcccccaaaFFFcccccccaaaFcccccaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 cursor hidden

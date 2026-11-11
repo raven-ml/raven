@@ -63,7 +63,7 @@ type t = {
   runs_pane : pane;
   run_pane : pane;
   top : int;
-  strips_top : int;
+  strips_first : int;
   notice : string option;
 }
 
@@ -91,7 +91,7 @@ let make ~store ~clock ~scheme ~cursor =
     runs_pane = Auto;
     run_pane = Auto;
     top = 0;
-    strips_top = 0;
+    strips_first = 0;
     notice = None;
   }
 
@@ -516,32 +516,62 @@ let reveal m =
           { m with top })
   | _ -> m
 
-(* The strips' lines: each strip's first, then their count. *)
+(* The strips' lines: a strip is [strip_height] lines and the gap under
+   it. The machine's header is one line over the first of its strips shown,
+   and when strips follow those shown, the line under the last gap says how
+   many. *)
 let strip_height = 2
 let strip_gap = 1
 
-let strip_lines m =
-  let step = strip_height + strip_gap in
-  let metrics, machine = List.partition (fun (_, k) -> k = Metric) (strips m) in
-  let first = List.mapi (fun i (k, _) -> (k, step * i)) metrics in
-  let after = step * List.length metrics in
-  let rest = List.mapi (fun i (k, _) -> (k, after + 1 + (step * i))) machine in
-  (first @ rest, if machine = [] then after else after + 1 + (step * List.length machine))
+(* [fit kinds ~first ~h] is the number of strips from the [first] of
+   [kinds] that [h] lines show whole: the most whose lines fit. *)
+let fit kinds ~first ~h =
+  let n = Array.length kinds in
+  let lines k =
+    let header = if Array.exists (( = ) Machine) (Array.sub kinds first k) then 1 else 0 in
+    let more = if first + k < n then strip_gap + 1 else 0 in
+    header + (k * (strip_height + strip_gap)) - strip_gap + more
+  in
+  let k = ref (max 0 (n - first)) in
+  while !k > 0 && lines !k > h do
+    decr k
+  done;
+  !k
 
-(* The strips' first line, moved the least to show the cursor's strip whole
-   from the lines shown. *)
+(* The strips shown: from the first, as many as fit, with the count that
+   follow. Before the strips' lines are known, every strip from the first. *)
+let strips_shown m =
+  let all = strips m in
+  let n = List.length all in
+  let first = min m.strips_first (max 0 (n - 1)) in
+  let k =
+    match List.assoc_opt Strip_rows m.slots with
+    | Some (_, h) -> fit (Array.of_list (List.map snd all)) ~first ~h
+    | None -> n - first
+  in
+  (List.map fst (List.filteri (fun i _ -> i >= first && i < first + k) all), n - first - k)
+
+(* The first strip shown, moved by whole strips the least that shows the
+   cursor's strip. When the last strip is shown, the first moves back while
+   the last stays shown, so that no line is left blank under the list while
+   strips above it are hidden. *)
 let reveal_strip m =
   match (m.depth, List.assoc_opt Strip_rows m.slots, strip m) with
-  | Strips _, Some (w, h), Some k -> (
-      let at, n = strip_lines m in
-      match List.assoc_opt k at with
+  | Strips _, Some (_, h), Some key -> (
+      let all = strips m in
+      let kinds = Array.of_list (List.map snd all) in
+      let n = Array.length kinds in
+      match List.find_index (fun (k, _) -> k = key) all with
       | None -> m
-      | Some line ->
-          let resolve s =
-            snd (Mosaic.Scroll.resolve s ~width:w ~height:h ~content_width:w ~content_height:n)
-          in
-          let show line top = resolve (Mosaic.Scroll.reveal ~line (Mosaic.Scroll.at top)) in
-          { m with strips_top = show line (show (line + strip_height - 1) m.strips_top) })
+      | Some c ->
+          let first = ref (min m.strips_first c) in
+          while !first < c && c >= !first + fit kinds ~first:!first ~h do
+            incr first
+          done;
+          while !first > 0 && !first - 1 + fit kinds ~first:(!first - 1) ~h = n do
+            decr first
+          done;
+          { m with strips_first = !first })
   | _ -> m
 
 let settle m = reveal_strip (reveal (assign m))
@@ -582,14 +612,6 @@ let scrolled_rows s m =
       let n = List.length (lines m) in
       let _, top = Mosaic.Scroll.resolve s ~width:w ~height:h ~content_width:w ~content_height:n in
       { m with top }
-  | None -> m
-
-let scrolled_strips s m =
-  match List.assoc_opt Strip_rows m.slots with
-  | Some (w, h) ->
-      let _, n = strip_lines m in
-      let _, top = Mosaic.Scroll.resolve s ~width:w ~height:h ~content_width:w ~content_height:n in
-      { m with strips_top = top }
   | None -> m
 
 let edited e m = settle { m with layer = Filtering e }
@@ -634,7 +656,6 @@ type msg =
   | Submitted
   | Info_scrolled of Mosaic.Scroll.t
   | Rows_scrolled of Mosaic.Scroll.t
-  | Strips_scrolled of Mosaic.Scroll.t
   | Palette of Mosaic.Ansi.Palette.t
   | Styling of Mosaic.Ansi.Styling.t
 

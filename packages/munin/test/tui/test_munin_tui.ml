@@ -2926,6 +2926,83 @@ let resumed_cursor =
       equal ~msg:"twelve moves left" (option string) (Some "400") (at 12);
       equal ~msg:"one more" (option string) (Some "400") (at 13))
 
+(* The strips list shows whole strips: at any height and after any moves,
+   the strips from a first, in order, right under the legend, the cursor's
+   among them, as many as fit, and a line that says how many follow. A
+   strip takes three lines with the gap under it, the machine's header one
+   more over its first strip shown, and the line of those that follow two
+   with its gap. *)
+let strips_whole =
+  let store =
+    lazy (Fixture.make ~child (Filename.concat home "whole") Fixture.runs)
+  in
+  let start = Munin_tui.Run (Some (id_of Fixture.tidy_otter)) in
+  let every =
+    lazy (fst (strips (show ~cols:120 ~rows:100 (Lazy.force store) start [ Key Enter ])))
+  in
+  let machine = [ "GPU busy"; "VRAM"; "CPU busy"; "RAM" ] in
+  let gen =
+    Gen.(
+      with_pp
+        (fun ppf (rows, downs) -> Format.fprintf ppf "%d rows, %d down" rows downs)
+        (pair (int_range 16 40) (int_range 0 24)))
+  in
+  prop ~count:20 "the strips shown are whole, as many as fit, and say how many follow" gen
+    (fun (rows, downs) ->
+      let every = Lazy.force every in
+      let n = List.length every in
+      let screen =
+        show ~cols:120 ~rows (Lazy.force store) start (Key Enter :: times downs (Key Down))
+      in
+      let at row col = fst (T.Screen.cell screen ~row ~col) in
+      let status = rows - 1 in
+      let lines = List.init status Fun.id in
+      let legend = Option.get (List.find_opt (fun row -> at row strip_col = "━") lines) in
+      let label row = String.trim (String.concat "" (List.init 16 (fun i -> at row (strip_col + 1 + i)))) in
+      let firsts =
+        List.filter
+          (fun row ->
+            row > legend
+            && List.mem (at row strip_col) [ " "; "▌" ]
+            && not (List.mem (at row (strip_col + 1)) [ " "; ""; "↓"; "↑" ]))
+          lines
+      in
+      let shown = List.map label firsts in
+      let k = List.length shown in
+      let first = match shown with [] -> n | s :: _ -> Option.value (List.find_index (( = ) s) every) ~default:n in
+      let follows = n - first - k in
+      let header = List.exists (fun s -> List.mem s machine) shown in
+      cover "strips are hidden above" (first > 0);
+      cover "strips follow" (follows > 0);
+      cover "the machine's header is shown" header;
+      if not (List.exists (fun row -> at row strip_col = "▌") firsts) then
+        fail ("the cursor's strip is not shown:\n" ^ T.Screen.text screen);
+      equal ~msg:"the strips, from the first shown" (list string)
+        (List.filteri (fun i _ -> i >= first && i < first + k) every)
+        shown;
+      List.iter
+        (fun row -> at_most ~msg:("the second row of " ^ label row) int ~than:(status - 1) (row + 1))
+        firsts;
+      let top = if header && List.mem (List.hd shown) machine then legend + 3 else legend + 2 in
+      equal ~msg:"the first strip's row" int top (List.hd firsts);
+      let mores = List.filter (fun row -> holds " more" (T.Screen.row screen row)) lines in
+      let expected = if follows = 0 then [] else [ Printf.sprintf "+%d more" follows ] in
+      equal ~msg:"the line of those that follow" (list string) expected
+        (List.map (fun row -> String.trim (String.concat "" (List.init 10 (fun i -> at row (strip_col + i))))) mores);
+      (* The lines no strip, gap or line of those that follow takes cannot
+         hold the strip after the last shown, nor, when none follows, the
+         one before the first. The last strip's gap is room when none
+         follows. *)
+      let last = List.nth firsts (k - 1) in
+      let room = status - if follows > 0 then last + 4 else last + 2 in
+      let need =
+        if follows = 0 then 3
+        else
+          let next_header = (not header) && List.mem (List.nth every (first + k)) machine in
+          (if follows = 1 then 1 else 3) + if next_header then 1 else 0
+      in
+      if first > 0 || follows > 0 then less ~msg:"the lines left" int ~than:need room)
+
 (* The data path *)
 
 (* One poll at a time. A poll asked for while one runs waits for it, and the
@@ -3599,6 +3676,7 @@ let () =
          hidden_filter;
          strips_scroll;
          shared_axis;
+         strips_whole;
          machine_strips;
          reading_steps;
          resumed_readings;

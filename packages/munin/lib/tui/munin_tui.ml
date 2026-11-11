@@ -47,7 +47,6 @@ let update (msg : Model.msg) (m : Model.t) =
   | Submitted -> after m (Model.act Keep_filter m)
   | Info_scrolled s -> (Model.scrolled_info s m, Mosaic.Cmd.none)
   | Rows_scrolled s -> after m (Model.scrolled_rows s m)
-  | Strips_scrolled s -> (Model.scrolled_strips s m, Mosaic.Cmd.none)
   | Styling s -> (Model.styled s m, Mosaic.Cmd.none)
   | Palette p ->
       let look = { m.look with scheme = scheme p.background; background = Some p.background } in

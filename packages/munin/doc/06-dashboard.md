@@ -218,6 +218,10 @@ history the run kept:
 │                  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
 ```
 
+The list shows as many whole strips as fit. When more follow, a line
+under them counts them, `+6 more`, and moving down to one brings it into
+view a strip at a time.
+
 `up` and `down` move between the strips, and Enter on one zooms it: the
 metric fills the centre with each column's raw extent faint behind the
 smoothed line, and a step cursor that `left` and `right` move, ten

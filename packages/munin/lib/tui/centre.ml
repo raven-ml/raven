@@ -518,19 +518,20 @@ let strips th (m : M.t) (f : Facts.run) ~width =
           @ if vw = 22 && not machine then [ rcell 12 (difference th m f c.key) ] else []);
       ]
   in
+  let shown, more = M.strips_shown m in
+  let charts = List.filter (fun (c : M.chart) -> List.mem c.key shown) charts in
   let machine, metrics = List.partition machine charts in
-  (* A scroll box shrinks below its content: the room it is given is the
-     viewport it reports. *)
+  let more = if more = 0 then [] else [ line [ frag th Dim (Printf.sprintf "+%d more" more) ] ] in
+  (* The lines below the header, whose size says how many strips fit. *)
   box ~flex_direction:Column ~flex_grow:1. ~min_size:(size_wh (px 0) (px 0))
     [
       header;
-      scroll_box ~flex_grow:1. ~min_size:(size_wh (px 0) (px 0)) ~margin:(margin_lrtb 0 0 1 0)
-        ~show_scrollbars:false
-        ~scroll:(Scroll.at m.strips_top)
-        ~on_scroll:(fun s -> M.Strips_scrolled s)
+      box ~flex_direction:Column ~flex_grow:1. ~min_size:(size_wh (px 0) (px 0))
+        ~margin:(margin_lrtb 0 0 1 0) ~overflow:{ x = Hidden; y = Hidden }
         ~on_size:(fun ~w ~h -> Some (M.Sized (Strip_rows, w, h)))
         (List.map strip metrics
-        @ if machine = [] then [] else section th "machine" :: List.map strip machine);
+        @ (if machine = [] then [] else section th "machine" :: List.map strip machine)
+        @ more);
     ]
 
 (* Zoom *)

@@ -62,10 +62,9 @@
 36 |                                 │                       ⠈⠉⠉⠒⠒⠒⠶⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⣤⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀a
    |                                                                                                a
 37 |                                 │
-38 |                                 │  train/lr         ⡰⠒⠉⠉⠉⠉⠉⠉⠉⠉⠒⠒⠒⠒⠒⠢⠤⠤⠤⢄⣀⣀⣀⡀                     9.908e-05        -70%
-   |                                                                                                  aaaaaaaaa        bbbb
-39 |                                 │                  ⡴⠕⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠤⠤⠤⠤⠤⠤⠤⠬⠭⠭⠭⠑⠒⠒⠒⠢⠤⠤⠤⠤⠤⣀⣀⣀⣀⣀⣀a
-   |                                                                                                a
+38 |                                 │ +6 more
+   |                                   bbbbbbb
+39 |                                 │
 40 | charts › strips › zoom   ↑↓ metric   [ ] run   enter zoom   esc charts   ? keys
    | bbbbbbbbbaaaaaabbbbbbb   aabbbbbbb   aaabbbb   aaaaabbbbb   aaabbbbbbb   abbbbb
 cursor hidden
