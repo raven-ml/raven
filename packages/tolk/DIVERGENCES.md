@@ -7120,14 +7120,19 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   same when its function's result depends only on the naming.
 - **Reason:** (d): constant folding's rules, repeated over every source of
   an operation whose sources may each be a constant or a stack of them,
-  enumerated orderings that named nothing through continuations. Testing
-  such a part once cut rune's `compile/special/betaincinv-grad-f64` row from
-  261 M to 235 M words, counted at the process's exit at `s=64M`. The row's
-  baseline on fudge is pending a quiet run, and the compile bench records
-  time alone.
+  enumerate orderings that name nothing. On fudge, tinygrad's naming for
+  each ordering makes rune's first compile of float64 `betaincinv`'s
+  gradient (the compile bench's `special/betaincinv-grad-f64`, a process of
+  its own) allocate 216.3 M words where one naming allocates 190.2 M,
+  counted at the process's exit at `s=64M`. The tolk bench's fudge rows of
+  exact words see it: `sort/kernel_graph-fresh` allocates 576 k words
+  against 491 k, `gpt_oss_prefill/kernel_graph-fresh` 2.12 M against 1.96 M
+  and `gpt_oss_prefill/codegen-fresh` 30.4 M against 27.7 M.
 - **Pinned by:** the Ops suite: `Pattern_matcher › a part of a pattern that
-  names nothing gives one naming`; rune's
-  `compile/special/betaincinv-grad-f64` row, once recorded on fudge.
+  names nothing gives one naming`; the tolk bench's `sort/kernel_graph-fresh`,
+  `gpt_oss_prefill/kernel_graph-fresh` and `gpt_oss_prefill/codegen-fresh`
+  rows.
+
 ## D240. The host's output upcasts take no floor of elements
 
 - **tinygrad:** `codegen/opt/heuristic.py` (`hand_coded_optimizations`'
