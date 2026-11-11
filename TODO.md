@@ -5,6 +5,10 @@ Where it stands, with every measurement: doc/performance.md.
 
 ## tolk
 
+- rune's paged attention with pages of 16 keys runs at 168 registers on
+  CUDA, one workgroup an SM; its values spilled for a tile are refilled
+  every tile, skipped ones included, which keeps K's copy from moving
+  before the mask (_plans/perf-campaign/pagedattn/skeptic.md)
 - gpt-oss's MoE block on CUDA takes 2537 us at 64 tokens and 3195 at 96,
   against 1352 at 128: below 128 tokens the 8-row blocks have no tensor
   cores (gate_up 2076 us at 96 against 687 at 128)
