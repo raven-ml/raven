@@ -36,3 +36,14 @@ val load :
 
     Raises [Failure] as [Nx_io.load_safetensors] and [Nx_io.Archive.to_value]
     do. *)
+
+val part :
+  string ->
+  (module U : Nx.Ptree.S) ->
+  path:string -> like:(('v, 's, 'd) Nx.t, 'd) U.t -> (('v, 's, 'd) Nx.t, 'd) U.t
+(** [part file (module U) ~path ~like] is the part at [path] of the state
+    {!save} wrote to [file], as [Nx.Ptree.Path.to_string] names it ([model] in
+    {!Distil.State} and {!Barlow.State}), of [like]'s structure, each array
+    placed where [like]'s lies.
+
+    Raises [Failure] as {!load} does. *)

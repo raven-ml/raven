@@ -52,3 +52,11 @@ let load (type v s d) file (module U : Nx.Ptree.S)
     | None -> failwith ("Tessera.Checkpoint.load: " ^ file ^ ": no run")
   in
   (x, key, Int64.to_int position, run)
+
+let part (type v s d) file (module U : Nx.Ptree.S) ~path
+    ~(like : ((v, s, d) Nx.t, d) U.t) =
+  Nx_io.Archive.to_value
+    ~prefix:(prefix ^ "." ^ path)
+    (Nx.Ptree.instantiate (module U))
+    ~like
+    (Nx_io.load_safetensors file)

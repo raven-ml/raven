@@ -1,3 +1,9 @@
 (tests
- (names test_pixels test_batch test_model test_embedding test_train)
+ (names
+  test_pixels
+  test_batch
+  test_model
+  test_embedding
+  test_train
+  test_barlow)
  (libraries tessera synth nx nx.io nx.ragged kaun rune vega jord windtrap))
