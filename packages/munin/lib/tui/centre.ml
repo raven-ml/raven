@@ -355,17 +355,22 @@ let legend th (m : M.t) (c : M.chart) =
   in
   let marked = List.filter (fun (r, _) -> r <> Plot.Context) c.runs in
   let context = List.length c.runs - List.length marked in
+  (* With [r], the grey runs drawn, if any. *)
   let tail =
-    if m.others then
-      rich_text ~wrap:`None ~flex_shrink:0.
-        [ F.text ~style:(Th.faint th Dim) "━ "; frag th Dim (Printf.sprintf "%d others" context) ]
-    else rich_text ~wrap:`None ~flex_shrink:0. [ frag ~bold:true th Mid "r "; frag th Dim "others" ]
+    if not m.others then
+      [ rich_text ~wrap:`None ~flex_shrink:0. [ frag ~bold:true th Mid "r "; frag th Dim "others" ] ]
+    else if context = 0 then []
+    else
+      [
+        rich_text ~wrap:`None ~flex_shrink:0.
+          [ F.text ~style:(Th.faint th Dim) "━ "; frag th Dim (Printf.sprintf "%d other%s" context (if context = 1 then "" else "s")) ];
+      ]
   in
   (* The cursor's run first, then the overlays. *)
   let order = List.rev marked in
   box ~flex_direction:Row ~flex_wrap:Wrap ~gap:(gap_xy 3 0) ~flex_shrink:0.
     ~margin:(margin_lrtb 0 0 1 1)
-    (List.filter_map item order @ [ tail ])
+    (List.filter_map item order @ tail)
 
 let charts th (m : M.t) (f : Facts.run) ~width =
   match M.charts m with

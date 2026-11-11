@@ -2550,6 +2550,18 @@ let no_sample =
              String.trim (Option.value (before tail "│") ~default:tail))
            (row says)))
 
+(* [r] with no other run of the experiment to draw: the legend has no entry
+   for them. *)
+let no_others =
+  test "r with no other run to draw adds no legend entry" (fun () ->
+      with_store ~name:"no-others" [] @@ fun store ->
+      ignore (write_log store (List.init 20 (fun i -> sample_record (i, Float.of_int i))));
+      let before_r = show ~cols:120 ~rows:40 store Munin_tui.Runs [] in
+      let after_r = show ~cols:120 ~rows:40 store Munin_tui.Runs [ char 'r' ] in
+      let others sc = List.length (T.Screen.find sc "others") in
+      equal ~msg:"before r, its hint" int 1 (others before_r);
+      equal ~msg:"after r" int 0 (others after_r))
+
 (* Cut text *)
 
 (* A run whose texts outgrow their columns: a long name, host, command,
@@ -2962,7 +2974,7 @@ let () =
              matching; cadence;
            ];
          group "runs" [ filter; stars; nav_count ];
-         group "run" [ all_orphans; short_of_steps; paired; cut_text; no_sample ];
+         group "run" [ all_orphans; short_of_steps; paired; cut_text; no_sample; no_others ];
          group "held" [ held; kept_pane; ended_away; ended_between; watch_test ];
          depth_test;
          hidden_filter;
