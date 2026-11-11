@@ -128,11 +128,19 @@ let banner th (f : Facts.run) =
     | Crashed, _ -> Some ("✗ crashed at step " ^ at ^ ": ", "the writer exited without an end")
     | _ -> (
         match f.non_finite with
-        | Some (k, s, n) ->
+        | Some (k, s, firsts) ->
+            (* What the metrics went, each kind once: [NaN or inf]. *)
+            let went =
+              List.filter
+                (fun w -> List.exists (fun v -> Numbers.non_finite v = w) firsts)
+                [ "NaN"; "inf"; "-inf" ]
+            in
+            let n = List.length firsts in
             Some
               ( Printf.sprintf "× %s %s from step %s" k (Numbers.non_finite s.value)
                   (Numbers.count s.step),
-                if n > 1 then Printf.sprintf "; %d metrics went NaN" n else "" )
+                if n > 1 then Printf.sprintf "; %d metrics went %s" n (String.concat " or " went)
+                else "" )
         | None -> None)
   in
   match says with

@@ -15,9 +15,9 @@ type run = {
       (** Its metrics: losses with a goal, then the other metrics with a
           goal, then the rest, each by key. *)
   latest : int option;  (** The greatest step of its metrics' samples. *)
-  non_finite : (string * Munin.Metric.sample * int) option;
+  non_finite : (string * Munin.Metric.sample * float list) option;
       (** The metric of its earliest sample that is not finite, that sample,
-          and how many metrics have one. *)
+          and the first such value of each metric that has one. *)
   last_arrival : float option;  (** When a sample last arrived. *)
   active : float;
       (** Its active time: from its start, less its pauses, to its end, to

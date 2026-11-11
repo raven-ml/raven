@@ -2990,6 +2990,27 @@ let zoom_units =
       equal ~msg:"the zoomed reading, a raw byte count, values in its unit" (triple bool bool bool)
         (true, false, true) (title, raw, List.length readout >= 2))
 
+(* The banner of a run whose metrics went non-finite names what each
+   metric's first such sample was: [a] goes first, at step 5, [b] at 7. *)
+let banner_names =
+  cases ~id:(fun (name, _, _) -> name) "the banner names what the metrics went"
+    [
+      ("NaN", (Float.nan, Float.nan), "× a NaN from step 5; 2 metrics went NaN");
+      ("inf", (Float.infinity, Float.infinity), "× a inf from step 5; 2 metrics went inf");
+      ("-inf", (Float.neg_infinity, Float.neg_infinity), "× a -inf from step 5; 2 metrics went -inf");
+      ("inf, then NaN", (Float.infinity, Float.nan), "× a inf from step 5; 2 metrics went NaN or inf");
+    ]
+    (fun (_, (a, b), says) ->
+      with_store ~name:"banner" [] @@ fun store ->
+      let value k i = if k = "a" && i >= 5 then a else if k = "b" && i >= 7 then b else Float.of_int i in
+      ignore
+        (write_log store ~declare:[ metric_record "a"; metric_record "b" ]
+           (List.init 10 (fun i -> values_record i [ ("a", value "a" i); ("b", value "b" i) ])));
+      let screen = show ~cols:160 ~rows:48 store Munin_tui.Runs [] in
+      if T.Screen.find screen says = [] then
+        failf "no %S in:\n%s" says
+          (String.concat "\n" (List.init (T.Screen.rows screen) (T.Screen.row screen))))
+
 (* [y] asks for the other scale of the metric shown, and of no other: zoom's
    title says [log] while the metric is drawn on one. [m] rises over three
    decades and [w] within one, so [m] starts on a log scale and [w] on a
@@ -3073,4 +3094,5 @@ let () =
          long_values;
          strip_keys;
          zoom_units;
+         banner_names;
        ])

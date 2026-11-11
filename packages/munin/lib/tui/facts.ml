@@ -11,7 +11,7 @@ type run = {
   stats : (string * History.key_stats) list;
   metrics : string list;
   latest : int option;
-  non_finite : (string * Metric.sample * int) option;
+  non_finite : (string * Metric.sample * float list) option;
   last_arrival : float option;
   active : float;
   rate : float option;
@@ -176,7 +176,7 @@ let first_non_finite stats =
             if f'.step < f.step then (k', f') else (k, f))
           first rest
       in
-      Some (k, f, List.length firsts)
+      Some (k, f, List.map (fun (_, (f : Metric.sample)) -> f.value) firsts)
 
 let of_run ~now ~history ~hint ~watch ~pauses r =
   let r = match history with Some h -> History.run h | None -> r in
