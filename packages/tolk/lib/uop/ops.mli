@@ -1273,6 +1273,11 @@ val commit_dtype : ?default_int:Dtype.t -> t -> Dtype.t
     narrowest type holding its bounds ({!Dtype.commit_int}), a weak float to its
     default ({!Dtype.strong}). *)
 
+val widens : t -> bool
+(** [widens x] is [true] iff [x] casts its source to a type of more bytes that
+    holds every value of it ({!Dtype.can_lossless_cast}), as bfloat16 to
+    float32, neither type being boolean or weak. *)
+
 val element_size : t -> int
 (** [element_size x] is the size in bytes of one of [x]'s elements.
 

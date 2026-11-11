@@ -804,18 +804,6 @@ let pm_limit_bufs =
 
 (* Buffers *)
 
-(* Whether [x] converts its source to a wider type that holds every value of
-   it, as bfloat16 to float32. *)
-let widens x =
-  op x = Op.Cast
-  &&
-  let s = Ops.dtype (nth x 0) and d = Ops.dtype x in
-  (not (Dtype.equal s Dtype.Bool))
-  && (not (Dtype.mem s Dtype.weaks))
-  && (not (Dtype.mem d Dtype.weaks))
-  && Dtype.itemsize s < Dtype.itemsize d
-  && Dtype.can_lossless_cast s d
-
 (* A stage that an output of the graph stores whole, in the stage's order and
    type, into storage nothing else reads or writes is stored there: stored
    apart, the output would be a copy of it. A stage stored narrow keeps its

@@ -3064,7 +3064,7 @@ the expand, as there.
 
 - **tinygrad:** `schedule/rangeify.py` (`bufferize_to_store`, which
   stores a stage's value at its committed dtype).
-- **tolk:** `Rangeify.widens`, `Rangeify.bufferize_to_store` and
+- **tolk:** `Ops.widens`, `Rangeify.bufferize_to_store` and
   `Rangeify.pm_add_buffers`' rule for the index of a narrow store through its
   widening.
 - **Differs:** a stage that is not stored whole, whose value is a cast to a
@@ -10020,7 +10020,7 @@ kept in ordered sets, change no source and belong to D466.
   stored into `b` where `b` is storage that nothing else in the graph reads
   or writes, its state after the store included, and that the stage's value
   does not read; the store, then a copy of `b` into itself, is dropped. A
-  stage stored narrower than its readers read it (`Rangeify.widens`) keeps
+  stage stored narrower than its readers read it (`Ops.widens`) keeps
   its storage. Where tinygrad stores the stage apart and copies it into
   `b`, tolk writes `b` once. tinygrad's own fix, every reader of a returned
   value reading its output, belongs to rune's lowering; there it would make

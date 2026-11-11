@@ -2969,6 +2969,16 @@ let commit_dtype ?default_int x =
     Dtype.commit_int ?default_int (Value.to_z (vmin x)) (Value.to_z (vmax x))
   else Dtype.strong x.dtype
 
+let widens x =
+  x.op = Op.Cast
+  &&
+  let s = (nth x 0).dtype and d = x.dtype in
+  (not (Dtype.equal s Dtype.Bool))
+  && (not (Dtype.mem s Dtype.weaks))
+  && (not (Dtype.mem d Dtype.weaks))
+  && Dtype.itemsize s < Dtype.itemsize d
+  && Dtype.can_lossless_cast s d
+
 let element_size x =
   if Dtype.mem x.dtype Dtype.weaks then
     invalid_argf "a %s has no size" (repr_dtype x.dtype);
