@@ -67,17 +67,24 @@ let projector ~key widths =
 let bn_eps = 1e-5
 let relu x = Nx.maximum x (Nx.scalar_like x 0.)
 let linear p x = Nx.cast f32 (Product.apply p x)
+let ignore_record _ _ = ()
 
-let project p e =
-  let x =
+(* [record] receives each hidden layer's normalised values, before its ReLU. *)
+let projected ~record p e =
+  let x, _ =
     List.fold_left
-      (fun x (l, (bn : _ Kaun.Batch_norm.t)) ->
-        relu
-          (Nx.standardize ~axes:[ 0 ] ~eps:bn_eps ~scale:bn.gamma ~shift:bn.beta
-             (linear l x)))
-      e p.hidden
+      (fun (x, i) (l, (bn : _ Kaun.Batch_norm.t)) ->
+        let x =
+          Nx.standardize ~axes:[ 0 ] ~eps:bn_eps ~scale:bn.gamma ~shift:bn.beta
+            (linear l x)
+        in
+        record (Printf.sprintf "projector%d_bn" i) (fun () -> x);
+        (relu x, i + 1))
+      (e, 0) p.hidden
   in
   linear p.out x
+
+let project p e = projected ~record:ignore_record p e
 
 (* Objective *)
 
@@ -209,11 +216,21 @@ let permuted perm (b : 'd Batch.t) =
   in
   { b with s2 = rows b.s2; s1 = rows b.s1 }
 
-let loss w ~dropout ~remat m p v =
+let loss ?record w ~dropout ~remat m p v =
   let m = { m with Model.net = p.net } in
   let keys k = Nx.Rng.of_tensor (Nx.get [ k ] (Nx.Rng.to_tensor v.keys)) in
   let z k i =
-    project p.projector (Model.train ~dropout ~remat ~keys:(keys k) m i)
+    let record =
+      Option.map (fun r n v -> r (Printf.sprintf "v%d_%s" k n) v) record
+    in
+    let z =
+      projected
+        ~record:(Option.value ~default:ignore_record record)
+        p.projector
+        (Model.train ?record ~dropout ~remat ~keys:(keys k) m i)
+    in
+    Option.iter (fun r -> r "projection" (fun () -> z)) record;
+    z
   in
   let i1 = Model.inputs m v.a1 in
   let z1 = z 0 i1 and z2 = z 1 (Model.inputs m v.a2) in

@@ -54,6 +54,15 @@ An item leaves when its library fixes it, or when a design decides it stays.
   tolerance derivation.
 - `Nx.split` returns a list, so taking a GRU's three gates needs a
   non-exhaustive match or slices.
+- A long contraction accumulates in one float32 register, sequentially:
+  nx.cpu's over all its terms, and tolk's kernels (tinygrad's heuristic at
+  these shapes) in chunks of 4. A weight gradient of `validate --training`
+  sums 16384 rows, which puts it 2-5 times further from float64 than
+  PyTorch's blocked sums (5.5e-7 compiled, 1.1e-6 eager, 2.4e-7 PyTorch,
+  1e-7 pairwise; `_plans/tessera-port/compiled-f32-grads.md`). It fails no
+  check but costs margin: eager's worst leaf sits at 0.975 of the bound,
+  CUDA's at 0.921, where a blocked or pairwise sum would put them near 0.5.
+  The fix is nx.cpu's contraction and, in tolk, a choice beyond tinygrad's.
 
 - `Nx_io.save_tiff` compresses by Deflate only (lz decodes LZW and does not
   encode it), so `Embedding.save_geotiff` writes Deflate with the floating
@@ -132,34 +141,12 @@ An item leaves when its library fixes it, or when a design decides it stays.
 
 ## tolk
 
-- Compiled float32 gradients exceed the oracle bound (2 x torch f32's own
-  distance from f64; `main.exe validate --training fixtures/grads --tile
-  fixtures/tiles/small_64`). On CUDA (main 5e057f36f4, which made the step
-  compile; it raised `Invalid_argument` naming an UPCAST axis before):
-  34/91 fail, worst 7.96 (s1 layer 0 ffn1.w and .b), q/k weights about 3x,
-  every s1 layer 0 leaf and embed 1.4-2.5x, s1 pool, heads' w 1.4-1.5x; s1
-  layer 1 is at torch's own level (0.5). Compiled on the host: 11/91, 2.2x
-  (q/k weights, s1 pool, heads' w; m4a-notes.md). Eager f32 passes. Being
-  diagnosed: accumulation order in long weight-gradient sums against a ReLU
-  flip in s1 layer 0's FFN (m4-numerics.md's mechanism). Blocks validating
-  f32 training on CUDA and compiled.
 - A distillation step end to end (medium, 4096 pixels in 4 groups, bf16,
   fused attention) takes 8.04 s on fudge's RTX 5000 against PyTorch's
   1.744 s (m0-baselines.md §2.3, which drops out at 0.1); unprofiled. The
   bf16 training products (3.6-17× PyTorch's) and the missing attention
   derivative kernels (rune) are the suspects. Found by the M4 distillation
   track.
-- Compiled on the host (`cpu-jit`), that float32 gradient lies further from
-  float64 than PyTorch's float32 does: the queries' and keys' weights at a
-  relative 1.9-2.3e-6 against PyTorch's 5.0-6.0e-7 (up to 2.2 times the
-  validation's bound of twice PyTorch's), the heads' at 4.6-6.0e-7 against
-  2.3-2.4e-7; eager nx.cpu meets the bound (0.95 of it at worst). The cause
-  (the compiled exp, the sums' order) is unexamined. A pretraining group's
-  gradient (Barlow Twins with mixup on a small teacher, `main.exe validate
-  --barlow DIR --device cpu-jit`) shows the same: 17 of 150 tensors past the
-  bound, at most 1.38 times it (queries', keys' and QK norms' parameters,
-  layer norms, the pooling query), where eager meets it at 0.78 of it.
-
 - On fudge's RTX 5000, float32 products whose output is 440 wide, the
   medium student's width, run at 4.6-6.6 TFLOP/s (bench op rows
   `medium/{embed2,out_proj,ffn2}`), while medium's `ffn1`, 440 wide on its

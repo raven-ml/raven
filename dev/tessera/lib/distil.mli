@@ -59,6 +59,7 @@ val cosines :
     fidelity to the teacher (v2 App. K). *)
 
 val loss :
+  ?record:'d Model.record ->
   dropout:Model.dropout ->
   keys:'d Nx.Rng.key ->
   ('b, 'd) Model.t ->
@@ -69,7 +70,8 @@ val loss :
 (** [loss ~dropout ~keys m p b ~targets] is the sum over [b]'s filled places of
     [Σ_k (1 − cos (h_k (s_{1:k}), t))] ({!cosines}), [s] the place's training
     embedding [Model.train ~dropout ~remat:false ~keys] by [m] with [p]'s net,
-    and [t] its row of [targets]. An empty place adds [0].
+    and [t] its row of [targets]. An empty place adds [0]. [record] receives the
+    embedding's intermediate values, as {!Model.train}'s does.
 
     Raises [Invalid_argument] as {!Model.train} does. *)
 

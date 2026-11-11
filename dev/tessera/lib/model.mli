@@ -226,7 +226,12 @@ val mixup : alpha:'d Nx.float32_t -> 'd inputs -> 'd inputs -> 'd inputs
     Raises [Invalid_argument] if [alpha] is not a scalar, or if an array of
     [i']'s layout differs in shape from [i]'s. *)
 
+type 'd record = string -> (unit -> 'd Nx.float32_t) -> unit
+(** The type for receivers of a forward's intermediate values: [record n v]
+    receives the value [v ()] under its name [n]. *)
+
 val train :
+  ?record:'d record ->
   dropout:dropout ->
   remat:bool ->
   keys:'d Nx.Rng.key ->
@@ -255,8 +260,16 @@ val train :
     inside one, as a step that scans several groups calls it, [Rune.remat] keeps
     today nearly what no remat keeps. The result does not change.
 
-    Raises [Invalid_argument] if a rate is outside \[[0]; [1]), or if [keys] is
-    not [[pixels; 2]]. *)
+    [record n v], if given, is called with each intermediate value [v ()] as the
+    forward computes it, under a name [n] such as [s2_layer0_linear1], the
+    pre-activation [[rows; width; ffn]] of sensor [s2]'s first layer's
+    feed-forward, [s2_embed_hidden], the embedding's values before its ReLU,
+    [fusion_layer1_linear1] or [reducer1_ln1]. A ReLU's input is recorded, never
+    its output.
+
+    Raises [Invalid_argument] if a rate is outside \[[0]; [1]), if [keys] is not
+    [[pixels; 2]], or if [record] is given with [~remat:true]: a value inside a
+    layer that [remat] computes again belongs to that computation. *)
 
 (**/**)
 
@@ -264,11 +277,13 @@ val blocks :
   ((float, 's, 'd) Nx.t, 'd) t -> 'd inputs -> (string * 'd Nx.float32_t) list
 (** [blocks m i] is {!apply}'s intermediate values, on the inputs [i], under the
     names of the upstream layer dumps: per sensor [s], [s_in] (standardised
-    tokens, then the day), [s_embedding], [s_pe], [s_encoder_in], [s_layer{i}],
-    [s_layer{i}_attn], [s_layer{i}_norm1], [s_layer{i}_linear1], [s_pool_logits]
-    and [s_pooled]; then [reducer0_linear0], [reducer1_ln1], [reducer2_relu],
-    [reducer4_linear4], [reducer5_output] and [embedding]. Token values are
-    [[rows; width; …]], pixel values [[pixels; …]]. *)
+    tokens, then the day), [s_embed_hidden] (the embedding's values before its
+    ReLU, which the dumps lack), [s_embedding], [s_pe], [s_encoder_in],
+    [s_layer{i}], [s_layer{i}_attn], [s_layer{i}_norm1], [s_layer{i}_linear1],
+    [s_pool_logits] and [s_pooled]; then [reducer0_linear0], [reducer1_ln1],
+    [reducer2_relu], [reducer4_linear4], [reducer5_output] and [embedding]; a
+    fusion's layer [i], [fusion_layer{i}] and [fusion_layer{i}_linear1]. Token
+    values are [[rows; width; …]], pixel values [[pixels; …]]. *)
 
 val masks :
   dropout:dropout ->

@@ -39,8 +39,9 @@ no CHANGES entry).
   corpus of pixels with observations of each sensor (`corpus --min`).
   `validate --training DIR` and `validate --barlow DIR` compare a step's
   loss and gradients with `_plans/tessera-port/gen/grads.py`'s, dropout
-  masks fed to it. `probe` scores a model's embeddings of a tile by a linear
-  probe on a GeoJSON's labels rasterised on the tile's landmask grid.
+  masks and the signs of each ReLU's input (`--signs`) fed to it. `probe`
+  scores a model's embeddings of a tile by a linear probe on a GeoJSON's
+  labels rasterised on the tile's landmask grid.
 - `bench/` times raven's operations at TESSERA's shapes, beside PyTorch's
   timings of the same cases. It measures real shapes, not regression rows,
   so it runs far longer than a package suite (about an hour on a CPU).

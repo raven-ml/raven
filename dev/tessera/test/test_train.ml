@@ -295,9 +295,16 @@ let remat =
       let px, counts = training spec in
       let b, _ = Batch.pack packed px counts ~from:0 in
       let keys = keys_of b in
+      (* A weighted sum: a plain sum of standardised embeddings is 0. *)
+      let w =
+        Nx.Rng.normal ~key:(Nx.Rng.key 9) Nx.float32
+          [| Nx.dim 0 b.pixel; Model.dims m |]
+      in
       let f remat n =
         let m = { m with net = n } in
-        Nx.sum (Model.train ~dropout:half ~remat ~keys m (Model.inputs m b))
+        Nx.sum
+          (Nx.mul w
+             (Model.train ~dropout:half ~remat ~keys m (Model.inputs m b)))
       in
       let v, g = Rune.value_and_grad net (f false) m.net in
       let v', g' = Rune.value_and_grad net (f true) m.net in
@@ -309,6 +316,135 @@ let remat =
           g []
       in
       equal (list (array int32)) (leaves g) (leaves g'))
+
+(* Records *)
+
+let leaf_bits g =
+  Nx.Ptree.fold net (fun _ a acc -> bits (Nx.cast Nx.float32 a) :: acc) g []
+
+(* A weighted sum of [Model.train]'s embeddings and its gradient, with each
+   recorded value when [record] and none otherwise, eager or compiled. (A plain
+   sum of standardised embeddings is 0 whatever the parameters.) *)
+let differentiated ~record ~jit m b keys =
+  let names = ref [] in
+  let w =
+    Nx.Rng.normal ~key:(Nx.Rng.key 9) Nx.float32
+      [| Nx.dim 0 b.Batch.pixel; Model.dims m |]
+  in
+  let f n =
+    let m = { m with Model.net = n } in
+    let acc = ref [] in
+    let record =
+      if record then Some (fun k v -> acc := (k, v ()) :: !acc) else None
+    in
+    let y =
+      Nx.sum
+        (Nx.mul w
+           (Model.train ?record ~dropout:half ~remat:false ~keys m
+              (Model.inputs m b)))
+    in
+    names := List.rev_map fst !acc;
+    (y, List.rev_map snd !acc)
+  in
+  let g n =
+    let v, g, z = Rune.value_and_grad_aux net Nx.Ptree.(list tensor) f n in
+    (v, (g, z))
+  in
+  let v, (g, z) =
+    if jit then
+      Rune.jit
+        Nx.Ptree.(net @-> returns (pair tensor (pair net (list tensor))))
+        g m.net
+    else g m.net
+  in
+  (v, g, List.combine !names z)
+
+(* With a record, the forward's values become outputs of the program the
+   gradient is taken in. Eager, the value and the gradient stay the same, bit
+   for bit. Compiled, the gradient does too; the value, a sum the compiler
+   schedules beside the extra outputs, may round otherwise, and is not
+   compared. *)
+let transparent =
+  prop "a record changes neither the value nor the gradient" ~count:10 cases_gen
+    (fun (pre, spec) ->
+      let m = model pre in
+      let px, counts = training spec in
+      let b, _ = Batch.pack packed px counts ~from:0 in
+      let keys = keys_of b in
+      cover "the teacher's form" pre;
+      List.iter
+        (fun jit ->
+          let v, g, _ = differentiated ~record:false ~jit m b keys in
+          let v', g', z = differentiated ~record:true ~jit m b keys in
+          is_true (z <> []);
+          if not jit then equal (array int32) (bits v) (bits v');
+          equal (list (array int32)) (leaf_bits g) (leaf_bits g'))
+        [ false; true ])
+
+(* [m] with unit 0 of sensor S2's embedding and first feed-forward dead: their
+   bias at -1000, so their ReLU's input is negative at every token. *)
+let dead (m : _ Model.t) =
+  let kill (l : _ Kaun.Linear.t) =
+    let b = Option.get l.b in
+    let rest = Nx.slice [ Nx.R (1, Nx.dim 0 b) ] b in
+    {
+      l with
+      b =
+        Some
+          (Nx.concatenate ~axis:0
+             [ Nx.create Nx.float32 [| 1 |] [| -1e3 |]; rest ]);
+    }
+  in
+  let backbone (bb : _ Model.backbone) =
+    let e1, e2 = bb.embed in
+    match bb.layers with
+    | l :: ls ->
+        {
+          bb with
+          embed = (kill e1, e2);
+          layers = { l with ffn1 = kill l.ffn1 } :: ls;
+        }
+    | [] -> bb
+  in
+  match m.net with
+  | Post_ln r -> { m with net = Post_ln { r with s2 = backbone r.s2 } }
+  | Pre_ln r -> { m with net = Pre_ln { r with s2 = backbone r.s2 } }
+
+let s2 = function Model.Post_ln r -> r.s2 | Pre_ln r -> r.s2
+let bias (l : _ Kaun.Linear.t) i = Nx.item [ i ] (Option.get l.b)
+
+let relu_inputs =
+  test "a record receives a ReLU's input, on the branch the gradient takes"
+    (fun () ->
+      List.iter
+        (fun (pre, jit) ->
+          let m = dead (model pre) in
+          let px, counts =
+            training { Synth.s2 = [ 5; 30 ]; s1 = [ 9; 3 ]; seed = 2 }
+          in
+          let b, _ = Batch.pack packed px counts ~from:0 in
+          let _, g, z = differentiated ~record:true ~jit m b (keys_of b) in
+          let unit0 name =
+            let v = List.assoc name z in
+            Nx.to_array (Nx.slice [ Nx.A; Nx.A; Nx.I 0 ] v)
+          in
+          let negative a = Array.for_all (fun x -> x < 0.) a in
+          let bb = s2 g in
+          is_true ~msg:"embedding's input" (negative (unit0 "s2_embed_hidden"));
+          equal ~msg:"embedding's gradient" float_exact 0.
+            (bias (fst bb.embed) 0);
+          is_true ~msg:"feed-forward's input"
+            (negative (unit0 "s2_layer0_linear1"));
+          equal ~msg:"feed-forward's gradient" float_exact 0.
+            (bias (List.hd bb.layers).ffn1 0);
+          is_true ~msg:"a live unit's gradient"
+            (bias (List.hd bb.layers).ffn1 1 <> 0.
+            && bias (fst bb.embed) 1 <> 0.);
+          let relu x = Nx.maximum x (Nx.scalar_like x 0.) in
+          equal ~msg:"reducer's ReLU" (array int32)
+            (bits (relu (List.assoc "reducer1_ln1" z)))
+            (bits (List.assoc "reducer2_relu" z)))
+        [ (false, false); (true, false); (false, true) ])
 
 let heads = Distil.heads ~key:(Nx.Rng.key 4) ~prefixes:post_ln.prefixes 8
 
@@ -523,6 +659,8 @@ let () =
              compiled_masks;
              refusals;
              remat;
+             transparent;
+             relu_inputs;
              mixed;
              mixup_refusals;
            ];

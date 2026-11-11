@@ -213,6 +213,7 @@ let relu x = Nx.maximum x (Nx.scalar_like x 0.)
 (* Dropout *)
 
 type dropout = { layers : float; reducer : float }
+type 'd record = string -> (unit -> 'd Nx.float32_t) -> unit
 
 let v2_dropout = { layers = 0.1; reducer = 0.2 }
 let no_dropout = { layers = 0.; reducer = 0. }
@@ -558,7 +559,9 @@ let backbone ~pre_ln ~heads ~remat ~record ~drop b (r : 'd Batch.rows)
   record "in" (fun () ->
       Nx.concatenate ~axis:2 [ z; Nx.unsqueeze ~axes:[ 2 ] doy ]);
   let e1, e2 = b.embed in
-  let x = linear e2 (relu (linear e1 z)) in
+  let h = linear e1 z in
+  record "embed_hidden" (fun () -> h);
+  let x = linear e2 (relu h) in
   record "embedding" (fun () -> x);
   let pe = encoding (Nx.dim 2 x) doy in
   record "pe" (fun () -> pe);
@@ -653,8 +656,8 @@ let forward ~record ?drop ~remat m (i : 'd inputs) =
               drop;
         }
       in
-      let skip _ _ = () in
-      let x = layers ~pre_ln:true ~heads ~remat tk ~record:skip x layers_ in
+      let fused n v = record ("fusion_" ^ n) v in
+      let x = layers ~pre_ln:true ~heads ~remat tk ~record:fused x layers_ in
       reduce ~record ~drop reducer (Nx.reshape [| p; 2 * d |] x)
 
 let ignore_record _ _ = ()
@@ -670,10 +673,13 @@ let check_dropout fn (r : dropout) keys (b : 'd Batch.t) =
       (Printf.sprintf "Tessera.Model.%s: keys of shape [%d; 2] expected" fn
          pixels)
 
-let train ~dropout ~remat ~keys m i =
+let train ?record ~dropout ~remat ~keys m i =
   check_dropout "train" dropout keys i.batch;
+  if remat && Option.is_some record then
+    invalid_arg "Tessera.Model.train: a record with remat";
+  let record = Option.value ~default:ignore_record record in
   let drop = { rates = dropout; keys; mask = ignore_record } in
-  forward ~record:ignore_record ~drop ~remat m i
+  forward ~record ~drop ~remat m i
 
 let blocks m i =
   let acc = ref [] in

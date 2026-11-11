@@ -19,7 +19,8 @@ open Tessera
 let usage =
   {|usage: main.exe encode --model FILE --tile DIR --out NAME [OPTION...]
        main.exe validate --weights DIR --fixtures DIR [OPTION...]
-       main.exe validate --training DIR --tile DIR [--masks] [--device D] [--bf16]
+       main.exe validate --training DIR --tile DIR [--masks | --signs]
+                [--device D] [--bf16]
        main.exe corpus --tiles DIR[,DIR...] --out DIR [--seed N] [--bytes B]
        main.exe targets --teacher FILE --corpus DIR --out FILE [OPTION...]
        main.exe distil --corpus DIR --targets FILE --out DIR
@@ -27,7 +28,8 @@ let usage =
        main.exe pretrain --corpus DIR --out DIR
                        (--init FILE [--projector-weights FILE] | --arch A)
                        [OPTION...]
-       main.exe validate --barlow DIR --tile DIR [--masks] [--device D]
+       main.exe validate --barlow DIR --tile DIR [--masks | --signs]
+                [--device D]
        main.exe probe (--model FILE | --arch A) --tile DIR --landmask FILE
                        --labels FILE [OPTION...]
 
@@ -50,7 +52,10 @@ validate options:
 
 validate --training compares one distillation step's loss and gradients
 with gen/grads.py's on a small student, dropout masks fed to it; --masks
-writes raven's tokens and masks for it first.
+writes raven's tokens and masks for it first. --signs writes the signs of
+the inputs of the device's ReLUs to DIR/DEVICE-PREC (cuda-f32),
+which the oracle multiplies its own by; the run then compares its gradients
+on that branch, and judges each sign that differs from float64's apart.
 
 corpus writes the pixels of the tiles with an observation, or with --min N
 of each sensor (v1.0 pretrains on pixels of 10), shuffled by --seed, in runs
@@ -114,7 +119,8 @@ needs an observation of each sensor (corpus --min).
 
 validate --barlow compares one pretraining group's loss and gradients
 with gen/grads.py barlow-oracle's on a small teacher or student, dropout
-masks fed to it; --masks writes raven's views and masks for it first.
+masks fed to it; --masks writes raven's views and masks for it first, and
+--signs the branch, as for --training.
 
 probe embeds a tile with a model and labels each pixel by the GeoJSON
 feature whose region holds its centre, on the grid of the tile's landmask,
@@ -513,12 +519,14 @@ let validate_blocks (type s d) (t : d target)
   List.iter
     (fun (name, v) ->
       let worst = ref 0. and scale = ref 0. and exact = ref true in
+      let dumped = ref false in
       List.iteri
         (fun i (pixel, _, _) ->
           let file =
             Filename.concat dir (Filename.concat pixel (name ^ ".npy"))
           in
           if Sys.file_exists file then begin
+            dumped := true;
             let dump = f64 (load_f32 file) in
             let sensor = String.sub name 0 2 in
             let per_token =
@@ -546,13 +554,23 @@ let validate_blocks (type s d) (t : d target)
         pixels;
       let tol = block_tol *. Float.max 1. !scale in
       let pass = !worst <= tol && !exact in
-      report
-        ~name:(Printf.sprintf "medium/%s/blocks/%s" device name)
-        ~pass
-        (Printf.sprintf "max|d| %.3g  max|ref| %.3g%s" !worst !scale
-           (if input name then
-              Printf.sprintf "  tokens and counts exact %b" !exact
-            else "")))
+      (* The reference dumps every value but the embedding's before its ReLU and
+         a fusion's, which only a teacher has. *)
+      let undumped =
+        Filename.check_suffix name "_embed_hidden"
+        || String.starts_with ~prefix:"fusion_" name
+      in
+      if not !dumped then
+        begin if not undumped then die "%s: no dump of %s" dir name
+        end
+      else
+        report
+          ~name:(Printf.sprintf "medium/%s/blocks/%s" device name)
+          ~pass
+          (Printf.sprintf "max|d| %.3g  max|ref| %.3g%s" !worst !scale
+             (if input name then
+                Printf.sprintf "  tokens and counts exact %b" !exact
+              else "")))
     blocks
 
 (* Training *)
@@ -1356,12 +1374,289 @@ let rel a b =
     a;
   Float.sqrt (!d /. Float.max !n 1e-300)
 
+(* Fed branches. A ReLU's sign is discrete, so the gradients are compared on
+   raven's branch: [--signs] writes the signs of each ReLU's input in the
+   device's step, the oracle multiplies its own by them, and the values where
+   raven's sign differs from float64's are judged apart. A device and
+   precision's branch lives in its own directory, [cuda-f32]. *)
+
+let branch_dir dir ~device ~prec = Filename.concat dir (device ^ "-" ^ prec)
+
+(* A ReLU's inputs [z] in the oracle's layout, [[pixels; width; c]] with pixel
+   [r]'s tokens from column [0] to [len.(r)], zeros after; a pixel's values,
+   [[pixels; c]], are [[pixels; 1; c]]. *)
+type preact = {
+  name : string;
+  dims : int array;
+  len : int array;
+  z : float array;
+}
+
+(* Each ReLU's input a step records, under the name the oracle feeds:
+   [s2_layer0] for a feed-forward's [s2_layer0_linear1], [s2_embed] for
+   [s2_embed_hidden], [reducer] for [reducer1_ln1] and [projector0] for
+   [projector0_bn], after a pretraining view's prefix. Each must be the ReLU's
+   input, not its output: the oracle is fed the input's signs, so a ReLU that
+   cuts elsewhere than [0] runs another branch than the one fed and shows in the
+   gradients, where the output's signs would follow it. *)
+let relu_inputs =
+  [
+    ("_linear1", "");
+    ("_embed_hidden", "_embed");
+    ("reducer1_ln1", "reducer");
+    ("_bn", "");
+  ]
+
+(* The loss's inputs, which the loss's checks need: a distillation's [embedding]
+   and a pretraining view's [v0_projection]. *)
+let loss_input name =
+  name = "embedding" || Filename.check_suffix name "_projection"
+
+let recorder acc name v =
+  let chop (suffix, by) =
+    if Filename.check_suffix name suffix then
+      Some (Filename.chop_suffix name suffix ^ by)
+    else None
+  in
+  match List.find_map chop relu_inputs with
+  | Some n -> acc := (n, v ()) :: !acc
+  | None -> if loss_input name then acc := (name, v ()) :: !acc
+
+(* [z] of a batch of one pixel a row, every token filled, or of pixels. *)
+let whole name z =
+  let z = Nx.place Nx.Host.on z in
+  let dims =
+    match Nx.shape z with [| p; c |] -> [| p; 1; c |] | dims -> dims
+  in
+  { name; dims; len = Array.make dims.(0) dims.(1); z = f64 z }
+
+(* [z] [[rows; width; ffn]] of [r]'s packed rows, by pixel place. *)
+let by_place (r : Nx.host Batch.rows) name z =
+  let z = Nx.place Nx.Host.on z in
+  let width = Nx.dim 1 z and c = Nx.dim 2 z in
+  let slots = Nx.dim 1 r.slot_start and places = Nx.dim 0 r.at in
+  let a = f64 z and out = Array.make (places * width * c) 0. in
+  let len =
+    Array.init places (fun k ->
+        let s = Int64.to_int (Nx.item [ k ] r.at) in
+        let row = s / slots and j = s mod slots in
+        let start = Int32.to_int (Nx.item [ row; j ] r.slot_start) in
+        let n = Int32.to_int (Nx.item [ row; j ] r.slot_stop) - start in
+        Array.blit a (((row * width) + start) * c) out (k * width * c) (n * c);
+        n)
+  in
+  { name; dims = [| places; width; c |]; len; z = out }
+
+let sign_file dir name = Filename.concat dir ("sign_" ^ name ^ ".npy")
+let signs p = Array.map (fun z -> if z > 0. then 1 else 0) p.z
+
+let save_signs dir ps =
+  (try Sys.mkdir dir 0o755 with Sys_error _ -> ());
+  List.iter
+    (fun p ->
+      Nx_io.save_npy (sign_file dir p.name)
+        (Nx.create Nx.uint8 p.dims (signs p)))
+    ps;
+  Printf.printf "%s: the signs of %d layers' pre-activations\n" dir
+    (List.length ps)
+
+(* The run's branch is the one the oracle was fed: a compiled program rounds as
+   it did when it wrote them. *)
+let check_branch dir ps =
+  List.iter
+    (fun p ->
+      let file = sign_file dir p.name in
+      if not (Sys.file_exists file) then
+        die "%s: no signs: write them with --signs, then run the oracle" file;
+      let fed = Nx.to_array (Nx.unpack Nx.uint8 (Nx_io.load_npy file)) in
+      if fed <> signs p then
+        die "%s: the run's signs differ from the ones the oracle was fed" file)
+    ps
+
+(* Each flip of [ps], a value where raven's sign is not float64's on raven's
+   branch, by the oracle's [preact_f64_*] in [dir]. A flip passes where the
+   float64 pre-activation's magnitude is at most the largest distance of the
+   reference's own pre-activation at the run's precision ([preact_<prec>_*])
+   from float64 over the layer's tokens: a sign the reference's rounding could
+   have given. The flips go to [dir/flips.tsv]. *)
+let check_flips ~label ~prec dir ps =
+  let load p pr =
+    let file =
+      Filename.concat dir (Printf.sprintf "preact_%s_%s.npy" pr p.name)
+    in
+    let a = Nx.to_array (Nx.unpack Nx.float64 (Nx_io.load_npy file)) in
+    if Array.length a <> Array.length p.z then die "%s: of another shape" file;
+    a
+  in
+  let rows = ref [] in
+  List.iter
+    (fun p ->
+      let z64 = load p "f64" and zr = load p prec in
+      let w = p.dims.(1) and c = p.dims.(2) in
+      let tokens f =
+        Array.iteri
+          (fun r n ->
+            for t = 0 to n - 1 do
+              for u = 0 to c - 1 do
+                f r t u ((((r * w) + t) * c) + u)
+              done
+            done)
+          p.len
+      in
+      let ss = ref 0. and n = ref 0 and bound = ref 0. in
+      tokens (fun _ _ _ i ->
+          let e = Float.abs (zr.(i) -. z64.(i)) in
+          ss := !ss +. (e *. e);
+          bound := Float.max !bound e;
+          incr n);
+      let sigma = Float.sqrt (!ss /. Float.of_int (max 1 !n)) in
+      let flips = ref 0 and worst = ref 0. in
+      tokens (fun r t u i ->
+          if p.z.(i) > 0. <> (z64.(i) > 0.) then begin
+            let ratio = Float.abs z64.(i) /. !bound in
+            incr flips;
+            worst := Float.max !worst ratio;
+            rows :=
+              Printf.sprintf
+                "%s\t%d\t%d\t%d\t%.6g\t%.6g\t%.6g\t%.4g\t%.4g\t%.3f" p.name r t
+                u z64.(i) p.z.(i) zr.(i) sigma !bound ratio
+              :: !rows
+          end);
+      report
+        ~name:(Printf.sprintf "%s/flips/%s" label p.name)
+        ~pass:(!worst <= 1.)
+        (Printf.sprintf
+           "%d flips of %d  torch %s sigma %.3g  bound %.3g  worst |f64|/bound \
+            %.3f"
+           !flips !n prec sigma !bound !worst))
+    ps;
+  Out_channel.with_open_text (Filename.concat dir "flips.tsv") (fun oc ->
+      output_string oc
+        "layer\tpixel\ttoken\tunit\tf64\traven\ttorch\tsigma\tbound\t|f64|/bound\n";
+      List.iter (fun l -> output_string oc (l ^ "\n")) (List.rev !rows))
+
+(* A leaf whose exact gradient is 0 by the softmax's invariance to a shift of
+   its scores (attention's key biases, the pooling's bias) is a sum of terms
+   that cancel. The oracle gives each element the sum [T] of its terms'
+   magnitudes, in float64 ([grads_zero.pt]), and an element passes where its
+   value is at most [u · T], [u] the unit roundoff of the products' dtype. [u ·
+   T] is a first-order estimate, not a bound: one rounding of every term and no
+   cancellation among the errors, leaving out the inner sums' growth and relying
+   on errors cancelling across tokens. Here it lies 6-20 times above the
+   measured error, a margin that moves with the batch's size. The result is the
+   largest [|g| / (u · T)]. *)
+let zero_ratio ~u g t =
+  let worst = ref 0. in
+  Array.iteri
+    (fun i x ->
+      let r = if t.(i) > 0. then Float.abs x /. (u *. t.(i)) else Float.abs x in
+      worst := Float.max !worst (if x = 0. then 0. else r))
+    g;
+  !worst
+
+let is_zero_leaf t = Array.exists (fun x -> x > 0.) t
+
+let unit_roundoff = function
+  | "bf16" -> Float.ldexp 1. (-8)
+  | _ -> Float.ldexp 1. (-24)
+
+(* A leaf of exact gradient 0 by the batch normalisation's or the whitening's
+   invariance to a shift, which the oracle gives no terms for: its float64 norm,
+   rounding alone, below this share of the whole gradient's (1e-15 to 2e-14 of
+   600-1600 in the fixtures). *)
+let zero_leaf = 1e-12
+let norm a = Float.sqrt (Array.fold_left (fun s x -> s +. (x *. x)) 0. a)
+
+(* The run's leaves [mine] against float64's [r64] and the reference's [rref] at
+   [prec], [terms] the oracle's exact-zero terms. A leaf with terms passes by
+   [zero_ratio]; one of float64 norm below [zero_leaf] of the gradient's by its
+   distance against float32's spacing at the gradient's norm; any other within
+   twice the reference's distance from float64. *)
+let check_leaves ~label ~prec mine ~r64 ~rref ~terms =
+  let u = unit_roundoff prec and worst = ref 0. in
+  let scale =
+    Float.sqrt (List.fold_left (fun s (_, a) -> s +. (norm a ** 2.)) 0. r64)
+  in
+  let judge name ratio text =
+    worst := Float.max !worst ratio;
+    report ~name ~pass:(ratio <= 1.) text
+  in
+  List.iter2
+    (fun (path, g) ((path', r64), ((_, rp), (_, tz))) ->
+      if path <> path' then die "%s against %s" path path';
+      let name = Printf.sprintf "%s/%s" label path in
+      if is_zero_leaf tz then
+        let ratio = zero_ratio ~u g tz in
+        judge name ratio
+          (Printf.sprintf "exact 0: |g|/(u T) %.3g  torch %s %.3g  f64 %.3g"
+             ratio prec (zero_ratio ~u rp tz) (zero_ratio ~u r64 tz))
+      else if norm r64 <= zero_leaf *. scale then
+        let dist a b = norm (Array.map2 ( -. ) a b) /. scale in
+        let d = dist g r64 in
+        judge name (d /. f32_ulp)
+          (Printf.sprintf
+             "exact 0: distance %.3g of the gradient's norm, torch %s %.3g, \
+              bound %.3g"
+             d prec (dist rp r64) f32_ulp)
+      else
+        let mine = rel g r64 and theirs = rel rp r64 in
+        let ratio = mine /. (2. *. theirs) in
+        judge name ratio
+          (Printf.sprintf "rel %.3g  torch %s rel %.3g  ratio %.2f" mine prec
+             theirs ratio))
+    mine
+    (List.combine r64 (List.combine rref terms));
+  Printf.printf "worst ratio to its bound: %.3f\n" !worst
+
+(* The loss against float64. A loss is one value, its error its input's error
+   projected onto its gradient in a random direction, so one reference run's
+   distance from float64 says little about the next. The run's loss must lie
+   within [u M] of its first-order prediction from float64, [l64 + ∂L/∂x · (x −
+   x₆₄)], [x] the objective's inputs (the embeddings, the projections), [∂L/∂x]
+   the float64 loss's gradient there. [M] is the sum over the objective's
+   rounded values [y] of [|∂L/∂y|] times the magnitude of [y]'s terms
+   ([objective_terms.npy]): like [zero_ratio]'s [u · T], a first-order estimate
+   of the objective's own rounding, not a bound, here 2.5-90 times the measured
+   residual. The remainder past first order is 1e-11 to 3e-10 here. [x] itself
+   must lie within twice the reference's distance from float64, as a leaf must.
+   With [~judge:false] the loss is reported, not judged: bfloat16's [u M] is too
+   wide for its residual ever to reach it. [files] name each input's files in
+   [dir] by kind: ["f64"], the reference's precision and ["grad"]. *)
+let check_loss ~label ~prec ~judge ~input dir ~loss ~l64 ~mine ~files =
+  let load f = Nx.unpack Nx.float64 (Nx_io.load_npy (Filename.concat dir f)) in
+  let inputs kind =
+    Array.concat (List.map (fun f -> Nx.to_array (load (f kind))) files)
+  in
+  let x64 = inputs "f64" and xref = inputs prec and g = inputs "grad" in
+  let x = Array.concat mine in
+  let mine_rel = rel x x64 and theirs = rel xref x64 in
+  report
+    ~name:(label ^ "/" ^ input)
+    ~pass:(mine_rel <= 2. *. theirs)
+    (Printf.sprintf "rel %.3g  torch %s rel %.3g  ratio %.2f" mine_rel prec
+       theirs
+       (mine_rel /. (2. *. theirs)));
+  let terms = unit_roundoff prec *. Nx.item [] (load "objective_terms.npy") in
+  let first =
+    Array.fold_left ( +. ) 0.
+      (Array.map2 (fun g d -> g *. d) g (Array.map2 ( -. ) x x64))
+  in
+  let residual = Float.abs (loss -. l64 -. first) in
+  let text =
+    Printf.sprintf
+      "raven %.10g  f64 %.10g  first order %.3g  residual %.3g  bound u M %.3g"
+      loss l64 first residual terms
+  in
+  let name = label ^ "/loss" in
+  if judge then report ~name ~pass:(residual <= terms) text else note ~name text
+
 let validate_training opts =
   let dir = req opts "--training" and tile = req opts "--tile" in
   if flag opts "--masks" then write_masks dir tile
   else begin
     let device = Option.value ~default:"cpu" (opt opts "--device") in
     let prec = if flag opts "--bf16" then "bf16" else "f32" in
+    let branch = branch_dir dir ~device ~prec in
     let m, heads, targets, px, counts = training_inputs dir tile in
     let n = Pixels.length px in
     let shape =
@@ -1370,19 +1665,16 @@ let validate_training opts =
     let b, _ = Batch.pack shape px counts ~from:0 in
     let keys = place_keys oracle_key ~first:0 b in
     let host = Nx.Ptree.instantiate (module Distil.Params) in
-    let file f = Filename.concat dir f in
-    let oracle prec =
+    let file f = Filename.concat branch f in
+    let ref_grads prec =
       let g = Model.load (file ("grads_" ^ prec ^ ".pt")) in
       let h = load_heads (file ("heads_grads_" ^ prec ^ ".npz")) m.prefixes in
-      let loss =
-        Nx.item []
-          (Nx.unpack Nx.float64
-             (Nx_io.load_npy (file ("loss_" ^ prec ^ ".npy"))))
-      in
-      (loss, leaves host { Distil.net = g.net; heads = h })
+      leaves host { Distil.net = g.net; heads = h }
     in
-    let l64, g64 = oracle "f64" in
-    let lref, gref = oracle prec in
+    let ref_loss prec =
+      Nx.item []
+        (Nx.unpack Nx.float64 (Nx_io.load_npy (file ("loss_" ^ prec ^ ".npy"))))
+    in
     on device
       {
         run =
@@ -1395,16 +1687,25 @@ let validate_training opts =
             in
             let mt = Nx.Ptree.place (module Model) t.at m in
             let p = Nx.Ptree.instantiate (module Distil.Params) in
+            let names = ref [] in
             let f (params, b, keys, targets) =
               let objective (type c) (dt : (float, c) Nx.dtype) q =
                 let q = Nx.Ptree.cast (module Distil.Params) dt q in
-                Nx.div_s
-                  (Distil.loss ~dropout:Model.v2_dropout ~keys mt q b ~targets)
-                  (Float.of_int n)
+                let acc = ref [] in
+                let l =
+                  Distil.loss ~record:(recorder acc) ~dropout:Model.v2_dropout
+                    ~keys mt q b ~targets
+                in
+                names := List.rev_map fst !acc;
+                (Nx.div_s l (Float.of_int n), List.rev_map snd !acc)
               in
-              if prec = "bf16" then
-                Rune.value_and_grad p (objective Nx.bfloat16) params
-              else Rune.value_and_grad p (objective Nx.float32) params
+              let aux = Nx.Ptree.(list tensor) in
+              let loss, g, z =
+                if prec = "bf16" then
+                  Rune.value_and_grad_aux p aux (objective Nx.bfloat16) params
+                else Rune.value_and_grad_aux p aux (objective Nx.float32) params
+              in
+              (loss, (g, z))
             in
             let args =
               ( params,
@@ -1412,44 +1713,47 @@ let validate_training opts =
                 Nx.Rng.place t.at keys,
                 Nx.place t.at targets )
             in
-            let loss, grads =
+            let loss, (grads, z) =
               if not t.jit then f args
               else
                 Rune.jit
                   Nx.Ptree.(
                     quad p (v Batch.walk) Nx.Rng.ptree tensor
-                    @-> returns (pair tensor p))
+                    @-> returns (pair tensor (pair p (list tensor))))
                   f args
             in
-            let loss = Nx.item [] (Nx.place Nx.Host.on loss) in
-            let mine = leaves p grads in
-            let lrel = Float.abs (loss -. l64) /. Float.abs l64 in
-            (* The oracle sums its pixels' losses in float64; raven's is one
-               float32 value, which its rounding alone can move by an ulp. *)
-            let lbound =
-              Float.max (2. *. Float.abs (lref -. l64) /. Float.abs l64) f32_ulp
+            let values, relus =
+              List.partition
+                (fun (n, _) -> loss_input n)
+                (List.combine !names z)
             in
-            report
-              ~name:(Printf.sprintf "training/%s/%s/loss" device prec)
-              ~pass:(lrel <= lbound)
-              (Printf.sprintf
-                 "raven %.10g  torch f64 %.10g  rel %.3g  bound %.3g" loss l64
-                 lrel lbound);
-            let worst = ref 0. in
-            List.iter2
-              (fun (path, g) ((path', r64), (_, rp)) ->
-                if path <> path' then die "%s against %s" path path';
-                let mine = rel g r64 and theirs = rel rp r64 in
-                let ratio = mine /. (2. *. theirs) in
-                worst := Float.max !worst ratio;
-                report
-                  ~name:(Printf.sprintf "training/%s/%s/%s" device prec path)
-                  ~pass:(ratio <= 1.)
-                  (Printf.sprintf "rel %.3g  torch %s rel %.3g  ratio %.2f" mine
-                     prec theirs ratio))
-              mine (List.combine g64 gref);
-            Printf.printf "worst ratio to twice torch's %s spread: %.3f\n" prec
-              !worst);
+            let ps =
+              List.map
+                (fun (name, z) ->
+                  match String.sub name 0 3 with
+                  | "s2_" -> by_place b.s2 name z
+                  | "s1_" -> by_place b.s1 name z
+                  | _ -> whole name z)
+                relus
+            in
+            if flag opts "--signs" then save_signs branch ps
+            else begin
+              check_branch branch ps;
+              let label = Printf.sprintf "training/%s/%s" device prec in
+              let loss = Nx.item [] (Nx.place Nx.Host.on loss) in
+              let embedding kind =
+                match kind with
+                | "grad" -> "embedding_grad.npy"
+                | k -> "embedding_" ^ k ^ ".npy"
+              in
+              check_loss ~label ~prec ~judge:(prec <> "bf16") ~input:"embedding"
+                branch ~loss ~l64:(ref_loss "f64")
+                ~mine:(List.map (fun (_, e) -> (whole "" e).z) values)
+                ~files:[ embedding ];
+              check_leaves ~label ~prec (leaves p grads) ~r64:(ref_grads "f64")
+                ~rref:(ref_grads prec) ~terms:(ref_grads "zero");
+              check_flips ~label ~prec branch ps
+            end);
       }
   end
 
@@ -1480,11 +1784,6 @@ let barlow_inputs dir tile =
     }
   in
   (m, projector, v)
-
-(* A leaf of exact gradient 0: its float64 norm, rounding alone, below this
-   share of the whole gradient's (1e-15 to 2e-14 of 600-1600 in the
-   fixtures). *)
-let zero_leaf = 1e-12
 
 (* The oracle's dropout: the reference's encoder layers and its reducer's. *)
 let barlow_dropout = Model.v2_dropout
@@ -1525,21 +1824,19 @@ let validate_barlow opts =
   if flag opts "--masks" then write_views dir tile
   else begin
     let device = Option.value ~default:"cpu" (opt opts "--device") in
+    let branch = branch_dir dir ~device ~prec:"f32" in
     let m, projector, v = barlow_inputs dir tile in
     let host = Nx.Ptree.instantiate (module Barlow.Params) in
-    let file f = Filename.concat dir f in
-    let oracle prec =
+    let file f = Filename.concat branch f in
+    let ref_grads prec =
       let g = Model.load (file ("grads_" ^ prec ^ ".pt")) in
       let pr = load_projector (file ("projector_grads_" ^ prec ^ ".npz")) in
-      let loss =
-        Nx.item []
-          (Nx.unpack Nx.float64
-             (Nx_io.load_npy (file ("loss_" ^ prec ^ ".npy"))))
-      in
-      (loss, leaves host { Barlow.net = g.net; projector = pr })
+      leaves host { Barlow.net = g.net; projector = pr }
     in
-    let l64, g64 = oracle "f64" in
-    let l32, g32 = oracle "f32" in
+    let ref_loss prec =
+      Nx.item []
+        (Nx.unpack Nx.float64 (Nx_io.load_npy (file ("loss_" ^ prec ^ ".npy"))))
+    in
     on device
       {
         run =
@@ -1552,78 +1849,65 @@ let validate_barlow opts =
                 { Barlow.net = m.net; projector }
             in
             let mt = Nx.Ptree.place (module Model) t.at m in
+            let names = ref [] in
             let f (params, v) =
-              Rune.value_and_grad p
-                (fun q ->
-                  Barlow.loss Barlow.v1_weights ~dropout:barlow_dropout
-                    ~remat:false mt q v)
-                params
+              let loss, g, z =
+                Rune.value_and_grad_aux p
+                  Nx.Ptree.(list tensor)
+                  (fun q ->
+                    let acc = ref [] in
+                    let l =
+                      Barlow.loss ~record:(recorder acc) Barlow.v1_weights
+                        ~dropout:barlow_dropout ~remat:false mt q v
+                    in
+                    names := List.rev_map fst !acc;
+                    (l, List.rev_map snd !acc))
+                  params
+              in
+              (loss, (g, z))
             in
             let args = (params, Nx.Ptree.place (module Barlow.Group) t.at v) in
-            let loss, grads =
+            let loss, (grads, z) =
               if not t.jit then f args
               else
                 Rune.jit
                   Nx.Ptree.(
                     pair p (instantiate (module Barlow.Group))
-                    @-> returns (pair tensor p))
+                    @-> returns (pair tensor (pair p (list tensor))))
                   f args
             in
-            let loss = Nx.item [] (Nx.place Nx.Host.on loss) in
-            let lrel = Float.abs (loss -. l64) /. Float.abs l64 in
-            let lbound =
-              Float.max (2. *. Float.abs (l32 -. l64) /. Float.abs l64) f32_ulp
+            let values, relus =
+              List.partition
+                (fun (n, _) -> loss_input n)
+                (List.combine !names z)
             in
-            report
-              ~name:(Printf.sprintf "barlow/%s/loss" device)
-              ~pass:(lrel <= lbound)
-              (Printf.sprintf
-                 "raven %.10g  torch f64 %.10g  rel %.3g  bound %.3g" loss l64
-                 lrel lbound);
-            let worst = ref 0. in
-            let norm a =
-              Float.sqrt (Array.fold_left (fun s x -> s +. (x *. x)) 0. a)
-            in
-            let dist a b = norm (Array.map2 ( -. ) a b) in
-            let scale =
-              Float.sqrt
-                (List.fold_left (fun s (_, a) -> s +. (norm a ** 2.)) 0. g64)
-            in
-            List.iter2
-              (fun (path, g) ((path', r64), (_, r32)) ->
-                if path <> path' then die "%s against %s" path path';
-                (* A leaf whose exact gradient is 0, by the softmax's or the
-                   batch normalisation's invariance to a shift, holds rounding
-                   alone, and the ratio of two roundings says nothing: it is
-                   judged by its distance against float32's spacing at the
-                   gradient's norm. *)
-                if norm r64 <= zero_leaf *. scale then begin
-                  let d = dist g r64 /. scale in
-                  let ratio = d /. f32_ulp in
-                  worst := Float.max !worst ratio;
-                  report
-                    ~name:(Printf.sprintf "barlow/%s/%s" device path)
-                    ~pass:(ratio <= 1.)
-                    (Printf.sprintf
-                       "exact 0: distance %.3g of the gradient's norm, torch \
-                        f32 %.3g, bound %.3g"
-                       d
-                       (dist r32 r64 /. scale)
-                       f32_ulp)
-                end
-                else begin
-                  let mine = rel g r64 and theirs = rel r32 r64 in
-                  let ratio = mine /. (2. *. theirs) in
-                  worst := Float.max !worst ratio;
-                  report
-                    ~name:(Printf.sprintf "barlow/%s/%s" device path)
-                    ~pass:(ratio <= 1.)
-                    (Printf.sprintf "rel %.3g  torch f32 rel %.3g  ratio %.2f"
-                       mine theirs ratio)
-                end)
-              (leaves p grads) (List.combine g64 g32);
-            Printf.printf "worst ratio to twice torch's f32 spread: %.3f\n"
-              !worst);
+            let ps = List.map (fun (n, z) -> whole n z) relus in
+            if flag opts "--signs" then save_signs branch ps
+            else begin
+              check_branch branch ps;
+              let label = Printf.sprintf "barlow/%s" device in
+              let loss = Nx.item [] (Nx.place Nx.Host.on loss) in
+              let projection v kind =
+                match kind with
+                | "grad" -> Printf.sprintf "projection_grad_v%d.npy" v
+                | k -> Printf.sprintf "projection_%s_v%d.npy" k v
+              in
+              let mine =
+                List.map
+                  (fun v ->
+                    (whole ""
+                       (List.assoc (Printf.sprintf "v%d_projection" v) values))
+                      .z)
+                  [ 0; 1; 2 ]
+              in
+              check_loss ~label ~prec:"f32" ~judge:true ~input:"projection"
+                branch ~loss ~l64:(ref_loss "f64") ~mine
+                ~files:(List.map projection [ 0; 1; 2 ]);
+              check_leaves ~label ~prec:"f32" (leaves p grads)
+                ~r64:(ref_grads "f64") ~rref:(ref_grads "f32")
+                ~terms:(ref_grads "zero");
+              check_flips ~label ~prec:"f32" branch ps
+            end);
       }
   end
 
@@ -1911,7 +2195,8 @@ let () =
            args)
   | "validate" :: args ->
       validate
-        (parse ~flags:[ "--bf16"; "--masks" ]
+        (parse
+           ~flags:[ "--bf16"; "--masks"; "--signs" ]
            ~options:
              [
                "--weights";

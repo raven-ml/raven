@@ -149,6 +149,7 @@ val group :
     Raises [Invalid_argument] as {!Pixels.draw} and {!pack} do. *)
 
 val loss :
+  ?record:'d Model.record ->
   weights ->
   dropout:Model.dropout ->
   remat:bool ->
@@ -161,7 +162,11 @@ val loss :
     [v.a1], of [v.a2] and of their mixup, [v.a1] mixed with [v.a2]'s rows
     [v.perm] by [v.alpha]. Every place of [v.a1] and [v.a2] must hold a pixel,
     place [i] of both the same one's, since an empty place would enter the
-    group's statistics.
+    group's statistics. [record] receives each view's intermediate values, as
+    {!Model.train}'s does, then its projector's hidden layer [i]'s normalised
+    values before their ReLU, [projector{i}_bn], and its projection,
+    [projection], each name after [v0_], [v1_] or [v2_] for [v.a1]'s, [v.a2]'s
+    and the mixup's.
 
     Raises [Invalid_argument] as {!Model.train} and {!objective} do. *)
 
