@@ -27,6 +27,16 @@
 
 (opam_file_location inside_opam_directory)
 
+(pin
+ (url
+  "git+https://github.com/tmattio/mosaic.git#66da2fdde6790351b9bc16561a97249bb92d1a31")
+ (package
+  (name mosaic))
+ (package
+  (name matrix))
+ (package
+  (name toffee)))
+
 (package
  (name lz)
  (dir packages/lz)

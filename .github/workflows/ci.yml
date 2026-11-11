@@ -66,6 +66,9 @@ jobs:
 
       - name: Install dependencies
         run: |
+          opam pin add matrix git+https://github.com/tmattio/mosaic.git#66da2fdde6790351b9bc16561a97249bb92d1a31 --no-action
+          opam pin add toffee git+https://github.com/tmattio/mosaic.git#66da2fdde6790351b9bc16561a97249bb92d1a31 --no-action
+          opam pin add mosaic git+https://github.com/tmattio/mosaic.git#66da2fdde6790351b9bc16561a97249bb92d1a31 --no-action
           opam install . --deps-only --with-test
 
       # Every runtest runs under .github/memcap.sh, which caps its memory so
