@@ -131,7 +131,7 @@ let same_bytes (module Gpu : Gpu) () =
   let x' = B.create d (4 * words) and y' = B.create d (4 * words) in
   ignore
     (G.run p
-       { inputs = [| x'; y' |]; ints = [||]; step_points = G.step_points p });
+       { inputs = [| x'; y' |]; ints = [||] });
   let le32s f = String.concat "" (List.init words (fun k -> le32 (f k))) in
   equal string ~msg:"ids, by hand" (le32s (fun k -> 7 + (3 * k))) (get x);
   equal string ~msg:"twice, by hand" (le32s (fun k -> 15 + (6 * k))) (get y);
@@ -155,7 +155,7 @@ let timed (module Gpu : Gpu) () =
     let inputs = Array.init 2 (fun _ -> B.create d (4 * words)) in
     let t0 = Rig.Profile.now () in
     let times =
-      G.time p { inputs; ints = [||]; step_points = G.step_points p }
+      G.time p { inputs; ints = [||] }
     in
     let t1 = Rig.Profile.now () in
     let error = Gpu.clock_error ~since:(t1 - opened) in

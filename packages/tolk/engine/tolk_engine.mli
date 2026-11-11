@@ -232,13 +232,12 @@ val time :
 (** [time ~vars s slots] is the time in seconds of one run of [s] on [slots]
     with [vars] ({!run}), reporting nothing on standard output whatever
     {!Tolk.Setting.debug} holds. The time is the sum, over the run's
-    submissions that run a kernel of [s], of their work in a profile of the
-    run ({!Rig.Profile.Work}). A submission of several kernels counts once,
-    and one of copies alone counts nothing. The run's submissions are found
-    by the points its steps report ({!Rig_program.type-frame}), so work of
-    other domains and of profiles taken around it adds nothing. A time loads
-    nothing, and allocates no device memory but the storage of a schedule
-    linked {!Per_run}.
+    submissions that run a kernel of [s], of their devices' times for their
+    work ({!Rig_program.time}). A submission of several kernels counts once,
+    and one of copies alone counts nothing. Only the run's submissions are
+    timed, so work of other domains and of profiles taken around it adds
+    nothing. A time loads nothing, and allocates no device memory but the
+    storage of a schedule linked {!Per_run}.
 
     With [scrub], the run starts from a clean, cold cache on each device of
     [scrub] that runs a kernel of [s]: before the run, and outside its time,
@@ -254,17 +253,15 @@ val time :
     GPU of 576 GB/s.
 
     Raises [Invalid_argument], before the scrub and the run, if [s] has a
-    loop, whose steps a run reports one trip of ({!Rig_program.type-frame}),
+    loop, whose steps a run may submit once per trip ({!Rig_program.time}),
     and, naming the device, if a kernel of [s] runs on another machine's
-    device ({!Rig.host_of}), whose work no profile here records; [Failure]
-    naming the device and the kernels if the profile holds no work of a
-    submission of the run that runs a kernel of [s], which a device's driver
-    drops where it cannot time it, such as a sample its driver finds outside
-    the host's window: a caller that samples several times can take the
-    sample as lost. Raises as {!run} does, and {!Rig.Lost} if a device that
-    runs a kernel of [s] is lost during the run, or if another domain's
-    device whose work the run's profile recorded is lost before the profile
-    reads it ({!Rig.Profile.take}). *)
+    device ({!Rig.host_of}), whose work no time here reads; [Failure] naming
+    the device and the kernels if a device did not time a submission of the
+    run that runs a kernel of [s], as a driver drops a sample it cannot
+    time, such as one it finds outside the host's window: a caller that
+    samples several times can take the sample as lost. Raises as {!run}
+    does, and {!Rig.Lost} if a device of [s] is lost, or closed, before the
+    time has read its times. *)
 
 (**/**)
 

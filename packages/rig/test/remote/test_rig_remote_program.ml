@@ -147,7 +147,6 @@ let runs ds =
            {
              inputs = [| x; c |];
              ints = [| groups; trips |];
-             step_points = G.step_points p;
            });
       (read x, read c))
     [ (8, 1); (3, 0); (5, 4); (3, -1) ]
@@ -179,7 +178,7 @@ let same_bytes () =
   equal ~msg:"on the agent" (list (pair string string)) local far
 
 (* A run's answer is the host's point, reached once the run's work there is
-   done, and it is every step's point in the frame. *)
+   done. *)
 let host_point () =
   with_job @@ fun j _ ->
   let h = List.hd (Rig_remote.hosts j) in
@@ -191,18 +190,12 @@ let host_point () =
          (Iarray.of_array (with_host ds)))
   in
   let x = Rig.Buffer.create ds.(1) size and c = Rig.Buffer.create ds.(0) 8 in
-  let step_points = G.step_points p in
-  let ends = G.run p { inputs = [| x; c |]; ints = [| 1; 0 |]; step_points } in
+  let ends = G.run p { inputs = [| x; c |]; ints = [| 1; 0 |] } in
   equal ~msg:"the host's point" (list string)
     [ Rig.name h ]
     (List.map
        (fun p -> Option.fold ~none:"" ~some:Rig.name (Rig.Point.device p))
        (Array.to_list ends));
-  let point = Testable.make ~pp:Rig.Point.pp ~equal:( = ) in
-  greater ~msg:"Submit steps" int ~than:1 (Array.length step_points);
-  equal ~msg:"every step's point" (array point)
-    (Array.make (Array.length step_points) ends.(0))
-    step_points;
   Rig.Point.wait ends.(0)
 
 (* A binary that is no program is the agent's refusal. *)
@@ -291,7 +284,7 @@ let rail_end_to_end () =
   let far = require_ok ~pp:Format.pp_print_string (G.load fill [| h |]) in
   let pt =
     (G.run far
-       { inputs = [||]; ints = [| 42 |]; step_points = G.step_points far }).(0)
+       { inputs = [||]; ints = [| 42 |] }).(0)
   in
   Rig.Point.wait pt;
   (* [arrived] is the word at byte 256 of the counts. *)
@@ -324,7 +317,7 @@ let rail_end_to_end () =
   let x = Rig.Buffer.create Rig.host 8 in
   ignore
     (G.run here
-       { inputs = [| x |]; ints = [||]; step_points = G.step_points here });
+       { inputs = [| x |]; ints = [||] });
   equal ~msg:"the word, here" string (le64 42) (read_host x);
   ignore (Sys.opaque_identity (r, far, here))
 
@@ -505,7 +498,7 @@ let loaded_rail_ends () =
     hs;
   Array.iter Rig.Point.wait
     (G.run send
-       { inputs = [||]; ints = [| 42 |]; step_points = G.step_points send });
+       { inputs = [||]; ints = [| 42 |] });
   let arrived = Rig.Buffer.create receiver 8 in
   let bytes = Rig.Buffer.create receiver 8 in
   until ~what:"the retained rail's transfer" (fun () ->
@@ -514,7 +507,6 @@ let loaded_rail_ends () =
            {
              inputs = [| arrived; bytes |];
              ints = [||];
-             step_points = G.step_points receive;
            });
       String.get_int64_le (read arrived) 0 >= 1L);
   equal ~msg:"the received word" string (le64 42) (read bytes)
@@ -567,7 +559,7 @@ let collected_end () =
   rail_is_dropped h id;
   Array.iter Rig.Point.wait
     (G.run send
-       { inputs = [||]; ints = [| 42 |]; step_points = G.step_points send });
+       { inputs = [||]; ints = [| 42 |] });
   let count = Rig.Buffer.create h 8 in
   until ~what:"the transfer's send" (fun () ->
       let points =
@@ -575,7 +567,6 @@ let collected_end () =
           {
             inputs = [| count |];
             ints = [||];
-            step_points = G.step_points sent;
           }
       in
       Array.iter Rig.Point.wait points;
@@ -654,7 +645,7 @@ let refused_frame () =
   in
   let x = Rig.Buffer.create h 8 in
   raises_match Exn.invalid_arg (fun () ->
-      G.run p { inputs = [| x |]; ints = [||]; step_points = G.step_points p });
+      G.run p { inputs = [| x |]; ints = [||] });
   equal ~msg:"the job's failure" (option string) None (Rig_remote.failed j)
 
 (* A run raises at the call on an input the agent's host does not address that
@@ -698,7 +689,7 @@ let unaddressed_input () =
   in
   let x = Rig.Buffer.create d 8 in
   raises_match Exn.invalid_arg (fun () ->
-      G.run p { inputs = [| x |]; ints = [||]; step_points = G.step_points p });
+      G.run p { inputs = [| x |]; ints = [||] });
   equal ~msg:"the job's failure" (option string) None (Rig_remote.failed j)
 
 (* A run raises at the call on threads per group, read from the frame's ints,
@@ -762,10 +753,10 @@ let too_many_threads () =
        "Rig_program.run: main runs at most 1024 threads per group; the frame \
         sets 513x2x1") (fun () ->
       G.run p
-        { inputs = [||]; ints = [| 513; 4096 |]; step_points = G.step_points p });
+        { inputs = [||]; ints = [| 513; 4096 |] });
   Array.iter Rig.Point.wait
     (G.run p
-       { inputs = [||]; ints = [| 512; 0 |]; step_points = G.step_points p });
+       { inputs = [||]; ints = [| 512; 0 |] });
   equal ~msg:"the job's failure" (option string) None (Rig_remote.failed j)
 
 let () =

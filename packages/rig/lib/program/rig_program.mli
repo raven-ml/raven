@@ -427,25 +427,9 @@ val load :
     [Write] or an [Unordered] ref or a copy's [dst] names, or a [Move] has it
     as its destination. *)
 
-type frame = {
-  inputs : Rig.Buffer.t array;
-  ints : int array;
-  step_points : Rig.Point.t array;
-}
-(** The type for a run's frame: its inputs, by index, the first words of its
-    ints, and where the run reports each step's point. [step_points] has one
-    element per [Submit] step of the program, in step order, a loop's body
-    counted once. {!run} stores into each element the point of its step's
-    last submit in the run. A step the run does not reach, such as the body
-    of a loop of zero trips, holds after that run the shared reached point
-    of {!Rig.host} that {!val-step_points} starts each element at, so no
-    element ever holds an earlier run's point. *)
-
-val step_points : loaded -> Rig.Point.t array
-(** [step_points p] is a fresh array for the [step_points] of [p]'s frames,
-    each element the same point of {!Rig.host}, which is reached. A caller
-    makes it once, with the frame, and passes it to every run: a run
-    allocates nothing for it. *)
+type frame = { inputs : Rig.Buffer.t array; ints : int array }
+(** The type for a run's frame: its inputs, by index, and the first words of
+    its ints. *)
 
 val run : ?waits:Rig.Point.t array -> loaded -> frame -> Rig.Point.t array
 (** [run ~waits p f] runs [p]'s steps once, in order, over the frame [f]
@@ -474,10 +458,9 @@ val run : ?waits:Rig.Point.t array -> loaded -> frame -> Rig.Point.t array
 
     Raises [Invalid_argument]:
     {ul
-    {- before any step runs, if [f] has another number of inputs than [p],
-       more ints, or [step_points] another number of elements than its
-       [Submit] steps, or if an input is not on its device, holds fewer bytes,
-       is read-only memory ({!Rig.Buffer.val-access}) that the run writes, or
+    {- before any step runs, if [f] has another number of inputs than [p] or
+       more ints, or if an input is not on its device, holds fewer bytes, is
+       read-only memory ({!Rig.Buffer.val-access}) that the run writes, or
        cannot be borrowed by a device that names it, if it is called on the
        thread that runs [p], as from a callback inside that run, or from a
        callback inside a lock ({!Rig.section-domains});}
@@ -521,8 +504,7 @@ val time : ?waits:Rig.Point.t array -> loaded -> frame -> int array
     frame's inputs, each as its memory's id on the machine, its offset and its
     length, and the frame's ints. The submission names only the memory of
     this process that holds these words, and its point is reached once the
-    run's work on that machine is done. {!run} stores that point in every
-    element of the frame's [step_points]. The machine's agent runs it after the
+    run's work on that machine is done. The machine's agent runs it after the
     work submitted to the machine before it, and runs the work submitted
     after it once the run is done ([Rig_remote]'s order section).
 

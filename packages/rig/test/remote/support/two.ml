@@ -254,7 +254,6 @@ let () =
          {
            inputs = [| x; y |];
            ints = [| c |];
-           step_points = G.step_points senders.(k);
          });
     Rig.Point.wait p;
     if read out <> le32s (fun i -> (2 * (i + (1000 * c))) + 1) then

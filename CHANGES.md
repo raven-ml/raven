@@ -1281,6 +1281,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Tolk_engine.time` times only its run's submits (`Rig_program.time`). It
+  took a profile, which times every domain's submits while it runs, so other
+  domains' work paid for a search, and a loss of their devices raised
+  `Rig.Lost` in it.
 - An operand counts as decoded only where it converts integers loaded from
   integer storage: ReLU of a bfloat16, a float's bits through an integer, no
   longer sends a product to the stream a decoded matrix takes on a GPU.

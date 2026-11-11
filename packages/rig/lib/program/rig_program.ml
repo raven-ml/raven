@@ -1105,15 +1105,9 @@ type prepared = {
 }
 
 type lstep =
-  | Lsubmit of {
-      spec : submit;
-      copies : prepared array;
-      index : int;
-      step : int;
-    }
-    (* [index] numbers the [Submit] steps in step order, and [step] is the
-       index among the description's steps of the step, or of the loop that
-       holds it. *)
+  | Lsubmit of { spec : submit; copies : prepared array; step : int }
+    (* [step] is the index among the description's steps of the step, or of
+       the loop that holds it. *)
   | Lmove of {
       src : slot;
       src_offset : (known * int) array;
@@ -1128,11 +1122,7 @@ type lstep =
       body : lstep array;
     }
 
-type frame = {
-  inputs : B.t array;
-  ints : int array;
-  step_points : Rig.Point.t array;
-}
+type frame = { inputs : B.t array; ints : int array }
 
 (* Whether each of [s]'s slots is written: a [Write] or an [Unordered] ref
    names it, or it is a copy's [dst]. [s]'s indices are checked. *)
@@ -1214,15 +1204,6 @@ let launches (t : t) =
   in
   Iarray.iter step t.steps;
   Array.of_list (List.rev !acc)
-
-(* The number of [t]'s [Submit] steps, a loop's body counted once. *)
-let submits (t : t) =
-  let rec step n = function
-    | Submit _ -> n + 1
-    | Loop { body; _ } -> Iarray.fold_left step n body
-    | Move _ -> n
-  in
-  Iarray.fold_left step 0 t.steps
 
 (* The words of the run's ints that [t]'s steps may write: [None] for any, as a
    [Submit] slot written or a [Move]'s destination may; else the loops' trip
@@ -1309,9 +1290,6 @@ type here = {
   mutable last : Rig.Point.t array;
       (* By device: the run's last point, where [ran]; empty before the first
          submit. *)
-  mutable step_points : Rig.Point.t array;
-      (* The frame's step points while a run runs, and empty between runs. *)
-  received : Rig.Point.t array; (* The points of [run_received]'s frames. *)
   access : Rig.access array; (* By input, as its steps use it. *)
   binds : bind array;
   bound : B.t array;
@@ -1631,14 +1609,12 @@ let submission p i k s =
       broken "step %d: a parameter hole at byte %d meets set bits of its bytes"
         i at
 
-(* Step [i]'s loaded form, which numbers its [Submit] steps from [!next]. *)
-let rec lstep p next i = function
+(* Step [i]'s loaded form. *)
+let rec lstep p i = function
   | Submit s ->
       let n = if per_copy p.t s then 2 else 1 in
       let copies = Array.init n (fun k -> submission p i k s) in
-      let index = !next in
-      incr next;
-      Lsubmit { spec = s; copies; index; step = i }
+      Lsubmit { spec = s; copies; step = i }
   | Move { src; src_offset; dst; dst_offset; length } ->
       (* An offset names no leaf, so its terms are those of every copy. *)
       let terms o =
@@ -1654,7 +1630,7 @@ let rec lstep p next i = function
         }
   | Loop { trips; trip; flag; body } ->
       let trips = Array.init 2 (fun k -> resolve p k trips) in
-      let body = Array.map (lstep p next i) (Iarray.to_array body) in
+      let body = Array.map (lstep p i) (Iarray.to_array body) in
       Lloop { trips; trip; flag; body }
 
 (* A device borrows host memory that starts on a page, as a host buffer of 64
@@ -1755,24 +1731,6 @@ let footprint t devices =
   add Rig.host (2 * Rig.allocation Rig.host (ints_bytes t));
   List.map (fun (d, n) -> (d, !n)) held
 
-(* The point every fresh array of points starts at, for the process: an empty
-   submission's on the host, made at the first need and reached once its submit
-   returns. Two domains' first needs may each make one; both use the one stored
-   first. *)
-let first_reached : Rig.Point.t option Atomic.t = Atomic.make None
-
-let reached () =
-  match Atomic.get first_reached with
-  | Some p -> p
-  | None ->
-      let p =
-        Rig.submit (Sub.take (Sub.make Rig.host [||])) ~buffers:[||]
-      in
-      ignore (Atomic.compare_and_set first_reached None (Some p));
-      Option.get (Atomic.get first_reached)
-
-let fresh_points t = Array.make (submits t) (reached ())
-
 let load_here ~rails t devices =
   (* Every end [rails] gives is kept with the images: a rail ends once its end
      is unreachable. *)
@@ -1822,8 +1780,6 @@ let load_here ~rails t devices =
       flag = Bytes.create 1;
       ran = Array.make (Array.length devices) false;
       last = [||];
-      step_points = [||];
-      received = fresh_points t;
       access = input_access t;
       binds = binds t;
       bound = Array.make pairs unset;
@@ -1844,8 +1800,7 @@ let load_here ~rails t devices =
         if not (Hashtbl.mem funcs (image, name)) then
           Rig.Image.prepare p.images.(image) name)
       (launches t);
-    let next = ref 0 in
-    p.steps <- Array.mapi (lstep p next) (Iarray.to_array t.steps);
+    p.steps <- Array.mapi (lstep p) (Iarray.to_array t.steps);
     Iarray.iteri
       (fun m _ -> Array.iteri (fun k _ -> write_init p m k) mem.(m))
       t.memory
@@ -1857,17 +1812,13 @@ let load_here ~rails t devices =
 
 let invalid fmt = Printf.ksprintf invalid_arg ("Rig_program.run: " ^^ fmt)
 
-(* The frame's counts: as many inputs as [t]'s, at most [t]'s ints, and a point
-   per [Submit] step. *)
+(* The frame's counts: as many inputs as [t]'s, and at most [t]'s ints. *)
 let check_counts (t : t) (f : frame) =
   let n = Iarray.length t.inputs in
   if Array.length f.inputs <> n then
     invalid "%d inputs for a program of %d" (Array.length f.inputs) n;
   if Array.length f.ints > t.ints then
-    invalid "%d ints for a program of %d" (Array.length f.ints) t.ints;
-  let n = Array.length f.step_points and steps = submits t in
-  if n <> steps then
-    invalid "%d points for a program of %d Submit steps" n steps
+    invalid "%d ints for a program of %d" (Array.length f.ints) t.ints
 
 (* [b], input [i] of [spec], on [spec]'s device [d] and holding its bytes. *)
 let check_input i (spec : input) d b =
@@ -1907,16 +1858,11 @@ let bind (p : here) (f : frame) =
         | None -> invalid "input %d: %s cannot borrow it" i (Rig.name dev)
     in
     p.bound.((i * nd) + on) <- b
-  done;
-  (* Every element is the run's: a step the run does not submit holds the
-     reached point, never an earlier run's. *)
-  Array.fill f.step_points 0 (Array.length f.step_points) (reached ());
-  p.step_points <- f.step_points
+  done
 
 (* Drops the run's inputs, so a loaded program keeps no caller's buffer past its
    run. *)
 let unbind (p : here) =
-  p.step_points <- [||];
   let nd = Array.length p.devices in
   for j = 0 to Array.length p.binds - 1 do
     let { input; on; _ } = p.binds.(j) in
@@ -2019,7 +1965,7 @@ let set_last (p : here) d point =
    as it returns or raises, and a run that raises frees every step's run
    ([release_runs]). With a [timer], a run of [time]'s, the submit is timed
    as its [step]. *)
-let submit_step p timer k waits (spec : submit) copies index step =
+let submit_step p timer k waits (spec : submit) copies step =
   let q = copies.(if Array.length copies = 2 then k else 0) in
   let d = spec.device in
   (match
@@ -2038,8 +1984,7 @@ let submit_step p timer k waits (spec : submit) copies index step =
   with
   | point ->
       unpass q;
-      set_last p d point;
-      p.step_points.(index) <- point
+      set_last p d point
   | exception e ->
       unpass q;
       Sub.Run.release q.srun;
@@ -2174,8 +2119,8 @@ let flag_holds p k (slot, at) =
 let rec exec (p : here) timer k waits = function
   | Lmove { src; src_offset; dst; dst_offset; boxes } ->
       move_step p k waits ~src ~src_offset ~dst ~dst_offset boxes
-  | Lsubmit { spec; copies; index; step } ->
-      submit_step p timer k waits spec copies index step
+  | Lsubmit { spec; copies; step } ->
+      submit_step p timer k waits spec copies step
   | Lloop { trips; trip; flag; body } ->
       (* A loop without closures: a run allocates only its answer. *)
       let n = run_value p k trips.(k) in
@@ -2493,9 +2438,7 @@ let run_words ~waits p (f : frame) =
   for i = 0 to Array.length f.ints - 1 do
     set_word p.words (at + 8 + (8 * i)) f.ints.(i)
   done;
-  let point = Rig.submit ?waits p.srun ~buffers:[||] in
-  Array.fill f.step_points 0 (Array.length f.step_points) point;
-  [| point |]
+  [| Rig.submit ?waits p.srun ~buffers:[||] |]
 
 (* The lock as [run_here] takes it. *)
 let run_there ~waits p (f : frame) =
@@ -2522,8 +2465,6 @@ let time ?waits p f =
         ("Rig_program.time: a program of "
         ^ Rig.name (Rig.host_of p.devices.(0))
         ^ ", another machine's host")
-
-let step_points = function Here { t; _ } | There { t; _ } -> fresh_points t
 
 let load_received ?rails b ~device =
   let r = { R.s = b; at = 0 } in
@@ -2577,7 +2518,7 @@ let run_received ?waits w ~program ~region =
     if n < 0 || n > p.t.ints then
       R.fail r "%d ints for a program of %d" n p.t.ints;
     let ints = Array.init p.t.ints (fun _ -> R.int r) in
-    (p, { inputs; ints = Array.sub ints 0 n; step_points = p.received })
+    (p, { inputs; ints = Array.sub ints 0 n })
   with
   | exception R.Malformed (at, why) ->
       Error (strf "a malformed run at byte %d: %s" at why)

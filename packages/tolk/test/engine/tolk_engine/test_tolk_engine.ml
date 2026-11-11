@@ -6801,8 +6801,8 @@ let profiled f =
   in
   (r, taken, events)
 
-(* A time under a profile takes its own: its value is the sum of the spans of
-   its kernels that the outer profile records too. *)
+(* A profile taken around a time records the run's kernels, and the time is
+   the sum of their spans. *)
 let time_under_profile name =
   let s, slots = timed name in
   let t, _, events = profiled (fun () -> Engine.time ~vars:n_bound s slots) in
@@ -6850,8 +6850,9 @@ let counts_grouped_kernels () =
   let ns = List.fold_left (fun ns (_, d) -> ns + d) 0 works in
   equal ~msg:"the time" (float 1e-12) (Float.of_int ns *. 1e-9) t
 
-(* A run reports one trip of a loop's steps, so a time refuses a schedule
-   with a loop, before its run, whatever its trips: none, one or more. *)
+(* A run may submit a loop's steps once per trip, so a time refuses a
+   schedule with a loop, before its run, whatever its trips: none, one or
+   more. *)
 let refuses_a_loop limit () =
   let s, c, _ = flag_loop "CPU" (limit, 2) in
   raises_match

@@ -929,9 +929,9 @@ type t = {
   made : made array;
   calls : int;
   kernels : kernel list;
-  launches : (Rig.t * string list) array;
-      (* for each element of the frame's [step_points], its submission's
-         device and the kernels it launches *)
+  launches : (Rig.t * string list) option array;
+      (* for each step of the program, a [Submit] step's device and the
+         kernels it launches *)
   looped : bool; (* whether a step of the program is a [Loop] *)
 }
 
@@ -1059,8 +1059,8 @@ let is_loop : Rig_program.step -> bool = function
   | Loop _ -> true
   | Submit _ | Move _ -> false
 
-(* For each [Submit] step that [b] assembled, in the order of a frame's
-   [step_points], its device and the names of the kernels it launches. *)
+(* For each step that [b] assembled, in step order, a [Submit] step's device
+   and the names of the kernels it launches. *)
 let launches (b : builder) =
   let names parts =
     Iarray.fold_right
@@ -1068,14 +1068,12 @@ let launches (b : builder) =
         match p with Launch { name; _ } -> name :: names | _ -> names)
       parts []
   in
-  let rec step acc (s : Rig_program.step) =
-    match s with
+  let step : Rig_program.step -> _ = function
     | Submit { device; parts; _ } ->
-        (Dynarray.get b.rigs device, names parts) :: acc
-    | Move _ -> acc
-    | Loop { body; _ } -> Iarray.fold_left step acc body
+        Some (Dynarray.get b.rigs device, names parts)
+    | Move _ | Loop _ -> None
   in
-  Array.of_list (List.rev (List.fold_left step [] (List.rev b.steps)))
+  Array.of_list (List.rev_map step b.steps)
 
 (* The storage nodes [bound] binds, checked against [devices], and the
    schedule a link of [linear] runs, with the storage each run makes. *)
@@ -1140,7 +1138,6 @@ let link_with ~separate ~devices ?(bound = []) ?(storage = Linked) linear =
           {
             inputs = Array.make (Array.length inputs) idle;
             ints = Array.make (Dynarray.length b.words) 0;
-            step_points = Rig_program.step_points loaded;
           };
         idle;
         width;
@@ -1243,23 +1240,24 @@ let inputs t slots =
       | Slot slot -> slot_buffer slots slot)
   done
 
-(* Runs [t]'s program on [slots], calling [each] with its ends, and lets the
-   frame drop the run's buffers. *)
-let run_on each t slots =
+(* [call]'s answer for [t]'s program over its frame on [slots], a run or a
+   time ([Rig_program.run], [Rig_program.time]), after which the frame drops
+   the run's buffers. *)
+let run_on call t slots =
   inputs t slots;
   Fun.protect
     ~finally:(fun () ->
       Array.fill t.frame.inputs 0 (Array.length t.frame.inputs) t.idle)
-    (fun () -> each (Rig_program.run t.loaded t.frame))
+    (fun () -> call t.loaded t.frame)
 
-(* Runs [t] on [slots], calling [each] with the run's ends. The storage of a
-   schedule linked per run is made before the run, in its slots, and returned
-   after it, its memory coming back once the work on it is done; on a raise,
-   all that was made is returned. A schedule that makes no storage runs on the
+(* [call]'s answer for [t] on [slots] ([run_on]). The storage of a schedule
+   linked per run is made before the run, in its slots, and returned after
+   it, its memory coming back once the work on it is done; on a raise, all
+   that was made is returned. A schedule that makes no storage runs on the
    caller's slots. *)
-let run_with t ~vars slots each =
+let run_with t ~vars slots call =
   words t ~vars;
-  if Array.length t.made = 0 then run_on each t slots
+  if Array.length t.made = 0 then run_on call t slots
   else begin
     let all = Array.make t.width None in
     Array.blit slots 0 all 0 (Int.min (Array.length slots) t.width);
@@ -1276,7 +1274,7 @@ let run_with t ~vars slots each =
             held := whole :: !held;
             all.(m.slot) <- Some buf)
           t.made;
-        run_on each t all)
+        run_on call t all)
   end
 
 (* Reports *)
@@ -1354,7 +1352,8 @@ let print_reports t events =
 
 let submit t ~vars slots =
   check_slots t slots;
-  Mutex.protect t.lock (fun () -> run_with t ~vars slots ignore)
+  Mutex.protect t.lock (fun () ->
+      ignore (run_with t ~vars slots Rig_program.run))
 
 let run ?(vars = []) t slots =
   let debug = Setting.value Setting.debug in
@@ -1418,7 +1417,7 @@ type device_scrub = {
 (* Reads [s]'s buffer and waits for the read. *)
 let read_scrub s =
   Mutex.protect s.read.lock (fun () ->
-      run_with s.read ~vars:[] s.buffers ignore);
+      ignore (run_with s.read ~vars:[] s.buffers Rig_program.run));
   Rig.Buffer.wait (Option.get s.buffers.(0)) Read
 
 let device_scrub d bytes =
@@ -1476,25 +1475,15 @@ let scrub t =
     (fun d -> Option.map (device_scrub d) (cache_bytes d))
     (timed_devices t)
 
-(* The steps of [points], a run's [step_points], that launch a kernel, each
-   as its index and its point. With no loop, a run reaches every step. *)
-let kernel_steps t points =
-  let steps = ref [] in
-  Array.iteri
-    (fun i p -> if snd t.launches.(i) <> [] then steps := (i, p) :: !steps)
-    points;
-  !steps
-
-(* Refuses a schedule with a loop: a run reports the point of a looped step's
-   last submit alone, so a sum over the reported points would count one
-   trip. *)
+(* Refuses a schedule with a loop, whose steps a run may submit once per trip:
+   [Rig_program.time] times a program without one. *)
 let check_unlooped t =
   if t.looped then
     fail "Tolk_engine.time"
-      "a schedule with a loop: a run reports one trip of each looped step"
+      "a schedule with a loop, whose steps a run may submit once per trip"
 
 (* Refuses a schedule with a kernel on another machine's device: its work is
-   timed there, and no time of it comes back ({!Rig.Profile.Work}). *)
+   timed there, and [Rig_program.time] brings no time of it back. *)
 let check_local t =
   match
     List.find_opt
@@ -1507,21 +1496,19 @@ let check_local t =
         (Rig.name k.device)
   | None -> ()
 
-(* Raises for the step [i], whose work the profile holds none of: a sum
-   without it would be short. A device drops a sample whose times its driver
-   finds outside the host's window, so a [Failure], which a search takes as
-   the failure of that sample or that candidate, never of the search. *)
-let untimed t i =
-  let device, kernels = t.launches.(i) in
+(* Raises for the step of [device] launching [kernels], whose device did not
+   time its work: a sum without it would be short. A device drops a sample
+   whose times its driver finds outside the host's window, so a [Failure],
+   which a search takes as the failure of that sample or that candidate,
+   never of the search. *)
+let untimed device kernels =
   failwith
-    (Printf.sprintf "Tolk_engine.time: %s recorded no work for %s"
+    (Printf.sprintf "Tolk_engine.time: %s timed no work for %s"
        (Rig.name device)
        (String.concat ", " kernels))
 
-(* The run's work in a profile is the [Work] whose point a step of the run
-   that launches a kernel reported in the frame, which the lock keeps the
-   run's until it is copied: another domain's work of the same kernels has
-   other points. *)
+(* The sum of the times of the run's steps that launch a kernel. The steps
+   are numbered as the program's, which [t.launches] describes. *)
 let time ?(vars = []) ?(scrub = []) t slots =
   check_unlooped t;
   check_local t;
@@ -1531,28 +1518,18 @@ let time ?(vars = []) ?(scrub = []) t slots =
       if List.exists (fun (k : kernel) -> Rig.equal k.device s.on) t.kernels
       then read_scrub s)
     scrub;
-  let steps = ref [] and ends = ref [] in
-  let run () =
-    Mutex.protect t.lock (fun () ->
-        run_with t ~vars slots (fun e ->
-            steps := Array.copy t.frame.step_points :: !steps;
-            ends := e :: !ends));
-    List.iter (Array.iter Rig.Point.wait) !ends
+  let times =
+    Mutex.protect t.lock (fun () -> run_with t ~vars slots Rig_program.time)
   in
-  let (), events = Rig.Profile.take run in
-  let launched = List.concat_map (kernel_steps t) !steps in
-  let at p (_, q) = p = q in
-  let works p = function Rig.Profile.Work w -> w.point = p | _ -> false in
-  List.iter
-    (fun (i, p) -> if not (List.exists (works p) events) then untimed t i)
-    launched;
   let ns = ref 0 in
-  List.iter
-    (function
-      | Rig.Profile.Work w when List.exists (at w.point) launched ->
-          ns := !ns + (w.stop - w.start)
-      | _ -> ())
-    events;
+  Array.iteri
+    (fun i step_ns ->
+      match t.launches.(i) with
+      | Some (device, (_ :: _ as kernels)) ->
+          if step_ns < 0 then untimed device kernels;
+          ns := !ns + step_ns
+      | Some (_, []) | None -> ())
+    times;
   Float.of_int !ns *. 1e-9
 
 (* Compiled schedules kept whole

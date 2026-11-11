@@ -3756,7 +3756,7 @@ let program_loop () =
   let p =
     require_ok ~pp:Format.pp_print_string (G.load description [| t.d |])
   in
-  let frame = { G.inputs = [||]; ints = [||]; step_points = G.step_points p } in
+  let frame = { G.inputs = [||]; ints = [||] } in
   let events =
     snd (Prof.take (fun () -> Array.iter Rig.Point.wait (G.run p frame)))
   in
