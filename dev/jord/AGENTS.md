@@ -27,7 +27,10 @@ campaign.
   and `touched`), `Warp` (a grid's centres in another system, pixel points,
   the nearest and bilinear samplers, the source window they read), `Band`
   (STAC's band: scale, offset, nodata and saturated values, one decode,
-  never applied to bitfield bands). `Wkt` and `Points` are private.
+  never applied to bitfield bands), `Sentinel2` (ESA's Level-2A: bands and
+  resolutions, scene classes, reflectance as a `Band` from the product's
+  stated offset, the acquisition key of a datastrip). `Wkt` and `Points`
+  are private.
 - Each file or document format is a library of its own, `lib/<format>/`,
   named `jord_<format>` (`jord.<format>` once jord has a package):
   `jord_geotiff` (nx.io: tags to and from a grid, GDAL's nodata),

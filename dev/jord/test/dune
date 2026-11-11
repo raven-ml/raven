@@ -1,4 +1,11 @@
 (tests
- (names test_crs test_grid test_polygons test_rasterize test_warp test_band)
+ (names
+  test_crs
+  test_grid
+  test_polygons
+  test_rasterize
+  test_warp
+  test_band
+  test_sentinel2)
  (libraries jord nx rune windtrap)
  (deps tm_coords.dat warp_gdal.dat))
