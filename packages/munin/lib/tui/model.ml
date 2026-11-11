@@ -193,7 +193,8 @@ let metric m =
 let goal_metrics (f : Facts.run) =
   List.filter (fun k -> Facts.goal f k <> None) f.metrics
 
-(* The machine's readings a live run's strips end with. *)
+(* The machine's readings a run's strips end with, those the run pane
+   gives. *)
 let machine (f : Facts.run) =
   let has k = Facts.stats f k <> None in
   let device =
@@ -209,15 +210,15 @@ let machine (f : Facts.run) =
     | Some d -> [ "dev/" ^ d ^ "/busy_pct"; "dev/" ^ d ^ "/used_bytes" ]
     | None -> []
   in
-  List.filter has (dev @ [ "sys/cpu_busy_pct" ])
+  List.filter has (dev @ [ "sys/cpu_busy_pct"; "sys/mem_used_bytes" ])
+
+type kind = Metric | Machine
 
 let strips m =
   match focus m with
   | None -> []
   | Some f ->
-      let steps = List.map (fun k -> (k, Data.Step)) f.metrics in
-      if Watch.live f.state then steps @ List.map (fun k -> (k, Data.Time)) (machine f)
-      else steps
+      List.map (fun k -> (k, Metric)) f.metrics @ List.map (fun k -> (k, Machine)) (machine f)
 
 let strip m =
   match m.depth with
@@ -298,7 +299,7 @@ let label_in m f w =
 type chart = {
   slot : slot;
   key : string;
-  axis : Data.axis;
+  kind : kind;
   x : float * float;
   runs : (Plot.role * string) list;
   smooth : bool;
@@ -311,10 +312,10 @@ let facts m runs = List.filter_map (fun (_, o) -> Data.run m.data o) runs
 (* The x domain of a chart of [key] over [runs]. *)
 let domain m key runs = Plot.domain ~key (facts m runs)
 
-let chart m slot key axis x runs =
+let chart m slot key kind x runs =
   let log = Plot.log (facts m runs) key <> Sset.mem key m.scales in
   let smooth = m.smooth && Plot.smoothable key in
-  { slot; key; axis; x; runs; smooth; log; size = List.assoc_opt slot m.slots }
+  { slot; key; kind; x; runs; smooth; log; size = List.assoc_opt slot m.slots }
 
 let marked runs = List.filter (fun (r, _) -> r <> Plot.Context) runs
 
@@ -342,21 +343,18 @@ let charts m =
           | Some k ->
               let others = List.filter (( <> ) k) (goal_metrics f) in
               let smalls = List.filteri (fun i _ -> i < p.smalls) others in
-              let small i s = chart m (Small i) s Step (domain m s (marked drawn)) (marked drawn) in
-              chart m Large k Step (domain m k drawn) drawn :: List.mapi small smalls)
+              let small i s = chart m (Small i) s Metric (domain m s (marked drawn)) (marked drawn) in
+              chart m Large k Metric (domain m k drawn) drawn :: List.mapi small smalls)
       | Strips _ ->
           let first = match marked drawn with ((Plot.Overlay _, _) as o) :: _ -> [ o ] | _ -> [] in
           let runs = first @ [ (Plot.Cursor, id f) ] in
           (* One axis for every strip, so that a column is one moment in each. *)
           let shared = Plot.domain (facts m runs) in
-          List.map
-            (fun (k, axis) ->
-              let x = match axis with Data.Step -> shared | Time -> (0., Facts.bound f.active) in
-              chart m Strip k axis x runs)
-            (strips m)
+          List.map (fun (k, kind) -> chart m Strip k kind shared runs) (strips m)
       | Zoom { metric; _ } -> (
+          let kind = Option.value (List.assoc_opt metric (strips m)) ~default:Metric in
           match zoom_window m with
-          | Some w -> [ chart m Large metric Step w drawn ]
+          | Some w -> [ chart m Large metric kind w drawn ]
           | None -> []))
   | _ -> []
 
@@ -366,7 +364,7 @@ let trend m (f : Facts.run) =
   let role =
     if List.exists (fun (_, o) -> o = me) (marked (drawn m)) then Plot.Cursor else Plot.Context
   in
-  Option.map (fun k -> chart m Trend k Step (0., f.x_end) [ (role, me) ]) (key m (experiment f))
+  Option.map (fun k -> chart m Trend k Metric (0., f.x_end) [ (role, me) ]) (key m (experiment f))
 
 (* The runs pane's lines shown. *)
 let shown_lines m =
@@ -384,8 +382,8 @@ let trends m =
 let frame_of m (c : chart) : Plot.t =
   let zoom = match m.depth with Zoom _ -> c.slot = Large | Charts | Strips _ -> false in
   let now =
-    match (focus m, c.slot, c.axis) with
-    | Some f, (Large | Small _), Data.Step when Watch.live f.state ->
+    match (focus m, c.slot) with
+    | Some f, (Large | Small _) when Watch.live f.state ->
         Option.map Float.of_int f.latest
     | _ -> None
   in
@@ -400,7 +398,7 @@ let frame_of m (c : chart) : Plot.t =
     now;
     cursor = (if zoom then Option.map Float.of_int (zoom_step m) else None);
     extents = zoom;
-    fill = c.axis = Data.Time;
+    fill = c.kind = Machine && not zoom;
     lines = [];
   }
 
@@ -413,13 +411,13 @@ let dots m c =
 (* A reduction keeps smoothed means where smoothing may draw them, so that
    [s] waits for no poll. *)
 let data_plot (c : chart) dots run =
-  { Data.run; key = c.key; axis = c.axis; x = c.x; dots; smooth = Plot.smoothable c.key }
+  { Data.run; key = c.key; x = c.x; dots; smooth = Plot.smoothable c.key }
 
 (* A chart to draw: the frame and each run's reductions, whatever their dot
    counts, since the draw lays out the plot that picks one. *)
 let plot m (c : chart) =
   let line (role, run) =
-    let reductions = Data.reductions m.data ~run ~key:c.key ~axis:c.axis ~x:c.x in
+    let reductions = Data.reductions m.data ~run ~key:c.key ~x:c.x in
     { Plot.role; colour = Option.value (colour m run) ~default:0; reductions }
   in
   { (frame_of m c) with lines = List.map line c.runs }
@@ -524,7 +522,7 @@ let strip_gap = 1
 
 let strip_lines m =
   let step = strip_height + strip_gap in
-  let metrics, machine = List.partition (fun (_, a) -> a = Data.Step) (strips m) in
+  let metrics, machine = List.partition (fun (_, k) -> k = Metric) (strips m) in
   let first = List.mapi (fun i (k, _) -> (k, step * i)) metrics in
   let after = step * List.length metrics in
   let rest = List.mapi (fun i (k, _) -> (k, after + 1 + (step * i))) machine in
@@ -654,14 +652,17 @@ let next_in l cur d =
   | None -> List.nth_opt l 0
   | Some i -> List.nth_opt l (clamp (List.length l) (i + d))
 
-(* Zoom's cursor moved by [d] samples of the focus's metric. *)
+(* Zoom's cursor moved by [d] of the samples of the focus's metric that its
+   chart draws: those no resume abandoned. *)
 let move_step d metric at m =
   match focus m with
   | None -> None
   | Some f -> (
       let series =
         Option.bind (Data.history m.data (id f)) (fun h ->
-            match History.series h metric with s -> Some s | exception Invalid_argument _ -> None)
+            match History.surviving h metric with
+            | s -> Some s
+            | exception Invalid_argument _ -> None)
       in
       match series with
       | None -> None

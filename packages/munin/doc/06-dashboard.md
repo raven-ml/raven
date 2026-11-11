@@ -203,14 +203,19 @@ step both logged:
 │  ↓ min               ⠉⠉⠒⠒⠢⠤⠤⠤⠤⠤⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀
 ```
 
-While the run is live, its machine's readings end the list, each filled
-down to its floor:
+When the run recorded readings of its machine, live or ended, those the
+run pane gives end the list: GPU busy, VRAM, CPU busy and RAM, each
+filled down to its floor. They are drawn over the same steps, each
+reading at the run's latest step when it was read, so a column is one
+moment in every strip. After a resume, the readings of the steps it went
+back over are left out, as the metrics' are, so the strips show the
+history the run kept:
 
 <!-- $MDX skip -->
 ```text
 │ machine ────────────────────────────────────────────────────────────────────────────
-│  GPU busy        ⣼⣾⣾⣾⣿⣿⣿⣿⣷⣷⣷⣷⣿⣿⣾⣿⣿⣿⣾⣾⣷⣷⣿⣿⣿⣷⣿⣿⣾⣾⣾⣿⣿⣿⣿⣷⣷⣷⣷⣿⣿           97%
-│                  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+│  GPU busy        ⣼⣿⣾⣾⣿⣿⣿⣿⣿⣿⣿⣿⣷⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣾⣷⣷⣷⣿⣾⣾⣷⣷⣷⣿⣿⣾⣾⣿⣿⣿       97%
+│                  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
 ```
 
 `up` and `down` move between the strips, and Enter on one zooms it: the

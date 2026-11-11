@@ -109,7 +109,12 @@ type key = {
   acc : Acc.t; (* the statistics of the samples that are not orphans *)
   col : col option; (* those samples, when the history keeps the key's *)
   orph : col option;
-  max_step : int; (* the largest step of a [metrics] sample not an orphan *)
+  max_step : int;
+      (* the largest step of a [metrics] sample not an orphan, or of a
+         [reading] sample no resume abandoned *)
+  surv : col option;
+      (* a [reading] key's samples that no resume abandoned, once a resume
+         abandoned one of [col]'s; [col] itself before *)
 }
 
 type file = { key : string; step : int; time : float; path : string }
@@ -155,6 +160,7 @@ let new_key st k kind =
     col;
     orph = Option.map (fun _ -> empty_col ()) col;
     max_step = -1;
+    surv = None;
   }
 
 let orphan_by_plan st ~offset step =
@@ -183,16 +189,28 @@ let add_sample st ~offset ~kind ~step ~time keys (k, value) =
   in
   let s = { Metric.step; time; value } in
   let key =
-    if kind = `Metric && orphan_by_plan st ~offset step then
-      { key with orph = Option.map (fun c -> push c s) key.orph }
-    else
-      {
-        key with
-        acc = Acc.add key.acc s;
-        col = Option.map (fun c -> push c s) key.col;
-        max_step =
-          (if kind = `Metric then max key.max_step step else key.max_step);
-      }
+    match kind with
+    | `Metric when orphan_by_plan st ~offset step ->
+        { key with orph = Option.map (fun c -> push c s) key.orph }
+    | `Metric ->
+        {
+          key with
+          acc = Acc.add key.acc s;
+          col = Option.map (fun c -> push c s) key.col;
+          max_step = max key.max_step step;
+        }
+    | `Reading -> (
+        let before = key.col in
+        let col = Option.map (fun c -> push c s) before in
+        let key = { key with acc = Acc.add key.acc s; col } in
+        (* A sample a resume the plan knows abandons starts the surviving
+           column from the samples before it. *)
+        match (key.surv, orphan_by_plan st ~offset step) with
+        | None, false -> { key with max_step = max key.max_step step }
+        | None, true -> { key with surv = before }
+        | Some v, false ->
+            { key with surv = Some (push v s); max_step = max key.max_step step }
+        | Some _, true -> key)
   in
   Smap.add k key keys
 
@@ -207,7 +225,19 @@ let declared_kind st k =
   | Some _ as k -> k
   | None -> if Smap.mem k st.defs then Some `Metric else None
 
-(* A resume at [step] makes orphans of the [metrics] samples above it. *)
+(* The samples of [c] at or below [step], and the largest of their steps. *)
+let at_most c step =
+  let kept = ref (empty_col ()) and max_step = ref (-1) in
+  for i = 0 to c.len - 1 do
+    let s = sample_at c i in
+    if s.step <= step then (
+      kept := push !kept s;
+      max_step := max !max_step s.step)
+  done;
+  (!kept, !max_step)
+
+(* A resume at [step] makes orphans of the [metrics] samples above it, and
+   abandons the [reading] samples above it. *)
 let cut st step =
   let needs_reread =
     Smap.exists
@@ -218,7 +248,13 @@ let cut st step =
   let keys =
     Smap.map
       (fun (k : key) ->
-        if k.kind <> `Metric || k.max_step <= step then k
+        if k.max_step <= step then k
+        else if k.kind = `Reading then
+          match (k.surv, k.col) with
+          | Some c, _ | None, Some c ->
+              let surv, max_step = at_most c step in
+              { k with surv = Some surv; max_step }
+          | None, None -> k
         else
           match (k.col, k.orph) with
           | Some c, Some o ->
@@ -556,6 +592,13 @@ let empty_series =
 let series st k =
   kept st k "series";
   match Smap.find_opt k st.keys with
+  | Some { col = Some c; _ } -> col_series c
+  | _ -> empty_series
+
+let surviving st k =
+  kept st k "surviving";
+  match Smap.find_opt k st.keys with
+  | Some { surv = Some c; _ } -> col_series c
   | Some { col = Some c; _ } -> col_series c
   | _ -> empty_series
 

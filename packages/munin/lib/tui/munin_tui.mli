@@ -88,8 +88,9 @@
     the {e strips} depth each metric of the run is a strip two
     lines high on the same steps, with its latest value and, with an overlay,
     the difference to the first overlay at the latest step at which both
-    logged a finite value; while the run is live, strips of its machine end
-    the list, over its active time. At the {e zoom} depth one metric fills the
+    logged a finite value; for a run that recorded readings of its machine,
+    live or ended, strips of those the run pane gives end the list, over the
+    same steps. At the {e zoom} depth one metric fills the
     centre with each column's raw extent faint behind the smoothed line, a
     step cursor and a readout of each drawn run at the cursor. Enter goes one
     depth deeper and Esc one back.
@@ -115,9 +116,12 @@
       its [steps] while it is within them, so that at step 80 of 3,000 it is
       drawn on [0] to 100 and the axis changes at most three times a decade
       as it grows, a pause included. The run pane says how many steps are
-      left. A machine's strip is over the run's active time, to
-      the same rounding of it. Zoom shows a window of the domain: halved by
-      each [+], the part that holds its cursor.
+      left. A machine's strip is over the steps too: a reading is at the
+      run's latest step when it was read, step 0 before the first. A reading
+      from a history that a resume abandoned is left out, as its metrics'
+      samples are, so that the strips draw the history the run kept. Zoom
+      shows a window of the domain: halved by each [+], the part that holds
+      its cursor.
     + A line is one value per braille dot column, the mean of the column's
       samples, joined to the next column's.
     + A column's least and greatest raw samples of the cursor's run, where
@@ -140,7 +144,7 @@
     + Without colour each overlay's line ends in its letter, [a] to [d].
     + While the run is live a faint rule marks its latest step, [now], on a
       chart with axes.
-    + A machine's reading is filled down to the plot's floor.
+    + A machine's strip is filled down to the plot's floor.
     + The large chart and zoom have both axes, a small chart the y axis
       alone, a strip and a run's trend none. A y label is a value that its
       digits give exactly in at most six columns, at a multiple of 1, 2 or 5
@@ -258,7 +262,8 @@ val run : Munin.Store.t -> screen -> (unit, string) result
     that changes what the screen draws starts a poll that reads only what
     it lacks. Only one poll runs at a time. An ended run is never followed
     and its charts outlive the poll, so that coming back to it reads nothing
-    of it. A key kept costs 24 bytes a sample.
+    of it. A key kept costs 24 bytes a sample, and a reading key from which
+    a resume abandoned samples 48.
 
     [Error why] if standard input or output is not a terminal, or no run of
     [store] has the id given. *)

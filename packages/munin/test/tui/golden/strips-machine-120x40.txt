@@ -18,66 +18,66 @@
    |  u vvvvvvvvv   s wwwww  vvvvvv  f xxjjjjjjjjjjqqqqqvvvvvvvvv                                     ggggggggggggggggggggg
 10 |  ■ dusty-mole  × ⢢⡀     0.7665  │
    |  y rrrrrrrrrr  z yy     vvvvvv  f
-11 |  · eager-hawk  ✗ ⠑⠢⠤⢄⣀   1.670  │  ↓ min               ⠉⠛⠒⠒⠲⠦⠤⠤⠤⠤⠤⣤⣤⣄⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀
-   |  u rrrrrrrrrr  z wwwww   vvvvv  f  ggggg               xxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq
+11 |  · eager-hawk  ✗ ⠑⠢⠤⢄⣀   1.670  │  ↑ max           ⡠⠔⠊⠉
+   |  u rrrrrrrrrr  z wwwww   vvvvv  f  ggggg           xxxx
 12 | ▾ mnist-mlp  2         val/loss │
    | ggkkkkkkkkkggg         gggggggg f
-13 |  · mlp-wide    ✓ ⠈⢆⣀⣀⣀ 0.05831 ★│  val/top5            ⣀⣀⠤⠤⠔⠒⠒⠒⠒⠒⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉    0.9968       -0.1%
-   |  u vvvvvvvv    s wwwww jjjjjjj tf  rrrrrrrr            xxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq    kkkkkk       AAAAA
-14 |  · mlp-base    ✗ ⠈⠢⣀⣀⣀ 0.06576  │  ↑ max           ⡠⠔⠊⠉
-   |  u rrrrrrrr    z wwwww vvvvvvv  f  ggggg           xxxx
+13 |  · mlp-wide    ✓ ⠈⢆⣀⣀⣀ 0.05831 ★│  epoch                                 ⢀⣀⣀⣀⣀⣀⡠⠤⠤⠤⠤⠤⠤⠒⠒⠒⠒⠒⠒⠉⠉⠉⠉     6.200        same
+   |  u vvvvvvvv    s wwwww jjjjjjj tf  rrrrr                                 xxxxxxqqqqqqqqqqqqqqqqq     kkkkk        gggg
+14 |  · mlp-base    ✗ ⠈⠢⣀⣀⣀ 0.06576  │                  ⣀⣀⣀⣀⠤⠤⠤⠤⠤⠤⠒⠒⠒⠒⠒⠒⠊⠉⠉⠉⠉⠉⠁
+   |  u rrrrrrrr    z wwwww vvvvvvv  f                  xxxxxxxxxxxxxxxxxxxxxxx
 15 |                                 │
    |                                 f
-16 |                                 │  epoch                                 ⢀⣀⣀⣀⣀⣀⡠⠤⠤⠤⠤⠤⠤⠒⠒⠒⠒⠒⠒⠉⠉⠉⠉     6.200        same
-   |                                 f  rrrrr                                 xxxxxxqqqqqqqqqqqqqqqqq     kkkkk        gggg
-17 |                                 │                  ⣀⣀⣀⣀⠤⠤⠤⠤⠤⠤⠒⠒⠒⠒⠒⠒⠊⠉⠉⠉⠉⠉⠁
-   |                                 f                  xxxxxxxxxxxxxxxxxxxxxxx
+16 |                                 │  train/data_ms       ⠊     ⠁     ⠈                                 4.758       +4.5%
+   |                                 f  rrrrrrrrrrrrr       A     A     A                                 kkkkk       ggggg
+17 |                                 │                  ⣀⣀⣀⣀⠤⣤⣀⣠⣄⣀⠤⠤⢤⣀⣀⣤⣤⣤⣄⣠⣤⣤⣄⣀⣠⣄⣠⣤⣀⣀⣀⣀⠤⠤⢄⣀⣀⣀⣀⣀⣀⡠⠤⠤⠤
+   |                                 f                  xxxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq
 18 |                                 │
    |                                 f
-19 |                                 │  train/data_ms       ⠊     ⠁     ⠈                                 4.758       +4.5%
-   |                                 f  rrrrrrrrrrrrr       B     B     B                                 kkkkk       ggggg
-20 |                                 │                  ⣀⣀⣀⣀⠤⣤⣀⣠⣄⣀⠤⠤⢤⣀⣀⣤⣤⣤⣄⣠⣤⣤⣄⣀⣠⣄⣠⣤⣀⣀⣀⣀⠤⠤⢄⣀⣀⣀⣀⣀⣀⡠⠤⠤⠤
-   |                                 f                  xxxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq
+19 |                                 │  train/grad_norm ⠙⠒⠤⢄⣀⡀                                            1.020        -20%
+   |                                 f  rrrrrrrrrrrrrrr xxxxxx                                            kkkkk        gggg
+20 |                                 │                       ⠈⠉⠉⠒⠒⠒⠶⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⣤⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀
+   |                                 f                       xxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq
 21 |                                 │
    |                                 f
-22 |                                 │  train/grad_norm ⠙⠒⠤⢄⣀⡀                                            1.020        -20%
-   |                                 f  rrrrrrrrrrrrrrr xxxxxx                                            kkkkk        gggg
-23 |                                 │                       ⠈⠉⠉⠒⠒⠒⠶⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⣤⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀
-   |                                 f                       xxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq
+22 |                                 │  train/lr         ⡰⠒⠉⠉⠉⠉⠉⠉⠉⠉⠒⠒⠒⠒⠒⠢⠤⠤⠤⢄⣀⣀⣀⡀                     9.908e-05        -70%
+   |                                 f  rrrrrrrr         qqqqqqqqqqqqqqqqqqqqqqqq                     kkkkkkkkk        gggg
+23 |                                 │                  ⡴⠕⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠤⠤⠤⠤⠤⠤⠤⠬⠭⠭⠭⠑⠒⠒⠒⠢⠤⠤⠤⠤⠤⣀⣀⣀⣀⣀⣀⣀
+   |                                 f                  xxxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq
 24 |                                 │
    |                                 f
-25 |                                 │  train/lr         ⡰⠒⠉⠉⠉⠉⠉⠉⠉⠉⠒⠒⠒⠒⠒⠢⠤⠤⠤⢄⣀⣀⣀⡀                     9.908e-05        -70%
-   |                                 f  rrrrrrrr         qqqqqqqqqqqqqqqqqqqqqqqq                     kkkkkkkkk        gggg
-26 |                                 │                  ⡴⠕⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠤⠤⠤⠤⠤⠤⠤⠬⠭⠭⠭⠑⠒⠒⠒⠢⠤⠤⠤⠤⠤⣀⣀⣀⣀⣀⣀⣀
-   |                                 f                  xxxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq
+25 |                                 │  train/samples_s ⢄⠁⠈ ⠉ ⣀⣀⣀⣀⣀⣁⡈⣀⣁⣀⣀⣀⠈⠈⢀⡁⣉⣀⣀⣀⣀⣀    ⣀⡀  ⣀⣀⣀⣀⣀⣀⣀⣀⡀    2.196k       +0.8%
+   |                                 f  rrrrrrrrrrrrrrr xAA A xxxxxAAqxxxxAAqAAqxqxx    qq  qqqqqqqqq    kkkkkk       ggggg
+26 |                                 │                  ⠞⠚⠛⠉⠉⠉⢀ ⡈⢉⡈⠉⠉⠉⠁⢀⡀⠈⠉⠉⠓⠉⠉⠉ ⠉ ⠈⠉⠉⠉⠉ ⠈⠉⠉        ⠈
+   |                                 f                  xxxxxxA AAxxxxxAAqxxxxxx x qqqqq qqq        q
 27 |                                 │
    |                                 f
-28 |                                 │  train/samples_s ⢄⠁⠈ ⠉ ⣀⣀⣀⣀⣀⣁⡈⣀⣁⣀⣀⣀⠈⠈⢀⡁⣉⣀⣀⣀⣀⣀    ⣀⡀  ⣀⣀⣀⣀⣀⣀⣀⣀⡀    2.196k       +0.8%
-   |                                 f  rrrrrrrrrrrrrrr xBB B xxxxxBBqxxxxBBqBBqxqxx    qq  qqqqqqqqq    kkkkkk       ggggg
-29 |                                 │                  ⠞⠚⠛⠉⠉⠉⢀ ⡈⢉⡈⠉⠉⠉⠁⢀⡀⠈⠉⠉⠓⠉⠉⠉ ⠉ ⠈⠉⠉⠉⠉ ⠈⠉⠉        ⠈
-   |                                 f                  xxxxxxB BBxxxxxBBqxxxxxx x qqqqq qqq        q
-30 |                                 │
-   |                                 f
-31 |                                 │ machine ────────────────────────────────────────────────────────────────────────────
+28 |                                 │ machine ────────────────────────────────────────────────────────────────────────────
    |                                 f hhhhhhh ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
-32 |                                 │  GPU busy        ⣼⣾⣾⣾⣿⣿⣿⣿⣷⣷⣷⣷⣿⣿⣾⣿⣿⣿⣾⣾⣷⣷⣿⣿⣿⣷⣿⣿⣾⣾⣾⣿⣿⣿⣿⣷⣷⣷⣷⣿⣿           97%
-   |                                 f  rrrrrrrr        xxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqq           rrr
-33 |                                 │                  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
-   |                                 f                  xxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqq
+29 |                                 │  GPU busy        ⣼⣿⣾⣾⣿⣿⣿⣿⣿⣿⣿⣿⣷⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣾⣷⣷⣷⣿⣾⣾⣷⣷⣷⣿⣿⣾⣾⣿⣿⣿       97%
+   |                                 f  rrrrrrrr        xxxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq       rrr
+30 |                                 │                  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+   |                                 f                  xxxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq
+31 |                                 │
+   |                                 f
+32 |                                 │  VRAM            ⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿  21.3 GiB
+   |                                 f  rrrr            xxxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq  rrrrrrrr
+33 |                                 │                  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+   |                                 f                  xxxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq
 34 |                                 │
    |                                 f
-35 |                                 │  VRAM            ⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿      21.3 GiB
-   |                                 f  rrrr            xxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqq      rrrrrrrr
-36 |                                 │                  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
-   |                                 f                  xxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqq
+35 |                                 │  CPU busy        ⣼⣾⣾⣾⣷⣷⣷⣿⣿⣾⣿⣿⣷⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣾⣷⣷⣷⣿⣾⣾⣷⣷⣷⣿⣾⣾⣾⣷⣷⣿       71%
+   |                                 f  rrrrrrrr        xxxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq       rrr
+36 |                                 │                  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+   |                                 f                  xxxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq
 37 |                                 │
    |                                 f
-38 |                                 │ ▌CPU busy        ⣼⣾⣾⣾⣾⣾⣷⣷⣷⣷⣷⣷⣿⣿⣾⣾⣾⣾⣾⣾⣷⣷⣿⣷⣷⣷⣿⣾⣾⣾⣾⣾⣾⣷⣷⣷⣷⣷⣷⣷⣿           71%
-   |                                 f lCCCCCCCCmmmmmmmmlllllllllllllllllllllllllllDDDDDDDDDDDDDDmmmmmmmmmmmEEEmmmmmmmmmmmm
-39 |                                 │                  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
-   |                                 f mmmmmmmmmmmmmmmmmlllllllllllllllllllllllllllDDDDDDDDDDDDDDmmmmmmmmmmmmmmmmmmmmmmmmmm
+38 |                                 │ ▌RAM             ⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿  33.0 GiB
+   |                                 f lBBBmmmmmmmmmmmmmllllllllllllllllllllllllllllCCCCCCCCCCCCCCCCCmmDDDDDDDDmmmmmmmmmmmm
+39 |                                 │                  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+   |                                 f mmmmmmmmmmmmmmmmmllllllllllllllllllllllllllllCCCCCCCCCCCCCCCCCmmmmmmmmmmmmmmmmmmmmmm
 40 | charts › strips › zoom   ↑↓ metric   [ ] run   enter zoom   esc charts   ? keys
-   |accccccFFFGGGGGGFFFccccaaaGGcccccccaaaGGGccccaaaGGGGGcccccaaaGGGcccccccaaaGcccccaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+   |accccccEEEFFFFFFEEEccccaaaFFcccccccaaaFFFccccaaaFFFFFcccccaaaFFFcccccccaaaFcccccaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 cursor hidden
 a bg=Rgb(22,26,32)
 b fg=Rgb(143,152,165) bg=Rgb(22,26,32) bold
@@ -105,10 +105,9 @@ w fg=Rgb(48,52,58)
 x fg=Rgb(108,182,255)
 y fg=Rgb(180,190,254)
 z fg=Rgb(255,107,107) bold
-A fg=Rgb(255,107,107)
-B fg=Rgb(54,91,128)
-C fg=Rgb(201,206,214) bg=Rgb(27,35,48)
-D fg=Rgb(79,209,197) bg=Rgb(27,35,48)
-E fg=Rgb(238,241,245) bg=Rgb(27,35,48)
-F fg=Rgb(50,57,68) bg=Rgb(22,26,32)
-G fg=Rgb(238,241,245) bg=Rgb(22,26,32) bold
+A fg=Rgb(54,91,128)
+B fg=Rgb(201,206,214) bg=Rgb(27,35,48)
+C fg=Rgb(79,209,197) bg=Rgb(27,35,48)
+D fg=Rgb(238,241,245) bg=Rgb(27,35,48)
+E fg=Rgb(50,57,68) bg=Rgb(22,26,32)
+F fg=Rgb(238,241,245) bg=Rgb(22,26,32) bold

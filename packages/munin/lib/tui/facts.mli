@@ -51,10 +51,6 @@ val pauses : Munin.History.t -> (float * float) list
     first. A pause runs from the last metric sample before a resume to the
     resume. It reads every kept series once. *)
 
-val active_at : (float * float) list -> started:float -> float -> float
-(** [active_at pauses ~started t] is the active time at [t] of a run that
-    started at [started]. *)
-
 val name : Munin.Run.t -> string
 (** [name r] is [r]'s name, or its id. *)
 

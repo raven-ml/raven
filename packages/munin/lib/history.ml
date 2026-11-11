@@ -13,6 +13,7 @@ let readings = Fold.readings
 let goal = Fold.goal
 let step_metric = Fold.step_metric
 let series = Fold.series
+let surviving = Fold.surviving
 let orphans = Fold.orphans
 let stats = Fold.stats
 

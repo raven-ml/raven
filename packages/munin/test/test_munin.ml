@@ -600,6 +600,128 @@ let spaced_line (reading, time, step, values) =
     step (shortest time)
     (if reading then "reading" else "metrics")
 
+(* The samples no resume abandoned *)
+
+(* The records [surviving] reads: a sample of the metric "a" at a step, a reading
+   of "r" at a step, and a resume, each at a time any clock gave. *)
+type kev = K_sample of int | K_reading of int * float | K_resume of int
+
+let pp_kev ppf (e, t) =
+  match e with
+  | K_sample s -> Format.fprintf ppf "sample a@%d at %g" s t
+  | K_reading (s, v) -> Format.fprintf ppf "reading r@%d=%g at %g" s v t
+  | K_resume s -> Format.fprintf ppf "resume %d at %g" s t
+
+let kev_line (e, t) =
+  match e with
+  | K_sample s ->
+      Printf.sprintf {|{"type":"metrics","time":%s,"step":%d,"values":{"a":1}}|}
+        (json_float t) s
+  | K_reading (s, v) ->
+      Printf.sprintf {|{"type":"reading","time":%s,"step":%d,"values":{"r":%s}}|}
+        (json_float t) s (json_float v)
+  | K_resume s ->
+      Printf.sprintf {|{"type":"resume","time":%s,"step":%d,"provenance":%s}|}
+        (json_float t) s prov_json
+
+let kev_text evs =
+  String.concat "" (List.map (fun l -> l ^ "\n") (start_line :: metric_line "a" :: List.map kev_line evs))
+
+(* The reference: a reading is abandoned when a resume after it in the log
+   names a step below its own. *)
+let surviving_readings evs =
+  let rec go = function
+    | [] -> []
+    | (K_reading (s, v), t) :: rest ->
+        let abandoned = List.exists (function K_resume r, _ -> r < s | _ -> false) rest in
+        if abandoned then go rest else ({ step = s; time = t; value = v } : Metric.sample) :: go rest
+    | _ :: rest -> go rest
+  in
+  go evs
+
+let gen_kevs =
+  let open Gen in
+  let ev =
+    let* t = float_range 0. 100. in
+    let+ e =
+      frequency
+        [
+          (3, map (fun s -> K_sample s) (int_range 0 20));
+          (3, map (fun (s, v) -> K_reading (s, v)) (pair (int_range 0 20) (float_range 0. 100.)));
+          (1, map (fun s -> K_resume s) (int_range 0 20));
+        ]
+    in
+    (e, t)
+  in
+  with_pp (Format.pp_print_list ~pp_sep:Format.pp_print_space pp_kev) (list ~size:(int_range 0 40) ev)
+
+let surviving_test =
+  prop "surviving leaves out the readings a later resume goes back below, whatever the clocks"
+    (Gen.pair gen_kevs (Gen.int_range 0 100000))
+    (fun (evs, cut) ->
+      let abandons_later =
+        let rec go = function
+          | [] -> false
+          | (K_reading (s, _), t) :: rest ->
+              List.exists (function K_resume r, t' -> r < s && t' < t | _ -> false) rest || go rest
+          | _ :: rest -> go rest
+        in
+        go evs
+      in
+      let readings = List.length (List.filter (function K_reading _, _ -> true | _ -> false) evs) in
+      let expected = surviving_readings evs in
+      cover "a resume abandons a reading" (List.length expected < readings);
+      cover "a resume logged at an earlier time abandons a reading" abandons_later;
+      cover "a reading kept after a resume"
+        (List.exists (function K_resume _, _ -> true | _ -> false) evs && expected <> []);
+      with_store @@ fun store ->
+      let text = kev_text evs in
+      let run = spec_run store text in
+      let h = History.read run in
+      equal ~msg:"read at once" (list sample) expected (samples_of (History.surviving h "r"));
+      equal ~msg:"a metric's, its series" (list sample)
+        (samples_of (History.series h "a"))
+        (samples_of (History.surviving h "a"));
+      (* A resume that orphans samples of "a", which it does not keep, reads
+         the log again. *)
+      let only = History.read ~series:[ "r" ] run in
+      equal ~msg:"keeping r alone" (list sample) expected (samples_of (History.surviving only "r"));
+      (* Followed in two pieces, a resume of the second after readings of
+         the first. *)
+      let first = String.length start_line + 1 in
+      let cut = first + (cut mod (String.length text - first + 1)) in
+      let path = Filename.concat (Run.dir run) "events.jsonl" in
+      let prefix = String.sub text 0 cut in
+      write_file path prefix;
+      let h0 = History.read run in
+      let before = samples_of (History.surviving h0 "r") in
+      write_file path text;
+      let h1 = History.follow h0 in
+      let after = samples_of (History.surviving h1 "r") in
+      equal ~msg:"followed" (list sample) expected after;
+      equal ~msg:"the first piece's, after the follow" (list sample) before
+        (samples_of (History.surviving h0 "r"));
+      (* The follow extends the first piece's samples unless a resume of
+         the second abandons one of them. *)
+      let lines = List.length (String.split_on_char '\n' prefix) - 1 in
+      let first_evs = List.filteri (fun i _ -> i < lines - 2) evs in
+      let second = List.filteri (fun i _ -> i >= lines - 2) evs in
+      let abandons =
+        List.exists
+          (function
+            | K_resume r, _ -> List.exists (fun (s : Metric.sample) -> r < s.step) before
+            | _ -> false)
+          second
+      in
+      cover "the follow extends the first piece's readings"
+        ((not abandons) && before <> [] && List.length after > List.length before);
+      cover "a resume of the second piece abandons a reading of the first" abandons;
+      equal ~msg:"the first piece's, by the reference" (list sample)
+        (surviving_readings first_evs) before;
+      if not abandons then
+        equal ~msg:"the follow extends them" (list sample) before
+          (List.filteri (fun i _ -> i < List.length before) after))
+
 let fold_tests =
   group "fold"
     [
@@ -2170,6 +2292,7 @@ let () =
          values_tests;
          float_text_tests;
          fold_tests;
+         surviving_test;
          session_tests;
          sampling_tests;
          hint_tests;

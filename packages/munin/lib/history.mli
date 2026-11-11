@@ -71,7 +71,8 @@ val follow : ?limit:int -> t -> t
     {!restarted} or a resume read by the follow orphaned samples of [k].
 
     It costs the new bytes and a lookup per sample among the run's keys,
-    and a [resume] record costs the samples of the keys it orphans. When
+    and a [resume] record costs the samples of the keys it orphans or
+    whose readings it abandons. When
     the log has not grown it costs an open, a probe, the read of the last
     record, and the reads of the tags and notes.
 
@@ -107,6 +108,23 @@ val series : t -> string -> Metric.series
 
     Raises [Invalid_argument] if [h] does not keep [k]'s samples
     ({!read}). *)
+
+val surviving : t -> string -> Metric.series
+(** [surviving h k] is [k]'s samples that no resume abandoned, in log
+    order: for a reading, {!series} less the samples logged before a
+    [resume] record that names a step below theirs, which belong to the
+    history the restart abandoned though they are no orphans
+    ({!Store_format.section-reading}); for a metric, [series h k]. It is
+    what a view over the run's steps shows. The order of the records
+    decides, so a resumed writer whose clock is behind the abandoned
+    one's abandons the same readings.
+
+    It is a view, as {!series} is: [surviving (follow h) k] extends
+    [surviving h k], unless the result is {!restarted} or a resume read by
+    the follow abandoned samples of [k]. Such a resume costs the samples
+    of [k], once, and from then on each reading of [k] is held twice.
+
+    Raises [Invalid_argument] if [h] does not keep [k]'s samples. *)
 
 val orphans : t -> string -> Metric.series
 (** [orphans h k] is [k]'s orphans, in log order.

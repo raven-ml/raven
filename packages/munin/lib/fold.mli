@@ -25,6 +25,7 @@ val defs : t -> (string * (Metric.goal option * string option)) list
 
 val step_metric : t -> string -> string option
 val series : t -> string -> Metric.series
+val surviving : t -> string -> Metric.series
 val orphans : t -> string -> Metric.series
 val stats : t -> string -> Metric.stats option
 val summary : t -> (string * Value.t) list

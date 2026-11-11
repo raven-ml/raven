@@ -234,9 +234,15 @@ val metric : t -> string option
 val metrics : t -> string list
 (** [metrics m] is the focus's metrics, the tabs. *)
 
-val strips : t -> (string * Data.axis) list
-(** [strips m] is the strips at the strips depth: each metric, then, while
-    the focus is live, its machine's readings. *)
+type kind =
+  | Metric
+  | Machine  (** A reading of the machine, filled to the floor of its strip. *)
+(** The type for what a strip draws. *)
+
+val strips : t -> (string * kind) list
+(** [strips m] is the strips at the strips depth: each metric of the focus,
+    then those of its machine's readings that the run pane gives: GPU busy,
+    VRAM, CPU busy and RAM. *)
 
 val strip : t -> string option
 (** [strip m] is the strip under the cursor at strips: the one chosen if
@@ -265,7 +271,7 @@ val label_in : t -> Facts.run -> int -> string
 type chart = {
   slot : slot;
   key : string;
-  axis : Data.axis;
+  kind : kind;
   x : float * float;  (** The x domain shown. *)
   runs : (Plot.role * string) list;  (** In drawing order. *)
   smooth : bool;

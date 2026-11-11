@@ -27,14 +27,14 @@
     log, as its first draw read it. The statistics of an ended run that no
     want names come from its hint, read once. *)
 
-type axis = Step | Time
-(** The type for a plot's x: the step, or the run's active time. *)
-
 type plot = {
   run : string;
   key : string;
-  axis : axis;
-  x : float * float;  (** The x domain. *)
+  x : float * float;
+      (** The x domain, over the steps. A sample is at its step, of the
+          history the run kept ({!Munin.History.surviving}): a reading logged
+          before a resume that went back below its step is left out, as a
+          metric's orphans are. *)
   dots : int;  (** The plot's dot columns. *)
   smooth : bool;  (** Whether the reduction has a smoothed form. *)
 }
@@ -103,8 +103,8 @@ val history : t -> string -> Munin.History.t option
 (** [history d id] is the history held of the run [id]. *)
 
 val reductions :
-  t -> run:string -> key:string -> axis:axis -> x:float * float -> Reduce.t list
-(** [reductions d ~run ~key ~axis ~x] is the reductions a poll made of the
+  t -> run:string -> key:string -> x:float * float -> Reduce.t list
+(** [reductions d ~run ~key ~x] is the reductions a poll made of the
     series [key] of [run] over the x domain [x], at each dot count it made
     one. *)
 

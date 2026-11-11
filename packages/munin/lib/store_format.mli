@@ -177,7 +177,12 @@ v}
     history the restart abandoned. Readers leave orphans out of a metric's
     series and statistics and out of the run's files, and the log keeps
     them. Samples of [reading] records are never orphans, since the
-    machine's state at a time happened whatever the run's steps did.
+    machine's state at a time happened whatever the run's steps did, and
+    readers keep them in their series. A reading sample logged before a
+    [resume] record that names a step below its step still belongs to the
+    history the restart abandoned: a view over the run's steps, which
+    shows one attempt at each step, leaves it out. The order of the
+    records decides, whatever their times say.
 
     A key's {e latest} sample is its last sample in log order that is not
     an orphan. When the latest [metric] record of a key [k] names a

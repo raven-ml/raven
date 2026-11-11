@@ -2050,6 +2050,10 @@ let values_record step kvs =
           (fun (k, v) -> Printf.sprintf {|"%s":%s|} k (Fixture.num v))
           kvs))
 
+let reading_record ~time step kvs =
+  Printf.sprintf {|{"type":"reading","time":%s,"step":%d,"values":{%s}}|} (Fixture.num time) step
+    (String.concat "," (List.map (fun (k, v) -> Printf.sprintf {|"%s":%s|} k (Fixture.num v)) kvs))
+
 (* Runs: the filter and the best value of each experiment *)
 
 (* [before row sep] is [row] up to the first [sep] in it. *)
@@ -2715,6 +2719,17 @@ let strips screen =
   let cursor = List.find_opt (fun row -> at row strip_col = "▌") firsts in
   (List.map label firsts, Option.map label cursor)
 
+(* The strips of a run that recorded readings end with its machine's, live
+   or ended: the readings the run pane gives, in its order. *)
+let machine_strips =
+  test "an ended run's strips end with its machine's readings" (fun () ->
+      with_store Fixture.runs @@ fun store ->
+      let start = Munin_tui.Run (Some (id_of Fixture.amber_fox)) in
+      let screen = show ~cols:120 ~rows:40 store start (Key Enter :: times 30 (Key Down)) in
+      let labels, _ = strips screen in
+      let last = List.filteri (fun i _ -> i >= List.length labels - 4) labels in
+      equal (list string) [ "GPU busy"; "VRAM"; "CPU busy"; "RAM" ] last)
+
 (* The strips scroll the least that shows the cursor's strip whole, from the
    strips shown: a move to a strip shown leaves them where they are. *)
 let strips_scroll =
@@ -2756,40 +2771,47 @@ let strips_scroll =
            moves);
       cover "a move scrolls" !scrolled)
 
-(* [strip_ends screen] is, for each strip whose two rows are above the
-   status bar, its label and the rightmost cell of either row whose braille
-   is in the cursor's colour. The cursor's colour is that of the strip
-   [only], which no other run draws. *)
-let strip_ends ~only screen =
+(* [strip_ink screen] is, for each strip under the legend whose two rows
+   are above the status bar, its label and its braille dots, each its dot
+   column, its dot row and its colour. *)
+let strip_ink screen =
   let last = T.Screen.rows screen - 2 in
   let at row col = fst (T.Screen.cell screen ~row ~col) in
   let label row = String.trim (String.concat "" (List.init 16 (fun i -> at row (strip_col + 1 + i)))) in
+  let rows = List.init last Fun.id in
+  let legend = Option.value (List.find_opt (fun row -> at row strip_col = "━") rows) ~default:last in
   let firsts =
     List.filter
       (fun row ->
-        List.mem (at row strip_col) [ " "; "▌" ]
+        row > legend
+        && List.mem (at row strip_col) [ " "; "▌" ]
         && not (List.mem (at row (strip_col + 1)) [ " "; ""; "↓"; "↑" ]))
-      (List.init last Fun.id)
+      rows
   in
-  let braille row col =
+  let dots ~top row col =
     let ch, style = T.Screen.cell screen ~row ~col in
-    let cp = Uchar.to_int (String.get_utf_8_uchar ch 0 |> Uchar.utf_decode_uchar) in
-    if ch <> "" && cp >= 0x2800 && cp <= 0x28FF then style.Matrix.Ansi.Style.fg else None
+    let cp = if ch = "" then 0 else Uchar.to_int (Uchar.utf_decode_uchar (String.get_utf_8_uchar ch 0)) in
+    if cp < 0x2800 || cp > 0x28FF then []
+    else
+      List.filter_map
+        (fun (bit, dx, dy) ->
+          if (cp - 0x2800) land bit = 0 then None
+          else Some ((2 * col) + dx, (4 * (row - top)) + dy, style.Matrix.Ansi.Style.fg))
+        braille_dots
   in
   let cols = List.init (T.Screen.cols screen) Fun.id in
-  let inked row = List.filter_map (fun col -> Option.map (fun c -> (col, c)) (braille row col)) cols in
-  let strip = List.map (fun row -> (label row, inked row @ inked (row + 1))) firsts in
-  let colour = match List.assoc_opt only strip with Some ((_, c) :: _) -> Some c | _ -> None in
-  List.map
-    (fun (l, ink) ->
-      let mine = List.filter (fun (_, c) -> Some c = colour) ink in
-      (l, List.fold_left (fun e (col, _) -> max e col) (-1) mine))
-    strip
+  let ink top = List.concat_map (fun row -> List.concat_map (dots ~top row) cols) [ top; top + 1 ] in
+  List.map (fun row -> (label row, ink row)) firsts
+
+(* [last_dot ink] is the rightmost dot column of [ink]. *)
+let last_dot ink = List.fold_left (fun e (c, _, _) -> max e c) (-1) ink
 
 (* Law 1: the strips share one x axis, so that a column is one moment in
-   each. The cursor's run ended at step 3,000 with [m] and [n]; the overlay
-   ended at 5,000 with [m] alone. The cursor's line ends in one column in
-   both strips, though no overlay widens [n]'s. *)
+   each. The cursor's run ended at step 3,000 with [m], [n] and readings of
+   its GPU's memory; the overlay ended at 5,000 with [m] alone. The cursor's
+   line ends in one dot column in every strip, though the overlay widens
+   neither [n]'s nor the machine's. The cursor's colour is that of [n],
+   which the overlay does not draw. *)
 let shared_axis =
   test "the strips share one x axis" (fun () ->
       with_store ~name:"shared" [] @@ fun store ->
@@ -2798,17 +2820,111 @@ let shared_axis =
       ignore
         (write_log store ~declare ~started:1
            (List.init 51 (fun k -> values_record (k * 100) [ ("m", 1.) ]) @ [ ended ]));
-      ignore
-        (write_log store ~declare ~started:2
-           (List.init 31 (fun k -> values_record (k * 100) [ ("m", 0.); ("n", 0.) ]) @ [ ended ]));
+      let cursor k =
+        [
+          values_record (k * 100) [ ("m", 0.); ("n", 0.) ];
+          reading_record ~time:2. (k * 100) [ ("dev/CUDA:0/used_bytes", 1e9) ];
+        ]
+      in
+      ignore (write_log store ~declare ~started:2 (List.concat (List.init 31 cursor) @ [ ended ]));
       (* The cursor's run, the newest, is the first row: overlay the second,
          come back and open the strips. *)
       let screen =
         show ~cols:120 ~rows:40 store Munin_tui.Runs [ char 'j'; Text " "; char 'k'; Key Enter ]
       in
-      let ends = strip_ends ~only:"n" screen in
-      equal ~msg:"the strips" (list string) [ "m"; "n" ] (List.map fst ends);
-      equal ~msg:"the cursor's last column in m, in n" int (List.assoc "n" ends) (List.assoc "m" ends))
+      let strips = strip_ink screen in
+      equal ~msg:"the strips" (list string) [ "m"; "n"; "VRAM" ] (List.map fst strips);
+      let colour = match List.assoc "n" strips with (_, _, c) :: _ -> c | [] -> None in
+      let mine key = List.filter (fun (_, _, c) -> c = colour) (List.assoc key strips) in
+      let n = last_dot (mine "n") in
+      equal ~msg:"the cursor's last dot column in m" int n (last_dot (mine "m"));
+      equal ~msg:"its last in VRAM" int n (last_dot (List.assoc "VRAM" strips)))
+
+(* A reading is drawn at the step it carries, the run's latest step when it
+   was read, so its column is the column of a metric's sample at that step.
+   The run reads its GPU's memory at step 0 before its first sample of [m],
+   then at each of [m]'s steps from 300 to 600; [n] spans the steps 0 to
+   1,000. The machine's strip starts in [n]'s first dot column and ends in
+   [m]'s last. *)
+let reading_steps =
+  test "a reading is drawn at its step" (fun () ->
+      with_store ~name:"reading-steps" [] @@ fun store ->
+      let declare = [ metric_record "m"; metric_record "n" ] in
+      let vram = "dev/CUDA:0/used_bytes" in
+      let n = List.init 101 (fun k -> values_record (k * 10) [ ("n", 1.) ]) in
+      let paired k =
+        [ values_record (k * 10) [ ("m", 1.) ]; reading_record ~time:2. (k * 10) [ (vram, 1e9) ] ]
+      in
+      let read = (reading_record ~time:2. 0 [ (vram, 1e9) ] :: n) @ List.concat (List.init 31 (fun k -> paired (30 + k))) in
+      let id, _ = write_log store ~declare (read @ [ Fixture.end_record ~time:4. `Finished ]) in
+      let strips = strip_ink (show ~cols:120 ~rows:40 store (Munin_tui.Run (Some id)) [ Key Enter ]) in
+      equal ~msg:"the strips" (list string) [ "m"; "n"; "VRAM" ] (List.map fst strips);
+      let first ink = List.fold_left (fun e (c, _, _) -> min e c) max_int ink in
+      let ink key = List.assoc key strips in
+      equal ~msg:"its first dot column, n's" int (first (ink "n")) (first (ink "VRAM"));
+      equal ~msg:"its last, m's" int (last_dot (ink "m")) (last_dot (ink "VRAM")))
+
+(* [resumed_log store ~crashed] is the id of a run that read 20 GB of GPU
+   memory from step 450 to 700, its records timed [crashed], then resumed
+   from step 400 at 3 s and read 1 GB from there to 1,000. *)
+let resumed_log store ~crashed =
+  let vram = "dev/CUDA:0/used_bytes" in
+  let attempt ~time ~from ~upto gb =
+    List.concat
+      (List.init (((upto - from) / 50) + 1) (fun k ->
+           let step = from + (k * 50) in
+           [
+             Printf.sprintf {|{"type":"metrics","time":%s,"step":%d,"values":{"m":1}}|}
+               (Fixture.num time) step;
+             reading_record ~time step [ (vram, gb *. 1e9) ];
+           ]))
+  in
+  let records =
+    attempt ~time:crashed ~from:450 ~upto:700 20.
+    @ [ resume_record 400 ]
+    @ attempt ~time:3.5 ~from:400 ~upto:1000 1.
+    @ [ Fixture.end_record ~time:4. `Finished ]
+  in
+  fst (write_log store records)
+
+(* A resume abandons the history after its step: the strips draw the
+   history the run kept: [resumed_log]'s machine strip draws a constant
+   1 GB, every dot column at one height. The log's order decides, so the
+   resumed writer's clock may be behind the crashed one's: the resume is
+   logged at 3 s, after readings logged at 5 s. *)
+let resumed_readings =
+  cases "a resume leaves the readings it abandoned out of the strips"
+    ~id:(fun (name, _) -> name)
+    [ ("the resumed writer's clock ahead", 2.); ("the resumed writer's clock behind", 5.) ]
+    (fun (_, crashed) ->
+      with_store ~name:"resumed" [] @@ fun store ->
+      let id = resumed_log store ~crashed in
+      let strips = strip_ink (show ~cols:120 ~rows:40 store (Munin_tui.Run (Some id)) [ Key Enter ]) in
+      let tops = Hashtbl.create 64 in
+      List.iter
+        (fun (c, r, _) ->
+          let top = Option.value (Hashtbl.find_opt tops c) ~default:max_int in
+          Hashtbl.replace tops c (min top r))
+        (List.assoc "VRAM" strips);
+      let heights = List.sort_uniq compare (Hashtbl.fold (fun _ r acc -> r :: acc) tops []) in
+      equal ~msg:"the top dot rows of its columns" int 1 (List.length heights))
+
+(* Zoom's cursor walks the samples the chart draws: on the VRAM of
+   [resumed_log]'s run, twelve moves left from the latest step reach step
+   400, the resumed attempt's first, and one more stays there, below the
+   abandoned steps. *)
+let resumed_cursor =
+  test "zoom's cursor skips the readings a resume abandoned" (fun () ->
+      with_store ~name:"resumed-cursor" [] @@ fun store ->
+      let id = resumed_log store ~crashed:2. in
+      let zoom = [ Key Enter; Key Down; Key Enter ] in
+      let at lefts =
+        let screen = show ~cols:120 ~rows:40 store (Munin_tui.Run (Some id)) (zoom @ times lefts (Key Left)) in
+        List.find_opt (fun s -> holds ("at step " ^ s) (T.Screen.text screen)) [ "400"; "700"; "1,000" ]
+      in
+      equal ~msg:"the start" (option string) (Some "1,000") (at 0);
+      equal ~msg:"twelve moves left" (option string) (Some "400") (at 12);
+      equal ~msg:"one more" (option string) (Some "400") (at 13))
 
 (* The data path *)
 
@@ -3352,14 +3468,14 @@ let strip_keys =
         [ T.Screen.find screen "train/samples_per_s " <> []; T.Screen.find screen "train/samples_…" <> [] ])
 
 (* Zoom on a reading of the machine gives its values in the reading's unit,
-   as its strip does: VRAM in GiB, a busy share in percent. *)
+   as its strip does: RAM in GiB, a busy share in percent. *)
 let zoom_units =
   cases ~id:(fun (name, _, _) -> name) "zoom gives a reading in its unit"
-    [ ("used_bytes", [ Key Up ], " GiB"); ("cpu_busy_pct", [], "%") ]
+    [ ("mem_used_bytes", [], " GiB"); ("cpu_busy_pct", [ Key Up ], "%") ]
     (fun (key, up, unit) ->
       with_store Fixture.runs @@ fun store ->
       let script _ = feed store Fixture.tidy_otter ~step:12400 in
-      (* The machine's strips end the list: the last is CPU busy, VRAM before. *)
+      (* The machine's strips end the list: the last is RAM, CPU busy before. *)
       let keys = [ Key Enter ] @ times 30 (Key Down) @ up @ [ Key Enter ] in
       let screen = show ~script ~cols:120 ~rows:40 store Munin_tui.Runs keys in
       let rows = List.init (T.Screen.rows screen) (T.Screen.row screen) in
@@ -3483,6 +3599,10 @@ let () =
          hidden_filter;
          strips_scroll;
          shared_axis;
+         machine_strips;
+         reading_steps;
+         resumed_readings;
+         resumed_cursor;
          data_path_test;
          hint_test;
          hints_fit;

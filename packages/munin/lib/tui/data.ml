@@ -7,12 +7,9 @@ open Munin
 module Smap = Map.Make (String)
 module Sset = Set.Make (String)
 
-type axis = Step | Time
-
 type plot = {
   run : string;
   key : string;
-  axis : axis;
   x : float * float;
   dots : int;
   smooth : bool;
@@ -52,7 +49,7 @@ type keys = All | Keys of Sset.t
 type held = { history : History.t; keys : keys; gen : int }
 
 (* A reduction, with the generation and the resumes of the history it read,
-   since a resume can orphan samples it reduced and moves a time axis, and
+   since a resume can orphan samples it reduced, and
    whether that history had read its run's end: only such a reduction is
    whole. *)
 type made = { reduction : Reduce.t; from : int; resumes : int; whole : bool }
@@ -102,11 +99,11 @@ let experiment d name = Smap.find_opt name d.experiments
 let history d id = Option.map (fun h -> h.history) (Smap.find_opt id d.held)
 let errors d = d.errors
 
-(* A plot's dot count and smoothing follow its run, key, axis and x in the
-   order of plots, so the reductions of a series are one range. *)
-let reductions d ~run ~key ~axis ~x =
-  let first = { run; key; axis; x; dots = min_int; smooth = false } in
-  let series (p : plot) = p.run = run && p.key = key && p.axis = axis && p.x = x in
+(* A plot's dot count and smoothing follow its run, key and x in the order
+   of plots, so the reductions of a series are one range. *)
+let reductions d ~run ~key ~x =
+  let first = { run; key; x; dots = min_int; smooth = false } in
+  let series (p : plot) = p.run = run && p.key = key && p.x = x in
   Pmap.to_seq_from first d.reductions
   |> Seq.take_while (fun (p, _) -> series p)
   |> Seq.map (fun (_, m) -> m.reduction)
@@ -135,15 +132,13 @@ let add_need id keys m =
 
 let ended r = Run.ended_at r <> None
 
+(* A key's samples in the history the run kept: a reading logged before a
+   resume that went back below its step is left out, as a metric's orphans
+   are, so a chart over the steps draws one attempt at each step. *)
 let series h key =
-  match History.series h key with s -> Some s | exception Invalid_argument _ -> None
+  match History.surviving h key with s -> Some s | exception Invalid_argument _ -> None
 
-let x_of axis h pauses s =
-  match axis with
-  | Step -> fun i -> Float.of_int (Metric.step s i)
-  | Time ->
-      let started = Run.started_at (History.run h) in
-      fun i -> Facts.active_at pauses ~started (Metric.time s i)
+let step_of s i = Float.of_int (Metric.step s i)
 
 (* The poll *)
 
@@ -329,11 +324,7 @@ let poll store ~now ~list wants d =
       match series h.history p.key with
       | None -> prev
       | Some s ->
-          let x =
-            x_of p.axis h.history
-              (Option.value (Smap.find_opt p.run pauses) ~default:[])
-              s
-          in
+          let x = step_of s in
           let resumes = List.length (History.resumes h.history) in
           let reduction =
             match prev with
@@ -382,7 +373,7 @@ let poll store ~now ~list wants d =
           Option.bind (Smap.find_opt id held) (fun (h : held) ->
               Option.map
                 (fun s ->
-                  let x i = Float.of_int (Metric.step s i) in
+                  let x = step_of s in
                   let v = Float.of_int step in
                   (id, Reduce.at ~x s v, Reduce.at ~tau:r.tau ~x s v))
                 (series h.history r.key))

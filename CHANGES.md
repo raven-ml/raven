@@ -1218,6 +1218,9 @@ All notable changes to this project will be documented in this file.
 
 ### Munin (new)
 
+- `History.surviving` gives a key's samples that no resume abandoned: a
+  reading logged before a resume that went back below its step is left out,
+  by its place in the log whatever the clocks say.
 - `Metric.ordered` tells whether no step of a series is below the one before,
   kept by the reader as it reads.
 - **Breaking:** `History.best` is removed: pass `History.goal` and
@@ -1261,7 +1264,7 @@ experiments, each with its state glyph, its key metric drawn over its steps
 and its best value; the cursor's run, its key metric in large digits over its
 charts; and the run's state, progress, params, machine and source. `enter`
 goes from the charts to a strip of every metric, with the difference to an
-overlaid run and, while the run is live, its machine's readings, then to one
+overlaid run, and of its machine's readings over the same steps, then to one
 metric at a step cursor. `space` overlays up to four runs, `r` draws the
 experiment's other runs in grey, and `?` lists the keys. A chart draws the
 mean of each braille dot column, smoothed for `train/` metrics over steps so
