@@ -132,18 +132,17 @@ An item leaves when its library fixes it, or when a design decides it stays.
 
 ## tolk
 
-- Compiling a distillation step's gradient for CUDA raises
-  `Invalid_argument "a AxisType.UPCAST axis comes from a AxisType.GLOBAL,
-  AxisType.LOCAL, AxisType.WEAK axis, not a AxisType.UPCAST one"` in
-  `Heuristic.block` (`codegen/opt/heuristic.ml:970`, from
-  `Postrange.apply_opts`; the 8-by-8 blocking of d35db2e8d0), wherever the
-  step takes the dense attention path (dropout above 0): in float32 at
-  `gen/grads.py init`'s student (d 64), in bfloat16 at nano's 4096 pixels
-  and medium's 2048 a group. The same student in bfloat16 compiles, and
-  so do nano's and medium's steps on the fused path (dropout 0 at the
-  layers). Reproduce:
-  `main.exe validate --training DIR --tile DIR --device cuda`. It blocks
-  training with v2's dropout on CUDA. Found by the M4 distillation track.
+- Compiled float32 gradients exceed the oracle bound (2 x torch f32's own
+  distance from f64; `main.exe validate --training fixtures/grads --tile
+  fixtures/tiles/small_64`). On CUDA (main 5e057f36f4, which made the step
+  compile; it raised `Invalid_argument` naming an UPCAST axis before):
+  34/91 fail, worst 7.96 (s1 layer 0 ffn1.w and .b), q/k weights about 3x,
+  every s1 layer 0 leaf and embed 1.4-2.5x, s1 pool, heads' w 1.4-1.5x; s1
+  layer 1 is at torch's own level (0.5). Compiled on the host: 11/91, 2.2x
+  (q/k weights, s1 pool, heads' w; m4a-notes.md). Eager f32 passes. Being
+  diagnosed: accumulation order in long weight-gradient sums against a ReLU
+  flip in s1 layer 0's FFN (m4-numerics.md's mechanism). Blocks validating
+  f32 training on CUDA and compiled.
 - A distillation step end to end (medium, 4096 pixels in 4 groups, bf16,
   fused attention) takes 8.04 s on fudge's RTX 5000 against PyTorch's
   1.744 s (m0-baselines.md §2.3, which drops out at 0.1); unprofiled. The
@@ -171,17 +170,18 @@ An item leaves when its library fixes it, or when a design decides it stays.
   with cuBLAS.
 - LayerNorm is ~2× PyTorch's on CUDA and 2-3.5× on CPU (M0); see the next
   item for the compiled reads.
-- tolk's `Heuristic.block` trusts the upcast indices `upcast_more` recorded;
-  when an upcast consumes a whole axis (TESSERA's dense attention scores at
-  [64; 4; 256; 256]: the 4 heads), the index shifts onto an UPCAST range and
-  compiling raises "UPCAST axis comes from GLOBAL/LOCAL/WEAK", or silently
-  blocks the wrong axis. It blocks training with dropout and f32 gradients
-  on CUDA. Diagnosed; being fixed within the M2 GEMM track, which edits the
-  same heuristic.
 - tolk's `Heuristic.block` ignores upcasts made before it by
   `upcast_masked`: a materialised `[b; h; i; j]` mask gave 256 accumulators a
-  thread. Values were correct; the cost is registers and occupancy (found by
-  the second M2 GEMM review, pre-existing on main).
+  thread (`r_8_16_2_2_16_4_4_4_2_2_4_4`). Values were correct; the cost is
+  registers and occupancy. A bound on the kernel's upcast size (at most 16
+  before blocking) would hold it (found by the second M2 GEMM review,
+  pre-existing on main).
+- tolk's lend (main 5e057f36f4: an upcast taking its axis whole lends its
+  double to the output axis the same operands read) compares every load,
+  including a bias read after the reduce: a per-head bias makes the heads'
+  reads differ from the width's and nothing is lent, 102 µs against 33 µs
+  lent. Comparing only the loads under the reduce would fix it; attention's
+  scores would still not lend (second M2 review, re-review).
 - tolk compiles reductions that read the same operand over the same axes
   as separate kernels: compiled `Nx.standardize` reads its input five times
   (Max for the overflow rescue, Σx, Σd, Σd², then the map) where nx.cpu reads
@@ -190,7 +190,12 @@ An item leaves when its library fixes it, or when a design decides it stays.
   LAPACK's dnrm2.f90 after Anderson, ACM TOMS 2017) drop the Max pass from
   standardize, rms_norm, var and std together. GPU wall time unmeasured
   (found by the layer-norm review).
-- CUDA f32 GEMM shape coverage (M0, m0-baselines.md): products whose N is
+- CUDA f32 GEMM shape coverage. Since main 5e057f36f4 (M2) the students'
+  projections run at 0.85-1.11x cuBLAS in kernel time (medium encode 2741 ->
+  1438 ms, nano 234 -> 166 ms a call); still above cuBLAS: nano (1.11x),
+  medium's in_proj at T40 (1.05x), reduce2 (1.7-2.2x in wall time), and
+  split-K for training's weight gradients is unmeasured. The M0 record
+  before M2 (m0-baselines.md): products whose N is
   divisible by 3 (every fused QKV projection: N = 432, 768, 1320, 1920) and
   those at TESSERA's d = 144 and 440 run at ~5 TFLOP/s, against 16-20 for
   well-factored N, 3.8-4.4× cuBLAS; well-factored N are 1.3-1.45×. Together
