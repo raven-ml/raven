@@ -554,29 +554,34 @@ let test_lent_open () =
   stop (hold g m 0)
 
 (* A lend of a function whose release began, at any allocation: it counts
-   nothing, so the take goes back at the last unlend. *)
+   nothing, so the take goes back at the last unlend. Each step runs on a
+   tree of its own, removed as the step ends, failed or not. *)
 let test_lend_interrupted () =
   needs_flock ();
   let rec walk n =
     let g, m, root = three () in
-    let fn = ref None in
-    let h =
-      require_ok
-        (Driver.open_ g m 0 (fun h f ->
-             fn := Some f;
-             kept h))
-    in
-    let f = require_some !fn in
-    equal ~msg:"the lend" bool true (Function.lend f);
-    stop h;
     let reached =
-      Rig_support.interrupted n (fun () -> ignore (Function.lend f : bool))
+      Fun.protect ~finally:(fun () -> Tree.remove root) @@ fun () ->
+      let fn = ref None in
+      let h =
+        require_ok
+          (Driver.open_ g m 0 (fun h f ->
+               fn := Some f;
+               kept h))
+      in
+      let f = require_some !fn in
+      equal ~msg:"the lend" bool true (Function.lend f);
+      stop h;
+      let reached =
+        Rig_support.interrupted n (fun () -> ignore (Function.lend f : bool))
+      in
+      Function.unlend f;
+      equal
+        ~msg:(strf "held after the lend, from allocation %d" n)
+        bool false (held root gpu_bus);
+      stop (hold g m 0);
+      reached
     in
-    Function.unlend f;
-    equal
-      ~msg:(strf "held after the lend, from allocation %d" n)
-      bool false (held root gpu_bus);
-    stop (hold g m 0);
     if reached then walk (n + 1)
   in
   walk 1
