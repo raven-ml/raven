@@ -198,6 +198,229 @@ let host_point () =
        (Array.to_list ends));
   Rig.Point.wait ends.(0)
 
+(* Times *)
+
+(* The most groups of a time's fill, and the most groups a core runs in a
+   nanosecond: Polled calls its [fill] once per group, and no core makes more
+   than one call a cycle at 8 GHz. A fill of [large] groups thus takes at least
+   [large / per_ns] ns. *)
+let large = 1 lsl 14
+let per_ns = 8
+
+(* [description] without its loop, whose body is a step of its own, then a
+   submission of no parts on device 0: a program [time] times. Its memory 0
+   holds [large] words, all of which its fill may write. *)
+let unlooped archs =
+  let t = description archs in
+  let words = G.Memory { memory = 0; offset = 0; length = 8 * large } in
+  let memory =
+    Iarray.map
+      (function G.Alloc a -> G.Alloc { a with bytes = 8 * large } | m -> m)
+      t.memory
+  in
+  let fill =
+    match Iarray.get t.steps 0 with
+    | G.Submit s -> G.Submit { s with slots = [| words |] }
+    | step -> step
+  in
+  let body =
+    match Iarray.get t.steps 2 with
+    | G.Loop { body; _ } -> Iarray.get body 0
+    | step -> step
+  in
+  let none =
+    G.Submit { device = 0; slots = [||]; fixed = [||]; parts = [||] }
+  in
+  { t with memory; steps = [| fill; Iarray.get t.steps 1; body; none |] }
+
+(* [unlooped] on [h]'s Polled devices and [h], and a frame of it whose run
+   leaves [expected] in its inputs. *)
+let timed_on h =
+  let ds = with_host (Array.of_list (polled h)) in
+  let p =
+    require_ok ~pp:Format.pp_print_string
+      (G.load (unlooped (archs ds)) (Iarray.of_array ds))
+  in
+  let frame () =
+    let x = far_of_string ds.(1) (String.make size '\000') in
+    let c = far_of_string ds.(0) (le64 0) in
+    { G.inputs = [| x; c |]; ints = [| 8; 0 |] }
+  in
+  (p, frame)
+
+let expected = (words 8 (fun i -> 100 + i), le64 1)
+let inputs_of (f : G.frame) = (read f.inputs.(0), read f.inputs.(1))
+
+(* A time's durations against the host's time [window] around its call: at
+   least 0 for each of the three steps of parts, each on a device of its own,
+   and at most [window], at least [least] for the fill, and 0 for the
+   submission of no parts. *)
+let window_law ?(least = 0) times window =
+  equal ~msg:"one per step" int 4 (Array.length times);
+  for i = 0 to 2 do
+    let msg = Printf.sprintf "step %d's time" i in
+    at_least ~msg int ~than:0 times.(i);
+    at_most ~msg int ~than:window times.(i)
+  done;
+  at_least ~msg:"the fill's time" int ~than:least times.(0);
+  equal ~msg:"the submission of no parts" int 0 times.(3)
+
+(* A time on an agent has each step's duration there, and its run leaves the
+   bytes a run leaves. A program with a loop raises before any work. *)
+let times () =
+  with_job @@ fun j _ ->
+  let h = List.hd (Rig_remote.hosts j) in
+  let p, frame = timed_on h in
+  let f = frame () in
+  let t0 = Rig.Profile.now () in
+  let times = G.time p f in
+  window_law times (Rig.Profile.now () - t0);
+  equal ~msg:"the inputs" (pair string string) expected (inputs_of f);
+  let ds = with_host (Array.of_list (polled h)) in
+  let looped =
+    require_ok ~pp:Format.pp_print_string
+      (G.load (description (archs ds)) (Iarray.of_array ds))
+  in
+  let before = Rig.submitted h in
+  raises_match (Exn.invalid_arg ~sub:"Rig_program.time: a program with a loop")
+    (fun () -> G.time looped (frame ()));
+  equal ~msg:"no work for a loop" int before (Rig.submitted h)
+
+(* A time on an agent's device that times no work has [-1] for a step of
+   parts, as the agent read it, and [0] for a submission of no parts. *)
+let untimed () =
+  with_job @@ fun j _ ->
+  let h = List.hd (Rig_remote.hosts j) in
+  let d =
+    match Rig_remote.devices h "UNTIMED" with
+    | Ok ds -> List.hd ds
+    | Error why -> failf "devices: %s" why
+  in
+  let t =
+    {
+      G.devices = [| Rig.arch d |];
+      memory = [||];
+      images =
+        [| { G.device = 0; binary = { bytes = "functions"; holes = [||] } } |];
+      inputs = [| { G.device = 0; bytes = size } |];
+      ints = 0;
+      steps =
+        [|
+          G.Submit
+            {
+              device = 0;
+              slots = [| G.Input 0 |];
+              fixed = [||];
+              parts =
+                [|
+                  launch ~image:0 ~groups:(G.Fixed 8) "fill"
+                    (le64 0 ^ le64 100) [| ref_ Write 0 0 |];
+                |];
+            };
+          G.Submit { device = 0; slots = [||]; fixed = [||]; parts = [||] };
+        |];
+    }
+  in
+  let p = require_ok ~pp:Format.pp_print_string (G.load t [| d |]) in
+  let x = far_of_string d (String.make size '\000') in
+  equal ~msg:"its times" (array int) [| -1; 0 |]
+    (G.time p { inputs = [| x |]; ints = [||] });
+  equal ~msg:"the fill" string (words 8 (fun i -> 100 + i)) (read x)
+
+(* A time of a program of no [Submit] step on an agent has only [0]s, and its
+   load made no memory there, where a load of one with a [Submit] step makes
+   8 bytes per step for its times. *)
+let no_submit () =
+  with_job @@ fun j _ ->
+  let h = List.hd (Rig_remote.hosts j) in
+  let d = List.hd (polled h) in
+  let move =
+    G.Move
+      {
+        src = G.Input 0;
+        src_offset = [||];
+        dst = G.Input 1;
+        dst_offset = [||];
+        length = 8;
+      }
+  in
+  let program steps =
+    {
+      G.devices = [| Rig.arch d |];
+      memory = [||];
+      images = [||];
+      inputs = [| { G.device = 0; bytes = 8 }; { G.device = 0; bytes = 8 } |];
+      ints = 0;
+      steps;
+    }
+  in
+  let made steps =
+    let before = Rig.allocated h in
+    let p =
+      require_ok ~pp:Format.pp_print_string (G.load (program steps) [| d |])
+    in
+    (p, Rig.allocated h - before)
+  in
+  let p, bytes = made [| move |] in
+  equal ~msg:"memory made at load" int 0 bytes;
+  let y = far_of_string d (le64 0) in
+  equal ~msg:"its times" (array int) [| 0 |]
+    (G.time p { inputs = [| far_of_string d (le64 7); y |]; ints = [||] });
+  equal ~msg:"the move's bytes" string (le64 7) (read y);
+  let none =
+    G.Submit { device = 0; slots = [||]; fixed = [||]; parts = [||] }
+  in
+  let _, bytes = made [| move; none |] in
+  equal ~msg:"memory made at load, with a Submit step" int
+    (Rig.allocation h 16) bytes
+
+(* Times of one program on an agent from two domains each answer their own
+   run's durations, within the host's window around their call, and leave
+   their run's bytes. A large time's fill is timed, at least [large / per_ns]
+   ns: one that answered another run's times, or left its fill untimed (0),
+   falls short of it, as a fill of 8 groups does unless the machine stalls
+   it. *)
+let remote =
+  fixture
+    ~teardown:(fun (j, a) ->
+      Rig_remote.close j;
+      kill a)
+    (fun () ->
+      let a = with_key_file start in
+      (connect [ a ], a))
+
+let timed = abstract "p"
+
+let time_law ~least = function
+  | Error e -> failf "raised %s" (Printexc.to_string e)
+  | Ok (times, window, inputs) ->
+      window_law ~least times window;
+      equal ~msg:"the inputs" (pair string string) expected inputs
+
+(* A time of [p] whose fill runs [groups] groups. *)
+let time_with groups (p, frame) =
+  let f = { (frame ()) with G.ints = [| groups; 0 |] } in
+  let t0 = Rig.Profile.now () in
+  let times = G.time p f in
+  let window = Rig.Profile.now () - t0 in
+  (times, window, inputs_of f)
+
+let timed_commands =
+  [
+    command "load"
+      (Gen.unit @-> makes timed)
+      (fun () -> ())
+      (fun () -> timed_on (List.hd (Rig_remote.hosts (fst (remote ())))));
+    command "time"
+      (timed ^-> judges (triple (array int) int (pair string string)))
+      (fun () -> time_law ~least:0)
+      (time_with 8);
+    command "time large"
+      (timed ^-> judges (triple (array int) int (pair string string)))
+      (fun () -> time_law ~least:(large / per_ns))
+      (time_with large);
+  ]
+
 (* A binary that is no program is the agent's refusal. *)
 let refused_binary () =
   with_job @@ fun j _ ->
@@ -769,6 +992,19 @@ let () =
            same_bytes;
          test ~timeout:60. "a run on an agent is a point of its machine's host"
            host_point;
+         test ~timeout:60.
+           "a time on an agent has each step's duration there, and refuses a \
+            loop"
+           times;
+         test ~timeout:60.
+           "a time on an agent's device that times nothing has -1 for a step"
+           untimed;
+         test ~timeout:60.
+           "a time of no Submit step on an agent has 0s, its load no memory \
+            for them"
+           no_submit;
+         stateful ~timeout:60. ~count:30 ~domains:2
+           "times of one program on an agent from two domains" timed_commands;
          test ~timeout:60. "an agent refuses a binary that is no program"
            refused_binary;
          test ~timeout:60.

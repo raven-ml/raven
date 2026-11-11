@@ -1,6 +1,5 @@
-(* Tests of Tolk_engine on another machine's host, whose device records no
-   work for a run: the other machine is rig's test agent, a real process on
-   the loopback (Remote_job). *)
+(* Tests of Tolk_engine on another machine's host: the other machine is rig's
+   test agent, a real process on the loopback (Remote_job). *)
 
 open Windtrap
 open Tolk
@@ -32,11 +31,10 @@ let axpy size =
   Ops.sink ~kernel:(Ops.kernel_info ~name:"axpy" ())
     [ Ops.end_ (Ops.store (at 0) ((at 1 * Ops.cast n Float32) + at 2)) [ i ] ]
 
-(* A time is the sum of the work a profile here records for the run's
-   kernels, and another machine's device records none: a time of a schedule
-   with a kernel there raises at its call, naming the device, and runs
-   nothing on it. *)
-let refused () =
+(* A time of a schedule on another machine's host is its kernel's time there,
+   which lies within the host's times around the call, and runs the schedule
+   once there: one submission of its run's words. *)
+let timed () =
   let h = host () in
   let size = 1024 in
   let prg = Codegen.to_program (axpy size) (Engine.renderer h) in
@@ -50,15 +48,15 @@ let refused () =
   in
   let slots = Engine.slots s in
   let before = Rig.submitted h in
-  raises_match
-    (fun e ->
-      Exn.invalid_arg ~sub:"Tolk_engine.time" e
-      && Exn.invalid_arg ~sub:(Rig.name h) e)
-    (fun () -> Engine.time ~vars:[ ("n", 3) ] s slots);
-  equal ~msg:"its submits" int before (Rig.submitted h)
+  let t0 = Rig.Profile.now () in
+  let t = Engine.time ~vars:[ ("n", 3) ] s slots in
+  let window = Float.of_int (Rig.Profile.now () - t0) *. 1e-9 in
+  greater ~msg:"the time" float_exact ~than:0. t;
+  at_most ~msg:"the time" float_exact ~than:window t;
+  equal ~msg:"its submits" int (before + 1) (Rig.submitted h)
 
 let () =
   Watchdog.start ();
   exit
     (run "Tolk_engine on another machine's host"
-       [ test "a time raises at its call, naming the device" refused ])
+       [ test "a time is its kernel's time there, within the call" timed ])

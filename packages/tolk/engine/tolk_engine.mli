@@ -253,15 +253,13 @@ val time :
     GPU of 576 GB/s.
 
     Raises [Invalid_argument], before the scrub and the run, if [s] has a
-    loop, whose steps a run may submit once per trip ({!Rig_program.time}),
-    and, naming the device, if a kernel of [s] runs on another machine's
-    device ({!Rig.host_of}), whose work no time here reads; [Failure] naming
-    the device and the kernels if a device did not time a submission of the
-    run that runs a kernel of [s], as a driver drops a sample it cannot
-    time, such as one it finds outside the host's window: a caller that
-    samples several times can take the sample as lost. Raises as {!run}
-    does, and {!Rig.Lost} if a device of [s] is lost, or closed, before the
-    time has read its times. *)
+    loop, whose steps a run may submit once per trip ({!Rig_program.time});
+    [Failure] naming the device and the kernels if a device did not time a
+    submission of the run that runs a kernel of [s], as a driver drops a
+    sample it cannot time, such as one it finds outside the host's window: a
+    caller that samples several times can take the sample as lost. Raises as
+    {!run} does, and {!Rig.Lost} if a device of [s] is lost, or closed,
+    before the time has read its times. *)
 
 (**/**)
 

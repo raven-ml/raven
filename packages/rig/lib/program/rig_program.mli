@@ -489,10 +489,12 @@ val time : ?waits:Rig.Point.t array -> loaded -> frame -> int array
     states. On a device whose driver measures its launches' counters, a
     timed launch is measured too.
 
+    On another machine, the times are read there and come back
+    ({!section-machines}).
+
     Raises [Invalid_argument], before any step runs, if [p] has a [Loop]
-    step or is loaded on another machine. Raises as {!run} does, and
-    {!Rig.Lost} if a device is lost, or closed ({!Rig.close}), before [time]
-    has read its times. *)
+    step. Raises as {!run} does, and {!Rig.Lost} if a device is lost, or
+    closed ({!Rig.close}), before [time] has read its times. *)
 
 (** {1:machines Programs of another machine}
 
@@ -501,12 +503,23 @@ val time : ?waits:Rig.Point.t array -> loaded -> frame -> int array
     image ({!Rig.Image.load}), and asks for the image's function ["run"]
     ({!Rig.Image.resolve}). Each {!run} is then one submission on that host,
     whose one part is a {!Rig.Submission.words}: the function's value, the
-    frame's inputs, each as its memory's id on the machine, its offset and its
-    length, and the frame's ints. The submission names only the memory of
-    this process that holds these words, and its point is reached once the
-    run's work on that machine is done. The machine's agent runs it after the
-    work submitted to the machine before it, and runs the work submitted
-    after it once the run is done ([Rig_remote]'s order section).
+    {e times word}, [-1] for a run, the frame's inputs, each as its memory's
+    id on the machine, its offset and its length, and the frame's ints. The
+    submission names only the memory of this process that holds these words,
+    and its point is reached once the run's work on that machine is done.
+    The machine's agent runs it after the work submitted to the machine
+    before it, and runs the work submitted after it once the run is done
+    ([Rig_remote]'s order section).
+
+    For a program without a loop that has a [Submit] step, {!load} also
+    makes 8 bytes per step on that host. A {!time} makes as many in this
+    process's host memory, and submits the same words, the times word the id
+    of the memory on the machine, and a copy of it into its own. The agent
+    times the run, writes each step's time there as a little-endian 64-bit
+    integer, and the copy brings them back. Times share the memory on the
+    machine, since the agent runs a later run's words once the copy is done.
+    A program without a [Submit] step is timed as it runs, and has only
+    [0]s.
 
     {!run} raises here, before the submission, for each refusal that comes
     before any step. It also raises [Invalid_argument] here for a launch
@@ -542,9 +555,13 @@ val run_received :
 (** [run_received ~waits w ~program ~region] is {!run}[ ~waits] of the program
     that [program] gives for the value [w] starts with, over the frame [w]
     holds. Each input is the view of [region id] at its offset and length.
+    Where [w]'s times word is an id, it is {!time}[ ~waits] instead, which
+    writes each step's time into [region id] as a little-endian 64-bit
+    integer, and is the run's ends ({!section-machines}).
 
     [Error why] if [w] is malformed, or [program] or [region] gives nothing
-    for an id it names. Otherwise it raises as {!run}. *)
+    for an id it names, or the times' memory is not 8 bytes per step.
+    Otherwise it raises as {!run} or {!time}. *)
 
 (**/**)
 

@@ -17,7 +17,7 @@ let err_malformed = "a malformed handshake"
 (* Constants *)
 
 let magic = "rig-job\n"
-let version = 12
+let version = 13
 let min_key = 16
 let max_key = 4096
 let nonce_bytes = 32

@@ -22,8 +22,8 @@
     job's key over both ends' nonces, the dialing end first:
 
     {v
-     accepting: "rig-job\n", version 12 (u32), 0, its nonce (32 bytes)
-                or "rig-job\n", version 12 (u32), 1 and why
+     accepting: "rig-job\n", version 13 (u32), 0, its nonce (32 bytes)
+                or "rig-job\n", version 13 (u32), 1 and why
      dialing:   its nonce (32 bytes), its process, the accepting end's
                 process, its proof (32 bytes)
      accepting: 0 and its proof (32 bytes)
@@ -100,12 +100,13 @@
 (** {1:handshakes Handshakes} *)
 
 val version : int
-(** [version] is the protocol's version, the handshake's: 12. Ends at other
+(** [version] is the protocol's version, the handshake's: 13. Ends at other
     versions refuse each other. Adding or removing a level of an x86-64
     host's [Rig.arch], which an account carries and [Rig_program.load]
     orders, changes the version, so that no end reads a level its rig does
     not know. An arm64 feature does not: [Rig_program.load] compares
-    features by name. *)
+    features by name. So does a change to the words of a program's run
+    ([Rig_program]'s machines section), which an agent decodes. *)
 
 val min_key : int
 (** [min_key] is the fewest bytes of a job's key: 16. *)

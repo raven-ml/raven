@@ -2252,10 +2252,20 @@ let time_here ~waits (p : here) (f : frame) =
 
 (* The binary [load] sends another machine's host: the magic, then each device's
    id on that machine, then the description's bytes. A run's words: the
-   program's entry, each input's memory id, offset and length, the number of the
-   frame's ints, then the description's [ints] words, the frame's first. *)
+   program's entry, the memory id of the region a time's agent writes the
+   steps' times into or [no_times] for a run, each input's memory id, offset
+   and length, the number of the frame's ints, then the description's [ints]
+   words, the frame's first. *)
 
 let share_magic = "rig.share\n"
+let no_times = -1
+
+(* What a time of a program of another machine uses: the region on that
+   machine's host that its agent writes the steps' times into, as
+   little-endian 64-bit integers, and the run of a submission of the run's
+   words and a copy of the region into its slot 0, the time's own memory of
+   this process. *)
+type times_there = { region : B.t; trun : Sub.Run.t }
 
 (* A program loaded on another machine, which a submission on its host runs. *)
 type there = {
@@ -2267,6 +2277,9 @@ type there = {
   watch : watched array;
   entry : int;
   srun : Sub.Run.t;
+  times : times_there option;
+      (* [None] for a program that has a loop, which [time] refuses, or no
+         [Submit] step, whose times are all [0]. *)
   words :
     (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t;
   lock : Mutex.t;
@@ -2274,7 +2287,24 @@ type there = {
 
 type loaded = Here of here | There of there
 
-let words_bytes (t : t) = 8 + (24 * Iarray.length t.inputs) + 8 + (8 * t.ints)
+let words_bytes (t : t) =
+  8 + 8 + (24 * Iarray.length t.inputs) + 8 + (8 * t.ints)
+
+(* Where a run's words hold each input's memory id, offset and length. *)
+let input_word i = 16 + (24 * i)
+
+let is_submit = function Submit _ -> true | Loop _ | Move _ -> false
+
+(* [t]'s times on another machine, whose host is [host], with the words of
+   [words] run as [run]. *)
+let times_there (t : t) host words run =
+  if Iarray.exists is_loop t.steps || not (Iarray.exists is_submit t.steps)
+  then None
+  else
+    let region = B.create host (8 * Iarray.length t.steps) in
+    let copy = Sub.copy ~src:(Sub.Buffer region) ~dst:(Sub.Slot 0) in
+    let sub = Sub.make ~keep:run host [| Sub.words words; copy |] in
+    Some { region; trun = Sub.take sub }
 
 (* [d]'s id on its machine, as its agent names it. *)
 let proxy_id d =
@@ -2290,7 +2320,7 @@ let load_there t devices =
   check t (Iarray.to_array (Iarray.map size t.memory)) devices;
   let inputs = Iarray.length t.inputs in
   if
-    inputs > (max_int - 16) / 24 || t.ints > (max_int - 16 - (24 * inputs)) / 8
+    inputs > (max_int - 24) / 24 || t.ints > (max_int - 24 - (24 * inputs)) / 8
   then
     broken "%d inputs and %d ints: more than a run's words hold" inputs t.ints;
   let host = Rig.host_of devices.(0) in
@@ -2332,6 +2362,7 @@ let load_there t devices =
                  watch;
                  entry;
                  srun = Sub.take sub;
+                 times = times_there t host buffer run;
                  words = B.export buffer Bigarray.char;
                  lock = Mutex.create ();
                })))
@@ -2372,6 +2403,14 @@ let set_word words at v =
       unsafe_set words (at + i) (Char.unsafe_chr ((v asr (8 * i)) land 0xff))
     done)
 
+(* The little-endian int64 at [at] of [words], which [set_word] wrote. *)
+let get_word words at =
+  let v = ref 0 in
+  for i = 7 downto 0 do
+    v := (!v lsl 8) lor Char.code (Bigarray.Array1.unsafe_get words (at + i))
+  done;
+  !v
+
 let threads = function
   | Here p ->
       Array.map
@@ -2408,14 +2447,17 @@ let check_threads watch (f : frame) =
         kernel most x y z
   done
 
-(* The words are placed on the host's queue when [submit] hands them over, so
-   the next run writes them again once it returned. Each input is read once,
-   checked and written: the agent checks again what it decodes. A borrow here
-   asks the agent's own borrow, once per allocation and device. *)
-let run_words ~waits p (f : frame) =
+(* Submits [run] over [buffers], which runs [p]'s words, naming the region
+   [times] for the steps' times, and is its point. The words are placed on
+   the host's queue when [submit] hands them over, so the next run writes
+   them again once it returned. Each input is read once, checked and written:
+   the agent checks again what it decodes. A borrow here asks the agent's own
+   borrow, once per allocation and device. *)
+let run_words ~waits p run ~times ~buffers (f : frame) =
   check_counts p.t f;
   check_threads p.watch f;
   set_word p.words 0 p.entry;
+  set_word p.words 8 times;
   for i = 0 to Array.length f.inputs - 1 do
     let b = f.inputs.(i) and spec = Iarray.get p.t.inputs i in
     check_input i spec p.devices.(spec.device) b;
@@ -2428,28 +2470,52 @@ let run_words ~waits p (f : frame) =
       else if Option.is_none (B.borrow dev b) then
         invalid "input %d: %s cannot borrow it" i (Rig.name dev)
     done;
-    let at = 8 + (24 * i) in
+    let at = input_word i in
     set_word p.words at (Nativeint.to_int (B.handle b));
     set_word p.words (at + 8) (B.offset b);
     set_word p.words (at + 16) (B.length b)
   done;
-  let at = 8 + (24 * Array.length f.inputs) in
+  let at = input_word (Array.length f.inputs) in
   set_word p.words at (Array.length f.ints);
   for i = 0 to Array.length f.ints - 1 do
     set_word p.words (at + 8 + (8 * i)) f.ints.(i)
   done;
-  [| Rig.submit ?waits p.srun ~buffers:[||] |]
+  Rig.submit ?waits run ~buffers
 
-(* The lock as [run_here] takes it. *)
-let run_there ~waits p (f : frame) =
+(* [run_words] under the lock, as [run_here] takes it. *)
+let submit_there ~waits p run ~times ~buffers (f : frame) =
   lock p.lock;
-  match run_words ~waits p f with
-  | points ->
+  match run_words ~waits p run ~times ~buffers f with
+  | point ->
       Mutex.unlock p.lock;
-      points
+      point
   | exception e ->
       Mutex.unlock p.lock;
       raise e
+
+let run_there ~waits p (f : frame) =
+  [| submit_there ~waits p p.srun ~times:no_times ~buffers:[||] f |]
+
+(* A run of [p] whose agent writes the steps' times into [x]'s region, which
+   a copy brings back into memory of this time's own. The region needs no
+   lock: the agent runs a later run's words once this run's copy is done. *)
+let time_times ~waits p x (f : frame) =
+  let n = Iarray.length p.t.steps in
+  let region = Nativeint.to_int (B.handle x.region) in
+  let local = B.create Rig.host (8 * n) in
+  let point =
+    submit_there ~waits p x.trun ~times:region ~buffers:[| local |] f
+  in
+  Rig.Point.wait point;
+  B.read local Bigarray.char (fun a ->
+      Array.init n (fun i -> get_word a (8 * i)))
+
+let time_there ~waits p (f : frame) =
+  match p.times with
+  | Some x -> time_times ~waits p x f
+  | None ->
+      Array.iter Rig.Point.wait (run_there ~waits p f);
+      Array.make (Iarray.length p.t.steps) 0
 
 let run ?waits p f =
   match p with Here p -> run_here ~waits p f | There p -> run_there ~waits p f
@@ -2461,10 +2527,7 @@ let time ?waits p f =
       snd (time_here ~waits p f)
   | There p ->
       check_unlooped p.t;
-      invalid_arg
-        ("Rig_program.time: a program of "
-        ^ Rig.name (Rig.host_of p.devices.(0))
-        ^ ", another machine's host")
+      time_there ~waits p f
 
 let load_received ?rails b ~device =
   let r = { R.s = b; at = 0 } in
@@ -2494,6 +2557,8 @@ let load_received ?rails b ~device =
                 with Broken why -> Error why)))
   end
 
+(* A run's words that name a region for its times make it [time_here], whose
+   times the agent writes there for the controller's copy to bring back. *)
 let run_received ?waits w ~program ~region =
   let r = { R.s = w; at = 0 } in
   match
@@ -2501,6 +2566,18 @@ let run_received ?waits w ~program ~region =
       match program (R.int r) with
       | Some (Here p) -> p
       | Some (There _) | None -> R.fail r "no program of this entry"
+    in
+    let times =
+      match R.int r with
+      | id when id = no_times -> None
+      | id -> (
+          let bytes = 8 * Iarray.length p.t.steps in
+          match region id with
+          | None -> R.fail r "no memory %d" id
+          | Some b when B.length b <> bytes ->
+              R.fail r "memory %d holds %d bytes, not the %d of the times" id
+                (B.length b) bytes
+          | Some b -> Some b)
     in
     let input _ =
       let id = R.int r in
@@ -2518,8 +2595,14 @@ let run_received ?waits w ~program ~region =
     if n < 0 || n > p.t.ints then
       R.fail r "%d ints for a program of %d" n p.t.ints;
     let ints = Array.init p.t.ints (fun _ -> R.int r) in
-    (p, { inputs; ints = Array.sub ints 0 n })
+    (p, times, { inputs; ints = Array.sub ints 0 n })
   with
   | exception R.Malformed (at, why) ->
       Error (strf "a malformed run at byte %d: %s" at why)
-  | p, f -> Ok (run_here ~waits p f)
+  | p, None, f -> Ok (run_here ~waits p f)
+  | p, Some b, f ->
+      check_unlooped p.t;
+      let ends, times = time_here ~waits p f in
+      B.write b Bigarray.char (fun a ->
+          Array.iteri (fun i v -> set_word a (8 * i) v) times);
+      Ok ends

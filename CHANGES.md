@@ -434,6 +434,8 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit ~beam` searches kernels on another machine's device, where it
+  raised `Invalid_argument`: the candidates are timed where they run.
 - `rune.mli` states that a `Rune.jit` variant gives the same bits at every
   call, and the same kernels when compiled again by the same raven and
   compiler in any process or domain; a searched variant is the exception.
@@ -1281,6 +1283,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Tolk_engine.time` times a schedule whose kernels run on another machine's
+  device, where it raised `Invalid_argument`: that machine times the run and
+  sends the times back (`Rig_program.time`).
 - `Tolk_engine.time` times only its run's submits (`Rig_program.time`). It
   took a profile, which times every domain's submits while it runs, so other
   domains' work paid for a search, and a loss of their devices raised

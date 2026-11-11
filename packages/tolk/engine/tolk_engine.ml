@@ -1482,20 +1482,6 @@ let check_unlooped t =
     fail "Tolk_engine.time"
       "a schedule with a loop, whose steps a run may submit once per trip"
 
-(* Refuses a schedule with a kernel on another machine's device: its work is
-   timed there, and [Rig_program.time] brings no time of it back. *)
-let check_local t =
-  match
-    List.find_opt
-      (fun (k : kernel) -> not (Rig.equal (Rig.host_of k.device) Rig.host))
-      t.kernels
-  with
-  | Some k ->
-      fail "Tolk_engine.time"
-        "%s is a device of another machine, which times no work here"
-        (Rig.name k.device)
-  | None -> ()
-
 (* Raises for the step of [device] launching [kernels], whose device did not
    time its work: a sum without it would be short. A device drops a sample
    whose times its driver finds outside the host's window, so a [Failure],
@@ -1511,7 +1497,6 @@ let untimed device kernels =
    are numbered as the program's, which [t.launches] describes. *)
 let time ?(vars = []) ?(scrub = []) t slots =
   check_unlooped t;
-  check_local t;
   check_slots t slots;
   List.iter
     (fun s ->

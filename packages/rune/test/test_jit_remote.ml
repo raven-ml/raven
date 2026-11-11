@@ -91,14 +91,14 @@ let compiles_for_its_arch () =
   equal string "CPU" t.device;
   equal string "CLANG" t.renderer
 
-(* A search times its candidates where they run, and another machine's host
-   gives no time back: a [beam] there raises before any round. *)
-let refuses_a_search () =
+(* A search times its candidates where they run, on another machine's host
+   too: the kernel it picks gives eager computation's bits. *)
+let searches () =
   let module R = (val Nx.devices [ host () ]) in
-  let x = Nx.place R.on (Nx.create Nx.float32 [| 64 |] (Array.make 64 1.)) in
-  raises_match
-    (Exn.invalid_arg ~sub:"Rune.jit: cannot search")
-    (fun () -> Rune.jit' ~beam:1 Nx.neg x)
+  let xs = Array.init 64 (fun i -> Float.of_int (i - 32) *. 0.5) in
+  let x = Nx.create Nx.float32 [| 64 |] xs in
+  let far = Rune.jit' ~beam:1 Nx.neg (Nx.place R.on x) in
+  equal (array int32) (bits (Nx.neg x)) (bits (Nx.place Nx.Host.on far))
 
 (* Half casts *)
 
@@ -244,7 +244,7 @@ let () =
            place_elsewhere;
          test "values on one machine of a set spanning machines compile"
            on_one_machine;
-         test "a search on another machine's host raises" refuses_a_search;
+         test "a search on another machine's host gives eager's bits" searches;
          group "gives eager's bits"
            [ agrees "neg" { f = Nx.neg }; agrees "floor" { f = Nx.floor } ];
          group "half casts give eager's bits"
