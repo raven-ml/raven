@@ -1453,14 +1453,14 @@ let bitcast_rule dt x =
   else Route.Elementwise
 
 (* Attention's results [[lead…; hq; tq; dv]] and [[lead…; hq; tq]] take
-   [q]'s lead axes, its heads and its rows; [k] and [v] give their lead
-   axes and their key heads, which become [q]'s where they are as many and
+   [q]'s lead axes, its heads and its rows; [k] and [v], dense or pools,
+   give their key heads, which become [q]'s where they are as many and
    regroup into them in tiles otherwise, a query head reading the key head
-   of its group; a page table and the lengths their lead axes; a load its
-   lead axes, heads and rows. The keys, a page table's pages and a dense
-   call's loads' keys are the one reduced factor, which {!Partial} closes.
-   Every other axis, the dimensions, a pool's and a paged call's loads'
-   keys, is read whole. *)
+   of its group, and dense ones their lead axes; a page table and the
+   lengths their lead axes; a load its lead axes, heads and rows. The keys,
+   a page table's pages and a dense call's loads' keys are the one reduced
+   factor, which {!Partial} closes. Every other axis, the dimensions, a
+   pool's pages and slots and a paged call's loads' keys, is read whole. *)
 let attention_rule (type v s d) (q : (v, s, d) t) (kv : (v, s, d) kv)
     (lengths : d index option) (loads : d any iarray) =
   let r = rank q in
@@ -1469,14 +1469,16 @@ let attention_rule (type v s d) (q : (v, s, d) t) (kv : (v, s, d) kv)
   let row n f = Array.init n (fun a -> if a < lead then Route.Becomes a else f a)
   in
   let whole _ = Route.Whole in
+  let head hk =
+    if hk = hq then Route.Becomes lead
+    else if hk > 1 && hq > 1 then Regroups { axis = lead; extent = hq }
+    else Whole
+  in
   let heads x =
-    let hk = dim x lead in
     row r (fun a ->
         if a = r - 2 then Route.Reduced 0
         else if a <> lead then Whole
-        else if hk = hq then Becomes lead
-        else if hk > 1 && hq > 1 then Regroups { axis = lead; extent = hq }
-        else Whole)
+        else head (dim x lead))
   in
   let paged = match kv with Dense _ -> false | Paged _ -> true in
   let pairs _ =
@@ -1488,9 +1490,12 @@ let attention_rule (type v s d) (q : (v, s, d) t) (kv : (v, s, d) kv)
   let kv =
     match kv with
     | Dense { k; v } -> [| heads k; heads v |]
-    | Paged _ ->
-        let pool = Array.make 4 Route.Whole in
-        [| pool; pool; row (lead + 1) (fun _ -> Route.Reduced 0) |]
+    | Paged { k; v; _ } ->
+        (* A pool [[pages; hk; page; d]] holds its key heads on axis 1. *)
+        let pool x =
+          Array.init 4 (fun a -> if a = 1 then head (dim x 1) else Route.Whole)
+        in
+        [| pool k; pool v; row (lead + 1) (fun _ -> Route.Reduced 0) |]
   in
   let lengths =
     match lengths with Some _ -> [| row lead whole |] | None -> [||]

@@ -2828,6 +2828,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.attention` reads `Paged` pools cut along their key heads in place, and
+  pools cut along their pages as a dense call over the keys the table names;
+  both raised before.
 - A set of the host and software devices (`Rig.software`) is of one
   architecture: a window several of them hold is computed on each, where the
   first computed it and copied it to the others.

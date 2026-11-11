@@ -871,6 +871,110 @@ let test_attention dt () =
   same 0 (Nx.P o) (Nx.P o');
   same 1 (Nx.P lse) (Nx.P lse')
 
+(* Paged attention over pools cut along their key heads, with the queries
+   cut along theirs: each device reads its heads of the pools through the
+   whole table, as on one device. As many key heads as query heads over 4
+   devices, and half as many over 2, each serving a group of two. *)
+let test_paged_heads (type s) (dt : (float, s) Nx.dtype) () =
+  let draw seed s =
+    Nx.create dt s
+      (Array.init (numel s) (fun k -> Float.sin ((Float.of_int k *. 0.37) +. seed)))
+  in
+  let table =
+    Nx.create Nx.int64 [| 2; 4 |] [| 3L; 0L; -1L; 5L; 1L; 6L; 2L; 4L |]
+  in
+  let attend ~hk at at_heads =
+    let pool seed d = Nx.place at_heads (draw seed [| 7; hk; 3; d |]) in
+    let kv =
+      Nx.Paged { k = pool 2. 8; v = pool 3. 4; table = Nx.place at table }
+    in
+    Nx.attention ~mask:Nx.causal ~acc:dt ~kv
+      (Nx.place at_heads (draw 1. [| 2; 4; 5; 8 |]))
+  in
+  let o, lse = attend ~hk:4 Set1.on Set1.on in
+  let o', lse' = attend ~hk:4 Set4.on (Set4.split ~axis:1) in
+  same 0 (Nx.P o) (Nx.P o');
+  same 1 (Nx.P lse) (Nx.P lse');
+  let o, lse = attend ~hk:2 Set1.on Set1.on in
+  let o', lse' = attend ~hk:2 Set2.on (Set2.split ~axis:1) in
+  same 0 (Nx.P o) (Nx.P o');
+  same 1 (Nx.P lse) (Nx.P lse');
+  (* Heads cut along one axis of a mesh and the table's pages along the
+     other: each part's [(o, lse)] combines as keys cut across devices do,
+     within the roundings of that combination. *)
+  let q = draw 1. [| 2; 4; 5; 8 |] in
+  let pool seed d = draw seed [| 7; 2; 3; d |] in
+  let attend at_heads at_table =
+    let kv =
+      Nx.Paged
+        {
+          k = Nx.place at_heads (pool 2. 8);
+          v = Nx.place at_heads (pool 3. 4);
+          table = Nx.place at_table table;
+        }
+    in
+    Nx.attention ~mask:Nx.causal ~acc:dt ~kv (Nx.place at_heads q)
+  in
+  let o, lse = attend Set1.on Set1.on in
+  let heads = Nx.Placement.mesh mesh4 [ (1, [ "a" ]) ] in
+  let o', lse' = attend heads (Nx.Placement.mesh mesh4 [ (1, [ "b" ]) ]) in
+  let tol = match dt with Float64 -> 1e-12 | _ -> 1e-5 in
+  equal ~msg:"o" (array (float tol)) (Nx.to_array o) (Nx.to_array o');
+  equal ~msg:"lse" (array (float tol)) (Nx.to_array lse) (Nx.to_array lse')
+
+(* Paged attention over pools cut along their pages: each device reads the
+   pages the table names from the devices that hold them, and the result is
+   the dense call's over those keys on one device, which nx.cpu computes with
+   the bits of the read in place. Entries of [-1] and past the pool; lead
+   ranks 0 to 2; with and without lengths and a score; pools cut along their
+   pages over 4 devices, and along their pages and key heads over a mesh. *)
+let test_paged_slots (type s) (dt : (float, s) Nx.dtype) () =
+  let draw seed s =
+    Nx.create dt s
+      (Array.init (numel s) (fun k ->
+           Float.sin ((Float.of_int k *. 0.37) +. seed)))
+  in
+  let slopes = draw 5. [| 4; 1; 1 |] in
+  let case lead ~extras =
+    let rows = numel lead in
+    let entries = [| 3L; 0L; -1L; 5L; 1L; 9L; 2L; 7L; 6L; 4L; -1L; 0L |] in
+    let table =
+      Nx.create Nx.int64 (Array.append lead [| 4 |])
+        (Array.init (rows * 4) (fun i -> entries.(i mod 12)))
+    in
+    let lengths =
+      Nx.create Nx.int64 lead (Array.init rows (fun i -> Int64.of_int (12 - (3 * i))))
+    in
+    let attend ~at_q ~at_pool at =
+      let pool seed d = Nx.place at_pool (draw seed [| 8; 2; 3; d |]) in
+      let kv =
+        Nx.Paged { k = pool 2. 8; v = pool 3. 4; table = Nx.place at table }
+      in
+      let slopes = Nx.place at slopes in
+      let score p s = Nx.(Infix.(s - (cast dt (p.q - p.k) * slopes))) in
+      let q = Nx.place at_q (draw 1. (Array.append lead [| 4; 5; 8 |])) in
+      if extras then
+        Nx.attention ~lengths:(Nx.place at lengths) ~mask:Nx.causal ~score
+          ~acc:dt ~kv q
+      else Nx.attention ~mask:Nx.causal ~acc:dt ~kv q
+    in
+    let o, lse = attend ~at_q:Set1.on ~at_pool:Set1.on Set1.on in
+    let check (o', lse') =
+      same 0 (Nx.P o) (Nx.P o');
+      same 1 (Nx.P lse) (Nx.P lse')
+    in
+    let r = Array.length lead in
+    check (attend ~at_q:Set4.on ~at_pool:(Set4.split ~axis:0) Set4.on);
+    check
+      (attend
+         ~at_q:(Nx.Placement.mesh mesh4 [ (r, [ "a" ]) ])
+         ~at_pool:(Nx.Placement.mesh mesh4 [ (0, [ "b" ]); (1, [ "a" ]) ])
+         Set4.on)
+  in
+  List.iter
+    (fun lead -> List.iter (fun extras -> case lead ~extras) [ false; true ])
+    [ [||]; [| 2 |]; [| 2; 1 |] ]
+
 (* Attention over keys cut across 2 and 4 devices against one device,
    within the sum of the bounds nx.mli states for each: dense keys with
    lengths, or paged ones through a table cut by its pages, under a mask
@@ -1006,6 +1110,14 @@ let () =
                (test_attention Nx.float32);
              test "attention over cut heads and rows, float64"
                (test_attention Nx.float64);
+             test "paged attention over cut key heads, float32"
+               (test_paged_heads Nx.float32);
+             test "paged attention over cut key heads, float64"
+               (test_paged_heads Nx.float64);
+             test "paged attention over pools cut along their pages, float32"
+               (test_paged_slots Nx.float32);
+             test "paged attention over pools cut along their pages, float64"
+               (test_paged_slots Nx.float64);
              prop ~count:24
                "attention over cut keys within its bounds, float32"
                (Gen.with_pp pp_split split_case)

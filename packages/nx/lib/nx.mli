@@ -2963,13 +2963,19 @@ val attention :
     holds with [η] doubled, [ε] three times the greatest part's plus the
     library's bound for a [Logsumexp] of [n] terms plus
     [(2b + ln tk + 5) u], and [γ(tk + n + 1, 2u)] in place of
-    [γ(tk + 1, 2u)]. A paged call's loads are read whole.
+    [γ(tk + 1, 2u)]. A paged call's loads are read whole. Pools cut along
+    their key heads are read where they lie, with the queries' heads. Pools
+    cut along their pages, and along their key heads at most, are read
+    through the table as {!take} reads them, into [Dense] keys and values
+    with a key whose entry is outside [\[0, pages)] hidden: the result is
+    that dense call's on one device. A pool cut along another axis raises.
 
     It is one operation, {!Prim.Attention}, whose [mask] and [score] are
     one program of two outputs over a pair. The set's kernel library
     computes it ({!Nx_kernel.S.val-attention}), reading paged keys and values
     in place; nx.cpu stores no array of [[lead…; hq; tq; tk]]. An
-    interpretation receives it whole.
+    interpretation receives it whole, except over pools cut along their
+    pages, where it receives the {!take} of each pool and the dense call.
 
     Raises [Invalid_argument] if [q]'s dtype is another, [acc] is not
     float32 or float64 or is narrower than [q]'s dtype, [q] has fewer than

@@ -6435,7 +6435,7 @@ let reads_length st cells =
 (* Dtypes as Nx_kernel's rules read them. *)
 let dtype_array = { Nx_kernel.arrays = Array.length; dtype = Array.get }
 
-let attention (type v s a d) ?scale ?lengths ?mask ?score
+let attention_op (type v s a d) ?scale ?lengths ?mask ?score
     ~(acc : (float, a) D.t) ~(kv : (v, s, d) kv) (q : (v, s, d) t) :
     (v, s, d) t * (float, a, d) t =
   let by = "Nx.attention" in
@@ -6571,6 +6571,72 @@ let attention (type v s a d) ?scale ?lengths ?mask ?score
          lengths;
          loads = Iarray.of_list loads;
        })
+
+(* Whether a pool lies cut along its pages, and along its key heads at
+   most. Its read in place takes the pages whole; a cut along another axis
+   is refused as in place. *)
+let cut_pages x =
+  let cuts = Grid.cuts (Devices.grid (placement x)) in
+  Array.exists (fun (a, _) -> a = 0) cuts
+  && Array.for_all (fun (a, _) -> a = 0 || a = 1) cuts
+
+(* Paged keys whose pool lies cut along its pages are read through the table
+   as a gather, which reads a cut pool by partials, and attended dense: key
+   [t] of lead index [b] is the pool's entry [table[b; t / page]] at
+   [t mod page], and a key whose entry is outside [[0, pages)] is hidden, as
+   the read in place hides it. Each device then reads the keys its part of
+   the call needs. A refusal names the call's arguments. *)
+let attention (type v s a d) ?scale ?lengths ?mask ?score
+    ~(acc : (float, a) D.t) ~(kv : (v, s, d) kv) (q : (v, s, d) t) :
+    (v, s, d) t * (float, a, d) t =
+  match kv with
+  | Paged { k; v; table }
+    when ndim k = 4 && ndim v = 4
+         && ndim table = ndim q - 2
+         && ndim table >= 1
+         && dim 0 k = dim 0 v
+         && dim 2 k = dim 2 v
+         && (cut_pages k || cut_pages v) ->
+      let args =
+        [ Eval.Arg ("q", q); Arg ("k", k); Arg ("v", v); Arg ("table", table) ]
+      in
+      Eval.composite ~by:"Nx.attention" args @@ fun () ->
+      let lead = Array.sub (shape table) 0 (ndim table - 1) in
+      let l = Array.length lead in
+      let pages = dim 0 k and page = dim 2 k in
+      let width = dim (-1) table in
+      let tk = width * page in
+      let gathered pool =
+        let rows = take ~axis:0 table pool in
+        (* [[lead…; width; hk; page; d]] to [[lead…; hk; width·page; d]]. *)
+        let axes =
+          List.init l Fun.id @ [ l + 1; l; l + 2; l + 3 ]
+        in
+        let rows = transpose ~axes rows in
+        reshape
+          (Array.append lead [| dim 1 pool; tk; dim 3 pool |])
+          rows
+      in
+      let named =
+        logical_and (greater_equal_s table 0L)
+          (less_s table (Int64.of_int pages))
+      in
+      let named =
+        reshape
+          (Array.append lead [| 1; 1; tk |])
+          (broadcast_to
+             (Array.append lead [| width; page |])
+             (reshape (Array.append lead [| width; 1 |]) named))
+      in
+      let mask =
+        match mask with
+        | None -> fun _ -> named
+        | Some m -> fun p -> logical_and (m p) named
+      in
+      attention_op ?scale ?lengths ~mask ?score ~acc
+        ~kv:(Dense { k = gathered k; v = gathered v })
+        q
+  | Dense _ | Paged _ -> attention_op ?scale ?lengths ?mask ?score ~acc ~kv q
 
 (* Fourier transforms *)
 
