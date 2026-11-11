@@ -18,6 +18,12 @@ Code objects for gfx1201, each made from its source by `gen.sh`.
   its dispatch packet, and `packet_scratch` does both.
 - `launch_gfx942.hsaco` holds the same kernels for gfx942, a GPU of several
   dies, whose queue reads AQL packets.
+- `args_gfx1201.hsaco`, of `args.cl`, holds kernels over groups of 32
+  work-items that read many launch arguments, which rig's AMD bench times.
+  `lap` checks its 4 KiB of arguments, each word loaded at its own
+  work-item's index as a kernel stages a block of arguments, and its grid
+  from the implicit arguments. `scalars` sums its 256 bytes of arguments,
+  read by scalar loads as most kernels read theirs.
 - `hidden_gfx1201.hsaco`, of `hidden.s`, which the ABI suite reads too,
   holds three kernels and their metadata. `every` names each implicit
   argument of code object version 5, and bounds its workgroups at 128

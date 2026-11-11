@@ -51,8 +51,8 @@ fixture() {
 }
 
 [ $# -gt 0 ] || set -- \
-  counts_gfx1201.hsaco hidden_gfx1201.hsaco kernels_gfx1201.hsaco \
-  launch_gfx1201.hsaco launch_gfx942.hsaco other_gfx1201.hsaco \
-  work_gfx1201.hsaco \
+  args_gfx1201.hsaco counts_gfx1201.hsaco hidden_gfx1201.hsaco \
+  kernels_gfx1201.hsaco launch_gfx1201.hsaco launch_gfx942.hsaco \
+  other_gfx1201.hsaco work_gfx1201.hsaco \
   r9700.bin r9700_wide.bin r9700_fused.bin
 for f in "$@"; do fixture "$f"; done

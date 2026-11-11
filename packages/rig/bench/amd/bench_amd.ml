@@ -94,6 +94,12 @@ let binary =
 
 let code_object = lazy (get (Abi.Code_object.of_string (Lazy.force binary)))
 
+(* The kernels that read many launch arguments. *)
+let args_binary =
+  lazy
+    (In_channel.with_open_bin "../../test/amd/fixtures/args_gfx1201.hsaco"
+       In_channel.input_all)
+
 let kernel name =
   Option.get (Abi.Code_object.kernel (Lazy.force code_object) name)
 
@@ -277,6 +283,47 @@ let launch_rows ~mapped =
     B.blit_from_string bytes 0 ws 0 (String.length bytes);
     (t, p, args, address out, s)
   in
+  (* One launch of [args.cl]'s [name] over [groups] groups of 32 work-items,
+     with [params] bytes of parameters, the first the address of a word per
+     group, the others as [set] stores them. *)
+  let reading name ~params ~groups set () =
+    let t = dev () in
+    let p = get (Rig.Image.load t.d (Lazy.force args_binary)) in
+    let out = B.create t.d (4 * groups) in
+    let fn = Option.get (Rig.Image.resolve p name) in
+    let refs = Rig.Submission.[| write 0 ~at:0 |] in
+    let r = prepare t [| Rig.Submission.launch ~refs fn ~params |] in
+    let b = Rig.Submission.(block (Run.submission r) 0) in
+    Rig.Submission.Run.groups r b groups 1 1;
+    Rig.Submission.Run.threads r b 32 1 1;
+    Rig.Submission.Run.int64 r b 0 0L;
+    set r b;
+    (t, p, r, [| out |])
+  in
+  (* [lap]'s 4 KiB, which each group loads as vectors, as a kernel stages a
+     block of arguments: the words it checks, so each group finds them. *)
+  let lap_args =
+    let seq = 1 and groups = 1024 in
+    reading "lap" ~params:4096 ~groups (fun r b ->
+        Rig.Submission.Run.int32 r b 8 seq;
+        Rig.Submission.Run.int32 r b 12 groups;
+        for i = 0 to 1019 do
+          Rig.Submission.Run.int32 r b (16 + (4 * i)) ((seq lsl 12) lor i)
+        done)
+  in
+  (* [scalars]' 256 bytes, which each wave reads by scalar loads, as most
+     kernels read their arguments. *)
+  let scalar_args =
+    reading "scalars" ~params:256 ~groups:1024 (fun r b ->
+        for i = 0 to 61 do
+          Rig.Submission.Run.int32 r b (8 + (4 * i)) i
+        done)
+  in
+  let launched (t, _, r, buffers) =
+    let p = Rig.submit r ~buffers in
+    t.v <- Rig.Point.value p;
+    wait t
+  in
   let rows =
     [
       row "1" (launching 1) (fun (t, _, s) -> run t s);
@@ -287,10 +334,9 @@ let launch_rows ~mapped =
             submit t s
           done;
           wait t);
-      row "1-params" params (fun (t, _, r, buffers) ->
-          let p = Rig.submit r ~buffers in
-          t.v <- Rig.Point.value p;
-          wait t);
+      row "1-params" params launched;
+      row "1024-4KiB-args" lap_args launched;
+      row "1024-256B-args" scalar_args launched;
     ]
   in
   let written (t, _, args, out, s) =
