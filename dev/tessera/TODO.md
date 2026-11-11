@@ -79,6 +79,13 @@ An item leaves when its library fixes it, or when a design decides it stays.
 
 ## vega
 
+- vega's LARS and LAMB apply the trust ratio to every leaf: a recipe cannot
+  leave a leaf out of it, as Barlow Twins' LARS (biases and normalisation
+  parameters) and optax's `scale_by_trust_ratio` mask can, so a ported
+  recipe's biases and norms step more slowly than in its source. vega's
+  per-leaf `?decays` predicate is the likely shape (found by the LARS
+  review; TESSERA's released runs use AdamW).
+
 - LARS's trust ratio is not eq. 6 of You, Gitman & Ginsburg, "Large Batch
   Training of Convolutional Networks" (2017), found by the per-leaf decay
   skeptic: a pass of its own decides whether vega's form is a stated
