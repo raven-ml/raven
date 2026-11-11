@@ -188,4 +188,68 @@ let corpora =
                   Pixels.load dir)));
     ]
 
-let () = exit (run "tessera.pixels" [ tiles; corpora ])
+(* Views *)
+
+let rows_of r =
+  let v = Nx.to_array (Nx.cast Nx.int32 (Nx_ragged.values r)) in
+  let o = Nx.to_array (Nx_ragged.offsets r) in
+  let cells = Nx.dim 1 (Nx_ragged.values r) in
+  List.init (Nx_ragged.length r) (fun i ->
+      let a = Int64.to_int o.(i) and b = Int64.to_int o.(i + 1) in
+      List.init (b - a) (fun j -> Array.sub v ((a + j) * cells) cells))
+
+let both =
+  Gen.(
+    map
+      (fun ((n, len), seed) ->
+        ( {
+            Synth.s2 = List.init n (fun i -> 1 + ((i + seed) mod 4));
+            s1 = List.init n (fun i -> 1 + (((3 * i) + seed) mod 5));
+            seed;
+          },
+          len ))
+      (pair (pair (int_range 1 6) (int_range 1 9)) (int_range 0 1000)))
+
+let draws =
+  prop "a view draws each row's observations from its key" ~count:50 both
+    (fun (spec, length) ->
+      let px = Synth.pixels spec in
+      let n = Pixels.length px in
+      let keys = Nx.Rng.split_batch ~n (Nx.Rng.key spec.seed) in
+      let v = Pixels.draw ~keys ~length px in
+      cover "an observation drawn twice" (length > 1);
+      let drawn rows rows' =
+        List.iter2
+          (fun row row' ->
+            equal int length (List.length row');
+            List.iter (fun o -> mem (array int32) o row) row')
+          rows rows'
+      in
+      drawn (rows_of px.s2) (rows_of v.s2);
+      drawn (rows_of px.s1) (rows_of v.s1);
+      (* Row i's draws are its key's: the last row drawn alone is the same. *)
+      let last = Pixels.sub px ~pos:(n - 1) ~len:1 in
+      let k =
+        Nx.Rng.of_tensor (Nx.slice [ Nx.R (n - 1, n) ] (Nx.Rng.to_tensor keys))
+      in
+      let alone = Pixels.draw ~keys:k ~length last in
+      equal
+        (list (list (array int32)))
+        [ List.nth (rows_of v.s1) (n - 1) ]
+        (rows_of alone.s1))
+
+let draw_refusals =
+  test "a view needs an observation of each sensor" (fun () ->
+      let px = Synth.pixels { Synth.s2 = [ 2; 0 ]; s1 = [ 1; 3 ]; seed = 1 } in
+      raises
+        (Invalid_argument
+           "Tessera.Pixels.draw: a pixel has no observation of a sensor")
+        (fun () ->
+          Pixels.draw
+            ~keys:(Nx.Rng.split_batch ~n:2 (Nx.Rng.key 0))
+            ~length:4 px))
+
+let () =
+  exit
+    (run "tessera.pixels"
+       [ tiles; corpora; group "views" [ draws; draw_refusals ] ])

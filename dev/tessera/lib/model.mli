@@ -205,19 +205,42 @@ val v2_dropout : dropout
 val no_dropout : dropout
 (** [no_dropout] is the rates [0]. *)
 
+type 'd inputs
+(** The type for the values a model computes on: a batch's tokens, each sensor's
+    bands standardised by the model's statistics, and their days, with the
+    batch's layout. *)
+
+val inputs : ('a, 'd) t -> 'd Batch.t -> 'd inputs
+(** [inputs m b] is [b]'s inputs to [m]: its tokens standardised by [m]'s
+    statistics, a Sentinel-1 token by those of its orbit, and their days. *)
+
+val mixup : alpha:'d Nx.float32_t -> 'd inputs -> 'd inputs -> 'd inputs
+(** [mixup ~alpha i i'] is the {e mixup} (Zhang et al. 2018) of [i] and [i']:
+    each token's standardised bands and its day are
+    [alpha · x + (1 − alpha) · x'], [x'] the token at the same row and column of
+    [i'], each product and the sum rounded once in float32, with [i]'s layout.
+    Each orbit's tokens are standardised by their own statistics before they are
+    mixed. [i'] must lay its tokens out as [i] does, with equal bounds, counts,
+    places and slots.
+
+    Raises [Invalid_argument] if [alpha] is not a scalar, or if an array of
+    [i']'s layout differs in shape from [i]'s. *)
+
 val train :
   dropout:dropout ->
   remat:bool ->
   keys:'d Nx.Rng.key ->
   ((float, 's, 'd) Nx.t, 'd) t ->
-  'd Batch.t ->
+  'd inputs ->
   'd Nx.float32_t
-(** [train ~dropout ~remat ~keys m b] is {!apply} with dropout, as a training
-    step computes it. [keys] is [[pixels; 2]], row [i] the key of [b]'s place
-    [i]. Each site drops a value with its rate and scales a kept one by
-    [1 / (1 − rate)]. At a rate above [0] a layer's attention computes its
-    probabilities whole, [[rows; heads; width; width]] in float32, where
-    {!apply} computes them a tile at a time.
+(** [train ~dropout ~remat ~keys m i] is {!apply} with dropout, as a training
+    step computes it, on [m]'s inputs [i] ({!inputs}, or their {!mixup}). [keys]
+    is [[pixels; 2]], row [k] the key of place [k]. Each site drops a value with
+    its rate and scales a kept one by [1 / (1 − rate)]. At a rate above [0] a
+    layer's attention computes its probabilities whole,
+    [[rows; heads; width; width]] in float32, where {!apply} computes them a
+    tile at a time. [i] must be inputs by [m]'s statistics: inputs by another
+    model's are computed on as they are.
 
     A mask is a function of the place's key, the site, and the index in its slot
     of each token the value reads, so a pixel's embedding is the same in any
@@ -225,12 +248,12 @@ val train :
     count [m] shares its mask among the [m] copies it stands for: train on
     tokens of count [1] ({!Batch.expand}), whose copies drop independently.
 
-    At rates [0] the result is [apply m b] bit for bit. [remat] computes each
-    encoder and fusion layer again in the backward pass ([Rune.remat]): a
-    differentiated [train] keeps each layer's input, not its intermediate
-    values, where it is not inside a loop of two or more trips; inside one, as a
-    step that scans several groups calls it, [Rune.remat] keeps today nearly
-    what no remat keeps. The result does not change.
+    At rates [0], [train ~keys m (inputs m b)] is [apply m b] bit for bit.
+    [remat] computes each encoder and fusion layer again in the backward pass
+    ([Rune.remat]): a differentiated [train] keeps each layer's input, not its
+    intermediate values, where it is not inside a loop of two or more trips;
+    inside one, as a step that scans several groups calls it, [Rune.remat] keeps
+    today nearly what no remat keeps. The result does not change.
 
     Raises [Invalid_argument] if a rate is outside \[[0]; [1]), or if [keys] is
     not [[pixels; 2]]. *)
@@ -238,10 +261,10 @@ val train :
 (**/**)
 
 val blocks :
-  ((float, 's, 'd) Nx.t, 'd) t -> 'd Batch.t -> (string * 'd Nx.float32_t) list
-(** [blocks m b] is {!apply}'s intermediate values under the names of the
-    upstream layer dumps: per sensor [s], [s_in] (standardised tokens, then the
-    day), [s_embedding], [s_pe], [s_encoder_in], [s_layer{i}],
+  ((float, 's, 'd) Nx.t, 'd) t -> 'd inputs -> (string * 'd Nx.float32_t) list
+(** [blocks m i] is {!apply}'s intermediate values, on the inputs [i], under the
+    names of the upstream layer dumps: per sensor [s], [s_in] (standardised
+    tokens, then the day), [s_embedding], [s_pe], [s_encoder_in], [s_layer{i}],
     [s_layer{i}_attn], [s_layer{i}_norm1], [s_layer{i}_linear1], [s_pool_logits]
     and [s_pooled]; then [reducer0_linear0], [reducer1_ln1], [reducer2_relu],
     [reducer4_linear4], [reducer5_output] and [embedding]. Token values are

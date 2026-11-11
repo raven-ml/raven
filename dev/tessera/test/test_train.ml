@@ -49,7 +49,9 @@ let rows_of (b : Nx.host Batch.t) e =
 
 let embed ~dropout m shape (px, counts) =
   batches shape px counts (fun b ->
-      rows_of b (Model.train ~dropout ~remat:false ~keys:(keys_of b) m b))
+      rows_of b
+        (Model.train ~dropout ~remat:false ~keys:(keys_of b) m
+           (Model.inputs m b)))
   |> List.concat |> List.sort compare
 
 let tol = 1e-5
@@ -69,7 +71,7 @@ let rate0 =
              ( bits (Model.apply m b),
                bits
                  (Model.train ~dropout:Model.no_dropout ~remat:false
-                    ~keys:(keys_of b) m b) ))))
+                    ~keys:(keys_of b) m (Model.inputs m b)) ))))
 
 let layout =
   prop "a training embedding does not depend on the batch's shape" ~count:30
@@ -194,13 +196,93 @@ let refusals =
         (fun () ->
           Model.train
             ~dropout:{ layers = 1.; reducer = 0. }
-            ~remat:false ~keys:(keys_of b) post_ln b);
+            ~remat:false ~keys:(keys_of b) post_ln (Model.inputs post_ln b));
       raises
         (Invalid_argument "Tessera.Model.train: keys of shape [1; 2] expected")
         (fun () ->
           Model.train ~dropout:half ~remat:false
             ~keys:(Nx.Rng.split_batch ~n:2 root)
-            post_ln b))
+            post_ln (Model.inputs post_ln b)))
+
+(* Mixup *)
+
+(* Two batches of one layout: equal counts, other values, and the second's
+   observations in reverse order, so its descending passes come first. *)
+let pair_of_batches () =
+  let spec seed = { Synth.s2 = [ 3; 5 ]; s1 = [ 6; 4 ]; seed } in
+  let pack px =
+    fst
+      (Batch.pack
+         (shape ~pixels:2 ~rows:2 ~slots:1 ~width:8 ())
+         px (Batch.v2_counts px) ~from:0)
+  in
+  let px = Synth.pixels (spec 4) in
+  let reversed, _ =
+    Synth.rebuild px (Batch.v2_counts px) (fun _ cs ->
+        Array.init (Array.length cs) (fun k -> Array.length cs - 1 - k))
+  in
+  (pack (Synth.pixels (spec 3)), pack reversed)
+
+let mixup_alpha = 0.3
+
+let mixed =
+  test "a mixup mixes each orbit's standardised tokens" (fun () ->
+      (* The students' statistics: the orbits' differ. *)
+      let m = post_ln in
+      let a, b = pair_of_batches () in
+      let alpha = Nx.scalar Nx.float32 mixup_alpha in
+      let i = Model.mixup ~alpha (Model.inputs m a) (Model.inputs m b) in
+      let got = List.assoc "s1_in" (Model.blocks m i) in
+      let mean = Nx.to_array (Nx.cast Nx.float64 m.norm.s1_mean)
+      and std = Nx.to_array (Nx.cast Nx.float64 m.norm.s1_std) in
+      let token (r : Nx.host Batch.rows) row j =
+        Array.init 4 (fun c -> Nx.item [ row; j; c ] r.tokens)
+      in
+      let z t c =
+        let o = Float.to_int t.(3) in
+        (t.(c) -. mean.((2 * o) + c)) /. (std.((2 * o) + c) +. 1e-9)
+      in
+      let other_orbits = ref 0 and apart = ref 0. in
+      for row = 0 to 1 do
+        let stop = Int32.to_int (Nx.item [ row; 0 ] a.s1.slot_stop) in
+        for j = 0 to stop - 1 do
+          let ta = token a.s1 row j and tb = token b.s1 row j in
+          let mix x y = (mixup_alpha *. x) +. ((1. -. mixup_alpha) *. y) in
+          for c = 0 to 1 do
+            let expected = mix (z ta c) (z tb c) in
+            equal (float 1e-5) expected (Nx.item [ row; j; c ] got);
+            (* Mixing raw values, standardised by the first token's orbit. *)
+            let raw =
+              z [| mix ta.(0) tb.(0); mix ta.(1) tb.(1); 0.; ta.(3) |] c
+            in
+            if ta.(3) <> tb.(3) then begin
+              incr other_orbits;
+              apart := Float.max !apart (Float.abs (expected -. raw))
+            end
+          done;
+          equal (float 1e-3) (mix ta.(2) tb.(2)) (Nx.item [ row; j; 2 ] got)
+        done
+      done;
+      (* Where the orbits differ, mixing raw values is another input. *)
+      less int ~than:!other_orbits 0;
+      less float_exact ~than:!apart 1e-2)
+
+let mixup_refusals =
+  test "a mixup refuses inputs of other layouts" (fun () ->
+      let a, _ = pair_of_batches () in
+      let px = Synth.pixels { Synth.s2 = [ 3; 5 ]; s1 = [ 6; 4 ]; seed = 4 } in
+      let wide, _ =
+        Batch.pack
+          (shape ~pixels:2 ~rows:2 ~slots:1 ~width:9 ())
+          px (Batch.v2_counts px) ~from:0
+      in
+      let i = Model.inputs post_ln a and i' = Model.inputs post_ln wide in
+      raises
+        (Invalid_argument
+           "Tessera.Model.mixup: inputs of other layouts (s2.tokens)")
+        (fun () -> Model.mixup ~alpha:(Nx.scalar Nx.float32 0.5) i i');
+      raises (Invalid_argument "Tessera.Model.mixup: alpha is not a scalar")
+        (fun () -> Model.mixup ~alpha:(Nx.ones Nx.float32 [| 1 |]) i i))
 
 (* Distillation *)
 
@@ -214,7 +296,8 @@ let remat =
       let b, _ = Batch.pack packed px counts ~from:0 in
       let keys = keys_of b in
       let f remat n =
-        Nx.sum (Model.train ~dropout:half ~remat ~keys { m with net = n } b)
+        let m = { m with net = n } in
+        Nx.sum (Model.train ~dropout:half ~remat ~keys m (Model.inputs m b))
       in
       let v, g = Rune.value_and_grad net (f false) m.net in
       let v', g' = Rune.value_and_grad net (f true) m.net in
@@ -433,7 +516,15 @@ let () =
        [
          group "train"
            [
-             rate0; layout; masks_layout; kept; compiled_masks; refusals; remat;
+             rate0;
+             layout;
+             masks_layout;
+             kept;
+             compiled_masks;
+             refusals;
+             remat;
+             mixed;
+             mixup_refusals;
            ];
          group "distil" [ cosines; grouping; resume; compiled; stepped ];
        ])

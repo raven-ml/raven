@@ -495,10 +495,64 @@ let slot_index (r : 'd Batch.rows) =
   in
   Nx.sub col (Nx.cast Nx.int64 r.start)
 
-let backbone ~pre_ln ~heads ~remat ~record ~drop b (r : 'd Batch.rows) z =
-  let doy = Nx.squeeze ~axes:[ 2 ] (channel r.tokens (Nx.dim 2 z)) in
+(* Inputs *)
+
+(* A sensor's inputs: its standardised bands [[rows; width; bands]] and its days
+   [[rows; width]]. *)
+type 'd sensor = { bands : 'd f32; days : 'd f32 }
+
+(* A batch's inputs: each sensor's, with the batch's layout. The batch's tokens
+   are not read again. *)
+type 'd inputs = { batch : 'd Batch.t; s2_in : 'd sensor; s1_in : 'd sensor }
+
+let sensor_inputs z (r : 'd Batch.rows) =
+  { bands = z; days = Nx.squeeze ~axes:[ 2 ] (channel r.tokens (Nx.dim 2 z)) }
+
+let inputs m (b : 'd Batch.t) =
+  {
+    batch = b;
+    s2_in = sensor_inputs (s2_inputs m.norm b.s2) b.s2;
+    s1_in = sensor_inputs (s1_inputs m.norm b.s1) b.s1;
+  }
+
+(* Every array of [b]'s layout, by name, for the layout check. *)
+let layout_shapes (b : 'd Batch.t) =
+  let rows name (r : 'd Batch.rows) =
+    List.map
+      (fun (n, s) -> (name ^ "." ^ n, s))
+      [
+        ("tokens", Nx.shape r.tokens);
+        ("log_count", Nx.shape r.log_count);
+        ("start", Nx.shape r.start);
+        ("stop", Nx.shape r.stop);
+        ("slot_start", Nx.shape r.slot_start);
+        ("slot_stop", Nx.shape r.slot_stop);
+        ("place", Nx.shape r.place);
+        ("at", Nx.shape r.at);
+      ]
+  in
+  (("pixel", Nx.shape b.pixel) :: rows "s2" b.s2) @ rows "s1" b.s1
+
+let mixup ~alpha i i' =
+  if Nx.ndim alpha <> 0 then
+    invalid_arg "Tessera.Model.mixup: alpha is not a scalar";
+  List.iter2
+    (fun (n, s) (_, s') ->
+      if s <> s' then
+        invalid_arg
+          (Printf.sprintf "Tessera.Model.mixup: inputs of other layouts (%s)" n))
+    (layout_shapes i.batch) (layout_shapes i'.batch);
+  let beta = Nx.rsub_s 1. alpha in
+  let mix x x' = Nx.add (Nx.mul alpha x) (Nx.mul beta x') in
+  let sensor a a' =
+    { bands = mix a.bands a'.bands; days = mix a.days a'.days }
+  in
+  { i with s2_in = sensor i.s2_in i'.s2_in; s1_in = sensor i.s1_in i'.s1_in }
+
+let backbone ~pre_ln ~heads ~remat ~record ~drop b (r : 'd Batch.rows)
+    { bands = z; days = doy } =
   record "in" (fun () ->
-      Nx.concatenate ~axis:2 [ z; channel r.tokens (Nx.dim 2 z) ]);
+      Nx.concatenate ~axis:2 [ z; Nx.unsqueeze ~axes:[ 2 ] doy ]);
   let e1, e2 = b.embed in
   let x = linear e2 (relu (linear e1 z)) in
   record "embedding" (fun () -> x);
@@ -550,27 +604,30 @@ let reduce ~record ~drop r x =
   record "embedding" (fun () -> x);
   x
 
-let forward ~record ?drop ~remat m (b : 'd Batch.t) =
+let forward ~record ?drop ~remat m (i : 'd inputs) =
   let heads = m.heads in
-  let sensor name i pre_ln bb rows z =
+  let b = i.batch in
+  (* Sensor [k]'s pooled vectors. *)
+  let sensor name k pre_ln bb rows x =
     let drop =
       Option.map
-        (fun d -> ({ d with mask = (fun n v -> d.mask (name ^ "_" ^ n) v) }, i))
+        (fun d -> ({ d with mask = (fun n v -> d.mask (name ^ "_" ^ n) v) }, k))
         drop
     in
     backbone ~pre_ln ~heads ~remat
       ~record:(fun n v -> record (name ^ "_" ^ n) v)
-      ~drop bb rows z
+      ~drop bb rows x
   in
-  let z2 = s2_inputs m.norm b.s2 and z1 = s1_inputs m.norm b.s1 in
+  let s2_sensor pre_ln bb = sensor "s2" 0 pre_ln bb b.s2 i.s2_in
+  and s1_sensor pre_ln bb = sensor "s1" 1 pre_ln bb b.s1 i.s1_in in
   match m.net with
   | Post_ln { s2; s1; reducer } ->
-      let v2 = sensor "s2" 0 false s2 b.s2 z2 in
-      let v1 = sensor "s1" 1 false s1 b.s1 z1 in
+      let v2 = s2_sensor false s2 in
+      let v1 = s1_sensor false s1 in
       reduce ~record ~drop reducer (Nx.concatenate ~axis:1 [ v2; v1 ])
   | Pre_ln { s2; s1; modality; fusion = layers_; reducer } ->
-      let v2 = sensor "s2" 0 true s2 b.s2 z2 in
-      let v1 = sensor "s1" 1 true s1 b.s1 z1 in
+      let v2 = s2_sensor true s2 in
+      let v1 = s1_sensor true s1 in
       let x = Nx.add (Nx.stack ~axis:1 [ v2; v1 ]) modality in
       let p = Nx.dim 0 x and d = Nx.dim 2 x in
       let at = Nx.beside b.pixel in
@@ -597,7 +654,7 @@ let forward ~record ?drop ~remat m (b : 'd Batch.t) =
       reduce ~record ~drop reducer (Nx.reshape [| p; 2 * d |] x)
 
 let ignore_record _ _ = ()
-let apply m b = forward ~record:ignore_record ~remat:false m b
+let apply m b = forward ~record:ignore_record ~remat:false m (inputs m b)
 
 let check_dropout fn (r : dropout) keys (b : 'd Batch.t) =
   let bad x = not (x >= 0. && x < 1.) in
@@ -609,15 +666,15 @@ let check_dropout fn (r : dropout) keys (b : 'd Batch.t) =
       (Printf.sprintf "Tessera.Model.%s: keys of shape [%d; 2] expected" fn
          pixels)
 
-let train ~dropout ~remat ~keys m b =
-  check_dropout "train" dropout keys b;
+let train ~dropout ~remat ~keys m i =
+  check_dropout "train" dropout keys i.batch;
   let drop = { rates = dropout; keys; mask = ignore_record } in
-  forward ~record:ignore_record ~drop ~remat m b
+  forward ~record:ignore_record ~drop ~remat m i
 
-let blocks m b =
+let blocks m i =
   let acc = ref [] in
   ignore
-    (forward ~record:(fun n v -> acc := (n, v ()) :: !acc) ~remat:false m b);
+    (forward ~record:(fun n v -> acc := (n, v ()) :: !acc) ~remat:false m i);
   List.rev !acc
 
 let masks ~dropout ~keys m b =
@@ -626,7 +683,7 @@ let masks ~dropout ~keys m b =
   let drop =
     { rates = dropout; keys; mask = (fun n v -> acc := (n, v ()) :: !acc) }
   in
-  ignore (forward ~record:ignore_record ~drop ~remat:false m b);
+  ignore (forward ~record:ignore_record ~drop ~remat:false m (inputs m b));
   List.rev !acc
 
 (* Loading *)

@@ -335,3 +335,38 @@ let shuffle ~key ~bytes dir parts =
   write "s2" { get = (fun p -> p.s2); dtype = Nx.uint16 } (s2_bands + 1) l2;
   write "s1" { get = (fun p -> p.s1); dtype = Nx.int16 } (s1_bands + 2) l1;
   n
+
+(* Draws *)
+
+(* [length] observations of each row of [r], each uniform over the row from the
+   row's key in [keys] ([[n; 2]]). *)
+let draw_rows (type s) keys ~length (r : (int, s, Nx.host) Nx_ragged.t) =
+  let n = Nx_ragged.length r in
+  let counts = Nx.reshape [| n; 1 |] (Nx_ragged.lengths r) in
+  let keys =
+    Nx.Rng.of_tensor (Nx.reshape [| n; 1; 2 |] (Nx.Rng.to_tensor keys))
+  in
+  let index =
+    Nx.Rng.randint ~key:keys (Nx.broadcast_to [| n; length |] counts)
+  in
+  let first =
+    Nx.reshape [| n; 1 |] (Nx.slice [ Nx.R (0, n) ] (Nx_ragged.offsets r))
+  in
+  let at = Nx.reshape [| n * length |] (Nx.add first index) in
+  Nx_ragged.of_lengths
+    (Nx.full Nx.int64 [| n |] (Int64.of_int length))
+    (Nx.take ~axis:0 at (Nx_ragged.values r))
+
+let draw ~keys ~length:l px =
+  let n = length px in
+  if l < 1 then invalid_arg "Tessera.Pixels.draw: length is not positive";
+  if Nx.shape (Nx.Rng.to_tensor keys) <> [| n; 2 |] then
+    invalid_arg
+      (Printf.sprintf "Tessera.Pixels.draw: keys of shape [%d; 2] expected" n);
+  let empty r = n > 0 && Nx.item [] (Nx.min (Nx_ragged.lengths r)) = 0L in
+  if empty px.s2 || empty px.s1 then
+    invalid_arg "Tessera.Pixels.draw: a pixel has no observation of a sensor";
+  {
+    s2 = draw_rows (Nx.Rng.fold_in keys 0) ~length:l px.s2;
+    s1 = draw_rows (Nx.Rng.fold_in keys 1) ~length:l px.s1;
+  }

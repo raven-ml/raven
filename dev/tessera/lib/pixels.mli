@@ -88,3 +88,17 @@ val shuffle :
 
     Raises [Invalid_argument] if [bytes] is not positive, and as {!load} does.
 *)
+
+(** {1:views Views} *)
+
+val draw : keys:Nx.host Nx.Rng.key -> length:int -> Nx.host t -> Nx.host t
+(** [draw ~keys ~length px] is a {e view} of each pixel of [px]: [length]
+    observations of each sensor, each drawn uniformly with replacement from the
+    pixel's, in draw order. Row [i]'s draws are a function of row [i] of [keys]
+    ([[n; 2]]) alone, its Sentinel-2 draws [Nx.Rng.randint] below the row's
+    count from [Nx.Rng.fold_in] of the key and [0], its Sentinel-1 draws from
+    that of [1]. TESSERA v1.0 trains on two views of [40] observations of each
+    pixel.
+
+    Raises [Invalid_argument] if [length] is not positive, if [keys] is not
+    [[n; 2]], or if a pixel has no observation of a sensor. *)

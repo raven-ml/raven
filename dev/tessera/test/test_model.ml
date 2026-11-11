@@ -212,7 +212,7 @@ let standardisation =
           (shape ~pixels:2 ~rows:2 ~slots:1 ~width:8 ())
           px (Batch.v2_counts px) ~from:0
       in
-      let blocks = Model.blocks post_ln b in
+      let blocks = Model.blocks post_ln (Model.inputs post_ln b) in
       let token name row c =
         let v = List.assoc name blocks in
         Array.init c (fun k -> Nx.item [ row; 0; k ] v)

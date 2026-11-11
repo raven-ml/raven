@@ -424,7 +424,7 @@ let validate_blocks (type s d) (t : d target)
   let b, _ = Batch.pack shape sub (Batch.v2_counts sub) ~from:0 in
   let blocks =
     let bt = Batch.place t.at b in
-    if not t.jit then Model.blocks m bt
+    if not t.jit then Model.blocks m (Model.inputs m bt)
     else
       let names = ref [] in
       let model = Nx.Ptree.instantiate (module Model) in
@@ -433,7 +433,7 @@ let validate_blocks (type s d) (t : d target)
         Rune.jit
           Nx.Ptree.(model @-> batch @-> returns (list tensor))
           (fun m b ->
-            let l = Model.blocks m b in
+            let l = Model.blocks m (Model.inputs m b) in
             names := List.map fst l;
             List.map snd l)
       in
@@ -1019,7 +1019,7 @@ let write_masks dir tile =
         (Filename.concat dir ("mask_" ^ name ^ ".npy"))
         (Nx.cast Nx.uint8 x))
     masks;
-  let blocks = Model.blocks m b in
+  let blocks = Model.blocks m (Model.inputs m b) in
   List.iter
     (fun s ->
       Nx_io.save_npy

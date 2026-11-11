@@ -71,9 +71,8 @@ let cosines hs e ~targets =
        hs)
 
 let loss ~dropout ~keys m p (b : 'd Batch.t) ~targets =
-  let e =
-    Model.train ~dropout ~remat:false ~keys { m with Model.net = p.net } b
-  in
+  let m = { m with Model.net = p.net } in
+  let e = Model.train ~dropout ~remat:false ~keys m (Model.inputs m b) in
   let c = cosines p.heads e ~targets in
   let filled = Nx.reshape [| Nx.dim 0 c; 1 |] (Nx.greater_equal_s b.pixel 0L) in
   let one = Nx.scalar_like c 1. in
