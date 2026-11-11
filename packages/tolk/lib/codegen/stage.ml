@@ -727,7 +727,11 @@ let tile (ren : Renderer.t) ast (w : wmma) ~core_threads ~workgroups
   let unroll =
     if chunk mod kd = 0 && sk mod (chunk / kd) = 0 then chunk / kd else 1
   in
-  let rec within u = if u <= 1 || in_run u then u else within (u / 2) in
+  (* The most tiles of rows up to [u] that a run holds, one tile less at a
+     time: a run of three tiles, a routed block of 48 rows, fits one warp,
+     which loads the run's value of the other operand once. Halving would
+     give it three warps of one tile, each loading it. *)
+  let rec within u = if u <= 1 || in_run u then u else within (u - 1) in
   (* The upcasts of M and N, and their local splits, of a warp tile halved
      [hm] and [hn] times. *)
   let plan (hm, hn) =

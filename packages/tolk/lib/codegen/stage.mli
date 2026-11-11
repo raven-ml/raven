@@ -91,15 +91,16 @@ val tile :
     core does not yet split. [n],
     [m] and [k] are the sizes of those axes as the core leaves them, [0] when
     unknown, and [workgroups] the kernel's, if known. A warp holds 64 by 64
-    outputs, by upcasts of powers of two; a workgroup takes 2 by 2 warps where
-    [M] and [N] divide by 2, one on each of the four schedulers of an NVIDIA
-    SM since Volta, and [K] is unrolled to 32 elements a trip where it divides.
+    outputs; a workgroup takes 2 by 2 warps where [M] and [N] divide by 2, one
+    on each of the four schedulers of an NVIDIA SM since Volta, and [K] is
+    unrolled to 32 elements a trip where it divides.
     While the kernel keeps fewer than [core_threads / s] threads, [s] the
     stages, the warp tile halves, [M] then [N], down to half of 64 a side: a
     pipeline overlaps a warp's copies with its cores, so it needs fewer warps
     in flight. [in_run u] is whether [u] of the core's tiles of rows read one
-    value of an operand: [M]'s upcast halves, and its local split is left out,
-    while it does not hold. *)
+    value of an operand: [M]'s upcast falls by one tile, and its local split
+    is left out, while it does not hold, so that a run of three tiles takes
+    one warp. *)
 
 (**/**)
 

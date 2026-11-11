@@ -7447,7 +7447,9 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   coordinates. A staged core takes its own tile: 2 by 2 warps of 64 by 64,
   the warp tile halved, M then N, to 32 by 32 while the kernel keeps fewer
   than `core_threads / stages` threads, and K unrolled to chunks of 32; its
-  rows stay within a run of rows that read one value of an operand, and the
+  rows stay within a run of rows that read one value of an operand, a
+  warp's tiles of rows falling by one until they fit it, so that a run of
+  three tiles takes one warp, and the
   heuristic takes it only where `Stage.admits` the kernel as the core leaves
   it, so a core staging refuses keeps the unstaged splits. One dimension of
   a tile may be rows gathered through a row map: a term whose only read of
@@ -7497,7 +7499,10 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   barriers a trip: 2300-2310 staged against 2198-2201 on main, and
   2199-2202 left unstaged; at 128 tokens 2052-2053 against 2063-2065.
   AMD gfx1201 and Metal stage gathered rows in one stage of register
-  copies too; unmeasured.
+  copies too; unmeasured. A run of three tiles in one warp: bfloat16
+  experts' down product in blocks of 48 rows, at 32, 64 and 128 tokens,
+  took 1069-1081 us where three warps of one tile took 1103-1116, outputs
+  bit for bit equal.
 - **Pinned by:** the Stage suite: `values › a staged kernel computes the bits
   of the same optimisations unstaged` (CUDA's renderer against itself
   without shared memory, both tiles, one and two stages, padded, batched,
@@ -7511,7 +7516,8 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   HIP's RDNA3 and RDNA4, and every barrier of a kernel with `cp.async`
   waiting for it), `races` (`compute-sanitizer`'s race checker in hazard mode on a
   kernel of each depth and one of gathered rows), `stages` (`Stage.depth`),
-  `a staged core's workgroups, threads and trips`, `the layout` and
+  `a staged core's workgroups, threads and trips`, `a staged warp holds a
+  block's rows of one matrix`, `the layout` and
   `sources`; the tolk bench's `contract/bf16-*` rows, `bf16-512x4096x2880`
   and `bf16-512x512x2880` among them, rune's
   `Cuda/experts-bfloat16-64x4of32-2880x5760` and `-512x4of32-2880x5760`

@@ -787,6 +787,56 @@ let routed_tiles =
   cases "a core reading gathered rows keeps the unstaged splits"
     ~id:(Printf.sprintf "%d tokens") [ 12; 64; 128; 512 ] routed_splits
 
+(* Rows already in their slots, as a routed layer's second product reads the
+   first's outputs: slot [σ] of [blocks] blocks of [block] rows reads row [σ]
+   of [a] and the bfloat16 [K; N] matrix of its block's expert,
+   [c.(σ, j) = Σ_r a.(σ, r) · w.(owner.(σ / block), r, j)]. *)
+let slotted_kernel ~block ~blocks ~experts ~k ~n =
+  let slots = blocks * block and kn = k * n in
+  let c = Shape.param ~shape:[ Ops.Int (slots * n) ] 0 Float32
+  and a = Shape.param ~shape:[ Ops.Int (slots * k) ] 1 Bfloat16
+  and owner = Shape.param ~shape:[ Ops.Int blocks ] 2 Int32
+  and w = Shape.param ~shape:[ Ops.Int (experts * kn) ] 3 Bfloat16 in
+  let open Ops.O in
+  let s = Ops.range ~axis_type:Weak (Int slots) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int n) [ 1 ]
+  and r = Ops.range ~axis_type:Weak (Int k) [ 2 ] in
+  let e = Ops.cast (Ops.index owner [ s // int block ]) Weak_int in
+  let av = Ops.index a [ (s * int k) + r ]
+  and bv = Ops.index w [ (e * int kn) + (r * int n) + j ] in
+  let sum = Ops.reduce (Ops.cast av Float32 * Ops.cast bv Float32) Add [ r ] in
+  let store = Ops.store (Ops.index c [ (s * int n) + j ]) sum in
+  Ops.sink ~kernel:(Ops.kernel_info ()) [ Ops.end_ store [ s; j ] ]
+
+(* A slotted product of 50 blocks of [block] rows over 8 experts of [2880;
+   2560] on sm_89, staged: its workgroups, the threads of one and the core's
+   trips. *)
+let slotted_tile block =
+  let k = slotted_kernel ~block ~blocks:50 ~experts:8 ~k:2880 ~n:2560 in
+  let s = Postrange.Scheduler.v k (sm89 ()) in
+  Postrange.Scheduler.convert_loop_to_global s;
+  let o =
+    Setting.context
+      [ Setting.B (Setting.stage, true) ]
+      (fun () -> Heuristic.hand_coded_optimizations s)
+  in
+  let module K = Postrange.Scheduler in
+  let size i = match List.nth (K.full_shape o) i with Int n -> n | Sym _ -> 0 in
+  let product l = List.fold_left (fun n i -> n * size i) 1 l in
+  ( product (K.axes_of o [ Global ]),
+    product (K.axes_of o [ Warp; Local ]),
+    product (K.axes_of ~reduce:true o [ Weak; Loop ]) )
+
+(* A block's rows read one matrix, so a staged warp holds as many of the
+   core's 16-row tiles as a block has: 3 of 48 rows, 4 of 64, and one
+   workgroup loads a block's tile of the matrix. A block takes 20 workgroups
+   of 2 warps along its 2560 outputs, and the core 90 trips of 32 of its 2880
+   values. *)
+let slotted_tiles =
+  cases "a staged warp holds a block's rows of one matrix"
+    ~id:(Printf.sprintf "blocks of %d") [ 48; 64 ]
+    (fun block -> equal (triple int int int) (1000, 64, 90) (slotted_tile block))
+
 let cube =
   { dt = Bfloat16; batch = 1; m = 128; k = 128; n = 128; layout = Kn;
     toeplitz = false }
@@ -1635,6 +1685,7 @@ let () =
            core_under_a_sum;
          staged_tiles;
          routed_tiles;
+         slotted_tiles;
          test "gathered rows each warp reads alone stay unstaged" alone;
          sources;
          group "decoded panels"
