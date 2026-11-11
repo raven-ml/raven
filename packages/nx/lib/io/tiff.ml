@@ -318,12 +318,21 @@ let per_sample t tag ~spp ~default =
       Fail.failf "%s holds %d values for %d samples" (field tag)
         (Array.length a) spp
 
-(* The dtype of samples of [bits] bits of SampleFormat [format]. *)
+(* The dtype of samples of [bits] bits of SampleFormat [format]: for
+   unsigned samples, the narrowest that holds them. *)
 let dtype ~bits ~format =
   match (format, bits) with
-  | 1, 8 -> D.Any D.Uint8
-  | 1, 16 -> D.Any D.Uint16
-  | 1, 32 -> D.Any D.Uint32
+  (* TIFF 6.0 stores a 24-bit sample as three bytes, most significant
+     first, but libtiff swaps it as an integer in the file's byte order,
+     and GDAL writes either: in each byte order a major writer departs from
+     the specification. *)
+  | 1, 24 ->
+      refuse bits_per_sample 24
+        "unsigned, whose bytes TIFF 6.0 orders most significant first and \
+         libtiff in the file's byte order"
+  | 1, b when b >= 1 && b <= 8 -> D.Any D.Uint8
+  | 1, b when b >= 9 && b <= 16 -> D.Any D.Uint16
+  | 1, b when b >= 17 && b <= 32 -> D.Any D.Uint32
   | 2, 16 -> D.Any D.Int16
   | 2, 32 -> D.Any D.Int32
   | 3, 32 -> D.Any D.Float32
@@ -331,10 +340,16 @@ let dtype ~bits ~format =
   | (1 | 2 | 3), _ ->
       refuse bits_per_sample bits
         (Printf.sprintf
-           "with SampleFormat %d; read are 8, 16 and 32 bits unsigned, 16 and \
-            32 signed, 32 and 64 float"
+           "with SampleFormat %d; read are 1 to 32 bits unsigned but 24, 16 \
+            and 32 signed, 32 and 64 float"
            format)
   | _ -> refuse sample_format format "read are 1, 2 and 3"
+
+(* Samples of 8, 16, 32 or 64 bits lie in the file as SHORTs, LONGs and
+   DOUBLEs do, in its byte order; samples of any other width are packed,
+   most significant bit first, whatever its byte order: "Otherwise BYTE"
+   (TIFF 6.0, section 8, Compression). *)
+let packed bits = bits <> 8 && bits <> 16 && bits <> 32 && bits <> 64
 
 (* The most bytes one byte of a stream decodes to: deflate's 258-byte
    match, from a length code and a distance code of a bit each (RFC 1951),
@@ -345,11 +360,13 @@ let lzw_ratio = 2560
 
 (* How an IFD's samples lie in its chunks: [rows] by [cols] pixels each,
    [across] to a row of chunks, chunk [k] at [offsets.(k)] of
-   [counts.(k)] bytes. *)
+   [counts.(k)] bytes. A sample takes [bits] bits in a chunk and [bytes]
+   bytes in the raster. *)
 type plan = {
   h : int;
   w : int;
   spp : int;
+  bits : int;
   bytes : int;
   dt : D.any;
   codec : int;
@@ -364,12 +381,18 @@ type plan = {
 
 let ceil_div a b = (a + b - 1) / b
 
-let check_values t ~spp ~format ~codec =
+let check_values t ~spp ~bits ~format ~codec =
   let predictor = one ~default:1 t predictor_tag in
   (match predictor with
   | 1 -> ()
   | (2 | 3) when codec = 1 ->
       refuse predictor_tag predictor "with Compression 1"
+  | 2 when packed bits ->
+      refuse predictor_tag 2
+        (Printf.sprintf
+           "on samples of %d bits; read is 1 for samples not of 8, 16 or 32 \
+            bits"
+           bits)
   | 3 when format <> 3 -> refuse predictor_tag predictor "on integer samples"
   | 2 | 3 -> ()
   | p -> refuse predictor_tag p "read are 1, 2 and 3");
@@ -400,7 +423,7 @@ let plan t =
   if not (List.mem codec [ 1; 5; 8; 32946 ]) then
     refuse compression_tag codec
       "read are 1 (none), 5 (LZW), and 8 and 32946 (Deflate)";
-  let predictor = check_values t ~spp ~format ~codec in
+  let predictor = check_values t ~spp ~bits ~format ~codec in
   Storage.check_shape [| h; w; spp |];
   let tiled = List.mem_assoc tile_offsets t.tags in
   if tiled && List.mem_assoc strip_offsets t.tags then
@@ -435,13 +458,16 @@ let plan t =
       (Array.length counts) n;
   let bytes = D.bits d / 8 in
   {
-    h; w; spp; bytes; dt; codec; predictor; rows; cols; across; offsets;
-    counts; tiled;
+    h; w; spp; bits; bytes; dt; codec; predictor; rows; cols; across;
+    offsets; counts; tiled;
   }
 
 let unit p = if p.tiled then "tile" else "strip"
 let counts_tag p = if p.tiled then tile_byte_counts else strip_byte_counts
-let chunk_row p = p.cols * p.spp * p.bytes
+(* The bytes of a chunk's row: its samples' bits, padded to a byte, "Each
+   row is padded to the next BYTE/SHORT/LONG boundary" (TIFF 6.0, section
+   8, Compression). *)
+let chunk_row p = ceil_div (p.cols * p.spp * p.bits) 8
 
 (* Chunk [k]'s first row and column, and its rows and columns that lie in
    the raster. *)
@@ -528,6 +554,26 @@ external copy :
   unit = "caml_nx_io_tiff_copy_byte" "caml_nx_io_tiff_copy"
 [@@noalloc]
 
+(* [unpack src ~at ~stride ~first dst ~at ~stride rows n bits bytes]
+   reads [rows] rows of [n] samples of [bits] bits, packed most significant
+   bit first, from sample [first] of each row of [src], into samples of
+   [bytes] bytes in the host's byte order in [dst], with no allocation.
+   Rows lie as [copy]'s do, and every row must lie in its buffer. *)
+external unpack :
+  Storage.bytes ->
+  int ->
+  int ->
+  int ->
+  Storage.bytes ->
+  int ->
+  int ->
+  int ->
+  int ->
+  int ->
+  int ->
+  unit = "caml_nx_io_tiff_unpack_byte" "caml_nx_io_tiff_unpack"
+[@@noalloc]
+
 let create n = Array1.create int8_unsigned c_layout n
 
 (* Chunk [k]'s stream [src] decoded into [buf]. *)
@@ -547,7 +593,7 @@ let inflate p k src buf =
    chunks as wide as the raster that follow each other. *)
 let contiguous p =
   let stride = p.rows * chunk_row p in
-  p.codec = 1 && p.cols = p.w
+  p.codec = 1 && p.cols = p.w && not (packed p.bits)
   && Array.for_all Fun.id
        (Array.mapi (fun k off -> off = p.offsets.(0) + (k * stride)) p.offsets)
 
@@ -557,7 +603,8 @@ let read_samples t =
   let (D.Any dt) = p.dt in
   let layout = L.contiguous (Iarray.of_array [| p.h; p.w; p.spp |]) in
   let total = p.h * p.w * p.spp * p.bytes in
-  let swapped = t.big <> Sys.big_endian && p.bytes > 1 in
+  let packed = packed p.bits in
+  let swapped = t.big <> Sys.big_endian && p.bytes > 1 && not packed in
   if contiguous p then
     let first = p.offsets.(0) in
     let x = Storage.value (B.view t.file ~first ~length:total) dt layout in
@@ -576,8 +623,9 @@ let read_samples t =
             for k = 0 to Array.length p.offsets - 1 do
               let r, c, rows, cols = place p k in
               let src = Array1.sub file p.offsets.(k) p.counts.(k) in
-              (* An uncompressed chunk in the host's byte order is read in
-                 place; any other is decoded or copied into [buf] first. *)
+              (* An uncompressed chunk of packed samples or in the host's
+                 byte order is read in place; any other is decoded or copied
+                 into [buf] first. *)
               let data =
                 if p.codec <> 1 then (
                   inflate p k src buf;
@@ -589,11 +637,16 @@ let read_samples t =
                   buf)
                 else src
               in
-              if data == buf then
-                unpredict buf scratch rows (p.cols * p.spp) p.spp p.bytes
-                  p.predictor t.big;
               let at = (r * row) + (c * p.spp * p.bytes) in
-              copy data 0 crow dst at row rows (cols * p.spp * p.bytes)
+              if packed then
+                unpack data 0 crow 0 dst at row rows (cols * p.spp) p.bits
+                  p.bytes
+              else begin
+                if data == buf then
+                  unpredict buf scratch rows (p.cols * p.spp) p.spp p.bytes
+                    p.predictor t.big;
+                copy data 0 crow dst at row rows (cols * p.spp * p.bytes)
+              end
             done));
     Nx.P (Nx.Repr.unsafe_of_array Nx.Host.v (A.v dt layout out))
   end

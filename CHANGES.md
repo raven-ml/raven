@@ -2859,6 +2859,9 @@ its lock and from samples the dashboard saw arrive.
 - `Nx_array.answer` loses `Held_exclusive`, and `nx_array.h` loses
   `NX_EXCLUSIVE`: a kernel that meets memory a donation is taking waits for
   the take, and refuses the operand as `Dead_buffer` if the take took it.
+- `Nx_io.Tiff.samples` reads unsigned samples of 1 to 32 bits but 24,
+  packed as TIFF 6.0 states, into the narrowest unsigned dtype, so
+  Sentinel-2's 15-bit bands since 2025 load as `uint16`.
 - `Nx.attention` reads `Paged` pools cut along their key heads in place, and
   pools cut along their pages as a dense call over the keys the table names;
   both raised before.

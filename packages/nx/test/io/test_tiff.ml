@@ -5,10 +5,11 @@
 
 (* TIFF. Files built here byte by byte from TIFF 6.0, BigTIFF and Adobe's
    notes load as the raster they encode, for every value of a tag nx.io
-   reads; every other value is refused, naming its tag; a raster saved
-   loads as itself, bit for bit, with its tags; files GDAL wrote load as
-   the arrays it was given; a file cut short or corrupted raises [Failure]
-   naming it, and never anything else. *)
+   reads, packed samples of every width among them; every other value is
+   refused, naming its tag; a raster saved loads as itself, bit for bit,
+   with its tags; files GDAL wrote load as the arrays it was given, and a
+   tile of a Sentinel-2 file as GDAL decodes it; a file cut short or
+   corrupted raises [Failure] naming it, and never anything else. *)
 
 open Windtrap
 open Io_support
@@ -196,6 +197,27 @@ let mask bits v =
 let byte_of v k =
   Int64.to_int (Int64.logand (Int64.shift_right_logical v (8 * k)) 0xffL)
 
+(* Whether samples of [bits] bits are packed, as TIFF 6.0 stores any width
+   but 8, 16, 32 and 64 bits: "Otherwise BYTE". *)
+let is_packed bits = not (List.mem bits [ 8; 16; 32; 64 ])
+
+(* A row of samples of [bits] bits, packed most significant bit first and
+   padded to a byte (TIFF 6.0, section 8, Compression and FillOrder). *)
+let pack bits row =
+  let b = Bytes.make (((Array.length row * bits) + 7) / 8) '\000' in
+  Array.iteri
+    (fun i v ->
+      for k = 0 to bits - 1 do
+        let bit = Int64.shift_right_logical v (bits - 1 - k) in
+        if Int64.logand bit 1L = 1L then begin
+          let at = (i * bits) + k in
+          let old = Char.code (Bytes.get b (at / 8)) in
+          Bytes.set b (at / 8) (Char.chr (old lor (0x80 lsr (at mod 8))))
+        end
+      done)
+    row;
+  Bytes.to_string b
+
 (* One chunk's rows of samples, [n] to a row, as [l] stores them: after
    its predictor, in its byte order, compressed. *)
 let encode l r rows n =
@@ -223,6 +245,7 @@ let encode l r rows n =
   in
   let row_bytes row =
     if l.predictor = 3 then planes row
+    else if is_packed r.bits then pack r.bits row
     else String.concat "" (Array.to_list (Array.map (num l.form bytes) row))
   in
   let raw = String.concat "" (Array.to_list (Array.map row_bytes rows)) in
@@ -395,6 +418,65 @@ let reading =
       cover "several samples a pixel" (r.c > 1);
       equal packed x (load_one (file (tiff l r))))
 
+(* Packed samples *)
+
+(* The widths every run reaches. *)
+let widths = [ 1; 3; 12; 15; 17; 31 ]
+
+(* [r]'s samples at the narrowest unsigned dtype that holds them. *)
+let unsigned r =
+  let s = [| r.h; r.w; r.c |] and to_int = Array.map Int64.to_int in
+  if r.bits <= 8 then Nx.P (Nx.create Nx.uint8 s (to_int r.samples))
+  else if r.bits <= 16 then Nx.P (Nx.create Nx.uint16 s (to_int r.samples))
+  else Nx.P (Nx.create Nx.uint32 s (Array.map Int64.to_int32 r.samples))
+
+(* Rasters of unsigned samples of 1 to 32 bits, the widths above often, any
+   values, zero and the largest among them, and layouts of them: strips or
+   tiles, every compression, Predictor 1, either byte order. *)
+let packed_files =
+  let open Gen in
+  let any = List.filter (( <> ) 24) (List.init 32 succ) in
+  let* bits = frequency [ (3, of_list widths); (1, of_list any) ] in
+  let side = frequency [ (1, constant 1); (4, int_range 1 40) ] in
+  let* h = side and+ w = side and+ c = int_range 1 4 in
+  let top = Int64.pred (Int64.shift_left 1L bits) in
+  let sample =
+    frequency
+      [
+        (1, constant 0L); (1, constant top); (4, map (Int64.logand top) int64);
+      ]
+  in
+  let* samples = array ~size:(constant (h * w * c)) sample in
+  let* mm = bool in
+  let* bigtiff = bool in
+  let side = int_range 1 3 in
+  let tile = map (fun (a, b) -> Tiles (16 * a, 16 * b)) (pair side side) in
+  let* chunks = one_of [ map (fun k -> Strips k) (int_range 1 50); tile ] in
+  let* codec = of_list [ 1; 5; 8; 32946 ] in
+  let+ padded = bool in
+  let l = { form = { mm; bigtiff }; chunks; codec; predictor = 1; padded } in
+  ({ h; w; c; bits; format = 1; samples }, l)
+
+let packs =
+  prop "packed samples of 1 to 32 bits but 24 load as the values they pack"
+    (Gen.with_pp
+       (fun ppf (r, l) ->
+         Format.fprintf ppf "%d by %d by %d of %d bits, %a" r.h r.w r.c r.bits
+           pp_layout l)
+       packed_files)
+    (fun (r, l) ->
+      let cols = snd (sides l r) in
+      List.iter
+        (fun b -> cover (Printf.sprintf "%d bits" b) (r.bits = b))
+        widths;
+      cover "MM" l.form.mm;
+      cover "tiles" (match l.chunks with Tiles _ -> true | Strips _ -> false);
+      cover "a row that ends inside a byte" (cols * r.c * r.bits mod 8 <> 0);
+      cover "uncompressed" (l.codec = 1);
+      cover "LZW" (l.codec = 5);
+      cover "Deflate" (l.codec = 8);
+      equal packed (unsigned r) (load_one (file (tiff l r))))
+
 (* A small raster, classic little-endian strips of it, and its file with a
    field edit. *)
 let small =
@@ -490,9 +572,25 @@ let refusals =
           refused ~l
             ~naming:(Printf.sprintf "Predictor (317) %d" v)
             (replace (short f 317 [ v ])));
+      cases "Predictor 2 on packed samples" ~id:string_of_int [ 1; 12; 15 ]
+        (fun bits ->
+          let l = { plain with codec = 8 } in
+          refused ~l
+            ~naming:
+              (Printf.sprintf "Predictor (317) 2: on samples of %d bits" bits)
+            (fun fs ->
+              replace (short f 317 [ 2 ])
+                (replace (short f 258 [ bits; bits; bits ]) fs)));
+      cases "24-bit unsigned samples, in either byte order"
+        ~id:(Format.asprintf "%a" pp_form)
+        [ f; { f with mm = true } ]
+        (fun form ->
+          let l = { plain with form } in
+          refused ~l ~naming:"BitsPerSample (258) 24: unsigned"
+            (replace (short form 258 [ 24; 24; 24 ])));
       cases "BitsPerSample and SampleFormat"
         ~id:(fun (b, s) -> Printf.sprintf "%d bits, SampleFormat %d" b s)
-        [ (1, 1); (12, 1); (64, 1); (8, 2); (64, 2); (16, 3); (16, 4) ]
+        [ (0, 1); (33, 1); (64, 1); (8, 2); (64, 2); (16, 3); (16, 4) ]
         (fun (bits, format) ->
           let naming =
             if format = 4 then "SampleFormat (339) 4"
@@ -833,17 +931,79 @@ let gdal =
     [
       "tiff_lzw_u16_tiles"; "tiff_deflate_f32_bigtiff_mm";
       "tiff_lzw_f64_strips"; "tiff_deflate_i16_mm_tiles"; "tiff_none_u32";
-      "tiff_lzw_i32"; "tiff_lzw_u8_rgb";
+      "tiff_lzw_i32"; "tiff_lzw_u8_rgb"; "tiff_none_u1"; "tiff_none_u3_mm";
+      "tiff_lzw_u12_rgb"; "tiff_deflate_u15_tiles"; "tiff_deflate_u17_bigtiff";
+      "tiff_deflate_u31_mm_tiles";
     ]
     (fun name ->
       equal packed
         (Nx_io.load_npy (fixture (name ^ ".npy")))
         (load_one (fixture (name ^ ".tif"))))
 
+(* A Sentinel-2 file *)
+
+(* Bytes of a cloud-optimised GeoTIFF of the Microsoft Planetary Computer,
+   Sentinel-2 L2A tile T31UCT's B04 band of 2025-07-01 (baseline N05.11),
+   246,755,406 bytes: its first 6556, which hold its five IFDs and their
+   values, and tile 348 of its first IFD, a Deflate stream of 512 by 512
+   samples of 15 bits, partly nodata. cut/NOTICE gives their source. *)
+let s2_head = Filename.concat "cut" "s2_b04_head.bin"
+let s2_tile = Filename.concat "cut" "s2_b04_tile348.bin"
+
+(* The tile as GDAL 3.12.2 decodes it from the whole file: the MD5 of its
+   samples as little-endian [uint16], in C order, and their largest value,
+   sum and count of nonzero. *)
+let s2_md5 = "9e8cb3052738828e8d6d1470be4772aa"
+let s2_stats = [ 2478; 6_822_003; 3292 ]
+
+let s2_digest p =
+  let x = Nx.unpack Nx.uint16 p in
+  let vs = Nx.to_array x in
+  let le = Bytes.create (2 * Array.length vs) in
+  Array.iteri (fun i v -> Bytes.set_uint16_le le (2 * i) v) vs;
+  ( Nx.shape x,
+    Digest.to_hex (Digest.bytes le),
+    [
+      Array.fold_left Int.max 0 vs;
+      Array.fold_left ( + ) 0 vs;
+      Array.fold_left (fun n v -> if v = 0 then n else n + 1) 0 vs;
+    ] )
+
+let s2_expected = ([| 512; 512; 1 |], s2_md5, s2_stats)
+let digest = triple (array int) string (list int)
+
+let sentinel =
+  test "a tile of a Sentinel-2 file loads as GDAL decodes it" (fun () ->
+      (* The tile under an IFD of the file's first IFD's sample tags, its
+         raster cut to the tile. *)
+      let first = T.tags (List.hd (Nx_io.load_tiff s2_head)) in
+      equal (list (option value))
+        [
+          Some (T.Short [| 15 |]); Some (T.Short [| 8 |]);
+          Some (T.Short [| 1 |]); Some (T.Short [| 1 |]);
+          Some (T.Short [| 512 |]); Some (T.Short [| 512 |]);
+        ]
+        (List.map
+           (fun t -> List.assoc_opt t first)
+           [ 258; 259; 317; 339; 322; 323 ]);
+      let tile = read s2_tile in
+      let fields at =
+        by_tag
+          [
+            short f 256 [ 512 ]; short f 257 [ 512 ]; short f 258 [ 15 ];
+            short f 259 [ 8 ]; short f 262 [ 1 ]; short f 277 [ 1 ];
+            short f 284 [ 1 ]; short f 317 [ 1 ]; short f 322 [ 512 ];
+            short f 323 [ 512 ]; long f 324 at;
+            long f 325 [ String.length tile ]; short f 339 [ 1 ];
+          ]
+      in
+      let path = file (build f [ ([ tile ], fields) ]) in
+      equal digest s2_expected (s2_digest (load_one path)))
+
 let () =
   exit
     (run "nx.io TIFF"
        [
-         reading; variants; refusals; headers; corrupted; round_trips;
-         save_refusals; gdal;
+         reading; packs; variants; refusals; headers; corrupted; round_trips;
+         save_refusals; gdal; sentinel;
        ])

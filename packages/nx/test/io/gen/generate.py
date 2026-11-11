@@ -26,7 +26,8 @@ jpeg_table16_coarse.jpg, whose 16-bit table Pillow writes and decodes. Nor
 have jpeg_zrl_progressive.jpg and jpeg_zrl_baseline.jpg, which decode to the
 same pixels. GDAL 3.12, which the rasterio wheel bundles with its libtiff,
 writes the tiff_*.tif files, each with a sibling .npy of the array of shape
-(h, w, c) it was given, and reads each back as that array.
+(h, w, c) it was given, and reads each back as that array; the tiff_*_u<n>
+files hold samples of n bits, packed (GDAL's NBITS).
 
 The fixtures are written into ../support. Pillow 13.0.0 encodes JPEG with
 the libjpeg-turbo its wheel bundles, and every fixture reproduces byte for
@@ -699,6 +700,27 @@ def tiff_fixtures():
         ("tiff_none_u32", ramp(np.uint32, (17, 13, 1), 1 << 20), dict(compress="none")),
         ("tiff_lzw_i32", ramp(np.int32, (11, 300, 1), -(1 << 18)), dict(compress="lzw", predictor=2)),
         ("tiff_lzw_u8_rgb", ramp(np.uint8, (31, 47, 3), 1), dict(compress="lzw")),
+    ]
+    def packed(dtype, shape, n):
+        # Samples of n bits that use every bit, the largest first, and rows
+        # that end inside a byte.
+        a = ramp(np.int64, shape, 2654435761) % (1 << n)
+        a[0, 0, 0] = (1 << n) - 1
+        return a.astype(dtype)
+
+    cases += [
+        ("tiff_none_u1", packed(np.uint8, (9, 19, 1), 1), dict(compress="none", nbits=1)),
+        ("tiff_none_u3_mm", packed(np.uint8, (7, 11, 2), 3),
+         dict(compress="none", nbits=3, endianness="BIG")),
+        ("tiff_lzw_u12_rgb", packed(np.uint16, (13, 21, 3), 12),
+         dict(compress="lzw", nbits=12, blockysize=3)),
+        ("tiff_deflate_u15_tiles", packed(np.uint16, (37, 45, 1), 15),
+         dict(compress="deflate", nbits=15, tiled=True, blockxsize=16, blockysize=16)),
+        ("tiff_deflate_u17_bigtiff", packed(np.uint32, (6, 9, 2), 17),
+         dict(compress="deflate", nbits=17, bigtiff="YES", blockysize=4)),
+        ("tiff_deflate_u31_mm_tiles", packed(np.uint32, (20, 17, 1), 31),
+         dict(compress="deflate", nbits=31, tiled=True, blockxsize=16, blockysize=16,
+              endianness="BIG")),
     ]
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", NotGeoreferencedWarning)

@@ -758,12 +758,14 @@ val encode_png : ?dpi:float -> ?srgb:bool -> 'd Nx.uint8_t -> string
     {ul
     {- Compression (259) 1 (none), 5 (LZW, as {!Lz.Lzw} decodes it), or 8
        or its obsolete code 32946 (Deflate, a zlib stream a chunk);}
-    {- Predictor (317) 1 (none), 2 (horizontal differencing) or, for float
-       samples, 3 (floating point), and 1 with Compression 1;}
+    {- Predictor (317) 1 (none), 2 (horizontal differencing) on samples of
+       8, 16 or 32 bits or, for float samples, 3 (floating point), and 1
+       with Compression 1;}
     {- BitsPerSample (258) and SampleFormat (339), the same for every
-       sample, of [uint8], [uint16] or [uint32] (SampleFormat 1, unsigned),
-       [int16] or [int32] (2, signed), or [float32] or [float64] (3, IEEE
-       floating point);}
+       sample: 1 to 32 bits but 24 unsigned (SampleFormat 1), read as the
+       narrowest of [uint8], [uint16] and [uint32] that holds them; 16 or
+       32 bits signed (2), as [int16] or [int32]; or 32 or 64 bits IEEE
+       floating point (3), as [float32] or [float64];}
     {- PlanarConfiguration (284) 1, a pixel's samples together, or 2 with
        one sample a pixel;}
     {- FillOrder (266) 1, and a Photometric (262) other than 6 (YCbCr),
@@ -772,15 +774,23 @@ val encode_png : ?dpi:float -> ?srgb:bool -> 'd Nx.uint8_t -> string
        RowsPerStrip (278), or tiles, with TileWidth (322), TileLength (323),
        TileOffsets (324) and TileByteCounts (325), each chunk of a byte or
        more.}}
-    Any other value of these tags is refused, naming the tag. A field of a
-    type {!Tiff.type-value} lacks is skipped, as TIFF 6.0 tells readers to.
+    Any other value of these tags is refused, naming the tag. 24-bit
+    unsigned samples are refused because TIFF 6.0 stores them as bytes,
+    most significant first, while libtiff swaps them as integers in the
+    file's byte order, so writers disagree in either byte order. Samples of
+    8, 16, 32 or 64 bits are in the file's byte order. Samples of any
+    other width are {e packed}, as TIFF 6.0's Compression 1 states: most
+    significant bit first whatever the file's byte order, with each row of
+    a chunk padded to a byte, before any compression. A field of a type
+    {!Tiff.type-value} lacks is skipped, as TIFF 6.0 tells readers to.
     Every other tag is data, Orientation (274) among them, so a raster's
     first row is its file's first.
 
     A file's IFDs and the values that do not fit their entries must take
     no more bytes in all than the file holds, and so must each IFD's
     chunks, so that a load's tags take memory linear in the file's length,
-    and a raster at most 2560 times its bytes.
+    and a raster at most 2560 times its bytes, or 20480 times for packed
+    samples.
 
     {!save_tiff} writes a raster of a sample or more, at most 65535
     samples a pixel and sides below 2{^32}, with its own tags: ImageWidth,

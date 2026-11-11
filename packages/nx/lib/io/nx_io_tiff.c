@@ -2,15 +2,18 @@
   Copyright (c) 2026 The Raven authors. All rights reserved.
   SPDX-License-Identifier: ISC
 
-  TIFF's predictors over the rows of a strip or tile, in place: horizontal
-  differencing (TIFF 6.0, section 14), which replaces each sample but a
-  row's first pixel by its difference from the same sample of the pixel
-  before, modulo 2^bits; and the floating point predictor (Adobe Photoshop
-  TIFF Technical Note 3), which reorders each row's bytes into planes, most
-  significant byte of every sample first, then replaces each byte but the
-  first pixel's by its difference from the byte one pixel before. The
-  floating point predictor's planes are in the same order whatever the
-  file's byte order.
+  TIFF's packed samples and predictors over the rows of a strip or tile.
+  Samples of a width other than 8, 16 or 32 bits are packed, most
+  significant bit first, each row padded to a byte (TIFF 6.0, section 8,
+  Compression); [unpack] reads them into whole bytes. The predictors are
+  undone in place: horizontal differencing (TIFF 6.0, section 14), which
+  replaces each sample but a row's first pixel by its difference from the
+  same sample of the pixel before, modulo 2^bits; and the floating point
+  predictor (Adobe Photoshop TIFF Technical Note 3), which reorders each
+  row's bytes into planes, most significant byte of every sample first,
+  then replaces each byte but the first pixel's by its difference from the
+  byte one pixel before. The floating point predictor's planes are in the
+  same order whatever the file's byte order.
   --------------------------------------------------------------------------*/
 
 #include <caml/bigarray.h>
@@ -195,4 +198,53 @@ CAMLprim value caml_nx_io_tiff_copy_byte(value *argv, int argn) {
   (void)argn;
   return caml_nx_io_tiff_copy(argv[0], argv[1], argv[2], argv[3], argv[4],
                               argv[5], argv[6], argv[7]);
+}
+
+/* [caml_nx_io_tiff_unpack src src_at src_stride first dst dst_at
+   dst_stride rows n bits bytes] reads [rows] rows of [n] samples of [bits]
+   bits, 1 to 32, packed most significant bit first, row [i] from sample
+   [first] of the row at [src_at + i * src_stride], into samples of [bytes]
+   bytes, 1, 2 or 4, in the host's byte order from [dst_at + i *
+   dst_stride]. A sample spans at most 5 bytes. The caller checks that
+   every row lies in its buffer. */
+CAMLprim value caml_nx_io_tiff_unpack(value vsrc, value vsrc_at,
+                                      value vsrc_stride, value vfirst,
+                                      value vdst, value vdst_at,
+                                      value vdst_stride, value vrows,
+                                      value vn, value vbits, value vbytes) {
+  const uint8_t *src = Caml_ba_data_val(vsrc);
+  uint8_t *dst = Caml_ba_data_val(vdst);
+  size_t src_at = Long_val(vsrc_at), dst_at = Long_val(vdst_at);
+  size_t src_stride = Long_val(vsrc_stride), dst_stride = Long_val(vdst_stride);
+  size_t first = Long_val(vfirst), rows = Long_val(vrows), n = Long_val(vn);
+  int bits = Int_val(vbits), bytes = Int_val(vbytes);
+  uint64_t mask = (UINT64_C(1) << bits) - 1;
+  for (size_t i = 0; i < rows; i++) {
+    const uint8_t *row = src + src_at + i * src_stride;
+    uint8_t *out = dst + dst_at + i * dst_stride;
+    size_t bit = first * (size_t)bits;
+    for (size_t j = 0; j < n; j++, bit += (size_t)bits, out += bytes) {
+      const uint8_t *p = row + (bit >> 3);
+      int shift = (int)(bit & 7), span = (shift + bits + 7) >> 3;
+      uint64_t acc = 0;
+      for (int k = 0; k < span; k++) acc = (acc << 8) | p[k];
+      uint32_t v = (uint32_t)((acc >> (span * 8 - shift - bits)) & mask);
+      if (bytes == 1) {
+        out[0] = (uint8_t)v;
+      } else if (bytes == 2) {
+        uint16_t h = (uint16_t)v;
+        memcpy(out, &h, 2);
+      } else {
+        memcpy(out, &v, 4);
+      }
+    }
+  }
+  return Val_unit;
+}
+
+CAMLprim value caml_nx_io_tiff_unpack_byte(value *argv, int argn) {
+  (void)argn;
+  return caml_nx_io_tiff_unpack(argv[0], argv[1], argv[2], argv[3], argv[4],
+                                argv[5], argv[6], argv[7], argv[8], argv[9],
+                                argv[10]);
 }

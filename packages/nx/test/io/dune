@@ -2,7 +2,8 @@
 ; Python's zipfile, Pillow, GDAL and a minimal PNG writer, with each image's
 ; pixels as an npy file, as Pillow decodes it, or as PNG-3 states it where
 ; Pillow differs, and each TIFF raster as the array GDAL was given, which
-; gen/generate.py writes into support/.
+; gen/generate.py writes into support/. cut/ holds byte ranges of a
+; Sentinel-2 file, whose source and licence cut/NOTICE states.
 
 (tests
  (names
@@ -28,7 +29,8 @@
   io_support)
  (libraries nx nx_array nx_io nx_support rig unix lz windtrap)
  (deps
-  (glob_files support/*))
+  (glob_files support/*)
+  (glob_files cut/*))
  ; A stack of 8 MiB, a common system default, so that a parser that recurses
  ; once per nesting level of a file overflows here.
  (action

@@ -1,0 +1,23 @@
+Byte ranges of a Sentinel-2 file for nx.io's TIFF tests
+
+Contains modified Copernicus Sentinel data 2025.
+
+The files here are byte ranges, unchanged, of one cloud-optimised GeoTIFF
+that the Microsoft Planetary Computer publishes, cut out of the whole file
+to test reading by ranges. They are distributed under the Legal Notice on
+the use of Copernicus Sentinel Data and Service Information:
+https://sentinels.copernicus.eu/documents/247904/690755/Sentinel_Data_Legal_Notice
+
+Product:  S2A_MSIL2A_20250701T110711_N0511_R137_T31UCT_20250701T153201
+Band:     B04, 10 m
+Source:   https://sentinel2l2a01.blob.core.windows.net/sentinel2-l2/31/U/CT/2025/07/01/S2A_MSIL2A_20250701T110711_N0511_R137_T31UCT_20250701T153201.SAFE/GRANULE/L2A_T31UCT_A052358_20250701T111203/IMG_DATA/R10m/T31UCT_20250701T110711_B04_10m.tif
+ETag:     "0x8DDB8C69D833C08"
+Length:   246755406 bytes
+
+s2_b04_head.bin
+  Bytes:  0 to 6555, the header, the five IFDs and their values
+  MD5:    09f79ae1ae2b54acc4ab5b255ca97f35
+
+s2_b04_tile348.bin
+  Bytes:  207111118 to 207117258, tile 348 of the first IFD
+  MD5:    bb6c90c460ef0e9fe3057c833c453514
