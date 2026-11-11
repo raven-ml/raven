@@ -1292,6 +1292,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A tensor core reading rows through a row map, as routed products do, stages
+  them once a workgroup (`Stage.operands`): gpt-oss-20b's MXFP4 gate and up
+  projection at 512 tokens takes 931 µs where it took 1271 on an RTX 5000 Ada.
 - `Tolk_engine.time` times a schedule whose kernels run on another machine's
   device, where it raised `Invalid_argument`: that machine times the run and
   sends the times back (`Rig_program.time`).

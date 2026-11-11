@@ -504,6 +504,289 @@ let core_under_a_sum () =
   equal (array Dtypes.value) (outer_exact a b sc)
     (List.assoc 0 (Run.on d prg [ (1, a); (2, b); (3, sc) ]))
 
+(* Gathered rows
+
+   A routed product: each slot [σ] of [blocks] blocks of 64 slots reads the
+   row of [a] its map entry names and the expert matrix of its block's owner,
+   [c.(σ, j) = Σ_r a.(map.(σ) / topk, r) · w.(owner.(σ / 64), r, j)], in
+   float32, the products of bfloat16 values. [map] holds each slot's route
+   position, [tokens · topk] for a pad slot, which reads [a] as [0]: a pad's
+   outputs are [+0]. Positions are each expert's in order, in blocks of 64
+   from its first; each token's [topk] positions draw their experts at random,
+   so a block may read a row twice. [w] is bfloat16, of [K; N] matrices, or
+   MXFP4: [N; K] matrices of 4-bit codes, two a byte, the low nibble first,
+   each block of 32 scaled by a power of two of 8 bits, decoded into
+   bfloat16 in the kernel. The positions, the map's rows, the clamp and the
+   gate are rune's for [Nx.matmul_segments]. *)
+
+type weights = Float_weights | Mxfp4
+
+type routed = {
+  weights : weights;
+  tokens : int;
+  topk : int;
+  experts : int;
+  block : int;
+  rk : int;
+  rn : int;
+  rseed : int;
+}
+
+(* E2M1's 16 values, by code. *)
+let e2m1 =
+  [| 0.; 0.5; 1.; 1.5; 2.; 3.; 4.; 6.; -0.; -0.5; -1.; -1.5; -2.; -3.; -4.;
+     -6. |]
+
+(* Each slot's route position, its count of real ones, and each block's
+   owner: the blocks a routing of [n] positions over [g] experts takes at
+   most, [m + (n - m) / 64] for [m = min n g], as rune bounds them. *)
+let routing p =
+  let st = Random.State.make [| p.rseed |] in
+  let positions = p.tokens * p.topk in
+  let ids = Array.init positions (fun _ -> Random.State.int st p.experts) in
+  let m = min positions p.experts in
+  let blocks = m + ((positions - m) / p.block) in
+  let map = Array.make (blocks * p.block) positions in
+  let owner = Array.make blocks 0 in
+  let next = ref 0 in
+  for e = 0 to p.experts - 1 do
+    let rank = ref 0 in
+    Array.iteri
+      (fun pos id ->
+        if id = e then begin
+          if !rank mod p.block = 0 then begin
+            owner.(!next) <- e;
+            incr next
+          end;
+          map.(((!next - 1) * p.block) + (!rank mod p.block)) <- pos;
+          incr rank
+        end)
+      ids
+  done;
+  (map, owner)
+
+let routed_kernel ?opts_to_apply p ~blocks =
+  let k = p.rk and n = p.rn and positions = p.tokens * p.topk in
+  let slots = blocks * p.block and last = positions - 1 in
+  let kn = k * n and halves = k / 2 and scaled = k / 32 in
+  let c = Shape.param ~shape:[ Ops.Int (slots * n) ] 0 Float32
+  and a = Shape.param ~shape:[ Ops.Int (p.tokens * k) ] 1 Bfloat16
+  and map = Shape.param ~shape:[ Ops.Int slots ] 2 Int64
+  and owner = Shape.param ~shape:[ Ops.Int blocks ] 3 Int32
+  and w = Shape.param ~shape:[ Ops.Int (p.experts * kn) ] 4 Bfloat16
+  and codes = Shape.param ~shape:[ Ops.Int (p.experts * n * halves) ] 4 Uint8
+  and scales = Shape.param ~shape:[ Ops.Int (p.experts * n * scaled) ] 5 Uint8
+  and lut = Shape.param ~shape:[ Ops.Int 16 ] 6 Float32 in
+  let open Ops.O in
+  let b = Ops.range ~axis_type:Weak (Int blocks) [ 0 ]
+  and i = Ops.range ~axis_type:Weak (Int p.block) [ 1 ]
+  and j = Ops.range ~axis_type:Weak (Int n) [ 2 ]
+  and r = Ops.range ~axis_type:Weak (Int k) [ 3 ] in
+  let pos = Ops.index map [ (b * int p.block) + i ] in
+  let inside =
+    Ops.lt (Ops.bitcast pos Uint64) (Ops.int ~dtype:Uint64 positions)
+  in
+  let at =
+    Ops.minimum
+      (Ops.maximum pos (Ops.int ~dtype:Int64 0))
+      (Ops.int ~dtype:Int64 last)
+  in
+  let row = Ops.cast at Weak_int // int p.topk in
+  let av =
+    Ops.where inside
+      (Ops.index a [ (row * int k) + r ])
+      (Ops.float ~dtype:Bfloat16 0.)
+  in
+  let e = Ops.cast (Ops.index owner [ b ]) Weak_int in
+  let bv =
+    match p.weights with
+    | Float_weights -> Ops.index w [ (e * int kn) + (r * int n) + j ]
+    | Mxfp4 ->
+        let wrow = (e * int n) + j in
+        let code =
+          Ops.cast (Ops.index codes [ (wrow * int halves) + (r // int 2) ])
+            Weak_int
+        in
+        let nibble = (code lsr (r % int 2 * int 4)) land int 15 in
+        let bits =
+          Ops.cast (Ops.index scales [ (wrow * int scaled) + (r // int 32) ])
+            Uint32
+        in
+        let scale = Ops.bitcast (bits lsl Ops.int ~dtype:Uint32 23) Float32 in
+        Ops.cast (Ops.index lut [ nibble ] * scale) Bfloat16
+  in
+  let sum =
+    Ops.reduce (Ops.cast av Float32 * Ops.cast bv Float32) Add [ r ]
+  in
+  let out = (((b * int p.block) + i) * int n) + j in
+  let store = Ops.store (Ops.index c [ out ]) sum in
+  Ops.sink ~kernel:(Ops.kernel_info ?opts_to_apply ())
+    [ Ops.end_ store [ b; i; j ] ]
+
+(* The kernel's inputs: [a] and float weights of [values], or with [small],
+   integers from -2 to 2, codes of any byte and scales from [2^-4] to [2^4]
+   (bytes 123 to 131). *)
+let routed_inputs ?(small = false) p =
+  let map, owner = routing p in
+  let int x = `Int (Bigint.of_int x) in
+  let draw seed size =
+    if small then
+      let st = Random.State.make [| seed |] in
+      Array.init size (fun _ ->
+          `Float (Float.of_int (Random.State.int st 5 - 2)))
+    else values seed size
+  in
+  let st = Random.State.make [| p.rseed + 2 |] in
+  let weights =
+    match p.weights with
+    | Float_weights -> [ (4, draw (p.rseed + 1) (p.experts * p.rk * p.rn)) ]
+    | Mxfp4 ->
+        let bytes n lo hi =
+          Array.init n (fun _ -> int (lo + Random.State.int st (hi - lo + 1)))
+        in
+        [
+          (4, bytes (p.experts * p.rn * p.rk / 2) 0 255);
+          (5, bytes (p.experts * p.rn * p.rk / 32) 123 131);
+          (6, Array.map (fun f -> `Float f) e2m1);
+        ]
+  in
+  ( map,
+    owner,
+    [
+      (1, draw p.rseed (p.tokens * p.rk));
+      (2, Array.map int map);
+      (3, Array.map int owner);
+    ]
+    @ weights )
+
+(* The routed product's kernel, with the optimisations [opts] if given, else
+   those the compiler chooses. *)
+let routed_program ?opts p =
+  let map, _ = routing p in
+  routed_kernel ?opts_to_apply:opts p ~blocks:(Array.length map / p.block)
+
+(* The optimisations the compiler applied to [prg]. *)
+let applied prg =
+  match Ops.arg (Ops.nth prg 0) with
+  | Kernel { applied_opts; _ } -> applied_opts
+  | _ -> failwith "a program's first source is its kernel"
+
+let pp_routed ppf p =
+  Format.fprintf ppf
+    "%s, %d tokens, top %d of %d experts in blocks of %d, [%d; %d], seed %d"
+    (match p.weights with Float_weights -> "bfloat16" | Mxfp4 -> "MXFP4")
+    p.tokens p.topk p.experts p.block p.rk p.rn p.rseed
+
+(* The tiles a core of [p] stages: the gathered rows of [a], and the
+   weights' tile where they are not decoded. *)
+let staged_tiles_of p =
+  match p.weights with Float_weights -> 2 | Mxfp4 -> 1
+
+let gathered_bits p =
+  let d, r = on_cuda () in
+  let prg = compiled r (routed_program p) in
+  let map, _, inputs = routed_inputs p in
+  let positions = p.tokens * p.topk in
+  let run prg = List.assoc 0 (Run.on d prg inputs) in
+  let src = source prg in
+  let cored = says "mma.sync" src in
+  let staged = List.length (locals (Ops.nth prg 1)) in
+  let blocks = Array.length map / p.block in
+  let block b = Array.sub map (b * p.block) p.block in
+  let pads b = Array.exists (( = ) positions) (block b) in
+  let reals b = Array.exists (( <> ) positions) (block b) in
+  let twice b =
+    let rows =
+      List.filter_map
+        (fun x -> if x = positions then None else Some (x / p.topk))
+        (Array.to_list (block b))
+    in
+    List.length (List.sort_uniq Int.compare rows) < List.length rows
+  in
+  let some f = List.exists f (List.init blocks Fun.id) in
+  cover "a core" cored;
+  cover "MXFP4 weights on a core" (cored && p.weights = Mxfp4);
+  cover "float weights on a core" (cored && p.weights = Float_weights);
+  cover "a block of real and pad rows" (some (fun b -> pads b && reals b));
+  cover "a block of pad rows alone" (some (fun b -> not (reals b)));
+  cover "a row read twice in a block" (some twice);
+  List.iter
+    (fun t -> cover (Printf.sprintf "%d tokens" t) (p.tokens = t))
+    [ 12; 64; 128; 512 ];
+  (* Whether several warps read the rows decides which: [run_routed] and
+     [alone] pin each. *)
+  cover "gathered rows staged" (cored && staged = staged_tiles_of p);
+  cover "gathered rows left unstaged" (cored && staged < staged_tiles_of p);
+  if cored then
+    mem ~msg:"the tiles staged, gathered rows among them or not" int staged
+      (List.init (staged_tiles_of p + 1) Fun.id);
+  let staged = run prg in
+  let opts = applied prg in
+  equal (array Dtypes.value)
+    (run (compiled (unstaged r) (routed_program ~opts p)))
+    staged;
+  Array.iteri
+    (fun s x ->
+      if x = positions then
+        for j = 0 to p.rn - 1 do
+          equal ~msg:(Printf.sprintf "slot %d, a pad, column %d" s j)
+            Dtypes.value (`Float 0.) staged.((s * p.rn) + j)
+        done)
+    map
+
+let routed_law =
+  let gen =
+    let open Gen in
+    let+ weights = of_list [ Float_weights; Mxfp4 ]
+    and+ tokens = of_list [ 12; 64; 128; 512 ]
+    and+ topk = of_list [ 1; 2; 4 ]
+    and+ experts = of_list [ 4; 8; 32 ]
+    and+ rk = of_list [ 64; 160; 256 ]
+    and+ rn = of_list [ 64; 128 ]
+    and+ block = of_list [ 8; 64 ]
+    and+ rseed = int_range 0 1_000_000 in
+    { weights; tokens; topk; experts; block; rk; rn; rseed }
+  in
+  (* rune's blocks: 8 rows below 16 positions an expert, 64 from there. *)
+  let example weights (tokens, experts) =
+    let block = if tokens * 4 < 16 * experts then 8 else 64 in
+    { weights; tokens; topk = 4; experts; block; rk = 160; rn = 128;
+      rseed = tokens }
+  in
+  prop ~count:8
+    ~examples:
+      (List.concat_map
+         (fun w ->
+           List.map (example w) [ (12, 8); (64, 32); (128, 8); (512, 8) ])
+         [ Float_weights; Mxfp4 ])
+    "a staged product of gathered rows computes the bits of the same \
+     optimisations unstaged, a pad row's outputs +0"
+    (Gen.with_pp pp_routed gen) gathered_bits
+
+(* The splits the hand-coded rules choose for a routed product of float
+   weights on CUDA, staged or not. A core reading gathered rows copies in
+   one stage and keeps the unstaged splits. *)
+let routed_splits tokens =
+  let p =
+    { weights = Float_weights; tokens; topk = 4; experts = 8; block = 64;
+      rk = 160; rn = 128; rseed = tokens }
+  in
+  let r = sm89 () in
+  let opts staged =
+    Setting.context
+      [ Setting.B (Setting.stage, staged) ]
+      (fun () ->
+        let s = Postrange.Scheduler.v (routed_program p) r in
+        Postrange.Scheduler.convert_loop_to_global s;
+        Postrange.Scheduler.applied_opts (Heuristic.hand_coded_optimizations s))
+  in
+  let opt = Testable.make ~pp:Opt.pp ~equal:Opt.equal in
+  equal (list opt) (opts false) (opts true)
+
+let routed_tiles =
+  cases "a core reading gathered rows keeps the unstaged splits"
+    ~id:(Printf.sprintf "%d tokens") [ 12; 64; 128; 512 ] routed_splits
+
 let cube =
   { dt = Bfloat16; batch = 1; m = 128; k = 128; n = 128; layout = Kn;
     toeplitz = false }
@@ -519,15 +802,78 @@ let run_staged depth () =
   equal (array Dtypes.value) (exact cube a b)
     (List.assoc 0 (Run.on d prg [ (1, a); (2, b) ]))
 
+(* A routed product of float weights over 128 tokens, of integers from -2 to
+   2: its sums are exact. *)
+let exact_routed =
+  { weights = Float_weights; tokens = 128; topk = 4; experts = 8; block = 64;
+    rk = 160; rn = 128; rseed = 7 }
+
+let run_routed () =
+  let d, r = on_cuda () in
+  let p = exact_routed in
+  let prg = compiled r (routed_program p) in
+  equal ~msg:"operands staged" int 2 (List.length (locals (Ops.nth prg 1)));
+  let map, owner, inputs = routed_inputs ~small:true p in
+  let v = function `Float f -> f | _ -> 0. in
+  let a = List.assoc 1 inputs and w = List.assoc 4 inputs in
+  let positions = p.tokens * p.topk in
+  let expected =
+    Array.init (Array.length map * p.rn) (fun e ->
+        let s = e / p.rn and j = e mod p.rn in
+        let o = owner.(s / p.block) in
+        let t = ref 0. in
+        if map.(s) <> positions then
+          for q = 0 to p.rk - 1 do
+            t :=
+              !t
+              +. v a.((map.(s) / p.topk * p.rk) + q)
+                 *. v w.((o * p.rk * p.rn) + (q * p.rn) + j)
+          done;
+        `Float !t)
+  in
+  equal (array Dtypes.value) expected (List.assoc 0 (Run.on d prg inputs))
+
+(* Gathered rows that each warp reads alone: blocks of 8 rows, the core's
+   two warps on two blocks, as gpt-oss's gate and up projection with
+   bfloat16 experts splits its rows over 64 tokens. Staged, they would save
+   no load and add a wait a trip. The weights, gathered at each warp's
+   block's expert, are rows each warp reads alone too: nothing stages. *)
+let alone () =
+  let r = sm89 () in
+  let p =
+    { weights = Float_weights; tokens = 64; topk = 4; experts = 32; block = 8;
+      rk = 160; rn = 128; rseed = 64 }
+  in
+  let opts =
+    Opt.
+      [
+        Tc { axis = 1; tc_select = -1; tc_opt = 0; use_tc = 1 };
+        Split { axis = 0; amount = 2; target = Local; top = false };
+      ]
+  in
+  let prg = Codegen.to_program (routed_program ~opts p) r in
+  let warps =
+    List.filter
+      (fun u ->
+        is Special u
+        && match Ops.arg u with String n -> n = "lidx1" | _ -> false)
+      (Ops.src (Ops.nth prg 1))
+  in
+  equal ~msg:"a core" bool true (says "mma.sync" (source prg));
+  equal ~msg:"a second warp" int 1 (List.length warps);
+  equal ~msg:"the tiles staged" int 0 (List.length (locals (Ops.nth prg 1)))
+
 let checked = "kernels the race checker runs"
 let in_two = "a product of 128 cubed in two stages of cp.async is exact"
 let in_one = "a product of 128 cubed in one stage is exact"
+let gathered = "a routed product of gathered rows is exact"
 
 let checked_kernels =
   group checked
     [
       test in_two (run_staged 2);
       test in_one (run_staged 1);
+      test gathered run_routed;
     ]
 
 (* [compute-sanitizer] attaches to the process it starts, so each kernel runs
@@ -559,6 +905,8 @@ let races =
         (racecheck in_two);
       test "the race checker finds no hazard in a kernel staged in one stage"
         (racecheck in_one);
+      test "the race checker finds no hazard in a kernel of gathered rows"
+        (racecheck gathered);
     ]
 
 (* Serial ranges around a core
@@ -1274,7 +1622,7 @@ let () =
   exit
     (Windtrap.run "Tolk.Stage"
        [
-         group "values" [ law ];
+         group "values" [ law; routed_law ];
          group "barriers" [ barriers ];
          checked_kernels;
          races;
@@ -1286,6 +1634,8 @@ let () =
             product"
            core_under_a_sum;
          staged_tiles;
+         routed_tiles;
+         test "gathered rows each warp reads alone stay unstaged" alone;
          sources;
          group "decoded panels"
            [

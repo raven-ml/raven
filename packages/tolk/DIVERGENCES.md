@@ -7449,8 +7449,18 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   than `core_threads / stages` threads, and K unrolled to chunks of 32; its
   rows stay within a run of rows that read one value of an operand, and the
   heuristic takes it only where `Stage.admits` the kernel as the core leaves
-  it, so a core staging refuses keeps the unstaged splits. An operand whose
-  terms mix the box's ranges with others, a core whose operands step through
+  it, so a core staging refuses keeps the unstaged splits. One dimension of
+  a tile may be rows gathered through a row map: a term whose only read of
+  the box's ranges is one load of global memory, whose own index's terms
+  form one dimension of the box, as a routed product's blocks read their
+  rows (`rowmap[block, r] * k + c`), or a weight read at each block's
+  expert (`owner[block] * k * n + c`). Each copy loads its row's entry and
+  copies from that row, 0 where the gate on the entry fails (a pad row),
+  and the core reads the row back at its place in the map. Such a tile
+  copies in one stage, so it is staged only where several warps read it,
+  where a local range does not move its index. A core reading gathered rows
+  keeps the unstaged splits. Other operands whose terms mix
+  the box's ranges with others, a core whose operands step through
   different loops, a kernel with other shared memory, and `Setting.stage`
   off, as the goldens compare with tinygrad, stay unstaged; a tile whose
   address gathers copies in one stage, so that no gather reads past the
@@ -7470,19 +7480,43 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   on main and 174.3-175.6 ms staged, and `GptOss/experts-at-prefill-512`
   4.17 and 3.81-3.83 ms (three interleaved rounds). AMD gfx1201 and Metal stage in one stage
   of register copies with CUDA's bank constants; correct, unmeasured.
+  Gathered rows, gpt-oss-20b's MoE block of MXFP4 experts at bfloat16
+  (random weights and routing, GPU time a kernel, us, before and after):
+  gate and up at 512 tokens 1271 to 931, at 128 866 to 691; at 12 and 64
+  tokens, whose blocks of 4 and 8 rows take no core, and down, whose rows
+  are dense, unchanged; outputs bit for bit equal. A core reading gathered
+  rows keeps the unstaged splits by measurement: bfloat16 experts' gate
+  and up at 512 tokens ran 2276-2283 on the staged tile, its rows copied in
+  one stage, against 2196-2210 on main and 2205-2212 on the unstaged
+  splits; no rule from the tile's stages separates it, since a tile whose
+  outer part gathers (the bfloat16 experts' down, 1160 us) gains from the
+  staged tile. Two stages for gathered rows ran MXFP4 gate and up slower,
+  1025-1034 against 935-958 us. Rows each warp reads alone: bfloat16
+  experts' gate and up at 64 tokens, in blocks of 8 rows whose two warps
+  split the rows, saves no load by staging them and adds a wait and two
+  barriers a trip: 2300-2310 staged against 2198-2201 on main, and
+  2199-2202 left unstaged; at 128 tokens 2052-2053 against 2063-2065.
+  AMD gfx1201 and Metal stage gathered rows in one stage of register
+  copies too; unmeasured.
 - **Pinned by:** the Stage suite: `values › a staged kernel computes the bits
   of the same optimisations unstaged` (CUDA's renderer against itself
   without shared memory, both tiles, one and two stages, padded, batched,
-  `[N; K]` operands, a refused operand), `serial ranges › …` (exact values
+  `[N; K]` operands, a refused operand), `values › a staged product of
+  gathered rows …` (MXFP4 and bfloat16 weights, 12 to 512 tokens, pad rows
+  and rows read twice in a block), `a core reading gathered rows keeps the
+  unstaged splits`, `gathered rows each warp reads alone stay unstaged`, `serial ranges › …` (exact values
   and barriers under a loop, a weak range bounded by memory, and a range the
   core's sum closes outside and inside its loop), `barriers › …` (every store
   and load of an element separated by a barrier over two trips, on CUDA and on
   HIP's RDNA3 and RDNA4, and every barrier of a kernel with `cp.async`
   waiting for it), `races` (`compute-sanitizer`'s race checker in hazard mode on a
-  kernel of each depth), `stages` (`Stage.depth`), `a staged core's
-  workgroups, threads and trips`, `the layout` and `sources`; the tolk
-  bench's `contract/bf16-*` rows, `bf16-512x4096x2880` and
-  `bf16-512x512x2880` among them, their baselines pending the scheduled
+  kernel of each depth and one of gathered rows), `stages` (`Stage.depth`),
+  `a staged core's workgroups, threads and trips`, `the layout` and
+  `sources`; the tolk bench's `contract/bf16-*` rows, `bf16-512x4096x2880`
+  and `bf16-512x512x2880` among them, rune's
+  `Cuda/experts-bfloat16-64x4of32-2880x5760` and `-512x4of32-2880x5760`
+  and kaun's
+  `GptOss/experts-at-prefill-512`, their baselines pending the scheduled
   re-record.
 
 ## D263. CUDA copies 16 bytes from global to shared memory asynchronously

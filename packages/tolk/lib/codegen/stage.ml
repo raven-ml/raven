@@ -93,28 +93,67 @@ let rec terms u =
   | _ -> [ (1, Some u) ]
 
 (* A dimension of a tile: its stride in memory, its extent, and the atoms
-   whose sum, each times its coefficient, is the coordinate along it. *)
-type dim = { stride : int; extent : int; parts : (int * Ops.t) list }
+   whose sum, each times its coefficient, is the coordinate along it. A
+   dimension of gathered rows has [rows = Some (c, t)]: its coordinate is a
+   position in a row map, and [c t], [t] the row the map holds there, is
+   that row's offset in memory; its stride is the size of the dimensions
+   inside it. *)
+type dim = {
+  stride : int;
+  extent : int;
+  parts : (int * Ops.t) list;
+  rows : (int * Ops.t) option;
+}
+
+(* The load of global memory through which alone [t] reads the threads and
+   lanes, as a row map's: [t] is then the row at that load's coordinate. *)
+let row_load t =
+  let direct =
+    toposort ~calls:Skip ~gate:(fun x -> not (Op.equal (op x) Op.Index)) t
+  in
+  (* The walk stops at loads, which it leaves out: they are the sources of
+     the nodes it reaches. *)
+  let loads =
+    List.sort_uniq Ops.compare
+      (List.filter
+         (fun x -> Op.equal (op x) Op.Index && reads_inner x)
+         (t :: List.concat_map src direct))
+  in
+  let reads_inner_directly =
+    List.exists (fun x -> Op.equal (op x) Op.Range && is_inner x) direct
+  in
+  let global l = addrspace (nth l 0) = Some Dtype.Global in
+  match loads with
+  | [ l ] when global l && not reads_inner_directly -> Some l
+  | _ -> None
 
 (* The tile an index [idx] reads over the threads and lanes of a workgroup:
    the part of [idx] that the threads and lanes do not move (the global and
-   loop ranges, a gather) and the dimensions, innermost first. [None] where a
-   term mixes both, or the inner terms overlap. *)
-let split idx =
+   loop ranges, a gather), and the dimensions, innermost first. A term [c t]
+   whose [t] reads the threads and lanes only through one load, a row of a
+   row map, is a dimension of rows, outermost, its coordinate the load's.
+   [None] where a term mixes both otherwise, or the inner terms overlap. *)
+let rec split idx =
   let classify (c, a) =
     match a with
     | None -> `Outer (c, a)
-    | Some t ->
+    | Some t -> (
         let rs = Nodes.to_list (ranges t) in
         if not (reads_inner t) then `Outer (c, a)
         else if
           List.for_all is_inner rs && c > 0
           && Dtype.Value.to_int (vmin t) = 0
         then if extent t > 1 then `Inner (c, t) else `Unit
-        else `Mixed
+        else
+          let map l = split (get_idx (nth l 1)) in
+          match Option.map map (row_load t) with
+          | Some (Some (_, [ d ])) when d.rows = None ->
+              `Rows { d with rows = Some (c, t) }
+          | _ -> `Mixed)
   in
   let classes = List.map classify (terms idx) in
-  if List.mem `Mixed classes then None
+  let rows = List.filter_map (function `Rows d -> Some d | _ -> None) classes in
+  if List.mem `Mixed classes || List.length rows > 1 then None
   else
     let outer =
       List.fold_left
@@ -139,12 +178,19 @@ let split idx =
               group (d :: ds) rest
           | d :: _ when c < d.stride * d.extent -> None
           | _ ->
-              let d = { stride = c; extent = e; parts = [ (1, t) ] } in
+              let d =
+                { stride = c; extent = e; parts = [ (1, t) ]; rows = None }
+              in
               group (d :: dims) rest)
+    in
+    (* A dimension of rows counts past the others in {!dense}: its stride
+       there is their size. *)
+    let past dims d =
+      { d with stride = List.fold_left (fun n d -> n * d.extent) 1 dims }
     in
     match group [] inner with
     | None | Some [] -> None
-    | Some dims -> Some (outer, dims)
+    | Some dims -> Some (outer, dims @ List.map (past dims) rows)
 
 (* The value of the integer expression [u] with each range bound by [env]. *)
 let rec eval env u =
@@ -293,8 +339,16 @@ let tile_of x =
         | None, v -> Some v
         | Some g, v -> Some O.(g land v)
       in
+      let held dims =
+        List.for_all
+          (fun d ->
+            match d.rows with
+            | Some (_, t) -> Option.is_some (fields dims t)
+            | None -> true)
+          dims
+      in
       match split (get_idx idx) with
-      | Some (outer, dims) when dense dims -> (
+      | Some (outer, dims) when dense dims && held dims -> (
           let fs =
             match valid with Some g -> fields dims g | None -> Some []
           in
@@ -310,14 +364,35 @@ let tile_of x =
                   fields;
                   loop = loop_of outer;
                   gathers =
-                    List.exists
-                      (fun u -> Op.equal (op u) Op.Index)
-                      (toposort ~calls:Skip outer);
+                    List.exists (fun d -> Option.is_some d.rows) dims
+                    || List.exists
+                         (fun u -> Op.equal (op u) Op.Index)
+                         (toposort ~calls:Skip outer);
                   size = List.fold_left (fun n d -> n * d.extent) 1 dims;
                 }
           | None -> None)
       | _ -> None)
   | _ -> None
+
+(* The tile of [x] that staging copies, in a kernel of the nodes [all]. A
+   tile of gathered rows copies in one stage, each trip waiting for its
+   copies, and is copied only where several warps read it: where a warp's
+   index, a local range, does not move [x]'s index. On an RTX 5000 Ada,
+   bfloat16 routed rows each of two warps read alone, blocks of 8 over 64
+   tokens, ran 4.8% slower staged; at 512 tokens, staged and read by 4
+   warps, MXFP4 routed rows ran 27% faster. Other tiles copied in one stage
+   keep staging unmeasured either way. The heuristic asks before it splits
+   any warp, so a core reading gathered rows keeps the unstaged splits: a
+   routed product of bfloat16 weights ran 3.6% slower on the staged tile. *)
+let staged_tile all x =
+  let warps =
+    List.filter
+      (fun u -> Op.equal (op u) Op.Range && axis_type u = Axis_type.Local)
+      all
+  in
+  let shared = List.exists (fun r -> not (Nodes.mem r (ranges x))) warps in
+  let rows t = List.exists (fun d -> Option.is_some d.rows) t.dims in
+  match tile_of x with Some t when rows t && not shared -> None | t -> t
 
 (* Copies *)
 
@@ -400,14 +475,9 @@ let stager wg ~fresh t buf =
               (O.(f // int below % int d.extent) :: cs, below * d.extent))
             ([], 1) t.dims))
   in
-  let gaddr =
-    List.fold_left2
-      (fun acc d c -> O.(acc + (c * int d.stride)))
-      t.outer t.dims coords
-  in
-  (* The gate at the copy's element: each inner range it reads, the sum of
-     its fields' values there. *)
-  let valid =
+  (* [u] at the copy's element: each inner range it reads, the sum of its
+     fields' values there. *)
+  let at fields u =
     let coord = Array.of_list coords in
     let field (d, k, p, a) =
       O.(coord.(d) // int k % int (extent a) * int p)
@@ -415,12 +485,23 @@ let stager wg ~fresh t buf =
     let value fs =
       List.fold_left (fun acc f -> O.(acc + field f)) (int 0) fs
     in
-    Option.map
-      (fun g ->
-        substitute ~calls:Skip ~pass:Once g
-          (List.map (fun (r, fs) -> (r, value fs)) t.fields))
-      t.valid
+    substitute ~calls:Skip ~pass:Once u
+      (List.map (fun (r, fs) -> (r, value fs)) fields)
   in
+  (* A dimension of rows moves by its row's offset, the row loaded at the
+     copy's element. *)
+  let gaddr =
+    List.fold_left2
+      (fun acc d c ->
+        match d.rows with
+        | None -> O.(acc + (c * int d.stride))
+        | Some (k, r) ->
+            (* {!tile_of} holds the fields of each range [r] reads. *)
+            let fs = Option.get (fields t.dims r) in
+            O.(acc + (at fs r * int k)))
+      t.outer t.dims coords
+  in
+  let valid = Option.map (at t.fields) t.valid in
   let partial = if t.size mod per = 0 then None else Some O.(f < int t.size) in
   let laddr = address t coords in
   let copy_to ?ahead ?(within = []) ~slot ~at () =
@@ -523,7 +604,7 @@ let operands (ren : Renderer.t) sink =
       let used = ref 0 in
       let stage w =
         let operands = List.filteri (fun i _ -> i < 2) (src w) in
-        let tiles = List.map (fun x -> (x, tile_of x)) operands in
+        let tiles = List.map (fun x -> (x, staged_tile all x)) operands in
         let staged = List.filter_map snd tiles in
         let d = depth ~used:!used ren (List.map bytes staged) in
         (* The tiles step through one loop, or none: a copy runs where its
@@ -616,7 +697,9 @@ let operands (ren : Renderer.t) sink =
 let admits (ren : Renderer.t) sink =
   let all = toposort ~calls:Skip sink in
   let core w =
-    let tiles = List.filteri (fun i _ -> i < 2) (src w) |> List.map tile_of in
+    let tiles =
+      List.filteri (fun i _ -> i < 2) (src w) |> List.map (staged_tile all)
+    in
     match tiles with
     | Some t :: rest ->
         List.for_all

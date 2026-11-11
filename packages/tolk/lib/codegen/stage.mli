@@ -53,11 +53,18 @@ val operands : Renderer.t -> Ops.t -> Ops.t
     with each tensor core's operands staged ({!depth}) that read global memory
     through an index whose terms that read the workgroup's threads and the
     thread's lanes form a dense box of strided dimensions: each element read
-    once, and none of those terms reading another range. A gate on such an
+    once, and none of those terms reading another range. One dimension of
+    the box may be gathered rows: a term [c · t] whose [t] reads the threads
+    and lanes only through one load of global memory, a row map, whose own
+    index's terms form one dimension of the box. Each copy loads its row's
+    entry of the map and reads that row, so the operand's rows are gathered
+    once a workgroup; such a tile copies in one stage, and is staged only
+    where several warps read it: where a local range of the workgroup does
+    not move the operand's index. A gate on such an
     operand, its index's validity or a selection of [0], copies [0] where it
-    fails. An operand whose terms mix the box's ranges with others stays
-    unstaged, as do the cores of a kernel that holds other shared memory or
-    reduces across threads. *)
+    fails. An operand whose terms mix the box's ranges with others otherwise
+    stays unstaged, as do the cores of a kernel that holds other shared memory
+    or reduces across threads. *)
 
 val admits : Renderer.t -> Ops.t -> bool
 (** [admits ren sink] is [true] iff {!operands} stages every operand of each
@@ -80,7 +87,8 @@ val tile :
     them, and whether the core has two stages and the kernel keeps
     [core_threads / 2] threads on some tile, which an unknown count of
     workgroups does not show, when {!admits} and {!depth} stage the core;
-    [None] otherwise. [n],
+    [None] otherwise, as for a core reading gathered rows, whose warps the
+    core does not yet split. [n],
     [m] and [k] are the sizes of those axes as the core leaves them, [0] when
     unknown, and [workgroups] the kernel's, if known. A warp holds 64 by 64
     outputs, by upcasts of powers of two; a workgroup takes 2 by 2 warps where
