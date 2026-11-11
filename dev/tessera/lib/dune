@@ -3,5 +3,5 @@
 
 (library
  (name tessera)
- (private_modules flat product)
+ (private_modules flat)
  (libraries nx nx.array nx.io nx.ragged kaun rune vega jera jord jord_geotiff))

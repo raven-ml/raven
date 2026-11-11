@@ -66,7 +66,10 @@ let projector ~key widths =
 (* BatchNorm1d's eps (PyTorch's default, which v1.0 keeps). *)
 let bn_eps = 1e-5
 let relu x = Nx.maximum x (Nx.scalar_like x 0.)
-let linear p x = Nx.cast f32 (Product.apply p x)
+
+let linear (p : (_, _) Kaun.Linear.t) x =
+  Nx.cast f32 (Kaun.Linear.apply p (Nx.cast (Nx.dtype p.w) x))
+
 let ignore_record _ _ = ()
 
 (* [record] receives each hidden layer's normalised values, before its ReLU. *)

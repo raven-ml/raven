@@ -53,7 +53,7 @@ let apply_head layers x =
   List.fold_left
     (fun (i, x) l ->
       let x = if i > 0 then relu x else x in
-      (i + 1, Nx.cast f32 (Product.apply l x)))
+      (i + 1, Nx.cast f32 (Kaun.Linear.apply l (Nx.cast (Nx.dtype l.w) x))))
     (0, x) layers
   |> snd
 

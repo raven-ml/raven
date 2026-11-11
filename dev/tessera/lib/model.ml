@@ -200,7 +200,10 @@ let eps = 1e-5
 
 (* float32's machine epsilon, [nn.RMSNorm]'s eps for float32 inputs. *)
 let qk_eps = Float.ldexp 1. (-23)
-let product = Product.apply
+
+(* [x · w + b] at [w]'s dtype, [x] cast to it first as autocast does. *)
+let product (p : (_, _) Kaun.Linear.t) x =
+  Kaun.Linear.apply p (Nx.cast (Nx.dtype p.w) x)
 
 (* A linear layer at its parameters' dtype, on and to float32. *)
 let linear p x = Nx.cast f32 (product p x)
