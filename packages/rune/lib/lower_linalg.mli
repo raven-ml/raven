@@ -77,13 +77,15 @@ open Tolk
 
 val op :
   device:Ops.device ->
+  host:bool ->
   local:bool ->
   ('v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) ->
   ('d, 'r) Nx.Prim.linalg ->
   Ops.t array
-(** [op ~device ~local node l] is the node of each result of [l], in position
-    order, computed on [device], which is local where [local] holds. It reads
-    each operand [x] from [node x].
+(** [op ~device ~host ~local node l] is the node of each result of [l], in
+    position order, computed on [device], whose kernels compile for the host's
+    processors where [host] holds ({!Loop.cut}), and which is local where
+    [local] holds. It reads each operand [x] from [node x].
 
     Raises {!Lower_arith.Unlowered} naming the routine for a complex operand and
     for [Eig] and [Eig_values]. *)

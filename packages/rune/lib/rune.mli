@@ -2119,6 +2119,19 @@ val jit' :
 module Lower = Lower
 module Lower_arith = Lower_arith
 
+module Loop : sig
+  val cut :
+    ?hoist:bool ->
+    host:(Tolk.Ops.device -> bool) ->
+    own:unit Tolk.Ops.Tbl.t ->
+    (unit -> int) ->
+    (int * Tolk.Ops.t) list ref ->
+    Tolk.Ops.t ->
+    Tolk.Ops.t
+  (** [cut] is the cut of a loop's body into the parts computed once before
+      the loop and the rest, for its suites. *)
+end
+
 val attention_tile : Tolk.Tc.t -> wide:bool -> int
 (** [attention_tile tc ~wide] is the keys or rows a tile of attention's
     derivative kernels holds on the tensor core [tc], for the suites. *)

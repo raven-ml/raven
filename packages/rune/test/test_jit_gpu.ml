@@ -1863,6 +1863,104 @@ let test_dense_grad () =
   close "x" gx ex;
   close "wq" gq eq
 
+(* A scan whose step casts its float32 weights to bfloat16, as a training
+   step of bfloat16 products does: the loop stores them once, narrow, and the
+   products widen them where they read them, which keeps every value. [s]
+   rows of [m] by [k] inputs, weights of [k] by [k], drawn on the host in
+   [-1, 1). *)
+let narrowed_case = (3, 32, 48)
+
+let narrowed_inputs () =
+  let s, m, k = narrowed_case in
+  let draw seed shape =
+    let x = Nx.Rng.uniform ~key:(Nx.Rng.key seed) Nx.float32 shape in
+    Nx.sub_s (Nx.mul_s x 2.) 1.
+  in
+  (draw 1 [| k; k |], draw 2 [| s; m; k |])
+
+let bf16_product x w =
+  Nx.contract Nx.bfloat16
+    (Nx.Pattern.v "n i, i o -> n o | i")
+    (Nx.cast Nx.bfloat16 x) (Nx.cast Nx.bfloat16 w)
+
+(* A step adding to [c] the gradient in [w] of two layers that share it, so
+   that the forward pass and the input's gradient both read it. *)
+let weights_step w c x =
+  let loss w =
+    let h = Nx.cast Nx.float32 (bf16_product x w) in
+    Nx.sum (Nx.cast Nx.float32 (bf16_product h w))
+  in
+  let l, g = Rune.value_and_grad' loss w in
+  (Nx.add c g, l)
+
+(* Unoptimised, each kernel sums in order, so the scan's result is that of
+   its steps compiled one at a time, where no loop stores the weights. *)
+let test_narrowed_exact () =
+  let _, (module S) = on_gpu () in
+  let w, xs = narrowed_inputs () in
+  let s, _, k = narrowed_case in
+  let on x = Nx.place S.on x in
+  let scan =
+    Rune.jit
+      Nx.Ptree.(tensor @-> tensor @-> returns (pair tensor tensor))
+      (fun w xs -> Rune.scan' (weights_step w) ~init:(Nx.zeros_like w) xs)
+  in
+  let step =
+    Rune.jit
+      Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns (pair tensor tensor))
+      weights_step
+  in
+  Tolk.Setting.context [ B (Tolk.Setting.noopt, true) ] (fun () ->
+      let c, ls = scan (on w) (on xs) in
+      let c', ls' =
+        List.fold_left
+          (fun (c, ls) i ->
+            let c, l = step (on w) c (on (Nx.get [ i ] xs)) in
+            (c, host l :: ls))
+          (on (Nx.zeros Nx.float32 [| k; k |]), [])
+          (List.init s Fun.id)
+      in
+      equal ~msg:"the gradients" bits_t (bits (host c')) (bits (host c));
+      equal ~msg:"the losses" bits_t
+        (bits (Nx.stack (List.rev ls')))
+        (bits (host ls)))
+
+(* Optimised, the scan's sum of its steps' products is within the bound of a
+   sum of all their terms, in any order: tensor cores take the narrow
+   weights. *)
+let test_narrowed_bound () =
+  let _, (module S) = on_gpu () in
+  let w, xs = narrowed_inputs () in
+  let s, _, k = narrowed_case in
+  let step w c x =
+    let p = Nx.Pattern.v "n i, i o -> n o | i" in
+    let y =
+      Nx.contract Nx.float32 p (Nx.cast Nx.bfloat16 x) (Nx.cast Nx.bfloat16 w)
+    in
+    (Nx.add c y, Nx.sum y)
+  in
+  let summed w xs =
+    fst (Rune.scan' (step w) ~init:(Nx.zeros_like (Nx.get [ 0 ] xs)) xs)
+  in
+  let c =
+    Rune.jit
+      Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+      summed (Nx.place S.on w) (Nx.place S.on xs)
+  in
+  (* The steps' inputs summed in float64 first: their sum's rounding is far
+     below the bound. *)
+  let f x = Nx.cast Nx.float64 (Nx.cast Nx.bfloat16 x) in
+  let rows g = Nx.sum ~axes:[ 0 ] (g (f xs)) in
+  let exact = Nx.to_array (Nx.matmul (rows Fun.id) (f w)) in
+  let mass = Nx.to_array (Nx.matmul (rows Nx.abs) (Nx.abs (f w))) in
+  let c = Nx.to_array (Nx.cast Nx.float64 (host c)) in
+  Array.iteri
+    (fun i z ->
+      less ~msg:(string_of_int i) float_exact
+        ~than:(product ((s * k) + 1) *. mass.(i))
+        (Float.abs (c.(i) -. z)))
+    exact
+
 (* A projection of 16 by 256 rows into attention's 4 heads of 110, its output
    laid out by head: the upcasts take the heads whole and the width, which the
    same operands read, takes their second upcast, padded to its threads.
@@ -2408,6 +2506,14 @@ let () =
                "a dense attention step's gradient is the host's within \
                 float32's rounding"
                test_dense_grad;
+             test
+               "a scan whose step narrows its weights computes, unoptimised, \
+                its steps' bits"
+               test_narrowed_exact;
+             test
+               "a scan whose step narrows its weights is within the bound of \
+                its products"
+               test_narrowed_bound;
              Windtrap.cases
                "an MXFP4 product is within its bound of the exact one"
                ~id:(Format.asprintf "%a" Mxfp4_products.pp)

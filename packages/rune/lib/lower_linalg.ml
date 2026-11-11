@@ -256,10 +256,10 @@ let norm_roundoff l =
    A loop of no trip, or of values with no element, runs nothing and needs
    none. *)
 
-let repeat device n init step =
+let repeat ~host device n init step =
   let empty u = Shape.max_numel u = 0 in
   if n = 0 || List.for_all empty init then init
-  else Loop.repeat device n init step
+  else Loop.repeat ~host device n init step
 
 (* [dot a b] is the product of the matrices of [a] and [b]: each row of [a]
    against each column of [b] along a new last axis, summed. *)
@@ -282,7 +282,7 @@ let dot a b =
 let sum_last u = Shape.unsqueeze (Shape.rop u Op.Add [ Shape.ndim u - 1 ]) (-1)
 let max_last u = Shape.unsqueeze (Shape.rop u Op.Max [ Shape.ndim u - 1 ]) (-1)
 
-let householder device a =
+let householder ~host device a =
   let batch, m, n = matrix a in
   let idx = Shape.arange ~dtype:Int32 m in
   let rows = row_index m and columns = column_index n in
@@ -344,7 +344,7 @@ let householder device a =
     | _ -> invalid_arg "Lower_linalg.householder"
   in
   let q = Shape.expand (eye (dtype a) m m) (ints (batch @ [ m; m ])) in
-  match repeat device (Int.min m n) [ q; a ] step with
+  match repeat ~host device (Int.min m n) [ q; a ] step with
   | [ q; r ] -> (q, r)
   | _ -> invalid_arg "Lower_linalg.householder"
 
@@ -353,10 +353,10 @@ let triu u =
   let _, m, n = matrix u in
   Ops.where (Ops.le (row_index m) (column_index n)) u (zero u)
 
-let qr device ~complete a =
+let qr ~host device ~complete a =
   let _, m, n = matrix a in
   let k = Int.min m n in
-  let q, r = householder device a in
+  let q, r = householder ~host device a in
   let r = triu r in
   if complete then (q, r)
   else (block q None (Some (0, k)), block r (Some (0, k)) None)
@@ -574,11 +574,11 @@ let converged ~tol ~noise u =
   let fails = Ops.cast (Ops.bitwise_not within) Int32 in
   Ops.eq (over_matrix Op.Add fails) (Ops.int 0)
 
-let svd device ~local ~complete a =
+let svd ~host device ~local ~complete a =
   let batch, m, n = matrix a in
   let num = Int.min m n and q_num = Int.max m n in
   let dt = dtype a in
-  let q, r = householder device (if m >= n then a else transpose a) in
+  let q, r = householder ~host device (if m >= n then a else transpose a) in
   let square k = Shape.expand (eye dt k k) (ints (batch @ [ k; k ])) in
   let rank = Shape.ndim r in
   let columns x = Shape.unsqueeze x (-2) in
@@ -617,7 +617,7 @@ let svd device ~local ~complete a =
   let y = Shape.cat ~axis:(rank - 2) r [ square num ] in
   let trip _ = function
     | [ settled; y ] ->
-        let y' = List.hd (repeat device (sweep num) [ y ] round) in
+        let y' = List.hd (repeat ~host device (sweep num) [ y ] round) in
         let moved = over_matrix Op.Max (Ops.cast (Ops.ne y y') Int32) in
         let held = Shape.expand settled (Shape.shape y) in
         [
@@ -627,11 +627,11 @@ let svd device ~local ~complete a =
     | _ -> invalid_arg "Lower_linalg.svd"
   in
   let y =
-    if not local then List.hd (repeat device rounds [ y ] round)
+    if not local then List.hd (repeat ~host device rounds [ y ] round)
     else
       let cap = sweeps num (snd (Dtype.finfo dt) + 1) 1 in
       let settled = Ops.logical_not (finite a) in
-      match Loop.until device cap [ settled; y ] ~stop:all trip with
+      match Loop.until ~host device cap [ settled; y ] ~stop:all trip with
       | [ _; y ] -> y
       | _ -> invalid_arg "Lower_linalg.svd"
   in
@@ -661,7 +661,7 @@ let svd device ~local ~complete a =
      are an orthogonal basis of which each column, with the sign it takes on the
      diagonal, is the direction, and which completes the columns of zero
      norm. *)
-  let q_u, r_u = householder device (by_order order u) in
+  let q_u, r_u = householder ~host device (by_order order u) in
   let u = Ops.mul q_u (Shape.unsqueeze (direction (diagonal r_u)) (-2)) in
   let inside =
     Ops.bitwise_and
@@ -729,7 +729,7 @@ let read n =
          (Ops.bitwise_and (Ops.ne j zero)
             (Ops.eq (parity (n - 1)) (Ops.int 1))))
 
-let eigh device ~local ~vectors a =
+let eigh ~host device ~local ~vectors a =
   let dt = dtype a in
   let batch, n, _ = matrix a in
   let r = Shape.ndim a in
@@ -775,7 +775,7 @@ let eigh device ~local ~vectors a =
   in
   let trip _ = function
     | settled_before :: xv ->
-        let rotated = repeat device (sweep n) xv round in
+        let rotated = repeat ~host device (sweep n) xv round in
         let held u u' =
           Ops.where (Shape.expand settled_before (Shape.shape u)) u u'
         in
@@ -785,9 +785,11 @@ let eigh device ~local ~vectors a =
   in
   let cap = sweeps n (snd (Dtype.finfo dt) + 1) 0 in
   let rotated =
-    if not local then repeat device (rounds n dt) (x :: v) round
+    if not local then repeat ~host device (rounds n dt) (x :: v) round
     else
-      match Loop.until device cap (settled x :: x :: v) ~stop:all trip with
+      match
+        Loop.until ~host device cap (settled x :: x :: v) ~stop:all trip
+      with
       | _ :: rotated -> rotated
       | [] -> invalid_arg "Lower_linalg.eigh"
   in
@@ -819,7 +821,7 @@ let eigh device ~local ~vectors a =
    trailing rows take the rank-one update. Step [j] writes its pivot's row at
    position [j] of the pivots. *)
 
-let lu device a =
+let lu ~host device a =
   let batch, m, n = matrix a in
   let k = Int.min m n in
   let rank = Shape.ndim a in
@@ -872,7 +874,7 @@ let lu device a =
       (Ops.const ~dtype:Int64 (`Int Bigint.zero))
       (ints (batch @ [ k ]))
   in
-  match repeat device k [ a; perm; pivots ] step with
+  match repeat ~host device k [ a; perm; pivots ] step with
   | [ x; perm; pivots ] -> [| x; pivots; Shape.squeeze ~axis:(-1) perm |]
   | _ -> invalid_arg "Lower_linalg.lu"
 
@@ -885,7 +887,7 @@ let lu device a =
    pivot [d] is positive exactly where its root is: [sqrt] of a negative or NaN
    [d] is NaN, of [+0] or [-0] a zero. *)
 
-let cholesky device ~upper a =
+let cholesky ~host device ~upper a =
   let _, n, _ = matrix a in
   let rank = Shape.ndim a in
   let rows = row_index n and cols = column_index n in
@@ -906,7 +908,7 @@ let cholesky device ~upper a =
         ]
     | _ -> invalid_arg "Lower_linalg.cholesky"
   in
-  let s = List.hd (repeat device n [ Ops.where lower a (zero a) ] step) in
+  let s = List.hd (repeat ~host device n [ Ops.where lower a (zero a) ] step) in
   let l = Ops.where lower s (zero s) in
   let d = diagonal l in
   let failed = Ops.cast (Ops.logical_not (Ops.gt d (zero d))) Int32 in
@@ -923,7 +925,7 @@ let cholesky device ~upper a =
    column [i] of the matrix from the rows below. A zero diagonal element makes
    the matrix singular. *)
 
-let solve_triangular device ~upper ~adjoint ~unit_diagonal a b =
+let solve_triangular ~host device ~upper ~adjoint ~unit_diagonal a b =
   let m = if adjoint then transpose a else a in
   let rank = Shape.ndim m in
   let reversed = upper <> adjoint in
@@ -943,7 +945,7 @@ let solve_triangular device ~upper ~adjoint ~unit_diagonal a b =
         ]
     | _ -> invalid_arg "Lower_linalg.solve_triangular"
   in
-  let x = List.hd (repeat device n [ b ] step) in
+  let x = List.hd (repeat ~host device n [ b ] step) in
   let x = if reversed then Shape.flip x [ rank - 2 ] else x in
   if unit_diagonal || n = 0 then x
   else
@@ -957,7 +959,7 @@ let solve_triangular device ~upper ~adjoint ~unit_diagonal a b =
 let real (type v s) name (dt : (v, s) D.t) =
   if D.is D.Complex dt then unlowered ("a complex " ^ name)
 
-let op ~device:d ~local (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t)
+let op ~device:d ~host ~local (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t)
     (type d r) (l : (d, r) P.linalg) : Ops.t array =
   let operand name a =
     real name (Nx.dtype a);
@@ -965,24 +967,24 @@ let op ~device:d ~local (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t)
   in
   match l with
   | Cholesky { triangle; a } ->
-      [| cholesky d ~upper:(triangle = Upper) (operand "Cholesky" a) |]
-  | Lu a -> lu d (operand "Lu" a)
+      [| cholesky ~host d ~upper:(triangle = Upper) (operand "Cholesky" a) |]
+  | Lu a -> lu ~host d (operand "Lu" a)
   | Qr { factors; a } ->
-      let q, r = qr d ~complete:(factors = Complete) (operand "Qr" a) in
+      let q, r = qr ~host d ~complete:(factors = Complete) (operand "Qr" a) in
       [| q; r |]
   | Svd_values { a; _ } ->
-      [| (svd d ~local ~complete:false (operand "Svd_values" a)).(0) |]
+      [| (svd ~host d ~local ~complete:false (operand "Svd_values" a)).(0) |]
   | Svd { factors; a; _ } ->
-      svd d ~local ~complete:(factors = Complete) (operand "Svd" a)
+      svd ~host d ~local ~complete:(factors = Complete) (operand "Svd" a)
   | Eigh_values { a; _ } ->
-      eigh d ~local ~vectors:false (operand "Eigh_values" a)
-  | Eigh { a; _ } -> eigh d ~local ~vectors:true (operand "Eigh" a)
+      eigh ~host d ~local ~vectors:false (operand "Eigh_values" a)
+  | Eigh { a; _ } -> eigh ~host d ~local ~vectors:true (operand "Eigh" a)
   | Solve_triangular { triangle; adjoint; unit_diagonal; a; b } ->
       let a = operand "Solve_triangular" a in
       let b = operand "Solve_triangular" b in
       [|
-        solve_triangular d ~upper:(triangle = Upper) ~adjoint ~unit_diagonal a
-          b;
+        solve_triangular ~host d ~upper:(triangle = Upper) ~adjoint
+          ~unit_diagonal a b;
       |]
   | Eig_values _ -> unlowered "Eig_values"
   | Eig _ -> unlowered "Eig"

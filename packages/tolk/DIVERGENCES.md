@@ -3066,7 +3066,8 @@ the expand, as there.
   stores a stage's value at its committed dtype).
 - **tolk:** `Ops.widens`, `Rangeify.bufferize_to_store` and
   `Rangeify.pm_add_buffers`' rule for the index of a narrow store through its
-  widening.
+  widening. rune's `Loop.cut` keeps the same widening in a loop's body
+  (`Ops.widens`), off the host, so the loop stores its source narrow.
 - **Differs:** a stage that is not stored whole, whose value is a cast to a
   wider type that holds every value of its source (`Dtype.can_lossless_cast`,
   `bool` and the weak types excepted), stores the source at its own type, and
@@ -3090,7 +3091,11 @@ the expand, as there.
 - **Pinned by:** the Heuristic suite's `projection_of_stored` kernel, whose
   golden reads the stored attention output as `bfloat16`, and its cases
   `projection_of_stored_{metal,cuda,amd}` (the tensor cores apply); kaun's
-  `GptOss/prefill-512` and `GptOss/prefill-512-Q8_0`.
+  `GptOss/prefill-512` and `GptOss/prefill-512-Q8_0`. rune's loop rule: the
+  `Rune.Loop` suite's `a widening is passed narrow, but on the host and to a
+  call`, and its GPU suite's `products › a scan whose step narrows its
+  weights computes, unoptimised, its steps' bits` and `› … is within the
+  bound of its products`.
 
 ## D105. A tensor core takes rows that share the other operand's tile
 

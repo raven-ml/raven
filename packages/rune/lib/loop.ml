@@ -59,9 +59,16 @@ let viewed u =
    A view of an invariant part, a movement or a gather at positions that are
    functions of constants alone, stays in the body, and the part below it is
    computed once: a view costs nothing where it is read, while computing it
-   once would store a transposed or broadcast copy that the loop then reads. *)
+   once would store a transposed or broadcast copy that the loop then reads.
+   A widening that keeps every value, as bfloat16 to float32, stays too: its
+   readers widen the narrow value stored once, which takes half the bytes and
+   which a tensor core multiplies. On the host a product widening it at each
+   read, by integer shifts, costs more than one reading it stored widened: a
+   step of two bfloat16 products ran 1.3 times the instructions. There the
+   widened value is computed once. So it is where a call of the body reads
+   it: passed to the call, it would be stored widened at each trip. *)
 
-let cut ?(hoist = true) ~own next args body =
+let cut ?(hoist = true) ~host ~own next args body =
   let reading = Ops.Tbl.create 64
   and storing = Ops.Tbl.create 64
   and rebuilt = Ops.Tbl.create 64 in
@@ -119,6 +126,19 @@ let cut ?(hoist = true) ~own next args body =
       (Ops.toposort ~calls:Skip body)
   in
   let open_ranges u = Ops.Nodes.cardinal (Ops.ranges u) > 0 in
+  (* The widenings that a call of the body reads, under its views. *)
+  let called = Ops.Tbl.create 8 in
+  let rec feeds u =
+    if Ops.widens u then Ops.Tbl.replace called u ()
+    else if Op.Set.mem (Ops.op u) Op.Set.movement || gathers u then
+      feeds (Ops.nth u 0)
+  in
+  List.iter (fun (c, _) -> List.iter feeds (Ops.src_without_body c)) calls;
+  let widens u =
+    Ops.widens u
+    && (not (Ops.Tbl.mem called u))
+    && not (Option.fold ~none:false ~some:host (Ops.device u))
+  in
   (* The storage a call of the body that runs each trip writes, such as a loop's
      carry it updates in place: what reads it, its first value included, runs
      each trip too. A call runs each trip when it reads an own parameter, or
@@ -184,6 +204,7 @@ let cut ?(hoist = true) ~own next args body =
             || reads_storage u
                && (Op.Set.mem (Ops.op u) Op.Set.movement
                   || gathers u
+                  || widens u
                   || weak u
                   || Ops.op u = Op.Store
                   || ((not hoist) && not (stored u)))
@@ -285,12 +306,13 @@ let carried device b finals =
     (List.combine b.carries b.params)
     finals
 
-let call b =
-  let body = cut ~own:b.own b.next b.args (Ops.sink (List.rev !(b.stores))) in
+let call ~host b =
+  let stores = Ops.sink (List.rev !(b.stores)) in
+  let body = cut ~host:(fun _ -> host) ~own:b.own b.next b.args stores in
   let by_slot (a, _) (b, _) = Int.compare a b in
   Ops.call ~precompile:true body (List.map snd (List.sort by_slot !(b.args)))
 
-let repeat device n init step =
+let repeat ~host device n init step =
   if n = 0 || List.for_all empty init then init
   else
     let init = List.map (placed device) init in
@@ -316,10 +338,10 @@ let repeat device n init step =
       let i' = Ops.add i (Shape.const_like i (`Int Bigint.one)) in
       let finals = step i' (List.map Ops.contiguous (step i b.params)) in
       let results = carried device b finals in
-      let e = Ops.end_ (call b) [ range ] in
+      let e = Ops.end_ (call ~host b) [ range ] in
       List.map (fun result -> result e) results
 
-let until device n init ~stop step =
+let until ~host device n init ~stop step =
   if n <= 0 || List.for_all empty init then init
   else
     let init = List.map (placed device) init in
@@ -342,5 +364,5 @@ let until device n init ~stop step =
     let first = Ops.after s [ Ops.store s first ] in
     b.args := (slot, first) :: !(b.args);
     b.stores := Ops.store flag (running finals) :: !(b.stores);
-    let e = Ops.backedge (call b) ~loop:range ~cond:first in
+    let e = Ops.backedge (call ~host b) ~loop:range ~cond:first in
     List.map (fun result -> result e) results

@@ -245,6 +245,9 @@ let issued (p : Program.t) (forms : form array) =
 type state = {
   rig : Rig.t;
   device : Ops.device;
+  hosts : Ops.device list;
+      (** The program's devices whose kernels compile for the host's
+          processors. *)
   issued : form;  (** {!issued}'s form of the program. *)
   split : bool;
       (** Whether the program is a split one ({!Pieces}), each of its values
@@ -1423,6 +1426,12 @@ let placed st env q x ys =
   in
   Array.map (fun u -> if own u then Ops.contiguous u else moved u d) ys
 
+(* Whether [rig]'s kernels compile for the host's processors. *)
+let on_host rig =
+  match Engine.target rig with
+  | t -> String.equal t.device "CPU"
+  | exception Invalid_argument _ -> false
+
 let issue st cs env (type r) base (op : r Nx.Prim.t) =
   (match op with Place (q, _) -> on_rig st q "a placement" | _ -> ());
   let rig = op_rig st op in
@@ -1452,11 +1461,7 @@ let issue st cs env (type r) base (op : r Nx.Prim.t) =
               Some (Holding (dst flat))
         | _ -> None
       in
-      let host =
-        match Engine.target rig with
-        | t -> String.equal t.device "CPU"
-        | exception Invalid_argument _ -> false
-      in
+      let host = on_host rig in
       let read x = node st env x in
       let step1 (r : A.Move.range) = r.step = 1 in
       let ys =
@@ -2548,7 +2553,8 @@ and repeat ?(into = [||]) st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip
   in
   let body =
     Ops.substitute ~calls:Skip ~pass:Fixed_point
-      (Loop.cut ~hoist ~own next args sink)
+      (Loop.cut ~hoist ~host:(fun d -> List.mem d st.hosts) ~own next args
+         sink)
       renumbered
   in
   let by_slot (a, _) (b, _) = Int.compare a b in
@@ -2679,6 +2685,7 @@ let lower ~rigs ~split ~uploads (p : Program.t) (forms : form array) ~layouts
     {
       rig;
       device = Rig.name rig;
+      hosts = List.map Rig.name (List.filter on_host rigs);
       issued = issued p forms;
       split;
       captures = [];
