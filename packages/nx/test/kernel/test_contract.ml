@@ -18,9 +18,9 @@ module Support = Nx_kernels_support
 
 (* The reference *)
 
-(* The sum of [o]'s products and init, with an error under 2^-100 of the sum
-   of their magnitudes, and that sum. Products and the running sum are held
-   in two parts. *)
+(* The sum of [o]'s products and init in two parts, with an error under
+   2^-100 of the sum of their magnitudes, and that sum. Products and the
+   running sum are held in two parts. *)
 let exact o =
   (* A loop: refs that a closure takes are boxed, a float allocated a
      term. *)
@@ -34,7 +34,7 @@ let exact o =
     lo := !lo +. t +. Float.fma x y (-.p);
     mag := !mag +. Float.abs p
   done;
-  (!hi +. !lo, !mag)
+  (!hi, !lo, !mag)
 
 let unit_roundoff acc =
   if part_of acc = D.Any D.Float32 then 0x1p-24 else 0x1p-53
@@ -53,21 +53,20 @@ let naive o =
   done;
   !s
 
-(* |init| + Σ|a||b| of an output whose parts are [parts]: a complex one's
-   factors are its real part's, [ar] and [ai] at terms [2p] and [2p + 1]
-   against [br] and [-bi]. *)
+(* Σ|a||b| of an output whose parts are [parts]: a complex one's factors
+   are its real part's, [ar] and [ai] at terms [2p] and [2p + 1] against
+   [br] and [-bi]. *)
 let magnitude parts =
   let o = parts.(0) in
   if Array.length parts = 1 then begin
-    let m = ref (Float.abs (Option.value ~default:0. o.init)) in
+    let m = ref 0. in
     for k = 0 to Array.length o.av - 1 do
       m := !m +. Float.abs (o.av.(k) *. o.bv.(k))
     done;
     !m
   end
   else begin
-    let init p = Option.value ~default:0. parts.(p).init in
-    let m = ref (Float.hypot (init 0) (init 1)) in
+    let m = ref 0. in
     for p = 0 to (Array.length o.av / 2) - 1 do
       let a = Float.hypot o.av.(2 * p) o.av.((2 * p) + 1) in
       let b = Float.hypot o.bv.(2 * p) o.bv.((2 * p) + 1) in
@@ -76,14 +75,17 @@ let magnitude parts =
     !m
   end
 
+(* nx_kernel.mli's [β(n) = ⌈5 min(n, 256) / 4⌉ + ⌈n / 128⌉]. *)
+let beta n = ((5 * min n 256) + 3) / 4 + ((n + 127) / 128)
+
 (* An output [xs] of [c], one value a part, is within the largest bound
-   nx_kernel.mli allows a library, γ(2K + 2) (|init| + Σ|a||b|) of the
-   exact sum of its [K] products and init, a complex one in modulus, u
-   being the unit roundoff of [acc]'s parts. Where results
-   underflow it may err by η more for each term of each part, [η] [acc]'s
-   smallest subnormal, twice the most a rounding into the subnormals errs.
-   A part whose sum is not finite is matched to the bits of its naive
-   sum. *)
+   nx_kernel.mli allows a library, [u|r| + (1 + u) e Σ|a||b|] of the exact
+   [r], init and its [K] products, a complex one in modulus, [e] being
+   [γ(β(K))] for a real [acc] and [√2 γ(β(2K))] for a complex one, and u
+   the unit roundoff of [acc]'s parts. Where results underflow it may err by η
+   more for each term of each part, [η] [acc]'s smallest subnormal, twice
+   the most a rounding into the subnormals errs. A part whose sum is not
+   finite is matched to the bits of its naive sum. *)
 let within c parts xs =
   let show x = Printf.sprintf "%h" x in
   let sums = Array.map naive parts in
@@ -97,24 +99,43 @@ let within c parts xs =
     !bad
   else
     let exact = Array.map exact parts in
-    let off = Array.mapi (fun p (want, _) -> xs.(p) -. want) exact in
+    (* Each part subtracted apart, so that rounding the exact sum adds no
+       error. *)
+    let off = Array.mapi (fun p (hi, lo, _) -> xs.(p) -. hi -. lo) exact in
     let err = Array.fold_left Float.hypot 0. off in
     let terms = Array.length parts.(0).av in
+    let complex = Array.length parts > 1 in
     let k = terms / Array.length parts in
     let u = unit_roundoff c.acc in
-    let n = float_of_int ((2 * k) + 2) in
-    let g = n *. u /. (1. -. (n *. u)) in
+    let gamma n =
+      let n = float_of_int n in
+      n *. u /. (1. -. (n *. u))
+    in
+    let e =
+      if complex then Float.sqrt 2. *. gamma (beta (2 * k))
+      else gamma (beta k)
+    in
+    let r =
+      Array.fold_left (fun s (hi, lo, _) -> Float.hypot s (hi +. lo)) 0. exact
+    in
+    let has_init = Option.is_some parts.(0).init in
     let parts_n = float_of_int (Array.length parts) in
     let eta = smallest_subnormal c.acc *. float_of_int (terms + 1) *. parts_n in
-    let slack = Array.fold_left (fun s (_, m) -> s +. (0x1p-100 *. m)) 0. exact in
-    let bound = (g *. magnitude parts) +. slack +. eta in
+    let slack =
+      Array.fold_left (fun s (_, _, m) -> s +. (0x1p-100 *. m)) 0. exact
+    in
+    let bound =
+      (if has_init then u *. r else 0.)
+      +. ((1. +. u) *. e *. magnitude parts)
+      +. slack +. eta
+    in
     if err <= bound then None
     else
       let all f = String.concat ", " (Array.to_list (Array.map f exact)) in
       Some
         (Printf.sprintf "%s is %h from %s, past %h"
            (String.concat ", " (Array.to_list (Array.map show xs)))
-           err (all (fun (w, _) -> show w)) bound)
+           err (all (fun (hi, lo, _) -> show (hi +. lo))) bound)
 
 (* The first outputs of [y] past their bound. *)
 let outside c y =
@@ -427,6 +448,20 @@ let law_in_place (b : Support.backend) (c : case) =
             (if Option.is_some y then "computed" else "declined")
             Nx_array_support.pp_answer r)
 
+(* Contractions of 16 × 16 outputs, with init, either side of a block of
+   256 products and over several, which a library may sum into scratch
+   beside a destination identical to init. *)
+let in_place_examples =
+  let v = Elements.plain 2 in
+  List.concat_map
+    (fun acc ->
+      List.map
+        (fun k ->
+          make ~acc ~out:acc ([||], [| 16 |], [| 16 |], [| k |]) (acc, v)
+            (acc, v) (Some v) k)
+        [ 255; 256; 257; 1025 ])
+    D.[ Any Float32; Any Float64; Any Complex64 ]
+
 (* A destination through any view, its axes stored apart, windowed,
    stepped or reversed, made on the backend's device, gets the bits a fresh
    C-contiguous one gets: the association reads no layout. *)
@@ -545,7 +580,7 @@ let laws (b : Support.backend) =
         (run (law_segmented b));
       prop "a declined contraction writes nothing" any_case
         (run (law_declined b));
-      prop ~examples
+      prop ~examples:(examples @ in_place_examples)
         "a destination identical to init gives a fresh one's bits" computed
         (run (law_in_place b));
       test

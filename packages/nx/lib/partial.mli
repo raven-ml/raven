@@ -99,15 +99,15 @@
     complex result has the kernels' association over its tile and the left
     fold over the slots, and does not keep the bits of the reduction on one
     device. A
-    float sum is within [γ(n - 1) Σ|x|] of the exact sum, as on one device,
-    and a complex sum so part by part: a tile of [m] terms sums within
-    [γ(m - 1)] of its magnitudes, the slots within [γ(t - 1)] of theirs, and
-    [γ(j) + γ(k) + γ(j) γ(k) <= γ(j + k)] (Higham, {e Accuracy and
-    Stability of Numerical Algorithms}, Lemma 3.3) with
-    [(m - 1) + (t - 1) <= n - 1]. A float product is so within a relative
-    [γ(n - 1)], and a complex product within a normwise relative
-    [γ(2n - 2)], each complex multiplication by the kernels erring by at
-    most [2u] ({!Nx_kernel.section-bounds}).
+    float sum is within [γ(β(m) + t - 1) Σ|x|] of the exact sum, [m] the
+    most terms a tile holds, and a complex sum so part by part: a tile of
+    [m] terms sums within [γ(β(m))] of its magnitudes
+    ({!Nx_kernel.section-bounds}), the slots within [γ(t - 1)] of theirs,
+    and [γ(j) + γ(k) + γ(j) γ(k) <= γ(j + k)] (Higham, {e Accuracy and
+    Stability of Numerical Algorithms}, Lemma 3.3). A float product is
+    within a relative [γ(n - 1)], and a complex product within a normwise
+    relative [γ(2n - 2)], each complex multiplication by the kernels
+    erring by at most [2u] ({!Nx_kernel.section-bounds}).
 
     A [Logsumexp] closes as the [Logsumexp] of its tiles' logsumexps,
     within [ε + ε{_t}] of the exact one, [ε] the largest of the bounds the
@@ -130,17 +130,13 @@
     of the group then holds; each tile then sums its terms' deviations
     [d = x - c] and their squares, and the variance is
     [(Σ d² - Σ d (Σ d / n)) / n], [+0] where that is negative or [Σ d²]
-    where that is [+∞]. Both are NaNs where [c] is. On nx.cpu's kernels,
-    to first order in [u] and for [n] exact in the carrier, a lane-order
-    sum of [m] terms rounds each at most [L + D] times, [L] and [D] as
-    {!Nx_cpu.section-states} defines them for [m] terms, and the closing,
-    a lane-order sum of [t] terms, adds [L{_t} + D{_t}], those of [t]
-    terms. Let
-    [K = L + D + L{_t} + D{_t}] for the tile of most terms, [M] the mean of
-    the terms' magnitudes and [V] their variance. The mean is within
-    [A = K u M + u|μ|] of the exact [μ] and the variance within
-    [(K + 5) u V + 2 (K + 1) u A √V + (3K + 7) u A²], nx.cpu's bound on one
-    device with [K] for its [L + D]. For any [c],
+    where that is [+∞]. Both are NaNs where [c] is. To first order in [u]
+    and for [n] exact in the carrier, a tile's sum of [m] terms is within
+    [β(m) u] of its magnitudes, and the closing's fold of [t] slots adds
+    [t - 1] roundings. Let [K = β(m) + t - 1] for the tile of most terms,
+    [M] the mean of the terms' magnitudes and [V] their variance. The mean
+    is within [A = K u M + u|μ|] of the exact [μ] and the variance within
+    [(K + 5) u V + 2 (K + 1) u A √V + (3K + 7) u A²]. For any [c],
     [Σ (x - c)² - (Σ (x - c))² / n] is [n V], so [c]'s error reaches the
     variance only through the roundings: [Σ d²] within a relative
     [(K + 3) u], and [Σ d] within [(K + 1) u Σ|d|], where
@@ -156,16 +152,14 @@
     piece. A device contracts its tile's pieces in C order of their first
     indices by its kernels, each from the sum of those before it as its
     [init], into the accumulator, each scale read at the blocks the piece
-    spans. Where there is an [init], an output's first piece starts from
-    [init] as the accumulator holds it on the tile that holds its
-    products, and from [-0] on the others, so that [init] joins the sum
-    once, in the kernel that adds those products: on the first tile, at
-    the start of every folded axis, which holds products wherever a tile
-    does, but under [Rows], on the tile of the row's group, the first tile
-    taking the rows in no group. Without [init] it starts from none. The
-    closing sums the slots and the result rounds
-    once into its dtype. A segmented contraction cut along a pair never
-    computes so, nor one of [Contracting] groups.
+    spans. Where there is an [init], an output's first piece adds [-0] on
+    every tile, which keeps an output without products at [-0], and the
+    closing sums the slots in the accumulator, adds [init] as the
+    accumulator holds it, and rounds the result once into its dtype: [init]
+    joins after every product, as on one device. Without [init] the first
+    piece adds none and the closing rounds the slots' sum. A segmented
+    contraction cut along a pair never computes so, nor one of
+    [Contracting] groups.
 
     A piece of groups [lo] to [hi - 1] of [Rows]' groups takes the ids of
     its rows less [lo], so that group [e] of the piece is group [lo + e] of
@@ -178,45 +172,45 @@
     zeros: each output has the bits it has with [b]'s groups whole on each
     device, NaNs and infinities included, where the kernels' association
     does not depend on the count of [b]'s groups, as nx.cpu's ({!Nx_cpu}).
-    With [init], an output without products holds [init] on one tile and
-    [-0] on the others, which add to [init], a NaN to a NaN whose sign and
-    payload the NaN rule leaves free ({!Nx_array.Dtype.section-stores}).
+    With [init], an output without products holds [-0] on every tile, and
+    the closing adds them to [init], which keeps its bits but a NaN's, whose
+    sign and payload the NaN rule leaves free
+    ({!Nx_array.Dtype.section-stores}).
 
     An integer contraction has the bits it has on one device. Barring
-    overflow and underflow, a float or complex output of [K] products is
-    within [γ(2m + 2p + t - 1) (|init| + Σ|a||b|)] of the exact sum, a
-    complex one in modulus, plus the roundings each library states its
-    scaling adds. Here [u] is the accumulator's unit roundoff, its parts'
-    for a complex one, [t] the tiles holding the output's products, [m]
-    the most products one of them holds and [p] the most pieces one is
-    contracted in.
+    overflow and underflow, a float output of [K] products is within
+    [u|r| + (1 + u) γ(β(m) + p + t - 2) Σ|a||b|] of the exact [r], init
+    and products, the [u|r|] term [0] without [init], and a complex one in
+    modulus within that with [√2 γ(β(2m) + p + t - 2)], plus the roundings
+    each library states its scaling adds. Here
+    [u] is the accumulator's unit roundoff, its parts' for a complex one,
+    [t] the tiles holding the output's products, [m] the most products one
+    of them holds and [p] the most pieces one is contracted in.
 
-    A piece of [k] products, from the sum [ŝ] of the pieces before it,
-    errs by at most [e(k) (|ŝ| + Σ|a||b|)] over its products, its
-    library's error factor [e(k)] at most [γ(2k + 2)]
-    ({!Nx_kernel.section-bounds}). [|ŝ|] is at most the earlier products'
-    magnitudes, [|init|] on the tile that starts from it, plus the error
-    so far, so
-    after pieces of [k1], …, [kq] products the error is within
-    [Π (1 + e(kj)) - 1] of those magnitudes, at most [γ(2m + 2p)] (Higham,
-    Lemma 3.3). The closing's additions of the slots round within [u]
-    each, but for those of an exact zero, so a slot passes at most
-    [t - 1] roundings, and [(1 + γ(j)) (1 + γ(k)) - 1 <= γ(j + k)]. Each
-    tile holding terms holds a product, so [m <= K - t + 1]. With one
-    piece a tile, as without block scales or with tiles cut at the scales'
-    block edges, the bound is so at most [γ(2K + 3 - t)], within one
-    device's [γ(2K + 2)]. With [t] of [1] the tile holding the products
-    computes as one device does.
+    A piece of [k] products sums them within [e(k) Σ|a||b|] of theirs, its
+    library's error factor [e(k)] at most [γ(β(k))]
+    ({!Nx_kernel.section-bounds}), each part of a complex one within
+    [γ(β(2k))], then adds the sum [ŝ] of the pieces before it as its
+    [init], one rounding but for the first piece's [-0]. [|ŝ|] is at most
+    the earlier products' magnitudes plus the error so far, and [β] grows
+    with [k], so after [q] pieces the error is within [γ(β(m) + q - 1)] of
+    those magnitudes (Higham, Lemma 3.3). The closing's additions of the
+    slots round within [u] each, but for those of an exact zero, so a slot
+    passes at most [t - 1] roundings, and
+    [(1 + γ(j)) (1 + γ(k)) - 1 <= γ(j + k)]; [init]'s addition errs by
+    [u|r|], [r] as computed, to first order. With [t] of [1] the tile
+    holding the products computes as one device does.
 
     A contraction asked for its sum ([sum], {!Value.Contract}) does not
-    close: each device's partial, from [init] on the device whose term is
-    its group's first ({!Grid.term}), or under [Rows] as above, and from
-    {!Partition.identity} on the others where there is an [init], so that
-    [init] joins the sum once, is
+    close: each device's partial, its first piece adding [init] on the
+    device whose term is its group's first ({!Grid.term}), under [Rows]
+    on the tile of the row's group, the first tile taking the rows in no
+    group, and {!Partition.identity} on the others where there is an
+    [init], so that [init] joins the sum once, is
     its term, rounded once into the result's dtype ({!section-sums}). Its
     terms are numbered as the tiles of its folded axes, in C order of their
     first indices ({!Grid.sum}). In the accumulator, as the tiles' errors
-    above add, they sum to within [γ(2m + 2p) (|init| + Σ|a||b|)] of the
+    above add, they sum to within [γ(β(m) + p) (|init| + Σ|a||b|)] of the
     exact sum. Rounded into a dtype of unit roundoff [v],
     each term errs by [v] more, and a closing of [t] terms adds them there,
     [t - 1] additions: [γ(t, v) Σ|term|] more (Higham, §4.2 and Lemma 3.3).

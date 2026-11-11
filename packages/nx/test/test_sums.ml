@@ -680,15 +680,14 @@ let test_entry_points () =
   near ~msg:"einsum's sum" (Nx.sum ~axes:[ 1 ] (Nx.matmul a b)) summed
 
 (* Closed products over cut summed axes, at every float dtype: each device's
-   partial in the accumulator, the first window's from [init] and the
-   others' from [-0], added from the first window's in C order of the
-   windows, rounded once (nx.mli's {!Nx.section-contraction}). [k] is cut
-   along a line of two or four devices, or over a grid whose cut lists its
-   mesh axes major first or minor first. Asked for its sum at the
-   accumulator's dtype, the product closes to the same bits. With one
-   window holding products it has one device's bits, and with [init] or
-   without it stays within the bound {!Nx.contract} states on one
-   device. *)
+   partial in the accumulator, adding [-0] where there is an [init], added
+   from the first window's in C order of the windows, then [init], rounded
+   once (nx.mli's {!Nx.section-contraction}). [k] is cut along a line of
+   two or four devices, or over a grid whose cut lists its mesh axes major
+   first or minor first. Asked for its sum at the accumulator's dtype, the
+   product without [init] closes to the same bits. With one window holding
+   products it has one device's bits, and with [init] or without it stays
+   within the bound {!Nx.contract} states. *)
 type float_dt = F : (float, 's) D.t -> float_dt
 type layout = Line_of of int | Grid_ab | Grid_ba
 
@@ -735,6 +734,9 @@ let ordered =
 let bits x =
   Array.map Int64.bits_of_float (Nx.to_array (Nx.cast Nx.float64 x))
 
+(* nx_kernel.mli's [β(n) = ⌈5 min(n, 256) / 4⌉ + ⌈n / 128⌉]. *)
+let beta n = (((5 * min n 256) + 3) / 4) + ((n + 127) / 128)
+
 let law_ordered c =
   let (F dt) = c.fdt in
   cover "a narrow float" (match c.fdt with F D.Float16 | F D.Bfloat16 -> true | _ -> false);
@@ -756,12 +758,12 @@ let law_ordered c =
   in
   let want =
     let host_rule (type q) (acc : (float, q) D.t) =
-      (* The first tile's partial from [init], the others' from [-0]. *)
+      (* Each tile's partial adding [-0] where there is an [init], which
+         joins after the partials' sum. *)
       let partial j =
         let lo, n = tile j in
         let init =
           match init with
-          | Some i when j = 0 -> Some (Nx.cast acc i)
           | Some _ -> Some (Nx.full acc [| c.om; c.on |] (-0.))
           | None -> None
         in
@@ -773,9 +775,13 @@ let law_ordered c =
       match (held, init) with
       | [], Some i -> Nx.contract ~init:i dt pattern a b
       | [], None -> Nx.cast dt (Nx.contract acc pattern a b)
-      | j :: rest, _ ->
-          Nx.cast dt
-            (List.fold_left (fun s j -> Nx.add s (partial j)) (partial j) rest)
+      | j :: rest, _ -> (
+          let s =
+            List.fold_left (fun s j -> Nx.add s (partial j)) (partial j) rest
+          in
+          match init with
+          | Some i -> Nx.cast dt (Nx.add s (Nx.cast acc i))
+          | None -> Nx.cast dt s)
     in
     match c.fdt with
     | F D.Float64 -> host_rule D.Float64
@@ -801,16 +807,17 @@ let law_ordered c =
   in
   equal (array int64) ~msg:"closed, the rule's bits" (bits want) closed;
   let wide = match c.fdt with F D.Float32 | F D.Float64 -> true | F _ -> false in
-  if wide then
+  if wide && not c.oinit then
     equal (array int64) ~msg:"its sum closed, the same bits" closed summed;
   (* One window holding every product computes as one device does. *)
   if c.ok = 1 then
     equal (array int64) ~msg:"one window holding products, one device's bits"
       (bits (Nx.contract ?init dt pattern a b))
       closed;
-  (* Nx.contract's bound, γ(K + 1, 2u) (|init| + Σ|a||b|) in the
-     accumulator, then half the dtype's spacing [u_out] relative, or [tiny]
-     below its normals; the float64 reference errs by γ(K + 2) of float64. *)
+  (* Nx.contract's bound, u|r| + (1 + u) γ(β(K), u) Σ|a||b| in the
+     accumulator, the [u|r|] term with [init] alone, then half the dtype's
+     spacing [u_out] relative, or [tiny] below its normals; the float64
+     reference errs by γ(K + 2) of float64. *)
   let u, u_out, tiny =
     match c.fdt with
     | F D.Float64 -> (0x1p-53, 0., 0.)
@@ -821,18 +828,22 @@ let law_ordered c =
   let host x = Nx.to_array (Nx.cast Nx.float64 x) in
   let ha = host a and hb = host b and hi = Option.map host init in
   let gamma n u = n *. u /. (1. -. (n *. u)) in
-  let k = Float.of_int c.ok in
+  let k = Float.of_int (beta c.ok) and k64 = Float.of_int (c.ok + 2) in
   for i = 0 to c.om - 1 do
     for j = 0 to c.on - 1 do
       let o = (i * c.on) + j in
       let start = Option.fold ~none:0. ~some:(fun h -> h.(o)) hi in
-      let sum = ref start and mag = ref (Float.abs start) in
+      let sum = ref start and mag = ref 0. in
       for l = 0 to c.ok - 1 do
         let p = ha.((i * c.ok) + l) *. hb.((l * c.on) + j) in
         sum := !sum +. p;
         mag := !mag +. Float.abs p
       done;
-      let g = (gamma (k +. 1.) (2. *. u) +. gamma (k +. 2.) 0x1p-53) *. !mag in
+      let joins = if c.oinit then u *. Float.abs !sum else 0. in
+      let g =
+        joins +. ((1. +. u) *. gamma k u *. !mag)
+        +. (gamma k64 0x1p-53 *. (!mag +. Float.abs start))
+      in
       let bound = g +. (u_out *. (Float.abs !sum +. g)) +. tiny in
       let got = Int64.float_of_bits closed.(o) in
       if Float.abs (got -. !sum) > bound then
@@ -865,6 +876,20 @@ let test_named_sums () =
   check ~msg:"cut over a then b, mesh b then a" ba [ "a"; "b" ];
   check ~msg:"cut over b then a, mesh b then a" ba [ "b"; "a" ]
 
+(* A large init joins a cut sum after every product: four products of
+   [0x1.8p-26] over four devices add [1.5 · 2^-24] to an init of [1], which
+   rounds to [1 + 2^-23]; added to the first device's partial, the others'
+   would each be lost against it. *)
+let test_init_joins_last () =
+  let a = Nx.full Nx.float32 [| 1; 4 |] 0x1.8p-13
+  and b = Nx.full Nx.float32 [| 4; 1 |] 0x1p-13 in
+  let init = Nx.place Mem.on (Nx.full Nx.float32 [| 1; 1 |] 1.) in
+  let a = Nx.place (Nx.Placement.split ~axis:1 Mem.v) a
+  and b = Nx.place (Nx.Placement.split ~axis:0 Mem.v) b in
+  let y = Nx.contract ~init Nx.float32 (Nx.Pattern.v "m k, k n -> m n | k") a b in
+  equal (array float_exact) [| 1. +. 0x1p-23 |]
+    (Nx.to_array (Nx.place Nx.Host.on y))
+
 let contractions =
   group "contractions"
     [
@@ -884,10 +909,12 @@ let contractions =
       test "a product closes unless asked for its sum" test_entry_points;
       test "a product's sum is named by its cut's mesh axes in order"
         test_named_sums;
+      test "a large init joins a cut sum after its products"
+        test_init_joins_last;
       prop ~count:300 ~examples:ordered_examples
         "a closed product over cut summed axes adds its devices' partials \
-         in C order of their windows, the first from init, rounds once and \
-         keeps one device's bound"
+         in C order of their windows, then init, rounds once and keeps \
+         the contraction's bound"
         (Gen.with_pp pp_ordered ordered)
         law_ordered;
     ]

@@ -2887,6 +2887,22 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- **Breaking:** a contraction adds its `init` after summing its products,
+  on every kernel library and over cut summed axes, where nx.cpu's chain
+  order, nx.cuda and the first device's partial started the sum from it: a
+  large `init` no longer costs the products their low bits. A donated
+  `init` past 256 products sums through scratch of the result's size on
+  nx.cpu (`Nx_cpu`'s contractions).
+- Float sums and contractions add at most 256 terms in one chain before the
+  chain's sum joins the next, on nx.cpu and nx.cuda. The bounds of
+  `Nx.sum`, `contract`, `var`, `std`, `rms_norm`, `standardize` and the
+  convolutions are one function of the term count on every library,
+  `γ(β(n))` (`Nx_kernel`'s error bounds): a 64 × 64 float32 weight gradient
+  over 16384 rows errs 7 times less on nx.cpu (2.2e-6 to 3.2e-7). Below
+  325 terms the stated bound is looser than `γ(n - 1)`, as `β` carries a
+  matrix unit's 5/4. Float results change in their last bits. nx.cuda holds a sum's
+  partials past 256 terms in workspace, about the result's size in
+  float32.
 - `Nx_array.answer` loses `Held_exclusive`, and `nx_array.h` loses
   `NX_EXCLUSIVE`: a kernel that meets memory a donation is taking waits for
   the take, and refuses the operand as `Dead_buffer` if the take took it.

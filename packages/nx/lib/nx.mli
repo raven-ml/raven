@@ -2151,15 +2151,18 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     axes has the kernels' association over each window's terms and over the
     stacked partials. It may differ from the result on one device within the
     bounds below, and is the same on every run for a given placement and set
-    of devices. Barring overflow and underflow, a float sum of [n] terms
-    stays within [γ(n - 1) Σ|x|] of the exact sum and a product within a
-    relative [γ(n - 1)], as on one device ({!Nx_kernel.section-bounds}); a
-    complex product within a normwise relative [γ(2n - 2)]. A {!mean} is
-    such a sum divided by [n]. {!var} and {!std} are within the bound {!var}
-    states. A {!logsumexp} is within [ε + ε{_t}] of the exact one, [ε] the
-    largest bound the kernels' library states for the logsumexp of a
-    window's terms and [ε{_t}] its bound for one of [t] terms, [t] the
-    windows holding terms, and {!logmeanexp} is that less [log n].
+    of devices. Barring overflow and underflow, a float sum of [n] terms is
+    within [γ(β(n)) Σ|x|] of the exact sum on one device, [γ] and [β] as
+    {!Nx_kernel.section-bounds} defines them, and within
+    [γ(β(n) + β(t)) Σ|x|] over cut axes, [t] the windows holding terms. A
+    float product is within a relative [γ(n - 1)], a complex one within a
+    normwise relative [γ(2n - 2)], on one device as over cut axes. A
+    {!mean} is such a sum divided by [n]. {!var} and {!std} are within the
+    bound {!var} states. A {!logsumexp} is within [ε + ε{_t}] of the exact
+    one, [ε] the largest bound the kernels' library states for the
+    logsumexp of a window's terms and [ε{_t}] its bound for one of [t]
+    terms, [t] the windows holding terms, and {!logmeanexp} is that less
+    [log n].
 
     A scan along an axis cut across devices scans each device's window
     alone. The windows' totals, one row each, move to every device that
@@ -2254,16 +2257,20 @@ val var :
     an element is NaN or infinite. It is [+∞] only where the variance passes
     the dtype's greatest value.
 
-    On one device, the population variance is the kernels' moments, within
-    the bound their library states. Over axes cut across devices, it is the
-    mean, then the deviations [d] from it and their squares, each summed as
-    {!sum} sums, and [(Σ d² - Σ d (Σ d / n)) / n], [+0] where that is negative:
-    on nx.cpu's kernels, within nx.cpu's bound for its moments
-    ({!Nx_cpu.section-states}) with [L + D + L{_t} + D{_t}] in place of its
-    [L + D], [L{_t}] and [D{_t}] nx.cpu's [L] and [D] for [t] terms, [t] the
-    windows holding terms. A [ddof] scales it by a relative [2u] more, then
-    one rounding to the dtype. A variance the dtype holds as a subnormal,
-    where the squares underflow before the sum, can err by
+    The population variance is the mean [c], then the sums of the
+    deviations [d = x - c] and of their squares, each summed as {!sum}
+    sums, and [(Σ d² - Σ d (Σ d / n)) / n], [+0] where that is negative:
+    on one device the kernels' moments, which every kernel library
+    computes so, and over axes cut across devices these sums. Barring
+    overflow and underflow, to first order in the unit roundoff [u], the
+    mean is within [E = b u M + u|μ|] of the exact [μ], [M] the mean of
+    the elements' magnitudes, and the variance within
+    [F = (b + 5) u V + 2 (b + 1) u E √V + (3b + 7) u E²] of the exact
+    [V], where [b] is [β(n)] ({!Nx_kernel.section-bounds}) on one device
+    and [β(n) + β(t)] over cut axes, [t] the windows holding terms. A
+    library may state a sharper bound. A [ddof] scales it by a relative
+    [2u] more, then one rounding to the dtype. A variance the dtype holds
+    as a subnormal, where the squares underflow before the sum, can err by
     [n / (n - ddof) + 1] of the least subnormal more, [0] included.
 
     Its derivative, as rune takes one, is the variance's wherever the variance
@@ -2431,11 +2438,12 @@ val rms_norm :
 
     Barring overflow and underflow, and for [k u < 1/4], it is within
     [k u / (1 - 4 k u)] of the exact value, relatively, where
-    [k = (n + 8) / 2], or [(n + 10) / 2] with [scale], and [u] is the unit
-    roundoff of the format it computes in, before a narrow float's
-    rounding: the squares and their sum take [n] roundings, the mean and
-    [eps] two more, which the root halves, and the root, the reciprocal,
-    the product and [scale]'s one each.
+    [k = (β(n) + 9) / 2], or [(β(n) + 11) / 2] with [scale], [β] as
+    {!Nx_kernel.section-bounds} defines it, and [u] is the unit roundoff
+    of the format it computes in, before a narrow float's rounding: a
+    square takes one rounding and their sum [β(n)], the mean and [eps] two
+    more, which the root halves, and the root, the reciprocal, the product
+    and [scale]'s one each.
 
     A lane whose squares would overflow, or with [~eps:0.] underflow to
     [0], is normalised as its elements times a power of two, [eps] scaled
@@ -2476,12 +2484,11 @@ val standardize :
 
     Barring overflow and underflow, to first order in the unit roundoff [u]
     and before a narrow float's rounding, an element of exact value [y] is
-    within [(F / 2s + 11u/2) |y| + (L + D + 1) u A / √s], [s] the exact
-    [v + eps], [A] the lane's mean absolute deviation, and [F], [L] and [D]
-    nx.cpu's for the moments of the lane's elements
-    ({!Nx_cpu.section-states}), or as {!var} states them over cut axes.
-    [scale] multiplies that by [|scale|], and the affine adds [u |scale · y|]
-    and [u |scale · y + shift|].
+    within [(F / 2s + 11u/2) |y| + (b + 1) u A / √s], [s] the exact
+    [v + eps], [A] the lane's mean absolute deviation, and [F] the
+    variance's bound and [b] its depth, as {!var} states them. [scale]
+    multiplies that by [|scale|], and the affine adds [u |scale · y|] and
+    [u |scale · y + shift|].
 
     A lane whose squares would overflow, or with [~eps:0.] underflow to
     [0], is normalised as its elements times a power of two, [eps] scaled
@@ -2534,13 +2541,14 @@ val bitcast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
     the result from its windows of the operands. Where both operands' paired
     summed axes are cut alike, the devices that hold one window of the
     result compute it together: each contracts the products its windows
-    hold, the first windows' from [init] and the others' from [-0], and
-    only these partial sums move, in the accumulator, stacked in C order of
-    the windows' first indices and summed over the stack by the kernels
-    piece by piece, as a reduction's partials are ({!section-reductions}),
-    then rounded once. Where the first windows hold every product, as an
-    axis of fewer elements than its cuts can leave, each window of the
-    result has the bits of that window's contraction on one device. An
+    hold, adding [-0] where there is an [init], and only these partial
+    sums move, in the accumulator, stacked in C order of the windows' first
+    indices and summed over the stack by the kernels piece by piece, as a
+    reduction's partials are ({!section-reductions}); [init] is then added
+    to that sum in the accumulator, and the result rounded once. Where the
+    first windows hold every product, as an axis of fewer elements than its
+    cuts can leave, each window of the result has the bits of that window's
+    contraction on one device. An
     operand whole on every device is read at the other's cut; summed axes
     cut otherwise raise ({!section-routing}). [Nx_quant.apply_experts],
     which multiplies each row by its expert's matrix, computes so too with
@@ -2558,9 +2566,9 @@ val bitcast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
     [Nx_quant.apply_experts]) given [~sum:true] keeps the sum its cut
     summed axes make, where its terms lie, and moves nothing
     ({!Placement.partial}): each device contracts its windows' products
-    into the accumulator, the first of its group's from [init] and the
-    others from [-0], so that [init] joins once, and rounds that term once
-    into the result's dtype. The terms are numbered in C order of the
+    into the accumulator, the first of its group's adding [init] to them
+    and the others [-0], so that [init] joins once, in that term, and rounds
+    that term once into the result's dtype. The terms are numbered in C order of the
     windows' first indices. {!place} closes the sum later, after the
     linear work a model does on it, as a tensor-parallel layer closes once
     after its residual add ({!section-routing}). A product whose summed
@@ -2570,8 +2578,8 @@ val bitcast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
     dtype, then [t - 1] additions do (Higham, {e Accuracy and Stability of
     Numerical Algorithms}, §4.2 and Lemma 3.3). Where the dtype is the
     accumulator's, the terms round nothing, the bound is
-    [γ(t - 1, u) Σ|term|], and the sum closes to the bits of the product
-    without [~sum:true]. *)
+    [γ(t - 1, u) Σ|term|], and the sum of a product without [init] closes
+    to the bits of the product without [~sum:true]. *)
 
 val contract :
   ?sizes:(string * int) list ->
@@ -2595,13 +2603,17 @@ val contract :
 
     The sum's accumulator is [dt]'s carrier ({!Nx_kernel.carrier}):
     [float32] for a float narrower than it, [int8] and [uint8] for [int4]
-    and [uint4], else [dt]. Integers wrap. It starts from [init], or [+0]
-    without it, and associates in an order each kernel library states,
-    never a function of the order a pattern lists its names. Barring
-    overflow and underflow, before rounding it is within
-    [γ(2K + 2, u) (|init| + Σ|a||b|)] of the exact sum of its [K] products,
-    wherever its operands lie, where [γ(n, v) = n v / (1 - n v)] and [u] is
-    the accumulator's unit roundoff.
+    and [uint4], else [dt]. Integers wrap. The products sum from [+0], in
+    an order each kernel library states, never a function of the order a
+    pattern lists its names, and [init] is then added to their sum, so
+    that a large [init] costs the products none of their low bits.
+    Barring overflow and underflow, before rounding it is within
+    [u|r| + (1 + u) γ(β(K), u) Σ|a||b|] of the exact [r = init + Σ a·b]
+    of its [K] products, [√2 γ(β(2K), u)] in place of [γ(β(K), u)] for a
+    complex one, wherever its operands lie, where
+    [γ(n, v) = n v / (1 - n v)], [β] is as {!Nx_kernel.section-bounds}
+    defines it, [u] is the accumulator's unit roundoff, and the [u|r|]
+    term is [0] without [init].
     With [~sum:true] (default [false]) over cut summed names, it is the
     devices' terms, which close within the bound {!section-contraction}
     adds.
@@ -2737,9 +2749,9 @@ val conv :
     Each output sums its [K] products, one per tap and channel of its group,
     from [+0], in the dtype's carrier, as {!contract} does, and rounds
     once: the float formats narrower than 32 bits sum at [float32]. Integers
-    wrap. Before rounding it is within [γ(2K + 2, u) Σ|x||w|] of the exact
-    sum, [γ] and [u] as {!contract} states. On one device it gives the same
-    bits on every run of the same computation ({!section-reductions}),
+    wrap. Before rounding it is within [γ(β(K), u) Σ|x||w|] of the exact
+    sum, [γ], [β] and [u] as {!contract} states. On one device it gives
+    the same bits on every run of the same computation ({!section-reductions}),
     computing as follows:
     - With other than one input channel a group, [c' = c / groups], it is
       one {!contract} of [x]'s windows with [w], batched over the groups:

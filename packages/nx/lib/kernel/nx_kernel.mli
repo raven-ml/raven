@@ -263,22 +263,36 @@ val scan_refusal :
     complex result may differ between libraries, device models and layouts,
     and the same terms in a call of other extents may round differently.
     Let [u] be the unit roundoff of the dtype each addition or
-    multiplication rounds to, its parts' for a complex one, and
-    [γ(k) = k u / (1 - k u)]. Barring overflow and underflow, and before
-    the rounding into the destination, which adds its own, a float sum of
-    [n] terms, a reduction's, a scan's or a fold's, is within
-    [γ(n - 1) Σ|x|] of the exact sum, and a float product within a relative
-    [γ(n - 1)]. A complex product is within a normwise relative
-    [γ(2n - 2)], where each {!Prog.Mul} errs by at most [2u].
+    multiplication rounds to, its parts' for a complex one,
+    [γ(k) = k u / (1 - k u)] and
+    [β(n) = ⌈5 min(n, 256) / 4⌉ + ⌈n / 128⌉].
 
-    Barring overflow and underflow, an output of a float or complex
-    contraction ({!S.contract}) with [K] products [a·b] is within
-    [e(K) (|init| + Σ|a||b|)] of the exact sum of its products and [init]
-    as the accumulator holds them, a complex one in modulus, [|init|] being
-    [0] without [init]. [e] is the library's {e error factor}, a function
-    of [K] that the library states and that may vary with the dtypes and
-    the device model. It is at most [γ(2K + 2)], [u] the accumulator's
-    unit roundoff, its parts' for a complex one. *)
+    A library adds the terms of a float reduction and the products of a
+    contraction in {e blocks}: no running sum takes more than 256 terms
+    before it is added into another. A term so passes at most 256
+    additions in its block, at most the cost of 320 on a matrix unit, whose
+    additions align 8 terms and a running sum to the largest and truncate,
+    and at most [⌈n / 128⌉] more as the blocks' sums, and the partial sums
+    of threads and kernels, combine. Barring overflow and underflow, and
+    before the rounding into the destination, which adds its own, a float
+    sum of [n] terms, a reduction's, is within [γ(β(n)) Σ|x|] of the exact
+    sum, and a scan's or a fold's within [γ(n - 1) Σ|x|]. A float product
+    is within a relative [γ(n - 1)], and a complex one within a normwise
+    relative [γ(2n - 2)], where each {!Prog.Mul} errs by at most [2u]. A
+    library may state sharper bounds.
+
+    A float or complex contraction ({!S.contract}) sums each output's [K]
+    products [a·b] from [+0] in blocks, then adds [init] to their sum
+    ({!section-contraction}). Barring overflow and underflow, and before
+    the rounding into the destination, an output is within
+    [u|r| + (1 + u) e(K) Σ|a||b|] of the exact [r = init + Σ a·b], with
+    [init] as the accumulator holds it, a complex one in modulus, and the
+    [u|r|] term [0] without [init]. [e] is the library's {e error factor},
+    a function of [K] that the library states and that may vary with the
+    dtypes and the device model, [u] the accumulator's unit roundoff, its
+    parts' for a complex one. It is at most [γ(β(K))] for a real
+    accumulator and [√2 γ(β(2K))] for a complex one, each of whose parts
+    sums [2K] terms. *)
 
 (** {2:scans Scans}
 
@@ -334,9 +348,14 @@ type combine = Set | Add | Max | Min
     [p]'s terms are numbered [2p] and [2p + 1], [ar·br] and [ai·(-bi)] in
     the real part, [ar·bi] and [ai·br] in the imaginary part.
 
-    An output without products, where the contracted extent is [0] or its
-    segments give it none, is its [init] element as the accumulator holds
-    it, rounded into the destination, or [+0] without [init]. No addition
+    An output's products sum from [+0] in its library's association, and
+    its [init] element, as the accumulator holds it, is then added to their
+    sum in one addition, so that [init] does not sit in the running sum
+    while the products add: an [init] of [-0] and products summing to [+0]
+    give [+0]. The result rounds once into the destination. An output
+    without products, where the contracted extent is [0] or its segments
+    give it none, is its [init] element as the accumulator holds it,
+    rounded into the destination, or [+0] without [init]. No addition
     touches it, so an [init] of [-0] stays [-0] and a NaN [init] keeps its
     bits. *)
 
@@ -435,8 +454,8 @@ val full_precision : ('v, 's) Nx_array.Dtype.t -> bool
     rounded to the accumulator and [q·k] the sum of the row's and the key's
     [dk] products, each element widened to the accumulator, in an order its
     library states. Barring overflow and underflow, [q·k] is within
-    [e(dk) Σ|qᵢkᵢ|] of the exact sum, [e] the library's error factor
-    ({!section-bounds}), at most [γ(2dk + 2)]. A program over the pair
+    [e Σ|qᵢkᵢ|] of the exact sum, [e] a factor its library states, at
+    most [γ(2dk + 2)]. A program over the pair
     computes two outputs from its operand [0], the score, and its loads,
     operands [1] on, each of the loop's shape: output [0], a [bool], which
     reads no score, and output [1], in the accumulator. Its [Coord] nodes
@@ -905,10 +924,10 @@ module type S = sig
       ]}
       computed in [acc], summed in the library's order and rounded once
       into [dst], each operand's elements times their scales, each group of
-      [segments] as {!Nx_kernel.type-segments} states. [init] has [dst]'s shape
-      and is one term of the sum, in the library's association; without
-      [init] the sum starts from [+0]. An output without products is as
-      {!Nx_kernel.section-contraction} states. Integers wrap in [acc].
+      [segments] as {!Nx_kernel.type-segments} states. [init] has [dst]'s
+      shape and is added to the products' sum, which starts from [+0], as
+      {!Nx_kernel.section-contraction} states, as is an output without
+      products. Integers wrap in [acc].
       [a], [b], [init] and [dst] may be of any dtypes: an element enters
       [acc], and the sum enters [dst], as {!Nx_kernel.Prog.Cast} stores it. It
       takes an [acc] that {!Nx_kernel.accumulates} accepts. *)

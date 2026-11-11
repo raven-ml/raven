@@ -1403,9 +1403,10 @@ let contract (type v s d a b c e) eng ~by (route : unit Route.t) rule ~batch
         let vs = [ Value.Any i; Value.Any ids; Value.Any zero ] in
         Prim.expect ad (List.hd (map eng ~by (here j) vs [ e ]))
   in
-  (* Where device [j]'s partial starts: from [init] where [first], else from
-     the identity, so that [init] joins the sum once, in the kernel that
-     adds the first products; from no [init] without one. *)
+  (* The [init] device [j]'s term adds, where its sum stays partial:
+     [init] where [first], else the identity, so that [init] joins the sum
+     once, in the kernel that adds the first products; none without
+     one. *)
   let from j ~first =
     let init_at i =
       let i = Value.Any (view eng ~by ks.(j) (resw j) i) in
@@ -1419,13 +1420,30 @@ let contract (type v s d a b c e) eng ~by (route : unit Route.t) rule ~batch
     | Some _, None -> Some (zero ())
   in
   if not (Devices.partial p) then
-    (* The first tile, at the start of every folded factor, holds an
-       output's products wherever any tile does, as a cut gives its first
-       tiles the extra elements, and under [Rows] {!owned} picks the tile:
-       [init] so starts the sum it starts on one device. *)
-    let first j = Array.for_all (fun (r : M.range) -> r.start = 0) tiles.(j) in
-    closed_sum eng ~by route ~operand ~folded ~of_folded shape out ad
-      (fun j -> partial j (from j ~first:(first j)))
+    match init with
+    | None ->
+        closed_sum eng ~by route ~operand ~folded ~of_folded shape out ad
+          (fun j -> partial j None)
+    | Some i ->
+        (* Every partial adds the identity, which keeps an output without
+           products at [-0]; the closed sum, in the accumulator, then adds
+           [init] and rounds once into the result's dtype, so that [init]
+           joins after every product, as on one device. *)
+        let zero j =
+          Some (Partition.identity eng ~by (here j) ad (counts (resw j)))
+        in
+        let sum =
+          closed_sum eng ~by route ~operand ~folded ~of_folded shape ad ad
+            (fun j -> partial j (zero j))
+        in
+        let joined j =
+          let s = Value.Any (view eng ~by ks.(j) (resw j) sum) in
+          let i = cast eng ~by acc (Value.Any (view eng ~by ks.(j) (resw j) i)) in
+          let e = E.any (E.cast out E.(input 0 ad + input 1 ad)) in
+          Prim.expect out (List.hd (map eng ~by (here j) [ s; i ] [ e ]))
+        in
+        let holds j = not (Route.empty (resw j)) in
+        eng.assemble p shape out (values eng ~by p shape ~holds joined)
   else
     (* Each device's term, its window of the result: its partial, from
        [init] where its term is its group's first. *)

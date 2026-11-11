@@ -2874,10 +2874,10 @@ let tiled c side tile x =
   Nx.slice (List.init (Nx.ndim x) index) x
 
 (* A contraction cut along its contracting pairs is, as partial.mli states,
-   each tile contracted on one device into the accumulator, the first from
-   [init] and the others from [-0], the sums stacked in the tiles' order
-   and summed over the stack by the kernels' reduction, rounded once: the
-   same bits, whatever
+   each tile contracted on one device into the accumulator, adding [-0]
+   where there is an [init], the sums stacked in the tiles' order and
+   summed over the stack by the kernels' reduction, then [init] added and
+   the result rounded once: the same bits, whatever
    the library contracts by. Both libraries reduce as nx.cpu does, so the
    host sums the stack. Where the result is cut too, each device contracts
    its tiles of its own window of the result. [pairs] where cases may have
@@ -2951,18 +2951,17 @@ let law_cut ~pairs (module S : Sets) c =
            (if c.init then Some (one init) else None))
     else
       let window a b init =
-        (* The first tile from [init], the others from [-0]. *)
-        let part i t =
-          let init = Nx.cast ad init in
+        (* Every tile adding [-0], then [init] after their sum. *)
+        let init = Nx.cast ad init in
+        let part t =
           let from =
-            if not c.init then None
-            else if i = 0 then Some init
-            else Some (Nx.neg (Nx.zeros_like init))
+            if c.init then Some (Nx.neg (Nx.zeros_like init)) else None
           in
           contracted k.acc ad batch contracting (tiled c fst t a)
             (tiled c snd t b) from
         in
-        Nx.cast dt (fold Nx.add (List.mapi part ts))
+        let sum = fold Nx.add (List.map part ts) in
+        Nx.cast dt (if c.init then Nx.add sum init else sum)
       in
       (* The result's windows along its axis [ax] over two devices, [b]
          cut along it too where [both]. *)
@@ -3887,7 +3886,7 @@ let contractions =
     [
       prop ~count:400 ~examples:ccase_examples
         "a contraction over cut contracting axes sums its tiles' stacked \
-         sums, the first from init"
+         sums, then init"
         ccase
         (law_cut ~pairs:true (module Cpu_sets));
       prop ~count:300

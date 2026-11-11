@@ -148,15 +148,20 @@ let fsum_add s x =
     s.mag <- s.mag +. Float.abs x
   end
 
+(* nx_kernel.mli's [β(n) = ⌈5 min(n, 256) / 4⌉ + ⌈n / 128⌉]. *)
+let beta n = (((5 * min n 256) + 3) / 4) + ((n + 127) / 128)
+
 (* A sum of magnitudes below half the largest number keeps every partial
-   sum of every association finite. *)
-let fsum_verdict ?into p s g =
+   sum of every association finite. A reduction's sum is within
+   [γ(β(n))], a scan's within [γ(n - 1)]. *)
+let fsum_verdict ?into ~scan p s g =
   if s.nan || (s.pinf && s.ninf) then want_nan g
   else if s.mag > p.big /. 2. then Barred
   else if s.pinf then want_special infinity g
   else if s.ninf then want_special neg_infinity g
   else
-    let bound = (gamma p (s.n - 1) +. 0x1p-100) *. s.mag in
+    let depth = if scan then s.n - 1 else beta s.n in
+    let bound = (gamma p depth +. 0x1p-100) *. s.mag in
     within ?into ~exact:(s.hi, s.lo) ~bound g
 
 (* A float product's factors so far: their count, the exact product of the
@@ -306,20 +311,23 @@ let zprod_verdict pr p (g : Complex.t) =
    sum. *)
 type reference = { push : Complex.t -> unit; verdict : Complex.t -> verdict }
 
-let reference ?into ~complex pr m =
+let reference ?into ~scan ~complex pr m =
   match (m, complex) with
   | Sum, false ->
       let s = fsum () in
       {
         push = (fun z -> fsum_add s z.re);
-        verdict = (fun g -> fsum_verdict ?into pr s g.re);
+        verdict = (fun g -> fsum_verdict ?into ~scan pr s g.re);
       }
   | Sum, true ->
       let r = fsum () and i = fsum () in
       {
         push = (fun z -> fsum_add r z.re; fsum_add i z.im);
         verdict =
-          (fun g -> worse (fsum_verdict pr r g.re) (fsum_verdict pr i g.im));
+          (fun g ->
+            worse
+              (fsum_verdict ~scan pr r g.re)
+              (fsum_verdict ~scan pr i g.im));
       }
   | Prod, false ->
       let p = fprod () in
@@ -361,8 +369,8 @@ let kind_of ~complex m =
 
 (* The laws of S *)
 
-(* A float sum of [n] terms, a reduction's or a scan's result, is within
-   γ(n - 1) Σ|x| of the exact sum, a float product within a relative
+(* A float sum of [n] terms is within γ(β(n)) Σ|x| of the exact sum, a
+   scan's result within γ(n - 1) Σ|x|, a float product within a relative
    γ(n - 1), a complex one normwise within γ(2n - 2), a complex sum part by
    part, barring overflow and underflow; a NaN or an infinity is one where
    the terms make it. *)
@@ -372,7 +380,7 @@ let law_bound (b : Support.backend) (c : case) =
   let pr = precision (D.Any (A.dtype x)) in
   let y = run b c in
       let ts = zvalues c.x and gs = zvalues y in
-      let fresh () = reference ~complex pr c.monoid in
+      let fresh () = reference ~scan:c.scan ~complex pr c.monoid in
       let vs =
         if not c.scan then
           Array.of_list
@@ -749,7 +757,7 @@ let law_carry_bound (b : Support.backend) c =
   let bad = ref [] and seen = ref [] in
   for o = 0 to c.outer - 1 do
     for i = 0 to c.inner - 1 do
-      let r = reference ?into ~complex pr c.cm in
+      let r = reference ?into ~scan:true ~complex pr c.cm in
       r.push cs.((o * c.inner) + i);
       for j = 0 to c.m - 1 do
         let k = (((o * c.m) + j) * c.inner) + i in

@@ -1541,9 +1541,21 @@ let init =
   let expected = [| 19.5; 22.25; 43.125; 52. |] in
   group "init"
     [
-      test "the sum starts from init" (fun () ->
+      test "init is added to the products' sum" (fun () ->
           equal (array float_exact) expected
             (read (Nx.contract ~init:(c ()) Nx.float32 p (a ()) (b ()))));
+      (* Two products of [2^-24] and an init of [1]: added last, [init]
+         meets their sum [2^-23] and gives [1 + 2^-23]; added first, each
+         product would be a tie that rounds to [1]. Over 8 × 8 outputs, as
+         every library's chain orders take them. *)
+      test "init joins after the products" (fun () ->
+          let tiny = Nx.full Nx.float32 [| 8; 2 |] 0x1p-12 in
+          let one = Nx.full Nx.float32 [| 8; 8 |] 1. in
+          let y =
+            Nx.contract ~init:one Nx.float32 p tiny (Nx.transpose tiny)
+          in
+          equal (array float_exact) (Array.make 64 (1. +. 0x1p-23))
+            (Nx.to_array y));
       test "a donated init is consumed" (fun () ->
           let c = c () in
           let y = Nx.contract ~init:(Nx.donate c) Nx.float32 p (a ()) (b ()) in
