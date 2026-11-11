@@ -79,6 +79,14 @@ An item leaves when its library fixes it, or when a design decides it stays.
 
 ## vega
 
+- A learning-rate schedule's parameters (`Vega.Schedule`'s steps, warmup,
+  rates) become float constants in a compiled step, so each new `--steps`,
+  `--warmup` or `--lr` is a different program and schedules again, about
+  9-10 s for medium's step on CUDA (sound: the key differs because the
+  program does). Passing them as data (an argument or state leaves) would
+  let one program serve every run of a recipe (found by the schedule-cache
+  diagnosis).
+
 - vega's LARS and LAMB apply the trust ratio to every leaf: a recipe cannot
   leave a leaf out of it, as Barlow Twins' LARS (biases and normalisation
   parameters) and optax's `scale_by_trust_ratio` mask can, so a ported
