@@ -146,6 +146,13 @@ let sum a b =
       let (V y) = b.v in
       fresh (V (Nx.add (rebrand r x) (with_dtype (Nx.dtype x) (rebrand r y))))
 
+(* A variable's running cotangent ({!walk}): a whole value, or the variable
+   and pieces of it, each a region, a [Slice] of its shape by ranges, and the
+   region's cotangent, latest first, each over those before it. *)
+type running =
+  | Whole of ct
+  | Pieces of value * (Move.range iarray * value) list
+
 (* Placements
 
    A variable's cotangent lies at its primal's placement. [ps] holds each
@@ -190,12 +197,13 @@ let at_primal ~name primal c =
       held (V (Prim.eval ~by:name (Place (ct_placement x, w))))
   | _ -> c
 
-(* Variable [n]'s cotangent in [acc] at its primal's placement. *)
+(* Variable [n]'s cotangent in [acc] at its primal's placement, where its
+   pieces lie already. *)
 let settle ~name ps acc n =
   match (primal_at ps n, acc.(n)) with
-  | (Some _ as x), Some c ->
+  | (Some _ as x), Some (Whole c) ->
       let c' = at_primal ~name x c in
-      if c' != c then acc.(n) <- Some c'
+      if c' != c then acc.(n) <- Some (Whole c')
   | _ -> ()
 
 (* Outputs of dtypes known at run time *)
@@ -221,6 +229,10 @@ type env = {
   lin : 'v 's 'd. ('v, 's, 'd) Nx.t -> bool;
   const : 'v 's 'd. ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t;
   give : 'v 's 'd. ('v, 's, 'd) Nx.t -> ct -> unit;
+  give_pieces :
+    'v 's 'd. ('v, 's, 'd) Nx.t -> (Move.range iarray * value) list -> unit;
+      (** Pieces of a contribution in pairwise disjoint regions, at the
+          operand's placement, which is whole. *)
   fn : bool;
 }
 
@@ -564,6 +576,88 @@ let scatter_rule env (combine : Nx_kernel.combine) ~unique ~axis idx updates
 
 let window ~axis ~step : Move.window = { axis; size = 1; step; dilation = 1 }
 
+(* Regions *)
+
+(* Whether two regions may share an element ({!Region.meet}). *)
+let overlap a b = Region.meet (Region.axes a) (Region.axes b)
+
+(* Whether two regions are one, element for element in order. *)
+let same a b =
+  Iarray.for_all2
+    (fun (x : Move.range) (y : Move.range) ->
+      x.start = y.start && x.count = y.count
+      && (x.count <= 1 || x.step = y.step))
+    a b
+
+let whole_region s =
+  Iarray.map (fun d -> ({ start = 0; count = d; step = 1 } : Move.range)) s
+
+(* Whether a contribution [w] to [x] can be pieces: both lie whole at [x]'s
+   cotangent's placement. *)
+let regional x w =
+  let p = ct_placement x in
+  (not (is_cut p)) && Nx.Placement.equal (Nx.placement w) p
+
+(* A window's cotangent [w] as pieces of [x], where its windows read each
+   element once. Along a windowed axis, each tap's elements are a region by
+   the windows' step; where a window ends one dilation before the next
+   starts, or there is one window, all taps are one region by the dilation.
+   [None] where two taps' regions may meet. *)
+let window_pieces x (windows : Move.window iarray) w =
+  let s = Nx.shape x and r = Nx.ndim x in
+  let ws = Iarray.to_list windows in
+  let range start count step : Move.range = { start; count; step } in
+  (* An axis's taps: [None] for all of them as one region, else one. *)
+  let taps (v : Move.window) =
+    let n = Nx.dim v.axis w in
+    if n <= 1 || v.step = v.size * v.dilation then
+      Some [ (None, range 0 (n * v.size) v.dilation) ]
+    else
+      let tap j = (Some j, range (j * v.dilation) n v.step) in
+      let ts = List.init v.size tap in
+      let one (_, a) = Iarray.of_list [ a ] in
+      let rec apart = function
+        | [] -> true
+        | t :: rest ->
+            List.for_all (fun u -> not (overlap (one t) (one u))) rest
+            && apart rest
+      in
+      if apart ts then Some ts else None
+  in
+  let taps = List.map taps ws in
+  if Nx.numel w = 0 then Some []
+  else if List.mem None taps then None
+  else
+    let taps = List.map Option.get taps in
+    (* Each window's tap axis beside its axis, so that an axis and its taps
+       read in C order are the region's elements in order. *)
+    let at a = List.find_index (fun (v : Move.window) -> v.axis = a) ws in
+    let beside a = match at a with Some i -> [ a; r + i ] | None -> [ a ] in
+    let order = List.concat_map beside (List.init r Fun.id) in
+    let w = Nx.transpose ~axes:order w in
+    let piece choice =
+      let region = Array.map (fun d -> range 0 d 1) s in
+      let index = ref [] in
+      for a = r - 1 downto 0 do
+        match at a with
+        | None -> index := Nx.A :: !index
+        | Some i ->
+            let tap, rg = List.nth choice i in
+            region.(a) <- rg;
+            let t = match tap with None -> Nx.A | Some j -> Nx.R (j, j + 1) in
+            index := Nx.A :: t :: !index
+      done;
+      let counts = Array.map (fun (g : Move.range) -> g.count) region in
+      (Iarray.of_array region, V (Nx.reshape counts (Nx.slice !index w)))
+    in
+    let rec choices = function
+      | [] -> [ [] ]
+      | t :: rest ->
+          let cs = choices rest in
+          List.concat_map (fun c -> List.map (fun cs -> c :: cs) cs) t
+    in
+    Some (List.map piece (choices taps))
+
 (* A slice's transpose: its cotangent read back in the slice's order, then
    folded into the operand's shape, as the adjoint of the load that crops each
    axis to the slice's span and windows it by its step. *)
@@ -657,59 +751,59 @@ let summed (type v s d) ~by axes (w : (v, s, d) Nx.t) : (v, s, d) Nx.t =
 (* [y] at shape [s], itself where it has that shape. *)
 let reshaped s y = if Nx.shape y = s then y else Nx.reshape s y
 
+(* A movement's cotangent [w] of [x], a whole value: a slice's and a
+   window's folded into [x]'s shape, [+0.] at each element they do not
+   read. *)
+let unmoved env (mv : Move.t) x w =
+  let s = Nx.shape x in
+  match mv with
+  | Reshape _ -> held (V (Nx.reshape s w))
+  | Permute p ->
+      (* The inverse map: each axis [p] lists at its place, each it leaves
+         out a new axis, each it adds left out. *)
+      let inv =
+        Iarray.init (Nx.ndim x) (fun a ->
+            Option.value ~default:(-1) (Iarray.find_index (( = ) a) p))
+      in
+      held (V (Prim.eval ~by:env.name (Move (Permute inv, w))))
+  | Broadcast b ->
+      (* Summed over each axis that repeats the operand. *)
+      let b = Iarray.to_array b in
+      let lead = Array.length b - Array.length s in
+      let repeats a = b.(a) <> 1 && (a < lead || s.(a - lead) = 1) in
+      let axes = List.filter repeats (List.init (Array.length b) Fun.id) in
+      if regional x w then
+        (* Whole where the operand is whole, as on one device: so is the
+           sum. *)
+        if axes = [] then held (V (reshaped s w))
+        else fresh (V (reshaped s (summed ~by:env.name axes w)))
+      else unbroadcast env x ~lead ~axes w
+  | Slice ranges -> fresh (V (unslice env x ranges w))
+  | Window windows ->
+      let r = Nx.ndim x in
+      let zeros = Iarray.init r (fun _ -> 0) in
+      let pad : Nx_kernel.pad =
+        { lo = zeros; hi = zeros; interior = zeros; windows }
+      in
+      let shape = Iarray.of_array s in
+      fresh (V (Prim.eval ~by:env.name (Fold { shape; pad; x = w })))
+
+(* A slice's or a window's contribution is pieces where it can be, so that
+   each element it reads receives its cotangent alone and every other
+   element nothing ({!unmoved} gives those [+0.]). *)
 let move_rule env (mv : Move.t) x (V w) =
-  let w = with_dtype (Nx.dtype x) w and s = Nx.shape x in
-  let c =
+  let w = with_dtype (Nx.dtype x) w in
+  let pieces =
     match mv with
-    | Reshape _ -> held (V (Nx.reshape s w))
-    | Permute p ->
-        (* The inverse map: each axis [p] lists at its place, each it leaves
-           out a new axis, each it adds left out. *)
-        let inv =
-          Iarray.init (Nx.ndim x) (fun a ->
-              Option.value ~default:(-1) (Iarray.find_index (( = ) a) p))
-        in
-        held (V (Prim.eval ~by:env.name (Move (Permute inv, w))))
-    | Broadcast b ->
-        (* Summed over each axis that repeats the operand. *)
-        let b = Iarray.to_array b in
-        let lead = Array.length b - Array.length s in
-        let repeats a = b.(a) <> 1 && (a < lead || s.(a - lead) = 1) in
-        let axes = List.filter repeats (List.init (Array.length b) Fun.id) in
-        let px = ct_placement x in
-        if (not (is_cut px)) && Nx.Placement.equal (Nx.placement w) px then
-          (* Whole where the operand is whole, as on one device: so is the
-             sum. *)
-          if axes = [] then held (V (reshaped s w))
-          else fresh (V (reshaped s (summed ~by:env.name axes w)))
-        else unbroadcast env x ~lead ~axes w
-    | Slice ranges -> fresh (V (unslice env x ranges w))
-    | Window windows ->
-        let r = Nx.ndim x in
-        let zeros = Iarray.init r (fun _ -> 0) in
-        let pad : Nx_kernel.pad =
-          { lo = zeros; hi = zeros; interior = zeros; windows }
-        in
-        let shape = Iarray.of_array s in
-        fresh (V (Prim.eval ~by:env.name (Fold { shape; pad; x = w })))
+    | Slice ranges when regional x w -> Some [ (ranges, V w) ]
+    | Window windows when regional x w -> window_pieces x windows w
+    | _ -> None
   in
-  env.give x c
+  match pieces with
+  | Some ps -> env.give_pieces x ps
+  | None -> env.give x (unmoved env mv x w)
 
 (* Assemblies *)
-
-let interval ({ start; count; step } : Move.range) =
-  let last = start + ((count - 1) * step) in
-  (Int.min start last, Int.max start last)
-
-(* Whether two regions may share an element: their spans meet on every axis. *)
-let overlap a b =
-  Iarray.for_all2
-    (fun (x : Move.range) (y : Move.range) ->
-      x.count > 0 && y.count > 0
-      &&
-      let x0, x1 = interval x and y0, y1 = interval y in
-      x0 <= y1 && y0 <= x1)
-    a b
 
 let assemble_rule (type v s) env (dtype : (v, s) D.t) shape pieces (V w) =
   let w = with_dtype dtype w in
@@ -1223,6 +1317,51 @@ let next_bases (p : Program.t) =
   let base = function Op { base; _ } | Do { base; _ } -> base in
   Array.init n (fun e -> if e + 1 < n then base p.eqns.(e + 1) else p.slots)
 
+(* Running cotangents
+
+   A variable's running cotangent is a whole value, or pieces of it at its
+   placement, which is whole, latest first, each laid over those before it:
+   its value is their assembly over [+0.], whose last piece wins, so an
+   element no piece holds has received no contribution. A slice's or a
+   window's contribution is pieces, a whole one a piece that covers the
+   variable. Each piece of a contribution, which are disjoint, joins the
+   running ones by one of three rules, from the latest held piece that may
+   share an element with it:
+   - where that piece has its region, the piece is added to it, the held one
+     first;
+   - where there is none, the piece is kept beside them;
+   - otherwise it is laid over them, holding the sum of their assembly over
+     [-0.], which adds to no term, at its region and the piece.
+   The pieces are assembled once, where the cotangent is read. *)
+
+(* The assembly over [+0.], or over [-0.] where [identity], of pieces of [x],
+   latest first: the latest that covers [x] alone where it is the earliest
+   left. *)
+let assembly ~by ~identity (V x) pieces =
+  let s = Nx.shape x in
+  let whole = whole_region (Iarray.of_array s) in
+  let rec upto = function
+    | [] -> []
+    | ((r, _) as p) :: rest -> if same r whole then [ p ] else p :: upto rest
+  in
+  match upto pieces with
+  | [ (r, v) ] when same r whole -> v
+  | pieces -> (
+      match reference (List.rev_map snd pieces) with
+      | V r ->
+          let dtype = Nx.dtype x in
+          let piece (region, V p) = (region, with_dtype dtype (rebrand r p)) in
+          let fill = if identity then neg_zero dtype else D.zero dtype in
+          V
+            (Prim.eval ~by
+               (Assemble
+                  {
+                    dtype;
+                    shape = Iarray.of_array s;
+                    fill;
+                    pieces = List.rev_map piece pieces;
+                  })))
+
 (* [p]'s parameters' cotangents, given its outputs' [cts]: [None] for a
    parameter bound to a constant ([consts.(k) = Some v]) or one that receives no
    contribution. *)
@@ -1265,23 +1404,63 @@ let rec walk ~name ~fn (p : Program.t) consts cts =
     let (V w) = c.v in
     if not (Nx.Placement.equal (ct_placement x) (Nx.placement w)) then
       primal := mark !primal ~slots:(Array.length acc) n x;
-    acc.(n) <-
-      Some
-        (match acc.(n) with
-        | None -> c
-        | Some a when apart a c ->
-            let x = primal_at !primal n in
-            sum (at_primal ~name x a) (at_primal ~name x c)
-        | Some a -> sum a c)
+    match acc.(n) with
+    | None -> acc.(n) <- Some (Whole c)
+    | Some (Whole a) when apart a c ->
+        let x = primal_at !primal n in
+        let c = sum (at_primal ~name x a) (at_primal ~name x c) in
+        acc.(n) <- Some (Whole c)
+    | Some (Whole a) -> acc.(n) <- Some (Whole (sum a c))
+    | Some (Pieces (_, ps)) ->
+        let a = fresh (assembly ~by:name ~identity:true (V x) ps) in
+        let c = at_primal ~name (primal_at !primal n) c in
+        acc.(n) <- Some (Whole (sum a c))
   in
-  let env = { name; lin; const; give; fn } in
+  let add a p = (sum (held a) (held p)).v in
+  let give_pieces x ps =
+    let n = var x in
+    let whole = whole_region (Iarray.of_array (Nx.shape x)) in
+    match (ps, acc.(n)) with
+    | [], _ -> ()
+    | [ (r, v) ], _ when same r whole -> give x (held v)
+    | _, None -> acc.(n) <- Some (Pieces (V x, List.rev ps))
+    | _, Some running -> (
+        let hs =
+          match running with
+          | Whole a -> [ (whole, (at_primal ~name (primal_at !primal n) a).v) ]
+          | Pieces (_, hs) -> hs
+        in
+        (* The rules of running cotangents, from the latest held piece the
+           new one may meet. *)
+        let rec join (r, p) = function
+          | [] -> [ (r, p) ]
+          | (q, a) :: rest when same q r -> (q, add a p) :: rest
+          | ((q, _) :: _) as hs when overlap q r ->
+              let (V b) = assembly ~by:name ~identity:true (V x) hs in
+              (r, add (V (Prim.eval ~by:name (Move (Slice r, b)))) p) :: hs
+          | h :: rest -> h :: join (r, p) rest
+        in
+        let hs = List.fold_left (fun hs p -> join p hs) hs ps in
+        acc.(n) <- Some (Pieces (V x, hs)))
+  in
+  (* Variable [n]'s cotangent, its pieces assembled. *)
+  let ct n =
+    match acc.(n) with
+    | None -> None
+    | Some (Whole c) -> Some c
+    | Some (Pieces (x, ps)) ->
+        let c = fresh (assembly ~by:name ~identity:false x ps) in
+        acc.(n) <- Some (Whole c);
+        Some c
+  in
+  let env = { name; lin; const; give; give_pieces; fn } in
   Array.iteri
     (fun k c ->
       match (c, p.outputs.(k)) with
       | Some c, V y -> if lin y then give y (held c)
       | None, _ -> ())
     cts;
-  let acc_at base k = Option.map (fun c -> c.v) acc.(base + k) in
+  let acc_at base k = Option.map (fun c -> c.v) (ct (base + k)) in
   let next = next_bases p in
   let reached base n =
     let k = ref 0 in
@@ -1291,7 +1470,7 @@ let rec walk ~name ~fn (p : Program.t) consts cts =
     !k < n
   in
   let cts_at base n k =
-    if k < n then Option.map (fun c -> c.v) acc.(base + k) else None
+    if k < n then Option.map (fun c -> c.v) (ct (base + k)) else None
   in
   for e = Array.length p.eqns - 1 downto 0 do
     (match p.eqns.(e) with
@@ -1306,7 +1485,7 @@ let rec walk ~name ~fn (p : Program.t) consts cts =
         let n = next.(e) - base in
         if reached base n then rule env op (cts_at base n)
     | Do { c = Lanes (a, x); base } -> (
-        match acc.(base) with
+        match ct base with
         | Some c when lin x -> give x (fresh (lanes_transpose a x c.v))
         | _ -> ())
     | Do
@@ -1420,7 +1599,7 @@ let rec walk ~name ~fn (p : Program.t) consts cts =
       (fun k c -> if Option.is_none c then settle ~name ps acc p.params.(k))
       consts;
   Array.mapi
-    (fun k c -> if Option.is_none c then acc.(p.params.(k)) else None)
+    (fun k c -> if Option.is_none c then ct p.params.(k) else None)
     consts
 
 (* A linear scan's transpose is the scan of its step's transpose over the same

@@ -9,6 +9,7 @@
 # forced: blessed Jit/var-float64-1M Jit/std-float64-1M under load 37.5 on 14 cores
 # forced: blessed Cuda/cat-16-columns-of-exp-64x64 under load 7.5 on 14 cores
 # forced: blessed CudaWords/remat-chains-2x4-grad-hit under load 22.1 on 14 cores
+# forced: blessed JitFootprint/stacked-grad-scan-k4-replay under load 13.2 on 14 cores
 
 Bodies/grad-scan-in-a-rule-in-a-total-scope-eager	alloc_words	exact	52718
 Bodies/grad-scan-in-a-rule-in-a-total-scope-eager	wall_time	batch=32	n=20	2.070e-04	2.020e-04 2.025e-04 2.025e-04 2.028e-04 2.033e-04 2.034e-04 2.037e-04 2.057e-04 2.057e-04 2.061e-04 2.079e-04 2.088e-04 2.093e-04 2.095e-04 2.101e-04 2.105e-04 2.108e-04 2.108e-04 2.109e-04 2.116e-04
@@ -115,6 +116,8 @@ JitFootprint/rnn-fwd-h20-replay	alloc_words	exact	3147
 JitFootprint/rnn-fwd-h20-replay	wall_time	batch=64	n=20	9.166e-05	9.046e-05 9.080e-05 9.093e-05 9.110e-05 9.113e-05 9.125e-05 9.141e-05 9.151e-05 9.154e-05 9.159e-05 9.172e-05 9.174e-05 9.175e-05 9.184e-05 9.186e-05 9.186e-05 9.191e-05 9.191e-05 9.193e-05 9.194e-05
 JitFootprint/rnn-grad-h20-replay	alloc_words	exact	6430
 JitFootprint/rnn-grad-h20-replay	wall_time	batch=16	n=20	3.136e-04	2.627e-04 2.733e-04 2.771e-04 2.786e-04 2.977e-04 3.054e-04 3.123e-04 3.124e-04 3.125e-04 3.129e-04 3.142e-04 3.175e-04 3.220e-04 3.315e-04 3.329e-04 3.352e-04 3.401e-04 3.469e-04 3.741e-04 3.813e-04
+JitFootprint/stacked-grad-scan-k4-replay	alloc_words	exact	1376
+JitFootprint/stacked-grad-scan-k4-replay	wall_time	batch=4	n=20	1.312e-03	1.227e-03 1.230e-03 1.234e-03 1.235e-03 1.249e-03 1.255e-03 1.273e-03 1.300e-03 1.304e-03 1.310e-03 1.314e-03 1.319e-03 1.344e-03 1.382e-03 1.399e-03 1.414e-03 1.444e-03 1.557e-03 1.576e-03 1.582e-03
 JitLoops/iterate-64-rows-into-4096x64-replay	alloc_words	exact	956
 JitLoops/lorenz-scan-grad-n100-replay	alloc_words	exact	1265
 JitLoops/lorenz-scan-grad-n100-replay	wall_time	batch=128	n=20	5.742e-05	5.590e-05 5.618e-05 5.626e-05 5.648e-05 5.670e-05 5.701e-05 5.715e-05 5.718e-05 5.724e-05 5.741e-05 5.743e-05 5.745e-05 5.750e-05 5.752e-05 5.756e-05 5.806e-05 5.826e-05 5.852e-05 5.892e-05 5.925e-05

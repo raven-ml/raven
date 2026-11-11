@@ -825,6 +825,197 @@ let test_zeros () =
     [| (false, 0.) |]
     (g (Nx.broadcast_to [| 2 |]) [| 1. |])
 
+(* Two reads of regions of one array, eagerly and compiled: each element
+   receives the contributions of the reads that reach it alone, so that one
+   [-0.] keeps its sign, and an element no read reaches is [+0.]. Each
+   read's cotangent is [-0.] at every element. *)
+let test_region_zeros () =
+  let zeroed y = Nx.sum (Nx.mul y (Nx.full_like y (-0.))) in
+  let two r s x = Nx.add (zeroed (r x)) (zeroed (s x)) in
+  let check msg want f xs =
+    let x = v xs in
+    equal ~msg signed want (with_signs (Rune.grad' f x));
+    let g = Rune.jit T.(tensor @-> returns tensor) (Rune.grad' f) in
+    equal ~msg:(msg ^ ", compiled") signed want (with_signs (g x))
+  in
+  let neg = (true, -0.) and pos = (false, 0.) in
+  let windows window step = Nx.sliding_window ~window ~step in
+  check "two rows" [| neg; neg |]
+    (two (Nx.get [ 0 ]) (Nx.get [ 1 ]))
+    [| 1.; 2. |];
+  check "a slice by steps and a row" [| neg; neg; neg; pos |]
+    (two (Nx.slice [ Rs (0, 3, 2) ]) (Nx.get [ 1 ]))
+    [| 1.; 2.; 3.; 4. |];
+  check "windows and a row" [| neg; neg; neg; pos |]
+    (two (windows 1 2) (Nx.get [ 1 ]))
+    [| 1.; 2.; 3.; 4. |];
+  check "two reads of windows" [| neg; pos; neg; neg |]
+    (two (windows 1 2) (windows 1 3))
+    [| 1.; 2.; 3.; 4. |];
+  check "windows apart and a row" [| neg; neg; neg; neg; neg |]
+    (two (windows 2 3) (Nx.get [ 2 ]))
+    [| 1.; 2.; 3.; 4.; 5. |];
+  (* Along the second axis a dilated window spans 3 of 2: no window. *)
+  let patches x =
+    Nx.extract_patches ~kernel_size:[| 2; 2 |] ~stride:[| 1; 1 |]
+      ~dilation:[| 1; 2 |]
+      ~padding:[| (0, 0); (0, 0) |]
+      (Nx.reshape [| 1; 3; 2 |] x)
+  in
+  check "no window and the whole" (Array.make 6 neg) (two patches Fun.id)
+    [| 1.; 2.; 3.; 4.; 5.; 6. |]
+
+(* Reads of regions
+
+   Reads of an array by slices and by windows, each summed and scaled: an
+   element's gradient is the sum of the scales of the reads that reach it, a
+   term each time a read reaches it, the reads taken from the last back, as
+   the transpose meets them, with no zero before the first, and [+0.] where
+   none does. A read of windows that share elements contributes [+0.] to each
+   element it does not reach. Scales of far magnitudes and zeros of both
+   signs show the order of the sums and their signs, in bits, eagerly and
+   compiled. *)
+
+type read = Slice of int * int * int | Windows of int * int
+type reads = { n : int; reads : (read * float) list }
+
+let pp_reads ppf { n; reads } =
+  let pp_read ppf (r, c) =
+    match r with
+    | Slice (start, count, step) ->
+        Format.fprintf ppf "%d from %d by %d, times %h" count start step c
+    | Windows (size, step) ->
+        Format.fprintf ppf "windows of %d by %d, times %h" size step c
+  in
+  let sep ppf () = Format.fprintf ppf "; " in
+  Format.fprintf ppf "%d elements: %a" n
+    (Format.pp_print_list ~pp_sep:sep pp_read)
+    reads
+
+let reads_gen =
+  let open Gen in
+  let slice n =
+    if n = 0 then constant (Slice (0, 0, 1))
+    else
+      let* start = int_range 0 (n - 1)
+      and+ step = of_list [ -2; -1; 1; 2; 3 ] in
+      let most =
+        if step > 0 then ((n - 1 - start) / step) + 1 else (start / -step) + 1
+      in
+      let+ count = int_range 0 most in
+      Slice (start, count, step)
+  in
+  let windows =
+    let+ size = int_range 1 3 and+ step = int_range 1 3 in
+    Windows (size, step)
+  in
+  let scale = of_list [ 0x1p53; 1.; -0x1p53; -0.; 0.; 3.; -2. ] in
+  let any =
+    let* n = int_range 0 6 in
+    let read = pair (one_of [ slice n; windows ]) scale in
+    let+ reads = list ~size:(int_range 1 4) read in
+    { n; reads }
+  in
+  (* A [-0.] read of the last element, which the transpose meets after two
+     reads that overlap before it. *)
+  let after_overlap =
+    let* n = int_range 3 6 in
+    let* c1 = int_range 2 (n - 1) and+ c2 = int_range 1 (n - 2) in
+    let+ k1 = scale and+ k2 = scale in
+    let one = (Slice (n - 1, 1, 1), -0.) in
+    { n; reads = [ one; (Slice (0, c1, 1), k1); (Slice (1, c2, 1), k2) ] }
+  in
+  with_pp pp_reads (frequency [ (3, any); (1, after_overlap) ])
+
+(* The elements a read reaches, an element once each time, and whether it
+   reads windows that share elements. *)
+let reached n = function
+  | Slice (start, count, step) ->
+      (List.init count (fun j -> start + (j * step)), false)
+  | Windows (size, step) ->
+      let windows = if size > n then 0 else ((n - size) / step) + 1 in
+      let window w = List.init size (fun j -> (w * step) + j) in
+      (List.concat (List.init windows window), windows > 1 && step < size)
+
+let read_of n r x =
+  match r with
+  | Slice (start, 0, _) -> Nx.slice [ R (start, start) ] x
+  | Slice (start, count, step) ->
+      let last = start + ((count - 1) * step) in
+      (* A stop past the axis's start, [-n - 1], counts from the end to
+         [-1]. *)
+      let stop =
+        if step > 0 then last + 1 else if last = 0 then -n - 1 else last - 1
+      in
+      Nx.slice [ Rs (start, stop, step) ] x
+  | Windows (size, step) -> Nx.sliding_window ~window:size ~step x
+
+let regions_law { n; reads } =
+  let f x =
+    List.fold_left
+      (fun s (r, k) -> Nx.add s (Nx.mul_s (Nx.sum (read_of n r x)) k))
+      (Nx.scalar f64 0.) reads
+  in
+  let element i =
+    let term (r, k) =
+      let at, shares = reached n r in
+      match List.filter (( = ) i) at with
+      | [] -> if shares then Some 0. else None
+      | _ :: rest -> Some (List.fold_left (fun s _ -> s +. k) k rest)
+    in
+    let add s t =
+      match (s, t) with
+      | None, t -> t
+      | s, None -> s
+      | Some a, Some b -> Some (a +. b)
+    in
+    Option.value ~default:0.
+      (List.fold_left (fun s r -> add s (term r)) None (List.rev reads))
+  in
+  let elements = List.init n Fun.id in
+  let reaching i =
+    List.filter (fun (r, _) -> List.mem i (fst (reached n r))) reads
+  in
+  let alone i =
+    let e = element i in
+    List.length (reaching i) = 1
+    && List.length reads > 1 && e = 0. && Float.sign_bit e
+  in
+  let reversed = function Slice (_, c, s), _ -> c > 1 && s < 0 | _ -> false in
+  cover "an element two reads reach"
+    (List.exists (fun i -> List.length (reaching i) > 1) elements);
+  cover "windows that share elements"
+    (List.exists (fun (r, _) -> snd (reached n r)) reads);
+  cover "a reversed slice" (List.exists reversed reads);
+  cover "a negative zero of one read among others" (List.exists alone elements);
+  (* An element only one [-0.] read reaches, which the transpose meets
+     after two reads in different regions that share an element: each read
+     after it in the program. *)
+  let rec overlapped = function
+    | [] -> false
+    | a :: rest ->
+        let shared b = a <> b && List.exists (fun e -> List.mem e b) a in
+        List.exists shared rest || overlapped rest
+  in
+  let after_overlap i =
+    let reaches (r, _) = List.mem i (fst (reached n r)) in
+    match List.find_index reaches reads with
+    | None -> false
+    | Some k ->
+        let later = List.filteri (fun j _ -> j > k) reads in
+        alone i
+        && (not (List.exists (fun (r, _) -> snd (reached n r)) reads))
+        && overlapped (List.map (fun (r, _) -> fst (reached n r)) later)
+  in
+  cover "a negative zero of one read after two that overlap"
+    (List.exists after_overlap elements);
+  let x = Nx.create f64 [| n |] (Array.make n 1.) in
+  let bits a = Array.map Int64.bits_of_float (Nx.to_array a) in
+  let want = Array.map Int64.bits_of_float (Array.init n element) in
+  equal ~msg:"eager" (array int64) want (bits (Rune.grad' f x));
+  let g = Rune.jit T.(tensor @-> returns tensor) (Rune.grad' f) in
+  equal ~msg:"compiled" (array int64) want (bits (g x))
+
 (* A truncated normal over [[0, inf]] does not move with its upper bound,
    whose masses' unselected branches meet a zero cotangent with no infinite
    factor. A draw's tangent through a broadcast bound, which a tangent of
@@ -1639,6 +1830,9 @@ let () =
                softplus_points softplus_law;
              test "selections" test_selections;
              test "signs of zero" test_zeros;
+             test "signs of zero through reads of regions" test_region_zeros;
+             prop "reads of regions sum each element's contributions"
+               reads_gen regions_law;
              test "a truncated normal's bounds" test_draws;
            ];
          group "interface"

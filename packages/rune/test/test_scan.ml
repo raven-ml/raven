@@ -1517,6 +1517,44 @@ let test_constant_take () =
   compiles ~msg:"take" f
     (on0 (Nx.create f32 [| 4; 3 |] (Array.init 12 Float.of_int)))
 
+(* A scan whose next carry is the carry plus the gradient of a stack read by
+   regions, or a descent over the stack, gives eager's bits compiled: where
+   the regions leave rows of the carry, one of them [-0.], where they
+   overlap, and where each row's gradient reads another row of the carry. *)
+let test_stacked_carry () =
+  let w =
+    on0 (Nx.create f32 [| 4; 2 |] [| 0.5; -1.; 2.; 0.25; -0.5; 1.; 3.; -2. |])
+  in
+  let xs = on0 (Nx.create f32 [| 3; 2 |] [| 1.; -2.; 0.5; 3.; -1.; 2. |]) in
+  let carry =
+    on0 (Nx.create f32 [| 4; 2 |] [| 1.; 1.; -0.; -0.; 1.; 1.; -0.; 5. |])
+  in
+  let term r x = Nx.sum (Nx.mul r x) in
+  let rows w x =
+    Nx.add (term (Nx.get [ 0 ] w) x) (term (Nx.get [ 2 ] w) (Nx.mul x x))
+  in
+  let spans w x =
+    let span lo hi = Nx.slice [ R (lo, hi) ] w in
+    Nx.add (term (span 0 2) x) (term (span 1 3) (Nx.mul x x))
+  in
+  let across w x = term (Nx.mul (Nx.get [ 0 ] w) (Nx.get [ 2 ] w)) x in
+  let summed loss xs =
+    fst
+      (Rune.scan'
+         (fun c x -> (Nx.add c (Rune.grad' (fun w -> loss w x) w), Nx.sum x))
+         ~init:carry xs)
+  in
+  let descent loss xs =
+    fst
+      (Rune.scan'
+         (fun w x -> (Nx.sub w (Rune.grad' (fun w -> loss w x) w), Nx.sum x))
+         ~init:w xs)
+  in
+  compiles ~msg:"rows that leave rows of the carry" (summed rows) xs;
+  compiles ~msg:"spans that overlap" (summed spans) xs;
+  compiles ~msg:"a descent whose rows read each other" (descent across) xs;
+  compiles ~msg:"a descent over rows" (descent rows) xs
+
 (* A carry with no element beside rows with elements: compiled, and its gradient
    mapped over no lane. *)
 let test_empty_carry () =
@@ -2465,6 +2503,7 @@ let () =
              test "constant and empty outputs" test_constant_outputs;
              test "a take at constant indices" test_constant_take;
              test "an empty carry beside rows" test_empty_carry;
+             test "a carry summing a stack's gradient" test_stacked_carry;
              test "a step traces once and compiles one loop" test_staged;
              prop "a compiled call in a step computes its own bits" call_cases
                law_call;

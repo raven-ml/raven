@@ -479,6 +479,86 @@ let test_summed_step () =
         int ~than:(whole + 1) recomputed)
     [ 1; 2; 4 ]
 
+(* The stacks read by rows against separate arrays: each row's gradient is
+   its region of the stack's, so the gradient alone holds no more over the
+   stacks, with or without remats. A step that sums it in its carry over [k]
+   chunks without remats adds each row's gradient into its region of the
+   carry, in the carry's storage, so it holds no more either. *)
+let test_stacked_step () =
+  let pd = T.(list (pair tensor tensor)) and pt = T.(pair tensor tensor) in
+  let apart =
+    List.init layers (fun i ->
+        let w1, w2 = layer ws i in
+        (Nx.copy w1, Nx.copy w2))
+  in
+  let loss remat ws x =
+    Nx.sum
+      (List.fold_left
+         (fun a w ->
+           let b = block w in
+           if remat then rm b a else b a)
+         (Nx.sin x) ws)
+  in
+  let rows ws = List.init layers (layer ws) in
+  let on_host (r, _) = Rig.equal r Rig.host in
+  let bytes s f x = snd (List.find on_host (Rune.footprint s f x)) in
+  let no_more msg ~apart:x ~stacked:y =
+    less ~msg:(Printf.sprintf "%s: %d bytes stacked, %d apart" msg y x) int
+      ~than:(x + 1) y
+  in
+  List.iter
+    (fun remat ->
+      let x =
+        bytes
+          T.(pair pd tensor @-> returns pd)
+          (fun (ws, a) -> Rune.grad pd (fun ws -> loss remat ws a) ws)
+          (apart, a)
+      and y =
+        bytes
+          T.(pair pt tensor @-> returns pt)
+          (fun (ws, a) -> Rune.grad pt (fun ws -> loss remat (rows ws) a) ws)
+          (ws, a)
+      in
+      no_more (Printf.sprintf "the gradient, remats %b" remat) ~apart:x
+        ~stacked:y)
+    [ false; true ];
+  let chunks k a = Nx.reshape [| k; batch / k; dim |] a in
+  let f_apart k (ws, a) =
+    let step (l, sums) x =
+      let v, gs = Rune.value_and_grad pd (fun ws -> loss false ws x) ws in
+      let add (s1, s2) (g1, g2) = (Nx.add s1 g1, Nx.add s2 g2) in
+      ((Nx.add l v, List.map2 add sums gs), ())
+    in
+    let zeros (w1, w2) = (Nx.zeros_like w1, Nx.zeros_like w2) in
+    fst
+      (Rune.scan T.(pair tensor pd) T.tensor T.unit step
+         ~init:(Nx.scalar f32 0., List.map zeros ws)
+         (chunks k a))
+  in
+  let f_stacked k ((w1, w2), a) =
+    let step (l, (s1, s2)) x =
+      let v, (g1, g2) =
+        Rune.value_and_grad pt (fun ws -> loss false (rows ws) x) (w1, w2)
+      in
+      ((Nx.add l v, (Nx.add s1 g1, Nx.add s2 g2)), ())
+    in
+    fst
+      (Rune.scan T.(pair tensor pt) T.tensor T.unit step
+         ~init:(Nx.scalar f32 0., (Nx.zeros_like w1, Nx.zeros_like w2))
+         (chunks k a))
+  in
+  List.iter
+    (fun k ->
+      let x =
+        bytes T.(pair pd tensor @-> returns (pair tensor pd)) (f_apart k)
+          (apart, a)
+      and y =
+        bytes T.(pair pt tensor @-> returns (pair tensor pt)) (f_stacked k)
+          (ws, a)
+      in
+      no_more (Printf.sprintf "%d chunks" k) ~apart:x ~stacked:y)
+    [ 2; 4; 8 ]
+
 (* Donation *)
 
 (* A result that takes a donated argument's memory is stored over it after the
@@ -859,6 +939,8 @@ let () =
                test_step_gradient;
              test "a step that sums a gradient in its carry plans each trip"
                test_summed_step;
+             test "stacks read by rows hold what separate arrays hold"
+               test_stacked_step;
              test "a result takes a donated argument after the backward pass"
                test_donated;
            ];

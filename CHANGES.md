@@ -434,6 +434,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A slice's cotangent, or that of windows sharing no element, reaches its
+  region alone: an element one read reaches keeps its sign of zero, as the
+  Sums rule states, and a stack read by `Nx.get` costs one gradient.
 - `Rune.jit` adds an assembly, as `Nx.stack`'s, into a loop's carry region
   by region in the carry's storage, where it stored the assembly apart.
 - `Rune.jit`'s attention compiles kernels whose code does not grow with

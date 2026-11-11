@@ -184,7 +184,9 @@
     functions, reductions, scans, movements, pads and windows is that
     contribution, sign of zero included: [grad' (fun x -> Nx.sum (Nx.mul x x))]
     at [-0.] is [-0.]. The contributions through a gather, as [Nx.take]'s, and
-    the copies of a broadcast are summed from [+0.], as [Nx.sum] sums. An
+    the copies of a broadcast are summed from [+0.], as [Nx.sum] sums. A read
+    of windows that share elements, as [Nx.sliding_window]'s whose step is
+    below its window, contributes [+0.] to each element it does not read. An
     element that receives none is [+0.]. A {!scan}'s or an {!iterate}'s carry
     holds a derivative at every step: where the call or a step gives a carry
     array none, the next step takes a zero from it, so the derivative may

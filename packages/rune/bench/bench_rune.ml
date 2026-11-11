@@ -1154,6 +1154,35 @@ let rnn_params horizon =
     xs = List.init horizon (fun _ -> draw [| 32; 32 |]);
   }
 
+(* A step of gradient accumulation over stacks of 8 layers' weights read by
+   [Nx.get], a scan of 4 chunks summing the gradient in its carry: each row's
+   gradient is added into its region of the carry, in the carry's storage. *)
+let stacked_layers = 8
+let stacked_t = Nx.Ptree.(pair tensor tensor)
+
+let stacked_step (ws, a) =
+  let block (w1, w2) a =
+    let h = Nx.matmul a w1 in
+    Nx.add a (Nx.matmul (Nx.maximum h (Nx.zeros_like h)) w2)
+  in
+  let loss (w1, w2) x =
+    let layer i = (Nx.get [ i ] w1, Nx.get [ i ] w2) in
+    Nx.sum
+      (List.fold_left
+         (fun a i -> block (layer i) a)
+         (Nx.sin x)
+         (List.init stacked_layers Fun.id))
+  in
+  let step (l, (s1, s2)) x =
+    let v, (g1, g2) = Rune.value_and_grad stacked_t (fun ws -> loss ws x) ws in
+    ((Nx.add l v, (Nx.add s1 g1, Nx.add s2 g2)), ())
+  in
+  let w1, w2 = ws in
+  let init = (Nx.scalar f32 0., (Nx.zeros_like w1, Nx.zeros_like w2)) in
+  fst
+    (Rune.scan Nx.Ptree.(pair tensor stacked_t) t Nx.Ptree.unit step ~init
+       (Nx.reshape [| 4; 16; 32 |] a))
+
 let footprint_rows () =
   let state k = normal k [| 64 |] in
   let s = { lx = state 13; ly = state 14; lz = state 15 } in
@@ -1182,6 +1211,15 @@ let footprint_rows () =
     rnn_row "rnn-fwd h2 replay" 2 fwd;
     rnn_row "rnn-fwd h20 replay" 20 fwd;
     rnn_row "rnn-grad h20 replay" 20 grad;
+    (let ws =
+       ( Nx.mul_s (normal 70 [| stacked_layers; 32; 64 |]) 0.05,
+         Nx.mul_s (normal 71 [| stacked_layers; 64; 32 |]) 0.05 )
+     and a = normal 72 [| 64; 32 |] in
+     let out = Nx.Ptree.(pair tensor stacked_t) in
+     warm "stacked-grad-scan k4 replay"
+       (fun () ->
+         Rune.jit Nx.Ptree.(pair stacked_t tensor @-> returns out) stacked_step)
+       (fun g -> synced_all out (g (ws, a))));
   ]
 
 (* Newton's iteration for the square roots of 1024 values in [[0.5, 4.5)],
