@@ -83,8 +83,9 @@ let census () =
 let left p = List.filter (fun n -> n = 64 || n = page) (P.outstanding p)
 
 (* Runs [op] on a device it ran on once, which made what the device keeps for
-   good, with [failure]; checks what the failure left, and runs [op] again: the
-   growth of the C heap. *)
+   good, with [failure]; checks what the failure left, runs [op] again and
+   closes the device: the growth of the C heap. A device left open would keep
+   its memory in the heap that every later collection of the walk reads. *)
 let attempt op failure =
   let name = fresh op.name in
   let d, p = op.opener name in
@@ -111,6 +112,7 @@ let attempt op failure =
   let d = if lost = None then d else fst (op.opener name) in
   op.prepare d None;
   settle d;
+  Rig.close d;
   match (heap, heap') with Some h, Some h' -> h' - h | _ -> 0
 
 (* The fallible calls [op] makes on a device it ran on once. *)
@@ -123,6 +125,7 @@ let steps op =
   run None;
   let k = P.steps p - before in
   settle d;
+  Rig.close d;
   k
 
 let all = [ (fun n -> Fault n); (fun n -> Refuse n); (fun n -> Exhaust n) ]
