@@ -20,10 +20,10 @@ Adan/Adan/256	alloc_words	exact	2541
 L-BFGS/1024	alloc_words	exact	30433
 L-BFGS/256	alloc_words	exact	30433
 L-BFGS/bfloat16/256	alloc_words	exact	35769
-LAMB/LAMB/1024	alloc_words	exact	4553
-LAMB/LAMB/256	alloc_words	exact	4553
-LARS/LARS/1024	alloc_words	exact	2119
-LARS/LARS/256	alloc_words	exact	2119
+LAMB/LAMB/1024	alloc_words	exact	4514
+LAMB/LAMB/256	alloc_words	exact	4514
+LARS/LARS/1024	alloc_words	exact	2204
+LARS/LARS/256	alloc_words	exact	2204
 Lion/Lion/1024	alloc_words	exact	1214
 Lion/Lion/256	alloc_words	exact	1214
 Loss_scale/step/1024	alloc_words	exact	3116
