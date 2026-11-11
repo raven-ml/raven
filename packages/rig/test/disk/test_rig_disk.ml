@@ -1437,11 +1437,11 @@ let barriers =
         "a barrier raises a failure to write the file met as its descriptor \
          closed"
         test_failed_close;
-      test "barrier returns on an empty file a lost device borrowed"
-        (fun () ->
+      cases "barrier returns on a file a lost device borrowed and never wrote"
+        ~id:(Printf.sprintf "%d bytes") [ 0; 64 ] (fun n ->
           let path = new_path () in
           removing [ path ] @@ fun () ->
-          let f = create_file path 0 in
+          let f = create_file path n in
           let d = Result.get_ok (Rig.software "DISK-TEST-CLOSED") in
           ignore (require_some (B.borrow d (Rig_disk.buffer f)));
           Rig.close d;

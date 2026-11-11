@@ -2074,17 +2074,16 @@ let on_file c =
   | None -> true
 
 (* A barrier of the file whose memory the cell holds: a view or a borrow of a
-   file's buffer reaches its file. *)
+   file's buffer reaches its file. The barrier takes the file and reads its
+   buffer, on the disk, so it uses neither the cell's buffer nor a device that
+   borrowed it: a lost borrower's loss reaches it only through the file's last
+   write (rig_disk.mli). *)
 let barrier_ref last c outcome =
   with_buf c outcome @@ fun b ->
   let vd = verdict () in
-  invalid_if vd (dead b);
   (* A barrier returns at once on a file opened for reading or of no bytes
      (rig_disk.mli). *)
-  if not (read_only b.mem || Bytes.length b.mem.data = 0) then begin
-    owned vd b;
-    reads vd b.mem
-  end;
+  if not (read_only b.mem || Bytes.length b.mem.data = 0) then reads vd b.mem;
   judge c.w vd outcome Fun.id;
   drop_if last c
 
