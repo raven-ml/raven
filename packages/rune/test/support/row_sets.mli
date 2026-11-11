@@ -5,9 +5,8 @@
 
 (** Scatters by [Set] of rows along the middle axis of three, a position for
     each row of the last axis, as a model writes rows of its cache: of fewer
-    updates than a GPU's scatter elects at, of more, and of enough that the
-    election splits its comparisons ({!Rune.Lower.scatter_election}), and of
-    positions written in the program, which are distinct. *)
+    updates than a GPU's scatter elects at ({!Rune.Lower.scatter_election}),
+    of more, and of positions written in the program, which are distinct. *)
 
 (** The type for how the positions reach the scatter. *)
 type positions =
@@ -41,9 +40,9 @@ val gen : t Windtrap.Gen.t
 
 val examples : t list
 (** [examples] holds a case of each regime of a GPU's scatter of rows: a
-    walk outside the election's bounds, an election in one part and in
-    several, of repeating positions with one outside the axis and [p > 1],
-    and written positions of a float and of a complex number. *)
+    walk outside the election's bounds, elections of 16 to 4096 rows, of
+    repeating positions with one outside the axis and [p > 1], and written
+    positions of a float and of a complex number. *)
 
 val law : Tolk.Renderer.t -> (module Nx.Devices) -> t -> unit
 (** [law ren s c] checks that a compiled call on [s]'s first device, whose

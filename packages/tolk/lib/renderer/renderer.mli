@@ -234,10 +234,12 @@ type t = private {
   stream_threads : int;
       (** The threads that keep a part's memory busy, about as many loads in
           flight as its latency times its bandwidth. A kernel that streams an
-          operand runs about as many ({!Heuristic}). It is a bound fitted to
-          the products timed on one part of a target: 32768 on an RTX 5000
+          operand runs about as many, and a kernel of fewer outputs with a
+          long reduce groups its reduce ({!Heuristic}). It is a bound fitted
+          to the products timed on one part of a target: 32768 on an RTX 5000
           Ada (sm_89), and Metal's 16384 on an M1 Max, other Apple parts
-          unmeasured. Fixed per target, as [core_threads] is. *)
+          unmeasured. It moves the order of a sum, so it is fixed per target,
+          as [core_threads] is. *)
   local_workgroups : int;
       (** The fewest workgroups a split of threads into larger workgroups
           leaves, so that each compute unit of a part takes about as many

@@ -91,8 +91,8 @@ val scatter :
     [unique], for every combine but a narrow float's [Add], and for a [Set]
     of rows, positions an expansion repeats along every axis after [axis],
     where the walk would take one chunk and within the bounds {!election}
-    states. Such a [Set] first elects its rows: in a kernel or two, each
-    row's position is compared with those of the later rows at its index of
+    states. Such a [Set] first elects its rows: in one kernel, each row's
+    position is compared with those of the later rows at its index of
     the axes before [axis], [p k{^2}] comparisons for [p] such indices, and
     each row a later one overwrites is dropped. Each target then takes one
     update, the last in C order, as the walk gives it. A chunked walk is
@@ -181,13 +181,9 @@ val plan :
     updates that {!scatter} takes for [into] of [p·n·q] elements, an axis of
     [n] between [p] and [q], under [p·k·q] updates. *)
 
-val election :
-  Renderer.t -> p:int -> n:int -> q:int -> k:int -> int option
-(** [election ren ~p ~n ~q ~k] is [Some c] where a GPU's [Set] {!scatter} of
-    rows into [into] of [p·n·q] elements, an axis of [n] between [p] and
-    [q], under [k] rows of [q] updates at each of the [p] indices, elects its
-    rows, and [None] where it walks. It elects where {!plan} takes one chunk,
-    from 16 rows to [2{^30}] comparisons [p k{^2}]. Each row's [k]
-    comparisons are cut in [c] parts, compared in one kernel and reduced in
-    a second, where that shortens a thread's [k] comparisons by more than
-    the second kernel's launch costs. *)
+val election : Renderer.t -> p:int -> n:int -> q:int -> k:int -> bool
+(** [election ren ~p ~n ~q ~k] is whether a GPU's [Set] {!scatter} of rows
+    into [into] of [p·n·q] elements, an axis of [n] between [p] and [q],
+    under [k] rows of [q] updates at each of the [p] indices, elects its
+    rows; where it does not, it walks. It elects where {!plan} takes one
+    chunk, from 16 rows to [2{^30}] comparisons [p k{^2}]. *)

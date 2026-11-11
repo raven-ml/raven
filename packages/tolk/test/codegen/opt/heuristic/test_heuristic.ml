@@ -1477,6 +1477,59 @@ let blocks =
         (fun name -> equal int 16 (lane_outputs (recorded name)));
     ]
 
+(* Groups past 2048 outputs *)
+
+(* Whether [c]'s optimised kernel groups a reduce. *)
+let grouped c =
+  Setting.context (Setting.B (Setting.stage, false) :: c.settings) (fun () ->
+      let k = K.v (kernel c.kernel) (renderer c.renderer) in
+      K.convert_loop_to_global k;
+      K.group_for_reduces (Heuristic.hand_coded_optimizations k) > 0)
+
+(* Past 2048 outputs a GPU kernel groups its reduce where its outputs are
+   fewer than its renderer's [stream_threads], 16384 on Metal and 32768 on
+   CUDA and AMD, each of its reduces sums at least 256 values an output, and
+   the kernel contracts no two operands. *)
+let starved =
+  let groups want name = equal ~msg:"grouped" bool want (grouped (recorded name)) in
+  group "past 2048 outputs"
+    [
+      cases "a reduce of at least 256 values an output groups below \
+             stream_threads outputs"
+        ~id:Fun.id
+        [
+          "sum_rows_long_metal";
+          "sum_rows_long_cuda";
+          "sum_rows_long_amd";
+          "sum_rows_16384_cuda";
+          "sum_rows_16384_amd";
+        ]
+        (groups true);
+      cases "eight reduces of at least 256 values an output group" ~id:Fun.id
+        [ "sum_rows_eight_metal"; "sum_rows_eight_cuda"; "sum_rows_eight_amd" ]
+        (groups true);
+      cases "a reduce of fewer than 256 values an output does not group"
+        ~id:Fun.id
+        [
+          "sum_rows_short_metal";
+          "sum_rows_short_cuda";
+          "sum_rows_short_amd";
+          "sum_rows_240_metal";
+          "sum_rows_240_cuda";
+          "sum_rows_240_amd";
+        ]
+        (groups false);
+      cases "two reduces of fewer than 256 values an output do not group"
+        ~id:Fun.id
+        [ "sum_rows_pair_metal"; "sum_rows_pair_cuda"; "sum_rows_pair_amd" ]
+        (groups false);
+      cases "a kernel of stream_threads outputs does not group" ~id:Fun.id
+        [ "sum_rows_16384_metal" ] (groups false);
+      cases "a contraction does not group" ~id:Fun.id
+        [ "matmul_long_cuda"; "matmul_long_amd" ]
+        (groups false);
+    ]
+
 (* The host's lanes *)
 
 (* The kernel information of [k] lowered for the host with [file]'s
@@ -2395,6 +2448,7 @@ let () =
          core_fits_settings;
          leaves_its_argument;
          blocks;
+         starved;
          keeps_kernel_writes;
          fastest_threads_coalesce;
          group "streaming"

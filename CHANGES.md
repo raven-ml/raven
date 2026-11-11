@@ -443,6 +443,10 @@ All notable changes to this project will be documented in this file.
   captured array to a narrower float, as float32 weights to bfloat16, stores
   the narrow copy once and widens it where read, where it stored the widened
   float32: half the bytes, and products of the step can take tensor cores.
+- A compiled `Nx.scatter` by `Set` of rows on a GPU elects its rows in one
+  kernel, where it split each row's comparisons over two kernels: on an RTX
+  5000 Ada 1.24-1.33x faster a call at 512 to 4096 rows, 1.4-1.9x slower at
+  16384 to 24576.
 - A slice's cotangent, or that of windows sharing no element, reaches its
   region alone: an element one read reaches keeps its sign of zero, as the
   Sums rule states, and a stack read by `Nx.get` costs one gradient.
@@ -1293,6 +1297,11 @@ its lock and from samples the dashboard saw arrive.
 - An operand counts as decoded only where it converts integers loaded from
   integer storage: ReLU of a bfloat16, a float's bits through an integer, no
   longer sends a product to the stream a decoded matrix takes on a GPU.
+- On a GPU, a reduce other than a matrix product, of at least 256 values an
+  output over 2049 outputs to fewer than the renderer's `stream_threads`,
+  takes 16 threads an output: on an RTX 5000 Ada `Nx.logsumexp` of 4096 rows
+  of 2880 runs 5.9x faster and a float32 sum of 4096 rows of 4096 6.1x. A
+  float sum's bits change there.
 - `Tolk_engine.link` launches a software device's kernels (`Rig.software`)
   on that device, where it launched them on the host, so `Tolk_engine.time`
   times them there.

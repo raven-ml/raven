@@ -17,11 +17,6 @@ Where it stands, with every measurement: doc/performance.md.
   512 tokens. A rangeify rule that inlines it slows 32-127 tokens; storing
   the routed product's row operand at its own rows (rune) gets most of the
   gain
-- rune splits a GPU `Set` scatter's election into about sqrt(k) parts
-  in two kernels itself, because tolk's grouping of a long reduce falls
-  off past 2048 rows (10x to 1.25x); a reduce split in tolk
-  (`split_reduceop` or the grouping heuristic) would let rune drop the
-  parts kernel
 - On gpt-oss's cold first call, rangeify's reshape substitution
   (`Indexing`, the `apply_reshape` over placeholder ranges) allocates 8.5%
   of the call's words on the calling domain, before the parallel render

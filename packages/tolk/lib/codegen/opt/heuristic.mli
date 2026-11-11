@@ -142,10 +142,12 @@
     A kernel that neither streams nor takes a core takes the rules below in
     order. The first, grouping, ends the sequence when it applies.
 
-    - {b Grouping}: when the upcastable axes hold at most 2048 elements, 16
-      local threads take consecutive indices of one of the first three reduce
-      axes, the first that splits by 16 of those a load reads at unit stride,
-      then of the others. Where no load reads the axis the group takes at
+    - {b Grouping}: when the upcastable axes hold at most 2048 elements, or,
+      in a kernel that is not a contraction and each of whose reduces sums
+      at least 256 values an output, fewer than the renderer's
+      [stream_threads], 16 local threads take consecutive indices of one of
+      the first three reduce axes, the first that splits by 16 of those a
+      load reads at unit stride, then of the others. Where no load reads the axis the group takes at
       unit stride but one reads an output axis so, 16 threads first take
       consecutive indices of the first such axis whose split leaves the group
       one, and are the workgroup's fastest ([lidx0]). Consecutive threads of

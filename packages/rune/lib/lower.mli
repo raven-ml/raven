@@ -69,7 +69,6 @@ val scatter_plan :
 (** [scatter_plan] is {!Lower_index.plan}: the runs of positions and the
     chunks of updates a [Scatter] takes. *)
 
-val scatter_election :
-  Renderer.t -> p:int -> n:int -> q:int -> k:int -> int option
-(** [scatter_election] is {!Lower_index.election}: the parts a GPU's [Set]
-    [Scatter] of rows cuts its election's comparisons in, where it elects. *)
+val scatter_election : Renderer.t -> p:int -> n:int -> q:int -> k:int -> bool
+(** [scatter_election] is {!Lower_index.election}: whether a GPU's [Set]
+    [Scatter] of rows elects its rows. *)

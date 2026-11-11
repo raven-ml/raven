@@ -103,6 +103,16 @@ KERNELS = {
     "sum": lambda: last(empty(4096).sum()),
     "sum_rows": lambda: last(empty(32, 32).sum(1)),
     "sum_rows_wide": lambda: last(empty(4096, 64).sum(1)),
+    # past 2048 outputs, fewer than a GPU's threads: sums long enough to group, too short, just short, two short sums in one
+    # kernel, eight long ones, at Metal's 16384 threads and 256 values an output, and a contraction
+    "sum_rows_long": lambda: last(empty(4096, 1024).sum(1)),
+    "sum_rows_short": lambda: last(empty(8192, 32).sum(1)),
+    "sum_rows_240": lambda: last(empty(4096, 240).sum(1)),
+    "sum_rows_pair": lambda: last(empty(8192, 32).sum(1) + empty(8192, 32).sum(1)),
+    # eight long sums of each of 4096 rows in one kernel, whose ranges together count 2^80 steps, past a machine integer
+    "sum_rows_eight": lambda: last(functools.reduce(lambda x, y: x + y, [empty(4096, 1024).sum(1) for _ in range(8)])),
+    "sum_rows_16384": lambda: last(empty(16384, 256).sum(1)),
+    "matmul_long": lambda: last(empty(64, 1024) @ empty(1024, 64)),
     "sum_cols": lambda: last(empty(64, 4096).sum(0)),
     "sum_17": lambda: last(empty(512, 17).sum(1)),
     "sum_100": lambda: last(empty(4096, 100).sum(1)),

@@ -65,21 +65,19 @@ let scatter c i u x =
       Nx.set [ A; L ps; A ] u x
 
 (* The regime a GPU's scatter of [c] takes. *)
-type regime = Walked | Elected | Parted | Distinct
+type regime = Walked | Elected | Distinct
 
 let regime ren c =
   let p = c.updates_shape.(0) and k = c.updates_shape.(1) in
   let n = c.into_shape.(1) and q = c.into_shape.(2) in
-  match (c.positions, Rune.Lower.scatter_election ren ~p ~n ~q ~k) with
-  | Written, _ -> Distinct
-  | _, None -> Walked
-  | _, Some 1 -> Elected
-  | _, Some _ -> Parted
+  match c.positions with
+  | Written -> Distinct
+  | Trailing | Transposed ->
+      if Rune.Lower.scatter_election ren ~p ~n ~q ~k then Elected else Walked
 
 let regime_name = function
   | Walked -> "a walk outside the election's bounds"
-  | Elected -> "an election in one part"
-  | Parted -> "an election in parts"
+  | Elected -> "an election"
   | Distinct -> "distinct written targets"
 
 (* Generated cases *)
@@ -172,6 +170,7 @@ let examples =
         (Any Nx.float32, Transposed, 3, 13, 40, 2);
         (Any Nx.int8, Trailing, 1, 40, 16, 1);
         (Any Nx.complex64, Trailing, 2, 1100, 1000, 8);
+        (Any Nx.bfloat16, Trailing, 1, 1024, 4096, 32);
         (Any Nx.bfloat16, Written, 2, 40, 33, 4);
         (Any Nx.complex64, Written, 1, 20, 17, 3);
       ]
@@ -187,7 +186,7 @@ let law ren (module S : Nx.Devices) c =
   let r = regime ren c in
   List.iter
     (fun g -> cover (regime_name g) (r = g))
-    [ Walked; Elected; Parted; Distinct ];
+    [ Walked; Elected; Distinct ];
   let t = c.updates_shape and n = c.into_shape.(1) in
   let drawn_pos = c.positions <> Written in
   cover "positions broadcast along the trailing axes"

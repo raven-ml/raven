@@ -1676,6 +1676,44 @@ let sum_at shape axis =
         fun () -> ignore (synced (f x)));
   }
 
+(* A log-sum-exp along the last axis of uniform float32 values of [shape]:
+   its first kernel is the rows' maximum. *)
+let logsumexp_at shape =
+  {
+    at =
+      (fun at ->
+        let x = Nx.place at (Nx.Rng.uniform ~key:(Nx.Rng.key 56) f32 shape) in
+        let f = Rune.jit' (fun x -> Nx.logsumexp ~axes:[ 1 ] x) in
+        fun () -> ignore (synced (f x)));
+  }
+
+(* A prefill's keys: [rows] rows of 512 bfloat16 set into a donated pool of
+   twice as many, each call taking the last one's result. *)
+let set_rows_at rows =
+  {
+    at =
+      (fun at ->
+        let slots = 2 * rows and width = 512 in
+        let draw i s =
+          Nx.place at
+            (Nx.cast Nx.bfloat16 (Nx.Rng.uniform ~key:(Nx.Rng.key i) f32 s))
+        in
+        let u = draw 60 [| rows; width |] in
+        let i =
+          Nx.place at
+            (Nx.create Nx.int64 [| rows; 1 |]
+               (Array.init rows (fun r -> Int64.of_int (2 * r))))
+        in
+        let write pool u i =
+          Nx.scatter ~axis:0 (Nx.broadcast_to [| rows; width |] i) u pool
+        in
+        let f = Rune.jit (tri_fn ()) write in
+        let pool = ref (f (Nx.donate (draw 61 [| slots; width |])) u i) in
+        fun () ->
+          pool := f (Nx.donate !pool) u i;
+          ignore (synced !pool));
+  }
+
 (* The first [k] along the last axis of uniform float32 values of [shape], and
    their positions. *)
 let top_k_at ~k shape =
@@ -2095,33 +2133,18 @@ let gpu_rows g =
               let f = Rune.jit (tri_fn ()) histogram in
               fun () -> ignore (synced (f p u into)));
         };
-      (* A prefill's keys: 512 rows of 512 bfloat16 set into a donated pool
-         of 1024 rows, each call taking the last one's result. *)
-      on_gpu g "scatter-512-rows-into-donated-bf16-1024x512"
-        {
-          at =
-            (fun at ->
-              let rows = 512 and slots = 1024 and width = 512 in
-              let draw i s =
-                Nx.place at
-                  (Nx.cast Nx.bfloat16
-                     (Nx.Rng.uniform ~key:(Nx.Rng.key i) f32 s))
-              in
-              let u = draw 60 [| rows; width |] in
-              let i =
-                Nx.place at
-                  (Nx.create Nx.int64 [| rows; 1 |]
-                     (Array.init rows (fun r -> Int64.of_int (2 * r))))
-              in
-              let write pool u i =
-                Nx.scatter ~axis:0 (Nx.broadcast_to [| rows; width |] i) u pool
-              in
-              let f = Rune.jit (tri_fn ()) write in
-              let pool = ref (f (Nx.donate (draw 61 [| slots; width |])) u i) in
-              fun () ->
-                pool := f (Nx.donate !pool) u i;
-                ignore (synced !pool));
-        };
+      (* Elections of a prefill's rows, each row's comparisons one reduce
+         that tolk spreads over a workgroup's threads: 512 rows, 4096, and
+         16384, where one reduce loses to a split of it that tolk lacks. *)
+      on_gpu g "scatter-512-rows-into-donated-bf16-1024x512" (set_rows_at 512);
+      on_gpu g "scatter-4096-rows-into-donated-bf16-8192x512"
+        (set_rows_at 4096);
+      on_gpu g "scatter-16384-rows-into-donated-bf16-32768x512"
+        (set_rows_at 16384);
+      (* The rows' maximum that starts a log-sum-exp, a softmax and an RMS
+         norm, over a prefill's 4096 rows of gpt-oss-20b's 2880: one thread a
+         row runs it as a chain of 2880 steps. *)
+      on_gpu g "logsumexp-float32-4096x2880" (logsumexp_at [| 4096; 2880 |]);
       (* Attention's scores of 8 heads of 64 at 2048 positions in float32,
          [h i d, h j d -> h i j]: its kernel keeps the heads apart from the
          queries, along which the keys repeat. *)

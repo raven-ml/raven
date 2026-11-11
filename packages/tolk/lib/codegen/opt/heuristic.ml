@@ -693,6 +693,12 @@ let columns_layout (g, k, across, wanted) =
    columns. *)
 let group_threads = 16
 
+(* The fewest values an output's reduce sums for a group past 2048 outputs.
+   A grouped output's 16 threads each sum a 16th of its values, then the
+   group combines their 16 partials, so the group pays once each thread's
+   share is at least the combine's 16 steps. *)
+let group_least = group_threads * group_threads
+
 (* The longest reduce axis that [unroll] unrolls whole, which no group
    pads. *)
 let unroll_whole = 32
@@ -745,10 +751,33 @@ let group k =
     let t = K.copy k in
     try_split t axis group_threads Opt.Local && Option.is_some (grouped t)
   in
+  (* A kernel of at most 2048 outputs groups. Past them, while they are fewer
+     than [stream_threads], the part runs too few threads to hide a load's
+     latency, and each output's thread sums its reduce as one serial chain:
+     on an RTX 5000 Ada a float32 sum of 4096 rows of 1024 took 25.2 us so
+     and 5.6 grouped, a logsumexp of 4096 rows of 2880, whose first kernel
+     is a row's maximum, 172 us and 29, and rune's election of 4096 rows 203
+     us and 22. A reduce shorter than [group_least] loses to the group's
+     combine (8192 rows of 32, 1.6 us against 4.9), so each of the kernel's
+     reduces must sum that many, and a contraction keeps its upcasts, whose
+     reuse a group gives up (a float32 product of 128 by 4096 by 128, 0.40
+     ms against 0.89). *)
+  let outs = prod_at k (K.upcastable_dims k) in
+  let weak = K.axes_of ~reduce:true k [ Weak ] in
+  let long r =
+    let closes axis = List.memq (List.nth (K.rngs k) axis) (List.tl (src r)) in
+    Sint.resolve ~default:false
+      Sint.(prod_at k (List.filter closes weak) >= Int group_least)
+  in
+  let starved () =
+    Sint.resolve ~default:false Sint.(outs < Int (K.ren k).stream_threads)
+    && K.reduceops k <> []
+    && List.for_all long (K.reduceops k)
+    && Option.is_none (contraction k)
+  in
   if
     (K.ren k).has_local
-    && Sint.resolve ~default:false
-         Sint.(prod_at k (K.upcastable_dims k) <= Int 2048)
+    && (Sint.resolve ~default:false Sint.(outs <= Int 2048) || starved ())
   then begin
     let outputs =
       match grouped (K.copy k) with

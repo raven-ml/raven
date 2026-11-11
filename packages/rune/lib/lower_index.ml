@@ -94,16 +94,16 @@ let gather d ~axis idx x =
    axis after the axis as a model writes rows of its cache, are made
    distinct by an election. It compares each row's position with those of
    the later rows of its index of the axes before the axis, [p·k²]
-   comparisons in one or two reduces, and replaces by [-1] each position a
-   later row shares: each target keeps its last row in C order, so the
-   result is eager's bit for bit, with no atomic store, which tolk lacks.
+   comparisons in one reduce, and replaces by [-1] each position a later
+   row shares: each target keeps its last row in C order, so the result is
+   eager's bit for bit, with no atomic store, which tolk lacks.
    It elects where the walk takes [k] steps a thread, in one chunk, from
    [elect_least] rows to [elect_work] comparisons: below, the walk is
    shorter than the election's launch, and above, the election's
    comparisons outgrow it. Positions the caller promises distinct
    ([unique]) take the threads with no election, under any combine. On an
    RTX 5000 Ada, 512 rows of 512 bfloat16 into 1024 took the walk 35.2 µs,
-   and the election 3.13 and the threads 2.27. The host always walks: one
+   and the election 1.98 and the threads 2.21. The host always walks: one
    thread's walk there does [k·q] work, the stores' own, and the election
    would add [k²].
 
@@ -465,38 +465,22 @@ let push ren ~rows ~w ~p ~n ~q ~k f args =
   let kernel = Ops.kernel_info ~name:"scatter_push" ~opts_to_apply:[] () in
   Ops.sink ~kernel [ Ops.end_ (Ops.group stores) threads ]
 
-(* [elected ~p ~k ~c i] is the positions [i] of [p·k] rows, [k] for each
+(* [elected ~p ~k i] is the positions [i] of [p·k] rows, [k] for each
    index of the axes before the axis, with [-1], outside every axis, at each
    row that a later row of its index targets at the same position: each
    target keeps its last row in C order. A row compares its position with
-   the [k] of its index in [c] parts of [ceil (k / c)], each part's result
-   stored, then those [c] reduced: a thread's comparisons are then about
-   [k / c + c] whatever threads tolk gives a reduce. The last part pads with
-   [-1], which only a position outside the axis equals. *)
-let elected ~p ~k ~c i =
-  let s = ceil_div k c in
+   the [k] of its index in one reduce. *)
+let elected ~p ~k i =
   let pos = Shape.reshape i (dims [ p; k ]) in
-  let cube = [ p; k; c; s ] in
-  let mine =
-    Shape.expand (Shape.reshape pos (dims [ p; k; 1; 1 ])) (dims cube)
-  in
-  let padded =
-    let m1 = `Int (Bigint.of_int (-1)) in
-    Shape.pad ~value:m1 pos [ None; Some (Ops.Int 0, Ops.Int ((c * s) - k)) ]
-  in
+  let cube = [ p; k; k ] in
+  let mine = Shape.expand (Shape.reshape pos (dims [ p; k; 1 ])) (dims cube) in
   let theirs =
-    Shape.expand (Shape.reshape padded (dims [ p; 1; c; s ])) (dims cube)
+    Shape.expand (Shape.reshape pos (dims [ p; 1; k ])) (dims cube)
   in
   let j = laid cube 1 (Shape.arange ~dtype:Int64 k) in
-  let later =
-    Shape.reshape (Shape.arange ~dtype:Int64 (c * s)) (dims [ 1; 1; c; s ])
-  in
-  let later = Shape.expand later (dims cube) in
+  let later = laid cube 2 (Shape.arange ~dtype:Int64 k) in
   let clash = Ops.bitwise_and (Ops.eq mine theirs) (Ops.lt j later) in
-  let some = Shape.rop (Ops.cast clash Uint8) Op.Max [ 3 ] in
-  let some =
-    if c = 1 then some else Shape.rop (Ops.contiguous some) Op.Max [ 2 ]
-  in
+  let some = Shape.rop (Ops.cast clash Uint8) Op.Max [ 2 ] in
   let some = Shape.reshape some (dims [ p; k ]) in
   Shape.reshape (Ops.where (marked some) (int pos (-1)) pos) (dims [ p * k ])
 
@@ -513,32 +497,23 @@ type dst = Filled of (Ops.t -> Ops.t) | Holding of Ops.t
    - at 16 rows, 2.02 µs against 1.02 and 1.15: about even alone, a gain
      where the keys' and values' scatters of a model's layer share their
      election; at 32 rows, 3.04 against 1.06 and 1.22;
-   - at 512, 35.2 against 3.13 and 2.27; at 8192, 540 against 77.6 and
-     21.4; at 32768, 2162 against 590 and 122, [2{^30}] comparisons;
+   - at 512, 35.2 against 1.98 and 2.21; at 8192, 540 against 76.6 and
+     21.3; at 32768, 2162 against 484 and 122, [2{^30}] comparisons;
    - past [elect_work] comparisons, unmeasured: they grow as [k²], the
      walk's steps as [k], and the gain fell from 5.5 times at 8192 rows to
-     3 at 32768. *)
+     3.6 at 32768. *)
 let elect_least = 16
 let elect_work = 1 lsl 30
 
-(* [election ren ~p ~n ~q ~k] is [Some c] where a GPU's [Set] of [k] rows at
-   each of [p] indices elects, its comparisons cut in [c] parts. It elects
-   where the walk takes one chunk, [k] steps a thread: a chunked walk takes
-   about [2 √k], as the parts do, and needs no election. The parts are
-   about [√k], and taken where they shorten a thread's [k] comparisons,
-   each about a walk's step, by more than their second kernel's launch:
-   tolk may spread one reduce's comparisons over threads, but the election
-   does not count on it. Parts cost that launch where it does: at 512 rows,
-   3.13 µs against one reduce's 1.98; at 2048, 11.45 against 7.26; at 4096,
-   where one thread took each row, 29.7 against 203. The marks between the
-   parts' kernels are [p·k·c] bytes, at most [elect_work / 7] where
-   [c > 1]. *)
+(* [election ren ~p ~n ~q ~k] is whether a GPU's [Set] of [k] rows at each
+   of [p] indices elects. It elects where the walk takes one chunk, [k]
+   steps a thread: a chunked walk takes about [2 √k] and needs no
+   election. tolk may spread a row's [k] comparisons over a workgroup's
+   threads, which it does where the rows are too few to keep the GPU busy
+   and [k] is long. *)
 let election ren ~p ~n ~q ~k =
   let _, chunks = plan ~host:false ren ~p ~n ~q ~k in
-  if k < elect_least || chunks > 1 || p * k * k > elect_work then None
-  else
-    let c = isqrt k in
-    if k - (2 * c) > gpu_launch_steps then Some c else Some 1
+  k >= elect_least && chunks = 1 && p * k * k <= elect_work
 
 let looped ~dst ~host ~unique (ren : Renderer.t) device (D.Any dt as d)
     (c : Nx_kernel.combine) ~axis ~idx ~updates into =
@@ -601,9 +576,8 @@ let looped ~dst ~host ~unique (ren : Renderer.t) device (D.Any dt as d)
   let distinct =
     if host || narrow then None
     else if unique then Some (arg i)
-    else if c = Set && rows then
-      let elect parts = arg (elected ~p ~k ~c:parts (arg i)) in
-      Option.map elect (election ren ~p ~n ~q ~k)
+    else if c = Set && rows && election ren ~p ~n ~q ~k then
+      Some (arg (elected ~p ~k (arg i)))
     else None
   in
   match distinct with

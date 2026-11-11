@@ -2585,11 +2585,12 @@ Withdrawn: multi-device is out of scope, see README.
     lanes of a tensor core's K, which the core contracts and no reduction
     closes, take a group in both;
   - the constants: `lanes`, `in_flight`, `in_flight_held`,
-    `stream_threads`, `stream_first`, `summed`, `per_byte_first` and D175's
-    `core_threads` each move the order of a sum. They are fixed per target,
-    never read from a device: a value read from the part would give two
-    parts of one target different bits, and the program key names the
-    target alone (D170). `stream_threads` and D175's `local_workgroups` are
+    `stream_threads`, `stream_first`, `summed`, `per_byte_first`, D175's
+    `core_threads` and D479's `group_least` each move the order of a sum,
+    `stream_threads` also through `Heuristic.group` (D479). They are fixed
+    per target, never read from a device: a value read from the part would
+    give two parts of one target different bits, and the program key names
+    the target alone (D170). `stream_threads` and D175's `local_workgroups` are
     fields of the renderer, since a second reader, rune's attention
     lowering, sizes its grid by them. D175's `core_threads` is one, since
     Metal fitted its own. `per_byte_first` is one, since
@@ -10049,3 +10050,74 @@ kept in ordered sets, change no source and belong to D466.
   reader reads, and keeps its copy where the value reads its old elements or
   another output reads it, as it was or once stored); rune's `Rune.jit on a GPU › a reduction another
   reads › returned too is stored once`; the row above.
+
+## D479. A reduce starved of threads groups past 2048 outputs
+
+- **tinygrad:** `codegen/opt/heuristic.py` (`hand_coded_optimizations`'
+  grouping: at most 2048 outputs, 240 on QCOM, whatever the reduce).
+- **tolk:** `Heuristic.group`, `Heuristic.group_least` and
+  `Renderer.t.stream_threads`.
+- **Differs:** a GPU kernel that neither streams nor takes a core also
+  groups its reduce past 2048 outputs where its outputs are fewer than
+  `stream_threads` (32768 on sm_89 and the targets that take its constants,
+  16384 on Metal), each of its reduces sums at least `group_least` values an
+  output, and it is not a contraction (`Heuristic.contraction`, D89's). One
+  thread an output then leaves the part short of threads, and each runs its
+  reduce as one serial chain at a load's latency (Larsen and Henriksen,
+  "Strategies for Regular Segmented Reductions on GPU", FHPC 2017, §2 and
+  §3.1: reduce each segment in one thread only when the segments fill the
+  GPU). The
+  group's 16 threads each sum a 16th, then combine 16 partials, so
+  `group_least` is `16 * 16`, 256: the measured crossover lay between 128
+  and 512 values at 16384 outputs, and 256 took no measured loss (FHPC 2017
+  §2.2: a segment a few times the workgroup leaves each thread few
+  elements). A contraction keeps tinygrad's rule, since a group drops the
+  upcasts that reuse its operands: a float32 product of 128 by 4096 by 128
+  took 0.40 ms and 0.89 grouped. rune casts each operand before the
+  product (D29, `Lower_reduce.sum`), so its products are seen; a product
+  summed through a cast, `REDUCE(CAST(MUL))`, is not, and groups. The
+  predicate also takes a product without reuse, a sum of squares or a row's
+  dot product, which keeps the rule where the stream's layout refuses it. An
+  extreme or an integer reduction keeps its bits; a float sum's order
+  changes with the group's partials, fixed per target as D89's constants
+  are.
+- **Reason:** (d): the reductions of a prefill of 2049 to 32767 tokens on a
+  GPU, measured on fudge's RTX 5000 Ada by nsys, kernel medians of a call,
+  two interleaved rounds that agree within 2%:
+  - rune's election of a `Set` scatter of rows, which kaun's
+    `Cache_index.put` runs for each layer's keys and values: one reduce of
+    `k` comparisons a row, which replaces rune's two kernels of about `√k`
+    parts. At 512 rows 3.13 to 1.98 us (grouped by tinygrad's rule), 2048
+    11.61 to 7.30, 4096 29.8 to 21.8, 8192 even; a call with its stores
+    1.24-1.33x faster;
+  - the row's maximum that starts `Nx.logsumexp`, `Nx.softmax` and
+    `Nx.rms_norm`: at 4096 rows of 2880 a logsumexp call took 171.5 us and
+    29.0, a softmax 352 and 258, a bfloat16 `rms_norm` 277 and 137.5; at
+    16384 rows of 1024 a logsumexp 79 and 39;
+  - row and column sums: 4096 rows of 1024 25.2 to 5.6 us, of 4096 112.2
+    to 18.4, 8192 columns of 1024 17.8 to 9.9; attention's JVP
+    (`Cuda/attention/jit-jvp-bf16-8x2048x64-full`), its 16384 rows of 2048,
+    262 to 229 us.
+  Sums of 8192 rows of 32 and of 16384 rows of 256 do not move. The rule
+  costs where the group gives up the reuse rune's parts kept by an upcast:
+  elections of 16384 and 24576 rows take 1.40 and 1.88 times as long a call
+  (kernels 203 to 302 us and 322 to 659), and an election at `p > 1`
+  indices whose `p k` reaches `stream_threads`, no longer grouped, up to 3.5
+  times (`p = 2`, `k = 16384`); no library caller elects at `p > 1`. A
+  split decided where the renderer is known would close both. AMD and Metal
+  take the rule untimed.
+- **Pinned by:** the Heuristic suite's `past 2048 outputs` cases:
+  `sum_rows_long_{metal,cuda,amd}` (4096 rows of 1024) and
+  `sum_rows_16384_{cuda,amd}` (16384 rows of 256) and
+  `sum_rows_eight_{metal,cuda,amd}` (eight sums of 4096 rows of 1024 in one
+  kernel, whose ranges together count past a machine integer) group;
+  `sum_rows_short_{metal,cuda,amd}` (8192 rows of 32),
+  `sum_rows_240_{metal,cuda,amd}` (4096 rows of 240),
+  `sum_rows_pair_{metal,cuda,amd}` (two sums of 8192 rows of 32 in one
+  kernel), `sum_rows_16384_metal` and `matmul_long_{cuda,amd}` (a float32
+  product of 64 by 1024 by 64) do not; rune's `Rune.jit on a GPU ›
+  scatters › a Set scatter of rows compiles to eager's bits` (an election of
+  4096 rows);
+  rune's bench rows `Cuda/scatter-4096-rows-into-donated-bf16-8192x512`,
+  `Cuda/scatter-16384-rows-into-donated-bf16-32768x512` and
+  `Cuda/logsumexp-float32-4096x2880` (baselines to record).
