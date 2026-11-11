@@ -728,16 +728,17 @@ let test_reset_cut (_, landing, next) =
 (* A reset the vendor refuses, with an exception at any allocation from its
    take on, leaves the GPUs lost on other machines lost, and its own GPU lost
    once the vendor's reset ran: the next open of each renews it. The GPUs of
-   32 machines are lost first, so that the next machine's mark grows the
-   driver's table of lost GPUs, which holds two machines for each of its
-   first 16 buckets (stdlib ephemeron.ml). *)
+   32 machines are lost first, so that the next machine's mark, made before
+   the vendor's reset, grows the driver's table of lost GPUs, which holds two
+   machines for each of its first 16 buckets (stdlib ephemeron.ml). *)
 let before_growth = 32
 
 let test_reset_cut_lost () =
   needs_flock ();
   let root = Tree.make [ Tree.gpu gpu_bus ] in
-  let refuse = ref true and taking = ref false in
+  let refuse = ref true and taking = ref false and resetting = ref false in
   let reset _ =
+    resetting := true;
     Atomic.incr vendor_resets;
     if !refuse then Error "the GPU did not come back" else Ok ()
   in
@@ -762,51 +763,73 @@ let test_reset_cut_lost () =
     List.iter (lose g) others;
     (g, others)
   in
-  let rec walk n (g, others) =
+  (* Cuts a refused reset of a new machine's GPU at its [n]-th allocation once
+     [from] holds, then opens the GPU: whether the cut landed, whether the
+     vendor's reset ran, and the open's renewals. [since] names where the
+     count starts. *)
+  let cut g from since n =
     let m = Machine.at root in
     refuse := true;
     taking := false;
-    let before = Atomic.get vendor_resets in
+    resetting := false;
     let reached =
-      Rig_support.interrupted ~from:(fun _ -> !taking) n (fun () ->
+      Rig_support.interrupted ~from:(fun _ -> !from) n (fun () ->
           ignore (Driver.reset g m 0))
     in
-    let ran = Atomic.get vendor_resets > before in
+    let ran = !resetting in
     refuse := false;
-    (* A growth moves the oldest machines first: one cut short drops the
-       newest it has not moved, the newest before this one among them, and
-       the oldest too if cut at its first move. *)
+    if n = 1 then equal ~msg:("the walk lands " ^ since) bool true reached;
+    let mine = renewals g m in
+    if ran then
+      equal
+        ~msg:(strf "cut at allocation %d %s, the renewals of the GPU" n since)
+        int 1 mine;
+    (reached, ran, mine)
+  in
+  (* A function's mark changes only by calls on it: the oldest and newest
+     lost GPUs, checked once after the cuts from allocation [first] to [n],
+     are renewed by their next open after any of them. A growth moves the
+     oldest machines first: one cut short drops the newest it has not moved,
+     the newest before this one among them, and the oldest too if cut at its
+     first move. *)
+  let renewed (g, others) since first n =
     let oldest = List.hd others
     and newest = List.nth others (before_growth - 1) in
     List.iter
       (fun (which, o) ->
         equal
-          ~msg:(strf "from allocation %d, the renewals of the %s lost GPU" n
-                  which)
+          ~msg:
+            (strf
+               "cut at allocations %d to %d %s, the renewals of the %s lost GPU"
+               first n since which)
           int 1 (renewals g o))
-      [ ("oldest", oldest); ("newest", newest) ];
-    let mine = renewals g m in
-    if ran then
-      equal ~msg:(strf "from allocation %d, the renewals of the GPU" n) int 1
-        mine;
-    if n = 1 then equal ~msg:"the walk lands" bool true reached;
-    (* A cut that left the GPU unmarked left the table as it was, since a
-       mark publishes its copy with one store: losing the two GPUs renewed
-       again, now the newest, gives the next landing a table about to grow
-       with two resets in place of 32. A mark made grew it, and the next
-       landing starts afresh. *)
-    let next () =
-      if mine > 0 then fresh ()
-      else begin
-        let middle = List.filter (fun o -> o != oldest && o != newest) others in
-        lose g oldest;
-        lose g newest;
-        (g, middle @ [ oldest; newest ])
-      end
-    in
-    if reached then walk (n + 1) (next ())
+      [ ("oldest", oldest); ("newest", newest) ]
   in
-  walk 1 (fresh ())
+  (* Until the vendor's reset, a cut that left the GPU unmarked left the table
+     as it was, since a mark publishes its copy with one store: the next
+     landing cuts the same table. A mark made grew it, and the next landing
+     starts afresh. The walk ends at its first landing after the vendor's
+     reset. *)
+  let from_take = "from the take" in
+  let rec until_reset first n ((g, _) as lost) =
+    let reached, ran, mine = cut g taking from_take n in
+    if ran || not reached then renewed lost from_take first n
+    else if mine > 0 then begin
+      renewed lost from_take first n;
+      until_reset (n + 1) (n + 1) (fresh ())
+    end
+    else until_reset first (n + 1) lost
+  in
+  (* From the vendor's reset on, the mark is made and nothing reads the table,
+     so its growth changes no allocation: each landing cuts the table the one
+     before left. *)
+  let from_reset = "from the vendor's reset" in
+  let rec after_reset n ((g, _) as lost) =
+    let reached, _, _ = cut g resetting from_reset n in
+    if reached then after_reset (n + 1) lost else renewed lost from_reset 1 n
+  in
+  until_reset 1 1 (fresh ());
+  after_reset 1 (fresh ())
 
 let resets =
   group ~timeout:patience "resets"
