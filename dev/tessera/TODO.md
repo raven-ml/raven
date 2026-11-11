@@ -64,12 +64,6 @@ An item leaves when its library fixes it, or when a design decides it stays.
   CUDA's at 0.921, where a blocked or pairwise sum would put them near 0.5.
   The fix is nx.cpu's contraction and, in tolk, a choice beyond tinygrad's.
 
-- `Nx_io.save_tiff` compresses by Deflate only (lz decodes LZW and does not
-  encode it), so `Embedding.save_geotiff` writes Deflate with the floating
-  point predictor where GeoTessera's GeoTIFFs default to LZW, a choice its
-  `--compress` leaves to the user. GDAL reads both; a 1116 × 228 tile of 128
-  bands takes 56.5 MB in Deflate against 161 MB in GeoTessera's LZW. An LZW
-  writer is wanted only if a reader needs it.
 - `Nx.round` rounds halves away from zero; GeoTessera's int8 embedding codes
   round ties to even (numpy's `np.round`), and 23 of the oracle fixtures'
   15.7M codes differ. A rounding mode is a vocabulary question for nx
