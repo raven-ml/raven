@@ -176,6 +176,15 @@ and live = {
   mutable progress : progress; [@atomic]
       (** The word as the last wait under [hang_ms] saw it, written by that
           wait without the lock. *)
+  mutable seen : int; [@atomic]
+      (** The word as a wait or a look last read it: [2 w + 1] if work was
+          committed above it then, [2 w] if not, [-1] before the first read.
+          It only rises, written without the lock. *)
+  mutable since : int; [@atomic]
+      (** When [seen] last rose, in nanoseconds of [Rig_edge_primitive.now]'s
+          clock, written without the lock. It only rises. It is stored after
+          [seen], so for a moment it may still be the time of the rise
+          before. *)
   word : int;
       (** Its word's host address, in rig's array, or [0] for a word of its
           driver's own, which rig reads through its driver. *)

@@ -625,6 +625,106 @@ let test_submitted_host () =
   equal ~msg:"after a submit" bool true (Rig.Point.reached after);
   equal ~msg:"wait_for" bool true (Rig.Point.wait_for ~ns:1 after)
 
+(* Looks at producers *)
+
+(* A producer whose driver recorded a fault, a consumer whose queue waits on
+   it, and the consumer's point. The consumer's sleeps stall, so they never
+   run the producer's work: only a look at the producer surfaces the fault. *)
+let faulted_pair ?(completion = `Store) what =
+  let pd, pp = P.open_ (fresh (what ^ "-producer")) in
+  let c, pc =
+    P.open_ ~completion ~waits_on:[ `Host ] (fresh (what ^ "-consumer"))
+  in
+  let a = submit (empty pd) in
+  let b = submit (empty c) ~waits:[| a |] in
+  P.fault pp "the engine hung";
+  P.stall pc max_int;
+  (pd, c, b)
+
+(* The most a fault takes to surface through looks: the consumer's clock
+   passes a still interval, its first look reads the producer, whose own clock
+   then passes one, and one more round; and the tolerance. *)
+let look_within_ns = (3 * still_ns) + tolerance_ns
+
+(* A loop of short bounded waits on the consumer surfaces the producer's
+   fault: the consumer's clock outlives each wait, so its waits look. *)
+let short_waits ns =
+  let pd, c, b = faulted_pair "short-waits" in
+  let t0 = Rig.Profile.now () in
+  let rec loop () =
+    if Rig.Profile.now () - t0 > look_within_ns then "no loss in time"
+    else
+      match Rig.Point.wait_for ~ns b with
+      | true -> "reached"
+      | false -> loop ()
+      | exception Rig.Lost (l, why) when Rig.equal l c -> why
+  in
+  equal string (Rig.name pd ^ " lost") (loop ());
+  Rig.close c;
+  Rig.close pd
+
+(* A consumer whose word the host writes looks as one whose queue writes
+   it. *)
+let test_look_host () =
+  let pd, c, b = faulted_pair ~completion:`Host "look-host" in
+  let got =
+    match Rig.Point.wait_for ~ns:1_000_000_000 b with
+    | true -> "reached"
+    | false -> "no loss in time"
+    | exception Rig.Lost (l, why) when Rig.equal l c -> why
+  in
+  equal string (Rig.name pd ^ " lost") got;
+  Rig.close c;
+  Rig.close pd
+
+(* A producer lost while a consumer's wait sleeps, its clock past the still
+   interval, reaches the consumer once that sleep returns. The producer's
+   sleeps stall too, so a look runs none of its work. *)
+let test_lost_producer () =
+  let pd, pp = P.open_ (fresh "lost-producer") in
+  let c, pc = P.open_ ~waits_on:[ `Host ] (fresh "lost-producer-consumer") in
+  let a = submit (empty pd) in
+  let b = submit (empty c) ~waits:[| a |] in
+  P.stall pp max_int;
+  P.stall pc max_int;
+  let waiter =
+    Domain.spawn (fun () ->
+        match Rig.Point.wait b with
+        | () -> None
+        | exception Rig.Lost (l, why) when Rig.equal l c ->
+            Some (why, Rig.Profile.now ()))
+  in
+  Support.await "the consumer's second sleep" (fun () -> P.sleeps pc >= 2);
+  let lost_at = Rig.Profile.now () in
+  Rig.lose pd "given up";
+  match Domain.join waiter with
+  | None -> fail "the consumer's wait returned"
+  | Some (why, raised_at) ->
+      equal string ~msg:"the reason" (Rig.name pd ^ " lost") why;
+      less ~msg:"from the loss to the raise, in ns" int
+        ~than:(still_ns + tolerance_ns) (raised_at - lost_at);
+      Rig.close c;
+      Rig.close pd
+
+(* A short wait leaves the bound's clock alone: a later wait, past twice the
+   bound, on a queue that waited on its producer all along loses nothing. *)
+let test_short_wait_bound () =
+  let pd, pp = P.open_ (fresh "short-bound-producer") in
+  let c, _ =
+    P.open_ ~hang_ms ~completion:`Store ~waits_on:[ `Host ]
+      (fresh "short-bound-consumer")
+  in
+  let a = submit (empty pd) in
+  let b = submit (empty c) ~waits:[| a |] in
+  P.stall pp max_int;
+  equal ~msg:"the short wait" bool false (Rig.Point.wait_for ~ns:10_000_000 b);
+  Thread.delay (2. *. Float.of_int hang_ms /. 1000.);
+  P.stall pp 0;
+  Rig.Point.wait b;
+  equal (option string) ~msg:"the loss" None (Rig.lost c);
+  Rig.close c;
+  Rig.close pd
+
 (* Two waiters on one stalled device: each raises the bound's loss no sooner
    than the bound after the stall began. *)
 let test_hang_two_waiters () =
@@ -2200,7 +2300,20 @@ let tests =
           test_hang_in_queue;
         test "a word that moved while a wait was held loses nothing"
           test_hang_held_read;
+        test "a short wait leaves the bound's clock alone"
+          test_short_wait_bound;
         test "the bound comes no sooner with two waiters" test_hang_two_waiters;
+      ];
+    group ~timeout "looks"
+      [
+        cases ~id:string_of_int
+          "a loop of short waits surfaces a producer's recorded fault"
+          [ 1; 50_000_000 ]
+          short_waits;
+        test "a wait on a host-written word surfaces a producer's fault"
+          test_look_host;
+        test "a lost producer reaches a consumer's wait at once"
+          test_lost_producer;
       ];
     group ~timeout "bounded waits"
       [

@@ -154,13 +154,15 @@ type 'region facts = {
           library's back-pressure. Where they may, rig counts them
           ({!Driver}), so {!Driver.stop} never runs while one blocks. *)
   hang_ms : int option;
-      (** [Some n] if rig loses the device once its word stays below a
-          committed value for [n] milliseconds, for a device whose work
-          nothing else bounds, and [None] where the vendor's driver bounds it.
-          [n] must be at least [1]. The clock starts at a wait, so the loss
-          comes [n] ms or more after the work stalled. [Rig]'s Hangs section
-          states when the clock starts again. rig passes the loss's reason,
-          ["no progress for n ms"], to {!Driver.stop}. *)
+      (** [Some n] if rig loses the device once its own committed work has
+          kept the word still for [n] milliseconds, and [None] if no time
+          loses it. A driver declares one only where a wait has no other way
+          to find a device that died, such as a GPU it drives without a
+          kernel driver. [n] must be at least [1]. The clock starts at a
+          wait, so the loss comes [n] ms or more after the work stalled.
+          [Rig]'s Hangs section states when the clock starts and starts
+          again. rig passes the loss's reason, ["no progress for n ms"], to
+          {!Driver.stop}. *)
   maps_host : bool;
       (** Whether the device maps host memory of its machine that starts on a
           page ({!Driver.map_host}). *)
@@ -673,10 +675,14 @@ module type Driver = sig
   (** [sleep d ~seen ~still_ms] blocks on the device's events until the word
       differs from [seen], and must return, or raise {!Fault}, at the latest
       after [still_ms] milliseconds. It must return immediately if the word
-      already differs. It may return earlier, on an event of other work or a timer of the
-      driver's own, since rig reads the word again after every return and
-      sleeps again while it is unmoved. rig may call it while the driver's
-      [submit] or [commit] runs. Counted.
+      already differs. It may return earlier, on an event of other work or a
+      timer of the driver's own, since rig reads the word again after every
+      return and sleeps again while it is unmoved. rig may call it while the
+      driver's [submit] or [commit] runs. Counted.
+
+      rig also calls it with [still_ms] [0] on a device whose work another
+      device's queue waits for, to raise a fault the driver recorded. It must
+      then read that record and return.
 
       An exception other than {!Fault} that escapes [sleep] loses nothing
       ({!Rig_edge.section-drivers}). The driver must record each event it

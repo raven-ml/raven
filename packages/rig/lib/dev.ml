@@ -111,7 +111,8 @@ let orphaned_state = 5
 
 external still : unit -> int = "caml_rig_still_ms" [@@noalloc]
 
-(* How long a wait sees no progress before it blocks in the driver, and the
+(* How long a device's word stands still, by its still clock ([observe]),
+   before a wait blocks in the driver and looks at its producers, and the
    longest a blocking call of a wait lasts: each returns to OCaml within it,
    where a pending [Sys.Break] raises. [rig_device.c]'s STILL_MS. *)
 let still_ms = still ()
@@ -173,6 +174,8 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~bus ~queues ~copy_engine
       waits;
       hang_ms;
       progress = { seen = 0; idle = true; since = 0 };
+      seen = -1;
+      since = 0;
       word;
       word_region;
       word_unmaps = 1;
@@ -773,8 +776,6 @@ let word d =
         w
     | _ -> slot_word d
 
-let now_ms () = Rig_edge_primitive.now () / 1_000_000
-
 (* How long a sleep may watch the word [w] under [d]'s hang bound [hang], or a
    loss of [d] once the bound passed. The clock restarts when the word moved or
    [d] was idle at this look or the last, and runs on while the same committed
@@ -877,15 +878,49 @@ let live_word d =
   if d.live.word <> 0 then slot_word d
   else try word d with Lost (d', _) when d' == d -> -1
 
+(* Raises [l.since] to [now], never lowers it: of two restarts that race, the
+   later [now] stays. *)
+let rec raise_since (l : live) now =
+  let s = l.since in
+  if now > s && not (Atomic.Loc.compare_and_set [%atomic.loc l.since] s now)
+  then raise_since l now
+
+(* How long, in whole ms, [d]'s word has stood at [w] as of [now], in ns on
+   [Rig_edge_primitive.now]'s clock, by [d]'s still clock. The clock runs in
+   ns, so it reads [still_ms] only once that much time has passed. A read
+   above the clock's restarts it: the word moved, or work came to a device
+   whose word had reached all its work. A read at or below it, the same
+   stillness or a stale read, leaves it. [since] is raised after the
+   compare-and-set on [seen], so a reader between them sees the clock long
+   for a round, and a reader whose [now] predates another's restart reads 0
+   for a round, as a time below 0 counts as none. *)
+let rec observe d w now =
+  let l = d.live in
+  let m = if committed d > w then (2 * w) + 1 else 2 * w in
+  let seen = l.seen in
+  if m <= seen then Int.max 0 (now - l.since) / 1_000_000
+  else if Atomic.Loc.compare_and_set [%atomic.loc l.seen] seen m then begin
+    raise_since l now;
+    0
+  end
+  else observe d w now
+
 (* A device whose unreached work waits in its queue on another's surfaces that
-   producer's unseen fault: its sleep raises it. A producer is the device its
-   slot holds, as no entry of an earlier device's points is unreached. *)
+   producer's recorded fault: a sleep of no length raises it, and the loss
+   spreads. A producer is the device its slot holds, as no entry of an
+   earlier device's points is unreached. It is judged by its own clock, at a
+   fresh [now]: one whose word moved, or that took new work, within the still
+   interval is left alone. *)
 let look_at_producers d =
   Array.iter
     (fun i ->
       let p = of_index i in
       if not (is_lost p) then
-        try sleep p ~seen:(word p) ~still_ms:0 with Lost _ -> ())
+        try
+          let w = word p in
+          if observe p w (Rig_edge_primitive.now ()) >= still_ms then
+            sleep p ~seen:w ~still_ms:0
+        with Lost _ -> ())
     (c_producers d.live.c)
 
 (* Reads [d]'s word until it reaches [v] or the clock [until]: the word. *)
@@ -897,25 +932,29 @@ let rec spin_held (d : device) v until =
     spin_held d v until
   end
 
-(* Waits for [d]'s value [v], the word having read [seen] since [since],
-   until the word reads [v], [d] is lost, or the clock passes [until], in ns
-   on [Rig_edge_primitive.now]'s clock: whether it ended before [until].
-   Until [v] is committed, each round commits [d]'s work unless another holds
-   [d]'s turn throughout the still interval, such as a submit blocked in its
-   driver, whose earlier work runs without another call, so the turn frees
-   and a later round commits. The commit comes before the deadline's check, so
-   that a loop of short waits commits what it waits for. A sleep or a spin
-   lasts at most the time left, rounded up to whole ms, so the wait never
-   answers before [until]. Top level, so a wait that finds its value reached
-   allocates nothing. *)
-let rec wait_from d v seen since until =
+(* Waits for [d]'s value [v] until the word reads it, [d] is lost, or the
+   clock passes [until], in ns on [Rig_edge_primitive.now]'s clock: whether
+   it ended before [until]. Until [v] is committed, each round commits [d]'s
+   work unless another holds [d]'s turn throughout the still interval, such
+   as a submit blocked in its driver, whose earlier work runs without another
+   call, so the turn frees and a later round commits. Each round then reads
+   [d]'s still clock, the read that finds [v] included, and once the clock
+   passed the still interval looks at [d]'s producers. Both come before the
+   deadline's check, so a loop of short waits commits what it waits for and
+   surfaces a producer's fault. A sleep or a spin lasts at most the time
+   left, rounded up to whole ms, so the wait never answers before [until].
+   Top level, so a wait that finds its value reached allocates nothing. *)
+let rec wait_from d v until =
   let w = word d in
-  if w >= v || is_lost d then true
+  if is_lost d then true
+  else if w >= v then begin
+    ignore (observe d w (Rig_edge_primitive.now ()) : int);
+    true
+  end
   else begin
     if committed d < v then ignore (commit_once d : bool);
-    let now = now_ms () in
-    let since = if w <> seen then now else since in
-    let still = now - since in
+    let still = observe d w (Rig_edge_primitive.now ()) in
+    if still >= still_ms then look_at_producers d;
     let left = until - Rig_edge_primitive.now () in
     if left <= 0 then false
     else begin
@@ -923,15 +962,13 @@ let rec wait_from d v seen since until =
       let l = d.live in
       (match l.completion with
       | Rig_edge.Host -> sleep d ~seen:w ~still_ms:ms
-      | Store when l.word = 0 -> sleep d ~seen:w ~still_ms:ms
-      | Store when still >= still_ms ->
-          look_at_producers d;
+      | Store when l.word = 0 || still >= still_ms ->
           sleep d ~seen:w ~still_ms:ms
       | Store ->
           let held = Int.min until (Rig_edge_primitive.now () + held_ns) in
           if spin_held d v held < v then
             ignore (c_spin l.c v (Int.min (still_ms - still) ms)));
-      wait_from d v w since until
+      wait_from d v until
     end
   end
 
@@ -939,12 +976,11 @@ let rec wait_from d v seen since until =
    ([Host]), or one with no host address, changes only on an event the driver
    sees, so the wait sleeps in the driver from its first read. A word a queue
    writes is read with the domain lock held for [held_ns], then spun on with
-   the lock released, and once it stood still for [still_ms] the wait sleeps
-   in the driver between reads. *)
+   the lock released, and once the device's still clock passed [still_ms]
+   the wait sleeps in the driver between reads. *)
 let wait_value d v =
   let w = word d in
-  if w < v && not (is_lost d) then
-    ignore (wait_from d v w (now_ms ()) max_int : bool);
+  if w < v && not (is_lost d) then ignore (wait_from d v max_int : bool);
   if is_lost d then raise_lost d
 
 let wait d v =
@@ -952,11 +988,11 @@ let wait d v =
   if v > s then invalid_argf "Rig: %d is beyond %s's last value %d" v d.name s;
   wait_value d v
 
-(* Waits for [d]'s value [v] from the word [w], until [d] is lost or the clock
-   passes [until]: whether it ended before [until]. A loss its sleep raises is
-   judged by the caller. *)
-let wait_until_lost d v w until =
-  try wait_from d v w (now_ms ()) until with Lost (d', _) when d' == d -> true
+(* Waits for [d]'s value [v] until [d] is lost or the clock passes [until]:
+   whether it ended before [until]. A loss its sleep raises is judged by the
+   caller. *)
+let wait_until_lost d v until =
+  try wait_from d v until with Lost (d', _) when d' == d -> true
 
 (* Points
 
@@ -997,7 +1033,7 @@ let wait_point_by st every p until =
       else begin
         let q = c_stamps_lost st every in
         if q <> 0 then raise_point_lost q;
-        wait_until_lost d v w until
+        wait_until_lost d v until
       end
     in
     if is_lost d then begin

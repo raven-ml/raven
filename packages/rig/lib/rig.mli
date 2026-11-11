@@ -693,16 +693,27 @@ val word : int
 
 (** {2:hangs Hangs}
 
-    A driver whose work no kernel or vendor timeout bounds declares a
-    {e hang bound}, [hang_ms] in {!Rig_edge.type-facts}. A wait checks the
-    bound's clock while it watches the device. The clock starts when a wait
-    first finds committed work of the device unreached. It starts again
-    when a wait finds that the device has reached a later value, and when a
-    wait finds the device idle, with all its committed work reached or its
-    queue waiting for another device's unreached point. A device whose clock
-    passes the bound is lost with the reason ["no progress for n ms"]. Only
-    a wait checks the clock, so no device is lost to a hang while nothing
-    waits for it.
+    rig keeps a clock per device: how long its word has stood still, as
+    waits read it. The clock starts again when the word moves, and when
+    work is committed to the device after its word reached all its earlier
+    work. A wait whose device's clock has passed 200 ms sleeps in the
+    driver between reads, and looks at each device whose work the device's
+    queue waits for: one whose own clock has passed 200 ms is asked for a
+    fault its driver recorded, so the loss spreads ({!section-loss}) though
+    no wait is on that device.
+
+    rig loses no device for the time its work runs, unless its driver
+    declares a {e hang bound}, [hang_ms] in {!Rig_edge.type-facts}, as a GPU
+    driven over PCI without a kernel driver does. The bound has a clock of
+    its own, which a wait checks while it watches the device. The clock
+    starts when a wait first finds committed work of the device unreached.
+    It starts again when a wait finds that the device has reached a later
+    value, and when a wait finds the device idle, with all its committed
+    work reached or its queue waiting for another device's unreached point.
+    A device whose bound's clock passes [n] ms is lost with the reason
+    ["no progress for n ms"], so the loss comes [n] ms or more after its
+    work stalled. Only a wait checks the bound, so no device is lost to a
+    hang while nothing waits for it.
 
     A program bounds a wait with {!Point.wait_for}. To give up on a
     device's work, it loses the device ({!lose}) and closes it, and the
