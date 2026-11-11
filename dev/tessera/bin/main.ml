@@ -615,14 +615,6 @@ let take_pixels (px : Nx.host Pixels.t) indices =
     s1 = Nx_ragged.take ~indices px.s1;
   }
 
-(* Each place's key: the run's dropout key indexed by the place's stream
-   position, the first position at an empty place. *)
-let place_keys key ~first (b : Nx.host Batch.t) =
-  let p =
-    Nx.add_s (Nx.maximum b.pixel (Nx.scalar Nx.int64 0L)) (Int64.of_int first)
-  in
-  Nx.Rng.fold_in_tensor key p
-
 (* corpus *)
 
 let corpus opts =
@@ -743,7 +735,7 @@ let step_groups ~key ~shape ~groups corpus targets p =
     else
       let b, next = Batch.pack shape px counts ~from in
       let places = Nx.maximum b.pixel (Nx.scalar Nx.int64 0L) in
-      let keys = place_keys dkey ~first:p b in
+      let keys = Distil.keys ~key:dkey ~first:p b in
       let t = Nx.take ~axis:0 (Nx.take ~axis:0 places idx) targets in
       go (g + 1) next ({ Distil.batch = b; keys; targets = t } :: acc)
   in
@@ -1336,7 +1328,7 @@ let write_masks dir tile =
     { Batch.pixels = n; s2_rows = n; s1_rows = n; slots = 1; width = 256 }
   in
   let b, _ = Batch.pack shape px counts ~from:0 in
-  let keys = place_keys oracle_key ~first:0 b in
+  let keys = Distil.keys ~key:oracle_key ~first:0 b in
   let masks = Model.masks ~dropout:Model.v2_dropout ~keys m b in
   List.iter
     (fun (name, x) ->
@@ -1684,7 +1676,7 @@ let validate_training opts =
       { Batch.pixels = n; s2_rows = n; s1_rows = n; slots = 4; width = 256 }
     in
     let b, _ = Batch.pack shape px counts ~from:0 in
-    let keys = place_keys oracle_key ~first:0 b in
+    let keys = Distil.keys ~key:oracle_key ~first:0 b in
     let host = Nx.Ptree.instantiate (module Distil.Params) in
     let file f = Filename.concat branch f in
     let ref_grads prec =

@@ -111,9 +111,9 @@ let pixel_masks (b : Nx.host Batch.t) masks =
           (fun (name, m) -> (name, Nx.to_array (part name m place)))
           masks ))
 
-let masks_of m shape (px, counts) =
+let masks_of ?(keys = keys_of) m shape (px, counts) =
   batches shape px counts (fun b ->
-      pixel_masks b (Model.masks ~dropout:half ~keys:(keys_of b) m b))
+      pixel_masks b (Model.masks ~dropout:half ~keys:(keys b) m b))
   |> List.concat |> List.sort compare
 
 let masks_layout =
@@ -762,6 +762,38 @@ let resume =
       equal (list (array int32)) ls (ls1 @ ls2);
       equal (list (array float_exact)) (leaves s straight) (leaves s resumed))
 
+(* A placed pixel's masks hold its reducer row, 4 · 16 = 64 values each kept
+   with probability 1/2, so a pixel's masks at two positions, of two keys, agree
+   with probability 2^-64. 30 cases of at most 6 pixels at 3 positions each see
+   one agree with probability below 2^-54. *)
+let positions =
+  prop "a pixel's masks differ at each stream position" ~count:30
+    Gen.(triple bool (Synth.spec ()) (int_range 0 1000))
+    (fun (pre, spec, first) ->
+      let m = model pre in
+      let px = training spec in
+      let n = Pixels.length (fst px) in
+      let at ?(shape = packed) first =
+        masks_of ~keys:(Distil.keys ~key:root ~first) m shape px
+      in
+      let here = at first in
+      cover "pixels sharing a row" (n > 1);
+      cover "the teacher's form" pre;
+      let masks = list (pair string (array bool)) in
+      equal (list (pair int masks)) here (at ~shape:alone first);
+      List.iter
+        (fun (later, name) ->
+          List.iter2
+            (fun (p, a) (p', b) ->
+              equal int p p';
+              not_equal ~msg:(Printf.sprintf "pixel %d, %s" p name) masks a b)
+            here (at later))
+        [
+          (first + 1, "the next position");
+          (first + n, "a corpus later");
+          (first + (1 lsl 32), "2^32 positions later");
+        ])
+
 let host_jit =
   Nx.Ptree.(
     pair (instantiate (module Distil.Group)) (instantiate (module Distil.State))
@@ -847,5 +879,6 @@ let () =
              mixed;
              mixup_refusals;
            ];
-         group "distil" [ cosines; grouping; resume; compiled; stepped ];
+         group "distil"
+           [ cosines; grouping; resume; positions; compiled; stepped ];
        ])

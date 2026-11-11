@@ -95,6 +95,12 @@ module Group = struct
     { batch; keys; targets }
 end
 
+let keys ~key ~first (b : Nx.host Batch.t) =
+  let p =
+    Nx.add_s (Nx.maximum b.pixel (Nx.scalar Nx.int64 0L)) (Int64.of_int first)
+  in
+  Nx.Rng.fold_in_tensor key p
+
 type ('a, 'd) state = {
   model : ('a, 'd) Model.t;
   heads : ('a, 'd) head list;

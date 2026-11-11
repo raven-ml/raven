@@ -89,6 +89,15 @@ module Group : Nx.Ptree.S with type ('a, 'd) t = ('a, 'd) group
     batch's arrays and the keys are fixed arrays, the targets at the parameter,
     so a cast turns float16 targets into float32. *)
 
+val keys :
+  key:Nx.host Nx.Rng.key -> first:int -> Nx.host Batch.t -> Nx.host Nx.Rng.key
+(** [keys ~key ~first b] is the keys of [b]'s places, as {!Model.train} takes
+    them, for [b]'s pixels at stream positions from [first]: place [k]'s key is
+    [Nx.Rng.fold_in key (first + p)], [p] its pixel's index in [b], or [0] at an
+    empty place. A pixel's masks are thus a function of [key] and its stream
+    position: the same at that position in any group or batch shape, drawn anew
+    at any other, as at a later step or epoch. *)
+
 type ('a, 'd) state = {
   model : ('a, 'd) Model.t;
   heads : ('a, 'd) head list;
