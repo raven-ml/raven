@@ -555,62 +555,49 @@ let free_slot d =
   && fst l.pending == []
   && c_free l.c d
 
-(* Calls the driver's stop, allocating nothing before it does. *)
-let stop_handle d fault =
-  match d.kind with
-  | Driver { m; h; _ } -> (
-      let module D = (val m) in
-      Rig_edge_primitive.mask ();
-      match D.stop h ~fault with
-      | () -> Rig_edge_primitive.unmask ()
-      | exception D.Fault _ -> Rig_edge_primitive.unmask ()
-      | exception e -> unmask_raise e)
-  | Io | Host -> ()
-
-(* Moves the state on after the driver's stop. Its values and its names go
-   first, so a close, which waits for the state, returns after them, and the
-   state moves also when they raise. *)
-let returned d =
-  match
-    drop_values d;
-    Lock.protect table_lock forget_locked d
-  with
-  | () -> c_stopped d.live.c
-  | exception e ->
-      c_stopped d.live.c;
-      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
-
-(* Runs the stop of [d], which the caller claimed just before. It ends in no
-   tail call, so the compiler puts no poll at its start, and nothing polls
-   between the claim and its handlers. An exception before the driver's stop
-   is called owes the stop again; from the driver's stop on, the state moves
-   on whatever else it did: the device must count as stopped or not. A stop
-   that raised may have left the device's work running, which asks nothing
-   more of rig: its memory returns once it is Stopped, as its word shows its
-   last value, which a driver writes only once no work of the device runs. *)
-let run_stop d =
-  (match if c_faulted d.live.c then Some (why d) else None with
-  | exception e ->
-      c_unclaim d.live.c;
-      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
-  | fault -> (
-      match stop_handle d fault with
-      | () -> returned d
-      | exception e ->
-          returned d;
-          Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())));
-  !answered d;
-  ()
-
 (* Runs [d]'s stop if it is owed and no counted call runs on [d]: whether
    this call ran it. Only a close and an open of [d]'s name call it, outside
    the calls that lost [d], so an exception that cut such a call short, and
-   may land again in its handlers, never lands in the stop. *)
+   may land again in its handlers, never lands in the stop.
+
+   One handler covers the stop from its claim to the move of the state, and
+   [called], stored with the thread's signals blocked right before the
+   driver's stop, tells it which way to go: an exception before the store
+   owes the stop again; from the driver's stop on, the state moves on
+   whatever else the stop did, the device's values and names dropped or not,
+   since the device must count as stopped or not. The move follows the
+   handler's end with nothing between that polls, so no exception leaves
+   the stop claimed. The values and the names go before the move, so a
+   close, which waits for the state, returns after them. A stop that raised
+   may have left the device's work running, which asks nothing more of rig:
+   its memory returns once it is Stopped, as its word shows its last value,
+   which a driver writes only once no work of the device runs. *)
 let own_stop d =
   state d = owed_state
-  && c_claim_own d.live.c
+  &&
+  let called = ref false in
+  c_claim_own d.live.c
   && begin
-    run_stop d;
+    (match
+       let fault = if c_faulted d.live.c then Some (why d) else None in
+       (match d.kind with
+       | Driver { m; h; _ } -> (
+           let module D = (val m) in
+           Rig_edge_primitive.mask ();
+           called := true;
+           match D.stop h ~fault with
+           | () -> Rig_edge_primitive.unmask ()
+           | exception D.Fault _ -> Rig_edge_primitive.unmask ()
+           | exception e -> unmask_raise e)
+       | Io | Host -> called := true);
+       drop_values d;
+       Lock.protect table_lock forget_locked d
+     with
+    | () -> c_stopped d.live.c
+    | exception e ->
+        if !called then c_stopped d.live.c else c_unclaim d.live.c;
+        Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()));
+    !answered d;
     true
   end
 
