@@ -1391,6 +1391,10 @@ let open_ ?measure ~root ~word i =
         give_back ();
         Printexc.raise_with_backtrace e bt
 
+(* Packed once: Rig_amd has items the signature lacks, so each pack copies
+   it. *)
+let driver = (module Rig_amd : Rig_edge.Driver with type t = Rig_amd.t)
+
 let gpu_under ?measure ~root i : Rig_amd.t Rig_edge.opener =
   {
     name =
@@ -1406,7 +1410,7 @@ let gpu_under ?measure ~root i : Rig_amd.t Rig_edge.opener =
           in
           strf "%s measuring %s" (device_name i)
             (String.concat "," (first @ rest)));
-    driver = (module Rig_amd);
+    driver;
     make = (fun ~word -> open_ ?measure ~root ~word i);
   }
 

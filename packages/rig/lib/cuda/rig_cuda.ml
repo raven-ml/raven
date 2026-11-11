@@ -1171,9 +1171,13 @@ module Driver = struct
   let grow = grow
 end
 
+(* Packed once: a pack copies Driver unless it lists the signature's items
+   exactly, in order. *)
+let packed = (module Driver : Rig_edge.Driver with type t = t)
+
 let gpu i : t Rig_edge.opener =
   {
     name = device_name i;
-    driver = (module Driver);
+    driver = packed;
     make = (fun ~word -> open_ ~word i);
   }

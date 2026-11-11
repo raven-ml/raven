@@ -465,12 +465,16 @@ let reset ?(machine = Machine.this) i =
 (* The system's firmware directory, searched after the caller's and rig's. *)
 let system_firmware = "/lib/firmware"
 
+(* Packed once: Rig_amd has items the signature lacks, so each pack copies
+   it. *)
+let driver = (module Rig_amd : Rig_edge.Driver with type t = Rig_amd.t)
+
 let gpu ?machine ?(firmware = []) i : Rig_amd.t Rig_edge.opener =
   let rig = Option.to_list (Rig_pci.Firmware.directory ()) in
   let firmware = firmware @ rig @ [ system_firmware ] in
   {
     name = device_name i;
-    driver = (module Rig_amd);
+    driver;
     make = (fun ~word -> open_ ?machine ~word ~firmware i);
   }
 

@@ -103,9 +103,10 @@ module D = struct
   let grow _ = Rig_edge.Grown
 end
 
+(* Packed once: D has items the signature lacks, so each pack copies it. *)
+let driver = (module D : Rig_edge.Driver with type t = D.t)
+
 let open_ name =
-  Dev.open_driver ~software:true
-    (module D)
-    ~machine:Def.Here ~name
+  Dev.open_driver ~software:true driver ~machine:Def.Here ~name
     (fun ~word ->
       Ok { D.self = state word; word = Nativeint.to_int word })

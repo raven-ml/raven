@@ -242,10 +242,14 @@ module Driver = struct
   let grow = grow
 end
 
+(* Packed once: a pack copies Driver unless it lists the signature's items
+   exactly, in order. *)
+let driver = (module Driver : Rig_edge.Driver with type t = t)
+
 let device l (a : Wire.account) c : t Rig_edge.opener =
   {
     name = a.name;
-    driver = (module Driver);
+    driver;
     make = (fun ~word -> make l a c ~word);
   }
 

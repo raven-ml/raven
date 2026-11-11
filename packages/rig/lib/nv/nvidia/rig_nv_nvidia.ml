@@ -1312,10 +1312,14 @@ let open_ ?(wrap = Fun.id) ~root ~word i =
             Atomic.set g.opened false;
             reraise e)
 
+(* Packed once: Rig_nv has items the signature lacks, so each pack copies
+   it. *)
+let driver = (module Rig_nv : Rig_edge.Driver with type t = Rig_nv.t)
+
 let gpu_under ~root i : Rig_nv.t Rig_edge.opener =
   {
     name = device_name i;
-    driver = (module Rig_nv);
+    driver;
     make = (fun ~word -> open_ ~root ~word i);
   }
 

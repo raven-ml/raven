@@ -502,6 +502,9 @@ module Io = struct
     try using f (fun fd -> advise fd f.pages at len) with Sys_error _ -> ()
 end
 
+(* Packed once: Io has items the signature lacks, so each pack copies it. *)
+let io = (module Io : Rig_edge.Io with type region = region)
+
 (* The disk *)
 
 (* The first open of its name, as the library starts: it answers [Error] only in
@@ -551,7 +554,7 @@ let open_file path mode n =
             trim ()
           in
           locked admitted ();
-          let buffer = Rig.Buffer.of_io device (module Io) f ~access size in
+          let buffer = Rig.Buffer.of_io device io f ~access size in
           Ok { region = f; buffer }
         with
         | b -> b
