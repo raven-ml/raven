@@ -1541,6 +1541,43 @@ let x_domain_law =
       let expected = match ends with [] -> 1. | _ -> List.fold_left Float.max 0. ends in
       equal (pair float_exact float_exact) (0., expected) (Plot.domain ~key:"m" (List.map facts runs)))
 
+(* Zoom's window: [n] halvings of the domain [(0, hi)], the part that holds
+   the cursor, or the nearer end for a cursor outside. It lies inside the
+   domain, so zooming on an ended run's last step shows its last samples. *)
+let zoom_window =
+  let gen =
+    Gen.(
+      let* hi =
+        frequency [ (3, map Float.of_int (int_range 1 100_000)); (1, float_range 1e-3 1e9) ]
+      in
+      let* narrow = int_range 0 30 in
+      let+ at =
+        frequency
+          [
+            (5, float_range 0. hi);
+            (1, constant hi);
+            (1, constant 0.);
+            (1, float_range (-.hi) 0.);
+            (1, float_range hi (2. *. hi));
+          ]
+      in
+      (hi, narrow, at))
+    |> Gen.with_pp (fun ppf (hi, narrow, at) ->
+           Format.fprintf ppf "(0, %h), %d halvings, at %h" hi narrow at)
+  in
+  prop "zoom's window lies in the domain and holds the cursor" gen (fun (hi, narrow, at) ->
+      cover "the cursor at the domain's end" (at = hi);
+      cover "the cursor outside the domain" (at < 0. || at > hi);
+      cover "narrowed more than once" (narrow > 1);
+      let lo', hi' = Plot.window (0., hi) ~at ~narrow in
+      at_least ~msg:"its start" float_exact ~than:0. lo';
+      at_most ~msg:"its end" float_exact ~than:hi hi';
+      let w = Float.ldexp hi (-narrow) in
+      equal ~msg:"its width" (float_rel ~rel:1e-9 ~abs:(1e-12 *. hi)) w (hi' -. lo');
+      let at = Float.min hi (Float.max 0. at) in
+      at_least ~msg:"the cursor, from its start" float_exact ~than:lo' at;
+      at_most ~msg:"the cursor, to its end" float_exact ~than:hi' at)
+
 (* Law 9: a live run's latest step has its [now] rule wherever it is in the
    x domain, which is closed: a run whose latest step is the domain's end,
    as one past 1,000 steps without [steps] reaches at step 1,000, has it. *)
@@ -3433,7 +3470,7 @@ let () =
            ];
          group "charts"
            [
-             binned; rising; spike; non_finite; cursor_wins; zoom_cursor; x_labels_clear; lines_over_rules; letters; exact_labels; tick_labels; x_domain; x_domain_law; stalled_end; now_rule; bounds;
+             binned; rising; spike; non_finite; cursor_wins; zoom_cursor; x_labels_clear; lines_over_rules; letters; exact_labels; tick_labels; x_domain; x_domain_law; stalled_end; zoom_window; now_rule; bounds;
              ticks_of;
              log_choice; y_per_metric; cut_law; values_printed; rounding_shown;
              filled;
