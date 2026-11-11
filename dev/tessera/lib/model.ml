@@ -266,15 +266,15 @@ let token_mask ~rate k x =
     (Nx.Rng.of_tensor (Nx.reshape [| r; t; 1; 2 |] (Nx.Rng.to_tensor k)))
     x
 
-(* The attention probabilities' mask, [[r; h; t; t]], one key per pair of tokens
-   drawing each head: the query's key indexed by the key's [index]. *)
-let pair_mask ~rate k ~index p =
-  let r = Nx.dim 0 p and t = Nx.dim 2 p in
+(* The attention probabilities' mask over [x], [[r; h; t; t]], one key per pair
+   of tokens drawing each head: the query's key indexed by the key's [index]. *)
+let pair_mask ~rate k ~index x =
+  let r = Nx.dim 0 x and t = Nx.dim 2 x in
   let q = Nx.Rng.of_tensor (Nx.reshape [| r; t; 1; 2 |] (Nx.Rng.to_tensor k)) in
   let pairs = Nx.Rng.fold_in_tensor q (Nx.reshape [| r; 1; t |] index) in
   draw ~rate
     (Nx.Rng.of_tensor (Nx.reshape [| r; 1; t; t; 2 |] (Nx.Rng.to_tensor pairs)))
-    p
+    x
 
 (* The tokens a layer reads: the bounds of each query's keys, [[r; t]], each
    token's pixel place and index in its slot, and where its masks come from. *)
@@ -329,32 +329,40 @@ let key_bias b =
   let b = Nx.reshape [| n; 1; 1; k |] b in
   fun _ s -> Nx.add s b
 
-let scores = Nx.Pattern.v "r h q d, r h k d -> r h q k | d"
-let mix = Nx.Pattern.v "r h q k, r h k d -> r h q d | k"
+(* Attention with its probabilities dropped, as two calls sharing the scores:
+   for the keep mask [z], [Σ_j z_j p_j v_j] is [o_kept] times the kept keys'
+   share of the row's weight, [σ (lse_kept − lse_lost)], from the call over
+   the kept keys and the call over the lost ones. The share carries the
+   [lse]s' errors scaled by the lost share, about [rate], where [exp
+   (lse_kept − lse)] would carry them whole; {!Nx.sigmoid} never overflows,
+   where [1 / (1 + exp (lse_lost − lse_kept))] would lose its derivative to
+   [0 · ∞] once the lost keys outweigh the kept ones by [e^89]. [o_kept]
+   rounds to [q]'s dtype before the product, which rounds again.
 
-(* Attention with its probabilities dropped, composed: float32 scores and
-   softmax over each query's visible keys, the kept probabilities rounded to
-   [v]'s dtype for the value product. *)
-let dense (tk : 'd tokens) s q k v =
-  let r = Nx.dim 0 q and t = Nx.dim 2 q in
-  let dt = Nx.dtype v in
-  let scale = 1. /. Float.sqrt (Float.of_int (Nx.dim (-1) q)) in
-  let x = Nx.mul_s (Nx.contract f32 scores q k) scale in
-  let x = Nx.add x (Nx.reshape [| r; 1; 1; t |] tk.bias) in
-  let col =
-    Nx.reshape [| 1; 1; 1; t |]
-      (Nx.arange_at (Nx.beside tk.start) Nx.int32 0 t 1)
-  in
-  let bound b = Nx.reshape [| r; 1; t; 1 |] b in
-  let visible =
-    Nx.logical_and
-      (Nx.greater_equal col (bound tk.start))
-      (Nx.less col (bound tk.stop))
-  in
-  let p = Nx.softmax ~where:visible x in
-  let m = pair_mask ~rate:s.rate (s.keys attn_p) ~index:tk.index p in
+   A row that keeps no key, whether it sees none (a padding token) or drops
+   every one it sees, gives 0. The kept call gives it [o_kept = 0] and
+   [lse_kept = −∞], and its share is 0 with its argument taken at 0: where
+   the row sees no key, [lse_lost] is [−∞] too, and [−∞ − (−∞)] would make
+   the argument and its cotangent NaN. *)
+let dropped (tk : 'd tokens) s q k v =
+  let r = Nx.dim 0 q and h = Nx.dim 1 q and t = Nx.dim 2 q in
+  let x = Nx.broadcast_to [| r; h; t; t |] (Nx.scalar_like tk.bias 0.) in
+  let m = pair_mask ~rate:s.rate (s.keys attn_p) ~index:tk.index x in
   s.report "attn_p" (fun () -> m);
-  Nx.contract dt mix (Nx.cast dt (keep ~rate:s.rate m p)) v
+  let within = within tk.start tk.stop and score = key_bias tk.bias in
+  let kept p = Nx.logical_and (within p) m in
+  (* At each pair: [logical_not m] would be an array of its own. *)
+  let lost p = Nx.logical_xor (within p) (kept p) in
+  let kv = Nx.Dense { k; v } in
+  let o, lse_kept = Nx.attention ~mask:kept ~score ~acc:f32 ~kv q in
+  let _, lse_lost = Nx.attention ~mask:lost ~score ~acc:f32 ~kv q in
+  let live = Nx.not_equal_s lse_kept Float.neg_infinity in
+  let share =
+    Nx.sigmoid
+      (Nx.where live (Nx.sub lse_kept lse_lost) (Nx.scalar_like lse_kept 0.))
+  in
+  let c = Nx.reshape [| r; h; t; 1 |] (keep ~rate:s.rate live share) in
+  Nx.cast (Nx.dtype v) (Nx.mul (Nx.cast f32 o) c)
 
 let split ~heads (p : ((float, 's, 'd) Nx.t, 'd) Kaun.Linear.t) x =
   let b = Nx.dim 0 x and t = Nx.dim 1 x and d = Nx.dim 1 p.w in
@@ -383,7 +391,7 @@ let attention ~heads l (tk : 'd tokens) ds x =
   in
   let o =
     match ds with
-    | Some s -> dense tk s q k v
+    | Some s -> dropped tk s q k v
     | None ->
         let mask = within tk.start tk.stop and score = key_bias tk.bias in
         fst (Nx.attention ~mask ~score ~acc:f32 ~kv:(Nx.Dense { k; v }) q)

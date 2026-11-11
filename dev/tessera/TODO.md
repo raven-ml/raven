@@ -123,15 +123,22 @@ An item leaves when its library fixes it, or when a design decides it stays.
   constant and specialises on it. One compile per round count needs either
   a traced integer argument or tolk not specialising on folded constants
   (rune/tolk).
-- No f32 attention derivative kernel, and none above head dim 128: those
-  cases fall back to a dense backward (packed rows 2.3× per-pixel buckets in
-  f32 training; TESSERA's large student, head dim 160, and the teacher,
-  1024, in bf16). Found by the stack's design skeptic.
+- No f32 attention derivative kernel: f32 falls back to a dense backward
+  (packed rows 2.3× per-pixel buckets in f32 training). Found by the
+  stack's design skeptic. Dropout's two attention calls take that backward
+  twice: at medium's shape in f32 on CUDA, 1.00 GB and 70 ms a call against
+  a dense composition's 0.87 GB and 67 ms.
+- Attention-probability dropout at the large student's head dim (160)
+  costs 7.1 ms a call over the fused call without it, where the dense
+  composition's costs 2.6: bf16 on CUDA, 176 rows of 256 tokens, forward
+  and backward, two calls 12.00 ms, dense 7.48, fused without dropout
+  4.88. The gap is the second call and the mask draw, not the 160-dim
+  kernel; the item is cutting those two. Dropout inside `Nx.attention`
+  stays out until a second user needs it. Bench rows
+  `train/large/layer/T256/{dropout,no_dropout}/bf16`.
 - A query tile's key loop visits every key tile and votes on each; limiting
   it to the tile's visible key range would make flat segments (no rows) a
   simpler layout than packed rows (today 1.9-98× slower).
-- Attention-probability dropout composes from existing ops, which is the
-  dense path; a fused form is a speed item, not a missing capability.
 - tolk's loop-body launch rule (main 1ab249a3d3, which fixed remat inside a
   scan of two or more trips: 87.0 → 41.9 MB) allows no byte above the
   trip's peak and counts a one-element buffer as a 256-byte block, so loop

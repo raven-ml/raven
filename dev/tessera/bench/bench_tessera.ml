@@ -477,6 +477,87 @@ let tile ~pixels =
   in
   { Tessera.Pixels.s2; s1 }
 
+(* A step of a one-layer student over a group of [pixels] pixels of the tile
+   below, duplicate-filled into rows of 256 tokens as distillation packs them:
+   the gradient of a weighted sum of [Model.train]'s embeddings, in bfloat16,
+   with v2's attention dropout or none. Its encoder layer's attention, over
+   [[rows; 4; 256; 256]] pairs, is most of the step; the two rows' difference
+   is what dropout costs. *)
+let layer_step name arch ~pixels ~dropout =
+  let make (type d) (t : d target) =
+    let px = tile ~pixels in
+    let px, counts = Tessera.Batch.expand px (Tessera.Batch.v2_counts px) in
+    let width = 256 in
+    let rows x =
+      let tokens = fl (Nx.numel x) /. fl pixels in
+      Float.to_int (Float.ceil (1.05 *. tokens *. fl pixels /. fl width)) + 1
+    in
+    let shape =
+      {
+        Tessera.Batch.pixels;
+        s2_rows = rows counts.s2;
+        s1_rows = rows counts.s1;
+        slots = 32;
+        width;
+      }
+    in
+    let b, _ = Tessera.Batch.pack shape px counts ~from:0 in
+    let rates = { Tessera.Model.layers = dropout; reducer = 0. } in
+    let keys =
+      Nx.Rng.fold_in_tensor (Nx.Rng.key 0)
+        (Nx.maximum b.pixel (Nx.scalar Nx.int64 0L))
+    in
+    let m = Tessera.Model.init ~key:(Nx.Rng.key 7) { arch with layers = 1 } in
+    let m = Nx.Ptree.cast (module Tessera.Model) bf16 m in
+    let m = Nx.Ptree.place (module Tessera.Model) t.at m in
+    let b = Tessera.Batch.place t.at b and keys = Nx.Rng.place t.at keys in
+    let w = draw t f32 6 [| pixels; Tessera.Model.dims m |] in
+    let net = Nx.Ptree.instantiate (module Tessera.Model.Net) in
+    let grad net' b keys w =
+      let f n =
+        let m = { m with net = n } in
+        Nx.sum
+          (Nx.mul w
+             (Tessera.Model.train ~dropout:rates ~remat:false ~keys m
+                (Tessera.Model.inputs m b)))
+      in
+      snd (Rune.value_and_grad net f net')
+    in
+    let f =
+      compile t
+        Nx.Ptree.(
+          net @-> v Tessera.Batch.walk @-> Nx.Rng.ptree @-> tensor
+          @-> returns net)
+        grad
+    in
+    fun () -> wait net (f m.net b keys w)
+  in
+  {
+    name;
+    shape =
+      Printf.sprintf "op=train_layer pixels=%d T=256 dropout=%g dtype=bf16"
+        pixels dropout;
+    flops = 0.;
+    bytes = 0.;
+    pixels;
+    call = { make };
+  }
+
+(* Attention-probability dropout at the medium (110) and large (160) head
+   dims, beside the same step without it. *)
+let dropout_steps ~pixels =
+  List.concat_map
+    (fun (name, arch) ->
+      [
+        layer_step
+          (Printf.sprintf "train/%s/layer/T256/dropout/bf16" name)
+          arch ~pixels ~dropout:0.1;
+        layer_step
+          (Printf.sprintf "train/%s/layer/T256/no_dropout/bf16" name)
+          arch ~pixels ~dropout:0.;
+      ])
+    Tessera.Model.[ ("medium", medium); ("large", large) ]
+
 (* A model of random weights embedding the tile: packing, placing, computing and
    reading back, as [Tessera.Embedding.encode] does, in batches of up to 4096
    pixels of the typical shape. The model computes at [precision], cast on the
@@ -537,6 +618,7 @@ let cases ~shrink ~gpu =
   @ teacher ~pixels:(pixels 512)
   @ distillation ~pixels:(pixels 4096)
   @ barlow_twins ~pixels:(pixels 2048)
+  @ dropout_steps ~pixels:(pixels 1024)
   @ end_to_end ~pixels:(pixels 8192) ~teacher_pixels:(pixels 512) ~gpu
 
 (* Devices *)

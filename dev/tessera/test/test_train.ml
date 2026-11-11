@@ -317,6 +317,187 @@ let remat =
       in
       equal (list (array int32)) (leaves g) (leaves g'))
 
+(* Tokens that keep no key *)
+
+(* [m] with each attention's output bias 0, so a token that attends to 0 in
+   every head records 0 as its attention's value. *)
+let unbiased (m : _ Model.t) =
+  let zero (l : _ Model.layer) =
+    let out = l.attn.out in
+    let out = { out with b = Option.map Nx.zeros_like out.b } in
+    { l with attn = { l.attn with out } }
+  in
+  let backbone (bb : _ Model.backbone) =
+    { bb with layers = List.map zero bb.layers }
+  in
+  match m.net with
+  | Post_ln n ->
+      { m with net = Post_ln { n with s2 = backbone n.s2; s1 = backbone n.s1 } }
+  | Pre_ln _ -> invalid_arg "unbiased: a post-LN model expected"
+
+(* Each token of [r]'s rows that keeps no key of the ones it sees in any head
+   of the mask [p] ([[rows; heads; width; width]]), with whether it sees one. *)
+let blind (r : Nx.host Batch.rows) p =
+  let rows = Nx.dim 0 p and heads = Nx.dim 1 p and width = Nx.dim 2 p in
+  let p = Nx.to_array p in
+  let start = Nx.to_array r.start and stop = Nx.to_array r.stop in
+  let at row t = Int32.to_int start.((row * width) + t)
+  and upto row t = Int32.to_int stop.((row * width) + t) in
+  let kept row t =
+    let any = ref false in
+    for h = 0 to heads - 1 do
+      for k = at row t to upto row t - 1 do
+        if p.((((((row * heads) + h) * width) + t) * width) + k) then
+          any := true
+      done
+    done;
+    !any
+  in
+  List.concat_map
+    (fun row ->
+      List.filter_map
+        (fun t ->
+          if kept row t then None else Some (row, t, at row t < upto row t))
+        (List.init width Fun.id))
+    (List.init rows Fun.id)
+
+let heavy = { Model.layers = 0.9; reducer = 0. }
+
+(* Elements of [x] that are NaN or infinite. *)
+let nonfinite x =
+  Array.fold_left
+    (fun n v -> if Float.is_finite v then n else n + 1)
+    0
+    (Nx.to_array (Nx.cast Nx.float32 x))
+
+(* The gradient of a weighted sum of [Model.train]'s embeddings, eager and
+   compiled. *)
+let gradients ~dropout m (b : Nx.host Batch.t) keys =
+  let w =
+    Nx.Rng.normal ~key:(Nx.Rng.key 9) Nx.float32
+      [| Nx.dim 0 b.pixel; Model.dims m |]
+  in
+  let f n =
+    let m = { m with Model.net = n } in
+    Nx.sum
+      (Nx.mul w
+         (Model.train ~dropout ~remat:false ~keys m (Model.inputs m b)))
+  in
+  let grad n = snd (Rune.value_and_grad net f n) in
+  [ grad m.net; Rune.jit Nx.Ptree.(net @-> returns net) grad m.net ]
+
+let finite g = Nx.Ptree.fold net (fun _ a () -> equal int 0 (nonfinite a)) g ()
+
+(* A padding token sees no key, and at rate 0.9 a short slot's token often
+   keeps none of its keys in either head. Both attend to 0, as a softmax over
+   no key gives, and neither makes a value or a derivative NaN. *)
+let no_key =
+  prop "a token that keeps no key attends to 0" ~count:10 (Synth.spec ())
+    (fun spec ->
+      let m = unbiased post_ln in
+      let px, counts = training spec in
+      let b, _ = Batch.pack packed px counts ~from:0 in
+      let keys = keys_of b in
+      let masks = Model.masks ~dropout:heavy ~keys m b in
+      let acc = ref [] in
+      let record k v = acc := (k, v ()) :: !acc in
+      let e =
+        Model.train ~record ~dropout:heavy ~remat:false ~keys m
+          (Model.inputs m b)
+      in
+      equal int 0 (nonfinite e);
+      let seen = ref [] in
+      List.iter
+        (fun (sensor, rows) ->
+          for i = 0 to 1 do
+            let name = Printf.sprintf "%s_layer%d_attn" sensor i in
+            let a = List.assoc name !acc in
+            let d = Nx.dim 2 a in
+            List.iter
+              (fun (row, t, sees) ->
+                seen := sees :: !seen;
+                equal (array float_exact) (Array.make d 0.)
+                  (Nx.to_array (Nx.slice [ Nx.I row; Nx.I t; Nx.A ] a)))
+              (blind rows (List.assoc (name ^ "_p") masks))
+          done)
+        [ ("s2", b.s2); ("s1", b.s1) ];
+      cover "a padding token" (List.mem false !seen);
+      cover "a token that drops every key it sees" (List.mem true !seen);
+      List.iter finite (gradients ~dropout:heavy m b keys))
+
+(* [m] with each attention's query and key weights times [f]: scores [f²]
+   times as far apart, as logits grow without QK norm. *)
+let sharp f (m : _ Model.t) =
+  let scale (l : _ Model.layer) =
+    let by (p : _ Kaun.Linear.t) = { p with w = Nx.mul_s p.w f } in
+    { l with attn = { l.attn with q = by l.attn.q; k = by l.attn.k } }
+  in
+  let backbone (bb : _ Model.backbone) =
+    { bb with layers = List.map scale bb.layers }
+  in
+  match m.net with
+  | Post_ln n ->
+      { m with net = Post_ln { n with s2 = backbone n.s2; s1 = backbone n.s1 } }
+  | Pre_ln _ -> invalid_arg "sharp: a post-LN model expected"
+
+(* The largest margin by which a key that S2's first layer drops outscores
+   every key the token keeps, over [b]'s tokens and [m]'s heads: the scores
+   restated from the layer's input and parameters. *)
+let margin (m : _ Model.t) (b : Nx.host Batch.t) masks =
+  let x = List.assoc "s2_encoder_in" (Model.blocks m (Model.inputs m b)) in
+  let l =
+    match m.net with
+    | Post_ln n -> List.hd n.s2.layers
+    | Pre_ln n -> List.hd n.s2.layers
+  in
+  let rows = Nx.dim 0 x and width = Nx.dim 1 x and heads = m.heads in
+  let split (p : _ Kaun.Linear.t) =
+    let y = Nx.add (Nx.matmul x p.w) (Option.get p.b) in
+    let dh = Nx.dim 1 p.w / heads in
+    Nx.swapaxes 1 2 (Nx.reshape [| rows; width; heads; dh |] y)
+  in
+  let q = split l.attn.q and k = split l.attn.k in
+  let scale = 1. /. Float.sqrt (Float.of_int (Nx.dim 3 q)) in
+  let s = Nx.mul_s (Nx.matmul q (Nx.swapaxes 2 3 k)) scale in
+  let s = Nx.add s (Nx.reshape [| rows; 1; 1; width |] b.s2.log_count) in
+  let s = Nx.to_array s
+  and p = Nx.to_array (List.assoc "s2_layer0_attn_p" masks) in
+  let start = Nx.to_array b.s2.start and stop = Nx.to_array b.s2.stop in
+  let best = ref Float.neg_infinity in
+  for row = 0 to rows - 1 do
+    for h = 0 to heads - 1 do
+      for t = 0 to width - 1 do
+        let kept = ref Float.neg_infinity and lost = ref Float.neg_infinity in
+        let i = (row * width) + t in
+        for j = Int32.to_int start.(i) to Int32.to_int stop.(i) - 1 do
+          let at = (((((row * heads) + h) * width) + t) * width) + j in
+          if p.(at) then kept := Float.max !kept s.(at)
+          else lost := Float.max !lost s.(at)
+        done;
+        if Float.is_finite !kept && Float.is_finite !lost then
+          best := Float.max !best (!lost -. !kept)
+      done
+    done
+  done;
+  !best
+
+(* float32's [exp] overflows past 88.7: a share of the row's weight computed
+   through it would lose its derivative where a dropped key outscores the kept
+   ones by more. *)
+let far_key =
+  prop "a dropped key far above the kept ones leaves the gradient finite"
+    ~count:10 (Synth.spec ()) (fun spec ->
+      let m = sharp 30. post_ln in
+      let px, counts = training spec in
+      let b, _ = Batch.pack packed px counts ~from:0 in
+      let keys = keys_of b in
+      let masks = Model.masks ~dropout:half ~keys m b in
+      cover "a dropped key 89 above the kept ones" (margin m b masks > 89.);
+      equal int 0
+        (nonfinite
+           (Model.train ~dropout:half ~remat:false ~keys m (Model.inputs m b)));
+      List.iter finite (gradients ~dropout:half m b keys))
+
 (* Records *)
 
 let leaf_bits g =
@@ -660,6 +841,8 @@ let () =
              refusals;
              remat;
              transparent;
+             no_key;
+             far_key;
              relu_inputs;
              mixed;
              mixup_refusals;
