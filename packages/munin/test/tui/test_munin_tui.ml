@@ -3011,6 +3011,24 @@ let banner_names =
         failf "no %S in:\n%s" says
           (String.concat "\n" (List.init (T.Screen.rows screen) (T.Screen.row screen))))
 
+(* Zoom's window is numbers, so its line wraps rather than cut one: after
+   one [+] on a run of two million steps it reads from 1,000,000. *)
+let zoom_window_whole =
+  test "zoom's window gives its steps whole" (fun () ->
+      with_store ~name:"window" [] @@ fun store ->
+      ignore
+        (write_log store
+           (List.init 41 (fun i -> sample_record (i * 50_000, Float.of_int i)))
+        );
+      let screen = show ~cols:120 ~rows:40 store Munin_tui.Runs [ Key Enter; Key Enter; char '+' ] in
+      let y, x = match T.Screen.find screen "showing" with p :: _ -> p | [] -> fail "no window" in
+      (* The panel's lines from [showing] down to the status bar. *)
+      let lines =
+        List.init (T.Screen.rows screen - 1 - y) (fun k -> String.trim (from x (T.Screen.row screen (y + k))))
+      in
+      equal string "showing 1,000,000 – 2,000,000"
+        (String.concat " " (List.filter (( <> ) "") lines)))
+
 (* [y] asks for the other scale of the metric shown, and of no other: zoom's
    title says [log] while the metric is drawn on one. [m] rises over three
    decades and [w] within one, so [m] starts on a log scale and [w] on a
@@ -3095,4 +3113,5 @@ let () =
          strip_keys;
          zoom_units;
          banner_names;
+         zoom_window_whole;
        ])

@@ -75,7 +75,7 @@
 38 |                                 │       └┬───────────┬────────────┬────────────┬───────────┬ │
    |                                 f       yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy f
 39 |                                 │        0           5k    8,000              15k       step │ showing 0 – 20,000
-   |                                 f        g           gg   DDDDDDD             ggg       gggg f gggggggggggggggggg
+   |                                 f        g           gg   DDDDDDD             ggg       gggg f ggggggg ggg gggggg
 40 | charts › strips › zoom   ←→ step   esc strips   s smooth   + − zoom   ? keys
    |accccccEEEccccccEEEDDDDaaaDDcccccaaaDDDcccccccaaaDcccccccaaaDDDcccccaaaDcccccaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 cursor hidden

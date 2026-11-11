@@ -594,10 +594,10 @@ let zoom th (m : M.t) (f : Facts.run) =
         | Some s -> "at step " ^ Numbers.count s
         | None -> "at the cursor"
       in
+      (* The window's line, in groups that wrap whole: each number is one. *)
       let showing =
         let lo, hi = c.x in
-        Printf.sprintf "showing %s – %s" (Numbers.count (Float.to_int lo))
-          (Numbers.count (Float.to_int hi))
+        [ "showing"; Numbers.count (Float.to_int lo) ^ " –"; Numbers.count (Float.to_int hi) ]
       in
       box ~flex_direction:Column ~flex_grow:1. ~margin:(margin_lrtb 0 0 1 0)
         [
@@ -611,7 +611,10 @@ let zoom th (m : M.t) (f : Facts.run) =
                 ~padding:(padding_lrtb 1 0 0 0)
                 ([ line [ frag ~bold:true th Mid at ]; line [] ]
                 @ List.concat_map run marked
-                @ [ box ~flex_grow:1. []; line [ frag th Dim showing ] ]);
+                @ [
+                    box ~flex_grow:1. [];
+                    groups (List.map (fun s -> [ frag th Dim s ]) showing);
+                  ]);
             ];
         ]
 
