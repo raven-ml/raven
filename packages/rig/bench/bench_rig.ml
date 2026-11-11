@@ -644,6 +644,21 @@ let finish_pending t =
   collect_releases t.d;
   Rig.close t.d
 
+(* The frees that one mask of a drain covers. *)
+let batch = 64
+
+(* Frees [t]'s cache of [batch] buffers while its work runs, which defers
+   each free until the work is done, then runs the work: the create after
+   drains the frees under one mask, and masks once more to find none
+   left. *)
+let deferred_frees (t, run) =
+  let bs = Array.init batch (fun _ -> B.create t.d (4 * kib)) in
+  ignore (submit run);
+  Array.iter (fun b -> ignore (B.free b : bool)) bs;
+  Rig.free_cache t.d;
+  ignore (P.run t.p);
+  B.create t.d (4 * kib)
+
 let drain_rows =
   let allocation name setup =
     Thumper.bench_with_setup ~setup ~teardown:finish_pending name (fun t ->
@@ -666,6 +681,7 @@ let drain_rows =
           Gc.full_major ();
           create d (4 * kib) ();
           Rig.free_cache d);
+      row "deferred-frees-64" empty deferred_frees;
       allocation "allocate-4K/pending-0" (pending pending_buffers 0);
       allocation "allocate-4K/pending-buffers-64" (pending pending_buffers 64);
       allocation "allocate-4K/pending-buffers-1024"
