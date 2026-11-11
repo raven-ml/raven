@@ -1,0 +1,98 @@
+01 | ᛗ munin                                              8 runs · 2 experiments   ● 1 live   ✗ 2 failed   × 1 NaN   gpu-01
+   | aaaaaaa                                              bbbbbbbbbbbbbbbbbbbbbbbbbccccccccbbbddddddddddbbbdddddddbbbbbbbbb
+02 |                                 │                                                          │
+   |                                 e                                                          e
+03 | ¹ runs                          │ val/loss ↓                                               │ ³ run
+   | bbaaaa                          e bbbbbbbbbb                                               e bbaaa
+04 |                                 │ █▀█   █ █ █▀█ ▀▀█ ▀▀█      train/loss  0.2762  smoothed  │
+   |                                 e fffffffffffffffffffff      bbbbbbbbbb  aaaaaabbbbbbbbbb  e
+05 | ▾ cifar-resnet  6      val/loss │ █ █   ▀▀█ █ █   █   █      train/acc   95.40%  smoothed  │ ● tidy-otter  live
+   | bbaaaaaaaaaaaabbb      bbbbbbbb e fffffffffffffffffffff      bbbbbbbbb   aaaaaabbbbbbbbbb  e gaaaaaaaaaaacccccc
+06 |▌ ■ tidy-otter ● ⠢⣀⣀⣀    0.4077  │ ▀▀▀ ▀   ▀ ▀▀▀   ▀   ▀      val/acc     94.18%            │ last sample 0s ago
+   |hihijjjjjjjjjjikihhhhiiiiiiiiiiiie fffffffffffffffffffff      bbbbbbb     aaaaaa            e bbbbbbbbbbbbbbbbbb
+07 |  · amber-fox  ✓ ⠢⣀⣀⣀⣀⣀  0.3841 ★│ best 0.4077 at 12,000                                    │
+   |  l            m bbbbbb  aaaaaa ne bbbbb      bbbbbbbbbb                                    e
+08 |  · brisk-wren ✓ ⠢⣀⣀⣀⣀⣀  0.4071  │                                                          │ ━━━━━━━━━━━━━──────── 62%
+   |  l            m bbbbbb          e                                                          e ccccccccccccceeeeeeee
+09 |  · calm-lynx  ✓ ⠢⣀⣀⣀⣀⣀  0.3942  │ ‹   val/loss   train/acc   val/acc   val/ece   ›         │ 12,400 of 20,000 steps
+   |  l            m bbbbbb          e b   aaaaaaaa   bbbbbbbbb   bbbbbbb   bbbbbbb   b         e aaaaaabbbbbbbbbbbbbbbb
+10 |  · dusty-mole × ⢢⡀      0.7665  │     ▔▔▔▔▔▔▔▔                                             │ 59m 11s left · ends 13:17
+   |  l            o bb              e     pppppppp                                             e aaaaaaabbbbbbbbbbbbbbbbbb
+11 |  · eager-hawk ✗ ⠄        1.670  │                                                          │ 2.1 steps/s · 1h 37m in
+   |  l            o b               e                                                          e aaabbbbbbbbbbbbbbbbbbbb
+12 | ▾ mnist-mlp  2         val/loss │ ━ tidy-otter 0.4077   r others                           │
+   | bbaaaaaaaaabbb         bbbbbbbb e ffaaaaaaaaaaaaaaaaa   aabbbbbb                           e
+13 |  · mlp-wide   ✓ ⠈⢆⣀⣀⣀⣀ 0.05831 ★│                                                          │ params ──────────────────
+   |  l            m bbbbbb aaaaaaa ne                                                          e aaaaaa eeeeeeeeeeeeeeeeee
+14 |  · mlp-base   ✗ ⠈⢆⣀⣀   0.06576  │      2┤⡄                            ┊now                 │ lr       0.0003    varies
+   |  l            o bbbb            e bbbbbblp                            lbbb                 e bb       aaaaaa    bbbbbb
+15 |                                 │       │⢱                            ┊                    │ warmup   500       varies
+   |                                 e       lp                            l                    e bbbbbb   aaa       bbbbbb
+16 |                                 │       │⠘⡄                           ┊                    │ batch    256
+   |                                 e       lpp                           l                    e bbbbb
+17 |                                 │       │ ⢣                           ┊                    │ epochs   10
+   |                                 e       l p                           l                    e bbbbbb
+18 |                                 │    1.5┤ ⠘⡄                          ┊                    │ wd       0.05
+   |                                 e bbbbbbl pp                          l                    e bb
+19 |                                 │       │  ⢣                          ┊                    │ +1 more   i: all
+   |                                 e       l  p                          l                    e bbbbbbbbbbbbbbbb
+20 |                                 │       │   ⢣                         ┊                    │
+   |                                 e       l   p                         l                    e
+21 |                                 │       │   ⠈⢆                        ┊                    │ machine ─────────────────
+   |                                 e       l   pp                        l                    e aaaaaaa eeeeeeeeeeeeeeeee
+22 |                                 │       │    ⠈⢆                       ┊                    │ GPU  ━━━━━━━━━━━━━━━╸ 97%
+   |                                 e       l    pp                       l                    e bbb
+23 |                                 │      1┤     ⠈⢢                      ┊                    │ VRAM ━━━━━━━━━━─ 21.3/24G
+   |                                 e bbbbbbl     pp                      l                    e bbbb           e
+24 |                                 │       │       ⢣                     ┊                    │ CPU  ━━━━━━━━━━━╸──── 71%
+   |                                 e       l       p                     l                    e bbb              eeee
+25 |                                 │       │        ⠑⠢⡀                  ┊                    │ RAM  ━━━━╸──── 33.0/62.7G
+   |                                 e       l        ppp                  l                    e bbb       eeee
+26 |                                 │       │          ⠈⠒⢄⡀               ┊                    │ 71°C  274 W
+   |                                 e       l          pppp               l                    e aaaabbbbbbb
+27 |                                 │    0.5┤             ⠈⠉⠒⠤⠤⢄⣀⣀        ┊                    │
+   |                                 e bbbbbbl             pppppppp        l                    e
+28 |                                 │       │                     ⠉⠉⠉⠉⠉⠉⠉⠒┊                    │ source ──────────────────
+   |                                 e       l                     ppppppppl                    e aaaaaa eeeeeeeeeeeeeeeeee
+29 |                                 │       └┬───────────┬───────────┬───────────┬──────────┬  │ 5eaf82b dirty
+   |                                 e       lllllllllllllllllllllllllllllllllllllllllllllllll  e        nnnnnn
+30 |                                 │        0           5k         10k         15k      step  │ train.exe --lr 0.0003 --…
+   |                                 e        b           bb         bbb         bbb      bbbb  e bbbbbbbbbbbbbbbbbbbbbbbbb
+31 |                                 │                                                          │
+   |                                 e                                                          e
+32 |                                 │ train/loss                   train/acc                   │
+   |                                 e aaaaaaaaaa                   aaaaaaaaa                   e
+33 |                                 │       │⡄           ┊now            │      ⢀⡠⠤⠤⠒⠒⠂now     │
+   |                                 e       lp           lbbb            l      pppppppbbb     e
+34 |                                 │      2┤⠘⡄          ┊               │    ⡠⠊⠁     ┊        │
+   |                                 e bbbbbblpp          l               l    ppp     l        e
+35 |                                 │       │⠐⢱          ┊            0.8┤  ⠄⡔⠁       ┊        │
+   |                                 e       lqp          l         bbbbbbl  qpp       l        e
+36 |                                 │       │ ⢁⢣         ┊               │ ⡈⡜         ┊        │
+   |                                 e       l qp         l               l qp         l        e
+37 |                                 │      1┤  ⢂⢣        ┊            0.6┤⠠⡸          ┊        │
+   |                                 e bbbbbbl  qp        l         bbbbbblqp          l        e
+38 |                                 │       │    ⠑⢄⡀     ┊               │⢠⠃          ┊        │
+   |                                 e       l    ppp     l               lpp          l        e
+39 |                                 │       │      ⠈⠑⠒⠢⠤⠤⠄               │⠃           ┊        │
+   |                                 e       l      ppppppp               lp           l        e
+40 | charts › strips › zoom   ↑↓ run   ←→ metric   enter strips   space overlay   / filter   ? keys
+   | aaaaaalllbbbbbblllbbbb   aabbbb   aabbbbbbb   aaaaabbbbbbb   aaaaabbbbbbbb   abbbbbbb   abbbbb
+cursor hidden
+a bold
+b dim
+c fg=Green
+d fg=Red
+e fg=Bright_black
+f fg=Blue bold
+g fg=Green bold
+h fg=Blue bg=Bright_black
+i bg=Bright_black
+j bg=Bright_black bold
+k fg=Green bg=Bright_black bold
+l fg=Bright_black dim
+m bold dim
+n fg=Yellow
+o fg=Red bold
+p fg=Blue
+q fg=Blue dim

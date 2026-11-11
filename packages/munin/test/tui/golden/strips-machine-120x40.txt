@@ -1,0 +1,114 @@
+01 | ᛗ munin                                              8 runs · 2 experiments   ● 1 live   ✗ 2 failed   × 1 NaN   gpu-01
+   |abbbbbbbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaacccccccccccccccccccccccccddddddddccceeeeeeeeeeccceeeeeeeccccccccca
+02 |                                 │
+   |                                 f
+03 | ¹ runs                          │ val/loss ↓
+   | gghhhh                          f gggggggggg
+04 |                                 │ █▀█   █ █ █▀█ ▀▀█ ▀▀█      train/loss  0.2762  smoothed
+   |                                 f iiiiiiiiiiiiiiiiiiiii      gggggggggg  jjjjjjgggggggggg
+05 | ▾ cifar-resnet  6      val/loss │ █ █   ▀▀█ █ █   █   █      train/acc   95.40%  smoothed
+   | ggkkkkkkkkkkkkggg      gggggggg f iiiiiiiiiiiiiiiiiiiii      ggggggggg   jjjjjjgggggggggg
+06 |▌ ■ tidy-otter ● ⠢⣀⣀⣀    0.4077  │ ▀▀▀ ▀   ▀ ▀▀▀   ▀   ▀      val/acc     94.18%
+   |lmlmnnnnnnnnnnmomllllmmmmppppppmmf iiiiiiiiiiiiiiiiiiiii      ggggggg     jjjjjj
+07 |  ■ amber-fox  ✓ ⠢⣀⣀⣀⣀⣀  0.3841 ★│ best 0.4077 at 12,000
+   |  q rrrrrrrrr  s qqqqqq  jjjjjj tf gggggrrrrrrgggggggggg
+08 |  · brisk-wren ✓ ⠢⣀⣀⣀⣀⣀  0.4071  │
+   |  u vvvvvvvvvv s wwwwww  vvvvvv  f
+09 |  · calm-lynx  ✓ ⠢⣀⣀⣀⣀⣀  0.3942  │ ━ tidy-otter   ━ amber-fox                                      latest   vs amber-f…
+   |  u vvvvvvvvv  s wwwwww  vvvvvv  f xxjjjjjjjjjjqqqqqvvvvvvvvv                                      gggggggggggggggggggg
+10 |  ■ dusty-mole × ⢢⡀      0.7665  │
+   |  y rrrrrrrrrr z yy      vvvvvv  f
+11 |  · eager-hawk ✗ ⠄        1.670  │  ↓ min               ⠉⠒⠒⠒⠒⠢⠤⠤⠤⠤⠤⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⡀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀
+   |  u rrrrrrrrrr z w        vvvvv  f  ggggg               xxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq
+12 | ▾ mnist-mlp  2         val/loss │
+   | ggkkkkkkkkkggg         gggggggg f
+13 |  · mlp-wide   ✓ ⠈⢆⣀⣀⣀⣀ 0.05831 ★│  val/top5            ⣀⣀⠤⠤⠔⠒⠒⠒⠒⠒⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠁⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉    0.9968       -0.1%
+   |  u vvvvvvvv   s wwwwww jjjjjjj tf  rrrrrrrr            xxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq    kkkkkk       AAAAA
+14 |  · mlp-base   ✗ ⠈⢆⣀⣀   0.06576  │  ↑ max           ⡠⠔⠊⠉
+   |  u rrrrrrrr   z wwww   vvvvvvv  f  ggggg           xxxx
+15 |                                 │
+   |                                 f
+16 |                                 │  epoch                                 ⢀⣀⣀⣀⣀⣀⡠⠤⠤⠤⠤⠤⠤⠒⠒⠒⠒⠒⠒⠉⠉⠉⠉     6.200        same
+   |                                 f  rrrrr                                 xxxxxxqqqqqqqqqqqqqqqqq     kkkkk        gggg
+17 |                                 │                  ⣀⣀⣀⣀⠤⠤⠤⠤⠤⠤⠒⠒⠒⠒⠒⠒⠊⠉⠉⠉⠉⠉⠁
+   |                                 f                  xxxxxxxxxxxxxxxxxxxxxxx
+18 |                                 │
+   |                                 f
+19 |                                 │  train/data_ms       ⠊     ⠁     ⠈                                 4.758       +4.5%
+   |                                 f  rrrrrrrrrrrrr       B     B     B                                 kkkkk       ggggg
+20 |                                 │                  ⣀⣀⣀⣀⠤⠤⣀⣀⣀⣀⠤⠤⢄⣀⣀⣀⡠⠤⢄⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⠤⠤⢄⣀⣀⣀⣀⣀⣀⡠⠤⠤⠤
+   |                                 f                  xxxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq
+21 |                                 │
+   |                                 f
+22 |                                 │  train/grad_norm ⠑⠒⠤⢄⣀⡀                                            1.020        -20%
+   |                                 f  rrrrrrrrrrrrrrr xxxxxx                                            kkkkk        gggg
+23 |                                 │                       ⠈⠉⠉⠒⠒⠒⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀
+   |                                 f                       xxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq
+24 |                                 │
+   |                                 f
+25 |                                 │  train/lr         ⡰⠒⠉⠉⠉⠉⠉⠉⠉⠉⠒⠒⠒⠒⠒⠢⠤⠤⠤⢄⣀⣀⣀⡀                     9.908e-05        -70%
+   |                                 f  rrrrrrrr         qqqqqqqqqqqqqqqqqqqqqqqq                     kkkkkkkkk        gggg
+26 |                                 │                  ⡠⠔⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠑⠒⠒⠒⠢⠤⠤⠤⠤⠤⣀⣀⣀⣀⣀⣀⣀
+   |                                 f                  xxxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqqqqq
+27 |                                 │
+   |                                 f
+28 |                                 │  train/samples_s ⢄⠁⠈ ⠉ ⣀⣀⣀⣀⡀⣀⡀⣀⢀⣀⣀⣀⠈⠈⢀⡀⣀⣀⣀⣀⣀⣀    ⣀⡀  ⣀⣀⣀⣀⣀⣀⣀⣀⡀      2196       +0.8%
+   |                                 f  rrrrrrrrrrrrrrr xBB B xxxxxqqqxxxxBBqqqqxqxx    qq  qqqqqqqqq      kkkk       ggggg
+29 |                                 │                  ⠈⠊⠉⠉⠉⠉⢀ ⠈⠉⠈⠉⠉⠉⠁⢀⡀⠈⠉⠉⠒⠉⠉⠉ ⠉ ⠈⠉⠉⠉⠉ ⠈⠉⠉        ⠈
+   |                                 f                  xxxxxxB qqxxxxxBBqxxxxxx x qqqqq qqq        q
+30 |                                 │
+   |                                 f
+31 |                                 │ machine ────────────────────────────────────────────────────────────────────────────
+   |                                 f hhhhhhh ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+32 |                                 │  GPU busy        ⣼⣾⣾⣾⣿⣿⣿⣿⣷⣷⣷⣷⣿⣿⣾⣿⣿⣾⣾⣾⣷⣷⣿⣿⣿⣷⡇⣿⣾⣾⣾⣿⣿⣿⣿⣷⣷⣷⣷⣿⣿           97%
+   |                                 f  rrrrrrrr        xxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqq           rrr
+33 |                                 │                  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+   |                                 f                  xxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqq
+34 |                                 │
+   |                                 f
+35 |                                 │  VRAM            ⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿      21.3 GiB
+   |                                 f  rrrr            xxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqq      rrrrrrrr
+36 |                                 │                  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+   |                                 f                  xxxxxxxxxxxxxxxxxxxxxxxxxxxqqqqqqqqqqqqqq
+37 |                                 │
+   |                                 f
+38 |                                 │ ▌CPU busy        ⣼⣾⣾⣾⣾⣾⣷⣷⣷⣷⣷⣷⣿⣿⣾⣾⣾⣾⣾⣾⣷⣷⣷⣷⣷⣷⡇⣾⣾⣾⣾⣾⣾⣷⣷⣷⣷⣷⣷⣷⣿           71%
+   |                                 f lCCCCCCCCmmmmmmmmlllllllllllllllllllllllllllDDDDDDDDDDDDDDmmmmmmmmmmmEEEmmmmmmmmmmmm
+39 |                                 │                  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+   |                                 f mmmmmmmmmmmmmmmmmlllllllllllllllllllllllllllDDDDDDDDDDDDDDmmmmmmmmmmmmmmmmmmmmmmmmmm
+40 | charts › strips › zoom   ↑↓ metric   [ ] run   enter zoom   esc charts   ? keys
+   |accccccFFFGGGGGGFFFccccaaaGGcccccccaaaGGGccccaaaGGGGGcccccaaaGGGcccccccaaaGcccccaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+cursor hidden
+a bg=Rgb(22,26,32)
+b fg=Rgb(143,152,165) bg=Rgb(22,26,32) bold
+c fg=Rgb(95,103,115) bg=Rgb(22,26,32)
+d fg=Rgb(61,220,132) bg=Rgb(22,26,32)
+e fg=Rgb(255,107,107) bg=Rgb(22,26,32)
+f fg=Rgb(34,39,47)
+g fg=Rgb(95,103,115)
+h fg=Rgb(143,152,165) bold
+i fg=Rgb(108,182,255) bold
+j fg=Rgb(238,241,245) bold
+k fg=Rgb(201,206,214) bold
+l fg=Rgb(108,182,255) bg=Rgb(27,35,48)
+m bg=Rgb(27,35,48)
+n fg=Rgb(238,241,245) bg=Rgb(27,35,48) bold
+o fg=Rgb(61,220,132) bg=Rgb(27,35,48) bold
+p fg=Rgb(143,152,165) bg=Rgb(27,35,48)
+q fg=Rgb(79,209,197)
+r fg=Rgb(201,206,214)
+s fg=Rgb(95,103,115) bold
+t fg=Rgb(229,180,90)
+u fg=Rgb(50,57,68)
+v fg=Rgb(143,152,165)
+w fg=Rgb(48,52,58)
+x fg=Rgb(108,182,255)
+y fg=Rgb(180,190,254)
+z fg=Rgb(255,107,107) bold
+A fg=Rgb(255,107,107)
+B fg=Rgb(54,91,128)
+C fg=Rgb(201,206,214) bg=Rgb(27,35,48)
+D fg=Rgb(79,209,197) bg=Rgb(27,35,48)
+E fg=Rgb(238,241,245) bg=Rgb(27,35,48)
+F fg=Rgb(50,57,68) bg=Rgb(22,26,32)
+G fg=Rgb(238,241,245) bg=Rgb(22,26,32) bold

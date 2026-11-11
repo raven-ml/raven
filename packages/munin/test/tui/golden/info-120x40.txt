@@ -1,0 +1,106 @@
+01 | ᛗ munin                                              8 runs · 2 experiments   ● 1 live   ✗ 2 failed   × 1 NaN   gpu-01
+   |abbbbbbbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaacccccccccccccccccccccccccddddddddccceeeeeeeeeeccceeeeeeeccccccccca
+02 |                                 │                                                          │
+   |                                 f                                                          f
+03 | ¹ runs                          │ ● tidy-otter  cifar-resnet  everything         esc close │ ³ run
+   | gghhhh                          f ijjjjjjjjjjjgggggggggggggggggggggggggg         jjjgggggg f gghhh
+04 |                                 │                                                          │
+   |                                 f                                                          f
+05 | ▾ cifar-resnet  6      val/loss │ run         id          20261101T104102Z-7f3a0c21      █ │ ● tidy-otter  live
+   | ggkkkkkkkkkkkkggg      gggggggg f lll         gg          mmmmmmmmmmmmmmmmmmmmmmmmm        f ijjjjjjjjjjjnnnnnn
+06 |▌ ■ tidy-otter ● ⠢⣀⣀⣀    0.4077  │             experiment  cifar-resnet                   █ │ last sample 1s ago
+   |opopqqqqqqqqqqprpooooppppssssssppf             gggggggggg  mmmmmmmmmmmm                     f gggggggggggggggggg
+07 |  · amber-fox  ✓ ⠢⣀⣀⣀⣀⣀  0.3841 ★│             started     Nov 1 10:41:02                 █ │
+   |  t lllllllll  u vvvvvv  jjjjjj wf             ggggggg     mmmmmmmmmmmmmm                   f
+08 |  · brisk-wren ✓ ⠢⣀⣀⣀⣀⣀  0.4071  │             last write  Nov 1 12:18:01                 █ │ ━━━━━━━━━━━━━──────── 62%
+   |  t llllllllll u vvvvvv  llllll  f             gggggggggg  mmmmmmmmmmmmmm                   f nnnnnnnnnnnnntttttttt mmm
+09 |  · calm-lynx  ✓ ⠢⣀⣀⣀⣀⣀  0.3942  │             steps       12,400 of 20,000               █ │ 12,400 of 20,000 steps
+   |  t lllllllll  u vvvvvv  llllll  f             ggggg       mmmmmmgggggggggg                 f kkkkkkgggggggggggggggg
+10 |  · dusty-mole × ⢢⡀      0.7665  │                                                        █ │ 59m 11s left · ends 13:17
+   |  t mmmmmmmmmm x vv      llllll  f                                                          f kkkkkkkgggggggggggggggggg
+11 |  · eager-hawk ✗ ⠄        1.670  │ source      command     ./train.exe --lr 0.0003 --warmu█ │ 2.1 steps/s · 1h 37m in
+   |  t mmmmmmmmmm x v        lllll  f llllll      ggggggg     mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm  f kkkgggggggggggggggggggg
+12 | ▾ mnist-mlp  2         val/loss │             in          /home/ada/src/resnet           █ │
+   | ggkkkkkkkkkggg         gggggggg f             gg          mmmmmmmmmmmmmmmmmmmm             f
+13 |  · mlp-wide   ✓ ⠈⢆⣀⣀⣀⣀ 0.05831 ★│             host        gpu-01 · pid 48211             █ │ params ──────────────────
+   |  t llllllll   u vvvvvv jjjjjjj wf             gggg        mmmmmmgggggggggggg               f hhhhhh ffffffffffffffffff
+14 |  · mlp-base   ✗ ⠈⢆⣀⣀   0.06576  │             commit      5eaf82b  dirty: the work tree h█ │ lr       0.0003    varies
+   |  t mmmmmmmm   x vvvv   lllllll  f             gggggg      mmmmmmmwwwwwwwwwwwwwwwwwwwwwwww  f gg       jjjjjj    gggggg
+15 |                                 │             built       OCaml 5.4.0 · raven 1.0.0~dev ·█ │ warmup   500       varies
+   |                                 f             ggggg       mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm  f gggggg   jjj       gggggg
+16 |                                 │                                                        █ │ batch    256
+   |                                 f                                                          f ggggg    mmm
+17 |                                 │ params      batch       256                            █ │ epochs   10
+   |                                 f llllll      ggggg       mmm                              f gggggg   mm
+18 |                                 │             epochs      10                             █ │ wd       0.05
+   |                                 f             gggggg      mm                               f gg       mmmm
+19 |                                 │             lr          0.0003                         █ │ +1 more   i: all
+   |                                 f             gg          mmmmmm                           f gggggggggggggggg
+20 |                                 │             opt         adamw                          █ │
+   |                                 f             ggg         mmmmm                            f
+21 |                                 │             warmup      500                            █ │ machine ─────────────────
+   |                                 f             gggggg      mmm                              f hhhhhhh fffffffffffffffff
+22 |                                 │             wd          0.05                           ▀ │ GPU  ━━━━━━━━━━━━━━━╸ 97%
+   |                                 f             gg          mmmm                             f ggg  llllllllllllllll mmm
+23 |                                 │                                                        │ │ VRAM ━━━━━━━━━━─ 21.3/24G
+   |                                 f                                                          f gggg llllllllllt mmmmmmmm
+24 |                                 │ metrics     epoch  6.200 at 12,400                     │ │ CPU  ━━━━━━━━━━━╸──── 71%
+   |                                 f lllllll     gggggggmmmmmggggggggggggg                    f ggg  lllllllllllltttt mmm
+25 |                                 │             train/acc ↑  95.82% at 12,400   best 95.95%│ │ RAM  ━━━━╸──── 33.0/62.7G
+   |                                 f             gggggggggggggmmmmmmggggggggggggggggggmmmmmm  f ggg  llllltttt mmmmmmmmmm
+26 |                                 │             train/data_ms  4.758 at 12,400             │ │ 71°C  274 W
+   |                                 f             gggggggggggggggmmmmmggggggggggggg            f kkkkggggggg
+27 |                                 │             train/grad_norm  1.020 at 12,400           │ │
+   |                                 f             gggggggggggggggggmmmmmggggggggggggg          f
+28 |                                 │             train/loss ↓  0.2642 at 12,400   best 0.262│ │ source ──────────────────
+   |                                 f             ggggggggggggggmmmmmmggggggggggggggggggmmmmm  f hhhhhh ffffffffffffffffff
+29 |                                 │             train/lr  9.908e-05 at 12,400              │ │ 5eaf82b dirty
+   |                                 f             ggggggggggmmmmmmmmmggggggggggggg             f mmmmmmmwwwwww
+30 |                                 │             train/samples_s  2196 at 12,400            │ │ train.exe --lr 0.0003 --…
+   |                                 f             gggggggggggggggggmmmmggggggggggggg           f ggggggggggggggggggggggggg
+31 |                                 │             val/acc ↑  94.18% at 12,000   best 94.18% a│ │
+   |                                 f             gggggggggggmmmmmmggggggggggggggggggmmmmmmgg  f
+32 |                                 │             val/ece ↓  0.02243 at 12,000   best 0.02218│ │
+   |                                 f             gggggggggggmmmmmmmggggggggggggggggggmmmmmmm  f
+33 |                                 │             val/loss ↓  0.4077 at 12,000   best 0.4077 │ │
+   |                                 f             ggggggggggggmmmmmmggggggggggggggggggmmmmmmg  f
+34 |                                 │             val/top5 ↑  0.9968 at 12,000   best 0.9968 │ │
+   |                                 f             ggggggggggggmmmmmmggggggggggggggggggmmmmmmg  f
+35 |                                 │                                                        │ │
+   |                                 f                                                          f
+36 |                                 │ notes       cosine schedule, no label smoothing        │ │
+   |                                 f lllll       mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm          f
+37 |                                 │                                                        │ │
+   |                                 f                                                          f
+38 |                                 │ tags        sweep                                      │ │
+   |                                 f llll        mmmmm                                        f
+39 |                                 │                                                        │ │
+   |                                 f                                                          f
+40 | ↑↓ scroll   esc close   q quit
+   |ayycccccccaaayyyccccccaaaycccccaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+cursor hidden
+a bg=Rgb(22,26,32)
+b fg=Rgb(143,152,165) bg=Rgb(22,26,32) bold
+c fg=Rgb(95,103,115) bg=Rgb(22,26,32)
+d fg=Rgb(61,220,132) bg=Rgb(22,26,32)
+e fg=Rgb(255,107,107) bg=Rgb(22,26,32)
+f fg=Rgb(34,39,47)
+g fg=Rgb(95,103,115)
+h fg=Rgb(143,152,165) bold
+i fg=Rgb(61,220,132) bold
+j fg=Rgb(238,241,245) bold
+k fg=Rgb(201,206,214) bold
+l fg=Rgb(143,152,165)
+m fg=Rgb(201,206,214)
+n fg=Rgb(61,220,132)
+o fg=Rgb(108,182,255) bg=Rgb(27,35,48)
+p bg=Rgb(27,35,48)
+q fg=Rgb(238,241,245) bg=Rgb(27,35,48) bold
+r fg=Rgb(61,220,132) bg=Rgb(27,35,48) bold
+s fg=Rgb(143,152,165) bg=Rgb(27,35,48)
+t fg=Rgb(50,57,68)
+u fg=Rgb(95,103,115) bold
+v fg=Rgb(48,52,58)
+w fg=Rgb(229,180,90)
+x fg=Rgb(255,107,107) bold
+y fg=Rgb(238,241,245) bg=Rgb(22,26,32) bold

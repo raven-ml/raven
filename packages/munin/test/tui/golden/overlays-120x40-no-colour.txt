@@ -1,0 +1,84 @@
+01 | ᛗ munin                                              8 runs · 2 experiments   ● 1 live   ✗ 2 failed   × 1 NaN   gpu-01
+   | aaaaaaa                                              bbbbbbbbbbbbbbbbbbbbbbbbb        bbb          bbb       bbbbbbbbb
+02 |                                 │                                                          │
+03 | ¹ runs                          │ val/loss ↓                                               │ ³ run
+   | bbaaaa                            bbbbbbbbbb                                                 bbaaa
+04 |                                 │ █▀█   █ █ █▀█ ▀▀█ ▀▀█      train/loss  0.2762  smoothed  │
+   |                                   aaaaaaaaaaaaaaaaaaaaa      bbbbbbbbbb  aaaaaabbbbbbbbbb
+05 | ▾ cifar-resnet  6      val/loss │ █ █   ▀▀█ █ █   █   █      train/acc   95.40%  smoothed  │ ● tidy-otter  live
+   | bbaaaaaaaaaaaabbb      bbbbbbbb   aaaaaaaaaaaaaaaaaaaaa      bbbbbbbbb   aaaaaabbbbbbbbbb    aaaaaaaaaaaa
+06 |▌ ■ tidy-otter ● ⠢⣀⣀⣀    0.4077  │ ▀▀▀ ▀   ▀ ▀▀▀   ▀   ▀      val/acc     94.18%            │ last sample 7s ago
+   |ccccddddddddddcdccccccccccccccccc  aaaaaaaaaaaaaaaaaaaaa      bbbbbbb     aaaaaa              bbbbbbbbbbbbbbbbbb
+07 |  ■ amber-fox  ✓ ⠢⣀⣀⣀⣀⣀  0.3841 ★│ best 0.4077 at 12,000                                    │
+   |               e         aaaaaa    bbbbb      bbbbbbbbbb
+08 |  · brisk-wren ✓ ⠢⣀⣀⣀⣀⣀  0.4071  │                                                          │ ━━━━━━━━━━━━━──────── 62%
+   |  b            e bbbbbb
+09 |  · calm-lynx  ✓ ⠢⣀⣀⣀⣀⣀  0.3942  │ ‹   val/loss   train/acc   val/acc   val/ece   ›         │ 12,400 of 20,000 steps
+   |  b            e bbbbbb            b   aaaaaaaa   bbbbbbbbb   bbbbbbb   bbbbbbb   b           aaaaaabbbbbbbbbbbbbbbb
+10 |  ■ dusty-mole × ⢢⡀      0.7665  │     ▔▔▔▔▔▔▔▔                                             │ 59m 11s left · ends 13:17
+   |               a                                                                              aaaaaaabbbbbbbbbbbbbbbbbb
+11 |  · eager-hawk ✗ ⠄        1.670  │                                                          │ 2.1 steps/s · 1h 37m in
+   |  b            a b                                                                            aaabbbbbbbbbbbbbbbbbbbb
+12 | ▾ mnist-mlp  2         val/loss │ ━ tidy-otter 0.4077   b dusty-mole NaN                   │
+   | bbaaaaaaaaabbb         bbbbbbbb   aaaaaaaaaaaaaaaaaaa   aa
+13 |  · mlp-wide   ✓ ⠈⢆⣀⣀⣀⣀ 0.05831 ★│ a amber-fox 0.3939   r others                            │ params ──────────────────
+   |  b            e bbbbbb aaaaaaa    aa                   aabbbbbb                              aaaaaa
+14 |  · mlp-base   ✗ ⠈⢆⣀⣀   0.06576  │                                                          │ lr       0.0003    varies
+   |  b            a bbbb                                                                         bb       aaaaaa    bbbbbb
+15 |                                 │      2┤⡄                            ┊now                 │ warmup   500       varies
+   |                                   bbbbbbb                             bbbb                   bbbbbb   aaa       bbbbbb
+16 |                                 │       │⢱                            ┊                    │ batch    256
+   |                                         b                             b                      bbbbb
+17 |                                 │       │⠈⡆                           ┊                    │ epochs   10
+   |                                         b                             b                      bbbbbb
+18 |                                 │       │ ⢱                           ┊                    │ wd       0.05
+   |                                         b                             b                      bb
+19 |                                 │    1.5┤ ⠈⣆                          ┊                    │ +1 more   i: all
+   |                                   bbbbbbb                             b                      bbbbbbbbbbbbbbbb
+20 |                                 │       │  ⠘⣆                         ┊                    │
+   |                                         b                             b
+21 |                                 │       │   ⠸⡄                        ┊                    │ machine ─────────────────
+   |                                         b                             b                      aaaaaaa
+22 |                                 │       │    ⠹⣄                       ┊                    │ GPU  ━━━━━━━━━━━━━━━╸ 97%
+   |                                         b                             b                      bbb
+23 |                                 │      1┤     ⠘⢦                      ┊                    │ VRAM ━━━━━━━━━━─ 21.3/24G
+   |                                   bbbbbbb                             b                      bbbb
+24 |                                 │       │      ⠈⢷⡀                    ┊                    │ CPU  ━━━━━━━━━━━╸──── 71%
+   |                                         b                             b                      bbb
+25 |                                 │       │        ⠙⢷b                  ┊                    │ RAM  ━━━━╸──── 33.0/62.7G
+   |                                         b          a                  b                      bbb
+26 |                                 │       │          ⠙⠲⢄⡀               ┊                    │ 71°C  274 W
+   |                                         b                             b                      aaaabbbbbbb
+27 |                                 │    0.5┤             ⠈⠉⠒⠶⠦⢤⣄⣀⣀⣀⡀     ┊                    │
+   |                                   bbbbbbb                             b
+28 |                                 │       │                     ⠉⠉⠉⠉⠉⠉⠛⠛⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒a  │ source ──────────────────
+   |                                         b                                               a    aaaaaa
+29 |                                 │       └┬───────────┬───────────┬───────────┬──────────┬  │ 5eaf82b dirty
+   |                                         bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+30 |                                 │        0           5k         10k         15k      step  │ train.exe --lr 0.0003 --…
+   |                                          b           bb         bbb         bbb      bbbb    bbbbbbbbbbbbbbbbbbbbbbbbb
+31 |                                 │                                                          │
+32 |                                 │ train/loss                   train/acc                   │
+   |                                   aaaaaaaaaa                   aaaaaaaaa
+33 |                                 │       │⡄           ┊now            │      ⢀⣀⣤⠤⠴⠶⠖now⠒⠒⠒a │
+   |                                         b            bbbb            b             bbb   a
+34 |                                 │      2┤⠸⡀          ┊               │    ⣠⠞⠉     ┊        │
+   |                                   bbbbbbb            b               b            b
+35 |                                 │       │⠐⢳          ┊            0.8┤  ⠄⡴⠁b      ┊        │
+   |                                         bb           b         bbbbbbb  b  a      b
+36 |                                 │       │ ⢁⢣         ┊               │ ⡐⡜         ┊        │
+   |                                         b b          b               b b          b
+37 |                                 │      1┤  ⠂⢳⡀b      ┊            0.6┤⠠⡸          ┊        │
+   |                                   bbbbbbb  b  a      b         bbbbbbbb           b
+38 |                                 │       │    ⠑⢤⣀     ┊               │⢰⠁          ┊        │
+   |                                         b            b               b            b
+39 |                                 │       │      ⠈⠙⠓⠒⠶⠶⠦⠤⠤⠤⠤⠤⠤a        │⠃           ┊        │
+   |                                         b                   a        b            b
+40 | charts › strips › zoom   ↑↓ run   ←→ metric   enter strips   space overlay   / filter   ? keys
+   | aaaaaabbbbbbbbbbbbbbbb   aabbbb   aabbbbbbb   aaaaabbbbbbb   aaaaabbbbbbbb   abbbbbbb   abbbbb
+cursor hidden
+a bold
+b dim
+c inverse
+d bold inverse
+e bold dim

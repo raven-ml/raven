@@ -1,0 +1,126 @@
+01 | ᛗ munin                                                                                      8 runs · 2 experiments   ● 1 live   ✗ 2 failed   × 1 NaN   gpu-01
+   |abbbbbbbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaacccccccccccccccccccccccccddddddddccceeeeeeeeeeccceeeeeeeccccccccca
+02 |                                         │                                                                                    │
+   |                                         f                                                                                    f
+03 | ¹ runs                                  │ val/loss ↓                                                                         │ ³ run
+   | gghhhh                                  f gggggggggg                                                                         f gghhh
+04 |                                         │ █▀█   █ █ █▀█ ▀▀█ ▀▀█      train/loss   0.2762  smoothed                           │
+   |                                         f iiiiiiiiiiiiiiiiiiiii      gggggggggg   jjjjjjgggggggggg                           f
+05 | ▾ cifar-resnet  6              val/loss │ █ █   ▀▀█ █ █   █   █      train/acc    95.40%  smoothed                           │ ● tidy-otter  live
+   | ggkkkkkkkkkkkkggg              gggggggg f iiiiiiiiiiiiiiiiiiiii      ggggggggg    jjjjjjgggggggggg                           f ljjjjjjjjjjjmmmmmm
+06 |▌ ■ tidy-otter ● ⠑⠤⢄⣀⣀⣀⣀⣀⡀       0.4077  │ ▀▀▀ ▀   ▀ ▀▀▀   ▀   ▀      val/acc      94.18%                                     │ last sample 0s ago
+   |nonoppppppppppoqonnnnnnnnnooooooorrrrrroof iiiiiiiiiiiiiiiiiiiii      ggggggg      jjjjjj                                     f gggggggggggggggggg
+07 |  · amber-fox  ✓ ⠑⠤⢄⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀  0.3841 ★│ best 0.4077 at 12,000      val/ece     0.02243                                     │
+   |  s ttttttttt  u vvvvvvvvvvvvvv  jjjjjj wf gggggxxxxxxgggggggggg      ggggggg     jjjjjjj                                     f
+08 |  · brisk-wren ✓ ⠑⠢⢄⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀  0.4071  │                                                                                    │ ━━━━━━━━━━━━━━━━╸────────── 62%
+   |  s tttttttttt u vvvvvvvvvvvvvv  tttttt  f                                                                                    f mmmmmmmmmmmmmmmmmssssssssss xxx
+09 |  · calm-lynx  ✓ ⠑⠤⢄⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀  0.3942  │ ‹   val/loss   train/acc   val/acc   val/ece   val/top5   epoch   train/data_ms    │ 12,400 of 20,000 steps
+   |  s ttttttttt  u vvvvvvvvvvvvvv  tttttt  f g   jjjjjjjj   ggggggggg   ggggggg   ggggggg   gggggggg   ggggg   ggggggggggggg    f kkkkkkgggggggggggggggg
+10 |  · dusty-mole × ⠑⢄⣀             0.7665  │     ▔▔▔▔▔▔▔▔                                                                       │ 59m 11s left · ends 13:17
+   |  s xxxxxxxxxx y vvv             tttttt  f     zzzzzzzz                                                                       f kkkkkkkgggggggggggggggggg
+11 |  · eager-hawk ✗ ⢢                1.670  │                                                                                    │ 2.1 steps/s · 1h 37m in
+   |  s xxxxxxxxxx y v                ttttt  f                                                                                    f kkkgggggggggggggggggggg
+12 | ▾ mnist-mlp  2                 val/loss │ ━ tidy-otter 0.4077   r others                                                     │
+   | ggkkkkkkkkkggg                 gggggggg f iijjjjjjjjjjjjjjjjj   hhgggggg                                                     f
+13 |  · mlp-wide   ✓  ⠑⠢⢄⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀ 0.05831 ★│                                                                                    │ params ────────────────────────
+   |  s tttttttt   u  vvvvvvvvvvvvv jjjjjjj wf                                                                                    f hhhhhh ffffffffffffffffffffffff
+14 |  · mlp-base   ✗  ⠑⠢⢄⣀⣀⣀⣀⡀      0.06576  │       │                                             ┊now                           │ lr       0.0003          varies
+   |  s xxxxxxxx   y  vvvvvvvv      ttttttt  f       s                                             sggg                           f gg       jjjjjj          gggggg
+15 |                                         │      2┤⢇                                            ┊                              │ warmup   500             varies
+   |                                         f ggggggsz                                            s                              f gggggg   jjj             gggggg
+16 |                                         │       │⢸                                            ┊                              │ batch    256
+   |                                         f       sz                                            s                              f ggggg    xxx
+17 |                                         │       │ ⡇                                           ┊                              │ epochs   10
+   |                                         f       s z                                           s                              f gggggg   xx
+18 |                                         │       │ ⢱                                           ┊                              │ wd       0.05
+   |                                         f       s z                                           s                              f gg       xxxx
+19 |                                         │       │ ⠈⡆                                          ┊                              │ +1 more   i: all
+   |                                         f       s zz                                          s                              f gggggggggggggggg
+20 |                                         │       │  ⠸⡀                                         ┊                              │
+   |                                         f       s  zz                                         s                              f
+21 |                                         │    1.5┤   ⢣                                         ┊                              │ machine ───────────────────────
+   |                                         f ggggggs   z                                         s                              f hhhhhhh fffffffffffffffffffffff
+22 |                                         │       │   ⠈⡆                                        ┊                              │ GPU  ━━━━━━━━━━━━━━━━━━━━━╸ 97%
+   |                                         f       s   zz                                        s                              f ggg  tttttttttttttttttttttt xxx
+23 |                                         │       │    ⠘⡄                                       ┊                              │ VRAM ━━━━━━━━━━━━━━━── 21.3/24G
+   |                                         f       s    zz                                       s                              f gggg tttttttttttttttss xxxxxxxx
+24 |                                         │       │     ⢱                                       ┊                              │ CPU  ━━━━━━━━━━━━━━━╸────── 71%
+   |                                         f       s     z                                       s                              f ggg  ttttttttttttttttssssss xxx
+25 |                                         │       │      ⢣                                      ┊                              │ RAM  ━━━━━━━━─────── 33.0/62.7G
+   |                                         f       s      z                                      s                              f ggg  ttttttttsssssss xxxxxxxxxx
+26 |                                         │       │      ⠈⢆                                     ┊                              │ 71°C  274 W
+   |                                         f       s      zz                                     s                              f kkkkggggggg
+27 |                                         │       │       ⠈⢆                                    ┊                              │
+   |                                         f       s       zz                                    s                              f
+28 |                                         │      1┤        ⠈⠢⡀                                  ┊                              │ source ────────────────────────
+   |                                         f ggggggs        zzz                                  s                              f hhhhhh ffffffffffffffffffffffff
+29 |                                         │       │          ⠑⢄                                 ┊                              │ 5eaf82b dirty
+   |                                         f       s          zz                                 s                              f xxxxxxxwwwwww
+30 |                                         │       │           ⠈⢆                                ┊                              │ train.exe --lr 0.0003 --warmup…
+   |                                         f       s           zz                                s                              f ggggggggggggggggggggggggggggggg
+31 |                                         │       │             ⠑⢄                              ┊                              │
+   |                                         f       s             zz                              s                              f
+32 |                                         │       │               ⠑⠢⣀                           ┊                              │
+   |                                         f       s               zzz                           s                              f
+33 |                                         │       │                  ⠉⠒⢄⡀                       ┊                              │
+   |                                         f       s                  zzzz                       s                              f
+34 |                                         │    0.5┤                     ⠈⠑⠢⠤⣀⡀                  ┊                              │
+   |                                         f ggggggs                     zzzzzz                  s                              f
+35 |                                         │       │                          ⠈⠉⠉⠉⠑⠒⠤⠤⠤⠤⠤⠤⣀⣀⣀⣀⣀⣀⡀┊                              │
+   |                                         f       s                          zzzzzzzzzzzzzzzzzzzs                              f
+36 |                                         │       │                                             ┊                              │
+   |                                         f       s                                             s                              f
+37 |                                         │       └┬────────┬────────┬────────┬─────────┬────────┬────────┬────────┬────────┬  │
+   |                                         f       sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss  f
+38 |                                         │        0       2.5k      5k      7.5k      10k     12.5k     15k     17.5k   step  │
+   |                                         f        g       gggg      gg      gggg      ggg     ggggg     ggg     ggggg   gggg  f
+39 |                                         │                                                                                    │
+   |                                         f                                                                                    f
+40 |                                         │ train/loss                  train/acc                   val/acc                    │
+   |                                         f hhhhhhhhhh                  hhhhhhhhh                   hhhhhhh                    f
+41 |                                         │       │⡄          ┊now            │      ⣀⡠⠤⠔⠒⠒now            │     ⢀⠤⠤⠒⠒⠒⠂now     │
+   |                                         f       sz          sggg            s      zzzzzzggg            s     zzzzzzzggg     f
+42 |                                         │      2┤⠸⡀         ┊               │    ⡰⠊     ┊               │   ⡠⠊⠁     ┊        │
+   |                                         f ggggggszz         s               s    zz     s               s   zzz     s        f
+43 |                                         │       │⠐⢣         ┊            0.8┤  ⢀⠜       ┊               │  ⡜        ┊        │
+   |                                         f       sAz         s         ggggggs  zz       s               s  z        s        f
+44 |                                         │       │ ⢂⢇        ┊               │ ⠌⡎        ┊            0.5┤ ⡜         ┊        │
+   |                                         f       s Az        s               s Az        s         ggggggs z         s        f
+45 |                                         │      1┤  ⠈⢆       ┊            0.6┤⠠⡜         ┊               │⢰⠁         ┊        │
+   |                                         f ggggggs  zz       s         ggggggsAz         s               szz         s        f
+46 |                                         │       │    ⠣⢄     ┊               │⢰⠁         ┊               │⡜          ┊        │
+   |                                         f       s    zz     s               szz         s               sz          s        f
+47 |                                         │       │      ⠉⠒⠒⠤⠤⠤               │⠃          ┊               │⠁          ┊        │
+   |                                         f       s      zzzzzz               sz          s               sz          s        f
+48 | charts › strips › zoom   ↑↓ run   ←→ metric   enter strips   space overlay   / filter   ? keys
+   |aBBBBBBCCCccccccCCCccccaaaBBccccaaaBBcccccccaaaBBBBBcccccccaaaBBBBBccccccccaaaBcccccccaaaBcccccaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+cursor hidden
+a bg=Rgb(22,26,32)
+b fg=Rgb(143,152,165) bg=Rgb(22,26,32) bold
+c fg=Rgb(95,103,115) bg=Rgb(22,26,32)
+d fg=Rgb(61,220,132) bg=Rgb(22,26,32)
+e fg=Rgb(255,107,107) bg=Rgb(22,26,32)
+f fg=Rgb(34,39,47)
+g fg=Rgb(95,103,115)
+h fg=Rgb(143,152,165) bold
+i fg=Rgb(108,182,255) bold
+j fg=Rgb(238,241,245) bold
+k fg=Rgb(201,206,214) bold
+l fg=Rgb(61,220,132) bold
+m fg=Rgb(61,220,132)
+n fg=Rgb(108,182,255) bg=Rgb(27,35,48)
+o bg=Rgb(27,35,48)
+p fg=Rgb(238,241,245) bg=Rgb(27,35,48) bold
+q fg=Rgb(61,220,132) bg=Rgb(27,35,48) bold
+r fg=Rgb(143,152,165) bg=Rgb(27,35,48)
+s fg=Rgb(50,57,68)
+t fg=Rgb(143,152,165)
+u fg=Rgb(95,103,115) bold
+v fg=Rgb(48,52,58)
+w fg=Rgb(229,180,90)
+x fg=Rgb(201,206,214)
+y fg=Rgb(255,107,107) bold
+z fg=Rgb(108,182,255)
+A fg=Rgb(54,91,128)
+B fg=Rgb(238,241,245) bg=Rgb(22,26,32) bold
+C fg=Rgb(50,57,68) bg=Rgb(22,26,32)

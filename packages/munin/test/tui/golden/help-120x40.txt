@@ -1,0 +1,112 @@
+01 | ᛗ munin                                              8 runs · 2 experiments   ● 1 live   ✗ 2 failed   × 1 NaN   gpu-01
+   |abbbbbbbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaacccccccccccccccccccccccccddddddddccceeeeeeeeeeccceeeeeeeccccccccca
+02 |                                 │                                                          │
+   |                                 f                                                          f
+03 | ¹ runs                          │ val/loss ↓                                               │ ³ run
+   | gghhhh                          f gggggggggg                                               f gghhh
+04 |                                 │ █▀█   █ █ █▀█ ▀▀█ ▀▀█      train/loss  0.2762  smoothed  │
+   |                                 f iiiiiiiiiiiiiiiiiiiii      gggggggggg  jjjjjjgggggggggg  f
+05 | ▾ cifar-resnet  6      val/loss │ █ █   ▀▀█ █ █   █   █      train/acc   95.40%  smoothed  │ ● tidy-otter  live
+   | ggkkkkkkkkkkkkggg      gggggggg f iiiiiiiiiiiiiiiiiiiii      ggggggggg   jjjjjjgggggggggg  f ljjjjjjjjjjjmmmmmm
+06 |▌ ■ tidy-otter ● ⠢⣀⣀⣀    0.4077  │ ▀▀▀ ▀   ▀ ▀▀▀   ▀   ▀      val/acc     94.18%            │ last sample 1s ago
+   |nonoppppppppppoqonnnnoooorrrrrroof iiiiiiiiiiiiiiiiiiiii      ggggggg     jjjjjj            f gggggggggggggggggg
+07 |  · amber-fox  ✓ ⠢⣀⣀⣀⣀⣀  0.3841 ★│ best 0.4077 at 12,000                                    │
+   |  s ttttttttt  u vvvvvv  jjjjjj wf gggggxxxxxxgggggggggg                                    f
+08 |  · brisk-wren ✓ ⠢⣀⣀⣀⣀⣀  0.4071  │                                                          │ ━━━━━━━━━━━━━──────── 62%
+   |  s tttttttttt u vvvvvv  tttttt  f                                                          f mmmmmmmmmmmmmssssssss xxx
+09 |  · calm-lynx  ✓ ⠢⣀⣀⣀⣀⣀  0.3942  │ ‹   val/loss   train/acc   val/acc   val/ece   ›         │ 12,400 of 20,000 steps
+   |  s ttttttttt  u vvvvvv  tttttt  f g   jjjjjjjj   ggggggggg   ggggggg   ggggggg   g         f kkkkkkgggggggggggggggg
+10 |  · dusty-mole × ⢢╭─keys─────────────────────────────────────────────────────────────────────────────╮left · ends 13:17
+   |  s xxxxxxxxxx y vzzAAAAzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzggggggggggggggggg
+11 |  · eager-hawk ✗ ⠄│                                                                                  │s/s · 1h 37m in
+   |  s xxxxxxxxxx y vzaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaazggggggggggggggg
+12 | ▾ mnist-mlp  2   │  move                                     find                                   │
+   | ggkkkkkkkkkggg   zaabbbbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaz
+13 |  · mlp-wide   ✓ ⠈│  ↑↓ k j   run; metric in strips           /        filter: name, state, lr<0.05  │─────────────────
+   |  s tttttttt   u vzaaAABBBBaaaCCCCCCCCCCCCCCCCCCCCCaaaaaaaaaaaAaaaaaaaaCCCCCCCCCCCCCCCCCCCCCCCCCCCCaazfffffffffffffffff
+14 |  · mlp-base   ✗ ⠈│  ←→ h l   metric; step in zoom, ⇧ ×10     o        order: started, best, name    │ 0.0003    varies
+   |  s xxxxxxxx   y vzaaAABBBBaaaCCCCCCCCCCCCCCCCCCCCCCCCCCCaaaaaAaaaaaaaaCCCCCCCCCCCCCCCCCCCCCCCCCCaaaaz jjjjjj    gggggg
+15 |                  │  [ ]      previous, next run              e        fold, open the experiment     │ 500       varies
+   |                  zaaAAAaaaaaaCCCCCCCCCCCCCCCCCCaaaaaaaaaaaaaaAaaaaaaaaCCCCCCCCCCCCCCCCCCCCCCCCCaaaaaz jjj       gggggg
+16 |                  │  g G      first, last run                                                        │ 256
+   |                  zaaAAAaaaaaaCCCCCCCCCCCCCCCaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaz xxx
+17 |                  │  enter    charts › strips › zoom          panes                                  │ 10
+   |                  zaaAAAAAaaaaCCCCCCCCCCCCCCCCCCCCCCaaaaaaaaaabbbbbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaz xx
+18 |                  │  esc      back a depth, or clear          i        everything about the run      │ 0.05
+   |                  zaaAAAaaaaaaCCCCCCCCCCCCCCCCCCCCCCaaaaaaaaaaAaaaaaaaaCCCCCCCCCCCCCCCCCCCCCCCCaaaaaaz xxxx
+19 |                  │                                           1 3      runs, run pane                │  i: all
+   |                  zaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaAAAaaaaaaCCCCCCCCCCCCCCaaaaaaaaaaaaaaaazgggggggg
+20 |                  │  look                                     ?        these keys                    │
+   |                  zaabbbbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaAaaaaaaaaCCCCCCCCCCaaaaaaaaaaaaaaaaaaaaz
+21 |                  │  s        smoothing on, off               q        quit; Ctrl+C too              │─────────────────
+   |                  zaaAaaaaaaaaCCCCCCCCCCCCCCCCCaaaaaaaaaaaaaaaAaaaaaaaaCCCCCCCCCCCCCCCCaaaaaaaaaaaaaazfffffffffffffffff
+22 |                  │  y        log scale, this metric                                                 │━━━━━━━━━━━━╸ 97%
+   |                  zaaAaaaaaaaaCCCCCCCCCCCCCCCCCCCCCCaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaazttttttttttttt xxx
+23 |                  │  + −      narrow, widen the steps                                                │━━━━━━━─ 21.3/24G
+   |                  zaaAAAaaaaaaCCCCCCCCCCCCCCCCCCCCCCCaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaazttttttts xxxxxxxx
+24 |                  │                                                                                  │━━━━━━━━╸──── 71%
+   |                  zaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaztttttttttssss xxx
+25 |                  │  compare                                                                         │━╸──── 33.0/62.7G
+   |                  zaabbbbbbbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaazttssss xxxxxxxxxx
+26 |                  │  space    overlay the run (4 at most)                                            │4 W
+   |                  zaaAAAAAaaaaCCCCCCCCCCCCCCCCCCCCCCCCCCCaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaazggg
+27 |                  │  r        the other runs, in grey                                                │
+   |                  zaaAaaaaaaaaCCCCCCCCCCCCCCCCCCCCCCCaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaz
+28 |                  │  c        clear overlays                                                         │─────────────────
+   |                  zaaAaaaaaaaaCCCCCCCCCCCCCCaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaazfffffffffffffffff
+29 |                  │                                                                                  │dirty
+   |                  zaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaazwwwww
+30 |                  │  munin reads the store once a second and never writes to it                      │e --lr 0.0003 --…
+   |                  zaaccccccccccccccccccccccccccccccccccccccccccccccccccccccccccaaaaaaaaaaaaaaaaaaaaaazggggggggggggggggg
+31 |                  │                                                                                  │
+   |                  zaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaz
+32 |                  ╰──────────────────────────────────────────────────────────────────────────────────╯
+   |                  zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz
+33 |                                 │       │⡄           ┊now            │      ⢀⡠⠤⠤⠒⠒⠂now     │
+   |                                 f       sD           sggg            s      DDDDDDDggg     f
+34 |                                 │      2┤⠘⡄          ┊               │    ⡠⠊⠁     ┊        │
+   |                                 f ggggggsDD          s               s    DDD     s        f
+35 |                                 │       │⠐⢱          ┊            0.8┤  ⠄⡔⠁       ┊        │
+   |                                 f       sED          s         ggggggs  EDD       s        f
+36 |                                 │       │ ⢁⢣         ┊               │ ⡈⡜         ┊        │
+   |                                 f       s ED         s               s ED         s        f
+37 |                                 │      1┤  ⢂⢣        ┊            0.6┤⠠⡸          ┊        │
+   |                                 f ggggggs  ED        s         ggggggsED          s        f
+38 |                                 │       │    ⠑⢄⡀     ┊               │⢠⠃          ┊        │
+   |                                 f       s    DDD     s               sDD          s        f
+39 |                                 │       │      ⠈⠑⠒⠢⠤⠤⠄               │⠃           ┊        │
+   |                                 f       s      DDDDDDD               sD           s        f
+40 | esc close   q quit
+   |aAAAccccccaaaAcccccaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+cursor hidden
+a bg=Rgb(22,26,32)
+b fg=Rgb(143,152,165) bg=Rgb(22,26,32) bold
+c fg=Rgb(95,103,115) bg=Rgb(22,26,32)
+d fg=Rgb(61,220,132) bg=Rgb(22,26,32)
+e fg=Rgb(255,107,107) bg=Rgb(22,26,32)
+f fg=Rgb(34,39,47)
+g fg=Rgb(95,103,115)
+h fg=Rgb(143,152,165) bold
+i fg=Rgb(108,182,255) bold
+j fg=Rgb(238,241,245) bold
+k fg=Rgb(201,206,214) bold
+l fg=Rgb(61,220,132) bold
+m fg=Rgb(61,220,132)
+n fg=Rgb(108,182,255) bg=Rgb(27,35,48)
+o bg=Rgb(27,35,48)
+p fg=Rgb(238,241,245) bg=Rgb(27,35,48) bold
+q fg=Rgb(61,220,132) bg=Rgb(27,35,48) bold
+r fg=Rgb(143,152,165) bg=Rgb(27,35,48)
+s fg=Rgb(50,57,68)
+t fg=Rgb(143,152,165)
+u fg=Rgb(95,103,115) bold
+v fg=Rgb(48,52,58)
+w fg=Rgb(229,180,90)
+x fg=Rgb(201,206,214)
+y fg=Rgb(255,107,107) bold
+z fg=Rgb(50,57,68) bg=Rgb(22,26,32)
+A fg=Rgb(238,241,245) bg=Rgb(22,26,32) bold
+B fg=Rgb(238,241,245) bg=Rgb(22,26,32)
+C fg=Rgb(201,206,214) bg=Rgb(22,26,32)
+D fg=Rgb(108,182,255)
+E fg=Rgb(54,91,128)

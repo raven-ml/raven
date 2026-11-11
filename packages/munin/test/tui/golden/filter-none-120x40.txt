@@ -1,0 +1,93 @@
+01 | ᛗ munin                                              8 runs · 2 experiments   ● 1 live   ✗ 2 failed   × 1 NaN   gpu-01
+   |abbbbbbbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaacccccccccccccccccccccccccddddddddccceeeeeeeeeeccceeeeeeeccccccccca
+02 |                                 │
+   |                                 f
+03 | ¹ runs                          │  no run matches the filter
+   | gghhhh                          f  ggggggggggggggggggggggggg
+04 |  / q                    0 of 8  │
+   | aiijaaaaaaaaaaaaaaaaaaaacccccca f
+05 |                                 │
+   |                                 f
+06 |                                 │
+   |                                 f
+07 |                                 │
+   |                                 f
+08 |                                 │
+   |                                 f
+09 |                                 │
+   |                                 f
+10 |                                 │
+   |                                 f
+11 |                                 │
+   |                                 f
+12 |                                 │
+   |                                 f
+13 |                                 │
+   |                                 f
+14 |                                 │
+   |                                 f
+15 |                                 │
+   |                                 f
+16 |                                 │
+   |                                 f
+17 |                                 │
+   |                                 f
+18 |                                 │
+   |                                 f
+19 |                                 │
+   |                                 f
+20 |                                 │
+   |                                 f
+21 |                                 │
+   |                                 f
+22 |                                 │
+   |                                 f
+23 |                                 │
+   |                                 f
+24 |                                 │
+   |                                 f
+25 |                                 │
+   |                                 f
+26 |                                 │
+   |                                 f
+27 |                                 │
+   |                                 f
+28 |                                 │
+   |                                 f
+29 |                                 │
+   |                                 f
+30 |                                 │
+   |                                 f
+31 |                                 │
+   |                                 f
+32 |                                 │
+   |                                 f
+33 |                                 │
+   |                                 f
+34 |                                 │
+   |                                 f
+35 |                                 │
+   |                                 f
+36 |                                 │
+   |                                 f
+37 |                                 │
+   |                                 f
+38 |                                 │
+   |                                 f
+39 |                                 │
+   |                                 f
+40 | charts › strips › zoom   / filter   ? keys
+   |akkkkkklllcccccclllccccaaakcccccccaaakcccccaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+cursor hidden
+a bg=Rgb(22,26,32)
+b fg=Rgb(143,152,165) bg=Rgb(22,26,32) bold
+c fg=Rgb(95,103,115) bg=Rgb(22,26,32)
+d fg=Rgb(61,220,132) bg=Rgb(22,26,32)
+e fg=Rgb(255,107,107) bg=Rgb(22,26,32)
+f fg=Rgb(34,39,47)
+g fg=Rgb(95,103,115)
+h fg=Rgb(143,152,165) bold
+i fg=Rgb(229,180,90) bg=Rgb(22,26,32) bold
+j fg=Rgb(238,241,245) bg=Rgb(22,26,32)
+k fg=Rgb(238,241,245) bg=Rgb(22,26,32) bold
+l fg=Rgb(50,57,68) bg=Rgb(22,26,32)

@@ -1,0 +1,110 @@
+01 | ᛗ munin                                              8 runs · 2 experiments   ● 1 live   ✗ 2 failed   × 1 NaN   gpu-01
+   |abbbbbbbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaacccccccccccccccccccccccccddddddddccceeeeeeeeeeccceeeeeeeccccccccca
+02 |                                 │                                                          │
+   |                                 f                                                          f
+03 | ¹ runs                          │ val/loss ↓                                               │ ³ run
+   | gghhhh                          f gggggggggg                                               f gghhh
+04 |                                 │ █▀█   █ █ █▀█ ▀▀█ ▀▀█      train/loss  0.2762  smoothed  │
+   |                                 f iiiiiiiiiiiiiiiiiiiii      gggggggggg  jjjjjjgggggggggg  f
+05 | ▾ cifar-resnet  6      val/loss │ █ █   ▀▀█ █ █   █   █      train/acc   95.40%  smoothed  │ ● tidy-otter  live
+   | ggkkkkkkkkkkkkggg      gggggggg f iiiiiiiiiiiiiiiiiiiii      ggggggggg   jjjjjjgggggggggg  f ljjjjjjjjjjjmmmmmm
+06 |▌ ■ tidy-otter ● ⠢⣀⣀⣀    0.4077  │ ▀▀▀ ▀   ▀ ▀▀▀   ▀   ▀      val/acc     94.18%            │ last sample 0s ago
+   |nonoppppppppppoqonnnnoooorrrrrroof iiiiiiiiiiiiiiiiiiiii      ggggggg     jjjjjj            f gggggggggggggggggg
+07 |  · amber-fox  ✓ ⠢⣀⣀⣀⣀⣀  0.3841 ★│ best 0.4077 at 12,000                                    │
+   |  s ttttttttt  u vvvvvv  jjjjjj wf gggggxxxxxxgggggggggg                                    f
+08 |  · brisk-wren ✓ ⠢⣀⣀⣀⣀⣀  0.4071  │                                                          │ ━━━━━━━━━━━━━──────── 62%
+   |  s tttttttttt u vvvvvv  tttttt  f                                                          f mmmmmmmmmmmmmssssssss xxx
+09 |  · calm-lynx  ✓ ⠢⣀⣀⣀⣀⣀  0.3942  │ ‹   val/loss   train/acc   val/acc   val/ece   ›         │ 12,400 of 20,000 steps
+   |  s ttttttttt  u vvvvvv  tttttt  f g   jjjjjjjj   ggggggggg   ggggggg   ggggggg   g         f kkkkkkgggggggggggggggg
+10 |  · dusty-mole × ⢢⡀      0.7665  │     ▔▔▔▔▔▔▔▔                                             │ 59m 11s left · ends 13:17
+   |  s xxxxxxxxxx y vv      tttttt  f     zzzzzzzz                                             f kkkkkkkgggggggggggggggggg
+11 |  · eager-hawk ✗ ⠄        1.670  │                                                          │ 2.1 steps/s · 1h 37m in
+   |  s xxxxxxxxxx y v        ttttt  f                                                          f kkkgggggggggggggggggggg
+12 | ▾ mnist-mlp  2         val/loss │ ━ tidy-otter 0.4077   r others                           │
+   | ggkkkkkkkkkggg         gggggggg f iijjjjjjjjjjjjjjjjj   hhgggggg                           f
+13 |  · mlp-wide   ✓ ⠈⢆⣀⣀⣀⣀ 0.05831 ★│                                                          │ params ──────────────────
+   |  s tttttttt   u vvvvvv jjjjjjj wf                                                          f hhhhhh ffffffffffffffffff
+14 |  · mlp-base   ✗ ⠈⢆⣀⣀   0.06576  │      2┤⡄                            ┊now                 │ lr       0.0003    varies
+   |  s xxxxxxxx   y vvvv   ttttttt  f ggggggsz                            sggg                 f gg       jjjjjj    gggggg
+15 |                                 │       │⢱                            ┊                    │ warmup   500       varies
+   |                                 f       sz                            s                    f gggggg   jjj       gggggg
+16 |                                 │       │⠘⡄                           ┊                    │ batch    256
+   |                                 f       szz                           s                    f ggggg    xxx
+17 |                                 │       │ ⢣                           ┊                    │ epochs   10
+   |                                 f       s z                           s                    f gggggg   xx
+18 |                                 │    1.5┤ ⠘⡄                          ┊                    │ wd       0.05
+   |                                 f ggggggs zz                          s                    f gg       xxxx
+19 |                                 │       │  ⢣                          ┊                    │ +1 more   i: all
+   |                                 f       s  z                          s                    f gggggggggggggggg
+20 |                                 │       │   ⢣                         ┊                    │
+   |                                 f       s   z                         s                    f
+21 |                                 │       │   ⠈⢆                        ┊                    │ machine ─────────────────
+   |                                 f       s   zz                        s                    f hhhhhhh fffffffffffffffff
+22 |                                 │       │    ⠈⢆                       ┊                    │ GPU  ━━━━━━━━━━━━━━━╸ 97%
+   |                                 f       s    zz                       s                    f ggg  tttttttttttttttt xxx
+23 |                                 │      1┤     ⠈⢢                      ┊                    │ VRAM ━━━━━━━━━━─ 21.3/24G
+   |                                 f ggggggs     zz                      s                    f gggg tttttttttts xxxxxxxx
+24 |                                 │       │       ⢣                     ┊                    │ CPU  ━━━━━━━━━━━╸──── 71%
+   |                                 f       s       z                     s                    f ggg  ttttttttttttssss xxx
+25 |                                 │       │        ⠑⠢⡀                  ┊                    │ RAM  ━━━━╸──── 33.0/62.7G
+   |                                 f       s        zzz                  s                    f ggg  tttttssss xxxxxxxxxx
+26 |                                 │       │          ⠈⠒⢄⡀               ┊                    │ 71°C  274 W
+   |                                 f       s          zzzz               s                    f kkkkggggggg
+27 |                                 │    0.5┤             ⠈⠉⠒⠤⠤⢄⣀⣀        ┊                    │
+   |                                 f ggggggs             zzzzzzzz        s                    f
+28 |                                 │       │                     ⠉⠉⠉⠉⠉⠉⠉⠒┊                    │ source ──────────────────
+   |                                 f       s                     zzzzzzzzs                    f hhhhhh ffffffffffffffffff
+29 |                                 │       └┬───────────┬───────────┬───────────┬──────────┬  │ 5eaf82b dirty
+   |                                 f       sssssssssssssssssssssssssssssssssssssssssssssssss  f xxxxxxxwwwwww
+30 |                                 │        0           5k         10k         15k      step  │ train.exe --lr 0.0003 --…
+   |                                 f        g           gg         ggg         ggg      gggg  f ggggggggggggggggggggggggg
+31 |                                 │                                                          │
+   |                                 f                                                          f
+32 |                                 │ train/loss                   train/acc                   │
+   |                                 f hhhhhhhhhh                   hhhhhhhhh                   f
+33 |                                 │       │⡄           ┊now            │      ⢀⡠⠤⠤⠒⠒⠂now     │
+   |                                 f       sz           sggg            s      zzzzzzzggg     f
+34 |                                 │      2┤⠘⡄          ┊               │    ⡠⠊⠁     ┊        │
+   |                                 f ggggggszz          s               s    zzz     s        f
+35 |                                 │       │⠐⢱          ┊            0.8┤  ⠄⡔⠁       ┊        │
+   |                                 f       sAz          s         ggggggs  Azz       s        f
+36 |                                 │       │ ⢁⢣         ┊               │ ⡈⡜         ┊        │
+   |                                 f       s Az         s               s Az         s        f
+37 |                                 │      1┤  ⢂⢣        ┊            0.6┤⠠⡸          ┊        │
+   |                                 f ggggggs  Az        s         ggggggsAz          s        f
+38 |                                 │       │    ⠑⢄⡀     ┊               │⢠⠃          ┊        │
+   |                                 f       s    zzz     s               szz          s        f
+39 |                                 │       │      ⠈⠑⠒⠢⠤⠤⠄               │⠃           ┊        │
+   |                                 f       s      zzzzzzz               sz           s        f
+40 | charts › strips › zoom   ↑↓ run   ←→ metric   enter strips   space overlay   / filter   ? keys
+   |aBBBBBBCCCccccccCCCccccaaaBBccccaaaBBcccccccaaaBBBBBcccccccaaaBBBBBccccccccaaaBcccccccaaaBcccccaaaaaaaaaaaaaaaaaaaaaaaaa
+cursor hidden
+a bg=Rgb(22,26,32)
+b fg=Rgb(143,152,165) bg=Rgb(22,26,32) bold
+c fg=Rgb(95,103,115) bg=Rgb(22,26,32)
+d fg=Rgb(61,220,132) bg=Rgb(22,26,32)
+e fg=Rgb(255,107,107) bg=Rgb(22,26,32)
+f fg=Rgb(34,39,47)
+g fg=Rgb(95,103,115)
+h fg=Rgb(143,152,165) bold
+i fg=Rgb(108,182,255) bold
+j fg=Rgb(238,241,245) bold
+k fg=Rgb(201,206,214) bold
+l fg=Rgb(61,220,132) bold
+m fg=Rgb(61,220,132)
+n fg=Rgb(108,182,255) bg=Rgb(27,35,48)
+o bg=Rgb(27,35,48)
+p fg=Rgb(238,241,245) bg=Rgb(27,35,48) bold
+q fg=Rgb(61,220,132) bg=Rgb(27,35,48) bold
+r fg=Rgb(143,152,165) bg=Rgb(27,35,48)
+s fg=Rgb(50,57,68)
+t fg=Rgb(143,152,165)
+u fg=Rgb(95,103,115) bold
+v fg=Rgb(48,52,58)
+w fg=Rgb(229,180,90)
+x fg=Rgb(201,206,214)
+y fg=Rgb(255,107,107) bold
+z fg=Rgb(108,182,255)
+A fg=Rgb(54,91,128)
+B fg=Rgb(238,241,245) bg=Rgb(22,26,32) bold
+C fg=Rgb(50,57,68) bg=Rgb(22,26,32)

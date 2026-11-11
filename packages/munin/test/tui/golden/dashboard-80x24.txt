@@ -1,0 +1,59 @@
+01 | ᛗ munin                                     ● 1 live   ✗ 2 failed   × 1 NaN
+   |abbbbbbbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaccccccccdddeeeeeeeeeedddeeeeeeeddda
+02 | ‹ ● tidy-otter ›  1 of 8 · cifar-resnet                          12,400/20,000
+   | ffghhhhhhhhhhhfffffffffffffffffffffffff                          fffffffffffff
+03 |
+04 | train/loss 0.2762   val/loss 0.4077   train/acc 95.40%   val/acc 94.18%
+   | fffffffffffhhhhhhffffffffffffhhhhhhfffffffffffffhhhhhhfffffffffffhhhhhhfff
+05 |
+06 | ‹   val/loss   train/acc   val/acc   val/ece   val/top5   epoch   ›
+   | f   hhhhhhhh   fffffffff   fffffff   fffffff   ffffffff   fffff   f
+07 |     ▔▔▔▔▔▔▔▔
+   |     iiiiiiii
+08 |
+09 | ━ tidy-otter 0.4077   r others
+   | jjhhhhhhhhhhhhhhhhh   kkffffff
+10 |
+11 |      2┤⢆                                          ┊now
+   | ffffffli                                          lfff
+12 |       │⠈⡆                                         ┊
+   |       lii                                         l
+13 |       │ ⠘⡄                                        ┊
+   |       l ii                                        l
+14 |    1.5┤  ⠈⢆                                       ┊
+   | ffffffl  ii                                       l
+15 |       │    ⢣                                      ┊
+   |       l    i                                      l
+16 |       │     ⠑⢄                                    ┊
+   |       l     ii                                    l
+17 |      1┤       ⠑⢄                                  ┊
+   | ffffffl       ii                                  l
+18 |       │         ⠑⠢⣀                               ┊
+   |       l         iii                               l
+19 |       │            ⠑⠢⠤⣀⡀                          ┊
+   |       l            iiiii                          l
+20 |    0.5┤                ⠈⠉⠑⠒⠤⠤⣀⣀⣀⡀                 ┊
+   | ffffffl                iiiiiiiiii                 l
+21 |       │                         ⠈⠉⠉⠉⠉⠑⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠂┊
+   |       l                         iiiiiiiiiiiiiiiiiil
+22 |       └┬───────┬────────┬────────┬────────┬───────┬────────┬────────┬───────┬
+   |       lllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll
+23 |        0      2.5k      5k      7.5k     10k    12.5k     15k     17.5k  step
+   |        f      ffff      ff      ffff     fff    fffff     fff     fffff  ffff
+24 | charts › strips › zoom   ↑↓ run   ←→ metric   enter strips   space overlay
+   |ammmmmmnnnddddddnnnddddaaammddddaaammdddddddaaammmmmdddddddaaammmmmddddddddaaaaa
+cursor hidden
+a bg=Rgb(22,26,32)
+b fg=Rgb(143,152,165) bg=Rgb(22,26,32) bold
+c fg=Rgb(61,220,132) bg=Rgb(22,26,32)
+d fg=Rgb(95,103,115) bg=Rgb(22,26,32)
+e fg=Rgb(255,107,107) bg=Rgb(22,26,32)
+f fg=Rgb(95,103,115)
+g fg=Rgb(61,220,132) bold
+h fg=Rgb(238,241,245) bold
+i fg=Rgb(108,182,255)
+j fg=Rgb(108,182,255) bold
+k fg=Rgb(143,152,165) bold
+l fg=Rgb(50,57,68)
+m fg=Rgb(238,241,245) bg=Rgb(22,26,32) bold
+n fg=Rgb(50,57,68) bg=Rgb(22,26,32)

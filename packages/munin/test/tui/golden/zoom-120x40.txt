@@ -1,0 +1,112 @@
+01 | ᛗ munin                                              8 runs · 2 experiments   ● 1 live   ✗ 2 failed   × 1 NaN   gpu-01
+   |abbbbbbbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaacccccccccccccccccccccccccddddddddccceeeeeeeeeeccceeeeeeeccccccccca
+02 |                                 │
+   |                                 f
+03 | ¹ runs                          │ val/loss   lower is better
+   | gghhhh                          f iiiiiiiigggggggggggggggggg
+04 |                                 │
+   |                                 f
+05 | ▾ cifar-resnet  6      val/loss │ ━ tidy-otter 0.4641   ━ dusty-mole NaN   ━ amber-fox 0.4468   r others
+   | ggjjjjjjjjjjjjggg      gggggggg f kkiiiiiiiiiiiiiiiii   llmmmmmmmmmmmnnn   oommmmmmmmmmpppppp   hhgggggg
+06 |▌ ■ tidy-otter ● ⠢⣀⣀⣀    0.4077  │
+   |qrqrssssssssssrtrqqqqrrrruuuuuurrf
+07 |  ■ amber-fox  ✓ ⠢⣀⣀⣀⣀⣀  0.3841 ★│       │                    │          ┊now                 │ at step 8,000
+   |  v ppppppppp  w vvvvvv  iiiiii xf       y                    m          yggg                 f hhhhhhhhhhhhh
+08 |  · brisk-wren ✓ ⠢⣀⣀⣀⣀⣀  0.4071  │      2┤⡆                   │          ┊                    │
+   |  y mmmmmmmmmm w zzzzzz  mmmmmm  f ggggggyA                   m          y                    f
+09 |  · calm-lynx  ✓ ⠢⣀⣀⣀⣀⣀  0.3942  │       │⢇                   │          ┊                    │ ━ tidy-otter
+   |  y mmmmmmmmm  w zzzzzz  mmmmmm  f       yA                   m          y                    f AAiiiiiiiiii
+10 |  ■ dusty-mole × ⢢⡀      0.7665  │       │⢸                   │          ┊                    │   0.4641
+   |  B pppppppppp C BB      mmmmmm  f       yA                   m          y                    f ggiiiiii
+11 |  · eager-hawk ✗ ⠄        1.670  │    1.8┤⢸                   │          ┊                    │
+   |  y pppppppppp C z        mmmmm  f ggggggyA                   m          y                    f
+12 | ▾ mnist-mlp  2         val/loss │       │⠈⡆                  │          ┊                    │ ━ dusty-mole
+   | ggjjjjjjjjjggg         gggggggg f       yAA                  m          y                    f BBpppppppppp
+13 |  · mlp-wide   ✓ ⠈⢆⣀⣀⣀⣀ 0.05831 ★│       │ ⡇                  │          ┊                    │   NaN
+   |  y mmmmmmmm   w zzzzzz iiiiiii xf       y A                  m          y                    f ggCCC
+14 |  · mlp-base   ✗ ⠈⢆⣀⣀   0.06576  │       │ ⢱                  │          ┊                    │
+   |  y pppppppp   C zzzz   mmmmmmm  f       y A                  m          y                    f
+15 |                                 │    1.6┤ ⠘⡄                 │          ┊                    │ ━ amber-fox
+   |                                 f ggggggy AA                 m          y                    f vvppppppppp
+16 |                                 │       │  ⡇                 │          ┊                    │   0.4468
+   |                                 f       y  A                 m          y                    f ggjjjjjj
+17 |                                 │       │  ⢸                 │          ┊                    │
+   |                                 f       y  A                 m          y                    f
+18 |                                 │    1.4┤  ⠘⡄                │          ┊                    │
+   |                                 f ggggggy  AA                m          y                    f
+19 |                                 │       │   ⡇                │          ┊                    │
+   |                                 f       y   A                m          y                    f
+20 |                                 │       │   ⢱                │          ┊                    │
+   |                                 f       y   A                m          y                    f
+21 |                                 │       │   ⠘⡄               │          ┊                    │
+   |                                 f       y   AA               m          y                    f
+22 |                                 │    1.2┤    ⢣               │          ┊                    │
+   |                                 f ggggggy    A               m          y                    f
+23 |                                 │       │    ⠘⡄              │          ┊                    │
+   |                                 f       y    AA              m          y                    f
+24 |                                 │       │     ⢣⡀             │          ┊                    │
+   |                                 f       y     AB             m          y                    f
+25 |                                 │      1┤     ⠘⡄             │          ┊                    │
+   |                                 f ggggggy     AA             m          y                    f
+26 |                                 │       │      ⢣⡆            │          ┊                    │
+   |                                 f       y      AB            m          y                    f
+27 |                                 │       │       ⢣⡀           │          ┊                    │
+   |                                 f       y       AB           m          y                    f
+28 |                                 │       │       ⠈⡆⡀          │          ┊                    │
+   |                                 f       y       AAB          m          y                    f
+29 |                                 │    0.8┤        ⠱⡀⡀         │          ┊                    │
+   |                                 f ggggggy        AAB         m          y                    f
+30 |                                 │       │         ⠘⢄         │          ┊                    │
+   |                                 f       y         AA         m          y                    f
+31 |                                 │       │          ⠈⢆        │          ┊                    │
+   |                                 f       y          AA        m          y                    f
+32 |                                 │    0.6┤           ⠈⠣⣀      │          ┊                    │
+   |                                 f ggggggy           vAA      m          y                    f
+33 |                                 │       │             ⠉⠱⡀    │          ┊                    │
+   |                                 f       y             vAA    m          y                    f
+34 |                                 │       │               ⠈⠑⠤⣀ │          ┊                    │
+   |                                 f       y               AAAA m          y                    f
+35 |                                 │       │                  ⠈⠉⠉⠒⠤⠤⠤⣀⣀⣀⡀  ┊                    │
+   |                                 f       y                  vAAAAAAAAAA  y                    f
+36 |                                 │    0.4┤                    │    ⠉⠉⠉⠈⠉⠉⠒⠢⠔⠒⠒⠤⠤⠤⠤⠤⠤⠔⠒⠤⠤⠤⠤⠤⠤⠒ │
+   |                                 f ggggggy                    m    vvvAAAvvvvvvvvvvvvvvvvvvvv f
+37 |                                 │       │                    │          ┊                    │
+   |                                 f       y                    m          y                    f
+38 |                                 │       └┬───────────┬────────────┬────────────┬───────────┬ │
+   |                                 f       yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy f
+39 |                                 │        0           5k    8,000 10k          15k       step │ showing 0 – 20,000
+   |                                 f        g           gg    DDDDD ggg          ggg       gggg f gggggggggggggggggg
+40 | charts › strips › zoom   ←→ step   esc strips   s smooth   + − zoom   ? keys
+   |accccccEEEccccccEEEDDDDaaaDDcccccaaaDDDcccccccaaaDcccccccaaaDDDcccccaaaDcccccaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+cursor hidden
+a bg=Rgb(22,26,32)
+b fg=Rgb(143,152,165) bg=Rgb(22,26,32) bold
+c fg=Rgb(95,103,115) bg=Rgb(22,26,32)
+d fg=Rgb(61,220,132) bg=Rgb(22,26,32)
+e fg=Rgb(255,107,107) bg=Rgb(22,26,32)
+f fg=Rgb(34,39,47)
+g fg=Rgb(95,103,115)
+h fg=Rgb(143,152,165) bold
+i fg=Rgb(238,241,245) bold
+j fg=Rgb(201,206,214) bold
+k fg=Rgb(108,182,255) bold
+l fg=Rgb(180,190,254) bold
+m fg=Rgb(143,152,165)
+n fg=Rgb(255,107,107)
+o fg=Rgb(79,209,197) bold
+p fg=Rgb(201,206,214)
+q fg=Rgb(108,182,255) bg=Rgb(27,35,48)
+r bg=Rgb(27,35,48)
+s fg=Rgb(238,241,245) bg=Rgb(27,35,48) bold
+t fg=Rgb(61,220,132) bg=Rgb(27,35,48) bold
+u fg=Rgb(143,152,165) bg=Rgb(27,35,48)
+v fg=Rgb(79,209,197)
+w fg=Rgb(95,103,115) bold
+x fg=Rgb(229,180,90)
+y fg=Rgb(50,57,68)
+z fg=Rgb(48,52,58)
+A fg=Rgb(108,182,255)
+B fg=Rgb(180,190,254)
+C fg=Rgb(255,107,107) bold
+D fg=Rgb(238,241,245) bg=Rgb(22,26,32) bold
+E fg=Rgb(50,57,68) bg=Rgb(22,26,32)

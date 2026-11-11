@@ -9,22 +9,16 @@
 let kept = 32
 let floor = 10.
 
-type t = {
-  since : float;
-  samples : int;
-  arrivals : float list (* newest first *);
-}
+type t = { samples : int; arrivals : float list (* newest first *) }
 
-let start ~now ~samples = { since = now; samples; arrivals = [] }
+let start ~samples = { samples; arrivals = [] }
 
 let observe w ~now ~samples =
   if samples > w.samples then
     let arrivals = List.filteri (fun i _ -> i < kept) (now :: w.arrivals) in
-    { w with samples; arrivals }
+    { samples; arrivals }
   else { w with samples }
 
-let since w = w.since
-let samples w = w.samples
 let last_arrival w = match w.arrivals with t :: _ -> Some t | [] -> None
 
 let usual_gap w =
@@ -45,17 +39,47 @@ let stalled w ~now =
   | Some g, Some t -> now -. t > Float.max (3. *. g) floor
   | _ -> false
 
-let word (status : Munin.Run.status) w ~now =
+type state =
+  | Starting
+  | Running
+  | Live
+  | Stalled
+  | Writing
+  | Silent
+  | Crashed
+  | Finished
+  | Failed
+  | Killed
+
+let state (status : Munin.Run.status) w ~now =
   match (status, w) with
-  | `Running, None -> "running"
+  | `Running, None -> Running
   | `Running, Some w ->
-      if w.samples = 0 then "starting"
-      else if w.arrivals = [] then "running"
-      else if stalled w ~now then "stalled"
-      else "live"
-  | `Silent, Some w when w.arrivals <> [] && not (stalled w ~now) -> "writing"
-  | `Silent, _ -> "silent"
-  | `Crashed, _ -> "crashed"
-  | `Finished, _ -> "finished"
-  | `Failed _, _ -> "failed"
-  | `Killed, _ -> "killed"
+      if w.samples = 0 then Starting
+      else if w.arrivals = [] then Running
+      else if stalled w ~now then Stalled
+      else Live
+  | `Silent, Some w when w.arrivals <> [] && not (stalled w ~now) -> Writing
+  | `Silent, _ -> Silent
+  | `Crashed, _ -> Crashed
+  | `Finished, _ -> Finished
+  | `Failed _, _ -> Failed
+  | `Killed, _ -> Killed
+
+let word = function
+  | Starting -> "starting"
+  | Running -> "running"
+  | Live -> "live"
+  | Stalled -> "stalled"
+  | Writing -> "writing"
+  | Silent -> "silent"
+  | Crashed -> "crashed"
+  | Finished -> "finished"
+  | Failed -> "failed"
+  | Killed -> "killed"
+
+let live = function
+  | Starting | Running | Live | Writing -> true
+  | Stalled | Silent | Crashed | Finished | Failed | Killed -> false
+
+let broken = function Failed | Crashed -> true | _ -> false

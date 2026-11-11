@@ -1236,12 +1236,21 @@ compares, tags, annotates, deletes, collects and checks, printing
 tab-separated lines.
 
 `munin.tui` is a terminal dashboard of a store, opened by bare `munin` on a
-terminal and by `munin watch [RUN]`: the store's runs under a header per
-experiment, with the params that differ and each run's best value, and one
-run on one dominant chart drawn from every sample, its other metrics as
-strips aligned under it, up to two marked runs as level lines with rows of
-their difference from the focus, and its machine's readings. A run's state
-word comes from its lock and from samples the dashboard saw arrive.
+terminal and by `munin watch [RUN]`. It is one screen: the runs under their
+experiments, each with its state glyph, its key metric drawn over its steps
+and its best value; the cursor's run, its key metric in large digits over its
+charts; and the run's state, progress, params, machine and source. `enter`
+goes from the charts to a strip of every metric, with the difference to an
+overlaid run and, while the run is live, its machine's readings, then to one
+metric at a step cursor. `space` overlays up to four runs, `r` draws the
+experiment's other runs in grey, and `?` lists the keys. A chart draws the
+mean of each braille dot column, smoothed for `train/` metrics over steps so
+that runs logging at different cadences agree, with spikes the smoothing
+hides as faint dots, a hatch from the run's first non-finite sample, and y
+labels that give their values exactly. Without colour, or under `NO_COLOR`,
+glyphs and letters say what colour says. The store is read off the loop, one
+poll at a time, and an ended run is read once. A run's state word comes from
+its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 

@@ -1,0 +1,20 @@
+01 |
+02 |
+03 |
+04 |
+05 |
+06 |
+07 |               ● tidy-otter  12,400
+   |               abbbbbbbbbbbcccccccc
+08 |             make the terminal larger
+   |             cccccccccccccccccccccccc
+09 |
+10 |
+11 |
+12 |
+13 |
+14 |
+cursor hidden
+a fg=Rgb(61,220,132) bold
+b fg=Rgb(238,241,245) bold
+c fg=Rgb(95,103,115)

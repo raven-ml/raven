@@ -1,0 +1,77 @@
+01 | ᛗ munin                                              8 runs · 2 experiments   ● 1 live   ✗ 2 failed   × 1 NaN   gpu-01
+   | aaaaaaa                                              bbbbbbbbbbbbbbbbbbbbbbbbb        bbb          bbb       bbbbbbbbb
+02 |                                 │
+03 | ¹ runs                          │ val/loss ↓
+   | bbaaaa                            bbbbbbbbbb
+04 |                                 │ █▀█   █ █ █▀█ ▀▀█ ▀▀█      train/loss  0.2762  smoothed
+   |                                   aaaaaaaaaaaaaaaaaaaaa      bbbbbbbbbb  aaaaaabbbbbbbbbb
+05 | ▾ cifar-resnet  6      val/loss │ █ █   ▀▀█ █ █   █   █      train/acc   95.40%  smoothed
+   | bbaaaaaaaaaaaabbb      bbbbbbbb   aaaaaaaaaaaaaaaaaaaaa      bbbbbbbbb   aaaaaabbbbbbbbbb
+06 |▌ ■ tidy-otter ● ⠢⣀⣀⣀    0.4077  │ ▀▀▀ ▀   ▀ ▀▀▀   ▀   ▀      val/acc     94.18%
+   |ccccddddddddddcdccccccccccccccccc  aaaaaaaaaaaaaaaaaaaaa      bbbbbbb     aaaaaa
+07 |  ■ amber-fox  ✓ ⠢⣀⣀⣀⣀⣀  0.3841 ★│ best 0.4077 at 12,000
+   |               e         aaaaaa    bbbbb      bbbbbbbbbb
+08 |  · brisk-wren ✓ ⠢⣀⣀⣀⣀⣀  0.4071  │
+   |  b            e bbbbbb
+09 |  · calm-lynx  ✓ ⠢⣀⣀⣀⣀⣀  0.3942  │ ━ tidy-otter   ━ amber-fox                                      latest   vs amber-f…
+   |  b            e bbbbbb              aaaaaaaaaa                                                    bbbbbbbbbbbbbbbbbbbb
+10 |  ■ dusty-mole × ⢢⡀      0.7665  │
+   |               a
+11 |  · eager-hawk ✗ ⠄        1.670  │  train/loss      ⠉⠒⠤⢄⣀⡀                                           0.2642        +11%
+   |  b            a b                                                                                   aaaaaa
+12 | ▾ mnist-mlp  2         val/loss │  ↓ min                ⠈⠉⠓⠒⠒⠦⠤⠤⠤⠤⢤⣤⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀a
+   | bbaaaaaaaaabbb         bbbbbbbb    bbbbb                                                       a
+13 |  · mlp-wide   ✓ ⠈⢆⣀⣀⣀⣀ 0.05831 ★│
+   |  b            e bbbbbb aaaaaaa
+14 |  · mlp-base   ✗ ⠈⢆⣀⣀   0.06576  │ ▌val/loss        ⠑⠢⢄⣀                                             0.4077       +3.5%
+   |  b            a bbbb              cddddddddcccccccccccccccccccccccccccccccccccccccccccccccccccccccccddddddcccccccccccc
+15 |                                 │  ↓ min               ⠉⠉⠒⠒⠢⠤⠤⠤⠤⠤⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀a
+   |                                   cfffffcccccccccccccccccccccccccccccccccccccccccccccccccccccccdcccccccccccccccccccccc
+16 |                                 │
+17 |                                 │  train/acc            ⢀⣀⡠⠤⠤⠖⠒⠒⠒⠒⠒⠛⠋⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉a    95.82%    -0.54 pt
+   |                                                                                                a    aaaaaa
+18 |                                 │  ↑ max           ⣀⠤⠖⠚⠉⠁
+   |                                    bbbbb
+19 |                                 │
+20 |                                 │  val/acc             ⣀⣀⠤⠤⠔⠒⠒⠒⠒⠒⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉a    94.18%    -0.54 pt
+   |                                                                                                a    aaaaaa
+21 |                                 │  ↑ max           ⡠⠔⠊⠉
+   |                                    bbbbb
+22 |                                 │
+23 |                                 │  val/ece         ⠑⠢⢄⣀                                            0.02243       +3.0%
+   |                                                                                                    aaaaaaa
+24 |                                 │  ↓ min               ⠉⠛⠒⠒⠲⠦⠤⠤⠤⠤⠤⣤⣤⣄⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀a
+   |                                    bbbbb                                                       a
+25 |                                 │
+26 |                                 │  val/top5            ⣀⣀⠤⠤⠔⠒⠒⠒⠒⠒⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉a    0.9968       -0.1%
+   |                                                                                                a    aaaaaa
+27 |                                 │  ↑ max           ⡠⠔⠊⠉
+   |                                    bbbbb
+28 |                                 │
+29 |                                 │  epoch                                 ⢀⣀⣀⣀⣀⣀⡠⠤⠤⠤⠤⠤⠤⠒⠒⠒⠒⠒⠒⠉⠉⠉a     6.200        same
+   |                                                                                                a     aaaaa        bbbb
+30 |                                 │                  ⣀⣀⣀⣀⠤⠤⠤⠤⠤⠤⠒⠒⠒⠒⠒⠒⠊⠉⠉⠉⠉⠉⠁
+31 |                                 │
+32 |                                 │  train/data_ms       ⠊     ⠁     ⠈                                 4.758       +4.5%
+   |                                                        b     b     b                                 aaaaa       bbbbb
+33 |                                 │                  ⣀⣀⣀⣀⠤⣤⣀⣠⣄⣀⠤⠤⢤⣀⣀⣤⣤⣤⣄⣠⣤⣤⣄⣀⣠⣄⣠⣤⣀⣀⣀⣀⠤⠤⢄⣀⣀⣀⣀⣀⣀⡠⠤⠤a
+   |                                                                                                a
+34 |                                 │
+35 |                                 │  train/grad_norm ⠙⠒⠤⢄⣀⡀                                            1.020        -20%
+   |                                                                                                      aaaaa        bbbb
+36 |                                 │                       ⠈⠉⠉⠒⠒⠒⠶⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⣤⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀a
+   |                                                                                                a
+37 |                                 │
+38 |                                 │  train/lr         ⡰⠒⠉⠉⠉⠉⠉⠉⠉⠉⠒⠒⠒⠒⠒⠢⠤⠤⠤⢄⣀⣀⣀⡀                     9.908e-05        -70%
+   |                                                                                                  aaaaaaaaa        bbbb
+39 |                                 │                  ⡴⠕⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠤⠤⠤⠤⠤⠤⠤⠬⠭⠭⠭⠑⠒⠒⠒⠢⠤⠤⠤⠤⠤⣀⣀⣀⣀⣀⣀a
+   |                                                                                                a
+40 | charts › strips › zoom   ↑↓ metric   [ ] run   enter zoom   esc charts   ? keys
+   | bbbbbbbbbaaaaaabbbbbbb   aabbbbbbb   aaabbbb   aaaaabbbbb   aaabbbbbbb   abbbbb
+cursor hidden
+a bold
+b dim
+c inverse
+d bold inverse
+e bold dim
+f dim inverse

@@ -6,213 +6,129 @@
 (** A terminal dashboard of a munin store.
 
     The dashboard shows a {!Munin.Store.t} in a terminal, reads it again once a
-    second, and never writes it. It has two {e screens}. {e Runs} lists the
-    store's runs, to find a run and compare runs by their params and metrics.
-    {e Run} monitors one run, the {e focus}: its state, its metrics drawn over
-    its steps, and its machine. A {e marked} run is drawn in every chart of Run
-    beside the focus, so the focus reads against earlier runs of a sweep. Run's
-    charts follow a {e metric cursor}, and Runs shows the cursor's metric, the
-    {e focus metric}, in a column. Three views open over the screens: {e Zoom},
-    one metric of Run at full size with a step cursor; {e Details}, every fact
-    about one run; and {e Help}.
+    second, and never writes it. It is one screen: a bar at the top, three
+    panes, and a status bar at the bottom. The {e runs pane} at the left lists
+    the store's runs under their experiments, and its cursor picks the run the
+    rest shows. The {e centre} shows that run's metrics at one of three
+    {e depths}: charts, strips and zoom. The {e run pane} at the right states
+    the run: its state, its progress, its params, its machine and its source.
+    Up to four {e overlays}, runs the user picked, are drawn beside the
+    cursor's run in every chart, each in a colour it keeps for the session.
 
-    Each screen's last line names its keys ({!section-keys}). The screens form a
-    stack whose bottom is Runs. Enter opens the run under the cursor in Run, and
-    Esc goes back one screen. A dashboard that starts on Run has Runs below it,
-    so Esc from either start ends on Runs, and only [q] and Ctrl+C quit.
-
-    The screens draw no boxes. Two weights rank what they show: normal text for
-    what the user reads, dim for what frames it. They state each fact in words
-    or glyphs, and colour repeats what they say, so a terminal without colour,
-    or under [NO_COLOR], shows every fact. Text takes the terminal's own
-    foreground and background, and other colours are the 16 colours of the
-    terminal's palette, except the cursor row's tint at 256 colours and more;
-    with fewer, the cursor row is reverse video.
+    The status bar names the depth and the keys that act at it
+    ({!section-keys}). Colour repeats what a glyph or a word says, so a terminal
+    without colour, or [NO_COLOR], shows every fact: bold and faint remain, the
+    cursor's row is reverse video, and each overlay's line ends in its letter.
+    The colours follow the terminal's background, dark or light.
 
     The dashboard reads a run as its library does ({!Munin.Store_format}).
     Unless a section says otherwise, a value shown is the run's as last read,
     and a time is the dashboard's clock against a time the store recorded. *)
 
-(** {1:runs Runs}
+(** {1:screen The screen}
 
-    Runs has a row per run of the store under a header row per experiment, the
-    experiments in the order of their newest run, and a cursor on one row. Its
-    first line counts the runs, the [live] ones, the [failed] ones, the
-    [crashed] ones and those with a metric sample that is not finite, each count
-    the rows that show its glyph; with a filter, the rows it keeps. A value that
-    every row shows equal, such as the experiment of a filtered sweep or the
-    host, is stated once on that line, and leaves it first when it is too long.
-    The store's path ends the line, cut at its start. An experiment's header row
-    counts its runs, its live ones and its failed or crashed ones.
+    The top bar counts the runs and experiments, the runs [live], the runs
+    [failed] or [crashed], and those with a metric sample that is not finite,
+    and names the host when every run shares one.
 
-    The columns, left to right, are the run's state word ({!section-states}),
-    its name or else its id, its parent, its start time, the time from its start
-    to its end or its last write, its latest step with its progress while short
-    of its [steps] ({!section-numbers}), the focus metric's value, the first
-    sample of the run's metrics that is not finite, as [× NaN at 4,250], its
-    params, its host and its commit. The value is the run's best sample by the
-    metric's goal ({!Munin.Metric.best}), or its latest without a goal, and a
-    [*] follows the best value of each experiment among the rows shown. The
-    parent, the host, each param and the commit are columns only when their
-    values differ among the rows shown, a param column with [—] for a run
-    without it. A param whose values differ within an experiment comes before
-    one that differs only between experiments, and among them the param with the
-    most values first. Columns that do not fit are left out whole, in this
-    order: the commit, the params that differ only between experiments, the
-    host, the time from its start, the start time, the params past the first,
-    the parent. The column the rows are ordered by carries [▾], or [▴] reversed.
+    The panes take their widths from the terminal's: at 150 columns or more
+    the runs pane has 42 and the run pane 34; at 100 or more, 34 and 28, the
+    run pane hidden at the strips and zoom depths; below 100, neither, and a
+    line under the top bar names the cursor's run. [1] and [3] show or hide
+    either pane at any width. Below 60 columns or 16 lines the screen is one
+    line per live run and asks for a larger terminal. A store without runs
+    shows how a program starts one.
 
-    The focus metric is chosen by the first listing whose rows have a metric:
-    the metric with a goal that the most shown rows have, the first by name
-    among equals. After that only [left] and [right] move it, through the
-    metrics that any shown row has, by name, and a row without the focus metric
-    shows [—] in its column.
+    {b The runs pane} has a header per experiment, open or folded to one line
+    that counts its runs and its failed or live ones, and a line per run of an
+    open experiment: its name, its state glyph ({!section-states}), its
+    experiment's key metric drawn over its steps, and its best value of it,
+    with [★] on the best of its experiment among the runs shown. Beyond 30
+    runs, the experiments start folded but the cursor's. The cursor stops at
+    each run of an open experiment and at the header of a folded one. Runs
+    are newest first, or by their best key metric, or by name ([o]).
 
-    In the lines the rows leave, once they are 7 or more, the cursor run's
-    {e pane} states the run and its params, its focus metric's latest and best
-    values, and draws the metric over its steps; at 140 columns or more a list
-    of its metrics' latest and best values sits beside the chart. With fewer
-    lines, the third line from the bottom states the cursor run.
+    A {e filter}, typed after [/], keeps the runs of which each word matches
+    the name, the id, the experiment, a tag, the state word or a param written
+    [key=value], ignoring case, or, for a word [key<v] or [key>v] with [v] a
+    decimal such as [0.002] or [2e-3], whose param [key] is a number below or
+    above [v].
 
-    A {e filter}, typed after [/], keeps the rows of which each word of the
-    filter is part of the name, the id, the experiment, the parent, a tag, the
-    state word or a param written [key=value], ignoring case. The rows are
-    filtered as each key is typed. Enter keeps the filter and Esc clears it.
+    The {e key metric} of an experiment is, among its runs' metrics by key, the
+    first with a goal outside [train/] whose key ends in [loss], else the first
+    with a goal outside [train/], else the first with a goal, else the first.
 
-    The values come from each run's statistics ({!Munin.History.stats_of}),
-    which are an ended run's hint, and for a run without an end a history the
-    dashboard follows while Runs is shown. *)
+    {b The centre} starts with a {e banner} when the cursor's run failed,
+    crashed or logged a sample that is not finite, then the {e hero}: the key
+    metric's latest value in large digits, its best, and the latest values of
+    up to three other metrics with a goal, four from 150 columns, smoothed
+    where their charts smooth them. Below 100 columns or 30 lines one line of
+    those values takes the hero's place.
 
-(** {1:run Run}
+    At the {e charts} depth the centre has the metric tabs, which [left] and
+    [right] move, a legend that gives each drawn run's value at the cursor's
+    run's latest step, one large chart and, from 100 columns and 30 lines, two
+    small charts of the other metrics with a goal, three from 150 columns and
+    44 lines. At the {e strips} depth each metric of the run is a strip two
+    lines high on the same steps, with its latest value and, with an overlay,
+    the difference to the first overlay at the latest step at which both
+    logged a finite value; while the run is live, strips of its machine end
+    the list, over its active time. At the {e zoom} depth one metric fills the
+    centre with each column's raw extent faint behind the smoothed line, a
+    step cursor and a readout of each drawn run at the cursor. Enter goes one
+    depth deeper and Esc one back.
 
-    Run's first line states the focus in words ({!section-states}): its state
-    word, its name, its progress, its rate, the time it has left, its active
-    time, and the age of its last arrival or its last write ({!section-states}).
-    Parts leave the line whole when it is too long, the rate and the time left
-    first. The second line, shown only when something needs attention, starts
-    with [!] and names a sample that is not finite in the focus or a marked run,
-    a stalled or crashed run, a run whose lock is held and from which no metric
-    sample has arrived in the 30 s since the dashboard began watching it, or
-    damaged lines in a log.
-
-    Then comes one chart, the cursor's metric ({!section-charts}), under a title
-    with its latest and best values and, with marked runs, a legend that names
-    each marked run and the params in which it differs from the focus. Under the
-    chart each marked run has a pair of {e difference rows}: the focus's sample
-    minus the marked run's at each step both logged with finite values, the
-    marked run's latest sample at a step taken, averaged per dot column, around
-    a dim zero rule; at the right the difference at the latest such step, and
-    whether the focus is [worse] or [better] there by the metric's goal, with
-    that step. A marked run that stops before the focus's latest step, by an end
-    or a sample that is not finite, says where after its row's end. A metric is
-    a key of the run's metrics with a sample ({!Munin.History.metrics}).
-
-    Under them each metric has a {e strip}: the metric drawn over the chart's x
-    domain in the chart's own columns, one or two rows high, its name in a
-    column at the left and its latest value at the right. Strips are grouped by
-    the prefix of their keys, up to the last [/], which the first strip of a
-    group prints. They are two rows high when all fit so, with a blank row
-    between groups when that fits, and otherwise a window of them, which the
-    metric cursor moves, shows as many as fit and counts them. The chart keeps
-    at least three fifths of the lines that the first lines, the difference rows
-    and the machine leave, four fifths below 30 lines.
-
-    The machine's readings come last and follow the USE method, with a row per
-    resource that gives its utilisation, its saturation and its errors. The keys
-    are those of [Munin_sys]. munin logs no errors, which the rows state once. A
-    device's rows give its [used] of its [memory], the device's whole memory,
-    apart from the [allocated] bytes of the run against its [budget]. At 140
-    columns or more each row adds the reading drawn over the run's time. Below
-    30 lines one line gives the first reading of each resource. The readings of
-    a run that is not [live], [running], [writing] or [starting] give the time
-    of the last one. *)
-
-(** {1:views Zoom, Details and Help}
-
-    Zoom draws the cursor's metric at the terminal's size with a step cursor on
-    the focus's samples, which [left] and [right] move one sample, and a table
-    of each run's value at the cursor, its latest value, its best value and its
-    step, and counts of samples, non-finite samples and orphans. Below 100
-    columns the table keeps each run's value at the cursor and its best value.
-    Details lists, in a column at most 104 cells wide, the run's id, start and
-    end, its source, its params, beside each the value a marked run gives it
-    when that differs, its metrics' latest and best values, its notes and tags,
-    the artifact versions it used, the files it logged, its resumes and its
-    damaged lines. It scrolls. Help lists, over the screen it opens on, the keys
-    of every screen, the keys of that screen, and the words and glyphs of the
-    screens; it scrolls when it does not fit. Below 40 columns or 10 lines every
-    screen gives its gist in a few centred lines, the focus's state word, name,
-    progress and latest value, or the counts of Runs, and the size it needs. *)
+    [i] shows everything about the run over the centre: its params, notes,
+    tags, source, every metric's latest and best values, the artifact versions
+    it used, its files, its resumes and its damaged lines. [?] shows the
+    keys. *)
 
 (** {1:charts Charts}
 
-    A chart draws the focus's samples of a metric as a line in braille dots,
-    over a domain of x and of y, and each marked run's as a level line.
+    A chart draws a metric of the cursor's run over the step, and each overlay
+    beside it.
 
-    {b x.} A chart's x is the step, or with [x] the metric's step metric, or the
-    time. A sample on the step metric's axis takes the value of the step
-    metric's sample at the same step ({!Munin.Store_format.section-reading}),
-    and a sample without one is not drawn; the title counts them. The time is
-    the run's active time, the time from its start less the time between a
-    writer's last record and the next writer's resume. The x domain runs from
-    [0] to the focus's [steps] on the step axis of a run that declared them and
-    has no sample past them, and otherwise to the least of [1], [2] or [5] times
-    a power of ten at or above 1.1 times the largest x, so that it changes a few
-    times over a run and holds every sample, or to the largest float where no
-    such float is.
+    + The x axis is the step, from [0] to the greatest end of the runs drawn:
+      a run's [steps], or, without them or past them, the least of 1, 2 or 5
+      times a power of ten at or above its largest step, so that a run that
+      ended at step 10,000 is drawn on [0] to 10,000. A machine's strip is
+      over the run's active time, to the same rounding of it. Zoom shows a
+      window of the domain: halved by each [+], the part that holds its
+      cursor.
+    + A line is one value per braille dot column, the mean of the column's
+      samples, joined to the next column's.
+    + A column's least and greatest raw samples of the cursor's run, where
+      further than three dot rows from its line, smoothed or not, are faint
+      dots, and the y range covers the raw samples, so that no spike hides.
+    + A metric under [train/] is smoothed by default, with a debiased
+      exponential mean over the steps whose time constant is a thirtieth of
+      the steps shown, so that runs logging at different cadences are
+      smoothed alike; [s] turns smoothing on and off for every chart.
+    + y is on a log scale when every value drawn is above 0 and they span two
+      decades or more, with ticks at the powers of ten; else linear with round
+      ticks. [y] asks for the other scale, per metric.
+    + On a chart with axes, from the cursor's run's first sample that is not
+      finite, the plot is hatched and labelled [× NaN], [× inf] or [× -inf].
+    + The other runs of the experiment ([r]) are drawn first, in grey, then the
+      overlays, then the cursor's run, which wins a cell it shares.
+    + Without colour each overlay's line ends in its letter, [a] to [d].
+    + While the run is live a faint rule marks its latest step, [now], on a
+      chart with axes.
+    + A machine's reading is filled down to the plot's floor.
+    + The large chart and zoom have both axes, a small chart the y axis
+      alone, a strip and a run's trend none. A y label is a value that its
+      digits give exactly in at most six columns, at a multiple of 1, 2 or 5
+      times a power of ten, the labels three rows apart or more; a y range
+      where no such value falls has no label. An axis's labels share one
+      notation: plain, as [0.25] or [12500], if each fits; else with the
+      suffix [k], [M] or [G], as [1.5M]; else with an exponent, as [2e-05].
+      x labels are compact steps, and [step] ends the axis.
 
-    {b Reduction.} The samples of a {e dot column}, the samples whose x falls in
-    that column of the plot, are reduced to the first, the least, the greatest
-    and the last of its finite samples, joined in order. The line through them
-    inks the dots that the line through every sample inks.
-
-    {b Non-finite samples.} A sample that is NaN or infinite takes no part in a
-    domain or in smoothing, and the line breaks across it. The row above the
-    plot marks each dot column that holds one of the focus's with [×] for NaN,
-    [↑] for an infinity and [↓] for a negative one, [×] winning. Two marked
-    columns with no finite sample between them are joined by a dotted rule, so
-    that a metric that stays NaN reads as one span however often it logs. A
-    marked run's are named on the attention line.
-
-    {b Orphans and resumes.} A sample that a resume orphans is never drawn
-    ({!Munin.History.orphans}). Each resume is a dotted vertical line at its
-    step. Where a run's steps decrease without a resume, its line breaks, and
-    smoothing starts again.
-
-    {b y.} The y domain is the extent of the finite values drawn in the x
-    window, the focus's and the marked runs'. Nothing is trimmed, so a spike
-    sets the domain; a narrower x window ([+]) refits y to the samples in it.
-    With [L] a chart whose finite values in the window are all above [0] draws y
-    on a log scale, and another says [linear: values <= 0]. The y axis is
-    labelled at both ends of the domain, the least and the greatest value drawn,
-    and between them at multiples of [1], [2] or [5] times a power of ten about
-    a third of the plot apart, none closer than two lines to another; on a log
-    scale at the powers of ten. A dot follows the focus's latest sample when it
-    is finite.
-
-    {b Smoothing}, off by default, draws a smoothed line over the raw one, which
-    stays drawn, dimmed. The smoothed value at a step [x_i] is the debiased mean
-    of the finite samples at and before it,
-    [s_i = y_1 + Σ_j w_j (y_j - y_1) / Σ_j w_j], with
-    [w_j = (1 - exp (-(x_j - x_(j-1)) / τ)) * exp (-(x_i - x_j) / τ)], where
-    [x_0 = x_1 - (x_2 - x_1)], or [x_1 - 1] for a lone sample. The samples that
-    share a step count as one sample, their mean, at that step. [s] cycles [τ]
-    through a hundredth, a thirtieth and a tenth of the shown x span, rounded to
-    [1], [2] or [5] times a power of ten, and the legend prints it. A latest and
-    a best value are always the raw samples'.
-
-    {b Marked runs.} A marked run's {e level line} joins, per dot column, the
-    mean of its finite values in that column, smoothed when smoothing is on. It
-    is drawn before the focus so that the focus loses no dot, and carries its
-    letter, [a] or [b], at its end, beside it when the focus or the other letter
-    holds that cell, and in cells along it that the focus does not ink. Where
-    the two lines share a cell the focus's dots replace the marked run's, so a
-    level line shows the level of a marked run and promises none of its
-    extremes; Run's difference rows show the gap the overlay hides. Its points
-    are means over a dot column, so a narrower chart averages more samples per
-    point; a marked run's values are read from Zoom's table. At most two runs
-    are marked. A third level line shares the cells of the other two at braille
-    resolution, and without colour no reader can tell it from them. *)
+    A chart is drawn from a reduction of each series to its dot columns,
+    made off the loop by the poll for the chart's x domain and size, so that
+    drawing costs what the chart shows, whatever the series' length. A chart
+    whose reduction is not made yet, as after a resize, draws its axes
+    alone. *)
 
 (** {1:states States}
 
@@ -232,111 +148,96 @@
       watching began, or for longer than three usual gaps;
     - [crashed], [finished], [failed] and [killed]: the run's status.
 
+    Its glyph is [●] for [live] and [writing], [○] for [running] and
+    [starting], [◌] for [stalled] and [silent], [✓] [finished], [■] [killed],
+    [✗] [failed] and [crashed], and [×] for a run, not failed, with a metric
+    sample that is not finite.
+
     The dashboard times each arrival on its own clock. A poll that finds new
     metric samples of a run is an arrival at that poll's time, and a run's
     samples that the first read finds are none. The {e usual gap} is the median
     of the gaps between the run's last 32 arrivals, known once two arrivals have
     been timed, and three of them are never less than 10 s. No time the run
-    recorded judges its state. Run's first line gives the age of the last
-    arrival, or before one, the age of the last write ({!Munin.Run.updated_at})
-    labelled as such and how long the dashboard has watched. A run that is
-    [writing] or [silent] may have exited, which its line says by
-    [lock not probed]. *)
+    recorded judges its state. *)
 
 (** {1:numbers Numbers}
 
     - A value prints with four significant digits, its trailing zeros kept, as
-      [0.4077], [2196] or [6.200], so that values line up digit for digit; in
-      scientific notation below [1e-4] and from [1e6] in magnitude, as
-      [9.908e-05], so that no value that is not zero prints as [0]. NaN prints
-      [NaN], and the infinities [inf] and [-inf]. A param prints as the program
-      gave it, in the fewest digits that read back as its value.
-    - A step or a count prints with separators, as [12,400].
-    - A duration prints in at most two units, as [45s], [1h37m] or [3d4h].
-    - Memory prints in GiB and a rate of bytes in MB/s.
-    - The {e latest step} is the largest step of the latest samples of the run's
-      metrics. Progress is the latest step over the run's [steps]
-      ({!Munin.Run.steps}), and absent without them; its percentage is rounded
-      down, so it reads [100%] only once the steps are reached.
-    - The {e rate} is the steps per second over the last 10 minutes, or over the
-      last tenth of the active time when that is longer, once that window holds
-      60 s of samples. The {e time left} is the steps left over the rate, shown
-      as [~59m left] while the run is [live] or [writing].
-    - Times of day are local, as [10:41] today and [Oct 31 16:20] before. *)
+      [0.4077], [2196] or [6.200], in scientific notation below [1e-4] and from
+      [1e6] in magnitude; an accuracy, a metric with [acc] in its key and a
+      value in [[0;1]], prints as a percentage with two decimals. NaN prints
+      [NaN], and the infinities [inf] and [-inf].
+    - A step or a count prints with separators, as [12,400], and compactly on
+      an axis, as [12k].
+    - A difference prints relative, as [-6.0%], or in points for an accuracy,
+      as [+0.15 pt], and [same] within the digits shown.
+    - A duration prints in two units, as [4m 10s]; a time of day as [14:22].
+    - Progress is the latest step over the run's [steps], rounded down, so it
+      reads [100%] only once the steps are reached. The rate is the steps per
+      second over the last 10 minutes, and the time left the steps left over
+      the rate, while the run is live. *)
 
 (** {1:keys Keys}
 
-    A key means one thing on every screen, and a key whose object the screen
-    lacks does nothing. Keys are matched with their case.
+    A key means one thing at every depth, and a key whose object is missing
+    does nothing. Arrows and [h j k l] alike.
 
     {v
-    up down, k j     move the cursor: run, metric, line; scroll Help
-    left right, h l  move sideways: focus metric, step cursor
-    g G              first, last
-    Enter            open: the run in Run, the metric in Zoom
-    Esc              back one screen; in the filter, clear it; on Runs,
-                     clear a kept filter; close Help
+    up down, k j     the run; the strip at strips
+    left right, h l  the metric; the step at zoom, shift for ten
+    [ ]              the previous, next run, at any depth
+    g G              the first, last run
+    Enter            one depth deeper: charts, strips, zoom; open a folded
+                     experiment
+    Esc              one depth back; at charts, clear the overlays, then the
+                     filter, then the grey runs; close the run's facts
+    Space            overlay the cursor's run, or take it off (four at most)
+    r                the experiment's other runs, in grey
+    c                clear the overlays
+    s                smoothing on, off
+    y                the other y scale for this metric
+    + -              narrow, widen the steps shown, about zoom's cursor
+    /                filter the runs
+    o                order the runs: started, best, name
+    e                fold or open the cursor's experiment
+    i                everything about the run
+    1 3              the runs pane, the run pane
+    ?                these keys
     q, Ctrl+C        quit, except in the filter, where q is typed
-    ?                Help
-    /                filter the rows of Runs, the metrics of Run
-    Space            mark or unmark the run: the cursor's on Runs, the
-                     focus elsewhere
-    [ ]              focus the previous, next run of Runs's order
-    o O              order Runs by the next column, reverse the order
-    s                smoothing: off, then three time constants
-    x                x axis: step, step metric, time
-    L                log y
-    + - 0            narrow, widen, reset the x window, at the latest step
-    < >              pan the x window
-    i                Details of the run
-    y                copy the run's id to the clipboard
     v}
 
-    [y] sends the terminal its sequence to set the clipboard (OSC 52). A
-    terminal may ignore it, which the dashboard cannot see.
-
-    The dashboard leaves the mouse to the terminal, so the terminal selects text
-    as it does for any program. *)
+    The dashboard leaves the mouse to the terminal, so the terminal selects
+    text as it does for any program. *)
 
 (** {1:running Running} *)
 
-(** The type for the screen a dashboard starts on. *)
+(** The type for where a dashboard starts. *)
 type screen =
-  | Runs  (** The store's runs. *)
+  | Runs  (** The cursor on the newest run. *)
   | Run of string option
-      (** The run of this id, or with [None] the newest run without an end that
-          has not crashed, else the newest run, else the first run to start. *)
+      (** The cursor on the run of this id, or with [None] on the newest run
+          without an end that has not crashed, waiting for one to start. *)
 
 val run : Munin.Store.t -> screen -> (unit, string) result
 (** [run store screen] shows the dashboard of [store], starting on [screen], on
-    the process's terminal until the user quits. On Runs a poll reads the
-    store's listing as {!Munin.Store.val-runs} reads it with the previous
-    listing, and follows the history of each run without an end, with statistics
-    alone, and the cursor's run's focus metric while its pane shows. On Run it
-    follows the focus's history with every key, and the marked runs' with the
-    key of the chart they are drawn in. A key kept costs 24 bytes a sample. When
-    the cursor leaves an ended run whose pane's chart was drawn from the run's
-    end, that chart is kept and its history is not: the run's log no longer
-    changes, so coming back reads nothing, and the kept charts cost a reduction
-    of the pane's width per row. A change of the focus metric reads them again.
-    A history is held while a screen of the stack needs its run, and charts,
-    strips and difference rows are reduced as polls read, so a key and a frame
-    cost what the screen shows.
+    the process's terminal until the user quits. Once a second a poll lists
+    the store as {!Munin.Store.val-runs} lists it with the previous listing,
+    follows the history of the cursor's run while it has no end, or while
+    [i] shows it, with every key, each other run drawn with the keys drawn,
+    and each run without an end with statistics alone. A key or a resize
+    that changes what the screen draws starts a poll that reads only what
+    it lacks. Only one poll runs at a time. An ended run is never followed
+    and its charts outlive the poll, so that coming back to it reads nothing
+    of it. A key kept costs 24 bytes a sample.
 
     [Error why] if standard input or output is not a terminal, or no run of
     [store] has the id given. *)
 
 (**/**)
 
-(* What the tests drive. [app ~clock store screen] is the program [run] runs,
-   which reads the wall clock from [clock], for Mosaic_test's emulated terminal.
-   [Curve] reduces a metric's series to a plot's dot columns, as the charts draw
-   them: the laws of the Charts section, for windtrap. [Chart.draw] draws a
-   chart as Run draws it, with any number of marked runs, for the test that
-   shows how many the medium carries, and [Chart.paired] and [Chart.domain] give
-   the x of the charts' laws. [Watch] states the state words without a store.
-   [set_depth] pins the colour depth. [key], [resize] and [frame] let the bench
-   drive the program by its messages. *)
+(* What the tests drive. [app ~clock store screen] is the program [run]
+   runs, which reads the wall clock from [clock], for Mosaic_test's emulated
+   terminal. *)
 
 type model
 type msg
@@ -344,89 +245,17 @@ type msg
 val app :
   clock:(unit -> float) -> Munin.Store.t -> screen -> (model, msg) Mosaic.app
 
-module Curve : sig
-  type event = [ `Nan | `Pos_inf | `Neg_inf ]
+(* The reduction the charts draw, the drawing of a chart, the numbers it
+   prints, the facts its domain comes from, the screen's tokens and the watch
+   the state words come from, whose laws the tests state over inputs no
+   screen reaches. A reduction's arithmetic is stated on [Reduce], since a
+   drawing shows it only to a dot. *)
 
-  type plot = { lo : float; hi : float; dots : int }
-  (** The x domain shown and the dot columns of the plot. A sample at [x] in
-      [[lo;hi]] is in the dot column in which {!Matrix_charts} draws [x] on a
-      plot of [dots] dot columns over that domain. *)
-
-  type t
-
-  val reduce :
-    ?tau:float -> plot -> x:(int -> float) -> Munin.Metric.series -> t
-  (** [reduce plot ~x s] is [s]'s samples at x [x i], reduced to [plot]'s dot
-      columns, smoothed with [tau] when given. A sample whose [x] is NaN has no
-      x and is left out. *)
-
-  val extend : t -> x:(int -> float) -> Munin.Metric.series -> t
-  (** [extend c ~x s] is [reduce] of [s] with [c]'s plot and [tau], at the cost
-      of [s]'s samples past those [c] reduced. [s] extends the series [c]
-      reduced, and [x] gives the samples [c] reduced their x. *)
-
-  val points : t -> (float * float) array
-  (** [points c] is the line's points in order, a NaN [y] where it breaks. *)
-
-  val level : t -> (float * float) array
-  (** [level c] is the level line's points, one per dot column that holds a
-      finite sample. *)
-
-  val events : t -> (int * event) array
-  (** [events c] is each dot column that holds a sample that is not finite, with
-      its mark, by column. *)
-end
-
-module Chart : sig
-  val draw :
-    width:int ->
-    height:int ->
-    lo:float ->
-    hi:float ->
-    key:string ->
-    Munin.History.t ->
-    (char * Munin.History.t) list ->
-    Matrix_grid.t
-  (** [draw ~width ~height ~lo ~hi ~key focus marked] is the chart of [key] that
-      Run draws for the focus [focus] and the marked runs [marked] with their
-      letters, over the steps [lo] to [hi], in a grid of [width] by [height]
-      cells. *)
-
-  val paired : Munin.History.t -> string -> int -> float
-  (** [paired h key i] is the x of the sample [i] of [key]'s series on its step
-      metric's axis, NaN when it has none. *)
-
-  val domain : Munin.History.t -> string -> float * float
-  (** [domain h key] is the x domain of [key] on the step axis. *)
-end
-
-(** The state words from the arrivals a dashboard timed. *)
-module Watch : sig
-  type t
-
-  val start : now:float -> samples:int -> t
-  (** [start ~now ~samples] is a watch that began at [now] on a run whose log
-      held [samples] metric samples, which are no arrival. *)
-
-  val observe : t -> now:float -> samples:int -> t
-  (** [observe w ~now ~samples] is [w] after a poll at [now] read [samples]: an
-      arrival when they are more than before. *)
-
-  val word : Munin.Run.status -> t option -> now:float -> string
-  (** [word status w ~now] is the state word of a run of [status]. *)
-end
-
-val set_depth : [ `Mono | `Ansi16 | `Ansi256 | `Truecolor ] -> unit
-(** [set_depth d] makes [d] the colour depth the screens draw for, in place of
-    the one the environment gave at start ([NO_COLOR], [COLORTERM], [TERM]), so
-    that a test's screens do not depend on the terminal it runs from. Below 256
-    colours the cursor row is reverse video and marked [›]. *)
-
-val key : Matrix.Input.Keystroke.t -> msg
-val resize : width:int -> height:int -> msg
-
-val frame : model -> Matrix_grid.t
-(** [frame m] is the screen [m] draws, at its size: what the bench times after a
-    key. *)
+module Reduce = Reduce
+module Plot = Plot
+module Numbers = Numbers
+module Facts = Facts
+module Theme = Theme
+module Watch = Watch
 
 (**/**)

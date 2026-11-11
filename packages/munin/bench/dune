@@ -1,10 +1,13 @@
 (executable
  (name bench_munin)
- (libraries munin munin.tui mosaic matrix unix thumper))
+ (libraries munin munin.tui mosaic mosaic.test matrix matrix.test unix thumper))
 
-; Not attached to runtest on purpose: run with `dune build @bench`, or run the
-; built exe directly. [--tiny] makes every input small, to see the rows work
-; on a machine where timing is not taken.
+; Not attached to runtest on purpose: run with
+; `dune build --profile release @packages/munin/bench`, or run the built exe
+; directly. Baselines are recorded in the release profile, which inlines
+; across modules as an installed munin is built; the dev profile does not.
+; [--tiny] makes every input small, to see the rows work on a machine where
+; timing is not taken.
 
 (rule
  (alias bench)

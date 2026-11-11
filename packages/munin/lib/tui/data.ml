@@ -5,223 +5,163 @@
 
 open Munin
 module Smap = Map.Make (String)
+module Sset = Set.Make (String)
 
-type keys = All | Keys of string list
+type axis = Step | Time
 
-type entry = {
-  history : History.t;
-  keys : keys;
-  watch : Watch.t;
-  rate : float option;
-  pauses : (float * float) list;
-}
-
-type chart = {
-  focus : string;
-  marked : (char * string) list;
-  view : Chart.view;
-  spec : Chart.spec;
-  kept : bool;
-      (* kept, once its run has ended, after the screen stops asking for it *)
-}
-
-type trend = {
+type plot = {
   run : string;
   key : string;
-  axis : Chart.axis;
-  width : int;
-  domain : (float * float) option;
+  axis : axis;
+  x : float * float;
+  dots : int;
+  smooth : bool;
 }
 
-type zoom = {
-  focus : string;
-  others : string list;
-  key : string;
-  axis : Chart.axis;
-  index : int option;
-}
-
-type cursor = {
-  at : zoom;
-  x : float option;
-  values : (string * float option) list;
-}
-
-module Cmap = Map.Make (struct
-  type t = chart
+module Pmap = Map.Make (struct
+  type t = plot
 
   let compare = compare
 end)
 
-module Tmap = Map.Make (struct
-  type t = trend
+type at = Latest of string | At of int
+type readout = { key : string; runs : string list; at : at; tau : float }
+type compare = { focus : string; other : string; keys : string list }
 
-  let compare = compare
-end)
+type wants = {
+  focus : string option;
+  every : bool;
+  plots : (plot * (float -> int)) list;
+  readouts : readout list;
+  compare : compare option;
+}
 
-(* A prepared chart, and whether its focus's history had read the run's end. *)
-type made = { chart : Chart.prepared; whole : bool }
+let nothing = { focus = None; every = false; plots = []; readouts = []; compare = None }
+
+let same a b =
+  a.focus = b.focus && a.every = b.every
+  && List.equal ( = ) (List.map fst a.plots) (List.map fst b.plots)
+  && a.readouts = b.readouts && a.compare = b.compare
+
+(* The keys a history keeps the samples of. *)
+type keys = All | Keys of Sset.t
+
+(* A history held, and its generation: a history read from its log's start,
+   or followed into a restart, starts a new one, so that a reduction made from
+   another generation is never extended by its series. *)
+type held = { history : History.t; keys : keys; gen : int }
+
+(* A reduction, with the generation and the resumes of the history it read,
+   since a resume can orphan samples it reduced and moves a time axis, and
+   whether that history had read its run's end: only such a reduction is
+   whole. *)
+type made = { reduction : Reduce.t; from : int; resumes : int; whole : bool }
 
 type t = {
+  time : float;
+  listed : bool;
   listing : Run.t list;
-  entries : entry Smap.t;
-  hints : (string * History.key_stats) list Smap.t; (* ended runs' *)
-  charts : made Cmap.t;
-  trends : Chart.trend Tmap.t;
-  cursor : cursor option;
+  facts : Facts.run list;
+  by_id : Facts.run Smap.t;
+  experiments : Facts.experiment Smap.t;
+  held : held Smap.t;
+  watches : Watch.t Smap.t;
+  hints : (string * History.key_stats) list Smap.t;
+  pauses : (float * float) list Smap.t;
+  reductions : made Pmap.t;
+  values : (readout * (string * float option * float option) list) list;
+  differences : (compare * (string * (int * float * float)) list) option;
+  errors : (string * string) list;
+  gen : int;
 }
 
 let empty =
   {
+    time = 0.;
+    listed = false;
     listing = [];
-    entries = Smap.empty;
+    facts = [];
+    by_id = Smap.empty;
+    experiments = Smap.empty;
+    held = Smap.empty;
+    watches = Smap.empty;
     hints = Smap.empty;
-    charts = Cmap.empty;
-    trends = Tmap.empty;
-    cursor = None;
+    pauses = Smap.empty;
+    reductions = Pmap.empty;
+    values = [];
+    differences = None;
+    errors = [];
+    gen = 0;
   }
 
-let listing d = d.listing
-let entry d id = Smap.find_opt id d.entries
+let time d = d.time
+let listed d = d.listed
+let runs d = d.facts
+let run d id = Smap.find_opt id d.by_id
+let experiment d name = Smap.find_opt name d.experiments
+let history d id = Option.map (fun h -> h.history) (Smap.find_opt id d.held)
+let errors d = d.errors
 
-let run d id =
-  match Smap.find_opt id d.entries with
-  | Some e -> Some (History.run e.history)
-  | None -> List.find_opt (fun r -> Run.id r = id) d.listing
+(* A plot's dot count and smoothing follow its run, key, axis and x in the
+   order of plots, so the reductions of a series are one range. *)
+let reductions d ~run ~key ~axis ~x =
+  let first = { run; key; axis; x; dots = min_int; smooth = false } in
+  let series (p : plot) = p.run = run && p.key = key && p.axis = axis && p.x = x in
+  Pmap.to_seq_from first d.reductions
+  |> Seq.take_while (fun (p, _) -> series p)
+  |> Seq.map (fun (_, m) -> m.reduction)
+  |> List.of_seq
 
-let key_stats h =
-  let of_key kind k =
-    Option.map
-      (fun stats -> (k, { History.kind; goal = History.goal h k; stats }))
-      (History.stats h k)
-  in
-  List.sort
-    (fun (a, _) (b, _) -> String.compare a b)
-    (List.filter_map (of_key `Metric) (History.metrics h)
-    @ List.filter_map (of_key `Reading) (History.readings h))
+let values d r = Option.value (List.assoc_opt r d.values) ~default:[]
 
-let stats d r =
-  match Smap.find_opt (Run.id r) d.entries with
-  | Some e -> Some (key_stats e.history)
-  | None -> Smap.find_opt (Run.id r) d.hints
+let difference d c key =
+  match d.differences with
+  | Some (c', l) when c' = c -> List.assoc_opt key l
+  | _ -> None
 
-let word d ~now r =
-  let w = Option.map (fun e -> e.watch) (Smap.find_opt (Run.id r) d.entries) in
-  Watch.word (Run.status r) w ~now
+(* Keys *)
 
-let made d (c : chart) =
-  match Cmap.find_opt c d.charts with
-  | Some m -> Some m
-  | None ->
-      (* One prepared for the same focus, marks and region under another view,
-         as while a key changes the smoothing: never one of another region,
-         whose plot is not this one's, nor of other marks, whose letters would
-         name the runs marked before. *)
-      Cmap.fold
-        (fun (c' : chart) m acc ->
-          if c'.focus = c.focus && c'.spec = c.spec && c'.marked = c.marked then
-            Some m
-          else acc)
-        d.charts None
-
-let chart d c = Option.map (fun m -> m.chart) (made d c)
-
-let whole d c =
-  match Cmap.find_opt c d.charts with Some m -> m.whole | None -> false
-
-let trend d t = Option.map Chart.text (Tmap.find_opt t d.trends)
-let cursor d = d.cursor
-
-(* Reads *)
-
-type request = {
-  time : float;
-  list : bool;
-  prev : Run.t list;
-  follow : (string * keys) list;
-  keep : string list;
-  held : entry Smap.t;
-  hinted : string list;
-  want_charts : chart list;
-  old_charts : made Cmap.t;
-  want_trends : trend list;
-  old_trends : Chart.trend Tmap.t;
-  want_zoom : zoom option;
-}
-
-let request d ~time ~list ~follow ~keep ~charts ~trends ~zoom =
-  {
-    time;
-    list;
-    prev = d.listing;
-    follow;
-    keep;
-    held = d.entries;
-    hinted = List.map fst (Smap.bindings d.hints);
-    want_charts = charts;
-    old_charts = d.charts;
-    want_trends = trends;
-    old_trends = d.trends;
-    want_zoom = zoom;
-  }
-
-type result = {
-  at : float;
-  wanted : string list; (* the runs followed or kept *)
-  want_charts : chart list;
-  want_trends : trend list;
-  listing : Run.t list option;
-  read : (string * History.t * keys * float option * (float * float) list) list;
-  hints : (string * (string * History.key_stats) list) list;
-  charts : made Cmap.t;
-  trends : Chart.trend Tmap.t;
-  cursor : cursor option;
-  errors : (string * string) list;
-}
-
-let errors (r : result) = r.errors
-
-(* [covers have want] is [true] iff a history that keeps [have] keeps every key
-   of [want]. *)
 let covers have want =
   match (have, want) with
   | All, _ -> true
   | Keys _, All -> false
-  | Keys h, Keys w -> List.for_all (fun k -> List.mem k h) w
+  | Keys h, Keys w -> Sset.subset w h
 
 let union a b =
-  match (a, b) with
-  | All, _ | _, All -> All
-  | Keys a, Keys b -> Keys (List.sort_uniq String.compare (a @ b))
+  match (a, b) with All, _ | _, All -> All | Keys a, Keys b -> Keys (Sset.union a b)
 
-(* The rate over the last 10 minutes, or the last tenth of the active time, from
-   the series with the most samples, once that window holds 60 s. *)
-let rate h ~active =
-  let best =
-    List.fold_left
-      (fun acc k ->
-        match History.series h k with
-        | s when Metric.length s > match acc with Some (_, n) -> n | None -> 1
-          ->
-            Some (s, Metric.length s)
-        | _ -> acc
-        | exception Invalid_argument _ -> acc)
-      None (History.metrics h)
-  in
-  match best with
-  | None -> None
-  | Some (s, n) ->
-      let span = Float.max 600. (0.1 *. active) in
-      let t1 = Metric.time s (n - 1) in
-      let k = ref (n - 1) in
-      while !k > 0 && t1 -. Metric.time s (!k - 1) <= span do
-        decr k
-      done;
-      let dt = t1 -. Metric.time s !k in
-      let ds = Metric.step s (n - 1) - Metric.step s !k in
-      if dt < 60. || ds <= 0 then None else Some (Float.of_int ds /. dt)
+let add_need id keys m =
+  Smap.update id (function Some k -> Some (union k keys) | None -> Some keys) m
 
-let read store (q : request) =
+let ended r = Run.ended_at r <> None
+
+let series h key =
+  match History.series h key with s -> Some s | exception Invalid_argument _ -> None
+
+let x_of axis h pauses s =
+  match axis with
+  | Step -> fun i -> Float.of_int (Metric.step s i)
+  | Time ->
+      let started = Run.started_at (History.run h) in
+      fun i -> Facts.active_at pauses ~started (Metric.time s i)
+
+(* The poll *)
+
+(* The samples a history read, all keys together: a poll that finds more has
+   timed an arrival. *)
+let samples h =
+  List.fold_left
+    (fun n k -> match History.stats h k with Some s -> n + s.count | None -> n)
+    0 (History.metrics h)
+
+(* A reduction made from [h] that the poll can extend: of [h]'s generation and
+   resumes, over a series no shorter than the one it read. *)
+let reusable m (h : held) s =
+  m.from = h.gen
+  && m.resumes = List.length (History.resumes h.history)
+  && Reduce.length m.reduction <= Metric.length s
+
+let poll store ~now ~list wants d =
   let errors = ref [] in
   let guard id f =
     try Some (f ())
@@ -230,271 +170,254 @@ let read store (q : request) =
       None
   in
   let listing =
-    if q.list then
-      guard "" (fun () ->
-          if q.prev = [] then Store.runs store
-          else Store.runs ~prev:q.prev store)
-    else None
+    if not list then d.listing
+    else
+      let prev = if d.listed then Some d.listing else None in
+      match guard "" (fun () -> Store.runs ?prev store) with
+      | Some l -> l
+      | None -> d.listing
   in
-  let runs = Option.value listing ~default:q.prev in
+  let listed = d.listed || (list && !errors = []) in
+  let by_listing = List.fold_left (fun m r -> Smap.add (Run.id r) r m) Smap.empty listing in
+  let in_listing id = Smap.mem id by_listing in
   let find id =
-    match List.find_opt (fun r -> Run.id r = id) runs with
+    match Smap.find_opt id by_listing with
     | Some r -> Some r
     | None -> Option.join (guard id (fun () -> Store.run store id))
   in
-  (* A held history that keeps the keys asked for is followed; otherwise the log
-     is read from its start with the keys both ask for. *)
-  let follow (id, want) =
-    let fresh have =
+  (* What each run's history must keep. A history held whose run had not
+     ended when last read is followed once more by the listing that shows
+     the end, so that what was made from it reaches its last samples. *)
+  let lacks (p, _) =
+    match Pmap.find_opt p d.reductions with None -> true | Some m -> not m.whole
+  in
+  let need = ref Smap.empty in
+  List.iter
+    (fun r -> if not (ended r) then need := add_need (Run.id r) (Keys Sset.empty) !need)
+    listing;
+  if list then
+    List.iter
+      (fun r ->
+        match Smap.find_opt (Run.id r) d.held with
+        | Some h when ended r && not (ended (History.run h.history)) ->
+            need := add_need (Run.id r) h.keys !need
+        | _ -> ())
+      listing;
+  List.iter
+    (fun ((p : plot), dot) ->
+      if lacks (p, dot) then need := add_need p.run (Keys (Sset.singleton p.key)) !need)
+    wants.plots;
+  (match wants.focus with
+  | Some id ->
+      let live =
+        match Smap.find_opt id by_listing with Some r -> not (ended r) | None -> true
+      in
+      if live || wants.every then need := add_need id All !need
+  | None -> ());
+  List.iter
+    (fun (r : readout) ->
+      List.iter (fun id -> need := add_need id (Keys (Sset.singleton r.key)) !need) r.runs)
+    wants.readouts;
+  Option.iter
+    (fun (c : compare) ->
+      let ks = Keys (Sset.of_list c.keys) in
+      need := add_need c.focus ks (add_need c.other ks !need))
+    wants.compare;
+  (* Read what is needed: a history held with the keys is followed when the
+     poll lists, and kept as it is otherwise; any other is read from its
+     log's start with the keys both ask for. *)
+  let gen = ref d.gen in
+  let fresh () =
+    incr gen;
+    !gen
+  in
+  let read id want =
+    let fresh_read keys =
       Option.bind (find id) (fun r ->
-          let series = match have with All -> None | Keys k -> Some k in
-          guard id (fun () -> (History.read ?series r, have)))
+          let series = match keys with All -> None | Keys k -> Some (Sset.elements k) in
+          guard id (fun () ->
+              { history = History.read ?series r; keys; gen = fresh () }))
     in
-    let got =
-      match Smap.find_opt id q.held with
-      | Some e when covers e.keys want ->
-          Option.map
-            (fun h -> (h, e.keys))
-            (guard id (fun () -> History.follow e.history))
-      | Some e -> fresh (union e.keys want)
-      | None -> fresh want
-    in
-    Option.map
-      (fun (h, keys) ->
-        let r = History.run h in
-        let pauses, rate =
-          match keys with
-          | All ->
-              (* The pauses change only with the resumes, which a follow that
-                 reads one marks as a restart or a longer list. *)
-              let pauses =
-                match Smap.find_opt id q.held with
-                | Some { keys = All; pauses; history; _ }
-                  when (not (History.restarted h))
-                       && List.length (History.resumes history)
-                          = List.length (History.resumes h) ->
-                    pauses
-                | _ -> Fact.pauses h
-              in
-              let until =
-                match (Run.ended_at r, Run.status r) with
-                | Some e, _ -> e
-                | None, (`Running | `Silent) -> q.time
-                | None, _ -> Run.updated_at r
-              in
-              ( pauses,
-                rate h ~active:(Fact.active_at pauses (Run.started_at r) until)
-              )
-          | Keys _ -> ([], None)
+    match Smap.find_opt id d.held with
+    | Some h when covers h.keys want ->
+        if list && not (ended (History.run h.history)) then
+          match guard id (fun () -> History.follow h.history) with
+          | Some h' ->
+              let gen = if History.restarted h' then fresh () else h.gen in
+              Some { h with history = h'; gen }
+          | None -> Some h
+        else Some h
+    | Some h -> (
+        match fresh_read (union h.keys want) with Some h' -> Some h' | None -> Some h)
+    | None -> fresh_read want
+  in
+  let held =
+    Smap.fold
+      (fun id want acc -> match read id want with Some h -> Smap.add id h acc | None -> acc)
+      !need Smap.empty
+  in
+  (* Arrivals, timed at this poll for the histories it followed or read. *)
+  let watches =
+    Smap.fold
+      (fun id (h : held) acc ->
+        let n = samples h.history in
+        let w =
+          match Smap.find_opt id d.watches with
+          | Some w -> Watch.observe w ~now ~samples:n
+          | None -> Watch.start ~samples:n
         in
-        (id, h, keys, rate, pauses))
-      got
+        Smap.add id w acc)
+      held
+      (Smap.filter (fun id _ -> in_listing id) d.watches)
   in
-  let read = List.filter_map follow q.follow in
-  let history id =
-    match List.find_opt (fun (id', _, _, _, _) -> id' = id) read with
-    | Some (_, h, _, _, _) -> Some h
-    | None -> Option.map (fun e -> e.history) (Smap.find_opt id q.held)
-  in
+  (* The statistics of each ended run not held, from its hint, once. *)
   let hints =
-    if q.list then
-      List.filter_map
-        (fun r ->
+    let kept = Smap.filter (fun id _ -> in_listing id) d.hints in
+    if not list then kept
+    else
+      List.fold_left
+        (fun acc r ->
           let id = Run.id r in
-          if
-            Run.ended_at r = None
-            || List.mem id q.hinted || Smap.mem id q.held
-            || List.mem_assoc id q.follow
-          then None
+          if (not (ended r)) || Smap.mem id acc || Smap.mem id held then acc
           else
-            Option.map
-              (fun s -> (id, s))
-              (guard id (fun () -> History.stats_of r)))
-        runs
-    else []
+            match guard id (fun () -> History.stats_of r) with
+            | Some s -> Smap.add id s acc
+            | None -> acc)
+        kept listing
   in
-  let charts =
+  (* Pauses change only with resumes, so a run's are read again only when a
+     history held of it has another number of them, or none was known. *)
+  let pauses =
+    Smap.fold
+      (fun id (h : held) acc ->
+        let known = Smap.find_opt id d.pauses in
+        let resumes = List.length (History.resumes h.history) in
+        match (h.keys, known) with
+        | All, Some p
+          when List.length p = resumes && not (History.restarted h.history) ->
+            Smap.add id p acc
+        | All, _ -> Smap.add id (Facts.pauses h.history) acc
+        | Keys _, Some p -> Smap.add id p acc
+        | Keys _, None -> acc)
+      held
+      (Smap.filter (fun id _ -> in_listing id) d.pauses)
+  in
+  let facts =
+    List.map
+      (fun r ->
+        let id = Run.id r in
+        Facts.of_run ~now
+          ~history:(Option.map (fun (h : held) -> h.history) (Smap.find_opt id held))
+          ~hint:(Smap.find_opt id hints) ~watch:(Smap.find_opt id watches)
+          ~pauses:(Option.value (Smap.find_opt id pauses) ~default:[])
+          r)
+      listing
+  in
+  let by_id =
+    List.fold_left (fun m (f : Facts.run) -> Smap.add (Run.id f.run) f m) Smap.empty facts
+  in
+  let experiments =
     List.fold_left
-      (fun m (c : chart) ->
-        match
-          ( history c.focus,
-            List.filter_map
-              (fun (l, id) -> Option.map (fun h -> (l, h)) (history id))
-              c.marked )
-        with
-        | Some focus, marked -> (
-            let prev =
-              Option.map (fun m -> m.chart) (Cmap.find_opt c q.old_charts)
-            in
-            match
-              guard c.focus (fun () ->
-                  Chart.prepare ?prev c.view c.spec focus marked)
-            with
-            | Some chart ->
-                let whole = Run.ended_at (History.run focus) <> None in
-                Cmap.add c { chart; whole } m
-            | None -> m)
-        | None, _ -> m)
-      Cmap.empty q.want_charts
+      (fun m (e : Facts.experiment) -> Smap.add e.name e m)
+      Smap.empty (Facts.experiments facts)
   in
-  let trends =
+  (* Reductions: each wanted one made from its run's history, extended by
+     what the history gained, or kept as it was when nothing holds it. *)
+  let make_reduction ((p : plot), dot) =
+    let prev = Pmap.find_opt p d.reductions in
+    let from_history (h : held) =
+      match series h.history p.key with
+      | None -> prev
+      | Some s ->
+          let x =
+            x_of p.axis h.history
+              (Option.value (Smap.find_opt p.run pauses) ~default:[])
+              s
+          in
+          let resumes = List.length (History.resumes h.history) in
+          let reduction =
+            match prev with
+            | Some m when reusable m h s -> Reduce.extend m.reduction ~x s
+            | _ ->
+                let lo, hi = p.x in
+                let tau = if p.smooth then Some (Plot.tau p.x) else None in
+                Reduce.make ?tau { lo; hi; dots = p.dots; dot } ~x s
+          in
+          Some { reduction; from = h.gen; resumes; whole = ended (History.run h.history) }
+    in
+    match Smap.find_opt p.run held with
+    | Some h when covers h.keys (Keys (Sset.singleton p.key)) -> (
+        match guard p.run (fun () -> from_history h) with
+        | Some m -> m
+        | None -> prev)
+    | _ -> prev
+  in
+  let wanted =
     List.fold_left
-      (fun m (t : trend) ->
-        match history t.run with
-        | None -> m
-        | Some h -> (
-            let prev = Tmap.find_opt t q.old_trends in
-            match
-              Option.join
-                (guard t.run (fun () ->
-                     Chart.trend ?prev ?domain:t.domain t.axis ~width:t.width h
-                       t.key))
-            with
-            | Some tr -> Tmap.add t tr m
-            | None -> m))
-      Tmap.empty q.want_trends
+      (fun m ((p : plot), dot) ->
+        match make_reduction (p, dot) with Some r -> Pmap.add p r m | None -> m)
+      Pmap.empty wants.plots
   in
-  (* The values of each run at the step cursor's x. *)
-  let cursor =
-    Option.bind q.want_zoom (fun (z : zoom) ->
-        Option.map
-          (fun focus ->
-            let series h =
-              match History.series h z.key with
-              | s -> Some s
-              | exception Invalid_argument _ -> None
-            in
-            let x =
-              Option.bind (series focus) (fun s ->
-                  let n = Metric.length s in
-                  if n = 0 then None
-                  else
-                    let i =
-                      match z.index with
-                      | Some i -> max 0 (min (n - 1) i)
-                      | None -> n - 1
-                    in
-                    let x = Chart.x_of z.axis focus z.key s i in
-                    if Float.is_nan x then None else Some x)
-            in
-            let value_at h =
-              match (x, series h) with
-              | Some at, Some s ->
-                  let xs = Chart.x_of z.axis h z.key s in
-                  let r = ref None in
-                  for i = 0 to Metric.length s - 1 do
-                    if xs i <= at then r := Some (Metric.value s i)
-                  done;
-                  !r
-              | _ -> None
-            in
-            let ids = z.focus :: z.others in
-            {
-              at = z;
-              x;
-              values =
-                List.filter_map
-                  (fun id ->
-                    Option.map (fun h -> (id, value_at h)) (history id))
-                  ids;
-            })
-          (history z.focus))
+  (* A whole reduction stays while its run is listed, at the dot counts the
+     screen draws. *)
+  let drawn = List.sort_uniq Int.compare (List.map (fun ((p : plot), _) -> p.dots) wants.plots) in
+  let reductions =
+    Pmap.fold
+      (fun (p : plot) m acc ->
+        if Pmap.mem p acc then acc
+        else if m.whole && in_listing p.run && List.mem p.dots drawn then
+          Pmap.add p m acc
+        else acc)
+      d.reductions wanted
   in
-  {
-    at = q.time;
-    wanted = List.map fst q.follow @ q.keep;
-    want_charts = q.want_charts;
-    want_trends = q.want_trends;
-    listing;
-    read;
-    hints;
-    charts;
-    trends;
-    cursor;
-    errors = !errors;
-  }
-
-let samples h =
-  List.fold_left
-    (fun n k ->
-      match History.stats h k with Some s -> n + s.count | None -> n)
-    0 (History.metrics h)
-
-let apply (d : t) (r : result) =
-  let listing = Option.value r.listing ~default:d.listing in
-  let in_store id =
-    match r.listing with
-    | None -> true
-    | Some l -> List.exists (fun x -> Run.id x = id) l
-  in
-  (* What was read replaces what was held; what was held and is still wanted
-     stays, read or not. *)
-  let wanted = r.wanted in
-  let entries =
-    Smap.filter (fun id _ -> in_store id && List.mem id wanted) d.entries
-  in
-  let entries =
-    List.fold_left
-      (fun m (id, history, keys, rate, pauses) ->
-        let samples = samples history in
-        let watch =
-          match Smap.find_opt id d.entries with
-          | Some e -> Watch.observe e.watch ~now:r.at ~samples
-          | None -> Watch.start ~now:r.at ~samples
+  let values =
+    List.map
+      (fun (r : readout) ->
+        let step =
+          match r.at with
+          | At s -> Some s
+          | Latest id -> Option.bind (Smap.find_opt id by_id) (fun (f : Facts.run) -> f.latest)
         in
-        Smap.add id { history; keys; watch; rate; pauses } m)
-      entries r.read
+        let value step id =
+          Option.bind (Smap.find_opt id held) (fun (h : held) ->
+              Option.map
+                (fun s ->
+                  let x i = Float.of_int (Metric.step s i) in
+                  let v = Float.of_int step in
+                  (id, Reduce.at ~x s v, Reduce.at ~tau:r.tau ~x s v))
+                (series h.history r.key))
+        in
+        (r, match step with Some s -> List.filter_map (value s) r.runs | None -> []))
+      wants.readouts
   in
-  let hints =
-    List.fold_left (fun m (id, s) -> Smap.add id s m) d.hints r.hints
-  in
-  let hints =
-    match r.listing with
-    | None -> hints
-    | Some _ -> Smap.filter (fun id _ -> in_store id) hints
-  in
-  (* A chart asked for and not prepared, as when its run could not be read,
-     keeps its last preparation. *)
-  let charts =
-    List.fold_left
-      (fun m c ->
-        match (Cmap.find_opt c r.charts, made d c) with
-        | Some p, _ | None, Some p -> Cmap.add c p m
-        | None, None -> m)
-      Cmap.empty r.want_charts
-  in
-  (* An ended run's kept chart stays if it was prepared from the run's whole
-     log, unless a newer one of the run took its place. A chart prepared before
-     the end lacks the samples written after it. *)
-  let ended id =
-    List.exists (fun x -> Run.id x = id && Run.ended_at x <> None) listing
-  in
-  let charts =
-    Cmap.fold
-      (fun (c : chart) p m ->
-        if
-          c.kept && p.whole && ended c.focus
-          && not
-               (Cmap.exists
-                  (fun (c' : chart) _ -> c'.kept && c'.focus = c.focus)
-                  m)
-        then Cmap.add c p m
-        else m)
-      d.charts charts
-  in
-  let trends =
-    List.fold_left
-      (fun m t ->
-        match (Tmap.find_opt t r.trends, Tmap.find_opt t d.trends) with
-        | Some p, _ | None, Some p -> Tmap.add t p m
-        | None, None -> m)
-      Tmap.empty r.want_trends
+  let differences =
+    Option.map
+      (fun (c : compare) ->
+        let pair key =
+          match (Smap.find_opt c.focus held, Smap.find_opt c.other held) with
+          | Some a, Some b -> (
+              match (series a.history key, series b.history key) with
+              | Some sa, Some sb -> Option.map (fun d -> (key, d)) (Reduce.common sa sb)
+              | _ -> None)
+          | _ -> None
+        in
+        (c, List.filter_map pair c.keys))
+      wants.compare
   in
   {
+    time = now;
+    listed;
     listing;
-    entries;
+    facts;
+    by_id;
+    experiments;
+    held;
+    watches;
     hints;
-    charts;
-    trends;
-    cursor = (match r.cursor with Some _ as c -> c | None -> d.cursor);
+    pauses;
+    reductions;
+    values;
+    differences;
+    errors = List.rev !errors;
+    gen = !gen;
   }

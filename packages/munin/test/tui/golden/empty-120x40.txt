@@ -1,0 +1,61 @@
+01 | ᛗ munin  ~/empty
+   |abbbbbbbaacccccccaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+02 |
+03 |
+04 |
+05 |
+06 |
+07 |
+08 |
+09 |
+10 |
+11 |
+12 |
+13 |
+14 |
+15 |                              No runs yet
+   |                              ddddddddddd
+16 |                              in ~/empty
+   |                              eeeeeeeeee
+17 |
+18 |                              A run shows up here as soon as a program starts one:
+   |                              ffffffffffffffffffffffffffffffffffffffffffffffffffff
+19 |
+20 |
+   |                              aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+21 |                                let store = Munin.Store.open_ () in
+   |                              aagggggggggggggggggggggggggggggggggggaaaaaaaaaaaaaaaaaaaaaaa
+22 |                                Munin.Session.within
+   |                              aaggggggggggggggggggggaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+23 |                                  (Munin.Session.start ~store ~experiment:"mnist" ())
+   |                              aagggggggggggggggggggggggggggggggggggggggggggggggggggggaaaaa
+24 |                                @@ fun s -> ...
+   |                              aagggggggggggggggaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+25 |
+   |                              aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+26 |
+27 |                              Another store:  munin --root DIR
+   |                              eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+28 |
+29 |
+30 |
+31 |
+32 |
+33 |
+34 |
+35 |
+36 |
+37 |
+38 |
+39 |
+40 | ? keys   q quit
+   |ahcccccaaahcccccaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+cursor hidden
+a bg=Rgb(22,26,32)
+b fg=Rgb(143,152,165) bg=Rgb(22,26,32) bold
+c fg=Rgb(95,103,115) bg=Rgb(22,26,32)
+d fg=Rgb(238,241,245) bold
+e fg=Rgb(95,103,115)
+f fg=Rgb(143,152,165)
+g fg=Rgb(201,206,214) bg=Rgb(22,26,32)
+h fg=Rgb(238,241,245) bg=Rgb(22,26,32) bold
