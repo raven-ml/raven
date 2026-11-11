@@ -124,10 +124,6 @@ val overlaps : t -> t -> bool
 val share_byte : t -> t -> bool
 (** [share_byte b b'] is {!Rig.Buffer.share_byte}[ b b']. *)
 
-val words : int -> int -> int * int
-(** [words a n] is [(lo, hi)], the [n] bytes from [a] rounded out to whole
-    words: [lo] the first word's start and [hi] the last word's end. *)
-
 val places : t -> (int * int) list
 (** [places b] is where [b]'s bytes lie, as [(space, first)]: the space and
     first byte that [rig_buffer_span] in [rig.h] gives, then, for memory

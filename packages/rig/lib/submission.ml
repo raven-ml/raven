@@ -616,10 +616,10 @@ let reaches_of queues parts fixed =
           Hashtbl.add index s i;
           i
     in
-    let a, b = Buffer.words a length in
     space.(!p) <- i;
-    lo.(!p) <- a;
-    hi.(!p) <- b;
+    (* The bytes rounded out to whole words. *)
+    lo.(!p) <- a land -Memory.word;
+    hi.(!p) <- Memory.whole (a + length);
     incr p
   in
   let add_slot w =

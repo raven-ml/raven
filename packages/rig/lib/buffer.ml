@@ -153,10 +153,6 @@ external cached_host : t -> (int[@untagged])
 
 let alias b = if space b = 0 then 0 else cached_host b
 
-(* The [n] bytes from [a] rounded out to whole words: the first word's start
-   and the last word's end. *)
-let words a n = (a land -Memory.word, Memory.whole (a + n))
-
 let places b =
   if b.length = 0 then []
   else
