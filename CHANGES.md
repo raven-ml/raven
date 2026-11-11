@@ -2908,6 +2908,11 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- A product over summed axes cut across devices (`Nx.contract`,
+  `Nx.matmul`, `Nx.einsum`, `Nx.dot`, `Nx.tensordot`, `Nx.inner`,
+  `Nx.vecdot`, `Nx.matmul_segments`, `Nx_quant.apply`,
+  `Nx_quant.apply_experts`) allocates 31 fewer words a call where its
+  result is closed, and 18 fewer a device where it stays a sum.
 - **Breaking:** a contraction adds its `init` after summing its products,
   on every kernel library and over cut summed axes, where nx.cpu's chain
   order, nx.cuda and the first device's partial started the sum from it: a

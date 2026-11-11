@@ -1361,64 +1361,6 @@ let contract (type v s d a b c e) eng ~by (route : unit Route.t) rule ~batch
         List.fold_left next (piece j from r) rs
     | [] -> invalid_arg "Partial.contract: a tile of no piece"
   in
-  (* Under [Rows], an output's products lie on the device holding its row's
-     group: [init] there, as the accumulator holds it, and [zero]
-     elsewhere, the first device also taking the rows in no group. The ids,
-     along the batch and [a_axis], are laid over the result's axes: the
-     batch's, then [a]'s free axes, [a_axis] among them, then [b]'s. *)
-  let owned j ~first (g : _ Nx_kernel.segments) i zero =
-    match g with
-    | Contracting _ ->
-        invalid_arg "Partial.contract: groups of a contracting pair"
-    | Rows { ids; a_axis; b_axis } ->
-        let shape = counts (resw j) in
-        let nb = Iarray.length batch in
-        let taken ax =
-          Iarray.exists (fun (x, _) -> x = ax) batch
-          || Iarray.exists (fun (x, _) -> x = ax) contracting
-        in
-        let before = ref 0 in
-        for ax = 0 to a_axis - 1 do
-          if not (taken ax) then incr before
-        done;
-        let perm = Array.make (Array.length shape) (-1) in
-        for d = 0 to nb - 1 do
-          perm.(d) <- d
-        done;
-        perm.(nb + !before) <- nb;
-        let k = b_at + Bool.to_int (Option.is_some b_scale) in
-        let w = reads rule k (Prim.shape ids) (resw j) (Array.get tiles.(j)) in
-        let ids = view eng ~by ks.(j) w ids in
-        let ids = eng.view (M.Permute (Iarray.of_array perm)) ids in
-        let ids = eng.view (M.Broadcast (Iarray.of_array shape)) ids in
-        let q = tiles.(j).(Array.length pairs) in
-        let c n = E.const D.Int64 (Int64.of_int n) in
-        let id = E.input 1 D.Int64 in
-        let hi = c (q.start + q.count) in
-        let mine =
-          if first then E.(id < hi || id >= c (Prim.dim b b_axis))
-          else E.(id >= c q.start && id < hi)
-        in
-        let e = E.any (E.where mine (E.input 0 ad) (E.input 2 ad)) in
-        let vs = [ Value.Any i; Value.Any ids; Value.Any zero ] in
-        Prim.expect ad (List.hd (map eng ~by (here j) vs [ e ]))
-  in
-  (* The [init] device [j]'s term adds, where its sum stays partial:
-     [init] where [first], else the identity, so that [init] joins the sum
-     once, in the kernel that adds the first products; none without
-     one. *)
-  let from j ~first =
-    let init_at i =
-      let i = Value.Any (view eng ~by ks.(j) (resw j) i) in
-      Prim.expect ad (cast eng ~by acc i)
-    in
-    let zero () = Partition.identity eng ~by (here j) ad (counts (resw j)) in
-    match (init, segments) with
-    | None, _ -> None
-    | Some i, Some g -> Some (owned j ~first g (init_at i) (zero ()))
-    | Some i, None when first -> Some (init_at i)
-    | Some _, None -> Some (zero ())
-  in
   if not (Devices.partial p) then
     match init with
     | None ->
@@ -1445,6 +1387,66 @@ let contract (type v s d a b c e) eng ~by (route : unit Route.t) rule ~batch
         let holds j = not (Route.empty (resw j)) in
         eng.assemble p shape out (values eng ~by p shape ~holds joined)
   else
+    (* Under [Rows], an output's products lie on the device holding its
+       row's group: [init] there, as the accumulator holds it, and [zero]
+       elsewhere, the first device also taking the rows in no group. The
+       ids, along the batch and [a_axis], are laid over the result's axes:
+       the batch's, then [a]'s free axes, [a_axis] among them, then [b]'s. *)
+    let owned j ~first (g : _ Nx_kernel.segments) i zero =
+      match g with
+      | Contracting _ ->
+          invalid_arg "Partial.contract: groups of a contracting pair"
+      | Rows { ids; a_axis; b_axis } ->
+          let shape = counts (resw j) in
+          let nb = Iarray.length batch in
+          let taken ax =
+            Iarray.exists (fun (x, _) -> x = ax) batch
+            || Iarray.exists (fun (x, _) -> x = ax) contracting
+          in
+          let before = ref 0 in
+          for ax = 0 to a_axis - 1 do
+            if not (taken ax) then incr before
+          done;
+          let perm = Array.make (Array.length shape) (-1) in
+          for d = 0 to nb - 1 do
+            perm.(d) <- d
+          done;
+          perm.(nb + !before) <- nb;
+          let k = b_at + Bool.to_int (Option.is_some b_scale) in
+          let w =
+            reads rule k (Prim.shape ids) (resw j) (Array.get tiles.(j))
+          in
+          let ids = view eng ~by ks.(j) w ids in
+          let ids = eng.view (M.Permute (Iarray.of_array perm)) ids in
+          let ids = eng.view (M.Broadcast (Iarray.of_array shape)) ids in
+          let q = tiles.(j).(Array.length pairs) in
+          let c n = E.const D.Int64 (Int64.of_int n) in
+          let id = E.input 1 D.Int64 in
+          let hi = c (q.start + q.count) in
+          let mine =
+            if first then E.(id < hi || id >= c (Prim.dim b b_axis))
+            else E.(id >= c q.start && id < hi)
+          in
+          let e = E.any (E.where mine (E.input 0 ad) (E.input 2 ad)) in
+          let vs = [ Value.Any i; Value.Any ids; Value.Any zero ] in
+          Prim.expect ad (List.hd (map eng ~by (here j) vs [ e ]))
+    in
+    (* The [init] device [j]'s term adds: [init] where [first], else the
+       identity, so that [init] joins the sum once, in the kernel that adds
+       the first products; none without one. *)
+    let from j ~first =
+      match (init, segments) with
+      | None, _ -> None
+      | Some i, Some g ->
+          let zero = Partition.identity eng ~by (here j) ad (counts (resw j)) in
+          let i = Value.Any (view eng ~by ks.(j) (resw j) i) in
+          Some (owned j ~first g (Prim.expect ad (cast eng ~by acc i)) zero)
+      | Some i, None when first ->
+          let i = Value.Any (view eng ~by ks.(j) (resw j) i) in
+          Some (Prim.expect ad (cast eng ~by acc i))
+      | Some _, None ->
+          Some (Partition.identity eng ~by (here j) ad (counts (resw j)))
+    in
     (* Each device's term, its window of the result: its partial, from
        [init] where its term is its group's first. *)
     let g = Devices.grid p in

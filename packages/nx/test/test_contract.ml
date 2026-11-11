@@ -1700,7 +1700,7 @@ module Scaled = struct
         let (P.Any v) = made p role dt (stored s sv) s.swap vs in
         Some (Value v)
 
-  let op (type r o e) (p : e put) (acc : (float, r) Nx.dtype)
+  let op (type r o e) ?(sum = false) (p : e put) (acc : (float, r) Nx.dtype)
       (out : (float, o) Nx.dtype) c : (float, o, e) Nx.t P.t =
     let (P.Any a) = operand p A c.a in
     let (P.Any b) = operand p B c.b in
@@ -1734,7 +1734,7 @@ module Scaled = struct
         a_scale = scale p A_scale c.a;
         b_scale = scale p B_scale c.b;
         segments;
-        sum = false;
+        sum;
       }
 
   (* The index [r] of the segmented axis is in group [ids.(r)] where that
@@ -2222,13 +2222,14 @@ module Scaled = struct
     }
 
   (* [c] with [a]'s or [b]'s arrays placed by [where], the others on every
-     device of the set of [on]: the result's placement, and its values
-     against one device's, bit for bit, where [c]'s sums are exact in every
+     device of the set of [on], asked for its sum where [sum]: the result's
+     placement, and its values, a sum's closed as they are read, against
+     one device's, bit for bit, where [c]'s sums are exact in every
      order. *)
-  let placed (type e) (on : e Nx.Placement.t) where c =
+  let placed (type e) ?sum (on : e Nx.Placement.t) where c =
     let at role = Option.value ~default:on (where role) in
     let p = { put = (fun role x -> Nx.place (at role) x) } in
-    let y = P.eval ~by:"t" (op p Nx.float32 Nx.float32 c) in
+    let y = P.eval ~by:"t" (op ?sum p Nx.float32 Nx.float32 c) in
     let one = P.eval ~by:"t" (op on_host Nx.float32 Nx.float32 c) in
     equal (array float_exact) (read one) (read y);
     Nx.placement y
@@ -2268,6 +2269,13 @@ module Scaled = struct
       | A -> Some q
       | A_scale when scale -> Some q
       | A_scale | B | B_scale | Ids | Init -> None
+    in
+    (* Rows by three groups from an init of 2^25, row 4 in none. *)
+    let from_init =
+      let segs = Rows [| 2L; 0L; 1L; 2L; -1L; 2L; 1L; 0L |] in
+      let c = mx ~segs ~g:3 ~m:8 ~k:32 ~n:8 ~per:2 () in
+      let xs = Array.init (8 * 32) (fun i -> 0.1 +. (Float.of_int i *. 1e-3)) in
+      { c with a = { c.a with xs }; init = Some (Array.make 64 0x1p25) }
     in
     group "placements"
       [
@@ -2309,13 +2317,17 @@ module Scaled = struct
            0.1 rounds each away, which init plus their sum would not. *)
         test "rows by groups from init, b cut along its groups, give one \
               device's bits" (fun () ->
-            let segs = Rows [| 2L; 0L; 1L; 2L; -1L; 2L; 1L; 0L |] in
-            let c = mx ~segs ~g:3 ~m:8 ~k:32 ~n:8 ~per:2 () in
-            let xs = Array.init (8 * 32) (fun i -> 0.1 +. (Float.of_int i *. 1e-3)) in
-            let c =
-              { c with a = { c.a with xs }; init = Some (Array.make 64 0x1p25) }
+            ignore (placed S2.on (b_cut (S2.split ~axis:0)) from_init));
+        (* Asked for its sum, a device's term starts from init where it
+           holds the row's group, the first device's also for a row in no
+           group, and from the identity elsewhere. *)
+        test "rows by groups from init, b cut along its groups, asked for \
+              their sum, close to one device's bits" (fun () ->
+            let q =
+              placed ~sum:true S2.on (b_cut (S2.split ~axis:0)) from_init
             in
-            ignore (placed S2.on (b_cut (S2.split ~axis:0)) c));
+            equal bool ~msg:"the result is a sum" false
+              (Nx.Placement.equal (Nx.Placement.closed q) q));
       ]
 
   (* An output of no products is [init] as the accumulator holds it, rounded
