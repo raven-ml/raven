@@ -154,6 +154,8 @@ typedef struct
 
 #define NVOS33_FLAGS_CACHING_TYPE_WRITECOMBINED                    2
 
+#define NVOS33_FLAGS_CACHING_TYPE_DEFAULT                          6
+
 typedef struct
 {
     NvHandle hClient;
