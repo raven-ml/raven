@@ -451,6 +451,12 @@ let buffer_rows =
       Thumper.bench "host-create-16" (create Rig.host 16);
       Thumper.bench "host-create-1M" (create Rig.host mib);
       row "memory-create-cached-4K" memory (fun d -> create d (4 * kib) ());
+      (* A software device's borrow of another's memory, dropped: a borrow
+         that holds no mapping, as nx's placements and a compiled run's
+         copies make. *)
+      row "borrow-software"
+        (fun () -> (memory (), B.create (memory ()) 64))
+        (fun (d, b) -> ignore (B.borrow d b));
       row "wait-reached-24"
         (fun () -> written (memory ()) slots)
         (fun bs ->

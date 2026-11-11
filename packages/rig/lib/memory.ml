@@ -295,9 +295,9 @@ let[@poll error] claim_add b =
   (* A claim through a borrow counts on its lease too, which an unborrow
      waits on, as C's claims do ([lease_take] in rig_memory.c). *)
   match b.mem.lease with
-  | Some l ->
+  | Lease l ->
       ignore (Atomic.Loc.fetch_and_add [%atomic.loc l.lease_count] 1 : int)
-  | None -> ()
+  | Unleased -> ()
 
 external claim_drop : buffer -> unit = "caml_rig_claim_drop" [@@noalloc]
 
@@ -333,8 +333,8 @@ let rec mark_outside (a : alloc) =
 let lease_end = 1 lsl 40
 let lease_ended m =
   match m.lease with
-  | None -> false
-  | Some l -> Atomic.Loc.get [%atomic.loc l.lease_count] >= lease_end
+  | Unleased -> false
+  | Lease l -> Atomic.Loc.get [%atomic.loc l.lease_count] >= lease_end
 
 (* Host memory's size is its bigarray's, other memory's its entry's:
    [no_entry], of no bytes, for memory of no bytes. *)
@@ -359,9 +359,9 @@ let make ?(keep = Nothing) ?(host = -1) ?(address = -1) ?(handle = 0n) dev
       size = keep_size keep entry;
     }
   in
-  { dev; host; address; handle; alloc; lease = None }
+  { dev; host; address; handle; alloc; lease = Unleased }
 
-let memory_of ?lease alloc dev ~host ~address ~handle =
+let memory_of ~lease alloc dev ~host ~address ~handle =
   { dev; host; address; handle; alloc; lease }
 
 (* Where [r] lies, which its driver made. *)
@@ -1067,7 +1067,7 @@ external hold_record : int -> holds = "caml_rig_node_record" [@@noalloc]
    callback that interrupts another at [Weak.get]'s allocation, and a release
    that an asynchronous exception interrupts and a later drain runs again,
    release each hold once, and none returns before the hold has ended. *)
-external unhold : Bytes.t -> int -> alloc -> lease option -> unit
+external unhold : Bytes.t -> int -> alloc -> lease -> unit
   = "caml_rig_claim_unhold"
 [@@noalloc]
 
@@ -1083,7 +1083,10 @@ let unhold_all (h : holds) =
     match Weak.get h.allocs i with
     | Some a ->
         (* A lease collected is one no buffer can use any more. *)
-        unhold h.taken i a (Weak.get h.leases i)
+        let l =
+          match Weak.get h.leases i with Some l -> l | None -> Unleased
+        in
+        unhold h.taken i a l
     | None -> ()
   done
 
@@ -2128,7 +2131,7 @@ let[@inline] host_records keep addr n =
       address = addr;
       handle = 0n;
       alloc;
-      lease = None;
+      lease = Unleased;
     }
   in
   { mem; offset = 0; length = n; generation = host_generation }
@@ -2467,22 +2470,25 @@ let owned (a : alloc) =
   match a.entry.backing with
   | Driver_memory { location = l; _ } ->
       let address = Option.value ~default:(-1) l.address in
-      memory_of a dev ~host ~address ~handle:l.handle
-  | Io_memory _ -> memory_of a dev ~host ~address:(-1) ~handle:0n
+      memory_of ~lease:Unleased a dev ~host ~address ~handle:l.handle
+  | Io_memory _ ->
+      memory_of ~lease:Unleased a dev ~host ~address:(-1) ~handle:0n
   | Kept _ ->
-      memory_of a dev ~host ~address:(if host >= 0 then host else 0)
+      memory_of ~lease:Unleased a dev ~host
+        ~address:(if host >= 0 then host else 0)
         ~handle:0n
 
 (* A borrow's lease of the [n] bytes from byte [at] of its memory, ended by
    [t]'s collection or link. *)
 let lease ?(t = no_token) at n =
-  {
-    lease_count = 0;
-    lease_why = "";
-    lease_token = t;
-    lease_offset = at;
-    lease_length = n;
-  }
+  Lease
+    {
+      lease_count = 0;
+      lease_why = "";
+      lease_token = t;
+      lease_offset = at;
+      lease_length = n;
+    }
 
 (* A borrow's lease of [d]'s mapping [mp] of [a], held for it: its token, on
    [d]'s list, ends the hold once the lease is collected or ended. Its
@@ -2538,23 +2544,31 @@ let rec mapped d (a : alloc) host how ~ladder ~retried =
       if Dev.is_lost d then Dev.raise_lost d;
       mapped d a host how ~ladder ~retried:true
 
-let borrow d m ~at ~n =
+(* It builds the buffer itself, so a borrow allocates no option of its
+   memory record. *)
+let borrow d b =
+  let m = b.mem and at = b.offset and n = b.length in
   let a = m.alloc in
   if empty_io d a then
     let addr = ba_address empty in
-    Some (memory_of ~lease:(lease at n) a d ~host:addr ~address:addr ~handle:0n)
+    let lease = lease at n in
+    Some
+      { b with mem = memory_of ~lease a d ~host:addr ~address:addr ~handle:0n }
   else
     let host = host_of a in
     match reach d a host with
     | Cannot -> None
-    | Itself -> Some (if m.dev == d then m else owned a)
+    | Itself -> if m.dev == d then Some b else Some { b with mem = owned a }
     | At_host ->
-        Some (memory_of ~lease:(lease at n) a d ~host ~address:host ~handle:0n)
+        let lease = lease at n in
+        Some
+          { b with mem = memory_of ~lease a d ~host ~address:host ~handle:0n }
     | Addressed ->
-        let handle = Nativeint.of_int host in
-        Some (memory_of ~lease:(lease at n) a d ~host ~address:host ~handle)
+        let lease = lease at n and handle = Nativeint.of_int host in
+        Some { b with mem = memory_of ~lease a d ~host ~address:host ~handle }
     | Empty ->
-        Some (memory_of ~lease:(lease at n) a d ~host ~address:0 ~handle:0n)
+        let lease = lease at n in
+        Some { b with mem = memory_of ~lease a d ~host ~address:0 ~handle:0n }
     | Map -> (
         if a.entry == no_entry then ensure_entry a;
         (* A borrow of host memory keeps its host address: it is host memory,
@@ -2563,7 +2577,11 @@ let borrow d m ~at ~n =
         | None -> None
         | Some mp ->
             let lease = mapped_lease d a mp at n in
-            Some (memory_of ~lease a d ~host ~address:mp.at ~handle:mp.by))
+            Some
+              {
+                b with
+                mem = memory_of ~lease a d ~host ~address:mp.at ~handle:mp.by;
+              })
 
 (* [d]'s reach of [m]'s allocation through a mapping rig keeps until the
    memory returns, made if [d] has none: [None] where [d] cannot map it, or
@@ -2574,17 +2592,21 @@ let kept_reach d m ~ladder =
   match reach d a host with
   | Cannot -> None
   | Itself -> Some (if m.dev == d then m else owned a)
-  | At_host -> Some (memory_of a d ~host ~address:host ~handle:0n)
+  | At_host ->
+      Some (memory_of ~lease:Unleased a d ~host ~address:host ~handle:0n)
   | Addressed ->
-      Some (memory_of a d ~host ~address:host ~handle:(Nativeint.of_int host))
-  | Empty -> Some (memory_of a d ~host ~address:0 ~handle:0n)
+      let handle = Nativeint.of_int host in
+      Some (memory_of ~lease:Unleased a d ~host ~address:host ~handle)
+  | Empty -> Some (memory_of ~lease:Unleased a d ~host ~address:0 ~handle:0n)
   | Map -> (
       if a.entry == no_entry then ensure_entry a;
       match mapped d a host Keep ~ladder ~retried:false with
       | None -> None
-      | Some mp -> Some (memory_of a d ~host ~address:mp.at ~handle:mp.by))
+      | Some mp ->
+          Some
+            (memory_of ~lease:Unleased a d ~host ~address:mp.at ~handle:mp.by))
 
-let end_lease l = token_link l.lease_token
+let end_lease t = token_link t
 
 let reach_kept d m = kept_reach d m ~ladder:false
 let staging d m = kept_reach d m ~ladder:true

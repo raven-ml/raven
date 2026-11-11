@@ -434,6 +434,8 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A `Rune.jit` call over several devices allocates 4 fewer words for each
+  buffer that one device borrows of another's for the call.
 - A compiled routed product (`Nx.matmul_segments`, `Nx_quant.apply_experts`)
   on a GPU's tensor core stores rows it computes, such as an activation
   between two experts' projections, in their own order, which the core's tile
@@ -2933,6 +2935,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.place`, and operations over arrays placed on several devices,
+  allocate 4 fewer words for each piece one device shares of another's
+  memory where the host addresses both.
 - `Nx_kernel`'s error bounds let a kernel library keep one running sum for
   the sums its interface names, within a single chain's bound: `γ(n - 1)`
   for a reduction, and an error factor up to `γ(2K + 1)` for a real

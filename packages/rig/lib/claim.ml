@@ -190,19 +190,17 @@ let unborrow ?(why = "unborrowed") b =
   let fn = "Buffer.unborrow" in
   Dev.check_held fn;
   Buffer.check_live fn b;
-  let l =
-    match b.mem.lease with
-    | Some l -> l
-    | None -> invalid_arg "Rig.Buffer.unborrow: the buffer is no borrow"
-  in
-  if b.offset <> l.lease_offset || b.length <> l.lease_length then
-    invalid_arg "Rig.Buffer.unborrow: the buffer is part of its borrow";
-  match lease_freed b why with
-  | 0 -> false
-  | 1 ->
-      Memory.end_lease l;
-      true
-  | _ -> Buffer.refuse_dead fn b
+  match b.mem.lease with
+  | Unleased -> invalid_arg "Rig.Buffer.unborrow: the buffer is no borrow"
+  | Lease l -> (
+      if b.offset <> l.lease_offset || b.length <> l.lease_length then
+        invalid_arg "Rig.Buffer.unborrow: the buffer is part of its borrow";
+      match lease_freed b why with
+      | 0 -> false
+      | 1 ->
+          Memory.end_lease l.lease_token;
+          true
+      | _ -> Buffer.refuse_dead fn b)
 
 (* Keeps *)
 
@@ -229,7 +227,9 @@ let kept fn bs =
     let allocs = Weak.create n and leases = Weak.create n in
     for i = 0 to n - 1 do
       Weak.set allocs i (Some bs.(i).mem.alloc);
-      Weak.set leases i bs.(i).mem.lease
+      match bs.(i).mem.lease with
+      | Unleased -> ()
+      | Lease _ as l -> Weak.set leases i (Some l)
     done;
     let record = { allocs; leases; taken = Bytes.make n '\000' } in
     let token = Memory.hold_token record in

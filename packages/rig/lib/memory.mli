@@ -413,18 +413,18 @@ val lease_ended : memory -> bool
 (** [lease_ended m] is whether [m] is a borrow's whose lease an unborrow
     ended. *)
 
-val end_lease : lease -> unit
-(** [end_lease l] puts the release record of [l]'s token on its list now,
-    as its collection would, so the next drain of the borrowing device ends
-    its hold. The caller ended [l] first. *)
+val end_lease : token -> unit
+(** [end_lease t] puts the release record of [t], a lease's token, on its
+    list now, as the lease's collection would, so the next drain of the
+    borrowing device ends its hold. The caller ended the lease first. *)
 
-val borrow : device -> memory -> at:int -> n:int -> memory option
-(** [borrow d m ~at ~n] is [d]'s borrow of [m]'s allocation, for the [n]
-    bytes of it from byte [at], with a lease of its own, or [None] where [d]
-    cannot map it or its driver never maps it. On the allocation's owner it
-    is [m] if [m] is the owner's record, and otherwise a record with the
-    coordinates the owner's record was made with, with no lease. A mapping
-    the driver has no room for returns memory once, as
+val borrow : device -> buffer -> buffer option
+(** [borrow d b] is [b] as [d] reaches its memory: over [d]'s borrow of
+    [b]'s allocation, for [b]'s bytes, with a lease of its own, or [None]
+    where [d] cannot map it or its driver never maps it. On the allocation's
+    owner it is [b] if [b]'s record is the owner's, and otherwise [b] over a
+    record with the coordinates the owner's record was made with, with no
+    lease. A mapping the driver has no room for returns memory once, as
     {!Rig.section-reclaim} states, and raises {!Dev.Out_of_memory} if the
     driver still has no room. An io allocation borrows through its pages,
     and raises what asking for them raises. *)

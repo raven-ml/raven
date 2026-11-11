@@ -62,12 +62,12 @@ value caml_rig_set_bytes(value v_b, value v_j, value v_n, value v_c) {
 /* Reading buffers
 
    A buffer is the record { mem; offset; length; generation }, its
-   memory { dev; host; address; handle; alloc; lease }, its lease, an option,
-   { count; why; ... }, its allocation
-   { owner; host; count; generation; why; entry; ... }, the allocation's
-   entry { owner; backing; bytes; access; stamps; ... } and a device
-   { index; name; machine; opened; ... }, as rig's Def module lays them
-   out. */
+   memory { dev; host; address; handle; alloc; lease }, its lease, the
+   immediate [Unleased] or a borrow's block [Lease { count; why; ... }], its
+   allocation { owner; host; count; generation; why; entry; ... }, the
+   allocation's entry { owner; backing; bytes; access; stamps; ... } and a
+   device { index; name; machine; opened; ... }, as rig's Def module lays
+   them out. */
 
 enum { DEVICE_INDEX, DEVICE_NAME, DEVICE_MACHINE, DEVICE_OPENED };
 enum { BUFFER_MEM, BUFFER_OFFSET, BUFFER_LENGTH, BUFFER_GEN };
@@ -118,21 +118,20 @@ static value alloc_of(value b) {
   return Field(Field(b, BUFFER_MEM), MEMORY_ALLOC);
 }
 
-/* The lease of [b]'s memory record, an option: [Some] of a borrow's. */
-static value lease_opt(value b) {
+/* The lease of [b]'s memory record: a block for a borrow's, the immediate
+   [Unleased] for every other record's. */
+static value lease_of(value b) {
   return Field(Field(b, BUFFER_MEM), MEMORY_LEASE);
 }
 
-/* The lease of a borrow's buffer [b]. */
-static value lease_of(value b) { return Field(lease_opt(b), 0); }
-
+/* The count of a borrow's buffer [b]'s lease. */
 static _Atomic value *lease_count(value b) {
   return (_Atomic value *)&Field(lease_of(b), LEASE_COUNT);
 }
 
 /* Whether an unborrow ended [b]'s lease. It stores the reason first. */
 static int lease_ended(value b) {
-  return Is_block(lease_opt(b)) &&
+  return Is_block(lease_of(b)) &&
          Long_val(atomic_load_explicit(lease_count(b), memory_order_acquire)) >=
              LEASE_END;
 }
@@ -141,13 +140,13 @@ static int lease_ended(value b) {
    unborrow refuses while it holds, and ends one. A count past an end only
    marks claims that will find the borrow dead. Other buffers have none. */
 static void lease_take(value b) {
-  if (Is_block(lease_opt(b)))
+  if (Is_block(lease_of(b)))
     atomic_fetch_add_explicit(lease_count(b), Val_long(1) - Val_long(0),
                               memory_order_acquire);
 }
 
 static void lease_give(value b) {
-  if (Is_block(lease_opt(b)))
+  if (Is_block(lease_of(b)))
     atomic_fetch_sub_explicit(lease_count(b), Val_long(1) - Val_long(0),
                               memory_order_release);
 }
@@ -716,12 +715,13 @@ value caml_rig_claim_holds(value v_bs, value v_taken) {
 }
 
 /* Ends the hold [v_i] of [v_taken] on the allocation [v_alloc]'s memory, if
-   it is taken, and its count on the lease it went through, [v_lease] an
-   option. A release moves the mark from HOLD_TAKEN to HOLD_ENDING, ends the
-   hold, then clears the mark, so of two releases on two domains one ends
-   the hold. The other, finding HOLD_ENDING, spins until the mark clears:
-   the first is inside this call, which runs no OCaml code. Each returns
-   once the hold has ended. */
+   it is taken, and its count on the lease it went through, [v_lease], which
+   is [Unleased] where it went through none or the lease was collected. A
+   release moves the mark from HOLD_TAKEN to HOLD_ENDING, ends the hold, then
+   clears the mark, so of two releases on two domains one ends the hold. The
+   other, finding HOLD_ENDING, spins until the mark clears: the first is
+   inside this call, which runs no OCaml code. Each returns once the hold has
+   ended. */
 value caml_rig_claim_unhold(value v_taken, value v_i, value v_alloc,
                             value v_lease) {
   _Atomic unsigned char *mark =
@@ -735,9 +735,8 @@ value caml_rig_claim_unhold(value v_taken, value v_i, value v_alloc,
     return Val_unit;
   }
   if (Is_block(v_lease))
-    atomic_fetch_sub_explicit(
-        (_Atomic value *)&Field(Field(v_lease, 0), LEASE_COUNT),
-        Val_long(1) - Val_long(0), memory_order_release);
+    atomic_fetch_sub_explicit((_Atomic value *)&Field(v_lease, LEASE_COUNT),
+                              Val_long(1) - Val_long(0), memory_order_release);
   unhold_word((_Atomic value *)&Field(v_alloc, ALLOC_COUNT));
   atomic_store_explicit(mark, 0, memory_order_release);
   return Val_unit;

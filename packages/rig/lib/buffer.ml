@@ -24,7 +24,7 @@ let is_live b =
 
 let why b =
   if b.generation <> generation b.mem.alloc then b.mem.alloc.why
-  else match b.mem.lease with Some l -> l.lease_why | None -> ""
+  else match b.mem.lease with Lease l -> l.lease_why | Unleased -> ""
 
 let dead b = if is_live b then None else Some (why b)
 let access b = Memory.admits b.generation
@@ -178,12 +178,12 @@ let borrow d b =
     match
       check_live "Buffer.borrow" b;
       Memory.check b.mem;
-      Memory.borrow d b.mem ~at:b.offset ~n:b.length
+      Memory.borrow d b
     with
-    | Some mem ->
+    | Some _ as borrowed ->
         Memory.claim_drop b;
         Memory.prefetch d b.mem ~at:b.offset ~len:b.length;
-        Some { b with mem }
+        borrowed
     | None ->
         Memory.claim_drop b;
         None

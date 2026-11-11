@@ -420,30 +420,32 @@ and memory = {
   address : int;  (** As [dev]'s work addresses it, [-1] if none. *)
   handle : nativeint;  (** The driver object that names it on [dev]. *)
   alloc : alloc;  (** The allocation. *)
-  lease : lease option;
-      (** A borrow's own life, [None] for every other reach. *)
+  lease : lease;
+      (** A borrow's own life, [Unleased] for every other reach. *)
 }
 (** The type for a device's reach of an allocation: the owner's, whose [dev]
     is [alloc]'s [owner], or a borrow's. *)
 
-(** The type for a borrow's lease ({!Rig.Buffer.borrow}): its own life within
-    its memory's, ended by {!Rig.Buffer.unborrow} or, through
-    [lease_token], its collection, and the range of the buffer the borrow
-    made. Its token,
-    {!Memory.no_token} for a borrow that holds no mapping, ends the borrow's
-    hold of its mapping. C reads [lease_count] and [lease_why] in this
-    order. *)
-and lease = {
-  mutable lease_count : int; [@atomic]
-      (** The claims and holds through the borrow, plus [lease_end]
-          once an unborrow ended it, which then makes the borrow's buffers
-          dead. *)
-  mutable lease_why : string;
-      (** The unborrow's reason, set before its end. *)
-  mutable lease_token : token;
-  lease_offset : int;
-  lease_length : int;
-}
+(** The type for a reach's life: [Unleased] for a reach that lives as its
+    memory does, and a borrow's [Lease] ({!Rig.Buffer.borrow}), its own life
+    within its memory's, ended by {!Rig.Buffer.unborrow} or, through
+    [lease_token], its collection, with the range of the buffer the borrow
+    made. Its token, {!Memory.no_token} for a borrow that holds no mapping,
+    ends the borrow's hold of its mapping. C reads [lease_count] and
+    [lease_why], fields 0 and 1 of the [Lease] block, in this order. *)
+and lease =
+  | Unleased
+  | Lease of {
+      mutable lease_count : int; [@atomic]
+          (** The claims and holds through the borrow, plus [lease_end]
+              once an unborrow ended it, which then makes the borrow's
+              buffers dead. *)
+      mutable lease_why : string;
+          (** The unborrow's reason, set before its end. *)
+      mutable lease_token : token;
+      lease_offset : int;
+      lease_length : int;
+    }
 
 and buffer = { mem : memory; offset : int; length : int; generation : int }
 (** {!Rig.Buffer.t}: live while [generation] is its allocation's, whose low
