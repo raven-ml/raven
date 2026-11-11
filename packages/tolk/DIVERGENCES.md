@@ -7492,7 +7492,15 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   one stage, against 2196-2210 on main and 2205-2212 on the unstaged
   splits; no rule from the tile's stages separates it, since a tile whose
   outer part gathers (the bfloat16 experts' down, 1160 us) gains from the
-  staged tile. Two stages for gathered rows ran MXFP4 gate and up slower,
+  staged tile. Its cause is the staged tile's registers, 222 a thread
+  against 125, which halve the warps an SM holds: it gains where the grid
+  fills its last wave and loses where it does not, 2.5% faster over 48
+  blocks of 64 rows and 3.1-3.5% slower over 63 (bfloat16 gate and up). The
+  last wave follows the card's count of SMs, which no target fact states,
+  so the unstaged splits, which lose less, stay. The sign was measured on
+  blocks of 64 rows; over blocks of 48, a warp of three tiles each, the
+  staged tile took gpt-oss's bfloat16 MoE block 2.8% less to 0.5% more at 20
+  to 128 tokens. Two stages for gathered rows ran MXFP4 gate and up slower,
   1025-1034 against 935-958 us. Rows each warp reads alone: bfloat16
   experts' gate and up at 64 tokens, in blocks of 8 rows whose two warps
   split the rows, saves no load by staging them and adds a wait and two

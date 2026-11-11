@@ -382,8 +382,14 @@ let tile_of x =
    tokens, ran 4.8% slower staged; at 512 tokens, staged and read by 4
    warps, MXFP4 routed rows ran 27% faster. Other tiles copied in one stage
    keep staging unmeasured either way. The heuristic asks before it splits
-   any warp, so a core reading gathered rows keeps the unstaged splits: a
-   routed product of bfloat16 weights ran 3.6% slower on the staged tile. *)
+   any warp, so a core reading gathered rows keeps the unstaged splits. The
+   staged tile's registers, 222 a thread against 125, halve the warps an SM
+   holds, which pays where the grid fills its last wave and costs where it
+   does not: bfloat16 experts' gate and up projection, in blocks of 64 rows,
+   ran 2.5% faster staged over 48 blocks and 3.1-3.5% slower over 63. The
+   last wave follows the card's count of SMs, which a target does not fix,
+   so the splits that lose less, the unstaged, stay. The sign was measured
+   on blocks of 64 rows; over blocks of 48 the two ran within 3%. *)
 let staged_tile all x =
   let warps =
     List.filter
