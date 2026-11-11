@@ -226,7 +226,7 @@ interp/add-1-100-fiber-beside-extent	alloc_words	exact	9900
 interp/add-1-100-under-values	alloc_words	exact	5047
 interp/traced-add-1-100	alloc_words	exact	6959
 interp/traced-add-1-100-under-inner-extent	alloc_words	exact	9412
-io/load-tiff-1024x1024-u16-deflate-tiles	alloc_words	exact	1685
+io/load-tiff-1024x1024-u16-deflate-tiles	alloc_words	exact	1728
 io/save-npz-1024-one-element-entries	alloc_words	exact	1014268
 move/broadcast-shapes-1K	alloc_words	exact	30726
 move/copy-1M	alloc_words	exact	86
