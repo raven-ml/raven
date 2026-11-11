@@ -3072,13 +3072,18 @@ the expand, as there.
   values of `bfloat16`: twice the bytes, and a `float32` load, which no CUDA
   tensor core multiplies. Stored narrow, the output projection of a 512-token
   prefill on an RTX 5000 Ada runs on the tensor cores in 0.30 ms where it took
-  2.34 ms, and the scores in 0.29 ms where they took 0.87 ms. On fudge,
-  gpt-oss's bench row `GptOss/prefill-512` takes 185 ms against 955 and
-  958 ms with each stage stored at its committed type (medians of 11, two
-  interleaved runs each).
+  2.34 ms, and the scores in 0.29 ms where they took 0.87 ms, measured
+  before rune lowered `Nx.attention` to kernels of its own. Since then, on
+  fudge, kaun's `GptOss/prefill-512` takes 132 ms against 367 and 368 ms
+  with each stage stored at its committed type, and
+  `GptOss/prefill-512-Q8_0` 141 ms against 1.35 and 1.36 s (medians of 11,
+  two interleaved runs each on a loaded machine, the second under nsys).
+  The decode steps are unchanged. The rows' fudge wall-time baselines are
+  pending the scheduled quiet re-record.
 - **Pinned by:** the Heuristic suite's `projection_of_stored` kernel, whose
   golden reads the stored attention output as `bfloat16`, and its cases
-  `projection_of_stored_{metal,cuda,amd}` (the tensor cores apply).
+  `projection_of_stored_{metal,cuda,amd}` (the tensor cores apply); kaun's
+  `GptOss/prefill-512` and `GptOss/prefill-512-Q8_0`.
 
 ## D105. A tensor core takes rows that share the other operand's tile
 
