@@ -40,8 +40,8 @@
    |                  zaabbbbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaAaaaaaaaaCCCCCCCCCCaaaaaaaaaaaaaaaaaaaaz
 21 |                  │  s        smoothing on, off               q        quit; Ctrl+C too              │─────────────────
    |                  zaaAaaaaaaaaCCCCCCCCCCCCCCCCCaaaaaaaaaaaaaaaAaaaaaaaaCCCCCCCCCCCCCCCCaaaaaaaaaaaaaazfffffffffffffffff
-22 |                  │  y        log scale, this metric                                                 │━━━━━━━━━━━━╸ 97%
-   |                  zaaAaaaaaaaaCCCCCCCCCCCCCCCCCCCCCCaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaazttttttttttttt xxx
+22 |                  │  y        other y scale, this metric                                             │━━━━━━━━━━━━╸ 97%
+   |                  zaaAaaaaaaaaCCCCCCCCCCCCCCCCCCCCCCCCCCaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaazttttttttttttt xxx
 23 |                  │  + −      narrow, widen the steps                                                │━━━━━━━─ 21.3/24G
    |                  zaaAAAaaaaaaCCCCCCCCCCCCCCCCCCCCCCCaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaazttttttts xxxxxxxx
 24 |                  │                                                                                  │━━━━━━━━╸──── 71%

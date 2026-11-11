@@ -70,7 +70,7 @@ let screen =
     row Compare "c" "clear overlays" [ (c 'c', Clear) ];
     row Look "s" "smoothing on, off" ~on_run:true ~hints:[ (`Zoom, "smooth") ]
       [ (c 's', Smooth) ];
-    row Look "y" "log scale, this metric" ~on_run:true [ (c 'y', Scale) ];
+    row Look "y" "other y scale, this metric" ~on_run:true [ (c 'y', Scale) ];
     row Look "+ −" "narrow, widen the steps" ~on_run:true
       ~hints:[ (`Zoom, "zoom") ]
       [ (c '+', Narrow); (c '-', Widen) ];

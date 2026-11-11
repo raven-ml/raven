@@ -24,8 +24,8 @@
    |faabbbbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaagaaaaaaaaiiiiiiiiiiaaaaaaaaaaaaaaaaaaf
 13 |│  s        smoothing on, off             q        quit; Ctrl+C too            │
    |faagaaaaaaaaiiiiiiiiiiiiiiiiiaaaaaaaaaaaaagaaaaaaaaiiiiiiiiiiiiiiiiaaaaaaaaaaaaf
-14 |│  y        log scale, this metric                                             │
-   |faagaaaaaaaaiiiiiiiiiiiiiiiiiiiiiiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaf
+14 |│  y        other y scale, this metric                                         │
+   |faagaaaaaaaaiiiiiiiiiiiiiiiiiiiiiiiiiiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaf
 15 |│  + −      narrow, widen the steps                                            │
    |faagggaaaaaaiiiiiiiiiiiiiiiiiiiiiiiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaf
 16 |│                                                                              │
