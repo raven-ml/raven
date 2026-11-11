@@ -669,6 +669,11 @@ value caml_rig_lease_free(value v_b, value v_why) {
    buffer dead. A keep's record marks each hold taken with a byte, which the
    steps below set and clear with the word, so each hold is released once. */
 
+/* A hold's mark: taken, or being ended by a release; 0 once it has ended or
+   was never taken. */
+#define HOLD_TAKEN 1
+#define HOLD_ENDING 2
+
 static void unhold_word(_Atomic value *word) {
   value w = atomic_fetch_sub_explicit(
       word, Val_long(CLAIM_HOLD) - Val_long(0), memory_order_release);
@@ -704,25 +709,35 @@ value caml_rig_claim_holds(value v_bs, value v_taken) {
       }
       return Val_long(i);
     }
-    taken[i] = 1;
+    taken[i] = HOLD_TAKEN;
   }
   return Val_long(-1);
 }
 
 /* Ends the hold [v_i] of [v_taken] on the allocation [v_alloc]'s memory, if
    it is taken, and its count on the lease it went through, [v_lease] an
-   option. The mark is cleared in one exchange, so of two releases on two
-   domains one ends the hold. */
+   option. A release moves the mark from HOLD_TAKEN to HOLD_ENDING, ends the
+   hold, then clears the mark, so of two releases on two domains one ends
+   the hold. The other, finding HOLD_ENDING, spins until the mark clears:
+   the first is inside this call, which runs no OCaml code. Each returns
+   once the hold has ended. */
 value caml_rig_claim_unhold(value v_taken, value v_i, value v_alloc,
                             value v_lease) {
-  _Atomic unsigned char *taken =
+  _Atomic unsigned char *mark =
       (_Atomic unsigned char *)(Bytes_val(v_taken) + Long_val(v_i));
-  if (atomic_exchange_explicit(taken, 0, memory_order_relaxed) == 0)
+  unsigned char seen = HOLD_TAKEN;
+  if (!atomic_compare_exchange_strong_explicit(mark, &seen, HOLD_ENDING,
+                                               memory_order_relaxed,
+                                               memory_order_acquire)) {
+    while (atomic_load_explicit(mark, memory_order_acquire) == HOLD_ENDING)
+      relax();
     return Val_unit;
+  }
   if (Is_block(v_lease))
     atomic_fetch_sub_explicit(
         (_Atomic value *)&Field(Field(v_lease, 0), LEASE_COUNT),
         Val_long(1) - Val_long(0), memory_order_release);
   unhold_word((_Atomic value *)&Field(v_alloc, ALLOC_COUNT));
+  atomic_store_explicit(mark, 0, memory_order_release);
   return Val_unit;
 }

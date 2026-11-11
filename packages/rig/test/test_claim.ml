@@ -972,16 +972,17 @@ let collect_pair (_ : kept_pair) =
 
 let release_model r = r.released <- true
 
-(* A take of the first memory succeeds only once the keep is released. It
-   may be refused after a release beside another domain's: of two releases
-   of one keep, one ends each hold, and the other can return before it
-   has. *)
+(* A take of the first memory succeeds once the keep is released, and only
+   then: of two releases of one keep, each returns once the keep's holds
+   have ended. *)
 let judge_take_first r = function
   | Ok true ->
       equal ~msg:"released, taken" (pair bool bool) (true, false)
         (r.released, r.took);
       r.took <- true
-  | Ok false -> equal ~msg:"taken" bool false r.took
+  | Ok false ->
+      equal ~msg:"released, taken" (pair bool bool) (false, false)
+        (r.released, r.took)
   | Error (Invalid_argument _) -> equal ~msg:"taken" bool true r.took
   | Error e -> raise e
 

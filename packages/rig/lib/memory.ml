@@ -1049,7 +1049,7 @@ external hold_record : int -> holds = "caml_rig_node_record" [@@noalloc]
    step, so releases that run concurrently, on several domains or in a
    callback that interrupts another at [Weak.get]'s allocation, and a release
    that an asynchronous exception interrupts and a later drain runs again,
-   release each hold once. *)
+   release each hold once, and none returns before the hold has ended. *)
 external unhold : Bytes.t -> int -> alloc -> lease option -> unit
   = "caml_rig_claim_unhold"
 [@@noalloc]
