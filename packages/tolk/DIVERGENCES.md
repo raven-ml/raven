@@ -9979,7 +9979,7 @@ kept in ordered sets, change no source and belong to D466.
   each recorded plan's arena is at most tinygrad's; the recorded plans
   whose places differ carry this entry in their `.tolk`.
 
-## D476. An output that stores a stage whole holds it
+## D478. An output that stores a stage whole holds it
 
 - **tinygrad:** `schedule/rangeify.py` (`bufferize_to_store`, which gives
   every stage storage of its own, `UOp.alloc`); `schedule/prepare.py`
