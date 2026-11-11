@@ -6,16 +6,18 @@
 (* Interrupt walks. An operation runs once for each allocation it makes, in a
    forked child, with every allocation from that one on raising until the
    operation returns, as an asynchronous exception does, and handlers that
-   allocate meet it again. It then runs so again from the first allocation at
-   the same call stack. After that, rig is consistent: no profile is left
-   taken, and the device is either lost, by an exception that escaped a call
-   of its driver, with the exception's text, its stop not run until its
-   close runs it once, or live, its name answering it, and it runs the
-   operation again and closes. Either way
-   its name then opens a device that runs the operation. rig promises no
-   return of memory after an asynchronous exception but what a driver's call
-   made, which the walks of records before calls check, so this walk checks
-   none. *)
+   allocate meet it again. An operation that repeats one call only to make a
+   table grow runs once for the first allocation of each of its call stacks
+   instead: its repeats differ by the table's contents alone, and the growth
+   allocates from call stacks of its own. Either walk then runs the operation
+   so again from the first allocation at the same call stack. After that, rig
+   is consistent: no profile is left taken, and the device is either lost, by
+   an exception that escaped a call of its driver, with the exception's text,
+   its stop not run until its close runs it once, or live, its name answering
+   it, and it runs the operation again and closes. Either way its name then
+   opens a device that runs the operation. rig promises no return of memory
+   after an asynchronous exception but what a driver's call made, which the
+   walks of records before calls check, so this walk checks none. *)
 
 open Windtrap
 open Ops
@@ -42,34 +44,101 @@ let outcome f =
   | exception Injected -> "raised Injected"
   | exception e -> Printexc.to_string e
 
-(* The first allocation that raises in an interrupted call: its [n]-th, or its
-   first from the call stack [s] within the call, by code addresses. *)
-type allocation = Nth of int | Site of Printexc.raw_backtrace_entry array
+(* The call stack of an allocation within an interrupted call, by code
+   addresses. *)
+type stack = Printexc.raw_backtrace_entry array
+
+(* The first allocation that raises in an interrupted call: its [n]-th, the
+   first from a call stack that [landed] does not hold, or the first from the
+   call stack [s]. *)
+type allocation =
+  | Nth of int
+  | New_stack of (stack, unit) Hashtbl.t
+  | Site of stack
+
+(* The call stack of the allocation [sample] within a call made [outer]
+   frames deep. *)
+let within outer (sample : Gc.Memprof.allocation) : stack =
+  let s = Printexc.raw_backtrace_entries sample.callstack in
+  Array.sub s 0 (Array.length s - outer)
+
+(* Whether [slot] lies in the standard library, whose functions every caller
+   shares. *)
+let in_stdlib slot =
+  match Printexc.Slot.name slot with
+  | Some n ->
+      String.starts_with ~prefix:"Stdlib" n
+      || String.starts_with ~prefix:"Camlinternal" n
+  | None -> false
+
+(* [slot]'s function and line. *)
+let frame slot =
+  let name =
+    Option.value ~default:"an unnamed function" (Printexc.Slot.name slot)
+  in
+  match Printexc.Slot.location slot with
+  | Some l -> Printf.sprintf "%s (%s:%d)" name l.filename l.line_number
+  | None -> name
+
+(* The frames of the call stack [s], by function and line, from the
+   innermost out to the first outside the standard library: a stack that
+   allocates in a shared function, such as [Printf.sprintf], is named by its
+   caller too. *)
+let frames (s : stack) =
+  let slots =
+    List.concat_map
+      (fun e ->
+        match Printexc.backtrace_slots_of_raw_entry e with
+        | Some slots -> Array.to_list slots
+        | None -> [])
+      (Array.to_list s)
+  in
+  let rec out = function
+    | [] -> []
+    | slot :: rest when in_stdlib slot -> frame slot :: out rest
+    | slot :: _ -> [ frame slot ]
+  in
+  match out slots with
+  | [] -> "a frame without debugging information"
+  | named -> String.concat ", called from " named
+
+(* The pipe on which a child of [in_child] notes where it is; [None] outside
+   one. *)
+let notes = ref None
+
+(* [note s], in a child of [in_child], tells the parent where the child is:
+   the parent adds the last note to any failure of the child it reports, a
+   hang or a crash included. *)
+let note s =
+  match !notes with
+  | None -> ()
+  | Some fd ->
+      let line = s ^ "\n" in
+      ignore (Unix.write_substring fd line 0 (String.length line))
 
 (* [interrupting a site f] is [f ()] with every allocation from [a] on raising
    [Injected] until [f] returns: a memory profile samples every allocation,
    and its callback raises. [site] is set to the call stack of the first
-   allocation that raised. *)
+   allocation that raised, which the callback notes. *)
 let interrupting a site f =
-  let left = ref (match a with Nth n -> n | Site _ -> 0)
+  let left = ref (match a with Nth n -> n | New_stack _ | Site _ -> 0)
   and armed = ref false
   and raising = ref false in
   let outer = Printexc.raw_backtrace_length (Printexc.get_callstack max_int) in
   let alloc (sample : Gc.Memprof.allocation) =
-    let stack () =
-      let s = Printexc.raw_backtrace_entries sample.callstack in
-      Array.sub s 0 (Array.length s - outer)
-    in
     if !armed && not !raising then begin
       let here =
         match a with
         | Nth _ ->
             decr left;
             !left = 0
-        | Site s -> stack () = s
+        | New_stack landed -> not (Hashtbl.mem landed (within outer sample))
+        | Site s -> within outer sample = s
       in
       if here then begin
-        site := Some (stack ());
+        let s = within outer sample in
+        site := Some s;
+        note (", landed at " ^ frames s);
         raising := true
       end
     end;
@@ -99,12 +168,16 @@ let interrupting a site f =
    never changes the next one's allocations. It fails with the child's
    exception, and if the child has not answered within [child_limit] s: a
    lock that an exception left held makes the next call that takes it wait
-   for good, in C, where no timeout interrupts it. *)
+   for good, in C, where no timeout interrupts it. The child's answer, or
+   the end of its pipe as it exits, wakes the wait. A failure adds the
+   child's last [note] to [what]. *)
 let in_child what (f : unit -> 'a) : 'a =
-  let r, w = Unix.pipe () in
+  let r, w = Unix.pipe () and noted, noting = Unix.pipe () in
   match Unix.fork () with
   | 0 ->
       Unix.close r;
+      Unix.close noted;
+      notes := Some noting;
       let answer : ('a, string) result =
         match f () with v -> Ok v | exception e -> Error (Printexc.to_string e)
       in
@@ -114,31 +187,44 @@ let in_child what (f : unit -> 'a) : 'a =
       Unix._exit 0
   | pid -> (
       Unix.close w;
-      let until = Unix.gettimeofday () +. child_limit in
-      let rec wait () =
-        match Unix.waitpid [ WNOHANG ] pid with
-        | 0, _ when Unix.gettimeofday () > until ->
-            Unix.kill pid Sys.sigkill;
-            ignore (Unix.waitpid [] pid);
-            Unix.close r;
-            failf "no return from rig%s after %.0f s" what child_limit
-        | 0, _ ->
-            Unix.sleepf 0.0005;
-            wait ()
-        | _, status -> status
+      Unix.close noting;
+      (* Read once the child is gone, so that its notes have ended. *)
+      let where () =
+        let ic = Unix.in_channel_of_descr noted in
+        let lines = In_channel.input_lines ic in
+        close_in ic;
+        match List.rev lines with last :: _ -> what ^ last | [] -> what
       in
-      let status = wait () in
+      let until = Unix.gettimeofday () +. child_limit in
+      let rec ready () =
+        let left = until -. Unix.gettimeofday () in
+        left > 0.
+        &&
+        match Unix.select [ r ] [] [] left with
+        | [], _, _ -> ready ()
+        | _ -> true
+        | exception Unix.Unix_error (EINTR, _, _) -> ready ()
+      in
+      if not (ready ()) then begin
+        Unix.kill pid Sys.sigkill;
+        ignore (Unix.waitpid [] pid);
+        Unix.close r;
+        failf "no return from rig%s after %.0f s" (where ()) child_limit
+      end;
       let ic = Unix.in_channel_of_descr r in
       let answer = In_channel.input_all ic in
       close_in ic;
+      let _, status = Unix.waitpid [] pid in
       match (answer, status) with
-      | "", WEXITED n -> failf "the child exited %d%s" n what
+      | "", WEXITED n -> failf "the child exited %d%s" n (where ())
       | "", (WSIGNALED n | WSTOPPED n) ->
-          failf "the child got %s%s" (Sys.signal_to_string n) what
+          failf "the child got %s%s" (Sys.signal_to_string n) (where ())
       | answer, _ -> (
           match (Marshal.from_string answer 0 : ('a, string) result) with
-          | Ok v -> v
-          | Error e -> failf "%s%s" e what))
+          | Ok v ->
+              Unix.close noted;
+              v
+          | Error e -> failf "%s%s" e (where ())))
 
 (* The device an interrupted operation runs on: one just opened, or one the
    operation ran on once, which made what the device keeps for good, and whose
@@ -160,11 +246,11 @@ let held = ref []
 (* The producers [waiting] opened, with their drivers. *)
 let producers = ref []
 
-(* Runs [op] interrupted from its [n]-th allocation, then from the same
-   allocation again, and checks that rig is consistent after it. Is whether
-   the allocation was reached. *)
-let interrupt start op n =
-  let at = Printf.sprintf ", interrupted from allocation %d" n in
+(* Runs [op] interrupted from the allocation [a], then from the same
+   allocation again, and checks that rig is consistent after it, failing
+   with [at] added. Is whether the run raised, and the call stack of the
+   allocation if the run reached it. *)
+let interrupt start op ~at a =
   in_child at (fun () ->
       let name = fresh op.name in
       let d, p = op.opener name in
@@ -179,9 +265,10 @@ let interrupt start op n =
         mem ~msg:"outcome" string got [ "done"; "raised Injected" ];
         got = "raised Injected"
       in
-      let raised = run (Nth n) in
+      let raised = run a in
+      let landed = !site in
       if Rig.lost d = None then
-        Option.iter (fun s -> ignore (run (Site s))) !site;
+        Option.iter (fun s -> ignore (run (Site s))) landed;
       equal ~msg:"profiles" bool false (Rig.Profile.enabled ());
       (match Rig.lost d with
       | Some why ->
@@ -218,13 +305,37 @@ let interrupt start op n =
           (fun (_, pp) -> equal ~msg:"a producer's stops" int 1 (P.stops pp))
           !producers
       end;
-      raised)
+      (raised, landed))
 
-let interrupts start op () =
+(* Where a walk lands: at each allocation of the operation, or at the first
+   allocation of each of its call stacks. A run of a stack walk lands at the
+   first stack that no run before it landed at, and the walk ends at the
+   first run that meets none: such a run met every stack of the operation,
+   so none goes unlanded, and a stack that only the collector's timing makes,
+   such as a finaliser's, costs the run that meets it. *)
+type walk = Each_allocation | Each_stack
+
+let interrupts ?(walk = Each_allocation) start op () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
   S.needs_fork ();
-  let rec from n = if interrupt start op n then from (n + 1) in
-  from 1
+  match walk with
+  | Each_allocation ->
+      let rec from n =
+        let at = Printf.sprintf ", interrupted from allocation %d" n in
+        if fst (interrupt start op ~at (Nth n)) then from (n + 1)
+      in
+      from 1
+  | Each_stack ->
+      let landed = Hashtbl.create 64 in
+      let at = ", interrupted from a call stack no run landed at before" in
+      let rec walk () =
+        match snd (interrupt start op ~at (New_stack landed)) with
+        | Some s ->
+            Hashtbl.replace landed s ();
+            walk ()
+        | None -> ()
+      in
+      walk ()
 
 (* More operations *)
 
@@ -1105,7 +1216,8 @@ let opens =
       done)
 
 (* Drops buffers of [names] sizes and drains them into the device's cache, as
-   many as make the cache grow. *)
+   many as make the cache grow. "a drain that routes memory into the cache"
+   walks every allocation of a drain. *)
 let caches =
   let drop d =
     for k = 1 to names do
@@ -1123,14 +1235,17 @@ let () =
        [
          group ~timeout "an exception at any allocation leaves rig consistent"
            (List.concat_map
-              (fun op ->
+              (fun (walk, op) ->
                 [
-                  test op.name (interrupts Fresh op);
+                  test op.name (interrupts ~walk Fresh op);
                   test (op.name ^ ", on a device it ran on")
-                    (interrupts Used op);
+                    (interrupts ~walk Used op);
                 ])
-              ((opens :: caches :: borrow_kept :: waiting :: kept_run :: ops)
-              @ staged @ List.map unmapped staged)
+              ([ (Each_stack, opens); (Each_stack, caches) ]
+              @ List.map
+                  (fun op -> (Each_allocation, op))
+                  ((borrow_kept :: waiting :: kept_run :: ops)
+                  @ staged @ List.map unmapped staged))
            @ [
                test "a profiled submit's time pair" test_timed;
                test "close of a machine's host" test_close;
