@@ -380,9 +380,9 @@ val serve :
 
 (* For rig's tests: holds the handshake of the next controller an agent of
    this process admits, once the agent replied and before it serves the job,
-   until [resume], and observes another agent's dial reaching its admission.
-   Each observation waits at most five seconds. Only one scenario may run at
-   once. *)
+   until [resume], and observes another agent's dial reaching its admission
+   and a connection waiting for an agent's accept. [held] and [dialled] wait
+   at most five seconds. Only one scenario may run at once. *)
 module Probe : sig
   (* [arm ()] holds the next controller's handshake there, and starts
      counting the agents' dials whose admission starts. *)
@@ -397,4 +397,10 @@ module Probe : sig
 
   (* [resume ()] releases the hold and disarms the probe. *)
   val resume : unit -> unit
+
+  (* [waiting a] is [true] if a connection that the system completed waits
+     for [a] to accept it, and [false] once [a] listens no more. It waits for
+     nothing. A callback that runs inside it, such as a signal's handler,
+     must not call [serve] on [a]. *)
+  val waiting : agent -> bool
 end

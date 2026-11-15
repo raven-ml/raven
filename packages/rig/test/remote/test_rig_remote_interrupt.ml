@@ -468,23 +468,30 @@ let serving a =
     Thread.join t;
     Option.get !r
 
-(* A controller's connection to the agent at [port]: [Some fd] once both
-   proved the key, [None] if the agent ended it first or listens no more.
-   Each read gives up after [patience]. *)
-let dial port =
-  let module Wire = Rig_remote_proxy.Wire in
+(* A connection to the agent at [port], or [None] if it listens no more. Each
+   read gives up after [patience]. *)
+let connected port =
   let fd = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
   Rig_support.recv_timeout fd patience;
   match Unix.connect fd (Unix.ADDR_INET (Unix.inet_addr_loopback, port)) with
   | exception Unix.Unix_error ((Unix.ECONNREFUSED | Unix.ECONNRESET), _, _) ->
       Unix.close fd;
       None
-  | () -> (
-      match Wire.dial fd ~key ~self:Wire.Controller ~peer:(Wire.Agent 1) with
-      | Ok () -> Some fd
-      | Error _ ->
-          Unix.close fd;
-          None)
+  | () -> Some fd
+
+(* [Some fd] once the controller over [fd] and the agent proved the key, or
+   [None], [fd] closed, if the agent ended it first. *)
+let proved fd =
+  let module Wire = Rig_remote_proxy.Wire in
+  match Wire.dial fd ~key ~self:Wire.Controller ~peer:(Wire.Agent 1) with
+  | Ok () -> Some fd
+  | Error _ ->
+      Unix.close fd;
+      None
+
+(* A controller's connection to the agent at [port]: [Some fd] once both
+   proved the key, [None] if the agent ended it first or listens no more. *)
+let dial port = Option.bind (connected port) proved
 
 (* Whether the agent at [port] answers the join of a job of it alone over
    [fd], so that it serves the job. *)
@@ -510,10 +517,6 @@ let ends fd =
   let rec drain () = match next_frame fd with Some _ -> drain () | None -> () in
   drain ();
   Unix.close fd
-
-(* The most a handshake takes: a connection that proves nothing within it is
-   dropped ({!Rig_remote.listen}), and a dial gives up. *)
-let handshake_s = 10.
 
 (* Whether anything listens at [port] of the loopback. *)
 let listens port =
@@ -596,9 +599,16 @@ let acceptor_cut () =
 
 (* A serve whose own steps, its commands' aside, take [landing] at each of
    their allocations, while a controller joins and closes its job: serve
-   ends, the controller's connection ends, and the agent listens no more
-   and holds no descriptor. A cut before serve claimed the agent leaves it
-   to a later serve, which serves the controller. *)
+   ends, the controller's connection ends, and the agent listens no more,
+   has no connection waiting and holds no descriptor. A cut before serve
+   claimed the agent leaves it to a later serve, which serves the
+   controller.
+
+   The controller connects before serve runs, and its connection is queued
+   for the agent's accept: closing a listener resets the connections queued
+   on it, but Linux drops without a reset one whose handshake ends as its
+   listener closes. The controller sends nothing before the agent's
+   greeting, so it would then wait out its dial's 10 s bound. *)
 let cut_serve what landing n =
   in_child (strf ", %s from allocation %d" what n) @@ fun () ->
   child_start ();
@@ -609,10 +619,17 @@ let cut_serve what landing n =
   in
   let a = agent_here () in
   let port = Rig_remote.port a in
+  let fd =
+    match connected port with
+    | Some fd -> fd
+    | None -> fail "the agent refuses a connection"
+  in
+  until ~what:"the connection queued for the agent" (fun () ->
+      Rig_remote.Probe.waiting a);
   let finished = ref false in
   let controller () =
     ignore (Thread.sigmask Unix.SIG_BLOCK [ Sys.sigint ]);
-    (match dial port with
+    (match proved fd with
     | Some fd when joins fd port -> ends fd
     | Some fd -> Unix.close fd
     | None -> ());
@@ -627,15 +644,10 @@ let cut_serve what landing n =
   (match Rig_remote.serve a [] with
   | Ok () | Error _ -> ()
   | exception Invalid_argument _ -> ());
-  (* A connection that comes as the agent stops listening may get no answer:
-     its dial gives up after the 10 s a handshake may take. *)
-  let t0 = Unix.gettimeofday () in
-  while (not !finished) && Unix.gettimeofday () -. t0 < handshake_s +. patience do
-    Thread.delay 0.01
-  done;
-  equal ~msg:"the controller ended" bool true !finished;
+  until ~what:"the controller's end" (fun () -> !finished);
   Thread.join t;
   equal ~msg:"the port listens" bool false (listens port);
+  equal ~msg:"a connection waits" bool false (Rig_remote.Probe.waiting a);
   until ~what:"the agent's descriptors closed" (fun () ->
       Rig_support.descriptors () = Some before);
   reached

@@ -127,4 +127,5 @@ module Probe : sig
   val held : unit -> bool
   val dialled : unit -> bool
   val resume : unit -> unit
+  val waiting : t -> bool
 end

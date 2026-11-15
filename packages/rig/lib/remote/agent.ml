@@ -292,7 +292,12 @@ type t = {
   claimed : bool Atomic.t;
       (** Once a serve claimed it. The claim takes no lock, and the sections
           under [lock] run only once the agent is claimed, so a callback
-          inside one that calls [serve] raises [Invalid_argument]. *)
+          inside one that calls [serve] raises [Invalid_argument].
+          [Probe.waiting]'s, for rig's tests, also runs before, so a
+          callback inside it must not call [serve] on the agent: that serve
+          would claim it and start its acceptor, then raise [Sys_error] at
+          the lock its thread holds, in [job] and again in [release]'s
+          [stop], and leave the agent claimed and accepting with no serve. *)
   lock : Mutex.t;
   changes : changes;
       (** Counts each change of [phase], [accepted]'s additions and [broken]. *)
@@ -398,6 +403,16 @@ module Probe = struct
       done
 
   let admits () = if Atomic.get armed then Atomic.incr dials
+
+  (* Polls under [lock], where [stop] marks [a] stopped before [release]
+     closes its socket, so no poll reads a closed descriptor. *)
+  let waiting a =
+    Mutex.protect a.lock @@ fun () ->
+    if a.stopped then false
+    else
+      match Wire.ready [ a.socket ] `Read 0. with
+      | Some _ -> true
+      | None -> false
 end
 
 (* A handshake's state, made before its thread: the job its controller's
