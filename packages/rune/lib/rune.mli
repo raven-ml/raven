@@ -1532,9 +1532,11 @@ val jit :
     order the function made them and the data at its first failing index, as
     eagerly. On the host it raises as the call returns, and the call's results
     are lost. On another set the call returns its results, and the failure
-    raises at the next wait on that set, so that no check makes a call wait for
-    its device, where an {!iterate} or a {!switch} applied eagerly raises at the
-    call.
+    raises at a wait on that set as {{!Nx.section-waiting}nx's waiting}
+    states, so that no check makes a call wait for its device, where an
+    {!iterate} or a {!switch} applied eagerly raises at the call. There a
+    later check of the call that fails raises nothing, where eagerly it raises
+    at a later wait.
 
     Over several devices each device checks its window of the flags, a window
     whole on several devices once, and keeps there its position and data.

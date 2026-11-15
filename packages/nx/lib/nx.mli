@@ -904,27 +904,42 @@ val to_bigarray :
     A check is a condition on data whose failure raises the caller's
     exception: one stated with {!check}, a sampler's parameter outside its
     domain ({!Rng}), or a {!Prim.Check}. On the host it raises at the call. On
-    another set it is computed where its data lies, and its failure raises at
-    the next wait on that set on the domain that issued it, so that no check
-    makes the host wait. The systhreads of a domain share its checks. A wait
-    drains the checks its domain issued on the set before it and raises the
-    earliest failure among them; the later ones are dropped. A wait on one set
-    raises nothing of another's checks; a check no wait follows never raises.
-    A check keeps its data's memory until a wait drains it, or until a later
-    check on its set is issued once its devices report its flags computed, so
-    a donation of that data meanwhile computes into fresh memory. A device
-    reports its work at most a fixed number of submissions late while work is
-    submitted on it ({!Rig.section-timeline}), and a check on a device that
-    gets no more work is found computed when the next check is issued, so the
-    checks of a loop that never waits keep the data of a bounded window of
-    steps. A failing check's data is read when its failure is found, at a wait
-    or at a later check's issue, and that read may wait for the set. Once a
-    check is known to fail, the checks after it release their data, and a
-    check issued later on its set is not kept. *)
+    another set it is computed where its data lies, and its failure is
+    {e pending} on that set until a wait on the set raises it, so that no
+    check makes the host wait. A wait raises the oldest failure pending on
+    its set, whichever domain or systhread issued the check, and only that
+    one: each failure raises at one wait, oldest first, and none is dropped.
+    The failure's [fail] builds its exception at that wait, and a wait that
+    [fail] makes on any set raises no failure. A wait on one set raises
+    nothing of another's checks; a check no wait follows never raises.
+
+    One failure per wait means that a program that catches a failure and goes
+    on, failing more than one check between its waits, gathers failures: each
+    wait raises an older one than the program's last check made, until the
+    waits catch up.
+
+    A check holds none of its data. Where its flags and data are written when
+    it is issued, as on a device whose work runs as it is submitted, it is
+    read then, and a failing one keeps only its position and elements.
+    Otherwise it copies whether its flags hold and each datum's element at
+    the first false flag into memory of its own. Either way a donation of
+    the data after the check may write over its memory. On a device whose
+    memory the host addresses and whose work runs after its submit returns,
+    such as Metal, a check of one flag whose flag or data are not yet written
+    reads them in place, since a copy there would make the host wait for the
+    work: a donation of that flag or data before the check is read computes
+    into fresh memory. Issuing a check on a set reads the set's earlier
+    checks that its devices report computed: a passing one goes, and a
+    failing one keeps only its position and elements until a wait raises it.
+    A device reports its work at most a fixed number of submissions late
+    while work is submitted on it ({!Rig.section-timeline}), and a check on a
+    device that gets no more work is found computed when the next check is
+    issued, so the unread checks of a loop that never waits are those of a
+    bounded window of steps. *)
 
 val sync : ('v, 's, 'd) t -> unit
-(** [sync x] waits for the work [x] depends on, then drains the checks pending
-    on [x]'s set, raising the earliest failure, as stated above.
+(** [sync x] waits for the work [x] depends on, then raises the oldest failure
+    pending on [x]'s set, as stated above.
 
     Raises [Invalid_argument] naming [Nx.sync] for a dead value, and for a
     traced one, as {!item} does: [Nx.sync: the value is traced by Rune.jit], or
@@ -4828,8 +4843,8 @@ val check :
     {!Ptree.unit} and [()].
 
     It is a {{!section-waiting}check}: on the host it raises at the call, and on
-    another set at the next wait on that set. It computes on [ok]'s set. What
-    [fail] raises passes on, there, with the backtrace of its raise.
+    another set at a wait on that set. It computes on [ok]'s set. What [fail]
+    raises passes on, there, with the backtrace of its raise.
 
     [s]'s walk must rebuild [data] with each array replaced by a 0-d one, as
     [fail]'s [d] is built; a walk that checks its arrays' shapes, as {!Rng.walk}
@@ -5066,8 +5081,8 @@ module Rng : sig
       index and its value, as in
       [Nx.Rng.bernoulli: p at [3] is 1.5, not in [0, 1]]. The check is a
       {{!Nx.section-waiting}check}: it raises at the call for a parameter on the
-      host, and for one on another set at the next wait on that set, so that a
-      draw never waits for its parameters. Under an
+      host, and for one on another set at a wait on that set, so that a draw
+      never waits for its parameters. Under an
       interpretation it is a [Check] operation, which raises where the
       interpretation computes it. *)
 
@@ -5978,7 +5993,7 @@ module Prim : sig
             is [false], [e] each of [data]'s elements at [i], in order: OCaml
             values, which belong to no device set. Each value of [data] has
             [ok]'s shape. An empty [ok] passes. It is computed where [ok]'s
-            bytes lie: at the call on the host, and otherwise at the next
+            bytes lie, and raises at the call on the host, and otherwise at a
             {{!section-waiting}wait} on [ok]'s set. A check of one element
             reduces nothing: its flag is that element, read on the device
             that holds it, and its first index is [0], so it needs no

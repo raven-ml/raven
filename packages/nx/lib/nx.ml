@@ -7361,11 +7361,13 @@ let check s ok data fail =
         invalid_argf "%s: %a does not broadcast to %a" by pp_value x pp_shape
           target)
     leaves;
-  (* [fail]'s structure is rebuilt from 0-d arrays when the failure is found,
-     maybe at a later check's issue: a walk that refuses them raises now. It
-     is tried over stand-ins of no bytes where the 0-d arrays would lie, so
-     that it computes nothing. The interpretation that owns them gives an
-     operation its eager meaning, which refuses them. *)
+  (* [fail]'s structure is rebuilt from 0-d arrays when the failure raises,
+     maybe at a later wait: a walk that refuses them raises now. It is tried
+     over stand-ins of no bytes where the 0-d arrays would lie, so that it
+     computes nothing. The interpretation that owns them gives an operation
+     its eager meaning, which refuses them. The structure of stand-ins it
+     makes is the one the failure rebuilds from, so that a pending failure
+     holds none of [data]. *)
   let stand_in i (P x) =
     let form =
       {
@@ -7378,20 +7380,22 @@ let check s ok data fail =
   in
   let rebuild i = Ptree.rebuild s ~like:data (List.map (stand_in i) leaves) in
   let eager _ ~by op = Eval.run ~by op in
-  (match Eval.interpret ~name:by Values eager rebuild with
-  | _ -> ()
-  | exception Invalid_argument m ->
-      invalid_argf "%s: the structure's walk refuses 0-d arrays: %s" by m);
+  let skeleton =
+    match Eval.interpret ~name:by Values eager rebuild with
+    | skeleton -> skeleton
+    | exception Invalid_argument m ->
+        invalid_argf "%s: the structure's walk refuses 0-d arrays: %s" by m
+  in
   let rec datum = function
     | [] -> Datum (Value.[], fun () -> [])
     | P x :: rest ->
         let (Datum (d, read)) = datum rest in
-        let x = Eval.broadcast ~by target x in
-        let read (v, e) = P (scalar_beside ~by x (dtype x) v) :: read e in
-        Datum (Value.( :: ) (x, d), read)
+        let at = beside x and dt = dtype x in
+        let read (v, e) = P (fill ~by at dt [||] v) :: read e in
+        Datum (Value.( :: ) (Eval.broadcast ~by target x, d), read)
   in
   let (Datum (d, read)) = datum leaves in
-  let fail i e = fail i (Ptree.rebuild s ~like:data (read e)) in
+  let fail i e = fail i (Ptree.rebuild s ~like:skeleton (read e)) in
   Eval.eval ~by (Value.Check { ok; data = d; fail })
 
 (* The scan by [Pairwise.circuit], whose states are the structure's arrays: each

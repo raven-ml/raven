@@ -1368,9 +1368,8 @@ let test_check_elements () =
 exception One of int array * float
 
 (* A check of one element reduces nothing: its flag is read where it lies, on
-   its device or on the one of a cut placement that holds it, and the check
-   holds the flag's memory until a wait reads it, so a donation of the flag
-   computes afresh. *)
+   its device or on the one of a cut placement that holds it, and a donation
+   of the flag after the check leaves its failure as it was. *)
 let test_check_one () =
   let shape = [| 1; 1 |] in
   let host dt v =

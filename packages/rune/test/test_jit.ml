@@ -3029,7 +3029,9 @@ let off_checked = Rune.jit' checked
 let off_scanned = Rune.jit' scan_checked
 
 (* [f x]'s failure, raised by the call or by a wait on its result after it,
-   whether the call returned, and the result's bits where nothing failed. *)
+   whether the call returned, and the result's bits where nothing failed. A
+   later failure still pending on [x]'s set, an eager second check's, is
+   raised and set aside, so that the next call starts with none. *)
 let settled f x =
   let returned = ref false and out = ref None in
   let failure =
@@ -3039,6 +3041,12 @@ let settled f x =
         Nx.sync y;
         out := Some (bits y))
   in
+  let rec drain () =
+    match Nx.sync x with
+    | () -> ()
+    | exception (Small _ | Signed _) -> drain ()
+  in
+  drain ();
   (failure, !returned, !out)
 
 type deferred_case = { off : bool; xs : float array; scanned : bool }
@@ -3102,8 +3110,9 @@ let law_deferred c =
   equal ~msg:"eager's call returned" bool returns er;
   equal ~msg:"the call returned" bool returns jr
 
-(* Compiled calls whose checks fail raise at the next wait on their set, the
-   earliest first, the later ones dropped, as eager checks do. *)
+(* Compiled calls whose checks fail raise at a wait on their set, one per
+   wait, the oldest first, the later ones at later waits, as eager checks
+   do. *)
 
 module Pending = (val Nx.devices [ Nx_support.memory 1 ])
 
@@ -3122,9 +3131,12 @@ let pending_value = lazy (Nx.place Pending.on (v [| 0. |]))
 (* The calls since the last wait, as [(id, fails)] in call order. *)
 let pending_calls = ref []
 
-(* Drains the set's checks, so that no program sees another's. *)
-let drain_pending () =
-  try Nx.sync (Lazy.force pending_value) with Called _ -> ()
+(* Raises every failure pending on the set, so that no program sees
+   another's. *)
+let rec drain_pending () =
+  match Nx.sync (Lazy.force pending_value) with
+  | () -> ()
+  | exception Called _ -> drain_pending ()
 
 let pending_session = abstract "c" ~release:drain_pending
 
@@ -3144,16 +3156,17 @@ let pending_commands =
       (pending_session ^-> returns (option int))
       (fun () ->
         let rec first = function
-          | [] -> None
+          | [] -> ([], None)
           | (_, false) :: rest ->
               cover "a wait passes a call before a failing one" (rest <> []);
               first rest
           | (id, true) :: rest ->
-              cover "a wait drops a later failure" (List.exists snd rest);
-              Some id
+              cover "a wait leaves a later failure pending"
+                (List.exists snd rest);
+              (rest, Some id)
         in
-        let raised = first !pending_calls in
-        pending_calls := [];
+        let left, raised = first !pending_calls in
+        pending_calls := left;
         raised)
       (fun () ->
         match Nx.sync (Lazy.force pending_value) with
@@ -5881,8 +5894,8 @@ let () =
                 and at the next wait elsewhere"
                deferred_cases law_deferred;
              stateful
-               "a wait raises the earliest failing call's check, the later \
-                ones dropped"
+               "a wait raises the oldest failing call's check, the later ones \
+                at later waits"
                pending_commands;
              test
                "a sampler, a switch and an iterate fail at the next wait off \

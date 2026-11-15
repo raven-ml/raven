@@ -185,6 +185,269 @@ and moved : type v s d.
     let core = Partition.place e ~by q core in
     partition e ~by (Move (Broadcast (Iarray.of_array s), core))
 
+(* Checks
+
+   A check whose flags and data are written when it is issued, on the host
+   or on devices the host addresses that have done their work, is read at
+   once on the host: on the host its failure raises, elsewhere {!Check} keeps
+   it. Any other check is computed where its flags lie without being read,
+   since reading it would make the host wait for the set: its reduction and
+   each datum's element at the first false flag are copied into memory of
+   its own, or on a device the host addresses read in place, and {!Check}
+   keeps the pending check. *)
+
+module D = Nx_array.Dtype
+module L = Nx_array.Layout
+module E = Nx_kernel.Prog.E
+
+(* The one element of [a], as a 0-d view. *)
+let unit_view a = Option.get (A.move (Reshape [||]) a)
+
+(* The one element of [x], which has bytes: a 0-d view of the array that holds
+   it. A cut placement's other devices hold empty windows. *)
+let element x =
+  let holds a = A.Layout.numel (A.layout a) = 1 in
+  unit_view (Option.get (Iarray.find_opt holds (Prim.arrays x)))
+
+(* [a] in memory the host addresses: [a] itself where the host addresses its
+   device's memory, else a copy the device makes in its order. A device of
+   this machine copies into [Pinned] memory, which both address, since a copy
+   into host memory it does not map would wait for its work. Another
+   machine's device copies into host memory, its agent sending the bytes back
+   as one message. *)
+let readable a =
+  let d = A.device a in
+  if Rig.reaches Rig.host d then a
+  else if not (Rig.equal (Rig.host_of d) Rig.host) then A.to_device Rig.host a
+  else
+    let dst = A.create ~memory:Pinned d (A.dtype a) (L.shape (A.layout a)) in
+    A.transfer ~src:a ~dst;
+    dst
+
+(* A reader of one element of a datum, at every dtype. *)
+type 'd pick = { pick : 'v 's. ('v, 's, 'd) t -> unit -> 'v }
+
+(* Reads, on the host, the element [p] picks of each datum of [data], which
+   it picks now. *)
+let rec elements : type d e. d pick -> (d, e) data -> unit -> e =
+ fun p -> function
+  | [] -> fun () -> ()
+  | x :: rest ->
+      let get = p.pick x in
+      let rest = elements p rest in
+      fun () -> (get (), rest ())
+
+let unravel i shape =
+  let r = Array.length shape in
+  let idx = Array.make r 0 and k = ref i in
+  for a = r - 1 downto 0 do
+    idx.(a) <- !k mod shape.(a);
+    k := !k / shape.(a)
+  done;
+  idx
+
+(* The reduction [r] of the flags [ok], which have bytes, over all their
+   axes. *)
+let reduce ~by ok r =
+  let shape = Prim.shape ok in
+  partition Exec.eager ~by
+    (Reduce
+       {
+         layout = L.contiguous (Iarray.of_array shape);
+         axes = Iarray.init (Array.length shape) Fun.id;
+         prog = Prim.identity D.Bool;
+         reductions = [ r ];
+         loads = [| Plain ok |];
+       })
+
+(* Outputs of [int64] positions, and the list of the values a map makes. *)
+type 'd positions =
+  | Positions : ('d, 'r) outs * ('r -> 'd index list) -> 'd positions
+
+let rec positions : type d. int -> d positions = function
+  | 0 -> Positions ([], fun () -> [])
+  | k ->
+      let (Positions (outs, list)) = positions (k - 1) in
+      Positions (D.Int64 :: outs, fun (x, r) -> x :: list r)
+
+(* The coordinate along each axis of [shape] of more than one element of the
+   C-order position [first], each a 0-d value made by one map beside
+   [first]; [None] along an axis of one element, whose coordinate is [0]. *)
+let coordinates ~by first shape =
+  let r = Array.length shape in
+  let axes = List.filter (fun a -> shape.(a) > 1) (List.init r Fun.id) in
+  let k v = E.const D.Int64 (Int64.of_int v) in
+  let inner a =
+    let n = ref 1 in
+    for b = a + 1 to r - 1 do
+      n := !n * shape.(b)
+    done;
+    !n
+  in
+  let coordinate a = E.(idiv (input 0 D.Int64) (k (inner a)) mod k shape.(a)) in
+  let ins = Iarray.of_array [| D.Any D.Int64 |] in
+  let prog =
+    Nx_kernel.Prog.of_exprs ~ins
+      (Iarray.of_list (List.map (fun a -> E.any (coordinate a)) axes))
+  in
+  let (Positions (outs, list)) = positions (List.length axes) in
+  let loads = Iarray.of_array [| Plain first |] in
+  let map = Map { layout = L.contiguous [||]; prog; outs; loads; at = None } in
+  let cs = list (partition Exec.eager ~by map) in
+  let coords = Array.make r None in
+  List.iter2 (fun a c -> coords.(a) <- Some c) axes cs;
+  coords
+
+(* [x]'s element at the coordinates [cs] of a position of its shape, of one
+   element, in fresh memory: gathered along each axis that has a coordinate,
+   the axes of most elements first, so that each gather's result holds at
+   most the datum's elements over its longest extent. A gather reads [x]
+   through its layout, at any placement. *)
+let gathered ~by cs x =
+  let x = match x with Handle { over; _ } -> over | _ -> x in
+  let shape = Prim.shape x in
+  let axes = List.init (Array.length cs) Fun.id in
+  let axes = List.filter (fun a -> Option.is_some cs.(a)) axes in
+  let longest a b = Int.compare shape.(b) shape.(a) in
+  let gather x a =
+    let s = Array.copy (Prim.shape x) in
+    s.(a) <- 1;
+    let c = Option.get cs.(a) in
+    let broadcast = Move (Broadcast (Iarray.of_array s), c) in
+    let idx = partition Exec.eager ~by broadcast in
+    partition Exec.eager ~by (Gather { axis = a; idx; x })
+  in
+  List.fold_left gather x (List.stable_sort longest axes)
+
+(* A pending check of one flag: the flag, its own reduction, and each datum's
+   one element, each copied where the host addresses it ({!readable}), or
+   read in place where the host addresses its device's memory and kept until
+   the check is read: a copy there is the host's, which waits for the work
+   that writes it ({!Rig.Buffer}'s copying section). *)
+let one_flag ok data fail : Check.pending =
+  let held = ref ([] : Rig.Buffer.t list) in
+  let own a =
+    if Rig.reaches Rig.host (A.device a) then begin
+      held := A.buffer a :: !held;
+      a
+    end
+    else readable a
+  in
+  let pick x =
+    let a = own (element x) in
+    fun () -> A.get a [||]
+  in
+  let flag = element ok in
+  let elements = elements { pick } data in
+  let holds = own flag in
+  let on = A.device flag in
+  let mark = Rig.submitted on in
+  let kept =
+    match !held with [] -> None | bs -> Some (Rig.Buffer.keep bs, bs)
+  in
+  let index = Array.make (Array.length (Prim.shape ok)) 0 in
+  let found () =
+    let e = elements () in
+    fun () -> fail index e
+  in
+  { holds; on; mark; kept; found }
+
+(* A pending check of several flags. One reduction gives both whether every
+   flag holds and the first false, and a gather each datum's element there,
+   so that the check holds only single elements, each copied where the host
+   addresses it, before the flags' copy, which the mark follows. A check
+   without data computes no coordinate. *)
+let several ~by ok data fail : Check.pending =
+  let shape = Prim.shape ok in
+  let (holds, first), () = reduce ~by ok (Arg (Min, 0, D.Bool)) in
+  let cs = lazy (coordinates ~by first shape) in
+  let pick x =
+    let a = readable (element (gathered ~by (Lazy.force cs) x)) in
+    fun () -> A.get a [||]
+  in
+  let elements = elements { pick } data in
+  let first = readable (element first) in
+  let holds = readable (Iarray.get (Prim.arrays holds) 0) in
+  let on = A.device holds in
+  let mark = Rig.submitted on in
+  let found () =
+    let index = unravel (Int64.to_int (A.get first [||])) shape in
+    let e = elements () in
+    fun () -> fail index e
+  in
+  { holds; on; mark; kept = None; found }
+
+(* Each of [data]'s elements at [idx], read on the host. *)
+let rec data_at : type d e. by:string -> int iarray -> (d, e) data -> e =
+ fun ~by idx -> function
+  | [] -> ()
+  | x :: rest -> (A.get (Check.on_host ~by x) idx, data_at ~by idx rest)
+
+(* The builder of the exception of a check whose first false lies at [first]
+   in C order, the data's elements there read now. *)
+let failure_at ~by first shape data fail =
+  let idx = unravel (Int64.to_int first) shape in
+  let e = data_at ~by (Iarray.of_array idx) data in
+  Some (fun () -> fail idx e)
+
+(* [x]'s one element, of a 0-d value whole on each of its devices, read in
+   memory the host addresses. *)
+let scalar x = A.get (Iarray.get (Prim.arrays x) 0) [||]
+
+(* The check of [ok], of [shape], on [data] read now on the host, whose memory
+   holds its flags: [None] where every flag holds, else the builder of its
+   exception. A passing check runs one [Min]; [Arg], for the first [false],
+   costs more and runs only on a failure. *)
+let read_now ~by ok shape data fail =
+  if Array.for_all (( = ) 1) shape then
+    if A.get (element ok) [||] then None else failure_at ~by 0L shape data fail
+  else
+    let holds, () = reduce ~by ok (Monoid (Min, 0, D.Bool)) in
+    if scalar holds then None
+    else
+      let (_, first), () = reduce ~by ok (Arg (Min, 0, D.Bool)) in
+      failure_at ~by (scalar first) shape data fail
+
+(* The buffers of [data]'s arrays, after [bs]. *)
+let rec data_buffers : type d e. (d, e) data -> Rig.Buffer.t list -> _ =
+ fun data bs ->
+  match data with
+  | [] -> bs
+  | x :: rest ->
+      data_buffers rest
+        (Iarray.fold_left
+           (fun bs a -> List.cons (A.buffer a) bs)
+           bs (Prim.arrays x))
+
+(* Whether [d] has done all its work and the host addresses its memory: no
+   device then, but one whose queued copy writes a buffer, makes a host read
+   of [d]'s memory wait. Asking commits nothing. *)
+let idle d = Rig.reaches Rig.host d && Rig.signaled d >= Rig.submitted d
+
+(* Checks [ok] on [data] as {!Check} states. *)
+let check (type d e) ~by (ok : (bool, D.bool_elt, d) t) (data : (d, e) data)
+    (fail : int array -> e -> exn) =
+  let shape = Prim.shape ok in
+  let p = Prim.placement ok in
+  if Array.mem 0 shape then ()
+  else if Devices.on_host_set p then
+    Option.iter (fun b -> raise (b ())) (read_now ~by ok shape data fail)
+  else
+    let set = Devices.set p in
+    let devices = Array.map (Devices.rig set) (Grid.devices (Devices.grid p)) in
+    let devices = Array.to_list devices and n = Devices.number set in
+    let flags = Iarray.fold_left (fun bs a -> List.cons (A.buffer a) bs) in
+    let bs = data_buffers data (flags [] (Prim.arrays ok)) in
+    (* Reading now reduces the flags on the set and reads the result at once,
+       which waits for nothing only because the set's kernels finish their
+       work within the call, as nx.cpu's do. A kernel library on a device the
+       host addresses whose work runs later would make that read wait. *)
+    if Check.written ~own:(List.for_all idle devices) bs
+    then Check.add_read ~devices n (read_now ~by ok shape data fail)
+    else if Array.for_all (( = ) 1) shape then
+      Check.add ~devices n (one_flag ok data fail)
+    else Check.add ~devices n (several ~by ok data fail)
+
 let rec run : type r. by:string -> r prim -> r =
  fun ~by op -> if Exec.is_local op then Exec.local ~by op else general ~by op
 
@@ -269,7 +532,7 @@ and plain : type r. by:string -> r prim -> r =
   | Place (p, x) -> placed ~by p x
   | Check { ok; data; fail } ->
       ignore (Prim.layouts ~by op);
-      Check.issue ~by ok data fail
+      check ~by ok data fail
   | _ -> routed ~by (Prim.route ~by op) op
 
 (* [op], a placement, a check, or another operation, computed as its rule
@@ -286,7 +549,7 @@ and routed : type r.
  fun ~by ?into ?cut r op ->
   match op with
   | Place (p, x) -> placed ~by p x
-  | Check { ok; data; fail } -> Check.issue ~by ok data fail
+  | Check { ok; data; fail } -> check ~by ok data fail
   | _ -> (
       match (into, cut) with
       | None, None -> partitioned Exec.eager ~by r op

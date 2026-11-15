@@ -5,7 +5,6 @@
 
 module A = Nx_array
 module D = Nx_array.Dtype
-module L = Nx_array.Layout
 
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
@@ -28,403 +27,224 @@ let on_host : type v s d. by:string -> (v, s, d) Value.t -> (v, s) A.t =
   | Value.Array _ | Value.Shards _ | Value.Handle _ ->
       Iarray.get (Prim.arrays (Exec.value ~by host x)) 0
 
-(* Pending checks
+let written ~own bs = own && List.for_all (fun b -> Rig.Buffer.reached b Read) bs
 
-   A check off the host reduces its flags where they lie and leaves the result
-   there unread, since reading it would make the host wait for the set. Each
-   domain lists the checks it issued, by set, and a wait on a set drains that
-   set's, oldest first, up to the first that fails. A pending check keeps its
-   data's memory, so that no donation writes the elements its failure
-   reports. *)
+(* Pending checks *)
 
-type ('d, 'e) issued = {
+type pending = {
   holds : (bool, D.bool_elt) A.t;
-      (* Whether every flag holds, in memory the host addresses
-         ({!readable}). *)
-  on : Rig.t;  (* The device that computed it. *)
-  mark : int;  (* [on]'s last value once [holds] was written. *)
-  first : (int64, D.int64_elt, 'd) Value.t option;
-      (* The first false flag's position in C order; [None] for one flag,
-         whose position is [0]. *)
-  shape : int array;  (* The flags'. *)
-  data : ('d, 'e) Value.data;
-  fail : int array -> 'e -> exn;
+  on : Rig.t;
+  mark : int;
+  kept : (Rig.Buffer.keep * Rig.Buffer.t list) option;
+  found : unit -> unit -> exn;
 }
 
-(* A check found failing, and the keep of its data's memory, while its
-   exception is built ({!built}). *)
-type failing = Failing : ('d, 'e) issued * Rig.Buffer.keep -> failing
+(* A pending check, unread, or a failure read as the builder of its exception,
+   which holds nothing of a device's. *)
+type entry = Unread of pending | Fails of (unit -> exn)
 
-(* A check and the keep of its data's memory, a check found failing, or the
-   exception of one that failed before any wait read it. *)
-type pending =
-  | Pending : ('d, 'e) issued * Rig.Buffer.keep -> pending
-  | Marked of failing
-  | Raised : exn -> pending
+(* A set's entries, newest first, and its claim: the mutex that whoever reads
+   or takes off its entries holds, so that one reader at a time decides each
+   entry. An issue adds entries without it. *)
+type set = { claim : Mutex.t; entries : entry list }
 
 module Sets = Map.Make (Int)
 
-(* Each domain's pending checks, by set number, each set's newest first. The
-   domain's systhreads share them, so every update is a compare-and-set of the
-   whole. *)
-let checks : pending list Sets.t Atomic.t Domain.DLS.key =
-  Domain.DLS.new_key (fun () -> Atomic.make Sets.empty)
+(* Every set with entries, by set number. The process's domains and systhreads
+   share them, so every update is a compare-and-set of the whole. A set with
+   no entry has no binding. *)
+let table : set Sets.t Atomic.t = Atomic.make Sets.empty
 
-(* [f] of the calling domain's pending checks, which it replaces, atomically
-   against the domain's other systhreads. *)
+(* [f] of the table, which it replaces, atomically against every other update.
+   [f] may run more than once. *)
 let rec update f =
-  let a = Domain.DLS.get checks in
-  let sets = Atomic.get a in
+  let sets = Atomic.get table in
   let sets', r = f sets in
-  if Atomic.compare_and_set a sets sets' then r else update f
+  if Atomic.compare_and_set table sets sets' then r else update f
 
-let of_set n sets = Option.value ~default:[] (Sets.find_opt n sets)
+let oldest n =
+  match Sets.find_opt n (Atomic.get table) with
+  | None -> []
+  | Some s -> List.rev s.entries
 
-(* Whether [p] is a failure the set holds. *)
-let fails = function Marked _ | Raised _ -> true | Pending _ -> false
-
-(* Adds [p] to set [n]'s pending checks, unless an earlier one failed, whose
-   exception the next wait raises in place of any later one's: [false] then. *)
-let pend n p =
+let push n e =
   update (fun sets ->
-      let l = of_set n sets in
-      if List.exists fails l then (sets, false)
-      else (Sets.add n (p :: l) sets, true))
+      let s =
+        match Sets.find_opt n sets with
+        | Some s -> { s with entries = e :: s.entries }
+        | None -> { claim = Mutex.create (); entries = [ e ] }
+      in
+      (Sets.add n s sets, ()))
 
-(* Ends a check's keep. *)
-let release = function
-  | Pending (_, k) | Marked (Failing (_, k)) -> Rig.Buffer.release k
-  | Raised _ -> ()
+(* Replaces the entry [e] of set [n] by [by], or takes it off for [None], and
+   ends its keep. Only the holder of [n]'s claim calls it. *)
+let replace n e by =
+  update (fun sets ->
+      match Sets.find_opt n sets with
+      | None -> (sets, ())
+      | Some s -> (
+          let at e' = if e' == e then Option.to_list by else [ e' ] in
+          match List.concat_map at s.entries with
+          | [] -> (Sets.remove n sets, ())
+          | entries -> (Sets.add n { s with entries } sets, ())));
+  match e with
+  | Unread { kept = Some (k, _); _ } -> Rig.Buffer.release k
+  | Unread { kept = None; _ } | Fails _ -> ()
 
-(* [a] in memory the host addresses: itself where the host addresses its
-   device's memory, else a copy the device makes in its order, which the host
-   then reads in place once the device reports the copy done. A device of
-   this machine copies into [Pinned] memory, which both address, since a copy
-   into host memory it does not map would wait for its work. Another
-   machine's device copies into host memory, its agent sending the byte back
-   as one message. *)
-let readable a =
-  let d = A.device a in
-  if Rig.reaches Rig.host d then a
-  else if not (Rig.equal (Rig.host_of d) Rig.host) then A.to_device Rig.host a
-  else
-    let dst = A.create ~memory:Pinned d (A.dtype a) (L.shape (A.layout a)) in
-    A.transfer ~src:a ~dst;
-    dst
+(* [Some (f ())] holding set [n]'s claim, [None] where [n] has no entry or,
+   unless [wait], where another reader holds the claim. A set that left the
+   table while the caller waited for its claim may come back with another. *)
+let rec claimed ~wait n f =
+  match Sets.find_opt n (Atomic.get table) with
+  | None -> None
+  | Some s ->
+      let locked =
+        if wait then begin
+          Mutex.lock s.claim;
+          true
+        end
+        else Mutex.try_lock s.claim
+      in
+      let current () =
+        match Sets.find_opt n (Atomic.get table) with
+        | Some s' -> s'.claim == s.claim
+        | None -> false
+      in
+      if not locked then None
+      else if current () then
+        Some (Fun.protect ~finally:(fun () -> Mutex.unlock s.claim) f)
+      else begin
+        Mutex.unlock s.claim;
+        if wait then claimed ~wait n f else None
+      end
 
-(* Whether [c.holds] is written, so that reading it waits for nothing, asked
-   while issuing a check on devices [ds]. On one of [ds], its device's report
-   decides, which commits nothing and waits for nothing: a device reports its
-   work at most its driver's batch of values late while work is submitted on
-   it ({!Rig.section-timeline}). Another device may get no more work, and its
+(* What reading a check finds. *)
+type found = Holds | Fails_as of (unit -> exn)
+
+(* Reads [c], the entry [e] of set [n], holding [n]'s claim. A read that
+   raises, such as {!Rig.Lost}, takes [e] off before the exception passes
+   on. *)
+let read n e c =
+  match if A.get c.holds [||] then Holds else Fails_as (c.found ()) with
+  | r -> r
+  | exception x ->
+      let bt = Printexc.get_raw_backtrace () in
+      replace n e None;
+      Printexc.raise_with_backtrace x bt
+
+(* Whether reading [c] waits for nothing, asked while issuing a check on
+   devices [ds]. On one of [ds], its device's report of [c.mark] decides,
+   which commits nothing and waits for nothing: a device reports its work at
+   most its driver's batch of values late while work is submitted on it
+   ({!Rig.section-timeline}). Another device may get no more work, and its
    last values would then stay unreported: asking commits them, since an idle
    device has nothing to batch. The final reduction and its copy on [c.on]
-   follow the work on the others, so that device alone decides. *)
-let reached ds c =
-  if List.exists (Rig.equal c.on) ds then Rig.signaled c.on >= c.mark
-  else Rig.Buffer.reached (A.buffer c.holds) Read
+   follow the work on the others. A check read in place waits on the buffers
+   it keeps too, which another device's queued copy may write. *)
+let reached n e ds c =
+  match
+    let own =
+      if List.exists (Rig.equal c.on) ds then Rig.signaled c.on >= c.mark
+      else Rig.Buffer.reached (A.buffer c.holds) Read
+    in
+    written ~own (match c.kept with Some (_, bs) -> bs | None -> [])
+  with
+  | r -> r
+  | exception x ->
+      let bt = Printexc.get_raw_backtrace () in
+      replace n e None;
+      Printexc.raise_with_backtrace x bt
 
-(* [a]'s element, which lies in memory the host addresses. *)
-let get_on_host a = A.get a [||]
-
-(* The one element of [a], as a 0-d view. *)
-let unit_view a = Option.get (A.move (Reshape [||]) a)
-
-(* [data] with each datum that has bytes a live value of its own over them,
-   which no donation of the datum kills. *)
-let rec kept : type d e. (d, e) Value.data -> (d, e) Value.data = function
-  | [] -> []
-  | (Value.Traced _ as x) :: rest -> x :: kept rest
-  | x :: rest ->
-      let x =
-        Prim.of_arrays (Prim.placement x) ~shape:(Prim.shape x) (Prim.arrays x)
-      in
-      x :: kept rest
-
-(* The buffers of [data]'s bytes. *)
-let rec data_buffers : type d e. (d, e) Value.data -> Rig.Buffer.t list =
-  function
-  | [] -> []
-  | Value.Traced _ :: rest -> data_buffers rest
-  | x :: rest ->
-      Iarray.fold_right
-        (fun a bs -> A.buffer a :: bs)
-        (Prim.arrays x) (data_buffers rest)
-
-let unravel i shape =
-  let r = Array.length shape in
-  let idx = Array.make r 0 and k = ref i in
-  for a = r - 1 downto 0 do
-    idx.(a) <- !k mod shape.(a);
-    k := !k / shape.(a)
-  done;
-  idx
-
-(* Each of [data]'s elements at [idx], read on the host. *)
-let rec data_at : type d e. by:string -> int iarray -> (d, e) Value.data -> e
-    =
- fun ~by idx -> function
-  | [] -> ()
-  | x :: rest ->
-      let v = A.get (on_host ~by x) idx in
-      (v, data_at ~by idx rest)
-
-(* The exception of a check whose first false lies at [first] in C order. *)
-let failed ~by first shape data fail =
-  let idx = unravel (Int64.to_int first) shape in
-  fail idx (data_at ~by (Iarray.of_array idx) data)
-
-(* [c]'s exception, its first false flag's position read on the host. *)
-let failure : type d e. by:string -> (d, e) issued -> exn =
- fun ~by c ->
-  let first =
-    match c.first with Some f -> A.get (on_host ~by f) [||] | None -> 0L
+(* Reads set [n]'s unread checks older than [mine], or all of them, whose
+   reading waits for nothing, oldest first, stopping at the first still
+   running: a passing one goes, a failing one stays as the builder of its
+   exception. It gives up where another reader holds the claim, so that an
+   issue never waits. *)
+let settle ?mine n ds =
+  let rec go = function
+    | [] -> ()
+    | e :: _ when Option.exists (( == ) e) mine -> ()
+    | Fails _ :: rest -> go rest
+    | (Unread c as e) :: rest ->
+        if reached n e ds c then begin
+          (match read n e c with
+          | Holds -> replace n e None
+          | Fails_as b -> replace n e (Some (Fails b)));
+          go rest
+        end
   in
-  failed ~by first c.shape c.data c.fail
+  ignore (claimed ~wait:false n (fun () -> go (oldest n)))
 
-(* [c]'s exception, read on the host, where a flag is false. *)
-let outcome ~by c = if get_on_host c.holds then None else Some (failure ~by c)
+let add ~devices n c =
+  let mine = Unread c in
+  push n mine;
+  settle ~mine n devices
 
-(* Builds of failures
+let add_read ~devices n failure =
+  match failure with
+  | None -> settle n devices
+  | Some b ->
+      let mine = Fails b in
+      push n mine;
+      settle ~mine n devices
 
-   A check found failing stays on its set's list, marked, while its [fail]
-   builds the exception. [fail] may read the values it receives, and such a
-   read waits on the set: the build runs under a handler that answers
-   [Building f] for its mark [f], so that a wait inside it leaves the mark
-   alone. A wait on another systhread meanwhile takes the mark off and
-   builds the exception itself, inside a build of its own, then raises it.
-   Whoever takes the mark off the list, under {!update}, ends the keep, once:
-   the builder that puts the exception in the mark's place, or a wait. *)
-type _ Effect.t += Building : failing -> bool Effect.t
+(* Building a failure's exception
 
-(* Whether the caller runs inside a build of [f]'s exception. *)
-let building f =
-  match Effect.perform (Building f) with
+   A wait takes the failure off its set and lets the claim go before [fail]
+   builds the exception, and [fail] may read the values it receives, which
+   waits on a set. Such a wait raises no failure, which would replace the one
+   being built: the build runs under a handler that answers [Building],
+   whatever systhread or fiber performs it. *)
+type _ Effect.t += Building : bool Effect.t
+
+(* Whether the caller runs inside the build of a failure's exception. *)
+let building () =
+  match Effect.perform Building with
   | b -> b
-  | exception Effect.Unhandled (Building _) -> false
+  | exception Effect.Unhandled Building -> false
 
 (* Re-raised with the backtrace of its raise, which a plain [raise] would
    restart at the handler. *)
 let reraise e = Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
-(* [f]'s exception, built inside a build of [f]. What [fail] raises keeps its
-   backtrace. *)
-let built ~by f =
+(* The exception [build] makes, under the handler. What [fail] raises keeps
+   its backtrace. *)
+let built build =
   let effc (type a) (e : a Effect.t) =
     match e with
-    | Building g when g == f ->
+    | Building ->
         Some
           (fun (k : (a, _) Effect.Deep.continuation) ->
             Effect.Deep.continue k true)
     | _ -> None
   in
-  match f with
-  | Failing (c, _) ->
-      Effect.Deep.match_with
-        (fun () -> failure ~by c)
-        ()
-        { retc = Fun.id; exnc = reraise; effc }
+  Effect.Deep.match_with build () { retc = Fun.id; exnc = reraise; effc }
 
-(* Set [n]'s pending checks, oldest first, taken off the list up to a mark
-   whose build runs around the caller: the build's own reads leave it, and
-   the checks after it, which no wait reads before it. *)
-let drained n =
-  let own = function Marked f -> building f | Pending _ | Raised _ -> false in
-  let rec split = function
-    | [] -> ([], [])
-    | p :: rest when own p -> ([], p :: rest)
-    | p :: rest ->
-        let taken, left = split rest in
-        (p :: taken, left)
+(* The oldest failure of set [n], taken off holding [n]'s claim: its entries
+   are read oldest first, waiting for each, and the passing ones go. *)
+let oldest_failure n =
+  let rec go = function
+    | [] -> None
+    | (Fails b as e) :: _ ->
+        replace n e None;
+        Some b
+    | (Unread c as e) :: rest -> (
+        match read n e c with
+        | Holds ->
+            replace n e None;
+            go rest
+        | Fails_as b ->
+            replace n e None;
+            Some b)
   in
-  update (fun sets ->
-      match split (List.rev (of_set n sets)) with
-      | taken, [] -> (Sets.remove n sets, taken)
-      | taken, left -> (Sets.add n (List.rev left) sets, taken))
-
-(* Reads [checks], oldest first, up to the first that fails, which raises: the
-   later ones go unread. Every check's keep ends then, so that a donation of its
-   data right after the wait may reuse the memory. *)
-let settle ~by checks =
-  let failure = function
-    | Pending (c, _) -> outcome ~by c
-    | Marked f -> Some (built ~by f)
-    | Raised e -> Some e
-  in
-  Fun.protect ~finally:(fun () -> List.iter release checks) (fun () ->
-      Option.iter raise (List.find_map failure checks))
-
-(* Builds the exception of [f], marked on set [n], and puts it in the mark's
-   place, where the next wait raises it, ending the keep. A wait on another
-   systhread that took the mark off meanwhile raises its own build and ends
-   the keep, and this build's exception goes. A [fail] that raises takes the
-   mark off, if it is still there, and its exception passes on. *)
-let record ~by n f =
-  (* Replaces the mark by [r], or takes it off for [None]: [true] where it
-     was still there. *)
-  let resolve r =
-    let mine = function Marked g -> g == f | Pending _ | Raised _ -> false in
-    update (fun sets ->
-        let l = of_set n sets in
-        if not (List.exists mine l) then (sets, false)
-        else
-          let at p = if mine p then Option.to_list r else [ p ] in
-          match List.concat_map at l with
-          | [] -> (Sets.remove n sets, true)
-          | l -> (Sets.add n l sets, true))
-  in
-  match built ~by f with
-  | e -> if resolve (Some (Raised e)) then release (Marked f)
-  | exception x ->
-      let bt = Printexc.get_raw_backtrace () in
-      if resolve None then release (Marked f);
-      Printexc.raise_with_backtrace x bt
-
-(* Settles set [n]'s earlier checks whose flags are computed, so that a domain
-   that never waits on the set keeps only the data of the checks still
-   running: a passing check goes, a failing one keeps only its exception, and
-   the checks after it go, since no wait can raise them. It reads them oldest
-   first and stops at the first still running, so it asks rig of one check
-   more than it settles. The checks are read outside the update, which then
-   takes off those still pending, against a wait on another systhread that
-   drains them meanwhile. [ds] are the devices of the check being issued
-   ({!reached}). [false] where the set then holds a failure. A failing check
-   is marked while its exception is built, then holds the exception where no
-   wait took the mark meanwhile ({!record}). *)
-let settle_reached ~by n ds =
-  let earlier = List.rev (of_set n (Atomic.get (Domain.DLS.get checks))) in
-  (* Whether each computed check passes, oldest first, up to the first that
-     fails. *)
-  let rec read = function
-    | [] | (Marked _ | Raised _) :: _ -> []
-    | (Pending (c, _) as p) :: rest ->
-        if not (reached ds c) then []
-        else if get_on_host c.holds then (p, true) :: read rest
-        else [ (p, false) ]
-  in
-  match read earlier with
-  | [] -> not (List.exists fails earlier)
-  | outcomes -> (
-      (* Set [n]'s checks after the update, oldest first, those it ends, and
-         the one it marks failing. *)
-      let rec cut = function
-        | [] -> ([], [], None)
-        | ((Marked _ | Raised _) as r) :: rest -> ([ r ], rest, None)
-        | (Pending (c, h) as p) :: rest -> (
-            match List.assq_opt p outcomes with
-            | None ->
-                let kept, ended, failing = cut rest in
-                (p :: kept, ended, failing)
-            | Some true ->
-                let kept, ended, failing = cut rest in
-                (kept, p :: ended, failing)
-            | Some false ->
-                let f = Failing (c, h) in
-                ([ Marked f ], rest, Some f))
-      in
-      let kept, ended, failing =
-        update (fun sets ->
-            match cut (List.rev (of_set n sets)) with
-            | ([], _, _) as r -> (Sets.remove n sets, r)
-            | (kept, _, _) as r -> (Sets.add n (List.rev kept) sets, r))
-      in
-      List.iter release ended;
-      match failing with
-      | None -> not (List.exists fails kept)
-      | Some f ->
-          record ~by n f;
-          false)
+  Option.join (claimed ~wait:true n (fun () -> go (oldest n)))
 
 let wait : type v s d. by:string -> (v, s, d) Value.t -> unit =
  fun ~by x ->
   match x with
   | Value.Traced { owner; _ } -> traced ~by owner
-  | Value.Array _ | Value.Shards _ | Value.Handle _ ->
+  | Value.Array _ | Value.Shards _ | Value.Handle _ -> (
       Iarray.iter (fun a -> Rig.Buffer.wait (A.buffer a) Read) (Prim.arrays x);
-      settle ~by (drained (Devices.number (Devices.set (Prim.placement x))))
-
-(* Issuing *)
-
-(* The reduction [r] of the flags [ok], which have bytes, over all their
-   axes: computed as its route decides, by windows or by partials. *)
-let reduce ~by ok r =
-  let shape = Prim.shape ok in
-  let op =
-    Value.Reduce
-      {
-        layout = L.contiguous (Iarray.of_array shape);
-        axes = Iarray.init (Array.length shape) Fun.id;
-        prog = Prim.identity D.Bool;
-        reductions = Value.[ r ];
-        loads = [| Plain ok |];
-      }
-  in
-  let { Prim.route; layouts } = Prim.route ~by op in
-  (* [ok] has bytes, so the reduction has a route. *)
-  let route = Option.get route in
-  match route.compute with
-  | Partials -> Partial.run Exec.eager ~by route op
-  | Windows -> Partition.windows Exec.eager ~by route layouts op
-
-(* The one element of [x], which has bytes: a 0-d view of the array that holds
-   it. A cut placement's other devices hold empty windows. *)
-let element x =
-  let holds a = L.numel (A.layout a) = 1 in
-  unit_view (Option.get (Iarray.find_opt holds (Prim.arrays x)))
-
-let issue : type d e.
-    by:string ->
-    (bool, D.bool_elt, d) Value.t ->
-    (d, e) Value.data ->
-    (int array -> e -> exn) ->
-    unit =
- fun ~by ok data fail ->
-  let shape = Prim.shape ok in
-  if Array.mem 0 shape then ()
-  else
-    (* The check computes where [ok]'s bytes lie. *)
-    let p = Prim.placement ok in
-    let scalar x = A.get (on_host ~by x) [||] in
-    (* One flag is its own reduction: no kernel reduces it. *)
-    let one = Array.for_all (( = ) 1) shape in
-    if not (Devices.on_host_set p) then begin
-      (* The set's earlier checks settle first, so that a raise there leaves
-         this check unissued and none of its data kept. A set that holds a
-         failure keeps no later check, which then computes nothing. *)
-      let set = Devices.set p in
-      let n = Devices.number set in
-      let ds = Array.map (Devices.rig set) (Grid.devices (Devices.grid p)) in
-      if settle_reached ~by n (Array.to_list ds) then begin
-        (* One reduction gives both whether every flag holds and the first
-           false, so that the check leaves only scalars to read later. The
-           mark follows the copy [readable] submits, which, for one flag,
-           no reduction orders. The keep stops a donation from writing a
-           flag read in place. *)
-        let holds, first =
-          if one then (element ok, None)
-          else
-            let (holds, first), () = reduce ~by ok (Arg (Min, 0, D.Bool)) in
-            (Iarray.get (Prim.arrays holds) 0, Some first)
-        in
-        let on = A.device holds in
-        let holds = readable holds in
-        let mark = Rig.submitted on in
-        let data = kept data in
-        let keep = Rig.Buffer.keep (A.buffer holds :: data_buffers data) in
-        let c = { holds; on; mark; first; shape; data; fail } in
-        if not (pend n (Pending (c, keep))) then Rig.Buffer.release keep
-      end
-    end
-    else begin
-      if one then begin
-        if not (get_on_host (element ok)) then
-          raise (failed ~by 0L shape data fail)
-      end
-      else
-        (* A passing check runs one [Min]; [Arg], for the first [false],
-           costs more and runs only on a failure. *)
-        let holds, () = reduce ~by ok (Monoid (Min, 0, D.Bool)) in
-        if not (scalar holds) then
-          let (_, first), () = reduce ~by ok (Arg (Min, 0, D.Bool)) in
-          raise (failed ~by (scalar first) shape data fail)
-    end
+      let n = Devices.number (Devices.set (Prim.placement x)) in
+      if Sets.mem n (Atomic.get table) && not (building ()) then
+        match oldest_failure n with Some b -> raise (built b) | None -> ())

@@ -2953,6 +2953,11 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- **Breaking:** a failed check off the host (`Nx.check`, an `Nx.Rng`
+  parameter, `Nx.Prim.Check`) raises at a wait on its set from any domain,
+  one failure per wait, oldest first; none is dropped. A pending check copies
+  its failing elements at issue, so `Nx.donate` of checked data reuses its
+  memory.
 - A read of a traced value by `Nx_ragged.take`, `concat`, `unique`, `rank`
   or `to_strings` raises naming that function alone, without
   `Nx.to_bigarray:` after it. `Nx_ragged.to_strings` reads the bytes in

@@ -5,10 +5,10 @@
 
 (* Checks and waits: the first false flag in C order raises the caller's
    exception with its index and the data's elements there, each array broadcast
-   to the flags' shape; at the call on the host, at the next wait on another
-   set, on the domain that issued it, earliest first and once. A check holds its
-   data's memory until a wait drains it, within a bounded window where none
-   does. *)
+   to the flags' shape; at the call on the host, and on another set at a wait on
+   that set, on any domain, one failure per wait, oldest first, each once. A
+   pending check holds none of its data, and checks no wait follows hold a
+   bounded window. *)
 
 open Windtrap
 open Nx_support
@@ -19,7 +19,6 @@ let m = Nx_support.memory
 
 module S = (val Nx.devices [ m 0 ])
 module S2 = (val Nx.devices [ m 0; m 1 ])
-module T = (val Nx.devices [ m 1 ])
 module Two = (val Nx.devices [ m 2; m 3 ])
 module C = Nx_support.Counting
 module Count = (val Nx.devices ~kernels:(module C) [ m 1 ])
@@ -171,6 +170,23 @@ let host =
               Nx.check P.tensor ok data (fun _ _ -> Failure "checked")));
     ]
 
+(* The data's elements at the first false flag, of one flag or of several, at
+   every dtype, on a device. *)
+let dtypes_elsewhere =
+  cases "the data's elements reach a deferred failure at every dtype"
+    ~id:(fun (D.Any dt, flags) ->
+      Printf.sprintf "%s, %d flags" (D.name dt) flags)
+    (List.concat_map (fun dt -> [ (dt, 1); (dt, 3) ]) D.all)
+    (fun (D.Any dt, flags) ->
+      let vs = [| D.zero dt; D.one dt; D.of_float dt 3. |] in
+      let vs = Array.sub vs (3 - flags) flags in
+      let data = Nx.place S.on (Nx.create dt [| flags |] vs) in
+      let ok = Array.init flags (fun k -> k < flags - 1) in
+      let ok = Nx.place S.on (Nx.create Nx.bool [| flags |] ok) in
+      let show v = Format.asprintf "%a" (D.pp_value dt) v in
+      Nx.check P.tensor ok data (fun _ x -> Element (show (Nx.item [] x)));
+      raises (Element (show vs.(flags - 1))) (fun () -> Nx.sync ok))
+
 let elsewhere =
   group "on another set"
     [
@@ -188,14 +204,16 @@ let elsewhere =
             Nx.check P.unit (ok false) () raise_exit;
             Nx.sync (ok true)
           in
-          (* The failure is found, and [fail] runs, at the second issue. *)
-          let at_issue () =
+          (* The failure is found at the second issue, and [fail] runs at the
+             wait. *)
+          let found_at_issue () =
             Nx.check P.unit (ok false) () raise_exit;
             Nx.check P.unit (ok true) () raise_exit;
             Nx.sync (ok true)
           in
           equal ~msg:"at a wait" string "test_check.ml" (raised_in at_wait);
-          equal ~msg:"at an issue" string "test_check.ml" (raised_in at_issue));
+          equal ~msg:"found at an issue" string "test_check.ml"
+            (raised_in found_at_issue));
       test "a failure's 0-d values lie where their data lies" (fun () ->
           let ok = Nx.full_at S.on Nx.bool [| 2 |] false in
           let data =
@@ -209,7 +227,7 @@ let elsewhere =
           equal ~msg:"the 0-d value's placement"
             (option (placement ()))
             (Some S.on) !lies);
-      test "a failure found at a later check's issue raises at the next wait"
+      test "a failure's exception is built at the wait that raises it"
         (fun () ->
           let ok b = Nx.place S.on (Nx.create Nx.bool [| 2 |] [| true; b |]) in
           let data =
@@ -224,9 +242,38 @@ let elsewhere =
           let desc = P.(pair tensor tensor) in
           Nx.check desc (ok false) data fail;
           Nx.check desc (ok true) data fail;
-          equal ~msg:"found at the second issue" int 1 !found;
+          equal ~msg:"built at no issue" int 0 !found;
           raises (At ([| 1 |], 2., 9l, 0.)) (fun () -> Nx.sync (fst data));
-          Nx.sync (fst data));
+          equal ~msg:"built at the wait" int 1 !found;
+          Nx.sync (fst data);
+          equal ~msg:"built once" int 1 !found);
+      test "a datum cut along an inner axis gives its element" (fun () ->
+          let at = S2.split ~axis:1 in
+          let ok = Array.init 8 (fun k -> k <> 5) in
+          let ok = Nx.place at (Nx.create Nx.bool [| 2; 4 |] ok) in
+          let xs = Array.init 8 float_of_int in
+          let data = Nx.place at (Nx.create Nx.float32 [| 2; 4 |] xs) in
+          Nx.check P.tensor ok data (fun i x -> At (i, Nx.item [] x, 0l, 0.));
+          raises (At ([| 1; 1 |], 5., 0l, 0.)) (fun () -> Nx.sync data));
+      test "a flipped datum gives its element" (fun () ->
+          let ok = Array.init 8 (fun k -> k <> 5) in
+          let ok = Nx.place S.on (Nx.create Nx.bool [| 8 |] ok) in
+          let xs = Array.init 8 float_of_int in
+          let data = Nx.flip (Nx.place S.on (Nx.create Nx.float32 [| 8 |] xs)) in
+          Nx.check P.tensor ok data (fun i x -> At (i, Nx.item [] x, 0l, 0.));
+          raises (At ([| 5 |], 2., 0l, 0.)) (fun () -> Nx.sync data));
+      test "every failure raises, oldest first, one per wait" (fun () ->
+          let ok b = Nx.place S.on (Nx.create Nx.bool [| 2 |] [| true; b |]) in
+          let issue b id = check (ok b) [] (fun _ () -> Failed id) in
+          issue false 1;
+          issue true 2;
+          issue false 3;
+          raises (Failed 1) (fun () -> Nx.sync (ok true));
+          (* A check issued once the set holds a failure is computed too. *)
+          issue false 4;
+          raises (Failed 3) (fun () -> Nx.sync (ok true));
+          raises (Failed 4) (fun () -> Nx.sync (ok true));
+          Nx.sync (ok true));
     ]
 
 (* Waits *)
@@ -252,12 +299,16 @@ let wait w x =
   | Print -> ignore (Nx.to_string x)
   | Place_host -> ignore (Nx.place Nx.Host.on x)
 
-(* A set seen through a value on it and two flags, one false at position 1. *)
+(* A set seen through a value on it and two flags of [n] elements, one false
+   at its last position. *)
 type side = { wait : wait -> unit; issue : bool -> int -> unit }
 
-let side (type d) (module D : Nx.Devices with type d = d) =
+let side (type d) (module D : Nx.Devices with type d = d) n =
   let x = Nx.place D.on (Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |]) in
-  let flags b = Nx.place D.on (Nx.create Nx.bool [| 3 |] [| true; b; true |]) in
+  let flags b =
+    let ok = Array.init n (fun k -> k < n - 1 || b) in
+    Nx.place D.on (Nx.create Nx.bool [| n |] ok)
+  in
   let pass = flags true and fail = flags false in
   {
     wait = (fun w -> wait w x);
@@ -266,8 +317,18 @@ let side (type d) (module D : Nx.Devices with type d = d) =
         check (if fails then fail else pass) [] (fun _ () -> Failed id));
   }
 
-let s_side = side (module S)
-let t_side = side (module T)
+(* S's checks are read at their issue, since its device runs its work as it
+   is submitted. Held's device runs its own queue at times no test chooses, so
+   its checks of one flag stay pending until a wait or an issue reads them,
+   and two readers may meet. *)
+let pending_device, _ =
+  Rig_support.Polled.open_ ~capacity:(1 lsl 16) ~host_visible:false
+    ~runs:`Itself ~waits_on:[ `Host ] "nx-check-pending"
+
+module Held = (val Nx.devices [ pending_device ])
+
+let s_side = side (module S) 3
+let t_side = side (module Held) 1
 
 (* The checks pending on each set, as [(id, fails)] in issue order. *)
 type model = {
@@ -280,7 +341,7 @@ type set = On_s | On_t
 let sets =
   Gen.of_list
     ~pp:(fun ppf s ->
-      Format.pp_print_string ppf (if s = On_s then "S" else "T"))
+      Format.pp_print_string ppf (if s = On_s then "S" else "Held"))
     [ On_s; On_t ]
 
 let side_of = function On_s -> s_side | On_t -> t_side
@@ -289,27 +350,27 @@ let pending md = function On_s -> md.on_s | On_t -> md.on_t
 let set_pending md s l =
   match s with On_s -> md.on_s <- l | On_t -> md.on_t <- l
 
-(* A wait drains its set's checks and raises the earliest failure, the later
-   ones dropped. *)
+(* A wait raises its set's oldest failure and leaves the later ones pending. *)
 let settle md s =
   let rec go = function
-    | [] -> None
+    | [] -> ([], None)
     | (_, false) :: rest ->
         cover "a wait passes a check before a failing one" (rest <> []);
         go rest
     | (id, true) :: rest ->
-        cover "a wait drops a later failure" (List.exists snd rest);
-        Some id
+        cover "a wait leaves a later failure pending" (List.exists snd rest);
+        (rest, Some id)
   in
-  let raised = go (pending md s) in
-  set_pending md s [];
+  let left, raised = go (pending md s) in
+  set_pending md s left;
   raised
 
-(* Drains a set's checks, so that no test sees another's. *)
-let drain side = try side.wait Sync with Failed _ -> ()
+(* Raises every failure pending on a set, so that no test sees another's. *)
+let rec drain side =
+  match side.wait Sync with () -> () | exception Failed _ -> drain side
 
-(* The checks are the domain's, so every session shares one model, which a start
-   empties. A program's end drains what it left. *)
+(* The checks are the process's, so every session shares one model, which a
+   start empties. A program's end drains what it left. *)
 let model = { on_s = []; on_t = [] }
 
 let session =
@@ -317,9 +378,10 @@ let session =
       drain s_side;
       drain t_side)
 
-let pending_checks =
-  stateful ~steps:30
-    "a wait drains its set's checks, raising the earliest failure"
+(* On two domains each wait and issue is explained by some order of the calls:
+   a wait raises a failure whichever domain issued it. *)
+let pending_checks ?count ?domains name =
+  stateful ?count ?domains ~steps:30 name
     [
       command "start"
         (Gen.unit @-> makes session)
@@ -378,7 +440,7 @@ let systhreads () =
   let sets =
     Array.init 6000 (fun _ ->
         let module D = (val Nx.devices [ m 0 ]) in
-        side (module D))
+        side (module D) 3)
   in
   let tick = { Unix.it_interval = 2e-5; it_value = 2e-5 } in
   let still = { Unix.it_interval = 0.; it_value = 0. } in
@@ -440,17 +502,9 @@ let bounded at d =
 let others =
   group "domains, donation and sync"
     [
-      test "a check raises only on the domain that issued it" (fun () ->
-          let raised =
-            Domain.join
-              (Domain.spawn (fun () ->
-                   s_side.issue true 7;
-                   match s_side.wait Sync with
-                   | () -> None
-                   | exception Failed id -> Some id))
-          in
-          equal (option int) (Some 7) raised;
+      test "a wait raises a failure another domain issued" (fun () ->
           Domain.join (Domain.spawn (fun () -> s_side.issue true 8));
+          raises (Failed 8) (fun () -> s_side.wait Sync);
           s_side.wait Sync);
       test "a check keeps its data's elements through a donation" (fun () ->
           let d =
@@ -478,22 +532,31 @@ let others =
           let before = Rig.allocated (m 0) in
           ignore (Nx.neg (Nx.donate d));
           equal int before (Rig.allocated (m 0)));
-      test "a check that raises at issue holds none of its data" (fun () ->
-          let d = Nx.place S.on (Nx.create Nx.float32 [| 1 |] [| 1. |]) in
-          let ok = Nx.place S.on (Nx.create Nx.bool [| 1 |] [| false |]) in
-          check ok [ d ] (fun _ _ -> raise Exit);
-          (* The wait that reads the failing check again ends its hold. *)
-          let drain () = try Nx.sync d with Exit -> () in
-          Fun.protect ~finally:drain (fun () ->
-              let d' = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
-              let d' = Nx.copy (Nx.place S.on d') in
-              let ok' = Nx.create Nx.bool [| 3 |] [| true; true; true |] in
-              let ok' = Nx.place S.on ok' in
-              raises Exit (fun () -> check ok' [ d' ] (fun _ _ -> Failed 0));
-              Rig.free_cache (m 0);
-              let before = Rig.allocated (m 0) in
-              ignore (Nx.neg (Nx.donate d'));
-              equal int before (Rig.allocated (m 0))));
+      cases "a donation of checked data before any wait reuses its memory"
+        ~id:(fun (n, fails) ->
+          let outcome = if fails then "failing" else "passing" in
+          Printf.sprintf "%d flags, %s" n outcome)
+        [ (1, false); (1, true); (3, false); (3, true) ]
+        (fun (n, fails) ->
+          (* A copy owns its memory: a placement onto a software device borrows
+             the host's, which no donation writes. *)
+          let d = Nx.create Nx.float32 [| n |] (Array.init n float_of_int) in
+          let d = Nx.copy (Nx.place S.on d) in
+          let ok = Array.init n (fun k -> not (fails && k = n - 1)) in
+          let ok = Nx.place S.on (Nx.create Nx.bool [| n |] ok) in
+          check ok [ d ] (fun idx (v, ()) -> At (idx, v, 0l, 0.));
+          (* The count includes cached memory, which a refused donation would
+             take unseen. *)
+          Gc.full_major ();
+          Rig.free_cache (m 0);
+          let before = Rig.allocated (m 0) in
+          let negated = Nx.neg (Nx.donate d) in
+          equal ~msg:"bytes allocated" int before (Rig.allocated (m 0));
+          if fails then
+            raises
+              (At ([| n - 1 |], float_of_int (n - 1), 0l, 0.))
+              (fun () -> Nx.sync negated);
+          Nx.sync negated);
       test "checks no wait follows hold bounded memory" (fun () ->
           bounded S.on (m 0));
       test "a check on a device then idle leaves later checks bounded"
@@ -502,6 +565,181 @@ let others =
           let p = Nx.create Nx.float32 [| 4 |] (Array.make 4 0.5) in
           ignore (Nx.Rng.bernoulli (Nx.copy (Nx.place (on 3) p)));
           bounded (on 2) (m 2));
+      test "Nx.check holds none of its data while a failure is pending"
+        (fun () ->
+          let n = 1 lsl 16 in
+          let ok = Array.init n (fun k -> k <> n - 1) in
+          let ok = Nx.place S.on (Nx.create Nx.bool [| n |] ok) in
+          (* The data, a copy that owns its memory, is reachable from no value
+             of the test once [issue] returns. *)
+          let issue () =
+            let d = Nx.create Nx.float32 [| n |] (Array.make n 1.) in
+            let d = Nx.copy (Nx.place S.on d) in
+            Nx.check P.tensor ok d (fun i x -> At (i, Nx.item [] x, 0l, 0.))
+          in
+          let settled () =
+            for _ = 1 to 4 do
+              Gc.full_major ();
+              Rig.free_cache (m 0)
+            done;
+            Rig.allocated (m 0)
+          in
+          let before = settled () in
+          issue ();
+          at_most ~msg:"bytes held past the data's" int
+            ~than:(before + (n * 4 / 2))
+            (settled ());
+          raises (At ([| n - 1 |], 1., 0l, 0.)) (fun () -> Nx.sync ok));
+      test "a read that raises takes its check off" (fun () ->
+          (* A Polled device runs its queue only when the test runs it, so its
+             copy of the flag is still queued when it is lost. *)
+          let lost, _ =
+            Rig_support.Polled.open_ ~capacity:(1 lsl 16) ~host_visible:false
+              ~waits_on:[ `Host ] "nx-check-lost"
+          in
+          let module L = (val Nx.devices [ lost; m 2 ]) in
+          let on d = Nx.Placement.device L.v d in
+          let flags d = Nx.place (on d) (Nx.create Nx.bool [| 1 |] [| false |]) in
+          check (flags lost) [] (fun _ () -> Failed 1);
+          check (flags (m 2)) [] (fun _ () -> Failed 2);
+          let x = Nx.place (on (m 2)) (Nx.create Nx.float32 [| 1 |] [| 0. |]) in
+          Rig.lose lost "lost by the test";
+          raises_match
+            (function Rig.Lost _ -> true | _ -> false)
+            (fun () -> Nx.sync x);
+          raises (Failed 2) (fun () -> Nx.sync x);
+          Nx.sync x);
+      test "an issue whose earlier check raises keeps the new check" (fun () ->
+          let lost, _ =
+            Rig_support.Polled.open_ ~capacity:(1 lsl 16) ~host_visible:false
+              ~waits_on:[ `Host ] "nx-check-lost-at-issue"
+          in
+          let module L = (val Nx.devices [ lost; m 2 ]) in
+          let on d = Nx.Placement.device L.v d in
+          let flags d = Nx.place (on d) (Nx.create Nx.bool [| 1 |] [| false |]) in
+          let x = Nx.place (on (m 2)) (Nx.create Nx.float32 [| 1 |] [| 0. |]) in
+          check (flags lost) [] (fun _ () -> Failed 1);
+          let late = flags (m 2) in
+          Rig.lose lost "lost by the test";
+          raises_match
+            (function Rig.Lost _ -> true | _ -> false)
+            (fun () -> check late [] (fun _ () -> Failed 2));
+          raises (Failed 2) (fun () -> Nx.sync x);
+          Nx.sync x);
+      test "a check kept in place holds its data until it is read" (fun () ->
+          (* The host addresses [a], and [b] copies into it, in a queue the
+             test runs, so the flag and the datum are unwritten at issue. *)
+          let a, _ =
+            Rig_support.Polled.open_ ~capacity:(1 lsl 16) ~host_visible:true
+              ~waits_on:[ `Host ] "nx-check-held"
+          in
+          let b, bq =
+            Rig_support.Polled.open_ ~capacity:(1 lsl 16) ~host_visible:false
+              ~waits_on:[ `Host ] "nx-check-held-from"
+          in
+          let module A = (val Nx.devices ~kernels:(module Nx_cpu) [ a ]) in
+          let module B = (val Nx.devices [ b ]) in
+          let via x = Nx.place A.on (Nx.place B.on x) in
+          let ok = via (Nx.create Nx.bool [| 1 |] [| false |]) in
+          let d = via (Nx.create Nx.float32 [| 1 |] [| 5. |]) in
+          check ok [ d ] (fun idx (v, ()) -> At (idx, v, 0l, 0.));
+          while Rig_support.Polled.run bq > 0 do
+            ()
+          done;
+          let allocates f =
+            Rig.free_cache a;
+            let before = Rig.allocated a in
+            ignore (f ());
+            Rig.allocated a > before
+          in
+          equal ~msg:"a donation before the read allocates" bool true
+            (allocates (fun () -> Nx.neg (Nx.donate d)));
+          raises (At ([| 0 |], 5., 0l, 0.)) (fun () -> Nx.sync ok);
+          equal ~msg:"a donation after the read allocates" bool false
+            (allocates (fun () -> Nx.logical_not (Nx.donate ok))));
+      test "an issue returns while a wait holds its set's claim" (fun () ->
+          (* The wait reads a check whose flag a Polled device copies, and
+             sleeps at the device's gate, holding the claim; the issue on the
+             set's other device, on a thread of its own, returns without
+             reading. Only a failure waits for the bound, then opens the
+             gate. *)
+          let polled, pq =
+            Rig_support.Polled.open_ ~capacity:(1 lsl 16) ~host_visible:false
+              ~waits_on:[ `Host ] "nx-check-claimed"
+          in
+          let module L = (val Nx.devices [ polled; m 2 ]) in
+          let on d = Nx.Placement.device L.v d in
+          let flag d b = Nx.place (on d) (Nx.create Nx.bool [| 1 |] [| b |]) in
+          let x = Nx.place (on (m 2)) (Nx.create Nx.float32 [| 1 |] [| 0. |]) in
+          check (flag polled false) [] (fun _ () -> Failed 1);
+          Rig_support.Polled.gate pq;
+          let raised = ref None and waited = Atomic.make false in
+          let waiter =
+            Thread.create
+              (fun () ->
+                (raised :=
+                   match Nx.sync x with () -> None | exception e -> Some e);
+                Atomic.set waited true)
+              ()
+          in
+          let asleep () = Rig_support.Polled.sleepers pq > 0 in
+          while (not (asleep ())) && not (Atomic.get waited) do
+            Thread.yield ()
+          done;
+          if Atomic.get waited then begin
+            Rig_support.Polled.open_gate pq;
+            fail "the wait returned without reading the pending check"
+          end;
+          let flag = flag (m 2) true and issued = Atomic.make false in
+          let issuer =
+            Thread.create
+              (fun () ->
+                check flag [] (fun _ () -> Failed 2);
+                Atomic.set issued true)
+              ()
+          in
+          let bound = Unix.gettimeofday () +. 5. in
+          while (not (Atomic.get issued)) && Unix.gettimeofday () < bound do
+            Thread.delay 0.001
+          done;
+          let returned = Atomic.get issued in
+          let sleeping = Rig_support.Polled.sleepers pq in
+          Rig_support.Polled.open_gate pq;
+          Thread.join issuer;
+          Thread.join waiter;
+          equal ~msg:"the issue returned while the wait slept" bool true
+            returned;
+          equal ~msg:"the wait slept" int 1 sleeping;
+          (match !raised with
+          | Some (Failed 1) -> ()
+          | Some e -> raise e
+          | None -> fail "the wait raised no failure");
+          Nx.sync x);
+      test "an issue beside a check kept in place waits for nothing"
+        (fun () ->
+          (* As above, and a second check issued while [b]'s copies into the
+             first check's buffers are still queued. A host wait on them would
+             run [b]'s queue, as a wait sleeps, so the queue is how many it
+             left. *)
+          let a, _ =
+            Rig_support.Polled.open_ ~capacity:(1 lsl 16) ~host_visible:true
+              ~waits_on:[ `Host ] "nx-check-held-beside"
+          in
+          let b, bq =
+            Rig_support.Polled.open_ ~capacity:(1 lsl 16) ~host_visible:false
+              ~waits_on:[ `Host ] "nx-check-held-beside-from"
+          in
+          let module A = (val Nx.devices ~kernels:(module Nx_cpu) [ a ]) in
+          let module B = (val Nx.devices [ b ]) in
+          let via x = Nx.place A.on (Nx.place B.on x) in
+          let ok = via (Nx.create Nx.bool [| 1 |] [| false |]) in
+          let d = via (Nx.create Nx.float32 [| 1 |] [| 5. |]) in
+          check ok [ d ] (fun idx (v, ()) -> At (idx, v, 0l, 0.));
+          let written = Nx.place A.on (Nx.create Nx.bool [| 1 |] [| true |]) in
+          let queued = Rig_support.Polled.queued bq in
+          check written [] (fun _ () -> Failed 0);
+          equal ~msg:"copies still queued" int queued
+            (Rig_support.Polled.queued bq));
       test "a print that raises a failed check prints nothing" (fun () ->
           let d = Nx.place S.on (Nx.create Nx.float32 [| 2 |] [| 1.; 2. |]) in
           let ok =
@@ -534,31 +772,24 @@ let others =
                 (fun () -> Nx.sync x)));
     ]
 
-(* Two systhreads of one domain share its pending checks. The order below is
-   held by two semaphores: the issuing thread builds a failure found at its
-   second issue and stops inside [fail], where the other thread waits on the
-   set, then resumes once that wait returns. *)
+(* Two systhreads of one process share its pending checks. The order below is
+   held by two semaphores: the main thread's wait takes the oldest failure and
+   stops inside its [fail], after a read of the value [fail] receives, where
+   the other thread waits on the set, then resumes once that wait returns. *)
 let threads =
   group "from two systhreads"
     [
-      test "a wait while another thread builds a failure raises it, once"
+      test
+        "a wait inside fail raises none, and another thread's raises the next"
         (fun () ->
-          let ok b = Nx.place S.on (Nx.create Nx.bool [| 2 |] [| true; b |]) in
+          let ok =
+            Nx.place S.on (Nx.create Nx.bool [| 2 |] [| true; false |])
+          in
           let data =
             Nx.place S.on (Nx.create Nx.float32 [| 2 |] [| 1.; 2. |])
           in
           let go = Semaphore.Binary.make false in
           let waited = Semaphore.Binary.make false in
-          let builder = Thread.id (Thread.self ()) and stopped = ref false in
-          let failing i x =
-            let e = At (i, Nx.item [] x, 0l, 0.) in
-            if Thread.id (Thread.self ()) = builder && not !stopped then begin
-              stopped := true;
-              Semaphore.Binary.release go;
-              Semaphore.Binary.acquire waited
-            end;
-            e
-          in
           let raised = ref None in
           let other =
             Thread.create
@@ -569,26 +800,22 @@ let threads =
                 Semaphore.Binary.release waited)
               ()
           in
-          Nx.check P.tensor (ok false) data failing;
-          Nx.check P.tensor (ok true) data failing;
-          (* Without the stop the other thread waits after the issues. *)
-          if not !stopped then Semaphore.Binary.release go;
-          Thread.join other;
-          let again =
-            match Nx.sync data with () -> None | exception e -> Some e
+          (* [Nx.item] waits on the set while the failure is built. *)
+          let failing i x =
+            let e = At (i, Nx.item [] x, 0l, 0.) in
+            Semaphore.Binary.release go;
+            Semaphore.Binary.acquire waited;
+            e
           in
-          equal ~msg:"the failure is built at the second issue" bool true
-            !stopped;
+          Nx.check P.tensor ok data failing;
+          check ok [] (fun _ () -> Failed 2);
+          raises (At ([| 1 |], 2., 0l, 0.)) (fun () -> Nx.sync data);
+          Thread.join other;
           (match !raised with
-          | Some (At (i, v, _, _)) ->
-              equal ~msg:"the index" (array int) [| 1 |] i;
-              equal ~msg:"the element" float_exact 2. v
+          | Some (Failed 2) -> ()
           | Some e -> raise e
-          | None -> fail "the other thread's wait passed a failed check");
-          match again with
-          | None -> ()
-          | Some (At _) -> fail "a later wait raised the failure again"
-          | Some e -> raise e);
+          | None -> fail "the other thread's wait passed a pending failure");
+          Nx.sync data);
     ]
 
 (* One array, whose walk passes the array it is given through [f]. *)
@@ -625,11 +852,15 @@ let tried =
             Nx.sync ok;
             C.calls ()
           in
-          let bare = calls (fun () -> Nx.check P.unit ok () pass) in
+          let prim =
+            calls (fun () ->
+                check ok [ fst data; snd data ] (fun _ _ -> Failure "checked"))
+          in
           let full =
             calls (fun () -> Nx.check P.(pair tensor tensor) ok data pass)
           in
-          equal ~msg:"kernel calls with data, as without" int bare full);
+          equal ~msg:"kernel calls of the primitive check, as of Nx.check" int
+            prim full);
       test "raises where the walk computes on a stand-in" (fun () ->
           let ok = Nx.create Nx.bool [| 2 |] [| true; false |] in
           let x = Nx.create Nx.float32 [| 2 |] [| 1.; 2. |] in
@@ -669,8 +900,11 @@ let () =
        [
          first_false;
          host;
+         dtypes_elsewhere;
          elsewhere;
-         pending_checks;
+         pending_checks "a wait raises its set's oldest failure, once";
+         pending_checks ~count:20 ~domains:2
+           "on two domains, a wait raises its set's oldest failure, once";
          at_call;
          threads;
          test "checks issued from two systhreads all raise" systhreads;

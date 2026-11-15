@@ -2203,13 +2203,22 @@ let check_outcome_t =
       | _ -> false)
 
 (* The outcome of [f ()] once its check, here read at a wait, has been read:
-   its value's bits, or its failure. *)
+   its value's bits, or its failure. A later failure still pending on the
+   result's set, an eager second check's, is raised and set aside, so that
+   the next call starts with none. *)
 let waited f =
+  let rec drain y =
+    match Nx.sync y with () -> () | exception Failure _ -> drain y
+  in
   match f () with
   | y -> (
       match Nx.place Nx.Host.on y with
-      | h -> Passed (bits h)
-      | exception Failure s -> Failed s)
+      | h ->
+          drain y;
+          Passed (bits h)
+      | exception Failure s ->
+          drain y;
+          Failed s)
   | exception Failure s -> Failed s
 
 let cut_devices c =
