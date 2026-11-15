@@ -379,7 +379,9 @@ let no_submit () =
    their run's bytes. A large time's fill is timed, at least [large / per_ns]
    ns: one that answered another run's times, or left its fill untimed (0),
    falls short of it, as a fill of 8 groups does unless the machine stalls
-   it. *)
+   it. A program makes at most one call before its branches, a load, and
+   none after: each call is round trips to the agent, and calls on one
+   domain are [times]'s. *)
 let remote =
   fixture
     ~teardown:(fun (j, a) ->
@@ -1003,7 +1005,7 @@ let () =
            "a time of no Submit step on an agent has 0s, its load no memory \
             for them"
            no_submit;
-         stateful ~timeout:60. ~count:30 ~domains:2
+         stateful ~timeout:60. ~count:30 ~steps:1 ~domains:2
            "times of one program on an agent from two domains" timed_commands;
          test ~timeout:60. "an agent refuses a binary that is no program"
            refused_binary;
