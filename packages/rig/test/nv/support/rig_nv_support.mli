@@ -119,7 +119,11 @@ type launches
     banks and ring segments. *)
 
 val launches : Rig_nv.t -> launches
-(** [launches g] is new memory for launches on [g]. *)
+(** [launches g] is new memory for launches on [g]. It is [Mapped] memory
+    where [g] makes it and its BAR has room, as [g] places the launches of
+    {!Rig.Submission.launch} on NVIDIA's kernel driver, and [Pinned] memory
+    otherwise. Work submitted after {!launch}, {!chained}, {!launch_at} or
+    {!segment} returns reads the bytes it wrote. *)
 
 val launch :
   launches -> kernels -> string -> blocks:int -> int list -> int array

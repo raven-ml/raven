@@ -187,8 +187,19 @@ let slots = 256
 
 type launches = { g : N.t; memory : N.region; mutable next : int }
 
+(* In Mapped memory where the device makes it and its BAR has room, so that
+   the GPU reads the launches from its own memory, as it reads those of
+   Rig.Submission.launch on NVIDIA's kernel driver; in Pinned memory
+   otherwise. The host writes Mapped memory through the BAR, so each
+   launch's writes end with the device's flush. *)
 let launches g =
-  { g; memory = require_some (N.alloc g Pinned (slots * slot)); next = 0 }
+  let n = slots * slot in
+  let memory =
+    match N.alloc g Mapped n with
+    | Some r -> r
+    | None -> require_some (N.alloc g Pinned n)
+  in
+  { g; memory; next = 0 }
 let reset l = l.next <- 0
 let free_launches l = N.free l.g l.memory
 
@@ -214,6 +225,7 @@ let segment l (p : A.Template.t) =
   let at = take l + segment_at in
   let words = p.bytes in
   H.write (at_host l at) words;
+  N.flush l.g;
   ring_entry (at_gpu l at) words
 
 (* A launch of [kernel] of [cubin], whose first instruction is at [entry], in
@@ -269,10 +281,13 @@ let schedule ?chain ?(releases = []) g ~addr ~put cubin name entry ~blocks
 let launch_kernel ?chain ?releases l cubin name entry ~blocks args =
   let at = take l in
   let addr = at_gpu l at in
-  ( addr,
+  let ring =
     schedule ?chain ?releases l.g ~addr
       ~put:(fun o s -> H.write (at_host l (at + o)) s)
-      cubin name entry ~blocks args )
+      cubin name entry ~blocks args
+  in
+  N.flush l.g;
+  (addr, ring)
 
 let entry_of k f =
   match Rig.Image.resolve k.image f with
