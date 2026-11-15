@@ -12,7 +12,9 @@
    floats or of MXFP4 weights holds its bound, a routed product of MXFP4 or
    bfloat16 experts of exact sums gives eager's bits in blocks of 4, 48 and
    64 rows and takes a tensor core and its blocks at the edges the lowering
-   states, a narrow float's fma rounds once, a call's check raises at the
+   states, as does a routed pair whose second product reads computed rows,
+   with biases or without, and a routed product of computed rows holds its
+   bound, a narrow float's fma rounds once, a call's check raises at the
    next wait, so the call returns while its work runs, a key split there has
    the host's words, and a program over the GPU and a software device,
    devices of two targets, compiles to eager's values with replicas equal bit
@@ -2174,18 +2176,19 @@ let pp_routed ppf c =
 let routed_inputs = 64
 let routed_outputs = 256
 
-(* The fewest rows a tensor core of [ren] takes of the routed product. *)
-let routed_core ren =
+(* The fewest rows a tensor core of [ren] takes of a routed product of
+   [routed_inputs] by [outputs], {!routed_outputs} by default. *)
+let routed_core ?(outputs = routed_outputs) ren =
   Tolk.Heuristic.core_rows ren ~dtype_in:Tolk.Dtype.Bfloat16
-    ~dtype_out:Tolk.Dtype.Float32 ~outputs:routed_outputs ~block:routed_inputs
+    ~dtype_out:Tolk.Dtype.Float32 ~outputs ~block:routed_inputs
 
-(* The rows of a block of the routed product's [n] rows over [g] groups on
+(* The rows of a block of a routed product's [n] rows over [g] groups on
    [ren], as Rune.Lower_reduce.contract states them: [1] for each row reading
    its own slice. *)
-let routed_block ren weights ~n ~g =
+let routed_block ?outputs ren weights ~n ~g =
   if n < g then 1
   else
-    match routed_core ren with
+    match routed_core ?outputs ren with
     | Some _ when weights = Mxfp4 && n <= 2 * g -> 4
     | Some c -> if 3 * n < c * g then c else max c 64
     | None -> if n < 5 * g then 4 else if n < 16 * g then 8 else 64
@@ -2345,6 +2348,299 @@ let routed_edges =
     (Bfloat16, 127, 48, true);
     (Bfloat16, 128, 64, true);
   ]
+
+(* Routed pairs
+
+   A mixture of experts' block at a prompt of [tokens]: each position's row
+   of [x] through its expert's gate and up projection of [routed_inputs] by
+   twice [pair_half], the expert's bias added by [Nx.take] where [bias], the
+   gate half cut off at 0 and 4, times the linear half cut off at -4 and 4
+   plus 1, then the expert's down projection of [pair_half] by
+   [pair_outputs], its bias added where [bias]. The down projection's rows
+   are so computed, in the positions' order. [crowd] positions name the
+   first expert, more than its block's rows where [crowd] exceeds them, one
+   position names no expert, and the last expert has no position.
+
+   Every sum is exact in float32: [x]'s elements and the biases' are
+   multiples of 1/2 up to 4 in magnitude and a weight's values multiples of
+   1/4 up to 12, so a gate or up sum of 64 products is a multiple of 1/8 below
+   2^12, as is its bfloat16 rounding with its bias added; the gate cut off
+   is at most 4 and the linear half plus 1 at most 5, so their bfloat16
+   product is a multiple of 1/64 of at most 20, and a down sum of 64
+   products a multiple of 1/256 below 2^14. Every other function the block
+   applies is exact (rune.mli's Numerics). Compiled, the block so gives
+   eager's bits however its rows are routed into blocks, and whether or not
+   a block's slots of no position are written. *)
+type pair = { routed : routed; bias : bool; crowd : int }
+
+let pp_pair ppf p =
+  Format.fprintf ppf "%a, %s, %d positions of the first expert" pp_routed
+    p.routed
+    (if p.bias then "biased" else "unbiased")
+    p.crowd
+
+let pair_half = routed_inputs
+let pair_outputs = 64
+
+(* [n] experts' ids drawn from [st]: [crowd] of them, at random positions,
+   name the first expert, one names none, past the last or before the first,
+   and the others are drawn among the experts but the first and the last.
+   [crowd] is below [n]. *)
+let crowded_ids st ~n ~crowd =
+  let ids = Array.init n (fun _ -> 1 + Random.State.int st (experts - 2)) in
+  let order = Array.init n Fun.id in
+  for i = n - 1 downto 1 do
+    let j = Random.State.int st (i + 1) in
+    let t = order.(i) in
+    order.(i) <- order.(j);
+    order.(j) <- t
+  done;
+  ids.(order.(0)) <- (if Random.State.bool st then experts else -1);
+  for i = 1 to crowd do
+    ids.(order.(i)) <- 0
+  done;
+  Array.map Int64.of_int ids
+
+(* The block of the projections [up] and [down], their biases [up_b] and
+   [down_b] added where [bias]. *)
+let pair_block ~bias up down up_b down_b ids x =
+  let biased y b = if bias then Nx.add y (Nx.take ~axis:0 ids b) else y in
+  let h = biased (up ids x) up_b in
+  let half i =
+    Nx.slice [ Nx.A; Nx.A; Nx.R (i * pair_half, (i + 1) * pair_half) ] h
+  in
+  let gate = Nx.clamp ~min:0. ~max:4. (half 0)
+  and linear = Nx.clamp ~min:(-4.) ~max:4. (half 1) in
+  biased (down ids (Nx.mul gate (Nx.add_s linear 1.))) down_b
+
+(* The block [p] eagerly, compiled on the GPU, and the kernels its compiled
+   call built. A GPU whose core does not take both projections from 48 rows
+   skips. *)
+let pair_run p =
+  let c = p.routed in
+  let d, (module S) = on_gpu () in
+  let ren = Tolk_engine.renderer d in
+  if
+    List.exists
+      (fun outputs -> routed_core ~outputs ren <> Some 48)
+      [ 2 * pair_half; pair_outputs ]
+  then skip ~reason:"no bfloat16 tensor core takes blocks from 48 rows" ();
+  let st = Random.State.make [| c.seed |] in
+  let draws n f = Array.init n (fun _ -> f ()) in
+  let halves n lo hi =
+    Nx.create Nx.float32 n
+      (draws (Array.fold_left ( * ) 1 n) (fun () ->
+           Float.of_int (lo + Random.State.int st (hi - lo + 1)) /. 2.))
+  in
+  let x =
+    Nx.cast Nx.bfloat16 (halves [| c.tokens; 1; routed_inputs |] (-8) 8)
+  in
+  let n = c.tokens * per_token in
+  let ids =
+    Nx.create Nx.int64 [| c.tokens; per_token |]
+      (crowded_ids st ~n ~crowd:p.crowd)
+  in
+  let bias outputs = Nx.cast Nx.bfloat16 (halves [| experts; outputs |] (-8) 8) in
+  let up_b = bias (2 * pair_half) and down_b = bias pair_outputs in
+  let compiled f =
+    Tolk.Realize.kernels (fun () ->
+        host
+          (Rune.jit
+             Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+             f (Nx.place S.on ids) (Nx.place S.on x)))
+  in
+  let up_b' = Nx.place S.on up_b and down_b' = Nx.place S.on down_b in
+  match c.weights with
+  | Mxfp4 ->
+      let matrix ~inputs ~outputs =
+        let codes =
+          Nx.create Nx.uint8
+            [| experts; outputs; inputs / 2 |]
+            (draws (experts * outputs * inputs / 2) (fun () ->
+                 Random.State.int st 256))
+        in
+        let scales =
+          Nx.create Nx.uint8
+            [| experts; outputs; inputs / 32 |]
+            (draws (experts * outputs * inputs / 32) (fun () ->
+                 126 + Random.State.int st 3))
+        in
+        Nx_quant.mxfp4 ~scales codes
+      in
+      let up = matrix ~inputs:routed_inputs ~outputs:(2 * pair_half) in
+      let down = matrix ~inputs:pair_half ~outputs:pair_outputs in
+      let block up down =
+        let product w ids x = Nx_quant.apply_experts ~ids w x in
+        pair_block ~bias:p.bias (product up) (product down)
+      in
+      let y, kernels =
+        compiled
+          (block (Nx_quant.place S.on up) (Nx_quant.place S.on down) up_b'
+             down_b')
+      in
+      (block up down up_b down_b ids x, y, kernels)
+  | Bfloat16 ->
+      let matrix ~inputs ~outputs =
+        Nx.cast Nx.bfloat16 (halves [| experts; inputs; outputs |] (-12) 12)
+      in
+      let up = matrix ~inputs:routed_inputs ~outputs:(2 * pair_half) in
+      let down = matrix ~inputs:pair_half ~outputs:pair_outputs in
+      let block up down =
+        let product w ids x = Nx.matmul_segments ids x w in
+        pair_block ~bias:p.bias (product up) (product down)
+      in
+      let y, kernels =
+        compiled (block (Nx.place S.on up) (Nx.place S.on down) up_b' down_b')
+      in
+      (block up down up_b down_b ids x, y, kernels)
+
+let pair_law p =
+  let c = p.routed in
+  let eager, y, kernels = pair_run p in
+  let d, _ = on_gpu () in
+  let block =
+    routed_block (Tolk_engine.renderer d) c.weights
+      ~n:(c.tokens * per_token) ~g:experts
+  in
+  List.iter
+    (fun w -> cover (weights_name w) (c.weights = w))
+    [ Mxfp4; Bfloat16 ];
+  List.iter
+    (fun b -> cover (Printf.sprintf "blocks of %d" b) (block = b))
+    [ 1; 4; 48; 64 ];
+  cover "biased" p.bias;
+  cover "unbiased" (not p.bias);
+  cover "an expert past its block" (block > 1 && p.crowd > block);
+  cover "a product on a tensor core" (List.exists on_core kernels);
+  equal bits_t (bits eager) (bits y)
+
+(* Each block kind from both sides, biased and not: MXFP4 at 7 tokens, a
+   row a slice, at 16, blocks of 4, at 17 and 127, of 48, and at 128, of
+   64; bfloat16 at 7, 8, 127 and 128. The first expert takes a block's rows
+   and one more where the positions hold them. *)
+let pair_examples =
+  List.concat_map
+    (fun bias ->
+      List.mapi
+        (fun seed (weights, tokens, crowd) ->
+          { routed = { weights; tokens; seed }; bias; crowd })
+        [
+          (Mxfp4, 7, 14); (Mxfp4, 16, 5); (Mxfp4, 17, 49); (Mxfp4, 127, 49);
+          (Mxfp4, 128, 65); (Bfloat16, 7, 14); (Bfloat16, 8, 16);
+          (Bfloat16, 127, 49); (Bfloat16, 128, 65);
+        ])
+    [ false; true ]
+
+let pair_gen =
+  let open Gen in
+  let+ routed = routed_gen and+ bias = bool and+ share = int_range 0 100 in
+  { routed; bias; crowd = ((routed.tokens * per_token) - 1) * share / 100 }
+
+(* A routed product whose rows compute, at values of every precision: each
+   position's row is [h] cut off at 0 times [l] plus 1, [h] and [l] bfloat16
+   draws in [\[-1, 1)], through its expert's matrix of random MXFP4 codes or
+   of bfloat16 draws, the first expert crowded as {!pair_examples}' are. The
+   rows are exact (rune.mli's Numerics), so the compiled product reads
+   eager's rows, and each of its elements is within Nx.contract's bound of
+   their exact product, computed at float64 from eager's rows: the float32
+   sum's [γ(β(k)) Σ|a||w|], the float64 reference's own [γ(β(k), 2{^-53})
+   Σ|a||w|], half a bfloat16 ulp at the sum and a subnormal step. *)
+let computed_law c =
+  let d, (module S) = on_gpu () in
+  let ren = Tolk_engine.renderer d in
+  if routed_core ren <> Some 48 then
+    skip ~reason:"no bfloat16 tensor core takes blocks from 48 rows" ();
+  let st = Random.State.make [| c.seed |] in
+  let n = c.tokens * per_token in
+  let block = routed_block ren c.weights ~n ~g:experts in
+  let crowd = if block > 1 then min (n - 1) (block + 1) else n / 2 in
+  let uniform s =
+    let count = Array.fold_left ( * ) 1 s in
+    Nx.cast Nx.bfloat16
+      (Nx.create Nx.float32 s
+         (Array.init count (fun _ -> Random.State.float st 2. -. 1.)))
+  in
+  let h = uniform [| c.tokens; per_token; routed_inputs |] in
+  let l = uniform [| c.tokens; per_token; routed_inputs |] in
+  let ids =
+    Nx.create Nx.int64 [| c.tokens; per_token |] (crowded_ids st ~n ~crowd)
+  in
+  let rows h l = Nx.mul (Nx.clamp ~min:0. h) (Nx.add_s l 1.) in
+  let compiled product =
+    Tolk.Realize.kernels (fun () ->
+        host
+          (Rune.jit
+             Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+             (fun ids h l -> product ids (rows h l))
+             (Nx.place S.on ids) (Nx.place S.on h) (Nx.place S.on l)))
+  in
+  let y, kernels, values =
+    match c.weights with
+    | Mxfp4 ->
+        let codes =
+          Nx.create Nx.uint8
+            [| experts; routed_outputs; routed_inputs / 2 |]
+            (Array.init (experts * routed_outputs * routed_inputs / 2)
+               (fun _ -> Random.State.int st 256))
+        in
+        let scales =
+          Nx.create Nx.uint8
+            [| experts; routed_outputs; routed_inputs / 32 |]
+            (Array.init (experts * routed_outputs * routed_inputs / 32)
+               (fun _ -> 124 + Random.State.int st 7))
+        in
+        let w = Nx_quant.mxfp4 ~scales codes in
+        let w' = Nx_quant.place S.on w in
+        let y, kernels =
+          compiled (fun ids a -> Nx_quant.apply_experts ~ids w' a)
+        in
+        (y, kernels, Nx.matrix_transpose (Nx_quant.dequant Nx.float64 w))
+    | Bfloat16 ->
+        let w = uniform [| experts; routed_inputs; routed_outputs |] in
+        let w' = Nx.place S.on w in
+        let y, kernels = compiled (fun ids a -> Nx.matmul_segments ids a w') in
+        (y, kernels, Nx.cast Nx.float64 w)
+  in
+  let a = Nx.cast Nx.float64 (rows h l) in
+  let exact = Nx.matmul_segments ids a values in
+  let mass = Nx.matmul_segments ids (Nx.abs a) (Nx.abs values) in
+  let format = Nx.Dtype.float_format Nx.bfloat16 in
+  (* [β(k)], Nx_kernel's error bounds' count for [k] terms. *)
+  let k = routed_inputs in
+  let beta = ((5 * min k 256) + 3) / 4 + ((k + 127) / 128) in
+  let reference = float_of_int beta *. 0x1p-53 in
+  let sum = Nx.mul_s mass (gamma beta +. (reference /. (1. -. reference))) in
+  let bound =
+    Nx.add sum
+      (Nx.add_s
+         (Nx.mul_s (Nx.add (Nx.abs exact) sum) (format.epsilon /. 2.))
+         (format.min_normal *. format.epsilon))
+  in
+  List.iter
+    (fun w -> cover (weights_name w) (c.weights = w))
+    [ Mxfp4; Bfloat16 ];
+  List.iter
+    (fun b -> cover (Printf.sprintf "blocks of %d" b) (block = b))
+    [ 1; 4; 48; 64 ];
+  cover "a product on a tensor core" (List.exists on_core kernels);
+  let y = Nx.to_array (Nx.cast Nx.float64 y) in
+  let exact = Nx.to_array exact and bound = Nx.to_array bound in
+  Array.iteri
+    (fun i e ->
+      less
+        ~msg:(Printf.sprintf "element %d" i)
+        float_exact ~than:bound.(i)
+        (Float.abs (y.(i) -. e)))
+    exact
+
+(* Each block kind from both sides, as {!pair_examples}. *)
+let computed_examples =
+  List.mapi
+    (fun seed (weights, tokens) -> { weights; tokens; seed })
+    [
+      (Mxfp4, 7); (Mxfp4, 16); (Mxfp4, 17); (Mxfp4, 127); (Mxfp4, 128);
+      (Bfloat16, 7); (Bfloat16, 8); (Bfloat16, 127); (Bfloat16, 128);
+    ]
 
 (* Quantised products
 
@@ -2768,6 +3064,14 @@ let () =
                  Printf.sprintf "%s, %d tokens, blocks of %d" (weights_name w)
                    t b)
                routed_edges routed_edge;
+             prop ~count:2 ~examples:pair_examples
+               "a routed pair of exact sums gives eager's bits, biased or not"
+               (Gen.with_pp pp_pair pair_gen)
+               pair_law;
+             prop ~count:2 ~examples:computed_examples
+               "a routed product of computed rows holds its bound"
+               (Gen.with_pp pp_routed routed_gen)
+               computed_law;
            ];
          (* Each case compiles programs of its own shapes. The examples reach
             every cover, each mask and each dtype, on every run; four draws

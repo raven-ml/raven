@@ -1937,6 +1937,43 @@ let experts_mxfp4_call tokens =
         fun () -> ignore (synced (f ids x)));
   }
 
+(* A mixture of experts' block at a prompt of [tokens], gpt-oss-20b's MXFP4
+   experts with an activation without a transcendental: each token's row
+   through 4 of 32 experts' gate and up projections, [2880] to [5760], the
+   gate half cut off at 0 times the linear half plus 1, and the experts' down
+   projections back to [2880]. The down projection's rows so compute. *)
+let experts_relu_call tokens =
+  {
+    at =
+      (fun at ->
+        let k = 2880 in
+        let matrix n =
+          Nx_quant.place at
+            (Nx_quant.mxfp4
+               ~scales:(Nx.full Nx.uint8 [| 32; n; k / 32 |] 127)
+               (Nx.full Nx.uint8 [| 32; n; k / 2 |] 0x5a))
+        in
+        let up = matrix (2 * k) and down = matrix k in
+        let ids =
+          Nx.place at
+            (Nx.init Nx.int64 [| tokens; 4 |] (fun i ->
+                 Int64.of_int (((i.(0) * 7) + (i.(1) * 8)) mod 32)))
+        in
+        let x =
+          Nx.place at
+            (Nx.cast Nx.bfloat16
+               (Nx.Rng.uniform ~key:(Nx.Rng.key 96) f32 [| tokens; 1; k |]))
+        in
+        let block ids x =
+          let h = Nx_quant.apply_experts ~ids up x in
+          let half i = Nx.slice [ Nx.A; Nx.A; Nx.R (i * k, (i + 1) * k) ] h in
+          let a = Nx.mul (Nx.clamp ~min:0. (half 0)) (Nx.add_s (half 1) 1.) in
+          Nx_quant.apply_experts ~ids down a
+        in
+        let f = Rune.jit (pair_fn ()) block in
+        fun () -> ignore (synced (f ids x)));
+  }
+
 let gpu_rows g =
   if not (opens g) then []
   else
@@ -2067,6 +2104,10 @@ let gpu_rows g =
       (* 18 tokens, 2.25 rows an expert, past which MXFP4 experts take a
          tensor core in blocks of 48 where blocks of 4 streamed. *)
       on_gpu g "experts-mxfp4-18x4of32-2880x5760" (experts_mxfp4_call 18);
+      (* 32 tokens, 4 rows an expert, on tensor cores in blocks of 48: the
+         down projection's computed rows are stored in their own order, which
+         its tile gathers as it stages them. *)
+      on_gpu g "experts-relu-mxfp4-32x4of32-2880" (experts_relu_call 32);
       (* gpt-oss's router at a decode step and at a prompt of 512 tokens: the
          first 4 of 32 logits of each token. *)
       on_gpu g "top-k-4-of-1x32" (top_k_at ~k:4 [| 1; 32 |]);

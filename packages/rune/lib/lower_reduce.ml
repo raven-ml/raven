@@ -847,6 +847,30 @@ let block_rows ~core ~decoded ~n ~g =
     | Some c -> if core_held * n < c * g then c else max c warp_rows
     | None -> if n < 5 * g then 4 else if n < 16 * g then 8 else 64
 
+(* Whether a movement of [u], down to its base, expands it: a row read again
+   at several positions, as one token's row by each of its experts. *)
+let rec expands u =
+  Op.Set.mem (Ops.op u) Op.Set.movement
+  && (Ops.op u = Op.Expand || expands (Ops.nth u 0))
+
+(* [stored x] is the operand [x] with each part that computes elementwise,
+   and that no movement expands, stored at its own elements. A core's tile
+   gathers a block's rows through the row map as it stages them
+   ({!Tolk.Stage}), from storage alone: a computed operand is otherwise
+   stored at the slots, padding included, or computed in the tile unstaged.
+   Its [n] rows are at most the slots. A part that expands is read in
+   place, where storing it would copy each row once per position; a part
+   that computes over an expanded value, as [f (broadcast x)], is stored
+   at every position, still at most the slots. *)
+let stored x =
+  let store u =
+    if expands u || not (Op.Set.mem (Ops.op (Ops.base u)) Op.Set.elementwise)
+    then u
+    else Ops.contiguous u
+  in
+  let parts = List.map store (Arith.parts x.dtype x.node) in
+  { x with node = Arith.of_parts x.dtype parts }
+
 (* [core_in acc x y] is the dtype a tensor core multiplies the rows [x] and
    the slices [y] in, if one may: bfloat16 for unscaled bfloat16 rows against
    codes whose scaled values a bfloat16 holds ({!entered}), else an unscaled
@@ -870,7 +894,9 @@ let core_in acc x y =
    [owner[σ / c]], and [init] at its index, so that [init] enters the sum
    once; its output is stored, and each row reads its slot's. A slot of no
    index reads [a] as zeros against a real slice, so that it may compute
-   [0 · ∞]; no row reads it. A row in no group takes the no-product rule. *)
+   [0 · ∞]; no row reads it. Where a core takes the blocks, [a] is first
+   {!stored}, and a slot of no index is not stored. A row in no group takes
+   the no-product rule. *)
 let rows ~renderer ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
   let shape x = extents (List.hd (Arith.parts x.dtype x.node)) in
   let sa = shape a and sb = shape b in
@@ -923,6 +949,17 @@ let rows ~renderer ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
     else
       let r = route o ~g ~c in
       let blocks = r.blocks in
+      (* On blocks a core takes, [a]'s computed rows are stored in their own
+         order and the core's tile gathers them ({!stored}). With the slots
+         of no index unstored below, gpt-oss-20b's experts layer took 8-11%
+         less at 17 to 128 tokens and 5.5% at 512 on an RTX 5000 Ada than
+         with its activation stored at the slots, and with an activation
+         without a transcendental, computed in the tile unstaged, 33-42%
+         less. *)
+      let cored =
+        match Lazy.force core with Some k -> c >= k | None -> false
+      in
+      let a = if cored then stored a else a in
       (* [a]'s rows at their slots, [a_axis] cut into the blocks and their
          rows, and [b]'s slices at the blocks' groups: a batch pair of the
          blocks. *)
@@ -954,6 +991,18 @@ let rows ~renderer ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
       let s = extents (List.hd (Arith.parts out y)) in
       let beta = lay (Shape.arange ~dtype:Int64 blocks) [ j ] s in
       let held = Ops.lt beta (lay used r_sides s) in
+      (* No row reads a slot of no index either: on a core's blocks its store
+         is skipped, the slot's row [n]. A streamed block's guarded store
+         took gpt-oss-20b's gate and up projection 20 µs more at 12 tokens,
+         past the padding it saved. *)
+      let held =
+        if not cored then held
+        else
+          let bs = List.filteri (fun i _ -> i < nb) (extents r.row) in
+          let row = Shape.reshape r.row (dims (bs @ [ blocks; c ])) in
+          let row = lay row (r_sides @ [ j; j + 1 ]) s in
+          Ops.bitwise_and held (Ops.lt row (int row n))
+      in
       let held u = Ops.where held u (Shape.const_like u `Invalid) in
       let y = Arith.of_parts out (List.map held (Arith.parts out y)) in
       let merge u =

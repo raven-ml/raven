@@ -1104,7 +1104,10 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   times the mean rows a group stays under `r`, then 64; elsewhere 4 below 5
   rows a group, 8 below 16 and 64 from 16. A block reads its group's slice,
   its rows at their slots, a slot of none reading `0`, and each row reads
-  its slot's stored output. A row reads its
+  its slot's stored output. Where a core takes the blocks, a row operand
+  that computes elementwise, and that no movement expands, is stored first
+  in its own row order, which the core's tile gathers as it stages it, and
+  a slot of none is not stored. A row reads its
   own group's slice alone, its bits exact, a NaN's payload and `-0.`
   included. A `Contracting` pair is routed alike and cuts each group into
   blocks of `c` indices from its first, each position a load at its index,
@@ -1137,7 +1140,9 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   values`, `› a group's weight gradient keeps its bits whatever the other
   groups' counts`, `› experts applied give eager's values`, `Rune.jit on
   a GPU › products › a routed product of exact sums gives eager's bits`,
-  `› a routed product takes a tensor core and its blocks at their edges`.
+  `› a routed product takes a tensor core and its blocks at their edges`,
+  `› a routed pair of exact sums gives eager's bits, biased or not`, `› a
+  routed product of computed rows holds its bound`.
 
 ### L8. Eigenvalues by two-sided Jacobi rotations
 

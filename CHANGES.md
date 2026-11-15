@@ -434,6 +434,13 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled routed product (`Nx.matmul_segments`, `Nx_quant.apply_experts`)
+  on a GPU's tensor core stores rows it computes, such as an activation
+  between two experts' projections, in their own order, which the core's tile
+  gathers, and skips the stores of its padding: on an RTX 5000 Ada
+  gpt-oss-20b's experts layer takes 8-11% less at 17-128 tokens and 5.5% at
+  512, its 512-token prefill 3.6%, and a layer whose activation computes no
+  transcendental 33-42% less. Such a layer's sums may take another order.
 - A `Rune.jit` result that a kernel of its own computes, as `Nx.attention`'s,
   is the storage that kernel wrote, no longer copied once more before the call
   returns: bfloat16 attention over 4096 x 4 heads of 64 rows of 256 takes
