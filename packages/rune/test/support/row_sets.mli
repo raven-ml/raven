@@ -42,7 +42,8 @@ val examples : t list
 (** [examples] holds a case of each regime of a GPU's scatter of rows: a
     walk outside the election's bounds, elections of 16 to 4096 rows, of
     repeating positions with one outside the axis and [p > 1], and written
-    positions of a float and of a complex number. *)
+    positions of a float and of a complex number, and of a float at 878
+    positions, whose fills are 878 stores of one state. *)
 
 val law : Tolk.Renderer.t -> (module Nx.Devices) -> t -> unit
 (** [law ren s c] checks that a compiled call on [s]'s first device, whose

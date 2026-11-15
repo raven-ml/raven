@@ -365,6 +365,15 @@ let past_a_hundred =
     bound = false;
   }
 
+(* A program of 512 one-element pieces, each a member of one workgroup: as
+   one launch, Metal builds its pipeline in minutes. *)
+let past_five_hundred =
+  {
+    past_a_hundred with
+    width = 1;
+    pieces = List.init 512 (fun _ -> { kind = Elementwise; rows = 1; k = 1 });
+  }
+
 (* Cases *)
 
 (* The sources of the programs of the launches of [big]'s schedule on
@@ -1072,8 +1081,9 @@ let on_a_gpu kind =
       (* Each case compiles a program of its own, whose pipelines a GPU
          builds anew, so the host draws the breadth. A GPU takes one draw
          beside a fixed case past a hundred pieces, which reaches the cover
-         on every seed. *)
-      prop ~count:1 ~examples:[ past_a_hundred ]
+         on every seed, and one of 512, which a launch holds only where the
+         GPU's compiler builds that many members in time. *)
+      prop ~count:1 ~examples:[ past_a_hundred; past_five_hundred ]
         "the stores of one state write each piece's values" gen_many
         (writes_pieces kind);
     ]

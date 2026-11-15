@@ -8962,11 +8962,11 @@ reason and its pins.
   kernel, so that every thread reaches each barrier of the member it runs
   (D285); Metal declares workgroup memory only in a kernel function, so there
   such a member runs alone (`Renderer.t.launch_locals`). A launch holds at
-  most `Renderer.t.launch_members` members (CUDA's 64, NVRTC's time a member
-  rising past it) and `Renderer.t.launch_args` arguments (CUDA's 512, the 4 KiB
-  of parameters a kernel takes), and with `MAX_KERNEL_BUFFERS` at `n` above 0
-  at most `n` buffers. Every subset of a launch is a launch, so splitting one
-  is always legal.
+  most `Renderer.t.launch_members` members (CUDA's 64 and Metal's 40, the
+  compiler's time a member rising past each) and `Renderer.t.launch_args`
+  arguments (CUDA's 512, the 4 KiB of parameters a kernel takes), and with
+  `MAX_KERNEL_BUFFERS` at `n` above 0 at most `n` buffers. Every subset of a
+  launch is a launch, so splitting one is always legal.
 
   A launch's members have their own kernels, heuristics and gates: a member
   reading shared storage reads it as a parameter passed once; no arithmetic is
@@ -8983,8 +8983,19 @@ reason and its pins.
   members in 0.27 s; NVRTC's time a member falls to its least at 64 members and
   grows past them, and past its member limit a CUDA launch runs as several,
   alike chunks one program: 256 alike pieces compile cold in 0.11 s on CUDA and
-  run as 4 launches in 18.6-18.9 µs against 347-352 apart. On the host a launch
-  compiles cold in 0.46 s against 0.09 s apart and costs nothing at run time.
+  run as 4 launches in 18.6-18.9 µs against 347-352 apart. A member of a
+  power-of-two count of workgroups, laid at a multiple of it, is selected by
+  an equality on the workgroup index, which Metal's front end threads into a
+  switch after each call: 874 switches of 23,261 cases at 878 one-workgroup
+  members, none for members of 3, 5, 6 or 12 workgroups. On an M1 Max under
+  macOS 26.3, Metal's time a member of one or two workgroups is then least at
+  40 members (4.6-5.3 ms, load 4-6) and grows past them, 48-117 ms at 128,
+  and 878 such members did not build in 4 minutes. Pinned by `test_launch`'s
+  case of 512 one-element pieces on Metal and rune's Set of rows at 878
+  written positions (`Row_sets.examples`). For members whose count of
+  workgroups is no power of two the cap costs launches and saves no compile
+  time. On the host a launch compiles cold in 0.46 s against 0.09 s apart and
+  costs nothing at run time.
 - **Reason:** (d). On CUDA a launch costs about 1.3-2 µs, so a kernel's calls
   are its cost. fudge's RTX 5000 Ada, against the prior two passes (`contract`
   and fused `merge_linear`), four interleaved runs each, GPU shared in some:

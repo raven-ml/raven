@@ -1308,6 +1308,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- On Metal, a program of a few hundred small stores into one buffer, such as
+  an `Nx.set` at 878 listed positions under `Rune.jit`, no longer takes
+  minutes to compile: a launch there holds at most 40 members
+  (`Cstyle.metal`).
 - `Rangeify.get_kernel_graph` inlines a value of more than three buffers
   into readers stored as they are, where it is computed once an element
   outside reductions: gpt-oss-20b's MoE block at 512 prefill tokens drops

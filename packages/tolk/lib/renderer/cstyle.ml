@@ -2352,9 +2352,21 @@ let metal_with compiler (target : Helpers.Target.t) =
   (* Fitted on an M1 Max (Apple7, 32 GPU cores): a float32 product of 1024
      squared ran 1.18x faster keeping 32768 threads after its core's splits
      than 16384, and a half vector times 16384 by 8192 1.74x faster
-     streaming with 16384 threads than 32768. *)
-  Renderer.v ~name:"MetalRenderer" ~launch_locals:false ~core_threads:32768
-    ~stream_threads:16384
+     streaming with 16384 threads than 32768.
+
+     A launch selects a member of a power-of-two count of workgroups, laid
+     at a multiple of it, by an equality on the workgroup index, which
+     Metal's front end threads into a switch after each call: 874 switches
+     of 23,261 cases at 878 one-workgroup members, none for members of 3,
+     5, 6 or 12 workgroups. Under macOS 26.3 the time Metal then takes to
+     build the pipeline, a member, is least at 40 members (4.6-5.3 ms, 0.2 s
+     in all) and grows past them: 5.9-7.0 ms at 48, 7.5-10.3 at 64, 23-36 at
+     96 and 48-117 at 128, for one and two workgroups a member, three cold
+     builds each at load 4-6. 128 members of 4 or 8 workgroups took
+     6.2-6.4 s, of 3 or 6 workgroups 0.2 s, and 878 one-workgroup members
+     did not build in 4 minutes. *)
+  Renderer.v ~name:"MetalRenderer" ~launch_members:40 ~launch_locals:false
+    ~core_threads:32768 ~stream_threads:16384
     ~tensor_cores:(if from 7 then Tc.metal else [])
     ~extra_matcher:metal_extra_matcher ~packed_args:true
     ~code_for_op:metal_lang.code_for_op

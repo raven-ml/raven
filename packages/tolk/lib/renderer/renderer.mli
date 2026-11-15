@@ -333,7 +333,10 @@ val v :
     - [per_byte_first] is [64], [sm_89]'s crossover, [core_threads] is
       [16384], [stream_threads] [32768] and [local_workgroups] [256],
       [sm_89]'s, which every target takes until its own are measured;
-    - [launch_members] is [max_int], until a target's compiler is measured;
+    - [launch_members] is [max_int], until a target's compiler is measured:
+      the time a member NVRTC and Metal take to build a launch is least at
+      64 and 40 members, which CUDA's and Metal's renderers hold; HIP's
+      compiler is not measured;
     - [launch_args] is [max_int];
     - [launch_locals] is [true];
     - [packed_args] is [false];

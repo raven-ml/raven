@@ -173,6 +173,7 @@ let examples =
         (Any Nx.bfloat16, Trailing, 1, 1024, 4096, 32);
         (Any Nx.bfloat16, Written, 2, 40, 33, 4);
         (Any Nx.complex64, Written, 1, 20, 17, 3);
+        (Any Nx.bfloat16, Written, 3, 883, 878, 3);
       ]
 
 (* The law *)
