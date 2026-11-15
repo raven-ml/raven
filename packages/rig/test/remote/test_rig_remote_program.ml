@@ -381,7 +381,9 @@ let no_submit () =
    falls short of it, as a fill of 8 groups does unless the machine stalls
    it. A program makes at most one call before its branches, a load, and
    none after: each call is round trips to the agent, and calls on one
-   domain are [times]'s. *)
+   domain are [times]'s. Each run loads its own program, so no program
+   carries state from one run to the next. About half the cases load
+   nothing and make no call, so 60 cases time about 30 programs. *)
 let remote =
   fixture
     ~teardown:(fun (j, a) ->
@@ -1005,7 +1007,8 @@ let () =
            "a time of no Submit step on an agent has 0s, its load no memory \
             for them"
            no_submit;
-         stateful ~timeout:60. ~count:30 ~steps:1 ~domains:2
+         (* A hang fails by name, with room left in the watchdog's 100 s. *)
+         stateful ~timeout:60. ~count:60 ~steps:1 ~domains:2
            "times of one program on an agent from two domains" timed_commands;
          test ~timeout:60. "an agent refuses a binary that is no program"
            refused_binary;
