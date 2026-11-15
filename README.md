@@ -92,6 +92,10 @@ Add to your `dune` file:
 
 See the [installation guide](https://raven-ml.dev/docs/manual/installation/) for system dependencies and editor setup.
 
+## Use of AI
+
+Raven is developed with AI coding agents: the maintainers guide, design and review, and, since around mid-2026, agents write almost all of the code. Contributions made with AI tools are welcome, as long as you understand and have reviewed what you submit. See [AI.md](AI.md) for how the project is built and what we expect from contributions.
+
 ## Support
 
 Building a scientific computing ecosystem takes sustained effort. Sponsorships help us ship distributed training, better developer tooling, and production deployment as static binaries.
