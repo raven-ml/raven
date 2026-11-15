@@ -434,6 +434,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A Ctrl-C ends a `Rune.jit` call on a Metal device while Metal compiles
+  its pipelines; before, the call ignored it until every build finished,
+  over four minutes for a program of 878 launches.
 - A `Rune.jit` call over several devices allocates 4 fewer words for each
   buffer that one device borrows of another's for the call.
 - A compiled routed product (`Nx.matmul_segments`, `Nx_quant.apply_experts`)
