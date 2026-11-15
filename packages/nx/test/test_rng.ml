@@ -2989,7 +2989,7 @@ let observed_names f =
 (* The last value {!kill} killed, as messages name it: [float64 [2]]. *)
 let killed = ref ""
 
-(* [x] dead: donated to [Nx.copy], which consumed it. *)
+(* [x] dead: donated. *)
 let kill x =
   let s = List.map string_of_int (Array.to_list (Nx.shape x)) in
   killed :=
@@ -3108,7 +3108,7 @@ let names =
           each_sampler (fun by keying operands make under ->
               if operands > 0 then
                 let draw = make ~dead:true in
-                let want = by ^ ": " ^ !killed ^ " was donated to Nx.copy" in
+                let want = by ^ ": " ^ !killed ^ " was donated" in
                 raises ~msg:(by ^ ", " ^ keying) (Invalid_argument want)
                   (fun () -> under draw)));
       test "a draw refused for a dead operand takes no key from its scope"
@@ -3121,7 +3121,7 @@ let names =
                 let draw = make ~dead:true in
                 let after () =
                   raises_match ~msg:name
-                    (Exn.invalid_arg ~sub:"donated to Nx.copy") (fun () ->
+                    (Exn.invalid_arg ~sub:" was donated") (fun () ->
                       draw None);
                   next ()
                 in

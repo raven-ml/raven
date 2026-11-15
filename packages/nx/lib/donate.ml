@@ -9,17 +9,36 @@ module L = Nx_array.Layout
 
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
-let died_to ~by x earlier =
-  invalid_argf "%s: %a was donated to %s" by Prim.pp_value x earlier
+(* What a donated value's word says: a use of it raises "was donated". *)
+let donated = Value.Died "donated"
+
+(* Sets the word [w] of [x] from [Live] to [donated], or raises naming [by]
+   where [x] is dead, on any domain: a compare-and-set, so that of two
+   donations of one value on two domains one raises. *)
+let rec kill ~by x w =
+  match Atomic.Loc.get w with
+  | Value.Died _ -> Prim.alive ~by x
+  | Value.Live ->
+      if not (Atomic.Loc.compare_and_set w Value.Live donated) then
+        kill ~by x w
 
 let donate (type v s d) ~by (x : (v, s, d) Value.t) : (v, s, d) Value.t =
-  Prim.alive ~by x;
   match x with
-  | Value.Array _ | Value.Shards _ -> Value.Handle { donor = x; over = x }
-  | Value.Handle _ | Value.Traced _ -> x
+  | Value.Array r ->
+      kill ~by x [%atomic.loc r.dead];
+      Value.Handle { over = x }
+  | Value.Shards r ->
+      kill ~by x [%atomic.loc r.dead];
+      Value.Handle { over = x }
+  | Value.Traced r ->
+      kill ~by x [%atomic.loc r.dead];
+      Value.Traced { r with dead = Value.Live }
+  | Value.Handle _ ->
+      Prim.alive ~by x;
+      x
 
 (* A handle's arrays as a live value, which the operation reads: a value of
-   its own, since [over] may be the donor, whose word a claim sets. *)
+   its own, since [over] may be the donated value, whose word is dead. *)
 let live (type v s d) (x : (v, s, d) Value.t) : (v, s, d) Value.t =
   match x with
   | Value.Handle { over; _ } ->
@@ -47,27 +66,9 @@ let read ~by x =
   Prim.alive ~by x;
   lent x
 
-(* Donors *)
-
-(* Whether [x] and [y] are one value. Donors are mutable blocks, each made
-   once, so physical equality tells them; their types are an operand's,
-   whose dtype and brand are existential, so it is taken on their
-   representations. *)
-let same x y = Obj.repr x == Obj.repr y
-
-(* Whether [y] is the donor of the handle [h]. *)
-let donates (Value.Any h) y =
-  match h with
-  | Value.Handle { donor; _ } -> same donor y
-  | Value.Array _ | Value.Shards _ | Value.Traced _ -> false
-
 (* Claims
 
-   A consumer claims each handle's donor in operand order, setting the
-   donor's word from [Live] to its death, for good; a donor that died first,
-   on any domain, raises naming its consumer. Two consumers racing for one
-   donor is a misuse: one of them raises, possibly both, and a donor a loser
-   claimed before it raised stays dead. [handles] holds every handle among
+   A claim reads its consumer's operands. [handles] holds every handle among
    [operands], in their order, [taken] the live buffers {!reuse} gave results,
    which a consumer that raises leaves to no result, and [ended] guards the
    steps after {!consumed}. *)
@@ -79,51 +80,12 @@ type 'd claim = {
   mutable ended : bool;
 }
 
-(* The word of a donor, an [Array] or [Shards]. *)
-let word (type v s d) (donor : (v, s, d) Value.t) : Value.death Atomic.Loc.t =
-  match donor with
-  | Value.Array r -> [%atomic.loc r.dead]
-  | Value.Shards r -> [%atomic.loc r.dead]
-  | Value.Handle _ | Value.Traced _ ->
-      invalid_arg "Donate.claim: a donor is an array or shards"
-
-(* Sets the donor word [w] of the handle [x] from [Live] to [died], or raises
-   naming the consumer it died to first, on any domain. The compare-and-set
-   fails only where another consumer set the word since it was read, which
-   the next read finds. *)
-let rec kill ~by x w died =
-  match Atomic.Loc.get w with
-  | Value.Died earlier -> died_to ~by x earlier
-  | Value.Live ->
-      if not (Atomic.Loc.compare_and_set w Value.Live died) then
-        kill ~by x w died
-
-let claim ~by xs =
-  let handles = List.filter (fun (Value.Any x) -> is_handle x) xs in
-  let died = Value.Died by in
-  (* Each handle kills its donor unless a handle before it has that donor:
-     two handles of one donor are read as a handle beside its donor is, and
-     the donor dies once, at the first. *)
-  let rec kills seen = function
-    | [] -> ()
-    | (Value.Any x as h) :: rest ->
-        (match x with
-        | Value.Handle { donor; _ } ->
-            if not (List.exists (fun s -> donates s donor) seen) then
-              kill ~by x (word donor) died
-        | Value.Array _ | Value.Shards _ | Value.Traced _ ->
-            ());
-        kills (h :: seen) rest
-  in
-  kills [] handles;
-  { by; operands = Array.of_list xs; handles; taken = []; ended = false }
-
 (* Raises once [c] ended, whose handles' memory may then be freed. *)
 let unended c =
   if c.ended then invalid_argf "%s: the consumer ended its handles" c.by
 
-(* A donor beside a handle stays dead. What reads the operation after the
-   claim reads its operands' arrays alone. *)
+(* What reads the operation after the claim reads its handles' arrays as
+   live values. *)
 let called c op =
   unended c;
   Prim.map live op
@@ -305,15 +267,17 @@ let consumed c =
 
 let with_consumer ~by xs f =
   List.iter (fun (Value.Any x) -> Prim.alive ~by x) xs;
-  let c = claim ~by xs in
+  let handles = List.filter (fun (Value.Any x) -> is_handle x) xs in
+  let operands = Array.of_list xs in
+  let c = { by; operands; handles; taken = []; ended = false } in
   match f c with
   | y ->
       consumed c;
       y
   | exception e ->
-      (* The claim ends on a raise too: its donors are dead, so nothing else
-         would return their memory. No result holds the memory a reuse took
-         for one, which is freed unless a later consumption killed it. *)
+      (* The claim ends on a raise too, since nothing else would return its
+         handles' memory. No result holds the memory a reuse took for one,
+         which is freed unless a later consumption killed it. *)
       let bt = Printexc.get_raw_backtrace () in
       consumed c;
       let why = "donated to " ^ by in
@@ -334,9 +298,9 @@ let arrays c i =
   Prim.any (Prim.arrays x)
 
 (* Operand [i] as a value over its arrays, which owns their memory where it
-   is a handle and no other operand's arrays share that memory, as two
-   handles of one donor do: a donation of it may then write there. Any
-   other is shared, so that no donation writes what another operand
+   is a handle and no other operand's arrays share that memory, as a handle
+   and one a movement passed on do: a donation of it may then write there.
+   Any other is shared, so that no donation writes what another operand
    reads. *)
 let value (type v s d) (c : d claim) i (dt : (v, s) D.t) : (v, s, d) Value.t =
   let (Value.Any x) = bytes_at c i in

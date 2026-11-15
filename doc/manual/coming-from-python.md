@@ -175,7 +175,7 @@ let double = Rune.jit' (fun x -> Nx.mul_s x 2.)
 let y = double x (* a Gpu.d value *)
 ```
 
-PyTorch updates a tensor in place, as `x.add_(1)` does. Nx never changes a value. A program that wants a result to reuse a value's memory gives the value up at the call. `Nx.donate x`, or `Nx.Ptree.donate` for a structure, lets the operation or compiled call that reads it write its result there, and the donated value is dead afterwards ([nx.mli, Donation](../../packages/nx/lib/nx.mli)).
+PyTorch updates a tensor in place, as `x.add_(1)` does. Nx never changes a value. A program that wants a result to reuse a value's memory gives the value up at the call. `Nx.donate x`, or `Nx.Ptree.donate` for a structure, lets the operation or compiled call that reads it write its result there, and the donated value is dead from the donation on ([nx.mli, Donation](../../packages/nx/lib/nx.mli)).
 
 ### DataFrames
 

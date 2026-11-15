@@ -551,8 +551,9 @@ let law_nan_ranges (Nan_ranges c) =
   in
   equal (array (option (array int))) expected actual
 
-(* A donated operand: the ranges compute as from the undonated one, and the
-   donor lives, since reduce_ranges reads it in many operations. *)
+(* A donated operand: the ranges compute as from the undonated one, the donor
+   is dead, and a later use of the handle reads its elements or names the
+   call. *)
 let test_range_donated () =
   let lo = Nx.create Nx.int64 [| 2 |] [| 0L; 1L |] in
   let hi = Nx.create Nx.int64 [| 2 |] [| 3L; 4L |] in
@@ -565,9 +566,16 @@ let test_range_donated () =
       in
       let plain = Nx.to_array (Nx.reduce_ranges c ~lo ~hi (fresh ())) in
       let x = fresh () in
-      let donated = Nx.to_array (Nx.reduce_ranges c ~lo ~hi (Nx.donate x)) in
+      let h = Nx.donate x in
+      let donated = Nx.to_array (Nx.reduce_ranges c ~lo ~hi h) in
       equal (array float_exact) plain donated;
-      equal ~msg:"the donor lives" (array float_exact) xs (Nx.to_array x))
+      raises (Invalid_argument "Nx.to_array: float32 [4] was donated")
+        (fun () -> Nx.to_array x);
+      match Nx.to_array h with
+      | ys -> equal ~msg:"the handle" (array float_exact) xs ys
+      | exception Invalid_argument m ->
+          equal ~msg:"the handle" string
+            "Nx.to_array: float32 [4] was donated to Nx.reduce_ranges" m)
     [ Nx.Add; Max; Min; Set ]
 
 (* Ranges over devices. [x], of three or four columns, lies whole on each
@@ -745,7 +753,8 @@ let ranges =
       test "narrow floats sum at float32" test_range_narrow;
       test "complex extremes in the dtype's order" test_range_complex;
       test "misuse raises" test_range_errors;
-      test "a donated operand computes and lives" test_range_donated;
+      test "a donated operand computes, its handle read as it was"
+        test_range_donated;
       prop
         "Add, Max and Min raise with their rows cut, naming the placement \
          that keeps the other cuts, and Set gives the host's bits anywhere"
@@ -929,16 +938,16 @@ let test_map_errors () =
         (split (Nx.zeros Nx.float32 [| 2; 2 |])))
 
 (* [f] is the user's function: a refusal of an nx function it calls reaches
-   the caller as raised, and what it donates dies naming the function it
-   called. *)
+   the caller as raised, and the handle of what it donates dies naming the
+   function it called. *)
 let test_map_callback () =
   let ids = Nx.create Nx.int64 [| 2 |] [| 0L; 1L |] in
   let x = Nx.zeros Nx.float32 [| 2; 2 |] in
   invalid ~by:"Nx.reshape" (fun () ->
       Nx.map_segments ~segments:2 ids (fun _ r -> Nx.reshape [| 3 |] r) x);
-  let t = Nx.create Nx.float32 [| 2 |] [| 1.; 2. |] in
+  let t = Nx.donate (Nx.create Nx.float32 [| 2 |] [| 1.; 2. |]) in
   let f _ r =
-    ignore (Nx.neg (Nx.donate t));
+    ignore (Nx.neg t);
     r
   in
   ignore (Nx.map_segments ~segments:2 ids f x);
@@ -1263,8 +1272,8 @@ let matmuls =
       test "misuse raises" test_matmul_errors;
     ]
 
-(* A donated operand that another operation consumed is dead: each function
-   names itself, the one the user called, whatever it computes through. *)
+(* A donated operand is dead: each function names itself, the one the user
+   called, whatever it computes through. *)
 let dead () =
   let x = Nx.create Nx.float32 [| 2 |] [| 1.; 2. |] in
   let _ = Nx.neg (Nx.donate x) in

@@ -1133,7 +1133,7 @@ and call_parts st i (body : Program.t) args site ~seeds =
          JAX's partial evaluation forwards a known input: the known part would
          return a copy of it. Where the known part consumes a donated argument,
          it returns every residual: no value tells which other argument shares
-         the donated one's donor, which dies with it. *)
+         the donated one's memory, which the known part may take. *)
       let consumes = Array.exists Fun.id kdonated in
       let forwarded =
         Array.map (fun r -> if consumes then None else index_of r kvs) res

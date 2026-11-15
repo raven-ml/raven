@@ -679,12 +679,11 @@ let views =
           let x =
             Nx.add (fst (operand [| 2; 3 |])) (Nx.zeros Nx.int32 [| 2; 3 |])
           in
-          let y =
-            Nx.set Nx.[ I 0; A ] (Nx.zeros Nx.int32 [| 3 |]) (Nx.donate x)
-          in
+          let h = Nx.donate x in
+          let y = Nx.set Nx.[ I 0; A ] (Nx.zeros Nx.int32 [| 3 |]) h in
           equal (array int32) [| 0l; 0l; 0l; 4l; 5l; 6l |] (elements y);
           raises_match (Exn.invalid_arg ~sub:"was donated to Nx.set") (fun () ->
-              Nx.copy x));
+              Nx.copy h));
       test "a decode step writes one row of a cache" (fun () ->
           let cache = Nx.zeros Nx.float32 [| 1; 2; 4; 3 |] in
           let row =

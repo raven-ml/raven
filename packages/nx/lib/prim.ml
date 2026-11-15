@@ -33,11 +33,27 @@ let rec own_layout : type v s d. (v, s, d) t -> L.t = function
 
 let rank x = L.rank (own_layout x)
 
+(* Whether [a]'s memory was taken or freed, and why. *)
+let buffer_death a =
+  match Rig.Buffer.dead (Nx_array.buffer a) with
+  | Some why -> Died why
+  | None -> Live
+
+let rec shards_death arrays i =
+  if i = Iarray.length arrays then Live
+  else
+    match buffer_death (Iarray.get arrays i) with
+    | Live -> shards_death arrays (i + 1)
+    | Died _ as d -> d
+
+(* A handle lives while its memory does. *)
 let rec death : type v s d. (v, s, d) t -> death = function
   | Array r -> r.dead
   | Shards r -> r.dead
-  | Handle { donor; _ } -> death donor
-  | Traced _ -> Live
+  | Handle { over = Array { a; _ } } -> buffer_death a
+  | Handle { over = Shards { arrays; _ } } -> shards_death arrays 0
+  | Handle { over } -> death over
+  | Traced r -> r.dead
 
 let rec arrays : type v s d. (v, s, d) t -> (v, s) Nx_array.t iarray =
   function
@@ -130,7 +146,7 @@ let pp_value ppf x =
 let alive ~by x =
   match death x with
   | Live -> ()
-  | Died why -> invalid_argf "%s: %a was donated to %s" by pp_value x why
+  | Died why -> invalid_argf "%s: %a was %s" by pp_value x why
 
 (* Each refusal of [Layout.fits] in its own words: they are rare, so the cheap
    predicate runs first. *)

@@ -74,7 +74,7 @@
       the stage goes on, and each stage output lists its warnings and those of
       the stages before it ({!Drawing.warnings}). {!resolve} and {!draw} also
       raise the [Invalid_argument] that reading a tensor raises, for a traced
-      tensor or a dead one, whose donation an operation consumed ({!Nx.donate}),
+      tensor or a dead one, given up by its donation ({!Nx.donate}),
       with its message prefixed by the id of the mark.
 
     {1:data Data and rows}

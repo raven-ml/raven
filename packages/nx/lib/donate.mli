@@ -3,39 +3,35 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Donation: handles over a donor's memory, and the one protocol by which an
-    operation or a function of several operations consumes them.
+(** Donation: handles over a donated value's memory, and the one protocol by
+    which an operation or a function of several operations consumes them.
 
-    A {e donor} is the [Array] or [Shards] value that {!donate} gives up. A
-    {e handle} is a value over a donor's memory that one consumer reads
-    ({!Value.Handle}).
+    {!donate} ends the value it donates, for good, and gives a {e handle}, a
+    value over the same memory that one consumer reads ({!Value.Handle}).
 
-    A {e consumer} is the function the deaths name: an eager operation, which
-    [Eval.run] computes, or a function of several operations. Each consumes
-    the handles among its operands through {!with_consumer}, by these steps:
-    + {!with_consumer} checks that each operand lives. An operation checks
-      its rule and its route before it calls {!with_consumer}, so that one
-      they refuse kills nothing. A function of several operations checks
-      nothing more, since its operations run in an order it fixes.
-    + It {e claims} the handles, which kills their donors for good, naming
-      the consumer.
-    + The consumer reads each handle as its arrays ({!called}, {!arrays}). A
-      donor beside one stays dead, and the consumer reads it by its arrays
-      alone.
+    A {e consumer} is an eager operation, which [Eval.run] computes, or a
+    function of several operations. Each consumes the handles among its
+    operands through {!with_consumer}, by these steps:
+    + {!with_consumer} checks that each operand lives, and {e claims} the
+      handles: the consumer reads each as its arrays ({!called},
+      {!arrays}).
     + {!reuse} gives a result the memory of a claimed handle that nothing
       else reads.
     + The claim {e ends} when the consumer returns or raises, which frees the
       memory no other value reads and no result holds.
 
-    A donor dies once, at the first claim of a handle of it ({!Value.death}),
-    and stays dead whatever its consumer does after. Any other reader, a
-    function of several operations that consumes nothing or an
-    interpretation, reads a handle as its arrays, shared ({!lent}), and kills
-    nothing.
+    A handle lives while its memory does ({!Prim.death}): once a consumer has
+    taken or freed it, every handle over it is dead, naming that consumer.
+    [Nx] promises no more than that a later use of a handle reads the donated
+    elements or raises: whether the memory is still there is this module's
+    and rig's.
+    Any other reader, a function of several operations that consumes nothing
+    or an interpretation, reads a handle as its arrays, shared ({!lent}), so
+    that no consumer takes that memory.
 
-    A consumer claims its handles in operand order. Racing consumers on
-    several domains for one donor is a misuse, after which any of them may
-    have raised and any of the donors they claimed may be dead.
+    Two consumers on several domains that read one handle race for its
+    memory through rig's take, which one of them wins: the other reads the
+    elements as they were or raises.
 
     This module lies above {!Prim}; [Eval], [Nx] and the modules [Nx] is
     made of call it. *)
@@ -43,13 +39,12 @@
 (** {1:handles Handles} *)
 
 val donate : by:string -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
-(** [donate ~by x] is a handle over [x]'s memory that one consumer reads
-    ({!Value.Handle}): [x] lives until a consumer claims a handle of it, then
-    dies naming the consumer, which reads [x] as it was when called. An
+(** [donate ~by x] ends [x], whose word it sets to [Died "donated"], and is a
+    handle over [x]'s memory that one consumer reads ({!Value.Handle}). An
     operation may write its first result into the memory ({!reuse}). A
-    movement passes a new handle of [x] on instead and kills nothing: the
-    handle it read and the one it passed on die with [x]. A handle or a
-    traced [x] is [x].
+    movement passes a new handle over [x]'s memory on instead. For a traced
+    [x], it is a traced value of [x]'s form and payload; for a handle, the
+    handle.
 
     Raises [Invalid_argument] naming [by] if [x] is dead. *)
 
@@ -64,8 +59,7 @@ val is_handle : ('v, 's, 'd) Value.t -> bool
 val lent : ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
 (** [lent x] is the arrays of a handle as a live value, which its reader may
     keep or return: their memory is shared ({!Rig.Buffer.share}), so no later
-    donation writes there, and the handle's donor lives on. Any other value is
-    itself.
+    donation writes there. Any other value is itself.
 
     Raises [Invalid_argument] as {!Rig.Buffer.share} does if a consumer took
     the memory meanwhile. *)
@@ -85,7 +79,7 @@ val read : by:string -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
     value reads, every live shard of a value or none, and that no {!reuse}
     took, is consumed and freed, so that it returns to its device once the
     work on it is done; its buffers stay dead naming the consumer. Memory
-    that several handles lie over, as two handles of one donor may, is
+    that several handles lie over, as a handle and one a movement passed on, is
     consumed once. Shards that share memory with one another, as borrows of
     one allocation do, are read by each other and consumed by none. Memory a
     {!reuse} took is the result's where the consumer returns. Where it
@@ -98,23 +92,18 @@ type 'd claim
 
 val with_consumer : by:string -> 'd Value.any list -> ('d claim -> 'a) -> 'a
 (** [with_consumer ~by xs f] checks that each of [xs] lives, claims every
-    handle among them for their consumer [by], in their order, each killing
-    its donor naming [by], and is [f c] for that claim [c], which ends when
-    [f] returns or raises. Two handles of one donor (the same handle twice,
-    two donations of one value, a handle and one a movement passed on) are
-    read as the donor beside its handle is, and the donor dies once, at the
-    first. [f] must not keep an array it reads by [c], or a value over one,
-    past its return, but those {!take} gave where it returns.
+    handle among them for their consumer [by], and is [f c] for that claim
+    [c], which ends when [f] returns or raises. [f] must not keep an array it
+    reads by [c], or a value over one, past its return, but those {!take}
+    gave where it returns.
 
-    Raises [Invalid_argument] naming [by] and the earlier consumer for a dead
-    value, claiming nothing, and for a donor that died to another domain's
-    consumer while it claimed, leaving dead the donors it claimed before.
+    Raises [Invalid_argument] naming [by] for a dead value, claiming nothing.
     Raises what [f] raises. *)
 
 val called : 'd claim -> 'r Value.prim -> 'r Value.prim
 (** [called c op] is [op] with each handle as its arrays, a live value
-    ({!live}), and any other operand as it is, a dead donor beside a handle
-    included. [op]'s operands must be those [c] claimed. *)
+    ({!live}), and any other operand as it is. [op]'s operands must be those
+    [c] claimed. *)
 
 val arrays : 'd claim -> int -> Nx_array.any array
 (** [arrays c i] is operand [i]'s arrays, one per device, shared with nothing.
@@ -166,8 +155,8 @@ val value :
 (** [value c i dt] is operand [i] as a value of its own over its arrays:
     owning their memory, so that a donation of it may write there, where
     the operand is a handle [c] claimed and no other operand's arrays share
-    that memory, as two handles of one donor do; shared otherwise, so that
-    no donation writes what another operand reads.
+    that memory, as a handle and one a movement passed on may; shared
+    otherwise, so that no donation writes what another operand reads.
 
     Raises [Invalid_argument] naming [c]'s consumer for a traced operand, a
     position no operand has, once [c] has ended, and if [dt] is not the

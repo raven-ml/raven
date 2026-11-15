@@ -24,10 +24,10 @@ type ('v, 's, +'d) payload = ..
 
 (** {1:values Values} *)
 
-type death = Live | Died of string  (** Given to the function named. *)
-(** Whether a value lives. Values are made [Live]. The consumer of a
-    donation sets its donor's word to [Died], for good, by one
-    compare-and-set from [Live] ({!Donate.with_consumer}). *)
+type death = Live | Died of string  (** What the value was, as ["donated"]. *)
+(** Whether a value lives. Values are made [Live]. {!Donate.donate} sets the
+    word of the value it donates to [Died], for good, by one compare-and-set
+    from [Live]. *)
 
 type ('v, 's, 'd) t =
   | Array of {
@@ -46,19 +46,16 @@ type ('v, 's, 'd) t =
           [Grid.devices (Devices.grid at)]'s order, its window of the value
           ({!Grid.window}). *)
   | Handle of {
-      donor : ('v, 's, 'd) t;
-          (** The [Array] or [Shards] donated, never a handle. Two handles of
-              one donor, and a donor beside its handle, are told by [==] on
-              it. *)
       over : ('v, 's, 'd) t;
-          (** The [Array] or [Shards] the handle reads: [donor] as donated, or
-              the result of the movement that passed the handle on, a view of
-              the donor's memory or a copy of it. *)
+          (** The [Array] or [Shards] the handle reads: the value donated,
+              dead from the donation, or the result of the movement that
+              passed the handle on, a view of the donated memory or a copy of
+              it. *)
     }
       (** A handle one operation reads. Its placement, dtype, shape and arrays
-          are [over]'s, and its death is its donor's: it lives while its donor
-          does, as does every other handle of the donor, those a movement
-          passed on included. *)
+          are [over]'s, whatever [over]'s word says. It lives while its memory
+          does: once a consumer has taken or freed that memory, it is dead
+          with the reason rig gives ({!Rig.Buffer.dead}). *)
   | Traced of {
       form : ('v, 's, 'd) form;
       owner : interpretation;
@@ -69,6 +66,7 @@ type ('v, 's, 'd) t =
       twin : ('v, 's, 'd) t option;
           (** A value of [form] that a read reads while [owner] is around
               it. *)
+      mutable dead : death; [@atomic]
     }  (** An interpretation's stand-in: its form, and what [owner] keeps. *)
 
 and ('v, 's, 'd) form = {

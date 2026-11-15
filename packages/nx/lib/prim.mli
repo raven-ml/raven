@@ -40,13 +40,16 @@ val of_arrays :
     otherwise. Nothing checks the windows. *)
 
 val death : ('v, 's, 'd) t -> death
-(** [death x] is whether [x] lives: for a handle, its donor's death. It
-    allocates nothing. *)
+(** [death x] is whether [x] lives: for a handle, whether its memory does,
+    [Died why] once a consumer has taken or freed it, [why] the reason rig
+    gives ({!Rig.Buffer.dead}). It allocates nothing for a live value. *)
 
 val alive : by:string -> ('v, 's, 'd) t -> unit
 (** [alive ~by x] raises [Invalid_argument] naming [by], [x] as {!pp_value}
-    prints it and the function [x] was donated to, if [x] died, as
-    [Nx.add: float32 [2; 2] was donated to Nx.mul]. *)
+    prints it and what [x] was, if [x] died, as
+    [Nx.add: float32 [2; 2] was donated] for a donated value and
+    [Nx.add: float32 [2; 2] was donated to Nx.mul] for a handle whose memory
+    [Nx.mul] took. *)
 
 val arrays : ('v, 's, 'd) t -> ('v, 's) Nx_array.t iarray
 (** [arrays x] is [x]'s arrays, one per device of its placement, whether [x]

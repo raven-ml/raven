@@ -2961,6 +2961,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- **Breaking:** `Nx.donate x` ends `x` at the call: a later use raises, where
+  whether it did depended on what read the handle. A handle is for one use,
+  and `add (donate x) x` raises.
 - `Nx.Prim.partition` takes a `Check`, where it raised, and computes it as a
   check of one flag on one device, which the engine's `run` receives: an `Arg`
   reduction of the flags gives the flag and a position, the first false where

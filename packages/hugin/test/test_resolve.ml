@@ -396,7 +396,7 @@ let traced () =
     (fun _ ~by:_ _ -> invalid_arg "Test.trace: no operation reaches the rule")
     (fun i -> Nx.Prim.traced i (Nx.Prim.form (f64 [| 0.; 1. |])) Outside)
 
-(* A tensor whose donation an operation consumed: it is dead. *)
+(* A donated tensor: it is dead. *)
 let dead () =
   let x = f64 [| 0.; 1. |] in
   ignore (Nx.neg (Nx.donate x));
@@ -405,7 +405,7 @@ let dead () =
 let reads =
   cases "a tensor that cannot be read raises naming its mark"
     ~id:(fun (n, _, _) -> n)
-    [ ("traced", traced, "Test.trace"); ("dead", dead, "Nx.neg") ]
+    [ ("traced", traced, "Test.trace"); ("dead", dead, "was donated") ]
     (fun (_, x, sub) ->
       let t = dot ~x:(num (x ())) ~y:(const 0.5) () |> name "t" in
       fails_naming [ "resolve: t: "; sub ] (fun () ->

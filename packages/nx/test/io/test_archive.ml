@@ -217,14 +217,14 @@ let ownership =
           let module M = (val Nx.devices [ device ]) in
           let blocks, scale = model_value in
           let like = (List.map (Nx.place M.on) blocks, Nx.place M.on scale) in
-          (* Donated host entries, which a placement consumes: the scale, read
-             last, has another shape. *)
-          let block () = Nx.full Nx.float32 [| 2 |] 1. in
+          (* Donated host entries, which a placement consumes, and a failed
+             read leaves: the scale, read last, has another shape. *)
+          let block () = Nx.donate (Nx.full Nx.float32 [| 2 |] 1.) in
           let entries b0 b1 scale =
             Archive.of_list
               [
-                ("blocks.0", Nx.P (Nx.donate b0));
-                ("blocks.1", Nx.P (Nx.donate b1));
+                ("blocks.0", Nx.P b0);
+                ("blocks.1", Nx.P b1);
                 ("scale", Nx.P scale);
               ]
           in
@@ -249,10 +249,16 @@ let ownership =
             Archive.to_value (model_on ()) ~like
               (entries b0 b1 (Nx.full Nx.float64 [||] 0.5))
           in
-          raises_match (Exn.invalid_arg ~sub:"was donated to") (fun () ->
-              Nx.to_array b0);
           equal (array float_exact) [| 1.; 1. |]
-            (Nx.to_array (List.nth (fst x) 1)));
+            (Nx.to_array (List.nth (fst x) 1));
+          (* The placement consumed the entry's handle: a later use reads
+             its elements or raises naming the call that took them. *)
+          match Nx.to_array b0 with
+          | xs ->
+              equal ~msg:"a placed entry" (array float_exact) [| 1.; 1. |] xs
+          | exception (Invalid_argument _ as e) ->
+              raises_match (Exn.invalid_arg ~sub:"was donated to") (fun () ->
+                  raise e));
     ]
 
 (* An absent option: drawn, some seeds reach none in a hundred values. *)

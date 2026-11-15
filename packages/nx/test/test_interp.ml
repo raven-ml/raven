@@ -124,19 +124,28 @@ let test_running () =
           Nx.Prim.interpret ~name:"test.own" Values own (fun i ->
               ignore (Nx.add (tag i x) x))))
 
-(* A rule reads an operation as it was called: the donor beside its own
-   handle, as in [add (donate x) x], is read as eager execution reads it, and
-   lives: an interpretation kills nothing. *)
+(* A rule reads an operation as it was called: one handle at two operands,
+   as in [add h h], is read as eager execution reads it. A donor beside its
+   own handle raises at the rule's operation. *)
 let test_donor_beside () =
   let x = x3 () in
-  let y =
+  let h = Nx.donate x in
+  let under f =
     Nx.Prim.interpret ~name:"test.extent" Extent
       (fun _ ~by op -> Nx.Prim.eval ~by op)
-      (fun _ -> Nx.add (Nx.donate x) x)
+      (fun _ -> f ())
   in
-  equal (array float_exact) [| 2.; 4.; 6. |] (elements y);
-  equal ~msg:"the donor lives" (array float_exact) [| 1.; 2.; 3. |]
-    (elements (Nx.copy x))
+  equal (array float_exact) [| 2.; 4.; 6. |]
+    (elements (under (fun () -> Nx.add h h)));
+  (* A later use of the handle reads its elements or names the call. *)
+  (match elements (Nx.copy h) with
+  | xs -> equal ~msg:"the handle" (array float_exact) [| 1.; 2.; 3. |] xs
+  | exception Invalid_argument m ->
+      equal ~msg:"the handle" string
+        "Nx.copy: float32 [3] was donated to Nx.add" m);
+  let x = x3 () in
+  raises (Invalid_argument "Nx.add: float32 [3] was donated") (fun () ->
+      under (fun () -> Nx.add (Nx.donate x) x))
 
 (* The [by]s a rule receives while [f] runs under it, each once, in order. *)
 let observed_names f =
@@ -213,25 +222,29 @@ let test_raised_backtrace () =
            (fun _ ~by:_ _ -> raise_exit ())
            (fun _ -> Nx.neg x)))
 
-(* What a rule donates dies naming the function the rule called, inside a
-   composite too. *)
+(* What a rule donates dies at the donation, and the handle it consumes
+   names the function the rule called, inside a composite too. *)
 let test_rule_donates () =
-  let own = vec f64 [| 1.; 2. |] and spent = ref false in
+  (* A copy, so that the value owns its memory. *)
+  let own = Nx.copy (vec f64 [| 1.; 2. |]) and spent = ref None in
   Nx.Prim.interpret ~name:"test.donor" Extent
     (fun _ ~by op ->
-      if not !spent then begin
-        spent := true;
-        ignore (Nx.neg (Nx.donate own))
+      if Option.is_none !spent then begin
+        let h = Nx.donate own in
+        spent := Some h;
+        ignore (Nx.neg h)
       end;
       Nx.Prim.eval ~by op)
     (fun _ -> ignore (Nx.trace (square64 ())));
+  raises (Invalid_argument "Nx.copy: float64 [2] was donated") (fun () ->
+      Nx.copy own);
   invalid ~sub:"Nx.copy: float64 [2] was donated to Nx.neg" (fun () ->
-      Nx.copy own)
+      Nx.copy (Option.get !spent))
 
 (* A rule inside [trace] performs an effect whose handler resumes the rest of
    the call on a second domain, as a work-stealing scheduler does. A plain
    operation on the first domain afterwards is named by its own function: the
-   [by] a rule receives, and its donor's death where it computes now. *)
+   [by] a rule receives, and its handle's death where it computes now. *)
 type _ Effect.t += Hop : unit Effect.t
 
 let test_names_after_hop () =
@@ -262,12 +275,12 @@ let test_names_after_hop () =
           Nx.Prim.eval ~by op)
         (fun _ -> ignore (Nx.trace (square64 ()))));
   equal ~msg:"hopped" bool true !hopped;
-  let x = vec f64 [| 1.; 2. |] in
   equal ~msg:"a rule's by" names [ "Nx.neg" ]
-    (observed_names (fun () -> Nx.neg (Nx.donate x)));
-  ignore (Nx.neg (Nx.donate x));
+    (observed_names (fun () -> Nx.neg (Nx.donate (vec f64 [| 1.; 2. |]))));
+  let h = Nx.donate (Nx.copy (vec f64 [| 1.; 2. |])) in
+  ignore (Nx.neg h);
   invalid ~sub:"Nx.copy: float64 [2] was donated to Nx.neg" (fun () ->
-      Nx.copy x)
+      Nx.copy h)
 
 (* One systhread holds a composite, blocked in its rule, while another of the
    same domain runs a plain operation: the [by] each operation's rule receives
@@ -436,7 +449,7 @@ let rule =
         test_extent_reach;
       test "the innermost that reaches an operation receives it" test_innermost;
       test "a rule computes, and refuses its own values" test_running;
-      test "a rule reads the donor beside its handle" test_donor_beside;
+      test "a rule reads one handle twice" test_donor_beside;
       test "a rule receives the function the user called" test_by_called;
       test "a rule's refusal keeps its name inside a composite"
         test_refusal_named;
@@ -444,7 +457,8 @@ let rule =
         test_rule_calls_named;
       test "what the function and the rule raise keep their backtrace"
         test_raised_backtrace;
-      test "what a rule donates dies naming the rule's call" test_rule_donates;
+      test "what a rule donates dies, its handle naming the rule's call"
+        test_rule_donates;
       test "a plain operation after a call resumed on another domain"
         test_names_after_hop;
       test "a plain operation beside another systhread's composite"
@@ -1904,7 +1918,7 @@ let test_dispatch_words () =
       let t = tag p x in
       let copy () = ignore (Sys.opaque_identity (Nx.copy t)) in
       Windtrap.expect (Printf.sprintf "%.0f words" (words_per copy))
-      @@ __POS_OF__ {| 55 words |})
+      @@ __POS_OF__ {| 56 words |})
 
 let allocation =
   group "allocation"

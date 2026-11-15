@@ -1305,23 +1305,31 @@ let donation =
           equal ~msg:"every array donated" (list bool) [ true; true ]
             (List.rev
                (P.fold linear (fun _ a acc -> Nx.Prim.donated a :: acc) d []));
-          ignore (Nx.add d.w d.w);
-          invalid ~by:"Nx.copy" (fun () -> Nx.copy x.w);
-          equal ~msg:"another array lives" (array float_exact) [| 3. |]
-            (Nx.to_array (Option.get x.b)));
+          raises (Invalid_argument "Nx.copy: float32 [2] was donated")
+            (fun () -> Nx.copy x.w);
+          raises (Invalid_argument "Nx.copy: float32 [1] was donated")
+            (fun () -> Nx.copy (Option.get x.b));
+          equal ~msg:"a handle" (array float_exact) [| 2.; 4. |]
+            (Nx.to_array (Nx.add d.w d.w)));
+      test "a value at two paths takes one handle" (fun () ->
+          let w = f32 [| 1.; 2. |] in
+          let x = { w; b = Some w } in
+          let d = P.donate linear x in
+          equal ~msg:"one handle" bool true (d.w == Option.get d.b);
+          raises (Invalid_argument "Nx.copy: float32 [2] was donated")
+            (fun () -> Nx.copy w));
       test "a dead array raises naming its path" (fun () ->
           let x = { w = f32 [| 1.; 2. |]; b = None } in
           ignore (Nx.copy (Nx.donate x.w));
           raises
-            (Invalid_argument
-               "Nx.Ptree.donate: w: float32 [2] was donated to Nx.copy")
+            (Invalid_argument "Nx.Ptree.donate: w: float32 [2] was donated")
             (fun () -> P.donate linear x));
       test "a dead array at the root raises naming the root" (fun () ->
           let x = f32 [| 1. |] in
           ignore (Nx.copy (Nx.donate x));
           raises
             (Invalid_argument
-               "Nx.Ptree.donate: the root: float32 [1] was donated to Nx.copy")
+               "Nx.Ptree.donate: the root: float32 [1] was donated")
             (fun () -> P.donate P.tensor x));
       test "a structure of no array is itself" (fun () ->
           equal unit () (P.donate P.unit ()));

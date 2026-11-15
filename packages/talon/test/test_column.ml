@@ -1569,9 +1569,11 @@ let nulls_cases =
 
 (* Donation *)
 
-(* [consume x] donates [x] to an addition, whose consumer may write its sum over
-   [x]'s memory. *)
-let consume x = ignore (Nx.add (Nx.donate x) x)
+(* [consume x] donates [x] to an addition of it to itself, whose consumer may
+   write its sum over [x]'s memory. *)
+let consume x =
+  let h = Nx.donate x in
+  ignore (Nx.add h h)
 let floats () = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |]
 let bits () = Nx.cast Nx.bit (Nx.create Nx.bool [| 3 |] [| true; false; true |])
 let expected = [| Some 1.; None; Some 3. |]

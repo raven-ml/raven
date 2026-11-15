@@ -17,7 +17,7 @@
     the memory of a handle that may hold it and lies where the route puts the
     results ({!Donate.reuse}), and one that raises frees that memory when its
     claim ends. A movement of a handle claims nothing.
-    It passes on a handle of the same donor over the moved arrays. A [Place]
+    It passes on a handle over the moved arrays. A [Place]
     onto the host from another set first waits on that set ({!Check.wait}),
     then places the value ({!Exec.place}) and waits for the copies that
     wrote its arrays ({!Rig.Buffer.wait}). A [Check] on the host raises at
@@ -43,8 +43,8 @@
     it [false]. Where that handler is absent, either answer is [false].
 
     Each donated handle reaches a rule as its arrays, lent ({!Donate.lent}),
-    and its donor lives on: a rule kills nothing. Other operands reach the
-    rule as they are.
+    whose memory is shared from then on. Other operands reach the rule as
+    they are.
 
     One atomic counts the live [Extent] interpretations of the process, on
     every domain: a continuation may resume on any domain, so no domain's own

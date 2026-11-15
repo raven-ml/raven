@@ -554,7 +554,7 @@ let next_key () : Devices.host key =
             Devices.pp_placement (Prim.placement root))
 
 (* The key a sampler [by] draws at [p] from: [key], lent so that the draw
-   kills no donation of it ({!Donate.read}), or the scope's next key: its
+   consumes no handle of it ({!Donate.read}), or the scope's next key: its
    words, read on the host, where {!on_host} holds, and otherwise the key
    itself, which lies on [p]'s set. *)
 let resolve ~by p = function

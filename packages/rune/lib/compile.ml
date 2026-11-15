@@ -3594,15 +3594,13 @@ let took arrays ys =
       over dead b && not (over (fun x -> not (dead x)) b))
     ys
 
-(* [p] evaluated over the arrays of a consumer of [args]: the donors it claimed
-   are dead, so the arrays of every argument stand for it, a donor beside
-   its handle included. Each argument is a value of its own over them,
-   owning the memory of a donated one that no other argument shares, which
-   goes to its last reader as a donation that may write over it. The first
-   result written so over a donated argument's memory is the call's, and
-   every other result is copied. A value over an argument's memory shares
-   it for good, so a later donation of that argument computes into fresh
-   memory: the cost of this path. *)
+(* [p] evaluated over the arrays of a consumer of [args]. Each argument is a
+   value of its own over them, owning the memory of a donated one that no
+   other argument shares, which goes to its last reader as a donation that
+   may write over it. The first result written so over a donated argument's
+   memory is the call's, and every other result is copied. A value over an
+   argument's memory shares it for good, so a later donation of that
+   argument computes into fresh memory: the cost of this path. *)
 let evaluated ~fresh p args c =
   let donated = Array.map (fun (V x) -> Nx.Prim.donated x) args in
   let values = Array.mapi (fun k _ -> value_of c k) args in

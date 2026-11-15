@@ -531,6 +531,8 @@ let item i x =
       (Array.of_list i) r (D.name (dtype x)) pp_shape s;
   let index = Array.make r 0 in
   item_index by s index 0 i;
+  (* A donated value raises before its twin is read. *)
+  Prim.alive ~by x;
   let live = readable ~by (Eval.read_through x) in
   (* A sum's element is its terms' sum: the sum closes where it lies, as a
      read closes it, and the element is read from the closed value. *)
@@ -566,8 +568,8 @@ let item i x =
 let same_shape = Prim.same_shape
 
 (* Raises if one of [xs] is dead: the operands of a function of several
-   operations, checked before any runs, since an earlier one may consume a
-   donation, and {!Donate.lent} revives a dead handle. *)
+   operations, checked before any runs, so that the call raises naming the
+   dead one before it computes. *)
 let alive_all ~by xs = List.iter (fun (Value.Any x) -> Prim.alive ~by x) xs
 
 (* A call that broadcasts its operands, then reads the broadcasts in one
@@ -7128,8 +7130,7 @@ let pp ppf x =
         note (fun ppf -> Format.fprintf ppf " traced by %s" owner.name)
     | Value.Array _ | Value.Shards _ | Value.Handle _ -> (
         match Prim.death x with
-        | Value.Died f ->
-            note (fun ppf -> Format.fprintf ppf ", donated to %s" f)
+        | Value.Died why -> note (fun ppf -> Format.fprintf ppf ", %s" why)
         | Value.Live -> (
             let lost d why =
               note (fun ppf ->
@@ -7172,14 +7173,25 @@ type ('v, 's, 'd) tensor = ('v, 's, 'd) t
 module Ptree = struct
   include Ptree
 
-  (* A leaf's path is formatted only where the leaf is dead. *)
-  let donate s x =
+  (* One handle per value: a value at several leaves, dead from its first,
+     is given the handle that leaf took, found by physical equality. A
+     leaf's path is formatted only where the leaf is dead and no earlier leaf
+     held it. *)
+  let donate (type d) s x =
+    let given = ref [] in
     let at p a =
-      (match Prim.death a with
-      | Value.Died _ ->
-          Prim.alive ~by:(Format.asprintf "Nx.Ptree.donate: %a" pp_path p) a
-      | Value.Live -> ());
-      donate a
+      match Prim.death a with
+      | Value.Live ->
+          let h = donate a in
+          given := (Obj.repr a, Value.Any h) :: !given;
+          h
+      | Value.Died _ -> (
+          match List.assq_opt (Obj.repr a) !given with
+          | Some h -> Prim.expect (dtype a) (h : d Value.any)
+          | None ->
+              let by = Format.asprintf "Nx.Ptree.donate: %a" pp_path p in
+              Prim.alive ~by a;
+              a)
     in
     map s at x
 

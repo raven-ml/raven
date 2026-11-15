@@ -42,7 +42,9 @@ at its own width.
 - A kind computed outside `nx_kinds.h`'s functions gives their bits. No
   libm or libc call on a result path.
 - Donation: a consumer writes in place only where `Nx.donate`'s conditions
-  hold, and a refused operation kills no handle.
+  hold, and `Nx.donate x` ends `x` at the call, whatever then reads the
+  handle; a handle is for one use, and a later use reads `x`'s elements or
+  raises, never other elements.
 - A new operation's result placement and its routing error follow
   `nx.mli`'s Routing section. A random draw is the same at every placement.
 

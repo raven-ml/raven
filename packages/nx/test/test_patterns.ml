@@ -603,12 +603,13 @@ let calls =
           let x =
             Nx.add (fst (host [| 2; 3 |])) (Nx.zeros Nx.int32 [| 2; 3 |])
           in
-          let y = Nx.rearrange (Nx.Pattern.v "a b -> (b a)") (Nx.donate x) in
+          let h = Nx.donate x in
+          let y = Nx.rearrange (Nx.Pattern.v "a b -> (b a)") h in
           equal (array int32)
             [| 1l; 4l; 2l; 5l; 3l; 6l |]
             (elements (Nx.copy y));
           raises_match (Exn.invalid_arg ~sub:"was donated to Nx.copy")
-            (fun () -> Nx.copy x));
+            (fun () -> Nx.copy y));
     ]
 
 let () = exit (run "nx patterns" [ laws; resolution; views; parsing; calls ])

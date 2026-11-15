@@ -181,11 +181,15 @@ let test_host_creation () =
 
 let test_dead () =
   let x = Nx.create Nx.float32 [| 2 |] [| 1.; 2. |] in
-  ignore (Nx.add (Nx.donate x) (Nx.create Nx.float32 [| 2 |] [| 0.; 0. |]));
-  equal string "float32 [2], donated to Nx.add" (printed x);
+  let h = Nx.donate x in
+  equal string "float32 [2], donated" (printed x);
+  ignore (Nx.add h (Nx.create Nx.float32 [| 2 |] [| 0.; 0. |]));
+  equal string "float32 [2], donated to Nx.add" (printed h);
   let m = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-  ignore (Nx.add (Nx.donate m) (Nx.zeros Nx.float32 [| 2; 2 |]));
-  equal string "float32 [2; 2], donated to Nx.add" (printed m)
+  let h = Nx.donate m in
+  ignore (Nx.add h (Nx.zeros Nx.float32 [| 2; 2 |]));
+  equal string "float32 [2; 2], donated" (printed m);
+  equal string "float32 [2; 2], donated to Nx.add" (printed h)
 
 type ('v, 's, 'd) Nx.Prim.payload += Mark : ('v, 's, 'd) Nx.Prim.payload
 

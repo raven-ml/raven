@@ -1777,9 +1777,17 @@ let law_donating c =
   in
   let vs = List.init n value in
   let args = List.map (List.nth vs) c.sources in
-  let given =
-    List.map2 (fun x d -> if d then Nx.donate x else x) args c.donated
+  (* A source donated at any position is one handle at each of its
+     positions. *)
+  let held =
+    List.mapi
+      (fun k x ->
+        if List.exists2 (fun s d -> d && s = k) c.sources c.donated then
+          Nx.donate x
+        else x)
+      vs
   in
+  let given = List.map (List.nth held) c.sources in
   let donates = List.exists Fun.id c.donated in
   (* Whether a donated argument's source is another argument's too. *)
   let repeated =
@@ -1794,7 +1802,7 @@ let law_donating c =
          c.donated)
   in
   cover "a donated argument" donates;
-  cover "a donor given twice" repeated;
+  cover "a handle given twice" repeated;
   cover "a repeated output" (c.repeats <> []);
   let before = Rune.evaluations () in
   let ys = g given in
@@ -2136,10 +2144,11 @@ let test_constructs () =
 
 (* Donation
 
-   A compiled call consumes the donated handles among its arguments: their
-   donors die. A result takes a donated argument's memory where it reads the
-   argument only at its own index and the stores have an order, and its values
-   are the same either way. *)
+   A donated value dies at its donation, and a compiled call consumes the
+   handles among its arguments, naming itself in their refusals. A result
+   takes a donated argument's memory where it reads the argument only at its
+   own index and the stores have an order, and its values are the same
+   either way. *)
 
 let fresh xs = Nx.create f32 [| Array.length xs |] xs
 
@@ -2150,16 +2159,150 @@ let in_place g x =
   let a = Option.get (Nx.Repr.array y) in
   (Rig.Buffer.overlaps b (Nx_array.buffer a), y)
 
-let dead x = invalid ~sub:"Rune.jit" (fun () -> ignore (Nx.to_array x))
+(* [x] dead from its donation. *)
+let dead x =
+  let dims = Array.to_list (Array.map string_of_int (Nx.shape x)) in
+  let sub =
+    Printf.sprintf "float32 [%s] was donated" (String.concat "; " dims)
+  in
+  raises_match (fun e ->
+      match e with
+      | Invalid_argument m -> String.ends_with ~suffix:sub m
+      | _ -> false)
+    (fun () -> ignore (Nx.to_array x))
+
+(* [h] a handle whose memory a call took or freed. *)
+let spent h = invalid ~sub:"was donated to Rune.jit" (fun () -> Nx.to_array h)
 
 let test_consumed () =
   let g = Rune.jit (pair_fn ()) Nx.add in
   let x = fresh [| 1.; 2. |] and y = fresh [| 3.; 4. |] in
-  equal bits_t (bits (fresh [| 4.; 6. |])) (bits (g (Nx.donate x) y));
+  let h = Nx.donate x in
+  equal bits_t (bits (fresh [| 4.; 6. |])) (bits (g h y));
   dead x;
+  spent h;
   equal ~msg:"the other argument lives" bits_t
     (bits (fresh [| 3.; 4. |]))
     (bits y)
+
+(* A value donated inside a transformation dies at the donation: a traced
+   argument and a captured value, under [jit], [grad] and [vmap]. *)
+let test_dies_inside () =
+  let raised ~msg f =
+    raises_match ~msg (Exn.invalid_arg ~sub:"Nx.add: float32 [2] was donated") f
+  in
+  let traced x = Nx.add x (Nx.exp (Nx.donate x)) in
+  let captured c x =
+    let y = Nx.mul x (Nx.exp (Nx.donate c)) in
+    Nx.add c y
+  in
+  let x = fresh [| 1.; 2. |] in
+  raised ~msg:"jit, traced" (fun () -> Rune.jit' traced x);
+  raised ~msg:"grad, traced" (fun () ->
+      Rune.grad' (fun x -> Nx.sum (traced x)) x);
+  raised ~msg:"vmap, traced" (fun () ->
+      Rune.vmap' traced (Nx.create f32 [| 3; 2 |] (Array.make 6 1.)));
+  raised ~msg:"jit, captured" (fun () ->
+      Rune.jit' (captured (fresh [| 1.; 2. |])) x);
+  raised ~msg:"grad, captured" (fun () ->
+      Rune.grad' (fun x -> Nx.sum (captured (fresh [| 1.; 2. |]) x)) x);
+  raised ~msg:"vmap, captured" (fun () ->
+      Rune.vmap'
+        (captured (fresh [| 1.; 2. |]))
+        (Nx.create f32 [| 3; 2 |] (Array.make 6 1.)));
+  (* A read of a donated dual's element raises before its primal is read. *)
+  invalid ~sub:"Nx.item: float32 [2] was donated" (fun () ->
+      Rune.jvp'
+        (fun x ->
+          ignore (Nx.donate x);
+          Nx.scalar f32 (Nx.item [ 0 ] x))
+        x (fresh [| 1.; 1. |]));
+  (* A result its function donated reads as it was traced, where the
+     function applied eagerly returns a dead value. *)
+  let returned x =
+    ignore (Nx.donate x);
+    x
+  in
+  dead (returned (fresh [| 1.; 2. |]));
+  let rows = Nx.create f32 [| 3; 2 |] (Array.init 6 Float.of_int) in
+  equal ~msg:"jit" bits_t (bits x) (bits (Rune.jit' returned x));
+  equal ~msg:"vmap" bits_t (bits rows) (bits (Rune.vmap' returned rows));
+  let y, t = Rune.jvp' returned x x in
+  equal ~msg:"jvp" (Testable.pair bits_t bits_t) (bits x, bits x)
+    (bits y, bits t);
+  equal ~msg:"grad" bits_t
+    (bits (Nx.scalar f32 1.))
+    (bits (Rune.grad' returned (Nx.scalar f32 2.)));
+  (* One the function captures raises, as a read of it does. *)
+  let captured () =
+    let c = fresh [| 5.; 6. |] in
+    fun _ ->
+      ignore (Nx.donate c);
+      c
+  in
+  dead (captured () x);
+  invalid ~sub:"float32 [2] was donated" (fun () -> Rune.jit' (captured ()) x);
+  invalid ~sub:"float32 [2] was donated" (fun () ->
+      Rune.vmap' (captured ()) rows);
+  (* A function that reads its argument, then donates it, computes as it
+     does eagerly: its program reads the argument before the donation. *)
+  let late x =
+    let s = Nx.sin x in
+    Nx.add s (Nx.exp (Nx.donate x))
+  in
+  let eager = late (fresh [| 1.; 2. |]) in
+  let within = float_rel ~rel:1e-6 ~abs:1e-6 in
+  equal ~msg:"jit" (array within) (Nx.to_array eager)
+    (Nx.to_array (Rune.jit' late (fresh [| 1.; 2. |])));
+  equal ~msg:"vmap" (array within)
+    (Nx.to_array (Nx.stack [ eager; eager ]))
+    (Nx.to_array
+       (Rune.vmap' late (Nx.stack [ fresh [| 1.; 2. |]; fresh [| 1.; 2. |] ])));
+  let a = fresh [| 1.; 2. |] in
+  equal ~msg:"grad" (array within)
+    (Nx.to_array (Nx.add (Nx.cos a) (Nx.exp a)))
+    (Nx.to_array (Rune.grad' (fun x -> Nx.sum (late x)) (fresh [| 1.; 2. |])))
+
+(* A construct traces its functions at the call, so a donation in one happens
+   there: in a branch not taken, and once for a loop's step. *)
+let test_dies_in_construct () =
+  let yes = Nx.scalar Nx.bool true in
+  let c = fresh [| 1.; 2. |] in
+  equal ~msg:"a branch not taken" bits_t (bits (fresh [| 0.; 0. |]))
+    (bits
+       (Rune.cond' (Nx.scalar Nx.bool false)
+          (fun () -> Nx.exp (Nx.donate c))
+          (fun () -> Nx.zeros f32 [| 2 |])));
+  dead c;
+  let c = fresh [| 1.; 2. |] in
+  invalid ~sub:"Nx.neg: float32 [2] was donated" (fun () ->
+      Rune.cond' yes (fun () -> Nx.neg c) (fun () -> Nx.exp (Nx.donate c)));
+  (* Three steps, its [until] never met: the step's donation happens once. *)
+  let k = fresh [| 1.; 2. |] in
+  let step c = Nx.add c (Nx.exp (Nx.donate k)) in
+  let never c = Nx.less_s (Nx.sum c) (-1.) in
+  invalid ~sub:"Rune.iterate': until is still false after max = 3 steps"
+    (fun () -> Rune.iterate' ~max:3 ~until:never step (fresh [| 0.; 0. |]));
+  dead k;
+  let k = fresh [| 1.; 2. |] in
+  invalid ~sub:"Nx.add: float32 [2] was donated" (fun () ->
+      Rune.iterate' ~max:3 ~until:never
+        (fun c -> Nx.add (Nx.exp (Nx.donate k)) (Nx.add c k))
+        (fresh [| 0.; 0. |]));
+  (* jit traces at the first call of each key: a later call reuses the
+     program, and a new shape retraces it, donating again. *)
+  let c = fresh [| 1.; 2. |] in
+  let g = Rune.jit' (fun x -> Nx.add x (Nx.exp (Nx.donate c))) in
+  let c' = fresh [| 1.; 2. |] in
+  let expected =
+    Rune.jit' (fun x -> Nx.add x (Nx.exp c')) (Nx.zeros f32 [| 2 |])
+  in
+  equal ~msg:"the first key" bits_t (bits expected)
+    (bits (g (Nx.zeros f32 [| 2 |])));
+  equal ~msg:"the first key again" bits_t (bits expected)
+    (bits (g (Nx.zeros f32 [| 2 |])));
+  invalid ~sub:"Nx.donate: float32 [2] was donated" (fun () ->
+      g (Nx.zeros f32 [| 3; 2 |]))
 
 let test_lending () =
   let xs = [| 1.; -0.; 2.5; Float.infinity |] in
@@ -4176,7 +4319,7 @@ let test_forwarded () =
 
 (* A donated argument that the linear part of a compiled call reads is consumed
    by the part computed at the call, which returns it for the pullback, as one
-   handle or two of one donor. *)
+   handle at one argument or at two. *)
 let test_forwarded_donation () =
   let g = Rune.jit (pair_fn ()) (fun x w -> Nx.mul x w) in
   let x = fresh [| 1.; 2.; -0.5 |] in
@@ -4192,21 +4335,20 @@ let test_forwarded_donation () =
       T.(tensor @-> tensor @-> tensor @-> returns tensor)
       (fun x a b -> Nx.mul x (Nx.mul a b))
   in
-  let w = fresh [| 3.; -0.5; 0.25 |] in
-  let _, pb = Rune.vjp' (fun x -> g3 x (Nx.donate w) (Nx.donate w)) x in
-  equal ~msg:"two handles of one donor" bits_t
+  let h = Nx.donate (fresh [| 3.; -0.5; 0.25 |]) in
+  let _, pb = Rune.vjp' (fun x -> g3 x h h) x in
+  equal ~msg:"one handle at two arguments" bits_t
     (bits (fresh [| 9.; 0.25; 0.0625 |]))
     (bits (pb (fresh [| 1.; 1.; 1. |])));
-  (* Each of [a] and [b] a residual: the handle's returned, its donor beside it
-     read from the call too. *)
+  (* Each of [a] and [b] a residual, one handle returned for both. *)
   let g3 =
     Rune.jit
       T.(tensor @-> tensor @-> tensor @-> returns tensor)
       (fun x a b -> Nx.add (Nx.mul x a) (Nx.mul x b))
   in
-  let w = fresh [| 3.; -0.5; 0.25 |] in
-  let _, pb = Rune.vjp' (fun x -> g3 x (Nx.donate w) w) x in
-  equal ~msg:"a handle beside its donor" bits_t
+  let h = Nx.donate (fresh [| 3.; -0.5; 0.25 |]) in
+  let _, pb = Rune.vjp' (fun x -> g3 x h h) x in
+  equal ~msg:"one handle at two residuals" bits_t
     (bits (fresh [| 6.; -1.; 0.5 |]))
     (bits (pb (fresh [| 1.; 1.; 1. |])))
 
@@ -4540,8 +4682,8 @@ let test_errors () =
     raises_match ~msg
       (starts (name ^ ": "))
       (fun () -> Rune.grad' (fun y -> Nx.sum (jit (fun z -> Nx.add z y) x)) x);
-    let d = v [| 1.; 2. |] in
-    ignore (jit Nx.neg (Nx.donate d));
+    let d = Nx.donate (v [| 1.; 2. |]) in
+    ignore (jit Nx.neg d);
     raises_match ~msg:(name ^ ": a consumed argument") (names name) (fun () ->
         ignore (Nx.to_array d));
     raises_match ~msg:(name ^ ": a read")
@@ -4553,18 +4695,23 @@ let test_errors () =
 
 (* Donation, as users step state *)
 
-(* One array at two leaves, donated at one: the call reads it at both and
-   consumes it. *)
+(* One handle at two leaves: the call reads it at both and consumes it. An
+   array beside its own handle raises. *)
 let test_two_leaves () =
   let f a b = Nx.sub a (Nx.flip b) in
   let xs = [| 1.; -0.; 2.5 |] in
   let x = fresh xs in
   equal ~msg:"kept" bits_t (bits (f x x)) (bits (Rune.jit (pair_fn ()) f x x));
   let d = fresh xs in
-  equal ~msg:"donated at one leaf" bits_t
+  let h = Nx.donate d in
+  equal ~msg:"one handle at two leaves" bits_t
     (bits (f x x))
-    (bits (Rune.jit (pair_fn ()) f (Nx.donate d) d));
-  dead d
+    (bits (Rune.jit (pair_fn ()) f h h));
+  dead d;
+  spent h;
+  let d = fresh xs in
+  invalid ~sub:"Rune.jit: float32 [3] was donated" (fun () ->
+      Rune.jit (pair_fn ()) f (Nx.donate d) d)
 
 (* A donated leaf returned unchanged beside one computed from another. *)
 let test_returned_leaf () =
@@ -5852,6 +5999,10 @@ let () =
              prop "a first call lowers once at phase 0 on one device"
                first_cases law_first_lowering;
              test "a donated argument is consumed" test_consumed;
+             test "a value donated inside a transformation dies there"
+               test_dies_inside;
+             test "a donation in a construct's function happens at the trace"
+               test_dies_in_construct;
              test "a result takes a donated argument's memory" test_lending;
              test "a shared donor lends nothing" test_shared;
              test "an evaluated program consumes its donations"

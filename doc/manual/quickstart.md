@@ -164,7 +164,7 @@ let () =
   done;
 ```
 
-The Predict block is unchanged. A donated value is dead once the call has read it, and a later use of the old state raises ([nx.mli, Donation](../../packages/nx/lib/nx.mli)).
+The Predict block is unchanged. A donated value is dead from the donation on, and a later use of the old state raises ([nx.mli, Donation](../../packages/nx/lib/nx.mli)).
 
 The same step runs on a GPU. `Nx.devices` mints a device set from a GPU that rig opens, `Nx.place` and `Nx.Ptree.place` put the data and the parameters there, and the step compiles for that device. A set minted without `~kernels` over GPUs computes nothing eagerly, and an operation there raises, so work there runs under `Rune.jit`, one device per compiled program. [Compilation](../../packages/rune/doc/06-compilation.md) covers devices.
 

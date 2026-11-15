@@ -130,8 +130,8 @@
     A failure that depends on the values, as an {!iterate} still running after
     [max] steps or a {!switch} index out of range, raises at the call, and under
     a {!val-jit} as the call's check does ({!section-checks}). A later operation on
-    an argument a {!val-jit} consumed raises in nx, naming the entry point that
-    consumed it ({!section-donation}). A {!val-jit} whose trace raises keeps no
+    an argument whose memory a {!val-jit} took raises in nx, naming the entry
+    point ({!section-donation}). A {!val-jit} whose trace raises keeps no
     program for the key. *)
 
 (** {1:derivatives Derivatives}
@@ -1494,16 +1494,16 @@ val jit :
 
 (** {2:donation Donation}
 
-    A call consumes the donated handles among its arguments
-    ({!Nx.section-moving}), as one operation consumes its operands: the values
-    they give up die once the call has checked its arguments, and a later use of
-    one raises [Invalid_argument] naming the entry point. A result may take a
-    donated argument's memory instead of fresh memory where the two have one
-    dtype, element count and placement, no check reads the argument, and the
-    result either reads it only at each element's own index (through elementwise
-    functions, casts and bitcasts that keep the width, reshapes in C order,
-    copies, placements, a scatter's target or a contraction's [init]), is the
-    argument itself, or reads no donated argument while nothing reads that one.
+    A call consumes the handles among its arguments ({!Nx.section-moving}), as
+    one operation consumes its operands, and a later use of a handle reads its
+    elements or raises [Invalid_argument] naming the entry point.
+    A result may take a donated argument's memory instead of fresh memory
+    where the two have one dtype, element count and placement, no check reads
+    the argument, and the result either reads it only at each element's own
+    index (through elementwise functions, casts and bitcasts that keep the
+    width, reshapes in C order, copies, placements, a scatter's target or a
+    contraction's [init]), is the argument itself, or reads no donated
+    argument while nothing reads that one.
     A result that takes an argument's memory is stored over it: each other value
     of the call that reads the result reads it there, after the store, and each
     that reads the argument as it was reads it before. Where no order of the
@@ -1518,9 +1518,23 @@ val jit :
     memory writes only its updates there. A result's values are the same
     either way.
 
-    A traced function reads a donated value it captures as its arrays and
-    consumes nothing: the value is lent ({!Nx.section-moving}), its memory
-    shared from then on, so its program reads that value at every evaluation. *)
+    A traced function reads a handle it captures as its arrays and consumes
+    nothing: its memory is shared from then on ({!Nx.section-moving}), so its
+    program reads those arrays at every evaluation.
+
+    A donation inside a function a transformation traces ends the value it
+    is given there. A traced argument is a stand-in for the caller's: with
+    [f x = Nx.exp (Nx.donate x)], [f a] ends [a], while [jit], [grad] or
+    [vmap] of [f] leave [a] alive. A result its function donated reads as
+    it was traced: [jit'], [vmap'], [jvp'] and [grad'] of
+    [fun x -> ignore (Nx.donate x); x] give [x]'s value, where the function
+    applied eagerly gives a dead value; one the function captures raises, as
+    a read of it does. A donation
+    happens once per trace of the function that makes it. A construct traces
+    at each call, in every branch of a {!switch}, taken or not, and in a
+    loop's step whatever its number of steps; {!val-jit} traces at the first
+    call of each key, so a function that donates a value it captures raises
+    when a new shape or device retraces it. *)
 
 (** {2:checks Checks}
 

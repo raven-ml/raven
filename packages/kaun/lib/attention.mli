@@ -119,8 +119,8 @@ val apply :
     Everything is functional: {!cached} returns the written cache and never
     mutates its argument. Thread the cache through the decode loop like any
     other state; a cache donated to a compiled call ({!Nx.Ptree.donate}) is dead
-    after the call, and is written in its own storage where [Rune.jit] lends the
-    call its memory, as rune.mli's donation rules state.
+    from the donation, and is written in its own storage where [Rune.jit] lends
+    the call its memory, as rune.mli's donation rules state.
 
     The addressing laws are {!Cache_index}'s. The layer adds five:
 

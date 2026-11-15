@@ -524,19 +524,17 @@ and general : type r. by:string -> r prim -> r =
   if Prim.exists Donate.is_handle op then donated ~by op else plain ~by op
 
 (* [op] over donated operands: a movement that maps elements one to one passes
-   a new handle on; any other operation checks its rule and its route, then
-   consumes the handles as {!Donate.with_consumer} does, reading their memory
-   and writing its first result into a handle's memory where it may. *)
+   a new handle on; any other operation routes itself, then consumes the
+   handles as {!Donate.with_consumer} does, reading their memory and writing
+   its first result into a handle's memory where it may. *)
 and donated : type r. by:string -> r prim -> r =
  fun ~by op ->
   match op with
-  | Move (mv, (Handle { donor; over } as x)) ->
+  | Move (mv, (Handle { over } as x)) ->
       (* A view of a handle's one array, made here, leaves the memory
          unshared, where [run]'s view would share it: the handle it passes on
-         has the same donor, so its consumer may still write into it. The
-         movement claims nothing: the deaths wait for that consumer, which
-         checks every operand first, so an operation that aligns its operands
-         by movements kills nothing when its checks refuse it. *)
+         lies over the same memory, so its consumer may still write into
+         it. *)
       let moved () = run ~by (Move (mv, Donate.live x)) in
       let over =
         match over with
@@ -547,13 +545,11 @@ and donated : type r. by:string -> r prim -> r =
             | None -> moved ())
         | Shards _ | Handle _ | Traced _ -> moved ()
       in
-      Handle { donor; over }
+      Handle { over }
   | Map _ | Reduce _ | Scan _ | Gather _ | Gather_ranges _ | Scatter _
   | Sort _ | Unique _ | Fft _ | Linalg _ | Fold _ | Assemble _ | Contract _
   | Copy _ | Move _ | Bitcast _ | Place _ | Check _ | Attention _ -> (
-      (* Routed before the claim: an operation its rule refuses neither takes
-         a handle's memory nor shows another domain a handle dead. Once
-         claimed, the donors stay dead whatever the kernels answer. *)
+      (* Routed before the claim, which [taken] reads. *)
       let r = Prim.route ~by op in
       let (Prim.Operands xs) = Prim.operands op in
       Donate.with_consumer ~by xs (fun c ->
@@ -684,8 +680,7 @@ let around o = ask o Around
 
 (* [i]'s rule on [op], in [i]'s clause. Another interpretation's traced operand
    is refused unless its interpretation is around [i], which is asked once per
-   interpretation. The rule reads each handle as its arrays, lent, and kills
-   nothing. *)
+   interpretation. The rule reads each handle as its arrays, lent. *)
 let deliver i ~by op =
   (* The other owners, once each, newest first: none in the common case,
      which then allocates nothing. *)
@@ -763,7 +758,8 @@ let interpret ~name reach
         run
 
 let traced i form payload =
-  Traced { form; owner = i; payload; held = Some payload; twin = None }
+  Traced
+    { form; owner = i; payload; held = Some payload; twin = None; dead = Live }
 
 let twinned i c payload =
   Traced
@@ -773,6 +769,7 @@ let twinned i c payload =
       payload;
       held = Some payload;
       twin = Some c;
+      dead = Live;
     }
 
 (* Whether [o]'s handler is around the caller with no [Extent] handler

@@ -85,32 +85,40 @@ the compiled program.
 ## Donation
 
 A donated argument gives up its memory to the call, which may write a result
-into it. The donated value dies once the call has checked its arguments, and
-a later use raises, naming the entry point, here `Rune.jit'` (the
-Donation section of [`rune.mli`](../lib/rune.mli)):
+into it. The donated value dies at the donation, and a later use raises
+(the Donation section of [`nx.mli`](../../nx/lib/nx.mli)); the handle the call
+consumed raises naming the entry point, here `Rune.jit'` (the Donation
+section of [`rune.mli`](../lib/rune.mli)):
 
 ```ocaml
 let decay = Rune.jit' (fun w -> Nx.Infix.(w *$ 0.5))
 
 let w = Nx.create Nx.float64 [| 3 |] [| 2.; 4.; 6. |]
 let kept = decay w
-let w' = decay (Nx.donate w)
+let h = Nx.donate w
+let w' = decay h
 ```
 
 ```ocaml
 # let () =
     Nx.print w';
     Printf.printf "equal: %b\n" (Nx.to_array kept = Nx.to_array w');
-    match Nx.to_array w with
-    | _ -> print_endline "w is alive"
-    | exception Invalid_argument msg -> print_endline msg;;
+    let tell x =
+      match Nx.to_array x with
+      | _ -> print_endline "alive"
+      | exception Invalid_argument msg -> print_endline msg
+    in
+    tell w;
+    tell h;;
 float64 [3] [1, 2, 3]
 equal: true
+Nx.to_array: float64 [3] was donated
 Nx.to_array: float64 [3] was donated to Rune.jit'
 ```
 
 A result's values are the same whether or not it takes a donated argument's
-memory, so `w'` equals `kept`. `w` was consumed by the second call.
+memory, so `w'` equals `kept`. `w` died at its donation, and the second call
+took its memory.
 
 ## Checks
 

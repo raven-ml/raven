@@ -116,8 +116,8 @@ val run : t -> Program.value array -> Program.value array
     memory in C order at its output's form's placement, or the memory of a
     donated argument it takes ({!Rune.section-donation}).
 
-    The call is a consumer of [args] ({!Nx.Prim.Consumer}). It claims the
-    donated handles among them, and reads each argument as it was at the claim.
+    The call is a consumer of [args] ({!Nx.Prim.Consumer}), which reads each
+    argument as it was when called.
     Where {!Nx.Prim.Consumer.take} does not give the memory of an argument a
     result takes, the result computes into a copy of it. A declined variant's
     results are all copies. Once the program is submitted, the call issues its

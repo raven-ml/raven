@@ -1557,8 +1557,8 @@ let init =
           equal (array float_exact) (Array.make 64 (1. +. 0x1p-23))
             (Nx.to_array y));
       test "a donated init is consumed" (fun () ->
-          let c = c () in
-          let y = Nx.contract ~init:(Nx.donate c) Nx.float32 p (a ()) (b ()) in
+          let c = Nx.donate (Nx.copy (c ())) in
+          let y = Nx.contract ~init:c Nx.float32 p (a ()) (b ()) in
           equal (array float_exact) expected (read y);
           raises_match (Exn.invalid_arg ~sub:"was donated to Nx.contract")
             (fun () -> Nx.copy c));
@@ -3086,8 +3086,8 @@ module Conv = struct
       (Nx.to_array
          (Nx.conv_transpose (i8 [| 1; 1; 2 |] [| 100; 100 |]) (i8 [| 2; 1; 1 |] [| 1; 1 |])))
 
-  (* A donated operand that another operation consumed is dead: each
-     function names itself, whatever it computes through. *)
+  (* A donated operand is dead: each function names itself, whatever it
+     computes through. *)
   let test_dead_names () =
     let dead s =
       let x = Nx.create Nx.float32 s (Array.make (numel s) 1.) in
