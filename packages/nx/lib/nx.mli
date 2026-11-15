@@ -1697,8 +1697,12 @@ end
     exponent.
 
     These bounds, and those the functions below state, hold where a set's
-    kernels compute. Under a compiler such as [Rune.jit], the compiler's
-    bounds hold. *)
+    kernels compute, and a set without kernels computes these functions
+    only under a compiler. [Rune.jit] computes each function that
+    [Rune]'s Numerics section lists within the bound stated there, and a
+    function nx composes from others, as {!asinh} on floats or {!lgamma},
+    by nx's formula over the compiled ones. [Rune] states no bound for
+    such a function. *)
 
 val sqrt : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [sqrt x] is the square root, NaN below [-0.], correctly rounded on
@@ -1823,8 +1827,7 @@ val erf : (float, 's, 'd) t -> (float, 's, 'd) t
     where [κ = |p / (x F'(x))|] at its result [x], for [F] the forward
     function, is its condition number. A subnormal result is held to its
     bound in units of the least subnormal, plus half of one. These bounds
-    hold where a set's kernels compute. Under a compiler such as
-    [Rune.jit], the compiler's bounds hold.
+    hold where those of {!section-transcendental} do.
 
     The formats narrower than 32 bits follow {!section-transcendental};
     where a bound is absolute, their result is within that bound at
@@ -3005,9 +3008,9 @@ val attention :
     Without [score], [η] is [((1 + u)² (1 + γ(dk + 1, 2u)) - 1) a], about
     [(2dk + 4) u a], and [b] is at most [a], where [a] is the greatest
     [|scale| Σ |q k|] of a visible key. The bound holds where a set's
-    kernels compute, as those of {!section-transcendental} do. Under a
-    compiler such as [Rune.jit], the compiler's bounds compose the same
-    way.
+    kernels compute, as those of {!section-transcendental} do. Under
+    [Rune.jit], the bound that [Rune]'s Numerics section states for a
+    compiled attention holds.
 
     Over keys cut across devices into [n] parts, a page table's pages for
     [Paged], each device computes [(o, lse)] over its part in [acc] as one

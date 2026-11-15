@@ -1547,14 +1547,15 @@ val jit :
 
 (** {2:numerics Numerics}
 
-    A compiled call computes each nx function to the accuracy below, so a float
-    result may differ from eager's within it. The {e unit roundoff} [u] of a
-    float dtype is [2{^-24}] for [float32] and [2{^-53}] for [float64], that of
-    its parts for a complex one. An {e ulp} is one rank in the order of a
-    dtype's bit patterns, [-0.] and [+0.] one rank apart, and an error of [n]
-    ulps is a distance of [n] ranks from the correctly rounded result. [γ(k)] is
-    [k u / (1 - k u)]. A function is {e exact} when it agrees with eager bit
-    for bit.
+    A compiled call computes each nx function to the accuracy below, so a
+    float result may differ from eager's, which each function's doc in [Nx]
+    bounds ({!Nx.section-transcendental} for the elementwise functions).
+    The {e unit roundoff} [u] of a float dtype is [2{^-24}] for [float32]
+    and [2{^-53}] for [float64], that of its parts for a complex one. An
+    {e ulp} is one rank in the order of a dtype's bit patterns, [-0.] and
+    [+0.] one rank apart, and an error of [n] ulps is a distance of [n]
+    ranks from the correctly rounded result. [γ(k)] is [k u / (1 - k u)].
+    A function is {e exact} when it agrees with eager bit for bit.
 
     A variant ({!section-compiled}) gives the same bits at every call with
     the same arguments: its kernels fix the order in which each sum combines
