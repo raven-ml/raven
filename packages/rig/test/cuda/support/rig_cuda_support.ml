@@ -13,6 +13,8 @@ external register : int -> int -> unit = "rig_cuda_test_register"
 external unregister : int -> unit = "rig_cuda_test_unregister"
 external free_memory : unit -> int = "rig_cuda_test_free_memory"
 external loaded_c : nativeint -> int * int = "rig_cuda_test_loaded"
+external context_flags : unit -> int = "rig_cuda_test_context_flags"
+external set_context_flags : int -> unit = "rig_cuda_test_set_context_flags"
 
 let functions_loaded f = loaded_c (Nativeint.of_int f)
 
@@ -43,6 +45,8 @@ let bind g =
          "cuModuleGetFunctionCount";
          "cuModuleEnumerateFunctions";
          "cuCtxSynchronize";
+         "cuDevicePrimaryCtxGetState";
+         "cuDevicePrimaryCtxSetFlags_v2";
        |])
 
 module D = Rig_cuda

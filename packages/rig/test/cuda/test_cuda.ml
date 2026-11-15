@@ -46,6 +46,30 @@ let gpu_once () =
   S.close t;
   C.stop (require_ok (Rig_gpu_support.opened (C.gpu 0))) ~fault:None
 
+(* The scheduling of a context, the three low bits of its flags, and CUDA's
+   values of it (cuDevicePrimaryCtxSetFlags). *)
+let scheduling_bits = 0x07
+
+let schedulings =
+  [
+    ("CU_CTX_SCHED_AUTO", 0x00);
+    ("CU_CTX_SCHED_SPIN", 0x01);
+    ("CU_CTX_SCHED_YIELD", 0x02);
+    ("CU_CTX_SCHED_BLOCKING_SYNC", 0x04);
+  ]
+
+(* An open finds the primary context's flags with the scheduling [s], as
+   another library set them, and leaves them. The flags are the process's,
+   so the case sets back those it found, whatever happens. *)
+let keeps_scheduling (_, s) =
+  let found = S.with_driver (fun _ -> S.context_flags ()) in
+  Fun.protect ~finally:(fun () -> S.set_context_flags found) @@ fun () ->
+  S.set_context_flags ((found land lnot scheduling_bits) lor s);
+  let before = S.context_flags () in
+  equal ~msg:"the scheduling set" int s (before land scheduling_bits);
+  S.with_driver ignore;
+  equal ~msg:"the flags after the open" int before (S.context_flags ())
+
 (* The test's executable, run with [unloadable], prints what count and GPU
    0's make answer. *)
 let unloadable = "--unloadable"
@@ -176,6 +200,8 @@ let opening =
           let e = require_error (Rig_gpu_support.opened (C.gpu n)) in
           contains ~sub:(if n = 0 then "CUDA" else strf "CUDA sees %d" n) e);
       test "a GPU has one device until it is closed" gpu_once;
+      cases "an open leaves the context's scheduling as it finds it" ~id:fst
+        schedulings keeps_scheduling;
       cases
         "a call inside a lock of its thread's raises naming it, changing \
          nothing"

@@ -14,12 +14,22 @@ include Rig_gpu_support.Conformance with module D = Rig_cuda
 val bind : Rig_cuda.t -> unit
 (** [bind g] makes the CUDA functions of [g]'s capability those {!attribute},
     {!current}, {!locked}, {!register}, {!unregister}, {!read_gpu},
-    {!write_gpu}, {!free_memory}, {!functions_loaded}, {!stall}, {!context} and
-    {!graph_launch} call. {!open_} binds them. *)
+    {!write_gpu}, {!free_memory}, {!functions_loaded}, {!context_flags},
+    {!set_context_flags}, {!stall}, {!context} and {!graph_launch} call.
+    {!open_} binds them. *)
 
 val attribute : int -> int
 (** [attribute a] is the value of CUDA's device attribute [a] of CUDA's device
     [0], after a {!with_}. *)
+
+val context_flags : unit -> int
+(** [context_flags ()] is the flags of CUDA's device [0]'s primary context
+    ([cuDevicePrimaryCtxGetState]), after a {!with_}. *)
+
+val set_context_flags : int -> unit
+(** [set_context_flags f] sets the flags of CUDA's device [0]'s primary context
+    to [f] ([cuDevicePrimaryCtxSetFlags]), as another library would, after a
+    {!with_}. The flags are the process's. *)
 
 val current : unit -> nativeint
 (** [current ()] is the calling thread's current CUDA context, [0n] for none,

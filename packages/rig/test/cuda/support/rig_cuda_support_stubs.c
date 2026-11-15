@@ -60,14 +60,17 @@ static CUresult(CUDAAPI *func_get_module)(void **, void *);
 static CUresult(CUDAAPI *function_count)(unsigned int *, void *);
 static CUresult(CUDAAPI *enumerate_functions)(void **, unsigned int, void *);
 static CUresult(CUDAAPI *synchronize)(void);
+static CUresult(CUDAAPI *primary_state)(int, unsigned int *, int *);
+static CUresult(CUDAAPI *primary_set_flags)(int, unsigned int);
 
 /* Binds cuLaunchKernel, cuCtxGetCurrent, cuDevicePrimaryCtxRetain,
    cuCtxPushCurrent_v2, cuCtxPopCurrent_v2, cuMemHostGetDevicePointer_v2,
    cuDeviceGetAttribute, cuMemcpyDtoH_v2, cuMemcpyHtoD_v2,
    cuMemHostRegister_v2, cuMemHostUnregister, cuMemGetInfo_v2,
    cuGraphExecKernelNodeSetParams_v2, cuGraphLaunch, cuFuncIsLoaded,
-   cuFuncGetModule, cuModuleGetFunctionCount, cuModuleEnumerateFunctions and
-   cuCtxSynchronize, in this order. */
+   cuFuncGetModule, cuModuleGetFunctionCount, cuModuleEnumerateFunctions,
+   cuCtxSynchronize, cuDevicePrimaryCtxGetState and
+   cuDevicePrimaryCtxSetFlags_v2, in this order. */
 value rig_cuda_test_bind(value v_f) {
   launch_kernel = Ptr_val(Field(v_f, 0));
   get_current = Ptr_val(Field(v_f, 1));
@@ -88,6 +91,8 @@ value rig_cuda_test_bind(value v_f) {
   function_count = Ptr_val(Field(v_f, 16));
   enumerate_functions = Ptr_val(Field(v_f, 17));
   synchronize = Ptr_val(Field(v_f, 18));
+  primary_state = Ptr_val(Field(v_f, 19));
+  primary_set_flags = Ptr_val(Field(v_f, 20));
   return Val_unit;
 }
 
@@ -230,6 +235,23 @@ value rig_cuda_test_attribute(value v_a) {
   int a = 0;
   if (get_attribute(&a, Int_val(v_a), 0) != 0) caml_failwith("attribute");
   return Val_int(a);
+}
+
+/* The flags of CUDA device 0's primary context. */
+value rig_cuda_test_context_flags(value unit) {
+  unsigned int flags = 0;
+  int active = 0;
+  (void)unit;
+  if (primary_state(0, &flags, &active) != 0)
+    caml_failwith("cuDevicePrimaryCtxGetState");
+  return Val_long(flags);
+}
+
+/* Sets the flags of CUDA device 0's primary context to [v_flags]. */
+value rig_cuda_test_set_context_flags(value v_flags) {
+  if (primary_set_flags(0, (unsigned int)Long_val(v_flags)) != 0)
+    caml_failwith("cuDevicePrimaryCtxSetFlags");
+  return Val_unit;
 }
 
 /* Fills */

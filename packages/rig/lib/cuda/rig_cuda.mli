@@ -363,18 +363,14 @@ val capability : t -> Rig_cuda_abi.t
     allocation, before {!val-image} loads a module, and before a module is
     unloaded. {!unload} unloads the module, unless a graph that recorded one
     of its functions remains; the destruction of the last such graph then
-    unloads it ({!Rig_cuda_abi.section-graphs}). Launches in the GPU's
-    context, from any thread, wait for CUDA's wait. The calling thread blocks
-    while CUDA waits: an open sets its primary context's scheduling to
-    [CU_CTX_SCHED_BLOCKING_SYNC] where the context's flags hold
-    [CU_CTX_SCHED_AUTO], with which CUDA spins unless the process has more
-    contexts than processors. The setting holds for every wait CUDA makes in
-    that context, those of other libraries in the process included, such as
-    [cuStreamSynchronize]: each returns after its thread wakes, later than a
-    spin would. A scheduling another library set before the open stays, but
-    one that set [CU_CTX_SCHED_AUTO] cannot be told from the default and is
-    changed. A load or an unload may sleep the calling thread in this way
-    even when the GPU has no work queued.
+    unloads it ({!Rig_cuda_abi.section-graphs}). CUDA waits as the
+    scheduling in the primary context's flags says
+    ([cuDevicePrimaryCtxSetFlags]), and an open leaves those flags as it
+    finds them. Under CUDA's default, [CU_CTX_SCHED_AUTO], CUDA may
+    busy-wait, and a call behind queued work then spends processor time until
+    that work completes, however long the device's word stands still. rig's
+    own waits sleep once the word has stood still for 200 ms
+    ({!Rig.section-hangs}).
 
     {!val-image}[ g bin] is [Ok (Loaded m)] with [m] the CUDA module of [bin]:
     a cubin, a fatbin, or PTX text, which CUDA compiles for the GPU. It places

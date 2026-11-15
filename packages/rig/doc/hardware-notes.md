@@ -222,18 +222,18 @@ other domains run while CUDA waits for the GPU (sampled)"). Measured while a
 kernel ran, `cuModuleGetFunction` took 31 µs and `cuMemHostGetDevicePointer`
 1 µs: neither waits for the GPU.
 
-Under `CU_CTX_SCHED_BLOCKING_SYNC`, which rig's CUDA open sets, loads and
-unloads also sleep the calling thread with no work queued. On the RTX 5000 Ada
-with driver 615.71.09, a probe loaded an image of 140 kernels with
-`cuModuleLoadData`, loaded each function with `cuFuncLoad` and unloaded the
-image, 800 rounds under each scheduling, and counted the thread's voluntary
-context switches in each call. `cuModuleLoadData` switched once a call,
-`cuModuleUnload` 0.66 times a call on average (0.59 to 0.77 over four runs of
-200 rounds), and `cuFuncLoad` never. Under CUDA's default scheduling, which
-spins, no call switched. The flag added 130 µs to `cuModuleLoadData` and
-71 µs to `cuModuleUnload`, so each sleep returned 105-130 µs later than a
-spin. rig's `image/load-140` bench row takes 893.3 µs under the flag and
-705.5 µs under CUDA's default.
+Under `CU_CTX_SCHED_BLOCKING_SYNC`, loads and unloads also sleep the calling
+thread with no work queued. On the RTX 5000 Ada with driver 615.71.09, a probe
+loaded an image of 140 kernels with `cuModuleLoadData`, loaded each function
+with `cuFuncLoad` and unloaded the image, 800 rounds under each scheduling,
+and counted the thread's voluntary context switches in each call.
+`cuModuleLoadData` switched once a call, `cuModuleUnload` 0.66 times a call on
+average (0.59 to 0.77 over four runs of 200 rounds), and `cuFuncLoad` never.
+Under CUDA's default scheduling, no call switched. With the probe's one
+context on fudge's 14 processors, that scheduling spins. The flag added 130 µs
+to `cuModuleLoadData` and 71 µs to `cuModuleUnload`, so each sleep returned
+105-130 µs later than a spin. rig's `image/load-140` bench row takes
+893.3 µs under the flag and 705.5 µs under CUDA's default.
 
 ### A page-locked range may span unlocked pages
 
