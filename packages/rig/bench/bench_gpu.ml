@@ -514,16 +514,17 @@ let cuda_graph g d =
     keep = (fun () -> ignore (Sys.opaque_identity (image, gr, f)));
   }
 
-(* [empty] over one block, loaded by rig. *)
-let nv_kernel g d =
+(* [empty] over one thread as a launch, loaded by rig. *)
+let nv_kernel _ d =
   let module S = Rig_nv_support in
-  let k = S.kernels ~dir:(fixtures "nv") { S.d; g } in
-  let l = S.launches g in
-  let ws = S.launch l k "empty" ~blocks:1 [] in
-  let words = B.create Rig.host (4 * Array.length ws) in
-  B.write words Bigarray.int32 (fun a ->
-      Array.iteri (fun i w -> a.{i} <- Int32.of_int w) ws);
-  work (Sub.words words) (fun () -> ignore (Sys.opaque_identity (k, l)))
+  let bin = S.fixture ~dir:(fixtures "nv") "kernels_sm89.cubin" in
+  let image =
+    match Rig.Image.load d bin with Ok i -> i | Error why -> failwith why
+  in
+  let launch =
+    Sub.launch (Option.get (Rig.Image.resolve image "empty")) ~params:0
+  in
+  work launch ignore
 
 (* [empty] over one work-item as a launch, loaded by rig. *)
 let amd_kernel _ d =
