@@ -148,7 +148,8 @@ let fsum_add s x =
     s.mag <- s.mag +. Float.abs x
   end
 
-(* nx_kernel.mli's [β(n) = ⌈5 min(n, 256) / 4⌉ + ⌈n / 128⌉]. *)
+(* nx_kernel.mli's [β(n) = ⌈5 min(n, 256) / 4⌉ + ⌈n / 128⌉] for a sum in
+   blocks. *)
 let beta n = (((5 * min n 256) + 3) / 4) + ((n + 127) / 128)
 
 (* A sum of magnitudes below half the largest number keeps every partial

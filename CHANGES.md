@@ -2920,6 +2920,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_kernel`'s error bounds let a kernel library keep one running sum for
+  the sums its interface names, within a single chain's bound: `γ(n - 1)`
+  for a reduction, and an error factor up to `γ(2K + 1)` for a real
+  contraction.
 - A product over summed axes cut across devices (`Nx.contract`,
   `Nx.matmul`, `Nx.einsum`, `Nx.dot`, `Nx.tensordot`, `Nx.inner`,
   `Nx.vecdot`, `Nx.matmul_segments`, `Nx_quant.apply`,

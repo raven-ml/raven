@@ -263,9 +263,9 @@ val scan_refusal :
     complex result may differ between libraries, device models and layouts,
     and the same terms in a call of other extents may round differently.
     Let [u] be the unit roundoff of the dtype each addition or
-    multiplication rounds to, its parts' for a complex one,
-    [γ(k) = k u / (1 - k u)] and
-    [β(n) = ⌈5 min(n, 256) / 4⌉ + ⌈n / 128⌉].
+    multiplication rounds to, its parts' for a complex one, and
+    [γ(k) = k u / (1 - k u)]. [β(n)] bounds the roundings a term of a
+    float sum of [n] terms passes, as counted below.
 
     A library adds the terms of a float reduction and the products of a
     contraction in {e blocks}: no running sum takes more than 256 terms
@@ -273,16 +273,24 @@ val scan_refusal :
     additions in its block, at most the cost of 320 on a matrix unit, whose
     additions align 8 terms and a running sum to the largest and truncate,
     and at most [⌈n / 128⌉] more as the blocks' sums, and the partial sums
-    of threads and kernels, combine. Barring overflow and underflow, and
-    before the rounding into the destination, which adds its own, a float
-    sum of [n] terms, a reduction's, is within [γ(β(n)) Σ|x|] of the exact
-    sum, and a scan's or a fold's within [γ(n - 1) Σ|x|]. A float product
-    is within a relative [γ(n - 1)], and a complex one within a normwise
-    relative [γ(2n - 2)], where each {!Prog.Mul} errs by at most [2u]. A
-    library may state sharper bounds.
+    of threads and kernels, combine, so that
+    [β(n) = ⌈5 min(n, 256) / 4⌉ + ⌈n / 128⌉]. A library may instead add
+    a sum into one running sum where its interface states that it does.
+    A term of such a sum passes at most [n - 1] additions. [β(n)] is then
+    [n - 1] for a reduction, whose additions must each round once, and
+    [2n + 1] for a contraction, whose count includes each product's
+    rounding and a matrix unit's truncations.
+
+    Barring overflow and underflow, and before the rounding into the
+    destination, which adds its own, a float sum of [n] terms, a
+    reduction's, is within [γ(β(n)) Σ|x|] of the exact sum, and a scan's or
+    a fold's within [γ(n - 1) Σ|x|]. A float product is within a relative
+    [γ(n - 1)], and a complex one within a normwise relative [γ(2n - 2)],
+    where each {!Prog.Mul} errs by at most [2u]. A library may state
+    sharper bounds.
 
     A float or complex contraction ({!S.contract}) sums each output's [K]
-    products [a·b] from [+0] in blocks, then adds [init] to their sum
+    products [a·b] from [+0], then adds [init] to their sum
     ({!section-contraction}). Barring overflow and underflow, and before
     the rounding into the destination, an output is within
     [u|r| + (1 + u) e(K) Σ|a||b|] of the exact [r = init + Σ a·b], with

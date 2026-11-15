@@ -75,14 +75,16 @@ let magnitude parts =
     !m
   end
 
-(* nx_kernel.mli's [β(n) = ⌈5 min(n, 256) / 4⌉ + ⌈n / 128⌉]. *)
+(* nx_kernel.mli's [β(n) = ⌈5 min(n, 256) / 4⌉ + ⌈n / 128⌉] for a sum in
+   blocks. *)
 let beta n = ((5 * min n 256) + 3) / 4 + ((n + 127) / 128)
 
 (* An output [xs] of [c], one value a part, is within the largest bound
-   nx_kernel.mli allows a library, [u|r| + (1 + u) e Σ|a||b|] of the exact
-   [r], init and its [K] products, a complex one in modulus, [e] being
-   [γ(β(K))] for a real [acc] and [√2 γ(β(2K))] for a complex one, and u
-   the unit roundoff of [acc]'s parts. Where results underflow it may err by η
+   nx_kernel.mli allows a library that adds in blocks, as nx.cpu and
+   nx.cuda do, [u|r| + (1 + u) e Σ|a||b|] of the exact [r], init and its
+   [K] products, a complex one in modulus, [e] being [γ(β(K))] for a real
+   [acc] and [√2 γ(β(2K))] for a complex one, and [u] the unit roundoff of
+   [acc]'s parts. Where results underflow it may err by η
    more for each term of each part, [η] [acc]'s smallest subnormal, twice
    the most a rounding into the subnormals errs. A part whose sum is not
    finite is matched to the bits of its naive sum. *)

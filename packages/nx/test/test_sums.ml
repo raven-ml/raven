@@ -734,7 +734,8 @@ let ordered =
 let bits x =
   Array.map Int64.bits_of_float (Nx.to_array (Nx.cast Nx.float64 x))
 
-(* nx_kernel.mli's [β(n) = ⌈5 min(n, 256) / 4⌉ + ⌈n / 128⌉]. *)
+(* nx_kernel.mli's [β(n) = ⌈5 min(n, 256) / 4⌉ + ⌈n / 128⌉] for a sum in
+   blocks. *)
 let beta n = (((5 * min n 256) + 3) / 4) + ((n + 127) / 128)
 
 let law_ordered c =
