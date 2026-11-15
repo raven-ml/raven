@@ -1308,6 +1308,11 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A tensor core's operand that the kernel computes from loads, such as an
+  attention output scaled by its sink, stages those loads through shared
+  memory (`Stage.operands`): on an RTX 5000 Ada gpt-oss-20b's output
+  projection takes 72 µs at 64 tokens where it took 113, and 134 µs at 512
+  where it took 180, whose bits change as its sum runs in one chain.
 - `Tolk.Heuristic.core_rows` gives the fewest rows of a contraction that a
   target's tensor core takes, for a caller that cuts rows into blocks.
 - A tensor core reading rows through a row map, as routed products do, stages

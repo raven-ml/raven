@@ -271,9 +271,12 @@ let bytes t = t.size * Dtype.itemsize t.dt
 
 let is_serial r = List.mem (axis_type r) Axis_type.[ Weak; Loop ]
 
-(* The loop of [outer]: its one weak or loop range, if it has one. *)
+(* The loop of [outer]: its one weak or loop range of more than one trip, if
+   it has one. A range of one trip, as a core's [K] unrolled whole leaves, is
+   no loop. *)
 let loop_of outer =
-  match List.filter is_serial (Nodes.to_list (ranges outer)) with
+  let loops r = is_serial r && extent r > 1 in
+  match List.filter loops (Nodes.to_list (ranges outer)) with
   | [ l ] -> Some l
   | _ -> None
 
@@ -399,6 +402,104 @@ let staged_tile all x =
   let shared = List.exists (fun r -> not (Nodes.mem r (ranges x))) warps in
   let rows t = List.exists (fun d -> Option.is_some d.rows) t.dims in
   match tile_of x with Some t when rows t && not shared -> None | t -> t
+
+(* Codes are integers that a load of integer storage gives, through integer
+   arithmetic alone. A float's bits read as an integer, as a selection by sign
+   computes ReLU of a bfloat16, are no codes. *)
+let decoded o =
+  let coded = Tbl.create 16 in
+  let rec codes u =
+    match Tbl.find_opt coded u with
+    | Some b -> b
+    | None ->
+        let b =
+          Dtype.is_int (dtype u)
+          && (op u = Op.Index || List.exists codes (src u))
+        in
+        Tbl.add coded u b;
+        b
+  in
+  let converts u =
+    (op u = Op.Cast || op u = Op.Bitcast)
+    && Dtype.is_float (dtype u)
+    && codes (nth u 0)
+  in
+  List.exists converts
+    (toposort ~calls:Skip ~gate:(fun u -> op u <> Op.Index) o)
+
+let elementwise u =
+  Op.Set.mem (op u) Op.Set.alu
+  || List.mem (op u) Op.[ Cast; Bitcast; Const; Where ]
+
+(* The loads staging copies for a core's operand [x], each with its tile: [x]
+   itself where it is a load with a tile; where [x] computes elementwise on
+   loads and is not decoded, the loads of global memory through which it reads
+   the threads and lanes, if each has a tile; [None] otherwise. Of a computed
+   operand's loads, those whose tiles step through the loop of its tile of
+   most elements are copied, and the others stay loads: an attention output's per-head
+   scale, while the core's loop runs within a head, is read once a trip of
+   its own loop. The copies move the loads' values, which the operand then
+   computes on as it did, so the operand's values do not change. A decoded
+   operand stays unstaged by measurement: staged, the codes and scales of
+   gpt-oss's Q8_0 projections at 64 tokens ran 1.5 to 1.8 times slower on an
+   RTX 5000 Ada. *)
+let loads_of all x =
+  match staged_tile all x with
+  | Some t -> Some [ (x, t) ]
+  | None when decoded x -> None
+  | None -> (
+      let stops u = List.mem (op u) Op.[ Index; Range; Special ] in
+      let walked = toposort ~calls:Skip ~gate:(fun u -> not (stops u)) x in
+      (* The walk stops at loads and at ranges, whose bounds the operand does
+         not compute on, and leaves them out: they are the sources of the
+         nodes it reaches. The loads keep the walk's order, which the
+         graph's structure fixes. *)
+      let loads =
+        List.fold_left
+          (fun acc u ->
+            if
+              Op.equal (op u) Op.Index
+              && addrspace (nth u 0) = Some Dtype.Global
+              && reads_inner u && not (List.memq u acc)
+            then u :: acc
+            else acc)
+          [] (List.concat_map src walked)
+        |> List.rev
+      in
+      let tiles = List.map (fun l -> (l, staged_tile all l)) loads in
+      if
+        loads = []
+        || (not (List.for_all elementwise walked))
+        || List.exists (fun (_, t) -> Option.is_none t) tiles
+      then None
+      else
+        let tiles = List.map (fun (l, t) -> (l, Option.get t)) tiles in
+        let largest =
+          List.fold_left
+            (fun b (_, t) -> if t.size > b.size then t else b)
+            (snd (List.hd tiles)) tiles
+        in
+        Some
+          (List.filter (fun (_, t) -> Option.equal ( == ) t.loop largest.loop)
+             tiles))
+
+(* The loads of a core's [operands] that staging copies, each with its tile,
+   or an operand with [None] where it stays unstaged. A computed operand's
+   loads are copied only where their loop is that of each operand that is a
+   load: a copy runs where the loop of its tile does. *)
+let operand_tiles all operands =
+  let plain = List.filter_map (staged_tile all) operands in
+  let on_plain (_, t) =
+    List.for_all (fun p -> Option.equal ( == ) p.loop t.loop) plain
+  in
+  List.concat_map
+    (fun x ->
+      match loads_of all x with
+      | Some [ (l, t) ] when l == x -> [ (x, Some t) ]
+      | Some ls when List.for_all on_plain ls ->
+          List.map (fun (l, t) -> (l, Some t)) ls
+      | _ -> [ (x, None) ])
+    operands
 
 (* Copies *)
 
@@ -610,7 +711,7 @@ let operands (ren : Renderer.t) sink =
       let used = ref 0 in
       let stage w =
         let operands = List.filteri (fun i _ -> i < 2) (src w) in
-        let tiles = List.map (fun x -> (x, staged_tile all x)) operands in
+        let tiles = operand_tiles all operands in
         let staged = List.filter_map snd tiles in
         let d = depth ~used:!used ren (List.map bytes staged) in
         (* The tiles step through one loop, or none: a copy runs where its
@@ -683,13 +784,21 @@ let operands (ren : Renderer.t) sink =
              before them, which no read waits for: the slot's offset is
              ordered after them. *)
           let slot = if List.is_empty ahead then rslot else after rslot ahead in
+          (* An operand reads its copies back: itself where it is a load,
+             or the loads it computes on. *)
+          let reads =
+            List.filter_map
+              (fun (x, p) ->
+                Option.map (fun st -> (x, st.read ~deps:first ~slot)) p)
+              plans
+          in
           let srcs =
             List.map
-              (fun (x, p) ->
-                match p with
-                | Some st -> st.read ~deps:first ~slot
-                | None -> x)
-              plans
+              (fun x ->
+                match List.assq_opt x reads with
+                | Some read -> read
+                | None -> substitute ~calls:Skip ~pass:Once x reads)
+              operands
           in
           let acc = List.filteri (fun i _ -> i >= 2) (src w) in
           Some (w, replace w ~src:(srcs @ acc))
@@ -704,7 +813,7 @@ let admits (ren : Renderer.t) sink =
   let all = toposort ~calls:Skip sink in
   let core w =
     let tiles =
-      List.filteri (fun i _ -> i < 2) (src w) |> List.map (staged_tile all)
+      List.map snd (operand_tiles all (List.filteri (fun i _ -> i < 2) (src w)))
     in
     match tiles with
     | Some t :: rest ->
@@ -790,30 +899,6 @@ let tile (ren : Renderer.t) ast (w : wmma) ~core_threads ~workgroups
         filled )
 
 (* Decoded panels on the host *)
-
-(* Codes are integers that a load of integer storage gives, through integer
-   arithmetic alone. A float's bits read as an integer, as a selection by sign
-   computes ReLU of a bfloat16, are no codes. *)
-let decoded o =
-  let coded = Tbl.create 16 in
-  let rec codes u =
-    match Tbl.find_opt coded u with
-    | Some b -> b
-    | None ->
-        let b =
-          Dtype.is_int (dtype u)
-          && (op u = Op.Index || List.exists codes (src u))
-        in
-        Tbl.add coded u b;
-        b
-  in
-  let converts u =
-    (op u = Op.Cast || op u = Op.Bitcast)
-    && Dtype.is_float (dtype u)
-    && codes (nth u 0)
-  in
-  List.exists converts
-    (toposort ~calls:Skip ~gate:(fun u -> op u <> Op.Index) o)
 
 (* The panel lies on the stack of the thread that runs the kernel: a rig pool's
    worker has 8 MiB, the calling thread its own, which a thread a program starts

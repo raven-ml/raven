@@ -7435,7 +7435,15 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   dimension is contiguous, in rows whose 16-byte chunks are permuted by an
   XOR with the row (`line` 128 bytes of 32 banks, `copy` 16 bytes: CuTe's
   `Swizzle` and Triton's `perPhase`, generalized to rows of any even count of
-  chunks); the core reads its fragments back through the same layout. Two
+  chunks); the core reads its fragments back through the same layout. An
+  operand the kernel computes elementwise from loads and does not decode, as
+  an attention output times the share of each head's row its sink leaves,
+  has its loads copied where each through which it reads the threads and
+  lanes has such a tile: those whose tiles step through the loop of its tile
+  of most elements, where that is the loop of each operand that is a load;
+  the others, as the per-head share while the core's loop runs within a head,
+  stay loads, and the operand computes on the copies. A range of one trip,
+  as K unrolled whole leaves, is no tile's loop. Two
   stages where the renderer copies asynchronously and they fit
   `shared_max`, the next trip's copy issued before this trip's reads and
   ordered so by the slot's offset, an AFTER of the loop's range at two trips,
@@ -7462,7 +7470,9 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   copies in one stage, so it is staged only where several warps read it,
   where a local range does not move its index. A core reading gathered rows
   keeps the unstaged splits. Other operands whose terms mix
-  the box's ranges with others, a core whose operands step through
+  the box's ranges with others, a decoded operand's loads, a computed
+  operand whose largest tile steps through another loop than an operand
+  that is a load, a core whose operands step through
   different loops, a kernel with other shared memory, and `Setting.stage`
   off, as the goldens compare with tinygrad, stay unstaged; a tile whose
   address gathers copies in one stage, so that no gather reads past the
@@ -7510,24 +7520,48 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   copies too; unmeasured. A run of three tiles in one warp: bfloat16
   experts' down product in blocks of 48 rows, at 32, 64 and 128 tokens,
   took 1069-1081 us where three warps of one tile took 1103-1116, outputs
-  bit for bit equal.
+  bit for bit equal. A computed operand: gpt-oss-20b's attention block as
+  `Gpt_oss.attention` composes it, the L2 evicted before each call, median
+  GPU time of 8 calls, two interleaved rounds, us, before and after: the
+  output projection, whose operand is the bfloat16 of the attention output
+  times each head's share its sink leaves, 112.6 to 71.7 at 64 tokens and
+  180.2 to 133.1-134.1 at 512; with Q8_0 weights, which stay unstaged, 131.1
+  to 130.1 at 64 and 275.5-276.4 to 254.0 at 512; the other projections
+  within 1 us; the tolk bench's `stream/output-projection-64`, the same
+  kernel L2-warm, 105.4-106.0 to 58.1-58.2 over three rounds. Outputs are
+  bit for bit equal at 64 tokens and with Q8_0 weights; at 512 the staged
+  tile's 128 accumulators a thread pass 320 bytes, so its sum runs as one
+  chain (rune's numerics). End to end, kaun's `GptOss/prefill-64`, four
+  interleaved rounds, 36.52-37.12 to 36.11-36.43 ms, 0.4 to 0.7 a round;
+  `prefill-512` 59.65-60.62 against 58.63-60.18, the Q8_0 prefills and the
+  decode step within their noise; allocated words equal. A decoded operand's
+  loads stay unstaged by measurement: staged, gpt-oss-20b's Q8_0
+  projections ran 1.2 to 1.9 times slower, key 56.3 to 104.4-105.5 and
+  output 130.1 to 196.6-196.8 at 64 tokens, query 188.4-190.5 to 231.4-231.5
+  and output 254.0-254.2 to 315.4-316.6 at 512.
 - **Pinned by:** the Stage suite: `values › a staged kernel computes the bits
   of the same optimisations unstaged` (CUDA's renderer against itself
   without shared memory, both tiles, one and two stages, padded, batched,
   `[N; K]` operands, a refused operand), `values › a staged product of
   gathered rows …` (MXFP4 and bfloat16 weights, 12 to 512 tokens, pad rows
-  and rows read twice in a block), `a core reading gathered rows keeps the
+  and rows read twice in a block), `values › a staged computed operand …`
+  (an output projection's operand computed from bfloat16 and float32 loads,
+  beside bfloat16 and Q8_0 weights, 12 to 512 tokens, heads of 64, whose
+  per-head scale stays a load, and of 32, whose loads all step through the
+  heads in two stages), `a core under
+  another sum whose tile takes its K whole …` (two stages), `a core reading gathered rows keeps the
   unstaged splits`, `gathered rows each warp reads alone stay unstaged`, `serial ranges › …` (exact values
   and barriers under a loop, a weak range bounded by memory, and a range the
   core's sum closes outside and inside its loop), `barriers › …` (every store
   and load of an element separated by a barrier over two trips, on CUDA and on
   HIP's RDNA3 and RDNA4, and every barrier of a kernel with `cp.async`
   waiting for it), `races` (`compute-sanitizer`'s race checker in hazard mode on a
-  kernel of each depth and one of gathered rows), `stages` (`Stage.depth`),
+  kernel of each depth, one of gathered rows and one of a computed
+  operand), `stages` (`Stage.depth`),
   `a staged core's workgroups, threads and trips`, `a staged warp holds a
   block's rows of one matrix`, `the layout` and
   `sources`; the tolk bench's `contract/bf16-*` rows, `bf16-512x4096x2880`
-  and `bf16-512x512x2880` among them, rune's
+  and `bf16-512x512x2880` among them, and `stream/output-projection-64`, rune's
   `Cuda/experts-bfloat16-64x4of32-2880x5760` and `-512x4of32-2880x5760`
   and kaun's
   `GptOss/experts-at-prefill-512`, their baselines pending the scheduled

@@ -62,13 +62,20 @@ val operands : Renderer.t -> Ops.t -> Ops.t
     where several warps read it: where a local range of the workgroup does
     not move the operand's index. A gate on such an
     operand, its index's validity or a selection of [0], copies [0] where it
-    fails. An operand whose terms mix the box's ranges with others otherwise
-    stays unstaged, as do the cores of a kernel that holds other shared memory
-    or reduces across threads. *)
+    fails. An operand computed elementwise from loads of global memory, and
+    not {!decoded}, is staged where each of its loads that reads the threads
+    and lanes reads such a box. The loads whose tiles step through the loop
+    of its tile of most elements are copied, where that loop is the loop of
+    each operand that is a load, and the others stay loads, as a per-head
+    scale stays while the core's loop runs within a head; the operand
+    computes on the copies as it did on the loads. An operand whose terms mix
+    the box's ranges with others otherwise stays unstaged, as do the cores of
+    a kernel that holds other shared memory or reduces across threads. *)
 
 val admits : Renderer.t -> Ops.t -> bool
 (** [admits ren sink] is [true] iff {!operands} stages every operand of each
-    tensor core of [sink] on [ren], tiles permitting ({!depth}): the question
+    tensor core of [sink] on [ren], a computed operand through the loads it
+    copies, tiles permitting ({!depth}): the question
     the heuristic asks before it gives a core the staged tile
     ({!Heuristic.hand_coded_optimizations}). *)
 

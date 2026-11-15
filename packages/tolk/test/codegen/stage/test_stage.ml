@@ -433,10 +433,12 @@ let exact p a b =
 
    [c[i, j] = Σ_h Σ_r a[i, r] · b'[h, r, j]], [b'] the bfloat16 of
    [b[h, r, j] · s[h]] computed in the kernel: [a]'s tile reads [i] and [r]
-   alone, [b'] has no tile, and the core's loop [r] runs inside the sum over
-   [h], in two stages. A first tile copied once, outside [h], would leave slot
-   [0] holding a chunk of [r]'s last trips at [h]'s second trip. Integers from -2 to 2 times
-   scales of [1] or [2]: every sum is exact. *)
+   alone, and the core's loop [r] runs inside the sum over [h], in two
+   stages. [b]'s tile steps through [h] as well as [r], another loop than
+   [a]'s, so [b'] stays unstaged. A first tile copied once, outside [h],
+   would leave slot [0] holding a chunk of [r]'s last trips at [h]'s second
+   trip. Integers from -2 to 2 times scales of [1] or [2]: every sum is
+   exact. *)
 let outer = (64, 4, 64, 64)
 
 let outer_kernel ?opts_to_apply () =
@@ -503,6 +505,77 @@ let core_under_a_sum () =
   let sc = Array.init h (fun g -> `Float (Float.of_int (1 + (g mod 2)))) in
   equal (array Dtypes.value) (outer_exact a b sc)
     (List.assoc 0 (Run.on d prg [ (1, a); (2, b); (3, sc) ]))
+
+(* A core whose K its tile takes whole, under another sum
+
+   [c[i, j] = Σ_g Σ_r a[g, i, r] · b[g, r, j]] over [g] of [h] blocks, [r] of
+   32, of bfloat16: the staged tile unrolls [K] to 32 values a trip, so the
+   core's own range runs one trip, and both tiles step through [g], in two
+   stages. Integers from -2 to 2: every sum is exact. *)
+let whole = (64, 8, 32, 64)
+
+let whole_kernel ?opts_to_apply () =
+  let m, h, k, n = whole in
+  let c = Shape.param ~shape:[ Ops.Int (m * n) ] 0 Float32
+  and a = Shape.param ~shape:[ Ops.Int (h * m * k) ] 1 Dtype.Bfloat16
+  and b = Shape.param ~shape:[ Ops.Int (h * k * n) ] 2 Dtype.Bfloat16 in
+  let mk = m * k and kn = k * n in
+  let open Ops.O in
+  let i = Ops.range ~axis_type:Weak (Int m) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int n) [ 1 ]
+  and g = Ops.range ~axis_type:Weak (Int h) [ 2 ]
+  and r = Ops.range ~axis_type:Weak (Int k) [ 3 ] in
+  let at x idx = Ops.cast (Ops.index x [ idx ]) Float32 in
+  let sum =
+    Ops.reduce
+      (at a ((g * int mk) + (i * int k) + r)
+      * at b ((g * int kn) + (r * int n) + j))
+      Add [ g; r ]
+  in
+  let store = Ops.store (Ops.index c [ (i * int n) + j ]) sum in
+  Ops.sink ~kernel:(Ops.kernel_info ?opts_to_apply ())
+    [ Ops.end_ store [ i; j ] ]
+
+let core_taken_whole () =
+  let d, r = on_cuda () in
+  let opts =
+    Setting.context
+      Setting.[ B (stage, true) ]
+      (fun () ->
+        let s = Postrange.Scheduler.v (whole_kernel ()) r in
+        Postrange.Scheduler.convert_loop_to_global s;
+        Postrange.Scheduler.applied_opts
+          (Heuristic.hand_coded_optimizations s))
+  in
+  let prg = compiled r (whole_kernel ~opts_to_apply:opts ()) in
+  let src = source prg in
+  equal ~msg:"a core" bool true (says "mma.sync" src);
+  equal ~msg:"both tiles staged" int 2 (List.length (locals (Ops.nth prg 1)));
+  (* Two stages: each tile's first trip's copies before [g]'s loop and its
+     next trip's inside it, beside the definition of the copy. A tile of 64
+     by 32 bfloat16 values takes two copies of 16 bytes from each of the
+     workgroup's 128 threads; one stage would copy it once, inside. *)
+  equal ~msg:"two stages" int (1 + (2 * 2 * 2)) (count "tg_cp_async(" src);
+  let m, h, k, n = whole in
+  let a = small 1 (h * m * k) and b = small 2 (h * k * n) in
+  let v = function `Float f -> f | _ -> 0. in
+  let expected =
+    Array.init (m * n) (fun e ->
+        let i = e / n and j = e mod n in
+        let t = ref 0. in
+        for g = 0 to h - 1 do
+          for q = 0 to k - 1 do
+            t :=
+              !t
+              +. v a.((g * m * k) + (i * k) + q)
+                 *. v b.((g * k * n) + (q * n) + j)
+          done
+        done;
+        `Float !t)
+  in
+  equal (array Dtypes.value) expected
+    (List.assoc 0 (Run.on d prg [ (1, a); (2, b) ]))
+
 
 (* Gathered rows
 
@@ -763,6 +836,148 @@ let routed_law =
      optimisations unstaged, a pad row's outputs +0"
     (Gen.with_pp pp_routed gen) gathered_bits
 
+(* A computed operand
+
+   An attention block's output projection as rune lowers it:
+   [c[t, j] = Σ_r x[t, r] · w[j, r]] in float32, over [r] of [heads · 64],
+   whose operand [x[t, r]] is the bfloat16 of [o[h, t, d] · kept[h, t]] at
+   [h = r / 64] and [d = r mod 64], for [o] of bfloat16 laid out [heads;
+   tokens; 64] and [kept] of float32 laid out [heads; tokens]. [w] is
+   bfloat16 [N; K], or Q8_0: each block of 32 values of a row in 34 bytes, a
+   float16 scale then 32 int8 codes, the product summed a block at a time,
+   each block's sum times its scale. The loads [x] computes on are staged
+   where they step through one loop with the other operand's, beside a
+   decoded [w] too. *)
+
+type weights_of = Bf16_rows | Q8_0_rows
+
+type computed = { weights_of : weights_of; tokens : int; head : int }
+
+let heads = 8
+let outputs = 256
+let qk = 32
+let q8_bytes = 2 + qk
+
+let computed_kernel ?opts_to_apply p =
+  let head = p.head in
+  let k = heads * head and t = p.tokens and n = outputs in
+  let blocks = k / qk and plane = t * head and per_head = head / qk in
+  let row = blocks * q8_bytes in
+  let c = Shape.param ~shape:[ Ops.Int (t * n) ] 0 Float32
+  and o = Shape.param ~shape:[ Ops.Int (heads * t * head) ] 1 Dtype.Bfloat16
+  and kept = Shape.param ~shape:[ Ops.Int (heads * t) ] 2 Float32
+  and w = Shape.param ~shape:[ Ops.Int (n * k) ] 3 Dtype.Bfloat16
+  and q8 = Shape.param ~shape:[ Ops.Int (n * blocks * q8_bytes) ] 3 Uint8 in
+  let open Ops.O in
+  let x tok h d =
+    let v =
+      Ops.cast (Ops.index o [ (h * int plane) + (tok * int head) + d ]) Float32
+    in
+    Ops.cast (Ops.cast (v * Ops.index kept [ (h * int t) + tok ]) Bfloat16)
+      Float32
+  in
+  let sum, tok, j =
+    match p.weights_of with
+    | Bf16_rows ->
+        let r = Ops.range ~axis_type:Weak (Int k) [ 0 ]
+        and tok = Ops.range ~axis_type:Weak (Int t) [ 1 ]
+        and j = Ops.range ~axis_type:Weak (Int n) [ 2 ] in
+        let wv = Ops.cast (Ops.index w [ (j * int k) + r ]) Float32 in
+        let sum = Ops.reduce (x tok (r // int head) (r % int head) * wv) in
+        (sum Add [ r ], tok, j)
+    | Q8_0_rows ->
+        let e = Ops.range ~axis_type:Weak (Int qk) [ 0 ]
+        and b = Ops.range ~axis_type:Weak (Int blocks) [ 1 ]
+        and tok = Ops.range ~axis_type:Weak (Int t) [ 2 ]
+        and j = Ops.range ~axis_type:Weak (Int n) [ 3 ] in
+        let block = (j * int row) + (b * int q8_bytes) in
+        let code =
+          Ops.cast (Ops.bitcast (Ops.index q8 [ block + int 2 + e ]) Int8)
+            Float32
+        in
+        let byte i = Ops.cast (Ops.index q8 [ block + int i ]) Uint16 in
+        let scale =
+          Ops.cast
+            (Ops.bitcast
+               (byte 0 + (byte 1 lsl Ops.int ~dtype:Uint16 8))
+               Float16)
+            Float32
+        in
+        let d = (b % int per_head * int qk) + e in
+        let inner = Ops.reduce (x tok (b // int per_head) d * code) Add [ e ] in
+        (Ops.reduce (inner * scale) Add [ b ], tok, j)
+  in
+  let store = Ops.store (Ops.index c [ (tok * int n) + j ]) sum in
+  Ops.sink ~kernel:(Ops.kernel_info ?opts_to_apply ())
+    [ Ops.end_ store [ tok; j ] ]
+
+(* [o] and [kept] of [values]; bfloat16 weights of [values], or Q8_0 blocks
+   of any codes, each scale a float16 from 2^-5 to 2^2 (high bytes 0x28 to
+   0x43). *)
+let computed_inputs p =
+  let k = heads * p.head and t = p.tokens in
+  let int x = `Int (Bigint.of_int x) in
+  let st = Random.State.make [| p.tokens + 3 |] in
+  let weights =
+    match p.weights_of with
+    | Bf16_rows -> values (p.tokens + 2) (outputs * k)
+    | Q8_0_rows ->
+        Array.init (outputs * k / qk * q8_bytes) (fun i ->
+            match i mod q8_bytes with
+            | 1 -> int (0x28 + Random.State.int st 0x1c)
+            | _ -> int (Random.State.int st 256))
+  in
+  [
+    (1, values p.tokens (heads * t * p.head));
+    (2, values (p.tokens + 1) (heads * t));
+    (3, weights);
+  ]
+
+(* The buffers a core of [p] stages: [o]'s tile beside [w]'s, or beside a
+   decoded [w]'s none. [kept], read once a head, stays a load where the
+   core's loop runs inside a head, heads of 64 a trip of 32 values, and is
+   copied where a trip takes a head of 32 whole, the loop of every tile then
+   stepping through the heads. *)
+let staged_of p =
+  match p.weights_of with
+  | Bf16_rows when p.head = 32 -> 3
+  | Bf16_rows -> 2
+  | Q8_0_rows -> 1
+
+let computed_bits p =
+  let d, r = on_cuda () in
+  let prg = compiled r (computed_kernel p) in
+  let inputs = computed_inputs p in
+  let run prg = List.assoc 0 (Run.on d prg inputs) in
+  let cored = says "mma.sync" (source prg) in
+  if p.tokens >= 64 then equal ~msg:"a core" bool true cored;
+  if cored then
+    equal ~msg:"the operands' loads staged" int (staged_of p)
+      (List.length (locals (Ops.nth prg 1)));
+  let opts = applied prg in
+  equal (array Dtypes.value)
+    (run (compiled (unstaged r) (computed_kernel ~opts_to_apply:opts p)))
+    (run prg)
+
+let computed_law =
+  cases
+    "a staged computed operand computes the bits of the same optimisations \
+     unstaged"
+    ~id:(fun p ->
+      Printf.sprintf "%s, %d tokens, heads of %d"
+        (match p.weights_of with Bf16_rows -> "bfloat16" | Q8_0_rows -> "Q8_0")
+        p.tokens p.head)
+    (List.concat_map
+       (fun weights_of ->
+         List.map
+           (fun tokens -> { weights_of; tokens; head = 64 })
+           [ 12; 64; 128; 512 ])
+       [ Bf16_rows; Q8_0_rows ]
+    @ List.map
+        (fun tokens -> { weights_of = Bf16_rows; tokens; head = 32 })
+        [ 64; 512 ])
+    computed_bits
+
 (* The splits the hand-coded rules choose for a routed product of float
    weights on CUDA, staged or not. A core reading gathered rows copies in
    one stage and keeps the unstaged splits. *)
@@ -883,6 +1098,48 @@ let run_routed () =
   in
   equal (array Dtypes.value) expected (List.assoc 0 (Run.on d prg inputs))
 
+(* The output projection of a computed operand over 64 tokens, in heads of 32
+   whose loads all step through the heads, of integers from -2 to 2 scaled by
+   1 or 2: its sums are exact. *)
+let run_computed () =
+  let d, r = on_cuda () in
+  let p = { weights_of = Bf16_rows; tokens = 64; head = 32 } in
+  let prg = compiled r (computed_kernel p) in
+  let src = source prg in
+  equal ~msg:"o, kept and w staged" int 3
+    (List.length (locals (Ops.nth prg 1)));
+  (* Two stages: each tile's first trip's copies before the heads' loop and
+     its next trip's inside it, beside the definition of the copy. [o]'s and
+     [w]'s tiles of 64 by 32 bfloat16 values take two copies of 16 bytes from
+     each of the workgroup's 128 threads, [kept]'s 64 float32 values one
+     from some of them. *)
+  equal ~msg:"two stages" int
+    (1 + (2 * (2 + 2 + 1)))
+    (count "tg_cp_async(" src);
+  let head = p.head in
+  let k = heads * head and t = p.tokens in
+  let o = small 1 (heads * t * head) and w = small 2 (outputs * k) in
+  let kept =
+    Array.init (heads * t) (fun i -> `Float (Float.of_int (1 + (i mod 2))))
+  in
+  let v = function `Float f -> f | _ -> 0. in
+  let expected =
+    Array.init (t * outputs) (fun e ->
+        let tok = e / outputs and j = e mod outputs in
+        let s = ref 0. in
+        for q = 0 to k - 1 do
+          let h = q / head and dd = q mod head in
+          s :=
+            !s
+            +. v o.((h * t * head) + (tok * head) + dd)
+               *. v kept.((h * t) + tok)
+               *. v w.((j * k) + q)
+        done;
+        `Float !s)
+  in
+  equal (array Dtypes.value) expected
+    (List.assoc 0 (Run.on d prg [ (1, o); (2, kept); (3, w) ]))
+
 (* Gathered rows that each warp reads alone: blocks of 8 rows, the core's
    two warps on two blocks, as gpt-oss's gate and up projection with
    bfloat16 experts splits its rows over 64 tokens. Staged, they would save
@@ -917,6 +1174,7 @@ let checked = "kernels the race checker runs"
 let in_two = "a product of 128 cubed in two stages of cp.async is exact"
 let in_one = "a product of 128 cubed in one stage is exact"
 let gathered = "a routed product of gathered rows is exact"
+let computed = "a product of a computed operand is exact"
 
 let checked_kernels =
   group checked
@@ -924,6 +1182,7 @@ let checked_kernels =
       test in_two (run_staged 2);
       test in_one (run_staged 1);
       test gathered run_routed;
+      test computed run_computed;
     ]
 
 (* [compute-sanitizer] attaches to the process it starts, so each kernel runs
@@ -957,6 +1216,9 @@ let races =
         (racecheck in_one);
       test "the race checker finds no hazard in a kernel of gathered rows"
         (racecheck gathered);
+      test
+        "the race checker finds no hazard in a kernel of a computed operand"
+        (racecheck computed);
     ]
 
 (* Serial ranges around a core
@@ -1672,7 +1934,7 @@ let () =
   exit
     (Windtrap.run "Tolk.Stage"
        [
-         group "values" [ law; routed_law ];
+         group "values" [ law; routed_law; computed_law ];
          group "barriers" [ barriers ];
          checked_kernels;
          races;
@@ -1683,6 +1945,10 @@ let () =
            "a core under another sum whose tile does not read it is the exact \
             product"
            core_under_a_sum;
+         test
+           "a core under another sum whose tile takes its K whole is staged in \
+            two stages and is the exact product"
+           core_taken_whole;
          staged_tiles;
          routed_tiles;
          slotted_tiles;
