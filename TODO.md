@@ -46,7 +46,19 @@ Where it stands, with every measurement: doc/performance.md.
   them from 17 and 128. rune should count the rows routed to its own
   groups
 - gpt-oss's router product takes 620-635 us at 16 tokens against 99 at
-  12 (`r_2_8_16_2_2880`), and 85 at 127 against 39 at 128
+  12 (`r_2_8_16_2_2880`), 567-764 us a layer at 13-15 tokens, and 85 at
+  127 against 39 at 128
+- rune's `stream_held = 2` (`lower_reduce.ml`) rests on per-weight costs
+  of 0.37 and 0.25 SM-cycles that measure 0.31-0.33 for the core and 0.38
+  for a stream of 4: on gpt-oss's experts cores beat streams from 8 tokens
+- A tensor core reads MXFP4 codes as single-byte loads into its lanes;
+  how they reach the lanes holds about 4.4 ms of gpt-oss's prefill-512
+  against vLLM, and staged Q8_0 codes ran 1.5-1.8x slower
+  (`stage.ml`'s comment) for a reason nobody has measured
+- gpt-oss's down projection at 64 tokens runs 324 workgroups on 300 slots,
+  a wave tail of 0.58 ms
+- MXFP4's float32 decode on Metal multiplies by a subnormal at scale byte
+  0, which Metal may flush (MSL 4.1 §8.1); no test reaches it there
 - tolk streams a routed block of 32 rows, which `core_fits` refuses: such
   blocks took gpt-oss's MoE block 6071 us at 24 tokens
 - gpt-oss's non-expert kernels take 41.7 ms over 24 layers at a 68-token
