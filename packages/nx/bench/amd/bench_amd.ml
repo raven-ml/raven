@@ -109,10 +109,11 @@ let suite () = host :: List.map case Rows.all
    bench_amd.exe compare [PATTERN...]
 
    prints, for each selected row with a spec, its name, its idle time in
-   microseconds and its spec, separated by tabs: what compare.py reads. A row
-   nx.amd declines prints [declined] in place of its time. A row whose runs a
+   microseconds, its floor kernel's idle time in microseconds ([-] for a row
+   with none) and its spec, separated by tabs: what compare.py reads. A row
+   nx.amd declines prints [declined] in place of its times. A row whose runs a
    hold cannot queue is timed from the host instead, each run submitted and
-   waited for, and adds a fourth field, [wall]. *)
+   waited for, and adds a fifth field, [wall]. *)
 
 let strf = Printf.sprintf
 let span = 10e-3
@@ -242,7 +243,7 @@ let compare_rows patterns =
         let text = Rows.spec_text spec in
         match r.make g with
         | exception Rows.Declined ->
-            Printf.printf "%s\tdeclined\t%s\n%!" r.name text
+            Printf.printf "%s\tdeclined\t-\t%s\n%!" r.name text
         | p ->
             p.check ();
             (* A hold that runs out, as the host stalls on a loaded machine or a
@@ -258,7 +259,13 @@ let compare_rows patterns =
                   Printf.eprintf "%s: %s; timed from the host\n%!" r.name m;
                   (wall g p.run, "\twall"))
             in
-            Printf.printf "%s\t%.3f\t%s%s\n%!" r.name (t *. 1e6) text note;
+            let floor =
+              match p.floor with
+              | None -> "-"
+              | Some f -> strf "%.3f" (fst4 (time_idle g f) *. 1e6)
+            in
+            Printf.printf "%s\t%.3f\t%s\t%s%s\n%!" r.name (t *. 1e6) floor text
+              note;
             Gc.full_major ())
   in
   List.iter one (List.filter (selected patterns) Rows.compared)

@@ -6,8 +6,9 @@
 # url = "https://download.pytorch.org/whl/rocm7.2"
 # ///
 """nx.amd against PyTorch ROCm on this machine's GPU: a table of each row's
-time under both and their ratio, PyTorch's time over nx.amd's (above 1,
-nx.amd is faster). Not on any alias.
+time under both, their ratio, PyTorch's time over nx.amd's (above 1,
+nx.amd is faster), the row's floor kernel's time and the ratio's band:
+"meets" from 0.95, "gap" from 0.5, "blocks" below. Not on any alias.
 
 usage: uv run packages/nx/bench/amd/compare.py [--exe EXE] [PATTERN...]
 
@@ -35,11 +36,20 @@ PyTorch does not compute prints its reason in place of a time, and a row
 nx.amd declines prints "declined" in place of its own, beside PyTorch's.
 An attention row names the backend scaled_dot_product_attention picks.
 
+Each row's PyTorch side runs in a process of its own, run once more if
+it dies; a second death prints in place of the time, and the table ends
+with the count of both. A float scatter sum is also timed under
+torch.use_deterministic_algorithms(True), and that time is its ratio's
+reference: nx.amd fixes the sum's bits, PyTorch's atomics do not.
+"raises" says PyTorch refuses the row so, and its ratio is then against
+the default, marked so.
+
 EXE defaults to bench_amd.exe in the checkout's _build, which
 `dune build packages/nx/bench/amd/bench_amd.exe` makes.
 """
 
 import os
+import signal
 import statistics
 import subprocess
 import sys
@@ -63,16 +73,16 @@ MAX_RUNS = 2000
 
 def nx_times(exe, patterns):
     """Each selected row's name, nx.amd's idle time in us or None where it
-    declines the row, and spec; a time from the host, with its submission,
-    names its row "(wall)"."""
+    declines the row, its floor kernel's idle time in us or None, and spec;
+    a time from the host, with its submission, names its row "(wall)"."""
     out = subprocess.run([exe, "compare", *patterns], check=True,
                          stdout=subprocess.PIPE, text=True).stdout
     rows = []
     for line in out.splitlines():
-        name, us, spec, *note = line.split("\t")
+        name, us, floor, spec, *note = line.split("\t")
         name = name + "".join(f" ({n})" for n in note)
         rows.append((name, None if us == "declined" else float(us),
-                     spec.split()))
+                     None if floor == "-" else float(floor), spec.split()))
     return rows
 
 
@@ -512,9 +522,111 @@ def torch_time(spec):
     except Unsupported as e:
         return str(e), []
     except (RuntimeError, TypeError) as e:
-        return str(e).splitlines()[0][:60], []
+        text = str(e)
+        if torch.are_deterministic_algorithms_enabled() and \
+                "deterministic" in text:
+            return "raises", []
+        return text.splitlines()[0][:60], []
     finally:
         torch.cuda.empty_cache()
+
+
+def worker(argv):
+    """`--torch [--deterministic] SPEC...`: one row's PyTorch time, printed
+    as `us<TAB>TIME<TAB>NOTE...` or `none<TAB>REASON`; `--describe`: the
+    device's line."""
+    if argv[:1] == ["--describe"]:
+        props = torch.cuda.get_device_properties(0)
+        print(f"# {props.name} ({props.gcnArchName}), torch"
+              f" {torch.__version__} (HIP {torch.version.hip})", flush=True)
+        return
+    if argv[:1] == ["--deterministic"]:
+        # Uninitialized memory stays as it is: filling it with NaN would
+        # time a write that determinism does not need.
+        torch.use_deterministic_algorithms(True)
+        torch.utils.deterministic.fill_uninitialized_memory = False
+        argv = argv[1:]
+    t, note = torch_time(argv)
+    if isinstance(t, str):
+        print(f"none\t{t}", flush=True)
+    else:
+        print("\t".join(["us", repr(t), *note]), flush=True)
+
+
+# One row a process
+
+# A row's process that dies, as torch.cuda._sleep has done on gfx1201 at
+# random, runs once more; a second death names its signal in place of a
+# time. A process past WORKER_S is killed and counts as a death.
+WORKER_S = 600
+SIGNALS = {signal.SIGSEGV: "segfault", signal.SIGABRT: "abort",
+           signal.SIGBUS: "bus error", signal.SIGKILL: "killed"}
+
+
+def death(rc):
+    if rc is None:
+        return "PyTorch timeout"
+    if rc < 0:
+        return "PyTorch " + SIGNALS.get(-rc, f"signal {-rc}")
+    return f"PyTorch exit {rc}"
+
+
+def spawn(args):
+    """The result line of a worker run with args, or its death."""
+    cmd = [sys.executable, os.path.abspath(__file__), *args]
+    try:
+        p = subprocess.run(cmd, stdout=subprocess.PIPE, text=True,
+                           timeout=WORKER_S)
+    except subprocess.TimeoutExpired:
+        return None, death(None)
+    lines = p.stdout.splitlines()
+    if p.returncode != 0 or not lines:
+        return None, death(p.returncode)
+    return lines[-1].split("\t"), None
+
+
+class Retries:
+    def __init__(self):
+        self.rows, self.retried, self.died = 0, 0, 0
+
+
+def row_time(spec, retries, deterministic=False):
+    """PyTorch's time of spec in us, or the reason it has none, and its
+    notes, from a process of its own."""
+    args = ["--torch", *(["--deterministic"] if deterministic else []), *spec]
+    retries.rows += 1
+    out, dead = spawn(args)
+    if dead is not None:
+        retries.retried += 1
+        out, dead = spawn(args)
+    if dead is not None:
+        retries.died += 1
+        return dead, []
+    if out[0] == "none":
+        return out[1], []
+    return float(out[1]), out[2:]
+
+
+def wants_deterministic(spec):
+    """A float scatter sum: its bits follow PyTorch's atomics by default,
+    where nx.amd fixes them, so the deterministic time is the bar."""
+    return (spec[0] == "move" and spec[1].startswith("scatter_add")
+            and spec[2].startswith(("float", "bfloat")))
+
+
+# Gate bands of a ratio
+MEETS = 0.95
+BLOCKS = 0.5
+
+
+def band(ratio):
+    if ratio >= MEETS:
+        return "meets"
+    return "gap" if ratio >= BLOCKS else "blocks"
+
+
+def cell(t):
+    return t if isinstance(t, str) else f"{t:.2f}"
 
 
 def main(argv):
@@ -522,24 +634,39 @@ def main(argv):
     if argv[:1] == ["--exe"]:
         exe, argv = argv[1], argv[2:]
     rows = nx_times(exe, argv)
-    props = torch.cuda.get_device_properties(0)
-    print(f"# {props.name} ({props.gcnArchName}), torch {torch.__version__}"
-          f" (HIP {torch.version.hip})")
+    out, dead = spawn(["--describe"])
+    print(dead if out is None else out[0])
     print()
-    print("| Row | nx.amd us | PyTorch us | Ratio |")
-    print("|---|---:|---:|---:|")
-    for name, nx_us, spec in rows:
-        t, note = torch_time(spec)
+    print("| Row | nx.amd us | PyTorch us | PyTorch det. us | Ratio |"
+          " Floor us | Band |")
+    print("|---|---:|---:|---:|---:|---:|---|")
+    retries = Retries()
+    for name, nx_us, floor, spec in rows:
+        t, note = row_time(spec, retries)
+        det = ""
+        ref, against = t, ""
+        if wants_deterministic(spec):
+            det, _ = row_time(spec, retries, deterministic=True)
+            if isinstance(det, str):
+                against = " (default)"
+            else:
+                ref = det
         name = name + "".join(f" ({n})" for n in note)
         nx = "declined" if nx_us is None else f"{nx_us:.2f}"
-        if isinstance(t, str):
-            print(f"| {name} | {nx} | {t} | |", flush=True)
-        elif nx_us is None:
-            print(f"| {name} | {nx} | {t:.2f} | |", flush=True)
-        else:
-            print(f"| {name} | {nx} | {t:.2f} | {t / nx_us:.2f} |",
-                  flush=True)
+        fl = "" if floor is None else f"{floor:.2f}"
+        ratio, gate = "", ""
+        if nx_us is not None and not isinstance(ref, str):
+            ratio, gate = f"{ref / nx_us:.2f}{against}", band(ref / nx_us)
+        print(f"| {name} | {nx} | {cell(t)} | {cell(det)} | {ratio} | {fl} |"
+              f" {gate} |", flush=True)
+    print()
+    print(f"# PyTorch processes: {retries.rows} runs, {retries.retried}"
+          f" retried, {retries.died} died twice")
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    args = sys.argv[1:]
+    if args[:1] in (["--torch"], ["--describe"]):
+        worker(args[1:] if args[0] == "--torch" else args)
+    else:
+        main(args)
