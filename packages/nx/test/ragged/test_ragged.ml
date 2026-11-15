@@ -1222,6 +1222,19 @@ let sets =
           in
           raises_match from_v (fun () ->
               Nx_ragged.take ~indices:(on_set (int64s [| 0L |])) r));
+      test "to_strings raises a pending check's failure as the check raised it"
+        (fun () ->
+          let r =
+            Nx_ragged.v
+              ~offsets:(on_set (int64s [| 0L; 2L |]))
+              (on_set (Nx.create Nx.uint8 [| 2 |] [| 97; 98 |]))
+          in
+          let failed = Invalid_argument "test.check: a flag is false" in
+          Nx.check Nx.Ptree.unit
+            (Nx.equal_s (Nx_ragged.offsets r) (-1L))
+            ()
+            (fun _ () -> failed);
+          raises failed (fun () -> Nx_ragged.to_strings r));
     ]
 
 (* Reads of traced values *)
@@ -1266,7 +1279,10 @@ let reads =
         fun { trace } ->
           ignore (Nx_ragged.rank (Nx_ragged.v ~offsets:(trace o) values)) );
     ]
-    (fun (by, f) -> invalid ~by (fun () -> traced f))
+    (fun (by, f) ->
+      raises_match
+        (Exn.invalid_arg ~sub:(by ^ ": the value is traced by test.trace"))
+        (fun () -> traced f))
 
 let no_reads =
   test "the functions that read nothing take traced values" (fun () ->

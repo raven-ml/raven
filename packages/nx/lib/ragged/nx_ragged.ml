@@ -15,22 +15,22 @@ type ('v, 's, 'd) t = { offsets : 'd Nx.int64_t; values : ('v, 's, 'd) Nx.t }
 
 (* Reads *)
 
-(* [host fn k x] is [x]'s elements in C order, read on the host by
-   [Nx_ragged.fn]. A read refused, as of a traced value, raises naming [fn]; a
-   pending check's failure, which the read's wait raises, passes as the check
-   raised it. *)
-let host fn k x =
-  try Nx.to_bigarray k x |> Bigarray.array1_of_genarray
-  with
-  | Invalid_argument m when String.starts_with ~prefix:"Nx.to_bigarray: " m ->
-    err fn "%s" m
+(* [host by x f] is [f b], [b] the elements of the vector [x] read on the host
+   for the function [by] ({!Nx.Repr.read}), for the extent of [f]: in place
+   where they lie in C order, from a copy otherwise. *)
+let host by x f =
+  Nx.Repr.read ~by x @@ fun a ->
+  let a =
+    if Nx_array.Layout.is_contiguous (Nx_array.layout a) then a
+    else Nx_array.copy a
+  in
+  Nx_array.read a (fun g -> f (Bigarray.array1_of_genarray g))
 
-let read fn x = host fn Bigarray.int64 x
-
-(* [ints fn xs] reads the 0-D int64 values [xs] in one read. *)
-let ints fn xs =
-  let a = read fn (Nx.concatenate ~axis:0 (List.map (Nx.reshape [| 1 |]) xs)) in
-  Array.init (Bigarray.Array1.dim a) (Bigarray.Array1.get a)
+(* [ints by xs] reads the 0-D int64 values [xs] in one read, for the function
+   [by]. *)
+let ints by xs =
+  let x = Nx.concatenate ~axis:0 (List.map (Nx.reshape [| 1 |]) xs) in
+  Nx.Repr.read ~by x Nx_array.to_array
 
 let first o = Nx.slice [ R (0, 1) ] o
 let last o = Nx.slice [ R (-1, Nx.dim 0 o) ] o
@@ -161,13 +161,11 @@ let to_strings r =
   if Nx.ndim r.values <> 1 then
     err "to_strings" "values of shape %s, not 1-D"
       (pp_shape (Nx.shape r.values));
-  let o = read "to_strings" r.offsets in
+  host "Nx_ragged.to_strings" r.offsets @@ fun o ->
   let at i = Int64.to_int (Bigarray.Array1.unsafe_get o i) in
   let n = length r and lo = at 0 in
-  let bytes =
-    host "to_strings" Bigarray.int8_unsigned
-      (Nx.slice [ R (lo, at n) ] r.values)
-  in
+  let values = Nx.slice [ R (lo, at n) ] r.values in
+  host "Nx_ragged.to_strings" values @@ fun bytes ->
   Array.init n (fun i ->
       let start = at i - lo in
       let s = Bytes.create (at (i + 1) - at i) in
@@ -203,7 +201,9 @@ let take ~indices r =
     else
       (* With every length in [0, 2^63), the first running total past int64's
          range is negative. *)
-      match ints "take" [ Nx.reshape [||] (last sums); Nx.min sums ] with
+      match
+        ints "Nx_ragged.take" [ Nx.reshape [||] (last sums); Nx.min sums ]
+      with
       | [| _; least |] when least < 0L ->
           err "take" "the rows' lengths sum past int64's range"
       | read when read.(0) > Int64.of_int Int.max_int ->
@@ -235,7 +235,7 @@ let concat = function
       let bound o = Nx.reshape [||] o in
       let bounds =
         Array.map Int64.to_int
-          (ints "concat"
+          (ints "Nx_ragged.concat"
              (List.concat_map
                 (fun r -> [ bound (first r.offsets); bound (last r.offsets) ])
                 rs))
@@ -344,8 +344,8 @@ let keys (type v s d) fn (x : (v, s, d) Nx.t) : d Nx.packed =
 
 let column m x = Nx.reshape [| m; 1 |] (Nx.bitcast Nx.uint64 x)
 
-(* [codes fn r] is a code for each row of [r]: the number of rows that order
-   before it, so equal rows share one.
+(* [codes r] is [rank]'s code for each row of [r]: the number of rows that
+   order before it, so equal rows share one.
 
    Rows are told apart in rounds of up to 64 bytes of keys. Each code is the
    first position of the row's class in the order of every row, and a class
@@ -357,12 +357,12 @@ let column m x = Nx.reshape [| m; 1 |] (Nx.bitcast Nx.uint64 x)
    starts [j] positions into its class has the code [j] more than the class. A
    row is done once it is alone in its run or has no keys left; a run's rows end
    in the same round, so a class still to tell apart is whole in the next. A
-   round that leaves a row with keys reads, through [fn], the count and lengths
-   of the rows left. *)
-let codes fn r =
+   round that leaves a row with keys reads the count and lengths of the rows
+   left. *)
+let codes r =
   let n = length r in
   let values, offsets = elements r in
-  let (P keys) = keys fn values in
+  let (P keys) = keys "rank" values in
   let w = Nx.Dtype.bits (Nx.dtype keys) / 8 in
   (* Every window of up to 64 bytes from an element of a row lies in [keys]. *)
   let keys = Nx.pad [| (0, 64 / w) |] (Nx.Dtype.zero (Nx.dtype keys)) keys in
@@ -439,7 +439,7 @@ let codes fn r =
           Nx.logical_and (Nx.greater_s left 0L) (Nx.logical_not alone)
         in
         let read =
-          ints fn
+          ints "Nx_ragged.rank"
             [
               Nx.count keep;
               Nx.max (Nx.where keep left (Nx.zeros_like left));
@@ -457,7 +457,7 @@ let codes fn r =
   let here = Nx.beside len in
   if n = 0 then Nx.zeros_at here Nx.int64 [| 0 |]
   else
-    let read = ints fn [ Nx.max len; Nx.min len ] in
+    let read = ints "Nx_ragged.rank" [ Nx.max len; Nx.min len ] in
     round ~seen:0 ~active:(Nx.arange_at here Nx.int64 0 n 1) ~m:n
       ~longest:(Int64.to_int read.(0))
       ~shortest:(Int64.to_int read.(1))
@@ -466,7 +466,7 @@ let codes fn r =
 (* The codes of distinct rows, marked at their positions, count the distinct
    rows before each. *)
 let rank r =
-  let code = codes "rank" r in
+  let code = codes r in
   let marks =
     Nx.scatter ~axis:0 code (Nx.ones_like code) (Nx.zeros_like code)
   in
@@ -506,7 +506,7 @@ let opened ?size rows code =
       let k =
         match size with
         | Some k -> k
-        | None -> Int64.to_int (ints "unique" [ count ]).(0)
+        | None -> Int64.to_int (ints "Nx_ragged.unique" [ count ]).(0)
       in
       {
         Nx.ids;
@@ -529,7 +529,7 @@ let unique ?size r =
   let here = Nx.beside len in
   if n = 0 then Nx.unique ?size (Nx.zeros_at here Nx.uint64 [| 0 |])
   else
-    let read = ints "unique" [ Nx.max len; Nx.min len ] in
+    let read = ints "Nx_ragged.unique" [ Nx.max len; Nx.min len ] in
     let longest = Int64.to_int read.(0) and shortest = Int64.to_int read.(1) in
     (* Every window of a round from an element of a row lies in [keys]. *)
     let keys = Nx.pad [| (0, round_words * q) |] (Nx.Dtype.zero dt) keys in
@@ -629,7 +629,7 @@ let unique ?size r =
             in
             let read =
               let kept fill = Nx.where keep left (Nx.full_like left fill) in
-              ints "unique"
+              ints "Nx_ragged.unique"
                 [ Nx.count keep; Nx.max (kept 0L); Nx.min (kept Int64.max_int) ]
             in
             let m = Int64.to_int read.(0) in

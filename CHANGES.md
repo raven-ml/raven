@@ -2953,6 +2953,11 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- A read of a traced value by `Nx_ragged.take`, `concat`, `unique`, `rank`
+  or `to_strings` raises naming that function alone, without
+  `Nx.to_bigarray:` after it. `Nx_ragged.to_strings` reads the bytes in
+  place where they lie in C order on memory the host addresses, without a
+  copy.
 - A save (`Nx_io.save_npy`, `save_npz`, `save_safetensors`, `save_txt`,
   `encode_txt`, the image saves and encoders) raises a failed check pending
   on its value as the check raised it, where it rewrote the message to name
