@@ -53,6 +53,12 @@ Where it stands, with every measurement: doc/performance.md.
   prompt against 29.4 at 108: the attention projections at a count with a
   factor 17, `r_8_17_8_16_4_4_720_4` and `r_17_8_16_4_4_720_4`, take 13.9
   and 8.5 ms
+- At heads of 80 (32 heads, 2560 wide) the q and k projections take no
+  staged tensor core: 85 and 38.9 us at 64 tokens, against 51 and 11.3 at
+  heads of 64. Not profiled
+- A staged core copies in at most two stages, so where twice the bytes in
+  flight pass `shared_max` it can only deepen its trips; more, shallower
+  stages need a counted `cp.async.wait_group` in the CUDA renderer
 - gpt-oss's prefill still stores gate_up's bias add as its own scatter: it
   reads 4 buffers, so the 3-buffer rule keeps it, about 5% of the MoE block
   at 512 tokens and 1-2% at 17-127. Stages are decided bottom-up, so
