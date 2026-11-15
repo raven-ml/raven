@@ -5442,11 +5442,11 @@ val pp_dtype : Format.formatter -> ('v, 's) dtype -> unit
 (** {1:repr Arrays}
 
     The crossing to the array layer, for libraries that read or make bytes:
-    formats, C bindings, compilers. Layouts and buffers are visible here and
-    nowhere else in this module. It shares memory, copying nothing: a value and
-    the arrays crossing with it read the same bytes, so a caller who writes them
-    breaks "nothing changes a value". {!copy} gives a value memory of its own.
-*)
+    formats, C bindings, compilers. Layouts and buffers are visible here, in
+    {!Prim}'s operations and consumers, and nowhere else in this module. It
+    shares memory, copying nothing: a value and the arrays crossing with it
+    read the same bytes, so a caller who writes them breaks "nothing changes
+    a value". {!copy} gives a value memory of its own. *)
 
 module Repr : sig
   val of_array : 'd Devices.t -> ('v, 's) Nx_array.t -> ('v, 's, 'd) t
@@ -5541,36 +5541,58 @@ module Repr : sig
   (** [layouts x] is the layout of each of [x]'s arrays, one per device of
       its placement, in order, as a compiler reads them to know the variant
       a call over [x] runs. A value cut over devices has a piece's own
-      layout there, which {!Prim.form} does not give. It reads no byte,
+      layout there, which {!Prim.val-form} does not give. It reads no byte,
       leaves [x]'s memory unshared, and answers for a dead [x] too.
 
       Raises [Invalid_argument] naming [Nx.Repr.layouts] for a traced [x]. *)
 end
 
-(**/**)
+(** {1:prim Operations as data} *)
 
 (** Operations as data, for interpreters such as rune's.
 
+    nx computes by {e operations}, values of {!Prim.t} that name what to
+    compute over their operands: each function of nx that makes elements
+    applies one or more. An {e interpretation} ({!Prim.interpret})
+    gives operations another meaning by its {e rule}, a function from an
+    operation to its result, as a derivative gives each result a tangent or
+    a compiler records each operation in a program. An interpretation owns
+    {e traced values} ({!Prim.traced}), values with a form and no bytes that
+    stand in for what it computes. Its {e extent} holds the operations
+    applied by the function {!Prim.interpret} calls, on whatever domain it
+    resumes, and by the fibers that a scheduler installed in the extent runs
+    on the domain the extent runs on. A systhread or a domain started in
+    it, a fiber forked by a scheduler installed outside the interpretation,
+    and a fiber that a scheduler installed in the extent resumes on another
+    domain lie outside it. An interpretation is {e around} the operations
+    of its extent. It {e reaches} the operations on the traced values it
+    owns, and one of reach [Extent] ({!Prim.reach}) also every operation of
+    its extent.
+
+    {b Warning.} This module is for libraries that give nx's operations
+    another meaning, such as a derivative, a batch of lanes or a compiler,
+    and for libraries that build operations of their own, as [Nx_quant]
+    builds contractions over scaled weights. A program that only computes
+    with arrays needs none of it. A rule that gives operations meanings of
+    their own must match every constructor of {!Prim.t} and have no
+    catch-all case, so that an operation nx adds fails the rule's build
+    until the rule gives it a meaning. A rule that treats every operation
+    alike, as one that records each, needs no such match. The operations,
+    their fields and the values of this module may change in any release
+    before nx 1.0.
+
     An operation goes to the innermost interpretation around it that reaches
-    it. An interpretation is around the operations of its extent: those applied
-    by the function {!interpret} calls, on whatever domain it resumes, and by
-    the fibers that a scheduler installed in the extent runs on the domain the
-    extent runs on. Outside the extent are a systhread or a domain started in
-    it, a fiber forked by a scheduler installed outside the interpretation, and
-    a fiber that a scheduler installed in the extent resumes on another domain:
-    there, an operation on a traced value raises, and an [Extent]
-    interpretation reaches none of the other operations. Every
-    interpretation reaches the operations on its traced values; an [Extent]
-    interpretation reaches every operation of its extent. An operation no
-    interpretation reaches computes now on its operands' set's kernels, and
-    raises if the set has none, but a check of one flag that has bytes
-    ([Check]) and a [Map] of no loads, a creation, which the host computes
-    and copies where it lies ({!val-devices}).
+    it. Outside an interpretation's extent, an operation on its traced
+    values raises, and an [Extent] interpretation reaches none of the other
+    operations. An operation no interpretation reaches computes now on its
+    operands' set's kernels, and raises if the set has none, but a check of
+    one flag that has bytes ([Check]) and a [Map] of no loads, a creation,
+    which the host computes and copies where it lies ({!val-devices}).
 
     An interpretation's rule receives each operation whole, a [Map] of
     several nodes or outputs included, and gives it its whole meaning,
     evaluating pieces it builds, as one-node maps from a [Map]'s program,
-    through {!eval} on the interpretations around its own.
+    through {!Prim.eval} on the interpretations around its own.
 
     A rule runs outside its own interpretation and outside every handler
     installed in its extent, with the extent suspended until it returns: its
@@ -5584,7 +5606,7 @@ end
 
     Every value has a placement, a traced one its form's. A creation is a
     [Map] of no loads that names where it lies, so an [Extent]
-    interpretation's rule receives it at that placement, which {!results}
+    interpretation's rule receives it at that placement, which {!Prim.results}
     gives its result. *)
 module Prim : sig
   type ('v, 's, 'd) nx := ('v, 's, 'd) t
@@ -5964,10 +5986,10 @@ module Prim : sig
         loads : 'd any iarray;
       }
         -> (('w, 'r, 'd) nx * (float, 'a, 'd) nx) t
-        (** {!attention} of [q] over [kv] in [acc], bounded by [lengths], at
+        (** {!val-attention} of [q] over [kv] in [acc], bounded by [lengths], at
             [scale], its mask and score the pair program [prog] over its
             [loads], each of shape [[lead…; hq; tq; tk]], as
-            {!Nx_kernel.S.attention} states: [o], C-contiguous of
+            {!Nx_kernel.S.val-attention} states: [o], C-contiguous of
             [[lead…; hq; tq; dv]] in [out], and [lse], of
             [[lead…; hq; tq]] in [acc]. *)
 
@@ -5997,7 +6019,7 @@ module Prim : sig
 
   val iteri : ('v 's 'd. int -> ('v, 's, 'd) nx -> unit) -> 'r t -> unit
   (** [iteri f op] is [f i x] for each operand [x] of [op], at its position
-      [i] in {!operands}. It allocates nothing but for a factorisation or a
+      [i] in {!val-operands}. It allocates nothing but for a factorisation or a
       check. *)
 
   val map : ('v 's 'd. ('v, 's, 'd) nx -> ('v, 's, 'd) nx) -> 'r t -> 'r t
@@ -6309,5 +6331,3 @@ module Prim : sig
 
   (**/**)
 end
-
-(**/**)

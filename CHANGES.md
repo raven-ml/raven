@@ -2953,6 +2953,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.Prim` is documented, under a warning: a rule giving operations their
+  own meanings must match every one, and the set may change before 1.0.
 - **Breaking:** `Nx.Prim.has_kernels` is `Nx.Devices.has_kernels`, `layouts`
   is `Nx.Repr.layouts`, and `composite` is `Nx.composite`, which tests
   itself whether its arguments lie apart; `Prim.apart` is removed.
