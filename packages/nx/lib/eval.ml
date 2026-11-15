@@ -312,15 +312,9 @@ let is_traced (type v s d) (x : (v, s, d) t) =
   | Traced _ -> true
   | Array _ | Shards _ | Handle _ -> false
 
-(* Whether [i] receives [o]'s values as its own: [o] is [i] or what [i]
-   adopts. *)
-let rec adopts i o =
-  o == i
-  || match i.reach with Adopting p -> adopts p o | Values | Extent -> false
-
 let owns i (type v s d) (x : (v, s, d) t) =
   match x with
-  | Traced { owner; _ } -> adopts i owner
+  | Traced { owner; _ } -> owner == i
   | Array _ | Shards _ | Handle _ -> false
 
 let refuse ~by o =
@@ -362,17 +356,16 @@ let around o = ask o Around
 
 (* [i]'s rule on [op], in [i]'s clause. Another interpretation's traced operand
    is refused unless its interpretation is around [i], which is asked once per
-   interpretation; one [i] adopts is around by construction ({!interpret}). The
-   rule reads each handle as its arrays, lent, and kills nothing. *)
+   interpretation. The rule reads each handle as its arrays, lent, and kills
+   nothing. *)
 let deliver i ~by op =
-  (* The owners [i] does not adopt, once each, newest first: none in the
-     common case, which then allocates nothing. *)
+  (* The other owners, once each, newest first: none in the common case,
+     which then allocates nothing. *)
   let others =
     Prim.fold
       (fun i acc x ->
         match x with
-        | Traced { owner; _ }
-          when (not (adopts i owner)) && not (List.memq owner acc) ->
+        | Traced { owner; _ } when owner != i && not (List.memq owner acc) ->
             List.cons owner acc
         | Traced _ | Array _ | Shards _ | Handle _ -> acc)
       i [] op
@@ -392,37 +385,13 @@ let deliver i ~by op =
 let reaches i op =
   match i.reach with
   | Extent -> true
-  | Values | Adopting _ ->
-      Prim.fold (fun i found x -> found || owns i x) i false op
-
-(* Whether [i], whose handler was installed on the domain [here], answers on
-   the calling domain, asked by its handler once it has taken an effect. An
-   adopting interpretation's rule may share its parent's state, which no lock
-   guards: on another domain it answers only where its parent is around too,
-   so that the parent's extent moved with it and no rule of theirs runs
-   elsewhere. *)
-let present i here =
-  match i.reach with
-  | Values | Extent -> true
-  | Adopting p -> (Domain.self () :> int) = here || around p
-
-(* Refuses [op], which [i] reaches where it is not present: names the first
-   operand's owner that [i] adopts. *)
-let absent i ~by op =
-  Prim.iteri
-    (fun _ x ->
-      match x with
-      | Traced { owner; _ } when adopts i owner -> refuse ~by owner
-      | Traced _ | Array _ | Shards _ | Handle _ -> ())
-    op;
-  invalid_arg "Eval.absent: an operation its interpretation does not reach"
+  | Values -> Prim.fold (fun i found x -> found || owns i x) i false op
 
 (* Re-raised with the backtrace of its raise, which a plain [raise] would
    restart at the handler. *)
 let reraise e = Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
 let handler i =
-  let here = (Domain.self () :> int) in
   {
     Effect.Deep.retc = Fun.id;
     exnc = reraise;
@@ -432,9 +401,7 @@ let handler i =
         | Receive { by; op = Some op } when reaches i op ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
-                match
-                  if present i here then deliver i ~by op else absent i ~by op
-                with
+                match deliver i ~by op with
                 | r -> Effect.Deep.continue k r
                 | exception x ->
                     let bt = Printexc.get_raw_backtrace () in
@@ -442,7 +409,7 @@ let handler i =
         | Ask { of_; _ } when of_ == i ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
-                Effect.Deep.continue k (present i here))
+                Effect.Deep.continue k true)
         | Ask { what = Readable; _ } when i.reach = Extent ->
             (* An extent inside the owner stages what it reaches: a read
                there would hide its value from it. *)
@@ -452,32 +419,13 @@ let handler i =
         | _ -> None);
   }
 
-(* Refuses to adopt [p] unless its values may skip the check that [p] is
-   around: [p] reaches its values alone, and is live and around the caller,
-   so around the adopting extent. *)
-let adoptable ~name p =
-  match p.reach with
-  | Extent ->
-      Format.kasprintf invalid_arg "%s: adopts %s, an Extent" name p.name
-  | Values | Adopting _ ->
-      if not (Atomic.get p.live) then
-        Format.kasprintf invalid_arg "%s: adopts %s, which returned" name
-          p.name;
-      if not (around p) then
-        Format.kasprintf invalid_arg "%s: adopts %s outside %s's extent" name
-          p.name p.name
-
 let interpret ~name reach
     (rule : 'r. interpretation -> by:string -> 'r prim -> 'r) f =
-  (match reach with
-  | Adopting p -> adoptable ~name p
-  | Values | Extent -> ());
   let live = Atomic.make true in
   let rec i = { name; reach; rule; live; self = Some i } in
   let run () = Effect.Deep.match_with f i (handler i) in
   match reach with
-  | Values | Adopting _ ->
-      Fun.protect ~finally:(fun () -> Atomic.set live false) run
+  | Values -> Fun.protect ~finally:(fun () -> Atomic.set live false) run
   | Extent ->
       Atomic.incr extents;
       Fun.protect

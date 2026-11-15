@@ -29,12 +29,9 @@
     reaches it answers: by running the rule in its clause, on the handler's
     parent fiber, outside the interpretation and every handler inside it, with
     the extent suspended until the rule returns. The receiver first refuses a
-    traced operand of another interpretation that is not around it, but one
-    it adopts, which is around by construction. On another domain than the
-    one it was installed on, an adopting interpretation's handler answers an
-    operation it reaches only where its parent is around too, and refuses it
-    otherwise. An operation no handler answers is {!run}'s, and raises where
-    an operand is traced.
+    traced operand of another interpretation that is not around it. An
+    operation no handler answers is {!run}'s, and raises where an operand is
+    traced.
 
     A second effect asks one interpretation's handler one of two questions
     about the caller. The first is whether the handler is around the
@@ -69,10 +66,7 @@ val interpret :
 (** [interpret ~name reach rule f] is [f i] under [i]'s handler, [i] a new
     interpretation that gives the operations it reaches the meaning
     [rule i ~by op]. [i] is live, and counted if [reach] is [Extent], until [f]
-    returns or raises.
-
-    Raises [Invalid_argument] naming [name] and [p], with [Adopting p], if [p]
-    is an [Extent], returned, or is not around the caller. *)
+    returns or raises. *)
 
 val traced :
   interpretation -> ('v, 's, 'd) form -> ('v, 's, 'd) payload -> ('v, 's, 'd) t

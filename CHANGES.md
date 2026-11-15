@@ -2953,6 +2953,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- **Breaking:** `Nx.Prim.reach` loses `Adopting`; a nested interpretation
+  binds outer values as captures. A traced operation allocates a word less.
 - nx.cuda's `qr` accepts an operand whose memory admits only reads where
   it reads the operand in place: C-contiguous, of at most 32 columns (16
   at `complex128`) and 1024 rows, within the 48 KiB that `nx_cuda.mli`'s

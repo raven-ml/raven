@@ -81,7 +81,7 @@ and 'd any = Any : ('v, 's, 'd) t -> 'd any
 
 (** {1:interpretations Interpretations} *)
 
-and reach = Values | Extent | Adopting of interpretation
+and reach = Values | Extent
 
 and interpretation = {
   name : string;  (** In messages, as ["Rune.grad"]. *)

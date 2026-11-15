@@ -5495,16 +5495,13 @@ end
     it, a fiber forked by a scheduler installed outside the interpretation, and
     a fiber that a scheduler installed in the extent resumes on another domain:
     there, an operation on a traced value raises, and an [Extent]
-    interpretation reaches none of the other operations. An [Adopting]
-    interpretation is around its extent on the domain it started on, and on
-    another only where the interpretation it adopts is around too.
-    Every interpretation reaches the operations on its traced values; an
-    [Extent] interpretation reaches every operation of its extent, and an
-    [Adopting] one those on the values of the interpretations it adopts. An
-    operation no interpretation reaches computes now on its operands' set's
-    kernels, and raises if the set has none, but a check of one flag that has
-    bytes ([Check]) and a [Map] of no loads, a creation, which the host
-    computes and copies where it lies ({!val-devices}).
+    interpretation reaches none of the other operations. Every
+    interpretation reaches the operations on its traced values; an [Extent]
+    interpretation reaches every operation of its extent. An operation no
+    interpretation reaches computes now on its operands' set's kernels, and
+    raises if the set has none, but a check of one flag that has bytes
+    ([Check]) and a [Map] of no loads, a creation, which the host computes
+    and copies where it lies ({!val-devices}).
 
     An interpretation's rule receives each operation whole, a [Map] of
     several nodes or outputs included, and gives it its whole meaning,
@@ -5515,11 +5512,7 @@ end
     installed in its extent, with the extent suspended until it returns: its
     operations go to the interpretations around its own, never to its own,
     and an effect it performs reaches the handlers around the interpretation.
-    So a rule is never entered while it runs, and its state needs no lock. A
-    rule that two interpretations share, as an adopting one may share its
-    parent's, is entered for one while it runs for the other: by an operation
-    it applies, or while its fiber is suspended, never on two domains at
-    once.
+    So a rule is never entered while it runs, and its state needs no lock.
 
     An operation on a traced value raises [Invalid_argument] naming [by] and
     the interpretation where the interpretation is not around it: after it
@@ -5983,9 +5976,6 @@ module Prim : sig
   type reach =
     | Values  (** Reaches the operations on its traced values. *)
     | Extent  (** Also reaches every operation of its extent. *)
-    | Adopting of interpretation
-        (** [Adopting p] also reaches the operations on the traced values of
-            [p] and of what [p] adopts, before [p]. *)
 
   type ('v, 's, +'d) payload = ..
   (** What an interpretation keeps in its traced values. A payload holds values,
@@ -6008,22 +5998,7 @@ module Prim : sig
 
       [rule] receives a donated handle ({!Nx.donate}) as a live value over
       its arrays, whose memory is shared from then on, so that [rule] may keep
-      it: no later donation writes there. Its donor lives on.
-
-      With [Adopting p], [i] receives the operations on [p]'s values as on its
-      own, without asking whether [p] is around them: [p] is around [i]'s
-      extent, since [interpret] checks it is around the caller, so an
-      operation on [p]'s values costs [i] what one on its own does. Since
-      [rule] may share [p]'s state, [i] answers on another domain than the one
-      [interpret] was called on only where [p] is around there too, its
-      extent resumed there with [i]'s; elsewhere an operation of [i]'s extent
-      on a value of [i] or of what it adopts raises as one outside their
-      extents. {!payload}[ i] is [None] for [p]'s values: [rule] reads them
-      through {!owner}.
-
-      Raises [Invalid_argument] naming [name] and [p], with [Adopting p], if
-      [p] is an [Extent], returned, or is not around the caller, as from its
-      own rule or on another domain. *)
+      it: no later donation writes there. Its donor lives on. *)
 
   val traced :
     interpretation ->
@@ -6047,16 +6022,15 @@ module Prim : sig
       [i] tracks. Operations on it go to [i] as on any value [i] owns. *)
 
   val payload : interpretation -> ('v, 's, 'd) nx -> ('v, 's, 'd) payload option
-  (** [payload i x] is [Some p] iff [i] owns [x], [p] what it keeps: [None]
-      for a value [i] adopts ([Adopting]), whose owner keeps its payload. It
+  (** [payload i x] is [Some p] iff [i] owns [x], [p] what it keeps. It
       allocates nothing. *)
 
   val quiet : unit -> bool
   (** [quiet ()] is [true] only if no [Extent] interpretation is live, on any
-      domain: an operation that no [Values] or [Adopting] interpretation
-      reaches then computes now. It may be [false] with none live: a
-      continuation dropped inside an extent keeps it [false] for the life of
-      the process. It reads one atomic. *)
+      domain: an operation that no [Values] interpretation reaches then
+      computes now. It may be [false] with none live: a continuation dropped
+      inside an extent keeps it [false] for the life of the process. It reads
+      one atomic. *)
 
   val owner : ('v, 's, 'd) nx -> interpretation option
   (** [owner x] is the interpretation that owns [x], if [x] is traced. It

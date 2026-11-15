@@ -7770,10 +7770,7 @@ module Prim = struct
       (Grid.devices (Devices.grid p))
 
   type interpretation = Value.interpretation
-  type reach = Value.reach =
-    | Values
-    | Extent
-    | Adopting of interpretation
+  type reach = Value.reach = Values | Extent
   type ('v, 's, +'d) payload = ('v, 's, 'd) Value.payload = ..
 
   let interpret = Eval.interpret
