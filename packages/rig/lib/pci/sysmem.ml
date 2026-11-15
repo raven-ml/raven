@@ -476,17 +476,23 @@ let parts a n =
   in
   go [] a
 
-(* [b], which nothing holds, goes. *)
+(* [b], which nothing holds, goes. Its page is unmapped and punched out while
+   [b] is listed, steps a free called again makes again whole; then [b]
+   leaves [blocks] as its offset becomes spare, the list cell made first,
+   with nothing between that allocates or polls. An exception before leaves
+   [b] listed with no user, for [ready] or [free_unheld] to finish, and never
+   lists its offset twice. *)
 let free_block b =
-  Tables.Address.remove blocks b.at;
   unmap_range b.at huge;
   let f = b.file in
   release_range f.fd b.off huge;
-  f.spare <- b.off :: f.spare;
+  let spare = b.off :: f.spare in
+  Tables.Address.remove blocks b.at;
+  f.spare <- spare;
   collect f
 
 (* A block counted by no take: one whose count an exception kept from
-   following its making. *)
+   following its making, or whose free an exception ended. *)
 let free_unheld () =
   Tables.Address.fold (fun _ b l -> if b.users = 0 then b :: l else l) blocks []
   |> List.iter free_block
@@ -602,8 +608,13 @@ let uncount table c a n =
      end
 
 (* The block at [at] of [s]'s root, made with its huge page if missing, and
-   zeroed where a take of another adds [len] bytes at [x]. *)
+   zeroed where a take of another adds [len] bytes at [x]. A listed block no
+   take counts may be one whose free an exception ended, its page given back
+   part-way: its free is finished first, and the block made anew. *)
 let ready s (at, x, len) =
+  (match Tables.Address.find_opt blocks at with
+  | Some b when b.users = 0 -> free_block b
+  | Some _ | None -> ());
   match Tables.Address.find blocks at with
   | b when b.file.root <> s.root ->
       Fail.fail "the 2 MiB of addresses at 0x%x hold another machine's memory"
@@ -684,12 +695,14 @@ let close s =
   leave ~root:s.root s.bus
 
 (* Every block of the [n] bytes at [a] must be [s]'s root's: memory of the
-   process's own, or of another machine, would not outlive the process. *)
+   process's own, or of another machine, would not outlive the process. A
+   block no store counts holds nothing [alloc] gave: an exception that cut
+   its free may have punched its page out already. *)
 let reach s a n =
   Lock.protect state @@ fun () ->
   let held (at, _, _) =
     match Tables.Address.find blocks at with
-    | b -> b.file.root = s.root
+    | b -> b.file.root = s.root && b.users > 0
     | exception Not_found -> false
   in
   let ps = parts a n in

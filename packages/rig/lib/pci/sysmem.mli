@@ -83,7 +83,9 @@ val alloc :
 val free : store -> Window.t -> unit
 (** [free s w] gives back [s]'s count of {!alloc}'s memory [w]. A huge page goes
     back once no store counts it. A [w] that [s] counts no more, such as after
-    {!close}, gives back nothing. *)
+    {!close}, gives back nothing. A huge page whose give-back an exception
+    ended goes back at the next {!alloc} in its 2 MiB block, or at the next
+    {!close} of any store. *)
 
 val close : store -> unit
 (** [close s] records that [s]'s function, with its bus mastering off, reaches
@@ -102,11 +104,11 @@ val set_own_length : int -> int
     is 1 GiB. *)
 
 val reach : store -> int -> int -> (int * int) list option
-(** [reach s a n] is the physical runs of the [n] bytes at [a], if {!alloc}
-    gave every 2 MiB block that holds them under [s]'s root. [s] counts them,
-    so their huge pages stay until {!unreach}, and their file stays until
-    [s]'s function no longer reaches it either. It is [None], recording
-    nothing, otherwise.
+(** [reach s a n] is the physical runs of the [n] bytes at [a], if each 2 MiB
+    block that holds them is one {!alloc} gave under [s]'s root, which a
+    store still counts. [s] counts them, so their huge pages stay until
+    {!unreach}, and their file stays until [s]'s function no longer reaches
+    it either. It is [None], recording nothing, otherwise.
 
     Raises {!Fail.Failed}, recording nothing, if the record cannot be written
     for after the process's death. *)

@@ -1077,6 +1077,51 @@ let test_reused_zeroed () =
   Function.free_dma f a;
   Function.free_dma f b
 
+(* An exception may land at any allocation of a free of memory alone in its
+   2 MiB block, as the block's huge page goes back. A pin of the freed memory
+   then pins none of the page the file gave back. Memory allocated there
+   again, if [again], reads what is written, and the page goes back by the
+   function's release, though another function's memory keeps the file. *)
+let test_free_block_cut (_, again) =
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
+  let buses = [ "0000:03:00.0"; "0000:04:00.0" ] in
+  let root = Tree.make (List.map Tree.gpu buses) in
+  let m = Machine.at root in
+  let other = require_ok (Function.take m (List.nth buses 1)) in
+  Fun.protect ~finally:(fun () -> Function.release other) @@ fun () ->
+  reserved other;
+  let page = Machine.page Machine.this in
+  let va = free_base + (2 * mib) and kept_va = free_base + (4 * mib) in
+  ignore (frames root va huge);
+  ignore (frames root kept_va page);
+  let kept, _ = given (Function.alloc_dma ~va:kept_va other page) in
+  let rec walk n =
+    let at what = strf "%s, landing at %d" what n in
+    let f = require_ok (Function.take m (List.hd buses)) in
+    let w, _ = given (Function.alloc_dma ~va f huge) in
+    let reached = Rig_support.interrupted n (fun () -> Function.free_dma f w) in
+    (match Function.pin f va page with
+    | Ok (Some _) ->
+        equal ~msg:(at "the page a pin reaches is in the file") int (2 * huge)
+          (Tree.stored (memory_file root));
+        Function.unpin f va page
+    | Ok None | Error _ -> ());
+    if again then begin
+      let w', _ = given (Function.alloc_dma ~va f huge) in
+      Window.write w' (huge - 5) "again";
+      equal ~msg:(at "memory allocated again") string "again"
+        (Window.read w' (huge - 5) 5);
+      Function.free_dma f w'
+    end;
+    Function.release f;
+    equal ~msg:(at "the bytes held once released") int huge
+      (Tree.stored (memory_file root));
+    if n = 1 then equal ~msg:"the walk lands" bool true reached;
+    if reached then walk (n + 1)
+  in
+  walk 1;
+  Function.free_dma other kept
+
 (* Addresses whose 2 MiB block another machine's memory holds are refused. *)
 let test_block_taken () =
   with_fixture @@ fun root f ->
@@ -1173,6 +1218,13 @@ let system_memory =
       test "memory in one 2 MiB block shares a huge page, gone once both are"
         test_shared_page;
       test "memory handed out again in a huge page is zeroed" test_reused_zeroed;
+      cases
+        "a free cut at any allocation as its huge page goes back leaves the \
+         page to the release, unpinned, and memory allocated there again \
+         works"
+        ~id:fst
+        [ ("then allocated again", true); ("then released", false) ]
+        test_free_block_cut;
       test "a 2 MiB block another machine's memory holds is refused"
         test_block_taken;
       test "the 2 MiB block around memory must be reserved" test_block_reserved;
