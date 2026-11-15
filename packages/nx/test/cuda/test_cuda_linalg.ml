@@ -546,6 +546,44 @@ let test_steps =
       limited ~steps:1 (fun () ->
           fails b (Eigh true) dt ~rows:40 ~cols:40 (hermitian st dt 40)))
 
+(* A secular equation whose first guesses are its roots, as the one
+   merge of a tridiagonal matrix of order 34: a diagonal leaf of 32, its
+   last value 0 once torn, and a leaf of 2 of values 1 and 3, coupled by
+   3 / 2, so that the merge is 1 + 3 Σ z_j² / (d_j − λ) over d = (0, 1, 3)
+   and z² = (1/2, 7/24, 5/24), the leaf's other values set aside. Its
+   roots are 1/2, 2 and 9/2: each interior one the middle of its poles,
+   the last its pole plus ρ / 2, where each first guess evaluates the far
+   poles, so that it is the root. At a limit of one iterate, the first
+   guess, eigh's results meet check_eigh's relations. *)
+let test_first_guess =
+  each_dtype (fun b dt _ _ ->
+      let n = 34 and beta = 1.5 and r = sqrt 35. /. 6. in
+      let diag =
+        Array.init n (fun i ->
+            if i < 31 then -.float_of_int (i + 1) /. 8.
+            else if i = 31 then beta
+            else if i = 32 then (11. /. 6.) +. beta
+            else 13. /. 6.)
+      in
+      let a =
+        Array.init (n * n) (fun p ->
+            let i = p / n and j = p mod n in
+            let v =
+              if i = j then diag.(i)
+              else if min i j = 31 && abs (i - j) = 1 then beta
+              else if min i j = 32 && abs (i - j) = 1 then r
+              else 0.
+            in
+            { Complex.re = v; im = 0. })
+      in
+      let x = of_values dt [| n; n |] a in
+      limited ~steps:1 (fun () ->
+          match run b (Eigh true) [| x |] with
+          | Some y ->
+              check_eigh dt ~e:0 ~count:1 ~n (values x) (values y.(0))
+                (values y.(1))
+          | None -> ()))
+
 let test_qr =
   each_dtype (fun b dt drawn _ ->
       limited ~qr:0 (fun () ->
@@ -656,7 +694,9 @@ let laws ~name b =
           test "Jacobi's sweeps" (on test_sweeps);
           test "Jacobi's sweeps on a leaf of divide and conquer"
             (on test_leaf_sweeps);
-          test "a secular equation's steps" (on test_steps);
+          test "a secular equation's iterates" (on test_steps);
+          test "a secular equation whose first guesses are its roots"
+            (on test_first_guess);
           test "eig's QR iterations" (on test_qr);
           test "the bidiagonal QR's rotations" (on test_rotations);
         ];

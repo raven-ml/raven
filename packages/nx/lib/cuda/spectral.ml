@@ -18,11 +18,12 @@
    extents alone, so no result's bits depend on the batch.
 
    An iteration that does not converge within its limit makes its matrix
-   NaN in every result: 60 Jacobi sweeps (sp_jacobi.cuh), 30 steps of a
-   secular equation and 40 iterations of a step's equation over three
-   poles (sp_stedc.cuh), 30 max(10, h) QR iterations of eig, h the order
-   balancing leaves to iterate on (sp_eig.cuh), and 6 k² rotations of the
-   bidiagonal QR sweeps (sp_bd.cuh). A call reads all but the 40 once, and
+   NaN in every result: 60 Jacobi sweeps (sp_jacobi.cuh), 30 iterates of
+   a secular equation, its first guess among them, and 40 iterations of
+   a correction's equation over three poles (sp_stedc.cuh), 30 max(10, h)
+   QR iterations of eig, h the order balancing leaves to iterate on
+   (sp_eig.cuh), and 6 k² rotations of the bidiagonal QR sweeps
+   (sp_bd.cuh). A call reads all but the 40 once, and
    each of its launches passes them as words, which tests lower. *)
 
 module A = Nx_array

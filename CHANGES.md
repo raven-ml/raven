@@ -2941,6 +2941,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- nx.cuda's `eigh` keeps a secular equation's root that converges on its
+  last allowed iterate; it discarded it and returned NaN for the matrix.
 - nx.cuda's `eigh` no longer reads eigenvectors at stale workspace
   positions when a divide and conquer leaf fails to converge: the leaf's
   NaN values rank last, by index.

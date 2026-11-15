@@ -458,8 +458,8 @@ D bool laed6(int kniter, bool orgati, R rho, const R *d, const R *z, R finit,
 
 /* Root [i] of 1 + ρ Σ z_j² / (d_j − λ) = 0, d ascending, z without
    zeros, ρ > 0 (xLAED4): λ into [dlam], d_j − λ into delta[j·ds], each
-   from the pole nearer the root. Returns false after [steps] steps, 30
-   but in tests (NX_SP_STEPS). */
+   from the pole nearer the root. Returns false if none of [steps] steps,
+   30 but in tests (NX_SP_STEPS), converges. */
 template <class R>
 D bool laed4(int n, int i, const R *d, const R *z, R *delta, size_t ds, R rho,
              R *dlam, int steps) {
@@ -567,11 +567,11 @@ D bool laed4(int n, int i, const R *d, const R *z, R *delta, size_t ds, R rho,
       else if (step > 1 && w * prew > 0 && fabs(w) > fabs(prew) / 10)
         swtch = !swtch;
     }
-    if (step + 1 >= steps) break;
     if (fabs(w) <= eps * err) {
       *dlam = org + tau;
       return true;
     }
+    if (step + 1 >= steps) break;
     if (w <= 0)
       lb = fmax(lb, tau);
     else
