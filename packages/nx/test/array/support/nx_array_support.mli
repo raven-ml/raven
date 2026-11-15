@@ -98,6 +98,12 @@ val mapped_region :
     region whose pages the host maps, and that region: the bigarray its
     memory lies in, which a borrow maps. *)
 
+val mapped_read_only : ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t
+(** [mapped_read_only a] is an array of [a]'s dtype and layout on
+    {!io_device}, over a copy of the bytes of [a]'s buffer in a region whose
+    pages the host maps, from the start of a page, whose memory admits only
+    [Read]. A borrow maps it on a device whose driver maps host pages. *)
+
 val off_host : unit -> Rig.t
 (** [off_host ()] is a device whose memory the host does not address and
     which runs its own work as it arrives ({!Rig_support.Polled}, without

@@ -2941,6 +2941,11 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- nx.cuda's `qr` accepts an operand whose memory admits only reads where
+  it reads the operand in place: C-contiguous, of at most 32 columns (16
+  at `complex128`) and 1024 rows, within the 48 KiB that `nx_cuda.mli`'s
+  Memory section states. It declared the operand written, and the submit
+  refused it with `Invalid_argument` after the call was accepted.
 - A small nx.cuda `svd` stops rotating once its own matrix converges, so
   its bits no longer depend on the other matrices of its batch.
 - nx.cuda's `eigh` keeps a secular equation's root that converges on its

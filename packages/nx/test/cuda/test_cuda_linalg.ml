@@ -10,10 +10,11 @@
    product, on spread and scaled magnitudes and at every small shape whose
    matrices share a group; the spectra against known ones; the Upper
    factor's bits; LU, Cholesky and the solves bit for bit the unblocked
-   algorithm's; the same bits under every layout, in every batch and
-   beside whatever a small svd's group holds; past a lowered limit of
-   iteration, NaN in every result of a matrix and its bits alone for a
-   neighbour that converges. Through rig.nv, CUDA's bits. *)
+   algorithm's; the same bits under every layout, in every batch, beside
+   whatever a small svd's group holds and over memory that admits only
+   reads; past a lowered limit of iteration, NaN in every result of a
+   matrix and its bits alone for a neighbour that converges. Through
+   rig.nv, CUDA's bits. *)
 
 open Windtrap
 module A = Nx_array
@@ -390,6 +391,49 @@ let test_large (b : Support.backend) dt =
   lu_unblocked b (fixed dt 600 70);
   List.iter (qr_blocks b dt) [ (300, 40); (4500, 40); (32768, 8) ]
 
+(* Read-only operands *)
+
+(* [x] and [y] alike: floats as [same_bits] compares them, LU's int64
+   positions equal. *)
+let alike ~msg (A.Any x) y =
+  match A.dtype x with
+  | D.Int64 ->
+      let y = A.expect D.Int64 y in
+      equal ~msg (array int64)
+        (A.to_array (Support.host x))
+        (A.to_array (Support.host y))
+  | _ -> equal ~msg same_bits (bits (A.Any x)) (bits y)
+
+(* [x] on [b]'s device over memory that admits only [Read]: a borrow of
+   host pages holding a copy of its bytes. *)
+let read_only (b : Support.backend) (A.Any x) =
+  let y = Nx_array_support.mapped_read_only (Support.host x) in
+  match Rig.Buffer.borrow b.device (A.buffer y) with
+  | Some buf -> A.Any (A.v (A.dtype y) (A.layout y) buf)
+  | None -> fail "the GPU maps no host pages"
+
+(* Operands whose memory admits only [Read] give the bits writable ones
+   give: read where they lie by QR's one launch, copied by a QR past it,
+   and read by LU, Cholesky and a solve. *)
+let test_read_only (b : Support.backend) dt =
+  let check name r ops =
+    match (run b r ops, run b r (Array.map (read_only b) ops)) with
+    | Some y, Some z ->
+        Array.iteri
+          (fun i y ->
+            alike ~msg:(Printf.sprintf "%s, result %d" name i) y z.(i))
+          y
+    | _ -> ()
+  in
+  let few = fixed dt 12 3 and wide = fixed dt 100 70 in
+  let square = fixed dt 100 3 in
+  check "qr, one launch" (Qr Reduced) [| snd (lu_operand few) |];
+  check "qr, blocked" (Qr Reduced) [| snd (lu_operand wide) |];
+  check "lu" Lu [| snd (lu_operand few) |];
+  check "lu, blocked" Lu [| snd (lu_operand wide) |];
+  check "cholesky" (Cholesky Lower) [| cholesky_operand square |];
+  check "solve" (solve square) (solve_operands square)
+
 (* svd of every small shape whose matrices share a group of threads, at
    every dtype: each group's shared memory within the device's, every
    result within its bound. *)
@@ -746,6 +790,7 @@ let laws ~name b =
           prop "LU's, Cholesky's and a solve's are the unblocked algorithm's"
             case (on law_unblocked);
           prop "whatever the layout" case (on law_layouts);
+          cases "whatever memory the operands admit" test_read_only;
           (* Each case makes 40 calls. *)
           prop ~count:25 "whatever the batch" case (on law_batch);
           test "whatever a small svd's group holds beside it"

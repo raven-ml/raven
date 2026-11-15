@@ -110,6 +110,20 @@ let mapped_region n =
   in
   (b, r)
 
+(* The region starts on a page, so that a driver's device borrows it: a
+   host buffer of at least 64 KiB and four pages does ({!Rig.Buffer.create}),
+   which [page_aligned] bytes are on every page size up to 64 KiB. *)
+let page_aligned = 4 * 64 * 1024
+
+let mapped_read_only (type v s) (a : (v, s) Nx_array.t) =
+  let src = Nx_array.buffer a in
+  let n = Rig.Buffer.length src in
+  let host = Rig.Buffer.create Rig.host (Int.max n page_aligned) in
+  Rig.Buffer.copy ~src ~dst:(Rig.Buffer.view host ~first:0 ~length:n);
+  let r = Bigarray.Array1.sub (Rig.Buffer.export host Bigarray.char) 0 n in
+  let b = Rig.Buffer.of_io (io_device ()) (module Mapped) r ~access:Read n in
+  Nx_array.v (Nx_array.dtype a) (Nx_array.layout a) b
+
 (* A device whose memory the host does not address *)
 
 let off_host_polled =

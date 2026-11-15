@@ -25,6 +25,7 @@
  (modules test_cuda_linalg)
  (libraries
   nx_array
+  nx_array_support
   nx_cpu
   nx_cuda
   nx_kernel

@@ -620,7 +620,9 @@ let qr_panel c ~f:fv ~m ~n ~c0 ~w:wd ~tau ~k ?v ?t ?qr ~qc ?(ldto = 0) ?(st = 0)
   set w P.matrices c.batch;
   let parts = parts_stride * fm.bytes in
   let refs = ref [] in
-  ptr refs w P.a (of_view c fv) ~write:true;
+  (* Where Q and R are stored, the panel reads [a] alone (factor.cu's
+     panel). *)
+  ptr refs w P.a (of_view c fv) ~write:(Option.is_none qr);
   ptr refs w P.tau tau ~write:true;
   Option.iter (fun v -> ptr refs w P.v (of_view c v) ~write:true) v;
   Option.iter (fun t -> ptr refs w P.t (of_view c t) ~write:true) t;
