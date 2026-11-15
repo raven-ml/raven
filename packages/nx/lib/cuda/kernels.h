@@ -585,9 +585,16 @@ typedef struct {
    address, an integer or a size, as spectral.cu's sp_ functions call
    them. Its matrices' workspace is laid out by the functions below, which
    the device code and spectral.ml both follow, [t] and [r] the bytes of an
-   element and of its real part. */
-#define NX_SP_ARGS 13
+   element and of its real part. Past them, every launch's [w] holds its
+   format and the call's limits of iteration: Jacobi's sweeps, a secular
+   equation's steps, eig's QR steps an eigenvalue over max(10, h), and the
+   bidiagonal QR's rotations over k². */
+#define NX_SP_ARGS 17
 #define NX_SP_FMT 12
+#define NX_SP_SWEEPS 13
+#define NX_SP_STEPS 14
+#define NX_SP_QR 15
+#define NX_SP_ROTATIONS 16
 typedef struct {
   uint64_t w[NX_SP_ARGS];
 } sp_args;

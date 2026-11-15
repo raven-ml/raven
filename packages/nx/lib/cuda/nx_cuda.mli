@@ -351,8 +351,13 @@
 
 (** {3:spectral_bounds Bounds of [eigh] and [svd]}
 
-    [eigh], [svd] and [eig] iterate. A matrix on which an iteration does
-    not converge within its limit is NaN in every result. Otherwise, with
+    [eigh], [svd] and [eig] iterate: Jacobi to 60 sweeps, a secular
+    equation to 30 steps and a step's equation over three poles, where it
+    takes one, to 40 iterations, the bidiagonal QR sweeps to [6 k{^2}]
+    rotations, [k] the smaller extent, and [eig] to [30 max(10, h)] QR
+    iterations an eigenvalue, [h] the order balancing leaves to iterate
+    on. A matrix on which an iteration does not converge within its limit
+    is NaN in every result. Otherwise, with
     [θ(k) = k t], [t] the dtype's least normal number (2{^-126} or
     2{^-1022}) and [k] doubled on complex dtypes:
     {ul
@@ -613,3 +618,17 @@ val numbering_words : int -> unit
 (** [numbering_words n] makes a numbering's submission sort at most [n]
     columns of its keys, at least one and at most 8, so that a test
     reaches several submissions with few columns. *)
+
+val bound_iterations :
+  sweeps:int -> steps:int -> qr:int -> rotations:int -> unit
+(** [bound_iterations ~sweeps ~steps ~qr ~rotations] sets the spectral
+    routines' limits ({!section-spectral_bounds}) to [sweeps] Jacobi
+    sweeps, [steps] steps of a secular equation, [qr max(10, h)] QR
+    iterations of [eig] an eigenvalue and [max(rotations k{^2}, k)]
+    rotations of the bidiagonal QR sweeps, so that tests reach each
+    failure with small matrices. [~sweeps:60 ~steps:30 ~qr:30
+    ~rotations:6], the initial limits, restores them. It applies to calls
+    planned after it returns.
+
+    Raises [Invalid_argument] if [sweeps] or [steps] is below [1], or if
+    [qr] or [rotations] is negative. *)

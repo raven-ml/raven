@@ -20,7 +20,8 @@
      Francis QR (xLAHQR) and back substitution (xTREVC3).
 
    Each entry reads its function's parameters from the words of an
-   sp_args, in order: an address, an integer, or a size. */
+   sp_args, in order: an address, an integer, or a size; an iteration's
+   limit from its word past them. */
 
 #include <float.h>
 #include <math.h>
@@ -31,7 +32,6 @@ namespace nx_spectral {
 
 #include "sp_jacobi.cuh"
 #undef NT
-#undef MAX_SWEEPS
 
 #include "sp_tridiag.cuh"
 #undef NB
@@ -77,11 +77,12 @@ struct word {
 #define W(k) word{p.w[k]}
 
 template <class T> D void sp_eigh_jacobi(const sp_args &p) {
-  eigh_jacobi<T>(W(0), W(1), W(2), W(3), W(4));
+  eigh_jacobi<T>(W(0), W(1), W(2), W(3), W(4), W(NX_SP_SWEEPS));
 }
 
 template <class T> D void sp_svd_jacobi(const sp_args &p) {
-  svd_jacobi<T>(W(0), W(1), W(2), W(3), W(4), W(5), W(6), W(7), W(8));
+  svd_jacobi<T>(W(0), W(1), W(2), W(3), W(4), W(5), W(6), W(7), W(8),
+                W(NX_SP_SWEEPS));
 }
 
 template <class T> D void sp_td_stage(const sp_args &p) {
@@ -129,7 +130,7 @@ template <class R> D void sp_dc_deflate(const sp_args &p) {
 }
 
 template <class R> D void sp_dc_secular(const sp_args &p) {
-  dc_secular<R>(W(0), W(1), W(2), W(3), W(4));
+  dc_secular<R>(W(0), W(1), W(2), W(3), W(4), W(NX_SP_STEPS));
 }
 
 template <class R> D void sp_dc_product(const sp_args &p) {
@@ -185,7 +186,7 @@ template <class T> D void sp_bd_ginit(const sp_args &p) {
 }
 
 template <class T> D void sp_bd_gen(const sp_args &p) {
-  bd_gen<T>(W(0), W(1), W(2), W(3), W(4));
+  bd_gen<T>(W(0), W(1), W(2), W(3), W(4), W(NX_SP_ROTATIONS));
 }
 
 template <class T> D void sp_bd_apply(const sp_args &p) {
@@ -213,7 +214,7 @@ template <class T> D void sp_bd_out(const sp_args &p) {
 }
 
 template <class T> D void sp_eig_schur(const sp_args &p) {
-  eig_schur<T>(W(0), W(1), W(2), W(3), W(4), W(5));
+  eig_schur<T>(W(0), W(1), W(2), W(3), W(4), W(5), W(NX_SP_QR));
 }
 
 template <class T> D void sp_eig_norms(const sp_args &p) {

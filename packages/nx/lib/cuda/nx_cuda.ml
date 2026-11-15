@@ -728,3 +728,4 @@ let attention (p : Nx_kernel.Prog.t) ~scale ~o ~lse ?lengths q kv loads =
       | Ok _ | Error _ -> A.Shape_mismatch)
 
 let numbering_words = Sort.set_run_words
+let bound_iterations = Spectral.bound_iterations

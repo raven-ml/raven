@@ -234,11 +234,12 @@ template <class R> D cx<R> csqrt(cx<R> a) {
 
 /* Complex: single-shift QR sweeps (xLAHQR). H made upper triangular in
    columns [i1, i2] under [wantt], Z's rows [0, n) rotated where [z].
-   Returns false if an eigenvalue takes more than 30 max(10, hi − lo + 1)
-   iterations. */
+   Returns false if an eigenvalue takes more than q max(10, hi − lo + 1)
+   QR steps, q 30 but in tests (NX_SP_QR): xLAHQR's limit, without its
+   last step, whose result xLAHQR never tests. */
 template <class R>
 __device__ __noinline__ bool lahqr(bool wantt, int n, int lo, int hi, cx<R> *h, R *wr, R *wi,
-             cx<R> *z, R *sh) {
+             cx<R> *z, R *sh, int q) {
   typedef cx<R> T;
   const int t = threadIdx.x, nt = blockDim.x;
   const R ulp = 2 * lim<R>::eps();
@@ -276,13 +277,13 @@ __device__ __noinline__ bool lahqr(bool wantt, int n, int lo, int hi, cx<R> *h, 
   }
   __syncthreads();
   const R smlnum = lim<R>::tiny() * ((R)(hi - lo + 1) / ulp);
-  const int itmax = 30 * max(10, hi - lo + 1);
+  const int itmax = q * max(10, hi - lo + 1);
   int i1 = 0, i2 = n - 1, kdefl = 0;
   #pragma unroll 1
   for (int i = hi; i >= lo;) {
     int l = lo, its = 0;
     #pragma unroll 1
-    for (; its <= itmax; its++) {
+    for (;; its++) {
       __syncthreads();
       int k = i;
       while (k > l && !negligible(h, n, k, lo, hi, smlnum)) k--;
@@ -290,6 +291,7 @@ __device__ __noinline__ bool lahqr(bool wantt, int n, int lo, int hi, cx<R> *h, 
       __syncthreads();
       if (l > lo && t == 0) M(h, l, l - 1) = T{0, 0};
       if (l >= i) break;
+      if (its == itmax) return false;
       kdefl++;
       if (!wantt) i1 = l, i2 = i;
       T s;
@@ -422,7 +424,6 @@ __device__ __noinline__ bool lahqr(bool wantt, int n, int lo, int hi, cx<R> *h, 
         for (int p = t; z && p < n; p += nt) M(z, p, i) = M(z, p, i) * x;
       }
     }
-    if (its > itmax) return false;
     __syncthreads();
     if (t == 0) {
       wr[i] = M(h, i, i).re;
@@ -528,10 +529,11 @@ __device__ __noinline__ void lanv2(R *a, R *b, R *c, R *d, R *rt1r, R *rt1i, R *
 }
 
 /* Real: Francis double-shift QR sweeps (xLAHQR), each complex pair a 2 ×
-   2 block in xLANV2's form under [wantt]. */
+   2 block in xLANV2's form under [wantt]. Returns false as the complex
+   one does. */
 template <class R>
 __device__ __noinline__ bool lahqr(bool wantt, int n, int lo, int hi, R *h, R *wr, R *wi, R *z,
-             R *sh) {
+             R *sh, int q) {
   const int t = threadIdx.x, nt = blockDim.x;
   const R ulp = 2 * lim<R>::eps();
   if (lo == hi) {
@@ -545,13 +547,13 @@ __device__ __noinline__ bool lahqr(bool wantt, int n, int lo, int hi, R *h, R *w
     if (lo <= hi - 2) M(h, hi, hi - 2) = 0;
   }
   const R smlnum = lim<R>::tiny() * ((R)(hi - lo + 1) / ulp);
-  const int itmax = 30 * max(10, hi - lo + 1);
+  const int itmax = q * max(10, hi - lo + 1);
   int i1 = 0, i2 = n - 1, kdefl = 0;
   #pragma unroll 1
   for (int i = hi; i >= lo;) {
     int l = lo, its = 0;
     #pragma unroll 1
-    for (; its <= itmax; its++) {
+    for (;; its++) {
       __syncthreads();
       int k = i;
       while (k > l && !negligible(h, n, k, lo, hi, smlnum)) k--;
@@ -559,6 +561,7 @@ __device__ __noinline__ bool lahqr(bool wantt, int n, int lo, int hi, R *h, R *w
       __syncthreads();
       if (l > lo && t == 0) M(h, l, l - 1) = 0;
       if (l >= i - 1) break;
+      if (its == itmax) return false;
       kdefl++;
       if (!wantt) i1 = l, i2 = i;
       R h11, h12, h21, h22, s;
@@ -684,7 +687,6 @@ __device__ __noinline__ bool lahqr(bool wantt, int n, int lo, int hi, R *h, R *w
         }
       }
     }
-    if (its > itmax) return false;
     __syncthreads();
     if (l == i) {
       if (t == 0) wr[i] = M(h, i, i), wi[i] = 0;
@@ -726,12 +728,12 @@ __device__ __noinline__ bool lahqr(bool wantt, int n, int lo, int hi, R *h, R *w
   return true;
 }
 
-/* Schur: w, and S and Z for the vectors, of matrix b. Launch a power of
-   two threads, one block per matrix (looping), shared memory 2 ×
-   blockDim.x words of R and int. */
+/* Schur: w, and S and Z for the vectors, of matrix b, QR to [q] (lahqr).
+   Launch a power of two threads, one block per matrix (looping), shared
+   memory 2 × blockDim.x words of R and int. */
 template <class T>
 D void eig_schur(const T *a, typename real_of<T>::R *w, void *wsp, int vectors,
-                 int64_t nb, int n) {
+                 int64_t nb, int n, int q) {
   typedef typename real_of<T>::R R;
   extern __shared__ __align__(16) unsigned char smem[];
   R *sh = (R *)smem;
@@ -812,7 +814,7 @@ D void eig_schur(const T *a, typename real_of<T>::R *w, void *wsp, int vectors,
         if ((int)(k % n) > (int)(k / n) + 1) h[k] = elt<T>((R)0);
       __syncthreads();
       ok = lahqr(vectors != 0, n, lo, hi, h, ws.wr, ws.wi, vectors ? z : NULL,
-                 sh);
+                 sh, q);
     }
     __syncthreads();
     if (t == 0) {

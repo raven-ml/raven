@@ -10,8 +10,10 @@
    product, on spread and scaled magnitudes and at every small shape whose
    matrices share a group; the spectra against known ones; the Upper
    factor's bits; LU, Cholesky and the solves bit for bit the unblocked
-   algorithm's; the same bits under every layout and in every batch.
-   Through rig.nv, CUDA's bits. *)
+   algorithm's; the same bits under every layout and in every batch; past
+   a lowered limit of iteration, NaN in every result of a matrix and its
+   bits alone for a neighbour that converges. Through rig.nv, CUDA's
+   bits. *)
 
 open Windtrap
 module A = Nx_array
@@ -471,6 +473,91 @@ let law_batch (b : Support.backend) c =
   in
   List.iter (fun check -> check ()) checks
 
+(* Limits
+
+   nx_cuda.mli's limits of iteration, lowered by bound_iterations: a drawn
+   matrix needs more and is NaN in every result, while a diagonal one
+   beside it, which converges at once, has the bits it has alone. *)
+
+let limited ?(sweeps = 60) ?(steps = 30) ?(qr = 30) ?(rotations = 6) f =
+  Nx_cuda.bound_iterations ~sweeps ~steps ~qr ~rotations;
+  Fun.protect f ~finally:(fun () ->
+      Nx_cuda.bound_iterations ~sweeps:60 ~steps:30 ~qr:30 ~rotations:6)
+
+(* The parts of [x] that are not NaN, the imaginary ones of a complex
+   dtype, and the count of its parts. *)
+let parts (A.Any x) =
+  let dt = D.Any (A.dtype x) and v = values (A.Any x) in
+  (numbers dt v, Array.length v * if is_complex dt then 2 else 1)
+
+let fails (b : Support.backend) r dt ~rows ~cols x =
+  let diagonal =
+    Array.init (rows * cols) (fun k ->
+        if k / cols = k mod cols then
+          { Complex.re = float_of_int ((k / cols) + 1); im = 0. }
+        else Complex.zero)
+  in
+  let pair = of_values dt [| 2; rows; cols |] (Array.append x diagonal) in
+  let lone = of_values dt [| rows; cols |] diagonal in
+  match (run b r [| pair |], run b r [| lone |]) with
+  | Some y, Some one ->
+      Array.iteri
+        (fun i y ->
+          let msg what =
+            Format.asprintf "%a %d x %d, result %d: %s" pp_dtype dt rows cols
+              i what
+          in
+          equal ~msg:(msg "numbers in the drawn one") int 0
+            (fst (parts (alone 0 y)));
+          equal ~msg:(msg "the diagonal one is alone") same_bits
+            (bits one.(i)) (bits (alone 1 y));
+          let numbers, all = parts one.(i) in
+          equal ~msg:(msg "numbers in the diagonal one") int all numbers)
+        y
+  | _ -> ()
+
+(* [each_dtype check b ()] is [check b dt drawn st] at each dtype, [st]
+   a fixed seed's state and [drawn rows cols] a plain draw of it. *)
+let each_dtype check (b : Support.backend) () =
+  List.iter
+    (fun dt ->
+      let st = Random.State.make [| 5 |] in
+      let drawn rows cols = Array.init (rows * cols) (fun _ -> draw st dt) in
+      check b dt drawn st)
+    dtypes
+
+let test_sweeps =
+  each_dtype (fun b dt drawn st ->
+      limited ~sweeps:1 (fun () ->
+          let x = hermitian st dt 8 in
+          fails b (Eigh true) dt ~rows:8 ~cols:8 x;
+          fails b (Eigh false) dt ~rows:8 ~cols:8 x;
+          let x = drawn 8 6 in
+          fails b (Svd (Some Reduced)) dt ~rows:8 ~cols:6 x;
+          fails b (Svd None) dt ~rows:8 ~cols:6 x))
+
+let test_leaf_sweeps =
+  each_dtype (fun b dt _ st ->
+      limited ~sweeps:1 (fun () ->
+          fails b (Eigh true) dt ~rows:40 ~cols:40 (hermitian st dt 40)))
+
+let test_steps =
+  each_dtype (fun b dt _ st ->
+      limited ~steps:1 (fun () ->
+          fails b (Eigh true) dt ~rows:40 ~cols:40 (hermitian st dt 40)))
+
+let test_qr =
+  each_dtype (fun b dt drawn _ ->
+      limited ~qr:0 (fun () ->
+          let x = drawn 6 6 in
+          fails b (Eig true) dt ~rows:6 ~cols:6 x;
+          fails b (Eig false) dt ~rows:6 ~cols:6 x))
+
+let test_rotations =
+  each_dtype (fun b dt drawn _ ->
+      limited ~rotations:0 (fun () ->
+          fails b (Svd (Some Reduced)) dt ~rows:40 ~cols:36 (drawn 40 36)))
+
 (* GPU 0 through CUDA and through rig.nv, opened at a test's first call;
    a test skips without its GPU. *)
 let cuda_name = "cuda"
@@ -563,6 +650,15 @@ let laws ~name b =
             (on test_eig_extremes);
           test "eig's eigenvalues of Wilkinson's matrices are eigh's"
             (on test_wilkinson);
+        ];
+      group "a matrix past an iteration's limit is NaN in every result"
+        [
+          test "Jacobi's sweeps" (on test_sweeps);
+          test "Jacobi's sweeps on a leaf of divide and conquer"
+            (on test_leaf_sweeps);
+          test "a secular equation's steps" (on test_steps);
+          test "eig's QR iterations" (on test_qr);
+          test "the bidiagonal QR's rotations" (on test_rotations);
         ];
       group "bits are a function of the values alone"
         [

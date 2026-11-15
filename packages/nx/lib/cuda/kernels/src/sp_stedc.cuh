@@ -454,10 +454,11 @@ D bool laed6(int kniter, bool orgati, R rho, const R *d, const R *z, R finit,
 
 /* Root [i] of 1 + ρ Σ z_j² / (d_j − λ) = 0, d ascending, z without
    zeros, ρ > 0 (xLAED4): λ into [dlam], d_j − λ into delta[j·ds], each
-   from the pole nearer the root. Returns false after 30 steps. */
+   from the pole nearer the root. Returns false after [steps] steps, 30
+   but in tests (NX_SP_STEPS). */
 template <class R>
 D bool laed4(int n, int i, const R *d, const R *z, R *delta, size_t ds, R rho,
-             R *dlam) {
+             R *dlam, int steps) {
   const R eps = lim<R>::eps();
   if (n == 1) {
     *dlam = d[0] + rho * z[0] * z[0];
@@ -562,7 +563,7 @@ D bool laed4(int n, int i, const R *d, const R *z, R *delta, size_t ds, R rho,
       else if (step > 1 && w * prew > 0 && fabs(w) > fabs(prew) / 10)
         swtch = !swtch;
     }
-    if (step == 29) break;
+    if (step + 1 >= steps) break;
     if (fabs(w) <= eps * err) {
       *dlam = org + tau;
       return true;
@@ -656,9 +657,9 @@ D bool laed4(int n, int i, const R *d, const R *z, R *delta, size_t ds, R rho,
 
 /* Roots, weights and vectors: one thread per index x of a matrix, root
    x − a of its merge where it is below k. [phase] 0 roots, 1 weights, 2
-   vectors. */
+   vectors; a root to [steps] steps (laed4). */
 template <class R> D void dc_secular(void *wsp, int64_t nb, int n, int lev,
-                                     int phase) {
+                                     int phase, int steps) {
   #pragma unroll 1
   for (int64_t g = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
        g < nb * (int64_t)n; g += (int64_t)gridDim.x * blockDim.x) {
@@ -670,7 +671,8 @@ template <class R> D void dc_secular(void *wsp, int64_t nb, int n, int lev,
     if (i >= k) continue;
     R *s = &Q(ws.s, a, a), *dl = ws.dl + a, *w = ws.w + a;
     if (phase == 0) {
-      if (!laed4(k, i, dl, w, s + (size_t)i * n, 1, ws.e[m - 1], &ws.lam[a + i]))
+      if (!laed4(k, i, dl, w, s + (size_t)i * n, 1, ws.e[m - 1], &ws.lam[a + i],
+                 steps))
         ws.fail[0] = 1;
       continue;
     }

@@ -392,9 +392,10 @@ template <class T> __device__ __noinline__ void bd_ginit(ARGS, int t) {
 /* Generate: xBDSQR's sweeps on B, each chasing its bulge down, recorded
    (rotations at k in [ll, m) of the right, then left, factor), until the
    records are full or B is diagonal; a sweep records a rotation at least,
-   so the sweeps fit as the records do. One block per matrix, its thread 0
-   working; the state carries over to the next launch. */
-template <class T> D void bd_gen(ARGS) {
+   so the sweeps fit as the records do. A matrix fails past [l] K²
+   rotations, l 6 but in tests (NX_SP_ROTATIONS). One block per matrix,
+   its thread 0 working; the state carries over to the next launch. */
+template <class T> D void bd_gen(ARGS, int l) {
   typedef typename real_of<T>::R R;
   const R eps = lim<R>::eps();
   /* d and e in shared memory where they fit: the iteration is one
@@ -418,7 +419,7 @@ template <class T> D void bd_gen(ARGS) {
     int m = st[NX_SP_ST_M], iter = st[NX_SP_ST_ITER], sweeps = st[NX_SP_ST_SWEEPS],
         oldll = st[NX_SP_ST_OLDLL], oldm = st[NX_SP_ST_OLDM];
     int nsw = 0, nrec = 0;
-    const int maxit = 6 * K;
+    const int maxit = l * K;
     bool full = false, fail = false;
     while (m > 0) {
       if (iter >= K) {

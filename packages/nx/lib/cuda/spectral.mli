@@ -28,3 +28,10 @@ val svd :
 val eig :
   w:Nx_array.any -> ?v:Nx_array.any -> Nx_array.any -> Bytes.t Launch.plan
 (** [eig ~w ~v a] plans {!Nx_kernel.S.eig}. *)
+
+(**/**)
+
+val bound_iterations :
+  sweeps:int -> steps:int -> qr:int -> rotations:int -> unit
+(** [bound_iterations ~sweeps ~steps ~qr ~rotations] is
+    {!Nx_cuda.bound_iterations}. *)

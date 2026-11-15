@@ -19,8 +19,11 @@
 
    An iteration that does not converge within its limit makes its matrix
    NaN in every result: 60 Jacobi sweeps (sp_jacobi.cuh), 30 steps of a
-   secular equation (sp_stedc.cuh), 30 max(10, n) QR iterations of eig
-   (sp_eig.cuh) and 6 k² bidiagonal rotations (sp_bd.cuh). *)
+   secular equation and 40 iterations of a step's equation over three
+   poles (sp_stedc.cuh), 30 max(10, h) QR iterations of eig, h the order
+   balancing leaves to iterate on (sp_eig.cuh), and 6 k² rotations of the
+   bidiagonal QR sweeps (sp_bd.cuh). A call reads all but the 40 once, and
+   each of its launches passes them as words, which tests lower. *)
 
 module A = Nx_array
 module D = Nx_array.Dtype
@@ -28,6 +31,19 @@ module L = Nx_array.Layout
 module K = Kernels
 module C = Contract
 module B = Kernels.Nx_sp_bd
+
+(* Limits *)
+
+type limits = { sweeps : int; steps : int; qr : int; rotations : int }
+
+let limits = Atomic.make { sweeps = 60; steps = 30; qr = 30; rotations = 6 }
+
+let bound_iterations ~sweeps ~steps ~qr ~rotations =
+  if sweeps < 1 then invalid_arg "Nx_cuda.bound_iterations: sweeps";
+  if steps < 1 then invalid_arg "Nx_cuda.bound_iterations: steps";
+  if qr < 0 then invalid_arg "Nx_cuda.bound_iterations: qr";
+  if rotations < 0 then invalid_arg "Nx_cuda.bound_iterations: rotations";
+  Atomic.set limits { sweeps; steps; qr; rotations }
 
 (* kernels.h's layouts, from nx_cuda_stubs.c, [t] and [r] the bytes of an
    element and of its real part: Jacobi's matrices a group and their
@@ -66,20 +82,32 @@ let sp_bd ~m ~k ~gc ~t ~r =
 (* Formats *)
 
 (* A routine's arithmetic: its kernels' suffix, its NX_FMT_ code, the
-   bytes of its element and of its real part, and its dtype. *)
-type fmt = { name : string; code : int; t : int; r : int; dt : D.any }
+   bytes of its element and of its real part, its dtype, and the call's
+   limits, read once when the call is planned. *)
+type fmt = {
+  name : string;
+  code : int;
+  t : int;
+  r : int;
+  dt : D.any;
+  lim : limits;
+}
 
-let fmt_of (D.Any dt as any) =
+let fmt_of ~lim (D.Any dt as any) =
   match dt with
-  | D.Float32 -> { name = "f32"; code = K.fmt_f32; t = 4; r = 4; dt = any }
-  | D.Float64 -> { name = "f64"; code = K.fmt_f64; t = 8; r = 8; dt = any }
-  | D.Complex64 -> { name = "c64"; code = K.fmt_c64; t = 8; r = 4; dt = any }
+  | D.Float32 ->
+      { name = "f32"; code = K.fmt_f32; t = 4; r = 4; dt = any; lim }
+  | D.Float64 ->
+      { name = "f64"; code = K.fmt_f64; t = 8; r = 8; dt = any; lim }
+  | D.Complex64 ->
+      { name = "c64"; code = K.fmt_c64; t = 8; r = 4; dt = any; lim }
   | D.Complex128 ->
-      { name = "c128"; code = K.fmt_c128; t = 16; r = 8; dt = any }
+      { name = "c128"; code = K.fmt_c128; t = 16; r = 8; dt = any; lim }
   | _ -> invalid_arg "Spectral: not a routine's dtype"
 
 let real_fmt f =
-  if f.r = 4 then fmt_of (D.Any D.Float32) else fmt_of (D.Any D.Float64)
+  fmt_of ~lim:f.lim
+    (if f.r = 4 then D.Any D.Float32 else D.Any D.Float64)
 
 let cdiv a b = (a + b - 1) / b
 
@@ -156,6 +184,11 @@ let launch c f entry ?(gy = 1) ?(gz = 1) ~gx ~threads ?(shared = 0) args =
         k
     | None -> Launch.kernel ("sp_" ^ entry ^ "_" ^ f.name)
   in
+  let set k v = Bytes.set_int64_le w (8 * k) (Int64.of_int v) in
+  set K.sp_sweeps f.lim.sweeps;
+  set K.sp_steps f.lim.steps;
+  set K.sp_qr f.lim.qr;
+  set K.sp_rotations f.lim.rotations;
   C.launch c.b ~kernel ~gx ~gy ~gz ~threads ~shared w refs
 
 (* [c <- op(a) op(b)], plus [c] where [acc], negated where [neg], over
@@ -425,11 +458,13 @@ and svd_large c f ~a ~s ~u ~vh ~nb ~m ~n ~uc ~vr =
   else begin
     (* Rounds: every one but a matrix's last records more than cap - K
        rotations (a sweep's at most K - 1 more would pass cap), and a
-       matrix records fewer than 6 K² + 2 K before it converges or fails:
-       its counted rotations, below 6 K² + K, and a rotation for each 2 x 2
-       block, at most K / 2. A matrix done earlier skips the rest. *)
+       matrix records fewer than R + 2 K before it converges or fails, R =
+       max(l K², K) its limit of rotations, l 6 but in tests: its counted
+       rotations, below R + K, and a rotation for each 2 x 2 block, at
+       most K / 2. A matrix done earlier skips the rest. *)
     launch c f "bd_ginit" ~gx:(grid_of nb) ~threads:256 base;
-    let rounds = cdiv ((6 * k * k) + (2 * k)) (l B.cap - k) + 1 in
+    let most = Int.max (f.lim.rotations * k * k) k in
+    let rounds = cdiv (most + (2 * k)) (l B.cap - k) + 1 in
     let gs = if 2 * k * r <= 48 * 1024 then 2 * k * r else 0 in
     for _ = 1 to rounds do
       launch c f "bd_gen" ~gx:(grid_of nb) ~threads:32 ~shared:gs base;
@@ -535,12 +570,14 @@ let dims (A.Any x) =
 
 let elt_bytes (A.Any x) = D.bytes (A.dtype x) 1
 
-(* A call's scratch of [bytes]; [plan] adds its launches, its operand
-   read from [x] in place where C-contiguous, else from a copy, the
-   scratch's first piece. *)
-let run x ~bytes plan =
+(* A call's format, its limits read once. *)
+let call_fmt (A.Any a) = fmt_of ~lim:(Atomic.get limits) (D.Any (A.dtype a))
+
+(* A call of format [f] with scratch of [bytes]; [plan] adds its
+   launches, its operand read from [x] in place where C-contiguous, else
+   from a copy, the scratch's first piece. *)
+let run f x ~bytes plan =
   let (A.Any a) = x in
-  let f = fmt_of (D.Any (A.dtype a)) in
   let b = C.builder () in
   let contiguous = L.is_contiguous (A.layout a) in
   let copy =
@@ -586,8 +623,7 @@ let eigh ~w ?v x =
   let nb = batch_of x and n, _ = dims x in
   if nb = 0 || n = 0 then Ok []
   else
-    let (A.Any a) = x in
-    let f = fmt_of (D.Any (A.dtype a)) in
+    let f = call_fmt x in
     let t = f.t and r = f.r and nn = n * n in
     let dp = sp_dc_per n ~r and nl = cdiv n leaf in
     let last = n - ((nl - 1) * leaf) and nfull = nb * (nl - 1) in
@@ -605,7 +641,7 @@ let eigh ~w ?v x =
             nb * tnb * n * t;
           ]
     in
-    run x ~bytes (fun c f src ->
+    run f x ~bytes (fun c f src ->
         let v = match v with None -> Null | Some v -> out c v in
         eigh_dev c f ~a:src ~w:(out c w) ~v ~nb ~n)
 
@@ -613,8 +649,7 @@ let svd ~s ?vectors x =
   let nb = batch_of x and m, n = dims x in
   if nb = 0 then Ok []
   else
-    let (A.Any a) = x in
-    let f = fmt_of (D.Any (A.dtype a)) in
+    let f = call_fmt x in
     let mm = Int.max m n and k = Int.min m n in
     let uc, vr =
       match vectors with
@@ -630,7 +665,7 @@ let svd ~s ?vectors x =
         let l = sp_bd ~m:mm ~k ~gc ~t:f.t ~r:f.r in
         pieces [ nb * l B.per; (nb * 2 * k * f.r * 2) + (nb * k * f.r) ]
     in
-    run x ~bytes (fun c f src ->
+    run f x ~bytes (fun c f src ->
         let u, vh =
           match vectors with
           | None -> (Null, Null)
@@ -642,9 +677,8 @@ let eig ~w ?v x =
   let nb = batch_of x and n, _ = dims x in
   if nb = 0 || n = 0 then Ok []
   else
-    let (A.Any a) = x in
-    let f = fmt_of (D.Any (A.dtype a)) in
+    let f = call_fmt x in
     let bytes = pieces [ nb * sp_eig_per n ~t:f.t ~r:f.r; nb * n * n * f.t ] in
-    run x ~bytes (fun c f src ->
+    run f x ~bytes (fun c f src ->
         let v = match v with None -> Null | Some v -> out c v in
         eig_dev c f ~a:src ~w:(out c w) ~v ~nb ~n)

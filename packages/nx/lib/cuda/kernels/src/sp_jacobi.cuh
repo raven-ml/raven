@@ -30,9 +30,6 @@
 #include "sp_common.cuh"
 
 #define NT NX_SP_THREADS
-/* Sweeps before a matrix is declared not to converge: Jacobi converges
-   quadratically, in about 6 to 12 sweeps here; xGESVJ allows 30. */
-#define MAX_SWEEPS 60
 
 /* The pair [i] of round [r] among [np] indices, np even: index np − 1
    meets r, and the others meet by reflection about r. */
@@ -109,11 +106,14 @@ template <class T> D T nan_of() {
 __host__ __device__ inline int eigh_per(int n) { return nx_sp_eigh_per(n); }
 
 /* w and, where [v] is not NULL, v of the [nb] Hermitian n × n matrices
-   at [a], 1 ≤ n ≤ 32. Launch NT threads a block, any grid, eigh_smem
-   bytes of dynamic shared memory. */
+   at [a], 1 ≤ n ≤ 32, a matrix that still rotates after [sweeps] sweeps
+   NaN: 60 but in tests (NX_SP_SWEEPS), as Jacobi converges
+   quadratically, in about 6 to 12 sweeps here; xGESVJ allows 30. Launch
+   NT threads a block, any grid, eigh_smem bytes of dynamic shared
+   memory. */
 template <class T>
 __device__ void eigh_jacobi(const T *a, typename real_of<T>::R *w, T *v,
-                            int64_t nb, int n) {
+                            int64_t nb, int n, int sweeps) {
   typedef typename real_of<T>::R R;
   extern __shared__ __align__(16) unsigned char smem[];
   __shared__ slots sl;
@@ -220,7 +220,7 @@ __device__ void eigh_jacobi(const T *a, typename real_of<T>::R *w, T *v,
       __syncthreads();
       const int mine = run && sl.rotated[slot];
       go = __syncthreads_or(mine);
-      if (go && sweep + 1 == MAX_SWEEPS) {
+      if (go && sweep + 1 >= sweeps) {
         if (mine && lt == 0) sl.failed[slot] = 1;
         go = false;
       }
@@ -284,11 +284,13 @@ __host__ __device__ inline int svd_per(int m, int n, int tb, int rb) {
 
 /* s and, where [u] is not NULL, u and vh of the [nb] m × n matrices at
    [a], 1 ≤ m, n ≤ 32, [uc] the columns of u and [vr] the rows of vh
-   (reduced or complete). g is a, or aᴴ where a is wide, M × K. Launch NT
-   threads a block, any grid, svd_smem bytes of dynamic shared memory. */
+   (reduced or complete), a matrix past [sweeps] sweeps NaN as in
+   eigh_jacobi. g is a, or aᴴ where a is wide, M × K. Launch NT threads a
+   block, any grid, svd_smem bytes of dynamic shared memory. */
 template <class T>
 __device__ void svd_jacobi(const T *a, typename real_of<T>::R *s, T *u,
-                           T *vh, int64_t nb, int m, int n, int uc, int vr) {
+                           T *vh, int64_t nb, int m, int n, int uc, int vr,
+                           int sweeps) {
   typedef typename real_of<T>::R R;
   extern __shared__ __align__(16) unsigned char smem[];
   __shared__ slots sl;
@@ -429,7 +431,7 @@ __device__ void svd_jacobi(const T *a, typename real_of<T>::R *s, T *u,
       __syncthreads();
       const int mine = run && sl.rotated[slot];
       go = __syncthreads_or(mine);
-      if (go && sweep + 1 == MAX_SWEEPS) {
+      if (go && sweep + 1 >= sweeps) {
         if (mine && lt == 0) sl.failed[slot] = 1;
         go = false;
       }

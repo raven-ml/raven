@@ -561,11 +561,15 @@ let la_qblk = 256
 let la_qr_step_a = 1
 let la_qr_step_b = 2
 let la_qr_step_g = 3
-let sp_args = 13
+let sp_args = 17
 let sp_fmt = 12
+let sp_sweeps = 13
+let sp_steps = 14
+let sp_qr = 15
+let sp_rotations = 16
 
 module Sp_args = struct
-  let size = 104
+  let size = 136
   let w = 0
 end
 

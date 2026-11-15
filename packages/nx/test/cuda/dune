@@ -26,6 +26,7 @@
  (libraries
   nx_array
   nx_cpu
+  nx_cuda
   nx_kernel
   nx_kernel_cases
   nx_kernels_support
