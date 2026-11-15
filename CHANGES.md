@@ -2941,6 +2941,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- nx.cuda's `eigh` no longer reads eigenvectors at stale workspace
+  positions when a divide and conquer leaf fails to converge: the leaf's
+  NaN values rank last, by index.
 - `Nx.place`, and operations over arrays placed on several devices,
   allocate 4 fewer words for each piece one device shares of another's
   memory where the host addresses both.

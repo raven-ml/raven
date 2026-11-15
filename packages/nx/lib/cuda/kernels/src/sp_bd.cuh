@@ -681,11 +681,17 @@ template <class T> __device__ __noinline__ void bd_rank(ARGS, int t) {
     int64_t b = q / K;
     int j = (int)(q % K);
     bd_ws<T> ws(wsp, b, M, K, gc, t);
+    typedef typename bd_ws<T>::R R;
+    /* NaN ranks last, by index: the ranks stay a permutation, so bd_out
+       writes every s of a failed matrix. */
     int rank = 0;
+    const R dj = fabs(ws.d[j]);
+    const bool nan_j = dj != dj;
     #pragma unroll 1
-    for (int i = 0; i < K; i++)
-      rank += fabs(ws.d[i]) > fabs(ws.d[j]) ||
-              (fabs(ws.d[i]) == fabs(ws.d[j]) && i < j);
+    for (int i = 0; i < K; i++) {
+      const R di = fabs(ws.d[i]);
+      rank += di > dj || (di == dj && i < j) || (nan_j && (di == di || i < j));
+    }
     int *ix = (int *)ws.rec;
     ix[j] = rank;
     ix[K + rank] = j;

@@ -291,13 +291,17 @@ template <class R> D void dc_deflate(void *wsp, int64_t nb, int n, int lev) {
     __syncthreads();
     /* The set-aside values ascending, ties by order set aside: their
        ranks, then their columns into Qt[:, k + rank]. cols[N − 1 − i]
-       holds the column of dd[i]. */
+       holds the column of dd[i]. NaN, from a failed leaf, ranks last, by
+       order set aside: the ranks stay a permutation, so every column read
+       is the merge's. */
     #pragma unroll 1
     for (int i = threadIdx.x; i < nd; i += blockDim.x) {
       int rank = 0;
+      const bool nan_i = dd[i] != dd[i];
       #pragma unroll 1
       for (int j = 0; j < nd; j++)
-        rank += dd[j] < dd[i] || (dd[j] == dd[i] && j < i);
+        rank += dd[j] < dd[i] || (dd[j] == dd[i] && j < i) ||
+                (nan_i && (dd[j] == dd[j] || j < i));
       ws.lam[a + k + rank] = dd[i];
       ws.rn[a + k + rank] = cols[N - 1 - i];
     }
