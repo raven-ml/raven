@@ -22,8 +22,6 @@
 
 open Rig_pci
 
-external reraise : exn -> 'a = "%reraise"
-
 let strf = Printf.sprintf
 let ( let* ) = Result.bind
 let gib = 1 lsl 30
@@ -340,19 +338,30 @@ let device ~word ~on g ~gsp ~hold ~tables (c : Chip.t) =
   let* device, subdevice, vaspace = Gsp.objects rm in
   let* gpu = Gsp.gpu gsp rm ~subdevice in
   let* cache_bytes = Gsp.cache_bytes gsp rm ~subdevice in
-  (* The flush word's page lives with the GPU's memory until the stop, which
-     gives back its addresses, as a device that fails to make does at once. A
-     GPU whose BAR has no room for it opens placing nothing in the BAR. *)
+  (* The flush word's page lives with the GPU's memory until the hold's
+     release frees it, as a device that fails to make does at once. A GPU
+     whose BAR has no room for it opens placing nothing in the BAR. *)
   let* page = protect g (fun () -> Memory.alloc g.memory Memory.Bar 0x1000) in
+  (* The page leaves [left] before its free, so that a free an exception cut
+     is never made again: a second free of the region raises. *)
+  let left = ref page in
   let free_page () =
-    Option.iter (fun r -> protect g (fun () -> Memory.free g.memory r)) page
+    match !left with
+    | None -> ()
+    | Some r ->
+        left := None;
+        protect g (fun () -> Memory.free g.memory r)
   in
-  let after_stop () =
-    protect g (fun () ->
-        g.names <- None;
-        Memory.release g.memory);
-    free_page ()
-  in
+  (* What the open holds past the hold's stop goes once the stop released the
+     function ([Driver.set_release]): the names and the memory, which drops
+     the page tables, then the flush word's page. rig frees nothing during the
+     stop, and a free that writes the GPU's tables gives the function back as
+     it ends if the release began meanwhile (Memory.free). *)
+  Driver.set_release hold (fun () ->
+      protect g (fun () ->
+          g.names <- None;
+          Memory.release g.memory);
+      free_page ());
   let flush = Option.bind page host in
   match
     Rig_nv.make ~word
@@ -387,25 +396,12 @@ let device ~word ~on g ~gsp ~hold ~tables (c : Chip.t) =
         unregister = (fun _ -> Ok ());
         check = check g gsp;
         hang_ms = Some Driver.hang_ms;
-        (* The hold's stop is the first call, with nothing allocated before
-           it, so that an exception later leaves the hold to the next open of
-           the GPU. The names and the memory go after it: rig frees nothing
-           during the stop, and a free that writes the GPU's tables gives the
-           function back as it ends if the release began meanwhile
-           (Memory.free). A stop that raised before the release leaves it to
-           the hold, which the next open, reset or change of any of the
-           driver's functions, or the exit, ends, so that no open finds it
-           part-way; one that raised after it gives back the memory as one
-           that returned does. *)
-        stop =
-          (fun () ->
-            match Driver.stop hold with
-            | s ->
-                after_stop ();
-                s
-            | exception e ->
-                if Function.released g.fn then after_stop ();
-                reraise e);
+        (* The hold's stop, which runs the hold's release after the
+           function's. A stop that raised before the releases returned leaves
+           them to the hold, which the next open, reset or change of any of
+           the driver's functions, or the exit, ends, so that no open finds
+           it part-way. *)
+        stop = (fun () -> Driver.stop hold);
       }
   with
   | Ok _ as d -> d

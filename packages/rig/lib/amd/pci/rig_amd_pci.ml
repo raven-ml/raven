@@ -19,8 +19,6 @@ module Window = Rig_pci.Window
 module Driver = Rig_pci.Driver
 module Amd = Rig_amd
 
-external reraise : exn -> 'a = "%reraise"
-
 let strf = Printf.sprintf
 let ( let* ) = Result.bind
 
@@ -166,9 +164,10 @@ let memory r = { Amd.address = Memory.address r; host = host r; data = r }
 
 (* What the path's memory functions use: a GPU's memory and the lock its calls
    take. Memory the path gave holds them until its free, also after stop, so
-   they hold nothing else of the GPU, and stop releases the memory. The lock
-   nests inside the driver's lock and a hold's ([Driver]), and outside rig.pci's
-   memory locks; [machines_lock] holds no other. *)
+   they hold nothing else of the GPU, and the hold's release releases the
+   memory ([release]). The lock nests inside the driver's lock and a hold's
+   ([Driver]), and outside rig.pci's memory locks; [machines_lock] holds no
+   other. *)
 type gpu = { memory : Memory.t; lock : Amd.Lock.t }
 
 let protect g f = Amd.Lock.protect g.lock f
@@ -313,21 +312,9 @@ let path g h fn ~index : Memory.region Amd.path =
   let mem = { memory = Boot.memory g; lock = Boot.lock g } in
   (* A fault rig lost the device for, a hang included, is the GPU's as much as
      one its interrupt ring reported: the stop leaves the GPU lost. *)
-  (* The memory, which drops the page tables, goes after the hold's stop. A
-     stop that an exception ended before it released the function leaves the
-     release to the hold, which its next stop, or the next open, reset or
-     change of any of the driver's functions, makes; the exception passes as
-     raised. *)
   let stop ~fault =
     Option.iter (Boot.faulted g) fault;
-    let release () = protect mem (fun () -> Memory.release mem.memory) in
-    match Driver.stop h with
-    | s ->
-        release ();
-        s
-    | exception e ->
-        if Rig_pci.Function.released fn then release ();
-        reraise e
+    Driver.stop h
   in
   let on = known (Rig_pci.Function.machine fn) in
   {
@@ -371,19 +358,26 @@ let path g h fn ~index : Memory.region Amd.path =
     stop;
   }
 
+(* What the open holds past the hold's stop goes once the stop released the
+   function ([Driver.set_release]): the memory, which drops the page tables. *)
+let release g =
+  Amd.Lock.protect (Boot.lock g) (fun () -> Memory.release (Boot.memory g))
+
 (* The hold's stop is the GPU's from before the boot's first write to a
    register, so that no exception between that write and the open's return
    leaves the function to be released as clean: rig.pci then loses it, and
-   the stop answers what the boot's own stop recorded. A boot that raised
-   before [started], having written no register, sets a stop that answers
-   [`Lost], as before. One that raised inside [started], after [set] and
-   before the stop, also wrote nothing, and its function is released as it
-   was found. *)
+   the stop answers what the boot's own stop recorded. The hold's release
+   follows it, so that an open that fails after releases the memory. A boot
+   that raised before [started], having written no register, sets a stop
+   that answers [`Lost], as before. One that raised inside [started], after
+   [set] and before the stop, also wrote nothing, and its function is
+   released as it was found. *)
 let boot h fn ~firmware =
   let set = ref false in
   let started g =
     set := true;
-    Driver.set_stop h (fun () -> Boot.stop g)
+    Driver.set_stop h (fun () -> Boot.stop g);
+    Driver.set_release h (fun () -> release g)
   in
   let lost () = if not !set then Driver.set_stop h (fun () -> `Lost) in
   let gpus =

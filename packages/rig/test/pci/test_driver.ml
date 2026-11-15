@@ -449,17 +449,19 @@ let crossed after =
 (* A stop of GPU 0 with an exception landing at its [n]-th allocation, for
    [n] from 1 until the stop makes fewer. Its start maps windows on three
    BARs and lets the GPU master the bus, so that the release has each of its
-   steps to make. After [next], the GPU's take is given back and its vendor's
-   stop ran once. *)
+   steps to make. After [next], the GPU's take is given back, its vendor's
+   stop ran once, and its vendor's release returned, run again where the cut
+   ended it. *)
 let test_stop_cut (_, landing, next) =
   needs_flock ();
   let g, m, root = three () in
   let rec walk n =
-    let calls = ref 0 in
+    let calls = ref 0 and releases = ref 0 in
     let start h fn =
       Driver.set_stop h (fun () ->
           incr calls;
           `Clean);
+      Driver.set_release h (fun () -> incr releases);
       List.iter
         (fun i -> ignore (require_ok (Function.map ~length:4096 fn i)))
         [ 0; 2; 5 ];
@@ -473,9 +475,36 @@ let test_stop_cut (_, landing, next) =
     let at what = strf "%s, from allocation %d" what n in
     equal ~msg:(at "the GPU's take held") bool false (held root gpu_bus);
     equal ~msg:(at "the vendor's stops") int 1 !calls;
+    at_least ~msg:(at "the vendor's releases") int ~than:1 !releases;
     if reached then walk (n + 1)
   in
   walk 1
+
+(* How a driver's start fails once it gave the hold a stop and a release. *)
+let open_failures =
+  [
+    ("an Error", fun () -> Error "the GPU did not start");
+    ("an exception", fun () -> failwith "the GPU did not start");
+  ]
+
+(* The vendor's release follows the release of an open that failed, once. *)
+let test_failed_release (_, fail_) =
+  needs_flock ();
+  let g, m, root = three () in
+  let releases = ref 0 in
+  let start h fn =
+    Driver.set_stop h (fun () -> `Clean);
+    Driver.set_release h (fun () -> incr releases);
+    Function.set_bus_master fn true;
+    fail_ ()
+  in
+  (match Driver.open_ g m 0 start with
+  | Ok () -> fail "the open succeeded"
+  | Error _ | (exception Failure _) -> ());
+  equal ~msg:"the GPU's take held" bool false (held root gpu_bus);
+  equal ~msg:"the vendor's releases" int 1 !releases;
+  stop (hold g m 0);
+  equal ~msg:"the vendor's releases after the next open" int 1 !releases
 
 (* A driver that gives its GPU a stop that always raises, then fails, with an
    exception at each allocation from its failure on and every one after, as
@@ -596,10 +625,13 @@ let opening =
       test "an exception at any allocation of an open leaves it to open again"
         test_open_interrupted;
       cases
-        "an exception at any allocation of a stop, its release's included, \
-         leaves the GPU given back by what comes next"
+        "an exception at any allocation of a stop, its releases' included, \
+         leaves the GPU given back and the vendor's release run by what comes \
+         next"
         ~id:(fun (n, _, _) -> n)
         (crossed after_cut) test_stop_cut;
+      cases "the vendor's release follows an open that failed, once"
+        ~id:fst open_failures test_failed_release;
       test
         "an exception at any allocation before the driver starts leaves it to \
          open again"

@@ -141,8 +141,9 @@ val buses : t -> Machine.t -> (string list, string) result
     process does, for its next open to renew.
 
     A stop that an exception, such as an asynchronous one ([Sys.Break]), cut
-    before it released the function, and an open that one cut before it
-    returned, are ended as a failed open is by the next {!open_}, {!reset},
+    before its driver's release returned ({!set_release}), and an open that
+    one cut before it returned, are ended as a failed open is by the next
+    {!open_}, {!reset},
     {!detach} or {!attach} of the driver in this process, which leaves a stop
     running on another thread. The function is lost where no stop recorded an
     answer. An exception that a driver's stop raises there passes to that
@@ -187,19 +188,34 @@ val set_stop : hold -> (unit -> [ `Clean | `Lost | `Unknown ]) -> unit
 
     Raises [Invalid_argument] if [h] has a stop already or was stopped. *)
 
+val set_release : hold -> (unit -> unit) -> unit
+(** [set_release h release] makes [release] the driver's give-back of what it
+    holds for the function past the function's release, such as the GPU's
+    {!Memory} ({!Memory.release}) and the regions it keeps for the open. The
+    driver calls [set_release] inside the open's [f]. [release ()] runs once
+    the function's release has begun, on every path that releases it: at
+    {!stop}, at the release of an open that failed, and where the next
+    {!open_}, {!reset}, {!detach} or {!attach}, or the process's exit, ends a
+    stop or an open an exception cut. It runs under the hold, as the driver's
+    stop does. An exception that ends it passes to that call, and the next of
+    those calls runs it again, so it must give nothing back twice.
+
+    Raises [Invalid_argument] if [h] has a release already or was stopped. *)
+
 val stop : hold -> [ `Stopped | `Unknown ]
 (** [stop h] calls the driver's stop ({!set_stop}), then releases the function
-    ({!Function.release}). The function may then be opened again, and its
+    ({!Function.release}), then calls the driver's release ({!set_release}).
+    The function may then be opened again, and its
     next open renews it if the driver's stop returned [`Lost] or [`Unknown].
     [stop h] is [`Unknown] iff the driver's stop returned [`Unknown], and
     [`Stopped] otherwise. Later calls
     return what the first returned and call no driver's stop, and a call while
     another runs waits for it and returns the same. An exception raised by the
     driver's stop passes through, and the function is lost. Where another
-    exception ended the first call before the release, as one from a callback
-    inside a lock of this library's on the same thread does, the next call
-    releases the function. A device calls [stop] once its work is done or
-    lost. *)
+    exception ended the first call before the driver's release returned, as
+    one from a callback inside a lock of this library's on the same thread
+    does, the next call makes the releases it had not finished. A device
+    calls [stop] once its work is done or lost. *)
 
 val renew : hold -> (unit, string) result
 (** [renew h] resets the function [h] holds as its vendor does ([reset] of

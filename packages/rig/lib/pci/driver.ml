@@ -53,9 +53,9 @@ type t = {
    it stays the parent's. [lock] makes the first [stop] the only one to call
    the driver's: [stopped] is its answer, and [lost] whether it loses the
    function. The hold is listed in [held] until a stop's release of its
-   function returns, so that an exception that ended the first stop before
-   leaves the release to the next. A renewal that failed leaves the function
-   lost whatever stops it. *)
+   function and the driver's release after it return, so that an exception
+   that ended the first stop before leaves them to the next. A renewal that
+   failed leaves the function lost whatever stops it. *)
 and hold = {
   driver : t;
   machine : Machine.t;
@@ -64,6 +64,7 @@ and hold = {
   pid : int;
   lock : Lock.t;
   mutable vendor_stop : (unit -> [ `Clean | `Lost | `Unknown ]) option;
+  mutable vendor_release : (unit -> unit) option;
   mutable unrenewed : bool;
   mutable stopped : [ `Stopped | `Unknown ] option;
   mutable lost : bool;
@@ -185,18 +186,28 @@ let renew h =
 
 (* Releases [h]'s function once its stop recorded its answer, under [holds]:
    no open or reset sees the function free while still taken, or lost before
-   it is marked. [h] stays listed until the release returns, so that a
-   give-back an exception ended before the release, as one from a callback
-   inside [holds] on the same thread does, is made by the next stop. A
-   release an exception ended is Function's to finish
-   (Function.finish_releases). *)
+   it is marked. A release an exception ended is Function's to finish
+   (Function.finish_releases). The driver's release follows, outside
+   [holds], in which no vendor's lock nests. [h] stays listed until both
+   return, so that an exception that ends either, as one from a callback
+   inside [holds] on the same thread does, leaves them to the next stop, or
+   the next open, reset or change, which ends the stop; each may run
+   again. *)
 let give_once h =
   let g = h.driver in
-  Lock.protect g.holds @@ fun () ->
-  if List.memq h g.held then begin
-    if h.lost then mark g h.machine h.bus ~lost:true;
-    Function.release h.fn;
-    g.held <- List.filter (fun h' -> h' != h) g.held
+  let listed =
+    Lock.protect g.holds @@ fun () ->
+    List.memq h g.held
+    && begin
+         if h.lost then mark g h.machine h.bus ~lost:true;
+         Function.release h.fn;
+         true
+       end
+  in
+  if listed then begin
+    Option.iter (fun release -> release ()) h.vendor_release;
+    Lock.protect g.holds (fun () ->
+        g.held <- List.filter (fun h' -> h' != h) g.held)
   end
 
 (* The first call stops the function. A failed open's bracket releases a
@@ -258,6 +269,14 @@ let set_stop h stop =
   if Option.is_some h.vendor_stop then
     invalid_argf "Driver.set_stop: %s has a stop already" h.bus;
   h.vendor_stop <- Some stop
+
+let set_release h release =
+  Lock.protect h.lock @@ fun () ->
+  if Option.is_some h.stopped then
+    invalid_argf "Driver.set_release: %s was stopped" h.bus;
+  if Option.is_some h.vendor_release then
+    invalid_argf "Driver.set_release: %s has a release already" h.bus;
+  h.vendor_release <- Some release
 
 (* At exit the process stops the functions it holds. The hook is registered at
    the first open, after the one that turns physical takes' bus mastering off,
@@ -341,16 +360,16 @@ let take_into g m fn =
    lock leaving, whose stop an exception cut. The function is renewed where
    no stop recorded an answer, since the open may have written to it before
    it recorded its stop. A hold whose lock another thread holds is live, a
-   stop or a [set_stop] running: it is left, never waited for, so that an
-   open never waits for a stop, which may itself wait for that open. Then
-   every function of any driver released and not given back, which waits for
-   its uses and give-back on other threads: none of them takes a lock an
-   open holds, and the entries' check refuses a call from inside one on this
-   thread. An exception
-   here passes to the caller. One a driver's stop raised leaves its hold
-   stopped and released, unlisted, as at any stop (finish_locked), so that no
-   later open calls that stop again; one that cut a release leaves it to the
-   next. *)
+   stop or a [set_stop] or [set_release] running: it is left, never waited
+   for, so that an open never waits for a stop, which may itself wait for
+   that open. Then every function of any driver released and not given back,
+   which waits for its uses and give-back on other threads: none of them
+   takes a lock an open holds, and the entries' check refuses a call from
+   inside one on this thread. An exception here passes to the caller. One a
+   driver's stop raised leaves its hold stopped and released, unlisted once
+   the driver's release returns, as at any stop (finish_locked), so that no
+   later open calls that stop again; one that cut a release, the function's
+   or the driver's, leaves it to the next. *)
 let ended g =
   let me = Unix.getpid () in
   let listed =
@@ -393,6 +412,7 @@ let open_ g m i f =
       pid = Unix.getpid ();
       lock = Lock.create ();
       vendor_stop = None;
+      vendor_release = None;
       unrenewed = false;
       stopped = None;
       lost = false;
