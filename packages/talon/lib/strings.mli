@@ -28,8 +28,8 @@ val reading :
     elements in C order, as elements of [k], under a read claim so that no
     donation writes their memory while [f] reads it ({!Nx.Repr.read}).
 
-    Raises [Invalid_argument] starting with [by] if nx cannot read [x], as a
-    traced [x]. *)
+    Raises [Invalid_argument] naming [by] where {!Nx.Repr.read} refuses [x],
+    as a traced [x]. What [f] raises passes on as raised. *)
 
 val fresh : ('v, 's) Nx.dtype -> int -> ('v, 's) Nx_array.t
 (** [fresh dt n] is a host vector of [n] uninitialized elements of [dt]

@@ -31,15 +31,7 @@ let array_bytes a k f =
       k
       (fun b -> f (A.sub b 0 n))
 
-(* A value nx cannot read, a traced one, fails naming [by]; [f]'s own failures
-   pass as they are. *)
-let reading ~by x k f =
-  let entered = ref false in
-  try
-    Nx.Repr.read ~by:"Nx.Repr.read" x (fun a ->
-        entered := true;
-        array_bytes a k f)
-  with Invalid_argument m when not !entered -> invalid_arg (by ^ ": " ^ m)
+let reading ~by x k f = Nx.Repr.read ~by x (fun a -> array_bytes a k f)
 
 (* Host arrays
 

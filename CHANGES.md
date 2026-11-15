@@ -4732,6 +4732,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- A function that reads a traced column's bytes, such as `Expr.hash` under
+  `Rune.jit`, raises `Expr.hash: the value is traced by Rune.jit`, without
+  `Nx.Repr.read:` in the middle.
 - `Talon_arrow.encode` and `Talon_parquet.encode` name themselves for a
   traced column they read, where they named `Nx.Repr.read`.
 - `Str.regex` compiles a regular expression, RE2 and Perl syntax with UTS #18

@@ -458,6 +458,8 @@ let dynamic =
        matrix names (run_ok q)
      in
      refuses ~read:"Nx.positions: " "pivot over a traced key" pivoted);
+    refuses ~read:"Expr.hash: " "hash of a traced column"
+      (verb [ "h" ] (Query.derive [ "h" := hash a ]));
     test "a list column in a result raises under jit" (fun () ->
         raises_match
           (Exn.invalid_arg ~sub:"Nx.item: the value is traced by Rune.jit")
