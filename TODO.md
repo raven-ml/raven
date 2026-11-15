@@ -62,6 +62,14 @@ Where it stands, with every measurement: doc/performance.md.
   traced launch test runs only over PCI. The paths left are PCI and an
   amdgpu DRM submission, which holds its VMID and memory for the job
 
+## nx, rune
+
+- nx's `permute is a bijection` (test/test_rng.ml) covers "one element" on
+  some seeds only, so the test can fail on a draw that reaches no such case
+- rune's blocked complex contraction bound, `γ(β(K) + 2)`, exceeds the
+  kernel contract's `√2 γ(β(2K))` at K = 1; it matters if compiled programs
+  must stay within the kernel contract
+
 ## talon, hugin, brot, munin, quill
 
 - talon needs a query optimizer, a large design of its own, and the other
