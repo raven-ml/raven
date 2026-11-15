@@ -699,8 +699,8 @@ template <class T> __device__ __noinline__ void bd_rank(ARGS, int t) {
 }
 
 /* s, u and vh: tall, u = X and vh = Yᴴ; wide, u = Y and vh = Xᴴ, columns
-   of X and Y in the order, Y's signed by d's; NaN for a flagged or
-   failed matrix. */
+   of X and Y in the order, Y's signed by d's; NaN for a flagged, failed
+   or unfinished matrix. */
 template <class R>
 __device__ __noinline__ void bd_out(ARGS, R *s, R *u, R *vh, int64_t m, int64_t n, int uc, int vr,
                                     int P) {
@@ -712,7 +712,8 @@ __device__ __noinline__ void bd_out(ARGS, R *s, R *u, R *vh, int64_t m, int64_t 
     int64_t b = q / per, k = q % per;
     bd_ws<R> ws(wsp, b, M, K, gc, P * sizeof(R));
     const int *ix = (const int *)ws.rec, *inv = ix + K;
-    const bool ok = ws.st[NX_SP_ST_OK] && !ws.st[NX_SP_ST_FAIL];
+    const bool ok =
+        ws.st[NX_SP_ST_OK] && !ws.st[NX_SP_ST_FAIL] && ws.st[NX_SP_ST_DONE];
     auto xcol = [&](int j) { return j < K ? inv[j] : j; };
     auto sgn = [&](int j) { return ws.d[j] < 0 ? (R)-1 : (R)1; };
     if (k < K) {
