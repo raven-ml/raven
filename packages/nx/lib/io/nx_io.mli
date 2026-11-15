@@ -1020,5 +1020,7 @@ val decode_tiff : Partial.t -> (Tiff.t list, (int * int) list) result
     A function raises [Invalid_argument] naming it for a value, a name or an
     argument its format cannot store, as in
     ["Nx_io.save_npy: npy has no bfloat16"]. A save also raises it for a value
-    {!Nx.Repr.read} refuses: a traced value or a dead one. A failed check
-    pending on the value raises as {!Nx.Repr.read} states. *)
+    {!Nx.Repr.read} refuses: a traced value or a dead one. On a big-endian
+    host the swap of a dead value's bytes raises first, naming its nx
+    operation. A failed check pending on the value raises from the save as
+    the check raised it. *)

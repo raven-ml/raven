@@ -94,5 +94,7 @@ val with_bytes : by:string -> ('v, 's, 'd) Nx.t -> (bytes -> 'a) -> 'a
     {!Nx_array.read}), which leaves [x]'s memory unshared. [x]'s dtype must be
     of a byte or more, and [f] must not keep [b].
 
-    Raises [Invalid_argument] naming [by] if [x] is dead or traced, and a
-    failed check pending on [x] as {!Nx.Repr.read} does. *)
+    Raises [Invalid_argument] naming [by] if [x] is traced or dead, but for a
+    dead [x] on a big-endian host, where the swap's nx operation raises first,
+    naming itself. A failed check pending on [x] raises as {!Nx.Repr.read}
+    raises it. *)

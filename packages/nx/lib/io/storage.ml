@@ -111,8 +111,8 @@ let as_bytes a =
    big-endian host the swap comes first, on [x]'s set, and its result is fresh
    and C-contiguous, so it is read in place. *)
 let with_bytes ~by x f =
-  let x = if Sys.big_endian then Fail.renamed ~by byteswap x else x in
-  Fail.reading ~by (Nx.Repr.read ~by x) @@ fun a ->
+  let x = if Sys.big_endian then byteswap x else x in
+  Nx.Repr.read ~by x @@ fun a ->
   let a = if L.is_contiguous (A.layout a) then a else A.copy a in
   A.read (as_bytes a) (fun g ->
       f (Bigarray.array1_of_genarray g))

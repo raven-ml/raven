@@ -456,6 +456,22 @@ let errors =
           let x = Nx.zeros Nx.uint8 shape in
           traced @@ fun trace ->
           invalid ~by (fun () -> save (temp_file ()) (trace x)));
+      (let module M = (val Nx.devices [ Nx_support.memory 0 ]) in
+       cases
+         "a failed check pending on the value's set raises from the save as \
+          the check raised it"
+         ~id:fst
+         (List.map (fun s -> (s.name, (s.shape, s.save))) saves
+         @ [
+             ( "encode_txt",
+               ([| 2; 9 |], fun _ x -> ignore (Nx_io.encode_txt x)) );
+             ("encode_png", (image, fun _ x -> ignore (Nx_io.encode_png x)));
+           ])
+         (fun (_, (shape, save)) ->
+           let failed = Invalid_argument "test.check: a flag is false" in
+           let x = Nx.place M.on (Nx.zeros Nx.uint8 shape) in
+           Nx.check Nx.Ptree.unit (Nx.equal_s x 1) () (fun _ () -> failed);
+           raises failed (fun () -> save (temp_file ()) x)));
     ]
 
 let () = exit (run "nx.io saving" [ saving; loaded; errors ])

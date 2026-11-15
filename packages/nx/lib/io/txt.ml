@@ -385,7 +385,7 @@ let text ~by ~sep x write =
   if Array.length shape > 2 then
     Fail.invalid_argf "%s: %d axes, text holds at most 2" by
       (Array.length shape);
-  let values = Fail.renamed ~by Nx.to_array x in
+  let values = Nx.Repr.read ~by x Nx_array.to_array in
   let cols = match shape with [| _; c |] -> c | [| c |] -> c | _ -> 1 in
   write @@ fun emit ->
   let b = Buffer.create chunk in

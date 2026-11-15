@@ -2953,6 +2953,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- A save (`Nx_io.save_npy`, `save_npz`, `save_safetensors`, `save_txt`,
+  `encode_txt`, the image saves and encoders) raises a failed check pending
+  on its value as the check raised it, where it rewrote the message to name
+  the save.
 - **Breaking:** `Nx.Repr.read` takes `~by`, the function the read is for,
   which its refusal of a dead or traced value names in place of
   `Nx.Repr.read`: a library names the function its user called.

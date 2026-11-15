@@ -18,20 +18,3 @@ let file path f =
   | Sys_error m when String.starts_with ~prefix:path m -> failwith m
   | Sys_error m -> failwith (path ^ ": " ^ m)
   | Unix.Unix_error (e, _, _) -> failwith (path ^ ": " ^ Unix.error_message e)
-
-(* [rename ~by m] raises [Invalid_argument] for the message [m] of another
-   function, naming [by] in its place and keeping its reason. *)
-let rename ~by m =
-  match String.index_opt m ':' with
-  | Some i -> invalid_arg (by ^ String.sub m i (String.length m - i))
-  | None -> invalid_arg (by ^ ": " ^ m)
-
-let renamed ~by f x = try f x with Invalid_argument m -> rename ~by m
-
-let reading ~by read f =
-  let started = ref false in
-  try
-    read (fun a ->
-        started := true;
-        f a)
-  with Invalid_argument m when not !started -> rename ~by m
