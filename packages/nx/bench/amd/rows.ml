@@ -371,6 +371,8 @@ let contracts =
       contract e4m3 f32 bf16 4096 4096 4096;
       contract e5m2 f32 bf16 4096 4096 4096;
       contract i4 i32 i32 4096 4096 4096;
+      (* more batch elements than the units' grid holds: two windows *)
+      contract ~batch:131072 bf16 f32 bf16 16 16 16;
     ]
 
 (* Reduce and scan *)
@@ -1762,6 +1764,29 @@ let matrices =
       matrix_row Eig f32 [| 64; 256; 256 |];
     ]
 
+(* The suite's matrix rows: a small one of each routine, and the two whose
+   products take contraction paths no contracts row takes, complex packs (lu
+   c64) and P <= 16 panels over a long k with a transposed operand (qr f32
+   2048x1024). *)
+let matrix_suite =
+  let names =
+    [
+      "linalg/lu/f32/4096x32x32";
+      "linalg/qr/f32/4096x32x32";
+      "linalg/chol/f32/4096x32";
+      "linalg/solve/f32/4096x32x32";
+      "linalg/eigh/f32/1024x32x32";
+      "linalg/svd/f32/1024x32x32";
+      "linalg/eig/f32/1024x32x32";
+      "linalg/lu/c64/1x1024x1024";
+      "linalg/qr/f32/1x2048x1024";
+    ]
+  in
+  let rows = List.filter (fun (r : row) -> List.mem r.name names) matrices in
+  if List.length rows <> List.length names then
+    invalid_arg "Rows.matrix_suite: a name matches no matrix row";
+  rows
+
 (* Attention *)
 
 (* Calls of Nx.attention as nx.amd receives them: a query [[b; hq; tq; d]] over
@@ -2037,10 +2062,13 @@ let nx_add n =
 let nx_calls =
   [ nx_chain 4 [| 1 lsl 26 |]; nx_chain 64 [| 1 lsl 26 |]; nx_add (1 lsl 20) ]
 
-(* The bench's suite: floors, contractions, reductions, scans, loops and calls
-   through Nx. *)
-let all = floors @ contracts @ reductions @ loops @ nx_calls
+(* The bench's suite: floors, contractions, reductions, scans, loops, calls
+   through Nx, sorts, moves, transforms and some matrix routines. *)
+let all =
+  floors @ contracts @ reductions @ loops @ nx_calls @ sorts @ moves
+  @ transforms @ matrix_suite
 
 (* What compare and gate also time: every family against PyTorch. *)
 let compared =
-  all @ probe_contracts @ sorts @ moves @ transforms @ matrices @ attentions
+  let rest = List.filter (fun r -> not (List.memq r matrix_suite)) matrices in
+  all @ probe_contracts @ rest @ attentions
