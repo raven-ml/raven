@@ -259,7 +259,7 @@ type keep =
       (** As {!Removable}, for a value read where it is broadcast: it is not
           inlined back where computing it runs a transcendental function, which
           its readers would compute again for each element of the ranges it
-          does not vary along. *)
+          does not vary along, nor where it reads more than three buffers. *)
   | Whole
       (** Nothing: a value the user materialises is stored as it is. *)
   | Argument

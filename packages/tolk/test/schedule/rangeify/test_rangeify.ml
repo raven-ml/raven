@@ -713,6 +713,77 @@ let shared =
           writes sink);
     ]
 
+(* The buffer limit
+
+   A value that reads more than three storages stays stored, unless each of its
+   readers is stored as it is, as a store is, and its reads compute each of its
+   elements at most once in all, none in a reduction: inlined, it then loads no
+   storage more often than storing it does. A value read where it is broadcast
+   stays stored. [four shape] sums four inputs of [shape]; [part v axis i] is
+   element [i] of [v]'s [axis], that axis dropped. *)
+
+let four shape = sum_of (List.map (input ~shape) [ 1; 2; 3; 4 ])
+
+let part v axis i =
+  let s = Shape.shape v in
+  let bounds =
+    List.mapi
+      (fun a _ -> if a = axis then Some (Ops.Int i, Ops.Int (i + 1)) else None)
+      s
+  in
+  Shape.reshape (Shape.shrink v bounds) (List.filteri (fun a _ -> a <> axis) s)
+
+let limit =
+  group "get_kernel_graph › buffer limit"
+    [
+      test "a value of four storages a store reads in halves is one kernel"
+        (fun () ->
+          let p = four [ 16; 2 ] in
+          let sink = stores Ops.O.(part p 1 0 * part p 1 1) in
+          equal int 1 (kernels_of sink);
+          writes sink);
+      (* The materialised product is read twice, so it is staged, and kept
+         whole: it is a reader stored as it is. *)
+      test
+        "a value of four storages a materialisation reads in halves is \
+         computed there" (fun () ->
+          let p = four [ 4; 4; 2 ] in
+          let sink =
+            stores (read_twice (Ops.contiguous Ops.O.(part p 2 0 * part p 2 1)))
+          in
+          equal int 2 (kernels_of sink);
+          writes sink);
+      (* [p]'s halves are read by their sum and difference, each read twice
+         and staged: inlined, [p] would make each read four storages. *)
+      test "a value of four storages that stages read stays stored" (fun () ->
+          let p = four [ 4; 4; 2 ] in
+          let h0 = part p 2 0 and h1 = part p 2 1 in
+          let sink =
+            stores Ops.O.(read_twice (h0 + h1) + read_twice (h0 - h1))
+          in
+          equal int 2 (kernels_of sink);
+          writes sink);
+      test "a value of four storages a reduction reads in halves stays stored"
+        (fun () ->
+          let p = four [ 4; 16; 2 ] in
+          let sink =
+            stores (Shape.rop Ops.O.(part p 2 0 * part p 2 1) Add [ 0 ])
+          in
+          equal int 2 (kernels_of sink);
+          writes sink);
+      test "a value of four storages read where it is broadcast stays stored"
+        (fun () ->
+          let p = four [ 2; 4 ] in
+          let row i =
+            Shape.expand
+              (Shape.reshape (part p 0 i) (ints [ 1; 4 ]))
+              (ints [ 4; 4 ])
+          in
+          let sink = stores Ops.O.((input 5 * row 0) + row 1) in
+          equal int 2 (kernels_of sink);
+          writes sink);
+    ]
+
 (* Stores that read their destination
 
    A store whose value reads its destination only at the element it writes,
@@ -2147,6 +2218,7 @@ let () =
          spec;
          rules;
          shared;
+         limit;
          self_reads;
          siblings;
          loops;

@@ -10252,3 +10252,50 @@ kept in ordered sets, change no source and belong to D466.
   terms`, over every kernel it lowers; the `codegen` goldens `readout_*`,
   `sum_all_clang`, `matvec_clang` and `linearizer_fail_1_clang`, whose
   `.tolk` hold the blocked loops.
+
+## D481. A stage the buffer limit kept is inlined into readers stored as they are
+
+- **tinygrad:** `schedule/rangeify.py` (`remove_bufferize`, which keeps
+  a stored value whose value reads more than three buffers, whoever reads
+  it), and `get_kernel_graph`, which decides each read of a stage once its
+  producers are decided and before its consumers are.
+- **tolk:** `Rangeify.remove_bufferize`'s `limited`, with
+  `Rangeify.stored_readers` (whether every read of a stage is computed in a
+  value stored as it is), and the `cover` of
+  `Rangeify.read_copies`' `share`, summed per axis in `Rangeify.stage_reads`.
+- **Differs:** a `Removable` stage whose value reads more than three
+  buffers is inlined, the other tests of `remove_bufferize` applying as
+  before, when every read of it is computed in a value stored as it is (a
+  store, the sink, a stage kept `Whole` or `Argument`) and its reads compute
+  each of its elements at most once in all. A read's cover is the unfloored
+  count `read_copies` computes, the elements its index runs over by the
+  stage's, `0.5` for a read of half of them, and infinite where a reduction
+  runs the read. Inlined there, the value loads no buffer more often than
+  storing it does, and no decision is left that its buffers could change:
+  a reader that is a stage still to decide could be pushed past the limit
+  by them and stored in its place, once for each reader, as `Nx_wide.sum`'s
+  chunks would be. A `Broadcast` stage stays kept, since it is computed
+  again along the ranges its index does not count, and the limit is the
+  only bound on that (a 4-buffer value of 512 multiply-adds broadcast along
+  4096 rows took 11.3 ms on the host inlined, 0.64 stored); so does a
+  value read in a reduction, which would move its work into the reduction
+  (a sum of two halves of a 4-buffer value over 4096 rows of 64 took 20.4 us
+  on CUDA inlined, 13.4 stored). The decision stays in tinygrad's one pass
+  and its order.
+- **Reason:** (d), to re-measure on fudge. gpt-oss-20b's prefill MoE block
+  on CUDA stored gate_up's bias add, `Y[slot[r]] + bias[ids[r]]`, as a
+  scatter of its own: two buffers from rune's row lowering, two from the
+  model's bias add, read in two halves by a store. Inlined into that store,
+  the block takes one kernel fewer and its bits are equal, on fudge's RTX
+  5000 Ada 0.5% faster at 17 tokens, 1.6% at 64, 2.6% at 128 and 5.4% at
+  512 (a probe of one block, medians of two interleaved rounds); prompts
+  of 12 and 16 tokens keep their 23 kernels. `GptOss/experts-at-prefill-512`
+  went from 1.80 to 1.71 ms, its allocated words unchanged; its fudge
+  baseline holds words only, so the entry is to re-measure on fudge until the
+  scheduled re-record gives it a wall baseline there. AMD and Metal take
+  the rule unmeasured.
+- **Pinned by:** the Rangeify suite's `get_kernel_graph › buffer limit`
+  (a value of four storages a store reads in halves is one kernel, and one a
+  materialisation reads in halves is computed there; one that stages read, one a reduction reads in halves and one read where it is
+  broadcast stay stored), and the bench row
+  `GptOss/experts-at-prefill-512`.

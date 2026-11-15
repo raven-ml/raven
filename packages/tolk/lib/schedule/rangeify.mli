@@ -30,16 +30,24 @@ val get_kernel_graph : Ops.t -> Ops.t
           storages, a reduction in it reads one, or its copies beyond the first
           exceed 360 nodes, so that copies of copies cannot grow the kernels
           faster than the program, nor recomputation the work of a reduction
-          past what storing the value costs. Its copies beyond the first are the
-          nodes of its value inside its ranges, which each index copies, times
-          the copies its reads make less one. A read makes one copy at each
-          distinct index, and in a reduction one per trip of the reduction's
-          ranges its index runs in, but at most its trips per element of the
-          stage: a running sum's windows of [w] compute each element [w] times,
-          and a sum computes each element once. A read whose index runs in no
-          reduction range makes one copy, as a broadcast through an expand, a
-          reshape or padding does. Trips in padding count, since inlined there
-          the value's loads are skipped and its arithmetic is not. A sum over
+          past what storing the value costs. A value of more than three
+          storages is inlined all the same where: each of its reads is
+          computed in a value stored as it is in the graph this step starts
+          from, that of a store, the sink or a stage no pass removes; the
+          stage is not one kept for being read where it is broadcast
+          ({!Ops.type-keep}); and its reads compute each of its elements at
+          most once in all, none in a reduction, a read of half its elements
+          computing each of them half a time. Its copies beyond the first are
+          the nodes of its value inside its ranges, which each index copies,
+          times the copies its reads make less one. A read makes one copy at
+          each distinct index, and in a reduction one per trip of the
+          reduction's ranges its index runs in, but at most its trips per
+          element of the stage: a running sum's windows of [w] compute each
+          element [w] times, and a sum computes each element once. A read
+          whose index runs in no reduction range makes one copy, as a
+          broadcast through an expand, a reshape or padding does. Trips in
+          padding count, since inlined there the value's loads are skipped and
+          its arithmetic is not. A sum over
           one range that selects one trip, where an index equals the range
           ({!Simplify.load_collapse}), is computed at that index alone, once for
           each point of the ranges the index runs in, so its range counts as

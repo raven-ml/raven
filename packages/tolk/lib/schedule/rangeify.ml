@@ -167,14 +167,22 @@ let rec digit_of r x =
 
 (* The copies a read makes: [no] where its sum over the range [sum] is computed
    at every trip, [yes] where at one, [no] alone where it reads no such sum or
-   the answer is known. *)
-type share = { no : float; yes : float; sum : Ops.t option }
+   the answer is known. [cover] is the times the read computes each element of
+   the stage, unfloored, under the answer that computes more: [0.5] for a read
+   of half the elements, infinite where a reduction runs it. *)
+type share = { no : float; yes : float; sum : Ops.t option; cover : float }
 
 (* The copies of the reads over an axis: [lo] and [hi] their sums over the
-   answers of the tests they leave pending. [shares] holds the reads latest
-   first; every sum adds them earliest first, the order of the reads, so a
-   sum with no test pending is the same float whatever is asked. *)
-type axis_copies = { lo : float; hi : float; shares : share list }
+   answers of the tests they leave pending, [cover] the sum of their covers.
+   [shares] holds the reads latest first; every sum adds them earliest first,
+   the order of the reads, so a sum with no test pending is the same float
+   whatever is asked. *)
+type axis_copies = {
+  lo : float;
+  hi : float;
+  shares : share list;
+  cover : float;
+}
 
 (* The copies the read [idx] of the stage [buf] makes of the stage's value once
    inlined: one, or one per trip of the reductions its index runs in, as a
@@ -232,8 +240,9 @@ let read_copies ~reduced ~selected ~collapses buf idx =
   let counted = read_ranges (List.map snd others) in
   let digit d = List.memq d digits in
   let reuse = Float.max 1. (extent digits /. extent (List.map fst pure)) in
-  (* The copies when the sums over the ranges of [collapsing] are computed at
-     one trip, each range then counting as its sum's [selected]. *)
+  (* The copies and the cover when the sums over the ranges of [collapsing] are
+     computed at one trip, each range then counting as its sum's
+     [selected]. *)
   let count collapsing =
     let add rs r = if List.memq r rs then rs else r :: rs in
     let read =
@@ -250,10 +259,11 @@ let read_copies ~reduced ~selected ~collapses buf idx =
       else if List.exists (fun (_, o) -> List.exists digit o) collapsing then 1.
       else reuse
     in
-    if elements <= 0. then 1.
+    if elements <= 0. then (1., 0.)
     else
-      Float.max 1.
-        (Float.min (extent reduce) (extent read /. elements /. shared))
+      let cover = extent read /. elements /. shared in
+      ( Float.max 1. (Float.min (extent reduce) cover),
+        if reduce = [] then cover else Float.infinity )
   in
   (* A value that reads no storage is seen as itself by the test of a sum
      that selects one trip, which then compares the index it selects with
@@ -263,17 +273,76 @@ let read_copies ~reduced ~selected ~collapses buf idx =
     List.filter_map (fun r -> Option.map (fun o -> (r, o)) (selected r)) rs
   in
   let sums = if sums <> [] && not (storage (nth buf 0)) then [] else sums in
-  let known c = { no = c; yes = c; sum = None } in
+  let known (c, cover) = { no = c; yes = c; sum = None; cover } in
   match sums with
   | [] -> known (count [])
   | [ ((r, _) as sum) ] ->
-      let no = count [] and yes = count [ sum ] in
-      if no = yes then known no else { no; yes; sum = Some r }
+      let no, c0 = count [] and yes, c1 = count [ sum ] in
+      let cover = Float.max c0 c1 in
+      if no = yes then known (no, cover) else { no; yes; sum = Some r; cover }
   | _ -> known (count (List.filter (fun (r, _) -> collapses r) sums))
 
 (* A range's axis: its type and identity, which name it while the cleanups
    rebuild the nodes around it. *)
 let axis r = (axis_type r, axis_id r)
+
+(* Whether some stage of [tsink] has a range of the axis [a], and every read of
+   each such stage is computed in a value stored as it is, which no decision
+   inlines: one that a store, the sink or a stage kept whole holds. A read is
+   computed in the value of the nearest stage, store or sink above it. The
+   axes of a stage's ranges name it while the cleanups rebuild it, its dead
+   axes dropped. The graph's consumers are found at the first question, and
+   each axis's answer once asked. *)
+let stored_readers tsink =
+  let parents =
+    lazy
+      (let parents = Tbl.create 256 in
+       List.iter
+         (fun u ->
+           List.iter
+             (fun s ->
+               let ps = Option.value (Tbl.find_opt parents s) ~default:[] in
+               Tbl.replace parents s (u :: ps))
+             (src_without_body u))
+         (toposort ~calls:Skip tsink);
+       parents)
+  in
+  let parents_of v =
+    Option.value (Tbl.find_opt (Lazy.force parents) v) ~default:[]
+  in
+  let stored stage =
+    let seen = Tbl.create 16 in
+    let rec up = function
+      | [] -> true
+      | v :: rest when Tbl.mem seen v -> up rest
+      | v :: rest ->
+          Tbl.replace seen v ();
+          if v == tsink || op v = Op.Store then up rest
+          else if op v = Op.Stage then kept_whole v && up rest
+          else up (List.rev_append (parents_of v) rest)
+    in
+    let read p = op p = Op.Index && nth p 0 == stage && up (parents_of p) in
+    List.for_all read (parents_of stage)
+  in
+  let memo = Hashtbl.create 8 in
+  fun a ->
+    match Hashtbl.find_opt memo a with
+    | Some b -> b
+    | None ->
+        let over u =
+          op u = Op.Stage
+          && List.exists
+               (fun r -> op r = Op.Range && axis r = a)
+               (List.tl (src u))
+        in
+        let found, all =
+          Tbl.fold
+            (fun u _ (found, all) ->
+              if over u then (true, all && stored u) else (found, all))
+            (Lazy.force parents) (false, true)
+        in
+        Hashtbl.replace memo a (found && all);
+        found && all
 
 (* The copies the reads of the stages of a graph make of their values once
    inlined ({!read_copies}): [by_axis] those of the stages over each range
@@ -282,12 +351,14 @@ let axis r = (axis_type r, axis_id r)
    its rewritten value. [reduce_axes] holds the axes of the ranges a reduction
    closes, with the reduction, [selections] the ranges each reduction's sum
    is computed at when it selects one trip, and [collapsed] whether it does,
-   each once asked. *)
+   each once asked. [stored] tells, by an axis of their ranges, whether the
+   readers of the stages are stored as they are ({!stored_readers}). *)
 type reads = {
   by_axis : (Axis_type.t * int list, axis_copies) Hashtbl.t;
   reduce_axes : (Axis_type.t * int list, Ops.t) Hashtbl.t;
   selections : (Axis_type.t * int list, Ops.t list) Hashtbl.t;
   collapsed : (Axis_type.t * int list, bool) Hashtbl.t;
+  stored : Axis_type.t * int list -> bool;
 }
 
 (* Whether the range [r] is one a reduction of the graph [reads] was taken from
@@ -356,13 +427,14 @@ let stage_reads tsink =
       let a =
         Option.value
           (Hashtbl.find_opt by_axis k)
-          ~default:{ lo = 0.; hi = 0.; shares = [] }
+          ~default:{ lo = 0.; hi = 0.; shares = []; cover = 0. }
       in
       Hashtbl.replace by_axis k
         {
           lo = a.lo +. Float.min c.no c.yes;
           hi = a.hi +. Float.max c.no c.yes;
           shares = c :: a.shares;
+          cover = a.cover +. c.cover;
         }
   in
   (* Each node is pushed once, outside call bodies, in no order. *)
@@ -390,6 +462,7 @@ let stage_reads tsink =
       reduce_axes;
       selections = Hashtbl.create 16;
       collapsed = Hashtbl.create 16;
+      stored = stored_readers tsink;
     }
   in
   List.iter
@@ -554,9 +627,25 @@ let remove_bufferize ~reads src buf idx =
       | Some (lo, hi) when exceeds lo = exceeds hi -> exceeds lo
       | _ -> exceeds (stage_copies reads buf)
     in
-    if
+    (* A value that reads more than three buffers stays stored, unless every
+       reader is stored as it is and its reads compute each of its elements at
+       most once in all, none in a reduction: inlined, it loads no buffer more
+       often than storing it does, and no decision is taken for its readers
+       that the buffers it brings could change. A reader that is a stage to
+       decide could be pushed past the limit by them and stored in its place,
+       once for each reader. A [Broadcast] stage is computed again along the
+       ranges its index does not count, and stays stored. *)
+    let limited =
       Tbl.length accessed > 3
-      || recomputes || read_by_every_output
+      && not
+           ((opts buf).keep = Removable
+           && least_copies (fun a -> a.cover) reads buf <= 1.
+           && List.for_all
+                (fun r -> op r <> Op.Range || reads.stored (axis r))
+                (List.tl (Ops.src buf)))
+    in
+    if
+      limited || recomputes || read_by_every_output
       || ((not view) && copies ())
     then None
     else

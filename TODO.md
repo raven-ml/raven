@@ -59,11 +59,10 @@ Where it stands, with every measurement: doc/performance.md.
 - A staged core copies in at most two stages, so where twice the bytes in
   flight pass `shared_max` it can only deepen its trips; more, shallower
   stages need a counted `cp.async.wait_group` in the CUDA renderer
-- gpt-oss's prefill still stores gate_up's bias add as its own scatter: it
-  reads 4 buffers, so the 3-buffer rule keeps it, about 5% of the MoE block
-  at 512 tokens and 1-2% at 17-127. Stages are decided bottom-up, so
-  inlining it pushes two removable consumers past 3 buffers; the order in
-  which tolk decides stages is the question, not tinygrad's limit
+- A stage read through a gather and then expanded is tagged `Removable`,
+  not `Broadcast`, so both D481's waiver and `recomputes` may inline and
+  recompute it along every row (from reading `rangeify.ml`, not yet
+  reproduced)
 - rangeify's law "a scheduled function writes what its tensors compute"
   fails under seeds `s1:63ab132b4eb9fb74` and `s1:47b3074f072c6405`: both
   graphs end in `sum 0, expand, max 0`, and the kernel graph writes
