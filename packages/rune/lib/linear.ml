@@ -206,16 +206,6 @@ let settle ~name ps acc n =
       if c' != c then acc.(n) <- Some (Whole c')
   | _ -> ()
 
-(* Outputs of dtypes known at run time *)
-
-type 'd outs = Outs : ('d, 'r) Prim.outs * ('r -> 'd Prim.any list) -> 'd outs
-
-let rec outs_of : type d. D.any list -> d outs = function
-  | [] -> Outs ([], fun () -> [])
-  | D.Any dt :: rest ->
-      let (Outs (o, read)) = outs_of rest in
-      Outs (dt :: o, fun (y, r) -> Prim.Any y :: read r)
-
 let rec out_dtypes : type d r. (d, r) Prim.outs -> D.any list = function
   | [] -> []
   | dt :: rest -> D.Any dt :: out_dtypes rest
@@ -369,7 +359,7 @@ let sweep (type d) env layout prog (loads : d Prim.load iarray) cts =
                        | Padded { x; _ } -> D.Any (Nx.dtype x))
                      outs)
               in
-              let (Outs (o, read)) = outs_of dts in
+              let (Prim.Outputs (o, read)) = Prim.outputs dts in
               let ys = read (Prim.eval ~by:env.name (map o)) in
               List.iteri (fun k y -> give outs.(k) y) ys))
 

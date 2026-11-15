@@ -5705,6 +5705,15 @@ module Prim : sig
     | ( :: ) : ('v, 's) dtype * ('d, 'r) outs -> ('d, ('v, 's, 'd) nx * 'r) outs
         (** The dtypes of a map's results. *)
 
+  type 'd outputs =
+    | Outputs : ('d, 'r) outs * ('r -> 'd any list) -> 'd outputs
+        (** A map's outs of dtypes known only at run time, and the reader of
+            its result as a list of its values, in order. *)
+
+  val outputs : Dtype.any list -> 'd outputs
+  (** [outputs dts] is the outs of the dtypes [dts], in order, with their
+      reader. *)
+
   type ('d, _) fft =
     | C2c : {
         direction : Nx_kernel.direction;

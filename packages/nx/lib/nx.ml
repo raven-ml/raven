@@ -7504,6 +7504,11 @@ module Prim = struct
     | [] : ('d, unit) outs
     | ( :: ) : ('v, 's) dtype * ('d, 'r) outs -> ('d, ('v, 's, 'd) t * 'r) outs
 
+  type 'd outputs = 'd Prim.outputs =
+    | Outputs : ('d, 'r) outs * ('r -> 'd any list) -> 'd outputs
+
+  let outputs = Prim.outputs
+
   type 'd index = (int64, Dtype.int64_elt, 'd) Value.t
 
   type ('d, 'r) fft = ('d, 'r) Value.fft =

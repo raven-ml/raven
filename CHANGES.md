@@ -2953,6 +2953,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.Prim.outputs` and its type `Nx.Prim.outputs` are public: the outs of a
+  `Map` whose dtypes are known only at run time, with the reader of its
+  result as a list of values.
 - **Breaking:** a failed check off the host (`Nx.check`, an `Nx.Rng`
   parameter, `Nx.Prim.Check`) raises at a wait on its set from any domain,
   one failure per wait, oldest first; none is dropped. A pending check copies

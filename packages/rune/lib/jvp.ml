@@ -134,21 +134,13 @@ let mask i loads =
   done;
   !m
 
-(* Outputs of dtypes known at run time *)
-
-type 'd outs = Outs : ('d, 'r) Prim.outs * ('r -> 'd Prim.any list) -> 'd outs
-
-let rec outs_of : type d. D.any list -> d outs = function
-  | [] -> Outs ([], fun () -> [])
-  | D.Any dt :: rest ->
-      let (Outs (o, read)) = outs_of rest in
-      Outs (dt :: o, fun (y, r) -> Prim.Any y :: read r)
-
 (* [p]'s outputs at every index of [layout] over [loads], one map. *)
 let run_map (type d) ~by layout (p : P.t) (loads : d Prim.load iarray) :
     d Prim.any array =
   let dts k = P.dtype p (Iarray.get p.outs k) in
-  let (Outs (outs, read)) = outs_of (List.init (Iarray.length p.outs) dts) in
+  let (Prim.Outputs (outs, read)) =
+    Prim.outputs (List.init (Iarray.length p.outs) dts)
+  in
   Array.of_list
     (read (Prim.eval ~by (Map { layout; prog = p; outs; loads; at = None })))
 

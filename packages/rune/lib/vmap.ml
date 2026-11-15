@@ -285,14 +285,6 @@ let plan (p : P.t) laned_load =
       { laned = Array.make nout true; lanes = Some whole; shared = None }
   | Some _ as shared -> { laned; lanes = part true; shared }
 
-type 'd outs = Outs : ('d, 'r) Prim.outs -> 'd outs
-
-let rec outs_of : type d. D.any list -> d outs = function
-  | [] -> Outs []
-  | D.Any dt :: rest ->
-      let (Outs o) = outs_of rest in
-      Outs (dt :: o)
-
 let out_dtypes (p : P.t) = List.map (P.dtype p) (Iarray.to_list p.outs)
 
 type 'd red = Red : ('d, 'a) Prim.reduction -> 'd red
@@ -332,7 +324,7 @@ let map_rule (type r) i n ~by (op : r Prim.t) : r =
   | Map m ->
       let pl = plan m.prog (laned_loads i m.loads) in
       let issue ~laned part =
-        let (Outs o) = outs_of (out_dtypes part.prog) in
+        let (Prim.Outputs (o, _)) = Prim.outputs (out_dtypes part.prog) in
         let loads = part_loads i n ~laned part m.loads in
         if laned then
           values ~by
