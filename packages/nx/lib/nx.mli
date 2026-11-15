@@ -23,13 +23,15 @@
     moves only bytes that no placement of its operands could have put where
     they are needed: the partial results of a reduction, a contraction, a
     scan, a gather or a scatter along a cut axis, and the parts of
-    the result they close into, which exist only once it computes; a
-    gather's or a scatter's positions, whose need depends on their values;
-    and, on a set of devices of several architectures, each window that
-    devices of several of them hold, which the devices of one compute and
-    copy to the others ({!section-reductions}, {!section-routing}). A
-    contraction asked for its sum moves nothing: its result is the devices'
-    terms, which {!place} closes ({!section-contraction}). *)
+    the result they close into, which exist only once it computes; and, on
+    a set of devices of several architectures, each window that devices of
+    several of them hold, which the devices of one compute and copy to the
+    others ({!section-reductions}, {!section-routing}). It also moves a
+    gather's or a scatter's positions that it cannot read where they lie,
+    so that the values they index keep their cuts, though a {!place} could
+    have put them there ({!section-routing}). A contraction asked for its
+    sum moves nothing: its result is the devices' terms, which {!place}
+    closes ({!section-contraction}). *)
 
 (** {1:values Values}
 
