@@ -2953,6 +2953,7 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- **Breaking:** `Nx.Prim.quiet` is removed: no interpretation asks it.
 - **Breaking:** `Nx.Prim.reach` loses `Adopting`; a nested interpretation
   binds outer values as captures. A traced operation allocates a word less.
 - nx.cuda's `qr` accepts an operand whose memory admits only reads where

@@ -7778,7 +7778,6 @@ module Prim = struct
   let twinned = Eval.twinned
   let payload = Eval.payload
   let owner = Eval.owner
-  let quiet = Eval.quiet
   let donated = Donate.is_handle
   let eval = Eval.eval
   let apart = Eval.apart

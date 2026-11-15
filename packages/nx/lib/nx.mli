@@ -6025,13 +6025,6 @@ module Prim : sig
   (** [payload i x] is [Some p] iff [i] owns [x], [p] what it keeps. It
       allocates nothing. *)
 
-  val quiet : unit -> bool
-  (** [quiet ()] is [true] only if no [Extent] interpretation is live, on any
-      domain: an operation that no [Values] interpretation reaches then
-      computes now. It may be [false] with none live: a continuation dropped
-      inside an extent keeps it [false] for the life of the process. It reads
-      one atomic. *)
-
   val owner : ('v, 's, 'd) nx -> interpretation option
   (** [owner x] is the interpretation that owns [x], if [x] is traced. It
       allocates nothing. *)
