@@ -173,7 +173,7 @@ let law (c, at) =
   cover "reduce_ranges refused" (c.by = "Nx.reduce_ranges" && !calls > 1);
   equal_elements Nx_array.Dtype.Float64 host got
 
-(* Nx.Prim.composite's promises, over programs of calls that share the
+(* Nx.composite's promises, over programs of calls that share the
    domain's state: each call's refusal is named as nx.mli states, whatever
    the calls before it did, a collection, an exception or a domain. *)
 
@@ -207,7 +207,7 @@ let value = abstract "v"
 
 let split () = Nx.place (S2.split ~axis:0) (Nx.arange Nx.int64 0 4 1)
 
-let open_ ~by v f = Nx.Prim.composite ~by [ Arg ("x", v) ] f
+let open_ ~by v f = Nx.composite ~by [ Arg ("x", v) ] f
 
 (* [depth] composites, each over a value the outer one derives, with a
    collection before the refusal: the outermost's argument is named. *)
@@ -235,7 +235,7 @@ let after_inner v =
 let passed_over v =
   let whole = Nx.place S2.on (Nx.arange Nx.int64 0 4 1) in
   message (fun () ->
-      Nx.Prim.composite ~by:"two" [ Arg ("a", whole); Arg ("b", v) ] (fun () ->
+      Nx.composite ~by:"two" [ Arg ("a", whole); Arg ("b", v) ] (fun () ->
           sorted (Nx.add whole v)))
 
 (* A value the composite makes, derived from no argument: the operation's
@@ -300,6 +300,32 @@ let commands =
       (fun () -> read_whole "Nx.map_segments" "x") in_f;
   ]
 
+(* Over arguments whole at one placement, Nx.composite is its body: it
+   allocates no word more than the body alone, so it opens no frame. *)
+let test_together () =
+  let whole = Nx.place S2.on (Nx.arange Nx.int64 0 4 1) in
+  let host = Nx.arange Nx.int64 0 4 1 in
+  let words f =
+    f ();
+    let run () =
+      let before = Gc.minor_words () in
+      for _ = 1 to 100 do
+        f ()
+      done;
+      Gc.minor_words () -. before
+    in
+    List.fold_left Float.min infinity (List.init 5 (fun _ -> run ()))
+  in
+  let body () = ignore (Sys.opaque_identity (Nx.neg whole)) in
+  let check msg args =
+    equal ~msg float_exact (words body)
+      (words (fun () -> Nx.composite ~by:"t" args body))
+  in
+  check "one value" [ Nx.Arg ("a", whole) ];
+  check "two at one placement" [ Nx.Arg ("a", whole); Arg ("b", whole) ];
+  check "parts" [ Nx.Parts ("w", "f", [ Nx.P whole; P whole ]) ];
+  check "on the host" [ Nx.Arg ("a", host); Arg ("b", host) ]
+
 let () =
   exit
     (run "nx composites"
@@ -311,8 +337,11 @@ let () =
                 place that resolves it"
                placed_case law;
              stateful ~count:50
-               "Nx.Prim.composite names the outermost frame's argument, \
+               "Nx.composite names the outermost frame's argument, \
                 passes over one the remedy leaves, and leaves no state"
                commands;
            ];
+         group "together"
+           [ test "a composite over values whole together is its body"
+               test_together ];
        ])

@@ -170,6 +170,10 @@ module Devices : sig
 
   val to_list : 'd t -> Rig.t list
   (** [to_list s] is [s]'s devices in order. *)
+
+  val has_kernels : 'd t -> bool
+  (** [has_kernels s] is [true] iff a kernel library computes on [s]
+      eagerly, the one {!val-devices} fixed when it minted [s]. *)
 end
 
 (** Named axes over a set's devices. *)
@@ -391,7 +395,7 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
     argument as its documentation names it, where it lies, and the call of
     the argument's placing function, {!place} for a value, that reads the
     operand where the operation needs it, the grid moved back through each
-    operation between them ({!Prim.composite}). An argument that the remedy
+    operation between them ({!composite}). An argument that the remedy
     leaves where it lies is passed over for the next. Over [lo] and [x]
     split along their rows and columns over the same devices:
 
@@ -479,6 +483,41 @@ val beside : ('v, 's, 'd) t -> 'd Placement.t
     up with [x]'s. For [x] of shape [[4; 3]] split along axis [0],
     [arange_at (placement x) float32 0 3 1] is split along its only axis,
     which [add x] reads along axis [1], and raises. *)
+
+(** {3:composites Functions of several operations}
+
+    A library that computes a function by several operations, as
+    [Nx_quant.apply_experts] does, names the function's arguments in its
+    refusals as nx's own functions do ({!section-routing}) by running its
+    body under {!composite}. *)
+
+(** The type for a composite's argument. *)
+type 'd arg =
+  | Arg : string * ('v, 's, 'd) t -> 'd arg
+      (** [Arg (name, x)]: the value [x], named [name], which {!place}
+          places. *)
+  | Parts : string * string * 'd packed list -> 'd arg
+      (** [Parts (name, place, xs)]: the parts [xs] of one structure named
+          [name], which the function named [place] places, as
+          ["Nx_quant.place"]. *)
+
+val composite : by:string -> 'd arg list -> (unit -> 'a) -> 'a
+(** [composite ~by args f] is [f ()], the body of the operation [by] over
+    its arguments [args], each named as the caller's interface names it.
+    An operation [f] calls that refuses an operand derived from an
+    argument, by movements or any other operations, raises as
+    {!section-routing} states but naming [by], the argument, where it lies
+    (the part's placement, for a structure), and the call of the argument's
+    placing function that reads the operand where the operation needs it:
+    the first argument, in operand order, that the remedy places elsewhere
+    than it lies, of the outermost such call around [f]. An operand derived
+    from none keeps the operation's own message. Each operation inside [f]
+    notes its operands, holding no value alive; on another domain than the
+    one [f] started on, nothing is noted. Where every argument lies whole
+    at one placement, none cut across devices and none a sum, no operation
+    over values derived from them alone refuses one, and [composite] is
+    [f ()], noting nothing and allocating nothing beyond what [f ()]
+    does. *)
 
 (** {1:creation Creation}
 
@@ -4087,6 +4126,22 @@ val matmul_segments :
     more than [ids] or its leading axes do not broadcast to [ids]', [x]'s
     last axis is not [k], or the dtype is a boolean. *)
 
+(**/**)
+
+val position_rows : int array -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [position_rows lead x] is each position's row of [x], [[| p; k |]], for
+    positions of shape [lead], [p] their count, [x] [[| s'…; k |]] with
+    [s'…] broadcasting to [lead]: {!matmul_segments}' rows, so that a
+    product over another weight, as [Nx_quant.apply_experts], reads its rows
+    where {!matmul_segments} does. [x]'s leading axes are broadcast and
+    flattened where that keeps where they lie: at most one has more than
+    one index, or only the first such is cut, into windows of one extent.
+    Cut otherwise, [x] is gathered along each such axis in turn, from the
+    longest, which holds each position's row times the extents of the
+    others. *)
+
+(**/**)
+
 (** {3:ranges Ranges}
 
     {!moments_ranges}, and {!reduce_ranges} but for [Set], combine a range of
@@ -5481,6 +5536,15 @@ module Repr : sig
 
       Raises [Invalid_argument] naming [Nx.Repr.shards] for a dead or a
       traced [x]. *)
+
+  val layouts : ('v, 's, 'd) t -> Nx_array.Layout.t iarray
+  (** [layouts x] is the layout of each of [x]'s arrays, one per device of
+      its placement, in order, as a compiler reads them to know the variant
+      a call over [x] runs. A value cut over devices has a piece's own
+      layout there, which {!Prim.form} does not give. It reads no byte,
+      leaves [x]'s memory unshared, and answers for a dead [x] too.
+
+      Raises [Invalid_argument] naming [Nx.Repr.layouts] for a traced [x]. *)
 end
 
 (**/**)
@@ -5942,15 +6006,6 @@ module Prim : sig
   val form : ('v, 's, 'd) nx -> ('v, 's, 'd) form
   (** [form x] is [x] without its bytes. *)
 
-  val layouts : ('v, 's, 'd) nx -> Nx_array.Layout.t iarray
-  (** [layouts x] is the layout of each of [x]'s arrays over its memory, one
-      per device of its placement, in order, as a compiler reads them to
-      know the variant a call over [x] runs; it reads no byte and claims
-      nothing. A value cut over devices has a piece's own layout there,
-      which {!form} does not give.
-
-      Raises [Invalid_argument] for a traced value. *)
-
   val results :
     by:string ->
     ('v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) nx) ->
@@ -6036,39 +6091,6 @@ module Prim : sig
   val eval : by:string -> 'r t -> 'r
   (** [eval ~by op] is [op]'s meaning under the rule, as the vocabulary's
       functions apply it. *)
-
-  val apart : ('a, 'b, 'd) nx -> ('c, 'e, 'd) nx -> bool
-  (** [apart x y] is [true] iff [x] or [y] lies cut across devices or as a
-      sum, or they lie at different placements. Over arguments no two of
-      which are apart, no operation over values derived from them alone
-      refuses one: a function calls {!composite} only where some two of its
-      arguments are apart, so that a call over values whole at one
-      placement costs nothing more. It allocates nothing. *)
-
-  (** The type for a composite's argument. *)
-  type 'd arg =
-    | Arg : string * ('v, 's, 'd) nx -> 'd arg
-        (** [Arg (name, x)]: the value [x], named [name], which
-            {!Nx.place} places. *)
-    | Parts : string * string * 'd any list -> 'd arg
-        (** [Parts (name, place, xs)]: the parts [xs] of one structure
-            named [name], which the function named [place] places, as
-            ["Nx_quant.place"]. *)
-
-  val composite : by:string -> 'd arg list -> (unit -> 'a) -> 'a
-  (** [composite ~by args f] is [f ()], the body of the operation [by] over
-      its arguments [args], each named as the caller's interface names it.
-      An operation [f] calls that refuses an operand derived from an
-      argument, by movements or any other operations, raises as
-      {!Nx.section-routing} states but naming [by], the argument, where it
-      lies (the part's placement, for a structure), and the call of the
-      argument's placing function that reads the operand where the
-      operation needs it: the first
-      argument, in operand order, that the remedy places elsewhere than it
-      lies, of the outermost such call around [f]. An operand derived from
-      none keeps the operation's own message. Each operation inside [f]
-      notes its operands, holding no value alive; on another domain than
-      the one [f] started on, nothing is noted. *)
 
   (** {1:consumers Consumers}
 
@@ -6263,20 +6285,6 @@ module Prim : sig
       [o.start] of the loop's rank: [op] over the window of its loop's shape
       that starts at [o.start]. It is [op] where [o.start] is [[||]], and an
       operation other than a loop is itself. *)
-
-  val position_rows : int array -> ('v, 's, 'd) nx -> ('v, 's, 'd) nx
-  (** [position_rows lead x] is each position's row of [x], [[| p; k |]], for
-      positions of shape [lead], [p] their count, [x] [[| s'…; k |]] with
-      [s'…] broadcasting to [lead]: {!matmul_segments}' rows. [x]'s leading
-      axes are broadcast and flattened where that keeps where they lie: at
-      most one has more than one index, or only the first such is cut, into
-      windows of one extent. Cut otherwise, [x] is gathered along each such
-      axis in turn, from the longest, which holds each position's row times
-      the extents of the others. *)
-
-  val has_kernels : 'd Devices.t -> bool
-  (** [has_kernels s] is [true] iff [s] has kernels to evaluate an operation
-      ({!val-devices}). *)
 
   val pieces :
     'd Placement.t ->

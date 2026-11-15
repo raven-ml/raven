@@ -3415,7 +3415,7 @@ let footprint t args =
     else
       let layouts (V x) =
         let f = Nx.Prim.form x in
-        Array.map (within f.dtype) (Iarray.to_array (Nx.Prim.layouts x))
+        Array.map (within f.dtype) (Iarray.to_array (Nx.Repr.layouts x))
       in
       let donated (V x) = Nx.Prim.donated x in
       match owners t with

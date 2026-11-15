@@ -2953,6 +2953,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- **Breaking:** `Nx.Prim.has_kernels` is `Nx.Devices.has_kernels`, `layouts`
+  is `Nx.Repr.layouts`, and `composite` is `Nx.composite`, which tests
+  itself whether its arguments lie apart; `Prim.apart` is removed.
 - **Breaking:** `Nx.Prim.quiet` is removed: no interpretation asks it.
 - **Breaking:** `Nx.Prim.reach` loses `Adopting`; a nested interpretation
   binds outer values as captures. A traced operation allocates a word less.
@@ -3029,7 +3032,7 @@ its lock and from samples the dashboard saw arrive.
 - `Nx.rms_norm` takes `?scale`, applied before its one rounding, and
   normalises a lane whose squares overflow or underflow at a power-of-two
   scale, where it gave zeros or infinities.
-- Add `Nx.Prim.layouts`, the layout of each of a value's arrays, a cut
+- Add `Nx.Repr.layouts`, the layout of each of a value's arrays, a cut
   value's pieces' own, reading no byte.
 - Add `nx.cuda` (`Nx_cuda`), kernels of `Nx_kernel.S` for NVIDIA `sm_89`
   GPUs. A set made by `Nx.devices ~kernels:(module Nx_cuda)` computes on
@@ -3298,9 +3301,9 @@ its lock and from samples the dashboard saw arrive.
   named an internal operation's operand: `Nx.reduce_segments`,
   `Nx.reduce_ranges`, `Nx.map_segments`, and `Nx_quant.dequant`, `apply`,
   `apply_experts`, `take` and `quantize_q8_0`, whose weight is `w`, placed
-  by `Nx_quant.place`. `Nx.Prim.composite` declares a function's arguments
-  so, where `Nx.Prim.apart` finds two of them apart: a call over arguments
-  whole at one placement records nothing and allocates as before.
+  by `Nx_quant.place`. `Nx.composite` declares a function's arguments
+  so: a call over arguments whole at one placement records nothing, and
+  allocates its arguments' list and body, 20 words for `Nx.reduce_segments`.
 - `Nx.scatter` with positions and updates cut along its axis computes
   `Set`, `Max` and `Min` by partials, as `Add`: each device combines the
   updates it holds, and the partial results close in tile order, `Set`

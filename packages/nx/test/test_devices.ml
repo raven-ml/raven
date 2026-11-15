@@ -23,6 +23,14 @@ module Nowhere = struct
   let computes_on _ = false
 end
 
+(* A kernel library that claims every device: a mint over a device the host
+   does not run takes it only when asked. Nothing here computes with it. *)
+module Everywhere = struct
+  include Nx_cpu
+
+  let computes_on _ = true
+end
+
 let sets =
   group "sets"
     [
@@ -38,6 +46,19 @@ let sets =
             fun () -> ignore (Nx.devices ~kernels:(module Nowhere) [ m 0 ]) );
         ]
         (fun (_, f) -> invalid ~by:"Nx.devices" f);
+      test "a set has kernels where nx.cpu or the mint's computes on it"
+        (fun () ->
+          let off = Nx_array_support.off_host () in
+          let module Off = (val Nx.devices [ off ]) in
+          let module Given =
+            (val Nx.devices ~kernels:(module Everywhere) [ off ])
+          in
+          equal ~msg:"the host" bool true (Nx.Devices.has_kernels Nx.Host.v);
+          equal ~msg:"host-run devices" bool true (Nx.Devices.has_kernels S2.v);
+          equal ~msg:"a device the host does not run" bool false
+            (Nx.Devices.has_kernels Off.v);
+          equal ~msg:"the same device with the mint's kernels" bool true
+            (Nx.Devices.has_kernels Given.v));
     ]
 
 let placements =
@@ -221,21 +242,37 @@ let witnesses =
 
 (* A value's layouts: one per device, each piece's own, as the piece holds
    it there; and a traced value has none. *)
+
+type (_, _, _) Nx.Prim.payload += Stand_in : ('v, 's, 'd) Nx.Prim.payload
 let layouts =
   group "layouts"
     [
       test "a cut value's pieces" (fun () ->
           let x = Nx.place (S2.split ~axis:1) (Nx.ones Nx.float32 [| 2; 4 |]) in
           let shape l = Iarray.to_list (Nx_array.Layout.shape l) in
-          let shapes = Iarray.to_list (Iarray.map shape (Nx.Prim.layouts x)) in
+          let shapes = Iarray.to_list (Iarray.map shape (Nx.Repr.layouts x)) in
           equal (list (list int)) [ [ 2; 2 ]; [ 2; 2 ] ] shapes);
       test "a value on one device" (fun () ->
           let x = Nx.matrix_transpose (Nx.ones Nx.float32 [| 2; 3 |]) in
-          equal int 1 (Iarray.length (Nx.Prim.layouts x));
+          equal int 1 (Iarray.length (Nx.Repr.layouts x));
           let strides l = Iarray.to_list (Nx_array.Layout.strides l) in
           equal (list int)
             (strides (Nx.Prim.form x).layout)
-            (strides (Iarray.get (Nx.Prim.layouts x) 0)));
+            (strides (Iarray.get (Nx.Repr.layouts x) 0)));
+      test "a dead value keeps its layouts" (fun () ->
+          let x = Nx.ones Nx.float32 [| 2; 3 |] in
+          ignore (Nx.neg (Nx.donate x));
+          invalid ~by:"Nx.to_array" (fun () -> ignore (Nx.to_array x));
+          let shape l = Iarray.to_list (Nx_array.Layout.shape l) in
+          equal (list (list int)) [ [ 2; 3 ] ]
+            (Iarray.to_list (Iarray.map shape (Nx.Repr.layouts x))));
+      test "a traced value raises" (fun () ->
+          let x = Nx.ones Nx.float32 [| 2 |] in
+          Nx.Prim.interpret ~name:"test" Values
+            (fun _ ~by:_ _ -> invalid_arg "test: no operation")
+            (fun i ->
+              let t = Nx.Prim.traced i (Nx.Prim.form x) Stand_in in
+              invalid ~by:"Nx.Repr.layouts" (fun () -> Nx.Repr.layouts t)));
     ]
 
 let () =

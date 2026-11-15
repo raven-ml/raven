@@ -401,7 +401,7 @@ let offered name (body : Program.t) forms =
 let bare (body : Program.t) forms =
   match first_form body forms with
   | Some (Program.F f)
-    when not (Nx.Prim.has_kernels (Nx.Placement.devices f.placement)) ->
+    when not (Nx.Devices.has_kernels (Nx.Placement.devices f.placement)) ->
       Some (Format.asprintf "%a" Nx.Placement.pp f.placement)
   | Some _ | None -> None
 

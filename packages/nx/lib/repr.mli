@@ -27,3 +27,6 @@ val unsafe_of_shards :
   ('v, 's, 'd) Value.t
 
 val shards : ('v, 's, 'd) Value.t -> ('v, 's) Nx_array.t iarray
+
+val layouts : ('v, 's, 'd) Value.t -> Nx_array.Layout.t iarray
+(** Raises [Invalid_argument] naming [Nx.Repr.layouts] for a traced value. *)

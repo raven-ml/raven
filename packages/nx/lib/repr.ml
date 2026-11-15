@@ -98,3 +98,13 @@ let array x =
   if Iarray.length arrays = 1 then Some (Iarray.get arrays 0) else None
 
 let shards x = crossing ~by:"Nx.Repr.shards" x
+
+(* [x]'s layouts read nothing and share no memory, so a dead value has them
+   too. *)
+let layouts (type v s d) (x : (v, s, d) Value.t) =
+  match x with
+  | Value.Traced { owner; _ } ->
+      invalid_argf "Nx.Repr.layouts: a value traced by %s has no bytes"
+        owner.name
+  | Value.Array _ | Value.Shards _ | Value.Handle _ ->
+      Iarray.map A.layout (Prim.arrays x)

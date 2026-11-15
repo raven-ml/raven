@@ -496,23 +496,47 @@ let spread x =
   let g = Devices.grid (Prim.placement x) in
   Grid.is_cut g || Grid.is_partial g
 
-let apart x y =
-  spread x || spread y
-  || not (Devices.equal (Prim.placement x) (Prim.placement y))
+(* Whether [x] lies whole at [p]. *)
+let whole_at p x = (not (spread x)) && Devices.equal (Prim.placement x) p
 
 type 'd arg =
   | Arg : string * ('v, 's, 'd) t -> 'd arg
-  | Parts : string * string * 'd any list -> 'd arg
+  | Parts : string * string * 'd Ptree.packed list -> 'd arg
+
+(* Whether every argument of [args] and every part in [xs] lies whole at
+   [p]. It allocates nothing. *)
+let rec args_at : type d. d Devices.placement -> d arg list -> bool =
+ fun p args ->
+  match args with
+  | [] -> true
+  | Arg (_, x) :: args -> whole_at p x && args_at p args
+  | Parts (_, _, xs) :: args -> parts_at p xs && args_at p args
+
+and parts_at : type d. d Devices.placement -> d Ptree.packed list -> bool =
+ fun p xs ->
+  match xs with
+  | [] -> true
+  | Ptree.P x :: xs -> whole_at p x && parts_at p xs
+
+(* Whether the arguments lie whole at one placement, that of the first. *)
+let rec together : type d. d arg list -> bool = function
+  | [] -> true
+  | Arg (_, x) :: _ as args -> args_at (Prim.placement x) args
+  | Parts (_, _, Ptree.P x :: _) :: _ as args ->
+      args_at (Prim.placement x) args
+  | Parts (_, _, []) :: args -> together args
 
 let composite ~by args f =
-  let part name place (Any x) =
-    (name, place, Prim.placement x, Composite.Value x)
-  in
-  let arg = function
-    | Arg (name, x) -> List.[ part name "Nx.place" (Any x) ]
-    | Parts (name, place, xs) -> List.map (part name place) xs
-  in
-  Composite.call ~by (List.concat_map arg args) f
+  if together args then f ()
+  else
+    let part name place (Ptree.P x) =
+      (name, place, Prim.placement x, Composite.Value x)
+    in
+    let arg = function
+      | Arg (name, x) -> List.[ part name "Nx.place" (Ptree.P x) ]
+      | Parts (name, place, xs) -> List.map (part name place) xs
+    in
+    Composite.call ~by (List.concat_map arg args) f
 
 (* Notes, inside a composite, how [op]'s results [r] derive from its
    operands that derive from an argument ({!Composite.note}): those of the

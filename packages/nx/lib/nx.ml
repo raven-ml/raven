@@ -81,11 +81,13 @@ type 'd bit_t = (bool, Dtype.bit_elt, 'd) t
 type host = Devices.host
 
 (* The public [Devices] extends the private one, which the rest of this file
-   keeps using by that name; nx.mli exposes its [t] and [to_list] alone. *)
+   keeps using by that name; nx.mli exposes its [t], [to_list] and
+   [has_kernels] alone. *)
 module Devices = struct
   include Devices
 
   let to_list s = List.init (count s) (rig s)
+  let has_kernels s = Option.is_some (kernels s)
 end
 
 module Mesh = struct
@@ -464,6 +466,7 @@ module Repr = struct
   let unsafe_of_shards p arrays =
     Repr.unsafe_of_shards ~by:"Nx.Repr.unsafe_of_shards" p arrays
   let shards = Repr.shards
+  let layouts = Repr.layouts
 
   (* A read's array: [Check.on_host] shares no memory, so the value's next
      donation may still write into it once [f] returns. Until then a keep
@@ -5316,10 +5319,8 @@ let segments_of ~by c ~segments ids x =
 
 let reduce_segments c ~segments ids x =
   let by = "Nx.reduce_segments" in
-  if Eval.apart ids x then
-    Eval.composite ~by [ Arg ("ids", ids); Arg ("x", x) ] (fun () ->
-        segments_of ~by c ~segments ids x)
-  else segments_of ~by c ~segments ids x
+  Eval.composite ~by [ Arg ("ids", ids); Arg ("x", x) ] (fun () ->
+      segments_of ~by c ~segments ids x)
 
 (* The disjoint sparse table: level [k] holds, at each row, its chunk of [2^k]
    rows combined from that row to the chunk's end, its suffix, and from the
@@ -5495,16 +5496,13 @@ let ranges_of ~by c ~lo ~hi x =
       let s = fold_ranges ~by Add ~l ~r (cast_by ~by w x) (empty w zero) in
       cast_by ~by dt (literal ~by ~swapped:false (Binary Add) w s zero)
 
-(* Bounds and rows read as their own values, and through a composite where
-   they lie apart. *)
+(* Bounds and rows read as their own values, through a composite. *)
 let over_ranges ~by f ~lo ~hi x =
   let lo = Donate.read ~by lo in
   let hi = Donate.read ~by hi in
   let x = Donate.read ~by x in
-  if Eval.apart lo hi || Eval.apart lo x then
-    Eval.composite ~by [ Arg ("lo", lo); Arg ("hi", hi); Arg ("x", x) ]
-      (fun () -> f ~lo ~hi x)
-  else f ~lo ~hi x
+  Eval.composite ~by [ Arg ("lo", lo); Arg ("hi", hi); Arg ("x", x) ]
+    (fun () -> f ~lo ~hi x)
 
 let reduce_ranges c ~lo ~hi x =
   over_ranges ~by:"Nx.reduce_ranges" (ranges_of ~by:"Nx.reduce_ranges" c) ~lo
@@ -5991,10 +5989,8 @@ let map_segments ~segments ids f x =
   let by = "Nx.map_segments" in
   let ids = Donate.read ~by ids in
   let x = Donate.read ~by x in
-  if Eval.apart ids x then
-    Eval.composite ~by [ Arg ("ids", ids); Arg ("x", x) ] (fun () ->
-        map_segments_of ~by ~segments ids f x)
-  else map_segments_of ~by ~segments ids f x
+  Eval.composite ~by [ Arg ("ids", ids); Arg ("x", x) ] (fun () ->
+      map_segments_of ~by ~segments ids f x)
 
 (* Whether flattening [x]'s leading axes [xs] keeps where they lie. A
    reshape drops axes of one index and keeps a cut of the axis the others
@@ -6083,11 +6079,9 @@ let matmul_segments ?sum ids x w =
   let by = "Nx.matmul_segments" in
   let ids = Donate.read ~by ids in
   let x = Donate.read ~by x and w = Donate.read ~by w in
-  if Eval.apart ids x || Eval.apart x w then
-    Eval.composite ~by
-      [ Arg ("ids", ids); Arg ("x", x); Arg ("w", w) ]
-      (fun () -> matmul_segments_of ~by ?sum ids x w)
-  else matmul_segments_of ~by ?sum ids x w
+  Eval.composite ~by
+    [ Arg ("ids", ids); Arg ("x", x); Arg ("w", w) ]
+    (fun () -> matmul_segments_of ~by ?sum ids x w)
 
 (* Convolution *)
 
@@ -7448,6 +7442,14 @@ let associative_scan ?axis:(a = 0) s f x =
             (fun (Value.Any t) -> Value.Any (Donate.read ~by t))
             states))
 
+(* Functions of several operations *)
+
+type 'd arg = 'd Eval.arg =
+  | Arg : string * ('v, 's, 'd) t -> 'd arg
+  | Parts : string * string * 'd packed list -> 'd arg
+
+let composite = Eval.composite
+
 (* Operations as data *)
 
 module Prim = struct
@@ -7710,7 +7712,6 @@ module Prim = struct
   let iteri = Prim.iteri
   let map = Prim.map
   let form = Prim.form
-  let layouts x = Iarray.map Nx_array.layout (Prim.arrays x)
   let results = Prim.results
   let iter_results = Prim.iter_results
 
@@ -7758,10 +7759,6 @@ module Prim = struct
   let partition = Eval.partition
   let offset = Prim.offset
 
-  let position_rows = position_rows
-
-  let has_kernels s = Option.is_some (Devices.kernels s)
-
   let pieces p shape =
     let set = Devices.set p in
     Array.mapi
@@ -7780,14 +7777,6 @@ module Prim = struct
   let owner = Eval.owner
   let donated = Donate.is_handle
   let eval = Eval.eval
-  let apart = Eval.apart
-
-  type 'd arg = 'd Eval.arg =
-    | Arg : string * ('v, 's, 'd) Value.t -> 'd arg
-    | Parts : string * string * 'd any list -> 'd arg
-
-  let composite = Eval.composite
-
   module Consumer = struct
     type 'd t = 'd Donate.claim
 
