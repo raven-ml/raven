@@ -13,11 +13,12 @@
     flags and data waits for nothing ({!written}): a passing one leaves no
     trace and a failing one is kept as the builder of its exception, its
     position and elements read on the host ({!add_read}). Otherwise it
-    computes the check there without reading it, copies whether every flag
-    holds into memory the host addresses, and the first false position and
-    each datum's element there into memory of its own, and hands this
-    module the {e pending} check ({!add}). A pending check of one flag on a
-    device whose memory the host addresses holds that flag and those
+    computes the check as its partition ({!Eval.partition}) without reading
+    it: the check of one flag on one device, whose data are, for several
+    flags, the first false position and each datum's element there. It
+    copies that flag and those elements into memory the host addresses and
+    hands this module the {e pending} check ({!add}). On a device whose
+    memory the host addresses, the pending check holds that flag and those
     elements in place instead, under a keep ({!Rig.Buffer.val-keep}) that
     ends once the check is read, since a copy there would make the host wait
     for the work that writes them.

@@ -1428,7 +1428,7 @@ val jit :
     kernels of its own, a fold over a cut axis closes to a whole value, as a
     contraction does unless asked for its sum ({!Nx.section-contraction}), and a
     window moves from one device to another only where eager computation moves
-    it, or a check's data placed apart from its flags ({!section-checks}).
+    it.
     Each value's placement is eager's, uneven windows included, and a device
     whose windows of an operation's results are all empty computes nothing for
     it. A program for one device serves every device of its target, so the
@@ -1538,14 +1538,10 @@ val jit :
     later check of the call that fails raises nothing, where eagerly it raises
     at a later wait.
 
-    Over several devices each device checks its window of the flags, a window
-    whole on several devices once, and keeps there its position and data.
-    Only its flag reaches the program's device: a passing check moves one
-    flag per device and no data. A failing check reads the positions and data
-    on the host and raises as eagerly, first false in C order of the whole
-    value, the data's elements there. A datum that lies elsewhere than its
-    flags, as a value whole on one device beside flags cut across several,
-    moves to the flags' placement each call. *)
+    Over several devices a check computes as eager computation computes one
+    it leaves pending ({!Nx.section-waiting}), as the check of one flag on
+    one device that [Nx.Prim.partition] states, and that flag alone then
+    reaches the program's device. *)
 
 (** {2:numerics Numerics}
 

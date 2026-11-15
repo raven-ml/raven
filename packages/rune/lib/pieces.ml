@@ -11,9 +11,6 @@ module D = Nx.Dtype
 
 exception Declined of string
 
-exception
-  Part of { check : int; position : int; failure : unit -> exn }
-
 let decline fmt = Printf.ksprintf (fun s -> raise (Declined s)) fmt
 let shape_of (f : _ Nx.Prim.form) = Iarray.to_array (L.shape f.layout)
 let extents w = Array.map (fun (r : M.range) -> r.count) w
@@ -435,85 +432,6 @@ let joined ri (F f) ps =
       let ps = Iarray.map (Program.cast f.dtype set) (Iarray.of_array ps) in
       V (Nx.Prim.traced ri f (Cut ps))
 
-(* Checks
-
-   A check over several devices is computed where its flags lie: each device's
-   window of the flags is a check of its own, whose position counts within
-   that window, and each device's copy of a window whole on several is checked
-   once, on [home] where it holds one. The data, moved to the flags' placement
-   where they lie elsewhere, are read at the same position of each device's
-   window: this is the only data a check moves. Only each device's outcome,
-   one flag, reaches [home], where the call's check reads it ({!Compile}).
-   A failure is a {!Part}: {!Compile} reads the position of each device's
-   failing part and raises the first, in C order of the whole value. *)
-
-let checked_parts = Atomic.make 0
-
-(* The data of a check at device [j]'s window. *)
-let rec data_pieces : type d e.
-    _ -> (d, e) Nx.Prim.data -> int -> (d, e) Nx.Prim.data =
- fun ri data j ->
-  match data with
-  | [] -> []
-  | x :: rest -> Iarray.get (pieces_of ri x) j :: data_pieces ri rest j
-
-let rec placed_at : type d e.
-    Nx.Prim.engine -> by:string -> d Nx.Placement.t ->
-    (d, e) Nx.Prim.data -> (d, e) Nx.Prim.data =
- fun e ~by at data ->
-  match data with
-  | [] -> []
-  | x :: rest ->
-      let x =
-        if Nx.Placement.equal (Nx.placement x) at then x
-        else Nx.Prim.partition e ~by (Place (at, x))
-      in
-      x :: placed_at e ~by at rest
-
-let checked (type d e) ri ~home e ~by (ok : (bool, _, d) Nx.t)
-    (data : (d, e) Nx.Prim.data) (fail : int array -> e -> exn) =
-  let shape = Nx.shape ok and at = Nx.placement ok in
-  let check = Atomic.fetch_and_add checked_parts 1 in
-  let data = placed_at e ~by at data in
-  let windows = Nx.Prim.pieces at shape in
-  let devices = Array.map (fun (here, _) -> rig_of here) windows in
-  (* Each window's device that checks it: [home] where it holds that window,
-     else the first. *)
-  let chosen = Hashtbl.create 4 in
-  Array.iteri
-    (fun j (_, w) ->
-      let key = Array.to_list w in
-      match Hashtbl.find_opt chosen key with
-      | Some k when Rig.equal devices.(k) home -> ()
-      | Some _ when not (Rig.equal devices.(j) home) -> ()
-      | Some _ | None -> Hashtbl.replace chosen key j)
-    windows;
-  (* A window's flags at [local], in the whole value's indices and position
-     in C order. *)
-  let at_position (w : M.range array) local =
-    let index = Array.map2 (fun (r : M.range) c -> r.start + c) w local in
-    let position = ref 0 in
-    Array.iteri (fun a n -> position := (!position * n) + index.(a)) shape;
-    (index, !position)
-  in
-  let part j =
-    let _, w = windows.(j) in
-    if Array.for_all (fun (r : M.range) -> r.count > 0) w then
-      Nx.Prim.eval ~by
-        (Check
-           {
-             ok = Iarray.get (pieces_of ri ok) j;
-             data = data_pieces ri data j;
-             fail =
-               (fun local datum ->
-                 let index, position = at_position w local in
-                 Part
-                   { check; position; failure = (fun () -> fail index datum) });
-           })
-  in
-  List.iter part
-    (List.sort compare (Hashtbl.fold (fun _ j l -> j :: l) chosen []))
-
 (* The moves of [noted], each with the value it makes, that [p] keeps: those
    whose value an equation of [p] that reads to its outputs makes. *)
 let kept (p : Program.t) noted =
@@ -535,8 +453,8 @@ let kept (p : Program.t) noted =
 
 (* [cut ~kind ~home ~name p forms] is [p] split, as {!split}, by a tracer of
    [kind], its captures, and its moves, each with the value it makes, in
-   order. [home] is the device the split program computes on, where its
-   checks and an iterate's stop lie. *)
+   order. [home] is the device the split program computes on, where an
+   iterate's stop and a switch's index lie. *)
 let rec cut ~kind ~in_loop ~(home : Rig.t) ~name (p : Program.t) forms =
   if kind <> Trace.Jit && Array.length p.adds > 0 then
     decline "a total in a loop over several devices";
@@ -579,10 +497,8 @@ let rec cut ~kind ~in_loop ~(home : Rig.t) ~name (p : Program.t) forms =
               let op = Nx.Prim.map lookup traced in
               let e = engine ri ~gathered ~by moves in
               match op with
-              | Check { ok; data; fail } ->
-                  if in_loop then
-                    decline "a check in a loop's step over several devices";
-                  checked ri ~home e ~by ok data fail
+              | Check _ when in_loop ->
+                  decline "a check in a loop's step over several devices"
               | _ ->
                   let r = Nx.Prim.partition e ~by op in
                   bind := base;

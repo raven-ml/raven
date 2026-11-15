@@ -498,8 +498,9 @@ let sharded_switch () =
       fun () -> ignore (synced (g i x)))
     (fun call -> call ())
 
-(* A check over a value cut across 4 software devices, warm: each device checks
-   its window, one flag per device reaching the program's device. *)
+(* A check over a value cut across 4 software devices, warm: one reduction of
+   its flags across them, the datum's element gathered at the first false,
+   and the check of the one flag that results. *)
 let sharded_check () =
   warm "devices/check-4"
     (fun () ->

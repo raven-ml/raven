@@ -434,6 +434,14 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A check that `Rune.jit` compiles over several devices (`Nx.check`, a
+  sampler's parameters) computes as eager computation computes one it leaves
+  pending: one reduction of its flags where they lie, one element of each
+  datum gathered where the datum lies, at the first false where one is false,
+  and one check of the result. A datum that lies apart from its flags no
+  longer moves to them on each call, and a passing check over cut flags moves
+  the reduction's partials and one element of each datum where it moved one
+  flag per device.
 - On CUDA and NV, a compiled MXFP4 product of `bfloat16` activations
   (`Nx_quant.apply`, `apply_experts`) builds each weight's `bfloat16` from
   its code's bits by two exact multiplies, where it computed a `float32`
@@ -2953,6 +2961,11 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.Prim.partition` takes a `Check`, where it raised, and computes it as a
+  check of one flag on one device, which the engine's `run` receives: an `Arg`
+  reduction of the flags gives the flag and a position, the first false where
+  one is false, and gathers give each datum's element there, passing or not.
+  Eager execution computes so each check it leaves pending.
 - `Nx.Prim.outputs` and its type `Nx.Prim.outputs` are public: the outs of a
   `Map` whose dtypes are known only at run time, with the reader of its
   result as a list of values.

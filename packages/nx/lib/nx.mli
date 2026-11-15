@@ -29,7 +29,10 @@
     others ({!section-reductions}, {!section-routing}). It also moves a
     gather's or a scatter's positions that it cannot read where they lie,
     so that the values they index keep their cuts, though a {!place} could
-    have put them there ({!section-routing}). A contraction asked for its
+    have put them there ({!section-routing}). A check, passing or not,
+    moves one element of each datum to the device that checks, the first
+    that holds a flag: the element at the first false flag where one is
+    false ({!section-waiting}). A contraction asked for its
     sum moves nothing: its result is the devices' terms, which {!place}
     closes ({!section-contraction}). *)
 
@@ -6331,9 +6334,21 @@ module Prim : sig
       a device of another architecture computes for it
       ({!section-routing}).
 
+      A [Check] is the check of one flag on one device, which [e]'s [run]
+      receives. A check of several flags becomes one whose flag is whether
+      every flag holds and whose data are the C-order position of the first
+      false and each datum's element there. One [Arg] reduction of the flags
+      gives that flag and the position, and gathers along each axis of more
+      than one element give each element, each operation computed as its
+      partition. The one flag is checked on the first device, in its
+      placement's order, that holds it, each datum placed there. Its moves
+      between devices are those the module's preamble lists. A check of no
+      flag computes nothing. Eager execution computes each check it leaves
+      pending so ({!section-waiting}).
+
       Raises [Invalid_argument] naming [by] where [op]'s operands break its
-      rule or its route, as eager execution raises, what [e]'s steps raise,
-      and [Invalid_argument] for a [Check]. *)
+      rule or its route, as eager execution raises, and what [e]'s steps
+      raise. *)
 
   val offset : 'r t -> origin -> 'r t
   (** [offset op o] is the loop [op], a [Map], a [Reduce] or a [Scan], with

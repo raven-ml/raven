@@ -214,8 +214,8 @@ type check = {
   data : (D.any * Ops.t) list;
   fail : int array -> A.any list -> exn;
   rig : Rig.t option;
-      (** The device of the buffers, the program's if none; [Some] for one
-          device's part of a check over several ({!Pieces.Part}). *)
+      (** The device of the buffers, the program's if none; [Some] in a split
+          program ({!Pieces}), whose check lies on one of its devices. *)
 }
 
 type lowered = {
@@ -856,9 +856,9 @@ let check st cs env (type d e) (ok : (bool, _, d) Nx.t)
           ((D.Any dt, at) :: others, read)
     in
     let data, read = walk data in
-    (* Over several devices each device's window of the flags is a check of
-       its own, its position and data kept on that device and read on failure
-       ({!Pieces}), so that only its flag reaches the program's device. *)
+    (* A split program's check lies on one of its devices ({!Pieces}): its
+       position and data stay there, read on failure, and only its flag
+       reaches the program's device. *)
     let rig =
       if st.split then Some (Pieces.rig_of (Nx.placement ok)) else None
     in
@@ -3687,28 +3687,9 @@ let issue_checks t v slots s =
       v.checks
   in
   let by = t.name in
-  (* The failure of the first failing check in the program's order. A check
-     over several devices has one part per device, whose positions read here
-     decide the failure in C order of the whole value ({!Pieces}). *)
+  (* The failure of the first failing check in the program's order. *)
   let fail _ () =
     match List.find_map failure checks with
-    | Some (Pieces.Part { check; position; failure = make }) ->
-        let parts =
-          List.filter_map
-            (fun ((c : check), _, _ as x) ->
-              if Option.is_some c.rig then failure x else None)
-            checks
-        in
-        let _, make =
-          List.fold_left
-            (fun (p, m) -> function
-              | Pieces.Part { check = c; position = q; failure = g }
-                when c = check && q < p ->
-                  (q, g)
-              | _ -> (p, m))
-            (position, make) parts
-        in
-        make ()
     | Some e -> e
     | None -> invalid_arg (by ^ ": a failed check without a failure")
   in

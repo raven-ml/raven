@@ -276,6 +276,154 @@ let elsewhere =
           Nx.sync (ok true));
     ]
 
+(* Pending over several devices
+
+   Two devices whose memory the host addresses, with nx.cpu's kernels, and a
+   device whose copies into them run only when the host waits: flags and
+   data placed through it are unwritten when the check is issued, so the
+   check stays pending until a wait. *)
+
+let cut_a, _ =
+  Rig_support.Polled.open_ ~capacity:(1 lsl 16) ~host_visible:true
+    ~waits_on:[ `Host ] "nx-check-cut-a"
+
+let cut_b, _ =
+  Rig_support.Polled.open_ ~capacity:(1 lsl 16) ~host_visible:true
+    ~waits_on:[ `Host ] "nx-check-cut-b"
+
+let cut_from, _ =
+  Rig_support.Polled.open_ ~capacity:(1 lsl 16) ~host_visible:false
+    ~waits_on:[ `Host ] "nx-check-cut-from"
+
+module Cut = (val Nx.devices ~kernels:(module Nx_cpu) [ cut_a; cut_b ])
+module From = (val Nx.devices [ cut_from ])
+
+(* A shape of rank 1 or 2, the axis the flags are cut along, and the false
+   flags' positions. *)
+let pending_cuts =
+  let open Gen in
+  (let* s = array ~size:(int_range 1 2) (int_range 1 4) in
+   let* axis = int_range 0 (Array.length s - 1) in
+   let n = numel s in
+   let+ falses = list ~size:(int_range 0 3) (int_range 0 (n - 1)) in
+   (s, axis, falses))
+  |> with_pp (fun ppf (s, axis, falses) ->
+      Format.fprintf ppf "%a cut along %d, false at [%s]" pp_ints s axis
+        (String.concat "; " (List.map string_of_int falses)))
+
+(* The device of [s] cut along [axis] in two that holds position [j]. *)
+let device_of s axis j =
+  if (index s j).(axis) < (s.(axis) + 1) / 2 then 0 else 1
+
+let pending_cut (s, axis, falses) =
+  let n = numel s in
+  let first = List.fold_left min n falses in
+  let others = List.filter (fun j -> j <> first) falses in
+  cover "passes" (falses = []);
+  cover "fails" (falses <> []);
+  cover "one flag" (n = 1);
+  cover "cut along an inner axis" (axis > 0 && s.(axis) > 1);
+  cover "the first false on the second device, the first's later"
+    (first < n
+    && device_of s axis first = 1
+    && List.exists (fun j -> device_of s axis j = 0) others);
+  let through x = Nx.place (Cut.split ~axis) (Nx.place From.on x) in
+  let flags = Array.init n (fun j -> not (List.mem j falses)) in
+  let ok = through (Nx.create Nx.bool s flags) in
+  let xs = Array.init n float_of_int in
+  let seven = Nx.place From.on (Nx.create Nx.int32 [||] [| 7l |]) in
+  let data = (through (Nx.create Nx.float32 s xs), Nx.place Cut.on seven) in
+  let fail i (a, b) = At (i, Nx.item [] a, Nx.item [] b, 0.) in
+  Nx.check P.(pair tensor tensor) ok data fail;
+  if first < n then
+    raises (At (index s first, xs.(first), 7l, 0.)) (fun () -> Nx.sync ok);
+  Nx.sync ok
+
+let pending_over_devices =
+  prop
+    ~examples:
+      [
+        (* Cut along the inner axis: position 2 lies on the second device, 4
+           on the first. *)
+        ([| 2; 4 |], 1, [ 4; 2 ]);
+        ([| 3; 4 |], 0, [ 9; 1 ]);
+        ([| 1 |], 0, [ 0 ]);
+        ([| 4 |], 0, []);
+      ]
+    "a check pending over several devices raises its first false in C order"
+    pending_cuts pending_cut
+
+(* A datum that is a sum of the devices' terms ([~sum:true]) gives its closed
+   element at the first false, pending or read at its issue. *)
+let summed_datum () =
+  let a = Array.init 8 float_of_int and b = Array.init 12 float_of_int in
+  let product i j =
+    List.fold_left (fun t k -> t +. (a.((4 * i) + k) *. b.((3 * k) + j))) 0.
+      [ 0; 1; 2; 3 ]
+  in
+  let flags = Array.init 6 (fun k -> k <> 5) in
+  let run (type d) (module D : Nx.Devices with type d = d) ~pending =
+    let through p x =
+      if pending then Nx.place p (Nx.place From.on x) else Nx.place p x
+    in
+    let x = through (D.split ~axis:1) (Nx.create Nx.float32 [| 2; 4 |] a) in
+    let y = through (D.split ~axis:0) (Nx.create Nx.float32 [| 4; 3 |] b) in
+    let sum = Nx.matmul ~sum:true x y in
+    let ok = through D.on (Nx.create Nx.bool [| 2; 3 |] flags) in
+    Nx.check P.tensor ok sum (fun i v -> At (i, Nx.item [] v, 0l, 0.));
+    raises (At ([| 1; 2 |], product 1 2, 0l, 0.)) (fun () -> Nx.sync ok)
+  in
+  run (module Cut) ~pending:true;
+  run (module S2) ~pending:false
+
+(* On two devices the host does not address, a check of one flag on the
+   second, its datum on the first: the datum's element moves to the second,
+   and the second copies it and then the flag into memory the host
+   addresses, by the value it has submitted once the check is issued, which
+   the check is read after. *)
+let apart_off_host () =
+  let p0, q0 =
+    Rig_support.Polled.open_ ~capacity:(1 lsl 16) ~host_visible:false
+      ~waits_on:[ `Host ] "nx-check-apart-0"
+  in
+  let p1, q1 =
+    Rig_support.Polled.open_ ~capacity:(1 lsl 16) ~host_visible:false
+      ~waits_on:[ `Host ] "nx-check-apart-1"
+  in
+  let module A = (val Nx.devices [ p0; p1 ]) in
+  let on d x = Nx.place (Nx.Placement.device A.v d) x in
+  let ok = on p1 (Nx.create Nx.bool [||] [| false |]) in
+  let d = on p0 (Nx.create Nx.float32 [||] [| 5. |]) in
+  let rec drain () =
+    if Rig_support.Polled.run q0 + Rig_support.Polled.run q1 > 0 then drain ()
+  in
+  drain ();
+  let mark = ref 0 in
+  let (), events =
+    Rig.Profile.take (fun () ->
+        check ok [ d ] (fun idx (v, ()) -> At (idx, v, 0l, 0.));
+        mark := Rig.submitted p1;
+        drain ())
+  in
+  let into_host =
+    List.filter_map
+      (function
+        | Rig.Profile.Copy { src; dst; bytes; point; _ }
+          when Rig.equal src p1 && Rig.equal dst Rig.host ->
+            let on_p1 pt =
+              Option.fold ~none:false ~some:(Rig.equal p1) (Rig.Point.device pt)
+              && Rig.Point.value pt <= !mark
+            in
+            Some (bytes, Option.fold ~none:false ~some:on_p1 point)
+        | _ -> None)
+      events
+  in
+  equal ~msg:"copies into memory the host addresses, before the mark"
+    (list (pair int bool))
+    [ (4, true); (1, true) ]
+    into_host;
+  raises (At ([||], 5., 0l, 0.)) (fun () -> Nx.sync ok)
+
 (* Waits *)
 
 type wait = Sync | To_array | Item | Print | Place_host
@@ -902,6 +1050,10 @@ let () =
          host;
          dtypes_elsewhere;
          elsewhere;
+         pending_over_devices;
+         test "a datum that is a sum gives its closed element" summed_datum;
+         test "a check of one flag off host memory copies before its mark"
+           apart_off_host;
          pending_checks "a wait raises its set's oldest failure, once";
          pending_checks ~count:20 ~domains:2
            "on two domains, a wait raises its set's oldest failure, once";

@@ -20,8 +20,11 @@
     It passes on a handle of the same donor over the moved arrays. A [Place]
     onto the host from another set first waits on that set ({!Check.wait}),
     then places the value ({!Exec.place}) and waits for the copies that
-    wrote its arrays ({!Rig.Buffer.wait}). A [Check] is issued
-    ({!Check.issue}).
+    wrote its arrays ({!Rig.Buffer.wait}). A [Check] on the host raises at
+    its issue. Elsewhere it is read at its issue where that waits for
+    nothing ({!Check.written}), and is otherwise computed as its partition
+    ({!partition}), whose check of one flag on one device {!Check} keeps
+    pending ({!Check.add}).
 
     Each interpretation's extent runs under a handler of its own. An operation
     that a live [Extent] or a traced operand may send to an interpretation
@@ -101,7 +104,7 @@ val run : by:string -> 'r prim -> 'r
 
     Raises [Invalid_argument] naming [by] for a dead or traced operand and
     where [op]'s operands break its rule, before any handle is claimed, and
-    as {!Donate.with_consumer}, {!Exec} and {!Check.issue} state. *)
+    as {!Donate.with_consumer}, {!Exec} and {!Check} state. *)
 
 val eval : by:string -> 'r prim -> 'r
 (** [eval ~by op] is [op]'s meaning, as stated above: {!run}'s where no
@@ -110,14 +113,15 @@ val eval : by:string -> 'r prim -> 'r
 
 val partition : Partition.engine -> by:string -> 'r prim -> 'r
 (** [partition e ~by op] is [op] computed as its partition on [e]: a [Place]
-    by {!Partition.place}, and any other operation by partials ({!Partial})
-    or by windows ({!Partition.windows}), as its route ({!Prim.val-route})
-    says, a gather's or a scatter's positions first moved where the route
-    reads them. {!run} computes an operation so on {!Exec.eager}.
+    by {!Partition.place}, a [Check] as the check of one flag on one device
+    as [Nx.Prim.partition] states, and any other operation by partials
+    ({!Partial}) or by windows ({!Partition.windows}), as its route
+    ({!Prim.val-route}) says, a gather's or a scatter's positions first moved
+    where the route reads them. {!run} computes an operation so on
+    {!Exec.eager}.
 
     Raises [Invalid_argument] naming [by] where [op]'s operands break its
-    rule, what [e]'s steps raise, and [Invalid_argument] as an internal fault
-    for a [Check]. *)
+    rule, and what [e]'s steps raise. *)
 
 (** The type for a composite's argument: a value and its name, or the parts
     of a structure, its name and the function that places it. *)

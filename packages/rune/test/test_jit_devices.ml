@@ -19,6 +19,7 @@ module T = Nx.Ptree
 let f32 = Nx.float32
 let m = Nx_support.memory
 
+module One = (val Nx.devices [ m 0 ])
 module Two = (val Nx.devices [ m 0; m 1 ])
 module Three = (val Nx.devices [ m 0; m 1; m 2 ])
 module Four = (val Nx.devices [ m 0; m 1; m 2; m 3 ])
@@ -55,6 +56,7 @@ type law = { law : 'd. 'd set -> unit }
 
 let over n { law } =
   match n with
+  | 1 -> law { s = One.v; mesh = None }
   | 2 -> law { s = Two.v; mesh = None }
   | 3 -> law { s = Three.v; mesh = None }
   | _ -> law { s = Four.v; mesh = Some mesh }
@@ -2113,10 +2115,10 @@ let declined () =
 
 (* Checks
 
-   A check over several devices fails as eager computation does, whichever
-   device holds the data: the first false flag in C order of the whole value,
-   the data's element there, the first failing check of the program. It
-   compiles. *)
+   A check over the devices of a set, one or several, fails as eager
+   computation does, whichever device holds the data: the first false flag in
+   C order of the whole value, the data's element there, the first failing
+   check of the program. It compiles. *)
 
 type check_case = {
   cn : int;
@@ -2133,7 +2135,7 @@ let pp_check_case ppf c =
 
 let check_cases =
   let open Gen in
-  (let* cn = int_range 2 4 in
+  (let* cn = int_range 1 4 in
    let* rank = int_range 0 2 in
    let* cshape = array ~size:(constant rank) (int_range 0 ((2 * cn) + 1)) in
    let cut =
@@ -2174,9 +2176,14 @@ let check_examples =
     c 4 [| 4; 4 |] mesh_yx mesh_xy [ 7 ];
     c 2 [| 6 |] (Split 0) (Device 1) [ 1 ];
     c 2 [| 6; 4 |] (Split 0) (Split 1) [ 5 ];
+    (* Cut along an inner axis: the first false in C order lies on the second
+       device, the first device's false after it. *)
+    c 3 [| 2; 5 |] (Split 1) (Split 1) [ 3; 6 ];
     (* One flag, whole on each device. *)
     c 3 [||] On (Device 1) [ 0 ];
     c 4 [| 3 |] On On [ 1; 2 ];
+    (* A set of one device. *)
+    c 1 [| 3; 2 |] (Split 1) On [ 4 ];
   ]
 
 let index_text i =
@@ -2228,8 +2235,11 @@ let cut_devices c =
 
 let checked_case set c =
   cover "passes" (c.falses = []);
-  cover "a cut across devices" (cut_devices c.flags);
+  cover "a cut across devices" (cut_devices c.flags && c.cn > 1);
+  cover "a cut along an inner axis"
+    (c.cn > 1 && match c.flags with Split a -> a > 0 | Mesh _ -> true | _ -> false);
   cover "a mesh" (match c.flags with Mesh _ -> true | _ -> false);
+  cover "a set of one device" (c.cn = 1);
   cover "data apart from the flags" (c.flags <> c.cdata);
   cover "the first false on a mesh, in two tiles"
     (match c.flags with Mesh _ -> List.length c.falses >= 2 | _ -> false);
@@ -2367,22 +2377,34 @@ let nested_check set =
   equal check_outcome_t (waited (fun () -> f1 ok d)) (jit f1);
   equal check_outcome_t (waited (fun () -> f2 ok d)) (jit f2)
 
-(* A passing check moves only its flags: one per device other than the one that
-   computes. *)
+(* A passing check over flags cut across [n] devices moves what nx.mli's
+   preamble lists: each device's partial of the flags' reduction, a flag and
+   an [int64] position, to each other device, and of a datum only its element
+   at the first false. Of a datum cut as the flags are, the gather's partial
+   of that element moves from each device to the one that checks; of a datum
+   on another device, the element moves there once. *)
 let check_moves set =
-  let n = List.length (Nx.Devices.to_list set.s) in
-  let ok = Nx.place (at set (Split 0)) (Nx.full Nx.bool [| 8 |] true) in
-  let d = Nx.place (at set (Split 0)) (value [| 8 |]) in
+  let n = List.length (Nx.Devices.to_list set.s) and k = 1024 in
+  let ok = Nx.place (at set (Split 0)) (Nx.full Nx.bool [| k |] true) in
   let f ok d =
     Nx.check T.tensor ok d check_fail;
     Nx.neg d
   in
   let s = T.(tensor @-> tensor @-> returns tensor) in
-  (* The first call compiles and copies constants: the second is the one
-     measured. *)
-  ignore (Nx.to_array (Nx.place Nx.Host.on (Rune.jit s f ok d)));
-  let run () = ignore (Nx.to_array (Nx.place Nx.Host.on (Rune.jit s f ok d))) in
-  equal ~msg:"bytes copied" int (8 * (n - 1)) (moved_bytes run)
+  let partials = n * (n - 1) * (1 + 8) in
+  let moved where elements =
+    let d = Nx.place (at set where) (value [| k |]) in
+    (* The first call compiles and copies constants: the second is the one
+       measured. *)
+    ignore (Nx.to_array (Nx.place Nx.Host.on (Rune.jit s f ok d)));
+    let run () =
+      ignore (Nx.to_array (Nx.place Nx.Host.on (Rune.jit s f ok d)))
+    in
+    at_most ~msg:"bytes copied" int ~than:(partials + (4 * elements))
+      (moved_bytes run)
+  in
+  moved (Split 0) (n - 1);
+  moved (Device 1) 1
 
 (* Additions to a total compiled over several devices give eager's bits and
    placement of the running value, wherever the running value starts. A
@@ -2799,7 +2821,7 @@ let () =
                  over 2 { law = two_checks });
              test "a check inside a remat or a custom rule" (fun () ->
                  over 2 { law = nested_check });
-             test "a passing check moves one flag per device" (fun () ->
+             test "a passing check moves partials and one element" (fun () ->
                  over 2 { law = check_moves };
                  over 3 { law = check_moves });
              test "a check of no value evaluates" (fun () ->
