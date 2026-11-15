@@ -56,12 +56,12 @@
     core, the weights and the scores' cotangents rounded once to the
     operands' dtype; each sum adds in a fixed order of the shapes and the
     target. Past 128 dimensions of keys or values the derivative's default
-    computes it, as products over the stored weights: on an RTX 5000 Ada
-    over 64 and 2048 keys it took 0.54 to 0.85 times as long as kernels of
-    their own at 160 and 256 dimensions, and 0.11 to 0.28 times at 1024.
-    Those kernels' times were taken with other jobs on the GPU and include
-    a copy of each cotangent after its kernel, which the default does not
-    pay, so the bound is provisional until measured clean. The weights cost
+    computes it, as products over the stored weights: on an idle RTX 5000
+    Ada, kernels of a block of 128 columns each, which compute [S] and [dP]
+    for each block, take 1.14 to 1.26 times the default's time at 160
+    dimensions past 256 keys, 1.05 to 1.58 times at 256 and 2.6 to 5.3 at
+    1024; they win only at 129, an odd width where the default's products
+    are slow (0.29 times), and tie at 160 over 64 keys. The weights cost
     memory: the gradient's [Rune.footprint] of 64 batches of 4 heads of
     256 bfloat16 rows is 5.05 bytes a pair of a head at 128 dimensions and
     12.05 at 129. *)

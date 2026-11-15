@@ -1977,12 +1977,13 @@ let derivative_tile tc ~wide =
    and 82 ms; and kernels that summed a cotangent's chunks in device memory
    between tiles 36.2, 56.3 and 58.2 ms and 5.8, 8.6 and 140 ms. Kernels
    that held every dimension in registers spilled at 256 and took 7.1 ms
-   there over 8 heads of 2048 rows, against the default's 4.3. The fused
-   times were taken with other jobs on the GPU and include a copy of each
-   cotangent after its kernel, 5.3 ms of the block kernels' at 160 over 64
-   rows, which the default does not pay; without it they took 11.2 and 16.9
-   ms at 160 and 256 against the default's 12.9 and 15.7. The bound is
-   provisional until they are measured clean. It trades memory for time:
+   there over 8 heads of 2048 rows, against the default's 4.3. Measured
+   again on an idle GPU once results were no longer copied, the block
+   kernels took 1.14 to 1.26 times the default's time at 160 past 256 keys
+   (2.23 against 1.81 ms at 256 keys), 1.05 to 1.58 at 256 and 2.6 to 5.3 at
+   1024: each block computes [S] and [dP] again, so their cost grows with
+   the blocks. They win only at 129, where the default's products of an odd
+   width are slow (0.29 times). It trades memory for time:
    the default stores the weights, a gradient's footprint of 64 batches of
    4 heads of 256 bfloat16 rows going from 5.05 bytes a pair of a head at
    128 dimensions to 12.05 at 129.
