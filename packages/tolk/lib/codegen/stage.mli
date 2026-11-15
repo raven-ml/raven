@@ -130,15 +130,15 @@ val tile :
   sizes:int * int * int ->
   axes:Ops.t * Ops.t * Ops.t ->
   in_run:(int -> bool) ->
-  ((int * int * Opt.target) list * bool) option
+  (Opt.t list * bool) option
 (** [tile ren sink core ~core_threads ~workgroups ~sizes:(n, m, k) ~axes
-    ~in_run] is the splits of a tensor core's staged tile, as
-    [(axis, amount, target)] with [axis] [0], [1] or [2] for the core's N, M
-    and K, in the order to apply them, and whether the core has two stages
-    and the kernel keeps [core_threads / 2] threads on some tile, which an
-    unknown count of workgroups does not show, when {!admits} and {!depth}
-    stage the core; [None] otherwise, as for a core reading gathered rows,
-    whose warps the core does not yet split. [n], [m] and [k] are the sizes
+    ~in_run] is the optimisations of a tensor core's staged tile, splits and
+    a pad ({!Opt.t.Split}, {!Opt.t.Padto}) whose [axis] is [0], [1] or [2]
+    for the core's N, M and K, in the order to apply them, and whether the
+    core has two stages and the kernel keeps [core_threads / 2] threads on
+    some tile, which an unknown count of workgroups does not show, when
+    {!admits} and {!depth} stage the core; [None] otherwise, as for a core
+    reading gathered rows, whose warps the core does not yet split. [n], [m] and [k] are the sizes
     of those axes as the core leaves them, [0] when unknown, [axes] their
     ranges, and [workgroups] the kernel's, if known. A warp holds
     {!warp_tile} by {!warp_tile} outputs; a workgroup takes 2 by 2 warps
@@ -152,7 +152,10 @@ val tile :
     While the kernel keeps fewer than [core_threads / s] threads, the warp
     tile halves, [M] then [N], down to half of {!warp_tile} a side: a
     pipeline overlaps a warp's copies with its cores, so it needs fewer warps
-    in flight.
+    in flight. Where neither the whole warp tile's upcast of [N] nor its
+    half divides [n], and {!Setting.tc_opt} is [2], [N] is first padded to a
+    multiple of the whole tile's ({!Opt.t.Padto}): its padded columns
+    multiply zeros into outputs never stored, and every plan divides it.
 
     Where [ren] states its compute units and the bytes a unit keeps in
     flight ({!Renderer.t.units}, {!Renderer.t.in_flight}), the core has two

@@ -1217,8 +1217,25 @@ let chunk = 32
    512 over 2880, its operands read from memory, ran 8 workgroups of 64 by 64
    on 8 of its 100 SMs in 39.7 us, and 15.7 spread and deepened. *)
 let tile (ren : Renderer.t) ast (w : wmma) ~core_threads ~workgroups
-    ~sizes:(sn, sm, sk) ~axes:(rn, rm, rk) ~in_run =
+    ~sizes:(sn0, sm, sk) ~axes:(rn, rm, rk) ~in_run =
   let n, m, kd = w.dims in
+  (* N's extent is the product's, which a model's widths fix (440 columns are
+     55 tiles of 8): where no plan's upcast divides it and the core pads
+     ({!Setting.tc_opt} [2]), N pads to a multiple of the whole warp tile's,
+     its padded columns stored nowhere, and every plan below divides it. On
+     an RTX 5000 Ada bfloat16 products of 65536 rows by 512 by 440 and by
+     136, whose core divides N but whose tiles no plan divides, took 0.35
+     and 0.20 ms staged on 448 and 192 columns against 0.67 and 0.71 on the
+     unstaged core. *)
+  let sn =
+    let divides hn = sn0 mod max 1 (warp_tile / n / hn) = 0 in
+    let un = warp_tile / n in
+    if sn0 > 0 && un > 1 && Setting.value Setting.tc_opt >= 2
+       && not (List.exists divides [ 1; 2 ])
+    then (sn0 + un - 1) / un * un
+    else sn0
+  in
+  let workgroups = Option.map (fun g -> g * sn / max 1 sn0) workgroups in
   let unroll =
     if chunk mod kd = 0 && sk mod (chunk / kd) = 0 then chunk / kd else 1
   in
@@ -1380,14 +1397,19 @@ let tile (ren : Renderer.t) ast (w : wmma) ~core_threads ~workgroups
             | None -> List.fold_left max unroll depths
         in
         let um, un, lm, ln = best in
-        let when_ c split = if c then [ split ] else [] in
+        let when_ c opt = if c then [ opt ] else [] in
+        let split axis amount target =
+          Opt.Split { axis; amount; target; top = false }
+        in
         Some
-          ( when_ (um > 1) (1, um, Opt.Upcast)
-            @ (if un > 4 then [ (0, 4, Opt.Upcast); (0, un / 4, Opt.Upcast) ]
-               else when_ (un > 1) (0, un, Opt.Upcast))
-            @ when_ (lm = 2) (1, 2, Opt.Local)
-            @ when_ (ln = 2) (0, 2, Opt.Local)
-            @ when_ (u > 1) (2, u, Opt.Upcast),
+          ( when_ (sn > sn0) (Opt.Padto { axis = 0; amount = warp_tile / n })
+            @ when_ (um > 1) (split 1 um Opt.Upcast)
+            @ (if un > 4 then
+                 [ split 0 4 Opt.Upcast; split 0 (un / 4) Opt.Upcast ]
+               else when_ (un > 1) (split 0 un Opt.Upcast))
+            @ when_ (lm = 2) (split 1 2 Opt.Local)
+            @ when_ (ln = 2) (split 0 2 Opt.Local)
+            @ when_ (u > 1) (split 2 u Opt.Upcast),
             filled )
   in
   let core =

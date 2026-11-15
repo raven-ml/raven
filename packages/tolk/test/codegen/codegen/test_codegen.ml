@@ -4450,6 +4450,60 @@ let matvec ~rows n =
       (Ops.kernel_info ~opts_to_apply:[ split 0 Upcast; split 2 Upcast ] ())
     [ Ops.end_ (Ops.store (Ops.index out [ i ]) sum) [ i ] ]
 
+(* [out[i] = sum_k f a[i, k] * b[k]] for [i] below [rows] and [k] below [n],
+   [f] the reciprocal, or nothing where [plain]: a sum of products whose
+   left factor a producer computes, as a fused prologue does. [f 0] is
+   infinite, so a padded step that multiplied it by its other factor's 0
+   would sum a NaN. *)
+let producer_matvec ?(plain = false) ~opts ~rows n =
+  let out = Shape.param ~shape:[ Int rows ] 0 Float32 in
+  let a = Shape.param ~shape:[ Int (rows * n) ] 1 Float32 in
+  let b = Shape.param ~shape:[ Int n ] 2 Float32 in
+  let i = Ops.range ~axis_type:Weak (Int rows) [ 0 ] in
+  let k = Ops.range ~axis_type:Weak (Int n) [ 1 ] in
+  let a_ik = Ops.index a [ Ops.O.((i * Ops.int n) + k) ] in
+  let f = if plain then a_ik else Ops.reciprocal a_ik in
+  let sum = Ops.reduce (Ops.mul f (Ops.index b [ k ])) Op.Add [ k ] in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply:opts ())
+    [ Ops.end_ (Ops.store (Ops.index out [ i ]) sum) [ i ] ]
+
+(* Floats of magnitudes from [2^-4] to [2^4], none zero: products of them
+   round, so that a multiply-add and a product rounded alone differ. *)
+let nonzero_fractions st size =
+  Array.init size (fun _ ->
+      let f = Float.of_int (Random.State.int st 1023 + 1) /. 1024. in
+      let f = if Random.State.bool st then f else -.f in
+      Float.ldexp f (Random.State.int st 9 - 4))
+
+(* A sum of products padded from [n] terms to [padded] computes the bits of
+   the same sum over its factors with zeros appended, its producer applied
+   before: each padded step adds [+0] as a multiply-add, as an appended zero
+   does. *)
+let padded_appended seed =
+  let rows = 8 and n = 37 and padded = 48 in
+  let st = Random.State.make [| seed |] in
+  let a = nonzero_fractions st (rows * n) and b = nonzero_fractions st n in
+  let run k inputs =
+    let prg = Codegen.to_program k (Lazy.force host) in
+    let floats (slot, x) = (slot, Array.map (fun f -> `Float f) x) in
+    List.assoc 0 (Run.on_host prg (List.map floats inputs))
+  in
+  let pad = [ Opt.Padto { axis = 1; amount = 16 } ] in
+  let appended_a =
+    Array.init (rows * padded) (fun j ->
+        let i = j / padded and k = j mod padded in
+        if k < n then 1. /. a.((i * n) + k) else 0.)
+  and appended_b = Array.init padded (fun k -> if k < n then b.(k) else 0.) in
+  let got = run (producer_matvec ~opts:pad ~rows n) [ (1, a); (2, b) ] in
+  is_true ~msg:"finite"
+    (Array.for_all (function `Float f -> Float.is_finite f | _ -> false) got);
+  equal (array Dtypes.value)
+    (run
+       (producer_matvec ~plain:true ~opts:[] ~rows padded)
+       [ (1, appended_a); (2, appended_b) ])
+    got
+
 let muladd n =
   let out = Shape.param ~shape:[ Int n ] 0 Float32 in
   let x k = Ops.index (Shape.param ~shape:[ Int n ] k Float32) in
@@ -4512,6 +4566,9 @@ let multiply_adds =
           equal (array Dtypes.value)
             (Array.make rows (`Float 0x1p-24))
             (List.assoc 0 out));
+      cases
+        "a sum of products padded computes the bits of its factors with \
+         zeros appended" ~id:string_of_int [ 1; 2; 3 ] padded_appended;
       test "a product and a sum outside a reduction are not fused" (fun () ->
           let prg = Codegen.to_program (muladd 4) (Lazy.force host) in
           is_false ~msg:"fma" (mentions "fma" (source prg)));

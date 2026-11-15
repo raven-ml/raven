@@ -1965,6 +1965,70 @@ let test_narrowed_exact () =
         (bits (Nx.stack (List.rev ls')))
         (bits (host ls)))
 
+(* A sum a tensor core pads computes the bits of its operands with zeros
+   appended after their producers: [contract (f x) w] summed over 440 terms,
+   which m16n8k16 pads to 448, against the same contraction over
+   [concat [f x; 0]] and [concat [w; 0]] of 448 terms, which it takes as they
+   are. [f x = bfloat16 (2 log x + 1)] is [-inf] at [0], so a padded step that
+   multiplied [f 0] by [0] would sum a NaN. *)
+let test_padded_appended () =
+  let _, (module S) = on_gpu () in
+  let rows, k, k', n = (256, 440, 448, 440) in
+  let p = Nx.Pattern.v "n i, i o -> n o | i" in
+  let x = Nx.add_s (Nx.abs (value ~seed:1 [| rows; k |])) 0.5
+  and w = Nx.cast Nx.bfloat16 (value ~seed:2 [| k; n |]) in
+  let za = Nx.zeros Nx.bfloat16 [| rows; k' - k |]
+  and zb = Nx.zeros Nx.bfloat16 [| k' - k; n |] in
+  let f x = Nx.cast Nx.bfloat16 (Nx.add_s (Nx.mul_s (Nx.log x) 2.) 1.) in
+  let on x = Nx.place S.on x in
+  let padded =
+    Rune.jit
+      Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+      (fun x w -> Nx.contract Nx.float32 p (f x) w)
+  in
+  let appended =
+    Rune.jit
+      Nx.Ptree.(tensor @-> tensor @-> tensor @-> tensor @-> returns tensor)
+      (fun x w za zb ->
+        Nx.contract Nx.float32 p
+          (Nx.concatenate ~axis:1 [ f x; za ])
+          (Nx.concatenate ~axis:0 [ w; zb ]))
+  in
+  let y = host (padded (on x) (on w)) in
+  equal ~msg:"finite" Testable.bool false
+    (Nx.item [] (Nx.any (Nx.isnan y)));
+  equal bits_t (bits (host (appended (on x) (on w) (on za) (on zb)))) (bits y)
+
+(* A product whose N is one tile of the core, 8 columns on CUDA, computes
+   eager's bits: the staged core's pad of N has no axis to pad there and
+   leaves the core unstaged. Its values are halves, so that every product and
+   partial sum is exact in float32, in any order: [[128; 64] by [64; 8]] in
+   bfloat16 and float16, and 93 rows by 16 by 8 with the output transposed. *)
+let test_one_tile_of_n () =
+  let _, (module S) = on_gpu () in
+  let st = Random.State.make [| 11 |] in
+  let halves shape =
+    let n = Array.fold_left ( * ) 1 shape in
+    Nx.create f32 shape
+      (Array.init n (fun _ -> Float.of_int (Random.State.int st 17 - 8) /. 2.))
+  in
+  let on x = Nx.place S.on x in
+  let case (Nx.Dtype.Any dt) pattern (m, k, n) =
+    let p = Nx.Pattern.v pattern in
+    let a = Nx.cast dt (halves [| m; k |])
+    and w = Nx.cast dt (halves [| k; n |]) in
+    let prod a w = Nx.contract f32 p a w in
+    let f = Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) prod in
+    equal
+      ~msg:(Printf.sprintf "%s %d by %d by %d" pattern m k n)
+      bits_t
+      (bits (prod a w))
+      (bits (host (f (on a) (on w))))
+  in
+  case (Any Nx.bfloat16) "n i, i o -> n o | i" (128, 64, 8);
+  case (Any Nx.float16) "n i, i o -> n o | i" (128, 64, 8);
+  case (Any Nx.bfloat16) "n i, i o -> o n | i" (93, 16, 8)
+
 (* Optimised, the scan's sum of its steps' products is within the bound of a
    sum of all their terms, in any order: tensor cores take the narrow
    weights. *)
@@ -3081,6 +3145,12 @@ let () =
                "a dense attention step's gradient is the host's within \
                 float32's rounding"
                test_dense_grad;
+             test
+               "a sum a tensor core pads computes the bits of its operands \
+                with zeros appended"
+               test_padded_appended;
+             test "a product whose N is one tile of the core gives eager's bits"
+               test_one_tile_of_n;
              test
                "a scan whose step narrows its weights computes, unoptimised, \
                 its steps' bits"

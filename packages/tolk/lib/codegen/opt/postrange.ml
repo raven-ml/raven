@@ -881,19 +881,33 @@ module Scheduler = struct
                             Op.pp o))
                   else []
           in
+          (* A padded step adds the reduction's identity. A sum of products
+             multiplies its factors gated to [0] instead, each below its
+             widenings, where a tensor core reads its operand: [0 * 0] is [+0]
+             whatever the factors' producers give on the padding, and the step
+             keeps its multiply-add, so a padded sum computes the bits of the
+             sum of its factors with zeros appended. *)
           let pad_reduce r =
             if List.memq rng (List.tl (src r)) then
-              let op =
+              let rop =
                 match arg r with Reduce { op; _ } -> op | _ -> Op.Add
               in
-              let zero =
-                const ~dtype:(dtype r) (identity_element op (dtype r))
+              let rec gated x =
+                if Ops.widens x then replace x ~src:[ gated (nth x 0) ]
+                else where valid_ x (const ~dtype:(dtype x) (`Int Bigint.zero))
               in
-              [
-                ( r,
-                  replace r ~src:(where valid_ (nth r 0) zero :: List.tl (src r))
-                );
-              ]
+              let factors m = replace m ~src:(List.map gated (src m)) in
+              let source =
+                let s = nth r 0 in
+                match (rop, op s) with
+                | Op.Add, Op.Mul -> factors s
+                | Op.Add, Op.Cast when op (nth s 0) = Op.Mul ->
+                    replace s ~src:[ factors (nth s 0) ]
+                | _ ->
+                    where valid_ s
+                      (const ~dtype:(dtype r) (identity_element rop (dtype r)))
+              in
+              [ (r, replace r ~src:(source :: List.tl (src r))) ]
             else []
           in
           k.ast <-
@@ -1019,8 +1033,13 @@ module Scheduler = struct
               then begin
                 if opt_level < 2 then
                   raise_notrace (Refused "tc padding requires opt_level >= 2");
-                (* PADTO might fail *)
-                let axis = index_of a (rngs k) in
+                (* PADTO might fail, and an extent of one trip is no axis
+                   to pad *)
+                let axis =
+                  match List.find_index (fun r -> r == a) (rngs k) with
+                  | Some axis -> axis
+                  | None -> raise_notrace (Refused "cannot pad a range of one")
+                in
                 axes.(i) <-
                   List.hd
                     (apply ~append_opt:false k
@@ -1072,10 +1091,7 @@ module Scheduler = struct
                   (List.length rs)))
     in
     let r0 = nth reduceop 0 in
-    let gate, mul =
-      if op r0 = Op.Where then (Some (nth r0 0), nth r0 1) else (None, r0)
-    in
-    let mul = if op mul = Op.Cast then nth mul 0 else mul in
+    let mul = if op r0 = Op.Cast then nth r0 0 else r0 in
     (* An operand read in whole tiles of the other's axis (see [in_tiles]) is
        one value over a tile: its reads of the other's bits, which stay below
        the tile, are read at 0. A reads no N bit, and B no M bit. *)
@@ -1097,14 +1113,6 @@ module Scheduler = struct
         own (function Tc.N _ -> true | _ -> false) a;
         own (function Tc.M _ -> true | _ -> false) b;
       ]
-    in
-    let ins =
-      match gate with
-      | None -> ins
-      | Some g ->
-          List.map
-            (fun x -> where g x (const ~dtype:(dtype x) (`Int Bigint.zero)))
-            ins
     in
     let relabel_a, relabel_b = Tc.relabel tc in
     let srcs =
@@ -1155,14 +1163,6 @@ module Scheduler = struct
     in
     k.ast <-
       substitute ~calls:Skip ~pass:Fixed_point k.ast [ (reduceop, tc_uop) ]
-
-  and index_of x l =
-    let rec go i = function
-      | [] -> invalid_arg "the node is not an axis of the kernel"
-      | y :: _ when y == x -> i
-      | _ :: r -> go (i + 1) r
-    in
-    go 0 l
 
   and index_of_bit b l =
     let rec go i = function

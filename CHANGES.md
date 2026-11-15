@@ -1395,6 +1395,20 @@ its lock and from samples the dashboard saw arrive.
   (`Renderer.t.local_threads_max`), or a group adding more than 256 partials
   of a float sum, past `Nx_kernel`'s error bound. A hand-given opt doing
   either raises from `Postrange.apply_opts`.
+- A tensor core pads the extents its tile does not divide by default
+  (`TC_OPT` defaults to 2), where the core's padding adds at most a fifth of
+  the product's work, and a staged core pads N to its tile beside that
+  bound: on an RTX 5000 Ada tessera's 440-wide bfloat16 products of 68608
+  rows take 2.26 ms where they took 25.6 (the weight gradient) and 1.07
+  where they took 3.29 (the input gradient), and gpt-oss-20b's query
+  projection at 127 tokens 56 µs where it took 2070. A kernel some axis's
+  core divides takes the core it took. `Heuristic.core_fits` and `core_rows`
+  read the same bound in place of divisibility. A kernel that newly pads
+  computes other bits, within `Nx.contract`'s bound; at `TC_OPT=0` the
+  tensor cores and staged tiles are the former ones.
+- A sum of products padded along its sum multiplies its factors gated to
+  zero, so it keeps its multiply-adds and computes the bits of the same sum
+  with zeros appended.
 - On CUDA, MXFP4 tensor-core operands are staged, codes 32 bytes a row a
   trip (`Stage.steps`): on an RTX 5000 Ada `GptOss/prefill-512` takes 6%
   less, a dense `Nx_quant.apply` 16-29% less, a routed 64-token down 10% more.

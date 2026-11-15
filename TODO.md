@@ -23,8 +23,7 @@ Where it stands, with every measurement: doc/performance.md.
   and v run 11.3 us at 64 tokens to 24 us at 512, L2 evicted
   (`stream/key-projection-64` 15.7 us), 2-4x their 5.5 us byte bound: they
   lack a split of K across workgroups;
-  q at 512 tokens runs at 107 TFLOP/s against cuBLAS's 135; a token count
-  with no factor of 16 takes no core (q 5.9 ms at 127 tokens); weights laid
+  q at 512 tokens runs at 107 TFLOP/s against cuBLAS's 135; weights laid
   `[K; N]` take no core, about 100x their byte bound.
 - A group beside an output axis split across keeps 16 threads across
   (D487), which on fudge's RTX 5000 Ada leaves a band open: bfloat16 column
@@ -33,6 +32,32 @@ Where it stands, with every measurement: doc/performance.md.
   8192 columns, where float32 loses 34-41% at 1024. A rule needs the part's
   SM count, as the target's bound with a stated band, and none is derived
   (_plans/perf-campaign/groupwidth/skeptic.md §2)
+- A staged tensor core pads N to its tile (D491) but not M: a token count
+  whose padded M the warp tile's upcast does not divide keeps the unstaged
+  core, gpt-oss-20b's q projection 115 us at 100 tokens (M padded to 112)
+  against 56 at 127 and 128 (fudge,
+  _plans/tessera-port/design/gemm2/gd3-notes.md). M's upcast also keeps
+  routed rows within a run (`in_run`), which a pad must respect
+- Where a core's rows are 8 mod 16, the heuristic takes main's swapped core
+  (the rows along N, level 0, N then padded to the staged tile) before
+  padding M on axis 0 (D491). Neither wins everywhere on fudge: q of
+  gpt-oss-20b, swapped against axis 0 padded, 67 against 79 us at 40
+  tokens, 64 against 109 at 72, 70 against 115 at 104, but 67 against 54
+  at 88, and 54 against 53, 57 against 56 at 56 and 120; k 15 against 45 at
+  72, 17 against 15 at 120; [88; 2880] by [2880; 4096] 0.051 against 0.033
+  ms. A rule between them is a measured heuristic decision of its own
+- A padded core loses to main's SIMT kernel under an exp epilogue: bfloat16
+  [65536; 72] by [72; 512] into float32 with an exp after it takes 0.348
+  ms against 0.283 (1.23x), by 4096 columns 2.71 against 2.11 (1.28x),
+  16384 rows by 4096 0.687 against 0.532 (1.29x). Main takes the same core
+  unpadded at K = 80 in 0.354 ms, and without the exp K = 72 runs 0.98 of
+  main: the loss is the core's kernel at five K tiles with that epilogue,
+  not the padding (fudge, _plans/tessera-port/design/gemm2/gd3-review.md)
+- The 440 by 440 weight gradient over 68608 rows, a split sum of 16
+  partials, takes the staged tile on 448 padded columns at about 2.27 ms
+  where staging off takes 1.78 (1.28x; fudge, on PROJ-2's plans; both about
+  11 times faster than main's 25.6): `Stage.tile`'s plan for a split
+  partial, which the two-kernel split's design should re-derive
 - Since D479 groups starved reduces, a GPU `Set` election of 16384 and
   24576 rows runs 1.4x and 1.9x slower than rune's former split, and
   elections over several indices near `stream_threads` outputs up to 3.5x;
@@ -104,7 +129,8 @@ Where it stands, with every measurement: doc/performance.md.
 - gpt-oss's non-expert kernels take 41.7 ms over 24 layers at a 68-token
   prompt against 29.4 at 108: the attention projections at a count with a
   factor 17, `r_8_17_8_16_4_4_720_4` and `r_17_8_16_4_4_720_4`, take 13.9
-  and 8.5 ms
+  and 8.5 ms. Since D491 they pad to a core: q at 68 tokens takes 106 us
+  against 511 (one layer, L2 evicted); the prompt is not re-measured
 - At heads of 80 (32 heads, 2560 wide) the q and k projections take no
   staged tensor core: 85 and 38.9 us at 64 tokens, against 51 and 11.3 at
   heads of 64. Not profiled

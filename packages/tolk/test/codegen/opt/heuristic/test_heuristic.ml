@@ -865,6 +865,63 @@ let relu_product =
       equal Testable.bool false (streams o);
       equal Testable.bool cored (List.exists core (K.applied_opts o)))
 
+(* A core pads the extents its tile does not divide, by [TC_OPT=2], the
+   default, while the padding adds at most [Heuristic]'s bound to the work:
+   127 tokens' projection pads M to 128, a sum of 440 terms K to 448, and a
+   sum of 20 terms, which would pad K to 32, 1.6 times the work, takes none.
+   At [TC_OPT=0] only extents the tile divides take a core. *)
+let padded_cores =
+  let sm_89 =
+    { Helpers.Target.device = "CUDA"; renderer = "CUDA"; arch = "sm_89";
+      interface = ""; indices = "" }
+  in
+  let core = function Opt.Tc _ -> true | _ -> false in
+  cases "a core pads what its tile does not divide, within a bound"
+    ~id:(fun (name, _, _, _, _, _) -> name)
+    [
+      ("127 rows", 127, 4096, 2880, 2, true);
+      ("127 rows at TC_OPT=0", 127, 4096, 2880, 0, false);
+      ("a sum of 440", 68608, 440, 440, 2, true);
+      ("a sum of 440 at TC_OPT=0", 68608, 440, 440, 0, false);
+      ("a sum of 20", 68608, 440, 20, 2, false);
+    ]
+    (fun (_, rows, cols, depth, level, cored) ->
+      let ren = Cstyle.without_compiler sm_89 in
+      let s = K.v (dense rows cols depth) ren in
+      K.convert_loop_to_global s;
+      let o =
+        Setting.context
+          [ Setting.B (Setting.tc_opt, level) ]
+          (fun () -> Heuristic.hand_coded_optimizations s)
+      in
+      equal Testable.bool cored (List.exists core (K.applied_opts o)))
+
+(* A core whose N is one of its tiles, 8 columns on CUDA's m16n8k16 and 16 on
+   RDNA4's, leaves N a range of one trip, which no pad can take: the
+   heuristic chooses, and a staged tile pads nothing there. *)
+let one_tile_of_n =
+  let gpu device renderer arch =
+    Cstyle.without_compiler
+      { Helpers.Target.device; renderer; arch; interface = ""; indices = "" }
+  in
+  let sm_89 = gpu "CUDA" "CUDA" "sm_89"
+  and gfx1201 = gpu "AMD" "HIP" "gfx1201" in
+  let pads = function Opt.Padto _ -> true | _ -> false in
+  cases "a core of one tile of N is optimised without a pad of N"
+    ~id:(fun (name, _, _, _, _) -> name)
+    [
+      ("sm_89, 128 rows by 8 over 64", sm_89, 128, 8, 64);
+      ("sm_89, 4096 rows by 8 over 2880", sm_89, 4096, 8, 2880);
+      ("sm_89, 93 rows by 8 over 16", sm_89, 93, 8, 16);
+      ("gfx1201, 128 rows by 16 over 64", gfx1201, 128, 16, 64);
+      ("gfx1201, 28 rows by 16 over 248", gfx1201, 28, 16, 248);
+    ]
+    (fun (_, ren, rows, cols, depth) ->
+      let s = K.v (dense rows cols depth) ren in
+      K.convert_loop_to_global s;
+      let o = Heuristic.hand_coded_optimizations s in
+      equal Testable.bool false (List.exists pads (K.applied_opts o)))
+
 (* [k]'s kernel with a call beside its stores, of [f(&y[r0], &y[r1], ...)]
    for its output axes [r0], [r1], ... *)
 let with_call k =
@@ -2595,7 +2652,8 @@ let fastest_threads_coalesce =
 
    The form of a contraction the lowering writes depends on the core it will
    take: past the reuse that streams first, a core of the operand's dtypes
-   whose M and N each divide one extent and whose K divides the block. *)
+   whose M, N and K pad the extents and the block within 6/5 of their work,
+   or divide them at TC_OPT=0. *)
 let core_fits_cases =
   let fits ?(ren = "cuda") ?(rows = 64) ?(outputs = 64) ?(block = 32)
       ?(dtype_in = Dtype.Bfloat16) ?(dtype_out = Dtype.Float32) () =
@@ -2607,8 +2665,10 @@ let core_fits_cases =
       ("bfloat16 past 32 outputs", (fits (), true));
       ("rows at the reuse that streams", (fits ~rows:32 (), false));
       ("outputs at the reuse that streams", (fits ~outputs:32 (), false));
-      ("a block K does not divide", (fits ~block:17 (), false));
-      ("rows M and N do not divide", (fits ~rows:33 (), false));
+      ("a block K pads past the bound", (fits ~block:17 (), false));
+      ("rows M and N pad past the bound", (fits ~rows:33 (), false));
+      ("rows M pads within the bound", (fits ~rows:127 (), true));
+      ("a block K pads within the bound", (fits ~block:40 (), true));
       ("float32 accumulates float16", (fits ~dtype_in:Dtype.Float16 (), true));
       ( "float32 operands without TF32 allowed",
         (fits ~dtype_in:Dtype.Float32 (), false) );
@@ -2635,6 +2695,12 @@ let core_fits_settings =
             Heuristic.core_fits (renderer ren) ~dtype_in:Dtype.Bfloat16
               ~dtype_out:Dtype.Float32 ~rows:64 ~outputs:64 ~block:32)
       in
+      equal bool ~msg:"rows padded at TC_OPT=0" false
+        (Setting.context
+           [ Setting.B (Setting.tc_opt, 0) ]
+           (fun () ->
+             Heuristic.core_fits (renderer "cuda") ~dtype_in:Dtype.Bfloat16
+               ~dtype_out:Dtype.Float32 ~rows:127 ~outputs:64 ~block:32));
       equal bool ~msg:"a selected core the host lacks" false (selected "cpu" 0);
       equal bool ~msg:"a selected core past CUDA's" false (selected "cuda" 99))
 
@@ -2642,7 +2708,8 @@ let core_fits_settings =
 
    The fewest rows a core takes along its [M]: the least multiple of [M]
    past the reuse that streams first, 32, of a core of the operand's dtypes
-   whose [N] divides the outputs and whose [K] divides the block. *)
+   whose [N] and [K] pad the outputs and the block within the bound of
+   core_fits. *)
 let core_rows ?(ren = "cuda") ?(outputs = 256) ?(block = 64)
     ?(dtype_in = Dtype.Bfloat16) ?(dtype_out = Dtype.Float32) () =
   Heuristic.core_rows (renderer ren) ~dtype_in ~dtype_out ~outputs ~block
@@ -2655,8 +2722,9 @@ let core_rows_cases =
       ("Metal's 8-row tile", (core_rows ~ren:"metal" (), Some 40));
       ("float16 into float32", (core_rows ~dtype_in:Dtype.Float16 (), Some 48));
       ("outputs at the reuse that streams", (core_rows ~outputs:32 (), None));
-      ("outputs N does not divide", (core_rows ~outputs:36 (), None));
-      ("a block K does not divide", (core_rows ~block:17 (), None));
+      ("outputs N pads within the bound", (core_rows ~outputs:36 (), Some 48));
+      ("outputs N pads past the bound", (core_rows ~outputs:33 (), None));
+      ("a block K pads past the bound", (core_rows ~block:17 (), None));
       ( "float32 operands without TF32 allowed",
         (core_rows ~dtype_in:Dtype.Float32 (), None) );
       ("the host has no core", (core_rows ~ren:"cpu" (), None));
@@ -2721,6 +2789,8 @@ let () =
              passes_or_core;
              passes_unstaged;
              relu_product;
+             padded_cores;
+             one_tile_of_n;
              per_byte_bounds;
              per_byte_order;
              recorded_order;

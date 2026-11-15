@@ -159,8 +159,8 @@ val tc_select : int t
 val tc_opt : int t
 (** [tc_opt] is how hand-coded optimizations ([Heuristic]) fit a kernel to a
     tensor core, from [TC_OPT]: [2] pads the kernel's axes to the core's
-    dimensions, [0] and [1] take only kernels those dimensions divide. Defaults
-    to [0]. *)
+    dimensions, within a bound on the work the padding adds, [0] and [1] take
+    only kernels those dimensions divide. Defaults to [2]. *)
 
 val tc_min_globals : int t
 (** [tc_min_globals] is the number of global axes below which tensor core

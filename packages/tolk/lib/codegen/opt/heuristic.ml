@@ -118,6 +118,57 @@ let unroll_beside k tk own =
         (fun r -> if List.exists (fun a -> beside core a r) loads then unroll r)
         reduces
 
+(* Padded tensor cores
+
+   A core multiplies tiles of its [N], [M] and [K]. An extent its tile does not
+   divide is padded to one it does ({!Opt.Tc} under {!Setting.tc_opt} [2]),
+   each padded step multiplying zeros, as a packed panel is zero-padded so
+   that one kernel serves every size (Van Zee and van de Geijn, "BLIS", ACM
+   TOMS, §5.1.1). The padding is work the core does for no output: a core
+   takes a product whose padded volume is at most [core_waste] times its
+   own; a staged core's pad of N to its tile ({!Stage.tile}) is not
+   counted. The bound is chosen, not fitted. On an RTX 5000 Ada, bfloat16
+   products of 65536 rows by K by 512, whose float32 output bounds their
+   time, took 0.97-0.98 of the unpadded kernel's time at K = 72 to 20, 1.11
+   to 1.6 times the work, and gpt-oss-20b's query projection at 68 and 100
+   tokens, its M padded 1.18 and 1.12 times, a fifth and a tenth. A padded
+   core can still lose: with an exp after it, K = 72 padded to 80 ran 1.22
+   to 1.28 times main's SIMT kernel, as the core unpadded at K = 80 runs, so
+   the loss is the core's at five K tiles, not the padding's. The bound
+   admits the padding a model's widths and token counts need, a head of 129
+   among them, and stops short of the narrow axes whose padding is most of
+   the work. *)
+let core_waste = (6, 5)
+
+(* Whether a core of [dims] [(n, m, k)] takes extents [(a, b, c)] along them:
+   padded, within [core_waste] of their volume, under {!Setting.tc_opt} [2],
+   and below it only where [dims] divide them. *)
+let core_takes (n, m, k) (a, b, c) =
+  let up x d = Float.of_int (((x + d - 1) / d) * d) and float = Float.of_int in
+  let num, den = if setting Setting.tc_opt >= 2 then core_waste else (1, 1) in
+  float den *. up a n *. up b m *. up c k
+  <= float num *. float a *. float b *. float c
+
+(* The core of [tk], [k] with a core applied, if it has its instruction. *)
+let core_of tk =
+  List.find_map
+    (fun u -> match arg u with Wmma w -> Some w | _ -> None)
+    (toposort ~calls:Skip (K.ast tk))
+
+(* Whether the core of [tk], [k] with the core applied on the axes [rngs] (its
+   N, M and K as it leaves them), takes their extents in [k] ({!core_takes}).
+   [TC=2], which lays out a core's shape without its instruction, is not
+   bounded. *)
+let padded_within k tk rngs =
+  let extent i =
+    match List.find_opt (fun r -> axis_id r = axis_id rngs.(i)) (K.rngs k) with
+    | Some r -> Option.map Bigint.to_int (known_size (Sym (nth r 0)))
+    | None -> None
+  in
+  match (core_of tk, extent 0, extent 1, extent 2) with
+  | Some w, Some a, Some b, Some c -> core_takes w.dims (a, b, c)
+  | _ -> true
+
 (* The staged core's splits ({!Stage.tile}), applied to [tk], [k] with the core
    applied, whose core made the axes [rngs] (N, M and K), if the core is
    staged: [split i size target] splits the axis [rngs.(i)]. Whether the kernel
@@ -125,11 +176,7 @@ let unroll_beside k tk own =
    warp's rows, and a workgroup's, stay within a run of rows that read one
    value of an operand ({!within_run}). *)
 let staged_tile ~core_threads k tk rngs split =
-  let core =
-    List.find_map
-      (fun u -> match arg u with Wmma w -> Some w | _ -> None)
-      (toposort ~calls:Skip (K.ast tk))
-  in
+  let core = core_of tk in
   let size i =
     match known_size (Sym (nth rngs.(i) 0)) with
     | Some b -> Bigint.to_int b
@@ -168,9 +215,26 @@ let staged_tile ~core_threads k tk rngs split =
           ~in_run
       with
       | None -> None
-      | Some (splits, filled) ->
-          List.iter (fun (i, amount, target) -> split i amount target) splits;
-          Some filled)
+      | Some (opts, filled) ->
+          let apply = function
+            | Opt.Split { axis = i; amount; target; _ } ->
+                split i amount target;
+                true
+            | Opt.Padto { axis = i; amount } -> (
+                (* A range of one trip the core left is no axis: no pad. *)
+                match List.find_index (fun r -> r == rngs.(i)) (K.rngs tk) with
+                | None -> false
+                | Some axis -> (
+                    match K.apply_opt tk (Opt.Padto { axis; amount }) with
+                    | Ok [ r ] ->
+                        rngs.(i) <- r;
+                        true
+                    | _ -> false))
+            | _ -> invalid_arg "a staged tile is splits and pads"
+          in
+          (* A pad comes first, and one refused or on no axis leaves the core
+             unstaged. *)
+          if List.for_all apply opts then Some filled else None)
 
 (* first try the tensor cores *)
 let tensor_cores ~core_threads k =
@@ -178,95 +242,101 @@ let tensor_cores ~core_threads k =
   let tc_opt = setting Setting.tc_opt in
   let tc_select = setting Setting.tc_select in
   let min_globals = setting Setting.tc_min_globals in
+  (* Every candidate axis is tried at level 0, tinygrad's default, before any
+     is padded: a kernel some axis's core divides keeps tinygrad's
+     optimisations, and only a padded core records [tc_opt]. *)
+  let levels = if tc_opt >= 2 then [ 0; tc_opt ] else [ tc_opt ] in
+  (* The core on [axis] at [tc_opt], with the splits that follow it. *)
+  let core tc_opt axis =
+    let tk = K.copy k in
+    match K.apply_opt tk (Opt.Tc { axis; tc_select; tc_opt; use_tc }) with
+    | Error _ -> None
+    | Ok rngs when not (padded_within k tk (Array.of_list rngs)) -> None
+    | Ok rngs ->
+        let rngs = Array.of_list rngs in
+        let split i size target =
+          let axis = index_of rngs.(i) (K.rngs tk) in
+          rngs.(i) <- List.hd (split tk axis size target)
+        in
+        (* A split of [i] by the first of [sizes] that divides it, when
+           [keep] holds of that size. *)
+        let upcast ~keep i sizes target =
+          match first_dividing rngs.(i) sizes with
+          | Some size when keep size -> split i size target
+          | _ -> ()
+        in
+        (* Whether [n] workgroups are left once a split by [size] divides
+           them, or [default] when their count is not known. *)
+        let leaves ~default n size =
+          Sint.resolve ~default
+            Sint.(prod_at tk (K.axes_of tk [ Global ]) >= Int size * Int n)
+        in
+        let always _ = true in
+        (* M's upcast, kept within a run of rows that read one value of
+           an operand. *)
+        let upcast_m ~keep =
+          match first_dividing rngs.(1) core_upcasts with
+          | Some size when keep size ->
+              let same r = axis_id r = axis_id rngs.(1) in
+              let size =
+                match List.find_opt same (K.rngs k) with
+                | Some m -> within_run k m rngs.(1) size
+                | None -> size
+              in
+              split 1 size Opt.Upcast
+          | _ -> ()
+        in
+        let unstaged () =
+          (* attempt to upcast M, N, local N. Each gives a workgroup more of
+             the outputs and the kernel fewer workgroups, which pays only
+             while the kernel keeps [core_threads] threads: the core's
+             warp axis is its threads. CUDA's core makes a product of 64
+             by 64 outputs over 1024 32 workgroups of a warp, which its
+             upcasts would leave one, three times slower. *)
+          let threads = prod_at tk (K.axes_of tk [ Warp ]) in
+          let floor =
+            match threads with Int n -> core_threads / n | Sym _ -> 0
+          in
+          let keep = leaves ~default:true floor in
+          upcast_m ~keep;
+          upcast ~keep 0 core_upcasts Opt.Upcast;
+          (* N's local split, by the largest of 4 and 2 that divides it
+             and leaves [local_workgroups]. *)
+          let local size =
+            Option.is_some (first_dividing rngs.(0) [ size ])
+            && leaves ~default:true (K.ren k).local_workgroups size
+          in
+          Option.iter
+            (fun size -> split 0 size Opt.Local)
+            (List.find_opt local [ 4; 2 ]);
+          unroll_beside k tk rngs.(2);
+          (* Each row staging copies a trip covers a sector
+             ({!Stage.steps}). *)
+          let steps = Stage.steps (K.ren tk) (K.ast tk) ~k:rngs.(2) in
+          if steps > 1 then split 2 steps Opt.Upcast;
+          false
+        in
+        if min_globals <> 0 then begin
+          (* attempt to upcast M, local N, upcast N, skipping upcast N if
+             we'd end up with too few globals *)
+          upcast_m ~keep:always;
+          upcast ~keep:always 0 [ 4; 2 ] Opt.Local;
+          upcast
+            ~keep:(leaves ~default:false min_globals)
+            0 core_upcasts Opt.Upcast;
+          unroll_beside k tk rngs.(2);
+          Some (tk, false)
+        end
+        else
+          let filled =
+            match staged_tile ~core_threads k tk rngs split with
+            | Some filled -> filled
+            | None -> unstaged ()
+          in
+          Some (tk, filled)
+  in
   if use_tc > 0 then
-    List.find_map
-      (fun axis ->
-        let tk = K.copy k in
-        match K.apply_opt tk (Opt.Tc { axis; tc_select; tc_opt; use_tc }) with
-        | Error _ -> None
-        | Ok rngs ->
-            let rngs = Array.of_list rngs in
-            let split i size target =
-              let axis = index_of rngs.(i) (K.rngs tk) in
-              rngs.(i) <- List.hd (split tk axis size target)
-            in
-            (* A split of [i] by the first of [sizes] that divides it, when
-               [keep] holds of that size. *)
-            let upcast ~keep i sizes target =
-              match first_dividing rngs.(i) sizes with
-              | Some size when keep size -> split i size target
-              | _ -> ()
-            in
-            (* Whether [n] workgroups are left once a split by [size] divides
-               them, or [default] when their count is not known. *)
-            let leaves ~default n size =
-              Sint.resolve ~default
-                Sint.(prod_at tk (K.axes_of tk [ Global ]) >= Int size * Int n)
-            in
-            let always _ = true in
-            (* M's upcast, kept within a run of rows that read one value of
-               an operand. *)
-            let upcast_m ~keep =
-              match first_dividing rngs.(1) core_upcasts with
-              | Some size when keep size ->
-                  let same r = axis_id r = axis_id rngs.(1) in
-                  let size =
-                    match List.find_opt same (K.rngs k) with
-                    | Some m -> within_run k m rngs.(1) size
-                    | None -> size
-                  in
-                  split 1 size Opt.Upcast
-              | _ -> ()
-            in
-            let unstaged () =
-              (* attempt to upcast M, N, local N. Each gives a workgroup more of
-                 the outputs and the kernel fewer workgroups, which pays only
-                 while the kernel keeps [core_threads] threads: the core's
-                 warp axis is its threads. CUDA's core makes a product of 64
-                 by 64 outputs over 1024 32 workgroups of a warp, which its
-                 upcasts would leave one, three times slower. *)
-              let threads = prod_at tk (K.axes_of tk [ Warp ]) in
-              let floor =
-                match threads with Int n -> core_threads / n | Sym _ -> 0
-              in
-              let keep = leaves ~default:true floor in
-              upcast_m ~keep;
-              upcast ~keep 0 core_upcasts Opt.Upcast;
-              (* N's local split, by the largest of 4 and 2 that divides it
-                 and leaves [local_workgroups]. *)
-              let local size =
-                Option.is_some (first_dividing rngs.(0) [ size ])
-                && leaves ~default:true (K.ren k).local_workgroups size
-              in
-              Option.iter
-                (fun size -> split 0 size Opt.Local)
-                (List.find_opt local [ 4; 2 ]);
-              unroll_beside k tk rngs.(2);
-              (* Each row staging copies a trip covers a sector
-                 ({!Stage.steps}). *)
-              let steps = Stage.steps (K.ren tk) (K.ast tk) ~k:rngs.(2) in
-              if steps > 1 then split 2 steps Opt.Upcast;
-              false
-            in
-            if min_globals <> 0 then begin
-              (* attempt to upcast M, local N, upcast N, skipping upcast N if
-                 we'd end up with too few globals *)
-              upcast_m ~keep:always;
-              upcast ~keep:always 0 [ 4; 2 ] Opt.Local;
-              upcast
-                ~keep:(leaves ~default:false min_globals)
-                0 core_upcasts Opt.Upcast;
-              unroll_beside k tk rngs.(2);
-              Some (tk, false)
-            end
-            else
-              let filled =
-                match staged_tile ~core_threads k tk rngs split with
-                | Some filled -> filled
-                | None -> unstaged ()
-              in
-              Some (tk, filled))
-      [ 0; 1; 2 ]
+    List.find_map (fun l -> List.find_map (core l) [ 0; 1; 2 ]) levels
   else None
 
 (* Streamed contractions
@@ -1408,9 +1478,8 @@ let hand_coded_optimizations k =
   hand_coded_with ~core_threads:(K.ren k).core_threads k
 
 (* The cores of [ren] that {!Opt.Tc} takes for a contraction of [dtype_in]
-   operands accumulated in [dtype_out], summed over [block] of them at a
-   time, whatever its extents. *)
-let cores (ren : Renderer.t) ~dtype_in ~dtype_out ~block =
+   operands accumulated in [dtype_out], whatever its extents. *)
+let cores (ren : Renderer.t) ~dtype_in ~dtype_out =
   let device = ren.target.device in
   (* TF32 rounds float32's inputs: {!Opt.Tc} takes it only when allowed. *)
   let tf32 (tc : Tc.t) =
@@ -1419,11 +1488,9 @@ let cores (ren : Renderer.t) ~dtype_in ~dtype_out ~block =
     && not (setting Setting.allow_tf32)
   in
   let takes (tc : Tc.t) =
-    let _, _, k = Tc.dims tc in
     (not (tf32 tc))
     && Dtype.equal tc.dtype_in dtype_in
     && Dtype.equal tc.dtype_out dtype_out
-    && block mod k = 0
   in
   (* A selected core the target lacks is none, as {!Opt.Tc} refuses it. *)
   let cores =
@@ -1437,24 +1504,24 @@ let cores (ren : Renderer.t) ~dtype_in ~dtype_out ~block =
 
 let core_fits ren ~dtype_in ~dtype_out ~rows ~outputs ~block =
   let fits (tc : Tc.t) =
-    let n, m, _ = Tc.dims tc in
-    (rows mod m = 0 && outputs mod n = 0)
-    || (rows mod n = 0 && outputs mod m = 0)
+    core_takes (Tc.dims tc) (outputs, rows, block)
+    || core_takes (Tc.dims tc) (rows, outputs, block)
   in
   min rows outputs > stream_first
-  && List.exists fits (cores ren ~dtype_in ~dtype_out ~block)
+  && List.exists fits (cores ren ~dtype_in ~dtype_out)
 
 let core_rows ren ~dtype_in ~dtype_out ~outputs ~block =
   (* The least multiple of the core's M past [stream_first]. *)
   let least (tc : Tc.t) =
-    let n, m, _ = Tc.dims tc in
-    if outputs > stream_first && outputs mod n = 0 then
-      Some (((stream_first / m) + 1) * m)
+    let _, m, _ = Tc.dims tc in
+    let rows = ((stream_first / m) + 1) * m in
+    if outputs > stream_first && core_takes (Tc.dims tc) (outputs, rows, block)
+    then Some rows
     else None
   in
   List.fold_left
     (fun acc r -> Some (Option.fold ~none:r ~some:(min r) acc))
     None
-    (List.filter_map least (cores ren ~dtype_in ~dtype_out ~block))
+    (List.filter_map least (cores ren ~dtype_in ~dtype_out))
 
 let held_registers = held_registers

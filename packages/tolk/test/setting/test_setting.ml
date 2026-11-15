@@ -521,8 +521,9 @@ let unless_set key =
   if Option.is_some (Sys.getenv_opt key) then
     skip ~reason:(key ^ " is set in the environment") ()
 
-(* A default that is not tinygrad's: schedules are kept on disk. *)
-let diverging = [ ("SCACHE", "2") ]
+(* Defaults that are not tinygrad's: schedules are kept on disk, and the
+   hand-coded optimisations pad a tensor core's extents (D491). *)
+let diverging = [ ("SCACHE", "2"); ("TC_OPT", "2") ]
 
 let holds_tinygrad_default s =
   unless_set (key s);
@@ -757,7 +758,9 @@ let library_settings =
             (List.filter_map
                (fun s -> if ported s then None else Some (key s))
                settings));
-      cases "hold tinygrad's default when their variable is unset, but SCACHE"
+      cases
+        "hold tinygrad's default when their variable is unset, but SCACHE \
+         and TC_OPT"
         ~id:key
         (List.filter ported settings)
         holds_tinygrad_default;

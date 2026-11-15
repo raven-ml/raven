@@ -183,10 +183,24 @@ let products =
   and+ m = dims
   and+ n = dims
   and+ k = of_list [ 32; 48; 64; 160; 256 ]
-  and+ padded = frequency [ (4, constant false); (1, constant true) ]
+  and+ padded =
+    frequency
+      [
+        (3, constant `None); (1, constant `M); (1, constant `K);
+        (1, constant `N);
+      ]
   and+ layout = of_list [ Kn; Nk ]
   and+ toeplitz = frequency [ (5, constant false); (1, constant true) ] in
-  let m, k = if padded then (m - 4, k - 8) else (m, k) in
+  (* One axis padded, within the heuristic's 6/5 of the work: M and K to the
+     core's 16, at most 32 / 28 times, or N by 8 columns, which the core's 8
+     divides and the staged tile pads to its 64. *)
+  let m, k, n =
+    match padded with
+    | `M when m >= 32 -> (m - 4, k, n)
+    | `K when k >= 48 -> (m, k - 8, n)
+    | `N when n >= 32 -> (m, k, n - 8)
+    | _ -> (m, k, n)
+  in
   { dt; batch; m; k; n; layout; toeplitz }
 
 let pp_product ppf p =
@@ -221,6 +235,9 @@ let same_bits ((p, staged_tile, depth, seed) as _case) =
   cover "an operand refused, the other staged" (cored && operands = 1);
   cover "an axis the core pads"
     (cored && shared && (p.m mod 16 <> 0 || p.k mod 16 <> 0));
+  cover "N padded to the staged tile"
+    (cored && shared
+    && List.exists (function Opt.Padto _ -> true | _ -> false) opts);
   cover "two stages, cp.async" (shared && says "cp.async" src);
   cover "one stage" (shared && depth = 1);
   cover "the staged tile" (shared && staged_tile);
@@ -236,9 +253,12 @@ let law =
         ( { dt = Bfloat16; batch = 1; m = 128; k = 64; n = 128; layout = Kn;
             toeplitz = false },
           true, 2, 1 );
-        ( { dt = Float16; batch = 2; m = 60; k = 56; n = 32; layout = Nk;
+        ( { dt = Float16; batch = 2; m = 62; k = 56; n = 32; layout = Nk;
             toeplitz = false },
           true, 1, 2 );
+        ( { dt = Bfloat16; batch = 1; m = 128; k = 64; n = 120; layout = Kn;
+            toeplitz = false },
+          true, 2, 5 );
         ( { dt = Bfloat16; batch = 1; m = 64; k = 64; n = 64; layout = Kn;
             toeplitz = true },
           false, 2, 3 );
@@ -445,6 +465,10 @@ let barriers =
             toeplitz = false },
           Hip "gfx1100" );
         ( { dt = Bfloat16; batch = 1; m = 128; k = 64; n = 128; layout = Nk;
+            toeplitz = false },
+          Hip "gfx1201" );
+        (* N one tile of RDNA4's core, 16 columns: no pad of N *)
+        ( { dt = Float16; batch = 1; m = 28; k = 248; n = 16; layout = Kn;
             toeplitz = false },
           Hip "gfx1201" );
       ]
@@ -1955,7 +1979,7 @@ let sources =
             "packages/tolk/test/codegen/stage/bf16_2048.cu");
       test "a float16 product whose core pads M and K" (fun () ->
           rendered
-            { dt = Float16; batch = 1; m = 60; k = 56; n = 64; layout = Kn;
+            { dt = Float16; batch = 1; m = 62; k = 56; n = 64; layout = Kn;
               toeplitz = false }
             "packages/tolk/test/codegen/stage/f16_padded.cu");
     ]

@@ -6081,11 +6081,12 @@ against 2.77).
     the plans above. No sum's order follows the units: every plan the rule
     takes blocks its sums as the plan above does, and every depth keeps the
     blocks, so each output sums the same terms in the same order, and a part
-    of another count runs the same programs, at another speed. Its rows
-    stay within a run of rows that read one value of an operand, a warp's
-    tiles of rows falling by one until they fit it, so that a run of three
-    tiles takes one warp, and the heuristic takes it only where
-    `Stage.admits` the kernel as the core leaves it, so a core staging
+    of another count runs the same programs, at another speed. Where no
+    plan's upcast of N divides it, N is first padded to the full warp tile's
+    upcast (D491). Its rows stay within a run of rows that read one value of
+    an operand, a warp's tiles of rows falling by one until they fit it, so
+    that a run of three tiles takes one warp, and the heuristic takes it only
+    where `Stage.admits` the kernel as the core leaves it, so a core staging
     refuses keeps the unstaged splits.
   - **Gathered rows.** One dimension of a tile may be rows gathered through
     a row map: a term whose only read of the box's ranges is one load of
@@ -8968,3 +8969,105 @@ D466.
   blocks) and `measuring on fewer workgroups › launches a host program's
   blocks over its whole loop`; `searches.golden`'s host rows, which count a
   host program's workgroups without its blocks.
+
+## D490. A padded sum of products multiplies its factors gated to zero
+
+- **tinygrad:** `codegen/opt/postrange.py` (`PADTO`: a reduce over the padded
+  axis sums `valid.where(src, identity)`), `Scheduler._apply_tc_opt` (a core
+  whose reduce's source is such a `WHERE` gates each of its operands by it).
+- **tolk:** `Postrange.Scheduler.apply_opt`'s `pad_reduce`, `use_wmma`.
+- **Differs:** a sum whose source is a product, or a cast of one, padded
+  along its reduce axis, multiplies its factors each gated to `0` by the
+  padded range's validity, below the lossless widenings it reads them
+  through (`Ops.widens`), where tinygrad selects the product's identity:
+  `where v a 0 * where v b 0` for `where v (a * b) 0`. Any other reduce's
+  padded steps add its identity, as tinygrad's do. A padded step adds
+  `+0 * +0`, which is `+0` whatever the factors' producers give at the
+  padding (`log 0`, a reciprocal's infinity, a bias), so the sum keeps its
+  multiply-add, rounded once (D25), where a selected product rounds alone and
+  adds; the sum then computes the bits of the same sum over its factors with
+  zeros appended. A tensor core reads the gated factors as its operands, so
+  `use_wmma` no longer gates them itself: one gate serves both paths, and the
+  staged copy folds it into its zero fill as before (D262).
+- **Reason:** (b): D25's sum of products, each product added into its
+  running sum rounded once, holds through a pad only with the gate on the
+  factors, and the tensor cores D491 pads by default would otherwise sum
+  their padded and unpadded twins of one kernel (a padded K, and its
+  operands with zeros appended) to different bits wherever a padded kernel
+  falls to the SIMT path. tinygrad's form computes a value within
+  `Nx.contract`'s bound, rounding each padded sum's products twice.
+- **Pinned by:** the Codegen suite's `multiply-adds › a sum of products
+  padded computes the bits of its factors with zeros appended` (a
+  reciprocal's product padded from 37 terms to 48 on the host, against the
+  same sum over 48 with zeros appended), the Postrange suite's
+  `apply_opts optimises a kernel as recorded › padto_matmul_2`,
+  `padto_matmul_4`, `padto_upcasted_5`, `padto_group_full_unroll_sum` and
+  `tc_{metal,cuda,amd}_shape_padded`.
+
+## D491. A tensor core pads its extents by default, within a bound on the work
+
+- **tinygrad:** `helpers.py` (`TC_OPT`, default `0`), `codegen/opt/heuristic.py`
+  (`hand_coded_optimizations`: the core at `TC_OPT`'s level, `2` only in a
+  search), `codegen/opt/postrange.py` (`_apply_tc_opt`: an axis the core's
+  dims do not divide is padded only at level 2).
+- **tolk:** `Setting.tc_opt`, `Heuristic.tensor_cores`, `Heuristic.core_waste`,
+  `Heuristic.core_takes`, `Heuristic.core_fits`, `Heuristic.core_rows`,
+  `Heuristic.staged_tile`, `Stage.tile`.
+- **Differs:** `TC_OPT` defaults to `2`. The heuristic tries every
+  candidate axis's core at level 0 before any at the setting's level, and
+  records the level that applied, so a kernel some axis's core divides takes
+  the core tinygrad's default takes, on the same axis. A padded core is taken
+  only where its padded extents hold at most 6/5 of the work of the kernel's
+  own (`core_waste`), and `core_fits` and `core_rows`, which rune asks for
+  the form of a contraction, read the same bound in place of divisibility
+  (at `TC_OPT` 0 or 1 the bound is 1, divisibility). An extent the kernel
+  holds as a range of one trip is no axis, and a core that would pad it is
+  refused, where tinygrad's lookup of the axis raises. At level 2, a staged
+  core pads N to a multiple of its whole warp tile's upcast where neither
+  that upcast nor its half divides N (`Stage.tile`, D262), on a padded or an
+  unpadded core, beside the bound and within PADTO's 4x; a pad on no axis
+  of the kernel leaves the core unstaged. At `TC_OPT=0` no core and no
+  staged tile pads, so the kernels are those of tinygrad's default and the
+  staging of D262. Padding computes the padded steps' products of zeros
+  (D490): values stay within `Nx.contract`'s bound, and a kernel's bits
+  move only where it pads.
+- **Reason:** (d). On fudge's RTX 5000 Ada, against main on PROJ-2's staged
+  plans, three interleaved rounds, each case on an empty GPU, minimum over
+  rounds of the minimum of 10 calls: tessera's distillation step, bfloat16
+  products from float32 parameters over 68608 rows a scan trip, ms, the 440
+  by 440 weight gradient 25.57 to 2.26, the 1792 by 440 one 16.71 to 3.65,
+  the 440-wide input gradient 3.29 to 1.07, the feed-forward products 10.68
+  to 4.61 and 4.83 to 3.04. gpt-oss-20b's projections (L2 evicted, sums of
+  kernel medians over 8 calls, us): q at 127 tokens 2070 to 56, at 100 1145
+  to 115, at 68 480 to 103, at 40, 56, 72, 88, 104 and 120 tokens 0.27-0.58
+  of main, k at 72 and 120 41.5 to 15.6 and 49.7 to 16.0, the attention
+  block at 127 tokens 8236 to 290; at 128 tokens, which no core pads, the
+  same kernels and bits. The default's backward of attention at a head of
+  129, bfloat16, 0.61-0.89 of main's time. The bound is chosen, not
+  fitted: products of 65536 rows by K by 512, bound by their float32
+  output, took 0.32 and 0.88 of main's time at K = 440 and 136 and
+  0.97-0.98 at K = 72 and 40 (1.11 and 1.2 times the work), while q at 100
+  and 68 tokens, padded 1.12 and 1.18 times, gain 10x and 4.7x and a head
+  of 129 (1.12) 1.1-1.6x; a padded core can lose by its
+  own shape, K = 72 padded with an exp epilogue 1.23-1.29 times main's SIMT
+  kernel, as main's core runs at K = 80 (TODO). The staged pad of N:
+  products of 65536 rows by 512 by N took 0.28-0.83 of main's at N = 440,
+  136, 72, 24 and 20 (tiles of 448, 192, 128 and 64 columns), and 0.99 at
+  40; the 440 by 440 weight gradient, a split sum, takes about 2.27 ms
+  staged against 1.78 with staging off (1.28x), both about 11 times
+  faster than main. AMD and Metal take the default unmeasured.
+- **Pinned by:** the Heuristic suite's `streaming › a core pads what its tile
+  does not divide, within a bound`, `core_fits names the contractions a core
+  takes`, `core_fits reads the core settings`, `core_rows names the fewest
+  rows a core takes`, the cases `heads_projection_metal`,
+  `heads_projection_biased_metal` and
+  `matmul_half_ragged_{metal,cuda,amd}_tc_opt_2` (refused past the bound),
+  the Heuristic suite's `a core of one tile of N is optimised without a pad
+  of N` and `a product's workgroups hold at most a block's threads on every
+  GPU` (a row of one trip), the Codegen suite's `conv_big_metal`, the
+  Setting suite's defaults, the Stage suite's `sources › a float16 product
+  whose core pads M and K`, its value law (`an axis the core pads`, `N
+  padded to the staged tile`) and its barriers law's HIP case of N one
+  tile, and rune's `Jit_gpu › products › a sum a tensor core pads computes
+  the bits of its operands with zeros appended` and `› a product whose N is
+  one tile of the core gives eager's bits`.
