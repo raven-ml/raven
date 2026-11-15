@@ -791,20 +791,20 @@ let layout_refusals =
               child = text_child;
             }))
     @@ __POS_OF__
-         {| Column.of_layout: offsets of shape [1; 1], not 1-D with an entry |};
+         {| Nx_ragged.v: offsets of shape [1; 1], not 1-D with an entry |};
     refuse "no text offsets" (of_layout string (varsize [||] text_child))
     @@ __POS_OF__
-         {| Column.of_layout: offsets of shape [0], not 1-D with an entry |};
+         {| Nx_ragged.v: offsets of shape [0], not 1-D with an entry |};
     refuse "text offsets that start below 0"
       (of_layout string (varsize [| -1L; 0L |] text_child))
-    @@ __POS_OF__ {| Column.of_layout: offsets start at -1, below 0 |};
+    @@ __POS_OF__ {| Nx_ragged.v: offsets start at -1, below 0 |};
     refuse "text offsets that decrease"
       (of_layout string (varsize [| 0L; 2L; 1L |] text_child))
-    @@ __POS_OF__ {| Column.of_layout: offset 2 is 1, below the 2 before it |};
+    @@ __POS_OF__ {| Nx_ragged.v: offset 2 is 1, below the 2 before it |};
     refuse "text offsets past the child"
       (of_layout string (varsize [| 0L; 3L |] text_child))
     @@ __POS_OF__
-         {| Column.of_layout: offset 1 is 3, past the 2 rows of the values |};
+         {| Nx_ragged.v: offset 1 is 3, past the 2 rows of the values |};
     refuse "text over a child of another type"
       (of_layout string (varsize [| 0L; 2L |] child))
     @@ __POS_OF__

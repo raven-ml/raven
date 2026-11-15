@@ -4732,6 +4732,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Column.of_layout`'s refusal of the offsets of `string` or `binary` names
+  `Nx_ragged.v`, which checks them, at the call as under `Rune.jit`; at the
+  call it named `Column.of_layout`.
 - A function that reads a traced column's bytes, such as `Expr.hash` under
   `Rune.jit`, raises `Expr.hash: the value is traced by Rune.jit`, without
   `Nx.Repr.read:` in the middle.
