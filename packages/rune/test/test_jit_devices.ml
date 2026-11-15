@@ -9,7 +9,7 @@
    within rune.mli's classes, for even, uneven and empty windows. It compiles
    (no call is evaluated), each device runs its own kernels, and its gradient
    is eager's. A map over an axis cut one row per device compiles as
-   per-device code. *)
+   per-device code. Written positions compile as eagerly, on the host too. *)
 
 open Windtrap
 open Rune_support
@@ -1351,6 +1351,64 @@ let gather_kinds set =
       equal (outcome_t bits_t)
         (omap bits (outcome (fun () -> rows x x)))
         (omap bits got)
+
+(* Written positions
+
+   Positions written in the program ([Nx.L]) and the probabilities of
+   {!Nx.quantile} are constants of the call: a compiled slice, update or
+   quantile at them gives eager's placement and bits, on the host and over
+   two devices, the value whole on each or cut along either axis. *)
+
+type written_case = { rows : int; ps : int list; qs : float array; cut : cut }
+
+let pp_written ppf c =
+  Format.fprintf ppf "%d rows, %a, positions %a, probabilities %a" c.rows
+    pp_cut c.cut Operand.pp_shape (Array.of_list c.ps)
+    (Format.pp_print_list ~pp_sep:Format.pp_print_space Format.pp_print_float)
+    (Array.to_list c.qs)
+
+(* No value, one, or several, so that every run draws each. *)
+let few g =
+  let open Gen in
+  let* n = frequency [ (1, constant 0); (1, constant 1); (2, int_range 2 9) ] in
+  list ~size:(constant n) g
+
+let written_cases ~cuts =
+  let open Gen in
+  (let* rows = int_range 1 5 in
+   let* ps = few (int_range (-rows) (rows - 1)) in
+   let* qs = few (one_of [ float_range 0. 1.; of_list [ 0.; 0.5; 1. ] ]) in
+   let+ cut = of_list cuts in
+   { rows; ps; qs = Array.of_list qs; cut })
+  |> with_pp pp_written
+
+let written set c =
+  let count l = List.length l in
+  cover "no position" (c.ps = []);
+  cover "one position" (count c.ps = 1);
+  cover "several positions" (count c.ps > 1);
+  cover "a negative position" (List.exists (fun p -> p < 0) c.ps);
+  cover "a repeated position"
+    (count (List.sort_uniq compare c.ps) < count c.ps);
+  cover "no probability" (c.qs = [||]);
+  cover "one probability" (Array.length c.qs = 1);
+  cover "several probabilities" (Array.length c.qs > 1);
+  let x = Nx.place (at set c.cut) (value [| c.rows; 3 |]) in
+  let same name f =
+    let eager = outcome (fun () -> f x x) in
+    let jit = compiled f x x in
+    cover (name ^ " computes") (match eager with Value _ -> true | _ -> false);
+    match (eager, jit) with
+    | Value e, Value j ->
+        equal ~msg:(name ^ ": placement") (placement ()) (Nx.placement e)
+          (Nx.placement j);
+        equal ~msg:name bits_t (bits e) (bits j)
+    | _ ->
+        equal ~msg:name (outcome_t bits_t) (omap bits eager) (omap bits jit)
+  in
+  same "slice" (fun x _ -> Nx.slice Nx.[ L c.ps ] x);
+  same "set" (fun x _ -> Nx.set Nx.[ L c.ps ] (Nx.scalar_like x 9.) x);
+  same "quantile" (fun x _ -> Nx.quantile ~axis:0 c.qs x)
 
 (* Small integers, so that every sum is exact in any order. *)
 let integers ?(seed = 0) shape =
@@ -2729,6 +2787,15 @@ let () =
                (fun () ->
                  over 2 { law = own_window };
                  over 4 { law = own_window });
+           ];
+         group "written positions"
+           [
+             prop ~count:30 "on the host"
+               (written_cases ~cuts:[ On ])
+               (written { s = Nx.Host.v; mesh = None });
+             prop ~count:30 "over two devices"
+               (written_cases ~cuts:[ On; Split 0; Split 1 ])
+               (fun c -> over 2 { law = (fun set -> written set c) });
            ];
          group "assemblies give eager's bits"
            (List.map

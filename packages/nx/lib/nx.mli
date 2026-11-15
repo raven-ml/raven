@@ -1232,7 +1232,10 @@ val rearrange :
 (** The type for selections along one axis. *)
 type 'd index =
   | I of int  (** One position; the axis goes. *)
-  | L of int list  (** Positions written in the program; a gather. *)
+  | L of int list
+      (** Positions written in the program; a gather. Whatever their number,
+          they add no kernel: one copy to each of the indexed value's
+          devices, none on the host. *)
   | T of 'd int64_t
       (** Positions held in data, replacing the axis by their axes; a gather. *)
   | R of int * int
@@ -3832,7 +3835,8 @@ val quantile :
     elements at [floor h] and [floor h + 1], it is [a + (h - floor h) (b - a)],
     and [a] exactly where [h] is an integer or [a] equals [b]. NaN sorts last,
     so it reaches the upper quantiles. The narrow floats interpolate in float32
-    and round once. One sort serves every probability.
+    and round once. One sort serves every probability, and the number of kernels
+    does not grow with the number of probabilities.
 
     Raises [Invalid_argument] if a probability is outside [[0, 1]] or NaN, if
     [axis] is not an axis of [x], or if there is no element along it. *)

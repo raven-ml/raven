@@ -1497,14 +1497,10 @@ let selection x picks =
   done;
   out
 
-(* The 1-d value of [vs] at [p]: one assembly of their fills. *)
+(* The 1-d value of [vs] at [p]: made on the host and placed, one copy to each
+   of [p]'s devices whatever the number of values. *)
 let vector_at ~by p dt vs =
-  let piece j v =
-    ( ([| { Nx_array.Move.start = j; count = 1; step = 1 } |] : _ iarray),
-      fill ~by p dt [| 1 |] v )
-  in
-  let pieces = Array.to_list (Array.mapi piece vs) in
-  assemble ~by dt [| Array.length vs |] (D.zero dt) pieces
+  Eval.place ~by p (of_values ~by dt [| Array.length vs |] vs)
 
 (* The int64 value of written positions [ps] beside [x], whole on each of
    [x]'s devices. *)

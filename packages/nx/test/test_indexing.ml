@@ -883,7 +883,69 @@ let many =
         check_set;
     ]
 
+module Counted2 =
+  (val Nx.devices ~kernels:(module Nx_support.Counting)
+         [ Nx_support.memory 0; Nx_support.memory 1 ])
+
+(* A gather at written positions on two devices: each device's row is the one
+   its position selects, by as many kernel calls as a single position takes. *)
+let written =
+  group "written positions"
+    [
+      prop "a gather reads each written position's row"
+        Gen.(
+          let* n = int_range 1 6 in
+          let size =
+            frequency
+              [ (1, constant 0); (1, constant 1); (2, int_range 2 40) ]
+          in
+          let+ ps = list ~size (int_range (-n) (n - 1)) in
+          (n, ps))
+        (fun (n, ps) ->
+          cover "no position" (ps = []);
+          cover "one position" (List.length ps = 1);
+          cover "more positions than the axis" (List.length ps > n);
+          let data = Array.init (2 * n) Int32.of_int in
+          let x = Nx.place Counted2.on (host D.Int32 [| n; 2 |] data) in
+          let gather ps =
+            Nx_support.Counting.reset ();
+            let y = Nx.slice Nx.[ L ps ] x in
+            let calls = Nx_support.Counting.calls () in
+            (y, calls)
+          in
+          let y, calls = gather ps in
+          equal ~msg:"shape" (array int) [| List.length ps; 2 |] (Nx.shape y);
+          let row p =
+            let p = if p < 0 then p + n else p in
+            [| data.(2 * p); data.((2 * p) + 1) |]
+          in
+          Nx.sync y;
+          let copies = Iarray.to_list (Nx.Repr.shards y) in
+          equal ~msg:"copies" int 2 (List.length copies);
+          List.iter
+            (fun a ->
+              equal ~msg:"rows" (array int32)
+                (Array.concat (List.map row ps))
+                (A.to_array a))
+            copies;
+          match ps with
+          | [] -> ()
+          | p :: _ ->
+              let _, one = gather [ p ] in
+              equal ~msg:"kernel calls of one position" int one calls);
+    ]
+
 let () =
   exit
     (run "nx indexing"
-       [ laws; definitions; masks; views; dtypes; declines; many; refusals ])
+       [
+         laws;
+         definitions;
+         masks;
+         views;
+         dtypes;
+         declines;
+         many;
+         written;
+         refusals;
+       ])

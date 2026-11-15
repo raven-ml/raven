@@ -1023,6 +1023,42 @@ let law_quantile (Quantile_case (dt, eps, s, a, qs, vs)) =
         sl)
     qs
 
+module Counted2 =
+  (val Nx.devices ~kernels:(module Nx_support.Counting)
+         [ Nx_support.memory 0; Nx_support.memory 1 ])
+
+(* Each device's copy of [y], whole on each, in C order. *)
+let copies y =
+  Nx.sync y;
+  List.map Nx_array.to_array (Iarray.to_list (Nx.Repr.shards y))
+
+(* On two devices, each device's quantiles of each probability are those it
+   gives alone, by as many kernel calls as one probability takes. *)
+let law_quantile_each (Quantile_case (dt, _, s, a, qs, vs)) =
+  cover "no probability" (qs = [||]);
+  cover "one probability" (Array.length qs = 1);
+  cover "several probabilities" (Array.length qs > 1);
+  let x = Nx.place Counted2.on (Nx.create dt s vs) in
+  let quantile qs =
+    Nx_support.Counting.reset ();
+    let y = Nx.quantile ?axis:a qs x in
+    let calls = Nx_support.Counting.calls () in
+    (y, calls)
+  in
+  let got, calls = quantile qs in
+  equal ~msg:"probabilities" int (Array.length qs) (Nx.shape got).(0);
+  let per = Array.fold_left ( * ) 1 (Nx.shape got) / max 1 (Array.length qs) in
+  Array.iteri
+    (fun j q ->
+      let one, single = quantile [| q |] in
+      equal ~msg:"kernel calls of one probability" int single calls;
+      let want = Nx.to_array one in
+      List.iter
+        (fun c -> equal_elements dt want (Array.sub c (j * per) per))
+        (copies got))
+    qs;
+  equal ~msg:"copies" int 2 (List.length (copies got))
+
 let test_quantile_cases () =
   let x = Nx.create Nx.float64 [| 5 |] [| 3.; 1.; 4.; 1.; 5. |] in
   equal (array float_exact) [| 1.; 3.; 4.; 5. |]
@@ -1226,6 +1262,8 @@ let () =
          group "quantile"
            [
              prop "interpolated order statistics" quantile_case law_quantile;
+             prop "each probability as alone, on two devices" quantile_case
+               law_quantile_each;
              test "cases" test_quantile_cases;
            ];
          group "histogram"

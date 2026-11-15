@@ -875,7 +875,8 @@ let conv_rows =
         max_pool_grad;
     ]
 
-(* Indexing: a row take reads its rows, an add-scatter its updates at
+(* Indexing: a row take reads its rows, a slice at written positions copies
+   them once, an add-scatter its updates at
    positions drawn at random, as a histogram's or a gradient's land, a set
    writes its row into a copy of the cache, a set by positions held in data
    along each axis addresses every element it writes from three of them, and
@@ -887,6 +888,10 @@ let take_1k () =
       (Array.init 1024 (fun i -> Int64.of_int (i * 7 mod 8192)))
   in
   (Nx.Repr.of_array Nx.Host.v ids, filled D.Float32 [| 8192; 256 |] 1.)
+
+(* take_1k's positions written in the program, and its table. *)
+let written_1k () =
+  (List.init 1024 (fun i -> i * 7 mod 8192), filled D.Float32 [| 8192; 256 |] 1.)
 
 (* 64K positions in 1024 targets, drawn once from a fixed key, their
    updates and the targets. *)
@@ -1062,6 +1067,8 @@ let index_rows =
     ([
       Thumper.bench_with_setup "take-rows-1K-of-8K" ~setup:take_1k
         (fun (ids, table) -> Nx.take ~axis:0 ids table);
+      Thumper.bench_with_setup "slice-written-1K-of-8K" ~setup:written_1k
+        (fun (ps, table) -> Nx.slice Nx.[ L ps ] table);
       Thumper.bench_with_setup "scatter-add-64K-into-1K" ~setup:scatter_64k
         (fun (ids, updates, sums) ->
           Nx.scatter ~combine:Add ~axis:0 ids updates sums);

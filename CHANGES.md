@@ -2978,6 +2978,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- Written positions (`L`) of `Nx.slice` and `Nx.set`, and `Nx.quantile`'s
+  probabilities, add no kernel each: they are copied once to each device,
+  and not at all on the host. `Nx.slice` with `L []` and `Nx.quantile [||]`
+  off the host no longer raise.
 - Add `nx.amd` (`Nx_amd`), kernels of `Nx_kernel.S` for AMD RDNA4 GPUs
   (`gfx1200`, `gfx1201`). A set made by `Nx.devices ~kernels:(module Nx_amd)`
   computes on the GPU without `Rune.jit`. Every kernel but `contract` and
