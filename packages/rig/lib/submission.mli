@@ -101,8 +101,9 @@ val set : dst:side -> char -> part
     checks nothing of [dst]; {!make} refuses a [dst] buffer that is dead,
     not the device's, or this process's memory. *)
 
-val launch : ?refs:ref array -> func -> params:int -> part
-(** [launch ~refs f ~params] is {!Rig.Submission.launch}[ ~refs f ~params]. *)
+val launch : ?refs:ref array -> ?label:string -> func -> params:int -> part
+(** [launch ~refs ~label f ~params] is
+    {!Rig.Submission.launch}[ ~refs ~label f ~params]. *)
 
 val fill : ?refs:ref array -> nativeint -> params:int -> part
 (** [fill ~refs f ~params] is {!Rig.Submission.fill}[ ~refs f ~params]. *)

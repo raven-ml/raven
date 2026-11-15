@@ -2167,23 +2167,143 @@ let do_render (ren : Renderer.t) prg lin =
   let source = ren.render (src lin) in
   Some (replace prg ~src:(src prg @ [ v Op.Source ~arg:(String source) ]))
 
+(* Compiled text
+
+   A kernel's source shows its name, which reads its shape, and on a GPU its
+   launch sizes, in comments: kernels that compute alike over two extents
+   differ there alone. The text compiled leaves both out, so that such
+   kernels compile to one binary, each launch passing its own sizes: its
+   comments are dropped, and its kernel is named [symbol] in every program.
+
+   The source is read as the tokens of C and C++, every renderer writing a
+   dialect of one, and code in the target's language passing through as it
+   is written. A comment, [/* */] or [//] to its line's end, becomes a
+   space, as C reads it. A literal is kept as it is: a string or character
+   literal, a raw string [R"d( )d"], and a number, whose digit separators
+   ([1'000]) open no character literal. Every other word is an identifier or
+   a keyword, and the kernel's name and [symbol] trade places wherever
+   either is one, which renames without changing what the source means.
+
+   The reading is conservative, not C's: C joins lines at a backslash before
+   a newline, which Clang allows blanks between, and reads [??/] as a
+   backslash where trigraphs are on, before any of this. A source holding
+   either, which no renderer writes but code passed through may, keeps its
+   comments, so that a comment misread can drop no code: only the renaming
+   applies, whose misreading leaves the name unrenamed, a missing symbol,
+   or renames text that is the name. Such kernels share no binary. *)
+let symbol = "tolk_kernel"
+
+let without_display name src =
+  let n = String.length src and b = Buffer.create (String.length src) in
+  let word = function
+    | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' -> true
+    | _ -> false
+  in
+  let digit c = c >= '0' && c <= '9' in
+  (* whether [src] holds [s] at [i] *)
+  let at i s =
+    let k = String.length s in
+    let rec same j = j = k || (src.[i + j] = s.[j] && same (j + 1)) in
+    i + k <= n && same 0
+  in
+  (* the first [i'] from [i] where [src] holds [s], or [n] *)
+  let rec find s i = if i >= n || at i s then min i n else find s (i + 1) in
+  (* past a word from [i]; a number's digit separators are within it *)
+  let rec past_word number i =
+    if i < n && word src.[i] then past_word number (i + 1)
+    else if number && i + 1 < n && src.[i] = '\'' && word src.[i + 1] then
+      past_word number (i + 1)
+    else i
+  in
+  (* past the literal opened at [i - 1] by [q]: its closing quote, unescaped,
+     or the end of its line, which a literal does not cross *)
+  let rec past_literal q i =
+    if i >= n || src.[i] = '\n' then i
+    else if src.[i] = '\\' then past_literal q (i + 2)
+    else if src.[i] = q then i + 1
+    else past_literal q (i + 1)
+  in
+  (* past a line comment from [i]: before its newline *)
+  let past_line i = find "\n" i in
+  (* whether a backslash, blanks and a newline, or [??], stand from [i] *)
+  let rec spliced i =
+    i < n
+    && (at i "??"
+       || (src.[i] = '\\'
+          && let rec blanks j =
+               j < n
+               && (src.[j] = '\n'
+                  || ((src.[j] = ' ' || src.[j] = '\t' || src.[j] = '\r')
+                     && blanks (j + 1)))
+             in
+             blanks (i + 1))
+       || spliced (i + 1))
+  in
+  let comments = not (spliced 0) in
+  (* past the raw string whose quote is at [i]: [R"d( )d"] *)
+  let past_raw i =
+    let d = String.sub src (i + 1) (find "(" (i + 1) - i - 1) in
+    let body = i + String.length d + 2 in
+    min n (find (")" ^ d ^ "\"") body + String.length d + 2)
+  in
+  let raw i j =
+    j < n && src.[j] = '"'
+    && List.exists (fun p -> j - i = String.length p && at i p)
+         [ "R"; "LR"; "uR"; "UR"; "u8R" ]
+  in
+  (* whether [src] from [i] to [j] is [w] *)
+  let is w i j = j - i = String.length w && at i w in
+  let copy i j =
+    Buffer.add_substring b src i (j - i);
+    j
+  in
+  let rec from i =
+    if i < n then
+      match src.[i] with
+      | '/' when comments && at i "/*" ->
+          let j = find "*/" (i + 2) in
+          if j >= n then ignore (copy i n)
+          else begin
+            Buffer.add_char b ' ';
+            from (j + 2)
+          end
+      | '/' when comments && at i "//" ->
+          Buffer.add_char b ' ';
+          from (past_line (i + 2))
+      | ('"' | '\'') as q -> from (copy i (min n (past_literal q (i + 1))))
+      | c when word c ->
+          let j = past_word (digit c) i in
+          if raw i j then from (copy i (past_raw j))
+          else begin
+            if is name i j then Buffer.add_string b symbol
+            else if is symbol i j then Buffer.add_string b name
+            else ignore (copy i j);
+            from j
+          end
+      | c ->
+          Buffer.add_char b c;
+          from (i + 1)
+  in
+  from 0;
+  Buffer.contents b
+
 (* The host calls a program as [void f(const void *p, long long first, long long
    end)] (rig's host code), where [p] points to the bytes of the kernel's
    arguments, each at its offset ({!Device.Tiny_elf.iter_sig}), which the
    kernel itself takes. The call runs the iterations [first] to [end - 1], at
    most the loop's last: the launch's threads number the iterations. The kernel
-   is renamed [NAME_], and [NAME] becomes the entry that passes [p] on, or for a
-   split program a copy of the bytes whose bounds are [first] and [end], [end]
-   at most the iterations of the whole loop, which the launch passes as its
-   bound [hi]. The copies are inline, where Clang compiles a copy of many bytes
-   as a call of [memcpy], which a remote Windows host's object, compiled for no
-   system, would call by the wrong convention. On x86_64 Windows, whose object
+   is renamed [NAME_], [NAME] being [symbol], and [NAME] becomes the entry
+   that passes [p] on, or for a split program a copy of the bytes whose bounds
+   are [first] and [end], [end] at most the iterations of the whole loop,
+   which the launch passes as its bound [hi]. The copies are inline, where
+   Clang compiles a copy of many bytes as a call of [memcpy], which a remote
+   Windows host's object, compiled for no system, would call by the wrong
+   convention. On x86_64 Windows, whose object
    calls by Windows' convention, the entry is declared System V's, by which rig
-   calls it (rig's host code). The source the program keeps is the
-   renderer's. *)
+   calls it (rig's host code). *)
 let host_entry ~arch prg source =
   let k = kernel_info (nth prg 0) in
-  let name = function_name k in
+  let name = symbol in
   let body =
     match k.split with
     | None -> Printf.sprintf "%s_((unsigned char *)p);" name
@@ -2233,12 +2353,14 @@ let host_entry ~arch prg source =
 
 let text source = match arg source with String s -> s | _ -> assert false
 
-(* The text [ren]'s compiler compiles for [prg]'s rendered [source]: on the
-   host, with the entry rig calls. *)
+(* The text [ren]'s compiler compiles for [prg]'s rendered [source]: the source
+   without its kernel's name and comments ([without_display]), on the host with
+   the entry rig calls. The source the program keeps is the renderer's. *)
 let compiled_text (ren : Renderer.t) prg source =
-  if ren.target.device = "CPU" then
-    host_entry ~arch:ren.target.arch prg (text source)
-  else text source
+  let name = function_name (kernel_info (nth prg 0)) in
+  let source = without_display name (text source) in
+  if ren.target.device = "CPU" then host_entry ~arch:ren.target.arch prg source
+  else source
 
 (* [compiled_text], printing the program's source from DEBUG 4. *)
 let compiled_source ren prg source =

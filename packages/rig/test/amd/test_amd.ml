@@ -4098,6 +4098,7 @@ let program_loop () =
       {
         image = 0;
         name = "valu";
+        label = "valu";
         params = { G.bytes = String.make 8 '\000'; holes = [| k |] };
         refs = [||];
         groups = (G.Fixed groups, G.Fixed 1, G.Fixed 1);

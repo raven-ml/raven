@@ -43,6 +43,7 @@ let launch ?(holes : _ iarray = [||]) ~image ~groups name bytes refs =
         {
           image;
           name;
+          label = name;
           params = { G.bytes; holes };
           refs;
           groups = (groups, G.Fixed 1, G.Fixed 1);
@@ -995,6 +996,7 @@ let too_many_threads () =
               {
                 image = 0;
                 name = "main";
+                label = "main";
                 params = { G.bytes = ""; holes = [||] };
                 refs = [||];
                 groups = (G.Fixed 1, G.Fixed 1, G.Fixed 1);

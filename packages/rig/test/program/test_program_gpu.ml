@@ -76,6 +76,7 @@ let described d binary =
           {
             image = 0;
             name;
+            label = name;
             params = { G.bytes = params; holes = [||] };
             refs;
             groups = (G.Fixed groups, G.Fixed 1, G.Fixed 1);

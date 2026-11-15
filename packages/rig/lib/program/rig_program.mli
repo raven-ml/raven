@@ -256,7 +256,11 @@ type part =
           buffer each run passes. *)
   | Launch of {
       image : int;
-      name : string;
+      name : string;  (** The function of image [image] it runs. *)
+      label : string;
+          (** The name of its work in profiles and refusals
+              ({!Rig.Submission.launch}), which tells apart launches of one
+              function. *)
       params : value data;
           (** Its parameters' bytes, a whole number of 32-bit words, each
               hole written into the run's block before each submit. *)

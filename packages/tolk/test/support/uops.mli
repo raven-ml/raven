@@ -31,6 +31,3 @@ val binary_of : Ops.t -> string
     source.
 
     Raises [Invalid_argument] if [prg] holds no binary. *)
-
-val entry_of : Ops.t -> string
-(** [entry_of prg] is the name of [prg]'s kernel as its binary exports it. *)

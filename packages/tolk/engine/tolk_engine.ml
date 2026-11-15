@@ -787,7 +787,8 @@ let launch b call prg d =
     (Launch
        {
          image;
-         name = kname;
+         name = Codegen.symbol;
+         label = kname;
          params =
            { bytes = Bytes.to_string params; holes = Iarray.of_list !holes };
          refs = Iarray.of_list refs;
@@ -1065,7 +1066,7 @@ let launches (b : builder) =
   let names parts =
     Iarray.fold_right
       (fun (p : Rig_program.part) names ->
-        match p with Launch { name; _ } -> name :: names | _ -> names)
+        match p with Launch { label; _ } -> label :: names | _ -> names)
       parts []
   in
   let step : Rig_program.step -> _ = function

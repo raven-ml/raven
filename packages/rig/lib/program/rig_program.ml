@@ -59,6 +59,7 @@ type part =
   | Launch of {
       image : int;
       name : string;
+      label : string;
       params : value data;
       refs : ref iarray;
       groups : value * value * value;
@@ -545,7 +546,7 @@ let check t sizes devices =
    byte, then its arguments. *)
 
 let magic = "rig.program\n"
-let version = 14
+let version = 15
 
 module R = struct
   exception Malformed of int * string
@@ -775,7 +776,7 @@ module C = struct
     in
     k
 
-  let case7 a b c d e f g inj =
+  let case8 a b c d e f g h inj =
     let read r =
       let x = a.r r in
       let y = b.r r in
@@ -784,14 +785,15 @@ module C = struct
       let v = e.r r in
       let s = f.r r in
       let t = g.r r in
-      inj x y z u v s t
+      let w = h.r r in
+      inj x y z u v s t w
     in
     let rec k =
       {
         tag = -1;
         read;
         put =
-          (fun buf x y z u v s t ->
+          (fun buf x y z u v s t w ->
             tag buf k;
             a.w buf x;
             b.w buf y;
@@ -799,7 +801,8 @@ module C = struct
             d.w buf u;
             e.w buf v;
             f.w buf s;
-            g.w buf t);
+            g.w buf t;
+            h.w buf w);
       }
     in
     k
@@ -968,9 +971,9 @@ module D = struct
         (fun src src_offset dst dst_offset length ->
           Copy { src; src_offset; dst; dst_offset; length })
     and launch =
-      case7 int string (data value) (array ref) sizes sizes value
-        (fun image name params refs groups threads shared ->
-          Launch { image; name; params; refs; groups; threads; shared })
+      case8 int string string (data value) (array ref) sizes sizes value
+        (fun image name label params refs groups threads shared ->
+          Launch { image; name; label; params; refs; groups; threads; shared })
     in
     variant "a part" [ Arm words; Arm fill; Arm copy; Arm launch ]
       (fun b -> function
@@ -978,8 +981,9 @@ module D = struct
       | Fill { fill = l; params; refs } -> fill.put b l params refs
       | Copy { src; src_offset; dst; dst_offset; length } ->
           copy.put b src src_offset dst dst_offset length
-      | Launch { image; name; params; refs; groups; threads; shared } ->
-          launch.put b image name params refs groups threads shared)
+      | Launch { image; name; label; params; refs; groups; threads; shared }
+        ->
+          launch.put b image name label params refs groups threads shared)
 
   let submit =
     record (fun device parts slots fixed -> { device; parts; slots; fixed })
@@ -1514,8 +1518,8 @@ let prepared p k (s : submit) =
         in
         let src = side src src_offset in
         Sub.copy ~src ~dst:(side dst dst_offset)
-    | Launch { image; name; params; refs = rs; _ } ->
-        Sub.launch ~refs:(refs rs) (func p image name)
+    | Launch { image; name; label; params; refs = rs; _ } ->
+        Sub.launch ~refs:(refs rs) ~label (func p image name)
           ~params:(String.length params.bytes)
   in
   let parts = Iarray.to_array (Iarray.map part s.parts) in

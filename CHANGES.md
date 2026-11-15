@@ -40,6 +40,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- `Rig.Submission.launch ~label` names a launch's work in profiles apart
+  from its function, so launches of one function are told apart. **Breaking:**
+  `Rig_program.Launch` takes the `label` its run passes, and descriptions are
+  of format 15.
 - Add `Rig.offers d k`, whether `Rig.Buffer.create ~memory:k d` makes `d`'s
   memory of kind `k`; where it is `false`, that create raises
   `Invalid_argument`.
@@ -1358,6 +1362,11 @@ its lock and from samples the dashboard saw arrive.
   an `Nx.set` at 878 listed positions under `Rune.jit`, no longer takes
   minutes to compile: a launch there holds at most 40 members
   (`Cstyle.metal`).
+- Kernels whose sources differ only in their names and comments compile to
+  one binary, in which every kernel is `Codegen.symbol`: a compiled
+  function's new extent on the host compiles none of the binaries an
+  earlier extent made. Programs keep the renderer's source, and profiles
+  name each launch after its kernel.
 - `Rangeify.get_kernel_graph` inlines a value of more than three buffers
   into readers stored as they are, where it is computed once an element
   outside reductions: gpt-oss-20b's MoE block at 512 prefill tokens drops

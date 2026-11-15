@@ -53,7 +53,7 @@ type part =
   | Fill of { fill : nativeint; params : int; refs : ref array }
   | Copy of copy
   | Set of { dst : side; byte : char }
-  | Launch of { fn : func; params : int; refs : ref array }
+  | Launch of { fn : func; label : string; params : int; refs : ref array }
 
 (* The most parameter bytes of a launch or a fill: a block of 32 bytes and
    twice its parameters rounded up to 16 ([rig_block_bytes]) within the
@@ -89,8 +89,8 @@ let fill ?(refs = [||]) fill ~params =
   Fill { fill; params; refs }
 
 (* Refuses fewer parameters than [f] reads, or a ref past them, where the
-   driver states them. *)
-let check_reads (f : func) params refs =
+   driver states them, naming the launch by its [label]. *)
+let check_reads (f : func) label params refs =
   match f.fentry.params with
   | None -> ()
   | Some takes ->
@@ -98,7 +98,7 @@ let check_reads (f : func) params refs =
         invalid_argf
           "Rig.Submission.launch: %s takes %d bytes of parameters; the launch \
            gives %d"
-          f.fname takes params;
+          label takes params;
       Array.iter
         (fun r ->
           let at = ref_at r in
@@ -106,14 +106,14 @@ let check_reads (f : func) params refs =
             invalid_argf
               "Rig.Submission.launch: a ref at %d lies past the %d bytes of \
                parameters %s takes"
-              at takes f.fname)
+              at takes label)
         refs
 
-let launch ?(refs = [||]) f ~params =
-  let refs = Array.copy refs in
+let launch ?(refs = [||]) ?label f ~params =
+  let refs = Array.copy refs and label = Option.value label ~default:f.fname in
   check_args "launch" params refs;
-  check_reads f params refs;
-  Launch { fn = f; params; refs }
+  check_reads f label params refs;
+  Launch { fn = f; label; params; refs }
 
 (* Refuses a copy whose ends are one slot or a negative one, whose buffer
    end is dead or whose [dst] buffer admits only reads, or whose two buffer
@@ -236,7 +236,7 @@ external times_taken : Def.c -> int = "caml_rig_times_taken" [@@noalloc]
 (* A launch's or a fill's block, as the setters' C reads it: the id of its
    submission's C form, where it starts in a run, its parameter bytes, and the
    most threads a group of its function has, [0] for a fill or where the
-   driver states none, which [Run.threads] checks, with the function's name
+   driver states none, which [Run.threads] checks, with the launch's label
    for its refusal. *)
 type block = int * int * int * int * string
 
@@ -272,10 +272,10 @@ type t = {
   blocks : block array;
       (** Each part's block, [no_block] for no launch or fill. *)
   span : (string * string) option;
-      (** The first part's queue and the launches' functions, or the first
+      (** The first part's queue and the launches' labels, or the first
           part's kind. [None] for no parts. *)
   launches : string array;
-      (** The functions of its launches, in the order of its parts. *)
+      (** The labels of its launches, in the order of its parts. *)
   copies : copy array;
       (** The copy parts that read memory, in order. *)
   runs : run list Atomic.t;
@@ -973,7 +973,7 @@ let build keep ~fixed ~named:(named, named_uses) ~held d parts =
           let place = sub_launch c i e.code e.launch l.params slots !r in
           place_codes place l.refs;
           let most = Option.value e.threads ~default:0 in
-          blocks.(i) <- (sub_id c, place, l.params, most, l.fn.fname);
+          blocks.(i) <- (sub_id c, place, l.params, most, l.label);
           r := !r + Array.length slots;
           images := l.fn.fimage :: !images)
     parts;
@@ -982,7 +982,7 @@ let build keep ~fixed ~named:(named, named_uses) ~held d parts =
     Array.fold_right
       (fun p ks ->
         match p with
-        | Launch l -> l.fn.fname :: ks
+        | Launch l -> l.label :: ks
         | Words _ | Fill _ | Copy _ | Set _ -> ks)
       parts []
   in

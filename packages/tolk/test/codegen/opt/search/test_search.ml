@@ -1195,11 +1195,6 @@ let cache_kinds =
         (List.exists (function Opt.Swap _ -> true | _ -> false) first);
       equal opts first (cached untimed))
 
-let source prg =
-  match Ops.arg (Ops.nth prg 2) with
-  | String s -> s
-  | _ -> failf "the program %a has no source" Ops.pp prg
-
 (* A compiler whose binaries are kept, in the table [binaries]. *)
 let binaries = "search test binaries"
 
@@ -1224,7 +1219,8 @@ let cache_candidates =
           ~beam:(Search.beam_search ~link ~time)
           k ren
       in
-      let kept p = Helpers.Diskcache.get ~table:binaries (source p) in
+      (* The compiler returns the text it compiles, which is the key. *)
+      let kept p = Helpers.Diskcache.get ~table:binaries (binary p) in
       let candidates = (record ()).linked in
       greater int ~than:1 (List.length candidates);
       equal ~msg:"candidates' binaries kept" (list (option string))

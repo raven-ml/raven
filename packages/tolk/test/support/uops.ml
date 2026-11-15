@@ -30,12 +30,16 @@ let numbered_like like u =
   | subs -> Ops.substitute ~calls:Enter ~pass:Once u subs
   | exception Invalid_argument _ -> u
 
+(* Each program is replaced whole, since programs of one compiled text share
+   one binary node, which stands for one program's source alone. *)
 let binaries_as_sources u =
   let recorded prg =
     match List.rev (Ops.src prg) with
-    | binary :: source :: _ when Ops.op binary = Binary -> (
+    | binary :: (source :: _ as rest) when Ops.op binary = Binary -> (
         match Ops.arg source with
-        | String text -> Some (binary, Ops.v Binary ~arg:(Bytes text))
+        | String text ->
+            let binary = Ops.v Binary ~arg:(Bytes text) in
+            Some (prg, Ops.replace prg ~src:(List.rev (binary :: rest)))
         | _ -> None)
     | _ -> None
   in
@@ -51,8 +55,3 @@ let binary_of prg =
   | _ -> invalid_arg "a program of no binary"
   | exception (Failure _ | Invalid_argument _) ->
       invalid_arg "a program of no binary"
-
-let entry_of prg =
-  match Ops.arg (Ops.nth prg 0) with
-  | Kernel k -> Ops.function_name k
-  | _ -> invalid_arg "a program of no kernel"

@@ -1209,7 +1209,7 @@ let sums_fn =
     | None ->
         let prg = Codegen.to_program (sums ~opts:[] m k) (Lazy.force clang) in
         let image = Result.get_ok (Rig.Image.load host (Uops.binary_of prg)) in
-        let fn = require_some (Rig.Image.resolve image (Uops.entry_of prg)) in
+        let fn = require_some (Rig.Image.resolve image Codegen.symbol) in
         Hashtbl.replace loaded (m, k) fn;
         fn
 

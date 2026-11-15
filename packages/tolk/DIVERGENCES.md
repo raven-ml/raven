@@ -1193,12 +1193,12 @@ Each part is one layer of the head's NaN rule: a float constant is its bits
   `end` as its bounds, made with `__builtin_memcpy_inline`. The program's
   source is the renderer's; only its binary differs.
 - **Reason:** (c). rig's host calls a function of linked code with one ABI,
-  `void f(const void *params, int64_t first, int64_t end)`, places each
-  buffer's address among the parameters, and names a submission's span after
-  the entry. It runs a launch's blocks of threads on several cores at once,
-  each call with its own `first` and `end`, which the parameters every call
-  shares cannot hold. The entry keeps the kernel's name in profiles, and on
-  x86_64 Windows is declared System V's (D178). Clang compiles a copy of many
+  `void f(const void *params, int64_t first, int64_t end)` and places each
+  buffer's address among the parameters. It runs a launch's blocks of
+  threads on several cores at once, each call with its own `first` and
+  `end`, which the parameters every call shares cannot hold. `NAME` is
+  `Codegen.symbol` (D485), and on x86_64 Windows the entry is declared
+  System V's (D178). Clang compiles a copy of many
   bytes as a call of `memcpy`, which rig takes from the process, and a remote
   Windows host's target names no system (D178), so its object would call that
   `memcpy` by System V: the inline copy calls nothing.
@@ -10531,3 +10531,44 @@ kept in ordered sets, change no source and belong to D466.
   renderer's most threads`; rune's `Lower_index › workgroups › a scatter's
   workgroups hold at most a block's threads on every GPU`. AMD and Metal are
   unrun.
+
+## D485. Kernels whose sources differ in their names and comments alone take one binary
+
+- **tinygrad:** `renderer/cstyle.py` (`CStyleLanguage._render`, which names
+  the kernel's function after the sink's `function_name`, and
+  `base_rewrite`'s `SPECIAL` rule, which writes a hardware index's size in a
+  comment, `/* 64 */`); `device.py` (`Compiler.compile_cached`, a binary kept
+  under its source); `runtime/ops_cuda.py` and `engine/realize.py`
+  (`get_runtime`), which find the kernel in its binary by `function_name`.
+- **tolk:** `Codegen.compiled_text` and `Codegen.without_display`,
+  `Codegen.symbol`, `Codegen.host_entry`; `Tolk_engine.launch`, which runs
+  `Codegen.symbol` and labels the launch with the kernel's name
+  (`Rig_program.Launch`'s `label`, `Rig.Submission.launch ~label`).
+- **Differs:** the text compiled is the program's source, read as C's and
+  C++'s tokens (comments, string, character and raw string literals,
+  numbers with digit separators), without its comments and with the
+  kernel's name and `Codegen.symbol` traded wherever either is an
+  identifier, so every binary names its kernel `Codegen.symbol`. A source
+  holding a line splice or `??`, which no renderer writes, keeps its
+  comments and shares no binary. Two
+  kernels whose sources differ in those alone, as an operation's kernels
+  over two extents of a split host loop do (`E_4096_4`
+  and `E_12288_4` on the host), or two GPU extents whose opts and buffers
+  agree (the launch sizes in comments), compile to one binary, kept once in
+  the compiler's table, and a link loads it once; each launch passes its own
+  sizes and bounds, as before. The program keeps the renderer's source, its
+  name and comments in it, and profiles name a launch's work after its
+  kernel. On a GPU, a parameter's name still holds its buffer's size
+  (`data0_4096`), so kernels over buffers of two sizes keep two binaries.
+- **Reason:** (d), to re-measure on a quiet fudge: tessera's distillation
+  step (nano, 64 pixels, `--device cpu-jit`, cold) makes 222 programs whose
+  binaries fall from 217 to 160 and Clang's sources from 219 to 165, its
+  process 24.6 s to 22.5 s (medians of 3, fudge's CPU at load 10-22), its
+  loss unchanged; a 5-kernel encoder over four extents went from 20 binaries
+  to 6, a new extent's first call 48-58% faster.
+- **Pinned by:** the `Codegen` suite's `kernels of one source take one
+  binary` (a name, a GPU kernel's launch sizes, host kernels over two
+  extents run one binary, kernels of one source compile once, kernels of two
+  sources keep two binaries whatever comments, literals, splices and
+  trigraphs their code holds, a comment after a digit separator); the bench
+  row is owed.

@@ -2245,12 +2245,15 @@ module Submission : sig
       reads, or both ends are buffers and they differ in length or
       share a byte. *)
 
-  val launch : ?refs:ref array -> Image.func -> params:int -> part
-  (** [launch ~refs fn ~params] runs [fn] once, over the grid of groups of
-      threads that its block in the run sets ({!val-block}), with the
+  val launch :
+    ?refs:ref array -> ?label:string -> Image.func -> params:int -> part
+  (** [launch ~refs ~label fn ~params] runs [fn] once, over the grid of groups
+      of threads that its block in the run sets ({!val-block}), with the
       [params] bytes of parameters of that block and each of [refs]
       (defaults to [[||]]) placed ({!type-ref}), which [launch] reads once.
-      [fn]'s image must be loaded on the device.
+      [fn]'s image must be loaded on the device. [label] names the launch's
+      work in profiles ({!Profile.event}) and in its refusals; it defaults to
+      [fn]'s name ({!Image.name}), and tells apart launches of one function.
 
       Raises [Invalid_argument] if [params] is negative or above
       [2{^31} - 32], the most one block of a run holds ({!make}), or is
@@ -2666,8 +2669,9 @@ module Profile : sig
             device started it to when the device ended all its parts' work,
             on the lane of the queue its first part ran on, such as
             ["COMPUTE:0"] ({!Rig_edge.type-queue}). Each submission with
-            parts records it. It is named after the functions its launches
-            run, in the order of its parts, joined by [", "], or, with no
+            parts records it. It is named after its launches, each by its
+            label ({!Submission.launch}), in the order of its parts, joined
+            by [", "], or, with no
             launch, after its first part's kind, ["copies"], ["fills"] or
             ["words"]. A device whose driver cannot time a submission's work
             records none of it, nor does one whose driver finds the work's
@@ -2700,7 +2704,9 @@ module Profile : sig
         counters : (string * int array) list;
             (** Each counter's name and its count during the run, one per unit
                 of the hardware that counts it. *)
-      }  (** The counters of a run of a function. *)
+      }
+        (** The counters of a run of a launch, [name] its label
+            ({!Submission.launch}). *)
     | Trace of {
         device : device;
         name : string;

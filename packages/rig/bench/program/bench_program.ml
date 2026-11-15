@@ -42,6 +42,7 @@ let fills steps =
           {
             image = d;
             name = "fill";
+            label = "fill";
             params = { bytes = le64 0 ^ le64 7; holes = [||] };
             refs = [| { G.slot = 0; at = 0; use = Write } |];
             groups = (G.Fixed 1, G.Fixed 1, G.Fixed 1);
@@ -238,6 +239,7 @@ let host_step () =
                     {
                       image = 0;
                       name = "empty";
+                      label = "empty";
                       params = { bytes = String.make 16 '\000'; holes = [||] };
                       refs =
                         [|

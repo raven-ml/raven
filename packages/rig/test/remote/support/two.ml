@@ -111,6 +111,7 @@ let sender d binary rail k =
                       {
                         image = 0;
                         name = "twice";
+                        label = "twice";
                         params =
                           { G.bytes = Bytes.to_string params; holes = [||] };
                         refs =
@@ -146,6 +147,7 @@ let sender d binary rail k =
                   {
                     image = 1;
                     name = "ready";
+                    label = "ready";
                     params =
                       {
                         G.bytes = String.make 48 '\000';

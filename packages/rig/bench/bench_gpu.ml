@@ -175,6 +175,7 @@ let one_launch arch binary =
       {
         image = 0;
         name = "ids";
+        label = "ids";
         params = { G.bytes = String.make 24 '\000'; holes = [||] };
         refs = [| { G.slot = 0; at = 0; use = Write } |];
         groups = one 1;

@@ -52,6 +52,7 @@ let fill ?(holes : _ iarray = [||]) ?(use = G.Write) ~image ~groups base =
         {
           image;
           name = "fill";
+          label = "fill";
           params = { bytes; holes };
           refs = [| { G.slot = 0; at = 0; use } |];
           groups = (Fixed groups, Fixed 1, Fixed 1);
@@ -66,6 +67,7 @@ let kcopy ?(src = 0) ?(dst = 1) ~image bytes =
         {
           image;
           name = "copy";
+          label = "copy";
           params = data (String.make 16 '\000' ^ le64 bytes);
           refs =
             [|
@@ -674,6 +676,7 @@ let fill_at w base =
     {
       image = 0;
       name = "fill";
+      label = "fill";
       params = data (String.make 8 '\000' ^ le64 base);
       refs = [| { G.slot = 0; at = 0; use = Write } |];
       groups = (G.Int w, G.Fixed 1, G.Fixed 1);
@@ -774,6 +777,7 @@ let fill_word i hole =
         {
           image = 0;
           name = "fill";
+          label = "fill";
           params = { bytes = le64 (8 * i) ^ le64 0; holes = [| hole |] };
           refs = [| { G.slot = 0; at = 0; use = Write } |];
           groups = (Fixed 1, Fixed 1, Fixed 1);
@@ -1333,6 +1337,7 @@ let with_params bytes (t : G.t) =
                   {
                     image = 0;
                     name = "fill";
+                    label = "fill";
                     params = data bytes;
                     refs = [||];
                     groups = (Fixed 1, Fixed 1, Fixed 1);
@@ -1859,6 +1864,7 @@ let step_affine ?(host = 1) ?(image = 1) x ~a ~c =
         {
           image;
           name = "affine";
+          label = "affine";
           params =
             {
               bytes = String.make 16 '\000' ^ le64 1 ^ String.make 16 '\000';
@@ -2171,6 +2177,7 @@ let clear_int w =
         {
           image = 1;
           name = "affine";
+          label = "affine";
           params =
             data (le64 (8 * w) ^ le64 (8 * w) ^ le64 1 ^ le64 0 ^ le64 0);
           refs =
@@ -2276,6 +2283,7 @@ let calling ~(callee : G.leaf) x =
         {
           image = 1;
           name = "calling";
+          label = "calling";
           params =
             {
               bytes =
@@ -2596,12 +2604,14 @@ let gen_t =
          (Copy { src; src_offset; dst; dst_offset; length } : G.part));
         (let+ image = n
          and+ name = str
+         and+ label = str
          and+ params = data value
          and+ refs = few ref
          and+ groups = triple
          and+ threads = triple
          and+ shared = value in
-         Launch { image; name; params; refs; groups; threads; shared });
+         Launch
+           { image; name; label; params; refs; groups; threads; shared });
       ]
   in
   let rec step depth =
@@ -2689,7 +2699,7 @@ let test_version () =
   let s = Bytes.of_string (G.to_string (base (fst (polled "version")))) in
   Bytes.set_int64_le s 12 7L;
   let why = require_error (G.of_string (Bytes.to_string s)) in
-  contains ~msg:"names the versions" ~sub:"version 7, not 14" why
+  contains ~msg:"names the versions" ~sub:"version 7, not 15" why
 
 (* A description cut inside its version is malformed where the cut is. *)
 let test_cut_version () =
@@ -2730,6 +2740,7 @@ let rail_program =
               {
                 image = 0;
                 name = "ready";
+                label = "ready";
                 params =
                   {
                     bytes = String.make 32 '\000' ^ le64 1;
@@ -2829,6 +2840,7 @@ let beside_law b =
                     {
                       image = 0;
                       name = "main";
+                      label = "main";
                       params =
                         {
                           bytes = Bytes.to_string bytes;
@@ -2959,6 +2971,7 @@ let test_trip_follows_work () =
           {
             image = 0;
             name = "copy";
+            label = "copy";
             params =
               {
                 bytes = le64 0 ^ le64 0 ^ le64 1;
@@ -3925,6 +3938,7 @@ let waiting_step ?(groups : G.value = Fixed 1) slots rounds =
         {
           image = 0;
           name = "waiting";
+          label = "waiting";
           params =
             { bytes = String.make (8 * (n + 1)) '\000'; holes = [| hole 8 rounds |] };
           refs =
@@ -4100,6 +4114,7 @@ let test_entry_leaf_kept () =
                 {
                   image = 1;
                   name = "calling";
+                  label = "calling";
                   params =
                     {
                       bytes = String.make 24 '\000';

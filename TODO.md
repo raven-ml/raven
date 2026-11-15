@@ -5,6 +5,17 @@ Where it stands, with every measurement: doc/performance.md.
 
 ## tolk
 
+- One binary per source (D485) shares nothing on a GPU between kernels over
+  buffers of two sizes: cstyle names each parameter after its buffer's size
+  (`data0_4096`), so the compiled texts differ. The compiled text should
+  name parameters without sizes, decided where the renderer names them
+  (renaming in `Codegen.without_display` would need a bijection per
+  parameter; renaming in the renderer moves every source golden)
+  (_plans/tessera-port/design/shapes/s3s5-notes.md)
+- `Codegen.to_programs` compiles each worker's sources apart, so two kernels
+  of one compiled text taken by two workers each run Clang or NVRTC; one
+  compile per distinct text needs the texts gathered before the workers
+  split them
 - Dense bf16 projections on CUDA (_plans/perf-campaign/proj/, proj2/): k
   and v run 11.3 us at 64 tokens to 24 us at 512, L2 evicted
   (`stream/key-projection-64` 15.7 us), 2-4x their 5.5 us byte bound: they

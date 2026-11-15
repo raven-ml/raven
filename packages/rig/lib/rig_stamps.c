@@ -972,12 +972,12 @@ value caml_rig_call_producer(value v_c) {
 
 /* A block, as Submission.block makes it: its submission's id, where it
    starts in a run, its parameter bytes, the most threads a group of its
-   function has or 0 for none, and the function's name. */
+   function has or 0 for none, and the launch's label. */
 #define BLOCK_SUB(v) ((uint64_t)Long_val(Field(v, 0)))
 #define BLOCK_AT(v) ((size_t)Long_val(Field(v, 1)))
 #define BLOCK_PARAMS(v) ((size_t)Long_val(Field(v, 2)))
 #define BLOCK_MOST(v) Long_val(Field(v, 3))
-#define BLOCK_FN(v) String_val(Field(v, 4))
+#define BLOCK_LABEL(v) String_val(Field(v, 4))
 
 /* Stores the [size] bytes at [src] at byte [at] of the run [v_r]'s block
    [v_b]. The calling thread must have taken the run, which only it can
@@ -1050,7 +1050,7 @@ static void check_threads(value b, intnat x, intnat y, intnat z) {
            "Rig.Submission.Run.threads: %s runs at most %" PRId64
            " threads per group; the block sets %" PRId64 "x%" PRId64
            "x%" PRId64,
-           BLOCK_FN(b), (int64_t)most, (int64_t)x, (int64_t)y, (int64_t)z);
+           BLOCK_LABEL(b), (int64_t)most, (int64_t)x, (int64_t)y, (int64_t)z);
   caml_invalid_argument(why);
 }
 

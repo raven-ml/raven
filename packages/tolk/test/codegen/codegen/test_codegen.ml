@@ -759,11 +759,12 @@ let compiles_in_one_call () =
    the first did not keep. *)
 let remakes_after_raise () =
   let ks = List.init 6 (fun _ -> fresh_kernel ()) in
+  (* What the compiler is given for the fourth: its text compiled, which the
+     uncompiling renderer's binary is. *)
   let rejected =
     let k = List.nth ks 3 in
-    source (Codegen.compile (Codegen.linearize k clang) clang)
+    Uops.binary_of (Codegen.compile (Codegen.linearize k clang) clang)
   in
-  (* What the compiler is given holds the program's source, and more. *)
   let holds src =
     let n = String.length rejected in
     let rec at i =
@@ -969,6 +970,161 @@ let read_waits_for_none () =
   match Codegen.read k r with
   | Some q -> same_graph p q
   | None -> fail "the made program is not returned"
+
+(* One binary per source *)
+
+(* [out[i] = 2 inp[i]] over the first [n] floats of buffers of [size],
+   [n] by default, named [name], as kernels of one operation over two extents
+   are, their names after their shapes. *)
+let doubled ?size ~name n =
+  let size = Option.value size ~default:n in
+  let out = Shape.param ~shape:[ Ops.Int size ] 0 Float32
+  and inp = Shape.param ~shape:[ Ops.Int size ] 1 Float32 in
+  let r = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
+  let twice = Ops.O.(Ops.index inp [ r ] * Ops.float ~dtype:Float32 2.) in
+  Ops.sink ~kernel:(Ops.kernel_info ~name ())
+    [ Ops.end_ (Ops.store (Ops.index out [ r ]) twice) [ r ] ]
+
+(* A kernel's name shows in its source, and is no part of its binary. *)
+let renaming_keeps_the_binary () =
+  let a = Codegen.to_program (doubled ~name:"twice_a" 64) clang
+  and b = Codegen.to_program (doubled ~name:"twice_b" 64) clang in
+  not_equal string ~msg:"sources, which show their names" (source a)
+    (source b);
+  equal string ~msg:"binaries" (Uops.binary_of a) (Uops.binary_of b)
+
+(* On a GPU, the launch sizes show in the source, in comments, and are no part
+   of its binary: kernels over two extents of buffers of one size, which the
+   optimiser treats alike, take one binary. Rendering needs no GPU. *)
+let gpu_extents_keep_the_binary () =
+  let cuda = renderer_for (target "CUDA" "CUDA" "sm_89") in
+  let at n =
+    Codegen.to_program
+      (doubled ~size:8192 ~name:(Printf.sprintf "twice_%d" n) n)
+      cuda
+  in
+  let small = at 4096 and large = at 8192 in
+  not_equal string ~msg:"sources, which show their launch sizes"
+    (source small) (source large);
+  equal string ~msg:"binaries" (Uops.binary_of small) (Uops.binary_of large)
+
+(* Kernels over two extents on the host compile to one binary, which runs
+   each over its own extent: the launch passes it. *)
+let host_extents_share_a_binary () =
+  let host = Lazy.force host in
+  let at n =
+    Codegen.to_program (doubled ~name:(Printf.sprintf "twice_%d" n) n) host
+  in
+  let small = at 4096 and large = at 12288 in
+  equal string ~msg:"binaries" (Uops.binary_of small) (Uops.binary_of large);
+  List.iter
+    (fun (n, prg) ->
+      let inp = Array.init n (fun i -> `Float (Float.of_int (i - 100))) in
+      let twice =
+        Array.map (function `Float f -> `Float (2. *. f) | v -> v) inp
+      in
+      equal (array Dtypes.value)
+        ~msg:(Printf.sprintf "%d elements" n)
+        twice
+        (List.assoc 0 (Run.on_host prg [ (1, inp) ])))
+    [ (4096, small); (12288, large) ]
+
+(* Two kernels of one source compile once while the compiler's binaries are
+   kept: the second finds the first's. *)
+let compiles_once_per_source () =
+  let compiled = Atomic.make 0 in
+  let table =
+    Printf.sprintf "test_codegen_one_binary_%.6f" (Unix.gettimeofday ())
+  in
+  let compiler =
+    Renderer.Compiler.v ~cachekey:(fun () -> table) (fun src ->
+        Atomic.incr compiled;
+        src)
+  in
+  let r = renderer_for ~compiler clang_target in
+  List.iter
+    (fun name -> ignore (Codegen.to_program (doubled ~name 64) r))
+    [ "once_a"; "once_b" ];
+  equal int ~msg:"compilations" 1 (Atomic.get compiled)
+
+(* A kernel of code in the target's language, [code], on [out], named
+   [name]. *)
+let coded ?(name = "coded") code =
+  let out = Shape.param ~shape:[ Ops.Int 2 ] 0 Float32 in
+  Ops.sink ~kernel:(Ops.kernel_info ~name ())
+    [
+      Ops.call
+        (Ops.custom_function ~fmt:true code [])
+        [ Ops.index out [ Ops.int 0 ] ];
+    ]
+
+let compiled code = Uops.binary_of (Codegen.to_program (coded code) clang)
+
+(* The text compiled means what the source means: kernels whose code differs
+   after what a reader could take for a comment's opener or closer keep two
+   binaries, where a reader that took it for one would drop the code
+   between. Each row is code whose [HOLE] the two kernels fill apart. Line
+   splices (a backslash, blanks and a newline) and trigraphs ([??/], a
+   backslash before C++17) join or end comments before C reads them. *)
+let apart =
+  [
+    ("a line comment holding a block comment's opener",
+     "// /*\n{0}[0] = HOLE; /* */");
+    ("a string holding a block comment's opener",
+     "(void)\"/*\"; {0}[0] = HOLE; /* */");
+    ("a raw string holding a quote",
+     "(void)R\"x(\"/*)x\"; {0}[0] = HOLE; /* */");
+    ("a splice opening a line comment",
+     "/\\\n/ see /*\n{0}[0] = HOLE;\n/* 4 */");
+    ("a splice closing a block comment",
+     "/* a *\\\n/ {0}[0] = HOLE; /* b */");
+    ("a backslash, a blank and a newline after a line comment",
+     "// a \\ \n/*\n{0}[0] = HOLE;\n/* 4 */");
+    ("a backslash continuing a line comment",
+     "// a \\\n{0}[0] = HOLE; /* */");
+    ("a trigraph in a string",
+     "{0}[0] = sizeof(\"??/\" /* HOLE */ \");");
+  ]
+
+(* [template] with each [HOLE] written [v]. *)
+let filled template v =
+  let rec from i =
+    match String.index_from_opt template i 'H' with
+    | Some j
+      when j + 4 <= String.length template && String.sub template j 4 = "HOLE"
+      ->
+        String.sub template i (j - i) ^ v ^ from (j + 4)
+    | Some j -> String.sub template i (j + 1 - i) ^ from (j + 1)
+    | None -> String.sub template i (String.length template - i)
+  in
+  from 0
+
+let keeps_apart (_, template) =
+  not_equal string ~msg:"binaries"
+    (compiled (filled template "1.0f"))
+    (compiled (filled template "22.0f"))
+
+(* A comment after a C++ digit separator is a comment, which no binary
+   holds. *)
+let reads_digit_separators () =
+  equal string ~msg:"binaries"
+    (compiled "{0}[0] = 1'000; /* one */")
+    (compiled "{0}[0] = 1'000; /* two */")
+
+let sharing =
+  group "kernels of one source take one binary"
+    [
+      test "a kernel's name is no part of its binary" renaming_keeps_the_binary;
+      test "a GPU kernel's launch sizes are no part of its binary"
+        gpu_extents_keep_the_binary;
+      test "host kernels over two extents run one binary"
+        host_extents_share_a_binary;
+      test "kernels of one source compile once" compiles_once_per_source;
+      cases "kernels of two sources keep two binaries"
+        ~id:fst apart keeps_apart;
+      test "a comment after a digit separator is no part of a binary"
+        reads_digit_separators;
+    ]
 
 let caching =
   group "programs are kept"
@@ -1325,7 +1481,6 @@ let ten_scalars () =
       [ Ops.store (Ops.index out [ Ops.int ~dtype:Int32 0 ]) sum ]
   in
   let p = Codegen.to_program k (Lazy.force host) in
-  equal ~msg:"the entry" string "ten" (Uops.entry_of p);
   let value v =
     List.assoc (Ops.expr v) (List.mapi (fun i v -> (Ops.expr v, i + 1)) vars)
   in
@@ -1338,7 +1493,7 @@ let ten_scalars () =
      integer. *)
   (match Rig.Image.load Rig.host (Uops.binary_of p) with
   | Ok image ->
-      let fn = require_some (Rig.Image.resolve image (Uops.entry_of p)) in
+      let fn = require_some (Rig.Image.resolve image Codegen.symbol) in
       let s =
         Rig.Submission.(
           make Rig.host
@@ -1404,6 +1559,44 @@ let calls_only_its_own n () =
   is_some ~msg:"the program is split" (kernel_info (Ops.nth p 0)).split;
   equal (list string) [] (undefined_calls p)
 
+(* [renamed name src] is [src] with each [name] written [Codegen.symbol], and
+   [uncommented src] with each comment a space: [src]'s kernel is the only
+   identifier of its name, and no literal holds a comment's marks. *)
+let renamed name src =
+  let n = String.length name and b = Buffer.create (String.length src) in
+  let rec from i =
+    if i >= String.length src then ()
+    else if i + n <= String.length src && String.sub src i n = name then begin
+      Buffer.add_string b Codegen.symbol;
+      from (i + n)
+    end
+    else begin
+      Buffer.add_char b src.[i];
+      from (i + 1)
+    end
+  in
+  from 0;
+  Buffer.contents b
+
+let uncommented src =
+  let b = Buffer.create (String.length src) in
+  let rec from i =
+    match String.index_from_opt src i '/' with
+    | Some j when j + 1 < String.length src && src.[j + 1] = '*' ->
+        Buffer.add_substring b src i (j - i);
+        Buffer.add_char b ' ';
+        let rec close k =
+          if src.[k] = '*' && src.[k + 1] = '/' then k + 2 else close (k + 1)
+        in
+        from (close (j + 2))
+    | Some j ->
+        Buffer.add_substring b src i (j + 1 - i);
+        from (j + 1)
+    | None -> Buffer.add_substring b src i (String.length src - i)
+  in
+  from 0;
+  Buffer.contents b
+
 let scalars_of (p : Ops.program_info) =
   List.filter (fun u -> Ops.addrspace u = Some Alu) p.params
 
@@ -1431,26 +1624,28 @@ let programs =
         (per_row ~only:on_clang ~default:sample lowers_the_same_twice);
       test
         "a device program's binary is its source compiled by the renderer's \
-         compiler" (fun () ->
+         compiler, its comments dropped and its kernel named symbol" (fun () ->
           let p = Codegen.to_program (Lazy.force add_kernel) (metal ()) in
-          equal string (source p) (Uops.binary_of p));
+          equal string
+            (uncommented (renamed "E_2_32_4" (source p)))
+            (Uops.binary_of p));
       test "a host program's binary holds rig's host entry after the kernel"
         (fun () ->
           let p = Codegen.to_program (Lazy.force add_kernel) clang in
           equal string
             (String.concat "\n"
                [
-                 "#define E_16_16 E_16_16_";
-                 source p;
-                 "#undef E_16_16";
-                 "void E_16_16(const void *p, long long first, long long end) \
-                  { unsigned char a[32] __attribute__((aligned(8))); \
+                 "#define tolk_kernel tolk_kernel_";
+                 renamed "E_16_16" (source p);
+                 "#undef tolk_kernel";
+                 "void tolk_kernel(const void *p, long long first, long long \
+                  end) { unsigned char a[32] __attribute__((aligned(8))); \
                   __builtin_memcpy_inline(a, p, sizeof a); int hi; \
                   __builtin_memcpy_inline(&hi, a + 28, sizeof hi); if (end > \
                   hi) end = hi; if (first < end) { int lo = first; hi = end; \
                   __builtin_memcpy_inline(a + 24, &lo, sizeof lo); \
                   __builtin_memcpy_inline(a + 28, &hi, sizeof hi); \
-                  E_16_16_(a); } }";
+                  tolk_kernel_(a); } }";
                ])
             (Uops.binary_of p));
       test
@@ -9858,6 +10053,7 @@ let () =
            blocks;
            beam_search;
            caching;
+           sharing;
            linearizing;
            on_disk;
            programs;
