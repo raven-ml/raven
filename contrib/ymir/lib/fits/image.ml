@@ -120,11 +120,11 @@ let of_big_endian (type a b) (dtype : (a, b) Nx.dtype) shape bytes : (a, b, Nx.h
     let u = if Sys.big_endian then u else Nx.flip ~axes:[ 1 ] u in
     Nx.reshape shape (Nx.bitcast dtype u)
 
-(* [to_big_endian t] is a host buffer of [t]'s elements in C order, each
-   big-endian. *)
-let to_big_endian (type a b) (t : (a, b, Nx.host) Nx.t) : B.t =
+(* [to_big_endian ~by t] is a host buffer of [t]'s elements in C order, each
+   big-endian, read for the function [by]. *)
+let to_big_endian (type a b) ~by (t : (a, b, Nx.host) Nx.t) : B.t =
   let w = Nx.Dtype.bytes (Nx.dtype t) 1 in
-  let src = Hdu.bytes (Nx.bitcast Nx.uint8 t) in
+  let src = Hdu.bytes ~by (Nx.bitcast Nx.uint8 t) in
   if w = 1 || Sys.big_endian then src
   else begin
     (* each element's bytes reversed, in one pass that allocates nothing *)
@@ -508,16 +508,16 @@ let to_stored (type a b) (t : (a, b, Nx.host) Nx.t) : Nx.host Nx.packed =
   | Uint64 -> Nx.P (Nx.bitcast Nx.int64 (Nx.add_s t Int64.min_int))
   | _ -> Nx.P t
 
-let encode t =
+let encode ~by t =
   let (Nx.P s) = to_stored t in
-  to_big_endian s
+  to_big_endian ~by s
 
 (* Rows of at most this many bytes make one slab of a streamed write. *)
 let slab_bytes = 1 lsl 22
 
 (* [each_slab t f] calls [f] with the big-endian elements of [t]'s slabs
    along its leading axis, in order. *)
-let each_slab (type a b) (t : (a, b, Nx.host) Nx.t) f =
+let each_slab (type a b) ~by (t : (a, b, Nx.host) Nx.t) f =
   let shape = Nx.shape t in
   let lead = shape.(0) in
   let row = Nx.nbytes t / Int.max 1 lead in
@@ -525,18 +525,18 @@ let each_slab (type a b) (t : (a, b, Nx.host) Nx.t) f =
   let rec go a =
     if a < lead then begin
       let b = Int.min lead (a + step) in
-      f (encode (Nx.slice [ Nx.R (a, b) ] t));
+      f (encode ~by (Nx.slice [ Nx.R (a, b) ] t));
       go b
     end
   in
   go 0
 
-let plain_stream header t =
+let plain_stream ~by header t =
   {
     Hdu.provisional = header;
     write =
       (fun sink ->
-        each_slab t sink.Hdu.append;
+        each_slab ~by t sink.Hdu.append;
         header);
   }
 
@@ -558,16 +558,16 @@ let tile_shape fn shape tiles =
 
 (* A tiled image HDU: a BINTABLE of the tiles coded by [plan], tile row by
    tile row from slabs of [t] along its leading axis. *)
-let tiled header t ~bitpix ~others ~tile plan =
+let tiled ~by header t ~bitpix ~others ~tile plan =
   let axes = Array.of_list (List.rev (Array.to_list (Nx.shape t))) in
-  let slab a b f = Hdu.reading (encode (Nx.slice [ Nx.R (a, b) ] t)) f in
+  let slab a b f = Hdu.reading (encode ~by (Nx.slice [ Nx.R (a, b) ] t)) f in
   (* a quantized image is read once before it is coded, for its seed *)
   let zdither0 =
     Once.make (fun () ->
         match plan with
         | Tiles.Quantized _ ->
             let s = Checksum.summer () in
-            each_slab t (fun b ->
+            each_slab ~by t (fun b ->
                 Hdu.reading b (fun a -> Checksum.feed s a 0 (B.length b)));
             Tiles.zdither0 (Checksum.total s)
         | Lossless _ -> 0)
@@ -681,7 +681,8 @@ let hdu ?tiles header (t : ('a, 'b, Nx.host) Nx.t) =
                  (Nx.Dtype.name (Nx.dtype t)))
         | _ -> Tiles.Gzip_2
       in
-      tiled header t ~bitpix ~others ~tile (Lossless codec)
+      tiled ~by:"Fits.Image.hdu" header t ~bitpix ~others ~tile
+        (Lossless codec)
   | None ->
       let axes = Array.of_list (List.rev (Array.to_list shape)) in
       let owned k = Structure.image_owned k || (bitpix < 0 && k = "BLANK") in
@@ -690,9 +691,10 @@ let hdu ?tiles header (t : ('a, 'b, Nx.host) Nx.t) =
           ~prefix:(Structure.image_prefix ~primary:false ~bitpix ~axes)
           ~others header
       in
-      let data = Once.make (fun () -> Hdu.host_store (encode t)) in
+      let by = "Fits.Image.hdu" in
+      let data = Once.make (fun () -> Hdu.host_store (encode ~by t)) in
       Hdu.constructed
-        ~stream:(Once.of_value (plain_stream header t))
+        ~stream:(Once.of_value (plain_stream ~by header t))
         header data
 
 let quantized (type b) ?tiles q header (t : (float, b, Nx.host) Nx.t) =
@@ -721,6 +723,6 @@ let quantized (type b) ?tiles q header (t : (float, b, Nx.host) Nx.t) =
           (fun i n -> if i = Array.length shape - 1 then n else 1)
           shape
   in
-  tiled header t ~bitpix ~others:[]
+  tiled ~by:"Fits.Image.quantized" header t ~bitpix ~others:[]
     ~tile:(tile_shape "quantized" shape tiles)
     (Quantized { q })

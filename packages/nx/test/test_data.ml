@@ -229,6 +229,31 @@ let test_read_traced () =
         (Exn.invalid_arg ~sub:"Nx.item: the value is traced by test.reads")
         (fun () -> Nx.item [ 0 ] t))
 
+(* [Nx.Repr.read ~by] names [by] where it refuses. *)
+let test_repr_read_by () =
+  let dead = Nx.create f32 [| 2 |] [| 1.; 2. |] in
+  ignore (Nx.neg (Nx.donate dead));
+  invalid ~by:"test.reader" (fun () ->
+      Nx.Repr.read ~by:"test.reader" dead A.to_array);
+  let x = Nx.create f32 [| 2 |] [| 1.; 2. |] in
+  Nx.Prim.interpret ~name:"test.reads" Values mark (fun i ->
+      let t = Nx.Prim.traced i (Nx.Prim.form x) Mark in
+      raises_match
+        (Exn.invalid_arg ~sub:"test.reader: the value is traced by test.reads")
+        (fun () -> Nx.Repr.read ~by:"test.reader" t A.to_array))
+
+(* What a read raises that it did not refuse, a pending check's failure or its
+   function's own error, passes on as raised, whatever [~by] names. *)
+let test_repr_read_passes () =
+  let module S = (val Nx.devices [ m 0 ]) in
+  let failed = Invalid_argument "test.check: a flag is false" in
+  let ok = Nx.place S.on (Nx.create Nx.bool [| 2 |] [| true; false |]) in
+  Nx.check Nx.Ptree.unit ok () (fun _ () -> failed);
+  raises failed (fun () -> Nx.Repr.read ~by:"test.reader" ok A.to_array);
+  let x = Nx.create f32 [| 2 |] [| 1.; 2. |] in
+  let own = Invalid_argument "test.f: its own error" in
+  raises own (fun () -> Nx.Repr.read ~by:"test.reader" x (fun _ -> raise own))
+
 (* An extent reaches every operation on its fiber; a read is none. *)
 let test_read_under_extent () =
   let x = Nx.create f32 [| 2 |] [| 1.; 2. |] and c = Nx.zeros f32 [| 1 |] in
@@ -249,6 +274,8 @@ let reads =
       test "a view reads in its own C order" test_read_view;
       test "a dead value raises naming the read" test_read_dead;
       test "a traced value raises naming the read" test_read_traced;
+      test "Repr.read refuses naming its ~by" test_repr_read_by;
+      test "Repr.read passes on what it did not refuse" test_repr_read_passes;
       test "an extent receives no read" test_read_under_extent;
     ]
 

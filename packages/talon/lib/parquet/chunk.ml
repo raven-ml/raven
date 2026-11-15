@@ -159,11 +159,11 @@ let retype dt n x =
 (* [bits a n] is the first [n] elements of the bit array [a]. *)
 let bits a n = retype Nx.bit n (value a)
 
-(* [reading k x f] is [f b] for [b] [x]'s elements in C order as [k], whose
+(* [reading ~by k x f] is [f b] for [b] [x]'s elements in C order as [k], whose
    width divides theirs, under a read claim: a view of its buffer where they
    lie there in order from a byte, a copy's otherwise. *)
-let reading k x f =
-  Nx.Repr.read x @@ fun a ->
+let reading ~by k x f =
+  Nx.Repr.read ~by x @@ fun a ->
   let l = Nx_array.layout a and dt = Nx_array.dtype a in
   let n = Nx_array.Dtype.bytes dt (Nx_array.Layout.numel l) in
   let first = Nx_array.Layout.offset l * Nx_array.Dtype.bits dt in
@@ -174,6 +174,10 @@ let reading k x f =
   let w = Bigarray.kind_size_in_bytes k in
   Rig.Buffer.read (Nx_array.buffer a) k (fun b ->
       f (A1.sub b (first / w) (n / w)))
+
+(* The decoder reads values it made itself, for the source that reads the
+   file. *)
+let decoder = "Talon_parquet.source"
 
 (* Scratch
 
@@ -515,14 +519,14 @@ let gather s idx =
   | Values (P v) -> Values (P (Nx.take idx v))
   | Strings { offsets; data } ->
       let out, d =
-        reading i64 idx @@ fun idx ->
-        reading i64 offsets @@ fun offsets ->
+        reading ~by:decoder i64 idx @@ fun idx ->
+        reading ~by:decoder i64 offsets @@ fun offsets ->
         let m = A1.dim idx in
         let out = fresh Nx.int64 (m + 1) in
         let total = writing out (gather_ends offsets idx) in
         assert (total >= 0);
         let d = fresh Nx.uint8 total in
-        reading u8 data (fun data ->
+        reading ~by:decoder u8 data (fun data ->
             peek out @@ fun o ->
             writing d @@ fun dst ->
             let r = gather_byte_arrays offsets data idx o dst in
@@ -549,7 +553,8 @@ let spread_values (type a b) (v : (a, b, Nx.host) Nx.t) ~valid ~rows =
   let taken =
     writing out @@ fun dst ->
     peek valid @@ fun valid ->
-    reading u8 v (fun src -> spread_fixed valid src (Nx.Dtype.bits dt) rows dst)
+    reading ~by:decoder u8 v (fun src ->
+        spread_fixed valid src (Nx.Dtype.bits dt) rows dst)
   in
   (retype dt rows (value out), taken)
 
@@ -577,7 +582,7 @@ let spread ~row_group s ~valid ~rows ~present =
         took
           ( writing o @@ fun o ->
             peek valid @@ fun valid ->
-            reading i64 offsets (fun offsets ->
+            reading ~by:decoder i64 offsets (fun offsets ->
                 spread_offsets valid offsets rows o) );
         let mask = bits valid rows in
         Varsize { valid = Some mask; offsets = value o; data }
@@ -615,7 +620,7 @@ let coded ~row_group idx ~valid ~rows ~offsets ~data =
   let n = Nx.dim 0 offsets - 1 in
   let words = fresh Nx.int64 (n + 2) in
   writing words (fun w ->
-      reading i64 offsets (fun o ->
+      reading ~by:decoder i64 offsets (fun o ->
           A1.blit o (A1.sub w 0 (n + 1));
           w.{n + 1} <- o.{n}));
   let offsets = value words in

@@ -55,7 +55,7 @@ let placed (type d) (module R : Nx.Devices with type d = d) h k xs =
   let run = Rig.Buffer.view b ~first:(k * 4) ~length:(n * 4) in
   let x = Nx.create Nx.float32 [| n |] xs in
   if n > 0 then
-    Rig.Buffer.copy ~src:(Nx.Repr.read x Nx_array.buffer) ~dst:run;
+    Rig.Buffer.copy ~src:(Nx.Repr.read ~by:"test" x Nx_array.buffer) ~dst:run;
   Nx.Repr.of_array R.v
     (Nx_array.v Nx.float32
        (Nx_array.Layout.contiguous (Iarray.of_list [ n ]))

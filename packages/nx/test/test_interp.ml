@@ -2117,8 +2117,8 @@ let twins =
               refused_read ~by:"Nx.to_bigarray" "test.twin" (fun () ->
                   Nx.to_bigarray Bigarray.float32 t);
               refused_read ~by:"Nx.sync" "test.twin" (fun () -> Nx.sync t);
-              refused_read ~by:"Nx.Repr.read" "test.twin" (fun () ->
-                  Nx.Repr.read t A.to_array);
+              refused_read ~by:"test.read" "test.twin" (fun () ->
+                  Nx.Repr.read ~by:"test.read" t A.to_array);
               invalid ~sub:"Nx.Repr.array: a value traced by test.twin"
                 (fun () -> Nx.Repr.array t)));
       test "item after its interpretation returned raises" (fun () ->

@@ -111,7 +111,7 @@ let dispatch_rows =
       (* A read of a value's array, which keeps its memory for the call: a
          value the collector finalises and a record in the C heap. *)
       Thumper.bench_with_setup "repr-read-1" ~setup:one (fun x ->
-          Nx.Repr.read x A.layout);
+          Nx.Repr.read ~by:"bench" x A.layout);
       Thumper.bench_with_setup "add-1" ~setup:one (fun x -> Nx.add x x);
       Thumper.bench_with_setup "sin-1" ~setup:one Nx.sin;
       Thumper.bench_with_setup "prim-eval-sin-1"

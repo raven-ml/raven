@@ -393,9 +393,9 @@ let test_several_reads () =
 type ('v, 's, 'd) Nx.Prim.payload += Tag : ('v, 's, 'd) Nx.Prim.payload
 
 let test_lent () =
-  let peek x = Nx.Repr.read x A.to_array in
+  let peek x = Nx.Repr.read ~by:"test" x A.to_array in
   let in_place x =
-    let b = Nx.Repr.read x A.buffer in
+    let b = Nx.Repr.read ~by:"test" x A.buffer in
     let y = Nx.neg (Nx.donate x) in
     Rig.Buffer.overlaps b (A.buffer (Option.get (Nx.Repr.array y)))
   in
@@ -714,7 +714,7 @@ let test_cut_in_place () =
    where a crossing ({!Nx.Repr.array}) shares it for good. *)
 let test_read_in_place () =
   let read c =
-    Nx.Repr.read c (fun a ->
+    Nx.Repr.read ~by:"test" c (fun a ->
         Nx_array.read a (fun b ->
             ignore (Bigarray.Genarray.get b [| 5; 0 |])));
     c
@@ -742,7 +742,7 @@ let test_read_in_place () =
 let donated_during_read donate =
   let c = cache () in
   let y =
-    Nx.Repr.read c (fun a ->
+    Nx.Repr.read ~by:"test" c (fun a ->
         let before = A.to_array a in
         let y = donate c in
         let fresh = Option.get (Nx.Repr.array y) in

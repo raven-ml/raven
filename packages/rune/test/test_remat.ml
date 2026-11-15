@@ -578,7 +578,7 @@ let test_stacked_step () =
 let test_donated () =
   let w = (Nx.get [ 0 ] (fst ws), Nx.get [ 0 ] (snd ws)) in
   let grad a = Rune.grad' (fun a -> Nx.sum (rm (block w) a)) a in
-  let address x = Nx.Repr.read x Nx_array.buffer in
+  let address x = Nx.Repr.read ~by:"test" x Nx_array.buffer in
   let memory_t =
     Testable.make
       ~pp:(fun ppf b -> Format.fprintf ppf "byte %d" (Rig.Buffer.offset b))
@@ -700,11 +700,13 @@ let first_call s f x =
   let g = Rune.jit s f in
   let x = x () in
   let donated = Nx.Prim.donated x in
-  let memory = Nx.Repr.read x Nx_array.buffer in
+  let memory = Nx.Repr.read ~by:"test" x Nx_array.buffer in
   let before = host_settled () in
   let r = g x in
   let held = host_settled () - before in
-  let taken = Rig.Buffer.overlaps memory (Nx.Repr.read r Nx_array.buffer) in
+  let taken =
+    Rig.Buffer.overlaps memory (Nx.Repr.read ~by:"test" r Nx_array.buffer)
+  in
   let freed =
     if donated && not taken then
       Rig.allocation Rig.host (Rig.Buffer.length memory)

@@ -2626,7 +2626,8 @@ let on_disk (type d) (set : d Nx.Devices.t) xs =
   in
   Sys.remove path;
   let x = Nx.create f32 [| n |] xs in
-  if n > 0 then Rig.Buffer.copy ~src:(Nx.Repr.read x Nx_array.buffer) ~dst:b;
+  if n > 0 then
+    Rig.Buffer.copy ~src:(Nx.Repr.read ~by:"test" x Nx_array.buffer) ~dst:b;
   Nx.Repr.of_array set
     (Nx_array.v f32 (Nx_array.Layout.contiguous (Iarray.of_list [ n ])) b)
 

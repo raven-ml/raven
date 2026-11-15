@@ -953,8 +953,10 @@ let rec categoricals acc (f : field) (Type.Any t) =
 
 type part = Absent | Held of I.bigbytes | Values of Nx.host Nx.packed
 
+(* [reading x f] is [f b], [b] the bytes of [x]'s elements, read to encode
+   them. *)
 let reading (Nx.P x) f =
-  Nx.Repr.read x @@ fun a ->
+  Nx.Repr.read ~by:"Talon_arrow.encode" x @@ fun a ->
   let l = Nx_array.layout a and dt = Nx_array.dtype a in
   let n = Nx_array.Dtype.bytes dt (Nx_array.Layout.numel l) in
   let first = Nx_array.Layout.offset l * Nx_array.Dtype.bits dt / 8 in

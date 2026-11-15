@@ -1126,7 +1126,7 @@ let hex (type a b) (x : (a, b, Nx.host) Nx.t) =
     match Nx.dtype x with
     | Bool -> Nx.to_array (Nx.cast Nx.uint8 x)
     | _ when bits < 8 ->
-        Nx.Repr.read x @@ fun a ->
+        Nx.Repr.read ~by:"test" x @@ fun a ->
         Rig.Buffer.read (Nx_array.buffer a) Bigarray.int8_unsigned (fun raw ->
             Array.init (((Nx.numel x * bits) + 7) / 8) (fun i -> raw.{i}))
     | _ -> Nx.to_array (Nx.flatten (Nx.bitcast Nx.uint8 x))
@@ -5739,7 +5739,7 @@ let validity_bytes c =
   | None -> None
   | Some b ->
       let n = Nx.numel b in
-      Nx.Repr.read b @@ fun a ->
+      Nx.Repr.read ~by:"test" b @@ fun a ->
       Rig.Buffer.read (Nx_array.buffer a) Bigarray.int8_unsigned (fun raw ->
           Some (Array.init ((n + 7) / 8) (fun i -> raw.{i})))
 

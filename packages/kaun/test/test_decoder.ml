@@ -423,7 +423,7 @@ let test_generation_matches_recomputation ~in_place () =
   (* Each pool's storage, read without sharing it: a value over its memory
      would keep the next call from taking it. *)
   let storage kv =
-    let of_leaf x = [ Nx.Repr.read x Nx_array.buffer ] in
+    let of_leaf x = [ Nx.Repr.read ~by:"test" x Nx_array.buffer ] in
     Nx.Ptree.fold caches (fun _ t acc -> acc @ of_leaf t) kv []
   in
   let sampled () = fst (fst !s) and sampled_from () = snd (fst !s) in

@@ -1395,7 +1395,7 @@ let memory_t =
    nothing. *)
 let test_placed_calls () =
   let device = Nx_support.memory 2 in
-  let address x = Nx.Repr.read x Nx_array.buffer in
+  let address x = Nx.Repr.read ~by:"test" x Nx_array.buffer in
   let copied f =
     let y, events = Rig.Profile.take f in
     let count n = function
@@ -1836,7 +1836,7 @@ let law_donating c =
    from the arguments', the captures' and the other results'. *)
 let test_fresh () =
   let x = v [| 1.; 2. |] in
-  let b = Nx.Repr.read x Nx_array.buffer in
+  let b = Nx.Repr.read ~by:"test" x Nx_array.buffer in
   let shares y =
     Rig.Buffer.overlaps b (Nx_array.buffer (Option.get (Nx.Repr.array y)))
   in
@@ -1877,7 +1877,7 @@ let test_fresh () =
         (r, c))
   in
   let r, k = rooted x in
-  let held = Nx.Repr.read c Nx_array.buffer in
+  let held = Nx.Repr.read ~by:"test" c Nx_array.buffer in
   let held_by y =
     Rig.Buffer.overlaps held (Nx_array.buffer (Option.get (Nx.Repr.array y)))
   in
@@ -2032,7 +2032,10 @@ let first_arg (type s) (dt : (float, s) Nx.dtype) c =
       let x = Nx.create dt [| c.rows; 2 |] (values n) in
       let b = Rig.Buffer.create Rig.host ((k + n) * size) in
       let run = Rig.Buffer.view b ~first:(k * size) ~length:(n * size) in
-      if n > 0 then Rig.Buffer.copy ~src:(Nx.Repr.read x Nx_array.buffer) ~dst:run;
+      if n > 0 then
+        Rig.Buffer.copy
+          ~src:(Nx.Repr.read ~by:"test" x Nx_array.buffer)
+          ~dst:run;
       Nx.Repr.of_array Nx.Host.v
         (Nx_array.v dt
            (Nx_array.Layout.contiguous (Iarray.of_list [ c.rows; 2 ]))
@@ -2142,7 +2145,7 @@ let fresh xs = Nx.create f32 [| Array.length xs |] xs
 
 (* [g (Nx.donate x)] and whether it wrote its result into [x]'s memory. *)
 let in_place g x =
-  let b = Nx.Repr.read x Nx_array.buffer in
+  let b = Nx.Repr.read ~by:"test" x Nx_array.buffer in
   let y = g (Nx.donate x) in
   let a = Option.get (Nx.Repr.array y) in
   (Rig.Buffer.overlaps b (Nx_array.buffer a), y)
@@ -2208,7 +2211,7 @@ let test_lending () =
   let pair = T.(tensor @-> returns (pair tensor tensor)) in
   let g = Rune.jit pair (fun x -> (Nx.neg x, Nx.add x x)) in
   let x = fresh xs in
-  let b = Nx.Repr.read x Nx_array.buffer in
+  let b = Nx.Repr.read ~by:"test" x Nx_array.buffer in
   let y, z = g (Nx.donate x) in
   let shares v =
     Rig.Buffer.overlaps b (Nx_array.buffer (Option.get (Nx.Repr.array v)))
@@ -2314,7 +2317,8 @@ let law_donation (Donation_case (dt, s, xo, yo, e)) =
   let eager = outcome (fun () -> bits (f (make dt s xo) (make dt s yo))) in
   let x = make dt s xo and y = make dt s yo in
   let memory =
-    if numel s = 0 then None else Some (Nx.Repr.read x Nx_array.buffer)
+    if numel s = 0 then None
+    else Some (Nx.Repr.read ~by:"test" x Nx_array.buffer)
   in
   let result = ref None in
   let jitted =
@@ -2538,7 +2542,8 @@ let law_states (State_case c as case) =
   let eager = outcome (fun () -> both (step (make ()))) in
   let w, v = make () in
   let memory x =
-    if numel c.s = 0 then None else Some (Nx.Repr.read x Nx_array.buffer)
+    if numel c.s = 0 then None
+    else Some (Nx.Repr.read ~by:"test" x Nx_array.buffer)
   in
   let leaves = List.filter_map memory [ w; v ] in
   let result = ref None in
@@ -2581,7 +2586,7 @@ let law_states (State_case c as case) =
    over the donated leaves [start ()] three times against eager, [same] its
    results' equality, and [lends] whether each result took a leaf's memory. *)
 let test_states () =
-  let address x = Nx.Repr.read x Nx_array.buffer in
+  let address x = Nx.Repr.read ~by:"test" x Nx_array.buffer in
   let run ~msg ~start ~same step lends =
     let two = T.(pair tensor tensor) in
     let g = Rune.jit T.(two @-> returns two) step in
@@ -2653,7 +2658,7 @@ let test_states () =
    while another result reads the pool's new value. Each call compiles and gives
    eager's values. *)
 let test_readers () =
-  let address x = Nx.Repr.read x Nx_array.buffer in
+  let address x = Nx.Repr.read ~by:"test" x Nx_array.buffer in
   let rows = Nx.reshape [| 2; 3 |] (fresh [| 0.5; -2.; 1.5; 0.25; 3.; -1. |]) in
   let f (w, a) =
     let w' = Nx.add_s w 1. in
@@ -2727,10 +2732,10 @@ let test_remat_lends () =
   let xs = [| 1.; -0.; 2.5; -3. |] in
   let ey, eg = f (fresh xs) in
   let x = fresh xs in
-  let b = Nx.Repr.read x Nx_array.buffer in
+  let b = Nx.Repr.read ~by:"test" x Nx_array.buffer in
   let y, d = g (Nx.donate x) in
   equal ~msg:"in place" bool true
-    (Rig.Buffer.overlaps b (Nx.Repr.read y Nx_array.buffer));
+    (Rig.Buffer.overlaps b (Nx.Repr.read ~by:"test" y Nx_array.buffer));
   equal bits_t (bits ey) (bits y);
   equal ~msg:"the gradient" bits_t (bits eg) (bits d)
 
@@ -2757,7 +2762,7 @@ let test_contract_init () =
    the table. Each pool is written in its own memory call after call, and the
    values keep eager's bits. *)
 let test_pools () =
-  let address x = Nx.Repr.read x Nx_array.buffer in
+  let address x = Nx.Repr.read ~by:"test" x Nx_array.buffer in
   let slots = 5 and width = 3 in
   let table = Nx.create Nx.int64 [| 1; slots |] [| 4L; 0L; 3L; 1L; 2L |] in
   let row = Nx.reshape [| 1; width |] (fresh [| 0.5; -2.; 1.5 |]) in
@@ -2843,7 +2848,7 @@ let test_long_donated () =
   let s, sq = f (x ()) in
   let p0 = Nx.to_array p and u0 = bits u in
   let x = x () in
-  let b = Nx.Repr.read x Nx_array.buffer in
+  let b = Nx.Repr.read ~by:"test" x Nx_array.buffer in
   let g = Rune.jit T.(tensor @-> returns (pair tensor tensor)) f in
   let before = Rune.evaluations () in
   let y, z = g (Nx.donate x) in
@@ -2888,7 +2893,7 @@ let test_long_twice () =
   in
   let s, _ = f (x ()) in
   let x = x () in
-  let b = Nx.Repr.read x Nx_array.buffer in
+  let b = Nx.Repr.read ~by:"test" x Nx_array.buffer in
   let g = Rune.jit T.(tensor @-> returns (pair tensor tensor)) f in
   let before = Rune.evaluations () in
   let y, z = g (Nx.donate x) in
@@ -3257,7 +3262,7 @@ let test_loop_checks () =
       (fun w xs -> (Nx.neg w, scan xs))
   in
   let w = v [| 1.; 2. |] in
-  let b = Nx.Repr.read w Nx_array.buffer in
+  let b = Nx.Repr.read ~by:"test" w Nx_array.buffer in
   let nw, y = lending (Nx.donate w) passing in
   let a = Option.get (Nx.Repr.array nw) in
   equal ~msg:"compiled: the result took the donated memory" bool true
@@ -3286,7 +3291,7 @@ let test_loop_checks () =
           Nx.mul_s w 4.)
     in
     let w = rows [| 1.; 2.; 0.; 2.5; 1.; 1. |] in
-    let b = Nx.Repr.read w Nx_array.buffer in
+    let b = Nx.Repr.read ~by:"test" w Nx_array.buffer in
     let a = Option.get (Nx.Repr.array (g (Nx.donate w))) in
     Rig.Buffer.overlaps b (Nx_array.buffer a)
   in

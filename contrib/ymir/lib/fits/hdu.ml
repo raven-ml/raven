@@ -111,11 +111,12 @@ let tensor dt shape b =
   let layout = Nx_array.Layout.contiguous (Iarray.of_array shape) in
   Nx.Repr.of_array Nx.Host.v (Nx_array.v dt layout b)
 
-(* [bytes t] is a fresh host buffer of [t]'s elements in C order. *)
-let bytes (t : (int, Nx.int8_unsigned_elt, Nx.host) Nx.t) =
+(* [bytes ~by t] is a fresh host buffer of [t]'s elements in C order, read for
+   the function [by]. *)
+let bytes ~by (t : (int, Nx.int8_unsigned_elt, Nx.host) Nx.t) =
   let n = Nx.numel t in
   let h = host_bytes n in
-  Nx.Repr.read t (fun a ->
+  Nx.Repr.read ~by t (fun a ->
       let a =
         if Nx_array.Layout.is_contiguous (Nx_array.layout a) then a
         else Nx_array.copy a
@@ -312,7 +313,8 @@ let read path =
   | Error e -> Error e
   | Ok f -> catch (fun () -> walk ~name:path (Rig_disk.buffer f))
 
-let of_bytes ~name t = catch (fun () -> walk ~name (bytes t))
+let of_bytes ~name t =
+  catch (fun () -> walk ~name (bytes ~by:"Fits.of_bytes" t))
 
 (* Data *)
 

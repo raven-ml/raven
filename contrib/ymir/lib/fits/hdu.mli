@@ -114,8 +114,10 @@ val tensor :
     of [b] in C order: [b]'s own memory on the host, a host copy of it
     elsewhere. [b] must not be written afterwards. *)
 
-val bytes : (int, Nx.int8_unsigned_elt, Nx.host) Nx.t -> Rig.Buffer.t
-(** [bytes t] is a new host buffer of [t]'s elements in C order. *)
+val bytes :
+  by:string -> (int, Nx.int8_unsigned_elt, Nx.host) Nx.t -> Rig.Buffer.t
+(** [bytes ~by t] is a new host buffer of [t]'s elements in C order, read for
+    the function [by] ({!Nx.Repr.read}). *)
 
 val read_string : Rig.Buffer.t -> offset:int -> int -> string
 (** [read_string src ~offset n] is the [n] bytes of [src] from byte

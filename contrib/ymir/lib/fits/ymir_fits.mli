@@ -23,7 +23,14 @@
     [<name>] is the path or {!Fits.of_bytes}'s name. HDUs count from 0, cards
     within their HDU from 1, and bytes are inclusive file offsets. Each place
     appears when known. A caller's bug, such as an illegal keyword name or a
-    dtype FITS cannot store, raises [Invalid_argument]. *)
+    dtype FITS cannot store, raises [Invalid_argument]. An HDU that
+    {!Fits.Image.hdu}, {!Fits.Image.quantized} or {!Fits.Table.hdu} makes
+    reads its tensors when its data is first written or read ({!Fits.write},
+    {!Fits.data}, {!Fits.verify}); a tensor nx cannot read, a traced one,
+    raises [Invalid_argument] there, naming the function that took it.
+    {!Fits.Table.hdu} also reads at the call each validity it is given, with
+    the values of an integer column, and a traced one raises there, naming
+    nx's read. *)
 
 module Fits : sig
   (** {1:values Values} *)

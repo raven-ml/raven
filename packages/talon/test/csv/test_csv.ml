@@ -696,7 +696,7 @@ let nulls =
           in
           let v = Option.get (Column.validity (column t "c1")) in
           equal (array bool) (Array.init 13 (fun i -> i <> 4)) (Nx.to_array v);
-          Nx.Repr.read v @@ fun a ->
+          Nx.Repr.read ~by:"test" v @@ fun a ->
           Rig.Buffer.read (Nx_array.buffer a) Bigarray.int8_unsigned (fun raw ->
               equal int 0 (raw.{1} lsr 5)));
       test "every row valid has no validity" (fun () ->

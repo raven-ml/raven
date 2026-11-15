@@ -1209,7 +1209,8 @@ let choose_null cplace elt held =
   in
   gap (stored_min elt)
 
-let be_of (type a b) (t : (a, b, Nx.host) Nx.t) f = Hdu.reading (Image.to_big_endian t) f
+let be_of (type a b) (t : (a, b, Nx.host) Nx.t) f =
+  Hdu.reading (Image.to_big_endian ~by:"Fits.Table.hdu" t) f
 
 (* Rows of at most this many bytes make one slab of a write. *)
 let slab_bytes = 1 lsl 22

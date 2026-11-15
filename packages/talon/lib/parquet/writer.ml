@@ -15,6 +15,10 @@ exception Failed of string
 
 let fail fmt = Printf.ksprintf (fun msg -> raise (Failed msg)) fmt
 
+(* The function that reads a table's values to encode them. *)
+let by = "Talon_parquet.encode"
+
+
 external rle_encode :
   ('a, 'b, Bigarray.c_layout) A1.t -> int -> int -> int -> bigbytes -> int
   = "talon_parquet_rle_encode"
@@ -333,7 +337,7 @@ let flat name ty c n =
   let at =
     match Column.validity c with
     | Some v when nulls > 0 ->
-        Chunk.reading u8 (Nx.cast Nx.uint8 v) (fun b ->
+        Chunk.reading ~by u8 (Nx.cast Nx.uint8 v) (fun b ->
             for i = 0 to n - 1 do
               A1.unsafe_set defs i (A1.unsafe_get b i)
             done);
@@ -557,7 +561,7 @@ let truncate_max s ~text =
   else Option.map (fun v -> (v, false)) (next (truncated s ~text) ~text)
 
 let bytes_of (Nx.P x) =
-  Chunk.reading u8
+  Chunk.reading ~by u8
     (Nx.reshape [| 1 |] x)
     (fun b -> String.init (A1.dim b) (fun i -> Char.chr b.{i}))
 
@@ -628,8 +632,8 @@ let stats leaf enc : Meta.stats =
         match enc with Dictionary { words = Byte_strings w; _ } -> w | _ -> r
       in
       let text = is_text leaf.ty in
-      Chunk.reading i64 (Nx_ragged.offsets r) @@ fun o ->
-      Chunk.reading u8 (Nx_ragged.values r) @@ fun d ->
+      Chunk.reading ~by i64 (Nx_ragged.offsets r) @@ fun o ->
+      Chunk.reading ~by u8 (Nx_ragged.values r) @@ fun d ->
       let lo_row = ref 0 and hi_row = ref 0 in
       for i = 1 to Nx_ragged.length r - 1 do
         if compare_rows o d i !lo_row < 0 then lo_row := i;
@@ -762,20 +766,20 @@ let plain_size v a b =
   | Bits _ -> (b - a + 7) / 8
   | Fixed_width (_, w) -> (b - a) * w
   | Byte_strings r ->
-      Chunk.reading i64 (Nx_ragged.offsets r) (fun o ->
+      Chunk.reading ~by i64 (Nx_ragged.offsets r) (fun o ->
           Int64.to_int (Int64.sub o.{b} o.{a}) + (4 * (b - a)))
 
 let add_plain v a b dst =
   match v with
-  | Bits x -> Chunk.reading u8 x (fun src -> pack_bits src a (b - a) dst)
+  | Bits x -> Chunk.reading ~by u8 x (fun src -> pack_bits src a (b - a) dst)
   | Fixed_width (Nx.P x, w) ->
-      Chunk.reading u8 x (fun src ->
+      Chunk.reading ~by u8 x (fun src ->
           let n = (b - a) * w in
           A1.blit (A1.sub src (a * w) n) (A1.sub dst 0 n);
           n)
   | Byte_strings r ->
-      Chunk.reading i64 (Nx_ragged.offsets r) (fun o ->
-          Chunk.reading u8 (Nx_ragged.values r) (fun d ->
+      Chunk.reading ~by i64 (Nx_ragged.offsets r) (fun o ->
+          Chunk.reading ~by u8 (Nx_ragged.values r) (fun d ->
               plain_byte_arrays o d a b dst))
 
 (* [with_cost leaf enc f] is [f cost], [cost v] the bits value [v] takes in a
@@ -786,7 +790,7 @@ let with_cost leaf enc f =
   | Plain, Bits _ -> f (fun _ -> 1)
   | Plain, Fixed_width (_, w) -> f (fun _ -> 8 * w)
   | Plain, Byte_strings r ->
-      Chunk.reading i64 (Nx_ragged.offsets r) (fun (o : int64s) ->
+      Chunk.reading ~by i64 (Nx_ragged.offsets r) (fun (o : int64s) ->
           f (fun v -> 8 * (4 + Int64.to_int (Int64.sub o.{v + 1} o.{v}))))
 
 (* [page_end defs top cost a va] is the end of the page that starts at slot [a]
@@ -865,7 +869,7 @@ let chunk out leaf : Meta.column_out =
         A1.set out.page !p bits;
         incr p;
         let k =
-          Chunk.reading i64 ids (fun o ->
+          Chunk.reading ~by i64 ids (fun o ->
               rle_encode (A1.sub o va nv) 8 nv bits (rest ()))
         in
         if k < 0 then fail "dictionary indices overrun their page";

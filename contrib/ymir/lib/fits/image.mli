@@ -61,7 +61,8 @@ val of_big_endian :
     held big-endian in the host buffer [bytes], of shape [shape]. [shape]
     must hold as many elements as [bytes]. *)
 
-val to_big_endian : ('a, 'b, Nx.host) Nx.t -> Rig.Buffer.t
-(** [to_big_endian t] is a host buffer of [t]'s elements in C order, each
-    big-endian. It may be [t]'s own storage when [t]'s elements are bytes
-    or the host is big-endian. *)
+val to_big_endian : by:string -> ('a, 'b, Nx.host) Nx.t -> Rig.Buffer.t
+(** [to_big_endian ~by t] is a host buffer of [t]'s elements in C order, each
+    big-endian, read for the function [by] ({!Nx.Repr.read}). It may be
+    [t]'s own storage when [t]'s elements are bytes or the host is
+    big-endian. *)

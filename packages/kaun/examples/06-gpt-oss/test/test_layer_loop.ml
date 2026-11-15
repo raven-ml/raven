@@ -94,7 +94,7 @@ let params ?(q8_0 = false) () =
 (* Each pool's storage, read without sharing it: a value over its memory
    would keep the next call from taking it. *)
 let storage caches =
-  let of_leaf x = [ Nx.Repr.read x Nx_array.buffer ] in
+  let of_leaf x = [ Nx.Repr.read ~by:"test" x Nx_array.buffer ] in
   List.concat_map
     (fun (c : _ Attention.Cache.t) -> of_leaf c.keys @ of_leaf c.values)
     caches

@@ -146,10 +146,12 @@ val flat : t -> t
     as {!Varsize}, and [c] itself otherwise. *)
 
 val reading :
+  by:string ->
   ('c, 'd) Bigarray.kind ->
   ('a, 'b, Nx.host) Nx.t ->
   (('c, 'd, Bigarray.c_layout) Bigarray.Array1.t -> 'e) ->
   'e
-(** [reading k x f] is [f b] for [b] [x]'s elements in C order as elements of
-    [k], whose width divides theirs, under a read claim: a view of its buffer
-    where they lie there in order from a byte, a copy's otherwise. *)
+(** [reading ~by k x f] is [f b] for [b] [x]'s elements in C order as elements
+    of [k], whose width divides theirs, under a read claim: a view of its
+    buffer where they lie there in order from a byte, a copy's otherwise. The
+    read is for the function [by] ({!Nx.Repr.read}). *)

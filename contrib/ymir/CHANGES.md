@@ -4,6 +4,12 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- A traced tensor given to `Fits.v` or `Fits.of_bytes` raises naming that
+  function, where it named `Nx.Repr.read`. One given to `Fits.Image.hdu`,
+  `Fits.Image.quantized` or `Fits.Table.hdu` raises when the HDU's data is
+  written or read (`Fits.write`, `Fits.data`, `Fits.verify`), naming the
+  function that took it; `Fits.Table.hdu` still reads a column's validity at
+  the call, naming nx's read.
 - Error messages write each float as the shortest decimal that reads back, the
   same text on every system: `1000000` where they wrote `1e+06`, or `1e+006`
   under Windows, and every digit where `Transform` rounded to six or ten.

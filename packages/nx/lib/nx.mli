@@ -5487,14 +5487,19 @@ module Repr : sig
       Raises [Invalid_argument] naming [Nx.Repr.array] for a dead or a traced
       [x]. *)
 
-  val read : ('v, 's, 'd) t -> (('v, 's) Nx_array.t -> 'a) -> 'a
-  (** [read x f] is [f a], [a] an array on the host of [x]'s elements for the
-      extent of [f]: over [x]'s own memory where [x] lies on one device whose
-      memory the host addresses (the host, a software device, Metal), and
-      otherwise a copy on the host, made for any placement, including a value
-      cut across devices. It is a {{!section-reads}read}: it waits for [x]'s
-      set and raises a failed check pending on it. [a] may be strided or
+  val read : by:string -> ('v, 's, 'd) t -> (('v, 's) Nx_array.t -> 'a) -> 'a
+  (** [read ~by x f] is [f a], [a] an array on the host of [x]'s elements for
+      the extent of [f]: over [x]'s own memory where [x] lies on one device
+      whose memory the host addresses (the host, a software device, Metal),
+      and otherwise a copy on the host, made for any placement, including a
+      value cut across devices. It is a {{!section-reads}read}: it waits for
+      [x]'s set and raises a failed check pending on it. [a] may be strided or
       offset.
+
+      [by] names the function the read is for: a library that reads for one
+      of its own functions passes that function's name, as
+      [~by:"Nx_io.save_npy"], so that its user meets the name of the function
+      they called.
 
       Unlike {!array}, it leaves [x]'s memory unshared, so a donation of [x]
       after [f] returns may write its result there ({!donate}). [a]'s memory
@@ -5504,8 +5509,8 @@ module Repr : sig
       keep [a], or a bigarray over it, after it returns. [x] stays reachable
       until [f] returns.
 
-      Raises [Invalid_argument] naming [Nx.Repr.read] for a dead or a traced
-      [x], and a failed check as a wait does. *)
+      Raises [Invalid_argument] naming [by] for a dead or a traced [x], and a
+      failed check as a wait does. What [f] raises passes on as raised. *)
 
   val of_shards :
     'd Placement.t -> ('v, 's) Nx_array.t iarray -> ('v, 's, 'd) t

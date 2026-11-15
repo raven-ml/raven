@@ -473,9 +473,10 @@ module Repr = struct
      claims the memory, so a donation meanwhile computes into fresh memory,
      and [x] stays reachable, so its memory is not collected under [f]. Each
      call's keep costs a value the collector finalises and a record in the C
-     heap. *)
-  let read x f =
-    let by = "Nx.Repr.read" in
+     heap. The keep refuses only memory a donation of [x] on another domain
+     took since the read, and runs no caller's code, so its refusal is [x]'s
+     death and names [by]. *)
+  let read ~by x f =
     let a = read ~by x in
     let k =
       try Rig.Buffer.keep [ Nx_array.buffer a ]

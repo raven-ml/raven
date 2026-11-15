@@ -2953,6 +2953,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- **Breaking:** `Nx.Repr.read` takes `~by`, the function the read is for,
+  which its refusal of a dead or traced value names in place of
+  `Nx.Repr.read`: a library names the function its user called.
 - `Nx.Prim` is documented, under a warning: a rule giving operations their
   own meanings must match every one, and the set may change before 1.0.
 - **Breaking:** `Nx.Prim.has_kernels` is `Nx.Devices.has_kernels`, `layouts`
@@ -4720,6 +4723,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Talon_arrow.encode` and `Talon_parquet.encode` name themselves for a
+  traced column they read, where they named `Nx.Repr.read`.
 - `Str.regex` compiles a regular expression, RE2 and Perl syntax with UTS #18
   Level 1 semantics for Unicode 18.0.0, matching in time linear in the row:
   `Str.matches` filters by it, `Str.extract` and `Str.find_all` read its

@@ -36,7 +36,7 @@ let array_bytes a k f =
 let reading ~by x k f =
   let entered = ref false in
   try
-    Nx.Repr.read x (fun a ->
+    Nx.Repr.read ~by:"Nx.Repr.read" x (fun a ->
         entered := true;
         array_bytes a k f)
   with Invalid_argument m when not !entered -> invalid_arg (by ^ ": " ^ m)
