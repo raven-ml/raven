@@ -98,7 +98,8 @@ let damage ?table cachedb f =
 let truncated e = String.sub e 0 (String.length e / 2)
 
 (* An entry is "<key length> <value length> <digest>\n<key><value>", the digest
-   of the key and the value. *)
+   of the key and the value. The key it stores is its place,
+   "<digest of the table>_<version>.<generation>", a newline and the key. *)
 let header e = String.index e '\n' + 1
 
 let parts e =
@@ -127,9 +128,31 @@ let restated f e =
       ^ "\n" ^ key ^ v
   | _ -> invalid_arg "Disk_cache.restated: not an entry"
 
+(* [table_of key] and [key_of key] split the key [key] an entry stores. *)
+let table_of key = String.sub key 0 (String.index key '\n')
+
+let key_of key =
+  let at = String.index key '\n' + 1 in
+  String.sub key at (String.length key - at)
+
 let of_another_build e =
-  let key, v = parts e in
-  entry (String.make 32 '0' ^ String.sub key 32 (String.length key - 32)) v
+  let stored, v = parts e in
+  let key = key_of stored in
+  entry
+    (table_of stored ^ "\n" ^ String.make 32 '0'
+    ^ String.sub key 32 (String.length key - 32))
+    v
+
+let of_another_version e =
+  let stored, v = parts e in
+  let place = table_of stored in
+  let at = String.index place '_' + 1 and dot = String.index place '.' in
+  let version = int_of_string (String.sub place at (dot - at)) in
+  entry
+    (Printf.sprintf "%s%d%s\n%s" (String.sub place 0 at) (version + 1)
+       (String.sub place dot (String.length place - dot))
+       (key_of stored))
+    v
 
 let of_other_sources digest e =
   let key, v = parts e in

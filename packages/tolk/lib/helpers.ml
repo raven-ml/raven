@@ -304,6 +304,51 @@ let cache_dir =
   in
   Filename.concat base "tolk"
 
+(* Files no other user wrote *)
+
+external open_nofollow : string -> Unix.file_descr = "tolk_open_nofollow"
+
+(* Owners and modes: Windows has neither here. *)
+
+let own (st : Unix.stats) = Sys.win32 || st.st_uid = Unix.geteuid ()
+
+let others_write (st : Unix.stats) =
+  (not Sys.win32) && st.st_perm land 0o022 <> 0
+
+let safe_dir dir =
+  match Unix.stat dir with
+  | exception Unix.Unix_error _ -> false
+  | st ->
+      st.st_kind = S_DIR
+      && (own st || st.st_uid = 0)
+      && ((not (others_write st)) || st.st_perm land 0o1000 <> 0)
+
+(* [path] is opened unless its last component is a link, and each check is of
+   the file opened, by [fstat] on its descriptor, whatever another process
+   renames to [path] meanwhile: a check of the name before the open would see
+   one file and read another. Windows has no such open: a file that is no
+   regular one is refused before it opens, and the file is opened shared for
+   deletion, since renaming a file there holds it open for deletion. *)
+let open_owned path =
+  let opened () =
+    if not Sys.win32 then open_nofollow path
+    else
+      match (Unix.lstat path).st_kind with
+      | S_REG -> Unix.openfile path [ O_RDONLY; O_CLOEXEC; O_SHARE_DELETE ] 0
+      | _ -> raise (Unix.Unix_error (ELOOP, "open", path))
+  in
+  match opened () with
+  | exception Unix.Unix_error (ELOOP, _, _) -> None
+  | fd -> (
+      match Unix.fstat fd with
+      | st when st.st_kind = S_REG && own st && not (others_write st) -> Some fd
+      | _ ->
+          Unix.close fd;
+          None
+      | exception e ->
+          Unix.close fd;
+          raise e)
+
 let cachedb =
   match Setting.getenv "CACHEDB" with
   | Some dir -> dir
@@ -315,7 +360,7 @@ let cachedb =
 module Diskcache = struct
   (* Bump whenever what an entry means changes without its key changing: the old
      entries would otherwise answer a different question. *)
-  let version = 3
+  let version = 4
   let digest s = Digest.to_hex (Digest.string s)
   let is_hex c = is_digit c || (c >= 'a' && c <= 'f')
 
@@ -325,8 +370,7 @@ module Diskcache = struct
   (* A table's directory is named by the digest of its name, so that any name
      makes a valid, bounded file name on every file system, followed by the
      version. *)
-  let table_dir table =
-    Filename.concat cachedb (Printf.sprintf "%s_%d" (digest table) version)
+  let table_name table = Printf.sprintf "%s_%d" (digest table) version
 
   let is_table_dir name =
     let n = String.length name in
@@ -406,23 +450,40 @@ module Diskcache = struct
     && (n = 32
        || (n = 65 && name.[32] = '.' && is_digest (String.sub name 33 32)))
 
-  let entry_path table generation key =
+  let entry_path name generation key =
     let suffix = if generation = "" then "" else "." ^ generation in
-    Filename.concat (table_dir table) (digest key ^ suffix)
+    Filename.concat (Filename.concat cachedb name) (digest key ^ suffix)
 
   let enabled () = Setting.value Setting.cachelevel >= 1
 
-  (* An entry is the lengths of its key and value, the digest of the key and
-     the value, a newline, the key and the value. Keeping the key tells a digest
-     collision from a hit, the lengths tell a truncated entry from a whole one,
-     and the digest a damaged one: a byte changed on disk would otherwise read
-     as another value, such as a program with another constant or a binary with
-     another instruction. *)
+  (* An entry is the lengths of its stored key and value, the digest of both, a
+     newline, the stored key and the value. The stored key is its place, the
+     name of its table's directory, which names the table and the version, a
+     dot and its generation, then a newline and the key. Keeping the key tells
+     a digest collision from a hit, and keeping the place an entry that a
+     writer of the cache moved to another table, version or generation, as an
+     entry from before a clear: either reads as no entry. The lengths tell a
+     truncated entry from a whole one, and the digest a damaged one: a byte
+     changed on disk would otherwise read as another value, such as a program
+     with another constant or a binary with another instruction. *)
+  let place name generation = name ^ "." ^ generation
+  let stored place key = place ^ "\n" ^ key
+
   let encode key value =
     Printf.sprintf "%d %d %s\n%s%s" (String.length key) (String.length value)
       (digest (key ^ value)) key value
 
-  let decode path key contents =
+  (* Whether [contents] from [at] holds [stored name key], compared where it
+     lies. *)
+  let holds contents at name key =
+    let n = String.length name in
+    let rec same s from i =
+      i = String.length s
+      || (contents.[from + i] = s.[i] && same s from (i + 1))
+    in
+    same name at 0 && contents.[at + n] = '\n' && same key (at + n + 1) 0
+
+  let decode path name key contents =
     match
       Scanf.sscanf_opt contents "%u %u %32[0-9a-f]\n%n"
         (fun klen vlen sum start -> (klen, vlen, sum, start))
@@ -432,18 +493,21 @@ module Diskcache = struct
            klen >= 0 && klen <= rest
            && vlen = rest - klen
            && Digest.to_hex (Digest.substring contents start rest) = sum ->
-        if String.sub contents start klen <> key then None
+        if klen <> String.length name + 1 + String.length key
+           || not (holds contents start name key)
+        then None
         else Some (String.sub contents (start + klen) vlen)
     | _ -> failwith (path ^ ": malformed cache entry")
 
-  (* An entry is opened shared for deletion: on Windows, renaming a file holds
-     it open for deletion, and a reader that does not share it fails while
-     another writer renames the entry into place. *)
+  (* An entry reads only from a file of this user's that no other can write,
+     reached through no link ([open_owned]): any other file is no entry. *)
   let read path =
-    let fd = Unix.openfile path [ O_RDONLY; O_CLOEXEC; O_SHARE_DELETE ] 0 in
-    let ic = Unix.in_channel_of_descr fd in
-    Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
-        In_channel.input_all ic)
+    Option.map
+      (fun fd ->
+        let ic = Unix.in_channel_of_descr fd in
+        Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
+            In_channel.input_all ic))
+      (open_owned path)
 
   let sys_error path e = Sys_error (path ^ ": " ^ Unix.error_message e)
 
@@ -475,10 +539,14 @@ module Diskcache = struct
       match generation () with
       | None -> None
       | Some generation -> (
-          let path = entry_path table generation key in
+          let name = table_name table in
+          let path = entry_path name generation key in
           match read path with
-          | contents ->
-              let value = decode path key contents in
+          | None -> None
+          | Some contents ->
+              let value =
+                decode path (place name generation) key contents
+              in
               if Option.is_some value then mark path;
               value
           | exception Unix.Unix_error (ENOENT, _, _) -> None
@@ -522,6 +590,13 @@ module Diskcache = struct
           Some (Unix.fstat fd).st_size
         with Unix.Unix_error _ -> None)
 
+  (* Whether a link stands at [dir]: puts and trims keep out of it, so that
+     they write and remove within {!cachedb}. *)
+  let linked dir =
+    match Unix.lstat dir with
+    | st -> st.st_kind = S_LNK
+    | exception Unix.Unix_error _ -> false
+
   (* The files named like entries in every table and version, whole or being
      written, each with its name, path, length and the time it was last used. *)
   let files () =
@@ -533,7 +608,7 @@ module Diskcache = struct
     in
     let in_table name =
       let dir = Filename.concat cachedb name in
-      match Sys.readdir dir with
+      match if linked dir then [||] else Sys.readdir dir with
       | names ->
           Array.to_list names |> List.filter is_entry
           |> List.filter_map (stat dir)
@@ -624,14 +699,18 @@ module Diskcache = struct
   external rename : string -> string -> unit = "tolk_rename"
 
   (* The entry is written aside and renamed into place, so readers never see it
-     half written. On Windows the rename fails while a program that does not
-     share the entry for deletion holds it open, which the cache's own reads and
+     half written. The file aside is made with [O_CREAT | O_EXCL], which
+     follows no link and makes no file where one stands, readable and
+     writable by this user alone, and a rename replaces a link at [path]
+     itself. On Windows the rename fails while a program that does not share
+     the entry for deletion holds it open, which the cache's own reads and
      marks do not; that entry is complete, so it stays. *)
   let write path entry =
     let dir = Filename.dirname path in
     mkdir_p dir;
+    if linked dir then raise (Sys_error (dir ^ ": a link, not a directory"));
     let tmp, oc =
-      Filename.open_temp_file ~mode:[ Open_binary ] ~temp_dir:dir
+      Filename.open_temp_file ~mode:[ Open_binary ] ~perms:0o600 ~temp_dir:dir
         (Filename.basename path ^ ".")
         ".tmp"
     in
@@ -654,16 +733,15 @@ module Diskcache = struct
       invalid_arg
         (Printf.sprintf "Diskcache.put: cachesize %d, expected 0 or more" limit);
     if enabled () then begin
-      let entry = encode key value in
+      let found = generation () and name = table_name table in
+      let generation = Option.value found ~default:"" in
+      let entry = encode (stored (place name generation) key) value in
       let bytes = String.length entry in
       if limit = 0 || held bytes <= limit then begin
-        let generation =
-          match generation () with
-          | Some generation -> generation
-          | None -> raise (Sys_error (generations_dir ^ ": unreadable"))
-        in
+        if Option.is_none found then
+          raise (Sys_error (generations_dir ^ ": unreadable"));
         make_room limit bytes;
-        write (entry_path table generation key) entry
+        write (entry_path name generation key) entry
       end
     end
 

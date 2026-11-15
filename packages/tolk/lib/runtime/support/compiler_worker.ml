@@ -12,9 +12,6 @@ external above_stdio : Unix.file_descr -> Unix.file_descr
 
 external no_sigpipe : Unix.file_descr -> unit = "caml_tolk_worker_no_sigpipe"
 
-external open_program : string -> Unix.file_descr
-  = "caml_tolk_worker_open_program"
-
 external quarantined : Unix.file_descr -> bool
   = "caml_tolk_worker_quarantined"
 [@@noalloc]
@@ -97,54 +94,21 @@ let prefix w = w.name ^ "-worker-"
 let program_name w dir =
   Filename.concat dir (prefix w ^ digest w ^ if Sys.win32 then ".exe" else "")
 
-(* Owners and modes: Windows has neither here. *)
-
-let own (st : Unix.stats) = Sys.win32 || st.st_uid = Unix.geteuid ()
-
-let others_write (st : Unix.stats) =
-  (not Sys.win32) && st.st_perm land 0o022 <> 0
-
-(* Whether no other user can replace what [dir] holds: a directory of this
-   user's or the system's that no other can write, or whose sticky bit keeps
-   each file to its owner, as /tmp's. *)
-let safe_dir dir =
-  match Unix.stat dir with
-  | exception Unix.Unix_error _ -> false
-  | st ->
-      st.st_kind = S_DIR
-      && (own st || st.st_uid = 0)
-      && ((not (others_write st)) || st.st_perm land 0o1000 <> 0)
-
-(* [path] opened for reading unless its last component is a link. Windows has
-   no such open: a file that is no regular one is refused before it opens. *)
-let open_unlinked path =
-  if not Sys.win32 then open_program path
-  else
-    match (Unix.lstat path).st_kind with
-    | S_REG -> Unix.openfile path [ O_RDONLY; O_CLOEXEC; O_SHARE_DELETE ] 0
-    | _ -> raise (Unix.Unix_error (ELOOP, "open", path))
-
 let before_program_open : (string -> unit) ref = ref ignore
 
-(* Whether [path] is the program and may run: a regular file reached through
-   no link, this user's, that no other can write, without macOS's quarantine,
-   whose bytes are the program's. Each check is of the file opened, whatever
-   another process renames to [path] meanwhile, as one writing the program
-   does: a check of the name before the open would see one file and read
-   another. It is read shared for deletion: on Windows, renaming a file holds
-   it open for deletion, and a reader that does not share it fails while
-   another process renames the program into place. *)
+(* Whether [path] is the program and may run: a file no other user wrote
+   ({!Helpers.open_owned}), without macOS's quarantine, whose bytes are the
+   program's, each checked on the file opened, as one writing the program
+   renames it to [path] meanwhile. *)
 let trusted w path =
   !before_program_open path;
-  match open_unlinked path with
+  match Helpers.open_owned path with
   | exception Unix.Unix_error _ -> false
-  | fd ->
+  | None -> false
+  | Some fd ->
       let ic = Unix.in_channel_of_descr fd in
       Fun.protect ~finally:(fun () -> close_in_noerr ic) @@ fun () ->
-      let st = Unix.fstat fd in
-      st.st_kind = S_REG && own st
-      && (not (others_write st))
-      && (not (quarantined fd))
+      (not (quarantined fd))
       && Digest.to_hex (Digest.channel ic (-1)) = digest w
 
 (* The program in [dir]: [program_name w dir] if it is [trusted], or else
@@ -157,7 +121,8 @@ let program_file w dir =
   let fail e = failwith (Printf.sprintf "%s worker %s: %s" w.name path e) in
   try
     mkdir_p dir;
-    if not (safe_dir dir) then fail "other users can write its directory";
+    if not (Helpers.safe_dir dir) then
+      fail "other users can write its directory";
     if trusted w path then path
     else
       let tmp, oc =

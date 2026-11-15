@@ -52,6 +52,36 @@ CAMLextern void caml_win32_maperr(DWORD errcode);
 extern char **environ;
 #endif
 
+/* [tolk_open_nofollow path] is the file [path] opened for reading,
+   close-on-exec, unless its last component is a symbolic link: then
+   Unix_error ELOOP. It opens without waiting, so that a pipe planted there
+   does not hold the open until a writer comes. It runs without the runtime
+   lock, on a copy of the path, as Unix.openfile does: a file system can be
+   slow to answer. Windows opens through Unix.openfile. */
+#ifndef _WIN32
+CAMLprim value tolk_open_nofollow(value v_path)
+{
+  CAMLparam1(v_path);
+  char *path;
+  int fd, error;
+  if (!caml_string_is_c_safe(v_path)) caml_unix_error(ENOENT, "open", v_path);
+  path = caml_stat_strdup(String_val(v_path));
+  caml_enter_blocking_section();
+  fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+  error = errno;
+  caml_leave_blocking_section();
+  caml_stat_free(path);
+  if (fd < 0) caml_unix_error(error, "open", v_path);
+  CAMLreturn(Val_int(fd));
+}
+#else
+CAMLprim value tolk_open_nofollow(value v_path)
+{
+  (void)v_path;
+  caml_failwith("tolk_open_nofollow: Windows opens through Unix.openfile");
+}
+#endif
+
 /* [tolk_touch fd] sets the access and modification times of the file [fd]
    is open on to now. On Windows the handle needs FILE_WRITE_ATTRIBUTES,
    which a descriptor opened for writing has. Raises [Unix.Unix_error]. */

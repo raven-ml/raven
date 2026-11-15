@@ -1362,6 +1362,12 @@ its lock and from samples the dashboard saw arrive.
   an `Nx.set` at 878 listed positions under `Rune.jit`, no longer takes
   minutes to compile: a launch there holds at most 40 members
   (`Cstyle.metal`).
+- `Helpers.Diskcache.get` reads an entry only from a file of this user's
+  that no other user can write, reached through no link
+  (`Helpers.open_owned`), and only as the table, version and generation it
+  was written for. A `CACHEDB` that others can write no longer runs or
+  reads what they planted or moved. Entries of earlier tolk versions are
+  not read.
 - Kernels whose sources differ only in their names and comments compile to
   one binary, in which every kernel is `Codegen.symbol`: a compiled
   function's new extent on the host compiles none of the binaries an

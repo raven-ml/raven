@@ -60,6 +60,10 @@ val of_another_build : string -> string
 (** [of_another_build e] is the entry [e] whole, its key's first 32 characters,
     the digest of the library's sources, replaced. *)
 
+val of_another_version : string -> string
+(** [of_another_version e] is the entry [e] as a library of the next version
+    of the cache writes it, of the same table, key and value. *)
+
 val of_other_sources : string -> string -> string
 (** [of_other_sources digest e] is the entry [e] whole, each [digest] its key
     states, the digest of some sources, replaced by another.

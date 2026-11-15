@@ -171,6 +171,35 @@ val cache_dir : string
     directory, from [USERPROFILE] on Windows and [HOME] elsewhere. Paths are
     joined with the system's separator. *)
 
+(** {2:trust Files no other user wrote}
+
+    A file this process reads as its own data, a program to run or a cache
+    entry, is trusted only where no other user could have written it. Windows
+    has no owners or modes here, and takes every file and directory as this
+    user's. *)
+
+val safe_dir : string -> bool
+(** [safe_dir dir] is [true] iff [dir], as it stands when checked, is a
+    directory of this user's or the system's (root's) that no other user can
+    write, or whose sticky bit keeps each of its files to its owner, as
+    [/tmp]'s. The check follows links and reads none of [dir]'s parents: a
+    user who can write a parent can put another directory at [dir] after the
+    check, so what is then opened there is checked as it is opened
+    ({!open_owned}). *)
+
+val open_owned : string -> Unix.file_descr option
+(** [open_owned path] is the file [path] opened for reading if it is a
+    regular file reached through no link, this user's, that no other user
+    can write, and [None] if it is not: its last component is a link, or the
+    file opened is another's, writable by another user, or not regular, as a
+    planted pipe, which opens without waiting for a writer. Each check is of
+    the file opened, whatever another process renames to [path] meanwhile.
+    The caller closes the descriptor. On Windows, the file is opened shared
+    for deletion.
+
+    Raises [Unix.Unix_error] if [path] cannot be opened, as one that does not
+    exist. *)
+
 val cachedb : string
 (** [cachedb] is the directory of the {!Diskcache}, from the variable [CACHEDB].
     Defaults to [cache] in {!cache_dir}, made absolute against the current
@@ -180,12 +209,28 @@ val cachedb : string
 
     A table maps strings to strings across runs and processes. Entries are
     written atomically, so a reader sees a complete entry or none, and the last
-    writer of a key wins. An entry holds the digest of its key and value, so
-    one damaged on disk, cut short or with a byte changed, does not read as
-    another value. Tables are versioned with the library: entries written
-    by a library whose cached data meant something else are not seen. Tables and
-    keys are any strings; entries stay within {!cachedb} whatever they hold. The
-    cache is disabled while {!Setting.cachelevel} is not positive.
+    writer of a key wins. An entry holds the digest of its table, version,
+    generation (each {!Diskcache.clear} starts one), key and value, so one
+    damaged on disk, cut short or with a byte changed, does not read as
+    another value. Tables are versioned with the library: entries written by
+    a library whose cached data meant something else are not seen.
+    Tables and keys are any strings; entries stay within {!cachedb} whatever
+    they hold: a put, a trim or a clear writes or removes nothing through a
+    link it finds where a table's directory would be. The cache is
+    disabled while {!Setting.cachelevel} is not positive.
+
+    An entry is read only from a file of this user's that no other user can
+    write, reached through no link ({!open_owned}), and only as the table,
+    version and generation it was written for and the key it binds. So in a
+    cache other users can write, each user reads only values they wrote, each
+    for its own table and key since the last clear, wherever another moves
+    the files. Such another user can still remove or move them, or put back
+    an older value this user wrote for the same key, which then reads in
+    place of the last writer's; and can swap a link in for a table's
+    directory between the check and a write, which then lands where the
+    link points. Any other entry reads as none, and a put replaces it. A put
+    writes its entry as a new file, made only where no file or link stands
+    and readable by this user alone, then renames it into place.
 
     The files of the cache hold at most {!Setting.cachesize} bytes, or any
     number while it is [0]. A put that would take them past it first removes

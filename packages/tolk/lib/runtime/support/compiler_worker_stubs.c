@@ -102,32 +102,6 @@ value caml_tolk_worker_quarantined(value v_fd) {
 }
 #endif
 
-/* The file [v_path] opened for reading, close-on-exec, unless its last
-   component is a symbolic link: then Unix_error ELOOP. It opens without
-   waiting, so that a pipe planted there does not hold the open until a writer
-   comes. It runs without the runtime lock, on a copy of the path, as
-   Unix.openfile does: a file system can be slow to answer. Windows opens
-   through Unix.openfile. */
-#ifndef _WIN32
-value caml_tolk_worker_open_program(value v_path) {
-  CAMLparam1(v_path);
-  if (!caml_string_is_c_safe(v_path)) caml_unix_error(ENOENT, "open", v_path);
-  char *path = caml_stat_strdup(String_val(v_path));
-  caml_release_runtime_system();
-  int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
-  int error = errno;
-  caml_acquire_runtime_system();
-  caml_stat_free(path);
-  if (fd < 0) caml_unix_error(error, "open", v_path);
-  CAMLreturn(Val_int(fd));
-}
-#else
-value caml_tolk_worker_open_program(value v_path) {
-  (void)v_path;
-  caml_failwith("open_program: Windows opens through Unix.openfile");
-}
-#endif
-
 /* Channels */
 
 #ifndef _WIN32

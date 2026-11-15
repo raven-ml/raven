@@ -990,6 +990,137 @@ let model =
       (fun table key () -> disabled (fun () -> Diskcache.get ~table key));
   ]
 
+(* Entries no other user wrote: an entry another user could have written,
+   planted, linked or moved, reads as none, and a put replaces it. *)
+
+(* What [get] reads of an entry [v] once [f] has run on its file, then once
+   a put has replaced it with [v2]. *)
+let after_tamper f =
+  let table = fresh_table () in
+  let file = put_entry ~table "k" "v" in
+  f file;
+  let tampered = Diskcache.get ~table "k" in
+  Diskcache.put ~table "k" "v2";
+  (tampered, Diskcache.get ~table "k")
+
+let refused = (None, Some "v2")
+
+let unix_only f () =
+  if Sys.win32 then skip ~reason:"no owners or modes" () else f ()
+
+let refuses_a_link =
+  unix_only @@ fun () ->
+  let tampered =
+    after_tamper (fun file ->
+        let target = temp_file () in
+        let e = In_channel.with_open_bin file In_channel.input_all in
+        Out_channel.with_open_bin target (fun oc -> output_string oc e);
+        Sys.remove file;
+        Unix.symlink target file)
+  in
+  equal (pair (option string) (option string)) refused tampered
+
+let entry_modes =
+  [
+    (0o600, true);
+    (0o644, true);
+    (0o620, false);
+    (0o602, false);
+    (0o666, false);
+  ]
+
+let reads_by_mode (mode, read) =
+  unix_only
+    (fun () ->
+      let tampered = after_tamper (fun file -> Unix.chmod file mode) in
+      equal (pair (option string) (option string))
+        (if read then (Some "v", Some "v2") else refused)
+        tampered)
+    ()
+
+(* This user's own entry, moved by a writer of the cache to another table's
+   place for the same key, or written as a library of another version would,
+   or from before a clear, moved to where the next generation keeps it. *)
+let refuses_another_table () =
+  let other = fresh_table () in
+  let source = put_entry ~table:other "k" "a" in
+  let tampered =
+    after_tamper (fun file -> Unix.rename source file)
+  in
+  equal (pair (option string) (option string)) refused tampered
+
+let refuses_another_version () =
+  let tampered =
+    after_tamper (fun file ->
+        let e = In_channel.with_open_bin file In_channel.input_all in
+        Out_channel.with_open_bin file (fun oc ->
+            output_string oc (Disk_cache.of_another_version e)))
+  in
+  equal (pair (option string) (option string)) refused tampered
+
+let refuses_an_earlier_generation () =
+  let table = fresh_table () in
+  let before = put_entry ~table "k" "v" in
+  let old = In_channel.with_open_bin before In_channel.input_all in
+  Diskcache.clear ();
+  let file = put_entry ~table "k" "now" in
+  Out_channel.with_open_bin file (fun oc -> output_string oc old);
+  equal (option string) None (Diskcache.get ~table "k")
+
+(* A file of another user's, root's, that no other user can write. *)
+let refuses_another_owner () =
+  let file = "/etc/passwd" in
+  match Unix.stat file with
+  | exception Unix.Unix_error _ -> skip ~reason:"no /etc/passwd" ()
+  | st when Sys.win32 || st.st_uid = Unix.geteuid () ->
+      skip ~reason:"/etc/passwd is this user's" ()
+  | _ ->
+      let opened = open_owned file in
+      Option.iter Unix.close opened;
+      equal bool ~msg:"opened" false (Option.is_some opened)
+
+(* A put where a link was planted for its entry replaces the link, writing
+   nothing where it points, and its entry no other user can read. *)
+let puts_past_a_link =
+  unix_only @@ fun () ->
+  let table = fresh_table () in
+  let file = put_entry ~table "k" "v" in
+  let target = temp_file () in
+  Out_channel.with_open_bin target (fun oc -> output_string oc "kept");
+  Sys.remove file;
+  Unix.symlink target file;
+  Diskcache.put ~table "k" "v2";
+  equal
+    (pair string (option string))
+    ("kept", Some "v2")
+    ( In_channel.with_open_bin target In_channel.input_all,
+      Diskcache.get ~table "k" );
+  equal int ~msg:"mode" 0o600 ((Unix.lstat file).st_perm land 0o777)
+
+(* A link planted where a table's directory stands: a put refuses to write
+   through it, and a clear removes nothing where it points. *)
+let keeps_out_of_a_linked_table =
+  unix_only @@ fun () ->
+  let table = fresh_table () in
+  let dir = table_directory table in
+  Diskcache.clear ();
+  Array.iter (fun f -> Sys.remove (Filename.concat dir f)) (Sys.readdir dir);
+  Sys.rmdir dir;
+  let elsewhere = temp_dir () in
+  let planted = Filename.concat elsewhere (String.make 32 'a') in
+  Out_channel.with_open_bin planted (fun oc -> output_string oc "kept");
+  Unix.symlink elsewhere dir;
+  Fun.protect
+    ~finally:(fun () -> Sys.remove dir)
+    (fun () ->
+      raises_match
+        (function Sys_error _ -> true | _ -> false)
+        (fun () -> Diskcache.put ~table "k" "v");
+      Diskcache.clear ();
+      equal (list string) ~msg:"where the link points"
+        [ String.make 32 'a' ]
+        (Array.to_list (Sys.readdir elsewhere)))
+
 let diskcache =
   match Sys.getenv_opt "CACHEDB" with
   | None ->
@@ -1091,6 +1222,24 @@ let diskcache =
           test "get fails on a truncated entry" (fun () -> damaged truncate);
           test "get fails on an entry that is no entry" (fun () ->
               damaged overwrite);
+          test "an entry reached through a link reads as none" refuses_a_link;
+          cases "an entry reads only if no other user can write it"
+            ~id:(fun (mode, _) -> Printf.sprintf "%o" mode)
+            entry_modes reads_by_mode;
+          test "an entry moved from another table reads as none"
+            refuses_another_table;
+          test "an entry of another version reads as none"
+            refuses_another_version;
+          test "an entry from before a clear reads as none"
+            refuses_an_earlier_generation;
+          test "a file of another owner is not opened" refuses_another_owner;
+          test "the system's directory is safe" (fun () ->
+              if Sys.win32 then skip ~reason:"no owners or modes" ()
+              else equal bool true (safe_dir "/"));
+          test "a put past a planted link writes its own entry"
+            puts_past_a_link;
+          test "puts and clears keep out of a link for a table's directory"
+            keeps_out_of_a_linked_table;
         ]
 
 (* Calls on two domains, each branch on its own: an entry is put, read and
