@@ -2941,6 +2941,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- A small nx.cuda `svd` stops rotating once its own matrix converges, so
+  its bits no longer depend on the other matrices of its batch.
 - nx.cuda's `eigh` keeps a secular equation's root that converges on its
   last allowed iterate; it discarded it and returned NaN for the matrix.
 - nx.cuda's `eigh` no longer reads eigenvectors at stale workspace

@@ -22,10 +22,13 @@
 
    A block holds [per] matrices, NT / (their elements), at least one; the
    block's threads split into one group per matrix. Every group runs the
-   same rounds until no matrix of the block rotates, so a matrix's bits
-   are those it would have alone: a sweep that rotates nothing changes
-   nothing. Shared reductions combine in a fixed order or by integer
-   maxima and ands, which no order changes. */
+   block's rounds, its barriers among them, until no matrix of the block
+   rotates, but a matrix rotates only until its own sweeps stop: eigh's
+   at the first sweep that rotates nothing, which changes nothing; svd's
+   at the first whose rotations are all within rounding's reach, after
+   which it is left as it is. So a matrix's bits are those it has alone,
+   whatever [per] and its neighbours. Shared reductions combine in a
+   fixed order or by integer maxima and ands, which no order changes. */
 
 #include "sp_common.cuh"
 
@@ -65,10 +68,10 @@ template <class T> D typename real_of<T>::R part(T x) {
   return fmax(fabs(re(x)), fabs(im(x)));
 }
 
-/* Shared state: per matrix of the block, its scale's exponent, flags,
-   largest magnitude's bits; and the arrays each round reads. */
+/* Shared state: per matrix of the block, its flags and its largest
+   magnitude's bits; and the arrays each round reads. */
 struct slots {
-  int e[NT], finite[NT], rotated[NT], failed[NT];
+  int finite[NT], rotated[NT], failed[NT], done[NT];
   unsigned long long big[NT];
 };
 
@@ -326,6 +329,7 @@ __device__ void svd_jacobi(const T *a, typename real_of<T>::R *s, T *u,
       sl.finite[threadIdx.x] = 1;
       sl.rotated[threadIdx.x] = 0;
       sl.failed[threadIdx.x] = 0;
+      sl.done[threadIdx.x] = 0;
       sl.big[threadIdx.x] = 0;
     }
     __syncthreads();
@@ -362,10 +366,13 @@ __device__ void svd_jacobi(const T *a, typename real_of<T>::R *s, T *u,
     bool go = true;
     #pragma unroll 1
     for (int sweep = 0; go; sweep++) {
+      /* Whether the matrix still sweeps: not once a sweep of its own has
+         rotated only within rounding's reach. */
+      const bool act = run && !sl.done[slot];
       #pragma unroll 1
       for (int r = 0; r < np - 1; r++) {
         __syncthreads();
-        if (run && lt < np / 2) {
+        if (act && lt < np / 2) {
           int p, q;
           pair_of(r, lt, np, &p, &q);
           if (q < K) {
@@ -412,7 +419,7 @@ __device__ void svd_jacobi(const T *a, typename real_of<T>::R *s, T *u,
         __syncthreads();
         /* g ← g J and v ← v J. */
         T ng[4], nv[4];
-        if (run)
+        if (act)
           #pragma unroll 1
           for (int k = lt, c = 0; k < mk; k += g, c++) {
             int i = k / K, j = k % K, pj = pa[j];
@@ -421,7 +428,7 @@ __device__ void svd_jacobi(const T *a, typename real_of<T>::R *s, T *u,
               nv[c] = pj >= 0 ? al[j] * V[k] + be[j] * V[k - j + pj] : V[k];
           }
         __syncthreads();
-        if (run)
+        if (act)
           #pragma unroll 1
           for (int k = lt, c = 0; k < mk; k += g, c++) {
             G[k] = ng[c];
@@ -429,7 +436,8 @@ __device__ void svd_jacobi(const T *a, typename real_of<T>::R *s, T *u,
           }
       }
       __syncthreads();
-      const int mine = run && sl.rotated[slot];
+      const int mine = act && sl.rotated[slot];
+      if (act && !mine && lt == 0) sl.done[slot] = 1;
       go = __syncthreads_or(mine);
       if (go && sweep + 1 >= sweeps) {
         if (mine && lt == 0) sl.failed[slot] = 1;

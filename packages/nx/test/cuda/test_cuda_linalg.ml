@@ -10,10 +10,10 @@
    product, on spread and scaled magnitudes and at every small shape whose
    matrices share a group; the spectra against known ones; the Upper
    factor's bits; LU, Cholesky and the solves bit for bit the unblocked
-   algorithm's; the same bits under every layout and in every batch; past
-   a lowered limit of iteration, NaN in every result of a matrix and its
-   bits alone for a neighbour that converges. Through rig.nv, CUDA's
-   bits. *)
+   algorithm's; the same bits under every layout, in every batch and
+   beside whatever a small svd's group holds; past a lowered limit of
+   iteration, NaN in every result of a matrix and its bits alone for a
+   neighbour that converges. Through rig.nv, CUDA's bits. *)
 
 open Windtrap
 module A = Nx_array
@@ -425,6 +425,47 @@ let test_svd_shapes (b : Support.backend) () =
         shared_sizes)
     dtypes
 
+(* A small svd's matrix has the bits it has alone beside a matrix of its
+   group that may sweep longer: [x] of columns graded by 2^6 beside [y], a
+   plain draw. Each shape's group holds both: at most 128 elements a
+   matrix. *)
+let neighbour_shapes =
+  [ (2, 2); (3, 2); (4, 3); (4, 4); (6, 5); (8, 4); (8, 8); (11, 7); (16, 8) ]
+
+let test_svd_neighbours (b : Support.backend) () =
+  let check dt (m, n) seed r =
+    let st = Random.State.make [| m; n; seed |] in
+    let x =
+      Array.init (m * n) (fun k -> ldexp (6 * (k mod n)) (draw st dt))
+    in
+    let y = Array.init (m * n) (fun _ -> draw st dt) in
+    match
+      ( run b r [| of_values dt [| m; n |] x |],
+        run b r [| of_values dt [| 2; m; n |] (Array.append x y) |] )
+    with
+    | Some one, Some two ->
+        Array.iteri
+          (fun i z ->
+            equal
+              ~msg:
+                (Format.asprintf "%a %d x %d, seed %d, result %d" pp_dtype dt
+                   m n seed i)
+              same_bits (bits z)
+              (bits (alone 0 two.(i))))
+          one
+    | _ -> ()
+  in
+  List.iter
+    (fun dt ->
+      List.iter
+        (fun shape ->
+          for seed = 0 to 7 do
+            check dt shape seed (Svd (Some Reduced));
+            check dt shape seed (Svd None)
+          done)
+        neighbour_shapes)
+    dtypes
+
 (* A matrix in a batch of others has the bits it has alone. A case makes
    all its calls before it reads any result, so that the device runs them
    without a round trip between. *)
@@ -707,6 +748,8 @@ let laws ~name b =
           prop "whatever the layout" case (on law_layouts);
           (* Each case makes 40 calls. *)
           prop ~count:25 "whatever the batch" case (on law_batch);
+          test "whatever a small svd's group holds beside it"
+            (on test_svd_neighbours);
         ];
     ]
 
