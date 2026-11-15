@@ -406,8 +406,11 @@ let step_rows =
         step;
     ]
 
-(* Loading includes the description's encoding and its transport to a real
-   agent. Initializers make whole-description copies visible across sizes. *)
+(* A program's load on a real agent, the description's encoding and transport
+   included, and an unload. A dropped program unloads at a later call on its
+   device that finds it collected, here [Rig.free_cache]: the row pays the
+   unloads amortised, and the programs rig keeps stay bounded. Initializers
+   make whole-description copies visible across sizes. *)
 type loading = {
   ljob : Rig_remote.t;
   lpid : int;
@@ -457,11 +460,15 @@ let loaded l =
   ignore (Unix.waitpid [] l.lpid)
 
 let load_rows =
+  let load l =
+    ignore (Result.get_ok (G.load l.description l.devices));
+    Rig.free_cache (Iarray.get l.devices 0)
+  in
   Thumper.group "remote-load"
     (List.map
        (fun (name, bytes) ->
          Thumper.bench_with_setup ~setup:(loading bytes) ~teardown:loaded name
-           (fun l -> Result.get_ok (G.load l.description l.devices)))
+           load)
        [ ("4K", 4096); ("64K", 65536); ("1M", 1048576) ])
 
 (* Runs whose work takes an agent's device a while *)
