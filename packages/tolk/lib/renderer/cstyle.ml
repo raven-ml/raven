@@ -2624,6 +2624,17 @@ let cuda_kernel ?(copies = false) ?(prefix = []) l ~name
   (* Its own definitions first, then the functions it calls. *)
   render_kernel l ~prefix:(defines @ prefix) ~name kernel bufs uops
 
+(* sm_89's facts are an RTX 5000 Ada's: its 100 SMs, and a copy's least trip
+   from memory, 0.32 us, times one SM's peak fill, 44 GB/s, which is 14080
+   bytes (a microbenchmark of one-stage cp.async copies of 16 bytes on a
+   small grid, and of one workgroup's copies a trip; DRAM 533 GB/s).
+   Sustaining 90% of a peak takes "about 1.3x" the bytes in flight of
+   minimum latency times peak throughput (Volkov, "Understanding Latency
+   Hiding on GPUs", UCB/EECS-2016-143, Sec. 6, printed p. 84): 18304. Other
+   parts are unmeasured and keep 0. *)
+let sm89_units = 100
+let sm89_in_flight = 18304
+
 let cuda_renderer ~sync compiler (target : Helpers.Target.t) =
   let arch = target.arch in
   let tensor_cores = Tc.cuda arch in
@@ -2664,14 +2675,17 @@ let cuda_renderer ~sync compiler (target : Helpers.Target.t) =
     render (cuda_kernel ~copies) l uops
   in
   let name = if sync then "CUDARenderer without cp.async" else "CUDARenderer" in
+  let units, in_flight =
+    if ver = 89 then (sm89_units, sm89_in_flight) else (0, 0)
+  in
   (* NVRTC's time a call site of a launch falls to its least at 64 members
      (0.064 s, 1.0 ms a member, on fudge with CUDA 13) and grows past them:
      96 members 1.4 ms a member, 128 1.9 ms, 256 4.5 ms. *)
   Renderer.v ~name ~half8:true ~launch_members:64 ~launch_args:512
     ~global_max:[ 2147483647; 65535; 65535 ]
     ~local_max:[ 1024; 1024; 64 ] ~shared_max:49152 ~async_copy ~tensor_cores
-    ~extra_matcher:cuda_extra_matcher ~code_for_op:cuda_lang.code_for_op ~native
-    ~fma ~render ~compiler target
+    ~units ~in_flight ~extra_matcher:cuda_extra_matcher
+    ~code_for_op:cuda_lang.code_for_op ~native ~fma ~render ~compiler target
 
 (* A cubin on every device: the disk cache keeps the GPU's code, which the
    driver loads as it is, where it would translate PTX at each load and keep its

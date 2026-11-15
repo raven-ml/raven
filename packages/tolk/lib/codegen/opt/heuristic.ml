@@ -164,6 +164,7 @@ let staged_tile ~core_threads k tk rngs split =
       match
         Stage.tile (K.ren tk) (K.ast tk) w ~core_threads ~workgroups
           ~sizes:(size 0, sm, size 2)
+          ~axes:(rngs.(0), rngs.(1), rngs.(2))
           ~in_run
       with
       | None -> None

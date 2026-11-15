@@ -334,16 +334,42 @@ let rows_of all =
     (fun r -> (r, List.map snd (List.filter (fun k -> row k = r) kernels)))
     (List.sort_uniq String.compare (List.map row kernels))
 
+(* The rows whose calls read their operands from memory, as a model's weights
+   come, read once a step: each call runs the next of several copies of the
+   row's buffers, which together hold at least twice the device's last-level
+   cache, so that a copy's last call has left the cache by its next. *)
+let cold = [ "key-projection-64" ]
+
 let gpu_rows name all =
   let case (row, kernels) =
     Thumper.bench_with_setup
       ~setup:(fun () ->
         let d = cuda () in
-        List.map
-          (fun text -> compiled ~scratch:filled d (Graph.of_string text))
-          kernels)
+        let bytes = ref 0 in
+        let scratch d dt n =
+          bytes := !bytes + (n * Dtype.itemsize dt);
+          filled d dt n
+        in
+        let copy () =
+          List.map
+            (fun text -> compiled ~scratch d (Graph.of_string text))
+            kernels
+        in
+        let first = copy () in
+        let copies =
+          match Rig.cache_bytes d with
+          | Some cache when List.mem row cold -> 1 + (2 * cache / !bytes)
+          | _ -> 1
+        in
+        let runs =
+          Array.init copies (fun i -> if i = 0 then first else copy ())
+        in
+        let next = ref 0 in
+        fun () ->
+          List.iter (fun run -> run ()) runs.(!next);
+          next := (!next + 1) mod copies)
       row
-      (fun runs -> List.iter (fun run -> run ()) runs)
+      (fun call -> call ())
   in
   Thumper.group name
     ~metrics:[ Thumper.Metric.wall_time ]

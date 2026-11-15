@@ -281,6 +281,8 @@ type t = {
   core_threads : int;
   stream_threads : int;
   local_workgroups : int;
+  units : int;
+  in_flight : int;
   extra_matcher : (unit, Ops.t) Pattern_matcher.t;
   launch_members : int;
   launch_args : int;
@@ -304,7 +306,7 @@ let v ?(name = "Renderer") ?(suffix = "") ?(supports_float4 = true)
     ?(tensor_cores = [])
     ?(per_byte_first = 64) ?(core_threads = 16384)
     ?(stream_threads = 32768)
-    ?(local_workgroups = 256)
+    ?(local_workgroups = 256) ?(units = 0) ?(in_flight = 0)
     ?(extra_matcher = Pattern_matcher.v (fun () -> []))
     ?(launch_members = max_int) ?(launch_args = max_int)
     ?(launch_locals = true) ?(packed_args = false)
@@ -333,6 +335,8 @@ let v ?(name = "Renderer") ?(suffix = "") ?(supports_float4 = true)
     core_threads;
     stream_threads;
     local_workgroups;
+    units;
+    in_flight;
     extra_matcher;
     launch_members;
     launch_args;

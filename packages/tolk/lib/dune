@@ -4,6 +4,7 @@
  (name tolk)
  (public_name tolk)
  (private_modules
+  chains
   heuristic_common
   heuristic_host
   host_config

@@ -253,8 +253,8 @@ let dense dims =
    its dimensions, its gate if any ([0] read where it fails), each inner range
    the gate reads as the fields of the tile's coordinates that hold its bits
    ([(d, k, place, atom)]: the atom at [k] in dimension [d], holding the
-   range's bits from [place]), the loop it steps through, whether its outer
-   part loads (a gather), and its size in elements. *)
+   range's bits from [place]), the loops it steps through, outermost first,
+   whether its outer part loads (a gather), and its size in elements. *)
 type tile = {
   buf : Ops.t;
   dt : Dtype.t;
@@ -262,7 +262,7 @@ type tile = {
   dims : dim list;
   valid : Ops.t option;
   fields : (Ops.t * (int * int * int * Ops.t) list) list;
-  loop : Ops.t option;
+  loops : Ops.t list;
   gathers : bool;
   size : int;
 }
@@ -271,14 +271,78 @@ let bytes t = t.size * Dtype.itemsize t.dt
 
 let is_serial r = List.mem (axis_type r) Axis_type.[ Weak; Loop ]
 
-(* The loop of [outer]: its one weak or loop range of more than one trip, if
-   it has one. A range of one trip, as a core's [K] unrolled whole leaves, is
-   no loop. *)
-let loop_of outer =
-  let loops r = is_serial r && extent r > 1 in
-  match List.filter loops (Nodes.to_list (ranges outer)) with
-  | [ l ] -> Some l
-  | _ -> None
+(* The loops of [outer]: its weak and loop ranges of more than one trip,
+   outermost first, the order in which a node closing several nests them
+   ({!Ops.compare_range_arg}). A range of one trip, as a core's [K] unrolled
+   whole leaves, is no loop. *)
+let loops_of outer =
+  List.filter
+    (fun r -> is_serial r && extent r > 1)
+    (Nodes.to_list (ranges outer))
+  |> List.sort compare_range_arg
+
+let same_loops a b = List.equal ( == ) a.loops b.loops
+
+(* Whether the loops [ls] of the core [w], outermost first, are a nest that
+   two stages step through as one sequence of trips: none or one loop, or
+   loops of constant extents that one node closes, closing no other loop of
+   more than one trip inside the outermost. A loop closed elsewhere cannot
+   run between them, since they end together. The trip after the last of an
+   inner loop's is then the first of the next outer trip's. *)
+let nest all w ls =
+  match ls with
+  | [] | [ _ ] -> true
+  | l :: _ -> (
+      let closes u =
+        List.memq l (ended_ranges u)
+        && Nodes.mem w (backward_slice_with_self ~calls:Skip u)
+      in
+      match List.find_opt closes all with
+      | None -> false
+      | Some y ->
+          let inside =
+            List.filter
+              (fun r ->
+                op r = Op.Range && is_serial r && extent r > 1
+                && compare_range_arg r l >= 0)
+              (ended_ranges y)
+            |> List.sort compare_range_arg
+          in
+          List.equal ( == ) inside ls
+          && List.for_all (fun r -> constant (nth r 0) <> None) ls)
+
+(* The trip of the nest [ls] that runs, counted outermost first, and the
+   nest's count of trips: a loop's own range and bound where it is one. *)
+let trip ls =
+  match ls with
+  | [ l ] -> (l, nth l 0)
+  | _ ->
+      let t, n =
+        List.fold_left
+          (fun (t, n) l -> (O.((t * int (extent l)) + l), n * extent l))
+          (int 0, 1) ls
+      in
+      (t, int n)
+
+(* Each loop of the nest [ls] at its trip [t], counted outermost first: [t]'s
+   digits in the loops' extents. The outermost takes no remainder, so that the
+   trip past the last one reads past the outermost loop's bound, where the
+   copy's gate fails, rather than wrapping. *)
+let digits ls t =
+  match ls with
+  | [ l ] -> [ (l, t) ]
+  | _ ->
+      let strides =
+        fst
+          (List.fold_right
+             (fun l (acc, s) -> (s :: acc, s * extent l))
+             ls ([], 1))
+      in
+      List.mapi
+        (fun i (l, s) ->
+          let q = O.(t // int s) in
+          (l, if i = 0 then q else O.(q % int (extent l))))
+        (List.combine ls strides)
 
 (* The place of the lowest bit of the range [r] that the atom [t] holds: [d]
    where [t] is [r], [r / d], [r mod b] or [(r / d) mod b]. *)
@@ -365,7 +429,7 @@ let tile_of x =
                   dims;
                   valid;
                   fields;
-                  loop = loop_of outer;
+                  loops = loops_of outer;
                   gathers =
                     List.exists (fun d -> Option.is_some d.rows) dims
                     || List.exists
@@ -392,8 +456,9 @@ let tile_of x =
    ran 2.5% faster staged over 48 blocks and 3.1-3.5% slower over 63. The
    last wave follows the card's count of SMs, which a target does not fix,
    so the splits that lose less, the unstaged, stay. The sign was measured
-   on blocks of 64 rows; over blocks of 48 the two ran within 3%. *)
-let staged_tile all x =
+   on blocks of 64 rows; over blocks of 48 the two ran within 3%. A range
+   [whole], a loop the tile planned takes whole, is none of its loops. *)
+let staged_tile ?whole all x =
   let warps =
     List.filter
       (fun u -> Op.equal (op u) Op.Range && axis_type u = Axis_type.Local)
@@ -401,7 +466,15 @@ let staged_tile all x =
   in
   let shared = List.exists (fun r -> not (Nodes.mem r (ranges x))) warps in
   let rows t = List.exists (fun d -> Option.is_some d.rows) t.dims in
-  match tile_of x with Some t when rows t && not shared -> None | t -> t
+  let unlooped t =
+    match whole with
+    | None -> t
+    | Some k ->
+        { t with loops = List.filter (fun l -> axis_id l <> axis_id k) t.loops }
+  in
+  match tile_of x with
+  | Some t when rows t && not shared -> None
+  | t -> Option.map unlooped t
 
 (* Codes are integers that a load of integer storage gives, through integer
    arithmetic alone. A float's bits read as an integer, as a selection by sign
@@ -435,16 +508,16 @@ let elementwise u =
    itself where it is a load with a tile; where [x] computes elementwise on
    loads and is not decoded, the loads of global memory through which it reads
    the threads and lanes, if each has a tile; [None] otherwise. Of a computed
-   operand's loads, those whose tiles step through the loop of its tile of
-   most elements are copied, and the others stay loads: an attention output's per-head
-   scale, while the core's loop runs within a head, is read once a trip of
-   its own loop. The copies move the loads' values, which the operand then
-   computes on as it did, so the operand's values do not change. A decoded
+   operand's loads, those whose tiles step through the loops of its tile of
+   most elements are copied, and the others stay loads: an attention output's
+   per-head scale, while the core's loop runs within a head, is read once a
+   trip of its own loop. The copies move the loads' values, which the operand
+   then computes on as it did, so the operand's values do not change. A decoded
    operand stays unstaged by measurement: staged, the codes and scales of
    gpt-oss's Q8_0 projections at 64 tokens ran 1.5 to 1.8 times slower on an
    RTX 5000 Ada. *)
-let loads_of all x =
-  match staged_tile all x with
+let loads_of ?whole all x =
+  match staged_tile ?whole all x with
   | Some t -> Some [ (x, t) ]
   | None when decoded x -> None
   | None -> (
@@ -466,7 +539,7 @@ let loads_of all x =
           [] (List.concat_map src walked)
         |> List.rev
       in
-      let tiles = List.map (fun l -> (l, staged_tile all l)) loads in
+      let tiles = List.map (fun l -> (l, staged_tile ?whole all l)) loads in
       if
         loads = []
         || (not (List.for_all elementwise walked))
@@ -479,22 +552,18 @@ let loads_of all x =
             (fun b (_, t) -> if t.size > b.size then t else b)
             (snd (List.hd tiles)) tiles
         in
-        Some
-          (List.filter (fun (_, t) -> Option.equal ( == ) t.loop largest.loop)
-             tiles))
+        Some (List.filter (fun (_, t) -> same_loops t largest) tiles))
 
 (* The loads of a core's [operands] that staging copies, each with its tile,
    or an operand with [None] where it stays unstaged. A computed operand's
-   loads are copied only where their loop is that of each operand that is a
-   load: a copy runs where the loop of its tile does. *)
-let operand_tiles all operands =
-  let plain = List.filter_map (staged_tile all) operands in
-  let on_plain (_, t) =
-    List.for_all (fun p -> Option.equal ( == ) p.loop t.loop) plain
-  in
+   loads are copied only where their loops are those of each operand that is
+   a load: a copy runs where the loops of its tile do. *)
+let operand_tiles ?whole all operands =
+  let plain = List.filter_map (staged_tile ?whole all) operands in
+  let on_plain (_, t) = List.for_all (fun p -> same_loops p t) plain in
   List.concat_map
     (fun x ->
-      match loads_of all x with
+      match loads_of ?whole all x with
       | Some [ (l, t) ] when l == x -> [ (x, Some t) ]
       | Some ls when List.for_all on_plain ls ->
           List.map (fun (l, t) -> (l, Some t)) ls
@@ -548,18 +617,19 @@ type stager = {
   copy_to :
     ?ahead:Ops.t ->
     ?within:Ops.t list ->
+    ?at:Ops.t ->
     slot:Ops.t ->
-    at:Ops.t ->
     unit ->
     Ops.t;
   read : deps:Ops.t list -> slot:Ops.t -> Ops.t;
 }
 
 (* The staging of [t] by the workgroup [wg] into [buf], in slots of
-   [t.size] elements. [copy_to ~slot ~at] copies the tile of the loop's trip
-   [at] into slot [slot], under the gate [ahead] if given, at each trip of the
-   ranges [within] (default none) besides those it reads; [read ~deps ~slot]
-   reads it back, ordered after the copies [deps]. *)
+   [t.size] elements. [copy_to ~slot ~at] copies the tile of the trip [at] of
+   its loops, counted outermost first ({!digits}), or of the trip that runs
+   by default, into slot [slot], under the gate [ahead] if given, at each
+   trip of the ranges [within] (default none) besides those it reads;
+   [read ~deps ~slot] reads it back, ordered after the copies [deps]. *)
 let stager wg ~fresh t buf =
   let v = lanes t in
   let per = wg.threads * v in
@@ -611,10 +681,11 @@ let stager wg ~fresh t buf =
   let valid = Option.map (at t.fields) t.valid in
   let partial = if t.size mod per = 0 then None else Some O.(f < int t.size) in
   let laddr = address t coords in
-  let copy_to ?ahead ?(within = []) ~slot ~at () =
+  let copy_to ?ahead ?(within = []) ?at ~slot () =
     let moved u =
-      match t.loop with
-      | Some l when at != l -> substitute ~calls:Skip ~pass:Once u [ (l, at) ]
+      match at with
+      | Some a when t.loops <> [] ->
+          substitute ~calls:Skip ~pass:Once u (digits t.loops a)
       | _ -> u
     in
     let conds =
@@ -680,6 +751,48 @@ let has_locals all =
       | _ -> false)
     all
 
+(* The stages of the core [w] of [all] whose staged tiles [staged] step
+   through [loops] and copy [sizes] bytes a trip, beside [used] bytes of
+   other cores' stages ({!depth}): one where the tiles step through no loop
+   or through loops that are no {!nest}, or where a tile's address gathers,
+   since a gather is read at the next trip only inside the loop's bound. *)
+let stages ~used ren all w staged ~loops sizes =
+  match depth ~used ren sizes with
+  | 0 -> 0
+  | d ->
+      let gathered = List.exists (fun t -> t.gathers) staged in
+      if loops = [] || gathered || not (nest all w loops) then 1 else d
+
+(* The staging of the core [w] of [all] beside [used] bytes of other cores'
+   stages: the tiles of its operands ({!operand_tiles}), its staged tiles,
+   the loops they step through, the same for each, and its stages; [None]
+   where it stages nothing. *)
+let staging ren all ~used w =
+  let tiles = operand_tiles all (List.filteri (fun i _ -> i < 2) (src w)) in
+  let staged = List.filter_map snd tiles in
+  match List.map (fun t -> t.loops) staged with
+  | loops :: rest when List.for_all (List.equal ( == ) loops) rest -> (
+      match stages ~used ren all w staged ~loops (List.map bytes staged) with
+      | 0 -> None
+      | d -> Some (tiles, staged, loops, d))
+  | _ -> None
+
+let staged_bytes (_, staged, _, d) =
+  d * List.fold_left (fun n t -> n + bytes t) 0 staged
+
+(* The bytes of shared memory the stages of [all]'s cores before [w] take,
+   as {!operands} stages them, in order. *)
+let used_before ren all w =
+  let rec go used = function
+    | [] -> used
+    | c :: _ when c == w -> used
+    | c :: rest -> (
+        match staging ren all ~used c with
+        | Some st -> go (used + staged_bytes st) rest
+        | None -> go used rest)
+  in
+  go 0 (List.filter (fun u -> Op.equal (op u) Op.Wmma) all)
+
 let operands (ren : Renderer.t) sink =
   let all = toposort ~calls:Skip sink in
   match workgroup all with
@@ -710,27 +823,11 @@ let operands (ren : Renderer.t) sink =
       in
       let used = ref 0 in
       let stage w =
-        let operands = List.filteri (fun i _ -> i < 2) (src w) in
-        let tiles = operand_tiles all operands in
-        let staged = List.filter_map snd tiles in
-        let d = depth ~used:!used ren (List.map bytes staged) in
-        (* The tiles step through one loop, or none: a copy runs where its
-           tile's loop does. *)
-        let loop =
-          match List.map (fun t -> t.loop) staged with
-          | l :: rest when List.for_all (Option.equal ( == ) l) rest -> Ok l
-          | _ -> Error ()
-        in
-        match loop with
-        | Error () -> None
-        | Ok _ when List.is_empty staged || d = 0 -> None
-        | Ok loop -> begin
-          (* A gather in a tile's address is read at the next trip only
-             inside the loop's bound: such a tile copies in one stage. *)
-          let gathered = List.exists (fun t -> t.gathers) staged in
-          let d = if Option.is_none loop || gathered then 1 else d in
-          used :=
-            !used + (d * List.fold_left (fun n t -> n + bytes t) 0 staged);
+        match staging ren all ~used:!used w with
+        | None -> None
+        | Some ((tiles, _, loops, d) as st) ->
+          let operands = List.filteri (fun i _ -> i < 2) (src w) in
+          used := !used + staged_bytes st;
           let plans =
             List.map
               (fun (x, t) ->
@@ -746,12 +843,14 @@ let operands (ren : Renderer.t) sink =
               tiles
           in
           (* The first chunk's copies, before the reads; with two stages, the
-             next chunk's, each trip, into the slot the next trip reads. *)
+             next chunk's, each trip, into the slot the next trip reads: of a
+             nest, the next trip in its order. *)
           let first, ahead, rslot =
-            match loop with
-            | Some l when d = 2 ->
-                let n = nth l 0 and next = O.(l + int 1) in
-                let within = around all w l in
+            match loops with
+            | outermost :: _ when d = 2 ->
+                let t, n = trip loops in
+                let next = O.(t + int 1) in
+                let within = around all w outermost in
                 let firsts =
                   List.filter_map
                     (fun (_, p) ->
@@ -770,12 +869,11 @@ let operands (ren : Renderer.t) sink =
                         p)
                     plans
                 in
-                (firsts, aheads, O.(l % int 2))
+                (firsts, aheads, O.(t % int 2))
             | _ ->
-                let at = match loop with Some l -> l | None -> int 0 in
                 ( List.filter_map
                     (fun (_, p) ->
-                      Option.map (fun st -> st.copy_to ~slot:(int 0) ~at ()) p)
+                      Option.map (fun st -> st.copy_to ~slot:(int 0) ()) p)
                     plans,
                   [],
                   int 0 )
@@ -802,7 +900,6 @@ let operands (ren : Renderer.t) sink =
           in
           let acc = List.filteri (fun i _ -> i >= 2) (src w) in
           Some (w, replace w ~src:(srcs @ acc))
-        end
       in
       let cores = List.filter (fun u -> Op.equal (op u) Op.Wmma) all in
       match List.filter_map stage cores with
@@ -818,8 +915,7 @@ let admits (ren : Renderer.t) sink =
     match tiles with
     | Some t :: rest ->
         List.for_all
-          (function
-            | Some t' -> Option.equal ( == ) t.loop t'.loop | None -> false)
+          (function Some t' -> same_loops t t' | None -> false)
           rest
     | _ -> false
   in
@@ -836,9 +932,21 @@ let admits (ren : Renderer.t) sink =
 let warp_tile = 64
 let chunk = 32
 
+(* A staged trip lasts about one copy's latency while its busiest compute
+   unit copies few bytes, and those bytes over the unit's rate of fill when
+   it copies many: [max (L, B / F)] for [B] bytes a trip (Volkov,
+   "Understanding Latency Hiding on GPUs", UCB/EECS-2016-143, Sec. 3.5, the
+   latency-bound and throughput-bound modes). A kernel then takes at least
+   its busiest unit's bytes over the whole sum over [F], so of the plans
+   whose sums keep their order the one whose busiest unit copies least a
+   value of [K] fills the units best; and its trip is deepened until [B]
+   reaches [in_flight], [L F] with a margin, past which a deeper trip only
+   takes shared memory. On an RTX 5000 Ada a key projection of 64 tokens by
+   512 over 2880, its operands read from memory, ran 8 workgroups of 64 by 64
+   on 8 of its 100 SMs in 39.7 us, and 15.7 spread and deepened. *)
 let tile (ren : Renderer.t) ast (w : wmma) ~core_threads ~workgroups
-    ~sizes:(sn, sm, sk) ~in_run =
-  let n, m, kd = w.dims and itemsize = Dtype.itemsize w.dtype_in in
+    ~sizes:(sn, sm, sk) ~axes:(rn, rm, rk) ~in_run =
+  let n, m, kd = w.dims in
   let unroll =
     if chunk mod kd = 0 && sk mod (chunk / kd) = 0 then chunk / kd else 1
   in
@@ -858,45 +966,165 @@ let tile (ren : Renderer.t) ast (w : wmma) ~core_threads ~workgroups
       and ln = if sn / un mod 2 = 0 then 2 else 1 in
       Some (um, un, lm, ln)
   in
-  let plans = List.filter_map plan [ (1, 1); (2, 1); (2, 2) ] in
-  let bytes (um, un, lm, ln) =
-    let depth = kd * unroll * itemsize in
-    [ lm * um * m * depth; ln * un * n * depth ]
+  let planned h = Option.map (fun p -> (h, p)) (plan h) in
+  let plans = List.filter_map planned [ (1, 1); (2, 1); (2, 2) ] in
+  (* The halvings past [h], [M] then [N] in turn, down to the core's own
+     tile. *)
+  let rec halved (hm, hn) =
+    let can_m = warp_tile / m / hm >= 2 and can_n = warp_tile / n / hn >= 2 in
+    let next =
+      if can_m && (hm <= hn || not can_n) then Some (hm * 2, hn)
+      else if can_n then Some (hm, hn * 2)
+      else None
+    in
+    match next with
+    | None -> []
+    | Some h -> Option.to_list (planned h) @ halved h
+  in
+  let all = toposort ~calls:Skip ast in
+  let reads r t =
+    List.exists
+      (fun x -> axis_id x = axis_id r)
+      (Nodes.to_list (ranges t.outer))
+  in
+  let threads (um, un, lm, ln) =
+    match workgroups with
+    | Some g -> g / (um * un * lm * ln) * w.threads * lm * ln
+    | None -> max_int
+  in
+  (* The units' share of the busiest, in workgroups of the plan [p]. *)
+  let busiest (um, un, lm, ln) =
+    let g = max 1 (Option.value workgroups ~default:1 / (um * un * lm * ln)) in
+    (g + ren.units - 1) / ren.units
+  in
+  (* The plan and the depth of the core [c], the largest plan [top]. *)
+  let choose c top =
+    let operands = List.filteri (fun i _ -> i < 2) (src c) in
+    let used = used_before ren all c in
+    (* The tiles staging copies at [u] of the core's steps a trip, the core's
+       [K] none of their loops where a trip takes it whole, as a per-head
+       scale is copied once a trip takes a head whole. *)
+    let tiles whole =
+      List.filter_map snd (operand_tiles ?whole all operands)
+    in
+    let within = lazy (tiles None) and whole = lazy (tiles (Some rk)) in
+    let staged u =
+      Lazy.force (if sk = 0 || sk / u > 1 then within else whole)
+    in
+    (* The bytes a workgroup of [p] copies of each tile a trip of [u] steps:
+       the core leaves a tile of its rows for one step, which [p]'s splits
+       widen where it reads [M] or [N], and [u] where it reads [K]. *)
+    let copied (um, un, lm, ln) u =
+      List.map
+        (fun t ->
+          bytes t
+          * (if reads rm t then um * lm else 1)
+          * (if reads rn t then un * ln else 1)
+          * if reads rk t then u else 1)
+        (staged u)
+    in
+    let stages_at p u =
+      let ts = staged u in
+      match List.map (fun t -> t.loops) ts with
+      | loops :: rest when List.for_all (List.equal ( == ) loops) rest ->
+          stages ~used ren all c ts ~loops (copied p u)
+      | _ -> 0
+    in
+    match stages_at top unroll with
+    | 0 -> None
+    | s0 ->
+        let fits (_, p) = threads p >= core_threads / s0 in
+        (* Whether the core beats a stream of several passes was measured
+           only with copies overlapping its cores, on two stages, and known
+           counts. *)
+        let filled =
+          s0 = 2 && Option.is_some workgroups && List.exists fits plans
+        in
+        let h0, p0 =
+          match List.find_opt fits plans with
+          | Some p -> p
+          | None -> List.hd (List.rev plans)
+        in
+        (* The plan and the trip follow the units and their bytes in flight
+           where the target states them, with copies overlapping cores, as
+           they were measured, and known workgroups. *)
+        let measured =
+          ren.in_flight > 0 && ren.units > 0 && s0 = 2
+          && Option.is_some workgroups
+        in
+        let carried p u = busiest p * List.fold_left ( + ) 0 (copied p u) in
+        (* Smaller tiles than [p0]'s block their sums as [p0]'s do where its
+           accumulators are blocked, so that no sum's order moves. *)
+        let blocked (um, un, _, _) =
+          um * m * un * n / w.threads * Dtype.itemsize (dtype c) <= Chains.held
+        in
+        let least b (_, p) =
+          if carried p unroll < carried b unroll then p else b
+        in
+        let best =
+          if measured && blocked p0 then List.fold_left least p0 (halved h0)
+          else p0
+        in
+        let s = stages_at best unroll in
+        (* The depths that keep the stages and the blocks of the sum's
+           running sums, so that its order does not move; the least whose
+           trip carries [in_flight], else the deepest. The blocks are
+           {!Chains.block}'s where the core's [K] is its sum's innermost
+           range: then the trips it takes whole, or the block it is split
+           in, are the same terms at every depth, and the ranges outside see
+           the same terms a trip of [K]. Every sum over [K] must have it
+           innermost: one beside the core then reads fewer lanes a trip, so
+           it leaves [K] more room and the core's blocks govern. *)
+        let innermost =
+          let over r =
+            Op.equal (op r) Op.Reduce
+            && List.exists (fun x -> axis_id x = axis_id rk) (List.tl (src r))
+          in
+          let first r =
+            let rs = Chains.innermost (List.tl (src r)) in
+            match List.find_opt (fun x -> extent x > 1) rs with
+            | Some x -> axis_id x = axis_id rk
+            | None -> false
+          in
+          match List.filter over all with
+          | [] -> false
+          | sums -> List.for_all first sums
+        in
+        let block u = Chains.block ~lanes:(kd * u) (sk / u) * u in
+        let keeps u =
+          u mod unroll = 0 && sk mod u = 0
+          && kd * u <= Chains.chain
+          && block u = block unroll
+          && stages_at best u >= s
+        in
+        let depths = List.filter keeps (List.init sk (fun i -> i + 1)) in
+        let flies u = carried best u >= ren.in_flight in
+        let u =
+          if not (measured && innermost) then unroll
+          else
+            match List.find_opt flies depths with
+            | Some u -> u
+            | None -> List.fold_left max unroll depths
+        in
+        let um, un, lm, ln = best in
+        let when_ c split = if c then [ split ] else [] in
+        Some
+          ( when_ (um > 1) (1, um, Opt.Upcast)
+            @ (if un > 4 then [ (0, 4, Opt.Upcast); (0, un / 4, Opt.Upcast) ]
+               else when_ (un > 1) (0, un, Opt.Upcast))
+            @ when_ (lm = 2) (1, 2, Opt.Local)
+            @ when_ (ln = 2) (0, 2, Opt.Local)
+            @ when_ (u > 1) (2, u, Opt.Upcast),
+            filled )
+  in
+  let core =
+    List.find_opt (fun u -> match arg u with Wmma w' -> w' = w | _ -> false) all
   in
   (* The staged tile is taken only where staging stages the core's operands,
      which it decides of the kernel as the core leaves it. *)
-  let stages =
-    match plans with
-    | p :: _ when admits ren ast -> depth ren (bytes p)
-    | _ -> 0
-  in
-  if stages = 0 then None
-  else
-    let threads (um, un, lm, ln) =
-      match workgroups with
-      | Some g -> g / (um * un * lm * ln) * w.threads * lm * ln
-      | None -> max_int
-    in
-    let fits p = threads p >= core_threads / stages in
-    (* Whether the core beats a stream of several passes was measured only
-       with copies overlapping its cores, on two stages, and known counts. *)
-    let filled =
-      stages = 2 && Option.is_some workgroups && List.exists fits plans
-    in
-    let um, un, lm, ln =
-      match List.find_opt fits plans with
-      | Some p -> p
-      | None -> List.hd (List.rev plans)
-    in
-    let when_ c split = if c then [ split ] else [] in
-    Some
-      ( when_ (um > 1) (1, um, Opt.Upcast)
-        @ (if un > 4 then [ (0, 4, Opt.Upcast); (0, un / 4, Opt.Upcast) ]
-           else when_ (un > 1) (0, un, Opt.Upcast))
-        @ when_ (lm = 2) (1, 2, Opt.Local)
-        @ when_ (ln = 2) (0, 2, Opt.Local)
-        @ when_ (unroll > 1) (2, unroll, Opt.Upcast),
-        filled )
+  match (core, plans) with
+  | Some c, (_, top) :: _ when admits ren ast -> choose c top
+  | _ -> None
 
 (* Decoded panels on the host *)
 

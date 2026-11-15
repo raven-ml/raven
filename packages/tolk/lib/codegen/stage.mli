@@ -36,8 +36,15 @@
     overwrites it, and publishes chunk [k + 1] before it is read. The barriers
     are the ones code generation places between a store to shared memory and
     the reads after it. The loop's first copy runs before each run of the
-    loop, at each trip of every serial loop around it. Without asynchronous
-    copies a single stage copies each trip's tile at the start of the trip. *)
+    loop, at each trip of every serial loop around it. A tile that steps
+    through several loops, as an operand summed over heads and then a head's
+    width does, steps through them as one loop of trips counted outermost
+    first, the trip after an inner loop's last being the next outer trip's
+    first, where one node closes them all, their extents are constant and
+    that node closes no other loop inside the outermost; it copies in one
+    stage otherwise.
+    Without asynchronous copies a single stage copies each trip's tile at the
+    start of the trip. *)
 
 val depth : ?used:int -> Renderer.t -> int list -> int
 (** [depth ~used ren tiles] is the number of stages a core whose staged
@@ -64,8 +71,8 @@ val operands : Renderer.t -> Ops.t -> Ops.t
     operand, its index's validity or a selection of [0], copies [0] where it
     fails. An operand computed elementwise from loads of global memory, and
     not {!decoded}, is staged where each of its loads that reads the threads
-    and lanes reads such a box. The loads whose tiles step through the loop
-    of its tile of most elements are copied, where that loop is the loop of
+    and lanes reads such a box. The loads whose tiles step through the loops
+    of its tile of most elements are copied, where those are the loops of
     each operand that is a load, and the others stay loads, as a per-head
     scale stays while the core's loop runs within a head; the operand
     computes on the copies as it did on the loads. An operand whose terms mix
@@ -86,28 +93,49 @@ val tile :
   core_threads:int ->
   workgroups:int option ->
   sizes:int * int * int ->
+  axes:Ops.t * Ops.t * Ops.t ->
   in_run:(int -> bool) ->
   ((int * int * Opt.target) list * bool) option
-(** [tile ren sink core ~core_threads ~workgroups ~sizes:(n, m, k) ~in_run] is
-    the splits of a tensor core's staged tile, as [(axis, amount, target)] with
-    [axis] [0], [1] or [2] for the core's N, M and K, in the order to apply
-    them, and whether the core has two stages and the kernel keeps
-    [core_threads / 2] threads on some tile, which an unknown count of
-    workgroups does not show, when {!admits} and {!depth} stage the core;
-    [None] otherwise, as for a core reading gathered rows, whose warps the
-    core does not yet split. [n],
-    [m] and [k] are the sizes of those axes as the core leaves them, [0] when
-    unknown, and [workgroups] the kernel's, if known. A warp holds 64 by 64
-    outputs; a workgroup takes 2 by 2 warps where [M] and [N] divide by 2, one
-    on each of the four schedulers of an NVIDIA SM since Volta, and [K] is
-    unrolled to 32 elements a trip where it divides.
-    While the kernel keeps fewer than [core_threads / s] threads, [s] the
-    stages, the warp tile halves, [M] then [N], down to half of 64 a side: a
-    pipeline overlaps a warp's copies with its cores, so it needs fewer warps
-    in flight. [in_run u] is whether [u] of the core's tiles of rows read one
-    value of an operand: [M]'s upcast falls by one tile, and its local split
-    is left out, while it does not hold, so that a run of three tiles takes
-    one warp. *)
+(** [tile ren sink core ~core_threads ~workgroups ~sizes:(n, m, k) ~axes
+    ~in_run] is the splits of a tensor core's staged tile, as
+    [(axis, amount, target)] with [axis] [0], [1] or [2] for the core's N, M
+    and K, in the order to apply them, and whether the core has two stages
+    and the kernel keeps [core_threads / 2] threads on some tile, which an
+    unknown count of workgroups does not show, when {!admits} and {!depth}
+    stage the core; [None] otherwise, as for a core reading gathered rows,
+    whose warps the core does not yet split. [n], [m] and [k] are the sizes
+    of those axes as the core leaves them, [0] when unknown, [axes] their
+    ranges, and [workgroups] the kernel's, if known. A warp holds 64 by
+    64 outputs; a workgroup takes 2 by 2 warps where [M] and [N] divide by 2,
+    one on each of the four schedulers of an NVIDIA SM since Volta, and [K]
+    is unrolled to 32 elements a trip where it divides. The stages [s] are
+    those {!operands} copies: {!depth} of the tiles its loads copy, at their
+    types, beside the stages of the kernel's earlier cores, and one where the
+    tiles step through no loop or loops that are no nest, or an address
+    gathers.
+    While the kernel keeps fewer than [core_threads / s] threads, the warp
+    tile halves, [M] then [N], down to half of 64 a side: a pipeline overlaps
+    a warp's copies with its cores, so it needs fewer warps in flight.
+
+    Where [ren] states its compute units and the bytes a unit keeps in
+    flight ({!Renderer.t.units}, {!Renderer.t.in_flight}), the core has two
+    stages and [workgroups] is known, the tile follows them. Past that plan,
+    where its accumulators take at most 320 bytes a thread and so are
+    blocked into running sums, the warp tile halves on, [M] then [N] in
+    turn, down to the core's own, and the plan whose busiest unit copies the
+    fewest bytes a trip is taken: [⌈g / units⌉] of the plan's [g]
+    workgroups, each copying its rows of each operand. [K] is then unrolled
+    to the least depth from 32 elements at which those copies reach
+    [in_flight], or the deepest where none does, among the depths that keep
+    the stages and the blocks of the sum's running sums, where [K] is its
+    sum's innermost range; it stays at 32 otherwise. Each output so sums
+    the same terms in the same order whatever the plan and the units, and
+    [K] is never split among a workgroup's warps.
+
+    [in_run u] is whether [u] of the core's tiles of rows read one value of
+    an operand: [M]'s upcast falls by one tile, and its local split is left
+    out, while it does not hold, so that a run of three tiles takes one
+    warp. *)
 
 (**/**)
 

@@ -7426,8 +7426,10 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   scheduler `STAGE`, which skips the heuristic. `uop/spec.py`
   (`spec_shared`: an AFTER of a scalar or a computed value only).
 - **tolk:** `Stage.operands`, which `Codegen.full_rewrite_to_sink` runs after
-  the opts; `Stage.depth` and `Stage.layout`; `Heuristic.staged_tile`;
-  `Renderer.t.async_copy`; `Setting.stage`.
+  the opts; `Stage.depth`, `Stage.layout` and `Stage.tile`;
+  `Heuristic.staged_tile`; `Chains`, the blocks of a sum's running sums
+  that codegen and the tile both read; `Renderer.t.async_copy`, `units`
+  and `in_flight`; `Setting.stage`.
 - **Differs:** after the opts, each core operand that reads global memory
   through an index whose terms reading the workgroup's threads and lanes form
   a dense box of strided dimensions is copied by every thread of the
@@ -7439,23 +7441,53 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   operand the kernel computes elementwise from loads and does not decode, as
   an attention output times the share of each head's row its sink leaves,
   has its loads copied where each through which it reads the threads and
-  lanes has such a tile: those whose tiles step through the loop of its tile
-  of most elements, where that is the loop of each operand that is a load;
-  the others, as the per-head share while the core's loop runs within a head,
-  stay loads, and the operand computes on the copies. A range of one trip,
-  as K unrolled whole leaves, is no tile's loop. Two
-  stages where the renderer copies asynchronously and they fit
-  `shared_max`, the next trip's copy issued before this trip's reads and
-  ordered so by the slot's offset, an AFTER of the loop's range at two trips,
-  and the first trip's copy pinned, by an AFTER of their ranges, inside every
-  serial loop the core's loop runs in, so that each run of the loop copies
-  it; one stage otherwise. The barriers are those the implicit rules place. A
+  lanes has such a tile: those whose tiles step through the loops of its
+  tile of most elements, where those are the loops of each operand that is
+  a load; the others, as the per-head share while the core's loop runs
+  within a head, stay loads, and the operand computes on the copies. A
+  tile's loops are its serial ranges of more than one trip; a range of one
+  trip, as K unrolled whole leaves, is no tile's loop. Two stages where the
+  renderer copies asynchronously and they fit `shared_max`, the next trip's
+  copy issued before this trip's reads and ordered so by the slot's offset,
+  an AFTER of the trip at two trips, and the first trip's copy pinned, by
+  an AFTER of their ranges, inside every serial loop the outermost loop runs
+  in, so that each run of the loop copies it; one stage otherwise. A tile
+  whose index steps through a nest of loops copies the next trip of the
+  nest in two stages where one node closes the loops, their extents are
+  constant and it closes no other loop of more than one trip inside the
+  outermost: its trips are counted outermost first, the next trip's
+  loops being its digits in their extents, the outermost without a
+  remainder, so that the trip past the last fails the copy's gate; a tile
+  whose loops are no such nest copies in one stage. The barriers are those the implicit rules place. A
   gated operand (PADTO's validity, or a core's selection of 0) copies 0
   where its gate fails, its thread ranges rebuilt from the tile's
   coordinates. A staged core takes its own tile: 2 by 2 warps of 64 by 64,
   the warp tile halved, M then N, to 32 by 32 while the kernel keeps fewer
-  than `core_threads / stages` threads, and K unrolled to chunks of 32; its
-  rows stay within a run of rows that read one value of an operand, a
+  than `core_threads / stages` threads, its stages planned as
+  `Stage.operands` copies them, at the types its loads copy and beside the
+  kernel's earlier cores' stages; past that plan, where the renderer states
+  `units` and `in_flight`, the core has two stages and the kernel's
+  workgroups are known, down to the core's own tile among plans whose
+  accumulators a thread blocks (at most `Chains.held`, 320 bytes), the plan
+  whose busiest compute unit copies the fewest bytes a value of K,
+  ⌈workgroups / units⌉ workgroups at the bytes staging copies; K unrolled
+  to the least depth from 32 at which the busiest unit's copies of a trip
+  reach `in_flight`, among the depths that keep the stages and the blocks of
+  the sum's running sums where K is the sum's innermost range (`Chains`,
+  whose walk codegen's blocks are), or the deepest that keeps them; K
+  unrolled to chunks of 32 elsewhere, and never split among a
+  workgroup's warps. `in_flight` is Volkov's estimate of the bytes in flight
+  that sustain nine tenths of a peak ("Understanding Latency Hiding on
+  GPUs", UCB/EECS-2016-143, Sec. 6, printed p. 84: "about 1.3x" minimum
+  latency times peak throughput), 1.3 times a copy's least trip from memory
+  on a small grid, 0.32 us, times one SM's peak fill from one workgroup's
+  copies, 44 GB/s (fudge's `lat.cu` microbenchmark of 16-byte `cp.async`
+  copies), 18304 bytes; `units` is the RTX 5000 Ada's 100 SMs. Both are
+  fixed for sm_89 and 0 elsewhere, which keeps the plans above. No sum's
+  order follows the units: every plan the rule takes blocks its sums as the
+  plan above does, and every depth keeps the blocks, so each output sums
+  the same terms in the same order, and a part of another count runs the
+  same programs, at another speed. Its rows stay within a run of rows that read one value of an operand, a
   warp's tiles of rows falling by one until they fit it, so that a run of
   three tiles takes one warp, and the
   heuristic takes it only where `Stage.admits` the kernel as the core leaves
@@ -7538,7 +7570,29 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   loads stay unstaged by measurement: staged, gpt-oss-20b's Q8_0
   projections ran 1.2 to 1.9 times slower, key 56.3 to 104.4-105.5 and
   output 130.1 to 196.6-196.8 at 64 tokens, query 188.4-190.5 to 231.4-231.5
-  and output 254.0-254.2 to 315.4-316.6 at 512.
+  and output 254.0-254.2 to 315.4-316.6 at 512. The nest, the spread and
+  the depth: the tolk bench on fudge, two interleaved rounds, us, before
+  and after: `stream/key-projection-64`, the key projection of 64 tokens
+  by 512 over 2880 with its operands read from memory, 39.7-39.8 to 15.7;
+  `stream/output-projection-64` 57.8-58.0 to 28.1-28.3;
+  `stream/key-projection` and `contract/bf16-512x512x2880`, L2-warm,
+  27.4-27.5 to 26.1-26.2, where an `in_flight` of 16384 bytes, one trip
+  shallower, ran 24.0-24.2: a warm operand's latency is the L2's, 11-12 KB
+  of fill in flight, and the compiler cannot see which operand is resident,
+  so the cold case, a model's weights read once a step, decides; every
+  other `contract/*` and `stream/*` row within 1.1% of before, allocated
+  words of the compile rows equal. kaun's `GptOss/prefill-64` 32.96-33.44
+  to 31.81-32.04 ms, `prefill-512` 55.88-56.94 against 55.21-56.33 and
+  `decode-step-cache-1024` 8.73-8.80 both, words a call equal. The
+  attention block's kernels apart, the L2 evicted before each call, at the
+  prototype's rule of the same kernels (to re-measure on fudge): key and
+  value 31.7-33.8 to 11.3 at 64 tokens, 32.8 to 12.3 at 128 and to
+  23.6-24.1 at 512; output 70.7-71.7 to 53.8-54.3 (heads of 64) and
+  64.5-68.6 to 50.2 (heads of 128) at 64 tokens, 132.1-133.1 to 103.4-104.5
+  and 116.7-117.8 to 96.2-96.3 at 512; the MLP's down projection at 64
+  tokens 81.3-81.9 to 71.6-71.7; outputs bit for bit equal at 24, 100 and
+  142 units. AMD and Metal state no `units` or `in_flight` and keep their
+  plans; the nest reaches their one stage unchanged, unmeasured there.
 - **Pinned by:** the Stage suite: `values › a staged kernel computes the bits
   of the same optimisations unstaged` (CUDA's renderer against itself
   without shared memory, both tiles, one and two stages, padded, batched,
@@ -7548,7 +7602,14 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   (an output projection's operand computed from bfloat16 and float32 loads,
   beside bfloat16 and Q8_0 weights, 12 to 512 tokens, heads of 64, whose
   per-head scale stays a load, and of 32, whose loads all step through the
-  heads in two stages), `a core under
+  heads in two stages), `values › a staged core's plans at two counts of
+  units compute the same bits` (CUDA's renderer, the same at 24 units, and
+  with no units, three plans), `values › a staged core's plans under another
+  sum at any units …` (drawn units and bytes in flight against neither,
+  blocks of 64 to 512 terms, the running sums' blocks padded past a nest's
+  inner bound, and a core taking its K from the blocks with a loop inside),
+  `kernels the race checker runs › a product
+  over a nest of loops …` (two stages, against its unstaged twin), `a core under
   another sum whose tile takes its K whole …` (two stages), `a core reading gathered rows keeps the
   unstaged splits`, `gathered rows each warp reads alone stay unstaged`, `serial ranges › …` (exact values
   and barriers under a loop, a weak range bounded by memory, and a range the
@@ -7556,12 +7617,13 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   and load of an element separated by a barrier over two trips, on CUDA and on
   HIP's RDNA3 and RDNA4, and every barrier of a kernel with `cp.async`
   waiting for it), `races` (`compute-sanitizer`'s race checker in hazard mode on a
-  kernel of each depth, one of gathered rows and one of a computed
-  operand), `stages` (`Stage.depth`),
+  kernel of each depth, one of gathered rows, one of a computed operand and
+  one over a nest of loops), `stages` (`Stage.depth`),
   `a staged core's workgroups, threads and trips`, `a staged warp holds a
   block's rows of one matrix`, `the layout` and
   `sources`; the tolk bench's `contract/bf16-*` rows, `bf16-512x4096x2880`
-  and `bf16-512x512x2880` among them, and `stream/output-projection-64`, rune's
+  and `bf16-512x512x2880` among them, `stream/output-projection-64` and
+  `stream/key-projection-64`, rune's
   `Cuda/experts-bfloat16-64x4of32-2880x5760` and `-512x4of32-2880x5760`
   and kaun's
   `GptOss/experts-at-prefill-512`, their baselines pending the scheduled

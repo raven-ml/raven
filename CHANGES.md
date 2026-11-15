@@ -1313,6 +1313,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A staged tensor core copies through a nest of loops in two stages, and on
+  sm_89 spreads small grids and deepens trips (`Stage.tile`, `Renderer.t.units`,
+  `in_flight`): a cold 64-token key projection takes 15.7 µs, not 39.7.
 - On Metal, a program of a few hundred small stores into one buffer, such as
   an `Nx.set` at 878 listed positions under `Rune.jit`, no longer takes
   minutes to compile: a launch there holds at most 40 members

@@ -83,16 +83,21 @@ let on_cuda () =
       | r -> (d, r)
       | exception Failure why -> skip ~reason:why ())
 
-(* [r] rebuilt with [has_shared] and [registers], named [name]. *)
-let rebuilt ~name ?(has_shared = true) ?registers (r : Renderer.t) =
+(* [r] rebuilt with [has_shared], [registers], [units] and [in_flight],
+   named [name]. *)
+let rebuilt ~name ?(has_shared = true) ?registers ?units ?in_flight
+    (r : Renderer.t) =
   let registers = Option.value registers ~default:r.registers in
+  let units = Option.value units ~default:r.units
+  and in_flight = Option.value in_flight ~default:r.in_flight in
   Renderer.v ~name ~suffix:r.suffix ~supports_float4:r.supports_float4
     ~half8:r.half8 ~registers ~vector_lanes:r.vector_lanes
     ~has_local:r.has_local ~has_shared ~global_max:r.global_max
     ~local_max:r.local_max ?global_prod_max:r.global_prod_max
     ~shared_max:r.shared_max ~async_copy:r.async_copy
     ~tensor_cores:r.tensor_cores
-    ~per_byte_first:r.per_byte_first ~extra_matcher:r.extra_matcher
+    ~per_byte_first:r.per_byte_first ~units ~in_flight
+    ~extra_matcher:r.extra_matcher
     ~packed_args:r.packed_args ~code_for_op:r.code_for_op ~native:r.native
     ~render:r.render ~compiler:r.compiler r.target
 
@@ -232,6 +237,38 @@ let law =
        Gen.(
          quad products bool (of_list [ 1; 2 ]) (int_range 0 1_000_000)))
     same_bits
+
+(* The spread
+
+   A staged core's tile and its trips follow the renderer's compute units and
+   the bytes a unit keeps in flight, and never the order of a sum: a key
+   projection of 64 tokens by 512 over 2880 takes one plan on CUDA's
+   renderer, another on the same renderer stating a part of 24 units, and a
+   third where neither is stated, and the three compute the same bits. *)
+let spread_bits () =
+  let d, r = on_cuda () in
+  let p =
+    { dt = Bfloat16; batch = 1; m = 64; k = 2880; n = 512; layout = Nk;
+      toeplitz = false }
+  in
+  let fewer = rebuilt ~name:(r.name ^ " of 24 units") ~units:24 r
+  and unstated =
+    rebuilt ~name:(r.name ^ " of no units") ~units:0 ~in_flight:0 r
+  in
+  let opts r = chosen ~staged:true p r in
+  let opt = Testable.make ~pp:Opt.pp ~equal:Opt.equal in
+  not_equal ~msg:"24 units" (list opt) (opts r) (opts fewer);
+  not_equal ~msg:"no units" (list opt) (opts r) (opts unstated);
+  let inputs =
+    [ (1, values 1 (a_size p)); (2, values 2 (p.batch * p.k * p.n)) ]
+  in
+  let run r =
+    let prg = compiled r (kernel ~opts_to_apply:(opts r) p) in
+    List.assoc 0 (Run.on d prg inputs)
+  in
+  let bits = run r in
+  equal ~msg:"24 units" (array Dtypes.value) bits (run fewer);
+  equal ~msg:"no units" (array Dtypes.value) bits (run unstated)
 
 (* The barriers of a staged kernel
 
@@ -514,8 +551,7 @@ let core_under_a_sum () =
    stages. Integers from -2 to 2: every sum is exact. *)
 let whole = (64, 8, 32, 64)
 
-let whole_kernel ?opts_to_apply () =
-  let m, h, k, n = whole in
+let heads_kernel ?opts_to_apply (m, h, k, n) =
   let c = Shape.param ~shape:[ Ops.Int (m * n) ] 0 Float32
   and a = Shape.param ~shape:[ Ops.Int (h * m * k) ] 1 Dtype.Bfloat16
   and b = Shape.param ~shape:[ Ops.Int (h * k * n) ] 2 Dtype.Bfloat16 in
@@ -542,20 +578,22 @@ let core_taken_whole () =
     Setting.context
       Setting.[ B (stage, true) ]
       (fun () ->
-        let s = Postrange.Scheduler.v (whole_kernel ()) r in
+        let s = Postrange.Scheduler.v (heads_kernel whole) r in
         Postrange.Scheduler.convert_loop_to_global s;
         Postrange.Scheduler.applied_opts
           (Heuristic.hand_coded_optimizations s))
   in
-  let prg = compiled r (whole_kernel ~opts_to_apply:opts ()) in
+  let prg = compiled r (heads_kernel ~opts_to_apply:opts whole) in
   let src = source prg in
   equal ~msg:"a core" bool true (says "mma.sync" src);
   equal ~msg:"both tiles staged" int 2 (List.length (locals (Ops.nth prg 1)));
   (* Two stages: each tile's first trip's copies before [g]'s loop and its
-     next trip's inside it, beside the definition of the copy. A tile of 64
-     by 32 bfloat16 values takes two copies of 16 bytes from each of the
-     workgroup's 128 threads; one stage would copy it once, inside. *)
-  equal ~msg:"two stages" int (1 + (2 * 2 * 2)) (count "tg_cp_async(" src);
+     next trip's inside it, beside the definition of the copy. The 64 by 64
+     outputs spread over 8 workgroups of 32 by 16, whose tiles of 32 by 32
+     and 32 by 16 bfloat16 values take one copy of 16 bytes from each of the
+     workgroup's 128 threads, or from half of them; one stage would copy
+     each once, inside. *)
+  equal ~msg:"two stages" int (1 + (2 * 1 * 2)) (count "tg_cp_async(" src);
   let m, h, k, n = whole in
   let a = small 1 (h * m * k) and b = small 2 (h * k * n) in
   let v = function `Float f -> f | _ -> 0. in
@@ -934,15 +972,12 @@ let computed_inputs p =
   ]
 
 (* The buffers a core of [p] stages: [o]'s tile beside [w]'s, or beside a
-   decoded [w]'s none. [kept], read once a head, stays a load where the
-   core's loop runs inside a head, heads of 64 a trip of 32 values, and is
-   copied where a trip takes a head of 32 whole, the loop of every tile then
-   stepping through the heads. *)
+   decoded [w]'s none. [kept], read once a head, is copied where a trip
+   takes a head whole, the loops of every tile then stepping through the
+   heads alone, as each core's trip here does on CUDA's renderer; it stays a
+   load where the core's loop runs inside a head. *)
 let staged_of p =
-  match p.weights_of with
-  | Bf16_rows when p.head = 32 -> 3
-  | Bf16_rows -> 2
-  | Q8_0_rows -> 1
+  match p.weights_of with Bf16_rows -> 3 | Q8_0_rows -> 1
 
 let computed_bits p =
   let d, r = on_cuda () in
@@ -1109,12 +1144,13 @@ let run_computed () =
   equal ~msg:"o, kept and w staged" int 3
     (List.length (locals (Ops.nth prg 1)));
   (* Two stages: each tile's first trip's copies before the heads' loop and
-     its next trip's inside it, beside the definition of the copy. [o]'s and
-     [w]'s tiles of 64 by 32 bfloat16 values take two copies of 16 bytes from
-     each of the workgroup's 128 threads, [kept]'s 64 float32 values one
-     from some of them. *)
+     its next trip's inside it, beside the definition of the copy. The 64 by
+     256 outputs spread over workgroups of 32 by 16, whose tiles of [o]'s 32
+     by 32 and [w]'s 16 by 32 bfloat16 values take one copy of 16 bytes from
+     each of the workgroup's 128 threads, or from half of them, and [kept]'s
+     32 float32 values one from some of them. *)
   equal ~msg:"two stages" int
-    (1 + (2 * (2 + 2 + 1)))
+    (1 + (2 * (1 + 1 + 1)))
     (count "tg_cp_async(" src);
   let head = p.head in
   let k = heads * head and t = p.tokens in
@@ -1170,11 +1206,129 @@ let alone () =
   equal ~msg:"a second warp" int 1 (List.length warps);
   equal ~msg:"the tiles staged" int 0 (List.length (locals (Ops.nth prg 1)))
 
+(* A core over a nest of loops
+
+   [heads_kernel]'s product over [g] of [h] blocks, [r] of 512: a block's
+   terms pass one running sum's, so its trips cannot take a block whole, and
+   both tiles step through [g] and [r]'s trips as one nest, in two stages.
+   The kernel computes the bits of the same optimisations unstaged. *)
+let nest = (64, 4, 512, 64)
+
+let run_nest () =
+  let d, r = on_cuda () in
+  let module K = Postrange.Scheduler in
+  let o =
+    Setting.context
+      Setting.[ B (stage, true) ]
+      (fun () ->
+        let s = K.v (heads_kernel nest) r in
+        K.convert_loop_to_global s;
+        Heuristic.hand_coded_optimizations s)
+  in
+  (* The sum's loops of more than one trip: [g]'s and the core's. *)
+  let trips i =
+    match List.nth (K.full_shape o) i with Int n -> n | Sym _ -> 0
+  in
+  let loops =
+    List.filter (fun i -> trips i > 1) (K.axes_of ~reduce:true o [ Weak; Loop ])
+  in
+  equal ~msg:"loops of more than one trip" int 2 (List.length loops);
+  let k = heads_kernel ~opts_to_apply:(K.applied_opts o) nest in
+  let prg = compiled r k in
+  equal ~msg:"a core" bool true (says "mma.sync" (source prg));
+  (* Two stages: each tile's buffer holds twice what one stage's does. *)
+  let sizes prg = List.map Shape.max_numel (locals (Ops.nth prg 1)) in
+  let one = sizes (compiled (one_stage r) k) in
+  equal ~msg:"both tiles staged" int 2 (List.length one);
+  equal ~msg:"two stages" (list int) (List.map (( * ) 2) one) (sizes prg);
+  let m, h, kk, n = nest in
+  let inputs =
+    [ (1, values 1 (h * m * kk)); (2, values 2 (h * kk * n)) ]
+  in
+  let run prg = List.assoc 0 (Run.on d prg inputs) in
+  equal (array Dtypes.value) (run (compiled (unstaged r) k)) (run prg)
+
+(* The plans of [heads_kernel] at [sizes], on renderers that state units
+   and their bytes in flight or not, compute the same bits: blocks of [r]'s
+   terms of 64, 320 and 512, which the core takes whole or in trips; 352
+   and 416, whose trips the sum's running sums pad, so that a nest's next
+   trip passes the inner loop's bound; and 3, which leaves the core [g] for
+   its [K], over 16 and 32 blocks, with [r] inside it. Of the sizes drawn,
+   only 64 by 64 takes a staged core with padded blocks, one draw in 12, and
+   8 in 120 take [K] from the blocks, so the examples hold both. *)
+let heads_opts r sizes =
+  Setting.context
+    Setting.[ B (stage, true) ]
+    (fun () ->
+      let s = Postrange.Scheduler.v (heads_kernel sizes) r in
+      Postrange.Scheduler.convert_loop_to_global s;
+      Postrange.Scheduler.applied_opts (Heuristic.hand_coded_optimizations s))
+
+let heads_bits ((sizes, units, in_flight), seed) =
+  let d, r = on_cuda () in
+  let name =
+    Printf.sprintf "%s of %d units, %d in flight" r.name units in_flight
+  in
+  let stated = rebuilt ~name ~units ~in_flight r
+  and unstated =
+    rebuilt ~name:(r.name ^ " of no units") ~units:0 ~in_flight:0 r
+  in
+  let m, h, k, n = sizes in
+  let inputs =
+    [ (1, values seed (h * m * k)); (2, values (seed + 1) (h * k * n)) ]
+  in
+  let run r =
+    let opts = heads_opts r sizes in
+    let prg = compiled r (heads_kernel ~opts_to_apply:opts sizes) in
+    (opts, says "cp.async" (source prg), List.assoc 0 (Run.on d prg inputs))
+  in
+  let o1, staged, bits = run stated and o0, _, expected = run unstated in
+  let moved = not (List.equal Opt.equal o1 o0) in
+  cover "a plan the units move, staged" (moved && staged);
+  cover "a plan they leave" (not moved);
+  cover "a padded block, staged" (staged && (k = 352 || k = 416));
+  cover "the core's K from the blocks, staged" (staged && k = 3);
+  equal (array Dtypes.value) expected bits
+
+let heads_law =
+  let open Gen in
+  let sizes =
+    let+ m = of_list [ 32; 64 ]
+    and+ h = of_list [ 2; 4; 8; 16; 32 ]
+    and+ k = of_list [ 3; 64; 320; 352; 416; 512 ]
+    and+ n = of_list [ 32; 64 ] in
+    (m, h, k, n)
+  in
+  prop ~count:24
+    ~examples:
+      [
+        (((64, 4, 512, 64), 100, 18304), 1);
+        (((64, 8, 320, 64), 24, 32768), 2);
+        (((64, 32, 3, 64), 100, 18304), 3);
+        (((64, 4, 352, 64), 100, 18304), 4);
+        (((64, 2, 416, 64), 24, 32768), 5);
+      ]
+    "a staged core's plans under another sum at any units and bytes in \
+     flight compute the bits of the plan that reads neither"
+    (Gen.with_pp
+       (fun ppf (((m, h, k, n), u, f), seed) ->
+         Format.fprintf ppf "%d by %d over %d blocks of %d, %d units, %d \
+                             bytes in flight, seed %d" m n h k u f seed)
+       (pair
+          (triple sizes
+             (of_list [ 1; 24; 100; 142 ])
+             (of_list [ 4096; 18304; 32768 ]))
+          (int_range 0 1_000_000)))
+    heads_bits
+
 let checked = "kernels the race checker runs"
 let in_two = "a product of 128 cubed in two stages of cp.async is exact"
 let in_one = "a product of 128 cubed in one stage is exact"
 let gathered = "a routed product of gathered rows is exact"
 let computed = "a product of a computed operand is exact"
+let nested_loops =
+  "a product over a nest of loops in two stages computes its unstaged \
+   twin's bits"
 
 let checked_kernels =
   group checked
@@ -1183,6 +1337,7 @@ let checked_kernels =
       test in_one (run_staged 1);
       test gathered run_routed;
       test computed run_computed;
+      test nested_loops run_nest;
     ]
 
 (* [compute-sanitizer] attaches to the process it starts, so each kernel runs
@@ -1219,6 +1374,10 @@ let races =
       test
         "the race checker finds no hazard in a kernel of a computed operand"
         (racecheck computed);
+      test
+        "the race checker finds no hazard in a kernel staged over a nest of \
+         loops"
+        (racecheck nested_loops);
     ]
 
 (* Serial ranges around a core
@@ -1488,7 +1647,11 @@ let stage_off () =
 
    A staged core's workgroup is 2 by 2 warps, 128 threads, of 64 by 64
    outputs, each halved, M then N, to 32 by 32 while the kernel keeps fewer
-   than 16384 / stages threads; K is unrolled to 32. *)
+   than 16384 / stages threads; K is unrolled to 32. In two stages on sm_89,
+   whose renderer states its units and their bytes in flight, the busiest
+   unit's copies a trip reach those bytes where shared memory and the sum's
+   blocks allow: 512 by 512 over 2880 keeps one workgroup of 64 by 64 a unit
+   and takes 96 values a trip, 30 trips. *)
 
 let tile (dt, m, k, n, sync) =
   let r = sm89 ~sync () in
@@ -1516,7 +1679,7 @@ let staged_tiles =
       ((Dtype.Bfloat16, 2048, 2048, 2048, false), (256, 128, 64));
       ((Dtype.Bfloat16, 512, 2880, 4096, false), (128, 128, 90));
       ((Dtype.Bfloat16, 512, 2880, 5760, false), (180, 128, 90));
-      ((Dtype.Bfloat16, 512, 2880, 512, false), (64, 128, 90));
+      ((Dtype.Bfloat16, 512, 2880, 512, false), (64, 128, 30));
       ((Dtype.Bfloat16, 512, 2880, 4096, true), (128, 128, 90));
       ((Dtype.Float16, 256, 2880, 256, true), (16, 128, 90));
     ]
@@ -1934,7 +2097,17 @@ let () =
   exit
     (Windtrap.run "Tolk.Stage"
        [
-         group "values" [ law; routed_law; computed_law ];
+         group "values"
+           [
+             law;
+             routed_law;
+             computed_law;
+             heads_law;
+             test
+               "a staged core's plans at two counts of units compute the same \
+                bits"
+               spread_bits;
+           ];
          group "barriers" [ barriers ];
          checked_kernels;
          races;

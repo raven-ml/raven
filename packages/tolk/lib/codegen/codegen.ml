@@ -638,22 +638,13 @@ let devectorizer2 =
    contract states, for every [t] up to [2{^20}] and [G] up to [256], and
    beyond, where [t G / 128] grows faster than [t / 128 + G]; with a split's
    [s - 1] more, its [8] to [256] partials added in order, for the [32768]
-   terms and more the scheduler splits. *)
+   terms and more the scheduler splits. Staging reads the same blocks
+   ({!Chains}). *)
 
-let chain = 256
+let chain = Chains.chain
+let held = Chains.held
 
-(* A GPU thread's registers hold its accumulators, a nested sum two of each:
-   past [held] bytes of them a thread's registers spill. On CUDA (255 a
-   thread), a staged core's 128 float32 accumulators take 228 registers
-   alone and spilled 560 bytes nested; a core's 80 took 240 nested, a
-   blocked float32 tile's 64 took 207. Such a sum keeps its one running sum,
-   and its bound is a single chain's. *)
-let held = 320
-
-let serial u =
-  match axis_type u with
-  | Axis_type.Weak | Loop | Upcast -> true
-  | Global | Local | Warp | Placeholder -> false
+let serial = Chains.serial
 
 (* The trips of [r], if they are a literal. *)
 let trips r =
@@ -690,30 +681,15 @@ let caps (ren : Renderer.t) r =
   && Dtype.is_float (dtype r)
   && ((not ren.has_local) || bytes <= held)
 
-(* [r]'s serial ranges, innermost first: ranges nest by axis type, then
-   identity. *)
-let innermost r =
-  List.filter serial (srcs r)
-  |> List.sort (fun a b ->
-      let c = Axis_type.compare (axis_type b) (axis_type a) in
-      if c <> 0 then c else Stdlib.compare (axis_id b) (axis_id a))
-
 (* The innermost ranges of [r] whose trips fit [chain] with its lanes', and
    the range after them with the trips left to fit, where there is one:
-   [None] where they all fit. *)
+   [None] where they all fit ({!Chains.cut}). *)
 let inner r =
-  let rec go p taken = function
-    | [] -> None
-    | x :: rest -> (
-        match trips x with
-        | Some n when p * n <= chain -> go (p * n) (x :: taken) rest
-        | _ -> Some (List.rev taken, x, chain / p))
-  in
-  go (lane_terms r) [] (innermost r)
-
-let greatest_divisor n most =
-  let rec go d = if n mod d = 0 then d else go (d - 1) in
-  go (min n most)
+  let rs = Chains.innermost (srcs r) in
+  match Chains.cut ~lanes:(lane_terms r) (List.map trips rs) with
+  | None -> None
+  | Some (k, room) ->
+      Some (List.filteri (fun i _ -> i < k) rs, List.nth rs k, room)
 
 (* Each range a capped reduce must split, as [(range, trips, amount)]. Every
    reduce over a range splits it alike, so that siblings still share a loop,
@@ -739,8 +715,7 @@ let splits ren sink =
   List.rev_map
     (fun (x, room) ->
       let n = Option.get (trips x) in
-      let d = greatest_divisor n room in
-      (x, n, if d > 1 && 2 * d >= room then d else room))
+      (x, n, Chains.divisor n room))
     !wanted
 
 (* [sink] with the range [x] of [n] trips read in blocks of [d], at [o d + b]

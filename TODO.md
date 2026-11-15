@@ -5,13 +5,13 @@ Where it stands, with every measurement: doc/performance.md.
 
 ## tolk
 
-- Dense bf16 projections on CUDA (_plans/perf-campaign/proj/): k and v at
-  every token count run 8-64 workgroups with no split of K, at 88 GB/s;
+- Dense bf16 projections on CUDA (_plans/perf-campaign/proj/, proj2/): k
+  and v run 11.3 us at 64 tokens to 24 us at 512, L2 evicted
+  (`stream/key-projection-64` 15.7 us), 2-4x their 5.5 us byte bound: they
+  lack a split of K across workgroups;
   q at 512 tokens runs at 107 TFLOP/s against cuBLAS's 135; a token count
   with no factor of 16 takes no core (q 5.9 ms at 127 tokens); weights laid
-  `[K; N]` take no core, about 100x their byte bound. `Stage.tile` plans
-  two stages where `operands` copies in one, and sizes copies at the core's
-  input dtype; one tile rule for trip depth and warp split should own both
+  `[K; N]` take no core, about 100x their byte bound.
 - Since D479 groups starved reduces, a GPU `Set` election of 16384 and
   24576 rows runs 1.4x and 1.9x slower than rune's former split, and
   elections over several indices near `stream_threads` outputs up to 3.5x;
