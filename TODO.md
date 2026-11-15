@@ -46,11 +46,11 @@ Where it stands, with every measurement: doc/performance.md.
   prompt against 29.4 at 108: the attention projections at a count with a
   factor 17, `r_8_17_8_16_4_4_720_4` and `r_17_8_16_4_4_720_4`, take 13.9
   and 8.5 ms
-- gpt-oss's prefill scatters gate_up's padded rows back to token rows for
-  the bias and activation, then gathers them again for down: about 4 ms at
-  512 tokens. A rangeify rule that inlines it slows 32-127 tokens; storing
-  the routed product's row operand at its own rows (rune) gets most of the
-  gain
+- gpt-oss's prefill still stores gate_up's bias add as its own scatter: it
+  reads 4 buffers, so the 3-buffer rule keeps it, about 5% of the MoE block
+  at 512 tokens and 1-2% at 17-127. Stages are decided bottom-up, so
+  inlining it pushes two removable consumers past 3 buffers; the order in
+  which tolk decides stages is the question, not tinygrad's limit
 - On gpt-oss's cold first call, rangeify's reshape substitution
   (`Indexing`, the `apply_reshape` over placeholder ranges) allocates 8.5%
   of the call's words on the calling domain, before the parallel render
