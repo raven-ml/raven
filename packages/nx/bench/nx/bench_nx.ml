@@ -365,6 +365,38 @@ let placed_rows =
      ]
     @ partial_rows)
 
+(* Checks: a passing [Nx.check] of a value against its own flags, each call
+   one check, of one axis and of two, since a check off the host gathers its
+   data's element along each axis. On a software device the check is pending
+   until the next call's issue reads it; on the host it is read at the
+   call. *)
+type checked =
+  | Checked :
+      (bool, D.bool_elt, 'd) Nx.t * (float, D.float32_elt, 'd) Nx.t
+      -> checked
+
+let check_on s () =
+  let module Mem = (val Nx.devices [ memory 0 ]) in
+  let x = Nx.copy (Nx.place Mem.on (filled D.Float32 s 1.)) in
+  Checked (Nx.copy (Nx.place Mem.on (filled D.Bool s true)), x)
+
+let check_host n () = Checked (filled D.Bool [| n |] true, host n)
+
+let checked (Checked (ok, x)) =
+  Nx.check Nx.Ptree.tensor ok x (fun _ _ -> Failure "bench_nx: a check failed")
+
+let check_rows =
+  Thumper.group "check"
+    [
+      Thumper.bench_with_setup "check-1-memory-device"
+        ~setup:(check_on [| 1 |]) checked;
+      Thumper.bench_with_setup "check-1K-memory-device"
+        ~setup:(check_on [| 1024 |]) checked;
+      Thumper.bench_with_setup "check-32x32-memory-device"
+        ~setup:(check_on [| 32; 32 |]) checked;
+      Thumper.bench_with_setup "check-1K-host" ~setup:(check_host 1024) checked;
+    ]
+
 let place_rows =
   Thumper.group "place"
     [
@@ -1825,6 +1857,7 @@ let () =
          constant_rows;
          placed_rows;
          place_rows;
+         check_rows;
          move_rows;
          rng_rows;
          contract_rows;

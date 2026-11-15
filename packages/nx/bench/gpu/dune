@@ -1,7 +1,7 @@
 (executable
  (name bench_nx_gpu)
  (modules bench_nx_gpu)
- (libraries nx nx_array rig rig.gpus rig_cuda_support thumper))
+ (libraries nx nx.cuda nx_array rig rig.gpus rig_cuda_support thumper))
 
 (rule
  (alias bench)

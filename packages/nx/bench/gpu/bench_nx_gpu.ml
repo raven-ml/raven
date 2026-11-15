@@ -61,6 +61,38 @@ let rows =
         place;
     ]
 
+(* Checks: a passing [Nx.check] of a value on the GPU against its own flags,
+   each call one check, of one axis and of two. The GPU's work runs after the
+   call returns, so each check is pending: its flags' reduction, a map of the
+   first false position's coordinates, a gather of the value along each axis
+   of more than one element, and their copies into pinned memory. *)
+type checked =
+  | Checked :
+      (bool, D.bool_elt, 'd) Nx.t * (float, D.float32_elt, 'd) Nx.t
+      -> checked
+
+let check_on s () =
+  let module G = (val Nx.devices ~kernels:(module Nx_cuda) [ cuda () ]) in
+  let n = Array.fold_left ( * ) 1 s in
+  let flags =
+    Nx.Repr.of_array Nx.Host.v
+      (A.of_array D.Bool (Iarray.of_array s) (Array.make n true))
+  in
+  Checked (Nx.place G.on flags, Nx.place G.on (filled s))
+
+let checked (Checked (ok, x)) =
+  Nx.check Nx.Ptree.tensor ok x (fun _ _ ->
+      Failure "bench_nx_gpu: a check failed")
+
+let check_rows =
+  Thumper.group "check"
+    [
+      Thumper.bench_with_setup "check-1K-gpu" ~setup:(check_on [| 1024 |])
+        checked;
+      Thumper.bench_with_setup "check-32x32-gpu" ~setup:(check_on [| 32; 32 |])
+        checked;
+    ]
+
 let () =
   if not (Rig_cuda_support.present ()) then exit 0;
-  exit (Thumper.run "nx-gpu" [ rows ])
+  exit (Thumper.run "nx-gpu" [ rows; check_rows ])
