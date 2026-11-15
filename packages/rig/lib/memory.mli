@@ -536,18 +536,21 @@ val grow_queues :
     the host or an io device. *)
 
 val kernel_prepare : image -> string -> unit
-(** [kernel_prepare i f] is the driver's prepare of [i]'s function [f], a
-    counted call ({!Rig_edge.Driver.prepare}) whose exceptions but a fault
-    lose nothing, or nothing for the host's linked code. It keeps [i]
-    reachable until the driver returns. *)
+(** [kernel_prepare i f] is the driver's prepare of [i]'s function [f] with
+    [still_ms] [0], a counted call ({!Rig_edge.Driver.prepare}) whose
+    exceptions but a fault lose nothing, or nothing for the host's linked
+    code. It keeps [i] reachable until the driver returns. *)
 
 val kernel_entry : image -> string -> Rig_edge.entry option
 (** [kernel_entry i f] is the driver's entry for [i]'s function [f], a
-    counted call ({!Rig_edge.Driver.entry}), or [None] if [i] has no [f]. It
-    keeps [i] reachable until the driver returns, since [i]'s collection
-    unloads the image. A driver with no memory for [f] is asked again after
-    each round of the ladder ({!reclaiming}). Raises {!Dev.Out_of_memory} if
-    it still has none after the last. *)
+    counted call ({!Rig_edge.Driver.entry}), or [None] if [i] has no [f].
+    The driver's prepares of [f] with {!Dev.still_ms} run first, each counted
+    as {!kernel_prepare}'s, until one answers [true], and the entry is asked
+    for inside that prepare's count. It keeps [i] reachable until the driver
+    returns, since [i]'s collection unloads the image. A driver with no
+    memory for [f] is asked again after each round of the ladder
+    ({!reclaiming}). Raises {!Dev.Out_of_memory} if it still has none after
+    the last. *)
 
 val alloc : device -> Rig_edge.memory -> int -> memory
 (** [alloc d kind n] is the owner's memory record of a new lifetime of a new

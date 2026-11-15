@@ -507,8 +507,9 @@ type grown =
        devices of the driver;}
     {- it calls {!Driver.val-dma} only with a region {!Driver.val-alloc}
        made, on a device that is not lost;}
-    {- it unloads each image once, and calls {!Driver.val-prepare} and
-       {!Driver.val-entry} only on a loaded image;}
+    {- it unloads each image once, never while a call of
+       {!Driver.val-prepare} or {!Driver.val-entry} on it runs, and calls
+       those only on a loaded image;}
     {- it stores into the window of [Mapped] memory only inside its own
        calls, and calls {!Driver.flush} at the end of each, on the thread
        that stored, and it calls {!Driver.val-stop} neither during the
@@ -608,10 +609,11 @@ module type Driver = sig
   val entry : image -> string -> entry_answer
   (** [entry i f] is [Entry e] with what the driver needs to launch [i]'s
       function [f], or [Absent] if [i] has no function [f]. It must make what
-      a launch of [f] needs, such as a compiled pipeline or [f]'s scratch
+      a launch of [f] needs and {!val-prepare} did not, such as [f]'s scratch
       memory, so that the driver's [submit] allocates nothing to launch [f].
-      A second call for [f] must make nothing new. The first call may block.
-      Counted.
+      A second call for [f] must make nothing new. rig calls it only after a
+      [prepare i f] with a positive [still_ms] answered [true], and it must
+      not wait for what [prepare] made. Counted.
 
       It is [No_memory n], having made nothing, if the device has no memory
       for the [n] bytes [f]'s launches need. rig then runs the rounds of
@@ -619,18 +621,29 @@ module type Driver = sig
       [Rig.Out_of_memory] after the last.
 
       Raises [Invalid_argument] with the driver's reason if [f] needs more
-      than the device offers, where the driver finds that only here. *)
+      than the device offers, where the driver finds that only after the
+      load, here or in what [prepare] made. *)
 
-  val prepare : image -> string -> unit
-  (** [prepare i f] may start making what {!val-entry}[ i f] makes and
-      return without waiting, so that the device makes the entries of
-      several functions concurrently: it is [entry]'s asynchronous start. It
-      must report nothing, failures included: the next [entry i f] must wait
-      for what it started and answer as if it made the entry itself. A
-      [prepare] of an [f] that has an entry or a started [prepare] must
-      start nothing, and a [prepare] that raises must have changed nothing.
-      Doing nothing is a valid [prepare], as on a device whose [entry] makes
-      nothing slow. Counted. *)
+  val prepare : image -> string -> still_ms:int -> bool
+  (** [prepare i f ~still_ms] makes the part of what a launch of [i]'s
+      function [f] needs that is slow to make, such as a compiled pipeline.
+      It starts making it, unless [f] has an entry or a [prepare] started
+      it, then waits for it at most [still_ms] milliseconds. The start
+      returns without waiting, so that the device makes several functions
+      concurrently when rig prepares each before asking for any. The wait
+      unblocks signals as every wait does ({!Rig_edge.section-drivers}). rig
+      calls it with [still_ms] [0] to start without waiting, and with a
+      positive one before an {!val-entry}, until it answers [true].
+
+      It is [true] once nothing started for [f] is being made, and [false]
+      only while something is. What it started stays [i]'s until the
+      unload, through an exception too, and every [entry i f] answers from
+      it as if it made it itself, a refusal included. If the host has no
+      memory for the start, it starts nothing and raises [Out_of_memory] at
+      a positive [still_ms]; at [0] it reports nothing, and the next call
+      with a positive [still_ms] starts again. Answering [true] at once is a
+      valid [prepare], as on a device whose [entry] makes nothing slow.
+      Counted. *)
 
   val unload : t -> image -> unit
   (** [unload d i] releases what {!val-image}, {!val-prepare} and

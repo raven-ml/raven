@@ -64,7 +64,7 @@ let first_point d =
    its own. *)
 let dev () =
   let { S.d; g } = S.open_ () in
-  let step = (found (M.entry (load g) "step")).code in
+  let step = (found (S.entry (load g) "step")).code in
   let args = Option.get (M.alloc g Rig_edge.Device 16) in
   let image = get (Rig.Image.load d metallib) in
   let out = Rig.Buffer.create d 16 in
@@ -269,15 +269,16 @@ let map_host_rows =
             (Option.get (Rig_gpu_support.mapped (M.map_host t.g p n))));
     ]
 
-(* An image's load makes no pipeline; its first entry makes one, which Metal's
-   shader cache holds after the first run on the machine. [load-resolve] is
-   what a user calls: rig's load and first resolve, which waits for Metal's
-   asynchronous answer; the image unloads once collected, in whichever later
-   call runs the pending releases, so the row pays the unloads amortised. *)
+(* An image's load makes no pipeline; the prepares of its first entry make
+   one, which Metal's shader cache holds after the first run on the machine,
+   and the entry takes it. [load-resolve] is what a user calls: rig's load
+   and first resolve, which waits for Metal's asynchronous answer; the image
+   unloads once collected, in whichever later call runs the pending
+   releases, so the row pays the unloads amortised. *)
 let image_rows =
   let first t =
     let i = load t.g in
-    ignore (M.entry i "fill");
+    ignore (S.entry i "fill");
     M.unload t.g i
   in
   let resolved t =

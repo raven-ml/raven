@@ -182,7 +182,7 @@ let second () =
   if not (S.present ()) then skip ~reason:"the machine has no METAL GPU rig drives" ();
   require_ok (Rig_gpu_support.opened (Rig_metal.gpu 0))
 
-let pipeline t f = (found (Rig_metal.entry t.fill f)).code
+let pipeline t f = (found (S.entry t.fill f)).code
 
 let submit t fills =
   let run, buffers =
@@ -780,7 +780,7 @@ let foreign_pipelines () =
   let t = dev () in
   let args = alloc t args_bytes in
   let i = load t.g in
-  let step = (found (Rig_metal.entry i "step")).code in
+  let step = (found (S.entry i "step")).code in
   Rig_metal.unload t.g i;
   let invalid p =
     raises_match Exn.invalid_arg (fun () -> icb t args [| dispatch p |])
@@ -831,7 +831,7 @@ let released_after_stop () =
   let g = S.driver () in
   let args = alloc_on g args_bytes in
   let i = load g in
-  let step = (found (Rig_metal.entry i "step")).code in
+  let step = (found (S.entry i "step")).code in
   let[@inline never] made () =
     let b = require_ok (icb_on g args [| dispatch step |]) in
     let objects =
@@ -866,7 +866,7 @@ let after_unload () =
   let out = alloc t 256 and args = alloc t args_bytes in
   set_args args ~at:0 ~out:(gpu out) ~c:0;
   let i = load t.g in
-  let step = (found (Rig_metal.entry i "step")).code in
+  let step = (found (S.entry i "step")).code in
   let b = require_ok (icb t args [| dispatch step; dispatch step |]) in
   Rig_metal.unload t.g i;
   Gc.full_major ();
@@ -880,7 +880,7 @@ let stopped_icb = "the device was stopped"
 let after_stop () =
   let g = S.driver () in
   let args = alloc_on g args_bytes in
-  let step = (found (Rig_metal.entry (load g) "step")).code in
+  let step = (found (S.entry (load g) "step")).code in
   S.stop_driver g;
   equal (result pass string) ~msg:"after the stop" (Error stopped_icb)
     (Result.map ignore (icb_on g args [| dispatch step |]));
@@ -915,7 +915,7 @@ let stop_commands =
       (fun () -> { stopped = false })
       (fun () ->
         let g = second () in
-        let step = (found (Rig_metal.entry (load g) "step")).code in
+        let step = (found (S.entry (load g) "step")).code in
         (g, alloc_on g args_bytes, step, (Mutex.create (), ref false)));
     command "icb" (dev ^-> returns (result unit string)) icb_model icb_sys;
     command "stop" (dev ^-> returns unit) (fun s -> s.stopped <- true) stop_once;
@@ -1239,7 +1239,7 @@ let first_growth () =
     | Rig_edge.Loaded i -> i
     | Place (n, _) -> failf "the device asked to place %d bytes of code" n
   in
-  let where = found (Rig_metal.entry image "where") in
+  let where = found (S.entry image "where") in
   let room params =
     match S.room g where ~params with
     | `Fits -> "fits"
@@ -1473,7 +1473,7 @@ let growths_keep_larger () =
     | Rig_edge.Loaded i -> i
     | Place (n, _) -> failf "the device asked to place %d bytes of code" n
   in
-  let wide = found (Rig_metal.entry image "wide") in
+  let wide = found (S.entry image "wide") in
   let large = 1 lsl 20 and small = 128 * 1024 in
   let name = function
     | `Fits -> "fits"
@@ -1883,9 +1883,12 @@ let no_kernel () =
   | Error why ->
       equal string "the function \"position\" is no compute kernel" why
 
+(* A prepare that starts a compile and waits for nothing. *)
+let start i f = ignore (Rig_metal.prepare i f ~still_ms:0 : bool)
+
 (* An image loads whatever its kernels need; the entry of one that needs more
-   than the GPU has raises with Metal's reason, each time it is asked, and the
-   others' entries work. *)
+   than the GPU has raises with Metal's reason, each time it is asked, from
+   the refusal the image keeps, and the others' entries work. *)
 let beyond_limits () =
   let t = dev () in
   let i =
@@ -1895,15 +1898,17 @@ let beyond_limits () =
     | Rig_edge.Loaded i -> i
     | Place _ -> failf "Metal asked to place its code"
   in
-  ignore (found (Rig_metal.entry i "small")).code;
+  ignore (found (S.entry i "small")).code;
   let refused () =
     raises_match
       (Exn.invalid_arg
          ~sub:"Rig_metal.entry: Metal makes no pipeline of \"wide\": ")
-      (fun () -> Rig_metal.entry i "wide")
+      (fun () -> S.entry i "wide")
   in
   refused ();
   refused ();
+  equal int ~msg:"functions with an entry or a build, the refusal kept" 2
+    (Rig_metal.held i);
   Rig_metal.unload t.g i
 
 (* Images prepared and entered from two domains: whatever the order, every
@@ -1918,7 +1923,7 @@ type held = {
 }
 
 let entry_system h f =
-  match Rig_metal.entry h.i f with
+  match S.entry h.i f with
   | Absent | No_memory _ -> false
   | Entry { code = p; _ } -> (
       Mutex.protect h.m @@ fun () ->
@@ -1947,7 +1952,7 @@ let entry_commands =
     command "prepare"
       (loaded_image ^-> functions @-> returns unit)
       made
-      (fun h f -> Rig_metal.prepare h.i f);
+      (fun h f -> start h.i f);
     command "entry"
       (loaded_image ^-> functions @-> returns bool)
       (fun m f ->
@@ -2001,7 +2006,7 @@ let entry_model m = function
   | _ -> "absent"
 
 let entry_answer s f =
-  match Rig_metal.entry s.si f with
+  match S.entry s.si f with
   | Entry { code; _ } ->
       if s.code = 0 then s.code <- code;
       if code = s.code then "entry" else "another pipeline"
@@ -2034,7 +2039,7 @@ let small_commands =
     command "prepare" ~pre:loaded_only
       (small_image ^-> small_functions @-> returns unit)
       (fun m f -> if f = "small" && m.small = Unmade then m.small <- Prepared)
-      (fun s f -> Rig_metal.prepare s.si f);
+      (fun s f -> start s.si f);
     command "entry" ~pre:loaded_only
       (small_image ^-> small_functions @-> returns string)
       entry_model entry_answer;
@@ -2049,7 +2054,7 @@ let small_commands =
       (fun s ->
         Rig_metal.settle ();
         let before = Rig_metal.pipelines () in
-        Rig_metal.prepare s.si "small";
+        start s.si "small";
         Rig_metal.unload (dev ()).g s.si;
         s.gone <- true;
         Rig_metal.settle ();
@@ -2069,7 +2074,7 @@ let unload_unstored () =
   Rig_metal.hold_builds true;
   Fun.protect ~finally:(fun () -> Rig_metal.hold_builds false) (fun () ->
       let i = threadgroup t.g in
-      Rig_metal.prepare i "small";
+      start i "small";
       equal int ~msg:"prepared" 1 (Rig_metal.held i);
       Rig_metal.unload t.g i;
       equal int ~msg:"while held" before (Rig_metal.pipelines ()));
@@ -2082,7 +2087,7 @@ let unloaded_releases () =
     List.init 60 (fun _ ->
         let i = load t.g in
         let w =
-          S.weak (Nativeint.of_int (found (Rig_metal.entry i "fill")).code)
+          S.weak (Nativeint.of_int (found (S.entry i "fill")).code)
         in
         Rig_metal.unload t.g i;
         w)
@@ -2114,12 +2119,75 @@ let entry_params () =
     | Place _ -> failf "Metal asked to place its code"
   in
   equal (option int) ~msg:"small: words at buffer 0" None
-    (found (Rig_metal.entry i "small")).params;
+    (found (S.entry i "small")).params;
   Rig_metal.unload t.g i
+
+(* A resolve waiting for Metal's compile returns to OCaml at least every
+   200 ms, where a signal's handler runs: a Ctrl-C's Sys.Break ends it, the
+   device stays, and the next resolve takes the pipeline of the same compile.
+   The gate holds Metal's answer, after Metal compiled, for as long as the test
+   needs. A watchdog parked outside OCaml opens it once unparked or after 5 s,
+   so a resolve that no signal ends returns rather than hangs. The prepare
+   starts the compile before the interrupter watches, so the resolve's only
+   timed wait is the compile's. The handler raises Sys.Break on the resolving
+   thread alone. *)
+let break_resolve () =
+  if not Rig_support.sees_waits then
+    skip ~reason:"the system shows no thread's blocking call" ();
+  let t = dev () in
+  let image =
+    require_ok ~pp:Format.pp_print_string
+      (Rig.Image.load t.d (S.fixture ~dir:"fixtures" "threadgroup"))
+  in
+  Rig_metal.settle ();
+  let before = Rig_metal.pipelines () in
+  let waiting = Thread.id (Thread.self ()) and taken = ref "nowhere" in
+  let handle _ =
+    if Thread.id (Thread.self ()) = waiting then raise Sys.Break
+    else taken := "on another thread"
+  in
+  let resolve () =
+    match Rig.Image.resolve image "small" with
+    | Some _ -> "resolved, the signal taken " ^ !taken
+    | None -> "None"
+    | exception Sys.Break -> "Sys.Break"
+  in
+  Rig_metal.hold_builds true;
+  let watchdog = ref None and handler = ref None in
+  let got, raised, held =
+    Fun.protect
+      ~finally:(fun () ->
+        Option.iter (Sys.set_signal Sys.sigint) !handler;
+        Rig_support.unpark ();
+        Option.iter Thread.join !watchdog;
+        Rig_metal.hold_builds false)
+      (fun () ->
+        let open_gate () =
+          Rig_support.park ();
+          Rig_metal.hold_builds false
+        in
+        watchdog := Some (Thread.create open_gate ());
+        Rig_support.await "the watchdog" Rig_support.parked;
+        handler := Some (Sys.signal Sys.sigint (Sys.Signal_handle handle));
+        Rig.Image.prepare image "small";
+        let got, raised = Rig_support.interrupt_in_wait ~timed:true resolve in
+        (got, raised, Rig_metal.pipelines ()))
+  in
+  equal ~msg:"the resolve waited" bool true raised;
+  equal ~msg:"the waiting resolve" string "Sys.Break" got;
+  equal ~msg:"pipelines while Metal's answer is held" int before held;
+  equal ~msg:"the loss" (option string) None (Rig.lost t.d);
+  Rig_metal.settle ();
+  is_some ~msg:"the next resolve" (Rig.Image.resolve image "small");
+  equal ~msg:"pipelines once answered" int (before + 1) (Rig_metal.pipelines ())
 
 let images =
   group ~timeout:60. "images"
     [
+      test
+        "a resolve waiting for Metal's compile ends at a signal, keeping the \
+         device and the compile"
+        break_resolve;
       test "a function that is no compute kernel is an error" no_kernel;
       test "an entry beyond the GPU's limits raises, each time" beyond_limits;
       stateful ~domains:2 ~count:30
@@ -2165,7 +2233,7 @@ let stopped_running () =
 let unload_after_stop () =
   let g = S.driver () in
   let i = load g in
-  let weak f = S.weak (Nativeint.of_int (found (Rig_metal.entry i f)).code) in
+  let weak f = S.weak (Nativeint.of_int (found (S.entry i f)).code) in
   let weaks = [ weak "fill"; weak "step"; weak "bump" ] in
   S.stop_driver g;
   List.iteri
@@ -2200,7 +2268,7 @@ let interrupted_calls () =
     Rig_metal.free g (alloc_on g 64);
     match require_ok (Rig_metal.image g fill) with
     | Rig_edge.Loaded i ->
-        ignore (found (Rig_metal.entry i "fill"));
+        ignore (found (S.entry i "fill"));
         Rig_metal.unload g i
     | Place (n, _) -> failf "the device asked to place %d bytes of code" n
   in

@@ -11,6 +11,7 @@
   rig_metal_abi
   rig_metal_support
   rig_support
+  threads.posix
   windtrap)
  (deps
   (source_tree fixtures)))

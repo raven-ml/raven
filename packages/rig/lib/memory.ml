@@ -1832,12 +1832,17 @@ let reclaiming d ~pool n f = reclaim_from d pool n f 1 never_collected
    than the device offers, which loses nothing. *)
 let entry_scope = Dev.Any_but [%extension_constructor Invalid_argument]
 
-(* [image] stays reachable until the driver's call returns: its collection
-   unloads [i], whose entry a driver may still be compiling, as Metal does. A
-   function the device has no memory for is asked again after each round of the
-   ladder. What the driver makes for the entry is [i]'s, which [image]'s
-   record holds, so an exception once the call returned leaves it to the
-   unload. *)
+(* [image] stays reachable until the driver's calls return: its collection
+   unloads [i], whose function a driver may still be compiling, as Metal does.
+   The driver's prepares make what is slow first, each a wait of at most
+   [still_ms] under the scope that loses nothing: a signal's exception there
+   ends the resolve with the device kept, and the next resolve waits for what
+   they started. The prepare that answers [true] asks for the entry inside its
+   count, as a counted call under the entry's scope nested in it, which
+   blocks no signal again: a made entry pays one mask. A function the device
+   has no memory for is asked again after each round of the ladder. What the
+   driver makes for the entry is [i]'s, which [image]'s record holds, so an
+   exception once the call returned leaves it to the unload. *)
 let kernel_entry image f =
   match image.loaded with
   | Linked c ->
@@ -1856,6 +1861,14 @@ let kernel_entry image f =
       in
       let d = image.idev in
       let ask () = Dev.counted d entry_scope (fun () -> D.entry i f) () in
+      let made still_ms =
+        if D.prepare i f ~still_ms then Some (ask ()) else None
+      in
+      let rec first () =
+        match Dev.counted d Dev.Faults made Dev.still_ms with
+        | Some answer -> answer
+        | None -> first ()
+      in
       let again () =
         match ask () with
         | Rig_edge.Entry e -> Some (Some e)
@@ -1863,7 +1876,7 @@ let kernel_entry image f =
         | No_memory _ -> None
       in
       let e =
-        match ask () with
+        match first () with
         | Rig_edge.Entry e -> Some e
         | Absent -> None
         | No_memory n -> reclaiming d ~pool:d n again
@@ -1873,8 +1886,9 @@ let kernel_entry image f =
 
 (* [image] stays reachable until the driver's call returns, as for an entry.
    What the driver starts is [i]'s, which its unload releases. Only a fault
-   loses the device: a prepare reports nothing, so an exception from it, such
-   as an allocation's, loses nothing. *)
+   loses the device: a prepare changes nothing a launch reads, so an
+   exception from it, such as an allocation's, loses nothing. It waits for
+   nothing, so its answer is dropped: the resolve waits. *)
 let kernel_prepare image f =
   match image.loaded with
   | Linked _ -> ()
@@ -1885,7 +1899,8 @@ let kernel_prepare image f =
         | Some i -> i
         | None -> invalid_arg "Rig: an image its driver did not make"
       in
-      Dev.counted image.idev Dev.Faults (fun () -> D.prepare i f) ();
+      let start () = D.prepare i f ~still_ms:0 in
+      ignore (Dev.counted image.idev Dev.Faults start () : bool);
       ignore (Sys.opaque_identity image)
 
 (* The growth of [d]'s queues a submission asks at round [round] of the

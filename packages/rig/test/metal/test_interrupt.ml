@@ -84,14 +84,16 @@ let walk attempt =
 let pipelines = 32
 
 (* The 33rd entry's pipeline, each of the first 32 from an image of its
-   own. Once every image is unloaded, the device holds none of their
-   pipelines, the 33rd's included, whether the entry returned or raised. *)
+   own, once Metal answered its prepare. Once every image is unloaded, the
+   device holds none of their pipelines, the 33rd's included, whether the
+   entry returned or raised. *)
 let test_entries () =
   walk @@ fun g n ->
   let held = M.pipelines () in
   let args = alloc g args_bytes in
   let made = List.init pipelines (fun _ -> image g) and last = image g in
-  let codes = List.map (fun i -> (found (M.entry i "step")).code) made in
+  let codes = List.map (fun i -> (found (S.entry i "step")).code) made in
+  S.answered last "step";
   let reached =
     Rig_support.interrupted n (fun () -> ignore (M.entry last "step"))
   in
@@ -103,17 +105,20 @@ let test_entries () =
   M.free g args;
   reached
 
-(* The entry of a function prepared after 32 images' prepares. A prepare
-   allocates nothing, so the entry, which takes the build out of its slot, is
-   the call walked. Whether it returned or raised, the next entry makes the
-   pipeline, and once every image is unloaded and Metal answered the process
-   holds none of theirs. *)
+(* The entry of a function prepared after 32 images' prepares, once Metal
+   answered it. The entry, which takes the pipeline from the build it leaves
+   in its slot, is the call walked. Whether it returned or raised, the next
+   entry makes the pipeline, and once every image is unloaded and Metal
+   answered the process holds none of theirs. *)
 let test_prepares () =
   walk @@ fun g n ->
   M.settle ();
   let held = M.pipelines () in
   let made = List.init pipelines (fun _ -> image g) and last = image g in
-  List.iter (fun i -> M.prepare i "step") (made @ [ last ]);
+  List.iter
+    (fun i -> ignore (M.prepare i "step" ~still_ms:0 : bool))
+    (made @ [ last ]);
+  S.answered last "step";
   let reached =
     Rig_support.interrupted n (fun () -> ignore (M.entry last "step"))
   in
@@ -133,7 +138,7 @@ let regions = 128
 let test_regions () =
   walk @@ fun g n ->
   let i = image g in
-  let step = (found (M.entry i "step")).code in
+  let step = (found (S.entry i "step")).code in
   let made = List.init regions (fun _ -> alloc g args_bytes) in
   let last = ref None in
   let held = M.buffers () in
@@ -161,7 +166,7 @@ let reentry call () =
   let seen = Rig_support.seen () in
   walk (fun g n ->
       let i = image g in
-      let step = (found (M.entry i "step")).code in
+      let step = (found (S.entry i "step")).code in
       let args = alloc g args_bytes and other = alloc g args_bytes in
       let held = M.buffers () in
       let landing, landed =

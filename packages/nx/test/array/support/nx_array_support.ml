@@ -203,7 +203,7 @@ module Driver = struct
   let flush _ = ()
   let image _ _ = Error "late loads no code"
   let entry () _ = Rig_edge.Absent
-  let prepare () _ = ()
+  let prepare () _ ~still_ms:_ = true
   let unload _ () = ()
 
   (* Its room never answers RIG_GROW. *)

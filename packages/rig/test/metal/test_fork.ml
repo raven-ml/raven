@@ -45,8 +45,7 @@ let prepared_entry () =
   | Error why -> [ why ]
   | Ok (Rig_edge.Place _) -> [ "Metal asked to place its code" ]
   | Ok (Loaded i) -> (
-      Rig_metal.prepare i "small";
-      match Rig_metal.entry i "small" with
+      match S.entry i "small" with
       | Entry _ -> [ "entered" ]
       | Absent -> [ "absent" ]
       | No_memory n -> [ Printf.sprintf "no memory for %d bytes" n ])

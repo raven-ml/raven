@@ -75,8 +75,8 @@
 
     A device lives until {!Rig.close} or a loss ({!section-failure}). Any
     domain may call any function of this module, at the same time as other
-    domains. {!sleep} and the first {!entry} for a function let other domains
-    run while they wait for Metal.
+    domains. {!sleep} and {!prepare} let other domains run while they wait
+    for Metal.
 
     An [icb] ({!Rig_metal_abi}) and an opener's [make], called from a
     callback inside a lock ([Rig]'s domains section), raise
@@ -311,34 +311,43 @@ val capability : t -> Rig_metal_abi.t
 (** {1:code Code}
 
     {!val-image} loads a metallib as a Metal library, and leaves compiling
-    its functions to {!prepare} and {!entry}. The result is [Ok (Loaded i)],
+    its functions to {!prepare}. The result is [Ok (Loaded i)],
     or [Error] with the reason if Metal cannot load the bytes as a library,
     or if one of its functions is not a compute kernel.
 
     {!prepare} starts Metal's asynchronous compile of a function into a
     pipeline ([MTLComputePipelineState]) that indirect command buffers may
-    also run, and returns. Metal compiles in its own processes, several
-    pipelines at once. The first {!entry} for a function waits for the
-    compile {!prepare} started, or compiles the same way and waits. A
-    prepare or an entry waits while another domain's entry waits for a
-    pipeline of the same image. Calls for one function from several domains
-    concurrently make one pipeline. Every later call returns the same entry,
-    which is valid until {!unload}. The entry's [code] is the pipeline's
-    address, and its [launch] the address of what a launch reads, the
-    pipeline and its limits. Its [threads] are the least of the pipeline's
+    also run, unless one was started, then waits at most [still_ms]
+    milliseconds for Metal's answer, with the thread's signals unblocked as
+    in {!sleep}. Metal compiles in its own processes, several pipelines at
+    once. It is [true] once Metal answered, with a pipeline or a refusal, and
+    for a function that has an entry or is none of the image's. A start the
+    host has no memory for raises [Out_of_memory] at a positive [still_ms],
+    and is [true] at [0], having started nothing. A prepare or an entry
+    waits while another domain's prepare starts a compile of the same image.
+    Calls for one function from several domains concurrently make one
+    pipeline.
+
+    {!entry} takes the pipeline of the compile a prepare found answered, and
+    waits for nothing. Every later call returns the same entry, which is
+    valid until {!unload}. The entry's [code] is the pipeline's address, and
+    its [launch] the address of what a launch reads, the pipeline and its
+    limits. Its [threads] are the least of the pipeline's
     [maxTotalThreadsPerThreadgroup] and the device's axes. Its [params] are
     the size, trailing padding included, of the struct the function reads
     as kernel buffer 0, [Some 0] for a function with no buffer 0, and [None]
     where buffer 0 points to another type, such as words, whose length the
     function does not state. {!entry} raises [Invalid_argument] with Metal's
-    reason if Metal cannot make a pipeline of the function, such as for a
-    function that needs more threadgroup memory than the GPU family has. A
-    refusal is not kept, so a later call compiles again.
+    reason if Metal made no pipeline of the function, such as for a function
+    that needs more threadgroup memory than the GPU family has. The refusal
+    is kept: every later entry raises it, until the metallib is loaded
+    again. An entry of a function that no prepare found answered raises
+    [Invalid_argument].
 
-    {!unload} releases the library, and the pipelines and launches {!entry}
-    made of it. It waits for no compile: a pipeline {!prepare} started and no
-    entry took is released once made. An indirect command buffer that records
-    one of these pipelines keeps it until its own release
+    {!unload} releases the library, the pipelines {!prepare} started and the
+    launches {!entry} made of them. It waits for no compile: a pipeline Metal
+    has not answered is released once made. An indirect command buffer that
+    records one of these pipelines keeps it until its own release
     ({!Rig_metal_abi.type-icb}). *)
 
 (** {1:failure Failure and stopping}
@@ -436,20 +445,20 @@ val capability : t -> Rig_metal_abi.t
 
 (* For rig's tests. *)
 
-(* [pipelines ()] is the number of pipelines that the entries and the
-   builds of the process's devices hold. A build holds its pipeline from
-   Metal's answer until an entry takes it or the last of its image's unload
-   and Metal's handler drops it. *)
+(* [pipelines ()] is the number of pipelines that the builds of the process's
+   devices hold, which their entries share. A build holds its pipeline from
+   Metal's answer until the last of its image's unload and Metal's handler
+   drops it. *)
 val pipelines : unit -> int
 
-(* [settle ()] returns once Metal answered every compile {!prepare} or
-   {!entry} started in the process. In a child forked while a compile was
-   pending it never returns. *)
+(* [settle ()] returns once Metal answered every compile {!prepare} started
+   in the process. In a child forked while a compile was pending it never
+   returns. *)
 val settle : unit -> unit
 
 (* [hold_builds true] makes Metal's answers to compiles wait, unstored,
    until [hold_builds false]: {!pipelines} counts none of them meanwhile,
-   and {!entry} waits for them. *)
+   and {!prepare} waits for them and answers [false]. *)
 val hold_builds : bool -> unit
 
 (* [held i] is the number of [i]'s functions with an entry or a started

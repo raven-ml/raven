@@ -213,7 +213,7 @@ let stop d ~fault:_ = stop_c d.c
 let grow _ = Rig_edge.Grown
 
 (* The agent links the program, and prepares its launches there. *)
-let prepare _ _ = ()
+let prepare _ _ ~still_ms:_ = true
 
 module Driver = struct
   type nonrec t = t

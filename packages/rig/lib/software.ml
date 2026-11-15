@@ -93,7 +93,7 @@ module D = struct
         Rig_edge.Entry { code; launch = 0n; params = None; threads = None }
     | None -> Absent
 
-  let prepare _ _ = ()
+  let prepare _ _ ~still_ms:_ = true
   let unload _ _ = ()
   let signaled d = load d.word
   let sleep _ ~seen:_ ~still_ms:_ = ()

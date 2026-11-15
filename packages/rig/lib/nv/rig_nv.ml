@@ -1701,7 +1701,7 @@ let entry c name =
       | Some k -> set_up c name k)
 
 (* An entry sets up its launch at once, with nothing to start ahead. *)
-let prepare _ _ = ()
+let prepare _ _ ~still_ms:_ = true
 
 (* An image holds of its device its code region, which rig frees, and its
    functions' launches. rig unloads an image once, so past its take the

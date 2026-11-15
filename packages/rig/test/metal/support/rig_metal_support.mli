@@ -10,6 +10,16 @@
 include Rig_gpu_support.Conformance with module D = Rig_metal
 (** Metal's device [0]; its second device is device [0] opened again. *)
 
+(** {1:code Code} *)
+
+val answered : Rig_metal.image -> string -> unit
+(** [answered i f] returns once a {!Rig_metal.prepare} of [f], waiting
+    200 ms at a time as rig's resolve does, answered [true]. *)
+
+val entry : Rig_metal.image -> string -> Rig_edge.entry_answer
+(** [entry i f] is {!Rig_metal.entry}[ i f] after {!answered}[ i f], as rig
+    asks for a function. *)
+
 (** {1:fills Fills} *)
 
 type fill

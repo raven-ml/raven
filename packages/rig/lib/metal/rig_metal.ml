@@ -33,7 +33,8 @@ external load : int -> string -> string * nativeint * string array
   = "caml_rig_metal_image"
 
 external start : nativeint -> string -> int = "caml_rig_metal_start"
-external finish : int -> int = "caml_rig_metal_finish"
+external wait_build : int -> int -> bool = "caml_rig_metal_wait"
+external take_build : int -> int = "caml_rig_metal_take"
 external entry_code : nativeint -> int = "caml_rig_metal_entry_code" [@@noalloc]
 
 external entry_threads : nativeint -> int = "caml_rig_metal_entry_threads"
@@ -71,10 +72,12 @@ let split = split ()
    section takes any other. An [icb] and an opener's [make], which callers
    outside rig make, run inside [guarded].
 
-   An image's lock is held while Metal makes a function's pipeline, and a
-   device's while an icb records its dispatches, so that no unload, free or
-   stop releases what they hold; both run OCaml code and Metal's compiler. A
-   call of rig's from a callback during one raises. *)
+   An image's lock is held while Metal takes the request of a function's
+   build, so that calls for one function from several domains start one
+   build, and no call waits for a build holding it. A device's lock is held
+   while an icb records its dispatches, so that no unload, free or stop
+   releases what it records. Both run OCaml code and Metal's synchronous
+   work. A call of rig's from a callback during one raises. *)
 
 external reraise : exn -> 'a = "%reraise"
 
@@ -177,11 +180,12 @@ type tables = {
       (* the regions freed since [regions] last dropped their cells *)
 }
 
-(* An image's entries, [none] until its first [entry], and its builds, [0] but
-   between a [prepare] and the next [entry], under [guard]: at most one of a
-   function's entry and build is set. An [entry] compiles holding it, so calls
-   for one function from several domains make one pipeline. [tables] and
-   [device_guard] are its device's, which guards [unloaded]. *)
+(* An image's entries, [none] until its first [entry], and its builds, [0]
+   until a [prepare] starts one, under [guard]. A build stays in its slot until
+   the unload: after its entry took the pipeline, or with Metal's refusal,
+   which every later [entry] raises again. A [prepare] starts a build holding
+   [guard], so calls for one function from several domains make one pipeline.
+   [tables] and [device_guard] are its device's, which guards [unloaded]. *)
 and image = {
   library : nativeint;
   names : string array;
@@ -525,35 +529,61 @@ let keep ((i : image), k, (e : Rig_edge.entry), threads) =
       t.unloads <- 0;
       i.entries.(k) <- e
 
-(* [prepare i f] under [i.guard]: starts [f]'s build unless [f] has an entry
-   or a build. A build that could not start leaves the slot empty. *)
-let prepare_held (i : image) f =
+(* [started i f still_ms] under [i.guard]: [f]'s build, which it starts
+   unless [f] has one, or [0] if [f] has an entry or is none of [i]'s. A build
+   that could not start leaves the slot empty: it is [0] at [still_ms = 0],
+   which reports nothing, and raises [Out_of_memory] above. *)
+let started (i : image) f still_ms =
   let k = index i.names f 0 in
-  if k >= 0 && i.entries.(k).code = 0 && i.builds.(k) = 0 then
-    i.builds.(k) <- start i.library f
+  if k < 0 || i.entries.(k).code <> 0 then 0
+  else begin
+    if i.builds.(k) = 0 then i.builds.(k) <- start i.library f;
+    if i.builds.(k) = 0 && still_ms > 0 then raise Out_of_memory;
+    i.builds.(k)
+  end
 
-let prepare (i : image) f =
+(* Whether Metal answered the build [b], after a wait of at most [still_ms]
+   with the thread's signals unblocked, as [sleep] waits: a signal's handler
+   runs as the wait returns, and its exception ends the prepare, whose build
+   stays in its slot for the next. *)
+let answered b still_ms =
+  Rig_edge_primitive.unblock ();
+  let r = wait_build b still_ms in
+  Rig_edge_primitive.block ();
+  r
+
+(* Holds [i.guard] for the start alone, taken without a closure, in
+   [locked]'s form. The build outlives the wait in its slot, since rig
+   unloads no image while a call on it runs. *)
+let prepare (i : image) f ~still_ms =
   take i.guard;
-  match prepare_held i f with
-  | () -> give i.guard
+  match started i f still_ms with
   | exception x ->
       give i.guard;
       reraise x
+  | 0 ->
+      give i.guard;
+      true
+  | b ->
+      give i.guard;
+      answered b still_ms
 
-(* [entry i f] under [i.guard]: waits for [f]'s build, which it takes out of
-   its slot first, or starts one. A refusal is not kept: a later call compiles
-   again. The pipeline is [i]'s once [keep] stored it: an exception before,
-   such as an asynchronous one where the entry allocates, releases it. *)
+(* [entry i f] under [i.guard]: the entry of [f]'s build, which a prepare
+   found answered, holding the build's pipeline; the build stays in its slot,
+   so a refusal stays for every later call. The entry is [i]'s once [keep]
+   stored it: an exception before, such as an asynchronous one where the entry
+   allocates, releases it, and the next call takes the pipeline again. *)
 let entry_held (i : image) f =
   let k = index i.names f 0 in
   if k < 0 then Rig_edge.Absent
   else if i.entries.(k).code <> 0 then Entry i.entries.(k)
   else
-    let b = i.builds.(k) in
-    i.builds.(k) <- 0;
-    let b = if b = 0 then start i.library f else b in
-    if b = 0 then raise Out_of_memory;
-    match finish b with
+    match take_build i.builds.(k) with
+    | 0 ->
+        invalid_argf
+          "Rig_metal.entry: %S was asked for before a prepare of it answered \
+           true"
+          f
     | made -> (
         match
           let launch = Nativeint.of_int made in

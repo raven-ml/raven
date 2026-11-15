@@ -30,6 +30,18 @@ include Rig_gpu_support.Make (struct
   let open_ ~word = (Rig_metal.gpu 0).make ~word
 end)
 
+(* Code *)
+
+(* The longest wait of a prepare, rig's slice of a wait. *)
+let still_ms = 200
+
+let rec answered i f =
+  if not (Rig_metal.prepare i f ~still_ms) then answered i f
+
+let entry i f =
+  answered i f;
+  Rig_metal.entry i f
+
 (* Fills *)
 
 type arg =

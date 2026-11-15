@@ -309,6 +309,11 @@ val failure : unit -> string option
     answered from its line: {!is_done}, {!settled}, {!check} and
     {!wait_point} on them allocate nothing unless they raise. *)
 
+val still_ms : int
+(** [still_ms] is the longest a blocking call of a wait lasts, in
+    milliseconds: each returns to OCaml within it, where a pending signal's
+    handler runs. *)
+
 val submitted : device -> int
 (** [submitted d] is {!Rig.submitted}[ d]. *)
 

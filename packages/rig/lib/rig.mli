@@ -1873,7 +1873,12 @@ module Image : sig
   val resolve : t -> string -> func option
   (** [resolve i f] is [i]'s function [f], made ready to launch, or [None] if
       [i] has none. The first resolve of [f] makes what its launches need,
-      such as its scratch.
+      such as its scratch, and waits for what the device makes slowly, as
+      Metal compiles a pipeline. It waits as a wait does
+      ({!section-domains}): a resolve interrupted while it waits loses
+      nothing, and the next resolve of [f] waits for what the first started.
+      [i] keeps the device's refusal of [f]: every resolve of [f] on [i]
+      raises it, and only a new {!load} of the binary asks the device again.
 
       Raises [Invalid_argument] if [i]'s device cannot run [f]
       ({!Rig_edge.Driver.entry}), {!Out_of_memory} if the device has no
@@ -1888,8 +1893,8 @@ module Image : sig
       that makes them slowly, as Metal compiles a pipeline, make them
       concurrently; on another device it does nothing. It does nothing if
       [i] has no function [f], or [f] was resolved or prepared, and may wait
-      while another domain resolves a function of [i]. What it starts is
-      [i]'s until [i] unloads, which waits for none of it.
+      while another domain starts making a function of [i]. What it starts
+      is [i]'s until [i] unloads, which waits for none of it.
 
       Raises {!Lost} if [i]'s device is lost. *)
 

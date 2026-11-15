@@ -1136,7 +1136,7 @@ let stop g ~fault:_ =
 let grow _ = Rig_edge.Grown
 
 (* The load placed every function, and an entry makes nothing slow. *)
-let prepare _ _ = ()
+let prepare _ _ ~still_ms:_ = true
 
 module Driver = struct
   type nonrec t = t
