@@ -58,6 +58,14 @@ Where it stands, with every measurement: doc/performance.md.
   at 512 tokens and 1-2% at 17-127. Stages are decided bottom-up, so
   inlining it pushes two removable consumers past 3 buffers; the order in
   which tolk decides stages is the question, not tinygrad's limit
+- rangeify's law "a scheduled function writes what its tensors compute"
+  fails under seeds `s1:63ab132b4eb9fb74` and `s1:47b3074f072c6405`: both
+  graphs end in `sum 0, expand, max 0`, and the kernel graph writes
+  nothing where the tensors write one element
+- tolk recomputes a cheap broadcast value along every row that reads it:
+  a 3-buffer polynomial of D multiply-adds broadcast along 4096 rows takes
+  11.3 ms on the host against 0.64 ms stored. `recomputes`/`copies` count
+  the reader's ranges; bounding it would also let fft-4096 drop 20 kernels
 - On gpt-oss's cold first call, rangeify's reshape substitution
   (`Indexing`, the `apply_reshape` over placeholder ranges) allocates 8.5%
   of the call's words on the calling domain, before the parallel render
