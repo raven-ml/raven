@@ -1764,29 +1764,6 @@ let matrices =
       matrix_row Eig f32 [| 64; 256; 256 |];
     ]
 
-(* The suite's matrix rows: a small one of each routine, and the two whose
-   products take contraction paths no contracts row takes, complex packs (lu
-   c64) and P <= 16 panels over a long k with a transposed operand (qr f32
-   2048x1024). *)
-let matrix_suite =
-  let names =
-    [
-      "linalg/lu/f32/4096x32x32";
-      "linalg/qr/f32/4096x32x32";
-      "linalg/chol/f32/4096x32";
-      "linalg/solve/f32/4096x32x32";
-      "linalg/eigh/f32/1024x32x32";
-      "linalg/svd/f32/1024x32x32";
-      "linalg/eig/f32/1024x32x32";
-      "linalg/lu/c64/1x1024x1024";
-      "linalg/qr/f32/1x2048x1024";
-    ]
-  in
-  let rows = List.filter (fun (r : row) -> List.mem r.name names) matrices in
-  if List.length rows <> List.length names then
-    invalid_arg "Rows.matrix_suite: a name matches no matrix row";
-  rows
-
 (* Attention *)
 
 (* Calls of Nx.attention as nx.amd receives them: a query [[b; hq; tq; d]] over
@@ -2062,13 +2039,163 @@ let nx_add n =
 let nx_calls =
   [ nx_chain 4 [| 1 lsl 26 |]; nx_chain 64 [| 1 lsl 26 |]; nx_add (1 lsl 20) ]
 
-(* The bench's suite: floors, contractions, reductions, scans, loops, calls
-   through Nx, sorts, moves, transforms and some matrix routines. *)
-let all =
-  floors @ contracts @ reductions @ loops @ nx_calls @ sorts @ moves
-  @ transforms @ matrix_suite
-
-(* What compare and gate also time: every family against PyTorch. *)
+(* What compare and gate time: every family against PyTorch. *)
 let compared =
-  let rest = List.filter (fun r -> not (List.memq r matrix_suite)) matrices in
-  all @ probe_contracts @ rest @ attentions
+  floors @ contracts @ probe_contracts @ reductions @ loops @ nx_calls @ sorts
+  @ moves @ transforms @ matrices @ attentions
+
+(* The bench's suite: a row of each kernel path and plan regime, and of each
+   family at least one past the caches, so that a regression in any path, or
+   one that shows only at size, fails it. Size sweeps and dtype twins of one
+   path stay in {!compared}. *)
+let suite_names =
+  [
+    (* floors: a launch, a submission, copies and a read in and past the
+       caches, the matrix units' and the vector units' peaks *)
+    "floor/launch";
+    "floor/submission";
+    "floor/copy-4MB";
+    "floor/copy-256MB";
+    "floor/copy-driver-256MB";
+    "floor/read-256MB";
+    "floor/wmma-bf16-peak";
+    "floor/fma-f32-peak";
+    (* contractions: small and large tiles, layouts, SIMT, batches, each
+       matrix unit's dtype, gemv's dtypes and its read of 1.1 GB, a few
+       rows, long sums, A @ x, windows, integer sums *)
+    "contract/bfloat16-256x256x256";
+    "contract/bfloat16-4096x4096x4096";
+    "contract/float16-4096x4096x4096";
+    "contract/float32-256x256x256";
+    "contract/float32-4096x4096x4096";
+    "contract/bfloat16-4096x4096x4096-kf";
+    "contract/bfloat16-4096x4096x4096-fk";
+    "contract/bfloat16-4096x4096x4096-ff";
+    "contract/float64-256x256x256";
+    "contract/float64-1024x1024x1024";
+    "contract/bfloat16-256x64x64x64";
+    "contract/float32-256x64x64x64";
+    "contract/float64-256x64x64x64";
+    "contract/int8-4096x4096x4096";
+    "contract/float8_e4m3fn-4096x4096x4096";
+    "contract/float8_e5m2-4096x4096x4096";
+    "contract/int4-4096x4096x4096";
+    "contract/bfloat16-1x5120x2880";
+    "contract/float8_e4m3fn-1x5120x2880";
+    "contract/float32-1x5120x2880";
+    "contract/float64-1x5120x2880";
+    "contract/int8-1x5120x2880";
+    "contract/int32-1x5120x2880";
+    "contract/bfloat16-1x201088x2880";
+    "contract/bfloat16-8x5120x2880";
+    "contract/float32-16x5120x2880";
+    "contract/bfloat16-256x256x65536";
+    "contract/bfloat16-4096x1x4096";
+    "contract/bfloat16-4096x4096x65536";
+    "contract/bfloat16-512x5120x2880";
+    "contract/float32-20480x1x2880";
+    "contract/bfloat16-131072x16x16x16";
+    "contract/int16-1024x1024x1024";
+    "contract/int32-1024x1024x1024";
+    (* reductions and scans: each plan in the L2, the plain sum and scan
+       past it *)
+    "reduce/float32-sum-1024x1024-axes0.1";
+    "reduce/float32-sum-8192x8192-axes0.1";
+    "reduce/float32-sum-1024x1024-axes1";
+    "reduce/float32-sum-1024x1024-axes0";
+    "reduce/float32-max-1024x1024-axes1";
+    "reduce/float64-sum-512x1024-axes0.1";
+    "reduce/int32-sum-1024x1024-axes0.1";
+    "reduce/int32-sum-256x256-axes0.1";
+    "reduce/float32-sum-4096-axes0";
+    "reduce/float32-sum-16384x64-axes1";
+    "scan/float32-sum-1024x1024-axis1";
+    "scan/float32-sum-1024x1024-axis0";
+    "scan/float32-sum-1048576-axis0";
+    "scan/float32-sum-67108864-axis0";
+    (* loops: each program in the L2, an f32 and a bf16 map and a reduction
+       past it *)
+    "map/add-float32-1048576";
+    "map/add-float32-67108864";
+    "map/exp-float32-1048576";
+    "map/add-bfloat16-2097152";
+    "map/add-bfloat16-134217728";
+    "map/cast_bf16-float32-1048576";
+    "map/bcast_add-float32-1024x1024";
+    "map/t_add-float32-1024x1024";
+    "map/fused4-float32-1048576";
+    "map/pad9-float32-1x64x64x64";
+    "map/where_lt-float32-1048576";
+    "reduce/argmax-float32-1024x1024";
+    "reduce/logsumexp-float32-1024x1024";
+    "reduce/logsumexp-float32-8192x8192";
+    "reduce/moments-float32-1024x1024";
+    "reduce/window2-float32-1x64x256x256";
+    "reduce/sqdiff-float32-1024x1024";
+    "scan/logcumsumexp-float32-1024x1024";
+    "scan/sqcumsum-float32-1024x1024";
+    "reduce/bfloat16-sum-2048x1024-axes1";
+    "scan/float32-max-1024x1024-axis1";
+    (* calls through Nx, the short chain past the caches *)
+    "map/nx-chain4-f32-67108864";
+    "map/nx-add-f32-1048576";
+    (* sorts: the band row, keys of 4 and 8 bytes and masked, bytes past the
+       caches, tiled rows, a strided axis, top-k of one row and of many, a
+       numbering of wide rows *)
+    "sort/sort-f32-1x1M";
+    "sort/sort-f32-1x16M";
+    "sort/sort-f64-1x16M";
+    "sort/sort-i64-1x16M-range2^20";
+    "sort/sort-u8-1x256M";
+    "sort/sort-f32-65536x128";
+    "sort/sort-f32-4096x4096-axis0";
+    "sort/topk-f32-1x16M-k8";
+    "sort/topk-f32-64x131072-k50";
+    "sort/unique-i64-4Mx4-range16";
+    (* moves: gathers of rows, of elements past the caches and in the band,
+       ranges, sums sorted first, into one target and of rows, sets,
+       maxima, an assembly, a fold *)
+    "move/gather_emb_f32";
+    "move/gather_rand_f32";
+    "move/gather_rand64k_f32";
+    "move/ranges_f32";
+    "move/scatter_add_rand1m_f32";
+    "move/scatter_add_one_f32";
+    "move/scatter_add_emb_f32";
+    "move/scatter_set_perm_f32";
+    "move/scatter_max_rand1m_f32";
+    "move/assemble_cat_f32";
+    "move/fold_col2im_f32";
+    (* transforms: batched, one long axis in and past the caches, two axes,
+       real ones both ways, a mixed radix, a prime factor, float64 *)
+    "fft/c2c-c64-4096x1024";
+    "fft/c2c-c64-2^20";
+    "fft/c2c-c64-2^24";
+    "fft/c2c-c64-2048x2048-axes01";
+    "fft/r2c-c64-4096x1024";
+    "fft/c2r-c64-4096x513";
+    "fft/c2c-c64-4096x1009";
+    "fft/c2c-c64-2^20+7";
+    "fft/c2c-c128-2^20";
+    (* matrix routines: a small row of each, and the two whose products take
+       contraction paths no contraction row takes, complex packs (lu c64)
+       and P <= 16 panels over a long k with a transposed operand (qr f32
+       2048x1024) *)
+    "linalg/lu/f32/4096x32x32";
+    "linalg/qr/f32/4096x32x32";
+    "linalg/chol/f32/4096x32";
+    "linalg/solve/f32/4096x32x32";
+    "linalg/eigh/f32/1024x32x32";
+    "linalg/svd/f32/1024x32x32";
+    "linalg/eig/f32/1024x32x32";
+    "linalg/lu/c64/1x1024x1024";
+    "linalg/qr/f32/1x2048x1024";
+  ]
+
+let all =
+  let rows =
+    List.filter (fun (r : row) -> List.mem r.name suite_names) compared
+  in
+  if List.length rows <> List.length suite_names then
+    invalid_arg "Rows.all: a suite name matches no row";
+  rows
