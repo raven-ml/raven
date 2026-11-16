@@ -285,8 +285,11 @@ let value d =
   Gen.of_list [ m; -.m; 1. ]
 
 (* [o]'s cases: a zero query, [tk] a power of two up to 16 blocks of 64
-   keys, past which nx.cuda may cut a row's keys into parts, often 8 or 16
-   blocks, and half of them with a length, which may end in any part. *)
+   keys, past which nx.cuda may cut a row's keys into parts, half of them 8
+   or 16 blocks. A third have no length, a third any length, and a third a
+   length past a part's 256 keys and short of [tk], where [tk] has one, so
+   that about 1 case in 4 is one, and 100 cases cover it but with
+   probability below 10^-13. *)
 let sums =
   let open Gen in
   with_pp pp_case
@@ -294,9 +297,17 @@ let sums =
   let* rows = rows in
   let* tk =
     frequency
-      [ (3, map (fun e -> 1 lsl e) (int_range 0 8)); (1, of_list [ 512; 1024 ]) ]
+      [ (1, map (fun e -> 1 lsl e) (int_range 0 8)); (1, of_list [ 512; 1024 ]) ]
   in
-  let* len = frequency [ (1, constant None); (1, map Option.some (int_range 1 tk)) ] in
+  let past_part = if tk > 257 then int_range 257 (tk - 1) else int_range 1 tk in
+  let* len =
+    frequency
+      [
+        (1, constant None);
+        (1, map Option.some (int_range 1 tk));
+        (1, map Option.some past_part);
+      ]
+  in
   let* dk = int_range 1 4 in
   let* dv = int_range 1 3 in
   let+ k = array ~size:(constant (tk * dk)) (element d)
