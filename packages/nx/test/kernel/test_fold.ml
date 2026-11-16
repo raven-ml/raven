@@ -55,7 +55,9 @@ let folded = List.filter (fun (D.Any d) -> not (D.is D.Boolean d)) D.all
    so that the fold starts the whole result first. The last two window the
    last axis, of a result of two or three axes. [Pad] draws no window and no
    interior padding on any axis: the fold is a pad, as a slice's transpose
-   is. *)
+   is. Unless [last] draws its last extent, its result has more than one
+   element; its operand keeps an element on each axis, which may all be
+   padding. [Drawn] draws the empty pads. *)
 type lead = Drawn | Slabs | Padded | Pad
 
 (* The complex and sub-byte dtypes, which the laws cover, drawn more often than
@@ -63,10 +65,22 @@ type lead = Drawn | Slabs | Padded | Pad
 let weight (D.Any d) =
   if D.is D.Complex d then 10 else if D.bits d < 8 then 6 else 2
 
+let weighted dtypes =
+  Gen.frequency (List.map (fun d -> (weight d, Gen.constant d)) dtypes)
+
+(* A [Pad]'s dtype: one of whole bytes 7 times in 8, any 1 time in 8, so of
+   whole bytes 0.966 of the time over [folded]. [Pad] leads one draw in
+   five, so that 0.193 of the draws are "a pad of whole bytes", and 100
+   cases cover it but with probability below 6 10^-10; discarded draws of
+   the other leads and [Drawn]'s pads only raise it. *)
+let pad_dtype dtypes =
+  let bytes = List.filter (fun (D.Any d) -> D.bits d >= 8) dtypes in
+  if bytes = [] then weighted dtypes
+  else Gen.frequency [ (7, weighted bytes); (1, weighted dtypes) ]
+
 (* [last], where given, draws the result's last extent. *)
 let case_gen ?(dtypes = folded) ?last () =
   let open Gen in
-  let* d = frequency (List.map (fun d -> (weight d, constant d)) dtypes) in
   let* lead =
     frequency
       [
@@ -76,13 +90,14 @@ let case_gen ?(dtypes = folded) ?last () =
         (1, constant Pad);
       ]
   in
+  let* d = if lead = Pad then pad_dtype dtypes else weighted dtypes in
+  let first_two = Array.mapi (fun a v -> if a = 0 then max v 2 else v) in
   let* shape =
     match lead with
-    | Drawn | Pad -> array ~size:(int_range 0 3) (int_range 0 5)
+    | Drawn -> array ~size:(int_range 0 3) (int_range 0 5)
+    | Pad -> map first_two (array ~size:(int_range 1 3) (int_range 1 5))
     | Slabs | Padded ->
-        map
-          (fun s -> Array.mapi (fun a v -> if a = 0 then max v 2 else v) s)
-          (array ~size:(int_range 2 3) (int_range 1 5))
+        map first_two (array ~size:(int_range 2 3) (int_range 1 5))
   in
   let* shape =
     match last with
@@ -106,6 +121,11 @@ let case_gen ?(dtypes = folded) ?last () =
   let lo0 = if lead = Padded then 1 else 0 in
   let lo = Array.mapi (fun a v -> first a v lo0) lo in
   let hi = Array.mapi (fun a v -> first a v (max v 0)) hi in
+  (* A [Pad]'s loaded extent [shape.(a) + lo.(a) + hi.(a)] is at least 1. *)
+  let hi =
+    if lead <> Pad then hi
+    else Array.mapi (fun a v -> max v (1 - shape.(a) - lo.(a))) hi
+  in
   let interior =
     Array.mapi (fun a v -> if lead = Pad then 0 else first a v 0) interior
   in
