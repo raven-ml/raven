@@ -2183,21 +2183,24 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     order of association depends on the shape alone. Over axes cut across
     devices, each device reduces the part its window holds, and only
     partial results move instead of [x]'s elements: one per output and
-    window holding terms, stacked in C order of the windows' first indices
-    and reduced over the stack by the kernels; for {!argmax} and {!argmin},
-    each device's extreme and its position. Each device reduces its share
-    of the result over the stack piece by piece, each piece of at most 256
-    KiB of the partials of every device, its own included. So a {!sum},
-    {!prod}, {!max} or {!min} whose result of [r] bytes is whole on [N]
-    devices, each holding partials of [r] bytes, holds on each device at
-    most [r + r / N] bytes and [256 (1 + 1 / N)] KiB more beside its
-    operand. Integer and boolean reductions, extremes and their positions
-    keep the bits they have on one device. A float or complex {!sum},
-    {!prod}, {!mean}, {!var}, {!std}, {!logsumexp} or {!logmeanexp} over cut
-    axes has the kernels' association over each window's terms and over the
-    stacked partials. It may differ from the result on one device within the
-    bounds below, and is the same on every run for a given placement and set
-    of devices. Barring overflow and underflow, a float sum of [n] terms is
+    window holding terms; for {!argmax} and {!argmin}, each device's
+    extreme and its position. Each device computes its share of the
+    result piece by piece, each piece of at most 256 KiB of the partials
+    of every device, its own included. It combines a piece's partials one
+    at a time, in C order of the windows' first indices, each with the
+    combination of those before it, and a {!logsumexp}'s at once by the
+    kernels. So a {!sum}, {!prod}, {!max} or {!min} whose result of [r]
+    bytes is whole on [N] devices, each holding partials of [r] bytes,
+    holds on each device at most [r + r / N] bytes and [256 (1 + 1 / N)]
+    KiB more beside its operand. Integer and boolean reductions, extremes
+    and their positions keep the bits they have on one device. A float or
+    complex {!sum}, {!prod}, {!mean}, {!var}, {!std}, {!logsumexp} or
+    {!logmeanexp} over cut axes has the kernels' association over each
+    window's terms and, over the partials, their combination in turn, the
+    kernels' association for {!logsumexp} and {!logmeanexp}. It may differ
+    from the result on one device within the bounds below, and is the same
+    on every run for a given placement and set of devices. Barring
+    overflow and underflow, a float sum of [n] terms is
     within [γ(β(n)) Σ|x|] of the exact sum on one device, [γ] and [β] as
     {!Nx_kernel.section-bounds} defines them, and within
     [γ(β(n) + β(t)) Σ|x|] over cut axes, [t] the windows holding terms. A
@@ -2588,9 +2591,9 @@ val bitcast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
     summed axes are cut alike, the devices that hold one window of the
     result compute it together: each contracts the products its windows
     hold, adding [-0] where there is an [init], and only these partial
-    sums move, in the accumulator, stacked in C order of the windows' first
-    indices and summed over the stack by the kernels piece by piece, as a
-    reduction's partials are ({!section-reductions}); [init] is then added
+    sums move, in the accumulator, added one at a time in C order of the
+    windows' first indices, piece by piece, as a reduction's partials are
+    ({!section-reductions}); [init] is then added
     to that sum in the accumulator, and the result rounded once. Where the
     first windows hold every product, as an axis of fewer elements than its
     cuts can leave, each window of the result has the bits of that window's
