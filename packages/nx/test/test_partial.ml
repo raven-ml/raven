@@ -253,17 +253,18 @@ let law_placed (Case (k, s, data, w, op)) =
   cover "a cut of an empty axis" (List.exists (fun a -> extent a = 0) cut);
   cover "a cut over several mesh axes"
     (match w with Cuts (x, y) -> x = y | _ -> false);
-  (match op with
-  | Fold a -> cover "a fold along an axis no cut names" (not (List.mem a cut))
-  | Moved Sliced ->
-      cover "a slice that keeps a cut axis"
-        (not (List.mem (Array.length s - 1) cut))
-  | Moved _ -> cover "a movement of a cut value" true
-  | Beside a ->
-      cover "a ramp scanned along a cut axis" (List.mem a cut);
-      cover "a ramp scanned along a cut axis, beside another cut"
-        (List.mem a cut && List.length cut > 1)
-  | Combine -> ());
+  let beside p = match op with Beside a -> p a | _ -> false in
+  cover "a fold along an axis no cut names"
+    (match op with Fold a -> not (List.mem a cut) | _ -> false);
+  cover "a slice that keeps a cut axis"
+    (match op with
+    | Moved Sliced -> not (List.mem (Array.length s - 1) cut)
+    | _ -> false);
+  cover "a movement of a cut value"
+    (match op with Moved Sliced -> false | Moved _ -> true | _ -> false);
+  cover "a ramp scanned along a cut axis" (beside (fun a -> List.mem a cut));
+  cover "a ramp scanned along a cut axis, beside another cut"
+    (beside (fun a -> List.mem a cut && List.length cut > 1));
   cover "a signalling NaN" (signals k.dtype data);
   let x = signalling k.dtype s data in
   (* A maximum's NaN is one of the elements with a NaN part, which one
@@ -395,19 +396,23 @@ let law_assembled (Acase (k, s, data, w, asm, data', beside)) =
   cover "a cut of a one-element axis" (List.exists (fun a -> s.(a) = 1) cut);
   cover "a cut over several mesh axes"
     (match w with Cuts (x, y) -> x = y | _ -> false);
-  (match asm with
-  | Concat (_, e) ->
-      cover "a concatenation beside a cut" true;
-      cover "a concatenation of nothing more" (e = 0);
-      cover "a concatenation with a value whole on each device" beside
-  | Stack a ->
-      cover "a stack that moves a cut axis" (List.exists (fun c -> c >= a) cut);
-      cover "a stack after every cut axis" (List.for_all (fun c -> c < a) cut);
-      cover "a stack at or before a cut one-element axis"
-        (List.exists (fun c -> c >= a && s.(c) = 1) cut);
-      cover "a stack with a value whole on each device" beside
-  | Pad ws ->
-      cover "a pad beside a cut" (Array.exists (fun (b, e) -> b + e > 0) ws));
+  let concat p = match asm with Concat (_, e) -> p e | _ -> false in
+  let stack p = match asm with Stack a -> p a | _ -> false in
+  cover "a concatenation beside a cut" (concat (fun _ -> true));
+  cover "a concatenation of nothing more" (concat (fun e -> e = 0));
+  cover "a concatenation with a value whole on each device"
+    (concat (fun _ -> beside));
+  cover "a stack that moves a cut axis"
+    (stack (fun a -> List.exists (fun c -> c >= a) cut));
+  cover "a stack after every cut axis"
+    (stack (fun a -> List.for_all (fun c -> c < a) cut));
+  cover "a stack at or before a cut one-element axis"
+    (stack (fun a -> List.exists (fun c -> c >= a && s.(c) = 1) cut));
+  cover "a stack with a value whole on each device" (stack (fun _ -> beside));
+  cover "a pad beside a cut"
+    (match asm with
+    | Pad ws -> Array.exists (fun (b, e) -> b + e > 0) ws
+    | _ -> false);
   let fill = List.hd k.values in
   let assemble (type d) (x : (_, _, d) Nx.t) (y : (_, _, d) Nx.t) =
     match asm with
@@ -2438,8 +2443,13 @@ let law_lanes c =
   let cut_along = List.filter (fun (a, _) -> List.mem a along) ts in
   let data = lane_data dt c in
   let n = List.fold_left (fun n a -> n * c.lshape.(a)) 1 along in
-  cover ("a reduction of " ^ D.name dt) true;
-  cover ("a reduction by " ^ reduction_name c.lr) true;
+  List.iter
+    (fun (Lane_kind (d, _)) ->
+      cover ("a reduction of " ^ D.name d) (D.name d = D.name dt))
+    lane_kinds;
+  List.iter
+    (fun r -> cover ("a reduction by " ^ reduction_name r) (c.lr = r))
+    ([ Sum; Prod; Mean ] @ of_floats);
   cover "no term" (n = 0);
   cover "an empty window along a reduced axis"
     (List.exists
@@ -2946,7 +2956,11 @@ let law_cut ~pairs (module S : Sets) c =
            match List.assoc_opt p t with Some (_, n) -> n | None -> k)
          c.ks)
   in
-  cover ("a contraction of " ^ D.name k.cdtype) true;
+  List.iter
+    (fun (Ckind k') ->
+      let name = D.name k'.cdtype in
+      cover ("a contraction of " ^ name) (name = D.name k.cdtype))
+    ckinds;
   cover "from init" c.init;
   cover "from init on every device beside a cut result"
     (c.init && c.iwhere = Init_everywhere
@@ -3185,7 +3199,11 @@ let law_nx_case c =
     | Dot_vector -> host true [| c.k |]
     | Matmul | Einsum -> host true [| c.k; c.ncols |]
   in
-  cover ("a product of " ^ D.name k.cdtype) true;
+  List.iter
+    (fun (Ckind k') ->
+      let name = D.name k'.cdtype in
+      cover ("a product of " ^ name) (name = D.name k.cdtype))
+    ckinds;
   cover "an empty window" (c.k > 0 && c.k < 3 && c.nwhere <> Rows_alone);
   cover "a cut along the rows alone" (c.nwhere = Rows_alone);
   cover_marks k.floats c.nmarks c.k;
@@ -3838,11 +3856,13 @@ let traffic =
 let placed =
   group "placements"
     [
-      prop ~count:1000
+      (* A ramp scanned along a cut axis beside another cut is 1.8% of the
+         cases, a stack at or before a cut one-element axis 3.3%. *)
+      prop ~count:1500
         "an operation over a value at any placement gives its bits on one \
          device"
         placed_case law_placed;
-      prop ~count:500
+      prop ~count:1000
         "an assembly of values cut along axes it leaves whole gives their \
          bits, cut along those axes over the same devices"
         assembled_case law_assembled;
