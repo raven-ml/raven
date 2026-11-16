@@ -576,6 +576,76 @@ let pow =
       ];
   }
 
+(* mod: exact, so any exact algorithm gives nx_mod_f32's long division's bits
+   and fmod's. Its pairs: exponent gaps of up to the whole range, a subnormal
+   divisor, an exact multiple, and Annex F's operands. *)
+
+let mod_pairs wide =
+  let open Gen in
+  let c v = code wide v in
+  let signed v =
+    let+ neg = bool in
+    if neg then -.v else v
+  in
+  let top = if wide then 1023 else 127 and low = if wide then -1074 else -149 in
+  let gap =
+    let* ex = int_range (top - 60) top
+    and+ ey = int_range low (low + 60)
+    and+ mx = float_range 1. 2.
+    and+ my = float_range 1. 2. in
+    let+ x = signed (Float.ldexp mx ex) and+ y = signed (Float.ldexp my ey) in
+    [| c x; c y |]
+  in
+  let sub_divisor =
+    let* x = float_range (-1e6) 1e6 and+ y = int64_range 1L (mmask wide) in
+    let+ neg = bool in
+    [| c x; (if neg then Int64.logor y (sign wide) else y) |]
+  in
+  let multiple =
+    let* y = float_range 0.5 4. and+ k = int_range 1 1000 in
+    let y = value wide (c y) in
+    let+ x = signed (Float.of_int k *. y) in
+    [| c x; c y |]
+  in
+  let special =
+    let xs = [ 0.; -0.; 1.; Float.infinity; Float.neg_infinity; Float.nan ] in
+    let ys = [ 0.; -0.; 1.; Float.infinity; Float.nan ] in
+    let+ x = of_list xs and+ y = of_list ys in
+    [| c x; c y |]
+  in
+  frequency [ (2, gap); (1, sub_divisor); (1, multiple); (1, special) ]
+
+let mod_ =
+  let s w =
+    spec [ 7.; 7.5; 3.; 0.75; 0.1; 1.; pick w (1e30, 1e300) ] [ 1e3; 10. ]
+  in
+  let finite e = Float.is_finite e.(0) && Float.is_finite e.(1) in
+  {
+    name = "mod";
+    fn = Two ({ f2 = Nx.mod_ }, mod_pairs);
+    specs = [| (s false, s true); (s false, s true) |];
+    covers =
+      [
+        ( "an exponent gap past 50 binades",
+          fun _ e ->
+            finite e
+            && e.(1) <> 0.
+            && Float.abs e.(0) > Float.ldexp (Float.abs e.(1)) 50 );
+        ( "a subnormal divisor",
+          fun w e ->
+            e.(1) <> 0. && Float.abs e.(1) < pick w (0x1p-126, Float.min_float)
+        );
+        ( "an exact multiple, not zero",
+          fun _ e ->
+            finite e && e.(0) <> 0. && e.(1) <> 0. && Float.rem e.(0) e.(1) = 0.
+        );
+        ( "|x| below |y|, not zero",
+          fun _ e -> e.(0) <> 0. && Float.abs e.(0) < Float.abs e.(1) );
+        ("a zero divisor", fun _ e -> e.(1) = 0.);
+        ("an infinite dividend", fun _ e -> Float.abs e.(0) = Float.infinity);
+      ];
+  }
+
 (* Logarithms: nx_log_reduce's switch, where a significand passes sqrt(1/2), in
    several binades; the least normal, below which it scales a subnormal up; 1,
    around which log cancels; powers of two, where log2 is exact; for log1p, -1,

@@ -390,7 +390,10 @@ rounded sum; a stated bound) and its reason. A rounded sum's bound is
 - **nx:** `prog.mli`, `Mod`: `fmod` on floats.
 - **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `Lower_real › exact › mod`.
+- **Pinned by:** `Lower_real › exact › mod`, `Lower_real › kinds › mod
+  gives eager's bits`, `› mod of every narrow float gives eager's bits`,
+  `› mod of a constant gives eager's bits` on the host; `Jit_gpu › kinds ›
+  mod *` on a GPU, against `nx_kinds.h`'s `nx_mod_f32` at `float32`.
 
 ### A18. Power by nx's sequence
 

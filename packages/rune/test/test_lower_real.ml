@@ -364,7 +364,7 @@ let kinds =
   Kinds.
     [
       sin; cos; tan; log; log2; log1p; exp; exp2; expm1; sinh; cosh; tanh; asin;
-      acos; atan; atan2; erf; pow;
+      acos; atan; atan2; erf; pow; mod_;
     ]
 
 let () =
