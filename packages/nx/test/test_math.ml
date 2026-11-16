@@ -6,7 +6,9 @@
 (* The float functions nx composes from the kernels' kinds: each within its
    stated ulps of the C library's at float32 and float64, over values drawn
    from bytes, its special values as stated, and a narrower float computed at
-   float32 and rounded once. *)
+   float32 and rounded once. roundeven is exact: at every float32, and at
+   float64 over drawn bits and halves, it is the float64 arithmetic's ties to
+   even. *)
 
 open Windtrap
 module A = Nx_array
@@ -196,6 +198,70 @@ let law_hypot (type s) (dt : (float, s) D.t) (x, y) =
   let xs = Nx.to_array x and ys = Nx.to_array y in
   within dt 3. xs (Array.map2 Float.hypot xs ys) (Nx.to_array (Nx.hypot x y))
 
+(* roundeven *)
+
+(* Ties to even by the float64 arithmetic: below [2^52], [(|x| + 2^52) - 2^52]
+   is [|x|] rounded to an integer, ties to even, and the sign is put back;
+   from [2^52] every float is an integer. *)
+let even x =
+  let a = Float.abs x in
+  if a < 0x1p52 then Float.copy_sign (a +. 0x1p52 -. 0x1p52) x else x
+
+(* Every float32, [2^24] bit patterns at a time. *)
+let roundeven_float32 () =
+  let n = 1 lsl 24 in
+  for c = 0 to 255 do
+    let start = (c lsl 24) - (1 lsl 31) in
+    let x = Nx.bitcast Nx.float32 (Nx.arange Nx.int32 start (start + n) 1) in
+    let got =
+      Bigarray.array1_of_genarray
+        (Nx.to_bigarray Bigarray.int32 (Nx.bitcast Nx.int32 (Nx.roundeven x)))
+    in
+    for i = 0 to n - 1 do
+      let x = Int32.float_of_bits (Int32.of_int (start + i)) in
+      let g = Int32.float_of_bits (Bigarray.Array1.unsafe_get got i) in
+      if not (same (even x) g) then
+        failf "at %h: %h, not %h" x g (even x)
+    done
+  done
+
+(* Drawn bits, and halves, quarters and integers up to [2^53] with their
+   neighbours, signed. *)
+let roundeven_float64 () =
+  let rng = Random.State.make [| 2026 |] in
+  let below k = Int64.to_float (Random.State.int64 rng k) in
+  let drawn =
+    List.init (1 lsl 20) (fun _ ->
+        Int64.float_of_bits (Random.State.bits64 rng))
+  in
+  let halves = List.init 65536 (fun _ -> below 0x10_0000_0000_0000L +. 0.5) in
+  let quarters =
+    List.init 65536 (fun _ -> ((2. *. below 0x8_0000_0000_0000L) +. 1.) /. 4.)
+  in
+  let small = List.init 8001 (fun i -> Float.of_int (i - 4000) /. 2.) in
+  let ends =
+    [
+      0.; 0.49999999999999994; 0.5; 0x1p51 +. 0.5; 0x1p52 -. 0.5;
+      0x1p52 -. 1.5; 0x1p52; 0x1p52 +. 1.; 0x1p53; 0x1p-1074; Float.max_float;
+      infinity; nan;
+    ]
+  in
+  let around x = [ Float.pred x; x; Float.succ x ] in
+  let xs = drawn @ List.concat_map around (halves @ quarters @ small @ ends) in
+  let xs = Array.of_list (xs @ List.map Float.neg xs) in
+  let got = values Nx.roundeven Nx.float64 xs in
+  Array.iteri
+    (fun i x ->
+      if not (same (even x) got.(i)) then
+        failf "at %h: %h, not %h" x got.(i) (even x))
+    xs
+
+let roundeven_others () =
+  let ints = Nx.create Nx.int32 [| 3 |] [| -7l; 0l; 9l |] in
+  equal (array int32) [| -7l; 0l; 9l |] (Nx.to_array (Nx.roundeven ints));
+  equal (array float_exact) [| 2.; 4.; -0.; -2.; 3. |]
+    (values Nx.roundeven Nx.float32 [| 2.5; 3.5; -0.5; -2.5; 2.5000002 |])
+
 let test_square () =
   equal (array int) [| -112; 0; 1 |]
     (Nx.to_array (Nx.square (Nx.create Nx.int8 [| 3 |] [| 12; -128; -1 |])));
@@ -232,8 +298,15 @@ let math =
           (law_hypot D.Float32);
         test "special values" hypot_specials;
       ];
+    group "roundeven"
+      [
+        test "every float32 against float64 ties to even" roundeven_float32;
+        test "float64 against its own ties to even" roundeven_float64;
+        test "integers and examples" roundeven_others;
+      ];
     group "narrow floats"
       [
+        narrow "roundeven" (fun x -> Nx.roundeven x);
         narrow "asinh" (fun x -> Nx.asinh x);
         narrow "acosh" (fun x -> Nx.acosh x);
         narrow "atanh" (fun x -> Nx.atanh x);
@@ -257,6 +330,8 @@ let math =
             ("Nx.acosh", fun () -> ignore (Nx.acosh (Nx.zeros Nx.uint8 [| 1 |])));
             ("Nx.atanh", fun () -> ignore (Nx.atanh (Nx.zeros Nx.int64 [| 1 |])));
             ("Nx.square", fun () -> ignore (Nx.square (Nx.zeros Nx.bool [| 1 |])));
+            ("Nx.roundeven", fun () ->
+                ignore (Nx.roundeven (Nx.zeros Nx.complex64 [| 1 |])));
           ]
           (fun (by, f) -> invalid ~by f);
       ];

@@ -1585,12 +1585,12 @@ val jit :
     {!Nx.scatter} by [Set], keep a NaN's bits too. Casts, bitcasts, {!Nx.where},
     comparisons, extremes ({!Nx.max}, {!Nx.argmax}) and integer and boolean
     arithmetic are exact, as are {!Nx.neg}, {!Nx.abs}, {!Nx.sign}, {!Nx.floor},
-    {!Nx.ceil}, {!Nx.round}, {!Nx.trunc}, {!Nx.mod_}, {!Nx.maximum},
-    {!Nx.minimum} and IEEE 754's correctly rounded {!Nx.add}, {!Nx.sub},
-    {!Nx.mul} and {!Nx.fma}. {!Nx.div}, {!Nx.recip} and {!Nx.sqrt} are exact on
-    a device that rounds division and the square root correctly. Of the complex
-    functions, {!Nx.neg}, {!Nx.add}, {!Nx.sub}, the extremes and the comparisons
-    are exact.
+    {!Nx.ceil}, {!Nx.round}, {!Nx.roundeven}, {!Nx.trunc}, {!Nx.mod_},
+    {!Nx.maximum}, {!Nx.minimum} and IEEE 754's correctly rounded {!Nx.add},
+    {!Nx.sub}, {!Nx.mul} and {!Nx.fma}. {!Nx.div}, {!Nx.recip} and {!Nx.sqrt}
+    are exact on a device that rounds division and the square root correctly.
+    Of the complex functions, {!Nx.neg}, {!Nx.add}, {!Nx.sub}, the extremes
+    and the comparisons are exact.
 
     A float narrower than [float32] computes at [float32] and rounds once, so
     each real function of the table below is within one ulp of the correctly

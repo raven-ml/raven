@@ -2031,7 +2031,14 @@ val ceil : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [ceil x] rounds toward positive infinity. *)
 
 val round : ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [round x] rounds to the nearest integer, halves away from zero. *)
+(** [round x] rounds to the nearest integer, halves away from zero, as C's
+    [round] and [Float.round] do. NumPy's, PyTorch's and the Array API's
+    [round] is {!roundeven}. *)
+
+val roundeven : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [roundeven x] rounds to the nearest integer, halves to the even one, as
+    C's [roundeven] does: [roundeven 2.5] is [2.], [roundeven 3.5] is [4.]
+    and [roundeven (-0.5)] is [-0.]. *)
 
 val trunc : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [trunc x] rounds toward zero. *)

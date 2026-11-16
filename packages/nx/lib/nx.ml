@@ -2286,6 +2286,19 @@ let float_map (type v s d) ~by (xs : (v, s, d) t list)
   | D.Complex | D.Signed | D.Unsigned | D.Boolean ->
       invalid_argf "%s: %s is not a float dtype" by (D.name dt)
 
+(* Ties to even: a tie is twice the rounding of its half. [x - trunc x] is
+   exact, and a tie has [|x| >= 1/2], so its half neither rounds nor
+   underflows. NaN and the infinities are no tie, and {!round} keeps them. *)
+let roundeven (type v s d) (x : (v, s, d) t) : (v, s, d) t =
+  match D.kind (dtype x) with
+  | D.Float ->
+      float_map ~by:"Nx.roundeven" [ x ] (fun w ins ->
+          let lit = E.const w and x = ins.(0) in
+          let tie = E.(abs (x - trunc x) = lit 0.5) in
+          E.(where tie (round (x * lit 0.5) * lit 2.) (round x)))
+  | D.Complex | D.Signed | D.Unsigned | D.Boolean ->
+      unary ~by:"Nx.roundeven" Round x
+
 
 let square x =
   let by = "Nx.square" in

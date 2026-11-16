@@ -731,6 +731,40 @@ let test_specials () =
       at f64 u)
     unaries
 
+(* Nx.roundeven is exact: compiled, it gives eager's bits at halves and their
+   neighbours, at the least float whose neighbours are integers and beside it,
+   at the special values and over drawn bits. *)
+let test_roundeven () =
+  let rng = Random.State.make [| 7 |] in
+  let at (type s) (dt : (float, s) Nx.dtype) =
+    let wide = Nx.Dtype.equal dt f64 in
+    let step x d =
+      if wide then
+        Int64.float_of_bits (Int64.add (Int64.bits_of_float x) (Int64.of_int d))
+      else
+        Int32.float_of_bits (Int32.add (Int32.bits_of_float x) (Int32.of_int d))
+    in
+    let big = if wide then 0x1p52 else 0x1p23 in
+    let points =
+      List.init 64 (fun i -> Float.of_int (i - 32) +. 0.5)
+      @ [ 0.5; big -. 0.5; big; 0x1p-149; Float.max_float; Float.infinity ]
+    in
+    let around = List.concat_map (fun x -> [ step x (-1); x; step x 1 ]) in
+    let drawn =
+      List.init 256 (fun _ ->
+          if wide then Int64.float_of_bits (Random.State.bits64 rng)
+          else Int32.float_of_bits (Random.State.bits32 rng))
+    in
+    let xs = around points @ [ 0.; Float.nan ] @ drawn in
+    let xs = Array.of_list (xs @ List.map Float.neg xs) in
+    let x = Nx.create dt [| Array.length xs |] xs in
+    let msg = Format.asprintf "%a" Nx.pp_dtype dt in
+    let y = compiled (fun () -> bits (Rune.jit' Nx.roundeven x)) in
+    equal ~msg (outcome_t bits_t) (Value (bits (Nx.roundeven x))) y
+  in
+  at f32;
+  at f64
+
 (* [Nx.where (Nx.less m c) m c] of [m = Nx.minimum c x] is [c] where [m] ties
    with [c] or is NaN, and [m] elsewhere: [0.] at [x = -0.] and [c = 0.], and
    [1.] at a NaN and [c = 1.]. *)
@@ -5911,6 +5945,7 @@ let () =
                Mxfp4_products.decodes
                (Mxfp4_products.decode_law (module Nx.Host));
              test "special values are exact" test_specials;
+             test "roundeven is exact" test_roundeven;
              test "a selection of a minimum against its constant is exact"
                test_nested_minimum;
              Windtrap.cases "a selection of a value and a zero is exact"

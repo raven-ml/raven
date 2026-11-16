@@ -425,6 +425,7 @@ let real_cases =
     unary "floor" ~values:spaced Nx.floor;
     unary "ceil" ~values:spaced Nx.ceil;
     unary "round" ~values:spaced Nx.round;
+    unary "roundeven" ~values:spaced Nx.roundeven;
     unary "trunc" ~values:spaced Nx.trunc;
     unary "sigmoid" Nx.sigmoid;
     unary "softplus" ~values:spaced Nx.softplus;
