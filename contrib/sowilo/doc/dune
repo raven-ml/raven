@@ -5,4 +5,4 @@
   (and
    (<> %{profile} sanitize)
    (<> %{profile} tsan)))
- (libraries sowilo unix))
+ (libraries sowilo kaun nx unix))

@@ -127,11 +127,11 @@ sobel, scharr, laplacian -- support `Rune.grad'`.
 
 ## Integration with Kaun
 
-Use sowilo preprocessing in Kaun data pipelines:
+Use sowilo preprocessing in Kaun data pipelines. An epoch takes the dataset
+in an order drawn from a key, cuts it into batches with `Data.batches2`, and
+maps each batch with `Seq.map`:
 
-<!-- $MDX skip -->
 ```ocaml
-open Sowilo
 open Kaun
 
 let preprocess img =
@@ -142,10 +142,13 @@ let preprocess img =
       ~mean:[0.485; 0.456; 0.406]
       ~std:[0.229; 0.224; 0.225]
 
-let train_data =
-  Data.prepare ~shuffle:rngs ~batch_size:32 (images, labels)
-  |> Data.map (fun (x, y) ->
-    (preprocess x, fun logits -> Loss.cross_entropy_sparse logits y))
+let epoch key e (images, labels) =
+  let key = Nx.Rng.fold_in key e in
+  let order = Nx.Rng.permutation ~key (Nx.dim 0 images) in
+  let take t = Nx.take ~axis:0 order t in
+  Data.batches2 ~batch_size:32 (take images, take labels)
+  |> Seq.map (fun (x, y) ->
+    (preprocess x, fun logits -> Loss.softmax_cross_entropy_sparse logits y))
 ```
 
 ## Feature extraction
