@@ -108,6 +108,13 @@ let pp_case ppf c =
   Format.fprintf ppf "%d devices, %d x %d, x %a, y %a" c.n c.rows c.cols pp_cut
     c.x pp_cut c.y
 
+(* Each operand is whole on each device 1 time in 6, on one device 1 time in
+   6, and split along its rows or its columns 1 time in 3 each. Of [x]'s
+   splits along its rows, about 0.37 have fewer rows than devices, 0.37
+   uneven windows and 0.26 even ones, before [Gen.int_range]'s draws of its
+   bounds and their neighbours: even windows are about 0.078 of the cases,
+   the rarest class the law covers, so it draws 300 cases, which miss them
+   with probability 2 10^-11. *)
 let cases =
   let open Gen in
   let cut n =
@@ -186,7 +193,14 @@ let law c =
   let cut_rows = function Split 0 -> true | _ -> false in
   cover "an empty window" (cut_rows c.x && c.rows < c.n);
   cover "uneven windows" (cut_rows c.x && c.rows > c.n && c.rows mod c.n <> 0);
+  cover "even windows"
+    (cut_rows c.x && c.rows >= c.n && c.rows mod c.n = 0);
+  cover "x cut along its columns" (c.x = Split 1);
+  cover "x whole on each device" (c.x = On);
+  cover "x on one device" (match c.x with Device _ -> true | _ -> false);
+  cover "two devices" (c.n = 2);
   cover "three devices" (c.n = 3);
+  cover "four devices" (c.n = 4);
   match c.n with
   | 2 -> law_on Two.v c
   | 3 -> law_on Three.v c
@@ -197,5 +211,5 @@ let () =
     (run "Nx.Prim.partition"
        [
          group "an engine of nx's operations computes as eager execution"
-           [ prop ~count:60 "over two, three and four devices" cases law ];
+           [ prop ~count:300 "over two, three and four devices" cases law ];
        ])
