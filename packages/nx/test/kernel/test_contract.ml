@@ -431,24 +431,31 @@ let law_wide ~wide (b : Support.backend) s =
    dtype, gives the bits a fresh one does: a kernel reads each element of
    [init] before it writes the destination there. *)
 let law_in_place (b : Support.backend) (c : case) =
-  match c.init with
-  | None -> cover "no init" true
-  | Some i -> (
-      let c = { c with init = Some (cast_to c.out i) } in
-      let alias = on b (cast_to c.out i) in
-      let answer =
-        contract b.kernels c ~dst:alias (on b c.a) (on b c.b) (Some alias)
-      in
-      match (run b c, answer) with
-      | Some y, A.Done ->
-          cover "computed" true;
-          equal (list string) []
-            (differ_bits c.acc ~other:"in place" y (host alias))
-      | None, A.Declined -> cover "declined" true
-      | y, r ->
-          failf "a fresh destination %s, in place %a"
-            (if Option.is_some y then "computed" else "declined")
-            Nx_array_support.pp_answer r)
+  let computed =
+    match c.init with
+    | None ->
+        collect "no init";
+        false
+    | Some i -> (
+        let c = { c with init = Some (cast_to c.out i) } in
+        let alias = on b (cast_to c.out i) in
+        let answer =
+          contract b.kernels c ~dst:alias (on b c.a) (on b c.b) (Some alias)
+        in
+        match (run b c, answer) with
+        | Some y, A.Done ->
+            equal (list string) []
+              (differ_bits c.acc ~other:"in place" y (host alias));
+            true
+        | None, A.Declined ->
+            collect "declined";
+            false
+        | y, r ->
+            failf "a fresh destination %s, in place %a"
+              (if Option.is_some y then "computed" else "declined")
+              Nx_array_support.pp_answer r)
+  in
+  cover "computed" computed
 
 (* Contractions of 16 × 16 outputs, with init, either side of a block of
    256 products and over several, which a library may sum into scratch
@@ -503,9 +510,9 @@ let law_declined (b : Support.backend) c =
   let init = Option.map (on b) c.init in
   match contract b.kernels c ~dst (on b c.a) (on b c.b) init with
   | A.Declined ->
-      cover "declined" true;
+      collect "declined";
       equal (array (array float_exact)) before (planes c.out (host dst))
-  | A.Done -> cover "computed" true
+  | A.Done -> collect "computed"
   | r -> failf "contract answered %a" Nx_array_support.pp_answer r
 
 (* Integers *)
