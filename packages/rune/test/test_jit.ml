@@ -652,7 +652,7 @@ type unary = {
 (* rune.mli's bound, then nx's; 0 for an exact function. *)
 let unaries =
   [
-    { name = "exp"; f = Nx.exp; bound = (9 + 2, 9 + 2) };
+    { name = "exp"; f = Nx.exp; bound = (0, 0) };
     { name = "log"; f = Nx.log; bound = (0, 0) };
     { name = "sin"; f = Nx.sin; bound = (0, 0) };
     { name = "cos"; f = Nx.cos; bound = (0, 0) };
@@ -660,10 +660,10 @@ let unaries =
     { name = "asin"; f = Nx.asin; bound = (5 + 2, 9 + 2) };
     { name = "acos"; f = Nx.acos; bound = (5 + 2, 9 + 2) };
     { name = "atan"; f = Nx.atan; bound = (2 + 2, 7 + 2) };
-    { name = "sinh"; f = Nx.sinh; bound = (23 + 3, 23 + 2) };
-    { name = "cosh"; f = Nx.cosh; bound = (10 + 2, 10 + 2) };
-    { name = "tanh"; f = Nx.tanh; bound = (18 + 2, 18 + 2) };
-    { name = "expm1"; f = Nx.expm1; bound = (23 + 1, 23 + 2) };
+    { name = "sinh"; f = Nx.sinh; bound = (0, 0) };
+    { name = "cosh"; f = Nx.cosh; bound = (0, 0) };
+    { name = "tanh"; f = Nx.tanh; bound = (0, 0) };
+    { name = "expm1"; f = Nx.expm1; bound = (0, 0) };
     { name = "log1p"; f = Nx.log1p; bound = (0, 0) };
     { name = "erf"; f = Nx.erf; bound = (2 + 2, 3 + 2) };
   ]

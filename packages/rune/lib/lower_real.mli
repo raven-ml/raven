@@ -30,9 +30,12 @@
 
     {1:sequence Kinds of nx's sequence}
 
-    [Log], [Log2], [Log1p], [Sin], [Cos] and [Tan] compute the sequence of
-    operations nx's kernel header, [nx_kinds.h], gives them, each fused
-    multiply-add a {!Lower_bits.mulacc}. The logarithms reduce [x] to
+    [Exp], [Exp2], [Expm1], [Log], [Log2], [Log1p], [Sin], [Cos], [Tan],
+    [Sinh], [Cosh] and [Tanh] compute the sequence of operations nx's kernel
+    header, [nx_kinds.h], gives them, each fused multiply-add a
+    {!Lower_bits.mulacc}. The exponentials and hyperbolic kinds reduce [x] to
+    [k ln 2 + r], [k] an integer, and take nx's polynomial in [r], [2{^k}]
+    applied by exact products. The logarithms reduce [x] to
     [2{^k} (1 + f)], [1 + f] in [\[√½, √2)], and take nx's polynomial in
     [(f / (2 + f)){^2}]. The trigonometric kinds reduce by [π/2], Cody and
     Waite's reduction below [2{^15}] ([float32]) or [2{^28}] ([float64]) and
@@ -51,21 +54,16 @@
 
     {v
       kind                        float32  float64
-      exp2                           4        4
       erf                            2        3
       atan                           2        7
       asin, acos                     5        9
       atan2                          6        8
-      exp, pow                       9        9
-      cosh                          10       10
-      tanh                          18       18
-      expm1, sinh                   23       23
+      pow                            9        9
     v}
 
     On the CPU host target, tolk computes [exp2] by {!Tolk.Transcendental},
-    within one ulp, [exp] is within 2 ulps at [float32], and [pow] within 2 at
-    both dtypes. [exp2] at an integer may be inexact; its bound still holds
-    there. The bounds hold at tolk's default {!Tolk.Setting.transcendental}.
+    within one ulp, and [pow] is within 2 ulps at both dtypes. The bounds hold
+    at tolk's default {!Tolk.Setting.transcendental}.
 
     Where every operand is [±0], [±inf] or a NaN, a kind gives the zero,
     infinity, [±1] or NaN that C99 Annex F (ISO/IEC 9899, F.9) gives, with the

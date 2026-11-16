@@ -21,6 +21,12 @@ val name : kind -> string
 val sin : kind
 val cos : kind
 val tan : kind
+val exp : kind
+val exp2 : kind
+val expm1 : kind
+val sinh : kind
+val cosh : kind
+val tanh : kind
 val log : kind
 val log2 : kind
 val log1p : kind

@@ -71,7 +71,7 @@ type kind = {
 
 let name k = k.name
 let arity k = Array.length k.specs
-let spec wide k i = pick wide k.specs.(i)
+let spec_of wide k i = pick wide k.specs.(i)
 
 (* Trigonometric kinds: nx_kinds.h's switch to Payne and Hanek's reduction, 2^15
    or 2^28, and the cutoff below which sin and tan are x, 2^-12 or 2^-27;
@@ -127,6 +127,153 @@ let trig name f =
 let sin = trig "sin" { f1 = Nx.sin }
 let cos = trig "cos" { f1 = Nx.cos }
 let tan = trig "tan" { f1 = Nx.tan }
+
+(* Exponentials: nx_kinds.h's clamps (EXP_HI and EXP_LO, EXP2_HI and EXP2_LO,
+   EXPM1_LO, HYP_HI, TANH_HI), exp's near range (EXP_NEAR), the cutoffs below
+   which expm1 is x (EXPM1_TINY) and tanh its polynomial (TANH_SMALL), where k
+   passes its cap (EXPM1_KCAP and HYP_KCAP times ln2), where results overflow,
+   turn subnormal and round to zero, and ln2/2, where the reduction's r is
+   largest. *)
+
+let half_ln2 = 0.34657359
+
+let unary name f s32 s64 covers =
+  { name; fn = One f; specs = [| (s32, s64) |]; covers }
+
+let spec points ranges = { points; ranges }
+let past (a, b) w v = v > pick w (a, b) && Float.is_finite v
+let below (a, b) w v = v < pick w (a, b) && Float.is_finite v
+
+let exp =
+  unary "exp" { f1 = Nx.exp }
+    (spec
+       [
+         89.; 104.; 86.; 88.72284; 87.33655; 103.27893; 103.97208; half_ln2; 1.;
+       ]
+       [ 1.; 100. ])
+    (spec
+       [
+         710.;
+         746.;
+         708.;
+         709.782712893384;
+         708.3964185322641;
+         744.4400719213812;
+         745.1332191019411;
+         half_ln2;
+         1.;
+       ]
+       [ 1.; 800. ])
+    [
+      ( "past a clamp",
+        fun w e -> past (89., 710.) w e.(0) || below (-104., -746.) w e.(0) );
+      ("an overflowing result", fun w e -> past (88.7229, 709.783) w e.(0));
+      ( "a subnormal result",
+        fun w e ->
+          e.(0) < pick w (-87.34, -708.4) && e.(0) > pick w (-103.97, -745.13)
+      );
+      ( "past the near range, within the clamps",
+        fun w e ->
+          let a = Float.abs e.(0) in
+          a > pick w (86., 708.)
+          && e.(0) < pick w (89., 710.)
+          && e.(0) > pick w (-104., -746.) );
+    ]
+
+let exp2 =
+  unary "exp2" { f1 = Nx.exp2 }
+    (spec [ 128.; 129.; 126.; 149.; 150.; 151.; 0.5; 1.5; 3. ] [ 1.; 160. ])
+    (spec
+       [ 1024.; 1025.; 1022.; 1074.; 1075.; 1076.; 0.5; 1.5; 3. ]
+       [ 1.; 1100. ])
+    [
+      ( "an integer in range, not zero",
+        fun w e ->
+          Float.is_integer e.(0)
+          && e.(0) <> 0.
+          && Float.abs e.(0) < pick w (128., 1024.) );
+      ( "a half-integer",
+        fun _ e ->
+          Float.is_finite e.(0) && Float.abs (e.(0) -. Float.round e.(0)) = 0.5
+      );
+      ( "past a clamp",
+        fun w e -> past (129., 1025.) w e.(0) || below (-151., -1076.) w e.(0)
+      );
+      ( "a subnormal result",
+        fun w e ->
+          e.(0) < pick w (-126., -1022.) && e.(0) > pick w (-150., -1075.) );
+    ]
+
+let expm1 =
+  let kcap = (64. *. 0.6931471805599453, 128. *. 0.6931471805599453) in
+  unary "expm1" { f1 = Nx.expm1 }
+    (spec
+       [ 26.; 0x1p-25; 89.; 88.72284; fst kcap; half_ln2; 1.; 0.5 ]
+       [ 1.; 50. ])
+    (spec
+       [ 40.; 0x1p-54; 710.; 709.782712893384; snd kcap; half_ln2; 1.; 0.5 ]
+       [ 1.; 720. ])
+    [
+      ( "below the tiny cutoff, not zero",
+        fun w e -> e.(0) <> 0. && Float.abs e.(0) < pick w (0x1p-25, 0x1p-54) );
+      ("below the low clamp", fun w e -> below (-26., -40.) w e.(0));
+      ("past k's cap", fun w e -> past kcap w e.(0));
+      ("an overflowing result", fun w e -> past (88.7229, 709.783) w e.(0));
+      ( "within 1/2 of zero, past the cutoff",
+        fun w e ->
+          Float.abs e.(0) < 0.5 && Float.abs e.(0) >= pick w (0x1p-25, 0x1p-54)
+      );
+    ]
+
+let hyp_points w =
+  let kcap = pick w (32., 64.) *. 0.6931471805599453 in
+  [
+    pick w (90., 712.);
+    pick w (89.41599, 710.4758600739439);
+    kcap;
+    2. *. kcap;
+    half_ln2;
+    0x1p-30;
+    6.;
+    1.;
+  ]
+
+let hyp_covers =
+  let a e = Float.abs e.(0) in
+  [
+    ( "k past its cap",
+      fun w e ->
+        a e > pick w (32., 64.) *. 0.6931471805599453 && Float.is_finite e.(0)
+    );
+    ( "an overflowing result",
+      fun w e -> a e > pick w (89.416, 710.476) && Float.is_finite e.(0) );
+    ("within 1/2 of zero, not zero", fun _ e -> a e < 0.5 && e.(0) <> 0.);
+  ]
+
+let sinh =
+  unary "sinh" { f1 = Nx.sinh }
+    (spec (hyp_points false) [ 1.; 100. ])
+    (spec (hyp_points true) [ 1.; 720. ])
+    hyp_covers
+
+let cosh =
+  unary "cosh" { f1 = Nx.cosh }
+    (spec (hyp_points false) [ 1.; 100. ])
+    (spec (hyp_points true) [ 1.; 720. ])
+    hyp_covers
+
+let tanh =
+  let a e = Float.abs e.(0) in
+  unary "tanh" { f1 = Nx.tanh }
+    (spec [ 0.625; 9.5; 0x1p-30; 0.3; 1.; 2. ] [ 1.; 25. ])
+    (spec [ 0.625; 19.5; 19.06154746539849; 0x1p-54; 0.3; 1.; 2. ] [ 1.; 25. ])
+    [
+      ("below the polynomial's split", fun _ e -> a e < 0.625);
+      ( "from the split to the clamp",
+        fun w e -> a e >= 0.625 && a e < pick w (9.5, 19.5) );
+      ( "past the clamp, finite",
+        fun w e -> a e >= pick w (9.5, 19.5) && Float.is_finite e.(0) );
+    ]
 
 (* Logarithms: nx_log_reduce's switch, where a significand passes sqrt(1/2), in
    several binades; the least normal, below which it scales a subnormal up; 1,
@@ -273,7 +420,7 @@ let operand wide s =
     [ (4, point); (2, of_list (edges wide)); (2, bits); (3, range); (1, sub) ]
 
 let element wide k =
-  let ops = List.init (arity k) (fun i -> operand wide (spec wide k i)) in
+  let ops = List.init (arity k) (fun i -> operand wide (spec_of wide k i)) in
   Gen.map Array.of_list
     (List.fold_right
        (fun g acc ->
@@ -318,7 +465,7 @@ let example k =
   let block wide =
     let cols =
       Array.init (arity k) (fun j ->
-          let c = example_codes wide (spec wide k j) in
+          let c = example_codes wide (spec_of wide k j) in
           Array.init n (fun i -> c.((i + j) mod n)))
     in
     Array.init n (fun i -> Array.map (fun c -> c.(i)) cols)
@@ -557,7 +704,7 @@ let constants wide s =
 
 let folded_at (type s d) (module S : Nx.Devices with type d = d) k
     (dt : (float, s) Nx.dtype) wide =
-  let cs = List.init (arity k) (fun i -> constants wide (spec wide k i)) in
+  let cs = List.init (arity k) (fun i -> constants wide (spec_of wide k i)) in
   let tuples =
     match cs with
     | [ a ] -> List.map (fun v -> [ v ]) a

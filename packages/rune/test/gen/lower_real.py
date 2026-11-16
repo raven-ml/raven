@@ -142,27 +142,14 @@ def any_bits(rng, n, fmt, top_exp=None, low_exp=None, signed=True):
 # where its result saturates, at both dtypes; and the range its uniform values
 # come from, per dtype.
 UNARY = {
-    "exp": ([89, -104, 86, 88.72284, -87.33655, -103.27893, -103.97208, 710, -746, 708,
-             709.782712893384, -708.3964185322641, -744.4400719213812, -745.1332191019411,
-             0.34657359], {"f32": (-120, 120), "f64": (-800, 800)}),
-    "exp2": ([128, 129, -126, -149, -150, -151, 1024, 1025, -1022, -1074, -1075, -1076, 0.5, 3],
-             {"f32": (-160, 160), "f64": (-1100, 1100)}),
-    "expm1": ([-26, -40, "0x1p-25", "0x1p-54", "0x1p-30", 88.72284, 709.782712893384, 89, 710,
-               0.34657359, 44, 45, -37.42994775023705],
-              {"f32": (-40, 100), "f64": (-50, 720)}),
     "asin": ([1, 0.5, 0.99999994, 0.9999999999999999], {"f32": (-1.1, 1.1), "f64": (-1.1, 1.1)}),
     "acos": ([1, 0.5, 0.99999994, 0.9999999999999999], {"f32": (-1.1, 1.1), "f64": (-1.1, 1.1)}),
     "atan": ([1, 0.4375, 0.6875, 1.1875, 2.4375, 1e10, 1e300, "0x1p-960", "0x1p54"],
              {"f32": (-10, 10), "f64": (-10, 10)}),
-    "sinh": ([90, 712, 89.41599, 710.4758600739439, 22, 0.34657359, 44, 45, "0x1p-30", 6, 1],
-             {"f32": (-100, 100), "f64": (-720, 720)}),
-    "cosh": ([90, 712, 89.41599, 710.4758600739439, 22, 0.34657359, 44, 45, "0x1p-30", 6, 1],
-             {"f32": (-100, 100), "f64": (-720, 720)}),
-    "tanh": ([0.625, 9.5, 19.5, "0x1p-30", 0.3, 19.06154746539849, "0x1p-54",
-              "0x1.bd0a009ce7bedp-1"], {"f32": (-25, 25), "f64": (-25, 25)}),
     "erf": ([1, 2.5, 4, 5.95, "0x1p-100", 1.75, 6, 0.5, 4.25, 2.75, 5.921587195794507],
             {"f32": (-7, 7), "f64": (-7, 7)}),
 }
+
 
 def unary_points(fn, fmt):
     rng = random.Random(f"lower_real:{fn}:{fmt}")
@@ -170,9 +157,6 @@ def unary_points(fn, fmt):
     xs = specials(fmt) + near(pts, fmt)
     xs += uniform(rng, 150, *lo_hi[fmt], fmt)
     xs += any_bits(rng, 100, fmt)
-    if fn == "tanh":
-        # past the split at 0.625, where 1 - 2 / (e^2a + 1) errs most
-        xs += uniform(rng, 60, -2, 2, fmt)
     return [x for x in xs if usable(x)]
 
 
@@ -252,20 +236,12 @@ def unary_ref(fn, x):
     x = mpf(x)
     if fn in ("asin", "acos") and abs(x) > 1:
         return None
-    far = {
-        "exp": (1200, TINY, HUGE), "exp2": (1200, TINY, HUGE), "expm1": (1200, -1 + TINY, HUGE),
-        "sinh": (1200, -HUGE, HUGE), "cosh": (1200, HUGE, HUGE),
-        "tanh": (1000, -1 + TINY, 1 - TINY), "erf": (30, -1 + TINY, 1 - TINY),
-    }.get(fn)
-    if far is not None:
-        v = limit(x, *far)
+    if fn == "erf":
+        v = limit(x, 30, -1 + TINY, 1 - TINY)
         if v is not None:
             return v
     f = {
-        "exp": mpmath.exp, "exp2": lambda v: mpmath.power(2, v), "expm1": mpmath.expm1,
-        "asin": mpmath.asin,
-        "acos": mpmath.acos, "atan": mpmath.atan, "sinh": mpmath.sinh, "cosh": mpmath.cosh,
-        "tanh": mpmath.tanh, "erf": mpmath.erf,
+        "asin": mpmath.asin, "acos": mpmath.acos, "atan": mpmath.atan, "erf": mpmath.erf,
     }[fn]
     return f(x)
 

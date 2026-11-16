@@ -577,8 +577,8 @@ let run_rows ?at d ~ins rows vs ops =
 let exact1 d (k : K.unary) =
   match k with
   | Neg -> true
-  | Recip | Abs | Sign | Sqrt | Floor | Ceil | Round | Trunc | Log | Log2
-  | Log1p | Sin | Cos | Tan ->
+  | Recip | Abs | Sign | Sqrt | Floor | Ceil | Round | Trunc | Exp | Exp2
+  | Expm1 | Log | Log2 | Log1p | Sin | Cos | Tan | Sinh | Cosh | Tanh ->
       not (is_complex d)
   | _ -> not (is_float d || is_complex d)
 
@@ -725,15 +725,9 @@ let constant_exponents =
 let narrow = List.filter (fun d -> is_float d && bits d < 32) dtypes
 
 let reference1 : K.unary -> float -> float = function
-  | Exp -> Float.exp
-  | Exp2 -> Float.exp2
-  | Expm1 -> Float.expm1
   | Asin -> Float.asin
   | Acos -> Float.acos
   | Atan -> Float.atan
-  | Sinh -> Float.sinh
-  | Cosh -> Float.cosh
-  | Tanh -> Float.tanh
   | Asinh -> Float.asinh
   | Acosh -> Float.acosh
   | Atanh -> Float.atanh

@@ -94,8 +94,8 @@ let pio2_lo = (-0x1.777a5cp-25, 0x1.1a62633145c07p-54)
 let pi_hi = (0x1.921fb6p+1, 0x1.921fb54442d18p+1)
 let pi_lo = (-0x1.777a5cp-24, 0x1.1a62633145c07p-53)
 
-(* Where cosh, sinh and tanh take their far forms: past it, e^-2|x| is below the
-   unit roundoff of both types. *)
+(* Where the complex kinds take the hyperbolic functions' far forms: past it,
+   e^-2|x| is below the unit roundoff of both types. *)
 let hyp_far = 20.
 
 let horner x = function
@@ -216,7 +216,7 @@ let fmod x y =
   let r = where (lt ux uy) x (of_bits (bor (bits m) sx)) in
   where special (nan x) r
 
-(* Exponentials and logarithms *)
+(* Exponentials in two parts, of tolk's exp2, for pow and the complex kinds *)
 
 (* 2^(hi + lo) for |lo| at most two ulps of hi: 2^hi (1 + lo ln2), whose
    relative error (lo ln2)^2 / 2 is below 2^-30 at float32 and 2^-80 at
@@ -235,10 +235,6 @@ let exp2_split hi lo =
 let exp_parts x =
   let hi = x *: con x log2e in
   (hi, mulacc x (con x log2e) (negated hi) +: (x *: con x log2e_lo))
-
-let exp x =
-  let hi, lo = exp_parts x in
-  exp2_split hi lo
 
 (* Logarithms
 
@@ -344,18 +340,6 @@ let normalized ~top a =
   let high = gt m (con a top) in
   (where high (m *: half a) m, where high (e +: one a) e)
 
-(* Kahan's expm1: with w = e^x rounded, (w - 1) x / log w, which is x g(w) for
-   g(w) = (w - 1) / log w, exactly expm1(x) / x at w = e^x. w's relative error
-   reaches the result scaled by w g'(w) / g(w), which is 1/2 near 0 and below 1
-   everywhere, so exp's error passes through, halved near 0. *)
-let expm1 x =
-  let w = exp x in
-  let wm = w -: one x in
-  let v = wm *: (x /: log w) in
-  let v = where (eq w (inf x)) w v in
-  let v = where (eq wm (num x (-1.))) wm v in
-  where (eq w (one x)) x v
-
 (* nx's sequences
 
    Helpers of nx_kinds_real.h, each named as there. *)
@@ -386,6 +370,200 @@ let div_pair (nh, nl) (dh, dl) =
   let rd = one dh /: dh in
   let qh = nh *: rd in
   (qh, (mulacc (negated qh) dh nh +: mulacc (negated qh) dl nl) *: rd)
+
+(* nx_nearest: from t = v + NX_SHIFT, the integer nearest v, as a float and
+   as an int32, the low word of the difference of the bits. *)
+let nearest t =
+  let s = shifter t in
+  (t -: s, Ops.cast (Ops.sub (bits t) (bits s)) Int32)
+
+(* nx_nan1: r, or a where a is a NaN. *)
+let nan1 a r = where (is_nan a) a r
+
+(* Exponentials
+
+   nx_kinds_real.h's: x = k ln2 + r with k the integer nearest x / ln2, and
+   expm1 r = r + r^2 Q(r). Constants are nx_kinds.h's macros of the same
+   names, at float32 then float64, their text copied. *)
+
+let exp_hi = (89., 710.)
+let exp_lo = (-104., -746.)
+let exp2_hi = (129., 1025.)
+let exp2_lo = (-151., -1076.)
+let expm1_lo = (-26., -40.)
+let expm1_kcap = (64, 128)
+let expm1_tiny = (0x1p-25, 0x1p-54)
+let hyp_hi = (90., 712.)
+let hyp_kcap = (32, 64)
+let tanh_small = (0.625, 0.625)
+let tanh_hi = (9.5, 19.5)
+
+(* nx_exp_q_f32 and nx_exp_q_f64, from the leading coefficient. *)
+let exp_q =
+  ( [
+      0x1.6ac6e2p-10;
+      0x1.123ddcp-7;
+      0x1.555858p-5;
+      0x1.55548cp-3;
+      0x1.fffffcp-2;
+    ],
+    [
+      0x1.ad7f55323502cp-26;
+      0x1.28ad86039e73p-22;
+      0x1.71df2581c2cafp-19;
+      0x1.a01999f89494ap-16;
+      0x1.a01a012a34bddp-13;
+      0x1.6c16c18430f75p-10;
+      0x1.1111111127c73p-7;
+      0x1.555555555085fp-5;
+      0x1.55555555554fap-3;
+      0x1.000000000000ap-1;
+    ] )
+
+(* nx_exp2_poly_f32 and nx_exp2_poly_f64, to the last term, 1. *)
+let exp2_p =
+  ( [
+      0x1.177586p-13;
+      0x1.5ef2ep-10;
+      0x1.3b6816p-7;
+      0x1.c6af9ep-5;
+      0x1.ebfb94p-3;
+      0x1.62e43p-1;
+      1.;
+    ],
+    [
+      0x1.c2cea03f4f3ap-36;
+      0x1.ea014ee31fd31p-32;
+      0x1.e4d06c7074e68p-28;
+      0x1.b524dd55482cfp-24;
+      0x1.62c021e26f2c5p-20;
+      0x1.ffcbfc74d611dp-17;
+      0x1.430912f883cf5p-13;
+      0x1.5d87fe78a26c9p-10;
+      0x1.3b2ab6fba4e22p-7;
+      0x1.c6b08d704a0cfp-5;
+      0x1.ebfbdff82c58fp-3;
+      0x1.62e42fefa39efp-1;
+      1.;
+    ] )
+
+(* nx_tanh_t_f32 and nx_tanh_t_f64 *)
+let tanh_t =
+  ( [
+      -0x1.750ce4p-8;
+      0x1.51f8cep-6;
+      -0x1.b835a4p-5;
+      0x1.1106f6p-3;
+      -0x1.555532p-2;
+    ],
+    [
+      -0x1.0da727a627179p-16;
+      0x1.4391214300e67p-14;
+      -0x1.df5579a8b4a07p-13;
+      0x1.336612e405191p-11;
+      -0x1.7d68a32fdd9b9p-10;
+      0x1.d6cf280ecda0fp-9;
+      -0x1.226e162bf7b5p-7;
+      0x1.664f477adac7ap-6;
+      -0x1.ba1ba1b5064afp-5;
+      0x1.111111110accdp-3;
+      -0x1.55555555554ffp-2;
+    ] )
+
+(* nx_exp_reduce: (r, rc, k), rc r's rounding error. ln2's head has few
+   enough bits that k ln2_hi is exact, so the first fma is. *)
+let exp_reduce x =
+  let kf, k = nearest (mulacc x (con x log2e) (shifter x)) in
+  let m = negated kf in
+  let rh = mulacc m (con x ln2_hi) x in
+  let r = mulacc m (con x ln2_lo) rh in
+  (r, mulacc m (con x ln2_lo) (rh -: r), k)
+
+(* expm1 r = r + r^2 Q(r), and r^2 Q(r) + c. *)
+let poly_q r c = mulacc (r *: r) (horner r (pick r exp_q)) c
+
+(* nx_exp: x clamped to the range past which e^x rounds to 0 or
+   overflows. *)
+let exp x =
+  let c = where (lt x (con x exp_hi)) x (con x exp_hi) in
+  let c = where (gt c (con x exp_lo)) c (con x exp_lo) in
+  let r, _, k = exp_reduce c in
+  nan1 x (scale (one x +: poly_q r r) k)
+
+(* nx_exp_near: for |x| <= NX_EXP_NEAR, k added to 1 + em's exponent. *)
+let exp_near x =
+  let r, _, k = exp_reduce x in
+  let b = bits (one x +: poly_q r r) in
+  let k = Ops.cast k (unsigned (Ops.dtype x)) in
+  of_bits (Ops.add b (shl k (pick x mbits)))
+
+(* nx_exp2: x = k + r, |r| <= 1/2, 2^r = 1 + r P(r). *)
+let exp2 x =
+  let x = where (gt x (con x exp2_hi)) (con x exp2_hi) x in
+  let x = where (lt x (con x exp2_lo)) (con x exp2_lo) x in
+  let kf, k = nearest (x +: shifter x) in
+  nan1 x (scale (horner (x -: kf) (pick x exp2_p)) k)
+
+(* nx_expm1: 2^k ((1 - 2^-k) + r + r^2 Q(r)), the bracket summed exactly but
+   for the last rounding, r's rounding error rc added scaled by e^r. *)
+let expm1 x =
+  let c = where (gt x (con x exp_hi)) (con x exp_hi) x in
+  let c = where (lt c (con x expm1_lo)) (con x expm1_lo) c in
+  let r, rc, k = exp_reduce c in
+  let h = poly_q r (mulacc rc r rc) in
+  let cap = int k (pick x expm1_kcap) in
+  let m = pow2 x (Ops.sub (int k 0) (where (gt k cap) cap k)) in
+  let uh, ul = two_sum (one x) (negated m) in
+  let sh, sl = two_sum uh r in
+  let y = scale (sh +: (sl +: (ul +: h))) k in
+  nan1 x (where (lt (magnitude x) (con x expm1_tiny)) x y)
+
+(* nx_hyp_reduce: for a = k ln2 + r, em = expm1 r and w = 1 + em as pairs,
+   and 2^-2k. *)
+let hyp_reduce a =
+  let a = where (gt a (con a hyp_hi)) (con a hyp_hi) a in
+  let r, rc, k = exp_reduce a in
+  let em_lo = poly_q r (mulacc rc r rc) in
+  let wh, wl = two_sum (one a) r in
+  let cap = int k (pick a hyp_kcap) in
+  let m = pow2 a (Ops.mul (where (gt k cap) cap k) (int k (-2))) in
+  ((r, em_lo), (wh, wl +: em_lo), m, k)
+
+(* nx_sinh: 2^(k-1) (em + (em + 1 - 2^-2k) / w) *)
+let sinh x =
+  let (eh, el), w, m, k = hyp_reduce (magnitude x) in
+  let nh, nl = two_sum (one x -: m) eh in
+  let qh, ql = div_pair (nh, nl +: el) w in
+  let vh, vl = two_sum eh qh in
+  let y = vh +: (vl +: (el +: ql)) in
+  nan1 x (copysign (scale y (Ops.sub k (int k 1))) x)
+
+(* nx_cosh: 2^(k-1) (w + 2^-2k / w) *)
+let cosh x =
+  let _, (wh, wl), m, k = hyp_reduce (magnitude x) in
+  let qh, ql = div_pair (m, zero x) (wh, wl) in
+  let vh, vl = two_sum wh qh in
+  let y = vh +: (vl +: (wl +: ql)) in
+  nan1 x (scale y (Ops.sub k (int k 1)))
+
+(* nx_tanh: below the split a + a^3 T(a^2); above, 1 - 2 / (w + 1) with
+   w = e^2a, the quotient and the subtraction's roundings kept as tails; x's
+   sign bit set on either. *)
+let tanh x =
+  let a = magnitude x in
+  let z = a *: a in
+  let small = mulacc (a *: z) (horner z (pick x tanh_t)) a in
+  let hi = con x tanh_hi in
+  let w = exp_near (two x *: where (lt a hi) a hi) in
+  let dh, dl = fast_two_sum w (one x) in
+  let qh = two x /: dh in
+  let ql = (mulacc (negated qh) dh (two x) -: (qh *: dl)) *: (half x *: qh) in
+  let s = one x -: qh in
+  let y =
+    where (lt a (con x tanh_small)) small (s +: (one x -: s -: qh -: ql))
+  in
+  let y = of_bits (bor (bits y) (band (bits x) (sign_word x))) in
+  nan1 x y
 
 (* Trigonometric kinds
 
@@ -423,16 +601,11 @@ let cos_c =
       0x1.555555555554bp-5;
     ] )
 
-(* From t = v + NX_SHIFT, the integer nearest v: as a float, and as a uint32,
-   the low word of the difference of the bits (nx_nearest's, as
-   nx_rem_pio2_cw takes it). *)
-let nearest_u32 t =
-  let s = shifter t in
-  (t -: s, Ops.cast (Ops.sub (bits t) (bits s)) Uint32)
-
-(* nx_rem_pio2_cw_f32 and nx_rem_pio2_cw_f64 *)
+(* nx_rem_pio2_cw_f32 and nx_rem_pio2_cw_f64, q the uint32 of nx_nearest's
+   int. *)
 let rem_cw x =
-  let qf, q = nearest_u32 (mulacc x (con x two_over_pi) (shifter x)) in
+  let qf, q = nearest (mulacc x (con x two_over_pi) (shifter x)) in
+  let q = Ops.cast q Uint32 in
   let mq = negated qf in
   let a = mulacc mq (con x pio2_hi) x in
   if not (wide x) then
@@ -705,29 +878,6 @@ let atan2 y x =
   let v = where (negative x) (con x pi_hi +: (con x pi_lo -: v)) v in
   copysign v y
 
-(* Hyperbolic kinds: past hyp_far, cosh and |sinh| are e^|x| / 2 = 2^(|x| log2e
-   - 1), the subtraction exact, so that nothing overflows before the result. *)
-
-let half_exp a =
-  let hi, lo = exp_parts a in
-  exp2_split (hi -: one a) lo
-
-let cosh x =
-  let a = magnitude x in
-  let e = exp a in
-  where (lt a (num x hyp_far)) ((e +: (one x /: e)) *: half x) (half_exp a)
-
-let sinh x =
-  let a = magnitude x in
-  let t = expm1 a in
-  let near = (t +: (t /: (t +: one x))) *: half x in
-  copysign (where (lt a (num x hyp_far)) near (half_exp a)) x
-
-let tanh x =
-  let a = magnitude x in
-  let t = expm1 (two x *: a) in
-  copysign (where (ge a (num x hyp_far)) (one x) (t /: (t +: two x))) x
-
 (* log2 a as hi + lo for a finite a > 0, |lo| within half an ulp of hi, to a
    relative 2^-12 u. With a = m 2^e, m in (sqrt3 / 2, sqrt3] and b = 1.5 from
    sqrt1_5 on, else 1, log2 a is e + log2 b + log2 (m / b), and log2 (m / b) is
@@ -957,7 +1107,7 @@ let unary (k : Nx_kernel.Prog.unary) x =
   | Sign -> sign x
   | Sqrt -> Ops.sqrt x
   | Exp -> exp x
-  | Exp2 -> Ops.exp2 x
+  | Exp2 -> exp2 x
   | Log -> log x
   | Log2 -> log2 x
   | Log1p -> log1p x

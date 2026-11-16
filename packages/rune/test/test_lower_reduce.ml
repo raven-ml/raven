@@ -1005,9 +1005,8 @@ let long_scans =
    ulp; for float64 the two errors add. *)
 
 (* [E] and [L], the bounds in ulps of the compiled [Exp] and [Log] at float32
-   and float64: Lower_real's for [Exp], nx's for [Log], which compiles to
-   nx's bits. *)
-let exp_ulps = 9.
+   and float64: nx's, since both compile to nx's bits. *)
+let exp_ulps = 2.
 let log_ulps = 2.
 let u64 = Float.ldexp 1. (-53)
 

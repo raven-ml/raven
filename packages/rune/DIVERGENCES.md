@@ -226,20 +226,29 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Reason:** (b).
 - **Pinned by:** `Lower_real › exact › round`.
 
-### A7. Exponential in two parts
+### A7. Exponentials by nx's sequence
 
-- **Reference:** `mixin/elementwise.py:512` (`exp2 (x * 1/ln 2)`).
-- **Raven:** `lower_real.ml` (`exp_parts`, `exp2_split`, `exp`).
-- **Differs:** rounding the product `x log2 e` costs up to about `|x|` ulps.
-  The product is kept in two parts, its error exact from an fma, and
-  `2^(hi + lo)` is `2^hi (1 + lo ln 2)`. A positive `hi` takes `2^(hi - 1)`,
-  doubled after the product, since `hi` may round up to where `2^hi`
-  overflows while the result does not.
-- **nx:** `prog.mli`, Results, `Exp`.
-- **Class:** ulp bound: 9 at `float32` and `float64`.
+- **Reference:** `mixin/elementwise.py:512` (`exp2 (x * 1/ln 2)`), over
+  `Ops.EXP2`, the target's or `codegen/decomp/transcendental.py`'s; none for
+  `expm1`.
+- **Raven:** `lower_real.ml` (`nearest`, `exp_reduce`, `exp`, `exp_near`,
+  `exp2`, `expm1`).
+- **Differs:** rounding the product `x log2 e` costs up to about `|x|` ulps,
+  and a target's `exp2` differs from nx's. The lowering builds
+  `nx_kinds_real.h`'s `nx_exp`, `nx_exp2` and `nx_expm1` operation for
+  operation: `x = k ln 2 + r` by a shifter and `ln 2` in two parts, nx's
+  polynomial for `expm1 r`, `2^k` applied by two exact products, the
+  argument clamped where the result saturates. `expm1` sums
+  `(1 - 2^-k) + r + r^2 Q(r)` exactly but for its last rounding and is `x`
+  below `2^-25` or `2^-54`.
+- **nx:** `nx_kinds_real.h` (`nx_exp`, `nx_exp_near`, `nx_exp2`,
+  `nx_expm1`).
+- **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `Lower_real › transcendental › exp within 2 ulps at float32, 9
-  at float64`.
+- **Pinned by:** `Lower_real › kinds › exp gives eager's bits`, `› exp of
+  every narrow float gives eager's bits`, `› exp of a constant gives eager's
+  bits`, the same for `exp2` and `expm1`, on the host; `Jit_gpu › kinds ›
+  *` on a GPU.
 
 ### A8. Sine, cosine and tangent by nx's sequence
 
@@ -313,20 +322,23 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 - **Reference:** `mixin/elementwise.py:1034,1046` (`(e^x -+ e^-x) / 2`), `:757`
   (`2 sigmoid (2x) - 1`).
-- **Raven:** `lower_real.ml` (`half_exp`, `cosh`, `sinh`, `tanh`).
+- **Raven:** `lower_real.ml` (`hyp_reduce`, `sinh`, `cosh`, `tanh`).
 - **Differs:** `sinh` and `tanh` cancel near 0 (`tanh` is 0 below about
   `6e-8`), and `sinh` and `cosh` overflow for `x` in `(88.72, 89.42]` in
-  `float32`. Below `|x| = 20` the lowering takes `cosh` as
-  `(e^|x| + 1/e^|x|) / 2`, `sinh` as `(t + t / (t + 1)) / 2` and `tanh` as
-  `t / (t + 2)`, `t` the `expm1` of `|x|` or `2|x|`, which do not cancel. From
-  20 `cosh` and `|sinh|` are `2^(|x| log2 e - 1)`, which overflows only with
-  the result, and `|tanh|` is 1.
-- **nx:** `prog.mli`, Results, `Sinh`, `Cosh`, `Tanh`.
-- **Class:** ulp bound: `sinh` 23, `cosh` 10, `tanh` 18.
+  `float32`. The lowering builds `nx_kinds_real.h`'s `nx_sinh`, `nx_cosh`
+  and `nx_tanh` operation for operation: for `|x| = k ln 2 + r`,
+  `sinh = 2^(k-1) (em + (em + 1 - 2^-2k) / w)` and
+  `cosh = 2^(k-1) (w + 2^-2k / w)`, `em = expm1 r` and `w = 1 + em` as
+  pairs, which cancel nowhere and overflow only with the result; `tanh` is
+  nx's polynomial below `0.625` and `1 - 2 / (e^2|x| + 1)` with its
+  roundings kept as tails above, `|x|` held at `9.5` or `19.5`.
+- **nx:** `nx_kinds_real.h` (`nx_sinh`, `nx_cosh`, `nx_tanh`).
+- **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `Lower_real › transcendental › sinh within 23 ulps at float32,
-  23 at float64`, `› cosh within 10 ulps at float32, 10 at float64`, `› tanh
-  within 18 ulps at float32, 18 at float64`.
+- **Pinned by:** `Lower_real › kinds › sinh gives eager's bits`, `› sinh of
+  every narrow float gives eager's bits`, `› sinh of a constant gives
+  eager's bits`, the same for `cosh` and `tanh`, on the host; `Jit_gpu ›
+  kinds › *` on a GPU.
 
 ### A14. Error function
 
@@ -375,8 +387,10 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   `exp2 (y log2 |x|)`).
 - **Raven:** `lower_real.ml` (`pow`).
 - **Differs:** rounding `y log2 |x|` costs up to about its magnitude in ulps.
-  The product's error, exact from an fma, is kept, and the two parts are
-  exponentiated as A7's. A negative base takes the sign of an odd integral
+  The product's error, exact from an fma, is kept, and `2^(hi + lo)` is
+  `2^hi (1 + lo ln 2)` (`exp_parts`, `exp2_split`), a positive `hi` taking
+  `2^(hi - 1)`, doubled after the product, since `hi` may round up to where
+  `2^hi` overflows while the result does not. A negative base takes the sign of an odd integral
   exponent and is NaN for a fractional one, and the special values are C99
   F.9.4.4's: `pow 1 nan` is 1, where tinygrad's `xpow`
   (`codegen/decomp/transcendental.py:257`) gives NaN.
@@ -472,20 +486,6 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   every narrow float gives eager's bits`, `› log of a constant gives eager's
   bits`, the same for `log2` and `log1p`, on the host; `Jit_gpu › kinds ›
   *` on a GPU.
-
-### A25. `expm1`
-
-- **Reference:** none.
-- **Raven:** `lower_real.ml` (`expm1`).
-- **No source:** `expm1` is Kahan's: with `w = e^x` rounded, `(w - 1) x / log
-  w`, so that `exp`'s error passes through, halved near 0. It is `x` where
-  `w` is 1, -1 where `w - 1` is, and `w` where `w` is infinite. The `exp`
-  and `log` are A7's and A24's.
-- **nx:** `prog.mli`, `Expm1`: accurate near 0; Results.
-- **Class:** ulp bound: 23.
-- **Reason:** (b).
-- **Pinned by:** `Lower_real › transcendental › expm1 within 23 ulps at
-  float32, 23 at float64`, whose points include Annex F's specials.
 
 ### A26. Complex kinds
 
@@ -717,7 +717,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   `lse_combine`, `network`, `reduce`, `scan`).
 - **Differs:**
   - A reduction builds tinygrad's composition, with R3's maximum, A7's `exp`,
-    A24's `log` and R1's and R2's sum. It computes in the carrier and rounds
+    A24's `log`, both of nx's sequence, and R1's and R2's sum. It computes in the carrier and rounds
     once into the destination. tinygrad shifts, exponentiates and takes the
     `log` of a narrow float at its own dtype, around a `float32` sum.
   - A scan combines states of a maximum and a sum of `exp (x - c)` by the

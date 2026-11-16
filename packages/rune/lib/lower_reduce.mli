@@ -56,9 +56,8 @@
     of the infinities and the variance a NaN. A variance is never negative.
 
     Their bounds are to first order in [u]. [E] and [L] are the bounds in ulps
-    of [Exp] and [Log]: {!Lower_real}'s, which hold at tolk's default
-    {!Tolk.Setting.transcendental}, or for a kind {!Lower_real} computes by
-    nx's sequence, nx's own; and an error of [n] ulps counts as a
+    of [Exp] and [Log], nx's own, since {!Lower_real} computes both by nx's
+    sequence, and an error of [n] ulps counts as a
     relative error of [(2n + 1) u] from the exact result. [M] is the mean of the
     terms' magnitudes. A reduction of [n] terms:
 

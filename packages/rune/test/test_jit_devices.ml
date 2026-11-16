@@ -558,8 +558,9 @@ let decodes n =
     [ U4; I4; I8 ]
 
 (* A table of [f j] along each row of [x], summed against it, for [f] [exp2]
-   or [sin]: each side is within [f]'s 4 ulps of the exact table and [γ(4)]
-   of its sum, so the two lie within twice that bound of each other. *)
+   or [sin]: each side is within [f]'s 2 ulps of the exact table, nx's bound,
+   which compiled calls keep, and [γ(4)] of its sum, so the two lie within
+   twice that bound of each other. *)
 let table set ~whole =
   let x = Nx.place (at set (if whole then On else Split 0)) (value [| 5; 4 |]) in
   let check name f f64 =
@@ -572,7 +573,7 @@ let table set ~whole =
         let host = Nx.abs (Nx.cast Nx.float64 (Nx.place Nx.Host.on x)) in
         let entries = Nx.abs (f64 (Nx.arange Nx.float64 0 4 1)) in
         let mass = Nx.sum ~axes:[ 1 ] (Nx.mul host entries) in
-        let ulps = 4. *. ldexp 1. (-23) in
+        let ulps = 2. *. ldexp 1. (-23) in
         within ~bound:(Nx.mul_s mass (2. *. (ulps +. gamma 4))) eager jit
     | Raised m -> fail (name ^ ": " ^ m)
   in
@@ -624,16 +625,16 @@ let grads set rows =
   | Value jit ->
       (* [g = xᵀ (1 - t²)] for [t = tanh (x w)]: [x w] is within
          [γ(5, 2u) |x| |w|], which moves [1 - t²] by twice that at most; [t]'s
-         18 ulps move it by 36 [u], its square and difference by 2 [u] more;
-         the product with [xᵀ] adds [γ(rows + 1, 2u)]. Eager and compiled each
-         hold the bound. *)
+         2 ulps, nx's bound, which a compiled call keeps, move it by 4 [u],
+         its square and difference by 2 [u] more; the product with [xᵀ] adds
+         [γ(rows + 1, 2u)]. Eager and compiled each hold the bound. *)
       let host x = Nx.abs (Nx.cast Nx.float64 (Nx.place Nx.Host.on x)) in
       let ax = host x in
       let u = ldexp 1. (-24) in
       let term =
         Nx.add_s
           (Nx.mul_s (Nx.matmul ax (host w)) (2. *. product 5))
-          ((38. *. u) +. product (rows + 1))
+          ((6. *. u) +. product (rows + 1))
       in
       let bound = Nx.mul_s (Nx.matmul (Nx.transpose ax) term) 2. in
       within ~bound eager jit

@@ -448,6 +448,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx.exp`, `Nx.exp2`, `Nx.expm1`, `Nx.sinh`, `Nx.cosh` and
+  `Nx.tanh` give eager's bits on the host and NVIDIA GPUs, where they
+  differed in the last bits: they were tolk's `exp2` with rune's forms.
 - A compiled `Nx.log`, `Nx.log2`, `Nx.log1p` and `Nx.log10` give eager's
   bits on the host and NVIDIA GPUs, where they differed in the last bit:
   `Nx.log2` was the target's, and `Nx.log` and `Nx.log1p` fdlibm's and

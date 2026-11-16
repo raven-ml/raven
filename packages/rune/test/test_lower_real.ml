@@ -12,11 +12,9 @@
    its host bound in ulps of the correctly rounded result (rune.mli, Numerics)
    at the points of golden/lower_real, which gen/lower_real.py writes from
    mpmath; where every operand is a zero, an infinity or a NaN, it gives Annex
-   F's zero, infinity, ±1 or NaN, stated below. Exp holds its bound over drawn
-   float32 operands and every 16-bit code too. *)
+   F's zero, infinity, ±1 or NaN, stated below. *)
 
 open Windtrap
-module Exps = Rune_support.Exps
 module Kinds = Rune_support.Kinds
 module D = Nx_array.Dtype
 module K = Nx_kernel.Prog
@@ -389,18 +387,14 @@ let annex1 name wide e =
     else if x = -.inf then Some (pick wide ni)
     else None
   in
-  let z = both 0. and nz = both (-0.) and i = both inf and ni = both (-.inf) in
+  let z = both 0. and nz = both (-0.) in
   let one = both 1. and none = both (-1.) and nn = both nan in
   at
     (match name with
-    | "exp" | "exp2" -> (one, one, i, z)
-    | "expm1" -> (z, nz, i, none)
     | "asin" -> (z, nz, nn, nn)
     | "acos" -> (half_pi, half_pi, nn, nn)
     | "atan" -> (z, nz, half_pi, neg half_pi)
-    | "sinh" -> (z, nz, i, ni)
-    | "cosh" -> (one, one, i, i)
-    | "tanh" | "erf" -> (z, nz, one, none)
+    | "erf" -> (z, nz, one, none)
     | _ -> invalid_arg name)
 
 let odd y = Float.is_integer y && Float.rem y 2. <> 0.
@@ -528,15 +522,9 @@ let transcendental =
     (fun (name, k, bound) ->
       accurate name (Op1 (Unary k, D.Any D.Float32, 0)) bound (annex1 name))
     [
-      ("exp", K.Exp, (2, 9));
-      ("exp2", K.Exp2, (4, 4));
-      ("expm1", K.Expm1, (23, 23));
       ("asin", K.Asin, (5, 9));
       ("acos", K.Acos, (5, 9));
       ("atan", K.Atan, (2, 7));
-      ("sinh", K.Sinh, (23, 23));
-      ("cosh", K.Cosh, (10, 10));
-      ("tanh", K.Tanh, (18, 18));
       ("erf", K.Erf, (2, 3));
     ]
   @ [
@@ -562,23 +550,8 @@ let ported k =
         Kinds.folded (module Nx.Host) ~f64:true k);
   ]
 
-let kinds = Kinds.[ sin; cos; tan; log; log2; log1p ]
-
-(* Drawn operands
-
-   Exp over drawn float32 operands and every 16-bit code, against libm's
-   float64 exp rounded once (Exps). Measured over every float32 on fudge
-   (Intel Core Ultra 5 235): 2 ulps at most, at 129 operands. Every float16
-   and bfloat16 code is within one ulp. *)
-let drawn =
-  [
-    prop "exp within 2 ulps at float32" Exps.gen
-      (Exps.law (module Nx.Host) ~ulps:2 ~flushes:false);
-    test "exp of every float16 code within one ulp" (fun () ->
-        Exps.law16 (module Nx.Host) ~flushes:false Nx.float16);
-    test "exp of every bfloat16 code within one ulp" (fun () ->
-        Exps.law16 (module Nx.Host) ~flushes:false Nx.bfloat16);
-  ]
+let kinds =
+  Kinds.[ sin; cos; tan; log; log2; log1p; exp; exp2; expm1; sinh; cosh; tanh ]
 
 let () =
   exit
@@ -587,5 +560,4 @@ let () =
          group "exact" (List.map law (unary @ binary @ compare @ [ fma ]));
          group "kinds" (List.concat_map ported kinds);
          group "transcendental" transcendental;
-         group "drawn operands" drawn;
        ])

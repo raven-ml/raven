@@ -23,10 +23,11 @@
    attention holds its bound against a float64 reference and gives +0 for a
    sum of zeros, paged keys and values give dense ones' bits, a sum of a
    contraction's result holds its bound, a long sum and a weight gradient
-   hold the blocked bound, exp holds its bound in ulps of the correctly
-   rounded result, a kind compiled to nx's sequence gives eager's bits, and a range gather and its gradient compile to eager's
-   bits, and an argmax or argmin over a length 16 does not divide gives nx's
-   position, a sum and a product their exact values, and a first k of a sort
+   hold the blocked bound, a kind compiled to nx's sequence gives eager's
+   bits on an NVIDIA GPU and exp holds its bound in ulps of the correctly
+   rounded result on one that flushes subnormals, a range gather and its
+   gradient compile to eager's bits, and an argmax or argmin over a length
+   16 does not divide gives nx's position, a sum and a product their exact values, and a first k of a sort
    gives eager's values and positions bit for bit. It skips without a GPU, or
    without the compiler the GPU's kernels need. *)
 
@@ -2865,18 +2866,18 @@ let q8_0_special =
         Array.iter (fun v -> equal ~msg:"+0" float_exact 0. v) (Nx.to_array y));
   ]
 
-(* Exp at rune.mli's bound for a device whose exp2 is within 4 ulps, as
-   CUDA's exp2f is within 2 (CUDA C++ Programming Guide, Mathematical
-   Functions), against libm's float64 exp rounded once (Exps). Measured over
-   every float32 on an RTX 5000 Ada: 3 ulps at most, at 18 operands. Every
-   float16 and bfloat16 code is within one ulp. *)
-let exp_law codes =
+(* Exp on a GPU that flushes float32's subnormals, where rune.mli states no
+   kind exact: within 9 ulps at float32 where the result is normal, and every
+   float16 and bfloat16 code within one ulp where it is normal, against
+   libm's float64 exp rounded once (Exps). On an NVIDIA GPU the kinds law
+   below holds exp exact. *)
+let flushing () =
   let d, s = on_gpu () in
-  Exps.law s ~ulps:9 ~flushes:(flushes d) codes
+  if not (flushes d) then skip ~reason:"the GPU keeps float32's subnormals" ();
+  s
 
-let exp16 dt () =
-  let d, s = on_gpu () in
-  Exps.law16 s ~flushes:(flushes d) dt
+let exp_law codes = Exps.law (flushing ()) ~ulps:9 ~flushes:true codes
+let exp16 dt () = Exps.law16 (flushing ()) ~flushes:true dt
 
 (* Kinds compiled to nx's own sequence give eager's bits on an NVIDIA GPU
    (Kinds), a float64 element checked where its kernels have float64:
@@ -3011,13 +3012,19 @@ let () =
                assembly;
            ];
          group "kinds"
-           (List.concat_map ported Kinds.[ sin; cos; tan; log; log2; log1p ]);
+           (List.concat_map ported
+              Kinds.
+                [
+                  sin; cos; tan; log; log2; log1p; exp; exp2; expm1; sinh; cosh;
+                  tanh;
+                ]);
          group "exp"
            [
-             prop ~count:24 "exp within 9 ulps at float32" Exps.gen exp_law;
-             test "exp of every float16 code within one ulp"
+             prop ~count:24 "exp within 9 ulps at float32 where it flushes"
+               Exps.gen exp_law;
+             test "exp of every float16 code within one ulp where it flushes"
                (exp16 Nx.float16);
-             test "exp of every bfloat16 code within one ulp"
+             test "exp of every bfloat16 code within one ulp where it flushes"
                (exp16 Nx.bfloat16);
            ];
          group "multiply-adds"
