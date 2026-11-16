@@ -1586,10 +1586,16 @@ let wide_reductions : Nx_kernel.reduction list =
    scan in one that states its own, the bits of its output mapped, then
    scanned. A scan scans along the innermost axis of more than one
    element; a reduction reduces axes 0 and 1. *)
+(* A wide call as a failure names it. *)
+let wide_name (c : Kernels_cases.wide) scanned =
+  Format.asprintf "%a, %s" Kernels_cases.pp_wide c
+    (if scanned then "scanned" else "reduced")
+
 let wide_call (c : Kernels_cases.wide) scanned =
   let p, n = Kernels_cases.wide_program c in
   let shape = Kernels_cases.wide_shape c in
   let scanned = scanned && c.mode <> Outputs in
+  let name = wide_name c scanned in
   let axis = if c.padded then 1 else 2 in
   let (D.Any d) = c.dt in
   let ok = List.filter (fun r -> Nx_kernel.accepts r d) wide_reductions in
@@ -1615,7 +1621,7 @@ let wide_call (c : Kernels_cases.wide) scanned =
         K.reduce p ~shape:(Iarray.of_array shape) ~axes (Iarray.of_array rs)
           ~dsts:ds loads
     in
-    equal Kernels_cases.answer A.Done answer;
+    equal ~msg:name Kernels_cases.answer A.Done answer;
     dsts
   in
   let mapped (b : Support.backend) =
@@ -1624,15 +1630,26 @@ let wide_call (c : Kernels_cases.wide) scanned =
     let dt = P.dtype p (Iarray.get p.outs 0) in
     let (D.Any d) = dt in
     let y = A.Any (A.create b.device d (Iarray.of_array shape)) in
-    equal Kernels_cases.answer A.Done
+    equal ~msg:(name ^ ", its map") Kernels_cases.answer A.Done
       (K.map p ~dsts:[| y |] (Iarray.of_array loads));
     let id = identity dt in
     let dsts = programmed_dsts b id rs ys in
-    equal Kernels_cases.answer A.Done
+    equal ~msg:(name ^ ", its map scanned") Kernels_cases.answer A.Done
       (K.scan id ~axis rs.(0) ~dsts:(Iarray.of_array dsts) [| plain_of y |]);
     dsts
   in
   (scanned, call, mapped)
+
+(* Every wide call of [seed] reduced, and scanned but for those of many
+   reductions, which have no scan: 50. A reduction reads no destination
+   identical to a load, so the calls into one are left out. *)
+let wide_scans seed =
+  List.concat_map
+    (fun (c : Kernels_cases.wide) ->
+      if c.aliased then []
+      else if c.mode = Outputs then [ (c, false) ]
+      else [ (c, false); (c, true) ])
+    (Kernels_cases.wide_calls seed)
 
 let law_wide (b : Support.backend) ((c : Kernels_cases.wide), scanned) =
   let scanned, call, mapped = wide_call c scanned in
@@ -1650,7 +1667,7 @@ let law_wide (b : Support.backend) ((c : Kernels_cases.wide), scanned) =
     (fun k (A.Any w) ->
       let (A.Any g) = got.(k) in
       equal
-        ~msg:(Printf.sprintf "destination %d" k)
+        ~msg:(Printf.sprintf "%s, destination %d" (wide_name c scanned) k)
         (Kernels_cases.same_values (D.Any (A.dtype w)))
         (Kernels_cases.bits_of (Support.host w))
         (Kernels_cases.bits_of (Support.host g)))
@@ -1771,25 +1788,13 @@ let laws (b : Support.backend) =
     if b == Support.cpu || not b.lane_order then []
     else
       [
-        (* A reduction held over uint8 from a padded load asks for the most
-           LDS a launch may. *)
-        prop ~count:45
-          ~examples:
-            [
-              ( Kernels_cases.
-                  {
-                    mode = Held;
-                    dt = D.Any D.Uint8;
-                    padded = true;
-                    aliased = false;
-                    seed = 0;
-                  },
-                false );
-            ]
+        (* Each case runs every wide call of its seed, among them a
+           reduction held over uint8 from a padded load, which asks for the
+           most LDS a launch may. *)
+        prop ~count:1
           "a reduction or a scan too wide for a launch has nx.cpu's bits"
-          (Gen.pair (Gen.with_pp Kernels_cases.pp_wide Kernels_cases.wide_cases)
-             Gen.bool)
-          (run (law_wide b));
+          Kernels_cases.wide_seeds
+          (fun seed -> List.iter (run (law_wide b)) (wide_scans seed));
         prop
           ~examples:
             ([
@@ -1836,15 +1841,17 @@ let nv_laws (first : Support.backend) (nv : Support.backend) =
               cover "several loads" (Array.length c.dts > 1);
               cover "a long axis" (Array.exists (fun e -> e > 60_000) c.shape);
               agree (fun b -> programmed_call b c (programmed_parts b c)));
-          prop ~count:45 "of calls too wide for a launch"
-            (Gen.pair (Gen.with_pp Kernels_cases.pp_wide Kernels_cases.wide_cases)
-               Gen.bool) (fun ((c : Kernels_cases.wide), scanned) ->
-              let scanned, call, _ = wide_call c scanned in
-              cover "past a launch's loads" (c.mode = Loads);
-              cover "past a launch's values held" (c.mode = Held);
-              cover "past a launch's reductions" (c.mode = Outputs);
-              cover "a scan" scanned;
-              agree call);
+          prop ~count:1 "of calls too wide for a launch"
+            Kernels_cases.wide_seeds (fun seed ->
+              List.iter
+                (fun ((c : Kernels_cases.wide), scanned) ->
+                  let scanned, call, _ = wide_call c scanned in
+                  cover "past a launch's loads" (c.mode = Loads);
+                  cover "past a launch's values held" (c.mode = Held);
+                  cover "past a launch's reductions" (c.mode = Outputs);
+                  cover "a scan" scanned;
+                  Elements.agree ~msg:(wide_name c scanned) first nv call)
+                (wide_scans seed));
           prop "of Logsumexp, Moments and Arg" special_case (fun c ->
               cover "a scan" c.scanned;
               agree (fun b ->

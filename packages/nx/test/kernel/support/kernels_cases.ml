@@ -1499,17 +1499,31 @@ let pp_wide ppf c =
     (if c.aliased then ", aliased" else "")
     c.seed
 
-let wide_cases =
-  let open Gen in
-  let* mode = of_list [ Loads; Held; Outputs ] in
-  let* dt =
-    of_list ~pp:pp_dtype
-      D.[ Any Float32; Any Float64; Any Bfloat16; Any Int32; Any Uint8 ]
+(* Every wide call of [seed], 45: each of five dtypes and three modes, its
+   first load padded, or plain into fresh destinations or into one identical
+   to load 0. A law checks them all on each case, so that every run reaches
+   each. *)
+let wide_calls seed =
+  let dts =
+    D.[ Any Float32; Any Float64; Any Bfloat16; Any Int32; Any Uint8 ]
   in
-  let* padded = bool in
-  let* aliased = bool in
-  let+ seed = int in
-  { mode; dt; padded; aliased; seed }
+  let variants dt mode =
+    [
+      { mode; dt; padded = true; aliased = false; seed };
+      { mode; dt; padded = false; aliased = false; seed };
+      { mode; dt; padded = false; aliased = true; seed };
+    ]
+  in
+  List.concat_map
+    (fun dt -> List.concat_map (variants dt) [ Loads; Held; Outputs ])
+    dts
+
+(* A case's seed, of 16 bits, so that a failing case shrinks in a few
+   steps, each of which reruns its calls. *)
+let wide_seeds =
+  Gen.with_pp
+    (fun ppf -> Format.fprintf ppf "seed %d")
+    (Gen.int_range 0 0xffff)
 
 (* The loop's shape: of 24 axes where the loads are padded, so that a node
    of three padded loads reads more descriptor words than a launch holds,
@@ -1595,7 +1609,7 @@ let wide_map (b : Support.backend) c =
           A.Any (A.create b.device d shape))
       (Iarray.to_array p.outs)
   in
-  equal answer A.Done
+  equal ~msg:(Format.asprintf "%a" pp_wide c) answer A.Done
     (K.map p ~dsts:(Iarray.of_array dsts) (Iarray.of_array loads));
   dsts
 
@@ -1631,12 +1645,15 @@ let law_wide_map (b : Support.backend) c =
   cover "past a launch's outputs" (c.mode = Outputs);
   cover "a padded load copied out" (c.mode = Loads && c.padded);
   cover "a destination identical to a load" aliased;
-  equal answer A.Done
+  let call = Format.asprintf "%a" pp_wide c in
+  equal ~msg:call answer A.Done
     (K.map p ~dsts:(Iarray.of_array dsts) (Iarray.of_array loads));
   Array.iteri
     (fun k (A.Any y) ->
       let d, w = want.(k) in
-      equal ~msg:(strf "output %d" k) (same_values d) w (bits_of (host y)))
+      equal
+        ~msg:(strf "%s, output %d" call k)
+        (same_values d) w (bits_of (host y)))
     dsts
 
 (* Device memory held in a loop *)

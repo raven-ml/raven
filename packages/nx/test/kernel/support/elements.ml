@@ -430,8 +430,8 @@ let same (D.Any dt as d) =
 
 (* Each destination of [got] holds its partner's elements in [want], each
    pair [equal] at the destination's dtype: the first differing elements
-   shown where one differs. *)
-let matching equal want got =
+   shown where one differs, after [msg] where given. *)
+let matching ?msg equal want got =
   Array.iteri
     (fun k w ->
       if not (Nx_kernels_support.same_bytes w got.(k)) then begin
@@ -451,19 +451,20 @@ let matching equal want got =
                (List.of_seq (String.to_seq e)))
         in
         let at a = if i < Array.length a then hex a.(i) else "none" in
+        let call = match msg with Some m -> m ^ ": " | None -> "" in
         if i >= 0 then
-          failf "destination %d, element %d of %d: %s, expected %s" k i n
-            (at g) (at w')
+          failf "%sdestination %d, element %d of %d: %s, expected %s" call k i
+            n (at g) (at w')
       end)
     want
 
 (* [call first] and [call second] give the same destinations, an element
    the same bits or both NaN, as {!same} says, since a computed NaN's sign
    and payload are unspecified: [call b] makes its calls on [b]'s device
-   and answers their destinations. *)
-let agree (first : Nx_kernels_support.backend) second call =
+   and answers their destinations. [msg] names the call in a failure. *)
+let agree ?msg (first : Nx_kernels_support.backend) second call =
   let want = call first in
-  matching (fun d -> Testable.equal (same d)) want (call second)
+  matching ?msg (fun d -> Testable.equal (same d)) want (call second)
 
 (* [agree] bit for bit, NaNs included, for the moves whose contract keeps
    an element's bits. *)

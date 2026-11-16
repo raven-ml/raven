@@ -1561,9 +1561,10 @@ let laws (b : Support.backend) =
         "a map that does not fit is not Done and writes nothing outside its \
          destinations; the loops' rule names its refusal"
         (map_misfits b) (check_map_misfit b);
-      prop ~count:45
+      prop ~count:1
         "a map too wide for a launch gives its nodes' bits, into a load too"
-        (Gen.with_pp pp_wide wide_cases) (run (law_wide_map b));
+        wide_seeds
+        (fun seed -> List.iter (run (law_wide_map b)) (wide_calls seed));
       test "a map reads a load identical to a destination before writing it"
         (unit (test_map_identical_view b));
       test "a map of outputs too many for a launch may write over its loads"
@@ -1686,13 +1687,18 @@ let nv_laws (first : Support.backend) (nv : Support.backend) =
               cover "padded loads" (mode = Padded);
               cover "a program of hundreds of nodes" (mode = Long);
               Elements.agree first nv (fun b -> split_map b (pair, seed, mode)));
-          prop ~count:45 "of maps too wide for a launch"
-            (Gen.with_pp pp_wide wide_cases) (fun c ->
-              cover "past a launch's loads" (c.mode = Loads);
-              cover "past a launch's values held" (c.mode = Held);
-              cover "past a launch's outputs" (c.mode = Outputs);
-              cover "a padded load copied out" (c.mode = Loads && c.padded);
-              Elements.agree first nv (fun b -> wide_map b c));
+          prop ~count:1 "of maps too wide for a launch" wide_seeds (fun seed ->
+              List.iter
+                (fun c ->
+                  cover "past a launch's loads" (c.mode = Loads);
+                  cover "past a launch's values held" (c.mode = Held);
+                  cover "past a launch's outputs" (c.mode = Outputs);
+                  cover "a padded load copied out" (c.mode = Loads && c.padded);
+                  Elements.agree
+                    ~msg:(Format.asprintf "%a" pp_wide c)
+                    first nv
+                    (fun b -> wide_map b c))
+                (wide_calls seed));
           test "of a map into a buffer past 4 GiB" (fun () ->
               Elements.agree first nv past_4_gib);
         ];
