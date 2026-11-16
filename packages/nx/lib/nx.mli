@@ -4945,7 +4945,8 @@ val associative_scan :
     computes from a key: {!Rng.split}, {!Rng.fold_in} and a draw from
     [~key] raise [Invalid_argument] there eagerly, as every computation
     does. The message of a derivation from an untraced key, or of a keyless
-    draw in a scope at one, names [Nx.Rng.place Nx.Host.on key].
+    draw in a scope at one, names [Nx.Rng.place Nx.Host.on key], and that of
+    a draw from such a key without array parameters names {!Rng.with_key}.
     Keep the keys of such a program on the host, derive them there, and
     place each where the program reads it, at its call:
 
@@ -4958,6 +4959,15 @@ val associative_scan :
         (fun key -> Nx.Rng.normal_at Gpu.on ~key Nx.float32 [| 4 |])
 
     let x i = step (Nx.Rng.place Gpu.on (Nx.Rng.fold_in root i))
+    ]}
+
+    A value drawn once, such as an input, is a creation there when it is
+    drawn without [~key] inside {!Rng.with_key} on a host key. Its bits are
+    those of the draw from [Nx.Rng.fold_in key 0], at any placement:
+
+    {[
+    let x =
+      Nx.Rng.with_key key (fun () -> Nx.Rng.normal_at Gpu.on Nx.float32 [| 4 |])
     ]}
 
     A key a program returns lies on the program's set: derive the next one
@@ -5062,7 +5072,8 @@ module Rng : sig
       each device computing its window: [placement (uniform_at p dt s)] is
       [p]. On a set without kernels, a draw without [~key] is a creation,
       the host draw placed there ({!Nx.val-devices}), and a draw from a
-      [~key] there reads the key, a computation, and raises as one. An
+      [~key] there reads the key, a computation, and raises as one, naming
+      {!with_key} where the sampler has no array parameter. An
       [_at] form raises as its host form does, and raises
       [Invalid_argument] naming itself where [p] cuts an axis the draw's
       shape lacks, and where a device of [p] does not hold [key], naming the

@@ -270,6 +270,16 @@ let read_at ~by p w =
 let drawn_shape ~by ~params batch s =
   if params then Prim.broadcast_shape ~by batch s else Array.append batch s
 
+(* Raises naming [by] and [advice] where reading [k] would compute now on a
+   set without kernels: [k] is untraced and no extent is live, when
+   {!Eval.eval} runs at once. The advice names where the key can be used:
+   the generic advice leads to {!Nx.place}, whose array no sampler takes. *)
+let bare ~by advice (k : 'd key) =
+  let p = Prim.placement k in
+  if Devices.bare p && Option.is_none (Eval.owner k) && Eval.quiet () then
+    invalid_argf "%s: the key lies on %a, which has no kernels; %s" by
+      Devices.pp (Devices.set p) advice
+
 (* A draw of [dt] by the sampler program [prog], of {!drawn_shape}: one map
    whose elements each read their key, their position among the elements
    that share it, and [params], each stretched to the draw's shape. A draw
@@ -297,6 +307,13 @@ let drawn ~by ~params ?at source dt s prog =
       let prog = bind prog key_operand (E.any (u64 w)) in
       map dispatched ~by ?at shape prog dt params
   | Key k ->
+      (* Without parameters, a draw from a host scope's words is a creation
+         at any placement. *)
+      if params = [||] then
+        bare ~by
+          "draw without ~key in Nx.Rng.with_key at a host key, which draws on \
+           the host and places the draw, or draw where a compiler stages it"
+          k;
       let w = Eval.reshape ~by keys (pack dispatched ~by k) in
       let w = Eval.broadcast ~by shape w in
       let w = match at with None -> w | Some p -> read_at ~by p w in
@@ -358,17 +375,12 @@ let walk c k = of_tensor (Ptree.Walk.tensor c k)
 let ptree visitor path k = Ptree.v walk visitor path k
 
 (* Raises naming [by] where deriving from [k] would compute now on a set
-   without kernels: [k] is untraced and no extent is live, when {!Eval.eval}
-   runs at once. The message names the host, where such keys are derived:
-   the generic advice leads to {!Nx.place}, whose array no sampler takes. *)
-let bare_key ~by (k : 'd key) =
-  let p = Prim.placement k in
-  if Devices.bare p && Option.is_none (Eval.owner k) && Eval.quiet () then
-    invalid_argf
-      "%s: the key lies on %a, which has no kernels; derive keys on the host, \
-       then place each where a program reads it; Nx.Rng.place Nx.Host.on key \
-       brings this one to the host"
-      by Devices.pp (Devices.set p)
+   without kernels. *)
+let bare_key ~by k =
+  bare ~by
+    "derive keys on the host, then place each where a program reads it; \
+     Nx.Rng.place Nx.Host.on key brings this one to the host"
+    k
 
 (* The keys [f ~key] gives at each element of [shape], whose last axes follow
    [k]'s batch: one map over [k], where [k] lies. The broadcast is dispatched;

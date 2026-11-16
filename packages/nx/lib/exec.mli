@@ -32,7 +32,8 @@
     devices on its own. A set without kernels raises [Invalid_argument]
     naming [by] before any kernel runs, but for a map of no loads, a
     creation, which the host's kernels compute and {!place} puts on the
-    device.
+    device. A draw without [~key] in a scope at a host key is one: its
+    key's words are in its program ({!Rng.with_key}).
 
     Over devices of one architecture, a result's bits are those of the same
     operation on one device, by the window law ({!Route.window}), wherever

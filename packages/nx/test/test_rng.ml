@@ -1126,20 +1126,28 @@ let placed_draws =
           Array.sort compare sorted;
           equal ~msg:"permutation: a permutation" (array int64)
             (Array.init 7 Int64.of_int) sorted);
-      test "a keyed _at draw on a set without kernels raises as a computation"
+      test "a keyed _at draw on a set without kernels raises naming with_key"
         (fun () ->
           let key = Rng.place Bare.on (Rng.key 1) in
-          let computes by f =
-            raises_match (Exn.invalid_arg ~sub:(by ^ ": set ")) f;
+          let names by f =
+            raises_match (Exn.invalid_arg ~sub:(by ^ ": the key lies on ")) f;
             raises_match
-              (Exn.invalid_arg
-                 ~sub:"has no kernels to compute Map; place the value")
+              (Exn.invalid_arg ~sub:"draw without ~key in Nx.Rng.with_key")
               f
           in
-          computes "Nx.Rng.uniform_at" (fun () ->
+          names "Nx.Rng.uniform_at" (fun () ->
               Rng.uniform_at Bare.on ~key Nx.float32 [| 4 |]);
-          computes "Nx.Rng.permutation_at" (fun () ->
+          names "Nx.Rng.bits_at" (fun () -> Rng.bits_at Bare.on ~key [| 4 |]);
+          names "Nx.Rng.permutation_at" (fun () ->
               Rng.permutation_at Bare.on ~key 4));
+      test "a keyless _at draw in a scope on a set without kernels is the \
+            draw from fold_in key 0"
+        (fun () ->
+          let k = Rng.key 5 and p = Nx.Placement.device Bare.v off in
+          let x = Rng.with_key k (fun () -> Rng.normal_at p Nx.float32 [| 6 |]) in
+          let y = Rng.normal ~key:(Rng.fold_in k 0) Nx.float32 [| 6 |] in
+          equal ~msg:"placement" (placement ()) p (Nx.placement x);
+          equal (array float_exact) (read y) (read x));
       test
         "under an interpretation, a keyless permutation_at on a set without \
          kernels is the host draw placed" (fun () ->

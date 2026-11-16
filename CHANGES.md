@@ -3035,6 +3035,13 @@ its lock and from samples the dashboard saw arrive.
 - **Breaking:** `Nx.Repr.array` and `Nx.Repr.shards` take `~by`, the function
   the arrays are for, which their refusal of a dead or traced value names in
   place of their own: a library names the function its user called.
+- A keyed draw at a set without kernels by a sampler without array
+  parameters, such as `Nx.Rng.normal_at p ~key`, raises naming
+  `Nx.Rng.with_key`, where it advised "place the value on a set with
+  kernels, mint the set with kernels, or apply the function where a
+  compiler stages it", though no sampler takes a placed value. A keyless
+  draw in `with_key` at a host key is a creation there, made on the host
+  and placed, as nx.mli now shows.
 - Add `Nx.log10`, exact at each power of ten the dtype holds: `log10 1000.`
   is `3.`, which `log x / log 10` misses. It is within 1 ulp at float32,
   measured at every float32, eagerly and under `Rune.jit` on the host; and
