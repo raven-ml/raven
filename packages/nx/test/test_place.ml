@@ -194,19 +194,53 @@ let allocates_its_window shape x w y =
 let shape_of rank =
   Gen.array ~size:(Gen.constant rank) (Gen.of_list [ 0; 1; 3; 4; 5; 8 ])
 
+let layouts = Gen.of_list [ Contiguous; Transposed; Broadcast ]
+
+(* Any shape of rank 1 to 3, layout and two placements. *)
+let any_case =
+  Gen.bind (Gen.int_range 1 3) (fun rank ->
+      Gen.map
+        (fun ((s, l), (w, w')) -> (s, l, w, w'))
+        (Gen.pair
+           (Gen.pair (shape_of rank) layouts)
+           (Gen.pair (where_of rank) (where_of rank))))
+
+(* A contiguous source of rank 2 or 3 and no extent below 4, split along its
+   last axis, so that the fourth device's window skips elements, then split
+   along another axis or more coarsely along the same. *)
+let packing =
+  let open Gen in
+  let* rank = int_range 2 3 in
+  let* s = array ~size:(constant rank) (of_list [ 4; 5; 8 ]) in
+  let last = rank - 1 in
+  let+ w' =
+    one_of
+      [ map (fun a -> Split a) (int_range 0 (last - 1)); constant (Minor last) ]
+  in
+  (s, Contiguous, Split last, w')
+
+(* A split along an axis of 3 elements, whose fourth window is empty. *)
+let emptied =
+  let open Gen in
+  let* rank = int_range 1 3 in
+  let* s = shape_of rank and+ l = layouts in
+  let+ a = int_range 0 (rank - 1) and+ w' = where_of rank in
+  let s = Array.mapi (fun i n -> if i = a then 3 else n) s in
+  (s, l, Split a, w')
+
+(* Any case half the time; otherwise one of two cases that the laws cover
+   and [any_case] seldom draws, each a quarter of the time. The first is a
+   window packed into memory the host does not address, then a split along
+   another axis or a coarser one along the same, which [any_case] draws one
+   time in 11, 80 and 35. The second is an empty window, which [any_case]
+   draws one time in 5. *)
 let case =
   Gen.with_pp
     (fun ppf (s, l, w, w') ->
       Format.fprintf ppf "%a [%s] at %a then %a" pp_layout l
         (String.concat "; " (Array.to_list (Array.map string_of_int s)))
         pp_where w pp_where w')
-    (Gen.bind (Gen.int_range 1 3) (fun rank ->
-         Gen.map
-           (fun ((s, l), (w, w')) -> (s, l, w, w'))
-           (Gen.pair
-              (Gen.pair (shape_of rank)
-                 (Gen.of_list [ Contiguous; Transposed; Broadcast ]))
-              (Gen.pair (where_of rank) (where_of rank)))))
+    (Gen.frequency [ (2, any_case); (1, packing); (1, emptied) ])
 
 let split = function
   | Split _ | Cuts _ | Major _ | Minor _ -> true
