@@ -2693,8 +2693,11 @@ module Conv = struct
        let stride = at0 2 stride and dilation = at0 1 dilation in
        let los = at0 1 los and his = at0 1 his in
        (* One case in ten makes axis 0 a padding that cuts past the axis: an
-          input of 1 cropped by 1 on each side. Drawn freely it is about one
-          case in twenty, which some seeds never reach. *)
+          input of 1 cropped by 1 on each side. A case of no padding or
+          shaped below undoes it, so it is 1/10 x 7/8 x 6/10 = 0.0525 of the
+          cases, and drawn freely about 0.025 more. Such a case has no
+          output, which most of the laws' other cases need, so the law that
+          covers it draws 400 cases instead of taking a larger share. *)
        let* past = int_range 0 9 in
        let cut v a =
          if past = 0 then Array.mapi (fun i e -> if i = 0 then v else e) a
@@ -2837,7 +2840,8 @@ module Conv = struct
     parts (Nx.to_array (conv_of c x w))
 
   let law_conv =
-    prop "conv is its sum over the taps, at every dtype" case (fun c ->
+    prop ~count:400 "conv is its sum over the taps, at every dtype" case
+      (fun c ->
         let want = reference c in
         let axes f = Array.exists Fun.id (Array.init (Array.length c.spatial) f) in
         cover "an output" (Array.length want > 0);
