@@ -54,21 +54,15 @@ let runs =
   [
     ("floor/launch", 3774);
     ("floor/submission", 1134);
-    ("floor/copy-4MB", 558);
     ("floor/copy-256MB", 2);
-    ("floor/copy-driver-256MB", 2);
     ("floor/read-256MB", 5);
     ("floor/wmma-bf16-peak", 1);
-    ("floor/fma-f32-peak", 1);
     ("contract/bfloat16-256x256x256", 239);
     ("contract/bfloat16-4096x4096x4096", 1);
-    ("contract/float16-4096x4096x4096", 1);
     ("contract/float32-256x256x256", 153);
     ("contract/float32-4096x4096x4096", 1);
     ("contract/bfloat16-4096x4096x4096-kf", 1);
-    ("contract/bfloat16-4096x4096x4096-fk", 1);
     ("contract/bfloat16-4096x4096x4096-ff", 1);
-    ("contract/float64-256x256x256", 35);
     ("contract/bfloat16-256x64x64x64", 88);
     ("contract/float32-256x64x64x64", 89);
     ("contract/float64-256x64x64x64", 11);
@@ -83,15 +77,12 @@ let runs =
     ("contract/float32-1x5120x2880", 26);
     ("contract/float64-1024x1024x1024", 1);
     ("contract/float64-1x5120x2880", 10);
-    ("contract/int16-1024x1024x1024", 2);
     ("contract/int32-1024x1024x1024", 5);
     ("contract/int8-1x5120x2880", 74);
     ("contract/int32-1x5120x2880", 26);
     ("contract/bfloat16-8x5120x2880", 62);
-    ("contract/float32-16x5120x2880", 16);
     ("contract/float32-20480x1x2880", 5);
     ("contract/float8_e4m3fn-4096x4096x4096", 2);
-    ("contract/float8_e5m2-4096x4096x4096", 2);
     ("contract/int4-4096x4096x4096", 1);
     ("contract/bfloat16-131072x16x16x16", 1);
     ("reduce/float32-sum-1024x1024-axes0.1", 155);
@@ -110,15 +101,11 @@ let runs =
     ("scan/float32-sum-67108864-axis0", 1);
     ("map/add-float32-1048576", 47);
     ("map/add-float32-67108864", 1);
-    ("map/exp-float32-1048576", 64);
-    ("map/add-bfloat16-2097152", 17);
     ("map/add-bfloat16-134217728", 1);
-    ("map/cast_bf16-float32-1048576", 73);
     ("map/bcast_add-float32-1024x1024", 43);
     ("map/t_add-float32-1024x1024", 40);
     ("map/fused4-float32-1048576", 47);
     ("map/pad9-float32-1x64x64x64", 10);
-    ("map/where_lt-float32-1048576", 58);
     ("reduce/argmax-float32-1024x1024", 20);
     ("reduce/logsumexp-float32-1024x1024", 9);
     ("reduce/logsumexp-float32-8192x8192", 1);
@@ -133,7 +120,6 @@ let runs =
     ("map/nx-add-f32-1048576", 45);
     ("sort/sort-f32-1x1M", 3);
     ("sort/sort-f32-1x16M", 1);
-    ("sort/sort-f64-1x16M", 1);
     ("sort/sort-i64-1x16M-range2^20", 1);
     ("sort/sort-u8-1x256M", 1);
     ("sort/sort-f32-65536x128", 3);
@@ -177,10 +163,10 @@ let runs_of_row (r : Rows.row) =
   | Some n -> n
   | None -> invalid_arg ("Bench_amd.runs: no runs for " ^ r.name)
 
-(* A row's case. Its setup settles the clock on the row, 50 ms at a time:
-   thumper's calls follow one another with no idle in between, so the clock
-   stays where the row keeps it, and the settle is the trial's warmup
-   ({!config}). *)
+(* A row's case. Its setup settles the clock on the row, 50 ms at a time and
+   300 ms at most: thumper's calls follow one another with no idle in between,
+   so the clock stays where the row keeps it, and the settle is the trial's
+   warmup ({!config}). *)
 let case (r : Rows.row) =
   let count = runs_of_row r in
   let setup () =
@@ -191,7 +177,7 @@ let case (r : Rows.row) =
     in
     settle g p.run
       ~runs:(runs_of (call_span /. float count))
-      ~chunk:0.05 ~cap:1.;
+      ~chunk:0.05 ~cap:0.3;
     (g, p)
   in
   Thumper.bench_with_setup ~setup
