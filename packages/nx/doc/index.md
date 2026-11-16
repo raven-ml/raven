@@ -19,7 +19,7 @@ the Raven ecosystem.
   and GGUF
 - **Devices**: arrays lie on the host or on a set of devices, and an operation
   computes where its operands lie: on the host by C kernels, on NVIDIA GPUs
-  of sm_89 by `nx.cuda`'s
+  of sm_89 by `nx.cuda`'s and on AMD GPUs of RDNA4 by `nx.amd`'s
 
 ## Quick start
 

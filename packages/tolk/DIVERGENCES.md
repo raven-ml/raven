@@ -4648,8 +4648,8 @@ rule, its reason and its pins.
 - **Reason:** (e). tinygrad raises on valid graphs (the swap, the stale read
   beside its overwrite), and computes wrong values where it orders silently:
   a call given one buffer twice, and the join cases of D202. rune's jit
-  promises eager's values, and a program refused on a set of GPUs, which
-  have no eager kernels, raises. No raven suite schedules a cycle today:
+  promises eager's values, and a program refused on a set without kernels
+  raises. No raven suite schedules a cycle today:
   jera's compiled gradient of an adaptive solve made the one copy they reach
   (`Ode › solve derivatives › compiled grad equals eager grad`).
 - **Pinned by:** the `Tolk.Schedule` suite: `create_schedule › laws › a schedule
@@ -8114,8 +8114,8 @@ rule, its reason and its pins.
   the same computed pieces stored into their regions of two buffers, makes
   two kernels, each storing a column of both. Each was ordered before the
   other, and no copy cuts the cycle, since each read is the kernel's own
-  store; the program was declined, and over a set of GPUs, which have no
-  eager kernels, it raises.
+  store; the program was declined, and over a set without kernels it
+  raises.
 - **Pinned by:** the `Tolk.Schedule` suite: `create_schedule › laws › a
   schedule copies a state iff its kernels form a cycle`, whose writes may
   have two kernels that two Afters list, and `create_linear_with_vars ›

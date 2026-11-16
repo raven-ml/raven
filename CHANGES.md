@@ -2978,6 +2978,16 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- Add `nx.amd` (`Nx_amd`), kernels of `Nx_kernel.S` for AMD RDNA4 GPUs
+  (`gfx1200`, `gfx1201`). A set made by `Nx.devices ~kernels:(module Nx_amd)`
+  computes on the GPU without `Rune.jit`. Every kernel but `contract` and
+  `attention` computes every case `Nx_kernel.S` offers, the transforms
+  `c2c`, `r2c` and `c2r` included, and `map`, `reduce` and `scan` have
+  nx.cpu's bits for kinds, sums and chunked scans. `contract` declines a
+  scale with an integer or complex accumulator, and `attention` declines
+  every call. A float contraction adds each range of its products into one
+  running sum, so its bound is `Nx_kernel`'s for a single chain, with an
+  error factor up to `γ(2K + 1)`, and adds `init` after the products.
 - **Breaking:** `Nx.donate x` ends `x` at the call: a later use raises, where
   whether it did depended on what read the handle. A handle is for one use,
   and `add (donate x) x` raises.
