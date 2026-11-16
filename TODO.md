@@ -40,11 +40,16 @@ Where it stands, with every measurement: doc/performance.md.
   kernels and 22-23% of the 12-token ones; the experts are 0.11 ms of the
   decode step's 2.89 ms gap to llama.cpp
 - A tensor core's kernel sums its whole reduce in each thread, so a grid
-  of few blocks by few outputs reads its operand more slowly than a
-  stream: on Mixtral-like experts (8 of 14336 by 4096, top 2) rune's
-  routed blocks of 48 take the down product about 20% longer than blocks
-  of 4 at 9-12 tokens, the MoE block 1-2% longer. A split of such a
-  kernel's reduce would remove it
+  under one wave, or just past one, reads its operand more slowly than a
+  stream. With decoded slices on cores from one row a group, gpt-oss's
+  down at 10-11 tokens and Mixtral-like MXFP4 down at 5-6 tokens (one
+  routing each) and gpt-oss's down at 64 tokens lose to it. A split of the
+  reduce, in the graph as tinygrad's `split_reduceop` does or in codegen,
+  from the SM count and occupancy, would remove it
+- rune's routed products with no core: one row a block loses 12-33% to
+  blocks of 4 at 3-7 tokens, and Q8_0's blocks of 64 from 16 rows a group
+  take 1.5-2.9x as long as 8 or 16 (9480 against 3854 us at 128 tokens);
+  the 64 came from MXFP4 under the float32 decode
 - Under expert-parallel placement each device's routed product holds its
   `g / D` experts and every row, those routed elsewhere in no group, and
   rune's `block_rows` reads all `n` rows over the local `g`: its rule sees
