@@ -502,14 +502,14 @@ let set_pending md s l =
 let settle md s =
   let rec go = function
     | [] -> ([], None)
-    | (_, false) :: rest ->
-        cover "a wait passes a check before a failing one" (rest <> []);
-        go rest
-    | (id, true) :: rest ->
-        cover "a wait leaves a later failure pending" (List.exists snd rest);
-        (rest, Some id)
+    | (_, false) :: rest -> go rest
+    | (id, true) :: rest -> (rest, Some id)
   in
-  let left, raised = go (pending md s) in
+  let checks = pending md s in
+  cover "a wait passes a check before a failing one"
+    (match checks with (_, false) :: _ :: _ -> true | _ -> false);
+  let left, raised = go checks in
+  cover "a wait leaves a later failure pending" (List.exists snd left);
   set_pending md s left;
   raised
 
@@ -1054,8 +1054,11 @@ let () =
          test "a datum that is a sum gives its closed element" summed_datum;
          test "a check of one flag off host memory copies before its mark"
            apart_off_host;
-         pending_checks "a wait raises its set's oldest failure, once";
-         pending_checks ~count:20 ~domains:2
+         (* A program leaves a later failure pending about one time in ten on
+            one domain and four in ten on two. *)
+         pending_checks ~count:300
+           "a wait raises its set's oldest failure, once";
+         pending_checks ~count:60 ~domains:2
            "on two domains, a wait raises its set's oldest failure, once";
          at_call;
          threads;
