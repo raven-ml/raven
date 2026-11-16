@@ -3170,7 +3170,9 @@ let law_fused (b : Support.backend) c =
   cover "narrow factors" (staged fdt);
   cover "float32 factors at float64" (same fdt f32 && same o f64);
   cover "float64 factors at float32" (same fdt f64 && same o f32);
-  cover (reduction_name c.red) true;
+  List.iter
+    (fun r -> cover (reduction_name r) (c.red = r))
+    (reductions_of ~scan:true f32);
   cover "a scan" c.scan;
   cover "a Moments scan" (c.scan && c.red = Moments);
   cover "a stateful scan"
@@ -3187,18 +3189,23 @@ let law_fused (b : Support.backend) c =
   cover "a padded float4_e2m1fn load" (padded && same fdt (D.Any D.Float4_e2m1fn));
   let (D.Any fd) = fdt in
   cover "a padded sub-byte load" (padded && D.bits fd < 8);
-  (match if c.pads = [||] then None else c.pads.(0) with
-  | Some (fill, pad) ->
-      cover "windows" (pad.windows <> [||]);
-      cover "cropped" (Iarray.exists (fun l -> l < 0) pad.lo);
-      cover "interior" (Iarray.exists (fun i -> i > 0) pad.interior);
-      cover "a NaN fill" (Elements.nan_of fdt fill);
-      cover "a -0 fill"
-        (is_float fdt && String.length fill >= 4
-        && String.for_all (fun ch -> ch = '\000') (String.sub fill 0 (String.length fill - 1))
-        && fill.[String.length fill - 1] = '\128');
-      cover "a scan over a padded load" c.scan
-  | None -> ());
+  (* The first operand's pad. *)
+  let first p =
+    match if c.pads = [||] then None else c.pads.(0) with
+    | Some (fill, pad) -> p fill pad
+    | None -> false
+  in
+  cover "windows" (first (fun _ pad -> pad.windows <> [||]));
+  cover "cropped" (first (fun _ pad -> Iarray.exists (fun l -> l < 0) pad.lo));
+  cover "interior"
+    (first (fun _ pad -> Iarray.exists (fun i -> i > 0) pad.interior));
+  cover "a NaN fill" (first (fun fill _ -> Elements.nan_of fdt fill));
+  cover "a -0 fill"
+    (first (fun fill _ ->
+         is_float fdt && String.length fill >= 4
+         && String.for_all (fun ch -> ch = '\000') (String.sub fill 0 (String.length fill - 1))
+         && fill.[String.length fill - 1] = '\128'));
+  cover "a scan over a padded load" (first (fun _ _ -> c.scan));
   let r = Array.length s in
   let side = r > 1 && not (Array.mem (r - 1) c.axes) in
   let split =
@@ -3904,19 +3911,25 @@ let copied = function
           fviews = [];
         }
 
-let covers_job = function
-  | Fold c ->
-      cover "a monoid" true;
-      cover "a monoid scanned" c.scan;
-      cover "narrow" (staged (dtype_of c.x));
-      cover "many outputs of several blocks"
-        (let s = shape_of c.x in
+let covers_job j =
+  let fold p = match j with Fold c -> p c | State _ | Program _ -> false in
+  let state p =
+    match j with State (scan, c) -> p scan c | Fold _ | Program _ -> false
+  in
+  cover "a monoid" (fold (fun _ -> true));
+  cover "a monoid scanned" (fold (fun c -> c.scan));
+  cover "narrow" (fold (fun c -> staged (dtype_of c.x)));
+  cover "many outputs of several blocks"
+    (fold (fun c ->
+         let s = shape_of c.x in
          let per = Array.fold_left (fun n a -> n * s.(a)) 1 c.axes in
-         per > 1024 && total (result_shape c) >= 64)
-  | State (scan, c) ->
-      cover (reduction_name c.r) true;
-      cover "a state scanned" scan
-  | Program _ -> cover "a program" true
+         per > 1024 && total (result_shape c) >= 64));
+  List.iter
+    (fun r -> cover (reduction_name r) (state (fun _ c -> c.r = r)))
+    Nx_kernel.[ Arg Max; Arg Min; Logsumexp; Moments ];
+  cover "a state scanned" (state (fun scan _ -> scan));
+  cover "a program"
+    (match j with Program _ -> true | Fold _ | State _ -> false)
 
 (* One thread gives the bits of the job's threads, a NaN as any NaN. *)
 let law_threads (b : Support.backend) j =
@@ -4031,7 +4044,8 @@ let programs (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group ("programs, " ^ b.name)
     [
-      prop
+      (* Min, which no example reduces by, is drawn in one case of six. *)
+      prop ~count:150
         ~examples:(fused_examples @ product_examples @ padded_examples)
         "a reduction or scan of a program's output gives the bits of its \
          map's, over plain and padded loads"
