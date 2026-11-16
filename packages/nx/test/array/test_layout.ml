@@ -599,6 +599,30 @@ let law_distinct_sound l =
   cover "a repeated position" (not (distinct (positions l)));
   if L.is_distinct l then equal bool true (distinct (positions l))
 
+(* Views that keep positions apart: 2 times in 3 any, 1 time in 3 a strided
+   view of two elements or more, a slice by -1 or ±2 of an axis of 3 or 4
+   elements, then up to two more such views. About a third of the cases
+   are then strided views, so that 100 cases cover them but with
+   probability below 10^-15. *)
+let apart_views =
+  let open Gen in
+  let strided =
+    let* s = array ~size:(int_range 1 4) (int_range 1 4) in
+    let* a = int_range 0 (Array.length s - 1) in
+    let* d = int_range 3 4 in
+    let* step = ints_of [ -2; -1; 2 ] in
+    let s = Array.mapi (fun i v -> if i = a then d else v) s in
+    let start = if step > 0 then 0 else d - 1 in
+    let cut i v =
+      if i = a then { M.start; count = ((d - 1) / abs step) + 1; step }
+      else { M.start = 0; count = v; step = 1 }
+    in
+    let slice = M.Slice (Iarray.of_array (Array.mapi cut s)) in
+    let l = L.contiguous (Iarray.of_array s) in
+    moved_by ~apart:true 2 (Option.get (L.move slice l))
+  in
+  Gen.with_pp L.pp (frequency [ (2, reached ~apart:true); (1, strided) ])
+
 let law_distinct_views l =
   cover "a strided view" ((not (L.is_contiguous l)) && L.numel l > 1);
   equal bool true (L.is_distinct l)
@@ -780,8 +804,7 @@ let tests =
         prop "is_distinct is never true of a repeated position" any_layout
           law_distinct_sound;
         prop "is_distinct holds of views that keep positions apart"
-          (Gen.with_pp L.pp (reached ~apart:true))
-          law_distinct_views;
+          apart_views law_distinct_views;
         prop "span holds every position, from 0 up" any_layout law_span;
         prop "every layout made is well formed" any_layout law_well_formed;
         prop "nx_read's descriptor holds the fields the accessors give"

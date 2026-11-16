@@ -221,19 +221,25 @@ let movement ~apart s =
   if apart then one_of views
   else one_of (reshape_target s :: broadcast_of s :: views)
 
-(* A layout [contiguous] reaches by up to three movements, views that keep
-   positions apart if [apart]. *)
-let reached ~apart =
+(* A layout [l] reaches by up to [n] movements, views that keep positions
+   apart if [apart]. *)
+let moved_by ~apart n l =
   let open Gen in
-  let* s = shape in
   let rec go l k =
     if k = 0 then constant l
     else
       let* m = movement ~apart (Iarray.to_array (L.shape l)) in
       match L.move m l with Some l' -> go l' (k - 1) | None -> go l (k - 1)
   in
-  let* k = int_range 0 3 in
-  go (L.contiguous (Iarray.of_array s)) k
+  let* k = int_range 0 n in
+  go l k
+
+(* A layout [contiguous] reaches by up to three movements, views that keep
+   positions apart if [apart]. *)
+let reached ~apart =
+  let open Gen in
+  let* s = shape in
+  moved_by ~apart 3 (L.contiguous (Iarray.of_array s))
 
 let any_layout = Gen.with_pp L.pp (Gen.one_of [ strided; reached ~apart:false ])
 
