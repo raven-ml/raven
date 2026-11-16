@@ -22,8 +22,9 @@
     {!place} to write ({!section-routing}). Between devices an operation
     moves only bytes that no placement of its operands could have put where
     they are needed: the partial results of a reduction, a contraction, a
-    scan, a gather or a scatter along a cut axis, and the parts of
-    the result they close into, which exist only once it computes; and, on
+    scan, a gather or a scatter along a cut axis, or of an attention over
+    cut keys, and the parts of the result they close into, which exist
+    only once it computes; and, on
     a set of devices of several architectures, each window that devices of
     several of them hold, which the devices of one compute and copy to the
     others ({!section-reductions}, {!section-routing}). It also moves a
@@ -1383,7 +1384,8 @@ val scatter :
     [x], and these partial results close by [combine] in the order of the
     tiles of [u], moving as a {!sum}'s over a cut axis do and never [u]:
     each tile of [u] holding updates sends a partial of each device's
-    window of [x], whatever the size of [u]. Two updates of one element
+    window of [x], with a [Set]'s flag of the elements it wrote, whatever
+    the size of [u]. Two updates of one element
     differ only along [axis], so the later tile holds the later in C
     order. [Set] keeps the last, from the last tile holding one, and
     [Max] and [Min] the bits one device gives, a NaN where one of them is.

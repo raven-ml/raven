@@ -7,10 +7,11 @@
     ({!Route.Partials}).
 
     A {e fold} is a reduction, a scan without carry, a contraction, a
-    gather or a scatter's [Add], and its {e folded} axes are those it
-    reduces, scans or contracts, [b]'s axis of [Rows]' groups
-    ({!Nx_kernel.type-segments}), the axis a gather reads at positions and
-    the axis of an [Add]'s positions and updates. Its route
+    gather, a scatter or an attention, and its {e folded} axes are those
+    it reduces, scans or contracts, [b]'s axis of [Rows]' groups
+    ({!Nx_kernel.type-segments}), the axis a gather reads at positions,
+    the axis of a scatter's positions and updates and an attention's keys'
+    axis. Its route
     reads an operand cut along a folded axis, so no device holds every term
     of its window of the results. Each device computes a {e partial}, the
     fold of the terms its operands' windows hold, and the partials
@@ -26,7 +27,8 @@
     result there. This module lies above {!Partition}; {!Check} and {!Eval}
     route operations and give it those whose route computes by partials. A
     scatter into a target cut along its axis computes by partials too, and
-    closes nothing ({!section-scatters}).
+    closes nothing ({!section-scatters}). An attention's partials close as
+    [Nx.attention] states.
 
     A device's windows of the operands along the folded axes are its
     {e tile}. The devices that hold one window of the results form a
@@ -298,6 +300,22 @@
     included; a NaN stays a NaN whose sign and payload this module does
     not state.
 
+    A [Max], [Min] or [Set] whose positions and updates are cut along its
+    axis is a fold so too. A device scatters the updates of its tile, at
+    its window of the positions moved by its window's start, into its
+    window of [into], in the dtype. Two updates of one element differ only
+    along the axis, so a later tile holds the later in C order. A [Max] or
+    [Min] closes as a reduction's does, each piece the slots combined in
+    tile order by one map of the monoid. Every slot holds [into]'s
+    element, which the monoid keeps, so each element is the extreme of
+    [into]'s and its updates, with the bits of the scatter on one device
+    but a NaN's sign and payload. A [Set] also scatters [true] at its
+    tile's positions into [false], a flag of the elements its tile wrote,
+    and closes the two stacks so, one map per slot taking the slot's
+    element where its flag holds. Each element so keeps its last update,
+    or [into]'s where none lands, with the bits of the scatter on one
+    device.
+
     {1:sums Sums}
 
     A value at a partial placement ({!Grid.sums}) is a {e sum}: each
@@ -330,14 +348,17 @@
 
     A device's {e partials} are its slots: one in the carrier, for an [Arg]
     its extreme and its position, for [Moments] the mean, whole, and the
-    two sums of deviations. Where a group holds [s] slots, a device holds,
-    beside the operands, the larger of its partials and the results, its
-    part of the results and, at a time, at most [C] bytes of one piece's
-    slots and [m] of the piece's results, of at most [C / s] bytes each:
+    two sums of deviations, for a scatter's [Max] or [Min] one in the
+    dtype, and for its [Set] one in the dtype and its flags. Where a group
+    holds [s] slots, a device holds, beside the operands, the larger of
+    its partials and the results, its part of the results and, at a time,
+    at most [C] bytes of one piece's slots and [m] of the piece's results,
+    of at most [C / s] bytes each:
     [m = 1] for a [Sum], [Prod], [Max], [Min] or [Logsumexp], a gather, a
-    contraction without [init] and a sum's closing, whose slots are the
-    sum's terms, [m = 2] for an [Arg], [Moments], a contraction with [init]
-    and a scatter's [Add], which finish a piece by a second map. A
+    scatter's [Max], [Min] or [Set], a contraction without [init] and a
+    sum's closing, whose slots are the sum's terms, [m = 2] for an [Arg],
+    [Moments], a contraction with [init], a scatter's [Add] and an
+    attention's output, which finish a piece by a second map. A
     contraction asked for its sum holds its term, beside its operands, and
     one piece's sum at a time. A piece holds more than [C] only where the
     slots of one element do, or where a part of a dtype narrower than a byte on a device
@@ -363,9 +384,9 @@
     holding terms, one row of its window off the axis each, two for an
     [Arg]. A [Gather] moves its slots as a [Reduce] of one reduction does,
     and no part of its positions, a [Gather_ranges] so too. A [Scatter]
-    into a cut target moves
-    nothing; an [Add] of cut updates moves its slots as a [Reduce] of one
-    reduction does, and no part of its positions or updates. No part of an
+    into a cut target moves nothing; one of cut updates moves its slots as
+    a [Reduce] of one reduction does, a [Set] its flags' slots too, and no
+    part of its positions or updates. No part of an
     operand moves. A contraction asked for its sum moves nothing. A sum's
     closing moves its terms as a [Reduce] of one reduction moves its slots,
     every device's term holding terms; a reduce-scatter gathers no part, so
@@ -382,7 +403,10 @@
     scatter, and an [Add] of cut updates also one map for its target and,
     where the carrier is not the dtype, one casting its updates, then one
     map adding the slots and, where the carrier is not the dtype, one
-    casting the result. A [Gather] runs on each
+    casting the result. A [Max] or [Min] of cut updates then runs one map
+    per slot combining them, and a [Set] of cut updates runs its shift and
+    its scatter twice, once for its flags, with two maps making the flags'
+    updates and target, then one map per slot. A [Gather] runs on each
     device one map shifting its positions where its tile starts past [0],
     one gather and one bitcast, and one bitcast over the results; a
     [Gather_ranges] shifts its starts so. *)
@@ -406,7 +430,7 @@ val run : Partition.engine -> by:string -> unit Route.t -> 'r Value.prim -> 'r
     Raises what [e]'s steps raise, naming [by], and
     [Invalid_argument] as an internal fault for an operation other than a
     [Reduce], a [Scan] of no carry, a [Gather], a [Gather_ranges], a
-    [Scatter] or a [Contract]
+    [Scatter], an [Attention] or a [Contract]
     of no segments or of [Rows], since no route computes another by partials,
     and where the result's grid and the folded operand's are not of one
     mesh ({!Grid.cut_like}). *)
