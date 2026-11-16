@@ -775,12 +775,14 @@ let law_kind_guards (b : Support.backend) (g, side) =
         Support.map3 (module K) k ~dst:(A.expect (A.dtype x) ds.(0)) c x
           (A.expect (A.dtype x) xs.(2))
   in
-  match
+  let answer =
     Elements.same_guarded ~any_nan:true side ~call g.ops
       [| (result_dtype g, g.shape) |]
-  with
-  | A.Done -> cover "computed" true
-  | A.Declined -> cover "declined" true
+  in
+  cover "computed" (answer = A.Done);
+  classify "declined" (answer = A.Declined);
+  match answer with
+  | A.Done | A.Declined -> ()
   | a -> failf "the kernels answered %a" Nx_array_support.pp_answer a
 
 (* Large copies and casts, staged through blocks and threads, with the
@@ -1459,18 +1461,25 @@ let law_map_held (b : Support.backend)
   let module K = (val b.kernels) in
   let st = Random.State.make [| seed |] in
   let shape = L.shape (A.layout x) in
-  match held_program st (D.Any (A.dtype x)) (D.Any dt) ~k ~pattern with
-  | exception Skip -> cover "cast declined" true
-  | p, types -> (
-      let h = held p in
-      cover "more than 256 held" (h > 256);
-      cover "more than a thousand values held" (h > 1000);
-      cover "reuse" (pattern = Reuse);
-      cover "never" (pattern = Never);
-      cover "guarded" (side <> None);
-      let numel = Iarray.fold_left ( * ) 1 shape in
-      cover "a few elements" (numel <= 4);
-      cover "a thousand elements or more" (numel >= 1000);
+  let program =
+    match held_program st (D.Any (A.dtype x)) (D.Any dt) ~k ~pattern with
+    | exception Skip -> None
+    | p -> Some p
+  in
+  let made = Option.is_some program in
+  let h = match program with Some (p, _) -> held p | None -> 0 in
+  let numel = Iarray.fold_left ( * ) 1 shape in
+  classify "cast declined" (not made);
+  cover "more than 256 held" (h > 256);
+  cover "more than a thousand values held" (h > 1000);
+  cover "reuse" (made && pattern = Reuse);
+  cover "never" (made && pattern = Never);
+  cover "guarded" (made && side <> None);
+  cover "a few elements" (made && numel <= 4);
+  cover "a thousand elements or more" (made && numel >= 1000);
+  match program with
+  | None -> ()
+  | Some (p, types) -> (
       match split b p types shape [| A.Any x |] with
       | exception Skip -> fail "a node declined"
       | values ->
@@ -1572,8 +1581,9 @@ let cpu =
               law_map1 b c));
       (* Every dtype refuses a kind: floats Atanh, complex numbers Erf,
          integers and booleans Exp, so that each case checks a refusal over a
-         large view writes nothing. *)
-      prop ~count:8
+         large view writes nothing. Bool and bit compute none of them, two
+         dtypes in 21: ten cases miss a computed kind with probability 6e-11. *)
+      prop ~count:10
         (strf "%s's kinds of one operand over large views" b.name)
         large
         (fun (Case x as c) ->
@@ -1627,9 +1637,9 @@ let cpu =
           cover "outside its domain"
             (List.exists (fun k -> not (P.accepts2 k dt)) kinds);
           b.around (fun () -> law_map2 ~kinds b c));
-      (* "a where" and "a load of one repeated element" come in one case
-         in twenty-five: 400 cases reach each in every run. *)
-      prop ~count:400
+      (* "a where" and "a load of one repeated element" come in 4.4% and
+         5.0% of cases: 600 cases miss each with probability below 2e-12. *)
+      prop ~count:600
         (strf "%s computes every map its loop holds" b.name)
         split_cases
         (fun c -> b.around (fun () -> law_split ~declines:never b c));

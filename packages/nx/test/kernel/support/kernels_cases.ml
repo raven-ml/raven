@@ -709,7 +709,9 @@ let large_pairs =
 (* The answer of [run] into a seeded destination of [dt] and [shape], checked:
    [Done] with the bytes [want ()], a decline only of a case [b] does not
    claim, and nothing written but on [Done]. A kind outside its domain makes
-   no program, or one whose result is not of [dt]. *)
+   no program, or one whose result is not of [dt]. It collects the answer
+   under labels no law demands: the laws that call it demand the answers
+   they reach, from the case. *)
 let answers (b : Support.backend) kind (D.Any at) (D.Any dt) shape ~accepted
     ~want (into : 'v 's. ('v, 's) A.t -> A.answer) =
   (* The seeded bits, read on the host before [dst] goes to [b]'s device:
@@ -719,20 +721,20 @@ let answers (b : Support.backend) kind (D.Any at) (D.Any dt) shape ~accepted
   let dst = on b seed in
   match into dst with
   | A.Done ->
-      cover "computed" true;
+      collect "a call Done";
       equal ~msg:"accepted" bool true accepted;
       equal
         (if any_nan kind then same_values (D.Any dt) else array int)
         (want ()) (bits_of (host dst))
   | A.Declined ->
-      cover "declined" true;
+      collect "a call Declined";
       check_declined b kind (D.Any at);
       equal ~msg:"declined writes nothing" (array int) before
         (bits_of (host dst))
   | exception Invalid_argument _ when not accepted ->
-      cover "outside its domain" true
+      collect "a call refused"
   | A.Wrong_dtype when not accepted ->
-      cover "outside its domain" true;
+      collect "a call refused";
       equal ~msg:"refused writes nothing" (array int) before
         (bits_of (host dst))
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
@@ -741,6 +743,11 @@ let law_map1 ?(kinds = unaries) (b : Support.backend) (Case x) =
   let module K = (val b.kernels) in
   let dt = A.dtype x and shape = L.shape (A.layout x) in
   let x' = on b x in
+  let computes (u, _) =
+    let k = P.Unary u in
+    P.accepts1 k dt dt && b.computes (K1 k) (D.Any dt)
+  in
+  cover "computed" (List.exists computes kinds);
   List.iter
     (fun (u, name) ->
       let k = P.Unary u in
@@ -754,6 +761,10 @@ let law_map2 ?(kinds = op2s) (b : Support.backend) (Pair (x, y)) =
   let module K = (val b.kernels) in
   let dt = A.dtype x and shape = L.shape (A.layout x) in
   let x' = on b x and y' = on b y in
+  cover "computed"
+    (List.exists
+       (fun k -> P.accepts2 k dt && b.computes (K2 k) (D.Any dt))
+       kinds);
   List.iter
     (fun k ->
       let compare = match k with P.Compare _ -> true | Binary _ -> false in
@@ -1090,72 +1101,83 @@ let law_map_split ?declines ?(labels = true) ?length ?(padded = false)
   let shape = L.shape (A.layout x) in
   let p, types, ops, loads = split_program ?length ~padded b (pair, seed) in
   let ins = Array.map (fun (A.Any x) -> D.Any (A.dtype x)) ops in
-  match split b p types shape ops with
-  | exception Skip -> cover "a node declined" true
-  | values -> (
-      let dsts =
-        Array.map
-          (fun o ->
-            let (D.Any d) = types.(o) in
-            A.Any (on b (seeded d shape (seed + o))))
-          (Iarray.to_array p.outs)
-      in
-      let before = Array.map (fun (A.Any d) -> bits_of (host d)) dsts in
-      match K.map p ~dsts:(Iarray.of_array dsts) (Iarray.of_array loads) with
-      | A.Declined -> (
-          cover "map declined" true;
-          Array.iteri
-            (fun k (A.Any d) ->
-              equal ~msg:"declined writes nothing" (array int) before.(k)
-                (bits_of (host d)))
-            dsts;
-          match declines with
-          | Some ok when not (ok p types) ->
-              failf "map declined a program it computes: %d nodes"
-                (Iarray.length p.nodes)
-          | _ -> ())
-      | A.Done ->
-          cover "computed" true;
-          if labels then begin
-          cover "several nodes" (Iarray.length p.nodes > Array.length ins + 1);
-          let has f = Iarray.exists f p.nodes in
-          cover "a coordinate" (has (function P.Coord _ -> true | _ -> false));
-          cover "a constant" (has (function P.Const _ -> true | _ -> false));
-          cover "a cast" (has (function P.Op1 (Cast, _, _) -> true | _ -> false));
-          cover "a where" (has (function P.Op3 (Where, _, _, _) -> true | _ -> false));
-          cover "a sub-byte bitcast"
-            (has (function
-              | P.Op1 (Bitcast, D.Any d, j) ->
-                  let (D.Any x) = types.(j) in
-                  D.bits x < 8 && not (D.equal x d)
-              | _ -> false));
-          cover "two outputs" (Array.length (Iarray.to_array p.outs) = 2);
-          let axes =
-            List.sort_uniq compare
-              (List.filter_map
-                 (function P.Coord a -> Some a | _ -> None)
-                 (List.init (Iarray.length p.nodes) (Iarray.get p.nodes)))
-          in
-          cover "more than four loop operands"
-            (Array.length ins + Iarray.length p.outs + List.length axes > 4);
-          let repeated (A.Any x) =
-            let l = A.layout x in
-            L.numel l > 1 && Iarray.for_all (( = ) 0) (L.strides l)
-          in
-          cover "a load of one repeated element" (Array.exists repeated ops)
-          end;
-          if length <> None then
-            cover "more than eight values held" (held p > 8);
-          Array.iteri
-            (fun k o ->
-              let (A.Any want) = values.(o) in
-              let (A.Any got) = dsts.(k) in
-              equal ~msg:(strf "output %d of %s" k (describe p))
-                (same_values (D.Any (A.dtype want)))
-                (bits_of (host want))
-                (bits_of (host got)))
+  let computed =
+    match split b p types shape ops with
+    | exception Skip ->
+        collect "a node declined";
+        false
+    | values -> (
+        let dsts =
+          Array.map
+            (fun o ->
+              let (D.Any d) = types.(o) in
+              A.Any (on b (seeded d shape (seed + o))))
             (Iarray.to_array p.outs)
-      | r -> failf "map answered %a" Nx_array_support.pp_answer r)
+        in
+        let before = Array.map (fun (A.Any d) -> bits_of (host d)) dsts in
+        match K.map p ~dsts:(Iarray.of_array dsts) (Iarray.of_array loads) with
+        | A.Declined ->
+            collect "map declined";
+            Array.iteri
+              (fun k (A.Any d) ->
+                equal ~msg:"declined writes nothing" (array int) before.(k)
+                  (bits_of (host d)))
+              dsts;
+            (match declines with
+            | Some ok when not (ok p types) ->
+                failf "map declined a program it computes: %d nodes"
+                  (Iarray.length p.nodes)
+            | _ -> ());
+            false
+        | A.Done ->
+            Array.iteri
+              (fun k o ->
+                let (A.Any want) = values.(o) in
+                let (A.Any got) = dsts.(k) in
+                equal ~msg:(strf "output %d of %s" k (describe p))
+                  (same_values (D.Any (A.dtype want)))
+                  (bits_of (host want))
+                  (bits_of (host got)))
+              (Iarray.to_array p.outs);
+            true
+        | r -> failf "map answered %a" Nx_array_support.pp_answer r)
+  in
+  cover "computed" computed;
+  (* The programs a map computed, by their nodes and loads. *)
+  if labels then begin
+    let has f = computed && Iarray.exists f p.nodes in
+    cover "several nodes"
+      (computed && Iarray.length p.nodes > Array.length ins + 1);
+    cover "a coordinate" (has (function P.Coord _ -> true | _ -> false));
+    cover "a constant" (has (function P.Const _ -> true | _ -> false));
+    cover "a cast" (has (function P.Op1 (Cast, _, _) -> true | _ -> false));
+    cover "a where"
+      (has (function P.Op3 (Where, _, _, _) -> true | _ -> false));
+    cover "a sub-byte bitcast"
+      (has (function
+        | P.Op1 (Bitcast, D.Any d, j) ->
+            let (D.Any x) = types.(j) in
+            D.bits x < 8 && not (D.equal x d)
+        | _ -> false));
+    cover "two outputs" (computed && Array.length (Iarray.to_array p.outs) = 2);
+    let axes =
+      List.sort_uniq compare
+        (List.filter_map
+           (function P.Coord a -> Some a | _ -> None)
+           (List.init (Iarray.length p.nodes) (Iarray.get p.nodes)))
+    in
+    cover "more than four loop operands"
+      (computed
+      && Array.length ins + Iarray.length p.outs + List.length axes > 4);
+    let repeated (A.Any x) =
+      let l = A.layout x in
+      L.numel l > 1 && Iarray.for_all (( = ) 0) (L.strides l)
+    in
+    cover "a load of one repeated element"
+      (computed && Array.exists repeated ops)
+  end;
+  if length <> None then
+    cover "more than eight values held" (computed && held p > 8)
 
 (* Programs: how a map's loads are read, and how long its program is. *)
 type split = Plain | Padded | Long

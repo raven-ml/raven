@@ -34,9 +34,9 @@ let run_op (b : Support.backend) op dt a =
       None
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
-let declines = function
-  | Some _ -> cover "computed" true
-  | None -> cover "declined" true
+let declines r =
+  cover "computed" (Option.is_some r);
+  classify "declined" (Option.is_none r)
 
 (* Bits *)
 
@@ -265,9 +265,12 @@ let law_bitcast (b : Support.backend) (Case x, D.Any d) =
   let dt = A.dtype x in
   let x = on b x in
   cover "of one width" (D.bits dt = D.bits d);
+  let accepted = P.accepts1 Bitcast dt d in
+  cover "computed" (accepted && b.computes (K1 Bitcast) (D.Any dt));
+  cover "outside its domain" (not accepted);
   answers b (K1 Bitcast) (D.Any dt) (D.Any d)
     (L.shape (A.layout x))
-    ~accepted:(P.accepts1 Bitcast dt d)
+    ~accepted
     ~want:(fun () -> bits_of (host x))
     (fun dst -> Support.map1 (module K) Bitcast ~dst x)
 
@@ -304,8 +307,10 @@ let law_map3 (b : Support.backend) (Pair (x, y), seed) =
   if seed mod 2 = 0 then where (seeded D.Bool shape seed)
   else where (seeded D.Bit shape seed);
   let z = on b (seeded dt shape (seed + 1)) in
-  answers b (K3 Fma) (D.Any dt) (D.Any dt) shape
-    ~accepted:(P.accepts3 Fma dt dt)
+  let fma = P.accepts3 Fma dt dt in
+  cover "an fma computed" (fma && b.computes (K3 Fma) (D.Any dt));
+  cover "an fma outside its domain" (not fma);
+  answers b (K3 Fma) (D.Any dt) (D.Any dt) shape ~accepted:fma
     ~want:(fun () -> expected "fma" dt ~compare:false [| host x; host y; host z |])
     (fun dst -> Support.map3 (module K) Fma ~dst:(A.expect dt (A.Any dst)) x y z)
 
@@ -316,6 +321,8 @@ let law_map0 (b : Support.backend) (D.Any dt, shape, seed) =
   let s = Iarray.of_array shape in
   let e = bits_of (seeded dt [| 1 |] seed) in
   let fill = String.init (Array.length e) (fun i -> Char.chr e.(i)) in
+  cover "an iota outside its domain"
+    (Array.length shape > 0 && not (D.equal dt D.Int64));
   answers b (K0 (Fill fill)) (D.Any dt) (D.Any dt) s ~accepted:true
     ~want:(fun () -> Array.concat (List.init n (fun _ -> Array.sub e 0 w)))
     (fun dst -> Support.map0 (module K) (Fill fill) ~dst);
@@ -685,8 +692,8 @@ let in_place ?any_nan ~msg (b : Support.backend) (a, a0) k =
   let got = k alias alias in
   fun () ->
     equal ~msg answer want got;
+    cover "computed" (want = A.Done);
     if want = A.Done then begin
-      cover "computed" true;
       equal ~msg (list string) [] (differ ?any_nan (host fresh) (host alias))
     end
 
@@ -822,13 +829,14 @@ let law_map_over_load (b : Support.backend) (Pair (x, y), seed) =
   let msg = describe q in
   equal ~msg answer answered
     (K.map q ~dsts:(Iarray.of_array got) (loads ops'));
-  if answered = A.Done then begin
-    cover "computed" true;
-    cover "the load read after the output is written"
-      (match second with `Reread _ -> true | _ -> false);
-    cover "the load an output"
-      (match second with `Output _ -> true | _ -> false);
-    cover "several nodes" (n > Array.length ops + 1);
+  let computed = answered = A.Done in
+  cover "computed" computed;
+  cover "the load read after the output is written"
+    (computed && match second with `Reread _ -> true | _ -> false);
+  cover "the load an output"
+    (computed && match second with `Output _ -> true | _ -> false);
+  cover "several nodes" (computed && n > Array.length ops + 1);
+  if computed then begin
     Array.iteri
       (fun i (A.Any w) ->
         let (A.Any g) = got.(i) in
@@ -1433,25 +1441,31 @@ let law_box (b : Support.backend) (Pair (x, y), box) =
   cover "the whole as the box"
     (Array.for_all2 (fun (g : M.range) e -> g.start = 0 && g.count = e) box shape);
   (* [call] into a destination, [fresh] for the operands, over the whole
-     operands [a] and over their box [a']; [sub] is the result's box. *)
+     operands [a] and over their box [a']; [sub] is the result's box. Whether
+     both computed. *)
   let both ~msg ~sub fresh call a a' =
     let d = fresh a and d' = fresh a' in
     match (call ~dst:d a, call ~dst:d' a') with
     | A.Done, A.Done ->
-        cover msg true;
         equal ~msg (list string) []
-          (differ ~any_nan:true (A.copy (slice sub (host d))) (host d'))
-    | A.Declined, A.Declined -> cover "declined" true
+          (differ ~any_nan:true (A.copy (slice sub (host d))) (host d'));
+        true
+    | A.Declined, A.Declined ->
+        collect "declined";
+        false
     | p, q ->
         failf "%s answered %a over the whole and %a over the box" msg
           Nx_array_support.pp_answer p Nx_array_support.pp_answer q
   in
   let x = on b x and y = on b y in
-  if P.accepts2 (Binary Add) dt then
-    both ~msg:"an exact kind of two operands" ~sub:box fresh2
-      (fun ~dst (a, c) -> Support.map2 (module K) (Binary Add) ~dst a c)
-      (x, y)
-      (slice box x, slice box y);
+  let exact =
+    P.accepts2 (Binary Add) dt
+    && both ~msg:"an exact kind of two operands" ~sub:box fresh2
+         (fun ~dst (a, c) -> Support.map2 (module K) (Binary Add) ~dst a c)
+         (x, y)
+         (slice box x, slice box y)
+  in
+  cover "an exact kind of two operands" exact;
   let flipped =
     slice
       (Array.mapi
@@ -1461,11 +1475,17 @@ let law_box (b : Support.backend) (Pair (x, y), box) =
          shape)
       x
   in
-  both ~msg:"a copy of a view" ~sub:box fresh
-    (fun ~dst a -> Support.map1 (module K) Copy ~dst a)
-    flipped (slice box flipped);
-  if (D.is D.Signed dt || D.is D.Unsigned dt) && Nx_kernel.accepts (Monoid Sum) dt
-  then begin
+  cover "a copy of a view"
+    (both ~msg:"a copy of a view" ~sub:box fresh
+       (fun ~dst a -> Support.map1 (module K) Copy ~dst a)
+       flipped (slice box flipped));
+  let integer =
+    (D.is D.Signed dt || D.is D.Unsigned dt)
+    && Nx_kernel.accepts (Monoid Sum) dt
+  in
+  let summed =
+    integer
+    &&
     let id = P.v ~ins:[| D.Any dt |] [| P.In 0 |] ~outs:[| 0 |] in
     let whole = { M.start = 0; count = shape.(r - 1); step = 1 } in
     let obox = Array.mapi (fun i g -> if i = r - 1 then whole else g) box in
@@ -1482,14 +1502,17 @@ let law_box (b : Support.backend) (Pair (x, y), box) =
     in
     match (sum ~dst:d x, sum ~dst:d' (slice obox x)) with
     | A.Done, A.Done ->
-        cover "an integer sum" true;
         equal ~msg:"sum" (list string) []
-          (differ (A.copy (slice (Array.sub box 0 (r - 1)) (host d))) (host d'))
-    | A.Declined, A.Declined -> cover "declined" true
+          (differ (A.copy (slice (Array.sub box 0 (r - 1)) (host d))) (host d'));
+        true
+    | A.Declined, A.Declined ->
+        collect "declined";
+        false
     | p, q ->
         failf "sum answered %a over the whole and %a over the box"
           Nx_array_support.pp_answer p Nx_array_support.pp_answer q
-  end
+  in
+  cover "an integer sum" summed
 
 (* The laws of maps that move bits, which every backend computes. *)
 let moves (b : Support.backend) =
@@ -1506,7 +1529,8 @@ let moves (b : Support.backend) =
            covers_large c;
            law_copy b c));
     test "copy keeps NaN payloads" (unit (test_copy_nan_payloads b));
-    prop "bitcast keeps every element's bits" (same_width case)
+    (* A bitcast outside its domain is about one case in six. *)
+    prop ~count:200 "bitcast keeps every element's bits" (same_width case)
       (run (fun ((c, _) as x) ->
            covers c;
            law_bitcast b x));
@@ -1545,7 +1569,8 @@ let laws (b : Support.backend) =
              if D.bits s < 8 || specials s = [] then None
              else Some (test (D.name s) (unit (test_specials b d))))
            D.all);
-      prop "where picks bytes and fma is nx_kinds.h's"
+      (* An fma outside its domain is about one case in five. *)
+      prop ~count:150 "where picks bytes and fma is nx_kinds.h's"
         (Gen.pair pairs Gen.nat)
         (run (law_map3 b));
       prop "fill stores its element and iota each index"
@@ -1575,9 +1600,9 @@ let laws (b : Support.backend) =
         "a map, a sum and a scan at any offset their dtype admits have the \
          bits they have at a buffer's start"
         (Gen.with_pp pp_offsets offset_cases) (run (law_offsets b));
-      (* "a where" and "a load of one repeated element" come in one case
-         in twenty-five: 400 cases reach each in every run. *)
-      prop ~count:400
+      (* "a where" and "a load of one repeated element" come in 4.4% and
+         5.0% of cases: 600 cases miss each with probability below 2e-12. *)
+      prop ~count:600
         ~examples:(List.map (fun p -> (p, 1, Plain)) large_view_pairs)
         "a map gives the bits of its nodes run one by one"
         split_cases (run (law_split ~declines:(fun _ _ -> false) b));
