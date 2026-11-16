@@ -1505,10 +1505,22 @@ let allocation =
       test "an add of one-element host values allocates its budget" (fun () ->
           let a = on_host Plain D.Float32 [| 1 |] [| 1. |] in
           at_most (float 0.5) ~than:52. (words (fun () -> Nx.add a a)));
-      test "an add_s of a one-element host value allocates its budget"
+      test "an add_s allocates its baseline whatever call came before"
         (fun () ->
+          (* Its words after [before ()], beyond [before ()]'s own. *)
           let a = on_host Plain D.Float32 [| 1 |] [| 1. |] in
-          at_most (float 0.5) ~than:51. (words (fun () -> Nx.add_s a 1.)));
+          let after before =
+            words (fun () ->
+                ignore (Sys.opaque_identity (before ()));
+                Nx.add_s a 1.)
+            -. words before
+          in
+          expect
+            (Printf.sprintf "%.0f %.0f %.0f words"
+               (after (fun () -> Nx.add_s a 1.))
+               (after (fun () -> Nx.add_s a 2.))
+               (after (fun () -> Nx.mul_s a 1.)))
+          @@ __POS_OF__ {| 70 70 70 words |});
       test "an add of host values performs no effect" (fun () ->
           let a = on_host Plain D.Float32 [| 3 |] [| 1.; 2.; 3. |] in
           equal (array bits) [| 2.; 4.; 6. |]

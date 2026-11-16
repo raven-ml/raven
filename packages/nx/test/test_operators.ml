@@ -175,6 +175,109 @@ let laws =
     (List.map (fun f -> prop f.name operand (law_form f)) forms
     @ List.map (fun f -> prop f.tname operand (law_test f)) tests)
 
+(* Literals *)
+
+(* A host value of [dt] over [data], each byte of a bool its low bit. *)
+let of_bytes (type v s) (dt : (v, s) D.t) data : (v, s, Nx.host) Nx.t =
+  let data =
+    match dt with
+    | D.Bool -> String.map (fun c -> Char.chr (Char.code c land 1)) data
+    | _ -> data
+  in
+  let n = String.length data * 8 / D.bits dt in
+  Nx.Repr.of_array Nx.Host.v
+    (A.v dt (L.contiguous [| n |]) (Rig.Buffer.of_string data))
+
+(* Values of [dt] that a literal breaks on. The bit patterns zero, one, all
+   ones and the signed range's ends: for an integer its range's ends, for int4
+   and uint4 each nibble's corners, for a float NaNs and the least subnormal.
+   For a float or complex dtype, from float64 also ±0, NaNs of both signs,
+   quiet and signalling, with payloads, ±∞ and subnormals of each width. *)
+let specials (type v s) (dt : (v, s) D.t) : (v, s, Nx.host) Nx.t =
+  let w = max 1 (D.bits dt / 8) in
+  let pattern f = String.init w f in
+  let bits =
+    String.concat ""
+      [
+        pattern (fun _ -> '\000');
+        pattern (fun i -> if i = 0 then '\001' else '\000');
+        pattern (fun _ -> '\255');
+        pattern (fun i -> if i = w - 1 then '\127' else '\255');
+        pattern (fun i -> if i = w - 1 then '\128' else '\000');
+      ]
+  in
+  let bits = of_bytes dt bits in
+  let from64 xs = Nx.cast dt (Nx.create Nx.float64 [| Array.length xs |] xs) in
+  match D.kind dt with
+  | Float | Complex ->
+      Nx.concatenate ~axis:0
+        [
+          bits;
+          from64
+            [|
+              0.; -0.; 1.; -2.25; 0.9; 1e-3; Float.nan;
+              Int64.float_of_bits 0xFFF8000000000123L;
+              Int64.float_of_bits 0x7FF4000000000001L; Float.infinity;
+              Float.neg_infinity; 1e-310; 1e-40; 6e-8; 3e38; 65504.;
+            |];
+        ]
+  | Signed | Unsigned ->
+      Nx.concatenate ~axis:0 [ bits; from64 [| 2.; 3.; 7. |] ]
+  | Boolean -> bits
+
+(* Each scalar form at each dtype gives its function's bits, NaNs as one,
+   for each literal fresh, after itself and after the others of its class,
+   its call after another form's, as a program writes them. *)
+let test_literal_orders () =
+  (* The forms that take a literal: not the operators of two values. *)
+  let literal name =
+    (not (String.contains name ' ')) || String.contains name '$'
+  in
+  let scalar = List.filter (fun f -> literal f.name) forms
+  and tscalar = List.filter (fun f -> literal f.tname) tests in
+  List.iter
+    (fun (D.Any dt) ->
+      let x = specials dt in
+      let lits = List.init (Nx.numel x) (fun i -> Nx.item [ i ] x) in
+      let one f c =
+        same_outcome
+          (outcome dt (fun () -> f.full x (Nx.scalar dt c)))
+          (outcome dt (fun () -> f.scalar x c))
+      and tone f c =
+        same_outcome
+          (outcome D.Bool (fun () -> f.tfull x (Nx.scalar dt c)))
+          (outcome D.Bool (fun () -> f.tscalar x c))
+      in
+      let each g = List.iter g scalar and teach g = List.iter g tscalar in
+      List.iter
+        (fun c ->
+          each (fun f -> one f c);
+          teach (fun f -> tone f c))
+        lits;
+      each (fun f -> List.iter (fun c -> one f c; one f c) lits);
+      teach (fun f -> List.iter (fun c -> tone f c; tone f c) lits);
+      each (fun f -> List.iter (one f) (List.rev lits));
+      teach (fun f -> List.iter (tone f) (List.rev lits)))
+    D.all
+
+(* Two domains calling one scalar form of one kind, dtype and side, each with
+   its own literal, a million times each: every result has its literal's bits.
+   A scalar form shares nothing between calls that one domain could read
+   half-written from another; at this count a torn read shows. *)
+let test_two_domains () =
+  let x = Nx.create Nx.float32 [| 4 |] [| 1.5; -2.25; 3.; 0.7 |] in
+  let run c () =
+    let want = Nx.to_array (Nx.mul x (Nx.scalar Nx.float32 c)) in
+    let wrong = ref 0 in
+    for _ = 1 to 1_000_000 do
+      if Nx.to_array (Nx.mul_s x c) <> want then incr wrong
+    done;
+    !wrong
+  in
+  let other = Domain.spawn (run 0.001) in
+  let here = run 0.9 () in
+  equal (pair int int) (0, 0) (here, Domain.join other)
+
 (* Binary operators of two values, each its function: [b] is [a]'s
    elements reversed, broadcast where [a] has a unit last axis. *)
 type pair_form = {
@@ -316,6 +419,10 @@ let cases_group =
       test "Infix's && and || are logical_and and logical_or" test_logical;
       test "a formula reads as its arithmetic" test_reads_as_prose;
       test "a scalar form computes where its operand lies" test_placement;
+      test "a scalar form gives its function's bits whatever came before"
+        test_literal_orders;
+      test "two domains' scalar forms of one kind give their own literals'"
+        test_two_domains;
       test ".%{} is get and .${} is slice" test_index_operators;
       test "open Nx keeps OCaml's operators" test_stdlib;
       cases "refusals name the scalar form" ~id:fst refusals (fun (by, f) ->

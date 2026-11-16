@@ -3107,6 +3107,12 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- A scalar form (`Nx.add_s`, `Nx.mul_s`, `Nx.rsub_s`, `Nx.less_s`, ...)
+  builds its program on each call and keeps none between calls: an eager
+  call allocates 70 words whatever call came before, in any domain, where
+  it allocated 51 after a call of its kind, dtype and side with the same
+  literal and 90 after one with another. The process's first call at each
+  dtype allocates 80, making that dtype's operand program once.
 - `Nx.vdot` is the `Nx.matmul` of its flattened operands, the same kernel
   call, and no longer parses a pattern on each call: it allocates 154
   words a call where it allocated 823.

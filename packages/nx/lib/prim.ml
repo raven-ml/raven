@@ -2511,32 +2511,17 @@ let identity dt =
       identities.(i) <- Some p;
       p
 
-(* The literal program made last for each kind, dtype and side, beside its
-   literal's bits: a scalar form that repeats its literal, as a loop does,
-   builds no program and allocates the bits alone. A slot that two domains
-   fill at once keeps either's pair; each pair holds its own bits. *)
-let literals : (string * P.t) option array =
-  Array.make (op2_codes * dtypes * 2) None
-
 (* A literal's program: [k] of its one operand and the literal, read second,
-   or first where [swapped]. A program of three nodes: it holds the literal's
-   bits. *)
+   or first where [swapped]. A program of three nodes, made at each call: it
+   holds the literal's bits, so no two calls share a program. Its operands
+   are {!identity}'s. *)
 let literal2 ~by ~swapped k dt c =
   check_value ~by dt c;
-  let bits = P.bits dt c in
-  let i = (((code2 k * dtypes) + D.code dt) * 2) + Bool.to_int swapped in
-  match literals.(i) with
-  | Some (b, p) when String.equal b bits -> p
-  | Some _ | None ->
-      if not (P.accepts2 k dt) then
-        refused ~by (P.Op2 (k, 0, 1)) [| D.Any dt; D.Any dt |];
-      let op : P.node = if swapped then Op2 (k, 1, 0) else Op2 (k, 0, 1) in
-      let p =
-        P.v ~ins:[| D.Any dt |] [| In 0; Const (D.Any dt, bits); op |]
-          ~outs:[| 2 |]
-      in
-      literals.(i) <- Some (bits, p);
-      p
+  if not (P.accepts2 k dt) then
+    refused ~by (P.Op2 (k, 0, 1)) [| D.Any dt; D.Any dt |];
+  let ins = (identity dt).ins in
+  let op : P.node = if swapped then Op2 (k, 1, 0) else Op2 (k, 0, 1) in
+  P.v ~ins [| In 0; Const (Iarray.get ins 0, P.bits dt c); op |] ~outs:[| 2 |]
 
 (* The map of [prog] over [loads], into [dt]. *)
 let one_node prog dt loads =

@@ -6,36 +6,36 @@
 # ocaml: 5.5.2 · 64-bit · release
 # forced: blessed under load 38.1 on 14 cores
 
-Adafactor/Adafactor/1024	alloc_words	exact	4406
-Adafactor/Adafactor/256	alloc_words	exact	4406
-Adagrad/Adagrad/1024	alloc_words	exact	952
-Adagrad/Adagrad/256	alloc_words	exact	952
-Adam/Adam/1024	alloc_words	exact	3124
-Adam/Adam/256	alloc_words	exact	3124
-Adam/Adam/bfloat16/1024	alloc_words	exact	7953
-AdamW/AdamW/1024	alloc_words	exact	3431
-AdamW/AdamW/256	alloc_words	exact	3431
-Adan/Adan/1024	alloc_words	exact	2475
-Adan/Adan/256	alloc_words	exact	2475
-L-BFGS/1024	alloc_words	exact	21843
-L-BFGS/256	alloc_words	exact	21843
-L-BFGS/bfloat16/256	alloc_words	exact	27223
-LAMB/LAMB/1024	alloc_words	exact	4482
-LAMB/LAMB/256	alloc_words	exact	4482
-LARS/LARS/1024	alloc_words	exact	2201
-LARS/LARS/256	alloc_words	exact	2201
-Lion/Lion/1024	alloc_words	exact	1173
-Lion/Lion/256	alloc_words	exact	1173
+Adafactor/Adafactor/1024	alloc_words	exact	4639
+Adafactor/Adafactor/256	alloc_words	exact	4639
+Adagrad/Adagrad/1024	alloc_words	exact	999
+Adagrad/Adagrad/256	alloc_words	exact	999
+Adam/Adam/1024	alloc_words	exact	3272
+Adam/Adam/256	alloc_words	exact	3272
+Adam/Adam/bfloat16/1024	alloc_words	exact	8158
+AdamW/AdamW/1024	alloc_words	exact	3579
+AdamW/AdamW/256	alloc_words	exact	3579
+Adan/Adan/1024	alloc_words	exact	2483
+Adan/Adan/256	alloc_words	exact	2483
+L-BFGS/1024	alloc_words	exact	21957
+L-BFGS/256	alloc_words	exact	21957
+L-BFGS/bfloat16/256	alloc_words	exact	27394
+LAMB/LAMB/1024	alloc_words	exact	4661
+LAMB/LAMB/256	alloc_words	exact	4661
+LARS/LARS/1024	alloc_words	exact	2244
+LARS/LARS/256	alloc_words	exact	2244
+Lion/Lion/1024	alloc_words	exact	1164
+Lion/Lion/256	alloc_words	exact	1164
 Loss_scale/step/1024	alloc_words	exact	3116
-RAdam/RAdam/1024	alloc_words	exact	4938
-RAdam/RAdam/256	alloc_words	exact	4938
-RMSprop/RMSprop/1024	alloc_words	exact	1240
-RMSprop/RMSprop/256	alloc_words	exact	1240
-SGD-Momentum/SGD-Momentum/1024	alloc_words	exact	797
-SGD-Momentum/SGD-Momentum/256	alloc_words	exact	797
-SGD/SGD/1024	alloc_words	exact	584
-SGD/SGD/256	alloc_words	exact	584
-SGD/SGD/bfloat16/1024	alloc_words	exact	2798
+RAdam/RAdam/1024	alloc_words	exact	5158
+RAdam/RAdam/256	alloc_words	exact	5158
+RMSprop/RMSprop/1024	alloc_words	exact	1264
+RMSprop/RMSprop/256	alloc_words	exact	1264
+SGD-Momentum/SGD-Momentum/1024	alloc_words	exact	841
+SGD-Momentum/SGD-Momentum/256	alloc_words	exact	841
+SGD/SGD/1024	alloc_words	exact	607
+SGD/SGD/256	alloc_words	exact	607
+SGD/SGD/bfloat16/1024	alloc_words	exact	2858
 
 # machine: 943935ae6b4f79ac
 # host: MacBookPro.Home · Apple M1 Max · arm64 · macos

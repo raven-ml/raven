@@ -1166,13 +1166,12 @@ let shared_law (steps, ux, uc, ts) =
 
 (* A chain of one kind of map
 
-   A chain of [Nx.mul_s] by one scalar applies one program, which a derivative
-   finds again as the last plan it found. nx keeps one program per kind,
-   dtype and scalar, rebuilt when the scalar changes, so [x * 2 * 3 * 2]
-   reaches its second [* 2] with a new program equal to the first. A link of
-   the chain after it costs what a link of a chain without the [* 3] does,
-   whose words a baseline records: a derivative that finds its plan again by
-   hashing allocates its key. *)
+   Each [Nx.mul_s] makes its program, which holds its scalar, and nx keeps
+   none between calls: every link of a chain reaches the derivative with a
+   new program, equal to the last one's where the scalar repeats, and the
+   derivative finds its plan again by hashing, which allocates its key. A
+   link after [x * 2 * 3 * 2] costs what a link after [x * 2] does, whatever
+   scalars came before, and a baseline records its words. *)
 
 let chain_words pre n =
   let x = Nx.create f64 [| 4 |] [| 1.; 2.; 3.; 4. |] in
@@ -1201,7 +1200,7 @@ let test_rebuilt_chain () =
   let rebuilt = link [ 2.; 3.; 2. ] in
   equal ~msg:"words per link" float_exact (link [ 2. ]) rebuilt;
   Windtrap.expect (Printf.sprintf "%.0f words" rebuilt)
-  @@ __POS_OF__ {| 259 words |}
+  @@ __POS_OF__ {| 287 words |}
 
 let () =
   exit

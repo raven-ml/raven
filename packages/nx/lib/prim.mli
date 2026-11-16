@@ -432,9 +432,8 @@ val literal2 :
   Nx_kernel.Prog.t
 (** [literal2 ~by ~swapped k dt c] is the program of [k] over one operand of
     [dt] and the literal [c] of [dt], held in the program: [k x c], or [k c x]
-    where [swapped]. A call that repeats the literal's bits of the last call
-    of its [k], [dt] and side gives that call's program; any other makes
-    one.
+    where [swapped]. Each call makes its program, and nothing is kept
+    between calls.
 
     Raises [Invalid_argument] naming [by] and [c] where [dt] does not hold [c]
     ({!check_value}), and naming [by] where [k] does not take [dt]. *)
