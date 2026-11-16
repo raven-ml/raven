@@ -1,0 +1,43 @@
+(executable
+ (name fresh))
+
+; Check the committed code object, which gen.py compiles from src/, in every
+; tree, including trees without the toolchain.
+
+(rule
+ (target embedded.co)
+ (action
+  (progn
+   (chdir
+    %{workspace_root}
+    (run
+     %{exe:fresh.exe}
+     %{dep:gfx12-generic.co}
+     %{dep:gen.py}
+     %{dep:libc/math.h}
+     %{dep:libc/string.h}
+     %{dep:src/kernels.h}
+     %{dep:src/device.h}
+     %{dep:src/dtypes.h}
+     %{dep:../../array/nx_dtype.h}
+     %{dep:../../kernel/nx_kernel.h}
+     %{dep:../../kernel/nx_kinds.h}
+     %{dep:../../kernel/nx_kinds_real.h}
+     %{dep:../../kernel/nx_kinds_complex.h}
+     %{dep:src/zero.hip}
+     %{dep:src/loop.hip}
+     %{dep:src/moves.hip}
+     %{dep:src/fft.hip}
+     %{dep:src/sort.hip}
+     %{dep:src/contract.hip}
+     %{dep:src/wmma.h}
+     %{dep:src/factor.hip}
+     %{dep:src/sp_common.h}
+     %{dep:src/sp_block.h}
+     %{dep:src/sp_jacobi.h}
+     %{dep:src/sp_tridiag.h}
+     %{dep:src/sp_stedc.h}
+     %{dep:src/sp_bd.h}
+     %{dep:src/sp_eig.h}
+     %{dep:src/spectral.hip}))
+   (copy gfx12-generic.co embedded.co))))
