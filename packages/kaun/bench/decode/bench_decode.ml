@@ -250,6 +250,34 @@ let routed ~run ~tokens at =
   | Compiled -> ignore (lowered "moe" (fun () -> f ids x)));
   fun () -> Nx.sync (f ids x)
 
+(* A routed MXFP4 product of 64 bfloat16 tokens on the host, 4 of 8 experts
+   of [[| 512; 512 |]] a token, compiled. Against bfloat16 rows each code
+   times its scale enters as a bfloat16, which the host rounds from a float32
+   product. Built as CUDA builds it, through the subnormal [2^-127] times
+   [2^126], a product of this shape took 1.6 times as long on fudge: x86
+   multiplies a subnormal through a microcode assist. *)
+let routed_bfloat16 at =
+  let experts = 8 and n = 512 and tokens = 64 in
+  let w =
+    Nx_quant.place at
+      (Nx_quant.mxfp4
+         ~scales:(Nx.copy (Nx.full Nx.uint8 [| experts; n; n / 32 |] 127))
+         (Nx.copy (random [| experts; n; n / 2 |])))
+  in
+  let ids =
+    Nx.init Nx.int64 [| tokens; per_token |] (fun i ->
+        Int64.of_int (((i.(0) * 7) + (i.(1) * 2)) mod experts))
+  in
+  let x = Nx.cast Nx.bfloat16 (Nx.full Nx.float32 [| tokens; 1; n |] 0.5) in
+  let f =
+    Rune.jit
+      Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+      (fun ids x -> Nx_quant.apply_experts ~ids w x)
+  in
+  let ids = own at ids and x = own at x in
+  ignore (lowered "moe" (fun () -> f ids x));
+  fun () -> Nx.sync (f ids x)
+
 (* Dense quantised products, one per format, at a decode step's shape: one token
    by a [[| 4096; 4096 |]] projection, compiled. MXFP4 is read from a
    checkpoint's bytes and from GGUF's blocks, whose codes a product reads
@@ -373,12 +401,16 @@ let host =
   products ~tokens:[ 1; 64 ] ~n:1024
     ~many:[ (10, Bfloat16); (64, Bfloat16) ]
     devices
-  @ [ routed_on devices ~run:Eager ~tokens:1 ", eager" ]
+  @ [
+      routed_on devices ~run:Eager ~tokens:1 ", eager";
+      on devices "routed product of 8 experts of 512, 64 bfloat16 tokens"
+        { at = (fun at -> routed_bfloat16 at) };
+    ]
 
 let get_ok = function Ok d -> d | Error e -> failwith e
 
 let gpu_many =
-  List.map (fun n -> (n, Bfloat16)) [ 12; 16; 17; 32; 64; 128; 256 ]
+  List.map (fun n -> (n, Bfloat16)) [ 1; 12; 16; 17; 32; 64; 128; 256; 512 ]
   @ [ (64, Float32) ]
 
 (* The GPU: CUDA's first, else AMD's first. *)

@@ -434,6 +434,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- On CUDA and NV, a compiled MXFP4 product of `bfloat16` activations
+  (`Nx_quant.apply`, `apply_experts`) builds each weight's `bfloat16` from
+  its code's bits by two exact multiplies, where it computed a `float32`
+  value and rounded it: on an RTX 5000 Ada gpt-oss-20b's 512-token prefill
+  takes 7.8% less, its 12-token prefill 10%, a decode step 1.6%; the
+  values are the same. Other targets keep the `float32` route.
 - A Ctrl-C ends a `Rune.jit` call on a Metal device while Metal compiles
   its pipelines; before, the call ignored it until every build finished,
   over four minutes for a program of 878 launches.

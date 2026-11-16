@@ -568,19 +568,76 @@ let bfloat16_values dt scale acc =
   | D.Any D.Float4_e2m1fn, Exponent _, D.Any D.Float32 -> true
   | _ -> false
 
-(* [entered acc ~other x] is [x]'s parts stored into [acc], each element times
-   its block's scale read into [acc], the product rounded once. Where [other],
-   the other operand's dtype, is bfloat16 and [x]'s products are all
-   bfloat16s, a product enters as a float32 cast of its bfloat16, the same
-   value: tolk's tensor cores multiply a product of two float32 casts of their
-   input type, so the two operands then share the bf16 core. Against another
-   dtype no core takes both, and the round trip would cost a cast per element
-   for nothing. *)
-let entered acc ~other { dtype; node; scale } =
+(* bfloat16's fields: the sign at bit 15, the exponent at bit 7, the
+   mantissa's top bit at bit 6. e2m1's sign is bit 3 of a code, its
+   exponent and mantissa bits 2 to 0. *)
+let bf16_sign = 15
+and bf16_exponent = 7
+and bf16_mantissa_top = 6
+and e2m1_sign = 3
+
+(* [2^-127], the bfloat16 subnormal of e8m0's byte 0, and bfloat16's quiet
+   NaN, of byte 255. *)
+let bf16_least_scale = 0x0040
+and bf16_nan = 0x7FC0
+
+(* A code's placed bits are the code times [2^-126]; this undoes it. *)
+let e2m1_placed = Float.ldexp 1. 126
+
+(* [e2m1_bfloat16 code scale] is the bfloat16 product of the e2m1 [code], a
+   [Uint8] below 16, and the e8m0 [scale] byte, the value the float32 route
+   rounds a float32 product to, by exact steps.
+
+   A code [s e1 e0 m] goes to the bfloat16 of bits [s << 15 | e1 e0 m << 6]:
+   exponent field [e] and top mantissa bit [m], which is the code times
+   [2^-126], the subnormal [m/2 · 2^-126] where [e] is [0]; one product by
+   [2^126] makes it the code. The scale is the bfloat16 of bits [s << 7],
+   [2^-127] (bits [0x0040]) at [0] and NaN at [255], as {!power}'s float32.
+   A code, of two significant bits, times a power of two of bfloat16's
+   range is exact, an overflow's infinity included: bfloat16 and float32
+   share the range. One product by [2^(s - 1)] would overflow past
+   [s = 128]. Codes [±0.5] multiply the subnormal [2^-127], so a target
+   takes this only where its multiplies keep subnormals at full rate
+   ({!Tolk.Renderer.t.full_rate_subnormals}). *)
+let e2m1_bfloat16 code scale =
+  let k x n = Shape.const_like x (`Int (Bigint.of_int n)) in
+  let bf16 x = Ops.bitcast (Ops.cast x Dtype.Uint16) Dtype.Bfloat16 in
+  let c = Ops.cast code Dtype.Uint32 in
+  let sign = 1 lsl e2m1_sign in
+  let bits =
+    Ops.bitwise_or
+      (Ops.shl (Ops.bitwise_and c (k c sign)) (k c (bf16_sign - e2m1_sign)))
+      (Ops.shl
+         (Ops.bitwise_and c (k c (sign - 1)))
+         (k c bf16_mantissa_top))
+  in
+  let s = Ops.cast scale Dtype.Uint32 in
+  let scale =
+    Ops.where
+      (Ops.eq s (k s 0))
+      (k s bf16_least_scale)
+      (Ops.where (Ops.eq s (k s 255)) (k s bf16_nan)
+         (Ops.shl s (k s bf16_exponent)))
+  in
+  let v = bf16 bits in
+  let up = Shape.const_like ~dtype:Dtype.Bfloat16 v (`Float e2m1_placed) in
+  Ops.mul (Ops.mul v up) (bf16 scale)
+
+(* [entered ~renderer acc ~other x] is [x]'s parts stored into [acc], each
+   element times its block's scale read into [acc], the product rounded once.
+   Where [other], the other operand's dtype, is bfloat16 and [x]'s products
+   are all bfloat16s, a product enters as a float32 cast of its bfloat16, the
+   same value: tolk's tensor cores multiply a product of two float32 casts of
+   their input type, so the two operands then share the bf16 core. Against
+   another dtype no core takes both, and the round trip would cost a cast per
+   element for nothing. Where [renderer]'s multiplies keep subnormals at full
+   rate, the bfloat16 of an e2m1 product is built in bfloat16
+   ({!e2m1_bfloat16}), and elsewhere rounded from its float32. *)
+let entered ~renderer acc ~other { dtype; node; scale } =
   let x = Arith.cast ~src:dtype acc node in
   match (scale, acc) with
   | None, _ -> Arith.parts acc x
-  | Some sc, D.Any (D.Float32 | D.Float64) ->
+  | Some sc, D.Any (D.Float32 | D.Float64) -> (
       let t = Arith.dtype acc and s = extents x in
       let v =
         match sc with
@@ -589,9 +646,14 @@ let entered acc ~other { dtype; node; scale } =
       in
       let bf16 = D.Any D.Bfloat16 in
       let paired = match other with D.Any D.Bfloat16 -> true | _ -> false in
-      if paired && bfloat16_values dtype sc acc then
-        [ Arith.cast ~src:bf16 acc (Arith.cast ~src:acc bf16 v) ]
-      else [ v ]
+      let subnormals () =
+        (Lazy.force renderer).Tolk.Renderer.full_rate_subnormals
+      in
+      match sc with
+      | _ when not (paired && bfloat16_values dtype sc acc) -> [ v ]
+      | Exponent c when subnormals () ->
+          [ Arith.cast ~src:bf16 acc (e2m1_bfloat16 node (blocks c s)) ]
+      | _ -> [ Arith.cast ~src:bf16 acc (Arith.cast ~src:acc bf16 v) ])
   | Some _, D.Any d ->
       raise
         (Arith.Unlowered
@@ -940,8 +1002,8 @@ let rows ~renderer ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
     if c = 1 then
       let id = Ops.where inside o (int o 0) in
       let b' = picked ~clamped:true b b_axis (spread id sb b_sides b_axis) in
-      let a' = entered acc ~other:b.dtype a in
-      let b' = entered acc ~other:a.dtype b' in
+      let a' = entered ~renderer acc ~other:b.dtype a in
+      let b' = entered ~renderer acc ~other:a.dtype b' in
       let laid = Option.map (move ~src:j ~dst:nb) init in
       let pairs = batch @ [ (a_axis, b_axis) ] in
       let r = sum ~batch:pairs ~contracting ~acc ~out a' b' laid in
@@ -967,8 +1029,8 @@ let rows ~renderer ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
       let a' = split a' a_axis [ blocks; c ] in
       let owner = spread r.owner sb b_sides b_axis in
       let b' = picked ~clamped:true b b_axis owner in
-      let a' = entered acc ~other:b.dtype a' in
-      let b' = entered acc ~other:a.dtype b' in
+      let a' = entered ~renderer acc ~other:b.dtype a' in
+      let b' = entered ~renderer acc ~other:a.dtype b' in
       let up x = if x > a_axis then x + 1 else x in
       let shift = List.map (fun (x, y) -> (up x, y)) in
       let pairs = shift batch @ [ (a_axis, b_axis) ] in
@@ -1216,7 +1278,8 @@ let contract ~renderer ~batch ~contracting ~segments ~acc ~out a b init =
   let batch = Iarray.to_list batch in
   let contracting = Iarray.to_list contracting in
   let entered () =
-    (entered acc ~other:b.dtype a, entered acc ~other:a.dtype b)
+    ( entered ~renderer acc ~other:b.dtype a,
+      entered ~renderer acc ~other:a.dtype b )
   in
   match (segments : Ops.t Nx_kernel.segments option) with
   | None -> (

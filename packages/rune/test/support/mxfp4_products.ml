@@ -123,3 +123,85 @@ let law ?(flushes = false) (module S : Nx.Devices) c =
       check ~kept:(Fun.const true) "eager" (Nx_quant.apply w x);
       check ~kept:(fun i -> (not flushes) || normal ~n:c.n i) "compiled" y
   | _ -> invalid_arg "Mxfp4_products.law: not a float dtype"
+
+(* Decodes
+
+   Each e2m1 code at each scale byte, through a compiled product of bfloat16
+   rows: the subnormal scales 0 and 1, the bytes about 1, and 254 and 255,
+   where codes of 2 or more overflow and every code is NaN. *)
+
+type decode = { tokens : int; experts : bool }
+
+let pp_decode ppf d =
+  Format.fprintf ppf "%d tokens%s" d.tokens
+    (if d.experts then ", through experts" else "")
+
+let decodes =
+  List.concat_map
+    (fun experts -> List.map (fun tokens -> { tokens; experts }) [ 1; 64 ])
+    [ false; true ]
+
+let decode_bytes = [| 0; 1; 126; 127; 128; 254; 255 |]
+let decode_k = 256
+
+(* e2m1's values, by code: sign, then magnitude. *)
+let e2m1 c =
+  let m = [| 0.; 0.5; 1.; 1.5; 2.; 3.; 4.; 6. |].(c land 7) in
+  if c land 8 = 0 then m else -.m
+
+(* The value of code [c] at scale byte [s], at float32: [2^(s - 127)] times
+   the code, infinite past float32's range, NaN at 255. *)
+let decoded_value s c =
+  if s = 255 then Float.nan
+  else
+    Int32.float_of_bits (Int32.bits_of_float (Float.ldexp (e2m1 c) (s - 127)))
+
+(* Row [16 b + c] holds code [c] at each of its [decode_k] values, at scale
+   byte [decode_bytes.(b)]; each row of [x] holds [2^-8] at each, so an
+   output is [decode_k] equal terms that sum to the row's value exactly,
+   [+0] for both zeros. *)
+let decode_law ?(flushes = false) (module S : Nx.Devices) d =
+  let n = 16 * Array.length decode_bytes and k = decode_k in
+  let byte r = decode_bytes.(r / 16) in
+  let codes =
+    Array.init (n * k / 2) (fun i ->
+        let c = i / (k / 2) mod 16 in
+        c lor (c lsl 4))
+  in
+  let scales = Array.init (n * k / 32) (fun i -> byte (i / (k / 32))) in
+  let lead = if d.experts then [| 2 |] else [||] in
+  let twice a = if d.experts then Array.append a a else a in
+  let part last a =
+    Nx.create Nx.uint8 (Array.append lead [| n; last |]) (twice a)
+  in
+  let w = Nx_quant.mxfp4 ~scales:(part (k / 32) scales) (part (k / 2) codes) in
+  let ws = Nx_quant.place S.on w in
+  let x = Nx.place S.on (Nx.full Nx.bfloat16 [| d.tokens; k |] 0x1p-8) in
+  let y =
+    if d.experts then
+      let ids =
+        Nx.place S.on
+          (Nx.init Nx.int64 [| d.tokens |] (fun i ->
+               Int64.of_int (i.(0) mod 2)))
+      in
+      Rune.jit
+        Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+        (fun ids x -> Nx_quant.apply_experts ~ids ws x)
+        ids x
+    else Rune.jit Nx.Ptree.(tensor @-> returns tensor) (Nx_quant.apply ws) x
+  in
+  let show v = if Float.is_nan v then "nan" else Printf.sprintf "%h" v in
+  (* On a target that flushes, the rows whose values are normal: bytes past
+     1, whose least nonzero value is [2^-126]. *)
+  let kept r = (not flushes) || byte r > 1 in
+  let expected =
+    Array.init (d.tokens * n) (fun i ->
+        let r = i mod n in
+        if kept r then show (decoded_value (byte r) (r mod 16) +. 0.) else "-")
+  in
+  let got =
+    Array.mapi
+      (fun i v -> if kept (i mod n) then show v else "-")
+      (Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on y)))
+  in
+  equal (array string) expected got

@@ -9,10 +9,11 @@
    numbering of repeated keys eager's counts, a cast between float32 and a
    16-bit float gives eager's bits at every code and tie, as does a cast of
    an integer to a float at the ties of every exponent, a product of narrow
-   floats or of MXFP4 weights holds its bound, a routed product of MXFP4 or
-   bfloat16 experts of exact sums gives eager's bits in blocks of 4, 48 and
-   64 rows and takes a tensor core and its blocks at the edges the lowering
-   states, as does a routed pair whose second product reads computed rows,
+   floats or of MXFP4 weights holds its bound, an MXFP4 product of bfloat16
+   rows decodes each code at each scale byte exactly, a routed product of
+   MXFP4 or bfloat16 experts of exact sums gives eager's bits in blocks of 4,
+   48 and 64 rows and takes a tensor core and its blocks at the edges the
+   lowering states, as does a routed pair whose second product reads computed rows,
    with biases or without, and a routed product of computed rows holds its
    bound, a narrow float's fma rounds once, a call's check raises at the
    next wait, so the call returns while its work runs, a key split there has
@@ -3049,6 +3050,14 @@ let () =
                (fun c ->
                  let d, s = on_gpu () in
                  Mxfp4_products.law ~flushes:(flushes d) s c);
+             Windtrap.cases
+               "an MXFP4 product of bfloat16 rows decodes each code at each \
+                scale exactly"
+               ~id:(Format.asprintf "%a" Mxfp4_products.pp_decode)
+               Mxfp4_products.decodes
+               (fun c ->
+                 let d, s = on_gpu () in
+                 Mxfp4_products.decode_law ~flushes:(flushes d) s c);
              test
                "a routed MXFP4 expert of 12 tokens streams its matrices across \
                 threads"

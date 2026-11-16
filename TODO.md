@@ -25,13 +25,19 @@ Where it stands, with every measurement: doc/performance.md.
   CUDA, one workgroup an SM; its values spilled for a tile are refilled
   every tile, skipped ones included, which keeps K's copy from moving
   before the mask
-- tolk's tensor core decodes MXFP4 in its warps before each multiply, 0.37
-  SM-cycles a weight against a stream's 0.25, below the memory's rate. A
-  decode into packed halves from an offline layout (Marlin, arXiv
-  2408.11743 §3.4) would keep it at that rate: rune's routed blocks would
-  then take the core from one row an expert, as bfloat16 slices do, where
-  they stream blocks of 4 up to 2 rows, and Mixtral-like experts would
-  lose nothing at 9-12 tokens
+- gpt-oss-20b's MXFP4 experts on fudge's RTX 5000 Ada, measured on
+  2026-11-15 with rune's float32 decode, before the bfloat16 decode and the
+  byte merge: a core takes 0.31-0.33 SM-cycles a weight at prefill and the
+  stream of 4 at 12 tokens 0.38, not 0.37 against 0.25, which rune's
+  `stream_held = 2` (`Lower_reduce`) still cites; DRAM reads the
+  compulsory bytes in every variant. Of the 512-token gap to vLLM, the
+  decode in the warps took 2.84 ms of gate_up's 6.27 and 1.50 of down's
+  3.49, and the code loads, 20 single bytes a thread a trip, 4.14 and 2.13
+  once the decode is cheap; a layout gains nothing at 64 tokens without
+  that decode. At 64 tokens down's 324 workgroups on 300 slots lose 0.58
+  ms to the wave tail. The decode costs 7-11% of the decode step's expert
+  kernels and 22-23% of the 12-token ones; the experts are 0.11 ms of the
+  decode step's 2.89 ms gap to llama.cpp
 - A tensor core's kernel sums its whole reduce in each thread, so a grid
   of few blocks by few outputs reads its operand more slowly than a
   stream: on Mixtral-like experts (8 of 14336 by 4096, top 2) rune's

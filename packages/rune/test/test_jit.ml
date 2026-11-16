@@ -5732,6 +5732,12 @@ let () =
                ~id:(Format.asprintf "%a" Mxfp4_products.pp)
                Mxfp4_products.cases
                (Mxfp4_products.law (module Nx.Host));
+             Windtrap.cases
+               "an MXFP4 product of bfloat16 rows decodes each code at each \
+                scale exactly"
+               ~id:(Format.asprintf "%a" Mxfp4_products.pp_decode)
+               Mxfp4_products.decodes
+               (Mxfp4_products.decode_law (module Nx.Host));
              test "special values are exact" test_specials;
              test "a selection of a minimum against its constant is exact"
                test_nested_minimum;

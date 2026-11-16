@@ -1199,7 +1199,14 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
     `±0.5`.
   - A `float4_e2m1fn` element with a code scale in `float32`, against a
     `bfloat16` operand, enters as the `float32` of its `bfloat16`, the same
-    value, so that both operands take tolk's `bfloat16` tensor cores.
+    value, so that both operands take tolk's `bfloat16` tensor cores. Where
+    the renderer's multiplies keep subnormals at full rate
+    (`Tolk.Renderer.t.full_rate_subnormals`: CUDA and NV), that `bfloat16`
+    is built in `bfloat16` (`e2m1_bfloat16`): the code's bits placed as the
+    code times `2^-126`, times `2^126`, times the scale's `bfloat16`, each
+    step exact. Elsewhere it is rounded from the `float32` product: codes
+    `±0.5` pass through the subnormal `2^-127`, which Metal may flush and
+    x86 multiplies slowly.
   - A scale with an accumulator other than `float32` or `float64` is
     refused, and the program runs uncompiled.
   - Where the shape takes a tensor core (`Heuristic.core_fits`, with integer
@@ -1224,14 +1231,26 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   blocks; a decode step keeps its programs and its 7.3 ms. The
   `bfloat16` entry: none; it would be (d) by
   `GptOss/experts-at-prefill-512` (`gpt_oss.thumper`), whose fudge baseline
-  holds allocated words alone. The refusal: none.
+  holds allocated words alone. Its build in `bfloat16`: (d) by
+  `GptOss/prefill-512` and `prefill-12`, their wall baselines pending the
+  scheduled re-record: on fudge's RTX 5000 Ada, three interleaved rounds,
+  the prefill takes 49.9 ms at 512 tokens against 54.1 rounded from
+  `float32`, 26.6 at 12 against 29.6, 30.5 at 64 against 31.5, and the
+  decode step 8.60 against 8.74, words equal; with tolk's byte words
+  (tolk D482) 48.3, 26.7, 29.9 and 8.60. A decode free of subnormal
+  operands, by a select for codes `±0` and `±0.5`, lost two thirds of the
+  kernels' gain (the gate and up product at 512 tokens 888 us against 831,
+  919 rounded from `float32`). The refusal: none.
 - **Pinned by:** `Lower_reduce › contractions › scaled float contractions
   hold their bound`, which covers a NaN code; `Lower_reduce › work › a scaled
   float4 Rows contraction's work is one slice's`; `Lower_reduce › cases › a
   contraction scaled in int32 is not lowered`; `Jit › classes › an MXFP4
   product is within its bound of the exact one` on the host and `Jit_gpu ›
   products › an MXFP4 product is within its bound of the exact one` on a GPU,
-  each over `bfloat16` operands and scale bytes up to 255; in the partial
+  each over `bfloat16` operands and scale bytes up to 255; `Jit › classes ›
+  an MXFP4 product of bfloat16 rows decodes each code at each scale exactly`
+  and its `Jit_gpu › products ›` twin, every code at scale bytes 0, 1,
+  126-128, 254 and 255, bit for bit; in the partial
   form on a GPU, `Jit_gpu › quantised products ›` `a NaN scale reaches
   exactly the outputs that read its block, the others eager's bits` (scales
   varying by row and block), `a weight of no blocks sums no term` and `a
