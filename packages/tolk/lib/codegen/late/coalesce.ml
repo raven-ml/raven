@@ -267,7 +267,21 @@ let memory_coalescing sink (r : Renderer.t) =
                 sixteen_bits dt && r.half8
                 && List.for_all (fun (_, us) -> List.for_all copies us) offsets
               in
-              (if (Dtype.mem dt merged || gpu_bfloat16) && r.supports_float4
+              (* Byte loads merge where the renderer holds the merged bytes
+                 as one integer word, read by shifts: a tensor core's lane
+                 reads an MXFP4 weight's codes two bytes at a time, and one
+                 load of each byte costs an instruction and a request of
+                 the cache. A word leaves no vector of bytes for a compiler's
+                 load combine to fold at a wrong address, as LLVM folds an
+                 or of bytes in descending addresses from vector loads
+                 (above). Stores of bytes stay apart: only loads were
+                 measured. *)
+              let gpu_bytes =
+                key.op = Op.Load && Dtype.equal dt Dtype.Uint8 && r.byte_words
+              in
+              (if
+                 (Dtype.mem dt merged || gpu_bfloat16 || gpu_bytes)
+                 && r.supports_float4
                then if copy () then [ 8; 4; 2 ] else [ 4; 2 ]
                else [])
               @ [ 1 ]

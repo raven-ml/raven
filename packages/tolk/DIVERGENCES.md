@@ -1047,7 +1047,8 @@ Each part is one layer of the head's NaN rule: a float constant is its bits
   (D9). A move keeps a merged access's lanes together, so it loads and stores
   vectors of the storage, which CUDA does not name as the renderer writes them
   (`unsigned_short4`, `unsigned_char4`): the CUDA renderer declares a vector of
-  `unsigned char` or `unsigned short` as it declares one of `half`.
+  `unsigned char` or `unsigned short` as it declares one of `half`, but for
+  2 and 4 bytes, which it writes as one integer word (D482).
 - **Reason:** (b). Under the NaN rule a move keeps a NaN's bits, and nx's do:
   an eager copy, movement or `where` keeps a signalling NaN, so a compiled
   function computes what it computes eagerly only if the emulated moves keep
@@ -6158,7 +6159,8 @@ into D183, which holds its rule, its reason and its pins.
   running sum of a widening bitcast of flipped bytes read a byte off; Clang
   merges bytes that feed one lane each itself.
   On the CPU device a buffer is taken to start on a
-  boundary of that width (D54). Other renderers merge as tinygrad does.
+  boundary of that width (D54). Other renderers merge as tinygrad does,
+  but where the renderer writes bytes as words (D482).
 - **Reason:** (d): the host's contractions and lorenz_simple's step. Clang's
   straight-line vectorizer packs values into registers as wide as the stores it
   reads them from: a float32 matmul's inner loop with its 16 stores as `float4`
@@ -10372,3 +10374,91 @@ kept in ordered sets, change no source and belong to D466.
   materialisation reads in halves is computed there; one that stages read, one a reduction reads in halves and one read where it is
   broadcast stay stored), and the bench row
   `GptOss/experts-at-prefill-512`.
+
+## D482. CUDA merges byte loads into words read by shifts
+
+- **tinygrad:** `codegen/late/coalesce.py` (`memory_coalescing`, which on a
+  GPU merges `float`, `half`, `int`, `uint` and the 8-bit floats into
+  vectors of 4 and 2 and leaves bytes scalar; the same at `6b7b018da`);
+  `renderer/cstyle.py` (`CUDARenderer`, which writes a vector of bytes as a
+  struct of `unsigned char` members).
+- **tolk:** `Coalesce.memory_coalescing`, through `Renderer.t.byte_words`;
+  CUDA's language in `Cstyle` (`word`, `render_dtype`, `render_index`, the
+  `Stack` rule, `cuda_kernel`'s vector definitions).
+- **Differs:** where the renderer writes bytes as words, CUDA's and so
+  NV's, adjacent `uint8` loads merge into loads of 4 and 2 under the
+  alignment rule of the other merges. A vector of 2 or 4 `uint8` is an
+  `unsigned short` or a `uint`: lane `i` is read as `(unsigned char)(w >>
+  8i)`, and a vector is built as an or of its lanes shifted by `8i`. An
+  emulated 8-bit float's vectors of 2 and 4 bytes are words too. Stores of
+  bytes and loads of `int8` stay apart; the host keeps D187, and Metal and
+  HIP merge no bytes.
+- **Reason:** (d). It reopens BYTEMERGE's decision of 2026-11-11, which
+  kept bytes apart on every GPU: its gain, about 1.1 ms of a 512-token
+  prefill, did not pay for a guard against LLVM's load combine, which folds
+  an or of bytes in descending addresses, read from vector loads, into one
+  load at the address of the first byte's vector, wrong where that byte is
+  not its vector's first. Upstream NVPTX and AMDGPU fold the struct form
+  CUDA writes so; NVRTC 13.4 does not, a compiler's behaviour, not the
+  target's. BYTEMERGE prescribed words read by shifts for any later merge:
+  a word leaves no vector of bytes to fold, so it needs no guard. The new
+  evidence, with rune's MXFP4 decode in `bfloat16` (D483, rune's L9): an
+  MXFP4 core's lane reads its codes two bytes at a time, and loaded byte by
+  byte, 20 single-byte loads a thread a trip, gpt-oss-20b's prefill on
+  fudge's RTX 5000 Ada took 1.6 ms more at 512 tokens (49.9 against 48.3
+  ms), 2.2 ms more at Q8_0 (56.6 against 54.4) and 0.6 ms more at 64
+  tokens (30.5 against 29.9), against BYTEMERGE's 1.1 ms; 12 tokens and
+  the decode step are unchanged (three interleaved rounds, medians, words
+  equal). At 32 and 96 tokens, where the decode alone slowed down's kernel
+  by 2-4% on random weights, one layer's experts take 0.93 ms against
+  0.96 and 1.02 against 1.06. CUDA's struct form, measured before, ran
+  prefill-64 in 29.3 ms and prefill-512 in 49.0-49.7, right only by NVRTC
+  13.4's behaviour. Metal and HIP keep bytes apart, unmeasured.
+- **Pinned by:** the Codegen suite's `byte assemblies on CUDA › an int32
+  assembled from bytes in descending addresses is exact` (an or, a masked
+  or, a masked sum, an xor and a product by 256 of `uint8` and `int8`
+  bytes from offsets 0 to 3, on the machine's first CUDA GPU, a thread's
+  four `uint8` from offset 0 one load of a word) and `› writes a thread's
+  four bytes as a word read by shifts`; its `words of bytes on CUDA ›`
+  `bytes copied from any start, stride and phase keep their values`
+  (buffers 0 to 3 bytes past a boundary, strides 1, 2 and 0, the merged
+  widths each start allows), `› a gated word reads its bytes where the gate
+  holds, zeros elsewhere`, `› an emulated float's selected lanes, stored as
+  a word, keep each code` (`float8_e4m3fn` through sm_80's renderer and
+  `float8_e4m3fnuz` through sm_89's, a word built from its lanes) and the
+  sources they write; the Coalesce suite's `lengths › on
+  a GPU that writes bytes as words, eight consecutive byte loads are two
+  loads of four` and `› on a GPU that writes bytes as words, stay apart:`
+  (byte stores, `int8` loads); kaun's `GptOss/prefill-512`, `prefill-12`
+  and `experts-at-prefill-512` rows, and kaun's decode bench rows
+  `Quant/cuda/mxfp4-product-of-16384-1-bfloat16-tokens` and `-512-`,
+  their fudge baselines pending the scheduled re-record.
+
+## D483. A renderer states whether its multiplies keep subnormals at full rate
+
+- **tinygrad:** `renderer/__init__.py` (`Renderer`, which states no fact
+  of subnormals).
+- **tolk:** `Renderer.t.full_rate_subnormals`, true in `Cstyle.cuda`'s
+  renderer (CUDA and NV), false elsewhere.
+- **Differs:** the renderer states whether a float multiply takes a
+  subnormal operand unflushed and as fast as a normal one. tolk reads it
+  nowhere; rune's lowering builds an MXFP4 code's `bfloat16` through one
+  (`Lower_reduce.e2m1_bfloat16`) only where it holds.
+- **Reason:** (d), for rune's `Lower_reduce.entered`. On fudge's RTX
+  5000 Ada the decode through the subnormal took gpt-oss-20b's MXFP4 gate
+  and up product at 512 tokens from 919 to 831 us, where a decode free of
+  subnormal operands, a select for the codes `±0` and `±0.5`, took 888,
+  and at 12 tokens 601 to 514 against 579: two thirds of the gain lost,
+  for one formula on every target. The model's prefill took 49.9 ms at
+  512 tokens against 54.1 and 26.6 at 12 against 29.6 (rune's L9). It is
+  false for the host, where x86 multiplies a subnormal through a microcode
+  assist: the same decode made a routed product of 64 bfloat16 tokens on
+  8 experts of 512 by 512 take 5.0 ms against 3.0; for Metal, whose
+  specification lets arithmetic flush subnormal operands to zero (MSL 4.1
+  §8.1, read, not run); and for AMD, unmeasured.
+- **Pinned by:** rune's `Jit_gpu › products › an MXFP4 product of bfloat16
+  rows decodes each code at each scale exactly` and its host twin in
+  `Jit › classes`, for the values; for the speed, kaun's `GptOss/prefill-512`
+  and `prefill-12` rows on CUDA and its decode bench row
+  `Quant/host/routed-product-of-8-experts-of-512-64-bfloat16-tokens` on the
+  host, their fudge baselines pending the scheduled re-record.

@@ -1313,6 +1313,12 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- On CUDA and NV, adjacent byte loads merge into loads of 2 and 4 bytes,
+  each held as one integer word whose bytes are read by shifts
+  (`Renderer.t.byte_words`): with rune's `bfloat16` decode, gpt-oss-20b's
+  512-token prefill takes another 3.2% less on an RTX 5000 Ada, 3.9% at
+  Q8_0. `Renderer.t.full_rate_subnormals` states whether a target's float
+  multiplies take subnormal operands unflushed at full rate.
 - A staged tensor core copies through a nest of loops in two stages, and on
   sm_89 spreads small grids and deepens trips (`Stage.tile`, `Renderer.t.units`,
   `in_flight`): a cold 64-token key projection takes 15.7 µs, not 39.7.

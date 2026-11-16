@@ -185,6 +185,16 @@ type t = private {
       (** Vectors of eight 16-bit floats are written, so that a copy of
           16 bytes of them from global into local memory merges into one
           ({!Coalesce.memory_coalescing}). *)
+  byte_words : bool;
+      (** A vector of 2 or 4 {!Dtype.Uint8} is written as one unsigned
+          integer word, each byte read from it by a shift and built into it
+          by one, so that adjacent [Uint8] loads merge into one load of the
+          word ({!Coalesce.memory_coalescing}). *)
+  full_rate_subnormals : bool;
+      (** A float multiply takes a subnormal operand unflushed, as fast as a
+          normal one, so that a lowering may build an exact value through
+          one. [false] for a target that may flush subnormals or multiplies
+          them slower. *)
   registers : unit -> registers option;
       (** [registers ()] is the target's vector register file, if known, asked
           when first needed. It sets the widest merged access
@@ -312,6 +322,8 @@ val v :
   ?suffix:string ->
   ?supports_float4:bool ->
   ?half8:bool ->
+  ?byte_words:bool ->
+  ?full_rate_subnormals:bool ->
   ?registers:(unit -> registers option) ->
   ?vector_lanes:int ->
   ?has_local:bool ->
@@ -344,7 +356,8 @@ val v :
     describe a target that renders nothing:
     - [name] is ["Renderer"] and [suffix] is [""];
     - [supports_float4], [has_local] and [has_shared] are [true], [registers]
-      gives [None], [half8] is [false] and [vector_lanes] is [1];
+      gives [None], [half8], [byte_words] and [full_rate_subnormals] are
+      [false] and [vector_lanes] is [1];
     - [global_max] and [local_max] are [0x8FFFFFFF] on each axis, the greatest
       size a 32-bit signed index holds, and [global_prod_max] is [None];
     - [shared_max] is [32768], and [async_copy] is [false];

@@ -267,6 +267,8 @@ type t = {
   suffix : string;
   supports_float4 : bool;
   half8 : bool;
+  byte_words : bool;
+  full_rate_subnormals : bool;
   registers : unit -> registers option;
   vector_lanes : int;
   has_local : bool;
@@ -299,7 +301,7 @@ type t = {
 let int32_max = [ 0x8FFFFFFF; 0x8FFFFFFF; 0x8FFFFFFF ]
 
 let v ?(name = "Renderer") ?(suffix = "") ?(supports_float4 = true)
-    ?(half8 = false)
+    ?(half8 = false) ?(byte_words = false) ?(full_rate_subnormals = false)
     ?(registers = fun () -> None) ?(vector_lanes = 1) ?(has_local = true)
     ?(has_shared = true) ?(global_max = int32_max) ?(local_max = int32_max)
     ?global_prod_max ?(shared_max = 32768) ?(async_copy = false)
@@ -321,6 +323,8 @@ let v ?(name = "Renderer") ?(suffix = "") ?(supports_float4 = true)
     suffix;
     supports_float4;
     half8;
+    byte_words;
+    full_rate_subnormals;
     registers;
     vector_lanes;
     has_local;

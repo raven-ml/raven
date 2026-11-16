@@ -2388,6 +2388,290 @@ let emulated_vectors_on_cuda =
             |});
     ]
 
+(* Byte assemblies on CUDA
+
+   [c.(i)], over 64 values, an int32 assembled by one of the forms below from
+   [lo = a.(2 i + 1 + off)] and [hi = a.(2 i + off)], each thread assembling
+   two: bytes in descending addresses, which LLVM's load combine folds into a
+   byte-swapped load at the address of the first byte's vector, the wrong one
+   where that byte is not its vector's first. Merged, a thread's four bytes
+   are one word, [hi] of its second value at the word's byte 2. *)
+
+let assemblies = [ "or"; "masked or"; "masked add"; "xor"; "times 256" ]
+
+let assembly dt form off =
+  let n = 64 in
+  let c = Shape.param ~shape:[ Ops.Int n ] 0 Int32
+  and a = Shape.param ~shape:[ Ops.Int ((2 * n) + 4) ] 1 dt in
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
+  let byte o =
+    Ops.cast (Ops.index a [ Ops.O.((i * int 2) + int o) ]) Int32
+  in
+  let k v = Ops.int ~dtype:Int32 v in
+  let lo = byte (off + 1) and hi = byte off in
+  let mask x = Ops.bitwise_and x (k 255) in
+  let w =
+    match form with
+    | "or" -> Ops.bitwise_or lo (Ops.shl hi (k 8))
+    | "masked or" -> Ops.bitwise_or (mask lo) (Ops.shl (mask hi) (k 8))
+    | "masked add" -> Ops.add (mask lo) (Ops.shl (mask hi) (k 8))
+    | "xor" -> Ops.bitwise_xor lo (Ops.shl hi (k 8))
+    | _ -> Ops.add lo (Ops.mul hi (k 256))
+  in
+  let opts_to_apply =
+    [ Opt.Split { axis = 0; amount = 2; target = Upcast; top = false } ]
+  in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply ())
+    [ Ops.end_ (Ops.store (Ops.index c [ i ]) w) [ i ] ]
+
+(* 132 bytes of [dt], half of them with the top bit set: an or of a sign
+   extended [lo] sets the bits above it. *)
+let assembled_bytes dt =
+  let signed = Dtype.equal dt Dtype.Int8 in
+  Array.init 132 (fun j ->
+      let v = ((j * 37) + 11) mod 256 in
+      if signed && v > 127 then v - 256 else v)
+
+let assembles (dt, form, off) =
+  let d, r = on_cuda () in
+  let a = assembled_bytes dt in
+  let exact =
+    Array.init 64 (fun i ->
+        let lo = a.((2 * i) + 1 + off) and hi = a.((2 * i) + off) in
+        let v =
+          match form with
+          | "or" -> lo lor (hi lsl 8)
+          | "masked or" -> lo land 255 lor ((hi land 255) lsl 8)
+          | "masked add" -> (lo land 255) + ((hi land 255) lsl 8)
+          | "xor" -> lo lxor (hi lsl 8)
+          | _ -> lo + (hi * 256)
+        in
+        `Int (Bigint.of_int v))
+  in
+  let prg = compiled_for r (assembly dt form off) in
+  let words =
+    List.filter
+      (fun u -> is Load u && Shape.max_numel u = 4)
+      (Ops.src (Ops.nth prg 1))
+  in
+  (* A thread's four bytes from a word's boundary are one load of the word. *)
+  if Dtype.equal dt Dtype.Uint8 && off = 0 then
+    equal ~msg:"loads of a word" int 1 (List.length words);
+  let stored = Array.map (fun v -> `Int (Bigint.of_int v)) a in
+  equal (array Dtypes.value) exact
+    (List.assoc 0 (Run.on d prg [ (1, stored) ]))
+
+(* Words of bytes on CUDA
+
+   [c.(i) = int32 a.(stride i)] over 64 values, each thread loading four, from
+   a buffer [a] whose first byte lies [phase] bytes past a 16-byte boundary:
+   the loads merge into words only where their bytes start on a word's or a
+   half's boundary, and a merge that ignored the phase would read the wrong
+   bytes or fault. Stride 0 is a broadcast, every thread reading [a.(0)]. *)
+let word_copy ~phase ~stride =
+  let n = 64 in
+  let c = Shape.param ~shape:[ Ops.Int n ] 0 Int32
+  and a =
+    Shape.param ~shape:[ Ops.Int ((max 1 stride * n) + 4) ] ~phase ~align:16 1
+      Uint8
+  in
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
+  let v = Ops.cast (Ops.index a [ Ops.O.(i * int stride) ]) Int32 in
+  let opts_to_apply =
+    [ Opt.Split { axis = 0; amount = 4; target = Upcast; top = false } ]
+  in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply ())
+    [ Ops.end_ (Ops.store (Ops.index c [ i ]) v) [ i ] ]
+
+(* The widths of [prg]'s loads of more than one lane. *)
+let merged_loads prg =
+  List.filter_map
+    (fun u ->
+      if is Load u && Shape.max_numel u > 1 then Some (Shape.max_numel u)
+      else None)
+    (Ops.src (Ops.nth prg 1))
+
+let byte_values n = Array.init n (fun j -> ((j * 37) + 11) mod 256)
+
+let copies_words (phase, stride) =
+  let d, r = on_cuda () in
+  let a = byte_values ((max 1 stride * 64) + 4) in
+  let prg = compiled_for r (word_copy ~phase ~stride) in
+  (* A thread's bytes [4 t + phase .. 4 t + phase + 3] from the boundary:
+     one word at phase 0, two halves at 2, the one aligned half at 1 and 3;
+     lanes apart merge nothing. *)
+  let widths =
+    match (stride, phase) with
+    | 1, 0 -> [ 4 ]
+    | 1, 2 -> [ 2; 2 ]
+    | 1, _ -> [ 2 ]
+    | _ -> []
+  in
+  equal ~msg:"merged loads" (slist int compare) widths (merged_loads prg);
+  let exact = Array.init 64 (fun i -> `Int (Bigint.of_int a.(stride * i))) in
+  let stored = Array.map (fun v -> `Int (Bigint.of_int v)) a in
+  equal (array Dtypes.value) exact
+    (List.assoc 0 (Run.on d prg [ (1, stored) ]))
+
+(* [c.(i) = int32 a.(i)] where [i < 40], else [0], each thread loading four:
+   a gated load of a word, whose alternative is a word of zeros built from
+   its lanes. *)
+let gated_word =
+  let n = 64 in
+  let c = Shape.param ~shape:[ Ops.Int n ] 0 Int32
+  and a = Shape.param ~shape:[ Ops.Int n ] 1 Uint8 in
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
+  let at =
+    Ops.where Ops.O.(i < int 40) i (Shape.const_like i `Invalid)
+  in
+  let v = Ops.cast (Ops.index a [ at ]) Int32 in
+  let opts_to_apply =
+    [ Opt.Split { axis = 0; amount = 4; target = Upcast; top = false } ]
+  in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply ())
+    [ Ops.end_ (Ops.store (Ops.index c [ i ]) v) [ i ] ]
+
+(* [c.(i) = where (s.(i) <> 0) a.(i) b.(i)] over 64 8-bit floats, each thread
+   selecting four: on a GPU that emulates the float the selected lanes are
+   stored together, as a word of bytes built from them. *)
+let selected_codes dt =
+  let n = 64 in
+  let c = Shape.param ~shape:[ Ops.Int n ] 0 dt
+  and a = Shape.param ~shape:[ Ops.Int n ] 1 dt
+  and b = Shape.param ~shape:[ Ops.Int n ] 2 dt
+  and sel = Shape.param ~shape:[ Ops.Int n ] 3 Int32 in
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
+  let at x = Ops.index x [ i ] in
+  let v = Ops.where Ops.O.(at sel <> Ops.int ~dtype:Int32 0) (at a) (at b) in
+  let opts_to_apply =
+    [ Opt.Split { axis = 0; amount = 4; target = Upcast; top = false } ]
+  in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply ())
+    [ Ops.end_ (Ops.store (at c) v) [ i ] ]
+
+(* The selection of 64 codes of [dt], every lane's choice from [sel], on
+   the GPU through CUDA's renderer of [arch]: each output's code is its
+   lane's choice, bit for bit. *)
+let selects_codes (dt, arch) =
+  let d, r = if arch = "sm_89" then on_cuda () else older_cuda arch in
+  let x = Array.init 64 (fun j -> ((j * 37) + 11) mod 256)
+  and y = Array.init 64 (fun j -> ((j * 101) + 3) mod 256)
+  and sel = Array.init 64 (fun j -> (j * 7) mod 3) in
+  let prg = compiled_for r (selected_codes dt) in
+  let words =
+    List.filter
+      (fun u -> is Store u && Shape.max_numel (Ops.nth u 1) = 4)
+      (Ops.src (Ops.nth prg 1))
+  in
+  equal ~msg:"stores of a word" int 1 (List.length words);
+  let codes a = Array.map (fun v -> `Int (Bigint.of_int v)) a in
+  let out =
+    Run.on d prg
+      [ (1, codes x); (2, codes y);
+        (3, Array.map (fun v -> `Int (Bigint.of_int v)) sel) ]
+  in
+  equal (list int)
+    (List.init 64 (fun j -> if sel.(j) <> 0 then x.(j) else y.(j)))
+    (Array.to_list (Array.map code (List.assoc 0 out)))
+
+let words_on_cuda =
+  group "words of bytes on CUDA"
+    [
+      cases "bytes copied from any start, stride and phase keep their values"
+        ~id:(fun (phase, stride) ->
+          Printf.sprintf "phase %d, stride %d" phase stride)
+        (List.concat_map
+           (fun stride -> List.map (fun p -> (p, stride)) [ 0; 1; 2; 3 ])
+           [ 1; 2; 0 ])
+        copies_words;
+      test "a gated word reads its bytes where the gate holds, zeros elsewhere"
+        (fun () ->
+          let d, r = on_cuda () in
+          let a = byte_values 64 in
+          let prg = compiled_for r gated_word in
+          equal ~msg:"merged loads" (list int) [ 4 ] (merged_loads prg);
+          let exact =
+            Array.init 64 (fun i ->
+                `Int (Bigint.of_int (if i < 40 then a.(i) else 0)))
+          in
+          let stored = Array.map (fun v -> `Int (Bigint.of_int v)) a in
+          equal (array Dtypes.value) exact
+            (List.assoc 0 (Run.on d prg [ (1, stored) ])));
+      test "writes a gated word's alternative as a word of zero bytes"
+        (fun () ->
+          let r = renderer_for (target "CUDA" "CUDA" "sm_89") in
+          expect (source (Codegen.to_program gated_word r)) @@ __POS_OF__ {|
+            typedef unsigned int uint;
+            #define INFINITY (__int_as_float(0x7f800000))
+            #define NAN (__int_as_float(0x7fffffff))
+            template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
+            extern "C" __global__ void __launch_bounds__(1) E_16_4(int* data0_64, unsigned char* data1_64) {
+              int gidx0 = blockIdx.x; /* 16 */
+              int alu0 = (gidx0<<2);
+              uint val0 = ((gidx0<10)?*((uint*)((data1_64+alu0))):((uint)((((uint)(((unsigned char)(0u))))<<0u)|(((uint)(((unsigned char)(0u))))<<8u)|(((uint)(((unsigned char)(0u))))<<16u)|(((uint)(((unsigned char)(0u))))<<24u))));
+              *((int4*)((data0_64+alu0))) = make_int4(((int)(((unsigned char)(val0>>0u)))),((int)(((unsigned char)(val0>>8u)))),((int)(((unsigned char)(val0>>16u)))),((int)(((unsigned char)(val0>>24u)))));
+            }
+            |});
+      cases "an emulated float's selected lanes, stored as a word, keep each code"
+        ~id:(fun (dt, arch) -> Format.asprintf "%a on %s" Dtype.pp dt arch)
+        Dtype.[ (Fp8e4m3, "sm_80"); (Fp8e4m3fnuz, "sm_89") ]
+        selects_codes;
+      test "writes an sm_80 store of selected 8-bit floats as a word" (fun () ->
+          let r = renderer_for (target "CUDA" "CUDA" "sm_80") in
+          let prg = Codegen.to_program (selected_codes Dtype.Fp8e4m3) r in
+          expect (source prg) @@ __POS_OF__ {|
+            typedef unsigned int uint;
+            #define INFINITY (__int_as_float(0x7f800000))
+            #define NAN (__int_as_float(0x7fffffff))
+            template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
+            extern "C" __global__ void __launch_bounds__(1) E_16_4(unsigned char* data0_64, unsigned char* data1_64, unsigned char* data2_64, int* data3_64) {
+              int gidx0 = blockIdx.x; /* 16 */
+              int alu0 = (gidx0<<2);
+              uint val0 = (*((uint*)((data1_64+alu0))));
+              uint val1 = (*((uint*)((data2_64+alu0))));
+              int4 val2 = (*((int4*)((data3_64+alu0))));
+              unsigned char alu1 = ((val2.x==0)?((unsigned char)(val1>>0u)):((unsigned char)(val0>>0u)));
+              unsigned char alu2 = ((val2.y==0)?((unsigned char)(val1>>8u)):((unsigned char)(val0>>8u)));
+              unsigned char alu3 = ((val2.z==0)?((unsigned char)(val1>>16u)):((unsigned char)(val0>>16u)));
+              unsigned char alu4 = ((val2.w==0)?((unsigned char)(val1>>24u)):((unsigned char)(val0>>24u)));
+              *((uint*)((data0_64+alu0))) = ((uint)((((uint)(alu1))<<0u)|(((uint)(alu2))<<8u)|(((uint)(alu3))<<16u)|(((uint)(alu4))<<24u)));
+            }
+            |});
+    ]
+
+let byte_assemblies_on_cuda =
+  group "byte assemblies on CUDA"
+    [
+      cases "an int32 assembled from bytes in descending addresses is exact"
+        ~id:(fun (dt, form, off) ->
+          Format.asprintf "%a, %s, from byte %d" Dtype.pp dt form off)
+        (List.concat_map
+           (fun dt ->
+             List.concat_map
+               (fun form -> List.map (fun off -> (dt, form, off)) [ 0; 1; 2; 3 ])
+               assemblies)
+           Dtype.[ Uint8; Int8 ])
+        assembles;
+      test "writes a thread's four bytes as a word read by shifts" (fun () ->
+          let r = renderer_for (target "CUDA" "CUDA" "sm_89") in
+          let prg = Codegen.to_program (assembly Dtype.Uint8 "or" 0) r in
+          expect (source prg) @@ __POS_OF__ {|
+            typedef unsigned int uint;
+            #define INFINITY (__int_as_float(0x7f800000))
+            #define NAN (__int_as_float(0x7fffffff))
+            template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
+            extern "C" __global__ void __launch_bounds__(1) E_32_2(int* data0_64, unsigned char* data1_132) {
+              int gidx0 = blockIdx.x; /* 32 */
+              uint val0 = (*((uint*)((data1_132+(gidx0<<2)))));
+              *((int2*)((data0_64+(gidx0<<1)))) = make_int2((((int)(((unsigned char)(val0>>8u))))|(((int)(((unsigned char)(val0>>0u))))<<8)),(((int)(((unsigned char)(val0>>24u))))|(((int)(((unsigned char)(val0>>16u))))<<8)));
+            }
+            |});
+    ]
+
 (* [c = Σ_r a.(i, r) * float32 b.(r, j)] for a float32 [a] and a bfloat16 [b],
    as attention's values multiply float32 weights by bfloat16 values: a
    bfloat16 core would round [a], which the program does not round, so no core
@@ -9539,6 +9823,8 @@ let () =
            fixed_threads;
            bfloat16_vectors_on_cuda;
            emulated_vectors_on_cuda;
+           byte_assemblies_on_cuda;
+           words_on_cuda;
            counted_once;
            counted_beside_host_blocks;
            weak_ranges;

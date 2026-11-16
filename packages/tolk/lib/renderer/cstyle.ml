@@ -91,6 +91,7 @@ type lang = {
   promoted : Dtype.t list; (* scalars whose operations compute wider *)
   vector_names : (Dtype.t * string) list;
       (* the element names of vector types, where they are not type_map's *)
+  byte_words : bool; (* Renderer.byte_words *)
   code_for_op : (Op.t * (string list -> Dtype.t -> string)) list;
   string_rewrite : (ctx, string) Pattern_matcher.t;
 }
@@ -108,6 +109,11 @@ let ( .%{} ) ctx u =
   | None ->
       invalid_arg (strf "%s is used before it is rendered" (Op.name (op u)))
 
+(* Whether a vector of [sz] elements of [dt] is one integer word
+   ({!Renderer.byte_words}). *)
+let word l dt sz =
+  l.byte_words && Dtype.equal dt Dtype.Uint8 && (sz = 2 || sz = 4)
+
 let render_dtype ?(sz = 1) ?(addrspace = Some Dtype.Alu) ?(override_ptr = false)
     l dt =
   let prefix =
@@ -123,7 +129,10 @@ let render_dtype ?(sz = 1) ?(addrspace = Some Dtype.Alu) ?(override_ptr = false)
     | Some name -> name
     | None -> invalid_arg (strf "the language has no type %s" (Dtype.name dt))
   in
-  if sz > 1 then
+  if word l dt sz then
+    let w = if sz = 4 then Dtype.Uint32 else Dtype.Uint16 in
+    prefix ^ List.assq w l.type_map ^ suffix
+  else if sz > 1 then
     let element =
       match List.assq_opt dt l.vector_names with
       | Some element -> element
@@ -160,10 +169,16 @@ let param_type l p =
 
 let render_cast ctx u v = strf "(%s)(%s)" (render_type ctx.lang u) v
 
+(* Whether the value [u] is one integer word of bytes. *)
+let is_word l u = l.byte_words && word l (dtype u) (max_numel u)
+
 let render_index ctx buf idx =
   if addrspace buf = Some Dtype.Alu then
-    (* lane access in C *)
+    (* lane access in C; a word's lane [i] is its bits from [8 i] *)
     match (op idx, src idx) with
+    | Op.Cast, [ c ] when is Op.Const c && is_word ctx.lang buf ->
+        strf "((unsigned char)(%s>>%du))" ctx.%{buf}
+          (8 * Dtype.Value.to_int (cval c))
     | Op.Cast, [ c ] when is Op.Const c ->
         let lane = Dtype.Value.to_int (cval c) in
         if max_numel buf > ctx.lang.gep_arr_threshold then
@@ -353,6 +368,11 @@ let base_rewrite =
         (fun ctx m -> Some (render_index ctx (m "buf") (m "idx")));
       r (Upat.op ~name:"x" Op.Stack) (fun ctx m ->
           let x = m "x" and l = ctx.lang in
+          if is_word l x then
+            let t = render_type l x in
+            let lane i y = strf "(((%s)(%s))<<%du)" t ctx.%{y} (8 * i) in
+            Some (strf "((%s)(%s))" t (String.concat "|" (List.mapi lane (src x))))
+          else
           let first, last = l.float4_style in
           let elems =
             String.concat "," (List.map (fun y -> ctx.%{y}) (src x))
@@ -908,6 +928,7 @@ let cstyle =
     bitcast = strf "__builtin_bit_cast(%s, (%s)(%s))";
     promoted = Dtype.[ Int8; Int16 ];
     vector_names = [];
+    byte_words = false;
     code_for_op;
     string_rewrite = base_rewrite;
   }
@@ -2428,6 +2449,7 @@ let cuda_lang =
       :: (Dtype.Fp8e5m2, "__nv_fp8_e5m2")
       :: cstyle.type_map;
     bitcast = strf "tg_bitcast<%s>((%s)(%s))";
+    byte_words = true;
     string_rewrite = base_rewrite;
   }
 
@@ -2618,7 +2640,8 @@ let cuda_kernel ?(copies = false) ?(prefix = []) l ~name
          [ "#define make_nv_bfloat162 make_bfloat162" ]
        else [])
     @ (if copies then [ cp_async ] else [])
-    @ List.map (cuda_vector_prefix l) (List.filter vector used)
+    @ List.map (cuda_vector_prefix l)
+        (List.filter (fun (dt, n) -> vector (dt, n) && not (word l dt n)) used)
     @ List.map (cuda_wmma l) (wmma_args uops)
   in
   (* Its own definitions first, then the functions it calls. *)
@@ -2681,7 +2704,14 @@ let cuda_renderer ~sync compiler (target : Helpers.Target.t) =
   (* NVRTC's time a call site of a launch falls to its least at 64 members
      (0.064 s, 1.0 ms a member, on fudge with CUDA 13) and grows past them:
      96 members 1.4 ms a member, 128 1.9 ms, 256 4.5 ms. *)
-  Renderer.v ~name ~half8:true ~launch_members:64 ~launch_args:512
+  (* NVRTC compiles without --ftz, and PTX's float multiplies keep
+     subnormals ("By default, subnormal numbers are supported", PTX ISA
+     §9.7.4.4, of half precision and bfloat16 too). On an RTX 5000 Ada,
+     gpt-oss-20b's MXFP4 gate and up product at 512 tokens took 831 us with
+     its codes decoded through the subnormal [2^-127], 888 with a select
+     that avoids it. *)
+  Renderer.v ~name ~half8:true ~byte_words:cuda_lang.byte_words
+    ~full_rate_subnormals:true ~launch_members:64 ~launch_args:512
     ~global_max:[ 2147483647; 65535; 65535 ]
     ~local_max:[ 1024; 1024; 64 ] ~shared_max:49152 ~async_copy ~tensor_cores
     ~units ~in_flight ~extra_matcher:cuda_extra_matcher

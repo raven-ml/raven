@@ -16,6 +16,12 @@ let scalar = Renderer.v ~supports_float4:false cpu
    starts; the CPU device's are aligned to their element. *)
 let gpu = Renderer.v (Result.get_ok (Helpers.Target.of_string "CUDA:CUDA:sm_89"))
 
+(* A GPU that writes a vector of bytes as one integer word, as CUDA's
+   renderer does. *)
+let gpu_words =
+  Renderer.v ~byte_words:true
+    (Result.get_ok (Helpers.Target.of_string "CUDA:CUDA:sm_89"))
+
 (* A GPU that writes vectors of eight 16-bit floats, as CUDA's renderer
    does. *)
 let gpu8 =
@@ -252,6 +258,30 @@ let lengths =
             [ (0, 4); (4, 4) ]
             (accesses Op.Load
                (coalesce ~renderer:gpu (loads b (List.init 8 Fun.id)))));
+      test "on a GPU that writes bytes as words, eight consecutive byte \
+            loads are two loads of four"
+        (fun () ->
+          let b = Shape.param ~shape:[ Int 64 ] 0 Dtype.Uint8 in
+          equal runs
+            [ (0, 4); (4, 4) ]
+            (accesses Op.Load
+               (coalesce ~renderer:gpu_words (loads b (List.init 8 Fun.id)))));
+      cases "on a GPU that writes bytes as words, stay apart:"
+        ~id:(fun (name, _, _) -> name)
+        [
+          ( "eight consecutive byte stores",
+            Dtype.Uint8,
+            fun b -> stores b (List.init 8 Fun.id) );
+          ( "eight consecutive int8 loads",
+            Dtype.Int8,
+            fun b -> loads b (List.init 8 Fun.id) );
+        ]
+        (fun (_, dtype, sink) ->
+          let b = Shape.param ~shape:[ Int 64 ] 0 dtype in
+          let merged = coalesce ~renderer:gpu_words (sink b) in
+          equal runs
+            (List.init 8 (fun k -> (k, 1)))
+            (accesses Op.Load merged @ accesses Op.Store merged));
       cases "thirty-two consecutive loads of bytes fill registers of"
         ~id:(fun (name, _, dtype, _) ->
           Format.asprintf "%s, %a" name Dtype.pp dtype)
