@@ -3399,7 +3399,9 @@ let keys_per_test = 1 lsl 12
 let permute_group =
   group "permute"
     [
-      prop "permute is a bijection of [0, n)" (Gen.pair keys small_ns)
+      prop "permute is a bijection of [0, n)"
+        ~examples:[ (Rng.key 0, 1); (Rng.key 0, 2); (Rng.key 0, 4) ]
+        (Gen.pair keys small_ns)
         (fun (k, n) ->
           cover "one element" (n = 1);
           cover "two elements" (n = 2);
