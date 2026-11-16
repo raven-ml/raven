@@ -996,6 +996,235 @@ let lowering =
           equal (array int) [| 4; 3; 3 |] (Nx.shape y));
     ]
 
+(* Generated plain patterns *)
+
+(* A plain pattern of two operands drawn from [st], with its operands' shapes,
+   the [sizes] it needs and its meaning. Each name is a batch, summed, a-free or
+   b-free name, and each layout and the sum list their names in an order of
+   their own. At times every layout leads with [...] (in the meaning, batch
+   names [e0], [e1]), a layout holds a unit axis, and a layout groups two
+   adjacent names, an operand's group given its first name's extent. Operands
+   have ranks 0 to 4. *)
+type plain = {
+  text : string;
+  ellipsis : bool;
+  unit : bool;
+  grouped : bool;
+  sizes : (string * int) list;
+  pa : int array;
+  pb : int array;
+  pm : meaning;
+}
+
+let pp_plain ppf c =
+  Format.fprintf ppf "%S ~sizes:[%s] a %a b %a" c.text
+    (String.concat "; "
+       (List.map (fun (n, e) -> Printf.sprintf "%s %d" n e) c.sizes))
+    pp_shape c.pa pp_shape c.pb
+
+let shuffled st l =
+  List.map snd
+    (List.sort compare (List.map (fun x -> (Random.State.bits st, x)) l))
+
+(* A layout of [names]: its tokens, with a unit axis at [unit] and the names at
+   [group] and after grouped, where given. *)
+type token = Name of string | Group of string * string | Unit
+
+let tokens ?unit ?group names =
+  let rec go i = function
+    | [] -> []
+    | n :: m :: rest when group = Some i -> Group (n, m) :: go (i + 2) rest
+    | n :: rest -> Name n :: go (i + 1) rest
+  in
+  let ts = go 0 names in
+  match unit with
+  | None -> ts
+  | Some u ->
+      List.filteri (fun i _ -> i < u) ts
+      @ (Unit :: List.filteri (fun i _ -> i >= u) ts)
+
+let layout ~ellipsis ts =
+  String.concat " "
+    ((if ellipsis then [ "..." ] else [])
+    @ List.map
+        (function
+          | Name n -> n
+          | Group (n, m) -> Printf.sprintf "(%s %s)" n m
+          | Unit -> "1")
+        ts)
+
+let plain_of_seed seed =
+  let st = Random.State.make [| seed |] in
+  let int n = Random.State.int st n and chance k = Random.State.int st k = 0 in
+  let rec draw () =
+    let count () = int 3 in
+    let nb = count () and ns = count () and nfa = count () and nfb = count () in
+    let ellipsis = chance 4 in
+    let lead = if ellipsis then int 3 else 0 in
+    let fresh p k = List.init k (fun i -> Printf.sprintf "%s%d" p i) in
+    let batch = fresh "t" nb and summed = fresh "s" ns in
+    let free_a = fresh "f" nfa and free_b = fresh "g" nfb in
+    let na = shuffled st (batch @ summed @ free_a)
+    and nb' = shuffled st (batch @ summed @ free_b)
+    and nr = shuffled st (batch @ free_a @ free_b) in
+    let side names =
+      let unit =
+        if chance 5 then Some (int (List.length names + 1)) else None
+      in
+      let group =
+        if List.length names >= 2 && chance 3 then
+          Some (int (List.length names - 1))
+        else None
+      in
+      tokens ?unit ?group names
+    in
+    let ta = side na and tb = side nb' and tr = side nr in
+    let rank ts = lead + List.length ts in
+    if rank ta > 4 || rank tb > 4 || rank tr > 4 then draw ()
+    else
+      let leads = List.init lead (fun _ -> 1 + int 3) in
+      let firsts =
+        List.concat_map
+          (function Group (n, _) -> [ n ] | Name _ | Unit -> [])
+          (ta @ tb)
+      in
+      let extents =
+        List.map
+          (fun n ->
+            (n, if List.mem n firsts || not (chance 12) then 1 + int 3 else 0))
+          (batch @ summed @ free_a @ free_b)
+        @ List.mapi (fun i e -> (Printf.sprintf "e%d" i, e)) leads
+      in
+      let extent n = List.assoc n extents in
+      let shape ts =
+        Array.of_list
+          (leads
+          @ List.map
+              (function
+                | Name n -> extent n
+                | Group (n, m) -> extent n * extent m
+                | Unit -> 1)
+              ts)
+      in
+      let es = List.init lead (Printf.sprintf "e%d") in
+      let sizes =
+        List.sort_uniq compare (List.map (fun n -> (n, extent n)) firsts)
+      in
+      let has f = List.exists f (ta @ tb @ tr) in
+      {
+        ellipsis;
+        unit = has (( = ) Unit);
+        grouped = has (function Group _ -> true | Name _ | Unit -> false);
+        text =
+          Printf.sprintf "%s, %s -> %s%s" (layout ~ellipsis ta)
+            (layout ~ellipsis tb) (layout ~ellipsis tr)
+            (if summed = [] then ""
+             else " | " ^ String.concat " " (shuffled st summed));
+        sizes;
+        pa = shape ta;
+        pb = shape tb;
+        pm =
+          {
+            extent;
+            result = es @ nr;
+            summed;
+            a = es @ na;
+            b = es @ nb';
+          };
+      }
+  in
+  draw ()
+
+let plains =
+  Gen.with_pp pp_plain (Gen.map plain_of_seed (Gen.int_range 0 0x3FFFFFFF))
+
+let int32_operand st n = Array.init n (fun _ -> Random.State.bits32 st)
+
+(* At int32 the sum wraps, so every order of association gives the exact sum
+   modulo 2^32: the result is the pattern's meaning, element for element, and
+   with an [init] it is that sum plus [init]'s element, which reads the
+   result's names in written order. *)
+let int32_is_its_meaning =
+  prop ~count:500 "an int32 contract of a plain pattern is its sum by index"
+    plains (fun c ->
+      cover "a group" c.grouped;
+      cover "an ellipsis" c.ellipsis;
+      cover "a unit axis" c.unit;
+      cover "a batch name"
+        (List.exists
+           (fun n -> List.mem n c.pm.b && List.mem n c.pm.result)
+           c.pm.a);
+      cover "a summed name" (c.pm.summed <> []);
+      cover "an empty operand" (numel c.pa = 0 || numel c.pb = 0);
+      cover "a 0-d operand" (c.pa = [||] || c.pb = [||]);
+      cover "a rank-4 operand"
+        (Array.length c.pa = 4 || Array.length c.pb = 4);
+      let st = Random.State.make [| numel c.pa; numel c.pb |] in
+      let xa = int32_operand st (numel c.pa)
+      and xb = int32_operand st (numel c.pb) in
+      let a = host D.Int32 c.pa xa and b = host D.Int32 c.pb xb in
+      let p = Nx.Pattern.v c.text in
+      let y = Nx.contract ~sizes:c.sizes Nx.int32 p a b in
+      let want =
+        Array.of_list
+          (List.map
+             (List.fold_left
+                (fun s (i, j) -> Int32.add s (Int32.mul xa.(i) xb.(j)))
+                0l)
+             (terms c.pm))
+      in
+      equal (array int32) want (read y);
+      let xi = int32_operand st (Array.length want) in
+      let init = host D.Int32 (Nx.shape y) xi in
+      equal ~msg:"with an init" (array int32)
+        (Array.map2 Int32.add want xi)
+        (read (Nx.contract ~sizes:c.sizes ~init Nx.int32 p a b)))
+
+(* The bits of a fixed corpus of plain patterns at each float dtype, through
+   contract, contract with an init and einsum: a digest recorded on main, so
+   that a change to how a pattern lowers keeps every result's bits, summation
+   order included. *)
+let recorded_bits =
+  test "a fixed corpus of plain patterns keeps its recorded bits" (fun () ->
+      let d = Buffer.create 65536 in
+      let add (type s) (x : (float, s, Nx.host) Nx.t) =
+        Buffer.add_string d (Format.asprintf "%a" pp_shape (Nx.shape x));
+        Array.iter
+          (fun v ->
+            Buffer.add_string d (Int64.to_string (Int64.bits_of_float v)))
+          (read x)
+      in
+      let run (type s) (dt : (float, s) D.t) c xa xb xi =
+        let p = Nx.Pattern.v c.text and sizes = c.sizes in
+        let a = Nx.cast dt (host D.Float64 c.pa xa)
+        and b = Nx.cast dt (host D.Float64 c.pb xb) in
+        let y = Nx.contract ~sizes dt p a b in
+        add y;
+        add
+          (Nx.contract ~sizes
+             ~init:(Nx.cast dt (host D.Float64 (Nx.shape y) xi))
+             dt p a b);
+        add (Nx.einsum ~sizes p [ a; b ])
+      in
+      for seed = 1 to 300 do
+        let c = plain_of_seed seed in
+        let st = Random.State.make [| seed |] in
+        let draw n = Array.init n (fun _ -> Random.State.float st 2. -. 1.) in
+        let xa = draw (numel c.pa) and xb = draw (numel c.pb) in
+        let xi =
+          draw (List.fold_left (fun n r -> n * c.pm.extent r) 1 c.pm.result)
+        in
+        run D.Float32 c xa xb xi;
+        run D.Float64 c xa xb xi;
+        run D.Float16 c xa xb xi;
+        run D.Bfloat16 c xa xb xi
+      done;
+      expect (Digest.to_hex (Digest.string (Buffer.contents d)))
+      @@ __POS_OF__ {| a1790591e62047714671057332118ee9 |})
+
+let generated =
+  group "generated plain patterns" [ int32_is_its_meaning; recorded_bits ]
+
 (* Dtypes *)
 
 let dtypes =
@@ -3227,6 +3456,7 @@ let () =
          einsum_within;
          einsum_errors;
          lowering;
+         generated;
          init;
          dtypes;
          matmul;

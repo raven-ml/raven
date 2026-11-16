@@ -55,26 +55,74 @@ let ints f (ns : int list) =
   in
   fill 0 ns
 
+(* The place of [n] in [ns], or [-1] where [ns] does not hold it. *)
+let place (n : int) ns =
+  let i = ref 0 in
+  while !i < Array.length ns && ns.(!i) <> n do
+    incr i
+  done;
+  if !i = Array.length ns then -1 else !i
+
+(* The extents of the names [ns]. *)
+let extents ext ns =
+  let a = Array.make (Array.length ns) 0 in
+  for i = 0 to Array.length ns - 1 do
+    a.(i) <- ext.(ns.(i))
+  done;
+  a
+
 (* The contraction of operands named [na] and [nb] into the names [nr], of the
    result [shape]. A name both operands hold is a batch name where the result
-   keeps it, else summed; the batch and summed names pair in [a]'s order. *)
+   keeps it, else summed; the batch and summed names pair in [a]'s order. The
+   kernel's axes are the batch names, then [a]'s free names, then [b]'s. *)
 let lower ~ext na nb nr shape =
-  let pairs ns =
-    Iarray.of_list (List.map (fun n -> (index_of n na, index_of n nb)) ns)
-  in
-  let both = List.filter (fun n -> mem n nb) na in
-  let batch = List.filter (fun n -> mem n nr) both in
-  let summed = List.filter (fun n -> not (mem n nr)) both in
-  let free_a = List.filter (fun n -> not (mem n nb)) na in
-  let free_b = List.filter (fun n -> not (mem n na)) nb in
-  let kernel = batch @ free_a @ free_b in
+  let la = Array.length na and lb = Array.length nb in
+  let nbatch = ref 0 and nsummed = ref 0 in
+  for i = 0 to la - 1 do
+    if place na.(i) nb >= 0 then
+      if place na.(i) nr >= 0 then incr nbatch else incr nsummed
+  done;
+  let nbatch = !nbatch and nsummed = !nsummed in
+  let batch = Array.make nbatch (0, 0) in
+  let summed = Array.make nsummed (0, 0) in
+  (* [kernel.(k)] is the name of the kernel's axis [k]. *)
+  let kernel = Array.make (la + lb - nbatch - (2 * nsummed)) 0 in
+  let ib = ref 0 and is = ref 0 and ifa = ref nbatch in
+  for i = 0 to la - 1 do
+    let n = na.(i) in
+    let j = place n nb in
+    if j < 0 then begin
+      kernel.(!ifa) <- n;
+      incr ifa
+    end
+    else if place n nr >= 0 then begin
+      batch.(!ib) <- (i, j);
+      kernel.(!ib) <- n;
+      incr ib
+    end
+    else begin
+      summed.(!is) <- (i, j);
+      incr is
+    end
+  done;
+  let ifb = ref (la - nsummed) in
+  for j = 0 to lb - 1 do
+    if place nb.(j) na < 0 then begin
+      kernel.(!ifb) <- nb.(j);
+      incr ifb
+    end
+  done;
+  let order = Array.make (Array.length nr) 0 in
+  for i = 0 to Array.length nr - 1 do
+    order.(i) <- place nr.(i) kernel
+  done;
   {
-    a = ints (Array.get ext) na;
-    b = ints (Array.get ext) nb;
-    batch = pairs batch;
-    contracting = pairs summed;
-    order = ints (fun n -> index_of n kernel) nr;
-    names = ints (Array.get ext) nr;
+    a = extents ext na;
+    b = extents ext nb;
+    batch = Iarray.of_array batch;
+    contracting = Iarray.of_array summed;
+    order;
+    names = extents ext nr;
     shape;
   }
 
@@ -91,8 +139,8 @@ let plan ~by ~sizes (p : Pattern.t) a b =
       let ~extents, ~operands, ~result, ~shape =
         Pattern.resolve ~by ~sizes ~label p [ a; b ]
       in
-      let named k = Array.to_list (List.nth operands k) in
-      lower ~ext:extents (named 0) (named 1) (Array.to_list result) shape
+      lower ~ext:extents (List.nth operands 0) (List.nth operands 1) result
+        shape
   | [ _ ] ->
       invalid_argf "%s: %a has one operand; use Nx.rearrange" by Pattern.pp p
   | operands ->
@@ -436,7 +484,11 @@ let pair (type x y d) ~by ?sum ~ext w (into : (x, y) D.t) names shape
     (na, l) (nb, r) : (x, y, d) Value.t =
   match (l, r) with
   | Value.Any a, Value.Any b ->
-      run ~by ?sum ~acc:(D.Any w) into (lower ~ext na nb names shape) a b
+      let lowered =
+        lower ~ext (Array.of_list na) (Array.of_list nb) (Array.of_list names)
+          shape
+      in
+      run ~by ?sum ~acc:(D.Any w) into lowered a b
 
 (* The einsum of the operands of names [ns], [leaf i] the [i]th, into the
    result's names [nr] and [shape], through the tree of fewest

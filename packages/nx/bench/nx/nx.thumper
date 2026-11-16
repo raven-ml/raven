@@ -29,34 +29,34 @@
 # forced: blessed rng/permute-16K-of-1.4e10 under load 14.3 on 14 cores
 # pending: wall_time of io/load-tiff-1024x1024-u16-deflate-tiles, to record on a quiet machine
 
-attention/decode-f32-64x8x4096x64	alloc_words	exact	902
+attention/decode-f32-64x8x4096x64	alloc_words	exact	876
 attention/decode-f32-64x8x4096x64	wall_time	batch=1	n=20	1.364e-03	9.401e-04 9.802e-04 9.986e-04 9.990e-04 1.039e-03 1.198e-03 1.219e-03 1.260e-03 1.295e-03 1.346e-03 1.383e-03 1.600e-03 1.727e-03 2.126e-03 2.527e-03 3.246e-03 3.993e-03 3.993e-03 5.491e-03 1.163e-02
-attention/prefill-bf16-8x1024x64-causal	alloc_words	exact	1993
+attention/prefill-bf16-8x1024x64-causal	alloc_words	exact	1976
 attention/prefill-bf16-8x1024x64-causal	wall_time	batch=1	n=20	1.140e-02	5.636e-03 5.894e-03 7.798e-03 7.958e-03 8.103e-03 8.669e-03 9.324e-03 9.511e-03 9.588e-03 1.101e-02 1.178e-02 1.263e-02 1.554e-02 1.621e-02 1.797e-02 1.813e-02 1.827e-02 1.840e-02 1.957e-02 2.347e-02
-attention/prefill-f32-8x1024x64-causal	alloc_words	exact	1993
+attention/prefill-f32-8x1024x64-causal	alloc_words	exact	1976
 attention/prefill-f32-8x1024x64-causal	wall_time	batch=1	n=20	8.667e-03	3.515e-03 4.478e-03 5.119e-03 5.841e-03 6.206e-03 6.634e-03 7.951e-03 8.164e-03 8.359e-03 8.640e-03 8.694e-03 8.779e-03 8.971e-03 9.000e-03 9.393e-03 9.684e-03 1.245e-02 1.378e-02 1.708e-02 1.932e-02
-attention/prefill-f32-8x1024x64-causal-through-floats	alloc_words	exact	2274
-attention/prefill-f32-8x2048x64-window-per-head	alloc_words	exact	3768
-attention/prefill-f64-8x1024x64-causal	alloc_words	exact	1993
+attention/prefill-f32-8x1024x64-causal-through-floats	alloc_words	exact	2261
+attention/prefill-f32-8x2048x64-window-per-head	alloc_words	exact	3771
+attention/prefill-f64-8x1024x64-causal	alloc_words	exact	1976
 attention/prefill-f64-8x1024x64-causal	wall_time	batch=1	n=20	1.607e-02	1.136e-02 1.152e-02 1.179e-02 1.202e-02 1.373e-02 1.441e-02 1.468e-02 1.526e-02 1.584e-02 1.586e-02 1.628e-02 1.731e-02 1.741e-02 1.777e-02 1.878e-02 1.968e-02 1.981e-02 2.006e-02 2.034e-02 2.338e-02
 constant/chain-1000	alloc_words	exact	94146
-contract/contract-i32-m128x4096x4096	alloc_words	exact	340
-contract/contract-i8-i32-1024	alloc_words	exact	340
-contract/contract-i8-i32-256	alloc_words	exact	340
-contract/contract-i8-i32-64	alloc_words	exact	340
-contract/contract-i8-i32-m128x4096x4096	alloc_words	exact	340
-contract/contract-i8-i32-m1x4096x4096	alloc_words	exact	340
-contract/contract-i8-i32-m1x4096x4096-kn-memory	alloc_words	exact	343
-contract/contract-i8-i32-m8x4096x4096-kn	alloc_words	exact	340
-contract/contract-i8-i32-n1x4096x4096	alloc_words	exact	313
+contract/contract-i32-m128x4096x4096	alloc_words	exact	189
+contract/contract-i8-i32-1024	alloc_words	exact	189
+contract/contract-i8-i32-256	alloc_words	exact	189
+contract/contract-i8-i32-64	alloc_words	exact	189
+contract/contract-i8-i32-m128x4096x4096	alloc_words	exact	189
+contract/contract-i8-i32-m1x4096x4096	alloc_words	exact	189
+contract/contract-i8-i32-m1x4096x4096-kn-memory	alloc_words	exact	192
+contract/contract-i8-i32-m8x4096x4096-kn	alloc_words	exact	189
+contract/contract-i8-i32-n1x4096x4096	alloc_words	exact	175
 contract/dot-f32-8	alloc_words	exact	218
-contract/einsum-bf16-m1x5120x2880	alloc_words	exact	623
-contract/einsum-f32-attention-2x8x128x64	alloc_words	exact	933
-contract/einsum-f32-attention-2x8x128x64-contiguous	alloc_words	exact	933
-contract/einsum-f32-m1x4096x4096	alloc_words	exact	623
+contract/einsum-bf16-m1x5120x2880	alloc_words	exact	533
+contract/einsum-f32-attention-2x8x128x64	alloc_words	exact	795
+contract/einsum-f32-attention-2x8x128x64-contiguous	alloc_words	exact	795
+contract/einsum-f32-m1x4096x4096	alloc_words	exact	533
 contract/einsum-f32-m1x4096x4096-direct	alloc_words	exact	44
-contract/einsum-f32-mmv-1024	alloc_words	exact	1296
-contract/einsum-plan-11	alloc_words	exact	13208
+contract/einsum-f32-mmv-1024	alloc_words	exact	1126
+contract/einsum-plan-11	alloc_words	exact	11877
 contract/matmul-bf16-1024	alloc_words	exact	165
 contract/matmul-bf16-256	alloc_words	exact	165
 contract/matmul-bf16-512-tn	alloc_words	exact	202
@@ -101,7 +101,7 @@ conv/conv-f32-8x112x112x3-3x3-to-3	alloc_words	exact	1197
 conv/conv-f32-8x56x56x64-3x3	alloc_words	exact	1197
 conv/conv-f32-8x56x56x64-3x3-to-3	alloc_words	exact	1197
 conv/conv-input-grad-f32-8x56x56x64-3x3	alloc_words	exact	1373
-conv/conv-weight-grad-f32-8x56x56x64-3x3	alloc_words	exact	871
+conv/conv-weight-grad-f32-8x56x56x64-3x3	alloc_words	exact	642
 conv/depthwise-f32-8x56x56x64-3x3	alloc_words	exact	1628
 conv/max-pool-f32-8x64x56x56-3x3s2	alloc_words	exact	577
 conv/max-pool-grad-f32-8x64x56x56-3x3s2	alloc_words	exact	1807
@@ -197,7 +197,7 @@ frontend/to_array-f32-1M	alloc_words	exact	1048610
 frontend/to_string-f32-1000	alloc_words	exact	256513
 frontend/trace-f32-1024	alloc_words	exact	276
 frontend/tril-f32-1024	alloc_words	exact	283
-frontend/vdot-f32-1M	alloc_words	exact	821
+frontend/vdot-f32-1M	alloc_words	exact	698
 index/concatenate-2x512K	alloc_words	exact	291
 index/embedding-grad-bf16-uniform	alloc_words	exact	402
 index/embedding-grad-bf16-zipf	alloc_words	exact	402
@@ -272,7 +272,7 @@ quant/mxfp4-moe-64x8of32	alloc_words	exact	790
 quant/mxfp4-moe-64x8of32-experts-split4	alloc_words	exact	94122
 quant/mxfp4-moe-64x8of32-k-split4	alloc_words	exact	99427
 quant/q4_k-gemv-4096	alloc_words	exact	7105
-quant/q6_k-gemv-4096	alloc_words	exact	6329
+quant/q6_k-gemv-4096	alloc_words	exact	6364
 quant/q8_0-gemv-4096	alloc_words	exact	833
 quant/q8_0-gemv-4096-f64	alloc_words	exact	833
 ragged/groups-text-1M-of-5B-100-values	alloc_words	exact	3690
@@ -308,15 +308,15 @@ rng/randint-1M	wall_time	batch=1	n=20	8.947e-04	8.343e-04 8.344e-04 8.362e-04 8.
 rng/threefry-1M-direct	alloc_words	exact	54
 rng/uniform-f32-1M	alloc_words	exact	479
 rng/uniform-f64-1M	alloc_words	exact	431
-scan/host-argmax-f32-1024x1024-rows	alloc_words	exact	216
-scan/host-argmax-f32-1M	alloc_words	exact	212
-scan/host-logsumexp-f32-1024x1024-cols	alloc_words	exact	135
-scan/host-logsumexp-f32-1024x1024-rows	alloc_words	exact	135
-scan/host-logsumexp-f32-1M	alloc_words	exact	131
+scan/host-argmax-f32-1024x1024-rows	alloc_words	exact	206
+scan/host-argmax-f32-1M	alloc_words	exact	202
+scan/host-logsumexp-f32-1024x1024-cols	alloc_words	exact	120
+scan/host-logsumexp-f32-1024x1024-rows	alloc_words	exact	120
+scan/host-logsumexp-f32-1M	alloc_words	exact	116
 small/add-f32-16	alloc_words	exact	50
 small/cumsum-f32-16	alloc_words	exact	117
 small/exp-f32-16	alloc_words	exact	49
-small/leapfrog-step-f32-16	alloc_words	exact	276
+small/leapfrog-step-f32-16	alloc_words	exact	258
 small/mul_s-f32-1	alloc_words	exact	49
 small/mul_s-f32-16	alloc_words	exact	49
 small/mul_s-f64-16	alloc_words	exact	50

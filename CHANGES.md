@@ -3107,6 +3107,11 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- An eager `Nx.contract` lowers its pattern without lists: a call allocates
+  153 to 185 fewer words, 185 against 338 for a float32 product of two 4×4
+  matrices, `Kaun.Linear.apply` with a bias 256 against 409, and
+  `Nx.einsum` of two operands 92 to 108 fewer. `Nx_kernel.Prog.v` checks a
+  program without closures: 8 words against 21 for three nodes.
 - **Breaking:** `Nx.Repr.array` and `Nx.Repr.shards` take `~by`, the function
   the arrays are for, which their refusal of a dead or traced value names in
   place of their own: a library names the function its user called.

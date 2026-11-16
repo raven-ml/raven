@@ -264,30 +264,34 @@ let node_dtype ins ty env = function
   | Op2 (Compare _, _, _) -> D.Any D.Bool
   | Op3 (_, _, b, _) -> ty env b
 
+(* Why a node of [nodes] from [i] on, of the [n], makes no program, each
+   earlier one's dtype in [types]. *)
+let rec nodes_problem ins nodes types n i =
+  if i = n then None
+  else
+    let nd = Iarray.get nodes i in
+    match node_problem ins Array.get types i nd with
+    | Some _ as why -> why
+    | None ->
+        types.(i) <- node_dtype ins Array.get types nd;
+        nodes_problem ins nodes types n (i + 1)
+
+(* Why an output of [outs] from [k] on names no node of the [n]. *)
+let rec outs_problem n outs k =
+  if k = Iarray.length outs then None
+  else
+    let o = Iarray.get outs k in
+    if o < 0 || o >= n then Some (strf "output %d is no node" o)
+    else outs_problem n outs (k + 1)
+
 (* Why [ins], [nodes] and [outs] make no program, if they do not. *)
 let problem ~ins nodes ~outs =
   let n = Iarray.length nodes in
-  let nouts = Iarray.length outs in
-  let types = Array.make n (D.Any D.Bool) in
-  let rec from i =
-    if i = n then None
-    else
-      let nd = Iarray.get nodes i in
-      match node_problem ins Array.get types i nd with
-      | Some _ as why -> why
-      | None ->
-          types.(i) <- node_dtype ins Array.get types nd;
-          from (i + 1)
-  in
-  let rec out k =
-    if k = nouts then None
-    else
-      let o = Iarray.get outs k in
-      if o < 0 || o >= n then Some (strf "output %d is no node" o)
-      else out (k + 1)
-  in
-  if nouts = 0 then Some "no output"
-  else match from 0 with Some _ as why -> why | None -> out 0
+  if Iarray.length outs = 0 then Some "no output"
+  else
+    match nodes_problem ins nodes (Array.make n (D.Any D.Bool)) n 0 with
+    | Some _ as why -> why
+    | None -> outs_problem n outs 0
 
 let invalid why = invalid_arg ("Nx_kernel.Prog.v: " ^ why)
 

@@ -525,6 +525,27 @@ let test_dtype_refuses () =
   raises_match ~msg:"past the nodes" Exn.invalid_arg (fun () -> P.dtype p 1);
   raises_match ~msg:"negative" Exn.invalid_arg (fun () -> P.dtype p (-1))
 
+(* The minor words a call of [f] allocates, to the word: they depend on the
+   call, not the machine, so a baseline records them. *)
+let allocated f =
+  ignore (f ());
+  let n = 1000 in
+  let before = Gc.minor_words () in
+  for _ = 1 to n do
+    ignore (Sys.opaque_identity (f ()))
+  done;
+  Printf.sprintf "%.0f words" ((Gc.minor_words () -. before) /. Float.of_int n)
+
+(* A scalar form's program: its checks allocate the nodes' dtypes alone. *)
+let test_v_allocates () =
+  let f32 = D.Any D.Float32 in
+  let ins : D.any iarray = [| f32 |] and outs : int iarray = [| 2 |] in
+  let nodes : P.node iarray =
+    [| P.In 0; P.Const (f32, P.bits D.Float32 2.); P.Op2 (P.Binary Mul, 0, 1) |]
+  in
+  expect (allocated (fun () -> P.v ~ins nodes ~outs))
+  @@ __POS_OF__ {| 8 words |}
+
 (* Expressions *)
 
 (* The element of [dt] whose bits are [b]. *)
@@ -1918,6 +1939,7 @@ let tests =
           ~id:(fun (n, _, _) -> n)
           identities test_identity;
         test "dtype refuses a node past the program" test_dtype_refuses;
+        test "v of three nodes allocates its baseline" test_v_allocates;
       ];
     group "expressions"
       [
