@@ -1,6 +1,8 @@
 ; bench_amd.exe holds the AMD rows against this machine's baseline;
+; bench_amd.exe verify checks the suite's rows and times nothing;
 ; bench_amd.exe gate prints their device times and floors, and
-; bench_amd.exe compare their idle times for compare.py.
+; bench_amd.exe compare their idle times for compare.py. The alias checks
+; every row once, then times them.
 
 (executable
  (name bench_amd)
@@ -23,4 +25,6 @@
  (deps
   (glob_files *.thumper))
  (action
-  (run %{exe:bench_amd.exe})))
+  (progn
+   (run %{exe:bench_amd.exe} verify)
+   (run %{exe:bench_amd.exe}))))

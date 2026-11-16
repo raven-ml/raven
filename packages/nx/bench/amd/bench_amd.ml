@@ -8,10 +8,11 @@
    done: its wall time is their span on the GPU and a submission's round trip.
    [bench_amd.exe gate] prints the device times themselves, [bench_amd.exe
    compare] the idle times of the rows that PyTorch can time too (compare.py),
-   and [bench_amd.exe verify] each row's check alone.
+   and [bench_amd.exe verify] each row's check alone, which the bench alias runs
+   once over the suite's rows before timing them: a trial checks nothing.
 
-   A row whose kernel nx.amd declines fails the suite, as a wrong result does;
-   gate, compare and verify print it as declined and go on. *)
+   A row whose kernel nx.amd declines fails the suite, as a wrong result fails
+   verify; gate, compare and verify print it as declined and go on. *)
 
 module S = Nx_amd_support
 module D = Nx_array.Dtype
@@ -44,8 +45,9 @@ let runs_of t s =
 let call_span = 2e-3
 
 (* A row's case. Its setup times one run to count the runs a call makes, then
-   settles the clock on the row: thumper's calls follow one another with no idle
-   in between, so the clock stays where the row keeps it. *)
+   settles the clock on the row, 50 ms at a time: thumper's calls follow one
+   another with no idle in between, so the clock stays where the row keeps it,
+   and the settle is the trial's warmup ({!config}). *)
 let case (r : Rows.row) =
   let setup () =
     let g = S.gpu () in
@@ -53,9 +55,8 @@ let case (r : Rows.row) =
       try r.make g
       with Rows.Declined -> failwith (r.name ^ ": nx.amd declines it")
     in
-    p.check ();
     let t = S.device_time g p.run ~count:1 in
-    settle_row g p.run ~runs:(runs_of t);
+    settle g p.run ~runs:(runs_of t) ~chunk:0.05 ~cap:1.;
     (g, p, Int.max 1 (int_of_float (Float.ceil (call_span /. t))))
   in
   Thumper.bench_with_setup ~setup r.name (fun (g, (p : Rows.prepared), count) ->
@@ -77,6 +78,10 @@ let host =
       S.issue g ~count:64 run)
 
 let suite () = host :: List.map case Rows.all
+
+(* thumper's protocol with no warmup time but its 3 batches: each case's setup
+   settled the clock on its row. *)
+let config = Thumper.Config.(warmup 0. default)
 
 (* Gate *)
 
@@ -204,8 +209,8 @@ let gate patterns =
 
 (* bench_amd.exe verify [PATTERN...] runs each selected row once and checks its
    result, timing nothing: the rows' correctness on a GPU no timing hold covers.
-   It prints each row's name and [ok] or [declined], and fails at the first
-   wrong result. *)
+   Without a PATTERN it runs the suite's rows. It prints each row's name and
+   [ok] or [declined], and fails at the first wrong result. *)
 let verify patterns =
   let g = S.gpu () in
   let one (r : Rows.row) =
@@ -217,7 +222,9 @@ let verify patterns =
         Printf.printf "%s\tok\n%!" r.name;
         Gc.full_major ()
   in
-  List.iter one (List.filter (selected patterns) Rows.compared)
+  match patterns with
+  | [] -> List.iter one Rows.all
+  | _ -> List.iter one (List.filter (selected patterns) Rows.compared)
 
 (* Compare *)
 
@@ -281,4 +288,4 @@ let () =
   | "gate" :: patterns -> gate patterns
   | "compare" :: patterns -> compare_rows patterns
   | "verify" :: patterns -> verify patterns
-  | _ -> exit (Thumper.run "nx_amd" (suite ()))
+  | _ -> exit (Thumper.run ~config "nx_amd" (suite ()))
