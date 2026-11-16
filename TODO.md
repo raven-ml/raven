@@ -141,6 +141,9 @@ Where it stands, with every measurement: doc/performance.md.
   the bits but tolk then inlines the norm's map into q, k, v and the
   experts (+3.5 to +7 ms a prefill), until tolk keeps stored a value a
   contraction re-reads across output tiles
+- D404's launch member caps, NVRTC's 64 and Metal's 40 (an M1 Max), name
+  no fudge measurement: the CUDA cap needs a fudge row, as the ledger's
+  header asks of a speed measured elsewhere
 - `beam_search`'s disk key names no device part, so a search timed on one
   part of a target serves every other part
 - `Heuristic.reused` (heuristic.ml:853) and `upcast_more`'s `reuses`
