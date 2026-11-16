@@ -90,14 +90,34 @@ let law_matmul (batch, m, k, n, seed) =
   equal (array int) (Nx.shape want) (Nx.shape got);
   equal (array float_exact) (read want) (read got)
 
-(* A shape of rank 0 to 3 and the axes a sum reduces, from none to all. *)
+(* A shape of rank 0 to 3 and the axes a sum reduces, from none to all;
+   one time in three a shape with an empty axis that the sum reduces or
+   keeps, which the others draw one time in 11 and 14. *)
 let sums =
   let open Gen in
-  let* r = int_range 0 3 in
-  let* s = array ~size:(constant r) extent in
-  let* axes = subsequence (List.init r Fun.id) in
-  let+ seed = int in
-  (s, axes, seed)
+  let any =
+    let* r = int_range 0 3 in
+    let* s = array ~size:(constant r) extent in
+    let* axes = subsequence (List.init r Fun.id) in
+    let+ seed = int in
+    (s, axes, seed)
+  in
+  let emptied =
+    let* r = int_range 1 3 in
+    let* s = array ~size:(constant r) extent and+ z = int_range 0 (r - 1) in
+    let s = Array.mapi (fun a n -> if a = z then 0 else n) s in
+    let with_z axes = List.sort_uniq compare (z :: axes) in
+    let* axes =
+      frequency
+        [
+          (1, constant []);
+          (1, map with_z (subsequence (List.init r Fun.id)));
+        ]
+    in
+    let+ seed = int in
+    (s, axes, seed)
+  in
+  frequency [ (2, any); (1, emptied) ]
 
 let pp_sum ppf (s, axes, seed) =
   Format.fprintf ppf "%a along [%a] (seed %d)" (pp_ints "x") (Array.to_list s)
