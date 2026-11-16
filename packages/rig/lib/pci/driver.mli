@@ -222,6 +222,11 @@ val stop : hold -> [ `Stopped | `Unknown ]
     does, the next call makes the releases it had not finished. A device
     calls [stop] once its work is done or lost. *)
 
+val halted : hold -> bool
+(** [halted h] is [true] iff the function [h] holds was released and masters
+    the bus no more ({!Function.release}), so that the GPU writes no system
+    memory, whatever the driver's stop answered or raised. *)
+
 val renew : hold -> (unit, string) result
 (** [renew h] resets the function [h] holds as its vendor does ([reset] of
     {!make}), with its bus mastering off, and gives back the memory dead

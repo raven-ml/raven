@@ -1320,6 +1320,9 @@ let path d ~gpus ~index : mem Amd.path =
     sleep = sleep d;
     stable_power = stable_power d;
     stop = stop d;
+    (* The path does not tell whether a stop that raised left a queue
+       writing memory. *)
+    halted = (fun () -> false);
   }
 
 (* Numbering *)

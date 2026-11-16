@@ -184,6 +184,8 @@ let renew h =
 
 (* Stopping *)
 
+let halted h = Function.released h.fn && not (Function.reaching h.fn)
+
 (* Releases [h]'s function once its stop recorded its answer, under [holds]:
    no open or reset sees the function free while still taken, or lost before
    it is marked. An open that returned releases keeping the memory its

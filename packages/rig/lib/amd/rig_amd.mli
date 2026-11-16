@@ -684,7 +684,15 @@ type 'm path = {
           may. [fault] is the reason rig lost the device for, if it lost it
           for a fault or a hang ({!Rig_edge.Driver.stop}). A path that keeps
           the GPU's state for later opens records it; a path that keeps none
-          ignores it. *)
+          ignores it. The device gives back the memory the path gave at
+          [`Stopped], and keeps it until the process exits at [`Unknown] and
+          where [stop] raises, an asynchronous exception included, unless
+          [halted] then holds. *)
+  halted : unit -> bool;
+      (** [halted ()] is [true] once no queue [queue] made can write memory
+          outside the GPU, as after a [stop] that turned the GPU's bus
+          mastering off, whatever it raised after. A path that cannot tell
+          answers [false]. *)
 }
 (** The type for what a path gives a device. A path fills it with functions
     over its own state, which this library never names.

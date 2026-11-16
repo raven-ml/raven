@@ -261,7 +261,8 @@ let reservations =
 (* A machine of 16 KiB pages that a transport reaches, whose one function
    records the operations it is asked, oldest first. Its DMA memory is new
    windows of the transport, and none past 1 MiB. Its functions are listed out
-   of bus order. *)
+   of bus order. Its release turns the bus mastering off unless [quiet] is
+   [false]. *)
 let far_page = 16 * kib
 let far_bus = "0000:03:00.0"
 
@@ -270,7 +271,7 @@ type recorder = { m : Machine.t; tr : int; calls : string list ref }
 (* A call's bound on its runs, where the function states one. *)
 let bound below = if below = max_int then "" else strf " below 0x%x" below
 
-let recorder () =
+let recorder ?(quiet = true) () =
   let tr = far 0 far_page in
   let calls = ref [] in
   let log fmt = Printf.ksprintf (fun s -> calls := s :: !calls) fmt in
@@ -325,7 +326,7 @@ let recorder () =
       release =
         (fun ~keep ->
           log "%s" (if keep then "release keep" else "release");
-          true);
+          quiet);
     }
   in
   let id bus =
@@ -498,6 +499,26 @@ let test_far_kept () =
   Function.free_dma f w2;
   equal ~msg:"a free_dma after them" (list string) [] (asked r)
 
+(* A stopped open is halted iff its release turned the bus mastering off,
+   whatever the driver's stop answered. *)
+let quiets =
+  [
+    ("its bus mastering turned off", true);
+    ("its bus mastering left on", false);
+  ]
+
+let test_far_halted (_, quiet) =
+  let r = recorder ~quiet () in
+  let h =
+    require_ok
+      (Driver.open_ (fixture_gpus ()) r.m 0 (fun h _ ->
+           Driver.set_stop h (fun () -> `Unknown);
+           Ok h))
+  in
+  equal ~msg:"halted before the stop" bool false (Driver.halted h);
+  ignore (Driver.stop h : [ `Stopped | `Unknown ]);
+  equal ~msg:"halted after the stop" bool quiet (Driver.halted h)
+
 let transports =
   group ~timeout:patience "transports"
     [
@@ -519,6 +540,10 @@ let transports =
         "a stopped open's memory goes back at each free_dma, and the rest at \
          one release once the memory lets go"
         test_far_kept;
+      cases
+        "a stopped open is halted iff its release turned the bus mastering \
+         off"
+        ~id:fst quiets test_far_halted;
     ]
 
 (* Routes

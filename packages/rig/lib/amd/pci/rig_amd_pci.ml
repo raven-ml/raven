@@ -311,10 +311,15 @@ let path g h fn ~index : Memory.region Amd.path =
   let gc = Boot.gc g and gpu = Boot.gpu g in
   let mem = { memory = Boot.memory g; lock = Boot.lock g } in
   (* A fault rig lost the device for, a hang included, is the GPU's as much as
-     one its interrupt ring reported: the stop leaves the GPU lost. *)
+     one its interrupt ring reported: the stop leaves the GPU lost. A release
+     that turned the GPU's bus mastering off leaves no queue that writes
+     memory outside the GPU, though one stayed: the stop is [`Stopped], as
+     [Rig_amd.path] states. *)
   let stop ~fault =
     Option.iter (Boot.faulted g) fault;
-    Driver.stop h
+    match Driver.stop h with
+    | `Unknown when Driver.halted h -> `Stopped
+    | s -> s
   in
   let on = known (Rig_pci.Function.machine fn) in
   {
@@ -356,6 +361,7 @@ let path g h fn ~index : Memory.region Amd.path =
     sleep = (fun ~ms ~after -> guard (fun () -> Boot.sleep g ~ms ~after));
     stable_power = (fun () -> guard (fun () -> Boot.stable_power g));
     stop;
+    halted = (fun () -> Driver.halted h);
   }
 
 (* What the open holds past the hold's stop goes once the stop released the

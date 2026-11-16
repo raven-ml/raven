@@ -96,6 +96,7 @@ let path_of gpu : unit A.path =
     sleep = (fun ~ms:_ ~after:_ -> unused ());
     stable_power = unused;
     stop = (fun ~fault:_ -> unused ());
+    halted = unused;
   }
 
 let gfx1201 : Gpu.t =

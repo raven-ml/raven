@@ -148,6 +148,7 @@ type 'm path = {
   sleep : ms:int -> after:int -> unit;
   stable_power : unit -> (unit, string) result;
   stop : fault:string option -> [ `Stopped | `Unknown ];
+  halted : unit -> bool;
 }
 
 (* Whose a path's memory is, by the path's key, and the path's [free]. Memory
@@ -210,6 +211,7 @@ type ops = {
   sleep : ms:int -> after:int -> unit;
   stable_power : unit -> (unit, string) result;
   stop : fault:string option -> [ `Stopped | `Unknown ];
+  halted : unit -> bool;
 }
 
 let ops (type m) (p : m path) =
@@ -260,6 +262,7 @@ let ops (type m) (p : m path) =
     sleep = p.sleep;
     stable_power = p.stable_power;
     stop = p.stop;
+    halted = p.halted;
   }
 
 (* What holds memory the path makes, such as a region, is made with the record
@@ -1829,21 +1832,30 @@ let grow g =
 (* Loss *)
 
 (* A queue the path could not destroy may still run, so its memory stays and its
-   own releases raise the word. *)
+   own releases raise the word. A stop that raised, an asynchronous exception
+   included, leaves the memory too, unless the path halted the GPU: no queue
+   then writes memory outside it, so the word is raised and the memory goes
+   back as at [`Stopped]. The exception then passes on, but for a [Fault]. *)
 let halt g l ~fault =
+  let stopped () =
+    raise_word g.self;
+    if l.copy_launch <> 0 then free_launch l.copy_launch;
+    let st = l.scratch in
+    let buffers = Option.to_list st.installed @ Option.to_list st.pending in
+    List.iter give_back
+      (List.map fst buffers
+      @ List.map (fun r -> r.buffer) st.retired
+      @ l.trace_memory @ l.own
+      @ List.concat_map (fun p -> p.mems) l.parts)
+  in
   match l.ops.stop ~fault with
-  | exception Fault _ -> ()
+  | `Stopped -> stopped ()
   | `Unknown -> ()
-  | `Stopped ->
-      raise_word g.self;
-      if l.copy_launch <> 0 then free_launch l.copy_launch;
-      let st = l.scratch in
-      let buffers = Option.to_list st.installed @ Option.to_list st.pending in
-      List.iter give_back
-        (List.map fst buffers
-        @ List.map (fun r -> r.buffer) st.retired
-        @ l.trace_memory @ l.own
-        @ List.concat_map (fun p -> p.mems) l.parts)
+  | exception Fault _ -> if l.ops.halted () then stopped ()
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      if l.ops.halted () then stopped ();
+      Printexc.raise_with_backtrace e bt
 
 (* The C state's run part goes whatever the path's stop answered, or if it
    raised: the queues read none of it. *)
