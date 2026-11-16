@@ -6,8 +6,9 @@
 /* The host's worker threads (rig_pool.h).
 
    One pool per process and kind of job, compute or blocking, each of
-   rig_pool_cores () - 1 persistent workers, made at the first job of its
-   kind on more than one thread. The two share only the lock that makes
+   persistent workers: the compute pool's rig_pool_cores () - 1, made at
+   its first job on more than one thread, and the blocking pool's as its
+   jobs ask for them (see grow). The two share only the lock that makes
    them and the fork handlers (see Fork); everything else below holds of
    each alone. A job is published behind a
    generation counter; its threads claim runs of chunk indices from a
@@ -30,11 +31,12 @@
    others. A run holds at most max (1, floor (s / claim_split)) chunks of a
    strip of s, so a job of at most 15 t chunks makes one call a chunk.
 
-   Jobs come in bursts, such as the kernels of a compiled program a few
-   microseconds apart. A waiting thread spins for spin_ns before it parks on
-   a condition variable, and a job wakes the parked workers only if one of
-   its own threads is among them, so a job's publication costs no system
-   call. */
+   Compute jobs come in bursts, such as the kernels of a compiled program a
+   few microseconds apart. A waiting thread of the compute pool spins for
+   spin_ns before it parks on a condition variable, and a job wakes the
+   parked workers only if one of its own threads is among them, so a job's
+   publication costs no system call. A blocking job lasts as long as the
+   system's waits, so the blocking pool's threads park at once. */
 
 #define _GNU_SOURCE
 
@@ -62,10 +64,10 @@
 #include <errno.h>
 #endif
 
-/* How long a waiting thread spins before it parks. Waking a parked thread
-   takes a system call and tens of microseconds before it runs; a spin
-   longer than the gaps within a burst keeps the workers running for the
-   next job.
+/* How long a waiting thread of the compute pool spins before it parks.
+   Waking a parked thread takes a system call and tens of microseconds
+   before it runs; a spin longer than the gaps within a burst keeps the
+   workers running for the next job.
 
    A spinning thread keeps its core. Yielding it between reads hands it to
    whatever else is runnable: another pool's thread gives it back within
@@ -83,9 +85,13 @@
    on x86 and even on the M1. */
 static const uint64_t spin_ns = 100000;
 
-/* A worker's stack, the size of a main thread's on Linux and macOS, so that
-   a body's safe depth does not depend on which thread claims its chunk. */
+/* A compute worker's stack, the size of a main thread's on Linux and macOS,
+   so that a body's safe depth does not depend on which thread claims its
+   chunk. A blocking worker's is smaller, since a blocking job may make
+   many: rig.disk's 127 take 32 MiB of address space where 8 MiB each would
+   take 1 GiB, which strict overcommit or RLIMIT_AS counts. */
 static const size_t stack_bytes = 8 << 20;
+static const size_t blocking_stack_bytes = 256 << 10;
 
 /* A claim takes 1 / claim_split of the chunks left in its strip, and at
    least one: one claim a chunk costs a fetch-add, more than a short chunk's
@@ -425,9 +431,13 @@ typedef struct {
 
 struct pool {
   int threads;           /* the workers made, plus the caller */
-  worker *workers;       /* [1, threads); slot 0 is the caller */
+  int slots;             /* the threads the arrays below have room for */
+  int grows;             /* whether jobs make the workers they ask for */
+  uint64_t spin_ns;      /* how long a waiting thread spins, 0 for none */
+  size_t stack_bytes;    /* each worker's stack */
+  worker **workers;      /* [1, threads); slot 0 is the caller */
   strip *strips;         /* [0, threads), strip k claimed first by worker k */
-  pthread_mutex_t drive; /* one published job at a time */
+  pthread_mutex_t drive; /* one published job at a time, and growth */
   pthread_mutex_t mtx;   /* guards parking */
   pthread_cond_t done;   /* a parked caller waits here for the job's end */
   /* The job's number in the high 32 bits and its threads in the low 32,
@@ -442,8 +452,9 @@ struct pool {
   char gap[RIG_LINE_BYTES];
   _Atomic uint64_t inside; /* the workers inside the job, | closed */
   _Atomic int waiting;     /* whether the caller parked on [done] */
-  /* Bit [id % 64] of word [id / 64] is set while worker [id] is parked. */
-  _Atomic uint64_t parked[];
+  /* Bit [id % 64] of word [id / 64] is set while worker [id] is parked.
+     Read and replaced under [mtx], and read by the caller of a job. */
+  _Atomic uint64_t *parked;
 };
 
 /* Whether the thread runs a body of a job of more than one thread: a job
@@ -568,16 +579,16 @@ static int enter(pool *p) {
    its own, and a job signals only its own parked workers, so a worker that
    narrow jobs leave out sleeps through their burst. */
 
-static uint64_t park_worker(pool *p, int id, uint64_t seen) {
-  _Atomic uint64_t *word = &p->parked[id / 64];
-  uint64_t bit = (uint64_t)1 << (id % 64);
+static uint64_t park_worker(worker *w, uint64_t seen) {
+  pool *p = w->pool;
+  uint64_t bit = (uint64_t)1 << (w->id % 64);
   pthread_mutex_lock(&p->mtx);
-  atomic_fetch_or(word, bit);
+  atomic_fetch_or(&p->parked[w->id / 64], bit);
   RIG_POOL_HOOK(PARKING);
   uint64_t g;
   while ((g = atomic_load(&p->generation)) == seen)
-    pthread_cond_wait(&p->workers[id].wake, &p->mtx);
-  atomic_fetch_and(word, ~bit);
+    pthread_cond_wait(&w->wake, &p->mtx);
+  atomic_fetch_and(&p->parked[w->id / 64], ~bit);
   pthread_mutex_unlock(&p->mtx);
   return g;
 }
@@ -601,20 +612,24 @@ static void wake_parked(pool *p, int threads) {
       synced = 1;
     }
     for (; bits; bits &= bits - 1)
-      pthread_cond_signal(&p->workers[w * 64 + __builtin_ctzll(bits)].wake);
+      pthread_cond_signal(&p->workers[w * 64 + __builtin_ctzll(bits)]->wake);
   }
 }
 
-/* The generation of the next job after [g] that worker [id] is one of the
-   threads of: spun for until [deadline], parked for after. A job without
-   the worker is passed over, and after [deadline] slept through: jobs may
-   follow each other faster than a spin reads the clock. */
-static uint64_t next_job(pool *p, int id, uint64_t g, uint64_t deadline) {
+/* The generation of the next job after [g] that worker [w] is one of the
+   threads of: spun for until [deadline], parked for after, at once in a
+   pool that does not spin. A job without the worker is passed over, and
+   after [deadline] slept through: jobs may follow each other faster than a
+   spin reads the clock. */
+static uint64_t next_job(worker *w, uint64_t g, uint64_t deadline) {
+  pool *p = w->pool;
+  int id = w->id;
   for (;;) {
-    uint64_t v = spin(&p->generation, g, LEAVE, deadline);
+    uint64_t v = p->spin_ns ? spin(&p->generation, g, LEAVE, deadline)
+                            : atomic_load(&p->generation);
     if (v == g || (id >= (int)(uint32_t)v && now_ns() >= deadline)) {
       RIG_POOL_HOOK(PARK);
-      v = park_worker(p, id, v);
+      v = park_worker(w, v);
     }
     if (id < (int)(uint32_t)v) return v;
     g = v;
@@ -622,7 +637,7 @@ static uint64_t next_job(pool *p, int id, uint64_t g, uint64_t deadline) {
 }
 
 static void *work(void *arg) {
-  const worker *w = arg;
+  worker *w = arg;
   pool *p = w->pool;
   in_body = 1;
   /* Workers start before the first job, at generation 0. */
@@ -630,9 +645,9 @@ static void *work(void *arg) {
   /* The spin window runs from the worker's last part in a job, and a job it
      takes no part in leaves the window as it was: a worker that narrow jobs
      leave out parks once the window ends, for the rest of their burst. */
-  uint64_t deadline = now_ns() + spin_ns;
+  uint64_t deadline = now_ns() + p->spin_ns;
   for (;;) {
-    seen = next_job(p, w->id, seen, deadline);
+    seen = next_job(w, seen, deadline);
     /* The job open by now may be a later one than [seen], whose threads
        the worker learns inside. */
     if (enter(p)) {
@@ -640,20 +655,61 @@ static void *work(void *arg) {
       if (w->id < p->job.threads) claim(p, &p->job, w->id);
       leave(p);
     }
-    deadline = now_ns() + spin_ns;
+    deadline = now_ns() + p->spin_ns;
   }
   return NULL;
 }
 
-/* Starts the workers of [p], with [stack_bytes] of stack and the signals
-   sent to the process blocked, keeping those a body raises itself. A worker
-   that cannot be made so ends the list: the job runs with those made. The
-   workers are never joined. */
-static void start_workers(pool *p, int wanted) {
-  p->threads = 1;
+/* Memory of a pool, from the suite's calloc where it set one
+   (rig_pool_set_calloc). calloc's zeros are each atomic field's initial
+   value. */
+static void *pool_calloc(size_t n, size_t size) {
+  void *(*f)(size_t, size_t) =
+      atomic_load_explicit(&g_calloc, memory_order_relaxed);
+  return f ? f(n, size) : calloc(n, size);
+}
+
+/* Gives [p] room for [t] threads, whether it could. The caller holds
+   [drive] with no job open, so no other thread reads [workers] or [strips];
+   a worker reads [parked] under [mtx], which the swap takes. A worker's
+   own record never moves. */
+static int widen(pool *p, int t) {
+  size_t words = ((size_t)t + 63) / 64, had = ((size_t)p->slots + 63) / 64;
+  worker **workers = pool_calloc((size_t)t, sizeof *workers);
+  strip *strips = workers ? pool_calloc((size_t)t, sizeof *strips) : NULL;
+  _Atomic uint64_t *parked =
+      strips ? pool_calloc(words, sizeof *parked) : NULL;
+  if (parked == NULL) {
+    free(strips);
+    free(workers);
+    return 0;
+  }
+  for (int id = 1; id < p->threads; id++) workers[id] = p->workers[id];
+  pthread_mutex_lock(&p->mtx);
+  for (size_t w = 0; w < had; w++)
+    atomic_store(&parked[w], atomic_load(&p->parked[w]));
+  _Atomic uint64_t *old = p->parked;
+  p->parked = parked;
+  pthread_mutex_unlock(&p->mtx);
+  free((void *)old);
+  free(p->workers);
+  free(p->strips);
+  p->workers = workers;
+  p->strips = strips;
+  p->slots = t;
+  return 1;
+}
+
+/* Starts workers of [p] until it has [t] threads, with its stack_bytes of
+   stack and the signals sent to the process blocked, keeping those a body
+   raises itself. A worker that cannot be made, its memory or its thread,
+   ends the list: the job runs with those made. The workers are never
+   joined. */
+static void grow(pool *p, int t) {
+  if (t > p->slots && !widen(p, t)) return;
   pthread_attr_t attr;
   if (pthread_attr_init(&attr) != 0) return;
-  int sized = pthread_attr_setstacksize(&attr, stack_bytes) == 0;
+  int sized = pthread_attr_setstacksize(&attr, p->stack_bytes) == 0;
 #if !defined(_WIN32)
   sigset_t blocked, saved;
   sigfillset(&blocked);
@@ -663,16 +719,22 @@ static void start_workers(pool *p, int wanted) {
     sigdelset(&blocked, faults[i]);
   pthread_sigmask(SIG_SETMASK, &blocked, &saved);
 #endif
-  for (int id = 1; sized && id < wanted; id++) {
-    worker *w = &p->workers[id];
+  for (int id = p->threads; sized && id < t; id++) {
+    worker *w = pool_calloc(1, sizeof *w);
+    if (w == NULL) break;
     w->pool = p;
     w->id = id;
-    if (pthread_cond_init(&w->wake, NULL) != 0) break;
+    if (pthread_cond_init(&w->wake, NULL) != 0) {
+      free(w);
+      break;
+    }
     pthread_t thread;
     if (pthread_create(&thread, &attr, work, w) != 0) {
       pthread_cond_destroy(&w->wake);
+      free(w);
       break;
     }
+    p->workers[id] = w;
     p->threads = id + 1;
   }
 #if !defined(_WIN32)
@@ -681,37 +743,35 @@ static void start_workers(pool *p, int wanted) {
   pthread_attr_destroy(&attr);
 }
 
-/* A new pool, or NULL if its memory or locks cannot be had. calloc's zeros
-   are each atomic field's initial value. */
-static void *pool_calloc(size_t n, size_t size) {
-  void *(*f)(size_t, size_t) =
-      atomic_load_explicit(&g_calloc, memory_order_relaxed);
-  return f ? f(n, size) : calloc(n, size);
-}
+/* The kinds of job, each with a pool of its own. */
+typedef enum { COMPUTE, BLOCKING, KINDS } kind;
 
-static pool *create(void) {
-  int cores = rig_pool_cores();
-  size_t words = ((size_t)cores + 63) / 64;
-  pool *p = pool_calloc(1, sizeof *p + words * sizeof(_Atomic uint64_t));
+/* A new pool of kind [k], or NULL if its memory or locks cannot be had,
+   or, for the compute pool, its room for a thread on every core. The
+   compute pool makes its workers at once, the blocking pool as its jobs
+   ask (run). */
+static pool *create(kind k) {
+  pool *p = pool_calloc(1, sizeof *p);
   if (p == NULL) return NULL;
-  p->workers = pool_calloc((size_t)cores, sizeof *p->workers);
-  if (p->workers == NULL) goto fail_pool;
-  p->strips = pool_calloc((size_t)cores, sizeof *p->strips);
-  if (p->strips == NULL) goto fail_workers;
-  if (pthread_mutex_init(&p->drive, NULL) != 0) goto fail_strips;
+  p->threads = 1;
+  p->grows = k == BLOCKING;
+  p->spin_ns = k == BLOCKING ? 0 : spin_ns;
+  p->stack_bytes = k == BLOCKING ? blocking_stack_bytes : stack_bytes;
+  if (pthread_mutex_init(&p->drive, NULL) != 0) goto fail_pool;
   if (pthread_mutex_init(&p->mtx, NULL) != 0) goto fail_drive;
   if (pthread_cond_init(&p->done, NULL) != 0) goto fail_mtx;
-  start_workers(p, cores);
+  if (k == COMPUTE) {
+    if (!widen(p, rig_pool_cores())) goto fail_done;
+    grow(p, rig_pool_cores());
+  }
   return p;
 
+fail_done:
+  pthread_cond_destroy(&p->done);
 fail_mtx:
   pthread_mutex_destroy(&p->mtx);
 fail_drive:
   pthread_mutex_destroy(&p->drive);
-fail_strips:
-  free(p->strips);
-fail_workers:
-  free(p->workers);
 fail_pool:
   free(p);
   return NULL;
@@ -730,7 +790,6 @@ fail_pool:
    pointers and releases only the still-valid init_mtx. fork does not wait
    for a blocking job, whose end the system decides: the child abandons its
    pool as it abandons the other. */
-typedef enum { COMPUTE, BLOCKING, KINDS } kind;
 
 static _Atomic(pool *) g_pools[KINDS];
 static pthread_mutex_t init_mtx = PTHREAD_MUTEX_INITIALIZER;
@@ -775,7 +834,7 @@ static pool *get(kind k) {
   pthread_mutex_lock(&init_mtx);
   p = atomic_load_explicit(&g_pools[k], memory_order_relaxed);
   if (!p) {
-    p = create();
+    p = create(k);
     atomic_store_explicit(&g_pools[k], p, memory_order_release);
   }
   pthread_mutex_unlock(&init_mtx);
@@ -813,15 +872,22 @@ static int take(pool *p, kind k) {
 
 /* Runs a job of kind [k] on [t] > 1 threads and [c] chunks: alone if begun
    from a body, without a pool, or without taking it, else on at most
-   p->threads (<= rig_pool_cores ()). Once it returns, no thread touches the
-   job or the claim counter until the next job opens. Out of line, so a
-   serial rig_pool_run saves no registers. */
+   p->threads, which a pool that grows first raises towards [t]. Once it
+   returns, no thread touches the job or the claim counter until the next
+   job opens. Out of line, so a serial rig_pool_run saves no registers. */
 __attribute__((noinline)) static void run(kind k, int t, int64_t total,
                                           int64_t c, rig_pool_body body,
                                           void *ctx) {
   pool *p = in_body ? NULL : get(k);
-  if (p && t > p->threads) t = p->threads;
+  if (p && !p->grows && t > p->threads) t = p->threads;
   if (p == NULL || t == 1 || !take(p, k)) {
+    body(0, total, 0, ctx);
+    return;
+  }
+  if (t > p->threads) grow(p, t);
+  if (t > p->threads) t = p->threads;
+  if (t == 1) {
+    pthread_mutex_unlock(&p->drive);
     body(0, total, 0, ctx);
     return;
   }
@@ -843,8 +909,9 @@ __attribute__((noinline)) static void run(kind k, int t, int64_t total,
   RIG_POOL_HOOK(CLAIMED);
   uint64_t was = atomic_fetch_or(&p->inside, closed);
   RIG_POOL_HOOK(CLOSED);
-  if (was != 0 &&
-      spin(&p->inside, closed, REACH, now_ns() + spin_ns) != closed) {
+  if (was != 0 && (p->spin_ns == 0 ||
+                   spin(&p->inside, closed, REACH, now_ns() + p->spin_ns) !=
+                       closed)) {
     pthread_mutex_lock(&p->mtx);
     atomic_store(&p->waiting, 1);
     RIG_POOL_HOOK(WAITING);

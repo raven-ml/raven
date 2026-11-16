@@ -31,13 +31,16 @@ let cores = P.cores ()
 let chunk_count ~total ~chunks =
   if total <= 0L then 0L else Int64.min (Int64.max chunks 1L) total
 
-(* t, the most threads of a job. *)
-let thread_bound ~threads ~total ~chunks =
+(* t, the most threads of a job: a compute job's are bounded by the cores, a
+   blocking job's by its chunks alone. *)
+let thread_bound kind ~threads ~total ~chunks =
   let c = chunk_count ~total ~chunks in
-  Int64.to_int
-    (Int64.min
-       (Int64.of_int (max threads 1))
-       (Int64.min (Int64.of_int cores) c))
+  let most =
+    match kind with
+    | P.Compute -> Int64.min (Int64.of_int cores) c
+    | P.Blocking -> c
+  in
+  Int64.to_int (Int64.min (Int64.of_int (max threads 1)) most)
 
 (* Chunk i is [floor (i * total / c), floor ((i + 1) * total / c)). With total =
    q c + r, floor (i * total / c) = i q + floor (i r / c), whose products stay
@@ -539,13 +542,20 @@ let int64_extremes =
       max_int;
     ]
 
-let threads_gen =
+(* A blocking job runs on as many threads as it asks, up to its chunks, so
+   its draws stay within a few times the cores: every one is made. *)
+let threads_gen kind =
+  let most =
+    match kind with
+    | P.Compute -> Int32.(to_int max_int)
+    | P.Blocking -> (2 * cores) + 8
+  in
   Gen.frequency
     [
       (6, Gen.int_range (-2) (cores + 2));
       ( 1,
         Gen.of_list ~pp:Format.pp_print_int
-          [ Int32.(to_int min_int); -1; 0; 1; Int32.(to_int max_int) ] );
+          [ Int32.(to_int min_int); -1; 0; 1; most ] );
     ]
 
 let total_gen =
@@ -567,7 +577,8 @@ let chunks_gen =
 let pp_job ppf (threads, total, chunks) =
   Format.fprintf ppf "threads %d, total %LdL, chunks %LdL" threads total chunks
 
-let job_gen = Gen.with_pp pp_job (Gen.triple threads_gen total_gen chunks_gen)
+let job_gen kind =
+  Gen.with_pp pp_job (Gen.triple (threads_gen kind) total_gen chunks_gen)
 
 (* A drawn job records its every call. *)
 let max_drawn_chunks = 16_384L
@@ -597,7 +608,7 @@ let for_kinds f = List.map (fun kind -> f kind (kind_name kind ^ ": ")) kinds
 let test_bounds kind ((threads, total, chunks) as job) =
   assume_recordable job;
   let c = chunk_count ~total ~chunks
-  and t = thread_bound ~threads ~total ~chunks in
+  and t = thread_bound kind ~threads ~total ~chunks in
   cover "no unit" (total <= 0L);
   cover "fewer than one chunk" (total > 0L && chunks < 1L);
   cover "more chunks than units" (total > 0L && chunks > total);
@@ -674,7 +685,7 @@ let chunk_tests =
           ^ "a job calls ranges of whole chunks of the stated bounds that \
              cover its units once, one range on one thread, and nothing for \
              no unit")
-           job_gen (test_bounds kind))
+           (job_gen kind) (test_bounds kind))
     @ for_kinds (fun kind name ->
         cases
           (name
@@ -694,7 +705,7 @@ let chunk_tests =
 
 let test_workers kind ((threads, total, chunks) as job) =
   assume_recordable job;
-  let t = thread_bound ~threads ~total ~chunks in
+  let t = thread_bound kind ~threads ~total ~chunks in
   let ran = P.record ~kind ~threads ~total ~chunks () in
   let pairs =
     distinct (List.map (fun (c : P.call) -> (c.worker, c.thread)) ran.calls)
@@ -702,7 +713,8 @@ let test_workers kind ((threads, total, chunks) as job) =
   let workers = distinct (List.map fst pairs)
   and threads_used = distinct (List.map snd pairs) in
   cover "fewer than one thread" (total > 0L && threads < 1);
-  cover "more threads than cores" (threads > cores && t = cores);
+  cover "more threads than cores"
+    (chunk_count ~total ~chunks > Int64.of_int cores && threads > cores);
   List.iter
     (fun w ->
       at_least ~msg:"a worker index" int ~than:0 w;
@@ -730,7 +742,7 @@ let worker_tests =
            (name
           ^ "a call's worker is below the job's threads, the caller's 0, one \
              per thread, and its calls never overlap")
-           job_gen (test_workers kind))
+           (job_gen kind) (test_workers kind))
     @ [
         cases
           "bodies see the caller's writes made before the job, and the caller \
@@ -816,7 +828,7 @@ let job_commands =
       command (kind_name kind)
         (small_job @-> returns (list (pair int64 int64)))
         (fun (threads, total, chunks) ->
-          let t = thread_bound ~threads ~total ~chunks
+          let t = thread_bound kind ~threads ~total ~chunks
           and c = chunk_count ~total ~chunks in
           if cores > 1 then
             cover

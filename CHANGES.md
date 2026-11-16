@@ -40,6 +40,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- The host pool's blocking workers, which rig.disk's reads use, sleep as
+  soon as they find no work, where they spun 100 us as compute workers
+  still do, and a blocking job makes the workers it asks for, which may
+  outnumber the cores, each with 256 KiB of stack. Each counts against the
+  process's thread budget (`RLIMIT_NPROC`, a cgroup's `pids.max`); where the
+  system refuses one, a job runs with fewer.
 - `Rig.Submission.launch ~label` names a launch's work in profiles apart
   from its function, so launches of one function are told apart. **Breaking:**
   `Rig_program.Launch` takes the `label` its run passes, and descriptions are

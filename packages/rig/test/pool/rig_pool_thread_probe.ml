@@ -16,14 +16,20 @@ let faults =
 
 (* Children made by fork *)
 
-type scenario = Threads | Job | Stack | Faults | Limited
+type scenario = Threads | Job | Stack | Faults | Limited | Grown | Limited_eight
 
 external in_child_raw : bool -> scenario -> string * int array
   = "rig_pool_test_in_child"
 
 let in_child kind s = in_child_raw (blocking kind) s
-external fork_beside_blocking : unit -> bool * string
+
+external fork_beside_blocking : int -> bool * string
   = "rig_pool_test_fork_beside_blocking"
+
+external spin_cpu_raw : bool -> int -> int array * int array
+  = "rig_pool_test_spin_cpu"
+
+let spin_cpu kind ~runs = spin_cpu_raw (blocking kind) runs
 
 external limits_threads : unit -> bool = "rig_pool_test_limits_threads"
 

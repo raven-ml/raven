@@ -105,7 +105,8 @@ value rig_pool_test_record(value v_blocking, value v_threads, value v_total,
   }
   if (cap > max_recorded)
     caml_invalid_argument("rig_pool_test_record: too many chunks");
-  int slots = rig_pool_cores();
+  /* A worker's index is below the job's threads, at most its chunks. */
+  int slots = (int)cap + 1;
   record_job j = {calloc((size_t)cap + 1, sizeof(call)),      cap,   0,
                   calloc((size_t)slots, sizeof(_Atomic int)), slots, 0};
   pthread_t *seen = malloc(((size_t)cap + 1) * sizeof(pthread_t));

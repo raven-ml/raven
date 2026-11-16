@@ -175,23 +175,23 @@ static void raise_faults(void) {
   }
 }
 
-/* 7 MiB of the 8 MiB rig_pool.h promises, touched from the top down so an
-   overflow meets the guard page first. The deepest byte is read back, so
-   the frame is used. */
-#define DEEP_BYTES (7 << 20)
-
+/* 7 MiB of the 8 MiB rig_pool.h promises a compute worker, and 192 KiB of
+   a blocking worker's 256 KiB, touched from the top down so an overflow
+   meets the guard page first. The deepest byte is read back, so the frame
+   is used. */
 static volatile char deep_sink;
 
 static __attribute__((noinline)) void deep_stack(void) {
-  volatile char frame[DEEP_BYTES];
-  for (size_t i = DEEP_BYTES; i > 0; i -= 4096)
+  size_t n = blocking ? 192 << 10 : 7 << 20;
+  volatile char *frame = __builtin_alloca(n);
+  for (size_t i = n; i > 0; i -= 4096)
     frame[i - 1] = (char)i;
   deep_sink = frame[4095];
 }
 
 /* Children made by fork */
 
-#define CHILD_VALUES 4
+#define CHILD_VALUES 5
 
 #if defined(__APPLE__)
 static int64_t thread_count(void) {
@@ -236,6 +236,22 @@ static void child_threads(int64_t *v) {
   v[3] = thread_count();
 }
 
+/* The process's threads before any job, after a job of two threads, after
+   another of two, after one of three, and after one of the cores and four
+   more. */
+static void child_grown(int64_t *v) {
+  int cores = rig_pool_cores();
+  v[0] = thread_count();
+  run_job(2, 1000, 10, nothing, NULL);
+  v[1] = thread_count();
+  run_job(2, 1000, 10, nothing, NULL);
+  v[2] = thread_count();
+  run_job(3, 1000, 10, nothing, NULL);
+  v[3] = thread_count();
+  run_job(cores + 4, 1000, 100, nothing, NULL);
+  v[4] = thread_count();
+}
+
 #define CHILD_UNITS 1000
 
 static _Atomic int child_units[CHILD_UNITS];
@@ -270,15 +286,20 @@ static void count_alone(int64_t lo, int64_t hi, int worker, void *ctx) {
   count_units(lo, hi, worker, ctx);
 }
 
-/* [units_not_once ()] runs a job on every core and is the units it did not
-   run once, which it then clears. */
-static int64_t units_not_once(void) {
-  run_job(rig_pool_cores(), CHILD_UNITS, 37, count_alone, NULL);
+/* The units the last job did not run once, which it then clears. */
+static int64_t units_cleared(void) {
   int64_t n = 0;
   for (int i = 0; i < CHILD_UNITS; i++)
     if (atomic_exchange(&child_units[i], 0) != 1)
       n++;
   return n;
+}
+
+/* [units_not_once ()] runs a job on every core and is the units it did not
+   run once, which it then clears. */
+static int64_t units_not_once(void) {
+  run_job(rig_pool_cores(), CHILD_UNITS, 37, count_alone, NULL);
+  return units_cleared();
 }
 
 /* Linux counts each thread against RLIMIT_NPROC, a limit of the process
@@ -307,8 +328,38 @@ static void child_limited(int64_t *v) {
   v[2] = atomic_load(&off_caller);
   v[3] = thread_count();
 }
+
+/* As child_limited, for a job of eight threads: 1 once the limit bound and
+   was lifted; the units not run once by the job under the limit and by one
+   after it; the calls on a worker under the limit; whether a worker then
+   ran a chunk of a job of two; the threads after them. */
+static void child_limited_eight(int64_t *v) {
+  struct rlimit old, none;
+  if (getrlimit(RLIMIT_NPROC, &old) != 0)
+    return;
+  none = old;
+  none.rlim_cur = 0;
+  if (setrlimit(RLIMIT_NPROC, &none) != 0)
+    return;
+  pthread_t thread;
+  if (pthread_create(&thread, NULL, idle, NULL) == 0) {
+    pthread_join(thread, NULL);
+    return;
+  }
+  run_job(8, CHILD_UNITS, 37, count_alone, NULL);
+  v[1] = units_cleared();
+  v[2] = atomic_exchange(&off_caller, 0);
+  if (setrlimit(RLIMIT_NPROC, &old) != 0)
+    return;
+  v[0] = 1;
+  run_job(8, CHILD_UNITS, 37, count_alone, NULL);
+  v[1] += units_cleared();
+  v[3] = on_a_worker(NULL);
+  v[4] = thread_count();
+}
 #else
 static void child_limited(int64_t *v) { (void)v; }
+static void child_limited_eight(int64_t *v) { (void)v; }
 #endif
 
 static void child_faults(int64_t *v) {
@@ -379,13 +430,15 @@ static void in_child(void (*f)(int64_t *), int64_t *values, char *status,
 
 /* [rig_pool_test_in_child blocking scenario] is (status, values) of
    [in_child] for the scenario of that index: threads, job, stack, faults,
-   limited; its jobs, the parent's before the fork included, are blocking
-   ones where [blocking]. */
+   limited, grown, limited_eight; its jobs, the parent's before the fork
+   included, are blocking ones where [blocking]. */
 value rig_pool_test_in_child(value v_blocking, value v_scenario) {
   CAMLparam2(v_blocking, v_scenario);
   CAMLlocal3(result, values, s);
   static void (*const scenarios[])(int64_t *) = {
-      child_threads, child_job, child_stack, child_faults, child_limited};
+      child_threads, child_job,     child_stack,
+      child_faults,  child_limited, child_grown,
+      child_limited_eight};
   int64_t v[CHILD_VALUES] = {0};
   char status[128];
   blocking = Bool_val(v_blocking);
@@ -405,6 +458,7 @@ value rig_pool_test_in_child(value v_blocking, value v_scenario) {
 /* Fork beside a running blocking job */
 
 static _Atomic int beside_began, beside_released, beside_ended;
+static int beside_threads;
 
 /* Every chunk waits for the release, up to [patience]. */
 static void beside_hold(int64_t lo, int64_t hi, int worker, void *ctx) {
@@ -419,9 +473,25 @@ static void beside_hold(int64_t lo, int64_t hi, int worker, void *ctx) {
 }
 
 static void *beside_caller(void *arg) {
-  rig_pool_run_blocking(2, 2, 2, beside_hold, NULL);
+  int n = beside_threads;
+  rig_pool_run_blocking(n, n, n, beside_hold, NULL);
   atomic_store(&beside_ended, 1);
   return arg;
+}
+
+/* The chunks of a job of [n] chunks wait until all [n] began, up to
+   [patience]: they meet only where [n] threads run them. */
+static _Atomic int all_arrived;
+
+static void meet_all(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)lo;
+  (void)hi;
+  (void)worker;
+  int n = *(int *)ctx;
+  atomic_fetch_add(&all_arrived, 1);
+  int64_t deadline = now_ns() + patience;
+  while (atomic_load(&all_arrived) < n && now_ns() < deadline) {
+  }
 }
 
 /* How the child [pid] ended, waited for up to [patience]: "exit 0" once it
@@ -447,15 +517,17 @@ static void child_status(pid_t pid, char *status, size_t len) {
     snprintf(status, len, "exit %d", WEXITSTATUS(st));
 }
 
-/* [rig_pool_test_fork_beside_blocking ()] forks while another thread's
-   blocking job of two threads runs, its chunks held. It is (whether fork
+/* [rig_pool_test_fork_beside_blocking n] forks while another thread's
+   blocking job of [n] threads runs, its chunks held. It is (whether fork
    returned while the job still ran, how the child ended): the child exits
-   0 once a worker of its own ran a chunk of a blocking job. */
-value rig_pool_test_fork_beside_blocking(value unit) {
-  CAMLparam1(unit);
+   0 once [n] threads of its own met in a blocking job, 3 if they did not,
+   and the parent's chunks then end; 4 if not all of them began. */
+value rig_pool_test_fork_beside_blocking(value v_n) {
+  CAMLparam1(v_n);
   CAMLlocal2(result, s);
   char status[128] = "not forked";
-  int during = 0;
+  int during = 0, n = Int_val(v_n);
+  beside_threads = n;
   atomic_store(&beside_began, 0);
   atomic_store(&beside_released, 0);
   atomic_store(&beside_ended, 0);
@@ -463,18 +535,23 @@ value rig_pool_test_fork_beside_blocking(value unit) {
   pthread_t thread;
   if (pthread_create(&thread, NULL, beside_caller, NULL) == 0) {
     int64_t deadline = now_ns() + patience;
-    while (atomic_load(&beside_began) < 2 && now_ns() < deadline) {
+    while (atomic_load(&beside_began) < n && now_ns() < deadline) {
     }
+    int began = atomic_load(&beside_began);
     pid_t pid = fork();
     if (pid == 0) {
-      blocking = 1;
-      _exit(on_a_worker(NULL) ? 0 : 3);
+      atomic_store(&all_arrived, 0);
+      rig_pool_run_blocking(n, n, n, meet_all, &n);
+      _exit(atomic_load(&all_arrived) == n ? 0 : 3);
     }
     during = !atomic_load(&beside_ended);
     atomic_store(&beside_released, 1);
     pthread_join(thread, NULL);
     if (pid < 0)
       snprintf(status, sizeof status, "fork: %s", strerror(errno));
+    else if (began < n)
+      snprintf(status, sizeof status, "%d of the parent's %d chunks began",
+               began, n);
     else
       child_status(pid, status, sizeof status);
   }
@@ -483,6 +560,96 @@ value rig_pool_test_fork_beside_blocking(value unit) {
   result = caml_alloc_tuple(2);
   Store_field(result, 0, Val_bool(during));
   Store_field(result, 1, s);
+  CAMLreturn(result);
+}
+
+/* CPU after a job */
+
+#if defined(__linux__)
+typedef struct {
+  _Atomic int began;     /* the worker's chunk began */
+  clockid_t worker;      /* its thread's CPU clock */
+  int64_t caller_done;   /* the caller's thread CPU as its chunk ended */
+} spin_job;
+
+static int64_t cpu_ns(clockid_t c) {
+  struct timespec ts;
+  if (clock_gettime(c, &ts) != 0)
+    return -1;
+  return (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec;
+}
+
+/* The caller's chunk ends once the worker's began; the worker's sleeps
+   5 ms, which the caller waits through. */
+static void spin_body(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)lo;
+  (void)hi;
+  spin_job *j = ctx;
+  if (worker != 0) {
+    pthread_getcpuclockid(pthread_self(), &j->worker);
+    atomic_store(&j->began, 1);
+    struct timespec ms5 = {0, 5000000};
+    nanosleep(&ms5, NULL);
+    return;
+  }
+  int64_t deadline = now_ns() + patience;
+  struct timespec us20 = {0, 20000};
+  while (!atomic_load(&j->began) && now_ns() < deadline)
+    nanosleep(&us20, NULL);
+  j->caller_done = cpu_ns(CLOCK_THREAD_CPUTIME_ID);
+}
+
+/* Each of [runs] jobs of two chunks on two threads: the caller's CPU from
+   its chunk's end to the job's, and the worker's in the 20 ms after the
+   job returned, in ns, written to waits[k] and afters[k]; -1 where a
+   worker ran no chunk. */
+static void spin_runs(int runs, int64_t *waits, int64_t *afters) {
+  for (int k = 0; k < runs; k++) {
+    spin_job j = {0, 0, 0};
+    run_job(2, 2, 2, spin_body, &j);
+    int64_t returned = cpu_ns(CLOCK_THREAD_CPUTIME_ID);
+    if (!atomic_load(&j.began)) {
+      waits[k] = afters[k] = -1;
+      continue;
+    }
+    int64_t at = cpu_ns(j.worker);
+    struct timespec ms20 = {0, 20000000};
+    nanosleep(&ms20, NULL);
+    waits[k] = returned - j.caller_done;
+    afters[k] = cpu_ns(j.worker) - at;
+  }
+}
+#endif
+
+/* [rig_pool_test_spin_cpu blocking runs] is (the caller's CPU waiting for
+   the end of its job, a worker's CPU after the job), each in ns per run of
+   [runs] jobs of two threads, blocking ones where [blocking]; [||] where
+   the system has no thread's CPU clock. */
+value rig_pool_test_spin_cpu(value v_blocking, value v_runs) {
+  CAMLparam2(v_blocking, v_runs);
+  CAMLlocal3(result, w, a);
+  int runs = Int_val(v_runs);
+  int64_t waits[64] = {0}, afters[64] = {0};
+  if (runs > 64)
+    runs = 64;
+#if defined(__linux__)
+  blocking = Bool_val(v_blocking);
+  caml_enter_blocking_section();
+  spin_runs(runs, waits, afters);
+  caml_leave_blocking_section();
+#else
+  (void)v_blocking;
+  runs = 0;
+#endif
+  w = caml_alloc(runs, 0);
+  a = caml_alloc(runs, 0);
+  for (int k = 0; k < runs; k++) {
+    Store_field(w, k, Val_long(waits[k]));
+    Store_field(a, k, Val_long(afters[k]));
+  }
+  result = caml_alloc_tuple(2);
+  Store_field(result, 0, w);
+  Store_field(result, 1, a);
   CAMLreturn(result);
 }
 
