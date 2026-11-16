@@ -1335,6 +1335,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- On a GPU, a float32 projection into heads whose upcast takes the heads whole
+  lends their second upcast to the width also when a bias of each head follows
+  the product, holding 8 by 8 outputs a thread: the bias's loads kept it at 4
+  by 4. GPU time not re-measured.
 - On a GPU, a float32 contraction that the masked upcasts already took, such
   as attention's scores under a materialised mask of a few heads, keeps the
   upcast loop's 4 by 4 outputs a head, or 3 by 3 with its reduce unrolled

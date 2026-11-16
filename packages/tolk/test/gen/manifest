@@ -1236,6 +1236,12 @@ codegen/opt/heuristic/gpt_oss_router_metal.golden
 codegen/opt/heuristic/heads_projection.golden
 codegen/opt/heuristic/heads_projection_amd.golden
 codegen/opt/heuristic/heads_projection_avx2.golden
+codegen/opt/heuristic/heads_projection_biased.golden
+codegen/opt/heuristic/heads_projection_biased_amd.golden
+codegen/opt/heuristic/heads_projection_biased_avx2.golden
+codegen/opt/heuristic/heads_projection_biased_cpu.golden
+codegen/opt/heuristic/heads_projection_biased_cuda.golden
+codegen/opt/heuristic/heads_projection_biased_metal.golden
 codegen/opt/heuristic/heads_projection_cpu.golden
 codegen/opt/heuristic/heads_projection_cuda.golden
 codegen/opt/heuristic/heads_projection_metal.golden

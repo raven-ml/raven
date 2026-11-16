@@ -1548,7 +1548,8 @@ let blocks =
       (* 768 columns, which 3 divides, are upcast by 4; 440 columns are 55
          runs of 8 outputs, which hold a SIMD group only padded; a projection
          into 4 heads of 110, its heads upcast whole, lends their second
-         upcast to the width, padded. *)
+         upcast to the width, padded, with or without a bias of each head,
+         which the width does not read. *)
       cases "on a GPU, both upcast axes reused, a thread holds 8 by 8 outputs \
              in a workgroup of one SIMD group"
         ~id:Fun.id
@@ -1561,6 +1562,8 @@ let blocks =
           "matmul_440_cuda";
           "heads_projection_cuda";
           "heads_projection_amd";
+          "heads_projection_biased_cuda";
+          "heads_projection_biased_amd";
         ]
         (fun name ->
           let c = recorded name in

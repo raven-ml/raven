@@ -159,6 +159,9 @@ KERNELS = {
     # a projection into attention's 4 heads of 110: the heads, upcast whole, lend their second upcast to the width the same
     # operands read
     "heads_projection": lambda: last((empty(16, 1, 256, 1, 64) * empty(64, 4, 110).permute(1, 2, 0).reshape(1, 4, 1, 110, 64)).sum(-1)),
+    # the same plus a bias of each head, which the width does not read: the width still takes the heads' second upcast
+    "heads_projection_biased": lambda: last((empty(16, 1, 256, 1, 64) * empty(64, 4, 110).permute(1, 2, 0).reshape(1, 4, 1, 110, 64))
+                                            .sum(-1) + empty(1, 4, 1, 1)),
     # attention's scores of 2 batches of 2 heads under a materialised mask: the masked upcasts take both whole, then the queries
     # and keys by 4, and the kernel is not blocked
     "scores_masked": lambda: last(empty(2, 2, 256, 256, dtype=dtypes.bool).where(empty(2, 2, 256, 16) @ empty(2, 2, 16, 256),

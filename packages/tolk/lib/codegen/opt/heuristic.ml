@@ -1060,14 +1060,19 @@ let block k upcasted =
   let outputs () = List.map (List.nth (K.rngs k)) (K.upcastable_dims k) in
   (* For an upcast that took its range whole, the output axis besides
      [other] that the same operands read: the other part of an axis the
-     kernel splits in two, as a projection's heads and their width. *)
+     kernel splits in two, as a projection's heads and their width. Only the
+     product's loads count: a load after the reduce, as a bias of each head,
+     shares no element of the product. *)
+  let operands =
+    match contraction k with Some (m, _) -> accesses m | None -> []
+  in
   let lent (_, up, _) other =
     match rest_of k up with
     | None -> None
     | Some up ->
         let same x =
           axis_id x <> axis_id other
-          && List.for_all (fun b -> indexes x b = indexes up b) (K.bufs k)
+          && List.for_all (fun b -> indexes x b = indexes up b) operands
         in
         List.find_opt same (outputs ())
   in
