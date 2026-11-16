@@ -4,8 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* The AMD rows against this machine's baseline. A call runs a row's kernel
-   behind a hold as many times as span 2 ms of the GPU and returns once they are
-   done: its wall time is their span on the GPU and a submission's round trip.
+   behind a hold a fixed number of times, about 2 ms of the GPU ({!runs}), and
+   returns once they are done: its wall time is their span on the GPU and a
+   submission's round trip.
    [bench_amd.exe gate] prints the device times themselves, [bench_amd.exe
    compare] the idle times of the rows that PyTorch can time too (compare.py),
    and [bench_amd.exe verify] each row's check alone, which the bench alias runs
@@ -44,23 +45,158 @@ let runs_of t s =
    hundredth of it. *)
 let call_span = 2e-3
 
-(* A row's case. Its setup times one run to count the runs a call makes, then
-   settles the clock on the row, 50 ms at a time: thumper's calls follow one
-   another with no idle in between, so the clock stays where the row keeps it,
-   and the settle is the trial's warmup ({!config}). *)
+(* The runs a suite call of each row makes: about 2 ms of the R9700's time at
+   a settled clock, from one run of each row on nonnormal (2026-11-16). They
+   are fixed, and in the case's name ([.../x<runs>]), so that a call's work
+   never follows a trial's measurement, and other runs are another case, of no
+   baseline. *)
+let runs =
+  [
+    ("floor/launch", 3774);
+    ("floor/submission", 1134);
+    ("floor/copy-4MB", 558);
+    ("floor/copy-256MB", 2);
+    ("floor/copy-driver-256MB", 2);
+    ("floor/read-256MB", 5);
+    ("floor/wmma-bf16-peak", 1);
+    ("floor/fma-f32-peak", 1);
+    ("contract/bfloat16-256x256x256", 239);
+    ("contract/bfloat16-4096x4096x4096", 1);
+    ("contract/float16-4096x4096x4096", 1);
+    ("contract/float32-256x256x256", 153);
+    ("contract/float32-4096x4096x4096", 1);
+    ("contract/bfloat16-4096x4096x4096-kf", 1);
+    ("contract/bfloat16-4096x4096x4096-fk", 1);
+    ("contract/bfloat16-4096x4096x4096-ff", 1);
+    ("contract/float64-256x256x256", 35);
+    ("contract/bfloat16-256x64x64x64", 88);
+    ("contract/float32-256x64x64x64", 89);
+    ("contract/float64-256x64x64x64", 11);
+    ("contract/int8-4096x4096x4096", 2);
+    ("contract/bfloat16-512x5120x2880", 10);
+    ("contract/bfloat16-1x5120x2880", 61);
+    ("contract/float8_e4m3fn-1x5120x2880", 71);
+    ("contract/bfloat16-1x201088x2880", 1);
+    ("contract/bfloat16-256x256x65536", 2);
+    ("contract/bfloat16-4096x4096x65536", 1);
+    ("contract/bfloat16-4096x1x4096", 32);
+    ("contract/float32-1x5120x2880", 26);
+    ("contract/float64-1024x1024x1024", 1);
+    ("contract/float64-1x5120x2880", 10);
+    ("contract/int16-1024x1024x1024", 2);
+    ("contract/int32-1024x1024x1024", 5);
+    ("contract/int8-1x5120x2880", 74);
+    ("contract/int32-1x5120x2880", 26);
+    ("contract/bfloat16-8x5120x2880", 62);
+    ("contract/float32-16x5120x2880", 16);
+    ("contract/float32-20480x1x2880", 5);
+    ("contract/float8_e4m3fn-4096x4096x4096", 2);
+    ("contract/float8_e5m2-4096x4096x4096", 2);
+    ("contract/int4-4096x4096x4096", 1);
+    ("contract/bfloat16-131072x16x16x16", 1);
+    ("reduce/float32-sum-1024x1024-axes0.1", 155);
+    ("reduce/float32-sum-8192x8192-axes0.1", 4);
+    ("reduce/float32-sum-1024x1024-axes1", 128);
+    ("reduce/float32-sum-1024x1024-axes0", 115);
+    ("reduce/float32-max-1024x1024-axes1", 122);
+    ("reduce/float64-sum-512x1024-axes0.1", 87);
+    ("reduce/int32-sum-1024x1024-axes0.1", 111);
+    ("reduce/int32-sum-256x256-axes0.1", 137);
+    ("reduce/float32-sum-4096-axes0", 187);
+    ("reduce/float32-sum-16384x64-axes1", 57);
+    ("scan/float32-sum-1024x1024-axis1", 46);
+    ("scan/float32-sum-1024x1024-axis0", 20);
+    ("scan/float32-sum-1048576-axis0", 11);
+    ("scan/float32-sum-67108864-axis0", 1);
+    ("map/add-float32-1048576", 47);
+    ("map/add-float32-67108864", 1);
+    ("map/exp-float32-1048576", 64);
+    ("map/add-bfloat16-2097152", 17);
+    ("map/add-bfloat16-134217728", 1);
+    ("map/cast_bf16-float32-1048576", 73);
+    ("map/bcast_add-float32-1024x1024", 43);
+    ("map/t_add-float32-1024x1024", 40);
+    ("map/fused4-float32-1048576", 47);
+    ("map/pad9-float32-1x64x64x64", 10);
+    ("map/where_lt-float32-1048576", 58);
+    ("reduce/argmax-float32-1024x1024", 20);
+    ("reduce/logsumexp-float32-1024x1024", 9);
+    ("reduce/logsumexp-float32-8192x8192", 1);
+    ("reduce/moments-float32-1024x1024", 9);
+    ("reduce/window2-float32-1x64x256x256", 3);
+    ("reduce/sqdiff-float32-1024x1024", 15);
+    ("scan/logcumsumexp-float32-1024x1024", 15);
+    ("scan/sqcumsum-float32-1024x1024", 7);
+    ("reduce/bfloat16-sum-2048x1024-axes1", 161);
+    ("scan/float32-max-1024x1024-axis1", 42);
+    ("map/nx-chain4-f32-67108864", 1);
+    ("map/nx-add-f32-1048576", 45);
+    ("sort/sort-f32-1x1M", 3);
+    ("sort/sort-f32-1x16M", 1);
+    ("sort/sort-f64-1x16M", 1);
+    ("sort/sort-i64-1x16M-range2^20", 1);
+    ("sort/sort-u8-1x256M", 1);
+    ("sort/sort-f32-65536x128", 3);
+    ("sort/sort-f32-4096x4096-axis0", 1);
+    ("sort/topk-f32-1x16M-k8", 2);
+    ("sort/topk-f32-64x131072-k50", 4);
+    ("sort/unique-i64-4Mx4-range16", 1);
+    ("move/gather_emb_f32", 9);
+    ("move/gather_rand_f32", 1);
+    ("move/gather_rand64k_f32", 217);
+    ("move/ranges_f32", 4);
+    ("move/scatter_add_one_f32", 1);
+    ("move/scatter_add_rand1m_f32", 1);
+    ("move/scatter_add_emb_f32", 1);
+    ("move/scatter_set_perm_f32", 1);
+    ("move/scatter_max_rand1m_f32", 3);
+    ("move/assemble_cat_f32", 2);
+    ("move/fold_col2im_f32", 1);
+    ("fft/c2c-c64-4096x1024", 9);
+    ("fft/c2c-c64-2^20", 16);
+    ("fft/c2c-c64-2^24", 1);
+    ("fft/c2c-c64-2048x2048-axes01", 4);
+    ("fft/r2c-c64-4096x1024", 16);
+    ("fft/c2r-c64-4096x513", 15);
+    ("fft/c2c-c64-4096x1009", 4);
+    ("fft/c2c-c64-2^20+7", 2);
+    ("fft/c2c-c128-2^20", 4);
+    ("linalg/lu/f32/4096x32x32", 3);
+    ("linalg/qr/f32/4096x32x32", 1);
+    ("linalg/chol/f32/4096x32", 11);
+    ("linalg/solve/f32/4096x32x32", 12);
+    ("linalg/lu/c64/1x1024x1024", 1);
+    ("linalg/qr/f32/1x2048x1024", 1);
+    ("linalg/eigh/f32/1024x32x32", 1);
+    ("linalg/svd/f32/1024x32x32", 1);
+    ("linalg/eig/f32/1024x32x32", 1);
+  ]
+
+let runs_of_row (r : Rows.row) =
+  match List.assoc_opt r.name runs with
+  | Some n -> n
+  | None -> invalid_arg ("Bench_amd.runs: no runs for " ^ r.name)
+
+(* A row's case. Its setup settles the clock on the row, 50 ms at a time:
+   thumper's calls follow one another with no idle in between, so the clock
+   stays where the row keeps it, and the settle is the trial's warmup
+   ({!config}). *)
 let case (r : Rows.row) =
+  let count = runs_of_row r in
   let setup () =
     let g = S.gpu () in
     let p =
       try r.make g
       with Rows.Declined -> failwith (r.name ^ ": nx.amd declines it")
     in
-    let t = S.device_time g p.run ~count:1 in
-    settle g p.run ~runs:(runs_of t) ~chunk:0.05 ~cap:1.;
-    (g, p, Int.max 1 (int_of_float (Float.ceil (call_span /. t))))
+    settle g p.run
+      ~runs:(runs_of (call_span /. float count))
+      ~chunk:0.05 ~cap:1.;
+    (g, p)
   in
-  Thumper.bench_with_setup ~setup r.name (fun (g, (p : Rows.prepared), count) ->
-      S.device_time g p.run ~count)
+  Thumper.bench_with_setup ~setup
+    (Printf.sprintf "%s/x%d" r.name count)
+    (fun (g, (p : Rows.prepared)) -> S.device_time g p.run ~count)
 
 (* The host's share of a call: 64 calls of the smallest contraction issued
    behind a hold, then their work once released. A call that finds nx.amd's
