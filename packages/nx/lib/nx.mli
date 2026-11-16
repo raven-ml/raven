@@ -2501,13 +2501,12 @@ val rms_norm :
     Barring overflow and underflow, and for [k u < 1/4], it is within
     [k u / (1 - 4 k u)] of the exact value, relatively, where
     [k = (β(n) + 9) / 2], or [(β(n) + 11) / 2] with [scale], [β] as
-    {!Nx_kernel.section-bounds} defines it and [β(m) + t - 1] in place of
-    [β(n)] over cut axes, [m] and [t] as for a {!sum}
-    ({!section-reductions}), and [u] is the unit roundoff
+    {!Nx_kernel.section-bounds} defines it, and [u] is the unit roundoff
     of the format it computes in, before a narrow float's rounding: a
     square takes one rounding and their sum [β(n)], the mean and [eps] two
     more, which the root halves, and the root, the reciprocal, the product
-    and [scale]'s one each.
+    and [scale]'s one each. Over cut axes [β(m) + t - 1] stands in place
+    of [β(n)], [m] and [t] as for a {!sum} ({!section-reductions}).
 
     A lane whose squares would overflow, or with [~eps:0.] underflow to
     [0], is normalised as its elements times a power of two, [eps] scaled

@@ -1712,11 +1712,14 @@ val jit :
     past 40, a staged tensor core's tile among them. Their bounds are a
     single chain's: those stated here with [n - 1] in place of [β(n)] and
     [2K + 1] in place of [β(K)]. Over axes cut across devices, each device
-    sums at most [m] of a result's terms or products, and the partial sums
-    of the [t] devices holding any are added in turn, as eager computation
-    adds them ({!Nx.section-reductions}): the bounds of {!Nx.sum}, a
-    contraction, {!Nx.var} and {!Nx.standardize} hold with [m] in place of
-    [n] and [K] and with [t - 1] added to [β]. A product asked for its sum
+    sums the terms or products of its window, at most [m], and the partial
+    sums of the [t] windows holding any are added in turn, as eager
+    computation adds them ({!Nx.section-reductions}): the bounds of
+    {!Nx.sum}, a contraction, {!Nx.var} and {!Nx.standardize} hold with [m]
+    in place of [n] and [K] and with [t - 1] added to [β]. {!Nx.logsumexp}
+    over cut axes is within [ε + ε{_t}], as {!Nx.section-reductions}
+    states, [ε] the largest of its row's bounds for the windows' terms and
+    [ε{_t}] its row's bound for [t] terms. A product asked for its sum
     ([~sum:true], {!Nx.section-contraction}) rounds each of its [t] terms
     into its dtype, and its closing adds them there: closed, it is within
     the contraction's bound plus [γ(t, v) Σ|term|], [v] the dtype's unit

@@ -2981,10 +2981,9 @@ its lock and from samples the dashboard saw arrive.
 
 - `Nx.cumsum` states a float result within a chain's `γ(n - 1) Σ|x|`, on one
   device and over cut axes, where it claimed a reduction's `γ(β(n))`.
-- Over axes cut across devices, the stated bounds of `Nx.sum`, `var`,
-  `rms_norm`, `contract` and `conv`, eager and compiled, take `β(m) + t - 1`
-  for `β(n)`, `m` the most terms a window holds and `t` the windows holding
-  terms: the old statements fail past some 330 devices.
+- Over cut axes, `Nx.sum`, `var` and `rms_norm`, eager and compiled, state
+  `β(m) + t - 1` for `β(n)`, `contract` and `conv` for `β(K)` (`β(2m) + t - 1`
+  complex): `m` a window's most terms, `t` the windows holding terms.
 - Written positions (`L`) of `Nx.slice` and `Nx.set`, and `Nx.quantile`'s
   probabilities, add no kernel each: they are copied once to each device,
   and not at all on the host. `Nx.slice` with `L []` and `Nx.quantile [||]`
