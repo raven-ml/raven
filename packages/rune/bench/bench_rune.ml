@@ -1688,6 +1688,26 @@ let logsumexp_at shape =
         fun () -> ignore (synced (f x)));
   }
 
+(* gpt-oss-20b's RMS norm with its scale over a prefill's 512 rows of 2880
+   bfloat16: its last kernel, the scaled map, has a workgroup over rows and
+   columns. *)
+let rms_norm_call =
+  {
+    at =
+      (fun at ->
+        let draw i s =
+          Nx.place at
+            (Nx.cast Nx.bfloat16 (Nx.Rng.normal ~key:(Nx.Rng.key i) f32 s))
+        in
+        let x = draw 97 [| 512; 2880 |] and scale = draw 98 [| 2880 |] in
+        let f =
+          Rune.jit
+            Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+            (fun x scale -> Nx.rms_norm ~eps:1e-5 ~scale x)
+        in
+        fun () -> ignore (synced (f x scale)));
+  }
+
 (* A prefill's keys: [rows] rows of 512 bfloat16 set into a donated pool of
    twice as many, each call taking the last one's result. *)
 let set_rows_at rows =
@@ -2288,6 +2308,8 @@ let gpu_rows g =
          norm, over a prefill's 4096 rows of gpt-oss-20b's 2880: one thread a
          row runs it as a chain of 2880 steps. *)
       on_gpu g "logsumexp-float32-4096x2880" (logsumexp_at [| 4096; 2880 |]);
+      (* gpt-oss-20b's RMS norm at a prefill of 512 tokens. *)
+      on_gpu g "rms-norm-bfloat16-512x2880" rms_norm_call;
       (* Attention's scores of 8 heads of 64 at 2048 positions in float32,
          [h i d, h j d -> h i j]: its kernel keeps the heads apart from the
          queries, along which the keys repeat. *)
