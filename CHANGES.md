@@ -3122,6 +3122,11 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_io.load_npy_rows path ~row ~rows` reads windows of an npy file's rows,
+  `rows.(j)` from `row.(j)`, joined along axis 0 into memory of its own. It
+  reads their byte ranges at once in one copy, never through a mapping, so a
+  random read of rows from a file larger than memory reads from storage only
+  the pages that hold them.
 - nx.array's host copies (`Nx_array.transfer`, `copy`, and `to_array` of
   elements that box) release the domain lock past 256 KiB and over an array
   in borrowed memory, such as a file's mapped pages, where they held it

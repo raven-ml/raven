@@ -35,6 +35,22 @@ val copied : header -> Rig.Buffer.t -> Nx.host Nx.packed
 (** [copied h b] is {!value} over a copy of the array's bytes that the value
     owns ({!Storage.copied}). *)
 
+val rows :
+  by:string ->
+  header ->
+  Rig.Buffer.t ->
+  row:int array ->
+  rows:int array ->
+  Nx.host Nx.packed
+(** [rows ~by h file ~row ~rows] is [Nx_io.load_npy_rows]'s array of the
+    stream [file] whose header is [h], for windows of non-negative bounds
+    and [row] and [rows] of one length.
+
+    Raises [Invalid_argument] naming [by] if a window ends past [h]'s rows or
+    the windows hold more than 2^53 elements, or rows where a row holds none,
+    and [Failure] if [h]'s array has no axis or lays out a row's elements
+    apart. *)
+
 val encode : ?length:int -> ('v, 's) Nx_array.Dtype.t -> int array -> string
 (** [encode dt s] is the header of a C-order little-endian stream of [dt]
     elements at shape [s]. [dt] must pass {!check}. With [~length] it is

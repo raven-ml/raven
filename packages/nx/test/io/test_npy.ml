@@ -300,6 +300,213 @@ let concat =
         (fun (_, save) -> invalid ~by save);
     ]
 
+(* npy windows *)
+
+(* An array of [n] rows of a cell, and windows of its rows. *)
+type windows =
+  | Windows : ('v, 's) D.t * int array * 'v array * (int * int) list -> windows
+
+let windows =
+  let open Gen in
+  (let* (D.Any dt) = of_list npy_dtypes in
+   let* cell = array ~size:(int_range 0 2) (int_range 0 3) in
+   let* n = frequency [ (1, constant 0); (4, int_range 1 9) ] in
+   let shape = Array.append [| n |] cell in
+   let* vs =
+     array ~size:(constant (Array.fold_left ( * ) 1 shape)) (element dt)
+   in
+   let+ ws =
+     list
+       ~size:(frequency [ (1, constant 0); (5, int_range 1 6) ])
+       (let* r = int_range 0 n in
+        let+ m = frequency [ (1, constant 0); (4, int_range 0 (n - r)) ] in
+        (r, m))
+   in
+   Windows (dt, shape, vs, ws))
+  |> with_pp (fun ppf (Windows (dt, s, _, ws)) ->
+      Format.fprintf ppf "%a %a, windows [%s]" D.pp dt pp_shape s
+        (String.concat "; "
+           (List.map (fun (r, m) -> Printf.sprintf "%d, %d" r m) ws)))
+
+let rows_of path ws =
+  Nx_io.load_npy_rows path
+    ~row:(Array.of_list (List.map fst ws))
+    ~rows:(Array.of_list (List.map snd ws))
+
+(* The windows [ws] of [load_npy path], sliced and joined. *)
+let sliced path ws =
+  let (Nx.P x) = Nx_io.load_npy path in
+  let s = Nx.shape x in
+  let part (r, m) = Nx.slice [ Nx.R (r, r + m) ] x in
+  match ws with
+  | [] ->
+      s.(0) <- 0;
+      Nx.P (Nx.zeros (Nx.dtype x) s)
+  | ws -> Nx.P (Nx.concatenate ~axis:0 (List.map part ws))
+
+let overlap ws =
+  List.exists
+    (fun (r, m) ->
+      List.exists
+        (fun (r', m') -> (r, m) != (r', m') && r < r' + m' && r' < r + m)
+        ws)
+    ws
+
+let decreasing ws =
+  let rec go = function
+    | (r, _) :: ((r', _) :: _ as rest) -> r' < r || go rest
+    | _ -> false
+  in
+  go ws
+
+(* A file of [pages] pages of float32 rows of one page each, its data on the
+   second page: the header padded to 4096 bytes. *)
+let paged pages =
+  let dict =
+    Printf.sprintf
+      "{'descr': '<f4', 'fortran_order': False, 'shape': (%d, 1024), }" pages
+  in
+  let used = 10 + String.length dict + 1 in
+  let dict = dict ^ String.make (4096 - used) ' ' ^ "\n" in
+  "\x93NUMPY\001\000"
+  ^ String.init 2 (fun i ->
+      Char.chr ((String.length dict lsr (8 * i)) land 0xff))
+  ^ dict
+  ^ pattern (pages * 4096) 3
+
+let rows =
+  group "npy windows"
+    [
+      prop
+        "windows of a saved value load as the value's rows, sliced and \
+         joined, in memory of its own"
+        windows (fun (Windows (dt, s, vs, ws)) ->
+          cover "no window" (ws = []);
+          cover "a window of no row" (List.exists (fun (_, m) -> m = 0) ws);
+          cover "overlapping windows" (overlap ws);
+          cover "windows out of order" (decreasing ws);
+          cover "a cell of no element" (Array.exists (( = ) 0) s);
+          cover "a vector" (Array.length s = 1);
+          let path = saved ".npy" save_npy (Nx.P (Nx.create dt s vs)) in
+          let loaded = rows_of path ws in
+          equal packed (sliced path ws) loaded;
+          equal memory Own_memory (memory_of loaded));
+      cases "files numpy wrote load as their rows" ~id:fst
+        [
+          ("big-endian", ("big_endian.npy", [ (2, 1); (0, 2); (1, 0) ]));
+          ("version 2.0", ("version2.npy", [ (1, 2); (0, 3) ]));
+          ("version 3.0", ("version3.npy", [ (2, 1); (2, 1) ]));
+        ]
+        (fun (_, (name, ws)) ->
+          let path = fixture name in
+          equal packed (sliced path ws) (rows_of path ws));
+      test "a vector in Fortran order loads as its rows" (fun () ->
+          let path =
+            file
+              (npy_file
+                 "{'descr': '<i2', 'fortran_order': True, 'shape': (3,), }"
+                 "\001\000\002\000\003\000")
+          in
+          equal packed
+            (Nx.P (Nx.create Nx.int16 [| 3 |] [| 3; 1; 2 |]))
+            (rows_of path [ (2, 1); (0, 2) ]));
+      cases "an array whose rows a window cannot hold fails, naming the file"
+        ~id:fst
+        [
+          ("Fortran order of two axes", fun () -> fixture "fortran.npy");
+          ( "no axis",
+            fun () ->
+              file
+                (npy_file
+                   "{'descr': '<i2', 'fortran_order': False, 'shape': (), }"
+                   "\001\000") );
+          ("no file", fun () -> Filename.concat (temp_dir ()) "x.npy");
+        ]
+        (fun (_, path) ->
+          let path = path () in
+          fails ~path (fun () -> rows_of path []));
+      test "every proper prefix fails" (fun () ->
+          let whole =
+            read (saved ".npy" save_npy (Nx.P (Nx.arange Nx.int16 0 5 1)))
+          in
+          prefixes_fail (fun path -> rows_of path [ (0, 1) ]) whole);
+      (let path =
+         lazy (saved ".npy" save_npy (Nx.P (Nx.arange Nx.int16 0 5 1)))
+       in
+       cases "a window outside the array is refused" ~id:fst
+         [
+           ("a negative row", ([| -1 |], [| 1 |]));
+           ("a negative count", ([| 0 |], [| -1 |]));
+           ("rows past the last", ([| 3 |], [| 3 |]));
+           ("a window of no row past the end", ([| 6 |], [| 0 |]));
+           ("counts of another length", ([| 0; 1 |], [| 1 |]));
+         ]
+         (fun (_, (row, rows)) ->
+           invalid ~by:"Nx_io.load_npy_rows" (fun () ->
+               Nx_io.load_npy_rows (Lazy.force path) ~row ~rows)));
+      test "windows of more than 2^53 rows of no element are refused"
+        (fun () ->
+          let path =
+            file
+              (npy_file
+                 "{'descr': '<i2', 'fortran_order': False, 'shape': \
+                  (9007199254740992, 0), }"
+                 "")
+          in
+          let n = 1 lsl 53 in
+          raises_match
+            (Exn.invalid_arg
+               ~sub:"Nx_io.load_npy_rows: the windows hold more than 2^53 rows")
+            (fun () ->
+              Nx_io.load_npy_rows path ~row:[| 0; 0 |] ~rows:[| n; n |]));
+      test "a window of no row may start at the end" (fun () ->
+          let path =
+            saved ".npy" save_npy (Nx.P (Nx.arange Nx.int16 0 5 1))
+          in
+          equal packed
+            (Nx.P (Nx.zeros Nx.int16 [| 0 |]))
+            (rows_of path [ (5, 0) ]));
+      (* Scattered pages of a file the system does not hold: the call reads
+         those pages from storage and no other beyond what its header's read
+         takes, which a call of no window measures. The file lies in the
+         working directory, on the build tree's disk, as a temporary
+         directory may be memory, which reads nothing from storage. The count
+         assumes the system reads a 4 KiB read of a file as one page: a file
+         system of larger blocks reads more and fails the test. *)
+      test "windows of a file not in memory read their pages from storage"
+        (fun () ->
+          if not (Sys.file_exists "/proc/self/io") then
+            skip ~reason:"the system does not count a process's reads" ();
+          let pages = 2048 in
+          let path =
+            Filename.temp_file ~temp_dir:(Sys.getcwd ()) "nx-io-paged" ".npy"
+          in
+          Fun.protect ~finally:(fun () -> Sys.remove path) @@ fun () ->
+          write path (paged pages);
+          let cold ws =
+            (match drop_pages path with
+            | 0 -> ()
+            | -1 ->
+                skip ~reason:"only Linux drops a file's pages unprivileged" ()
+            | code -> failf "drop_pages: errno %d" code);
+            let before = storage_reads () in
+            let x = rows_of path ws in
+            (x, storage_reads () - before)
+          in
+          let _, header = cold [] in
+          (* Rows 29 apart from 1 MiB on, and a window of 3. *)
+          let ws =
+            List.init 60 (fun j -> (256 + (29 * j), 1)) @ [ (2000, 3) ]
+          in
+          let x, read = cold ws in
+          equal packed (sliced path ws) x;
+          if read = 0 then
+            skip ~reason:"the file system reads nothing from storage" ();
+          equal ~msg:"bytes read from storage" int
+            (4096 * (60 + 3))
+            (read - header));
+    ]
+
 (* npz *)
 
 let save_npz path l = Nx_io.save_npz path (Archive.of_list l)
@@ -506,4 +713,4 @@ let npz =
           flips_load_or_fail Nx_io.load_npz whole);
     ]
 
-let () = exit (run "nx.io NumPy" [ npy; concat; npz ])
+let () = exit (run "nx.io NumPy" [ npy; concat; rows; npz ])

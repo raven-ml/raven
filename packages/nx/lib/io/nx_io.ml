@@ -18,6 +18,20 @@ let load_npy path =
   let file = Storage.open_file path in
   Npy.value (npy_header file) file
 
+let load_npy_rows path ~row ~rows =
+  let by = "Nx_io.load_npy_rows" in
+  if Array.length row <> Array.length rows then
+    Fail.invalid_argf "%s: %d windows' rows and %d counts" by (Array.length row)
+      (Array.length rows);
+  Array.iteri
+    (fun j r ->
+      if r < 0 || rows.(j) < 0 then
+        Fail.invalid_argf "%s: window %d, row %d, rows %d" by j r rows.(j))
+    row;
+  Fail.file path @@ fun () ->
+  let file = Storage.open_file path in
+  Npy.rows ~by (npy_header file) file ~row ~rows
+
 let save_npy path x =
   let by = "Nx_io.save_npy" in
   let dt = Nx.dtype x in

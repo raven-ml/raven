@@ -272,6 +272,46 @@ let read_data
 let value h b = read_data Storage.value h b
 let copied h b = read_data Storage.copied h b
 
+(* Windows of rows. A row's elements lie together in C order, and in Fortran
+   order only where its cell holds one element or none, as in a vector: a
+   window is then one run of the file, copied after the previous window's
+   rows. *)
+let rows ~by h file ~row ~rows =
+  let (D.Any dt) = h.dtype in
+  let rank = Array.length h.shape in
+  if rank = 0 then Fail.failf "a 0-d array has no rows";
+  let cell = Array.sub h.shape 1 (rank - 1) in
+  let numel = Array.fold_left ( * ) 1 cell in
+  if h.fortran && numel > 1 then
+    Fail.failf "Fortran order lays out each row's %d elements apart" numel;
+  let n = h.shape.(0) and width = D.bytes dt numel in
+  let limit = L.max_numel / Int.max 1 numel in
+  let k = ref 0 and boxes = ref [] in
+  Array.iteri
+    (fun j r ->
+      let m = rows.(j) in
+      if r > n - m then
+        Fail.invalid_argf "%s: window %d, %d rows from row %d, ends past %d rows"
+          by j m r n;
+      if m > limit - !k then
+        Fail.invalid_argf "%s: the windows hold more than 2^53 %s" by
+          (if numel = 0 then "rows" else "elements");
+      if m > 0 && width > 0 then
+        boxes :=
+          Rig.Buffer.row ~src_offset:(h.data + (r * width))
+            ~dst_offset:(!k * width) (m * width)
+          :: !boxes;
+      k := !k + m)
+    row;
+  let dst = Rig.Buffer.create Rig.host (!k * width) in
+  let boxes = Array.of_list (List.rev !boxes) in
+  ignore (Rig.Buffer.submit_copy ~src:file ~dst boxes : Rig.Point.t);
+  let shape = Iarray.of_array (Array.append [| !k |] cell) in
+  let x =
+    Nx.Repr.unsafe_of_array Nx.Host.v (Nx_array.v dt (L.contiguous shape) dst)
+  in
+  Nx.P (if h.swap then Storage.byteswap x else x)
+
 (* Writing *)
 
 let shape_literal s =

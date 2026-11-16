@@ -28,6 +28,9 @@
   test_tiff
   io_support)
  (libraries nx nx_array nx_io nx_support rig unix lz windtrap)
+ (foreign_stubs
+  (language c)
+  (names io_support_stubs))
  (deps
   (glob_files support/*)
   (glob_files cut/*))

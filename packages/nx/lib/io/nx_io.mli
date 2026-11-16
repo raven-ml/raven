@@ -224,6 +224,36 @@ val load_npy : string -> Nx.host Nx.packed
 (** [load_npy path] is the array of the npy file [path]. It is packed because
     the file states its dtype, which [Nx.unpack dt] checks ({!Nx.unpack}). *)
 
+val load_npy_rows :
+  string -> row:int array -> rows:int array -> Nx.host Nx.packed
+(** [load_npy_rows path ~row ~rows] is, for each [j] in order, the rows
+    [row.(j)] to [row.(j) + rows.(j) - 1] along axis 0 of the npy file
+    [path]'s array, its {e window} [j], joined along axis 0: of shape [k]
+    followed by the array's other extents, [k] the sum of [rows]. Its elements
+    are those {!load_npy} gives, in memory of its own, so a donation may write
+    its result there. Windows may overlap and come in any order, and a window
+    of no row adds none. Row [i] alone is the window [row.(j) = i],
+    [rows.(j) = 1].
+
+    It reads the file's header, then the bytes of the windows' rows and no
+    others, each window one read of the file, every window at once in one
+    copy ({!Rig_disk.section-copies}), never through a mapping of the file.
+    So it reads from storage only the pages that hold those bytes, whether or
+    not the system holds the file in memory, and a program reads all the
+    windows it has in one call. {!load_npy} is the faster read of rows that
+    lie together, and of a file the system holds in memory that the program
+    reads again: its mapped pages are read with no copy. Each call opens
+    [path] and reads its header again, so it reads the file the path names at
+    the call.
+
+    Raises [Invalid_argument] if [row] and [rows] differ in length, or, naming
+    [j], if [row.(j)] or [rows.(j)] is negative or window [j] ends past the
+    array's first extent, and if the windows hold more than 2{^53} elements,
+    or rows of an array whose row holds none, having read no row. Raises
+    [Failure] as {!section-errors} states, and for an array of no axis and for
+    one in Fortran order whose row holds more than one element, as such a
+    row's elements lie apart in the file. *)
+
 val save_npy : string -> ('v, 's, 'd) Nx.t -> unit
 (** [save_npy path x] writes [x] to the npy file [path].
 
