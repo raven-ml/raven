@@ -21,7 +21,7 @@ module Count = (val Nx.devices ~kernels:(module C) [ Nx_support.memory 0 ])
 let invalid ~sub f = raises_match (Exn.invalid_arg ~sub) f
 let f32 = Nx.float32
 let f64 = Nx.float64
-let host_array x = Option.get (Nx.Repr.array (Nx.place Nx.Host.on x))
+let host_array x = Option.get (Nx.Repr.array ~by:"test" (Nx.place Nx.Host.on x))
 let elements x = A.to_array (host_array x)
 
 let vec dt xs =
@@ -338,8 +338,8 @@ let test_after_return () =
     (match Nx.Prim.owner t with Some o -> o == i | None -> false);
   equal ~msg:"its payload answers" bool true
     (match Nx.Prim.payload i t with Some (Tag 0) -> true | _ -> false);
-  invalid ~sub:"Nx.Repr.array: a value traced by test.values has no bytes"
-    (fun () -> Nx.Repr.array t)
+  invalid ~sub:"test.array: a value traced by test.values has no bytes"
+    (fun () -> Nx.Repr.array ~by:"test.array" t)
 
 let test_domains () =
   let x = x3 () in
@@ -1257,7 +1257,7 @@ let bytes x =
   List.fold_left
     (fun n a -> n + D.bytes (A.dtype a) (L.numel (A.layout a)))
     0
-    (Iarray.to_list (Nx.Repr.shards x))
+    (Iarray.to_list (Nx.Repr.shards ~by:"test" x))
 
 let staging prog i ~by op =
   let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
@@ -2133,8 +2133,8 @@ let twins =
               refused_read ~by:"Nx.sync" "test.twin" (fun () -> Nx.sync t);
               refused_read ~by:"test.read" "test.twin" (fun () ->
                   Nx.Repr.read ~by:"test.read" t A.to_array);
-              invalid ~sub:"Nx.Repr.array: a value traced by test.twin"
-                (fun () -> Nx.Repr.array t)));
+              invalid ~sub:"test.array: a value traced by test.twin"
+                (fun () -> Nx.Repr.array ~by:"test.array" t)));
       test "item after its interpretation returned raises" (fun () ->
           let t =
             logged ~name:"test.twin" Values (ref []) (fun i -> twin i (x3 ()))

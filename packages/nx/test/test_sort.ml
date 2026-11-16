@@ -17,7 +17,7 @@ let m = Nx_support.memory
 module Count = (val Nx.devices ~kernels:(module C) [ m 0 ])
 module Count2 = (val Nx.devices ~kernels:(module C) [ m 0; m 1 ])
 
-let host_array x = Option.get (Nx.Repr.array (Nx.place Nx.Host.on x))
+let host_array x = Option.get (Nx.Repr.array ~by:"test" (Nx.place Nx.Host.on x))
 let read x = A.to_array (host_array x)
 let value a = Nx.Repr.of_array Nx.Host.v a
 

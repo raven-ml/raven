@@ -150,7 +150,7 @@ let expected xs shape b =
   go 0 0;
   List.rev !out
 
-let shards (V x) = Iarray.to_array ((Nx.Repr.shards x))
+let shards (V x) = Iarray.to_array ((Nx.Repr.shards ~by:"test" x))
 
 (* [a]'s elements, read on the host. *)
 let elements a =
@@ -320,7 +320,8 @@ let laws =
           in
           equal (list float_exact)
             (Array.to_list (A.to_array a))
-            (Array.to_list (A.to_array (require_some (Nx.Repr.array back)))));
+            (Array.to_list
+               (A.to_array (require_some (Nx.Repr.array ~by:"test" back)))));
     ]
 
 (* Reading one element *)
@@ -415,7 +416,8 @@ let narrow (type v s) name (dt : (v, s) A.Dtype.t) (of_int : int -> v) =
     in
     let y = Nx.place (S4.split ~axis:1) (Nx.place (S4.split ~axis:0) x) in
     let back = Nx.place Nx.Host.on y in
-    equal bool true (A.to_array (require_some (Nx.Repr.array back)) = xs)
+    equal bool true
+      (A.to_array (require_some (Nx.Repr.array ~by:"test" back)) = xs)
   in
   test (name ^ " keeps its elements across a change of arrangement") (fun () ->
       keeps [| 4; 8 |];
@@ -426,28 +428,30 @@ let sharing =
     [
       test "a value already at a placement keeps its arrays" (fun () ->
           let (V x) = place On (host [| 4 |]) in
-          let a = (Nx.Repr.shards x) in
-          let b = (Nx.Repr.shards (Nx.place S4.on x)) in
+          let a = (Nx.Repr.shards ~by:"test" x) in
+          let b = (Nx.Repr.shards ~by:"test" (Nx.place S4.on x)) in
           equal bool true (Iarray.for_all2 ( == ) a b));
       test "a set over the host's device reads the host's array" (fun () ->
           let module Fast =
             (val Nx.devices ~kernels:(module Nx_cpu) [ Rig.host ])
           in
           let (V x) = host [| 4 |] in
-          let a = require_some (Nx.Repr.array x) in
-          let b = require_some (Nx.Repr.array (Nx.place Fast.on x)) in
+          let a = require_some (Nx.Repr.array ~by:"test" x) in
+          let b =
+            require_some (Nx.Repr.array ~by:"test" (Nx.place Fast.on x))
+          in
           equal bool true (a == b));
       test "a device that maps the host's memory borrows it" (fun () ->
           let (V x) = host [| 1024 |] in
-          let a = require_some (Nx.Repr.array x) in
-          let b = (Nx.Repr.shards (Nx.place S4.on x)) in
+          let a = require_some (Nx.Repr.array ~by:"test" x) in
+          let b = (Nx.Repr.shards ~by:"test" (Nx.place S4.on x)) in
           equal bool true
             (Rig.Buffer.overlaps (A.buffer a) (A.buffer (Iarray.get b 1))));
       test "an empty window holds no memory of the value's" (fun () ->
           let (V x) = host [| 1 |] in
-          let a = require_some (Nx.Repr.array x) in
+          let a = require_some (Nx.Repr.array ~by:"test" x) in
           let b =
-            (Nx.Repr.shards (Nx.place (S4.split ~axis:0) x))
+            (Nx.Repr.shards ~by:"test" (Nx.place (S4.split ~axis:0) x))
           in
           for j = 1 to 3 do
             let e = A.buffer (Iarray.get b j) in
@@ -787,7 +791,7 @@ let holds_own h y =
   equal (array int) ~msg:"shape" s (Nx.shape y);
   let xs = Nx.to_array h in
   let pieces = Nx.Prim.pieces (Nx.placement y) s in
-  let arrays = Iarray.to_array (Nx.Repr.shards y) in
+  let arrays = Iarray.to_array (Nx.Repr.shards ~by:"test" y) in
   equal int ~msg:"one array per device" (Array.length pieces)
     (Array.length arrays);
   Array.iteri
@@ -1425,7 +1429,7 @@ let law_held (Bits a, o, from) =
     drain ();
     let back = Nx.place Nx.Host.on y in
     equal (array int) ~msg:"its bytes" (Nx_support.bytes a)
-      (Nx_support.bytes (require_some (Nx.Repr.array back)))
+      (Nx_support.bytes (require_some (Nx.Repr.array ~by:"test" back)))
   in
   match from with
   | None -> check x
@@ -1666,7 +1670,7 @@ let partial_value (type v s) w (dt : (v, s) A.Dtype.t) shape
         (A.of_array dt (Iarray.of_array shape) terms.(term_of w j))
     in
     let piece = Nx.Prim.eval ~by (Move (Slice (Iarray.of_array win), whole)) in
-    require_some (Nx.Repr.array (Nx.place here piece))
+    require_some (Nx.Repr.array ~by:"test" (Nx.place here piece))
   in
   Nx.Repr.of_shards p (Iarray.init (Array.length pieces) array)
 
@@ -1710,7 +1714,7 @@ let law_scatters (Summed c) =
   let scattered = Nx.place p x in
   let reduced = Nx.place p (Nx.place (Nx.Placement.closed (sum_at c.w)) x) in
   equal (placement ()) ~msg:"where it lies" p (Nx.placement scattered);
-  let shards x = Iarray.to_array (Nx.Repr.shards x) in
+  let shards x = Iarray.to_array (Nx.Repr.shards ~by:"test" x) in
   Array.iter2
     (fun a b -> same_elements c.same (A.to_array a) (A.to_array b))
     (shards reduced) (shards scattered)

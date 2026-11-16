@@ -44,7 +44,7 @@ let engine : Nx.Prim.engine =
     piece =
       (fun x j _ ->
         let s = Nx.Placement.devices (Nx.placement x) in
-        Nx.Repr.of_array s (Iarray.get (Nx.Repr.shards x) j));
+        Nx.Repr.of_array s (Iarray.get (Nx.Repr.shards ~by:"test" x) j));
     view = (fun mv x -> Nx.Prim.eval ~by (Move (mv, x)));
     bring =
       (fun at ps ->
@@ -68,7 +68,7 @@ let engine : Nx.Prim.engine =
         let windows = Nx.Prim.pieces p s in
         let array j =
           match ps.(j) with
-          | Some v -> Option.get (Nx.Repr.array v)
+          | Some v -> Option.get (Nx.Repr.array ~by:"test" v)
           | None ->
               let here, w = windows.(j) in
               empty here dt

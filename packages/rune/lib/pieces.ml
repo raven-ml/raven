@@ -119,7 +119,8 @@ let pieces_of (type v s d) ri (x : (v, s, d) Nx.t) : (v, s, d) Nx.t iarray =
       | Some _ -> Iarray.of_list [ x ]
       | None ->
           let s = Nx.Placement.devices (Nx.placement x) in
-          Iarray.map (Nx.Repr.of_array s) (Nx.Repr.shards x))
+          let arrays = Nx.Repr.shards ~by:"Nx.Repr.shards" x in
+          Iarray.map (Nx.Repr.of_array s) arrays)
 
 (* Loops over windows
 

@@ -962,7 +962,7 @@ let test_scored_visibility () =
   in
   raises_match (Exn.invalid_arg ~sub:"reads its score") (fun () ->
       ignore (Nx.Prim.eval ~by:"test" op));
-  let a x = Option.get (Nx.Repr.array x) in
+  let a x = Option.get (Nx.Repr.array ~by:"test" x) in
   let o = Nx_array.create Rig.host Nx.float32 (Iarray.of_array [| 1; 1; 1 |]) in
   let lse = Nx_array.create Rig.host Nx.float32 (Iarray.of_array [| 1; 1 |]) in
   let answer =

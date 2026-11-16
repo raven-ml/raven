@@ -118,7 +118,7 @@ let dispatch_rows =
         ~setup:(fun () -> sin_op (one ()))
         (fun op -> fst (Nx.Prim.eval ~by:"bench" op));
       Thumper.bench_with_setup "add-1-direct"
-        ~setup:(fun () -> Option.get (Nx.Repr.array (one ())))
+        ~setup:(fun () -> Option.get (Nx.Repr.array ~by:"bench" (one ())))
         add_direct;
       Thumper.bench_with_setup "less-1" ~setup:one (fun x -> Nx.less x x);
       Thumper.bench_with_setup "where-1"
@@ -265,7 +265,7 @@ let constant_rows =
   Thumper.group "constant"
     [
       Thumper.bench_with_setup "chain-1000" ~setup:half (fun half ->
-          Nx.Repr.array (Nx.place Nx.Host.on (chain half 1000)));
+          Nx.Repr.array ~by:"bench" (Nx.place Nx.Host.on (chain half 1000)));
     ]
 
 (* A value on a set minted in the worker, of a brand the row does not name. *)
@@ -457,7 +457,7 @@ let ints seed high s =
   Nx.Rng.randint ~key:(Nx.Rng.key seed) (Nx.full D.Int32 s (Int32.of_int high))
 
 let key () = Nx.Rng.key 0
-let draw x = Nx.Repr.array (Nx.place Nx.Host.on x)
+let draw x = Nx.Repr.array ~by:"bench" (Nx.place Nx.Host.on x)
 
 (* A key and a float32 parameter of shape [s] filled with [v]. *)
 let keyed s v () = (key (), filled D.Float32 s v)
@@ -544,14 +544,14 @@ let matrix dt s = filled dt s 1.
 
 (* Operands of [dt] filled with [v], of shapes [sa] and [sb]. *)
 let pair dt sa sb v () = (filled dt sa v, filled dt sb v)
-let matmul (a, b) = Nx.Repr.array (Nx.matmul a b)
+let matmul (a, b) = Nx.Repr.array ~by:"bench" (Nx.matmul a b)
 
 (* [make]'s operands as arrays, and the product of those into a new [s]
    float32 array by nx.cpu's kernel. *)
 let direct_operands make () =
   let a, b = make () in
   let plain x : Nx_kernel.operand =
-    { array = A.Any (Option.get (Nx.Repr.array x)); scale = None }
+    { array = A.Any (Option.get (Nx.Repr.array ~by:"bench" x)); scale = None }
   in
   (plain a, plain b)
 
@@ -582,11 +582,11 @@ let dot_rows =
   [
     Thumper.bench_with_setup "dot-f32-8"
       ~setup:(pair D.Float32 [| 8; 8 |] [| 8; 8 |] 1.)
-      (fun (a, b) -> Nx.Repr.array (Nx.dot a b));
+      (fun (a, b) -> Nx.Repr.array ~by:"bench" (Nx.dot a b));
   ]
 
 let rows_by_weight = Nx.Pattern.v "m k, n k -> m n | k"
-let einsum p (a, b) = Nx.Repr.array (Nx.einsum p [ a; b ])
+let einsum p (a, b) = Nx.Repr.array ~by:"bench" (Nx.einsum p [ a; b ])
 
 let decode_rows =
   let f32 = pair D.Float32 [| 1; 4096 |] [| 4096; 4096 |] 1. in
@@ -601,7 +601,7 @@ let decode_rows =
     (* A transposed bfloat16 operand, which the product stages strided. *)
     Thumper.bench_with_setup "matmul-bf16-512-tn"
       ~setup:(pair D.Bfloat16 [| 512; 512 |] [| 512; 512 |] 1.)
-      (fun (a, b) -> Nx.Repr.array (Nx.matmul (Nx.transpose a) b));
+      (fun (a, b) -> Nx.Repr.array ~by:"bench" (Nx.matmul (Nx.transpose a) b));
   ]
 
 (* A matrix, a matrix and a vector: a (b v) does two matrix-vector products,
@@ -616,7 +616,7 @@ let chain_rows =
           matrix D.Float32 [| 1024; 1024 |];
           matrix D.Float32 [| 1024 |];
         ])
-      (fun xs -> Nx.Repr.array (Nx.einsum mmv xs));
+      (fun xs -> Nx.Repr.array ~by:"bench" (Nx.einsum mmv xs));
   ]
 
 (* Attention's scores over heads stored [b; s; h; d], as a projection
@@ -658,7 +658,7 @@ let plan_row n =
     List.init n (fun _ -> x)
   in
   Thumper.bench_with_setup (Printf.sprintf "einsum-plan-%d" n)
-    ~setup:operands (fun xs -> Nx.Repr.array (Nx.einsum p xs))
+    ~setup:operands (fun xs -> Nx.Repr.array ~by:"bench" (Nx.einsum p xs))
 
 (* Gradients' products, an operand read transposed: a weight gradient's,
    16 × 16 outputs over 65536 rows of activations, few outputs over a long
@@ -668,10 +668,11 @@ let gradient_rows =
   [
     Thumper.bench_with_setup "matmul-f32-tn-16x16x65536"
       ~setup:(pair D.Float32 [| 65536; 16 |] [| 65536; 16 |] 1.)
-      (fun (x, dy) -> Nx.Repr.array (Nx.matmul (Nx.transpose x) dy));
+      (fun (x, dy) ->
+        Nx.Repr.array ~by:"bench" (Nx.matmul (Nx.transpose x) dy));
     Thumper.bench_with_setup "matmul-f32-tn-1024x64x1024"
       ~setup:(pair D.Float32 [| 1024; 1024 |] [| 1024; 64 |] 1.)
-      (fun (p, d) -> Nx.Repr.array (Nx.matmul (Nx.transpose p) d));
+      (fun (p, d) -> Nx.Repr.array ~by:"bench" (Nx.matmul (Nx.transpose p) d));
   ]
 
 (* Products at the dtypes beside float32. *)
@@ -710,7 +711,7 @@ let split_rows =
 
 let rows_by_columns = Nx.Pattern.v "m k, k n -> m n | k"
 let weight_by_vector = Nx.Pattern.v "n k, k -> n | k"
-let widened p (a, b) = Nx.Repr.array (Nx.contract D.Int32 p a b)
+let widened p (a, b) = Nx.Repr.array ~by:"bench" (Nx.contract D.Int32 p a b)
 
 (* int8 operands into an int32 accumulator, as quantized weights are: squares,
    a decode step and a prefill of 128 rows against a weight stored [n × k],
@@ -804,13 +805,14 @@ let windows ~step x =
 
 let conv_by dt s () = (image dt, filled dt s 1.)
 
-let conv ?groups (x, w) = Nx.Repr.array (Nx.conv ?groups ~padding:pad1 x w)
+let conv ?groups (x, w) =
+  Nx.Repr.array ~by:"bench" (Nx.conv ?groups ~padding:pad1 x w)
 
 let weight_grad =
   let p = Nx.Pattern.v "n h w c i j, n h w o -> o i j c | n h w" in
   fun (x, dy) ->
     let v = windows ~step:1 (Nx.pad around 0. x) in
-    Nx.Repr.array (Nx.contract D.Float32 p v dy)
+    Nx.Repr.array ~by:"bench" (Nx.contract D.Float32 p v dy)
 
 let max_pool x =
   let x = Nx.pad [| (0, 0); (0, 0); (1, 1); (1, 1) |] Float.neg_infinity x in
@@ -818,7 +820,7 @@ let max_pool x =
     Nx.sliding_window ~axis:3 ~window:3 ~step:2
       (Nx.sliding_window ~axis:2 ~window:3 ~step:2 x)
   in
-  Nx.Repr.array (Nx.max ~axes:[ 4; 5 ] v)
+  Nx.Repr.array ~by:"bench" (Nx.max ~axes:[ 4; 5 ] v)
 
 (* [[n; c; 28; 28; 3; 3]] windows to [[n; c; 9; 784]] patches. *)
 let max_pool_grad (x, dy) =
@@ -836,7 +838,7 @@ let max_pool_grad (x, dy) =
     Nx.reshape [| 8; 64; 9; 28 * 28 |]
       (Nx.transpose ~axes:[ 0; 1; 4; 5; 2; 3 ] g)
   in
-  Nx.Repr.array
+  Nx.Repr.array ~by:"bench"
     (Nx.combine_patches ~output_size:[| 56; 56 |] ~kernel_size:[| 3; 3 |]
        ~stride:[| 2; 2 |] ~dilation:[| 1; 1 |] ~padding:pad1 p)
 
@@ -860,7 +862,7 @@ let conv_rows =
         ~setup:(conv_by D.Bfloat16 [| 64; 3; 3; 64 |]) conv;
       Thumper.bench_with_setup "conv-input-grad-f32-8x56x56x64-3x3"
         ~setup:(conv_by D.Float32 [| 64; 3; 3; 64 |]) (fun (dy, w) ->
-          Nx.Repr.array (Nx.conv_transpose ~padding:pad1 dy w));
+          Nx.Repr.array ~by:"bench" (Nx.conv_transpose ~padding:pad1 dy w));
       Thumper.bench_with_setup "conv-weight-grad-f32-8x56x56x64-3x3"
         ~setup:(fun () -> (image D.Float32, image D.Float32)) weight_grad;
       Thumper.bench_with_setup "depthwise-f32-8x56x56x64-3x3"
@@ -1673,27 +1675,32 @@ let quant_rows =
         ~setup:(fun () ->
           let ws = mxfp4_weights ~copies:16 [||] 4096 4096 in
           (filled D.Float32 [| 1; 4096 |] 1., ws, ref 0))
-        (fun (x, ws, turn) -> Nx.Repr.array (Nx_quant.apply (next ws turn) x));
+        (fun (x, ws, turn) ->
+          Nx.Repr.array ~by:"bench" (Nx_quant.apply (next ws turn) x));
       Thumper.bench_with_setup "q8_0-gemv-4096"
         ~setup:(fun () ->
           let ws = q8_0_weights ~copies:8 4096 4096 in
           (filled D.Float32 [| 1; 4096 |] 1., ws, ref 0))
-        (fun (x, ws, turn) -> Nx.Repr.array (Nx_quant.apply (next ws turn) x));
+        (fun (x, ws, turn) ->
+          Nx.Repr.array ~by:"bench" (Nx_quant.apply (next ws turn) x));
       Thumper.bench_with_setup "q8_0-gemv-4096-f64"
         ~setup:(fun () ->
           let ws = q8_0_weights ~copies:8 4096 4096 in
           (filled D.Float64 [| 1; 4096 |] 1., ws, ref 0))
-        (fun (x, ws, turn) -> Nx.Repr.array (Nx_quant.apply (next ws turn) x));
+        (fun (x, ws, turn) ->
+          Nx.Repr.array ~by:"bench" (Nx_quant.apply (next ws turn) x));
       Thumper.bench_with_setup "q4_k-gemv-4096"
         ~setup:(fun () ->
           let ws = q4_k_weights ~copies:4 4096 4096 in
           (filled D.Float32 [| 1; 4096 |] 1., ws, ref 0))
-        (fun (x, ws, turn) -> Nx.Repr.array (Nx_quant.apply (next ws turn) x));
+        (fun (x, ws, turn) ->
+          Nx.Repr.array ~by:"bench" (Nx_quant.apply (next ws turn) x));
       Thumper.bench_with_setup "q6_k-gemv-4096"
         ~setup:(fun () ->
           let ws = q6_k_weights ~copies:4 4096 4096 in
           (filled D.Float32 [| 1; 4096 |] 1., ws, ref 0))
-        (fun (x, ws, turn) -> Nx.Repr.array (Nx_quant.apply (next ws turn) x));
+        (fun (x, ws, turn) ->
+          Nx.Repr.array ~by:"bench" (Nx_quant.apply (next ws turn) x));
       Thumper.bench_with_setup "mxfp4-gemv-4096-n-split4"
         ~setup:(mxfp4_four ~axis:0) (fun (Cut_weights (x, ws, turn)) ->
           Value (Nx_quant.apply (next ws turn) x));
@@ -1703,7 +1710,7 @@ let quant_rows =
       Thumper.bench_with_setup "mxfp4-moe-64x8of32" ~setup:experts
         (fun (ids, x, ws, turn) ->
           let w = next ws turn in
-          Nx.Repr.array (Nx_quant.apply_experts ~ids w x));
+          Nx.Repr.array ~by:"bench" (Nx_quant.apply_experts ~ids w x));
       Thumper.bench_with_setup "mxfp4-moe-64x8of32-experts-split4"
         ~setup:(experts_four ~axis:0) (fun (Cut_experts (ids, x, ws, turn)) ->
           Value (Nx_quant.apply_experts ~ids (next ws turn) x));
@@ -1779,7 +1786,7 @@ let ragged_rows =
    decode step of 64 query heads over 8 key heads of 4096 cached keys. *)
 let attend ?mask acc (q, k, v) =
   let o, lse = Nx.attention ?mask ~acc ~kv:(Dense { k; v }) q in
-  (Nx.Repr.array o, Nx.Repr.array lse)
+  (Nx.Repr.array ~by:"bench" o, Nx.Repr.array ~by:"bench" lse)
 
 let windows =
   Nx.create Nx.int32 [| 8; 1; 1 |]

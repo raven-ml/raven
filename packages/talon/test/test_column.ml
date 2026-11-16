@@ -23,7 +23,7 @@ let rejects f = raises_match Exn.invalid_arg f
    value of its own over a tensor's memory, so that a donation of the tensor
    leaves it. *)
 let shares x y =
-  let buffer v = Nx_array.buffer (Option.get (Nx.Repr.array v)) in
+  let buffer v = Nx_array.buffer (Option.get (Nx.Repr.array ~by:"test" v)) in
   Rig.Buffer.overlaps (buffer x) (buffer y)
 
 let message f =

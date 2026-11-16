@@ -21,11 +21,12 @@ let m = Nx_support.memory
 module Count = (val Nx.devices ~kernels:(module C) [ m 0 ])
 module Count2 = (val Nx.devices ~kernels:(module C) [ m 0; m 1 ])
 
-let elements x = A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)))
+let elements x =
+  A.to_array (Option.get (Nx.Repr.array ~by:"test" (Nx.place Nx.Host.on x)))
 
 (* The bytes of [x]'s elements, read on the host. *)
 let bytes (type v s d) (x : (v, s, d) Nx.t) =
-  let a = Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)) in
+  let a = Option.get (Nx.Repr.array ~by:"test" (Nx.place Nx.Host.on x)) in
   let flat =
     A.move (A.Move.Reshape [| A.Layout.numel (A.layout a) |]) (A.copy a)
   in
@@ -2016,7 +2017,7 @@ let shard_bytes (type v s d) (x : (v, s, d) Nx.t) =
         A.move (A.Move.Reshape [| A.Layout.numel (A.layout a) |]) (A.copy a)
       in
       A.to_array (Option.get (A.bitcast D.Uint8 (Option.get flat))))
-    (Iarray.to_array (Nx.Repr.shards x))
+    (Iarray.to_array (Nx.Repr.shards ~by:"test" x))
 
 let law_replicas c =
   let run (type d) (s : d Nx.Devices.t) =

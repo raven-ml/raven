@@ -96,7 +96,7 @@ let bits_of (type v s) (a : (v, s) A.t) =
   | _ -> A.to_array (Option.get (A.bitcast D.Uint8 a))
 
 let value a : (_, _, host) Nx.t = Nx.Repr.of_array Nx.Host.v a
-let host_array x = Option.get (Nx.Repr.array (Nx.place Nx.Host.on x))
+let host_array x = Option.get (Nx.Repr.array ~by:"test" (Nx.place Nx.Host.on x))
 let result_bits x = bits_of (host_array x)
 
 (* [a] broadcast to [s], as a view. *)

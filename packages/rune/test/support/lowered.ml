@@ -81,7 +81,7 @@ let bind (type v s d) ~direct ~device bound (x : (v, s, d) Nx.t) =
     bound := (u, host_buffer bytes) :: !bound;
     u
   in
-  match Nx.Repr.array x with
+  match Nx.Repr.array ~by:"test" x with
   | Some a when (not (packed dt)) && numel shape > 0 ->
       let b = A.buffer a in
       let len = Rig.Buffer.length b in

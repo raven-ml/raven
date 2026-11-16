@@ -45,7 +45,8 @@ let either ~msg t ~by expected read =
 (* What [by] raises for a handle [h] whose memory [consumer] took. *)
 let dead_in by h consumer =
   Printf.sprintf "%s: %s was donated to %s" by (text h) consumer
-let elements x = A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)))
+let elements x =
+  A.to_array (Option.get (Nx.Repr.array ~by:"test" (Nx.place Nx.Host.on x)))
 
 (* A value in memory of its own: computed, so no Repr crossing shares it. *)
 let fresh xs =
@@ -466,7 +467,7 @@ let test_lent () =
   let in_place h =
     let b = Nx.Repr.read ~by:"test" h A.buffer in
     let y = Nx.neg h in
-    Rig.Buffer.overlaps b (A.buffer (Option.get (Nx.Repr.array y)))
+    Rig.Buffer.overlaps b (A.buffer (Option.get (Nx.Repr.array ~by:"test" y)))
   in
   equal ~msg:"no interpretation: in place" bool true
     (in_place (Nx.donate (fresh [| 1.; 2. |])));
@@ -802,7 +803,7 @@ let test_read_in_place () =
     grown
       (fun () ->
         let c = cache () in
-        ignore (Nx.Repr.array c);
+        ignore (Nx.Repr.array ~by:"test" c);
         (c, nines [| width |]))
       (fun (c, u) -> Nx.set Nx.[ I 5 ] u (Nx.donate c))
   in
@@ -817,7 +818,7 @@ let donated_during_read donate =
     Nx.Repr.read ~by:"test" c (fun a ->
         let before = A.to_array a in
         let y = donate c in
-        let fresh = Option.get (Nx.Repr.array y) in
+        let fresh = Option.get (Nx.Repr.array ~by:"test" y) in
         equal ~msg:"fresh memory" bool false
           (Rig.Buffer.overlaps (A.buffer a) (A.buffer fresh));
         equal ~msg:"the read's bytes" (array float_exact) before (A.to_array a);
@@ -1815,12 +1816,11 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
       c "pp" ~dead 1 (fun d -> Format.asprintf "%a" Nx.pp (d 0 (x [| 2; 3 |])));
       c "place" 1 (fun d -> show (Nx.place Nx.Host.on (d 0 (x [| 2; 3 |]))));
       c "Repr.array" 1 (fun d ->
-          show
-            (Nx.Repr.of_array Nx.Host.v
-               (Option.get (Nx.Repr.array (d 0 (x [| 2; 3 |]))))));
+          let a = Nx.Repr.array ~by:"Nx.Repr.array" (d 0 (x [| 2; 3 |])) in
+          show (Nx.Repr.of_array Nx.Host.v (Option.get a)));
       c "Repr.shards" 1 (fun d ->
-          string_of_int
-            (Iarray.length (Nx.Repr.shards (d 0 (x [| 2; 3 |])))));
+          let s = Nx.Repr.shards ~by:"Nx.Repr.shards" (d 0 (x [| 2; 3 |])) in
+          string_of_int (Iarray.length s));
       c "reshape" 1 (fun d -> show (Nx.reshape [| 3; 2 |] (d 0 (x [| 2; 3 |]))));
       c "broadcast_to" 1 (fun d ->
           show (Nx.broadcast_to [| 2; 2; 3 |] (d 0 (x [| 2; 3 |]))));
@@ -3034,7 +3034,7 @@ let test_consumer_takes () =
   equal ~msg:"the view keeps its elements" (array float_exact) [| 2.; 1. |]
     (elements view);
   let x = fresh [| 1.; 2. |] in
-  ignore (Nx.Repr.array x);
+  ignore (Nx.Repr.array ~by:"test" x);
   equal ~msg:"shared by a crossing" bool false
     (take [ Any (Nx.donate x) ] 0 D.Float32 (layout_of 2));
   C.with_ ~by:"test.call" [ Any (h ()) ] (fun c ->

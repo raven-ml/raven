@@ -13,7 +13,8 @@ open Nx_support
 module A = Nx_array
 module D = Nx_array.Dtype
 
-let elements x = A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)))
+let elements x =
+  A.to_array (Option.get (Nx.Repr.array ~by:"test" (Nx.place Nx.Host.on x)))
 let numel s = Array.fold_left ( * ) 1 s
 
 let position s idx =
@@ -401,7 +402,7 @@ let resolution =
     ]
 
 let shares x y =
-  let buffer v = A.buffer (Option.get (Nx.Repr.array v)) in
+  let buffer v = A.buffer (Option.get (Nx.Repr.array ~by:"test" v)) in
   Rig.Buffer.overlaps (buffer x) (buffer y)
 
 let views =

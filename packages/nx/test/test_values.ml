@@ -143,39 +143,42 @@ let law_shards (s, (_, p)) =
   cover "an odd extent" (Array.exists (fun n -> n mod 2 = 1) s);
   cover "an empty window" (Array.exists (fun n -> n > 0 && n < 4) s);
   let x = Nx.Repr.of_array Nx.Host.v (on Rig.host s) in
-  let y = Nx.Repr.of_shards p ((Nx.Repr.shards (Nx.place p x))) in
+  let y = Nx.Repr.of_shards p ((Nx.Repr.shards ~by:"test" (Nx.place p x))) in
   equal (array int) ~msg:"shape" s (Nx.shape y);
   equal (array float_exact) ~msg:"elements" (floats s)
-    (A.to_array (require_some (Nx.Repr.array (Nx.place Nx.Host.on y))))
+    (A.to_array
+       (require_some (Nx.Repr.array ~by:"test" (Nx.place Nx.Host.on y))))
 
 let repr =
   group "repr"
     [
       test "array of a value from an array is that array" (fun () ->
           let a = on (m 0) [| 2; 2 |] in
-          let b = require_some (Nx.Repr.array (Nx.Repr.of_array S2.v a)) in
+          let b =
+            require_some (Nx.Repr.array ~by:"test" (Nx.Repr.of_array S2.v a))
+          in
           equal bool true (same a b));
       test "shards of a value from shards are those arrays" (fun () ->
           let a = on (m 0) [| 2 |] and b = on (m 1) [| 2 |] in
           let x = Nx.Repr.of_shards S2.on (Iarray.of_list [ a; b ]) in
-          let s = (Nx.Repr.shards x) in
+          let s = (Nx.Repr.shards ~by:"test" x) in
           equal bool true (same a (Iarray.get s 0) && same b (Iarray.get s 1)));
       test "a value on two devices has no single array" (fun () ->
           let x =
             Nx.Repr.of_shards S2.on
               (Iarray.of_list [ on (m 0) [| 2 |]; on (m 1) [| 2 |] ])
           in
-          is_none (Nx.Repr.array x));
+          is_none (Nx.Repr.array ~by:"test" x));
       test "shards of a value on one device is its array" (fun () ->
           let a = on (m 0) [| 2 |] in
-          let s = (Nx.Repr.shards (Nx.Repr.of_array S2.v a)) in
+          let s = (Nx.Repr.shards ~by:"test" (Nx.Repr.of_array S2.v a)) in
           equal int 1 (Iarray.length s);
           equal bool true (same a (Iarray.get s 0)));
       test "shards on one device of a placement make an array value" (fun () ->
           let module S1 = (val Nx.devices [ m 3 ]) in
           let a = on (m 3) [| 2 |] in
           let x = Nx.Repr.of_shards S1.on (Iarray.of_list [ a ]) in
-          equal bool true (same a (require_some (Nx.Repr.array x))));
+          equal bool true (same a (require_some (Nx.Repr.array ~by:"test" x))));
       test "an array on another set's device is refused" (fun () ->
           invalid ~by:"Nx.Repr.of_array" (fun () ->
               Nx.Repr.of_array Other.v (on (m 0) [| 2 |])));
@@ -285,8 +288,8 @@ let test_two_values_of_a_host_set () =
 let test_repr_of_creation () =
   let c = Nx.add (Nx.zeros f32 [| 2 |]) (Nx.full f32 [| 2 |] 1.) in
   equal ~msg:"array" (option (array float_exact)) (Some [| 1.; 1. |])
-    (Option.map A.to_array (Nx.Repr.array c));
-  equal ~msg:"shards" int 1 (Iarray.length (Nx.Repr.shards c))
+    (Option.map A.to_array (Nx.Repr.array ~by:"test" c));
+  equal ~msg:"shards" int 1 (Iarray.length (Nx.Repr.shards ~by:"test" c))
 
 let every_set =
   group "placements"

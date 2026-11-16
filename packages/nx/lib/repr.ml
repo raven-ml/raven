@@ -90,14 +90,18 @@ let crossing (type v s d) ~by (x : (v, s, d) Value.t) : (v, s) A.t iarray =
       invalid_argf "%s: a value traced by %s has no bytes" by owner.name
   | Value.Array _ | Value.Shards _ | Value.Handle _ ->
       let arrays = Prim.arrays x in
-      Iarray.iter (fun a -> Rig.Buffer.share (A.buffer a)) arrays;
+      (* A share refuses only memory that a donation on another domain took
+         since [Prim.alive], and runs no caller's code, so its refusal is
+         [x]'s death and names [by]. *)
+      (try Iarray.iter (fun a -> Rig.Buffer.share (A.buffer a)) arrays
+       with Invalid_argument m -> invalid_argf "%s: %s" by m);
       arrays
 
-let array x =
-  let arrays = crossing ~by:"Nx.Repr.array" x in
+let array ~by x =
+  let arrays = crossing ~by x in
   if Iarray.length arrays = 1 then Some (Iarray.get arrays 0) else None
 
-let shards x = crossing ~by:"Nx.Repr.shards" x
+let shards ~by x = crossing ~by x
 
 (* [x]'s layouts read nothing and share no memory, so a dead value has them
    too. *)

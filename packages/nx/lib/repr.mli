@@ -12,7 +12,7 @@ val of_array :
 val unsafe_of_array :
   by:string -> 'd Devices.t -> ('v, 's) Nx_array.t -> ('v, 's, 'd) Value.t
 
-val array : ('v, 's, 'd) Value.t -> ('v, 's) Nx_array.t option
+val array : by:string -> ('v, 's, 'd) Value.t -> ('v, 's) Nx_array.t option
 
 val of_shards :
   by:string ->
@@ -26,7 +26,7 @@ val unsafe_of_shards :
   ('v, 's) Nx_array.t iarray ->
   ('v, 's, 'd) Value.t
 
-val shards : ('v, 's, 'd) Value.t -> ('v, 's) Nx_array.t iarray
+val shards : by:string -> ('v, 's, 'd) Value.t -> ('v, 's) Nx_array.t iarray
 
 val layouts : ('v, 's, 'd) Value.t -> Nx_array.Layout.t iarray
 (** Raises [Invalid_argument] naming [Nx.Repr.layouts] for a traced value. *)

@@ -13,7 +13,8 @@ open Nx_support
 module A = Nx_array
 module D = Nx_array.Dtype
 
-let elements x = A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)))
+let elements x =
+  A.to_array (Option.get (Nx.Repr.array ~by:"test" (Nx.place Nx.Host.on x)))
 let numel s = Array.fold_left ( * ) 1 s
 
 let position s idx =
@@ -636,7 +637,7 @@ let masks =
     ]
 
 let shares x y =
-  let buffer v = A.buffer (Option.get (Nx.Repr.array v)) in
+  let buffer v = A.buffer (Option.get (Nx.Repr.array ~by:"test" v)) in
   Rig.Buffer.overlaps (buffer x) (buffer y)
 
 let views =
@@ -920,7 +921,7 @@ let written =
             [| data.(2 * p); data.((2 * p) + 1) |]
           in
           Nx.sync y;
-          let copies = Iarray.to_list (Nx.Repr.shards y) in
+          let copies = Iarray.to_list (Nx.Repr.shards ~by:"test" y) in
           equal ~msg:"copies" int 2 (List.length copies);
           List.iter
             (fun a ->

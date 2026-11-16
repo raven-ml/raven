@@ -39,7 +39,8 @@ let set =
 let host dt s xs =
   Nx.Repr.of_array Nx.Host.v (A.of_array dt (Iarray.of_array s) xs)
 
-let read x = A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)))
+let read x =
+  A.to_array (Option.get (Nx.Repr.array ~by:"test" (Nx.place Nx.Host.on x)))
 
 let pp_ints sep =
   Format.(

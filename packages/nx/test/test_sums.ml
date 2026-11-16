@@ -50,7 +50,7 @@ let partial_value (type v s) w (dt : (v, s) D.t) shape (terms : v array array)
         (A.of_array dt (Iarray.of_array shape) terms.(term_of w j))
     in
     let piece = Nx.Prim.eval ~by (Move (Slice (Iarray.of_array win), whole)) in
-    require_some (Nx.Repr.array (Nx.place here piece))
+    require_some (Nx.Repr.array ~by:"test" (Nx.place here piece))
   in
   Nx.Repr.of_shards p (Iarray.init (Array.length pieces) array)
 
@@ -290,7 +290,8 @@ let case_of ops =
       op;
     }
 
-let elements x = A.to_array (require_some (Nx.Repr.array (Nx.place Nx.Host.on x)))
+let elements x =
+  A.to_array (require_some (Nx.Repr.array ~by:"test" (Nx.place Nx.Host.on x)))
 
 let law_kept (Case c) =
   cover "a cut beside the sum" (cut c.w <> None);

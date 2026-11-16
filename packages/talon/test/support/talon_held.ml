@@ -16,7 +16,7 @@ let settled () =
 
 (* The buffer and bytes of a host value's array. *)
 let array (type v s) (x : (v, s, Nx.host) Nx.t) =
-  match Nx.Repr.array x with
+  match Nx.Repr.array ~by:"test" x with
   | None -> []
   | Some a ->
       let n = Nx_array.Layout.numel (Nx_array.layout a) in

@@ -1178,7 +1178,9 @@ let replicas set cols =
   | Value y ->
       equal ~msg:"placement" (placement ()) (at set On) (Nx.placement y);
       let shard a = Array.map Int32.bits_of_float (Nx_array.to_array a) in
-      let bs = Array.map shard (Iarray.to_array (Nx.Repr.shards y)) in
+      let bs =
+        Array.map shard (Iarray.to_array (Nx.Repr.shards ~by:"test" y))
+      in
       Array.iteri
         (fun k b ->
           equal ~msg:(Printf.sprintf "device %d" k) (array int32) bs.(0) b)

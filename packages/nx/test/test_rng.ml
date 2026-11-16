@@ -20,10 +20,11 @@ let message f =
   match f () with _ -> "no exception" | exception Invalid_argument m -> m
 
 (* [x]'s elements in row-major order, computed on the host. *)
-let read x = A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)))
+let read x =
+  A.to_array (Option.get (Nx.Repr.array ~by:"test" (Nx.place Nx.Host.on x)))
 
 (* [x]'s elements on the first device of its set. *)
-let shard x = A.to_array (Iarray.get (Nx.Repr.shards x) 0)
+let shard x = A.to_array (Iarray.get (Nx.Repr.shards ~by:"test" x) 0)
 
 let host_of dt s xs =
   Nx.Repr.of_array Nx.Host.v (A.of_array dt (Iarray.of_array s) xs)
@@ -1182,7 +1183,7 @@ let placed_draws =
           let whole =
             Rng.with_key k (fun () -> read (Rng.normal Nx.float32 s))
           in
-          let shards = Nx.Repr.shards x in
+          let shards = Nx.Repr.shards ~by:"test" x in
           equal ~msg:"device 0" (array float_exact) (Array.sub whole 0 6)
             (A.to_array (Iarray.get shards 0));
           equal ~msg:"device 1" (array float_exact) (Array.sub whole 6 6)

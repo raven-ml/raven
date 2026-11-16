@@ -327,7 +327,7 @@ let capture (type v s d) st (x : (v, s, d) Nx.t) =
   match List.find_opt (fun (v, _) -> same v (V x)) st.captures with
   | Some (_, u) -> u
   | None ->
-      let arrays = Nx.Repr.shards x in
+      let arrays = Nx.Repr.shards ~by:"Nx.Repr.shards" x in
       if Iarray.length arrays <> 1 then
         decline "a constant over several devices";
       let a = A.Any (Iarray.get arrays 0) in
@@ -356,7 +356,7 @@ let capture (type v s d) st (x : (v, s, d) Nx.t) =
    where a copy of them makes the result there with no kernel: one array,
    empty or contiguous in C order from a byte boundary. *)
 let elsewhere (type v s d) st (x : (v, s, d) Nx.t) =
-  let arrays = Nx.Repr.shards x in
+  let arrays = Nx.Repr.shards ~by:"Nx.Repr.shards" x in
   match device_of (Nx.placement x) with
   | Some r
     when (not st.split) && (not (Rig.equal r st.rig))

@@ -22,7 +22,8 @@ let pp_shape ppf s =
 let numel s = Array.fold_left ( * ) 1 s
 let host dt s xs =
   Nx.Repr.of_array Nx.Host.v (A.of_array dt (Iarray.of_array s) xs)
-let read x = A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)))
+let read x =
+  A.to_array (Option.get (Nx.Repr.array ~by:"test" (Nx.place Nx.Host.on x)))
 
 let f32 x = Int32.float_of_bits (Int32.bits_of_float x)
 
@@ -219,7 +220,7 @@ let shown (type v s) (dt : (v, s) D.t) (x : v) =
   | Complex -> float x.Complex.re ^ " " ^ float x.im
   | Signed | Unsigned | Boolean -> Format.asprintf "%a" (D.pp_value dt) x
 
-let values x = A.to_array (Option.get (Nx.Repr.array x))
+let values x = A.to_array (Option.get (Nx.Repr.array ~by:"test" x))
 
 (* The elements of [dt] whose little-endian bytes are [bytes]. *)
 let of_bytes (type v s) (dt : (v, s) D.t) bytes : (v, s, Nx.host) Nx.t =
@@ -843,7 +844,7 @@ let einsum_within =
           let a = x [| 2; 3 |] in
           let y = Nx.einsum (Nx.Pattern.v "i j -> j i") [ a ] in
           equal (array float_exact) (read (Nx.transpose a)) (read y);
-          let buffer v = A.buffer (Option.get (Nx.Repr.array v)) in
+          let buffer v = A.buffer (Option.get (Nx.Repr.array ~by:"test" v)) in
           equal bool false (Rig.Buffer.overlaps (buffer a) (buffer y)));
     ]
 

@@ -20,7 +20,7 @@ module P = Nx_kernel.Prog
 type host = Nx.host
 
 let value a : (_, _, host) Nx.t = Nx.Repr.of_array Nx.Host.v a
-let host_array x = Option.get (Nx.Repr.array (Nx.place Nx.Host.on x))
+let host_array x = Option.get (Nx.Repr.array ~by:"test" (Nx.place Nx.Host.on x))
 let names name f = raises_match (Exn.invalid_arg ~sub:("Nx." ^ name ^ ": ")) f
 
 (* Shapes and axes *)

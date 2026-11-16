@@ -34,7 +34,7 @@ let law_gpu (Nx_support.Bits a, from_split) =
   in
   let back = Nx.place Nx.Host.on y in
   equal (array int) ~msg:"its bytes" (Nx_support.bytes a)
-    (Nx_support.bytes (require_some (Nx.Repr.array back)))
+    (Nx_support.bytes (require_some (Nx.Repr.array ~by:"test" back)))
 
 (* Bits, half of them 64 KiB or more. *)
 let sources =

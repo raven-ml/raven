@@ -1299,7 +1299,7 @@ let pieces y =
   let windows = Nx.Prim.pieces (Nx.placement y) (Nx.shape y) in
   Array.mapi
     (fun j a -> (bits (host (Nx.Repr.of_array s a)), snd windows.(j)))
-    (Iarray.to_array (Nx.Repr.shards y))
+    (Iarray.to_array (Nx.Repr.shards ~by:"test" y))
 
 (* Over a 2 x 2 mesh: a value cut along its first axis over the mesh's first
    axis, which its second repeats, so that each window lies on two devices and

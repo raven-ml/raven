@@ -553,7 +553,7 @@ let law_nan_ranges (Nan_ranges c) =
       ~lo:(bound fst) ~hi:(bound snd)
       (Nx.Repr.of_array Nx.Host.v x)
   in
-  let y = Option.get (Nx.Repr.array y) in
+  let y = Option.get (Nx.Repr.array ~by:"test" y) in
   let yb = bytes y in
   let actual =
     Array.mapi

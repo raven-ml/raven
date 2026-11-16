@@ -761,7 +761,7 @@ let meshed keep cuts =
 let windows (type v s d) (x : (v, s, d) Nx.t) =
   Array.map
     (fun a -> Iarray.to_array (L.shape (Nx_array.layout a)))
-    (Iarray.to_array (Nx.Repr.shards x))
+    (Iarray.to_array (Nx.Repr.shards ~by:"test" x))
 
 let same (type d e) i (Nx.P x : d Nx.packed) (Nx.P y : e Nx.packed) =
   let msg = Printf.sprintf "result %d" i in

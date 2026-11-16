@@ -1076,7 +1076,7 @@ module Counted2 =
 (* Each device's copy of [y], whole on each, in C order. *)
 let copies y =
   Nx.sync y;
-  List.map Nx_array.to_array (Iarray.to_list (Nx.Repr.shards y))
+  List.map Nx_array.to_array (Iarray.to_list (Nx.Repr.shards ~by:"test" y))
 
 (* On two devices, each device's quantiles of each probability are those it
    gives alone, by as many kernel calls as one probability takes. *)

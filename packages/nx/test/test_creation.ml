@@ -553,7 +553,7 @@ let test_pair (Pair { dtype; host; at; lies; _ }) =
     (fun j a ->
       equal ~msg:(Printf.sprintf "device %d's window" j) (array int) (window j)
         (Iarray.to_array (Nx_array.Layout.shape (Nx_array.layout a))))
-    (Nx.Repr.shards y);
+    (Nx.Repr.shards ~by:"test" y);
   equal_elements dtype (Nx.to_array h) (Nx.to_array y)
 
 (* Placements over two devices, and shapes of up to three axes: an [_at]
@@ -727,7 +727,7 @@ let bare_placements =
 let windows x =
   List.map
     (fun a -> Iarray.to_array (Nx_array.Layout.shape (Nx_array.layout a)))
-    (Iarray.to_list (Nx.Repr.shards x))
+    (Iarray.to_list (Nx.Repr.shards ~by:"test" x))
 
 (* [y] lies where [want] lies, holding [want]'s windows and elements. *)
 let same_as ~msg dt want y =

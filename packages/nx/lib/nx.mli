@@ -5504,13 +5504,17 @@ module Repr : sig
       Raises [Invalid_argument] naming [Nx.Repr.unsafe_of_array] unless [a]
       lies on a device of [s]. *)
 
-  val array : ('v, 's, 'd) t -> ('v, 's) Nx_array.t option
-  (** [array x] is [Some a] iff [x] lies on one device, [a] its array, and
-      [None] for a value on several devices. [a] may be strided or offset. It
-      is for reading: writing through it changes [x].
+  val array : by:string -> ('v, 's, 'd) t -> ('v, 's) Nx_array.t option
+  (** [array ~by x] is [Some a] iff [x] lies on one device, [a] its array,
+      and [None] for a value on several devices. [a] may be strided or offset.
+      It is for reading: writing through it changes [x].
 
-      Raises [Invalid_argument] naming [Nx.Repr.array] for a dead or a traced
-      [x]. *)
+      [by] names the function the array is for: a library that takes it for
+      one of its own functions passes that function's name, as
+      [~by:"Rune.jit"], so that its user meets the name of the function they
+      called.
+
+      Raises [Invalid_argument] naming [by] for a dead or a traced [x]. *)
 
   val read : by:string -> ('v, 's, 'd) t -> (('v, 's) Nx_array.t -> 'a) -> 'a
   (** [read ~by x f] is [f a], [a] an array on the host of [x]'s elements for
@@ -5564,13 +5568,13 @@ module Repr : sig
       Raises [Invalid_argument] naming [Nx.Repr.unsafe_of_shards] as
       {!of_shards} raises. *)
 
-  val shards : ('v, 's, 'd) t -> ('v, 's) Nx_array.t iarray
-  (** [shards x] is [x]'s arrays, one per device of [x]'s placement, in
+  val shards : by:string -> ('v, 's, 'd) t -> ('v, 's) Nx_array.t iarray
+  (** [shards ~by x] is [x]'s arrays, one per device of [x]'s placement, in
       order: [[| a |]] for a value on one device. The arrays are for reading,
-      as {!array}'s.
+      as {!array}'s. [by] names the function they are for, as {!array}'s
+      does.
 
-      Raises [Invalid_argument] naming [Nx.Repr.shards] for a dead or a
-      traced [x]. *)
+      Raises [Invalid_argument] naming [by] for a dead or a traced [x]. *)
 
   val layouts : ('v, 's, 'd) t -> Nx_array.Layout.t iarray
   (** [layouts x] is the layout of each of [x]'s arrays, one per device of

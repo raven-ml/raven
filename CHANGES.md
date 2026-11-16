@@ -3004,6 +3004,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- **Breaking:** `Nx.Repr.array` and `Nx.Repr.shards` take `~by`, the function
+  the arrays are for, which their refusal of a dead or traced value names in
+  place of their own: a library names the function its user called.
 - `Nx.cumsum` states a float result within a chain's `γ(n - 1) Σ|x|`, on one
   device and over cut axes, where it claimed a reduction's `γ(β(n))`.
 - Over cut axes, `Nx.sum`, `var` and `rms_norm`, eager and compiled, state

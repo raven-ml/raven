@@ -50,12 +50,12 @@ let half_window ~transposed ~axis () =
   let module Two = (val Nx.devices [ Rig.host; gpu ]) in
   let a = unpaged ~transposed in
   let y = Nx.place (Two.split ~axis) (Nx.Repr.of_array Nx.Host.v a) in
-  let half = Iarray.get (Nx.Repr.shards y) 1 in
+  let half = Iarray.get (Nx.Repr.shards ~by:"test" y) 1 in
   equal string ~msg:"its device" (Rig.name gpu) (Rig.name (A.device half));
   equal int ~msg:"its buffer's bytes"
     (Dt.bytes Dt.Float32 (rows * cols / 2))
     (Rig.Buffer.length (A.buffer half));
-  let back = require_some (Nx.Repr.array (Nx.place Nx.Host.on y)) in
+  let back = require_some (Nx.Repr.array ~by:"test" (Nx.place Nx.Host.on y)) in
   equal (list float_exact) ~msg:"its elements"
     (Array.to_list (A.to_array a))
     (Array.to_list (A.to_array back))
@@ -70,12 +70,12 @@ let own_memory () =
   let module One = (val Nx.devices [ gpu () ]) in
   let a = paged () in
   let v = Nx.place One.on (Nx.Repr.of_array Nx.Host.v a) in
-  let y = require_some (Nx.Repr.array v) in
+  let y = require_some (Nx.Repr.array ~by:"test" v) in
   equal ~msg:"borrowed" bool false (Rig.Buffer.is_borrowed (A.buffer y));
   equal ~msg:"its bytes" int
     (Dt.bytes Dt.Float32 (128 * 128))
     (Rig.Buffer.length (A.buffer y));
-  let back = require_some (Nx.Repr.array (Nx.place Nx.Host.on v)) in
+  let back = require_some (Nx.Repr.array ~by:"test" (Nx.place Nx.Host.on v)) in
   equal (list float_exact) ~msg:"its elements"
     (Array.to_list (A.to_array a))
     (Array.to_list (A.to_array back))

@@ -1482,7 +1482,7 @@ let test_sibling_constant () =
   let on r x = Nx.place (Nx.Placement.device Bare.v r) x in
   let c = on off (v [| 0.5; -2. |]) in
   let x = on (Nx_support.memory 3) (v [| 1.; 2. |]) in
-  let memory y = Nx_array.buffer (Option.get (Nx.Repr.array y)) in
+  let memory y = Nx_array.buffer (Option.get (Nx.Repr.array ~by:"test" y)) in
   let apart msg a b =
     equal ~msg bool false (Rig.Buffer.overlaps (memory a) (memory b))
   in
@@ -1811,7 +1811,7 @@ let law_donating c =
     (List.map bits ys);
   (* Each result's buffers, then those of each argument still alive. *)
   let buffers x =
-    Iarray.to_list (Iarray.map Nx_array.buffer (Nx.Repr.shards x))
+    Iarray.to_list (Iarray.map Nx_array.buffer (Nx.Repr.shards ~by:"test" x))
   in
   let named what i x =
     List.map (fun b -> (Printf.sprintf "%s %d" what i, b)) (buffers x)
@@ -1846,7 +1846,8 @@ let test_fresh () =
   let x = v [| 1.; 2. |] in
   let b = Nx.Repr.read ~by:"test" x Nx_array.buffer in
   let shares y =
-    Rig.Buffer.overlaps b (Nx_array.buffer (Option.get (Nx.Repr.array y)))
+    Rig.Buffer.overlaps b
+      (Nx_array.buffer (Option.get (Nx.Repr.array ~by:"test" y)))
   in
   let compiled = Rune.jit' (fun x -> x) x in
   equal ~msg:"compiled" bool false (shares compiled);
@@ -1887,7 +1888,8 @@ let test_fresh () =
   let r, k = rooted x in
   let held = Nx.Repr.read ~by:"test" c Nx_array.buffer in
   let held_by y =
-    Rig.Buffer.overlaps held (Nx_array.buffer (Option.get (Nx.Repr.array y)))
+    Rig.Buffer.overlaps held
+      (Nx_array.buffer (Option.get (Nx.Repr.array ~by:"test" y)))
   in
   equal ~msg:"evaluated, a captured result" bool false (held_by k);
   equal bits_t (bits x) (bits r);
@@ -1941,7 +1943,7 @@ let test_fresh () =
         (r, Nx.reshape [| 2; 1 |] r))
   in
   let r, w = twice x in
-  let mem y = Nx_array.buffer (Option.get (Nx.Repr.array y)) in
+  let mem y = Nx_array.buffer (Option.get (Nx.Repr.array ~by:"test" y)) in
   equal ~msg:"evaluated, a view of a result" bool false
     (Rig.Buffer.overlaps (mem r) (mem w));
   equal bits_t (bits (Nx.add_s x 1.)) (bits r);
@@ -2156,7 +2158,7 @@ let fresh xs = Nx.create f32 [| Array.length xs |] xs
 let in_place g x =
   let b = Nx.Repr.read ~by:"test" x Nx_array.buffer in
   let y = g (Nx.donate x) in
-  let a = Option.get (Nx.Repr.array y) in
+  let a = Option.get (Nx.Repr.array ~by:"test" y) in
   (Rig.Buffer.overlaps b (Nx_array.buffer a), y)
 
 (* [x] dead from its donation. *)
@@ -2357,7 +2359,8 @@ let test_lending () =
   let b = Nx.Repr.read ~by:"test" x Nx_array.buffer in
   let y, z = g (Nx.donate x) in
   let shares v =
-    Rig.Buffer.overlaps b (Nx_array.buffer (Option.get (Nx.Repr.array v)))
+    Rig.Buffer.overlaps b
+      (Nx_array.buffer (Option.get (Nx.Repr.array ~by:"test" v)))
   in
   equal ~msg:"two results that read it: the first in place"
     (Testable.pair bool bool) (true, false)
@@ -2370,7 +2373,7 @@ let test_lending () =
 let test_shared () =
   let x = fresh [| 1.; 2. |] in
   let view = Nx.reshape [| 2; 1 |] x in
-  ignore (Nx.Repr.array view);
+  ignore (Nx.Repr.array ~by:"test" view);
   let took, y = in_place (Rune.jit' (fun x -> Nx.neg x)) x in
   equal ~msg:"in place" bool false took;
   equal bits_t (bits (fresh [| -1.; -2. |])) (bits y);
@@ -2473,7 +2476,7 @@ let law_donation (Donation_case (dt, s, xo, yo, e)) =
   let took =
     match (memory, !result) with
     | Some b, Some r -> (
-        match Nx.Repr.array r with
+        match Nx.Repr.array ~by:"test" r with
         | Some a -> Rig.Buffer.overlaps b (Nx_array.buffer a)
         | None -> false)
     | _ -> false
@@ -2702,7 +2705,7 @@ let law_states (State_case c as case) =
   | Value _ -> equal ~msg:"compiled" int 0 (Rune.evaluations () - calls)
   | Raised _ -> ());
   let lent x =
-    match Nx.Repr.array x with
+    match Nx.Repr.array ~by:"test" x with
     | Some a ->
         List.exists (fun b -> Rig.Buffer.overlaps b (Nx_array.buffer a)) leaves
     | None -> false
@@ -2983,7 +2986,7 @@ let long_scatter () =
   let x () = Nx.create f32 [| n |] (Array.init n (fun j -> -.Float.of_int j)) in
   (p, u, x)
 
-let memory y = Nx_array.buffer (Option.get (Nx.Repr.array y))
+let memory y = Nx_array.buffer (Option.get (Nx.Repr.array ~by:"test" y))
 
 let test_long_donated () =
   let p, u, x = long_scatter () in
@@ -3420,7 +3423,7 @@ let test_loop_checks () =
   let w = v [| 1.; 2. |] in
   let b = Nx.Repr.read ~by:"test" w Nx_array.buffer in
   let nw, y = lending (Nx.donate w) passing in
-  let a = Option.get (Nx.Repr.array nw) in
+  let a = Option.get (Nx.Repr.array ~by:"test" nw) in
   equal ~msg:"compiled: the result took the donated memory" bool true
     (Rig.Buffer.overlaps b (Nx_array.buffer a));
   equal ~msg:"passing" bits_t (bits (scan passing)) (bits y);
@@ -3448,7 +3451,7 @@ let test_loop_checks () =
     in
     let w = rows [| 1.; 2.; 0.; 2.5; 1.; 1. |] in
     let b = Nx.Repr.read ~by:"test" w Nx_array.buffer in
-    let a = Option.get (Nx.Repr.array (g (Nx.donate w))) in
+    let a = Option.get (Nx.Repr.array ~by:"test" (g (Nx.donate w))) in
     Rig.Buffer.overlaps b (Nx_array.buffer a)
   in
   let scan_with f xs =

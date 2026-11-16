@@ -96,7 +96,7 @@ let grown d make f =
 type memory = Over_file | Own_memory
 
 let memory_of (Nx.P x) =
-  match Nx.Repr.array x with
+  match Nx.Repr.array ~by:"test" x with
   | Some a when Rig.Buffer.is_borrowed (Nx_array.buffer a) -> Over_file
   | Some _ | None -> Own_memory
 
@@ -273,7 +273,7 @@ let value (Case (dt, s, vs, view)) =
     if Array.length vs mod 2 = 0 then x
     else
       Nx.Repr.of_array Nx.Host.v
-        (Nx_support.signalled (Option.get (Nx.Repr.array x)))
+        (Nx_support.signalled (Option.get (Nx.Repr.array ~by:"test" x)))
   in
   match view with
   | Plain -> Nx.P x
@@ -406,7 +406,7 @@ let pattern n seed =
 
 (* A value's dtype, shape and bytes as stored. *)
 let stored (Nx.P x) =
-  let a = Option.get (Nx.Repr.array (Nx.copy x)) in
+  let a = Option.get (Nx.Repr.array ~by:"test" (Nx.copy x)) in
   let b = Nx_array.buffer a in
   ( D.name (Nx.dtype x),
     Nx.shape x,

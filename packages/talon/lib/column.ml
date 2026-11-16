@@ -70,7 +70,9 @@ let known c =
    is kept as it is. *)
 let own x =
   if Option.is_some (Nx.Prim.owner x) then x
-  else Nx.Repr.of_array Nx.Host.v (Option.get (Nx.Repr.array x))
+  else
+    let a = Option.get (Nx.Repr.array ~by:"Nx.Repr.array" x) in
+    Nx.Repr.of_array Nx.Host.v a
 
 let own_packed (Nx.P x) = Nx.P (own x)
 let validity c = Option.map (fun v -> own v.bits) c.validity
@@ -914,7 +916,7 @@ let bounds offsets =
 (* [in_order x] is [true] iff [x]'s elements lie in one buffer in C order, and
    [at_start x] iff they lie there from its first bit. A traced value counts as
    both, since its interpretation, not the column, holds its memory. *)
-let layout x = Option.map Nx_array.layout (Nx.Repr.array x)
+let layout x = Option.map Nx_array.layout (Nx.Repr.array ~by:"Nx.Repr.array" x)
 
 let in_order x =
   traced x

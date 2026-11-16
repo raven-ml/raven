@@ -15,7 +15,8 @@ module D = Nx_array.Dtype
 module M = Nx_array.Move
 
 let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
-let elements x = A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)))
+let elements x =
+  A.to_array (Option.get (Nx.Repr.array ~by:"test" (Nx.place Nx.Host.on x)))
 
 (* The reference: a shape and its elements in C order. *)
 
@@ -179,7 +180,7 @@ let laws =
       prop "a bitcast of a live array is its operation's meaning" (operand ())
         (fun o ->
           covers o;
-          let held v = Option.get (Nx.Repr.array v) in
+          let held v = Option.get (Nx.Repr.array ~by:"test" v) in
           let shares v =
             Rig.Buffer.overlaps (A.buffer (held o.x)) (A.buffer (held v))
           in
@@ -216,7 +217,7 @@ let laws =
           covers o;
           let y = moved mv o.x in
           let z = Nx.Prim.eval ~by:"test" (Move (mv, o.x)) in
-          let held v = Option.get (Nx.Repr.array v) in
+          let held v = Option.get (Nx.Repr.array ~by:"test" v) in
           let overlaps a b =
             Rig.Buffer.overlaps (A.buffer (held a)) (A.buffer (held b))
           in
@@ -647,7 +648,7 @@ let properties =
 
 (* Whether [y]'s memory is [x]'s. *)
 let shares x y =
-  let buffer v = A.buffer (Option.get (Nx.Repr.array v)) in
+  let buffer v = A.buffer (Option.get (Nx.Repr.array ~by:"test" v)) in
   Rig.Buffer.overlaps (buffer x) (buffer y)
 
 (* Grids *)

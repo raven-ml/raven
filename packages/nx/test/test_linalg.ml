@@ -91,7 +91,8 @@ end
 module One = (val Nx.devices ~kernels:(module Filling) [ m 0 ])
 module Two = (val Nx.devices ~kernels:(module Filling) [ m 0; m 1 ])
 
-let read x = A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)))
+let read x =
+  A.to_array (Option.get (Nx.Repr.array ~by:"test" (Nx.place Nx.Host.on x)))
 
 let zeros dt s =
   Nx.place One.on (Nx.Repr.of_array Nx.Host.v (A.create Rig.host dt s))

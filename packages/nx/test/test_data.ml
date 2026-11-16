@@ -242,6 +242,29 @@ let test_repr_read_by () =
         (Exn.invalid_arg ~sub:"test.reader: the value is traced by test.reads")
         (fun () -> Nx.Repr.read ~by:"test.reader" t A.to_array))
 
+(* [Nx.Repr.array ~by] and [Nx.Repr.shards ~by] name [by] where they refuse: a
+   dead value, on one device or several, and a traced one. *)
+let test_repr_crossing_by () =
+  let by = "test.crosser" in
+  let refused why f = raises_match (Exn.invalid_arg ~sub:(by ^ ": " ^ why)) f in
+  let dead x =
+    ignore (Nx.donate x);
+    x
+  in
+  let one = dead (Nx.create f32 [| 2 |] [| 1.; 2. |]) in
+  let four = Nx.create f32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
+  let cut = dead (Nx.place (S2.split ~axis:0) four) in
+  refused "float32 [2] was donated" (fun () -> Nx.Repr.array ~by one);
+  refused "float32 [2] was donated" (fun () -> Nx.Repr.shards ~by one);
+  refused "float32 [4] was donated" (fun () -> Nx.Repr.array ~by cut);
+  refused "float32 [4] was donated" (fun () -> Nx.Repr.shards ~by cut);
+  let x = Nx.create f32 [| 2 |] [| 1.; 2. |] in
+  Nx.Prim.interpret ~name:"test.reads" Values mark (fun i ->
+      let t = Nx.Prim.traced i (Nx.Prim.form x) Mark in
+      let traced = "a value traced by test.reads has no bytes" in
+      refused traced (fun () -> Nx.Repr.array ~by t);
+      refused traced (fun () -> Nx.Repr.shards ~by t))
+
 (* What a read raises that it did not refuse, a pending check's failure or its
    function's own error, passes on as raised, whatever [~by] names. *)
 let test_repr_read_passes () =
@@ -276,6 +299,8 @@ let reads =
       test "a traced value raises naming the read" test_read_traced;
       test "Repr.read refuses naming its ~by" test_repr_read_by;
       test "Repr.read passes on what it did not refuse" test_repr_read_passes;
+      test "Repr.array and Repr.shards refuse naming their ~by"
+        test_repr_crossing_by;
       test "an extent receives no read" test_read_under_extent;
     ]
 

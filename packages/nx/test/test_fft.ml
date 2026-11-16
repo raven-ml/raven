@@ -131,7 +131,8 @@ let m = Nx_support.memory
 module One = (val Nx.devices ~kernels:(module Dft) [ m 0 ])
 module Two = (val Nx.devices ~kernels:(module Dft) [ m 0; m 1 ])
 
-let read x = A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)))
+let read x =
+  A.to_array (Option.get (Nx.Repr.array ~by:"test" (Nx.place Nx.Host.on x)))
 let on a = Nx.place One.on (Nx.Repr.of_array Nx.Host.v a)
 let z re im = { Complex.re; im }
 let fft f = Nx.Prim.eval ~by:"t" (Fft f)

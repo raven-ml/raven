@@ -85,7 +85,8 @@ module Refuse = (val Nx.devices ~kernels:(module Refusing) [ m 2 ])
 module Refuse2 = (val Nx.devices ~kernels:(module Refusing) [ m 2; m 3 ])
 
 let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
-let elements x = A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)))
+let elements x =
+  A.to_array (Option.get (Nx.Repr.array ~by:"test" (Nx.place Nx.Host.on x)))
 
 (* Operands: a shape, and arrays of it laid out C-contiguous, transposed, offset
    or broadcast, each holding [data]. *)
@@ -176,7 +177,7 @@ let bits =
 
 (* [x]'s bytes in C order, read on the host. *)
 let bytes (type v s d) (x : (v, s, d) Nx.t) =
-  let a = Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)) in
+  let a = Option.get (Nx.Repr.array ~by:"test" (Nx.place Nx.Host.on x)) in
   let flat = A.move (M.Reshape [| A.Layout.numel (A.layout a) |]) (A.copy a) in
   A.to_array (Option.get (A.bitcast D.Uint8 (Option.get flat)))
 
@@ -1230,7 +1231,7 @@ let creations =
           equal ~msg:"kernel calls" int 0 (C.calls ());
           equal (array bits) [| 0.; 0. |] (elements y));
       test "a creation of a sub-byte dtype holds its elements" (fun () ->
-          let get x = A.to_array (Option.get (Nx.Repr.array x)) in
+          let get x = A.to_array (Option.get (Nx.Repr.array ~by:"test" x)) in
           equal ~msg:"int4" (array int) [| -3; -3; -3 |]
             (get
                (Nx.add
@@ -1322,10 +1323,10 @@ let every_function (type d) name (x : (float, D.float32_elt, d) Nx.t) =
     (Nx.placement x) (Nx.placement bytes);
   equal ~msg:(msg "reshape") (array bits) xs (elements (Nx.reshape [| 4 |] x));
   equal ~msg:(msg "copy") (array bits) xs (elements (Nx.copy x));
-  ignore (Nx.Repr.array x);
+  ignore (Nx.Repr.array ~by:"test" x);
   equal ~msg:(msg "shards") int
     (List.length (Nx.Devices.to_list (Nx.Placement.devices (Nx.placement x))))
-    (Iarray.length (Nx.Repr.shards x))
+    (Iarray.length (Nx.Repr.shards ~by:"test" x))
 
 let test_every_placement () =
   let host = on_host Plain D.Float32 [| 2; 2 |] [| 1.; -2.; 3.; -4. |] in
@@ -1473,7 +1474,7 @@ let test_sub_byte_tail () =
       to_count
         (on_host Plain D.Int4 [| (2 * n) + 1 |] (Array.make ((2 * n) + 1) 1))
     in
-    let y = Option.get (Nx.Repr.array (Nx.add x x)) in
+    let y = Option.get (Nx.Repr.array ~by:"test" (Nx.add x x)) in
     let bytes =
       A.v D.Uint8 (Nx_array.Layout.contiguous [| n + 1 |]) (A.buffer y)
     in

@@ -271,7 +271,7 @@ let test_outlined_bare () =
     [ exp 1. +. 1.; exp 2. +. 1. ]
     (floats (Nx.place Nx.Host.on y));
   (* A result the function returns unchanged is the call's own memory. *)
-  let memory y = Nx_array.buffer (Option.get (Nx.Repr.array y)) in
+  let memory y = Nx_array.buffer (Option.get (Nx.Repr.array ~by:"test" y)) in
   let g = Rune.jit s (fun x -> Rune.callback s ~like:x Fun.id x) in
   let y = g x in
   equal ~msg:"own memory" Testable.bool false
@@ -431,7 +431,7 @@ let test_outlined_kept () =
         (a, Rune.callback tt ~like:a keep a))
   in
   let a, b = g (vec [| 1.; 2. |]) in
-  let memory y = Nx_array.buffer (Option.get (Nx.Repr.array y)) in
+  let memory y = Nx_array.buffer (Option.get (Nx.Repr.array ~by:"test" y)) in
   equal ~msg:"own memory" Testable.bool false
     (Rig.Buffer.overlaps (memory a) (memory (Option.get !kept)));
   equal ~msg:"values"

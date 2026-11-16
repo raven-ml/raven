@@ -1057,7 +1057,7 @@ let apart (module S : Nx.Devices) dtype =
     (Testable.array Testable.float_exact)
     o
     (host (swap t));
-  let memory y = Nx_array.buffer (Option.get (Nx.Repr.array y)) in
+  let memory y = Nx_array.buffer (Option.get (Nx.Repr.array ~by:"test" y)) in
   let shared x y = Rig.Buffer.overlaps (memory x) (memory y) in
   equal ~msg:"the first and the second share memory" Testable.bool false
     (shared a b);
