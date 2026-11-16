@@ -1173,7 +1173,16 @@ let law_own_updates (b : Support.backend) (c, (mw, mp)) =
   let m1 = (shape_of c.first.updates).(axis) in
   let m2 = (shape_of c.second.updates).(axis) in
   let at_least n = n >= 1 lsl 16 in
-  cover c.regime true;
+  List.iter
+    (fun g -> cover g (c.regime = g))
+    [
+      "few updates";
+      one_slice.name;
+      own_slices.name;
+      more_targets.name;
+      row_slices.name;
+      row_pieces.name;
+    ];
   cover "a narrow float" (is_narrow d);
   cover "complex numbers" (let (D.Any dt) = d in D.is D.Complex dt);
   cover "the whole of 2^16 updates or more, a part of fewer"
@@ -1255,7 +1264,9 @@ let law_slab (b : Support.backend) ((c, s), (mw, mp)) =
     in
     A.Any (Option.get (A.move (M.Slice rs) x))
   in
-  cover c.regime true;
+  List.iter
+    (fun g -> cover g (c.regime = g))
+    [ "few updates"; own_slices.name; row_slices.name; row_pieces.name ];
   cover "a narrow float" (is_narrow (dtype_of w.into));
   cover "a slab of one" (s.count = 1);
   cover "a slab of all but one" (n > 1 && s.count = n - 1);
@@ -1298,7 +1309,9 @@ let law_gather_guards (b : Support.backend) (c, side) =
 let law_scatter_guards (b : Support.backend) (c, side) =
   let module K = (val b.kernels) in
   let r = Array.length (shape_of c.into) in
-  cover (combine_name c.combine) true;
+  List.iter
+    (fun k -> cover (combine_name k) (c.combine = k))
+    Nx_kernel.[ Set; Add; Max; Min ];
   cover "along the innermost axis" (c.saxis = r - 1);
   cover "along an outer axis" (c.saxis < r - 1);
   covers_views ~after:(side = Support.After) c.sviews;
