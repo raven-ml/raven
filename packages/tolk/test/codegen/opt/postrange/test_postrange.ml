@@ -1090,6 +1090,197 @@ let queries =
       query "upcast axes" ints (fun k -> K.axes_of k [ Upcast ]);
     ]
 
+(* Workgroups
+
+   A workgroup's threads are its warp and local axes' product, which a target
+   launches up to a bound: a CUDA block's 1024 (the CUDA guide's "Maximum
+   number of threads per block"), a CDNA workgroup's 1024, an Apple
+   threadgroup's 512 before family 4 (Metal's feature set tables). A group
+   adds its threads' partials of a float sum into one running sum, which
+   [Nx_kernel]'s error bounds admit up to 256 terms. *)
+
+let sm_89 = "CUDA:CUDA:sm_89"
+let gfx90a = "AMD:HIP:gfx90a"
+let apple2 = "METAL:METAL:Apple2"
+
+let target_renderer t =
+  Cstyle.without_compiler (Result.get_ok (Helpers.Target.of_string t))
+
+(* [out[0] = op x[j]] over [n] values of [dt]. *)
+let reduction ?(dt = Dtype.Float32) ?(op = Op.Add) n =
+  let j = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
+  let x = Shape.param ~shape:[ Int n ] 1 dt
+  and out = Shape.param ~shape:[ Int 1 ] 0 dt in
+  let r = Ops.reduce (Ops.load (Ops.index x [ j ]) []) op [ j ] in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.store (Ops.index out [ Ops.int 0 ]) r ]
+
+(* [out[i] = sum x[i * n + j]] over [m] rows of [n] float32. *)
+let row_sums m n =
+  let i = Ops.range ~axis_type:Weak (Int m) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int n) [ 1 ] in
+  let x = Shape.param ~shape:[ Int (m * n) ] 1 Float32
+  and out = Shape.param ~shape:[ Int m ] 0 Float32 in
+  let r =
+    Ops.reduce
+      (Ops.load (Ops.index x [ Ops.O.((i * Ops.int n) + j) ]) [])
+      Op.Add [ j ]
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ i ]) r) [ i ] ]
+
+(* [out[i * n + j] = x[i * n + j]] over [m] by [n]. *)
+let copy_of m n =
+  let i = Ops.range ~axis_type:Weak (Int m) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int n) [ 1 ] in
+  let at = Ops.O.((i * Ops.int n) + j) in
+  let x = Shape.param ~shape:[ Int (m * n) ] 1 Float32
+  and out = Shape.param ~shape:[ Int (m * n) ] 0 Float32 in
+  let st =
+    Ops.store (Ops.index out [ at ]) (Ops.load (Ops.index x [ at ]) [])
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ()) [ Ops.end_ st [ i; j ] ]
+
+(* An int32 sum and a float32 sum of [n] values each, over two ranges: a
+   group of the first takes the second as a sibling. *)
+let int_and_float_sums n =
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int n) [ 1 ] in
+  let a = Shape.param ~shape:[ Int n ] 2 Int32
+  and b = Shape.param ~shape:[ Int n ] 3 Float32
+  and out0 = Shape.param ~shape:[ Int 1 ] 0 Int32
+  and out1 = Shape.param ~shape:[ Int 1 ] 1 Float32 in
+  let sum x r = Ops.reduce (Ops.load (Ops.index x [ r ]) []) Op.Add [ r ] in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [
+      Ops.store (Ops.index out0 [ Ops.int 0 ]) (sum a i);
+      Ops.store (Ops.index out1 [ Ops.int 0 ]) (sum b j);
+    ]
+
+(* Steps: each is the optimisation it makes of the kernel it is given. *)
+
+(* A group of [n] threads of the first reduce axis, of the reduction of type
+   [dt] if given. *)
+let grouped ?dt n k =
+  let closes a =
+    let r = List.nth (K.rngs k) a in
+    List.exists
+      (fun u ->
+        List.memq r (List.tl (Ops.src u))
+        && Option.fold ~none:true ~some:(Dtype.equal (Ops.dtype u)) dt)
+      (K.reduceops k)
+  in
+  split (List.find closes (K.axes_of ~reduce:true k [ Weak ])) n Local
+
+let across n k = split (List.hd (K.axes_of ~reduce:false k [ Global ])) n Local
+
+(* A pad to a multiple of [n] of the first local axis of [s] threads. *)
+let pad s n k =
+  let sized a = List.nth (K.full_shape k) a = Ops.Int s in
+  Opt.Padto { axis = List.find sized (K.axes_of k [ Local ]); amount = n }
+
+let threads_past most n =
+  Printf.sprintf "a workgroup holds at most %d threads, not %d" most n
+
+let partials_past = "a group adds at most 256 partials into a sum"
+
+(* [stepped k steps] applies [steps] in order up to the first refused one,
+   and is its position and reason, checking that it leaves [k] as it was. *)
+let stepped k steps =
+  let rec go i = function
+    | [] -> None
+    | step :: rest -> (
+        let opt = step k in
+        let ast = K.ast k and applied = K.applied_opts k in
+        match K.apply_opt k opt with
+        | Ok _ -> go (i + 1) rest
+        | Error msg ->
+            equal ~msg:"the kernel after a refusal" Uops.uop ast (K.ast k);
+            equal (list Kernel_opts.opt) applied (K.applied_opts k);
+            Some (i, msg))
+  in
+  go 0 steps
+
+(* Each case: its kernel, its steps and, on each target, the step refused
+   and why, [None] where every step applies. *)
+let workgroup_cases =
+  let all r = [ (sm_89, r); (gfx90a, r); (apple2, r) ] in
+  let wide r ~apple = [ (sm_89, r); (gfx90a, r); (apple2, apple) ] in
+  [
+    ( "a group of 256 threads of a float sum",
+      reduction 4096, [ grouped 256 ], all None );
+    ( "two groups of 16 threads of a float sum",
+      reduction 4096, [ grouped 16; grouped 16 ], all None );
+    ( "a group of 1024 threads of a float sum",
+      reduction 4096, [ grouped 1024 ],
+      wide (Some (0, partials_past)) ~apple:(Some (0, threads_past 512 1024)) );
+    ( "a group of 1024 threads of an int32 sum",
+      reduction ~dt:Int32 4096, [ grouped 1024 ],
+      wide None ~apple:(Some (0, threads_past 512 1024)) );
+    ( "a group of 1024 threads of a float maximum",
+      reduction ~op:Op.Max 4096, [ grouped 1024 ],
+      wide None ~apple:(Some (0, threads_past 512 1024)) );
+    ( "a group of 1024 threads of an int32 sum beside a float sum",
+      int_and_float_sums 1024, [ grouped ~dt:Int32 1024 ],
+      wide (Some (0, partials_past)) ~apple:(Some (0, threads_past 512 1024)) );
+    ( "a group's axis of 256 padded to 768",
+      reduction 4096, [ grouped 256; pad 256 768 ],
+      wide (Some (1, partials_past)) ~apple:(Some (1, threads_past 512 768)) );
+    ( "one of two group axes of 16 padded to 48",
+      reduction 4096, [ grouped 16; grouped 16; pad 16 48 ],
+      wide (Some (2, partials_past)) ~apple:(Some (2, threads_past 512 768)) );
+    ( "an output's local axis of 2 padded to 3 beside a group of 256",
+      row_sums 64 4096, [ grouped 256; across 2; pad 2 3 ],
+      wide None ~apple:(Some (2, threads_past 512 768)) );
+    ( "local splits of 32 and 16 threads",
+      copy_of 4096 4096, [ across 32; across 16 ], all None );
+    ( "local splits of 32 and 64 threads",
+      copy_of 4096 4096, [ across 32; across 64 ],
+      wide (Some (1, threads_past 1024 2048))
+        ~apple:(Some (1, threads_past 512 2048)) );
+  ]
+
+let workgroups =
+  let on_targets (name, ast, steps, outcomes) =
+    List.map (fun (t, outcome) -> (name ^ " on " ^ t, ast, steps, t, outcome))
+      outcomes
+  in
+  group "workgroups"
+    [
+      cases
+        "apply_opt keeps a workgroup's threads within its target's and a \
+         group's float sum within 256 partials, a pad's included"
+        ~id:(fun (name, _, _, _, _) -> name)
+        (List.concat_map on_targets workgroup_cases)
+        (fun (_, ast, steps, t, outcome) ->
+          let k = K.v ast (target_renderer t) in
+          K.convert_loop_to_global k;
+          equal (option (pair int string)) outcome (stepped k steps));
+      test "apply_opt refuses a pad of a group's axis past the shared memory"
+        (fun () ->
+          (* A group of 8 float32 threads takes 32 bytes of the renderer's
+             64, padded to 24 threads 96. *)
+          let k = K.v (reduction 4096) (renderer "small_shared") in
+          K.convert_loop_to_global k;
+          let reason = "exceeds maximum shared memory size" in
+          let cut (i, msg) =
+            let n = min (String.length reason) (String.length msg) in
+            (i, String.sub msg 0 n)
+          in
+          equal
+            (option (pair int string))
+            (Some (1, reason))
+            (Option.map cut (stepped k [ grouped 8; pad 8 24 ])));
+      test "a group of an int32 sum takes the float sum beside it" (fun () ->
+          let k = K.v (int_and_float_sums 1024) (target_renderer sm_89) in
+          ignore (apply k (grouped ~dt:Int32 256 k));
+          let local x = Ops.axis_type x = Local in
+          equal (list bool) [ true; true ]
+            (List.map
+               (fun r -> List.exists local (List.tl (Ops.src r)))
+               (K.reduceops k)));
+    ]
+
 let () =
   exit
     (Windtrap.run "Tolk.Postrange"
@@ -1108,5 +1299,6 @@ let () =
          split_targets;
          dispatch;
          keeps_kernel_writes;
+         workgroups;
          fuzzer;
        ])

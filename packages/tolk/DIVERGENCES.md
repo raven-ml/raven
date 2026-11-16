@@ -8745,26 +8745,21 @@ D466.
 ## D484. A renderer states the most threads a workgroup holds
 
 - **tinygrad:** `renderer/__init__.py` (`Renderer.local_max`, a bound on
-  each axis, and no bound on a workgroup's threads over all of them);
-  `codegen/opt/search.py` (`get_kernel_actions`, which bounds a candidate's
-  local threads by `BEAM_LOCAL_MAX` alone, 1024).
+  each axis, and no bound on a workgroup's threads over all of them).
 - **tolk:** `Renderer.t.local_threads_max`: 1024 in `Cstyle.cuda`'s
   renderer (CUDA and NV) and `Cstyle.hip`'s, 1024 in `Cstyle.metal`'s but
   512 on Apple2 and Apple3, 1 in `Cstyle.clang`'s; read by
-  `Heuristic`'s columns layout (D89) and by `Search.get_kernel_actions`,
-  which bounds a candidate by the lesser of it and
-  `Setting.beam_local_max`.
+  `Heuristic`'s columns layout (D89) and by
+  `Postrange.Scheduler.apply_opt` (D488).
 - **Differs:** the renderer states a workgroup's thread bound, which CUDA
   ("Maximum number of threads per block"), HIP (its hardware features) and
   Metal (its feature set tables, "Maximum threads per threadgroup") state
   apart from each axis's. The columns layout takes it in place of the 1024
-  it held as the square of a SIMD group's 32 threads; the search drops a
-  candidate past it. `Postrange.Scheduler.apply_opt` keeps tinygrad's
-  checks and applies a local split past it, as tinygrad's case
-  `local_whole_axis_beyond_host_integers` does. On CUDA, RDNA, Mac2 and
-  Apple's GPUs from family 4 it is the 1024 both held before, so their
-  kernels are unchanged; on Apple2 and Apple3 the columns layout's workgroup
-  is 512 where it was 1024.
+  it held as the square of a SIMD group's 32 threads; `apply_opt` refuses
+  a local split or pad past it, so no search candidate passes it. On CUDA,
+  RDNA, Mac2 and Apple's GPUs from family 4 it is the 1024 both held
+  before, so their kernels are unchanged; on Apple2 and Apple3 the columns
+  layout's workgroup is 512 where it was 1024.
 - **Reason:** (b), for rune's `Lower_index.workgroup`, which sizes a
   scatter's workgroup by the renderer: reading the x axis's `local_max`,
   unbounded on HIP and Metal, it built workgroups of more than 1024 threads
@@ -8859,3 +8854,31 @@ D466.
   `Cuda/attention/jit-grad-bf16-2048x40x1024-full` rows and kaun's
   `GptOss/prefill-512` row on CUDA, their baselines pending the scheduled
   re-record. AMD and Metal are untimed.
+
+## D488. A local split or pad keeps a workgroup's threads and a sum's partials
+
+- **tinygrad:** `codegen/opt/postrange.py` `Scheduler.apply_opt` (a split
+  checks shared memory only, a pad nothing of a local axis);
+  `codegen/opt/search.py` `get_kernel_actions` (`BEAM_LOCAL_MAX`).
+- **tolk:** `Postrange.Scheduler.apply_opt`; `Search.get_kernel_actions`.
+- **Differs:** a local split, a pad of a local axis or a tensor core is
+  refused where the workgroup would pass `Renderer.t.local_threads_max`
+  threads, and a local split or a pad of a local axis where a group would
+  add more than `Chains.chain` threads' partials of a float sum, its
+  siblings' included; a pad of a local axis checks the workgroup's shared
+  memory as a split does. A hand-given opt raises at `Postrange.apply_opts`.
+  tinygrad applies them all: its runtimes refuse a launch past the threads,
+  and a group past 256 partials sums them in one running sum.
+  `get_kernel_actions` bounds a candidate's threads by
+  `Setting.beam_local_max` alone, as tinygrad does.
+- **Reason:** (b) and (e): `Search.get_kernel_actions`, whose candidates
+  must launch on the target (D484), so on Apple2 and Apple3 at most 512
+  threads; and `Nx_kernel`'s error bound, which a running sum past 256
+  terms breaks.
+- **Pinned by:** postrange's `ten_sums_group`,
+  `ten_shared_sums_group_unfit` and
+  `local_whole_axis_beyond_host_integers` (`cases.tolk`, refused); the
+  Postrange suite's `workgroups › apply_opt keeps a workgroup's threads
+  within its target's and a group's float sum within 256 partials, a pad's
+  included` on sm_89, gfx90a and Apple2; the Search suite's `candidates
+  that pad a local axis`.

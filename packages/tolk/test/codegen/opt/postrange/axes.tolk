@@ -1,4 +1,4 @@
-# tolk D29 D101 D220 D270 golden=279275d390f0f1ac58d319cb71d3f984
+# tolk D29 D101 D220 D270 D488 golden=279275d390f0f1ac58d319cb71d3f984
 case	shape_len	full_shape	axis_types	reduce_axes	upcastable_dims	upcastable_reduce_dims	upcast_size	group_for_reduces	reduceops	bufs	colored_shape	made
 local_and_grouped_reduce_0	3	[1024, 2, 128]	[AxisType.GLOBAL, AxisType.LOCAL, AxisType.WEAK]	[2]	[0, 1]	[2]	1	0	1	3	1024    2  128	1:1024:GLOBAL 2:2:LOCAL
 local_and_grouped_reduce_1	3	[128, 16, 128]	[AxisType.GLOBAL, AxisType.LOCAL, AxisType.WEAK]	[2]	[0, 1]	[2]	1	0	1	3	 128   16  128	1:128:GLOBAL 2:16:LOCAL
@@ -119,7 +119,6 @@ arange_local	2	[16, 8]	[AxisType.GLOBAL, AxisType.LOCAL]	[]	[0, 1]	[]	1	0	0	1	  
 arange_local_upcast	2	[8, 16]	[AxisType.LOCAL, AxisType.UPCAST]	[]	[0]	[]	16	0	0	1	   8   16	0:1:GLOBAL 2:16:UPCAST
 top_split_upcast	3	[4, 16, 64]	[AxisType.WEAK, AxisType.UPCAST, AxisType.WEAK]	[2]	[0]	[2]	16	0	1	2	   4   16   64	1:4:WEAK 2:16:UPCAST
 sibling_sums_group	4	[16, 4, 8, 40]	[AxisType.LOCAL, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK]	[0, 1, 2, 3]	[]	[0, 1, 2, 3]	1	1	3	4	  16    4    8   40	0:4:WEAK 3:16:LOCAL
-ten_sums_group	10	[1024, 2, 3, 4, 5, 6, 7, 8, 9216, 10240]	[AxisType.LOCAL, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK]	[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]	[]	[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]	1	1	10	11	1024    2    3    4    5    6    7    8 9216 10240	0:1:WEAK 10:1024:LOCAL
 ten_shared_sums_group	11	[256, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4]	[AxisType.LOCAL, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK]	[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]	[]	[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]	1	1	10	11	 256    4    4    4    4    4    4    4    4    4    4	0:4:WEAK 10:256:LOCAL
 single_kernel_softmax_group	6	[32, 32, 4, 8, 8, 32]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK]	[2, 3, 4, 5]	[0, 1]	[2, 3, 4, 5]	1	1	3	5	  32   32    4    8    8   32	0:8:WEAK 5:4:LOCAL
 split_last_axis	3	[32, 16, 2]	[AxisType.WEAK, AxisType.WEAK, AxisType.UPCAST]	[1, 2]	[0]	[1]	2	0	1	2	  32   16    2	0:16:WEAK 2:2:UPCAST
@@ -141,7 +140,6 @@ local_sum_axes	2	[4, 8]	[AxisType.GLOBAL, AxisType.LOCAL]	[1]	[0]	[1]	1	1	1	2	  
 warp_sum_axes	2	[4, 8]	[AxisType.GLOBAL, AxisType.WARP]	[1]	[0]	[]	1	1	1	2	   4    8	
 group_within_symbolic_shared_memory	3	[n, 2, 4]	[AxisType.LOCAL, AxisType.LOCAL, AxisType.WEAK]	[1, 2]	[]	[1, 2]	1	1	1	2	   n    2    4	1:4:WEAK 2:2:LOCAL
 padto_beyond_host_integers	1	[4611686018427387904]	[AxisType.GLOBAL]	[]	[0]	[]	1	0	0	1	4611686018427387904	0:4611686018427387904:GLOBAL
-local_whole_axis_beyond_host_integers	1	[4611686018427387904]	[AxisType.LOCAL]	[]	[0]	[]	1	0	0	1	4611686018427387904	0:1:GLOBAL 1:4611686018427387904:LOCAL
 upcasts_beyond_host_integers	1	[18446744073709551616]	[AxisType.UPCAST]	[]	[]	[]	18446744073709551616	0	0	1	18446744073709551616	
 nested_end_globals	2	[8, 4]	[AxisType.GLOBAL, AxisType.WEAK]	[]	[0, 1]	[]	1	0	0	1	   8    4	
 launched_upcast	2	[4, 2]	[AxisType.GLOBAL, AxisType.UPCAST]	[]	[0]	[]	2	0	0	1	   4    2	0:4:GLOBAL 1:2:UPCAST

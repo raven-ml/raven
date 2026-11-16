@@ -448,12 +448,18 @@ module Scheduler = struct
   let union us vs = us @ List.filter (fun v -> not (List.memq v us)) vs
 
   (* The bytes of shared memory the buffers of [grouped] take after a split by
-     [amt]. The sizes may exceed an int, so the product is a node. *)
-  let smem k amt grouped =
-    let shape = full_shape k in
+     [amt], with the axis [r] grown to [n] threads where [pad] is [(r, n)]. The
+     sizes may exceed an int, so the product is a node. *)
+  let smem ?pad k amt grouped =
+    let shape = full_shape k and rngs = rngs k in
+    let width a =
+      match pad with
+      | Some (r, n) when List.nth rngs a == r -> z n
+      | _ -> sint_to_uop (List.nth shape a)
+    in
     let lanes =
       List.fold_left
-        (fun p a -> mul p (sint_to_uop (List.nth shape a)))
+        (fun p a -> mul p (width a))
         (z amt)
         (axes_of ~reduce:false k [ Upcast ] @ axes_of k [ Warp; Local ])
     in
@@ -464,6 +470,49 @@ module Scheduler = struct
 
   let smem_fits k amt grouped =
     to_bool O.(smem k amt grouped <= int k.ren.shared_max)
+
+  (* prevents METAL compiler hangs *)
+  let check_smem ?pad k amt grouped =
+    let bytes = smem ?pad k amt grouped in
+    check
+      (to_bool O.(bytes <= int k.ren.shared_max))
+      (strf "exceeds maximum shared memory size: needs %s, max %d"
+         (Render.render bytes) k.ren.shared_max)
+
+  (* A workgroup runs the threads of its warp and local axes together, and a
+     target launches at most [local_threads_max] of them. A group adds its
+     threads' partials of a reduction into one running sum, and a float sum's
+     running sum takes at most {!Chains.chain} terms: past them a term passes
+     more roundings than a float sum's error bound admits.
+
+     [check_workgroup k amt sums] refuses a split that multiplies [k]'s
+     threads by [amt] past the target's bound, or the partials of a float sum
+     of [sums] past the running sum's. [sized r] is the threads the axis [r]
+     takes, its size unless a pad grows it. *)
+  let check_workgroup ?(sized = size) k amt sums =
+    let threads rs =
+      List.fold_left
+        (fun n r ->
+          if List.mem (axis_type r) Axis_type.[ Warp; Local ] then
+            Bigint.mul n (sized r)
+          else n)
+        amt rs
+    in
+    let total = threads (rngs k) in
+    check
+      Bigint.(leq total (of_int k.ren.local_threads_max))
+      (strf "a workgroup holds at most %d threads, not %s"
+         k.ren.local_threads_max (Bigint.to_string total));
+    let float_sum r =
+      Dtype.is_float (dtype r)
+      && match arg r with Reduce { op = Op.Add; _ } -> true | _ -> false
+    in
+    let fits r =
+      (not (float_sum r))
+      || Bigint.(leq (threads (List.tl (src r))) (of_int Chains.chain))
+    in
+    check (List.for_all fits sums)
+      (strf "a group adds at most %d partials into a sum" Chains.chain)
 
   (* The reductions no reduce axis of the kernel encloses. *)
   let outermost k =
@@ -735,12 +784,7 @@ module Scheduler = struct
           let grouped =
             if groups then union grouped (closers k rng) else grouped
           in
-          (* prevents METAL compiler hangs *)
-          if groups || group_for_reduces k > 0 then
-            check (smem_fits k amt grouped)
-              (strf "exceeds maximum shared memory size: needs %s, max %d"
-                 (Render.render (smem k amt grouped))
-                 k.ren.shared_max);
+          if groups || group_for_reduces k > 0 then check_smem k amt grouped;
           if groups then begin
             let red = reduce_ranges k in
             (* An enclosing reduce runs its iterations in turn, each storing
@@ -754,6 +798,10 @@ module Scheduler = struct
               "cannot have a group inside an unrolled reduce"
           end;
           let shared = if groups then siblings k rng amt grouped else [] in
+          if target = Local then
+            check_workgroup k amt
+              (if groups then List.concat_map (closers k) (rng :: shared)
+               else []);
           let replaced, new_rng = split ~top k rng amt target in
           List.iter
             (fun r -> ignore (split ~top ~new_rng k r amt target))
@@ -793,6 +841,14 @@ module Scheduler = struct
           check
             Bigint.(gt sz (fdiv new_sz (of_int 4)))
             "pad adds more than quadruple the work";
+          (* A local axis padded runs more threads, and a group's more
+             partials and buffers. *)
+          if axis_type rng = Local then begin
+            let sized r = if r == rng then new_sz else size r in
+            check_workgroup ~sized k Bigint.one (closers k rng);
+            if group_for_reduces k > 0 then
+              check_smem ~pad:(rng, new_sz) k Bigint.one (grouped_reduces k)
+          end;
           let replaced_rng =
             replace rng ~src:[ const_like (nth rng 0) (`Int new_sz) ]
           in
@@ -946,6 +1002,8 @@ module Scheduler = struct
         check
           (not (List.memq axes.(0) red || List.memq axes.(1) red))
           "tensor core N and M can't be contracted";
+        (* The core's threads join the workgroup the kernel already has. *)
+        check_workgroup k (Bigint.of_int (Tc.threads tc)) [];
         (* do optimizations and save the ranges *)
         let saved = k.ast in
         let warp = range ~axis_type:Warp (Int (Tc.threads tc)) [ -1 ] in

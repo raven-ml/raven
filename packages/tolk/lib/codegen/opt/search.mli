@@ -55,8 +55,7 @@ val get_kernel_actions :
     - [k'] has more upcast lanes than [max_up] (default
       {!Setting.beam_upcast_max}), not counting a tensor core's product for each
       of its threads, or more warp and local threads than
-      {!Setting.beam_local_max} or than a workgroup of [k]'s renderer holds
-      ({!Renderer.t.local_threads_max}). Under
+      {!Setting.beam_local_max}. Under
       {!Setting.beam_log_surpass_max}, these are reported on standard
       output.
 

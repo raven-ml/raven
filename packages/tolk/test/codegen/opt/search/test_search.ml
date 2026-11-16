@@ -339,6 +339,154 @@ let within_workgroup =
       equal int most
         (List.fold_left (fun m (_, k) -> max m (threads k)) 0 acted))
 
+(* [ast]'s scheduler for [ren], its weak output axes made global and [opts]
+   applied, each of the kernel it is given. *)
+let opted ren ast opts =
+  let k = K.v ast ren in
+  K.convert_loop_to_global k;
+  List.iter
+    (fun opt ->
+      let o = opt k in
+      match K.apply_opt k o with
+      | Ok _ -> ()
+      | Error e -> failf "%a does not apply: %s" Opt.pp o e)
+    opts;
+  k
+
+let local_split ~reduce n k =
+  let axis = List.hd (K.axes_of ~reduce k [ Weak; Global ]) in
+  Opt.Split { axis; amount = n; target = Local; top = false }
+
+(* [out[i * 4096 + j] = x[i * 4096 + j]] over 4096 by 4096. *)
+let copy_4096 =
+  let i = Ops.range ~axis_type:Weak (Int 4096) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int 4096) [ 1 ] in
+  let at = Ops.O.((i * Ops.int 4096) + j) in
+  let x = Shape.param ~shape:[ Int (4096 * 4096) ] 1 Float32
+  and out = Shape.param ~shape:[ Int (4096 * 4096) ] 0 Float32 in
+  let st =
+    Ops.store (Ops.index out [ at ]) (Ops.load (Ops.index x [ at ]) [])
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ()) [ Ops.end_ st [ i; j ] ]
+
+(* [out[0] = sum x[j]] over 4096 float32. *)
+let sum_4096 =
+  let j = Ops.range ~axis_type:Weak (Int 4096) [ 0 ] in
+  let x = Shape.param ~shape:[ Int 4096 ] 1 Float32
+  and out = Shape.param ~shape:[ Int 1 ] 0 Float32 in
+  let r = Ops.reduce (Ops.load (Ops.index x [ j ]) []) Op.Add [ j ] in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.store (Ops.index out [ Ops.int 0 ]) r ]
+
+(* The most partials a float sum of [k] adds: the product of the warp and
+   local axes it closes. *)
+let partials k =
+  let joined r =
+    List.fold_left
+      (fun n x ->
+        match (Ops.axis_type x, Ops.vmax x) with
+        | (Warp | Local), `Int m -> n * (Bigint.to_int m + 1)
+        | _ -> n)
+      1
+      (List.tl (Ops.src r))
+  in
+  List.fold_left (fun m r -> max m (joined r)) 1 (K.reduceops k)
+
+let padding_candidates k =
+  quietly
+    ~settings:
+      [ B (Setting.beam_padto, true); B (Setting.beam_local_max, 1 lsl 20) ]
+    (fun () -> Search.get_kernel_actions k)
+
+(* A pad of a local axis to 32 is a candidate under BEAM_PADTO: from 16
+   threads it doubles them. *)
+let padded_workgroups =
+  group "candidates that pad a local axis"
+    [
+      cases
+        "a candidate's workgroup holds at most its renderer's most threads"
+        ~id:fst block_targets (fun (t, most) ->
+          let ren =
+            Cstyle.without_compiler
+              (Result.get_ok (Helpers.Target.of_string t))
+          in
+          let k =
+            opted ren copy_4096
+              [
+                local_split ~reduce:false 16;
+                local_split ~reduce:false (most / 16);
+              ]
+          in
+          equal int most
+            (List.fold_left (fun m (_, k) -> max m (threads k)) 0
+               (padding_candidates k)));
+      cases "a candidate's float sum adds at most 256 partials" ~id:fst
+        block_targets (fun (t, _) ->
+          let ren =
+            Cstyle.without_compiler
+              (Result.get_ok (Helpers.Target.of_string t))
+          in
+          let k =
+            opted ren sum_4096
+              [ local_split ~reduce:true 16; local_split ~reduce:true 16 ]
+          in
+          equal int 256
+            (List.fold_left (fun m (_, k) -> max m (partials k)) 0
+               (padding_candidates k)));
+    ]
+
+(* Every kernel a search reaches through its candidates, pads of local axes
+   among them, launches: at most its renderer's threads a workgroup and 256
+   partials a float sum, from a copy whose workgroup is full and a sum
+   grouped by 16 twice. *)
+let walks_bounded =
+  let starts =
+    [
+      ( "a full workgroup's copy",
+        fun ren most ->
+          opted ren copy_4096
+            [
+              local_split ~reduce:false 16;
+              local_split ~reduce:false (most / 16);
+            ] );
+      ( "a sum grouped by 16 twice",
+        fun ren _ ->
+          opted ren sum_4096
+            [ local_split ~reduce:true 16; local_split ~reduce:true 16 ] );
+    ]
+  in
+  let pp ppf ((name, _), (t, _), picks) =
+    Format.fprintf ppf "%s on %s, picks %s" name t
+      (String.concat " " (List.map string_of_int picks))
+  in
+  prop ~count:10
+    "every kernel a search reaches holds its renderer's threads and 256 \
+     partials a float sum"
+    Gen.(
+      with_pp pp
+        (triple (of_list starts) (of_list block_targets)
+           (list ~size:(int_range 1 2) nat)))
+    (fun ((_, start), (t, most), picks) ->
+      let ren =
+        Cstyle.without_compiler (Result.get_ok (Helpers.Target.of_string t))
+      in
+      let bounded (_, k) =
+        at_most ~msg:"threads" int ~than:most (threads k);
+        at_most ~msg:"partials" int ~than:256 (partials k)
+      in
+      let rec walk k = function
+        | [] -> ()
+        | pick :: picks -> (
+            let acted = padding_candidates k in
+            List.iter bounded acted;
+            match acted with
+            | [] -> ()
+            | _ ->
+                let n = List.length acted in
+                walk (snd (List.nth acted (pick mod n))) picks)
+      in
+      walk (start ren most) picks)
+
 (* Opt correctness *)
 
 (* The interpreter cannot evaluate a matrix multiply-accumulate, which a tensor
@@ -1452,6 +1600,8 @@ let () =
          searches;
          candidate_laws;
          within_workgroup;
+         padded_workgroups;
+         walks_bounded;
          keeps_writes;
          keeps_writes_exhaustively;
          chooses_the_fastest;

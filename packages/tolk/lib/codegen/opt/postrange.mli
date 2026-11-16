@@ -204,6 +204,13 @@ module Scheduler : sig
       ({!section-rewriting}), a split exceeds what the renderer allows (32
       lanes of a reduce axis or {!upcast_max} of another, locals only with
       local indices, the workgroup's shared memory),
+      a local split, a pad of a local axis or a tensor core makes a
+      workgroup of more threads than {!Renderer.t.local_threads_max}, the
+      product of its warp and local axes, each counted at its bound, a local
+      split or a pad of a local axis makes a group add more than
+      {!Chains.chain} threads' partials of a float sum, its own or a
+      sibling's, into one running sum, a pad of a local axis grows the
+      workgroup's shared memory past the renderer's,
       an upcast of an axis a range's bound reads ({!read_by_bounds}) or an
       opaque operation reads ({!read_by_opaque}), a local split of an axis an
       opaque operation does not read ({!unread_by_opaque}), a local split of a

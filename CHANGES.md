@@ -1357,6 +1357,11 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Postrange.Scheduler.apply_opt` refuses a local split, or a pad of a local
+  axis, that makes a workgroup of more threads than the target launches
+  (`Renderer.t.local_threads_max`), or a group adding more than 256 partials
+  of a float sum, past `Nx_kernel`'s error bound. A hand-given opt doing
+  either raises from `Postrange.apply_opts`.
 - On CUDA, MXFP4 tensor-core operands are staged, codes 32 bytes a row a
   trip (`Stage.steps`): on an RTX 5000 Ada `GptOss/prefill-512` takes 6%
   less, a dense `Nx_quant.apply` 16-29% less, a routed 64-token down 10% more.

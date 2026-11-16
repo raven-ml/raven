@@ -1,4 +1,4 @@
-# tolk D29 D101 D220 D270 golden=3008e70a52409e708d47e4c1b431b58d
+# tolk D29 D101 D220 D270 D488 golden=3008e70a52409e708d47e4c1b431b58d
 case	kernel	renderer	opts	context	outcome	refused
 swap_invalid_arg_0	add_one	metal	(Opt(op=OptOps.SWAP, axis=0, arg=99),)		KernelOptError	0
 swap_invalid_arg_1	add_one	metal	(Opt(op=OptOps.SWAP, axis=0, arg=-1),)		KernelOptError	0
@@ -130,9 +130,9 @@ double_sum_group	double_sum	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisTyp
 double_sum_unroll_group	double_sum	metal	(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)))		KernelOptError	1
 double_sum_group_twice	double_sum	metal	(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.LOCAL, True)), Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)))		ok	
 sibling_sums_group	sibling_sums	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),)		ok	
-ten_sums_group	ten_sums	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(1024, AxisType.LOCAL, True)),)		ok	
+ten_sums_group	ten_sums	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(1024, AxisType.LOCAL, True)),)		KernelOptError	0
 ten_shared_sums_group	ten_shared_sums	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(256, AxisType.LOCAL, True)),)		ok	
-ten_shared_sums_group_unfit	ten_shared_sums	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(1024, AxisType.LOCAL, True)),)		ok	
+ten_shared_sums_group_unfit	ten_shared_sums	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(1024, AxisType.LOCAL, True)),)		KernelOptError	0
 single_kernel_softmax_group	single_kernel_softmax	metal	(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.LOCAL)),)		ok	
 split_axis_negative	sum_rows	cpu	(Opt(op=OptOps.SPLIT, axis=-1, arg=(2, AxisType.UPCAST)),)		KernelOptError	0
 split_axis_past_end	sum_rows	cpu	(Opt(op=OptOps.SPLIT, axis=2, arg=(2, AxisType.UPCAST)),)		KernelOptError	0
@@ -189,7 +189,7 @@ group_beyond_host_integers	huge_local	metal	(Opt(op=OptOps.SPLIT, axis=1, arg=(2
 group_within_symbolic_shared_memory	symbolic_local_8	small_shared	(Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True)),)		ok	
 group_maybe_beyond_symbolic_shared_memory	symbolic_local_16	small_shared	(Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True)),)		ValueError	0
 padto_beyond_host_integers	huge_global	metal	(Opt(op=OptOps.PADTO, axis=0, arg=4),)		ok	
-local_whole_axis_beyond_host_integers	huge_global	metal	(Opt(op=OptOps.PADTO, axis=0, arg=4), Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.LOCAL)))		ok	
+local_whole_axis_beyond_host_integers	huge_global	metal	(Opt(op=OptOps.PADTO, axis=0, arg=4), Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.LOCAL)))		KernelOptError	1
 upcasts_beyond_host_integers	huge_upcasts	metal	()		ok	
 flatten_keeps_a_closed_extent	closed_extent	cpu	()		ok	
 nested_end_globals	nested_end	metal	()		ok	
