@@ -1532,6 +1532,11 @@ let allocation =
           let p = Nx.Pattern.v "i k, k j -> i j | k" in
           expect (allocated (fun () -> Nx.contract Nx.float32 p a a))
           @@ __POS_OF__ {| 185 words |});
+      test "a vdot of 16 float32 host elements allocates its baseline"
+        (fun () ->
+          let a = on_host Plain D.Float32 [| 16 |] (Array.make 16 1.) in
+          expect (allocated (fun () -> Nx.vdot a a))
+          @@ __POS_OF__ {| 154 words |});
       test "a slice of a 4x4 host value by ranges allocates its baseline"
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in

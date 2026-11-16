@@ -220,6 +220,78 @@ let test_vdot () =
   equal int32 0l (Nx.item [] (Nx.vdot (Nx.zeros Nx.int32 [| 0 |]) (Nx.zeros Nx.int32 [| 0; 3 |])));
   invalid ~by:"Nx.vdot" (fun () -> Nx.vdot (Nx.zeros Nx.int32 [| 2 |]) (Nx.zeros Nx.int32 [| 3 |]))
 
+(* Operands of one dtype other than bool and equal numbers of elements, of
+   shapes of their own, 0-d and empty ones among them, and whether to pass
+   [~sum:true]. *)
+type flat_pair =
+  | Flat_pair :
+      ('v, 's) D.t * ('v, 's, Nx.host) Nx.t * ('v, 's, Nx.host) Nx.t * bool
+      -> flat_pair
+
+let flat_pairs =
+  Gen.with_pp
+    (fun ppf (Flat_pair (dt, a, b, sum)) ->
+      Format.fprintf ppf "%a %a %a ~sum:%b" D.pp dt pp_ints (Nx.shape a) pp_ints
+        (Nx.shape b) sum)
+    (let open Gen in
+     let numeric =
+       List.filter (fun (D.Any dt) -> not (D.is D.Boolean dt)) D.all
+     in
+     let pp ppf (D.Any dt) = D.pp ppf dt in
+     let* (D.Any dt) = of_list ~pp numeric in
+     let* n =
+       frequency [ (1, constant 0); (1, constant 1); (4, int_range 2 17) ]
+     in
+     let shape =
+       of_list
+         ((if n = 1 then [ [||] ] else [])
+         @ [ [| n |]; [| 1; n |]; [| n; 1 |] ]
+         @ if n mod 2 = 0 then [ [| 2; n / 2 |]; [| n / 2; 1; 2 |] ] else [])
+     in
+     let* sa = shape in
+     let* sb = shape in
+     let* a = drawn dt sa in
+     let* b = drawn dt sb in
+     let+ sum = bool in
+     Flat_pair (dt, a, b, sum))
+
+(* The same bits, NaNs as one: vdot is the matmul of its operands conjugated
+   and flattened, and their contraction over one summed name. *)
+let law_vdot (Flat_pair (dt, a, b, sum)) =
+  cover "a 0-d operand" (Nx.shape a = [||] || Nx.shape b = [||]);
+  cover "no element" (Nx.numel a = 0);
+  cover "a complex dtype" (match D.kind dt with Complex -> true | _ -> false);
+  let flat x = Nx.reshape [| Nx.numel x |] x in
+  let v = Nx.vdot ~sum a b in
+  equal (array int) [||] (Nx.shape v);
+  let a' = Nx.conjugate (flat a) and b' = flat b in
+  equal_elements dt (Nx.to_array (Nx.matmul ~sum a' b')) (Nx.to_array v);
+  equal_elements dt
+    (Nx.to_array (Nx.contract ~sum dt (Nx.Pattern.v "k, k -> | k") a' b'))
+    (Nx.to_array v)
+
+(* What vdot raises, word for word. *)
+let test_vdot_refusals () =
+  let message f =
+    match f () with _ -> "no exception" | exception Invalid_argument m -> m
+  in
+  expect
+    (String.concat "\n"
+       [
+         message (fun () ->
+             Nx.vdot (Nx.zeros Nx.int32 [| 2 |]) (Nx.zeros Nx.int32 [| 3 |]));
+         message (fun () ->
+             Nx.vdot (Nx.zeros Nx.bool [| 2 |]) (Nx.zeros Nx.bool [| 2 |]));
+         message (fun () ->
+             Nx.vdot (Nx.zeros Nx.bool [| 2 |]) (Nx.zeros Nx.bool [| 1 |]));
+       ])
+  @@ __POS_OF__
+       {|
+         Nx.vdot: int32 [2] and int32 [3] differ in their number of elements
+         Nx.vdot: the result's dtype is bool
+         Nx.vdot: bool [2] and bool [1] differ in their number of elements
+       |}
+
 (* Cross products *)
 
 (* The distance from [r] to the next value of [dt]'s format away from zero,
@@ -390,6 +462,10 @@ let products =
             dot_shapes)
          law_dot;
        test "vdot conjugates a and flattens both" test_vdot;
+       prop ~count:1000 "vdot is matmul and contract of its flattened operands"
+         flat_pairs
+         law_vdot;
+       test "vdot raises in its own words" test_vdot_refusals;
        law_cross_float64;
        test "cross at the values its definition gives" test_cross;
        cross_refusals;

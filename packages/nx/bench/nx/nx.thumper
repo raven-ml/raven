@@ -197,7 +197,7 @@ frontend/to_array-f32-1M	alloc_words	exact	1048610
 frontend/to_string-f32-1000	alloc_words	exact	256513
 frontend/trace-f32-1024	alloc_words	exact	276
 frontend/tril-f32-1024	alloc_words	exact	283
-frontend/vdot-f32-1M	alloc_words	exact	698
+frontend/vdot-f32-1M	alloc_words	exact	154
 index/concatenate-2x512K	alloc_words	exact	291
 index/embedding-grad-bf16-uniform	alloc_words	exact	402
 index/embedding-grad-bf16-zipf	alloc_words	exact	402

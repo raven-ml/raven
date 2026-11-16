@@ -3107,6 +3107,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.vdot` is the `Nx.matmul` of its flattened operands, the same kernel
+  call, and no longer parses a pattern on each call: it allocates 154
+  words a call where it allocated 823.
 - An eager `Nx.contract` lowers its pattern without lists: a call allocates
   153 to 185 fewer words, 185 against 338 for a float32 product of two 4×4
   matrices, `Kaun.Linear.apply` with a bias 256 against 409, and

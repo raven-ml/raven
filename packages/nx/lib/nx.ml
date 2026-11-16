@@ -3490,8 +3490,7 @@ let vdot_by ~by ?sum a b =
     invalid_argf "%s: %a and %a differ in their number of elements" by pp_value
       a pp_value b;
   let flat x = Eval.reshape ~by [| numel x |] x in
-  Contraction.contract ~by ?sum (dtype a) (Pattern.v "k, k -> | k")
-    (conjugate_by ~by (flat a)) (flat b)
+  Contraction.matmul ~by ?sum (conjugate_by ~by (flat a)) (flat b)
 
 let vdot ?sum a b = vdot_by ~by:"Nx.vdot" ?sum a b
 
