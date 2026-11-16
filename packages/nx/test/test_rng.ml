@@ -575,12 +575,28 @@ let elementwise =
 let rowwise = sampled (fun n -> List.mem n rows)
 
 (* A shape of rank up to 3 with no empty axis, and the axes that share a
-   key. *)
+   key. One time in four no axis shares one, and one time in four some axes
+   of extent 2 or 3 share one and others do not, the two cases "a key
+   broadcast with the parameters" covers. *)
 let sharing =
   let open Gen in
-  (let* s = array ~size:(int_range 0 3) (int_range 1 3) in
-   let+ shared = array ~size:(constant (Array.length s)) bool in
-   (s, shared))
+  let any =
+    let* s = array ~size:(int_range 0 3) (int_range 1 3) in
+    let+ shared = array ~size:(constant (Array.length s)) bool in
+    (s, shared)
+  in
+  let per_element =
+    let+ s = array ~size:(int_range 1 3) (int_range 2 3) in
+    (s, Array.make (Array.length s) false)
+  in
+  (* The bits of [mask] mark the shared axes; it is neither 0 nor all ones. *)
+  let mixed =
+    let* s = array ~size:(int_range 2 3) (int_range 2 3) in
+    let r = Array.length s in
+    let+ mask = int_range 1 ((1 lsl r) - 2) in
+    (s, Array.init r (fun a -> mask land (1 lsl a) <> 0))
+  in
+  frequency [ (2, any); (1, per_element); (1, mixed) ]
   |> with_pp (fun ppf (s, _) -> pp_shape ppf s)
 
 (* Keys of batch shape [ks]: row [i] of [split_batch] of [k] at the [i]th
@@ -681,8 +697,10 @@ let integer_dtypes =
       I (Nx.uint4, Int.compare);
     ]
 
-(* A range [low, high) of int64: widths of 1, 2^k and 2^k + 1, int64's
-   extremes, and any. *)
+(* A range [low, high) of int64: widths of 1, 2^k and 2^k + 1, the whole of
+   int64, its other extremes, and any. A width of 1, one of 2^k and the whole
+   of int64 come 2 times in 9 each, so that 100 cases cover each but with
+   probability below 10^-10. *)
 let ranges64 =
   let open Gen in
   let pp ppf (l, h) = Format.fprintf ppf "[%Ld, %Ld)" l h in
@@ -692,24 +710,28 @@ let ranges64 =
     if Int64.compare high low > 0 then (low, high)
     else (Int64.sub Int64.max_int width, Int64.max_int)
   in
-  one_of
+  frequency
     [
-      from_low 1L;
-      (let* k = int_range 1 62 in
-       from_low (Int64.shift_left 1L k));
-      (let* k = int_range 1 62 in
-       from_low (Int64.succ (Int64.shift_left 1L k)));
-      of_list
-        [
-          (Int64.min_int, Int64.max_int);
-          (Int64.min_int, Int64.succ Int64.min_int);
-          (Int64.pred Int64.max_int, Int64.max_int);
-          (Int64.min_int, 0L);
-          (-1L, Int64.max_int);
-          (0L, Int64.shift_left 1L 62);
-        ];
-      (let+ a = int64 and+ b = int64 in
-       if a = b then (Int64.pred a, a) else (min a b, max a b));
+      (4, from_low 1L);
+      ( 4,
+        let* k = int_range 1 62 in
+        from_low (Int64.shift_left 1L k) );
+      ( 2,
+        let* k = int_range 1 62 in
+        from_low (Int64.succ (Int64.shift_left 1L k)) );
+      (4, constant (Int64.min_int, Int64.max_int));
+      ( 2,
+        of_list
+          [
+            (Int64.min_int, Int64.succ Int64.min_int);
+            (Int64.pred Int64.max_int, Int64.max_int);
+            (Int64.min_int, 0L);
+            (-1L, Int64.max_int);
+            (0L, Int64.shift_left 1L 62);
+          ] );
+      ( 2,
+        let+ a = int64 and+ b = int64 in
+        if a = b then (Int64.pred a, a) else (min a b, max a b) );
     ]
   |> such_that (fun (l, h) -> Int64.compare l h < 0)
   |> with_pp pp
@@ -727,7 +749,12 @@ let draws =
   group "draws"
     [
       prop "bits are split_batch's words in order"
-        (Gen.pair keys (Gen.int_range 0 9))
+        (Gen.pair keys
+           (Gen.frequency
+              [
+                (1, Gen.constant ~pp:Format.pp_print_int 0);
+                (3, Gen.int_range 1 9);
+              ]))
         (fun (k, n) ->
           cover "odd" (n mod 2 = 1);
           cover "none" (n = 0);
@@ -1387,8 +1414,8 @@ let distributions =
                 failf "draw %d outside [%d, %d)" x low high)
             xs;
           let width = high - low and nf = Float.of_int n in
+          cover "one value" (width = 1);
           if width <= 64 then begin
-            cover "one value" (width = 1);
             let counts = Array.make width 0 in
             Array.iter (fun x -> counts.(x - low) <- counts.(x - low) + 1) xs;
             let p = 1. /. Float.of_int width in
@@ -2045,12 +2072,14 @@ let tails_gen =
   @@ let* (F dt as dtype) = wide in
      let f = A.Dtype.float_format dt in
      let top = f.max_finite in
+     (* The band where [x^2] overflows comes one time in four, so that 100
+        cases cover it but with probability below 10^-11. *)
      let* near =
        frequency
          [
            (3, log_uniform 5. 1e3);
            (2, log_uniform 1e3 (top /. 10.));
-           (1, log_uniform (Float.sqrt top) (Float.sqrt 2. *. Float.sqrt top));
+           (2, log_uniform (Float.sqrt top) (Float.sqrt 2. *. Float.sqrt top));
            (1, log_uniform (top /. 10.) top);
          ]
      in
@@ -2338,7 +2367,10 @@ let others =
       prop "permutation is an ordering of 0 to n - 1"
         (Gen.pair keys
            (Gen.frequency
-              [ (1, Gen.constant 0); (9, Gen.int_range 1 70) ]))
+              [
+                (1, Gen.constant ~pp:Format.pp_print_int 0);
+                (3, Gen.int_range 1 70);
+              ]))
         (fun (key, m) ->
           cover "none" (m = 0);
           let xs = read (Rng.permutation ~key m) in
@@ -3286,15 +3318,17 @@ let rounds n =
 
 let pp_n = Format.pp_print_int
 
-(* Domains of 1 and 2 elements, powers of two, primes, and any up to 2000. *)
+(* Domains of 1 and 2 elements, powers of two, others with primes among them,
+   and any up to 2000. Each of the first three comes one time in four, so that
+   100 cases cover each but with probability below 10^-12. *)
 let small_ns =
-  Gen.one_of
+  Gen.frequency
     [
-      Gen.of_list ~pp:pp_n
-        [
-          1; 2; 3; 4; 5; 7; 8; 13; 16; 17; 64; 101; 128; 1009; 1024; 4093; 4096;
-        ];
-      Gen.int_range 1 2000;
+      (2, Gen.constant 1);
+      (2, Gen.constant 2);
+      (2, Gen.of_list [ 4; 8; 16; 64; 128; 1024; 4096 ]);
+      (1, Gen.of_list [ 3; 5; 7; 13; 17; 101; 1009; 4093 ]);
+      (1, Gen.int_range 1 2000);
     ]
   |> Gen.with_pp pp_n
 
