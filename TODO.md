@@ -46,6 +46,10 @@ Where it stands, with every measurement: doc/performance.md.
   it, each on one routing. A split of the
   reduce, in the graph as tinygrad's `split_reduceop` does or in codegen,
   from the SM count and occupancy, would remove it
+- A routed core's workgroups an SM follow the blocks a routing uses, which
+  only the run knows: on random routings occupancy decides between staged
+  plans, and gpt-oss's 64-token cores sit on the 128-register edge of 4
+  workgroups an SM
 - rune's routed products with no core: one row a block loses 12-33% to
   blocks of 4 at 3-7 tokens, and Q8_0's blocks of 64 from 16 rows a group
   take 1.5-2.9x as long as 8 or 16 (9480 against 3854 us at 128 tokens);
