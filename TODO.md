@@ -203,6 +203,21 @@ Where it stands, with every measurement: doc/performance.md.
 
 ## nx, rune
 
+- nx.array's `to_array` of unboxed elements and `of_array`
+  (nx_array_stubs.c:1022, :1101) copy a whole array with the domain lock
+  held, cold mapped pages included, since their walks touch OCaml arrays;
+  the gathers (`copy`, `to_bigarray`, `to_array` of boxed elements)
+  release past 256 KiB or over borrowed memory, by nx_cpu's rule. Found by
+  the SI-1 review
+- nx's `test_composite › together › a composite over values whole
+  together is its body` (test_composite.ml:303-327) fails about 1 run in 4
+  at `-j 2` on main too: it compares minor words of 100 calls, the least
+  of 5 runs, and the words vary with timing under load. Found by the DD+DC
+  landing
+- nx's bench rows `placed/*` and `placed/matmul-f32-256x4096x256-k-split4`
+  (bench_nx.ml:337-366; nx.thumper:260-267) record exact allocated words
+  that vary from run to run, so `check --quick` can fail them on an
+  unchanged tree. Found by the DD+DC landing
 - rune's attention core takes 8 warps where 8 still leave
   `local_workgroups` workgroups, else 4 (lower_attention.ml:1516). But
   renderer.mli:277-279 scopes that field to cores whose operands are not
@@ -321,9 +336,29 @@ Where it stands, with every measurement: doc/performance.md.
 ## rig
 
 - Windows has no read depth: rig's disk opens a file without
-  `FILE_FLAG_OVERLAPPED` (rig_disk_stubs.c:96-103), which serialises its
-  I/O even where each `ReadFile` passes an `OVERLAPPED` offset. Found by
-  the streaming-data part 2 audit
+  `FILE_FLAG_OVERLAPPED` (rig_disk_stubs.c:98-104), which serialises its
+  I/O even where each `ReadFile` passes an `OVERLAPPED` offset, so a
+  copy's runs are read one after another (rig_disk_stubs.c:513-515); a
+  handle opened with the flag would give it depth. Found by the
+  streaming-data part 2 audit and SI-1
+- rig.disk: a copy of many runs begun while another thread's blocking job
+  runs reads its runs one after another, since a blocking job does not
+  wait to take the pool (`take`'s trylock, rig_pool.c:867-870): 15 times
+  slower at 16K rows. A warm copy runs up to 128 runnable threads over the
+  host's cores beside compute. Reading each run first with `preadv2
+  RWF_NOWAIT` on the caller and handing only the misses to the pool would
+  keep both (on Linux 5.9 and 5.10 a 0 is to be retried there); then decide
+  whether a busy pool should make a cold copy wait rather than go serial.
+  Gate: the SI-1 audit's long read beside compute (§4.4) on a quiet fudge.
+  Found by the SI-1 review
+- rig.disk's read depth, 128 (rig_disk_stubs.c:517-532), was measured
+  pinned to two CPUs, which ended the pixels' curve still rising:
+  re-measure it unpinned on a quiet fudge (rows, and the port's ragged
+  shape at 32, 64, 128 and 256). Then bless `bench/disk`'s read rows,
+  which allocate 4 more words a copy since `Rig_edge.Io.read` takes
+  arrays of runs, and `read/cold-rows-16K` (bench_disk.ml:259), which has
+  no baseline, and run the long-read gate and the staged file-to-device
+  copy with parking workers. Found by SI-1
 
 ## sowilo
 
