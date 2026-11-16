@@ -281,6 +281,12 @@ All notable changes to this project will be documented in this file.
 
 ### Vega (new)
 
+- A schedule's numbers, and `Vega.rate`'s, are data of a compiled step's
+  program rather than literals: runs that differ only in a peak rate, a run
+  length or a weight decay share one program, where each compiled its own.
+  Every value keeps its bits, NaN for NaN, eagerly and compiled. A step's
+  coefficients, such as `b1`, `b2`, `eps` and `momentum`, stay constants of
+  the program.
 - **Breaking:** `lars_step` takes LARS's trust coefficient as
   `?trust_coefficient` (default `0.001`), and `~lr` is the paper's global
   rate. Multiply a former `~lr` by 1000 to keep the steps of leaves with

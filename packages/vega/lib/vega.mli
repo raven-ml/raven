@@ -49,8 +49,10 @@
     [max_norm]) are compile-time constants. Everything that does (the moments,
     the step counter, the learning rate and the weight decay) is a tensor leaf
     or derived from one, so the compiled program replays correctly on every
-    call: no data transfers, no retracing. A caller that donates the state
-    ({!Nx.Ptree.donate}) lets the step write the next one into its memory.
+    call, with no retracing. A rate's numbers are data ({!Schedule}), so runs
+    that differ only in their rates share one program. A caller that donates
+    the state ({!Nx.Ptree.donate}) lets the step write the next one into its
+    memory.
 
     Every function over parameters takes their structure first, a
     [('p, 'd) Nx.Ptree.t] built with [Nx.Ptree.instantiate], ['d] the set the
@@ -297,15 +299,20 @@ end
     is: the step applies it to its state's counter of completed steps and
     casts the scalar float tensor it gives to the dtype each leaf computes at
     ({!section-structures}). A constant rate is {!val-rate}; a rate exact at
-    float64 is one at that dtype beside the counter,
-    [fun step -> Nx.scalar_at (Nx.placement step) Nx.float64 0.1].
-    Either is tensor arithmetic beside the counter, which is what makes the
-    rate track correctly under [Rune.jit]. *)
+    float64 is one at that dtype placed beside the counter,
+    [let r = Nx.scalar Nx.float64 0.1 in fun step -> Nx.place (Nx.beside
+    step) r]. Either is tensor arithmetic beside the counter, which is what
+    makes the rate track correctly under [Rune.jit]. A number made outside
+    the rate's function, as [r] is, is data of a compiled step, so runs that
+    differ in it share one program; one made inside it, such as
+    [Nx.scalar_at (Nx.placement step) Nx.float64 0.1], is a constant of the
+    program. *)
 
 val rate : float -> 'd Schedule.t
 (** [rate v] is the schedule that always returns [v], which serves any
     parameter dtype and set, as a learning rate or as a weight decay:
     [Vega.adamw_step p ~lr:(Vega.rate 1e-3) ~weight_decay:(Vega.rate 0.01)].
+    Its number is data, as a {!Schedule}'s are.
 
     Raises [Invalid_argument] if [v] is negative. *)
 

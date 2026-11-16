@@ -277,6 +277,518 @@ let half_tests =
          ~step:(fun st -> Vega.lion_step p ~lr:lr2 ~b1:0.5 ~b2:0.5 st));
   ]
 
+
+(* Schedules' numbers are data of their program. [Literal] is vega's
+   schedules as they were, each number written into the program as a
+   literal. The data form gives its bits at every counter, eagerly and
+   compiled (compiled against eager is §numerics', not bit for bit), while
+   one program serves every set of numbers of a structure. *)
+type t = Nx.host Vega.Schedule.t
+
+module type Forms = sig
+  val rate : float -> t
+  val linear : init_value:float -> end_value:float -> steps:int -> t
+
+  val cosine_decay :
+    init_value:float -> decay_steps:int -> ?alpha:float -> unit -> t
+
+  val exponential_decay :
+    init_value:float -> decay_rate:float -> decay_steps:int -> t
+
+  val polynomial_decay :
+    init_value:float ->
+    end_value:float ->
+    decay_steps:int ->
+    ?power:float ->
+    unit ->
+    t
+
+  val warmup_cosine :
+    init_value:float -> peak_value:float -> warmup_steps:int -> t
+
+  val warmup_cosine_decay :
+    init_value:float ->
+    peak_value:float ->
+    warmup_steps:int ->
+    decay_steps:int ->
+    ?end_value:float ->
+    unit ->
+    t
+
+  val cosine_decay_restarts :
+    init_value:float ->
+    decay_steps:int ->
+    ?t_mul:float ->
+    ?m_mul:float ->
+    ?alpha:float ->
+    unit ->
+    t
+
+  val one_cycle :
+    max_value:float ->
+    total_steps:int ->
+    ?div_factor:float ->
+    ?final_div_factor:float ->
+    ?pct_start:float ->
+    unit ->
+    t
+
+  val piecewise_constant : boundaries:int list -> values:float list -> t
+  val join : (int * t) list -> t
+end
+
+module Data : Forms = struct
+  include Vega.Schedule
+
+  let rate = Vega.rate
+end
+
+module Literal : Forms = struct
+  let f32 = Nx.float32
+  let to_f32 step = Nx.cast f32 step
+
+  (* Cosine annealing factor: 1 -> 0 as ratio goes 0 -> 1. *)
+  let cosine_factor ratio =
+    Nx.mul_s (Nx.add_s (Nx.cos (Nx.mul_s ratio Float.pi)) 1.0) 0.5
+
+  (* step / steps, clamped to 1. *)
+  let clamp_ratio ~steps s =
+    Nx.div_s
+      (Nx.minimum_s s (float_of_int steps))
+      (float_of_int steps)
+
+  let linear ~init_value ~end_value ~steps =
+    if steps <= 0 then invalid_arg "Schedule.linear: steps must be positive";
+    fun step ->
+      let ratio = clamp_ratio ~steps (to_f32 step) in
+      Nx.add_s (Nx.mul_s ratio (end_value -. init_value)) init_value
+
+  let cosine_decay ~init_value ~decay_steps ?(alpha = 0.) () =
+    if decay_steps <= 0 then
+      invalid_arg "Schedule.cosine_decay: decay_steps must be positive";
+    fun step ->
+      let ratio = clamp_ratio ~steps:decay_steps (to_f32 step) in
+      let cosine_val = cosine_factor ratio in
+      Nx.mul_s (Nx.add_s (Nx.mul_s cosine_val (1.0 -. alpha)) alpha) init_value
+
+  let exponential_decay ~init_value ~decay_rate ~decay_steps =
+    if decay_steps <= 0 then
+      invalid_arg "Schedule.exponential_decay: decay_steps must be positive";
+    if decay_rate <= 0.0 then
+      invalid_arg "Schedule.exponential_decay: decay_rate must be positive";
+    fun step ->
+      let ratio = Nx.div_s (to_f32 step) (float_of_int decay_steps) in
+      Nx.mul_s (Nx.rpow_s decay_rate ratio) init_value
+
+  let polynomial_decay ~init_value ~end_value ~decay_steps ?(power = 1.0) () =
+    if decay_steps <= 0 then
+      invalid_arg "Schedule.polynomial_decay: decay_steps must be positive";
+    let steps = float_of_int decay_steps in
+    fun step ->
+      (* The fraction left, [(steps - s) / steps], is exactly zero from the end
+         of the decay on; [1 - s / steps] can round below it. *)
+      let s = Nx.minimum_s (to_f32 step) steps in
+      let remaining = Nx.div_s (Nx.rsub_s steps s) steps in
+      let poly = Nx.pow_s remaining power in
+      Nx.add_s (Nx.mul_s poly (init_value -. end_value)) end_value
+
+  let warmup_cosine ~init_value ~peak_value ~warmup_steps =
+    if warmup_steps <= 0 then
+      invalid_arg "Schedule.warmup_cosine: warmup_steps must be positive";
+    fun step ->
+      let ratio = clamp_ratio ~steps:warmup_steps (to_f32 step) in
+      let cosine_val = Nx.rsub_s 1.0 (cosine_factor ratio) in
+      Nx.add_s (Nx.mul_s cosine_val (peak_value -. init_value)) init_value
+
+  let warmup_cosine_decay ~init_value ~peak_value ~warmup_steps ~decay_steps
+      ?(end_value = 0.) () =
+    if warmup_steps <= 0 then
+      invalid_arg "Schedule.warmup_cosine_decay: warmup_steps must be positive";
+    if decay_steps <= 0 then
+      invalid_arg "Schedule.warmup_cosine_decay: decay_steps must be positive";
+    fun step ->
+      let s = to_f32 step in
+      let warm_ratio = clamp_ratio ~steps:warmup_steps s in
+      let linear_part =
+        Nx.add_s (Nx.mul_s warm_ratio (peak_value -. init_value)) init_value
+      in
+      let decay_step =
+        Nx.maximum_s (Nx.sub_s s (float_of_int warmup_steps)) 0.0
+      in
+      let decay_ratio = clamp_ratio ~steps:decay_steps decay_step in
+      let decay_part =
+        Nx.add_s
+          (Nx.mul_s (cosine_factor decay_ratio) (peak_value -. end_value))
+          end_value
+      in
+      Nx.where
+        (Nx.greater_s s (float_of_int warmup_steps))
+        decay_part linear_part
+
+  let cosine_decay_restarts ~init_value ~decay_steps ?(t_mul = 1.0)
+      ?(m_mul = 1.0) ?(alpha = 0.) () =
+    if decay_steps <= 0 then
+      invalid_arg
+        "Schedule.cosine_decay_restarts: decay_steps must be positive";
+    if t_mul < 1.0 then
+      invalid_arg "Schedule.cosine_decay_restarts: t_mul must be at least 1";
+    if m_mul <= 0.0 then
+      invalid_arg "Schedule.cosine_decay_restarts: m_mul must be positive";
+    let first = float_of_int decay_steps in
+    let anneal cycle ratio =
+      let amp = Nx.mul_s (Nx.rpow_s m_mul cycle) init_value in
+      Nx.mul
+        (Nx.add_s (Nx.mul_s (cosine_factor ratio) (1.0 -. alpha)) alpha)
+        amp
+    in
+    (* Exact float comparison is intentional: 1.0 is the unmodified default. *)
+    if t_mul = 1.0 then fun step ->
+      let s = to_f32 step in
+      let cycle = Nx.floor (Nx.div_s s first) in
+      let pos = Nx.sub s (Nx.mul_s cycle first) in
+      anneal cycle (Nx.div_s pos first)
+    else fun step ->
+      (* Geometric periods: cycle k spans [start k, start (k+1)) where
+         [start k = first * (t_mul^k - 1) / (t_mul - 1)]. Inverting gives
+         [k = floor (log q / log t_mul)] with [q = s*(t_mul-1)/first + 1]; the
+         two [where]s absorb any float slop at the cycle boundaries. *)
+      let s = to_f32 step in
+      let start k =
+        Nx.mul_s
+          (Nx.div_s (Nx.sub_s (Nx.rpow_s t_mul k) 1.0) (t_mul -. 1.0))
+          first
+      in
+      let q = Nx.add_s (Nx.mul_s s ((t_mul -. 1.0) /. first)) 1.0 in
+      let k = Nx.floor (Nx.div_s (Nx.log q) (Stdlib.log t_mul)) in
+      let k = Nx.where (Nx.less s (start k)) (Nx.sub_s k 1.0) k in
+      let k =
+        Nx.where
+          (Nx.greater_equal s (start (Nx.add_s k 1.0)))
+          (Nx.add_s k 1.0) k
+      in
+      let k = Nx.maximum_s k 0.0 in
+      let period = Nx.mul_s (Nx.rpow_s t_mul k) first in
+      let pos = Nx.sub s (start k) in
+      anneal k (Nx.div pos period)
+
+  let one_cycle ~max_value ~total_steps ?(div_factor = 25.0)
+      ?(final_div_factor = 10000.0) ?(pct_start = 0.3) () =
+    if total_steps <= 0 then
+      invalid_arg "Schedule.one_cycle: total_steps must be positive";
+    let warmup_steps = int_of_float (pct_start *. float_of_int total_steps) in
+    let decay_steps = total_steps - warmup_steps in
+    let init_value = max_value /. div_factor in
+    let end_value = max_value /. final_div_factor in
+    if warmup_steps <= 0 then fun step ->
+      (* All decay: warmup is degenerate, the counter ramps straight down. *)
+      let ratio = clamp_ratio ~steps:decay_steps (to_f32 step) in
+      Nx.add_s
+        (Nx.mul_s (cosine_factor ratio) (max_value -. end_value))
+        end_value
+    else if decay_steps <= 0 then fun step ->
+      (* All warmup: the schedule never leaves its ramp. *)
+      let ratio = clamp_ratio ~steps:warmup_steps (to_f32 step) in
+      Nx.add_s (Nx.mul_s ratio (max_value -. init_value)) init_value
+    else fun step ->
+      let s = to_f32 step in
+      let warm_ratio = clamp_ratio ~steps:warmup_steps s in
+      let linear_part =
+        Nx.add_s (Nx.mul_s warm_ratio (max_value -. init_value)) init_value
+      in
+      let decay_step =
+        Nx.maximum_s (Nx.sub_s s (float_of_int warmup_steps)) 0.0
+      in
+      let decay_ratio = clamp_ratio ~steps:decay_steps decay_step in
+      let decay_part =
+        Nx.add_s
+          (Nx.mul_s (cosine_factor decay_ratio) (max_value -. end_value))
+          end_value
+      in
+      Nx.where
+        (Nx.greater_s s (float_of_int warmup_steps))
+        decay_part linear_part
+
+  let piecewise_constant ~boundaries ~values =
+    let n_boundaries = List.length boundaries in
+    let n_values = List.length values in
+    if n_values <> n_boundaries + 1 then
+      invalid_arg
+        (Printf.sprintf
+           "Schedule.piecewise_constant: expected %d values for %d boundaries, \
+            got %d"
+           (n_boundaries + 1) n_boundaries n_values);
+    let boundaries = Array.of_list boundaries in
+    let values = Array.of_list values in
+    for i = 1 to Array.length boundaries - 1 do
+      if boundaries.(i) <= boundaries.(i - 1) then
+        invalid_arg
+          "Schedule.piecewise_constant: boundaries must be strictly increasing"
+    done;
+    fun step ->
+      let s = to_f32 step in
+      let acc = ref (Nx.scalar_like s values.(Array.length values - 1)) in
+      for i = Array.length boundaries - 1 downto 0 do
+        acc :=
+          Nx.where
+            (Nx.greater_s s (float_of_int boundaries.(i)))
+            !acc
+            (Nx.scalar_like s values.(i))
+      done;
+      !acc
+
+  let join segments =
+    if segments = [] then
+      invalid_arg "Schedule.join: segments must not be empty";
+    List.iter
+      (fun (n, _) ->
+        if n <= 0 then
+          invalid_arg "Schedule.join: segment lengths must be positive")
+      segments;
+    let segments = Array.of_list segments in
+    let n_seg = Array.length segments in
+    let starts = Array.make n_seg 0 in
+    for i = 1 to n_seg - 1 do
+      starts.(i) <- starts.(i - 1) + fst segments.(i - 1)
+    done;
+    fun step ->
+      (* Selected last to first: the earliest segment whose span covers the
+         relative counter wins. Inactive segments are still computed (at
+         out-of-range counters) and discarded by [where]. *)
+      let at i = snd segments.(i) (Nx.sub_s step (Int32.of_int starts.(i))) in
+      let acc = ref (at (n_seg - 1)) in
+      for i = n_seg - 2 downto 0 do
+        let rel = Nx.sub_s step (Int32.of_int starts.(i)) in
+        acc :=
+          Nx.where
+            (Nx.less_equal_s rel (Int32.of_int (fst segments.(i))))
+            (at i) !acc
+      done;
+      !acc
+
+  let rate v step = Nx.scalar_at (Nx.placement step) Nx.float32 v
+end
+
+(* Each constructor at sets of numbers that share its structure, with the
+   number of steps whose thrice the counters reach. *)
+module Sets (F : Forms) = struct
+  let wcd (init_value, peak_value, warmup_steps, decay_steps, end_value) =
+    ( F.warmup_cosine_decay ~init_value ~peak_value ~warmup_steps ~decay_steps
+        ~end_value (),
+      warmup_steps + decay_steps )
+
+  (* TESSERA's schedule of [--steps], [--lr] and [--warmup]
+     (dev/tessera/bin/main.ml). *)
+  let tessera (lr, warmup) steps =
+    let warmup_steps =
+      max 1 (Float.to_int (Float.round (warmup *. Float.of_int steps)))
+    in
+    F.warmup_cosine_decay ~init_value:0. ~peak_value:lr ~warmup_steps
+      ~decay_steps:(max 1 (steps - warmup_steps))
+      ()
+
+  let all =
+    [
+      ("rate", [ (F.rate 0.1, 10); (F.rate 3e-4, 10); (F.rate 0., 10) ]);
+      ( "linear",
+        [
+          (F.linear ~init_value:1e-3 ~end_value:1e-5 ~steps:100, 100);
+          (F.linear ~init_value:0.2 ~end_value:0.7 ~steps:37, 37);
+        ] );
+      ( "cosine_decay",
+        [
+          (F.cosine_decay ~init_value:0.1 ~decay_steps:100 ~alpha:0.1 (), 100);
+          (F.cosine_decay ~init_value:3e-4 ~decay_steps:777 (), 777);
+        ] );
+      ( "exponential_decay",
+        List.map
+          (fun (init_value, decay_rate, decay_steps) ->
+            ( F.exponential_decay ~init_value ~decay_rate ~decay_steps,
+              decay_steps ))
+          [ (1e-3, 0.96, 1000); (0.1, 0.5, 100); (3e-4, 0.9, 777) ] );
+      ( "polynomial_decay",
+        List.map
+          (fun (init_value, end_value, decay_steps, power) ->
+            ( F.polynomial_decay ~init_value ~end_value ~decay_steps ~power (),
+              decay_steps ))
+          [
+            (1e-3, 1e-5, 1000, 2.0);
+            (1e-3, 0., 1000, 0.5);
+            (1e-2, 1e-4, 300, 1.0);
+          ] );
+      ( "warmup_cosine",
+        [
+          ( F.warmup_cosine ~init_value:0. ~peak_value:1e-3 ~warmup_steps:50,
+            50 );
+          (F.warmup_cosine ~init_value:1e-5 ~peak_value:0.1 ~warmup_steps:7, 7);
+        ] );
+      ( "warmup_cosine_decay",
+        List.map wcd
+          [
+            (1e-5, 1e-3, 10, 100, 1e-6);
+            (0., 2e-3, 7, 33, 0.);
+            (1e-5, 3e-4, 1, 1, 1e-6);
+            (0., 1e-3, 100, 9900, 0.);
+            (1e-7, 0.1, 500, 99500, 1e-5);
+          ] );
+      ( "TESSERA's distil and pretrain recipes",
+        [
+          (tessera (8e-4, 0.05) 200, 200);
+          (tessera (2e-3, 0.1) 300, 300);
+          (tessera (8e-4, 0.05) 3000, 3000);
+        ] );
+      ( "cosine_decay_restarts",
+        [
+          ( F.cosine_decay_restarts ~init_value:1e-3 ~decay_steps:100 ~m_mul:0.9
+              (),
+            100 );
+          ( F.cosine_decay_restarts ~init_value:1e-3 ~decay_steps:250 ~m_mul:0.5
+              ~alpha:0.1 (),
+            250 );
+        ] );
+      ( "cosine_decay_restarts with geometric periods",
+        [
+          ( F.cosine_decay_restarts ~init_value:1.0 ~decay_steps:10 ~t_mul:2.0
+              ~m_mul:0.5 (),
+            100 );
+          ( F.cosine_decay_restarts ~init_value:3e-4 ~decay_steps:17 ~t_mul:1.5
+              ~alpha:0.1 (),
+            200 );
+        ] );
+      ( "one_cycle",
+        [
+          (F.one_cycle ~max_value:1.0 ~total_steps:100 (), 100);
+          ( F.one_cycle ~max_value:3e-3 ~total_steps:1000 ~div_factor:10.
+              ~final_div_factor:1e3 ~pct_start:0.25 (),
+            1000 );
+        ] );
+      ( "one_cycle without warmup",
+        [
+          (F.one_cycle ~max_value:1.0 ~total_steps:3 ~pct_start:0.2 (), 3);
+          (F.one_cycle ~max_value:0.5 ~total_steps:4 ~pct_start:0.1 (), 4);
+        ] );
+      ( "one_cycle without decay",
+        [
+          (F.one_cycle ~max_value:1.0 ~total_steps:10 ~pct_start:1.0 (), 10);
+          (F.one_cycle ~max_value:2e-3 ~total_steps:7 ~pct_start:1.5 (), 7);
+        ] );
+      ( "piecewise_constant",
+        [
+          ( F.piecewise_constant ~boundaries:[ 100; 200 ]
+              ~values:[ 0.1; 0.01; 0.001 ],
+            200 );
+          ( F.piecewise_constant ~boundaries:[ 7; 50 ]
+              ~values:[ 1.0; 0.3; 2e-4 ],
+            50 );
+        ] );
+      ( "join",
+        [
+          ( F.join
+              [
+                (10, F.rate 1.0);
+                (20, F.linear ~init_value:1.0 ~end_value:0. ~steps:20);
+              ],
+            30 );
+          ( F.join
+              [
+                (30, F.rate 3e-4);
+                (5, F.linear ~init_value:0.5 ~end_value:2e-3 ~steps:5);
+              ],
+            35 );
+        ] );
+    ]
+end
+
+module Data_sets = Sets (Data)
+module Literal_sets = Sets (Literal)
+
+let bits y = Array.map Int32.bits_of_float (Nx.to_array y)
+let counters n = Nx.init Nx.int32 [| n |] (fun i -> Int32.of_int i.(0))
+let counter k = Nx.scalar Nx.int32 (Int32.of_int k)
+
+let print f =
+  Format.asprintf "%a" Rune.pp_program
+    (Rune.program Nx.Ptree.tensor Nx.Ptree.tensor f (counter 5))
+
+(* [same f data literal c] says that [f data] and [f literal] give equal bits
+   at the counters [c]. *)
+let same ~msg f data literal c =
+  equal ~msg (array int32) (bits (f literal c)) (bits (f data c))
+
+(* For each set of a constructor: its bits, eager and compiled, at the
+   counters 0 to thrice its steps; and its program, which is the first
+   set's. *)
+let schedule_law (name, data) =
+  let literal = List.assoc name Literal_sets.all in
+  let program = print (fst (List.hd data)) in
+  List.iteri
+    (fun i ((d, steps), (l, _)) ->
+      let msg what = Printf.sprintf "%s, set %d: %s" name i what in
+      let c = counters ((3 * steps) + 1) in
+      same ~msg:(msg "eager") Fun.id d l c;
+      same ~msg:(msg "compiled") Rune.jit' d l c;
+      equal ~msg:(msg "one program") string program (print d))
+    (List.combine data literal)
+
+let schedule_laws =
+  List.map
+    (fun ((name, _) as case) -> test name (fun () -> schedule_law case))
+    Data_sets.all
+
+(* TESSERA's two recipes, compiled on a 0-d counter at every counter of
+   --steps 100, 1000 and 3000, and on a vector of every counter of --steps
+   100000. *)
+let test_tessera_compiled () =
+  List.iter
+    (fun recipe ->
+      List.iter
+        (fun steps ->
+          let d = Rune.jit' (Data_sets.tessera recipe steps)
+          and l = Rune.jit' (Literal_sets.tessera recipe steps) in
+          for k = 0 to steps + 1 do
+            let msg = Printf.sprintf "--steps %d, counter %d" steps k in
+            same ~msg (fun f c -> f c) d l (counter k)
+          done)
+        [ 100; 1000; 3000 ];
+      let steps = 100_000 in
+      same ~msg:"--steps 100000" Rune.jit'
+        (Data_sets.tessera recipe steps)
+        (Literal_sets.tessera recipe steps)
+        (counters (steps + 2)))
+    [ (8e-4, 0.05); (2e-3, 0.1) ]
+
+(* Eager, every counter of every --steps up to 1000 of both recipes. *)
+let test_tessera_eager () =
+  List.iter
+    (fun recipe ->
+      for steps = 1 to 1000 do
+        same ~msg:(Printf.sprintf "--steps %d" steps) Fun.id
+          (Data_sets.tessera recipe steps)
+          (Literal_sets.tessera recipe steps)
+          (counters (steps + 2))
+      done)
+    [ (8e-4, 0.05); (2e-3, 0.1) ]
+
+(* A TESSERA training step at two runs, --steps 200 at --lr 8e-4 and --decay
+   1e-4 and --steps 300 at --lr 2e-3 and --decay 0.05: one program. *)
+let test_one_step_program () =
+  let both = Nx.Ptree.pair Wb.ptree (Vega.adam_ptree Wb.ptree) in
+  let x =
+    let params = wb 1 in
+    (params, Vega.adamw_init Wb.ptree params)
+  in
+  let program (lr, warmup, decay) steps =
+    let lr = Data_sets.tessera (lr, warmup) steps in
+    let weight_decay = Vega.rate decay in
+    let step (params, st) =
+      Vega.adamw_step Wb.ptree ~lr ~weight_decay st ~params
+        ~grads:(grads params)
+    in
+    Format.asprintf "%a" Rune.pp_program (Rune.program both both step x)
+  in
+  equal string
+    (program (8e-4, 0.05, 1e-4) 200)
+    (program (2e-3, 0.1, 0.05) 300)
+
 let () =
   exit
     (run "vega jit"
@@ -294,5 +806,12 @@ let () =
            [
              test "a loss-scaled step compiles, overflow included"
                test_loss_scaled_compiles;
+           ];
+         group "a schedule's numbers are data" schedule_laws;
+         group "TESSERA's schedules are data"
+           [
+             test "compiled at every counter" test_tessera_compiled;
+             test "eager at every counter" test_tessera_eager;
+             test "one step program for two runs" test_one_step_program;
            ];
        ])

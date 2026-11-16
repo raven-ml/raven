@@ -15,6 +15,22 @@
     {!eval} to read a schedule at a host counter for logging or for loops that
     keep their own count.
 
+    A schedule's numbers, its values and its step counts, are data, not
+    constants. A constructor computes each on the host in float64 and rounds
+    it once into a 0-d float32 host array, which the schedule captures and
+    places beside the counter when applied, so its values are those of the
+    numbers written into the arithmetic as literals: the same bits, NaN for
+    NaN, since a compiled step folds literals and a NaN folded there can
+    take another sign than one computed at run time. Under
+    [Rune.jit] the arrays are data of the program, so schedules of one
+    constructor that differ only in their numbers compile to one program: a
+    new run length or peak rate compiles nothing the last run did not. A
+    compiled step on a device copies the numbers there, and an eager
+    application places them beside the counter ({!Nx.place}). What shapes
+    the schedule is the program's: the number of [boundaries] or [segments],
+    and the branches its numbers select at construction ([t_mul = 1.] in
+    {!cosine_decay_restarts}, an empty phase of {!one_cycle}).
+
     Optimizer steps take a schedule as their [~lr], and the steps that decay
     as their [~weight_decay], and apply it to their state's counter:
 

@@ -460,7 +460,8 @@ end
 
 let rate v =
   validate_non_negative "Vega.rate" "v" v;
-  fun step -> Nx.scalar_at (Nx.placement step) Nx.float32 v
+  let r = Nx.scalar Nx.float32 v in
+  fun step -> Nx.place (Nx.beside step) r
 
 (* Shared arithmetic of the steps *)
 
