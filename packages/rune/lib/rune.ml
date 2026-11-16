@@ -1147,12 +1147,14 @@ let rec spine : type f d. string -> int -> (f, d) Ptree.fn -> (f, d) spine =
         }
   | Returns _ -> invalid_argf "%s: the signature has no argument" name
 
-(* [traced name a r f args forms] is [f]'s program over stand-ins of [forms] for
-   [args]' leaves, and the result it returned, as jit traces it. *)
-let traced name a r f args forms totals =
+(* [traced ~constants name a r f args forms] is [f]'s program over stand-ins
+   of [forms] for [args]' leaves, and the result it returned, as jit traces
+   it. A program that compiles and outlives the trace keeps its constants
+   ({!Trace.trace}). *)
+let traced ~constants name a r f args forms totals =
   let like = ref None and asked = ref [] in
   let body, _ =
-    Trace.trace ~totals ~asked Jit ~name forms (fun vs ->
+    Trace.trace ~totals ~asked ~constants Jit ~name forms (fun vs ->
         let y = f (rebuild a ~like:args vs) in
         like := Some y;
         values r y)
@@ -1182,7 +1184,9 @@ let call name t a r f args =
     List.rev (Ptree.fold a (fun p _ acc -> path_name p :: acc) args [])
   in
   let trace forms totals =
-    let body, like, asked = traced name a r f args forms totals in
+    let body, like, asked =
+      traced ~constants:Trace.Keep name a r f args forms totals
+    in
     (body, results r like, asked)
   in
   let e = Jit.find t leaves skeleton ~paths trace in
@@ -1231,7 +1235,7 @@ let footprint (type a b d) (s : (a -> b, d) Ptree.fn) (f : a -> b) (x : a) =
   | Arg (a, Returns r) ->
       let leaves, _ = Ptree.flatten a x in
       let forms = Jit.stand_ins leaves in
-      let body, _, _ = traced name a r f x forms [||] in
+      let body, _, _ = traced ~constants:Trace.Keep name a r f x forms [||] in
       Jit.footprint ~name body forms
         (Array.of_list (List.map (fun (Nx.P y) -> V y) leaves))
 
@@ -1334,7 +1338,9 @@ type program = Program.t
 (* [f]'s trace at [args], as jit's: over C-order stand-ins. *)
 let staged name a r f args =
   let leaves, _ = Ptree.flatten a args in
-  let body, like, _ = traced name a r f args (Jit.stand_ins leaves) [||] in
+  let body, like, _ =
+    traced ~constants:Trace.As_is name a r f args (Jit.stand_ins leaves) [||]
+  in
   (body, like)
 
 let program a r f args = fst (staged "Rune.program" a r f args)

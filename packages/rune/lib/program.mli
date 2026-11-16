@@ -992,6 +992,16 @@ val staging : unit -> bool
     applied there. A call's default there evaluates its body and does not run
     its compiled form. *)
 
+type _ Effect.t +=
+  | Keeping : map option Effect.t
+        (** Answered by the tracer of a compiled function ([Trace.Keep]),
+            whose program outlives its trace, with the function that gives
+            each constant the value its program keeps for it, and by one that
+            keeps none ([Trace.As_is]) with [None]. *)
+
+val keeping : unit -> map option
+(** [keeping ()] is the answer to {!Keeping}, [None] with none around. *)
+
 (** {2:rules Custom rules on values}
 
     A custom rule's call ([Custom.jvp_call]) that no tracer stages first asks

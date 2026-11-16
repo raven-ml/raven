@@ -448,6 +448,13 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A `Rune.jit` function reads what it captures at the trace and keeps it, as
+  `rune.mli` states: one that reads a capture and then donates it computes as
+  eagerly instead of raising, and a capture its caller donates after a call
+  no longer raises at a call of the same key at a new layout.
+- A compiled program copies a constant of another device once per run of its
+  bytes, where it copied once per value: captures over one run share one copy
+  in device memory and in `Rune.footprint`.
 - A dead constant that a `Rune.jit` call reads, as one its function donates
   and returns, raises naming the entry point, where it named
   `Nx.Repr.shards`.

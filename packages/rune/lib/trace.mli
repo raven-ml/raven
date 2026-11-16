@@ -87,18 +87,39 @@ exception Stop_reads
     from the tape's variables, through its carry or its captures: its number of
     steps depends on them, so it has no transpose. *)
 
+(** How a tracer records the constants its program reads. *)
+type constants =
+  | Keep
+      (** Read once and kept, for a program that outlives the trace, as a
+          compiled function's does. *)
+  | Inherit  (** As a keeping tracer around the trace records them. *)
+  | As_is  (** As they are, by the tracer and every tracer inside it. *)
+
 val trace :
   ?totals:Program.addition array ->
   ?asked:Program.asked list ref ->
+  ?constants:constants ->
   kind ->
   name:string ->
   Program.form array ->
   (Program.value array -> Program.value array) ->
   Program.t * Program.value array
-(** [trace ~totals k ~name forms f] is the program of [f] over variables of
-    [forms], and its captures, in order. The interpretation is named [name] in
-    messages, as ["Rune.scan"]. A total's running value in lies where [totals]
-    places it. Without that, it lies where the first value asked of it
-    ({!Program.Running}) or added to it lies. [asked] receives, in order, each
-    probe [f] asked about ({!Program.Open}), which the tracer passes on, and the
-    answer. Raises what [f] raises. *)
+(** [trace ~totals ~constants k ~name forms f] is the program of [f] over
+    variables of [forms], and its captures, in order. The interpretation is
+    named [name] in messages, as ["Rune.scan"]. A total's running value in lies
+    where [totals] places it. Without that, it lies where the first value asked
+    of it ({!Program.Running}) or added to it lies. [asked] receives, in order,
+    each probe [f] asked about ({!Program.Open}), which the tracer passes on,
+    and the answer. Raises what [f] raises.
+
+    {e Constants.} With [Keep], the tracer reads each constant once, the first
+    time it or a tracer inside its extent meets it, and records a value over
+    the constant's arrays, whose memory is shared from then on
+    ({!Program.Keeping}). The program then reads those arrays whatever becomes
+    of the constant, a donation included. A constant that is dead where the
+    trace meets it raises [Invalid_argument] naming [name], met again after
+    the first time included. A keeping trace inside another keeps its
+    constants as the other does, so that one constant is one value. With
+    [Inherit] (the default), a tracer records a constant as a keeping tracer
+    around it does, and as it is with none. With [As_is], it and the tracers
+    inside it record constants as they are. *)

@@ -617,6 +617,13 @@ type map = { f : 'v 's 'd. ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t }
 
 let map_values m = Array.map (fun (V x) -> V (m.f x))
 
+type _ Effect.t += Keeping : map option Effect.t
+
+let keeping () =
+  match Effect.perform Keeping with
+  | m -> m
+  | exception Effect.Unhandled Keeping -> None
+
 let map_operands m = function
   | Detach x -> Detach (m.f x)
   | Lanes (a, x) -> Lanes (a, m.f x)
@@ -1097,6 +1104,7 @@ let guarded f =
         Some (fun k -> Effect.Deep.continue k [||])
     | Within -> Some (fun k -> Effect.Deep.continue k false)
     | Staging -> Some (fun k -> Effect.Deep.continue k false)
+    | Keeping -> Some (fun k -> Effect.Deep.continue k None)
     | Bound _ -> Some (fun k -> Effect.Deep.continue k None)
     | Rule _ -> Some (fun k -> Effect.Deep.continue k None)
     | Open p ->

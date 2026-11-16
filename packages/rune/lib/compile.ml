@@ -242,6 +242,15 @@ let issued (p : Program.t) (forms : form array) =
   else if Array.length p.outputs > 0 then form p.outputs.(0)
   else decline "no value"
 
+(* A run of bytes of another device's memory, its buffer's from [first] on,
+   and its copy on the program's device. *)
+type upload = {
+  src : Rig.Buffer.t;
+  first : int;
+  length : int;
+  copy : Rig.Buffer.t;
+}
+
 type state = {
   name : string;
       (** The entry point compiling the program, which a refused capture
@@ -258,9 +267,9 @@ type state = {
           values' device and a placement onto another device copies. *)
   mutable captures : (value * Ops.t) list;
   mutable bound : (Ops.t * Rig.Buffer.t) list;
-  uploads : (value * A.any) list ref;
-      (** The constants of other devices, each with its copy on this one,
-          which every lowering of the program shares. *)
+  uploads : upload list ref;
+      (** The runs of the constants of other devices, each with its copy on
+          this one, which every lowering of the program shares. *)
   views : unit Ops.Tbl.t;
       (** The nodes of the arguments and captures, without their movements:
           views of storage. *)
@@ -310,18 +319,28 @@ let bind st (A.Any a) =
     view_of st u;
     u
 
-(* The array [a] of another device copied to [st]'s, once, as JAX embeds a
-   constant where its program runs: its run, into memory of its own, viewed
-   as [a] views its own. *)
+(* The array [a] of another device copied to [st]'s, once per run of bytes in
+   the program, as JAX embeds a constant where its program runs: its run, into
+   memory of its own, viewed as [a] views its own. Two constants over one run,
+   as a compiled function and one it inlines may keep apart, share the
+   copy. *)
 let uploaded st (A.Any a) =
   let dt = A.dtype a and l = A.layout a in
   if L.numel l = 0 then A.Any a
   else
-    let first, length = run_bytes dt l in
-    let src = Rig.Buffer.view (A.buffer a) ~first ~length in
-    let dst = Rig.Buffer.create st.rig length in
-    Rig.Buffer.copy ~src ~dst;
-    A.Any (A.v dt (within dt l) dst)
+    let first, length = run_bytes dt l and b = A.buffer a in
+    let run u = u.src == b && u.first = first && u.length = length in
+    let copy =
+      match List.find_opt run !(st.uploads) with
+      | Some u -> u.copy
+      | None ->
+          let src = Rig.Buffer.view b ~first ~length in
+          let copy = Rig.Buffer.create st.rig length in
+          Rig.Buffer.copy ~src ~dst:copy;
+          st.uploads := { src = b; first; length; copy } :: !(st.uploads);
+          copy
+    in
+    A.Any (A.v dt (within dt l) copy)
 
 (* The node of a constant: its one array, bound once. A constant on another
    device, which the program places where it computes, is uploaded there
@@ -337,17 +356,7 @@ let capture (type v s d) st (x : (v, s, d) Nx.t) =
       let u =
         match device_of (Nx.placement x) with
         | Some r when st.split || Rig.equal r st.rig -> bind st a
-        | Some _ ->
-            let made = List.find_opt (fun (v, _) -> same v (V x)) in
-            let copy =
-              match made !(st.uploads) with
-              | Some (_, c) -> c
-              | None ->
-                  let c = uploaded st a in
-                  st.uploads := (V x, c) :: !(st.uploads);
-                  c
-            in
-            bind st copy
+        | Some _ -> bind st (uploaded st a)
         | None ->
             decline "a constant placed at %s, over several devices"
               (Format.asprintf "%a" Nx.Placement.pp (Nx.placement x))
@@ -3129,7 +3138,7 @@ type t = {
   shaping : unit -> (string * string) list;  (** {!shaping} at [beam]. *)
   lock : Mutex.t;
   variants : variant list Atomic.t;
-  uploads : (value * A.any) list ref;
+  uploads : upload list ref;
       (** The copies of the constants of other devices, made by the first
           lowering, under [lock]. *)
   mutable first : ((L.t array * int array * bool array) * lowered) option;
@@ -3480,9 +3489,7 @@ let footprint t args =
       | Lent _ | Taken _ | Empty -> ())
     lowered.outs;
   List.iter
-    (fun (_, A.Any a) ->
-      let b = A.buffer a in
-      add (Rig.Buffer.device b) (Rig.Buffer.length b))
+    (fun u -> add (Rig.Buffer.device u.copy) (Rig.Buffer.length u.copy))
     !(t.uploads);
   List.map (fun (r, n) -> (r, !n)) held
 

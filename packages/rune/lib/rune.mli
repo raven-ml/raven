@@ -1528,7 +1528,12 @@ val jit :
 
     A traced function reads a handle it captures as its arrays and consumes
     nothing: its memory is shared from then on ({!Nx.section-moving}), so its
-    program reads those arrays at every evaluation.
+    program reads those arrays at every evaluation. A compiled function holds
+    every array it captures from its trace on, and its memory is shared from
+    then on, as a handle's is. A later donation of a capture computes into
+    fresh memory, and a call of a key
+    traced before it reads what that trace read, at any layout; a call of a
+    new key traces again, where a read of the dead capture raises.
 
     A donation inside a function a transformation traces ends the value it
     is given there. A traced argument is a stand-in for the caller's: with

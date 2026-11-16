@@ -26,9 +26,17 @@ type thread =
     }
       -> thread
 
+type constants = Keep | Inherit | As_is
+
+(* How a trace records a constant: as the value a compiled function's trace
+   keeps for it ({!Program.Keeping}), or as it is. An inheriting tracer asks
+   the first time it meets one. *)
+type held = Unasked | Plain | Taken of map
+
 type state = {
   kind : kind;
   name : string;
+  mutable constants : held;
   mutable next : int;  (** The next variable's number. *)
   mutable eqns : eqn list;  (** Newest first. *)
   mutable captures : (value * int) list;
@@ -50,11 +58,45 @@ let fresh st i form =
 let captured st x =
   List.find_map (fun (y, n) -> if same y x then Some n else None) st.captures
 
+(* The function by which a compiled function's trace keeps each constant: a
+   value over its arrays, read the first time the trace meets it, so that the
+   program reads them however long it lives, whatever becomes of the constant.
+   A dead constant raises naming [name], met again too: a value the trace read
+   and the function then donated raises where the trace meets it next other
+   than through an operation, as a result or a loop's init. A value kept is
+   its own, so that a program the trace evaluates again keeps its constants
+   as they are. *)
+let taking ~name =
+  let taken = ref [] in
+  let f (type v s d) (x : (v, s, d) Nx.t) : (v, s, d) Nx.t =
+    match List.find_opt (fun (y, _) -> same y (V x)) !taken with
+    | Some (_, t) ->
+        let t = like x t in
+        if t != x then ignore (Nx.Repr.shards ~by:name x);
+        t
+    | None ->
+        let arrays = Nx.Repr.shards ~by:name x in
+        let t = Nx.Repr.of_shards (Nx.placement x) arrays in
+        taken := (V t, V t) :: (V x, V t) :: !taken;
+        t
+  in
+  { f }
+
+(* [x], a constant, as [st]'s program records it. *)
+let rec constant : type v s d. state -> (v, s, d) Nx.t -> (v, s, d) Nx.t =
+ fun st x ->
+  match st.constants with
+  | Taken m -> m.f x
+  | Plain -> x
+  | Unasked ->
+      st.constants <- (match keeping () with Some m -> Taken m | None -> Plain);
+      constant st x
+
 (* [x] as an equation of [i]'s reads it: [i]'s variable, a constant, or the
    variable of a capture. *)
 let operand (type v s d) st i (x : (v, s, d) Nx.t) : (v, s, d) Nx.t =
   match Nx.Prim.owner x with
-  | None -> x
+  | None -> constant st x
   | Some j when j == i -> x
   | Some _ -> (
       match st.kind with
@@ -1177,14 +1219,25 @@ and call_parts st i (body : Program.t) args site ~seeds =
   in
   Array.append (Loops.merge d.flags ur (Array.sub kr 0 nk)) sums
 
-and trace ?totals ?asked kind ~name inputs f =
-  trace_in ?totals ?asked kind ~name inputs (fun _ vs -> f vs)
+and trace ?totals ?asked ?constants kind ~name inputs f =
+  trace_in ?totals ?asked ?constants kind ~name inputs (fun _ vs -> f vs)
 
-and trace_in ?(totals = [||]) ?asked kind ~name inputs f =
+and trace_in ?(totals = [||]) ?asked ?(constants = Inherit) kind ~name inputs f
+    =
+  (* A keeping trace inside another keeps its constants in the other's map, so
+     that one constant is one value in the program that inlines it. *)
+  let constants =
+    match constants with
+    | Keep -> (
+        match keeping () with Some m -> Taken m | None -> Taken (taking ~name))
+    | Inherit -> Unasked
+    | As_is -> Plain
+  in
   let st =
     {
       kind;
       name;
+      constants;
       next = Array.length inputs;
       eqns = [];
       captures = [];
@@ -1280,6 +1333,14 @@ and trace_in ?(totals = [||]) ?asked kind ~name inputs f =
         Some
           (fun k ->
             Effect.Deep.continue k (Array.map (Loops.filled ~zero:false) forms))
+    (* A tracer inside a compiled function's trace records the constants it
+       keeps, so that each is one value wherever the program reads it; one
+       inside a trace that keeps none records them as they are. *)
+    | Keeping, _ -> (
+        match st.constants with
+        | Taken m -> Some (fun k -> Effect.Deep.continue k (Some m))
+        | Plain -> Some (fun k -> Effect.Deep.continue k None)
+        | Unasked -> None)
     | Staging, Some _ when st.kind = Jit || st.kind = Staged ->
         Some (fun k -> Effect.Deep.continue k true)
     (* No differentiation around the tracer runs a custom rule called inside it:

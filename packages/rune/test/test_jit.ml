@@ -2384,6 +2384,119 @@ let test_dies_in_construct () =
   invalid ~sub:"Nx.donate: float32 [2] was donated" (fun () ->
       g (Nx.zeros f32 [| 3; 2 |]))
 
+(* A compiled function reads what it captures at the first call of each key
+   and keeps it. A constant the function reads and then donates computes as
+   it does eagerly, under each construct and transformation inside the
+   function. *)
+let test_read_then_donated () =
+  let yes = Nx.scalar Nx.bool true in
+  let check ~msg f =
+    let late c x =
+      let y = f c x in
+      ignore (Nx.donate c);
+      y
+    in
+    let eager = late (fresh [| 10.; 20. |]) (fresh [| 1.; 2. |]) in
+    equal ~msg bits_t (bits eager)
+      (bits (Rune.jit' (late (fresh [| 10.; 20. |])) (fresh [| 1.; 2. |])))
+  in
+  check ~msg:"an operation" (fun c x -> Nx.add x c);
+  check ~msg:"grad" (fun c x -> Rune.grad' (fun y -> Nx.sum (Nx.mul y c)) x);
+  check ~msg:"jvp" (fun c x -> snd (Rune.jvp' (fun y -> Nx.mul y c) x x));
+  check ~msg:"vmap" (fun c x ->
+      Rune.vmap' (fun r -> Nx.add r c) (Nx.stack [ x; x ]));
+  check ~msg:"a scan's step" (fun c x ->
+      fst
+        (Rune.scan'
+           (fun carry row -> (Nx.add carry (Nx.mul row c), carry))
+           ~init:x (Nx.stack [ x; x ])));
+  check ~msg:"a branch" (fun c x ->
+      Rune.cond' yes (fun () -> Nx.add x c) (fun () -> x));
+  let late c x =
+    let y = Nx.add x c in
+    ignore (Nx.donate c);
+    y
+  in
+  equal ~msg:"Rune.jit" bits_t
+    (bits (fresh [| 11.; 22. |]))
+    (bits
+       (Rune.jit T.(tensor @-> returns tensor)
+          (late (fresh [| 10.; 20. |]))
+          (fresh [| 1.; 2. |])))
+
+(* A constant its caller donates after a call is the one the call read: a call
+   of the same key at a new layout compiles the program again over it, and a
+   new shape retraces, reading the dead constant as eager computation does. *)
+let test_donated_after_call () =
+  let column () =
+    Nx.slice [ Nx.A; Nx.I 0 ] (Nx.create f32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |])
+  in
+  let c = fresh [| 10.; 20. |] in
+  let g = Rune.jit' (fun x -> Nx.add x c) in
+  equal ~msg:"the first call" bits_t
+    (bits (fresh [| 11.; 22. |]))
+    (bits (g (fresh [| 1.; 2. |])));
+  ignore (Nx.donate c);
+  equal ~msg:"a strided argument" bits_t
+    (bits (fresh [| 11.; 23. |]))
+    (bits (g (column ())));
+  invalid ~sub:"Nx.add: float32 [2] was donated" (fun () ->
+      g (Nx.zeros f32 [| 3; 2 |]));
+  (* A capture of a loop's step: carry plus each row times [c], twice. *)
+  let c = fresh [| 10.; 20. |] in
+  let g =
+    Rune.jit' (fun x ->
+        fst
+          (Rune.scan'
+             (fun carry row -> (Nx.add carry (Nx.mul row c), carry))
+             ~init:x (Nx.stack [ x; x ])))
+  in
+  equal ~msg:"a step, the first call" bits_t
+    (bits (fresh [| 21.; 41. |]))
+    (bits (g (fresh [| 1.; 1. |])));
+  ignore (Nx.donate c);
+  equal ~msg:"a step, a strided argument" bits_t
+    (bits (fresh [| 21.; 123. |]))
+    (bits (g (column ())))
+
+(* A capture the function reads, donates and then meets again other than by
+   an operation, as a result or a loop's init, raises as a read of it does,
+   naming the entry point. *)
+let test_met_again () =
+  let donated ~msg f =
+    let sub = "float32 [2] was donated" in
+    raises_match ~msg
+      (fun e ->
+        match e with
+        | Invalid_argument m -> String.ends_with ~suffix:sub m
+        | _ -> false)
+      f
+  in
+  let init c x =
+    let y = Nx.add x c in
+    ignore (Nx.donate c);
+    let r, _ =
+      Rune.scan'
+        (fun carry row -> (Nx.add carry row, carry))
+        ~init:c (Nx.stack [ x; x ])
+    in
+    Nx.add y r
+  in
+  donated ~msg:"eager" (fun () ->
+      init (fresh [| 10.; 20. |]) (fresh [| 1.; 2. |]));
+  invalid ~sub:"Rune.jit': float32 [2] was donated" (fun () ->
+      Rune.jit' (init (fresh [| 10.; 20. |])) (fresh [| 1.; 2. |]));
+  let returned c x =
+    let y = Nx.add x c in
+    ignore (Nx.donate c);
+    (y, c)
+  in
+  invalid ~sub:"Rune.jit: float32 [2] was donated" (fun () ->
+      Rune.jit
+        T.(tensor @-> returns (pair tensor tensor))
+        (returned (fresh [| 10.; 20. |]))
+        (fresh [| 1.; 2. |]))
+
 let test_lending () =
   let xs = [| 1.; -0.; 2.5; Float.infinity |] in
   let check ~msg ~lent f =
@@ -6086,6 +6199,11 @@ let () =
                test_dies_inside;
              test "a donation in a construct's function happens at the trace"
                test_dies_in_construct;
+             test "a capture read and then donated computes as eagerly"
+               test_read_then_donated;
+             test "a capture donated after a call is the one it read"
+               test_donated_after_call;
+             test "a donated capture met again raises" test_met_again;
              test "a result takes a donated argument's memory" test_lending;
              test "a shared donor lends nothing" test_shared;
              test "an evaluated program consumes its donations"

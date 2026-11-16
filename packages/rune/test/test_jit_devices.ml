@@ -2751,6 +2751,62 @@ let dead_constant () =
     (Exn.invalid_arg ~sub:"Rune.jit': float32 [4] was donated")
     (fun () -> Rune.jit' (returned ()) x)
 
+(* A constant cut over two devices is read at the trace and kept: one the
+   function reads and then donates computes as eagerly. *)
+let kept_constant () =
+  let at = Two.split ~axis:0 in
+  let c () = Nx.place at (value ~seed:1 [| 4 |]) in
+  let late c x =
+    let y = Nx.add x c in
+    ignore (Nx.donate c);
+    y
+  in
+  let x () = Nx.place at (value [| 4 |]) in
+  let host y = Nx.to_array (Nx.place Nx.Host.on y) in
+  equal ~msg:"read, then donated" (array float_exact)
+    (host (late (c ()) (x ())))
+    (host (Rune.jit' (late (c ())) (x ())))
+
+(* A constant cut over two devices that its caller donates after a call is
+   the one that call read, at a new layout of the key too. *)
+let kept_after_call () =
+  let at = Two.split ~axis:0 in
+  let x () = Nx.place at (value [| 4 |]) in
+  let host y = Nx.to_array (Nx.place Nx.Host.on y) in
+  let k = Nx.place at (value ~seed:1 [| 4 |]) in
+  let expected = host (Nx.add (x ()) k) in
+  let g = Rune.jit' (fun x -> Nx.add x k) in
+  equal ~msg:"the first call" (array float_exact) expected (host (g (x ())));
+  ignore (Nx.donate k);
+  (* The first column of a [4; 2] value, which holds [x ()]'s elements. *)
+  let column =
+    let wide = Nx.stack ~axis:1 [ value [| 4 |]; value ~seed:2 [| 4 |] ] in
+    Nx.slice [ Nx.A; Nx.I 0 ] (Nx.place (Two.split ~axis:0) wide)
+  in
+  equal ~msg:"a strided argument" (array float_exact) expected
+    (host (g column))
+
+(* A host capture that a compiled function and a compiled function it calls
+   both place on the device where they compute is copied there once, as one
+   function that places it twice copies it: whether the inner one is traced
+   inside the outer's trace or before it. *)
+let nested_upload () =
+  let at = Nx.Placement.device One.v (m 0) in
+  let n = 1024 in
+  let c = value [| n |] and x = Nx.place at (value ~seed:1 [| n |]) in
+  let s = T.(tensor @-> returns tensor) in
+  let on_device (r, _) = Rig.equal r (m 0) in
+  let bytes f = snd (List.find on_device (Rune.footprint s f x)) in
+  let expected =
+    bytes (fun x -> Nx.add (Nx.mul x (Nx.place at c)) (Nx.place at c))
+  in
+  let outer inner x = Nx.add (inner x) (Nx.place at c) in
+  let inner () = Rune.jit' (fun x -> Nx.mul x (Nx.place at c)) in
+  equal ~msg:"traced inside" int expected (bytes (outer (inner ())));
+  let first = inner () in
+  ignore (first x);
+  equal ~msg:"traced before" int expected (bytes (outer first))
+
 let io_capture () =
   let y = on_disk Disk.v io_ys in
   let at = Two.split ~axis:0 in
@@ -2952,6 +3008,11 @@ let () =
          group "dead values"
            [
              test "a dead constant it returns raises, named" dead_constant;
+             test "a constant is read at the trace and kept" kept_constant;
+             test "a constant donated after a call is the one it read"
+               kept_after_call;
+             test "a capture is copied once across nested programs"
+               nested_upload;
            ];
          group "a batch of one"
            [
