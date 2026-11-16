@@ -2554,15 +2554,26 @@ let ckinds =
   ]
 
 (* Specials at fractions of [a]'s elements, or of [b]'s where the flag is
-   set: a draw of a few, a quarter of the time. *)
+   set: one or two, 2 times in 5, each a NaN, an infinity or [-0.] alike.
+   Each kind is then among a case's specials 8 times in 45, so that the
+   200 cases of a matrix product over cut operands, 3 in 4 of a float or
+   complex dtype, 7 in 8 with a product, cover each but with probability
+   below 10^-10. *)
 let marks_of =
   let open Gen in
+  let nans = List.filter (function Nan _ -> true | _ -> false) specials in
+  let special =
+    frequency
+      [
+        (1, of_list nans);
+        (1, of_list [ Inf; Neg_inf ]);
+        (1, constant Neg_zero);
+      ]
+  in
   frequency
     [
       (3, constant []);
-      ( 1,
-        list ~size:(int_range 1 2)
-          (triple bool (float_range 0. 1.) (of_list specials)) );
+      (2, list ~size:(int_range 1 2) (triple bool (float_range 0. 1.) special));
     ]
 
 (* [n] elements by [draw] from [st], with the specials of [marks] on
