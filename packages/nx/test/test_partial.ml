@@ -2109,8 +2109,8 @@ let peak ds ~most f =
    share's slots exceed a piece's 256 KiB: beside its operands, a device
    holds at most the larger of its partials [p] and the results, its share
    [s] of the results, and a piece's 256 KiB of slots with [m] of its
-   results of at most a quarter of that each. Each fold's bound is
-   partial.mli's. *)
+   results of at most [1 / N] of that each, [N] the windows, four but
+   where a case says. Each fold's bound is partial.mli's. *)
 let test_closing_peaks () =
   let ds =
     List.init 4 (fun k ->
@@ -2133,15 +2133,15 @@ let test_closing_peaks () =
     split 0
       (Nx.init Nx.int64 [| 8; cols |] (fun i -> Int64.of_int (i.(0) * 64)))
   and updates = split 0 (Nx.ones Nx.bfloat16 [| 8; cols |]) in
-  let case name ~p ~results ~share ~m f =
-    let bound = Int.max p results + share + c + (m * c / 4) in
+  let case ?(tiles = 4) name ~p ~results ~share ~m f =
+    let bound = Int.max p results + share + c + (m * c / tiles) in
     let got = peak ds ~most:(2 * bound) f in
     match got with
     | None -> fail (Printf.sprintf "%s: no fit within twice its bound" name)
     | Some got ->
         at_most int ~msg:name ~than:bound got;
-        less int ~msg:(name ^ ": the share beside the results")
-          ~than:got (results + share)
+        at_least int ~msg:(name ^ ": the share beside the results")
+          ~than:(results + share) got
   in
   case "sum" ~p:(4 * el) ~results:(4 * el) ~share:el ~m:1 (fun () ->
       Nx.sum ~axes:[ 0 ] x);
@@ -2162,7 +2162,37 @@ let test_closing_peaks () =
   (* Slots in float32, a bfloat16 result. *)
   case "scatter Add" ~p:(4 * el) ~results:(2 * el) ~share:(el / 2) ~m:2
     (fun () -> Nx.scatter ~combine:Add ~axis:0 idx updates into);
-  ignore (Sys.opaque_identity (x, short, a, b, into, idx, updates))
+  (* nx.mli's sum over [N] windows of a result of [r] bytes whole on every
+     device: at most [r + r ⌈e / N⌉ / e] and [C (1 + 1 / N)], [e] the
+     result's first axis of at least [N] elements, or [2r] and as much
+     where it has none. Each result is large enough that holding its
+     share beside it passes the bound with [N] devices in place of the
+     windows, or [r / N] in place of the share. Over a mesh whose major
+     axis holds copies, two windows on four devices: a share of
+     [⌈1024 / 2⌉] rows of 1024. *)
+  let mesh = Nx.Mesh.v S.v [ ("a", 2); ("b", 2) ] in
+  let copied =
+    Nx.place
+      (Nx.Placement.mesh mesh [ (0, [ "b" ]) ])
+      (value Nx.float32 [| 2; 2 * rows; cols |])
+  in
+  case "sum over a mesh holding copies" ~tiles:2 ~p:(8 * el)
+    ~results:(8 * el) ~share:(4 * el) ~m:1 (fun () ->
+      Nx.sum ~axes:[ 0 ] copied);
+  (* A first axis of 5 over four windows: a share of [⌈5 / 4⌉] rows. *)
+  let uneven = split 0 (value Nx.float32 [| 4; 5; 262144 |]) in
+  case "sum of a first axis four does not divide" ~p:(20 * el)
+    ~results:(20 * el) ~share:(8 * el) ~m:1 (fun () ->
+      Nx.sum ~axes:[ 0 ] uneven);
+  (* A result of eleven axes of 3, none of four elements: its whole. *)
+  let threes = Array.make 11 3 in
+  let r = 4 * Array.fold_left ( * ) 1 threes in
+  let narrow = split 0 (value Nx.float32 (Array.append [| 4 |] threes)) in
+  case "sum of a result without an axis of four" ~p:r ~results:r ~share:r
+    ~m:1 (fun () -> Nx.sum ~axes:[ 0 ] narrow);
+  ignore
+    (Sys.opaque_identity
+       (x, short, a, b, into, idx, updates, copied, uneven, narrow))
 
 (* Lanes at both ends of float64's range, cut across devices along the
    reduced axis and across it: the results' finiteness and values are the
