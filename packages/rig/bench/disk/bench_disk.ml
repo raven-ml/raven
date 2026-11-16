@@ -38,6 +38,12 @@ external map : int -> int -> int -> int = "rig_disk_bench_map"
 external evict : int -> int = "rig_disk_bench_evict"
 external evicts : unit -> bool = "rig_disk_bench_evicts"
 external address : B.t -> int = "rig_disk_bench_host"
+external no_huge_pages : unit -> unit = "rig_bench_no_huge_pages"
+
+(* On Linux the suite's host memory stays on base pages, 4 KiB on x86-64:
+   pages sized by the host's free memory at each fault would make its rows
+   measure the host's fragmentation. *)
+let () = no_huge_pages ()
 
 let strf = Printf.sprintf
 let kib = 1024

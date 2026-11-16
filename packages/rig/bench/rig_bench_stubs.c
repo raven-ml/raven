@@ -4,13 +4,17 @@
   ---------------------------------------------------------------------------*/
 
 /* What the bench rows need from C: a file's pages dropped from the page
-   cache, and a host kernel's claims on its operands. */
+   cache, a host kernel's claims on its operands, and host memory kept off
+   huge pages. */
 
 #define _GNU_SOURCE
 
 #include <errno.h>
+#include <stdio.h>
+#include <string.h>
 
 #define CAML_NAME_SPACE
+#include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 
@@ -22,6 +26,27 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
+
+#if defined(__linux__)
+#include <sys/prctl.h>
+#endif
+
+/* Turns transparent huge pages off for the process and every process it
+   starts (prctl's PR_SET_THP_DISABLE, kept across fork and exec): memory it
+   faults from then on comes in base pages, and khugepaged collapses none of
+   it. Pages faulted before keep their size. A no-op off Linux. Raises
+   [Failure] if the kernel refuses. */
+value rig_bench_no_huge_pages(value v_unit) {
+  (void)v_unit;
+#if defined(__linux__)
+  if (prctl(PR_SET_THP_DISABLE, 1L, 0L, 0L, 0L) != 0) {
+    char msg[96];
+    snprintf(msg, sizeof msg, "prctl PR_SET_THP_DISABLE: %s", strerror(errno));
+    caml_failwith(msg);
+  }
+#endif
+  return Val_unit;
+}
 
 /* Drops the file [v_path]'s pages from the page cache, so that its next
    read comes from its medium: writes back its dirty pages, then asks the

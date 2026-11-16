@@ -1,7 +1,7 @@
 (executable
  (name bench_disk)
  (modules bench_disk)
- (libraries rig rig_disk thumper)
+ (libraries rig rig_bench rig_disk thumper)
  (foreign_stubs
   (language c)
   (names rig_disk_bench_stubs)))

@@ -3,6 +3,7 @@
  (modules bench_cuda)
  (libraries
   rig
+  rig_bench
   rig_cuda
   rig_cuda_abi
   rig_cuda_support
