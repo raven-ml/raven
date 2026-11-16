@@ -92,6 +92,9 @@ Where it stands, with every measurement: doc/performance.md.
   nonnormal), and an eviction may move its window while it writes. rig's
   traced launch test runs only over PCI. The paths left are PCI and an
   amdgpu DRM submission, which holds its VMID and memory for the job
+- Metal's renderer emits no launch bound, and its `local_threads_max` of
+  1024 is the theoretical maximum a pipeline may refuse; Mac2's AMD GPUs
+  may run 64-wide SIMD groups, which `simd_threads` does not state
 - `beam_search`'s disk key names no device part, so a search timed on one
   part of a target serves every other part
 
