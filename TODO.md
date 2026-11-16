@@ -139,12 +139,18 @@ Where it stands, with every measurement: doc/performance.md.
   no fudge measurement: the CUDA cap needs a fudge row, as the ledger's
   header asks of a speed measured elsewhere
 - `beam_search`'s disk key names no device part, so a search timed on one
-  part of a target serves every other part
+  part of a target serves every other part. rig states arch, bus and
+  cache bytes but no model or unit count, so the key needs a rig fact and
+  an argument rune's `search` passes; tinygrad keys by device and suffix
 - `Heuristic.reused` (heuristic.ml:853) and `upcast_more`'s `reuses`
   (:926) count every access in the kernel, loads after the reduce
   included, so a bias that skips an axis both operands of a contraction
-  read makes that axis look reused. Unverified with a kernel. Found by the
-  I1 lend fix
+  read makes that axis look reused. On CUDA and AMD, `empty(4,512,16) @
+  empty(4,16,768) + empty(512,768)` turns `four_first` off and upcasts the
+  batch whole (4x4x3, unblocked) where `matmul_768` blocks at 64; fixing
+  `reused` alone gives 4x4x4, still unblocked, so `reuses` (tinygrad's
+  rule, pinned by `scores_biased`) changes too, a divergence that needs a
+  timed GPU row. Found by the I1 lend fix
 - A bf16 product's tensor core at five K tiles with a float32 `exp`
   epilogue runs 1.22-1.28x slower than SIMT: at 65536x72x512, padded to
   K = 80, 0.347 against SIMT's 0.284 ms, while main takes the same core
@@ -166,8 +172,12 @@ Where it stands, with every measurement: doc/performance.md.
   10-15 s on an idle fudge. At a load of 30-60 on its 14 cores they pass
   the 60 s `WINDTRAP_TIMEOUT` (dune:53) and fail the runtest; a rerun
   passes (10.7 s at load 14). Each case compiles programs of its own
-  shapes. Where their time goes is unmeasured. Found by the TARGETFACTS
-  audit and CODEPATH design A
+  shapes. Nearly all of it is cold compiles, one program a case: host
+  "every dtype" 10.2 s cold (9.7 s jit for 37 programs, clang about half),
+  1.9 s warm; GPU "mapped by vmap" 17.3 s cold (13.4 s jit, 36 programs),
+  3.1 s warm. A case at tq/tk 7-9 compiles in 0.1 s against 0.25-0.5 s at
+  300, so smaller shapes, where a case's comment allows, cut it. Found by
+  the TARGETFACTS audit and CODEPATH design A
 - rune states a compiled complex contraction's part within
   `γ(β(K) + 2) Σ(|ar br| + |ai bi|)` (rune.mli:1696-1698,
   lower_reduce.mli:141-145), while `Nx.contract` and the kernel contract
