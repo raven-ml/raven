@@ -1974,7 +1974,10 @@ let entry_commands =
    across it, Metal's answers settled on both sides. An unload at once
    follows a prepare of [small] with no settle, while Metal may still
    compile: the drop across both, settled before the prepare and after the
-   unload, is as large. *)
+   unload, is as large. An entry at once follows a prepare of [small] the
+   same way, on an image whose [small] no entry took: each of its calls
+   enters a prepared function, which a prepare and an entry drawn apart
+   reach in few cases. *)
 
 type small = Unmade | Prepared | Entered
 
@@ -2043,6 +2046,15 @@ let small_commands =
     command "entry" ~pre:loaded_only
       (small_image ^-> small_functions @-> returns string)
       entry_model entry_answer;
+    command "entry at once"
+      ~pre:(fun m -> (not m.unloaded) && m.small <> Entered)
+      (small_image ^-> returns string)
+      (fun m ->
+        m.small <- Prepared;
+        entry_model m "small")
+      (fun s ->
+        start s.si "small";
+        entry_answer s "small");
     command "unload"
       ~pre:(fun m -> not m.unloaded)
       (small_image ^-> returns int)
