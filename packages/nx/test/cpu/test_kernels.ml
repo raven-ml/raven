@@ -1570,14 +1570,27 @@ let cpu =
           b.around (fun () ->
               covers c;
               law_map1 b c));
+      (* Every dtype refuses a kind: floats Atanh, complex numbers Erf,
+         integers and booleans Exp, so that each case checks a refusal over a
+         large view writes nothing. *)
       prop ~count:8
         (strf "%s's kinds of one operand over large views" b.name)
         large
-        (fun c ->
-          b.around (fun () ->
-              law_map1
-                ~kinds:P.[ (Exp, "exp"); (Sin, "sin"); (Neg, "neg") ]
-                b c));
+        (fun (Case x as c) ->
+          let kinds =
+            P.
+              [
+                (Exp, "exp");
+                (Sin, "sin");
+                (Neg, "neg");
+                (Erf, "erf");
+                (Atanh, "atanh");
+              ]
+          in
+          let dt = A.dtype x in
+          let refused (u, _) = not (P.accepts1 (P.Unary u) dt dt) in
+          cover "outside its domain" (List.exists refused kinds);
+          b.around (fun () -> law_map1 ~kinds b c));
       prop
         (strf "%s's kinds of two operands are nx_kinds.h's at each index"
            b.name)
@@ -1602,12 +1615,18 @@ let cpu =
               cover "operands of one run, of one element"
                 (one_run && L.numel lx = 1);
               law_map2 b p));
+      (* Every dtype refuses a kind: floats And, integers and booleans Fdiv,
+         so that each case checks a refusal over a large view writes
+         nothing. *)
       prop ~count:8 ~examples:[ large_bfloat16_pair ]
         (strf "%s's kinds of two operands over large views" b.name)
         large_pairs
-        (fun c ->
-          b.around (fun () ->
-              law_map2 ~kinds:P.[ Binary Add; Compare Less ] b c));
+        (fun (Pair (x, _) as c) ->
+          let kinds = P.[ Binary Add; Compare Less; Binary And; Binary Fdiv ] in
+          let dt = A.dtype x in
+          cover "outside its domain"
+            (List.exists (fun k -> not (P.accepts2 k dt)) kinds);
+          b.around (fun () -> law_map2 ~kinds b c));
       (* "a where" and "a load of one repeated element" come in one case
          in twenty-five: 400 cases reach each in every run. *)
       prop ~count:400
