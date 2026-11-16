@@ -426,19 +426,21 @@ let laws =
           let ordered = List.stable_sort by_place offsets = offsets in
           cover "offsets in order" ordered;
           cover "offsets out of order" (not ordered);
+          let cuts = (0 :: List.map place offsets) @ [ d ] in
+          cover "no offset" (ordered && offsets = []);
+          cover "a negative offset"
+            (ordered && List.exists (fun k -> k < 0) offsets);
+          cover "an offset outside the axis"
+            (ordered && List.exists (fun k -> k < -d || k > d) offsets);
+          cover "an empty run"
+            (ordered
+            && List.exists2 ( = ) (List.filteri (fun i _ -> i > 0) cuts)
+                 (List.filteri (fun i _ -> i < List.length cuts - 1) cuts));
           let axis = spell o neg a in
           if not ordered then
             raises_match (Exn.invalid_arg ~sub:"Nx.split_at: offset ")
               (fun () -> Nx.split_at ~axis offsets o.x)
           else begin
-            cover "no offset" (offsets = []);
-            cover "a negative offset" (List.exists (fun k -> k < 0) offsets);
-            cover "an offset outside the axis"
-              (List.exists (fun k -> k < -d || k > d) offsets);
-            let cuts = (0 :: List.map place offsets) @ [ d ] in
-            cover "an empty run"
-              (List.exists2 ( = ) (List.filteri (fun i _ -> i > 0) cuts)
-                 (List.filteri (fun i _ -> i < List.length cuts - 1) cuts));
             let parts = Nx.split_at ~axis offsets o.x in
             equal ~msg:"runs" int (List.length offsets + 1) (List.length parts);
             List.iteri
