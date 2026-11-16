@@ -726,7 +726,9 @@ let law_positions (Count_case (dt, vs, size, view)) =
   cover "padded" (match size with Some l -> l > total | None -> false);
   cover "cut short" (match size with Some l -> l < total | None -> false);
   cover "sized to the total" (size = Some total && total > 0);
-  cover (view_name view) true;
+  List.iter
+    (fun v -> cover (view_name v) (view = v))
+    [ Contiguous; Reversed; Stepped; Broadcast ];
   let want =
     List.concat
       (List.mapi (fun i k -> List.init k (fun _ -> Int64.of_int i))
@@ -1292,7 +1294,10 @@ let () =
            ];
          group "positions"
            [
-             prop "each index repeated its count" count_case law_positions;
+             (* A size of the total and an empty count are each about one
+                case in eight. *)
+             prop ~count:300 "each index repeated its count" count_case
+               law_positions;
              test "cases" test_positions_cases;
              test "9000 positions" test_positions_long;
            ];
