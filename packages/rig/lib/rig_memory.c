@@ -5,7 +5,9 @@
 
 /* The readers of buffers rig.h declares. Nothing here blocks but
    rig_buffer_wait, which runs Rig.Buffer.wait. A claim that meets a take or
-   a free under way spins until that step ends. */
+   a free under way spins until that step ends. An unborrow, a take or a
+   free that meets an unborrow between its two steps spins until that
+   unborrow ends the lease or yields. */
 
 #define _GNU_SOURCE
 
@@ -140,9 +142,10 @@ static int lease_ended(value b) {
              LEASE_END;
 }
 
-/* Counts a claim or a hold through a borrow's [b] on its lease, which an
-   unborrow refuses while it holds, and ends one. A count past an end only
-   marks claims that will find the borrow dead. Other buffers have none. */
+/* Counts a claim, a hold, a take or a free through a borrow's [b] on its
+   lease, which an unborrow refuses while it holds, and ends one. A count
+   past an end only marks claims that will find the borrow dead. Other
+   buffers have none. */
 static void lease_take(value b) {
   if (Is_block(lease_of(b)))
     atomic_fetch_add_explicit(lease_count(b), Val_long(1) - Val_long(0),
@@ -176,13 +179,14 @@ static void add_settled(_Atomic value *word, intnat step) {
   }
 }
 
-/* Whether [b] is dead: a take or free raised its memory's generation from
-   [b]'s own, or an unborrow ended its lease. */
-static int dead(value b) {
+/* Whether a take or free raised [b]'s memory's generation from [b]'s own. */
+static int raised(value b) {
   return Long_val(load_field(alloc_of(b), ALLOC_GEN)) !=
-             Long_val(Field(b, BUFFER_GEN)) ||
-         lease_ended(b);
+         Long_val(Field(b, BUFFER_GEN));
 }
+
+/* Whether [b] is dead: raised, or an unborrow ended its lease. */
+static int dead(value b) { return raised(b) || lease_ended(b); }
 
 void *rig_buffer_host(value b) {
   value mem = Field(b, BUFFER_MEM);
@@ -523,8 +527,10 @@ int rig_buffers_claim(int n, const value *buffers,
    own, and gives the word back empty, generation first. A claim, hold or
    mark that meets CLAIM_TAKING spins until the word comes back, so its
    compare-and-set follows the raise and its check finds every earlier
-   buffer dead. A step never waits while it holds a word, so whatever a
-   spinner holds, the step it waits for ends. */
+   buffer dead. Under a borrow's word, the step also counts on the borrow's
+   lease, as a claim does, so that an unborrow beside it either yields or
+   sees the raise (lease_give_settled). A step never waits while it holds a
+   word, so whatever a spinner holds, the step it waits for ends. */
 
 /* Raises [b]'s memory's generation by 2 from [b]'s own, with the reason
    [why] first, so that a buffer found dead shows it. Its buffers then admit
@@ -558,6 +564,25 @@ static void await_given(_Atomic value *word) {
     relax();
 }
 
+/* Gives back the count a take or a free put on a borrow's [b] lease under
+   its word, once no unborrow is between its two steps. Such an unborrow
+   meets the count, so its second step fails and it backs out. A count
+   given back sooner would let that second step end the lease beside the
+   take's or free's success. An unborrow that marks the lease after the
+   count is given back sees the raise. While the count is on, no other
+   unborrow can mark the lease, so this waits for one at most. The caller
+   holds no word. */
+static void lease_give_settled(value b) {
+  if (!Is_block(lease_of(b))) return;
+  _Atomic value *count = lease_count(b);
+  for (;;) {
+    intnat n = Long_val(atomic_load_explicit(count, memory_order_acquire));
+    if (n < LEASE_MARK || n >= LEASE_END) break;
+    relax();
+  }
+  lease_give(b);
+}
+
 /* Buffer.free's step: holds [v_b]'s word if it is empty, waiting out a take
    or free under way, checks [v_b] live under it, and raises the generation
    with the reason [v_why], so a claim that follows finds [v_b] dead. It is
@@ -570,13 +595,12 @@ value caml_rig_buffer_free(value v_b, value v_why) {
     if (Long_val(seen) >= 0) return Val_long(dead(v_b) ? 2 : 0);
     await_given(word);
   }
-  if (dead(v_b)) {
-    give_back(word);
-    return Val_long(2);
-  }
-  raise_generation(v_b, v_why);
+  lease_take(v_b);
+  int live = !dead(v_b);
+  if (live) raise_generation(v_b, v_why);
   give_back(word);
-  return Val_long(1);
+  lease_give_settled(v_b);
+  return Val_long(live ? 1 : 2);
 }
 
 /* What the take step answers when it took every buffer, and when a word
@@ -612,6 +636,7 @@ static intnat take_try(value bs, value why, _Atomic value **busy) {
       }
       break;
     }
+    lease_take(b);
     held++;
     if (answer == TAKE_ALL && (dead(b) || followed(b, 1) == RIG_LOST))
       answer = held - 1;
@@ -619,8 +644,12 @@ static intnat take_try(value bs, value why, _Atomic value **busy) {
   if (answer == TAKE_ALL)
     for (value l = bs; l != Val_emptylist; l = Field(l, 1))
       raise_generation(Field(l, 0), why);
-  for (value l = bs; held > 0; l = Field(l, 1), held--)
+  /* Every word goes back before any count, which may wait out an unborrow. */
+  intnat k = held;
+  for (value l = bs; k > 0; l = Field(l, 1), k--)
     give_back(claim_word(Field(l, 0)));
+  for (value l = bs; held > 0; l = Field(l, 1), held--)
+    lease_give_settled(Field(l, 0));
   return answer;
 }
 
@@ -634,8 +663,10 @@ static intnat take_try(value bs, value why, _Atomic value **busy) {
    by the step itself: TAKE_USED. A word another step holds is waited for
    with no word held, then the step tries again, so its answer is the one
    it would give after that step. It allocates nothing, and a claim that
-   meets one of its words spins for at most one try: for [n] buffers, [n]
-   compare-and-sets, checks and walks of stamps. */
+   meets one of its words spins while one try holds them: for [n] buffers,
+   [n] compare-and-sets, counts on leases, checks and walks of stamps. With
+   its words given back, a try waits out at most one unborrow per borrowed
+   buffer (lease_give_settled). */
 value caml_rig_buffers_take(value v_bs, value v_why) {
   _Atomic value *busy = NULL;
   intnat answer;
@@ -650,16 +681,16 @@ value caml_rig_buffers_take(value v_bs, value v_why) {
    memory's claims, of its other buffers, are not its. It moves the count
    from none to LEASE_MARK, which keeps out every other unborrow, stores the
    reason, then moves LEASE_MARK to LEASE_END, so a count from LEASE_END
-   always has its reason. A claim or hold that came between the two keeps
-   the count off LEASE_MARK: the step takes LEASE_MARK back and yields to
-   it. The second compare-and-set acquires, so the end follows the accesses
-   of a claim that came and went between them, and releases the reason. It
-   is 1 if it ended the lease, 0 if a claim through the borrow kept it, and
-   2 if [v_b] is dead. */
+   always has its reason. A claim, hold, take or free that came between the
+   two keeps the count off LEASE_MARK: the step takes LEASE_MARK back and
+   yields to it. The second compare-and-set acquires, so the end follows the
+   accesses of a claim that came and went between them, and releases the
+   reason. Under the mark it checks [v_b]'s generation again: a take or free
+   that gave its count back before the mark raised it first
+   (lease_give_settled). It is 1 if it ended the lease, 0 if a claim, hold,
+   take or free through the borrow kept it, and 2 if [v_b] is dead. */
 value caml_rig_lease_free(value v_b, value v_why) {
-  if (Long_val(load_field(alloc_of(v_b), ALLOC_GEN)) !=
-      Long_val(Field(v_b, BUFFER_GEN)))
-    return Val_long(2);
+  if (raised(v_b)) return Val_long(2);
   _Atomic value *count = lease_count(v_b);
   value seen = Val_long(0);
   while (!atomic_compare_exchange_strong_explicit(
@@ -670,6 +701,11 @@ value caml_rig_lease_free(value v_b, value v_why) {
     /* Another unborrow is between its two steps, which wait for nothing. */
     relax();
     seen = Val_long(0);
+  }
+  if (raised(v_b)) {
+    atomic_fetch_sub_explicit(count, Val_long(LEASE_MARK) - Val_long(0),
+                              memory_order_release);
+    return Val_long(2);
   }
   caml_modify(&Field(lease_of(v_b), LEASE_WHY), v_why);
   value mark = Val_long(LEASE_MARK);

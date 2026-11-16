@@ -584,6 +584,35 @@ let claim_commands =
     command "dead" (lease ^-> returns (option string)) ended B.dead;
   ]
 
+(* Two domains: frees and takes of a borrow beside its unborrows. Whichever
+   comes first kills the borrow with its reason, and the others raise; a
+   take gives a live buffer. An unborrow may find a free or a take under way
+   and answer [false] while the borrow lives, as beside a claim. *)
+let judge_take why r = function
+  | Ok (Some deaths) ->
+      equal ~msg:"the taken buffer" (list (option string)) [ None ] deaths;
+      judge_unborrow why r (Ok true)
+  | Ok None -> judge_unborrow why r (Ok false)
+  | Error e -> judge_unborrow why r (Error e)
+
+let take why b = Option.map (List.map B.dead) (B.take ~why [ b ])
+
+let end_commands =
+  [
+    command "borrow" (Gen.unit @-> makes lease) live lend;
+    command "unborrow"
+      (reason @-> lease ^-> judges bool)
+      judge_unborrow_claimed unborrow;
+    command "free"
+      (reason @-> lease ^-> judges bool)
+      judge_unborrow
+      (fun why b -> B.free ~why b);
+    command "take"
+      (reason @-> lease ^-> judges (option (list (option string))))
+      judge_take take;
+    command "dead" (lease ^-> returns (option string)) ended B.dead;
+  ]
+
 (* A free of a borrow returns its memory, as a free of any buffer that spans
    it does: also of the buffer a take of the borrow gave. Every buffer over
    the memory is then dead, and its mappings go once its work is done. *)
@@ -2428,6 +2457,10 @@ let tests =
           "claims through a borrow beside its unborrow find it live, or dead \
            with the end's reason"
           claim_commands;
+        stateful ~domains:2
+          "frees and takes of a borrow beside its unborrow end it once, with \
+           the first one's reason"
+          end_commands;
         test "a free of a borrow returns its memory, also once taken"
           test_borrow_free;
         test "borrows of one allocation share one mapping until the last goes"

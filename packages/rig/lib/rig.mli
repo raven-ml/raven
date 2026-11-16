@@ -1257,9 +1257,9 @@ module Buffer : sig
   val unborrow : ?why:string -> t -> bool
   (** [unborrow ~why b] tries to end the borrow [b] early, and is [false],
       changing nothing, if a claim or a hold through the borrow or one of
-      its views keeps it, such as a host access or a submit through it on
-      another domain, or a prepared submission that names it
-      ({!val-keep}). Otherwise every buffer of the borrow,
+      its views keeps it, such as a host access, a submit, a {!take} or a
+      {!free} through it on another domain, or a prepared submission that
+      names it ({!val-keep}). Otherwise every buffer of the borrow,
       its views included, is dead with the reason [why] (["unborrowed"] by
       default), which {!dead} then answers, the memory and its other
       buffers live on, the borrow's hold of its mapping ends as at its

@@ -437,10 +437,11 @@ and lease =
   | Unleased
   | Lease of {
       mutable lease_count : int; [@atomic]
-          (** The claims and holds through the borrow, plus [lease_end]
-              once an unborrow ended it, which then makes the borrow's
-              buffers dead. An unborrow under way adds half [lease_end]
-              while it stores [lease_why], which reads as live. *)
+          (** The claims and holds through the borrow and its takes and
+              frees under way, plus [lease_end] once an unborrow ended it,
+              which then makes the borrow's buffers dead. An unborrow under
+              way adds half [lease_end] while it stores [lease_why], which
+              reads as live. *)
       mutable lease_why : string;
           (** The unborrow's reason, set before its end by the one unborrow
               under way. *)
