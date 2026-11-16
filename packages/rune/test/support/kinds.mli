@@ -32,6 +32,7 @@ val acos : kind
 val atan : kind
 val atan2 : kind
 val erf : kind
+val pow : kind
 val log : kind
 val log2 : kind
 val log1p : kind

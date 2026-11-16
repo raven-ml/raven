@@ -120,10 +120,8 @@ measured, withdrawn or redesigned.
 Each entry also gives the reference (tinygrad `c22edff14c79`, the commit
 tolk follows, its files under `tinygrad/`; or none), nx's meaning, the
 agreement class (exact, bit for bit as `rune.mli` defines it; an ulp bound; a
-rounded sum; a stated bound) and its reason. An ulp bound is the
-one `lower_real.mli` states, which `Lower_real`'s suite holds on the host; a
-rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
-`lower_linalg.mli`'s.
+rounded sum; a stated bound) and its reason. A rounded sum's bound is
+`lower_reduce.mli`'s; a matrix routine's is `lower_linalg.mli`'s.
 
 ### A1. Narrow floats compute at float32
 
@@ -144,15 +142,14 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   formulas on their bits.
 - **nx:** `prog.mli`, Results: floats narrower than `float32` compute in
   `float32` and round once to their dtype. `dtype.mli`, Stores: the NaN rule.
-- **Class:** as the operation's; a kind of nx's sequence exact, another
-  transcendental kind within one rank of the correctly rounded result.
+- **Class:** as the operation's: exact for every real kind.
 - **Reason:** (b).
 - **Pinned by:** `Lower_arith › exact unary kinds give eager's bits`, `› exact
-  binary kinds, comparisons, where and fma give eager's bits`, `› narrow
-  floats' transcendental kinds are within one ulp of the correctly rounded
-  result`, `› 16-bit casts › *` on the host and `Jit_gpu › 16-bit casts › *`
-  on a GPU (every code and every tie, the targets' casts against eager's
-  bits).
+  binary kinds, comparisons, where and fma give eager's bits`, `› 16-bit
+  casts › *` and `Lower_real › kinds › * of every narrow float gives eager's
+  bits` on the host and `Jit_gpu › 16-bit casts › *` and `Jit_gpu › kinds ›
+  * of every narrow float gives eager's bits` on a GPU (every code and every
+  tie, the targets' casts against eager's bits).
 
 ### A2. Integer arithmetic wraps
 
@@ -395,24 +392,26 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Reason:** (b).
 - **Pinned by:** `Lower_real › exact › mod`.
 
-### A18. Power with its product in two parts
+### A18. Power by nx's sequence
 
 - **Reference:** `mixin/elementwise.py:549` (`Ops.POW`, `xpow` =
   `exp2 (y log2 |x|)`).
-- **Raven:** `lower_real.ml` (`pow`).
+- **Raven:** `lower_real.ml` (`pow_log2`, `pow`).
 - **Differs:** rounding `y log2 |x|` costs up to about its magnitude in ulps.
-  The product's error, exact from an fma, is kept, and `2^(hi + lo)` is
-  `2^hi (1 + lo ln 2)` (`exp_parts`, `exp2_split`), a positive `hi` taking
-  `2^(hi - 1)`, doubled after the product, since `hi` may round up to where
-  `2^hi` overflows while the result does not. A negative base takes the sign of an odd integral
-  exponent and is NaN for a fractional one, and the special values are C99
-  F.9.4.4's: `pow 1 nan` is 1, where tinygrad's `xpow`
+  The lowering builds `nx_kinds_real.h`'s `nx_pow` operation for operation:
+  `log2 |x|` as a pair from A24's reduction, `f` and `f / (2 + f)` carried
+  as pairs, its product by `y` kept in two parts by fmas and clamped where
+  the result saturates, then A7's `exp2` polynomial and scaling. A negative
+  base takes the sign of an odd integral exponent, read from the bits, and
+  is NaN for a fractional one, and the special values are C99 F.9.4.4's:
+  `pow 1 nan` is 1, where tinygrad's `xpow`
   (`codegen/decomp/transcendental.py:257`) gives NaN.
-- **nx:** `prog.mli`, `Pow` and Results.
-- **Class:** ulp bound: 9.
+- **nx:** `nx_kinds_real.h` (`nx_pow`).
+- **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `Lower_real › transcendental › pow within 2 ulps at float32, 2
-  at float64`.
+- **Pinned by:** `Lower_real › kinds › pow gives eager's bits`, `› pow of
+  every narrow float gives eager's bits`, `› pow of a constant gives eager's
+  bits`, on the host; `Jit_gpu › kinds › *` on a GPU.
 
 ### A19. Maximum and minimum
 

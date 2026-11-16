@@ -1608,41 +1608,30 @@ val jit :
     and the comparisons are exact.
 
     A float narrower than [float32] computes at [float32] and rounds once, so
-    each real function of the table below is within one ulp of the correctly
-    rounded result there, {!Nx.pow} where its result is finite in that dtype,
-    and each exact real function is exact there too. On a device that flushes
-    subnormals, as Metal does at [float32], a function may be inexact or break
-    its bound where an operand, a result or an intermediate is below the least
-    normal float.
+    each exact real function is exact there too. On a device that flushes
+    subnormals, as Metal does at [float32], a function stated exact or within a
+    bound in this section may be inexact or break its bound where an operand, a
+    result or an intermediate is below the least normal float, and the real
+    functions below hold only what they state for such a device.
 
     {b Real functions.} {!Nx.exp}, {!Nx.exp2}, {!Nx.expm1}, {!Nx.log},
     {!Nx.log2}, {!Nx.log1p}, {!Nx.sin}, {!Nx.cos}, {!Nx.tan}, {!Nx.asin},
-    {!Nx.acos}, {!Nx.atan}, {!Nx.atan2}, {!Nx.sinh}, {!Nx.cosh}, {!Nx.tanh}
-    and {!Nx.erf} compute nx's own sequence of operations for them, so they
-    are exact on a device that keeps subnormals, rounds division and the
-    square root correctly and rounds a fused multiply-add once, as the host
-    CPU and NVIDIA GPUs do. So is {!Nx.log10}, which nx composes from
-    {!Nx.log2} and exact functions. On every device, where every operand is
-    [±0.], [±inf] or a NaN, a function gives the value of C99 Annex F
-    (ISO/IEC 9899, F.9), a zero's sign included: [sin (-0.)] is [-0.] and
-    [log 0.] is [-inf]; {!Nx.pow} is [1.] where [y] is [±0.] or [x] is [1.],
-    NaN included, and where [x] is [-1.] and [y] is infinite. On a device
-    that flushes subnormals, {!Nx.exp} is within 9 ulps of the correctly
-    rounded result at [float32] where that result is normal, and within one
-    ulp at [float16] and [bfloat16] where it is normal; rune states nothing
-    more for these functions there. Where the device computes [exp2] within
-    4 ulps and rounds division and the square root correctly, at the default
-    of the [TRANSCENDENTAL] setting, each other function is within these
-    ulps of the correctly rounded result, to first order in [u]:
-
-    {v
-      function                      float32  float64
-      Nx.pow                           9        9
-    v}
-
-    On the host CPU, {!Nx.pow} is within 2 ulps at both dtypes. A function nx
-    composes from these, such as {!Nx.asinh} or {!Nx.softmax}, computes as nx
-    composes it.
+    {!Nx.acos}, {!Nx.atan}, {!Nx.atan2}, {!Nx.sinh}, {!Nx.cosh}, {!Nx.tanh},
+    {!Nx.erf} and {!Nx.pow} compute nx's own sequence of operations for them,
+    so they are exact on a device that keeps subnormals, rounds division and
+    the square root correctly and rounds a fused multiply-add once, as the
+    host CPU and NVIDIA GPUs do, and hold the bounds their [Nx] docs state. So
+    is {!Nx.log10}, which nx composes from {!Nx.log2} and exact functions. On
+    every device, where every operand is [±0.], [±inf] or a NaN, each of
+    these functions gives the value of C99 Annex F (ISO/IEC 9899, F.9), a
+    zero's sign included: [sin (-0.)] is [-0.] and [log 0.] is [-inf];
+    {!Nx.pow} is [1.] where [y] is [±0.] or [x] is [1.], NaN included, and
+    where [x] is [-1.] and [y] is infinite. On a device that flushes
+    subnormals, {!Nx.exp} is within 9 ulps of the correctly rounded result at
+    [float32] where that result is normal, and within one ulp at [float16]
+    and [bfloat16] where it is normal; rune states nothing more for these
+    functions there. A function nx composes from these, such as {!Nx.asinh}
+    or {!Nx.softmax}, computes as nx composes it.
 
     {b Complex functions.} A result [z'] of exact value [z] holds a {e normwise}
     bound [c] in the sense that [|z' - z| / |z| <= c u], to first order, for the

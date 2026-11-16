@@ -452,6 +452,130 @@ let erf =
         fun w e -> a e > clamp w && Float.is_finite e.(0) );
     ]
 
+(* pow: nx_pow's clamps of y log2|x| (POW_HI, POW_LO), the results that
+   overflow, turn subnormal or round to zero there, y's parity past NX_INTEGRAL,
+   2^23 or 2^52, and twice it, x near 1 with large exponents, negative bases,
+   and Annex F's operands. Its pairs: y set from a drawn x to put y log2|x| at a
+   threshold; x within 2^-12 of 1 with |y| up to 2^60; a negative x with an
+   integer y; y an integer about NX_INTEGRAL; and pairs of Annex F's
+   operands. *)
+
+let pow_pairs wide =
+  let open Gen in
+  let c v = code wide v in
+  let signed v =
+    let+ neg = bool in
+    if neg then -.v else v
+  in
+  let integral = pick wide (0x1p23, 0x1p52) in
+  let threshold =
+    let ts =
+      if wide then [ 1023.99; -1021.9; -1074.5; 1030.; -1080. ]
+      else [ 127.99; -125.9; -149.5; 130.; -160. ]
+    in
+    let+ x = float_range 1.0001 100. and+ t = of_list ts and+ neg = bool in
+    let x = value wide (c x) in
+    let y = t /. Float.log2 x in
+    [| c x; c (if neg then -.y else y) |]
+  in
+  let near_one =
+    let+ u = float_range (-1.) 1.
+    and+ k = int_range 1 12
+    and+ v = float_range (-1.) 1.
+    and+ e = int_range 10 60 in
+    [| c (1. +. Float.ldexp u (-k)); c (Float.ldexp v e) |]
+  in
+  let negative =
+    let+ x = float_range 0.5 4. and+ y = int_range (-100) 100 in
+    [| c (-.x); c (Float.of_int y) |]
+  in
+  let parity =
+    let* x = of_list [ -1.5; -1.; -0.5; -3. ]
+    and+ base = of_list [ integral; 2. *. integral ]
+    and+ d = int_range (-2) 2 in
+    let+ y = signed (base +. Float.of_int d) in
+    [| c x; c y |]
+  in
+  let special =
+    let xs =
+      [ 0.; -0.; 1.; -1.; Float.infinity; Float.neg_infinity; Float.nan ]
+    in
+    let ys =
+      [ 0.; -0.; Float.infinity; Float.neg_infinity; 3.; 2.; -3.; Float.nan ]
+    in
+    let+ x = of_list xs and+ y = of_list ys in
+    [| c x; c y |]
+  in
+  frequency
+    [ (2, threshold); (1, near_one); (1, negative); (1, parity); (2, special) ]
+
+let pow =
+  let x_spec w =
+    spec
+      [
+        1.; 2.; 0.5; 10.; 1.5; pick w (0x1p-126, 0x1p-1022); pick w (1e30, 1e300);
+      ]
+      [ 4.; 1e3 ]
+  in
+  let y_spec w =
+    let i = pick w (0x1p23, 0x1p52) in
+    spec
+      [
+        1.;
+        2.;
+        3.;
+        0.5;
+        i;
+        2. *. i;
+        1e9;
+        pick w (130., 1030.);
+        pick w (160., 1080.);
+      ]
+      [ 4.; 200. ]
+  in
+  let r _ e = Float.pow (Float.abs e.(0)) e.(1) in
+  let finite e =
+    Float.is_finite e.(0) && Float.is_finite e.(1) && e.(0) <> 0.
+  in
+  let integer v = Float.is_integer v in
+  {
+    name = "pow";
+    fn = Two ({ f2 = Nx.pow }, pow_pairs);
+    specs = [| (x_spec false, x_spec true); (y_spec false, y_spec true) |];
+    covers =
+      [
+        ( "an overflowing result",
+          fun w e -> finite e && r w e > pick w (0x1.fffffep127, Float.max_float)
+        );
+        ( "a subnormal result",
+          fun w e ->
+            finite e && r w e > 0. && r w e < pick w (0x1p-126, Float.min_float)
+        );
+        ( "a result that rounds to zero",
+          fun w e -> finite e && if w then r w e = 0. else r w e <= 0x1p-150 );
+        ( "a negative base, an odd integer exponent",
+          fun _ e -> e.(0) < 0. && integer e.(1) && Float.rem e.(1) 2. <> 0. );
+        ( "a negative base, a non-integer exponent",
+          fun _ e ->
+            e.(0) < 0.
+            && Float.is_finite e.(0)
+            && Float.is_finite e.(1)
+            && not (integer e.(1)) );
+        ( "|y| past NX_INTEGRAL",
+          fun w e ->
+            Float.abs e.(1) >= pick w (0x1p23, 0x1p52) && Float.is_finite e.(1)
+        );
+        ( "x within 2^-10 of 1, |y| past 2^10",
+          fun _ e ->
+            e.(0) <> 1.
+            && Float.abs (e.(0) -. 1.) < 0x1p-10
+            && Float.abs e.(1) > 1024. );
+        ( "x = ±1, y infinite",
+          fun _ e -> Float.abs e.(0) = 1. && Float.abs e.(1) = Float.infinity );
+        ("y = ±0", fun _ e -> e.(1) = 0.);
+      ];
+  }
+
 (* Logarithms: nx_log_reduce's switch, where a significand passes sqrt(1/2), in
    several binades; the least normal, below which it scales a subnormal up; 1,
    around which log cancels; powers of two, where log2 is exact; for log1p, -1,

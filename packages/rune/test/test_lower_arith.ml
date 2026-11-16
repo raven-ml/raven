@@ -5,11 +5,9 @@
 
 (* Scalar programs compiled by Rune.jit give the bits nx's eager kernels give
    for every exact kind, any NaN for a NaN, and compile whole: no call is
-   evaluated; rune.mli's Numerics section states which kinds are exact, at
-   each float dtype. Another narrow float's transcendental kind, computed at
-   float32 and rounded once, is within one ulp of the correctly rounded result
-   (rune.mli, Numerics). Lower_real's and Lower_complex's suites hold the
-   bounds at float32, float64 and the complex dtypes.
+   evaluated; rune.mli's Numerics section states which kinds are exact, every
+   real one at each float dtype. Lower_complex's suite holds the complex
+   kinds' bounds.
 
    A case compiles one program over operands of one dtype. Its rows apply one
    kind each to the same operands: the operands are broadcast along a first axis
@@ -585,8 +583,7 @@ let exact1 d (k : K.unary) =
 
 let exact2 d (k : K.binary) =
   match k with
-  | Mul | Fdiv | Mod | Atan2 -> not (is_complex d)
-  | Pow -> not (is_float d || is_complex d)
+  | Mul | Fdiv | Mod | Pow | Atan2 -> not (is_complex d)
   | _ -> true
 
 let unary_rows ?(keep = exact1) d =
@@ -716,109 +713,6 @@ let by_exponents d =
 
 let constant_exponents =
   family "powers by constants give eager's bits" integers by_exponents ~arity:1
-
-(* A narrow float's transcendental kind computes at float32 and rounds once, so
-   it is within one ulp of the correctly rounded result: float64's function of
-   the operands, rounded once by nx's cast, and exact where C99 Annex F gives a
-   zero, an infinity, ±1 or a NaN. A pow whose result rounds to an infinity, of
-   operands not all ±0, ±inf or NaN, is not bound; the formats without an
-   infinity saturate, so every pow there is. *)
-let narrow = List.filter (fun d -> is_float d && bits d < 32) dtypes
-
-let reference1 : K.unary -> float -> float = function
-  | Asinh -> Float.asinh
-  | Acosh -> Float.acosh
-  | Atanh -> Float.atanh
-  | _ -> invalid_arg "reference1: an exact kind"
-
-let reference2 : K.binary -> (float -> float -> float) option = function
-  | Pow -> Some Float.pow
-  | _ -> None
-
-(* [zs] rounded once into [dt], as floats. *)
-let round_trip (type v s) (dt : (v, s) D.t) zs =
-  let z = Nx.create D.Float64 [| Array.length zs |] zs in
-  Nx.to_array (Nx.cast D.Float64 (Nx.cast dt z))
-
-let special v = v = 0. || not (Float.is_finite v)
-
-let floats (type v s) (dt : (v, s) D.t) es =
-  Nx.to_array (Nx.cast D.Float64 (value dt es))
-
-(* The codes, at the dtype [compared d] gives, of the floats [zs] rounded once
-   into [d]. *)
-let rounded_codes (D.Any dt as d) zs =
-  let (D.Any c) = compared d in
-  let z = Nx.create D.Float64 [| Array.length zs |] zs in
-  Array.map (K.bits c) (Nx.to_array (Nx.bitcast c (Nx.cast dt z)))
-
-let rounded =
-  let rows d =
-    List.filter_map
-      (fun (k, label) ->
-        if accepts1 (K.Unary k) d d && not (exact1 d k) then
-          Some
-            ( label,
-              (fun add -> add (K.Op1 (Unary k, d, 0))),
-              fun x _ -> reference1 k x )
-        else None)
-      unaries
-    @ List.filter_map
-        (fun (k, label) ->
-          Option.map
-            (fun f -> (label, (fun add -> add (K.Op2 (Binary k, 0, 1))), f))
-            (reference2 k))
-        binaries
-  in
-  prop
-    "narrow floats' transcendental kinds are within one ulp of the correctly \
-     rounded result"
-    ~count:2
-    ~examples:(List.map (fun d -> (d, 7)) narrow)
-    (by_dtype narrow)
-    (fun ((D.Any dt as d), seed) ->
-      cover_classes narrow d;
-      let x, y = operands d seed in
-      let rows = rows d in
-      let labels = List.map (fun (l, _, _) -> l) rows in
-      let arity row =
-        if List.nth labels row = "pow" then 2
-        else 1
-      in
-      let p =
-        select ~ins:[| d; d |]
-          (List.map (fun (_, node, _) add -> as_compared add d (node add)) rows)
-      in
-      let (D.Any r) = compared d in
-      let n = List.length x in
-      let f x y = map_rows p [| List.length rows; n |] r [ x; y ] in
-      let got = compiled2 f (value dt x) (value dt y) in
-      let xs = floats dt x and ys = floats dt y in
-      let float64s =
-        Array.concat (List.map (fun (_, _, g) -> Array.map2 g xs ys) rows)
-      in
-      let rounded = round_trip dt float64s in
-      let pow row = List.nth labels row = "pow" in
-      let specials row j =
-        special xs.(j) && (arity row = 1 || special ys.(j))
-      in
-      let overflows row j =
-        pow row
-        && Float.abs rounded.((row * n) + j) = Float.infinity
-        && not (specials row j)
-      in
-      (* Annex F's zeros, infinities, ±1 and NaNs, and pow's 1s. *)
-      let exact row j =
-        let r = float64s.((row * n) + j) and x = xs.(j) and y = ys.(j) in
-        (specials row j && (special r || Float.abs r = 1.))
-        || pow row
-           && (y = 0. || x = 1. || (x = -1. && Float.abs y = Float.infinity))
-      in
-      no_difference
-        (differences ~tol:1 ~skip:overflows ~exact
-           ~at:(fun _ -> d)
-           labels [ x; y ] ~want:(rounded_codes d float64s)
-           ~got:(Array.map (K.bits r) (Nx.to_array got))))
 
 (* Casts and bitcasts: one row per destination, compared by its bits in a
    uint64, a NaN that a cast into another format makes as any NaN. A complex128
@@ -1135,7 +1029,6 @@ let () =
          binary;
          constant_divisors;
          constant_exponents;
-         rounded;
          cast;
          casts16;
          bounded_casts;

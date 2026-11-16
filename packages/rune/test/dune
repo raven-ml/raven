@@ -183,15 +183,12 @@
  (deps
   (glob_files golden/special_grad/*.golden)))
 
-; The float kinds compiled by Rune.jit, against goldens gen/lower_real.py
-; writes from correctly rounded references.
+; The float kinds compiled by Rune.jit, against nx's eager kernels.
 
 (test
  (name test_lower_real)
  (modules test_lower_real)
- (libraries nx nx_array nx_kernel rune rune_support windtrap)
- (deps
-  (glob_files golden/lower_real/*.golden)))
+ (libraries nx nx_array nx_kernel rune rune_support windtrap))
 
 ; The complex kinds compiled by Rune.jit, against goldens gen/lower_complex.py
 ; writes from correctly rounded references.

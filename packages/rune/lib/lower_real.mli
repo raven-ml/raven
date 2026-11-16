@@ -17,8 +17,7 @@
     every operand on a target that keeps subnormals. On a target that flushes
     them, as Metal's [float32] does, a kind may be inexact or break its bound
     where an operand, a result or an intermediate is below the least normal.
-    This module's kinds and bounds are the float rows of
-    {!Rune.section-numerics}.
+    This module's kinds are the real functions of {!Rune.section-numerics}.
 
     {1:exact Exact kinds}
 
@@ -28,40 +27,26 @@
     operations. [Fdiv], [Recip] (as [1 / x]) and [Sqrt] are exact on a target
     that rounds division and the square root correctly.
 
-    {1:sequence Kinds of nx's sequence}
+    {1:transcendental Transcendental kinds}
 
     [Exp], [Exp2], [Expm1], [Log], [Log2], [Log1p], [Sin], [Cos], [Tan],
-    [Asin], [Acos], [Atan], [Atan2], [Sinh], [Cosh], [Tanh] and [Erf]
+    [Asin], [Acos], [Atan], [Atan2], [Sinh], [Cosh], [Tanh], [Erf] and [Pow]
     compute the sequence of operations nx's kernel header, [nx_kinds.h],
-    gives them, each fused multiply-add a {!Lower_bits.mulacc}. The inverse
-    trigonometric kinds take nx's polynomials of [arcsin] and [arctan] on
-    reduced arguments, summed with [π/2] or [π] in two parts. The
+    gives them, each fused multiply-add a {!Lower_bits.mulacc}. The
     exponentials and hyperbolic kinds reduce [x] to [k ln 2 + r], [k] an
     integer, and take nx's polynomial in [r], [2{^k}] applied by exact
-    products. The logarithms reduce [x] to [2{^k} (1 + f)], [1 + f] in [\[√½, √2)], and
-    take nx's polynomial in [(f / (2 + f)){^2}]. The trigonometric kinds
-    reduce by [π/2], Cody and Waite's reduction below [2{^15}] ([float32])
-    or [2{^28}] ([float64]) and Payne and Hanek's from there, then take nx's
-    polynomials. A branch of the header is a selection, both sides computed.
-    On a target that keeps subnormals, rounds division and the square root
-    correctly and rounds a fused multiply-add once, they give the bits nx's
-    kernels give, a NaN result as nx's NaN rule allows: they are exact.
-
-    {1:transcendental Other transcendental kinds}
-
-    The other kinds compose tolk's [exp2] ({!Tolk.Op.Exp2}) with the exact
-    kinds and those of nx's sequence. Where a target computes [exp2] within 4
-    ulps, and rounds division and the square root correctly, each kind is
-    within these bounds in ulps, to first order in [u]:
-
-    {v
-      kind                        float32  float64
-      pow                            9        9
-    v}
-
-    On the CPU host target, tolk computes [exp2] by {!Tolk.Transcendental},
-    within one ulp, and [pow] is within 2 ulps at both dtypes. The bounds hold
-    at tolk's default {!Tolk.Setting.transcendental}.
+    products. The logarithms reduce [x] to [2{^k} (1 + f)], [1 + f] in
+    [\[√½, √2)], and take nx's polynomial in [(f / (2 + f)){^2}]; [Pow]
+    multiplies such a [log2] in two parts by [y] and takes [Exp2]'s
+    polynomial of the product. The trigonometric kinds reduce by [π/2], Cody
+    and Waite's reduction below [2{^15}] ([float32]) or [2{^28}] ([float64])
+    and Payne and Hanek's from there, then take nx's polynomials. The inverse
+    trigonometric kinds take nx's polynomials of [arcsin] and [arctan] on
+    reduced arguments, summed with [π/2] or [π] in two parts. A branch of the
+    header is a selection, both sides computed. On a target that keeps
+    subnormals, rounds division and the square root correctly and rounds a
+    fused multiply-add once, they give the bits nx's kernels give, a NaN
+    result as nx's NaN rule allows: they are exact.
 
     Where every operand is [±0], [±inf] or a NaN, a kind gives the zero,
     infinity, [±1] or NaN that C99 Annex F (ISO/IEC 9899, F.9) gives, with the

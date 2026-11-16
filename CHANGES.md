@@ -448,6 +448,8 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx.pow` gives eager's bits on the host and NVIDIA GPUs, so
+  its float32 bound on the host is nx's 4 ulps, where it stated 2.
 - Numerics states a compiled `Nx.erf` exact, eager's bits, where it stated
   2 and 3 ulps: its lowering follows nx's sequence.
 - A compiled `Nx.asin`, `Nx.acos`, `Nx.atan` and `Nx.atan2` give eager's
@@ -457,9 +459,8 @@ All notable changes to this project will be documented in this file.
   `Nx.tanh` give eager's bits on the host and NVIDIA GPUs, where they
   differed in the last bits: they were tolk's `exp2` with rune's forms.
 - A compiled `Nx.log`, `Nx.log2`, `Nx.log1p` and `Nx.log10` give eager's
-  bits on the host and NVIDIA GPUs, where they differed in the last bit:
-  `Nx.log2` was the target's, and `Nx.log` and `Nx.log1p` fdlibm's and
-  Goldberg's forms.
+  bits on the host and NVIDIA GPUs, so `Nx.log` and `Nx.log2` at float64
+  are within nx's 2 ulps, where rune stated 1.
 - A compiled `Nx.sin`, `Nx.cos` and `Nx.tan` compute nx's sequence where they
   used the target's sine, so give eager's bits on the host and NVIDIA GPUs;
   a first call allocates 25 times the words, NVRTC taking 2.7 times as long.

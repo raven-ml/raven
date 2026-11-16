@@ -4,21 +4,14 @@
   ---------------------------------------------------------------------------*)
 
 (* The exact kinds are bit manipulations and IEEE's correctly rounded
-   operations. Some transcendental kinds restate nx's kernel header,
+   operations. The transcendental kinds restate nx's kernel header,
    nx_kinds.h with nx_kinds_real.h, operation for operation: the same
    constants, the same order, an fma ([Mulacc], rounded once) where the C
    writes one and none elsewhere, so that they give eager's bits. A C branch
    is a selection, both sides computed, a side's operands made safe on the
    lanes it does not take. Each such function names the header's function it
-   follows; when the header changes, it changes with it.
-
-   The other transcendental kinds compose tolk's exp2 with the exact kinds and
-   those of nx's sequence, in forms that cancel nowhere, whose bounds
-   [lower_real.mli] states. Those bounds are derived to first order in the
-   unit roundoff u. An error of n ulps is taken as a relative error of 2 n u,
-   and a relative error d as d / u + 1/2 ulps after the last rounding. The
-   bounds of erf's polynomials, of float32 atan and of the host's exp are
-   measured. *)
+   follows; when the header changes, it changes with it. tolk's exp2 remains
+   in [exp2_split], which the complex kinds compose. *)
 
 open Tolk
 open Lower_bits
@@ -216,7 +209,7 @@ let fmod x y =
   let r = where (lt ux uy) x (of_bits (bor (bits m) sx)) in
   where special (nan x) r
 
-(* Exponentials in two parts, of tolk's exp2, for pow and the complex kinds *)
+(* Exponentials in two parts, of tolk's exp2, for the complex kinds *)
 
 (* 2^(hi + lo) for |lo| at most two ulps of hi: 2^hi (1 + lo ln2), whose
    relative error (lo ln2)^2 / 2 is below 2^-30 at float32 and 2^-80 at
@@ -321,24 +314,6 @@ let log1p x =
   let uh, ul = two_sum (one x) x in
   let y = log_core (log_reduce uh) (ul /: uh) in
   log_special uh x (where (eq x (zero x)) x y)
-
-(* (m, e) with a = m 2^e, m in (top / 2, top] and e an integer of a's type,
-   for a finite a > 0 and top in (1, 2): a subnormal is scaled into the normals
-   first. *)
-let normalized ~top a =
-  let sub = lt (bits a) (word (bits a) (pick a min_normal_bits)) in
-  let s = where sub (a *: con a sub_scale) a in
-  let mb = pick a mbits in
-  let one_bits = Int64.shift_left (Int64.of_int (pick a bias)) mb in
-  let m =
-    of_bits
-      (bor
-         (band (bits s) (word (bits s) (pick a mmask)))
-         (word (bits s) one_bits))
-  in
-  let e = Ops.cast (ilogb a) (Ops.dtype a) in
-  let high = gt m (con a top) in
-  (where high (m *: half a) m, where high (e +: one a) e)
 
 (* nx's sequences
 
@@ -1007,91 +982,97 @@ let atan2 y x =
   in
   nan2 y x (copysign v y)
 
-(* log2 a as hi + lo for a finite a > 0, |lo| within half an ulp of hi, to a
-   relative 2^-12 u. With a = m 2^e, m in (sqrt3 / 2, sqrt3] and b = 1.5 from
-   sqrt1_5 on, else 1, log2 a is e + log2 b + log2 (m / b), and log2 (m / b) is
-   2 log2e s A(s^2) for s = (m - b) / (m + b) and A(z) = atanh(s) / s =
-   1 + z / 3 + z^2 R(z). m - b is exact, |s| at most 0.10103 and z at most
-   0.0103. s, z, z / 3, A and the products by s and log2e are carried in two
-   parts by fmas.
-   z^2 R(z), at most 2^-15.5 of A, is the one term rounded in the working
-   precision: its relative 4u, R a minimax fit within 0.28u at float32 and 0.5u
-   at float64, gives 2^-13.5 u, and the low parts' roundings at most 2^-12.9 u.
-   Drawn operands, subnormals included, measure 2^-13.4 u. *)
+(* pow
 
-let sqrt3 = (0x1.bb67aep+0, 0x1.bb67ae8584caap+0)
-let sqrt1_5 = (0x1.3988e2p+0, 0x1.3988e1409212ep+0)
-let log2_1_5 = (0x1.2b8034p-1, 0x1.2b803473f7ad1p-1)
-let log2_1_5_lo = (0x1.cfdeb4p-27, -0x1.817fd3b7d7e5dp-58)
-let third = (0x1.555556p-2, 0x1.5555555555555p-2)
-let third_lo = (-0x1.555556p-27, 0x1.5555555555555p-56)
+   nx_kinds_real.h's nx_pow: 2^(y log2|x|), log2|x| as a pair, f and
+   s = f / (2 + f) carried as pairs and log(1 + f) = 2s + (2/3) s^3 +
+   s^5 T'(s^2); the exponential exp2's. Constants are nx_kinds.h's macros
+   and coefficients of the same names, their text copied. *)
 
-let log2_poly =
-  ( [ 0x1.ccebf6p-4; 0x1.248f68p-3; 0x1.99999ap-3 ],
+let two_thirds_hi = (0x1.555556p-1, 0x1.5555555555555p-1)
+let two_thirds_lo = (-0x1.555556p-26, 0x1.5555555555555p-55)
+let pow_hi = (130., 1030.)
+let pow_lo = (-160., -1080.)
+
+(* nx_log_tp_f32 and nx_log_tp_f64, from the leading coefficient. *)
+let log_tp =
+  ( [ 0x1.d8279ap-3; 0x1.2479cap-2; 0x1.9999a4p-2 ],
     [
-      0x1.f1bd4d19e411fp-5;
-      0x1.10f421d252391p-4;
-      0x1.3b13e56a89c64p-4;
-      0x1.745d171591ad7p-4;
-      0x1.c71c71c731ac1p-4;
-      0x1.2492492492476p-3;
-      0x1.999999999999ap-3;
+      0x1.e0550027cf2a4p-4;
+      0x1.df790206d23b4p-4;
+      0x1.1118da70f5042p-3;
+      0x1.3b1395780c99fp-3;
+      0x1.745d177b75a35p-3;
+      0x1.c71c71c6e999ap-3;
+      0x1.2492492492525p-2;
+      0x1.999999999999ap-2;
     ] )
 
-(* hi + lo times the float c + c_lo, in two parts. *)
-let mul2 (hi, lo) c c_lo =
-  let p = hi *: c in
-  (p, mulacc hi c (negated p) +: ((hi *: c_lo) +: (lo *: c)))
+(* log2 a = gh + gl for a = |x| (nx_pow's first half): k + log(1 + f) / ln2,
+   inf at inf and -inf at 0. *)
+let pow_log2 a =
+  let f, k = log_reduce a in
+  let two = two a in
+  let d = two +: f in
+  let dl = f -: (d -: two) in
+  let rd = one a /: d in
+  let sh = f *: rd in
+  let sl = mulacc (negated sh) dl (mulacc (negated sh) d f) *: rd in
+  (* s^3 as c + cl, sl's share 3 s^2 sl included *)
+  let z = sh *: sh in
+  let zl = mulacc sh sh (negated z) in
+  let c = sh *: z in
+  let cl = mulacc (num a 3. *: z) sl (mulacc sh zl (mulacc sh z (negated c))) in
+  (* (2/3) s^3 as t + tl *)
+  let t = c *: con a two_thirds_hi in
+  let tl =
+    mulacc c (con a two_thirds_hi) (negated t)
+    +: mulacc c (con a two_thirds_lo) (cl *: con a two_thirds_hi)
+  in
+  let tp = horner z (pick a log_tp) in
+  let lh = sh +: sh in
+  let head = lh +: t in
+  let ll = lh -: head +: t +: (sl +: sl +: mulacc (c *: z) tp tl) in
+  let lh = head in
+  (* log2|x| = k + (lh + ll) / ln2 *)
+  let ph = lh *: con a log2e in
+  let pl = mulacc lh (con a log2e) (negated ph) in
+  let pl = mulacc lh (con a log2e_lo) (mulacc ll (con a log2e) pl) in
+  let g0, g1 = two_sum k ph in
+  let gh = g0 +: (g1 +: pl) in
+  let gl = g1 +: pl -: (gh -: g0) in
+  let at_inf = eq a (inf a) and at_zero = eq a (zero a) in
+  let gh = where at_inf a (where at_zero (negated (inf a)) gh) in
+  (gh, where (at_inf ||: at_zero) (zero a) gl)
 
-let log2_parts a =
-  let m, e = normalized ~top:sqrt3 a in
-  let upper = ge m (con a sqrt1_5) in
-  let b = where upper (num a 1.5) (one a) in
-  (* m + b in two parts: b's exponent is at least m's *)
-  let d = b +: m in
-  let d_lo = m -: (d -: b) in
-  let f = m -: b in
-  let s = f /: d in
-  let s_lo = (mulacc (negated s) d f -: (s *: d_lo)) /: d in
-  let z = s *: s in
-  let z_lo = mulacc s s (negated z) +: (two a *: s *: s_lo) in
-  let t, t_lo = mul2 (z, z_lo) (con a third) (con a third_lo) in
-  let zc = z +: z_lo in
-  let w = zc *: zc *: horner zc (pick a log2_poly) in
-  let p = one a +: t in
-  let p_lo = t -: (p -: one a) +: (t_lo +: w) in
-  let q, q_lo = mul2 (two a *: s, two a *: s_lo) p p_lo in
-  let l, l_lo = mul2 (q, q_lo) (con a log2e) (con a log2e_lo) in
-  let c = where upper (con a log2_1_5) (zero a) in
-  let c_lo = where upper (con a log2_1_5_lo) (zero a) in
-  let g, g_lo = two_sum c l in
-  let hi, hi_lo = two_sum e g in
-  (* lo carries z^2 R(z) at up to 2^-15.5 of hi: |lo| is brought within half
-     an ulp of hi, so that h's low part is within 1.5 ulps of h *)
-  let lo = hi_lo +: (g_lo +: (c_lo +: l_lo)) in
-  let r = hi +: lo in
-  (r, lo -: (r -: hi))
-
-(* pow: 2^(y log2|x|), log2|x| in two parts and their product by y carried in
-   two by an fma, with C99 F.9.4.4's special values. The parts' relative 2^-12 u
-   moves h = y log2|x| by 2^-12 u |h|, which 2^h turns into a relative
-   2^-12.5 |h| u: at most 0.18 ulp, since past |h| = 1075 the result overflows
-   or rounds to 0. With exp2_split's 8.5 ulps, as exp's, pow is within 9. *)
+(* nx_pow *)
 let pow x y =
-  let a = magnitude x in
-  let finite = gt a (zero x) &&: lt a (inf x) in
-  let l, l_lo = log2_parts (where finite a (one x)) in
-  let special = where (eq a (zero x)) (negated (inf x)) a in
-  let l = where finite l special in
-  let h = y *: l in
-  let h_lo = mulacc y l (negated h) +: where finite (y *: l_lo) (zero x) in
-  let v = exp2_split h h_lo in
-  let integer v = eq (trunc v) v in
-  let odd = integer y &&: Ops.logical_not (integer (y *: half y)) in
-  let v = where (odd &&: negative x) (negated v) v in
-  let below = lt x (zero x) &&: gt x (negated (inf x)) in
-  let v = where (below &&: Ops.logical_not (integer y)) (nan x) v in
-  let v = where (eq x (num x (-1.)) &&: eq (magnitude y) (inf x)) (one x) v in
+  let ax = magnitude x and ay = magnitude y in
+  let gh, gl = pow_log2 ax in
+  (* y log2|x|; past the range the result is 0 or inf and the tail may be
+     NaN *)
+  let hi = con x pow_hi and lo = con x pow_lo in
+  let yh = y *: gh in
+  let yl = mulacc y gl (mulacc y gh (negated yh)) in
+  let yl = where (le yh hi &&: ge yh lo) yl (zero x) in
+  let yh = where (gt yh hi) hi yh in
+  let yh = where (lt yh lo) lo yh in
+  let kf, k = nearest (yh +: shifter x) in
+  let v = scale (horner (yh -: kf +: yl) (pick x exp2_p)) k in
+  (* y's parity: ay + 2^(p-1) rounds ay to an integer, its last bit worth 1;
+     from 2^(p-1) on y is an integer, its last bit worth 1 below 2^p and more
+     above, so even *)
+  let i = con x integral in
+  let ty = ay +: i in
+  let integer = ge ay i ||: eq (ty -: i) ay in
+  let last = where (ge ay i) (bits ay) (bits ty) in
+  let odd = lt ay (two x *: i) &&: integer &&: set (band last (int last 1)) in
+  let n = negative x in
+  let v = where (n &&: odd) (negated v) v in
+  let finite = ne ax (zero x) &&: lt ax (inf x) in
+  let v = where (n &&: Ops.logical_not integer &&: finite) (nan x) v in
+  let v = where (eq ax (one x) &&: eq ay (inf x)) (one x) v in
+  let v = nan2 x y v in
   where (eq x (one x) ||: eq y (zero x)) (one x) v
 
 (* erf

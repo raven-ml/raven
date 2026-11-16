@@ -6,13 +6,9 @@
 (* The float kinds at float32 and float64, as maps of one kind compiled by
    Rune.jit, which must compile them whole: no call is evaluated. An exact kind
    gives the bits of nx's eager kernel, any NaN for a NaN, over operands drawn
-   to reach its special values and the edges of its range. So does each kind
-   compiled to nx's own sequence (Kinds), at every narrow float's code and at a
-   constant the compiler may fold too. Another transcendental kind is within
-   its host bound in ulps of the correctly rounded result (rune.mli, Numerics)
-   at the points of golden/lower_real, which gen/lower_real.py writes from
-   mpmath; where every operand is a zero, an infinity or a NaN, it gives Annex
-   F's zero, infinity, ±1 or NaN, stated below. *)
+   to reach its special values and the edges of its range. So does each
+   transcendental kind, compiled to nx's own sequence (Kinds), at every narrow
+   float's code and at a constant the compiler may fold too. *)
 
 open Windtrap
 module Kinds = Rune_support.Kinds
@@ -58,18 +54,6 @@ let staged out prog =
   fun xs -> (map xs, counted (fun () -> compiled xs))
 
 let show v = if Float.is_nan v then "nan" else Printf.sprintf "%h" v
-
-(* Ulps: the distance in ordered-bit ranks, -0 and +0 one apart, of two floats
-   of float64 if [wide], else of float32. *)
-let ulps wide a b =
-  let mag v =
-    if wide then Int64.logand (Int64.bits_of_float v) Int64.max_int
-    else Int64.of_int32 (Int32.logand (Int32.bits_of_float v) Int32.max_int)
-  in
-  let ma = mag a and mb = mag b in
-  if Float.sign_bit a = Float.sign_bit b then
-    Int64.to_float (Int64.abs (Int64.sub ma mb))
-  else Int64.to_float (Int64.add (Int64.add ma mb) 1L)
 
 (* Values *)
 
@@ -358,123 +342,6 @@ let law k =
       List.iter (fun (label, f) -> cover_some label f) k.covers;
       if wide then double es else single es)
 
-(* Transcendental kinds *)
-
-let inf = Float.infinity
-let nan = Float.nan
-
-(* A value where every operand is a zero, an infinity or a NaN and the value
-   is a zero, an infinity, ±1 or a NaN is exact (Annex F, F.9); another is
-   held to the kind's bound. *)
-let special v = v = 0. || Float.is_nan v || Float.abs v = Float.infinity
-let odd y = Float.is_integer y && Float.rem y 2. <> 0.
-
-(* pow x y, F.9.4.4: 1 at y = ±0 and at x = 1, NaN included, then the zeros' and
-   infinities' rules. *)
-let annex_pow _ e =
-  let x = e.(0) and y = e.(1) in
-  if y = 0. || x = 1. then Some 1.
-  else if Float.is_nan x || Float.is_nan y then Some nan
-  else if Float.abs y = inf then
-    let a = Float.abs x in
-    if a = 1. then Some 1. else Some (if a < 1. = (y > 0.) then 0. else inf)
-  else if x = 0. then
-    if y < 0. then Some (if odd y then Float.copy_sign inf x else inf)
-    else Some (if odd y then x else 0.)
-  else if Float.abs x = inf then
-    if y > 0. then Some (if odd y then x else inf)
-    else Some (if odd y then Float.copy_sign 0. x else 0.)
-  else None
-
-(* The rows of golden/lower_real/<name>.golden at float64 if [wide], else at
-   float32: operands and the correctly rounded value. *)
-let golden name wide =
-  let ic = open_in ("golden/lower_real/" ^ name ^ ".golden") in
-  let rows = ref [] in
-  (try
-     while true do
-       match String.split_on_char '\t' (input_line ic) with
-       | d :: cols when d = if wide then "f64" else "f32" ->
-           let vs = Array.of_list (List.map Float.of_string cols) in
-           let a = Array.length vs - 1 in
-           rows := (Array.sub vs 0 a, vs.(a)) :: !rows
-       | _ -> ()
-     done
-   with End_of_file -> close_in ic);
-  greater ~msg:(name ^ "'s rows") int ~than:0 (List.length !rows);
-  List.rev !rows
-
-(* Where a kind's value is exact: Annex F's zero, infinity, ±1 or NaN at
-   operands each a zero, an infinity or a NaN; and pow's 1 at [y = ±0], [x = 1]
-   and [x = -1], [y] infinite. *)
-let exact name e r =
-  (Array.for_all special e && (special r || Float.abs r = 1.))
-  || name = "pow"
-     && (e.(0) = 1.
-        || e.(1) = 0.
-        || (e.(0) = -1. && Float.abs e.(1) = Float.infinity))
-
-(* Whether [got] meets the reference [r] for operands [e] within [tol] ulps: a
-   NaN where [r] is NaN, and nowhere else. *)
-let meets wide name tol e r got =
-  if Float.is_nan r || Float.is_nan got then Float.is_nan r = Float.is_nan got
-  else if exact name e r then ulps wide r got = 0.
-  else ulps wide r got <= tol
-
-(* [accurate name node bound annex] holds [node] within [bound] ulps, at float32
-   and float64, at its golden points and where [annex] gives a value: at the
-   dtype's specials, every pair of them for a binary kind, and pow's golden
-   bases at y = ±0. *)
-let accurate name node (b32, b64) annex =
-  let at (type s) (dt : (float, s) D.t) wide tol =
-    let table = golden name wide in
-    let sp = specials wide in
-    let tuples =
-      match Array.length (fst (List.hd table)) with
-      | 1 -> List.map (fun x -> [| x |]) sp
-      | _ ->
-          List.concat_map (fun a -> List.map (fun b -> [| a; b |]) sp) sp
-          @ List.concat_map
-              (fun (e, _) -> [ [| e.(0); 0. |]; [| e.(0); -0. |] ])
-              (if name = "pow" then table else [])
-    in
-    let stated =
-      List.filter_map
-        (fun e -> Option.map (fun r -> (e, r)) (annex wide e))
-        tuples
-    in
-    let rows = table @ stated in
-    let es = Array.of_list (List.map fst rows) in
-    let run = staged dt (program dt (Array.length es.(0)) node) in
-    let got = Nx.to_array (snd (run (operands dt es))) in
-    List.concat
-      (List.mapi
-         (fun i (e, r) ->
-           if meets wide name tol e r got.(i) then []
-           else
-             let args = String.concat ", " (Array.to_list (Array.map show e)) in
-             [
-               Printf.sprintf "%s(%s) = %s at %s, reference %s, %g ulps over %g"
-                 name args
-                 (show got.(i))
-                 (if wide then "float64" else "float32")
-                 (show r)
-                 (ulps wide r got.(i))
-                 tol;
-             ])
-         rows)
-  in
-  test
-    (Printf.sprintf "%s within %d ulps at float32, %d at float64" name b32 b64)
-    (fun () ->
-      equal (list string) []
-        (at D.Float32 false (Float.of_int b32)
-        @ at D.Float64 true (Float.of_int b64)))
-
-(* Each kind's host bound at float32 and float64 (rune.mli, Numerics). *)
-let transcendental =
-  [ accurate "pow" (Op2 (Binary Pow, 0, 1)) (2, 2) annex_pow ]
-
 (* Kinds of nx's sequence
 
    Each gives eager's bits over drawn operands (Kinds), at every narrow
@@ -497,7 +364,7 @@ let kinds =
   Kinds.
     [
       sin; cos; tan; log; log2; log1p; exp; exp2; expm1; sinh; cosh; tanh; asin;
-      acos; atan; atan2; erf;
+      acos; atan; atan2; erf; pow;
     ]
 
 let () =
@@ -506,5 +373,4 @@ let () =
        [
          group "exact" (List.map law (unary @ binary @ compare @ [ fma ]));
          group "kinds" (List.concat_map ported kinds);
-         group "transcendental" transcendental;
        ])
