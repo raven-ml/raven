@@ -2227,10 +2227,13 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     holds a window of the same rows, and scan once in the windows' order;
     each window but the first combines each of its results with the
     totals' scan of the windows before it. Over integers and booleans, and
-    for {!cummax} and {!cummin}, it keeps the bits it has on one device;
-    {!cumsum} and {!cumprod} of floats and complex numbers keep the bounds
-    of a reduction of each result's terms. {!ewma} and {!logcumsumexp} read
-    their axis whole on each device, so a value cut along it raises
+    for {!cummax} and {!cummin}, it keeps the bits it has on one device.
+    Barring overflow and underflow, {!cumsum} of floats and complex
+    numbers is within [γ(n - 1) Σ|x|] of the exact sum of a result's [n]
+    terms, part by part for a complex one, and {!cumprod} within a
+    product's bound above, on one device as over cut axes
+    ({!Nx_kernel.section-bounds}). {!ewma} and {!logcumsumexp} read their
+    axis whole on each device, so a value cut along it raises
     ({!section-routing}).
 
     A float result that a NaN reaches is a NaN; which NaN, its sign and its

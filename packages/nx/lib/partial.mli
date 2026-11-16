@@ -237,11 +237,13 @@
       [Minimum], the slot's first, rounding once into the result's dtype.
       Over integers and booleans, and for a float or complex [Max] or
       [Min] that is not a NaN, each result has the bits of the scan on one
-      device. A float or complex sum's or product's result of [n] terms is
-      within the bound of a reduction of them above: each of its terms
-      passes at most the terms of its tile in additions there, at most the
-      tiles before in the totals' scan, and one in the combination, and
-      every tile before holds a term.
+      device. A float or complex sum's result of [n] terms is within
+      [γ(n - 1) Σ|x|], a complex one part by part, and a product's within
+      the product's bound above: each of its terms passes fewer roundings
+      in its tile's scan than the tile holds terms, at most [j - 1] in the
+      totals' scan of the [j] tiles before its own, and one in the
+      combination, and every tile before holds a term, so at most
+      [n - 1] in all ({!Nx_kernel.section-bounds}).
     - An [Arg] tile scans with its positions from the axis's start. A
       device takes the first extreme of the slots before its own, in tile
       order, one map per slot as a reduction's slots combine, and combines
