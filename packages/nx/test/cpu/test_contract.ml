@@ -181,7 +181,7 @@ let law_order b c =
   match run b c with
   | None when cpu_computes c ->
       failf "nx.cpu declined a case nx_cpu.mli says it computes"
-  | None -> cover "declined" true
+  | None -> ()
   | Some y ->
       let want = ordered ~chain:(order c = Chain) c.acc in
       equal (list string) []
@@ -260,7 +260,7 @@ let law_rounds_once b c =
   match run b c with
   | None when cpu_computes c ->
       failf "nx.cpu declined a case nx_cpu.mli says it computes"
-  | None -> cover "declined" true
+  | None -> ()
   | Some y -> (
       let c' =
         { c with out = c.acc; init = Option.map (cast_to c.acc) c.init }
@@ -404,7 +404,7 @@ let law_wraps b (c : case) =
   match run b c with
   | None when cpu_computes c ->
       failf "nx.cpu declined a case nx_cpu.mli says it computes"
-  | None -> cover "declined" true
+  | None -> ()
   | Some y ->
       let _, oa, ob, walk = index c in
       let ints x = ints (cast_to c.acc x) in
