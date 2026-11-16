@@ -1323,6 +1323,10 @@ let leading =
 
 module Polled = Rig_support.Polled
 
+(* Each queue's capacity. A case's copies fit it while its source is at
+   most 128 by 130 elements of 16 bytes, as [Nx_support.bits] and
+   [Nx_support.large_bits] draw; a larger source fills a queue, and the
+   placement then waits for its work. *)
 let capacity = 1 lsl 16
 
 let mapping, mapping_q =
@@ -1363,15 +1367,25 @@ let onto_held o x =
   | Onto_both -> H (Nx.place Both.on x)
   | Onto_split a -> H (Nx.place (Both.split ~axis:a) x)
 
-(* Bits, where they go, and where they come from: the host for [None], a
-   split of axis [a] over both devices for [Some a]. *)
+(* Bits, 64 KiB or more one time in four, where they go, and where they come
+   from: the host for [None], one time in three, a split of axis [a] over both
+   devices for [Some a]. *)
 let held_case =
   let open Gen in
   let onto =
     of_list ~pp:pp_onto
       [ Onto_map; Onto_flat; Onto_both; Onto_split 0; Onto_split 1 ]
   in
-  triple Nx_support.bits onto (option (int_range 0 1))
+  let pp_from ppf = function
+    | None -> Format.pp_print_string ppf "None"
+    | Some a -> Format.fprintf ppf "Some %d" a
+  in
+  let from =
+    frequency [ (1, constant None); (2, map Option.some (int_range 0 1)) ]
+    |> with_pp pp_from
+  in
+  let bits = frequency [ (5, Nx_support.bits); (1, Nx_support.large_bits) ] in
+  triple bits onto from
 
 (* A placement onto held devices returns with its copies queued and unrun,
    and once they have run, the value's bytes are the source's. *)

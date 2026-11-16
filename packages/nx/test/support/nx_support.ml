@@ -428,17 +428,16 @@ let view_of v r c =
 
 let extent = Windtrap.Gen.of_list [ 0; 1; 2; 3; 5 ]
 
-let bits =
+(* Arrays of [dtypes], of shape [[r; c]] drawn from [shapes], in every
+   view. *)
+let drawn_bits dtypes shapes =
   let open Windtrap.Gen in
-  let* (D.Any dt) = of_list ~pp:(fun ppf (D.Any dt) -> D.pp ppf dt) wide in
+  let* (D.Any dt) = of_list ~pp:(fun ppf (D.Any dt) -> D.pp ppf dt) dtypes in
   let* v =
     of_list ~pp:pp_view
       [ Plain; Transposed; Flipped; Strided; Broadcast; Windowed ]
   in
-  let* r, c =
-    frequency
-      [ (3, pair extent extent); (1, constant ((128, 130) : int * int)) ]
-  in
+  let* r, c = shapes in
   let s, m = view_of v r c in
   let n = Array.fold_left ( * ) 1 s * (D.bits dt / 8) in
   (* The bytes come from a drawn seed, so that drawing and shrinking a large
@@ -452,7 +451,17 @@ let bits =
 let pp_bits ppf (Bits a) =
   Format.fprintf ppf "%a %a" D.pp (A.dtype a) A.Layout.pp (A.layout a)
 
-let bits = Windtrap.Gen.with_pp pp_bits bits
+(* The large shape, 64 KiB or more at 4 bytes an element. *)
+let large = Windtrap.Gen.constant ((128, 130) : int * int)
+
+let bits =
+  Windtrap.Gen.(
+    with_pp pp_bits
+      (drawn_bits wide (frequency [ (3, pair extent extent); (1, large) ])))
+
+let large_bits =
+  let at_least_4 (D.Any dt) = D.bits dt >= 32 in
+  Windtrap.Gen.with_pp pp_bits (drawn_bits (List.filter at_least_4 wide) large)
 
 let bytes (type v s) (a : (v, s) A.t) =
   let c = A.copy a in

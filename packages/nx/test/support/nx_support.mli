@@ -133,6 +133,10 @@ val bits : bits Windtrap.Gen.t
     are mostly drawn from [0], [1], [2], [3] and [5]; one array in four is
     [128] by [130]. *)
 
+val large_bits : bits Windtrap.Gen.t
+(** [large_bits] is {!bits} of [128] by [130] elements of 4 bytes or more:
+    64 KiB or more. *)
+
 val bytes : ('v, 's) Nx_array.t -> int array
 (** [bytes a] is the bytes of [a]'s elements in C order of indices, each
     element's in memory order, read on the host. [a] must lie in memory the

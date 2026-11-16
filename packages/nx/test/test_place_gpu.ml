@@ -36,11 +36,14 @@ let law_gpu (Nx_support.Bits a, from_split) =
   equal (array int) ~msg:"its bytes" (Nx_support.bytes a)
     (Nx_support.bytes (require_some (Nx.Repr.array back)))
 
+(* Bits, half of them 64 KiB or more. *)
+let sources =
+  Gen.frequency [ (1, Nx_support.bits); (1, Nx_support.large_bits) ]
+
 let () =
   exit
     (run "nx place on a GPU"
        [
          prop ~count:50 "a value placed on a GPU and back keeps its bytes"
-           (Gen.pair Nx_support.bits Gen.bool)
-           law_gpu;
+           (Gen.pair sources Gen.bool) law_gpu;
        ])
