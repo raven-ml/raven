@@ -92,9 +92,16 @@ Where it stands, with every measurement: doc/performance.md.
   nonnormal), and an eviction may move its window while it writes. rig's
   traced launch test runs only over PCI. The paths left are PCI and an
   amdgpu DRM submission, which holds its VMID and memory for the job
+- `beam_search`'s disk key names no device part, so a search timed on one
+  part of a target serves every other part
 
 ## nx, rune
 
+- rune's attention takes 8 or 4 warps by `local_workgroups`, outside that
+  field's documented scope, and 8 against 4 was never measured
+- Under load (about 25-50), tolk's launch law and rune's attention "every
+  dtype" and "its gradient mapped by vmap" props hit windtrap's 60 s limit;
+  they pass in 10-15 s on a rerun
 - nx's `permute is a bijection` (test/test_rng.ml) covers "one element" on
   some seeds only, so the test can fail on a draw that reaches no such case
 - rune's blocked complex contraction bound, `γ(β(K) + 2)`, exceeds the
