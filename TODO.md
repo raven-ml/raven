@@ -29,7 +29,8 @@ Where it stands, with every measurement: doc/performance.md.
   2026-11-15 with rune's float32 decode, before the bfloat16 decode and the
   byte merge: a core takes 0.31-0.33 SM-cycles a weight at prefill and the
   stream of 4 at 12 tokens 0.38, not 0.37 against 0.25, which rune's
-  `stream_held = 2` (`Lower_reduce`) still cites; DRAM reads the
+  `stream_held = 2` (`Lower_reduce`) still cites, and cores beat streams
+  from 8 tokens on gpt-oss's experts; DRAM reads the
   compulsory bytes in every variant. Of the 512-token gap to vLLM, the
   decode in the warps took 2.84 ms of gate_up's 6.27 and 1.50 of down's
   3.49, and the code loads, 20 single bytes a thread a trip, 4.14 and 2.13
@@ -54,15 +55,10 @@ Where it stands, with every measurement: doc/performance.md.
 - gpt-oss's router product takes 620-635 us at 16 tokens against 99 at
   12 (`r_2_8_16_2_2880`), 567-764 us a layer at 13-15 tokens, and 85 at
   127 against 39 at 128
-- rune's `stream_held = 2` (`lower_reduce.ml`) rests on per-weight costs
-  of 0.37 and 0.25 SM-cycles that measure 0.31-0.33 for the core and 0.38
-  for a stream of 4: on gpt-oss's experts cores beat streams from 8 tokens
-- A tensor core reads MXFP4 codes as single-byte loads into its lanes;
-  how they reach the lanes holds about 4.4 ms of gpt-oss's prefill-512
+- With the bfloat16 decode and CUDA's byte words, how MXFP4 codes reach
+  a tensor core's lanes holds about 4.4 ms of gpt-oss's prefill-512
   against vLLM, and staged Q8_0 codes ran 1.5-1.8x slower
   (`stage.ml`'s comment) for a reason nobody has measured
-- gpt-oss's down projection at 64 tokens runs 324 workgroups on 300 slots,
-  a wave tail of 0.58 ms
 - MXFP4's float32 decode on Metal multiplies by a subnormal at scale byte
   0, which Metal may flush (MSL 4.1 §8.1); no test reaches it there
 - tolk streams a routed block of 32 rows, which `core_fits` refuses: such
