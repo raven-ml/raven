@@ -368,7 +368,12 @@ val rate : float -> 'd Schedule.t
     A rule on the rank, [Array.length shape >= 2], also decays each bias and
     normalisation scale of a model that stacks its blocks along a new axis to
     scan over them. Nothing checks a rule against the model, so a name the
-    model does not use matches no leaf, silently. *)
+    model does not use matches no leaf, silently.
+
+    {!lars_step} and {!lamb_step} also take [~adapts], a rule of the same
+    kind for their trust ratio, independent of [~decays]. A recipe that
+    leaves the same leaves out of both passes the rule twice:
+    [Vega.lars_step model ~lr ~decays ~adapts:decays opt ~params ~grads]. *)
 
 (** {1:parts Settings that differ across parameters}
 
@@ -464,6 +469,7 @@ val lars_step :
   ?trust_coefficient:float ->
   ?weight_decay:('d Nx.int32_t -> (float, 'c, 'd) Nx.t) ->
   ?decays:(Nx.Ptree.Path.t -> int array -> bool) ->
+  ?adapts:(Nx.Ptree.Path.t -> int array -> bool) ->
   ?nesterov:bool ->
   ('p, 'd) sgd_state ->
   params:'p ->
@@ -490,6 +496,17 @@ val lars_step :
     small against the gradient. A leaf whose weights are zero, such as a bias at
     initialisation, takes [r = 1], the momentum SGD step at [lr], and a zero
     update stays zero.
+
+    [~adapts path shape] says whether the leaf takes the trust ratio; by
+    default every leaf does, as the paper's LARS adapts its biases too
+    (Fig. 2). It is asked as [~decays] is ({!section-decay}), on the host
+    while the step is built, and is independent of it. A leaf it rejects
+    takes [r = 1]: without [nesterov], one that does not decay steps as
+    {!sgd_step} with the same positive [momentum] steps it, bit for bit.
+    Recipes that leave biases and normalisation parameters out of both the
+    adaptation and the decay, as BYOL (Grill et al., 2020, §3.3) and Barlow
+    Twins (Zbontar et al., 2021) do, pass one rule to both:
+    [~decays:r ~adapts:r].
 
     [lr] is the paper's global rate and [trust_coefficient] its [eta],
     defaulting to [0.001]. [momentum] defaults to [0.9], [weight_decay] to
@@ -644,6 +661,7 @@ val lamb_step :
   ?eps:float ->
   ?weight_decay:('d Nx.int32_t -> (float, 'c, 'd) Nx.t) ->
   ?decays:(Nx.Ptree.Path.t -> int array -> bool) ->
+  ?adapts:(Nx.Ptree.Path.t -> int array -> bool) ->
   ('p, 'd) adam_state ->
   params:'p ->
   grads:'p ->
@@ -662,6 +680,17 @@ val lamb_step :
     [wd] is the weight decay at the counter ({!section-decay}); a leaf that
     does not decay takes [u = d], in the ratio as in the step. Defaults are
     {!adam_step}'s, and [weight_decay] defaults to [Vega.rate 0.01].
+
+    [~adapts] says whether a leaf takes the trust ratio, as for {!lars_step}:
+    by default every leaf does, as in optax's [lamb]. A leaf it rejects takes
+    [r = 1] and steps as {!adamw_step} steps it, bit for bit. NVIDIA apex's
+    [FusedLAMB] (unless [use_nvlamb]) and TensorFlow Addons' [LAMB] instead
+    tie adaptation to decay by default: a leaf they do not decay is not
+    adapted either. A port of a recipe written for them, such as BERT's,
+    which decays neither biases nor normalisation parameters, passes its rule
+    to both, [~decays ~adapts:decays]. apex ties adaptation to the decay's
+    value, so a port whose decay is zero throughout adapts no leaf and
+    passes [~adapts:(fun _ _ -> false)].
 
     Raises [Invalid_argument] as {!adam_step} does. *)
 

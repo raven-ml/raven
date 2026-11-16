@@ -95,6 +95,11 @@ let tests =
     test "lamb"
       (compiles Vega.adam_ptree ~init:Vega.lamb_init ~step:(fun st ->
            Vega.lamb_step Wb.ptree ~lr st));
+    (* The rule's answers are constants of the program. *)
+    test "lars under a rule that adapts [w] alone"
+      (compiles Vega.sgd_ptree ~init:Vega.lars_init ~step:(fun st ->
+           let adapts path _ = Nx.Ptree.Path.to_string path = "w" in
+           Vega.lars_step Wb.ptree ~lr ~adapts st));
     test "rmsprop"
       (compiles Vega.rmsprop_ptree ~init:Vega.rmsprop_init ~step:(fun st ->
            Vega.rmsprop_step Wb.ptree ~lr ~momentum:0.9 st));

@@ -1705,6 +1705,163 @@ let test_decays_is_asked () =
   ignore (Vega.lars_step p ~lr ~decays (Vega.lars_init p x) ~params:x ~grads:x);
   check "lars"
 
+(* The trust ratio's rule *)
+
+(* LARS and LAMB from a state at the counter [c] whose parts are not zero, as
+   the float leaves of the parameters and the state they return. *)
+let adapting ?adapts ?decays () =
+  let p = Mixed.ptree and lr = Vega.rate 0.01 in
+  let square = Nx.Ptree.map p (fun _ a -> Nx.mul a a) in
+  [
+    ( "lars",
+      fun c x g ->
+        let st = { Vega.velocity = g; step = at_counter c } in
+        by_path
+          (Nx.Ptree.pair p (Vega.sgd_ptree p))
+          (Vega.lars_step p ~lr ~weight_decay:rising ?decays ?adapts st
+             ~params:x ~grads:g) );
+    ( "lamb",
+      fun c x g ->
+        let st = { Vega.mu = g; nu = square g; step = at_counter c } in
+        by_path
+          (Nx.Ptree.pair p (Vega.adam_ptree p))
+          (Vega.lamb_step p ~lr ~weight_decay:rising ?decays ?adapts st
+             ~params:x ~grads:g) );
+  ]
+
+(* A leaf the rule rejects takes no trust ratio: under LAMB it steps as under
+   AdamW with the same decay, and under LARS, not decayed, as under momentum
+   SGD, bit for bit. *)
+let rejected_is_the_base =
+  prop "a leaf that does not adapt steps as the base optimizer" mixed_step
+    (fun (x, g, c) ->
+      let p = Mixed.ptree and lr = Vega.rate 0.01 in
+      let decays path _ = Nx.Ptree.Path.to_string path <> "0.s" in
+      let adamw =
+        let nu = Nx.Ptree.map p (fun _ a -> Nx.mul a a) g in
+        let st = { Vega.mu = g; nu; step = at_counter c } in
+        by_path
+          (Nx.Ptree.pair p (Vega.adam_ptree p))
+          (Vega.adamw_step p ~lr ~weight_decay:rising ~decays st ~params:x
+             ~grads:g)
+      in
+      equal ~msg:"lamb" leaves_equal adamw
+        (List.assoc "lamb" (adapting ~adapts:rejects ~decays ()) c x g);
+      let sgd =
+        let st = { Vega.velocity = g; step = at_counter c } in
+        by_path
+          (Nx.Ptree.pair p (Vega.sgd_ptree p))
+          (Vega.sgd_step p ~lr ~momentum:0.9 st ~params:x ~grads:g)
+      in
+      equal ~msg:"lars" leaves_equal sgd
+        (List.assoc "lars" (adapting ~adapts:rejects ~decays:rejects ()) c x g))
+
+(* A float32 and a float64 leaf: LARS's closed form computes at each. *)
+module Sd = struct
+  type t = { s : Nx.host Nx.float32_t; d : Nx.host Nx.float64_t }
+
+  let walk c { s; d } =
+    let open Nx.Ptree.Walk in
+    let s = field c "s" tensor s in
+    let d = field c "d" tensor d in
+    { s; d }
+
+  let ptree : (t, Nx.host) Nx.Ptree.t = Nx.Ptree.v walk
+end
+
+(* [lars_rejected ~decays ~nesterov p g v] is lars_step's closed form at
+   [r = 1] (its doc's), at the leaf's dtype, with the float32 rates [lr] and
+   [wd] and [momentum] at the leaf's: [u = g + wd * p] for a leaf that
+   decays and [g] for one that does not, [v' = momentum * v + u], and [p' =
+   p - lr * v'], or [p - lr * (u + momentum * v')] with [nesterov]. *)
+let lars_rejected ~lr ~wd ~momentum ~decays ~nesterov p g v =
+  let f32 x = Int32.float_of_bits (Int32.bits_of_float x) in
+  let c x = Nx.scalar_like p x in
+  let u = if decays then Nx.add g (Nx.mul p (c (f32 wd))) else g in
+  let v' = Nx.add (Nx.mul v (c momentum)) u in
+  let d = if nesterov then Nx.add u (Nx.mul v' (c momentum)) else v' in
+  (Nx.sub p (Nx.mul d (c (f32 lr))), v')
+
+(* A leaf LARS's rule rejects follows the closed form at [r = 1], decayed or
+   not, with Nesterov's form or without, bit for bit: the rule for the ratio
+   leaves the decay and the momentum as they are. *)
+let rejected_lars_closed_form =
+  let leaves n =
+    let open Gen in
+    let+ xs = array ~size:(constant n) (float_range (-4.0) 4.0) in
+    {
+      Sd.s = Nx.create Nx.float32 [| n |] xs;
+      d = Nx.create Nx.float64 [| n |] xs;
+    }
+  in
+  let gen =
+    let open Gen in
+    let* n = int_range 0 4 in
+    let+ (x, g, v), (decays, nesterov) =
+      pair (triple (leaves n) (leaves n) (leaves n)) (pair bool bool)
+    in
+    (x, g, v, decays, nesterov)
+  in
+  prop "a leaf that does not adapt follows lars's closed form at r = 1" gen
+    (fun (x, g, v, decays, nesterov) ->
+      cover "decayed, with nesterov" (decays && nesterov);
+      cover "neither" ((not decays) && not nesterov);
+      let lr = 0.01 and wd = 0.3 and momentum = 0.9 in
+      let p = Sd.ptree in
+      let rule = if decays then None else Some rejects in
+      let st = { Vega.velocity = v; step = at_counter 3 } in
+      let x', st' =
+        Vega.lars_step p ~lr:(Vega.rate lr) ~momentum
+          ~weight_decay:(Vega.rate wd) ?decays:rule ~adapts:rejects ~nesterov
+          st ~params:x ~grads:g
+      in
+      let closed p g v =
+        lars_rejected ~lr ~wd ~momentum ~decays ~nesterov p g v
+      in
+      let bits t =
+        Array.map Int64.bits_of_float (Nx.to_array (Nx.cast Nx.float64 t))
+      in
+      let check name (y, w) (y', w') =
+        equal ~msg:(name ^ ": parameter") (array int64) (bits y) (bits y');
+        equal ~msg:(name ^ ": velocity") (array int64) (bits w) (bits w')
+      in
+      check "float32" (closed x.s g.s v.s) (x'.s, st'.velocity.s);
+      check "float64" (closed x.d g.d v.d) (x'.d, st'.velocity.d))
+
+(* Under a rule that picks some of the leaves by name, each leaf of the
+   parameters and the state is the leaf of the step where every leaf adapts,
+   or of the step where none does, whatever the rule for the decay. *)
+let mixed_adapts =
+  let gen = Gen.(pair mixed_step (array ~size:(constant 4) bool)) in
+  prop "a rule adapts the leaves it picks" gen (fun ((x, g, c), picked) ->
+      cover "some leaves adapt and some do not"
+        (Array.exists Fun.id picked && Array.exists not picked);
+      let picks = List.combine [ "h"; "s"; "d"; "z" ] (Array.to_list picked) in
+      let chosen path =
+        match List.rev (String.split_on_char '.' path) with
+        | name :: _ -> Option.value ~default:false (List.assoc_opt name picks)
+        | [] -> false
+      in
+      let adapts path _ = chosen (Nx.Ptree.Path.to_string path) in
+      let decays path _ = Nx.Ptree.Path.to_string path <> "0.d" in
+      List.iter2
+        (fun (name, mixed) ((_, all), (_, none)) ->
+          let all = all c x g and none = none c x g in
+          let bits =
+            List.map (fun (p, a) -> (p, Array.map Int64.bits_of_float a))
+          in
+          cover (name ^ ": the ratio moves a leaf") (bits all <> bits none);
+          let expected =
+            List.map2
+              (fun ((path, _) as a) b -> if chosen path then a else b)
+              all none
+          in
+          equal ~msg:name leaves_equal expected (mixed c x g))
+        (adapting ~adapts ~decays ())
+        (List.combine
+           (adapting ~decays ())
+           (adapting ~adapts:rejects ~decays ())))
+
 (* Two leaves each alone on its own device of one set: every per-leaf step
    reads its scalars beside both, and gives the host's values. *)
 let test_leaves_on_two_devices () =
@@ -1840,6 +1997,8 @@ let tests =
         test "the rule is asked once per float leaf, with its shape"
           test_decays_is_asked;
       ];
+    group "trust ratio"
+      [ rejected_is_the_base; rejected_lars_closed_form; mixed_adapts ];
     group "placement"
       [
         test "leaves alone on two devices of one set" test_leaves_on_two_devices;

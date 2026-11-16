@@ -281,6 +281,10 @@ All notable changes to this project will be documented in this file.
 
 ### Vega (new)
 
+- `lars_step` and `lamb_step` take `?adapts`, a rule on each leaf's path
+  and shape that leaves it out of the trust ratio, independent of
+  `?decays`. A leaf it rejects steps as under momentum SGD for LARS and
+  under `adamw_step` for LAMB. By default every leaf adapts, as before.
 - A schedule's numbers, and `Vega.rate`'s, are data of a compiled step's
   program rather than literals: runs that differ only in a peak rate, a run
   length or a weight decay share one program, where each compiled its own.
