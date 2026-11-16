@@ -95,20 +95,20 @@ let law_diagonal (Batch (dt, x), (offset, (a1, a2))) =
   let s = Nx.shape x in
   let r = Array.length s in
   let a1 = a1 mod r and a2 = a2 mod r in
+  let m = s.(a1) and n = s.(a2) in
+  let count =
+    Stdlib.max 0
+      (if offset >= 0 then Stdlib.min m (n - offset)
+       else Stdlib.min (m + offset) n)
+  in
+  cover "empty diagonal" (a1 <> a2 && count = 0);
   if a1 = a2 then
     invalid ~by:"Nx.diagonal" (fun () -> Nx.diagonal ~axis1:a1 ~axis2:a2 x)
   else
     let rest = List.filter (fun a -> a <> a1 && a <> a2) (List.init r Fun.id) in
-    let m = s.(a1) and n = s.(a2) in
-    let count =
-      Stdlib.max 0
-        (if offset >= 0 then Stdlib.min m (n - offset)
-         else Stdlib.min (m + offset) n)
-    in
     let lead = Array.of_list (List.map (fun a -> s.(a)) rest) in
     let out = Array.append lead [| count |] in
     let xs = Nx.to_array x in
-    cover "empty diagonal" (count = 0);
     let expected =
       Array.init (numel out) (fun j ->
           let o = unravel out j in
