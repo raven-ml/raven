@@ -163,9 +163,9 @@ Where it stands, with every measurement: doc/performance.md.
   shapes. Where their time goes is unmeasured. tolk's launch law is the
   tolk entry above. Found by the TARGETFACTS audit and CODEPATH design A
 - rune states a compiled complex contraction's part within
-  `γ(β(K) + 2) Σ(|ar br| + |ai bi|)` (rune.mli:1684-1686,
+  `γ(β(K) + 2) Σ(|ar br| + |ai bi|)` (rune.mli:1696-1698,
   lower_reduce.mli:141-145), while `Nx.contract` and the kernel contract
-  give `√2 γ(β(2K))` in modulus (nx.mli:2673-2676, nx_kernel.mli:300-303).
+  give `√2 γ(β(2K))` in modulus (nx.mli:2685-2688, nx_kernel.mli:300-303).
   At K = 1 alone, rune's bound is larger: `γ(5)` a part against `√2 γ(4)`
   in modulus. From K = 2 on, `β(K) + 2 ≤ β(2K)`. It matters if compiled
   programs must hold `Nx.contract`'s bound. Found by NXBOUND
@@ -226,6 +226,18 @@ Where it stands, with every measurement: doc/performance.md.
   no copy. Eager optimiser moments made at a GPU set outside a compiler
   pay a host fill of their size and a copy of it to the device.
   Unmeasured. Found by the DD design round (N3)
+- rune.mli:1400-1402 says that a value a compiled function captures on
+  another device and places where the program computes "is copied there
+  once per program". In a split program (values whole on each of several
+  devices) the capture is instead bound as it is (compile.ml:339, `Some r
+  when st.split || …`), and its placement copies it at every call.
+  Measured on two software devices: 6 float32 captures cost 48 bytes a
+  call, 4,848 over 101 calls
+  (_plans/tessera-port/design/jit-values/skeptic-probe/split.log). vega's
+  schedules capture their numbers, so a data-parallel step pays this for
+  each. Either upload once per device in split programs through
+  `st.uploads`, or scope the sentence to one-device programs. Found by DC's
+  skeptic
 
 ## vega
 
@@ -233,9 +245,18 @@ Where it stands, with every measurement: doc/performance.md.
   parameters their own learning rate, 0.0048 against the weights' 0.2
   (Zbontar et al. 2021, "Optimization"; `main.py` lines 167-168). No vega
   rule sets a rate by the kind of leaf: rates differ by part
-  (vega.mli:363-388), and these leaves interleave across every layer.
+  (vega.mli:378-403), and these leaves interleave across every layer.
   Decide whether a rate by leaf kind is a rule on the leaf, as `~decays`
-  is. Found by DC's V2 audit
+  and `~adapts` are; a third rule would ask whether the rules become one
+  record (_plans/tessera-port/design/jit-values/skeptic.md §3). Found by
+  DC's V2 audit
+- Momentum schedules. PyTorch's OneCycleLR cycles beta1 by default
+  (`cycle_momentum=True`), and PyTorch took tensor betas for it (PR
+  #134171, issue #133898). vega's `?b1:float` is read once at the trace
+  of a compiled step, so such a port is silently wrong. Decide an opt-in
+  data form for b1 when a consumer needs one; until then vega.mli:48-52
+  states that a sweep over any of a step's coefficients compiles once per
+  value. Found by DC's skeptic
 
 ## rig
 
