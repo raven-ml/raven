@@ -42,8 +42,8 @@ Where it stands, with every measurement: doc/performance.md.
 - A tensor core's kernel sums its whole reduce in each thread, so a grid
   under one wave, or just past one, reads its operand more slowly than a
   stream. With decoded slices on cores from one row a group, gpt-oss's
-  down at 10-11 tokens and Mixtral-like MXFP4 down at 5-6 tokens (one
-  routing each) and gpt-oss's down at 64 tokens lose to it. A split of the
+  down at 10-11 tokens and Mixtral-like MXFP4 down at 5-6 tokens lose to
+  it, each on one routing. A split of the
   reduce, in the graph as tinygrad's `split_reduceop` does or in codegen,
   from the SM count and occupancy, would remove it
 - rune's routed products with no core: one row a block loses 12-33% to
