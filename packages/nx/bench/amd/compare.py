@@ -391,11 +391,13 @@ def move(op, dt):
         rows = off + torch.arange(off.numel(), device=DEV)
         return lambda: torch.index_select(x, 0, rows)
     src = draw((m,), dt)
-    if op in ("scatter_add_perm", "scatter_set_perm"):
+    if op in ("scatter_add_perm", "scatter_set_perm", "scatter_max_perm"):
         into = draw((m,), dt)
         perm = torch.randperm(m, device=DEV, generator=g)
         if op == "scatter_set_perm":
             return lambda: into.scatter(0, perm, src)
+        if op == "scatter_max_perm":
+            return lambda: into.scatter_reduce(0, perm, src, "amax")
         return lambda: into.scatter_add(0, perm, src)
     if op == "scatter_add_one":
         into = draw((1024,), dt)
@@ -409,6 +411,10 @@ def move(op, dt):
         if op == "scatter_max_rand1m":
             return lambda: into.scatter_reduce(0, i, src, "amax")
         return lambda: into.scatter_add(0, i, src)
+    if op in ("scatter_max_rand4m", "scatter_max_rand8m"):
+        t = (4 if op == "scatter_max_rand4m" else 8) << 20
+        into, i = draw((t,), dt), rand(m, t)
+        return lambda: into.scatter_reduce(0, i, src, "amax")
     if op == "scatter_add_emb":
         emb, grads = draw((32768, 1024), dt), draw((16384, 1024), dt)
         ids = rand(16384, 32768)

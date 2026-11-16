@@ -72,7 +72,7 @@ let runs =
     ("contract/float8_e4m3fn-1x5120x2880", 71);
     ("contract/bfloat16-1x201088x2880", 1);
     ("contract/bfloat16-256x256x65536", 2);
-    ("contract/bfloat16-4096x4096x65536", 1);
+    ("contract/bfloat16-2048x2048x65536", 1);
     ("contract/bfloat16-4096x1x4096", 32);
     ("contract/float32-1x5120x2880", 26);
     ("contract/float64-1024x1024x1024", 1);
@@ -135,7 +135,8 @@ let runs =
     ("move/scatter_add_rand1m_f32", 1);
     ("move/scatter_add_emb_f32", 1);
     ("move/scatter_set_perm_f32", 1);
-    ("move/scatter_max_rand1m_f32", 3);
+    ("move/scatter_max_rand4m_f32", 3);
+    ("move/scatter_max_perm_f32", 1);
     ("move/assemble_cat_f32", 2);
     ("move/fold_col2im_f32", 1);
     ("fft/c2c-c64-4096x1024", 9);

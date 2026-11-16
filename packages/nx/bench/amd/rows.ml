@@ -346,6 +346,10 @@ let contracts =
          two, pass the kept workspace; many rows of one column *)
       contract bf16 f32 bf16 256 256 65536;
       contract bf16 f32 bf16 4096 4096 65536;
+      (* the plan of 4096 x 4096 x 65536 (the 128 x 128 tile, one range, no
+         window) at a quarter of its time, the suite's: at 1024 x 1024 a
+         group a CU, its time follows the slowest CU's *)
+      contract bf16 f32 bf16 2048 2048 65536;
       contract bf16 f32 bf16 4096 1 4096;
       contract ~batch:64 bf16 f32 bf16 512 512 512;
       contract f32 f32 f32 1 5120 2880;
@@ -1374,6 +1378,13 @@ let moves =
     scatter "scatter_set_perm_f32" "scatter_set_perm" Set ~targets:m perm;
     scatter "scatter_max_rand1m_f32" "scatter_max_rand1m" Max ~targets:mi
       (fun () -> random ~seed:7 m mi);
+    (* Max at 4 and 2 updates a target, and at unique positions, where no
+       target's compare-and-swap contends *)
+    scatter "scatter_max_rand4m_f32" "scatter_max_rand4m" Max ~targets:(4 * mi)
+      (fun () -> random ~seed:8 m (4 * mi));
+    scatter "scatter_max_rand8m_f32" "scatter_max_rand8m" Max ~targets:(8 * mi)
+      (fun () -> random ~seed:9 m (8 * mi));
+    scatter "scatter_max_perm_f32" "scatter_max_perm" Max ~targets:m perm;
     move_row "assemble_cat_f32" "assemble_cat" f32
       ~bytes:(8 * 16384 * 4096)
       (assemble_run ~fill:0. [| 16384; 4096 |]
@@ -2083,7 +2094,7 @@ let suite_names =
     "contract/bfloat16-8x5120x2880";
     "contract/bfloat16-256x256x65536";
     "contract/bfloat16-4096x1x4096";
-    "contract/bfloat16-4096x4096x65536";
+    "contract/bfloat16-2048x2048x65536";
     "contract/bfloat16-512x5120x2880";
     "contract/float32-20480x1x2880";
     "contract/bfloat16-131072x16x16x16";
@@ -2141,7 +2152,9 @@ let suite_names =
     "sort/unique-i64-4Mx4-range16";
     (* moves: gathers of rows, of elements past the caches and in the band,
        ranges, sums sorted first, into one target and of rows, sets,
-       maxima, an assembly, a fold *)
+       maxima at 4 updates a target and at unique positions (rand1m's time
+       differs by half from one process to the next), an assembly, a
+       fold *)
     "move/gather_emb_f32";
     "move/gather_rand_f32";
     "move/gather_rand64k_f32";
@@ -2150,7 +2163,8 @@ let suite_names =
     "move/scatter_add_one_f32";
     "move/scatter_add_emb_f32";
     "move/scatter_set_perm_f32";
-    "move/scatter_max_rand1m_f32";
+    "move/scatter_max_rand4m_f32";
+    "move/scatter_max_perm_f32";
     "move/assemble_cat_f32";
     "move/fold_col2im_f32";
     (* transforms: batched, one long axis in and past the caches, two axes,
