@@ -46,7 +46,16 @@
     aside, on every target. So [Exp2] is exact at integers whose power is
     in the dtype, and [Log2] at powers of two. The kinds keep subnormal
     operands and results. A transform's bits too are the same on every
-    target, NaNs aside. *)
+    target, NaNs aside.
+
+    The float formats narrower than 32 bits compute in [float32]
+    ({!Nx_kernel.Prog.section-results}), and in a contraction or attention in
+    its accumulator, which may be [float64]: a kernel converts each narrow
+    element it reads and rounds each narrow value it computes, a program's at
+    each node and a fold's at each addition, and a narrow [Fma] rounds to odd in
+    [float32] so that its store rounds once. They save memory and the bytes a
+    kernel moves, never arithmetic: a call on them does at least its compute
+    type's arithmetic, plus those conversions. *)
 
 (** {1:lane_order Lane order}
 
