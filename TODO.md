@@ -73,6 +73,11 @@ Where it stands, with every measurement: doc/performance.md.
 - A staged core copies in at most two stages, so where twice the bytes in
   flight pass `shared_max` it can only deepen its trips; more, shallower
   stages need a counted `cp.async.wait_group` in the CUDA renderer
+- A gather that reads more elements than its table holds, with no
+  broadcast above it, still inlines its table's computation into every
+  read
+- `Rangeify.buffers` keys `homes` by a stage's value, not its node, so two
+  stages of one value share a home; no failing case is known
 - tolk recomputes a cheap broadcast value along every row that reads it:
   a 3-buffer polynomial of D multiply-adds broadcast along 4096 rows takes
   11.3 ms on the host against 0.64 ms stored. `recomputes`/`copies` count
