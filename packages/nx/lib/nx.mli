@@ -2194,23 +2194,23 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     of every device, its own included. It combines a piece's partials one
     at a time, in C order of the windows' first indices, each with the
     combination of those before it, and a {!logsumexp}'s at once by the
-    kernels. So a {!sum}, {!prod}, {!max} or {!min} whose result of [r]
-    bytes is whole on [N] devices, each holding partials of [r] bytes,
-    holds on each device, beside its operand, at most [r + r ⌈e / N⌉ / e]
-    bytes and [256 (1 + 1 / N)] KiB more, [e] the extent of the result's
-    first axis of at least [N] elements. Where the result has no such
-    axis, each device computes all of it and holds at most [2r] bytes and
-    [256 (1 + 1 / N)] KiB more. Integer and boolean reductions, extremes
-    and their positions keep the bits they have on one device. A float or
-    complex {!sum}, {!prod}, {!mean}, {!var}, {!std}, {!logsumexp} or
-    {!logmeanexp} over cut axes has the kernels' association over each
-    window's terms and, over the partials, their combination in turn, the
-    kernels' association for {!logsumexp} and {!logmeanexp}. It may differ
-    from the result on one device within the bounds below, and is the same
-    on every run for a given placement and set of devices. Barring
-    overflow and underflow, a float sum of [n] terms is
-    within [γ(β(n)) Σ|x|] of the exact sum on one device, [γ] and [β] as
-    {!Nx_kernel.section-bounds} defines them, and within
+    kernels. So a {!sum}, {!prod}, {!max} or {!min} whose reduced axes are
+    cut into [N] windows, each holding terms and partials of [r] bytes,
+    and whose result of [r] bytes is whole on every device, holds on each
+    device, beside its operand, at most [r + r ⌈e / N⌉ / e] bytes and
+    [256 (1 + 1 / N)] KiB more, [e] the extent of the result's first axis
+    of at least [N] elements. Where the result has no such axis, it holds
+    at most [2r] bytes and [256 (1 + 1 / N)] KiB more. Integer and boolean
+    reductions, extremes and their positions keep the bits they have on
+    one device. A float or complex {!sum}, {!prod}, {!mean}, {!var},
+    {!std}, {!logsumexp} or {!logmeanexp} over cut axes has the kernels'
+    association over each window's terms and, over the partials, their
+    combination in turn, the kernels' association for {!logsumexp} and
+    {!logmeanexp}. It may differ from the result on one device within the
+    bounds below, and is the same on every run for a given placement and
+    set of devices. Barring overflow and underflow, a float sum of [n]
+    terms is within [γ(β(n)) Σ|x|] of the exact sum on one device, [γ] and
+    [β] as {!Nx_kernel.section-bounds} defines them, and within
     [γ(β(m) + t - 1) Σ|x|] over cut axes, [m] the most terms a window
     holds and [t] the windows holding terms. A float product is within a
     relative [γ(n - 1)], a complex one within a normwise relative

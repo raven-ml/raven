@@ -32,9 +32,10 @@
 
     A device's windows of the operands along the folded axes are its
     {e tile}. The devices that hold one window of the results form a
-    {e group}. The grid axes that cut the folded axes number a group's
-    tiles in C order of their first indices, one per device of a group of
-    [N] devices. A tile is empty only where a folded axis has fewer
+    {e group}. The grid axes that cut the folded axes number a group's [N]
+    tiles in C order of their first indices. The group's other grid axes
+    hold copies of the operands, so devices that differ only along them
+    share a tile. A tile is empty only where a folded axis has fewer
     elements than tiles, and the tiles that {e hold terms} come first along
     each cut axis. A group's partials are {e stacked} into one value of a
     new leading axis per cut folded axis, in the order of the first
@@ -363,9 +364,10 @@
     one piece's sum at a time. A piece holds more than [C] only where the
     slots of one element do, or where a part of a dtype narrower than a byte on a device
     whose memory the host does not address is one piece. Its partials go
-    before the result's windows are gathered. So a float32 sum whose result
-    of [r] bytes is whole on [N] devices, each holding a slot of [r] bytes,
-    holds at most [r + r ⌈e / N⌉ / e + C (1 + 1 / N)] beside the operands,
+    before the result's windows are gathered. So a float32 sum whose folded
+    axes are cut into [N] tiles, each holding terms and a slot of [r]
+    bytes, and whose result of [r] bytes is whole on every device, holds
+    at most [r + r ⌈e / N⌉ / e + C (1 + 1 / N)] beside the operands,
     [e] the extent of the result's first axis of at least [N] elements,
     along which a part holds at most [⌈e / N⌉] of [e] indices. Where the
     result has no such axis, a part is the device's whole window, and it
@@ -373,7 +375,7 @@
 
     {1:traffic Traffic}
 
-    A device of a group of [N], [t] of whose tiles hold terms, receives,
+    A device of a group of [N] tiles, [t] of which hold terms, receives,
     where an axis of [e] indices took the leading axes' cut, its part of
     each slot but its own, [⌊e / N⌋] or [⌈e / N⌉] of those indices of its
     window of the results each, then the [N - 1] other parts of its
@@ -392,8 +394,8 @@
     operand moves. A contraction asked for its sum moves nothing. A sum's
     closing moves its terms as a [Reduce] of one reduction moves its slots,
     every device's term holding terms; a reduce-scatter gathers no part, so
-    each device receives its part of each other term, [(N - 1) / N] of its
-    window of the sum where [N] divides the cut axis.
+    each device receives its part of each other term, [(q - 1) / q] of its
+    window of the sum where its group's [q] terms divide the cut axis.
 
     A [Reduce] of [k] reductions runs [k] loops over each device's loads,
     [Moments] two over its terms, laid out once where they are not a load.
