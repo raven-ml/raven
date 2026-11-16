@@ -1444,13 +1444,15 @@ let consumed by h =
   h.states <- union [ Some by ] (List.filter Option.is_none h.states)
 
 (* A one-handle operation [by] whose result's elements are [f]'s. *)
-let judge1 by f h = function
+let judge1 by f h out =
+  cover "a later operation raises naming the first"
+    (match out with Ok (Error _) -> true | Ok (Ok _) | Error _ -> false);
+  match out with
   | Ok (Ok ys) ->
       if not (free h) then fail (by ^ " took a taken handle");
       equal (array float_exact) (f h.ys) ys;
       consumed by h
   | Ok (Error e) ->
-      cover "a later operation raises naming the first" true;
       if not (lost_to e h) then fail (by ^ " raised naming " ^ e);
       h.states <- [ Some e ]
   | Error exn -> raise exn
@@ -1481,12 +1483,22 @@ let reshape_sys h =
    and may have taken the other if it was free. [sub h h] reads one handle.
    The result's elements are [f]'s. *)
 let pair_ref f by h1 h2 out =
-  if h1 == h2 then judge1 by (Array.map (fun v -> f v v)) h1 out
+  let two = h1 != h2 in
+  cover "two handles consumed"
+    (two && match out with Ok (Ok _) -> true | Ok (Error _) | Error _ -> false);
+  cover "one handle refused, the other free"
+    (two
+    &&
+    match out with
+    | Ok (Error e) ->
+        let lost = lost_to e in
+        (lost h1 && free h2) || (lost h2 && free h1)
+    | Ok (Ok _) | Error _ -> false);
+  if not two then judge1 by (Array.map (fun v -> f v v)) h1 out
   else
     match out with
     | Ok (Ok ys) ->
         if not (free h1 && free h2) then fail (by ^ " took a taken handle");
-        cover "two handles consumed" true;
         equal (array float_exact) (Array.map2 f h1.ys h2.ys) ys;
         consumed by h1;
         consumed by h2
@@ -1494,8 +1506,6 @@ let pair_ref f by h1 h2 out =
         let lost = lost_to e in
         let taken h = if free h then union h.states [ Some by ] else h.states in
         if not (lost h1 || lost h2) then fail (by ^ " raised naming " ^ e);
-        cover "one handle refused, the other free"
-          ((lost h1 && free h2) || (lost h2 && free h1));
         let s1 = if lost h1 then [ Some e ] else [] in
         let s1 = if lost h2 then union s1 (taken h1) else s1 in
         let s2 = if lost h2 then [ Some e ] else [] in
@@ -1619,13 +1629,14 @@ let made xs =
    result is [f ()]; if it raised, its message refuses one of them. Where it
    [consumes], a handle it read is read by it from then on. *)
 let reading ?(consumes = true) by rs f out =
+  cover "a later use refused"
+    (match out with Ok (Error _) -> true | Ok (Ok _) | Error _ -> false);
   (match out with
   | Ok (Ok ys) ->
       if List.exists (fun r -> (not r.handle) && !(r.word)) rs then
         fail (by ^ " read a donated value");
       equal (array float_exact) (f ()) ys
   | Ok (Error m) ->
-      cover "a later use refused" true;
       if not (List.exists (fun r -> refuses by r m) rs) then
         fail (by ^ " refused: " ^ m)
   | Error exn -> raise exn);
@@ -3221,7 +3232,9 @@ let () =
              test_dead_names;
              test_donated;
              test "a captured handle reads as it was" test_captured;
-             stateful ~domains:2
+             (* A program consumes two handles at once about one time in
+                eleven. *)
+             stateful ~domains:2 ~count:300
                "reads, consumers and handles taken on two domains" commands;
              test "donated tells a handle, live or not" test_is_handle;
              test "a consumer frees its handles' memory, naming itself"
