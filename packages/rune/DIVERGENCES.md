@@ -1284,7 +1284,9 @@ rounded sum; a stated bound) and its reason. A rounded sum's bound is
   to 250 a sum over the `p × p` twiddle table, and a larger `p` Bluestein's
   convolution over the least power of two at least `2p - 1`. Each stage is
   stored apart: one kernel per prime factor. A twiddle's parts are sines of
-  arguments at most `π/2`, from `4k = q n + s`, exact at whole quarter turns.
+  arguments at most `π/2`, from `4k = q n + s`, exact at whole quarter turns,
+  by `nx_sin_near` (`Lower_real.sin_near`), nx's sine without the reduction
+  past `2^15` or `2^28` that no such argument reaches.
   `r2c` transforms its points as complex numbers along the last axis first
   and keeps bins 0 to `n/2`. `c2r` completes the bins by `conj X[n - k]`,
   bin 0's and an even `n`'s bin `n/2`'s imaginary parts set to `+0.`, and

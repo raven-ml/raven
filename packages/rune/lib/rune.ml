@@ -1414,6 +1414,7 @@ let jacrev' f x =
 
 module Lower = Lower
 module Lower_arith = Lower_arith
+module Lower_real = Lower_real
 module Loop = Loop
 
 let attention_tile = Lower_attention.derivative_tile

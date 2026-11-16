@@ -367,10 +367,120 @@ let kinds =
       acos; atan; atan2; erf; pow; mod_;
     ]
 
+(* Near sine
+
+   Lower_real.sin_near, nx_sin_near, gives the full sine's bits wherever |x|
+   is below the switch to Payne and Hanek's reduction, 2^15 or 2^28, or is
+   not finite, at float32 and float64. Each dtype's block draws a uniform
+   code below the switch of either sign (3 in 6), a multiple of pi/2 below it
+   stepped up to 2 ranks (2 in 6), or one of 7 special codes (1 in 6): the
+   zeros, the infinities, a NaN, the least subnormal and the float just below
+   the switch. With at least 7/8 of draws fresh, each special is drawn at
+   1/48 a draw or more, and a block of 4096 misses one with probability
+   below 1e-37. *)
+
+let near_specials wide =
+  let below = if wide then 0x41AFFFFFFFFFFFFFL else 0x46FFFFFFL in
+  let sign = if wide then Int64.min_int else 0x80000000L in
+  let inf = if wide then 0x7FF0000000000000L else 0x7F800000L in
+  let nan = if wide then 0x7FF8000000000000L else 0x7FC00000L in
+  [ 0L; sign; inf; Int64.logor inf sign; nan; 1L; below ]
+
+let near_switch wide = if wide then 0x1p28 else 0x1p15
+
+let near_block wide =
+  let open Gen in
+  let top = if wide then 0x41B0000000000000L else 0x47000000L in
+  let sign = if wide then Int64.min_int else 0x80000000L in
+  let code v =
+    if wide then Int64.bits_of_float v
+    else Int64.logand (Int64.of_int32 (Int32.bits_of_float v)) 0xFFFFFFFFL
+  in
+  let signed g =
+    let+ c = g and+ neg = bool in
+    if neg then Int64.logor c sign else c
+  in
+  let last = int_of_float (near_switch wide /. Float.pi *. 2.) - 1 in
+  let multiple =
+    let+ k = int_range 1 last and+ d = int_range (-2) 2 in
+    Int64.add (code (Float.of_int k *. Float.pi /. 2.)) (Int64.of_int d)
+  in
+  array ~size:(constant 4096)
+    (frequency
+       [
+         (3, signed (int64_range 0L (Int64.pred top)));
+         (2, signed multiple);
+         (1, of_list (near_specials wide));
+       ])
+
+let near_value wide c =
+  if wide then Int64.float_of_bits c else Int32.float_of_bits (Int64.to_int32 c)
+
+(* [f] of the codes [cs] compiled on the host, as codes. *)
+let near_run wide f cs =
+  let n = Array.length cs in
+  if wide then
+    Array.map Int64.bits_of_float
+      (Lowered.map f (Nx.bitcast Nx.float64 (Nx.create Nx.int64 [| n |] cs)))
+  else
+    let x =
+      Nx.bitcast Nx.float32
+        (Nx.create Nx.int32 [| n |] (Array.map Int64.to_int32 cs))
+    in
+    let code v = Int64.of_int32 (Int32.bits_of_float v) in
+    Array.map (fun v -> Int64.logand (code v) 0xFFFFFFFFL) (Lowered.map f x)
+
+let near_misses wide cs =
+  let near = near_run wide Rune.Lower_real.sin_near cs in
+  let full = near_run wide (Rune.Lower_real.unary Sin) cs in
+  let nan c = Float.is_nan (near_value wide c) in
+  let out = ref [] in
+  Array.iteri
+    (fun i c ->
+      let a = near.(i) and b = full.(i) in
+      if (not (Int64.equal a b || (nan a && nan b))) && List.length !out < 8
+      then
+        out :=
+          Printf.sprintf "sin_near(%h) = %#Lx, sin = %#Lx" (near_value wide c) a
+            b
+          :: !out)
+    cs;
+  List.rev !out
+
+let near_covers wide cs =
+  let any p = Array.exists (fun c -> p (near_value wide c)) cs in
+  let dt = if wide then "float64: " else "float32: " in
+  let switch = near_switch wide in
+  let q x = Float.round (x /. (Float.pi /. 2.)) in
+  let off x = Float.abs (x -. (q x *. Float.pi /. 2.)) in
+  cover (dt ^ "beside a multiple of pi/2")
+    (any (fun x -> q x <> 0. && off x <= 0x1p-20 *. Float.abs x));
+  cover
+    (dt ^ "within 2^-12 of the switch, below it")
+    (any (fun x ->
+         Float.abs x < switch && Float.abs x >= switch *. (1. -. 0x1p-12)));
+  cover (dt ^ "a subnormal")
+    (any (fun x ->
+         x <> 0. && Float.abs x < if wide then Float.min_float else 0x1p-126));
+  cover (dt ^ "a NaN") (any Float.is_nan);
+  cover (dt ^ "an infinity") (any (fun x -> Float.abs x = Float.infinity))
+
+let near_law =
+  prop ~count:12 "sin_near gives sin's bits below the switch"
+    (Gen.with_pp
+       (fun ppf _ ->
+         Format.pp_print_string ppf "4096 float32 and float64 codes")
+       Gen.(pair (near_block false) (near_block true)))
+    (fun (c32, c64) ->
+      near_covers false c32;
+      near_covers true c64;
+      equal (list string) [] (near_misses false c32 @ near_misses true c64))
+
 let () =
   exit
     (run "Lower_real"
        [
          group "exact" (List.map law (unary @ binary @ compare @ [ fma ]));
          group "kinds" (List.concat_map ported kinds);
+         group "near sine" [ near_law ];
        ])

@@ -14,6 +14,11 @@ val run : ?local:bool -> (unit -> ('v, 's, 'd) Nx.t) -> 'v array
     [~local:false] it lowers as for a device whose work is not this process's
     code, though the graph still runs on the host. *)
 
+val map : (Tolk.Ops.t -> Tolk.Ops.t) -> (float, 's, 'd) Nx.t -> float array
+(** [map f x] is the elements, in C order, of [f] applied to the node of
+    [x]'s elements, a [float32] or [float64] array, compiled and run on the
+    host. [f] keeps the node's shape and type. *)
+
 val work : (unit -> ('v, 's, 'd) Nx.t) -> int * int
 (** [work f] is the arithmetic operations, and the bytes loaded and stored,
     that the kernels of {!run}'s schedule for [f] are estimated to perform

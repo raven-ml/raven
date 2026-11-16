@@ -173,8 +173,9 @@ let compiled u o n =
   let targets _ = Tolk_engine.target Rig.host in
   (Realize.compile_linear ~targets linear, vars)
 
-let run (type v s d) ?local (f : unit -> (v, s, d) Nx.t) : v array =
-  let bound, u, dt, shape, n = lowered ?local f in
+(* The elements of the graph [u] of [dt] and [shape], [n] nodes' elements,
+   compiled and run on the host over the storage [bound]. *)
+let execute (type v s) bound u (dt : (v, s) D.t) shape n : v array =
   let tdt = L.dtype (D.Any dt) in
   if n = 0 then [||]
   else
@@ -191,6 +192,16 @@ let run (type v s d) ?local (f : unit -> (v, s, d) Nx.t) : v array =
     let bytes = Bytes.create len in
     Rig.Buffer.blit_to_bytes out 0 bytes 0 len;
     decode dt shape bytes
+
+let run (type v s d) ?local (f : unit -> (v, s, d) Nx.t) : v array =
+  let bound, u, dt, shape, n = lowered ?local f in
+  execute bound u dt shape n
+
+let map (type s d) (f : Ops.t -> Ops.t) (x : (float, s, d) Nx.t) : float array =
+  let bound = ref [] in
+  let dt = Nx.dtype x and shape = Nx.shape x in
+  let u = f (bind ~direct:true ~device:cpu bound x) in
+  execute bound u dt shape (numel shape)
 
 let work (type v s d) (f : unit -> (v, s, d) Nx.t) =
   let _, u, dt, _, n = lowered ~direct:true f in

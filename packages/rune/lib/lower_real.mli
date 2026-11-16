@@ -81,6 +81,13 @@ val fma : Ops.t -> Ops.t -> Ops.t -> Ops.t
 (** [fma a b c] is {!Lower_bits.mulacc}[ a b c], [a * b + c] rounded once. [a],
     [b] and [c] must be nodes of one float type. *)
 
+val sin_near : Ops.t -> Ops.t
+(** [sin_near x] is {!unary}[ Sin x] wherever [|x|] is below the switch to
+    Payne and Hanek's reduction, [2{^15}] at [float32] and [2{^28}] at
+    [float64], or is not finite: [nx_kinds.h]'s [nx_sin_near], Cody and
+    Waite's reduction alone, for a caller whose argument is bounded below the
+    switch. Elsewhere its value is unspecified. *)
+
 (** {1:helpers Building blocks of the complex kinds}
 
     These values build {!Lower_complex}'s kinds on nodes of one float type,

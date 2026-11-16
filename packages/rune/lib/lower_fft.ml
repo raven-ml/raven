@@ -63,8 +63,9 @@ let rec least_factor n p =
    turn [q] and the remainder [s] of [4m = q n + s] split the angle into [q
    π/2] and [φ = (π/2) s / n]. [sin φ] and [cos φ] are the sines of [(π/2) l /
    n] and [(π/2) (n - l) / n], [l = min s (n - s)]: arguments of at most
-   [π/2], and sines, of nx's bits ({!Lower_real}). A whole
-   quarter turn, [s = 0], is exact. *)
+   [π/2], and sines, of nx's bits by Cody and Waite's reduction alone
+   ({!Lower_real.sin_near}), since no argument nears the switch to Payne and
+   Hanek's. A whole quarter turn, [s = 0], is exact. *)
 
 let twiddle t ~sign n m =
   let at = Ops.cast m (index n) in
@@ -77,7 +78,7 @@ let twiddle t ~sign n m =
   let sine k =
     let k = Ops.cast k t in
     let x = Ops.mul k (Shape.const_like k (`Float step)) in
-    Lower_real.unary Nx_kernel.Prog.Sin x
+    Lower_real.sin_near x
   in
   let exact = Ops.eq l (int l 0) in
   let small = sine l and big = sine (Ops.sub n' l) in

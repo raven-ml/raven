@@ -764,11 +764,16 @@ let odd q = set (band q (u32 q 1))
 let tiny x = Ops.logical_not (ge (magnitude x) (con x trig_tiny))
 
 (* nx_sin_at *)
-let sin x =
-  let hi, lo, q = rem x in
+let sin_at x (hi, lo, q) =
   let sh, sl = sin_kernel hi lo and ch, cl = cos_kernel hi lo in
   let y = flip2 (where (odd q) (ch +: cl) (sh +: sl)) q in
   where (tiny x) x y
+
+let sin x = sin_at x (rem x)
+
+(* nx_sin_near: Cody and Waite's reduction alone, nx_sin's bits wherever x
+   does not take the integer reduction. *)
+let sin_near x = sin_at x (rem_cw x)
 
 (* nx_cos_at *)
 let cos x =
