@@ -4,13 +4,20 @@
   ---------------------------------------------------------------------------*)
 
 (* The exact kinds are bit manipulations and IEEE's correctly rounded
-   operations. The transcendental kinds compose tolk's exp2, log2 and sin with
-   them, in forms that cancel nowhere, whose bounds [lower_real.mli] states.
+   operations. Some transcendental kinds restate nx's kernel header,
+   nx_kinds.h with nx_kinds_real.h, operation for operation: the same
+   constants, the same order, an fma ([Mulacc], rounded once) where the C
+   writes one and none elsewhere, so that they give eager's bits. A C branch
+   is a selection, both sides computed, a side's operands made safe on the
+   lanes it does not take. Each such function names the header's function it
+   follows; when the header changes, it changes with it.
 
-   Those bounds are derived to first order in the unit roundoff u. An error of n
-   ulps is taken as a relative error of 2 n u, and a relative error d as d / u +
-   1/2 ulps after the last rounding. The bounds of erf's polynomials, of float32
-   atan, of log and of the host's exp, sin and cos are measured. *)
+   The other transcendental kinds compose tolk's exp2 and log2 with the exact
+   kinds, in forms that cancel nowhere, whose bounds [lower_real.mli] states.
+   Those bounds are derived to first order in the unit roundoff u. An error of
+   n ulps is taken as a relative error of 2 n u, and a relative error d as
+   d / u + 1/2 ulps after the last rounding. The bounds of erf's polynomials,
+   of float32 atan, of log and of the host's exp are measured. *)
 
 open Tolk
 open Lower_bits
@@ -58,7 +65,6 @@ let bor = Ops.bitwise_or
 let shl u n = Ops.shl u (int u n)
 let shr u n = Ops.shr u (int u n)
 let set u = ne u (int u 0)
-let sin_ x = Ops.alu x Op.Sin []
 
 (* Constants *)
 
@@ -90,10 +96,6 @@ let pi_lo = (-0x1.777a5cp-24, 0x1.1a62633145c07p-53)
 (* Where cosh, sinh and tanh take their far forms: past it, e^-2|x| is below the
    unit roundoff of both types. *)
 let hyp_far = 20.
-
-(* Below it, the trigonometric kinds reduce by Cody and Waite; from it, by Payne
-   and Hanek. *)
-let trig_switch = 30.
 
 let horner x = function
   | [] -> invalid_arg "Lower_real.horner: no coefficient"
@@ -325,56 +327,288 @@ let log1p x =
   let v = where (eq x (inf x)) x v in
   where (eq w (one x)) x v
 
-(* Trigonometric kinds *)
+(* nx's sequences
 
-(* |x| = q pi/2 + r, |r| <= pi/4, by tolk's reductions, each fed 1 on the lanes
-   it does not take; r is NaN for an infinite or NaN x. Where x's bounds lie
-   below the switch-over, every lane takes Cody and Waite's, which is then the
-   whole reduction. *)
-let reduce x =
-  let a = magnitude x in
-  let below =
-    Dtype.Value.(
-      `Float (-.trig_switch) < Ops.vmin x && Ops.vmax x < `Float trig_switch)
+   Helpers of nx_kinds_real.h, each named as there. *)
+
+let u32 u n = Shape.const_like ~dtype:Uint32 u (`Int (Bigint.of_int n))
+
+(* [bits_of x v] is the bits of the float [v] at [x]'s type, as a word. *)
+let bits_of x v =
+  let b =
+    if wide x then Int64.bits_of_float v
+    else Int64.logand (Int64.of_int32 (Int32.bits_of_float v)) 0xFFFFFFFFL
   in
-  if below then Transcendental.cody_waite_reduction a
+  word (bits x) b
+
+(* NX_SHIFT, 1.5 * 2^MBITS: adding it rounds a float below 2^(MBITS - 1) to
+   the nearest integer. *)
+let shifter x = num x (Float.ldexp 3. (pick x mbits - 1))
+
+(* nx_fast_two_sum *)
+let fast_two_sum hi lo =
+  let h = hi +: lo in
+  (h, lo -: (h -: hi))
+
+(* nx_div_pair *)
+let div_pair (nh, nl) (dh, dl) =
+  let nh, nl = fast_two_sum nh nl in
+  let dh, dl = fast_two_sum dh dl in
+  let rd = one dh /: dh in
+  let qh = nh *: rd in
+  (qh, (mulacc (negated qh) dh nh +: mulacc (negated qh) dl nl) *: rd)
+
+(* Trigonometric kinds
+
+   x = q pi/2 + hi + lo, q a uint32, by nx_kinds.h's reductions: Cody and
+   Waite's below the switch, Payne and Hanek's from it, which the C branches
+   to and the selection [rem] takes. Constants are nx_kinds.h's macros of the
+   same names, at float32 then float64, their hexadecimal text copied. *)
+
+let two_over_pi = (0x1.45f306p-1, 0x1.45f306dc9c883p-1)
+let pio2_3 = (-0x1.ee59dap-50, -0x1.f1976b7ed8fbcp-110)
+let pio2_big = (0x1p+15, 0x1p+28)
+let trig_tiny = (0x1p-12, 0x1p-27)
+
+(* nx_sincos_p_f32 and nx_sincos_p_f64, by cosine: S then C, each from its
+   leading coefficient. *)
+let sin_s =
+  ( [ -0x1.9952fap-13; 0x1.110776p-7; -0x1.555546p-3 ],
+    [
+      0x1.5d8ee79c0623bp-33;
+      -0x1.ae5e57812c7p-26;
+      0x1.71de356408ad5p-19;
+      -0x1.a01a019bf9b6p-13;
+      0x1.111111110f7bp-7;
+      -0x1.5555555555548p-3;
+    ] )
+
+let cos_c =
+  ( [ 0x1.99e80cp-16; -0x1.6c0c28p-10; 0x1.55554ap-5 ],
+    [
+      -0x1.8fa3958a5c52ap-37;
+      0x1.1ee9d5c91b1dfp-29;
+      -0x1.27e4f7e80273p-22;
+      0x1.a01a019c80966p-16;
+      -0x1.6c16c16c14f6cp-10;
+      0x1.555555555554bp-5;
+    ] )
+
+(* From t = v + NX_SHIFT, the integer nearest v: as a float, and as a uint32,
+   the low word of the difference of the bits (nx_nearest's, as
+   nx_rem_pio2_cw takes it). *)
+let nearest_u32 t =
+  let s = shifter t in
+  (t -: s, Ops.cast (Ops.sub (bits t) (bits s)) Uint32)
+
+(* nx_rem_pio2_cw_f32 and nx_rem_pio2_cw_f64 *)
+let rem_cw x =
+  let qf, q = nearest_u32 (mulacc x (con x two_over_pi) (shifter x)) in
+  let mq = negated qf in
+  let a = mulacc mq (con x pio2_hi) x in
+  if not (wide x) then
+    let b = mulacc mq (con x pio2_lo) a in
+    let hi = mulacc mq (con x pio2_3) b in
+    (hi, mulacc mq (con x pio2_3) (b -: hi), q)
   else
-    let near = lt a (num x trig_switch) and finite = lt a (inf x) in
-    let rn, qn = Transcendental.cody_waite_reduction (where near a (one x)) in
-    let far = Ops.logical_not near &&: finite in
-    let rf, qf = Transcendental.payne_hanek_reduction (where far a (one x)) in
-    (where finite (where near rn rf) (nan x), where near qn qf)
+    let p = qf *: con x pio2_lo in
+    let pe = mulacc qf (con x pio2_lo) (negated p) in
+    let bh, bl = two_sum a (negated p) in
+    let lo = mulacc mq (con x pio2_3) (bl -: pe) in
+    let hi, lo = fast_two_sum bh lo in
+    (hi, lo, q)
 
-(* [r] held to [-1, 1], where tolk's sine needs no reduction of its own: the
-   bounds of a reduced argument, which no node of the reduction states. A NaN
-   becomes 1. *)
-let reduced r =
-  let r = where (lt r (one r)) r (one r) in
-  where (lt (num r (-1.)) r) r (num r (-1.))
+(* nx_two_over_pi: the bits of 2/pi after the point, behind one zero word. *)
+let two_over_pi_words =
+  [|
+    0x00000000L; 0xA2F9836EL; 0x4E441529L; 0xFC2757D1L; 0xF534DDC0L;
+    0xDB629599L; 0x3C439041L; 0xFE5163ABL; 0xDEBBC561L; 0xB7246E3AL;
+    0x424DD2E0L; 0x06492EEAL; 0x09D1921CL; 0xFE1DEB1CL; 0xB129A73EL;
+    0xE88235F5L; 0x2EBB4484L; 0xE99C7026L; 0xB45F7E41L; 0x3991D639L;
+    0x835339F4L; 0x9C845F8BL; 0xBDF9283BL; 0x1FF897FFL; 0xDE05980FL;
+    0xEF2F118BL; 0x5A0A6D1FL; 0x6D367ECFL; 0x27CB09B7L; 0x4F463F66L;
+    0x9E5FEA2DL; 0x7527BAC7L; 0xEBE5F17BL; 0x3D0739F7L; 0x8A5292EAL;
+    0x6BFB5FB1L; 0x1F8D5D08L; 0x56033046L; 0xFC7B6BABL; 0xF0CFBC20L;
+    0x9AF4361DL;
+  |]
 
-(* sin r and cos r = 1 - 2 sin^2(r/2), which cancels nowhere, NaN where r is. *)
-let sin_cos r =
-  let b = reduced r in
-  let s = sin_ (b *: half b) in
-  let s, c = (sin_ b, mulacc (negated (s +: s)) s (one b)) in
-  let undefined = ne r r in
-  (where undefined r s, where undefined r c)
+(* nx_bits_at for [n] runs of 32 bits of 2/pi from bits [g], [g + 32] and so
+   on, as uint64s: words [w] to [w + n], [w = g >> 5] of [nb] bits, are moved
+   into place by one selection per bit of [w], as a barrel shifter does, since
+   a node cannot index a table. *)
+let window g n nb =
+  let t = two_over_pi_words in
+  let w = shr g 5 in
+  let sh = Ops.cast (band g (int g 31)) Uint64 in
+  let at m = u64 g (if m < Array.length t then t.(m) else 0L) in
+  let words = ref (Array.init (n + (1 lsl nb)) at) in
+  for b = nb - 1 downto 0 do
+    let step = 1 lsl b and prev = !words in
+    let on = set (band w (int w step)) in
+    words :=
+      Array.init
+        (Array.length prev - step)
+        (fun m -> where on prev.(m + step) prev.(m))
+  done;
+  let ws = !words in
+  Array.init n (fun j ->
+      let pair = bor (shl ws.(j) 32) ws.(j + 1) in
+      band (shr (Ops.shl pair sh) 32) (u64 g 0xFFFFFFFFL))
 
-let odd q = set (band q (int q 1))
+(* x's reduction negated where x's sign bit is set, q as a uint32. *)
+let signed_rem x (hi, lo) q =
+  let n = negative x in
+  ( where n (negated hi) hi,
+    where n (negated lo) lo,
+    where n (Ops.sub (u32 q 0) q) q )
 
-(* cos x = cos(r + q pi/2): cos r, -sin r, -cos r, sin r by q mod 4. *)
+(* |x|'s bits, held at the switch's on the lanes below it, where the
+   reduction past the switch is computed but not taken: its exponent then
+   reads within the table. *)
+let big_bits x =
+  let ix = band (bits x) (mag_word x) in
+  let big = bits_of x (pick x pio2_big) in
+  where (lt ix big) big ix
+
+(* nx_rem_pio2_big_f32, of nx_two_over_pi *)
+let rem_big32 x =
+  let ix = big_bits x in
+  let e = Ops.cast (shr ix 23) Int32 in
+  let e = Ops.sub e (int e 150) in
+  let m =
+    Ops.cast (bor (band ix (word ix 0x007FFFFFL)) (word ix 0x00800000L)) Uint64
+  in
+  let w = window (Ops.add e (int e 30)) 3 3 in
+  let a0 = m *: w.(2) and a1 = m *: w.(1) and a2 = m *: w.(0) in
+  let low u = band u (u64 u 0xFFFFFFFFL) in
+  let t1 = Ops.add (shr a0 32) a1 in
+  let t2 = Ops.add (shr t1 32) a2 in
+  let f = bor (bor (shl t2 34) (shl (low t1) 2)) (shr (low a0) 30) in
+  let top = shr f 63 in
+  let q = Ops.add (Ops.cast (shr t2 30) Uint32) (Ops.cast top Uint32) in
+  (* the signed fraction in three exact pieces, its value f 2^-64 *)
+  let part u s = Ops.cast u Float32 *: num x s in
+  let c2 = part (shr f 40) 0x1p-24 in
+  let c1 = part (band (shr f 16) (u64 f 0xFFFFFFL)) 0x1p-48 in
+  let c0 = part (band f (u64 f 0xFFFFL)) 0x1p-64 in
+  let c2 = where (set top) (c2 -: one x) c2 in
+  let vh, vl = two_sum c2 c1 in
+  let vlo = vl +: c0 in
+  (* times pi/2 *)
+  let ph = vh *: con x pio2_hi in
+  let pl = mulacc vh (con x pio2_hi) (negated ph) in
+  let pl = mulacc vh (con x pio2_lo) (mulacc vlo (con x pio2_hi) pl) in
+  let hi = ph +: pl in
+  signed_rem x (hi, pl -: (hi -: ph)) q
+
+(* nx_rem_pio2_big_f64, of nx_two_over_pi *)
+let rem_big64 x =
+  let ix = big_bits x in
+  let e = Ops.cast (shr ix 52) Int32 in
+  let e = Ops.sub e (int e 1075) in
+  let m =
+    bor (band ix (word ix 0x000FFFFFFFFFFFFFL)) (word ix 0x0010000000000000L)
+  in
+  let win = window (Ops.add e (int e 30)) 6 5 in
+  let w = Array.init 6 (fun j -> win.(5 - j)) in
+  let low u = band u (u64 u 0xFFFFFFFFL) in
+  let ml = low m and mh = shr m 32 in
+  let p = Array.make 8 (u64 m 0L) in
+  let c = ref (u64 m 0L) in
+  for j = 0 to 5 do
+    let t = Ops.add (ml *: w.(j)) !c in
+    p.(j) <- low t;
+    c := shr t 32
+  done;
+  p.(6) <- !c;
+  c := u64 m 0L;
+  for j = 0 to 5 do
+    let t = Ops.add (Ops.add (mh *: w.(j)) p.(j + 1)) !c in
+    p.(j + 1) <- low t;
+    c := shr t 32
+  done;
+  p.(7) <- !c;
+  let mask30 u = band u (u64 u 0x3FFFFFFFL) in
+  let fh = bor (bor (shl (mask30 p.(5)) 34) (shl p.(4) 2)) (shr p.(3) 30) in
+  let fl = bor (bor (shl (mask30 p.(3)) 34) (shl p.(2) 2)) (shr p.(1) 30) in
+  let q =
+    Ops.add (Ops.cast (shr p.(5) 30) Uint32) (Ops.cast (shr fh 63) Uint32)
+  in
+  (* the signed fraction (fh, fl) 2^-128 in three exact pieces *)
+  let c2 = Ops.cast (Ops.cast (shr fh 32) Int32) Float64 *: num x 0x1p-32 in
+  let c1 = Ops.cast (low fh) Float64 *: num x 0x1p-64 in
+  let c0 = Ops.cast (shr fl 11) Float64 *: num x 0x1p-117 in
+  let sh, sl = two_sum c2 c1 in
+  let vh, vl = fast_two_sum sh (sl +: c0) in
+  let ph = vh *: con x pio2_hi in
+  let pl = mulacc vh (con x pio2_hi) (negated ph) in
+  let pl = mulacc vh (con x pio2_lo) (mulacc vl (con x pio2_hi) pl) in
+  signed_rem x (fast_two_sum ph pl) q
+
+(* nx_trig_big: |x| finite and at or past the switch. *)
+let trig_big x =
+  let a = band (bits x) (mag_word x) in
+  Ops.logical_not (lt a (bits_of x (pick x pio2_big)))
+  &&: lt a (word a (pick x inf_bits))
+
+(* The C's branch in nx_sin, nx_cos and nx_tan. *)
+let rem x =
+  let big = trig_big x in
+  let bh, bl, bq = if wide x then rem_big64 x else rem_big32 x in
+  let nh, nl, nq = rem_cw x in
+  (where big bh nh, where big bl nl, where big bq nq)
+
+(* nx_sin_kernel *)
+let sin_kernel hi lo =
+  let z = hi *: hi in
+  (hi, mulacc (hi *: z) (horner z (pick hi sin_s)) lo)
+
+(* nx_cos_kernel *)
+let cos_kernel hi lo =
+  let z = hi *: hi in
+  let zl = mulacc hi hi (negated z) in
+  let hz = half hi *: z in
+  let ch = one hi -: hz in
+  let tail =
+    mulacc (z *: z)
+      (horner z (pick hi cos_c))
+      (mulacc (negated hi) lo (num hi (-0.5) *: zl))
+  in
+  (ch, one hi -: ch -: hz +: tail)
+
+(* nx_flip2: y with its sign flipped where bit 1 of k is set. *)
+let flip2 y k =
+  let b = Ops.cast (band k (u32 k 2)) (unsigned (Ops.dtype y)) in
+  of_bits (Ops.bitwise_xor (bits y) (shl b (width y - 2)))
+
+let odd q = set (band q (u32 q 1))
+
+(* Where x is a NaN or below the cutoff, as !(|x| >= tiny). *)
+let tiny x = Ops.logical_not (ge (magnitude x) (con x trig_tiny))
+
+(* nx_sin_at *)
+let sin x =
+  let hi, lo, q = rem x in
+  let sh, sl = sin_kernel hi lo and ch, cl = cos_kernel hi lo in
+  let y = flip2 (where (odd q) (ch +: cl) (sh +: sl)) q in
+  where (tiny x) x y
+
+(* nx_cos_at *)
 let cos x =
-  let r, q = reduce x in
-  let s, c = sin_cos r in
-  let v = where (odd q) s c in
-  where (set (band (Ops.add q (int q 1)) (int q 2))) (negated v) v
+  let hi, lo, q = rem x in
+  let sh, sl = sin_kernel hi lo and ch, cl = cos_kernel hi lo in
+  let y = flip2 (where (odd q) (sh +: sl) (ch +: cl)) (Ops.add q (u32 q 1)) in
+  where (is_nan x) x y
 
-(* tan |x| = tan r or -1 / tan r by q's parity, of x's sign. *)
+(* nx_tan_at: -cos / sin in odd quadrants, sin / cos in even. *)
 let tan x =
-  let r, q = reduce x in
-  let s, c = sin_cos r in
+  let hi, lo, q = rem x in
+  let sh, sl = sin_kernel hi lo and ch, cl = cos_kernel hi lo in
   let o = odd q in
-  flip (where o (negated c) s /: where o s c) x
+  let n = (where o (negated ch) sh, where o (negated cl) sl) in
+  let d = (where o sh ch, where o sl cl) in
+  let qh, ql = div_pair n d in
+  where (tiny x) x (qh +: ql)
 
 (* Inverse trigonometric kinds *)
 
@@ -699,7 +933,7 @@ let unary (k : Nx_kernel.Prog.unary) x =
   | Log2 -> Ops.log2 x
   | Log1p -> log1p x
   | Expm1 -> expm1 x
-  | Sin -> sin_ x
+  | Sin -> sin x
   | Cos -> cos x
   | Tan -> tan x
   | Asin -> asin x

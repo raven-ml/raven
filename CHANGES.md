@@ -448,6 +448,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx.sin`, `Nx.cos` and `Nx.tan` compute nx's sequence where they
+  used the target's sine, so give eager's bits on the host and NVIDIA GPUs;
+  a first call allocates 25 times the words, NVRTC taking 2.7 times as long.
 - A `Rune.jit` function reads what it captures at the trace and keeps it, as
   `rune.mli` states: one that reads a capture and then donates it computes as
   eagerly instead of raising, and a capture its caller donates after a call

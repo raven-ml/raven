@@ -63,7 +63,7 @@ let rec least_factor n p =
    turn [q] and the remainder [s] of [4m = q n + s] split the angle into [q
    π/2] and [φ = (π/2) s / n]. [sin φ] and [cos φ] are the sines of [(π/2) l /
    n] and [(π/2) (n - l) / n], [l = min s (n - s)]: arguments of at most
-   [π/2], and sines, which {!Lower_real} holds closer than cosines. A whole
+   [π/2], and sines, of nx's bits ({!Lower_real}). A whole
    quarter turn, [s = 0], is exact. *)
 
 let twiddle t ~sign n m =
@@ -238,9 +238,9 @@ and bluestein t ~sign ax z =
    [u] of the parts and [γ] as [Nx_kernel] defines it.
 
    Twiddles. A twiddle [w] is within [12 u] of [e^(±2πi k/n)], and exact at
-   whole quarter turns. Its parts are the sines [Lower_real] states within 4
-   ulps of arguments of at most [π/2], which carry at most [4 u] of relative
-   error. A twiddle's product errs by at most [√2 γ(2) + 12 u <= 15 u] relative.
+   whole quarter turns. Its parts are sines of arguments of at most [π/2] at
+   nx's bits ([Lower_real]), within the 2 ulps nx states, which carry at most
+   [4 u] of relative error. A twiddle's product errs by at most [√2 γ(2) + 12 u <= 15 u] relative.
 
    Small primes. A [p]-point transform of the points [z] scales their norm by
    [√p] exactly, and is within [c(p) u] of its result's norm. A [2]-point

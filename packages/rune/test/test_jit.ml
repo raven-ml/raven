@@ -640,7 +640,8 @@ let test_quant_decodes () =
 
    A function of one kind is within the sum of its compiled bound and its eager
    one, in ulps, of eager's result: each is within its own of the correctly
-   rounded result. Special values are exact in both. *)
+   rounded result. One rune.mli states exact gives eager's bits. Special values
+   are exact in both. *)
 
 type unary = {
   name : string;
@@ -648,14 +649,14 @@ type unary = {
   bound : int * int;  (** At float32, at float64. *)
 }
 
-(* rune.mli's bound, then nx's. *)
+(* rune.mli's bound, then nx's; 0 for an exact function. *)
 let unaries =
   [
     { name = "exp"; f = Nx.exp; bound = (9 + 2, 9 + 2) };
     { name = "log"; f = Nx.log; bound = (1 + 1, 1 + 2) };
-    { name = "sin"; f = Nx.sin; bound = (4 + 2, 4 + 2) };
-    { name = "cos"; f = Nx.cos; bound = (9 + 2, 9 + 2) };
-    { name = "tan"; f = Nx.tan; bound = (19 + 4, 19 + 2) };
+    { name = "sin"; f = Nx.sin; bound = (0, 0) };
+    { name = "cos"; f = Nx.cos; bound = (0, 0) };
+    { name = "tan"; f = Nx.tan; bound = (0, 0) };
     { name = "asin"; f = Nx.asin; bound = (5 + 2, 9 + 2) };
     { name = "acos"; f = Nx.acos; bound = (5 + 2, 9 + 2) };
     { name = "atan"; f = Nx.atan; bound = (2 + 2, 7 + 2) };
@@ -4632,16 +4633,18 @@ let test_shortcut_captures () =
 
 (* A compiled call inside a remat's function, a loop's step or a custom rule
    stays a call, which runs compiled where the construct evaluates its program:
-   the construct gives its function's bits, the compiled sine's, over its
-   arguments and its captures alike. *)
+   the construct gives its function's bits, the compiled running sum's, which
+   combines its terms in another order than eager's, over its arguments and
+   its captures alike. *)
 let test_calls_stay () =
-  let g = Rune.jit' Nx.sin in
+  let s x = Nx.cumsum (Nx.mul x x) in
+  let g = Rune.jit' s in
   let host x = Nx.place Nx.Host.on x in
   let x = host (Nx.linspace f64 (-3.) 3. 1024) in
   let c = host (Nx.linspace f64 0. 7. 1024) in
   let f x = Nx.add (g x) (g c) in
-  equal ~msg:"the compiled sine differs from eager's here" bool false
-    (bits (g x) = bits (Nx.sin x));
+  equal ~msg:"the compiled running sum differs from eager's here" bool false
+    (bits (g x) = bits (s x));
   let expected = bits (f x) in
   let r = Rune.remat T.(tensor @-> returns tensor) f in
   equal ~msg:"remat" bits_t expected (bits (r x));

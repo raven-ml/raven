@@ -138,13 +138,6 @@ def any_bits(rng, n, fmt, top_exp=None, low_exp=None, signed=True):
     return out
 
 
-def half_pis(fmt):
-    """Multiples of pi/2 that reduce worst, and some past each dtype's switch
-    to the big reduction."""
-    with mp.workprec(400):
-        return [k * mp.pi / 2 for k in (1, 2, 3, 4, 5, 6, 7, 355, 103993, 1 << 20, 1 << 27)]
-
-
 # Each kind's points: the ends of its ranges, where its algorithm switches and
 # where its result saturates, at both dtypes; and the range its uniform values
 # come from, per dtype.
@@ -165,9 +158,6 @@ UNARY = {
               1024, "0x1p-126", "0x1p-1022", "0x1p-1074"], {"f32": (-2, 1e4), "f64": (-2, 1e4)}),
     "log1p": ([-1, -0.5, "0x1p-25", "0x1p-54", -0.29289322, -0.2928932188134524,
                0.41421356237309515, 1, 2, 10, 1e-40], {"f32": (-1.5, 10), "f64": (-1.5, 10)}),
-    "sin": ([], {"f32": (-1e5, 1e5), "f64": (-1e9, 1e9)}),
-    "cos": ([], {"f32": (-1e5, 1e5), "f64": (-1e9, 1e9)}),
-    "tan": ([], {"f32": (-1e5, 1e5), "f64": (-1e9, 1e9)}),
     "asin": ([1, 0.5, 0.99999994, 0.9999999999999999], {"f32": (-1.1, 1.1), "f64": (-1.1, 1.1)}),
     "acos": ([1, 0.5, 0.99999994, 0.9999999999999999], {"f32": (-1.1, 1.1), "f64": (-1.1, 1.1)}),
     "atan": ([1, 0.4375, 0.6875, 1.1875, 2.4375, 1e10, 1e300, "0x1p-960", "0x1p54"],
@@ -182,25 +172,15 @@ UNARY = {
             {"f32": (-7, 7), "f64": (-7, 7)}),
 }
 
-TRIG = [2**15, 2**28, "0x1p-12", "0x1p-27", 0.78539816, 1.5707963267948966,
-        3.141592653589793, 1e22, "0x1.6ac5b262ca1ffp+849", 1e30, 1e300, 105414350,
-        2.1904577e+38]
-
-
 def unary_points(fn, fmt):
     rng = random.Random(f"lower_real:{fn}:{fmt}")
     pts, lo_hi = UNARY[fn]
-    if fn in ("sin", "cos", "tan"):
-        pts = TRIG + half_pis(fmt)
     xs = specials(fmt) + near(pts, fmt)
     xs += uniform(rng, 150, *lo_hi[fmt], fmt)
     xs += any_bits(rng, 100, fmt)
     if fn == "tanh":
         # past the split at 0.625, where 1 - 2 / (e^2a + 1) errs most
         xs += uniform(rng, 60, -2, 2, fmt)
-    if fn in ("sin", "cos", "tan"):
-        # past the switch to the big reduction, to the greatest float
-        xs += any_bits(rng, 60, fmt, low_exp=15 if fmt == "f32" else 28)
     return [x for x in xs if usable(x)]
 
 
@@ -296,7 +276,7 @@ def unary_ref(fn, x):
     f = {
         "exp": mpmath.exp, "exp2": lambda v: mpmath.power(2, v), "expm1": mpmath.expm1,
         "log": mpmath.log, "log2": lambda v: mpmath.log(v, 2), "log1p": mpmath.log1p,
-        "sin": mpmath.sin, "cos": mpmath.cos, "tan": mpmath.tan, "asin": mpmath.asin,
+        "asin": mpmath.asin,
         "acos": mpmath.acos, "atan": mpmath.atan, "sinh": mpmath.sinh, "cosh": mpmath.cosh,
         "tanh": mpmath.tanh, "erf": mpmath.erf,
     }[fn]

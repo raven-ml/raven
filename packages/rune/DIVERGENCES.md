@@ -144,8 +144,8 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   formulas on their bits.
 - **nx:** `prog.mli`, Results: floats narrower than `float32` compute in
   `float32` and round once to their dtype. `dtype.mli`, Stores: the NaN rule.
-- **Class:** as the operation's; a transcendental kind within one rank of the
-  correctly rounded result.
+- **Class:** as the operation's; a kind of nx's sequence exact, another
+  transcendental kind within one rank of the correctly rounded result.
 - **Reason:** (b).
 - **Pinned by:** `Lower_arith › exact unary kinds give eager's bits`, `› exact
   binary kinds, comparisons, where and fma give eager's bits`, `› narrow
@@ -241,35 +241,31 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Pinned by:** `Lower_real › transcendental › exp within 2 ulps at float32, 9
   at float64`.
 
-### A8. Cosine reduced by a quarter turn
+### A8. Sine, cosine and tangent by nx's sequence
 
-- **Reference:** `mixin/elementwise.py:501` (`sin (pi/2 - x)`).
-- **Raven:** `lower_real.ml` (`reduce`, `sin_cos`, `cos`).
-- **Differs:** `pi/2 - x` rounds first, so tinygrad's cosine is 0 at
-  `f32(pi/2)`, where it is `-4.4e-8`. The lowering reduces `|x|` to
-  `q pi/2 + r`, `|r| <= pi/4`, by tolk's Cody-Waite reduction below 30 and its
-  Payne-Hanek reduction from there, and picks `sin r` or
-  `cos r = 1 - 2 sin^2 (r/2)` by the quadrant: the target's sine sees only `r`.
-  The sine itself is tolk's `Sin`, as tinygrad's.
-- **nx:** `prog.mli`, Results, `Cos`.
-- **Class:** ulp bound: 9.
+- **Reference:** `mixin/elementwise.py:501,921` (`cos` as `sin (pi/2 - x)`,
+  `tan` as `sin / cos`), over `Ops.SIN`, the target's sine or
+  `codegen/decomp/transcendental.py`'s where it has none.
+- **Raven:** `lower_real.ml` (`rem_cw`, `rem_big32`, `rem_big64`, `rem`,
+  `sin_kernel`, `cos_kernel`, `sin`, `cos`, `tan`).
+- **Differs:** the lowering builds `nx_kinds.h`'s `nx_sin`, `nx_cos` and
+  `nx_tan` operation for operation: Cody and Waite's reduction by `pi/2`
+  below `2^15` (`float32`) or `2^28` (`float64`), Payne and Hanek's from
+  there by a window of nx's 2/pi table, nx's sine and cosine polynomials
+  with their tails, and nx's pair division for the tangent. The C's branch
+  past the switch is a selection: both reductions compute, Payne and Hanek's
+  reading the switch's exponent on the lanes below it. tinygrad's `cos`
+  rounds `pi/2 - x` first and is 0 at `f32(pi/2)`, where it is `-4.4e-8`,
+  and a target's own `sin` differs from nx's in the last bit: NVIDIA's in
+  8.6% of uniform `float64` bit patterns.
+- **nx:** `nx_kinds_real.h` (`nx_sin`, `nx_cos`, `nx_tan`), `nx_kinds.h`
+  (`nx_rem_pio2_cw_*`, `nx_rem_pio2_big_*`).
+- **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `Lower_real › transcendental › cos within 2 ulps at float32, 9
-  at float64`, `Lower_real › bounded arguments › cos of an argument bounded
-  below the switch-over`.
-
-### A9. Tangent of the reduced argument
-
-- **Reference:** `mixin/elementwise.py:921` (`sin / cos`).
-- **Raven:** `lower_real.ml` (`tan`).
-- **Differs:** A8's reduction, then `sin r / cos r` or `-cos r / sin r` by the
-  quadrant's parity, with `x`'s sign.
-- **nx:** `prog.mli`, Results, `Tan`.
-- **Class:** ulp bound: 19.
-- **Reason:** (b).
-- **Pinned by:** `Lower_real › transcendental › tan within 19 ulps at float32,
-  19 at float64`, `Lower_real › bounded arguments › tan of an argument bounded
-  below the switch-over`.
+- **Pinned by:** `Lower_real › kinds › sin gives eager's bits`, `› sin of
+  every narrow float gives eager's bits`, `› sin of a constant gives eager's
+  bits`, the same for `cos` and `tan`, on the host; `Jit_gpu › kinds › *` on
+  a GPU.
 
 ### A10. Arcsine and arccosine by the arctangent
 

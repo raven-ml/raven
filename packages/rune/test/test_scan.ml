@@ -1631,11 +1631,14 @@ let test_staged () =
 
 (* A compiled call in a step stays a call, which computes on each row the bits
    it computes on that row outside the loop, over rows in every view and a
-   capture. *)
+   capture. Its function adds to a row a sum of 4096 products by the row's
+   sum, whose terms a compiled call and nx.cpu combine in other orders, so
+   that its compiled bits differ from eager's. *)
 type call =
   | Call : {
       dt : (float, 's) Nx.dtype;
-      sine : (float, 's, Nx.host) Nx.t -> (float, 's, Nx.host) Nx.t;
+      plain : (float, 's, Nx.host) Nx.t -> (float, 's, Nx.host) Nx.t;
+      jitted : (float, 's, Nx.host) Nx.t -> (float, 's, Nx.host) Nx.t;
       s : int array;
       n : int;
       xs : Operand.t;
@@ -1643,8 +1646,14 @@ type call =
     }
       -> call
 
-let sine32 = Rune.jit' (Nx.sin : (float, Nx.float32_elt, Nx.host) Nx.t -> _)
-let sine64 = Rune.jit' (Nx.sin : (float, Nx.float64_elt, Nx.host) Nx.t -> _)
+let spread (type s) (dt : (float, s) Nx.dtype) =
+  let v = Nx.cast dt (Nx.square (Nx.linspace Nx.float64 0.1 1.7 4096)) in
+  fun (x : (float, s, Nx.host) Nx.t) -> Nx.add x (Nx.sum (Nx.mul v (Nx.sum x)))
+
+let spread32 = spread Nx.float32
+let spread64 = spread Nx.float64
+let jitted32 = Rune.jit' spread32
+let jitted64 = Rune.jit' spread64
 
 let call_cases =
   let open Gen in
@@ -1652,8 +1661,10 @@ let call_cases =
    let* n = of_list [ 1; 2; 5 ] in
    let* xs = Operand.draw (Array.append [| n |] s) and+ c = Operand.draw s in
    let+ wide = bool in
-   if wide then Call { dt = Nx.float64; sine = sine64; s; n; xs; c }
-   else Call { dt = Nx.float32; sine = sine32; s; n; xs; c })
+   if wide then
+     Call { dt = Nx.float64; plain = spread64; jitted = jitted64; s; n; xs; c }
+   else
+     Call { dt = Nx.float32; plain = spread32; jitted = jitted32; s; n; xs; c })
   |> with_pp (fun ppf (Call c) ->
       Format.fprintf ppf "%a %a, %d rows in %a" Nx.pp_dtype c.dt
         Operand.pp_shape c.s c.n Operand.pp_view c.xs.view)
@@ -1665,12 +1676,12 @@ let law_call (Call c) =
   let w = Operand.make c.dt c.s c.c in
   (* Each call reads the carry or the row, so that it computes in the step. *)
   let step c' r =
-    let y = c.sine (Nx.maximum c' r) in
-    (y, Nx.add y (c.sine (Nx.maximum w r)))
+    let y = c.jitted (Nx.maximum c' r) in
+    (y, Nx.add y (c.jitted (Nx.maximum w r)))
   in
   let rows = List.init c.n (fun i -> Nx.get [ i ] xs) in
   cover "a row the call computes apart from eager"
-    (List.exists (fun r -> bits (c.sine r) <> bits (Nx.sin r)) rows);
+    (List.exists (fun r -> bits (c.jitted r) <> bits (c.plain r)) rows);
   let init = Nx.zeros c.dt c.s in
   let folded, ys = fold step ~init xs in
   let scanned, ys' = Rune.scan' step ~init xs in

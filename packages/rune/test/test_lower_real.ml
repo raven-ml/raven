@@ -6,15 +6,18 @@
 (* The float kinds at float32 and float64, as maps of one kind compiled by
    Rune.jit, which must compile them whole: no call is evaluated. An exact kind
    gives the bits of nx's eager kernel, any NaN for a NaN, over operands drawn
-   to reach its special values and the edges of its range. A transcendental kind
-   is within its host bound in ulps of the correctly rounded result (rune.mli,
-   Numerics) at the points of golden/lower_real, which gen/lower_real.py writes
-   from mpmath; where every operand is a zero, an infinity or a NaN, it gives
-   Annex F's zero, infinity, ±1 or NaN, stated below. Exp holds its bound over
-   drawn float32 operands and every 16-bit code too. *)
+   to reach its special values and the edges of its range. So does each kind
+   compiled to nx's own sequence (Kinds), at every narrow float's code and at a
+   constant the compiler may fold too. Another transcendental kind is within
+   its host bound in ulps of the correctly rounded result (rune.mli, Numerics)
+   at the points of golden/lower_real, which gen/lower_real.py writes from
+   mpmath; where every operand is a zero, an infinity or a NaN, it gives Annex
+   F's zero, infinity, ±1 or NaN, stated below. Exp holds its bound over drawn
+   float32 operands and every 16-bit code too. *)
 
 open Windtrap
 module Exps = Rune_support.Exps
+module Kinds = Rune_support.Kinds
 module D = Nx_array.Dtype
 module K = Nx_kernel.Prog
 module P = Nx.Prim
@@ -394,8 +397,7 @@ let annex1 name wide e =
     | "expm1" -> (z, nz, i, none)
     | "log" | "log2" -> (ni, ni, i, nn)
     | "log1p" -> (z, nz, i, nn)
-    | "sin" | "tan" | "asin" -> (z, nz, nn, nn)
-    | "cos" -> (one, one, nn, nn)
+    | "asin" -> (z, nz, nn, nn)
     | "acos" -> (half_pi, half_pi, nn, nn)
     | "atan" -> (z, nz, half_pi, neg half_pi)
     | "sinh" -> (z, nz, i, ni)
@@ -534,9 +536,6 @@ let transcendental =
       ("log", K.Log, (1, 1));
       ("log2", K.Log2, (1, 1));
       ("log1p", K.Log1p, (5, 5));
-      ("sin", K.Sin, (2, 4));
-      ("cos", K.Cos, (2, 9));
-      ("tan", K.Tan, (19, 19));
       ("asin", K.Asin, (5, 9));
       ("acos", K.Acos, (5, 9));
       ("atan", K.Atan, (2, 7));
@@ -550,44 +549,25 @@ let transcendental =
       accurate "atan2" (Op2 (Binary Atan2, 0, 1)) (6, 8) annex_atan2;
     ]
 
-(* Bounded arguments
+(* Kinds of nx's sequence
 
-   An argument whose bounds lie below the switch-over to Payne and Hanek is
-   reduced by Cody and Waite's alone. The program bounds its operand within
-   [-29.9, 29.9], selecting 0 outside, and cos and tan hold their bounds at
-   their golden points inside. *)
-let bounded (name, kind, (b32, b64)) =
-  let at (type s) (dt : (float, s) D.t) wide tol =
-    let limit = 29.9 in
-    let rows =
-      List.filter (fun (e, _) -> Float.abs e.(0) < limit) (golden name wide)
-    in
-    let es = Array.of_list (List.map fst rows) in
-    let prog =
-      let open K.E in
-      let x = input 0 dt and c = const dt limit and zero = const dt 0. in
-      let inside = where (x < c) (where (neg c < x) x zero) zero in
-      K.of_exprs ~ins:[| D.Any dt |] [| any (op1 (Unary kind) dt inside) |]
-    in
-    let got = Nx.to_array (snd (staged dt prog (operands dt es))) in
-    List.concat
-      (List.mapi
-         (fun i (e, r) ->
-           if meets wide name tol e r got.(i) then []
-           else
-             [
-               Printf.sprintf "%s(%s) = %s at %s, reference %s" name
-                 (show e.(0))
-                 (show got.(i))
-                 (D.name dt) (show r);
-             ])
-         rows)
-  in
-  test (Printf.sprintf "%s of an argument bounded below the switch-over" name)
-    (fun () ->
-      equal (list string) []
-        (at D.Float32 false (Float.of_int b32)
-        @ at D.Float64 true (Float.of_int b64)))
+   Each gives eager's bits over drawn operands (Kinds), at every narrow
+   float's code and of a constant inside the compiled function. *)
+let ported k =
+  let name = Kinds.name k in
+  [
+    prop ~count:12
+      ~examples:[ Kinds.example k ]
+      (name ^ " gives eager's bits")
+      (Kinds.gen k)
+      (Kinds.law (module Nx.Host) ~f64:true k);
+    test (name ^ " of every narrow float gives eager's bits") (fun () ->
+        Kinds.narrow (module Nx.Host) k);
+    test (name ^ " of a constant gives eager's bits") (fun () ->
+        Kinds.folded (module Nx.Host) ~f64:true k);
+  ]
+
+let kinds = Kinds.[ sin; cos; tan ]
 
 (* Drawn operands
 
@@ -610,9 +590,7 @@ let () =
     (run "Lower_real"
        [
          group "exact" (List.map law (unary @ binary @ compare @ [ fma ]));
+         group "kinds" (List.concat_map ported kinds);
          group "transcendental" transcendental;
          group "drawn operands" drawn;
-         group "bounded arguments"
-           (List.map bounded
-              [ ("cos", K.Cos, (2, 9)); ("tan", K.Tan, (19, 19)) ]);
        ])

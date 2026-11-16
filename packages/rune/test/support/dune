@@ -18,6 +18,7 @@
   scatters
   casts16
   exps
+  kinds
   mxfp4_products
   quants
   prefixes

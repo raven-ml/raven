@@ -28,37 +28,46 @@
     operations. [Fdiv], [Recip] (as [1 / x]) and [Sqrt] are exact on a target
     that rounds division and the square root correctly.
 
-    {1:transcendental Transcendental kinds}
+    {1:sequence Kinds of nx's sequence}
+
+    [Sin], [Cos] and [Tan] compute the sequence of operations nx's kernel
+    header, [nx_kinds.h], gives them, each fused multiply-add a
+    {!Lower_bits.mulacc}: argument reduction by [π/2], Cody and Waite's below
+    [2{^15}] ([float32]) or [2{^28}] ([float64]) and Payne and Hanek's from
+    there, then nx's polynomials. A branch of the header is a selection, both
+    sides computed. On a target that keeps subnormals, rounds division
+    correctly and rounds a fused multiply-add once, they give the bits nx's
+    kernels give, a NaN result as nx's NaN rule allows: they are exact.
+
+    {1:transcendental Other transcendental kinds}
 
     [Log] is computed from the exact kinds and [Fdiv] alone. The other kinds
-    compose tolk's [exp2], [log2] and [sin] ({!Tolk.Op.Exp2}, {!Tolk.Op.Log2},
-    {!Tolk.Op.Sin}) and its argument reductions ({!Tolk.Transcendental}) with
-    the exact kinds and [Log]. Where a target computes [exp2], [log2] and [sin]
-    within 4 ulps, and rounds division and the square root correctly, each kind
-    is within these bounds in ulps, to first order in [u]:
+    compose tolk's [exp2] and [log2] ({!Tolk.Op.Exp2}, {!Tolk.Op.Log2}) with
+    the exact kinds and [Log]. Where a target computes [exp2] and [log2] within
+    4 ulps, and rounds division and the square root correctly, each kind is
+    within these bounds in ulps, to first order in [u]:
 
     {v
       kind                        float32  float64
       log                            1        1
-      exp2, log2, sin                4        4
+      exp2, log2                     4        4
       erf                            2        3
       atan                           2        7
       asin, acos                     5        9
       log1p                          5        5
       atan2                          6        8
-      exp, cos, pow                  9        9
+      exp, pow                       9        9
       cosh                          10       10
-      tan                           19       19
       tanh                          18       18
       expm1, sinh                   23       23
     v}
 
     [log], which reads none of tolk's kinds, holds its bound on every target
     that rounds division correctly. On the CPU host target, tolk computes
-    [exp2], [log2] and [sin] by {!Tolk.Transcendental}, within one ulp, [exp],
-    [sin] and [cos] are within 2 ulps at [float32], and [pow] within 2 at both
-    dtypes. [exp2] at an integer and [log2] at a power of two may be inexact;
-    their bounds still hold there. The bounds hold at tolk's default
+    [exp2] and [log2] by {!Tolk.Transcendental}, within one ulp, [exp] is
+    within 2 ulps at [float32], and [pow] within 2 at both dtypes. [exp2] at an
+    integer and [log2] at a power of two may be inexact; their bounds still
+    hold there. The bounds hold at tolk's default
     {!Tolk.Setting.transcendental}.
 
     Where every operand is [±0], [±inf] or a NaN, a kind gives the zero,

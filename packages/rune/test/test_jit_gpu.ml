@@ -24,7 +24,7 @@
    sum of zeros, paged keys and values give dense ones' bits, a sum of a
    contraction's result holds its bound, a long sum and a weight gradient
    hold the blocked bound, exp holds its bound in ulps of the correctly
-   rounded result, and a range gather and its gradient compile to eager's
+   rounded result, sin, cos and tan give eager's bits, and a range gather and its gradient compile to eager's
    bits, and an argmax or argmin over a length 16 does not divide gives nx's
    position, a sum and a product their exact values, and a first k of a sort
    gives eager's values and positions bit for bit. It skips without a GPU, or
@@ -2878,6 +2878,34 @@ let exp16 dt () =
   let d, s = on_gpu () in
   Exps.law16 s ~flushes:(flushes d) dt
 
+(* Kinds compiled to nx's own sequence give eager's bits on an NVIDIA GPU
+   (Kinds), a float64 element checked where its kernels have float64:
+   rune.mli states them exact there, measured. AMD's are unmeasured and
+   Metal flushes float32's subnormals, so the law skips both. *)
+let keeps () =
+  let d, s = on_gpu () in
+  let device = (Tolk_engine.target d).Tolk.Helpers.Target.device in
+  if not (String.equal device "CUDA" || String.equal device "NV") then
+    skip ~reason:("rune.mli states no exact kind on " ^ device) ();
+  (has_float64 d, s)
+
+let ported k =
+  let name = Kinds.name k in
+  [
+    prop ~count:12
+      ~examples:[ Kinds.example k ]
+      (name ^ " gives eager's bits")
+      (Kinds.gen k)
+      (fun c ->
+        let f64, s = keeps () in
+        Kinds.law s ~f64 k c);
+    test (name ^ " of every narrow float gives eager's bits") (fun () ->
+        Kinds.narrow (snd (keeps ())) k);
+    test (name ^ " of a constant gives eager's bits") (fun () ->
+        let f64, s = keeps () in
+        Kinds.folded s ~f64 k);
+  ]
+
 (* Multiply-adds of narrow floats: fma at a float narrower than float32,
    compiled on the GPU, is its exact value rounded once, as Exact's integers
    round it. Where the GPU flushes float32's subnormals, rune.mli lets an
@@ -2982,6 +3010,7 @@ let () =
                (Gen.with_pp Assemblies.pp Assemblies.gen)
                assembly;
            ];
+         group "kinds" (List.concat_map ported Kinds.[ sin; cos; tan ]);
          group "exp"
            [
              prop ~count:24 "exp within 9 ulps at float32" Exps.gen exp_law;

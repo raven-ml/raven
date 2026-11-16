@@ -1580,7 +1580,9 @@ val jit :
     {e ulp} is one rank in the order of a dtype's bit patterns, [-0.] and
     [+0.] one rank apart, and an error of [n] ulps is a distance of [n]
     ranks from the correctly rounded result. [γ(k)] is [k u / (1 - k u)].
-    A function is {e exact} when it agrees with eager bit for bit.
+    A function is {e exact} when it agrees with eager bit for bit, except
+    that a NaN result may be any NaN where nx leaves which NaN unspecified
+    ({!Nx.section-transcendental}).
 
     A variant ({!section-compiled}) gives the same bits at every call with
     the same arguments: its kernels fix the order in which each sum combines
@@ -1595,7 +1597,7 @@ val jit :
     orders.
 
     Moves of elements, such as {!Nx.take}, {!Nx.concatenate}, {!Nx.sort} and a
-    {!Nx.scatter} by [Set], keep a NaN's bits too. Casts, bitcasts, {!Nx.where},
+    {!Nx.scatter} by [Set], keep a NaN's bits. Casts, bitcasts, {!Nx.where},
     comparisons, extremes ({!Nx.max}, {!Nx.argmax}) and integer and boolean
     arithmetic are exact, as are {!Nx.neg}, {!Nx.abs}, {!Nx.sign}, {!Nx.floor},
     {!Nx.ceil}, {!Nx.round}, {!Nx.roundeven}, {!Nx.trunc}, {!Nx.mod_},
@@ -1607,39 +1609,43 @@ val jit :
 
     A float narrower than [float32] computes at [float32] and rounds once, so
     each real function of the table below is within one ulp of the correctly
-    rounded result there, {!Nx.pow} where its result is finite in that dtype. On
-    a device that flushes subnormals, as Metal does at [float32], a function may
-    be inexact or break its bound where an operand, a result or an intermediate
-    is below the least normal float.
+    rounded result there, {!Nx.pow} where its result is finite in that dtype,
+    and each exact real function is exact there too. On a device that flushes
+    subnormals, as Metal does at [float32], a function may be inexact or break
+    its bound where an operand, a result or an intermediate is below the least
+    normal float.
 
-    {b Real functions.} Where the device computes [exp2], [log2] and [sin]
-    within 4 ulps and rounds division and the square root correctly, at the
-    default of the [TRANSCENDENTAL] setting, each function is within these ulps
-    of the correctly rounded result, to first order in [u]:
+    {b Real functions.} {!Nx.sin}, {!Nx.cos} and {!Nx.tan} compute nx's own
+    sequence of operations for them, so they are exact on a device that keeps
+    subnormals, rounds division correctly and rounds a fused multiply-add
+    once, as the host CPU and NVIDIA GPUs do. Where the device computes
+    [exp2] and [log2] within 4 ulps and rounds division and the square root
+    correctly, at the default of the [TRANSCENDENTAL] setting, each other
+    function is within these ulps of the correctly rounded result, to first
+    order in [u]:
 
     {v
       function                      float32  float64
       Nx.log                           1        1
-      Nx.exp2, Nx.log2, Nx.sin         4        4
+      Nx.exp2, Nx.log2                 4        4
       Nx.erf                           2        3
       Nx.atan                          2        7
       Nx.asin, Nx.acos                 5        9
       Nx.log1p                         5        5
       Nx.atan2                         6        8
-      Nx.exp, Nx.cos, Nx.pow           9        9
+      Nx.exp, Nx.pow                   9        9
       Nx.cosh                         10       10
       Nx.tanh                         18       18
-      Nx.tan                          19       19
       Nx.expm1, Nx.sinh               23       23
     v}
 
     {!Nx.log} needs only correctly rounded division. On the host CPU,
-    {!Nx.log2} is tolk's, within 1 ulp at both dtypes, {!Nx.exp}, {!Nx.sin}
-    and {!Nx.cos} are within 2 ulps at [float32], and {!Nx.pow} within 2 at
-    both dtypes. {!Nx.log10}, which nx composes from {!Nx.log2}, is within 2
-    ulps at [float64], which follows from tolk's host [log2], within 1 ulp;
-    within 1 at [float32], measured at every [float32]; and exact at each
-    power of ten the dtype holds, measured. Where every operand is [±0.], [±inf] or a NaN, a
+    {!Nx.log2} is tolk's, within 1 ulp at both dtypes, {!Nx.exp} is within 2
+    ulps at [float32], and {!Nx.pow} within 2 at both dtypes. {!Nx.log10},
+    which nx composes from {!Nx.log2}, is within 2 ulps at [float64], which
+    follows from tolk's host [log2], within 1 ulp; within 1 at [float32],
+    measured at every [float32]; and exact at each power of ten the dtype
+    holds, measured. Where every operand is [±0.], [±inf] or a NaN, a
     function gives the value of C99 Annex F (ISO/IEC 9899, F.9), a zero's sign
     included: [sin (-0.)] is [-0.] and [log 0.] is [-inf]. {!Nx.pow} is [1.]
     where [y] is [±0.] or [x] is [1.], NaN included, and where [x] is [-1.] and

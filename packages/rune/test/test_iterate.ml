@@ -312,11 +312,15 @@ let test_staged () =
     (fun () -> Nx.sync y)
 
 (* A compiled call in a step stays a call, which computes at each step the bits
-   it computes outside the loop, over carries in every view and a capture. *)
+   it computes outside the loop, over carries in every view and a capture. Its
+   function adds to the carry a sum of 4096 products by the carry's sum, whose
+   terms a compiled call and nx.cpu combine in other orders, so that its
+   compiled bits differ from eager's. *)
 type call =
   | Call : {
       dt : (float, 's) Nx.dtype;
-      sine : (float, 's, Nx.host) Nx.t -> (float, 's, Nx.host) Nx.t;
+      plain : (float, 's, Nx.host) Nx.t -> (float, 's, Nx.host) Nx.t;
+      jitted : (float, 's, Nx.host) Nx.t -> (float, 's, Nx.host) Nx.t;
       s : int array;
       trips : int;
       c : Operand.t;
@@ -324,8 +328,14 @@ type call =
     }
       -> call
 
-let sine32 = Rune.jit' (Nx.sin : (float, Nx.float32_elt, Nx.host) Nx.t -> _)
-let sine64 = Rune.jit' (Nx.sin : (float, Nx.float64_elt, Nx.host) Nx.t -> _)
+let spread (type s) (dt : (float, s) Nx.dtype) =
+  let v = Nx.cast dt (Nx.square (Nx.linspace Nx.float64 0.1 1.7 4096)) in
+  fun (x : (float, s, Nx.host) Nx.t) -> Nx.add x (Nx.sum (Nx.mul v (Nx.sum x)))
+
+let spread32 = spread f32
+let spread64 = spread f64
+let jitted32 = Rune.jit' spread32
+let jitted64 = Rune.jit' spread64
 
 let call_cases =
   let open Gen in
@@ -333,8 +343,9 @@ let call_cases =
    let* trips = int_range 1 3 in
    let* c = Operand.draw s and+ w = Operand.draw s in
    let+ wide = bool in
-   if wide then Call { dt = f64; sine = sine64; s; trips; c; w }
-   else Call { dt = f32; sine = sine32; s; trips; c; w })
+   if wide then
+     Call { dt = f64; plain = spread64; jitted = jitted64; s; trips; c; w }
+   else Call { dt = f32; plain = spread32; jitted = jitted32; s; trips; c; w })
   |> with_pp (fun ppf (Call c) ->
       Format.fprintf ppf "%a %a, %d trips, carry %a" Nx.pp_dtype c.dt
         Operand.pp_shape c.s c.trips Operand.pp_view c.c.view)
@@ -344,15 +355,15 @@ let law_call (Call c) =
   cover "a zero-size carry" (Operand.numel c.s = 0);
   let init = Operand.make c.dt c.s c.c and w = Operand.make c.dt c.s c.w in
   (* Each call reads the carry, so that it computes in the step. *)
-  let step sine (x, k) = (Nx.add (sine x) (sine (Nx.maximum w x)), tick k) in
+  let step f (x, k) = (Nx.add (f x) (f (Nx.maximum w x)), tick k) in
   let until (_, k) = Nx.greater_equal_s k (Int32.of_int c.trips) in
-  let written sine = fst (looped ~max:3 ~until (step sine) (init, k0 ())) in
+  let written f = fst (looped ~max:3 ~until (step f) (init, k0 ())) in
   cover "a step the call computes apart from eager"
-    (bits (written c.sine) <> bits (written Nx.sin));
+    (bits (written c.jitted) <> bits (written c.plain));
   equal bits_t
-    (bits (written c.sine))
+    (bits (written c.jitted))
     (bits
-       (fst (Rune.iterate (p2 ()) ~max:3 ~until (step c.sine) (init, k0 ()))))
+       (fst (Rune.iterate (p2 ()) ~max:3 ~until (step c.jitted) (init, k0 ()))))
 
 (* Derivatives *)
 

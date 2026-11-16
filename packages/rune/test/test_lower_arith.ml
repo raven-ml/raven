@@ -5,10 +5,11 @@
 
 (* Scalar programs compiled by Rune.jit give the bits nx's eager kernels give
    for every exact kind, any NaN for a NaN, and compile whole: no call is
-   evaluated. A narrow float's transcendental kind, computed at float32 and
-   rounded once, is within one ulp of the correctly rounded result (rune.mli,
-   Numerics). Lower_real's and Lower_complex's suites hold the bounds at
-   float32, float64 and the complex dtypes.
+   evaluated; rune.mli's Numerics section states which kinds are exact, at
+   each float dtype. Another narrow float's transcendental kind, computed at
+   float32 and rounded once, is within one ulp of the correctly rounded result
+   (rune.mli, Numerics). Lower_real's and Lower_complex's suites hold the
+   bounds at float32, float64 and the complex dtypes.
 
    A case compiles one program over operands of one dtype. Its rows apply one
    kind each to the same operands: the operands are broadcast along a first axis
@@ -576,7 +577,8 @@ let run_rows ?at d ~ins rows vs ops =
 let exact1 d (k : K.unary) =
   match k with
   | Neg -> true
-  | Recip | Abs | Sign | Sqrt | Floor | Ceil | Round | Trunc ->
+  | Recip | Abs | Sign | Sqrt | Floor | Ceil | Round | Trunc | Sin | Cos | Tan
+    ->
       not (is_complex d)
   | _ -> not (is_float d || is_complex d)
 
@@ -722,60 +724,6 @@ let constant_exponents =
    infinity saturate, so every pow there is. *)
 let narrow = List.filter (fun d -> is_float d && bits d < 32) dtypes
 
-(* The first 264 bits of 1/(2π) after the point, in hex. *)
-let inv_two_pi =
-  "28be60db9391054a7f09d5f47d4d377036d8a5664f10e4107f9458eaf7aef1586d"
-
-(* [x] modulo 2π, in [-π, π], for [x] of at most 24 significant bits below
-   2^128: [x] is [m 2^e], and the bits of 1/(2π) at or before [e] add
-   integers to [x / 2π], so the 144 after it give its fraction, as six base
-   2^24 digits. The host's [sin] may reduce with a rounded π: mingw-w64's
-   gives 0.158 for the -0.987 of bfloat16's greatest finite. On every
-   bfloat16, the sin, cos and tan of the result are within 2^-29 of the
-   exact ones, relatively. *)
-let reduce x =
-  if Float.abs x < 1. || not (Float.is_finite x) then x
-  else
-    let f, q = Float.frexp (Float.abs x) in
-    let m = Float.to_int (Float.ldexp f 24) and e = q - 24 in
-    if
-      Float.ldexp (Float.of_int m) e <> Float.abs x
-      || e + 144 > 4 * String.length inv_two_pi
-    then invalid_arg "reduce: more than 24 bits, or past 2^128";
-    let bit i =
-      if i < 1 then 0
-      else
-        let d = int_of_string ("0x" ^ String.make 1 inv_two_pi.[(i - 1) / 4]) in
-        (d lsr (3 - ((i - 1) mod 4))) land 1
-    in
-    let chunk j =
-      let c = ref 0 in
-      for i = 1 to 24 do
-        c := (!c lsl 1) lor bit (e + (24 * j) + i)
-      done;
-      !c
-    in
-    let digits = Array.make 7 0 in
-    for j = 0 to 5 do
-      let p = m * chunk j in
-      digits.(j + 1) <- digits.(j + 1) + (p land 0xffffff);
-      digits.(j) <- digits.(j) + (p lsr 24)
-    done;
-    for j = 6 downto 1 do
-      digits.(j - 1) <- digits.(j - 1) + (digits.(j) lsr 24);
-      digits.(j) <- digits.(j) land 0xffffff
-    done;
-    let low = ref 0. in
-    for j = 6 downto 2 do
-      low := !low +. Float.ldexp (Float.of_int digits.(j)) (-24 * j)
-    done;
-    (* a fraction from one half on is a negative turn *)
-    let top =
-      if digits.(1) >= 0x800000 then digits.(1) - 0x1000000 else digits.(1)
-    in
-    let r = 2. *. Float.pi *. (Float.ldexp (Float.of_int top) (-24) +. !low) in
-    if x < 0. then -.r else r
-
 let reference1 : K.unary -> float -> float = function
   | Exp -> Float.exp
   | Exp2 -> Float.exp2
@@ -783,9 +731,6 @@ let reference1 : K.unary -> float -> float = function
   | Log2 -> Float.log2
   | Log1p -> Float.log1p
   | Expm1 -> Float.expm1
-  | Sin -> fun x -> Float.sin (reduce x)
-  | Cos -> fun x -> Float.cos (reduce x)
-  | Tan -> fun x -> Float.tan (reduce x)
   | Asin -> Float.asin
   | Acos -> Float.acos
   | Atan -> Float.atan
