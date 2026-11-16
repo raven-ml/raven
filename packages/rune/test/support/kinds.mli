@@ -21,6 +21,9 @@ val name : kind -> string
 val sin : kind
 val cos : kind
 val tan : kind
+val log : kind
+val log2 : kind
+val log1p : kind
 
 (** {1:cases Cases} *)
 

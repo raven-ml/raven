@@ -395,8 +395,6 @@ let annex1 name wide e =
     (match name with
     | "exp" | "exp2" -> (one, one, i, z)
     | "expm1" -> (z, nz, i, none)
-    | "log" | "log2" -> (ni, ni, i, nn)
-    | "log1p" -> (z, nz, i, nn)
     | "asin" -> (z, nz, nn, nn)
     | "acos" -> (half_pi, half_pi, nn, nn)
     | "atan" -> (z, nz, half_pi, neg half_pi)
@@ -533,9 +531,6 @@ let transcendental =
       ("exp", K.Exp, (2, 9));
       ("exp2", K.Exp2, (4, 4));
       ("expm1", K.Expm1, (23, 23));
-      ("log", K.Log, (1, 1));
-      ("log2", K.Log2, (1, 1));
-      ("log1p", K.Log1p, (5, 5));
       ("asin", K.Asin, (5, 9));
       ("acos", K.Acos, (5, 9));
       ("atan", K.Atan, (2, 7));
@@ -567,7 +562,7 @@ let ported k =
         Kinds.folded (module Nx.Host) ~f64:true k);
   ]
 
-let kinds = Kinds.[ sin; cos; tan ]
+let kinds = Kinds.[ sin; cos; tan; log; log2; log1p ]
 
 (* Drawn operands
 

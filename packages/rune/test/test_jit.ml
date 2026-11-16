@@ -653,7 +653,7 @@ type unary = {
 let unaries =
   [
     { name = "exp"; f = Nx.exp; bound = (9 + 2, 9 + 2) };
-    { name = "log"; f = Nx.log; bound = (1 + 1, 1 + 2) };
+    { name = "log"; f = Nx.log; bound = (0, 0) };
     { name = "sin"; f = Nx.sin; bound = (0, 0) };
     { name = "cos"; f = Nx.cos; bound = (0, 0) };
     { name = "tan"; f = Nx.tan; bound = (0, 0) };
@@ -664,7 +664,7 @@ let unaries =
     { name = "cosh"; f = Nx.cosh; bound = (10 + 2, 10 + 2) };
     { name = "tanh"; f = Nx.tanh; bound = (18 + 2, 18 + 2) };
     { name = "expm1"; f = Nx.expm1; bound = (23 + 1, 23 + 2) };
-    { name = "log1p"; f = Nx.log1p; bound = (5 + 1, 5 + 2) };
+    { name = "log1p"; f = Nx.log1p; bound = (0, 0) };
     { name = "erf"; f = Nx.erf; bound = (2 + 2, 3 + 2) };
   ]
 
@@ -766,10 +766,10 @@ let test_roundeven () =
   at f32;
   at f64
 
-(* Nx.log10, compiled on the host, is within 1 ulp at float32 and 2 at float64
-   of the correctly rounded value at the points of nx's golden, which nx's
-   gen/special.py writes from mpmath and dune copies here, and exact at each
-   power of ten the dtype holds. *)
+(* Nx.log10, compiled on the host, gives eager's bits at the points of nx's
+   golden, which nx's gen/special.py writes from mpmath and dune copies here,
+   and at each power of ten the dtype holds: nx composes it from Nx.log2,
+   which compiles to nx's bits, and exact functions. *)
 let test_log10 () =
   let dir = Filename.dirname Sys.executable_name in
   let lines =
@@ -777,34 +777,26 @@ let test_log10 () =
       (Filename.concat dir "log10.golden")
       In_channel.input_lines
   in
-  let at (type s) (dt : (float, s) Nx.dtype) short n most =
-    let rows =
+  let at (type s) (dt : (float, s) Nx.dtype) short most =
+    let xs =
       List.filter_map
         (fun l ->
           match String.split_on_char '\t' l with
-          | [ d; x; f ] when d = short ->
-              Some (float_of_string x, float_of_string f)
+          | [ d; x; _ ] when d = short -> Some (float_of_string x)
           | _ -> None)
         lines
     in
-    let xs = Array.of_list (List.map fst rows) in
+    let powers =
+      List.init (most + 1) (fun k -> float_of_string (Printf.sprintf "1e%d" k))
+    in
+    let xs = Array.of_list (xs @ powers) in
     let x = Nx.create dt [| Array.length xs |] xs in
     let msg = Format.asprintf "%a" Nx.pp_dtype dt in
     let y = compiled (fun () -> Nx.to_array (Rune.jit' Nx.log10 x)) in
-    equal ~msg (outcome_t (within dt n))
-      (Value (Array.of_list (List.map snd rows)))
-      y;
-    let powers =
-      Array.init (most + 1) (fun k -> float_of_string (Printf.sprintf "1e%d" k))
-    in
-    let x = Nx.create dt [| most + 1 |] powers in
-    let y = compiled (fun () -> Nx.to_array (Rune.jit' Nx.log10 x)) in
-    equal ~msg (outcome_t (array float_exact))
-      (Value (Array.init (most + 1) Float.of_int))
-      y
+    equal ~msg (outcome_t (within dt 0)) (Value (Nx.to_array (Nx.log10 x))) y
   in
-  at f32 "f32" 1 10;
-  at f64 "f64" 2 22
+  at f32 "f32" 10;
+  at f64 "f64" 22
 
 (* [Nx.where (Nx.less m c) m c] of [m = Nx.minimum c x] is [c] where [m] ties
    with [c] or is NaN, and [m] elsewhere: [0.] at [x = -0.] and [c = 0.], and
@@ -6102,7 +6094,7 @@ let () =
                (Mxfp4_products.decode_law (module Nx.Host));
              test "special values are exact" test_specials;
              test "roundeven is exact" test_roundeven;
-             test "log10 is within its host bounds" test_log10;
+             test "log10 gives eager's bits" test_log10;
              test "a selection of a minimum against its constant is exact"
                test_nested_minimum;
              Windtrap.cases "a selection of a value and a zero is exact"

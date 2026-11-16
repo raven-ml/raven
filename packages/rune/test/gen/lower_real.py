@@ -150,14 +150,6 @@ UNARY = {
     "expm1": ([-26, -40, "0x1p-25", "0x1p-54", "0x1p-30", 88.72284, 709.782712893384, 89, 710,
                0.34657359, 44, 45, -37.42994775023705],
               {"f32": (-40, 100), "f64": (-50, 720)}),
-    "log": ([1, 2, 0.5, 0.70710677, 1.4142135, 0.7071067811865476, 1.4142135623730951, 3, 10,
-             "0x1p-126", "0x1p-1022", 1e-40, 1e-310, "0x1.481e0a20c684p+0",
-             "0x1.203eace7848f4p+0", "0x1.936dc3c250523p-1", "0x1.67372bc172382p-1",
-             "0x1.410308102a104p+0"], {"f32": (-2, 1e4), "f64": (-2, 1e4)}),
-    "log2": ([1, 2, 0.5, 0.70710677, 1.4142135, 0.7071067811865476, 1.4142135623730951, 3, 10,
-              1024, "0x1p-126", "0x1p-1022", "0x1p-1074"], {"f32": (-2, 1e4), "f64": (-2, 1e4)}),
-    "log1p": ([-1, -0.5, "0x1p-25", "0x1p-54", -0.29289322, -0.2928932188134524,
-               0.41421356237309515, 1, 2, 10, 1e-40], {"f32": (-1.5, 10), "f64": (-1.5, 10)}),
     "asin": ([1, 0.5, 0.99999994, 0.9999999999999999], {"f32": (-1.1, 1.1), "f64": (-1.1, 1.1)}),
     "acos": ([1, 0.5, 0.99999994, 0.9999999999999999], {"f32": (-1.1, 1.1), "f64": (-1.1, 1.1)}),
     "atan": ([1, 0.4375, 0.6875, 1.1875, 2.4375, 1e10, 1e300, "0x1p-960", "0x1p54"],
@@ -258,12 +250,8 @@ def limit(x, beyond, below, above):
 
 def unary_ref(fn, x):
     x = mpf(x)
-    if fn in ("log", "log2") and x < 0 or fn == "log1p" and x < -1:
-        return None
     if fn in ("asin", "acos") and abs(x) > 1:
         return None
-    if fn == "log1p" and x == -1:
-        return -HUGE
     far = {
         "exp": (1200, TINY, HUGE), "exp2": (1200, TINY, HUGE), "expm1": (1200, -1 + TINY, HUGE),
         "sinh": (1200, -HUGE, HUGE), "cosh": (1200, HUGE, HUGE),
@@ -275,7 +263,6 @@ def unary_ref(fn, x):
             return v
     f = {
         "exp": mpmath.exp, "exp2": lambda v: mpmath.power(2, v), "expm1": mpmath.expm1,
-        "log": mpmath.log, "log2": lambda v: mpmath.log(v, 2), "log1p": mpmath.log1p,
         "asin": mpmath.asin,
         "acos": mpmath.acos, "atan": mpmath.atan, "sinh": mpmath.sinh, "cosh": mpmath.cosh,
         "tanh": mpmath.tanh, "erf": mpmath.erf,

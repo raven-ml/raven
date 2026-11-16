@@ -449,39 +449,43 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   integers › an integer cast to a float gives eager's bits` on a GPU, whose
   integers lie one around each format's ties at every exponent.
 
-### A24. Logarithm by fdlibm, NaN below zero
+### A24. Logarithms by nx's sequence
 
 - **Reference:** `mixin/elementwise.py:830` (`log2 (x) * ln 2`), whose `log2`
-  is `codegen/decomp/transcendental.py:219` (`xlog2`) on a target without it.
-- **Raven:** `lower_real.ml` (`log`).
+  is `codegen/decomp/transcendental.py:219` (`xlog2`) on a target without it;
+  none for `log1p`.
+- **Raven:** `lower_real.ml` (`log_reduce`, `log_core`, `log_special`, `log`,
+  `log2`, `log1p`).
 - **Differs:** the product by `ln 2` adds its rounding to `log2`'s error, two
-  ulps near 1. The lowering builds fdlibm's `log` of the exact kinds, reading
-  no `log2`. `xlog2` takes `x` for `-0.` where its reciprocal is `-inf`, as for
-  a negative subnormal whose reciprocal overflows, and a target that flushes
-  subnormals takes every negative subnormal for `-0.`: the lowering selects
-  NaN where the bits of `x` have the sign bit and a magnitude.
-- **nx:** `prog.mli`, Results, `Log`: NaN below zero, `-inf` at either zero.
-- **Class:** ulp bound: 1, on every target.
+  ulps near 1, and a target's `log2` differs from nx's. The lowering builds
+  `nx_kinds_real.h`'s `nx_log`, `nx_log2` and `nx_log1p` operation for
+  operation: `x = 2^k (1 + f)`, `1 + f` in `[sqrt(1/2), sqrt 2)` from the
+  bits, a subnormal scaled up first, and nx's polynomial in
+  `(f / (2 + f))^2`; `log2` splits `log(1 + f)` so that its product by
+  `1/ln 2`'s head is exact; `log1p` corrects `log (1 + x)` by `1 + x`'s
+  exact error. NaN below zero, `-inf` at either zero, as nx's selections
+  give them.
+- **nx:** `nx_kinds_real.h` (`nx_log`, `nx_log2`, `nx_log1p`).
+- **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `Lower_real › transcendental › log within 1 ulps at float32, 1
-  at float64`, whose golden points crowd around 1.
+- **Pinned by:** `Lower_real › kinds › log gives eager's bits`, `› log of
+  every narrow float gives eager's bits`, `› log of a constant gives eager's
+  bits`, the same for `log2` and `log1p`, on the host; `Jit_gpu › kinds ›
+  *` on a GPU.
 
-### A25. `expm1` and `log1p`
+### A25. `expm1`
 
 - **Reference:** none.
-- **Raven:** `lower_real.ml` (`expm1`, `log1p`).
+- **Raven:** `lower_real.ml` (`expm1`).
 - **No source:** `expm1` is Kahan's: with `w = e^x` rounded, `(w - 1) x / log
   w`, so that `exp`'s error passes through, halved near 0. It is `x` where
-  `w` is 1, -1 where `w - 1` is, and `w` where `w` is infinite. `log1p` is
-  Goldberg's: with `w = 1 + x` rounded, `log w x / (w - 1)`, `w - 1` exact,
-  and `x` where `w` is 1 or `x` is `+inf`. The `exp` and `log` are A7's and
-  A24's.
-- **nx:** `prog.mli`, `Expm1`, `Log1p`: accurate near 0; Results.
-- **Class:** ulp bound: `expm1` 23, `log1p` 5.
+  `w` is 1, -1 where `w - 1` is, and `w` where `w` is infinite. The `exp`
+  and `log` are A7's and A24's.
+- **nx:** `prog.mli`, `Expm1`: accurate near 0; Results.
+- **Class:** ulp bound: 23.
 - **Reason:** (b).
 - **Pinned by:** `Lower_real › transcendental › expm1 within 23 ulps at
-  float32, 23 at float64`, `› log1p within 5 ulps at float32, 5 at float64`,
-  whose points include Annex F's specials.
+  float32, 23 at float64`, whose points include Annex F's specials.
 
 ### A26. Complex kinds
 

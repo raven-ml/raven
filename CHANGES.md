@@ -448,6 +448,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx.log`, `Nx.log2`, `Nx.log1p` and `Nx.log10` give eager's
+  bits on the host and NVIDIA GPUs, where they differed in the last bit:
+  `Nx.log2` was the target's, and `Nx.log` and `Nx.log1p` fdlibm's and
+  Goldberg's forms.
 - A compiled `Nx.sin`, `Nx.cos` and `Nx.tan` compute nx's sequence where they
   used the target's sine, so give eager's bits on the host and NVIDIA GPUs;
   a first call allocates 25 times the words, NVRTC taking 2.7 times as long.

@@ -128,6 +128,107 @@ let sin = trig "sin" { f1 = Nx.sin }
 let cos = trig "cos" { f1 = Nx.cos }
 let tan = trig "tan" { f1 = Nx.tan }
 
+(* Logarithms: nx_log_reduce's switch, where a significand passes sqrt(1/2), in
+   several binades; the least normal, below which it scales a subnormal up; 1,
+   around which log cancels; powers of two, where log2 is exact; for log1p, -1,
+   the arguments whose 1 + x crosses sqrt(1/2) or 2, and those past which 1 + x
+   rounds to x. *)
+
+let sqrt_half = (0x1.6a09e6p-1, 0x1.6a09e667f3bcdp-1)
+
+let log_points wide =
+  let h = pick wide sqrt_half in
+  [
+    pick wide (0x1p-126, 0x1p-1022);
+    h;
+    2. *. h;
+    Float.ldexp h (-100);
+    Float.ldexp h 60;
+    1.;
+    2.;
+    0.5;
+    3.;
+    10.;
+    1024.;
+    pick wide (1e-40, 1e-310);
+    pick wide (1e30, 1e300);
+  ]
+  @
+  if wide then
+    [ 0x1.481e0a20c684p+0; 0x1.203eace7848f4p+0; 0x1.936dc3c250523p-1 ]
+  else []
+
+let log_spec wide = { points = log_points wide; ranges = [ 2.; 1e4 ] }
+let finite_pos v = v > 0. && Float.is_finite v
+
+let log_covers =
+  [
+    ("a negative number", fun _ e -> e.(0) < 0. && Float.is_finite e.(0));
+    ( "within 2^-10 of 1, not 1",
+      fun _ e -> e.(0) <> 1. && Float.abs (e.(0) -. 1.) < 0x1p-10 );
+    ( "a significand beside sqrt(1/2)",
+      fun _ e ->
+        finite_pos e.(0)
+        && Float.abs (fst (Float.frexp e.(0)) -. 0.70710678) < 0x1p-20 );
+  ]
+
+let log_kind name f covers =
+  {
+    name;
+    fn = One f;
+    specs = [| (log_spec false, log_spec true) |];
+    covers = log_covers @ covers;
+  }
+
+let log = log_kind "log" { f1 = Nx.log } []
+
+let log2 =
+  log_kind "log2" { f1 = Nx.log2 }
+    [
+      ( "a power of two but 1",
+        fun _ e ->
+          finite_pos e.(0) && e.(0) <> 1. && fst (Float.frexp e.(0)) = 0.5 );
+    ]
+
+let log1p_spec wide =
+  let h = pick wide sqrt_half in
+  {
+    points =
+      [
+        1.;
+        0.5;
+        1. -. h;
+        (2. *. h) -. 1.;
+        2.;
+        10.;
+        pick wide (0x1p-25, 0x1p-54);
+        pick wide (0x1p24, 0x1p53);
+        pick wide (1e-40, 1e-310);
+        pick wide (1e30, 1e300);
+      ];
+    ranges = [ 1.; 1e4 ];
+  }
+
+let log1p =
+  let big w = pick w (0x1p24, 0x1p53) in
+  {
+    name = "log1p";
+    fn = One { f1 = Nx.log1p };
+    specs = [| (log1p_spec false, log1p_spec true) |];
+    covers =
+      [
+        ("below -1", fun _ e -> e.(0) < -1.);
+        ( "within 3 ranks of -1",
+          fun w e -> Float.abs (e.(0) +. 1.) < pick w (0x1p-21, 0x1p-50) );
+        ("in (-1, -1/2)", fun _ e -> e.(0) > -1. && e.(0) < -0.5);
+        ( "below 2^-24 of 1, not zero",
+          fun w e -> e.(0) <> 0. && Float.abs e.(0) < pick w (0x1p-24, 0x1p-53)
+        );
+        ( "where 1 + x rounds to x, finite",
+          fun w e -> e.(0) >= big w && Float.is_finite e.(0) );
+      ];
+  }
+
 (* Cases *)
 
 type case = { f32 : int64 array array; f64 : int64 array array }

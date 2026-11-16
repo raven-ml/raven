@@ -1004,10 +1004,11 @@ let long_scans =
    bounds at float64's unit roundoff, with glibc's [exp] and [log] within an
    ulp; for float64 the two errors add. *)
 
-(* [E] and [L], the bounds in ulps Lower_real states for [Exp] and [Log] at
-   float32 and float64. *)
+(* [E] and [L], the bounds in ulps of the compiled [Exp] and [Log] at float32
+   and float64: Lower_real's for [Exp], nx's for [Log], which compiles to
+   nx's bits. *)
 let exp_ulps = 9.
-let log_ulps = 1.
+let log_ulps = 2.
 let u64 = Float.ldexp 1. (-53)
 
 (* The loop of [x]'s identity by [r]: reduced along [c]'s axes, or scanned

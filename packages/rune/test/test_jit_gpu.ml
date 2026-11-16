@@ -24,7 +24,7 @@
    sum of zeros, paged keys and values give dense ones' bits, a sum of a
    contraction's result holds its bound, a long sum and a weight gradient
    hold the blocked bound, exp holds its bound in ulps of the correctly
-   rounded result, sin, cos and tan give eager's bits, and a range gather and its gradient compile to eager's
+   rounded result, a kind compiled to nx's sequence gives eager's bits, and a range gather and its gradient compile to eager's
    bits, and an argmax or argmin over a length 16 does not divide gives nx's
    position, a sum and a product their exact values, and a first k of a sort
    gives eager's values and positions bit for bit. It skips without a GPU, or
@@ -3010,7 +3010,8 @@ let () =
                (Gen.with_pp Assemblies.pp Assemblies.gen)
                assembly;
            ];
-         group "kinds" (List.concat_map ported Kinds.[ sin; cos; tan ]);
+         group "kinds"
+           (List.concat_map ported Kinds.[ sin; cos; tan; log; log2; log1p ]);
          group "exp"
            [
              prop ~count:24 "exp within 9 ulps at float32" Exps.gen exp_law;

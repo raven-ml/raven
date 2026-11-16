@@ -1,6 +1,6 @@
 (*---------------------------------------------------------------------------
   Copyright (c) 2026 The Raven authors. All rights reserved.
-  SPDX-License-Identifier: ISC AND SunPro
+  SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
 (* The exact kinds are bit manipulations and IEEE's correctly rounded
@@ -12,12 +12,13 @@
    lanes it does not take. Each such function names the header's function it
    follows; when the header changes, it changes with it.
 
-   The other transcendental kinds compose tolk's exp2 and log2 with the exact
-   kinds, in forms that cancel nowhere, whose bounds [lower_real.mli] states.
-   Those bounds are derived to first order in the unit roundoff u. An error of
-   n ulps is taken as a relative error of 2 n u, and a relative error d as
-   d / u + 1/2 ulps after the last rounding. The bounds of erf's polynomials,
-   of float32 atan, of log and of the host's exp are measured. *)
+   The other transcendental kinds compose tolk's exp2 with the exact kinds and
+   those of nx's sequence, in forms that cancel nowhere, whose bounds
+   [lower_real.mli] states. Those bounds are derived to first order in the
+   unit roundoff u. An error of n ulps is taken as a relative error of 2 n u,
+   and a relative error d as d / u + 1/2 ulps after the last rounding. The
+   bounds of erf's polynomials, of float32 atan and of the host's exp are
+   measured. *)
 
 open Tolk
 open Lower_bits
@@ -239,42 +240,96 @@ let exp x =
   let hi, lo = exp_parts x in
   exp2_split hi lo
 
-(* fdlibm's log (e_log.c, e_logf.c). With x = m 2^e, m in (1/sqrt 2, sqrt 2],
-   log x is e ln2 + log(1 + f), f = m - 1 exact, and log(1 + f) is f - (h - s (h
-   + R)) with h = f^2 / 2, s = f / (2 + f) and R a minimax polynomial in s^2 for
-   2 atanh(s) / s - 2: every term but f is small, so only the last sum rounds at
-   the result's scale. ln2 is in two parts, the first of few enough bits that
-   its product by e is exact. It reads no log2: a product of one by ln 2 would
-   add its rounding to log2's error. Every positive float32 is within one ulp of
-   libm's log rounded, as are drawn float64 operands of libm's; on the host exp
-   and cos are within two, sin within one, over the same operands. The
-   coefficients and the parts carry this notice:
+(* Logarithms
 
-   Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved. Developed
-   at SunPro, a Sun Microsystems, Inc. business. Permission to use, copy,
-   modify, and distribute this software is freely granted, provided that this
-   notice is preserved. *)
+   nx_kinds_real.h's: u = 2^k (1 + f) with 1 + f in [sqrt(1/2), sqrt 2), f
+   exact, and with s = f / (2 + f), log(1 + f) = f - f^2/2 + s (f^2/2 + R),
+   R = s^2 T(s^2). Constants are nx_kinds.h's macros of the same names, at
+   float32 then float64, their text copied. *)
 
-let log_poly =
-  ( [ 0xf89e26.0p-26; 0x91e9ee.0p-25; 0xccce13.0p-25; 0xaaaaaa.0p-24 ],
+let sqrt_half_bits = (0x3F3504F3L, 0x3FE6A09E667F3BCDL)
+let ln2_hi = (0x1.62e4p-1, 0x1.62e42fefa38p-1)
+let ln2_lo = (0x1.7f7d1cp-20, 0x1.ef35793c7673p-45)
+let ivln2_hi = (0x1.716p+0, 0x1.71547652p+0)
+let ivln2_lo = (-0x1.7135a8p-13, 0x1.705fc2eefa2p-33)
+let log2_hi_mask = (0xFFFFF000L, 0xFFFFFFFF00000000L)
+
+(* nx_log_t_f32 and nx_log_t_f64, from the leading coefficient. *)
+let log_t =
+  ( [ 0x1.ab4e0cp-3; 0x1.257d1cp-2; 0x1.9996acp-2; 0x1.555556p-1 ],
     [
-      1.479819860511658591e-01;
-      1.531383769920937332e-01;
-      1.818357216161805012e-01;
-      2.222219843214978396e-01;
-      2.857142874366239149e-01;
-      3.999999999940941908e-01;
-      6.666666666666735130e-01;
+      0x1.0c1994438ce53p-3;
+      0x1.0fbc6f8b23776p-3;
+      0x1.3b1c4a71fa6cep-3;
+      0x1.745cf89e46188p-3;
+      0x1.c71c720256c1fp-3;
+      0x1.2492492476379p-2;
+      0x1.9999999999a3cp-2;
+      0x1.5555555555555p-1;
     ] )
 
-let ln2_hi = (6.9313812256e-01, 6.93147180369123816490e-01)
-let ln2_lo = (9.0580006145e-06, 1.90821492927058770002e-10)
-let sqrt2 = (0x1.6a09e6p+0, 0x1.6a09e667f3bcdp+0)
+(* NX_ONE_BITS, 1's bits: the bias in the exponent field. *)
+let one_bits x = Int64.shift_left (Int64.of_int (pick x bias)) (pick x mbits)
+
+(* nx_log_reduce: (f, k) for u > 0, a subnormal scaled up first. *)
+let log_reduce u =
+  let b = bits u in
+  let sub = lt b (word b (pick u min_normal_bits)) in
+  let u = where sub (u *: con u sub_scale) u in
+  let half = pick u sqrt_half_bits in
+  let ix = Ops.add (bits u) (word b (Int64.sub (one_bits u) half)) in
+  let e = Ops.cast (shr ix (pick u mbits)) Int32 in
+  let e = Ops.sub e (int e (pick u bias)) in
+  let k = Ops.sub e (where sub (int e (pick u mbits)) (int e 0)) in
+  let m = Ops.add (band ix (word b (pick u mmask))) (word b half) in
+  (of_bits m -: one u, Ops.cast k (Ops.dtype u))
+
+(* nx_log_core: k ln2 + log(1 + f) + c. *)
+let log_core (f, k) c =
+  let s = f /: (two f +: f) in
+  let z = s *: s in
+  let hfsq = half f *: f *: f in
+  let t = horner z (pick f log_t) in
+  let sr = mulacc s (mulacc z t hfsq) (mulacc k (con f ln2_lo) c) in
+  mulacc k (con f ln2_hi) (negated (hfsq -: sr -: f))
+
+(* nx_log_special: the value at u = 1 + x outside (0, inf), and at a NaN
+   x. *)
+let log_special u x y =
+  let y = where (eq u (inf u)) u y in
+  let y = where (eq u (zero u)) (negated (inf u)) y in
+  let y = where (lt u (zero u)) (nan u) y in
+  where (is_nan x) x y
+
+(* nx_log *)
+let log x = log_special x x (log_core (log_reduce x) (zero x))
+
+(* nx_log2: log(1 + f) as hi + lo, hi truncated so that its product by
+   1/ln2's head is exact. *)
+let log2 x =
+  let f, k = log_reduce x in
+  let s = f /: (two f +: f) in
+  let z = s *: s in
+  let hfsq = half f *: f *: f in
+  let hi =
+    of_bits (band (bits (f -: hfsq)) (word (bits f) (pick x log2_hi_mask)))
+  in
+  let t = horner z (pick f log_t) in
+  let lo = mulacc s (mulacc z t hfsq) (f -: hi -: hfsq) in
+  let v = mulacc lo (con x ivln2_hi) ((lo +: hi) *: con x ivln2_lo) in
+  log_special x x (mulacc hi (con x ivln2_hi) v +: k)
+
+(* nx_log1p: u = 1 + x rounded, c its exact error; log(u + c) = log u +
+   c/u. *)
+let log1p x =
+  let uh, ul = two_sum (one x) x in
+  let y = log_core (log_reduce uh) (ul /: uh) in
+  log_special uh x (where (eq x (zero x)) x y)
 
 (* (m, e) with a = m 2^e, m in (top / 2, top] and e an integer of a's type,
    for a finite a > 0 and top in (1, 2): a subnormal is scaled into the normals
    first. *)
-let normalized ?(top = sqrt2) a =
+let normalized ~top a =
   let sub = lt (bits a) (word (bits a) (pick a min_normal_bits)) in
   let s = where sub (a *: con a sub_scale) a in
   let mb = pick a mbits in
@@ -289,25 +344,6 @@ let normalized ?(top = sqrt2) a =
   let high = gt m (con a top) in
   (where high (m *: half a) m, where high (e +: one a) e)
 
-let log x =
-  let positive = gt x (zero x) &&: lt x (inf x) in
-  let m, e = normalized (where positive x (one x)) in
-  let f = m -: one x in
-  let s = f /: (two x +: f) in
-  let z = s *: s in
-  let h = half x *: f *: f in
-  let r = z *: horner z (pick x log_poly) in
-  let l =
-    (e *: con x ln2_hi) -: (h -: ((s *: (h +: r)) +: (e *: con x ln2_lo)) -: f)
-  in
-  (* The sign is read from the bits: a target that flushes subnormals takes a
-     negative one for -0. *)
-  let below = negative x &&: ne (bits (magnitude x)) (word (bits x) 0L) in
-  let special =
-    where (eq x (zero x)) (negated (inf x)) (where (is_nan x) x (inf x))
-  in
-  where below (nan x) (where positive l special)
-
 (* Kahan's expm1: with w = e^x rounded, (w - 1) x / log w, which is x g(w) for
    g(w) = (w - 1) / log w, exactly expm1(x) / x at w = e^x. w's relative error
    reaches the result scaled by w g'(w) / g(w), which is 1/2 near 0 and below 1
@@ -318,13 +354,6 @@ let expm1 x =
   let v = wm *: (x /: log w) in
   let v = where (eq w (inf x)) w v in
   let v = where (eq wm (num x (-1.))) wm v in
-  where (eq w (one x)) x v
-
-(* Goldberg's log1p: with w = 1 + x rounded, log w x / (w - 1), w - 1 exact. *)
-let log1p x =
-  let w = one x +: x in
-  let v = log w *: (x /: (w -: one x)) in
-  let v = where (eq x (inf x)) x v in
   where (eq w (one x)) x v
 
 (* nx's sequences
@@ -930,7 +959,7 @@ let unary (k : Nx_kernel.Prog.unary) x =
   | Exp -> exp x
   | Exp2 -> Ops.exp2 x
   | Log -> log x
-  | Log2 -> Ops.log2 x
+  | Log2 -> log2 x
   | Log1p -> log1p x
   | Expm1 -> expm1 x
   | Sin -> sin x
