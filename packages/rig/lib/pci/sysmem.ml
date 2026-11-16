@@ -165,13 +165,14 @@ let unmap a n = unmap_range a n
    reaches the file. A hugetlbfs refuses write(2), so a list cannot be a file's
    contents; a marker is made and removed in one call each, so no reader meets
    half a list, and two processes that change one file's list lose neither's
-   change. [close], [forget], [collect_dead] and [exit] in sysmem.mli state
-   when a function leaves a list and when a file goes. The process holds a
-   read lock of its open file description on its file from before the file
-   has a name until it dies (rig_pci_sysmem.c), so a take or a reset tells a
-   dead process's file by testing for the lock, which places none, and reads
-   its markers only then. A judge then holds no lock, so no judge reads
-   another's file as alive, and a child forked meanwhile holds nothing.
+   change. [close], [free_all], [forget], [collect_dead] and [exit] in
+   sysmem.mli state when a function leaves a list and when a file goes. The
+   process holds a read lock of its open file description on its file from
+   before the file has a name until it dies (rig_pci_sysmem.c), so a take or
+   a reset tells a dead process's file by testing for the lock, which places
+   none, and reads its markers only then. A judge then holds no lock, so no
+   judge reads another's file as alive, and a child forked meanwhile holds
+   nothing.
 
    Two processes may sweep at once. Only a file's own process adds markers,
    so a dead process's file's markers only go. Each sweep removes its reset
@@ -690,9 +691,16 @@ let uncount_all table ~own =
 let close s =
   Lock.protect state @@ fun () ->
   uncount_all s.reaches ~own:false;
+  leave ~root:s.root s.bus
+
+(* No function leaves a list here: a later take of [s]'s function may have
+   joined one, and its marker must stay while the process may die with that
+   take's GPU writing the file. *)
+let free_all s =
+  Lock.protect state @@ fun () ->
   uncount_all s.allocs ~own:true;
   free_unheld ();
-  leave ~root:s.root s.bus
+  List.iter (fun (f : file) -> if f.root = s.root then collect f) !files
 
 (* Every block of the [n] bytes at [a] must be [s]'s root's: memory of the
    process's own, or of another machine, would not outlive the process. A

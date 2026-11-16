@@ -107,6 +107,7 @@ type on_tree = {
   t_g : Tables.memory;
   t_tables : Page_table.t;
   t_memory : Memory.t;
+  t_hold : Driver.hold option; (* the open's, if a driver opened it *)
 }
 
 let needs_linux () =
@@ -137,7 +138,7 @@ let tree_machine ?(gpu = fun _ bus -> Tree.gpu bus) ?(others = [])
 
 (* The GPU of the taken function [fn], with its tables and memory. *)
 let on_function ?link ?(memory = gpu_memory) ?(pa_bits = 52)
-    ?(tables = Page_table.Pool) ?(format = Fun.id) ~space fn =
+    ?(tables = Page_table.Pool) ?(format = Fun.id) ?hold ~space fn =
   let g = Tables.memory () in
   let tables =
     Page_table.create ~base:tables_base
@@ -150,6 +151,7 @@ let on_function ?link ?(memory = gpu_memory) ?(pa_bits = 52)
     t_g = g;
     t_tables = tables;
     t_memory = Memory.create ?link fn tables ~bar:0;
+    t_hold = hold;
   }
 
 (* The GPU at [bus] of [m], its function taken, released at the end of the
@@ -157,6 +159,29 @@ let on_function ?link ?(memory = gpu_memory) ?(pa_bits = 52)
 let take_gpu ?link ?memory ?pa_bits ?tables ?format ~space m bus =
   on_function ?link ?memory ?pa_bits ?tables ?format ~space
     (require_ok (Function.take m bus))
+
+(* The driver of the trees' GPUs. *)
+let gpus = fixture_gpus ()
+
+(* GPU [i] of [m], opened by a driver whose stop is clean and whose release
+   releases the GPU's memory, as a vendor's does, so that [stop_open] stops
+   it as rig does. *)
+let open_gpu ~space m i =
+  require_ok
+    (Driver.open_ gpus m i (fun h fn ->
+         Driver.set_stop h (fun () -> `Clean);
+         let x = on_function ~hold:h ~space fn in
+         Driver.set_release h (fun () -> Memory.release x.t_memory);
+         Ok x))
+
+(* A GPU's stop as rig makes it, through its hold ([Driver.stop]). *)
+let stop_open x =
+  match x.t_hold with
+  | Some h -> ignore (Driver.stop h : [ `Stopped | `Unknown ])
+  | None -> fail "a stop of a GPU no driver opened"
+
+(* The window on [r]'s memory. *)
+let host_window r = require_some ~msg:"a window" (Memory.host r)
 
 (* [with_gpus n f] is [f root m gpus], [gpus] the [n] GPUs of a new tree sharing
    a space, released after. *)
@@ -638,6 +663,183 @@ let test_unconfirmed_cut () =
   in
   walk 1
 
+(* A GPU's stop gives back what waits for the release: the regions whose
+   free the GPU did not confirm, and its memory that another GPU mapped,
+   parked at its free. *)
+let test_waiting_stop () =
+  let base = own_space () in
+  let root, m, _ = tree_machine ~space:base 2 in
+  let space = Space.create ~base space_length in
+  let x = open_gpu ~space m 0 and y = open_gpu ~space m 1 in
+  let host = given (Memory.alloc x.t_memory Host (64 * kib)) in
+  let gpu = given (Memory.alloc x.t_memory Gpu (64 * kib)) in
+  let parked = given (Memory.alloc x.t_memory Host (64 * kib)) in
+  let p = mapped (Memory.map_peer y.t_memory parked) in
+  x.t_g.confirms <- false;
+  List.iter (Memory.free x.t_memory) [ host; gpu ];
+  x.t_g.confirms <- true;
+  Memory.free x.t_memory parked;
+  stop_open x;
+  Memory.free y.t_memory p;
+  stop_open y;
+  equal ~msg:"system memory held" int 0 (held_bytes root);
+  equal ~msg:"addresses taken" int 0 (Space.taken space)
+
+(* An exception may land at any allocation of a GPU's stop: what waits for
+   the release goes back all the same, once the next open, here of another
+   GPU, has ended the stop. *)
+let test_waiting_cut () =
+  let base = own_space () in
+  let root, m, _ = tree_machine ~space:base 2 in
+  let rec walk n =
+    let at what = strf "%s, landing at %d" what n in
+    let space = Space.create ~base space_length in
+    let x = open_gpu ~space m 0 in
+    let host = given (Memory.alloc x.t_memory Host (64 * kib)) in
+    x.t_g.confirms <- false;
+    Memory.free x.t_memory host;
+    x.t_g.confirms <- true;
+    let reached = Rig_support.interrupted n (fun () -> stop_open x) in
+    stop_open (open_gpu ~space m 1);
+    equal ~msg:(at "system memory held") int 0 (held_bytes root);
+    equal ~msg:(at "addresses taken") int 0 (Space.taken space);
+    if n = 1 then equal ~msg:"the walk lands" bool true reached;
+    if reached then walk (n + 1)
+  in
+  walk 1
+
+(* A stop keeps the memory a region of the open holds, and a free after it
+   gives that back. Once a later open of the same GPU has joined the
+   memory's file, the old open's last free leaves the file, the new open's
+   memory and its marker, which tells another process that the GPU may
+   still write the file. *)
+let test_reopened_free () =
+  let base = own_space () in
+  let root, m, buses = tree_machine ~space:base 1 in
+  let space = Space.create ~base space_length in
+  let x = open_gpu ~space m 0 in
+  let r = given (Memory.alloc x.t_memory Host huge) in
+  stop_open x;
+  equal ~msg:"kept while its region is out" int huge (held_bytes root);
+  let again = open_gpu ~space m 0 in
+  let mine = given (Memory.alloc again.t_memory Host (64 * kib)) in
+  let name = require_some ~msg:"the file" (List.nth_opt (host_files root) 0) in
+  let file = Filename.concat root ("dev/hugepages/" ^ name) in
+  Memory.free x.t_memory r;
+  equal ~msg:"the files after the old open's last free" (list string)
+    [ name ] (host_files root);
+  equal ~msg:"the new open's memory" int huge (held_bytes root);
+  equal ~msg:"the new open's marker" bool true
+    (Sys.file_exists (file ^ ".reach-" ^ List.hd buses));
+  Memory.free again.t_memory mine;
+  stop_open again;
+  equal ~msg:"the files after the new open's stop" (list string) []
+    (host_files root)
+
+(* An exception may land at any allocation of a free after a GPU's stop.
+   Called again, the free gives the rest back or raises [Invalid_argument],
+   and what the cut left goes back at the open's last free: the memory, but
+   for another function's in the same file, and the addresses. Some landing
+   leaves memory or addresses for that last free. *)
+let test_free_stopped_cut () =
+  let base = own_space () in
+  let root, m, buses = tree_machine ~space:base 2 in
+  let other = require_ok (Function.take m (List.nth buses 1)) in
+  let kept, _ =
+    given (Function.alloc_dma ~va:(base + space_length) other page)
+  in
+  let left = ref false in
+  let rec walk n =
+    let at what = strf "%s, landing at %d" what n in
+    let space = Space.create ~base space_length in
+    let x = open_gpu ~space m 0 in
+    let r = given (Memory.alloc x.t_memory Host huge) in
+    let last = given (Memory.alloc x.t_memory Host (64 * kib)) in
+    stop_open x;
+    equal ~msg:(at "memory after the stop") int (3 * huge) (held_bytes root);
+    let both = Space.taken space in
+    let reached =
+      Rig_support.interrupted n (fun () -> Memory.free x.t_memory r)
+    in
+    (match Memory.free x.t_memory r with
+    | () | (exception Invalid_argument _) -> ());
+    if held_bytes root > 2 * huge || Space.taken space = both then left := true;
+    Memory.free x.t_memory last;
+    equal ~msg:(at "memory after the last free") int huge (held_bytes root);
+    equal ~msg:(at "addresses after the last free") int 0 (Space.taken space);
+    if n = 1 then equal ~msg:"the walk lands" bool true reached;
+    if reached then walk (n + 1)
+  in
+  walk 1;
+  equal ~msg:"a landing left memory or addresses to the last free" bool true
+    !left;
+  Function.free_dma other kept;
+  Function.release other
+
+(* Any order of a GPU's stop and the frees of its regions: system memory
+   stays while a region holds it and goes back at its free, before and after
+   the stop, and a region still out after the stop reads what was written
+   there. Once all is freed and stopped, nothing is held. *)
+type event = Stop | Free of int
+
+let pp_event ppf = function
+  | Stop -> Format.pp_print_string ppf "Stop"
+  | Free i -> Format.fprintf ppf "Free %d" i
+
+let events = [ Stop; Free 0; Free 1; Free 2 ]
+
+let test_stop_and_frees order =
+  let base = own_space () in
+  let root, m, _ = tree_machine ~space:base 1 in
+  let space = Space.create ~base space_length in
+  let x = open_gpu ~space m 0 in
+  let regions =
+    Array.init 3 (fun _ -> given (Memory.alloc x.t_memory Host huge))
+  in
+  let text i = strf "region %d" i in
+  Array.iteri (fun i r -> Window.write (host_window r) 0 (text i)) regions;
+  let freed = Array.make 3 false and stopped = ref false in
+  let out () = Array.fold_left (fun n f -> if f then n else n + 1) 0 freed in
+  List.iter
+    (fun e ->
+      (match e with
+      | Stop ->
+          stop_open x;
+          stopped := true
+      | Free i ->
+          Memory.free x.t_memory regions.(i);
+          freed.(i) <- true);
+      let what = Format.asprintf "after %a" pp_event e in
+      (* The memory first: a window on memory given back is unmapped. *)
+      equal ~msg:(what ^ ": memory held") int (out () * huge) (held_bytes root);
+      if !stopped then
+        Array.iteri
+          (fun i r ->
+            if not freed.(i) then
+              equal ~msg:(strf "%s: region %d" what i) string (text i)
+                (Window.read (host_window r) 0 (String.length (text i))))
+          regions)
+    order;
+  equal ~msg:"addresses taken" int 0 (Space.taken space);
+  equal ~msg:"files" (list string) [] (host_files root);
+  let first = List.hd order and final = List.nth order 3 in
+  cover "the stop first" (first = Stop);
+  cover "the stop between frees" (first <> Stop && final <> Stop);
+  cover "the stop last" (final = Stop)
+
+let stop_and_frees =
+  prop ~count:24
+    ~examples:
+      [
+        [ Stop; Free 0; Free 1; Free 2 ];
+        [ Free 0; Stop; Free 1; Free 2 ];
+        [ Free 0; Free 1; Free 2; Stop ];
+      ]
+    "any order of a stop and the frees keeps memory a region holds and gives \
+     back the rest"
+    (Gen.permutation ~pp:pp_event events)
+    test_stop_and_frees
+
 (* Once the function is released, a free of any region writes no table. *)
 let test_free_released from =
   with_gpus 2 @@ fun _ _ gpus ->
@@ -748,6 +950,28 @@ let test_owner_free_after_peer () =
   owner_call_on o;
   equal ~msg:"a released peer's memory given back" (pair int int) before
     (tree_capacity o)
+
+(* System memory the owner freed while another GPU mapped it, whose free
+   that GPU then did not confirm, stays through the owner's next call, which
+   finds it mapped no more, and goes back once both GPUs are stopped. *)
+let test_parked_reached () =
+  let base = own_space () in
+  let root, m, _ = tree_machine ~space:base 2 in
+  let space = Space.create ~base space_length in
+  let o = open_gpu ~space m 0 and x = open_gpu ~space m 1 in
+  let r = given (Memory.alloc o.t_memory Host (64 * kib)) in
+  let p = mapped (Memory.map_peer x.t_memory r) in
+  Memory.free o.t_memory r;
+  x.t_g.confirms <- false;
+  Memory.free x.t_memory p;
+  x.t_g.confirms <- true;
+  let bytes = held_bytes root in
+  owner_call_on o;
+  equal ~msg:"kept through the owner's call" int bytes (held_bytes root);
+  stop_open o;
+  stop_open x;
+  equal ~msg:"system memory held" int 0 (held_bytes root);
+  equal ~msg:"addresses taken" int 0 (Space.taken space)
 
 (* A released owner's free keeps the addresses of memory a peer maps: the
    peer's next allocation, and another GPU's region it maps, take other
@@ -1516,7 +1740,7 @@ let test_map_host_transport () =
       free_dma = (fun _ -> unused ());
       pin = (fun ~below:_ a n -> Ok (Some [ (a, n) ]));
       unpin = (fun _ _ -> ());
-      release = (fun () -> true);
+      release = (fun ~keep:_ -> true);
     }
   in
   let m =
@@ -1564,7 +1788,7 @@ let far_gpu ?(reserved = true) () =
       free_dma = (fun _ -> unused ());
       pin = (fun ~below:_ a n -> Ok (Some [ (a, n) ]));
       unpin = (fun _ _ -> ());
-      release = (fun () -> true);
+      release = (fun ~keep:_ -> true);
     }
   in
   let m =
@@ -2652,6 +2876,126 @@ let test_cut_give_back () =
   walk 1;
   equal ~msg:"a cut left the function taken for the finish" bool true !left
 
+(* A machine a transport reaches, with one GPU, whose function records the
+   releases it is asked, from any domain, oldest first: one without [keep]
+   gives back all the take holds. Its system memory lies in the transport's
+   memory, which [alloc_dma] hands out once [wait ()] returned. Its space is
+   reserved. *)
+let far_recorder ?(wait = ignore) () =
+  let tr = far 0 (8 * mib) in
+  let lock = Mutex.create () and calls = ref [] and next = ref mib in
+  let log s = Mutex.protect lock (fun () -> calls := s :: !calls) in
+  let asked () =
+    Mutex.protect lock (fun () ->
+        let c = List.rev !calls in
+        calls := [];
+        c)
+  in
+  let fn : Machine.fn =
+    {
+      addressing = Physical;
+      inherited = false;
+      config = (fun _ _ -> 0);
+      set_config = (fun _ _ _ -> ());
+      bar = (fun i -> if i = 0 then Some (0, gpu_memory) else None);
+      map = (fun ~combine:_ _ _ _ -> Error "no BAR");
+      unmap = (fun _ -> ());
+      interrupt = (fun _ -> false);
+      reset = (fun () -> Ok ());
+      forget = (fun () -> Ok ());
+      alloc_dma =
+        (fun ~contiguous:_ ~va:_ ~below:_ n ->
+          wait ();
+          let a =
+            Mutex.protect lock (fun () ->
+                let a = !next in
+                next := a + n;
+                a)
+          in
+          let w = Window.through (Window.unsafe_transport tr) a n in
+          Ok (Some (w, [ (a, n) ])));
+      free_dma = (fun _ -> ());
+      pin = (fun ~below:_ a n -> Ok (Some [ (a, n) ]));
+      unpin = (fun _ _ -> ());
+      release =
+        (fun ~keep ->
+          log (if keep then "release keep" else "release");
+          true);
+    }
+  in
+  let id =
+    {
+      Machine.bus = "0000:03:00.0";
+      vendor = 0x1002;
+      device = 0x744c;
+      class_ = 0x030000;
+    }
+  in
+  let m =
+    Machine.make ~name:"far"
+      {
+        transport = Window.unsafe_transport tr;
+        page;
+        functions = (fun () -> Ok [ id ]);
+        take = (fun _ -> Ok fn);
+        reserve = (fun ~base:_ _ -> Ok ());
+      }
+  in
+  require_ok (Machine.reserve m ~base:space_base space_length);
+  (m, asked)
+
+(* A request that began before a GPU's stop records its region after the
+   stop's release, which keeps the memory the region holds: the region's
+   memory reads after the stop, and its free gives it back. The machine's
+   alloc_dma holds the request inside its use while another domain stops the
+   GPU. *)
+let test_alloc_across_stop () =
+  let inside = Atomic.make false and go = Atomic.make false in
+  let wait () =
+    Atomic.set inside true;
+    while not (Atomic.get go) do
+      Domain.cpu_relax ()
+    done
+  in
+  let m, asked = far_recorder ~wait () in
+  let x = open_gpu ~space:(Space.create ~base:space_base space_length) m 0 in
+  let allocating =
+    Domain.spawn (fun () -> Memory.alloc x.t_memory Host page)
+  in
+  let reached, stopped =
+    Fun.protect ~finally:(fun () -> Atomic.set go true) @@ fun () ->
+    let reached = poll (fun () -> Atomic.get inside) in
+    (reached, reached && returns (fun () -> stop_open x))
+  in
+  let r = Domain.join allocating in
+  equal ~msg:"the alloc reached the machine" bool true reached;
+  equal ~msg:"the stop returned while the alloc ran" bool true stopped;
+  let r = given r in
+  equal ~msg:"the release, once the alloc returned" (list string)
+    [ "release keep" ] (asked ());
+  let w = host_window r in
+  Window.set32 w 0 0x5a5a;
+  equal ~msg:"the region's memory after the stop" int 0x5a5a
+    (Window.get32 w 0);
+  Memory.free x.t_memory r;
+  equal ~msg:"the region's free" (list string) [ "release" ] (asked ())
+
+(* An open that fails gives its function back whole at once, the memory of a
+   region still out included, since no holder of the open reads it. *)
+let test_failed_open_region () =
+  let m, asked = far_recorder () in
+  let space = Space.create ~base:space_base space_length in
+  let r =
+    Driver.open_ gpus m 0 (fun h fn ->
+        Driver.set_stop h (fun () -> `Clean);
+        let x = on_function ~hold:h ~space fn in
+        Driver.set_release h (fun () -> Memory.release x.t_memory);
+        ignore (given (Memory.alloc x.t_memory Host page) : Memory.region);
+        Error "the boot failed")
+  in
+  ignore (require_error ~msg:"the open" r : string);
+  equal ~msg:"the failed open's release" (list string) [ "release" ] (asked ())
+
 let on_files =
   group ~timeout:patience "on a machine's files"
     [
@@ -2684,6 +3028,12 @@ let on_files =
         "an exception in a free's give-back leaves the rest to a finish of \
          the releases"
         test_cut_give_back;
+      test
+        "a request that began before the stop keeps its region's memory \
+         until its free"
+        test_alloc_across_stop;
+      test "a failed open gives back the memory of a region still out"
+        test_failed_open_region;
       cases "a free gives back what its region took"
         ~id:(Format.asprintf "%a" pp_from)
         froms test_round_trip;
@@ -2708,6 +3058,20 @@ let on_files =
         "a free after the release cut at any allocation gives no unconfirmed \
          region back twice"
         test_unconfirmed_cut;
+      test "a stop gives back what waits for the release" test_waiting_stop;
+      test
+        "a stop cut at any allocation gives back what waits for the release \
+         once the next open ends it"
+        test_waiting_cut;
+      test
+        "a free after a stop gives back its memory and leaves a later open's \
+         file and marker"
+        test_reopened_free;
+      test
+        "a free after a stop cut at any allocation leaves the rest to the \
+         open's last free"
+        test_free_stopped_cut;
+      stop_and_frees;
       test "system memory a peer maps stays until neither GPU reaches it"
         test_peer_reach;
       cases "memory a peer maps stays until the peer's free"
@@ -2719,6 +3083,10 @@ let on_files =
         "memory a peer may still reach after its free stays, and a released \
          peer's goes back"
         test_owner_free_after_peer;
+      test
+        "memory the owner freed that a peer may still reach after its free \
+         goes back once both stop"
+        test_parked_reached;
       test "a released owner's free keeps the addresses a peer maps"
         test_released_owner_addresses;
       test "a released owner's memory a peer let go of goes back at its free"

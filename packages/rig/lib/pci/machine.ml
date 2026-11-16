@@ -26,7 +26,7 @@ type fn = Ops.fn = {
   free_dma : Window.t -> unit;
   pin : below:int -> int -> int -> ((int * int) list option, string) result;
   unpin : int -> int -> unit;
-  release : unit -> bool;
+  release : keep:bool -> bool;
 }
 
 type ops = Ops.ops = {

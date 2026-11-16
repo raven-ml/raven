@@ -205,7 +205,12 @@ val set_release : hold -> (unit -> unit) -> unit
 val stop : hold -> [ `Stopped | `Unknown ]
 (** [stop h] calls the driver's stop ({!set_stop}), then releases the function
     ({!Function.release}), then calls the driver's release ({!set_release}).
-    The function may then be opened again, and its
+    The release keeps the system memory that regions of the GPU's memory
+    hold while they are out, so that their holders read it after the stop,
+    and each region's free gives its memory back. Memory no region holds goes
+    back at the free of the last region out, or at the exit while one stays
+    out ({!Memory}'s {b After the GPU is given back}). The function may then
+    be opened again, and its
     next open renews it if the driver's stop returned [`Lost] or [`Unknown].
     [stop h] is [`Unknown] iff the driver's stop returned [`Unknown], and
     [`Stopped] otherwise. Later calls

@@ -12,7 +12,9 @@
     Locks nest in this order. A driver's lock ({!Driver}) is held over an
     open, a reset or a change, and a hold's lock over its stop. Under either
     come the driver's holds ({!Driver}) and the driver's own locks, then a
-    function's release ({!Function}). Under those come VFIO's list of
+    function's release ({!Function}), then the give-back of the memory a
+    release kept, which each {!Function.free_dma} after it takes too. Under
+    those come VFIO's list of
     containers, then a container's lock ({!Vfio}), then the
     spaces' ({!Space}); and system memory's state ({!Sysmem}), then its
     reservations' lock. A function's lock ({!Function}), the firmware found

@@ -131,10 +131,14 @@ val distance : t -> string -> string -> distance option
     before the give-back's own [config], [set_config] and [release]. The
     release, the last use, a use refused after the release or
     {!Function.finish_releases} makes them, never two at once. No [free_dma],
-    [unpin] or [unmap] follows the release's start but a use's, or a
+    [unpin] or [unmap] follows the release's start but a use's, a
     [free_dma] or [unpin] of a function kept taken for another function
-    ({!Memory.bus}) once its bus mastering is off: the take's [release] gives
-    back what the take holds. An exception, such as an
+    ({!Memory.bus}) once its bus mastering is off, or a [free_dma] between a
+    [release ~keep:true] that answered [true] and the [release ~keep:false]
+    after it, never at once with either: the take's [release] gives back what
+    the take holds. A [release ~keep:true] is made for a function {!Driver}
+    opened while its {!Memory} has regions out ({!Driver.stop}), and its
+    [release ~keep:false] once none is. An exception, such as an
     asynchronous one, may end [release] part-way, and {!Function} then calls
     it again. Every pin and unpin of a live function is passed on, so a
     transport counts them too.
@@ -194,16 +198,20 @@ type fn = Ops.fn = {
   pin : below:int -> int -> int -> ((int * int) list option, string) result;
       (** {!Function.pin}, as [alloc_dma] places its runs. *)
   unpin : int -> int -> unit;  (** {!Function.unpin}. *)
-  release : unit -> bool;
+  release : keep:bool -> bool;
       (** {!Function.release}, which turns the function's bus mastering off:
           [false] if the memory the function reached may still be written once
           given back, as when the system refused the write that turns its bus
-          mastering off. It gives back everything the take holds: its windows,
-          and, once its bus mastering reads off, its DMA memory and pins, those
-          an exception kept {!Function} from recording included. It must
-          raise only where an exception cuts it. Called again after an
-          exception ended it part-way, it must give back what it had not, and
-          nothing twice. *)
+          mastering off. With [~keep:false] it gives back everything the take
+          holds: its windows, and, once its bus mastering reads off, its DMA
+          memory and pins, those an exception kept {!Function} from recording
+          included. With [~keep:true] it gives back all of that but the
+          memory [alloc_dma] gave, which stays the process's, mapped and
+          counted, for the [free_dma]s after it and a [release ~keep:false]
+          after those. It must raise only where an exception cuts it. Called
+          again after an exception ended it part-way, or with [~keep:false]
+          after [~keep:true], it must give back what it had not, nothing
+          twice, and nothing a later take of the function holds. *)
 }
 (** The type for the operations on a function that a transport took. *)
 

@@ -140,7 +140,9 @@ val finish_releases : unit -> unit
 (** [finish_releases ()] gives back each function of this process whose
     {!release} has begun and that is not given back, such as one whose
     give-back an exception ended part-way: what it had not given back, and
-    nothing twice. It first waits for the uses of such a function that run,
+    nothing twice, the memory a stop kept included once no region of its
+    GPU's memory holds it ({{!dma}system memory}). It first waits for the
+    uses of such a function that run,
     and for a give-back of it that runs on another thread, so each is given
     back as it returns. {!Driver} calls [finish_releases] before each open,
     reset, detach and attach.
@@ -346,7 +348,14 @@ val reset : t -> (unit, string) result
     From a release's start, {!free_dma} and {!unpin} give no memory back: the
     give-back gives back all the function's memory and pins once its bus
     mastering reads off, and the process's windows on the memory are gone
-    then. A function whose memory was given to another function
+    then. A function {!Driver} opened is released at its stop
+    ({!Driver.stop}) keeping its memory from {!alloc_dma} while regions of
+    its GPU's {!Memory} are out, since their holders read them after the
+    stop: the give-back gives back everything else, pins included, and once
+    the bus mastering reads off, each {!free_dma} gives back the memory it
+    names. Memory no free names, as one an exception cut left, goes back at
+    the free of the last region out, or at the exit while one stays out. A
+    function whose memory was given to another function
     ({!Memory.bus}) stays taken until the process exits: once its bus
     mastering reads off, {!free_dma} and {!unpin} give back the memory and
     pins they name, and none that was given. After a release that could not
@@ -412,7 +421,8 @@ val alloc_dma :
 val free_dma : t -> Window.t -> unit
 (** [free_dma f w] frees [w], and [f] reaches it no more. Once a release of
     [f] has begun, [w] goes back with the give-back instead, or at the free
-    for a function kept taken ({{!dma}system memory}).
+    for a function kept taken or one whose stop kept its memory
+    ({{!dma}system memory}).
 
     Raises [Invalid_argument] if [w] is not a live window {!alloc_dma} returned
     for [f]. *)
@@ -478,8 +488,36 @@ val take_locked_into : t -> 's Sysfs.lock -> (t, string) result
 (* [holder f] is the holder of the addresses [f]'s GPU's memory lies at in
    its space ({!Space.holder}). [f]'s give-back releases them once the
    machine gave back [f]'s take and [f] masters the bus no more, since the
-   memory at them goes back with the take. *)
+   memory at them goes back with the take, or, after a give-back that kept
+   the memory ({!release_keeping_dma}), {!give_memory} does. *)
 val holder : t -> Space.holder
+
+(* [release_keeping_dma f] is {!release} of [f], whose give-back keeps the
+   memory from {!alloc_dma}, and [f]'s addresses ({!holder}), if [f] is
+   retained ({!retain}) as it runs: it gives back all else, pins included,
+   and, once [f] masters the bus no more, each {!free_dma} after it gives
+   back the memory it names, until {!give_memory} gives back the rest.
+   {!Driver.stop} releases so, since the holders of an open's memory read it
+   and free it after the stop. It is {!release} once a release of [f]
+   began. *)
+val release_keeping_dma : t -> unit
+
+(* [retain f] records that regions of [f]'s GPU's memory may be out, which
+   {!Memory.create} does, and [unretain f] that none is out once [f] is
+   released, which {!Memory} records in the section that takes off the last
+   region. One memory retains a function. *)
+val retain : t -> unit
+
+val unretain : t -> unit
+
+(* [give_memory f] gives back the memory a give-back of
+   {!release_keeping_dma} kept, if [f] is not retained: the machine's
+   release of the rest, then [f]'s addresses. It does nothing otherwise, and
+   gives nothing back twice. {!Memory}'s free and release call it after
+   [unretain], and [f]'s give-back at its end; one that an exception ended is
+   made again by the next call or by {!finish_releases}, and what none of
+   them gives back goes at the exit. *)
+val give_memory : t -> unit
 
 (* [placed f ~va n] is [true] iff the [n] bytes at [va], a multiple of the
    page, lie where {!alloc_dma} places memory at an address it is given: in

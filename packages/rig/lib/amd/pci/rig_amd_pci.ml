@@ -359,9 +359,19 @@ let path g h fn ~index : Memory.region Amd.path =
   }
 
 (* What the open holds past the hold's stop goes once the stop released the
-   function ([Driver.set_release]): the memory, which drops the page tables. *)
+   function ([Driver.set_release]): the boot's regions, then the memory,
+   which drops the page tables and, once no region is out, gives back what
+   the stop kept, whatever the boot's release raised. *)
 let release g =
-  Amd.Lock.protect (Boot.lock g) (fun () -> Memory.release (Boot.memory g))
+  let memory () =
+    Amd.Lock.protect (Boot.lock g) (fun () -> Memory.release (Boot.memory g))
+  in
+  match Boot.release g with
+  | () -> memory ()
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      memory ();
+      Printexc.raise_with_backtrace e bt
 
 (* The hold's stop is the GPU's from before the boot's first write to a
    register, so that no exception between that write and the open's return

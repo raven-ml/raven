@@ -41,11 +41,23 @@ type t = {
   parked : bool Atomic.t;
       (* once its give-back stopped its DMA and kept its take for lent
          memory, until [unpark] gives the take back *)
+  keeps_dma : bool Atomic.t; (* [release_keeping_dma] *)
+  retained : bool Atomic.t; (* [retain], until [unretain] *)
+  memory : memory Atomic.t; (* what became of the memory [alloc_dma] gave *)
+  passing : Lock.t;
+      (* held by a [free_dma] passed on after the release, and by
+         [give_memory] *)
 }
 
 (* A list each of whose cells is made before the section that links it,
    which then allocates nothing. *)
 and writers = No_writer | Writer of { w : t; mutable rest : writers }
+
+(* The memory [alloc_dma] gave is [Held] by the take until the machine's
+   release, [Kept] once that release kept it and answered quiet, and
+   [Settled] once no more of it goes back before the exit: the machine gave
+   it back, or could not turn the bus mastering off. It never moves back. *)
+and memory = Held | Kept | Settled
 
 (* A function reaches 64 bits of address until its driver says otherwise. *)
 let full_bits = 64
@@ -58,7 +70,9 @@ let rec update a f =
    process that took each. A function is listed before its take ([vacant]),
    so that a release begins with no allocation, as an exception handler's
    must, and an exception at any of its steps leaves it listed for
-   [finish_releases]. It leaves the list once given back. A list in an
+   [finish_releases]. It leaves the list once given back, and, if its
+   release kept the memory [alloc_dma] gave, once that memory went back
+   too, or will go back only at the exit ([give_memory]). A list in an
    atomic, so that a child of fork meets no held lock; the child finishes
    none of its parent's. *)
 let unfinished = Atomic.make []
@@ -83,7 +97,7 @@ let vacant_fn =
     free_dma = no;
     pin = (fun ~below:_ _ -> no);
     unpin = (fun _ -> no);
-    release = (fun () -> true);
+    release = (fun ~keep:_ -> true);
   }
 
 let vacant machine bus =
@@ -108,6 +122,10 @@ let vacant machine bus =
       lent = Atomic.make 0;
       writers = Atomic.make No_writer;
       parked = Atomic.make false;
+      keeps_dma = Atomic.make false;
+      retained = Atomic.make false;
+      memory = Atomic.make Held;
+      passing = Lock.create ();
     }
   in
   update unfinished (List.cons (Unix.getpid (), f));
@@ -151,14 +169,58 @@ let lends f = Atomic.get f.lent > 0 || writing (Atomic.get f.writers)
 (* The machine's release of [f]'s take, which gives back what the take
    holds, then, once the function masters the bus no more, the addresses its
    memory lay at: the memory goes first, since another GPU's memory there
-   would be mapped over it. *)
+   would be mapped over it. A release that keeps the DMA memory, for a
+   function whose GPU's memory has regions out ([retain]), keeps the
+   addresses too, for [give_memory]. Each call reads [retained] anew, so a
+   release an exception ended keeps only if it still must. *)
 let give_take f =
-  let quiet = f.fn.release () in
-  if quiet then begin
-    Space.release f.space;
-    Atomic.set f.quiet true
-  end;
+  let keep = Atomic.get f.keeps_dma && Atomic.get f.retained in
+  let quiet = f.fn.release ~keep in
+  if quiet && not keep then Space.release f.space;
+  if quiet then Atomic.set f.quiet true;
+  if quiet && keep then
+    ignore (Atomic.compare_and_set f.memory Held Kept : bool)
+  else Atomic.set f.memory Settled;
   quiet
+
+(* Whether [f]'s memory may go back before the exit, at [give_memory]: its
+   release keeps the DMA memory of a function not kept for another, and it
+   is not settled. None of the three moves back, so a function that stays no
+   more never stays again. *)
+let stays f =
+  Atomic.get f.keeps_dma
+  && (not (Atomic.get f.kept))
+  && Atomic.get f.memory <> Settled
+
+let rec listed f = function
+  | [] -> false
+  | (_, f') :: rest -> f' == f || listed f rest
+
+(* [f] leaves [unfinished] once given back, but while its memory stays, for
+   a finish to call [give_memory] again. The check allocates nothing, so the
+   frees after the release that call it cost no list. *)
+let delist f =
+  if Atomic.get f.given && (not (stays f)) && listed f (Atomic.get unfinished)
+  then update unfinished (List.filter (fun (_, f') -> f' != f))
+
+(* Gives back the memory [give_take] kept, once no region of the GPU's
+   memory is out ([unretain]): the machine's release without [keep], then
+   the addresses. It runs under [passing], so that no [free_dma] reaches the
+   machine at once with it or after it. An exception leaves it to the next
+   call: a free of the GPU's memory, its release, or a finish, since [f]
+   stays listed. *)
+let give_memory f =
+  if Atomic.get f.memory = Kept && not (Atomic.get f.retained) then
+    Lock.protect f.passing (fun () ->
+        if Atomic.get f.memory = Kept then begin
+          ignore (f.fn.release ~keep:false : bool);
+          Space.release f.space;
+          Atomic.set f.memory Settled
+        end);
+  delist f
+
+let retain f = Atomic.set f.retained true
+let unretain f = Atomic.set f.retained false
 
 (* Gives back the take that [f]'s parked give-back kept, once: of two calls,
    the one that clears [parked] gives it back. An exception that ends the
@@ -166,7 +228,9 @@ let give_take f =
 let unpark f =
   if Atomic.compare_and_set f.parked true false then
     match give_take f with
-    | (_ : bool) -> unlist f
+    | (_ : bool) ->
+        unlist f;
+        give_memory f
     | exception e ->
         let bt = Printexc.get_raw_backtrace () in
         Atomic.set f.parked true;
@@ -274,12 +338,13 @@ let give_back f =
   end
 
 (* Gives [f] back under [giving], which the caller took, giving it back
-   first on both exits. [f] leaves the list once given back. *)
+   first on both exits, then gives back the memory a release kept if no
+   region holds it any more. *)
 let give_locked f =
   match give_back f with
   | () ->
       Lock.give f.giving;
-      update unfinished (List.filter (fun (_, f') -> f' != f))
+      give_memory f
   | exception e ->
       Lock.give f.giving;
       reraise e
@@ -348,12 +413,18 @@ let unuse = leave
    that finish gives it back. Nothing allocates or polls before the bit is
    set: the compiler polls at the entry of a function whose tail call may
    reach a function defined after it, and [give_locked] is defined before. *)
-let release f =
-  if not (Atomic.exchange f.releasing true) then
+let elect f ~keeps_dma =
+  if not (Atomic.exchange f.releasing true) then begin
+    (* Before the bit, which every give-back follows. *)
+    if keeps_dma then Atomic.set f.keeps_dma true;
     if Atomic.fetch_and_add f.state 1 = 0 then begin
       Lock.take f.giving;
       give_locked f
     end
+  end
+
+let release f = elect f ~keeps_dma:false
+let release_keeping_dma f = elect f ~keeps_dma:true
 
 (* A take that fails leaves its function vacant, given back by its
    release. *)
@@ -752,7 +823,10 @@ let alloc_dma ?(contiguous = false) ?va f n =
    the give-back, which gives back all the take holds, but for a kept
    function, whose take stays until the exit: once its bus mastering reads
    off, the free gives back its own memory, which the machine counts apart
-   from what another function was given. *)
+   from what another function was given. After a give-back that kept the DMA
+   memory, a free gives back its own until [give_memory] gives back the
+   rest. A window an exception kept from the machine's free stays counted
+   there, for [give_memory]. *)
 let free_dma f w =
   unlist f f.dmas "free_dma" w;
   if use f then
@@ -762,6 +836,9 @@ let free_dma f w =
         leave f;
         reraise e
   else if Atomic.get f.kept && Atomic.get f.quiet then f.fn.free_dma w
+  else if Atomic.get f.memory = Kept then
+    Lock.protect f.passing (fun () ->
+        if Atomic.get f.memory = Kept then f.fn.free_dma w)
 
 let pin_entered f a n =
   on_page f "pin" a;

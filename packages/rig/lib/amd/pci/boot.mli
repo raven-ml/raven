@@ -283,3 +283,11 @@ val stop : t -> [ `Clean | `Lost | `Unknown ]
     GPU: [Invalid_argument] for a register its layout lacks, the failure of
     a change to bus mastering, or a signal's exception from one of its
     waits. *)
+
+val release : t -> unit
+(** [release g] frees the memory regions [g] holds for the open's life: the
+    compute queues' end-of-pipe buffers and a virtual function's KIQ, also
+    after a stop that failed or raised. It runs once the hold's stop
+    released the GPU's function ({!Rig_pci.Driver.stop}), which keeps a
+    region's memory until the region's free. Releasing [g] again frees
+    nothing more. *)

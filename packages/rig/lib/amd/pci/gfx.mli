@@ -153,3 +153,9 @@ val invalidate : t -> unit
     Raises [Invalid_argument] if [g] has no KIQ, which only a virtual
     function has, and {!Regs.Stuck} if a KIQ does not respond within
     10 s. *)
+
+val free_kiq : t -> Rig_pci.Memory.t -> unit
+(** [free_kiq g m] frees the KIQ's memory {!start} took in [m], after which
+    [g] has no KIQ. It is called once the GPU's function is released, so
+    that the free writes no table and needs no invalidation through the KIQ.
+    Called again, it frees nothing, also after an exception ended a call. *)

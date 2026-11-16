@@ -55,7 +55,7 @@ type t = {
          records a fault: [interrupts] *)
   mutable eops : (int * Memory.region) list;
       (* each compute queue's end-of-pipe buffer, by its doorbell index, kept
-         from its first queue to the stop for every later one *)
+         from its first queue to the release for every later one *)
   mutable stopped : [ `Clean | `Lost | `Unknown ] option;
   hw : Rig_amd.Lock.t; (* the register sequences and page-table edits *)
   combines : bool; (* the window on the GPU's memory combines *)
@@ -372,8 +372,6 @@ let stop_locked g =
     step (fun () ->
         ignore (Ih.read g.ih);
         ignore (Ih.consume g.ih : bool));
-    step (fun () -> List.iter (fun (_, m) -> Memory.free g.memory m) g.eops);
-    g.eops <- [];
     step (fun () -> mark g ~dirty:(!(g.fault) <> None || (not left) || !failed));
     let lost = !(g.fault) <> None || (not left) || !failed in
     give_back_access g;
@@ -403,6 +401,24 @@ let stop g =
       | exception e ->
           g.stopped <- Some `Unknown;
           reraise e)
+
+(* Each end-of-pipe buffer leaves [g.eops] before its free, so that a release
+   called again after an exception frees none twice: one whose free a cut
+   ended stays out until the exit. *)
+let rec free_eops g =
+  match g.eops with
+  | [] -> ()
+  | (_, m) :: rest ->
+      g.eops <- rest;
+      Memory.free g.memory m;
+      free_eops g
+
+(* Once the function is released, a free writes no table, so the KIQ's needs
+   no invalidation through the KIQ and no free waits for a flush. *)
+let release g =
+  Rig_amd.Lock.protect g.hw @@ fun () ->
+  Gfx.free_kiq g.gfx g.memory;
+  free_eops g
 
 (* Starting *)
 

@@ -156,7 +156,7 @@ type t = {
       (* what compute queues 0 and 1 of MEC 1's pipe 0 run, [None] if free *)
   gc : Discovery.version;
   xccs : int list;
-  mutable kiq : (Window.t * int) option; (* a VF's KIQ memory and its address *)
+  mutable kiq : Rig_pci.Memory.region option; (* a VF's KIQ memory *)
 }
 
 let make r gmc vram doorbells ~mqds =
@@ -420,15 +420,18 @@ let kiq_bytes = 0x3000
 let kiq_ring = 0x1000
 let kiq_doorbell xcc = D.amdgpu_navi10_doorbell_kiq + (xcc * 0x20)
 
+(* The region is recorded as the allocation returns, with nothing between
+   that allocates or polls, so that the release after the stop frees it
+   ([free_kiq]). *)
 let start_kiq g m =
   match
     Rig_pci.Memory.alloc m Rig_pci.Memory.Host (kiq_bytes * List.length g.xccs)
   with
   | Error why -> raise (Regs.Stuck (strf "the KIQ's memory: %s" why))
   | Ok None -> raise (Regs.Stuck "no GPU addresses for the KIQ")
-  | Ok (Some region) ->
+  | Ok (Some region as kiq) ->
+      g.kiq <- kiq;
       let va = Rig_pci.Memory.address region in
-      let w = Option.get (Rig_pci.Memory.host region) in
       each_xcc g (fun xcc ->
           let b = va + (kiq_bytes * xcc) in
           program g ~me:2 ~pipe:1 ~queue:0 ~insts:[ xcc ] ~mqd:g.mqds.(2) `Kiq
@@ -443,8 +446,17 @@ let start_kiq g m =
             });
       each_xcc g (fun inst ->
           Regs.update ~inst g.r "regRLC_CP_SCHEDULERS"
-            [ ("scheduler0", (2 lsl 5) lor (1 lsl 3) lor 0x80) ]);
-      g.kiq <- Some (w, va)
+            [ ("scheduler0", (2 lsl 5) lor (1 lsl 3) lor 0x80) ])
+
+(* [g] has no KIQ from before the free, so that a release called again after
+   an exception cut the free raises nothing and frees nothing twice: what
+   the cut left goes back with the open's memory, at worst at the exit. *)
+let free_kiq g m =
+  match g.kiq with
+  | None -> ()
+  | Some region ->
+      g.kiq <- None;
+      Rig_pci.Memory.free m region
 
 let wait_autoload g =
   let r = g.r in
@@ -650,7 +662,9 @@ let kiq_poll_interval = 0x20
 let invalidate g =
   match g.kiq with
   | None -> invalid_arg "Gfx.invalidate: the GPU has no KIQ"
-  | Some (w, va) ->
+  | Some region ->
+      let w = Option.get (Rig_pci.Memory.host region) in
+      let va = Rig_pci.Memory.address region in
       let l = Regs.layout_of g.r in
       let gpu = Regs.gpu l in
       let vmid = 0 in

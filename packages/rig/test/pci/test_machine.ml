@@ -323,8 +323,8 @@ let recorder () =
           Ok (Some [ (a, n) ]));
       unpin = (fun a n -> log "unpin 0x%x %d" a n);
       release =
-        (fun () ->
-          log "release";
+        (fun ~keep ->
+          log "%s" (if keep then "release keep" else "release");
           true);
     }
   in
@@ -460,6 +460,44 @@ let test_far_released () =
   equal ~msg:"the release gave back the memory and the pin" (list string)
     [ "release" ] (asked r)
 
+(* A stop of an open whose memory holds the function asks the transport the
+   release that keeps the DMA memory. Each free_dma after it is passed on,
+   an unpin is not, since the release gave back the pins, and once the
+   memory holds the function no more, one release gives back the rest, after
+   which a free_dma asks nothing. *)
+let test_far_kept () =
+  let r = recorder () in
+  let base = free_base in
+  require_ok (Machine.reserve r.m ~base far_page);
+  let h, f =
+    require_ok
+      (Driver.open_ (fixture_gpus ()) r.m 0 (fun h fn ->
+           Driver.set_stop h (fun () -> `Clean);
+           Ok (h, fn)))
+  in
+  Function.retain f;
+  let w, _ = require_some (require_ok (Function.alloc_dma f 1)) in
+  let w2, _ = require_some (require_ok (Function.alloc_dma f 1)) in
+  ignore (require_some (require_ok (Function.pin f base far_page)));
+  ignore (asked r);
+  ignore (Driver.stop h : [ `Stopped | `Unknown ]);
+  ignore (Driver.stop h : [ `Stopped | `Unknown ]);
+  equal ~msg:"the stops" (list string) [ "release keep" ] (asked r);
+  Function.unpin f base far_page;
+  equal ~msg:"an unpin after the stop" (list string) [] (asked r);
+  Function.free_dma f w;
+  equal ~msg:"a free_dma after the stop" (list string)
+    [ strf "free_dma 0x%x" (Window.address w) ]
+    (asked r);
+  misuse "a free_dma twice" (fun () -> Function.free_dma f w);
+  Function.unretain f;
+  Function.give_memory f;
+  Function.give_memory f;
+  equal ~msg:"the give-backs of the rest" (list string) [ "release" ]
+    (asked r);
+  Function.free_dma f w2;
+  equal ~msg:"a free_dma after them" (list string) [] (asked r)
+
 let transports =
   group ~timeout:patience "transports"
     [
@@ -477,6 +515,10 @@ let transports =
         "a released function asks its transport one release, which gives back \
          its memory and pins"
         test_far_released;
+      test
+        "a stopped open's memory goes back at each free_dma, and the rest at \
+         one release once the memory lets go"
+        test_far_kept;
     ]
 
 (* Routes

@@ -51,7 +51,7 @@ type store
     ({!reach}), and a block's huge page goes back once no store counts it.
     A store's count of a block changes in one step with the block's, so an
     exception, an asynchronous one too, leaves each store giving back exactly
-    what it counts ({!close}). *)
+    what it counts ({!free_all}). *)
 
 val store : root:string -> bus:string -> store
 (** [store ~root ~bus] is the memory of the function at [bus] of the machine
@@ -75,7 +75,8 @@ val alloc :
     range {!reserve} reserved, as {!Function.alloc_dma} checks. It is [None] if
     the machine has no free huge page for a new block, or the process no free
     addresses of its own. [s] counts each block from the step that takes it,
-    so an exception that ends the call leaves the memory to {!close} of [s].
+    so an exception that ends the call leaves the memory to {!free_all} of
+    [s].
     Raises {!Fail.Failed}, counting nothing, if a block holds memory of
     another root, or if the root's [proc/self/mounts] shows its [dev/hugepages]
     on no hugetlbfs of 2 MiB pages. *)
@@ -83,19 +84,28 @@ val alloc :
 val free : store -> Window.t -> unit
 (** [free s w] gives back [s]'s count of {!alloc}'s memory [w]. A huge page goes
     back once no store counts it. A [w] that [s] counts no more, such as after
-    {!close}, gives back nothing. A huge page whose give-back an exception
+    {!free_all}, gives back nothing. A huge page whose give-back an exception
     ended goes back at the next {!alloc} in its 2 MiB block, or at the next
-    {!close} of any store. *)
+    {!free_all} of any store. *)
 
 val close : store -> unit
 (** [close s] records that [s]'s function, with its bus mastering off, reaches
-    no memory any more: it gives back every count of [s], its memory from
-    {!alloc} included, which the process's windows on it then no longer
-    reach. The function leaves the lists of the process's files, each of
-    which goes once it lists no function and holds no memory. A file a dead
+    no memory any more: it gives back [s]'s counts of {!reach}, and the
+    function leaves the lists of the process's files, each of which goes
+    once it lists no function and holds no memory. The memory {!alloc} gave
+    stays, mapped and counted, for {!free} and {!free_all}. A file a dead
     process left goes at {!collect_dead} once it lists no function, or at
     {!forget} of each function it lists. A [close] of [s] called again after
     an exception ended one finishes it. *)
+
+val free_all : store -> unit
+(** [free_all s] gives back every count of {!alloc}'s memory that [s] holds,
+    which the process's windows on it then no longer reach, and each file of
+    [s]'s root that then lists no function and holds no memory goes. It
+    changes no file's list, which a later store of the same function may
+    have joined, so it follows {!close} of [s] once [s]'s function masters
+    the bus no more. A [free_all] called again after an exception ended one
+    finishes it. *)
 
 val set_own_length : int -> int
 (** [set_own_length n] makes each range of the process's own addresses that

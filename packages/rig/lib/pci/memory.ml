@@ -25,13 +25,13 @@ type reach = {
 }
 
 (* The memory a GPU addresses: the facts [reaches] and errors read, and [held],
-   what its regions need. [held] goes once the function is released and no
-   region is out. Another GPU's [map_peer] and [free] read [held]'s regions
-   and write their [peers] and [reached] while this GPU's owner makes its
-   calls: those reads and every write of them take [lock], which holds no
-   other lock, so no two GPUs' calls wait for each other in a cycle. [ties]
-   lists the GPU's mappings of other GPUs' memory that count there, so that
-   its release ends each, whatever became of [held]. *)
+   what its regions need. [held] stays after the release, since a request
+   that began before it records its region after it. Another GPU's
+   [map_peer] and [free] read [held]'s regions and write their [peers] and
+   [reached] while this GPU's owner makes its calls: those reads and every
+   write of them take [lock], which holds no other lock, so no two GPUs'
+   calls wait for each other in a cycle. [ties] lists the GPU's mappings of
+   other GPUs' memory that count there, so that its release ends each. *)
 type t = {
   reach : reach;
   bar : int;
@@ -39,14 +39,15 @@ type t = {
   bar_size : int;
   lender : Function.t; (* the GPU's function, which lends ([enter]) *)
   lock : Lock.t;
-  mutable held : held option;
+  held : held;
   mutable ties : ties;
 }
 
 (* The function, and every mapping it holds by GPU address, so that a free or a
    map of memory it does not hold is refused. What the regions hold is
    counted by the function as a holder: its memory, pins and addresses, which
-   its give-back takes back whole once it masters the bus no more. A region
+   its give-back takes back whole once it masters the bus no more, or, after
+   a give-back that kept the memory, once no region is out. A region
    of system memory whose unmap the GPU did not confirm waits in
    [unconfirmed] until a free after the function's release, or the
    give-back. A mapping whose last region was freed while other GPUs map its
@@ -145,6 +146,7 @@ let create ?link fn tables ~bar =
         invalid_argf "Memory.create: %s has no BAR %d" (Function.bus fn) bar
   in
   Function.set_dma_bits fn (Page_table.pa_bits tables);
+  Function.retain fn;
   {
     reach =
       {
@@ -163,28 +165,26 @@ let create ?link fn tables ~bar =
     lock = Lock.create ();
     ties = No_tie;
     held =
-      Some
-        {
-          fn;
-          regions = Tables.Address.create 64;
-          unconfirmed = [];
-          parked = [];
-          due = Atomic.make false;
-          writing = [];
-          tables = Some tables;
-          given = [];
-        };
+      {
+        fn;
+        regions = Tables.Address.create 64;
+        unconfirmed = [];
+        parked = [];
+        due = Atomic.make false;
+        writing = [];
+        tables = Some tables;
+        given = [];
+      };
   }
 
-(* Drops [h] once nothing needs it: the function is released and no region is
-   out. *)
+(* Once the function is released and no region is out, the function's memory
+   no longer retains it ([Function.unretain]), here for a free whose last
+   region went before the release. A request that began before the release
+   and records its region after it retains it again ([keep]). *)
 let settle m h =
   if Function.released h.fn then
     Lock.protect m.lock (fun () ->
-        if
-          Tables.Address.length h.regions = 0
-          && h.unconfirmed = [] && h.parked = []
-        then m.held <- None)
+        if Tables.Address.length h.regions = 0 then Function.unretain h.fn)
 
 let source r = r.source
 let address r = r.mapping.va + r.off
@@ -346,9 +346,9 @@ let positive fn n =
    another instance's: no request writes its tables. *)
 let live fn m =
   match m.held with
-  | Some ({ tables = Some tables; _ } as h) when not (Function.released h.fn) ->
+  | { tables = Some tables; _ } as h when not (Function.released h.fn) ->
       (h, tables)
-  | Some _ | None -> invalid_argf "Memory.%s: %s is released" fn m.reach.bus
+  | _ -> invalid_argf "Memory.%s: %s is released" fn m.reach.bus
 
 (* Gives back what [r] holds but its entries, with the GPU's [tables] while it
    is live: once the function is released the GPU may be another instance's, so
@@ -425,18 +425,14 @@ let leave m w ~gone =
   let section () =
     if not w.counted then false
     else
-      let found =
-        match o.held with
-        | None -> None
-        | Some h -> Option.map (fun e -> (h, e)) (entry_of h r)
-      in
+      let found = entry_of o.held r in
       w.counted <- false;
       unlink m w;
       (match found with
-      | Some (h, e) ->
+      | Some e ->
           e.peers <- e.peers - 1;
           if not gone then e.reached <- true;
-          if e.peers = 0 && e.out = [] then Atomic.set h.due true
+          if e.peers = 0 && e.out = [] then Atomic.set o.held.due true
       | None -> ());
       if lends then Function.unlend_held o.lender still;
       true
@@ -471,25 +467,22 @@ let give_due m h tables =
 
 (* The GPU's maps of other GPUs' memory end with it, as does what its parked
    and unconfirmed mappings hold, which its function's give-back takes back,
-   once the function masters the bus no more. *)
+   once the function masters the bus no more, or, if the give-back kept the
+   memory, [Function.give_memory] once no region is out. *)
 let release m =
-  Option.iter
-    (fun h ->
-      Function.release h.fn;
-      h.tables <- None)
-    m.held;
+  let h = m.held in
+  Function.release h.fn;
+  h.tables <- None;
   let gone = not (Function.reaching m.lender) in
   let rec listed acc = function
     | No_tie -> acc
     | Tie w -> listed (w :: acc) w.next
   in
   List.iter (fun w -> leave m w ~gone) (listed [] m.ties);
-  Option.iter
-    (fun h ->
-      Lock.protect m.lock (fun () -> h.parked <- []);
-      h.unconfirmed <- [];
-      settle m h)
-    m.held
+  Lock.protect m.lock (fun () -> h.parked <- []);
+  h.unconfirmed <- [];
+  settle m h;
+  Function.give_memory m.lender
 
 (* [using fn m f] is [f h tables] for the GPU [m] holds, run as a use of its
    function: its tables lie behind the function's BAR windows, which a
@@ -510,10 +503,15 @@ let using fn m f =
       Function.unuse h.fn;
       reraise e
 
+(* Records [r], which retains the function's memory ([Function.retain]) while
+   it is out. A request that began before the release may record its region
+   after [settle] let go of the memory: the give-back at the request's end
+   then keeps it for the region's free. *)
 let keep ?tie m h r =
   let e = { holder = r; out = [ r ]; peers = 0; reached = false; tie } in
   Lock.protect m.lock (fun () ->
-      Tables.Address.replace h.regions r.mapping.va e)
+      Tables.Address.replace h.regions r.mapping.va e;
+      Function.retain h.fn)
 
 let alloc ?(uncached = false) m kind n =
   using "alloc" m @@ fun h tables ->
@@ -600,12 +598,10 @@ let holds h r =
 
 (* What [m] holds, of which [r] is a region. *)
 let mine fn m r =
-  match m.held with
-  | Some h when holds h r -> h
-  | Some _ | None ->
-      invalid_argf
-        "Memory.%s: the memory at 0x%x is not %s's, or was given back" fn
-        r.mapping.va m.reach.bus
+  if holds m.held r then m.held
+  else
+    invalid_argf "Memory.%s: the memory at 0x%x is not %s's, or was given back"
+      fn r.mapping.va m.reach.bus
 
 (* [mine], called by another GPU's request, as its owner may be in a call. *)
 let theirs fn m r = Lock.protect m.lock (fun () -> mine fn m r)
@@ -974,7 +970,11 @@ type left = Others | Last | Parked | Kept
    mapping whose memory another GPU maps parks it, with its memory and
    addresses, in the same section, so that [leave] finds it, while the GPU is
    [live]. Once its release has begun, the other GPU's counts keep what it
-   maps, and the owner's go back. *)
+   maps, and the owner's go back. The last region out of a released GPU
+   lets go of its function in the step that takes it off, with nothing
+   between that allocates or polls, so that no exception leaves the function
+   retained with no region out. [released] is read in the section: a free
+   that began as a use before the release has [live] set. *)
 let take_off m h e r ~live =
   let given = List.mem r.mapping.va h.given in
   Lock.protect m.lock @@ fun () ->
@@ -983,6 +983,8 @@ let take_off m h e r ~live =
   if out <> [] then Others
   else begin
     Tables.Address.remove h.regions r.mapping.va;
+    if Function.released h.fn && Tables.Address.length h.regions = 0 then
+      Function.unretain h.fn;
     if e.reached || given then Kept
     else if e.peers > 0 && live then begin
       h.parked <- e :: h.parked;
@@ -1019,7 +1021,8 @@ let free_with m h r tables =
    use of the function, as [using]'s requests do, so that a release that
    begins meanwhile leaves the function's give-back, which unmaps them, to
    the free's end. The use's handler is the next step after its count. Once
-   a release has begun the free writes no table. *)
+   a release has begun the free writes no table, and the last region's free
+   gives back what a give-back kept ([Function.give_memory]). *)
 let free m r =
   let h = mine "free" m r in
   if Function.use h.fn then
@@ -1028,4 +1031,7 @@ let free m r =
     | exception e ->
         Function.unuse h.fn;
         reraise e
-  else free_with m h r None
+  else begin
+    free_with m h r None;
+    Function.give_memory h.fn
+  end

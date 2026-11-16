@@ -186,8 +186,10 @@ let renew h =
 
 (* Releases [h]'s function once its stop recorded its answer, under [holds]:
    no open or reset sees the function free while still taken, or lost before
-   it is marked. A release an exception ended is Function's to finish
-   (Function.finish_releases). The driver's release follows, outside
+   it is marked. An open that returned releases keeping the memory its
+   regions hold, which rig reads and frees after the stop; a failed open's
+   regions are gone with it. A release an exception ended is Function's to
+   finish (Function.finish_releases). The driver's release follows, outside
    [holds], in which no vendor's lock nests. [h] stays listed until both
    return, so that an exception that ends either, as one from a callback
    inside [holds] on the same thread does, leaves them to the next stop, or
@@ -200,7 +202,8 @@ let give_once h =
     List.memq h g.held
     && begin
          if h.lost then mark g h.machine h.bus ~lost:true;
-         Function.release h.fn;
+         if h.opened then Function.release_keeping_dma h.fn
+         else Function.release h.fn;
          true
        end
   in
