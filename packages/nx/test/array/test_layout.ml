@@ -242,13 +242,14 @@ let law_v (s, strides, offset) =
     (match expected with
     | Ok _ -> numel s <> Some 0 && snd (L.span (L.v ~offset ~strides s)) = max_numel
     | Error _ -> false);
+  let made = Result.is_ok expected in
+  cover "a negative stride"
+    (made && Iarray.exists2 (fun d t -> d > 1 && t < 0) s strides);
+  cover "no element" (made && numel s = Some 0);
   match expected with
   | Error _ -> raises_match Exn.invalid_arg (fun () -> L.v ~offset ~strides s)
   | Ok (o, st) ->
       let l = L.v ~offset ~strides s in
-      cover "a negative stride"
-        (Iarray.exists2 (fun d t -> d > 1 && t < 0) s strides);
-      cover "no element" (numel s = Some 0);
       equal iints s (L.shape l);
       equal iints st (L.strides l);
       equal int o (L.offset l);
@@ -510,13 +511,13 @@ let law_map_composed (l, m, m') =
 (* Canonical form *)
 
 let law_canonical_move (l, m) =
-  match L.move m l with
-  | exception Invalid_argument _ -> ()
+  let moved = try L.move m l with Invalid_argument _ -> None in
+  let viewed p = match moved with Some l' -> p l' | None -> false in
+  cover "an extent-1 axis" (viewed (fun l' -> Iarray.mem 1 (L.shape l')));
+  cover "no element" (viewed (fun l' -> L.numel l' = 0));
+  match moved with
   | None -> ()
-  | Some l' ->
-      cover "an extent-1 axis" (Iarray.mem 1 (L.shape l'));
-      cover "no element" (L.numel l' = 0);
-      if not (canonical l') then failf "%a is not canonical" L.pp l'
+  | Some l' -> if not (canonical l') then failf "%a is not canonical" L.pp l'
 
 (* Two layouts of one shape over strides in [-1, 1], so that many map indices
    alike. *)
