@@ -1671,14 +1671,32 @@ let processor () =
   t.tms_utime +. t.tms_stime
 
 (* A load behind a second of queued work, a hundred values whose word moves
-   throughout, holds no processor while that work runs: it places the code
-   without waiting for the work (rig.mli), or its driver waits blocked
-   (rig_cuda.mli), where a spin takes the second. A kernel of the image then
-   runs as loaded. A first load, outside the count, compiles what the driver
-   compiles. *)
+   throughout, gives an image whose kernel then runs as loaded. Where the
+   driver places the code in the device's memory ([Place]) and the copy engine
+   copies it, the load returns without waiting for the work or the copy
+   (rig.mli), so it holds no processor while the work runs, where a spin takes
+   the second. Elsewhere rig.mli promises no such load: where the driver's
+   library loads the code ([Loaded]) it may wait for the work, and CUDA's may
+   busy-wait (rig_cuda.mli). The GPU opens through its driver wrapped to record
+   what its [image] answers. A first load, outside the count, compiles what the
+   driver compiles. *)
 let load_behind_work (module G : Gpu) () =
-  G.with_ @@ fun t ->
-  if running Rig_edge.Launch (G.D.facts t.g).queues = [] then
+  let placed = ref false in
+  let module Recording = struct
+    include G.D
+
+    let image h bin =
+      let r = G.D.image h bin in
+      (placed :=
+         match r with
+         | Ok (Rig_edge.Place _) -> true
+         | Ok (Loaded _) | Error _ -> false);
+      r
+  end in
+  let t = G.open_as (module Recording) in
+  Fun.protect ~finally:(fun () -> G.close t) @@ fun () ->
+  let f = G.D.facts t.g in
+  if running Rig_edge.Launch f.queues = [] then
     skip ~reason:"the device runs no launch" ();
   let bin =
     match G.launch_binary () with
@@ -1705,9 +1723,19 @@ let load_behind_work (module G : Gpu) () =
        ]
        ~uses:[ (out, Rig.Read_write) ]);
   List.iter Rig.Point.wait queued;
-  less ~msg:"processor seconds during the load" float_exact ~than:0.25 used;
   equal (array int) ~msg:"the kernel's words" (Array.init n Fun.id)
-    (words (get out) ~at:0 n)
+    (words (get out) ~at:0 n);
+  if not !placed then
+    skip
+      ~reason:
+        "the driver's library loads the code, and may busy-wait behind queued \
+         work, as rig_cuda.mli says CUDA's may"
+      ();
+  if f.copy_engine = None then
+    skip
+      ~reason:"the device has no copy engine to copy the code without waiting"
+      ();
+  less ~msg:"processor seconds during the load" float_exact ~than:0.25 used
 
 (* Timeline *)
 
@@ -2423,7 +2451,9 @@ let laws (module G : Gpu) =
         launches (workspace g);
       test "an image names its kernels, and bytes no binary are an error"
         (images g);
-      test "a load behind queued work holds no processor, and its kernel runs"
+      test
+        "a load behind queued work runs its kernel, and holds no processor \
+         where the copy engine copies the code"
         (load_behind_work g);
       test "a close of an idle device leaves the word at the last value"
         (idle_close g);
