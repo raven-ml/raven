@@ -8,27 +8,25 @@
 
     A {e program} is the memory and images a computation needs on the devices
     of one machine, and the {e steps} each run of it takes: submissions,
-    copies and loops. Its {e description}
-    ({!t}) is plain data that names each of these by its index in the
-    description, so it travels between processes as bytes ({!to_string}). What
-    only the loading process knows, such as an address or an image's function,
-    stands in the description's bytes as a {e hole}, which {!load} fills, or
-    each run for a value it reads ({!type-hole}). What changes from one run to
+    copies, loops and sends. Its {e description} ({!t}) is plain data that
+    names each of these by its index in the description, so it travels
+    between processes as bytes ({!to_string}). What changes from one run to
     the next is the run's {e frame} ({!type-frame}): its input buffers and the
     first words of its {e ints}, 64-bit integers in host memory that loops and
-    the work of its steps also read and write.
+    the work of its steps also read and write. An integer of a step that a
+    run may change, such as a launch's parameter or grid or a copy's offset,
+    is a {e value} ({!type-value}): a sum of words of the ints, which the run
+    computes when the step runs.
 
-    Memory the program makes may have two copies ({!type-copies}). Run [n]
-    uses copy [n mod 2], so a run's work may write its copy while the previous
-    run's work still reads the other. The run's ints always have two copies.
+    The run's ints have two copies. Run [n] uses copy [n mod 2], so a run may
+    write its ints while the previous run's work still reads the other copy.
 
     The life of a program goes like this:
     + A caller builds its description, in this process or in another one that
       sends it as bytes.
     + {!load} checks the description against the devices of one machine,
       makes its memory, loads its images and prepares a {!Rig.Submission} for
-      each [Submit] step, one per copy where the step names memory of two
-      copies.
+      each [Submit] step, one per copy of the ints where the step names them.
     + {!run} runs the steps once, in order, over a frame, and returns its
       ends, the points its work ends at. A loaded program runs any number of
       times.
@@ -51,26 +49,9 @@
 
     A step's work follows other work by the memory the step names, as every
     {!Rig.submit}'s does ({!Rig.section-order}). A [Submit] step names the
-    memory of its [slots], of its parts' views and of its [fixed], and a
-    [Move] the memory of its two slots. A step therefore follows the earlier
-    steps whose memory it names, and its device's earlier work.
-
-    Work that reaches memory through an address it was given escapes this
-    order, so an address or handle may stand only where its step names the
-    memory. A step names memory {e whole} if one of its views starts at the
-    memory's first byte and covers all of it, and {e fixes} it whole if that
-    view is in its [fixed]. {!load} returns [Error] unless:
-    {ul
-    {- an image holds no [Address] or [Handle];}
-    {- an [Address] in a launch's or a fill's parameters or geometry is of
-       memory its step fixes whole, on its step's device, and a [Handle]
-       there is of memory its step names whole;}
-    {- a loop's trips hold no [Address], and a [Handle] there is of memory
-       the loop's flag names whole;}
-    {- a [Submit] step that names memory whose [init] holds an [Address] or
-       a [Handle] of other memory names that other memory whole too;}
-    {- an [Address] on device [d] in an [init] is of memory that a [Submit]
-       step on [d] fixes whole.}}
+    memory of its [slots] and of its parts' views, and a [Move] the memory of
+    its two slots. A step therefore follows the earlier steps whose memory it
+    names, and its device's earlier work.
 
     Host code runs as a [Submit] step on the machine's host, whose launches
     are done when its submit returns ({!Rig.section-host_launches}).
@@ -81,17 +62,14 @@
     ({!type:Rig_remote_abi.end_}) as [Rail] memory, in three areas:
     [Outbound] holds the bytes it sends, [Inbound] the bytes it receives, and
     [Counts] the counts that number the transfers. [Outbound] and [Inbound]
-    each hold two copies of their bytes, independent of the program's
-    {!type-copies}, and [Rail] memory covers both, so a step's views select
-    the copy a transfer uses.
+    each hold two copies of their bytes, and [Rail] memory covers both, so a
+    step's views select the copy a transfer uses.
 
     No stamp records the rail's own reads and writes, so rig does not order
     them. A program orders them by the rail's counts, as
-    {!Rig_remote_abi.section-rails} states. To send, a [Submit] step on the
-    host after the work that writes [Outbound] names [Outbound], so that it
-    follows that work, and [Counts], and its launch calls the rail's ready
-    function, given as a [Ready] leaf, with the address of [Counts] and the
-    count.
+    {!Rig_remote_abi.section-rails} states. Its steps write a transfer's
+    bytes into [Outbound], then a [Send] step tells the rail that the
+    transfer is there, once the work that wrote them is done.
 
     {1:domains Domains}
 
@@ -101,84 +79,31 @@
 
 (** {1:descriptions Descriptions} *)
 
-(** The type for what only a loaded program knows: a word of its memory or
-    its images, filled once at {!load}. *)
-type leaf =
-  | Address of { memory : int; on : int }
-      (** The address of memory [memory]'s first byte as device [on]'s work
-          addresses it, as {!Rig.Submission.address} gives it for a step on
-          [on] that fixes the memory whole. For memory of two copies
-          ({!type-copies}), the address of the copy the run uses. *)
-  | Handle of int
-      (** The driver's object for memory [i] ({!Rig.Buffer.handle}), such as
-          an [MTLBuffer]. For memory of two copies, the object of the copy the
-          run uses. *)
-  | Entry of { image : int; name : string }
-      (** What compiled code names image [image]'s function [name] by
-          ({!Rig.Image.entry}): a kernel descriptor's address, a
-          [CUfunction], an executable graph, the address of a function of
-          the host's code. The loaded program keeps the image until the work
-          of each of its runs is done. *)
-  | Ready of int
-      (** The address of the ready function of this machine's end of the rail
-          of id [i] ([ready_fn] of {!type:Rig_remote_abi.end_}). *)
+type value = { add : int; terms : (int * int) iarray }
+(** The type for integers a run computes from its ints: [add] plus the sum,
+    over [terms], of each word [w] of the run's ints ({!t.ints}) times its
+    [factor], for [(w, factor)]. The run reads each word when the step that
+    needs the value runs: after the frame's ints were written, the enclosing
+    loops' trips stored and the run's earlier work that writes the ints is
+    done. A value is {e constant} if [terms] is empty: it is [add], which
+    {!load} knows. The sum is exact. It starts from [add] and adds the terms
+    in order, and the run refuses a product or a partial sum past an OCaml
+    [int]: [{ add = 1; terms = [: (0, max_int); (1, -1) :] }] with both words
+    [1] is refused, since [1 + max_int] is past an [int], though the sum is
+    [max_int]. For example, the offset of a copy that a loop moves along rows
+    of [n] bytes, the loop storing its trip in word [i], is
+    [{ add = 0; terms = [: (i, n) :] }]. *)
 
-(** The type for the widths of holes. *)
+(** The type for the widths of scalars. *)
 type width = W32 | W64
 
-type 'a hole = {
-  at : int;  (** The hole's first byte. *)
-  width : width;
-  terms : ('a * int) iarray;  (** Each value with its factor. *)
-  add : int;
-  shift : int;
-}
-(** The type for holes: places in a description's bytes that receive a value
-    when the program loads or runs. A hole ORs the low [width] bits of
-    [s + add], as a 64-bit word shifted right by [shift] bits, into the
-    little-endian word at byte [at], where [s] is the sum, over [terms], of
-    each value times its factor. The bytes hold the word's constant bits, and
-    [0] where the value goes. For example:
-    {ul
-    {- the high half of an address [a] is [{ width = W32; terms = [: (a, 1)
-       :]; add = 0; shift = 32 }];}
-    {- a word with an address in its low bits and a length in its high bits
-       holds the length in the bytes;}
-    {- at a ref's [at], whose bytes hold the offset the ref adds to its
-       slot's address ({!Rig.Submission.type-ref}), the terms
-       [[: (Int i, n) :]] reach row [r] of rows of [n] bytes, where word [i]
-       of the run's ints holds [r], such as the trip a loop stores there.}}
-    The rules:
-    {ul
-    {- [shift] is [0] to [62], and no two holes of one bytes share a byte.}
-    {- A value that meets a set bit of the bytes under it would overwrite a
-       constant. {!load} raises for it, and {!run} for a parameter's value
-       read per run.}
-    {- The sum is computed on OCaml [int]s, which wrap modulo [2{^63}]. The
-       64-bit word is the sum's two's complement, and the shift brings in
-       zeros at the top, so the high half of [-8] is [0xFFFFFFFF]. The value
-       sets bit 63 of a [W64] word iff it is negative and [shift] is [0]. A
-       word whose bit 63 is a constant holds it in the bytes.}} *)
-
-type 'a data = { bytes : string; holes : 'a hole iarray }
-(** The type for bytes with holes. *)
-
-(** The type for what a run knows: a word read when the step that needs it
-    runs. *)
-type value =
-  | Fixed of int  (** The integer itself. *)
-  | Int of int
-      (** Word [i] of the run's ints ({!t.ints}), as it holds when read:
-          after the frame's ints were written, the enclosing loops' trips
-          stored and the run's earlier work that writes the ints is done. *)
-  | Leaf of leaf
-
-(** The type for how many copies of its memory a program keeps. *)
-type copies =
-  | One  (** One, which every run uses. *)
-  | Two
-      (** Two: run [n] uses copy [n mod 2], once the work of run [n - 2] on
-          that copy is done. *)
+type scalar = { at : int; width : width; value : value }
+(** The type for scalars, parameters a run writes: [value] as the
+    little-endian word of [width] bytes at byte [at] of a launch's
+    parameters, over their constant bytes. A [W32] scalar takes a value that
+    32 bits hold as a signed or an unsigned integer, from [-2{^31}] to
+    [2{^32} - 1], and writes its low 32 bits. A [W64] scalar takes any value,
+    in two's complement. No two scalars of a launch share a byte. *)
 
 (** The type for the areas of a rail's end ({!section-rails}). *)
 type area = Outbound | Inbound | Counts
@@ -189,26 +114,18 @@ type memory =
       device : int;
       kind : Rig.Buffer.kind;
       bytes : int;
-      init : leaf data;
-          (** Its first bytes, written at load into each copy, each hole
-              filled for that copy. *)
-      copies : copies;
+      init : string;  (** Its first bytes, written at load. *)
     }  (** Memory made at load ({!Rig.Buffer.create}). *)
   | Rail of { rail : int; area : area }
       (** The area [area] of this machine's end of the rail of id [rail]:
           host memory the rail made, which the program borrows and every run
           uses ({!section-rails}). *)
 
-type image = { device : int; binary : leaf data }
-(** The type for images: [binary] in [device]'s format, loaded in the
-    description's order ({!Rig.Image.load}). A hole may name an earlier
-    image's entry, so an image can be a vendor object over loaded code, such
-    as a CUDA graph over a module's functions, on a driver that loads such
-    objects. *)
+type image = { device : int; binary : string }
+(** The type for images: [binary] in [device]'s format ({!Rig.Image.load}). *)
 
 type view = { memory : int; offset : int; length : int }
-(** The type for [length] bytes of memory [memory] from its byte [offset].
-    For memory of two copies, the bytes are those of the copy the run uses. *)
+(** The type for [length] bytes of memory [memory] from its byte [offset]. *)
 
 (** The type for the buffers a step names. *)
 type slot =
@@ -223,37 +140,28 @@ type use = Read | Write | Unordered
 type ref = { slot : int; at : int; use : use }
 (** The type for refs, as {!Rig.Submission.type-ref}. The work uses the
     submit's slot [slot] as [use] says, and the 8 parameter bytes at [at]
-    hold an offset into that slot's buffer. *)
+    hold an offset into that slot's buffer. A [W64] scalar at [at] makes the
+    offset the run's: with [{ at; width = W64; value = { add = 0; terms = [:
+    (i, n) :] } }], the ref reaches row [r] of rows of [n] bytes, where word
+    [i] of the run's ints holds [r], such as the trip a loop stores there. *)
 
 (** The type for parts, as {!Rig.Submission.type-part}. *)
 type part =
   | Words of view
-  | Fill of {
-      fill : leaf;
-          (** The function the fill calls: an [Entry] or a [Ready]. *)
-      params : value data;
-          (** Its parameters' bytes, a whole number of 32-bit words, each
-              hole written into the run's block before each submit. *)
-      refs : ref iarray;
-    }
   | Copy of {
       src : int;
-      src_offset : (value * int) iarray;
+      src_offset : value;
       dst : int;
-      dst_offset : (value * int) iarray;
+      dst_offset : value;
       length : int;
     }
       (** A copy of [length] bytes from byte [src_offset] of the submit's slot
           [src] into byte [dst_offset] of its slot [dst], as
-          {!Rig.Submission.copy}. An offset is the sum, over its terms, of
-          each value times its factor, an [Int] read when the step runs, so a
-          copy in a loop may move with the loop's trips. The sum is exact: a
-          product or a partial sum past an OCaml [int] is refused, by {!load}
-          for an offset of [Fixed] terms and by the run at the step for one
-          that reads an [Int]. An end whose slot is [Memory] and whose offset
-          reads no [Int] is those bytes of the memory, set once at load. Any
-          other end is a [Slot] end ({!Rig.Submission.type-side}), whose
-          buffer each run passes. *)
+          {!Rig.Submission.copy}. The offsets are computed when the step runs,
+          so a copy in a loop may move with the loop's trips. An end whose
+          slot is [Memory] and whose offset is constant is those bytes of the
+          memory, set once at load. Any other end is a [Slot] end
+          ({!Rig.Submission.type-side}), whose buffer each run passes. *)
   | Launch of {
       image : int;
       name : string;  (** The function of image [image] it runs. *)
@@ -261,24 +169,22 @@ type part =
           (** The name of its work in profiles and refusals
               ({!Rig.Submission.launch}), which tells apart launches of one
               function. *)
-      params : value data;
-          (** Its parameters' bytes, a whole number of 32-bit words, each
-              hole written into the run's block before each submit. *)
+      params : string;
+          (** Its parameters' constant bytes, a whole number of 32-bit
+              words. *)
+      scalars : scalar iarray;
+          (** Written over [params] into the run's block: at load for those
+              whose value is constant, and before each submit for the
+              others. *)
       refs : ref iarray;
       groups : value * value * value;
       threads : value * value * value;
       shared : value;
     }
 
-type submit = {
-  device : int;
-  parts : part iarray;
-  slots : slot iarray;
-  fixed : (view * Rig.access) iarray;
-}
+type submit = { device : int; parts : part iarray; slots : slot iarray }
 (** The type for submissions: [parts] on device [device]. Each run passes
-    [slots], which the parts' refs and copies index, and every run uses the
-    fixed memory [fixed] ({!Rig.Submission.make}). Memory of another device
+    [slots], which the parts' refs and copies index. Memory of another device
     is named through its borrow on [device], made at load, and an input of
     another device through a borrow made for each run. *)
 
@@ -287,23 +193,23 @@ type step =
   | Submit of submit  (** One {!Rig.submit}. *)
   | Move of {
       src : slot;
-      src_offset : (value * int) iarray;
+      src_offset : value;
       dst : slot;
-      dst_offset : (value * int) iarray;
+      dst_offset : value;
       length : int;
     }
       (** One {!Rig.Buffer.submit_copy} of [length] bytes from byte
           [src_offset] of [src]'s buffer into byte [dst_offset] of [dst]'s.
-          An offset is the sum of its terms, as a [Copy] part's, so a move in
-          a loop may move with the loop's trips. Between the program's host
-          memory, the ints included, and memory of another of its devices,
-          the move names the host memory's borrow on that device, made at
-          the first such move and kept with the program, so that the device
-          copies it directly and the host does not wait for the bytes
-          ({!Rig.Buffer.section-copying}). Host memory a move names is made
-          so that a device can borrow it ({!Rig.Buffer.create}). Where the
-          device does not borrow it, or has no room to map it, the program's
-          moves through it pass through staging memory. *)
+          The offsets are computed as a [Copy] part's, so a move in a loop
+          may move with the loop's trips. Between the program's host memory,
+          the ints included, and memory of another of its devices, the move
+          names the host memory's borrow on that device, made at the first
+          such move and kept with the program, so that the device copies it
+          directly and the host does not wait for the bytes
+          ({!Rig.Buffer.section-copying}). Host memory a move names is made so
+          that a device can borrow it ({!Rig.Buffer.create}). Where the device
+          does not borrow it, or has no room to map it, the program's moves
+          through it pass through staging memory. *)
   | Loop of {
       trips : value;
       trip : int option;
@@ -314,6 +220,13 @@ type step =
           index from [0] into word [trip] of the run's ints. With
           [flag = Some (s, at)], it reads byte [at] of [s]'s buffer before
           each trip, once the work that wrote it is done, and stops at [0]. *)
+  | Send of { rail : int; count : value }
+      (** Tells this machine's end of the rail of id [rail] that the transfer
+          of count [count], at least [1], lies in its [Outbound]
+          ({!Rig_remote_abi.section-rails}). Once the points of the run's
+          [waits] ({!run}) are reached and the work that writes the
+          program's [Rail] memory of that [Outbound] is done, it calls the
+          end's [ready] with [count] on the host. *)
 
 type input = { device : int; bytes : int }
 (** The type for inputs: a buffer of [device] of at least [bytes] bytes. *)
@@ -329,9 +242,9 @@ type t = {
   inputs : input iarray;
   ints : int;
       (** The number of 64-bit words of the run's ints, host memory that
-          {!load} makes in two copies ({!type-copies}). A frame writes the
-          first words, loops store their trips there, and the work of its
-          steps may write others. *)
+          {!load} makes in two copies. A frame writes the first words, loops
+          store their trips there, and the work of its steps may write
+          others. *)
   steps : step iarray;
 }
 (** The type for descriptions. *)
@@ -354,12 +267,12 @@ val footprint : t -> Rig.t iarray -> (Rig.t * int) list
 (** [footprint t devices] is, for each of [devices] and the host, the bytes
     {!load}[ t devices] on this machine makes there and counts in each
     device's budget, as {!Rig.allocation} counts them, making nothing: each
-    copy of each [Alloc] memory, host memory a move names taking 64 KiB at
-    least so that a device can borrow it, and the run's ints, kept twice on
-    the host, 64 KiB each at least where a step names them, each in the
-    budget {!Rig.charged} names for its kind. [Mapped] memory that falls back
-    at load ({!Rig.charged}) is counted as [Mapped]. Loaded images' code and
-    a rail's memory are not counted. *)
+    [Alloc] memory, host memory a move names taking 64 KiB at least so that a
+    device can borrow it, and the run's ints, kept twice on the host, 64 KiB
+    each at least where a step names them, each in the budget {!Rig.charged}
+    names for its kind. [Mapped] memory that falls back at load
+    ({!Rig.charged}) is counted as [Mapped]. Loaded images' code and a rail's
+    memory are not counted. *)
 
 type loaded
 (** The type for loaded programs. A loaded program keeps its memory, images
@@ -375,27 +288,24 @@ val load :
 (** [load ~rails t devices] is [t] loaded on [devices], all of one machine
     ({!Rig.host_of}). Device [i] of [t] is [devices.(i)]. [rails id] is this
     machine's end of the rail [id] ({!Rig_remote_abi.type-rail}), and
-    defaults to none. It loads the images in order and writes each [Alloc]
-    memory's [init] last, their holes filled. A [Submit] step's submission
-    borrows the memory the step names on its device, and stores the
-    parameters and geometry that no run changes. On another machine, [load]
-    checks [t] here and loads it through the agent ({!section-machines}).
+    defaults to none. It loads the images and writes each [Alloc] memory's
+    [init] last. A [Submit] step's submission borrows the memory the step
+    names on its device, and stores the parameters and geometry whose values
+    are constant. On another machine, [load] checks [t] here and loads it
+    through the agent ({!section-machines}).
 
     [Error why] only for what a device refuses:
     {ul
     {- a device refuses an image ({!Rig.Image.load}), or has no function a
-       [Launch] or an [Entry] names, or cannot run it ({!Rig.Image.resolve}),
-       [why] starting with the device's name;}
-    {- a device that names memory cannot borrow it ({!Rig.Buffer.borrow}),
-       or an [Address] is of memory its driver names by handle only;}
+       [Launch] names, or cannot run it ({!Rig.Image.resolve}), [why]
+       starting with the device's name;}
+    {- a device that names memory cannot borrow it ({!Rig.Buffer.borrow});}
     {- {!Rig.Submission.make}, a part's constructor or a run
        ({!Rig.Submission.Run}) refuses a step, [why] naming the step;}
     {- on another machine, the agent's load is [Error why].}}
 
-    Raises [Invalid_argument] if [t] breaks a rule its types or
-    {!section-order} state, which [load] checks before it makes anything,
-    but for a hole's value, which it checks as it fills the hole. Among
-    them:
+    Raises [Invalid_argument] if [t] breaks a rule its types state, which
+    [load] checks before it makes anything. Among them:
     {ul
     {- [devices] are not as many as [t]'s, or a device does not run code of
        [t]'s arch for it: its {!Rig.arch} differs, and is neither an x86-64
@@ -403,21 +313,23 @@ val load :
        features;}
     {- an index is outside its array, a size is negative, or an [init] or a
        view lies outside its memory;}
-    {- a leaf in an image or in memory of one copy names memory of two
-       copies, or an [Entry] names a later image;}
-    {- an [Int] or a loop's [trip] is past the ints, or a loop's flag lies
-       at a negative byte or past its slot where load knows the slot's
-       length: a [Memory] view's [length] and [8 * ints] for the ints;}
+    {- a launch's parameters are not a whole number of 32-bit words, a
+       scalar lies outside them, two scalars share a byte, or the width of a
+       scalar whose value is constant does not hold it;}
+    {- a value reads a word past the ints, a loop's [trip] is past them, or
+       a loop's flag lies at a negative byte or past its slot where load
+       knows the slot's length: a [Memory] view's [length] and [8 * ints] for
+       the ints;}
     {- a ref or a copy names no slot of its submit, a slot is named by no
        ref or copy, or a slot is named by both an [Unordered] ref and a
        [Read] or [Write] ref or a copy;}
-    {- a copy's or a move's [length] is negative, an offset names a [Leaf],
-       or an end's offset that reads no [Int] is past an [int], is negative or
-       puts the end past its slot where load knows the slot's length: a
-       [Memory] view's [length] and [8 * ints] for the ints;}
+    {- a copy's or a move's [length] is negative, or an end's constant
+       offset is negative or puts the end past its slot where load knows the
+       slot's length: a [Memory] view's [length] and [8 * ints] for the ints;}
     {- a copy's or a move's two ends share a byte of one memory, of the ints
-       or of one input, at offsets that read no [Int];}
-    {- [Rail] memory or a [Ready] names a rail that [rails] does not give;}
+       or of one input, at constant offsets;}
+    {- a [Send]'s count is constant and below [1];}
+    {- [Rail] memory or a [Send] names a rail that [rails] does not give;}
     {- on another machine, a device is not an agent's.}}
     Raises [Invalid_argument] also if [devices] are of several machines, or
     are of another machine and [rails] is given, or, having done nothing,
@@ -442,15 +354,16 @@ val run : ?waits:Rig.Point.t array -> loaded -> frame -> Rig.Point.t array
     [p]'s devices, the point of its last one. A move runs on the device of
     the point {!Rig.Buffer.submit_copy} returns for it. Each device's first
     submission, and each move, follows the points of [waits] (defaults to
-    none) and the device's earlier work.
+    none) and the device's earlier work, and each [Send] calls its end once
+    they are reached.
     {ul
-    {- It first waits for the work of run [n - 2] on the copies this run
-       uses, the run's ints included, then writes [f]'s ints.}
+    {- It first waits for the work of run [n - 2] on its copy of the ints,
+       then writes [f]'s ints.}
     {- The work it does on the host, [Submit] steps on the host, moves the
-       host makes and loops' flags, is done when it returns. A move whose
-       point is of a device outside [p]'s is done at its step, which waits
-       for it.}
-    {- An [Int] value is read once the run's earlier work that writes the
+       host makes, loops' flags and [Send] steps, is done when it returns. A
+       move whose point is of a device outside [p]'s is done at its step,
+       which waits for it.}
+    {- A value's words are read once the run's earlier work that writes the
        ints is done, and a loop stores its trip once the run's earlier work
        that uses the ints is done.}
     {- It reads [f]'s inputs and ints once, before its first step, so a
@@ -468,12 +381,12 @@ val run : ?waits:Rig.Point.t array -> loaded -> frame -> Rig.Point.t array
        cannot be borrowed by a device that names it, if it is called on the
        thread that runs [p], as from a callback inside that run, or from a
        callback inside a lock ({!Rig.section-domains});}
-    {- at a step, after the earlier steps ran, if the run refuses a launch's
-       geometry, shared memory or a parameter's value read from the ints
-       ({!Rig.Submission.Run}), if a copy's or a move's offset is past an
-       [int] or puts its end outside its slot's buffer, if a loop's flag lies
-       past its input's bytes, and as {!Rig.submit} and
-       {!Rig.Buffer.submit_copy} raise.}}
+    {- at a step, after the earlier steps ran, if a value's sum is past an
+       [int], if a scalar's width does not hold its value, if the run refuses
+       a launch's geometry or shared memory ({!Rig.Submission.Run}), if a
+       copy's or a move's offset puts its end outside its slot's buffer, if a
+       [Send]'s count is below [1], if a loop's flag lies past its input's
+       bytes, and as {!Rig.submit} and {!Rig.Buffer.submit_copy} raise.}}
     Raises {!Rig.Lost} as the devices raise it. *)
 
 val time : ?waits:Rig.Point.t array -> loaded -> frame -> int array
@@ -485,8 +398,8 @@ val time : ?waits:Rig.Point.t array -> loaded -> frame -> int array
     as exact as the device's driver correlates the device's clock with the
     host's, which its interface states. A step whose device did not time its
     work, as its driver's interface states, has [-1]. A step with no work to
-    time, a [Move] or a [Submit] whose submission has no parts, has [0], and
-    a timed step may have [0] too.
+    time, a [Move], a [Send] or a [Submit] whose submission has no parts, has
+    [0], and a timed step may have [0] too.
 
     Only the submits of the run's steps are timed, so other runs and domains
     pay nothing for it. Timing costs each device what its driver's interface
@@ -528,14 +441,14 @@ val time : ?waits:Rig.Point.t array -> loaded -> frame -> int array
     {!run} raises here, before the submission, for each refusal that comes
     before any step. It also raises [Invalid_argument] here for a launch
     whose threads per group exceed the most its function may have
-    ({!Rig.Image.threads}), where each of its three sizes is a constant or a word of
-    the frame's ints that no step may change, and at least one is such a
-    word. A step may change the ints where a [Submit] passes [Ints] in a
-    slot it writes or a [Move] writes [Ints], and a loop changes the word
-    [trip] it stores its trips in. The agent loads and runs the program with
-    the two functions below, and a run they refuse or raise on at a step,
-    such as any other launch with too many threads, fails the job
-    ([Rig_remote]'s failure section). *)
+    ({!Rig.Image.threads}), where its three sizes read only words of the
+    frame's ints that no step may change, at least one size reads one, and
+    each size's sum fits an [int]. A step may change the ints where a
+    [Submit] passes [Ints] in a slot it writes or a [Move] writes [Ints], and
+    a loop changes the word [trip] it stores its trips in. The agent loads
+    and runs the program with the two functions below, and a run they refuse
+    or raise on at a step, such as any other launch with too many threads,
+    fails the job ([Rig_remote]'s failure section). *)
 
 val load_received :
   ?rails:(int -> Rig_remote_abi.end_ option) ->

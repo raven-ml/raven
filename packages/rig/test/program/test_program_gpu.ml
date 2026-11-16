@@ -71,24 +71,26 @@ let by_hand d image x y =
   ignore (Rig.submit run ~buffers:[| x; y |])
 
 let described d binary =
+  let fixed n = { G.add = n; terms = [||] } in
   let launch name params refs ~groups ~threads =
-    (G.Launch
-          {
-            image = 0;
-            name;
-            label = name;
-            params = { G.bytes = params; holes = [||] };
-            refs;
-            groups = (G.Fixed groups, G.Fixed 1, G.Fixed 1);
-            threads = (G.Fixed threads, G.Fixed 1, G.Fixed 1);
-            shared = G.Fixed 0;
-          })
+    G.Launch
+      {
+        image = 0;
+        name;
+        label = name;
+        params;
+        scalars = [||];
+        refs;
+        groups = (fixed groups, fixed 1, fixed 1);
+        threads = (fixed threads, fixed 1, fixed 1);
+        shared = fixed 0;
+      }
   in
   {
     G.devices = [| Rig.arch d |];
     ints = 0;
     memory = [||];
-    images = [| { G.device = 0; binary = { G.bytes = binary; holes = [||] } } |];
+    images = [| { G.device = 0; binary } |];
     inputs = Iarray.init 2 (fun _ -> { G.device = 0; bytes = 4 * words });
     steps =
       [|
@@ -96,7 +98,6 @@ let described d binary =
           {
             device = 0;
             slots = [| G.Input 0; G.Input 1 |];
-            fixed = [||];
             parts =
               [|
                 launch "ids" ids_params

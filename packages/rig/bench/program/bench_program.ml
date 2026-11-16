@@ -26,6 +26,10 @@ let le64 v =
 
 let opened = ref 0
 
+(* The constant value [n]. *)
+let fixed n = { G.add = n; terms = [||] }
+let one = (fixed 1, fixed 1, fixed 1)
+
 let polled () =
   incr opened;
   P.open_ (strf "bench-program:%d" !opened)
@@ -38,35 +42,29 @@ let fills steps =
   let a, pa = polled () and b, pb = polled () in
   let ds = [| a; b |] in
   let launch d =
-    (G.Launch
-          {
-            image = d;
-            name = "fill";
-            label = "fill";
-            params = { bytes = le64 0 ^ le64 7; holes = [||] };
-            refs = [| { G.slot = 0; at = 0; use = Write } |];
-            groups = (G.Fixed 1, G.Fixed 1, G.Fixed 1);
-            threads = (G.Fixed 1, G.Fixed 1, G.Fixed 1);
-            shared = G.Fixed 0;
-          })
+    G.Launch
+      {
+        image = d;
+        name = "fill";
+        label = "fill";
+        params = le64 0 ^ le64 7;
+        scalars = [||];
+        refs = [| { G.slot = 0; at = 0; use = Write } |];
+        groups = one;
+        threads = one;
+        shared = fixed 0;
+      }
   in
   let step i =
     let d = i land 1 in
-    G.Submit
-      {
-        device = d;
-        parts = [| launch d |];
-        slots = [| G.Input d |];
-        fixed = [||];
-      }
+    G.Submit { device = d; parts = [| launch d |]; slots = [| G.Input d |] }
   in
   let t =
     {
       G.devices = Iarray.of_array (Array.map Rig.arch ds);
       memory = [||];
       images =
-        Iarray.init 2 (fun d ->
-            { G.device = d; binary = { bytes = "functions"; holes = [||] } });
+        Iarray.init 2 (fun d -> { G.device = d; binary = "functions" });
       inputs = Iarray.init 2 (fun d -> { G.device = d; bytes = 8 });
       ints = 0;
       steps = Iarray.init steps step;
@@ -126,7 +124,9 @@ let by_hand steps () =
    run passes a view of the memory. *)
 let copying ~moving () =
   let d, p = polled () in
-  let src_offset : _ iarray = if moving then [| (G.Int 0, 8) |] else [||] in
+  let src_offset =
+    if moving then { G.add = 0; terms = [| (0, 8) |] } else fixed 0
+  in
   let t =
     {
       G.devices = [| Rig.arch d |];
@@ -137,8 +137,7 @@ let copying ~moving () =
               device = 0;
               kind = B.Device;
               bytes = 16;
-              init = { bytes = ""; holes = [||] };
-              copies = One;
+              init = "";
             };
         |];
       images = [||];
@@ -156,7 +155,7 @@ let copying ~moving () =
                       src = 0;
                       src_offset;
                       dst = 1;
-                      dst_offset = [||];
+                      dst_offset = fixed 0;
                       length = 8;
                     };
                 |];
@@ -164,7 +163,6 @@ let copying ~moving () =
                 [|
                   G.Memory { memory = 0; offset = 0; length = 16 }; G.Input 0;
                 |];
-              fixed = [||];
             };
         |];
     }
@@ -223,7 +221,7 @@ let host_step () =
       G.devices = [| Rig.arch Rig.host |];
       memory = [||];
       images =
-        [| { G.device = 0; binary = { bytes = empty_object (); holes = [||] } } |];
+        [| { G.device = 0; binary = empty_object () } |];
       inputs = Iarray.init 2 (fun _ -> { G.device = 0; bytes = 8 });
       ints = 0;
       steps =
@@ -232,7 +230,6 @@ let host_step () =
             {
               device = 0;
               slots = [| Input 0; Input 1 |];
-              fixed = [||];
               parts =
                 [|
                   Launch
@@ -240,15 +237,16 @@ let host_step () =
                       image = 0;
                       name = "empty";
                       label = "empty";
-                      params = { bytes = String.make 16 '\000'; holes = [||] };
+                      params = String.make 16 '\000';
+                      scalars = [||];
                       refs =
                         [|
                           { G.slot = 0; at = 0; use = Write };
                           { G.slot = 1; at = 8; use = Read };
                         |];
-                      groups = (Fixed 1, Fixed 1, Fixed 1);
-                      threads = (Fixed 1, Fixed 1, Fixed 1);
-                      shared = Fixed 0;
+                      groups = one;
+                      threads = one;
+                      shared = fixed 0;
                     };
                 |];
             };
@@ -444,8 +442,7 @@ let loading bytes () =
                   device = 0;
                   kind = B.Device;
                   bytes;
-                  init = { bytes = String.make bytes 'x'; holes = [||] };
-                  copies = One;
+                  init = String.make bytes 'x';
                 };
             |];
           images = [||];
@@ -475,35 +472,22 @@ let load_rows =
 
 (* Runs whose work takes an agent's device a while *)
 
-(* test/program's fixture [spin]: a fill that counts to the word its argument
-   points at. *)
-let spin_object () =
-  let machine =
-    match Rig.instruction_set Rig.host with "arm64" -> "aarch64" | m -> m
-  in
-  let file =
-    Filename.concat
-      (Filename.dirname Sys.executable_name)
-      (strf "../../test/program/fixtures/spin_%s.o" machine)
-  in
-  In_channel.with_open_bin file In_channel.input_all
+(* The groups of a launch of Polled's [fill], each storing one 64-bit word, so
+   that the device takes a while on each run. *)
+let groups = 1 lsl 13
+let launches = 16
 
-(* Counts that take the M1 Max's fill about 100 us. *)
-let iterations = 100_000
-let spins = 16
+type filling = { fjob : Rig_remote.t; fpid : int; fprogram : G.loaded }
 
-type spinning = { sjob : Rig_remote.t; spid : int; sprogram : G.loaded }
-
-(* A program of one step on [d]: the [spin] fill, an image on [d]'s
-   machine's host. *)
-let spinner d =
-  let h = Rig.host_of d in
+(* A program of one step on the Polled device [d]: a launch of [fill] of
+   [groups] groups over memory 0, a word each. *)
+let filler d =
+  let bytes = 8 * groups in
   let t =
     {
-      G.devices = [| Rig.arch d; Rig.arch h |];
-      memory = [||];
-      images =
-        [| { G.device = 1; binary = { bytes = spin_object (); holes = [||] } } |];
+      G.devices = [| Rig.arch d |];
+      memory = [| G.Alloc { device = 0; kind = B.Device; bytes; init = "" } |];
+      images = [| { G.device = 0; binary = "functions" } |];
       inputs = [||];
       ints = 0;
       steps =
@@ -513,76 +497,81 @@ let spinner d =
               device = 0;
               parts =
                 [|
-                  (G.Fill
-                        {
-                          fill = G.Entry { image = 0; name = "spin" };
-                          params = { bytes = le64 iterations; holes = [||] };
-                          refs = [||];
-                        });
+                  G.Launch
+                    {
+                      image = 0;
+                      name = "fill";
+                      label = "fill";
+                      params = le64 0 ^ le64 7;
+                      scalars = [||];
+                      refs = [| { G.slot = 0; at = 0; use = Write } |];
+                      groups = (fixed groups, fixed 1, fixed 1);
+                      threads = one;
+                      shared = fixed 0;
+                    };
                 |];
-              slots = [||];
-              fixed = [||];
+              slots = [| G.Memory { memory = 0; offset = 0; length = bytes } |];
             };
         |];
     }
   in
-  Result.get_ok (G.load t [| d; h |])
+  Result.get_ok (G.load t [| d |])
 
-(* bench_agent.exe, whose Polled device runs its own queue, and the spinner on
+(* bench_agent.exe, whose Polled device runs its own queue, and the filler on
    it. *)
-let spinning () =
+let filling () =
   let exe =
     Filename.concat (Filename.dirname Sys.executable_name) "bench_agent.exe"
   in
   let out_r, out_w = Unix.pipe ~cloexec:true () in
-  let spid = Unix.create_process exe [| exe |] Unix.stdin out_w Unix.stderr in
+  let fpid = Unix.create_process exe [| exe |] Unix.stdin out_w Unix.stderr in
   Unix.close out_w;
   let ic = Unix.in_channel_of_descr out_r in
   let port = int_of_string (input_line ic) in
   close_in ic;
-  let sjob =
+  let fjob =
     Result.get_ok
       (Rig_remote.connect
          ~key:(Result.get_ok (Rig_remote.key key))
          [ ("127.0.0.1", port) ])
   in
-  let host = List.hd (Rig_remote.hosts sjob) in
+  let host = List.hd (Rig_remote.hosts fjob) in
   let d = List.hd (Result.get_ok (Rig_remote.devices host "POLLED")) in
-  { sjob; spid; sprogram = spinner d }
+  { fjob; fpid; fprogram = filler d }
 
-let spun s =
-  Rig_remote.close s.sjob;
-  ignore (Unix.waitpid [] s.spid)
+let filled f =
+  Rig_remote.close f.fjob;
+  ignore (Unix.waitpid [] f.fpid)
 
-(* [spins] runs handed over at once, until the controller sees the last one's
-   value: each run's fill, plus what the agent does between them that its device
-   does not overlap. *)
-let spins_of p =
+(* [launches] runs handed over at once, until the controller sees the last
+   one's value: each run's launch, plus what the agent does between them that
+   its device does not overlap. *)
+let launches_of p =
   let frame = { G.inputs = [||]; ints = [||] } in
   let pt = ref (G.run p frame).(0) in
-  for _ = 2 to spins do
+  for _ = 2 to launches do
     pt := (G.run p frame).(0)
   done;
   Rig.Point.wait !pt
 
-(* The floor: the same runs on a Polled device of this process that runs its own
-   queue, which no agent sits in front of. *)
-let spinning_here () =
+(* The floor: the same runs on a Polled device of this process that runs its
+   own queue, which no agent sits in front of. *)
+let filling_here () =
   incr opened;
-  let d, _ = P.open_ ~runs:`Itself (strf "bench-spin:%d" !opened) in
-  spinner d
+  let d, _ = P.open_ ~runs:`Itself (strf "bench-fill:%d" !opened) in
+  filler d
 
-let spin_rows =
+let agent_rows =
   Thumper.group "agent"
     [
-      Thumper.bench_with_setup ~setup:spinning ~teardown:spun
-        (strf "spins-%d" spins) (fun s -> spins_of s.sprogram);
-      Thumper.bench_with_setup ~setup:spinning_here
-        (strf "floor-spins-%d" spins)
-        spins_of;
+      Thumper.bench_with_setup ~setup:filling ~teardown:filled
+        (strf "fills-%d" launches) (fun f -> launches_of f.fprogram);
+      Thumper.bench_with_setup ~setup:filling_here
+        (strf "floor-fills-%d" launches)
+        launches_of;
     ]
 
 let () =
   exit
   @@ Thumper.run "rig_program"
-       [ polled_rows; host_rows; step_rows; load_rows; spin_rows ]
+       [ polled_rows; host_rows; step_rows; load_rows; agent_rows ]

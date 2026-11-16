@@ -10,77 +10,52 @@ let strf = Printf.sprintf
 
 (* Descriptions *)
 
-type leaf =
-  | Address of { memory : int; on : int }
-  | Handle of int
-  | Entry of { image : int; name : string }
-  | Ready of int
-
-(* Before holes, whose [at] an unannotated field then means. *)
+(* Before scalars, whose [at] an unannotated field then means. *)
 type use = Read | Write | Unordered
 type ref = { slot : int; at : int; use : use }
 type width = W32 | W64
-type 'a hole = {
-  at : int;
-  width : width;
-  terms : ('a * int) iarray;
-  add : int;
-  shift : int;
-}
-type 'a data = { bytes : string; holes : 'a hole iarray }
-type value = Fixed of int | Int of int | Leaf of leaf
-type copies = One | Two
+type value = { add : int; terms : (int * int) iarray }
+type scalar = { at : int; width : width; value : value }
 type area = Outbound | Inbound | Counts
 
 type memory =
-  | Alloc of {
-      device : int;
-      kind : B.kind;
-      bytes : int;
-      init : leaf data;
-      copies : copies;
-    }
+  | Alloc of { device : int; kind : B.kind; bytes : int; init : string }
   | Rail of { rail : int; area : area }
 
-type image = { device : int; binary : leaf data }
+type image = { device : int; binary : string }
 type view = { memory : int; offset : int; length : int }
 type slot = Memory of view | Input of int | Ints
 
 type part =
   | Words of view
-  | Fill of { fill : leaf; params : value data; refs : ref iarray }
   | Copy of {
       src : int;
-      src_offset : (value * int) iarray;
+      src_offset : value;
       dst : int;
-      dst_offset : (value * int) iarray;
+      dst_offset : value;
       length : int;
     }
   | Launch of {
       image : int;
       name : string;
       label : string;
-      params : value data;
+      params : string;
+      scalars : scalar iarray;
       refs : ref iarray;
       groups : value * value * value;
       threads : value * value * value;
       shared : value;
     }
 
-type submit = {
-  device : int;
-  parts : part iarray;
-  slots : slot iarray;
-  fixed : (view * Rig.access) iarray;
-}
+type submit = { device : int; parts : part iarray; slots : slot iarray }
 
 type step =
   | Submit of submit
   | Move of {
       src : slot;
-      src_offset : (value * int) iarray;
+      src_offset : value;
       dst : slot;
-      dst_offset : (value * int) iarray;
+      dst_offset : value;
       length : int;
     }
   | Loop of {
@@ -89,6 +64,7 @@ type step =
       flag : (slot * int) option;
       body : step iarray;
     }
+  | Send of { rail : int; count : value }
 
 type input = { device : int; bytes : int }
 
@@ -114,7 +90,7 @@ exception Broken of string
 
 let broken fmt = Printf.ksprintf (fun why -> raise (Broken why)) fmt
 
-(* An offset's sum past an OCaml [int]. *)
+(* A value's sum past an OCaml [int]. *)
 exception Overflow
 
 let add_exn a b =
@@ -135,52 +111,51 @@ let ints_view t =
 (* Checks *)
 
 (* The rules [load] checks before it makes anything: every index, size and
-   hole, and where a leaf of [Two] memory may stand. *)
+   scalar, and each constant value. *)
 
 let index what n i =
   if i < 0 || i >= n then broken "%s %d: no such %s" what i what
 
-let two t m =
-  match Iarray.get t.memory m with
-  | Alloc { copies; _ } -> copies = Two
-  | Rail _ -> false
+let is_constant (v : value) = Iarray.length v.terms = 0
 
-let check_leaf t ~images = function
-  | Address { memory; on } ->
-      index "memory" (Iarray.length t.memory) memory;
-      index "device" (Iarray.length t.devices) on
-  | Handle m -> index "memory" (Iarray.length t.memory) m
-  | Entry { image; _ } -> index "image" images image
-  | Ready _ -> ()
+(* A constant value's [add], which [load] knows. *)
+let known (v : value) = if is_constant v then Some v.add else None
 
-let leaf_two t = function
-  | Address { memory; _ } | Handle memory -> two t memory
-  | Entry _ | Ready _ -> false
+let check_value t (v : value) =
+  Iarray.iter (fun (w, _) -> index "int" t.ints w) v.terms
 
-let width h = match h.width with W32 -> 4 | W64 -> 8
+let width_bytes = function W32 -> 4 | W64 -> 8
+
+(* Whether a scalar of [width] holds [v]: 32 bits hold it as a signed or an
+   unsigned integer, and 64 bits hold every [int]. *)
+let fits width v =
+  match width with W32 -> v >= -0x8000_0000 && v <= 0xffff_ffff | W64 -> true
 
 (* Bounds are compared by subtraction: a description's integers may be any, and
    a sum of two may wrap. *)
-let check_holes what len check holes =
+let check_scalars t what len scalars =
   Iarray.iter
-    (fun h ->
-      if h.at < 0 || h.at > len - width h then
-        broken "%s: a hole at %d outside its %d bytes" what h.at len;
-      if h.shift < 0 || h.shift > 62 then
-        broken "%s: a hole's shift %d outside 0 to 62" what h.shift;
-      Iarray.iter (fun (x, _) -> check x) h.terms)
-    holes;
+    (fun s ->
+      if s.at < 0 || s.at > len - width_bytes s.width then
+        broken "%s: a scalar at %d outside its %d bytes" what s.at len;
+      check_value t s.value;
+      if is_constant s.value && not (fits s.width s.value.add) then
+        broken
+          "%s: the scalar at %d holds %d, which 32 bits hold neither signed \
+           nor unsigned"
+          what s.at s.value.add)
+    scalars;
   let sorted =
-    List.sort (fun a b -> compare a.at b.at) (Iarray.to_list holes)
+    List.sort (fun a b -> compare a.at b.at) (Iarray.to_list scalars)
   in
   ignore
     (List.fold_left
-       (fun prev h ->
+       (fun prev s ->
          (match prev with
-         | Some p when p.at + width p > h.at ->
-             broken "%s: holes at %d and %d share a byte" what p.at h.at
+         | Some p when p.at + width_bytes p.width > s.at ->
+             broken "%s: scalars at %d and %d share a byte" what p.at s.at
          | _ -> ());
-         Some h)
+         Some s)
        None sorted)
 
 let check_view t sizes (v : view) =
@@ -195,61 +170,42 @@ let check_slot t sizes = function
   | Input i -> index "input" (Iarray.length t.inputs) i
   | Ints -> ()
 
-let check_value t : value -> unit = function
-  | Fixed _ -> ()
-  | Int i -> index "int" t.ints i
-  | Leaf l -> check_leaf t ~images:(Iarray.length t.images) l
-
 let refs_of = function
-  | Fill { refs; _ } | Launch { refs; _ } -> refs
+  | Launch { refs; _ } -> refs
   | Words _ | Copy _ -> Iarray.of_list []
 
 let check_part t sizes = function
   | Words v -> check_view t sizes v
-  | Fill { fill; params; _ } ->
-      check_leaf t ~images:(Iarray.length t.images) fill;
-      let n = String.length params.bytes in
-      if n mod 4 <> 0 then broken "fill: invalid parameter length %d" n;
-      check_holes "fill parameters" n (check_value t) params.holes
   | Copy _ -> ()
   | Launch
-      { image; params; groups = gx, gy, gz; threads = tx, ty, tz; shared; _ } ->
+      {
+        image;
+        params;
+        scalars;
+        groups = gx, gy, gz;
+        threads = tx, ty, tz;
+        shared;
+        _;
+      } ->
       index "image" (Iarray.length t.images) image;
-      let n = String.length params.bytes in
+      let n = String.length params in
       if n mod 4 <> 0 then
         broken
           "image %d: %d bytes of parameters, not a whole number of 32-bit words"
           image n;
-      check_holes
-        (strf "image %d's parameters" image)
-        n (check_value t) params.holes;
+      check_scalars t (strf "image %d's parameters" image) n scalars;
       List.iter (check_value t) [ gx; gy; gz; tx; ty; tz; shared ]
 
-(* An offset's value where it holds only constants, which [load] knows. *)
-let fixed_offset terms =
-  try
-    Iarray.fold_left
-      (fun sum (x, factor) ->
-        match (sum, x) with
-        | Some s, Fixed n -> Some (add_exn s (mul_exn n factor))
-        | _ -> None)
-      (Some 0) terms
-  with Overflow -> broken "a copy's offset past an int"
-
-(* Refuses a copy part or a move of a negative length, with an offset that
-   names a leaf, or, where load knows the offsets, whose end lies outside its
-   slot or whose two ends share a byte of one buffer. A view's and the ints'
-   lengths are known; an input's is only at least its [bytes]. *)
+(* Refuses a copy part or a move of a negative length, or, where load knows
+   the offsets, whose end lies outside its slot or whose two ends share a byte
+   of one buffer. A view's and the ints' lengths are known; an input's is only
+   at least its [bytes]. *)
 let check_copy t ~src ~src_offset ~dst ~dst_offset ~length =
   if length < 0 then broken "a copy of %d bytes" length;
-  let term = function
-    | Leaf _, _ -> broken "a copy's offset names a leaf"
-    | x, _ -> check_value t x
-  in
-  Iarray.iter term src_offset;
-  Iarray.iter term dst_offset;
+  check_value t src_offset;
+  check_value t dst_offset;
   let check_end slot offset =
-    match fixed_offset offset with
+    match known offset with
     | None -> ()
     | Some o -> (
         if o < 0 then broken "a copy from byte %d of its slot" o;
@@ -276,7 +232,7 @@ let check_copy t ~src ~src_offset ~dst ~dst_offset ~length =
     | Memory a, Memory b when a.memory = b.memory -> Some (a.offset, b.offset)
     | _ -> None
   in
-  match (shared, fixed_offset src_offset, fixed_offset dst_offset) with
+  match (shared, known src_offset, known dst_offset) with
   | Some (s, d), Some a, Some b when length > 0 ->
       let a = s + a and b = d + b in
       if a - b < length && b - a < length then
@@ -321,8 +277,7 @@ let rec check_step t sizes ndev = function
               "slot %d: named by an unordered ref and an ordered one or a copy"
               i
         | _ -> ()
-      done;
-      Iarray.iter (fun (v, _) -> check_view t sizes v) s.fixed
+      done
   | Move { src; src_offset; dst; dst_offset; length } ->
       check_slot t sizes src;
       check_slot t sizes dst;
@@ -346,125 +301,11 @@ let rec check_step t sizes ndev = function
           | _ -> ())
         flag;
       Iarray.iter (check_step t sizes ndev) body
-
-(* A memory leaf denotes its whole allocation. A step reading an initialized
-   container must also name every pointee, including those reached through other
-   initialized containers. Indices and views have already been checked. *)
-let check_memory t sizes =
-  let whole views m =
-    List.exists
-      (fun (v : view) ->
-        v.memory = m && v.offset = 0
-        && Option.fold ~none:true ~some:(( = ) v.length) sizes.(m))
-      views
-  in
-  let views slots =
-    List.filter_map
-      (function Memory v -> Some v | Input _ | Ints -> None)
-      slots
-  in
-  let named s =
-    let parts =
-      Iarray.to_list s.parts
-      |> List.concat_map (function
-        | Words v -> [ v ]
-        | Copy _ | Fill _ | Launch _ -> [])
-    in
-    List.map fst (Iarray.to_list s.fixed)
-    @ views (Iarray.to_list s.slots)
-    @ parts
-  in
-  let rec fixing m on steps =
-    Iarray.exists
-      (function
-        | Submit s ->
-            s.device = on && whole (List.map fst (Iarray.to_list s.fixed)) m
-        | Loop { body; _ } -> fixing m on body
-        | Move _ -> false)
-      steps
-  in
-  let terms holes f =
-    Iarray.iter (fun h -> Iarray.iter (fun (x, _) -> f x) h.terms) holes
-  in
-  let closure views =
-    (* Each pointee must itself occur whole in views, so checking every named
-       container also checks every transitive pointee, including cycles. *)
-    List.iter
-      (fun (v : view) ->
-        match Iarray.get t.memory v.memory with
-        | Rail _ -> ()
-        | Alloc { init; _ } ->
-            terms init.holes (function
-              | Address { memory; _ } | Handle memory ->
-                  if not (whole views memory) then
-                    broken
-                      "memory %d: its init names memory %d, which its step \
-                       does not name whole"
-                      v.memory memory
-              | Entry _ | Ready _ -> ()))
-      views
-  in
-  let value ~on ~fixed views = function
-    | Leaf (Address { memory; on = device }) ->
-        if on <> Some device || not (whole fixed memory) then
-          broken
-            "memory %d: an Address needs its step to fix it whole on device %d"
-            memory device
-    | Leaf (Handle memory) ->
-        if not (whole views memory) then
-          broken "memory %d: a Handle needs its step to name it whole" memory
-    | Fixed _ | Int _ | Leaf (Entry _ | Ready _) -> ()
-  in
-  Iarray.iteri
-    (fun i (image : image) ->
-      terms image.binary.holes (function
-        | Address _ | Handle _ -> broken "image %d: a hole names memory" i
-        | Entry _ | Ready _ -> ()))
-    t.images;
-  Iarray.iteri
-    (fun m -> function
-      | Rail _ -> ()
-      | Alloc { init; _ } ->
-          terms init.holes (function
-            | Address { memory; on } when not (fixing memory on t.steps) ->
-                broken
-                  "memory %d: its init takes memory %d's address on device %d, \
-                   where no step fixes it whole"
-                  m memory on
-            | Address _ | Handle _ | Entry _ | Ready _ -> ()))
-    t.memory;
-  let rec step = function
-    | Submit s ->
-        let views = named s in
-        closure views;
-        let check =
-          value ~on:(Some s.device)
-            ~fixed:(List.map fst (Iarray.to_list s.fixed))
-            views
-        in
-        Iarray.iter
-          (function
-            | Fill { fill; params; _ } ->
-                (match fill with
-                | Address _ | Handle _ ->
-                    broken "fill: memory is not a callable function"
-                | Entry _ | Ready _ -> ());
-                terms params.holes check
-            | Launch
-                { params; groups = gx, gy, gz; threads = tx, ty, tz; shared; _ }
-              ->
-                terms params.holes check;
-                List.iter check [ gx; gy; gz; tx; ty; tz; shared ]
-            | Words _ | Copy _ -> ())
-          s.parts
-    | Loop { trips; flag; body; _ } ->
-        value ~on:None ~fixed:[]
-          (views (Option.to_list (Option.map fst flag)))
-          trips;
-        Iarray.iter step body
-    | Move _ -> ()
-  in
-  Iarray.iter step t.steps
+  | Send { count; _ } -> (
+      check_value t count;
+      match known count with
+      | Some c when c < 1 -> broken "a send of count %d, below 1" c
+      | _ -> ())
 
 (* The features an arm64 arch names after "arm64", each after a "+";
    [None] for another arch. *)
@@ -490,7 +331,7 @@ let runs ~device arch =
       | _ -> device = arch)
 
 (* [sizes] gives known extents. Only the agent knows a remote rail's extent;
-   it checks the bounds and whole-memory claims again before loading. *)
+   it checks the bounds again before loading. *)
 let check t sizes devices =
   if Array.length devices <> Iarray.length t.devices then
     broken "%d devices for a program of %d" (Array.length devices)
@@ -506,37 +347,21 @@ let check t sizes devices =
   let ndev = Iarray.length t.devices in
   Iarray.iteri
     (fun i -> function
-      | Alloc { device; bytes; init; copies; _ } ->
+      | Alloc { device; bytes; init; _ } ->
           index "device" ndev device;
           if bytes < 0 then broken "memory %d: %d bytes" i bytes;
-          let n = String.length init.bytes in
+          let n = String.length init in
           if n > bytes then
-            broken "memory %d: %d bytes of init in %d bytes" i n bytes;
-          check_holes (strf "memory %d" i) n
-            (fun l ->
-              check_leaf t ~images:(Iarray.length t.images) l;
-              if copies = One && leaf_two t l then
-                broken "memory %d: of one copy, a hole names memory of two" i)
-            init.holes
+            broken "memory %d: %d bytes of init in %d bytes" i n bytes
       | Rail _ -> ())
     t.memory;
-  Iarray.iteri
-    (fun i (im : image) ->
-      index "device" ndev im.device;
-      check_holes (strf "image %d" i)
-        (String.length im.binary.bytes)
-        (fun l ->
-          check_leaf t ~images:i l;
-          if leaf_two t l then broken "image %d: a hole names memory of two" i)
-        im.binary.holes)
-    t.images;
+  Iarray.iter (fun (im : image) -> index "device" ndev im.device) t.images;
   Iarray.iteri
     (fun i (input : input) ->
       index "device" ndev input.device;
       if input.bytes < 0 then broken "input %d: %d bytes" i input.bytes)
     t.inputs;
-  Iarray.iter (check_step t sizes ndev) t.steps;
-  check_memory t sizes
+  Iarray.iter (check_step t sizes ndev) t.steps
 
 (* Bytes *)
 
@@ -546,7 +371,7 @@ let check t sizes devices =
    byte, then its arguments. *)
 
 let magic = "rig.program\n"
-let version = 15
+let version = 16
 
 module R = struct
   exception Malformed of int * string
@@ -707,27 +532,6 @@ module C = struct
     in
     c
 
-  let case3 a b c inj =
-    let read r =
-      let x = a.r r in
-      let y = b.r r in
-      let z = c.r r in
-      inj x y z
-    in
-    let rec k =
-      {
-        tag = -1;
-        read;
-        put =
-          (fun buf x y z ->
-            tag buf k;
-            a.w buf x;
-            b.w buf y;
-            c.w buf z);
-      }
-    in
-    k
-
   let case4 a b c d inj =
     let read r =
       let x = a.r r in
@@ -776,7 +580,7 @@ module C = struct
     in
     k
 
-  let case8 a b c d e f g h inj =
+  let case9 a b c d e f g h i inj =
     let read r =
       let x = a.r r in
       let y = b.r r in
@@ -786,14 +590,15 @@ module C = struct
       let s = f.r r in
       let t = g.r r in
       let w = h.r r in
-      inj x y z u v s t w
+      let q = i.r r in
+      inj x y z u v s t w q
     in
     let rec k =
       {
         tag = -1;
         read;
         put =
-          (fun buf x y z u v s t w ->
+          (fun buf x y z u v s t w q ->
             tag buf k;
             a.w buf x;
             b.w buf y;
@@ -802,7 +607,8 @@ module C = struct
             e.w buf v;
             f.w buf s;
             g.w buf t;
-            h.w buf w);
+            h.w buf w;
+            i.w buf q);
       }
     in
     k
@@ -862,54 +668,25 @@ end
 module D = struct
   open C
 
-  let leaf =
-    let address = case2 int int (fun memory on -> Address { memory; on })
-    and handle = case1 int (fun m -> Handle m)
-    and entry = case2 int string (fun image name -> Entry { image; name })
-    and ready = case1 int (fun r -> Ready r) in
-    variant "a leaf" [ Arm address; Arm handle; Arm entry; Arm ready ]
-      (fun b -> function
-      | Address { memory; on } -> address.put b memory on
-      | Handle m -> handle.put b m
-      | Entry { image; name } -> entry.put b image name
-      | Ready r -> ready.put b r)
-
   let value =
-    let fixed = case1 int (fun n -> Fixed n)
-    and int_ = case1 int (fun i -> Int i)
-    and leaf = case1 leaf (fun l -> Leaf l) in
-    variant "a value" [ Arm fixed; Arm int_; Arm leaf ] (fun b -> function
-      | Fixed n -> fixed.put b n
-      | Int i -> int_.put b i
-      | Leaf l -> leaf.put b l)
-
-  let terms v = array (pair v int)
-  let width = enum "a width" [ W32; W64 ] (function W32 -> 0 | W64 -> 1)
-
-  let hole v =
-    record (fun at width terms add shift -> { at; width; terms; add; shift })
-    |> field int (fun (h : _ hole) -> h.at)
-    |> field width (fun h -> h.width)
-    |> field (terms v) (fun h -> h.terms)
-    |> field int (fun h -> h.add)
-    |> field int (fun h -> h.shift)
+    record (fun add terms -> { add; terms })
+    |> field int (fun (v : value) -> v.add)
+    |> field (array (pair int int)) (fun v -> v.terms)
     |> finish
 
-  let data v =
-    record (fun bytes holes -> { bytes; holes })
-    |> field string (fun (d : _ data) -> d.bytes)
-    |> field (array (hole v)) (fun d -> d.holes)
+  let width = enum "a width" [ W32; W64 ] (function W32 -> 0 | W64 -> 1)
+
+  let scalar =
+    record (fun at width value -> { at; width; value })
+    |> field int (fun (s : scalar) -> s.at)
+    |> field width (fun s -> s.width)
+    |> field value (fun s -> s.value)
     |> finish
 
   let kind =
     enum "a memory kind"
       B.[ Device; Pinned; Mapped ]
       (function B.Device -> 0 | Pinned -> 1 | Mapped -> 2)
-
-  let access =
-    enum "an access"
-      Rig.[ Read; Read_write ]
-      (function Rig.Read -> 0 | Read_write -> 1)
 
   let use =
     enum "a use" [ Read; Write; Unordered ] (function
@@ -924,8 +701,6 @@ module D = struct
     |> field use (fun (r : ref) -> r.use)
     |> finish
 
-  let copies = enum "copies" [ One; Two ] (function One -> 0 | Two -> 1)
-
   let area =
     enum "an area" [ Outbound; Inbound; Counts ] (function
       | Outbound -> 0
@@ -934,13 +709,11 @@ module D = struct
 
   let memory =
     let alloc =
-      case5 int kind int (data leaf) copies
-        (fun device kind bytes init copies ->
-          Alloc { device; kind; bytes; init; copies })
+      case4 int kind int string (fun device kind bytes init ->
+          Alloc { device; kind; bytes; init })
     and rail = case2 int area (fun rail area -> Rail { rail; area }) in
     variant "a memory" [ Arm alloc; Arm rail ] (fun b -> function
-      | Alloc { device; kind; bytes; init; copies } ->
-          alloc.put b device kind bytes init copies
+      | Alloc { device; kind; bytes; init } -> alloc.put b device kind bytes init
       | Rail { rail = r; area } -> rail.put b r area)
 
   let view =
@@ -963,41 +736,58 @@ module D = struct
 
   let part =
     let words = case1 view (fun v -> Words v)
-    and fill =
-      case3 leaf (data value) (array ref) (fun fill params refs ->
-          Fill { fill; params; refs })
     and copy =
-      case5 int (terms value) int (terms value) int
+      case5 int value int value int
         (fun src src_offset dst dst_offset length ->
           Copy { src; src_offset; dst; dst_offset; length })
     and launch =
-      case8 int string string (data value) (array ref) sizes sizes value
-        (fun image name label params refs groups threads shared ->
-          Launch { image; name; label; params; refs; groups; threads; shared })
+      case9 int string string string (array scalar) (array ref) sizes sizes
+        value
+        (fun image name label params scalars refs groups threads shared ->
+          Launch
+            {
+              image;
+              name;
+              label;
+              params;
+              scalars;
+              refs;
+              groups;
+              threads;
+              shared;
+            })
     in
-    variant "a part" [ Arm words; Arm fill; Arm copy; Arm launch ]
-      (fun b -> function
+    variant "a part" [ Arm words; Arm copy; Arm launch ] (fun b -> function
       | Words v -> words.put b v
-      | Fill { fill = l; params; refs } -> fill.put b l params refs
       | Copy { src; src_offset; dst; dst_offset; length } ->
           copy.put b src src_offset dst dst_offset length
-      | Launch { image; name; label; params; refs; groups; threads; shared }
-        ->
-          launch.put b image name label params refs groups threads shared)
+      | Launch
+          {
+            image;
+            name;
+            label;
+            params;
+            scalars;
+            refs;
+            groups;
+            threads;
+            shared;
+          } ->
+          launch.put b image name label params scalars refs groups threads
+            shared)
 
   let submit =
-    record (fun device parts slots fixed -> { device; parts; slots; fixed })
+    record (fun device parts slots -> { device; parts; slots })
     |> field int (fun (s : submit) -> s.device)
     |> field (array part) (fun s -> s.parts)
     |> field (array slot) (fun s -> s.slots)
-    |> field (array (pair view access)) (fun s -> s.fixed)
     |> finish
 
   let step =
     fix @@ fun step ->
     let submit = case1 submit (fun s -> Submit s)
     and move =
-      case5 slot (terms value) slot (terms value) int
+      case5 slot value slot value int
         (fun src src_offset dst dst_offset length ->
           Move { src; src_offset; dst; dst_offset; length })
     and loop =
@@ -1005,17 +795,19 @@ module D = struct
         (option (pair slot int))
         (array step)
         (fun trips trip flag body -> Loop { trips; trip; flag; body })
-    in
-    variant "a step" [ Arm submit; Arm move; Arm loop ] (fun b -> function
+    and send = case2 int value (fun rail count -> Send { rail; count }) in
+    variant "a step" [ Arm submit; Arm move; Arm loop; Arm send ]
+      (fun b -> function
       | Submit s -> submit.put b s
       | Move { src; src_offset; dst; dst_offset; length } ->
           move.put b src src_offset dst dst_offset length
-      | Loop { trips; trip; flag; body } -> loop.put b trips trip flag body)
+      | Loop { trips; trip; flag; body } -> loop.put b trips trip flag body
+      | Send { rail; count } -> send.put b rail count)
 
   let image =
     record (fun device binary -> { device; binary })
     |> field int (fun (i : image) -> i.device)
-    |> field (data leaf) (fun i -> i.binary)
+    |> field string (fun i -> i.binary)
     |> finish
 
   let input =
@@ -1073,32 +865,27 @@ let of_string s =
 
 (* Loading *)
 
-(* A value once loaded, for one copy: a leaf is resolved at load, so a run meets
-   no refusal of it. *)
-type known = Known of int | Word of int (* Of the run's ints. *)
-
-(* A block's words that a run writes into its block before each submit: its
-   parameters' holes over the run's values, and its geometry. *)
+(* A launch's block, and what a run writes into it before each submit: the
+   scalars that read the ints, and its geometry where a run changes it. *)
 type block_run = {
   block : Sub.block;
-  params : string;
-  holes : known hole array;
-  geometry : ((known * known * known) * (known * known * known) * known) option;
-      (* A launch's geometry where a run changes it. *)
+  scalars : scalar array;
+  geometry : ((value * value * value) * (value * value * value) * value) option;
 }
 
 (* A copy's end whose buffer each run passes: [count] bytes of the slot
-   [from], at the offset [offset]'s terms sum to. *)
+   [from], at the byte [offset] sums to. *)
 type moving = {
   index : int; (* Of [sub]'s slots. *)
   from : slot;
   held : B.t; (* [from]'s buffer, or [unset] for an input. *)
-  offset : (known * int) array;
+  offset : value;
   count : int;
 }
 
-(* A step's run of its submission for one copy, and the buffers it is passed:
-   memory set at load, inputs and moving copy ends at each run. *)
+(* A step's run of its submission for one copy of the ints, and the buffers
+   it is passed: memory set at load, inputs and moving copy ends at each
+   run. *)
 type prepared = {
   srun : Sub.Run.t;
   buffers : B.t array;
@@ -1114,16 +901,21 @@ type lstep =
        the loop that holds it. *)
   | Lmove of {
       src : slot;
-      src_offset : (known * int) array;
+      src_offset : value;
       dst : slot;
-      dst_offset : (known * int) array;
+      dst_offset : value;
       boxes : B.box array; (* One row of the move's length. *)
     }
   | Lloop of {
-      trips : known array; (* By copy. *)
+      trips : value;
       trip : int option;
       flag : (slot * int) option;
       body : lstep array;
+    }
+  | Lsend of {
+      end_ : Rig_remote_abi.end_;
+      outbound : B.t array; (* The program's memory of its [Outbound]. *)
+      count : value;
     }
 
 type frame = { inputs : B.t array; ints : int array }
@@ -1157,6 +949,7 @@ let input_access (t : t) =
         Iarray.iteri (fun i slot -> if w.(i) then write slot) s.slots
     | Move { dst; _ } -> write dst
     | Loop { body; _ } -> Iarray.iter step body
+    | Send _ -> ()
   in
   Iarray.iter step t.steps;
   a
@@ -1175,7 +968,7 @@ let binds (t : t) =
         Iarray.iter
           (slot (fun i -> named.((i * nd) + s.device) <- true))
           s.slots
-    | Move _ -> ()
+    | Move _ | Send _ -> ()
     | Loop { body; _ } -> Iarray.iter step body
   in
   Iarray.iter step t.steps;
@@ -1199,12 +992,12 @@ let launches (t : t) =
   let part = function
     | Launch { image; name; threads; _ } ->
         acc := (image, name, threads) :: !acc
-    | Words _ | Fill _ | Copy _ -> ()
+    | Words _ | Copy _ -> ()
   in
   let rec step = function
     | Submit s -> Iarray.iter part s.parts
     | Loop { body; _ } -> Iarray.iter step body
-    | Move _ -> ()
+    | Move _ | Send _ -> ()
   in
   Iarray.iter step t.steps;
   Array.of_list (List.rev !acc)
@@ -1223,6 +1016,7 @@ let ints_written (t : t) =
     | Loop { trip; body; _ } ->
         Option.iter (fun w -> trips := w :: !trips) trip;
         Iarray.iter step body
+    | Send _ -> ()
   in
   Iarray.iter step t.steps;
   if !any then None else Some !trips
@@ -1241,16 +1035,14 @@ let watched (t : t) limits =
   match ints_written t with
   | None -> [||]
   | Some trips ->
-      let known = function
-        | Fixed _ -> true
-        | Int i -> not (List.mem i trips)
-        | Leaf _ -> false
+      let unchanged (v : value) =
+        Iarray.for_all (fun (w, _) -> not (List.mem w trips)) v.terms
       in
-      let read = function Int _ -> true | Fixed _ | Leaf _ -> false in
+      let reads v = not (is_constant v) in
       let watch k (_, kernel, ((x, y, z) as sizes)) =
         match limits.(k) with
         | Some most
-          when List.for_all known [ x; y; z ] && List.exists read [ x; y; z ]
+          when List.for_all unchanged [ x; y; z ] && List.exists reads [ x; y; z ]
           ->
             Some { kernel; sizes; most }
         | Some _ | None -> None
@@ -1262,7 +1054,7 @@ type here = {
   t : t;
   devices : Rig.t array;
   mem : B.t array array;
-      (* Each memory's copies, on its device, then the run's ints. *)
+      (* Each memory, on its device, then the two copies of the run's ints. *)
   ints : (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t array;
       (* Each copy of the run's ints, as words. *)
   given : int array;
@@ -1275,9 +1067,7 @@ type here = {
   unborrowed : (int * int * int, unit) Hashtbl.t;
       (* By memory, copy and device: host memory a move's device did not
          borrow, which its moves stage. *)
-  fixes : (int * int * int, Sub.t) Hashtbl.t;
-      (* A submission fixing each whole memory, copy and device. *)
-  mutable images : Rig.Image.t array; (* Those loaded so far, while loading. *)
+  mutable images : Rig.Image.t array; (* Empty until they load. *)
   funcs : (int * string, Rig.Image.func) Hashtbl.t;
       (* By image and name: the functions resolved so far. *)
   rails : int -> Rig_remote_abi.end_ option;
@@ -1285,10 +1075,9 @@ type here = {
     (int * string, Rig.Image.func) Hashtbl.t
     * Rig_remote_abi.end_ list Stdlib.ref;
       (* What every submission keeps until its work is done: the functions,
-         and the rail ends [rails] gave, whose functions and addresses its
-         work may name on any device. *)
+         and the rail ends [rails] gave, whose memory its work may use on any
+         device. *)
   mutable steps : lstep array;
-  twos : B.t array array; (* Copy [k] of each memory of two copies. *)
   flag : bytes; (* The byte a loop's flag is read into. *)
   ran : bool array; (* By device: whether the run submitted there. *)
   mutable last : Rig.Point.t array;
@@ -1328,6 +1117,8 @@ let on p m k d =
             b'
         | None -> refuse "memory %d: %s cannot borrow it" m (Rig.name dev))
 
+(* The copy of memory [m] that run [n] uses, for [k = n mod 2]: the ints have
+   two copies, and the program's memory one. *)
 let copy_of p m k = if Array.length p.mem.(m) = 2 then k else 0
 
 let view p k d (v : view) =
@@ -1351,108 +1142,25 @@ let func p image name =
             image name
       | exception Invalid_argument why -> refuse "%s" why)
 
-(* The value of [l] for copy [k]. *)
-let leaf_value p k = function
-  | Address { memory; on = d } -> (
-      let b = on p memory (copy_of p memory k) d in
-      try
-        Sub.address (Hashtbl.find p.fixes (memory, copy_of p memory k, d)) b
-      with
-      | Not_found ->
-          broken "memory %d: no step fixes it whole on device %d" memory d
-      | Invalid_argument _ ->
-          refuse "memory %d: named by its handle only, it has no address" memory
-      )
-  | Handle m -> Nativeint.to_int (B.handle p.mem.(m).(copy_of p m k))
-  | Entry { image; name } -> Rig.Image.entry (func p image name)
-  | Ready r -> Nativeint.to_int (rail_end p.rails r).ready_fn
+let is_ints = function Ints -> true | Memory _ | Input _ -> false
 
-(* A hole whose value meets set bits of its bytes, at its byte: the value
-   would clobber a constant the description holds there. *)
-exception Clobbers of int
+(* Whether [s] names the run's ints, so that it is made once per copy of
+   them. *)
+let per_copy (s : submit) = Iarray.exists is_ints s.slots
 
-(* The sum hole [h] writes before its shift, [value] giving its terms'
-   values. *)
-let hole_sum h value =
-  Iarray.fold_left (fun v (x, factor) -> v + (value x * factor)) h.add h.terms
+(* Stores the scalar [s] of value [v], which [s.width] holds, into the block
+   [b] of the run [r]. *)
+let store_scalar r b s v =
+  match s.width with
+  | W32 -> Sub.Run.int32 r b s.at v
+  | W64 -> Sub.Run.int64 r b s.at (Int64.of_int v)
 
-(* The word hole [h] makes of the sum [v] over [word], the word of its bytes
-   there: the sum's 64-bit word, shifted, its low bits ORed into it. It and
-   [get_word] are inlined, so that a launch's words stay unboxed. *)
-let[@inline] hole_word h v word =
-  let w = Int64.shift_right_logical (Int64.of_int v) h.shift in
-  let w = match h.width with W32 -> Int64.logand w 0xffff_ffffL | W64 -> w in
-  if Int64.logand word w <> 0L then raise (Clobbers h.at);
-  Int64.logor word w
-
-let[@inline] get_word b h =
-  match h.width with
-  | W32 ->
-      Int64.logand (Int64.of_int32 (String.get_int32_le b h.at)) 0xffff_ffffL
-  | W64 -> String.get_int64_le b h.at
-
-(* [d]'s bytes with its holes filled for copy [k]. *)
-let filled p k (d : leaf data) =
-  let b = Bytes.of_string d.bytes in
-  let fill h =
-    let v = hole_sum h (leaf_value p k) in
-    let w = hole_word h v (get_word d.bytes h) in
-    match h.width with
-    | W32 -> Bytes.set_int32_le b h.at (Int64.to_int32 w)
-    | W64 -> Bytes.set_int64_le b h.at w
-  in
-  (try Iarray.iter fill d.holes
-   with Clobbers at ->
-     broken "a hole at byte %d: its value meets set bits of the bytes" at);
-  Bytes.unsafe_to_string b
-
-(* Whether [s] names memory of [Two] copies, so that it is made once per
-   copy. *)
-let per_copy t (s : submit) =
-  let view (v : view) = two t v.memory in
-  let slot = function Memory v -> view v | Ints -> true | Input _ -> false in
-  let value : value -> bool = function
-    | Leaf l -> leaf_two t l
-    | Fixed _ | Int _ -> false
-  in
-  let holes =
-    Iarray.exists (fun h -> Iarray.exists (fun (x, _) -> value x) h.terms)
-  in
-  let part = function
-    | Words v -> view v
-    | Fill { fill; params; _ } -> leaf_two t fill || holes params.holes
-    | Copy _ -> false
-    | Launch { params; groups = gx, gy, gz; threads = tx, ty, tz; shared; _ } ->
-        holes params.holes
-        || List.exists value [ gx; gy; gz; tx; ty; tz; shared ]
-  in
-  Iarray.exists part s.parts || Iarray.exists slot s.slots
-  || Iarray.exists (fun (v, _) -> view v) s.fixed
-
-let per_run = function Word _ -> true | Known _ -> false
-let hole_per_run h = Iarray.exists (fun (x, _) -> per_run x) h.terms
-
-(* Stores hole [h] of a launch's parameters [params] over its sum [v] into its
-   block [b]. *)
-let store_hole r b params h v =
-  let w = hole_word h v (get_word params h) in
-  match h.width with
-  | W32 -> Sub.Run.int32 r b h.at (Int64.to_int w)
-  | W64 -> Sub.Run.int64 r b h.at w
-
-let store_geometry r b (gx, gy, gz) (tx, ty, tz) shared value =
-  Sub.Run.groups r b (value gx) (value gy) (value gz);
-  Sub.Run.threads r b (value tx) (value ty) (value tz);
-  Sub.Run.shared r b (value shared)
+(* What load stores of [v]: its sum where it is constant, and [0] for a sum
+   each run stores. *)
+let at_load (v : value) = if is_constant v then v.add else 0
 
 (* The buffer an input's slot holds until a run passes the input. *)
 let unset = B.of_string ""
-
-(* [v] for copy [k], its leaf resolved. *)
-let resolve p k : value -> known = function
-  | Fixed n -> Known n
-  | Leaf l -> Known (leaf_value p k l)
-  | Int i -> Word i
 
 (* The slot of [s]'s submission for each of [s]'s slots that a ref names, in
    order, or [-1]; and the count of those slots. A copy's end takes a slot of
@@ -1472,11 +1180,10 @@ let sub_slots (s : submit) =
   done;
   (index, !next)
 
-(* The submission of [s] for copy [k], and its run holding the words of its
-   blocks that no run changes. *)
+(* The submission of [s] for copy [k] of the ints, and its run holding the
+   words of its blocks that no run changes. *)
 let prepared p k (s : submit) =
   let d = s.device in
-  let known = resolve p k in
   let index, reffed = sub_slots s in
   let next = ref reffed and moving = ref [] in
   let sub_ref r =
@@ -1489,17 +1196,11 @@ let prepared p k (s : submit) =
   let refs rs = Array.map sub_ref (Iarray.to_array rs) in
   let part = function
     | Words v -> Sub.words (view p k d v)
-    | Fill { fill; params; refs = rs } ->
-        let fill = Nativeint.of_int (leaf_value p k fill) in
-        Sub.fill ~refs:(refs rs) fill ~params:(String.length params.bytes)
     | Copy { src; src_offset; dst; dst_offset; length } ->
         (* An end of memory at an offset load knows is that memory's bytes,
            set at make; any other end is a slot each run passes. *)
         let side i offset =
-          let terms =
-            Iarray.to_array (Iarray.map (fun (x, f) -> (known x, f)) offset)
-          in
-          match (Iarray.get s.slots i, fixed_offset offset) with
+          match (Iarray.get s.slots i, known offset) with
           | Memory v, Some o ->
               Sub.Buffer (B.view (view p k d v) ~first:o ~length)
           | slot, _ ->
@@ -1511,29 +1212,18 @@ let prepared p k (s : submit) =
               in
               let j = !next in
               incr next;
-              moving :=
-                { index = j; from = slot; held; offset = terms; count = length }
-                :: !moving;
+              moving := { index = j; from = slot; held; offset; count = length }
+                        :: !moving;
               Sub.Slot j
         in
         let src = side src src_offset in
         Sub.copy ~src ~dst:(side dst dst_offset)
     | Launch { image; name; label; params; refs = rs; _ } ->
         Sub.launch ~refs:(refs rs) ~label (func p image name)
-          ~params:(String.length params.bytes)
+          ~params:(String.length params)
   in
   let parts = Iarray.to_array (Iarray.map part s.parts) in
-  let fixed =
-    Iarray.to_list (Iarray.map (fun (v, a) -> (view p k d v, a)) s.fixed)
-  in
-  let sub = Sub.make ~keep:p.kept ~fixed p.devices.(d) parts in
-  Iarray.iter
-    (fun ((v : view), _) ->
-      if
-        v.offset = 0
-        && v.length = B.length p.mem.(v.memory).(copy_of p v.memory k)
-      then Hashtbl.replace p.fixes (v.memory, copy_of p v.memory k, d) sub)
-    s.fixed;
+  let sub = Sub.make ~keep:p.kept p.devices.(d) parts in
   let buffers = Array.make !next unset and inputs = ref [] in
   Iarray.iteri
     (fun i slot ->
@@ -1545,48 +1235,39 @@ let prepared p k (s : submit) =
         | Ints -> buffers.(j) <- view p k d (ints_view p.t))
     s.slots;
   let srun = Sub.take sub in
-  let value = function Known n -> n | Word _ -> 0 in
   let block i = function
     | Words _ | Copy _ -> None
-    | (Launch { params; _ } | Fill { params; _ }) as work ->
+    | Launch
+        {
+          params;
+          scalars;
+          groups = (gx, gy, gz) as groups;
+          threads = (tx, ty, tz) as threads;
+          shared;
+          _;
+        } ->
         let b = Sub.block sub i in
-        for w = 0 to (String.length params.bytes / 4) - 1 do
+        for w = 0 to (String.length params / 4) - 1 do
           Sub.Run.int32 srun b (4 * w)
-            (Int32.to_int (String.get_int32_le params.bytes (4 * w)))
+            (Int32.to_int (String.get_int32_le params (4 * w)))
         done;
-        let holes =
-          Iarray.map
-            (fun h ->
-              let terms = Iarray.map (fun (x, f) -> (known x, f)) h.terms in
-              { h with terms })
-            params.holes
-        in
         Iarray.iter
-          (fun h ->
-            if not (hole_per_run h) then
-              store_hole srun b params.bytes h (hole_sum h value))
-          holes;
+          (fun sc ->
+            if is_constant sc.value then store_scalar srun b sc sc.value.add)
+          scalars;
+        Sub.Run.groups srun b (at_load gx) (at_load gy) (at_load gz);
+        Sub.Run.threads srun b (at_load tx) (at_load ty) (at_load tz);
+        Sub.Run.shared srun b (at_load shared);
         let geometry =
-          match work with
-          | Launch { groups = gx, gy, gz; threads = tx, ty, tz; shared; _ } ->
-              let groups = (known gx, known gy, known gz)
-              and threads = (known tx, known ty, known tz)
-              and shared = known shared in
-              store_geometry srun b groups threads shared value;
-              let gx, gy, gz = groups and tx, ty, tz = threads in
-              if List.exists per_run [ gx; gy; gz; tx; ty; tz; shared ] then
-                Some (groups, threads, shared)
-              else None
-          | Fill _ -> None
-          | Words _ | Copy _ -> assert false
+          if List.for_all is_constant [ gx; gy; gz; tx; ty; tz; shared ] then
+            None
+          else Some (groups, threads, shared)
         in
+        let per_run sc = not (is_constant sc.value) in
         Some
           {
             block = b;
-            params = params.bytes;
-            holes =
-              Array.of_list
-                (List.filter hole_per_run (Iarray.to_list holes));
+            scalars = Array.of_list (List.filter per_run (Iarray.to_list scalars));
             geometry;
           }
   in
@@ -1594,7 +1275,7 @@ let prepared p k (s : submit) =
     Array.of_list
       (List.filter_map Fun.id (Iarray.to_list (Iarray.mapi block s.parts)))
   in
-  (* Each step takes the run again to store its holes. *)
+  (* Each step takes the run again to store its scalars. *)
   Sub.Run.release srun;
   {
     srun;
@@ -1607,92 +1288,82 @@ let prepared p k (s : submit) =
 (* A submission [Rig.Submission.make] or a setter refuses is a defect of the
    description. *)
 let submission p i k s =
-  try prepared p k s with
-  | Invalid_argument why -> refuse "step %d: %s" i why
-  | Clobbers at ->
-      broken "step %d: a parameter hole at byte %d meets set bits of its bytes"
-        i at
+  try prepared p k s with Invalid_argument why -> refuse "step %d: %s" i why
+
+(* The program's memory of the [Outbound] area of the rail [rail]. *)
+let outbound p rail =
+  let views = ref [] in
+  Iarray.iteri
+    (fun m -> function
+      | Rail { rail = r; area = Outbound } when r = rail ->
+          views := p.mem.(m).(0) :: !views
+      | Rail _ | Alloc _ -> ())
+    p.t.memory;
+  Array.of_list !views
 
 (* Step [i]'s loaded form. *)
 let rec lstep p i = function
   | Submit s ->
-      let n = if per_copy p.t s then 2 else 1 in
+      let n = if per_copy s then 2 else 1 in
       let copies = Array.init n (fun k -> submission p i k s) in
       Lsubmit { spec = s; copies; step = i }
   | Move { src; src_offset; dst; dst_offset; length } ->
-      (* An offset names no leaf, so its terms are those of every copy. *)
-      let terms o =
-        Iarray.to_array (Iarray.map (fun (x, f) -> (resolve p 0 x, f)) o)
-      in
-      Lmove
-        {
-          src;
-          src_offset = terms src_offset;
-          dst;
-          dst_offset = terms dst_offset;
-          boxes = [| B.row length |];
-        }
+      Lmove { src; src_offset; dst; dst_offset; boxes = [| B.row length |] }
   | Loop { trips; trip; flag; body } ->
-      let trips = Array.init 2 (fun k -> resolve p k trips) in
       let body = Array.map (lstep p i) (Iarray.to_array body) in
       Lloop { trips; trip; flag; body }
+  | Send { rail; count } ->
+      Lsend { end_ = rail_end p.rails rail; outbound = outbound p rail; count }
 
 (* A device borrows host memory that starts on a page, as a host buffer of 64
    KiB or more does (rig.mli, [Buffer.create]). *)
 let page_bytes = 65536
 
-let is_ints = function Ints -> true | Memory _ | Input _ -> false
-
 let rec names_ints = function
   | Submit s -> Iarray.exists is_ints s.slots
   | Move { src; dst; _ } -> is_ints src || is_ints dst
   | Loop { body; _ } -> Iarray.exists names_ints body
+  | Send _ -> false
 
 (* Whether a move of [step] names memory [m]. *)
 let rec names_memory m = function
-  | Submit _ -> false
+  | Submit _ | Send _ -> false
   | Move { src; dst; _ } ->
       let is = function Memory v -> v.memory = m | Ints | Input _ -> false in
       is src || is dst
   | Loop { body; _ } -> Iarray.exists (names_memory m) body
 
-(* The bytes of the buffer made for each copy of memory [m] of [t] on its
-   device [d]: on the host and named by a move, a page's worth at least, so
-   that a device can borrow it, as the ints are. *)
+(* The bytes of the buffer made for memory [m] of [t] on its device [d]: on
+   the host and named by a move, a page's worth at least, so that a device can
+   borrow it, as the ints are. *)
 let memory_bytes (t : t) d m bytes =
   if Rig.equal d Rig.host && Iarray.exists (names_memory m) t.steps then
     max bytes page_bytes
   else bytes
 
-let copies_of = function One -> 1 | Two -> 2
-
 (* Memory [m] of [t]: a view of its {!memory_bytes}. *)
 let make_memory (t : t) devices rails m = function
-  | Alloc { device; kind; bytes; copies; _ } ->
+  | Alloc { device; kind; bytes; _ } ->
       let d = devices.(device) in
-      let make () =
-        let n = memory_bytes t d m bytes in
-        if n = bytes then B.create ~memory:kind d bytes
-        else B.view (B.create ~memory:kind d n) ~first:0 ~length:bytes
-      in
-      Array.init (copies_of copies) (fun _ -> make ())
+      let n = memory_bytes t d m bytes in
+      if n = bytes then [| B.create ~memory:kind d bytes |]
+      else [| B.view (B.create ~memory:kind d n) ~first:0 ~length:bytes |]
   | Rail { rail; area } ->
       [| B.of_bigarray (rail_area (rail_end rails rail) area) |]
 
 let load_image p (im : image) =
-  match Rig.Image.load p.devices.(im.device) (filled p 0 im.binary) with
+  match Rig.Image.load p.devices.(im.device) im.binary with
   | Ok i -> i
   | Error why -> raise (Refused why)
 
-let write_init p m k =
+let write_init p m =
   match Iarray.get p.t.memory m with
   | Rail _ -> ()
   | Alloc { init; _ } ->
-      let n = String.length init.bytes in
+      let n = String.length init in
       if n > 0 then
-        B.copy
-          ~src:(B.of_string (filled p k init))
-          ~dst:(B.view p.mem.(m).(k) ~first:0 ~length:n)
+        B.copy ~src:(B.of_string init)
+          ~dst:(B.view p.mem.(m).(0) ~first:0 ~length:n)
 
 let words b =
   if B.length b = 0 then Bigarray.(Array1.create int64 c_layout 0)
@@ -1724,12 +1395,10 @@ let footprint t devices =
   in
   Iarray.iteri
     (fun m -> function
-      | Alloc { device; kind; bytes; copies; _ } ->
+      | Alloc { device; kind; bytes; _ } ->
           let d = List.nth devices device in
           let n = memory_bytes t d m bytes in
-          add
-            (Rig.charged ~memory:kind d)
-            (copies_of copies * Rig.allocation d n)
+          add (Rig.charged ~memory:kind d) (Rig.allocation d n)
       | Rail _ -> ())
     t.memory;
   add Rig.host (2 * Rig.allocation Rig.host (ints_bytes t));
@@ -1750,17 +1419,21 @@ let load_here ~rails t devices =
         Some (Bigarray.Array1.dim (rail_area (rail_end rails rail) area))
   in
   check t (Iarray.to_array (Iarray.map size t.memory)) devices;
+  (* A send's rail is checked before load makes anything, as Rail memory's. *)
+  let rec sends steps =
+    Iarray.iter
+      (function
+        | Send { rail; _ } -> ignore (rail_end rails rail)
+        | Loop { body; _ } -> sends body
+        | Submit _ | Move _ -> ())
+      steps
+  in
+  sends t.steps;
   let ints = Array.init 2 (fun _ -> make_ints t) in
   let mem =
     Array.append
       (Iarray.to_array (Iarray.mapi (make_memory t devices rails) t.memory))
       [| ints |]
-  in
-  let twos k =
-    Array.to_list mem
-    |> List.filter (fun c -> Array.length c = 2)
-    |> List.map (fun c -> c.(k))
-    |> Array.of_list
   in
   let pairs = Iarray.length t.inputs * Array.length devices in
   let funcs = Hashtbl.create 8 in
@@ -1774,13 +1447,11 @@ let load_here ~rails t devices =
       ngiven = 0;
       borrows = Hashtbl.create 8;
       unborrowed = Hashtbl.create 8;
-      fixes = Hashtbl.create 8;
       images = [||];
       funcs;
       rails;
       kept = (funcs, ends);
       steps = [||];
-      twos = [| twos 0; twos 1 |];
       flag = Bytes.create 1;
       ran = Array.make (Array.length devices) false;
       last = [||];
@@ -1792,11 +1463,7 @@ let load_here ~rails t devices =
     }
   in
   match
-    (* An image's holes name earlier images' entries: each loads once those
-       before it did. *)
-    Iarray.iter
-      (fun im -> p.images <- Array.append p.images [| load_image p im |])
-      t.images;
+    p.images <- Iarray.to_array (Iarray.map (load_image p) t.images);
     (* Every launched function starts being made before the steps resolve
        the first, so that a device makes them concurrently. *)
     Array.iter
@@ -1805,9 +1472,7 @@ let load_here ~rails t devices =
           Rig.Image.prepare p.images.(image) name)
       (launches t);
     p.steps <- Array.mapi (lstep p) (Iarray.to_array t.steps);
-    Iarray.iteri
-      (fun m _ -> Array.iteri (fun k _ -> write_init p m k) mem.(m))
-      t.memory
+    Iarray.iteri (fun m _ -> write_init p m) t.memory
   with
   | () -> Ok p
   | exception Refused why -> Error why
@@ -1885,17 +1550,18 @@ let set_trip p k w i =
   B.wait (ints_buffer p k) Rig.Read_write;
   Bigarray.Array1.unsafe_set p.ints.(k) w (Int64.of_int i)
 
-let run_value (p : here) k = function Known n -> n | Word i -> int_at p k i
-
-(* The sum of a copy's offset [terms] for copy [k], or [Overflow] past an
-   [int]. *)
-let offset_sum p k terms =
-  let o = ref 0 in
-  for t = 0 to Array.length terms - 1 do
-    let v, factor = terms.(t) in
-    o := add_exn !o (mul_exn (run_value p k v) factor)
+(* [v]'s sum over copy [k] of the ints, or [Overflow] past an [int]. *)
+let value_at p k (v : value) =
+  let s = ref v.add in
+  for i = 0 to Iarray.length v.terms - 1 do
+    let w, factor = Iarray.get v.terms i in
+    s := add_exn !s (mul_exn (int_at p k w) factor)
   done;
-  !o
+  !s
+
+(* [value_at], refused past an [int] as the sum of [what]. *)
+let sum_at p k what v =
+  try value_at p k v with Overflow -> invalid "%s past an int" what
 
 let pass p q d =
   for x = 0 to Array.length q.input_slots - 1 do
@@ -1913,35 +1579,37 @@ let unpass q =
     q.buffers.(q.moving.(x).index) <- unset
   done
 
-(* Stores [q]'s holes and geometry for copy [k] into its run, which the
-   caller took, and passes the run's buffers. *)
+(* Stores [q]'s scalars and geometry for copy [k] of the ints into its run,
+   which the caller took, and passes the run's buffers. *)
 let prepare_step p k (q : prepared) d =
-  (try
-     for i = 0 to Array.length q.blocks - 1 do
-       let l = q.blocks.(i) in
-       for j = 0 to Array.length l.holes - 1 do
-         let h = l.holes.(j) in
-         let v = ref h.add in
-         for t = 0 to Iarray.length h.terms - 1 do
-           let x, factor = Iarray.get h.terms t in
-           v := !v + (run_value p k x * factor)
-         done;
-         store_hole q.srun l.block l.params h !v
-       done;
-       match l.geometry with
-       | None -> ()
-       | Some (groups, threads, shared) ->
-           store_geometry q.srun l.block groups threads shared (run_value p k)
-     done
-   with Clobbers at ->
-     invalid
-       "a parameter hole at byte %d: its value meets set bits of its bytes" at);
+  for i = 0 to Array.length q.blocks - 1 do
+    let l = q.blocks.(i) in
+    for j = 0 to Array.length l.scalars - 1 do
+      let s = l.scalars.(j) in
+      let v = sum_at p k "a parameter's value" s.value in
+      if not (fits s.width v) then
+        invalid
+          "the parameter at byte %d takes %d, which 32 bits hold neither \
+           signed nor unsigned"
+          s.at v;
+      store_scalar q.srun l.block s v
+    done;
+    match l.geometry with
+    | None -> ()
+    | Some ((gx, gy, gz), (tx, ty, tz), shared) ->
+        let r = q.srun and b = l.block and g = "a launch's geometry" in
+        Sub.Run.groups r b (sum_at p k g gx) (sum_at p k g gy)
+          (sum_at p k g gz);
+        Sub.Run.threads r b (sum_at p k g tx) (sum_at p k g ty)
+          (sum_at p k g tz);
+        Sub.Run.shared r b (sum_at p k g shared)
+  done;
   pass p q d;
   for x = 0 to Array.length q.moving - 1 do
     let e = q.moving.(x) in
     let held = match e.from with Input j -> bound p j d | _ -> e.held in
     let o =
-      try offset_sum p k e.offset
+      try value_at p k e.offset
       with Overflow ->
         unpass q;
         invalid "a copy's offset past an int"
@@ -2000,12 +1668,12 @@ let submit_step p timer k waits (spec : submit) copies step =
 let rec release_runs = function
   | Lsubmit { copies; _ } ->
       Array.iter (fun (q : prepared) -> Sub.Run.release q.srun) copies
-  | Lmove _ -> ()
+  | Lmove _ | Lsend _ -> ()
   | Lloop { body; _ } -> Array.iter release_runs body
 
-(* The [length] bytes of [slot]'s buffer from the byte its offset [terms] sum
-   to for copy [k], as a move's end. *)
-let move_end p k slot terms length =
+(* The [length] bytes of [slot]'s buffer from the byte [offset] sums to for
+   copy [k] of the ints, as a move's end. *)
+let move_end p k slot offset length =
   let b, first, n =
     match slot with
     | Memory v -> (p.mem.(v.memory).(copy_of p v.memory k), v.offset, v.length)
@@ -2016,10 +1684,7 @@ let move_end p k slot terms length =
         let b = bound p j (Iarray.get p.t.inputs j).device in
         (b, 0, B.length b)
   in
-  let o =
-    try offset_sum p k terms
-    with Overflow -> invalid "a move's offset past an int"
-  in
+  let o = sum_at p k "a move's offset" offset in
   if o < 0 || o > n - length then
     invalid "a move of %d bytes from byte %d of a slot of %d bytes" length o n;
   if first + o = 0 && length = B.length b then b
@@ -2120,14 +1785,29 @@ let flag_holds p k (slot, at) =
   B.blit_to_bytes b first p.flag 0 1;
   Bytes.get p.flag 0 <> '\000'
 
+(* Tells the rail's end [e] that the transfer of count [count] lies in its
+   [Outbound], once the points of [waits] are reached and the work that writes
+   the program's memory of that area, [outbound], is done. [waits] may hold
+   work of another program that writes the area through memory of its own,
+   which no stamp of [outbound] records. *)
+let send_step p k waits (e : Rig_remote_abi.end_) outbound count =
+  Option.iter (Array.iter Rig.Point.wait) waits;
+  for i = 0 to Array.length outbound - 1 do
+    B.wait outbound.(i) Rig.Read
+  done;
+  let c = sum_at p k "a send's count" count in
+  if c < 1 then invalid "a send of count %d, below 1" c;
+  e.ready c
+
 let rec exec (p : here) timer k waits = function
   | Lmove { src; src_offset; dst; dst_offset; boxes } ->
       move_step p k waits ~src ~src_offset ~dst ~dst_offset boxes
   | Lsubmit { spec; copies; step } ->
       submit_step p timer k waits spec copies step
+  | Lsend { end_; outbound; count } -> send_step p k waits end_ outbound count
   | Lloop { trips; trip; flag; body } ->
       (* A loop without closures: a run allocates only its answer. *)
-      let n = run_value p k trips.(k) in
+      let n = sum_at p k "a loop's trips" trips in
       let i = ref 0 in
       while
         !i < n && match flag with None -> true | Some f -> flag_holds p k f
@@ -2160,10 +1840,7 @@ let run_steps ~waits ~timer (p : here) (f : frame) =
   bind p f;
   let k = p.runs land 1 in
   p.runs <- p.runs + 1;
-  let twos = p.twos.(k) in
-  for i = 0 to Array.length twos - 1 do
-    B.wait twos.(i) Rig.Read_write
-  done;
+  B.wait (ints_buffer p k) Rig.Read_write;
   let ints = p.ints.(k) in
   for i = 0 to p.ngiven - 1 do
     Bigarray.Array1.set ints i (Int64.of_int p.given.(i))
@@ -2218,7 +1895,7 @@ let run_here ~waits (p : here) (f : frame) =
 
 (* Timing *)
 
-let is_loop = function Loop _ -> true | Submit _ | Move _ -> false
+let is_loop = function Loop _ -> true | Submit _ | Move _ | Send _ -> false
 
 (* Refuses a program with a loop, a step of which a run may submit once per
    trip, before any work. *)
@@ -2297,7 +1974,7 @@ let words_bytes (t : t) =
 (* Where a run's words hold each input's memory id, offset and length. *)
 let input_word i = 16 + (24 * i)
 
-let is_submit = function Submit _ -> true | Loop _ | Move _ -> false
+let is_submit = function Submit _ -> true | Loop _ | Move _ | Send _ -> false
 
 (* [t]'s times on another machine, whose host is [host], with the words of
    [words] run as [run]. *)
@@ -2423,11 +2100,20 @@ let threads = function
         (launches p.t)
   | There p -> p.limits
 
-(* A watched size as [f] sets it, or -1 for one the agent knows. *)
-let watched_size (f : frame) = function
-  | Fixed n -> n
-  | Int i when i < Array.length f.ints -> f.ints.(i)
-  | Int _ | Leaf _ -> -1
+(* A watched size as [f] sets it, or -1 for one the agent knows: one that
+   reads a word past the frame's, or whose sum is past an [int]. *)
+let watched_size (f : frame) (v : value) =
+  let n = Array.length f.ints in
+  let s = ref v.add and known = ref true in
+  for i = 0 to Iarray.length v.terms - 1 do
+    let w, factor = Iarray.get v.terms i in
+    if w >= n then known := false
+    else if !known then
+      match add_exn !s (mul_exn f.ints.(w) factor) with
+      | x -> s := x
+      | exception Overflow -> known := false
+  done;
+  if !known then !s else -1
 
 (* Whether [n] is a size of at least 1 that a header word holds. *)
 let header_size n = n > 0 && n <= 0xffff_ffff

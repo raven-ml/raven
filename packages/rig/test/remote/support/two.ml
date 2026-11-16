@@ -7,8 +7,8 @@
    or NV GPU and one other machine with a GPU. A program loaded on the other
    machine doubles a frame there and sends it over a rail; this machine's GPU
    waits for its arrival and copies it. Three frames reuse the loaded programs
-   and both landing copies, and every word is checked. Kernels and host code
-   are the suites' fixtures, read from the directory it runs in. *)
+   and both landing copies, and every word is checked. Kernels are the suites'
+   fixtures, read from the directory it runs in. *)
 
 module B = Rig.Buffer
 module G = Rig_program
@@ -61,41 +61,17 @@ let near () =
   else failwith "no AMD or NV GPU on this machine"
 
 let view memory offset length = G.Memory { memory; offset; length }
-let hole at x = { G.at; width = W64; terms = [| (x, 1) |]; add = 0; shift = 0 }
+let fixed n = { G.add = n; terms = [||] }
 
 (* Doubles input 0 into input 1 and adds 1, places the result in landing copy
-   [k] of the rail's outbound area, and readies the run's count, its int 0,
-   through the fixture [ready]. *)
+   [k] of the rail's outbound area, and sends the run's count, its int 0. *)
 let sender d binary rail k =
   let params = Bytes.make 20 '\000' in
   Bytes.set_int32_le params 16 1l;
   {
-    G.devices = [| Rig.arch d; Rig.arch (Rig.host_of d) |];
-    memory =
-      [|
-        G.Rail { rail; area = Counts };
-        G.Rail { rail; area = Outbound };
-        G.Alloc
-          {
-            device = 1;
-            kind = Pinned;
-            bytes = 8;
-            init = { G.bytes = ""; holes = [||] };
-            copies = One;
-          };
-      |];
-    images =
-      [|
-        { G.device = 0; binary = { G.bytes = binary; holes = [||] } };
-        {
-          G.device = 1;
-          binary =
-            {
-              G.bytes = Rig_host_support.fixture ~dir:"../fixtures" "ready";
-              holes = [||];
-            };
-        };
-      |];
+    G.devices = [| Rig.arch d |];
+    memory = [| G.Rail { rail; area = Outbound } |];
+    images = [| { G.device = 0; binary } |];
     inputs = Iarray.init 2 (fun _ -> { G.device = 0; bytes });
     ints = 1;
     steps =
@@ -104,70 +80,35 @@ let sender d binary rail k =
           {
             device = 0;
             slots = [| G.Input 0; G.Input 1 |];
-            fixed = [||];
             parts =
               [|
-                (G.Launch
-                      {
-                        image = 0;
-                        name = "twice";
-                        label = "twice";
-                        params =
-                          { G.bytes = Bytes.to_string params; holes = [||] };
-                        refs =
-                          [|
-                            { G.slot = 1; at = 0; use = Write };
-                            { G.slot = 0; at = 8; use = Read };
-                          |];
-                        groups = (G.Fixed words, G.Fixed 1, G.Fixed 1);
-                        threads = (G.Fixed 1, G.Fixed 1, G.Fixed 1);
-                        shared = G.Fixed 0;
-                      });
+                G.Launch
+                  {
+                    image = 0;
+                    name = "twice";
+                    label = "twice";
+                    params = Bytes.to_string params;
+                    scalars = [||];
+                    refs =
+                      [|
+                        { G.slot = 1; at = 0; use = Write };
+                        { G.slot = 0; at = 8; use = Read };
+                      |];
+                    groups = (fixed words, fixed 1, fixed 1);
+                    threads = (fixed 1, fixed 1, fixed 1);
+                    shared = fixed 0;
+                  };
               |];
           };
         G.Move
           {
             src = G.Input 1;
-            src_offset = [||];
-            dst = view 1 (k * bytes) bytes;
-            dst_offset = [||];
+            src_offset = fixed 0;
+            dst = view 0 (k * bytes) bytes;
+            dst_offset = fixed 0;
             length = bytes;
           };
-        (* test/fixtures' [ready] stores [value] at [out], then calls [ready]
-           with [counts] and [count]; its last parameter names the outbound
-           area it follows. *)
-        G.Submit
-          {
-            device = 1;
-            slots = [| view 2 0 8; view 0 0 384; view 1 (k * bytes) bytes |];
-            fixed = [||];
-            parts =
-              [|
-                G.Launch
-                  {
-                    image = 1;
-                    name = "ready";
-                    label = "ready";
-                    params =
-                      {
-                        G.bytes = String.make 48 '\000';
-                        holes =
-                          [|
-                            hole 16 (G.Leaf (Ready rail)); hole 32 (G.Int 0);
-                          |];
-                      };
-                    refs =
-                      [|
-                        { G.slot = 0; at = 0; use = Write };
-                        { G.slot = 1; at = 8; use = Write };
-                        { G.slot = 2; at = 40; use = Read };
-                      |];
-                    groups = (G.Fixed 1, G.Fixed 1, G.Fixed 1);
-                    threads = (G.Fixed 1, G.Fixed 1, G.Fixed 1);
-                    shared = G.Fixed 0;
-                  };
-              |];
-          };
+        G.Send { rail; count = { add = 0; terms = [| (0, 1) |] } };
       |];
   }
 
@@ -208,7 +149,7 @@ let () =
   let e = Option.get rail.local in
   let senders =
     Array.init 2 (fun k ->
-        get (G.load (sender fd binary rail.id k) [| fd; h |]))
+        get (G.load (sender fd binary rail.id k) [| fd |]))
   in
   let borrow b = Option.get (B.borrow d b) in
   let counts = borrow (B.of_bigarray e.counts) in

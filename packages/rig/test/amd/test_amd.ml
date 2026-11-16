@@ -4090,20 +4090,20 @@ let two_profiles () =
 let program_loop () =
   measuring @@ fun t ->
   let trips = 5 and groups = 64 in
-  let k =
-    { G.at = 0; width = W32; terms = [| (G.Int 0, 1) |]; add = 1; shift = 0 }
-  in
+  let fixed n = { G.add = n; terms = [||] } in
+  let k = { G.at = 0; width = W32; value = { add = 1; terms = [| (0, 1) |] } } in
   let launch =
     G.Launch
       {
         image = 0;
         name = "valu";
         label = "valu";
-        params = { G.bytes = String.make 8 '\000'; holes = [| k |] };
+        params = String.make 8 '\000';
+        scalars = [| k |];
         refs = [||];
-        groups = (G.Fixed groups, G.Fixed 1, G.Fixed 1);
-        threads = (G.Fixed threads, G.Fixed 1, G.Fixed 1);
-        shared = G.Fixed 0;
+        groups = (fixed groups, fixed 1, fixed 1);
+        threads = (fixed threads, fixed 1, fixed 1);
+        shared = fixed 0;
       }
   in
   let description =
@@ -4112,11 +4112,7 @@ let program_loop () =
       memory = [||];
       images =
         [|
-          {
-            G.device = 0;
-            binary =
-              { G.bytes = (Lazy.force counts_code).binary; holes = [||] };
-          };
+          { G.device = 0; binary = (Lazy.force counts_code).binary };
         |];
       inputs = [||];
       ints = 1;
@@ -4124,18 +4120,12 @@ let program_loop () =
         [|
           G.Loop
             {
-              trips = G.Fixed trips;
+              trips = fixed trips;
               trip = Some 0;
               flag = None;
               body =
                 [|
-                  G.Submit
-                    {
-                      device = 0;
-                      parts = [| launch |];
-                      slots = [||];
-                      fixed = [||];
-                    };
+                  G.Submit { device = 0; parts = [| launch |]; slots = [||] };
                 |];
             };
         |];

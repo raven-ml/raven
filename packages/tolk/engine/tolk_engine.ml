@@ -259,6 +259,7 @@ type builder = {
   words : word_kind Dynarray.t;
   var_words : (string, int) Hashtbl.t;
   computed : int Ops.Tbl.t;
+  numbers : int Ops.Tbl.t;
   trips : int Ops.Tbl.t;
   mutable steps : Rig_program.step list;
   mutable pending : pending option;
@@ -311,14 +312,93 @@ let moves u =
 
 let reads_variable u = List.exists is_variable (Ops.toposort ~calls:Skip u)
 
+(* [v] as an integer type of [bits] bits, [signed] or not, holds it: its low
+   [bits] bits in two's complement. A 64-bit type keeps every [int]: a
+   uint64 past an [int] passes as the int64 of the same bits. *)
+let wrap ~bits ~signed v =
+  if bits >= 64 then v
+  else
+    let low = v land ((1 lsl bits) - 1) in
+    if signed && low >= 1 lsl (bits - 1) then low - (1 lsl bits) else low
+
+(* Whether [u] is a cast to an integer type that does not hold its operand's
+   bounds. *)
+let narrows u =
+  Ops.op u = Op.Cast
+  && Dtype.is_int (Ops.dtype u)
+  && Ops.overflows (Ops.nth u 0) (Ops.dtype u)
+
+(* The environment of a value that reads no variable. *)
+let no_env = { values = [||]; set = [||] }
+
+(* How a value's reader takes it: as the [Bits] of a scalar argument of 8
+   bytes alone, or as a [Number], such as an offset of bytes into a buffer, a
+   loop's trips, a grid or a split loop's count. A uint64 past an [int] is the
+   int64 of the same bits, which are right as bits and wrong as a number. *)
+type reading = Bits | Number
+
+(* The name of the run, which computes a value that reads its variables. *)
+let run_fn = "Tolk_engine.run"
+
+(* How [u], an expression of the run's variables, is computed as its kernel
+   computes it, for a reader of [reading], raising in the name of [fn]: the
+   link for a constant, the run otherwise. Each narrowing cast in [u] keeps
+   its operand's low bits ([wrap]), where [Shape.sym_compile] casts without
+   truncating. A variable of the cast's type stands in for each cast, read
+   from the cast's own computation: the cast to int32 of 0x1_0000_0004,
+   halved, is 2. A cast's number is read under another operation, and at
+   [u]'s root where [reading] is [Number]. *)
+let rec computation b ~fn reading u =
+  match List.filter narrows (Ops.toposort ~calls:Skip u) with
+  | [] -> Shape.sym_compile (Sym u) (reader b.cells)
+  | casts ->
+      let read = Ops.Tbl.create 4 in
+      let number c =
+        match reading with Number -> true | Bits -> not (Ops.equal c u)
+      in
+      let stand_in i c =
+        let dt = Ops.dtype c in
+        let v =
+          Ops.variable ~dtype:dt (strf "narrowing cast %d" i) (Dtype.min dt)
+            (Dtype.max dt)
+        in
+        Ops.Tbl.replace read v (narrowing b ~fn ~number:(number c) c);
+        (c, v)
+      in
+      let u = Ops.substitute ~calls:Skip ~pass:Once u (List.mapi stand_in casts) in
+      let var v =
+        match Ops.Tbl.find_opt read v with
+        | Some f -> f
+        | None -> reader b.cells v
+      in
+      Shape.sym_compile (Sym u) var
+
+(* How a run computes the narrowing cast [c]: its operand's low bits, which
+   are bits of the operand. A cast to uint64 keeps an [int]'s bits, which is
+   right where its bits are read. Where its [number] is read, a negative
+   operand makes it a value past an [int], refused in the name of [fn]. *)
+and narrowing b ~fn ~number c =
+  let dt = Ops.dtype c in
+  let bits = Dtype.bitsize dt and signed = not (Dtype.is_unsigned dt) in
+  let operand = computation b ~fn Bits (Ops.nth c 0) in
+  if number && bits >= 64 && not signed then fun env ->
+    let v = operand env in
+    if v < 0 then
+      fail fn
+        "a cast to %s of %d, read as a number, holds %d + 2^64, past an int"
+        (Dtype.name dt) v v;
+    v
+  else fun env -> wrap ~bits ~signed (operand env)
+
 (* The word that holds [u], an expression of the run's variables, which each
-   run computes. *)
-let computed_word b u =
-  match Ops.Tbl.find_opt b.computed u with
+   run computes for a reader of [reading]. *)
+let computed_word b reading u =
+  let table = match reading with Bits -> b.computed | Number -> b.numbers in
+  match Ops.Tbl.find_opt table u with
   | Some w -> w
   | None ->
-      let w = new_word b (Computed (Shape.sym_compile (Sym u) (reader b.cells))) in
-      Ops.Tbl.replace b.computed u w;
+      let w = new_word b (Computed (computation b ~fn:run_fn reading u)) in
+      Ops.Tbl.replace table u w;
       w
 
 let int_of_const u =
@@ -327,47 +407,54 @@ let int_of_const u =
   | Ops.Const (`Bool x) -> Bool.to_int x
   | _ -> invalid_arg (Format.asprintf "%a is no integer" Ops.pp u)
 
-(* [u] as a form of words: a range's trip moves it by a constant factor, and
-   the rest of it is computed for the run. *)
-let rec affine b u =
+(* [u] as a form of words, for a reader of [reading]: a range's trip moves it
+   by a constant factor, and the rest of it is computed for the run. *)
+let rec affine b reading u =
   match (Ops.op u, Ops.arg u) with
   | Op.Const, _ -> constant (int_of_const u)
   | Op.Range, _ -> (
       match Ops.Tbl.find_opt b.trips u with
       | Some w -> word w
-      | None -> fail b.fn "%s reads a range outside its loop" (Ops.expr u))
+      | None -> fail b.fn "a value reads a range outside its loop")
   | Op.Param, _ when is_variable u -> word (var_word b u)
   | Op.Add, _ ->
-      plus (affine b (Ops.nth u 0)) (affine b (Ops.nth u 1))
+      plus (affine b reading (Ops.nth u 0)) (affine b reading (Ops.nth u 1))
   | Op.Mul, _ -> (
-      let x = affine b (Ops.nth u 0) and y = affine b (Ops.nth u 1) in
+      let x = affine b reading (Ops.nth u 0)
+      and y = affine b reading (Ops.nth u 1) in
       match (x.terms, y.terms) with
       | [], _ -> scale x.add y
       | _, [] -> scale y.add x
-      | _ -> computed b u)
-  | Op.Cast, _ when Dtype.is_int (Ops.dtype u) -> affine b (Ops.nth u 0)
-  | Op.After, _ -> affine b (Ops.nth u 0)
-  | _ -> computed b u
+      | _ -> computed b reading u)
+  | Op.Cast, _ when Dtype.is_int (Ops.dtype u) ->
+      (* A narrowing cast keeps its operand's low bits, which no sum of words
+         does: it is computed. *)
+      if not (narrows u) then affine b reading (Ops.nth u 0)
+      else if moves (Ops.nth u 0) then
+        fail b.fn "a cast narrows a value that moves with its loop's trips"
+      else computed b reading u
+  | Op.After, _ -> affine b reading (Ops.nth u 0)
+  | _ -> computed b reading u
 
-and computed b u =
+and computed b reading u =
   if moves u then
-    fail b.fn "%s moves with its loop's trips by no constant factor"
-      (Ops.expr u)
-  else if not (reads_variable u) then constant (Shape.sym_infer (Sym u) [])
-  else word (computed_word b u)
+    fail b.fn "a value moves with its loop's trips by no constant factor"
+  else if not (reads_variable u) then
+    constant (computation b ~fn:b.fn reading u no_env)
+  else word (computed_word b reading u)
 
-let affine_sint b : Ops.sint -> affine = function
+let affine_sint b reading : Ops.sint -> affine = function
   | Int n -> constant n
-  | Sym u -> affine b u
+  | Sym u -> affine b reading u
 
-(* A value of one word, such as a grid's size or a loop's trips. *)
-let value b (s : Ops.sint) : Rig_program.value =
-  let a = affine_sint b s in
-  match (a.terms, s) with
-  | [], _ -> Fixed a.add
-  | [ (w, 1) ], _ when a.add = 0 -> Int w
-  | _, Sym u when not (moves u) -> Int (computed_word b u)
-  | _ -> fail b.fn "a value of one word moves with its loop's trips"
+(* [a] as a value of the run's ints. *)
+let of_affine (a : affine) : Rig_program.value =
+  { add = a.add; terms = Iarray.of_list a.terms }
+
+let fixed n : Rig_program.value = { add = n; terms = [||] }
+
+(* A value such as a grid's size or a loop's trips, read as a number. *)
+let value b (s : Ops.sint) = of_affine (affine_sint b Number s)
 
 (* Storage *)
 
@@ -383,8 +470,7 @@ let memory b base d ~first =
             device = device_index b d;
             kind = Device;
             bytes = first + max 1 (bytes base);
-            init = { bytes = ""; holes = [||] };
-            copies = One;
+            init = "";
           }
       in
       let i = push b.memory m in
@@ -453,7 +539,7 @@ let memory_place b base offset =
    bound storage; or in storage made at link. *)
 let locate b u =
   let base, off = view_offset u in
-  let offset = affine_sint b off in
+  let offset = affine_sint b Number off in
   match (Ops.op base, Ops.arg base) with
   | Op.Param, Ops.Param p when is_slot base ->
       let d = b.named (name base) and n = bytes base in
@@ -492,7 +578,6 @@ let flush b =
              device = p.on;
              parts = Iarray.of_list (List.rev p.parts);
              slots = Iarray.of_list (Dynarray.to_list p.slots);
-             fixed = Iarray.of_list [];
            })
 
 (* The submission of [on] that takes the next part. *)
@@ -566,22 +651,27 @@ let le bytes at width v =
   | 4 -> Bytes.set_int32_le bytes at (Int32.of_int v)
   | _ -> Bytes.set_int64_le bytes at (Int64.of_int v)
 
-(* Writes [a] into [width] bytes at [at]: its constant, or a hole. *)
-let place b bytes holes at width a =
+(* Whether [width] bytes hold [v] as a signed or an unsigned integer, as rig
+   checks a scalar of a value per run ({!Rig_program.type-scalar}). *)
+let holds width v =
+  let bits = 8 * width in
+  bits >= 63 || (v >= -(1 lsl (bits - 1)) && v < 1 lsl bits)
+
+(* Writes [a] into [width] bytes at [at]: its constant, or a scalar. *)
+let place b bytes scalars at width a =
   match a.terms with
-  | [] -> le bytes at width a.add
-  | terms ->
+  | [] ->
+      if not (holds width a.add) then
+        fail b.fn "a parameter of %d bytes cannot hold %d" width a.add;
+      le bytes at width a.add
+  | _ ->
       let width : Rig_program.width =
         match width with
         | 4 -> W32
         | 8 -> W64
         | _ -> fail b.fn "a value of %d bytes moves with the run" width
       in
-      let terms =
-        Iarray.of_list (List.map (fun (w, f) -> (Rig_program.Int w, f)) terms)
-      in
-      holes :=
-        { Rig_program.at; width; terms; add = a.add; shift = 0 } :: !holes
+      scalars := { Rig_program.at; width; value = of_affine a } :: !scalars
 
 let whole (l : located) : Rig_program.slot =
   match l.place with
@@ -614,31 +704,32 @@ let image b dev binary =
   | None ->
       let i =
         push b.images
-          {
-            Rig_program.device = dev;
-            binary = { bytes = binary; holes = [||] };
-          }
+          { Rig_program.device = dev; binary }
       in
       Hashtbl.replace b.image_of (dev, binary) i;
       i
 
 type grid = Rig_program.value * Rig_program.value * Rig_program.value
 
-let one : grid = (Fixed 1, Fixed 1, Fixed 1)
+let one : grid = (fixed 1, fixed 1, fixed 1)
 
 let triple : Rig_program.value list -> grid = function
   | [ x; y; z ] -> (x, y, z)
-  | [ x; y ] -> (x, y, Fixed 1)
-  | [ x ] -> (x, Fixed 1, Fixed 1)
-  | _ -> (Fixed 1, Fixed 1, Fixed 1)
+  | [ x; y ] -> (x, y, fixed 1)
+  | [ x ] -> (x, fixed 1, fixed 1)
+  | _ -> one
 
-(* How a run computes [s], which reads no range. *)
+(* How a run computes [s], a split loop's count, which reads no range, as a
+   number: a constant once, at link. *)
 let counter b (s : Ops.sint) =
   match s with
   | Int n -> fun _ -> n
   | Sym u when moves u ->
       fail b.fn "a split loop's iterations move with its loop's trips"
-  | Sym _ -> Shape.sym_compile s (reader b.cells)
+  | Sym u when not (reads_variable u) ->
+      let n = computation b ~fn:b.fn Number u no_env in
+      fun _ -> n
+  | Sym u -> computation b ~fn:run_fn Number u
 
 (* How a run computes the estimate [s], operations or bytes, saturated at an
    [int]'s bounds: a loop bounded by a loaded value counts its type's greatest
@@ -663,7 +754,7 @@ let split_grid b (extent : Ops.sint) (ops : Ops.sint) (bytes : Ops.sint) :
   match (extent, ops, bytes) with
   | Int extent, Int ops, Int bytes ->
       let n, t = blocks ~extent ~ops ~bytes in
-      ((Fixed n, Fixed 1, Fixed 1), (Fixed t, Fixed 1, Fixed 1))
+      ((fixed n, fixed 1, fixed 1), (fixed t, fixed 1, fixed 1))
   | extent, ops, bytes ->
       let extent = counter b extent in
       let ops = magnitude b ops and bytes = magnitude b bytes in
@@ -671,8 +762,8 @@ let split_grid b (extent : Ops.sint) (ops : Ops.sint) (bytes : Ops.sint) :
         blocks ~extent:(extent env) ~ops:(ops env) ~bytes:(bytes env)
       in
       let n env = fst (split env) and t env = snd (split env) in
-      ( (Int (new_word b (Computed n)), Fixed 1, Fixed 1),
-        (Int (new_word b (Computed t)), Fixed 1, Fixed 1) )
+      let computed f = of_affine (word (new_word b (Computed f))) in
+      ((computed n, fixed 1, fixed 1), (computed t, fixed 1, fixed 1))
 
 (* A kernel's vector accesses lie on their width only where each buffer it
    accesses starts at its storage's alignment and phase ({!Tolk.Codegen}).
@@ -731,20 +822,24 @@ let launch b call prg d =
       (0, 4) offsets
   in
   let params = Bytes.make (Helpers.round_up size align) '\000' in
-  let holes = ref [] in
+  let scalars = ref [] in
   let p = pending b dev in
   let refs =
     List.concat
       (List.map2
          (fun (prm, a) (at, dt) ->
            if Ops.addrspace prm = Some Dtype.Alu then begin
-             place b params holes at (Dtype.itemsize dt) (affine b a);
+             (* A scalar of 8 bytes takes a value's bits, and a narrower one
+                its number, which its bytes must hold. *)
+             let width = Dtype.itemsize dt in
+             let reading = if width = 8 then Bits else Number in
+             place b params scalars at width (affine b reading a);
              []
            end
            else
              let l = locate b a in
              note_start b l;
-             place b params holes at 8 l.offset;
+             place b params scalars at 8 l.offset;
              let use : Rig_program.use =
                if List.mem (slot_of prm) info.outs then Write else Read
              in
@@ -789,31 +884,26 @@ let launch b call prg d =
          image;
          name = Codegen.symbol;
          label = kname;
-         params =
-           { bytes = Bytes.to_string params; holes = Iarray.of_list !holes };
+         params = Bytes.to_string params;
+         scalars = Iarray.of_list !scalars;
          refs = Iarray.of_list refs;
          groups;
          threads;
-         shared = Fixed 0;
+         shared = fixed 0;
        })
 
 (* Copies *)
 
 (* [l] as the end of a copy part or a move: its memory or input whole, at the
    offset each step computes from the run's ints. *)
-let copy_end (l : located) :
-    Rig_program.slot * (Rig_program.value * int) iarray =
+let copy_end (l : located) : Rig_program.slot * Rig_program.value =
   let slot : Rig_program.slot =
     match l.place with
     | Memory { memory; first; bytes } ->
         Memory { memory; offset = first; length = bytes }
     | Input i -> Input i
   in
-  let words = List.map (fun (w, f) -> (Rig_program.Int w, f)) l.offset.terms in
-  let add =
-    if l.offset.add = 0 then [] else [ (Rig_program.Fixed l.offset.add, 1) ]
-  in
-  (slot, Iarray.of_list (add @ words))
+  (slot, of_affine l.offset)
 
 (* The copy [call] makes: a copy part of the source's device or the
    destination's, the source's first, where it copies between the two
@@ -872,7 +962,7 @@ and body b e =
    steps [f] emits. *)
 and loop b r flag f =
   let trips, trip =
-    if Ops.op r <> Op.Range then (Rig_program.Fixed 1, None)
+    if Ops.op r <> Op.Range then (fixed 1, None)
     else
       let trips = value b (sint (Ops.nth r 0)) in
       let w = new_word b Trip in
@@ -988,6 +1078,7 @@ let builder ~fn ~separate ~devices bound =
     words = Dynarray.create ();
     var_words = Hashtbl.create 16;
     computed = Ops.Tbl.create 16;
+    numbers = Ops.Tbl.create 16;
     trips = Ops.Tbl.create 16;
     steps = [];
     pending = None;
@@ -1058,7 +1149,7 @@ let per_run_storage ~named bound linear =
 
 let is_loop : Rig_program.step -> bool = function
   | Loop _ -> true
-  | Submit _ | Move _ -> false
+  | Submit _ | Move _ | Send _ -> false
 
 (* For each step that [b] assembled, in step order, a [Submit] step's device
    and the names of the kernels it launches. *)
@@ -1072,7 +1163,7 @@ let launches (b : builder) =
   let step : Rig_program.step -> _ = function
     | Submit { device; parts; _ } ->
         Some (Dynarray.get b.rigs device, names parts)
-    | Move _ | Loop _ -> None
+    | Move _ | Loop _ | Send _ -> None
   in
   Array.of_list (List.rev_map step b.steps)
 

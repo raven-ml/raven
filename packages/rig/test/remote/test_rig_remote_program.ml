@@ -30,33 +30,32 @@ let polled h =
 
 (* test/fixtures' host code [f], an image on device [device]. *)
 let host_image device f =
-  {
-    G.device;
-    binary =
-      { G.bytes = Rig_host_support.fixture ~dir:"../fixtures" f; holes = [||] };
-  }
+  { G.device; binary = Rig_host_support.fixture ~dir:"../fixtures" f }
 
-let hole at x = { G.at; width = W64; terms = [| (x, 1) |]; add = 0; shift = 0 }
+(* The value [n], and the value of word [w] of the run's ints. *)
+let fixed n = { G.add = n; terms = [||] }
+let int_at w = { G.add = 0; terms = [| (w, 1) |] }
 
-let launch ?(holes : _ iarray = [||]) ~image ~groups name bytes refs =
-  (G.Launch
-        {
-          image;
-          name;
-          label = name;
-          params = { G.bytes; holes };
-          refs;
-          groups = (groups, G.Fixed 1, G.Fixed 1);
-          threads = (G.Fixed 1, G.Fixed 1, G.Fixed 1);
-          shared = G.Fixed 0;
-        })
+let launch ?(scalars : _ iarray = [||]) ~image ~groups name params refs =
+  G.Launch
+    {
+      image;
+      name;
+      label = name;
+      params;
+      scalars;
+      refs;
+      groups = (groups, fixed 1, fixed 1);
+      threads = (fixed 1, fixed 1, fixed 1);
+      shared = fixed 0;
+    }
 
 let ref_ use at slot = { G.slot; at; use }
 
-(* Device 0 fills [Int 0] words of memory 0 from 100, memory of two copies that
-   starts as zeros; device 1 copies all of it into input 0 through its borrow;
-   the host, device 2, adds one to input 1's first word [Int 1] times with
-   test/fixtures' [affine]. *)
+(* Device 0 fills int 0 words of memory 0, which starts as zeros, from
+   [100 + 10 * int 1]; device 1 copies all of it into input 0 through its
+   borrow; the host, device 2, adds one to input 1's first word int 1 times
+   with test/fixtures' [affine]. *)
 let description archs =
   {
     G.devices = archs;
@@ -67,14 +66,13 @@ let description archs =
             device = 0;
             kind = Rig.Buffer.Device;
             bytes = size;
-            init = { bytes = String.make size '\000'; holes = [||] };
-            copies = Two;
+            init = String.make size '\000';
           };
       |];
     images =
       [|
-        { G.device = 0; binary = { bytes = "functions"; holes = [||] } };
-        { G.device = 1; binary = { bytes = "functions"; holes = [||] } };
+        { G.device = 0; binary = "functions" };
+        { G.device = 1; binary = "functions" };
         host_image 2 "affine";
       |];
     inputs = [| { G.device = 1; bytes = size }; { G.device = 0; bytes = 8 } |];
@@ -85,11 +83,18 @@ let description archs =
           {
             device = 0;
             slots = [| G.Memory { memory = 0; offset = 0; length = size } |];
-            fixed = [||];
             parts =
               [|
-                launch ~image:0 ~groups:(G.Int 0) "fill"
-                  (le64 0 ^ le64 100)
+                launch ~image:0 ~groups:(int_at 0) "fill"
+                  ~scalars:
+                    [|
+                      {
+                        G.at = 8;
+                        width = W64;
+                        value = { add = 100; terms = [| (1, 10) |] };
+                      };
+                    |]
+                  (le64 0 ^ le64 0)
                   [| ref_ Write 0 0 |];
               |];
           };
@@ -98,17 +103,16 @@ let description archs =
             device = 1;
             slots =
               [| G.Memory { memory = 0; offset = 0; length = size }; G.Input 0 |];
-            fixed = [||];
             parts =
               [|
-                launch ~image:1 ~groups:(G.Fixed 1) "copy"
+                launch ~image:1 ~groups:(fixed 1) "copy"
                   (le64 0 ^ le64 0 ^ le64 size)
                   [| ref_ Read 0 0; ref_ Write 8 1 |];
               |];
           };
         G.Loop
           {
-            trips = G.Int 1;
+            trips = int_at 1;
             trip = None;
             flag = None;
             body =
@@ -117,10 +121,9 @@ let description archs =
                   {
                     device = 2;
                     slots = [| G.Input 1 |];
-                    fixed = [||];
                     parts =
                       [|
-                        launch ~image:2 ~groups:(G.Fixed 1) "affine"
+                        launch ~image:2 ~groups:(fixed 1) "affine"
                           (le64 0 ^ le64 0 ^ le64 1 ^ le64 1 ^ le64 1)
                           [| ref_ Write 0 0; ref_ Read 8 0 |];
                       |];
@@ -130,8 +133,24 @@ let description archs =
       |];
   }
 
-(* Four runs of the description on [ds], with ints [(groups, trips)], their
-   inputs' bytes after each. The last's trips are negative: no trip. *)
+(* Four runs' ints [(groups, trips)]. The last's trips are negative: no
+   trip. *)
+let frames = [ (8, 1); (3, 0); (5, 4); (3, -1) ]
+
+(* The inputs' bytes after each of [frames], by the description's own
+   account: memory 0 keeps what each run's fill leaves. *)
+let model () =
+  let memory = Array.make 8 0 in
+  List.map
+    (fun (groups, trips) ->
+      for i = 0 to groups - 1 do
+        memory.(i) <- 100 + (10 * trips) + i
+      done;
+      (words 8 (fun i -> memory.(i)), le64 (max 0 trips)))
+    frames
+
+(* [frames]' runs of the description on [ds], their inputs' bytes after
+   each. *)
 let runs ds =
   let p =
     require_ok ~pp:Format.pp_print_string
@@ -150,7 +169,7 @@ let runs ds =
              ints = [| groups; trips |];
            });
       (read x, read c))
-    [ (8, 1); (3, 0); (5, 4); (3, -1) ]
+    frames
 
 let here () =
   let open_ i =
@@ -163,16 +182,7 @@ let same_bytes () =
   let local = runs (here ()) in
   equal ~msg:"here, by the description's own account"
     (list (pair string string))
-    [
-      (words 8 (fun i -> 100 + i), le64 1);
-      (* Run 1 fills the other copy. *)
-      (words 3 (fun i -> 100 + i) ^ String.make (size - 24) '\000', le64 0);
-      (* Run 2 fills run 0's copy, whose last words run 0 left. *)
-      (words 8 (fun i -> 100 + i), le64 4);
-      (* Run 3 fills run 1's copy again. *)
-      (words 3 (fun i -> 100 + i) ^ String.make (size - 24) '\000', le64 0);
-    ]
-    local;
+    (model ()) local;
   with_job @@ fun j _ ->
   let h = List.hd (Rig_remote.hosts j) in
   let far = runs (Array.of_list (polled h)) in
@@ -230,7 +240,7 @@ let unlooped archs =
     | step -> step
   in
   let none =
-    G.Submit { device = 0; slots = [||]; fixed = [||]; parts = [||] }
+    G.Submit { device = 0; slots = [||]; parts = [||] }
   in
   { t with memory; steps = [| fill; Iarray.get t.steps 1; body; none |] }
 
@@ -302,7 +312,7 @@ let untimed () =
       G.devices = [| Rig.arch d |];
       memory = [||];
       images =
-        [| { G.device = 0; binary = { bytes = "functions"; holes = [||] } } |];
+        [| { G.device = 0; binary = "functions" } |];
       inputs = [| { G.device = 0; bytes = size } |];
       ints = 0;
       steps =
@@ -311,14 +321,13 @@ let untimed () =
             {
               device = 0;
               slots = [| G.Input 0 |];
-              fixed = [||];
               parts =
                 [|
-                  launch ~image:0 ~groups:(G.Fixed 8) "fill"
+                  launch ~image:0 ~groups:(fixed 8) "fill"
                     (le64 0 ^ le64 100) [| ref_ Write 0 0 |];
                 |];
             };
-          G.Submit { device = 0; slots = [||]; fixed = [||]; parts = [||] };
+          G.Submit { device = 0; slots = [||]; parts = [||] };
         |];
     }
   in
@@ -339,9 +348,9 @@ let no_submit () =
     G.Move
       {
         src = G.Input 0;
-        src_offset = [||];
+        src_offset = fixed 0;
         dst = G.Input 1;
-        dst_offset = [||];
+        dst_offset = fixed 0;
         length = 8;
       }
   in
@@ -369,7 +378,7 @@ let no_submit () =
     (G.time p { inputs = [| far_of_string d (le64 7); y |]; ints = [||] });
   equal ~msg:"the move's bytes" string (le64 7) (read y);
   let none =
-    G.Submit { device = 0; slots = [||]; fixed = [||]; parts = [||] }
+    G.Submit { device = 0; slots = [||]; parts = [||] }
   in
   let _, bytes = made [| move; none |] in
   equal ~msg:"memory made at load, with a Submit step" int
@@ -499,38 +508,26 @@ let host_record h =
 (* The 64-bit word at byte [at] of [a], read with acquire order. *)
 let word_at (a : Rig_remote_abi.area) at = Int64.to_int (Rig_support.load64 a at)
 
+(* On [h]: the run's int 0 moved into the outbound area of rail [id], then a
+   send of the transfer of count 1. *)
 let rail_sender h id =
   {
     G.devices = [| Rig.arch h |];
-    memory =
-      [|
-        G.Rail { rail = id; area = Outbound };
-        G.Rail { rail = id; area = Counts };
-      |];
-    images = [| host_image 0 "ready" |];
+    memory = [| G.Rail { rail = id; area = Outbound } |];
+    images = [||];
     inputs = [||];
     ints = 1;
     steps =
       [|
-        (* test/fixtures' [ready] stores [value] at [out], then calls [ready]
-           with [counts] and [count]. *)
-        G.Submit
+        G.Move
           {
-            device = 0;
-            slots =
-              [|
-                G.Memory { memory = 0; offset = 0; length = 8 };
-                G.Memory { memory = 1; offset = 0; length = 384 };
-              |];
-            fixed = [||];
-            parts =
-              [|
-                launch ~image:0 ~groups:(G.Fixed 1) "ready"
-                  ~holes:[| hole 16 (G.Leaf (Ready id)); hole 24 (G.Int 0) |]
-                  (String.make 32 '\000' ^ le64 1)
-                  [| ref_ Write 0 0; ref_ Write 8 1 |];
-              |];
+            src = G.Ints;
+            src_offset = fixed 0;
+            dst = G.Memory { memory = 0; offset = 0; length = 8 };
+            dst_offset = fixed 0;
+            length = 8;
           };
+        G.Send { rail = id; count = fixed 1 };
       |];
   }
 
@@ -548,9 +545,8 @@ let rail_is_dropped h id =
   let why = require_error (G.load (named_rail h id) [| h |]) in
   contains ~msg:"the load's refusal" ~sub:"no rail" why
 
-(* An agent's program writes a word into its end of a TCP rail and calls the
-   rail's ready function, as host code after a GPU's work does; the word arrives
-   at this process's end, where a program here reads it. *)
+(* An agent's program writes a word into its end of a TCP rail and sends it;
+   the word arrives at this process's end, where a program here reads it. *)
 let rail_end_to_end () =
   with_job @@ fun j _ ->
   let h = List.hd (Rig_remote.hosts j) in
@@ -584,9 +580,9 @@ let rail_end_to_end () =
           G.Move
             {
               src = G.Memory { memory = 0; offset = 0; length = 8 };
-              src_offset = [||];
+              src_offset = fixed 0;
               dst = G.Input 0;
-              dst_offset = [||];
+              dst_offset = fixed 0;
               length = 8;
             };
         |];
@@ -604,9 +600,9 @@ let rail_end_to_end () =
   equal ~msg:"the word, here" string (le64 42) (read_host x);
   ignore (Sys.opaque_identity (r, far, here))
 
-(* Only the agent knows a rail area's size. It accepts an address whose step
-   fixes the whole area, and refuses a partial or out-of-bounds view. *)
-let rail_address () =
+(* Only the agent knows a rail area's size. It accepts a view of the whole
+   area, and refuses one past it. *)
+let rail_view () =
   with_job @@ fun j _ ->
   let h = List.hd (Rig_remote.hosts j) in
   let d = List.hd (polled h) in
@@ -621,41 +617,17 @@ let rail_address () =
       {
         (named_rail d r.id) with
         memory =
-          [|
-            G.Rail { rail = r.id; area = Counts };
-            G.Alloc
-              {
-                device = 0;
-                kind = Rig.Buffer.Device;
-                bytes = 8;
-                copies = One;
-                init =
-                  {
-                    bytes = le64 0;
-                    holes =
-                      [|
-                        {
-                          G.at = 0;
-                          width = W64;
-                          shift = 0;
-                          add = 0;
-                          terms = [| (Address { memory = 0; on = 0 }, 1) |];
-                        };
-                      |];
-                  };
-              };
-          |];
+          [| G.Rail { rail = r.id; area = Counts } |];
+        inputs = [| { G.device = 0; bytes = 8 } |];
         steps =
           [|
-            G.Submit
+            G.Move
               {
-                device = 0;
-                fixed =
-                  [|
-                    ({ G.memory = 0; offset = 0; length }, Rig.Read);
-                  |];
-                slots = [||];
-                parts = [||];
+                src = G.Memory { memory = 0; offset = 0; length };
+                src_offset = fixed 0;
+                dst = G.Input 0;
+                dst_offset = fixed 0;
+                length = 8;
               };
           |];
       }
@@ -663,7 +635,6 @@ let rail_address () =
     G.load t [| d |]
   in
   is_ok ~msg:"the whole counts area" ~pp:Format.pp_print_string (load 384);
-  contains ~msg:"a partial counts area" ~sub:"whole" (require_error (load 383));
   contains ~msg:"past the counts area" ~sub:"outside"
     (require_error (load 385));
   ignore (Sys.opaque_identity r)
@@ -749,10 +720,9 @@ let loaded_rail_ends () =
                     G.Input 1;
                     G.Memory { memory = 1; offset = 0; length = 8 };
                   |];
-                fixed = [||];
                 parts =
                   [|
-                    launch ~image:0 ~groups:(G.Fixed 1) "arrival"
+                    launch ~image:0 ~groups:(fixed 1) "arrival"
                       (String.make 32 '\000')
                       [|
                         ref_ Write 0 0;
@@ -824,9 +794,9 @@ let collected_end () =
             G.Move
               {
                 src = G.Memory { memory = 0; offset = 128; length = 8 };
-                src_offset = [||];
+                src_offset = fixed 0;
                 dst = G.Input 0;
-                dst_offset = [||];
+                dst_offset = fixed 0;
                 length = 8;
               };
           |];
@@ -874,8 +844,7 @@ let too_large () =
               device = 0;
               kind = Rig.Buffer.Device;
               bytes = 1 lsl 50;
-              init = { bytes = ""; holes = [||] };
-              copies = One;
+              init = "";
             };
         |];
     }
@@ -901,8 +870,7 @@ let refused_frame () =
     {
       G.devices = archs [| h; d |];
       memory = [||];
-      images =
-        [| { G.device = 1; binary = { bytes = "functions"; holes = [||] } } |];
+      images = [| { G.device = 1; binary = "functions" } |];
       inputs = [| { G.device = 0; bytes = 8 } |];
       ints = 0;
       steps =
@@ -911,10 +879,9 @@ let refused_frame () =
             {
               device = 1;
               slots = [| G.Input 0 |];
-              fixed = [||];
               parts =
                 [|
-                  launch ~image:0 ~groups:(G.Fixed 1) "copy"
+                  launch ~image:0 ~groups:(fixed 1) "copy"
                     (le64 0 ^ le64 0 ^ le64 0)
                     [| ref_ G.Write 0 0; ref_ G.Write 8 0 |];
                 |];
@@ -955,10 +922,9 @@ let unaddressed_input () =
             {
               device = 1;
               slots = [| G.Input 0 |];
-              fixed = [||];
               parts =
                 [|
-                  launch ~image:0 ~groups:(G.Fixed 1) "affine"
+                  launch ~image:0 ~groups:(fixed 1) "affine"
                     (le64 0 ^ le64 0 ^ le64 1 ^ le64 1 ^ le64 1)
                     [| ref_ Write 0 0; ref_ Read 8 0 |];
                 |];
@@ -989,7 +955,6 @@ let too_many_threads () =
       {
         device = 0;
         slots = [||];
-        fixed = [||];
         parts =
           [|
             G.Launch
@@ -997,11 +962,12 @@ let too_many_threads () =
                 image = 0;
                 name = "main";
                 label = "main";
-                params = { G.bytes = ""; holes = [||] };
+                params = "";
+                scalars = [||];
                 refs = [||];
-                groups = (G.Fixed 1, G.Fixed 1, G.Fixed 1);
+                groups = (fixed 1, fixed 1, fixed 1);
                 threads;
-                shared = G.Fixed 0;
+                shared = fixed 0;
               };
           |];
       }
@@ -1011,18 +977,18 @@ let too_many_threads () =
       G.devices = archs [| d |];
       memory = [||];
       images =
-        [| { G.device = 0; binary = { bytes = "functions"; holes = [||] } } |];
+        [| { G.device = 0; binary = "functions" } |];
       inputs = [||];
       ints = 2;
       steps =
         [|
-          main (G.Int 0, G.Fixed 2, G.Fixed 1);
+          main (int_at 0, fixed 2, fixed 1);
           G.Loop
             {
-              trips = G.Fixed 0;
+              trips = fixed 0;
               trip = Some 1;
               flag = None;
-              body = [| main (G.Int 1, G.Fixed 1, G.Fixed 1) |];
+              body = [| main (int_at 1, fixed 1, fixed 1) |];
             };
         |];
     }
@@ -1073,11 +1039,11 @@ let () =
            "an agent answers a program its devices cannot hold, and goes on"
            too_large;
          test ~timeout:60.
-           "a program's host launch sends a word on a rail, which a program \
-            reads at its other end"
+           "a program's send carries a word on a rail, which a program reads \
+            at its other end"
            rail_end_to_end;
-         test ~timeout:60. "an agent validates a rail address's whole area"
-           rail_address;
+         test ~timeout:60. "an agent checks a rail view against its area"
+           rail_view;
          test ~timeout:60. "a reachable rail keeps both agent ends"
            retained_rail;
          test ~timeout:60. "a reachable local end keeps the agent end"

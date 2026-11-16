@@ -2779,30 +2779,61 @@ Withdrawn: multi-device is out of scope, see README.
   `uop/ops.py` (`UOp._sym_fxn`, a cached property that simplifies a symbolic
   integer once and compiles it to a Python function, which `UOp.sym_infer` calls
   on each evaluation).
-- **tolk:** `Tolk_engine.affine`, `Tolk_engine.value`, `Tolk_engine.locate`
-  and `Tolk_engine.launch`; `Shape.sym_compile`, and
+- **tolk:** `Tolk_engine.affine`, `Tolk_engine.computation`,
+  `Tolk_engine.value`, `Tolk_engine.locate` and `Tolk_engine.launch`;
+  `Shape.sym_compile`, and
   `Shape.sym_infer`, which is `Shape.sym_compile` applied once.
 - **Differs:** linking a schedule turns each call into a launch per lane of
   rig's program (D146), whose buffers, offsets, scalars and grid are words of
   the run's ints or constants: each variable of the run is a word, a value
   computed from them a word the run computes once (`Shape.sym_compile`, which
   simplifies once and computes on `int`s, exactly where a value does not fit),
-  and a value that moves with a loop's trips a hole of rig's program, the sum of
-  trip words times constant factors. `Shape.sym_compile` is the port of
+  and a value that moves with a loop's trips, an offset, a scalar, a grid or a
+  loop's trips, a value of rig's program: the sum of trip words times constant
+  factors. A cast to an integer type that does not hold its operand's bounds
+  keeps the operand's low bits wherever it sits in a value, as tinygrad's
+  conversion of an argument to its parameter's type does for the whole value.
+  `Tolk_engine.computation` reads each such cast as a variable of the cast's
+  type, which the run computes truncated, since `Shape.sym_compile` casts
+  without truncating. A cast to `uint64` keeps an `int`'s bits, which its
+  reader states (`Tolk_engine.reading`): a scalar of 8 bytes and another cast
+  read them as they are, and where its number is read, under another
+  operation or as an offset, a loop's trips, a grid or a split loop's count,
+  a link refuses a constant past an `int` and the run a value it computes. A
+  link refuses such a cast where its operand moves with a loop's trips. A
+  scalar of 1, 2 or 4 bytes takes only a value its bytes hold, signed or
+  unsigned: a link refuses a constant they do not hold, and the run a value
+  of 4 bytes, where that conversion keeps the low bits.
+  `Shape.sym_compile` is the port of
   `_sym_fxn`, and `Shape.sym_infer` of `sym_infer` (`uop/ops.py` `sym_infer`),
   which evaluates once; a caller that evaluates an integer many times keeps the
   function `Shape.sym_compile` returns, where tinygrad caches it on the node. A
   `DEBUG` report of a call lists the run's variables that the schedule reads,
   where it listed every variable of the run.
-- **Reason:** (c): rig's program takes words and holes (D146), which a link
-  resolves once. Speed is not a reason: tinygrad's resolution on each run
-  has no path through rig's program to time against, so no fudge row can
-  show what resolving at link saves.
+- **Reason:** (c): rig's program takes words and values of them (D146), which
+  a link resolves once, and refuses a scalar its width does not hold. Speed is
+  not a reason: tinygrad's resolution on each run has no path through rig's
+  program to time against, so no fudge row can show what resolving at link
+  saves.
 - **Pinned by:** the Tolk_engine suite (`test/engine/tolk_engine`): `link and
   run › a linked scan carries its storage across runs on each run's
   parameters`, `› a scan runs its body once per trip, carrying in place`, `› a
-  schedule runs with each binding of its variables` and `runs › runs of one
-  schedule from two domains each compute their own`; the Ops suite
+  schedule runs with each binding of its variables`, `› a narrowing cast's low
+  bits reach the kernel as its scalar`, `› a cast to an unsigned type keeps its
+  operand's low bits`, `› a narrowing cast under a quotient keeps its low
+  bits`, `› a narrowing cast of a constant keeps its low bits`, `› a cast to
+  uint64 past an int under another operation is refused at the run`, `› a
+  cast to uint64 past an int as a loop's trips or a split loop's count is
+  refused at the run`, `› a cast to uint64 past an int as an offset is
+  refused at the run, which writes nothing`, `› a constant cast to uint64 past
+  an int whose number is read is refused at link`, `› a cast to uint64 past
+  an int as a 4-byte scalar is refused`, `› a narrowing cast in a split
+  loop's count keeps its low bits`, `› a 4-byte scalar that 32 bits
+  hold reaches the kernel`, `› a 4-byte scalar that 32 bits do not hold is
+  refused`, `› a narrowing of a value that moves with a loop's trips is
+  refused`, `› a loop's trips move with an outer loop's trip`,
+  `GPUs › <kind> › a call's grid moves with its loop's trips` and `runs › runs
+  of one schedule from two domains each compute their own`; the Ops suite
   (`test/uop/ops`): `sym_compile › computes what exact arithmetic does,
   variables within 50`, `› within 2147483648`, `› at the int extremes`,
   `› computes exactly where int arithmetic overflows` and `› raises as exact
@@ -3951,10 +3982,10 @@ driver signals its own (D146).
   program from its call's slot, and `get_call_arg_uops` leaves out every scalar
   argument, an expression as well as a variable. The value reaches the program
   as any variable's does, converted to the parameter's type at the ABI (D28): a
-  launch inside a loop of rig's program reads it from a hole of its parameters,
-  the sum of the loops' trip words times constant factors (D90). The kernel's
-  program depends on neither the range nor its trips, so that loops of any range
-  and length compile one. tinygrad has no loop of calls, and its calls bind a
+  launch inside a loop of rig's program reads it from a scalar of its
+  parameters, the sum of the loops' trip words times constant factors (D90).
+  The kernel's program depends on neither the range nor its trips, so that
+  loops of any range and length compile one. tinygrad has no loop of calls, and its calls bind a
   scalar only to a variable, by name. Beam search samples positional scalars by
   slot and named variables by name. Its `link` callback takes a complete call,
   with the scalar samples passed in their slots and the launch sizes evaluated

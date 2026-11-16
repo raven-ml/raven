@@ -11,7 +11,6 @@
   ../../bin/main.exe
   bench_agent.exe
   (glob_files ../../test/host/fixtures/*.o)
-  (glob_files ../../test/program/fixtures/*.o)
   (glob_files *.thumper))
  (action
   (run %{exe:bench_program.exe})))

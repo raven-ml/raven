@@ -5,10 +5,6 @@
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.2 · 64-bit · release
 
-agent/floor-spins-16	alloc_words	exact	132
-agent/floor-spins-16	wall_time	batch=4	n=20	1.731e-03	1.651e-03 1.654e-03 1.660e-03 1.666e-03 1.688e-03 1.689e-03 1.706e-03 1.722e-03 1.726e-03 1.726e-03 1.736e-03 1.753e-03 1.758e-03 1.760e-03 1.765e-03 1.774e-03 1.784e-03 1.804e-03 1.811e-03 2.311e-03
-agent/spins-16	alloc_words	exact	32
-agent/spins-16	wall_time	batch=4	n=20	1.466e-03	1.284e-03 1.284e-03 1.334e-03 1.344e-03 1.364e-03 1.389e-03 1.389e-03 1.406e-03 1.433e-03 1.461e-03 1.470e-03 1.487e-03 1.517e-03 1.549e-03 1.593e-03 1.616e-03 1.622e-03 1.715e-03 1.759e-03 1.917e-03
 host/call	alloc_words	exact	8
 host/call	wall_time	batch=32768	n=20	2.240e-07	2.234e-07 2.235e-07 2.237e-07 2.237e-07 2.237e-07 2.238e-07 2.238e-07 2.239e-07 2.239e-07 2.240e-07 2.240e-07 2.240e-07 2.241e-07 2.244e-07 2.244e-07 2.244e-07 2.244e-07 2.244e-07 2.246e-07 2.252e-07
 host/floor-call	alloc_words	exact	0
@@ -42,10 +38,6 @@ step/remote-1900	wall_time	batch=32	n=20	2.899e-04	2.863e-04 2.869e-04 2.878e-04
 # refreshed: 2026-10-10, Host ownership and final Program/Profile, quiet release
 # rows: host/*, polled/*
 
-agent/floor-spins-16	alloc_words	exact	140
-agent/floor-spins-16	wall_time	batch=2	n=20	2.786e-03	2.684e-03 2.699e-03 2.732e-03 2.739e-03 2.753e-03 2.754e-03 2.760e-03 2.770e-03 2.771e-03 2.771e-03 2.801e-03 2.813e-03 2.818e-03 2.836e-03 2.840e-03 2.845e-03 2.852e-03 2.963e-03 2.995e-03 3.582e-03
-agent/spins-16	alloc_words	exact	32
-agent/spins-16	wall_time	batch=2	n=20	2.711e-03	2.549e-03 2.589e-03 2.594e-03 2.610e-03 2.652e-03 2.660e-03 2.669e-03 2.677e-03 2.697e-03 2.697e-03 2.724e-03 2.750e-03 2.753e-03 2.755e-03 2.767e-03 2.784e-03 2.798e-03 2.802e-03 2.848e-03 2.911e-03
 host/call	alloc_words	exact	8
 host/call	wall_time	batch=32768	n=20	2.785e-07	2.777e-07 2.779e-07 2.781e-07 2.782e-07 2.782e-07 2.782e-07 2.783e-07 2.783e-07 2.783e-07 2.784e-07 2.785e-07 2.786e-07 2.787e-07 2.788e-07 2.794e-07 2.794e-07 2.794e-07 2.794e-07 2.799e-07 2.801e-07
 host/floor-call	alloc_words	exact	0

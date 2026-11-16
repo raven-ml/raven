@@ -31,8 +31,9 @@ carries such a fixed set of transfers directly between the two machines,
 step after step. A program makes one through the capability record of a
 machine's host, and orders its transfers by the rail's counts
 ([`Rig_remote_abi`](../lib/remote/abi/rig_remote_abi.mli), "Rails"). A
-rig.program program reaches its machine's end of a rail as `Rail` memory
-([`Rig_program`](../lib/program/rig_program.mli), "Rails").
+rig.program program reaches its machine's end of a rail as `Rail` memory,
+and readies a transfer with a `Send` step once the work that writes it is
+done ([`Rig_program`](../lib/program/rig_program.mli), "Rails").
 
 ## One call, traced
 

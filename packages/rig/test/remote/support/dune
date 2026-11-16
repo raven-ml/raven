@@ -18,5 +18,4 @@
   rig.nv.nvidia
   rig_amd_support
   rig_nv_support
-  rig_cuda_support
-  rig_host_support))
+  rig_cuda_support))

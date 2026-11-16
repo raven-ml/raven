@@ -112,8 +112,18 @@ val link :
     The variables a run binds, and the values computed from them, are words of
     the run's ints. A value under a range may move with its trips, by a constant
     factor per range: an offset into a buffer, the offset a copy reads or
-    writes, or a scalar argument. Everything else, such as a grid or a
-    range's trips, is fixed for the run.
+    writes, a scalar argument, a grid or a range's trips. A split program's
+    blocks and a back edge's flag are fixed for the run. A cast to an integer
+    type that does not hold its operand's bounds keeps the operand's low bits,
+    wherever it sits in a value. A cast to [uint64] of a negative value holds
+    a value past an OCaml [int]. A scalar argument of 8 bytes alone reads it
+    as its bits. Where its number is read, under another operation, such as
+    its quotient by [2{^32}], or as an offset, which counts bytes, a range's
+    trips, a grid or a split program's count, the link raises on a constant
+    and the run on a value computed per run. A scalar argument takes a value
+    its bytes hold as a signed or an unsigned integer: the link raises on a
+    constant they do not hold, and the run on such a value of 4 bytes computed
+    per run ({!Rig_program.type-scalar}).
 
     Raises [Invalid_argument] if [devices] does not map a device of [linear], if
     its devices are of several machines, if a kernel's device is of another
@@ -124,8 +134,11 @@ val link :
     its memory on fewer bytes ({!Rig.alignment}) than the alignment of a
     storage node made there at link, if kernels
     access a parameter at two alignments or phases, if a value under a range
-    moves with its trips in another way than above, if a back edge's flag
-    moves with the run's words, or if [linear] is not a compiled schedule;
+    moves with its trips in another way than above, a narrowing cast's
+    operand among them, if a back edge's flag moves with the run's words, if
+    a constant scalar argument's bytes hold its value neither signed nor
+    unsigned, if a constant cast whose number is read holds a value past an
+    [int], or if [linear] is not a compiled schedule;
     {!Rig.Out_of_memory} if a device cannot allocate its storage at link; and
     [Failure] with the reason if the program does not load, such as a device
     that refuses a program's binary. *)
@@ -165,7 +178,8 @@ val run : ?vars:(string * int) list -> t -> Rig.Buffer.t option array -> unit
     Raises [Invalid_argument] if [slots] does not bind each parameter of [s] to
     a buffer of its device holding its parameter's bytes, if a
     buffer a kernel accesses does not start at its parameter's phase, if
-    [vars] leaves out a variable its call binds no value to, and as
+    [vars] leaves out a variable its call binds no value to, if a cast whose
+    number is read holds a value past an [int] ({!link}), and as
     {!Rig_program.run} does; {!Rig.Out_of_memory}
     if a device cannot allocate the storage of a schedule linked {!Per_run}:
     no call has run, and the storage the run made is returned. *)

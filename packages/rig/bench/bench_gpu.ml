@@ -169,37 +169,29 @@ let work part keep =
    input's address are 0. *)
 let one_launch arch binary =
   let module G = Rig_program in
-  let one n = (G.Fixed n, G.Fixed 1, G.Fixed 1) in
+  let fixed n = { G.add = n; terms = [||] } in
+  let one n = (fixed n, fixed 1, fixed 1) in
   let ids =
     G.Launch
       {
         image = 0;
         name = "ids";
         label = "ids";
-        params = { G.bytes = String.make 24 '\000'; holes = [||] };
+        params = String.make 24 '\000';
+        scalars = [||];
         refs = [| { G.slot = 0; at = 0; use = Write } |];
         groups = one 1;
         threads = one 1;
-        shared = G.Fixed 0;
+        shared = fixed 0;
       }
   in
   {
     G.devices = [| arch |];
     ints = 0;
     memory = [||];
-    images =
-      [| { G.device = 0; binary = { G.bytes = binary; holes = [||] } } |];
+    images = [| { G.device = 0; binary } |];
     inputs = [| { G.device = 0; bytes = 4 } |];
-    steps =
-      [|
-        G.Submit
-          {
-            device = 0;
-            slots = [| G.Input 0 |];
-            fixed = [||];
-            parts = [| ids |];
-          };
-      |];
+    steps = [| G.Submit { device = 0; slots = [| G.Input 0 |]; parts = [| ids |] } |];
   }
 
 (* A GPU's submits through rig. [empty] and [cost] submit no work and wait for

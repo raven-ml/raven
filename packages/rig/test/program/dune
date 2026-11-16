@@ -11,8 +11,7 @@
   rig_host_support
   windtrap)
  (deps
-  (glob_files ../fixtures/*.o)
-  (glob_files fixtures/*.o)))
+  (glob_files ../fixtures/*.o)))
 
 ; A description on each GPU driver the machine has that runs launches, with
 ; the kernels of each driver's conformance fixtures.

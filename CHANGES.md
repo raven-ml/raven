@@ -43,7 +43,7 @@ All notable changes to this project will be documented in this file.
 - `Rig.Submission.launch ~label` names a launch's work in profiles apart
   from its function, so launches of one function are told apart. **Breaking:**
   `Rig_program.Launch` takes the `label` its run passes, and descriptions are
-  of format 15.
+  of format 16.
 - Add `Rig.offers d k`, whether `Rig.Buffer.create ~memory:k d` makes `d`'s
   memory of kind `k`; where it is `false`, that create raises
   `Invalid_argument`.
@@ -1338,6 +1338,21 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Tolk_engine.link` keeps the low bits of a cast to a narrower integer type
+  wherever it sits in a scalar argument, a grid or a loop's trips, where it
+  dropped the cast: the cast to `int32` of `0x1_0000_0004`, halved, is 2. It
+  refuses such a cast of a value that moves with a loop's trips.
+  `Tolk_engine.link`, for a constant, and `Tolk_engine.run` raise
+  `Invalid_argument` where a cast to `uint64` of a negative value, which
+  holds a value past an `int`, is read as a number: under another operation,
+  such as its quotient by 2^32, or as a scalar argument of fewer than 8
+  bytes, an offset, which stored before its buffer, a loop's trips, a grid
+  or a split loop's count. A scalar argument whose value its bytes hold
+  neither signed nor unsigned raises `Invalid_argument`, where it passed the
+  low bits: from `Tolk_engine.link` where the value is constant, and from
+  `Tolk_engine.run` where a value of 4 bytes changes per run.
+- A call's grid and a loop's trips may move with an enclosing loop's trips by
+  a constant factor, which `Tolk_engine.link` refused.
 - On a GPU, a float32 projection into heads whose upcast takes the heads whole
   lends their second upcast to the width also when a bias of each head follows
   the product, holding 8 by 8 outputs a thread: the bias's loads kept it at 4

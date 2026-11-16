@@ -38,26 +38,28 @@ let of_bytes d s =
   B.copy ~src:(B.of_string s) ~dst:b;
   b
 
-let data bytes = { G.bytes; holes = [||] }
-let functions = data "functions"
+let functions = "functions"
 
-let hole ?(width = G.W64) ?(add = 0) ?(shift = 0) at x =
-  { G.at; width; terms = [| (x, 1) |]; add; shift }
+(* The value [n], and the value of word [w] of the run's ints. *)
+let fixed n = { G.add = n; terms = [||] }
+let int_at w = { G.add = 0; terms = [| (w, 1) |] }
+let one = (fixed 1, fixed 1, fixed 1)
+let scalar ?(width = G.W64) at value = { G.at; width; value }
 
 (* A launch of Polled's [fill]: for [groups] groups, the 64-bit word [i] of its
    slot [0] is [base + i]. *)
-let fill ?(holes : _ iarray = [||]) ?(use = G.Write) ~image ~groups base =
-  let bytes = String.make 8 '\000' ^ le64 base in
+let fill ?(scalars : _ iarray = [||]) ?(use = G.Write) ~image ~groups base =
   (Launch
         {
           image;
           name = "fill";
           label = "fill";
-          params = { bytes; holes };
+          params = String.make 8 '\000' ^ le64 base;
+          scalars;
           refs = [| { G.slot = 0; at = 0; use } |];
-          groups = (Fixed groups, Fixed 1, Fixed 1);
-          threads = (Fixed 1, Fixed 1, Fixed 1);
-          shared = Fixed 0;
+          groups = (fixed groups, fixed 1, fixed 1);
+          threads = one;
+          shared = fixed 0;
         })
 
 (* A launch of Polled's [copy]: [bytes] bytes from its slot [src] (defaults
@@ -68,38 +70,37 @@ let kcopy ?(src = 0) ?(dst = 1) ~image bytes =
           image;
           name = "copy";
           label = "copy";
-          params = data (String.make 16 '\000' ^ le64 bytes);
+          params = String.make 16 '\000' ^ le64 bytes;
+          scalars = [||];
           refs =
             [|
               { G.slot = src; at = 0; use = Read };
               { G.slot = dst; at = 8; use = Write };
             |];
-          groups = (Fixed 1, Fixed 1, Fixed 1);
-          threads = (Fixed 1, Fixed 1, Fixed 1);
-          shared = Fixed 0;
+          groups = one;
+          threads = one;
+          shared = fixed 0;
         })
 
 (* A submit whose slots are [buffers]'s, their accesses the refs'. *)
-let submit ?(buffers : _ iarray = [||]) ?(fixed : _ iarray = [||]) device parts
-    =
-  G.Submit { device; parts; slots = Iarray.map fst buffers; fixed }
+let submit ?(buffers : _ iarray = [||]) device parts =
+  G.Submit { device; parts; slots = Iarray.map fst buffers }
 
-let alloc ?(copies = G.One) ?(init = data "") device bytes =
-  G.Alloc { device; kind = B.Device; bytes; init; copies }
+let alloc ?(init = "") device bytes =
+  G.Alloc { device; kind = B.Device; bytes; init }
 
 let all memory = G.Memory { memory; offset = 0; length = 64 }
 
 (* A copy part of [length] bytes from slot [src] (defaults to [0]) at
    [src_offset] (defaults to [0]) to slot [dst] (defaults to [1]) at
    [dst_offset] (defaults to [0]). *)
-let pcopy ?(src = 0) ?(src_offset : _ iarray = [||]) ?(dst = 1)
-    ?(dst_offset : _ iarray = [||]) length =
+let pcopy ?(src = 0) ?(src_offset = fixed 0) ?(dst = 1) ?(dst_offset = fixed 0)
+    length =
   G.Copy { src; src_offset; dst; dst_offset; length }
 
 (* A move of [length] bytes from [src] at [src_offset] (defaults to [0]) to
    [dst] at [dst_offset] (defaults to [0]). *)
-let move ?(src_offset : _ iarray = [||]) ?(dst_offset : _ iarray = [||]) src
-    dst length =
+let move ?(src_offset = fixed 0) ?(dst_offset = fixed 0) src dst length =
   G.Move { src; src_offset; dst; dst_offset; length }
 
 let load_ok t ds =
@@ -107,7 +108,7 @@ let load_ok t ds =
 
 (* The host code of [f]'s object in [dir], an image on device [device]. *)
 let host_image ?(dir = "../fixtures") device f =
-  { G.device; binary = data (Rig_host_support.fixture ~dir f) }
+  { G.device; binary = Rig_host_support.fixture ~dir f }
 
 (* Steps against a model *)
 
@@ -139,7 +140,6 @@ type op =
 (* With [loop], the steps run in a loop of one trip. *)
 type case = {
   mem_dev : int array;
-  two : bool array;
   init : string array;
   in_dev : int array;
   inputs : string array;
@@ -168,9 +168,8 @@ let pp_op ppf = function
   | Empty { dev } -> Format.fprintf ppf "no part@%d" dev
 
 let pp_case ppf c =
-  Format.fprintf ppf "memory on [%s] two [%s]; inputs on [%s]; %s[%a]"
+  Format.fprintf ppf "memory on [%s]; inputs on [%s]; %s[%a]"
     (String.concat ";" (Array.to_list (Array.map string_of_int c.mem_dev)))
-    (String.concat ";" (Array.to_list (Array.map string_of_bool c.two)))
     (String.concat ";" (Array.to_list (Array.map string_of_int c.in_dev)))
     (if c.loop then "a loop of " else "")
     (Format.pp_print_list ~pp_sep:(fun ppf () -> Format.fprintf ppf "; ") pp_op)
@@ -241,13 +240,12 @@ let gen_case =
   in
   let bytes = string_of ~size:(constant size) char in
   let+ mem_dev = array ~size:(constant 3) dev
-  and+ two = array ~size:(constant 3) bool
   and+ init = array ~size:(constant 3) bytes
   and+ in_dev = array ~size:(constant 2) dev
   and+ inputs = array ~size:(constant 2) bytes
   and+ ops = list ~size:(int_range 1 6) op
   and+ loop = frequency [ (3, constant false); (1, constant true) ] in
-  { mem_dev; two; init; in_dev; inputs; ops; loop }
+  { mem_dev; init; in_dev; inputs; ops; loop }
 
 let gen_case = Gen.with_pp pp_case gen_case
 
@@ -262,9 +260,8 @@ let hidden =
 
 (* The offset [at] of a copy's end: a constant, or [2 * w + at mod 2] where
    word [w] of the run's ints holds [at / 2]. *)
-let copy_offset ~per_run w at : _ iarray =
-  if per_run then [| (G.Int w, 2); (Fixed (at land 1), 1) |]
-  else [| (Fixed at, 1) |]
+let copy_offset ~per_run w at =
+  if per_run then { G.add = at land 1; terms = [| (w, 2) |] } else fixed at
 
 (* The run's ints: words [2 * i] and [2 * i + 1] hold half the offsets of op
    [i], a copy part or a move. *)
@@ -328,12 +325,7 @@ let describe c =
   {
     G.devices = [| Rig.arch a; Rig.arch b |];
     ints = 2 * List.length c.ops;
-    memory =
-      Iarray.init 3 (fun m ->
-          alloc
-            ~copies:(if c.two.(m) then Two else One)
-            ~init:(data c.init.(m))
-            c.mem_dev.(m) size);
+    memory = Iarray.init 3 (fun m -> alloc ~init:c.init.(m) c.mem_dev.(m) size);
     images =
       [|
         { device = 0; binary = functions }; { device = 1; binary = functions };
@@ -344,21 +336,17 @@ let describe c =
         (Iarray.of_array c.in_dev);
     steps =
       (if c.loop then
-         [| Loop { trips = Fixed 1; trip = None; flag = None; body = steps } |]
+         [| Loop { trips = fixed 1; trip = None; flag = None; body = steps } |]
        else steps);
   }
 
-(* The model: memory of two copies is one per run parity. *)
+(* The model: memory keeps what each run leaves, and each run's inputs start
+   from the case's. *)
 let model c =
-  let mem =
-    Array.init 3 (fun m -> Array.init 2 (fun _ -> Bytes.of_string c.init.(m)))
-  in
-  fun n ->
+  let mem = Array.map Bytes.of_string c.init in
+  fun () ->
     let inputs = Array.map Bytes.of_string c.inputs in
-    let cell = function
-      | Mem m -> mem.(m).(if c.two.(m) then n land 1 else 0)
-      | In i -> inputs.(i)
-    in
+    let cell = function Mem m -> mem.(m) | In i -> inputs.(i) in
     let copy { src; dst; length; src_at; dst_at; _ } =
       Bytes.blit (cell src) src_at (cell dst) dst_at length
     in
@@ -451,7 +439,7 @@ let model_law c =
     end;
     equal
       ~msg:(strf "the inputs after run %d" n)
-      (array string) (expect n) (Array.map read xs)
+      (array string) (expect ()) (Array.map read xs)
   done;
   (* A step that names memory another device's step wrote before. *)
   let rec crossed last = function
@@ -481,7 +469,6 @@ let model_law c =
   in
   let moves f = List.exists (function Move m -> f m | _ -> false) c.ops in
   cover "a step follows another device's step" (crossed [] c.ops);
-  cover "memory of two copies" (Array.exists Fun.id c.two);
   cover "a loop refused" c.loop;
   cover "a time of a submission of no parts"
     ((not c.loop) && List.exists (function Empty _ -> true | _ -> false) c.ops);
@@ -556,7 +543,7 @@ let timed_program d =
         submit 0 [||];
         submit 0
           ~buffers:[| (all 0, Rig.Read); (all 1, Rig.Read_write) |]
-          [| pcopy ~dst_offset:[| (G.Int 0, 1) |] 8 |];
+          [| pcopy ~dst_offset:(int_at 0) 8 |];
       |];
   }
 
@@ -672,17 +659,9 @@ let per_ns = 8
 
 (* A launch of Polled's [fill] over the groups the run's int [w] holds. *)
 let fill_at w base =
-  G.Launch
-    {
-      image = 0;
-      name = "fill";
-      label = "fill";
-      params = data (String.make 8 '\000' ^ le64 base);
-      refs = [| { G.slot = 0; at = 0; use = Write } |];
-      groups = (G.Int w, G.Fixed 1, G.Fixed 1);
-      threads = (G.Fixed 1, G.Fixed 1, G.Fixed 1);
-      shared = G.Fixed 0;
-    }
+  match fill ~image:0 ~groups:1 base with
+  | G.Launch l -> G.Launch { l with groups = (int_at w, fixed 1, fixed 1) }
+  | part -> part
 
 (* On device 0: a fill of memory 0, of [large] words, over the groups word 0
    of the run's ints holds, then a copy part of its first word into memory
@@ -746,275 +725,184 @@ let shared_commands =
       (time_fill large);
   ]
 
-(* Holes *)
-
-type hole_case = { width : G.width; add : int; shift : int }
-
-let gen_hole =
-  let open Gen in
-  let+ width = of_list [ G.W32; G.W64 ]
-  and+ add = int_range 0 (1 lsl 20)
-  and+ shift = int_range 0 62 in
-  { width; add; shift }
-
-let gen_hole =
-  Gen.with_pp
-    (fun ppf h ->
-      Format.fprintf ppf "%s, add %d, shift %d"
-        (match h.width with W32 -> "W32" | W64 -> "W64")
-        h.add h.shift)
-    gen_hole
-
-let shaped h at x =
-  { G.at; width = h.width; terms = [| (x, 1) |]; add = h.add; shift = h.shift }
+(* Scalars *)
 
 let word s i = Int64.to_int (String.get_int64_le s (8 * i))
 
-(* A fill of one group whose base is a hole: it stores the base at word [i] of
-   its write slot. *)
-let fill_word i hole =
-  (Launch
-        {
-          image = 0;
-          name = "fill";
-          label = "fill";
-          params = { bytes = le64 (8 * i) ^ le64 0; holes = [| hole |] };
-          refs = [| { G.slot = 0; at = 0; use = Write } |];
-          groups = (Fixed 1, Fixed 1, Fixed 1);
-          threads = (Fixed 1, Fixed 1, Fixed 1);
-          shared = Fixed 0;
-        })
+(* A fill of one group into input 0 whose base, at byte 8 of its parameters,
+   is [s] over bytes 0. *)
+let scalar_fill d s =
+  {
+    G.devices = [| Rig.arch d |];
+    ints = 2;
+    memory = [||];
+    images = [| { device = 0; binary = functions } |];
+    inputs = [| { device = 0; bytes = 8 } |];
+    steps =
+      [|
+        submit 0
+          ~buffers:[| (Input 0, Rig.Read_write) |]
+          [| fill ~scalars:[| s |] ~image:0 ~groups:1 0 |];
+      |];
+  }
 
-(* Memory 0's address lands in word 0 of input 0, through a plain hole; the same
-   through [h], in its word 1; and [h] over it in memory 1's init, then memory
-   0's handle, both moved into input 1. *)
-let hole_law h =
+(* A 32-bit parameter's value and the low 32 bits it writes, or [None] where
+   it fits 32 bits neither as a signed nor as an unsigned integer. *)
+let w32_values =
+  [
+    (-(1 lsl 31) - 1, None);
+    (-(1 lsl 31), Some 0x8000_0000);
+    (-1, Some 0xffff_ffff);
+    (0, Some 0);
+    ((1 lsl 31) - 1, Some 0x7fff_ffff);
+    ((1 lsl 32) - 1, Some 0xffff_ffff);
+    (1 lsl 32, None);
+    ((1 lsl 32) + 5, None);
+  ]
+
+(* A W32 scalar of value [v], a constant or the run's int 0, writes [v]'s low
+   32 bits where [v] fits them; else load refuses the constant and the run
+   the int. *)
+let scalar_range (v, low) =
   let d = fst (Lazy.force devices) in
-  let address = G.Address { memory = 0; on = 0 } in
-  let init =
-    {
-      G.bytes = String.make 16 '\000';
-      holes = [| shaped h 0 address; hole 8 (G.Handle 0) |];
-    }
-  in
-  let t =
-    {
-      G.devices = [| Rig.arch d |];
-      ints = 0;
-      memory = [| alloc 0 8; alloc ~init 0 16 |];
-      images = [| { device = 0; binary = functions } |];
-      inputs = [| { device = 0; bytes = 16 }; { device = 0; bytes = 16 } |];
-      steps =
-        [|
-          submit 0
-            ~buffers:[| (Input 0, Rig.Read_write) |]
-            ~fixed:[| ({ memory = 0; offset = 0; length = 8 }, Rig.Read) |]
-            [| fill_word 0 (hole 8 (G.Leaf address)) |];
-          submit 0
-            ~buffers:[| (Input 0, Rig.Read_write) |]
-            ~fixed:[| ({ memory = 0; offset = 0; length = 8 }, Rig.Read) |]
-            [| fill_word 1 (shaped h 8 (G.Leaf address)) |];
-          move (Memory { memory = 1; offset = 0; length = 16 }) (Input 1) 16;
-        |];
-    }
-  in
-  let p = load_ok t [ d ] in
-  let x = B.create d 16 and y = B.create d 16 in
-  ignore
-    (G.run p
-       { inputs = [| x; y |]; ints = [||] });
-  let x = read x and y = read y in
-  let a = word x 0 in
-  let w = (a + h.add) lsr h.shift in
-  let low32 = w land 0xffff_ffff in
-  equal ~msg:"a launch's hole" int
-    (match h.width with W32 -> low32 | W64 -> w)
-    (word x 1);
-  let memory_word =
-    match h.width with
-    | W32 -> low32 (* the init's other 4 bytes stay 0 *)
-    | W64 -> w
-  in
-  equal ~msg:"a memory's hole" int memory_word (word y 0);
-  equal ~msg:"Polled's handle is the address" int a (word y 1);
-  cover "a shift past the address's bits" (h.shift > 40);
-  cover "a W32 hole" (h.width = W32)
+  let constant = scalar_fill d (scalar ~width:W32 8 (fixed v))
+  and per_run = scalar_fill d (scalar ~width:W32 8 (int_at 0)) in
+  let x = B.create d 8 in
+  let frame = { G.inputs = [| x |]; ints = [| v; 0 |] } in
+  match low with
+  | Some low ->
+      List.iter
+        (fun (msg, t) ->
+          Array.iter Rig.Point.wait (G.run (load_ok t [ d ]) frame);
+          equal ~msg int low (word (read x) 0))
+        [ ("a constant", constant); ("an int", per_run) ]
+  | None ->
+      raises_match ~msg:"load refuses the constant" Exn.invalid_arg (fun () ->
+          G.load constant [| d |]);
+      let p = load_ok per_run [ d ] in
+      raises_match ~msg:"the run refuses the int" Exn.invalid_arg (fun () ->
+          G.run p frame)
 
-(* Affine holes *)
-
-(* A term of an affine hole: word [i] of the frame's ints, a constant, memory
-   0's address. *)
-type term = Frame of int | Const of int | Addr
-
-type affine = {
+(* A scalar of [width] whose value is [add] plus each term's int times its
+   factor, and the run's two ints, one pair per run. *)
+type sum = {
   width : G.width;
   add : int;
-  shift : int;
-  terms : (term * int) list;
-  frames : (int * int) list;  (** The frame's two ints, per run. *)
+  terms : (int * int) list;
+  frames : (int * int) list;
 }
 
-let pp_affine ppf c =
-  let term ppf = function
-    | Frame i, f -> Format.fprintf ppf "int %d * %d" i f
-    | Const n, f -> Format.fprintf ppf "%d * %d" n f
-    | Addr, f -> Format.fprintf ppf "address * %d" f
-  in
-  Format.fprintf ppf "%s, add %d, shift %d, terms [%a], frames [%s]"
+let pp_sum ppf c =
+  let pairs f l = String.concat "; " (List.map f l) in
+  Format.fprintf ppf "%s, add %d, terms [%s], frames [%s]"
     (match c.width with W32 -> "W32" | W64 -> "W64")
-    c.add c.shift
-    (Format.pp_print_list ~pp_sep:(fun ppf () -> Format.fprintf ppf "; ") term)
-    c.terms
-    (String.concat "; "
-       (List.map (fun (a, b) -> Printf.sprintf "%d,%d" a b) c.frames))
+    c.add
+    (pairs (fun (w, f) -> strf "int %d * %d" w f) c.terms)
+    (pairs (fun (a, b) -> strf "%d,%d" a b) c.frames)
 
-let gen_affine =
+let gen_sum =
   let open Gen in
-  let factor =
-    frequency
-      [
-        (3, int_range (-4) 4);
-        (1, of_list [ 1 lsl 32; -(1 lsl 40); max_int; min_int ]);
-      ]
-  in
-  let term =
-    one_of
-      [
-        map (fun i -> Frame i) (int_range 0 1);
-        map (fun n -> Const n) (int_range (-(1 lsl 30)) (1 lsl 30));
-        constant Addr;
-      ]
-  in
+  let big = of_list [ 1 lsl 31; 1 lsl 32; max_int; min_int ] in
+  let int = frequency [ (3, int_range (-(1 lsl 33)) (1 lsl 33)); (1, big) ] in
+  let factor = frequency [ (3, int_range (-4) 4); (1, big) ] in
   let+ width = of_list [ G.W32; G.W64 ]
-  and+ add = int_range (-(1 lsl 20)) (1 lsl 20)
-  (* A quarter of the shifts at the 32-bit boundary, so that 100 cases all
-     miss it with odds about 5e-14. *)
-  and+ shift =
-    frequency
-      [
-        (1, of_list [ 31; 32 ]);
-        (1, of_list [ 0; 1; 33; 61; 62 ]);
-        (2, int_range 0 62);
-      ]
-  and+ terms = list ~size:(int_range 0 4) (pair term factor)
+  and+ add = int
+  and+ terms = list ~size:(int_range 0 3) (pair (int_range 0 1) factor)
   and+ frames = list ~size:(int_range 1 3) (pair int int) in
-  { width; add; shift; terms; frames }
+  { width; add; terms; frames }
 
-let gen_affine = Gen.with_pp pp_affine gen_affine
+let gen_sum = Gen.with_pp pp_sum gen_sum
 
-(* The word an affine hole of [c] writes, [value] giving its terms' values:
-   the [int] sum taken modulo [2{^64}], divided by [2{^shift}], and for [W32]
-   its low 32 bits. *)
-let affine_sum c value =
-  List.fold_left (fun s (x, f) -> s + (value x * f)) c.add c.terms
+(* [a + b] and [a * b], or [None] past an [int]. *)
+let add_int a b =
+  let s = a + b in
+  if (a >= 0) = (b >= 0) && (s >= 0) <> (a >= 0) then None else Some s
 
-let affine_word c value =
-  let sum = Int64.of_int (affine_sum c value) in
-  let w = Int64.unsigned_div sum (Int64.shift_left 1L c.shift) in
-  match c.width with W32 -> Int64.logand w 0xffff_ffffL | W64 -> w
+let mul_int a b =
+  if a = 0 || b = 0 then Some 0
+  else
+    let p = a * b in
+    if p / b <> a || (a = min_int && b = -1) then None else Some p
 
-(* A launch's hole of the case's terms writes, on each run, the sum of its
-   terms' values times their factors, plus [add], shifted, as the case's
-   reference computes it; and the same hole over memory leaves in memory 1's
-   init, filled at load, moved into input 1. *)
-let affine_law c =
+(* [c]'s sum over the ints [i0] and [i1], term by term from [add], or [None]
+   where a product or a partial sum is past an [int]. *)
+let exact c (i0, i1) =
+  List.fold_left
+    (fun s (w, f) ->
+      Option.bind s (fun s ->
+          Option.bind (mul_int (if w = 0 then i0 else i1) f) (add_int s)))
+    (Some c.add) c.terms
+
+let holds width v =
+  match width with W64 -> true | W32 -> v >= -(1 lsl 31) && v < 1 lsl 32
+
+(* A scalar writes, on each run, its sum over the run's ints, the low 32 bits
+   of it for W32. The run refuses a sum past an [int] or past what the width
+   holds; load refuses a value of no terms past it. *)
+let sum_law c =
   let d = fst (Lazy.force devices) in
-  let address = G.Address { memory = 0; on = 0 } in
-  let value_of : term -> G.value = function
-    | Frame i -> Int i
-    | Const n -> Fixed n
-    | Addr -> Leaf address
-  in
-  let leaf_terms = List.map (fun (_, f) -> (address, f)) c.terms in
-  let affine at terms =
-    let terms = Iarray.of_list terms in
-    { G.at; width = c.width; terms; add = c.add; shift = c.shift }
-  in
-  let fixed : _ iarray =
-    [| ({ G.memory = 0; offset = 0; length = 8 }, Rig.Read) |]
-  in
-  let t =
-    {
-      G.devices = [| Rig.arch d |];
-      ints = 2;
-      memory =
-        [|
-          alloc 0 8;
-          alloc 0 8
-            ~init:
-              {
-                G.bytes = String.make 8 '\000';
-                holes = [| affine 0 leaf_terms |];
-              };
-        |];
-      images = [| { device = 0; binary = functions } |];
-      inputs = [| { device = 0; bytes = 16 }; { device = 0; bytes = 8 } |];
-      steps =
-        [|
-          submit 0
-            ~buffers:[| (Input 0, Rig.Read_write) |]
-            ~fixed
-            [| fill_word 0 (hole 8 (G.Leaf address)) |];
-          submit 0
-            ~buffers:[| (Input 0, Rig.Read_write) |]
-            ~fixed
-            [|
-              fill_word 1
-                (affine 8 (List.map (fun (x, f) -> (value_of x, f)) c.terms));
-            |];
-          move (Memory { memory = 1; offset = 0; length = 8 }) (Input 1) 8;
-        |];
-    }
-  in
-  let p = load_ok t [ d ] in
-  let shifted_negative = ref false in
-  List.iter
-    (fun (i0, i1) ->
-      let x = B.create d 16 and y = B.create d 8 in
-      Array.iter Rig.Point.wait
-        (G.run p
-           {
-             inputs = [| x; y |];
-             ints = [| i0; i1 |];
-           });
-      let x = read x and y = read y in
-      let a = word x 0 in
-      let value = function
-        | Frame 0 -> i0
-        | Frame _ -> i1
-        | Const n -> n
-        | Addr -> a
-      in
-      if c.shift > 0 && affine_sum c value < 0 then shifted_negative := true;
-      let word64 s i = String.get_int64_le s (8 * i) in
-      equal ~msg:"a launch's hole" int64 (affine_word c value) (word64 x 1);
-      equal ~msg:"a memory's hole" int64
-        (affine_word c (fun _ -> a))
-        (word64 y 0))
-    c.frames;
-  let factors = List.map snd c.terms in
+  let value = { G.add = c.add; terms = Iarray.of_list c.terms } in
+  let t = scalar_fill d (scalar ~width:c.width 8 value) in
+  let sums = List.map (exact c) c.frames in
+  if c.terms = [] && not (holds c.width c.add) then
+    raises_match ~msg:"load refuses the constant" Exn.invalid_arg (fun () ->
+        G.load t [| d |])
+  else begin
+    let p = load_ok t [ d ] in
+    List.iter2
+      (fun (i0, i1) sum ->
+        let x = B.create d 8 in
+        let f = { G.inputs = [| x |]; ints = [| i0; i1 |] } in
+        match sum with
+        | Some v when holds c.width v ->
+            Array.iter Rig.Point.wait (G.run p f);
+            let low = match c.width with W64 -> v | W32 -> v land 0xffff_ffff in
+            equal ~msg:"the scalar" int low (word (read x) 0)
+        | _ ->
+            raises_match ~msg:"the run refuses the sum" Exn.invalid_arg
+              (fun () -> G.run p f))
+      c.frames sums
+  end;
+  let past f = List.exists f sums in
   cover "two terms or more" (List.length c.terms >= 2);
   cover "no term" (c.terms = []);
-  cover "a negative factor" (List.exists (fun f -> f < 0) factors);
-  cover "a term the frame gives"
-    (List.exists (function Frame _, _ -> true | _ -> false) c.terms);
-  cover "a W32 hole" (c.width = W32);
-  cover "a shift at a 32-bit boundary" (c.shift = 31 || c.shift = 32);
-  cover "a negative sum, shifted" !shifted_negative
+  cover "a W32 scalar" (c.width = W32);
+  cover "a sum past an int" (past Option.is_none);
+  cover "a W32 sum past 32 bits"
+    (c.width = W32
+    && past (function Some v -> not (holds W32 v) | None -> false));
+  cover "a negative sum written"
+    (past (function Some v -> v < 0 && holds c.width v | None -> false))
 
-(* Two copies *)
+(* The ints' two copies *)
 
-let one_device_fill ?(copies = G.One) d =
+let one_device_fill d =
   {
     G.devices = [| Rig.arch d |];
     ints = 0;
-    memory = [| alloc ~copies 0 64 |];
+    memory = [| alloc 0 64 |];
     images = [| { device = 0; binary = functions } |];
     inputs = [||];
     steps =
       [|
         submit 0
           ~buffers:[| (all 0, Rig.Read_write) |]
+          [| fill ~image:0 ~groups:1 7 |];
+      |];
+  }
+
+(* A fill of the run's ints on device 0. *)
+let ints_fill d =
+  {
+    G.devices = [| Rig.arch d |];
+    ints = 1;
+    memory = [||];
+    images = [| { device = 0; binary = functions } |];
+    inputs = [||];
+    steps =
+      [|
+        submit 0
+          ~buffers:[| (Ints, Rig.Read_write) |]
           [| fill ~image:0 ~groups:1 7 |];
       |];
   }
@@ -1031,9 +919,11 @@ let test_lost_runs () =
     raises_match ~msg:(strf "run %d" i) lost (fun () -> G.run p empty)
   done
 
-let test_two_waits () =
+(* Polled runs its work at a wait: run 2 waits for run 0's fill of its copy
+   of the ints. *)
+let test_ints_wait () =
   let d, pd = polled "two" in
-  let p = load_ok (one_device_fill ~copies:Two d) [ d ] in
+  let p = load_ok (ints_fill d) [ d ] in
   ignore (P.launches pd);
   let empty = { G.inputs = [||]; ints = [||] } in
   ignore (G.run p empty);
@@ -1045,14 +935,13 @@ let test_two_waits () =
     (List.length (P.launches pd));
   Array.iter Rig.Point.wait last
 
-let test_one_waits_not () =
+let test_memory_waits_not () =
   let d, pd = polled "one" in
   let p = load_ok (one_device_fill d) [ d ] in
   ignore (P.launches pd);
   let empty = { G.inputs = [||]; ints = [||] } in
   let last = List.init 3 (fun _ -> G.run p empty) in
-  equal ~msg:"memory of one copy: runs wait only by its stamps, in the queue"
-    int 0
+  equal ~msg:"memory: runs wait only by its stamps, in the queue" int 0
     (List.length (P.launches pd));
   List.iter (Array.iter Rig.Point.wait) last
 
@@ -1252,11 +1141,11 @@ let test_run_lost () =
       G.run p empty_frame);
   raises_match ~msg:"the next run" (lost d why) (fun () -> G.run p empty_frame)
 
-(* Run 2 of memory of two copies waits for run 0's work on its copy: a fault
-   that wait finds loses the device, and the run raises Lost. *)
+(* Run 2 waits for run 0's work on its copy of the ints: a fault that wait
+   finds loses the device, and the run raises Lost. *)
 let test_wait_lost () =
   let d, pd = polled "wait-lost" in
-  let p = load_ok (one_device_fill ~copies:Two d) [ d ] in
+  let p = load_ok (ints_fill d) [ d ] in
   ignore (G.run p empty_frame);
   ignore (G.run p empty_frame);
   P.fault pd "the engine hung";
@@ -1264,9 +1153,9 @@ let test_wait_lost () =
 
 (* Footprint *)
 
-(* A load makes what {!G.footprint} counts on each device: memory of one
-   copy and of two, host memory a move names at a page, and the run's ints
-   twice, a page each where a move names them. *)
+(* A load makes what {!G.footprint} counts on each device: memory, host
+   memory a move names at a page, and the run's ints twice, a page each where
+   a move names them. *)
 let test_footprint () =
   let d = Result.get_ok (Rig.software "footprint") in
   let settled () =
@@ -1302,7 +1191,7 @@ let test_footprint () =
       [ (Rig.name d, d1 - d0); (Rig.name Rig.host, h1 - h0) ]
   in
   case "memory" ~ints:3
-    ~memory:[| alloc 0 200; alloc ~copies:G.Two 0 64; alloc 1 300 |]
+    ~memory:[| alloc 0 200; alloc 0 64; alloc 1 300 |]
     ~steps:[||];
   case "moved host memory and ints" ~ints:2
     ~memory:[| alloc 1 64 |]
@@ -1325,33 +1214,21 @@ let base d =
       |];
   }
 
-let with_params bytes (t : G.t) =
+(* [t] whose one step is a submit on device 0, input 0 its slot, of [part]. *)
+let with_part part (t : G.t) =
   {
     t with
-    steps =
-      [|
-        submit 0
-          ~buffers:[| (Input 0, Rig.Read_write) |]
-          [|
-            (Launch
-                  {
-                    image = 0;
-                    name = "fill";
-                    label = "fill";
-                    params = data bytes;
-                    refs = [||];
-                    groups = (Fixed 1, Fixed 1, Fixed 1);
-                    threads = (Fixed 1, Fixed 1, Fixed 1);
-                    shared = Fixed 0;
-                  });
-          |];
-      |];
+    steps = [| submit 0 ~buffers:[| (Input 0, Rig.Read_write) |] [| part |] |];
   }
 
-let addr memory = G.Address { memory; on = 0 }
+let with_params params t =
+  match fill ~image:0 ~groups:1 0 with
+  | Launch l -> with_part (Launch { l with params; refs = [||] }) t
+  | part -> with_part part t
 
-let holed ?width ?shift n h =
-  { G.bytes = String.make n '\000'; holes = [| hole ?width ?shift 0 h |] }
+(* [base d] whose fill writes its parameters' scalars [scalars]. *)
+let with_scalars ?(ints = 0) scalars d =
+  { (with_part (fill ~scalars ~image:0 ~groups:1 0) (base d)) with ints }
 
 (* [base d] whose step copies [length] bytes of its slot [0] into its slot
    [1], of [slots], and fills its slot [0] with a ref of [use]. *)
@@ -1393,51 +1270,7 @@ let breaks =
       one );
     ( "an init longer than its memory",
       (fun d ->
-        {
-          (base d) with
-          memory = [| alloc ~init:(data (String.make 65 'x')) 0 64 |];
-        }),
-      one );
-    ( "a hole past its bytes",
-      (fun d ->
-        { (base d) with memory = [| alloc ~init:(holed 4 (addr 0)) 0 64 |] }),
-      one );
-    ( "a shift of 63",
-      (fun d ->
-        {
-          (base d) with
-          memory = [| alloc ~init:(holed ~shift:63 8 (addr 0)) 0 64 |];
-        }),
-      one );
-    ( "memory of two copies named in memory of one",
-      (fun d ->
-        {
-          (base d) with
-          memory =
-            [| alloc ~copies:Two 0 8; alloc ~init:(holed 8 (addr 0)) 0 8 |];
-        }),
-      one );
-    ( "memory of two copies named in an image",
-      (fun d ->
-        {
-          (base d) with
-          memory = [| alloc ~copies:Two 0 8 |];
-          images = [| { device = 0; binary = holed 16 (addr 0) } |];
-        }),
-      one );
-    ( "an entry of a later image",
-      (fun d ->
-        {
-          (base d) with
-          images =
-            [|
-              {
-                device = 0;
-                binary = holed 16 (G.Entry { image = 1; name = "fill" });
-              };
-              { device = 0; binary = functions };
-            |];
-        }),
+        { (base d) with memory = [| alloc ~init:(String.make 65 'x') 0 64 |] }),
       one );
     ( "a view past its memory",
       (fun d ->
@@ -1468,43 +1301,34 @@ let breaks =
         }),
       one );
     ( "an image's index",
-      (fun d ->
-        {
-          (base d) with
-          steps =
-            [|
-              submit 0
-                ~buffers:[| (Input 0, Rig.Read_write) |]
-                [| fill ~image:5 ~groups:1 0 |];
-            |];
-        }),
+      (fun d -> with_part (fill ~image:5 ~groups:1 0) (base d)),
       one );
     ( "parameters of no whole word",
       (fun d -> with_params (String.make 6 '\000') (base d)),
       one );
-    ( "an address on no device",
-      (fun d ->
-        {
-          (base d) with
-          memory =
-            [| alloc ~init:(holed 8 (G.Address { memory = 0; on = 2 })) 0 64 |];
-        }),
+    ( "a scalar past its parameters",
+      with_scalars [| scalar 12 (fixed 0) |],
       one );
-    ( "holes that share a byte",
+    ( "a scalar at a negative byte",
+      with_scalars [| scalar ~width:W32 (-4) (fixed 0) |],
+      one );
+    ( "scalars that share a byte",
+      with_scalars [| scalar 8 (fixed 0); scalar ~width:W32 12 (fixed 0) |],
+      one );
+    ( "a constant scalar past 32 bits",
+      with_scalars [| scalar ~width:W32 8 (fixed (1 lsl 32)) |],
+      one );
+    ( "a scalar of a word past the ints",
+      with_scalars ~ints:1 [| scalar 8 (int_at 1) |],
+      one );
+    ( "a geometry of a word past the ints",
       (fun d ->
-        {
-          (base d) with
-          memory =
-            [|
-              alloc
-                ~init:
-                  {
-                    bytes = String.make 16 '\000';
-                    holes = [| hole 0 (addr 0); hole ~width:W32 4 (addr 0) |];
-                  }
-                0 64;
-            |];
-        }),
+        let part =
+          match fill ~image:0 ~groups:1 0 with
+          | Launch l -> G.Launch { l with groups = (int_at 0, fixed 1, fixed 1) }
+          | part -> part
+        in
+        with_part part (base d)),
       one );
     ( "a slot no ref names",
       (fun d ->
@@ -1545,34 +1369,19 @@ let breaks =
       copying ~ints:1 ~length:16 [| all 0; Ints |],
       one );
     ( "a copy at a negative offset",
-      copying ~src_offset:[| (Fixed (-8), 1) |] ~length:8 [| all 0; Input 0 |],
+      copying ~src_offset:(fixed (-8)) ~length:8 [| all 0; Input 0 |],
       one );
     ( "a copy of a negative length",
       copying ~length:(-1) [| all 0; Input 0 |],
       one );
     ( "a copy between overlapping bytes of the ints",
-      copying ~ints:2 ~dst_offset:[| (Fixed 4, 1) |] ~length:8 [| Ints; Ints |],
+      copying ~ints:2 ~dst_offset:(fixed 4) ~length:8 [| Ints; Ints |],
       one );
     ( "a copy between overlapping bytes of an input",
-      copying ~dst_offset:[| (Fixed 4, 1) |] ~length:8 [| Input 0; Input 0 |],
+      copying ~dst_offset:(fixed 4) ~length:8 [| Input 0; Input 0 |],
       one );
-    ( "a copy offset of a leaf",
-      copying ~src_offset:[| (Leaf (Handle 0), 1) |] ~length:8
-        [| all 0; Input 0 |],
-      one );
-    ( "a copy offset past an int",
-      copying ~src_offset:[| (Fixed max_int, 2) |] ~length:8
-        [| all 0; Input 0 |],
-      one );
-    ( "a copy offset whose sum passes an int",
-      copying
-        ~src_offset:[| (Fixed max_int, 1); (Fixed 1, 1) |]
-        ~length:8 [| all 0; Input 0 |],
-      one );
-    ( "a copy offset of an int past the ints",
-      copying ~ints:1
-        ~src_offset:[| (Int 1, 1) |]
-        ~length:8 [| all 0; Input 0 |],
+    ( "a copy offset of a word past the ints",
+      copying ~ints:1 ~src_offset:(int_at 1) ~length:8 [| all 0; Input 0 |],
       one );
     ( "a move of a negative length",
       (fun d -> { (base d) with steps = [| move (all 0) (Input 0) (-1) |] }),
@@ -1584,54 +1393,50 @@ let breaks =
       (fun d ->
         {
           (base d) with
-          steps = [| move ~dst_offset:[| (Fixed 60, 1) |] (Input 0) (all 0) 8 |];
+          steps = [| move ~dst_offset:(fixed 60) (Input 0) (all 0) 8 |];
         }),
       one );
     ( "a move at a negative offset",
       (fun d ->
         {
           (base d) with
-          steps = [| move ~src_offset:[| (Fixed (-8), 1) |] (all 0) (Input 0) 8 |];
+          steps = [| move ~src_offset:(fixed (-8)) (all 0) (Input 0) 8 |];
         }),
       one );
-    ( "a move offset of a leaf",
+    ( "a move offset of a word past the ints",
       (fun d ->
         {
           (base d) with
-          steps =
-            [| move ~src_offset:[| (Leaf (Handle 0), 1) |] (all 0) (Input 0) 8 |];
-        }),
-      one );
-    ( "a move offset whose sum passes an int",
-      (fun d ->
-        {
-          (base d) with
-          steps =
-            [|
-              move
-                ~src_offset:[| (Fixed max_int, 1); (Fixed 1, 1) |]
-                (all 0) (Input 0) 8;
-            |];
+          steps = [| move ~src_offset:(int_at 0) (all 0) (Input 0) 8 |];
         }),
       one );
     ( "a move between overlapping bytes of one memory",
       (fun d ->
         {
           (base d) with
-          steps =
-            [| move ~src_offset:[| (Fixed 8, 1) |] (view 0 16) (view 8 16) 8 |];
+          steps = [| move ~src_offset:(fixed 8) (view 0 16) (view 8 16) 8 |];
         }),
       one );
     ( "a move between overlapping bytes of an input",
       (fun d ->
         {
           (base d) with
-          steps = [| move ~dst_offset:[| (Fixed 4, 1) |] (Input 0) (Input 0) 8 |];
+          steps = [| move ~dst_offset:(fixed 4) (Input 0) (Input 0) 8 |];
         }),
       one );
     ( "a copy between overlapping bytes of one memory",
-      copying ~src_offset:[| (Fixed 8, 1) |] ~length:8
-        [| view 0 16; view 8 16 |],
+      copying ~src_offset:(fixed 8) ~length:8 [| view 0 16; view 8 16 |],
+      one );
+    ( "a loop of trips of a word past the ints",
+      (fun d ->
+        {
+          (base d) with
+          steps =
+            [|
+              Loop
+                { trips = int_at 0; trip = None; flag = None; body = (base d).steps };
+            |];
+        }),
       one );
     ( "a ref past its slots",
       (fun d ->
@@ -1652,33 +1457,20 @@ let refusals =
   let one d = [ d ] in
   [
     ( "a grid a run refuses",
-      (fun d ->
-        {
-          (base d) with
-          steps =
-            [|
-              submit 0
-                ~buffers:[| (Input 0, Rig.Read_write) |]
-                [| fill ~image:0 ~groups:(1 lsl 33) 0 |];
-            |];
-        }),
+      (fun d -> with_part (fill ~image:0 ~groups:(1 lsl 33) 0) (base d)),
       one );
     ( "an image its device refuses",
       (fun d ->
-        {
-          (base d) with
-          images = [| { device = 0; binary = data "nonsense" } |];
-        }),
+        { (base d) with images = [| { device = 0; binary = "nonsense" } |] }),
       one );
     ( "a function its image lacks",
       (fun d ->
-        {
-          (base d) with
-          memory =
-            [|
-              alloc ~init:(holed 8 (G.Entry { image = 0; name = "nope" })) 0 64;
-            |];
-        }),
+        let part =
+          match fill ~image:0 ~groups:1 0 with
+          | Launch l -> G.Launch { l with name = "nope" }
+          | part -> part
+        in
+        with_part part (base d)),
       one );
   ]
 
@@ -1805,28 +1597,6 @@ let test_unborrowable () =
   let why = require_error (G.load t [| a; b |]) in
   contains ~msg:"names the device" ~sub:(Rig.name a) why
 
-(* An Address is of memory with an address, which memory its driver names by
-   handle only has not. *)
-let test_handle_only () =
-  let d, _ =
-    P.open_ ~addresses:false
-      (strf "program:handle-only-%d" (Atomic.fetch_and_add opened 1))
-  in
-  let t =
-    {
-      (base d) with
-      steps =
-        [|
-          submit 0
-            ~buffers:[| (Input 0, Rig.Read_write) |]
-            ~fixed:[| (G.{ memory = 0; offset = 0; length = 64 }, Rig.Read) |]
-            [| fill ~image:0 ~groups:1 0 ~holes:[| hole 8 (Leaf (addr 0)) |] |];
-        |];
-    }
-  in
-  let why = require_error (G.load t [| d |]) in
-  contains ~msg:"says why" ~sub:"by its handle only" why
-
 let test_machines () =
   let d = fst (polled "machines") in
   let far =
@@ -1855,28 +1625,26 @@ let test_frame_refusals () =
 
 (* A launch on device [host] of test/fixtures' [affine], image [image], which
    stores [a * in[i] + c] at [out[i]] for [i] below [n]: [x.(0) <- a * x.(0)
-   + c]. *)
-let step_affine ?(host = 1) ?(image = 1) x ~a ~c =
+   + c]. The launch names the function [name]. *)
+let step_affine ?(host = 1) ?(image = 1) ?(name = "affine") x ~a ~c =
   submit host
     ~buffers:[| (x, Rig.Read_write) |]
     [|
       Launch
         {
           image;
-          name = "affine";
-          label = "affine";
-          params =
-            {
-              bytes = String.make 16 '\000' ^ le64 1 ^ String.make 16 '\000';
-              holes = [| hole 24 a; hole 32 c |];
-            };
+          name;
+          label = name;
+          params = String.make 16 '\000' ^ le64 1 ^ String.make 16 '\000';
+          scalars = [| scalar 24 a; scalar 32 c |];
           refs =
             [|
-              { G.slot = 0; at = 0; use = Write }; { G.slot = 0; at = 8; use = Read };
+              { G.slot = 0; at = 0; use = Write };
+              { G.slot = 0; at = 8; use = Read };
             |];
-          groups = (Fixed 1, Fixed 1, Fixed 1);
-          threads = (Fixed 1, Fixed 1, Fixed 1);
-          shared = Fixed 0;
+          groups = one;
+          threads = one;
+          shared = fixed 0;
         };
     |]
 
@@ -1891,185 +1659,6 @@ let with_host d (t : G.t) =
 
 let one_word d = of_bytes d (le64 0)
 let word_of b = word (read b) 0
-
-(* A first-byte address or handle reaches all of its memory. Every step that
-   reads a pointer-bearing container must name its pointees, transitively. *)
-let memory_hole_refusals () =
-  let d, _ = polled "memory-holes" in
-  let whole m = { memory = m; offset = 0; length = 64 } in
-  let short m = { memory = m; offset = 0; length = 8 } in
-  let launch leaf = fill ~image:0 ~groups:1 0 ~holes:[| hole 8 (Leaf leaf) |] in
-  let geometry leaf =
-    match launch leaf with
-    | Launch l ->
-        G.Launch
-          { l with params = data (String.make 16 '\000'); shared = Leaf leaf }
-    | _ -> assert false
-  in
-  let main = G.Entry { image = 0; name = "main" } in
-  let filling ?(target = main) leaf =
-    G.Fill
-      {
-        fill = target;
-        params = holed 16 (Leaf leaf);
-        refs = [| { G.slot = 0; at = 8; use = Write } |];
-      }
-  in
-  (* A fill that reads slots [0] to [n - 1]. *)
-  let reading n =
-    G.Fill
-      {
-        fill = main;
-        params = data (String.make (8 * n) '\000');
-        refs = Iarray.init n (fun slot -> { G.slot; at = 8 * slot; use = Read });
-      }
-  in
-  let sub ?(fixed : _ iarray = [||])
-      ?(buffers : _ iarray = [| (Input 0, Rig.Read_write) |]) parts =
-    G.Submit { device = 0; fixed; slots = Iarray.map fst buffers; parts }
-  in
-  let t = base d in
-  let cases =
-    [
-      ( "launch Address without fixed memory",
-        { t with steps = [| sub [| launch (addr 0) |] |] } );
-      ( "launch Address through a slot",
-        {
-          t with
-          steps =
-            [|
-              sub
-                ~buffers:[| (Memory (whole 0), Rig.Read) |]
-                [| launch (addr 0) |];
-            |];
-        } );
-      ( "launch Address through partial fixed memory",
-        {
-          t with
-          steps =
-            [| sub ~fixed:[| (short 0, Rig.Read) |] [| launch (addr 0) |] |];
-        } );
-      ( "launch Handle without whole memory",
-        {
-          t with
-          steps =
-            [|
-              sub
-                ~buffers:[| (Memory (short 0), Rig.Read) |]
-                [| launch (Handle 0) |];
-            |];
-        } );
-      ( "launch geometry Address",
-        { t with steps = [| sub [| geometry (addr 0) |] |] } );
-      ( "launch geometry Handle",
-        { t with steps = [| sub [| geometry (Handle 0) |] |] } );
-      ("fill Address", { t with steps = [| sub [| filling (addr 0) |] |] });
-      ("fill Handle", { t with steps = [| sub [| filling (Handle 0) |] |] });
-      ( "fill Address function",
-        {
-          t with
-          steps =
-            [|
-              sub
-                ~fixed:[| (whole 0, Rig.Read) |]
-                [| filling ~target:(addr 0) main |];
-            |];
-        } );
-      ( "fill Handle function",
-        {
-          t with
-          steps =
-            [|
-              sub
-                ~fixed:[| (whole 0, Rig.Read) |]
-                [| filling ~target:(Handle 0) main |];
-            |];
-        } );
-      ( "image Address",
-        {
-          t with
-          images = [| { device = 0; binary = holed 8 (addr 0) } |];
-          steps = [||];
-        } );
-      ( "image Handle",
-        {
-          t with
-          images = [| { device = 0; binary = holed 8 (Handle 0) } |];
-          steps = [||];
-        } );
-      ( "loop Address",
-        {
-          t with
-          steps =
-            [|
-              Loop
-                {
-                  trips = Leaf (addr 0);
-                  trip = None;
-                  flag = Some (Memory (whole 0), 0);
-                  body = [||];
-                };
-            |];
-        } );
-      ( "loop Handle without whole memory",
-        {
-          t with
-          steps =
-            [|
-              Loop
-                {
-                  trips = Leaf (Handle 0);
-                  trip = None;
-                  flag = Some (Memory (short 0), 0);
-                  body = [||];
-                };
-            |];
-        } );
-      ( "init Address without a fixing step",
-        {
-          t with
-          memory = [| alloc ~init:(holed 8 (addr 0)) 0 64 |];
-          steps = [||];
-        } );
-      ( "init Handle omitted by Submit",
-        {
-          t with
-          memory = [| alloc ~init:(holed 8 (Handle 1)) 0 64; alloc 0 64 |];
-          steps =
-            [|
-              sub
-                ~buffers:[| (Memory (short 0), Rig.Read) |]
-                [| reading 1 |];
-            |];
-        } );
-      ( "transitive init Handle",
-        {
-          t with
-          memory =
-            [|
-              alloc ~init:(holed 8 (Handle 1)) 0 64;
-              alloc ~init:(holed 8 (Handle 2)) 0 64;
-              alloc 0 64;
-            |];
-          steps =
-            [|
-              sub
-                ~buffers:
-                  [|
-                    (Memory (short 0), Rig.Read); (Memory (whole 1), Rig.Read);
-                  |]
-                [| reading 2 |];
-            |];
-        } );
-    ]
-  in
-  List.iter
-    (fun (name, t) ->
-      match G.load t [| d |] with
-      | exception Invalid_argument why -> contains ~msg:name ~sub:"memory" why
-      | Error why -> failf "load answered Error for %s: %s" name why
-      | Ok _ -> failf "load accepted %s" name)
-    cases
 
 type ints_case = { n : int; a : int; c : int }
 
@@ -2097,19 +1686,8 @@ let ints_law i =
       inputs = [| { device = 0; bytes = 256 } |];
       steps =
         [|
-          step_affine Ints ~a:(Fixed i.a) ~c:(Fixed i.c);
-          G.Submit
-            {
-              device = 0;
-              slots = [| Input 0 |];
-              fixed = [||];
-              parts =
-                [|
-                  (match fill ~image:0 ~groups:1 100 with
-                  | Launch l -> G.Launch { l with groups = (Int 0, Fixed 1, Fixed 1) }
-                  | f -> f);
-                |];
-            };
+          step_affine Ints ~a:(fixed i.a) ~c:(fixed i.c);
+          submit 0 ~buffers:[| (Input 0, Rig.Read_write) |] [| fill_at 0 100 |];
         |];
     }
   in
@@ -2140,18 +1718,15 @@ let loop_law k =
         [|
           Loop
             {
-              trips = Int 0;
+              trips = int_at 0;
               trip = Some 1;
               flag = None;
               body =
                 [|
-                  step_affine (Input 0) ~a:(Fixed 1) ~c:(Fixed 1);
+                  step_affine (Input 0) ~a:(fixed 1) ~c:(fixed 1);
                   submit 0
                     ~buffers:[| (Input 1, Rig.Read_write) |]
-                    [|
-                      fill ~image:0 ~groups:1 0
-                        ~holes:[| hole 8 (G.Int 1 : value) |];
-                    |];
+                    [| fill ~scalars:[| scalar 8 (int_at 1) |] ~image:0 ~groups:1 0 |];
                 |];
             };
         |];
@@ -2178,16 +1753,16 @@ let clear_int w =
           image = 1;
           name = "affine";
           label = "affine";
-          params =
-            data (le64 (8 * w) ^ le64 (8 * w) ^ le64 1 ^ le64 0 ^ le64 0);
+          params = le64 (8 * w) ^ le64 (8 * w) ^ le64 1 ^ le64 0 ^ le64 0;
+          scalars = [||];
           refs =
             [|
               { G.slot = 0; at = 0; use = Write };
               { G.slot = 0; at = 8; use = Read };
             |];
-          groups = (Fixed 1, Fixed 1, Fixed 1);
-          threads = (Fixed 1, Fixed 1, Fixed 1);
-          shared = Fixed 0;
+          groups = one;
+          threads = one;
+          shared = fixed 0;
         };
     |]
 
@@ -2208,19 +1783,19 @@ let test_flag () =
         {
           G.devices = [||];
           ints = 3;
-          memory = [| alloc ~init:(data (le64 1)) 0 8 |];
+          memory = [| alloc ~init:(le64 1) 0 8 |];
           images = [||];
           inputs = [| { device = 0; bytes = 8 }; { device = 0; bytes = 8 } |];
           steps =
             [|
               Loop
                 {
-                  trips = Fixed 10;
+                  trips = fixed 10;
                   trip = None;
                   flag = Some flag;
                   body =
                     [|
-                      clear; step_affine (Input 0) ~a:(Fixed 1) ~c:(Fixed 1);
+                      clear; step_affine (Input 0) ~a:(fixed 1) ~c:(fixed 1);
                     |];
                 };
             |];
@@ -2253,7 +1828,7 @@ let test_flag_outside () =
         [|
           Loop
             {
-              trips = Fixed 1;
+              trips = fixed 1;
               trip = None;
               flag = Some (Input 0, 8);
               body = [||];
@@ -2273,177 +1848,55 @@ let test_flag_outside () =
           ints = [||];
         })
 
-(* [calling], image 1, calls [affine], image 0, through its address, an
-   [Entry] leaf in its parameters: three trips of a loop add 3. *)
-let calling ~(callee : G.leaf) x =
-  submit 0
-    ~buffers:[| (x, Rig.Read_write) |]
-    [|
-      Launch
-        {
-          image = 1;
-          name = "calling";
-          label = "calling";
-          params =
-            {
-              bytes =
-                String.make 24 '\000' ^ le64 1 ^ le64 1 ^ le64 1;
-              holes = [| hole 0 (Leaf callee) |];
-            };
-          refs =
-            [|
-              { G.slot = 0; at = 8; use = Write }; { G.slot = 0; at = 16; use = Read };
-            |];
-          groups = (Fixed 1, Fixed 1, Fixed 1);
-          threads = (Fixed 1, Fixed 1, Fixed 1);
-          shared = Fixed 0;
-        };
-    |]
-
-let test_entry_leaf () =
-  let t =
-    {
-      G.devices = [| Rig.arch Rig.host |];
-      ints = 0;
-      memory = [||];
-      images = [| host_image 0 "affine"; host_image 0 "calling" |];
-      inputs = [| { device = 0; bytes = 8 } |];
-      steps =
-        [|
-          Loop
-            {
-              trips = Fixed 3;
-              trip = None;
-              flag = None;
-              body =
-                [|
-                  calling
-                    ~callee:(Entry { image = 0; name = "affine" })
-                    (Input 0);
-                |];
-            };
-        |];
-    }
-  in
-  let p = load_ok t [ Rig.host ] in
-  let counter = one_word Rig.host in
-  ignore
-    (G.run p
-       { inputs = [| counter |]; ints = [||] });
-  equal ~msg:"three calls of affine" int 3 (word_of counter)
-
 let host_breaks =
   let two d = [ d; Rig.host ] in
   let with_steps ?(ints = 0) d steps =
     with_host d { (base d) with ints; steps }
   in
+  let loop ?trip flag = Loop { trips = fixed 1; trip; flag; body = [||] } in
   [
-      ( "a host value of a rail this machine has not",
-        (fun d ->
-          with_steps d
-            [| step_affine (Input 0) ~a:(Leaf (Ready 9)) ~c:(Fixed 0) |]),
-        two );
-      ( "a loop's trips of a rail this machine has not",
-        (fun d ->
-          with_steps d
-            [|
-              Loop
-                {
-                  trips = Leaf (Ready 9);
-                  trip = None;
-                  flag = None;
-                  body = [||];
-                };
-            |]),
-        two );
-      ( "an int past the ints",
-        (fun d ->
-          with_steps ~ints:1 d [| step_affine Ints ~a:(Int 1) ~c:(Fixed 0) |]),
-        two );
-      ( "a trip past the ints",
-        (fun d ->
-          with_steps ~ints:1 d
-            [|
-              Loop { trips = Fixed 1; trip = Some 1; flag = None; body = [||] };
-            |]),
-        two );
-      ( "a flag of no byte",
-        (fun d ->
-          with_steps d
-            [|
-              Loop
-                {
-                  trips = Fixed 1;
-                  trip = None;
-                  flag =
-                    Some (Memory { memory = 0; offset = 0; length = 0 }, 0);
-                  body = [||];
-                };
-            |]),
-        two );
-      ( "a flag past its view",
-        (fun d ->
-          with_steps d
-            [|
-              Loop
-                {
-                  trips = Fixed 1;
-                  trip = None;
-                  flag =
-                    Some (Memory { memory = 0; offset = 0; length = 8 }, 8);
-                  body = [||];
-                };
-            |]),
-        two );
-      ( "a flag at a negative byte",
-        (fun d ->
-          with_steps d
-            [|
-              Loop
-                {
-                  trips = Fixed 1;
-                  trip = None;
-                  flag = Some (Input 0, -1);
-                  body = [||];
-                };
-            |]),
-        two );
-      ( "a flag past the ints",
-        (fun d ->
-          with_steps ~ints:1 d
-            [|
-              Loop
-                {
-                  trips = Fixed 1;
-                  trip = None;
-                  flag = Some (Ints, 8);
-                  body = [||];
-                };
-            |]),
-        two );
-    ]
+    ( "an int past the ints",
+      (fun d ->
+        with_steps ~ints:1 d [| step_affine Ints ~a:(int_at 1) ~c:(fixed 0) |]),
+      two );
+    ( "a trip past the ints",
+      (fun d -> with_steps ~ints:1 d [| loop ~trip:1 None |]),
+      two );
+    ( "a flag of no byte",
+      (fun d ->
+        with_steps d
+          [| loop (Some (Memory { memory = 0; offset = 0; length = 0 }, 0)) |]),
+      two );
+    ( "a flag past its view",
+      (fun d ->
+        with_steps d
+          [| loop (Some (Memory { memory = 0; offset = 0; length = 8 }, 8)) |]),
+      two );
+    ( "a flag at a negative byte",
+      (fun d -> with_steps d [| loop (Some (Input 0, -1)) |]),
+      two );
+    ( "a flag past the ints",
+      (fun d -> with_steps ~ints:1 d [| loop (Some (Ints, 8)) |]),
+      two );
+  ]
 
 let host_refusals =
   let two d = [ d; Rig.host ] in
   let with_steps d steps = with_host d { (base d) with steps } in
   [
-      ( "host code that does not link",
-        (fun d ->
-          {
-            (with_steps d [||]) with
-            images = [| { device = 1; binary = data "nonsense" } |];
-          }),
-        two );
-      ( "a host value of a function its image lacks",
-        (fun d ->
-          with_steps d
-            [|
-              step_affine (Input 0)
-                ~a:(Leaf (Entry { image = 0; name = "nope" }))
-                ~c:(Fixed 0);
-            |]),
-        two );
-    ]
+    ( "host code that does not link",
+      (fun d ->
+        {
+          (with_steps d [||]) with
+          images = [| { device = 1; binary = "nonsense" } |];
+        }),
+      two );
+    ( "a host function its image lacks",
+      (fun d ->
+        with_steps d
+          [| step_affine ~name:"nope" (Input 0) ~a:(fixed 0) ~c:(fixed 0) |]),
+      two );
+  ]
 
 (* Memory a host launch names that the host does not address. *)
 let test_host_unaddressed () =
@@ -2455,7 +1908,7 @@ let test_host_unaddressed () =
     with_host d
       {
         (base d) with
-        steps = [| step_affine (all 0) ~a:(Fixed 1) ~c:(Fixed 0) |];
+        steps = [| step_affine (all 0) ~a:(fixed 1) ~c:(fixed 0) |];
       }
   in
   is_error ~pp:(fun _ _ -> ()) (G.load t [| d; Rig.host |])
@@ -2476,7 +1929,7 @@ let test_read_only_input () =
       images = [| host_image 0 "affine" |];
       inputs = [| { device = 0; bytes = 8 } |];
       steps =
-        [| step_affine ~host:0 ~image:0 (Input 0) ~a:(Fixed 2) ~c:(Fixed 1) |];
+        [| step_affine ~host:0 ~image:0 (Input 0) ~a:(fixed 2) ~c:(fixed 1) |];
     }
   in
   let p = load_ok t [ Rig.host ] in
@@ -2498,7 +1951,7 @@ let test_read_only_copy () =
     {
       G.devices = [| Rig.arch d |];
       ints = 0;
-      memory = [| alloc ~init:(data (le64 7)) 0 8 |];
+      memory = [| alloc ~init:(le64 7) 0 8 |];
       images = [||];
       inputs = [| { device = 0; bytes = 8 } |];
       steps =
@@ -2538,37 +1991,9 @@ let gen_t =
   let n = int_range (-2) 5000 in
   let few g = map Iarray.of_array (array ~size:(int_range 0 3) g) in
   let str = string_of ~size:(int_range 0 12) char in
-  let leaf =
-    one_of
-      [
-        (let+ memory = n and+ on = n in
-         Address { memory; on });
-        map (fun m -> Handle m) n;
-        (let+ image = n and+ name = str in
-         Entry { image; name });
-        map (fun r -> Ready r) n;
-      ]
-  in
   let value =
-    one_of
-      [
-        map (fun x -> Fixed x) int;
-        map (fun i -> Int i) n;
-        map (fun l -> Leaf l) leaf;
-      ]
-  in
-  let data f =
-    let+ bytes = str
-    and+ holes =
-      few
-        (let+ at = n
-         and+ width = of_list [ W32; W64 ]
-         and+ terms = few (pair f int)
-         and+ add = int
-         and+ shift = n in
-         { at; width; terms; add; shift })
-    in
-    { bytes; holes }
+    let+ add = int and+ terms = few (pair n int) in
+    ({ add; terms } : G.value)
   in
   let view =
     let+ memory = n and+ offset = n and+ length = n in
@@ -2582,7 +2007,6 @@ let gen_t =
         constant Ints;
       ]
   in
-  let access = of_list [ Rig.Read; Rig.Read_write ] in
   let ref =
     let+ at = n and+ slot = n and+ use = of_list [ G.Read; Write; Unordered ] in
     { G.slot; at; use }
@@ -2592,42 +2016,53 @@ let gen_t =
     one_of
       [
         map (fun v -> Words v) view;
-        (let+ fill = leaf
-         and+ params = data value
-         and+ refs = few ref in
-         G.Fill { fill; params; refs });
         (let+ src = n
-         and+ src_offset = few (pair value int)
+         and+ src_offset = value
          and+ dst = n
-         and+ dst_offset = few (pair value int)
+         and+ dst_offset = value
          and+ length = n in
          (Copy { src; src_offset; dst; dst_offset; length } : G.part));
         (let+ image = n
          and+ name = str
          and+ label = str
-         and+ params = data value
+         and+ params = str
+         and+ scalars =
+           few
+             (let+ at = n
+              and+ width = of_list [ W32; W64 ]
+              and+ value = value in
+              ({ at; width; value } : G.scalar))
          and+ refs = few ref
          and+ groups = triple
          and+ threads = triple
          and+ shared = value in
          Launch
-           { image; name; label; params; refs; groups; threads; shared });
+           {
+             image;
+             name;
+             label;
+             params;
+             scalars;
+             refs;
+             groups;
+             threads;
+             shared;
+           });
       ]
   in
   let rec step depth =
     let leaves =
       [
-        (let+ device = n
-         and+ parts = few part
-         and+ slots = few slot
-         and+ fixed = few (pair view access) in
-         Submit { device; parts; slots; fixed });
+        (let+ device = n and+ parts = few part and+ slots = few slot in
+         Submit { device; parts; slots });
         (let+ src = slot
-         and+ src_offset = few (pair value int)
+         and+ src_offset = value
          and+ dst = slot
-         and+ dst_offset = few (pair value int)
+         and+ dst_offset = value
          and+ length = n in
          G.Move { src; src_offset; dst; dst_offset; length });
+        (let+ rail = n and+ count = value in
+         Send { rail; count });
       ]
     in
     if depth = 0 then one_of leaves
@@ -2648,15 +2083,14 @@ let gen_t =
            (let+ device = n
             and+ kind = of_list [ B.Device; B.Pinned; B.Mapped ]
             and+ bytes = n
-            and+ init = data leaf
-            and+ copies = of_list [ One; Two ] in
-            Alloc { device; kind; bytes; init; copies });
+            and+ init = str in
+            Alloc { device; kind; bytes; init });
            (let+ rail = n and+ area = of_list [ Outbound; Inbound; Counts ] in
             Rail { rail; area });
          ])
   and+ images =
     few
-      (let+ device = n and+ binary = data leaf in
+      (let+ device = n and+ binary = str in
        { device; binary })
   and+ inputs =
     few
@@ -2699,7 +2133,7 @@ let test_version () =
   let s = Bytes.of_string (G.to_string (base (fst (polled "version")))) in
   Bytes.set_int64_le s 12 7L;
   let why = require_error (G.of_string (Bytes.to_string s)) in
-  contains ~msg:"names the versions" ~sub:"version 7, not 15" why
+  contains ~msg:"names the versions" ~sub:"version 7, not 16" why
 
 (* A description cut inside its version is malformed where the cut is. *)
 let test_cut_version () =
@@ -2709,122 +2143,150 @@ let test_cut_version () =
 
 (* Rails *)
 
-let area n = Bigarray.(Array1.create char c_layout n)
+(* [n] bytes of 0 that start on a page, which Polled maps: a host buffer of
+   64 KiB starts on one. *)
+let area n =
+  let a = B.export (B.create Rig.host (1 lsl 16)) Bigarray.char in
+  let a = Bigarray.Array1.sub a 0 n in
+  Bigarray.Array1.fill a '\000';
+  a
 
-(* An end of a rail of this process whose ready function is the support's
-   [ready]: a call stores its count at the first word of [counts]. *)
-let fake_end () =
-  Rig_remote_abi.end_ ~outbound:(area 512) ~inbound:(area 512)
-    ~counts:(area 384) ~ready:ignore ~ready_fn:Rig_support.ready
+(* An end of rail 7 of this process whose ready function records each count
+   with word 0 of the outbound area at the call. *)
+let recording_end () =
+  let outbound = area 512 and seen = ref [] in
+  let ready c =
+    let w = String.init 8 (Bigarray.Array1.get outbound) in
+    seen := (c, word w 0) :: !seen
+  in
+  let e =
+    Rig_remote_abi.end_ ~outbound ~inbound:(area 512) ~counts:(area 384) ~ready
+      ~ready_fn:Rig_support.ready
+  in
+  ((fun id -> if id = 7 then Some e else None), seen)
 
-let rail_program =
+(* On Polled's [d]: a fill of [42] into word 0 of rail 7's outbound area, then
+   a send of [count]. *)
+let send_program ?(count = int_at 0) d =
   {
-    G.devices = [| Rig.arch Rig.host |];
-    memory =
-      [| Rail { rail = 7; area = Outbound }; Rail { rail = 7; area = Counts } |];
-    images = [| host_image 0 "ready" |];
+    G.devices = [| Rig.arch d |];
+    memory = [| Rail { rail = 7; area = Outbound } |];
+    images = [| { device = 0; binary = functions } |];
     inputs = [||];
     ints = 1;
     steps =
       [|
         submit 0
           ~buffers:
-            [|
-              (Memory { memory = 0; offset = 0; length = 8 }, Rig.Read_write);
-              (Memory { memory = 1; offset = 0; length = 384 }, Rig.Read_write);
-            |]
-          [|
-            (* test/fixtures' [ready] stores [value] at [out], then calls
-               [ready] with [counts] and [count]. *)
-            Launch
-              {
-                image = 0;
-                name = "ready";
-                label = "ready";
-                params =
-                  {
-                    bytes = String.make 32 '\000' ^ le64 1;
-                    holes = [| hole 16 (Leaf (Ready 7)); hole 24 (Int 0) |];
-                  };
-                refs =
-                  [|
-                    { G.slot = 0; at = 0; use = Write };
-                    { G.slot = 1; at = 8; use = Write };
-                  |];
-                groups = (Fixed 1, Fixed 1, Fixed 1);
-                threads = (Fixed 1, Fixed 1, Fixed 1);
-                shared = Fixed 0;
-              };
-          |];
+            [| (Memory { memory = 0; offset = 0; length = 8 }, Rig.Read_write) |]
+          [| fill ~image:0 ~groups:1 42 |];
+        Send { rail = 7; count };
       |];
   }
 
-(* A host launch writes a rail's outbound area and calls its ready function,
-   which a [Ready] leaf names, with its counts. *)
-let test_rail () =
-  let e = fake_end () in
-  let rails id = if id = 7 then Some e else None in
+(* A send calls the end's ready function with its count once the work that
+   writes the outbound area is done: Polled runs its work at a wait. A send
+   takes no time. *)
+let test_send () =
+  let d, _ = polled "send" in
+  let rails, seen = recording_end () in
   let p =
     require_ok ~pp:Format.pp_print_string
-      (G.load ~rails rail_program [| Rig.host |])
+      (G.load ~rails (send_program d) [| d |])
   in
-  ignore
-    (G.run p { inputs = [||]; ints = [| 42 |] });
-  let outbound = String.init 8 (Bigarray.Array1.get e.outbound) in
-  equal ~msg:"the outbound area" int 42 (word outbound 0);
-  equal ~msg:"the ready function's count" int 1
-    (word (read (B.of_bigarray e.counts)) 0)
+  ignore (G.run p { inputs = [||]; ints = [| 3 |] });
+  equal ~msg:"the count and the outbound word at the call"
+    (list (pair int int))
+    [ (3, 42) ]
+    !seen;
+  let times = G.time p { inputs = [||]; ints = [| 5 |] } in
+  equal ~msg:"the send's time" int 0 times.(1);
+  equal ~msg:"the second send's count" (list int) [ 5; 3 ] (List.map fst !seen)
+
+(* A count below 1 is refused at load where it is constant, and at the run
+   where it is not, before the end's ready function. *)
+let test_send_count () =
+  let d, _ = polled "send-count" in
+  let rails, seen = recording_end () in
+  raises_match ~msg:"a count of 0" (Exn.invalid_arg ~sub:"below 1") (fun () ->
+      G.load ~rails (send_program ~count:(fixed 0) d) [| d |]);
+  let p =
+    require_ok ~pp:Format.pp_print_string
+      (G.load ~rails (send_program d) [| d |])
+  in
+  raises_match ~msg:"an int of 0" (Exn.invalid_arg ~sub:"below 1") (fun () ->
+      G.run p { inputs = [||]; ints = [| 0 |] });
+  equal ~msg:"no call" (list (pair int int)) [] !seen
+
+(* A send follows the run's [waits]: program [b] sends what program [a] wrote
+   into the outbound area through [Rail] memory of its own, which [b]'s memory
+   does not order. Polled runs [a]'s work at a wait. *)
+let test_send_waits () =
+  let d, _ = polled "send-waits" in
+  let rails, seen = recording_end () in
+  let described = send_program d in
+  let a = { described with steps = [| Iarray.get described.steps 0 |] }
+  and b =
+    {
+      described with
+      images = [||];
+      steps = [| Send { rail = 7; count = fixed 1 } |];
+    }
+  in
+  let load t = require_ok ~pp:Format.pp_print_string (G.load ~rails t [| d |]) in
+  let a = load a and b = load b in
+  let frame = { G.inputs = [||]; ints = [| 0 |] } in
+  let waits = G.run a frame in
+  ignore (G.run ~waits b frame);
+  equal ~msg:"the count and the outbound word at the call"
+    (list (pair int int))
+    [ (1, 42) ]
+    !seen
 
 let test_no_rail () =
+  let d, _ = polled "no-rail" in
   raises_match ~msg:"names the rail" (Exn.invalid_arg ~sub:"rail 7") (fun () ->
-      G.load rail_program [| Rig.host |])
+      G.load (send_program d) [| d |]);
+  let send = { (send_program d) with memory = [| alloc 0 8 |] } in
+  raises_match ~msg:"a send's rail" (Exn.invalid_arg ~sub:"rail 7") (fun () ->
+      G.load send [| d |])
 
-(* Constants beside holes *)
+(* Constant bytes beside scalars *)
 
 type beside = {
-  bytes : int64;  (** The word the description holds. *)
-  value : int;
+  bytes : string;  (** The 16 parameter bytes the description holds. *)
+  at : int;
   width : G.width;
-  shift : int;
-  per_run : bool;  (** The value is the run's int, else fixed. *)
+  value : int;
+  per_run : bool;  (** The value is the run's int, else constant. *)
 }
 
 let gen_beside =
   let open Gen in
-  let+ width = of_list [ G.W32; G.W64 ]
-  and+ shift = int_range 0 62
-  and+ value = int_range 0 max_int
-  and+ raw = int64
-  and+ clash = bool
+  let+ bytes = string_of ~size:(int_range 16 16) char
+  and+ wide = bool
+  and+ at = int_range 0 12
+  and+ v64 = int
+  and+ v32 = int_range (-(1 lsl 31)) ((1 lsl 32) - 1)
   and+ per_run = bool in
-  let field =
-    let w = Int64.of_int (value lsr shift) in
-    match width with W32 -> Int64.logand w 0xffff_ffffL | W64 -> w
-  in
-  let raw =
-    match width with W32 -> Int64.logand raw 0xffff_ffffL | W64 -> raw
-  in
-  let bytes = if clash then raw else Int64.logand raw (Int64.lognot field) in
-  { bytes; value; width; shift; per_run }
+  if wide then { bytes; at = min at 8; width = W64; value = v64; per_run }
+  else { bytes; at; width = W32; value = v32; per_run }
 
 let gen_beside =
   Gen.with_pp
     (fun ppf b ->
-      Format.fprintf ppf "bytes %Lx, value %x >> %d, %s, %s" b.bytes b.value
-        b.shift
+      Format.fprintf ppf "bytes %S, %s at %d of %d, %s" b.bytes
         (match b.width with W32 -> "W32" | W64 -> "W64")
-        (if b.per_run then "per run" else "fixed"))
+        b.at b.value
+        (if b.per_run then "per run" else "constant"))
     gen_beside
 
-(* A launch of [main] whose 8 parameter bytes hold [b.bytes] with a hole over
-   [b.value]: a value that meets their set bits is refused, at load where it is
-   fixed and at run where it is the run's; otherwise the launch reads the bytes
-   with the value's bits ORed in, every other bit kept. *)
+(* A launch of [main] whose parameters are [b.bytes] with a scalar over
+   [b.value]: the launch reads the bytes with the scalar's little-endian word
+   in place of its bytes, every other byte kept. *)
 let beside_law b =
   let d, pd = polled "beside" in
-  let leaf : value = if b.per_run then Int 0 else Fixed b.value in
-  let bytes = Bytes.create 8 in
-  Bytes.set_int64_le bytes 0 b.bytes;
+  let value = if b.per_run then int_at 0 else fixed b.value in
   let t =
     {
       G.devices = [| Rig.arch d |];
@@ -2836,62 +2298,36 @@ let beside_law b =
         [|
           submit 0
             [|
-              (Launch
-                    {
-                      image = 0;
-                      name = "main";
-                      label = "main";
-                      params =
-                        {
-                          bytes = Bytes.to_string bytes;
-                          holes =
-                            [|
-                              {
-                                G.at = 0;
-                                width = b.width;
-                                terms = [| (leaf, 1) |];
-                                add = 0;
-                                shift = b.shift;
-                              };
-                            |];
-                        };
-                      refs = [||];
-                      groups = (Fixed 1, Fixed 1, Fixed 1);
-                      threads = (Fixed 1, Fixed 1, Fixed 1);
-                      shared = Fixed 0;
-                    });
+              Launch
+                {
+                  image = 0;
+                  name = "main";
+                  label = "main";
+                  params = b.bytes;
+                  scalars = [| scalar ~width:b.width b.at value |];
+                  refs = [||];
+                  groups = one;
+                  threads = one;
+                  shared = fixed 0;
+                };
             |];
         |];
     }
   in
-  let field =
-    let w = Int64.of_int (b.value lsr b.shift) in
-    match b.width with W32 -> Int64.logand w 0xffff_ffffL | W64 -> w
-  in
-  let clashes = Int64.logand b.bytes field <> 0L in
-  cover "a value that meets set bits" clashes;
-  cover "a value beside set bits" ((not clashes) && b.bytes <> 0L);
+  let p = load_ok t [ d ] in
+  ignore (P.launches pd);
+  Rig.Point.wait (G.run p { G.inputs = [||]; ints = [| b.value |] }).(0);
+  let want = Bytes.of_string b.bytes in
+  (match b.width with
+  | W64 -> Bytes.set_int64_le want b.at (Int64.of_int b.value)
+  | W32 -> Bytes.set_int32_le want b.at (Int32.of_int b.value));
+  let l = List.hd (P.launches pd) in
+  equal ~msg:"the bytes with the scalar in place" string
+    (Bytes.to_string want) l.params;
+  let size = match b.width with W32 -> 4 | W64 -> 8 in
+  cover "a W32 scalar" (b.width = W32);
   cover "a value read per run" b.per_run;
-  match (G.load t [| d |], clashes && not b.per_run) with
-  | exception Invalid_argument _ when clashes && not b.per_run -> ()
-  | (Ok _ | Error _), true -> fail "load took a fixed value that meets set bits"
-  | Error why, false -> failf "load: %s" why
-  | Ok p, false ->
-      ignore (P.launches pd);
-      let frame =
-        { G.inputs = [||]; ints = [| b.value |] }
-      in
-      if clashes then
-        raises_match ~msg:"run refuses it" Exn.invalid_arg (fun () ->
-            G.run p frame)
-      else begin
-        let pt = (G.run p frame).(0) in
-        Rig.Point.wait pt;
-        let l = List.hd (P.launches pd) in
-        equal ~msg:"the bytes with the value ORed in" int64
-          (Int64.logor b.bytes field)
-          (String.get_int64_le l.params 0)
-      end
+  cover "a scalar off its width's alignment" (b.at mod size <> 0)
 
 (* Integers at their extremes *)
 
@@ -2899,20 +2335,22 @@ let beside_law b =
    whose sum with another bounds an access is checked where a sum wraps. *)
 type extreme =
   | Ints of int
-  | Hole_at of int
+  | Scalar_at of int
+  | Word of int
   | View_at of int
   | View_length of int
 
 let pp_extreme ppf = function
   | Ints n -> Format.fprintf ppf "ints %d" n
-  | Hole_at n -> Format.fprintf ppf "a hole at %d" n
+  | Scalar_at n -> Format.fprintf ppf "a scalar at %d" n
+  | Word n -> Format.fprintf ppf "a value of word %d" n
   | View_at n -> Format.fprintf ppf "a view at %d" n
   | View_length n -> Format.fprintf ppf "a view of %d bytes" n
 
 let extremes =
   List.concat_map
     (fun n ->
-      let fields = [ Hole_at n; View_at n; View_length n ] in
+      let fields = [ Scalar_at n; Word n; View_at n; View_length n ] in
       if n < 0 || n > max_int / 8 then Ints n :: fields else fields)
     [
       max_int;
@@ -2939,20 +2377,8 @@ let extreme_law e =
   let t =
     match e with
     | Ints n -> { t with ints = n }
-    | Hole_at n ->
-        {
-          t with
-          memory =
-            [|
-              alloc
-                ~init:
-                  {
-                    bytes = String.make 8 '\000';
-                    holes = [| hole n (addr 0) |];
-                  }
-                0 64;
-            |];
-        }
+    | Scalar_at n -> with_scalars [| scalar n (fixed 0) |] d
+    | Word n -> with_scalars ~ints:1 [| scalar 8 (int_at n) |] d
     | View_at n -> { t with steps = [| view n 8 |] }
     | View_length n -> { t with steps = [| view 8 n |] }
   in
@@ -2962,30 +2388,26 @@ let extreme_law e =
 
 (* A loop of two trips stores its trip in int 0, and each trip's launch copies
    that word's low byte, read through an Ints slot, to byte [trip] of the input:
-   the launch's offset is a hole over the trip. The gate holds the device's
+   the launch's offset is a scalar of the trip. The gate holds the device's
    work, so trip 1's store waits for trip 0's work. *)
 let test_trip_follows_work () =
   let d, pd = polled "trip-order" in
   let copy_byte =
-    (Launch
-          {
-            image = 0;
-            name = "copy";
-            label = "copy";
-            params =
-              {
-                bytes = le64 0 ^ le64 0 ^ le64 1;
-                holes = [| hole 8 (Int 0 : value) |];
-              };
-            refs =
-              [|
-                { G.slot = 0; at = 0; use = Read };
-                { G.slot = 1; at = 8; use = Write };
-              |];
-            groups = (Fixed 1, Fixed 1, Fixed 1);
-            threads = (Fixed 1, Fixed 1, Fixed 1);
-            shared = Fixed 0;
-          })
+    Launch
+      {
+        image = 0;
+        name = "copy";
+        label = "copy";
+        params = le64 0 ^ le64 0 ^ le64 1;
+        scalars = [| scalar 8 (int_at 0) |];
+        refs =
+          [|
+            { G.slot = 0; at = 0; use = Read }; { G.slot = 1; at = 8; use = Write };
+          |];
+        groups = one;
+        threads = one;
+        shared = fixed 0;
+      }
   in
   let t =
     {
@@ -2998,7 +2420,7 @@ let test_trip_follows_work () =
         [|
           Loop
             {
-              trips = Fixed 2;
+              trips = fixed 2;
               trip = Some 0;
               flag = None;
               body =
@@ -3026,7 +2448,7 @@ let test_trip_follows_work () =
   equal ~msg:"each trip's work read its own trip" string "\000\001"
     (String.sub bytes 0 2)
 
-(* A launch writes int 0 through an Ints slot, and a later launch's hole over
+(* A launch writes int 0 through an Ints slot, and a later launch's scalar of
    int 0 reads what it wrote. *)
 let test_int_follows_writer () =
   let d, _ = polled "int-order" in
@@ -3044,7 +2466,7 @@ let test_int_follows_writer () =
             [| fill ~image:0 ~groups:1 42 |];
           submit 0
             ~buffers:[| (Input 0, Rig.Read_write) |]
-            [| fill ~image:0 ~groups:1 0 ~holes:[| hole 8 (Int 0 : value) |] |];
+            [| fill ~scalars:[| scalar 8 (int_at 0) |] ~image:0 ~groups:1 0 |];
         |];
     }
   in
@@ -3089,167 +2511,6 @@ let test_input_ref () =
            { inputs = [| x |]; ints = [||] });
       equal ~msg:"the stored address" int expected (word_of x))
     [ B.create d 64; B.create d 64 ]
-
-(* Fill parameters share launch parameters' frame and ref semantics. *)
-let test_fill_params () =
-  let d = Result.get_ok (Rig.software "program-fill-params") in
-  let t =
-    {
-      devices = [| Rig.arch d; Rig.arch Rig.host |];
-      memory = [||];
-      images = [| host_image ~dir:"fixtures" 1 "fill" |];
-      inputs = [| { device = 0; bytes = 8 } |];
-      ints = 1;
-      steps =
-        [|
-          submit 0
-            ~buffers:[| (Input 0, Rig.Read_write) |]
-            [|
-              (G.Fill
-                    {
-                      fill = Entry { image = 0; name = "fill" };
-                      params =
-                        {
-                          bytes = String.make 16 '\000';
-                          holes = [| hole 8 (Int 0) |];
-                        };
-                      refs = [| { G.slot = 0; at = 0; use = Write } |];
-                    });
-            |];
-        |];
-    }
-  in
-  let p = load_ok t [ d; Rig.host ] in
-  List.iter
-    (fun n ->
-      let out = B.create d 8 in
-      Array.iter Rig.Point.wait
-        (G.run p
-           { inputs = [| out |]; ints = [| n |] });
-      equal ~msg:"the run's parameter at its ref" int n (word_of out))
-    [ 42; 99 ]
-
-let test_fill_empty () =
-  let d = Result.get_ok (Rig.software "program-fill-empty") in
-  let t =
-    {
-      devices = [| Rig.arch d; Rig.arch Rig.host |];
-      memory = [||];
-      images = [| host_image ~dir:"fixtures" 1 "fill" |];
-      inputs = [||];
-      ints = 0;
-      steps =
-        [|
-          submit 0
-            [|
-              (G.Fill { fill = Entry { image = 0; name = "fill_empty" }; params = data ""; refs = [||] });
-            |];
-        |];
-    }
-  in
-  let p = load_ok t [ d; Rig.host ] in
-  let points =
-    G.run p { inputs = [||]; ints = [||] }
-  in
-  equal ~msg:"one submission" int 1 (Array.length points);
-  Array.iter Rig.Point.wait points
-
-(* Every run reaches its own copy through the address initialized after the
-   fixing submission was made. The init points through another container. *)
-let test_init_address () =
-  let d = Result.get_ok (Rig.software "program-init-address") in
-  let v memory = { memory; offset = 0; length = 8 } in
-  let t =
-    {
-      devices = [| Rig.arch d; Rig.arch Rig.host |];
-      memory =
-        [|
-          alloc ~copies:Two 0 8; alloc ~copies:Two ~init:(holed 8 (addr 0)) 0 8;
-        |];
-      images = [| host_image ~dir:"fixtures" 1 "fill" |];
-      inputs = [| { device = 0; bytes = 8 } |];
-      ints = 1;
-      steps =
-        [|
-          submit 0
-            ~buffers:[| (Memory (v 1), Rig.Read) |]
-            ~fixed:[| (v 0, Rig.Read_write) |]
-            [|
-              (G.Fill
-                    {
-                      fill = Entry { image = 0; name = "fill_indirect" };
-                      params =
-                        {
-                          bytes = String.make 16 '\000';
-                          holes = [| hole 8 (Int 0) |];
-                        };
-                      refs = [| { G.slot = 0; at = 0; use = Write } |];
-                    });
-            |];
-          move (Memory (v 0)) (Input 0) 8;
-        |];
-    }
-  in
-  let p = load_ok t [ d; Rig.host ] in
-  let out = B.create d 8 in
-  List.iter
-    (fun n ->
-      ignore
-        (G.run p
-           { inputs = [| out |]; ints = [| n |] });
-      equal ~msg:"the initialized address reaches this run's copy" int n
-        (word_of out))
-    [ 42; 99; 123 ]
-
-(* The submission keeps both its fill and the host function whose address its
-   initialized memory holds after the loaded program leaves scope. *)
-let test_init_code_kept () =
-  let d, pd = polled "init-code-kept" in
-  let out = one_word d in
-  let[@inline never] submit () =
-    let t =
-      {
-        G.devices = [| Rig.arch d; Rig.arch Rig.host |];
-        memory =
-          [|
-            alloc ~init:(holed 8 (Entry { image = 1; name = "affine" })) 0 8;
-          |];
-        images =
-          [| host_image ~dir:"fixtures" 1 "fill"; host_image 1 "affine" |];
-        inputs = [| { device = 0; bytes = 8 } |];
-        ints = 0;
-        steps =
-          [|
-            submit 0
-              ~buffers:
-                [|
-                  (Memory { memory = 0; offset = 0; length = 8 }, Rig.Read);
-                  (Input 0, Rig.Read_write);
-                |]
-              [|
-                (G.Fill
-                      {
-                        fill = Entry { image = 0; name = "fill_call" };
-                        params = data (String.make 16 '\000');
-                        refs =
-                          [|
-                            { G.slot = 0; at = 0; use = Read }; { G.slot = 1; at = 8; use = Write };
-                          |];
-                      });
-              |];
-          |];
-      }
-    in
-    let p = load_ok t [ d; Rig.host ] in
-    G.run p { inputs = [| out |]; ints = [||] }
-  in
-  let points = submit () in
-  equal ~msg:"work is held before collection" int 1 (P.queued pd);
-  for _ = 1 to 3 do
-    Gc.full_major ()
-  done;
-  Array.iter Rig.Point.wait points;
-  equal ~msg:"the initialized entry ran after collection" int 1 (word_of out)
 
 (* What run reads of the caller's *)
 
@@ -3311,7 +2572,7 @@ let test_copy_part () =
       G.devices = [| Rig.arch d |];
       ints = 0;
       memory =
-        [| alloc ~init:(data (le64 42 ^ le64 7)) 0 16; alloc 0 16 |];
+        [| alloc ~init:(le64 42 ^ le64 7) 0 16; alloc 0 16 |];
       images = [||];
       inputs = [| input; input; input |];
       steps =
@@ -3358,14 +2619,14 @@ let test_copy_loop () =
       G.devices = [| Rig.arch d |];
       ints = 1;
       memory =
-        [| alloc ~init:(data (String.concat "" (List.map le64 rows))) 0 32 |];
+        [| alloc ~init:(String.concat "" (List.map le64 rows)) 0 32 |];
       images = [||];
       inputs = [| { device = 0; bytes = 32 } |];
       steps =
         [|
           Loop
             {
-              trips = Fixed 4;
+              trips = fixed 4;
               trip = Some 0;
               flag = None;
               body =
@@ -3379,8 +2640,8 @@ let test_copy_loop () =
                       |]
                     [|
                       pcopy
-                        ~src_offset:[| (Int 0, 8) |]
-                        ~dst_offset:[| (Int 0, -8); (Fixed 24, 1) |]
+                        ~src_offset:{ G.add = 0; terms = [| (0, 8) |] }
+                        ~dst_offset:{ G.add = 24; terms = [| (0, -8) |] }
                         8;
                     |];
                 |];
@@ -3419,9 +2680,9 @@ let test_copy_outside () =
     G.run p
       { inputs = [| input |]; ints = [| v |] }
   in
-  let src = load (pcopy ~src_offset:[| (Int 0, 1) |] 8)
-  and dst = load (pcopy ~dst_offset:[| (Int 0, 1) |] 8)
-  and twice = load (pcopy ~src_offset:[| (Int 0, 2) |] 8) in
+  let src = load (pcopy ~src_offset:(int_at 0) 8)
+  and dst = load (pcopy ~dst_offset:(int_at 0) 8)
+  and twice = load (pcopy ~src_offset:{ G.add = 0; terms = [| (0, 2) |] } 8) in
   ignore (run src 56);
   ignore (run dst 56);
   raises_match ~msg:"a source from byte 60 of 64" Exn.invalid_arg (fun () ->
@@ -3450,8 +2711,8 @@ let test_copy_ints () =
             ~buffers:[| (Ints, Rig.Read); (Ints, Rig.Read_write) |]
             [|
               pcopy
-                ~src_offset:[| (Int 0, 1) |]
-                ~dst_offset:[| (Int 1, 1) |]
+                ~src_offset:(int_at 0)
+                ~dst_offset:(int_at 1)
                 8;
             |];
           move Ints (Input 0) 32;
@@ -3480,7 +2741,7 @@ let test_move_queued () =
     {
       G.devices = [| Rig.arch d |];
       ints = 0;
-      memory = [| alloc ~init:(data (String.make 64 'm')) 0 64 |];
+      memory = [| alloc ~init:(String.make 64 'm') 0 64 |];
       images = [||];
       inputs = [| { G.device = 0; bytes = 64 } |];
       steps = [| move (all 0) (Input 0) 64 |];
@@ -3553,7 +2814,7 @@ let test_move_host_queued () =
   equal ~msg:"the bytes through host memory" string (String.make 64 'h')
     (read y)
 
-(* An [Int] that a queued move wrote is read once the move is done: word 0 of
+(* An int that a queued move wrote is read once the move is done: word 0 of
    the ints, which a move sets from input 0, picks the row of memory 0 that a
    second move takes into input 1. *)
 let test_move_writes_int () =
@@ -3564,13 +2825,13 @@ let test_move_writes_int () =
       G.devices = [| Rig.arch d |];
       ints = 1;
       memory =
-        [| alloc ~init:(data (String.concat "" (List.map le64 rows))) 0 32 |];
+        [| alloc ~init:(String.concat "" (List.map le64 rows)) 0 32 |];
       images = [||];
       inputs = Iarray.init 2 (fun _ -> { G.device = 0; bytes = 8 });
       steps =
         [|
           move (Input 0) Ints 8;
-          move ~src_offset:[| (Int 0, 8) |]
+          move ~src_offset:{ G.add = 0; terms = [| (0, 8) |] }
             (Memory { memory = 0; offset = 0; length = 32 })
             (Input 1) 8;
         |];
@@ -3596,21 +2857,21 @@ let test_move_loop () =
       G.devices = [| Rig.arch d |];
       ints = 1;
       memory =
-        [| alloc ~init:(data (String.concat "" (List.map le64 rows))) 0 32 |];
+        [| alloc ~init:(String.concat "" (List.map le64 rows)) 0 32 |];
       images = [||];
       inputs = [| { G.device = 0; bytes = 32 } |];
       steps =
         [|
           Loop
             {
-              trips = Fixed 4;
+              trips = fixed 4;
               trip = Some 0;
               flag = None;
               body =
                 [|
                   move
-                    ~src_offset:[| (Int 0, 8) |]
-                    ~dst_offset:[| (Int 0, -8); (Fixed 24, 1) |]
+                    ~src_offset:{ G.add = 0; terms = [| (0, 8) |] }
+                    ~dst_offset:{ G.add = 24; terms = [| (0, -8) |] }
                     (Memory { memory = 0; offset = 0; length = 32 })
                     (Input 0) 8;
                 |];
@@ -3645,9 +2906,9 @@ let test_move_outside_slot () =
     G.run p
       { inputs = [| input |]; ints = [| v |] }
   in
-  let src = load ~src_offset:[| (Int 0, 1) |] ()
-  and dst = load ~dst_offset:[| (Int 0, 1) |] ()
-  and twice = load ~src_offset:[| (Int 0, 2) |] () in
+  let src = load ~src_offset:(int_at 0) ()
+  and dst = load ~dst_offset:(int_at 0) ()
+  and twice = load ~src_offset:{ G.add = 0; terms = [| (0, 2) |] } () in
   ignore (run src 56);
   ignore (run dst 56);
   let queued = Rig.submitted d in
@@ -3674,7 +2935,7 @@ let test_disjoint_views () =
       (base d) with
       memory =
         [|
-          alloc ~init:(data (String.make 32 'l' ^ String.make 32 'h')) 0 64;
+          alloc ~init:(String.make 32 'l' ^ String.make 32 'h') 0 64;
         |];
       steps = [| first; move (all 0) (Input 0) 64 |];
     }
@@ -3732,7 +2993,7 @@ let test_renumbered () =
     {
       G.devices = [| Rig.arch d |];
       ints = 0;
-      memory = [| alloc ~init:(data bytes) 0 64; alloc 0 64 |];
+      memory = [| alloc ~init:bytes 0 64; alloc 0 64 |];
       images = [| { device = 0; binary = functions } |];
       inputs = [| { device = 0; bytes = 64 } |];
       steps =
@@ -3754,25 +3015,23 @@ let test_renumbered () =
     (G.run p { inputs = [| x |]; ints = [||] });
   equal ~msg:"input 0" string bytes (read x)
 
-(* Run 2 waits for run 0's work on its copy before it writes its ints: the
-   frame's ints changed during that wait change nothing. *)
+(* Run 2 waits for run 0's work on its copy of the ints before it writes its
+   ints: the frame's ints changed during that wait change nothing. A copy of
+   int 0 into input 0 is that work. *)
 let test_frame_ints_read_once () =
   let d, pd = polled "ints-once" in
   let t =
     {
       G.devices = [| Rig.arch d |];
       ints = 1;
-      memory = [| alloc ~copies:Two 0 64 |];
+      memory = [||];
       images = [| { device = 0; binary = functions } |];
       inputs = [| { device = 0; bytes = 8 } |];
       steps =
         [|
           submit 0
-            ~buffers:[| (all 0, Rig.Read_write) |]
-            [| fill ~image:0 ~groups:1 7 |];
-          submit 0
-            ~buffers:[| (Input 0, Rig.Read_write) |]
-            [| fill ~image:0 ~groups:1 0 ~holes:[| hole 8 (Int 0 : value) |] |];
+            ~buffers:[| (Ints, Rig.Read); (Input 0, Rig.Read_write) |]
+            [| kcopy ~image:0 8 |];
         |];
     }
   in
@@ -3819,7 +3078,7 @@ let test_collected () =
   in
   let before = P.allocated pd Device in
   let[@inline never] run_dropped () =
-    let p = load_ok (one_device_fill ~copies:Two d) [ d ] in
+    let p = load_ok (one_device_fill d) [ d ] in
     ignore
       (G.run p { inputs = [||]; ints = [||] })
   in
@@ -3827,7 +3086,7 @@ let test_collected () =
   drain ();
   Rig.free_cache d;
   equal ~msg:"images while the run's work is unrun" int 0 (count "unload");
-  equal ~msg:"memory while the run's work is unrun" int (before + 128)
+  equal ~msg:"memory while the run's work is unrun" int (before + 64)
     (P.allocated pd Device);
   ignore (P.run pd);
   drain ();
@@ -3843,7 +3102,7 @@ let swap_program d =
   {
     G.devices = [| Rig.arch d |];
     ints = 1;
-    memory = [| alloc ~init:(data (le64 0)) 0 8 |];
+    memory = [| alloc ~init:(le64 0) 0 8 |];
     images = [| { device = 0; binary = functions } |];
     inputs = [| { device = 0; bytes = 8 } |];
     steps =
@@ -3854,7 +3113,7 @@ let swap_program d =
           [| kcopy ~image:0 8 |];
         submit 0
           ~buffers:[| (Memory word, Rig.Read_write) |]
-          [| fill ~image:0 ~groups:1 0 ~holes:[| hole 8 (Int 0 : value) |] |];
+          [| fill ~scalars:[| scalar 8 (int_at 0) |] ~image:0 ~groups:1 0 |];
       |];
   }
 
@@ -3929,7 +3188,7 @@ let test_frame_checked_first () =
    its first parameter's memory, then spins until word 0 is set, at most as
    many rounds as its second parameter. Its later parameters are refs to the
    other slots, which it leaves alone. *)
-let waiting_step ?(groups : G.value = Fixed 1) slots rounds =
+let waiting_step ?(groups = fixed 1) slots rounds =
   let n = Iarray.length slots in
   submit 1
     ~buffers:(Iarray.map (fun s -> (s, Rig.Read_write)) slots)
@@ -3939,14 +3198,14 @@ let waiting_step ?(groups : G.value = Fixed 1) slots rounds =
           image = 0;
           name = "waiting";
           label = "waiting";
-          params =
-            { bytes = String.make (8 * (n + 1)) '\000'; holes = [| hole 8 rounds |] };
+          params = String.make (8 * (n + 1)) '\000';
+          scalars = [| scalar 8 rounds |];
           refs =
             Iarray.init n (fun slot ->
                 { G.slot; at = (if slot = 0 then 0 else 8 * (slot + 1)); use = Write });
-          groups = (groups, Fixed 1, Fixed 1);
-          threads = (Fixed 1, Fixed 1, Fixed 1);
-          shared = Fixed 0;
+          groups = (groups, fixed 1, fixed 1);
+          threads = one;
+          shared = fixed 0;
         };
     |]
 
@@ -3986,7 +3245,7 @@ let retake frame =
    the linked code returns. *)
 let test_host_claim_call () =
   let d, _ = polled "host-claims-call" in
-  let t = host_program d [| Input 0; Input 0 |] (Fixed 20_000_000_000) in
+  let t = host_program d [| Input 0; Input 0 |] (fixed 20_000_000_000) in
   let p = load_ok t [ d; Rig.host ] in
   let frame = host_frame d in
   let x = frame.inputs.(0) in
@@ -4005,7 +3264,7 @@ let test_host_claim_call () =
 (* The claim starts before the host waits for the preceding device write. *)
 let test_host_claim_wait () =
   let d, pd = polled "host-claims-wait" in
-  let t = host_program d [| Input 0 |] (Fixed 0) in
+  let t = host_program d [| Input 0 |] (fixed 0) in
   let t =
     {
       t with
@@ -4037,7 +3296,7 @@ let test_host_claim_wait () =
    were claimed, and the run ends their claims. *)
 let test_host_claim_refusal index =
   let d, _ = polled "host-claims-refusal" in
-  let t = host_program d (Iarray.init 3 (fun i -> G.Input i)) (Fixed 0) in
+  let t = host_program d (Iarray.init 3 (fun i -> G.Input i)) (fixed 0) in
   let p = load_ok t [ d; Rig.host ] in
   let frame = host_frame d in
   let live = require_some (Rig_support.donated frame.inputs.(index)) in
@@ -4050,7 +3309,7 @@ let test_host_claim_refusal index =
 (* A launch the host never runs, of no group, releases its claims. *)
 let test_host_claim_grid_refusal () =
   let d, _ = polled "host-claims-grid" in
-  let t = host_program ~groups:(Int 0) d [| Input 0 |] (Fixed 0) in
+  let t = host_program ~groups:(int_at 0) d [| Input 0 |] (fixed 0) in
   let p = load_ok t [ d; Rig.host ] in
   let frame = host_frame d in
   frame.ints.(0) <- 0;
@@ -4067,7 +3326,7 @@ let test_host_input_kept () =
   let d, _ = polled "host-kept" in
   let t =
     {
-      (host_program d [| Input 0 |] (Fixed 20_000_000_000)) with
+      (host_program d [| Input 0 |] (fixed 20_000_000_000)) with
       inputs = [| { device = 0; bytes = 16 } |];
       ints = 0;
     }
@@ -4093,75 +3352,15 @@ let test_host_input_kept () =
   Domain.join runner;
   equal ~msg:"the input's memory reused while the code ran" bool false reused
 
-(* An [Entry] leaf names a function of a host image that only the loaded
-   program holds, which run keeps while [calling] calls it. An unmapped callee
-   faults. *)
-let test_entry_leaf_kept () =
-  let d, _ = polled "entry-kept" in
-  let t =
-    {
-      G.devices = [| Rig.arch d; Rig.arch Rig.host |];
-      ints = 0;
-      memory = [||];
-      images = [| host_image 1 "waiting"; host_image 1 "calling" |];
-      inputs = [| { device = 0; bytes = 16 } |];
-      steps =
-        [|
-          submit 1
-            ~buffers:[| (Input 0, Rig.Read_write) |]
-            [|
-              Launch
-                {
-                  image = 1;
-                  name = "calling";
-                  label = "calling";
-                  params =
-                    {
-                      bytes = String.make 24 '\000';
-                      holes =
-                        [|
-                          hole 0 (Leaf (Entry { image = 0; name = "waiting" }));
-                          hole 16 (Fixed 20_000_000_000);
-                        |];
-                    };
-                  refs = [| { G.slot = 0; at = 8; use = Write } |];
-                  groups = (Fixed 1, Fixed 1, Fixed 1);
-                  threads = (Fixed 1, Fixed 1, Fixed 1);
-                  shared = Fixed 0;
-                };
-            |];
-        |];
-    }
-  in
-  let x = B.create d 16 in
-  let at = Rig_support.at x in
-  Rig_support.store at 0;
-  Rig_support.store (at + 8) 0;
-  let runner =
-    Domain.spawn (fun () ->
-        ignore
-          (let p = load_ok t [ d; Rig.host ] in
-           G.run p
-             { inputs = [| x |]; ints = [||] }))
-  in
-  Rig_support.await "the callee running" (fun () ->
-      Rig_support.load (at + 8) = 1);
-  for _ = 1 to 3 do
-    Gc.full_major ()
-  done;
-  Rig_support.store at 1;
-  Domain.join runner
-
 let tests =
   [
     group ~timeout "steps"
       [
         prop
           "a run leaves the bytes of its steps run in order, on any device, \
-           copies at the offsets they state, memory of two copies alternating \
-           by run, and answers one point per device that ran; a time does the \
-           same and answers each step's time within its window, or refuses a \
-           loop before any work"
+           copies at the offsets they state, and answers one point per device \
+           that ran; a time does the same and answers each step's time within \
+           its window, or refuses a loop before any work"
           gen_case model_law;
       ];
     group ~timeout "times"
@@ -4181,20 +3380,21 @@ let tests =
         stateful ~domains:2 "times of one program from two domains"
           shared_commands;
       ];
-    group ~timeout "holes"
+    group ~timeout "scalars"
       [
         prop
-          "a hole holds the low bits of its leaf plus add, shifted, in memory \
-           and in a launch"
-          gen_hole hole_law;
+          "a scalar writes its value's sum over the run's ints, or the run \
+           refuses a sum past an int or its width"
+          gen_sum sum_law;
         prop
-          "a hole holds its terms' values times their factors, plus add, \
-           shifted, read on each run"
-          gen_affine affine_law;
-        prop
-          "a value that meets set bits of its bytes is refused, and the bits \
-           outside each value keep the description's bytes"
+          "a scalar's bytes replace its parameters' bytes, every other byte \
+           kept"
           gen_beside beside_law;
+        cases
+          "a 32-bit parameter takes a value that fits 32 bits, signed or \
+           unsigned, and writes its low 32 bits"
+          ~id:(fun (v, _) -> string_of_int v)
+          w32_values scalar_range;
       ];
     group ~timeout "bytes"
       [
@@ -4216,29 +3416,28 @@ let tests =
           (Gen.int_range (-2) 6) loop_law;
         test "a loop stops at a flag a step cleared" test_flag;
         test "run raises for a loop's flag past its input" test_flag_outside;
-        test "a host launch calls a function an Entry leaf names"
-          test_entry_leaf;
-        test "run keeps the host function an Entry leaf names"
-          test_entry_leaf_kept;
       ];
     group ~timeout "rails"
       [
-        test "host code fills a rail's area and calls its ready function"
-          test_rail;
+        test
+          "a send calls its end's ready function once the outbound area's \
+           writers are done"
+          test_send;
+        test "load and run raise for a send's count below 1" test_send_count;
+        test "a send follows the run's waits" test_send_waits;
         test "load raises for a rail this machine has not" test_no_rail;
       ];
     group ~timeout "order"
       [
-        test "run n of memory of two copies follows run n - 2 on its copy"
-          test_two_waits;
+        test "run n follows run n - 2's work on its copy of the ints"
+          test_ints_wait;
         test "runs on a lost device each raise Lost" test_lost_runs;
-        test "memory of one copy waits for nothing on the host"
-          test_one_waits_not;
+        test "memory waits for nothing on the host" test_memory_waits_not;
         test "a run's first submission follows its after points" test_after;
         test "a run's first move follows its after points" test_after_move;
         test "a loop's trip is stored once the work that reads the ints is done"
           test_trip_follows_work;
-        test "an Int is read once the work that writes the ints is done"
+        test "a value is read once the work that writes the ints is done"
           test_int_follows_writer;
         stateful ~domains:2 "runs of one program from two domains serialize"
           swap_commands;
@@ -4252,8 +3451,6 @@ let tests =
       ];
     group ~timeout "refusals"
       [
-        test "every address and handle names memory kept by its step"
-          memory_hole_refusals;
         cases "load raises for integers whose sums would wrap"
           ~id:(Format.asprintf "%a" pp_extreme)
           extremes extreme_law;
@@ -4280,8 +3477,6 @@ let tests =
           "load answers Error for host code over memory the host does not \
            address"
           test_host_unaddressed;
-        test "load answers Error for an Address of memory named by handle only"
-          test_handle_only;
         test "load raises for devices of several machines" test_machines;
         test "load raises for rails given with another machine's devices"
           test_far_rails;
@@ -4331,8 +3526,6 @@ let tests =
         test "a host launch of no group releases its claims"
           test_host_claim_grid_refusal;
         test "a launch's ref is its input's address in each run" test_input_ref;
-        test "a fill reads each run's parameters and refs" test_fill_params;
-        test "a fill with no parameters submits" test_fill_empty;
         test "a Copy part copies between its step's slots" test_copy_part;
         test "a Copy part in a loop moves with its trips" test_copy_loop;
         test "run raises for a copy its ints put outside its slot"
@@ -4347,7 +3540,7 @@ let tests =
           test_move_ints_queued;
         test "moves through host memory a device runs are queued"
           test_move_host_queued;
-        test "an Int a queued move wrote is read once the move is done"
+        test "an int a queued move wrote is read once the move is done"
           test_move_writes_int;
         test "a move in a loop moves with its trips" test_move_loop;
         test "run raises for a move its ints put outside its slot"
@@ -4356,10 +3549,6 @@ let tests =
           test_disjoint_views;
         test "memory only copies name takes no slot of the submission"
           test_renumbered;
-        test "an init Address comes from a step fixing its run's copy"
-          test_init_address;
-        test "an init Entry keeps its host function through queued work"
-          test_init_code_kept;
         test "a load makes what its footprint counts" test_footprint;
       ];
   ]

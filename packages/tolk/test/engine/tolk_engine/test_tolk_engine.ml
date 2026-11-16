@@ -2918,6 +2918,362 @@ let reads_mixed_scalars ?(devices = devices) d () =
   let expected = List.mapi (fun i (_, _, v) -> int (v + (1000 * i))) scalars in
   equal values (Array.of_list expected) (Run.values Int64 ys)
 
+(* Values of the 64-bit variable [v], each with what a cast of it to [Int32]
+   holds: its low 32 bits in two's complement. *)
+let narrowed_values =
+  [
+    (5, 5);
+    (0x7fff_ffff, 0x7fff_ffff);
+    (0x8000_0000, -0x8000_0000);
+    (0x1_2345_6789, 0x2345_6789);
+    (0x1_8000_0005, -0x7fff_fffb);
+  ]
+
+(* A kernel that stores its scalar of type [dt], slot 1, widened to 64 bits,
+   into its one element of slot 0. *)
+let widening_of dt =
+  let y = Shape.placeholder ~slot:0 [ 1 ] Int64 in
+  let s = Shape.param ~addrspace:Alu 1 dt in
+  Codegen.to_program
+    (Ops.sink
+       ~kernel:(Ops.kernel_info ~name:"widening" ())
+       [ Ops.store (Ops.index y [ Ops.int 0 ]) (Ops.cast s Int64) ])
+    (Lazy.force clang)
+
+let widening = lazy (widening_of Int32)
+let widening_u = lazy (widening_of Uint32)
+
+(* The variable [narrowed] of [Int64], from [0] to [max_int]. *)
+let narrowed_var =
+  Ops.variable ~dtype:Int64 "narrowed" (Dtype.Value.of_int 0)
+    (Dtype.Value.of_int max_int)
+
+let int64 v = Ops.const ~dtype:Int64 (`Int (Bigint.of_int v))
+
+(* The schedule of one call on the host of [prg], [widening] by default,
+   whose scalar is [arg]. *)
+let widened ?(prg = widening) arg =
+  let y = Shape.param ~shape:[ Ops.Int 1 ] ~device:"CPU" 0 Int64 in
+  Engine.link_call ~devices (Ops.call (Lazy.force prg) [ y; arg ])
+
+(* What a run of [s], a schedule of [widened], stores, with the variable
+   [name], [narrowed] by default, bound to [v]. *)
+let stored ?(name = "narrowed") ?(v = 0) s =
+  let ys = Run.buffer host Int64 [| `Int Bigint.zero |] in
+  Engine.run ~vars:[ (name, v) ] s [| Some ys |];
+  Run.values Int64 ys
+
+let int_value i = [| `Int (Bigint.of_int i) |]
+
+(* A call whose scalar is the cast of [v] to [Int32], which holds [v]'s low
+   32 bits whatever [v] holds. *)
+let reads_a_narrowed_scalar (v, low) =
+  equal values (int_value low)
+    (stored ~v (widened (Ops.cast narrowed_var Int32)))
+
+(* Values of [narrowed], each with what a cast of it to [Uint32] holds: its
+   low 32 bits. *)
+let narrowed_unsigned =
+  [
+    (5, 5);
+    (0xffff_ffff, 0xffff_ffff);
+    (0x1_0000_0000, 0);
+    (0x1_8000_0005, 0x8000_0005);
+  ]
+
+let reads_an_unsigned_narrowing (v, low) =
+  equal values (int_value low)
+    (stored ~v (widened ~prg:widening_u (Ops.cast narrowed_var Uint32)))
+
+(* Values of [narrowed], each with the quotient by [2], rounded down, of what
+   a cast of it to [Int32] holds: the cast truncates under the division. *)
+let halved_values = [ (0x1_0000_0004, 2); (0x1_8000_0006, -0x3fff_fffd) ]
+
+let reads_a_narrowing_under_a_quotient (v, half) =
+  let arg = Ops.O.(Ops.cast narrowed_var Int32 // int 2) in
+  equal values (int_value half) (stored ~v (widened arg))
+
+(* A cast of a constant keeps its low bits, alone and under a quotient. *)
+let reads_a_narrowed_constant () =
+  equal values ~msg:"alone" (int_value 5)
+    (stored (widened (Ops.cast (int64 0x1_0000_0005) Int32)));
+  equal values ~msg:"under a quotient" (int_value 2)
+    (stored (widened Ops.O.(Ops.cast (int64 0x1_0000_0004) Int32 // int 2)))
+
+(* The variable [small] of [Int64], from [-10] to [10]. *)
+let small_var =
+  Ops.variable ~dtype:Int64 "small" (Dtype.Value.of_int (-10))
+    (Dtype.Value.of_int 10)
+
+let widening_u64 = lazy (widening_of Uint64)
+
+(* A cast of [small] to [Uint64], which holds [2^64 - 2] of [-2]: alone, as a
+   scalar of 8 bytes, it reaches the kernel as those bits, but under a
+   quotient by [2^32] its value is past an [int], and the run refuses it. Of
+   [6], the quotient is [0]. *)
+let refuses_a_wide_unsigned () =
+  let wide = Ops.cast small_var Uint64 and two_32 = 1 lsl 32 in
+  let alone = widened ~prg:widening_u64 wide
+  and divided = widened ~prg:widening_u64 Ops.O.(wide // int two_32) in
+  equal values ~msg:"alone" (int_value (-2))
+    (stored ~name:"small" ~v:(-2) alone);
+  equal values ~msg:"6 divided" (int_value 0)
+    (stored ~name:"small" ~v:6 divided);
+  raises_match ~msg:"-2 divided"
+    (Exn.invalid_arg ~sub:"past an int")
+    (fun () -> stored ~name:"small" ~v:(-2) divided)
+
+(* A host kernel, compiled with its loop whole, which the host splits: it
+   stores its scalar [n] of type [dt], slot 1, as an [Int32] into the first
+   [n] of four 32-bit elements of slot 0. *)
+let prefix_of dt =
+  let y = Shape.placeholder ~slot:0 [ 4 ] Int32 in
+  let n =
+    Shape.param
+      ~vmin_vmax:(Dtype.Value.of_int 0, Dtype.Value.of_int 4)
+      ~addrspace:Alu 1 dt
+  in
+  let i = Ops.range ~axis_type:Weak (Sym n) [ 0 ] in
+  let kernel =
+    Ops.sink
+      ~kernel:(Ops.kernel_info ~name:"prefix" ())
+      [ Ops.end_ (Ops.store (Ops.index y [ i ]) (Ops.cast n Int32)) [ i ] ]
+  in
+  Setting.context
+    [ B (Setting.noopt, true) ]
+    (fun () -> Codegen.to_program kernel (Lazy.force clang))
+
+let prefix_on_the_host = lazy (prefix_of Int32)
+let prefix_u64 = lazy (prefix_of Uint64)
+
+(* Four 32-bit elements of the host, each [-1]. *)
+let unwritten () =
+  Run.buffer host Int32 (Array.make 4 (`Int Bigint.minus_one))
+
+(* A cast of [small] to [Uint64] read as a number, a loop's trips and a split
+   loop's count: of [3] it is [3], and of [-2] it holds [2^64 - 2], past an
+   [int], which a run refuses where trips of [-2] would run none. The loop
+   stores [r + 1] into row [r] of four for each trip [r] of the call of
+   [widening]; the split loop is [prefix_u64]'s. *)
+let refuses_a_wide_unsigned_count () =
+  let wide = Ops.cast small_var Uint64 in
+  let int i = `Int (Bigint.of_int i) in
+  let looped =
+    let r = Ops.range ~axis_type:Loop (Sym wide) [ 100 ] in
+    let ys = Shape.param ~shape:[ Ops.Int 4 ] ~device:"CPU" 0 Int64 in
+    let row = Shape.shrink ys [ Some (Sym r, Sym Ops.O.(r + int 1)) ] in
+    let call = Ops.call (Lazy.force widening) [ row; Ops.O.(r + int 1) ] in
+    Engine.link ~devices
+      (compile (Ops.v Op.Linear ~src:[ Ops.end_ call [ r ] ]))
+  in
+  let trips v () =
+    let buffer = Run.buffer host Int64 (Array.make 4 (int (-1))) in
+    Engine.run ~vars:[ ("small", v) ] looped [| Some buffer |];
+    Run.values Int64 buffer
+  in
+  equal values ~msg:"trips of 3" [| int 1; int 2; int 3; int (-1) |] (trips 3 ());
+  raises_match ~msg:"trips of -2"
+    (Exn.invalid_arg ~sub:"past an int")
+    (trips (-2));
+  let ys = Shape.param ~shape:[ Ops.Int 4 ] ~device:"CPU" 0 Int32 in
+  let split =
+    Engine.link_call ~devices (Ops.call (Lazy.force prefix_u64) [ ys; wide ])
+  in
+  let count v () =
+    let buffer = unwritten () in
+    Engine.run ~vars:[ ("small", v) ] split [| Some buffer |];
+    Run.values Int32 buffer
+  in
+  equal values ~msg:"a count of 3" [| int 3; int 3; int 3; int (-1) |]
+    (count 3 ());
+  raises_match ~msg:"a count of -2"
+    (Exn.invalid_arg ~sub:"past an int")
+    (count (-2))
+
+(* A cast of [small] to [Uint64] as offsets, numbers of bytes into a buffer,
+   which a run refuses past an [int]. A call of [widening] that stores [7]
+   into element [wide] of four 64-bit elements [ys], given as a view 32 bytes
+   into eight: of [3] it stores into element [4 + 3] of the eight, and of
+   [-2], refused, it stores nowhere, where the bits of [-2] would store 16
+   bytes before [ys]. A copy of four bytes from byte [wide] of sixteen of the
+   host into CPU:1: of [3] it copies bytes 3 to 6, and of [-2] it is
+   refused. *)
+let refuses_a_wide_unsigned_offset () =
+  let wide = Ops.cast small_var Uint64 in
+  let int i = `Int (Bigint.of_int i) in
+  let ys = Shape.param ~shape:[ Ops.Int 4 ] ~device:"CPU" 0 Int64 in
+  let row = Shape.shrink ys [ Some (Sym wide, Sym Ops.O.(wide + int 1)) ] in
+  let seven = Ops.const ~dtype:Int32 (int 7) in
+  let stores =
+    Engine.link_call ~devices (Ops.call (Lazy.force widening) [ row; seven ])
+  in
+  let store v ys () = Engine.run ~vars:[ ("small", v) ] stores [| Some ys |] in
+  let around v =
+    let parent = Run.buffer host Int64 (Array.make 8 (int (-1))) in
+    let ys = Rig.Buffer.view parent ~first:32 ~length:32 in
+    (try store v ys () with Invalid_argument _ -> ());
+    Run.values Int64 parent
+  in
+  equal values ~msg:"a store of 3"
+    (Array.init 8 (fun i -> int (if i = 7 then 7 else -1)))
+    (around 3);
+  equal values ~msg:"the eight elements around a store of -2"
+    (Array.make 8 (int (-1)))
+    (around (-2));
+  raises_match ~msg:"a store of -2"
+    (Exn.invalid_arg ~sub:"read as a number")
+    (store (-2) (Run.buffer host Int64 (Array.make 4 (int (-1)))));
+  let src = Ops.new_buffer "CPU" 16 Uint8
+  and dst = Ops.new_buffer "CPU:1" 4 Uint8 in
+  let window = Shape.shrink src [ Some (Sym wide, Sym Ops.O.(wide + int 4)) ] in
+  let bytes = Array.init 16 int in
+  let copied = Run.buffer (device "CPU:1") Uint8 (Array.make 4 (int 0)) in
+  let copies =
+    Engine.link ~devices
+      ~bound:[ (src, Run.buffer host Uint8 bytes); (dst, copied) ]
+      (compile (Ops.v Op.Linear ~src:[ Shape.store_call dst window ]))
+  in
+  let copy v () = Engine.run ~vars:[ ("small", v) ] copies [||] in
+  copy 3 ();
+  equal values ~msg:"a copy of 3" (Array.sub bytes 3 4)
+    (Run.values Uint8 copied);
+  raises_match ~msg:"a copy of -2"
+    (Exn.invalid_arg ~sub:"read as a number")
+    (copy (-2))
+
+(* A cast to [Uint64] of the constant [-2], whose number is read past an
+   [int], which the link refuses: divided by [2^32], and as the count of
+   [prefix_u64]'s split loop. *)
+let refuses_a_wide_unsigned_constant () =
+  let two_32 = 1 lsl 32 in
+  let wide = Ops.cast (int64 (-2)) Uint64 in
+  raises_match ~msg:"a quotient by 2^32"
+    (Exn.invalid_arg ~sub:"Tolk_engine.link: a cast to u64 of -2")
+    (fun () -> widened ~prg:widening_u64 Ops.O.(wide // int two_32));
+  let ys = Shape.param ~shape:[ Ops.Int 4 ] ~device:"CPU" 0 Int32 in
+  raises_match ~msg:"a split loop's count"
+    (Exn.invalid_arg ~sub:"Tolk_engine.link: a cast to u64 of -2")
+    (fun () ->
+      Engine.link_call ~devices (Ops.call (Lazy.force prefix_u64) [ ys; wide ]))
+
+(* A cast to [Uint64] as a scalar of 4 bytes, [widening]'s [Int32], whose
+   number is read. Of [small]: of [3] it reaches the kernel as [3], and of
+   [-2] it holds [2^64 - 2], past an [int], which the run refuses. Of the
+   constant [-2], the link refuses it. *)
+let refuses_a_wide_unsigned_4_byte_scalar () =
+  let wide = widened (Ops.cast small_var Uint64) in
+  equal values ~msg:"of 3" (int_value 3) (stored ~name:"small" ~v:3 wide);
+  raises_match ~msg:"of -2"
+    (Exn.invalid_arg ~sub:"Tolk_engine.run: a cast to u64 of -2")
+    (fun () -> stored ~name:"small" ~v:(-2) wide);
+  raises_match ~msg:"of the constant -2"
+    (Exn.invalid_arg ~sub:"Tolk_engine.link: a cast to u64 of -2")
+    (fun () -> widened (Ops.cast (int64 (-2)) Uint64))
+
+(* A split loop of [n] iterations, [n] the cast to [Int32] of [x] of
+   [Int64], from [-2^40] to [2^40], bound to [-2^32 + 3]: the cast holds [3],
+   so the blocks run 3 iterations. Without its truncation the loop would
+   count [-2^32 + 3] iterations, a block of one. *)
+let splits_a_narrowed_count () =
+  let prg = Lazy.force prefix_on_the_host in
+  (match Ops.arg (Ops.nth prg 0) with
+  | Ops.Kernel { split = Some _; _ } -> ()
+  | _ -> failf "the kernel does not split");
+  let x =
+    Ops.variable ~dtype:Int64 "x"
+      (Dtype.Value.of_int (-(1 lsl 40)))
+      (Dtype.Value.of_int (1 lsl 40))
+  in
+  let ys = Shape.param ~shape:[ Ops.Int 4 ] ~device:"CPU" 0 Int32 in
+  let s = Engine.link_call ~devices (Ops.call prg [ ys; Ops.cast x Int32 ]) in
+  let int i = `Int (Bigint.of_int i) in
+  let buffer = unwritten () in
+  Engine.run ~vars:[ ("x", -(1 lsl 32) + 3) ] s [| Some buffer |];
+  equal values [| int 3; int 3; int 3; int (-1) |] (Run.values Int32 buffer)
+
+(* Constants and values of [narrowed] as a 4-byte scalar, uncast: those 32
+   bits hold, signed or unsigned, reach the kernel as their low 32 bits. *)
+let held_by_32_bits = [ (-0x8000_0000, -0x8000_0000); (0xffff_ffff, -1) ]
+let past_32_bits = [ -0x8000_0001; 0x1_0000_0000 ]
+
+let reads_a_wide_scalar (v, low) =
+  equal values ~msg:"a constant" (int_value low) (stored (widened (int64 v)));
+  equal values ~msg:"a variable" (int_value low)
+    (stored ~v (widened narrowed_var))
+
+(* A link refuses a constant 32 bits do not hold, and a run a value of
+   [narrowed]. *)
+let refuses_a_wide_scalar v =
+  raises_match ~msg:"a constant" (Exn.invalid_arg ~sub:"4 bytes") (fun () ->
+      widened (int64 v));
+  let s = widened narrowed_var in
+  raises_match ~msg:"a variable"
+    (Exn.invalid_arg ~sub:"which 32 bits hold neither")
+    (fun () -> stored ~v s)
+
+(* A loop of two trips [r] around a call of [widening] whose scalar is the
+   cast to [Int32] of [r * 2^32]: a narrowing of a value that moves with the
+   trips, which link refuses. *)
+let refuses_a_moving_narrowing () =
+  let r = Ops.range ~axis_type:Loop (Int 2) [ 100 ] in
+  let y = Shape.param ~shape:[ Ops.Int 1 ] ~device:"CPU" 0 Int64 in
+  let two_32 = int64 (1 lsl 32) in
+  let wide = Ops.O.(Ops.cast r Int64 * two_32) in
+  let call = Ops.call (Lazy.force widening) [ y; Ops.cast wide Int32 ] in
+  let linear = compile (Ops.v Op.Linear ~src:[ Ops.end_ call [ r ] ]) in
+  raises_match
+    (Exn.invalid_arg ~sub:"narrows a value that moves")
+    (fun () -> Engine.link ~devices linear)
+
+(* Loops of three trips [o] around [o + 1] trips [i], around a call of
+   [widening] on the host that stores [4 o + i] into row [4 o + i] of twelve:
+   the inner loop's trips move with the outer trip. *)
+let moves_inner_trips () =
+  let o = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+  let i = Ops.range ~axis_type:Loop (Sym Ops.O.(o + int 1)) [ 101 ] in
+  let at = Ops.O.((o * int 4) + i) in
+  let ys = Shape.param ~shape:[ Ops.Int 12 ] ~device:"CPU" 0 Int64 in
+  let row = Shape.shrink ys [ Some (Sym at, Sym Ops.O.(at + int 1)) ] in
+  let call = Ops.call (Lazy.force widening) [ row; at ] in
+  let loops = Ops.end_ (Ops.end_ call [ i ]) [ o ] in
+  let s = Engine.link ~devices (compile (Ops.v Op.Linear ~src:[ loops ])) in
+  let buffer = Run.buffer host Int64 (Array.make 12 (`Int Bigint.minus_one)) in
+  Engine.run s [| Some buffer |];
+  let written k = k mod 4 <= k / 4 in
+  equal values
+    (Array.init 12 (fun k ->
+         `Int (Bigint.of_int (if written k then k else -1))))
+    (Run.values Int64 buffer)
+
+(* A loop of three trips [r] on the GPU [d] around a call of a kernel that
+   stores its scalar [n] into the first [n] of four 32-bit elements, a grid
+   [n] wide, for [n = r + 1]: the grid moves with the trips. *)
+let moves_a_grid ?(devices = devices) d () =
+  let on = devices d in
+  let y = Shape.placeholder ~slot:0 [ 4 ] Int32 in
+  let n =
+    Shape.param
+      ~vmin_vmax:(Dtype.Value.of_int 1, Dtype.Value.of_int 4)
+      ~addrspace:Alu 1 Int32
+  in
+  let i = Ops.range ~axis_type:Weak (Sym n) [ 0 ] in
+  let prefix =
+    Codegen.to_program
+      (Ops.sink
+         ~kernel:(Ops.kernel_info ~name:"prefix" ())
+         [ Ops.end_ (Ops.store (Ops.index y [ i ]) n) [ i ] ])
+      (Engine.renderer on)
+  in
+  let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+  let ys = Shape.param ~shape:[ Ops.Int 4 ] ~device:d 0 Int32 in
+  let call = Ops.call prefix [ ys; Ops.O.(r + int 1) ] in
+  let linear = Ops.v Op.Linear ~src:[ Ops.end_ call [ r ] ] in
+  let s = Engine.link ~devices (compile ~devices linear) in
+  let int i = `Int (Bigint.of_int i) in
+  let buffer = Run.buffer on Int32 (Array.make 4 (int (-1))) in
+  Engine.run s [| Some buffer |];
+  equal values [| int 3; int 3; int 3; int (-1) |] (Run.values Int32 buffer)
+
 (* A call on [d] of one kernel of [y] and 520 buffers of one element, whose
    addresses take 4,168 bytes of arguments, more than a Metal launch copies
    inline: it stores into [y] the sum of each buffer's element times its
@@ -5975,6 +6331,45 @@ let schedules =
       reads_trips_under_a_back_edge "CPU";
       test "a call's scalar arguments of mixed widths reach its kernel"
         (reads_mixed_scalars "CPU");
+      cases "a narrowing cast's low bits reach the kernel as its scalar"
+        ~id:(fun (v, _) -> Printf.sprintf "%#x" v)
+        narrowed_values reads_a_narrowed_scalar;
+      cases "a cast to an unsigned type keeps its operand's low bits"
+        ~id:(fun (v, _) -> Printf.sprintf "%#x" v)
+        narrowed_unsigned reads_an_unsigned_narrowing;
+      cases "a narrowing cast under a quotient keeps its low bits"
+        ~id:(fun (v, _) -> Printf.sprintf "%#x" v)
+        halved_values reads_a_narrowing_under_a_quotient;
+      test "a narrowing cast of a constant keeps its low bits"
+        reads_a_narrowed_constant;
+      test
+        "a cast to uint64 past an int under another operation is refused at \
+         the run"
+        refuses_a_wide_unsigned;
+      test
+        "a cast to uint64 past an int as a loop's trips or a split loop's \
+         count is refused at the run"
+        refuses_a_wide_unsigned_count;
+      test
+        "a cast to uint64 past an int as an offset is refused at the run, \
+         which writes nothing"
+        refuses_a_wide_unsigned_offset;
+      test
+        "a constant cast to uint64 past an int whose number is read is \
+         refused at link"
+        refuses_a_wide_unsigned_constant;
+      test "a cast to uint64 past an int as a 4-byte scalar is refused"
+        refuses_a_wide_unsigned_4_byte_scalar;
+      test "a narrowing cast in a split loop's count keeps its low bits"
+        splits_a_narrowed_count;
+      cases "a 4-byte scalar that 32 bits hold reaches the kernel"
+        ~id:(fun (v, _) -> string_of_int v)
+        held_by_32_bits reads_a_wide_scalar;
+      cases "a 4-byte scalar that 32 bits do not hold is refused"
+        ~id:string_of_int past_32_bits refuses_a_wide_scalar;
+      test "a narrowing of a value that moves with a loop's trips is refused"
+        refuses_a_moving_narrowing;
+      test "a loop's trips move with an outer loop's trip" moves_inner_trips;
       test "a call of 520 buffers reads each from its own address"
         (reads_many_buffers "CPU");
       test "a loop of one trip passes its call the trip as a scalar argument"
@@ -7496,6 +7891,8 @@ let on_a_gpu kind =
         (reads_mixed_scalars ~devices "CPU:1");
       test "a call of 520 buffers reads each from its own address"
         (reads_many_buffers ~devices "CPU:1");
+      test "a call's grid moves with its loop's trips"
+        (moves_a_grid ~devices "CPU:1");
       reads_trips_under_a_back_edge ~devices "CPU:1";
       loop_reads_law ~devices "CPU:1";
       loop_states_law ~devices "CPU:1";
