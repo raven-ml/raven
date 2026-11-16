@@ -2142,8 +2142,9 @@ unrolled reduce`).
   inlines that store again when its value reads at most three buffers and no
   reduction reads a buffer).
 - **tolk:** `Indexing.assign_ranges` (which records the values a broadcast
-  stores) and `Indexing.bufferize_and_index` (which marks their stages
-  `Broadcast`); `Ops.keep`, in place of `removable`;
+  stores, and a gather's stored source that its broadcast gathers would
+  compute more of inlined) and `Indexing.bufferize_and_index` (which marks
+  their stages `Broadcast`); `Ops.keep`, in place of `removable`;
   `Rangeify.remove_bufferize`, which keeps such a stage.
 - **Differs:** where a broadcast ends ranges below a value, its store is
   marked, and the cost check keeps it if computing it runs `EXP2`, `LOG2`,
@@ -2159,6 +2160,16 @@ unrolled reduce`).
   softmax's exponentials once per column of the product with the values, a
   RoPE's sines and cosines once per head. A value read once per element,
   as a rotated query reads its rows of a stored sine table, is not marked.
+  A gather's source (D73), stored before ranges are assigned, is marked when
+  its consumers broadcast it, or when a broadcast ends ranges above one of
+  its gathers and the gathers, inlined, would compute more elements than it
+  holds: each element a gather reads, once for each trip of the ranges that
+  end above it, that work at its least and the elements held at their most.
+  Gathers that no broadcast reads stay unmarked, whatever they read. Two
+  rows of a 16-element table broadcast along 3 rows compute 6 elements
+  inlined and stay unmarked; along 64 rows they compute 128 and are marked. To count those trips,
+  `Indexing.assign_ranges` carries the ranges that end above each node, as
+  tinygrad's `ending_ranges` does, where it held whether any did.
 - **Reason:** (d): gpt-oss-20b (`kaun/examples/06-gpt-oss`). On the host,
   where the transcendental functions are polynomials, recomputing them
   dominates. On an M-series Mac under load
@@ -2188,8 +2199,9 @@ unrolled reduce`).
   stored as the row), `exp_cheap_consumer` (a value that reads a kept
   exponential is inlined) and `rope_decode` (a decode step's rotated query
   reads its gathered rows of a cosine table and is not stored) rows of
-  `kernel_counts.golden` and their kernel goldens; kaun's
-  `GptOss/prefill-512` and `GptOss/prefill-512-Q8_0`.
+  `kernel_counts.golden` and their kernel goldens, and its `get_kernel_graph
+  › gathers read where broadcast`; kaun's `GptOss/prefill-512` and
+  `GptOss/prefill-512-Q8_0`.
 
 ## D79. A chain of one operation keeps its right operand's grouping
 
@@ -10186,8 +10198,11 @@ kept in ordered sets, change no source and belong to D466.
 - **Differs:** a stage that an item of the graph, `AFTER(b, STORE(b, s))`,
   stores whole into `b`, in the stage's order, at its type and device, is
   stored into `b` where `b` is storage that nothing else in the graph reads
-  or writes, its state after the store included, and that the stage's value
-  does not read; the store, then a copy of `b` into itself, is dropped. A
+  or writes, its state after the store included, that the stage's value
+  does not read, and where another item reads the stage; the store, then a
+  copy of `b` into itself, is dropped. A stage the store alone reads, as a
+  maximum of a broadcast sum is once the maximum folds to the sum, keeps its
+  own storage: dropped with its only reader, its store would be lost. A
   stage stored narrower than its readers read it (`Ops.widens`) keeps
   its storage. Where tinygrad stores the stage apart and copies it into
   `b`, tolk writes `b` once. tinygrad's own fix, every reader of a returned
@@ -10205,8 +10220,11 @@ kept in ordered sets, change no source and belong to D466.
 - **Pinned by:** the `Tolk.Schedule` suite's `create_linear_with_vars ›
   outputs that hold a stored value` (an output holds the row sums its other
   reader reads, and keeps its copy where the value reads its old elements or
-  another output reads it, as it was or once stored); rune's `Rune.jit on a GPU › a reduction another
-  reads › returned too is stored once`; the row above.
+  another output reads it, as it was or once stored); the Rangeify suite's
+  `get_kernel_graph › laws › a scheduled function writes what its tensors
+  compute, for`, its row `[2], then sum 0, expand, max 0`; rune's `Rune.jit
+  on a GPU › a reduction another reads › returned too is stored once`; the
+  row above.
 
 ## D479. A reduce starved of threads groups past 2048 outputs
 

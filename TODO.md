@@ -73,14 +73,6 @@ Where it stands, with every measurement: doc/performance.md.
 - A staged core copies in at most two stages, so where twice the bytes in
   flight pass `shared_max` it can only deepen its trips; more, shallower
   stages need a counted `cp.async.wait_group` in the CUDA renderer
-- A stage read through a gather and then expanded is tagged `Removable`,
-  not `Broadcast`, so both D481's waiver and `recomputes` may inline and
-  recompute it along every row (from reading `rangeify.ml`, not yet
-  reproduced)
-- rangeify's law "a scheduled function writes what its tensors compute"
-  fails under seeds `s1:63ab132b4eb9fb74` and `s1:47b3074f072c6405`: both
-  graphs end in `sum 0, expand, max 0`, and the kernel graph writes
-  nothing where the tensors write one element
 - tolk recomputes a cheap broadcast value along every row that reads it:
   a 3-buffer polynomial of D multiply-adds broadcast along 4096 rows takes
   11.3 ms on the host against 0.64 ms stored. `recomputes`/`copies` count

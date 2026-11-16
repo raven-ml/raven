@@ -922,7 +922,11 @@ let buffers ~slot tsink =
       && List.equal ( == ) at (flat stage rs)
       && (not (Tbl.mem ctx.homes value))
       && (not (reaches ~calls:Skip value b))
-      && not (reaches ~calls:Skip (others ()) b)
+      &&
+      (* Another item reads the stage: dropped, the copy would take with it
+         the store of a stage no other item reads. *)
+      let others = others () in
+      reaches ~calls:Skip others stage && not (reaches ~calls:Skip others b)
     then begin
       Tbl.replace ctx.homes value b;
       Tbl.replace ctx.copies st ()

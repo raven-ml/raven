@@ -1327,6 +1327,13 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A program whose output is a maximum of a broadcast reduction, such as
+  `max (expand (sum x))`, writes its output: `Rangeify.get_kernel_graph`
+  dropped the store into the output with the copy it spared. A value read
+  through a gather and then broadcast, where the broadcast rows would
+  compute more of it than it holds, stays stored where it computes a
+  transcendental function or reads more than three buffers, as a value
+  broadcast directly does, instead of being computed again along each row.
 - On CUDA and NV, adjacent byte loads merge into loads of 2 and 4 bytes,
   each held as one integer word whose bytes are read by shifts
   (`Renderer.t.byte_words`): with rune's `bfloat16` decode, gpt-oss-20b's

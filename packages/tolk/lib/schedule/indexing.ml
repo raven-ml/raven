@@ -963,34 +963,47 @@ let long sizes =
   in
   over 1 sizes
 
-(* Whether [x], a reduction of at least [nested_terms] terms, a symbolic size
-   counting at its largest, and of more than [inline_terms] terms an element
-   ({!long}) is read inside a
-   range another reduction reduces ([rngs], its consumers' ranges). *)
+(* The ranges another reduction reduces that [x] is read inside ([rngs], its
+   consumers' ranges), where [x] is a reduction of at least [nested_terms]
+   terms, a symbolic size counting at its largest, and of more than
+   [inline_terms] terms an element ({!long}); none otherwise. *)
 let nested rctx x rngs =
   let reduced r =
     List.exists (fun g -> List.exists (Ops.equal r) g.reduced) rctx.siblings
   in
-  max_numel (nth x 0) >= nested_terms
-  && (match arg x with
-     | Reduce { num_axes; _ } -> long (List.take num_axes (shape (nth x 0)))
-     | _ -> false)
-  && Nodes.fold
-       (fun r found -> found || reduced r)
-       (ranges (Ops.sink rngs))
-       false
+  if
+    max_numel (nth x 0) >= nested_terms
+    &&
+    match arg x with
+    | Reduce { num_axes; _ } -> long (List.take num_axes (shape (nth x 0)))
+    | _ -> false
+  then List.filter reduced (Nodes.to_list (ranges (Ops.sink rngs)))
+  else []
+
+(* The fewest elements [u] holds, a symbolic size counting at its least. *)
+let least_numel u =
+  List.fold_left
+    (fun n (s : sint) ->
+      match s with
+      | Int k -> n *. float_of_int k
+      | Sym s -> n *. Dtype.Value.to_float (vmin s))
+    1. (shape u)
+
+(* The fewest trips the distinct ranges [rs] make together. *)
+let least_trips rs =
+  List.fold_left
+    (fun n r -> n *. Dtype.Value.to_float (vmin (nth r 0)))
+    1.
+    (List.sort_uniq Ops.compare rs)
 
 (* Kernels are internal, and an after carries no ranges, as a sink does not. *)
 let no_ranges = ops Op.[ Call; After ]
 
 let assign_ranges rctx ~consumer_map ~ending_ranges x =
   let consumers = List.rev (Tbl.find consumer_map x) in
-  let ending =
-    ref
-      (List.exists
-         (fun u -> Option.value (Tbl.find_opt ending_ranges u) ~default:false)
-         consumers)
-  in
+  let ended_above u = Option.value (Tbl.find_opt ending_ranges u) ~default:[] in
+  (* The ranges that end above this node, which its consumers do not count. *)
+  let ending = ref (List.concat_map ended_above consumers) in
   (* The ranges the consumers iterate that this node is broadcast over. *)
   let ended =
     List.concat_map
@@ -1001,9 +1014,10 @@ let assign_ranges rctx ~consumer_map ~ending_ranges x =
         | _ -> [])
       consumers
   in
-  let broadcast_ending_ranges = Nodes.cardinal (ranges (Ops.sink ended)) > 0 in
+  let broadcast_ended = Nodes.to_list (ranges (Ops.sink ended)) in
+  let broadcast_ending_ranges = broadcast_ended <> [] in
   (* The fusion decision: a reduction is stored before it is broadcast. *)
-  if op x = Op.Reduce then ending := !ending || broadcast_ending_ranges;
+  if op x = Op.Reduce then ending := broadcast_ended @ !ending;
   (* A gather's source sees all its ranges, and its index the leading ones,
      which the index shapes. *)
   let consumer_rngs =
@@ -1028,11 +1042,33 @@ let assign_ranges rctx ~consumer_map ~ending_ranges x =
   in
   (* The other fusion decision: a large reduction is stored before another
      reduces over it. *)
-  if op x = Op.Reduce && nested rctx x (List.concat consumer_rngs) then
-    ending := true;
+  if op x = Op.Reduce then
+    ending := nested rctx x (List.concat consumer_rngs) @ !ending;
   let out_rngs =
     if Tbl.mem rctx.realize_map x then begin
-      ending := false;
+      (* A value stored already, as a gather's source is, is read where it is
+         broadcast when its consumers broadcast it, or when a broadcast ends
+         ranges above one of its gathers and the gathers, inlined, would
+         compute more elements than it holds: each element a gather reads,
+         again at each trip of the ranges that end above it. A few rows of a
+         larger table broadcast along a few rows stay unmarked, and so do
+         gathers no broadcast reads, as before ranges were counted. The work
+         inlined counts at its least and the elements held at their most, so
+         a symbolic size leans toward inlining. *)
+      let gathers =
+        List.filter (fun c -> is_gather c && nth c 0 == x) consumers
+      in
+      let computed_inlined =
+        List.fold_left
+          (fun n c -> n +. (least_numel c *. least_trips (ended_above c)))
+          0. gathers
+      in
+      if
+        broadcast_ending_ranges
+        || List.exists (fun c -> ended_above c <> []) gathers
+           && computed_inlined > float_of_int (max_numel x)
+      then Tbl.replace rctx.broadcast x ();
+      ending := [];
       Some (loops_of rctx x)
     end
     else
@@ -1050,8 +1086,8 @@ let assign_ranges rctx ~consumer_map ~ending_ranges x =
   Option.iter
     (fun out_rngs ->
       let out_rngs =
-        if !ending && computed x then begin
-          ending := false;
+        if !ending <> [] && computed x then begin
+          ending := [];
           (* A value of no axes that computes a reduction is stored too, as one
              element: inlined where it is broadcast, each element of the
              consumer would compute the reduction whole. Without a reduction it
@@ -1068,7 +1104,7 @@ let assign_ranges rctx ~consumer_map ~ending_ranges x =
         end
         else out_rngs
       in
-      ending := !ending || broadcast_ending_ranges;
+      ending := broadcast_ended @ !ending;
       let rngs =
         if Op.Set.mem (op x) Op.Set.movement then
           apply_movement_op (shape (nth x 0)) (marg x) out_rngs
@@ -1090,8 +1126,7 @@ let assign_ranges rctx ~consumer_map ~ending_ranges x =
                   (function Int _ -> true | Sym s -> op s <> Op.Range)
                   (shape x) ->
              let injected = List.take (List.length added) out_rngs in
-             ending :=
-               !ending || Nodes.cardinal (ranges (Ops.sink injected)) > 0
+             ending := Nodes.to_list (ranges (Ops.sink injected)) @ !ending
          | _ -> ());
       let rngs =
         match arg x with
@@ -1102,7 +1137,7 @@ let assign_ranges rctx ~consumer_map ~ending_ranges x =
       in
       Tbl.replace rctx.range_map x (rngs, out_rngs))
     out_rngs;
-  Tbl.replace ending_ranges x !ending
+  Tbl.replace ending_ranges x (List.sort_uniq Ops.compare !ending)
 
 let run_rangeify tsink =
   let tsink_toposort = toposort ~calls:Skip ~gate:gate_kernel_sink tsink in

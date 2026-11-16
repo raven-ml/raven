@@ -784,6 +784,67 @@ let limit =
           writes sink);
     ]
 
+(* Gathers read where broadcast
+
+   A value whose gathers are broadcast, and would compute more elements inlined
+   than it holds, each element read once for each row of the broadcast, is
+   read where it is broadcast, as a value broadcast directly is: one whose
+   computing runs a transcendental function or that reads more than three
+   storages stays stored. One whose gathers would compute fewer is inlined
+   where the cost check allows. [gathered ~rows v] reads two elements of [v],
+   at positions loaded from storage and clamped into range, and broadcasts
+   them along [rows] rows of a sum. *)
+
+let gathered ?(rows = 3) v =
+  let i32 n = Ops.const ~dtype:Int32 (`Int (Bigint.of_int n)) in
+  let n =
+    match Shape.shape v with [ Ops.Int n ] -> n | _ -> fail "a vector"
+  in
+  let at =
+    Ops.cast
+      (Ops.maximum
+         (Ops.minimum
+            (Shape.param ~device:cpu ~shape:[ Int 2 ] 7 Int32)
+            (i32 (n - 1)))
+         (i32 0))
+      Weak_int
+  in
+  let g = Shape.reshape (Ops.index v [ at ]) (ints [ 1; 2 ]) in
+  let o = Shape.param ~device:cpu ~shape:[ Int (rows * 2) ] 0 Float32 in
+  let value =
+    Ops.O.(Shape.expand g (ints [ rows; 2 ]) + input ~shape:[ rows; 2 ] 6)
+  in
+  Ops.sink
+    [ Ops.after o [ Ops.store (Shape.reshape o (ints [ rows; 2 ])) value ] ]
+
+let gathered_broadcast =
+  group "get_kernel_graph › gathers read where broadcast"
+    [
+      test "a gathered exponential read where it is broadcast stays stored"
+        (fun () ->
+          let sink = gathered (Ops.exp2 (input ~shape:[ 2 ] 1)) in
+          equal int 2 (kernels_of sink);
+          writes sink);
+      test
+        "a gathered value of four storages read where it is broadcast stays \
+         stored" (fun () ->
+          let sink = gathered (four [ 2 ]) in
+          equal int 2 (kernels_of sink);
+          writes sink);
+      test
+        "an exponential of a larger table gathered and broadcast along few \
+         rows is computed where it is read" (fun () ->
+          let sink = gathered (Ops.exp2 (input ~shape:[ 16 ] 1)) in
+          equal int 1 (kernels_of sink);
+          writes sink);
+      test
+        "an exponential of a larger table gathered and broadcast along many \
+         rows stays stored" (fun () ->
+          let sink = gathered ~rows:64 (Ops.exp2 (input ~shape:[ 16 ] 1)) in
+          equal int 2 (kernels_of sink);
+          writes sink);
+    ]
+
 (* Stores that read their destination
 
    A store whose value reads its destination only at the element it writes,
@@ -1116,8 +1177,14 @@ let writes_what_it_computes ?(cover = fun _ _ -> ()) drawn =
 
 (* Programs the law once failed on. A sum over a padded axis of size 1 folds
    into the value times its own validity, which reads the input at an invalid
-   index where it is padding: that read is zero. *)
-let counterexamples = [ ([ 1 ], [ Pad 0; Unsqueeze 0; Pad 0; Sum 0 ]) ]
+   index where it is padding: that read is zero. A maximum of a broadcast sum
+   is the sum, stored once for the broadcast and then read only by the store
+   of the output, which copies it whole. *)
+let counterexamples =
+  [
+    ([ 1 ], [ Pad 0; Unsqueeze 0; Pad 0; Sum 0 ]);
+    ([ 2 ], [ Sum 0; Expand; Max 0 ]);
+  ]
 
 let laws =
   group "get_kernel_graph › laws"
@@ -2219,6 +2286,7 @@ let () =
          rules;
          shared;
          limit;
+         gathered_broadcast;
          self_reads;
          siblings;
          loops;
