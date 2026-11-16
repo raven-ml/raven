@@ -465,7 +465,11 @@
 (** {2:transforms_memory Memory}
 
     The plans a device keeps for later transforms take at most 64 MiB of
-    the 192 MiB it keeps. A transform takes workspace of at most [3m]
+    the 192 MiB it keeps. A plan's tables are made on the host,
+    Bluestein's kernel by an FFT of [m] points in double-double
+    arithmetic, in time that grows as [m log m]: seconds for [m] of
+    millions. A plan of more than 64 MiB, which no device keeps, is made
+    again for each call. A transform takes workspace of at most [3m]
     complex points a line of the axis that needs most, [m = n] for a
     7-smooth [n] and [m = 4n] otherwise, and none for lines of at most 512
     points; and a [c2r] along several axes a copy of its operand beside
