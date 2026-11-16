@@ -530,14 +530,20 @@ let staged ~closed n () =
     B.copy ~src:(B.create Rig.host n) ~dst:(B.create d n);
     Rig.close d
   done;
-  (B.create Rig.host n, B.create (unaddressed ()) n)
+  (host_written n, B.create (unaddressed ()) n)
 
 (* [n] bytes of host memory, written, borrowed on [d]: a copy on [d]'s queue
    reads memory the host pages only through a borrow on [d]. *)
 let borrowed d n = Option.get (B.borrow d (host_written n))
 
 let copy_rows =
-  let pair d n () = (B.create d n, B.create d n) in
+  (* [n] bytes of [d]'s memory written, as [host_written] writes, and [n]
+     more to copy them into. *)
+  let pair d n () =
+    let src = B.create d n in
+    B.fill src 'w';
+    (src, B.create d n)
+  in
   let copy (src, dst) = B.copy ~src ~dst in
   Thumper.group "copy"
     [
@@ -579,7 +585,8 @@ let copy_rows =
       row "queued/host-to-device-8x4K"
         (fun () ->
           let d = unaddressed () in
-          Array.init 8 (fun _ -> (B.create Rig.host (4 * kib), B.create d (4 * kib))))
+          Array.init 8 (fun _ ->
+              (host_written (4 * kib), B.create d (4 * kib))))
         (fun ends ->
           let last = ref None in
           Array.iter
@@ -793,7 +800,7 @@ let memory_floor_rows =
     (b, Support.Reader.host b)
   in
   let blit (src, dst) = Bigarray.Array1.blit src dst in
-  let chars2 n () = (chars n, chars n) in
+  let chars2 n () = (written_chars n, chars n) in
   [
     Thumper.bench "bigarray-create-16" (fun () -> chars 16);
     Thumper.bench "bigarray-create-1M" (fun () -> chars mib);

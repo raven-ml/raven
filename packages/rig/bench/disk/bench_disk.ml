@@ -97,6 +97,16 @@ let fresh name =
 let ok = function Ok v -> v | Error why -> failwith why
 let host n = B.create Rig.host n
 
+(* [n] bytes of host memory, written, as the data a program writes to a file is.
+   Pages never written all map one page of zeros, and a copy from them runs at
+   a speed set by the size of the host's pages: on fudge a pwrite of 64 MiB took
+   9.8 ms from 2 MiB pages of zeros, 15.8 ms from 4 KiB ones, and 12.0 ms from
+   written memory with either size. *)
+let written n =
+  let b = host n in
+  B.fill b 'w';
+  b
+
 let size n =
   if n >= gib then strf "%dG" (n / gib)
   else if n >= mib then strf "%dM" (n / mib)
@@ -109,11 +119,12 @@ let opened p ~writable =
   if h < 0 then failwith (strf "%s: open failed: %d" p (-h));
   h
 
-(* Host memory of [n] bytes and its address. The floor keeps the pair, so the
-   buffer keeps the memory. *)
-let memory n =
-  let b = host n in
-  (b, address b)
+(* Host memory and its address: [memory n] for a floor to read into, [source n]
+   written for a floor to write from. The floor keeps the pair, so the buffer
+   keeps the memory. *)
+let addressed b = (b, address b)
+let memory n = addressed (host n)
+let source n = addressed (written n)
 
 let moved what n k =
   if k <> n then failwith (strf "%s: %d of %d bytes" what k n)
@@ -148,31 +159,31 @@ let read_rows =
 (* More files than the disk keeps descriptors for. *)
 let many = 128
 
-(* Writes: a copy into a file at each size, and a copy of 4 KiB into each of
-   [many] files followed by a barrier of each, beside the system's calls. The
-   disk syncs a written file before it closes the file's descriptor to open
-   another. *)
+(* Writes: a copy of written memory into a file at each size, and a copy of
+   4 KiB into each of [many] files followed by a barrier of each, beside the
+   system's calls. The disk syncs a written file before it closes the file's
+   descriptor to open another. *)
 
 let write_rows =
   let small = 4 * kib in
   let writings () =
-    ( host small,
+    ( written small,
       Array.init many (fun i ->
           ok (Rig_disk.create_file (fresh (strf "write-many-%d" i)) small)) )
   in
   let floors () =
-    ( memory small,
+    ( source small,
       Array.init many (fun i ->
           opened (data (strf "write-floor-many-%d" i) small) ~writable:true) )
   in
   let writing n () =
-    ( host n,
+    ( written n,
       Rig_disk.buffer
         (ok (Rig_disk.create_file (fresh (strf "write-%s" (size n))) n)) )
   in
   let floor n () =
     let h = opened (data (strf "write-floor-%s" (size n)) n) ~writable:true in
-    (h, memory n)
+    (h, source n)
   in
   Thumper.group "write"
     (List.concat_map
@@ -406,12 +417,12 @@ let barrier_rows =
   Thumper.group "barrier"
     [
       row "1M"
-        (fun () -> (host n, ok (Rig_disk.create_file (fresh "barrier") n)))
+        (fun () -> (written n, ok (Rig_disk.create_file (fresh "barrier") n)))
         (fun (h, file) ->
           B.copy ~src:h ~dst:(Rig_disk.buffer file);
           Rig_disk.barrier file);
       row "floor-1M"
-        (fun () -> (opened (data "barrier-floor" n) ~writable:true, memory n))
+        (fun () -> (opened (data "barrier-floor" n) ~writable:true, source n))
         (fun (h, (_, a)) ->
           moved "pwrite" n (pwrite h 0 a n);
           moved "sync" 0 (sync h));

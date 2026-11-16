@@ -55,6 +55,16 @@ let run t s =
 
 let row name setup f = Thumper.bench_with_setup ~setup name f
 
+(* [n] bytes of host pages from a page boundary, a byte of each page written,
+   as in memory a program filled: a mapping of pages never written first
+   faults each in. *)
+let touched n =
+  let p = H.pages n in
+  for i = 0 to (n / H.page) - 1 do
+    H.set8 (p + (i * H.page)) 1
+  done;
+  p
+
 (* [n] launches of [kernel] of kernels.ptx (defaults to [empty]) over one
    thread, as parts of COMPUTE:0 loaded by rig, their blocks stored in [t]'s
    run, their parameters left 0. *)
@@ -132,6 +142,7 @@ let copy_rows =
     let t = dev () in
     let create m = Rig.Buffer.create ~memory:m t.d n in
     let dst = create dst and src = create src in
+    Rig.Buffer.fill src 'w';
     (t, prepare t Rig.Submission.[| copy ~src:(Buffer src) ~dst:(Buffer dst) |])
   in
   let copy name kinds = row name (copying kinds) (fun (t, s) -> run t s) in
@@ -153,7 +164,7 @@ let map_host_rows =
   Thumper.group "map-host"
     [
       row "256MiB"
-        (fun () -> (dev (), H.pages n))
+        (fun () -> (dev (), touched n))
         (fun (t, p) ->
           C.free t.g
             (Option.get (Rig_gpu_support.mapped (C.map_host t.g p n))));

@@ -96,8 +96,9 @@ let load ~cold (p, dst) =
    buffer, on a page or 16 bytes past one, such as a C library's large
    allocation, go through the host's staging memory, one host copy per byte
    beside the GPU's; the GPU copies a borrow of a buffer on a page directly.
-   Host memory is written first: pages never written read as one page of
-   zeros, which no copy of real data reads as fast. *)
+   Every source is written first, the GPU's memory as the host's: host pages
+   never written read as one page of zeros, which no copy of real data reads
+   as fast. *)
 
 let copy_bytes = 256 lsl 20
 
@@ -111,6 +112,12 @@ let written ?(off = false) n =
   let ba = Bigarray.Array1.sub (B.export b Bigarray.char) at n in
   Bigarray.Array1.fill ba 'w';
   if off then B.of_bigarray ba else b
+
+(* [n] bytes of [g]'s memory, written. *)
+let written_on g n =
+  let b = B.create g n in
+  B.fill b 'w';
+  b
 
 (* A copy between host memory and a borrow of host memory: a size whose two
    buffers fit the last-level cache. A copy of a size that does not is bound by
@@ -279,7 +286,7 @@ let gpu_rows v ~opened ~kernel ~launch =
     let g, _ = opened () in
     let p = path (strf "out-%s" v) in
     if Sys.file_exists p then Sys.remove p;
-    ( B.create g file_bytes,
+    ( written_on g file_bytes,
       Rig_disk.buffer (ok (Rig_disk.create_file p file_bytes)) )
   in
   (* Host memory and a borrow on the GPU of other host memory: the host copies
@@ -290,8 +297,8 @@ let gpu_rows v ~opened ~kernel ~launch =
   in
   let copying host ~to_device () =
     let g, _ = opened () in
-    let h = host () and d = B.create g copy_bytes in
-    if to_device then (h, d) else (d, h)
+    if to_device then (host (), B.create g copy_bytes)
+    else (written_on g copy_bytes, host ())
   in
   let paged () = written copy_bytes
   and off_page () = written ~off:true copy_bytes in
@@ -300,8 +307,8 @@ let gpu_rows v ~opened ~kernel ~launch =
   let borrowed_host ~to_device () =
     let g, _ = opened () in
     let h = Option.get (B.borrow g (written copy_bytes)) in
-    let d = B.create g copy_bytes in
-    if to_device then (h, d) else (d, h)
+    if to_device then (h, B.create g copy_bytes)
+    else (written_on g copy_bytes, h)
   in
   (* A fresh host buffer of 1 MiB for each upload, as a step that makes its
      input anew does: no copy maps it. *)
