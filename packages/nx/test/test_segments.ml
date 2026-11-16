@@ -190,10 +190,14 @@ let test_segment_errors () =
 
 (* Segments over two devices: [ids] whole on each or split along its
    positions, [x] whole on each or split along its rows or its columns.
-   Each case the law covers is drawn on its own a sixth of the time, so
-   every run reaches it: [Add] beside [ids] split with [x] whole, with [x]'s
-   columns cut, and with [x]'s rows cut in uneven windows, any other combine
-   with its rows cut, and any combine with the columns alone cut. *)
+   Each case the law covers is drawn on its own a sixth of the time: [Add]
+   beside [ids] split with [x] whole, with [x]'s columns cut, and with [x]'s
+   rows cut in uneven windows, any other combine with its rows cut, by [ids]
+   or by [x], and any combine with the columns alone cut. Another combine
+   with [x]'s rows cut, of several rows and some segments, is 0.066 of the
+   draws, and with [ids] split beside [x] whole or its columns cut 0.123,
+   so the law draws 350 cases, which miss the first with probability
+   5 10^-11. *)
 type scenario = Ids_x_whole | Ids_x_cols | Add_x_rows | Other_rows | Cols | Any
 
 let add = [ 0; 1 ] and others = [ 2; 3; 4; 5; 6 ]
@@ -254,7 +258,14 @@ let law_cut_segments (Rows (dt, c, _, x), k, ids, ids_rows, x_cut) =
     (c = Nx.Add && ids_rows && x_cut = Some 1);
   cover "Max, Min or Set with x's rows cut"
     (c <> Nx.Add && x_cut = Some 0 && n > 1 && k > 0);
+  cover "Max, Min or Set with ids split beside x whole or its columns cut"
+    (c <> Nx.Add && ids_rows && x_cut <> Some 0);
   cover "a cut of the columns alone" ((not ids_rows) && x_cut = Some 1);
+  (* With fewer rows than devices, a device's partials stay at the
+     combine's identity, which Set must not take. *)
+  cover "Max, Min or Set with a device holding no row"
+    (c <> Nx.Add && rows_cut && n < 2);
+  cover "no segment, its rows cut" (k = 0 && rows_cut);
   let host = Nx.to_array (Nx.reduce_segments c ~segments:k ids x) in
   let whole = Nx.Placement.(with_leading_axis (without_leading_axis px)) in
   let y = Nx.reduce_segments c ~segments:k (Nx.place pi ids) (Nx.place px x) in
@@ -265,7 +276,7 @@ let segments =
   group "reduce_segments"
     [
       prop "each segment folds its rows in order" segmented law_segments;
-      prop
+      prop ~count:350
         "over devices, each combine folds rows split along the positions as \
          one device does"
         cut_segments law_cut_segments;
