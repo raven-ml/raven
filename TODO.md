@@ -193,17 +193,30 @@ Where it stands, with every measurement: doc/performance.md.
   host: `Exec.created` (exec.ml:589-600) fills each window on the host,
   then copies it, so a one-device value needs host memory of its full size
   where the device could hold it. On fudge, `capped`'s 8 GB is below an RTX
-  5000 Ada's 32 GB. Slabs would bound it: each computed on the host at its
-  `Prim.offset` and copied into its box of the device array, with edges on
-  whole bytes, the bits the same by the window law. It depends on whether
-  an eager convenience falls under "No arbitrary limits"
-  (_plans/tessera-port/design/nx-vocab/audit.md, question 2). Found by the
-  DD audit (N3)
-- `Nx.log10`, once it lands as a composite over `log2`, has no stated bound
-  under `Rune.jit` (rune.mli:1610 bounds `log2` at 4 ulps), and its
-  exactness at powers of ten is measured only on nx's kernels. A `Log10`
-  kind lowered over rune's `log2_parts` (lower_real.ml:504) would prove
-  both, once a consumer needs log10 bounded on a device. Found by the DD
+  5000 Ada's 32 GB. Slabs extend rig's own practice one layer up: rig moves
+  a paged copy through staging of 32 MiB allocations whatever its size
+  (rig.mli:1476-1488), and a copy through staging returns once the host's
+  transfers are done, so the host may then reuse its source
+  (rig.mli:1588-1590); a direct copy returns once queued (:1584-1587). The
+  slabs' copies are from a plain host buffer, so they go through staging.
+  So `created` would allocate the device array, then compute each slab at
+  its `Prim.offset` into one host buffer and copy it into its box
+  (rig.mli:1575-1582), with slab edges on whole bytes for dtypes under a
+  byte (nx_array.mli:212-221). The bits are the
+  same by the window law, and no second staging is needed. Where the host
+  addresses the device's memory (`share`, exec.ml:576-580) `created` could
+  instead compute straight into the device array. Owed by the DD
+  adjudication (W1); found by its audit and skeptic
+  (_plans/tessera-port/design/nx-vocab/skeptic.md §3)
+- `Nx.log10` is a composite over `log2`, so its float64 bound follows only
+  where `log2` is within 1 ulp: under `Rune.jit` on the host, over tolk's
+  `xlog2` (transcendental.mli:16-22). Eagerly, over nx's `log2` stated at
+  2 ulps, it is measured, as are the float32 bound, at every float32, and
+  the exact powers of ten. On a device rune bounds `log2` at 4 ulps
+  (rune.mli:1610), which leaves log10 within about 6, and the powers are
+  unmeasured there. A `Log10` kind lowered over rune's `log2_parts`
+  (lower_real.ml:504), which gives log2 as two parts, would prove both on
+  every device, once a consumer needs log10 bounded there. Found by the DD
   audit (S2)
 - `Nx.zeros_at` and `Nx.full_at` of a value whose bytes repeat one byte
   (zeros, all-ones integers) are maps of no loads, so on a set without
@@ -230,6 +243,19 @@ Where it stands, with every measurement: doc/performance.md.
   `FILE_FLAG_OVERLAPPED` (rig_disk_stubs.c:96-103), which serialises its
   I/O even where each `ReadFile` passes an `OVERLAPPED` offset. Found by
   the streaming-data part 2 audit
+
+## sowilo
+
+- A nearest resize to one column or row picks the first, not the centre:
+  `compute_nearest_indices` (contrib/sowilo/lib/transform.ml:20-22)
+  returns index 0 when `size_out = 1`. Pillow's NEAREST and OpenCV's
+  INTER_NEAREST_EXACT, which sowilo matches at every non-tie pixel of a
+  sweep of widths 1 to 96, pick `size_in / 2`: 3 from 7 columns.
+  sowilo.mli:100 states no centre rule, and `round (y - 1/2)` equals PIL's
+  `floor y` only because `Nx.round` takes halves away from zero. State the
+  rule and compute it as `floor ((i + 1/2) scale)`, which has no tie and is
+  the same at every other index. Found by the DD skeptic
+  (_plans/tessera-port/design/nx-vocab/skeptic.md §2)
 
 ## talon, hugin, brot, munin, quill
 
