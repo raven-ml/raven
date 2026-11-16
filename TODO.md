@@ -13,9 +13,10 @@ Where it stands, with every measurement: doc/performance.md.
   parameter; renaming in the renderer moves every source golden)
   (_plans/tessera-port/design/shapes/s3s5-notes.md)
 - `Codegen.to_programs` compiles each worker's sources apart, so two kernels
-  of one compiled text taken by two workers each run Clang or NVRTC; one
-  compile per distinct text needs the texts gathered before the workers
-  split them
+  of one compiled text taken by two workers each run Clang or NVRTC: 5 of
+  the 165 sources Clang compiles in tessera's cold distillation step at 2
+  workers. One compile per distinct text needs the texts gathered before
+  the workers split them
 - Dense bf16 projections on CUDA (_plans/perf-campaign/proj/, proj2/): k
   and v run 11.3 us at 64 tokens to 24 us at 512, L2 evicted
   (`stream/key-projection-64` 15.7 us), 2-4x their 5.5 us byte bound: they
@@ -133,19 +134,102 @@ Where it stands, with every measurement: doc/performance.md.
   contraction re-reads across output tiles
 - `beam_search`'s disk key names no device part, so a search timed on one
   part of a target serves every other part
+- `Heuristic.reused` (heuristic.ml:853) and `upcast_more`'s `reuses`
+  (:919) count every access in the kernel, loads after the reduce
+  included, so a bias that skips an axis both operands of a contraction
+  read makes that axis look reused. Unverified with a kernel. Found by the
+  I1 lend fix
+- A bf16 product's tensor core at five K tiles with a float32 `exp`
+  epilogue runs 1.22-1.28x slower than SIMT: at 65536x72x512, padded to
+  K = 80, 0.347 against SIMT's 0.284 ms, while main takes the same core
+  unpadded at K = 80 in 0.354 ms. Found by the G-D3 review
+  (_plans/tessera-port/design/gemm2/gd3-review.md)
 
 ## nx, rune
 
-- rune's attention takes 8 or 4 warps by `local_workgroups`, outside that
-  field's documented scope, and 8 against 4 was never measured
-- Under load (about 25-50), tolk's launch law and rune's attention "every
-  dtype" and "its gradient mapped by vmap" props hit windtrap's 60 s limit;
-  they pass in 10-15 s on a rerun
-- nx's `permute is a bijection` (test/test_rng.ml) covers "one element" on
-  some seeds only, so the test can fail on a draw that reaches no such case
-- rune's blocked complex contraction bound, `γ(β(K) + 2)`, exceeds the
-  kernel contract's `√2 γ(β(2K))` at K = 1; it matters if compiled programs
-  must stay within the kernel contract
+- rune's attention core takes 8 warps where 8 still leave
+  `local_workgroups` workgroups, else 4 (lower_attention.ml:1516). But
+  renderer.mli:277-279 scopes that field to cores whose operands are not
+  staged, and this core shares its tiles among its warps in workgroup
+  memory. 8 against 4 was never measured. At TESSERA's shapes the core
+  takes 8 (_plans/tessera-port/design/attention2/skeptic.md:66-70), so
+  whether 4 would serve its rows better is unknown. Found by the
+  TARGETFACTS audit (_plans/consolidate/targetfacts, A3)
+- rune's attention props "every dtype" (test_attention.ml:665-669) and, on
+  the GPU, "its gradient mapped by vmap" (test_jit_gpu.ml:3098-3104) take
+  10-15 s on an idle fudge. At a load of 30-60 on its 14 cores they pass
+  the 60 s `WINDTRAP_TIMEOUT` (dune:53) and fail the runtest; a rerun
+  passes (10.7 s at load 14). Each case compiles programs of its own
+  shapes. Where their time goes is unmeasured. tolk's launch law is the
+  tolk entry above. Found by the TARGETFACTS audit and CODEPATH design A
+- rune states a compiled complex contraction's part within
+  `γ(β(K) + 2) Σ(|ar br| + |ai bi|)` (rune.mli:1684-1686,
+  lower_reduce.mli:141-145), while `Nx.contract` and the kernel contract
+  give `√2 γ(β(2K))` in modulus (nx.mli:2673-2676, nx_kernel.mli:300-303).
+  At K = 1 alone, rune's bound is larger: `γ(5)` a part against `√2 γ(4)`
+  in modulus. From K = 2 on, `β(K) + 2 ≤ β(2K)`. It matters if compiled
+  programs must hold `Nx.contract`'s bound. Found by NXBOUND
+- The fused attention backward refuses values of no column: `dplan`
+  requires `a.dv > 0` (lower_attention.ml:2015), so an `Nx.attention` call
+  over values of no column, legal by nx.mli and handled by the forward
+  (:2204-2209, :2261-2263), takes the default derivative at every head dim
+  and stores the weights. Lifting the condition takes more than it:
+  `linear`'s operands have no guard for an empty `v` or `ō`, nor for the
+  δ kernel's `o` (:2317, :2324), which all need the forward's `operand`
+  (:2206-2209), one function for both lowerings rather than a second copy;
+  `v̄`'s buffer of at least one element is reshaped to `[…; 0]` (:2318,
+  :2359), where the forward fills its `o` at `dv = 0` (:2262); and
+  `Values` launches whenever `wide` (:2340-2350). tessera's dropout
+  composition needs it for its lse-only call (attention2 R7a). Found by
+  the attention round-2 audit and skeptic
+  (_plans/tessera-port/design/attention2/skeptic.md §1)
+- `Nx.rearrange` plans for 190-252 words beyond its movements (a `b h`
+  split costs 362 against 110 moved), for patterns that move nothing too.
+  Found by the nx-hostcost audit
+- A 0-d operand against a leaf of rank 1 or more costs 96-100 words a call,
+  44 of them the broadcast, and vega pays this for its 0-d rate and weight
+  decay. Found by the nx-hostcost skeptic
+- An eager creation at a set without kernels holds its window whole on the
+  host: `Exec.created` (exec.ml:589-600) fills each window on the host,
+  then copies it, so a one-device value needs host memory of its full size
+  where the device could hold it. On fudge, `capped`'s 8 GB is below an RTX
+  5000 Ada's 32 GB. Slabs would bound it: each computed on the host at its
+  `Prim.offset` and copied into its box of the device array, with edges on
+  whole bytes, the bits the same by the window law. It depends on whether
+  an eager convenience falls under "No arbitrary limits"
+  (_plans/tessera-port/design/nx-vocab/audit.md, question 2). Found by the
+  DD audit (N3)
+- `Nx.log10`, once it lands as a composite over `log2`, has no stated bound
+  under `Rune.jit` (rune.mli:1610 bounds `log2` at 4 ulps), and its
+  exactness at powers of ten is measured only on nx's kernels. A `Log10`
+  kind lowered over rune's `log2_parts` (lower_real.ml:504) would prove
+  both, once a consumer needs log10 bounded on a device. Found by the DD
+  audit (S2)
+- `Nx.zeros_at` and `Nx.full_at` of a value whose bytes repeat one byte
+  (zeros, all-ones integers) are maps of no loads, so on a set without
+  kernels `Exec.created` fills them on the host and copies the window
+  (exec.ml:584-600), though rig can set the bytes on the device
+  (`Rig.Buffer.submit_fill`, rig.mli:1648-1660) with no host memory and
+  no copy. Eager optimiser moments made at a GPU set outside a compiler
+  pay a host fill of their size and a copy of it to the device.
+  Unmeasured. Found by the DD design round (N3)
+
+## vega
+
+- A port of Barlow Twins' LARS also gives biases and normalisation
+  parameters their own learning rate, 0.0048 against the weights' 0.2
+  (Zbontar et al. 2021, "Optimization"; `main.py` lines 167-168). No vega
+  rule sets a rate by the kind of leaf: rates differ by part
+  (vega.mli:363-388), and these leaves interleave across every layer.
+  Decide whether a rate by leaf kind is a rule on the leaf, as `~decays`
+  is. Found by DC's V2 audit
+
+## rig
+
+- Windows has no read depth: rig's disk opens a file without
+  `FILE_FLAG_OVERLAPPED` (rig_disk_stubs.c:96-103), which serialises its
+  I/O even where each `ReadFile` passes an `OVERLAPPED` offset. Found by
+  the streaming-data part 2 audit
 
 ## talon, hugin, brot, munin, quill
 
