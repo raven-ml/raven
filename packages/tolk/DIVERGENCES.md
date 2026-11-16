@@ -47,17 +47,15 @@ memory it uses, and tolk encodes no queue (D146).
 
 ## D2. Withdrawn
 
-tinygrad compiles a rule's pattern on its first try (`uop/ops.py`
-`upat_deferred_compile`; `uop/upat.py` `upat_compile`) into one test per field
-the pattern has and one call of the rule's function per alternative, as Python
-source. tolk compiles it the same way into closures (`Ops.Upat.compile`,
-`Ops.Pattern_matcher.rule_ctx`), so leaving out the source generation and
-`UPAT_COMPILE` is scope: see the Exclusions of `README.md`. A pattern that
-`upat_compile` refuses, a repeat over a pattern with several namings or too many
-alternatives, has the namings `UPat.match` gives (`uop/ops.py` `UPat.match`) in
-tolk, which `Upat.match_` promises for every pattern. A repeat that names nodes
-matches no sources as `UPat.match` does, its names unbound, where `upat_compile`
-requires a source (`uop/upat.py` `_get_clause`).
+Compiling a pattern to closures (`Ops.Upat.compile`,
+`Ops.Pattern_matcher.rule_ctx`) without the source generation and
+`UPAT_COMPILE` of `uop/upat.py` `upat_compile` and `uop/ops.py`
+`upat_deferred_compile` is scope (README Exclusions). A pattern that
+`upat_compile` refuses, a repeat over a pattern with several namings or too
+many alternatives, has the namings `uop/ops.py` `UPat.match` gives, which
+`Upat.match_` promises for every pattern. A repeat that names nodes matches no
+sources as `UPat.match` does, its names unbound, where `upat_compile` requires
+a source (`uop/upat.py` `_get_clause`).
 
 ## D3. device.py and the ops_*.py files are split
 
@@ -69,36 +67,32 @@ requires a source (`uop/upat.py` `_get_clause`).
   compiler selection of `Compiled`, returning data. The lazy `Buffer` and
   running a schedule are `tolk.engine`'s, which has no registry of devices by
   name: its caller maps each name to a device. The IR half of each `ops_*.py`
-  (queues, `pm_encode`, program data), allocators, programs, drivers and profile
-  events are rig's (D146). So a node of the compiler holds no runtime state:
-  `ParamArg` has no `buffer`, a `BUFFER` is named by its slot for the engine to
-  bind, and `UOp.buffer`, `realized`, `is_realized`, `_buffer_view`,
-  `_base_buffer_is_realized`, `from_buffer` and `_frompy` (`uop/ops.py`) are the
-  engine's. Whether storage is bound is the operation itself, `BUFFER` or
-  `ALLOC`, so the specification's checks of `ParamArg.buffer` (`uop/spec.py`
-  `spec_tensor`, `spec_kernel_graph`) hold by construction.
+  (queues, `pm_encode`, program data), allocators, programs, drivers and
+  profile events are rig's (D146). A node of the compiler holds no runtime
+  state: `ParamArg` has no `buffer`, a `BUFFER` is named by its slot for the
+  engine to bind, and `UOp.buffer`, `realized`, `is_realized`, `_buffer_view`,
+  `_base_buffer_is_realized`, `from_buffer` and `_frompy` (`uop/ops.py`) are
+  the engine's. Bound storage is its own operation, `BUFFER` or `ALLOC`, so
+  the checks of `ParamArg.buffer` in `uop/spec.py` `spec_tensor` and
+  `spec_kernel_graph` hold by construction.
 - **Reason:** (c).
 - **Pinned by:** for `Ops`: `Tolk.Ops › storage › new_buffer takes the
-  next slot without one` and `Tolk.Ops › arguments › reprs.golden`, where
-  a `BUFFER` prints and interns by its slot alone; for the engine: the
-  Engine suite (`test/engine/tolk_engine`): `refusals › link refuses a
-  device the map does not hold`, which a registry would resolve, and
-  `refusals › run refuses a parameter it binds no buffer`, which a `BUFFER`
-  holding its buffer would run.
+  next slot without one` and `Tolk.Ops › arguments › reprs.golden`; for the
+  engine, the Engine suite (`test/engine/tolk_engine`): `refusals › link
+  refuses a device the map does not hold` and `refusals › run refuses a
+  parameter it binds no buffer`.
 
 ## D4. Import cycles are broken
 
 - **tinygrad:** the imports inside functions that Python uses to hide a cycle:
-  - `uop/ops.py` calls `symbolic`, `render`,
-    `spec`, `upat`, `schedule.prepare`, `mixin.rand` and `renderer`;
-  - `uop/spec.py` against `device`;
-  - `renderer/__init__.py` imports `device.Compiler`, while `device.Compiled`
-    holds renderers;
-  - `codegen/opt/postrange.py` `apply_opts` against `search` and `heuristic`,
-    with `search` importing `engine.realize`;
-  - `schedule/__init__.py` against `engine.realize`, and `tensor.py` against
-    `engine.jit` and `engine.realize`;
-  - `renderer/cstyle.py` imports the compilers and `ops_metal`.
+  `uop/ops.py` calls `symbolic`, `render`, `spec`, `upat`, `schedule.prepare`,
+  `mixin.rand` and `renderer`; `uop/spec.py` against `device`;
+  `renderer/__init__.py` imports `device.Compiler`, while `device.Compiled`
+  holds renderers; `codegen/opt/postrange.py` `apply_opts` against `search`
+  and `heuristic`, with `search` importing `engine.realize`;
+  `schedule/__init__.py` against `engine.realize`, and `tensor.py` against
+  `engine.jit` and `engine.realize`; `renderer/cstyle.py` imports the
+  compilers and `ops_metal`.
 - **tolk:** for `uop/ops.py`, `Shape.simplify_rules` and the line after
   them, which sets them; `Ops.Make_elementwise`, `Ops.repr`,
   `Ops.bufferize_opts`; `Render.render`, `Render.srender`;
@@ -106,28 +100,27 @@ requires a source (`uop/upat.py` `_get_clause`).
   `Schedule.pm_flatten_linear`; `Codegen.apply_opts`;
   `Realize.lower_and_compile`; and `Compiler_metal`.
 - **Differs:**
-  - the `UOp` methods that call a later module become functions of that
-    module: `contiguous_view` goes to `Prepare`,
-    `to_elf` to `Device`, and `render` and `srender` to `Render`;
+  - the `UOp` methods that call a later module are functions of that module:
+    `contiguous_view` of `Prepare`, `to_elf` of `Device`, `render` and
+    `srender` of `Render`;
   - `engine/realize.py`'s `pm_flatten_linear`, which `schedule/__init__.py`
     imports, is `Schedule.pm_flatten_linear`, since `Realize` follows
     `Schedule`;
   - `simplify` is `Shape`'s, with the functions that call it (reshaping,
     `resolve`, shapes) and the rules it rewrites with, which read shapes:
     `symbolic.py`'s `symbolic_simple`, `commutative` and `symbolic`,
-    `divandmod.py`'s `div_and_mod_symbolic`, `movement.py`'s `mop_cleanup`
-    and `weak.py`'s `pm_uncast_const`. `simplify` precedes the rules and reads
-    them through one reference that the line after them sets, so a
-    program that links `Shape` has them. `Symbolic` keeps `sym` and the rules
-    on conditions, which call `simplify`. The other `UOp` methods that read
-    shapes, of storage, variables, calls and programs, are
-    `Shape`'s too;
-  - `render.py`'s `pretty_print` is `Ops.pp`: it prints arguments
-    (`argstr`), and arguments print the nodes they hold, so the two recurse;
+    `divandmod.py`'s `div_and_mod_symbolic`, `movement.py`'s `mop_cleanup` and
+    `weak.py`'s `pm_uncast_const`. `simplify` precedes the rules and reads them
+    through one reference that the line after them sets, so a program that links
+    `Shape` has them. `Symbolic` keeps `sym` and the rules on conditions, which
+    call `simplify`. The other `UOp` methods that read shapes, of storage,
+    variables, calls and programs, are `Shape`'s too;
+  - `render.py`'s `pretty_print` is `Ops.pp`, since arguments print the nodes
+    they hold (`argstr`) and the two recurse;
   - the kept methods of `mixin/*.py` are functions of `Ops`, or of `Shape`
-    for those that read shapes, since `ops.py` calls them and a module cannot
-    call a later one; the elementwise ones, which patterns share with nodes,
-    are one functor applied to both;
+    where they read shapes, since `ops.py` calls them and a module cannot
+    call a later one; the elementwise ones, which patterns share with
+    nodes, are one functor applied to both;
   - the small types that `ops` and `spec` name from later files
     (`Estimates`, `BufferizeOpts`), and `device.py`'s `is_disk_device`, are
     defined in the earliest module that needs them; `Opt`, whose file
@@ -137,47 +130,41 @@ requires a source (`uop/upat.py` `_get_clause`).
     README), so they need no break;
   - `device.py`'s `Compiler` and `CompileError` are `Renderer.Compiler`,
     since a renderer holds its compiler and `Device` follows `Renderer`;
-  - `apply_opts` takes the optimiser as an argument, and `Search` follows
-    `Postrange` and takes how to link and time a program as its `link`
-    and `time` arguments, where `beam_search` takes `rawbufs` and
-    `var_vals`: its caller makes the buffers `args_from_ast` describes
-    (`Tolk_engine.slots`), since `tolk` cannot name rig's buffers,
-    and `get_kernel_actions` returns each candidate with its action, without
-    tinygrad's `include_0` and its positions in the action table;
-    `Codegen.full_rewrite_to_sink` and `Codegen.to_program` take
+  - `apply_opts` takes the optimiser as an argument. `Search` follows
+    `Postrange` and takes how to link and time a program as its `link` and
+    `time` arguments, where `beam_search` takes `rawbufs` and `var_vals`: its
+    caller makes the buffers `args_from_ast` describes (`Tolk_engine.slots`),
+    since `tolk` cannot name rig's buffers. `get_kernel_actions` returns each
+    candidate with its action, without `include_0` and its positions in the
+    action table. `Codegen.full_rewrite_to_sink` and `Codegen.to_program` take
     the beam search as their `beam` argument, a function of the width the
     kernel asks for, and raise when a kernel asks for one and none is given;
-  - the engine has one order (schedule, realize, jit), and each late
-    binding is passed as a function argument, never a global reference:
-    `Realize.compile_linear` takes the target of each device from its
-    caller;
-  - the compiler modules precede `Cstyle`, and `ops_metal.py`'s
-    `MetalCompiler`, which `cstyle.py` imports inside `MetalRenderer`, is
-    `Compiler_metal`, one of them; the rest of `ops_metal.py` is rig's
-    (D146).
+  - the engine has one order (schedule, realize, jit), and each late binding
+    is a function argument, never a global reference:
+    `Realize.compile_linear` takes the target of each device from its caller;
+  - the compiler modules precede `Cstyle`; `ops_metal.py`'s `MetalCompiler`,
+    which `cstyle.py` imports inside `MetalRenderer`, is `Compiler_metal`;
+    the rest of `ops_metal.py` is rig's (D146).
 - **Reason:** (a). Each layer's review checks that its breaks are the
   smallest possible.
-- **Pinned by:** for `Codegen`:
-  `Tolk.Codegen › beam search › a kernel that asks for a beam of
-  width w is optimised by beam w` and `› raises Invalid_argument when a kernel
-  asks for a beam and none is given`; for `Ops`: `Tolk.Ops › resolve ›
-  simplify leaves a constant, and a sink of constants and stacks of
-  constants, alone`, and the `Tolk.Ops › resolve` tests that simplify with
-  `Symbolic`'s rules; `Tolk.Ops › printing › pretty.golden`;
-  `Tolk.Ops › elementwise patterns › the pattern operators are the named
-  pattern operations`; for `Renderer`: `Tolk.Renderer ›
+- **Pinned by:** for `Codegen`: `Tolk.Codegen › beam search › a kernel that
+  asks for a beam of width w is optimised by beam w` and `› raises
+  Invalid_argument when a kernel asks for a beam and none is given`; for
+  `Ops`: `Tolk.Ops › resolve › simplify leaves a constant, and a sink of
+  constants and stacks of constants, alone`, and the `Tolk.Ops › resolve`
+  tests that simplify with `Symbolic`'s rules; `Tolk.Ops › printing ›
+  pretty.golden`; `Tolk.Ops › elementwise patterns › the pattern operators
+  are the named pattern operations`; for `Renderer`: `Tolk.Renderer ›
   Compiler › compile raises what the toolchain rejects`, its
   `Compile_error`; for `Prepare`: `Tolk.Prepare › contiguous_view › a
   reshape keeps the order`; for `Schedule`: `Tolk.Schedule ›
   pm_flatten_linear › Linears nested in Linears are inlined in order`; for
-  the engine's order: `Tolk.Realize › lower_and_compile with a beam
-  search › raises Invalid_argument for a kernel that asks for one when none is
+  the engine's order: `Tolk.Realize › lower_and_compile with a beam search ›
+  raises Invalid_argument for a kernel that asks for one when none is
   given`, and `Jit JITBEAM › JITBEAM unset › a kernel is searched with
-  BEAM's width`, which passes the search through `Realize.compile_linear`;
-  for `Compiler_metal`:
+  BEAM's width`, through `Realize.compile_linear`; for `Compiler_metal`:
   `Tolk.Compiler_metal › MTLCompiler › compiles a kernel to a Metal
-  library`. Each calls the function where its break puts it, or passes the
-  late binding as an argument, so none compiles without the break.
+  library`.
 
 ## D5. Compilation workers are domains
 
@@ -190,93 +177,88 @@ requires a source (`uop/upat.py` `_get_clause`).
   `Compiler_worker.call`, and the C files
   `lib/runtime/support/compiler_worker.h`, `compiler_amd_worker.c`,
   `compiler_cuda_worker.c` and `compiler_metal_worker.c`.
-- **Differs:** compilation runs on domains, not processes. `Worker.map` spawns
-  its domains for the call and joins them before it returns, where tinygrad
-  keeps a pool: an idle domain still takes part in every minor collection. So
-  the process machinery goes with the pool: the hidden `__main__`, the copied
-  environment, the recycling of a worker after 16 tasks, and
-  `terminate_worker_pool`. A tinygrad worker ignores SIGINT, which a domain
-  cannot, since a handler is the process's: the domains block every signal but a
-  fault's instead. The workers' context (`ALLOW_DEVICE_USAGE`, `VIZ`,
-  `TRACK_MATCH_STATS`) goes too: the compiler opens no device and has neither of
-  the other settings. A setting holds one value per domain, where tinygrad holds
-  one per process: a domain starts with the values of the domain that spawns it,
-  and a `context` override is seen by its own domain only. A tinygrad worker
-  process has its own settings, so a `Context` entered while it compiles (the
-  construction check's `CHECK_OOB=0`) leaves the others alone; process-wide
-  settings shared by compiling domains would let one domain's override and
-  restore clobber another's. A spawned domain starts with its spawner's
-  settings, so `to_program_context` goes too. `to_program` keeps its programs,
-  and `lower_sink_to_linear` its schedules, in a table that every domain reads
-  and fills under a lock (`Helpers.Memo`), and a domain that asks for one
-  another is making waits for it, so each program is compiled once, as
-  tinygrad's parent compiles each key once, and each body is scheduled once. The
-  matchers that a tinygrad worker keeps per process (`codegen/decomp/op.py`
-  `get_simplifying_rewrite_patterns`, `get_late_rewrite_patterns` and
-  `codegen/decomp/transcendental.py` `get_transcendental_patterns`,
-  `functools.cache`) are made once and shared by every domain
-  (`Decomp_op.simplifying_patterns`, `Decomp_op.late_patterns`,
-  `Transcendental.patterns`), and a rule compiles on the domain that tries it
-  first, or on each that tries it at once. MTLCompiler re-parses its options
-  into LLVM's global option registry on every build, which is not
-  thread-safe, comgr serialises the compiles of a process on a mutex of its
-  own, and NVRTC 13.3 and 13.4's assembler crashes on some valid sources, so
-  MTLCompiler, comgr and NVRTC compile in processes of their own, spawned by
-  the compiling domains, where a tinygrad worker process loads the library
-  once and compiles in it. tinygrad compiles a lone kernel in the parent;
-  tolk sends it to a process too, so that a crash has one outcome, at the
-  cost of one process start in a process's first compile. Making the compiler
-  finds the library, and
-  those processes load it, so a file found that is no library raises
-  `Compile_error` at each compile, where it fails making tinygrad's compiler.
-  Each process is a small C program per library that tolk carries, which runs
-  from memory on Linux and elsewhere from a file in `Helpers.cache_dir`, or in
-  the temporary directory where the cache cannot be written or its file
-  cannot run: macOS, Metal's only system, has no memory file to run. Such a
-  file runs only if it is this user's regular file, reached through no link,
-  that no other user can write and macOS has not quarantined; another is
-  written again, since a shared directory lets another user plant it. A
-  process serves compiles in turn over a socket (two pipes on Windows), idle
-  between them in a list every domain takes from, since a process's first
-  compile pays the library's setup: about 100 ms for NVRTC, most of it starting
-  CUDA's driver, about 9 ms for comgr, of which loading it is 4 ms
-  (nonnormal: a small kernel's compile takes 23-28 ms in a new process, 15 ms in
-  a serving one), and for MTLCompiler a load of 5-33 ms and a first compile of
-  9-28 ms against 3-11 ms later (an M1 Max under load); a compile that finds
-  none idle starts another. A compile whose
-  process ends without a reply raises `Compile_error` naming the signal or exit
-  status, where it would end tinygrad's worker, and that process serves no
-  other. The NVRTC process disables NVRTC's own cache of binaries
-  (`CUDA_CACHE_DISABLE=1`), whose key misses the math options
-  (`--use_fast_math`, `--prec-sqrt`, `--prec-div`, `--ftz`), `-I`, `-D` and
-  `--std`, so it could serve tolk a binary built under other options or against
-  other headers. The comgr process disables comgr's own cache of generated code
-  (`AMD_COMGR_CACHE=0`), on by default from ROCm 7.0 under `~/.cache/comgr` (2
-  GB on nonnormal), which tinygrad leaves on: tolk's table is the one cache it
-  keeps, and comgr's served no measurable time over a cold table (nonnormal,
-  gpt-oss-20b's first prefill and step: 0.886 and 0.587 s from a filled comgr
-  cache, 0.892 and 0.546 s with it off; rune's `amd/mlp-step` first call before
-  serving: 1.04 and 1.01 s with it off, 1.03 and 1.02 s on, against 0.91 s
-  served with the verifier).
-- **Reason:** (a).
-- **Pinned by:** `Tolk.Setting › context › is not seen by the other
-  domains` and `Tolk.Setting › context › binds for the domains spawned
-  while it runs`; `Tolk.Worker` (every test); `Tolk.Codegen ›
-  programs are kept › calls from several domains at once make one program,
-  compiled once`; `Tolk.Decomp_dtype, compiled in parallel › targets lowered
-  on several domains at once get their own rules`; `Tolk.Compiler_metal ›
-  compiles in processes of their own` (every test), `› a library that does
-  not load` (every test), `› a library without MTLCompiler's functions`,
-  `› a library that makes no service`, `› a process that cannot start`, `› a
-  cache that cannot be written`, `› a cache whose program cannot run` and
-  `› cache › a compile the table holds starts no worker`;
-  `Tolk.Compiler_metal (fork) › a forked process` (every test);
-  `Tolk.Compiler_amd › compiles in processes
-  of their own` (every test) and `› a process that cannot start`;
-  `Tolk.Compiler_cuda › compiles in processes of their own` (every test),
-  `› a library that does not load` (every test), and `› a process that cannot
-  start`; `Tolk.Compiler_amd › a library that does not load` (every test); `Tolk.Compiler_cuda (fork) ›
-  a forked process` (every test).
+- **Differs:**
+  - compilation runs on domains, which `Worker.map` spawns for the call and
+    joins before it returns, where tinygrad keeps a pool. The process
+    machinery goes with the pool: the hidden `__main__`, the copied
+    environment, the recycling of a worker after 16 tasks,
+    `terminate_worker_pool`. The domains block every signal but a fault's,
+    where a tinygrad worker ignores SIGINT, which a domain cannot, since a
+    handler is the process's. The workers' context (`ALLOW_DEVICE_USAGE`,
+    `VIZ`, `TRACK_MATCH_STATS`) goes: the compiler opens no device and has
+    neither of the other settings;
+  - a setting holds one value per domain, where tinygrad holds one per
+    process: a domain starts with the values of the domain that spawns it,
+    and a `context` override is seen by its own domain only. A spawned
+    domain starts with its spawner's settings, so `to_program_context` goes
+    too;
+  - `to_program` keeps its programs, and `lower_sink_to_linear` its
+    schedules, in a table every domain reads and fills under a lock
+    (`Helpers.Memo`), and a domain that asks for one another is making waits
+    for it, so each program is compiled once, as tinygrad's parent compiles
+    each key once, and each body is scheduled once;
+  - the matchers a tinygrad worker keeps per process (`codegen/decomp/op.py`
+    `get_simplifying_rewrite_patterns`, `get_late_rewrite_patterns` and
+    `codegen/decomp/transcendental.py` `get_transcendental_patterns`,
+    `functools.cache`) are made once and shared by every domain
+    (`Decomp_op.simplifying_patterns`, `Decomp_op.late_patterns`,
+    `Transcendental.patterns`), and a rule compiles on the domain that tries
+    it first, or on each that tries it at once;
+  - MTLCompiler, comgr and NVRTC compile in processes of their own, spawned
+    by the compiling domains, where a tinygrad worker process loads the
+    library once and compiles in it. tinygrad compiles a lone kernel in the
+    parent; tolk sends it to a process too, at the cost of one process start
+    in a process's first compile. Making the compiler finds the library and
+    those processes load it, so a file found that is no library raises
+    `Compile_error` at each compile, where it fails making tinygrad's
+    compiler. Each process is a small C program per library that tolk
+    carries, run from memory on Linux and elsewhere from a file in
+    `Helpers.cache_dir`, or in the temporary directory where the cache cannot
+    be written or its file cannot run: macOS, Metal's only system, has no
+    memory file to run. Such a file runs only if it is this user's regular
+    file, reached through no link, that no other user can write and macOS has
+    not quarantined; another is written again, since a shared directory lets
+    another user plant it. A process serves compiles in turn over a socket
+    (two pipes on Windows), idle between them in a list every domain takes
+    from; a compile that finds none idle starts another. A compile whose
+    process ends without a reply raises `Compile_error` naming the signal or
+    exit status, where it would end tinygrad's worker, and that process
+    serves no other;
+  - the NVRTC process sets `CUDA_CACHE_DISABLE=1`, and the comgr process
+    `AMD_COMGR_CACHE=0`, a cache on by default from ROCm 7.0 under
+    `~/.cache/comgr`, which tinygrad leaves on: tolk's table is the one cache
+    it keeps.
+- **Reason:** (a). An idle pooled domain takes part in every minor
+  collection. A tinygrad worker process has its own settings, so a `Context`
+  entered while it compiles (the construction check's `CHECK_OOB=0`) leaves
+  the others alone; process-wide settings shared by compiling domains would
+  let one domain's override and restore clobber another's. MTLCompiler
+  re-parses its options into LLVM's global registry, which is not
+  thread-safe, comgr serialises a process's compiles on its own mutex, and
+  NVRTC 13.3 and 13.4's assembler crashes on some valid sources, hence the
+  processes; a lone kernel goes to one too so that a crash has one outcome,
+  and a serving one saves the library's setup, about 100 ms for NVRTC.
+  NVRTC's cache key misses the math options (`--use_fast_math`,
+  `--prec-sqrt`, `--prec-div`, `--ftz`), `-I`, `-D` and `--std`, so it could
+  serve tolk a binary built under other options or against other headers;
+  comgr's cache served no measurable time over a cold table.
+- **Pinned by:** `Tolk.Setting › context › is not seen by the other domains` and
+  `Tolk.Setting › context › binds for the domains spawned while it runs`;
+  `Tolk.Worker` (every test); `Tolk.Codegen › programs are kept › calls from
+  several domains at once make one program, compiled once`; `Tolk.Decomp_dtype,
+  compiled in parallel › targets lowered on several domains at once get their
+  own rules`; `Tolk.Compiler_metal › compiles in processes of their own` (every
+  test), `› a library that does not load` (every test), `› a library without
+  MTLCompiler's functions`, `› a library that makes no service`, `› a process
+  that cannot start`, `› a cache that cannot be written`, `› a cache whose
+  program cannot run` and `› cache › a compile the table holds starts no
+  worker`; `Tolk.Compiler_metal (fork) › a forked process` (every test);
+  `Tolk.Compiler_amd › compiles in processes of their own` (every test) and `› a
+  process that cannot start`; `Tolk.Compiler_cuda › compiles in processes of
+  their own` (every test), `› a library that does not load` (every test), and `›
+  a process that cannot start`; `Tolk.Compiler_amd › a library that does not
+  load` (every test); `Tolk.Compiler_cuda (fork) › a forked process` (every
+  test).
 
 ## D6. Devices are named, never parsed
 
@@ -285,18 +267,15 @@ requires a source (`uop/upat.py` `_get_clause`).
 - **tolk:** `Device.renderers`, `Device.renderer`.
 - **Differs:** the caller gives a target, whose device is a kind and whose
   `arch` is the device's; tolk picks the renderer and compiler from the
-  target and never parses the name, with one exception: a name starting with `DISK` is a disk, as
-  tinygrad reserves it and rig names its disk device
-  (`Ops.on_disk`, `is_disk_device`, `copy_to_device`, `clone`).
+  target and never parses the name, but for one exception: a name starting
+  with `DISK` is a disk, as tinygrad reserves it and rig names its disk
+  device (`Ops.on_disk`, `is_disk_device`, `copy_to_device`, `clone`).
 - **Reason:** (c).
 - **Pinned by:** for targets, `Tolk.Device › renderer takes a device's
-  name as it is` (a name with an index, in lower case, or a disk's, is no
-  device, and a name gives no renderer or architecture) and `Tolk.Device ›
-  renderer › picks a device's renderer as tinygrad does` (the architecture
-  comes from the target); for the disk, `Tolk.Ops › several
-  devices › on_disk holds for a disk device`, `Tolk.Ops › several
-  devices › copy_to_device rejects a disk and a weak type` and `Tolk.Ops ›
-  storage › clone rejects a disk`.
+  name as it is` and `Tolk.Device › renderer › picks a device's renderer as
+  tinygrad does`; for the disk, `Tolk.Ops › several devices › on_disk holds
+  for a disk device`, `Tolk.Ops › several devices › copy_to_device rejects
+  a disk and a weak type` and `Tolk.Ops › storage › clone rejects a disk`.
 
 ## D7. Withdrawn
 
@@ -308,50 +287,49 @@ stamps nothing (D146).
 
 - **tinygrad:** `helpers.py` `diskcache_get`, `diskcache_put` (an SQLite
   database of pickled values, keyed by strings, integers or dictionaries of
-  columns).
+  columns), `diskcache_clear`.
 - **tolk:** `Helpers.Diskcache`; `Diskcache.generation`, `Diskcache.renew`
   and `Diskcache.clear`.
-- **Differs:** keys and values are strings, which callers encode. Each entry is
-  a file under `CACHEDB`, a directory, written aside and renamed into place,
-  holding the digest of its key and value: an entry damaged on disk raises
-  instead of reading as another value, and a graph's reader makes it anew.
-  Tables are versioned by tolk's own version. Entries belong to a generation, an
-  empty file named by a count and a unique name; a clear makes one past the
-  newest, which empties every table at one step, then removes the old files.
-  tinygrad's clear (`helpers.py` `diskcache_clear`) drops the tables one by one,
-  each drop committed on its own, so a reader between two drops sees one table
-  cleared and another not. A tolk from before generations reads an entry of one
-  as a write in progress: its clear and trim remove it only once an hour old,
-  and its trim does not count it.
-- **Reason:** (a). OCaml has no pickle, no type-safe serialization of
-  arbitrary values: a cache returning any type would be `Marshal`, which
-  crashes when a rebuilt program reads a value of a changed type. Without an
-  SQLite transaction, writing aside and renaming is what keeps an entry whole
-  when a writer crashes or races another. A file's contents carry no check
-  of their own, and a byte changed in a program or a binary would run as
-  another kernel. Without SQLite's drop, a clear
-  that removes files one by one orders against no call, and a generation per
-  table would cost what one costs while promising less.
+- **Differs:** keys and values are strings, which callers encode. Each entry
+  is a file under `CACHEDB`, a directory, written aside and renamed into
+  place, holding the digest of its key and value: an entry damaged on disk
+  raises instead of reading as another value, and a graph's reader makes it
+  anew. Tables are versioned by tolk's own version. Entries belong to a
+  generation, an empty file named by a count and a unique name; a clear
+  makes one past the newest, which empties every table at one step, then
+  removes the old files. A tolk
+  from before generations reads an entry of one as a write in progress: its
+  clear and trim remove it only once an hour old, and its trim does not
+  count it.
+- **Reason:** (a). OCaml has no pickle: a cache returning any type would be
+  `Marshal`, which crashes when a rebuilt program reads a value of a changed
+  type. Without an SQLite transaction, writing aside and renaming keeps an
+  entry whole when a writer crashes or races another, and the digest keeps a
+  changed byte from running as another kernel. Without SQLite's drop, a clear
+  that removes files one by one orders against no call: tinygrad's
+  (`diskcache_clear`) drops the tables one by one, each drop committed on its
+  own, so a reader between two drops sees one table cleared and another not.
+  A generation per table would cost what one costs while promising less.
 - **Pinned by:** `Tolk.Helpers › Diskcache › get reads back any key and
   value put`, `Tolk.Helpers › Diskcache › behaves as a table of entries per
   table`, `› a put and a get on another domain come before or after a
   clear`, `› a put and a get in another process come before or after a
   clear` and `Tolk.Helpers › Diskcache on two domains › behaves as a table
   of entries, whatever the order of the calls`, which run with `CACHEDB`
-  set, as dune runs them, and `Graph › a damaged entry reads back as its
-  graph, or misses`.
+  set, as dune runs them, and `Graph › a damaged entry
+  reads back as its graph, or misses`.
 
 ## D9. Narrow float conversions are IEEE conversions
 
 - **tinygrad:**
   - `dtype.py` (`float_to_bf16` rounds to float32 with
-    `truncate[dtypes.float]`, then to bfloat16), and `dtype.py` (`const`
-    converts an integer to a float through a double, `float(val)`);
-  - `codegen/decomp/dtype.py` `l2i`, `f2f`, `pm_float_decomp`: `l2i` converts a
-    long to a float32 word by word; an emulated cast narrows its source to
+    `truncate[dtypes.float]`, then to bfloat16; `const` converts an integer
+    to a float through a double, `float(val)`);
+  - `codegen/decomp/dtype.py` `l2i`, `f2f`, `pm_float_decomp`: `l2i` converts
+    a long to a float32 word by word; an emulated cast narrows its source to
     float32 first; `f2f` flushes subnormals to zero both ways, but for those
-    within half a subnormal ulp of the least normal, which round up to it, and
-    narrows every NaN to its format's one quiet NaN of its sign;
+    within half a subnormal ulp of the least normal, which round up to it,
+    and narrows every NaN to its format's one quiet NaN of its sign;
   - `renderer/cstyle.py` `ClangRenderer.extra_matcher`: Clang casts a
     double to half through a float32, rounded to nearest.
 - **tolk:** `Dtype.encode_format` (one rounding for every narrow float) and
@@ -361,77 +339,61 @@ stamps nothing (D146).
 - **Differs:** converting to a narrow float rounds once, to nearest with ties
   to even, from any source, and treats every value as IEEE does, folded or
   emulated:
-  - a double rounds to bfloat16 once: `1 + 2^-8 + 2^-40` is `1.0078125` here
-    and `1.0` in tinygrad. An integer converts once, from its exact value:
-    `9042383626829825` is bfloat16 `0x5a01` here and `0x5a00` in tinygrad,
-    whose double rounds it onto a tie. An emulated cast narrows a double, or
-    an integer more precise than a float32, to float32 by rounding to odd, so
-    that the cast's rounding to the narrow float is the one rounding; an
-    emulated 64-bit integer
-    converts to a float32 once, where tinygrad's word arithmetic rounds each
-    word and their sum. Clang's double to half cast narrows to float32 the
-    same way: `1 + 2^-11 + 2^-40` is half `1 + 2^-10` here and `1.0` in
-    tinygrad, and `65520 - 2^-20` is `65504` here and infinity there;
+  - a double rounds to bfloat16 once, and an integer converts once, from its
+    exact value. An emulated cast narrows a double, or an integer more
+    precise than a float32, to float32 by rounding to odd, so that the cast's
+    rounding to the narrow float is the one rounding; an emulated 64-bit
+    integer converts to a float32 once. Clang's double to half cast narrows
+    to float32 the same way;
   - emulation keeps subnormals, both ways.
 
   A NaN converts as the NaN rule allows, which no golden distinguishes:
-  `Dtype.truncate`, the folder, quiets it and, in a 16-bit or wider float,
-  keeps its sign and the top of its payload (an 8-bit float's is its format's
-  NaN, D10 and D20); the bfloat16 cast of Clang and HIP
-  (`Cstyle.pm_manual_bf16_cast`) shifts a float32's bits, so a signalling NaN
-  may stay signalling; `f2f` narrows every NaN to its format's quiet NaN of
-  its sign, as tinygrad's does. Each gives a NaN, signalling only from a
-  signalling one, so a folded NaN and the same NaN computed in a kernel may
-  differ in bits. A copy or a selection, which converts nothing, keeps a
-  signalling one (D62).
+  `Dtype.truncate`, the folder, quiets it and, in a 16-bit or wider float, keeps
+  its sign and the top of its payload (an 8-bit float's is its format's NaN, D10
+  and D20); the bfloat16 cast of Clang and HIP (`Cstyle.pm_manual_bf16_cast`)
+  shifts a float32's bits, so a signalling NaN may stay signalling; `f2f`
+  narrows every NaN to its format's quiet NaN of its sign, as tinygrad's does.
+  Each gives a NaN, signalling only from a signalling one, so a folded NaN and
+  the same NaN computed in a kernel may differ in bits. A copy or a selection,
+  which converts nothing, keeps a signalling one (D62).
 - **Reason:** (b). rune folds constants with `Dtype`, and nx converts eagerly
-  with one rounding. An emulated kernel exists only because its target lacks the
-  type, so it must give the values a native one gives. The emulated cast's
-  rounding to odd: (e). rune hands tolk only a float32 to cast to a narrow
-  float, so no raven call site reaches it, but without it the cast rounds twice,
-  first to a float32 to nearest: `1 + 2^-8 + 2^-40` becomes bfloat16 `0x3f80`
-  (1.0) where IEEE's one rounding, which `Dtype.truncate` folds, gives `0x3f81`
-  (1.0078125). Repro on the CPU with `EMULATED_DTYPES=bfloat16`: `Tensor([1 +
-  2**-8 + 2**-40],
-  dtype=dtypes.float64).cast(dtypes.bfloat16).bitcast(dtypes.uint16)` gives
-  `0x3f80`. The 8-bit facets: (e). rune hands tolk no 8-bit float, since it
-  stores each as `Uint8` and converts it itself (rune's `Lower_arith.dtype`),
-  but without them an emulated 8-bit float flushes its subnormals both ways,
-  where tinygrad's own folder (`dtype.py` `float_to_fp8`) rounds to them: on the
-  CPU with `EMULATED_DTYPES=fp8e4m3,fp8e5m2`,
-  `Tensor([2**-9]).contiguous().cast( dtypes.fp8e4m3).bitcast(dtypes.uint8)`
-  gives `0x00` where the folder gives `0x01`, e5m2's `2**-16` likewise, and the
-  code `0x01` widens to `0.0`; and a double rounds twice, through a float32: the
-  float64 `1 + 2**-4 + 2**-40` becomes e4m3 `0x38` (1.0) where the folder gives
-  `0x39` (1.125). Clang's double to half cast: (e), as the emulated cast's
-  rounding to odd; rune hands tolk no double to cast to half.
-- **Pinned by:** `Tolk.Dtype › truncate › truncation.golden` (the
-  near-tie rows, stated in code), `Tolk.Dtype › truncate › bfloat16 rounds
-  once, to the nearest, ties to even` and `Tolk.Dtype › truncate › an
-  integer rounds to a narrower float once, from its value`; for emulation, one
-  test per facet in `Tolk.Decomp_dtype › narrow float conversions are IEEE
-  conversions`: `an emulated narrow float keeps its subnormals, both ways`, `a
-  double, or an integer more precise than a float32, rounds once` (the
-  rounding to odd: `1 + 2^-8 + 2^-40` is `0x3f81`), `an emulated 64-bit integer converts to a float32 once`, `an fnuz format stores
-  an underflow to negative zero as positive zero`; `Tolk.Decomp_dtype › NaNs ›
-  f2f narrows a quiet NaN to a quiet NaN` and `› an emulated cast of a quiet
-  float32 or double NaN is a quiet NaN`, which state the rule;
-  `Tolk.Decomp_dtype › goldens`, which are tinygrad's
-  graphs with `f2f` replaced by these conversions. The 8-bit facets' values:
-  the e4m3, e5m2 and fnuz cases of `Tolk.Decomp_dtype › narrow float
-  conversions are IEEE conversions › an emulated narrow float keeps its
-  subnormals, both ways`, and `Tolk.Decomp_dtype › emulated narrow floats ›
-  an emulated cast of doubles near every <format> tie rounds once` for each
-  8-bit format. Clang's double to half cast: `Tolk.Codegen › a double rounds
-  once to half on the host` and `Tolk.Cstyle › extra_matcher`'s
-  `rewritten.tolk`.
+  with one rounding; an emulated kernel exists only because its target lacks
+  the type, so it must give the values a native one gives. The emulated
+  cast's rounding to odd: (e). rune hands tolk only a float32 to cast to a
+  narrow float, but without it the cast rounds twice: on the CPU with
+  `EMULATED_DTYPES=bfloat16`, the float64 `1 + 2**-8 + 2**-40` cast to
+  bfloat16 gives `0x3f80` (1.0) where `Dtype.truncate`'s one rounding gives
+  `0x3f81`. The 8-bit facets: (e). rune hands tolk no 8-bit float, storing
+  each as `Uint8` (rune's `Lower_arith.dtype`), but without them, under
+  `EMULATED_DTYPES=fp8e4m3,fp8e5m2`, an e4m3 cast of `2**-9` gives `0x00`
+  where tinygrad's folder (`dtype.py` `float_to_fp8`) gives `0x01`, and the
+  float64 `1 + 2**-4 + 2**-40` becomes e4m3 `0x38` where the folder gives
+  `0x39`. Clang's double to half cast: (e), as the rounding to odd; rune
+  hands tolk no double to cast to half, but without it `65520 - 2^-20` is
+  infinity where one rounding gives `65504`.
+- **Pinned by:** `Tolk.Dtype › truncate › truncation.golden` (the near-tie
+  rows), `Tolk.Dtype › truncate › bfloat16 rounds once, to the nearest, ties
+  to even` and `Tolk.Dtype › truncate › an integer rounds to a narrower float
+  once, from its value`; for emulation, in `Tolk.Decomp_dtype › narrow float
+  conversions are IEEE conversions`: `an emulated narrow float keeps its
+  subnormals, both ways`, `a double, or an integer more precise than a
+  float32, rounds once`, `an emulated 64-bit integer converts to a float32
+  once`, `an fnuz format stores an underflow to negative zero as positive
+  zero`; `Tolk.Decomp_dtype › NaNs › f2f narrows a quiet NaN to a quiet NaN`
+  and `› an emulated cast of a quiet float32 or double NaN is a quiet NaN`;
+  `Tolk.Decomp_dtype › goldens`. The 8-bit facets: the e4m3, e5m2 and fnuz
+  cases of `Tolk.Decomp_dtype › narrow float conversions are IEEE
+  conversions › an emulated narrow float keeps its subnormals, both ways`,
+  and `Tolk.Decomp_dtype › emulated narrow floats › an emulated cast of
+  doubles near every <format> tie rounds once` for each 8-bit format.
+  Clang's double to half cast: `Tolk.Codegen › a double rounds once to half
+  on the host` and `Tolk.Cstyle › extra_matcher`'s `rewritten.tolk`.
 
 ## D10. Withdrawn
 
 e4m3's `0xff` decoded to a negative NaN. Under the NaN rule a decoded NaN's
-sign is unspecified, and rune hands tolk no 8-bit float, so
-`Dtype.decode_format` decodes every e4m3 NaN as tinygrad's positive
-`math.nan` (`dtype.py` `fp8_to_float`).
+sign is unspecified, so `Dtype.decode_format` decodes every e4m3 NaN as
+tinygrad's positive `math.nan` (`dtype.py` `fp8_to_float`).
 
 ## D11. Kernel optimisations are typed
 
@@ -460,14 +422,13 @@ sign is unspecified, and rune hands tolk no 8-bit float, so
   tinygrad's `str` writes every NaN `nan` and tolk's repr prints an `Argument`
   stage as a `Whole` one (D27, D465): a float enters by its bits, a node an
   argument holds by its key, a call's write marks not at all.
-- **Reason:** (a) for the digest. No key is ever compared with a key tinygrad
-  computed: keys name compiled programs in caches that tolk alone writes, so
-  the digest is free to differ, and tolk takes the one OCaml's standard
-  library has, which has MD5 and BLAKE2 but not SHA-256. (e) for the writing:
-  a key that two different nodes share serves one's schedule or program to
-  the other, and tinygrad's `str` writes alike NaNs of different bits, and so
-  did tolk's repr an `Argument` stage and a `Whole` one, and a program's
-  target whose fields split one text two ways.
+- **Reason:** (a) for the digest: keys name compiled programs in caches that
+  tolk alone writes, and OCaml's standard library has MD5 and BLAKE2 but not
+  SHA-256. (e) for the writing: a key that two different nodes share serves
+  one's schedule or program to the other, and tinygrad's `str` writes alike
+  NaNs of different bits, as tolk's repr writes an `Argument` stage and a
+  `Whole` one alike, and a program's target whose fields split one text two
+  ways.
 - **Pinned by:** `Tolk.Ops › key › tells arguments apart`, `› two nodes of one
   key are one node, but for a call's marks`, `› tells apart arguments a repr
   prints alike`; `Graph › a graph of any argument reads back as itself`.
@@ -475,13 +436,13 @@ sign is unspecified, and rune hands tolk no 8-bit float, so
 ## D13. Folding reads and writes committed constants at their width
 
 - **tinygrad:** `uop/symbolic.py` (`fold_const_alu`), which writes a
-  folded integer result at its type's width; `symbolic_simple` (the collapse of
-  committed const conversions); `uop/ops.py` (`_min_max`), which
-  bounds an operand by its written value; `uop/weak.py` (`uncast_const`),
-  which leaves the literal bare. tinygrad's own `TestModularWraparound`
-  expects the wrapped results and is marked `xfail_broken_const_wraparound`:
-  its cases fold to them at this commit, but for the signed one of `test_div`,
-  whose `//` floors where the test truncates.
+  folded integer result at its type's width; `symbolic_simple` (the collapse
+  of committed const conversions); `uop/ops.py` (`_min_max`), which bounds an
+  operand by its written value; `uop/weak.py` (`uncast_const`), which leaves
+  the literal bare. tinygrad's own `TestModularWraparound` expects the
+  wrapped results and is marked `xfail_broken_const_wraparound`: its cases
+  fold to them at this commit, but for the signed one of `test_div`, whose
+  `//` floors where the test truncates.
 - **tolk:** `Shape.fold_const_alu`; `Ops.at_width` and `Ops.operand_bounds`;
   `Shape.uncast_const`.
 - **Differs:** a fold reads a cast of a literal to a type of known width wrapped
@@ -492,64 +453,48 @@ sign is unspecified, and rune hands tolk no 8-bit float, so
   cast whose literal fits, and a maximum by bounds that keeps a weak operand
   commits it to the maximum's type, so the operations that read it do not lose
   their width. Reading at the width also keeps `c0 + x < c1 → x < c1 - c0`,
-  which both apply to signed `x` only, from a wrong answer where the offset
-  wraps; D24 keeps that rule to offsets that do not wrap.
-- **Reason:** (b): RFC 0012's Law 1: every integer expression's compiled
-  value is eager nx's modular one, signed included. rune's `rune jit ›
+  which applies to signed `x` only, from a wrong answer where the offset wraps;
+  D24 keeps that rule to offsets that do not wrap.
+- **Reason:** (b): every integer expression's compiled value is eager nx's
+  modular one, signed included (RFC 0012's Law 1). rune's `rune jit ›
   classes › integer constants keep their bits and wrap` and `› a square of a
   product whose constant squares to 0`, at every signed and unsigned width,
   compile constants whose arithmetic wraps against eager nx.
 - **Pinned by:** `Tolk.Symbolic › symbolic_simple › constants › an operation
-  reads committed constants at their width` (a fold, a cast of a committed
-  constant, a uint8 remainder), `Tolk.Symbolic › symbolic_simple › constants › a
-  comparison reads a committed constant at its width` (the uncast),
-  `Tolk.Symbolic › committed constants hold their type's value` (each case
-  above, evaluated before and after), the law `Tolk.Symbolic › laws › sym keeps
-  the value of an integer expression at a committed width, wrapping included`,
-  and `Tolk.Symbolic › tinygrad › tests.golden › TestModularWraparound.<test>`,
-  whose goldens hold the machine values; the offset's interaction with D24:
-  `Tolk.Symbolic › integers wrap › an offset crosses a comparison only where
-  neither side wraps` (the committed case).
+  reads committed constants at their width`, `Tolk.Symbolic ›
+  symbolic_simple › constants › a comparison reads a committed constant at
+  its width`, `Tolk.Symbolic › committed constants hold their type's value`,
+  the law `Tolk.Symbolic › laws › sym keeps the value of an integer
+  expression at a committed width, wrapping included`, and `Tolk.Symbolic ›
+  tinygrad › tests.golden › TestModularWraparound.<test>`; the offset's
+  interaction with D24: `Tolk.Symbolic › integers wrap › an offset crosses a
+  comparison only where neither side wraps` (the committed case).
 
 ## D14. Withdrawn
 
-Folded comparisons of NaN constants followed IEEE here, where tinygrad compared
-them as `ConstFloat`s, which make NaN equal to NaN. At
-`uop/symbolic.py` `fold_const_alu` reads each operand through
-`const_arg`, which turns a `ConstFloat` into a plain float, so `nan != nan`
-folds to `True` there as in `Shape.fold_const_alu`; tinygrad's
-`test_const_folding.py::TestWeakConstFolding::test_nan_compare` states it.
+Folded comparisons of NaN constants follow IEEE: `uop/symbolic.py`
+`fold_const_alu` reads each operand through `const_arg`, so `nan != nan` folds
+to `True` there as in `Shape.fold_const_alu`.
 
 ## D15. Withdrawn
 
-Making a compiler loaded nothing: its library was loaded at the first compile,
-so a renderer for CUDA, HIP or Metal was made on a machine without NVRTC, comgr
-or MTLCompiler. No raven call site made such a renderer without compiling with
-it, so the entry had no reason; tolk's suites and the bench's `search` rows
-rendered for those targets without the libraries. As tinygrad's
+A compiler loaded its library at the first compile. As tinygrad's
 `runtime/support/compiler_cuda.py` `NVRTCCompiler.__init__` (`nvrtcVersion`),
 `runtime/support/compiler_amd.py` (`HIPCompiler` asserts comgr is loaded) and
 `runtime/ops_metal.py` (`MetalCompiler`) do when the compiler is made,
 `Compiler_cuda.nvrtc`, `Compiler_amd.hip` and `Compiler_metal.compiler` find
-their library, raising `Failure` without it, so
-`Cstyle.cuda`, `Cstyle.hip`, `Cstyle.metal` and `Device.renderer` raise it too.
-The tests that render for those targets skip without the library, as tolk's GPU
-tests do, except HIP's: no machine here has comgr, so the suites that render for
-HIP name a file that stands in for it in `COMGR_PATH`, as tinygrad's goldens'
-generator marks comgr loaded. NVRTC, comgr and MTLCompiler are loaded by the
-processes that compile (D5), so a file found that is no library fails each
-compile.
+their library, raising `Failure` without it, so `Cstyle.cuda`, `Cstyle.hip`,
+`Cstyle.metal` and `Device.renderer` raise it too; the processes that compile
+load it (D5).
 
 ## D16. Withdrawn
 
-A CUDA conversion to an 8-bit float kept an infinity special: an infinity in
-e5m2 and a NaN of its sign in e4m3, where nx stores ±448. rune hands tolk no
-8-bit float, so `Cstyle.cuda` converts with the saturating constructor, as
-tinygrad's `renderer/cstyle.py` `base_rewrite` does: an infinity becomes the
-greatest finite value of its sign in both formats. This departs from nx in
-e5m2, which keeps an infinity, and from the folder, where `Dtype.encode_format`
-keeps one in e5m2 and makes it a NaN in e4m3, as tinygrad's `float_to_fp8`
-(`dtype.py` `float_to_fp8`) does beside its own CUDA kernels.
+A CUDA conversion to an 8-bit float kept an infinity special. rune hands tolk
+no 8-bit float, so `Cstyle.cuda` saturates, as `renderer/cstyle.py`
+`base_rewrite` does: an infinity becomes the greatest finite value of its
+sign. This departs from nx's e5m2 and from `Dtype.encode_format`, which keeps
+an infinity in e5m2 and makes it a NaN in e4m3, as `dtype.py` `float_to_fp8`
+does.
 
 ## D17. Each operation on a narrow signed scalar is narrowed in the source
 
@@ -562,59 +507,52 @@ keeps one in e5m2 and makes it a NaN in e4m3, as tinygrad's `float_to_fp8`
   `Cstyle.clang_lang`; `Cstyle.render_uops` (`narrowed`, and the cast in
   `visit`); `Cstyle.base_rewrite` (an operand's parentheses).
 - **Differs:** C, C++ and Metal compute an operation on a `char` or `short`
-  in `int`, and Clang computes one on an `__fp16`, a storage format, in
-  `float`. Only an assignment narrows the result back, so an inlined
-  operation neither wraps nor rounds until the kernel stores: `(char)100 +
-  100`, halved, gives `100` where each operation wrapping gives `-28`. The
-  source is tinygrad's for the kernel with a cast to its own type after each
-  inlined scalar operation of one of these types that its user does not
-  store. The unsigned types take tinygrad's rule, whose unsigned int computes
-  each wrapping operation without the signed overflow of `int` that
-  `65535 * 65535` would be. Vectors are not promoted, and CUDA's `__half` and
-  `nv_bfloat16`, HIP's `_Float16` and Metal's `half` and `bfloat` compute
-  natively, so they keep tinygrad's source; so does every kernel without such
-  an inlined operation. Clang's, HIP's and Metal's rules were checked with
-  their compilers; CUDA's rests on the operators `cuda_fp16.hpp` and
-  `cuda_bf16.hpp` declare, and is on the hardware checks of
-  `test/README.md`.
-- **Reason:** (b). Eager nx and compiled code agree: nx computes each
+  in `int`, and Clang one on an `__fp16` in `float`, and only an assignment
+  narrows the result back. The source is tinygrad's for the kernel with a
+  cast to its own type after each inlined scalar operation of one of these
+  types that its user does not store. The unsigned types take tinygrad's
+  rule, which avoids the signed overflow of `int`. Vectors are not promoted,
+  and CUDA's `__half` and `nv_bfloat16`, HIP's `_Float16` and Metal's `half`
+  and `bfloat` compute natively, so they keep tinygrad's source; so does
+  every kernel without such an inlined operation.
+- **Reason:** (b). An inlined operation would neither wrap nor round until the
+  kernel stores: `(char)100 + 100`, halved, gives `100` where each operation
+  wrapping gives `-28`. Eager nx and compiled code agree: nx computes each
   operation in its own type, as the folder (`Ops.exec_alu`) and tinygrad's
   interpreter do.
-- **Pinned by:** `Tolk.Cstyle › narrowing`, which checks for every
-  kernel that the kernel whose tinygrad source is its source is the kernel
-  with those casts, and `Tolk.Cstyle › sources`, which compares the
-  sources it changes with tinygrad's for that kernel; `Tolk.Cstyle ›
-  execution on the host › rounds each operation on halves to a half`; and
-  the slow `Tolk.Cstyle › execution on the host › a kernel over a narrow
-  type wraps and rounds as the interpreter`, over each type's whole range.
-  The unsigned types' rule: `› wraps each operation on unsigned chars`.
+- **Pinned by:** `Tolk.Cstyle › narrowing` and `Tolk.Cstyle › sources`;
+  `Tolk.Cstyle › execution on the host › rounds each operation on halves to
+  a half`; and the slow `Tolk.Cstyle › execution on the host › a kernel over
+  a narrow type wraps and rounds as the interpreter`, over each type's whole
+  range. The unsigned types' rule: `› wraps each operation on unsigned
+  chars`. Clang's, HIP's and Metal's rules were checked with their
+  compilers; CUDA's rests on the operators `cuda_fp16.hpp` and
+  `cuda_bf16.hpp` declare, and is on the hardware checks of
+  `test/README.md`.
 
 ## D18. Withdrawn
 
-Metal computed a bfloat16 `TRUNC` in float32 here, where tinygrad truncated the
-bfloat, which Metal has no `trunc` of. At `renderer/cstyle.py`
-`MetalRenderer.extra_matcher` computes `TRUNC` in float32 with `SQRT`, `EXP2`,
-`LOG2` and `SIN`, as `Cstyle.metal_extra_matcher` does.
+Metal computed a bfloat16 `TRUNC` in float32, where tinygrad truncated the
+bfloat, which Metal has no `trunc` of. `renderer/cstyle.py`
+`MetalRenderer.extra_matcher` now computes `TRUNC` in float32 with `SQRT`,
+`EXP2`, `LOG2` and `SIN`, as `Cstyle.metal_extra_matcher` does.
 
 ## D19. Withdrawn
 
-A hierarchical allreduce to one device landed there, where tinygrad's stayed on
-every device of its source. Withdrawn: multi-device is out of scope, see
-README.
+A hierarchical allreduce to one device landed there. Withdrawn: multi-device
+is out of scope, see README.
 
 ## D20. Withdrawn
 
-Storage kept an e5m2 NaN's two payload bits, so a folded bitcast kept every
-e5m2 code. rune hands tolk no 8-bit float, so no consumer folds such a
-bitcast: `Dtype.encode_format` stores every e5m2 NaN as `0x7f` of its sign and
-`Dtype.decode_format` reads it as the NaN of its sign, as tinygrad's
-`dtype.py` `float_to_fp8`, `fp8_to_float` do.
+Storage kept an e5m2 NaN's payload bits. rune hands tolk no 8-bit float, so no
+consumer folds such a bitcast: `Dtype.encode_format` stores every e5m2 NaN as
+`0x7f` of its sign and `Dtype.decode_format` reads it as the NaN of its sign,
+as `dtype.py` `float_to_fp8` and `fp8_to_float` do.
 
 ## D21. Withdrawn
 
-A reshape of a value sharded on two axes divided each by its own shard count,
-where tinygrad's divided both by the last one's. Withdrawn: multi-device is out
-of scope, see README.
+A reshape of a value sharded on two axes divided each by its own shard count.
+Withdrawn: multi-device is out of scope, see README.
 
 ## D22. An emulated long converts no float past its words' range
 
@@ -625,8 +563,7 @@ of scope, see README.
 - **Differs:** the words are the quotient and remainder of the truncated
   float's magnitude by 2^32, each converted from a float the word holds, and
   negated as a long for a negative float. tinygrad converts a float past
-  2^31 to an int32 word, which C leaves undefined: ARM saturates and x86 gives
-  `0x80000000`, so the low word of `2^32 + 5` is `0x7fffffff` on ARM.
+  2^31 to an int32 word, which C leaves undefined.
 - **Reason:** (b): rune's kernels on a target without 64-bit integers cast
   floats to longs through this emulation, and must give the long nx gives.
 - **Pinned by:** `Tolk.Decomp_dtype › emulated 64-bit integers › an
@@ -635,168 +572,139 @@ of scope, see README.
 
 ## D23. Withdrawn
 
-A shard selected through a movement read its own shard, the movement's device
-range taking the selected shard's position. Withdrawn: multi-device is out of
-scope, see README.
+A shard selected through a movement read its own shard. Withdrawn:
+multi-device is out of scope, see README.
 
 ## D24. Rewrites keep IEEE and modular values
 
 - **tinygrad:** the rules and bounds each facet names below.
 - **tolk:** each facet's rules below.
-- **Differs:** tinygrad's rewrites assume real arithmetic: integers that never
-  wrap and floats that neither round, overflow, nor carry signed zeros and NaN.
-  A rewrite here keeps the value compiled code computes, bit for bit: an
-  integer of a committed type wraps at its width, as C's unsigned arithmetic,
-  Metal, CUDA and nx do, and the lowering computes signed arithmetic on the
-  unsigned bit pattern; a float follows IEEE. A rewrite that holds only in
-  real arithmetic applies to integers and booleans, and to a committed integer
-  only where no value it computes wraps (`Ops.exact`). Index arithmetic is weak
-  (`Weak_int`), never wraps, and keeps every fold tinygrad makes, so the
-  restrictions touch float and committed-integer values only. The one rounding
-  that stays is that of float powers, a constant one computed by products and
-  square roots and any other as `exp2 (y * log2 x)` (`Transcendental.xpow`).
-  - **Integer bounds wrap.** tinygrad: `uop/ops.py` (`wrapped`), which
-    `_min_max` applies to an unsigned sum, difference, product, left shift and
-    complement, `UOp._min_max` (a cast), `UOp._min_max` (a constant table).
-    tolk: `Ops.at_width`, `Ops.min_max`, `Ops.cast_bounds`, and the constant
-    table's case of `Ops.compute_min_max`. The bounds of a committed integer
-    that leave its type are one value wrapped, or the type's, signed or not,
-    whatever the operation: tinygrad wraps those of the unsigned operations
-    alone, and to the type's, one value included; an integer cast to an integer
-    keeps its interval, which then wraps, where tinygrad gives a cast that
-    leaves its type the type's bounds, one value included (69c2c1bce); a
-    constant table holding a NaN has its type's bounds, as a NaN constant has.
-    tinygrad folds int8 `(y + 100) < 0` for `y` in `[0, 50]` to `false`, which
-    is `true` at 40, and so `y * 4 < 0` and `y << 2 < 0`, `true` at 40 too, and
-    `cast (cast (y + 100) uint8) int32` to one cast, `-116` where the machine
-    gives `140`.
+- **Differs:** tinygrad's rewrites assume real arithmetic. A rewrite here
+  keeps the value compiled code computes, bit for bit: an integer of a
+  committed type wraps at its width, and the lowering computes signed
+  arithmetic on the unsigned bit pattern; a float follows IEEE. A rewrite
+  that holds only in real arithmetic applies to integers and booleans, and to
+  a committed integer only where no value it computes wraps (`Ops.exact`).
+  Index arithmetic is weak (`Weak_int`), never wraps, and keeps every fold
+  tinygrad makes, so the restrictions touch float and committed-integer
+  values only. The one rounding that stays is that of float powers, a
+  constant one computed by products and square roots and any other as
+  `exp2 (y * log2 x)` (`Transcendental.xpow`).
+  - **Integer bounds wrap.** tinygrad: `uop/ops.py` (`wrapped`, which `_min_max`
+    applies to an unsigned sum, difference, product, left shift and complement),
+    `UOp._min_max` (a cast, a constant table). tolk: `Ops.at_width`,
+    `Ops.min_max`, `Ops.cast_bounds`, and the constant table's case of
+    `Ops.compute_min_max`. The bounds of a committed integer that leave its type
+    are one value wrapped, or the type's, signed or not, whatever the operation,
+    where tinygrad wraps those of the unsigned operations alone, and to the
+    type's, one value included; an integer cast to an integer keeps its
+    interval, which then wraps, where tinygrad gives a cast that leaves its type
+    the type's bounds, one value included; a constant table holding a NaN has
+    its type's bounds, as a NaN constant has. tinygrad folds int8 `(y + 100) <
+    0` for `y` in `[0, 50]` to `false`, which is `true` at 40.
   - **Wrapping rules.** tinygrad: `uop/symbolic.py` `symbolic` (`(x // c1) //
-    c2`), `symbolic` (`c0 + x < c1`), `codegen/simplify.py` `pm_reduce_collapse`
-    (`x + y < c`, `x * y < c`) and `pm_reduce_load_collapse` (`x + y = c` under
-    a cast), `uop/symbolic.py` (`reduce_mul_chain`, a factor out of a maximum),
-    `uop/symbolic.py` `symbolic` (`-x < -y`, `-x < c`). tolk:
+    c2`, `c0 + x < c1`, `-x < -y`, `-x < c`, the maximum from a selection),
+    `reduce_mul_chain` (a factor out of a maximum), `fits`;
+    `codegen/simplify.py` `pm_reduce_collapse` (`x + y < c`, `x * y < c`)
+    and `pm_reduce_load_collapse` (`x + y = c` under a cast). tolk:
     `Shape.symbolic_simple`, `Shape.symbolic`, `Simplify.solves_sum`,
     `Simplify.pm_reduce_collapse`, `Simplify.pm_reduce_load_collapse`,
-    `Symbolic.reduce_mul_chain`. tinygrad keeps `c0 + x < c1`, the comparisons
-    of `Simplify` but the last, and a factor out of a maximum from unsigned
-    integers, which wrap, and applies them to signed ones, whose overflow it
-    takes to be undefined, checking only that the constants it makes fit the
-    type (`fits`, `uop/symbolic.py` `fits`); tolk applies each to a signed
-    integer only where every value it computes fits the type, and so `x + y = c`
-    to any committed integer, and `-x < -y` and `-x < c` to a signed one only
-    where no negation wraps. The comparisons of `Simplify` apply to integers
-    only, since moving a float term rounds, and `x + y = c` only under a cast
-    that does not narrow, where tinygrad takes any cast whose operand's bounds
-    fit its type (7e36b6735). `where (a < b) c (a + (c - b))` is a maximum for a
-    signed `a` only where `a + (c - b)` does not wrap (`uop/symbolic.py`
-    `symbolic`), where tinygrad takes signed overflow to be undefined. tinygrad
-    folds the int8 maximum of `r * p * q` over `r < 2` to `p * q`, `-112` at
-    `12, 12` where the machine gives `0`, and int8 `-x < 3` to `-3 < x`, `false`
-    at `x = -128` where the machine gives `true`.
-  - **Float folds.** tinygrad: `uop/symbolic.py` `symbolic_simple` (`x + 0`),
-    `symbolic_simple` (`x / x`, `x * 0`). tolk: `Shape.symbolic_simple`. A float
-    `x + 0` is `x` only for `-0.` (`-0. + +0.` is `+0.`); `x * 0` is `0` for
-    integers and booleans only (a float product by zero is NaN at an infinity or
-    a NaN and `-0.` at a negative `x`); `x / x` is gone, since true division is
-    always a float, and `x / x` is NaN at 0.
+    `Symbolic.reduce_mul_chain`. tinygrad keeps `c0 + x < c1`, the
+    comparisons of `Simplify` but the last, and a factor out of a maximum
+    from unsigned integers, and applies them to signed ones, taking signed
+    overflow to be undefined and checking only that the constants it makes
+    fit the type. tolk applies each to a signed integer, and `x + y = c` to
+    any committed integer, only where every value it computes fits the type,
+    and `-x < -y` and `-x < c` to a signed one only where no negation wraps.
+    The comparisons of `Simplify` apply to integers only, since moving a
+    float term rounds, and `x + y = c` only under a cast that does not
+    narrow, where tinygrad takes any cast whose operand's bounds fit its type.
+    `where (a < b) c (a + (c - b))` is a maximum for a signed `a` only where
+    `a + (c - b)` does not wrap.
+  - **Float folds.** tinygrad: `uop/symbolic.py` `symbolic_simple` (`x + 0`,
+    `x / x`, `x * 0`). tolk: `Shape.symbolic_simple`. A float `x + 0` is `x`
+    only for `-0.`; `x * 0` is `0` for integers and booleans only; `x / x`
+    is gone, since true division is always a float, NaN at 0.
   - **Signed zeros.** tinygrad: `uop/symbolic.py` `symbolic` (complementary
-    selections). tolk: `Shape.symbolic`. For integers and booleans only:
-    `where c t 0 + where c 0 f` at `t = -0.` is `+0.`, where `where c t f` is
-    `-0.`.
+    selections). tolk: `Shape.symbolic`. `where c t 0 + where c 0 f` becomes
+    `where c t f` for integers and booleans only: at `t = -0.` the sum is
+    `+0.`.
   - **Reassociation.** tinygrad: `uop/symbolic.py` `symbolic_simple` (two
-    constants of an associative operation), `symbolic` (like terms), `symbolic`
-    (a sum of two selections), `symbolic` (constants to the end),
-    `reduce_mul_chain`. tolk: `Shape.fold_where_closure`,
-    `Shape.symbolic_simple`, `Shape.symbolic`, `Symbolic.reduce_mul_chain`.
-    Sums, products and maxima regroup for integers and booleans only, and a
-    factor leaves a float reduction nowhere: `(x + 1e8) + -1e8` at `x = 1` is
-    `0.`, where `x + 0.` is `1.`; `(y + x) + x` at `y = 1`, `x = 2^-24` is `1.`,
-    where `y + x * 2` is `1.0000001`; `x * 1.1 + x * 2.2` at `1.` is
-    `3.3000002`, where `x * 3.3` is `3.2999999`; a sum over `r < 3` of `(r *
-    2e38) * 0.25` is `inf`, where `0.25 * 2e38` times the sum of `r` is finite;
-    and a maximum keeps a NaN only as its first operand, so `max (NaN, max (x,
-    0.))` is NaN, where `max (x, max (0., NaN))` is `x`. `x + x` is still `x *
-    2`, which is exact, and `(x * -1) * y` is `(x * y) * -1`, since a negation
-    commutes with rounding. tinygrad restricts these rules to integers too
-    (7e36b6735), the two stage fold of a sum since 5e826e373, but not that of a
-    product or a maximum, nor `x + x * -1`, which it makes `x * 0`: at `x = -1.`
-    that is `-0.`, where the sum is `+0.`. It checks that an intermediate it
-    makes does not overflow (`no_overflow`, `uop/symbolic.py` `no_overflow`),
-    which holds wherever tolk would check it, since the bounds of a committed
-    integer wrap (`Ops.at_width`), so tolk makes none.
+    constants of an associative operation), `symbolic` (like terms, a sum of
+    two selections, constants to the end), `reduce_mul_chain`, `no_overflow`.
+    tolk: `Shape.fold_where_closure`, `Shape.symbolic_simple`,
+    `Shape.symbolic`, `Symbolic.reduce_mul_chain`. Sums, products and maxima
+    regroup for integers and booleans only, and a factor leaves a float
+    reduction nowhere: a float sum or product rounds at each step, and a
+    maximum keeps a NaN only as its first operand, so `max (NaN, max (x,
+    0.))` is NaN, where `max (x, max (0., NaN))` is `x`.
+    `x + x` is still `x * 2`, which is exact, and `(x * -1) * y` is
+    `(x * y) * -1`, since a negation commutes with rounding. tinygrad
+    restricts these rules to integers too, but not the two stage fold of a
+    product or a maximum, nor `x + x * -1`, which it makes `x * 0`, `-0.` at
+    `x = -1.` where the sum is `+0.`. Its check that an intermediate does not
+    overflow (`no_overflow`) holds wherever tolk would check it, since the
+    bounds of a committed integer wrap (`Ops.at_width`), so tolk makes none.
   - **Maxima.** tinygrad: `uop/symbolic.py` `symbolic`. tolk:
-    `Shape.symbolic`. A maximum by bounds applies to integers
-    only, since a float's bounds leave out NaN and the order of zeros:
-    `max (x, inf)` at NaN is NaN, where the fold gives `inf`. A selection that
+    `Shape.symbolic`. A maximum by bounds applies to integers only, since a
+    float's bounds leave out NaN and the order of zeros. A selection that
     computes a maximum becomes one for integers only: rune builds a float
-    maximum that follows IEEE from selections, which the fold would turn back
-    into a maximum that renders as the target's own, and it took `-0.` and
-    `+0.` for one constant: `where (x < -0.) 0. x` at `-1e-45` is `+0.`,
-    where `max (x, -0.)` is `-0.`. A float ReLU stays a selection.
+    maximum that follows IEEE from selections, which the fold would turn
+    back into the target's own maximum, taking `-0.` and `+0.` for one
+    constant. A float ReLU stays a selection.
   - **Sigmoid forms.** tinygrad: `uop/symbolic.py` `sym`. tolk: the rules
-    are left out of `sym`. `x * (1 / (1 + x))` at `1e-8` is `1e-8`, where
-    `1 - 1 / (1 + x)` is `0.`, and at `inf` is NaN, where it is `1.`.
+    are left out of `sym`: `x * (1 / (1 + x))` at `1e-8` is `1e-8`, where
+    `1 - 1 / (1 + x)` is `0.`.
   - **Pow.** tinygrad: `uop/symbolic.py` (`simplify_pow`), `symbolic_simple`
     (`c ** x`). tolk: `Shape.simplify_pow` and the `c ** x` rule of
-    `Shape.symbolic_simple`. The reciprocal of the
-    base is taken for exponents of magnitude at least 1 only, where the power
-    overflows whenever the reciprocal does: `1e-40 ** -0.8` is `1e32`, where
-    `(1 / 1e-40) ** 0.8` is `inf`. A float half-integer power selects `+0.`
-    at `-0.` and `+inf` at `-inf`, where `sqrt` gives `-0.` and NaN. `c ** x`
-    goes to `xpow` for `c = inf`: `inf ** 0` is `1.`, where
-    `exp2 (0 * log2 inf)` is NaN. `1 ** x` is `1` of the power's type, as
-    IEEE's `pow (1, x)` is at every `x`, NaN included: tinygrad no longer
-    folds it (89ce9c494, which fixed the type of the `1` it gave), and leaves
-    a float `x` to `exp2 (x * 0)`, NaN at an infinity.
+    `Shape.symbolic_simple`. The reciprocal of the base is taken for
+    exponents of magnitude at least 1 only, where the power overflows
+    whenever the reciprocal does. A float half-integer power selects `+0.`
+    at `-0.` and `+inf` at `-inf`, where `sqrt` gives `-0.` and NaN.
+    `c ** x` goes to `xpow` for `c = inf`, since `exp2 (0 * log2 inf)` is
+    NaN. `1 ** x` is `1` of the power's type at every `x`, NaN included, as
+    IEEE's `pow (1, x)` is; tinygrad does not fold it, and leaves a float `x`
+    to `exp2 (x * 0)`, NaN at an infinity.
   - **Simplify's reductions.** tinygrad: `codegen/simplify.py`
-    `pm_reduce_collapse` (`sum_between`), `pm_reduce_collapse` (a parameter
-    lifted out of a sum) and `pm_reduce_collapse` (a product by a boolean cast).
-    tolk: `Simplify.sum_between`, `Simplify.pm_reduce_collapse`. A float sum
-    counted in closed form is `+0.` over an empty part of its range, where `0 *
-    inf` is NaN; a product by a boolean cast is a selection for integers only
-    (`-1. * 0.` is `-0.` and `inf * 0.` NaN, where the selection gives `+0.`); a
-    parameter conjunct is lifted out of a sum on a selection as a selection:
-    tinygrad lifts it as a product by its cast, which its product rule turns
-    back into a selection, and tolk's product rule does so for integers only. A
-    sum over a range its value does not use, `x * n`, and a sum of a sum split
-    in two stay: each is the sum of the same terms in another association, which
-    RFC 0012's rounded sum class allows; a sum of `-0.` terms computed as `-0. *
-    n` is `+0.` once the lowering adds `+0.` to every float sum's result, which
-    the `x + 0` fold now keeps.
+    `pm_reduce_collapse` (`sum_between`, a parameter lifted out of a sum, a
+    product by a boolean cast). tolk: `Simplify.sum_between`,
+    `Simplify.pm_reduce_collapse`. A float sum counted in closed form is `+0.`
+    over an empty part of its range, where `0 * inf` is NaN; a product by a
+    boolean cast is a selection for integers only; a parameter conjunct is
+    lifted out of a sum on a selection as a selection: tinygrad lifts it as a
+    product by its cast, which its product rule turns back into a selection, and
+    tolk's product rule does so for integers only. A sum over a range its value
+    does not use, `x * n`, and a sum of a sum split in two stay: each is the sum
+    of the same terms in another association, which RFC 0012's rounded sum class
+    allows; a sum of `-0.` terms computed as `-0. * n` is `+0.` once the
+    lowering adds `+0.` to every float sum's result, which the `x + 0` fold
+    keeps.
   - **Transcendental polynomials.** tinygrad: `helpers.py` (`polyN`, from
-    `0.0`). tolk: `Transcendental.poly_n`. A
-    polynomial starts from its first coefficient, so the decompositions no
-    longer rely on the float folds of `0. * x` and `x + 0` to be what tinygrad
-    renders.
+    `0.0`). tolk: `Transcendental.poly_n`. A polynomial starts from its
+    first coefficient, so the decompositions do not rely on the float folds
+    of `0. * x` and `x + 0` to be what tinygrad renders.
   - **Tensor-core accumulators.** tinygrad: `codegen/__init__.py`
-    (`pm_wmma_add`, which adds the running sum to a WMMA's accumulator operand).
-    tolk: `Codegen.wmma_accumulate`, which the fold at the reduce calls (D260).
-    A WMMA built for a sum starts from a zero accumulator, and the running sum
-    used to be added to it, `+0. + acc`, which only the float `x + 0` fold
-    removed: with that fold kept to `-0.`, every tensor-core loop added `+0.` to
-    each accumulator element on every iteration. The running sum now replaces a
-    zero accumulator: the sum's identity is the accumulator's initial value, set
-    once before the loop, and the lowering adds `+0.` to the result, so a
-    partial sum's zero sign, which the rounded sum class leaves open, is all
-    that differs. A core of another accumulator, which only a core built by hand
-    has, since the optimiser builds every core from zero, keeps it, and the sum
-    adds its value as it adds any term: tinygrad's rule regrouped it as `(c +
-    acc) + P`.
-- **Reason:** (b). RFC 0012's Law 1: every constructor's compiled result, alone
-  or fused, meets its class against eager nx, whose integer arithmetic is
-  modular and whose floats follow IEEE. rune's `rune jit › classes › jit gives
-  eager's bits for exact functions` and `› … at every dtype` compile drawn
-  compositions of sums, differences, products, quotients, maxima, minima and
-  selections against eager nx; `Lower_real › exact` compiles each float kind
-  at NaN, `-0.`, infinities and subnormals; `Lower_real › transcendental › pow
-  within 2 ulps at float32, 2 at float64` checks a power's special values; and
-  `rune jit › jit › an integer maximum of a running sum wraps` checks a
-  compiled maximum of a wrapping sum against the value nx states. They replace
-  the old rune's `check_wrapping_comparisons`, `check_float_identities`,
-  `check_signed_zeros` and `check_pow`, which went with its rewrite.
+    (`pm_wmma_add`, which adds the running sum to a WMMA's accumulator
+    operand). tolk: `Codegen.wmma_accumulate`, which the fold at the reduce
+    calls (D260). The running sum replaces a zero accumulator: the sum's
+    identity is the accumulator's initial value, set once before the loop,
+    and the lowering adds `+0.` to the result, so only a partial sum's zero
+    sign, which the rounded sum class leaves open, differs. Adding it, `+0. +
+    acc`, would add `+0.` to each accumulator element on every iteration,
+    since the `x + 0` fold is kept to `-0.`. A core of another accumulator,
+    which only a core built by hand has, keeps it, and the sum adds its value
+    as it adds any term, where tinygrad's rule regrouped it as `(c + acc) +
+    P`.
+- **Reason:** (b). Every constructor's compiled result, alone or fused,
+  meets its class against eager nx, whose integer arithmetic is modular and
+  whose floats follow IEEE (RFC 0012's Law 1). rune's `rune jit › classes ›
+  jit gives eager's bits for exact functions` and `› … at every dtype`,
+  `Lower_real › exact`, `Lower_real › transcendental › pow within 2 ulps at
+  float32, 2 at float64` and `rune jit › jit › an integer maximum of a
+  running sum wraps` compile drawn compositions, special values and a
+  wrapping maximum against eager nx.
 - **Pinned by:** each facet by value tests, which evaluate a graph with the
-  reference interpreter before and after the rewrite at bindings where the
-  restricted rewrite changes the value:
+  reference interpreter before and after the rewrite:
   - integer bounds: `Tolk.Ops › bounds › a committed integer that can
     leave its type has its bounds`, `› an integer cast to a signed type
     it leaves wraps`, `› a constant table holding a NaN has its type's
@@ -817,15 +725,12 @@ scope, see README.
     lifted past a parameter is +0. where it is false`, and
     `Tolk.Simplify › pm_reduce_collapse › a float product by a comparison
     cast from a boolean stays`;
-  - transcendental polynomials: the `Tolk.Transcendental` goldens, whose value
-    tables are unchanged;
+  - transcendental polynomials: the `Tolk.Transcendental` goldens;
   - tensor-core accumulators: the sources of every tensor core,
     `Tolk.Cstyle › sources › by default › metal_tc_*`, `hip_tc_*` and
-    `metal_matmul`, whose loops add nothing to the accumulator, as tinygrad's;
-    `Tolk.Codegen › tensor-core accumulators › the running sum
-    replaces a zero accumulator`, which lowers a contraction on each
-    target's tensor cores, one or two steps of K a trip; and the values of
-    folded sums on CUDA's cores, `Tolk.Codegen › tensor cores on CUDA › a
+    `metal_matmul`; `Tolk.Codegen › tensor-core accumulators › the running
+    sum replaces a zero accumulator`, on each target's tensor cores, one or
+    two steps of K a trip; and `Tolk.Codegen › tensor cores on CUDA › a
     float16 or bfloat16 product of 1 to 4 tiles a side, summed in float32
     from 0, is the exact product`;
   - the goldens.
@@ -841,7 +746,7 @@ scope, see README.
   c` becomes `MULACC` for a renderer that writes it), `renderer/cstyle.py`
   `CStyleLanguage.code_for_op` (no C-style language writes `MULACC`),
   `renderer/ptx.py` `asm_for_op` (PTX writes a float `MULACC` as `fma.rn` at
-  its own type, so a half's rounds once).
+  its own type, so a half's rounds once); `uop/ops.py` `python_alu`.
 - **tolk:** `Compiler_cpu` (`-ffp-contract=off`), `Compiler_amd`
   (`-ffp-contract=off`), `Compiler_cuda` (`--fmad=false`), `Compiler_metal`
   (`#pragma METAL fp contract(off)` before the source);
@@ -856,132 +761,97 @@ scope, see README.
   `Mulacc` rule; `Renderer.t.fma`, and `Codegen.narrow_mulacc`, which
   `Codegen.full_rewrite_to_sink` applies after the products fuse.
 - **Differs:**
-  - Each compiler would fuse a product and a sum that a rendered expression
-    holds together, `a*b + c`, into one multiply-add with one rounding: Clang
-    at `-O2` (`-ffp-contract=on`), HIP (`fast`), NVRTC (`--fmad=true`) and
-    Metal, whose `-ffp-contract=off` does not reach the code where its pragma
-    does. No compiler contracts.
-  - A sum of products of float32 or float64, on a renderer that writes a
-    multiply-add and has the type natively, adds each product into its running
-    sum as one multiply-add (`Op.Mulacc`), rounded once, in the order it adds
-    them unfused: an accumulator's `acc + a*b` is `fma(a, b, acc)`, and a
-    horizontal reduce's `a0*b0 + a1*b1 + ...` is `fma(a1, b1, a0*b0)` and so
-    on, which the accumulator then adds. A horizontal reduce of unrolled lanes
-    beside upcast ones sums a permuted view of the products, which the
-    expander makes to bring the unrolled axes first; its products fuse too
-    (`fuses` looks under the source's movements, as the generator's `fuses`
-    looks under `x.base`).
+  - no compiler contracts a product and a sum that a rendered expression
+    holds together, `a*b + c`, as Clang at `-O2`, HIP, NVRTC and Metal would.
+    Metal's `-ffp-contract=off` does not reach the code where its pragma
+    does: on an Apple GPU a kernel gives `2^-24` without the pragma and 0
+    with it, and still `2^-24` with `-ffp-contract=off` alone;
+  - a sum of products of float32 or float64, on a renderer that writes a
+    multiply-add and has the type natively, adds each product into its
+    running sum as one multiply-add (`Op.Mulacc`), rounded once, in the order
+    it adds them unfused: an accumulator's `acc + a*b` is `fma(a, b, acc)`,
+    and a horizontal reduce's `a0*b0 + a1*b1 + ...` is `fma(a1, b1, a0*b0)`
+    and so on, which the accumulator then adds. A horizontal reduce of
+    unrolled lanes beside upcast ones sums a permuted view of the products;
+    its products fuse too (`fuses` looks under the source's movements, as
+    the generator's `fuses` looks under `x.base`);
   - `Decomp_op`'s `a * b + c` rule never applies: decomposition takes the
-    renderer's operations without `Mulacc`. Every other product and sum keeps
-    the two roundings the graph states.
-  - A float `Mulacc` that a graph states, as rune's lowering of `Nx.fma` does,
-    folds and evaluates rounded once, where `python_alu` (`uop/ops.py`)
-    computes `x*y + z` with two roundings: at float64 by `Float.fma`, and below
-    by a sum rounded to odd at double precision, which the dtype's truncation
-    rounds once. A `Mulacc` moves inside the Invalid gate of each operand, and
-    an Invalid operand makes it Invalid, as `pm_data_invalid` does for binary
-    operations; no tinygrad tensor graph holds `MULACC`, so it has no such
-    rule.
-  - A `Mulacc` of a half, a bfloat16 or an 8-bit float rounds once too. A
-    target writes it so where its specification states one rounding
+    renderer's operations without `Mulacc`. Every other product and sum
+    keeps the two roundings the graph states;
+  - a float `Mulacc` that a graph states, as rune's lowering of `Nx.fma` does,
+    folds and evaluates rounded once, where `python_alu` rounds twice: at
+    float64 by `Float.fma`, and below by a sum rounded to odd at double
+    precision, which the dtype's truncation rounds once. A `Mulacc` moves inside
+    the Invalid gate of each operand, and an Invalid operand makes it Invalid,
+    as `pm_data_invalid` does for binary operations; no tinygrad tensor graph
+    holds `MULACC`, so it has no such rule;
+  - a `Mulacc` of a half, a bfloat16 or an 8-bit float rounds once too. A
+    target writes it natively where its specification states one rounding
     (`Renderer.t.fma`): CUDA's `__hfma` of halves from capability 53 and of
-    bfloat16s from 80 ("rounding the result once in round-to-nearest-even
-    mode", `cuda_fp16.h` and `cuda_bf16.h`), HIP's `__builtin_fmaf16`
-    (`V_FMA_F16`, fused), Metal's `fma` of halves from Apple family 4 ("Correctly
-    rounded", MSL 4.1 Table 8.3, fast math off), and Clang's
-    `__builtin_fmaf16` and `__builtin_elementwise_fma` of halves on arm64
-    with `fp16` (FEAT_FP16), LLVM's fma of a legal half type, one `fmadd` or
-    `fmla`, checked under Apple clang 17 and Homebrew Clang 18, 19, 21 and
-    22. Elsewhere its operands widen
-    to a float32, where their product is exact, a bfloat16's within guards
-    at the ends of its range; the sum is rounded to odd there, and the cast
-    back rounds once (Boldo and Melquiond, IEEE Trans. Computers 57(4), 2008,
-    Theorem 3). Before, targets
-    computed a narrow float in a float32, where `Cstyle.fma` rounds once and
-    the narrowing again: Clang's promoted half and HIP's half by
-    `__builtin_fmaf`, CUDA's half and bfloat16 by `__fmaf_rn`, an emulated
-    bfloat16 or 8-bit float by a float32 multiply-add; Clang's
-    `__builtin_elementwise_fma` on half lanes rounded once or twice by
-    compiler and features (Apple clang 17 at arm64 `generic` by `fmadd s` then
-    `fcvt h`, at `generic+fp16` by one `fmla .8h`, Homebrew Clang 22 through a
-    double). An e4m3 or e4m3fnuz `Mulacc` keeps the float32 multiply-add:
-    rounded there and then to the type, it rounds once, on every finite
-    triple. A bfloat16 `Mulacc` compiles on Metal, where it did not. For a
-    target that flushes subnormals, Metal's (MSL 4.1, Section 8.1), a lane
-    whose operand, product, sum or result is subnormal in its type is not
-    promised one rounding; every other lane is: the float32 route keeps an
-    addend below `2^-125` whole rather than halve it into the subnormals.
-- **Reason:** (b). RFC 0012's Law 1: a
-  reduction's result is in the rounded-sum class, whose error bound a fused
-  multiply-add stays within; every other compiled result meets eager nx, which
-  rounds a product and a sum apart, and rune's accurate compositions
-  (two-part products and sums) are exact only where each operation rounds as
-  written. The fusion is the IR's, so that only a sum's products fuse, where a
-  compiler's contraction fuses any `a*b + c` of an expression. `Nx.fma`
-  (RFC 0015's D3) states a `Mulacc` whose compiled bits must be eager's, so its
-  fold rounds once too, and `Nx.ewma`, built on it, compiles. Fusing a sum's
-  products is (d), on fudge (medians of 11, two interleaved runs each, fused
-  then unfused): rune's `Jit/matmul-64` takes 7.3 and 4.9 us against 49 and
-  46 us, and the tolk bench's `lorenz/r_128_16_3_4_4_3_3_400_400/heuristic`,
-  a kernel of lorenz_simple's step, 0.79 and 0.63 ms against 1.47 and 1.84
-  ms.
-- **Pinned by:** `Tolk.Compiler_cpu › execution on the host › a product
-  and a sum round twice, never fused` (`(1 + 2^-12)^2 - (1 + 2^-11)` is 0,
-  where a fused multiply-add gives `2^-24`); `Tolk.Compiler_metal ›
-  MTLCompiler › a product and a sum compile under the no-contraction pragma`. On
-  an Apple GPU, the same kernel compiled by MTLCompiler gives
-  `2^-24` without the pragma and 0 with it, and still `2^-24` with
-  `-ffp-contract=off` alone. NVRTC and HIP are README's hardware checks.
-  `Tolk.Codegen › multiply-adds › a sum of products adds each into
-  its running sum rounded once, of 2` and `› of 64` (the sum of `-(1 +
-  2^-11)` and `(1 + 2^-12)^2` is `2^-24`, with a multiply-add in the source)
-  and `› a sum of products unrolled beside upcast lanes adds each into its
-  running sum rounded once` (four running sums of a loop unrolled by 4, three
-  multiply-adds each, and the same `2^-24`) and `› a product and a sum outside a reduction are not
-  fused`; the Codegen and C-style goldens, with tolk's output naming D25 in `.tolk`
-  files beside them.
-  `Tolk.Ops › exec_alu › a float multiply-add folds rounded once` (its
-  float32 case past a double's rounding ties to the wrong float32 when the sum
-  is not rounded to odd); `Tolk.Symbolic › invalid values › a multiply-add
-  moves inside the gate of each operand` and `› a multiply-add of
-  invalid is invalid`. In rune, `Lower_arith › exact binary kinds,
-  comparisons, where and fma give eager's bits` and `Lower_real › exact ›
-  fma`, a compiled `Nx.fma` against eager's bits, and `rune jit › classes ›
-  jit gives eager's bits for exact functions`, whose products and sums outside
-  a reduction round apart. On rune: missing for a sum's products and for
-  `Nx.ewma` (the old rune's `Test_lower_arith › multiply-adds › a product
-  that the sum cancels is kept whole` and `Test_compiled_rules › compositions
-  › a compiled ewma is its eager value, bit for bit, and so is its gradient`
-  went with its rewrite).
-  A narrow float's `Mulacc` is (e), the bits of one graph that differed
-  between hosts and between targets: `Tolk.Codegen › a multiply-add of narrow
-  floats rounds once › of halves`, `› of bfloat16s` and `› of float8
-  <format>s` for e5m2, e5m2fnuz, e4m3 and e4m3fnuz, each on the host and each
-  GPU, in 1, 4 and 8 lanes, against the exact sum rounded once (lanes off a
-  midpoint by less than a float32 resolves, on a midpoint, around the bound
-  past which the type overflows, subnormal, NaN, infinite and negative zero
-  operands, a product on a midpoint of the top binade beside an addend of the
-  least normal binade, which fails on Metal where the addend is halved);
-  on the host also at `arm64,generic` and `arm64,generic,fp16`, the second
-  written by `fmla` and `fmadd`, which `Tolk.Compiler_cpu › a half
-  multiply-add on arm64` checks in the object.
+    bfloat16s from 80, HIP's `__builtin_fmaf16`, Metal's `fma` of halves from
+    Apple family 4 (fast math off), and Clang's `__builtin_fmaf16` and
+    `__builtin_elementwise_fma` of halves on arm64 with `fp16` (FEAT_FP16),
+    LLVM's fma of a legal half type, one `fmadd` or `fmla`.
+    Elsewhere its operands widen to a float32, where their product is exact,
+    a bfloat16's within guards at the ends of its range; the sum is rounded
+    to odd there, and the cast back rounds once (Boldo and Melquiond, IEEE
+    Trans. Computers 57(4), 2008, Theorem 3). An e4m3 or e4m3fnuz `Mulacc`
+    keeps the float32 multiply-add, which rounds once on every finite
+    triple. A bfloat16 `Mulacc` compiles on Metal. For a target that flushes
+    subnormals, Metal's, a lane whose operand, product, sum or result is
+    subnormal in its type is not promised one rounding; every other lane is:
+    the float32 route keeps an addend below `2^-125` whole.
+- **Reason:** (b). A reduction's result is in the rounded-sum class (RFC 0012's
+  Law 1), whose error bound a fused multiply-add stays within; every other
+  compiled result meets eager nx, which rounds a product and a sum apart, and
+  rune's two-part products and sums are exact only where each operation rounds
+  as written. The fusion is the IR's, so that only a sum's products fuse, where
+  a compiler's contraction fuses any `a*b + c` of an expression. `Nx.fma` (RFC
+  0015's D3) states a `Mulacc` whose compiled bits must be eager's, so its fold
+  rounds once too, and `Nx.ewma`, built on it, compiles. Fusing a sum's products
+  is (d): on fudge rune's `Jit/matmul-64` takes 7.3 us fused against 49 us, and
+  the tolk bench's `lorenz/r_128_16_3_4_4_3_3_400_400/heuristic` 0.79 ms against
+  1.47 ms. A narrow float's `Mulacc` is (e): the bits of one graph differed
+  between hosts and between targets.
+- **Pinned by:** `Tolk.Compiler_cpu › execution on the host › a product and a
+  sum round twice, never fused`; `Tolk.Compiler_metal › MTLCompiler › a product
+  and a sum compile under the no-contraction pragma`. NVRTC and HIP are README's
+  hardware checks. `Tolk.Codegen › multiply-adds › a sum of products adds each
+  into its running sum rounded once, of 2` and `› of 64` and `› a sum of
+  products unrolled beside upcast lanes adds each into its running sum rounded
+  once` and `› a product and a sum outside a reduction are not fused`; the
+  Codegen and C-style goldens, with tolk's output naming D25 in `.tolk` files
+  beside them. `Tolk.Ops › exec_alu › a float multiply-add folds rounded once`
+  (its float32 case past a double's rounding ties to the wrong float32 when the
+  sum is not rounded to odd); `Tolk.Symbolic › invalid values › a multiply-add
+  moves inside the gate of each operand` and `› a multiply-add of invalid is
+  invalid`. In rune, `Lower_arith › exact binary kinds, comparisons, where and
+  fma give eager's bits` and `Lower_real › exact › fma`, and `rune jit › classes
+  › jit gives eager's bits for exact functions`. On rune: missing for a sum's
+  products and for `Nx.ewma`. A narrow float's `Mulacc`: `Tolk.Codegen › a
+  multiply-add of narrow floats rounds once › of halves`, `› of bfloat16s` and
+  `› of float8 <format>s` for e5m2, e5m2fnuz, e4m3 and e4m3fnuz, each on the
+  host and each GPU, in 1, 4 and 8 lanes, against the exact sum rounded once; on
+  the host also at `arm64,generic` and `arm64,generic,fp16`, the second written
+  by `fmla` and `fmadd`, which `Tolk.Compiler_cpu › a half multiply-add on
+  arm64` checks in the object.
 
 ## D26. A minus never meets a minus in C-style source
 
 - **tinygrad:** `renderer/cstyle.py` `CStyleLanguage.code_for_op` (`Ops.NEG` is
-  `-{x}`), `CStyleLanguage.code_for_op` (`Ops.SUB` is `({a}-{b})`).
+  `-{x}`, `Ops.SUB` is `({a}-{b})`).
 - **tolk:** `Cstyle.joined`, `Cstyle.infix`, and `Neg` in
   `Cstyle.code_for_op`.
 - **Differs:** a negation or a subtraction whose operand starts with a minus
   sign, itself a negation or a negative constant, is written with a space
-  between the two signs: `(a- -b)`, `- -b`. tinygrad writes `(a--b)`, which C,
-  Metal, CUDA and HIP read as the decrement operator and reject. Every other
-  source is written as tinygrad writes it.
+  between the two signs: `(a- -b)`, `- -b`. tinygrad writes `(a--b)`, which
+  C, Metal, CUDA and HIP read as the decrement operator and reject. Every
+  other source is written as tinygrad writes it.
 - **Reason:** (b). rune lowers `Nx.sub` to `Ops.sub` (rune's
   `Lower_real.binary`) and its FFT's twiddles with `Ops.neg` (rune's
   `Lower_fft`), so a difference of a negative constant, as `Nx.sub_s x (-1.)`
-  states, or a negation of a negation can reach the renderer; a source the
-  compiler rejects is a failed program. No rune test is shown to reach it.
+  states, or a negation of a negation can reach the renderer, and a rejected
+  source is a failed program. No rune test is shown to reach it.
 - **Pinned by:** `Tolk.Cstyle › negation › a minus before a minus is
   apart › *` (every renderer), `› Clang compiles and runs a difference with a
   negated operand` and `› … with a negative constant`.
@@ -1000,34 +870,31 @@ Each part is one layer of the head's NaN rule: a float constant is its bits
 - **tolk:** `Dtype.equal_const`, `Dtype.hash_const` and `Dtype.const`;
   `Ops.key`; `Shape.fold_bitcast`.
 - **Differs:** a float constant is its bits. `Dtype.const` keeps a NaN's sign
-  and the payload its type holds, a signalling NaN staying one, in a float of 16
-  bits or more (an 8-bit float's NaN is the one its storage holds, D10 and D20),
-  and constants compare and hash by their bits, so NaNs of different bits are
-  different nodes, with different keys: a schedule cached under one NaN's key is
-  never the schedule of another's; a parameter's bounds and value key by their
-  bits too. No golden reads a key; tinygrad's writes
-  every NaN `nan`. `fold_bitcast` reads a float constant as its type stores it,
-  where tinygrad's conversion quiets a signalling NaN and makes an 8-bit NaN
-  canonical. So folding `bitcast(bitcast(0x7d01, half), uint16)` gives `0x7d01`,
-  where tinygrad gives `0x7e00`, and a negative float32 NaN's bits survive a
-  fold, where tinygrad makes them `0x7fc00000`. A NaN an operation makes from
-  other values is `Dtype.nan`, tinygrad's `math.nan`, whatever the host's FPU
-  gives, so that folding does not depend on the host: `exec_alu` makes the NaN
-  of an invalid operation (`inf - inf`, `0 * inf`, `0 / 0`, a square root or
-  logarithm of a negative) canonical, where x86 gives a negative NaN. The NaN
-  rule leaves that NaN's bits free, so this part follows tinygrad.
+  and the payload its type holds, a signalling NaN staying one, in a float of
+  16 bits or more (an 8-bit float's NaN is the one its storage holds, D10 and
+  D20). Constants compare and hash by their bits, so NaNs of different bits
+  are different nodes with different keys: a schedule cached under one NaN's
+  key is never the schedule of another's. A parameter's bounds and value key
+  by their bits too. No golden reads a key; tinygrad's writes every NaN
+  `nan`. `fold_bitcast` reads a float constant as its
+  type stores it, where tinygrad's conversion quiets a signalling NaN and
+  makes an 8-bit NaN canonical. A NaN an operation makes from other values
+  is `Dtype.nan`, tinygrad's `math.nan`, whatever the host's FPU gives, so
+  that folding does not depend on the host: `exec_alu` makes the NaN of an
+  invalid operation (`inf - inf`, `0 * inf`, `0 / 0`, a square root or
+  logarithm of a negative) canonical, where x86 gives a negative NaN. The
+  NaN rule leaves that NaN's bits free, so this part follows tinygrad.
 - **Reason:** (b): under the NaN rule a bitcast keeps a NaN's bits, as a
   kernel's and nx's do, so a bitcast that rune folds must keep them, which a
   constant can only if it holds them; a rewrite must keep a graph's value.
 - **Pinned by:** `Tolk.Ops › identity › NaN constants of different bits
   are different nodes`; `Tolk.Ops › key › tells apart NaN constants of
   different bits`; `Tolk.Ops › exec_alu › an invalid operation's
-  NaN is the canonical positive quiet NaN, whatever the host gives`,
-  which compares bits and fails on an x86 host without the canonical NaN; `Tolk.Symbolic › symbolic_simple › casts › a
-  bitcast round trip of every 8- and 16-bit word folds to its value`, which evaluates each graph
-  with the reference interpreter before and after `simplify`;
-  `Tolk.Dtype › const › const keeps the bits of every 8- and 16-bit float
-  word but an 8-bit float's NaN codes`.
+  NaN is the canonical positive quiet NaN, whatever the host gives`;
+  `Tolk.Symbolic › symbolic_simple › casts › a bitcast round trip of every
+  8- and 16-bit word folds to its value`; `Tolk.Dtype › const › const keeps
+  the bits of every 8- and 16-bit float word but an 8-bit float's NaN
+  codes`.
 
 ### A move of an emulated float keeps its bits (D62)
 
@@ -1040,69 +907,59 @@ Each part is one layer of the head's NaN rule: a float constant is its bits
 - **Differs:** a store of a value that moves stored bits without arithmetic
   (a load, a constant the float holds exactly, a selection between such
   values, and stacks and lanes of them) stores those bits, as the storage's
-  unsigned integers. tinygrad widens and narrows each such value, which keeps
-  its value but makes every NaN its format's quiet one: a copy of e5m2's
-  `0x7d`, half's `0x7c01` or bfloat16's `0x7f81` stores `0x7f`, `0x7e00` or
-  `0x7fc0`. Arithmetic still converts, and gives a NaN as the NaN rule allows
-  (D9). A move keeps a merged access's lanes together, so it loads and stores
-  vectors of the storage, which CUDA does not name as the renderer writes them
-  (`unsigned_short4`, `unsigned_char4`): the CUDA renderer declares a vector of
-  `unsigned char` or `unsigned short` as it declares one of `half`, but for
-  2 and 4 bytes, which it writes as one integer word (D482).
-- **Reason:** (b). Under the NaN rule a move keeps a NaN's bits, and nx's do:
-  an eager copy, movement or `where` keeps a signalling NaN, so a compiled
+  unsigned integers, where tinygrad's widening and narrowing makes every NaN
+  its format's quiet one. Arithmetic still converts, and gives a NaN as the
+  NaN rule allows (D9). A move keeps a merged access's lanes together, so it
+  loads and stores vectors of the storage, which CUDA does not name as the
+  renderer writes them (`unsigned_short4`, `unsigned_char4`): the CUDA
+  renderer declares a vector of `unsigned char` or `unsigned short` as it
+  declares one of `half`, but for 2 and 4 bytes, which it writes as one
+  integer word (D482).
+- **Reason:** (b). Under the NaN rule a move keeps a NaN's bits, and nx's
+  eager copy, movement or `where` keeps a signalling NaN, so a compiled
   function computes what it computes eagerly only if the emulated moves keep
-  the bits too. rune converts `float16` and `bfloat16` by tolk's casts, and
-  stores the 8-bit floats and `float4_e2m1fn` as `uint8`, which it decodes
-  and encodes by integer formulas on their bits (`Lower_arith.of_byte`,
-  `Lower_arith.to_byte`), so tolk no longer emulates an 8-bit float for
-  it. What remains is a move of `bfloat16` or `float16` storage on a target
-  that emulates it: `bfloat16` on a riscv64 host, on an Apple GPU before
-  family 6 and on CUDA before sm_80.
-  rune stores both in their own types (`Lower_arith.dtype`), so a compiled
-  copy of one is such a move.
+  the bits too. rune stores the 8-bit floats and `float4_e2m1fn` as `uint8`
+  (`Lower_arith.of_byte`, `Lower_arith.to_byte`), so tolk no longer emulates
+  an 8-bit float for it, and `float16` and `bfloat16` in their own types
+  (`Lower_arith.dtype`), so the move that remains is a compiled copy of
+  `bfloat16` or `float16` storage on a target that emulates it: `bfloat16` on
+  a riscv64 host, on an Apple GPU before family 6 and on CUDA before sm_80.
 - **Pinned by:** the `Decomp_dtype` suite (`test/codegen/decomp/decomp_dtype`):
   `NaNs › an emulated copy keeps every NaN code, a signalling one's included`
   and `› an emulated selection keeps every NaN code, a signalling one's
   included`, on every emulated float, and the goldens of the `where`, `flip`,
   `gather` and `pad` kernels; the Codegen suite's `emulated floats' vectors on
   CUDA › a copy of every code, a thread's lanes moved together, keeps it`
-  (`bfloat16` on sm_75, `fp8e4m3` on sm_80 and `fp8e4m3fnuz` on sm_89, run on
-  the machine's first CUDA GPU) and `› writes an sm_75 copy of bfloat16 lanes
-  with its vector declared`. On rune: missing (the old rune's `Compiled › host › 8-bit floats › a
-  copy of every 8-bit float code keeps its bits` and `› a selection of every
-  8-bit float code keeps its bits` went with its rewrite).
+  (`bfloat16` on sm_75, `fp8e4m3` on sm_80 and `fp8e4m3fnuz` on sm_89) and
+  `› writes an sm_75 copy of bfloat16 lanes with its vector declared`. On
+  rune: missing.
 
 ### A NaN constant is written from its bits (D156)
 
-- **tinygrad:** `renderer/cstyle.py` (`base_rewrite` writes every NaN constant
-  as the language's `nan` cast to its type), `CStyleLanguage.nan` (`NAN`),
-  `ClangRenderer.nan` (Clang's `__builtin_nanf("")`),
-  `CUDARenderer.render_kernel` (CUDA's `#define NAN
-  (__int_as_float(0x7fffffff))`) and `HIPRenderer.__init__` (HIP's 8-bit floats,
-  `f32_to_fp8(NAN, …)`).
+- **tinygrad:** `renderer/cstyle.py` `base_rewrite` (every NaN constant is
+  the language's `nan` cast to its type), `CStyleLanguage.nan` (`NAN`),
+  `ClangRenderer.nan` (`__builtin_nanf("")`), `CUDARenderer.render_kernel`
+  (`#define NAN (__int_as_float(0x7fffffff))`) and `HIPRenderer.__init__`
+  (HIP's 8-bit floats, `f32_to_fp8(NAN, …)`).
 - **tolk:** `Cstyle.nan_const`, the `bitcast` of each language
   (`Cstyle.cstyle`, `Cstyle.metal_lang`, `Cstyle.cuda_lang`) and
   `Cstyle.cdna_rewrite`.
 - **Differs:** a NaN constant (D27) is written as the language's bitcast of
   its bits, an unsigned literal of its width:
   `__builtin_bit_cast(float, (unsigned int)(0xffc00005u))` in C and HIP,
-  `as_type<float>(…)` in Metal, `tg_bitcast<float>(…)` in CUDA. So a program
-  stores the constant's sign and payload, a signalling NaN staying one, where
-  tinygrad's stores the conversion of one NaN of the language: a float64 NaN
-  with bits `0x7ff0000020000000` is stored as `0x7ff8000000000000` by Clang,
-  and every float32 NaN as `0x7fffffff` by CUDA. An infinity is written as
-  before.
+  `as_type<float>(…)` in Metal, `tg_bitcast<float>(…)` in CUDA. A program
+  stores the constant's sign and payload, a signalling NaN staying one,
+  where tinygrad's stores the conversion of one NaN of the language. An
+  infinity's writing is unchanged.
 - **Reason:** (b). Under the NaN rule a move keeps a NaN's bits. rune lowers
   every float constant from the bits nx stores for it (rune's `Lower.padded`
   fills a padded load with its fill's bits through `Shape.pad`), and padding
   moves those bits into the result, so a compiled kernel must store the bits
-  eager nx stores, as it must store the bits of a constant folded from a
-  bitcast (D27).
+  eager nx stores, as it must store the bits of a constant folded from a bitcast
+  (D27).
 - **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `a NaN constant
-  is stored with its sign and payload › *`, which runs a store of NaNs of both
-  signs, quiet and signalling, of half, float and double on the host; and the
-  `*_inf_nan_*` goldens of the `Cstyle` suite, for every renderer.
+  is stored with its sign and payload › *`; and the `*_inf_nan_*` goldens of
+  the `Cstyle` suite, for every renderer.
 
 ### A folded selection or negation keeps a NaN's bits (D176)
 
@@ -1114,55 +971,44 @@ Each part is one layer of the head's NaN rule: a float constant is its bits
   constant operand as `Dtype.const` holds it, its bits (D27).
 - **Differs:** a folded selection is the NaN it picks, and a folded negation
   that NaN with its sign flipped, a signalling NaN staying one, in a float of
-  16 bits or more; tinygrad's quiets a signalling one. Every other operation
-  still truncates its result. tolk has no absolute value or sign copy among
-  its operations: rune computes both on a float's bits (`Lower_bits`).
-- **Reason:** (b). Under the NaN rule a selection and a negation keep a NaN's
-  bits, as LLVM's LangRef states ("Behavior of Floating-Point NaN values"):
-  "if there is no floating-point operation being performed, NaN signs, quiet
-  bits, and payloads are preserved", and `fneg`, `llvm.fabs` and
-  `llvm.copysign` "act directly on the underlying bit representation and
-  never change anything except possibly for the sign bit". nx's `where` keeps
-  a signalling NaN (D62), and rune lowers it to `Ops.where`
-  (`Lower_arith`), so a selection tolk folds must give the bits the kernel's
-  selection gives. The `Neg` half has no rune call site: rune negates a float
-  on its bits (`Lower_bits.negated`), and `Op.Neg` reaches the folder only
-  from `Decomp_op`'s rewrite of `x * -1`. It rests on D27's rule that a
-  rewrite keeps a graph's value: a `Neg` the folder leaves renders as C's
-  `-x`, which flips the sign bit alone, so a folded one must too.
+  16 bits or more. Every other operation still truncates its result. tolk
+  has no absolute value or sign copy among its operations: rune computes
+  both on a float's bits (`Lower_bits`).
+- **Reason:** (b). Under the NaN rule a selection and a negation keep a
+  NaN's bits, as LLVM's LangRef states ("Behavior of Floating-Point NaN
+  values"). nx's `where` keeps a signalling NaN (D62), and rune lowers it to
+  `Ops.where` (`Lower_arith`), so a selection tolk folds must give the bits
+  the kernel's selection gives. The `Neg` half has no rune call site (rune
+  negates on a float's bits, `Lower_bits.negated`; `Op.Neg` reaches the
+  folder only from `Decomp_op`'s rewrite of `x * -1`) and rests on D27's
+  rule that a rewrite keeps a graph's value: a `Neg` the folder leaves
+  renders as C's `-x`, which flips the sign bit alone.
 - **Pinned by:** `Tolk.Ops › exec_alu › a selection keeps a NaN's bits and a
-  negation flips only its sign, a signalling NaN's included`, over NaNs of
-  every sign and payload of `half`, `bfloat16`, `float` and `double`; and
+  negation flips only its sign, a signalling NaN's included`; and
   `Tolk.Symbolic › symbolic_simple › constants › a folded selection keeps a
   signalling NaN's bits, and a negation flips only its sign`. On rune:
   `Lower_arith › a folded selection keeps a NaN's bits, and a negation or an
-  absolute value sets only its sign`, compiled selections by a constant and by
-  a folded comparison between a NaN constant and 1, and its negations and
-  absolute values, over signalling and quiet NaNs of both signs of `float16`,
-  `bfloat16`, `float32` and `float64`.
+  absolute value sets only its sign`.
 
 ### Clang selects a 16-bit float by its bits (D325)
 
-- **tinygrad:** `renderer/cstyle.py` (`CStyleLanguage.code_for_op`'s
-  `Ops.WHERE`, `(c?a:b)`) and `base_rewrite`'s gated `Ops.LOAD`,
-  `(gate?*p:alt)`, under `ClangRenderer`'s `type_map` of
-  `ClangRenderer.type_map`, which renders a half as `__fp16`; a bfloat16 is a
-  `__bf16` off x86.
+- **tinygrad:** `renderer/cstyle.py` `CStyleLanguage.code_for_op`'s
+  `Ops.WHERE` (`(c?a:b)`) and `base_rewrite`'s gated `Ops.LOAD`
+  (`(gate?*p:alt)`), under `ClangRenderer.type_map`, which renders a half as
+  `__fp16`, and a bfloat16 as a `__bf16` off x86.
 - **tolk:** `Cstyle.bit_where`, Clang's `code_for_op` of `Op.Where`, and
   `Cstyle.bit_loads`, in its rewrite, for `Float16`, and for `Bfloat16` where
   it is a `__bf16`.
 - **Differs:** a scalar selection of such a value, and a gated load's merge
   with its alternative, choose between the arms' bits:
   `__builtin_bit_cast(__fp16, (unsigned short)((c?A:B)))`, each arm read as
-  an `unsigned short`. Clang computes `c?a:b` of two `__fp16`s in float, a
-  storage format's promotion, and narrows the result back; on x86 the
-  conversions are `vcvtph2ps` and `vcvtps2ph`, which quiet a signalling
-  NaN, wherever LLVM's folds leave the round trip. A `__bf16` is not
-  promoted, but riscv64's backend, in clang 19, moves a selected one
-  through float32 and narrows it with `__truncsfbf2`; arm64's keeps its
-  bits, and takes the rule for one form across targets. Vector selections
-  are not promoted and are unchanged. Clang's `code_for_op` writes the
-  scalar selection, as `written.tolk`'s row of a half `Ops.WHERE` shows.
+  an `unsigned short`. Clang computes `c?a:b` of two `__fp16`s in float and
+  narrows the result back, which on x86 (`vcvtph2ps`, `vcvtps2ph`) quiets a
+  signalling NaN wherever LLVM's folds leave the round trip. A `__bf16` is
+  not promoted, but riscv64's backend, in clang 19, moves a selected one
+  through float32 and narrows it with `__truncsfbf2`; arm64's keeps its bits,
+  and takes the rule for one form across targets. Vector selections are not
+  promoted and are unchanged.
 - **Reason:** (e): a move keeps a NaN's bits. rune's scatter selects an
   element no update reaches from its target, and for a half `Add` on the
   host, in the kernel its comparison form makes, `0x7c01` came back
@@ -1192,16 +1038,14 @@ Each part is one layer of the head's NaN rule: a float constant is its bits
   most the iterations, through a copy of the bytes that holds `first` and
   `end` as its bounds, made with `__builtin_memcpy_inline`. The program's
   source is the renderer's; only its binary differs.
-- **Reason:** (c). rig's host calls a function of linked code with one ABI,
-  `void f(const void *params, int64_t first, int64_t end)` and places each
-  buffer's address among the parameters. It runs a launch's blocks of
-  threads on several cores at once, each call with its own `first` and
-  `end`, which the parameters every call shares cannot hold. `NAME` is
+- **Reason:** (c). rig's host calls linked code with one ABI,
+  `void f(const void *params, int64_t first, int64_t end)`, places each
+  buffer's address among the parameters, and runs a launch's blocks on
+  several cores at once, each call with its own `first` and `end`. `NAME` is
   `Codegen.symbol` (D485), and on x86_64 Windows the entry is declared
-  System V's (D178). Clang compiles a copy of many
-  bytes as a call of `memcpy`, which rig takes from the process, and a remote
-  Windows host's target names no system (D178), so its object would call that
-  `memcpy` by System V: the inline copy calls nothing.
+  System V's (D178). The copy is inline because Clang compiles a copy of
+  many bytes as a call of the process's `memcpy`, which a remote Windows
+  host's object, whose target names no system (D178), would call by System V.
 - **Pinned by:** the `Codegen` suite, `programs › a host program's binary
   holds rig's host entry after the kernel` and `› a host program runs as a
   launch of rig's host, with ten scalars past the argument registers` and
@@ -1212,58 +1056,46 @@ Each part is one layer of the head's NaN rule: a float constant is its bits
 
 ## D29. A float32 tensor core takes operands widened from its narrow input
 
-- **tinygrad:** `codegen/opt/postrange.py` (`_apply_tc_opt`: a core
-  applies only when both operands of the multiply have its input dtype),
-  `Scheduler._apply_tc_opt` (the core multiplies the multiply's own operands).
+- **tinygrad:** `codegen/opt/postrange.py` `_apply_tc_opt` (a core applies
+  only when both operands of the multiply have its input dtype) and
+  `Scheduler._apply_tc_opt`.
 - **tolk:** `Postrange`'s `tc_operand`, `try_core` and `use_wmma`.
 - **Differs:** a core whose input is a narrow float (`half`, `bfloat16`, an
   8-bit float) and whose output is `float32` also takes a `float32` operand
   that is a cast of its input dtype, and multiplies the narrow value. The core
-  and the widened products need not agree bit for bit: a product of two
-  bfloat16s below `2^-126` may round in `float32`, and Ada's `m16n8k16` cores
-  sum their products in pairs and truncate. Both are within `Nx.contract`'s
-  bound, `γ(K + 1, 2u) (|init| + Σ|a||b|)` for `float32`'s `u`: measured on
-  Ada at `K = 2880`, the core errs by `2868u`, inside even `γ(K + 1, u)`,
-  about `2881.5u`. A core shown to exceed the bound is disabled. A core with
-  a narrow output still takes no widened operand, since its sum rounds to the
-  narrow type. A `float32` operand that is not such a cast takes no core, and
-  tolk never narrows one by a cast that rounds (an integer the narrow type
-  holds exactly enters at it, D451): a `bfloat16` core would round a value
-  the program did not round, outside `Nx.contract`'s bound for
-  `float32`'s `u`. Attention's values, `float32` weights by `bfloat16` values,
-  so run without a core; they are bound by reading the weights (at 2048 slots
-  of 8 heads, 128 MiB, 233 us at fudge's 576 GB/s), not by arithmetic. A
-  program that wants the core rounds its operand itself, and this rule then
-  applies. rune never gives tolk an 8-bit float (rune's
-  `Lower_arith.dtype` stores each as `Uint8`), so no contraction of rune's
-  reaches an 8-bit core. Cores are tried in the renderer's order, so Metal,
-  whose `float32` core comes first, keeps it. tinygrad never builds the
-  widened form, which its `dot` does not make, so no golden it made before
-  changes.
-- **Reason:** (b). rune's contraction lowering (`Lower_reduce.entered`), which
-  casts each operand to the accumulator's type, computes nx's contraction of
-  narrow floats as `MUL(CAST f32 a, CAST f32 b)` summed at `float32` (RFC
-  0012, the `Matmul` row); without this rule it takes no tensor core on CUDA
-  or HIP, where the `float32` core is TF32 or absent, and
-  gpt-oss's `float16` and `bfloat16` products on CUDA lose theirs.
-- **Pinned by:** the Postrange suite, `apply_opts optimises a kernel as
-  tinygrad does › tc_{cuda,amd}_widened_{half,bfloat}.golden` (the core
-  applies on CUDA sm_89 and HIP gfx1100) and
-  `› tc_{cuda,amd}_widened_{half,bfloat}_shaped.golden`, with `optimising
-  keeps a kernel's writes › small kernels › tc_*_widened_*_shaped` (shaped for
-  the core, the kernel keeps its values). On rune, which widens a `half` or
-  `bfloat16` operand by tolk's cast (`Lower_arith.decode`), so that its
-  contractions and products of operands a program casts first take this
-  form: `test_jit_gpu`'s `products › a float16 or bfloat16 matmul is within
-  its bound of the exact product`, on the machine's first GPU, at extents the
-  core takes and extents it refuses, with `› sixteen terms under float32's
-  unit hold the bound` and `a contraction on matrix units holds its bound ›
-  *`. Each checks `Nx.contract`'s bound, `γ(K + 1, 2u) Σ|a||b|` for
-  `float32`'s `u`, with the result's rounding to its dtype. They pin the
-  bound only: whether a core was taken is not observable through rune's
-  interface. The Codegen suite's `tensor cores on CUDA › a float32 operand by
-  a widened bfloat16 takes no core, and is the exact product` pins the
-  refusal.
+  and the widened products may differ in bits within `Nx.contract`'s bound,
+  `γ(K + 1, 2u) (|init| + Σ|a||b|)` for `float32`'s `u`; a core shown to
+  exceed it is disabled. A core with a narrow output takes no widened operand,
+  since its sum rounds to the narrow type. A `float32` operand that is not
+  such a cast takes no core, and tolk never narrows one by a cast that rounds
+  (an integer the narrow type holds exactly enters at it, D451): a `bfloat16`
+  core would round a value the program did not round, outside
+  `Nx.contract`'s bound. So attention's values, `float32` weights by
+  `bfloat16` values, run without a core. A program that wants the core rounds
+  its operand itself, and this rule then applies. rune never gives tolk an
+  8-bit float (rune's `Lower_arith.dtype` stores each as `Uint8`), so no
+  contraction of rune's reaches an 8-bit core. Cores are tried in the
+  renderer's order, so Metal keeps its `float32` core, which comes first.
+  tinygrad's `dot` never builds the widened form, so its goldens do not
+  change.
+- **Reason:** (b). rune's contraction lowering (`Lower_reduce.entered`) casts
+  each operand to the accumulator's type, `MUL(CAST f32 a, CAST f32 b)` summed
+  at `float32`; without this rule it takes no tensor core on CUDA or HIP,
+  where the `float32` core is TF32 or absent, and gpt-oss's `float16` and
+  `bfloat16` products on CUDA lose theirs.
+- **Pinned by:** the Postrange suite, `apply_opts optimises a kernel as tinygrad
+  does › tc_{cuda,amd}_widened_{half,bfloat}.golden` (CUDA sm_89 and HIP
+  gfx1100) and `› tc_{cuda,amd}_widened_{half,bfloat}_shaped.golden`, with
+  `optimising keeps a kernel's writes › small kernels › tc_*_widened_*_shaped`.
+  On rune, which widens by tolk's cast (`Lower_arith.decode`): `test_jit_gpu`'s
+  `products › a float16 or bfloat16 matmul is within its bound of the exact
+  product`, on the machine's first GPU, at extents the core takes and refuses,
+  with `› sixteen terms under float32's unit hold the bound` and `a contraction
+  on matrix units holds its bound › *`; these pin `Nx.contract`'s bound,
+  `γ(K + 1, 2u) Σ|a||b|`, only, since whether a core was taken is not
+  observable through rune. The Codegen suite's `tensor cores on CUDA › a
+  float32 operand by a widened bfloat16 takes no core, and is the exact
+  product` pins the refusal.
 
 ## D30. Withdrawn
 
@@ -1273,45 +1105,38 @@ per trip of each submission under it (D146).
 
 ## D31. Payne-Hanek reduces exactly, to the nearest quadrant
 
-- **tinygrad:** `codegen/decomp/transcendental.py`
-  (`payne_hanek_reduction`) and `sin_poly_large`.
+- **tinygrad:** `codegen/decomp/transcendental.py` `payne_hanek_reduction`
+  and `sin_poly_large`.
 - **tolk:** `Transcendental.one_over_two_pi`, `Transcendental.turn_fraction`,
   `Transcendental.radians` and `Transcendental.payne_hanek`.
-- **Differs:** tinygrad rounds the quotient on `f < 0.5`, where `f` is
-  frexp's mantissa, always at least 0.5, so it always returns the fraction
-  less a quarter turn and the next quadrant: `|r|` reaches `pi/2`, and a tiny
-  remainder loses its low bits in the subtraction (4.4e-8 absolute in
-  float32). It also multiplies only 32 bits of the mantissa by 96 bits of
-  `2/pi` from a table of 190 bits, so a float64 is reduced wrong from about 30
-  up, and beyond the table's bits for large exponents. Here the quotient
-  rounds to the nearest quadrant on the fraction's top bit, so `|r| <= pi/4`;
-  the whole mantissa, 24 bits or 53 in two words, is multiplied by the bits of
-  `1/(2pi)` at its exponent, from a table of 1312 bits that covers a
-  float64's greatest exponent, to 128 bits of the fraction, carried word by
-  word, its words moved into place by one selection per bit of their index,
-  as a barrel shifter does, where tinygrad compares the index with each
-  position of the table (`_take`); and the remainder is the signed fraction,
-  summed exactly in two floats from parts that convert exactly and
-  multiplied by `2pi/2^64` in two floats (D126). The remainder is within an
-  ulp of the exact one in float32 and float64, `6381956970095103 * 2^797`,
-  the float64 nearest a multiple of `pi/2`, included.
+- **Differs:** tinygrad rounds the quotient on `f < 0.5`, `f` frexp's mantissa,
+  which never holds, so it returns the fraction less a quarter turn and the next
+  quadrant: `|r|` reaches `pi/2` and a tiny remainder loses its low bits. It
+  multiplies 32 bits of the mantissa by 96 bits of `2/pi` from a table of 190
+  bits, so a float64 is reduced wrong from about 30 up, and beyond the table's
+  bits for large exponents. Here the quotient rounds to the nearest quadrant on
+  the fraction's top bit, so `|r| <= pi/4`; the whole mantissa, 24 bits or 53 in
+  two words, is multiplied by the bits of `1/(2pi)` at its exponent, from a
+  table of 1312 bits that covers a float64's greatest exponent, to 128 bits of
+  the fraction, carried word by word; the table's words are selected by one
+  selection per bit of their index, where tinygrad's `_take` compares the index
+  with each position; and the remainder is the signed fraction, summed exactly
+  in two floats from parts that convert exactly and multiplied by `2pi/2^64` in
+  two floats (D126). The remainder is within an ulp of the exact one in float32
+  and float64, `6381956970095103 * 2^797`, the float64 nearest a multiple of
+  `pi/2`, included.
 - **Reason:** (b): rune's `cos` and `tan` reduce by `pi/2` with this
   reduction from 30 in magnitude, in float32 and float64, and with
-  Cody-Waite's below (`Lower_real.reduce`, `trig_switch`); its `sin` is
-  tolk's `Sin`, whose `xsin` uses it beyond its switch-over, 30 by default.
-  Both must give nx's sine and cosine there. Selecting the table's words
-  by bits is (d), compile time: every compiled sine or cosine of an
-  unbounded angle builds the reduction. Selected as tinygrad's `_take` does,
-  over this 40-word table, the float64 words take 345 selections and 43
-  comparisons of 728 nodes; by bits 111 and 6 of 428. rune's compile bench
-  row `trig/sin`, one float64 sine of an unbounded angle, makes the first
-  call 0.14 s of CPU against 0.17 s and 1.41 M minor words against 1.95 M
-  (fudge, 2026-11-08, Clang included).
+  Cody-Waite's below (`Lower_real.reduce`, `trig_switch`), and its `sin` is
+  tolk's `Sin`, whose `xsin` uses it beyond its switch-over, 30 by default;
+  both must give nx's values. Selecting the words by bits: (d), compile time,
+  since every compiled sine or cosine of an unbounded angle builds the
+  reduction: rune's compile bench row `trig/sin` makes its first call in
+  0.14 s of CPU against 0.17 s (fudge).
 - **Pinned by:** `Tolk.Transcendental › reductions ›
-  payne_hanek_near_multiples.golden`, remainders and quadrants of float32 and
-  float64 angles near multiples of `pi/2`, from pi to 1400 bits, which the old
-  reduction fails; `› payne_hanek_reduction removes quarter turns`; and the
-  `payne_hanek_*`, `xsin_*` and `values` goldens; and rune's compile bench row
+  payne_hanek_near_multiples.golden`, float32 and float64 angles near
+  multiples of `pi/2`; `› payne_hanek_reduction removes quarter turns`; the
+  `payne_hanek_*`, `xsin_*` and `values` goldens; rune's compile bench row
   `trig/sin`.
 
 ## D34. Withdrawn
@@ -1351,81 +1176,62 @@ encodes its own releases (D146).
 
 ## D41. The memory plan sees a range's calls and the buffers views reach, holds no copy past its last call, and plans a device's copies with its kernels
 
-- **tinygrad:** `schedule/memory.py` (`memory_plan_rewrite` takes each
-  entry's buffers from its sources after the first, through `_collect_bufs`,
-  which passes buffers, `MSELECT` and `MSTACK` only) and `memory_plan_rewrite`
-  (`buf_hold`: a copy's buffer lives `last - first + 1` calls past its last);
-  `schedule/__init__.py` (`create_linear_with_vars` holds the buffers
-  among its call's sources).
+- **tinygrad:** `schedule/memory.py` `memory_plan_rewrite` (each entry's
+  buffers from its sources after the first, through `_collect_bufs`, which
+  passes buffers, `MSELECT` and `MSTACK` only; `buf_hold`, a copy's buffer
+  living `last - first + 1` calls past its last); `schedule/__init__.py`
+  `create_linear_with_vars` (holds the buffers among its call's sources).
 - **tolk:** `Memory.viewed`, `Memory.uses` and
   `Memory.memory_plan_rewrite`'s lifetimes (`call_bufs`, the events) and
-  lanes (`key`);
-  `Schedule.create_linear_with_vars`'s `held_bufs`.
-- **Differs:** an `END` of ranges around calls takes the buffers of each
-  call it runs, each call at its place in one trip (D476), and a call takes
-  the buffers its arguments view (`SHRINK`, `BITCAST`, `AFTER`) as well as
-  those they are. tinygrad takes an `END`'s sources after the first, its ranges, so a buffer
-  used inside a range lives only where it is used outside it; it leaves a
-  buffer only views reach where it is, and a buffer reached both directly and
-  through a view lives only where it is reached directly, so the plan can
-  place it over bytes another buffer still needs. A schedule's call holds the
-  buffers its sources are or view, where tinygrad's holds those they are: its
-  planner never moves a viewed one. No recorded schedule plans a buffer a view
-  reaches. A planned
-  buffer takes whole blocks of 256 bytes of its arena, so one placed past the
-  arena's other buffers can cost what its own storage did not: rune's
-  `compile/scan/checks-48` row's program holds 75 520 bytes, where it held
-  75 328 with a buffer of 320 bytes, reached through a view, apart.
-
-  A copy's buffer is free from the call after its last, as a kernel's is,
-  where tinygrad holds it as many calls again, lest a later copy overwrite it
-  while the first may still run. Copies and kernels of a device share one
-  lane in every schedule, where tinygrad keeps copies in a lane of their
-  own. tinygrad's copy lane keeps reuse from ordering a copy against a
-  kernel, which rig's device order makes moot on one device: on fudge's
-  RTX 5000 beside a software device, a value moved into the GPU mid-chain is
-  a submission of the GPU's copy queue, ordered after its earlier products
-  with either lane count. Across devices rig orders by allocation, which
-  a lane avoids only in part, and two lanes add their peaks, past RFC
-  0005's bound for a schedule linked per run (D173). Where a host-run
-  device's work reuses bytes a GPU copy touched, the call waits for the
-  GPU: a software device's sum placed over a value just moved into the GPU
-  waits for all eight products before it, where an order that does not
-  reuse the bytes waits for none. A copy lane avoids that case but not host
-  work that writes the lane after a GPU copy used it; removing the wait is
-  rig's to do.
-- **Reason:** (b) for ranges and views: `Rune.scan`'s staged loop (RFC 0012)
-  schedules calls inside a range, whose arguments are views that move with
-  it, of buffers the calls after it read whole; tinygrad's scheduler hands
-  the planner neither. rune's compiled programs over one device store into
-  runs of a buffer through views of it (D184); left out of the plan, such a
-  buffer would hold its own memory for the whole schedule. (c) for the hold:
-  an arena is one rig allocation, and rig orders work that writes an
-  allocation after every use of it by any device (`Rig.section-order`, rule
-  3, Memory), its device's work by device order (rule 1) and the parts of a
-  submission that share memory (rule 2); `tolk.engine` passes no unordered
-  ref. A later call that reuses a copy's bytes therefore follows the copy,
-  and the hold guards nothing: it only costs memory, as the copy lane of
-  tinygrad's `test_deferred_copy_frees_chain` schedule, which needs 512
-  bytes with it and 256 without. (b) for one lane: the same order makes a
-  copy lane guard nothing on one device, and rune's fully sharded steps
-  hold within RFC 0005's bound only with one.
-- **Pinned by:** the Engine suite (`test/engine/tolk_engine`): `link and run › a
-  planned buffer a range writes is not placed over one it leaves` and `› a
-  buffer a range writes through a view is not placed over another`, each of
-  which fails without its half; the Memory suite (`test/schedule/memory`):
+  lanes (`key`); `Schedule.create_linear_with_vars`'s `held_bufs`.
+- **Differs:**
+  - An `END` of ranges around calls takes the buffers of each call it runs,
+    each call at its place in one trip (D476), and a call takes the buffers its
+    arguments view (`SHRINK`, `BITCAST`, `AFTER`) as well as those they are.
+    tinygrad takes an `END`'s sources after the first, its ranges, so a buffer
+    used inside a range lives only where it is used outside it; it leaves a
+    buffer only views reach unplanned, and one reached both directly and through
+    a view lives only where it is reached directly, so the plan can place it
+    over bytes another buffer still needs. A schedule's call holds the buffers
+    its sources are or view, where tinygrad's holds those they are. No
+    recorded schedule plans a buffer a view reaches.
+  - A copy's buffer is free from the call after its last, as a kernel's is,
+    where tinygrad holds it as many calls again.
+  - Copies and kernels of a device share one lane in every schedule, where
+    tinygrad keeps copies in a lane of their own. Across devices rig orders
+    by allocation, which a lane avoids only in part. Where a host-run device's
+    work reuses bytes a GPU copy touched, the call waits for the GPU. A copy
+    lane avoids that case but not host work that writes the lane after a GPU
+    copy used it; removing the wait is rig's to do.
+- **Reason:** (b) for ranges and views: `Rune.scan`'s staged loop schedules
+  calls inside a range, whose arguments are views that move with it, of buffers
+  the calls after it read whole; rune's programs over one device store into runs
+  of a buffer through views of it (D184), which left out of the plan would hold
+  their memory for the whole schedule. (c) for the hold: an arena is one rig
+  allocation, and rig orders work that writes an allocation after every use of
+  it by any device (`Rig.section-order`, rule 3, Memory), its device's work by
+  device order (rule 1) and the parts of a submission that share memory (rule
+  2), and `tolk.engine` passes no unordered ref, so a later call that reuses a
+  copy's bytes follows the copy, and the hold only costs memory: tinygrad's
+  `test_deferred_copy_frees_chain` schedule needs 512 bytes with it and 256
+  without. (b) for one lane: the same order makes a copy lane guard nothing on
+  one device, and rune's fully sharded steps hold within RFC 0005's bound for a
+  schedule linked per run (D173) only with one.
+- **Pinned by:** the Engine suite (`test/engine/tolk_engine`): `link and run ›
+  a planned buffer a range writes is not placed over one it leaves` and `› a
+  buffer a range writes through a view is not placed over another`, each
+  failing without its half; the Memory suite (`test/schedule/memory`):
   `memory_plan_rewrite › the buffers a call takes › a buffer a call views is
   planned` and `› a buffer viewed after another's life is not placed over it`,
   `› rules › a copy's buffer is free from the call after its last` and `› a
   copy's buffer and a call's of one device share bytes once their lives are
   apart`, the recorded `copy_chain`, `copies_share`, `random_*` plans, and the
-  law over drawn schedules, whose calls view some buffers, whose copies live no
-  longer than their last call and whose device has one arena of at least its
-  live bytes; the Jit suite's `jit_lower › arenas › a device's buffers share one
-  arena, a copy's among them` and its recorded `weights_copy_lowered`,
-  `held_constant_lowered`, `split_multidev_xfer_lowered` and
-  `split_multidev_copy_lowered`; the Schedule suite's recorded `copy_view`
-  schedule, whose copy reads a view of a buffer its call is given.
+  law over drawn schedules; the Jit suite's `jit_lower › arenas › a device's
+  buffers share one arena, a copy's among them` and its recorded
+  `weights_copy_lowered`, `held_constant_lowered`,
+  `split_multidev_xfer_lowered` and `split_multidev_copy_lowered`; the
+  Schedule suite's recorded `copy_view` schedule, whose copy reads a view of a
+  buffer its call is given.
 
 ## D42. Withdrawn
 
@@ -1440,23 +1246,21 @@ encodes no queue (D146).
 
 ## D44. An integer cast of a weak expression computes in integers
 
-- **tinygrad:** `uop/weak.py` (`cast_weak_srcs`), `dtype.py`
-  (`promo_lattice`, `least_upper_dtype`).
+- **tinygrad:** `uop/weak.py` `cast_weak_srcs`; `dtype.py` `promo_lattice`,
+  `least_upper_dtype`.
 - **tolk:** `Uop_weak.cast_weak_srcs`.
 - **Differs:** a cast to a committed type over a weak expression commits the
   expression at the least upper type of the cast's type and the committed
-  types of the expression and its weak sources. In the lattice, a 64-bit
-  unsigned integer and any signed one meet only at a float, so tinygrad
-  computes such an expression, `(b * 3 + 1).cast(dtypes.uint64)` for one, in
-  float32, and a value past 2^24 rounds. Where that least upper type is a
-  float and the cast's type an integer, the expression commits at `Int64`
-  here, or at `Uint64` where one of the committed types is: an integer cast
-  computes in integers, and converting the 64-bit result to the cast's type is
-  C's conversion of the integer. Every other cast commits as tinygrad's does.
-- **Reason:** (b): rune's scatter kernel (`Lower_index.walk`) casts the first
-  position of a run, `g * len` over a weak range `g`, to `Uint64`; computed in
-  float, a first position past 2^24 rounds, and updates land in the wrong
-  run.
+  types of the expression and its weak sources. Where that type is a float and
+  the cast's type an integer, the expression commits at `Int64` here, or at
+  `Uint64` where one of the committed types is, and the 64-bit result converts
+  to the cast's type as C converts an integer. tinygrad computes such an
+  expression in float32, since a 64-bit unsigned integer and a signed one meet
+  only at a float: `(b * 3 + 1).cast(dtypes.uint64)` rounds past 2^24. Every
+  other cast commits as tinygrad's does.
+- **Reason:** (b): rune's scatter kernel (`Lower_index.walk`) casts a run's
+  first position, `g * len` over a weak range `g`, to `Uint64`; in float, one
+  past 2^24 rounds and updates land in the wrong run.
 - **Pinned by:** the Uop_weak suite (`test/uop/uop_weak`): `pm_commit_weak ›
   a 64-bit unsigned cast of a weak expression keeps its value past a float's
   precision` and `laws › pm_commit_weak computes an integer cast in
@@ -1479,11 +1283,10 @@ its dispatch packets (D146).
 
 ## D50. Every C-style renderer writes a division; a product by a reciprocal stays one
 
-- **tinygrad:** `renderer/cstyle.py` (`CStyleLanguage.code_for_op` has no
+- **tinygrad:** `renderer/cstyle.py` `CStyleLanguage.code_for_op` (no
   `FDIV`) and `ClangRenderer.code_for_op` (Clang's adds it);
-  `codegen/decomp/op.py` `get_late_rewrite_patterns` (a target that lists `FDIV`
-  gets its reciprocals as divisions, and a product by a reciprocal, `a * (1/b)`,
-  as the quotient `a/b`).
+  `codegen/decomp/op.py` `get_late_rewrite_patterns` (a target that lists
+  `FDIV` gets its reciprocals as divisions, and `a * (1/b)` as `a/b`).
 - **tolk:** the `FDIV` rule of `Cstyle.base_rewrite`; the `FDIV` rules of
   `Decomp_op.late_patterns`, which turn a reciprocal into `1/x` and nothing
   else.
@@ -1492,25 +1295,21 @@ its dispatch packets (D146).
   so code generation keeps their reciprocals, and every kernel built from
   tinygrad's operations keeps tinygrad's source. On a target that lists
   `FDIV`, a product by a reciprocal stays a product: `a/b` rounds once where
-  `a * (1/b)` rounds twice, so the rewrite changed the value nx computes
-  eagerly, as at `a = 0x0.000000016db99p-1022`, `b = 0x1.5d24f36473bb3p-998`.
+  `a * (1/b)` rounds twice.
 - **Reason:** (b). rune lowers nx's float division, and the power and the
-  arc tangent built on it, to `FDIV` (RFC 0012): eager nx divides as IEEE
-  does, rounding once, which a product by the reciprocal does not.
+  arc tangent built on it, to `FDIV`: eager nx divides as IEEE does, rounding
+  once, as at `a = 0x0.000000016db99p-1022`, `b = 0x1.5d24f36473bb3p-998`,
+  where a product by the reciprocal differs.
 - **Pinned by:** the `Cstyle` suite (`test/renderer/cstyle`): `sources › by
-  default › <target>_fdiv_<type>`, tinygrad's source once its renderer lists
-  `FDIV` as Clang does, for Clang, Metal, CUDA and HIP in each float type
-  they have; `division › the operands tell a quotient from a product by
-  the reciprocal` and the slow `› Metal divides as IEEE does, rounding once`.
-  The `decomp_op` golden `late_division_fdiv`, whose products by a reciprocal
-  stay products; rune's `Lower_real › exact › fdiv` and `› recip`, a compiled
-  quotient and reciprocal against eager's bits, and `rune jit › classes › jit
-  gives eager's bits for exact functions`, whose drawn compositions divide.
-  On rune: missing for a product by a reciprocal (the old rune's `Rune.jit ›
-  division`, at the value above, and `test_jit_programs` went with its
-  rewrite).
-  CUDA's and HIP's `/` are correctly rounded by their compilers' defaults,
-  which is on the hardware checks of `test/README.md`.
+  default › <target>_fdiv_<type>`, for Clang, Metal, CUDA and HIP in each
+  float type they have; `division › the operands tell a quotient from a
+  product by the reciprocal` and the slow `› Metal divides as IEEE does,
+  rounding once`. The `decomp_op` golden `late_division_fdiv`; rune's
+  `Lower_real › exact › fdiv` and `› recip`, and `rune jit › classes › jit
+  gives eager's bits for exact functions`. On rune: missing for a product by a
+  reciprocal at the value above. CUDA's and HIP's `/` are correctly rounded by
+  their compilers' defaults, which is on the hardware checks of
+  `test/README.md`.
 
 ## D51. Withdrawn
 
@@ -1524,8 +1323,8 @@ A selection or a pad by `-0.` keeps `-0.`: tinygrad's tests for 0 take
 
 ### A selection of -0. stays off a gated load
 
-- **tinygrad:** `uop/symbolic.py` (`pm_move_where_on_load`), whose
-  pattern constant `0` matches `-0.` since `-0. == 0`.
+- **tinygrad:** `uop/symbolic.py` `pm_move_where_on_load`, whose pattern
+  constant `0` matches `-0.`.
 - **tolk:** `Symbolic.pm_move_where_on_load`.
 - **Differs:** a selection between a load and `-0.` stays a selection.
   tinygrad moves its condition into the load's gate, and a gated load reads
@@ -1533,36 +1332,33 @@ A selection or a pad by `-0.` keeps `-0.`: tinygrad's tests for 0 take
   `-0.` off the padded load, computes `+0.` on the padding.
 - **Reason:** (b). `Nx.pad` fills with the value given, `-0.` included, and
   rune's compiled pad must compute eager nx's bits.
-- **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `signed zeros › a pad with -0. fill renders and computes -0.` and `› a pad and a
-  selection of signed zeros keep the interpreter's bits`; in rune, `Lower ›
-  padded loads give eager's bits`, whose examples fill with `-0.`.
+- **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `signed zeros ›
+  a pad with -0. fill renders and computes -0.` and `› a pad and a selection
+  of signed zeros keep the interpreter's bits`; in rune, `Lower › padded loads
+  give eager's bits`, whose examples fill with `-0.`.
 
 ### A pad by -0. fills its padding with -0. (D155)
 
-- **tinygrad:** `mixin/op.py` (`_pad_constant`) and `pad_to`,
-  which return the plain pad when `value == 0`, true of `-0.`.
+- **tinygrad:** `mixin/op.py` `_pad_constant` and `pad_to`, which return the
+  plain pad when `value == 0`, true of `-0.`.
 - **tolk:** `Shape.is_zero`, used by `Shape.pad` and `Shape.pad_to`.
 - **Differs:** a fill is left to the pad's own zeros only when its bits are
   all zero. A `-0.` fill takes the selection off the padded mask, so the
   padding holds `-0.` where tinygrad's holds `+0.`.
 - **Reason:** (b). nx's `pad` fills with the value given, `-0.` included, and
-  rune lowers a padded load (rune's `Lower.padded`) through
-  `Shape.pad` with that fill, so its compiled pad must compute eager nx's
-  bits.
+  rune lowers a padded load (rune's `Lower.padded`) through `Shape.pad` with
+  that fill, so its compiled pad must compute eager nx's bits.
 - **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `signed zeros ›
   Shape.pad by -0. computes -0. on the padding`.
 
 ## D54. Storage says what it knows of where it starts within 16 bytes
 
-- **tinygrad:** `uop/ops.py` (`ParamArg`, which has no such field) and
-  `codegen/late/coalesce.py` (`memory_coalescing` merges a run of `l`
+- **tinygrad:** `uop/ops.py` `ParamArg` (no such field);
+  `codegen/late/coalesce.py` `memory_coalescing` (merges a run of `l`
   elements where `l` divides its element offset, taking every buffer to start
-  on a 16-byte boundary). tinygrad folds a view's offset into a kernel's
-  index, except for a contiguous slice that it stages without a copy
-  (`schedule/__init__.py` `contiguous_mops_to_view`): a later kernel
-  reads that view with vector loads that take it to start aligned, as
-  `x[1:].contiguous() + 1` loads `float4`s from 4 bytes past a boundary on
-  Metal.
+  on a 16-byte boundary); `schedule/__init__.py` `contiguous_mops_to_view`
+  (stages a contiguous slice without a copy, which later kernels read with
+  vector loads that take it to start aligned).
 - **tolk:** the fields `phase` and `align` of the type `Ops.param_arg`, and
   the function `Ops.param_arg`, which checks them; `Shape.view_start` and
   `Shape.storage_phase`, which `Shape.param_like` gives a parameter;
@@ -1570,217 +1366,190 @@ A selection or a pad by `-0.` keeps `-0.`: tinygrad's tests for 0 take
   `Coalesce.memory_coalescing` (the merge).
 - **Differs:** a parameter or buffer carries a congruence for its start: its
   first element lies `phase` bytes past a multiple of `align`, a power of two
-  up to 16, the width of the widest vector access off the CPU device, and
-  `phase` is a multiple of its element's size or of `align`, whichever is
-  less. They default to `0`
-  and `16`, tinygrad's assumption, so no graph of tinygrad's changes. Off the
-  CPU device, a run of `l` elements merges where `l` divides the element's
-  count from that boundary and the run is no wider than `align`, so every
-  vector access is
-  aligned to its width; an access through a bitcast to elements of a size the
-  phase is not a multiple of merges nothing. A parameter made from storage
-  keeps the storage's congruence, moved by the bytes a shrink of the storage
-  seen whole skips. A shrink by a symbolic start is known only modulo the
-  largest power of two its moving bytes are a multiple of: a range's window
-  `r · (2^24 + 1)` floats in is known modulo 4 bytes, and is read a float at a
-  time, where one `r · 4` floats in stays known modulo 16. A symbolic start
-  into a view that reorders or pads the storage is known only to its
-  element's size. Any other view of a view that reorders the storage keeps
-  its storage's, as tinygrad takes every view to start aligned, and storage on
-  a disk, which no vector access reads, keeps the default. A stage of a view
-  of a buffer through movements and bitcasts is that view when the schedule
-  finds it contiguous (`Schedule.contiguous_mops_to_view`), and storage the
-  schedule allocates, on a boundary, otherwise: it is known at phase 0 modulo
-  the largest power of two up to the buffer's alignment that the byte of the
-  view's first element is a multiple of, which holds of both, and modulo 1
-  byte when a size is symbolic. A view whose first or
-  last element is padding, or whose ends lie farther apart or closer than a
-  run of its size, is never made the view, and its stage keeps the
-  boundary. rune's staged loops give each body parameter the alignment and
-  phase of what the call passes it. The congruence is part of the graph, so
-  of a program's cache key.
+  up to 16, and `phase` is a multiple of its element's size or of `align`,
+  whichever is less. They default to `0` and `16`, tinygrad's assumption, so
+  no graph of tinygrad's changes.
+  - Off the CPU device, a run of `l` elements merges where `l` divides the
+    element's count from that boundary and the run is no wider than `align`,
+    so every vector access is aligned to its width; an access through a
+    bitcast to elements of a size the phase is not a multiple of merges
+    nothing. On the CPU device, whose vector types are aligned to their
+    element (`renderer/cstyle.py` `ClangRenderer.render_vector_prefix`), the
+    merge takes every buffer to start on a boundary of its widest access, as
+    tinygrad's takes it on 16 bytes (the width, D187).
+  - A parameter made from storage keeps the storage's congruence, moved by the
+    bytes a shrink of the storage seen whole skips. A shrink by a symbolic
+    start is known only modulo the largest power of two its moving bytes are a
+    multiple of. A symbolic start into a view that reorders or pads the
+    storage is known only to its element's size. Any other view of a view that
+    reorders the storage keeps its storage's, and storage on a disk keeps the
+    default.
+  - A stage of a view of a buffer through movements and bitcasts is that view
+    when the schedule finds it contiguous (`Schedule.contiguous_mops_to_view`),
+    and storage the schedule allocates otherwise: it is known at phase 0 modulo
+    the largest power of two up to the buffer's alignment that the byte of the
+    view's first element is a multiple of, which holds of both, and modulo 1
+    byte when a size is symbolic. A view whose first or last element is padding,
+    or whose ends lie farther apart or closer than a run of its size, is never
+    made the view, and its stage keeps the boundary.
+  - rune's staged loops give each body parameter the alignment and phase of
+    what the call passes it. The congruence is part of the graph, so of a
+    program's cache key.
 - **Reason:** (b). rune's jit runs a program over the storage it is given, each
   buffer at its phase (rune's `Compile.storage`), and mapped weights put a
-  tensor at any byte offset of its file: a vector access from an address that is
-  not a multiple of its width faults on CUDA, and is undefined in Metal, which
-  requires device pointers aligned to their type: there it reads the wrong
-  elements once Metal merges adjacent vector loads at constant offsets into one
-  wider load, which drops the low bits of the address. Single loads at computed
-  indices are not merged, and read correctly. A batched range (D30, since
-  withdrawn) binds each trip's window at its own address, so a kernel vectorised
-  for a window that starts aligned faulted on x86, where Clang emits `movaps`,
-  on the trips that moved it by 4 bytes. A rune loop (`Loop.cut`) passes its
-  body a stage of what it reads that does not change, and the schedule makes a
-  stage of a contiguous view the view: norn's NUTS step on a posterior whose
-  data the model reads from its sixth double failed verification, its body
-  compiled for storage on a boundary and passed the data 8 bytes past one. Those
-  two failures were on the host, in Clang's vector types aligned to their size;
-  on the CPU device they are now aligned to their element (`renderer/cstyle.py`
-  `ClangRenderer.render_vector_prefix`), so an access there is defined from any
-  element's address: the merge there takes every buffer to start on a boundary
-  of its widest access, as tinygrad's takes it on 16 bytes
-  (`Coalesce.memory_coalescing`; the width, D187).
-- **Pinned by:** the `Coalesce` suite (`test/codegen/late/coalesce`): `phase › one float past a boundary, eight loads are of one, two, four and
-  one`, `› three floats past a boundary, a load of four starts at element 1`,
-  `› stores start where loads would`, `› two halves past a boundary, a load of
-  four starts at element 2`, `› floats known to start on 4 bytes alone are
-  not merged`, `› floats known to start on 8 bytes merge in twos` and `›
-  halves three past 8 bytes merge no wider than 8 bytes, from element 1` and
-  `› on the CPU device, floats past a boundary merge as from one`, and
-  the laws `every vector access is aligned to its width and within the
-  alignment, for every phase and alignment` and `coalescing preserves
-  the kernel's writes, for every phase and alignment`; the `Ops` suite: `param_arg takes a
-  phase that is a multiple of the element size below 16`, `param_arg
-  takes an alignment that is a power of two up to 16, and a phase below it`,
-  `pp_arg writes a parameter's phase that is not 0 and alignment that
-  is not 16`, `equal_arg tells apart parameters that differ in phase` and
-  `param_like keeps its storage's phase, moved by a shrink, and
-  knows it modulo what a symbolic start moves by`;  the graph format's round trip of `a buffer past
-  a 16-byte boundary`; the `Schedule` suite's `disk_view_to_linear.golden`,
-  a view 8 bytes into a disk file whose parameter has no phase. In rune,
-  `rune jit › jit › an argument off 16 bytes`, which binds an argument 0, 4, 8
-  and 12 bytes into a window through a program compiled for its phase; the
-  `Schedule`
-  suite's `contiguous_mops_to_view › a stage of doubles one past a boundary is
-  known to start on 8 bytes`, `› a stage of rows padded apart, starting
-  one double past a boundary, is storage of its own on one` and `› a
+  tensor at any byte offset of its file; a vector access from an address not a
+  multiple of its width faults on CUDA, and on Metal reads the wrong elements
+  once adjacent vector loads at constant offsets merge. On the host, in Clang's
+  vector types aligned to their size, a batched range (D30, since withdrawn)
+  faulted on x86's `movaps` for windows 4 bytes off, and norn's NUTS step on
+  data read from its sixth double failed verification through a stage made the
+  view (`Loop.cut`); on the CPU device those types are now aligned to their
+  element.
+- **Pinned by:** the `Coalesce` suite (`test/codegen/late/coalesce`): `phase ›
+  one float past a boundary, eight loads are of one, two, four and one`, `›
+  three floats past a boundary, a load of four starts at element 1`, `› stores
+  start where loads would`, `› two halves past a boundary, a load of four
+  starts at element 2`, `› floats known to start on 4 bytes alone are not
+  merged`, `› floats known to start on 8 bytes merge in twos`, `› halves three
+  past 8 bytes merge no wider than 8 bytes, from element 1` and `› on the CPU
+  device, floats past a boundary merge as from one`, and the laws `every
+  vector access is aligned to its width and within the alignment, for every
+  phase and alignment` and `coalescing preserves the kernel's writes, for
+  every phase and alignment`; the `Ops` suite: `param_arg takes a phase that
+  is a multiple of the element size below 16`, `param_arg takes an alignment
+  that is a power of two up to 16, and a phase below it`, `pp_arg writes a
+  parameter's phase that is not 0 and alignment that is not 16`, `equal_arg
+  tells apart parameters that differ in phase` and `param_like keeps its
+  storage's phase, moved by a shrink, and knows it modulo what a symbolic
+  start moves by`; the graph format's round trip of `a buffer past a 16-byte
+  boundary`; the `Schedule` suite's `disk_view_to_linear.golden`, a view 8
+  bytes into a disk file whose parameter has no phase. In rune, `rune jit ›
+  jit › an argument off 16 bytes`, 0, 4, 8 and 12 bytes into a window; the
+  `Schedule` suite's `contiguous_mops_to_view › a stage of doubles one past a
+  boundary is known to start on 8 bytes`, `› a stage of rows padded apart,
+  starting one double past a boundary, is storage of its own on one` and `› a
   stage's alignment and phase hold of the storage it gets, a view or its own`;
   jera's `Split`, `Ode` and `Sde` suites' compiled marches, whose rows are
-  padded apart. On rune: missing for a scan and on Metal (the old rune's
-  `Scan › compiled › a scan under jit reads a copy of a slice that starts off
-  a 16-byte boundary`, `› … reads the bits …`, `› … reads rows …`, the
-  `Lower` suite's phase tests and `Compiled › edges › an operand whose buffer
-  starts 2 bytes into its memory is read where it is` went with its
-  rewrite).
+  padded apart. On rune: missing for a scan and on Metal.
 
 ## D55. Metal names a vector after its element's one-word name
 
-- **tinygrad:** `renderer/cstyle.py` (`_render_dtype` names a
-  vector after its element's name in `type_map` with spaces made
-  underscores) and `MetalRenderer.type_map` (renames only
-  `uint` and `bfloat` of `CStyleLanguage.type_map`'s C names).
+- **tinygrad:** `renderer/cstyle.py` `_render_dtype` (a vector after its
+  element's `type_map` name, spaces made underscores) and
+  `MetalRenderer.type_map` (renames only `uint` and `bfloat` of
+  `CStyleLanguage.type_map`'s C names).
 - **tolk:** `Cstyle.lang`'s field `vector_names`, which
   `Cstyle.render_dtype` reads, and Metal's in `Cstyle.metal_lang`.
-- **Differs:** a Metal vector of `signed char`, `unsigned char`,
-  `unsigned short` or `unsigned long` is a `char`, `uchar`, `ushort` or
-  `ulong` vector, as Metal names them; tinygrad writes `signed_char4`,
-  `unsigned_char4`, `unsigned_short4` and `unsigned_long4`, which Metal does
-  not have, so such a kernel does not compile. Scalars keep tinygrad's names.
-  Metal's vectors have 2, 3 or 4 lanes; none has 8.
+- **Differs:** a Metal vector of `signed char`, `unsigned char`, `unsigned
+  short` or `unsigned long` is a `char`, `uchar`, `ushort` or `ulong` vector;
+  tinygrad writes `signed_char4`, `unsigned_char4`, `unsigned_short4` and
+  `unsigned_long4`, which Metal does not have, so such a kernel does not
+  compile. Scalars keep tinygrad's names. Metal's vectors have 2, 3 or 4 lanes.
 - **Reason:** (b). rune's jit on Metal computes `Int8` and `Uint8` arrays
   (rune's `Lower_arith.dtype`, which also stores booleans and narrow floats as
   `Uint8`), whose upcast kernels hold `char4` and `uchar4` values.
 - **Pinned by:** the `Cstyle` suite (`test/renderer/cstyle`): `sources › by
-  default › metal_vector_<element>_<lanes>`, tinygrad's source with the D55
-  names, for each element and 2, 3 and 4 lanes, and `metal_vector_cast_char`;
-  and the slow `every GPU kernel compiles with its target's toolchain ›
-  metal_vector_*`, which compiles each with MTLCompiler. On rune: missing (the
-  old rune's `Compiled › fold of integers` went with its rewrite).
+  default › metal_vector_<element>_<lanes>`, for each element and 2, 3 and 4
+  lanes, and `metal_vector_cast_char`; the slow `every GPU kernel compiles
+  with its target's toolchain › metal_vector_*`, with MTLCompiler. On rune:
+  missing.
 
 ## D56. The logarithm of a negative subnormal is NaN
 
-- **tinygrad:** `codegen/decomp/transcendental.py` (`xlog2` selects
-  NaN where `d < -0.0`, then `-inf` where the reciprocal of `d` is `-inf`,
-  which it means for `-0.0`).
+- **tinygrad:** `codegen/decomp/transcendental.py` `xlog2` (selects NaN where
+  `d < -0.0`, then `-inf` where the reciprocal of `d` is `-inf`, meant for
+  `-0.0`).
 - **tolk:** `Transcendental.xlog2`.
-- **Differs:** the reciprocal of a negative number of magnitude below
-  `2^-128` in float32 (`2^-1024` in float64, about `2^-16` in float16)
-  overflows to `-inf` too, so
-  tinygrad's select of `-inf`, after the NaN select of a negative number,
-  turns the NaN of such a number's logarithm into `-inf`. The `-inf` select now comes first and the NaN select after it:
-  `-0.0` still gives `-inf`, and every negative number gives NaN.
+- **Differs:** the `-inf` select comes first and the NaN select after it, so
+  `-0.0` gives `-inf` and every negative number NaN. In tinygrad's order a
+  negative number whose reciprocal overflows to `-inf`, of magnitude below
+  `2^-128` in float32 (`2^-1024` in float64, about `2^-16` in float16), gives
+  `-inf`.
 - **Reason:** (b). rune lowers `Nx.log2` to tolk's `Log2` (rune's
   `Lower_real.unary`), which the Clang renderer leaves out
   (`Cstyle.clang_lang`), so every compiled `Nx.log2` on the host runs `xlog2`;
-  nx gives NaN for the logarithm of every negative number, subnormals
-  included. rune's `Nx.log` reads no `log2`.
+  nx gives NaN for the logarithm of every negative number. rune's `Nx.log`
+  reads no `log2`.
 - **Pinned by:** the `Transcendental` suite
   (`test/codegen/decomp/transcendental`): `special values › xlog2 of a
   negative number whose reciprocal overflows is NaN, and of -0. is -inf`, and
-  the negative float16 rows of `values.tolk` of magnitude below
-  `2^-16`; in rune, `Lower_real › transcendental ›
-  log2 within 4 ulps at float32, 4 at float64`, whose golden holds negative
-  float64 subnormals at NaN.
+  the negative float16 rows of `values.tolk` of magnitude below `2^-16`; in
+  rune, `Lower_real › transcendental › log2 within 4 ulps at float32, 4 at
+  float64`, whose golden holds negative float64 subnormals at NaN.
 
 ## D58. Withdrawn
 
-`Spec.program` rejected an elementwise operation of a program on a vector
-(the host's renderer, which computes on vectors, was checked against a second
-specification), so that a vector left after devectorize failed at lowering.
-No consumer got a wrong value or a failure without it: CUDA rejects such a
-kernel at NVRTC, Metal and the host compute it. `Spec.program` is
-`spec_program` (`uop/spec.py` `spec_program`) on every renderer.
+`Spec.program` rejected an elementwise operation on a vector, which no
+consumer needed; it is `spec_program` (`uop/spec.py` `spec_program`) on every
+renderer.
 
 ## D60. A loop of a call stays in the schedule
 
-- **tinygrad:** `schedule/rangeify.py` (`pm_no_views`, which strips
-  every view of storage), `split_store` (which makes a kernel of
-  an end of a call), `pm_renumber_range` (which renumbers the ranges
-  of that kernel), `schedule/__init__.py` (`create_schedule`, which
-  schedules the call of an end and drops the end), and `uop/spec.py`
-  (`spec_kernel_graph`, which admits device ranges only, and no end).
+- **tinygrad:** `schedule/rangeify.py` `pm_no_views` (strips every view of
+  storage), `split_store` (makes a kernel of an end of a call) and
+  `pm_renumber_range` (renumbers that kernel's ranges);
+  `schedule/__init__.py` `create_schedule` (schedules the call of an end and
+  drops the end); `uop/spec.py` `spec_kernel_graph` (device ranges only, no
+  end).
 - **tolk:** `Prepare.pm_loop_calls`, `Prepare.check_loop`,
-  `Rangeify.loop_range`, `Rangeify.pm_no_views` (which keeps a view
-  that moves with a loop's range) and `Rangeify.split_store`;
-  `Schedule.create_schedule` (`loops`, `argument` and the kept end);
-  `Spec.loop`, `Spec.loop_bound` and `Spec.kernel_graph`.
+  `Rangeify.loop_range`, `Rangeify.pm_no_views` (which keeps a view that moves
+  with a loop's range) and `Rangeify.split_store`; `Schedule.create_schedule`
+  (`loops`, `argument` and the kept end); `Spec.loop`, `Spec.loop_bound` and
+  `Spec.kernel_graph`.
 - **Differs:** an end of a precompiled call over loop ranges
   (`Axis_type.Loop`), `AFTER(buf, END(CALL(fn, args), r))`, is an effect of
-  the kernel graph and no kernel. `Prepare.pm_loop_calls` makes every loop
-  of a call one: an inline call an end or a back edge runs is compiled on
-  its own, where tinygrad's `resolve_function` inlines it into stores its
-  `split_store` makes one kernel of, each store run once over all trips;
-  and an end of an end of a call is one end over the outer ranges, then
-  the inner, where tinygrad's `create_schedule` asserts that an end's
-  source is a call. Any other loop outside a kernel is refused when
-  `Prepare.sequence` meets it, naming what it runs: an end of a call over a
-  range of another kind, an end around a back edge, a group of effects or a
-  linear of calls, and a back edge around anything but a call; tinygrad
-  asserts in `create_schedule`, or fails its spec, or drops the loop. The
-  calls a loop runs, or an inner loop, are the body of a call it runs. The
-  arguments that move with `r` stay
-  views, `r` keeps its number, since `split_store` renumbers only the
-  ranges of the kernel it makes, and `create_schedule` keeps the end around
-  the call, ordered by the call's reads and writes.
-  Once the call's body is scheduled and resolved, the schedule is `LINEAR
-  [END(LINEAR [CALL k1; CALL k2; ...], r)]`, the form that the memory plan of
-  a range (D41) and `Tolk_engine.run`, a loop of rig's program (D146), run.
-  The kernel graph spec admits loop ranges, ends of calls over them, and
-  views that move with them, whose bounds are constants, loop ranges, and
-  weak integer sums and products of them, which a call may also pass as a
-  scalar argument (D140); a range of any other kind outside
-  a kernel is still refused, so a range rangeify leaks never runs as a loop.
-  tinygrad has no such loop: its `split_store` wraps the end in a kernel of
-  its own, and its `create_schedule` drops the end.
-- **Reason:** (b). rune's `Rune.scan` compiles its body once and runs it
-  once per trip, in place over its carry and over rows of its inputs and
-  outputs, as such a loop. The inline call and the end of an end keep that
-  loop's meaning for every call a loop runs, however it is built: inlined,
-  as tinygrad would, its stores run once over all trips, and a trip no
-  longer reads what the trips before it wrote, a wrong value.
+  the kernel graph and no kernel.
+  - `Prepare.pm_loop_calls` makes every loop of a call one: an inline call an
+    end or a back edge runs is compiled on its own, where tinygrad's
+    `resolve_function` inlines it into stores its `split_store` makes one
+    kernel of, each run once over all trips; and an end of an end of a call is
+    one end over the outer ranges, then the inner, where tinygrad's
+    `create_schedule` asserts an end's source is a call.
+  - Any other loop outside a kernel is refused when `Prepare.sequence` meets it,
+    naming what it runs: an end of a call over a range of another kind, an end
+    around a back edge, a group of effects or a linear of calls, and a back edge
+    around anything but a call; tinygrad asserts in `create_schedule`, or fails
+    its spec, or drops the loop.
+  - The calls a loop runs, or an inner loop, are the body of a call it runs. The
+    arguments that move with `r` stay views, `r` keeps its number, since
+    `split_store` renumbers only the ranges of the kernel it makes, and
+    `create_schedule` keeps the end around the call, ordered by the call's reads
+    and writes. Once the body is scheduled and resolved, the schedule is `LINEAR
+    [END(LINEAR [CALL k1; CALL k2; ...], r)]`, which the memory plan of a range
+    (D41) and `Tolk_engine.run`, a loop of rig's program (D146), run.
+  - The kernel graph spec admits loop ranges, ends of calls over them, and
+    views that move with them, whose bounds are constants, loop ranges, and
+    weak integer sums and products of them, which a call may also pass as a
+    scalar argument (D140); a range of any other kind outside a kernel is
+    still refused.
+- **Reason:** (b). rune's `Rune.scan` compiles its body once and runs it once
+  per trip, in place over its carry and over rows of its inputs and outputs, as
+  such a loop. The inline call and the end of an end keep that loop's meaning
+  for every call a loop runs, however it is built: inlined as tinygrad would,
+  the stores run once over all trips and a trip no longer reads what the trips
+  before it wrote.
 - **Pinned by:** the `Rangeify` suite (`test/schedule/rangeify`):
   `get_kernel_graph › loops of calls › a loop of a precompiled call is no
   kernel` and `› a loop's call reads views that move with its range`; the
-  `Schedule` suite (`test/schedule/schedule`): `create_schedule › rules › an end
-  of a call over a loop schedules the call in its loop`, `› a loop runs after
-  the call that writes what it reads`, `› a loop runs before the call that
-  overwrites what it reads`, and `create_linear_with_vars › loops of calls › a
-  loop of a precompiled call is a loop of its body's calls`, `› a loop inside
-  a loop's body keeps its own end`, and `› an end of a back edge is refused,
-  naming what it runs` with the seven refusals beside it, each at the top
-  level and in a precompiled and an inlined body; and the `Tolk_engine` suite
-  (`test/engine/tolk_engine`): `link and run › a scan runs its body once per
-  trip, carrying in place`, against the unrolled loop on the host, and `› a
-  scan's merged calls carry in place as its calls apart do` (D404), on the host
-  and each GPU present; `calls of views › nested loops of a call run the outer
-  range slowest`, `› a loop reads each run as its trip starts`, `› a loop in a
-  body reads its parameters as each trip starts` and `› an After state's fixed
-  run under a back edge`, with the loop's call inlined, the nested loops and
-  the loop in a body also against `Tensors`. The `Spec` suite (`test/uop/spec`): `kernel_graph ›
-  loops of calls › accepts a loop of a call over a loop range`, `› refuses a
-  loop of a call over a range of any other kind` and `› refuses a weak sum of a
-  weak integer variable`; its `verdicts.tolk` records tolk's spec on ends and
-  shrinks.
+  `Schedule` suite (`test/schedule/schedule`): `create_schedule › rules › an
+  end of a call over a loop schedules the call in its loop`, `› a loop runs
+  after the call that writes what it reads`, `› a loop runs before the call
+  that overwrites what it reads`, and `create_linear_with_vars › loops of
+  calls › a loop of a precompiled call is a loop of its body's calls`, `› a
+  loop inside a loop's body keeps its own end`, and `› an end of a back edge
+  is refused, naming what it runs` with the seven refusals beside it, each at
+  the top level and in a precompiled and an inlined body; the `Tolk_engine`
+  suite (`test/engine/tolk_engine`): `link and run › a scan runs its body once
+  per trip, carrying in place` and `› a scan's merged calls carry in place as
+  its calls apart do` (D404), on the host and each GPU present; `calls of
+  views › nested loops of a call run the outer range slowest`, `› a loop reads
+  each run as its trip starts`, `› a loop in a body reads its parameters as
+  each trip starts` and `› an After state's fixed run under a back edge`, with
+  the loop's call inlined, the nested loops and the loop in a body also against
+  `Tensors`. The `Spec` suite (`test/uop/spec`): `kernel_graph › loops of
+  calls › accepts a loop of a call over a loop range`, `› refuses a loop of a
+  call over a range of any other kind` and `› refuses a weak sum of a weak
+  integer variable`; its `verdicts.tolk`.
 
 ## D61. Withdrawn
 
@@ -1794,136 +1563,111 @@ rule, its reason and its pins.
 
 ## D63. Programs and schedules are kept on disk
 
-- **tinygrad:** `codegen/__init__.py` (`to_program_config`, `to_program_key` and
-  `to_program_cache`, a dictionary of the process), `schedule/__init__.py`
-  (`lower_sink_to_linear`'s schedule cache, on disk only from `SCACHE=2`),
-  `helpers.py` (`SCACHE`, `1` by default), and `codegen/opt/postrange.py`
+- **tinygrad:** `codegen/__init__.py` `to_program_config`, `to_program_key`
+  and `to_program_cache` (a dictionary of the process); `schedule/__init__.py`
+  `lower_sink_to_linear`'s schedule cache (on disk only from `SCACHE=2`);
+  `helpers.py` `SCACHE` (`1` by default); `codegen/opt/postrange.py`
   `Scheduler.get_optimized_ast` (a kernel's name, coloured).
 - **tolk:** `Codegen.program_key`, `Codegen.kept` and
   `Codegen.made_program`; `Schedule.in_order`, `Schedule.schedule_key` and
   `Schedule.lower_sink_to_linear`; `Graph.cached`;
   `Postrange.Scheduler.get_optimized_ast`'s name; `Setting.scache` (`2` by
-  default), `Setting.shaping` and `Setting.cc`; and
-  `lib/dune`'s rule for `source_digest.ml`, written by
-  `tools/source_digest.ml`.
-- **Differs:** the program `to_program` makes of a kernel, up to its
-  source, and by default the schedule `lower_sink_to_linear` makes of a
-  function, are also put in the disk cache (tables `to_program` and
-  `schedule_cache`) as their graphs' text (`Graph`), and a later process
-  reads them back instead of making them. A program read back takes its
-  binary from its compiler's table, under its source, so each binary is
-  stored once. tinygrad keeps programs for its process only, and schedules on disk
-  only when asked. Each key is the kernel or function, a function with its
-  ranges and its storage replaced by placeholders numbered in order (whoever
-  makes a loop numbers its range, and whoever makes a staged loop's carry or
-  inlines call-local storage numbers it, from a counter whose value depends
-  on what the process did before); the schedule is kept with the same
-  placeholders and given back each function's own ranges and storage, for programs
-  the renderer and its target, the value of every setting and environment
-  variable that shapes what compilation makes, and the digest of the
-  library's sources, which dune computes when it builds the library: an
-  entry is a function of the code that made it. Every variable is a setting
-  declared with its reach (D114), among them those tinygrad reads with
-  `getenv` where it compiles (`BEAM_ESTIMATE`,
-  `BEAM_LOCAL_MAX`, `BEAM_MIN_PROGRESS`, `BEAM_PADTO`, `BEAM_UOPS_MAX`,
-  `BEAM_UPCAST_MAX`, `DMC`, `EXPAND_SSA`, `HCQ_NUM_SDMA`, `JITBEAM`, and the
-  `MV` and `REDUCEOP_SPLIT` variables), and the keys take every one that reaches
-  output (`Setting.shaping`), so one declared later, by tolk or by its
-  caller, is keyed without being listed; a setting of the process alone,
-  such as `DEBUG`, `PARALLEL` or `CC`, is not. One key serves memory and
-  disk, so a setting changed within the process by `context` makes the
-  result again, where tinygrad's in-memory keys leave out `TUPLE_ORDER` and,
-  for schedules, every setting. The compile cache's table names the compiler
-  `CC` runs, where tinygrad's names Clang alone. An entry that does not read
-  as a program or a schedule is a miss, and is replaced. The program of a
-  kernel that asks for a beam search is not kept, since it is what the
-  search found. `SCACHE=1` keeps schedules in memory only, as tinygrad's
-  default does. A kernel's name holds no colour, where tinygrad colours it
-  unless `NO_COLOR` is set: a kept program does not depend on the display of
-  the process that made it. A program read back shows its source and
-  instructions at `DEBUG` 4 and 7, as a compiled one does.
-  `lower_and_compile` reads the programs the disk keeps on the calling
-  domain (`Codegen.read`), and hands only the others to `Worker.map`, where
-  a tinygrad worker reads its compile cache: a read took 0.4 to 0.5 ms on
-  fudge (eight schools, gpt-oss's 12-token prefill), less than a domain's
-  start and the collections it joins.
-  A compiled schedule is kept whole too (D460).
-- **Reason:** (d): a later process's first compiled call of a model. With
-  binaries alone on disk, a warm process schedules and lowers every kernel
-  again. On fudge at `PARALLEL=1`, rune's compile bench rows
-  `warm/model/schools-start` and `warm/linalg/eigh-8x8`, a fresh process's
-  first call over the disk cache an earlier one filled, take 101 and 98 ms,
-  and 70 and 69 ms, against 263 and 274 ms, and 221 and 200 ms with binaries
-  alone kept and schedules in memory (`SCACHE=1`) (medians of 3, two
-  interleaved runs each). In one timed run on fudge, read on 14 domains, the
-  40 programs of `warm/model/schools-start` took 161 ms of its 328 ms first
-  call, and 14 ms of 96 ms on one. Its other fudge rows: the tolk bench's
-  `*/warm` rows, which time reading a schedule and its programs back against
-  the stages they replace, and rune's `WarmStart/chain-100`.
+  default), `Setting.shaping` and `Setting.cc`; and `lib/dune`'s rule for
+  `source_digest.ml`, written by `tools/source_digest.ml`.
+- **Differs:**
+  - The program `to_program` makes of a kernel, up to its source, and by
+    default the schedule `lower_sink_to_linear` makes of a function, are put
+    in the disk cache (tables `to_program` and `schedule_cache`) as their
+    graphs' text (`Graph`), and a later process reads them back. A program
+    read back takes its binary from its compiler's table, under its source.
+    `SCACHE=1` keeps schedules in memory only, as tinygrad's default does.
+  - Each key is the kernel or function, a function with its ranges and its
+    storage replaced by placeholders numbered in order (the schedule is kept
+    with the same placeholders and given back each function's own); for
+    programs, the renderer and its target; the value of every setting and
+    environment variable that shapes what compilation makes; and the digest of
+    the library's sources, which dune computes when it builds the library.
+  - Every variable is a setting declared with its reach (D114), among them
+    those tinygrad reads with `getenv` where it compiles (`BEAM_ESTIMATE`,
+    `BEAM_LOCAL_MAX`, `BEAM_MIN_PROGRESS`, `BEAM_PADTO`, `BEAM_UOPS_MAX`,
+    `BEAM_UPCAST_MAX`, `DMC`, `EXPAND_SSA`, `HCQ_NUM_SDMA`, `JITBEAM`, and the
+    `MV` and `REDUCEOP_SPLIT` variables), and the keys take every one that
+    reaches output (`Setting.shaping`), one declared later by tolk or its
+    caller included; a setting of the process alone, such as `DEBUG`,
+    `PARALLEL` or `CC`, is not. One key serves memory and disk, so a setting
+    changed by `context` makes the result again, where tinygrad's in-memory
+    keys leave out `TUPLE_ORDER` and, for schedules, every setting. The compile
+    cache's table names the compiler `CC` runs, where tinygrad's names Clang
+    alone.
+  - An entry that does not read as a program or a schedule is a miss, and is
+    replaced. The program of a kernel that asks for a beam search is not kept.
+    A kernel's name holds no colour, where tinygrad colours it unless
+    `NO_COLOR` is set. A program read back shows its source and instructions
+    at `DEBUG` 4 and 7, as a compiled one does.
+  - `lower_and_compile` reads the programs the disk keeps on the calling
+    domain (`Codegen.read`) and hands only the others to `Worker.map`, where a
+    tinygrad worker reads its compile cache. A compiled schedule is kept whole
+    too (D460).
+- **Reason:** (d): a later process's first compiled call of a model. On fudge
+  at `PARALLEL=1`, rune's compile bench row `warm/model/schools-start`, a fresh
+  process's first call over a disk cache an earlier one filled, takes 101 ms
+  against 263 ms with binaries alone kept. Its other fudge rows: rune's
+  `warm/linalg/eigh-8x8` and `WarmStart/chain-100`, and the tolk bench's
+  `*/warm` rows. Reading on the calling domain: a read took 0.4 to 0.5 ms on
+  fudge, less than a domain's start.
 - **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `programs are
   kept › a program is made again under another value of ›` each setting,
   `programs are kept on disk › a program made by one process is read back by
   the next`, `› read reads back a program and its binary, and is none
-  without`, `› a program made under one setting is not read back under another
-  ›` each setting, `› a damaged entry is made anew, and replaced ›
+  without`, `› a program made under one setting is not read back under
+  another ›` each setting, `› a damaged entry is made anew, and replaced ›
   truncated` and `› holding no program`, `› an entry of another build of the
   library is not read back`, and `› processes making one program at once all
-  get it`; and the `Schedule` suite (`test/schedule/schedule`):
-  `create_linear_with_vars › cache › a body scheduled under one setting
-  misses under another ›` each setting, a setting its caller declares
-  among them, `create_linear_with_vars ›
-  schedules are kept on disk ›` the same as programs' for schedules, and `›
-  with SCACHE at 1, nothing is kept on disk`, and `create_linear_with_vars ›
-  loops of calls › a loop whose range has another number is the same body`
-  and `› a body that hits under other numbers keeps its own loops`, and
-  `› cache › storage numbered in another counter state is the same body`;
-  the `Helpers` suite's
-  `shaping ›` tests; and the `Compiler_cpu` suite's `without Clang › an
-  object cached by the default compiler is not served under CC`; the
-  `Codegen` suite's `programs are kept › read waits for no program being
-  made`, and the `Realize` suite's `lower_and_compile in parallel › reads
-  the programs the disk keeps without spawning a domain`.
+  get it`; the `Schedule` suite (`test/schedule/schedule`):
+  `create_linear_with_vars › cache › a body scheduled under one setting misses
+  under another ›` each setting, a setting its caller declares among them,
+  `create_linear_with_vars › schedules are kept on disk ›` the same as
+  programs' for schedules, `› with SCACHE at 1, nothing is kept on disk`,
+  `create_linear_with_vars › loops of calls › a loop whose range has another
+  number is the same body` and `› a body that hits under other numbers keeps
+  its own loops`, and `› cache › storage numbered in another counter state is
+  the same body`; the `Helpers` suite's `shaping ›` tests; the `Compiler_cpu`
+  suite's `without Clang › an object cached by the default compiler is not
+  served under CC`; the `Codegen` suite's `programs are kept › read waits for
+  no program being made`, and the `Realize` suite's `lower_and_compile in
+  parallel › reads the programs the disk keeps without spawning a domain`.
 
 ## D64. A cast to a narrow float through a float32 rounds once
 
-- **tinygrad:** `renderer/cstyle.py` (`create_non_native_float_pats`,
-  which casts a source of any type but float32 to a float32, then to the
-  narrow float).
+- **tinygrad:** `renderer/cstyle.py` `create_non_native_float_pats` (casts a
+  source of any type but float32 to a float32, then to the narrow float).
 - **tolk:** the cast rule of `Cstyle.create_non_native_float_pats`, with
   `Decomp_dtype.narrow` (D9's).
 - **Differs:** a renderer without arithmetic on a narrow float, Clang's on
   bfloat16 and HIP's on bfloat16 and the 8-bit floats, casts to it through a
   float32. A source more precise than a float32 (a float64, or an integer of
   32 or 64 bits) reaches the float32 rounded to odd, as an emulated cast's
-  does (D9), so that the cast rounds once, from the exact value, as the folder
+  does (D9), so the cast rounds once, from the exact value, as the folder
   (`Dtype.truncate`) does. tinygrad rounds to the float32 to nearest, then
-  again: on the host, the bfloat16 of the double `1 + 2^-8 + 2^-52` is `1.0`
-  there, where its correctly rounded value is `1.0078125`, and of the int64
-  `2^40 + 2^32 + 1` is `2^40` where it is `2^40 + 2^33`. No golden holds such
-  a cast.
-- **Reason:** (e). A cast is IEEE's conversion, one rounding, in the IR's own
-  types; the second rounding gives the wrong neighbour where the float32 lands
-  on a tie of the narrow float. rune hands tolk only a float32 to cast to a
-  narrow float, rounding a more precise source to odd first with
-  `Decomp_dtype.narrow` (`Lower_arith.store_real`), so no raven call site
-  reaches the rule.
+  again. No golden holds such a cast.
+- **Reason:** (e). A cast is IEEE's conversion, one rounding: on the host,
+  tinygrad's bfloat16 of the double `1 + 2^-8 + 2^-52` is `1.0` where it is
+  `1.0078125`. rune hands tolk only a float32 to cast to a narrow float,
+  rounding a more precise source to odd first with `Decomp_dtype.narrow`
+  (`Lower_arith.store_real`), so no raven call site reaches the rule.
 - **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `casts to
   bfloat16 › an integer or a double rounds once on the host`, for int64,
   int32, uint32, uint64 and float64 sources, among them doubles just past a
-  tie, one of them subnormal. On rune, which rounds itself: `Lower_arith ›
-  casts give eager's values`, whose float64 operands include the doubles one
-  unit each side of the bfloat16 tie `1 + 2^-8`.
+  tie, one of them subnormal. On rune: `Lower_arith › casts give eager's
+  values`, whose float64 operands include the doubles one unit each side of
+  the bfloat16 tie `1 + 2^-8`.
 
 ## D65. Withdrawn
 
-An operation on an emulated narrow float rounded its result to the float in the
-kernel, so that a chain of operations rounded after each, as nx does. rune
-computes each narrow-float operation in float32 and encodes its result itself
-(`Lower_arith.narrowed`), so no operation on an emulated float reaches tolk from
-rune. The operation rule of `Decomp_dtype.pm_float_decomp` computes in the
-emulating float and rounds at the store, as `codegen/decomp/dtype.py`
-`pm_float_decomp` does; a cast to the emulated float rounds, as
-`pm_float_decomp` does.
+An operation on an emulated narrow float rounded its result in the kernel. rune
+computes in float32 and encodes itself (`Lower_arith.narrowed`), and
+`Decomp_dtype.pm_float_decomp` follows `codegen/decomp/dtype.py`
+`pm_float_decomp`.
 
 ## D66. Withdrawn
 
@@ -1938,20 +1682,14 @@ of commands. A range is a loop of rig's program, which holds one trip's work
 
 ## D68. Withdrawn
 
-The scheduler recognised a one-hot sum, rune's lowering of a gather, and
-inlined it as a load where it was read. Inlining values that read state
-written elsewhere in the graph left buffers with two definitions, and it
-was withdrawn; an explicit gather, which rune emits as an indexed load and
-tolk lowers as one, replaces it.
+The scheduler inlined a one-hot sum, rune's old gather, as a load, which left
+buffers with two definitions. An explicit gather (D73) replaces it.
 
 ## D69. Withdrawn
 
-A store whose destination moved through a pad wrote only within the pad's
-source, its validity carried on the index into the storage, so that rune
-could drop a row it wrote out of range into a padding row. Rune now writes
-those rows with one store through a gather whose index is Invalid where a
-row is dropped, which tinygrad schedules as a gated store, and nothing
-stores through a pad.
+A store through a pad wrote only within the pad's source. rune writes dropped
+rows through a gather whose index is Invalid, which tinygrad schedules as a
+gated store, and nothing stores through a pad.
 
 ## D70. Withdrawn
 
@@ -1965,20 +1703,17 @@ its launch descriptors (D146).
 
 ## D72. Withdrawn
 
-Only a view of storage had a contiguous view, since tinygrad's rewrite of a
-constant's index marked the constant and `symbolic` rebuilt it unmarked, without
-end. At `uop/ops.py` `UOp.contiguous_view` the rewrite marks nothing and finds a
-view of any value, a constant or a computed one included;
-`Prepare.contiguous_view` does the same.
+Only a view of storage had a contiguous view. `Prepare.contiguous_view` finds a
+view of any value, as `uop/ops.py` `UOp.contiguous_view` does.
 
 ## D73. A gather is an INDEX of a tensor by a value with axes
 
 - **tinygrad:** `uop/ops.py` `UOp._shape` (INDEX's shape: its index sources'
   shapes, then the rest of the source's), which no tinygrad pass puts in a
-  tensor graph; `schedule/indexing.py` (`pm_generate_realize_map` and its
-  rules), `data_srcs` (the sources an INDEX's ranges reach), `pm_apply_rangeify`
-  and `pm_apply_rangeify` and `run_rangeify`'s consumer ranges;
-  `schedule/prepare.py` (`_mop_index`), `pm_mops` and `prepare_rangeify`.
+  tensor graph; `schedule/indexing.py` `pm_generate_realize_map` and its
+  rules, `data_srcs`, `pm_apply_rangeify` and `run_rangeify`'s consumer
+  ranges; `schedule/prepare.py` `_mop_index`, `pm_mops` and
+  `prepare_rangeify`.
 - **tolk:** `Indexing.storage`, `Indexing.is_gather`,
   `Indexing.realize_gathered`, `Indexing.data_srcs`, `Indexing.convert_gather`
   and its rule in `Indexing.pm_apply_rangeify`, and
@@ -1987,24 +1722,21 @@ view of any value, a constant or a computed one included;
 - **Differs:** an `INDEX` whose one index source has axes, `INDEX(x, L)`,
   reads `x` at the row each element of `L` holds, and its shape is `L`'s
   followed by the rest of `x`'s. The scheduler takes it as a load:
-  - `x` is stored whole unless it is storage, so that a view of storage is
-    read through its movements;
+  - `x` is stored whole unless it is storage, so a view of storage is read
+    through its movements;
   - `L` takes the gather's leading ranges, one per axis of `L`, by its
     position among the gather's sources, and the gather reads `x` at `L`'s
     element followed by its trailing ranges;
-  - an index that loads from a storage state, as `L` does once ranged, moves
-    through a movement with each load held as a parameter of its bounds, so
-    that the index's simplification does not rebuild the stores the state is
-    ordered after, which gave the storage a second definition;
-  - in the tensor graph, prepare's movement rules leave the gather whole,
-    since `L`'s shape would multiply the movement's index; `pm_mops`, which
-    kernels use with vector indices, is tinygrad's;
-  - refused: a gather by several indices (rune emits one).
+  - an index that loads from a storage state moves through a movement with
+    each load held as a parameter of its bounds, so the index's
+    simplification does not rebuild the stores the state is ordered after;
+  - in the tensor graph, prepare's movement rules leave the gather whole;
+    `pm_mops`, which kernels use with vector indices, is tinygrad's;
+  - refused: a gather by several indices.
   The index is in range: rune clamps it and selects `0` where it was not.
 - **Reason:** (b): rune's gather lowering (`Lower_index`) emits this INDEX
-  for `Nx.take` and `Nx.take_along_axis`. D68, which recognised a one-hot sum
-  over the axis in the scheduler, was withdrawn. The sharded clauses are
-  withdrawn: multi-device is out of scope, see README.
+  for `Nx.take` and `Nx.take_along_axis`; D68 is withdrawn. The sharded
+  clauses are withdrawn: multi-device is out of scope, see README.
 - **Pinned by:** the Rangeify suite's `gathers` programs (`index_rows`,
   `index_rows_computed`, `index_read_twice`, `index_under_reduce`,
   `index_broadcast`, `index_view_source`, `index_zip`, `index_of_index`,
@@ -2017,106 +1749,84 @@ view of any value, a constant or a computed one included;
 
 ## D74. Float arithmetic has bounds, and a bounded sine takes the short reduction
 
-- **tinygrad:** `uop/ops.py` (`UOp._min_max`), which bounds binary
-  operations on integers only, has no case for `TRUNC` or `NEG`, and
-  bounds a `WHERE` by both its branches whatever selects them,
-  and gives a value it cannot bound, or a cast it cannot, its type's
-  `min` and `max`, finite in the 8-bit formats without infinities
-  (`dtype.py` `DType.max`);
-  `codegen/decomp/transcendental.py` (`xsin`), which builds the
-  Payne-Hanek reduction unless its caller passes `fast`, and chooses between
-  the reductions with `x_abs < switch_over`, a comparison that the
-  decompositions' rewrite (`symbolic_simple`) does not fold.
+- **tinygrad:** `uop/ops.py` `UOp._min_max` (bounds binary operations on
+  integers only, has no case for `TRUNC` or `NEG`, bounds a `WHERE` by both
+  its branches whatever selects them, and gives a value or cast it cannot
+  bound its type's `min` and `max`, finite in the 8-bit formats without
+  infinities, `dtype.py` `DType.max`); `codegen/decomp/transcendental.py`
+  `xsin` (builds the Payne-Hanek reduction unless its caller passes `fast`,
+  choosing at run time with `x_abs < switch_over`, which `symbolic_simple`
+  does not fold).
 - **tolk:** `Ops.unbounded`, `Ops.compute_min_max` (its `Where`, `Trunc`
   and `Neg` cases), `Ops.selected`, `Ops.float_bounds` and
   `Ops.cast_bounds`; `Transcendental.xsin`.
-- **Differs:** a float sum, difference or product of operands with finite
-  bounds has the bounds of its corners, computed in double and widened by a
-  relative `2^-m` and the smallest normal of its type, `m` its mantissa's bits,
-  so that they hold the result rounded at its type, or flushed to zero; an
-  operand's end within the subnormals counts as 0, for a target that flushes
-  the operand. A
-  result that may overflow its type, and one of a weak float, has the type's
-  bounds. A truncation's bounds are its operand's, truncated, and a float
-  negation's are its operand's, negated and swapped. A float selection by a
-  comparison `a < b` narrows the branch it selects where the comparison
-  holds, so where neither operand is NaN: `a` to below `b`'s greatest value,
-  and `b` to above `a`'s least. Finite float bounds state that a value is
-  not NaN, which every float type holds: a float that nothing bounds has
-  infinite bounds, in `float8_e4m3` and the `fnuz` formats too, and a cast
-  into a float keeps its source's rounded bounds only where they are values
-  of its type, so a value cast from an unbounded float stays unbounded. A
-  cast into a weak float rounds its bounds to doubles, as it rounds its
-  value, as tinygrad does since d94ec221b (`uop/ops.py` `UOp._min_max`), whose
-  cast of an infinite bound into an 8-bit format without infinities is NaN
-  and falls back to the type's finite bounds, where tolk's stays
-  unbounded. With
-  the type's finite greatest value instead, a compiled sine, cosine or
-  tangent of an 8-bit NaN gave -1, 0 and -452. Neither bounds a float
-  comparison to `true`, since a NaN compares false (d94ec221b).
-  `xsin` of an angle whose
-  bounds lie strictly within `switch_over` is its `fast` form, the Cody-Waite
-  reduction alone.
-- **Reason:** (d): the sine or cosine of a bounded value on the CPU, such as
-  a Gaussian draw (`Nx.Rng.normal`), whose angle is `2 pi u` for a uniform `u`
-  in `[0, 1)` fused into the draw. rune's trigonometric reduction
-  (`Lower_real.reduce`) reads tolk's bounds (`Ops.vmin`, `Ops.vmax`) and
-  builds Cody-Waite's reduction alone for an angle bounded below
-  `Lower_real.trig_switch`, and holds the remainder to `[-1, 1]`
-  (`Lower_real.reduced`), since the cancellation in `a - q pi/2` hides that
-  bound from interval arithmetic. The host's renderer has no sine, so `xsin`
-  reduces what remains. Without this entry every compiled normal draw built
-  the Payne-Hanek reduction for angles below `2 pi`. On fudge, with float
-  operations unbounded and `xsin` choosing at run time as tinygrad's do
-  (two interleaved runs each, with the entry then without), rune's
-  `Jit/normal-float32-1M`, `2^20` draws, takes 2.8 and 2.6 ms against 4.3
-  and 4.1 ms (medians of 11), and the compile bench's first calls of a draw
-  of 1024, `rng/normal-f32` and `rng/normal-f64`, take 0.75 and 0.30 s, and
-  1.15 and 0.44 s, against 0.78 and 0.59 s, and 2.10 and 0.90 s (medians of
-  3). `Jit/sin-bounded-float32-64K`, a sine of angles a `tanh` bounds, shows
-  no difference beyond its ranges. The 8-bit half of the
-  bounds (a float without infinities is unbounded) has no rune consumer
-  since rune stores the 8-bit floats as `uint8` (D62).
+- **Differs:**
+  - A float sum, difference or product of operands with finite bounds has the
+    bounds of its corners, computed in double and widened by a relative
+    `2^-m` and the smallest normal of its type, `m` its mantissa's bits, so
+    they hold the result rounded at its type, or flushed to zero; an operand's
+    end within the subnormals counts as 0, for a target that flushes it. A
+    result that may overflow its
+    type, and one of a weak float, has the type's bounds.
+  - A truncation's bounds are its operand's, truncated, and a float
+    negation's are its operand's, negated and swapped.
+  - A float selection by `a < b` narrows the branch it selects where the
+    comparison holds, so where neither operand is NaN: `a` to below `b`'s
+    greatest value, and `b` to above `a`'s least.
+  - Finite float bounds state that a value is not NaN: a float that nothing
+    bounds has infinite bounds, in `float8_e4m3` and the `fnuz` formats too,
+    and a cast into a float keeps its source's rounded bounds only where they
+    are values of its type, so a value cast from an unbounded float stays
+    unbounded. A cast into a weak float rounds its bounds to doubles, as
+    tinygrad does since d94ec221b, whose cast of an infinite bound into an
+    8-bit format without infinities is NaN and falls back to the type's finite
+    bounds, where tolk's stays unbounded. Neither bounds a float comparison to
+    `true`.
+  - `xsin` of an angle whose bounds lie strictly within `switch_over` is its
+    `fast` form, the Cody-Waite reduction alone.
+- **Reason:** (d): the sine or cosine of a bounded value on the CPU, such as a
+  Gaussian draw (`Nx.Rng.normal`), whose angle is `2 pi u` for a uniform `u` in
+  `[0, 1)` fused into the draw; rune's reduction (`Lower_real.reduce`) reads
+  tolk's bounds (`Ops.vmin`, `Ops.vmax`), builds Cody-Waite's alone below
+  `Lower_real.trig_switch` and holds the remainder to `[-1, 1]`
+  (`Lower_real.reduced`). The host's renderer has no sine, so `xsin` reduces
+  what remains. On fudge rune's `Jit/normal-float32-1M` takes 2.8 ms against 4.3
+  ms without the entry; the compile bench rows `rng/normal-f32` and
+  `rng/normal-f64` time the first calls of a draw of 1024. The 8-bit half (a
+  float without infinities is unbounded) has no rune consumer, since rune stores
+  the 8-bit floats as `uint8` (D62); with the type's finite greatest value, a
+  compiled sine, cosine or tangent of an 8-bit NaN gave -1, 0 and -452.
 - **Pinned by:** the Ops suite (`test/uop/ops`): `bounds › bounds hold every
   value a float operation rounds to`, sums, differences, products and
-  selections, `› a float operation of bounded operands is bounded`,
-  `› a float operation of an operand within the subnormals bounds a flushed
-  operand too`, `› a float operation of an unbounded operand, or that can
-  overflow, has its type's bounds`, `› a float selection by a
-  comparison narrows what it selects`, `› a float truncation and
-  negation map their operand's bounds`, `› a value of a float type
-  without infinities, which may be NaN, has no finite bounds` and `› bounds
-  hold every value a cast takes`; the Transcendental suite: `graphs › a sine of an
-  angle bounded below the switch-over is its fast form`; and rune's
-  `Lower_real` suite: `bounded arguments › cos of an argument bounded below
-  the switch-over` and `› tan of an argument bounded below the switch-over`.
-  On rune: missing (the old rune's `lower_arith › long reductions › a normal
-  draw takes none`, `› the sine of an angle read from a buffer takes its own
-  only` and `› the cosine …`, which counted the long reductions built, and
-  `Compiled › 8-bit floats › the sine, cosine and tangent of an 8-bit float
-  NaN are NaN`, went with its rewrite).
+  selections, `› a float operation of bounded operands is bounded`, `› a float
+  operation of an operand within the subnormals bounds a flushed operand too`,
+  `› a float operation of an unbounded operand, or that can overflow, has its
+  type's bounds`, `› a float selection by a comparison narrows what it selects`,
+  `› a float truncation and negation map their operand's bounds`, `› a value of
+  a float type without infinities, which may be NaN, has no finite bounds` and
+  `› bounds hold every value a cast takes`; the Transcendental suite: `graphs ›
+  a sine of an angle bounded below the switch-over is its fast form`; rune's
+  `Lower_real` suite: `bounded arguments › cos of an argument bounded below the
+  switch-over` and `› tan of an argument bounded below the switch-over`. On
+  rune: missing for the count of long reductions a normal draw builds, and the
+  sine and cosine of an angle read from a buffer build, and for the 8-bit NaN's
+  sine, cosine and tangent.
 
 ## D75. A constant condition assumes nothing in its branches
 
-- **tinygrad:** `uop/symbolic.py` (`fold_where_closure`), which
-  substitutes `True` for a selection's condition in its true branch and
-  `False` in its false branch, whatever the condition is.
+- **tinygrad:** `uop/symbolic.py` `fold_where_closure` (substitutes `True`
+  for a selection's condition in its true branch and `False` in its false
+  branch, whatever the condition is).
 - **tolk:** `Shape.fold_where_closure`.
 - **Differs:** `fold_where_closure` leaves a condition that is a constant,
   broadcast, padded or not, in the branches: a broadcast constant is one node
   for every use of that constant, so substituting it is no assumption about
-  the selection. In `where F (where F x (where F y x)) y`, with `F` a
-  broadcast `False`, the outer selection makes the inner `F`s `True`, the
-  inner selection makes its false branch's `True` back into `False`, and the
-  rewrite does not terminate; tinygrad raises "infinite loop in
-  graph_rewrite" on that graph, and tolk's rewrite, without this rule,
-  "graph_rewrite does not terminate".
-- **Reason:** (e): a graph tinygrad's rewrite does not terminate on, valid
-  by construction. The fold of a selection whose condition is a constant
-  through movements, this entry's other part, is withdrawn: its witnesses,
-  the old rune's staged scan on Metal and the multi-device rewrite, are gone,
-  and rune's suites pass without it. A selection by a `CONST` still folds, as
-  in tinygrad.
+  the selection. A selection by a `CONST` still folds, as in tinygrad.
+- **Reason:** (e): `where F (where F x (where F y x)) y`, with `F` a broadcast
+  `False`, is valid by construction, and tinygrad's rewrite raises "infinite
+  loop in graph_rewrite" on it, and tolk's without the rule "graph_rewrite does
+  not terminate". The fold of a selection whose condition is a constant through
+  movements, this entry's other part, is withdrawn.
 - **Pinned by:** the Symbolic suite: `symbolic › selections › a broadcast
   constant condition is not folded in the branches`, which raises without
   the rule, and `› a padded constant condition is not folded in the
@@ -2124,22 +1834,18 @@ view of any value, a constant or a computed one included;
 
 ## D76. Withdrawn
 
-A stack of `Invalid` lanes stayed a stack, since tinygrad folded it to one
-`Invalid` and the lanes' reshape, select and reduce lost their width.
-tinygrad now folds it to an `Invalid` expanded to the stack's shape
-(`uop/symbolic.py` `Shape.pm_data_invalid`), which keeps the width, and
-devectorizes no expanded scalar into a stack. The kernels that pinned the
-entry, whose upcast lanes all read an `Invalid` index, compile and sum to zero
-with tinygrad's rule (`Tolk.Codegen › lanes all Invalid`, `lanes of an
-unrolled reduce`).
+A stack of `Invalid` lanes stayed a stack. tinygrad folds it to an `Invalid`
+expanded to its shape (`uop/symbolic.py` `Shape.pm_data_invalid`), which keeps
+the width, and devectorizes no expanded scalar into a stack; with it
+`Tolk.Codegen › lanes all Invalid` and `lanes of an unrolled reduce` sum to 0.
 
 ## D77. A broadcast value that runs a transcendental stays stored
 
-- **tinygrad:** `schedule/indexing.py` (`run_rangeify`, which stores an
-  elementwise value or reduction whose ranges a broadcast ends),
-  `BufferizeOpts.removable` and `create_bufferize_and_index_srcs` (its value),
-  and `schedule/rangeify.py` (`cleanup_dead_axes`) and `remove_bufferize` (which
-  inlines that store again when its value reads at most three buffers and no
+- **tinygrad:** `schedule/indexing.py` `run_rangeify` (stores an elementwise
+  value or reduction whose ranges a broadcast ends),
+  `BufferizeOpts.removable` and `create_bufferize_and_index_srcs` (its value);
+  `schedule/rangeify.py` `cleanup_dead_axes` and `remove_bufferize` (inlines
+  that store again when its value reads at most three buffers and no
   reduction reads a buffer).
 - **tolk:** `Indexing.assign_ranges` (which records the values a broadcast
   stores, and a gather's stored source that its broadcast gathers would
@@ -2148,238 +1854,128 @@ unrolled reduce`).
   `Rangeify.remove_bufferize`, which keeps such a stage.
 - **Differs:** where a broadcast ends ranges below a value, its store is
   marked, and the cost check keeps it if computing it runs `EXP2`, `LOG2`,
-  `SIN` or `POW`: the value is computed once per element and read where it
-  is broadcast. The cost check sees the value with its producers already
-  stored or inlined, so it counts exactly what inlining would compute: a
-  value that reads a stored exponential computes none, and is inlined as
-  before. A marked store still loses the axes its value does not vary
-  along. tinygrad's cost check counts buffers and
-  reductions only, so it inlines such a value into its consumer, which
-  computes it again for every element of the ranges it does not vary along:
-  a SwiGLU's sigmoid once per output column of the down projection, a
-  softmax's exponentials once per column of the product with the values, a
-  RoPE's sines and cosines once per head. A value read once per element,
-  as a rotated query reads its rows of a stored sine table, is not marked.
-  A gather's source (D73), stored before ranges are assigned, is marked when
-  its consumers broadcast it, or when a broadcast ends ranges above one of
-  its gathers and the gathers, inlined, would compute more elements than it
-  holds: each element a gather reads, once for each trip of the ranges that
-  end above it, that work at its least and the elements held at their most.
-  Gathers that no broadcast reads stay unmarked, whatever they read. Two
-  rows of a 16-element table broadcast along 3 rows compute 6 elements
-  inlined and stay unmarked; along 64 rows they compute 128 and are marked. To count those trips,
-  `Indexing.assign_ranges` carries the ranges that end above each node, as
-  tinygrad's `ending_ranges` does, where it held whether any did.
-- **Reason:** (d): gpt-oss-20b (`kaun/examples/06-gpt-oss`). On the host,
-  where the transcendental functions are polynomials, recomputing them
-  dominates. On an M-series Mac under load
-  (provisional), one MoE block of gpt-oss-20b took 182 ms a token and
-  64 ms with the rule, and 1415 ms and 555 ms for 8 tokens; causal
-  attention with sinks at gpt-oss's shapes took 2726 ms and 614 ms at 512
-  tokens, and 39.0 s and 10.9 s at 2048. On Metal the MoE block took
-  18.4 ms and 17.1 ms a token, and attention 23.5 ms and 16.8 ms at 512
-  tokens, 187 ms and 183 ms at 2048. On CUDA, gpt-oss-20b's prefill took
-  9.4 s and 3.1 s warm, and its attention-score kernel went from 29k nodes
-  to 479; symo's tutorial step on kimchi took 962 ms and 161 ms. The cost is
-  memory: attention keeps its exponentials, one more buffer the size of the
-  scores (tokens by tokens by heads) while the call runs, at every length;
-  at 2048 tokens 1.10 GB and 2.17 GB were allocated. Since rune lowers
-  `Nx.attention` to kernels of its own, gpt-oss's attention no longer meets
-  this rule; the rest of its layers still do. On fudge's RTX 5000 Ada
-  (gpt-oss's bench, `kaun/examples/06-gpt-oss/bench`, medians of 11, two
-  interleaved runs each on a loaded machine, the second under nsys, with
-  the rule then without), `GptOss/prefill-512` takes 132 ms against 265 ms
-  in both runs and `GptOss/prefill-512-Q8_0` 141 ms against 274 and
-  277 ms. A decode step's kernels run 16.9 ms against 20.5 ms (nsys); its
-  wall time, 19.3-20.5 ms against 22.0-22.2 ms, is within the row's noise.
-  The prefill rows' fudge wall-time baselines are pending the scheduled
-  quiet re-record.
+  `SIN` or `POW`. The cost check sees the value with its producers already
+  stored or inlined, so a value that reads a stored exponential computes none,
+  and is inlined. A marked store still loses the axes its value does not vary
+  along. A value read once per element, as a rotated query reads its rows of
+  a stored sine table, is not marked. A gather's source (D73), stored before
+  ranges are assigned, is marked when its consumers broadcast it, or when a
+  broadcast ends ranges above one of its gathers and the gathers, inlined,
+  would compute more elements than it holds: each element a gather reads,
+  once for each trip of the ranges that end above it, that work at its least
+  and the elements held at their most. Gathers that no broadcast reads stay
+  unmarked. `Indexing.assign_ranges` carries the ranges that end above each
+  node, as tinygrad's `ending_ranges` does. tinygrad's cost check counts
+  buffers and reductions only, so its consumer computes the value again for
+  every element of the ranges it does not vary along.
+- **Reason:** (d): gpt-oss-20b (`kaun/examples/06-gpt-oss`), where inlining
+  computes a SwiGLU's sigmoid once per output column of the down projection and
+  a RoPE's sines and cosines once per head. Since rune lowers `Nx.attention` to
+  kernels of its own, gpt-oss's attention no longer meets this rule; the rest of
+  its layers still do. On fudge's RTX 5000 Ada `GptOss/prefill-512` takes 132 ms
+  against 265 ms without the rule. The prefill rows' fudge wall-time baselines
+  are pending the scheduled quiet re-record. The cost is memory: a kept value
+  holds a buffer while the call runs.
 - **Pinned by:** the Rangeify suite's `swiglu_down`, `attention`,
-  `exp_dead_axis` (a kept exponential of a row expanded to a matrix is
-  stored as the row), `exp_cheap_consumer` (a value that reads a kept
-  exponential is inlined) and `rope_decode` (a decode step's rotated query
-  reads its gathered rows of a cosine table and is not stored) rows of
-  `kernel_counts.golden` and their kernel goldens, and its `get_kernel_graph
-  › gathers read where broadcast`; kaun's `GptOss/prefill-512` and
-  `GptOss/prefill-512-Q8_0`.
+  `exp_dead_axis` (a kept exponential of a row expanded to a matrix is stored
+  as the row), `exp_cheap_consumer` (a value that reads a kept exponential is
+  inlined) and `rope_decode` (a decode step's rotated query reads its gathered
+  rows of a cosine table and is not stored) rows of `kernel_counts.golden` and
+  their kernel goldens, and its `get_kernel_graph › gathers read where
+  broadcast`; kaun's `GptOss/prefill-512` and `GptOss/prefill-512-Q8_0`.
 
 ## D79. A chain of one operation keeps its right operand's grouping
 
-- **tinygrad:** `renderer/cstyle.py` (`base_rewrite`'s ALU rule), which
-  drops the parentheses of any operand that is the same associative operation
-  (`ADD`, `MUL`, `XOR`, `OR`, `AND`), on either side, but the right operand
-  of a signed integer operation since 845977979, where regrouping can
-  overflow.
+- **tinygrad:** `renderer/cstyle.py` `base_rewrite`'s ALU rule (drops the
+  parentheses of any operand that is the same associative operation, `ADD`,
+  `MUL`, `XOR`, `OR`, `AND`, on either side, but the right operand of a signed
+  integer operation since 845977979).
 - **tolk:** `Cstyle.base_rewrite`'s ALU rule.
 - **Differs:** only the first operand drops them, of floats and unsigned
-  integers too. C groups `a*b*c` as
-  `(a*b)*c`, so writing `a*(b*c)` without parentheses regroups it, and a float
-  sum or product rounds and overflows by its grouping. An upcast reduction
-  `acc + (v0+v1+v2+v3)` was written `acc+v0+v1+v2+v3` and added in another
-  order than the kernel's; `4 * (2^126 * 0.25)` was written `4*2^126*0.25`,
-  which overflows.
+  integers too. C groups `a*b*c` as `(a*b)*c`, so `a*(b*c)` written without
+  parentheses is regrouped, and a float sum or product rounds and overflows by
+  its grouping: `4 * (2^126 * 0.25)` written `4*2^126*0.25` overflows.
 - **Reason:** (b): nx.quant's product, `Nx_quant.apply`, decodes each weight
   in the kernel that multiplies it, `x * (value * scale)`, and gave infinity
   where the eager product's infinities of both signs give NaN.
 - **Pinned by:** the Cstyle suite: `grouping › Clang computes a product of a
   product as it is grouped`; and the rendered sources of the `codegen`,
-  `renderer/cstyle` and `engine/jit` goldens. On rune: missing (the old rune's
-  `quant › values › compiled, a product is eager's › the largest scales` went
-  with its rewrite).
+  `renderer/cstyle` and `engine/jit` goldens. On rune: missing.
 
 ## D78. Withdrawn
 
-The CUDA device's kernels compiled to a cubin, so that a process's first
-load would not wait for the driver to translate PTX. On fudge (RTX 5000 Ada),
-rune's compile bench row `cuda/sin-nested-8`, a fresh process's first call
-of eight nested float64 sines over a driver cache of its own, took 455 and
-517 ms with cubins and 390 and 340 ms with PTX (medians of 3, interleaved
-runs), and `warm/cuda/sin-nested-8`, the same call over a disk cache an
-earlier process filled, 340 and 329 ms against 218 and 178 ms: no gain from
-cubins. As tinygrad's `renderer/cstyle.py` `CUDARenderer.__init__`,
-`Cstyle.cuda` compiles PTX for the CUDA device and a cubin for the NV device.
-D320 compiles a cubin again, measured with the driver's cache missing.
+The CUDA device's kernels compiled to a cubin, which measured no gain over PTX.
+As tinygrad's `renderer/cstyle.py` `CUDARenderer.__init__`, `Cstyle.cuda`
+compiles PTX for the CUDA device and a cubin for the NV device. D320 compiles a
+cubin again, measured with the driver's cache missing.
 
 ## D80. A host program runs its output loop in blocks on the host's cores
 
-- **tinygrad:** `runtime/ops_cpu.py` (`CPUProgram.__call__`), which calls a
-  kernel once per launch on the calling thread; `codegen/__init__.py`
-  `full_rewrite_to_sink` (the pipeline after `pm_cast_const`), `do_number_param`
-  (and its pass) and `do_to_program`'s estimates; `uop/ops.py` (`KernelInfo`)
-  and `ProgramInfo.from_sink`; `engine/realize.py` (`get_call_kernel_args`) and
-  `exec_kernel`.
+- **tinygrad:** `runtime/ops_cpu.py` `CPUProgram.__call__` (calls a kernel
+  once per launch on the calling thread); `codegen/__init__.py`
+  `full_rewrite_to_sink` (the pipeline after `pm_cast_const`),
+  `do_number_param` (and its pass) and `do_to_program`'s estimates;
+  `uop/ops.py` `KernelInfo` and `ProgramInfo.from_sink`; `engine/realize.py`
+  `get_call_kernel_args` and `exec_kernel`.
 - **tolk:** `Codegen.split_blocks`, its place in
   `Codegen.full_rewrite_to_sink`, `Postrange.misses`,
-  `Codegen.pm_number_params` and
-  `Codegen.whole_loop`; `Ops.kernel_info`'s
+  `Codegen.pm_number_params` and `Codegen.whole_loop`; `Ops.kernel_info`'s
   `split`; `Shape.program_info_of_sink`; `Realize.get_call_kernel_args`;
   `Tolk_engine.compute_work`, `Tolk_engine.memory_work`,
   `Tolk_engine.memory_blocks`, `Tolk_engine.blocks` and
   `Tolk_engine.split_grid`.
-- **Differs:** for a CPU target, once the kernel is final (after
-  `pm_cast_const`), the largest range of axis type `WEAK` whose end reads no
-  range, of at least two iterations, and on which every store to global
-  memory, by its address, and every call and piece of custom code, by its
-  sources, depend, runs `block_lo + r` for `r` below
-  `block_hi - block_lo`. `block_lo` and `block_hi` are new variables of the
-  range's type, bounded by `[0, n]` for a loop of `n` iterations, in the
-  first two slots past those the kernel's parameters took, a loop's trip
-  among them (D140), and named afresh
-  where the kernel has a variable of either name. The variables numbered
-  after them take the slots past every slot a parameter takes, the bounds'
-  included, one slot per name. The kernel's `KernelInfo`
-  records `split = (n, lo, hi)`, the iterations and the two slots, by which
-  each launch finds the bounds; `n` is its program's first global size, and
-  its estimates count the whole loop, exactly when they read no other
-  variable: counted in the loop's 32-bit type, a count past 2^31 would wrap.
-  A host launch cuts `[0, n)` into `min(n, ops / 2^16)` blocks where
-  `ops > mem`, and `min(n, max(ops / 2^18, min(8, mem / 2^18)))` otherwise,
-  at least one, `ops` and `mem` the estimates' operations and bytes of
-  memory, each a group of
-  rig's host of as many threads as iterations, which its pool runs on the
-  performance cores, and the entry (D28) runs the
-  iterations its threads number; tinygrad's own launch (`whole_loop` in
-  `engine/realize.py`) runs one block, the whole loop.
+- **Differs:**
+  - For a CPU target, once the kernel is final (after `pm_cast_const`), the
+    largest range of axis type `WEAK` whose end reads no range, of at least
+    two iterations, and on which every store to global memory, by its
+    address, and every call and piece of custom code, by its sources, depend,
+    runs `block_lo + r` for `r` below `block_hi - block_lo`.
+  - `block_lo` and `block_hi` are new variables of the range's type, bounded
+    by `[0, n]` for a loop of `n` iterations, in the first two slots past
+    those the kernel's parameters took, a loop's trip among them (D140), and
+    named afresh where the kernel has a variable of either name. The variables
+    numbered after them take the slots past every slot a parameter takes, the
+    bounds' included, one slot per name.
+  - The kernel's `KernelInfo` records `split = (n, lo, hi)`, the iterations
+    and the two slots, by which each launch finds the bounds; `n` is its
+    program's first global size, and its estimates count the whole loop,
+    exactly when they read no other variable.
+  - A host launch cuts `[0, n)` into `min(n, ops / 2^16)` blocks where
+    `ops > mem`, and `min(n, max(ops / 2^18, min(8, mem / 2^18)))` otherwise,
+    at least one, `ops` and `mem` the estimates' operations and bytes of
+    memory. Each block is a group of rig's host of as many threads as
+    iterations, which rig's pool runs on the performance cores, a thread for
+    each block up to their count; the block count does not read the host's
+    cores. The entry
+    (D28) runs the iterations its threads number. tinygrad's own launch
+    (`whole_loop` in `engine/realize.py`) runs one block, the whole loop.
 - **Reason:** (d): sofo's and symo's training steps on the CPU (outside the
-  repository), which ran each kernel on one core. Their hottest kernels,
-  split by hand into 32 blocks on kimchi's 8 E-cores (`taskset -c 6-13`,
-  best of 30), took 6.17 ms and 0.77 ms (r_256_8_4_4_32_4), 3.38 and 0.42
-  (r_32_32_4_4_128_16), 0.28 and 0.04 (r_256_3_3_100_4) and 17.8 and 2.83
-  (r_128_64_3_4_400_100_4). On fudge, against one block (medians of 11, two
-  interleaved runs each), the tolk bench's
-  `lorenz/r_128_16_3_4_4_3_3_400_400/heuristic` takes 0.79 and 0.63 ms
-  against 5.85 and 6.04 ms, and rune's `Jit/sin-float32-64K` 82 and 74 us
-  against 360 and 356 us, `Jit/normal-float32-1M` 2.8 and 2.6 ms against
-  16.9 ms. A block costs its threads' start and join: rig's pool bench on
-  fudge, workers spinning, starts and joins an empty job on all 14 cores in
-  1.3-1.5 us, and a job of 2 us a core ends 2.1-3.7 us past its work
-  (`launch/empty-all-cores`, `launch/2us-chunks-all-cores`, three runs at
-  loads 5.1-8.5). At the 19 operations a nanosecond one of fudge's cores
-  does (one block of `sin` over [8; 1024]), 2^16 operations take 3.4 us,
-  about twice that cost. At 2^17 rows gained less (`Jit/matmul-64` 0.57 of
-  2^18's against 0.36 at 2^16); at 2^15 some gained more
-  (`JitFootprint/rnn-fwd-h20-replay` 0.34 against 0.57) and
-  `WarmStart/transposed-matmul-64` took 1.28 times as long as at 2^18
-  (medians, 4 interleaved runs at loads 3.9-9.9), so 2^16 is the smallest at
-  which no row lost. A kernel of more operations than bytes takes a block
-  for each 2^16 of them. Against 2^18, every other kernel as before, 6
-  interleaved runs each at loads 3.7-9.9: the tolk bench's
-  `lorenz/r_32_3_2_4_3_400/heuristic` (1.03 M operations, 3 blocks to 15)
-  takes 5.7-40.6 us against 15.2-35.8 (median 0.55 of 2^18's), rune's
-  `JitFootprint/rnn-fwd-h20-replay` 189-200 against 340-352, `Jit/matmul-64`
-  8.5-8.9 against 23.9-24.4 and `Jit/grad-of-jit-mlp-float32` 65-68 against
-  112-139. No row of either bench whose split moves is slower beyond the
-  spread of the unchanged `host/conv/heuristic` in the same runs (62.8-89.2
-  against 60.2-82.9); `host/tangent_products/heuristic`, 11 blocks to 32,
-  takes 18.7-112.0 against 18.2-93.5 (median 1.34, the control's 1.12), and
-  0.81 of 2^18's where the same 32 blocks ran with every kernel at 2^16. A
-  kernel that moves as many bytes as it does operations shares memory's
-  bandwidth among its blocks, so a further block speeds it less: a block for
-  each 2^16 operations made the concatenations of rune's
-  `Jit/cat-3-views-scaled-4096x64` and `Jit/kv-concat-decode`, which move 2
-  and 4 MiB (25 and 24 blocks), slower than at 2^18 (medians 1.61 and 1.50,
-  4 interleaved runs at loads 3.9-9.9), and a block for each 2^16 bytes made
-  `JitLoops/newton-grad-1024-replay`, whose 512 KiB copy takes 8 blocks for
-  2, slower in 7 of 8 interleaved runs (median 1.10, 27.6-54.6 us against
-  26.8-29.2, loads 5.1-9.8) and `Jit/devices/fsdp-backward-8` in 6 of 8
-  (1.08), while `host/max_rows/heuristic` (0.67),
-  `Jit/cumsum-scaled-float32-100x400` (0.57) and
-  `JitLoops/iterate-64-rows-into-4096x64-replay` (0.90) ran faster: the
-  gains are larger, but bytes keep 2^18 so that no row loses. At 2^15
-  operations or bytes 64 KiB copies split in 2 made
-  `Jit/sort-with-positions-4096` and `Jit/eigh-float32-64x8x8` 1.5-1.6 times
-  as slow. Such a kernel keeps a block for each 2^18 operations or bytes.
-  A block for each 2^17 or 2^16 bytes made a row slower, as did a cap on a
-  launch's threads apart from its blocks (6 interleaved runs each at loads
-  3.4-6.0, over every row of the rune and tolk benches whose split moves). At
-  2^17 bytes rune's `Jit/cumsum-scaled-float32-100x400` takes 27.0-30.2 us
-  against 35.0-38.0 and `JitLoops/iterate-64-rows-into-4096x64-replay`
-  77.0-83.8 against 83.8-91.3, but `JitLoops/newton-grad-1024-replay`, whose
-  512 KiB copy takes 4 blocks for 2, is slower in 6 of 6 runs (paired median
-  1.04; 1.12 at 2^16 bytes). A block for each 2^16 bytes up to 64, run on the
-  threads 2^18 bytes ask and the others queued on them, gained no row beyond
-  the spread of the unchanged rows and made `newton-grad` slower in 6 of 6
-  runs (1.16), `Jit/cumsum-neg-log-uniform-8x1024` in 5 of 6 (1.12) and
-  `host/max_rows/heuristic` in 6 of 6 (1.01). So a launch runs a thread for
-  each block, up to the performance cores.
-  One of fudge's cores moves about a byte in the time of an operation (14-17
-  bytes a nanosecond, one block of `x * 2` over [4096; 64]): a copy or a
-  cheap elementwise kernel, counted by its operations alone, ran on one
-  core. Rounding the blocks past 14 down to a multiple of fudge's 14 cores,
-  so that no wave runs short, gained nothing (`host/sin_nested_8` 15.4-34.4
-  against 17.8-29.7, `host/vecmat_1000` 145.7-448.6 against 117.2-229.6), so
-  a launch does not read the host's cores. Bytes ask at most 8 blocks,
-  measured: a memory-bound kernel gains to about 8 blocks, and on a loaded
-  host each further thread can be held up (rune's `Jit/kv-concat-decode`, 4
-  MiB, 4 interleaved runs at load 4.6-6.6: 6 blocks 62-69 us, 8 57-95, 16
-  83-143, 32 89-185). Against the operations alone, 5 interleaved runs each
-  at load 4.8-5.8, rune's `Jit/cumsum-float32-4096x32` takes 39.6-50.5 us
-  against 72.1-80.0, `JitLoops/iterate-64-rows-into-4096x64-replay`
-  83.9-91.2 against 114.7-123.7 and `JitLoops/newton-grad-1024-replay`
-  26.0-26.7 against 30.2-31.5, and no row of the rune or tolk bench whose
-  split moves is slower. In the assembly prototype's cases, 4 interleaved
-  runs each at load 4.6-5.4, `x * 2` over [4096; 64] takes 36.1-42.2 against
-  124.0-277.0, and a decode step whose key and value concatenations are
-  stores that attention reads 126.8-128.4 against 243.6-256.7. tinygrad
-  deleted its CPU threading (`OptOps.THREAD`) at 4197f7423, before the pin.
+  repository), which ran each kernel on one core. On fudge the tolk bench's
+  `lorenz/r_128_16_3_4_4_3_3_400_400/heuristic` takes 0.79 ms against 5.85 ms in
+  one block. A block costs its threads' start and join, 1.3-1.5 us on all 14 of
+  fudge's cores (rig's `launch/empty-all-cores`); 2^16 operations a block is the
+  smallest at which no row of the rune or tolk bench lost. Bytes keep 2^18,
+  since a block for each 2^17 or 2^16 bytes made a row slower, and ask at most 8
+  blocks, since a memory-bound kernel gains to about 8 and on a loaded host each
+  further thread can be held up. tinygrad deleted its CPU threading
+  (`OptOps.THREAD`) at 4197f7423, before the pin.
 - **Pinned by:** the Codegen suite: `host programs in blocks › a host program
   splits the loop each store's address reads`, `› a split loop's estimates
-  count its whole loop past 2^31`, `› stores of separate loops
-  split none`, `› a store of no loop splits none`, `› a reduction's loop is
-  never split`, `› a serial loop is never split`, `› a loop shrunk by its
-  guard splits at its shrunk end, unguarded`, `› a split loop of 2^25 iterations keeps 32-bit indices` and `› a split's bounds and a variable take slots of their own past buffers that skip one`;
-  `calls and custom code beside host blocks › a loop beside one that does
-  not depend on it does not split`, `› one beside a loop runs once` (a
-  call and code, counting atomically, which counted 8 for 1 when the loop
-  split), `› a loop that one depends on splits, beside no store` and `› a
-  loop that code depends on splits`; the
-  Tolk_engine suite: `host programs in blocks › a launch of more operations
-  than bytes runs a block per 2^16 operations, another per 2^18 operations
-  or bytes, bytes up to 8`, `› a program writes the
-  same bits in any blocks`, `› a kernel that moves many bytes for few
-  operations writes its values` and `› a run of a large kernel computes its
-  sums`, `a variable named as a block's bounds is a variable like any
-  other`, and `a kernel whose estimates fit no int › splits and runs`.
+  count its whole loop past 2^31`, `› stores of separate loops split none`, `›
+  a store of no loop splits none`, `› a reduction's loop is never split`, `› a
+  serial loop is never split`, `› a loop shrunk by its guard splits at its
+  shrunk end, unguarded`, `› a split loop of 2^25 iterations keeps 32-bit
+  indices` and `› a split's bounds and a variable take slots of their own past
+  buffers that skip one`; `calls and custom code beside host blocks › a loop
+  beside one that does not depend on it does not split`, `› one beside a loop
+  runs once`, `› a loop that one depends on splits, beside no store` and `› a
+  loop that code depends on splits`; the Tolk_engine suite: `host programs in
+  blocks › a launch of more operations than bytes runs a block per 2^16
+  operations, another per 2^18 operations or bytes, bytes up to 8`, `› a
+  program writes the same bits in any blocks`, `› a kernel that moves many
+  bytes for few operations writes its values` and `› a run of a large kernel
+  computes its sums`, `a variable named as a block's bounds is a variable like
+  any other`, and `a kernel whose estimates fit no int › splits and runs`.
 
 ## D81. Withdrawn
 
@@ -2410,8 +2006,7 @@ A GFX11 trace set `TTRACE_EXEC` by name. tolk encodes no thread trace yet
 ## D86. Withdrawn
 
 `Spec.program` rejected an index of a vector value at a lane that is not a
-constant. No pass makes one, and NVRTC rejects a hand-built kernel that does,
-so no consumer depended on the check. `Spec.program` accepts it, as
+constant. No consumer depended on it; `Spec.program` accepts it, as
 `shared_spec` (`uop/spec.py` `spec_shared`) does.
 
 ## D87. Withdrawn
@@ -2438,48 +2033,25 @@ Withdrawn: multi-device is out of scope, see README.
   a float: `w` on arm64, `x` on x86_64, `f` on riscv64. Every other use of
   the zero, and every other zero, keeps the literal.
 - **Reason:** (b): backends lower a select of a value and a zero, by a
-  comparison of the two, to an instruction or a call that may keep the
-  value's zero where the select returns the literal's: `(v < 0.0f) ? v :
-  0.0f` is `-0.0` at `v = -0.0`. clang's AArch64 backend makes it `fminnm` or
-  `fmaxnm` from `-O1` up, in clang 19, Homebrew clang 22.1.7 and Apple clang
-  17; its RISC-V backend `fmin` or `fmax`, in clang 19; its x86 backend, at
-  float16, a call to `fminf` or `fmaxf`, whose zero at a tie is the C
-  library's, in clang 19. At float32 and float64 the x86 backend's `minss`
-  and `maxss` pick as the select does. A maximum against a zero, rendered as
-  such a select, meets it too, and an add of `+0.0` after it is then
-  dropped. Before any backend, LLVM's InstCombine, on every target, reads a
-  select whose arm converts its compared value as a minimum or maximum, and
-  rebuilds it to pick the zero at a tie. In clang 19, `(0.0f < x) ? 0.0 :
-  (double)x` becomes `(x >= 0.0f) ? 0.0f : x`, widened: `+0.0` at `x =
-  -0.0`. Selects of the compared value itself, and of vectors, keep their
-  order. rune compares a float16 in float32 and selects between the halves,
-  so its selections of a half meet it. Under `Rune.jit`, `Nx.where (Nx.less
-  x z) x z` gave `-0.` on arm64 where eager gives `0.`, a sum of a minimum
-  against a folded zero gave `-0.`, which a float sum never is, and on
-  x86_64 `Nx.where (Nx.less z x) z x` gave `0.` at a float16 `-0.`. The
-  lowering needs the select's operands to be the comparison's, so a zero
-  hidden in the comparison alone avoids it. On x86_64 a selection of the
-  compared value itself needs no hiding, so a maximum against a zero stays
-  one `maxps`; hidden in every comparison, the zero cost a maximum before a
-  64 × 64 matmul 1.10 times its time and a 4096-point FFT 1.15 times
-  (D166). Converting after the selection, or comparing before the widening,
-  keeps every value, and the half's comparison then reads a float16 zero,
-  which x86_64 hides. Hidden everywhere, the zero also kept the backend
-  from making `c ? v : 0.0f`, a select by any other condition, a mask: a
-  routed MXFP4 product on the host, whose rows are selected by their
-  validity before the product, ran 1.17 times as long as the same product
-  without the select, and runs 1.05 times as long with the literal there
-  (single-threaded kernel, paired). `-ffp-exception-behavior=maytrap` or
-  `-frounding-math` also avoid the lowering, at 2.7× to 4.7× the time of a
-  matmul or an element-wise kernel.
+  comparison of the two, to a minimum or maximum that may keep the value's
+  zero (`fminnm`/`fmaxnm` on AArch64, `fmin`/`fmax` on RISC-V, `fminf`/`fmaxf`
+  at x86 float16); at float32 and float64 the x86 backend's `minss` and
+  `maxss` pick as the select does. InstCombine rebuilds a select whose arm
+  converts its compared value to pick the zero at a tie. Selects of the
+  compared value itself, and of vectors, keep their order. Under `Rune.jit`,
+  `Nx.where (Nx.less x z) x z` gave `-0.` on arm64 where eager gives `0.`,
+  and on x86_64 `Nx.where (Nx.less z x) z x` gave `0.` at a float16 `-0.`.
+  Converting after the selection, or comparing before the widening, keeps
+  every value. Hidden in every comparison at x86_64 float32, the zero cost a
+  maximum before a 64 × 64 matmul 1.10 times its time (D166); hidden
+  everywhere, it kept a routed MXFP4 product's select from becoming a mask,
+  1.17 times the time without the select against 1.05 with the literal.
 - **Open:** the GPU renderers keep the literal, and NVRTC 13.4 lowers `(v <
   0.0f) ? v : 0.0f` to `min.f32` for sm_89: under `Rune.jit` on the RTX 5000,
   the selection gives `-0.` at `-0.`. NVRTC has no statement expressions, so
   CUDA needs a helper function around the `asm`; Metal has no inline `asm`.
-  HIP and Metal are untested. InstCombine's rewrite of a selection of a
-  converted value runs on every target, comgr's and NVRTC's included, so a
-  GPU's selection of a float16 against a zero may pick `+0.` at `-0.` too;
-  untested.
+  HIP and Metal are untested, as is a GPU's selection of a float16 against
+  a zero, which InstCombine may make pick `+0.` at `-0.`.
 - **Pinned by:** the Cstyle suite (`test/renderer/cstyle`): `zeros a
   comparison reads › a float zero a comparison reads is opaque to a backend
   that lowers it to an extreme, and a literal elsewhere › *`, `› a select
@@ -2487,26 +2059,25 @@ Withdrawn: multi-device is out of scope, see README.
   select of a value and a zero, compared and selected at two types, picks as
   the select does, on the host › *`; rune's `rune jit` suite: `classes › a
   selection of a minimum against its constant is exact`, a selection on
-  `minimum c x < c` at `c = 0.`, whose inputs hold `-0.`, in float16,
-  float32 and float64, and `classes › a selection of a value and a zero is
-  exact › *`.
+  `minimum c x < c` at `c = 0.` over inputs holding `-0.`, in float16,
+  float32 and float64, and `classes › a
+  selection of a value and a zero is exact › *`.
 
 ## D89. A contraction of little reuse streams its operand of least reuse
 
 - **tinygrad:** `codegen/opt/heuristic.py` (`hand_coded_optimizations`'
-  matrix-vector case, which applies only when the first reduce's product has two
-  loads as operands, `mulop.src[0].op is Ops.INDEX and mulop.src[1].op is
-  Ops.INDEX`, the vector's index has the first weak reduce range as a term of
-  its sum and its ranges are among the matrix's: that axis split into
-  `MV_THREADS_PER_ROW` local threads, 8, the first global axis that 16 divides,
-  whichever operand reads it, into `MV_BLOCKSIZE` local threads, 4, then
-  `MV_ROWS_PER_THREAD` upcast lanes, 4, whatever the matrix's layout, size and
-  reuse), `hand_coded_optimizations` (the tensor cores, tried first),
-  `hand_coded_optimizations` (the upcasts of output axes, which find reuse only
-  on an axis some access does not read and take 3 or 4 of it), and
+  matrix-vector case, which applies only when the first reduce's product has
+  two loads as operands, the vector's index has the first weak reduce range
+  as a term of its sum and its ranges are among the matrix's: that axis
+  split into `MV_THREADS_PER_ROW` local threads, 8, the first global axis
+  that 16 divides into `MV_BLOCKSIZE` local threads, 4, then
+  `MV_ROWS_PER_THREAD` upcast lanes, 4, whatever the matrix's layout, size
+  and reuse),
+  `hand_coded_optimizations` (the tensor cores, tried first),
+  `hand_coded_optimizations` (the upcasts of output axes), and
   `codegen/opt/postrange.py` (`apply_opt`, which refuses a local split of a
-  reduce axis whose reduction runs inside a weak range that a reduction closes,
-  a serial reduce).
+  reduce axis whose reduction runs inside a weak range that a reduction
+  closes).
 - **tolk:** `Heuristic.lanes` (`Renderer.t.simd_threads`), `Heuristic.rows`,
   `Heuristic.columns`, `Heuristic.sector_lanes`,
   `Renderer.t.local_threads_max`, `Renderer.t.stream_threads`,
@@ -2530,7 +2101,7 @@ Withdrawn: multi-device is out of scope, see README.
     (`CAST`, `BITCAST`), decode codes and scale a vector (D81's part), and
     read a reduction of the outputs alone, which comes before the sum: a
     row's expert that an argmax over the experts finds is computed once a
-    row;
+    row. A reduction that reads a buffer is stored (`remove_bufferize`);
   - the streamed operand: an operand's reuse `R` is the product of the sizes
     of the global axes it does not read, times `d` for each it reads only as
     its quotient by `d`. The operand of least `R` is streamed, `W`; of two of
@@ -2544,10 +2115,11 @@ Withdrawn: multi-device is out of scope, see README.
     shorter sum, or more multiply-adds a byte, tries a core first and streams
     where none applies. Past `R = 16` the operand is read in `ceil (R / 16)`
     passes, and a core of two stages that keeps `core_threads / 2` threads
-    (`Stage.tile`) takes the kernel first. sm_89 was measured; the other CUDA
+    (`Stage.tile`) takes the kernel first: sm_89 was measured, the other CUDA
     parts of two stages, from sm_80, take the rule unmeasured, and AMD and
     Metal, of one stage, keep streaming. Past `R = 32` a core takes it where
-    one applies, and the other rules where none does;
+    one applies, and the other rules where none does. A decoded operand
+    streams at any reuse (D230);
   - the layout: `W`'s main access is the one with a range of unit stride
     whose terms of contracted ranges span the most bytes. When that range `u`
     is contracted (rows): `W`'s reuse axes are upcast, each by its share of
@@ -2568,217 +2140,80 @@ Withdrawn: multi-device is out of scope, see README.
     layout to run `stream_threads` threads, a workgroup of the renderer's
     `local_threads_max` threads (D484), 1024 on CUDA, takes fewer threads
     across them, down to 8, and more along the reduce, so that more
-    workgroups share the outputs. 8 threads of 2 bfloat16 columns read a
-    32-byte sector. 32768 is the bound of sm_89's
-    parts, as D175's floor is: at 16384, from the L2, the decode step's key
-    and value projection (`gpt_oss_kv`, 2880 to 512, `stream/decode-kv`) is
-    1.16x slower, its query projection (`gpt_oss_qkv`) 1.10x and `vecmat`
-    1.52x, and from memory equal; 65536 changes the layout's shape, 8
-    threads across, and `vecmat` is 3.5x slower. Metal takes 16384, a
-    bound fitted on an M1 Max (Apple7, 32 GPU cores); other Apple parts are
-    unmeasured. GPU time with D175's `core_threads` at Metal's 32768, the
-    two values measured together, in 3 ABBA rounds of 2 samples a value
-    under load 33-52 on 10 cores, where a kernel that does not change
-    reads up to 1.22x apart: a half vector times 16384 by 8192 runs 1.74x
-    faster (970 against 1684 us), and the decode step's key and value
-    projection, 2880 to 512, 1.38x slower (62.8 against 45.4 us). Within
-    that noise, a half vector times 4096 by 4096 reads 1.24x faster, and a
-    half attention of 64 query heads over 8 key heads, 1024 or 4096 keys,
-    the same. rune's float32 attention decode of 8 heads over 4096 keys,
-    whose splits `stream_threads` sizes, reads faster (939 against 2074 us),
-    with spreads of 576-1594 and 1481-2361 that show the direction only.
-    kaun's 15 `Quant/metal` decode products keep their kernels. rune's
-    scatter plan, which `stream_threads` also sizes, is untimed. The 12
-    products swept from 8192 to 131072 threads with `core_threads` at 16384
-    gave the same trade (geomean 0.956x of 32768's);
+    workgroups share the outputs; 8 threads of 2 bfloat16 columns read a
+    32-byte sector. `stream_threads` is 32768 on sm_89's parts, as D175's
+    floor is: at 16384 the decode step's key and value projection
+    (`stream/decode-kv`) is 1.16x slower. Metal takes 16384, fitted on an M1
+    Max (Apple7); other Apple parts are unmeasured, and rune's scatter plan,
+    which `stream_threads` also sizes, is untimed;
   - a group inside a reduce: a reduce axis whose reduction runs inside a
     serial reduce, a weak range that a reduction closes, splits into local
     threads, each iteration of the outer reduce storing and reading the shared
     buffer between barriers. One inside an unrolled reduce, an upcast range
-    that a reduction closes, is refused, since each of its lanes would need a
-    buffer. tinygrad, which checks only for a weak range, refuses that one too
-    for the weak quotient that the unroll's split leaves its reduction; the
-    lanes of a tensor core's K, which the core contracts and no reduction
-    closes, take a group in both;
+    that a reduction closes, is refused, as tinygrad refuses it; the lanes of
+    a tensor core's K, which the core contracts and no reduction closes, take
+    a group in both;
   - the constants: `lanes`, `in_flight`, `in_flight_held`,
     `stream_threads`, `stream_first`, `summed`, `per_byte_first`, D175's
     `core_threads` and D479's `group_least` each move the order of a sum,
     `stream_threads` also through `Heuristic.group` (D479). They are fixed
-    per target, never read from a device: a value read from the part would
-    give two parts of one target different bits, and the program key names
-    the target alone (D170). `stream_threads` and D175's `local_workgroups` are
-    fields of the renderer, since a second reader, rune's attention
-    lowering, sizes its grid by them. `lanes` reads the renderer's
-    `simd_threads`, since a second target states another width: a CDNA
-    (gfx9) wave holds 64 threads where CUDA's warp, RDNA's wave and Metal's
-    SIMD group hold 32 ("AMD devices return 64 for gfx9 and 32 for gfx10
-    and above", HIP's `warpSize`), and rune's attention lowering sizes a
-    decode step's workgroup by it. It is 32 wherever `lanes` was, so those
-    targets' kernels are unchanged; CDNA's layouts at 64 are unmeasured, no
-    part being reachable. D175's `core_threads` is one, since
-    Metal fitted its own. `per_byte_first` is one, since
-    a second target measured another crossover: nonnormal's R9700 (gfx1201)
-    streams gpt-oss-20b's routed blocks at 149 a byte faster than its cores
-    (gate and up 20.6-22.1 against 26.7-28.0 ms a layer, down 10.2-11.1
-    against 13.6-14.4, the gather stored as the model stores it, under every
-    routing measured) where sm_89's cores win 4-6x at the same intensity.
-    Every target keeps 64 until its own crossover is placed: gfx1201's lies
-    above 149, and the rows that place it (routed blocks at 1024 and 2048
-    tokens, 298 and 597 a byte, both paths forced) are pending on
-    nonnormal. Routing does not order the two paths: across eight routings
-    no kernel moves by more than 5% on AMD or 10% on CUDA, and a path chosen
-    by data would make a row's bits depend on other rows' routes. A gather
-    fused into the streamed product, as when its rows are an input, costs
-    1.3x on CUDA (the streamed gate and up product 12.3-13.9 against
-    9.4-10.8 ms), its rows gathered again in each of 1440 workgroups, which
-    the order does not weigh: an open cost.
+    per target, never read from a device, since the program key names the
+    target alone (D170). `stream_threads`, D175's `local_workgroups`,
+    `core_threads` and `per_byte_first` are fields of the renderer, since a
+    second reader (rune's attention lowering) or a second target's fit
+    states another value. `lanes` reads the renderer's `simd_threads`: 64 on
+    a CDNA (gfx9) wave, unmeasured, and 32 elsewhere. Every target keeps
+    `per_byte_first` at 64 until its own crossover is placed: gfx1201's lies
+    above 149, its rows pending on nonnormal. Routing does not order the two
+    paths: across eight routings no kernel moves by more than 5% on AMD or
+    10% on CUDA, and a path chosen by data would make a row's bits depend on
+    other rows' routes. A
+    gather fused into the streamed product, its rows gathered again in each
+    workgroup, costs 1.3x on CUDA, which the order does not weigh: an open
+    cost.
 - **Reason:** (d): gpt-oss-20b (`kaun/examples/06-gpt-oss`) on CUDA, and
   nx.quant's products (`Nx_quant.apply`, `Nx.map_segments` over it)
-  compiled by rune. A contraction of little reuse reads its streamed operand
-  from memory more than it multiplies: tinygrad's layout puts 8 threads on a
-  row whatever the matrix, finds no layout for a reuse past 1, and reads only
-  the first reduce range for lanes, which a quantised block's values are not.
-  Measured on fudge's RTX 5000 Ada (576 GB/s, 64 MiB of L2), the rule against
-  the layouts before it (D89's matrix-vector layout and D92), interleaved,
-  ranges of three runs:
-  - lanes by stride: tolk's bench `stream/q8_0-1`, Q8_0 16384 by 8192 at one
-    token, 1230-1240 to 291 us; kaun's `Quant/cuda/q8_0-product-1-token`
-    408-410 to 27-28 us, `q6_k` 3.40-3.41 ms to 571 us, `q4_k` 255-257 to
-    53-55 us, `mxfp4-blocks` (GGUF's 17-byte blocks) 86 to 24-26 us; the
-    gpt-oss `--q8_0` decode step 22.8 to 8.0-8.1 ms;
-  - reuse in registers, rows held: `stream/dense-bf16-12` 889-914 to
-    267-271 us, `stream/q8_0-12` 1030 to 431-438 us, `stream/mxfp4-12` 5.35-5.39
-    to 3.09-3.10 ms (its decode stored as float32, D163), the routed blocks
-    of 16 rows of a 512-token prompt `stream/routed-512-bf16` 33.2 to 10.2 ms
-    (from a tensor core) and `stream/routed-512-f32` 57.8-58.0 to 20.6 ms,
-    kaun's `Quant/cuda/routed-product-512-tokens` 82.5 to 44.4-44.6 ms. Rows
-    held per thread against 4 SIMD groups: at `R = 16` 10.2 against 22.6 ms
-    and 20.6 against 28.6 ms; at `R = 2` (dense bfloat16, 16384 by 4096)
-    264.6-265.0 against 265.1-265.2 us;
-  - the order against the cores, on the rows' kernels as rune compiles them
-    today: `stream/dense-bf16-16` 834-844 us on a core to 281-283 us
-    streamed; `stream/dense-bf16-32`, where a thread's 16 rows leave two
-    passes over the operand, 425 us on a staged core and 540 us streamed. The
-    time follows the passes: forced to 2 and 4 passes, 16 rows take 519 and
-    1018 us, 32 rows 540 and 1024. What separates core from stream at
-    `R = 32` is whether a staged core keeps its threads. Keeping them, the
-    core won all 10 shapes measured, by 1.03 to 2.5 times. Short of them the
-    stream won 7 of 9. The core won the other two, gains left untaken: 6144
-    outputs a row by 4096 terms by 0.6 to 4%, and 2048 by 1024 (18 us on the
-    core, 25 streamed). An unstaged core does not pay: 24 rows take 524 us
-    streamed and 827 on one, and gpt-oss's prefill router, which no core
-    stages, 45 and 233. At
-    `R = 64` the core keeps it
-    (`stream/dense-bf16-64`, 433-436 us with and without `MV`). The
-    decode step's attention values, `gpt_oss/gpt_oss_decode_values` (`R = 8`,
-    a sum of 1024 slots), 25.2-26.6 us on a core to 14.6-15.3 us streamed;
-    its keys, `stream/decode-keys` (`R = 8`, a sum of 64), 8.4 us on a core
-    and 13.9-14.6 us streamed, where 32 lanes leave 2 loads each and a sum
-    across them that a core takes in one step: a sum under 256 values tries
-    the cores first, a constant between the sums measured. Floats are upcast
-    as decoded operands are: streamed without the upcast of their 8 heads the
-    keys took 16.6 us against 13.9-14.6, and the float32 routed blocks hold
-    their 16 rows in 20.6 ms against 28.6 ms in SIMD groups;
-  - the order by multiply-adds per byte, forced each way (kernel times under
-    `DEBUG=2`, 17 calls a run, load about 60): a core's tiles read a matrix
-    from memory at 137-167 GB/s where the streamed threads reach 465-512, so
-    a core wins where blocks of rows share a matrix the cache holds, or where
-    the arithmetic per byte binds the streamed threads. Under 64 a byte
-    streams faster: an MXFP4 matrix of 16384 by 16384 at 16 rows, 30 a byte,
-    0.69-0.71 ms against 0.88-1.06 on a core, at 32 rows, 60 a byte,
-    1.50-1.52 against 1.68; blocks of 16 rows each of its own bfloat16
-    matrix (`stream/routed-512-bf16`, 8 a byte) 10.2 against 33.2 ms;
-    gpt-oss-20b's experts with bfloat16 matrices at 128 and 256 tokens, 12
-    and 24 a byte, 4.9 and 7.7 ms a layer against 11.2 and 11.1. Past it the
-    cores: its MXFP4 experts at 224, 256 and 512 tokens, 66, 88 and 149 a
-    byte, 7.0, 2.6 and 3.7 ms a layer against 7.9, 9.9 and 17.5 streamed,
-    and bfloat16 experts at 1024 tokens, 72 a byte, 12.7 against 22.8. The
-    constant lies between 60 and 66; blocks sharing their matrices at 40 to
-    58 a byte stay streamed, 1.1 to 1.55 times slower than a core: the MXFP4
-    experts at 128 to 192 tokens (43-58 a byte, 5.0-6.6 ms against 4.1-4.3)
-    and bfloat16 ones at 512 (40 a byte, 12.8 against 11.6). The constant is a
-    crossover of achieved rates: at 60 a byte the streamed threads reach 18%
-    of the GPU's peak arithmetic and a core's tiles 15% of its bandwidth.
-    What separates the shared blocks from the dense matrix at 60 is how
-    much of the blocks' matrices the cache holds, and sm_89's parts hold
-    from 12 MB to 96 MB: no bound of the target tells 8.8 MB working sets
-    from 142 MB ones, so the 40-58 a byte band, 1.1-1.55x slower on fudge,
-    is the cost of one program per target. When the order was introduced, end
-    to end: kaun's `GptOss/prefill-512` 446-452 to 186-187 ms and
-    `GptOss/experts-at-prefill-512` 18.5-18.7 to 4.66-4.68 ms, as the cores
-    took back what the layouts had streamed. Those two rows no longer measure
-    the layouts: their kernels are the cores', so turning the contraction off
-    (`MV=0`) leaves them at 122.0 against 123.1 ms and 2.77 against 2.79 ms
-    (minima of four interleaved rounds). The rows that hold the layouts are
-    tolk's `stream/*` and `gpt_oss/*` and kaun's `Quant/cuda/*`: few outputs
-    and decoded products, 1.65-8.7x and 3.7-65x. The rule
-    applies on AMD's and Metal's cores too, where the constant is not
-    measured: nonnormal's R9700 rows (`GptOss/experts-at-prefill-512`,
-    `GptOss/prefill-512`) and Metal's are pending;
-  - the bound past `R = 32`: a streamed operand is read once a pass, where
-    the other rules' tiles share loads among a workgroup's threads. Float32
-    streamed loses from `R = 64` (2107-2171 against 1909-1987 us for a matrix
-    of 16384 by 4096) to `R = 1024` (a 1024-cube product, 1054 against 398
-    us). Narrower operands streamed faster than tiled to `R = 256` in a model
-    of the kernel on tinygrad at the pin, on matrices past L2, which no tolk
-    row confirms: they take the other rules past 32 until one does. A
-    decoded operand streams at any reuse (D230);
-  - a routed product whose rows' experts an argmax in the kernel finds,
-    gpt-oss-20b's shapes of 32 experts' `[2880; 2880]` matrices
-    (`stream/routed-argmax-16-bf16`), the general rules against streamed,
-    GPU time of a call, three interleaved processes each: bfloat16 at 1
-    row 138-142 to 35-51 us, 16 rows 1.235-1.251 to 0.502-0.519 ms (the
-    matrices read at 91% of the bandwidth), 64 rows 3.10-3.18 to 1.99-2.01
-    ms; float32 at 16 rows 2.74-2.77 to 1.00-1.01 ms. Such a kernel arises
-    only where the reduction reads no storage, a function of positions: one
-    that reads a buffer, as a router's top-k over its logits, is stored
-    (`remove_bufferize`), and its product reads the ids;
-  - unchanged: `stream/dense-bf16-1`, `stream/mxfp4-1`, `stream/decode-head`,
-    `stream/q8_0-64`, kaun's `mxfp4-product-1-token` and
-    `routed-product-1-tokens`;
-  - the parts merged from D81, D96 and D110, measured before fudge's rows:
-    the decode step from 45.5 to 11.1 ms on an RTX 5000 Ada, its expert
-    products reading MXFP4 codes and a widened bfloat16 activation, which
-    tinygrad declines; a workgroup's rows on the matrix's own axis took a
-    512-token gate and up product in blocks of 4 from 56.6 to 21.9 ms; few
-    outputs took the key and value projections from 9.05 to 7.8 us and the
-    router from 6.7 to 3.7 us.
+  compiled by rune, whose streamed operand tinygrad's layout reads from
+  memory more than it multiplies. On fudge's RTX 5000 Ada, tolk's bench
+  `stream/q8_0-1` goes from 1230-1240 to 291 us. 64 multiply-adds a byte is
+  the measured crossover against the cores (between 60 and 66); blocks
+  sharing their matrices at 40-58 a byte stay streamed, and that band,
+  1.1-1.55x slower on fudge, is the cost of one program per target. The
+  constant is not measured on AMD's and Metal's cores: nonnormal's R9700
+  rows (`GptOss/experts-at-prefill-512`, `GptOss/prefill-512`) and Metal's
+  are pending. Past `R = 32` float32 streamed loses to the tiles from
+  `R = 64`; narrower operands take the other rules past 32 until a tolk row
+  confirms them streamed.
 - **Pinned by:** the Heuristic suite: `the optimisations chosen are tinygrad's ›
   <environment> › the optimised kernel`, cases `matvec_*`, `vecmat_*`,
   `gpt_oss_*`, `experts_down_*`, `routed_blocks_*`, `routed_own_*`,
-  `routed_shared_*` (blocks sharing their experts' matrices, on a core),
-  `routed_at_bound_*` and `routed_past_bound_*` (63.9 a byte streamed, 71.0 on a
-  core), `shared_keys_*`, `rows_m{4,12,32}_*`, `q8_0_blocks_*`, `gguf_mxfp4_*`,
-  `mxfp4_m12_*`, `rows_short_*` (a sum of 64 on the cores) and
-  `routed_by_argmax_*` (rows whose experts an argmax in the kernel finds,
-  streamed); `streaming › the streamed operand's reuse outside a thread is its
-  reuse over its tile`, `› a SIMD group's load of an operand streamed along the
-  reduce reads whole sectors`, `› the unroll is the largest divisor of its loop
-  up to 8, 4 with reuse` (covering a contracted loop left beside an unroll), `›
-  a contraction streams up to a reuse of 32, before a tensor core` and `› a
-  recorded contraction streams before a tensor core up to 64 multiply-adds per
-  byte of its streamed operand` (rune's kernels of one token's products, of
-  blocks of their own matrices, of rows routed by an argmax in the kernel and of
-  gpt-oss-20b's experts at a 512-token prompt), `› each renderer streams before
-  a core up to 64 multiply-adds a byte` (the renderers' fields) and `› a
-  contraction streams before a core up to the renderer's bound a byte`, `› a
-  product's workgroups hold at most a block's threads on every GPU` (gfx942
-  among them) and `› a product streamed by its rows reduces over a SIMD
-  group's threads` (gfx942's 64); the Cstyle suite's `a renderer states its
-  SIMD group's threads and a workgroup's most`; `the
+  `routed_shared_*`, `routed_at_bound_*` and `routed_past_bound_*`,
+  `shared_keys_*`, `rows_m{4,12,32}_*`, `q8_0_blocks_*`, `gguf_mxfp4_*`,
+  `mxfp4_m12_*`, `rows_short_*` and `routed_by_argmax_*`; `streaming › the
+  streamed operand's reuse outside a thread is its reuse over its tile`, `› a
+  SIMD group's load of an operand streamed along the reduce reads whole
+  sectors`, `› the unroll is the largest divisor of its loop up to 8, 4 with
+  reuse`, `› a contraction streams up to a reuse of 32, before a tensor core`
+  and `› a recorded contraction streams before a tensor core up to 64
+  multiply-adds per byte of its streamed operand`, `› each renderer streams
+  before a core up to 64 multiply-adds a byte` and `› a contraction streams
+  before a core up to the renderer's bound a byte`, `› a product's workgroups
+  hold at most a block's threads on every GPU` and `› a product streamed by
+  its rows reduces over a SIMD group's threads`; the Cstyle suite's `a
+  renderer states its SIMD group's threads and a workgroup's most`; `the
   hand-coded optimisations keep a kernel's writes › small kernels ›
   experts_down_metal` (a group inside another reduce); the Postrange suite's
   cases `double_sum_group`, `double_sum_group_twice` and
-  `double_sum_unrolled_group`; on fudge, tolk's bench `stream/*` and `gpt_oss/*`
-  rows and kaun's `Quant/cuda/*` rows.
+  `double_sum_unrolled_group`; on fudge, tolk's bench `stream/*`
+  (`stream/mxfp4-12` with its decode
+  stored as float32, D163) and `gpt_oss/*` rows and kaun's `Quant/cuda/*` rows.
 
 ## D90. A linked schedule resolves its launches at link
 
 - **tinygrad:** `engine/realize.py` (`resolve_params`) and `exec_kernel`, which
   find a call's buffers, launch dimensions and variable values on every run, and
-  `uop/ops.py` (`UOp._sym_fxn`, a cached property that simplifies a symbolic
-  integer once and compiles it to a Python function, which `UOp.sym_infer` calls
-  on each evaluation).
+  `uop/ops.py` (`UOp._sym_fxn`, cached on the node, which `UOp.sym_infer`
+  calls on each evaluation).
 - **tolk:** `Tolk_engine.affine`, `Tolk_engine.computation`,
   `Tolk_engine.value`, `Tolk_engine.locate` and `Tolk_engine.launch`;
   `Shape.sym_compile`, and
@@ -2788,36 +2223,35 @@ Withdrawn: multi-device is out of scope, see README.
   the run's ints or constants: each variable of the run is a word, a value
   computed from them a word the run computes once (`Shape.sym_compile`, which
   simplifies once and computes on `int`s, exactly where a value does not fit),
-  and a value that moves with a loop's trips, an offset, a scalar, a grid or a
-  loop's trips, a value of rig's program: the sum of trip words times constant
-  factors. A cast to an integer type that does not hold its operand's bounds
-  keeps the operand's low bits wherever it sits in a value, as tinygrad's
-  conversion of an argument to its parameter's type does for the whole value.
-  `Tolk_engine.computation` reads each such cast as a variable of the cast's
-  type, which the run computes truncated, since `Shape.sym_compile` casts
-  without truncating. A cast to `uint64` keeps an `int`'s bits, which its
-  reader states (`Tolk_engine.reading`): a scalar of 8 bytes and another cast
-  read them as they are, and where its number is read, under another
-  operation or as an offset, a loop's trips, a grid or a split loop's count,
-  a link refuses a constant past an `int` and the run a value it computes. A
-  link refuses such a cast where its operand moves with a loop's trips. A
-  scalar of 1, 2 or 4 bytes takes only a value its bytes hold, signed or
-  unsigned: a link refuses a constant they do not hold, and the run a value
-  of 4 bytes, where that conversion keeps the low bits. Whether a cast
-  narrows is decided by its operand's bounds, so a run refuses a binding
-  outside its variable's bounds, which tinygrad checks only where a variable
-  is bound (`UOp.bind`, `uop/ops.py`).
-  `Shape.sym_compile` is the port of
-  `_sym_fxn`, and `Shape.sym_infer` of `sym_infer` (`uop/ops.py` `sym_infer`),
-  which evaluates once; a caller that evaluates an integer many times keeps the
-  function `Shape.sym_compile` returns, where tinygrad caches it on the node. A
-  `DEBUG` report of a call lists the run's variables that the schedule reads,
-  where it listed every variable of the run.
+  and a value that moves with a loop's trips (an offset, a scalar, a grid or a
+  loop's trips) a value of rig's program: the sum of trip words times constant
+  factors.
+  - A cast to an integer type that does not hold its operand's bounds keeps
+    the operand's low bits wherever it sits in a value, as tinygrad's
+    conversion of an argument to its parameter's type does for the whole
+    value: `Tolk_engine.computation` reads it as a variable of the cast's type, which the run computes
+    truncated. A link refuses such a cast where its operand moves with a
+    loop's trips.
+  - A cast to `uint64` keeps an `int`'s bits (`Tolk_engine.reading`): a
+    scalar of 8 bytes and another cast read them as they are; where its
+    number is read, under another operation or as an offset, a loop's trips,
+    a grid or a split loop's count, a link refuses a constant past an `int`
+    and the run a value it computes.
+  - A scalar of 1, 2 or 4 bytes takes only a value its bytes hold, signed or
+    unsigned: a link refuses a constant they do not hold, and the run a value
+    of 4 bytes, where that conversion keeps the low bits.
+  - A run refuses a binding outside its variable's bounds, which decide
+    whether a cast narrows; tinygrad checks only where a variable is bound
+    (`UOp.bind`, `uop/ops.py`).
+  - `Shape.sym_compile` ports `_sym_fxn` and `Shape.sym_infer` ports
+    `sym_infer` (`uop/ops.py` `sym_infer`); a caller that evaluates an
+    integer many times keeps the function `Shape.sym_compile` returns.
+  - A `DEBUG` report of a call lists the run's variables that the schedule
+    reads, where it listed every variable of the run.
 - **Reason:** (c): rig's program takes words and values of them (D146), which
   a link resolves once, and refuses a scalar its width does not hold. Speed is
-  not a reason: tinygrad's resolution on each run has no path through rig's
-  program to time against, so no fudge row can show what resolving at link
-  saves.
+  not a reason: no fudge row can time tinygrad's per-run resolution through
+  rig's program.
 - **Pinned by:** the Tolk_engine suite (`test/engine/tolk_engine`): `link and
   run › a linked scan carries its storage across runs on each run's
   parameters`, `› a scan runs its body once per trip, carrying in place`, `› a
@@ -2863,35 +2297,25 @@ host's accumulators in its vector registers.
   where it reads it only as `r / d`, is upcast, later axes first, by the
   largest amount up to 16 that divides the axis and one such operand's `f`
   and keeps the kernel within the host's budget (D186's registers and D241's
-  conversions and iteration). An operand is decoded when its value converts
-  integer codes into floats, by a cast or a bitcast, outside any access's
-  address: integers that a load of integer storage gives, through integer
-  arithmetic alone. A float's bits read as an integer, as ReLU of a bfloat16
-  selects its sign, are no codes, and such an operand takes no decoded rule
-  here, in D230's stream or in D348's panel. The axis's lanes then share one decode of each value. A host renderer
-  that does not know its registers takes at most 4. On a GPU a streamed contraction takes the
-  same reuse as a term of the operand's reuse (D89), whatever the operand's
-  type; one that does not stream takes no run.
-- **Reason:** (d): a product with a decoded matrix decodes each value once
-  for each tile of the rows that read it, and on the host, where D163
-  inlines the decode into the product, tinygrad's 4 rows decoded a value 16
-  times at 64 rows. Upcast first and bounded by the budget, the rows take 8
-  on a file of 16 registers (one register a row: their stores lie apart),
-  and the columns' upcast of 4 still fits beside them: BLIS's fusing factor,
-  "as large ... as possible, given the constraints of the floating-point
-  datatype and the size of the architecture's register set" (Van Zee and
-  van de Geijn, TOMS, §4.3). On fudge's AVX2, one P-core, interleaved, the
-  kernels of kaun's `Quant/host/mxfp4-product-of-1024-{10,64}-bfloat16-tokens`
-  took 4.29 and 18.6 ms with 4 rows and 2.90 and 15.1 ms with 8; float32
-  rows 3.46 and 16.3 ms, then 2.27 and 12.05 ms, against 2.6 and 8.5 ms for
-  the decode stored and the 4-row product, a gap D348's panel closes;
-  rune's `Jit/experts-mxfp4-512x4of32-256`
-  64.3-64.7 ms, now 48-53 ms. Past the budget, 16 rows by 4 columns took
-  13.7 and 54-56 ms at 64 rows and 512 tokens, 8 rows by 8 columns 13.3 and
-  54-58, 16 rows by 2 columns 14.6 and 65. Files of 32 registers (NEON,
-  AVX-512) take 16 rows unmeasured: fudge has neither. Before D163's dropped digit,
-  `Nx.map_segments` over `Nx_quant.apply` on a prompt took 195-226 ms with
-  blocks of 16 rows upcast by 4 against 6.0-6.9 s without.
+  conversions and iteration). The axis's lanes then share one decode of each
+  value. An operand is decoded when its value converts integer codes into
+  floats, by a cast or a bitcast, outside any access's address: integers
+  that a load of integer storage gives, through integer arithmetic alone. A
+  float's bits read as an integer, as ReLU of a bfloat16 selects its sign,
+  are no codes, and such an operand takes no decoded rule here, in D230's
+  stream or in D348's panel. A host renderer that does not know its
+  registers takes at most 4. On a GPU a streamed contraction takes the same
+  reuse as a term of the operand's reuse (D89), whatever the operand's type;
+  one that does not stream takes no run.
+- **Reason:** (d): on the host, where D163 inlines the decode into the
+  product, tinygrad's 4 rows decode a value 16 times at 64 rows. On fudge's
+  AVX2, one P-core, the kernels of kaun's
+  `Quant/host/mxfp4-product-of-1024-{10,64}-bfloat16-tokens` take 2.90 and
+  15.1 ms with 8 rows against 4.29 and 18.6 ms with 4; past the budget, 16
+  rows by 4 columns took 13.7 and 54-56 ms at 64 rows and 512 tokens. Float32
+  rows took 2.27 and 12.05 ms against 2.6 and 8.5 ms for the decode stored
+  and the 4-row product, a gap D348's panel closes. Files of 32 registers (NEON, AVX-512) take 16 rows
+  unmeasured.
 - **Pinned by:** the Heuristic suite: `the optimisations chosen are
   tinygrad's › in the default environment › the optimised kernel`, cases
   `routed_*_cpu` and `routed_*_avx2`; `the host's decodes`: the
@@ -2910,65 +2334,42 @@ host's accumulators in its vector registers.
 - **tinygrad:** `uop/symbolic.py` (`fold_where_closure`, which asks
   whether the condition is in `t.bool_slice` or `f.bool_slice`, and whether
   the condition or a branch reaches an `INDEX`); `uop/ops.py`
-  (`_bool_slice`, a `recursive_property`: each node keeps the set of the
-  boolean nodes it reaches) and `backward_slice` (a
-  `cached_property` holding the whole slice of each node asked, and
-  `op_in_backward_slice_with_self`, which walks it);
+  (`_bool_slice`, a `recursive_property`) and `backward_slice` (a
+  `cached_property`, and `op_in_backward_slice_with_self`, which walks it);
   `codegen/late/coalesce.py` (`memory_coalescing`, which addresses a
-  load of several elements by a `SHRINK` of the buffer where one element's
-  address is an `INDEX`).
+  load of several elements by a `SHRINK` of the buffer).
 - **tolk:** `Shape.fold_where_closure`, `Ops.reaches`, `Ops.ops_reached` and
   `Ops.op_in_backward_slice_with_self`.
 - **Differs:**
   - the load gate: a selection whose condition or branch reaches a `LOAD` is
-    left alone, as one that reaches an `INDEX` is. A load's address is an
-    INDEX until memory coalescing makes a run of loads one load through a
-    SHRINK, valid included; the INDEX gate then misses it, and the rule
-    assumes a condition read from memory in every branch below it. The gate
-    also leaves alone a selection over a register's read, the load of a
-    reduction's accumulator, whose address is the register alone. The
-    goldens do not change;
+    left alone, as one that reaches an `INDEX` is. This covers a load whose
+    address memory coalescing made a SHRINK, valid included, and a register's
+    read, the load of a reduction's accumulator. The goldens do not change;
   - the condition: the rule asks whether `t` or `f` reaches the condition, a
     scalar boolean, with `Ops.reaches`: a walk from the branch that enters no
-    node built before the condition, since a node is built after its
-    sources. `Ops.bool_slice` is gone. The search runs last, after the INDEX
-    and load gate, where tinygrad's lookup runs first: a branch that reaches
-    an INDEX or a LOAD is rejected without a walk;
+    node built before the condition. `Ops.bool_slice` is gone. The search
+    runs last, after the INDEX and load gate, where tinygrad's lookup runs
+    first: a branch that reaches an INDEX
+    or a LOAD is rejected without a walk;
   - the gate's sets: each node keeps, as a property filled from its sources,
     the set of the operations of itself and of the nodes it reaches outside
     call bodies; a node whose set is a source's shares it.
-    `op_in_backward_slice_with_self` reads that set and no longer builds the
-    node's `backward_slice`.
+    `op_in_backward_slice_with_self` reads that set and builds no
+    `backward_slice`.
 
   But for loads, the rule folds the same selections, and the answers are
   the same.
-- **Reason:** (d): compile time. A host kernel of 4 values upcasts them
-  whole, so its inputs load as vectors. `Nx.betainc` selects by conditions on
-  its shapes, and in a jitted chain of `Nx.betainc` over the same shapes those
-  conditions are one node in every link: the rule assumed each in a later
-  link's branches down through all the earlier links, copying them. Chains of
-  1, 2 and 3 float32 links rendered 3918, 9464 and 17811 lines of C and
-  compiled cold on fudge (load 30) in 1.7 s, 12.9 s and 77 s; with the load
-  gate, 1713, 3411 and 5102 lines, as a chain over 1 value, whose loads are
-  INDEXes. 4 links compiled cold in 172 s, and compile in 2.9 s with the
-  gate (load 2, rune's compile bench row `special/betainc-chain-f32`). rune
-  lowers `Nx.sin` to a reduction full of comparisons and selections
-  (`Lower_real.reduce`), and in a jitted chain of `Nx.sin` every link's
-  selections are asked about. Each node's boolean set holds every
-  comparison of the links before it, and each slice the whole chain below,
-  so work and memory grow with the square of the chain.
-  Compiling a chain of 80 `Nx.sin` cold on an M1 Max took 63.0 s and a heap
-  of 618M words with the boolean sets, and 16.6 s and 76M words with the
-  search, whose walks stay inside the link that built the condition; with
-  the slices it took 28.0 s and 218M words, and 16.4 s and 73M words with
-  the operation sets. A condition built before a long chain of selections
-  still makes each search walk the chain below it, which the gate
-  spares when the branches read memory. On fudge, with each node's boolean
-  set and whole slice kept as tinygrad keeps them, the load gate kept, rune's
-  compile bench row `special/betainc-chain-f32` compiles in 2.99 and 2.70 s
-  against 8.05 and 7.75 s (medians of 3, two interleaved runs each);
-  `shaped-4k` and `trig/sin-nested-8` show no difference beyond their
-  ranges.
+- **Reason:** (d): compile time. Without the load gate the rule assumed a
+  condition read from memory down through every link of a jitted chain of
+  `Nx.betainc`, copying the links: 4 links compiled cold in 172 s, and
+  compile in 2.9 s with the gate (rune's compile bench row
+  `special/betainc-chain-f32`). With the gate kept, tinygrad's boolean sets
+  and whole slices make that row 8.05 and 7.75 s against 2.99 and 2.70 s;
+  they grow with the square of a chain of `Nx.sin`: 80 links compiled cold
+  in 63.0 s and 618M words with the boolean sets, and 16.6 s and 76M words
+  with the search (an M1 Max). A condition built before a long chain of
+  selections still makes each search walk the chain below it, which the
+  gate spares when the branches read memory.
 - **Pinned by:** rune's compile bench row `special/betainc-chain-f32`; the
   Symbolic suite (`test/uop/symbolic`): `symbolic › selections › a condition
   over a load of several elements is not folded in the branches`, `› a
@@ -2991,8 +2392,7 @@ gate read a set; merged into D93.
 ## D95. A device's target follows from the device alone
 
 - **tinygrad:** `helpers.py` (`_DEV`, the `DEV` setting, and
-  `DEV.target`); `device.py` (`_select_renderer`, which renders for
-  `DEV.target` of the device's kind); `runtime/ops_cpu.py`
+  `DEV.target`); `device.py` (`_select_renderer`); `runtime/ops_cpu.py`
   (`CPUDevice`, whose arch, remote or not, is this machine's
   `platform.machine()` and `native`).
 - **tolk:** `Tolk_engine.target`; `Device.renderer`; `Helpers.Target`.
@@ -3000,24 +2400,18 @@ gate read a set; merged into D93.
   of the device: its vendor's kind, which its driver declares
   (`Rig.capability`), and its `arch`, or the host's CPU target.
   `Device.renderer` takes the target and renders for it with the renderer
-  of its kind. `Helpers.Target` keeps the
-  record and its syntax, which tests and the goldens' generator write.
-  A host compiles for its `Rig.arch`: on x86-64 its psABI level, such as
-  `x86_64,x86-64-v3`, and on arm64 `generic`, the base architecture, with
-  the features its arch names, as in `arm64,generic,fp16`; this
-  machine's host also tunes for its processor, as in
-  `x86_64,x86-64-v3,tune=native`, where tinygrad's CPU, remote or not,
-  compiles for this machine's instruction set and processor, `native`.
-- **Reason:** (c). rig places values on devices, and the compiler
-  compiles for the device the values live on. A target read from the
-  environment applies to every device of the process, so it compiles for a
-  device the values do not live on, and a malformed `DEV`, meant for another
-  program, failed every program linking tolk when it started. Another
-  machine's processor may lack instructions this machine's has, and a
-  program records the arch it was compiled for, which `Rig_program.load`
-  checks against the device's: `native` would use instructions beyond the
-  level it records. Tuning chooses among the level's instructions and adds
-  none.
+  of its kind. `Helpers.Target` keeps the record and its syntax, which tests
+  and the goldens' generator write. A host compiles for its `Rig.arch`: on
+  x86-64 its psABI level, such as `x86_64,x86-64-v3`, and on arm64
+  `generic` with the features its arch names, as in `arm64,generic,fp16`;
+  this machine's host also tunes for its processor, as in
+  `x86_64,x86-64-v3,tune=native`.
+- **Reason:** (c). rig places values on devices, and a target read from the
+  environment applies to every device of the process; a malformed `DEV`
+  meant for another program failed every program linking tolk. A program
+  records the arch it was compiled for, which `Rig_program.load` checks
+  against the device's, and `native` would use instructions beyond the level
+  it records; tuning adds none.
 - **Pinned by:** `Tolk.Setting › startup › starts whatever DEV holds`;
   `Rune.jit on another machine's host › another machine's host compiles for
   its arch` and `› gives eager's bits`; `Tolk_engine › target › the host
@@ -3042,25 +2436,15 @@ A matrix-vector workgroup's rows were the matrix's own; merged into D89.
   axes is. The cost check (`remove_bufferize`) then inlines it again where
   no reduction of it reads a buffer and it reads at most three. A value of
   no axes without a reduction, such as an offset, stays inlined.
-  tinygrad computes such a reduction inside its consumer, once for each
-  element: `x - x.sum()` sums the whole of `x` for each element.
 - **Reason:** (d): `Vega.Loss_scale.step`, whose `finite`, the conjunction
-  of `Nx.all (Nx.isfinite g)` over every gradient, selects each update.
-  In GPT-2 124M's float16 step (`kaun/examples/04-gpt2`) on an M1 Max's Metal,
-  five kernels each reduced all 148 gradients again: the scale and its
-  counters, and the embedding updates, about 14 ms a step. Stored, one kernel
-  reduces them. On fudge's RTX 5000 Ada, rune's
-  `Cuda/finite-selects-148-float16`, the check of 148 float16 gradients
-  selecting each, takes 295 and 302 us against 5.0 ms in both runs (medians
-  of 11, two interleaved runs each). On the host, vega's `Loss_scale/step/1024`, whose
-  check of one large gradient splits its reduction, shows no difference
-  beyond its ranges.
+  of `Nx.all (Nx.isfinite g)` over every gradient, selects each update. On
+  fudge's RTX 5000 Ada, rune's `Cuda/finite-selects-148-float16` takes
+  295-302 us against 5.0 ms with each consumer reducing again.
 - **Pinned by:** the Rangeify suite's `sum_all_broadcast` and `finite_checks`
   rows of `kernel_counts.golden` and their kernel goldens, and its
   `reduce_expand_child` and `preserve_multistage_reduce` rows; the Jit suite's
   `nonzero` and `masked_select` goldens. On rune: missing (the old rune's
-  `lower_linalg` goldens `qr_q` and `qr_r`, whose reflections' norms were
-  stored, went with its rewrite).
+  `lower_linalg` goldens `qr_q` and `qr_r` went with its rewrite).
 
 ## D101. A group shares its threads with the kernel's independent reductions
 
@@ -3074,18 +2458,14 @@ A matrix-vector workgroup's rows were the matrix's own; merged into D89.
   reduction: its first weak axis that the reduction closes and the amount
   divides, when only such reductions close it, when it neither reads a
   grouped reduction nor is read by one, and while every grouped reduction's
-  buffer fits in shared memory. The shared memory checked is the sum of the grouped reductions'
-  buffers. A reduction that reads another stays out, since the final
-  reductions of shared buffers that one thread range closes run as one
-  loop.
-- **Reason:** (d): the kernel of D100's `finite`. Grouped on its first
-  reduction, each of its 16 threads ran the other 147 whole. In GPT-2
-  124M's float16 step on an M1 Max's Metal the kernel took 3.1 ms and takes
-  0.77 ms; 200 checks of float16 vectors, from 3.6 ms to 0.90 ms. On fudge's
-  RTX 5000 Ada, rune's `Cuda/finite-of-148-float16`, the check of 148
-  float16 gradients of 256 to 2048 values, takes 174 and 165 us against 1.45
-  ms in both runs with the group on the first reduction alone (medians of
-  11, two interleaved runs each).
+  buffer fits in shared memory. The shared memory checked is the sum of the
+  grouped reductions' buffers. A reduction that reads another stays out,
+  since the final reductions of shared buffers that one thread range closes
+  run as one loop.
+- **Reason:** (d): the kernel of D100's `finite`, whose 16 threads each ran
+  the other 147 reductions whole. On fudge's RTX 5000 Ada, rune's
+  `Cuda/finite-of-148-float16` takes 165-174 us against 1.45 ms with the
+  group on the first reduction alone.
 - **Pinned by:** the Postrange suite's cases `sibling_sums_group` (a
   reduction the amount does not divide stays out), `ten_sums_group` (eight
   of ten buffers fit) and `single_kernel_softmax_group` (the sum that reads
@@ -3094,33 +2474,25 @@ A matrix-vector workgroup's rows were the matrix's own; merged into D89.
 
 ## D102. Withdrawn
 
-An empty argument of a precompiled call, which the size-0 rule made an expanded
-constant, reached the kernel graph as its scalar, so that a call could take an
-argument with no element. Its consumer was rune's staged scan with an empty
-carry, which rune now replaces by zeros in the step (`Loop`), and no other raven
-call passes an empty argument to a precompiled call: rune's suite passes with
-the rule gone. `Rangeify.no_indexing_calls` is `schedule/rangeify.py`
-`no_indexing_calls`, and such a call fails the kernel graph's verification on
-the expand, as there.
+An empty argument of a precompiled call reached the kernel graph as its
+scalar, for rune's staged scan, which now replaces it by zeros in the step
+(`Loop`). `Rangeify.no_indexing_calls` follows `schedule/rangeify.py`
+`no_indexing_calls`, and such a call fails verification on the expand, as there.
 
 ## D103. An integer constant is written as the value its type holds
 
-- **tinygrad:** `renderer/cstyle.py` `base_rewrite` (the constant rules: an
-  `int64` is its value with `l`, a `uint32` or a `uint64` its truncated value
-  with `u` or `ul`, an 8- or 16-bit integer a cast of its value, any other its
-  value).
+- **tinygrad:** `renderer/cstyle.py` `base_rewrite` (the constant rules,
+  which write a signed or 8- or 16-bit constant unwrapped).
 - **tolk:** `Cstyle.int_const`.
 - **Differs:** a constant of an integer type is written as the value the type
   holds: the integer part of a float, wrapped to the type's width, with the
   suffix or cast of its type. The least `int64` is written
   `(-9223372036854775807l-1)`. An infinity or a NaN, which has no integer
-  value, is a conversion of the float as the program runs. tinygrad writes a
-  signed or 8- or 16-bit constant unwrapped, so a value past 64 bits is no C
-  literal, and the least `int64` is an unsigned literal negated.
+  value, is a conversion of the float as the program runs. tinygrad writes
+  the least `int64` as an unsigned literal negated.
 - **Reason:** (b): rune compiles integer constants at every width's
-  extremes, the least `int64` among them. The old rune's `test_jit_programs`
-  property converted a float padding constant to an integer, written as a
-  literal past 64 bits, which C refuses.
+  extremes, the least `int64` among them; a float constant converted to an
+  integer was written as a literal past 64 bits, which C refuses.
 - **Pinned by:** the Cstyle suite: `execution on the host › stores each integer
   constant as its type holds it` and `› converts an infinity or a NaN to an
   integer type`; `clang_transcendental_f16.golden`; rune's `rune jit` suite:
@@ -3142,20 +2514,12 @@ the expand, as there.
   each index of the buffer widens the value it reads. Where the stage is
   placed and how it is laid out do not change.
 - **Reason:** (d): rune widens a product's `bfloat16` operands to `float32`
-  before multiplying them (D29), and a stage sits where its consumers end
-  their ranges, after the widening. gpt-oss-20b's attention probabilities, its
-  attention output and the rows of its experts were stored as `float32`
-  values of `bfloat16`: twice the bytes, and a `float32` load, which no CUDA
-  tensor core multiplies. Stored narrow, the output projection of a 512-token
-  prefill on an RTX 5000 Ada runs on the tensor cores in 0.30 ms where it took
-  2.34 ms, and the scores in 0.29 ms where they took 0.87 ms, measured
-  before rune lowered `Nx.attention` to kernels of its own. Since then, on
-  fudge, kaun's `GptOss/prefill-512` takes 132 ms against 367 and 368 ms
-  with each stage stored at its committed type, and
-  `GptOss/prefill-512-Q8_0` 141 ms against 1.35 and 1.36 s (medians of 11,
-  two interleaved runs each on a loaded machine, the second under nsys).
-  The decode steps are unchanged. The rows' fudge wall-time baselines are
-  pending the scheduled quiet re-record.
+  before multiplying them (D29), so gpt-oss-20b stored `float32` values of
+  `bfloat16`, twice the bytes, which no CUDA tensor core loads. On fudge,
+  kaun's `GptOss/prefill-512` takes 132 ms against 367-368 ms with each
+  stage stored at its committed type, and `GptOss/prefill-512-Q8_0` 141 ms
+  against 1.35-1.36 s. The rows' fudge wall-time baselines are pending the
+  scheduled quiet re-record.
 - **Pinned by:** the Heuristic suite's `projection_of_stored` kernel, whose
   golden reads the stored attention output as `bfloat16`, and its cases
   `projection_of_stored_{metal,cuda,amd}` (the tensor cores apply); kaun's
@@ -3180,25 +2544,16 @@ the expand, as there.
   and the core reads its bits of the range at 0. Either operand may be the
   core's A: the choices with `in0` as A come first, as tinygrad orders them,
   then those with `in1`. D450 tries the cores on any number of reduce axes.
-- **Reason:** (d): `Nx.map_segments` over `Nx_quant.apply` on a prompt, which
-  sorts positions by expert into blocks of up to 16 rows, each multiplying its
-  expert's matrix, `W[owner[row / 16]]`. The rows read the row axis and the
-  matrix reads it by blocks, so tinygrad finds no M range; the decoded bytes
-  split the reduce into bytes and a byte's two values (D89), which tinygrad's
-  heuristic leaves to the hand-coded path. A block of 8, which fewer positions
-  take, fits CUDA's N of 8 and not its M of 16, so its rows are the core's B.
-  gpt-oss-20b's 512-token gate and up product on an RTX 5000 Ada takes 2.9 ms on
-  the tensor cores, from 13.3 ms, and the down product 1.5 ms, from 6.9 ms; the
-  prefill takes 0.22 s, from 0.71 s.
   Blocks of up to 32 rows stream before the cores unless they do more than
-  64 multiply-adds per byte of their matrices (D89): blocks each of its own
-  bfloat16 matrix stream, 10.2 ms against 33.2 on a core for the gate and up
-  product on fudge; gpt-oss-20b's blocks of 16 rows sharing 32 experts' MXFP4
-  matrices at a 512-token prompt, 149 a byte, take the cores, and kaun's
-  `GptOss/experts-at-prefill-512` runs 4.66-4.68 ms against 18.5-18.7
-  streamed, `GptOss/prefill-512` 186-187 ms against 446-452. Blocks sharing
-  their matrices at 40 to 58 a byte stay streamed, up to 1.55x slower than a
-  core on fudge: D89's band, the cost of one program per target.
+  64 multiply-adds per byte of their matrices (D89).
+- **Reason:** (d): `Nx.map_segments` over `Nx_quant.apply` on a prompt
+  multiplies blocks of up to 16 rows by their expert's matrix,
+  `W[owner[row / 16]]`, where tinygrad finds no M range, and the decoded
+  bytes split the reduce into bytes and a byte's two values (D89), which
+  tinygrad's heuristic leaves to the hand-coded path; a block of 8 fits
+  CUDA's N of 8 and not its M of 16, so its rows are the core's B. On fudge,
+  kaun's `GptOss/experts-at-prefill-512` runs 4.66-4.68 ms on the cores
+  against 18.5-18.7 streamed.
 - **Pinned by:** the Heuristic suite's cases `routed_tiles_{metal,cuda,amd}`
   (the cores apply to a product in blocks of 64 rows) and
   `routed_shared_{metal,cuda,amd}` (blocks of 16 rows sharing their
@@ -3224,27 +2579,17 @@ the expand, as there.
   consumers broadcast it.
 - **Differs:** a stored value that is broadcast, read only through the
   reduce ranges of its consumer, those its reductions close, and reads more
-  than one buffer stays stored. Its consumer is a reduction that every output of reads it, as a
-  matrix-vector product reads its vector, so inlined it would be computed,
-  and each of its buffers loaded, once per output. A value read through an
-  output range, as a matrix's rows are, is inlined as before: a tiled
-  product computes it once for the outputs a thread holds. A value stored
-  for consumers that read it at different indices, as the query, key and
-  value projections read one normalised activation, is marked broadcast
-  when they broadcast it, as D77 marks a value that a broadcast ends.
-- **Reason:** (d): gpt-oss-20b's decode on CUDA (RTX 5000 Ada). The
-  normalised activation, the residual divided by its root mean square and
-  scaled by its gain, reads three buffers and divides, and every projection
-  of a decode step computed it again for each of its outputs: the router's
-  32, the key and value projections' 512, the experts' 23040 gate and up
-  rows. Stored, one 2880-element kernel per normalisation (1.2 us), the
-  router went from 37.1 us to 6.8 us, the key and value projections from
-  22.1 us to 9.4 us, the gate and up product from 113.9 us to 73.1 us (54%
-  to 84% of the bandwidth), and the step's kernels from 11.94 ms to 9.73 ms.
-  The 512-token prefill keeps its kernels and its 0.71 s. On fudge,
-  gpt-oss's bench row `GptOss/decode-step-cache-1024` takes 10.2 ms against
-  11.3 and 11.2 ms without the rule (medians of 11, two interleaved runs
-  each).
+  than one buffer stays stored: its consumer is a reduction every output of
+  which reads it, as a matrix-vector product reads its vector. A value read
+  through an output range, as a matrix's rows are, is inlined as before. A
+  value stored for consumers that read it at different indices, as the
+  query, key and value projections read one normalised activation, is
+  marked broadcast when they broadcast it, as D77 marks a value that a
+  broadcast ends.
+- **Reason:** (d): gpt-oss-20b's decode on CUDA, whose every projection
+  computed the normalised activation again for each of its outputs. On
+  fudge, gpt-oss's bench row `GptOss/decode-step-cache-1024` takes 10.2 ms
+  against 11.2-11.3 ms without the rule.
 - **Pinned by:** the Rangeify suite's `normed_vecmat` (a normalised vector
   read by a product), `normed_vecmats` (by two products, stored once) and
   `normed_matmul` (a normalised matrix, inlined) rows of
@@ -3264,8 +2609,7 @@ where the fill is a candidate within the register budget.
 ## D109. Withdrawn
 
 On the host, a kernel of several reduces unrolled within 32 lanes; merged
-into D186, whose budget counts an unroll by the lanes it holds across a
-loop no more: only an upcast of the outputs adds accumulators.
+into D186, whose budget adds accumulators only for an upcast of the outputs.
 
 ## D110. Withdrawn
 
@@ -3275,10 +2619,9 @@ merged into D89.
 ## D111. A hung AM device is lost, never recovered in the process
 
 - **tinygrad:** `runtime/ops_amd.py` (`_collect_interrupts`, whose `reset`
-  resets the compute engines through `AMDev.recover`, rewinds the compute queue
-  and moves the timeline past the hung value, and `on_device_hang`) and
-  `AMDDevice.__init__` (`can_recover`, true under AM off a virtual function);
-  `runtime/support/am/amdev.py` (`recover`).
+  resets the compute engines through `AMDev.recover`, and `on_device_hang`)
+  and `AMDDevice.__init__` (`can_recover`, true under AM off a virtual
+  function); `runtime/support/am/amdev.py` (`recover`).
 - **tolk:** none: rig's AMD driver owns the GPU, and loses it on a hang,
   driver-less after its hang limit and under the kernel's driver when the
   driver reports one.
@@ -3287,13 +2630,10 @@ merged into D89.
   not reset the GPU. An open of the GPU then gives a fresh device under KFD,
   with new queues, and refuses it under AM; the next process that opens it
   resets it.
-- **Reason:** (c): after a reset nothing the device held can be trusted. Work
-  in flight is dropped, its queues restart, and its buffers and programs hold
-  whatever the hung work left. nx's values are immutable, so a value must fail
-  loudly rather than silently outlive its storage. Recovery sits behind
-  device-lost semantics: after a fault every operation on the device's values
-  raises, naming the device and the fault, and reopening gives a fresh device
-  with a new identity. An in-process reset would only be how AM reopens.
+- **Reason:** (c): after a reset nothing the device held can be trusted, and
+  nx's values are immutable, so a value must fail loudly rather than outlive
+  its storage: after a fault every operation on the device's values raises,
+  naming the device and the fault.
 - **Pinned by:** rig's AMD fault suite (`packages/rig/test/amd/test_fault.ml`),
   on a GPU.
 
@@ -3321,42 +2661,41 @@ encodes its barriers (D146).
   (`Setting.beam_padto` to `Setting.beam_estimate`) and `Search.beam_search`'s
   key.
 - **Differs:** a table also names everything besides the source that
-  determines a binary: for Clang, the digest of what `clang -###` states it
-  runs for a source, its version and installation first, of the command of
-  its compiler proper that compiles a short and a long source, with the IR
-  verifier on (D275: the processor and features `native` resolves to, every
-  option), and of the length between them (D167), with
-  `-ffile-compilation-dir=.` keeping the
-  working directory out; for MTLCompiler, NVRTC and comgr, the build of macOS
-  or the library's file, size and modification time, and the options, PTX or
-  cubin included. Clang runs once per process to state its command: the
-  options depend on the LLVM release it states (D167), and a process asks
-  first for those of the release the last process found, a hint kept in the
-  disk cache's table `clang_llvm` while `CCACHE` holds, and again when Clang
-  states another. The
-  hint picks options only, and the table digests what Clang states for
-  them, so a stale hint costs a second run and never an object of another
-  compiler. A key on the binary's path, size and modification time alone,
-  ccache's default `compiler_check`, would miss the processor `native`
-  resolves to, Clang's configuration files and the environment its driver
-  reads. The table is the compiler's identity whatever `CCACHE`
-  holds: the keys of programs and searches take it, and `CCACHE`, read when a
-  binary or a program is compiled, decides only whether the disk keeps it. A
-  program is kept on disk under its compiler's table. The beam search's key
-  adds the
+  determines a binary:
+  - for Clang, the digest of what `clang -###` states it runs for a source,
+    its version and installation first, of the command of its compiler
+    proper that compiles a short and a long source, with the IR verifier on
+    (D275: the processor and features `native` resolves to, every option),
+    and of the length between them (D167), with `-ffile-compilation-dir=.`
+    keeping the working directory out. Clang runs once per process to state
+    its command: the options depend on the LLVM release it states (D167), and
+    a process asks first for those of the release the last process found, a
+    hint kept in the disk cache's table `clang_llvm` while `CCACHE` holds,
+    and again when Clang states another. The hint picks options only, and
+    the table digests what Clang states for them, so a stale hint costs a
+    second run and never an object of another compiler. A key on the
+    binary's path, size and modification time alone would miss the
+    processor `native` resolves to, Clang's configuration files and the
+    environment its driver reads;
+  - for MTLCompiler, NVRTC and comgr, the build of macOS or the library's
+    file, size and modification time, and the options, PTX or cubin
+    included.
+
+  The table is the compiler's identity whatever `CCACHE` holds: the keys of
+  programs and searches take it, and `CCACHE`, read when a binary or a
+  program is compiled, decides only whether the disk keeps it. A program is
+  kept on disk under its compiler's table. The beam search's key adds the
   library's sources, the renderer, its compiler's table, and the settings
   that shape compilation (`Setting.shaping`), among which those that pick
-  the candidates (`TC` and `BEAM_PADTO`, D114) and those
-  the search declares, `BEAM_UOPS_MAX`, `BEAM_UPCAST_MAX`,
-  `BEAM_LOCAL_MAX`, `BEAM_MIN_PROGRESS` and `BEAM_ESTIMATE`.
-  `BEAM_STRICT_MODE` is not keyed: a strict search that completes finds what
-  another finds.
+  the candidates (`TC` and `BEAM_PADTO`, D114) and those the search
+  declares, `BEAM_UOPS_MAX`, `BEAM_UPCAST_MAX`, `BEAM_LOCAL_MAX`,
+  `BEAM_MIN_PROGRESS` and `BEAM_ESTIMATE`. `BEAM_STRICT_MODE` is not keyed:
+  a strict search that completes finds what another finds.
 - **Reason:** (b): raven's test suites and rune share the default cache, so a
   hit must answer the compilation it stands for. tinygrad's key answers a
-  changed flag in `compiler_cpu.py`, an upgraded toolchain, a program of
-  another compiler of the same renderer name, or a search under other
-  settings, with a binary or a search made for something else; with
-  `CCACHE=0` its compilers have no table, so two that differ in their options
+  changed flag, an upgraded toolchain, another compiler of the same renderer
+  name or a search under other settings with a binary or a search made for
+  something else; with `CCACHE=0` two compilers that differ in their options
   alone share programs.
 - **Pinned by:** `Tolk.Compiler_cpu › cache`, `Tolk.Compiler_metal › cache`,
   `Tolk.Compiler_cuda › cache`, `Tolk.Compiler_amd › cache`,
@@ -3392,43 +2731,44 @@ encodes its barriers (D146).
   default and reach. A setting reaches `Output` if a change of its value
   alone can change what a compilation that returns makes from its graph,
   renderer and compiler, for the same measurements, and `Process`
-  otherwise. The caches key on every
-  `Output` setting (`Setting.shaping`, D63). `BEAM` and `JITBEAM` reach
-  output: `compile_linear` writes the width into the kernels it searches.
-  `CC`, `CUDA_PATH` and `ROCM_PATH` reach the process: they are read when a
-  compiler is made, and its table names the tools and options they pick
-  (D113). tinygrad reads a variable with `getenv` at any call site, so one
-  variable can have two readers with two defaults: `TC_OPT` is a
-  `ContextVar` of default `0` and a `getenv` of default `2` in the search.
-  In tolk `TC_OPT` is the level of hand-coded optimizations alone, default
-  `0`, and the search's candidates take the level `2`, a constant
-  (`Search.tc_opt_all`): it admits every kernel the lower levels admit, and
-  the search measures what it admits, so a lower level only shrinks the
-  search. `TC_OPT` in the environment no longer reaches the search. `TC` and
-  `BEAM_PADTO` are read when the search makes its candidates (`actions` is a
-  function), so a `context` binding of `TC` reaches the search, where
-  tinygrad's search sees the environment alone. `JITBEAM` is a setting
-  whose `None` stands for `BEAM`'s current value. `compile_linear` reads neither `DEBUG` nor `PROFILE`, since it makes no
-  batch to stamp (D146): rig's profiles record each submission's span, and
-  the engine makes each kernel a submission of its own from `DEBUG` 2, when
-  it prints each kernel's time. There is no `PROFILE`. A variable tinygrad reads on each use, such as
-  `DBGTV`, is read when the program starts. A library that compiles with
-  tolk declares its own variables the same way, so rune's jit keys on its
-  `Output` settings too, and beyond them only on what is not a setting of tolk. A function compiled with an explicit width keys on
-  that width in `BEAM`'s entry, without `JITBEAM`'s, since the width
-  overrides both. `ALLOW_TF32`, default `false` as in tinygrad, is an
-  explicit choice of precision: a TF32 core rounds each `float32` operand to
-  10 mantissa bits, so a contraction compiled under it may err past
-  `Nx.contract`'s bound.
+  otherwise. The caches key on every `Output` setting (`Setting.shaping`,
+  D63).
+  - `BEAM` and `JITBEAM` reach output: `compile_linear` writes the width
+    into the kernels it searches. `JITBEAM` is a setting whose `None` stands
+    for `BEAM`'s current value. A function compiled with an explicit width
+    keys on that width in `BEAM`'s entry, without `JITBEAM`'s, since the
+    width overrides both.
+  - `CC`, `CUDA_PATH` and `ROCM_PATH` reach the process: they are read when
+    a compiler is made, and its table names the tools and options they pick
+    (D113).
+  - `TC_OPT` is the level of hand-coded optimizations alone, default `0`;
+    the search's candidates take the level `2`, a constant
+    (`Search.tc_opt_all`), which admits every kernel the lower levels admit.
+    `TC_OPT` in the environment does not reach the search.
+  - `TC` and `BEAM_PADTO` are read when the search makes its candidates
+    (`actions` is a function), so a `context` binding of `TC` reaches the
+    search, where tinygrad's search sees the environment alone.
+  - `compile_linear` reads neither `DEBUG` nor `PROFILE`, since it makes no
+    batch to stamp (D146): rig's profiles record each submission's span, and
+    the engine makes each kernel a submission of its own from `DEBUG` 2,
+    when it prints each kernel's time. There is no `PROFILE`.
+  - A variable tinygrad reads on each use, such as `DBGTV`, is read when the
+    program starts.
+  - A library that compiles with tolk declares its own variables the same
+    way, so rune's jit keys on its `Output` settings too, and beyond them
+    only on what is not a setting of tolk.
+  - `ALLOW_TF32`, default `false` as in tinygrad, is an explicit choice of
+    precision: a TF32 core rounds each `float32` operand to 10 mantissa
+    bits, so a contraction compiled under it may err past `Nx.contract`'s
+    bound.
 - **Reason:** (b): rune's jit memo and tolk's program, schedule and search
-  caches key on `Setting.shaping`. A variable read outside a declaration on
-  a compile path is missing from every key, and a cache returns what was
-  made under another value: the search's `TC_OPT`, read raw with its own
-  default, kept a search made with `TC_OPT` unset for a process with
-  `TC_OPT=0`. A setting read by compilation but classed `Process` must be
-  keyed again by each caller that keeps what it compiles, as rune's jit
-  did for `BEAM`, `JITBEAM` and `DEBUG`; `DEBUG` read by `compile_linear`
-  would reach output and key every cache on verbosity.
+  caches key on `Setting.shaping`, and a variable read outside a declaration
+  is missing from every key: the search's raw `TC_OPT` kept a search made
+  with `TC_OPT` unset for a process with `TC_OPT=0`. A setting read by
+  compilation but classed `Process` must be keyed again by each caller that
+  keeps what it compiles, as rune's jit did for `BEAM`, `JITBEAM` and
+  `DEBUG`; `DEBUG` read by
+  `compile_linear` would reach output and key every cache on verbosity.
 - **Pinned by:** `Tolk.Setting › declarations` and `› shaping` (every
   test, among them `› holds the library's settings of output, and those
   alone` and `› changes a library setting's entry when the setting
@@ -3452,19 +2792,13 @@ encodes its barriers (D146).
 - **tolk:** `Search.try_compile` and `Codegen.linearize`.
 - **Differs:** a candidate is linearized (`Codegen.linearize`), dropped if it
   has `BEAM_UOPS_MAX` instructions or more, and only then rendered and
-  compiled (`Codegen.to_program` completes the linearized program). tinygrad
-  renders and compiles every candidate, then drops the one past the cap. The
+  compiled (`Codegen.to_program` completes the linearized program). The
   search keeps and drops the same candidates.
-- **Reason:** (d): a beam search of lorenz_simple's step (`Rune.jit ~beam`)
-  on AMD. The candidates past the cap are the largest unrolls, the slowest to
-  compile, and compiling them took 154 s of a search, 30 s once they were
-  dropped before compiling. On fudge, the tolk bench's
-  `search/beam/r_128_16_3_4_4_3_3_400_400`, a whole search of lorenz's kernel
-  on the host whose candidates Clang compiles uncached, over rounds a timing
-  of their optimisations fixes, whose last rounds drop candidates past the
-  cap, takes 0.47 to 0.59 s in five of six runs and 1.26 s in one under load
-  (medians of 11, interleaved runs), against 0.71 to 1.58 s in seven when
-  each candidate compiles before the cap drops it.
+- **Reason:** (d): a beam search of lorenz_simple's step (`Rune.jit ~beam`),
+  whose candidates past the cap are the largest unrolls, the slowest to
+  compile. On fudge, the tolk bench's
+  `search/beam/r_128_16_3_4_4_3_3_400_400` takes 0.47 to 0.59 s against 0.71
+  to 1.58 s when each candidate compiles before the cap drops it.
 - **Pinned by:** `Tolk.Search › BEAM_PADTO=1 ... › a candidate of
   BEAM_UOPS_MAX instructions or more is not compiled`; `Tolk.Codegen ›
   linearize and compile › compile completes linearize into the program
@@ -3480,31 +2814,22 @@ encodes its barriers (D146).
   and `Realize.get_call_to_compile`.
 - **Differs:** a candidate is compiled by `Codegen.linearize` then
   `Codegen.compile`, through its compiler's disk cache
-  (`Renderer.Compiler.compile_cached`), as tinygrad's `compile_cached` does;
-  its program enters neither of `to_program`'s tables, where tinygrad's
-  `to_program` keeps it in the memory of the process that compiled it. A
-  search keeps its choice, and the kernel compiled with it keeps its own
-  program and binary, as in tinygrad; that kernel is compiled apart from the
+  (`Renderer.Compiler.compile_cached`); its program enters neither of
+  `to_program`'s tables. A search keeps its choice, and the kernel compiled
+  with it keeps its own program and binary, compiled apart from the
   candidate it was, since a candidate is named `"test"`. `to_program` takes
   only a kernel's sink, and `compile` only what `linearize` returns:
-  `to_program ast ren` is `compile (linearize ast ren) ren`, kept. tinygrad's
-  `do_to_program`, and `lower_and_compile` with it, also resume a program from
-  any stage.
-- **Reason:** (a): tinygrad compiles candidates in worker processes
-  (`get_worker_pool`), which exit after `BEAM_MAX_TASKS_PER_CHILD` (16) tasks
-  and free the programs they kept, where tolk compiles them on domains of the
-  calling process (D5), whose `to_program` table would hold every candidate of
-  every search for the life of the process. A stage resumed by `to_program` is a
-  stage reached by `Codegen.linearize` or `Codegen.compile`, so no caller loses
-  one. The entry also kept memos of each kernel and each source a search
-  compiled, for duplicate candidates measured on AMD; they are withdrawn: on
-  fudge, the tolk bench's `search/beam/r_128_16_3_4_4_3_3_400_400` took 0.52,
-  0.50 and 1.39 s with them against 0.47 and 1.26 s without, in the same rounds
-  (medians of 11, interleaved runs), and a first call of `Rune.jit ~beam:2` of a
-  64 by 64 float32 product and its tanh on the host 9.4, 7.3 and 7.0 s with them
-  against 3.7, 7.6 and 10.0 s (medians of 3 cold processes). As tinygrad's
-  `codegen/opt/search.py` `beam_search`, every candidate compiles, and a binary
-  timed before is dropped after its compilation.
+  `to_program ast ren` is `compile (linearize ast ren) ren`, kept. Every
+  candidate compiles, and a binary timed before is dropped after its
+  compilation, as in `codegen/opt/search.py` `beam_search`. tinygrad's
+  `do_to_program`, and `lower_and_compile` with it, also resume a program
+  from any stage.
+- **Reason:** (a): tinygrad's worker processes (`get_worker_pool`) free the
+  programs they kept when they exit after `BEAM_MAX_TASKS_PER_CHILD` tasks,
+  where tolk compiles on domains of the calling process (D5), whose `to_program`
+  table would hold every candidate of every search for the life of the process.
+  A stage resumed by `to_program` is one reached by `Codegen.linearize` or
+  `Codegen.compile`, so no caller loses one.
 - **Pinned by:** `Tolk.Search › a search keeps each candidate's binary in its
   compiler's table, as a kernel compiled with it keeps its own`; an absence:
   `Search.try_compile` calls `Codegen.linearize` and `Codegen.compile`, which
@@ -3512,21 +2837,9 @@ encodes its barriers (D146).
 
 ## D117. Withdrawn
 
-A search timed its kernel before its first round and started the beam from
-its samples, and a round progressed only when every sample of its fastest
-candidate beat every sample of the beam's first kernel by
-`BEAM_MIN_PROGRESS`, so that it would not run rounds on gains within the
-noise, as searches on AMD did. On fudge, a first call of `Rune.jit ~beam:2`
-of a 64 by 64 float32 product and its tanh on the host took 9.4, 7.3 and
-7.0 s with the rule and 2.4, 4.7 and 4.6 s with tinygrad's (medians of 3
-cold processes, interleaved runs), and the
-kernel each search chose, replayed after a search over an empty cache, ran
-in 43, 61, 40 and 40 us against 104, 53, 55 and 36 us (medians of 11): no
-gain beyond the ranges. As tinygrad's
-`codegen/opt/search.py` `Search.beam_search` starts from its
-kernel untimed, ends a round on no timing, a fastest time under
-`BEAM_MIN_PROGRESS` or a gain under it, and then keeps the fastest alone if it
-beat the beam's first.
+A search timed its kernel first and progressed only past `BEAM_MIN_PROGRESS`
+on every sample, which gained nothing on fudge. `Search.beam_search` follows
+`codegen/opt/search.py` `Search.beam_search`.
 
 ## D118. Withdrawn
 
@@ -3549,39 +2862,30 @@ AMD's packet layouts were nx.amd.packet's. tolk encodes no packet (D146).
 
 ## D122. Withdrawn
 
-Storage that a stage or a copy fills carried the bounds of its value, and the
-parameter a kernel read it through kept them, so a gather read its clamped,
-stored indices within their bounds; a bitcast between integers of one width
-kept the bounds of a value both types hold. rune's check of a gather's index
-then folded away where the index is clamped and stored. On fudge's RTX 5000
-Ada, with D211 withdrawn, the bounds change nothing end to end: minima of four
-interleaved rounds, one layer's experts 2.77 ms with the bounds and 2.80 ms
-without, the 512-token prefill 121.8 ms and 121.7 ms. Its measured gain on an
-M1 Max (a routed MXFP4 product 42.6 to 36.4 ms) is not re-measured, and speed
+Storage a stage or copy fills carried its value's bounds into the parameter
+that reads it. With D211 withdrawn they changed nothing on fudge, and a gain
 held only on another machine is no reason.
 
 ## D123. The engine runs a loop of calls while a flag holds
 
 - **tinygrad:** `uop/spec.py` `spec_shared` (a `BACKEDGE` closes a bound-less
-  range, inside a kernel), `engine/realize.py` (`run_linear` runs every call of
-  a schedule once, in order).
+  range, inside a kernel), `engine/realize.py` `run_linear` (every call once,
+  in order).
 - **tolk:** `Spec.shared` and `Spec.kernel_graph` (a `Backedge` around
   calls, in the tensor and kernel-graph specs), `Schedule.is_loop` and
   `Schedule.linearize` (`create_schedule` keeps a back edge of a call),
   `Memory.uses` (the plan counts its calls and flag), and
   `Tolk_engine.loop`.
-- **Differs:** an `Op.Backedge` stands around a call of a schedule, or a linear
-  of calls, with a loop range of at most as many trips and a flag, one boolean
-  of storage the calls write. The schedule keeps it as an entry, and the engine
-  makes it a loop of rig's program (D146) that reads the flag before each trip
-  and runs the calls while it holds, its trip in a word of the run's ints, which
-  a call's scalar argument reads too (D140). The flag is storage the program
-  makes or a buffer a caller binds. tinygrad's schedules run each call once, and
-  stop on no value. A range of one trip around a call folds to a constant, which
-  `Shape.symbolic` drops from the end, so that the call runs once; tinygrad
-  deleted that rule (07efd3877), since its ends close only a kernel's ranges,
-  where code generation drops a constant (`codegen/simplify.py`
-  `flatten_range`).
+- **Differs:** an `Op.Backedge` stands around a call of a schedule, or a
+  linear of calls, with a loop range of at most as many trips and a flag, one
+  boolean of storage the calls write, which the program makes or a caller
+  binds. The schedule keeps it as an entry, and the engine makes it a loop of
+  rig's program (D146) that reads the flag before each trip and runs the calls
+  while it holds, its trip in a word of the run's ints, which a call's scalar
+  argument reads too (D140). A range of one trip around a call folds to a
+  constant, which `Shape.symbolic` drops from the end, so the call runs once;
+  tinygrad deleted that rule (07efd3877), since its ends close only a kernel's
+  ranges (`codegen/simplify.py` `flatten_range`).
 - **Reason:** (b). rune's `Rune.iterate` under `Rune.jit` stages a loop that
   stops on a condition of its carry as one body compiled once, which no
   schedule tinygrad makes can run.
@@ -3598,25 +2902,21 @@ held only on another machine is no reason.
 
 ## D124. A search times no compilation
 
-- **tinygrad:** `codegen/opt/search.py` (`timeout_handler`, and the
-  alarm of `BEAM_TIMEOUT_SEC` that `_try_compile` sets and clears).
+- **tinygrad:** `codegen/opt/search.py` `timeout_handler`, and the alarm of
+  `BEAM_TIMEOUT_SEC` that `_try_compile` sets and clears.
 - **tolk:** `Search.try_compile`.
 - **Differs:** a candidate's lowering and compilation run to their end.
-  tinygrad sets an alarm of `BEAM_TIMEOUT_SEC` (10 s) around each candidate
-  in its worker process and drops the candidate when it rings. The alarm
-  stops Python code and a Clang child. comgr, NVRTC and MTLCompiler run in
-  the worker through ctypes, and Python runs a signal handler only once the
-  call returns, so tinygrad drops such a candidate after its compile ends,
-  and a compile that hangs hangs its search. tolk bounds a candidate by its
-  size instead: one of `BEAM_UOPS_MAX` instructions or more is dropped
-  before it is compiled (D115), and lowering raises past
-  `REWRITE_STACK_LIMIT`.
+  tinygrad drops a candidate when an alarm of `BEAM_TIMEOUT_SEC` (10 s) rings
+  in its worker process; the alarm stops Python code and a Clang child, but
+  comgr, NVRTC and MTLCompiler run in the worker through ctypes, so such a
+  candidate is dropped only after its compile ends, and a compile that hangs
+  hangs its search. tolk bounds a candidate by its size instead:
+  one of `BEAM_UOPS_MAX` instructions or more is dropped before it is compiled
+  (D115), and lowering raises past `REWRITE_STACK_LIMIT`.
 - **Reason:** (a): tinygrad bounds a candidate as one unit in a worker
-  process. A tolk candidate is lowered on a domain (D5), which no signal
-  stops, and a process with domains cannot fork. A limit would reach only the
-  toolchains, which run as processes (Clang, and the workers of comgr, NVRTC
-  and MTLCompiler), and give the search a promise its lowering does not
-  keep.
+  process. A tolk candidate is lowered on a domain (D5), which no
+  signal stops, and a process with domains cannot fork; a limit would reach
+  only the toolchain processes and promise what lowering does not keep.
 - **Pinned by:** an absence; the bound tolk keeps is pinned by D115's
   `Tolk.Search › BEAM_PADTO=1 ... › a candidate of BEAM_UOPS_MAX
   instructions or more is not compiled`.
@@ -3628,85 +2928,67 @@ launch descriptors (D146).
 
 ## D126. The transcendental functions are within one ulp
 
-- **tinygrad:** `codegen/decomp/transcendental.py` (`TRANSCENDENTAL_DTYPES`,
-  float16 included), `cody_waite_reduction` (by half turns, whose float32 parts
-  are the first three of Sleef's split for FMA and the fourth of its other
-  split), `sin_poly`, `sin_poly_small` and `sin_poly_large`, `xsin`, and
-  `xlog2`.
+- **tinygrad:** `codegen/decomp/transcendental.py` `TRANSCENDENTAL_DTYPES`
+  (float16 included), `cody_waite_reduction` (by half turns, whose float32
+  parts are the first three of Sleef's split for FMA and the fourth of its
+  other split), `sin_poly`, `sin_poly_small` and `sin_poly_large`, `xsin`, and `xlog2`.
 - **tolk:** `Transcendental.transcendental_dtypes`, `Transcendental.radians`,
   `Transcendental.cody_waite`, `Transcendental.sin_kernel`,
   `Transcendental.cos_kernel`, `Transcendental.xsin` and
   `Transcendental.xlog2`.
 - **Differs:** `xexp2`, `xlog2` and `xsin` are defined in float32 and float64;
   float16 computes at float32 and rounds once, as bfloat16 and the 8-bit
-  floats did. Both reductions remove quarter turns and return the remainder
-  in two floats, the rounded remainder and the rest: Cody-Waite subtracts
-  `q pi/2` in four parts whose products by a quotient below `2^15` are exact,
-  and carries the rounding of the third difference to the last, in place of
-  tinygrad's parts, whose fourth term belongs to another split of pi and
-  leaves `1.2e-10 q` behind; Payne-Hanek's remainder is summed and scaled in
-  two floats (D31). The sine and the cosine of the remainder are fdlibm's
-  kernels, which take the rest to first order, in place of one polynomial on
-  half turns evaluated as `d p(d^2)`. `xsin` returns a zero of either sign
-  unchanged. `xlog2` is fdlibm's `log2` (`e_log2.c`): `m` in
-  `[1/sqrt 2, sqrt 2)`, `log (1 + f) = f - h + s (h + R)`, `f - h` split so
-  that its product by the leading part of `1/ln 2` is exact, the exponent
-  added last with its rounding carried, in place of a polynomial in
-  `(m - 1)/(m + 1)` whose rounding scales into the result. `xexp2` is
-  unchanged. Measured against correctly rounded results, every float32 input
-  and every float16 and bfloat16 input, and drawn float64 inputs, the largest
-  errors were 1, 5 and 205266 units in the last place in float32 (`exp2`,
-  `log2`, `sin`), 4, 3 and 2 in float16, and 1, 3 and 2 in float64; they are 1
-  in every case. On one core of the M1 Max, without vectorization, a float32
-  `xlog2` costs 8.0 ns from 5.0, `xsin` below its switch-over 11.4 ns from
-  6.2 and beyond it 28.5 from 21.0; float64 `xlog2` 9.8 ns from 6.4, `xsin`
-  13.3 from 11.4 and 69.2 from 73.4.
+  floats did. `xexp2` is unchanged. Each is within 1 ulp of the correctly
+  rounded result.
+  - Both reductions remove quarter turns and return the remainder in two
+    floats, the rounded remainder and the rest. Cody-Waite subtracts `q pi/2`
+    in four parts whose products by a quotient below `2^15` are exact, and
+    carries the rounding of the third difference to the last, where
+    tinygrad's fourth term belongs to another split of pi and leaves
+    `1.2e-10 q` behind; Payne-Hanek's
+    remainder is summed and scaled in two floats (D31).
+  - The sine and cosine of the remainder are fdlibm's kernels, which take the
+    rest to first order, where tinygrad's is one polynomial on half turns
+    evaluated as `d p(d^2)`. `xsin` returns a zero of either sign unchanged.
+  - `xlog2` is fdlibm's `log2` (`e_log2.c`): `m` in `[1/sqrt 2, sqrt 2)`,
+    `log (1 + f) = f - h + s (h + R)`, `f - h` split so that its product by
+    the leading part of `1/ln 2` is exact, the exponent added last with its
+    rounding carried, where tinygrad's is a polynomial in `(m - 1)/(m + 1)`
+    whose rounding scales into the result.
 - **Reason:** (b). rune's `exp`, `sin`, `cos` and the kinds built on them
   compute with tolk's `exp2` and `sin`, and its `Log2` kind is tolk's `log2`
-  (rune's `Lower_real.unary`); rune's `log` reads no `log2`. A target's
-  function one unit off leaves rune's compositions within their stated
-  bounds; tinygrad's `xsin` left the sine of a float32 near a multiple of pi
-  below 30 with no correct bit, and its `xlog2` was 5 units off in float32.
-  On the host, where Clang renders none of these functions, every one is
-  tolk's.
+  (rune's `Lower_real.unary`), and rune's `log` reads no `log2`. One unit off keeps rune's compositions within
+  their stated bounds, where tinygrad's float32 `xsin` near a multiple of pi
+  below 30 had no correct bit and its `xlog2` was 5 units off. On the host
+  every one of these functions is tolk's.
 - **Pinned by:** the Transcendental suite
-  (`test/codegen/decomp/transcendental`): `accuracy › accuracy.golden`, which
-  holds `exp2`, `log2` and `sin` of float16, bfloat16, float32 and float64
-  values correctly rounded by mpmath
-  (`test/gen/codegen/decomp/transcendental.py`) and checks each function, and
-  `xsin ~fast` below 30, within an ulp of them; `special values › sin <type>
-  -0x0p+0 is -0x0p+0` and the subnormal rows; `types › <function> refuses a node
-  of another type › half`; the graph goldens and `values.tolk`; and rune's
-  `Lower_real › transcendental › exp within 2 ulps at float32, 9 at float64`, `›
-  exp2 within 4 ulps …`, `› log2 within 4 ulps …`, `› sin within 2 ulps …` and
-  `› cos within 2 ulps …`, on the host.
+  (`test/codegen/decomp/transcendental`): `accuracy › accuracy.golden`
+  (mpmath's correctly rounded values,
+  `test/gen/codegen/decomp/transcendental.py`), and `xsin ~fast` below 30,
+  within an ulp of them; `special values › sin <type> -0x0p+0 is -0x0p+0` and
+  the subnormal rows; `types › <function> refuses a node of another type ›
+  half`; the graph goldens and `values.tolk`; and rune's `Lower_real ›
+  transcendental › exp within 2 ulps at float32, 9 at float64`, `› exp2
+  within 4 ulps …`, `› log2 within 4 ulps …`, `› sin within 2 ulps …` and `›
+  cos within 2 ulps …`, on the host.
 
 ## D127. Withdrawn
 
-A selection moved into a converted gated load only when the load's type held its
-other value, since tinygrad converted that value to the load's type and back.
-tinygrad no longer moves a selection through a conversion
-(`codegen/late/gater.py` `move_where_load`, `pm_move_gates_from_index`):
-`Gater.move_where_load` moves it only into a load of the selection's own type,
-where converting the other value changes nothing, so `Gater.holds` went.
+A selection moved into a converted gated load only when the load's type held
+its other value. `Gater.move_where_load` moves it only into a load of the
+selection's own type, as `codegen/late/gater.py` `move_where_load` does.
 
 ## D128. A committed float operation reads a weak float operand rounded
 
-- **tinygrad:** `uop/ops.py` (`UOp._min_max`), which bounds a weak float
-  operand of a committed float operation by its value as written, at no
-  width.
+- **tinygrad:** `uop/ops.py` `UOp._min_max`, which bounds a weak float operand
+  of a committed float operation by its value as written.
 - **tolk:** `Ops.rounded` and `Ops.operand_bounds`.
-- **Differs:** a committed float operation that reads a weak float operand
-  bounds it rounded to its own type, as the code it compiles to computes it,
-  as a committed integer operation already wraps a weak integer one. Rounding
-  keeps the order of values, so the bounds rounded hold the values rounded; a
-  bound that rounds to NaN, past a type without infinities, leaves the type's
-  bounds. tinygrad bounded `where c x 5e-324` at float32 by `5e-324`, which
-  rounds to 0, so the bounds excluded 0 and `== 0` of the selection folded to
-  false.
-- **Reason:** (b). rune's pad of a float32 tensor by a value that rounds to 0
-  (`Nx.pad ~value:5e-324`) compiled to such a selection, whose comparison with
-  0 folded to false where eager compares 0 with 0.
+- **Differs:** a committed float operation bounds a weak float operand rounded
+  to its own type, as compiled code computes it. A bound that rounds to NaN,
+  past a type without infinities, leaves the type's bounds.
+- **Reason:** (b). rune's `Nx.pad ~value:5e-324` of a float32 tensor compiled
+  to `where c x 5e-324`, bounded away from 0, so `== 0` folded to false where
+  eager compares 0 with 0.
 - **Pinned by:** the Ops suite (`test/uop/ops`): `bounds › a committed float
   selection holds a weak constant at its type, where it may round to zero`.
   On rune: missing (the old rune's `a compiled program › computes eager's
@@ -3719,72 +3001,54 @@ a search keeps.
 
 ## D130. Withdrawn
 
-A round's candidates were timed in their own order, each once its compilation
-ended, and on the host's clock all compiled before any was timed, so that a
-search chose as a serial one does. Nothing but a golden needed the order, and
-no measurement showed the host's searches choosing worse for compilations on
-other cores. `Search.beam_search` times each candidate as its compilation ends
-(`Worker.iter`), on every device, as `codegen/opt/search.py` `beam_search`'s
-`pool.imap_unordered` does; on one domain, as without a pool, in their order.
+A round's candidates were timed in their own order. `Search.beam_search` times
+each as its compilation ends (`Worker.iter`), on every device, as
+`codegen/opt/search.py` `beam_search`'s `pool.imap_unordered` does; on one
+domain, in their order.
 
 ## D132. A contiguous view's rewrite stops at the effects its storage waits on
 
-- **tinygrad:** `uop/ops.py` (`UOp.contiguous_view`), whose
-  rewrite of the index with `pm_mops` and `symbolic` visits every node the
-  index reaches, the effects an `AFTER` orders its storage after and the graphs
-  they compute included, and returns the node it reaches as rewritten
-  (`out.src[0]`).
+- **tinygrad:** `uop/ops.py` `UOp.contiguous_view`, whose rewrite with
+  `pm_mops` and `symbolic` visits every node the index reaches, the effects
+  an `AFTER` orders its storage after included, and returns `out.src[0]`.
 - **tolk:** `Prepare.pm_stop_at_effects` and `Prepare.contiguous_view`.
 - **Differs:** the rewrite stops at void nodes, the effects storage is ordered
-  after, and leaves them and what they compute as they are, so that the
-  storage it returns is the node of the view's graph. The effects decide
-  nothing of where the view's elements lie. The graphs they compute hold
-  rune's gathers (D73), which `pm_mops`, a rule for a view's index, moves
-  through a reshape into an index whose shape repeats the gather's, and
-  arithmetic on weak-integer tensors, on which `Divandmod`'s `divide_by_gcd`
-  raises. tinygrad's tensor graphs hold neither.
-- **Reason:** (b): the kernel split asks of each copy, stage and store of
-  movements or bitcasts of storage whether it is a view of that storage
-  (`Schedule.view_of`, through `Schedule.pm_callify_ctx_collect` and
-  `Schedule.contiguous_mops_to_view`), which calls `Prepare.contiguous_view`;
-  rune calls neither. norn's NUTS warmup and sampling of a posterior over
-  sixteen chains, compiled as one function, has results ordered after loops
-  whose steps gather by weak-integer positions, and did not compile: it
-  raised in `Divandmod`'s `divide_by_gcd`, and, past it, on a reshape of a
-  gather's index of four axes.
+  after, and leaves them and what they compute as they are, so the storage it
+  returns is the node of the view's graph. The effects decide nothing of where
+  the view's elements lie. The graphs they compute hold rune's gathers (D73),
+  which `pm_mops` moves through a reshape into an index whose shape repeats
+  the gather's, and weak-integer arithmetic, on which `Divandmod`'s
+  `divide_by_gcd` raises. tinygrad's tensor graphs hold neither.
+- **Reason:** (b): the kernel split calls `Prepare.contiguous_view` through
+  `Schedule.view_of` (from `Schedule.pm_callify_ctx_collect` and
+  `Schedule.contiguous_mops_to_view`); rune calls neither. norn's NUTS warmup and sampling over
+  sixteen chains, compiled as one function, raised in `divide_by_gcd` and on a
+  reshape of a gather's index of four axes.
 - **Pinned by:** the `Prepare` suite: `contiguous_view › a view of storage
   after effects is a view of that storage, whatever the effects compute`.
 
 ## D133. A greatest common divisor's coefficient is a scalar
 
-- **tinygrad:** `uop/ops.py` (`UOp.gcd`, whose coefficient is
-  `uops[0].const_like(...)`, a constant broadcast to the shape of the first
-  term) and `uop/divandmod.py` `fold_divmod_general` (`divide_by_gcd`, which
-  divides every term by a divisor that is not the `CONST` 1). Over terms with a
-  shape, a vector of index expressions or a weak-integer tensor, a divisor of 1
-  is a broadcast 1, which is not the `CONST` 1 and divides no term:
+- **tinygrad:** `uop/ops.py` `UOp.gcd` (`uops[0].const_like(...)`) and
+  `uop/divandmod.py` `fold_divmod_general` (`divide_by_gcd`). Over terms with
+  a shape a divisor of 1 is a broadcast 1, which divides no term:
   `UOp.stack(a, b) // 3` raises in `unwrap`.
 - **tolk:** `Shape.gcd`.
 - **Differs:** the coefficient is a scalar constant of the first term's type,
   whatever the terms' shape, so a divisor of 1 is the `CONST` 1, and a larger
   one divides each term as `divides` does.
 - **Reason:** (b): the norn compile D132 names reached `divide_by_gcd`, before
-  D132, on a weak-integer tensor of rune's gather positions, and raised there.
-  The rule applies to any vector of index arithmetic.
+  D132, on a weak-integer tensor of rune's gather positions, and raised there. The rule applies to any
+  vector of index arithmetic.
 - **Pinned by:** the `Divandmod` suite: `values › each rewrite of a random
   division of vectors keeps each lane's value`.
 
 ## D134. Withdrawn
 
 A widening cast of an unsigned `x land y`, or `x lsr k` with `k` within the
-operand's width, was the operation on the widened operands, so that nx.quant's
-host MXFP4 products unpacked their uint4 codes at uint32, which Clang vectorises
-better on arm64. On fudge, kaun's decode bench rows show no gain beyond their
-ranges (medians of 11, two interleaved runs each, with the rule then without):
-`Quant/host/mxfp4-product-1-token` 0.91 and 0.84 ms against 0.68 and 0.88 ms,
-`Quant/host/routed-product-1-tokens` 5.01 and 4.07 ms against 3.85 and 5.28 ms,
-`Quant/host/routed-product-64-tokens` 130 and 122 ms against 114 and 145 ms. As
-tinygrad's `uop/symbolic.py` `Shape.symbolic` keeps such a cast where it is.
+operand's width, widened the operands; kaun's decode rows on fudge showed no
+gain. The cast stays where it is, as tinygrad's `uop/symbolic.py`
+`Shape.symbolic` keeps it.
 
 ## D135. Withdrawn
 
@@ -3794,20 +3058,17 @@ driver signals its own (D146).
 ## D137. Consumers of one domain share their loops
 
 - **tinygrad:** `schedule/indexing.py` `run_rangeify` (new ranges for every
-  stored value) and `run_rangeify` (a node its consumers index apart is stored);
-  `schedule/rangeify.py` (`remove_bufferize`, which inlines such a store back
-  into each consumer) and `split_store` (one kernel per store). Upstream calls
-  scheduling several outputs into one kernel pending:
+  stored value; a node its consumers index apart is stored, and each
+  reduction takes new ranges for the axes it reduces); `schedule/rangeify.py`
+  `remove_bufferize` (inlines such a store into each consumer) and
+  `split_store` (one kernel per store); `codegen/__init__.py`
+  `merge_reduce_ends`. Upstream calls several outputs per kernel pending:
   `test/runtime/test_assign.py` `TestAssign.test_simple_assignment_multioutput`,
   `TestAssign.test_permuted_reduceop_multioutput_dual_use` and
-  `TestAssign.test_permuted_reduceop_multioutput_dual_use_possible` skip "multi
-  output not supported anymore", and `test/runtime/test_jit.py`
-  `TestMultioutputJit` skips "Pending multioutput implementation #3607". Codegen
-  already compiles a kernel of one end over a group of stores
-  (`test/runtime/test_custom_kernel.py` `flip_contract_kernel`). For reductions,
-  `schedule/indexing.py` (`run_rangeify`: each reduction takes new ranges for
-  the axes it reduces); `codegen/__init__.py` (`merge_reduce_ends`, which
-  already makes one loop of the reductions that close one range).
+  `TestAssign.test_permuted_reduceop_multioutput_dual_use_possible`, and
+  `test/runtime/test_jit.py` `TestMultioutputJit`, skip; codegen already
+  compiles a kernel of one end over a group of stores
+  (`test/runtime/test_custom_kernel.py` `flip_contract_kernel`).
 - **tolk:** for stores, `Indexing.region`, `Indexing.views`,
   `Indexing.waits_over`, `Indexing.share_loops` (its `crossed`),
   `Indexing.loops_of` and `Indexing.end_shared` (which
@@ -3817,82 +3078,57 @@ driver signals its own (D146).
   stores and no state of a buffer, and `Rangeify.is_noop_after_dep`, which
   takes a group emptied of its stores as no effect; for reductions,
   `Indexing.reaches`, `Indexing.reduce_loops` and its use in
-  `Indexing.assign_ranges`;
-  `Codegen.merge_reduce_ends`.
+  `Indexing.assign_ranges`; `Codegen.merge_reduce_ends`.
 - **Differs:** consumers of one domain take one set of ranges, so a node they
-  share is indexed alike and computed once, where tinygrad indexes each
-  consumer apart, stores what they share and inlines it back into each. Stores
-  and reductions are its two cases.
+  share is indexed alike and computed once.
 
-  Stores: before ranges are assigned, the stores of the tensor graph that have
-  a loop are grouped. Two join when their values have one shape and one
-  device, they write different storage, neither reads the other or the storage
-  the other writes, through anything, neither waits for a write over storage
-  that the other reads in a state before it, which one kernel of both could
-  run neither before nor after, the computed nodes each reaches before storage
-  or another stored value share one, and no computed node that both read
-  through views (movements) is read through different views. A node behind a
-  view is read at the view's indices, so two stores index it alike only
-  through the same views: two slices of one reduction, each stored, stay two
-  kernels, each holding its slice alone, whatever else they share. Two groups
-  join only when neither reads the other through the stores of a third: where
-  `b` reads `c` and `d` reads `a`, a kernel of `a` and `b` and one of `c` and
-  `d` would each run before and after the other. Neither may reach a reduction
-  the other does not: a kernel of two reductions can lose the optimisations
-  each would take. A group's stores take one set of loops, so their shared
-  nodes are indexed alike and computed once, and they end as one end over a
-  group of the stores, which the kernel split makes one kernel writing them
-  all. A group whose every store is dropped, as a store of a value into itself
-  is, leaves the empty stack, which waits on nothing and makes no kernel,
-  where tinygrad, whose stores end apart, drops a noop and the end of one.
-  Outputs that share only loads stay apart; finished calls may still share a
-  launch (D404).
+  Stores: before ranges are assigned, the stores of the tensor graph that
+  have a loop are grouped. Two join when:
+  - their values have one shape and one device, and they write different
+    storage;
+  - neither reads the other or the storage the other writes, through
+    anything;
+  - neither waits for a write over storage that the other reads in a state
+    before it;
+  - the computed nodes each reaches before storage or another stored value
+    share one;
+  - no computed node both read through views (movements) is read through
+    different views, so two stored slices of one reduction stay two kernels;
+  - neither reaches a reduction the other does not, since a kernel of two
+    reductions can lose the optimisations each would take.
+
+  Two groups join only when neither reads the other through the stores of a
+  third. A group's stores take one set of loops and end as one end over a
+  group of the stores, which the kernel split makes one kernel. A group whose
+  every store is dropped, as a store of a value into itself is, leaves the
+  empty stack, which waits on nothing and makes no kernel. Outputs that share
+  only loads stay apart; finished calls may still share a launch (D404).
 
   Reductions: a reduction whose output is indexed by the same ranges as an
-  earlier one's in the walk, and that reduces axes of the same sizes, takes that
-  reduction's reduce ranges when no reduction of the group reaches it, through
-  anything. The walk meets a reduction before those it reads, so only a
-  reduction already in the group can read it. The sources are then indexed
-  alike: a node they share is one node, computed once per element of the loop,
-  where tinygrad indexes it by each reduction's ranges, stores it, and inlines
-  the store back into each loop. A group of a loop that several reductions close
-  takes a buffer of shared memory for each (D101). Two ranges that reductions
-  close merge in every reduction that closes them or not at all, as tinygrad
-  merges ranges since df93a6cb8. A reduction can stop closing its group's
-  ranges: a sum over a range its source does not read drops it
-  (`pm_reduce_unparented`), so a sum over `i` and `k` of a source that reads `k`
-  alone closes `k` alone, where a maximum beside it closes `k` within `i`'s
-  loop. Both merge every end, a store's as a reduction's. tinygrad gives an end
-  fresh ranges only when it closes the same ranges as another at a different
-  depth; tolk gives them to every end that closes a range an earlier end closes,
-  so each range has one end. No recorded kernel has such ends.
-- **Reason:** for stores, (d): `Nx_wide`, whose operations return a double
-  word's high and low parts, the two ends of one chain, and rune's gradients
-  of several arguments, which share their chain. tinygrad schedules each part
-  as a kernel that computes the whole chain: a compiled double-word add ran
-  six kernels and runs one, and the old rune's `compile/wide/sum-1e6` row
-  compiled 17 kernels. Without the grouping, rune's
-  `compile/special/betainccinv-grad-f32` row, the gradient of a float32
-  `Nx.betainccinv` in its three arguments, ran 593 kernels in place of one,
-  its first call took 29.7 s against 6.1 s, under load on fudge, and it held
-  1.3 MB of scratch against none. Through views, (b): rune's fully sharded
-  training (RFC 0005's memory bound), whose closing slices one partial into a
-  piece for each device; grouped, every slice was live at once. The check
-  costs kernel graphs up to 2% more words (tolk's `*/kernel_graph` rows). A
-  group emptied of its stores, (b): `Rune.jit` of `Rune.jvp` of a scan whose
-  step gives back its carry, whose carry and tangent each store a value into
-  themselves through a shared sign mask; the group's end was a kernel of no
-  storage, which no device runs, and the call was evaluated, which on a set of
-  GPUs raises. For reductions, (d): rune's reverse mode. The cotangent of a
-  value that operations broadcast sums one reduction per operation, each over
-  the same cotangent computation: the gradient of an aperture's weights over a
-  104 x 104 grid in its radius, which 28 operations broadcast, was one kernel of
-  28 loops, each computing the whole cell, and took 647-672 ms compiled against
-  93-171 ms eagerly on an M1 Max under load 11-15; one loop takes 30-31 ms.
-  On fudge, rune's `Jit/grad-broadcast-radius-float64-104x104`, the gradient
-  in a radius that 28 operations broadcast over a grid, takes 215 and 224 us
-  as one loop against 383 and 358 us as 28 (medians of 11, two interleaved
-  runs each).
+  earlier one's in the walk, and that reduces axes of the same sizes, takes
+  that reduction's reduce ranges when no reduction of the group reaches it,
+  through anything. A group of a loop that several reductions close takes a
+  buffer of shared memory for each (D101). Two ranges that reductions close
+  merge in every reduction that closes them or not at all, as tinygrad merges
+  ranges since df93a6cb8. A sum over a range its source does not read drops it
+  (`pm_reduce_unparented`), so it can stop closing its group's ranges.
+
+  Both merge every end, a store's as a reduction's, and give fresh ranges to
+  every end that closes a range an earlier end closes, so each range has one
+  end; tinygrad does so only for an end at a different depth. No recorded
+  kernel has such ends.
+- **Reason:** for stores, (d): `Nx_wide`'s high and low parts and rune's
+  gradients of several arguments share one chain; without the grouping,
+  rune's `compile/special/betainccinv-grad-f32` row ran 593 kernels in place
+  of one, with a first call of 29.7 s against 6.1 s on fudge. Through views,
+  (b): rune's fully sharded training (RFC 0005's memory bound), where grouped
+  slices were all live at once. The check costs kernel graphs up to 2% more
+  words (tolk's `*/kernel_graph` rows). A group emptied of its stores, (b):
+  `Rune.jit` of `Rune.jvp` of a scan whose step gives back its carry made a
+  kernel of no storage, and on a set of GPUs raised. For reductions, (d):
+  rune's reverse mode sums one reduction per broadcasting operation; on
+  fudge, rune's `Jit/grad-broadcast-radius-float64-104x104` takes 215 us as
+  one loop against 383 us as 28.
 - **Pinned by:** for stores, the Rangeify suite (`test/schedule/rangeify`):
   `get_kernel_graph › outputs that share a computation` (every test, `slices
   of one product through two views run as two kernels`, `slices that also
@@ -3901,102 +3137,92 @@ driver signals its own (D146).
   storage back are no kernel` among them); its recorded
   `read_around_assign_kernels`, `crossed_pairs_kernels` and `kernel_counts`,
   and the Postrange suite's `where_max_multioutput`, `padto_where_multioutput`
-  and `axes` cases. On rune: the
-  `compile/special/betainccinv-grad-f32` bench row, and `rune jit › fully
-  sharded` for the views and `rune scan › transformations › derivatives and
-  maps over views are the fold's` for an emptied group (the old rune's `Rune
-  nx.wide › kernels` went with its rewrite). For reductions, the Rangeify
-  suite (`test/schedule/rangeify`):
-  `get_kernel_graph › reductions that share a domain` (every test), and its
-  law over generated programs, whose `sum k + max k` and `x - sum k` steps
-  cover reductions that share a loop; its recorded `multireduce_*` and
-  `ugly_reduceop_pairing` kernel graphs and `kernel_counts`; the Indexing
-  suite's recorded `two_consumers` graph; the Postrange suite's
-  `sum_and_max_grouped`, `ten_shared_sums_group` and
-  `ten_shared_sums_group_unfit` cases, and the Codegen suite's
-  `two_grouped_stores_local`, whose upstream axes count one loop for the two
-  maximums. The Codegen suite's
+  and `axes` cases. On rune: the `compile/special/betainccinv-grad-f32` bench
+  row, and `rune jit › fully sharded` for the views and `rune scan ›
+  transformations › derivatives and maps over views are the fold's` for an
+  emptied group (the old rune's `Rune nx.wide › kernels` went with its
+  rewrite). For reductions, the Rangeify suite: `get_kernel_graph ›
+  reductions that share a domain` (every test), and its law over generated
+  programs, whose `sum k + max k` and `x - sum k` steps cover reductions that
+  share a loop; its recorded `multireduce_*` and `ugly_reduceop_pairing`
+  kernel graphs and `kernel_counts`; the Indexing suite's recorded
+  `two_consumers` graph; the Postrange suite's `sum_and_max_grouped`,
+  `ten_shared_sums_group` and `ten_shared_sums_group_unfit` cases, and the
+  Codegen suite's `two_grouped_stores_local`. The Codegen suite's
   `reductions that share a range › a range two reductions close at two depths
   runs as two loops`. On rune: missing (went with the old rune's rewrite):
-  its Packed suite's bit example of `a compiled call computes eager's values`,
-  two views a bit apart whose sums share their loops; its Jit suite's
-  `transformations › a compiled gradient of a parameter broadcast over a grid
-  is its gradient`; and its bench row
+  its Packed suite's bit example of `a compiled call computes eager's values`;
+  its Jit suite's `transformations › a compiled gradient of a parameter
+  broadcast over a grid is its gradient`; and its bench row
   `reverse/jit-of-grad-clipped-disc-float64-104x104-host`.
 
 ## D138. A load's index is simplified without the loads in it assuming its gate
 
-- **tinygrad:** `codegen/late/coalesce.py` (`simplify_valid_load`),
-  which simplifies a gated index with `uop/symbolic.py`
-  (`uop_given_valid`) down into the loads the index reads.
+- **tinygrad:** `codegen/late/coalesce.py` `simplify_valid_load`, which
+  simplifies a gated index with `uop/symbolic.py` `uop_given_valid` down into
+  the loads the index reads.
 - **tolk:** `Coalesce.simplify_valid_load`.
 - **Differs:** each load in the index stands as a variable of its bounds while
-  the gate simplifies the arithmetic around it, and is put back after, so a load
-  keeps its own index and gate. tinygrad substitutes the gate's bounds into the
-  loads too. A load's index whose gate implies the outer gate, such as a pad's,
-  loses that gate, and the load, which runs whatever the outer gate, reads
-  outside its buffer: the index of a gather through a pad is read before the
-  pad's first element. tinygrad's own `gated_given_valid` (`uop/symbolic.py`
-  `gated_given_valid`) refuses an index that loads for the same reason.
+  the gate simplifies the arithmetic around it, and is put back after, so a
+  load keeps its own index and gate. Substituting into it would drop a gate
+  the outer gate implies, such as a pad's, and the load, which runs whatever
+  the outer gate, would read outside its buffer. tinygrad's own
+  `gated_given_valid` (`uop/symbolic.py` `gated_given_valid`) refuses an index
+  that loads for the same reason.
 - **Reason:** (b): `Nx.concatenate` of a buffer and an `Nx.take` under
-  `Rune.jit`, as nested sampling's evidence concatenates its dead points and
-  its live points in likelihood order: the compiled kernel read up to the
-  buffer's length before the start of the indices and faulted.
+  `Rune.jit`, as nested sampling's evidence does, read before the start of
+  the indices and faulted.
 - **Pinned by:** the Coalesce suite (`test/codegen/late/coalesce`):
   `indexing_simplify › a gather through a pad reads its indices only inside
   the pad`.
 
 ## D139. Construction checks no specification
 
-- **tinygrad:** `uop/ops.py` (`UOpMetaClass.__call__`, which checks each
-  node it creates against `spec_full` when `SPEC` is above 1, and computes its
-  shape when `SPEC` is above 2), and `schedule/rangeify.py`'s
-  `Context(SPEC=min(SPEC.value, 2))` around `pm_apply_rangeify`.
+- **tinygrad:** `uop/ops.py` `UOpMetaClass.__call__` (checks each node against
+  `spec_full` when `SPEC` is above 1, computes its shape above 2), and
+  `schedule/rangeify.py`'s `Context(SPEC=min(SPEC.value, 2))` around
+  `pm_apply_rangeify`.
 - **tolk:** `Ops.v`, `Setting.spec` and `Indexing.run_rangeify`.
 - **Differs:** `Ops.v` checks nothing and computes no shape, whatever `SPEC`.
   `SPEC=0` checks nothing, and any other value checks the graphs passed
-  between stages, as `SPEC=1` does in tinygrad. A malformed node is reported at the
-  end of its stage rather than by the rule that built it;
-  `Spec.type_verify ~calls:Enter Spec.full` checks a graph after a suspect
-  rewrite.
-- **Reason:** (a). Construction is the bottom of the module stack, and the
-  full specification reads shapes, which read `simplify`, which builds nodes:
-  the check can only be defined above the nodes it checks. Running it from
-  construction needs a hook that a later module installs when it is
-  initialised, which holds only while every module of the library is linked.
+  between stages, as `SPEC=1` does in tinygrad. A malformed node is reported
+  at the end of its stage; `Spec.type_verify ~calls:Enter Spec.full` checks a
+  graph after a suspect rewrite.
+- **Reason:** (a). The full specification reads shapes, which read
+  `simplify`, which builds nodes, so the check is defined above construction,
+  and calling it from there needs a hook that holds only while every module is
+  linked.
 - **Pinned by:** the `Spec` suite: `construction › builds a node that breaks
   the full specification, whatever SPEC`.
 
 ## D140. A call of a loop takes its trip as a scalar argument
 
-- **tinygrad:** `schedule/__init__.py` (`resolve_linear_call`, which
-  binds a nameless scalar parameter only to a variable, and substitutes it into
-  each kernel that reads it), `engine/realize.py` (`get_call_arg_uops`,
-  which leaves out every variable, and `get_call_kernel_args`, which reads each
-  scalar parameter by its name).
+- **tinygrad:** `schedule/__init__.py` `resolve_linear_call` (binds a nameless
+  scalar parameter only to a variable), `engine/realize.py`
+  `get_call_arg_uops` (leaves out every variable) and `get_call_kernel_args`
+  (reads each scalar parameter by name); `codegen/opt/postrange.py`
+  `args_from_ast`.
 - **tolk:** `Schedule.scalar_argument`, `Schedule.pass_values` and
   `Schedule.resolve_linear_call`; `Realize.get_call_arg_uops` and
   `Realize.get_call_kernel_args`; `Tolk_engine.affine`.
 - **Differs:** a precompiled call inside a loop may pass a scalar parameter of
-  its body a weak integer expression of the loop's ranges, such as `r`, `2r + 1`
-  or `n - 1 - r`. The schedule keeps it as the call's argument, no state. Each
-  kernel of the body that reads the parameter keeps it, unnamed, in a slot past
-  its call's arguments, bounded by its type, and its call passes the expression
-  in that slot: `get_call_kernel_args` reads a nameless scalar parameter of a
-  program from its call's slot, and `get_call_arg_uops` leaves out every scalar
-  argument, an expression as well as a variable. The value reaches the program
-  as any variable's does, converted to the parameter's type at the ABI (D28): a
-  launch inside a loop of rig's program reads it from a scalar of its
-  parameters, the sum of the loops' trip words times constant factors (D90).
-  The kernel's program depends on neither the range nor its trips, so that
-  loops of any range and length compile one. tinygrad has no loop of calls, and its calls bind a
-  scalar only to a variable, by name. Beam search samples positional scalars by
-  slot and named variables by name. Its `link` callback takes a complete call,
-  with the scalar samples passed in their slots and the launch sizes evaluated
-  from the same samples; the candidate's compiled body keeps its parameters.
-  `Tolk_engine.link_call` links that call. tinygrad's `codegen/opt/postrange.py`
-  (`args_from_ast`) reads every scalar's `expr` and constructs only buffer
-  arguments.
+  its body a weak integer expression of the loop's ranges, such as `r`,
+  `2r + 1` or `n - 1 - r`, which the schedule keeps as the call's argument,
+  no state. Each kernel of the body that reads the parameter keeps it,
+  unnamed, in a slot past its call's arguments, bounded by its type, and its
+  call passes the expression there: `get_call_kernel_args` reads a nameless
+  scalar parameter from its call's slot, and `get_call_arg_uops` leaves out
+  every scalar argument, an expression as well as a variable. The value
+  reaches the program as any variable's does, converted to the parameter's
+  type at the ABI (D28): a launch inside a loop of rig's program reads it from
+  a scalar of its parameters, the sum of the loops' trip words times constant
+  factors (D90). The kernel's program depends on neither the range nor its
+  trips, so that loops of any range and length compile one. Beam search samples positional scalars by slot and named variables
+  by name; its `link` callback takes a complete call, with the scalar samples
+  in their slots and the launch sizes evaluated from the same samples, and
+  `Tolk_engine.link_call` links it; the candidate's compiled body keeps its
+  parameters, where tinygrad's `args_from_ast` reads every scalar's `expr` and
+  constructs only buffer arguments.
 - **Reason:** (b). rune's `Loop.repeat` and staged scans give each step its
   trip's index, which a kernel or a buffer of indices would otherwise compute.
 - **Pinned by:** the `Schedule` suite: `create_linear_with_vars › loops of
@@ -4005,11 +3231,11 @@ driver signals its own (D146).
   scalar argument is an expression of its range`; the `Realize` suite:
   `get_call_arg_uops › is a call's storage arguments in order, without its
   scalar ones` and `get_call_kernel_args › is the call's argument in the slot
-  of a scalar parameter`; the `Tolk_engine` suite: `link and run › a loop's call
-  reads its trip as a scalar argument on each trip`, `› a back edge's call
-  reads its trip on each trip, at most its trips`, `› a loop of one trip passes
-  its call the trip as a scalar argument`, `› loops of any range and trips
-  around one call compile one program`, and the same two on each GPU;
+  of a scalar parameter`; the `Tolk_engine` suite: `link and run › a loop's
+  call reads its trip as a scalar argument on each trip`, `› a back edge's
+  call reads its trip on each trip, at most its trips`, `› a loop of one trip
+  passes its call the trip as a scalar argument`, `› loops of any range and
+  trips around one call compile one program`, and the same two on each GPU;
   `Tolk.Search › a search binds a positional size in its call and launch`;
   `Tolk.Search on the host › a search runs candidates with named and
   positional scalars`. On rune: missing (the old rune's `Rune.jit › keys › a
@@ -4018,10 +3244,10 @@ driver signals its own (D146).
 
 ## D141. The host computes upcast lanes as vectors
 
-- **tinygrad:** `codegen/__init__.py` (`do_devectorize`, which splits every
+- **tinygrad:** `codegen/__init__.py` `do_devectorize` (splits every
   elementwise operation, load and store of several lanes into one per lane, on
-  every target); `renderer/cstyle.py` `base_rewrite`, which writes every
-  conversion as a C cast, for a vector a reinterpretation of its bits.
+  every target); `renderer/cstyle.py` `base_rewrite` (every conversion a C
+  cast, for a vector a reinterpretation of its bits).
 - **tolk:** `Renderer.t`'s `vector_lanes`; `Codegen.lanes_of`,
   `Codegen.in_order`, `Codegen.vector_operation`, `Codegen.lanes_at`,
   `Codegen.split_widths`, `Codegen.split_lanes`, `Codegen.distinct_lanes`,
@@ -4029,167 +3255,102 @@ driver signals its own (D146).
   `Codegen.address_lanes`, `Codegen.pm_vector_constants`,
   `Codegen.product_operands` and `Codegen.first_lane`;
   `Cstyle.mask_widths`, `Cstyle.clang_lanes`, `Cstyle.clang_vectors` and
-  `Cstyle.clang_kernel`;
-  `Decomp_dtype.emulates`; `Uop_weak.pm_commit_weak`'s cast over a stack.
+  `Cstyle.clang_kernel`; `Decomp_dtype.emulates`; `Uop_weak.pm_commit_weak`'s
+  cast over a stack.
 - **Differs:** a renderer may compute on vectors (`Renderer.vector_lanes` past
   1; Clang's is 64). There an elementwise operation of several lanes on a type
-  the target computes natively stays one operation on a vector of its lanes, on
-  one axis, or past `vector_lanes` lanes vectors of that many and a last of the
-  rest, the last `vector_lanes + 1` as two vectors where one lane would be left
-  (D241), when each source holds them in order: a vector operation, or a view
-  (reshapes, broadcasts, permutations, stacks) of constants (a literal), of
-  loads of memory, of lanes of vectors and of vector operations, a load or a
-  lane in as many lanes as read it (a shuffle), or a scalar that every lane
-  reads, and when no two of its lanes read the same sources: a lane of a vector
-  operation is its own, a lane of a stack its element. A source that holds lanes
-  computed apart, or apart in registers, as an accumulator's lanes, would be put
-  together lane by lane, and lanes that repeat are computed once each apart:
-  such an operation computes each lane apart. Loads, stores, tensor-core
-  products, calls, and operations on a weak type (an address) or an emulated one
-  still compute each lane apart; an address is computed lane by lane through the
-  vector operations it reads, so that accesses still merge. A sum fuses each
-  lane of a vector product into its running sum, and computes its first lane,
-  which it adds to nothing, as a product of scalars, so that no vector product
-  is left; a selection by constant conditions picks each lane. Clang writes the
-  vectors as `ext_vector_type` values: a conversion is
+  the target computes natively stays one operation on a vector of its lanes,
+  on one axis, or past `vector_lanes` lanes vectors of that many and a last of
+  the rest, the last `vector_lanes + 1` as two vectors where one lane would be
+  left (D241), when:
+  - each source holds them in order: a vector operation, or a view (reshapes,
+    broadcasts, permutations, stacks) of constants (a literal), of loads of
+    memory, of lanes of vectors and of vector operations, a load or a lane in
+    as many lanes as read it (a shuffle), or a scalar that every lane reads;
+  - no two of its lanes read the same sources: a lane of a vector operation is
+    its own, a lane of a stack its element.
+
+  Otherwise, as when a source holds lanes computed apart, or apart in
+  registers as an accumulator's lanes, or lanes repeat, the operation computes
+  each lane apart. Loads, stores, tensor-core products, calls, and operations
+  on a weak type (an address) or an emulated one still compute each lane
+  apart; an address is computed lane by lane through the vector operations it
+  reads, so accesses still merge. A sum fuses each lane of a vector product
+  into its running sum, and computes its first lane, which it adds to nothing,
+  as a product of scalars, so no vector product is left; a selection by
+  constant conditions picks each lane. Any number of lanes up to 64 is one
+  vector, which LLVM computes in the next power of two.
+
+  Clang writes the vectors as `ext_vector_type` values: a conversion is
   `__builtin_convertvector`, square roots, truncations and multiply-adds are
   `__builtin_elementwise_*`, a scalar operand of a builtin or a selection is
   splat, and a vector of booleans is a mask of -1 and 0 lanes as wide as the
-  values it compares, converted to the width of the masks or values it meets; a
-  lane of a mask is read as a `_Bool`, and a mask of one-byte lanes, which C
-  types as plain chars, as signed chars. A cast of a stack of weak constants
-  commits them at the cast's type, as tinygrad commits the weak sources of a
-  cast of an operation, so that the vector is of constants of that type, as each
-  lane would be alone (`uop/weak.py` `pm_commit_weak`). Which lanes a host
-  kernel takes is D188's.
-- **Reason:** (d): RFC 0025's special functions on the host. Lanes copied as
-  scalars made Clang compile each lane's copy of the body, in a time that
-  grows faster than the copies, and kept its loop vectorizer off a float32
-  loop: float64 `log_betainc` compiled in 36 s and its gradient in `a` in
-  174 s, and float32 `exp`, `erf` and `sin` replayed at 0.23-0.71 of their
-  speed without the upcast. As vectors, Clang compiles the body once and runs
-  its lanes at once, and each lane computes what the scalar kernel computes,
-  bit for bit. Timed on one core of an M1 Max (10^5 elements, kernels
-  alternated), against no upcast: float32 `exp`, `erf`, `erfc`, `erfinv`,
-  `ndtri` and `tanh` replay 1.03-1.50 times as fast, float64 `exp`, `erf`,
-  `erfc`, `erfinv`, `ndtri` and `tanh` 1.14-1.56 times, and float32 `sin`,
-  whose reduction multiplies 64-bit integers, which NEON lacks, 0.96 times.
-  Rune's compile bench rows `shaped-4k` and `shaped-4k-3-lanes` time host
-  compiles that the vectors decide. A stack of weak constants committed
-  apart from its cast took the narrowest type that holds them, and a
-  complex128 signalling NaN stored as two doubles of a vector became a
-  conversion of floats, which quiets it (e).
-
-  nx.quant's MXFP4 product unpacks a byte of uint4 codes into two lanes, a
-  load each lane of the pair reads, shifted by a broadcast of the constants 0
-  and 4. Refused as a vector, the shift and every operation after it went lane
-  by lane: Clang compiled each code's e2m1 decode as a scalar select, a branch
-  on x86 that random codes, as a checkpoint's are, mispredict, which made the
-  product 2.5-4.5 times slower on random codes than on zero codes (kaun's
-  decode bench, kimchi). A load fills each lane that reads it, as a literal
-  fills its lanes, at no cost beyond the stack of distinct loads already
-  taken, and the decode, a vector, selects without branches. A load that
-  fills lanes the other sources fill alike repeats work instead: Q6_K's scale
-  byte serves 16 values, and converting it in each of their lanes made the
-  dense product's x86 kernel 45% longer and 33% slower on kimchi, so such
-  lanes stay apart, where each is computed once. With D188, the
-  host's products of a checkpoint's codes run 1.7-3.6 times as fast for one
-  token's routed product and 2.4-3.3 times for a dense one, on an M1 Max
-  (alternated under load). On fudge (medians of 11, two interleaved runs
-  each), kaun's `Quant/host/mxfp4-product-1-token` takes 0.91 and 0.84 ms
-  against 5.03 and 4.53 ms with a load filling one lane, and 6.20 and 5.62 ms
-  with every lane apart; `Quant/host/routed-product-1-tokens` 5.0 and 4.1 ms
-  against 15.3 and 21.0 ms, and 38.6 and 27.2 ms. Every lane apart, rune's
-  `Jit/sin-float32-64K` takes 806 and 139 us against 82 and 74 us, the tolk
-  bench's `lorenz/r_128_16_3_4_4_3_3_400_400/heuristic` 3.2 and 1.8 ms
-  against 0.79 and 0.63 ms, and the compile bench's `trig/sin-nested-8` 1.98
-  and 1.91 s against 0.74 and 0.46 s (medians of 3).
-  A matmul's upcast products read their loads, or
-  the lanes of a loaded vector, in each lane's multiply-add
-  (`clang_matmul_upcasted*`). They computed a vector product of their shared
-  loads for its first lane alone, the one the sum adds to nothing, and read
-  the other lanes back from the vectors of those loads; Clang compiled both
-  to the same instructions, and building them cost tolk's passes: as one
-  vector, a conv kernel's 9 unrolled lanes made the conv rows' linearize,
-  render and warm stages 19%, 26% and 17% slower.
-
-  Any number of lanes up to 64 is one vector, which LLVM computes in the next
-  power of two. Computed lane by lane, Clang compiles each lane's copy of a
-  body, in a time that grows faster than the copies: jera's compiled
-  Milstein march over 3 elements fuses into one kernel of 3 lanes, whose test
-  compiled in 57 s cold, and in 14 s as one vector.
-
-  A broadcast or a permutation of a vector operation's lanes is a shuffle, as
-  a load in several lanes is. Computed apart, an operation that read one went
-  lane by lane, and so did every operation after it, since each read lanes
-  computed apart: a map of 3 lanes over a loop whose lanes stop apart selects
-  each step's values by a lane's flag, a comparison of 3 lanes broadcast
-  across the lane's values, and rune computes each float8 operation in float32
-  between a decode and an encode. rune's test_iterate (`maps › compiled, lanes
-  stop apart at every dtype`, seed `s1:a9af9f06d362c663`) compiled one such
-  kernel of 36 lanes to 828 KB of C, which Clang took 2.4-4.5 s on, and to 38
-  KB, 0.22-0.28 s, as vectors; the test ran in 16.8 s against 3.1 s. The
-  compile bench's `lanes/held-fp8-36`, a step of that shape whose kernel is
-  705 KB of C against 35 KB, takes 3.2-7.2 s against 0.49-1.04 s (fudge at
-  load 24-31, three interleaved runs, the timing lock held per run).
-  Elsewhere the rule turns kernels whose lanes were read apart into vectors
-  read back lane by lane: GGUF's q8_0, q4_k and q6_k host products multiply
-  128 code lanes by a scale broadcast from 4 lanes as one vector, which each
-  lane's multiply-add then reads. On fudge at load 30-60, kaun's
-  `Quant/host/q8_0-product-1-token` took 2.6-3.9 ms against 1.8-3.1 ms
-  unpinned, and 1.2-5.7 ms against 1.8-4.5 ms on its E-cores (six
-  interleaved runs each), and its kernel alone on one E-core 4.6-5.6 ms
-  against 3.9-5.3 ms (four runs, minima of 15 rounds), the q4_k and q6_k rows
-  overlapping as well; no range stands apart. The cascade cost 2-7 s of
-  Clang per kernel at each first call, which outweighs a replay difference
-  no range shows.
-- **Rejected:** host vectors of a power of two of lanes only, made for Ubuntu
-  24.04's Clang 18.1.3, which crashed on x86 compiling rune's sort of a uint4
-  [2; 3] view (D167): m·2^k lanes as m vectors of 2^k, 6 lanes as 3 of 2, and
-  an odd number each lane apart. The crash was not from its 6-lane vector,
-  and the split's other reason, speed, does not hold: on fudge, quiet, taskset
-  0-5, lorenz/step-batch-128-host replays in 7.23 and 7.25 ms with its 48
-  lanes as 3 vectors of 16, and 7.23 and 7.23 ms as one vector. An odd
-  number as vectors of the powers of two that sum to all but its last lane,
-  and that lane apart, 5 lanes as 4 and 1, made eight_schools' kernel
-  `E_8_5_2` take Clang 8.9 s, all in LLVM's loop strength reduction, against
-  0.2 s, and its first call 13.6 s against 8.8 s.
-
-  Compile time is paid once and replay on every call, so
-  neither trade below was taken. `#pragma clang loop vectorize(disable)`
-  changes nothing on vector kernels (Clang 0.24 s with and without it on
-  float64 `erfinv`, replay 0.99-1.00 times on 9 kernels); `-fno-vectorize`
-  on scalar kernels cuts the gradient of `log_betainc` from 7.68 s to 1.36 s
-  of Clang but slows its replay from 204 ms to 475 ms (D167 takes it for a
-  source of more than 400 000 bytes). One 16-byte register
-  of lanes at 5 operations or more saves at most 2.1 times of Clang (that
-  gradient, 6.35 s to 3.05 s) and replays 1.17-1.79 times slower (the
-  gradient 1.17, float64 `sin` 1.28, float32 `lgamma` 1.79).
-- **Pinned by:** the Cstyle suite's `sources › by default › clang_vector_*`, and
-  `execution on the host › every kernel the interpreter runs writes what it
-  computes`; the Codegen suite's `vectors in programs › a host program computes
-  on vectors of its lanes` (every host case), `› a host program of 6 lanes
-  computes one vector`, `› a host program of 48 lanes computes one vector`, `› a
-  host program of 24 lanes computes one vector`, `› a host program of n lanes
-  computes one vector`, `› a host program of 128 lanes computes vectors of 64`,
-  `› a host program of 80 lanes computes vectors of 64 and 16`, `› a host
-  program of 65 lanes computes vectors of 33 and 32`, `› a host operation of any
-  lanes computes vectors of at most 64 and writes what its kernel writes` (every
-  case), `› a host selection by a broadcast of computed lanes computes no lane
-  apart` and `› a host sum of a product's unrolled lanes multiplies no vectors`
-  (every case), `› a host selection of 8, 16 or 32 lanes by a comparison of
-  integers takes each lane's arm` and `› a host selection of 3, 6, 12, 24 or 48
-  lanes by a comparison of integers takes each lane's arm` (every case), `› a
-  weak constant stored into four lanes of half on the host converts them` and
-  `multiply-adds` (every test); `Tolk.Uop_weak › pm_commit_weak › a cast of a
-  stack of weak constants commits them at its type, signalling NaN bits kept`;
-  rune's `Lower › padded loads give eager's bits` (a complex128 signalling NaN
-  fill); rune's `rune jit › classes › a uint4 sort along the last axis of every
-  other row and column, flipped, gives eager's codes` and `› nx.quant's decodes
-  compile`; rune's compile bench: `shaped-4k-3-lanes` and `lanes/held-fp8-36`.
-  On rune, missing (went with the old rune's rewrite): its Rune.jit suite's
-  `lanes`, `stated values › a window set into bits at an odd offset keeps the
-  bits around it`, and lower_index's `quantised products › a product decodes a
+  values it compares, converted to the width of the masks or values it meets;
+  a lane of a mask is read as a `_Bool`, and a mask of one-byte lanes as
+  signed chars. A cast of a stack of weak constants commits them at the
+  cast's type, as each lane would be alone (`uop/weak.py` `pm_commit_weak`).
+  Which lanes a host kernel takes is D188's.
+- **Reason:** (d): RFC 0025's special functions on the host. Lanes as scalars
+  made Clang compile each lane's copy of the body, in a time that grows faster
+  than the copies (float64 `log_betainc`'s gradient in `a` took 174 s), and
+  kept its loop vectorizer off; as vectors each lane computes the scalar
+  kernel's bits, and on fudge every lane apart makes rune's
+  `Jit/sin-float32-64K` 806 us against 82 us and the compile bench's
+  `trig/sin-nested-8` 1.98 s against 0.74 s. A load filling each lane that
+  reads it: nx.quant's MXFP4 decode stays a vector without branches, and on
+  fudge kaun's `Quant/host/mxfp4-product-1-token` takes 0.91 ms against 5.03
+  ms with a load filling one lane; lanes that other sources fill alike stay
+  apart, since Q6_K's scale converted in each of its 16 lanes made the dense
+  x86 kernel 33% slower on kimchi. A matmul's upcast products
+  (`clang_matmul_upcasted*`) compute their first lane as scalars: as one
+  vector, a conv kernel's 9 lanes made the conv rows' linearize stage 19%
+  slower for the same instructions. Up to 64 lanes as one vector: jera's
+  compiled Milstein march over 3 elements compiled in 57 s lane by lane, 14 s
+  as one vector. A broadcast or permutation as a shuffle: rune's map of 3
+  lanes whose lanes stop apart, with each float8 operation computed in float32
+  (`maps › compiled, lanes stop apart at every dtype`), went lane by lane; the
+  compile bench's `lanes/held-fp8-36` takes 3.2-7.2 s against 0.49-1.04 s.
+  Committing a stack of weak constants, (e): committed apart, it took the
+  narrowest type that holds them, and a complex128 signalling NaN became a
+  conversion of floats, which quiets it. The cost: GGUF's q8_0, q4_k and q6_k
+  host products become vectors read back lane by lane, with no range apart on
+  fudge (kaun's `Quant/host/q8_0-product-1-token` 2.6-3.9 ms against 1.8-3.1
+  ms unpinned), against the 2-7 s of Clang per kernel at each first call that
+  lane by lane cost.
+- **Rejected:** a power of two of lanes per vector, made for Clang 18.1.3's
+  crash on rune's uint4 sort (D167), which was not from its vector and gains
+  no speed; an odd number as vectors of powers of two and its last lane apart,
+  which made eight_schools' kernel `E_8_5_2` take Clang 8.9 s against 0.2 s;
+  `#pragma clang loop vectorize(disable)`, which changes nothing on
+  vector kernels; `-fno-vectorize` on scalar kernels and 16-byte registers,
+  which trade replay for compile time (D167 takes `-fno-vectorize` for a
+  source of more than 400 000 bytes).
+- **Pinned by:** the Cstyle suite's `sources › by default › clang_vector_*`,
+  and `execution on the host › every kernel the interpreter runs writes what
+  it computes`; the Codegen suite's `vectors in programs › a host program
+  computes on vectors of its lanes` (every host case), `› a host program of 6
+  lanes computes one vector`, `› a host program of 48 lanes computes one
+  vector`, `› a host program of 24 lanes computes one vector`, `› a host
+  program of n lanes computes one vector`, `› a host program of 128 lanes
+  computes vectors of 64`, `› a host program of 80 lanes computes vectors of
+  64 and 16`, `› a host program of 65 lanes computes vectors of 33 and 32`, `›
+  a host operation of any lanes computes vectors of at most 64 and writes what
+  its kernel writes` (every case), `› a host selection by a broadcast of
+  computed lanes computes no lane apart` and `› a host sum of a product's
+  unrolled lanes multiplies no vectors` (every case), `› a host selection of
+  8, 16 or 32 lanes by a comparison of integers takes each lane's arm` and `›
+  a host selection of 3, 6, 12, 24 or 48 lanes by a comparison of integers
+  takes each lane's arm` (every case), `› a weak constant stored into four
+  lanes of half on the host converts them` and `multiply-adds` (every test);
+  `Tolk.Uop_weak › pm_commit_weak › a cast of a stack of weak constants
+  commits them at its type, signalling NaN bits kept`; rune's `Lower › padded
+  loads give eager's bits` (a complex128 signalling NaN fill); rune's `rune
+  jit › classes › a uint4 sort along the last axis of every other row and
+  column, flipped, gives eager's codes` and `› nx.quant's decodes compile`;
+  rune's compile bench: `shaped-4k-3-lanes` and `lanes/held-fp8-36`. On rune,
+  missing (went with the old rune's rewrite): its Rune.jit suite's `lanes`,
+  `stated values › a window set into bits at an odd offset keeps the bits
+  around it`, and lower_index's `quantised products › a product decodes a
   checkpoint's codes 16 at once on the host` (with D188) and `› a product over
   GGUF's Q6_K blocks converts each scale once`. The Codegen suite's
   `invalid_lanes_clang` and `invalid_lanes_int8_clang`, whose lanes of one
@@ -4213,52 +3374,49 @@ merged into D137, which holds the loops that consumers of one domain share.
 
 ## D145. Withdrawn
 
-Rangeify and `PADTO` divided an integer division by `where(valid, d, 1)` on
-padding, whose loads read zeros, since x86 traps on a division by zero. D355
-defines every division whose divisor's bounds reach 0, and the bounds of a load
-on padding hold the zero it reads: a load of storage is bounded by its type,
-and a gated load of a constant table by its alternative too (D355). The padding
-divides as tinygrad's interpreter does, without the guard. The Tolk_engine
-suite's `a pad of integer divisions writes what its tensors compute` and `a pad
-of a quotient by a constant table writes what it computes` (on the host and
-each GPU) and the Codegen suite's `padto_idiv_upcast` keep the values.
+Padding divided an integer division by `where(valid, d, 1)`. D355 defines it,
+and the Tolk_engine suite's `a pad of integer divisions writes what its tensors
+compute` and `a pad of a quotient by a constant table writes what it computes`
+(on the host and each GPU) and the Codegen suite's `padto_idiv_upcast` keep the
+values.
 
 ## D146. The runtime is rig: no command queues, batches or host batches
 
 - **tinygrad:** `runtime/support/hcq2.py` (`hcq_compile`, `sched_batches`,
   the queue encoders it calls through `Compiled.pm_encode`, the host
   programs that submit them, the staging copies and `hcq_link`);
-  `runtime/ops_*.py` (`pm_encode` and the queues);
-  `engine/realize.py` (`compile_linear`, which ends in `hcq_compile`)
-  and `run_linear`.
+  `runtime/ops_*.py` (`pm_encode` and the queues); `engine/realize.py`
+  `compile_linear` (which ends in `hcq_compile`) and `run_linear`;
+  `runtime/ops_cuda.py` `CUDADevice.function`.
 - **tolk:** `Realize.compile_linear`; `Tolk_engine.link`, `Tolk_engine.run`
-  and `Tolk_engine.time`; `test/gen/engine/jit.py`,
-  which stops tinygrad's `compile_linear` before `hcq_compile`.
+  and `Tolk_engine.time`; `test/gen/engine/jit.py`, which stops tinygrad's
+  `compile_linear` before `hcq_compile`.
 - **Differs:** `compile_linear` ends once the kernels are compiled: it batches
   no call, encodes no queue, makes no host program, splits no call into lanes
-  and stages no copy. `Tolk_engine.link` turns the compiled calls into a program
-  of rig (`Rig_program`): a kernel is a launch on each lane's device, a host
-  program's on its host, its parameters laid out as `hcq2.py`'s `layout_args`
-  lays them out; a copy is a copy part of a device that copies between its two
-  sides, or else a move, a queued copy of rig's (`Rig.Buffer.submit_copy`); a
-  range or a back edge is a loop; and consecutive calls of one device are one
-  submission. rig's drivers encode each vendor's queues, order the work across
-  queues and devices by the memory it uses, stage what no device copies
-  directly, and time the submissions where the driver can. A host program's
-  entry is rig's (D28). Storage the schedule makes is the program's, or an input
-  each run makes where it is linked per run (D173), and storage a caller binds
-  is an input of each run. Each linked program loads its own images
-  (`Rig.Image.load`), where `CUDADevice.function` (`runtime/ops_cuda.py`
-  `CUDADevice.function`) loads a binary once per device and process: two
-  programs that run one kernel load its binary twice, since `Rig.Image.load`
-  loads each call's binary again, so that each image's module variables are its
-  own, and a program shares an image among its own launches alone
-  (`Tolk_engine.link`). Sharing a binary without module variables across
-  programs would save 1-1.5 ms of a 70 ms gpt-oss-20b first call on CUDA, 2.5 ms
-  of 60 ms on NV, and 3.3-4.2 ms (1-4%) of its prefill and first step on an
-  R9700, against a driver function and an image table (about 80 lines).
+  and stages no copy. `Tolk_engine.link` turns the compiled calls into a
+  program of rig (`Rig_program`):
+  - a kernel is a launch on each lane's device, a host program's on its host,
+    its parameters laid out as `hcq2.py`'s `layout_args` lays them out;
+  - a copy is a copy part of a device that copies between its two sides, or
+    else a move, a queued copy of rig's (`Rig.Buffer.submit_copy`);
+  - a range or a back edge is a loop;
+  - consecutive calls of one device are one submission.
+
+  rig's drivers encode each vendor's queues, order the work across queues and
+  devices by the memory it uses, stage what no device copies directly, and
+  time the submissions where the driver can. A host program's entry is rig's
+  (D28). Storage the schedule makes is the program's, or an input each run
+  makes where it is linked per run (D173), and storage a caller binds is an
+  input of each run. Each linked program loads its own images
+  (`Rig.Image.load`), each call's binary again, so each image's module
+  variables are its own and a program shares an image among its own launches
+  alone; tinygrad loads a binary once per device and process.
 - **Reason:** (c). rig owns each GPU's queues: two runtimes cannot share a
-  GPU, and memory belongs to the runtime that made it.
+  GPU, and memory belongs to the runtime that made it. Sharing a binary without
+  module variables across programs would save 1-1.5 ms of a 70 ms gpt-oss-20b
+  first call on CUDA, 2.5 ms of 60 ms on NV, and 3.3-4.2 ms (1-4%) of its
+  prefill and first step on an R9700, against a driver function and an image
+  table (about 80 lines).
 - **Pinned by:** the Tolk_engine suite: `link and run › recorded`, `GPUs`
   (each recorded program, loop and refusal on Metal, CUDA, NV and AMD where
   the machine has one), `lanes and words` and `runs`; the jit goldens
@@ -4267,56 +3425,49 @@ each GPU) and the Codegen suite's `padto_idiv_upcast` keep the values.
 
 ## D147. The x86 host holds bfloat16 as its bits
 
-- **tinygrad:** `renderer/cstyle.py` (`ClangRenderer.type_map`,
-  which keeps `CStyleLanguage.type_map`'s bfloat16, Clang's `__bf16`
-  (`CStyleLanguage.type_map`), on every machine).
-- **tolk:** `Cstyle.clang` (the Clang renderer's language,
-  which on x86 maps bfloat16 to `unsigned short` and renders its constants as
-  their bits with `pm_bf16_ushort_const`).
+- **tinygrad:** `renderer/cstyle.py` `ClangRenderer.type_map`, which keeps
+  `CStyleLanguage.type_map`'s `__bf16` on every machine.
+- **tolk:** `Cstyle.clang` (on x86, bfloat16 as `unsigned short` and its
+  constants as bits with `pm_bf16_ushort_const`).
 - **Differs:** on x86, a bfloat16 value, pointer or vector is written as
   `unsigned short`, and a bfloat16 constant as its bits, as OpenCL writes them
   (`renderer/cstyle.py` `OpenCLRenderer.type_map`,
-  `OpenCLRenderer.string_rewrite`: its type map's `ushort` and
-  `pm_bf16_ushort_const`). The kernel's graph is tinygrad's; only its C types
-  change. Every bfloat16 operation already computes in float32 through
-  `create_non_native_float_pats` and `pm_manual_bf16_cast`, so a bfloat16 value
-  is only loaded, stored, selected and bitcast, which act on its bits.
-- **Reason:** (b). LLVM's x86 backend without AVX512-BF16 legalises a
-  bfloat16 value it only moves through float32. It aborts on a selection
-  between vectors ("Cannot select: v8bf16 = X86ISD::BLENDV"), and it truncates
-  a merge of a gated load with its alternative, and a bitcast of stacked
-  lanes, with compiler-rt's `__truncsfbf2`, which rig's host linker finds in
-  no library of the process. rune's bfloat16 suites failed on both x86 hosts:
+  `OpenCLRenderer.string_rewrite`). The kernel's graph is tinygrad's; only its
+  C types change. Every bfloat16 operation already computes in float32
+  through `create_non_native_float_pats` and `pm_manual_bf16_cast`, so a
+  bfloat16 value is only loaded, stored, selected and bitcast, which act on
+  its bits.
+- **Reason:** (b). LLVM's x86 backend without AVX512-BF16 aborts on a
+  selection between bfloat16 vectors ("Cannot select: v8bf16 =
+  X86ISD::BLENDV") and truncates a gated load's merge, or a bitcast of stacked
+  lanes, with compiler-rt's `__truncsfbf2`, which rig's host linker finds in no
+  library of the process. rune's bfloat16 suites failed on both x86 hosts:
   `compiled dtypes › bfloat16, compiled, carries hold each lane's bits`, the
   bfloat16 cases of `Rune.map_segments`' `dtypes`, `Rune.quant`'s routes in
   blocks and `transcendental functions on the host › pow › bfloat16`.
 - **Pinned by:** the `Codegen` suite's `a selection between bfloat16 vectors
   takes each lane's arm` and `a gated bfloat16 load takes its alternative
-  where its gate is false`, which run on the host: on an x86 host with clang
-  19, the first aborts the compile and the second fails to link (on a CPU
-  without AVX512-BF16) under `__bf16`. The x86 Clang goldens of bfloat16
-  kernels (`bf16_clang`, `clang_*_bf16`). On rune: missing (the cases above
-  went with the old rune's rewrite).
+  where its gate is false`, which run on the host and fail on x86 without
+  AVX512-BF16 under `__bf16`. The x86 Clang goldens of
+  bfloat16 kernels (`bf16_clang`, `clang_*_bf16`). On rune: missing (the
+  cases above went with the old rune's rewrite).
 
 ## D148. A selection keeps its guard of a conversion
 
-- **tinygrad:** `uop/symbolic.py` (`fold_where_closure`, which
-  assumes a selection's condition true in its true branch and false in the
-  other, unless an `INDEX` is involved).
+- **tinygrad:** `uop/symbolic.py` `fold_where_closure` (assumes a selection's
+  condition true in its true branch and false in the other, unless an `INDEX`
+  is involved).
 - **tolk:** `Shape.guards_partial` and `Shape.fold_where_closure`.
 - **Differs:** the condition is not assumed in the branches where it reaches
-  the operand of a conversion of a float to an integer in one of them.
-  tinygrad folds `where c (cast (where c q 0)) f` to `where c (cast q) f`. A
-  guard of an integer divisor, `where c (x // where c d 1) 0`, folds as
-  tinygrad folds it: D355 defines the division by any divisor whose bounds
-  reach 0.
-- **Reason:** (b). C leaves a conversion of a float outside the integer's
-  range undefined. Clang computes an operation in every lane of a vector and
-  selects between vectors with masks, which keep an undefined lane the
-  selection discards; LLVM then folds it into any value. rune guards such an
-  operand, as the quadrant of a sine's reduction, by a selection on the
-  condition that discards it, and the fold removed the guard: the compiled
-  sine of `[0; inf]` on x86 read `0x1.c9e8dep+97` for `sin 0`.
+  the operand of a conversion of a float to an integer in one of them:
+  `where c (cast (where c q 0)) f` stays. A guard of an integer divisor,
+  `where c (x // where c d 1) 0`, folds as tinygrad folds it: D355 defines the
+  division by any divisor whose bounds reach 0.
+- **Reason:** (b). C leaves a conversion of an out-of-range float undefined,
+  and Clang's vector selections keep the undefined lane, which LLVM folds into
+  any value. rune guards the quadrant of a sine's reduction this way; without
+  the guard the compiled sine of `[0; inf]` on x86 read `0x1.c9e8dep+97` for
+  `sin 0`.
 - **Pinned by:** the `Symbolic` suite's `selections › a guard of a conversion
   to an integer is kept in the branches`. On rune: missing (the old rune's `a
   compiled program › computes eager's values within the stated rounding`,
@@ -4324,165 +3475,135 @@ each GPU) and the Codegen suite's `padto_idiv_upcast` keep the values.
 
 ## D149. Withdrawn
 
-The Clang renderer wrote no calling convention on Windows, where tinygrad wrote
-`__attribute__((ms_abi))` on its kernels and the function pointers its calls
-cast to. tinygrad no longer supports Windows: `ClangRenderer`
-(`renderer/cstyle.py` `ClangRenderer`) keeps the empty `abi` and plain
+The Clang renderer wrote no calling convention on Windows. tinygrad no longer
+supports Windows: `Cstyle.clang_lang` keeps the empty `abi` and plain
 `kernel_typedef` of `CStyleLanguage` (`CStyleLanguage.abi`,
-`CStyleLanguage.kernel_typedef`) on every system, as `Cstyle.clang_lang` does. A
-Windows host's code is compiled for Windows' convention by D178.
+`CStyleLanguage.kernel_typedef`) on every system, as `renderer/cstyle.py`
+`ClangRenderer` does; D178 holds Windows' convention.
 
 ## D150. The folder's sine, logarithm and powers are correctly rounded
 
-- **tinygrad:** `uop/ops.py` (`python_alu`'s `SIN`, `math.sin`;
-  `LOG2`, `math.log2`; `EXP2`, `safe_exp2`'s `2 ** x`; `POW`, `safe_pow`'s
-  `pow`: the C library's), and `uop/symbolic.py` `symbolic_simple` (`c ** x` as
+- **tinygrad:** `uop/ops.py` `python_alu`'s `SIN` (`math.sin`), `LOG2`
+  (`math.log2`), `EXP2` (`safe_exp2`'s `2 ** x`) and `POW` (`safe_pow`'s
+  `pow`): the C library's; `uop/symbolic.py` `symbolic_simple` (`c ** x` as
   `exp2 (x * math.log2 c)`).
 - **tolk:** `Ops.sine`, `Ops.py_log2`, `Ops.py_exp2` and `Ops.py_pow`, which
   `python_alu` calls, and the `c ** x` rule of `Shape.symbolic_simple`, which
   takes `log2 c` from `Ops.exec_alu`; `test/gen/generate.py`, whose child
-  computes these folds correctly rounded with mpmath, so the goldens do not
-  depend on the host's C library.
-- **Differs:** `exec_alu` computes each on integers and rounds once. A sine's
-  argument is reduced exactly by pi/2, held to 1200 bits, and the sine or
-  cosine of the remainder is summed in fixed point to 192 bits. A logarithm,
-  a power of two and a power are summed in fixed point (`atanh` and `exp`
-  series) with a bound on their error, at 64 bits, then 128, 256, ..., until
-  both ends of the bound round to one double; a power of two `2^(e y)` and a
-  power that a double or a midpoint between two can equal are computed
-  exactly. Each result is correctly rounded on every host, where tinygrad's is
-  the C library's: on an M1 Mac about 3% of drawn float64 sines are one unit
-  off (`sin 2.5`, `sin 4.0`), glibc's about 0.1% (`sin 0.259`), and mingw-w64's
-  reduces by x87's 66-bit pi; glibc 2.41's `log2` is one unit off for about
-  one operand in 320 of [0.5, 2), its `pow (2, x)` for one in 1,250 of
-  [-1, 1), and its `pow` for one in 1,100 of [0.5, 8) to powers in [-2, 2)
-  (200,000 uniform draws each; `log2 0.86`, `2^-0.338`, `5.4 ** 0.8`). A NaN
-  operand of the sine gives `Dtype.nan`.
+  computes these folds correctly rounded with mpmath.
+- **Differs:** `exec_alu` computes each on integers and rounds once, correctly
+  rounded on every host. A sine's argument is reduced exactly by pi/2, held to
+  1200 bits, and the sine or cosine of the remainder is summed in fixed point
+  to 192 bits. A logarithm, a power of two and a power are summed in fixed
+  point (`atanh` and `exp` series) with a bound on their error, at 64 bits,
+  then 128, 256, ..., until both ends of the bound round to one double; a
+  power of two `2^(e y)` and a power that a double or a midpoint between two
+  can equal are computed exactly. A NaN operand of the sine gives `Dtype.nan`.
 - **Reason:** for the sine, (b). rune's `sin` and `cos` are `SIN` nodes
   (rune's `Lower_real.sin_`), which fold through `exec_alu`, and a fold must
   not depend on the host: on Windows `sin 1e300` folded to `0.979`, of the
-  wrong sign. For the logarithm and the powers, (e): `exec_alu` computes its
-  operation exactly and rounds once, and a C library's value one unit off is
-  the wrong value, which also differs between hosts. rune's `exp`, `log` and
-  their kin compose `EXP2` and `LOG2` nodes (rune's `Lower_real`), within one
-  unit of the correctly rounded result either way.
+  wrong sign. For the logarithm and the powers, (e): a C library's value one
+  unit off is the wrong value, and differs between hosts (glibc 2.41's `log2
+  0.86`, `2^-0.338`, `5.4 ** 0.8`).
 - **Pinned by:** `Tolk.Ops › exec_alu › exec_alu_values.golden`, compared
-  exactly: its `SIN` rows include `1e300`, `3.4e38`, pi, floats near multiples
-  of pi and floats whose sine glibc rounds to the wrong neighbour, which fail
-  with the C library's sine on macOS, glibc and Windows; its float64 `LOG2`,
-  `EXP2` and `POW` rows include operands whose results glibc rounds to the
-  wrong neighbour, which fail with glibc's, logarithms near 1, of subnormals
-  and of an integer past the greatest double, powers of two that round to a
-  subnormal or to 0, powers with exponents near `2^60`, and exact powers, one
-  of them halfway between two doubles (`68718952449 ** 1.5`, `262143^3`);
-  `Tolk.Symbolic › tinygrad › tests.golden ›
-  TestWeakConstFolding.test_float_unaries`, which folds `sin 4.0`; and
+  exactly: its `SIN` rows (`1e300`, `3.4e38`, pi, floats near multiples of pi
+  and floats glibc misrounds) and its float64 `LOG2`, `EXP2` and `POW` rows
+  (operands glibc misrounds, logarithms near 1, of subnormals and past the
+  greatest double, powers of two that round to a subnormal or to 0, exponents
+  near `2^60`, exact powers, one halfway between two doubles:
+  `68718952449 ** 1.5`, `262143^3`); `Tolk.Symbolic › tinygrad › tests.golden
+  › TestWeakConstFolding.test_float_unaries`, which folds `sin 4.0`; and
   `Tolk.Symbolic › symbolic_simple › powers › c ** x multiplies x by log2 c
   correctly rounded`, at `c = 0.86`.
 
 ## D151. An x86 kernel declares that it uses 512-bit vectors
 
-- **tinygrad:** `renderer/cstyle.py` (`kernel_typedef`, `void`) and
+- **tinygrad:** `renderer/cstyle.py` `kernel_typedef` (`void`) and
   `ClangRenderer.__init__`.
-- **tolk:** `Cstyle.clang` (the Clang renderer's language on
-  x86, whose `kernel_typedef` is
+- **tolk:** `Cstyle.clang` (on x86, `kernel_typedef` is
   `__attribute__((min_vector_width(512))) void`).
-- **Differs:** on x86, every kernel is marked as a function that uses
-  512-bit vectors. On a processor with AVX-512, 512-bit types are then legal
-  even where the processor prefers 256-bit vectors, as Intel's do: LLVM
-  holds a vector of up to 512 bits in one register and splits a wider one
-  into 512-bit parts. A kernel whose vectors are no wider than 256 bits,
-  scalar loops among them, compiles to the same instructions, and on a
-  processor without AVX-512 the mark changes nothing.
-- **Reason:** (b). The renderer writes vectors wider than 256 bits: 32 halves
-  for an elementwise float16 kernel (D141). Clang 18 crashes (a segfault in
-  `DAGTypeLegalizer::SplitVectorResult`) splitting a negation, an absolute
-  value or a copysign of more than 16 halves for a processor with AVX-512
-  that prefers 256-bit vectors, with or without AVX512-FP16. Such a vector is
-  what `Rune.jit` writes for `Nx.neg` and `Nx.abs` of float16 and for a
-  float16 minimum, which negates its lanes: rune's `Rune.jit programs › computes
-  eager's values within the stated rounding` crashed Ubuntu 24.04's Clang
-  18.1.3 under `-march=native` on a CI runner. Clang 17 and Clang 19 and later
-  compile them without the mark. Rendering the negation otherwise does not
-  hold: LLVM folds a round trip through float32, a subtraction from `-0.`, a
-  product by `-1` and a flip of the sign bit back into the same negation of
-  halves. tinygrad computes each lane apart and writes no such vector.
+- **Differs:** on x86, every kernel is marked as a function that uses 512-bit
+  vectors, so on a processor with AVX-512 512-bit types are legal even where
+  it prefers 256-bit vectors. A kernel whose vectors are no wider than 256
+  bits compiles to the same instructions, and without AVX-512 the mark
+  changes nothing.
+- **Reason:** (b). The renderer writes vectors wider than 256 bits (D141), and
+  Clang 18 segfaults splitting a negation, absolute value or copysign of more
+  than 16 halves for an AVX-512 processor that prefers 256-bit vectors, as
+  `Rune.jit` writes for float16 `Nx.neg`, `Nx.abs` and minima: rune's
+  `Rune.jit programs › computes eager's values within the stated rounding`
+  crashed Ubuntu 24.04's Clang 18.1.3 under `-march=native` on CI, with or
+  without AVX512-FP16. Clang 17 and Clang 19 and later compile them without
+  the mark. LLVM folds every other rendering of the negation back into the
+  same one. tinygrad computes each lane apart and writes no such vector.
 - **Pinned by:** `Tolk.Compiler_cpu › features › a kernel over more than 16
   halves compiles for AVX-512`, which renders `half_neg`, `half_abs`,
-  `half_copysign` and `half_min` (32 lanes each) for
-  `skylake-avx512`, `icelake-server` and `sapphirerapids` and fails under
-  `CC` naming Clang 18 without the mark; the x86 Clang goldens, whose kernels
-  carry it. On rune: missing (the old rune's `Rune.jit programs › computes
-  eager's values within the stated rounding`, whose examples held the program
-  found, went with its rewrite).
+  `half_copysign` and `half_min` (32 lanes each) for `skylake-avx512`,
+  `icelake-server` and `sapphirerapids` and fails under `CC` naming Clang 18
+  without the mark; the x86 Clang goldens, whose kernels carry it. On rune:
+  missing (the old rune's `Rune.jit programs › computes eager's values within
+  the stated rounding`, whose examples held the program found, went with its
+  rewrite).
 
 ## D152. The disk cache holds at most CACHESIZE bytes
 
-- **tinygrad:** `helpers.py` (`diskcache_clear`, `diskcache_get`,
-  `diskcache_put`): a put inserts or replaces a row and nothing removes one
-  but `diskcache_clear`.
+- **tinygrad:** `helpers.py` `diskcache_clear`, `diskcache_get`,
+  `diskcache_put`: nothing removes a row but `diskcache_clear`.
 - **tolk:** `Helpers.Diskcache.mark`, `Helpers.Diskcache.size_file`,
   `Helpers.Diskcache.count`, `Helpers.Diskcache.trim`,
   `Helpers.Diskcache.make_room`, `Helpers.Diskcache.put` and
   `Helpers.Diskcache.clear`; `Setting.cachesize` (5 GiB by default, `0` for
   no bound).
-- **Differs:** a put that would take the cache's files past `CACHESIZE`
-  bytes first removes entries of every table and version, the least recently
-  used by file time first, until they would hold four fifths of it with its
-  entry; it removes them before it writes, so that on a full disk the write
-  finds their space. A put of an entry larger than the bound writes nothing.
-  It also removes the writes that killed processes left: those last written
-  an hour or more before, the age at which ccache removes its temporary
-  files, so that another process's write in progress stays. A hit sets its
-  entry's time through a descriptor shared for deletion
-  (`lib/helpers_stubs.c`, `futimens` or `SetFileTime`), and on Windows a put
-  renames its entry with POSIX semantics (`tolk_rename`), which replace a
-  file open shared for deletion, so that a put over an entry a read or a
-  mark holds meanwhile still wins. Processes count each other's puts in the
-  length of one file, to which each put appends a byte per KiB. `diskcache_clear`
-  removes every entry; `clear` keeps a write in progress, an entry or size
-  it cannot remove, as on Windows one another program holds open without
-  sharing deletion, and the tables' directories, which a put meanwhile
-  writes in.
-- **Reason:** (b). Programs, schedules and beam results are keyed by the
-  digest of tolk's sources (D63), so each change of the sources leaves the
-  previous build's entries unread, about 0.6 GB for the tests of tolk and
-  rune. Every raven process shares the cache under `~/Library/Caches/tolk` or
-  `~/.cache/tolk`, which reached 96 GB on one machine; a full disk fails the
-  put of a compiled binary (`Renderer.Compiler.compile_cached`) and so the
-  compile.
+- **Differs:**
+  - A put that would take the cache's files past `CACHESIZE` bytes first
+    removes entries of every table and version, least recently used by file
+    time first, until they would hold four fifths of it with its entry; it
+    removes them before it writes, so that on a full disk the write finds
+    their space. A put of an entry larger than the bound
+    writes nothing. It also removes the writes killed processes left, last written an hour
+    or more before, the age at which ccache removes its temporary files, so
+    another process's write in progress stays.
+  - A hit sets its entry's time through a descriptor shared for deletion
+    (`lib/helpers_stubs.c`, `futimens` or `SetFileTime`), and on Windows a put
+    renames with POSIX semantics (`tolk_rename`), so a put over an entry a
+    read or a mark holds still wins.
+  - Processes count each other's puts in the length of one file, to which
+    each put appends a byte per KiB.
+  - `clear` keeps a write in progress, an entry or size it cannot remove (on
+    Windows, one another program holds open without sharing deletion), and
+    the tables' directories.
+- **Reason:** (b). Entries are keyed by the digest of tolk's sources (D63), so
+  each change leaves the previous build's unread, about 0.6 GB for the tests
+  of tolk and rune; the shared cache reached 96 GB on one machine, and a full
+  disk fails the put of a compiled binary (`Renderer.Compiler.compile_cached`)
+  and so the compile.
 - **Pinned by:** `Tolk.Helpers › Diskcache › the files of the cache never
   hold more than cachesize`, `› a put past cachesize removes entries used
   least recently first`, `› a put past cachesize removes the writes a killed
   process left`, `› a put past cachesize keeps another process's write in
   progress`, `› a put that cannot write removes entries past cachesize
-  first`, `› a put that cannot count the cache's size stores its entry`,
-  `› clear leaves the entries it cannot remove`, `› clear keeps the
-  directories of the tables`, `› a put replaces an entry that a read holds
-  open`, `› clear keeps another
-  process's write in progress`, `› processes putting in turn keep the cache
-  within cachesize`, `› a cachesize of 0 keeps every entry` and `› a
-  negative cachesize is refused`; `Tolk.Helpers › Diskcache on two domains ›
-  behaves as a table of entries, whatever the order of the calls`.
+  first`, `› a put that cannot count the cache's size stores its entry`, `›
+  clear leaves the entries it cannot remove`, `› clear keeps the directories
+  of the tables`, `› a put replaces an entry that a read holds open`, `› clear
+  keeps another process's write in progress`, `› processes putting in turn
+  keep the cache within cachesize`, `› a cachesize of 0 keeps every entry` and
+  `› a negative cachesize is refused`; `Tolk.Helpers › Diskcache on two
+  domains › behaves as a table of entries, whatever the order of the calls`.
 
 ## D154. A maximum over a range whose size may be 0 is its identity
 
-- **tinygrad:** `uop/symbolic.py` (`reduce_mul_chain`, an integer
-  maximum of a product times the factor that ignores its ranges).
+- **tinygrad:** `uop/symbolic.py` `reduce_mul_chain` (an integer maximum of a
+  product times the factor that ignores its ranges).
 - **tolk:** `Symbolic.reduce_mul_chain`.
 - **Differs:** an integer maximum of a product by a factor that ignores its
-  ranges, over a range whose size may be 0, is its identity there:
-  tinygrad's is the identity times the factor, which wraps. The entry's other
-  part, the linearizer counting a range as at least one run, went when
-  tinygrad dropped run counts from its order (cf335e26b): a loop's body sorts
-  after the nodes around it, whatever its size.
+  ranges, over a range whose size may be 0, is its identity there, where
+  tinygrad's identity times the factor wraps.
 - **Reason:** (c). `Tolk_engine.run` binds a variable to any value of its
-  range, its lower bound included, and runs each range's trips; a size of 0
-  is a binding the schedule must compute. With concrete shapes the scheduler
-  folds an empty value first (`Prepare`), so only a variable reaches it.
+  range, its lower bound included, so a size of 0 is a binding the schedule
+  must compute; with concrete shapes `Prepare` folds an empty value first.
 - **Pinned by:** `Tolk.Codegen › reductions over a variable size`, which runs
-  sums and maxima over sizes of at most 1 and 3 on the host at every size,
-  and an int32 maximum of `2 k` among them.
+  sums and maxima over sizes of at most 1 and 3 on the host at every size, an
+  int32 maximum of `2 k` among them.
 
 ## D155. Withdrawn
 
@@ -4496,85 +3617,51 @@ rule, its reason and its pins.
 
 ## D157. A C-style value read once is written into its reader only while its text is short and shallow
 
-- **tinygrad:** `renderer/cstyle.py` (`_render`'s rule that writes a
-  value read once into its reader, `r[u] = l`, which the reader's rule copies
-  whole into its own).
+- **tinygrad:** `renderer/cstyle.py` `_render` (a value read once is written
+  into its reader, `r[u] = l`).
 - **tolk:** `Cstyle.max_nesting`, `Cstyle.nesting`, `Cstyle.max_inlined`, and
   `inlined` in `Cstyle.render_uops`, with its call there.
-- **Differs:** a value read once, which both write into its reader, is
-  declared as a local variable when its expression nests more than 64
-  brackets, counting `(`, `[` and `{`, or is longer than 4096 characters.
-  - Nesting: tinygrad bounds no depth, so a chain of
-    single-use values nests without limit, and Clang and Metal reject a
-    statement past 256 levels: "bracket nesting level exceeded maximum of 256".
-    The limit is Clang's `BracketDepth` (`LangOptions.def`, default 256); HIP
-    compiles through comgr, which is Clang, and its limit is unverified on
-    hardware; NVRTC 13 compiles 1000 levels. tinygrad met the error and removed
-    parentheses of associative chains instead, which a chain of `<<` and `%`
-    cannot use. No golden nests past 24 levels, so none changes.
-  - Length: tinygrad bounds no length either. A flat chain, such as a sum of
-    loads, which an associative operation writes without its operands'
-    parentheses, nests one level and is one expression that each term copies
-    whole, and that tolk also scans for its brackets, so rendering it costs the
-    square of its length. Each copy is now at most 4096 characters. A call of
-    code written into its reader (`Ops.call ~inline`) stays written there at any
-    length and depth, as in tinygrad, so a chain of them costs the square of its
-    length again, as it did before texts were held aside (8,000 calls of
-    `{0}+1.0f`: 89 to 125 ms and 101.6 M words, against 7.1 to 7.4 ms and
-    2.16 M held aside); no raven consumer builds one. An address (an index, a
-    shrink, a buffer passed by address, a pointer cast) stays written at any
-    length, as in tinygrad: each wraps what it reads in a bracket, so the
-    bracket limit bounds a chain of them. No golden changes; a bound of 1024
-    would change 11 (HIP's fp8 conversions, and the host's matmul, attention,
-    argmax, llama_ffn_gate and int8 stages).
-- **Reason:** nesting, (b). rune's float64 `fmod` (rune's `Lower_real.fmod`)
-  computes `r := (r << left) % my` 187 times, which written as one expression
-  nests about 374 levels, so its kernel did not compile on the host: rune's
-  `binary kinds, comparisons, where and fma give eager's bits` (float64) and
-  `binary › mod` failed. Length, (d): compile time. Fudge, a sum of loads
-  rendered for the host, unbounded against bounded: 25,000 loads 15.5 s against
-  0.34 to 0.37 s, 100,000 over 120 s against 1.5 to 1.6 s, three interleaved
-  pinned rounds under load. Holding long texts aside and writing them out once
-  rendered 25,000 in 0.18 to 0.21 s and 100,000 in 0.81 to 0.85 s, with 120 more
-  lines of code; the bound copies at most 4096 characters a step, so
-  `chains/render-sum`'s 8,000 loads allocate 48% more words than that did
-  (21.5 M against 14.5 M). Clang 19 then compiles their kernel in 2.25 to
-  2.49 s of user time against 3.26 to 3.49 s for the one long statement, eight
-  interleaved rounds. rune's cold compiles, unbounded against held texts, with
-  D468: `special/betaincinv-grad-f64` 23.21 G instructions against 21.49 G
-  (Clang excluded) and 244.9 M words against 196.3 M;
-  `special/betainccinv-grad-f32` 15.10 G against 14.60 G and 144.6 M against
-  127.4 M. Bounded, a cold first call allocates against held texts, in one
-  process: `special/betaincinv-grad-f64` 196.7 M words against 195.8 M
-  (+0.46%), `special/betainccinv-grad-f32` 127.4 M against 127.0 M (+0.30%),
-  `rng/normal-f64` 11.6 M against 11.8 M (-1.5%), `long/pendulum-200` the
-  same to 0.01%.
+- **Differs:** a value read once is declared as a local variable when its
+  expression nests more than 64 brackets, counting `(`, `[` and `{`, or is
+  longer than 4096 characters. Two exceptions stay written at any length, as
+  in tinygrad: a call of code written into its reader (`Ops.call ~inline`), at
+  any depth too, and an address (an index, a shrink, a buffer passed by
+  address, a pointer cast), whose brackets the nesting limit bounds. No golden
+  changes.
+- **Reason:** nesting, (b). Clang and Metal reject a statement past 256
+  bracket levels (Clang's `BracketDepth`; HIP's comgr limit is unverified on
+  hardware), and rune's float64 `fmod` (rune's `Lower_real.fmod`) nests about
+  374: rune's `binary kinds, comparisons, where and fma give eager's bits`
+  (float64) and `binary › mod` failed on the host. Length, (d): compile time,
+  since each reader copies and scans its operand's text; on fudge a host sum
+  of 25,000 loads rendered in 15.5 s unbounded against 0.34 s bounded. The
+  bound costs against holding long texts aside and writing them out once,
+  with 120 more lines of code: `chains/render-sum`'s 8,000 loads allocate 48%
+  more words (21.5 M against 14.5 M), and a cold first call of rune's
+  `special/betaincinv-grad-f64` 196.7 M words against 195.8 M; unbounded, with
+  D468, it allocated 244.9 M. No raven consumer builds a chain of inline
+  calls.
 - **Pinned by:** nesting, the Cstyle suite: `parentheses › a chain of any
   length nests a bounded number of brackets`, which renders chains of 1 to 300
   steps with each renderer, and `execution on the host › computes a chain too
-  deep for one expression`, which runs 300 steps on the host against a fold in
-  OCaml. Length, tolk's bench `chains/render-sum`, on fudge, and the Cstyle
-  suite's `parentheses › a sum of any length writes statements of bounded
-  length` and `execution on the host › adds a sum too long for one expression
-  in order`, which runs 1500 additions against a fold in OCaml.
+  deep for one expression`. Length, tolk's bench `chains/render-sum`, on
+  fudge, and the Cstyle suite's `parentheses › a sum of any length writes
+  statements of bounded length` and `execution on the host › adds a sum too
+  long for one expression in order`.
 
 ## D158. A dead read of a staged value is 0
 
-- **tinygrad:** `schedule/rangeify.py` (`remove_bufferize`), which
-  inlines a stage's value at a read and leaves each range whose index is
-  `Invalid` in place.
+- **tinygrad:** `schedule/rangeify.py` `remove_bufferize` (inlines a stage's
+  value at a read and leaves each range whose index is `Invalid` in place).
 - **tolk:** `Rangeify.remove_bufferize`.
 - **Differs:** a read of a stage that would be inlined, at indices of which
   one is `Invalid`, is 0, as a load at an `Invalid` index is. tinygrad inlines
-  the stage's value there with the stage's own ranges, which no kernel ends,
-  so a value that a gate around the read does not fold away leaves a free
-  range in the kernel graph, which its specification refuses: "UOp
-  verification failed … RANGE … AxisType.WEAK".
+  the stage's value with its own ranges, which no kernel ends, and its
+  specification refuses the free range unless a gate folds it away.
 - **Reason:** (b). rune's compiled Fold (rune's `Lower_index.fold`) of a
-  complex128 `[2; 3; 1]` by `lo [0; 1; 2]`, `interior [0; 1;
-  0]` and a window of size 2 and step 2 on its last axis, whose every term
-  the crop drops, stages its operand to read its two parts and raised
-  there: rune's `a fold wraps integers and holds its float bound` failed.
+  complex128 `[2; 3; 1]` by `lo [0; 1; 2]`, `interior [0; 1; 0]` and a window
+  of size 2 and step 2 on its last axis, whose every term the crop drops,
+  raised: rune's `a fold wraps integers and holds its float bound` failed.
 - **Pinned by:** the `Rangeify` suite (`test/schedule/rangeify`):
   `get_kernel_graph › dead reads › a staged value read only in padding reads
   0 there`; rune's `Lower_index › folds and assemblies › a fold wraps
@@ -4582,126 +3669,105 @@ rule, its reason and its pins.
 
 ## D159. A captured schedule tells the settings it compiles under
 
-- **tinygrad:** `engine/jit.py` (`jit_lower`), which reads `JITBEAM`,
-  or else `BEAM`, at `jit_lower` and passes the width to `compile_linear` as its
-  `beam`, binding no setting; its search cache keys on no setting
-  (`codegen/opt/search.py` `beam_search`).
+- **tinygrad:** `engine/jit.py` `jit_lower` (reads `JITBEAM`, or else `BEAM`,
+  and passes the width to `compile_linear`, binding no setting);
+  `codegen/opt/search.py` `beam_search`, whose cache keys on no setting.
 - **tolk:** `Jit.width`, `Jit.bindings`, `Jit.shaping`, and `Jit.jit_lower`,
   which compiles under `bindings`; `Setting.shaping_under`.
 - **Differs:** `jit_lower ~beam` compiles with `BEAM` at its width and
-  `JITBEAM`, read by then, unset, so the caches of what it compiles key on
-  the width alone. `Jit.shaping ~beam` is `Setting.shaping` under those
-  bindings, read without binding them (`Setting.shaping_under`): two
-  lowerings whose `shaping` is equal compile alike, whatever `BEAM` and
-  `JITBEAM` were. tinygrad has no such value. tolk's caches key on every
-  setting that shapes compilation (`Setting.shaping`), so they keyed on
-  `JITBEAM` after the lowering had read it; unset, they key on the width
-  alone.
-- **Reason:** (b). rune's `Rune.jit ~beam` (rune's `Compile.shaping`) keys
-  a compiled function's variants on the settings that shape
-  its programs, and with an explicit width neither `BEAM` nor `JITBEAM`
-  does; it read the lowering's rule by repeating it.
-- **Pinned by:** the `Jit JITBEAM` suite (`test/engine/jit`):
-  `JITBEAM unset › a width given and BEAM's alike compile alike` and
-  `JITBEAM=3 › a width given and JITBEAM's alike compile alike`; and the
-  `Tolk.Setting` suite: `shaping › under bindings is shaping in their
-  context, and binds nothing`.
+  `JITBEAM`, read by then, unset, so the caches of what it compiles, which key
+  on `Setting.shaping`, key on the width alone. `Jit.shaping ~beam` is
+  `Setting.shaping` under those bindings, read without binding them
+  (`Setting.shaping_under`): two lowerings whose `shaping` is equal compile
+  alike, whatever `BEAM` and `JITBEAM` were. tinygrad has no such value.
+- **Reason:** (b). rune's `Rune.jit ~beam` (rune's `Compile.shaping`) keys a
+  compiled function's variants on the settings that shape its programs; with
+  an explicit width, neither `BEAM` nor `JITBEAM` shapes them, and rune read
+  the lowering's rule by repeating it.
+- **Pinned by:** the `Jit JITBEAM` suite (`test/engine/jit`): `JITBEAM unset ›
+  a width given and BEAM's alike compile alike` and `JITBEAM=3 › a width given
+  and JITBEAM's alike compile alike`; and the `Tolk.Setting` suite: `shaping ›
+  under bindings is shaping in their context, and binds nothing`.
 
 ## D160. A read no order keeps reads a copy of its state
 
-- **tinygrad:** `schedule/__init__.py` (`create_schedule`), which adds a
-  write-after-read edge from a kernel to every other kernel writing over a state
-  it reads, and raises "cycle detected in assign graph" where those edges and
-  the reads after writes form a cycle; `schedule/rangeify.py`
-  (`check_buf_states`), which raises "cycle detected while indexing" where one
-  kernel reads a storage in two states. Repro: `a = Tensor([1., 2.,
-  3.]).contiguous().realize(); b = a * 2; a.assign(a + 1); (b + (a *
-  3).contiguous()).tolist()` raises, and so does a swap `a, b = b * 1, a * 1`
-  through assigns; `test/runtime/test_assign.py::
+- **tinygrad:** `schedule/__init__.py` `create_schedule` (a write-after-read
+  edge to every other kernel writing over a state it reads; raises "cycle
+  detected in assign graph", and "sibling AFTERs detected in assign graph"
+  for two AFTERs over the state each names first); `schedule/rangeify.py`
+  `check_buf_states` (raises "cycle detected while indexing" where a kernel
+  reads a storage in two states); `test/runtime/test_assign.py::
   TestAssignOrdering::test_war_reader_already_depends_on_write` states the
-  raise, with the values `[2, 4, 15]` "once that read is staged" as its TODO. A
-  call given one buffer at two arguments, writing one, is ordered against no
-  other kernel and races with itself. Two AFTERs over the state each names first
-  raise "sibling AFTERs detected in assign graph" (`create_schedule`,
-  c00c9ada9).
+  raise. A call given one buffer at two arguments,
+  writing one, is ordered against no other kernel and races with itself.
 - **tolk:** `Schedule.schedule`, `Schedule.cuts`, `Schedule.copy_call`,
   `Schedule.copy_before_overwrites` and `Schedule.aliases`;
   `Prepare.sequence`; `Rangeify.stand_in`; `Shape.written_params` and
   `Shape.custom_kernel`.
-- **Differs:** one relation orders every kernel of the graph, a call of a
+- **Differs:** one relation orders every kernel of the graph: a call of a
   kernel, of a copy, of a precompiled body or a custom kernel, and a loop of a
-  call. A kernel reads the states its arguments name, a join being the state
-  under it (D202), and writes the states the Afters that list it are over, but
-  for a kernel already on an earlier state of that storage, which orders the
-  state and writes nothing over it, as tinygrad's (`create_schedule`,
-  3bdafaedf). It runs after the kernels that write the states it reads, and
-  after the kernels of the write that made the state it writes over, so a
-  reader of a state runs after every write under it, as tinygrad orders a
-  state after the state under it (413ecebe6): a kernel listed after a state
-  its own arguments do not reach, as `first` in
-  `x.after(second).after(first)`, would otherwise let a reader run before
-  `second`. It runs before every other kernel of each write over a state it
-  reads (D330), whichever elements each touches. Where
-  these orders form a cycle, the cycle is cut: one read on it reads a copy of
-  its whole state, which a kernel of its own makes into call-local storage
-  before the state's overwrite, and the schedule is made again from the graph
-  with the copy. Kahn's order finds the cycle where no kernel is ready, walking
-  back through the kernels not run; the read cut is one whose state is copied
-  already, else the one of fewest bytes, of storage that can be copied first.
-  Fewest copies is NP-hard (Sethi, by Rideau, Serpette and Leroy, "Tilting at
-  windmills with Coq", §1); the walk is greedy. A cycle in the graph made again
-  raises as an internal error. A graph whose kernels form no cycle gets no copy;
-  grouping stores into one kernel can make one, so the promise is of the kernel
-  graph `create_schedule` is given. Swaps, rotations and crossed reads compute,
-  with a copy for each cycle. A kernel reading one storage in two states takes a
-  parameter for each, and lies on a cycle, so no uncut kernel binds one buffer
-  at two parameters. A call given one state at an argument its body writes and
-  at one it does not reads, as `memmove` reads its source (C11 §7.24.2.2), a
-  copy of the state made before it at the argument it only reads
-  (`Shape.written_params`, at any depth through the calls the body makes); in a
-  loop, the copy is made in the loop as each trip starts. A custom kernel orders
-  after it only the arguments its body writes. A write's prior state is the
-  state before it on its storage's chain (`Prepare.sequence`, D473): rune's
-  loops name their carry's storage after the loop and pass the carry's first
-  state, and beside `a = x.after(x.store(1))`, `x.after(a.store(2))` writes
-  over `a` (D474). Two writes over one state, which no storage holds, raise
-  `Invalid_argument` (D474), and so does a call whose body does not show its
-  writes given one state twice. A partial overwrite of elements a
-  kernel does not read copies too, at a kernel and the state's size in storage.
-  The relation costs allocation in every schedule, cycle or not: an edge list, 7
-  words an edge, beside the order's own children, and tables of the kernels met
-  and of the joins' waits. Measured in words on fudge, `matmul/schedule`
-  allocates 738 words where it allocated 613 without the relation, and
-  `gpt_oss_decode/schedule` about 13.1 thousand against 11.6; the chains of
-  `Prepare.sequence` (D473) left the `*/schedule` rows within 3% of the rules
-  they replaced, and the kernel graphs unchanged. Waiting on the state under a state and listing each
-  kernel per storage (413ecebe6, 3bdafaedf) add 3-7% to these rows:
-  `matmul/schedule` 707 words against 684. Cheaper shapes were tried and kept:
-  the order runs first and the cut's parent tables are built only where it finds
-  a cycle, and a state is resolved without allocating; with parent and child
-  tables built for every graph, `matmul/schedule` allocated 909 words.
-- **Reason:** (e). tinygrad raises on valid graphs (the swap, the stale read
-  beside its overwrite), and computes wrong values where it orders silently:
-  a call given one buffer twice, and the join cases of D202. rune's jit
-  promises eager's values, and a program refused on a set without kernels
-  raises. No raven suite schedules a cycle today:
-  jera's compiled gradient of an adaptive solve made the one copy they reach
-  (`Ode › solve derivatives › compiled grad equals eager grad`).
-- **Pinned by:** the `Tolk.Schedule` suite: `create_schedule › laws › a schedule
-  copies a state iff its kernels form a cycle` and `create_linear_with_vars ›
-  laws › a schedule writes what its tensors compute`; `create_linear_with_vars ›
-  orders and copies`, `› writes` and `› calls given one state twice`;
-  `create_schedule › rules › kernels that overwrite each other's inputs read one
-  copy`, `› a kernel that waits for the overwrite of a state it reads reads it`
-  and the rules beside it, for a copy two kernels share, a kernel with two
-  copies, a copy of a state a rebuilt kernel writes and the copy's phase; the
-  programs `read_overwritten_through`, `read_beside_overwrite`,
-  `swap_through_values`, `call_given_one_state_twice`, `after_older_write`,
-  `readers_after_older_write` and `after_older_and_new_write`, whose recorded
-  schedules and linears and whose values (`create_linear_with_vars › values`);
-  `write_over_written`'s linear and values; the kernel graph of
-  `after_part_of_older_write`, whose schedule and linear differ by D184; and the
-  `Tolk.Rangeify` suite's `get_kernel_graph › buffer states`.
+  call.
+  - A kernel reads the states its arguments name, a join being the state
+    under it (D202), and writes the states the Afters that list it are over,
+    but for a kernel already on an earlier state of that storage, which orders
+    the state and writes nothing over it, as tinygrad's (3bdafaedf).
+  - It runs after the kernels that write the states it reads, and after the
+    kernels of the write that made the state it writes over, so a reader of a
+    state runs after every write under it, as tinygrad orders a state after
+    the state under it (413ecebe6). It runs before every
+    other kernel of each write over a state it reads (D330), whichever
+    elements each touches.
+  - Where these orders form a cycle, one read on it reads a copy of its whole
+    state, which a kernel of its own makes into call-local storage before the
+    overwrite, and the schedule is made again with the copy. Kahn's order
+    finds the cycle where no kernel is ready, walking back through the kernels
+    not run; the read cut is one whose state is copied already, else the one
+    of fewest bytes, of storage that can be copied first. The walk is greedy,
+    since fewest copies is NP-hard. A cycle in the graph made again raises as
+    an internal error. A kernel graph whose kernels form no cycle gets no copy;
+    grouping stores into one kernel can make one, so the promise is of the
+    kernel graph `create_schedule` is given. Swaps, rotations and crossed
+    reads compute, with a copy for each cycle. A kernel reading one storage in
+    two states takes a parameter for each, and lies on a cycle, so no uncut
+    kernel binds one buffer at two parameters.
+  - A call given one state at an argument its body writes and at one it does
+    not reads, as `memmove` reads its source, a copy made before it at the
+    argument it only reads (`Shape.written_params`, at any depth through the
+    calls the body makes); in a loop, the copy is made as each trip starts. A
+    custom kernel orders after it only the arguments its body writes.
+  - A write's prior state is the state before it on its storage's chain
+    (`Prepare.sequence`, D473): beside `a = x.after(x.store(1))`,
+    `x.after(a.store(2))` writes over `a` (D474). Two writes over one state,
+    which no storage holds, and a call whose body does not show its writes given one state twice,
+    raise `Invalid_argument` (D474).
+  - A partial overwrite of elements a kernel does not read copies too, at a
+    kernel and the state's size in storage.
+- **Reason:** (e). tinygrad raises on valid graphs (a swap, a stale read
+  beside its overwrite) and computes wrong values where it orders silently (a
+  call given one buffer twice, the join cases of D202); rune's jit promises
+  eager's values, and a program refused on a set without kernels raises. No
+  raven suite schedules a cycle; jera's compiled gradient
+  of an adaptive solve makes the one copy they reach (`Ode › solve
+  derivatives › compiled grad equals eager grad`). The relation
+  costs allocation in every schedule: on fudge `matmul/schedule` allocates
+  738 words against 613 without it, and `gpt_oss_decode/schedule` about 13.1
+  thousand against 11.6.
+- **Pinned by:** the `Tolk.Schedule` suite: `create_schedule › laws › a
+  schedule copies a state iff its kernels form a cycle` and
+  `create_linear_with_vars › laws › a schedule writes what its tensors
+  compute`; `create_linear_with_vars › orders and copies`, `› writes` and `›
+  calls given one state twice`; `create_schedule › rules › kernels that
+  overwrite each other's inputs read one copy`, `› a kernel that waits for the
+  overwrite of a state it reads reads it` and the rules beside it, for a copy
+  two kernels share, a kernel with two copies, a copy of a state a rebuilt
+  kernel writes and the copy's phase; the programs `read_overwritten_through`,
+  `read_beside_overwrite`, `swap_through_values`, `call_given_one_state_twice`,
+  `after_older_write`, `readers_after_older_write` and
+  `after_older_and_new_write`, whose recorded schedules and linears and whose
+  values (`create_linear_with_vars › values`); `write_over_written`'s linear
+  and values; the kernel graph of `after_part_of_older_write`, whose schedule
+  and linear differ by D184; and the `Tolk.Rangeify` suite's `get_kernel_graph
+  › buffer states`.
 
 ## D161. Withdrawn
 
