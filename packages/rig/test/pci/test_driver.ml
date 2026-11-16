@@ -1111,18 +1111,24 @@ let vendor_sys () =
 
 let check_index i = if i < 0 then invalid_arg "a negative GPU number"
 
-(* A lost GPU is renewed by the open that finds it free. *)
+(* Whether [i] numbers a GPU that the reference holds lost. *)
+let lost v i = 0 <= i && i < 2 && v.states.(i) = Lost
+
+(* A lost GPU is renewed by the open that finds it free, as every open of a
+   lost GPU does. Each open calls it first, so that every open makes the
+   cover's demand. *)
 let renew_ref v i =
-  if v.states.(i) = Lost then begin
-    cover "a lost GPU is renewed" true;
+  let renewed = lost v i in
+  cover "a lost GPU is renewed" renewed;
+  if renewed then begin
     v.resets <- v.resets + 1;
     v.states.(i) <- Free
   end
 
 let open_ref v start answer i =
+  renew_ref v i;
   check_index i;
   if i >= 2 || v.states.(i) = Held then raise Refused;
-  renew_ref v i;
   let started () =
     v.stops <- v.stops + 1;
     v.states.(i) <- Lost
@@ -1169,12 +1175,10 @@ let open_sys s start answer i =
   | Error _ -> if !begun then raise Driver_failed else raise Refused
 
 let try_open_ref v i =
+  renew_ref v i;
   check_index i;
   let free = i < 2 && v.states.(i) <> Held in
-  if free then begin
-    renew_ref v i;
-    v.states.(i) <- Held
-  end;
+  if free then v.states.(i) <- Held;
   free
 
 let try_open_sys s i =
@@ -1185,10 +1189,9 @@ let try_open_sys s i =
   | Error _ -> false
 
 let stop_ref h =
+  cover "a hold stopped again" (Option.is_some h.stopped);
   match h.stopped with
-  | Some s ->
-      cover "a hold stopped again" true;
-      s
+  | Some s -> s
   | None ->
       let v = h.v in
       v.stops <- v.stops + 1;
@@ -1198,10 +1201,10 @@ let stop_ref h =
       s
 
 let reset_ref v i =
+  cover "a lost GPU is reset" (lost v i);
   check_index i;
   let free = i < 2 && v.states.(i) <> Held in
   if free then begin
-    cover "a lost GPU is reset" (v.states.(i) = Lost);
     v.resets <- v.resets + 1;
     v.states.(i) <- Free
   end;
