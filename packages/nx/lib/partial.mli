@@ -344,7 +344,11 @@
     whose memory the host does not address is one piece. Its partials go
     before the result's windows are gathered. So a float32 sum whose result
     of [r] bytes is whole on [N] devices, each holding a slot of [r] bytes,
-    holds at most [r + r / N + C (1 + 1 / N)] beside the operands.
+    holds at most [r + r ⌈e / N⌉ / e + C (1 + 1 / N)] beside the operands,
+    [e] the extent of the result's first axis of at least [N] elements,
+    along which a part holds at most [⌈e / N⌉] of [e] indices. Where the
+    result has no such axis, a part is the device's whole window, and it
+    holds at most [2r + C (1 + 1 / N)].
 
     {1:traffic Traffic}
 

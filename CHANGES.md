@@ -3549,8 +3549,9 @@ its lock and from samples the dashboard saw arrive.
   `Add` over an axis cut across devices reduces each device's share of the
   result in pieces of at most 256 KiB of every device's partials, its own
   included, with the same bits. An `Nx.sum` whose result of `r` bytes is
-  whole on `n` devices holds `r + r/n` and at most `256 (1 + 1/n)` KiB
-  beside its operand on each device, where it held `2r`; `Nx.argmax`,
+  whole on `n` devices and has an axis of at least `n` elements, the first
+  of `e`, holds `r + r⌈e/n⌉/e` and at most `256 (1 + 1/n)` KiB beside its
+  operand on each device, where it held `2r`; `Nx.argmax`,
   `Nx.var` and `Nx.scatter`'s `Add` hold their partials once, not twice.
 - `Nx.place` onto devices and the moves of operations across devices return
   as `Rig.Buffer.submit_copy` returns, where they waited for each device's

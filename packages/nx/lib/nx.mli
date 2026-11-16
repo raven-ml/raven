@@ -2191,8 +2191,11 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     combination of those before it, and a {!logsumexp}'s at once by the
     kernels. So a {!sum}, {!prod}, {!max} or {!min} whose result of [r]
     bytes is whole on [N] devices, each holding partials of [r] bytes,
-    holds on each device at most [r + r / N] bytes and [256 (1 + 1 / N)]
-    KiB more beside its operand. Integer and boolean reductions, extremes
+    holds on each device, beside its operand, at most [r + r ⌈e / N⌉ / e]
+    bytes and [256 (1 + 1 / N)] KiB more, [e] the extent of the result's
+    first axis of at least [N] elements. Where the result has no such
+    axis, each device computes all of it and holds at most [2r] bytes and
+    [256 (1 + 1 / N)] KiB more. Integer and boolean reductions, extremes
     and their positions keep the bits they have on one device. A float or
     complex {!sum}, {!prod}, {!mean}, {!var}, {!std}, {!logsumexp} or
     {!logmeanexp} over cut axes has the kernels' association over each
