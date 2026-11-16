@@ -1617,27 +1617,26 @@ val jit :
 
     {b Real functions.} {!Nx.exp}, {!Nx.exp2}, {!Nx.expm1}, {!Nx.log},
     {!Nx.log2}, {!Nx.log1p}, {!Nx.sin}, {!Nx.cos}, {!Nx.tan}, {!Nx.asin},
-    {!Nx.acos}, {!Nx.atan}, {!Nx.atan2}, {!Nx.sinh}, {!Nx.cosh} and
-    {!Nx.tanh} compute nx's own sequence of operations for them, so they are
-    exact on a device that keeps subnormals, rounds division and the square
-    root correctly and rounds a fused multiply-add once, as the host CPU and
-    NVIDIA GPUs do. So is {!Nx.log10}, which nx composes from {!Nx.log2} and
-    exact functions. On every device, where every operand is [±0.], [±inf]
-    or a NaN, a function gives the value of C99 Annex F (ISO/IEC 9899, F.9),
-    a zero's sign included: [sin (-0.)] is [-0.] and [log 0.] is [-inf];
-    {!Nx.pow} is [1.] where [y] is [±0.] or [x] is [1.], NaN included, and
-    where [x] is [-1.] and [y] is infinite. On a device that flushes
-    subnormals, {!Nx.exp} is within 9 ulps of the correctly rounded result at
-    [float32] where that result is normal, and within one ulp at [float16]
-    and [bfloat16] where it is normal; rune states nothing more for these
-    functions there. Where the device computes [exp2] within 4 ulps and
-    rounds division and the square root correctly, at the default of the
-    [TRANSCENDENTAL] setting, each other function is within these ulps of the
-    correctly rounded result, to first order in [u]:
+    {!Nx.acos}, {!Nx.atan}, {!Nx.atan2}, {!Nx.sinh}, {!Nx.cosh}, {!Nx.tanh}
+    and {!Nx.erf} compute nx's own sequence of operations for them, so they
+    are exact on a device that keeps subnormals, rounds division and the
+    square root correctly and rounds a fused multiply-add once, as the host
+    CPU and NVIDIA GPUs do. So is {!Nx.log10}, which nx composes from
+    {!Nx.log2} and exact functions. On every device, where every operand is
+    [±0.], [±inf] or a NaN, a function gives the value of C99 Annex F
+    (ISO/IEC 9899, F.9), a zero's sign included: [sin (-0.)] is [-0.] and
+    [log 0.] is [-inf]; {!Nx.pow} is [1.] where [y] is [±0.] or [x] is [1.],
+    NaN included, and where [x] is [-1.] and [y] is infinite. On a device
+    that flushes subnormals, {!Nx.exp} is within 9 ulps of the correctly
+    rounded result at [float32] where that result is normal, and within one
+    ulp at [float16] and [bfloat16] where it is normal; rune states nothing
+    more for these functions there. Where the device computes [exp2] within
+    4 ulps and rounds division and the square root correctly, at the default
+    of the [TRANSCENDENTAL] setting, each other function is within these
+    ulps of the correctly rounded result, to first order in [u]:
 
     {v
       function                      float32  float64
-      Nx.erf                           2        3
       Nx.pow                           9        9
     v}
 

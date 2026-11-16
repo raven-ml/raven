@@ -448,6 +448,8 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Numerics states a compiled `Nx.erf` exact, eager's bits, where it stated
+  2 and 3 ulps: its lowering follows nx's sequence.
 - A compiled `Nx.asin`, `Nx.acos`, `Nx.atan` and `Nx.atan2` give eager's
   bits on the host and NVIDIA GPUs, where they were rune's forms through a
   rune arctangent and differed in the last bits.

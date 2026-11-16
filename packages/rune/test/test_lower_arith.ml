@@ -579,7 +579,7 @@ let exact1 d (k : K.unary) =
   | Neg -> true
   | Recip | Abs | Sign | Sqrt | Floor | Ceil | Round | Trunc | Exp | Exp2
   | Expm1 | Log | Log2 | Log1p | Sin | Cos | Tan | Asin | Acos | Atan | Sinh
-  | Cosh | Tanh ->
+  | Cosh | Tanh | Erf ->
       not (is_complex d)
   | _ -> not (is_float d || is_complex d)
 
@@ -729,7 +729,6 @@ let reference1 : K.unary -> float -> float = function
   | Asinh -> Float.asinh
   | Acosh -> Float.acosh
   | Atanh -> Float.atanh
-  | Erf -> Float.erf
   | _ -> invalid_arg "reference1: an exact kind"
 
 let reference2 : K.binary -> (float -> float -> float) option = function

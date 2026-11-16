@@ -360,35 +360,13 @@ let law k =
 
 (* Transcendental kinds *)
 
-(* A value rounded to float32 and to float64. *)
-let both x = (x, x)
 let inf = Float.infinity
 let nan = Float.nan
 
-(* Annex F's values (F.9) where an operand is a zero, an infinity or a NaN, as
-   each kind's rule: at operands of float64 if [wide], else float32, the value,
-   or [None] where Annex F gives none and the goldens hold the kind. A value
-   where every operand is one of these and the value is a zero, an infinity, ±1
-   or a NaN is exact; another, such as acos 0, is held to the kind's bound. *)
-let pick wide (a, b) = if wide then b else a
+(* A value where every operand is a zero, an infinity or a NaN and the value
+   is a zero, an infinity, ±1 or a NaN is exact (Annex F, F.9); another is
+   held to the kind's bound. *)
 let special v = v = 0. || Float.is_nan v || Float.abs v = Float.infinity
-
-let annex1 name wide e =
-  let x = e.(0) in
-  let at (z, nz, i, ni) =
-    if Float.is_nan x then Some nan
-    else if x = 0. then Some (pick wide (if Float.sign_bit x then nz else z))
-    else if x = inf then Some (pick wide i)
-    else if x = -.inf then Some (pick wide ni)
-    else None
-  in
-  let z = both 0. and nz = both (-0.) in
-  let one = both 1. and none = both (-1.) in
-  at
-    (match name with
-    | "erf" -> (z, nz, one, none)
-    | _ -> invalid_arg name)
-
 let odd y = Float.is_integer y && Float.rem y 2. <> 0.
 
 (* pow x y, F.9.4.4: 1 at y = ±0 and at x = 1, NaN included, then the zeros' and
@@ -495,13 +473,7 @@ let accurate name node (b32, b64) annex =
 
 (* Each kind's host bound at float32 and float64 (rune.mli, Numerics). *)
 let transcendental =
-  List.map
-    (fun (name, k, bound) ->
-      accurate name (Op1 (Unary k, D.Any D.Float32, 0)) bound (annex1 name))
-    [ ("erf", K.Erf, (2, 3)) ]
-  @ [
-      accurate "pow" (Op2 (Binary Pow, 0, 1)) (2, 2) annex_pow;
-    ]
+  [ accurate "pow" (Op2 (Binary Pow, 0, 1)) (2, 2) annex_pow ]
 
 (* Kinds of nx's sequence
 
@@ -525,7 +497,7 @@ let kinds =
   Kinds.
     [
       sin; cos; tan; log; log2; log1p; exp; exp2; expm1; sinh; cosh; tanh; asin;
-      acos; atan; atan2;
+      acos; atan; atan2; erf;
     ]
 
 let () =

@@ -665,7 +665,7 @@ let unaries =
     { name = "tanh"; f = Nx.tanh; bound = (0, 0) };
     { name = "expm1"; f = Nx.expm1; bound = (0, 0) };
     { name = "log1p"; f = Nx.log1p; bound = (0, 0) };
-    { name = "erf"; f = Nx.erf; bound = (2 + 2, 3 + 2) };
+    { name = "erf"; f = Nx.erf; bound = (0, 0) };
   ]
 
 let floats =

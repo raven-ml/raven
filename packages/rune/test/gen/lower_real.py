@@ -138,24 +138,6 @@ def any_bits(rng, n, fmt, top_exp=None, low_exp=None, signed=True):
     return out
 
 
-# Each kind's points: the ends of its ranges, where its algorithm switches and
-# where its result saturates, at both dtypes; and the range its uniform values
-# come from, per dtype.
-UNARY = {
-    "erf": ([1, 2.5, 4, 5.95, "0x1p-100", 1.75, 6, 0.5, 4.25, 2.75, 5.921587195794507],
-            {"f32": (-7, 7), "f64": (-7, 7)}),
-}
-
-
-def unary_points(fn, fmt):
-    rng = random.Random(f"lower_real:{fn}:{fmt}")
-    pts, lo_hi = UNARY[fn]
-    xs = specials(fmt) + near(pts, fmt)
-    xs += uniform(rng, 150, *lo_hi[fmt], fmt)
-    xs += any_bits(rng, 100, fmt)
-    return [x for x in xs if usable(x)]
-
-
 def pow_points(fmt):
     rng = random.Random(f"lower_real:pow:{fmt}")
     p, emin, emax = FORMATS[fmt]
@@ -206,24 +188,6 @@ def pow_points(fmt):
 # Exact values of finite, non-zero operands
 
 
-def limit(x, beyond, below, above):
-    """A stand-in past the point where the value rounds to its limit."""
-    if x > beyond:
-        return above
-    if x < -beyond:
-        return below
-    return None
-
-
-def unary_ref(fn, x):
-    x = mpf(x)
-    if fn == "erf":
-        v = limit(x, 30, -1 + TINY, 1 - TINY)
-        if v is not None:
-            return v
-    return {"erf": mpmath.erf}[fn](x)
-
-
 def pow_ref(x, y):
     x, y = mpf(x), mpf(y)
     integer = y == mpmath.floor(y)
@@ -253,12 +217,6 @@ def rounded(v, fmt):
 def goldens():
     mp.prec = 320
     files = {}
-    for fn in UNARY:
-        rows = [("dtype", "x", "f")]
-        for fmt in FORMATS:
-            rows += [(fmt, hexf(x), rounded(unary_ref(fn, x), fmt))
-                     for x in unary_points(fn, fmt)]
-        files[fn] = golden(rows)
     rows = [("dtype", "x", "y", "f")]
     for fmt in FORMATS:
         rows += [(fmt, hexf(x), hexf(y), rounded(pow_ref(x, y), fmt)) for x, y in pow_points(fmt)]

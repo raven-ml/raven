@@ -432,6 +432,26 @@ let atan2 =
       ];
   }
 
+(* erf: the switch at 1 and, at float32, the tail's cutoff 2^-100 and the clamp
+   at 4; at float64 the switch between the near and far ranges at 2.5, the clamp
+   at 5.95, and the expansions' centres 1.75 and 4.25. *)
+let erf =
+  let a e = Float.abs e.(0) in
+  let clamp w = pick w (4., 5.95) in
+  unary "erf" { f1 = Nx.erf }
+    (spec [ 1.; 2.5; 4.; 0x1p-100; 0.5; 3. ] [ 1.; 7. ])
+    (spec
+       [ 1.; 2.5; 1.75; 4.25; 5.95; 6.; 0.5; 0x1p-100; 5.921587195794507 ]
+       [ 1.; 7. ])
+    [
+      ("|x| below 2^-100, not zero", fun _ e -> e.(0) <> 0. && a e < 0x1p-100);
+      ("|x| from 2^-100 to 1", fun _ e -> a e >= 0x1p-100 && a e < 1.);
+      ("|x| from 1 to 2.5", fun _ e -> a e >= 1. && a e <= 2.5);
+      ("|x| past 2.5, to the clamp", fun w e -> a e > 2.5 && a e <= clamp w);
+      ( "|x| past the clamp, finite",
+        fun w e -> a e > clamp w && Float.is_finite e.(0) );
+    ]
+
 (* Logarithms: nx_log_reduce's switch, where a significand passes sqrt(1/2), in
    several binades; the least normal, below which it scales a subnormal up; 1,
    around which log cancels; powers of two, where log2 is exact; for log1p, -1,

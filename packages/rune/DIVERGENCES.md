@@ -356,15 +356,18 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Reference:** `mixin/elementwise.py:1058` (Abramowitz-Stegun 7.1.26).
 - **Raven:** `lower_real.ml` (`erf32`, `erf_near64`, `erf_far64`, `erf`).
 - **Differs:** tinygrad's approximation has an absolute error of `1.5e-7` and
-  no relative accuracy near 0. The lowering takes a polynomial per range: at
-  `float32`, one in `x^2` below 1 and one in `|x| - 2.5` to 4; at `float64`,
-  two up to 2.5, then `1 - e^(G(a) - a^2)`, `a` held at 5.95, where `erf`
-  rounds to 1.
-- **nx:** `prog.mli`, Results, `Erf`.
-- **Class:** ulp bound: 2 at `float32`, 3 at `float64`, measured.
+  no relative accuracy near 0. The lowering builds `nx_kinds.h`'s
+  `nx_erf_f32` and `nx_erf_f64` operation for operation, a polynomial per
+  range: at `float32`, one in `x^2` below 1 and one in `|x| - 2.5` to 4; at
+  `float64`, two up to 2.5, then `1 - e^(G(a) - a^2)` by A7's `exp_near`,
+  `a` held at 5.95, where `erf` rounds to 1.
+- **nx:** `nx_kinds.h` (`nx_erf_f32`, `nx_erf_near_f64`, `nx_erf_far_f64`,
+  `nx_erf_f64`).
+- **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `Lower_real › transcendental › erf within 2 ulps at float32, 3
-  at float64`.
+- **Pinned by:** `Lower_real › kinds › erf gives eager's bits`, `› erf of
+  every narrow float gives eager's bits`, `› erf of a constant gives eager's
+  bits`, on the host; `Jit_gpu › kinds › *` on a GPU.
 
 ### A15. True division
 

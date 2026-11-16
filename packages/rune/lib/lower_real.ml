@@ -1094,8 +1094,12 @@ let pow x y =
   let v = where (eq x (num x (-1.)) &&: eq (magnitude y) (inf x)) (one x) v in
   where (eq x (one x) ||: eq y (zero x)) (one x) v
 
-(* erf, a polynomial per range; at float64, past 2.5, 1 - e^(G(a) - a^2). *)
+(* erf
 
+   nx_kinds.h's: a polynomial per range; at float64, past 2.5, 1 -
+   e^(G(a) - a^2). Coefficients are the header's, their text copied. *)
+
+(* nx_erf_f32 *)
 let erf32 x =
   let a = magnitude x in
   let z = a *: a in
@@ -1140,8 +1144,9 @@ let erf32 x =
         0x1.aab886p-12;
       ]
   in
-  copysign (where (lt a (one x)) small (one x -: q)) x
+  nan1 x (copysign (where (lt a (one x)) small (one x -: q)) x)
 
+(* nx_erf_near_f64 *)
 let erf_near64 x =
   let a = magnitude x in
   let z = a *: a in
@@ -1196,9 +1201,10 @@ let erf_near64 x =
         0x1.b4be201caa4b3p-7;
       ]
   in
-  copysign (where (lt a (one x)) small (one x -: q)) x
+  nan1 x (copysign (where (lt a (one x)) small (one x -: q)) x)
 
-(* Past 2.5, a taken as 5.95 past it, where erf rounds to 1. *)
+(* nx_erf_far_f64: past 2.5, a taken as 5.95 past it, where erf rounds to
+   1. *)
 let erf_far64 x =
   let a = magnitude x in
   let cap = num x 5.95 in
@@ -1220,8 +1226,9 @@ let erf_far64 x =
         -0x1.05cb67754a622p+1;
       ]
   in
-  copysign (one x -: exp (g -: (b *: b))) x
+  copysign (one x -: exp_near (g -: (b *: b))) x
 
+(* nx_erf_f32, and nx_erf_f64's branch at nx_erf_big_f64 *)
 let erf x =
   if not (wide x) then erf32 x
   else where (gt (magnitude x) (num x 2.5)) (erf_far64 x) (erf_near64 x)
