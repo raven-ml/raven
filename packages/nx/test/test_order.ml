@@ -286,19 +286,21 @@ let test_key_cases () =
 
 type rows_case = Rows_case : ('v, 's) D.t * int array * 'v array -> rows_case
 
-(* 1-d keys, or [n; w] rows, of a dtype with keys. *)
-let rows_case =
+(* 1-d keys, or [n; w] rows, of a dtype with keys, [n] drawn by [ns]. *)
+let rows_of ns =
   let open Gen in
   with_pp
     (fun ppf (Rows_case (dt, s, _)) ->
       Format.fprintf ppf "%s %a" (D.name dt) pp_ints s)
     (let* (D.Any dt) = of_list keyed in
-     let* n = int_range 0 7 in
+     let* n = ns in
      let* s =
        one_of [ constant [| n |]; map (fun w -> [| n; w |]) (int_range 0 3) ]
      in
      let+ vs = values dt (Array.fold_left ( * ) 1 s) in
      Rows_case (dt, s, vs))
+
+let rows_case = rows_of (Gen.int_range 0 7)
 
 (* The keys of [xs] of shape [s], as rows. *)
 let rows s xs =
@@ -430,20 +432,59 @@ let near_case =
   let s = if two then [| n; 2 |] else [| n |] in
   Unique_case (Rows_case (dt, s, Nx.to_array x), None)
 
+(* A case's rows, each made its first. *)
+let one_key (Rows_case (dt, s, vs)) =
+  let w = if Array.length s = 1 then 1 else s.(1) in
+  Rows_case (dt, s, Array.init (Array.length vs) (fun i -> vs.(i mod w)))
+
+(* A case's rows without those equal to an earlier one, as Nx reads them. *)
+let distinct (Rows_case (dt, s, vs)) =
+  let _, xs = made dt s vs in
+  let c = lex (cmp dt) in
+  let kept =
+    Array.fold_left
+      (fun kept r ->
+        if List.exists (fun k -> c k r = 0) kept then kept else r :: kept)
+      [] (rows s xs)
+  in
+  let n = List.length kept in
+  let s = if Array.length s = 1 then [| n |] else [| n; s.(1) |] in
+  Rows_case (dt, s, Array.concat (List.rev kept))
+
+let pp_unique ppf (Unique_case (Rows_case (dt, s, _), size)) =
+  Format.fprintf ppf "%s %a size %s" (D.name dt) pp_ints s
+    (match size with None -> "-" | Some l -> string_of_int l)
+
+(* Rows: half drawn, a quarter one key over 2 to 7 rows, a quarter drawn
+   without their repeats. Of the [k] keys, a third have no size, a third a
+   size that cuts them, below [k] (or 0 where [k] is 0), and a third one of
+   [k] to [k + 2]. "one key of many rows" is at least 1/4 of the cases,
+   "cut" 0.30, "padded" 2/9 and "sized to its keys" 1/9, so the law draws
+   200 cases, which miss the last with probability 6 10^-11. *)
 let unique_case =
   let open Gen in
-  with_pp
-    (fun ppf (Unique_case (Rows_case (dt, s, _), size)) ->
-      Format.fprintf ppf "%s %a size %s" (D.name dt) pp_ints s
-        (match size with None -> "-" | Some l -> string_of_int l))
-    (frequency
-       [
-         ( 1,
-           let* (Rows_case (_, s, _) as r) = rows_case in
-           let+ size = option (int_range 0 (s.(0) + 2)) in
-           Unique_case (r, size) );
-         (1, near_case);
-       ])
+  with_pp pp_unique
+    (let* r =
+       frequency
+         [
+           (2, rows_case);
+           (1, map one_key (rows_of (int_range 2 7)));
+           (1, map distinct rows_case);
+         ]
+     in
+     let (Rows_case (_, keys, _)) = distinct r in
+     let k = keys.(0) in
+     let+ size =
+       frequency
+         [
+           (1, constant None);
+           (1, map Option.some (int_range 0 (Int.max 0 (k - 1))));
+           (1, map Option.some (int_range k (k + 2)));
+         ]
+     in
+     Unique_case (r, size))
+
+let near_cases = Gen.with_pp pp_unique near_case
 
 (* The number of values the rows of [x] can take, the product of its columns'
    spans of the words Nx.unique numbers, or [max_int] past it: the bits of
@@ -470,7 +511,8 @@ let values_taken (type v s) (x : (v, s, Nx.host) Nx.t) =
     in
     List.fold_left times 1 (List.init (Array.length lo) Fun.id)
 
-let law_unique (Unique_case (Rows_case (dt, s, vs), size)) =
+(* [near] covers [near_case]'s rows, the other cases' sizes and keys. *)
+let law_unique ~near (Unique_case (Rows_case (dt, s, vs), size)) =
   let x, xs = made dt s vs in
   let rs = rows s xs in
   let c = lex (cmp dt) in
@@ -497,17 +539,21 @@ let law_unique (Unique_case (Rows_case (dt, s, vs), size)) =
   let pad f d =
     Array.init l (fun j -> if j < k then f (List.nth !groups j) else d)
   in
-  cover "padded" (l > k);
-  cover "cut" (l < k);
   let r = values_taken x and n = s.(0) in
   let edge = (2 * n) + 1024 in
-  if size = None && n >= 3 then begin
+  if near then begin
     cover "rows taking 2n + 1023 values" (r = edge - 1);
     cover "rows taking 2n + 1024 values" (r = edge);
     cover "rows taking 2n + 1025 values" (r = edge + 1)
+  end
+  else begin
+    cover "padded" (l > k);
+    cover "cut" (l < k);
+    cover "sized to its keys" (size = Some k);
+    cover "no size" (size = None);
+    cover "one key of many rows" (k = 1 && n > 1);
+    cover "every row its own key" (k = n && n > 1)
   end;
-  cover "one key of many rows" (k = 1 && n > 1);
-  cover "every row its own key" (k = n && n > 1);
   equal ~msg:"ids" (array int64) ids (Nx.to_array g.ids);
   equal ~msg:"count" int64 (Int64.of_int k) (Nx.item [] g.count);
   equal ~msg:"first" (array int64)
@@ -1234,7 +1280,12 @@ let () =
            ];
          group "unique"
            [
-             prop "groups in order of first appearance" unique_case law_unique;
+             prop ~count:200 "groups in order of first appearance" unique_case
+               (law_unique ~near:false);
+             prop
+               "groups in order of first appearance, over rows of about 2n + \
+                1024 values"
+               near_cases (law_unique ~near:true);
              test "cases" test_unique_cases;
              test "70,000 keys" test_unique_long;
              test "50,000 groups of 80,000 keys" test_unique_many;
