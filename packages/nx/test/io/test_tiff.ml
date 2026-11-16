@@ -1214,14 +1214,17 @@ let agreement =
         | Done ds -> window_of "part" (List.nth ds d.k) d.win
         | o -> failf "decoded once, then %a" (Testable.pp ifds) (tags o)
       in
-      match (o, window) with
-      | Done ds, Some window when d.k < List.length ds ->
-          let w, _ = loop p window_at in
-          let _, rows, _, cols = d.win in
-          cover "a window that lacked a chunk" (!rounds > first + 1);
-          cover "a window of no pixel" (rows = 0 || cols = 0);
-          equal windowed window w
-      | _ -> ())
+      let read_window =
+        match (o, window) with
+        | Done ds, Some window when d.k < List.length ds ->
+            let w, _ = loop p window_at in
+            equal windowed window w;
+            true
+        | _ -> false
+      in
+      let _, rows, _, cols = d.win in
+      cover "a window that lacked a chunk" (read_window && !rounds > first + 1);
+      cover "a window of no pixel" (read_window && (rows = 0 || cols = 0)))
 
 let unread =
   prop ~count:300 "no result depends on a byte the partial file lacks" drawn
@@ -1266,30 +1269,38 @@ let monotone =
     (fun d ->
       let p = partial d.whole d.held in
       let q = fill d.whole p d.more in
-      match decode_of p with
-      | Done ds when d.k < List.length ds -> (
-          let ds' =
-            match decode_of q with
-            | Done ds' -> ds'
-            | o -> failf "decoded, then %a" (Testable.pp ifds) (tags o)
-          in
-          equal ifds (Done (decoded_tags ds)) (Done (decoded_tags ds'));
-          let old = List.nth ds d.k and fresh = List.nth ds' d.k in
-          match window_of "part" old d.win with
-          | Done x ->
-              cover "a window, then more bytes" (d.more <> []);
-              equal windowed (Done x) (window_of "part" fresh d.win)
-          | Lacks rs ->
-              (* The IFD decoded before the ranges were added never reads
-                 them; one decoded after does. *)
-              let q = fill d.whole q rs in
-              let fresh = List.nth (Result.get_ok (Nx_io.decode_tiff q)) d.k in
-              cover "an IFD decoded before its ranges were added" true;
-              equal windowed (Lacks rs) (window_of "part" old d.win);
-              if window_of "part" fresh d.win = Lacks rs then
-                failf "the ranges added, the same ranges again"
-          | Raised _ | Refused _ -> ())
-      | _ -> ())
+      let window =
+        match decode_of p with
+        | Done ds when d.k < List.length ds -> (
+            let ds' =
+              match decode_of q with
+              | Done ds' -> ds'
+              | o -> failf "decoded, then %a" (Testable.pp ifds) (tags o)
+            in
+            equal ifds (Done (decoded_tags ds)) (Done (decoded_tags ds'));
+            let old = List.nth ds d.k and fresh = List.nth ds' d.k in
+            match window_of "part" old d.win with
+            | Done x as w ->
+                equal windowed (Done x) (window_of "part" fresh d.win);
+                Some w
+            | Lacks rs as w ->
+                (* The IFD decoded before the ranges were added never reads
+                   them; one decoded after does. *)
+                let q = fill d.whole q rs in
+                let fresh =
+                  List.nth (Result.get_ok (Nx_io.decode_tiff q)) d.k
+                in
+                equal windowed (Lacks rs) (window_of "part" old d.win);
+                if window_of "part" fresh d.win = Lacks rs then
+                  failf "the ranges added, the same ranges again";
+                Some w
+            | Raised _ | Refused _ -> None)
+        | _ -> None
+      in
+      cover "a window, then more bytes"
+        (d.more <> [] && match window with Some (Done _) -> true | _ -> false);
+      cover "an IFD decoded before its ranges were added"
+        (match window with Some (Lacks _) -> true | _ -> false))
 
 (* [small]'s file: its two strips of 60 bytes at bytes 8 and 68, then its
    IFD. *)
