@@ -572,6 +572,167 @@ let test_source_held () =
   done;
   same s (contents path)
 
+(* Runs *)
+
+(* Copies [boxes] of [src] into [dst] one after the other, as the host does. *)
+let reference src dst boxes =
+  let dst = Bytes.of_string dst in
+  Array.iter
+    (fun (x : B.box) ->
+      for i = 0 to x.rows - 1 do
+        Bytes.blit_string src
+          (x.src_offset + (i * x.src_pitch))
+          dst
+          (x.dst_offset + (i * x.dst_pitch))
+          x.width
+      done)
+    boxes;
+  Bytes.to_string dst
+
+(* [n] rows of up to [width] bytes at random places of a file of [size],
+   laid out one after the other in a destination, in a shuffled order of
+   the boxes, and the destination's length. *)
+let scattered st ~size ~width n =
+  let lens = Array.init n (fun _ -> 1 + Random.State.int st width) in
+  let starts = Array.make n 0 in
+  for i = 1 to n - 1 do
+    starts.(i) <- starts.(i - 1) + lens.(i - 1)
+  done;
+  let boxes =
+    Array.init n (fun i ->
+        B.row
+          ~src_offset:(Random.State.int st (size - lens.(i)))
+          ~dst_offset:starts.(i) lens.(i))
+  in
+  for i = n - 1 downto 1 do
+    let j = Random.State.int st (i + 1) in
+    let x = boxes.(i) in
+    boxes.(i) <- boxes.(j);
+    boxes.(j) <- x
+  done;
+  (boxes, starts.(n - 1) + lens.(n - 1))
+
+(* A copy of many runs from a file lands as one box after the other would:
+   runs scattered over the file, more than the reads it keeps in flight, with
+   a run longer than a segment and a box of rows among them, and runs whose
+   bytes in memory overlap, where the later box's byte lands. *)
+let test_runs () =
+  let size = (3 * segment) + 12345 in
+  let s = pattern 8 size in
+  let path = make_file s in
+  removing [ path ] @@ fun () ->
+  let src = of_file path and st = Random.State.make [| 8 |] in
+  let copied boxes n =
+    let blank = String.make n '.' in
+    let dst = host_of_string blank in
+    ignore (B.submit_copy ~src ~dst boxes);
+    same (reference s blank boxes) (string_of_host dst)
+  in
+  let apart, n = scattered st ~size ~width:5000 500 in
+  let long = B.row ~src_offset:7 ~dst_offset:n ((2 * segment) + 3) in
+  let rows =
+    {
+      B.src_offset = 1000;
+      dst_offset = n + (2 * segment) + 3;
+      width = 300;
+      rows = 40;
+      src_pitch = 70_001;
+      dst_pitch = 300;
+    }
+  in
+  copied (Array.append apart [| long; rows |]) (n + (2 * segment) + 12_003);
+  let overlapping =
+    Array.init 300 (fun i ->
+        B.row ~src_offset:(i * 9973 mod (size - 600)) ~dst_offset:(i * 37) 600)
+  in
+  copied overlapping ((299 * 37) + 600);
+  copied [||] 16;
+  copied [| B.row 0; { (B.row 8) with rows = 0 } |] 16
+
+(* A read of many runs that storage fails in the middle raises Sys_error
+   naming the file once no read of the copy still writes memory, and begins
+   none after the failure: every run waits 2 ms before it reads, so a read
+   left running would land within the 50 ms after the raise. The first run
+   fails, and the 400 runs are more than three times the reads in flight, so
+   the runs begun 4 ms in or later find the failure. *)
+let test_failed_runs () =
+  if Sys.win32 then skip ~reason:"Windows reads one run after another" ();
+  let n = 400 and w = 4096 in
+  let s = pattern 9 (n * w) in
+  let path = make_file s in
+  removing [ path ] @@ fun () ->
+  let src = of_file path and dst = host_of_string (String.make (n * w) '.') in
+  let boxes =
+    Array.init n (fun i -> B.row ~src_offset:(i * w) ~dst_offset:(i * w) w)
+  in
+  Support.fault_reads ~fail:0 ~wait:0.002;
+  let raised =
+    Fun.protect
+      ~finally:(fun () -> Support.fault_reads ~fail:(-1) ~wait:0.)
+      (fun () ->
+        match B.submit_copy ~src ~dst boxes with
+        | _ -> None
+        | exception Sys_error why -> Some why)
+  in
+  (match raised with
+  | Some why ->
+      equal ~msg:"names the file" bool true
+        (String.starts_with ~prefix:path why)
+  | None -> fail "the copy returned");
+  let after = string_of_host dst in
+  Unix.sleepf 0.05;
+  same ~msg:"the destination 50 ms after the raise" after (string_of_host dst);
+  let unread = String.make w '.' in
+  let run i = String.sub after (i * w) w in
+  equal ~msg:"the failed run's bytes" octets unread (run 0);
+  greater ~msg:"runs not begun once one failed" int ~than:1
+    (List.length (List.filter (fun i -> run i = unread) (List.init n Fun.id)))
+
+(* The bytes this process read from storage, from Linux's /proc/self/io. *)
+let storage_reads () =
+  In_channel.with_open_bin "/proc/self/io" In_channel.input_all
+  |> String.split_on_char '\n'
+  |> List.find_map (fun l ->
+      match String.split_on_char ' ' l with
+      | [ "read_bytes:"; v ] -> Some (int_of_string v)
+      | _ -> None)
+  |> Option.get
+
+(* A copy of scattered pages of a file that is not in memory reads from
+   storage those pages and no others: 256 pages of 4 KiB, three or more
+   apart, none the first. *)
+let test_exact_pages () =
+  if not (Sys.file_exists "/proc/self/io") then
+    skip ~reason:"the system does not count a process's reads" ();
+  let page = 4096 and pages = 4096 and n = 256 in
+  let s = pattern 10 (page * pages) in
+  let path = make_file s in
+  removing [ path ] @@ fun () ->
+  (match Support.drop_pages path with
+  | 0 -> ()
+  | -1 -> skip ~reason:"only Linux drops a file's pages without privileges" ()
+  | code -> failf "drop_pages: errno %d" code);
+  let st = Random.State.make [| 10 |] in
+  let slots = Array.init ((pages - 1) / 3) (fun k -> 1 + (3 * k)) in
+  for i = Array.length slots - 1 downto 1 do
+    let j = Random.State.int st (i + 1) in
+    let x = slots.(i) in
+    slots.(i) <- slots.(j);
+    slots.(j) <- x
+  done;
+  let boxes =
+    Array.init n (fun j ->
+        B.row ~src_offset:(slots.(j) * page) ~dst_offset:(j * page) page)
+  in
+  let src = of_file path and dst = B.create host (n * page) in
+  let before = storage_reads () in
+  ignore (B.submit_copy ~src ~dst boxes);
+  let read = storage_reads () - before in
+  same ~msg:"the pages" (reference s (String.make (n * page) '.') boxes)
+    (string_of_host dst);
+  if read = 0 then skip ~reason:"the file system reads nothing from storage" ();
+  at_most ~msg:"bytes read from storage" int ~than:(n * page) read
+
 let copies =
   group ~timeout "copies"
     [
@@ -595,6 +756,18 @@ let copies =
         test_copy_into_opened;
       test "a copy between a file and a borrow of its own pages is refused"
         test_copy_own_pages;
+      test
+        "a copy of many runs lands as one box after the other would, with \
+         long, many-row and overlapping boxes, and none"
+        test_runs;
+      test
+        "a read of many runs that storage fails raises once none still \
+         writes memory, beginning none after"
+        test_failed_runs;
+      test
+        "a copy of scattered pages of a file not in memory reads those pages \
+         from storage and no others"
+        test_exact_pages;
     ]
 
 (* Borrows *)
@@ -1018,7 +1191,8 @@ let test_inherited () =
 
 (* A forked child reads and writes files with the disk, its parent's opens and
    its own, with a read long enough to run on the host pool's blocking
-   workers, which the parent's read made before the fork. OCaml
+   workers and a read of 128 runs at once, which the parent's reads of each
+   made more workers than cores for before the fork. OCaml
    forks only a process that started no domain: a child process of the suite's
    own forks. *)
 let test_forked () =
@@ -1776,14 +1950,27 @@ let open_files_child () =
       Printf.printf "first: %s\n" (said opened.(0)));
   removed dir
 
-(* Opens [path], reads it, then forks a child that copies it into a new file at
-   [out] and orders it, and prints how the child ended. *)
+(* Opens [path], reads it whole and in 128 runs, then forks a child that reads
+   it in 128 runs, copies it into a new file at [out] and orders it, and
+   prints how the child ended. *)
 let fork_child path out =
   let opened = of_file path in
   let s = read opened in
+  let runs () =
+    let n = String.length s / 128 in
+    let dst = B.create host (128 * n) in
+    ignore
+      (B.submit_copy ~src:opened ~dst
+         (Array.init 128 (fun i ->
+              B.row ~src_offset:(i * n) ~dst_offset:(i * n) n)));
+    string_of_host dst = String.sub s 0 (128 * n)
+  in
+  let read_runs = runs () in
   match Unix.fork () with
   | 0 ->
       let copied () =
+        runs () && read_runs
+        &&
         let created =
           Result.get_ok (Rig_disk.create_file out (String.length s))
         in

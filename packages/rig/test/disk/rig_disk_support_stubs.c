@@ -15,6 +15,7 @@
 #include <caml/signals.h>
 #include <errno.h>
 #include <stdatomic.h>
+#include <stdint.h>
 
 #include "rig_pool.h"
 
@@ -24,6 +25,24 @@
 #include <sys/resource.h>
 #include <unistd.h>
 #endif
+
+/* rig.disk's hook for its suite (rig_disk_stubs.c), outside Windows. */
+#ifndef _WIN32
+extern void rig_disk_fault_runs(intnat run, int64_t wait_ns);
+#endif
+
+/* [fault_reads run wait] is rig_disk_fault_runs (run, wait in ns); nothing on
+   Windows, which reads the runs of a copy one after the other. Keeps the
+   runtime. */
+value rig_disk_test_fault_reads(value v_run, value v_wait) {
+#ifndef _WIN32
+  rig_disk_fault_runs(Long_val(v_run), (int64_t)(Double_val(v_wait) * 1e9));
+#else
+  (void)v_run;
+  (void)v_wait;
+#endif
+  return Val_unit;
+}
 
 /* [set_open_files n] sets this process's soft limit of open files to [n]: 0,
    the errno, or -1 on Windows, which has no such limit. Keeps the runtime:

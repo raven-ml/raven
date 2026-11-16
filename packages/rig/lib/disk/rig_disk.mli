@@ -109,16 +109,33 @@ val create_file : string -> int -> (file, string) result
     memory otherwise ({!Rig.Buffer.copy}). A copy returns once its bytes are
     in the file, where the system may still hold them in memory.
 
+    A copy from a disk buffer reads its boxes' rows, its {e runs}, in one
+    read where no two of them write a byte of memory in common, and one
+    after the other, in the boxes' order, where some do
+    ({!Rig.Buffer.submit_copy}). Each run is a positional read of its
+    bytes, so a copy of a file's scattered ranges reads from storage the
+    pages that hold them, whether or not the system holds the file in
+    memory. The system may read ahead where runs follow one another in the
+    file.
+
     A copy runs on the calling thread, except, outside Windows, a read of
-    more than 2 MiB. That one is cut into segments of 2 MiB that several
-    threads read at once: the calling thread and blocking workers of the
-    host's pool, at most one a segment and as many in all as the performance
-    cores the process may occupy ([rig_pool_run_blocking] in [rig_pool.h]).
-    It neither waits for the host's computations, such as CPU kernels on
-    another domain, nor makes them wait, and its threads share the cores
-    with them. A long read begun while another thread's long read, or
+    several runs or of one of more than 2 MiB:
+    {ul
+    {- The runs of up to 2 MiB are read at once, up to 64 at a time, by the
+       calling thread and blocking workers of the host's pool, each reading
+       one run at a time ([rig_pool_run_blocking] in [rig_pool.h]).}
+    {- Then each run of more than 2 MiB is cut into segments of 2 MiB that
+       the calling thread and blocking workers read at once, at most one a
+       segment and as many in all as the performance cores the process may
+       occupy.}}
+    These reads neither wait for the host's computations, such as CPU
+    kernels on another domain, nor make them wait, and their threads share
+    the cores with them. Such a read begun while another thread's, or
     another blocking job of the pool, runs reads on the calling thread
-    alone.
+    alone, one run after the other, so a program reads the runs it has at
+    once in one copy. On Windows a copy reads its runs one after the other
+    on the calling thread, since the disk opens files for synchronous
+    reads, which Windows serializes.
 
     {!barrier} orders the bytes written before it before every later change
     to the file system. After a crash, a change made after {!barrier}
@@ -132,9 +149,10 @@ val create_file : string -> int -> (file, string) result
     file, since nothing writes them.
 
     A copy also raises [Sys_error] on a read past the end of a file that
-    something outside the process cut short. The bytes a failed copy was to
-    write, in the file or in memory, are then unspecified, and nothing else
-    changes. *)
+    something outside the process cut short. A failed read raises once no
+    read of its runs still writes memory, having begun none after the
+    failure. The bytes a failed copy was to write, in the file or in memory,
+    are then unspecified, and nothing else changes. *)
 
 val barrier : file -> unit
 (** [barrier f] returns once the bytes written to [f] before it, by copies or

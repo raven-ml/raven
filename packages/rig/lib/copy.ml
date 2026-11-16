@@ -126,17 +126,24 @@ let sub b m at n =
 
 (* An io library's read or write of memory its device owns, a borrow of its
    pages included, is a counted call of that device, which a close waits for.
-   Each moves [n] bytes between byte [s] of [src] and byte [t] of [dst]. *)
-let io_read fn src s dst t n =
+   A read moves runs from the bytes [at] of [src]'s memory into the host
+   addresses [dst] (Rig_edge.Io.read), and a write [n] bytes from byte [s] of
+   [src] to byte [t] of [dst]. *)
+let io_reads fn src ~at ~dst ~len =
   match src.mem.alloc.entry.backing with
   | Io_memory (Io_region (m, r)) ->
       let module I = (val m) in
       Dev.counted src.mem.alloc.owner Dev.Faults
-        (fun () ->
-          I.read r ~at:(src.offset + s) ~dst:(host_address dst + t) ~len:n)
+        (fun () -> I.read r ~at ~dst ~len)
         ()
   | Driver_memory _ | Kept _ ->
       invalid_argf "Rig.%s: the source is no io memory" fn
+
+let io_read fn src s dst t n =
+  io_reads fn src
+    ~at:[| src.offset + s |]
+    ~dst:[| host_address dst + t |]
+    ~len:[| n |]
 
 let io_write fn src s dst t n =
   match dst.mem.alloc.entry.backing with
@@ -192,11 +199,73 @@ let move_box fn transfer src dst x =
         x.width
     done
 
+(* The rows of [boxes], each a run of bytes, as [src]'s io library reads
+   them: positions in [src]'s memory, host addresses of [dst] and lengths, in
+   the boxes' order. A box whose rows are one run gives one. *)
+let box_runs src dst boxes =
+  let count n x = if one_run x then n + 1 else n + x.rows in
+  let n = Array.fold_left count 0 boxes in
+  let at = Array.make n 0 and to_ = Array.make n 0 and len = Array.make n 0 in
+  let k = ref 0 in
+  let add s t w =
+    at.(!k) <- src.offset + s;
+    to_.(!k) <- host_address dst + t;
+    len.(!k) <- w;
+    incr k
+  in
+  Array.iter
+    (fun x ->
+      if one_run x then add x.src_offset x.dst_offset (box_bytes x)
+      else
+        for i = 0 to x.rows - 1 do
+          add
+            (x.src_offset + (i * x.src_pitch))
+            (x.dst_offset + (i * x.dst_pitch))
+            x.width
+        done)
+    boxes;
+  (at, to_, len)
+
+(* Whether no two of the ranges [dst.(i)] to [dst.(i) + len.(i) - 1] share a
+   byte: one pass where they increase, as a copy of a file's ranges into
+   memory of its own lays them, and a sort of their starts otherwise. *)
+let disjoint dst len =
+  let n = Array.length dst in
+  let apart order =
+    let rec from k =
+      k >= n
+      || dst.(order (k - 1)) + len.(order (k - 1)) <= dst.(order k)
+         && from (k + 1)
+    in
+    from 1
+  in
+  apart Fun.id
+  ||
+  let order = Array.init n Fun.id in
+  Array.sort (fun i j -> Int.compare dst.(i) dst.(j)) order;
+  apart (Array.get order)
+
+(* The host's read of [boxes] from io memory: one read of all their runs,
+   which the io library may read at once, unless two write a byte of [dst]
+   in common, which then read one after the other, so the later box's byte
+   lands. *)
+let read_boxes fn src dst boxes =
+  let at, to_, len = box_runs src dst boxes in
+  if Array.length at > 0 then
+    if disjoint to_ len then io_reads fn src ~at ~dst:to_ ~len
+    else
+      for i = 0 to Array.length at - 1 do
+        io_reads fn src ~at:[| at.(i) |] ~dst:[| to_.(i) |] ~len:[| len.(i) |]
+      done
+
 (* The host's moves of [boxes]. *)
 let move_boxes fn transfer src dst boxes =
-  for i = 0 to Array.length boxes - 1 do
-    move_box fn transfer src dst (Array.unsafe_get boxes i)
-  done
+  match transfer with
+  | Io_read -> read_boxes fn src dst boxes
+  | Move | Io_write ->
+      for i = 0 to Array.length boxes - 1 do
+        move_box fn transfer src dst (Array.unsafe_get boxes i)
+      done
 
 (* The host's moves into [dst]'s window and the owner's flush after them are
    one counted call ([Memory.stored]), so its stop, which may unmap the
@@ -1021,8 +1090,8 @@ let queued_run fn d src dst n =
   | _ -> undirected fn ~waits:[||] src dst [| row n |]
 
 (* [copy] under its claims, through its wait. The host's copy of one run
-   builds no box, so it allocates nothing, and a queue's builds no box
-   either. *)
+   builds no box, so it allocates nothing but an io read's arrays of one,
+   and a queue's builds no box either. *)
 let copied src dst n =
   let fn = "Buffer.copy" in
   prepare src dst;

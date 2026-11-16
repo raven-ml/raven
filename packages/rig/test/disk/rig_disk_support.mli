@@ -19,6 +19,13 @@ val drop_pages : string -> int
     and drops its cached pages, so that the next read reaches storage: [0], or
     the errno. On Linux only; [-1] elsewhere. *)
 
+val fault_reads : fail:int -> wait:float -> unit
+(** [fault_reads ~fail ~wait] makes each run of every later read of runs of the
+    disk wait [wait] seconds before it reads, and the run of index [fail] of
+    each read fail with an I/O error without reading, as storage that fails a
+    read does ([rig_disk_fault_runs] in [rig_disk_stubs.c]). [~fail:(-1)
+    ~wait:0.] restores the disk's reads. Nothing on Windows. *)
+
 val hold_pool : unit -> unit
 (** [hold_pool ()] runs a compute job of two chunks on two threads of the
     host's pool ([rig_pool_run] in [rig_pool.h]), whose every chunk lasts until

@@ -1593,6 +1593,10 @@ module Buffer : sig
          the copy is done, and the point is a point of {!Rig.host} that is
          reached. A copy of no bytes waits on the host for the points of
          [waits] and returns such a point.}}
+      An io device's library reads the rows of every box in one call, which
+      may read them at once, unless two of them write a byte of [dst] in
+      common ({!Rig_edge.Io.read}), so many ranges of a file read faster in
+      one copy than in a copy each.
       It blocks where {!Rig.submit} blocks, where the host copies after the
       work the copy follows, where a transfer into staging memory waits for
       the work that last read that memory, and where the host moves bytes

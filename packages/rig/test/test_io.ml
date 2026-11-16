@@ -48,7 +48,9 @@ module Pages = struct
   let read r ~at ~dst ~len =
     note r.log "read";
     r.log.during ();
-    Support.move ~dst ~src:(base r + at) len
+    Array.iteri
+      (fun i at -> Support.move ~dst:dst.(i) ~src:(base r + at) len.(i))
+      at
 
   let write r ~at ~src ~len =
     note r.log "write";
@@ -547,6 +549,77 @@ let test_read_keeps () =
   equal (list string) [ "collected: false"; "frees: 0" ] !seen;
   ignore (Sys.opaque_identity src)
 
+(* A copy out of io memory hands its library the rows of all its boxes in one
+   read where they share no byte of the destination, whatever their order,
+   and one row a read, in the boxes' order, where some do, so a byte two rows
+   write holds the later's. A copy of no bytes makes no read. *)
+let test_read_rows () =
+  let io, t = open_pages () in
+  let src = create io t page_bytes in
+  let s = String.init page_bytes (fun i -> Char.chr (i * 7 land 255)) in
+  B.blit_from_string s 0 src 0 page_bytes;
+  let reads f =
+    let before = count "read" t in
+    f ();
+    count "read" t - before
+  in
+  let copied boxes =
+    let dst = filled 4096 '.' in
+    let n = reads (fun () -> ignore (B.submit_copy ~src ~dst boxes)) in
+    (n, bytes dst)
+  in
+  let expected boxes =
+    let d = Bytes.make 4096 '.' in
+    Array.iter
+      (fun (x : B.box) ->
+        for i = 0 to x.rows - 1 do
+          Bytes.blit_string s
+            (x.src_offset + (i * x.src_pitch))
+            d
+            (x.dst_offset + (i * x.dst_pitch))
+            x.width
+        done)
+      boxes;
+    Bytes.to_string d
+  in
+  let apart =
+    Array.init 40 (fun i ->
+        B.row ~src_offset:(i * 997 mod 60000) ~dst_offset:((39 - i) * 100) 90)
+  and rows =
+    [|
+      {
+        B.src_offset = 5;
+        dst_offset = 4000;
+        width = 9;
+        rows = 1;
+        src_pitch = 9;
+        dst_pitch = 9;
+      };
+      {
+        B.src_offset = 300;
+        dst_offset = 0;
+        width = 8;
+        rows = 30;
+        src_pitch = 1000;
+        dst_pitch = 12;
+      };
+    |]
+  and overlapping =
+    Array.init 10 (fun i -> B.row ~src_offset:(i * 1301) ~dst_offset:(i * 11) 64)
+  in
+  equal ~msg:"rows apart, in decreasing order: (reads, bytes)"
+    (pair int string)
+    (1, expected apart) (copied apart);
+  equal ~msg:"a box of rows beside a row: (reads, bytes)" (pair int string)
+    (1, expected rows) (copied rows);
+  equal ~msg:"rows whose bytes overlap: (reads, bytes)" (pair int string)
+    (10, expected overlapping) (copied overlapping);
+  equal ~msg:"no box: (reads, bytes)" (pair int string)
+    (0, String.make 4096 '.') (copied [||]);
+  equal ~msg:"boxes of no bytes: (reads, bytes)" (pair int string)
+    (0, String.make 4096 '.')
+    (copied [| B.row 0; { (B.row 8) with rows = 0 } |])
+
 (* Faults and refusals *)
 
 let lost d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
@@ -878,6 +951,11 @@ let tests =
           test_staged_device;
         test "a failure of io memory reaches the caller and loses nothing"
           test_failures;
+        test
+          "a copy out of io memory reads its rows in one call where they share \
+           no byte of the destination, in order where they do, and none for no \
+           bytes"
+          test_read_rows;
         test
           "a copy from or into a borrow of io memory goes through its io \
            library"

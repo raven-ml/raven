@@ -37,12 +37,11 @@ external close : int -> unit = "caml_rig_disk_close"
 external remove : string -> bool = "caml_rig_disk_remove"
 external sync : int -> unit = "caml_rig_disk_sync"
 
-external pread :
-  (int[@untagged]) ->
-  (int[@untagged]) ->
-  (int[@untagged]) ->
-  (int[@untagged]) ->
-  (int[@untagged]) = "caml_rig_disk_read_byte" "caml_rig_disk_read"
+(* [read_runs fd at dst len] reads the runs of Rig_edge.Io.read: [None], or
+   [Some (i, k)] where run [i] found the end of the file after [k] bytes. *)
+external read_runs :
+  int -> int array -> int array -> int array -> (int * int) option
+  = "caml_rig_disk_read_runs"
 
 external pwrite :
   (int[@untagged]) ->
@@ -441,13 +440,15 @@ module Io = struct
   let free f = locked close_fd f
 
   let read f ~at ~dst ~len =
-    let k =
-      try moved f pread at dst len
+    match
+      try moved f read_runs at dst len
       with Unix.Unix_error (e, _, _) -> unix_error f e
-    in
-    if k < len then
-      sys_error f
-        (strf "the file ends at byte %d, before byte %d" (at + k) (at + len))
+    with
+    | None -> ()
+    | Some (i, k) ->
+        sys_error f
+          (strf "the file ends at byte %d, before byte %d" (at.(i) + k)
+             (at.(i) + len.(i)))
 
   (* Rig writes no file opened for reading: its memory admits only reads
      ([Rig.Buffer.access]). The write marks [f] unsynced while it pins the

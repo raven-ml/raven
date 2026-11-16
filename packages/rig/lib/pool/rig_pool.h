@@ -8,7 +8,7 @@
    The pool is the set of threads that run work on the host for one
    process. It holds two sets of workers: compute workers, which nx's CPU
    kernels and the host's launches in rig share, and blocking workers, for
-   jobs whose bodies wait on the system, such as rig.disk's long reads. A
+   jobs whose bodies wait on the system, such as rig.disk's reads. A
    caller hands the pool a job with rig_pool_run, or rig_pool_run_blocking
    for a blocking job, which runs it on the calling thread and on the
    workers of its kind.

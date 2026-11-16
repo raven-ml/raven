@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*/
 
 /* Files for the disk: opening, identity, positional reads and writes between
-   a file and host memory, read-ahead advice and ordering a file's writes
-   before later changes.
+   a file and host memory, many reads at once, read-ahead advice and ordering
+   a file's writes before later changes.
 
    A descriptor crosses to OCaml as an int: a file descriptor on POSIX, a
    HANDLE on Windows. A system call's failure raises [Unix.Unix_error],
@@ -20,6 +20,7 @@
 
 #include <caml/alloc.h>
 #include <caml/bigarray.h>
+#include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <caml/osdeps.h>
@@ -48,6 +49,7 @@ CAMLextern void caml_win32_maperr(DWORD errcode);
 #include <pthread.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 #if defined(__APPLE__)
 #include <sys/mount.h>
@@ -190,6 +192,11 @@ static intnat transfer(int write, intnat h, int64_t pos, char *buf,
 static void watch_forks(void) {}
 
 static int fork_count(void) { return 0; }
+
+static void pause_ns(int64_t ns) { Sleep((DWORD)(ns / 1000000)); }
+
+/* The error of a read the suite fails (fault_run). */
+#define FAULT_CODE ERROR_READ_FAULT
 
 static value handle_descr(intnat h) {
   return caml_win32_alloc_handle((HANDLE)h);
@@ -467,6 +474,14 @@ static int fork_count(void) { return atomic_load(&forks); }
 
 static value handle_descr(intnat h) { return Val_long(h); }
 
+static void pause_ns(int64_t ns) {
+  struct timespec ts = {(time_t)(ns / 1000000000), (long)(ns % 1000000000)};
+  while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {
+  }
+}
+
+#define FAULT_CODE EIO
+
 static void advise_file(intnat h, char *pages, int64_t pos, int64_t n) {
 #if defined(__APPLE__)
   (void)pages;
@@ -481,6 +496,90 @@ static void advise_file(intnat h, char *pages, int64_t pos, int64_t n) {
   (void)pages;
   if (n > 0) posix_fadvise((int)h, (off_t)pos, (off_t)n, POSIX_FADV_WILLNEED);
 #endif
+}
+
+#endif
+
+/* Many runs
+
+   A read of many runs, the rows of a copy's boxes that share no byte of
+   memory (Rig_edge.Io.read), keeps up to [DEPTH] of them in flight outside
+   Windows: a blocking job of the host's pool (rig_pool.h), one chunk a run,
+   on the calling thread and up to [DEPTH] - 1 blocking workers, each
+   reading one run at a time. Once that job ends, each run longer than
+   [SEGMENT] is a long read of its own, as above. A run that fails or finds
+   the end of the file stops the runs not yet begun. A job returns only
+   once each of its bodies has, so no read still writes memory when the
+   read of runs returns. On Windows the runs are read one after the other,
+   since a handle opened without FILE_FLAG_OVERLAPPED serializes its
+   reads. */
+
+#define DEPTH 64
+
+/* A read of [n] runs of [h]: run i's position, host address and length,
+   and the bytes it read, at runs[4 i] to runs[4 i + 3]. [short_run] is the
+   least index of a run read that found the end of the file, else [n], and
+   [error] the first system error, else 0. */
+struct batch {
+  intnat h, n;
+  intnat *runs;
+  _Atomic intnat short_run;
+  _Atomic int error;
+};
+
+/* For the suite (rig_disk_fault_runs below): the run of this index of every
+   read of runs fails with FAULT_CODE without reading, after each run waits
+   [fault_wait] ns. */
+static _Atomic intnat fault_run = -1;
+static _Atomic int64_t fault_wait;
+
+/* Reads run [i] of [b], unless a run failed or came short. */
+static void read_run(struct batch *b, intnat i) {
+  if (atomic_load(&b->error) != 0 || atomic_load(&b->short_run) < b->n)
+    return;
+  intnat *r = &b->runs[4 * i];
+  int64_t wait = atomic_load(&fault_wait);
+  if (wait > 0) pause_ns(wait);
+  intnat got = i == atomic_load(&fault_run)
+                   ? -(intnat)FAULT_CODE
+                   : transfer(0, b->h, r[0], (char *)r[1], r[2]);
+  if (got < 0) {
+    int none = 0;
+    atomic_compare_exchange_strong(&b->error, &none, (int)-got);
+    return;
+  }
+  r[3] = got;
+  if (got < r[2]) {
+    intnat least = atomic_load(&b->short_run);
+    while (i < least &&
+           !atomic_compare_exchange_weak(&b->short_run, &least, i)) {
+    }
+  }
+}
+
+#ifdef _WIN32
+
+static void read_batch(struct batch *b) {
+  for (intnat i = 0; i < b->n; i++) read_run(b, i);
+}
+
+#else
+
+/* Reads runs [lo, hi) of [ctx]'s batch but the long ones. */
+static void read_short_runs(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
+  struct batch *b = ctx;
+  for (int64_t i = lo; i < hi; i++)
+    if (b->runs[4 * i + 2] <= SEGMENT) read_run(b, (intnat)i);
+}
+
+static void read_batch(struct batch *b) {
+  intnat shorts = 0;
+  for (intnat i = 0; i < b->n; i++) shorts += b->runs[4 * i + 2] <= SEGMENT;
+  int threads = shorts < DEPTH ? (int)shorts : DEPTH;
+  rig_pool_run_blocking(threads, b->n, b->n, read_short_runs, b);
+  for (intnat i = 0; i < b->n; i++)
+    if (b->runs[4 * i + 2] > SEGMENT) read_run(b, i);
 }
 
 #endif
@@ -566,19 +665,45 @@ value caml_rig_disk_sync(value v_handle) {
    otherwise. It is the number of bytes moved, fewer than [n] when a read
    reaches the end of the file, or the system's error negated. */
 
-/* [read h pos dst n] reads [n] bytes of the file [h] from byte [pos] into host
-   memory at [dst]: the bytes read. Releases the runtime. */
-intnat caml_rig_disk_read(intnat h, intnat pos, intnat dst, intnat n) {
+/* [read_runs h at dst len] reads, for each [i], [len.(i)] bytes of the file
+   [h] from byte [at.(i)] into host memory at [dst.(i)] (Many runs): [None],
+   or [Some (i, k)] for the least [i] of the runs read that found the end of
+   the file, after [k] bytes. Releases the runtime, the runs copied out of
+   the arrays first. */
+value caml_rig_disk_read_runs(value v_h, value v_at, value v_dst,
+                              value v_len) {
+  CAMLparam4(v_h, v_at, v_dst, v_len);
+  CAMLlocal1(found);
+  intnat n = (intnat)Wosize_val(v_at), small[4 * 4];
+  intnat *runs = n <= 4 ? small : malloc((size_t)n * 4 * sizeof *runs);
+  if (runs == NULL) caml_raise_out_of_memory();
+  for (intnat i = 0; i < n; i++) {
+    runs[4 * i] = Long_val(Field(v_at, i));
+    runs[4 * i + 1] = Long_val(Field(v_dst, i));
+    runs[4 * i + 2] = Long_val(Field(v_len, i));
+    runs[4 * i + 3] = 0;
+  }
+  struct batch b = {Long_val(v_h), n, runs, n, 0};
   caml_release_runtime_system();
-  intnat r = transfer(0, h, pos, (char *)dst, n);
+  read_batch(&b);
   caml_acquire_runtime_system();
-  if (r < 0) fail((int)-r, "pread", Nothing);
-  return r;
+  int error = atomic_load(&b.error);
+  intnat i = atomic_load(&b.short_run), got = i < n ? runs[4 * i + 3] : 0;
+  if (runs != small) free(runs);
+  if (error != 0) fail(error, "pread", Nothing);
+  if (i == n) CAMLreturn(Val_none);
+  found = caml_alloc_tuple(2);
+  Store_field(found, 0, Val_long(i));
+  Store_field(found, 1, Val_long(got));
+  CAMLreturn(caml_alloc_some(found));
 }
 
-value caml_rig_disk_read_byte(value h, value pos, value dst, value n) {
-  return Val_long(caml_rig_disk_read(Long_val(h), Long_val(pos),
-                                        Long_val(dst), Long_val(n)));
+/* For rig.disk's suite, whose C stubs call it, outside Windows: each run of
+   every later read of runs waits [wait_ns] ns first, and run [run] of each
+   fails with an I/O error without reading; -1 and 0 restore the reads. */
+void rig_disk_fault_runs(intnat run, int64_t wait_ns) {
+  atomic_store(&fault_run, run);
+  atomic_store(&fault_wait, wait_ns);
 }
 
 /* [write h pos src n] writes [n] bytes of host memory at [src] into the file

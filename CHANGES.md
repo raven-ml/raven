@@ -40,6 +40,15 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- **Breaking:** `Rig_edge.Io.read` takes arrays of runs,
+  `read r ~at ~dst ~len`, and raises only once no read it began still
+  writes memory. A copy from io memory hands its library the rows of all
+  its boxes in one read where they share no byte of the destination, and
+  one row a read, in order, where they do.
+- A copy from a disk buffer reads its rows at once, up to 64 in flight on
+  the host pool's blocking workers (one after another on Windows), where it
+  read one row at a time: about 15x the rows a second for a copy of
+  scattered 4 KiB rows of a file not in memory.
 - The host pool's blocking workers, which rig.disk's reads use, sleep as
   soon as they find no work, where they spun 100 us as compute workers
   still do, and a blocking job makes the workers it asks for, which may

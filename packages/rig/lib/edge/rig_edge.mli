@@ -759,18 +759,24 @@ module type Io = sig
   (** [free r] gives [r] back. rig calls it once [r]'s buffers are
       unreachable. *)
 
-  val read : region -> at:int -> dst:int -> len:int -> unit
-  (** [read r ~at ~dst ~len] reads the [len] bytes at [at] in [r] into host
-      memory at [dst].
+  val read : region -> at:int array -> dst:int array -> len:int array -> unit
+  (** [read r ~at ~dst ~len] reads, for each [i], the [len.(i)] bytes at
+      [at.(i)] in [r] into host memory at [dst.(i)], and returns once every
+      byte is there. rig calls it with arrays of one length, at least one,
+      every [len.(i)] positive, and no two runs' bytes in host memory in
+      common, so the library may read the runs in any order and at once. A
+      copy hands one call the rows of all its boxes where they share no
+      byte of its destination ({!Rig.Buffer.submit_copy}).
 
       Raises [Sys_error] for a failure of the memory, such as a file
-      truncated since it was opened. *)
+      truncated since it was opened, and only once no read it began still
+      writes memory. The bytes of the runs are then unspecified. *)
 
   val write : region -> at:int -> src:int -> len:int -> unit
   (** [write r ~at ~src ~len] writes the [len] bytes of host memory at [src]
       at [at] in [r].
 
-      Raises as {!read}. *)
+      Raises [Sys_error] for a failure of the memory, as {!read}. *)
 
   val pages :
     region ->

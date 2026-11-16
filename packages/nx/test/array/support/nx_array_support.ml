@@ -68,7 +68,8 @@ module Io = struct
   type region = bytes
 
   let free (_ : region) = ()
-  let read r ~at ~dst ~len = blit_out r at dst len
+  let read r ~at ~dst ~len =
+    Array.iteri (fun i at -> blit_out r at dst.(i) len.(i)) at
   let write r ~at ~src ~len = blit_in r at src len
   let pages (_ : region) = None
   let prefetch (_ : region) ~at:(_ : int) ~len:(_ : int) = ()

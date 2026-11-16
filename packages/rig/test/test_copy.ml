@@ -277,7 +277,10 @@ module Store = struct
 
   let free _ = ()
   let base r = Support.Reader.host r
-  let read r ~at ~dst ~len = Support.move ~dst ~src:(base r + at) len
+  let read r ~at ~dst ~len =
+    Array.iteri
+      (fun i at -> Support.move ~dst:dst.(i) ~src:(base r + at) len.(i))
+      at
   let write r ~at ~src ~len = Support.move ~dst:(base r + at) ~src len
   let pages _ = None
   let prefetch _ ~at:_ ~len:_ = ()
