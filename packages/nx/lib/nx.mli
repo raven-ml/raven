@@ -2209,9 +2209,10 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     overflow and underflow, a float sum of [n] terms is
     within [γ(β(n)) Σ|x|] of the exact sum on one device, [γ] and [β] as
     {!Nx_kernel.section-bounds} defines them, and within
-    [γ(β(n) + β(t)) Σ|x|] over cut axes, [t] the windows holding terms. A
-    float product is within a relative [γ(n - 1)], a complex one within a
-    normwise relative [γ(2n - 2)], on one device as over cut axes. A
+    [γ(β(m) + t - 1) Σ|x|] over cut axes, [m] the most terms a window
+    holds and [t] the windows holding terms. A float product is within a
+    relative [γ(n - 1)], a complex one within a normwise relative
+    [γ(2n - 2)], on one device as over cut axes. A
     {!mean} is such a sum divided by [n]. {!var} and {!std} are within the
     bound {!var} states. A {!logsumexp} is within [ε + ε{_t}] of the exact
     one, [ε] the largest bound the kernels' library states for the
@@ -2322,9 +2323,10 @@ val var :
     the elements' magnitudes, and the variance within
     [F = (b + 5) u V + 2 (b + 1) u E √V + (3b + 7) u E²] of the exact
     [V], where [b] is [β(n)] ({!Nx_kernel.section-bounds}) on one device
-    and [β(n) + β(t)] over cut axes, [t] the windows holding terms. A
-    library may state a sharper bound. A [ddof] scales it by a relative
-    [2u] more, then one rounding to the dtype. A variance the dtype holds
+    and [β(m) + t - 1] over cut axes, [m] and [t] as for a {!sum}
+    ({!section-reductions}). A library may state a sharper bound. A [ddof]
+    scales it by a relative [2u] more, then one rounding to the dtype. A
+    variance the dtype holds
     as a subnormal, where the squares underflow before the sum, can err by
     [n / (n - ddof) + 1] of the least subnormal more, [0] included.
 
@@ -2494,7 +2496,9 @@ val rms_norm :
     Barring overflow and underflow, and for [k u < 1/4], it is within
     [k u / (1 - 4 k u)] of the exact value, relatively, where
     [k = (β(n) + 9) / 2], or [(β(n) + 11) / 2] with [scale], [β] as
-    {!Nx_kernel.section-bounds} defines it, and [u] is the unit roundoff
+    {!Nx_kernel.section-bounds} defines it and [β(m) + t - 1] in place of
+    [β(n)] over cut axes, [m] and [t] as for a {!sum}
+    ({!section-reductions}), and [u] is the unit roundoff
     of the format it computes in, before a narrow float's rounding: a
     square takes one rounding and their sum [β(n)], the mean and [eps] two
     more, which the root halves, and the root, the reciprocal, the product
@@ -2665,10 +2669,13 @@ val contract :
     Barring overflow and underflow, before rounding it is within
     [u|r| + (1 + u) γ(β(K), u) Σ|a||b|] of the exact [r = init + Σ a·b]
     of its [K] products, [√2 γ(β(2K), u)] in place of [γ(β(K), u)] for a
-    complex one, wherever its operands lie, where
+    complex one, with its summed names whole on each device. Here
     [γ(n, v) = n v / (1 - n v)], [β] is as {!Nx_kernel.section-bounds}
     defines it, [u] is the accumulator's unit roundoff, and the [u|r|]
-    term is [0] without [init].
+    term is [0] without [init]. Over summed names cut across devices,
+    [β(m) + t - 1] stands in place of [β(K)] and [β(2m) + t - 1] of
+    [β(2K)], [m] the most products a window holds and [t] the windows
+    holding products.
     With [~sum:true] (default [false]) over cut summed names, it is the
     devices' terms, which close within the bound {!section-contraction}
     adds.
@@ -2805,7 +2812,9 @@ val conv :
     from [+0], in the dtype's carrier, as {!contract} does, and rounds
     once: the float formats narrower than 32 bits sum at [float32]. Integers
     wrap. Before rounding it is within [γ(β(K), u) Σ|x||w|] of the exact
-    sum, [γ], [β] and [u] as {!contract} states. On one device it gives
+    sum, [γ], [β] and [u] as {!contract} states, with [β(m) + t - 1] in
+    place of [β(K)] over channels cut across devices, [m] and [t] as
+    {!contract} states them. On one device it gives
     the same bits on every run of the same computation ({!section-reductions}),
     computing as follows:
     - With other than one input channel a group, [c' = c / groups], it is

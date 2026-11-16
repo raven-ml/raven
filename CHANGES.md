@@ -2979,6 +2979,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- Over axes cut across devices, the stated bounds of `Nx.sum`, `var`,
+  `rms_norm`, `contract` and `conv`, eager and compiled, take `β(m) + t - 1`
+  for `β(n)`, `m` the most terms a window holds and `t` the windows holding
+  terms: the old statements fail past some 330 devices.
 - Written positions (`L`) of `Nx.slice` and `Nx.set`, and `Nx.quantile`'s
   probabilities, add no kernel each: they are copied once to each device,
   and not at all on the host. `Nx.slice` with `L []` and `Nx.quantile [||]`
