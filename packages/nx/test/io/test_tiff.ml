@@ -352,17 +352,23 @@ let tiff_dtypes =
       Any Float64;
     ]
 
+(* A raster of [h] rows and [w] columns of [c] samples of [dt], any
+   values. *)
+let drawn_raster (D.Any dt) h w c =
+  let open Gen in
+  let+ vs = array ~size:(constant (h * w * c)) (element dt) in
+  Nx.P (Nx.create dt [| h; w; c |] vs)
+
+let pp_dtype ppf (D.Any dt) = D.pp ppf dt
+
 (* Rasters of a dtype TIFF stores: 1 to 40 rows and columns, one in five a
    single row or column, of 1 to 4 samples, any values. *)
 let rasters =
   let open Gen in
-  let* (D.Any dt) =
-    of_list ~pp:(fun ppf (D.Any dt) -> D.pp ppf dt) tiff_dtypes
-  in
+  let* dt = of_list ~pp:pp_dtype tiff_dtypes in
   let side = frequency [ (1, constant 1); (4, int_range 1 40) ] in
   let* h = side and+ w = side and+ c = int_range 1 4 in
-  let+ vs = array ~size:(constant (h * w * c)) (element dt) in
-  Nx.P (Nx.create dt [| h; w; c |] vs)
+  drawn_raster dt h w c
 
 let layouts (Nx.P x) =
   let open Gen in
@@ -387,13 +393,34 @@ let pp_layout ppf l =
     l.codec l.predictor
     (if l.padded then ", last strip padded" else "")
 
+(* A float raster of 2 rows or more in several strips, the last padded,
+   compressed with the floating point predictor, cases [layouts] draws one
+   time in 15, 12 and 6. *)
+let float_strips =
+  let open Gen in
+  let* dt = of_list ~pp:pp_dtype D.[ Any Float32; Any Float64 ] in
+  let* h = int_range 2 40 and+ w = int_range 1 40 and+ c = int_range 1 4 in
+  let* x = drawn_raster dt h w c in
+  let+ mm = bool
+  and+ bigtiff = bool
+  and+ k = int_range 1 (h - 1)
+  and+ codec = of_list [ 5; 8; 32946 ] in
+  let chunks = Strips k in
+  (x, { form = { mm; bigtiff }; chunks; codec; predictor = 3; padded = true })
+
+(* Any raster and layout, and one time in four [float_strips]. *)
 let built =
   Gen.with_pp
     (fun ppf (x, l) -> Format.fprintf ppf "%a, %a" pp_packed x pp_layout l)
     Gen.(
-      let* x = rasters in
-      let+ l = layouts x in
-      (x, l))
+      frequency
+        [
+          ( 3,
+            let* x = rasters in
+            let+ l = layouts x in
+            (x, l) );
+          (1, float_strips);
+        ])
 
 let reading =
   prop "a file built from the specifications loads as the raster it encodes"
