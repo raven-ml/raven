@@ -78,8 +78,9 @@
     piece's results are the left fold of the slots in that order, finished
     by the maps below. A device so holds at most two slots of a piece and
     their combination at a time, and every device folds a window's slots in
-    one order, so each result's bits depend on the slots alone, whatever the
-    pieces and whichever device computes it. A [Logsumexp], which has no
+    one order, so each result's bits depend on the slots and the
+    architecture of the devices that compute it alone, whatever the
+    pieces. A [Logsumexp], which has no
     monoid, takes every slot's elements of a piece at once, and one [Reduce]
     over the leading axes gives the piece's results, by the kernels'
     association of each output's terms: where that association depends on
