@@ -5,7 +5,7 @@
 
 (* Folds over cut axes, through Nx: a reduction, a contraction or a scan over
    an axis cut across devices gives an exact one's bits on one device, and a
-   float one the fold of its tiles' stacked partials, within partial.mli's
+   float one the fold of its tiles' partials in order, within partial.mli's
    bounds; each moves its partials, not its operands. An operation over a
    value at any placement, folds and scans along cut axes among them, gives
    its bits on one device. *)
@@ -1682,10 +1682,10 @@ let law_summed (Sumcase (k, c, s, data, w, whole, a, us, p, u)) =
 
 (* Over axes cut across devices, a float or complex sum, product, mean,
    logsumexp or moments combines partials that round ({!Partial}): each
-   tile reduced into the carrier as one device reduces it, the partials
-   stacked along a new leading axis in the tiles' order and reduced over it
-   by the kernels, bit for bit. The devices are software devices that nx.cpu
-   computes on, so the host's reduction of the stack is theirs. *)
+   tile reduced into the carrier as one device reduces it, then the
+   partials combined one at a time in the tiles' order, a logsumexp's
+   reduced at once by the kernels, bit for bit. The devices are software
+   devices that nx.cpu computes on, so the host's combination is theirs. *)
 
 let gamma u k =
   let k = Float.of_int (Stdlib.max 0 k) in
@@ -1852,8 +1852,8 @@ let combined (type v s) r axes tiles (x : (v, s, Nx.Host.d) Nx.t) : v array =
       | D.Complex | D.Signed | D.Unsigned | D.Boolean ->
           invalid_arg "combined: not a float fold")
 
-(* The float fold [r] of [x] placed as [w]: its tiles' partials stacked
-   and reduced, or its bits on one device where [w] cuts no reduced axis or
+(* The float fold [r] of [x] placed as [w]: its tiles' partials combined
+   in order, or its bits on one device where [w] cuts no reduced axis or
    one has no element, which the route then reads whole. *)
 let float_law (type v s) (show : v -> string) w r axes
     (x : (v, s, Nx.Host.d) Nx.t) =
@@ -2875,13 +2875,13 @@ let tiled c side tile x =
 
 (* A contraction cut along its contracting pairs is, as partial.mli states,
    each tile contracted on one device into the accumulator, adding [-0]
-   where there is an [init], the sums stacked in the tiles' order and
-   summed over the stack by the kernels' reduction, then [init] added and
-   the result rounded once: the same bits, whatever
-   the library contracts by. Both libraries reduce as nx.cpu does, so the
-   host sums the stack. Where the result is cut too, each device contracts
-   its tiles of its own window of the result. [pairs] where cases may have
-   no product or two pairs, and the library is nx.cpu. *)
+   where there is an [init], the sums added one at a time in the tiles'
+   order, then [init] added and the result rounded once: the same bits,
+   whatever the library contracts by. Both libraries add as nx.cpu does,
+   so the host's fold of the sums is theirs. Where the result is cut too,
+   each device contracts its tiles of its own window of the result.
+   [pairs] where cases may have no product or two pairs, and the library
+   is nx.cpu. *)
 let law_cut ~pairs (module S : Sets) c =
   let (Ckind k) = c.ck in
   let a, b, init, batch, contracting =
@@ -3432,9 +3432,9 @@ let law_scans c =
       (printed (scan_bits k.rshow c.sr c.saxis x))
       (printed (scan_at c.swhere k.rshow c.sr c.saxis x))
 
-(* A float32 cumsum along an axis cut across devices keeps the bound of a
-   sum of each result's terms, as on one device: the result of terms [0]
-   to [i] within [γ(i) Σ|x|] of their exact sum, then its rounding. The
+(* A float32 cumsum along an axis cut across devices keeps a chain's
+   bound, as on one device: the result of terms [0] to [i] within
+   [γ(i) Σ|x|] of their exact sum, then its rounding. The
    exact sum is the float64 sum compensated by Neumaier's TwoSum, within
    [2 u64] of it relatively, plus [n² u64²] of the magnitudes. *)
 let pp_scan_bound ppf (n, w, seed) =
@@ -3480,9 +3480,10 @@ let law_scan_bound (n, w, seed) =
     xs
 
 (* The variance of float32 terms [c + y], [y] in [[-1, 1)] and [|c|] up
-   to [10{^6}], over an axis cut across devices: within nx.mli's bound of
-   the exact one, which a mean far from [0] keeps relative to the
-   variance. *)
+   to [10{^6}], over an axis cut across devices: within
+   [(γ(n + 4) + 2γ(n)²) V + 2γ(n + 6) γ(n) M √V + 4γ(n + 4) γ(n)² M²] of
+   the exact [V], [M] the terms' mean magnitude, a bound relative to the
+   variance however far the mean from [0]. *)
 let pp_shifted ppf (c, n, w, seed) =
   Format.fprintf ppf "%d terms near %g at %a, seed %d" n c pp_where w seed
 
@@ -3855,7 +3856,7 @@ let reductions =
         shifted_case law_shifted;
       prop ~count:2000
         "a reduction over cut axes gives an exact one's bits on one device, \
-         a float one the reduction of its tiles' stacked partials"
+         a float one the fold of its tiles' partials"
         reduced_case law_reduced;
       test "var and std at both ends of the range, cut" test_spread_range;
         test "a position over cut axes is the smallest of a tie across tiles"
@@ -3871,8 +3872,8 @@ let reductions =
       test "a float maximum or minimum over a cut axis is a NaN beside one"
         test_cut_extreme_nan;
       prop ~count:300
-        "a float reduction over cut axes of many terms reduces its tiles' \
-         stacked partials"
+        "a float reduction over cut axes of many terms folds its tiles' \
+         partials"
         lane_case law_lanes;
       cases
         "a float fold over a cut axis into a result whole on each device has \
@@ -3885,13 +3886,13 @@ let contractions =
   group "contractions"
     [
       prop ~count:400 ~examples:ccase_examples
-        "a contraction over cut contracting axes sums its tiles' stacked \
-         sums, then init"
+        "a contraction over cut contracting axes adds its tiles' sums in \
+         order, then init"
         ccase
         (law_cut ~pairs:true (module Cpu_sets));
       prop ~count:300
-        "a contraction cut over its contracted extent sums its tiles' \
-         stacked sums, for a library that sums blocks its own way"
+        "a contraction cut over its contracted extent adds its tiles' sums \
+         in order, for a library that sums blocks its own way"
         bcase
         (law_cut ~pairs:false (module Blocked_sets));
       prop ~count:200
@@ -3910,7 +3911,7 @@ let scans =
          float sum's or product's each window's scan from its totals' scan"
         scan_case law_scans;
       prop ~count:200
-        "a float32 cumsum along a cut axis is within the bound of a sum of \
+        "a float32 cumsum along a cut axis is within a chain's bound of \
          each result's terms"
         scan_bound_case law_scan_bound;
     ]
