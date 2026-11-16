@@ -2235,7 +2235,8 @@ let test_dies_inside () =
   equal ~msg:"grad" bits_t
     (bits (Nx.scalar f32 1.))
     (bits (Rune.grad' returned (Nx.scalar f32 2.)));
-  (* One the function captures raises, as a read of it does. *)
+  (* One the function captures raises, as a read of it does. A compiled call
+     names its entry point. *)
   let captured () =
     let c = fresh [| 5.; 6. |] in
     fun _ ->
@@ -2243,7 +2244,10 @@ let test_dies_inside () =
       c
   in
   dead (captured () x);
-  invalid ~sub:"float32 [2] was donated" (fun () -> Rune.jit' (captured ()) x);
+  invalid ~sub:"Rune.jit': float32 [2] was donated" (fun () ->
+      Rune.jit' (captured ()) x);
+  invalid ~sub:"Rune.jit: float32 [2] was donated" (fun () ->
+      Rune.jit T.(tensor @-> returns tensor) (captured ()) x);
   invalid ~sub:"float32 [2] was donated" (fun () ->
       Rune.vmap' (captured ()) rows);
   (* A function that reads its argument, then donates it, computes as it

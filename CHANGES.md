@@ -438,6 +438,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A dead constant that a `Rune.jit` call reads, as one its function donates
+  and returns, raises naming the entry point, where it named
+  `Nx.Repr.shards`.
 - A compiled scatter on AMD and Apple GPUs launches workgroups of at most
   the target's threads (`Renderer.t.local_threads_max`), where 2^19 updates
   or more made workgroups of more than 1024 that neither launches.

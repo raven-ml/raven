@@ -243,6 +243,9 @@ let issued (p : Program.t) (forms : form array) =
   else decline "no value"
 
 type state = {
+  name : string;
+      (** The entry point compiling the program, which a refused capture
+          names. *)
   rig : Rig.t;
   device : Ops.device;
   hosts : Ops.device list;
@@ -327,7 +330,7 @@ let capture (type v s d) st (x : (v, s, d) Nx.t) =
   match List.find_opt (fun (v, _) -> same v (V x)) st.captures with
   | Some (_, u) -> u
   | None ->
-      let arrays = Nx.Repr.shards ~by:"Nx.Repr.shards" x in
+      let arrays = Nx.Repr.shards ~by:st.name x in
       if Iarray.length arrays <> 1 then
         decline "a constant over several devices";
       let a = A.Any (Iarray.get arrays 0) in
@@ -356,7 +359,7 @@ let capture (type v s d) st (x : (v, s, d) Nx.t) =
    where a copy of them makes the result there with no kernel: one array,
    empty or contiguous in C order from a byte boundary. *)
 let elsewhere (type v s d) st (x : (v, s, d) Nx.t) =
-  let arrays = Nx.Repr.shards ~by:"Nx.Repr.shards" x in
+  let arrays = Nx.Repr.shards ~by:st.name x in
   match device_of (Nx.placement x) with
   | Some r
     when (not st.split) && (not (Rig.equal r st.rig))
@@ -2661,16 +2664,18 @@ and inline_over st cs (q : Program.t) operands =
 let lowerings_made = Domain.DLS.new_key (fun () -> ref 0)
 let lowerings () = !(Domain.DLS.get lowerings_made)
 
-(* [lower ~rigs p forms ~layouts ~phases ~donated] is [p] over arguments of
-   [forms] on the devices [rigs], the first its own, each laid out over its
+(* [lower ~name ~rigs p forms ~layouts ~phases ~donated] is [p] over arguments
+   of [forms] on the devices [rigs], the first its own, each laid out over its
    run as [layouts] says, its run at [phases], the arguments [donated] says
-   lending their storage where a result may take it. *)
-let lower ~rigs ~split ~uploads (p : Program.t) (forms : form array) ~layouts
-    ~phases ~donated =
+   lending their storage where a result may take it, for the entry point
+   [name]. *)
+let lower ~name ~rigs ~split ~uploads (p : Program.t) (forms : form array)
+    ~layouts ~phases ~donated =
   let rig = List.hd rigs in
   incr (Domain.DLS.get lowerings_made);
   let st =
     {
+      name;
       rig;
       device = Rig.name rig;
       hosts = List.map Rig.name (List.filter on_host rigs);
@@ -3265,7 +3270,7 @@ let variant t layouts phases donated settings =
                    && Array.for_all2 Bool.equal d donated ->
                 lowered
             | _ ->
-                lower ~rigs:t.rigs ~split:(Option.is_some t.split)
+                lower ~name:t.name ~rigs:t.rigs ~split:(Option.is_some t.split)
                   ~uploads:t.uploads t.program t.forms ~layouts ~phases ~donated
           in
           (* A declined variant is kept; another failure, as a compiler's or
@@ -3338,8 +3343,8 @@ let make ~name ?beam ?parallel ?first p forms =
     one_machine rigs;
     let uploads = ref [] in
     let lower (layouts, phases, donated) =
-      lower ~rigs ~split:(Option.is_some split) ~uploads p forms ~layouts
-        ~phases ~donated
+      lower ~name ~rigs ~split:(Option.is_some split) ~uploads p forms
+        ~layouts ~phases ~donated
     in
     let contiguous =
       ( Array.map
@@ -3439,8 +3444,8 @@ let footprint t args =
            && Array.for_all2 Bool.equal d d' ->
         lowered
     | _, Some (layouts, phases, donated) ->
-        lower ~rigs:t.rigs ~split:(Option.is_some t.split) ~uploads:t.uploads
-          t.program t.forms ~layouts ~phases ~donated
+        lower ~name:t.name ~rigs:t.rigs ~split:(Option.is_some t.split)
+          ~uploads:t.uploads t.program t.forms ~layouts ~phases ~donated
     | _, None -> invalid_arg (t.name ^ ": a program already linked")
   in
   let storage = storage t in

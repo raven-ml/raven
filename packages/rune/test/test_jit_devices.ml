@@ -2736,6 +2736,21 @@ let io_argument () =
   raises_match (Exn.invalid_arg ~sub:"computes nothing") (fun () ->
       Rune.jit T.(tensor @-> tensor @-> returns tensor) f x y)
 
+(* A dead constant over several devices that a compiled function returns
+   raises at the call, naming the entry point. *)
+let dead_constant () =
+  let at = Two.split ~axis:0 in
+  let x = Nx.place at (value [| 4 |]) in
+  let returned () =
+    let c = Nx.place at (value [| 4 |]) in
+    fun _ ->
+      ignore (Nx.donate c);
+      c
+  in
+  raises_match
+    (Exn.invalid_arg ~sub:"Rune.jit': float32 [4] was donated")
+    (fun () -> Rune.jit' (returned ()) x)
+
 let io_capture () =
   let y = on_disk Disk.v io_ys in
   let at = Two.split ~axis:0 in
@@ -2933,6 +2948,10 @@ let () =
              test "raises at the call on a set without kernels, named" declined;
              test "a check or an emission in a branch is evaluated"
                declined_branches;
+           ];
+         group "dead values"
+           [
+             test "a dead constant it returns raises, named" dead_constant;
            ];
          group "a batch of one"
            [

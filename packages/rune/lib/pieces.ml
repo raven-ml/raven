@@ -110,8 +110,10 @@ let full x (w : M.range array) =
 
 let bytes x = D.bytes (Nx.dtype x) (Array.fold_left ( * ) 1 (Nx.shape x))
 
-(* The pieces of [x], a value of the splitting [ri] or a constant. *)
-let pieces_of (type v s d) ri (x : (v, s, d) Nx.t) : (v, s, d) Nx.t iarray =
+(* The pieces of [x], a value of the splitting [ri] or a constant. A dead
+   constant raises naming [by]. *)
+let pieces_of (type v s d) ~by ri (x : (v, s, d) Nx.t) :
+    (v, s, d) Nx.t iarray =
   match Nx.Prim.payload ri x with
   | Some (Cut ps) -> ps
   | _ -> (
@@ -119,7 +121,7 @@ let pieces_of (type v s d) ri (x : (v, s, d) Nx.t) : (v, s, d) Nx.t iarray =
       | Some _ -> Iarray.of_list [ x ]
       | None ->
           let s = Nx.Placement.devices (Nx.placement x) in
-          let arrays = Nx.Repr.shards ~by:"Nx.Repr.shards" x in
+          let arrays = Nx.Repr.shards ~by x in
           Iarray.map (Nx.Repr.of_array s) arrays)
 
 (* Loops over windows
@@ -277,7 +279,7 @@ let relative (outer : M.range array) (inner : M.range array) =
     (fun (o : M.range) (i : M.range) -> { i with start = i.start - o.start })
     outer inner
 
-let engine ri ~(gathered : gathered) ~by moves : Nx.Prim.engine =
+let engine ri ~(gathered : gathered) ~name ~by moves : Nx.Prim.engine =
   let run ~by ?into:_ ~origin here _ op =
     Nx.Prim.eval ~by (windowed here op origin)
   in
@@ -375,7 +377,7 @@ let engine ri ~(gathered : gathered) ~by moves : Nx.Prim.engine =
   in
   {
     run;
-    piece = (fun x j _ -> Iarray.get (pieces_of ri x) j);
+    piece = (fun x j _ -> Iarray.get (pieces_of ~by:name ri x) j);
     view;
     bring;
     gather;
@@ -419,10 +421,11 @@ let same_form (F f) (F g) =
   && shape_of f = shape_of g
   && Nx.Placement.equal f.placement g.placement
 
-let pieces ri (V x) =
-  Array.map (fun v -> V v) (Iarray.to_array (pieces_of ri x))
+let pieces ~by ri (V x) =
+  Array.map (fun v -> V v) (Iarray.to_array (pieces_of ~by ri x))
 
-let all_pieces ri vs = Array.concat (Array.to_list (Array.map (pieces ri) vs))
+let all_pieces ~by ri vs =
+  Array.concat (Array.to_list (Array.map (pieces ~by ri) vs))
 
 (* The value of form [f] whose pieces are [ps]. *)
 let joined ri (F f) ps =
@@ -496,7 +499,7 @@ let rec cut ~kind ~in_loop ~(home : Rig.t) ~name (p : Program.t) forms =
         (function
           | Op { by; op = traced; base } -> (
               let op = Nx.Prim.map lookup traced in
-              let e = engine ri ~gathered ~by moves in
+              let e = engine ri ~gathered ~name ~by moves in
               match op with
               | Check _ when in_loop ->
                   decline "a check in a loop's step over several devices"
@@ -600,7 +603,7 @@ let rec cut ~kind ~in_loop ~(home : Rig.t) ~name (p : Program.t) forms =
       Array.map
         (fun (V y) ->
           let y = lookup y in
-          Array.map (fun v -> V v) (Iarray.to_array (pieces_of ri y)))
+          Array.map (fun v -> V v) (Iarray.to_array (pieces_of ~by:name ri y)))
         p.outputs
     in
     let next = ref 0 in
@@ -703,7 +706,7 @@ and looped ~in_loop ~home ~name ri moves c =
           (Array.concat [ forms init; Array.map Loops.row xs; forms captures ])
       in
       carries s (Array.length init);
-      let first v = (pieces ri v).(0) in
+      let first v = (pieces ~by:name ri v).(0) in
       results s
         (note @@ Program.perform
            (Scan
@@ -712,9 +715,9 @@ and looped ~in_loop ~home ~name ri moves c =
                 length;
                 trips = Option.map first trips;
                 reverse;
-                init = all_pieces ri init;
-                xs = all_pieces ri xs;
-                captures = Array.append (all_pieces ri captures) more;
+                init = all_pieces ~by:name ri init;
+                xs = all_pieces ~by:name ri xs;
+                captures = Array.append (all_pieces ~by:name ri captures) more;
                 seeds = [||];
               }))
   | Iterate
@@ -791,11 +794,13 @@ and looped ~in_loop ~home ~name ri moves c =
                 max;
                 rows = None;
                 stopped;
-                init = all_pieces ri init;
+                init = all_pieces ~by:name ri init;
                 step_captures =
-                  Array.append (all_pieces ri step_captures) step_more;
+                  Array.append (all_pieces ~by:name ri step_captures) step_more;
                 until_captures =
-                  Array.append (all_pieces ri until_captures) until_more;
+                  Array.append
+                    (all_pieces ~by:name ri until_captures)
+                    until_more;
                 seeds = [||];
               }))
   | Remat { body; args; seeds = [||]; differentiated } ->
@@ -807,7 +812,7 @@ and looped ~in_loop ~home ~name ri moves c =
            (Remat
               {
                 body = s.program;
-                args = Array.append (all_pieces ri args) more;
+                args = Array.append (all_pieces ~by:name ri args) more;
                 seeds = [||];
                 differentiated;
               }))
@@ -834,7 +839,7 @@ and looped ~in_loop ~home ~name ri moves c =
           ~params
       in
       let at_home (V x) = Rig.equal (rig_of (Nx.placement x)) home in
-      let copies = pieces ri index in
+      let copies = pieces ~by:name ri index in
       let index =
         match List.find_opt at_home (Array.to_list copies) with
         | Some v -> v
@@ -857,7 +862,7 @@ and looped ~in_loop ~home ~name ri moves c =
                 name = entry;
                 index;
                 branches = programs;
-                captures = Array.append (all_pieces ri captures) more;
+                captures = Array.append (all_pieces ~by:name ri captures) more;
                 seeds = [||];
               }))
   | Iterate { rows = Some _; _ } ->
