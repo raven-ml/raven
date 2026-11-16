@@ -76,8 +76,12 @@ enum { MEMORY_DEV, MEMORY_HOST, MEMORY_ADDRESS, MEMORY_HANDLE, MEMORY_ALLOC,
 enum { LEASE_COUNT, LEASE_WHY };
 
 /* What a lease's end adds to its count, past every count of its claims, as
-   Memory.lease_end. */
+   Memory.lease_end. An unborrow holds the count at LEASE_MARK, also past
+   every count of claims, while it stores its reason: a count from
+   LEASE_MARK and below LEASE_END is an unborrow under way, which claims read
+   as live. */
 #define LEASE_END ((intnat)1 << 40)
+#define LEASE_MARK (LEASE_END / 2)
 enum { ALLOC_OWNER, ALLOC_HOST, ALLOC_COUNT, ALLOC_GEN, ALLOC_WHY,
        ALLOC_ENTRY };
 
@@ -641,24 +645,41 @@ value caml_rig_buffers_take(value v_bs, value v_why) {
 }
 
 /* Buffer.unborrow's step: ends [v_b]'s lease with the reason [v_why] where
-   no claim or hold through the borrow keeps it, in one compare-and-set of its count
-   from none to its end, so that the borrow's buffers are dead and a claim
-   through it that follows finds them so. The memory's claims, of its other
-   buffers, are not its. It is 1 if it ended the lease, 0 if a claim through
-   the borrow kept it, and 2 if [v_b] is dead. */
+   no claim or hold through the borrow keeps it, so that the borrow's
+   buffers are dead and a claim through it that follows finds them so. The
+   memory's claims, of its other buffers, are not its. It moves the count
+   from none to LEASE_MARK, which keeps out every other unborrow, stores the
+   reason, then moves LEASE_MARK to LEASE_END, so a count from LEASE_END
+   always has its reason. A claim or hold that came between the two keeps
+   the count off LEASE_MARK: the step takes LEASE_MARK back and yields to
+   it. The second compare-and-set acquires, so the end follows the accesses
+   of a claim that came and went between them, and releases the reason. It
+   is 1 if it ended the lease, 0 if a claim through the borrow kept it, and
+   2 if [v_b] is dead. */
 value caml_rig_lease_free(value v_b, value v_why) {
-  value alloc = alloc_of(v_b);
-  if (Long_val(load_field(alloc, ALLOC_GEN)) !=
-          Long_val(Field(v_b, BUFFER_GEN)) ||
-      lease_ended(v_b))
+  if (Long_val(load_field(alloc_of(v_b), ALLOC_GEN)) !=
+      Long_val(Field(v_b, BUFFER_GEN)))
     return Val_long(2);
+  _Atomic value *count = lease_count(v_b);
+  value seen = Val_long(0);
+  while (!atomic_compare_exchange_strong_explicit(
+      count, &seen, Val_long(LEASE_MARK), memory_order_acquire,
+      memory_order_acquire)) {
+    if (Long_val(seen) >= LEASE_END) return Val_long(2);
+    if (Long_val(seen) < LEASE_MARK) return Val_long(0);
+    /* Another unborrow is between its two steps, which wait for nothing. */
+    relax();
+    seen = Val_long(0);
+  }
   caml_modify(&Field(lease_of(v_b), LEASE_WHY), v_why);
-  value none = Val_long(0);
-  if (atomic_compare_exchange_strong_explicit(
-          lease_count(v_b), &none, Val_long(LEASE_END), memory_order_acq_rel,
-          memory_order_acquire))
+  value mark = Val_long(LEASE_MARK);
+  if (atomic_compare_exchange_strong_explicit(count, &mark, Val_long(LEASE_END),
+                                              memory_order_acq_rel,
+                                              memory_order_relaxed))
     return Val_long(1);
-  return Val_long(Long_val(none) >= LEASE_END ? 2 : 0);
+  atomic_fetch_sub_explicit(count, Val_long(LEASE_MARK) - Val_long(0),
+                            memory_order_release);
+  return Val_long(0);
 }
 
 /* Holds

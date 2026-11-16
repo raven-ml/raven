@@ -499,6 +499,91 @@ let test_unborrow_unmapped (_, make) =
   B.release owner;
   Support.Reader.release m
 
+(* Two domains: unborrows of one borrow with different reasons, beside reads
+   of its reason. One unborrow ends the borrow and the others raise, and
+   every reader then gives the reason of the one that ended it, as [dead]
+   and as C reads it. *)
+type lease = { mutable ended : string option }
+
+let lease =
+  abstract
+    ~pp:(fun ppf r ->
+      match r.ended with
+      | None -> Format.pp_print_string ppf "live"
+      | Some why -> Format.fprintf ppf "ended %S" why)
+    "b"
+
+(* The devices of every program's borrows, opened once. *)
+let lenders =
+  lazy (memory "buffer:unborrow-race-of", memory "buffer:unborrow-race-on")
+
+let lend () =
+  let owner, d = Lazy.force lenders in
+  require_some (B.borrow d (B.create owner 64))
+
+let live () = { ended = None }
+let ended r = r.ended
+let reason = Gen.of_list ~pp:Format.pp_print_string [ "a"; "b"; "c" ]
+let unborrow why b = B.unborrow ~why b
+let still_live r = equal ~msg:"ended" (option string) None r.ended
+let already_ended r = not_equal ~msg:"ended" (option string) None r.ended
+
+let judge_unborrow why r = function
+  | Ok true ->
+      still_live r;
+      r.ended <- Some why
+  | Ok false -> fail "refused, though nothing claims the borrow"
+  | Error (Invalid_argument _) -> already_ended r
+  | Error e -> raise e
+
+let unborrow_commands =
+  [
+    command "borrow" (Gen.unit @-> makes lease) live lend;
+    command "unborrow"
+      (reason @-> lease ^-> judges bool)
+      judge_unborrow unborrow;
+    command "dead" (lease ^-> returns (option string)) ended B.dead;
+    command "why from C"
+      (lease ^-> returns (option string))
+      ended Support.Reader.why;
+  ]
+
+(* Two domains: claims through a borrow, from OCaml and from C, beside its
+   unborrows. A claim finds the borrow live before its end and dead after
+   it, and [dead] then gives the end's reason. An unborrow may find a claim
+   beside it and answer [false] while the borrow lives, which no order of
+   whole calls shows: a claim spans its call. *)
+let judge_unborrow_claimed why r = function
+  | Ok false -> still_live r
+  | outcome -> judge_unborrow why r outcome
+
+let judge_read r = function
+  | Ok () -> still_live r
+  | Error (Invalid_argument _) -> already_ended r
+  | Error e -> raise e
+
+let c_answer = Testable.make ~pp:Support.Reader.pp_answer ~equal:( = )
+
+let c_claimed r =
+  if r.ended = None then Support.Reader.Claimed else Support.Reader.Dead
+
+let claim_from_c b =
+  let a = Support.Reader.claim b Rig.Read in
+  if a = Support.Reader.Claimed then Support.Reader.release b;
+  a
+
+let claim_commands =
+  [
+    command "borrow" (Gen.unit @-> makes lease) live lend;
+    command "unborrow"
+      (reason @-> lease ^-> judges bool)
+      judge_unborrow_claimed unborrow;
+    command "read" (lease ^-> judges unit) judge_read (fun b ->
+        B.read b Bigarray.char ignore);
+    command "claim from C" (lease ^-> returns c_answer) c_claimed claim_from_c;
+    command "dead" (lease ^-> returns (option string)) ended B.dead;
+  ]
+
 (* A free of a borrow returns its memory, as a free of any buffer that spans
    it does: also of the buffer a take of the borrow gave. Every buffer over
    the memory is then dead, and its mappings go once its work is done. *)
@@ -2335,6 +2420,14 @@ let tests =
         test "a keep through a borrow keeps it from ending" test_unborrow_keeps;
         cases "a borrow that holds no mapping ends as one that holds one does"
           ~id:fst unmapped_borrows test_unborrow_unmapped;
+        stateful ~domains:2
+          "unborrows of one borrow on two domains end it once, and every \
+           reader gives that one's reason"
+          unborrow_commands;
+        stateful ~domains:2
+          "claims through a borrow beside its unborrow find it live, or dead \
+           with the end's reason"
+          claim_commands;
         test "a free of a borrow returns its memory, also once taken"
           test_borrow_free;
         test "borrows of one allocation share one mapping until the last goes"
