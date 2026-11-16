@@ -44,6 +44,21 @@ let case =
 
 let case = Gen.with_pp pp_case case
 
+(* An array viewed by up to one movement, and a movement of the view: a reshape
+   of a strided view is often one no view expresses. *)
+let viewed =
+  let open Gen in
+  let* (D.Any dt) = of_list ~pp:(fun ppf (D.Any dt) -> D.pp ppf dt) D.all in
+  let* s = shape in
+  let* a = filled dt s in
+  let* first = option (movement ~apart:false s) in
+  let a = Option.value ~default:a (Option.bind first (fun m -> A.move m a)) in
+  let s = Iarray.to_array (L.shape (A.layout a)) in
+  let+ m = option (movement ~apart:false s) in
+  Case (a, m)
+
+let viewed = Gen.with_pp pp_case viewed
+
 (* Construction *)
 
 let test_bounds () =
@@ -133,8 +148,8 @@ let law_create (D.Any dt, s) =
   equal int (D.bytes dt n) (B.length b);
   equal bool true (Rig.equal Rig.host (A.device a));
   let used = n * D.bits dt mod 8 in
+  cover "a partial last byte" (used > 0);
   if used > 0 then begin
-    cover "a partial last byte" true;
     let bytes = A.v D.Uint8 (L.contiguous [| B.length b |]) b in
     let last = A.get bytes [| B.length b - 1 |] in
     equal ~msg:"bits past the last element" int 0 (last lsr used)
@@ -202,27 +217,37 @@ let test_create_refuses () =
 (* Every movement keeps the array inside its buffer: [v] takes its parts
    back. *)
 let law_bounds (Case (a, m)) =
-  match m with
+  let b = Option.bind m (fun m -> A.move m a) in
+  cover "a view" (Option.is_some b);
+  match b with
   | None -> ()
-  | Some m -> (
-      match A.move m a with
-      | None -> cover "a reshape copies" true
-      | Some b ->
-          cover "a view" true;
-          ignore (A.v (A.dtype b) (A.layout b) (A.buffer b)))
+  | Some b -> ignore (A.v (A.dtype b) (A.layout b) (A.buffer b))
 
 let law_move (Case (a, m)) =
-  match m with
-  | None -> ()
-  | Some m -> (
-      match (A.move m a, L.move m (A.layout a)) with
-      | None, None -> cover "no view" true
-      | Some b, Some l ->
-          cover "a view" true;
-          equal layout l (A.layout b);
-          equal bool true (A.buffer a == A.buffer b)
-      | Some _, None -> fail "move answered a view Layout.move refuses"
-      | None, Some _ -> fail "move answered None where Layout.move has a view")
+  let moved = Option.map (fun m -> (A.move m a, L.move m (A.layout a))) m in
+  let view, none =
+    match moved with
+    | Some (Some _, _) -> (true, false)
+    | Some (None, None) -> (false, true)
+    | _ -> (false, false)
+  in
+  let viewed by = view && match m with Some m -> by m | None -> false in
+  cover "a strided array" (not (L.is_contiguous (A.layout a)));
+  cover "a C-contiguous array" (L.is_contiguous (A.layout a));
+  cover "a reshape" (viewed (function M.Reshape _ -> true | _ -> false));
+  cover "a broadcast" (viewed (function M.Broadcast _ -> true | _ -> false));
+  cover "an axis map" (viewed (function M.Permute _ -> true | _ -> false));
+  cover "a slice" (viewed (function M.Slice _ -> true | _ -> false));
+  cover "a window" (viewed (function M.Window _ -> true | _ -> false));
+  cover "no view" none;
+  match moved with
+  | None | Some (None, None) -> ()
+  | Some (Some b, Some l) ->
+      equal layout l (A.layout b);
+      equal bool true (A.buffer a == A.buffer b)
+  | Some (Some _, None) -> fail "move answered a view Layout.move refuses"
+  | Some (None, Some _) ->
+      fail "move answered None where Layout.move has a view"
 
 (* Bitcasts *)
 
@@ -278,15 +303,15 @@ let law_bitcast_round_trip (Case (a, m)) =
   let a =
     match m with Some m -> Option.value ~default:a (A.move m a) | None -> a
   in
-  if D.bits (A.dtype a) >= 8 && L.rank (A.layout a) < L.max_rank then
+  let narrows = D.bits (A.dtype a) >= 8 && L.rank (A.layout a) < L.max_rank in
+  cover "a strided array" (narrows && not (L.is_contiguous (A.layout a)));
+  if narrows then
     match A.bitcast D.Uint8 a with
     | None -> fail "a narrowing bitcast answered None"
     | Some u -> (
         match A.bitcast (A.dtype a) u with
         | None -> fail "widening a narrowing answered None"
-        | Some back ->
-            cover "a strided array" (not (L.is_contiguous (A.layout a)));
-            equal layout (A.layout a) (A.layout back))
+        | Some back -> equal layout (A.layout a) (A.layout back))
 
 (* The layout [bitcast] gives a layout [l] of [src] read as [dst] over [b], by
    the rule its interface states; [None] where widening's conditions fail or the
@@ -362,15 +387,17 @@ let law_bitcast (D.Any src, (D.Any dst as d), l, first) =
   cover "narrowing" (bs > bd);
   (* A narrowing would append an axis past max_rank, which raises; its
      fixed case is test_bitcast_refuses's. *)
-  if bs > bd && L.rank l = L.max_rank then
-    raises_match Exn.invalid_arg (fun () -> A.bitcast dst a)
+  let deep = bs > bd && L.rank l = L.max_rank in
+  let reference = if deep then None else bitcast_reference (D.Any src) d l b in
+  cover "widening" (bs < bd && Option.is_some reference);
+  cover "widening refused" ((not deep) && Option.is_none reference);
+  if deep then raises_match Exn.invalid_arg (fun () -> A.bitcast dst a)
   else
-    match (bitcast_reference (D.Any src) d l b, A.bitcast dst a) with
+    match (reference, A.bitcast dst a) with
     | Some l', Some c ->
-        cover "widening" (bs < bd);
         equal layout l' (A.layout c);
         equal bool true (A.buffer c == b)
-    | None, None -> cover "widening refused" true
+    | None, None -> ()
     | Some l', None -> failf "None where %a was expected" L.pp l'
     | None, Some c -> failf "%a where None was expected" L.pp (A.layout c)
 
@@ -467,14 +494,15 @@ let law_range (type s) (dt : (int, s) D.t) =
   in
   prop ~count:400 (D.name dt) x (fun x ->
       let a = A.create Rig.host dt [| 1 |] in
-      if x < lo || x > hi then begin
-        cover "out of range" true;
+      let outside = x < lo || x > hi in
+      cover "out of range" outside;
+      cover "a bound" (x = lo || x = hi);
+      if outside then begin
         equal ~msg:"holds" bool false (D.holds dt x);
         raises_match Exn.invalid_arg (fun () -> A.set a [| 0 |] x);
         raises_match Exn.invalid_arg (fun () -> A.of_array dt [| 1 |] [| x |])
       end
       else begin
-        cover "a bound" (x = lo || x = hi);
         equal ~msg:"holds" bool true (D.holds dt x);
         A.set a [| 0 |] x;
         equal int x (A.get a [| 0 |]);
@@ -686,11 +714,12 @@ let law_to_array (Case (a, m)) =
   let check : type v s. (v, s) A.t -> unit =
    fun a -> equal (values (A.dtype a)) (gets a) (A.to_array a)
   in
-  match Option.bind m (fun m -> A.move m a) with
-  | Some b ->
-      cover "a strided view" (not (L.is_contiguous (A.layout b)));
-      check b
-  | None -> check a
+  let b = Option.bind m (fun m -> A.move m a) in
+  cover "a strided view"
+    (match b with
+    | Some b -> not (L.is_contiguous (A.layout b))
+    | None -> false);
+  match b with Some b -> check b | None -> check a
 
 (* Every pattern of a narrow float format decodes alike in the run form
    ([to_array]) and the scalar one ([get]). *)
@@ -758,11 +787,12 @@ let law_copy (Case (a, m)) =
     equal layout (L.contiguous (L.shape (A.layout a))) (A.layout c);
     equal (values (A.dtype a)) (A.to_array a) (A.to_array c)
   in
-  match Option.bind m (fun m -> A.move m a) with
-  | Some b ->
-      cover "a strided view" (not (L.is_contiguous (A.layout b)));
-      check b
-  | None -> check a
+  let b = Option.bind m (fun m -> A.move m a) in
+  cover "a strided view"
+    (match b with
+    | Some b -> not (L.is_contiguous (A.layout b))
+    | None -> false);
+  match b with Some b -> check b | None -> check a
 
 (* [transfer] on the host into the transpose of a fresh array, a destination
    whose layout is not C order for two axes or more. *)
@@ -780,11 +810,12 @@ let law_transfer_layouts (Case (a, m)) =
     A.transfer ~src:a ~dst;
     equal (values (A.dtype a)) (A.to_array a) (A.to_array dst)
   in
-  match Option.bind m (fun m -> A.move m a) with
-  | Some b ->
-      cover "a strided source" (not (L.is_contiguous (A.layout b)));
-      check b
-  | None -> check a
+  let b = Option.bind m (fun m -> A.move m a) in
+  cover "a strided source"
+    (match b with
+    | Some b -> not (L.is_contiguous (A.layout b))
+    | None -> false);
+  match b with Some b -> check b | None -> check a
 
 (* [transfer] on the host writes its destination's elements alone: an int4
    window starting inside a byte keeps its neighbours, and an array stored
@@ -1180,11 +1211,9 @@ let law_to_device (Case (a, m)) =
     if B.length (A.buffer c) > 0 then
       equal bool false (B.overlaps (A.buffer c) (A.buffer a))
   in
-  match Option.bind m (fun m -> A.move m a) with
-  | Some b ->
-      cover "a view" true;
-      check b
-  | None -> check a
+  let b = Option.bind m (fun m -> A.move m a) in
+  cover "a view" (Option.is_some b);
+  match b with Some b -> check b | None -> check a
 
 let slice rs a =
   Option.get
@@ -1410,81 +1439,95 @@ let law_transfer_held ((Case (a, m), flip), r) =
    fun a v ->
     let dt = A.dtype v and s = L.shape (A.layout v) in
     let bits = D.bits dt in
+    let n = L.numel (A.layout v) in
+    let sides p =
+      match r with Sides (ss, ds) -> p ss ds | Shared _ -> false
+    in
+    let shared p =
+      match r with Shared k -> bits >= 8 && p k | Sides _ -> false
+    in
     cover "flipped destination" flip;
-    match r with
-    | Sides (ss, ds) ->
-        cover "into a held device" (ss = On_host && ds <> On_host);
-        cover "from a held device" (ss <> On_host && ds = On_host);
-        cover "between held devices" (ss <> On_host && ds <> On_host);
-        cover "a sub-byte source off the host" (bits < 8 && ss <> On_host);
-        let wide = Iarray.map (fun d -> (2 * d) + 1) s in
-        let before = pattern dt wide in
-        let reference = A.copy before in
-        A.transfer ~src:v ~dst:(odd ~flip s reference);
-        let src =
-          if ss = On_host then v
-          else
-            let on = A.to_device (device_of ss) a in
-            match Option.bind m (fun m -> A.move m on) with
-            | Some w -> w
-            | None -> on
-        in
-        let big = A.to_device (device_of ds) before in
-        let dst = odd ~flip s big in
-        if bits < 8 && ds <> On_host then
-          raises_match (Exn.invalid_arg ~sub:"host") (fun () ->
-              A.transfer ~src ~dst)
-        else begin
-          A.transfer ~src ~dst;
+    cover "into a held device"
+      (sides (fun ss ds -> ss = On_host && ds <> On_host));
+    cover "from a held device"
+      (sides (fun ss ds -> ss <> On_host && ds = On_host));
+    cover "between held devices"
+      (sides (fun ss ds -> ss <> On_host && ds <> On_host));
+    cover "a sub-byte source off the host"
+      (sides (fun ss _ -> bits < 8 && ss <> On_host));
+    cover "spans that share bytes" (shared (fun k -> k = Interleaved && n > 1));
+    cover "onto itself" (shared (fun k -> k = Itself));
+    cover "a transpose onto itself" (shared (fun k -> k = Turned));
+    cover "a window onto the next" (shared (fun k -> k = Shifted && n > 0));
+    let refused =
+      match r with
+      | Sides (ss, ds) ->
+          let wide = Iarray.map (fun d -> (2 * d) + 1) s in
+          let before = pattern dt wide in
+          let reference = A.copy before in
+          A.transfer ~src:v ~dst:(odd ~flip s reference);
+          let src =
+            if ss = On_host then v
+            else
+              let on = A.to_device (device_of ss) a in
+              match Option.bind m (fun m -> A.move m on) with
+              | Some w -> w
+              | None -> on
+          in
+          let big = A.to_device (device_of ds) before in
+          let dst = odd ~flip s big in
+          if bits < 8 && ds <> On_host then
+            raises_match (Exn.invalid_arg ~sub:"host") (fun () ->
+                A.transfer ~src ~dst)
+          else begin
+            A.transfer ~src ~dst;
+            drain ();
+            equal string ~msg:"bytes" (buffer_bytes reference)
+              (buffer_bytes big)
+          end;
+          false
+      | Shared k ->
+          (* A held device stores no element narrower than a byte. *)
+          assume (bits >= 8);
+          let r = Iarray.length s in
+          let base_shape, views =
+            match k with
+            | Interleaved | Itself ->
+                let first = if k = Itself then 1 else 0 in
+                ( Iarray.append s [| 2 |],
+                  fun b -> (half ~flip s b first, half ~flip s b 1) )
+            | Turned ->
+                ( [| 3; 3 |],
+                  fun b -> (Option.get (A.move (M.Permute [| 1; 0 |]) b), b) )
+            | Shifted ->
+                let range start i =
+                  if i = 0 then { M.start; count = 2; step = 1 }
+                  else { M.start = 0; count = Iarray.get s (i - 1); step = 1 }
+                in
+                let rows start = M.Slice (Iarray.init (r + 1) (range start)) in
+                let from, onto = if flip then (1, 0) else (0, 1) in
+                ( Iarray.append [| 3 |] s,
+                  fun b ->
+                    ( Option.get (A.move (rows from) b),
+                      Option.get (A.move (rows onto) b) ) )
+          in
+          let before = pattern dt base_shape in
+          let outcome base =
+            let src, dst = views base in
+            match A.transfer ~src ~dst with
+            | () -> "stored"
+            | exception Invalid_argument _ -> "refused"
+          in
+          let reference = A.copy before in
+          let expected = outcome reference in
+          let big = A.to_device held before in
+          let actual = outcome big in
+          equal string ~msg:"outcome" expected actual;
           drain ();
-          equal string ~msg:"bytes" (buffer_bytes reference) (buffer_bytes big)
-        end
-    | Shared k ->
-        (* A held device stores no element narrower than a byte. *)
-        assume (bits >= 8);
-        cover "spans that share bytes"
-          (k = Interleaved && L.numel (A.layout v) > 1);
-        cover "onto itself" (k = Itself);
-        cover "a transpose onto itself" (k = Turned);
-        cover "a window onto the next"
-          (k = Shifted && L.numel (A.layout v) > 0);
-        let r = Iarray.length s in
-        let base_shape, views =
-          match k with
-          | Interleaved | Itself ->
-              let first = if k = Itself then 1 else 0 in
-              ( Iarray.append s [| 2 |],
-                fun b -> (half ~flip s b first, half ~flip s b 1) )
-          | Turned ->
-              ( [| 3; 3 |],
-                fun b -> (Option.get (A.move (M.Permute [| 1; 0 |]) b), b) )
-          | Shifted ->
-              let range start i =
-                if i = 0 then { M.start; count = 2; step = 1 }
-                else { M.start = 0; count = Iarray.get s (i - 1); step = 1 }
-              in
-              let rows start = M.Slice (Iarray.init (r + 1) (range start)) in
-              let from, onto = if flip then (1, 0) else (0, 1) in
-              ( Iarray.append [| 3 |] s,
-                fun b ->
-                  ( Option.get (A.move (rows from) b),
-                    Option.get (A.move (rows onto) b) ) )
-        in
-        let before = pattern dt base_shape in
-        let outcome base =
-          let src, dst = views base in
-          match A.transfer ~src ~dst with
-          | () -> "stored"
-          | exception Invalid_argument _ -> "refused"
-        in
-        let reference = A.copy before in
-        let expected = outcome reference in
-        let big = A.to_device held before in
-        let actual = outcome big in
-        cover "refused" (expected = "refused");
-        equal string ~msg:"outcome" expected actual;
-        drain ();
-        equal string ~msg:"bytes" (buffer_bytes reference) (buffer_bytes big)
+          equal string ~msg:"bytes" (buffer_bytes reference) (buffer_bytes big);
+          expected = "refused"
+    in
+    cover "refused" refused
   in
   match Option.bind m (fun m -> A.move m a) with
   | Some b -> check a b
@@ -1556,11 +1599,9 @@ let law_borrow (Case (a, m)) =
     let back = Option.get (A.borrow Rig.host b) in
     equal ~msg:"back" (values (A.dtype a)) (A.to_array a) (A.to_array back)
   in
-  match Option.bind m (fun m -> A.move m a) with
-  | Some b ->
-      cover "a view" true;
-      check b
-  | None -> check a
+  let b = Option.bind m (fun m -> A.move m a) in
+  cover "a view" (Option.is_some b);
+  match b with Some b -> check b | None -> check a
 
 let test_borrow_cases () =
   let a = floats32 [| 2 |] [| 1.; 2. |] in
@@ -1687,17 +1728,19 @@ let law_bigarray (Case (a, m)) =
   let check : type v s. (v, s) A.t -> unit =
    fun a ->
     let l = A.layout a in
+    let has_kind = Option.is_some (kind (A.dtype a)) in
+    let fits = L.is_contiguous l && L.rank l <= 16 in
+    cover "no kind" (not has_kind);
+    cover "raises" (has_kind && not fits);
+    cover "a bigarray" (has_kind && fits);
     match kind (A.dtype a) with
     | None ->
-        cover "no kind" true;
         raises_match (Exn.invalid_arg ~sub:"Nx_array.bigarray") (fun () ->
             A.bigarray a)
-    | Some _ when not (L.is_contiguous l && L.rank l <= 16) ->
-        cover "raises" true;
+    | Some _ when not fits ->
         raises_match (Exn.invalid_arg ~sub:"Nx_array.bigarray") (fun () ->
             A.bigarray a)
     | Some _ ->
-        cover "a bigarray" true;
         let g = A.bigarray a in
         let s = Iarray.to_array (L.shape l) in
         equal ints s (Bigarray.Genarray.dims g);
@@ -1768,9 +1811,9 @@ let law_read (Case (a, m)) =
     cover "strided" (not contiguous);
     cover "an offset" (contiguous && L.offset l > 0);
     cover "no element" (L.numel l = 0);
+    cover "no kind" (Option.is_none (kind (A.dtype a)));
     (match kind (A.dtype a) with
     | None ->
-        cover "no kind" true;
         read_fails (if contiguous then "Bigarray kind" else "contiguous")
           (fun () -> A.read a ignore)
     | Some _ when contiguous ->
@@ -1819,6 +1862,7 @@ let law_write (Case (a, m)) =
     cover "contiguous" contiguous;
     cover "strided" (not contiguous);
     cover "no element" (L.numel l = 0);
+    cover "no kind" (Option.is_none (kind (A.dtype a)));
     let fails sub =
       raises_match
         (fun e ->
@@ -1826,9 +1870,7 @@ let law_write (Case (a, m)) =
         (fun () -> A.write a ignore)
     in
     (match kind (A.dtype a) with
-    | None ->
-        cover "no kind" true;
-        if contiguous then fails "Bigarray kind"
+    | None -> if contiguous then fails "Bigarray kind"
     | Some _ when contiguous ->
         let s = Iarray.to_array (L.shape l) in
         let idxs = Array.of_list (indices s) in
@@ -1953,7 +1995,9 @@ let tests =
           dtype_and_shape law_create;
         test "create refuses what contiguous refuses" test_create_refuses;
         test "create allocates the kind of memory it is given" test_create_memory;
-        prop "move is Layout.move over the same buffer" case law_move;
+        (* One case in a hundred is a movement no view expresses. *)
+        prop ~count:3000 "move is Layout.move over the same buffer" viewed
+          law_move;
         prop "every movement keeps an array in its buffer" case law_bounds;
       ];
     group "bitcast"
