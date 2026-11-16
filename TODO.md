@@ -135,7 +135,7 @@ Where it stands, with every measurement: doc/performance.md.
 - `beam_search`'s disk key names no device part, so a search timed on one
   part of a target serves every other part
 - `Heuristic.reused` (heuristic.ml:853) and `upcast_more`'s `reuses`
-  (:919) count every access in the kernel, loads after the reduce
+  (:926) count every access in the kernel, loads after the reduce
   included, so a bias that skips an axis both operands of a contraction
   read makes that axis look reused. Unverified with a kernel. Found by the
   I1 lend fix

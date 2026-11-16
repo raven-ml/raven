@@ -7094,15 +7094,19 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   where 4 divides it, and its workgroup takes at most 32 threads. A thread
   then holds 8 by 8 outputs, and each element it loads feeds 8 of them. Where
   one of the two upcasts took its axis whole, the output axis that the same
-  operands read takes its second upcast. The
+  operands read takes its second upcast. A kernel upcast past those two axes'
+  16 lanes, as the masked upcasts take a materialised mask's axes whole, is
+  not blocked: under a mask of 2 batches of 2 heads a thread would hold 256
+  outputs. The
   workgroup's threads are the local loop's where it lays a power of two of
   them, at least 2, along the later of the two axes; else 16 or 8 lie along
   the later axis, whichever pads it less, and the rest along the other, each
   axis padded to its threads (PADTO) where they do not divide it, unless a pad
-  is refused. Only for such a contraction, where its two reused output axes
-  would pass that guard once upcast by 4 and its blocked threads, a 64th of
-  its outputs, number at least the renderer's `core_threads`, does the
-  upcast loop take an axis by 4 before 3.
+  is refused. Only for such a contraction, upcast by nothing before the
+  loop, where its two reused output axes would pass that guard once upcast
+  by 4 and its blocked threads, a 64th of its outputs, number at least the
+  renderer's `core_threads`, does the upcast loop take an axis by 4 before
+  3.
 - **Reason:** (d): float32 contractions on fudge's RTX 5000 Ada, which take no
   tensor core (TF32 is off), ran at 6 TFLOP/s of the part's 65 with 4 by 4
   outputs a thread in workgroups of 128 threads. More outputs a thread cover
@@ -7143,8 +7147,9 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   `matmul_768`, upcast by 4, and `matmul_440`, padded, blocked; `matmul_1000`,
   whose halved axes hold one thread, `matmul_48`, whose blocked threads would
   be too few, and `scores_biased` and `scores_biased_first`, whose upcasts
-  take their 4 heads whole, not blocked; `heads_projection` blocked over the
-  heads' width), with the
+  take their 4 heads whole, and `scores_masked`, whose masked upcasts take
+  its batches and heads, not blocked, nor, at 1536 positions, taken by 4
+  before 3; `heads_projection` blocked over the heads' width), with the
   layouts in the suite's `.tolk` files; rune's
   `test_jit_gpu` `products › a float32 matmul is within its bound of the exact
   product` at extents of 64 and 128 summed over 13 and 52, and padded at

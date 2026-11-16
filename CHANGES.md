@@ -1335,6 +1335,12 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- On a GPU, a float32 contraction that the masked upcasts already took, such
+  as attention's scores under a materialised mask of a few heads, keeps the
+  upcast loop's 4 by 4 outputs a head, or 3 by 3 with its reduce unrolled
+  where 3 divides its axes, where it was blocked to 8 by 8 (a thread held 256
+  accumulators) or taken by 4 for a block that never came. GPU time not
+  measured.
 - A renderer states the threads of its SIMD group (`Renderer.t.simd_threads`,
   64 on CDNA's gfx9, 32 on other GPUs) and the most threads a workgroup holds
   (`Renderer.t.local_threads_max`), which the heuristic's layouts and

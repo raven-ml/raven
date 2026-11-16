@@ -1587,6 +1587,20 @@ let blocks =
           "scores_biased_first_amd";
         ]
         (fun name -> equal int 16 (lane_outputs (recorded name)));
+      (* The masked upcasts take the mask's 2 batches of 2 heads whole, then
+         the queries and the keys by 4, or by 3 at 1536 positions, which 3
+         divides. *)
+      cases "a thread holds 4 by 4 or 3 by 3 outputs a head where the masked \
+             upcasts took the heads"
+        ~id:fst
+        [
+          ("scores_masked_cuda", 64);
+          ("scores_masked_amd", 64);
+          ("scores_masked_1536_cuda", 36);
+          ("scores_masked_1536_amd", 36);
+        ]
+        (fun (name, outputs) ->
+          equal int outputs (lane_outputs (recorded name)));
     ]
 
 (* Groups past 2048 outputs *)

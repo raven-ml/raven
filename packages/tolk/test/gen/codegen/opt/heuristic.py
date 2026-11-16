@@ -159,6 +159,13 @@ KERNELS = {
     # a projection into attention's 4 heads of 110: the heads, upcast whole, lend their second upcast to the width the same
     # operands read
     "heads_projection": lambda: last((empty(16, 1, 256, 1, 64) * empty(64, 4, 110).permute(1, 2, 0).reshape(1, 4, 1, 110, 64)).sum(-1)),
+    # attention's scores of 2 batches of 2 heads under a materialised mask: the masked upcasts take both whole, then the queries
+    # and keys by 4, and the kernel is not blocked
+    "scores_masked": lambda: last(empty(2, 2, 256, 256, dtype=dtypes.bool).where(empty(2, 2, 256, 16) @ empty(2, 2, 16, 256),
+                                                                                  float("-inf"))),
+    # the same at 1536 positions, which 3 divides: the queries and keys by 3 and the reduce unrolled, as no block follows
+    "scores_masked_1536": lambda: last(empty(2, 2, 1536, 1536, dtype=dtypes.bool)
+                                       .where(empty(2, 2, 1536, 16) @ empty(2, 2, 16, 1536), float("-inf"))),
     # attention's scores per head plus a bias of each key and two of each query that no head reads, as a key bias and the
     # bounds of the visible keys: the upcasts take the keys by 4, then the 4 heads whole, which leaves no axis of heads to block
     "scores_biased": lambda: last(empty(64, 256, 4, 16).permute(0, 2, 1, 3) @ empty(64, 256, 4, 16).permute(0, 2, 3, 1)

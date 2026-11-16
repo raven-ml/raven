@@ -862,17 +862,24 @@ let doubled_threads ~lanes n =
   in
   pow2 (2 * lanes) / 2
 
+(* Whether [k] is upcast by [n] lanes at most, the upcast loop's own:
+   {!block}'s premise, [n] 1 before the loop and 16 after its two upcasts by
+   4. The masked upcasts, which take a materialised mask's axes whole, break
+   it: blocked, a thread of attention's scores under a mask would hold 8 by 8
+   outputs for each of its 2 batches of 2 heads, 256. *)
+let upcast_by_loop k n = holds Sint.(K.upcast_size k <= Int n)
+
 (* Whether [k]'s upcasts take an axis by 4 before 3: a narrow contraction on a
-   renderer with local indices whose two output axes, each unread by some
-   operand, would pass {!block}'s guard once upcast by 4, and whose blocked
-   threads, a 64th of its outputs, number at least [core_threads]. tinygrad
-   takes 3 first, which leaves such a product at 4 by 3 outputs a thread: on an
-   RTX 5000 Ada float32 products of 163840 rows into 432 to 1920 columns, which
-   3 divides, ran at 5.3-5.6 TFLOP/s so, and at 15-19 blocked. A product of 48
-   rows by 1024 columns blocked kept 768 threads, and took 105 us against 76
-   at 4 by 3. *)
+   renderer with local indices, upcast by nothing yet, whose two output axes,
+   each unread by some operand, would pass {!block}'s guard once upcast by 4,
+   and whose blocked threads, a 64th of its outputs, number at least
+   [core_threads]. tinygrad takes 3 first, which leaves such a product at 4 by
+   3 outputs a thread: on an RTX 5000 Ada float32 products of 163840 rows into
+   432 to 1920 columns, which 3 divides, ran at 5.3-5.6 TFLOP/s so, and at
+   15-19 blocked. A product of 48 rows by 1024 columns blocked kept 768
+   threads, and took 105 us against 76 at 4 by 3. *)
 let four_first ~core_threads k =
-  (K.ren k).has_local && narrow k
+  (K.ren k).has_local && narrow k && upcast_by_loop k 1
   &&
   match List.filter (reused k) (K.upcastable_dims k) with
   | [ a; b ] -> (
@@ -1038,8 +1045,9 @@ let upcast_one k =
    lends its second upcast to the output axis the same operands read, the
    other part of one axis: a projection of 16384 rows into 4 heads of 110
    took 331 us so and 2549 at 4 by 4. Attention's scores, whose queries the
-   operands that read the heads do not all read, keep 4 by 4. The ranges of
-   the two axes it doubled, if it blocked. *)
+   operands that read the heads do not all read, keep 4 by 4, and so does a
+   kernel upcast past its two axes by 4 ({!upcast_by_loop}). The ranges of the
+   two axes it doubled, if it blocked. *)
 let block k upcasted =
   let doubles axis = divisible (shape_at k axis) 2 in
   (* The threads the axes leave a workgroup once doubled. *)
@@ -1076,6 +1084,7 @@ let block k upcasted =
   match axes with
   | Some (ra, rb)
     when (K.ren k).has_local && narrow k
+         && upcast_by_loop k 16
          &&
          let a = axis_of k ra and b = axis_of k rb in
          reused k a && reused k b && doubles a && doubles b
