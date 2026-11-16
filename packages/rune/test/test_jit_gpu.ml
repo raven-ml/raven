@@ -3016,7 +3016,7 @@ let () =
               Kinds.
                 [
                   sin; cos; tan; log; log2; log1p; exp; exp2; expm1; sinh; cosh;
-                  tanh;
+                  tanh; asin; acos; atan; atan2;
                 ]);
          group "exp"
            [

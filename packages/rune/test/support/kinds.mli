@@ -27,6 +27,10 @@ val expm1 : kind
 val sinh : kind
 val cosh : kind
 val tanh : kind
+val asin : kind
+val acos : kind
+val atan : kind
+val atan2 : kind
 val log : kind
 val log2 : kind
 val log1p : kind

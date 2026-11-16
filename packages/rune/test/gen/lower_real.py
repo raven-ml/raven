@@ -142,10 +142,6 @@ def any_bits(rng, n, fmt, top_exp=None, low_exp=None, signed=True):
 # where its result saturates, at both dtypes; and the range its uniform values
 # come from, per dtype.
 UNARY = {
-    "asin": ([1, 0.5, 0.99999994, 0.9999999999999999], {"f32": (-1.1, 1.1), "f64": (-1.1, 1.1)}),
-    "acos": ([1, 0.5, 0.99999994, 0.9999999999999999], {"f32": (-1.1, 1.1), "f64": (-1.1, 1.1)}),
-    "atan": ([1, 0.4375, 0.6875, 1.1875, 2.4375, 1e10, 1e300, "0x1p-960", "0x1p54"],
-             {"f32": (-10, 10), "f64": (-10, 10)}),
     "erf": ([1, 2.5, 4, 5.95, "0x1p-100", 1.75, 6, 0.5, 4.25, 2.75, 5.921587195794507],
             {"f32": (-7, 7), "f64": (-7, 7)}),
 }
@@ -207,19 +203,6 @@ def pow_points(fmt):
     return out
 
 
-def atan2_points(fmt):
-    rng = random.Random(f"lower_real:atan2:{fmt}")
-    pts = [1, 0.4375, 0.6875, 1.1875, 2.4375, 1e10, 1e300, "0x1p-960"]
-    vs = specials(fmt) + near(pts, fmt, k=0)
-    pairs = [(y, x) for y in vs for x in vs]
-    # the ratios y / x at atan's switch points and their neighbours
-    pairs += [(v, 1.0) for v in near(pts, fmt)] + [(1.0, v) for v in near(pts, fmt)]
-    pairs += list(zip(any_bits(rng, 300, fmt), any_bits(rng, 300, fmt)))
-    pairs += list(zip(uniform(rng, 150, -4, 4, fmt), uniform(rng, 150, -4, 4, fmt)))
-    return [(exact(y, fmt), exact(x, fmt)) for y, x in pairs
-            if usable(exact(y, fmt)) and usable(exact(x, fmt))]
-
-
 # Exact values of finite, non-zero operands
 
 
@@ -234,16 +217,11 @@ def limit(x, beyond, below, above):
 
 def unary_ref(fn, x):
     x = mpf(x)
-    if fn in ("asin", "acos") and abs(x) > 1:
-        return None
     if fn == "erf":
         v = limit(x, 30, -1 + TINY, 1 - TINY)
         if v is not None:
             return v
-    f = {
-        "asin": mpmath.asin, "acos": mpmath.acos, "atan": mpmath.atan, "erf": mpmath.erf,
-    }[fn]
-    return f(x)
+    return {"erf": mpmath.erf}[fn](x)
 
 
 def pow_ref(x, y):
@@ -285,11 +263,6 @@ def goldens():
     for fmt in FORMATS:
         rows += [(fmt, hexf(x), hexf(y), rounded(pow_ref(x, y), fmt)) for x, y in pow_points(fmt)]
     files["pow"] = golden(rows)
-    rows = [("dtype", "y", "x", "f")]
-    for fmt in FORMATS:
-        rows += [(fmt, hexf(y), hexf(x), rounded(mpmath.atan2(mpf(y), mpf(x)), fmt))
-                 for y, x in atan2_points(fmt)]
-    files["atan2"] = golden(rows)
     return files
 
 

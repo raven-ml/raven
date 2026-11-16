@@ -578,14 +578,15 @@ let exact1 d (k : K.unary) =
   match k with
   | Neg -> true
   | Recip | Abs | Sign | Sqrt | Floor | Ceil | Round | Trunc | Exp | Exp2
-  | Expm1 | Log | Log2 | Log1p | Sin | Cos | Tan | Sinh | Cosh | Tanh ->
+  | Expm1 | Log | Log2 | Log1p | Sin | Cos | Tan | Asin | Acos | Atan | Sinh
+  | Cosh | Tanh ->
       not (is_complex d)
   | _ -> not (is_float d || is_complex d)
 
 let exact2 d (k : K.binary) =
   match k with
-  | Mul | Fdiv | Mod -> not (is_complex d)
-  | Pow | Atan2 -> not (is_float d || is_complex d)
+  | Mul | Fdiv | Mod | Atan2 -> not (is_complex d)
+  | Pow -> not (is_float d || is_complex d)
   | _ -> true
 
 let unary_rows ?(keep = exact1) d =
@@ -725,9 +726,6 @@ let constant_exponents =
 let narrow = List.filter (fun d -> is_float d && bits d < 32) dtypes
 
 let reference1 : K.unary -> float -> float = function
-  | Asin -> Float.asin
-  | Acos -> Float.acos
-  | Atan -> Float.atan
   | Asinh -> Float.asinh
   | Acosh -> Float.acosh
   | Atanh -> Float.atanh
@@ -736,7 +734,6 @@ let reference1 : K.unary -> float -> float = function
 
 let reference2 : K.binary -> (float -> float -> float) option = function
   | Pow -> Some Float.pow
-  | Atan2 -> Some Float.atan2
   | _ -> None
 
 (* [zs] rounded once into [dt], as floats. *)
@@ -786,7 +783,7 @@ let rounded =
       let rows = rows d in
       let labels = List.map (fun (l, _, _) -> l) rows in
       let arity row =
-        if List.nth labels row = "pow" || List.nth labels row = "atan2" then 2
+        if List.nth labels row = "pow" then 2
         else 1
       in
       let p =

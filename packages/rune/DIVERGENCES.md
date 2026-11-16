@@ -276,47 +276,58 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   bits`, the same for `cos` and `tan`, on the host; `Jit_gpu › kinds › *` on
   a GPU.
 
-### A10. Arcsine and arccosine by the arctangent
+### A10. Arcsine and arccosine by nx's sequence
 
 - **Reference:** `mixin/elementwise.py:931,944` (Abramowitz-Stegun 4.4.46,
   `acos = pi/2 - asin`).
-- **Raven:** `lower_real.ml` (`asin`, `acos`).
+- **Raven:** `lower_real.ml` (`asin_reduce`, `asin`, `acos`).
 - **Differs:** tinygrad's polynomial is float32-grade, has no relative accuracy
-  near 0, and `pi/2 - asin` cancels near 1. The lowering takes
-  `asin x = atan (x / sqrt (1 - x^2))`, `1 - x^2` by an fma, and
-  `acos x = 2 atan (sqrt ((1 - x) / (1 + x)))`, through A11.
-- **nx:** `prog.mli`, Results, `Asin`, `Acos`.
-- **Class:** ulp bound: 5 at `float32`, 9 at `float64`.
+  near 0, and `pi/2 - asin` cancels near 1. The lowering builds
+  `nx_kinds_real.h`'s `nx_asin` and `nx_acos` operation for operation:
+  `asin s = s + s^3 B(s^2)` up to 1/2, past it `pi/2 - 2 asin s` with
+  `s = sqrt ((1 - |x|) / 2)` and its rounding kept; `acos` sums the same
+  terms with `pi/2` or `pi` in two parts.
+- **nx:** `nx_kinds_real.h` (`nx_asin_reduce`, `nx_asin`, `nx_acos`).
+- **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `Lower_real › transcendental › asin within 5 ulps at float32,
-  9 at float64`, `› acos within 5 ulps at float32, 9 at float64`.
+- **Pinned by:** `Lower_real › kinds › asin gives eager's bits`, `› asin of
+  every narrow float gives eager's bits`, `› asin of a constant gives
+  eager's bits`, the same for `acos`, on the host; `Jit_gpu › kinds › *` on
+  a GPU.
 
-### A11. Arctangent
+### A11. Arctangent by nx's sequence
 
 - **Reference:** `mixin/elementwise.py:954` (`asin (x / sqrt (1 + x^2))`).
-- **Raven:** `lower_real.ml` (`atan_unit`, `angle`, `atan`).
+- **Raven:** `lower_real.ml` (`atan_k32`, `atan_k64`, `atan_pos`, `atan`).
 - **Differs:** `x^2` overflows past `1.8e19` in `float32`, where tinygrad's
-  arctangent is 0. The lowering takes the arctangent of `min (|x|, 1/|x|)`,
-  in `[0, 1]`, by a polynomial (at `float64` after the half-angle step), and
-  `pi/2` in two parts less it past 1, with `x`'s sign.
-- **nx:** `prog.mli`, Results, `Atan`.
-- **Class:** ulp bound: 2 at `float32`, 7 at `float64`.
+  arctangent is 0. The lowering builds `nx_kinds.h`'s `nx_atan_f32` and
+  `nx_atan_f64` operation for operation: at `float32` nx's polynomial of
+  `min (|x|, 1/|x|)`, `pi/2` in two parts less it past 1; at `float64`
+  `atan c + atan ((a - c) / (1 + c a))` for `c` the nearest of 0, 1/2, 1,
+  3/2 and infinity, as a pair.
+- **nx:** `nx_kinds.h` (`nx_atan_kernel_*`, `nx_atan_pos_f64`, `nx_atan_*`).
+- **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `Lower_real › transcendental › atan within 2 ulps at float32,
-  7 at float64`.
+- **Pinned by:** `Lower_real › kinds › atan gives eager's bits`, `› atan of
+  every narrow float gives eager's bits`, `› atan of a constant gives
+  eager's bits`, on the host; `Jit_gpu › kinds › *` on a GPU.
 
-### A12. Two-argument arctangent
+### A12. Two-argument arctangent by nx's sequence
 
 - **Reference:** none.
 - **Raven:** `lower_real.ml` (`atan2`).
-- **Differs:** a raven composition: A11's angle of `|y|` over `|x|`, `pi` in two
-  parts less it where `x`'s sign bit is set, `y`'s sign, and C's values for
-  both zeros and both infinities.
-- **nx:** `prog.mli`, `Atan2`.
-- **Class:** ulp bound: 6 at `float32`, 8 at `float64`.
+- **Differs:** the lowering builds `nx_kinds.h`'s `nx_atan2_f32` and
+  `nx_atan2_f64` operation for operation: A11's arctangent of the smaller
+  magnitude over the larger, added to or subtracted from 0, `pi/2` or `pi`
+  as a pair by quadrant, `y`'s sign, and C's values for both zeros and both
+  infinities; at `float64` the quotient's rounding error passes to the
+  arctangent as a tail, and operands below `2^-960` are scaled first.
+- **nx:** `nx_kinds.h` (`nx_atan2_*`).
+- **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `Lower_real › transcendental › atan2 within 6 ulps at float32,
-  8 at float64`.
+- **Pinned by:** `Lower_real › kinds › atan2 gives eager's bits`, `› atan2
+  of every narrow float gives eager's bits`, `› atan2 of a constant gives
+  eager's bits`, on the host; `Jit_gpu › kinds › *` on a GPU.
 
 ### A13. Hyperbolic functions
 

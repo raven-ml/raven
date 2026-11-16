@@ -31,19 +31,21 @@
     {1:sequence Kinds of nx's sequence}
 
     [Exp], [Exp2], [Expm1], [Log], [Log2], [Log1p], [Sin], [Cos], [Tan],
-    [Sinh], [Cosh] and [Tanh] compute the sequence of operations nx's kernel
-    header, [nx_kinds.h], gives them, each fused multiply-add a
-    {!Lower_bits.mulacc}. The exponentials and hyperbolic kinds reduce [x] to
-    [k ln 2 + r], [k] an integer, and take nx's polynomial in [r], [2{^k}]
-    applied by exact products. The logarithms reduce [x] to
-    [2{^k} (1 + f)], [1 + f] in [\[√½, √2)], and take nx's polynomial in
-    [(f / (2 + f)){^2}]. The trigonometric kinds reduce by [π/2], Cody and
-    Waite's reduction below [2{^15}] ([float32]) or [2{^28}] ([float64]) and
-    Payne and Hanek's from there, then take nx's polynomials. A branch of the
-    header is a selection, both sides computed. On a target that keeps
-    subnormals, rounds division correctly and rounds a fused multiply-add
-    once, they give the bits nx's kernels give, a NaN result as nx's NaN rule
-    allows: they are exact.
+    [Asin], [Acos], [Atan], [Atan2], [Sinh], [Cosh] and [Tanh] compute the
+    sequence of operations nx's kernel header, [nx_kinds.h], gives them, each
+    fused multiply-add a {!Lower_bits.mulacc}. The inverse trigonometric
+    kinds take nx's polynomials of [arcsin] and [arctan] on reduced
+    arguments, summed with [π/2] or [π] in two parts. The exponentials and
+    hyperbolic kinds reduce [x] to [k ln 2 + r], [k] an integer, and take
+    nx's polynomial in [r], [2{^k}] applied by exact products. The
+    logarithms reduce [x] to [2{^k} (1 + f)], [1 + f] in [\[√½, √2)], and
+    take nx's polynomial in [(f / (2 + f)){^2}]. The trigonometric kinds
+    reduce by [π/2], Cody and Waite's reduction below [2{^15}] ([float32])
+    or [2{^28}] ([float64]) and Payne and Hanek's from there, then take nx's
+    polynomials. A branch of the header is a selection, both sides computed.
+    On a target that keeps subnormals, rounds division and the square root
+    correctly and rounds a fused multiply-add once, they give the bits nx's
+    kernels give, a NaN result as nx's NaN rule allows: they are exact.
 
     {1:transcendental Other transcendental kinds}
 
@@ -55,9 +57,6 @@
     {v
       kind                        float32  float64
       erf                            2        3
-      atan                           2        7
-      asin, acos                     5        9
-      atan2                          6        8
       pow                            9        9
     v}
 

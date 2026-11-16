@@ -362,11 +362,6 @@ let law k =
 
 (* A value rounded to float32 and to float64. *)
 let both x = (x, x)
-let pi = (0x1.921fb6p+1, 0x1.921fb54442d18p+1)
-let half_pi = (0x1.921fb6p+0, 0x1.921fb54442d18p+0)
-let quarter_pi = (0x1.921fb6p-1, 0x1.921fb54442d18p-1)
-let three_quarter_pi = (0x1.2d97c8p+1, 0x1.2d97c7f3321d2p+1)
-let neg (a, b) = (-.a, -.b)
 let inf = Float.infinity
 let nan = Float.nan
 
@@ -388,12 +383,9 @@ let annex1 name wide e =
     else None
   in
   let z = both 0. and nz = both (-0.) in
-  let one = both 1. and none = both (-1.) and nn = both nan in
+  let one = both 1. and none = both (-1.) in
   at
     (match name with
-    | "asin" -> (z, nz, nn, nn)
-    | "acos" -> (half_pi, half_pi, nn, nn)
-    | "atan" -> (z, nz, half_pi, neg half_pi)
     | "erf" -> (z, nz, one, none)
     | _ -> invalid_arg name)
 
@@ -414,21 +406,6 @@ let annex_pow _ e =
   else if Float.abs x = inf then
     if y > 0. then Some (if odd y then x else inf)
     else Some (if odd y then Float.copy_sign 0. x else 0.)
-  else None
-
-(* atan2 y x, F.9.1.4. *)
-let annex_atan2 wide e =
-  let y = e.(0) and x = e.(1) in
-  let signed v = Some (pick wide (if Float.sign_bit y then neg v else v)) in
-  if Float.is_nan x || Float.is_nan y then Some nan
-  else if y = 0. then if Float.sign_bit x then signed pi else Some y
-  else if Float.abs y = inf then
-    if x = inf then signed quarter_pi
-    else if x = -.inf then signed three_quarter_pi
-    else signed half_pi
-  else if x = 0. then signed half_pi
-  else if x = inf then Some (Float.copy_sign 0. y)
-  else if x = -.inf then signed pi
   else None
 
 (* The rows of golden/lower_real/<name>.golden at float64 if [wide], else at
@@ -521,15 +498,9 @@ let transcendental =
   List.map
     (fun (name, k, bound) ->
       accurate name (Op1 (Unary k, D.Any D.Float32, 0)) bound (annex1 name))
-    [
-      ("asin", K.Asin, (5, 9));
-      ("acos", K.Acos, (5, 9));
-      ("atan", K.Atan, (2, 7));
-      ("erf", K.Erf, (2, 3));
-    ]
+    [ ("erf", K.Erf, (2, 3)) ]
   @ [
       accurate "pow" (Op2 (Binary Pow, 0, 1)) (2, 2) annex_pow;
-      accurate "atan2" (Op2 (Binary Atan2, 0, 1)) (6, 8) annex_atan2;
     ]
 
 (* Kinds of nx's sequence
@@ -551,7 +522,11 @@ let ported k =
   ]
 
 let kinds =
-  Kinds.[ sin; cos; tan; log; log2; log1p; exp; exp2; expm1; sinh; cosh; tanh ]
+  Kinds.
+    [
+      sin; cos; tan; log; log2; log1p; exp; exp2; expm1; sinh; cosh; tanh; asin;
+      acos; atan; atan2;
+    ]
 
 let () =
   exit

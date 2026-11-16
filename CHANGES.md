@@ -448,6 +448,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx.asin`, `Nx.acos`, `Nx.atan` and `Nx.atan2` give eager's
+  bits on the host and NVIDIA GPUs, where they were rune's forms through a
+  rune arctangent and differed in the last bits.
 - A compiled `Nx.exp`, `Nx.exp2`, `Nx.expm1`, `Nx.sinh`, `Nx.cosh` and
   `Nx.tanh` give eager's bits on the host and NVIDIA GPUs, where they
   differed in the last bits: they were tolk's `exp2` with rune's forms.

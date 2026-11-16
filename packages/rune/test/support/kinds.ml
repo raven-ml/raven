@@ -55,12 +55,20 @@ let edges wide =
 (* Kinds
 
    A spec gives one operand's draws at one dtype: the header's switch points and
-   edges of the kind, positive, and the bounds of its uniform ranges. A cover
-   names a class of an element's operands. *)
+   edges of the kind, positive, and the bounds of its uniform ranges. A kind of
+   two operands may draw pairs too, as codes at float64 if its argument holds,
+   else float32, such as operands that overflow its naive formula. A cover names
+   a class of an element's operands. *)
 
 type spec = { points : float list; ranges : float list }
 type f1 = { f1 : 's 'd. (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t }
-type fn = One of f1
+
+type f2 = {
+  f2 :
+    's 'd. (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t;
+}
+
+type fn = One of f1 | Two of f2 * (bool -> int64 array Windtrap.Gen.t)
 
 type kind = {
   name : string;
@@ -275,6 +283,155 @@ let tanh =
         fun w e -> a e >= pick w (9.5, 19.5) && Float.is_finite e.(0) );
     ]
 
+(* Inverse trigonometric kinds: asin's switch at 1/2 and the edge of its domain,
+   1; atan's at 1 (float32) and 7/16, 11/16, 19/16 and 39/16 (float64); atan2's
+   swap where |y| passes |x|, its quadrants, and quotients that overflow,
+   underflow or are scaled. *)
+
+let near_one w e = Float.abs (Float.abs e.(0) -. 1.) < pick w (0x1p-21, 0x1p-50)
+
+let asin_spec w =
+  spec
+    [
+      0.5;
+      1.;
+      0.25;
+      0.75;
+      2.;
+      pick w (0x1p-12, 0x1p-27);
+      pick w (0x1p-30, 0x1p-60);
+    ]
+    [ 1.; 2. ]
+
+let asin_covers =
+  let a e = Float.abs e.(0) in
+  [
+    ("|x| at most 1/2", fun _ e -> a e <= 0.5);
+    ("|x| past 1/2, below 1", fun _ e -> a e > 0.5 && a e < 1.);
+    ("within 3 ranks of ±1", near_one);
+    ("|x| past 1, finite", fun _ e -> a e > 1. && Float.is_finite e.(0));
+  ]
+
+let asin =
+  unary "asin" { f1 = Nx.asin } (asin_spec false) (asin_spec true) asin_covers
+
+let acos =
+  unary "acos" { f1 = Nx.acos } (asin_spec false) (asin_spec true) asin_covers
+
+let atan_switches = [ 0.4375; 0.6875; 1.1875; 2.4375 ]
+
+let atan_spec w =
+  spec
+    (atan_switches
+    @ [
+        1.;
+        pick w (0x1p-12, 0x1p-27);
+        pick w (0x1p24, 0x1p54);
+        pick w (1e30, 1e300);
+      ]
+    @ if w then [ 0x1p-960 ] else [])
+    [ 1.; 10. ]
+
+let atan =
+  let a e = Float.abs e.(0) in
+  let between lo hi = fun _ e -> a e >= lo && a e < hi in
+  unary "atan" { f1 = Nx.atan } (atan_spec false) (atan_spec true)
+    [
+      ("|x| below 7/16", fun _ e -> a e < 0.4375);
+      ("|x| in [7/16, 11/16)", between 0.4375 0.6875);
+      ("|x| in [11/16, 1]", fun _ e -> a e >= 0.6875 && a e <= 1.);
+      ("|x| in (1, 19/16)", fun _ e -> a e > 1. && a e < 1.1875);
+      ("|x| in [19/16, 39/16)", between 1.1875 2.4375);
+      ( "|x| from 39/16, finite",
+        fun _ e -> a e >= 2.4375 && Float.is_finite e.(0) );
+    ]
+
+(* atan2's pairs: |y| and |x| within a rank of each other; one huge and the
+   other tiny; both below the scale's switch, 2^-960 at float64 and 2^-120 at
+   float32 likewise; and zeros and infinities, each of either sign. *)
+let atan2_pairs wide =
+  let open Gen in
+  let signed c =
+    let+ neg = bool in
+    if neg then Int64.logor c (sign wide) else c
+  in
+  let finite = if wide then 0x7FEFFFFFFFFFFFFFL else 0x7F7FFFFFL in
+  let near =
+    let* c = int64_range 1L finite and+ d = int_range (-1) 1 in
+    let+ y = signed c and+ x = signed (Int64.add c (Int64.of_int d)) in
+    [| y; x |]
+  in
+  let tiny_top = code wide (pick wide (0x1p-120, 0x1p-960)) in
+  let tiny = int64_range 1L tiny_top in
+  let huge =
+    of_list
+      (List.map (code wide)
+         [ pick wide (1e30, 1e300); pick wide (0x1p127, 0x1p1023) ])
+  in
+  let extreme =
+    let* h = huge and+ t = tiny and+ swap = bool in
+    let+ h = signed h and+ t = signed t in
+    if swap then [| t; h |] else [| h; t |]
+  in
+  let both_tiny =
+    let* y = tiny and+ x = tiny in
+    let+ y = signed y and+ x = signed x in
+    [| y; x |]
+  in
+  let special =
+    let s = of_list [ 0L; code wide Float.infinity ] in
+    let* y = s and+ x = s in
+    let+ y = signed y and+ x = signed x in
+    [| y; x |]
+  in
+  frequency [ (2, near); (1, extreme); (1, both_tiny); (1, special) ]
+
+let atan2_spec w =
+  spec (atan_switches @ [ 1.; 3.; pick w (1e30, 1e300) ]) [ 1.; 1e4 ]
+
+let atan2 =
+  let finite e = Float.is_finite e.(0) && Float.is_finite e.(1) in
+  {
+    name = "atan2";
+    fn = Two ({ f2 = Nx.atan2 }, atan2_pairs);
+    specs =
+      [|
+        (atan2_spec false, atan2_spec true); (atan2_spec false, atan2_spec true);
+      |];
+    covers =
+      [
+        ( "|y| within a rank of |x|, finite, not zero",
+          fun w e ->
+            finite e
+            && e.(1) <> 0.
+            && Float.abs (Float.abs (e.(0) /. e.(1)) -. 1.)
+               < pick w (0x1p-21, 0x1p-50) );
+        ("|y| above |x|", fun _ e -> Float.abs e.(0) > Float.abs e.(1));
+        ( "x's sign bit set",
+          fun _ e -> Float.sign_bit e.(1) && not (Float.is_nan e.(1)) );
+        ( "both infinite",
+          fun _ e ->
+            Float.abs e.(0) = Float.infinity && Float.abs e.(1) = Float.infinity
+        );
+        ("both zero", fun _ e -> e.(0) = 0. && e.(1) = 0.);
+        ( "a quotient past the greatest finite or below the least normal",
+          fun w e ->
+            let q = Float.abs (e.(0) /. e.(1)) in
+            finite e
+            && e.(0) <> 0.
+            && e.(1) <> 0.
+            && (q > pick w (0x1.fffffep127, Float.max_float)
+               || q < pick w (0x1p-126, Float.min_float)) );
+        ( "both below the scale's switch, not zero",
+          fun w e ->
+            let t = pick w (0x1p-120, 0x1p-960) in
+            e.(0) <> 0.
+            && e.(1) <> 0.
+            && Float.abs e.(0) < t
+            && Float.abs e.(1) < t );
+      ];
+  }
+
 (* Logarithms: nx_log_reduce's switch, where a significand passes sqrt(1/2), in
    several binades; the least normal, below which it scales a subnormal up; 1,
    around which log cancels; powers of two, where log2 is exact; for log1p, -1,
@@ -419,15 +576,22 @@ let operand wide s =
   frequency
     [ (4, point); (2, of_list (edges wide)); (2, bits); (3, range); (1, sub) ]
 
+(* An element's operands, each drawn alone, or for two operands a pair the kind
+   draws in 2 of 5. *)
 let element wide k =
   let ops = List.init (arity k) (fun i -> operand wide (spec_of wide k i)) in
-  Gen.map Array.of_list
-    (List.fold_right
-       (fun g acc ->
-         Gen.(
-           let+ v = g and+ vs = acc in
-           v :: vs))
-       ops (Gen.constant []))
+  let alone =
+    Gen.map Array.of_list
+      (List.fold_right
+         (fun g acc ->
+           Gen.(
+             let+ v = g and+ vs = acc in
+             v :: vs))
+         ops (Gen.constant []))
+  in
+  match k.fn with
+  | One _ -> alone
+  | Two (_, pairs) -> Gen.frequency [ (3, alone); (2, pairs wide) ]
 
 let gen k =
   let block wide = Gen.array ~size:(Gen.constant n) (element wide k) in
@@ -488,6 +652,10 @@ let compiled (type s d) (module S : Nx.Devices with type d = d) k
     match (k.fn, xs) with
     | One { f1 }, [ x ] ->
         Rune.jit Nx.Ptree.(tensor @-> returns tensor) f1 (on x)
+    | Two ({ f2 }, _), [ x; y ] ->
+        Rune.jit
+          Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+          f2 (on x) (on y)
     | _ -> invalid_arg "Kinds: operands of another arity"
   in
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
@@ -496,6 +664,7 @@ let compiled (type s d) (module S : Nx.Devices with type d = d) k
 let eager k xs =
   match (k.fn, xs) with
   | One { f1 }, [ x ] -> f1 x
+  | Two ({ f2 }, _), [ x; y ] -> f2 x y
   | _ -> invalid_arg "Kinds: operands of another arity"
 
 (* A block's operands as host tensors and a result's codes. *)
@@ -710,7 +879,7 @@ let folded_at (type s d) (module S : Nx.Devices with type d = d) k
     | [ a ] -> List.map (fun v -> [ v ]) a
     | [ a; b ] ->
         let b = Array.of_list b in
-        List.mapi (fun i v -> [ v; b.(i mod Array.length b) ]) a
+        List.mapi (fun i v -> [ v; b.(((7 * i) + 3) mod Array.length b) ]) a
     | _ -> invalid_arg "Kinds: operands of another arity"
   in
   let at x vs =
@@ -718,6 +887,7 @@ let folded_at (type s d) (module S : Nx.Devices with type d = d) k
     let y =
       match (k.fn, vs) with
       | One { f1 }, [ a ] -> f1 (full a)
+      | Two ({ f2 }, _), [ a; b ] -> f2 (full a) (full b)
       | _ -> invalid_arg "Kinds: operands of another arity"
     in
     Nx.mul x y

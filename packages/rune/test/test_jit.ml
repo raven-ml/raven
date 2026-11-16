@@ -657,9 +657,9 @@ let unaries =
     { name = "sin"; f = Nx.sin; bound = (0, 0) };
     { name = "cos"; f = Nx.cos; bound = (0, 0) };
     { name = "tan"; f = Nx.tan; bound = (0, 0) };
-    { name = "asin"; f = Nx.asin; bound = (5 + 2, 9 + 2) };
-    { name = "acos"; f = Nx.acos; bound = (5 + 2, 9 + 2) };
-    { name = "atan"; f = Nx.atan; bound = (2 + 2, 7 + 2) };
+    { name = "asin"; f = Nx.asin; bound = (0, 0) };
+    { name = "acos"; f = Nx.acos; bound = (0, 0) };
+    { name = "atan"; f = Nx.atan; bound = (0, 0) };
     { name = "sinh"; f = Nx.sinh; bound = (0, 0) };
     { name = "cosh"; f = Nx.cosh; bound = (0, 0) };
     { name = "tanh"; f = Nx.tanh; bound = (0, 0) };

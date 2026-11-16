@@ -812,71 +812,200 @@ let tan x =
   let qh, ql = div_pair n d in
   where (tiny x) x (qh +: ql)
 
-(* Inverse trigonometric kinds *)
+(* Inverse trigonometric kinds
 
-(* atan t for t in [0, 1]: at float32, a minimax polynomial; at float64, one on
-   [0, 7/16], after the half-angle step atan t = 2 atan(t / (1 + sqrt(1 +
-   t^2))), which maps [0, 1] into [0, tan(pi/8)]. *)
-let atan_unit t =
-  if not (wide t) then
-    let z = t *: t in
-    let a =
-      horner z
-        [
-          0x1.7ed21ep-9;
-          -0x1.0c2c0cp-6;
-          0x1.61fdd4p-5;
-          -0x1.3556b4p-4;
-          0x1.b4e12ap-4;
-          -0x1.230adcp-3;
-          0x1.9978f4p-3;
-          -0x1.5554dcp-2;
-        ]
-    in
-    mulacc (t *: z) a t
+   nx_kinds_real.h's asin and acos, and nx_kinds.h's atan and atan2, which
+   differ between the types. Constants are nx_kinds.h's macros and
+   coefficients of the same names, at float32 then float64, their text
+   copied. *)
+
+(* nx_asin_b_f32 and nx_asin_b_f64 *)
+let asin_b =
+  ( [
+      0x1.595c8cp-5;
+      0x1.8c3e2ap-6;
+      0x1.747bbap-5;
+      0x1.330204p-4;
+      0x1.5555c8p-3;
+    ],
+    [
+      0x1.056cbe7839745p-5;
+      -0x1.09d10e2ce02f9p-6;
+      0x1.3ff33c58c8071p-6;
+      0x1.abd19915948edp-8;
+      0x1.8ec2b52f17c83p-7;
+      0x1.c6fdcd892b624p-7;
+      0x1.1c6be0fccac8fp-6;
+      0x1.6e89f44cb6e5ap-6;
+      0x1.f1c72c38610a7p-6;
+      0x1.6db6db427c841p-5;
+      0x1.333333336e7cbp-4;
+      0x1.555555555539p-3;
+    ] )
+
+(* The polynomials of nx_atan_kernel_f32 and nx_atan_kernel_f64. *)
+let atan_a =
+  ( [
+      0x1.7ed21ep-9;
+      -0x1.0c2c0cp-6;
+      0x1.61fdd4p-5;
+      -0x1.3556b4p-4;
+      0x1.b4e12ap-4;
+      -0x1.230adcp-3;
+      0x1.9978f4p-3;
+      -0x1.5554dcp-2;
+    ],
+    [
+      -0x1.0a7ed459d86b8p-6;
+      0x1.2b17be1f3a52cp-5;
+      -0x1.97a089c9a7af5p-5;
+      0x1.ddddadf2f06c5p-5;
+      -0x1.10d6017d18c7ap-4;
+      0x1.3b0f205706eb3p-4;
+      -0x1.745cdba3cb3p-4;
+      0x1.c71c6fdb0e4afp-4;
+      -0x1.2492491ff2fd8p-3;
+      0x1.999999998e7dp-3;
+      -0x1.555555555550bp-2;
+    ] )
+
+(* atan 1/2, pi/4 and atan 3/2 at float64, in two parts. *)
+let atan_1_2_hi = 0x1.dac670561bb4fp-2
+let atan_1_2_lo = 0x1.a2b7f222f65e2p-56
+let pio4_hi = 0x1.921fb54442d18p-1
+let pio4_lo = 0x1.1a62633145c07p-55
+let atan_3_2_hi = 0x1.f730bd281f69bp-1
+let atan_3_2_lo = 0x1.007887af0cbbdp-56
+
+(* nx_nan2: r, or the first of a and b that is a NaN. *)
+let nan2 a b r = where (is_nan a) a (nan1 b r)
+
+(* nx_asin_reduce: (s, tail, big), asin |x| = s + tail at or below 1/2, else
+   s = sqrt((1 - |x|)/2), whose asin the caller doubles. *)
+let asin_reduce a =
+  let big = gt a (half a) in
+  let z = where big ((one a -: a) *: half a) (a *: a) in
+  let s = where big (Ops.sqrt z) a in
+  let c = mulacc (negated s) s z /: (s +: s) in
+  let c = where (big &&: gt z (zero a)) c (zero a) in
+  (s, mulacc (s *: z) (horner z (pick a asin_b)) c, big)
+
+(* nx_asin: pi/2 - 2 asin s past 1/2. *)
+let asin x =
+  let a = magnitude x in
+  let s, tail, big = asin_reduce a in
+  let d = s +: s in
+  let hi = con x pio2_hi -: d in
+  let lo =
+    con x pio2_hi -: hi -: d +: mulacc (num x (-2.)) tail (con x pio2_lo)
+  in
+  let y = where big (hi +: lo) (s +: tail) in
+  let y = where (gt a (one x)) (nan x) y in
+  nan1 x (copysign y x)
+
+(* nx_acos: pi/2 - asin x within 1/2, 2 asin s above, pi - 2 asin s below,
+   as a pair. *)
+let acos x =
+  let a = magnitude x in
+  let s, tail, big = asin_reduce a in
+  let n = negative x in
+  let term = where big (s +: s) s in
+  let tail = where big (tail +: tail) tail in
+  let base_hi = where big (where n (con x pi_hi) (zero x)) (con x pio2_hi) in
+  let base_lo = where big (where n (con x pi_lo) (zero x)) (con x pio2_lo) in
+  let plus = ne big n in
+  let term = where plus term (negated term) in
+  let tail = where plus tail (negated tail) in
+  let hh, hl = two_sum base_hi term in
+  let y = hh +: (hl +: (base_lo +: tail)) in
+  nan1 x (where (gt a (one x)) (nan x) y)
+
+(* nx_atan_kernel_f32: t + t^3 A(t^2) on |t| <= 1. *)
+let atan_k32 t =
+  let z = t *: t in
+  mulacc (t *: z) (horner z (fst atan_a)) t
+
+(* nx_atan_kernel_f64: t^3 A(t^2) on |t| <= 7/16, the caller adding t. *)
+let atan_k64 t =
+  let z = t *: t in
+  t *: z *: horner z (snd atan_a)
+
+(* nx_atan_pos_f64: atan a, a >= 0, as a pair, a = c + (a - c) / (1 + c a),
+   c the nearest of 0, 1/2, 1, 3/2 and inf; the quotient's error and the
+   argument's tail al kept in tl. *)
+let atan_pos a al =
+  let n v = num a v in
+  let b1 = ge a (n 0.4375) and b2 = ge a (n 0.6875) in
+  let b3 = ge a (n 1.1875) and b4 = ge a (n 2.4375) in
+  let c = where b3 (n 1.5) (where b2 (n 1.) (n 0.5)) in
+  let num_ = where b4 (n (-1.)) (a -: c) in
+  let den = where b4 a (mulacc c a (n 1.)) in
+  let rden = n 1. /: den in
+  let t = where b1 (num_ *: rden) a in
+  let rest = mulacc (negated t) den num_ in
+  let tl = where b1 (mulacc al (mulacc (negated t) c (n 1.)) rest *: rden) al in
+  let tl = where b4 (rest *: rden) tl in
+  let tl = where (lt a (inf a)) tl (n 0.) in
+  let pick4 v4 v3 v2 v1 =
+    where b4 (n v4) (where b3 (n v3) (where b2 (n v2) (where b1 (n v1) (n 0.))))
+  in
+  let ch = pick4 (snd pio2_hi) atan_3_2_hi pio4_hi atan_1_2_hi in
+  let cl = pick4 (snd pio2_lo) atan_3_2_lo pio4_lo atan_1_2_lo in
+  let p = atan_k64 t in
+  let z = t *: t in
+  let w = mulacc z (z -: n 1.) (n 1.) in
+  let hh, hl = two_sum ch t in
+  fast_two_sum hh (hl +: (cl +: mulacc tl w p))
+
+(* nx_atan_f32 and nx_atan_f64 *)
+let atan x =
+  let a = magnitude x in
+  if wide x then nan1 x (copysign (fst (atan_pos a (zero x))) x)
   else
-    let h = t /: (one t +: Ops.sqrt (mulacc t t (one t))) in
-    let z = h *: h in
-    let a =
-      horner z
-        [
-          -0x1.0a7ed459d86b8p-6;
-          0x1.2b17be1f3a52cp-5;
-          -0x1.97a089c9a7af5p-5;
-          0x1.ddddadf2f06c5p-5;
-          -0x1.10d6017d18c7ap-4;
-          0x1.3b0f205706eb3p-4;
-          -0x1.745cdba3cb3p-4;
-          0x1.c71c6fdb0e4afp-4;
-          -0x1.2492491ff2fd8p-3;
-          0x1.999999998e7dp-3;
-          -0x1.555555555550bp-2;
-        ]
-    in
-    two t *: (h +: (h *: z *: a))
+    let big = gt a (one x) in
+    let p = atan_k32 (where big (one x /: a) a) in
+    let y = where big (con x pio2_hi +: (con x pio2_lo -: p)) p in
+    nan1 x (copysign y x)
 
-(* atan(n / d) for n, d >= 0: the angle of the smaller over the larger, taken
-   from pi/2 (in two parts) where n is the larger. *)
-let angle n d =
-  let big = gt n d in
-  let p = atan_unit (where big (d /: n) (n /: d)) in
-  where big (con n pio2_hi +: (con n pio2_lo -: p)) p
-
-let atan x = copysign (angle (magnitude x) (one x)) x
-let asin x = atan (x /: Ops.sqrt (mulacc (negated x) x (one x)))
-let acos x = two x *: atan (Ops.sqrt ((one x -: x) /: (one x +: x)))
-
-(* atan2: two zeros are the angle 0, two infinities pi/4; where x's sign bit is
-   set the angle is taken from pi; y's sign is copied. *)
+(* nx_atan2_f32 and nx_atan2_f64: the angle of (|x|, |y|) from atan of the
+   smaller magnitude over the larger; by quadrant, added to or subtracted
+   from 0, pi/2 or pi as a pair, then given y's sign. *)
 let atan2 y x =
   let ax = magnitude x and ay = magnitude y in
-  let zeros = eq ax (zero x) &&: eq ay (zero x) in
-  let infs = eq ax (inf x) &&: eq ay (inf x) in
-  let n = where infs (one x) (where zeros (zero x) ay) in
-  let d = where (zeros ||: infs) (one x) ax in
-  let v = angle n d in
-  let v = where (negative x) (con x pi_hi +: (con x pi_lo -: v)) v in
-  copysign v y
+  let swap = gt ay ax in
+  let num_ = where swap ax ay and den = where swap ay ax in
+  let both_inf = eq ax (inf x) &&: eq ay (inf x) in
+  let xneg = negative x in
+  let base p2 p = where swap (con x p2) (where xneg (con x p) (zero x)) in
+  let base_hi = base pio2_hi pi_hi and base_lo = base pio2_lo pi_lo in
+  let minus = ne swap xneg in
+  let v =
+    if not (wide x) then
+      let t = num_ /: den in
+      let t = where (eq den (zero x)) (zero x) t in
+      let t = where both_inf (one x) t in
+      let p = atan_k32 t in
+      let p = where minus (negated p) p in
+      let hh, hl = two_sum base_hi p in
+      hh +: (hl +: base_lo)
+    else
+      (* 1/den overflows below 2^-1024: scaled, num/den is unchanged *)
+      let s = where (lt den (num x 0x1p-960)) (num x 0x1p64) (one x) in
+      let num_ = num_ *: s and den = den *: s in
+      let rden = one x /: den in
+      let t = num_ *: rden in
+      let tl = mulacc (negated t) den num_ *: rden in
+      let degenerate = eq den (zero x) ||: both_inf ||: eq den (inf x) in
+      let t = where (eq den (zero x)) (zero x) t in
+      let t = where both_inf (one x) t in
+      let tl = where degenerate (zero x) tl in
+      let ph, pl = atan_pos t tl in
+      let ph = where minus (negated ph) ph
+      and pl = where minus (negated pl) pl in
+      let hh, hl = two_sum base_hi ph in
+      hh +: (hl +: (base_lo +: pl))
+  in
+  nan2 y x (copysign v y)
 
 (* log2 a as hi + lo for a finite a > 0, |lo| within half an ulp of hi, to a
    relative 2^-12 u. With a = m 2^e, m in (sqrt3 / 2, sqrt3] and b = 1.5 from
