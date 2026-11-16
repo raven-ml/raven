@@ -38,6 +38,15 @@ val log : kind
 val log2 : kind
 val log1p : kind
 
+val clamped_exp : kind
+(** [clamped_exp] is {!exp} of its operand clamped to [[-80, 80]] by two
+    selections on comparisons inside the compiled program, a NaN taking [80].
+    Its law covers the clamped operand. *)
+
+val clamped_log : kind
+(** [clamped_log] is {!log} of its operand clamped to [[1e-30, 1e4]] as
+    {!clamped_exp} clamps, a NaN taking [1e4]. *)
+
 (** {1:cases Cases} *)
 
 type case
@@ -48,8 +57,10 @@ val gen : kind -> case Windtrap.Gen.t
 (** [gen k] generates cases of [k]'s operands. *)
 
 val example : kind -> case
-(** [example k] is a case of every switch point of [k] and its neighbours, both
-    signs, and every special value. *)
+(** [example k] is a case of [k]'s fixed elements (every window of 2/π that a
+    trigonometric kind's large reduction reads, Annex F's pairs for a kind of
+    two operands), every switch point of [k] and its neighbours, both signs,
+    every special value and a Weyl sequence over the codes. *)
 
 (** {1:laws Laws} *)
 

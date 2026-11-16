@@ -2907,6 +2907,20 @@ let ported k =
         Kinds.folded s ~f64 k);
   ]
 
+(* exp and log of an operand the program clamps by selections on float
+   comparisons, whose bounds tolk's range analysis reads: the compiled kind
+   still gives eager's bits. *)
+let clamped_law k =
+  prop ~count:12
+    ~examples:[ Kinds.example k ]
+    (Kinds.name k ^ " gives eager's bits")
+    (Kinds.gen k)
+    (fun c ->
+      let f64, s = keeps () in
+      Kinds.law s ~f64 k c)
+
+let clamped = Kinds.[ clamped_exp; clamped_log ]
+
 (* Multiply-adds of narrow floats: fma at a float narrower than float32,
    compiled on the GPU, is its exact value rounded once, as Exact's integers
    round it. Where the GPU flushes float32's subnormals, rune.mli lets an
@@ -3018,6 +3032,7 @@ let () =
                   sin; cos; tan; log; log2; log1p; exp; exp2; expm1; sinh; cosh;
                   tanh; asin; acos; atan; atan2; erf; pow; mod_;
                 ]);
+         group "clamped operands" (List.map clamped_law clamped);
          group "exp"
            [
              prop ~count:24 "exp within 9 ulps at float32 where it flushes"

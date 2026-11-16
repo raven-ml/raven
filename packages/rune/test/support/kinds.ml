@@ -58,7 +58,8 @@ let edges wide =
    edges of the kind, positive, and the bounds of its uniform ranges. A kind of
    two operands may draw pairs too, as codes at float64 if its argument holds,
    else float32, such as operands that overflow its naive formula. A cover names
-   a class of an element's operands. *)
+   a class of an element's operands. A kind's fixed elements, at float64 if
+   their argument holds, else float32, open its example. *)
 
 type spec = { points : float list; ranges : float list }
 type f1 = { f1 : 's 'd. (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t }
@@ -75,9 +76,29 @@ type kind = {
   fn : fn;
   specs : (spec * spec) array;  (** Per operand, at float32 and float64. *)
   covers : (string * (bool -> float array -> bool)) list;
+  fixed : bool -> int64 array list;
+  generic : bool;  (** Whether the law covers the special values. *)
 }
 
 let name k = k.name
+let none _ = []
+
+(* A Weyl sequence over the code space, whose codes spread over every exponent
+   with significands of every pattern. *)
+let weyl wide i =
+  if wide then Int64.mul (Int64.of_int i) 0x9E3779B97F4A7C15L
+  else Int64.logand (Int64.mul (Int64.of_int i) 0x9E3779B9L) low32
+
+(* Pairs of Annex F's operands and small integers, each of either sign. *)
+let annex_pairs wide =
+  let vs =
+    [ 0.; -0.; 1.; -1.; 2.; 0.5; 3.; Float.infinity; Float.neg_infinity ]
+    @ [ Float.nan ]
+  in
+  List.concat_map
+    (fun a -> List.map (fun b -> [| code wide a; code wide b |]) vs)
+    vs
+
 let arity k = Array.length k.specs
 let spec_of wide k i = pick wide k.specs.(i)
 
@@ -124,12 +145,34 @@ let trig_covers =
         && Float.abs (x -. (q *. half_pi)) <= 0x1p-20 *. Float.abs x );
   ]
 
+(* Every window of nx_two_over_pi that Payne and Hanek's reduction reads, [g >>
+   5] for [g] the exponent less 120 (float32) or 1045 (float64): the least and
+   greatest exponent field past the switch reading each, with a Weyl
+   significand, of both signs. *)
+let trig_windows wide =
+  let mbits, offset, first, last =
+    if wide then (52, 1045, 1051, 2046) else (23, 120, 142, 254)
+  in
+  let window w =
+    let lo = max first (offset + (32 * w))
+    and hi = min last (offset + (32 * w) + 31) in
+    List.concat_map
+      (fun e ->
+        let frac = Int64.logand (weyl wide (e + (7 * w))) (mmask wide) in
+        let c = Int64.logor (Int64.shift_left (Int64.of_int e) mbits) frac in
+        [ [| c |]; [| Int64.logor c (sign wide) |] ])
+      [ lo; hi ]
+  in
+  List.concat_map window (List.init (((last - offset) / 32) + 1) Fun.id)
+
 let trig name f =
   {
     name;
     fn = One f;
     specs = [| (trig_spec false, trig_spec true) |];
     covers = trig_covers;
+    fixed = trig_windows;
+    generic = true;
   }
 
 let sin = trig "sin" { f1 = Nx.sin }
@@ -146,7 +189,14 @@ let tan = trig "tan" { f1 = Nx.tan }
 let half_ln2 = 0.34657359
 
 let unary name f s32 s64 covers =
-  { name; fn = One f; specs = [| (s32, s64) |]; covers }
+  {
+    name;
+    fn = One f;
+    specs = [| (s32, s64) |];
+    covers;
+    fixed = none;
+    generic = true;
+  }
 
 let spec points ranges = { points; ranges }
 let past (a, b) w v = v > pick w (a, b) && Float.is_finite v
@@ -394,6 +444,8 @@ let atan2 =
   {
     name = "atan2";
     fn = Two ({ f2 = Nx.atan2 }, atan2_pairs);
+    fixed = annex_pairs;
+    generic = true;
     specs =
       [|
         (atan2_spec false, atan2_spec true); (atan2_spec false, atan2_spec true);
@@ -541,6 +593,8 @@ let pow =
   {
     name = "pow";
     fn = Two ({ f2 = Nx.pow }, pow_pairs);
+    fixed = annex_pairs;
+    generic = true;
     specs = [| (x_spec false, x_spec true); (y_spec false, y_spec true) |];
     covers =
       [
@@ -623,6 +677,8 @@ let mod_ =
   {
     name = "mod";
     fn = Two ({ f2 = Nx.mod_ }, mod_pairs);
+    fixed = annex_pairs;
+    generic = true;
     specs = [| (s false, s true); (s false, s true) |];
     covers =
       [
@@ -696,6 +752,8 @@ let log_kind name f covers =
     fn = One f;
     specs = [| (log_spec false, log_spec true) |];
     covers = log_covers @ covers;
+    fixed = none;
+    generic = true;
   }
 
 let log = log_kind "log" { f1 = Nx.log } []
@@ -733,6 +791,8 @@ let log1p =
     name = "log1p";
     fn = One { f1 = Nx.log1p };
     specs = [| (log1p_spec false, log1p_spec true) |];
+    fixed = none;
+    generic = true;
     covers =
       [
         ("below -1", fun _ e -> e.(0) < -1.);
@@ -752,7 +812,7 @@ let log1p =
 type case = { f32 : int64 array array; f64 : int64 array array }
 
 (* Elements per dtype in a case: one compiled program per dtype and kind. *)
-let n = 256
+let n = 4096
 
 (* One operand's code at [wide], drawn from five classes by weight out of 12: a
    switch point stepped up to 3 ranks either way, of either sign (4); an edge
@@ -762,11 +822,12 @@ let n = 256
    Rates. Windtrap repeats an earlier draw of a generator with probability 1/8,
    so at least 7/8 of the elements are fresh draws. An edge, each of 16 equally
    likely, is then drawn with probability at least 7/8 * 2/12 / 16 = 1/110: a
-   block of 256 elements misses it with probability (1 - 1/110)^256 < 0.1, and
-   12 cases all miss it with probability below 1e-12. A subnormal (1/12 at
-   least) and a cover of a switch point's side (with p points, 7/8 * 4/12 / p *
-   3/7 at least, int_range drawing its uniform values and one corner in ten
-   among -3, 3, 0, -1 and 1) are drawn more often for every kind's p <= 16. *)
+   block of 4096 elements misses it with probability (1 - 1/110)^4096 < 1e-16. A
+   subnormal (1/12 at least) and a cover of a switch point's side (with p
+   points, 7/8 * 4/12 / p * 3/7 at least, int_range drawing its uniform values
+   and one corner in ten among -3, 3, 0, -1 and 1) are drawn more often for
+   every kind's p <= 16. A fault that 0.1% of the drawn elements reach escapes
+   12 cases of 4096 with probability (1 - 7/8 * 0.001)^49152 < 1e-18. *)
 let operand wide s =
   let open Gen in
   let signed g =
@@ -817,10 +878,9 @@ let gen k =
       { f32; f64 })
 
 (* The example's operand codes: the edges, then each point and its neighbours up
-   to 3 ranks of both signs, then codes spread over the code space, [n] in all;
-   elements pair the codes of each operand at the same position, the second
-   operand's list turned by one. *)
-let example_codes wide s =
+   to 3 ranks of both signs, then a Weyl sequence over the code space, [m] in
+   all. *)
+let example_codes wide s m =
   let around =
     List.concat_map
       (fun p ->
@@ -832,23 +892,80 @@ let example_codes wide s =
       s.points
   in
   let fixed = Array.of_list (edges wide @ around) in
-  let m = Array.length fixed in
-  let spread i =
-    let step = if wide then Int64.div Int64.max_int 128L else 0x02000000L in
-    Int64.mul (Int64.of_int ((2 * i) + 1)) step
-  in
-  Array.init n (fun i -> if i < m then fixed.(i) else spread (i - m))
+  let k = Array.length fixed in
+  if k > m then invalid_arg "Kinds.example: more fixed codes than elements";
+  Array.init m (fun i -> if i < k then fixed.(i) else weyl wide (i - k + 1))
 
+(* The example: the kind's fixed elements, then elements pairing the codes of
+   each operand at the same position, the second operand's list turned by one,
+   [n] in all. *)
 let example k =
   let block wide =
+    let fixed = Array.of_list (k.fixed wide) in
+    let m = n - Array.length fixed in
+    if m < 0 then invalid_arg "Kinds.example: more fixed elements than n";
     let cols =
       Array.init (arity k) (fun j ->
-          let c = example_codes wide (spec_of wide k j) in
-          Array.init n (fun i -> c.((i + j) mod n)))
+          let c = example_codes wide (spec_of wide k j) m in
+          Array.init m (fun i -> c.((i + j) mod m)))
     in
-    Array.init n (fun i -> Array.map (fun c -> c.(i)) cols)
+    Array.append fixed (Array.init m (fun i -> Array.map (fun c -> c.(i)) cols))
   in
   { f32 = block false; f64 = block true }
+
+(* [clamped k ~lo ~hi covers] is [k] of its operand clamped to [lo, hi] by two
+   selections on comparisons inside the compiled program, [x < hi] then [lo <
+   x], a NaN taking [hi]. Its covers read the clamped operand, as the program
+   computes it at the dtype. *)
+let clamped k ~lo ~hi covers =
+  match k.fn with
+  | Two _ -> invalid_arg "Kinds.clamped: a kind of two operands"
+  | One { f1 } ->
+      let clamp x =
+        let c v = Nx.full_like x v in
+        let x = Nx.where (Nx.less x (c hi)) x (c hi) in
+        Nx.where (Nx.less (c lo) x) x (c lo)
+      in
+      let at w v =
+        let r b = value w (code w b) in
+        let v = if v < r hi then v else r hi in
+        if r lo < v then v else r lo
+      in
+      let cover (label, f) = (label, fun w e -> f w [| at w e.(0) |]) in
+      {
+        k with
+        name =
+          Printf.sprintf "%s of an operand clamped to [%g, %g]" k.name lo hi;
+        fn = One { f1 = (fun x -> f1 (clamp x)) };
+        covers = List.map cover covers;
+        generic = false;
+      }
+
+(* Under this clamp tolk folds only exp's NaN selection, merging it with the
+   clamp's comparisons; exp's own clamps at 89 and -104 stay. *)
+let clamped_exp =
+  clamped exp ~lo:(-80.) ~hi:80.
+    [
+      ("the upper bound", fun _ e -> e.(0) = 80.);
+      ("the lower bound", fun _ e -> e.(0) = -80.);
+      ("within ln2/2 of 0", fun _ e -> Float.abs e.(0) < half_ln2);
+      ( "past 1 within the bounds",
+        fun _ e -> Float.abs e.(0) > 1. && Float.abs e.(0) < 80. );
+    ]
+
+(* Under this clamp tolk folds log's selections of 0, a negative and infinity;
+   its subnormal scaling, which compares bits, stays. *)
+let clamped_log =
+  clamped log ~lo:1e-30 ~hi:1e4
+    [
+      ("the upper bound", fun _ e -> e.(0) = 1e4);
+      ("near the lower bound", fun _ e -> e.(0) < 1e-29);
+      ( "within 2^-10 of 1, not 1",
+        fun _ e -> e.(0) <> 1. && Float.abs (e.(0) -. 1.) < 0x1p-10 );
+      ( "a significand beside sqrt(1/2)",
+        fun _ e -> Float.abs (fst (Float.frexp e.(0)) -. 0.70710678) < 0x1p-20
+      );
+    ]
 
 (* Laws *)
 
@@ -963,7 +1080,7 @@ let covers k wide es =
   let dt = if wide then "float64: " else "float32: " in
   List.iter
     (fun (label, f) -> cover (dt ^ label) (Array.exists (f wide) vs))
-    (generic @ k.covers)
+    ((if k.generic then generic else []) @ k.covers)
 
 let law (type d) (module S : Nx.Devices with type d = d) ~f64 k c =
   covers k false c.f32;

@@ -367,6 +367,18 @@ let kinds =
       acos; atan; atan2; erf; pow; mod_;
     ]
 
+(* exp and log of an operand the program clamps by selections on float
+   comparisons, whose bounds tolk's range analysis reads: the compiled kind
+   still gives eager's bits. *)
+let clamped = Kinds.[ clamped_exp; clamped_log ]
+
+let clamped_law k =
+  prop ~count:12
+    ~examples:[ Kinds.example k ]
+    (Kinds.name k ^ " gives eager's bits")
+    (Kinds.gen k)
+    (Kinds.law (module Nx.Host) ~f64:true k)
+
 (* Near sine
 
    Lower_real.sin_near, nx_sin_near, gives the full sine's bits wherever |x|
@@ -482,5 +494,6 @@ let () =
        [
          group "exact" (List.map law (unary @ binary @ compare @ [ fma ]));
          group "kinds" (List.concat_map ported kinds);
+         group "clamped operands" (List.map clamped_law clamped);
          group "near sine" [ near_law ];
        ])
