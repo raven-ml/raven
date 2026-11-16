@@ -67,15 +67,14 @@ let known c =
    the memory of each value it takes or gives: a donation of the caller's value
    then ends that value alone, and computes into fresh memory since the memory
    is shared ({!Nx.Repr.of_array}). A traced value dies with no donation, so it
-   is kept as it is. *)
-let own x =
+   is kept as it is. A dead value raises naming [by]. *)
+let own ~by x =
   if Option.is_some (Nx.Prim.owner x) then x
-  else
-    let a = Option.get (Nx.Repr.array ~by:"Nx.Repr.array" x) in
-    Nx.Repr.of_array Nx.Host.v a
+  else Nx.Repr.of_array Nx.Host.v (Option.get (Nx.Repr.array ~by x))
 
-let own_packed (Nx.P x) = Nx.P (own x)
-let validity c = Option.map (fun v -> own v.bits) c.validity
+let own_packed ~by (Nx.P x) = Nx.P (own ~by x)
+let own_validity ~by c = Option.map (fun v -> own ~by v.bits) c.validity
+let validity c = own_validity ~by:"Column.validity" c
 let data c = c.data
 let has_type ty c = match c.type_ with Any t -> Type.equal t ty
 
@@ -643,7 +642,8 @@ let cells : type a b.
         err "Column.%s: no scalar type stores %a; make it 2-D" fn Nx.Dtype.pp dt
 
 let of_tensor ?validity x =
-  let x = own x and validity = Option.map own validity in
+  let by = "Column.of_tensor" in
+  let x = own ~by x and validity = Option.map (own ~by) validity in
   let shape = Nx.shape x in
   if shape = [||] then err "Column.of_tensor: a scalar has no rows";
   let type_, values = cells "of_tensor" x in
@@ -658,7 +658,7 @@ let to_tensor (type a b) (dt : (a, b) Nx.dtype) c : (a, b, Nx.host) Nx.t =
   | Fixed p ->
       let null i = Printf.sprintf "Column.to_tensor: row %d is null" i in
       no_null c (fun i -> Invalid_argument (null i));
-      own (Nx.unpack dt p)
+      own ~by:"Column.to_tensor" (Nx.unpack dt p)
   | _ -> err "Column.to_tensor: %a is not stored one element per row" Type.pp ty
 
 (* Structural operations *)
@@ -693,6 +693,7 @@ let rec sub c ~offset ~length =
 (* Ragged arrays *)
 
 let ragged (type a b) (dt : (a, b) Nx.dtype) c : (a, b, Nx.host) Nx_ragged.t =
+  let by = "Column.ragged" in
   let (Any ty) = c.type_ in
   let mismatch stored =
     err "Column.ragged: %a is stored as %a, not %a" Type.pp ty Nx.Dtype.pp
@@ -704,12 +705,13 @@ let ragged (type a b) (dt : (a, b) Nx.dtype) c : (a, b, Nx.host) Nx_ragged.t =
       match Nx.Dtype.equal_witness Nx.uint8 dt with
       | Some Equal ->
           Nx_ragged.v
-            ~offsets:(own (Nx_ragged.offsets r))
-            (own (Nx_ragged.values r))
+            ~offsets:(own ~by (Nx_ragged.offsets r))
+            (own ~by (Nx_ragged.values r))
       | None -> mismatch Nx.uint8)
   | List { offsets; child = { data = Fixed (P x); _ } as child } ->
       if not (Nx.Dtype.equal dt (Nx.dtype x)) then mismatch (Nx.dtype x);
-      let r = Nx_ragged.v ~offsets:(own offsets) (own (Nx.unpack dt (P x))) in
+      let values = own ~by (Nx.unpack dt (P x)) in
+      let r = Nx_ragged.v ~offsets:(own ~by offsets) values in
       (* Only the elements of the rows count: values outside the offsets are not
          the column's. *)
       (if null_count child > 0 then
@@ -729,8 +731,9 @@ let ragged (type a b) (dt : (a, b) Nx.dtype) c : (a, b, Nx.host) Nx_ragged.t =
         Nx.Dtype.pp dt
 
 let of_ragged ?validity r =
-  let validity = Option.map own validity in
-  let values = own (Nx_ragged.values r) in
+  let by = "Column.of_ragged" in
+  let validity = Option.map (own ~by) validity in
+  let values = own ~by (Nx_ragged.values r) in
   let (Type.Any e as cell), stored = cells "of_ragged" values in
   let child =
     {
@@ -744,7 +747,7 @@ let of_ragged ?validity r =
   with_bits "of_ragged"
     (Any (Type.list e))
     validity ~length
-    (List { offsets = own (Nx_ragged.offsets r); child })
+    (List { offsets = own ~by (Nx_ragged.offsets r); child })
 
 (* Gathers
 
@@ -915,16 +918,15 @@ let bounds offsets =
 
 (* [in_order x] is [true] iff [x]'s elements lie in one buffer in C order, and
    [at_start x] iff they lie there from its first bit. A traced value counts as
-   both, since its interpretation, not the column, holds its memory. *)
-let layout x = Option.map Nx_array.layout (Nx.Repr.array ~by:"Nx.Repr.array" x)
+   both, since its interpretation, not the column, holds its memory. A column's
+   values lie on the host, one device, so each has one layout, which reads no
+   byte and leaves its memory unshared. *)
+let layout x = Iarray.get (Nx.Repr.layouts x) 0
 
-let in_order x =
-  traced x
-  || Option.fold ~none:false ~some:Nx_array.Layout.is_contiguous (layout x)
+let in_order x = traced x || Nx_array.Layout.is_contiguous (layout x)
 
 let at_start x =
-  traced x
-  || (in_order x && Nx_array.Layout.offset (Option.get (layout x)) = 0)
+  traced x || (in_order x && Nx_array.Layout.offset (layout x) = 0)
 
 (* [stored x] is [x] over C-contiguous storage: [x] itself where it lies so, a
    copy otherwise. *)
@@ -1077,9 +1079,10 @@ let fields_of ty =
   match Type.storage ty with Any (Record fs) -> fs | _ -> assert false
 
 let layout c =
-  let validity = validity c in
+  let by = "Column.layout" in
+  let validity = own_validity ~by c in
   match c.data with
-  | Fixed values -> Fixed { validity; values = own_packed values }
+  | Fixed values -> Fixed { validity; values = own_packed ~by values }
   | Bytes r ->
       let values = Nx_ragged.values r in
       let child =
@@ -1090,9 +1093,9 @@ let layout c =
           data = Fixed (P values);
         }
       in
-      Varsize { validity; offsets = own (Nx_ragged.offsets r); child }
+      Varsize { validity; offsets = own ~by (Nx_ragged.offsets r); child }
   | List { offsets; child } ->
-      Varsize { validity; offsets = own offsets; child }
+      Varsize { validity; offsets = own ~by offsets; child }
   | Fields cs ->
       let (Any ty) = c.type_ in
       let fields = List.map2 (fun (n, _) c -> (n, c)) (fields_of ty) cs in
@@ -1233,17 +1236,23 @@ let rec of_layout : type a. a Type.t -> layout -> (t, int * string) result =
   | _, Children _ -> refuse "fields do not lay out %a" Type.pp ty
 
 let of_layout (Type.Any ty) l =
+  let by = "Column.of_layout" in
   let l =
     match l with
     | Fixed { validity; values } ->
-        Fixed { validity = Option.map own validity; values = own_packed values }
+        Fixed
+          {
+            validity = Option.map (own ~by) validity;
+            values = own_packed ~by values;
+          }
     | Varsize v ->
         Varsize
           {
             v with
-            validity = Option.map own v.validity;
-            offsets = own v.offsets;
+            validity = Option.map (own ~by) v.validity;
+            offsets = own ~by v.offsets;
           }
-    | Children c -> Children { c with validity = Option.map own c.validity }
+    | Children c ->
+        Children { c with validity = Option.map (own ~by) c.validity }
   in
   of_layout ty l

@@ -4825,6 +4825,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Column.of_tensor`, `Column.of_ragged` and `Column.of_layout` given a dead
+  tensor raise naming themselves, where they named `Nx.Repr.array`.
 - `Column.of_layout`'s refusal of the offsets of `string` or `binary` names
   `Nx_ragged.v`, which checks them, at the call as under `Rune.jit`; at the
   call it named `Column.of_layout`.

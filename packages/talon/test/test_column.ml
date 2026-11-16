@@ -1614,6 +1614,30 @@ let donation_cases =
             (array (array float_exact))
             [| [| 1.; 2. |]; [| 3. |] |]
             (Column.values (Kind.list Kind.float) c));
+      test "a dead value a column would take raises naming the function"
+        (fun () ->
+          let dead x =
+            ignore (Nx.donate x);
+            x
+          in
+          let refused by value f =
+            raises_match
+              (Exn.invalid_arg ~sub:(by ^ ": " ^ value ^ " was donated"))
+              f
+          in
+          refused "Column.of_tensor" "float32 [3]" (fun () ->
+              Column.of_tensor (dead (floats ())));
+          refused "Column.of_tensor" "bit [3]" (fun () ->
+              Column.of_tensor ~validity:(dead (bits ())) (floats ()));
+          let offsets = Nx.create Nx.int64 [| 3 |] [| 0L; 2L; 3L |] in
+          let r = Nx_ragged.v ~offsets (floats ()) in
+          ignore (dead (Nx_ragged.values r));
+          refused "Column.of_ragged" "float32 [3]" (fun () ->
+              Column.of_ragged r);
+          let values = Nx.P (dead (floats ())) in
+          refused "Column.of_layout" "float32 [3]" (fun () ->
+              Column.of_layout (Type.Any Type.float32)
+                (Fixed { validity = None; values })));
     ]
 
 let () =

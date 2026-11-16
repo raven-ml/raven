@@ -537,7 +537,9 @@ module Column : sig
       and share their buffers with the tensors and layouts that read them: a
       column holds values of its own over that memory, so donating a tensor it
       took or gave ends that tensor alone, and the donation computes into fresh
-      memory ({!Nx.donate}).
+      memory ({!Nx.donate}). A dead tensor given to {!of_tensor},
+      {!of_ragged} or {!of_layout} raises [Invalid_argument] naming the
+      function.
 
       A column is {e canonical} when its buffers hold exactly its rows: offsets
       from [0], values exactly the rows', a validity only when a row is null,
