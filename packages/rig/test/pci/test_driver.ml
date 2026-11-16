@@ -1032,8 +1032,20 @@ let starts =
 let holding =
   Gen.frequency [ (4, Gen.constant ~pp:pp_start Starts); (1, starts) ]
 
+(* Starts that make a hold one time in three, twice as often as they end each
+   other way: a stop needs a hold, and a start that fails after it gave the
+   hold its stop loses the GPU. *)
+let model_starts =
+  Gen.of_list ~pp:pp_start
+    [ Starts; Starts; Fails; Raises; Fails_started; Raises_started ]
+
 let answer_gen = Gen.of_list ~pp:pp_answer answers
 let indices l = Gen.of_list ~pp:Format.pp_print_int l
+
+(* GPU numbers, each of the two GPUs three times in eight, so that calls meet
+   on the GPUs whose states the model follows; one past the last and a
+   negative number make the rest. *)
+let gpu_numbers = indices [ 0; 0; 0; 1; 1; 1; 2; -1 ]
 
 let two_gpus =
   [ Tree.gpu "0000:03:00.0"; audio "0000:04:00.1"; Tree.gpu "0000:43:00.0" ]
@@ -1197,21 +1209,33 @@ let reset_ref v i =
 
 let reset_sys s i = Result.is_ok (Driver.reset s.g s.m i)
 
-(* Two domains contend for GPU 0 alone, so that they meet. *)
-let commands ?(starts = starts) index =
+(* The calls on a vendor. [changes_twice] lists open_, stop and reset a
+   second time, which draws twice as often the calls that move a GPU between
+   free, held and lost. Two domains contend for GPU 0 alone, so that they
+   meet. *)
+let commands ?(starts = starts) ?(changes_twice = false) index =
+  let open_ =
+    command "open_"
+      (vendor_t ^-> starts @-> answer_gen @-> index @-> makes hold_t)
+      open_ref open_sys
+  in
+  let stop =
+    command "stop" (hold_t ^-> returns stopped) stop_ref Driver.stop
+  in
+  let reset =
+    command "reset" (vendor_t ^-> index @-> returns bool) reset_ref reset_sys
+  in
   [
     command "vendor"
       ~pre:(fun () -> Atomic.get vendors = 0)
       (Gen.unit @-> makes vendor_t)
       vendor_ref vendor_sys;
-    command "open_"
-      (vendor_t ^-> starts @-> answer_gen @-> index @-> makes hold_t)
-      open_ref open_sys;
+    open_;
     command "open_, kept"
       (vendor_t ^-> index @-> returns bool)
       try_open_ref try_open_sys;
-    command "stop" (hold_t ^-> returns stopped) stop_ref Driver.stop;
-    command "reset" (vendor_t ^-> index @-> returns bool) reset_ref reset_sys;
+    stop;
+    reset;
     command "resets"
       (vendor_t ^-> returns int)
       (fun v -> v.resets)
@@ -1221,6 +1245,7 @@ let commands ?(starts = starts) index =
       (fun v -> v.stops)
       (fun s -> Atomic.get s.stops);
   ]
+  @ if changes_twice then [ open_; stop; reset ] else []
 
 (* [flocking name t] is [t] where takes lock a function's file. *)
 let flocking name t =
@@ -1239,12 +1264,16 @@ let serialized =
   group ~timeout:patience "opens and changes"
     [
       (* A program's vendor is a tree of its own, which the file system
-         clones, and most of the program's cost. Its rarest covers, a lost
-         GPU reset and a hold stopped again, mark about 9% of programs, which
-         300 miss with odds near 10^-13. *)
+         clones and removes: with the program's setup, about 7 ms, and its 40
+         calls about 5 ms more, each reading the tree's files. The calls that
+         change a GPU's state are drawn twice as often as the others, so that
+         a program's calls meet on the states they make. Its rarest cover, a
+         lost GPU reset, then marks about 36% of programs, which 60 miss with
+         odds near 10^-12. The test takes 0.8 s alone, within the group's
+         patience on a machine twelve times as slow. *)
       flocking model_name
-        (stateful model_name ~count:300 ~steps:20
-           (commands (indices [ 0; 1; 2; -1 ])));
+        (stateful model_name ~count:60 ~steps:40
+           (commands ~starts:model_starts ~changes_twice:true gpu_numbers));
       (* 120 programs of 50 runs each, each run a new tree, with a limit of
          three patiences: a run hands off between domains, which waits for a
          time slice when the processors are busy. Its rarest cover, a lost GPU
