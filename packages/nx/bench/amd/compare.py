@@ -26,7 +26,8 @@ after one unmeasured call, measured as often as 3 s of calls allow, at
 least 5 times. PyTorch's runs replay a HIP graph behind
 torch.cuda._sleep, which spins the GPU while the host places the graph's
 calls, as nx.amd's runs queue behind a hold: unheld, a graph of 4 us
-kernels ran 8% slower on gfx1201. Float products sum in float32 or
+kernels ran 8% slower on gfx1201. A span replays a graph of at most
+256 calls as often as it takes. Float products sum in float32 or
 wider, as nx.amd's do: reduced-precision half sums are off. Each nx.amd
 call is a submission of its own, whose start writes back and invalidates
 the L2, where PyTorch's graph keeps the L2 between its kernels: on a row
@@ -69,6 +70,9 @@ HOLD_CYCLES = 50_000_000
 MEASUREMENTS = 30
 LONG_MS = 3000.0
 MAX_RUNS = 2000
+# The most calls a graph holds: under ROCm 7.2 on gfx1201, replaying a
+# graph of 2000 small matmuls segfaults, where one of 1000 does not.
+GRAPH_CALLS = 256
 
 
 def nx_times(exe, patterns):
@@ -174,25 +178,28 @@ def eager_us(f):
 
 
 def time_us(f):
+    """f's time: a span's calls replay a graph of at most GRAPH_CALLS
+    calls, as often as the span takes."""
     t = first_ms(f)
-    n = runs(t)
+    c = min(runs(t), GRAPH_CALLS)
     try:
-        g = graphed(f, n)
+        g = graphed(f, c)
     except RuntimeError:
         torch.cuda.synchronize()
         return eager_us(f)
-    t = span_ms(g.replay, 1) / n
-    n2 = runs(t)
-    if n2 > n:
-        n = n2
-        g = graphed(f, n)
-    span_ms(g.replay, max(1, int(SETTLE_MS / (t * n))))
+    t = span_ms(g.replay, 1) / c
+    if runs(t) < c:
+        c = runs(t)
+        g.reset()
+        g = graphed(f, c)
+    reps = -(-runs(t) // c)
+    span_ms(g.replay, max(1, int(SETTLE_MS / (t * c))))
     ts = []
     for _ in range(measurements(t)):
         time.sleep(IDLE_S)
-        for _ in range(warm_calls(t * n)):
+        for _ in range(warm_calls(t * c)):
             g.replay()
-        ts.append(span_ms(g.replay, 1, held=True) / n)
+        ts.append(span_ms(g.replay, reps, held=True) / (c * reps))
     return statistics.median(ts) * 1e3
 
 
