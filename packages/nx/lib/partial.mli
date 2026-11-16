@@ -374,9 +374,11 @@
     {1:traffic Traffic}
 
     A device of a group of [N], [t] of whose tiles hold terms, receives,
-    where an axis took the leading axes' cut, its part of each slot but its
-    own, [1 / N] of its window of the results each, then the [N - 1] other
-    parts of its window: [2 (N - 1) / N] of its window where [t = N]. Where
+    where an axis of [e] indices took the leading axes' cut, its part of
+    each slot but its own, [⌊e / N⌋] or [⌈e / N⌉] of those indices of its
+    window of the results each, then the [N - 1] other parts of its
+    window: [2 (N - 1) / N] of its window where [t = N] and [N] divides
+    [e]. Where
     none did, it receives each slot but its own: [t - 1] windows of the
     results, [t] where its tile is empty. An [Arg] moves an extreme and a
     position per output for each, and [Moments] three such closings. For a
@@ -390,7 +392,8 @@
     operand moves. A contraction asked for its sum moves nothing. A sum's
     closing moves its terms as a [Reduce] of one reduction moves its slots,
     every device's term holding terms; a reduce-scatter gathers no part, so
-    each device receives [(N - 1) / N] of its window of the sum.
+    each device receives its part of each other term, [(N - 1) / N] of its
+    window of the sum where [N] divides the cut axis.
 
     A [Reduce] of [k] reductions runs [k] loops over each device's loads,
     [Moments] two over its terms, laid out once where they are not a load.
