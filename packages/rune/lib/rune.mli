@@ -1428,7 +1428,7 @@ val jit :
     kernels of its own, a fold over a cut axis closes to a whole value, as a
     contraction does unless asked for its sum ({!Nx.section-contraction}), and a
     window moves from one device to another only where eager computation moves
-    it.
+    it and the program's results, checks or loop carries depend on the copy.
     Each value's placement is eager's, uneven windows included, and a device
     whose windows of an operation's results are all empty computes nothing for
     it. A program for one device serves every device of its target, so the
