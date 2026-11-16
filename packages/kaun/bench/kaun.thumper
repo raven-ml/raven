@@ -6,13 +6,13 @@
 # ocaml: 5.5.2 · 64-bit · release
 # forced: blessed LayerNorm/layer-norm-8x512x512 under load 64.7 on 14 cores
 
-Conv/conv-train-step	alloc_words	exact	39294
+Conv/conv-train-step	alloc_words	exact	39248
 Forward/apply	alloc_words	exact	1486
-LayerNorm/layer-norm-8x512x512	alloc_words	exact	3260
+LayerNorm/layer-norm-8x512x512	alloc_words	exact	3243
 Linear/linear-fwd	alloc_words	exact	256
 Linear/linear-fwd-bwd	alloc_words	exact	2899
-TrainStep/sgd-train-step	alloc_words	exact	15824
-TrainStep/train-step	alloc_words	exact	23282
+TrainStep/sgd-train-step	alloc_words	exact	15782
+TrainStep/train-step	alloc_words	exact	23240
 
 # machine: 943935ae6b4f79ac
 # host: MacBookPro.Home · Apple M1 Max · arm64 · macos
