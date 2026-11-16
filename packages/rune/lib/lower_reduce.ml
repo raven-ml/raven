@@ -857,23 +857,9 @@ let gathered dt u axis p =
    rows reads it [⌈k / c⌉] times in blocks of [c], and [n] rows over [g]
    groups give each [n / g] on average, the mean. A tensor core multiplies a
    block of rows at once from the fewest it takes along its [M]
-   ({!Tolk.Heuristic.core_rows}, 48 on CUDA); blocks of 4 stream, each reading
-   its slice at the memory's rate. Measured on an RTX 5000 Ada. *)
-
-(* The rows of a streamed block. *)
-let stream_rows = 4
-
-(* A decoded slice streams blocks of {!stream_rows} while they hold
-   [stream_held] times the mean, to 2 rows a group, as a group's rows then
-   seldom spill into a second read of its slice. A core decodes the slice in
-   its warps before each multiply, 0.37 SM-cycles a weight against a
-   stream's 0.25, below the memory's rate: while blocks of 4 hold twice the
-   mean both forms read each used slice about once and the stream wins, and
-   past it the stream's re-reads outgrow the core's premium. gpt-oss-20b's
-   experts layer at 17 to 19 tokens, 2.1 to 2.4 rows a group, takes 3.5-6.2%
-   less on the core. A slice the core reads as stored pays no premium and
-   takes the core from one row a group. *)
-let stream_held = 2
+   ({!Tolk.Heuristic.core_rows}, 48 on CUDA); without one, blocks stream,
+   each reading its slice at the memory's rate. Measured on an RTX 5000
+   Ada. *)
 
 (* A core's block holds its fewest rows while they hold [core_held] times the
    mean, then {!Tolk.Stage.warp_tile}. A group that spills past its block
@@ -884,12 +870,43 @@ let stream_held = 2
    favours 48 there by 3.5%. 3 holds the crossover with a margin. *)
 let core_held = 3
 
-(* [block_rows ~core ~decoded ~n ~g] is the rows of a block of [n] rows over
-   [g] groups, or [1] for each row reading its own slice, as rows share
-   slices from one row a group on average. [core] is the fewest rows a core
-   takes of the product, if one does, and [decoded] whether a slice is
-   decoded. Without a core every block streams and padding rows cost as much
-   as real ones: blocks of 4 from one row a group, of 8 from 5 and of 64 from
+(* [block_rows ~core ~n ~g] is the rows of a block of [n] rows over [g]
+   groups, or [1] for each row reading its own slice, as rows share slices
+   from one row a group on average. [core] is the fewest rows a core takes
+   of the product, if one does.
+
+   Where a core takes the product it takes the blocks, the slice decoded or
+   stored. While a group holds at most 4 rows, a core's blocks and blocks of
+   4 read each used slice once, and the form that issues less a weight is
+   the faster: a stream decodes the slice in each block of 4 that reads it,
+   24.4 instructions a weight on gpt-oss-20b's MXFP4 experts at 12 tokens
+   against the core's 9.0. A slice of their gate and up projection took
+   19.4-20.3 µs streamed against 18.2-19.2 on the core, of their down
+   projection 9.6-10.1 against 9.4-10.0, at 5 to 24 tokens, save 10.2-11.2
+   where the core's grid sits just past a wave. Past 4 rows a group the
+   stream reads the slice again.
+
+   A decoded slice's kernel moves 0.53 bytes a weight against a stored
+   bfloat16 slice's 2: each trip carries 3.8 times fewer bytes, so a core's
+   kernel whose workgroups fall well short of a wave of the device's slots,
+   or just past one, waits on the memory, where a stored slice's runs at the
+   memory's rate from a quarter of a wave. On gpt-oss-20b's own routing its
+   experts layer takes 10.7-15.2% less on the core at 8 to 16 tokens, 17.8%
+   at its 12-token prompt, though one of 48 routings takes 2.8% more at 9
+   and 4 of 24 uniform draws up to 2.3% more at 8 to 11. A routing onto 3
+   or 4 of a Mixtral-like layer's 8 MXFP4 experts (14336 by 4096, top 2) at
+   4 to 6 tokens, 128 workgroups for the down projection, takes up to 7.1%
+   more, routings drawn uniformly there 1.1-2.3% less. A split of the
+   kernel's reduce across workgroups, not the block's rows, would remove
+   these losses.
+
+   Both forms keep one running sum over a reduce whose trip count is not a
+   constant, bounded as one chain ({!Rune}); a core's chain holds the whole
+   reduce, 2880 terms on gpt-oss-20b, a stream's 90 terms a lane, then 32
+   lanes.
+
+   Without a core every block streams and padding rows cost as much as
+   real ones: blocks of 4 from one row a group, of 8 from 5 and of 64 from
    16, the fastest of 2, 4, 8 and 64 on gpt-oss-20b's MXFP4 experts layer
    streamed, rows routed uniformly at random (4 rows a group: 1.99 ms in
    blocks of 4, 1.51 of 8, 1.60 of 64), and on the host (1.5 rows a group:
@@ -897,11 +914,10 @@ let core_held = 3
    4). A block holds at least a staged warp's rows ({!Tolk.Stage.warp_tile}),
    the most a core takes in one warp: blocks of 80 read 10-13% slower than 64
    at equal reads of their slices. *)
-let block_rows ~core ~decoded ~n ~g =
+let block_rows ~core ~n ~g =
   if n < g then 1
   else
     match Lazy.force core with
-    | Some _ when decoded && stream_held * n <= stream_rows * g -> stream_rows
     | Some c -> if core_held * n < c * g then c else max c Tolk.Stage.warp_tile
     | None -> if n < 5 * g then 4 else if n < 16 * g then 8 else 64
 
@@ -973,7 +989,6 @@ let rows ~renderer ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
              ~dtype_out:(Arith.dtype acc) ~outputs ~block:(List.nth sb kb)
        | _ -> None)
   in
-  let decoded = Option.is_some a.scale || Option.is_some b.scale in
   let nb = List.length batch in
   let fa = free (List.length sa) (List.map fst (batch @ contracting)) in
   let j = nb + Option.get (List.find_index (Int.equal a_axis) fa) in
@@ -993,7 +1008,7 @@ let rows ~renderer ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
   in
   let r =
     let c =
-      if g = 0 || g > slice then 1 else block_rows ~core ~decoded ~n ~g
+      if g = 0 || g > slice then 1 else block_rows ~core ~n ~g
     in
     if c = 1 then
       let id = Ops.where inside o (int o 0) in

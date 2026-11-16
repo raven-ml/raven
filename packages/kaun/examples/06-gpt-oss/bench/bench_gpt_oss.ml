@@ -8,11 +8,11 @@
    prefills of 512 and 12 tokens, over random weights at bfloat16 with the
    experts packed as MXFP4, a decode step with the attention projections and
    the head packed as Q8_0 too, quantised in its case's setup, and one layer's
-   experts, after its norm, at prefills of 32, 96, 512 and 536 tokens. 12
-   tokens route 48 positions over 32 experts in blocks of 4, each block
-   reading its expert's matrices once for its rows. 32 and 96 tokens route 4
-   and 12 rows an expert on average into blocks of 48 for a tensor core,
-   where blocks of 4 and 8 streamed took 1.4 and 2.5 times as long. 536
+   experts, after its norm, at prefills of 32, 96, 512 and 536 tokens. 12,
+   32 and 96 tokens route 1.5, 4 and 12 rows an expert on average into
+   blocks of 48 for a tensor core, each block reading its expert's matrices
+   once for its rows; at 32 and 96 blocks of 4 and 8 streamed took 1.4 and
+   2.5 times as long. 536
    tokens fill 65 blocks of 64 rows, a count 5 divides, where a warp of 5
    tiles of rows would cross two blocks.
    [first call 12] times a later process's first 12-token call over a warm

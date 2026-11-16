@@ -26,12 +26,13 @@ Where it stands, with every measurement: doc/performance.md.
   every tile, skipped ones included, which keeps K's copy from moving
   before the mask
 - gpt-oss-20b's MXFP4 experts on fudge's RTX 5000 Ada, measured on
-  2026-11-15 with rune's float32 decode, before the bfloat16 decode and the
-  byte merge: a core takes 0.31-0.33 SM-cycles a weight at prefill and the
-  stream of 4 at 12 tokens 0.38, not 0.37 against 0.25, which rune's
-  `stream_held = 2` (`Lower_reduce`) still cites, and cores beat streams
-  from 8 tokens on gpt-oss's experts; DRAM reads the
-  compulsory bytes in every variant. Of the 512-token gap to vLLM, the
+  2026-11-16 with the bfloat16 decode: the stream of 4 takes 0.31-0.33
+  SM-cycles a weight, issue-bound at 24.4 instructions a weight, 13 of them
+  decode, and a core 0.30-0.31 on gate_up and 0.31-0.32 on down,
+  latency-bound at 9.0 a weight and 4 workgroups an SM, against DRAM's
+  0.268; both read only the compulsory bytes. Measured on 2026-11-15 with
+  rune's float32 decode, before the bfloat16 decode and the byte merge:
+  of the 512-token gap to vLLM, the
   decode in the warps took 2.84 ms of gate_up's 6.27 and 1.50 of down's
   3.49, and the code loads, 20 single bytes a thread a trip, 4.14 and 2.13
   once the decode is cheap; a layout gains nothing at 64 tokens without

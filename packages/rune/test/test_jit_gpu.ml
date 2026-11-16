@@ -11,9 +11,9 @@
    an integer to a float at the ties of every exponent, a product of narrow
    floats or of MXFP4 weights holds its bound, an MXFP4 product of bfloat16
    rows decodes each code at each scale byte exactly, a routed product of
-   MXFP4 or bfloat16 experts of exact sums gives eager's bits in blocks of 4,
-   48 and 64 rows and takes a tensor core and its blocks at the edges the
-   lowering states, as does a routed pair whose second product reads computed rows,
+   MXFP4 or bfloat16 experts of exact sums gives eager's bits per row and in
+   blocks of 48 and 64 rows and takes a tensor core and its blocks at the
+   edges the lowering states, as does a routed pair whose second product reads computed rows,
    with biases or without, and a routed product of computed rows holds its
    bound, a narrow float's fma rounds once, a call's check raises at the
    next wait, so the call returns while its work runs, a key split there has
@@ -2186,11 +2186,10 @@ let routed_core ?(outputs = routed_outputs) ren =
 (* The rows of a block of a routed product's [n] rows over [g] groups on
    [ren], as Rune.Lower_reduce.contract states them: [1] for each row reading
    its own slice. *)
-let routed_block ?outputs ren weights ~n ~g =
+let routed_block ?outputs ren ~n ~g =
   if n < g then 1
   else
     match routed_core ?outputs ren with
-    | Some _ when weights = Mxfp4 && n <= 2 * g -> 4
     | Some c -> if 3 * n < c * g then c else max c 64
     | None -> if n < 5 * g then 4 else if n < 16 * g then 8 else 64
 
@@ -2266,26 +2265,26 @@ let routed_law c =
   let eager, y, kernels = routed_run c in
   let d, _ = on_gpu () in
   let block =
-    routed_block (Tolk_engine.renderer d) c.weights
-      ~n:(c.tokens * per_token) ~g:experts
+    routed_block (Tolk_engine.renderer d) ~n:(c.tokens * per_token)
+      ~g:experts
   in
   List.iter
     (fun w -> cover (weights_name w) (c.weights = w))
     [ Mxfp4; Bfloat16 ];
   List.iter
     (fun b -> cover (Printf.sprintf "blocks of %d" b) (block = b))
-    [ 1; 4; 48; 64 ];
+    [ 1; 48; 64 ];
   cover "a product on a tensor core" (List.exists on_core kernels);
   equal bits_t (bits eager) (bits y)
 
 (* The examples reach each edge of the form and the block from both sides:
-   MXFP4 at 2 rows an expert, 16 and 17 tokens; bfloat16 at 1 row, 7 and 8
-   tokens; both at 16 rows, 127 and 128 tokens. *)
+   at 1 row an expert, 7 and 8 tokens, and at 16 rows, 127 and 128 tokens,
+   for MXFP4 and bfloat16 alike. *)
 let routed_examples =
   List.mapi
     (fun seed (weights, tokens) -> { weights; tokens; seed })
     [
-      (Mxfp4, 12); (Mxfp4, 16); (Mxfp4, 17); (Mxfp4, 64); (Mxfp4, 127);
+      (Mxfp4, 7); (Mxfp4, 8); (Mxfp4, 12); (Mxfp4, 64); (Mxfp4, 127);
       (Mxfp4, 128); (Bfloat16, 7); (Bfloat16, 8); (Bfloat16, 127);
       (Bfloat16, 128);
     ]
@@ -2320,10 +2319,9 @@ let outputs (k : Tolk.Realize.kernel) =
     1
     (K.axes_of s [ Global ])
 
-(* The form at each edge, on CUDA: a decoded slice streams blocks of 4 up to
-   2 rows an expert and takes a core past them, a bfloat16 slice takes a core
-   from 1 row, and a core's blocks hold 48 rows while 3 times the mean rows an
-   expert stays under 48, then 64. [n] rows over [g] experts in blocks of [c]
+(* The form at each edge, on CUDA: a slice, decoded or stored, takes a core
+   from 1 row an expert, and a core's blocks hold 48 rows while 3 times the
+   mean rows an expert stays under 48, then 64. [n] rows over [g] experts in blocks of [c]
    take [B c] slots, [B = m + ⌊(n - m) / c⌋] for [m = min n g]. *)
 let routed_edge (weights, tokens, block, cored) =
   let d, _ = on_gpu () in
@@ -2340,8 +2338,8 @@ let routed_edge (weights, tokens, block, cored) =
 
 let routed_edges =
   [
-    (Mxfp4, 16, 4, false);
-    (Mxfp4, 17, 48, true);
+    (Mxfp4, 7, 1, false);
+    (Mxfp4, 8, 48, true);
     (Mxfp4, 127, 48, true);
     (Mxfp4, 128, 64, true);
     (Bfloat16, 7, 1, false);
@@ -2500,25 +2498,25 @@ let pair_law p =
   let eager, y, kernels = pair_run p in
   let d, _ = on_gpu () in
   let block =
-    routed_block (Tolk_engine.renderer d) c.weights
-      ~n:(c.tokens * per_token) ~g:experts
+    routed_block (Tolk_engine.renderer d) ~n:(c.tokens * per_token)
+      ~g:experts
   in
   List.iter
     (fun w -> cover (weights_name w) (c.weights = w))
     [ Mxfp4; Bfloat16 ];
   List.iter
     (fun b -> cover (Printf.sprintf "blocks of %d" b) (block = b))
-    [ 1; 4; 48; 64 ];
+    [ 1; 48; 64 ];
   cover "biased" p.bias;
   cover "unbiased" (not p.bias);
   cover "an expert past its block" (block > 1 && p.crowd > block);
   cover "a product on a tensor core" (List.exists on_core kernels);
   equal bits_t (bits eager) (bits y)
 
-(* Each block kind from both sides, biased and not: MXFP4 at 7 tokens, a
-   row a slice, at 16, blocks of 4, at 17 and 127, of 48, and at 128, of
-   64; bfloat16 at 7, 8, 127 and 128. The first expert takes a block's rows
-   and one more where the positions hold them. *)
+(* Each block kind from both sides, biased and not, MXFP4 and bfloat16
+   alike: at 7 tokens, a row a slice, at 8 and 127, blocks of 48, and at
+   128, of 64. The first expert takes a block's rows and one more where the
+   positions hold them. *)
 let pair_examples =
   List.concat_map
     (fun bias ->
@@ -2526,7 +2524,7 @@ let pair_examples =
         (fun seed (weights, tokens, crowd) ->
           { routed = { weights; tokens; seed }; bias; crowd })
         [
-          (Mxfp4, 7, 14); (Mxfp4, 16, 5); (Mxfp4, 17, 49); (Mxfp4, 127, 49);
+          (Mxfp4, 7, 14); (Mxfp4, 8, 16); (Mxfp4, 127, 49);
           (Mxfp4, 128, 65); (Bfloat16, 7, 14); (Bfloat16, 8, 16);
           (Bfloat16, 127, 49); (Bfloat16, 128, 65);
         ])
@@ -2553,7 +2551,7 @@ let computed_law c =
     skip ~reason:"no bfloat16 tensor core takes blocks from 48 rows" ();
   let st = Random.State.make [| c.seed |] in
   let n = c.tokens * per_token in
-  let block = routed_block ren c.weights ~n ~g:experts in
+  let block = routed_block ren ~n ~g:experts in
   let crowd = if block > 1 then min (n - 1) (block + 1) else n / 2 in
   let uniform s =
     let count = Array.fold_left ( * ) 1 s in
@@ -2622,7 +2620,7 @@ let computed_law c =
     [ Mxfp4; Bfloat16 ];
   List.iter
     (fun b -> cover (Printf.sprintf "blocks of %d" b) (block = b))
-    [ 1; 4; 48; 64 ];
+    [ 1; 48; 64 ];
   cover "a product on a tensor core" (List.exists on_core kernels);
   let y = Nx.to_array (Nx.cast Nx.float64 y) in
   let exact = Nx.to_array exact and bound = Nx.to_array bound in
@@ -2639,7 +2637,7 @@ let computed_examples =
   List.mapi
     (fun seed (weights, tokens) -> { weights; tokens; seed })
     [
-      (Mxfp4, 7); (Mxfp4, 16); (Mxfp4, 17); (Mxfp4, 127); (Mxfp4, 128);
+      (Mxfp4, 7); (Mxfp4, 8); (Mxfp4, 127); (Mxfp4, 128);
       (Bfloat16, 7); (Bfloat16, 8); (Bfloat16, 127); (Bfloat16, 128);
     ]
 

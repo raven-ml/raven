@@ -1938,6 +1938,37 @@ let experts_mxfp4_call tokens =
         fun () -> ignore (synced (f ids x)));
   }
 
+(* A Mixtral-like down projection at a prompt of 4 tokens: each token's row
+   by the [4096; 14336] MXFP4 matrices of 2 of 8 experts, routed onto 3 of
+   them, every block's scale 1. A core's kernel over 3 slices fills a
+   fraction of a wave of workgroups and waits on the memory. *)
+let experts_few_call =
+  {
+    at =
+      (fun at ->
+        let k = 14336 and n = 4096 and tokens = 4 in
+        let w =
+          Nx_quant.place at
+            (Nx_quant.mxfp4
+               ~scales:(Nx.full Nx.uint8 [| 8; n; k / 32 |] 127)
+               (Nx.full Nx.uint8 [| 8; n; k / 2 |] 0x5a))
+        in
+        let ids =
+          Nx.place at
+            (Nx.init Nx.int64 [| tokens; 2 |] (fun i ->
+                 Int64.of_int (((i.(0) * 2) + i.(1)) mod 3)))
+        in
+        let x =
+          Nx.place at
+            (Nx.cast Nx.bfloat16
+               (Nx.Rng.uniform ~key:(Nx.Rng.key 96) f32 [| tokens; 1; k |]))
+        in
+        let f =
+          Rune.jit (pair_fn ()) (fun ids x -> Nx_quant.apply_experts ~ids w x)
+        in
+        fun () -> ignore (synced (f ids x)));
+  }
+
 (* A mixture of experts' block at a prompt of [tokens], gpt-oss-20b's MXFP4
    experts with an activation without a transcendental: each token's row
    through 4 of 32 experts' gate and up projections, [2880] to [5760], the
@@ -2102,9 +2133,13 @@ let gpu_rows g =
       (* 12 tokens, 1.5 rows an expert: bfloat16 experts on a tensor core in
          blocks of 48, where blocks of 4 streamed took 2.05 ms against 1.60. *)
       on_gpu g "experts-bfloat16-12x4of32-2880x5760" (experts_call 12);
-      (* 18 tokens, 2.25 rows an expert, past which MXFP4 experts take a
-         tensor core in blocks of 48 where blocks of 4 streamed. *)
+      (* 18 tokens, 2.25 rows an expert: MXFP4 experts on a tensor core in
+         blocks of 48, as from 1 row an expert. *)
       on_gpu g "experts-mxfp4-18x4of32-2880x5760" (experts_mxfp4_call 18);
+      (* 4 tokens routed onto 3 of 8 experts: MXFP4 experts on a tensor
+         core in blocks of 48, where blocks of 4 streamed took 248 us
+         against 342. *)
+      on_gpu g "experts-mxfp4-4x2of8-14336x4096" experts_few_call;
       (* 32 tokens, 4 rows an expert, on tensor cores in blocks of 48: the
          down projection's computed rows are stored in their own order, which
          its tile gathers as it stages them. *)

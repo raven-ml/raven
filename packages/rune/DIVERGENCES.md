@@ -1100,9 +1100,9 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   group's count and the scan of its blocks, each slot's row by a binary
   search of its group's running count) into blocks of rows of one group:
   where a tensor core takes a block (`Tolk.Heuristic.core_rows`, its fewest
-  rows `r`), 4 up to 2 rows a group for a scaled operand, then `r` while 3
-  times the mean rows a group stays under `r`, then 64; elsewhere 4 below 5
-  rows a group, 8 below 16 and 64 from 16. A block reads its group's slice,
+  rows `r`), `r` while 3 times the mean rows a group stays under `r`, then
+  64, a scaled operand's as a stored one's; elsewhere 4 below 5 rows a
+  group, 8 below 16 and 64 from 16. A block reads its group's slice,
   its rows at their slots, a slot of none reading `0`, and each row reads
   its slot's stored output. Where a core takes the blocks, a row operand
   that computes elementwise, and that no movement expands, is stored first
