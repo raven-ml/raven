@@ -337,24 +337,22 @@ let law_any (Case a, axes) =
     Array.exists (fun i -> s.(i) = 0) ax
     && Array.fold_left ( * ) 1 (reduced s (Array.to_list ax)) > 0
   in
+  let computes (m : Nx_kernel.monoid) =
+    let extreme = match m with Max | Min -> true | Sum | Prod -> false in
+    documented m dt && not (no_term && extreme)
+  in
+  cover "computed" (List.exists (fun (_, m, _) -> computes m) reductions);
+  cover "raised" (List.exists (fun (_, m, _) -> not (computes m)) reductions);
   List.iter
     (fun (name, m, f) ->
       let f () = host_array (f ?axes (value a)) in
       let parts = m = Nx_kernel.Sum in
-      let extreme =
-        match (m : Nx_kernel.monoid) with Max | Min -> true | _ -> false
-      in
-      if documented m dt && not (no_term && extreme) then begin
-        cover "computed" true;
+      if computes m then
         match reference m a ax with
         | Some want ->
             equal ~msg:name blind_bits (blind ~parts want) (blind ~parts (f ()))
         | None -> fail (name ^ ": the host's kernel declined a stated dtype")
-      end
-      else begin
-        cover "raised" true;
-        names name (fun () -> ignore (f ()))
-      end)
+      else names name (fun () -> ignore (f ())))
     reductions
 
 (* Errors *)
@@ -495,18 +493,21 @@ let law_int_mean (D.Any dt, s, axes, xs) =
   let xs = Array.map (of_int64 dt) xs in
   let x = value (A.of_array dt (Iarray.of_array s) xs) in
   let n = List.fold_left (fun n a -> n * s.(a)) 1 ax in
-  if n = 0 && Array.fold_left ( * ) 1 (reduced s ax) > 0 then
-    names "mean" (fun () -> Nx.mean ?axes x)
-  else begin
-    let sums = fold add_limbs (0, 0) s ax (Array.map (limbs dt) xs) in
-    let want = Array.map (divided n) sums in
+  let refused = n = 0 && Array.fold_left ( * ) 1 (reduced s ax) > 0 in
+  let want =
+    if refused then [||]
+    else
+      let sums = fold add_limbs (0, 0) s ax (Array.map (limbs dt) xs) in
+      Array.map (divided n) sums
+  in
+  cover "64 bits" ((not refused) && D.bits dt = 64);
+  cover "a negative mean rounded toward zero" (Array.exists snd want);
+  if refused then names "mean" (fun () -> Nx.mean ?axes x)
+  else
     let got =
       Array.map (to_int64 dt) (A.to_array (host_array (Nx.mean ?axes x)))
     in
-    cover "64 bits" (D.bits dt = 64);
-    cover "a negative mean rounded toward zero" (Array.exists snd want);
     equal (array int64) (Array.map fst want) got
-  end
 
 (* Means the spec gives: the exact mean rounded toward zero, between the least
    and greatest element. *)
@@ -915,6 +916,8 @@ let law_complex_extremes (Zcase { dt; s; axes; strided; xs }) =
   cover "a NaN result" (Array.exists (fun t -> List.exists znan t) ts);
   cover "transposed" (strided && r > 1);
   let empty = List.exists (fun a -> s.(a) = 0) ax in
+  cover "more than a block of terms"
+    ((not empty) && Array.exists (fun t -> List.length t > 1024) ts);
   List.iter
     (fun (name, flip, f, arg, scan) ->
       if not empty then begin
@@ -1639,25 +1642,30 @@ let law_lcse (Lcse_case (dt, s, axis, strided, xs)) =
   let ps =
     match axis with Some a -> prefixes s a | None -> prefixes [| n |] 0
   in
+  (* Whether a prefix's terms have a NaN, and their greatest. *)
+  let nan terms = List.exists Float.is_nan terms in
+  let greatest terms = List.fold_left Float.max Float.neg_infinity terms in
+  let some p = List.exists (fun ps -> p (List.map (fun p -> ts.(p)) ps)) ps in
+  let finite p =
+    some (fun t -> (not (nan t)) && Float.is_finite (greatest t) && p t)
+  in
+  cover "a NaN term" (some nan);
+  cover "+inf" (some (fun t -> (not (nan t)) && greatest t = Float.infinity));
+  cover "every term -inf"
+    (some (fun t -> (not (nan t)) && greatest t = Float.neg_infinity));
+  cover "finite" (finite (fun _ -> true));
+  cover "a -inf term among finite ones"
+    (finite (List.exists (fun t -> t = Float.neg_infinity)));
   List.iter
     (fun ps ->
       let at = List.nth ps (List.length ps - 1) in
       let terms = List.map (fun p -> ts.(p)) ps in
       let g = got.(at) in
-      let m = List.fold_left Float.max Float.neg_infinity terms in
-      if List.exists Float.is_nan terms then begin
-        cover "a NaN term" true;
-        equal ~msg:"a NaN" bool true (Float.is_nan g)
-      end
-      else if not (Float.is_finite m) then begin
-        cover "+inf" (m > 0.);
-        cover "every term -inf" (m < 0.);
+      let m = greatest terms in
+      if nan terms then equal ~msg:"a NaN" bool true (Float.is_nan g)
+      else if not (Float.is_finite m) then
         equal ~msg:"an infinity" float_exact m g
-      end
       else begin
-        cover "finite" true;
-        cover "a -inf term among finite ones"
-          (List.exists (fun t -> t = Float.neg_infinity) terms);
         let want, err = lse_ref m terms in
         let bound = lse_bound u (List.length terms) want +. err in
         let msg = Printf.sprintf "%h against %h" g want in
@@ -1678,11 +1686,12 @@ let law_lcse_bits ((Lcse_case (dt, s, axis, strided, xs)), cut, keep) =
   let r = Array.length s in
   let y = Nx.logcumsumexp ?axis x in
   let bits_of y = blind (host_array y) in
+  let k = match axis with Some a -> keep mod (s.(a) + 1) | None -> 0 in
+  let along p = match axis with Some a -> p s.(a) | None -> false in
+  cover "a proper prefix" (along (fun d -> k < d));
+  cover "an empty prefix" (along (fun d -> k = 0 && d > 0));
   (match axis with
   | Some a ->
-      let k = keep mod (s.(a) + 1) in
-      cover "a proper prefix" (k < s.(a));
-      cover "an empty prefix" (k = 0 && s.(a) > 0);
       let prefix t =
         Nx.slice (List.init r (fun i -> if i = a then Nx.R (0, k) else Nx.A)) t
       in
@@ -1789,8 +1798,9 @@ let reductions_group =
       test "an extreme of no term raises only where its result has an element"
         test_empty_extremes;
       test "mean divides the sum by the count" test_mean;
-      prop "an integer mean is the exact mean truncated toward zero" int_case
-        law_int_mean;
+      (* A negative mean that rounds is about one case in ten. *)
+      prop ~count:300 "an integer mean is the exact mean truncated toward zero"
+        int_case law_int_mean;
       test "integer means of extremes and empty axes" test_int_mean;
       test "a complex cumsum adds the parts, a narrow float's rounds once"
         test_scan_parts;
