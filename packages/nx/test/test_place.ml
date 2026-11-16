@@ -173,23 +173,25 @@ let holds ?dev xs shape w x =
 (* Each array of [y], at [w], shares the memory of an array of [x] or holds no
    more than its window's bytes. *)
 let allocates_its_window shape x w y =
-  let sources = shards x in
+  let sources = shards x and arrays = shards y in
+  let shared a =
+    Array.exists
+      (fun s -> Rig.Buffer.overlaps (A.buffer s) (A.buffer a))
+      sources
+  in
+  let ws = windows w shape in
+  cover "a destination that copies"
+    (List.exists Fun.id (List.mapi (fun j _ -> not (shared arrays.(j))) ws));
   List.iteri
     (fun j (_, b) ->
-      let a = (shards y).(j) in
-      let shared =
-        Array.exists
-          (fun s -> Rig.Buffer.overlaps (A.buffer s) (A.buffer a))
-          sources
-      in
-      if not shared then begin
-        cover "a destination that copies" true;
+      let a = arrays.(j) in
+      if not (shared a) then begin
         let n = Array.fold_left (fun n (_, k) -> n * k) 1 b in
         at_most int ~msg:"its buffer's bytes"
           ~than:(A.Dtype.bytes A.Dtype.Float32 n)
           (Rig.Buffer.length (A.buffer a))
       end)
-    (windows w shape)
+    ws
 
 let shape_of rank =
   Gen.array ~size:(Gen.constant rank) (Gen.of_list [ 0; 1; 3; 4; 5; 8 ])
@@ -376,15 +378,16 @@ let law_item (s, l, r, donated) =
         let (V x) = x in
         V (Nx.place Off.on x)
   in
-  (match r with
-  | Placed w ->
-      let counts a = List.map (fun (_, b) -> snd b.(a)) (windows w s) in
-      cover "split with tiles of two extents along an axis"
-        (split w
+  cover "split with tiles of two extents along an axis"
+    (match r with
+    | Placed w ->
+        let counts a = List.map (fun (_, b) -> snd b.(a)) (windows w s) in
+        split w
         && List.exists
              (fun a -> List.length (List.sort_uniq compare (counts a)) > 1)
-             (List.init (Array.length s) Fun.id))
-  | Off_host -> cover "off the host" true);
+             (List.init (Array.length s) Fun.id)
+    | Off_host -> false);
+  cover "off the host" (match r with Off_host -> true | Placed _ -> false);
   cover "donated" donated;
   let y = if donated then Nx.donate y else y in
   let xs = Nx.to_array y in
@@ -946,13 +949,13 @@ let law_stated (others, b, op, c) =
   cover "a batch of one beside another axis of one element"
     (Array.mem 1 others);
   cover "a batch of one beside none" (not (Array.mem 1 others));
-  (match op with
-  | Get _ -> cover "get" true
-  | Squeeze _ -> cover "squeeze" true
-  | Unsqueeze _ -> cover "unsqueeze" true
-  | Sliced l ->
-      cover "a slice of I and N"
-        (List.exists (function Whole_axis -> false | _ -> true) l));
+  cover "get" (match op with Get _ -> true | _ -> false);
+  cover "squeeze" (match op with Squeeze _ -> true | _ -> false);
+  cover "unsqueeze" (match op with Unsqueeze _ -> true | _ -> false);
+  cover "a slice of I and N"
+    (match op with
+    | Sliced l -> List.exists (function Whole_axis -> false | _ -> true) l
+    | _ -> false);
   List.iter
     (fun n ->
       let s = shape n in
@@ -1027,11 +1030,10 @@ let law_folded (mv, f, w) =
   let batch =
     match mv with Unsqueezed a -> if a = 0 then 1 else 0 | Row _ -> 0
   in
-  (match f with
-  | Sum a | Mean a ->
-      cover "a fold along the batch's axis" (a = batch);
-      cover "a fold along another axis" (a <> batch)
-  | Added -> cover "a sum beside a value on every device" true);
+  let along p = match f with Sum a | Mean a -> p a | Added -> false in
+  cover "a fold along the batch's axis" (along (fun a -> a = batch));
+  cover "a fold along another axis" (along (fun a -> a <> batch));
+  cover "a sum beside a value on every device" (f = Added);
   let run n =
     let h = folded mv f ~at:(fun _ x -> x) ~on:Fun.id n w in
     let y =
