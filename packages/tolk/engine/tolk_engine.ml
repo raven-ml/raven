@@ -155,11 +155,23 @@ let cell cells name =
       Hashtbl.add cells name i;
       i
 
+(* The bound [v] as an [int]: itself, or the bound of an [int] past which it
+   lies; [past] where it is no integer. *)
+let clamped ~past (v : Dtype.value) =
+  match v with
+  | `Int z when Bigint.fits_int z -> Bigint.to_int z
+  | `Int z -> if Bigint.sign z < 0 then min_int else max_int
+  | `Bool _ | `Float _ -> past
+
 (* How a run reads the variable [u]: its binding, or else the value it is bound
-   to. *)
+   to. A binding lies within [u]'s bounds, which decide whether a cast of [u]
+   narrows ([narrows]): a value outside them would be cast as if they held
+   it. *)
 let reader cells u =
   let name = Ops.expr u in
   let i = cell cells name in
+  let lo = clamped ~past:min_int (Ops.vmin u)
+  and hi = clamped ~past:max_int (Ops.vmax u) in
   let unset =
     match Ops.arg u with
     | Ops.Param { bound = Some b; _ } ->
@@ -169,7 +181,17 @@ let reader cells u =
         fun () ->
           invalid_arg (strf "Tolk_engine.run: variable %s is unbound" name)
   in
-  fun env -> if env.set.(i) then env.values.(i) else unset ()
+  fun env ->
+    if not env.set.(i) then unset ()
+    else
+      let v = env.values.(i) in
+      if v < lo || v > hi then
+        invalid_arg
+          (strf
+             "Tolk_engine.run: variable %s is bound to %d, outside its bounds \
+              %d to %d"
+             name v lo hi);
+      v
 
 (* Values as forms of words *)
 

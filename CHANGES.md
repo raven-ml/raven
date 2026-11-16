@@ -1351,6 +1351,10 @@ its lock and from samples the dashboard saw arrive.
   neither signed nor unsigned raises `Invalid_argument`, where it passed the
   low bits: from `Tolk_engine.link` where the value is constant, and from
   `Tolk_engine.run` where a value of 4 bytes changes per run.
+- `Tolk_engine.run` and `Tolk_engine.time` raise `Invalid_argument` for a
+  value of `vars` outside its variable's bounds. The bounds decide whether a
+  cast of the variable narrows, so such a value could reach a kernel
+  untruncated.
 - A call's grid and a loop's trips may move with an enclosing loop's trips by
   a constant factor, which `Tolk_engine.link` refused.
 - On a GPU, a float32 projection into heads whose upcast takes the heads whole

@@ -148,7 +148,8 @@ val run : ?vars:(string * int) list -> t -> Rig.Buffer.t option array -> unit
     parameter [i] (an untagged {!Tolk.Op.Param}), on the parameter's device,
     and each variable of the schedule bound to its value in [vars]
     (default [[]]), or else to the value its call binds it to
-    ({!Tolk.Realize.get_call_kernel_args}). The calls of the kernels
+    ({!Tolk.Realize.get_call_kernel_args}), a value within the variable's
+    bounds. The calls of the kernels
     {!Tolk.Schedule.create_linear_with_vars} makes bind no name their sink
     binds to one value, unless the kernel runs as one with a custom kernel
     that takes it, so [vars] must bind such a name; that function returns it
@@ -178,9 +179,11 @@ val run : ?vars:(string * int) list -> t -> Rig.Buffer.t option array -> unit
     Raises [Invalid_argument] if [slots] does not bind each parameter of [s] to
     a buffer of its device holding its parameter's bytes, if a
     buffer a kernel accesses does not start at its parameter's phase, if
-    [vars] leaves out a variable its call binds no value to, if a cast whose
-    number is read holds a value past an [int] ({!link}), and as
-    {!Rig_program.run} does; {!Rig.Out_of_memory}
+    [vars] leaves out a variable its call binds no value to, if it binds a
+    variable to a value outside the variable's bounds, which decide whether a
+    cast of it narrows ({!link}), if a cast whose number is read holds a
+    value past an [int] ({!link}), and as {!Rig_program.run} does;
+    {!Rig.Out_of_memory}
     if a device cannot allocate the storage of a schedule linked {!Per_run}:
     no call has run, and the storage the run made is returned. *)
 

@@ -2803,7 +2803,10 @@ Withdrawn: multi-device is out of scope, see README.
   link refuses such a cast where its operand moves with a loop's trips. A
   scalar of 1, 2 or 4 bytes takes only a value its bytes hold, signed or
   unsigned: a link refuses a constant they do not hold, and the run a value
-  of 4 bytes, where that conversion keeps the low bits.
+  of 4 bytes, where that conversion keeps the low bits. Whether a cast
+  narrows is decided by its operand's bounds, so a run refuses a binding
+  outside its variable's bounds, which tinygrad checks only where a variable
+  is bound (`UOp.bind`, `uop/ops.py`).
   `Shape.sym_compile` is the port of
   `_sym_fxn`, and `Shape.sym_infer` of `sym_infer` (`uop/ops.py` `sym_infer`),
   which evaluates once; a caller that evaluates an integer many times keeps the
@@ -2830,8 +2833,9 @@ Withdrawn: multi-device is out of scope, see README.
   an int as a 4-byte scalar is refused`, `› a narrowing cast in a split
   loop's count keeps its low bits`, `› a 4-byte scalar that 32 bits
   hold reaches the kernel`, `› a 4-byte scalar that 32 bits do not hold is
-  refused`, `› a narrowing of a value that moves with a loop's trips is
-  refused`, `› a loop's trips move with an outer loop's trip`,
+  refused`, `› a binding outside its variable's bounds is refused at the
+  run`, `› a narrowing of a value that moves with a loop's trips is refused`,
+  `› a loop's trips move with an outer loop's trip`,
   `GPUs › <kind> › a call's grid moves with its loop's trips` and `runs › runs
   of one schedule from two domains each compute their own`; the Ops suite
   (`test/uop/ops`): `sym_compile › computes what exact arithmetic does,

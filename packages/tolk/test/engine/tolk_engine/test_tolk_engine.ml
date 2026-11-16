@@ -3191,25 +3191,49 @@ let splits_a_narrowed_count () =
   Engine.run ~vars:[ ("x", -(1 lsl 32) + 3) ] s [| Some buffer |];
   equal values [| int 3; int 3; int 3; int (-1) |] (Run.values Int32 buffer)
 
-(* Constants and values of [narrowed] as a 4-byte scalar, uncast: those 32
-   bits hold, signed or unsigned, reach the kernel as their low 32 bits. *)
+(* The variable [whole] of [Int64], over every [int]. *)
+let whole_var =
+  Ops.variable ~dtype:Int64 "whole" (Dtype.Value.of_int min_int)
+    (Dtype.Value.of_int max_int)
+
+(* Constants and values of [whole] as a 4-byte scalar, uncast: those 32 bits
+   hold, signed or unsigned, reach the kernel as their low 32 bits. *)
 let held_by_32_bits = [ (-0x8000_0000, -0x8000_0000); (0xffff_ffff, -1) ]
 let past_32_bits = [ -0x8000_0001; 0x1_0000_0000 ]
 
 let reads_a_wide_scalar (v, low) =
   equal values ~msg:"a constant" (int_value low) (stored (widened (int64 v)));
   equal values ~msg:"a variable" (int_value low)
-    (stored ~v (widened narrowed_var))
+    (stored ~name:"whole" ~v (widened whole_var))
 
 (* A link refuses a constant 32 bits do not hold, and a run a value of
-   [narrowed]. *)
+   [whole]. *)
 let refuses_a_wide_scalar v =
   raises_match ~msg:"a constant" (Exn.invalid_arg ~sub:"4 bytes") (fun () ->
       widened (int64 v));
-  let s = widened narrowed_var in
+  let s = widened whole_var in
   raises_match ~msg:"a variable"
     (Exn.invalid_arg ~sub:"which 32 bits hold neither")
-    (fun () -> stored ~v s)
+    (fun () -> stored ~name:"whole" ~v s)
+
+(* The variable [bounded] of [Int64], from [0] to [2^31 - 1], which a cast to
+   [Int32] holds. *)
+let bounded_var =
+  Ops.variable ~dtype:Int64 "bounded" (Dtype.Value.of_int 0)
+    (Dtype.Value.of_int 0x7fff_ffff)
+
+(* Whether a cast narrows is decided by its operand's bounds, so a run
+   refuses a binding outside them: [bounded]'s cast to [Int32], halved, is a
+   quotient of [bounded] within them, and of [2^32 + 4] the kernel would
+   read [2] where the link computes [0x8000_0002]. *)
+let refuses_an_unbounded_binding () =
+  let s = widened Ops.O.(Ops.cast bounded_var Int32 // int 2) in
+  let run v () = stored ~name:"bounded" ~v s in
+  equal values ~msg:"within" (int_value 0x3fff_ffff) (run 0x7fff_ffff ());
+  raises_match ~msg:"above"
+    (Exn.invalid_arg ~sub:"outside its bounds")
+    (run ((1 lsl 32) + 4));
+  raises_match ~msg:"below" (Exn.invalid_arg ~sub:"outside its bounds") (run (-1))
 
 (* A loop of two trips [r] around a call of [widening] whose scalar is the
    cast to [Int32] of [r * 2^32]: a narrowing of a value that moves with the
@@ -6367,6 +6391,8 @@ let schedules =
         held_by_32_bits reads_a_wide_scalar;
       cases "a 4-byte scalar that 32 bits do not hold is refused"
         ~id:string_of_int past_32_bits refuses_a_wide_scalar;
+      test "a binding outside its variable's bounds is refused at the run"
+        refuses_an_unbounded_binding;
       test "a narrowing of a value that moves with a loop's trips is refused"
         refuses_a_moving_narrowing;
       test "a loop's trips move with an outer loop's trip" moves_inner_trips;
