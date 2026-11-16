@@ -1566,25 +1566,40 @@ type lcse_case =
       -> lcse_case
 
 (* A float dtype and moderate terms, at times infinite, [-0.] or a NaN, or in
-   a quarter of the cases mostly those, along an axis or over the elements,
-   read through a transposed view or not. *)
+   half the cases mostly those, -inf the most, in 5 to 8 rows of 2 to 6, so
+   that a case holds prefixes of each kind; along an axis or over the
+   elements, read through a transposed view or not. float64 and float32 come
+   2 times in 9 each. *)
 let lcse_case =
   let open Gen in
   let floats (type s) (dt : (float, s) D.t) =
-    let element moderate =
+    let element ~moderate ~neg_inf =
       frequency
         [
           (moderate, float_range (-5.) 5.);
           (1, constant (-0.));
-          (1, constant Float.neg_infinity);
+          (neg_inf, constant Float.neg_infinity);
           (1, constant Float.infinity);
           (1, map (fun k -> nan_with (Int64.of_int k)) (int_range 1 1000));
         ]
     in
-    let* moderate = frequency [ (3, constant 40); (1, constant 1) ] in
-    let element = element moderate in
-    let* s, axis = along in
-    let* flat = frequency [ (3, constant false); (1, constant true) ] in
+    let* special = bool in
+    let* s, axis =
+      if not special then along
+      else
+        let+ rows = int_range 5 8
+        and+ cols = int_range 2 6
+        and+ axis = frequency [ (2, constant 0); (1, constant 1) ] in
+        ([| rows; cols |], axis)
+    in
+    let element =
+      if special then element ~moderate:2 ~neg_inf:3
+      else element ~moderate:40 ~neg_inf:1
+    in
+    let* flat =
+      if special then bool
+      else frequency [ (3, constant false); (1, constant true) ]
+    in
     let* strided = bool in
     let+ xs = array ~size:(constant (Array.fold_left ( * ) 1 s)) element in
     Lcse_case (dt, s, (if flat then None else Some axis), strided, xs)
@@ -1596,15 +1611,15 @@ let lcse_case =
         | Some a -> Printf.sprintf "along %d" a
         | None -> "in C order")
         (if strided then ", transposed" else ""))
-    (one_of
+    (frequency
        [
-         floats D.Float64;
-         floats D.Float32;
-         floats D.Float16;
-         floats D.Bfloat16;
-         floats D.Float8_e4m3fn;
-         floats D.Float8_e5m2;
-         floats D.Float4_e2m1fn;
+         (2, floats D.Float64);
+         (2, floats D.Float32);
+         (1, floats D.Float16);
+         (1, floats D.Bfloat16);
+         (1, floats D.Float8_e4m3fn);
+         (1, floats D.Float8_e5m2);
+         (1, floats D.Float4_e2m1fn);
        ])
 
 let law_lcse (Lcse_case (dt, s, axis, strided, xs)) =
@@ -1697,8 +1712,13 @@ let law_lcse_bits ((Lcse_case (dt, s, axis, strided, xs)), cut, keep) =
   equal ~msg:"cut over three devices" blind_bits (bits_of y)
     (bits_of (Nx.logcumsumexp ?axis placed))
 
+(* A case, the axis to cut, and the prefix to keep, empty one time in four or
+   more. *)
 let lcse_bits_case =
-  Gen.(triple lcse_case (int_range 0 7) (int_range 0 40))
+  Gen.(
+    triple lcse_case (int_range 0 7)
+      (frequency
+         [ (1, constant ~pp:Format.pp_print_int 0); (3, int_range 0 40) ]))
 
 let test_lcse_cases () =
   let f64 xs = value (A.of_array D.Float64 [| Array.length xs |] xs) in
