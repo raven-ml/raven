@@ -9633,12 +9633,17 @@ let lanes_and_threads =
    ([lid.x] on Metal), take consecutive outputs, and the first operand, which no
    output of that axis reads apart, is one address for them. Grouping the batch
    from the top, as tinygrad names [r_3_256_16_64_64], read the second operand
-   1048576 floats apart from one [lid.x] to the next. *)
+   1048576 floats apart from one [lid.x] to the next.
 
-(* The address, in elements, that the load [l] reads with [lidx0] at [t] and
-   every other index, of a workgroup, a thread or a loop, at 0. *)
-let address_at l t =
-  let i = Ops.get_idx (Ops.nth (Ops.nth l 0) 1) in
+   A map whose workgroup spans two output axes stores along the inner one,
+   the output's unit stride, from consecutive [lidx0]: each thread's elements
+   follow the previous thread's. Taking the outer axis first, as tinygrad
+   orders the splits, put [lidx0] on the rows: the threads of [rmsnorm]'s
+   scaled map stored 4 floats a thread, 64 floats apart. *)
+
+(* The value of the index [i] with [lidx0] at [t] and every other index, of a
+   workgroup, a thread or a loop, at 0. *)
+let index_at i t =
   let at u =
     let value v =
       Some (u, Ops.const ~dtype:(Ops.dtype u) (`Int (Bigint.of_int v)))
@@ -9650,6 +9655,10 @@ let address_at l t =
   in
   let subs = List.filter_map at (Ops.toposort ~calls:Skip i) in
   Shape.sym_infer (Sym (Ops.substitute ~calls:Skip ~pass:Fixed_point i subs)) []
+
+(* The address, in elements, that the load [l] reads with [lidx0] at [t] and
+   every other index at 0. *)
+let address_at l t = index_at (Ops.get_idx (Ops.nth (Ops.nth l 0) 1)) t
 
 (* The loads of global memory among a program's instructions. *)
 let global_loads prg =
@@ -9674,6 +9683,73 @@ let threads_of_workgroups =
           (global_loads (program row))
       in
       equal (list int) [ 0; 1 ] (List.sort_uniq Int.compare steps))
+
+(* The first address, in elements, that the store [s] writes with [lidx0] at
+   [t] and every other index at 0, and how many elements it writes: one
+   through an index, a run through a shrink of its buffer. *)
+let stored_at s t =
+  let target = Ops.nth s 0 in
+  match Ops.op target with
+  | Op.Shrink ->
+      let n = Shape.sym_infer (Sym (Ops.nth target 2)) [] in
+      (index_at (Ops.nth target 1) t, n)
+  | _ -> (index_at (Ops.get_idx (Ops.nth target 1)) t, 1)
+
+(* The stores of global memory among a program's instructions. *)
+let global_stores prg =
+  List.filter
+    (fun u ->
+      Ops.op u = Op.Store
+      && Ops.addrspace (Ops.buf_uop (Ops.nth u 0)) = Some Dtype.Global)
+    (Ops.src (Ops.nth prg 1))
+
+(* The addresses, in order, that a thread with [lidx0] at [t] and every other
+   index at 0 stores to among [stores]. *)
+let stored_by stores t =
+  List.sort Int.compare
+    (List.concat_map
+       (fun s ->
+         let a, n = stored_at s t in
+         List.init n (( + ) a))
+       stores)
+
+let map_threads =
+  let is_map row =
+    not
+      (List.exists
+         (fun u -> Ops.op u = Op.Reduce)
+         (Ops.toposort ~calls:Skip (kernel_of (row "name"))))
+  in
+  let two_locals prg =
+    match Ops.arg prg with
+    | Program p ->
+        let spans = function Ops.Int n -> n > 1 | Sym _ -> true in
+        List.length (List.filter spans p.local_size) >= 2
+    | _ -> false
+  in
+  (* Chosen by their recorded programs: the suite compiles nothing until a
+     test runs, as its tests of the disk cache run it again in a child that
+     must not compile. *)
+  let on_gpu row = compiles row && row "target" <> "clang" && is_map row in
+  let rows =
+    List.filter
+      (fun row -> on_gpu row && two_locals (recorded_program row))
+      (Golden.rows "cases.golden")
+  in
+  cases
+    "consecutive lid.x threads of a map over two local axes store one run \
+     after another"
+    ~id:(fun row -> row "name")
+    rows
+    (fun row ->
+      let stores = global_stores (program row) in
+      let first = stored_by stores 0 in
+      let n = List.length first in
+      let run a = List.init n (( + ) a) in
+      let a = List.hd first in
+      equal (pair (list int) (list int))
+        (run a, run (a + n))
+        (first, stored_by stores 1))
 
 (* Hand-written kernels on the host
 
@@ -10025,6 +10101,7 @@ let () =
            weak_ranges;
            lanes_and_threads;
            threads_of_workgroups;
+           map_threads;
            variable_sizes;
            multiply_adds;
            narrow_multiply_adds;

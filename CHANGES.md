@@ -1338,6 +1338,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A GPU kernel outside a blocked contraction whose workgroup spans two
+  output axes runs its consecutive threads along the output's unit stride
+  (`Heuristic.hand_coded_optimizations`), where they stepped along the
+  rows: `Nx.rms_norm` at bfloat16 [512; 2880] takes 35% less time on CUDA.
 - `Tolk_engine.link` keeps the low bits of a cast to a narrower integer type
   wherever it sits in a scalar argument, a grid or a loop's trips, where it
   dropped the cast: the cast to `int32` of `0x1_0000_0004`, halved, is 2. It

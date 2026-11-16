@@ -1186,19 +1186,23 @@ let locals ?blocked k =
     | None -> greedy
   in
   let first_three = List.filteri (fun i _ -> i < 3) to_local in
-  ignore
-    (List.fold_left
-       (fun deleted_shape (axis, local_sz) ->
-         let axis = axis - deleted_shape in
-         let will_delete_shape =
-           Option.equal Bigint.equal
-             (known_size (shape_at k axis))
-             (Some (Bigint.of_int local_sz))
-         in
-         ignore (split k axis local_sz Opt.Local);
-         if will_delete_shape then deleted_shape + 1 else deleted_shape)
-       0
-       (List.sort Stdlib.compare first_three))
+  (* The innermost axis's split first. A new range is numbered after every
+     other and the lowest-numbered local is [lidx0], whose consecutive values
+     make a SIMD group, so its lanes take consecutive elements of the output's
+     unit-stride axis, as [gidx0] does. A blocked contraction's threads keep
+     the order its plan was measured in: its traffic is its operands' tiles,
+     not its output. Each split finds its range by identity, since an earlier
+     split may delete an axis or place a local before a weak one. *)
+  let ascending (a, _) (b, _) = Int.compare a b in
+  let order =
+    if Option.is_none blocked then fun x y -> ascending y x else ascending
+  in
+  let rngs = K.rngs k in
+  List.iter
+    (fun (r, local_sz) -> ignore (split k (axis_of k r) local_sz Opt.Local))
+    (List.map
+       (fun (axis, local_sz) -> (List.nth rngs axis, local_sz))
+       (List.sort order first_three))
 
 (* A contraction streams before a tensor core when it sums at least [summed]
    values an output, between the sums measured: the keys of a decode step's

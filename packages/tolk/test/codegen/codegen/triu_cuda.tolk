@@ -1,0 +1,73 @@
+# tolk D486 golden=4930c9353fb50a515f22674da7aa5639
+0 Ops.STACK dtypes.void []
+1 Ops.CONST dtypes.weakint [] 65536
+2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32)
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.CAST dtypes.i32 [3] dtypes.i32
+5 Ops.SPECIAL dtypes.i32 [4] "gidx0"
+6 Ops.CONST dtypes.weakint [] 6
+7 Ops.CAST dtypes.i32 [6] dtypes.i32
+8 Ops.SHL dtypes.i32 [5, 7]
+9 Ops.CONST dtypes.weakint [] 16
+10 Ops.CAST dtypes.i32 [9] dtypes.i32
+11 Ops.SPECIAL dtypes.i32 [10] "lidx0"
+12 Ops.CONST dtypes.weakint [] 2
+13 Ops.CAST dtypes.i32 [12] dtypes.i32
+14 Ops.SHL dtypes.i32 [11, 13]
+15 Ops.ADD dtypes.i32 [8, 14]
+16 Ops.CONST dtypes.weakint [] 32
+17 Ops.CAST dtypes.i32 [16] dtypes.i32
+18 Ops.SPECIAL dtypes.i32 [17] "gidx1"
+19 Ops.CONST dtypes.weakint [] 11
+20 Ops.CAST dtypes.i32 [19] dtypes.i32
+21 Ops.SHL dtypes.i32 [18, 20]
+22 Ops.CONST dtypes.weakint [] 8
+23 Ops.CAST dtypes.i32 [22] dtypes.i32
+24 Ops.SPECIAL dtypes.i32 [23] "lidx1"
+25 Ops.SHL dtypes.i32 [24, 23]
+26 Ops.ADD dtypes.i32 [21, 25]
+27 Ops.ADD dtypes.i32 [15, 26]
+28 Ops.SHRINK dtypes.f32 [2, 27, 4]
+29 Ops.PARAM dtypes.f32 [1] ParamArg(slot=1, dtype=dtypes.f32)
+30 Ops.INDEX dtypes.f32 [29, 27]
+31 Ops.CONST dtypes.weakfloat [] 0.0
+32 Ops.CAST dtypes.f32 [31] dtypes.f32
+33 Ops.CONST dtypes.weakint [] 3
+34 Ops.CAST dtypes.i32 [33] dtypes.i32
+35 Ops.SHL dtypes.i32 [18, 34]
+36 Ops.ADD dtypes.i32 [35, 24]
+37 Ops.CMPLT dtypes.bool [15, 36]
+38 Ops.CONST dtypes.bool [] False
+39 Ops.CAST dtypes.bool [38] dtypes.bool
+40 Ops.CMPEQ dtypes.bool [37, 39]
+41 Ops.LOAD dtypes.f32 [30, 32, 40]
+42 Ops.CONST dtypes.weakint [] 1
+43 Ops.CAST dtypes.i32 [42] dtypes.i32
+44 Ops.ADD dtypes.i32 [27, 43]
+45 Ops.INDEX dtypes.f32 [29, 44]
+46 Ops.ADD dtypes.i32 [15, 43]
+47 Ops.CMPLT dtypes.bool [46, 36]
+48 Ops.CMPEQ dtypes.bool [47, 39]
+49 Ops.LOAD dtypes.f32 [45, 32, 48]
+50 Ops.ADD dtypes.i32 [27, 13]
+51 Ops.INDEX dtypes.f32 [29, 50]
+52 Ops.ADD dtypes.i32 [15, 13]
+53 Ops.CMPLT dtypes.bool [52, 36]
+54 Ops.CMPEQ dtypes.bool [53, 39]
+55 Ops.LOAD dtypes.f32 [51, 32, 54]
+56 Ops.ADD dtypes.i32 [27, 34]
+57 Ops.INDEX dtypes.f32 [29, 56]
+58 Ops.ADD dtypes.i32 [15, 34]
+59 Ops.CMPLT dtypes.bool [58, 36]
+60 Ops.CMPEQ dtypes.bool [59, 39]
+61 Ops.LOAD dtypes.f32 [57, 32, 60]
+62 Ops.STACK dtypes.f32 [41, 49, 55, 61]
+63 Ops.STORE dtypes.void [28, 62]
+64 Ops.AFTER dtypes.void [0, 63]
+65 Ops.SINK dtypes.void [64] KernelInfo(name="E_32_4_16_8_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.LOCAL))), optimized=True)
+66 Ops.SINK dtypes.void [64] KernelInfo(name="E_32_4_16_8_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.LOCAL))), estimates=Estimates(ops=212992, lds=524288, mem=524288), optimized=True)
+67 Ops.LINEAR dtypes.void [1, 2, 29, 3, 4, 5, 16, 17, 18, 9, 10, 11, 22, 23, 24, 42, 43, 19, 20, 12, 13, 6, 7, 8, 14, 15, 21, 25, 26, 27, 44, 45, 38, 39, 31, 32, 33, 34, 46, 35, 36, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 30, 37, 40, 41, 0, 62, 28, 63, 64, 66]
+68 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(128) E_32_4_16_8_4(float* data0_65536, float* data1_65536) {\n  int gidx0 = blockIdx.x; /* 4 */\n  int gidx1 = blockIdx.y; /* 32 */\n  int lidx0 = threadIdx.x; /* 16 */\n  int lidx1 = threadIdx.y; /* 8 */\n  int alu0 = ((gidx0<<6)+(lidx0<<2));\n  int alu1 = (alu0+((gidx1<<11)+(lidx1<<8)));\n  int alu2 = ((gidx1<<3)+lidx1);\n  float val0 = ((((alu0+1)<alu2)==0)?*(data1_65536+(alu1+1)):0.0f);\n  float val1 = ((((alu0+2)<alu2)==0)?*(data1_65536+(alu1+2)):0.0f);\n  float val2 = ((((alu0+3)<alu2)==0)?*(data1_65536+(alu1+3)):0.0f);\n  float val3 = (((alu0<alu2)==0)?*(data1_65536+alu1):0.0f);\n  *((float4*)((data0_65536+alu1))) = make_float4(val3,val0,val1,val2);\n}"
+69 Ops.PROGRAM dtypes.void [66, 67, 68] ProgramInfo(global_size=(4, 32, 1), local_size=(16, 8, 1), params=(%2, %29), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
+70 Ops.SINK dtypes.void [65, 69]
+

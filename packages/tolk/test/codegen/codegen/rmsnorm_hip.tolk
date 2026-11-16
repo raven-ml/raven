@@ -1,0 +1,49 @@
+# tolk D486 golden=31447ac7f7f407a1ff7731b18a726665
+0 Ops.STACK dtypes.void []
+1 Ops.CONST dtypes.weakint [] 256
+2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32)
+3 Ops.CONST dtypes.weakint [] 16
+4 Ops.CAST dtypes.i32 [3] dtypes.i32
+5 Ops.SPECIAL dtypes.i32 [4] "lidx0"
+6 Ops.CONST dtypes.weakint [] 2
+7 Ops.CAST dtypes.i32 [6] dtypes.i32
+8 Ops.SHL dtypes.i32 [5, 7]
+9 Ops.CONST dtypes.weakint [] 4
+10 Ops.CAST dtypes.i32 [9] dtypes.i32
+11 Ops.SPECIAL dtypes.i32 [10] "lidx1"
+12 Ops.CONST dtypes.weakint [] 6
+13 Ops.CAST dtypes.i32 [12] dtypes.i32
+14 Ops.SHL dtypes.i32 [11, 13]
+15 Ops.ADD dtypes.i32 [8, 14]
+16 Ops.SHRINK dtypes.f32 [2, 15, 10]
+17 Ops.PARAM dtypes.f32 [1] ParamArg(slot=1, dtype=dtypes.f32)
+18 Ops.SHRINK dtypes.f32 [17, 15, 10]
+19 Ops.LOAD dtypes.f32 [18]
+20 Ops.CONST dtypes.weakint [] 0
+21 Ops.CAST dtypes.i32 [20] dtypes.i32
+22 Ops.INDEX dtypes.f32 [19, 21]
+23 Ops.PARAM dtypes.f32 [9] ParamArg(slot=2, dtype=dtypes.f32)
+24 Ops.INDEX dtypes.f32 [23, 11]
+25 Ops.LOAD dtypes.f32 [24]
+26 Ops.RECIP dtypes.f32 [25]
+27 Ops.MUL dtypes.f32 [22, 26]
+28 Ops.CONST dtypes.weakint [] 1
+29 Ops.CAST dtypes.i32 [28] dtypes.i32
+30 Ops.INDEX dtypes.f32 [19, 29]
+31 Ops.MUL dtypes.f32 [30, 26]
+32 Ops.INDEX dtypes.f32 [19, 7]
+33 Ops.MUL dtypes.f32 [32, 26]
+34 Ops.CONST dtypes.weakint [] 3
+35 Ops.CAST dtypes.i32 [34] dtypes.i32
+36 Ops.INDEX dtypes.f32 [19, 35]
+37 Ops.MUL dtypes.f32 [36, 26]
+38 Ops.STACK dtypes.f32 [27, 31, 33, 37]
+39 Ops.STORE dtypes.void [16, 38]
+40 Ops.AFTER dtypes.void [0, 39]
+41 Ops.SINK dtypes.void [40] KernelInfo(name="E_16_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), optimized=True)
+42 Ops.SINK dtypes.void [40] KernelInfo(name="E_16_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), estimates=Estimates(ops=320, lds=2064, mem=2064), optimized=True)
+43 Ops.LINEAR dtypes.void [1, 2, 17, 9, 23, 10, 11, 24, 25, 3, 4, 5, 6, 7, 12, 13, 8, 14, 15, 18, 19, 0, 20, 21, 22, 28, 29, 30, 32, 34, 35, 36, 26, 27, 31, 33, 37, 38, 16, 39, 40, 42]
+44 Ops.SOURCE dtypes.void [] "typedef long unsigned int size_t;\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);\ntypedef float float4 __attribute__((ext_vector_type(4)));\nstatic inline __attribute__((device)) float4 make_float4(float x, float y, float z, float w) { return { x, y, z, w }; }\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 64))) E_16_4_4(float* data0_256, float* data1_256, float* data2_4) {\n  int lidx1 = __ockl_get_local_id(1); /* 4 */\n  float val0 = (*(data2_4+lidx1));\n  int lidx0 = __ockl_get_local_id(0); /* 16 */\n  int alu0 = ((lidx0<<2)+(lidx1<<6));\n  float4 val1 = (*((float4*)((data1_256+alu0))));\n  float alu1 = (1/val0);\n  *((float4*)((data0_256+alu0))) = make_float4((val1.x*alu1),(val1.y*alu1),(val1.z*alu1),(val1.w*alu1));\n}"
+45 Ops.PROGRAM dtypes.void [42, 43, 44] ProgramInfo(local_size=(16, 4, 1), params=(%2, %17, %23), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
+46 Ops.SINK dtypes.void [41, 45]
+

@@ -1,0 +1,63 @@
+# tolk D486 golden=1272735f86128a87b13e9147a1d5fad4
+0 Ops.STACK dtypes.void []
+1 Ops.CONST dtypes.weakint [] 1024
+2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32)
+3 Ops.CONST dtypes.weakint [] 2
+4 Ops.CAST dtypes.i32 [3] dtypes.i32
+5 Ops.SPECIAL dtypes.i32 [4] "gidx0"
+6 Ops.CONST dtypes.weakint [] 6
+7 Ops.CAST dtypes.i32 [6] dtypes.i32
+8 Ops.SHL dtypes.i32 [5, 7]
+9 Ops.CONST dtypes.weakint [] 16
+10 Ops.CAST dtypes.i32 [9] dtypes.i32
+11 Ops.SPECIAL dtypes.i32 [10] "lidx0"
+12 Ops.SHL dtypes.i32 [11, 4]
+13 Ops.ADD dtypes.i32 [8, 12]
+14 Ops.CONST dtypes.weakint [] 8
+15 Ops.CAST dtypes.i32 [14] dtypes.i32
+16 Ops.SPECIAL dtypes.i32 [15] "lidx1"
+17 Ops.CONST dtypes.weakint [] 7
+18 Ops.CAST dtypes.i32 [17] dtypes.i32
+19 Ops.SHL dtypes.i32 [16, 18]
+20 Ops.ADD dtypes.i32 [13, 19]
+21 Ops.CONST dtypes.weakint [] 4
+22 Ops.CAST dtypes.i32 [21] dtypes.i32
+23 Ops.SHRINK dtypes.f32 [2, 20, 22]
+24 Ops.PARAM dtypes.f32 [1] ParamArg(slot=1, dtype=dtypes.f32)
+25 Ops.SHRINK dtypes.f32 [24, 20, 22]
+26 Ops.LOAD dtypes.f32 [25]
+27 Ops.CONST dtypes.weakint [] 0
+28 Ops.CAST dtypes.i32 [27] dtypes.i32
+29 Ops.INDEX dtypes.f32 [26, 28]
+30 Ops.PARAM dtypes.f32 [14] ParamArg(slot=2, dtype=dtypes.f32)
+31 Ops.INDEX dtypes.f32 [30, 16]
+32 Ops.LOAD dtypes.f32 [31]
+33 Ops.SUB dtypes.f32 [29, 32]
+34 Ops.PARAM dtypes.f32 [14] ParamArg(slot=3, dtype=dtypes.f32)
+35 Ops.INDEX dtypes.f32 [34, 16]
+36 Ops.LOAD dtypes.f32 [35]
+37 Ops.RECIP dtypes.f32 [36]
+38 Ops.MUL dtypes.f32 [33, 37]
+39 Ops.CONST dtypes.weakint [] 1
+40 Ops.CAST dtypes.i32 [39] dtypes.i32
+41 Ops.INDEX dtypes.f32 [26, 40]
+42 Ops.SUB dtypes.f32 [41, 32]
+43 Ops.MUL dtypes.f32 [42, 37]
+44 Ops.INDEX dtypes.f32 [26, 4]
+45 Ops.SUB dtypes.f32 [44, 32]
+46 Ops.MUL dtypes.f32 [45, 37]
+47 Ops.CONST dtypes.weakint [] 3
+48 Ops.CAST dtypes.i32 [47] dtypes.i32
+49 Ops.INDEX dtypes.f32 [26, 48]
+50 Ops.SUB dtypes.f32 [49, 32]
+51 Ops.MUL dtypes.f32 [50, 37]
+52 Ops.STACK dtypes.f32 [38, 43, 46, 51]
+53 Ops.STORE dtypes.void [23, 52]
+54 Ops.AFTER dtypes.void [0, 53]
+55 Ops.SINK dtypes.void [54] KernelInfo(name="E_2_16_8_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.LOCAL))), optimized=True)
+56 Ops.SINK dtypes.void [54] KernelInfo(name="E_2_16_8_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.LOCAL))), estimates=Estimates(ops=2304, lds=8256, mem=8256), optimized=True)
+57 Ops.LINEAR dtypes.void [1, 2, 24, 14, 30, 34, 15, 16, 31, 32, 35, 36, 3, 4, 5, 9, 10, 11, 21, 22, 6, 7, 17, 18, 8, 12, 13, 19, 20, 25, 26, 0, 27, 28, 29, 39, 40, 41, 44, 47, 48, 49, 37, 33, 38, 42, 43, 45, 46, 50, 51, 52, 23, 53, 54, 56]
+58 Ops.SOURCE dtypes.void [] "typedef long unsigned int size_t;\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);\ntypedef float float4 __attribute__((ext_vector_type(4)));\nstatic inline __attribute__((device)) float4 make_float4(float x, float y, float z, float w) { return { x, y, z, w }; }\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 128))) E_2_16_8_4(float* data0_1024, float* data1_1024, float* data2_8, float* data3_8) {\n  int lidx1 = __ockl_get_local_id(1); /* 8 */\n  float val0 = (*(data2_8+lidx1));\n  float val1 = (*(data3_8+lidx1));\n  int gidx0 = __ockl_get_group_id(0); /* 2 */\n  int lidx0 = __ockl_get_local_id(0); /* 16 */\n  int alu0 = ((gidx0<<6)+(lidx0<<2)+(lidx1<<7));\n  float4 val2 = (*((float4*)((data1_1024+alu0))));\n  float alu1 = (1/val1);\n  *((float4*)((data0_1024+alu0))) = make_float4(((val2.x-val0)*alu1),((val2.y-val0)*alu1),((val2.z-val0)*alu1),((val2.w-val0)*alu1));\n}"
+59 Ops.PROGRAM dtypes.void [56, 57, 58] ProgramInfo(global_size=(2, 1, 1), local_size=(16, 8, 1), params=(%2, %24, %30, %34), globals=(0, 1, 2, 3), outs=(0,), ins=(1, 2, 3), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
+60 Ops.SINK dtypes.void [55, 59]
+

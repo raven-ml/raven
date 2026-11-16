@@ -10614,3 +10614,64 @@ kept in ordered sets, change no source and belong to D466.
   sources keep two binaries whatever comments, literals, splices and
   trigraphs their code holds, a comment after a digit separator); the bench
   row is owed.
+
+## D486. A workgroup's first thread index runs along its innermost local axis
+
+- **tinygrad:** `codegen/opt/heuristic.py` (`hand_coded_optimizations`'
+  local splits: outside its QCOM branch, the ranked splits applied in
+  ascending axis order, `sorted(to_local[:3])`); `codegen/opt/postrange.py`
+  (`shift_to`, a new range numbered after every existing one);
+  `codegen/gpudims.py` `group_gpudims` (local ranges sorted by number, the
+  first `lidx0`).
+- **tolk:** `Heuristic.locals`.
+- **Differs:** outside a blocked contraction, the splits that `locals`
+  ranks are applied from the innermost axis out, so the split of the latest
+  axis is numbered first and becomes `lidx0`, the first hardware thread
+  index, as tinygrad's QCOM branch already does ("apply innermost global
+  axes first so the leading hardware local dims hold the trailing global
+  axes, like gidx"). Which axes take threads, and how many, is tinygrad's.
+  A kernel's innermost axis is its output's unit stride, and a SIMD group
+  holds consecutive values of the first thread index, so its lanes store
+  and load consecutive elements. In ascending order a two-axis map gave
+  `lidx0` to the rows: `Nx.rms_norm`'s scaled map over 512 rows of 2880
+  bfloat16 (`E_16_60_8_16_3_4`) had lane-adjacent threads 23 KB apart, a
+  warp's 2-byte loads spread over 8 rows. The CUDA C++ Programming Guide,
+  §2.3.2 ("Thread Hierarchy"): "The threads of a block are linearized
+  predictably: the first index `x` moves the fastest, followed by `y` and
+  then `z`"; §3.2.2.2 ("Hardware Multithreading"): "each warp contains
+  threads of consecutive, increasing thread IDs with the first warp
+  containing thread 0." The CUDA C++ Best Practices Guide, §10.2.1.1: "the
+  k-th thread accesses the k-th word in a 32-byte aligned array." HIP's
+  programming model ("Hierarchical thread model"): "When linearizing thread
+  IDs within a block, assume the fast index is the x dimension"; that x is
+  the fastest index is read, which threads a wavefront holds is unread.
+  Metal's order of a SIMD group's threads is unread. Each split finds its
+  axis by its range, since an earlier split may delete an axis or place a
+  local before a weak one, where tinygrad corrects a planned index for
+  deleted axes alone (`deleted_shape`). Kernels
+  that group, stream or take a tensor core keep their threads (D357, D89);
+  an unblocked contraction takes the order as a map does. This entry
+  leaves blocked contractions in ascending order, a scope and not a
+  principle: no reference says which operand's stride a blocked tile's
+  lanes should follow, its threads' plan (`blocked_threads`) was
+  measured in that order, and the innermost-first order moved rune's
+  `Cuda/` products both ways (`matmul-float32-heads-16384x440x4x110` 457
+  to 354 us, `attention/jit-jvp-bf16-8x2048x64-full` 2.00 to 2.10-2.12
+  ms).
+- **Reason:** (d): gpt-oss-20b's norms and any map over rows of a wide
+  output on CUDA. On fudge's RTX 5000 Ada, with bits equal: rune's
+  `Cuda/rms-norm-bfloat16-512x2880` 28.6 to 18.7 us and
+  `Cuda/attention/jit-grad-bf16-2048x40x1024-full` 14.37 to 10.30 ms;
+  gpt-oss's norms, in GPU time a step, 1.207 to 0.689 ms at a prefill of
+  512 and 0.380 to 0.315 at 64, decode unchanged; its prefill of 512 on
+  real weights 1.6 to 1.9 ms shorter. Blocked contractions' kernels are
+  unchanged.
+- **Pinned by:** the Codegen suite's `consecutive lid.x threads of a map
+  over two local axes store one run after another` (every recorded GPU map
+  whose workgroup spans two axes, on Metal, CUDA and HIP); the heuristic and
+  stage goldens of tinygrad's GPU renderers whose kernels take two or more
+  local splits outside a blocked contraction, as `.tolk` files headed
+  `D486`; rune's `Cuda/rms-norm-bfloat16-512x2880` and
+  `Cuda/attention/jit-grad-bf16-2048x40x1024-full` rows and kaun's
+  `GptOss/prefill-512` row on CUDA, their baselines pending the scheduled
+  re-record. AMD and Metal are untimed.
