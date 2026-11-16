@@ -1054,7 +1054,9 @@ let pp_kind ppf = function
   | Count -> Format.pp_print_string ppf "int32"
 
 (* Values every float format holds, so that each product and sum below is exact
-   in float64 and rounds once to the array's format. *)
+   in float64 and rounds once to the array's format. A NaN is one element
+   in 27, so about 0.11 of the vectors hold one in [x], and the law draws
+   300 vectors, which miss it with probability below 10^-13. *)
 let specials =
   Gen.frequency
     [
@@ -1211,7 +1213,7 @@ let law_vector (arrays, k) =
 let arithmetic =
   group "arithmetic"
     [
-      prop
+      prop ~count:300
         "dot, norm, scale and axpy over float and complex arrays, every \
          format, NaN, infinities and -0."
         vectors law_vector;
