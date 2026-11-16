@@ -1803,11 +1803,19 @@ DEVICE void scan_mode(const u64 *w, int E, int V) {
 
    A Sum, Max or Min scan of one plain load at its carrier into one
    destination of that dtype, without a tape: a work-item folds a chunk's
-   terms in order from the carry into it, 16 loads in flight, storing
-   each result. Past one chunk, a plain reduction first leaves each
-   chunk's total in the workspace, NX_LOOP_TOTALS, and the carries kernel
-   turns each slice's totals in place into the carries into its chunks.
-   Values are their bits in a word, as plain reductions hold them. */
+   terms in order from the carry into it, storing each result. Past one
+   chunk, a plain reduction first leaves each chunk's total in the
+   workspace, NX_LOOP_TOTALS, and the carries kernel turns each slice's
+   totals in place into the carries into its chunks. Values are their
+   bits in a word, as plain reductions hold them.
+
+   Where terms and results both step by one (NX_LOOP_TILED), a wave's 32
+   chunks pass through a tile of LDS, the next 128 bytes of each at a
+   time, so that each load and store reads or writes one chunk's run of
+   words side by side (Tiles). Elsewhere a work-item streams its own
+   chunk, 16 loads in flight; with terms that step by more than one, a
+   wave's work-items take one chunk of 32 adjacent slices, whose terms
+   lie side by side where the slices step by one. */
 
 typedef uint32_t quad __attribute__((ext_vector_type(4)));
 
@@ -1917,10 +1925,146 @@ DEVICE u64 plain_carry(const u64 *w, int ct, int rk, int carrier,
   return s.has ? s.v.lo : plain_id(ct, rk);
 }
 
+/* Tiles
+
+   A wave's tile is NX_LOOP_TILE bytes of LDS: row k holds the next 32
+   words of the wave's chunk k, its work-item k's, 32 terms of 32 bits or
+   16 of 64. A tile runs in three steps:
+
+     fill   for each k, work-item l loads word l of chunk k's next 128
+            bytes and puts it in row k: one load reads a run of words
+     scan   work-item k folds row k, its chunk's terms in order, from its
+            8 quads of words, writing each result over its term
+     drain  for each k, work-item l stores word l of row k to chunk k's
+            results
+
+   The next tile's loads are issued before the scan, so a wave keeps a
+   tile in flight. Quad q of row k lies at quad q ^ (k % 8) of the row, so
+   that the fill's and the drain's words of a row fall on 32 banks, and
+   the scan's quads of 8 rows a step on 8 distinct quads of banks, as a
+   16-byte access of LDS takes them.
+
+   A wave's LDS operations run in the order it issues them, so the fill's
+   writes reach LDS before the scan reads them, the scan's write-back
+   before the drain reads it, and the drain's reads before the next fill
+   writes: wave_barrier keeps the compiler from moving them across a step,
+   and a drain's store waits only on the read that gives its data. */
+
+_Static_assert(NX_LOOP_TILE == 32 * NX_LOOP_WAVE * 4,
+               "a tile is 32 words a work-item");
+
+/* The word of word [j] of row [k]. */
+DEVICE int tile_at(int k, int j) {
+  return 32 * k + 4 * ((j >> 2) ^ (k & 7)) + (j & 3);
+}
+
+/* Work-item [k]'s [p]. */
+DEVICE uintptr_t lane_of(uintptr_t p, int k) {
+  uint32_t lo = __builtin_amdgcn_readlane((int)(uint32_t)p, k);
+  uint32_t hi = __builtin_amdgcn_readlane((int)(uint32_t)(p >> 32), k);
+  return lo | (uintptr_t)hi << 32;
+}
+
+/* Word l of each chunk k's next 32, at work-item k's [p], [left] of its
+   bytes from there; 0 past them. A tile's addresses and bounds are read
+   from their work-items in the tile's own step, so that the compiler
+   holds none of them across the loop. */
+DEVICE void tile_load(uint32_t (&v)[32], const gbyte *p, int left) {
+  int l = (int)lane();
+#pragma unroll
+  for (int k = 0; k < 32; k++) {
+    const GLOBAL uint32_t *q =
+        (const GLOBAL uint32_t *)lane_of((uintptr_t)p, k) + l;
+    v[k] = 4 * l < __builtin_amdgcn_readlane(left, k) ? *q : 0;
+  }
+}
+
+/* Row k's word l to work-item k's [q], [left] of its bytes from there. */
+DEVICE void tile_store(const uint32_t *tile, gbyte *q, int left) {
+  int l = (int)lane();
+#pragma unroll
+  for (int k = 0; k < 32; k++) {
+    GLOBAL uint32_t *r = (GLOBAL uint32_t *)lane_of((uintptr_t)q, k) + l;
+    uint32_t x = tile[tile_at(k, l)];
+    if (4 * l < __builtin_amdgcn_readlane(left, k)) *r = x;
+  }
+}
+
+/* Folds the calling work-item's row of [tile], its first [n] terms of T,
+   from [a], each result over its term: a half row, 4 quads, at a
+   time. */
+template <class T>
+DEVICE T tile_fold(int rk, T a, uint32_t *tile, int n) {
+  constexpr int W = sizeof(T) / 4, N = 16 / W;
+  int l = (int)lane();
+  quad *row = (quad *)(tile + 32 * l);
+#pragma unroll
+  for (int h = 0; h < 2; h++) {
+    T v[N];
+#pragma unroll
+    for (int q = 0; q < 4; q++) {
+      quad u = row[(4 * h + q) ^ (l & 7)];
+      memcpy((char *)v + 16 * q, &u, 16);
+    }
+    int m = n - h * N;
+#define STEP(f)                                                                \
+  _Pragma("unroll") for (int t = 0; t < N; t++) {                              \
+    a = t < m ? f(a, v[t]) : a;                                                \
+    v[t] = a;                                                                  \
+  }
+    switch (rk) {
+    case NX_LOOP_SUM: STEP(plain_sum) break;
+    case NX_LOOP_MAX: STEP(plain_max) break;
+    default: STEP(plain_min)
+    }
+#undef STEP
+#pragma unroll
+    for (int q = 0; q < 4; q++) {
+      quad u;
+      memcpy(&u, (const char *)v + 16 * q, 16);
+      row[(4 * h + q) ^ (l & 7)] = u;
+    }
+  }
+  return a;
+}
+
+/* Scans each work-item's chunk of [nb] bytes at [p] from [a] into [q],
+   through [tile]. Every work-item of the wave calls it. */
+template <class T>
+DEVICE void tile_scan(int rk, T a, const gbyte *p, gbyte *q, int nb,
+                      uint32_t *tile) {
+  int l = (int)lane();
+  uint32_t v[32];
+  tile_load(v, p, nb);
+  for (int b = 0; __builtin_amdgcn_ballot_w32(b < nb); b += 128) {
+#pragma unroll
+    for (int k = 0; k < 32; k++) tile[tile_at(k, l)] = v[k];
+    wave_barrier();
+    tile_load(v, p + b + 128, nb - b - 128);
+    a = tile_fold<T>(rk, a, tile,
+                     (int)imax(0, imin(128, nb - b)) / (int)sizeof(T));
+    wave_barrier();
+    tile_store(tile, q + b, nb - b);
+    wave_barrier();
+  }
+}
+
+DEVICE void plain_tile_run(int ct, int rk, u64 a, const gbyte *p, gbyte *q,
+                           int nb, uint32_t *tile) {
+  switch (ct) {
+#define CASE(C, T, S, K)                                                       \
+  case C: tile_scan<T>(rk, as<T>(held{a, 0}), p, q, nb, tile); return;
+    PLAIN_TYPES(CASE)
+#undef CASE
+  }
+}
+
 /* A scan's [O] slices of [R] terms, slice o's term t at x + o so + t st,
-   its result at y + o yso + t yst: unit u, chunk u % chunks of slice
-   u / chunks, to work-item u % A of group u / A, [A] work-items a
-   group. */
+   its result at y + o yso + t yst, chunk c of slice o its unit
+   u = o chunks + c, or, where terms step by more than one, its
+   work-item's u = c O + o; unit u to work-item u % A of group u / A, [A]
+   work-items a group, a multiple of 32. Tiled, wave i of a group takes
+   tile i of LDS. */
 DEVICE void plain_scan_mode(const u64 *w) {
   u64 r = wd(w, NX_LOOP_REDUCTION);
   int rk = (int)(r & 0xff), ct = (int)((r >> 8) & 0xff);
@@ -1930,21 +2074,31 @@ DEVICE void plain_scan_mode(const u64 *w) {
   const gbyte *x = buffer(w, d) + wd(d, 1) * es;
   gbyte *y = buffer(w, e) + wd(e, 1) * es;
   int64_t O = (int64_t)wd(w, NX_LOOP_OUTPUTS), R = (int64_t)wd(w, NX_LOOP_TERMS);
-  int64_t chunks = (int64_t)wd(w, NX_LOOP_SEGMENTS);
+  int64_t chunks = (int64_t)wd(w, NX_LOOP_SEGMENTS), units = O * chunks;
   int64_t grid = (int64_t)wd(w, NX_LOOP_GRID);
   int A = (int)wd(w, NX_LOOP_GROUP);
-  bool two = wd(w, NX_LOOP_RANK) == 2;
+  bool two = wd(w, NX_LOOP_RANK) == 2, tiled = wd(w, NX_LOOP_TILED) != 0;
   int64_t so = two ? (int64_t)wd(d, 2) : 0, st = (int64_t)wd(d, 2 + two);
   int64_t yso = two ? (int64_t)wd(e, 2) : 0, yst = (int64_t)wd(e, 2 + two);
+  bool across = st != 1;
   GLOBAL u64 *totals = (GLOBAL u64 *)work_byte(w, NX_LOOP_TOTALS);
+  uint32_t *tile = loop_planes + wave() * (NX_LOOP_TILE / 4);
   if ((int)item() >= A) return;
-  for (int64_t u = (int64_t)group_x() * A + item(); u < O * chunks;
-       u += grid * A) {
-    int64_t o = u / chunks, at = u % chunks * NX_LOOP_CHUNK;
-    u64 a = chunks > 1 ? totals[u] : plain_carry(w, ct, rk, carrier, o);
-    plain_scan_run(ct, rk, a, x + (o * so + at * st) * es, st,
-                   y + (o * yso + at * yst) * es, yst,
-                   (int)imin(NX_LOOP_CHUNK, R - at));
+  /* u0 is the wave's first unit, so every work-item of a wave runs the
+     same rounds. */
+  for (int64_t u0 = (int64_t)group_x() * A + wave() * NX_LOOP_WAVE; u0 < units;
+       u0 += grid * A) {
+    int64_t u = u0 + lane();
+    int64_t o = across ? u % O : u / chunks, c = across ? u / O : u % chunks;
+    int64_t at = c * NX_LOOP_CHUNK;
+    int n = u < units ? (int)imin(NX_LOOP_CHUNK, R - at) : 0;
+    u64 a = n == 0       ? 0
+            : chunks > 1 ? totals[o * chunks + c]
+                         : plain_carry(w, ct, rk, carrier, o);
+    const gbyte *p = n == 0 ? x : x + (o * so + at * st) * es;
+    gbyte *q = n == 0 ? y : y + (o * yso + at * yst) * es;
+    if (tiled) plain_tile_run(ct, rk, a, p, q, n * es, tile);
+    else plain_scan_run(ct, rk, a, p, st, q, yst, n);
   }
 }
 

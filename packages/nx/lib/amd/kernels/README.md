@@ -55,7 +55,7 @@ weaker in every tree: each object holds a symbol named after its
 sources' digest, and `fresh.ml` refuses an object whose symbol does not
 match today's sources.
 
-The library's object is 5,609,072 bytes; the harness's, 38,688.
+The library's object is 5,679,472 bytes; the harness's, 38,688.
 Lane spills of the loops: loop_reduce 61, loop_plain 34, loop_scan 28,
 loop_network 24; of the factorisations' panels: la_qr_panel 200 to 209,
 la_lu_panel 31 to 32.

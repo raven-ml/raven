@@ -1158,7 +1158,7 @@ let part s (p : P.t) ~shape ops =
    [part] never answers [None], so this never declines. A loop's rank is
    at most 32 ({!L.max_rank}), so an operand's descriptor takes at most
    35 words, a padded one's 230 (6, then 7 a read, a read an axis). With a
-   padded load, its copy fits: 31 header words, 2 address words, 64
+   padded load, its copy fits: 32 header words, 2 address words, 64
    extent words (an extent and its divisor each), 230 and 35, and a tape
    of a load and a store, under
    {!K.loop_words}' 512, in 2 values' planes. With every load plain and a
@@ -1478,12 +1478,15 @@ let plain_launch w ops dsts ~nslots ~targets ~rk ~carrier ~seg ~fin
    (loop.hip's Plain scans), a group taking as many work-items as keep
    {!group_slots} groups busy, 32 to all; past one chunk a slice, the
    chunks' totals and their carries first, into the workspace from byte
-   0. *)
+   0. Where terms and results both step by one, the scan tiles: each of
+   a group's waves takes {!K.loop_tile} bytes of LDS. *)
 let plain_scan w ops outs ~nslots ~targets ~rk ~carrier ~carry =
   let rows, terms = rows_terms w in
   let chunks = ceil_div terms K.loop_chunk in
   let units = rows * chunks in
-  let launch kernel ~per ~units ~group =
+  let steps_one o = snd (row_term_strides w o) = 1 in
+  let tiled = steps_one ops.(0) && steps_one outs.(0) in
+  let launch kernel ~per ~units ~group ~planes =
     let h = header 1 in
     seti h K.loop_reduction
       (reduction_word ~rk ~ct:(compute carrier) ~carrier ~fin:K.loop_put);
@@ -1496,6 +1499,7 @@ let plain_scan w ops outs ~nslots ~targets ~rk ~carrier ~carry =
     seti h K.loop_tickets (nslots - 1);
     seti h K.loop_totals 0;
     seti h K.loop_carry carry;
+    seti h K.loop_tiled (Bool.to_int (planes > 0));
     let ws =
       params ~nslots w ops ~slots:Fun.id outs
         ~dst_slots:(fun j -> Array.length ops + j)
@@ -1505,14 +1509,15 @@ let plain_scan w ops outs ~nslots ~targets ~rk ~carrier ~carry =
        scan's group has [a] at work and the rest return at once: it steps
        neither kernel, both above 96 VGPRs. *)
     launch_of kernel ws ~targets ~groups:(Plan.grid ~per kernel units)
-      ~planes:0 ~tickets:0
+      ~planes ~tickets:0
   in
   let rec most a =
     if a < K.loop_threads && units / (2 * a) >= group_slots then most (2 * a)
     else a
   in
   let a = most 32 in
-  let last = launch K.Loop_plain_scan ~per:a ~units ~group:a in
+  let planes = if tiled then K.loop_tile * (a / K.loop_wave) else 0 in
+  let last = launch K.Loop_plain_scan ~per:a ~units ~group:a ~planes in
   if chunks = 1 then Some { launches = [ last ]; work = 0 }
   else
     match
@@ -1523,6 +1528,7 @@ let plain_scan w ops outs ~nslots ~targets ~rk ~carrier ~carry =
     | Some (totals, work) ->
         let carries =
           launch K.Loop_plain_carries ~per:K.loop_threads ~units:rows ~group:1
+            ~planes:0
         in
         Some { launches = [ totals; carries; last ]; work }
 

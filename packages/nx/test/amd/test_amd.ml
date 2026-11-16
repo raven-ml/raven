@@ -1889,13 +1889,19 @@ let law_plain_scan c =
     scan_monoids;
   let want = Support.cpu.around (fun () -> run_plain_scan Support.cpu c) in
   let got, launches = Plan.traced (fun () -> run_plain_scan b c) in
+  (* Where terms and results both step by one, the scan tiles: its launch
+     takes LDS beside its kernel's own. *)
+  let tiles = match c.layout with Rows | Offset _ -> true | _ -> false in
   let took =
-    List.exists
-      (fun (l : Plan.traced) -> l.kernel = Nx_amd.Kernels.Loop_plain_scan)
+    List.filter_map
+      (fun (l : Plan.traced) ->
+        if l.kernel = Nx_amd.Kernels.Loop_plain_scan then Some (l.shared > 0)
+        else None)
       launches
   in
-  equal ~msg:"takes loop_plain_scan" bool true took;
-  equal (Kernels_cases.same_values c.dt) want got
+  equal (Kernels_cases.same_values c.dt) want got;
+  equal ~msg:"loop_plain_scan's launches, whether each tiles" (list bool)
+    [ tiles ] took
 
 (* Memory *)
 

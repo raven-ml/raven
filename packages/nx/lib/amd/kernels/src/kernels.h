@@ -95,7 +95,9 @@ enum { NX_ZERO_THREADS = 256 };
    a block; a scan its chunks of NX_LOOP_CHUNK terms. A state in the
    workspace takes NX_LOOP_STATE 32-bit words. A plain reduction merges
    its groups' values in LDS NX_LOOP_PLAIN_CHUNK at a time, and takes
-   columns of at most NX_LOOP_PLAIN_TALL blocks. */
+   columns of at most NX_LOOP_PLAIN_TALL blocks. A plain scan's wave
+   of NX_LOOP_WAVE work-items passes its chunks through NX_LOOP_TILE bytes
+   of LDS where it tiles. */
 enum {
   NX_LOOP_WORDS = 512,
   NX_LOOP_THREADS = 256,
@@ -106,6 +108,8 @@ enum {
   NX_LOOP_STATE = 8,
   NX_LOOP_PLAIN_CHUNK = 2048,
   NX_LOOP_PLAIN_TALL = 16,
+  NX_LOOP_WAVE = 32,
+  NX_LOOP_TILE = 4096,
 };
 
 /* The header's words. */
@@ -146,6 +150,8 @@ enum {
   NX_LOOP_CENTERS,   /* the byte of the outputs' centers */
   NX_LOOP_CARRY,     /* a scan's carry: its load, or -1 */
   NX_LOOP_CELLS,     /* a plain reduction's cells at work a group */
+  NX_LOOP_TILED,     /* whether a plain scan's waves pass their chunks
+                        through tiles */
   NX_LOOP_HEADER
 };
 

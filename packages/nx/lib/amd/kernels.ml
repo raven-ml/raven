@@ -999,7 +999,7 @@ let vgprs = function
   | Loop_network -> 94
   | Loop_carries -> 43
   | Loop_plain -> 107
-  | Loop_plain_scan -> 98
+  | Loop_plain_scan -> 107
   | Loop_plain_carries -> 58
   | Move -> 64
   | Runs_chunk -> 50
@@ -1252,6 +1252,8 @@ let loop_chunk = 4096
 let loop_state = 8
 let loop_plain_chunk = 2048
 let loop_plain_tall = 16
+let loop_wave = 32
+let loop_tile = 4096
 let loop_used = 0
 let loop_mode = 1
 let loop_grid = 2
@@ -1283,7 +1285,8 @@ let loop_totals = 27
 let loop_centers = 28
 let loop_carry = 29
 let loop_cells = 30
-let loop_header = 31
+let loop_tiled = 31
+let loop_header = 32
 let loop_pad = 7
 let loop_binary = 32
 let loop_ternary = 64
