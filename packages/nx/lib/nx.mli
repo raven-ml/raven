@@ -21,7 +21,7 @@
     and an operation whose operands do not lie together raises, naming the
     {!place} to write ({!section-routing}). Between devices an operation
     moves only bytes that no placement of its operands could have put where
-    they are needed: the partial results of a reduction, a contraction, a
+    its result lies: the partial results of a reduction, a contraction, a
     scan, a gather or a scatter along a cut axis, or of an attention over
     cut keys, and the parts of the result they close into, which exist
     only once it computes; and, on

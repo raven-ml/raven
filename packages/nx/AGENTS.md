@@ -32,8 +32,8 @@ raven exchanges `Nx.t` values and `Nx.Ptree` structures.
   outside. nx's docs name rune's functions only as examples.
 - An operation computes where its operands lie. `Nx.place` moves a value;
   a mismatch raises naming the `place` to write. Between devices an
-  operation moves only bytes no placement could have put where they are
-  needed: a fold's partials and the parts of the result they close into,
+  operation moves only bytes no placement could have put where its result
+  lies: a fold's partials and the parts of the result they close into,
   which don't exist before the fold; and on a set of mixed architectures,
   the result windows one device computes and copies to the others. A
   gather's or a scatter's positions that the operation cannot read where
