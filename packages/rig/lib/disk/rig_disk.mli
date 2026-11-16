@@ -121,9 +121,12 @@ val create_file : string -> int -> (file, string) result
     A copy runs on the calling thread, except, outside Windows, a read of
     several runs or of one of more than 2 MiB:
     {ul
-    {- The runs of up to 2 MiB are read at once, up to 64 at a time, by the
+    {- The runs of up to 2 MiB are read at once, up to 128 at a time, by the
        calling thread and blocking workers of the host's pool, each reading
-       one run at a time ([rig_pool_run_blocking] in [rig_pool.h]).}
+       one run at a time ([rig_pool_run_blocking] in [rig_pool.h]). So
+       storage that answers a read in a time [W] serves such a copy at most
+       [128 / W] reads a second, 128,000 at 1 ms, such as a network file
+       system's, and that only where the storage serves 128 reads at once.}
     {- Then each run of more than 2 MiB is cut into segments of 2 MiB that
        the calling thread and blocking workers read at once, at most one a
        segment and as many in all as the performance cores the process may

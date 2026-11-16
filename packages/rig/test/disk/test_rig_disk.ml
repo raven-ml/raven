@@ -733,6 +733,17 @@ let test_exact_pages () =
   if read = 0 then skip ~reason:"the file system reads nothing from storage" ();
   at_most ~msg:"bytes read from storage" int ~than:(n * page) read
 
+(* The reads a copy of many runs keeps in flight, in a child of its own, as
+   the host pool's blocking workers it makes: a read of 10 runs makes 9, one
+   of 1,000 runs 127 in all, since the disk reads at most 128 at once with
+   the calling thread among them (rig_disk.mli, "Copies"). *)
+let test_depth () =
+  if not (Sys.file_exists "/proc/self/status") then
+    skip ~reason:"the system does not count a process's threads" ();
+  let path = make_file (pattern 11 (1000 * 4096)) in
+  removing [ path ] @@ fun () ->
+  equal string "9 127" (child [ "depth"; path ])
+
 let copies =
   group ~timeout "copies"
     [
@@ -768,6 +779,10 @@ let copies =
         "a copy of scattered pages of a file not in memory reads those pages \
          from storage and no others"
         test_exact_pages;
+      test
+        "a copy of many runs reads up to 128 at once, making blocking workers \
+         as it asks"
+        test_depth;
     ]
 
 (* Borrows *)
@@ -1950,6 +1965,34 @@ let open_files_child () =
       Printf.printf "first: %s\n" (said opened.(0)));
   removed dir
 
+(* The threads of this process, from Linux's /proc/self/status. *)
+let threads () =
+  In_channel.with_open_bin "/proc/self/status" In_channel.input_all
+  |> String.split_on_char '\n'
+  |> List.find_map (fun l ->
+      match String.split_on_char '\t' l with
+      | [ "Threads:"; v ] -> Some (int_of_string (String.trim v))
+      | _ -> None)
+  |> Option.get
+
+(* Reads [path] in one run, then in 10 and in 1,000 runs of 4 KiB, and prints
+   the threads each of the last two left beyond the first's. *)
+let depth_child path =
+  let file = of_file path in
+  let runs n =
+    let dst = B.create host (n * 4096) in
+    ignore
+      (B.submit_copy ~src:file ~dst
+         (Array.init n (fun i ->
+              B.row ~src_offset:(i * 4096) ~dst_offset:(i * 4096) 4096)))
+  in
+  runs 1;
+  let before = threads () in
+  runs 10;
+  let ten = threads () in
+  runs 1000;
+  Printf.printf "%d %d" (ten - before) (threads () - before)
+
 (* Opens [path], reads it whole and in 128 runs, then forks a child that reads
    it in 128 runs, copies it into a new file at [out] and orders it, and
    prints how the child ended. *)
@@ -2070,6 +2113,7 @@ let () =
   | [ _; "open-files" ] -> open_files_child ()
   | [ _; "limited"; op; path ] -> limited_child op path
   | [ _; "fork"; path; out ] -> fork_child path out
+  | [ _; "depth"; path ] -> depth_child path
   | [ _; "truncated-borrow"; op; kind; path ] ->
       truncated_borrow_child op kind path
   | _ ->

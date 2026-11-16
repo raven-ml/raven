@@ -196,33 +196,80 @@ let write_rows =
 
 (* Cold reads: each run first drops the file's pages from the system's cache, so
    the read reaches the storage device; the floor drops them too. Only on Linux,
-   where a process can drop one file's pages. *)
+   where a process can drop one file's pages.
+
+   [cold-rows-16K] reads 16,384 pages of 4 KiB scattered over 1 GiB, drawn
+   once, in one copy, which the disk reads 128 at a time (rig_disk.mli,
+   "Copies"); its floor reads them one after the other on one thread. Its
+   rate is the disk's depth over the storage's latency at that depth, the
+   row that checks the depth on each machine. *)
+
+let scattered = 16_384
+
+(* [scattered] distinct pages of a file of [gib] bytes, none the first. *)
+let scattered_pages () =
+  let st = Random.State.make [| scattered |] and pages = gib / (4 * kib) in
+  let seen = Hashtbl.create scattered in
+  let rec draw () =
+    let p = 1 + Random.State.int st (pages - 1) in
+    if Hashtbl.mem seen p then draw ()
+    else begin
+      Hashtbl.replace seen p ();
+      p
+    end
+  in
+  Array.init scattered (fun _ -> draw ())
 
 let cold_rows =
   let n = 64 * mib in
-  let cold () =
-    let p = data "cold-64M" n in
+  let cold name n =
+    let p = data name n in
     let h = opened p ~writable:true in
     moved "sync" 0 (sync h);
     (p, h)
   in
   let dropped h = moved "evict" 0 (evict h) in
+  let page = 4 * kib in
+  let rows () =
+    let p, h = cold "read-1G" gib in
+    let boxes =
+      Array.mapi
+        (fun i k -> B.row ~src_offset:(k * page) ~dst_offset:(i * page) page)
+        (scattered_pages ())
+    in
+    let file = Rig_disk.buffer (ok (Rig_disk.of_file p)) in
+    (h, file, host (scattered * page), boxes)
+  in
   Thumper.group "read"
     (if not (evicts ()) then []
      else
        [
          row "cold-64M"
            (fun () ->
-             let p, h = cold () in
+             let p, h = cold "cold-64M" n in
              (h, Rig_disk.buffer (ok (Rig_disk.of_file p)), host n))
            (fun (h, file, dst) ->
              dropped h;
              B.copy ~src:file ~dst);
          row "floor-cold-64M"
-           (fun () -> (snd (cold ()), memory n))
+           (fun () -> (snd (cold "cold-64M" n), memory n))
            (fun (h, (_, a)) ->
              dropped h;
              moved "pread" n (pread h 0 a n));
+         row "cold-rows-16K" rows (fun (h, file, dst, boxes) ->
+             dropped h;
+             ignore (B.submit_copy ~src:file ~dst boxes : Rig.Point.t));
+         row "floor-cold-rows-16K"
+           (fun () ->
+             ( snd (cold "read-1G" gib),
+               memory (scattered * page),
+               scattered_pages () ))
+           (fun (h, (_, a), pages) ->
+             dropped h;
+             Array.iteri
+               (fun i k ->
+                 moved "pread" page (pread h (k * page) (a + (i * page)) page))
+               pages);
        ])
 
 (* Borrows: of_file and the first borrow on the host, which maps the file, and

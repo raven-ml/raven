@@ -45,7 +45,7 @@ All notable changes to this project will be documented in this file.
   writes memory. A copy from io memory hands its library the rows of all
   its boxes in one read where they share no byte of the destination, and
   one row a read, in order, where they do.
-- A copy from a disk buffer reads its rows at once, up to 64 in flight on
+- A copy from a disk buffer reads its rows at once, up to 128 in flight on
   the host pool's blocking workers (one after another on Windows), where it
   read one row at a time: about 15x the rows a second for a copy of
   scattered 4 KiB rows of a file not in memory.

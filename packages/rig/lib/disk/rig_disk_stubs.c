@@ -512,9 +512,28 @@ static void advise_file(intnat h, char *pages, int64_t pos, int64_t n) {
    once each of its bodies has, so no read still writes memory when the
    read of runs returns. On Windows the runs are read one after the other,
    since a handle opened without FILE_FLAG_OVERLAPPED serializes its
-   reads. */
+   reads.
 
-#define DEPTH 64
+   [DEPTH] is the top of this read's own curve as measured on fudge (Core
+   Ultra 5 235, Linux 6.12, ext4 on NVMe), cold, 16,384 runs a copy,
+   pinned to two CPUs under a load of 3 to 26, three runs each, medians
+   [min-max]:
+   - random 4 KiB rows: 182K [125K-186K] rows/s at 16 in flight, 222K
+     [195K-270K] at 32, 194K [143K-210K] at 64 and 239K [161K-250K] at 128,
+     at 5.34, 5.58, 5.85 and 5.81 us of CPU a row: from 32 on the rates
+     overlap within the load's spread, and 128 costs no more than 64;
+   - a ragged corpus's pixels, two rounds of a 16-byte and a range read per
+     sensor: 50K, 65K and 87K pixels/s at 32, 64 and 128, run back to back,
+     at 18.3, 18.1 and 18.8 us of CPU a pixel.
+   The pixels' curve was still rising at 128, where the two CPUs ran
+   1.6 to 1.9 cores busy: the pin, not the device, ended it, so it shows no
+   knee, and an unpinned measurement on a quiet machine may place one past
+   128. 128 is chosen because the pixels gain to it at no measured CPU
+   cost, and because a copy serves at most DEPTH / W reads a second at
+   latency W (Little's law), whatever the device: more depth raises that
+   bound where storage serves that many reads at once. */
+
+#define DEPTH 128
 
 /* A read of [n] runs of [h]: run i's position, host address and length,
    and the bytes it read, at runs[4 i] to runs[4 i + 3]. [short_run] is the
