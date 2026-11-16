@@ -56,10 +56,6 @@ val run : Ops.t -> Ops.t -> Bigint.t
 (** [run o r] is the run of [o] along the range [r]: [d] if [o] reads [r] only
     as [r / d], 1 otherwise. *)
 
-val upcast_max : int
-(** [upcast_max] is the most values an upcast of one axis takes
-    ({!Postrange.Scheduler.apply_opt}'s bound). *)
-
 val stride : Ops.t -> Ops.t -> Bigint.t option
 (** [stride r i] is the stride of the range [r] in the index [i], when a term
     of [i] is [r] or [r * c]: [1] or [c]. *)

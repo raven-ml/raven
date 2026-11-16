@@ -434,6 +434,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled scatter on AMD and Apple GPUs launches workgroups of at most
+  the target's threads (`Renderer.t.local_threads_max`), where 2^19 updates
+  or more made workgroups of more than 1024 that neither launches.
 - A check that `Rune.jit` compiles over several devices (`Nx.check`, a
   sampler's parameters) computes as eager computation computes one it leaves
   pending: one reduction of its flags where they lie, one element of each
@@ -1327,6 +1330,13 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A renderer states the threads of its SIMD group (`Renderer.t.simd_threads`,
+  64 on CDNA's gfx9, 32 on other GPUs) and the most threads a workgroup holds
+  (`Renderer.t.local_threads_max`), which the heuristic's layouts and
+  `Search.get_kernel_actions` read: on CDNA a streamed product's threads
+  take a wave of 64, and on Apple2 and Apple3 a workgroup holds at most 512
+  threads. `Postrange.Scheduler.upcast_max` and `Stage.warp_tile` are
+  exported.
 - A program whose output is a maximum of a broadcast reduction, such as
   `max (expand (sum x))`, writes its output: `Rangeify.get_kernel_graph`
   dropped the store into the output with the copy it spared. A value read

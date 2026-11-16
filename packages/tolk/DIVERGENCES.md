@@ -2507,10 +2507,12 @@ Withdrawn: multi-device is out of scope, see README.
   `codegen/opt/postrange.py` (`apply_opt`, which refuses a local split of a
   reduce axis whose reduction runs inside a weak range that a reduction closes,
   a serial reduce).
-- **tolk:** `Heuristic.lanes`, `Heuristic.rows`, `Heuristic.columns`,
-  `Heuristic.sector_lanes`, `Renderer.t.stream_threads`, `Heuristic.in_flight`,
-  `Heuristic.in_flight_held`, `Heuristic.stream_first`,
-  `Heuristic_common.upcast_max`, `Heuristic.summed`, `Renderer.t.per_byte_first`,
+- **tolk:** `Heuristic.lanes` (`Renderer.t.simd_threads`), `Heuristic.rows`,
+  `Heuristic.columns`, `Heuristic.sector_lanes`,
+  `Renderer.t.local_threads_max`, `Renderer.t.stream_threads`,
+  `Heuristic.in_flight`, `Heuristic.in_flight_held`, `Heuristic.stream_first`,
+  `Postrange.Scheduler.upcast_max`, `Heuristic.summed`,
+  `Renderer.t.per_byte_first`,
   `Heuristic.per_byte`, `Heuristic_common.run`,
   `Heuristic.reuse_ranges`, `Heuristic.reuse`, `Heuristic_common.stride`,
   `Heuristic.accesses`, `Heuristic.reduces_in`, `Heuristic.contraction`,
@@ -2563,10 +2565,11 @@ Withdrawn: multi-device is out of scope, see README.
     the kernel takes the other rules. `MV_BLOCKSIZE`, `MV_THREADS_PER_ROW`
     and `MV_ROWS_PER_THREAD` are gone;
   - few outputs (D110's part): when the outputs are too few for the columns
-    layout to run `stream_threads` threads, a workgroup of 1024
-    threads takes fewer threads across them, down to 8, and more along the
-    reduce, so that more workgroups share the outputs. 8 threads of 2
-    bfloat16 columns read a 32-byte sector. 32768 is the bound of sm_89's
+    layout to run `stream_threads` threads, a workgroup of the renderer's
+    `local_threads_max` threads (D484), 1024 on CUDA, takes fewer threads
+    across them, down to 8, and more along the reduce, so that more
+    workgroups share the outputs. 8 threads of 2 bfloat16 columns read a
+    32-byte sector. 32768 is the bound of sm_89's
     parts, as D175's floor is: at 16384, from the L2, the decode step's key
     and value projection (`gpt_oss_kv`, 2880 to 512, `stream/decode-kv`) is
     1.16x slower, its query projection (`gpt_oss_qkv`) 1.10x and `vecmat`
@@ -2605,7 +2608,14 @@ Withdrawn: multi-device is out of scope, see README.
     give two parts of one target different bits, and the program key names
     the target alone (D170). `stream_threads` and D175's `local_workgroups` are
     fields of the renderer, since a second reader, rune's attention
-    lowering, sizes its grid by them. D175's `core_threads` is one, since
+    lowering, sizes its grid by them. `lanes` reads the renderer's
+    `simd_threads`, since a second target states another width: a CDNA
+    (gfx9) wave holds 64 threads where CUDA's warp, RDNA's wave and Metal's
+    SIMD group hold 32 ("AMD devices return 64 for gfx9 and 32 for gfx10
+    and above", HIP's `warpSize`), and rune's attention lowering sizes a
+    decode step's workgroup by it. It is 32 wherever `lanes` was, so those
+    targets' kernels are unchanged; CDNA's layouts at 64 are unmeasured, no
+    part being reachable. D175's `core_threads` is one, since
     Metal fitted its own. `per_byte_first` is one, since
     a second target measured another crossover: nonnormal's R9700 (gfx1201)
     streams gpt-oss-20b's routed blocks at 149 a byte faster than its cores
@@ -2751,7 +2761,11 @@ Withdrawn: multi-device is out of scope, see README.
   blocks of their own matrices, of rows routed by an argmax in the kernel and of
   gpt-oss-20b's experts at a 512-token prompt), `› each renderer streams before
   a core up to 64 multiply-adds a byte` (the renderers' fields) and `› a
-  contraction streams before a core up to the renderer's bound a byte`; `the
+  contraction streams before a core up to the renderer's bound a byte`, `› a
+  product's workgroups hold at most a block's threads on every GPU` (gfx942
+  among them) and `› a product streamed by its rows reduces over a SIMD
+  group's threads` (gfx942's 64); the Cstyle suite's `a renderer states its
+  SIMD group's threads and a workgroup's most`; `the
   hand-coded optimisations keep a kernel's writes › small kernels ›
   experts_down_metal` (a group inside another reduce); the Postrange suite's
   cases `double_sum_group`, `double_sum_group_twice` and
@@ -10480,3 +10494,40 @@ kept in ordered sets, change no source and belong to D466.
   and `prefill-12` rows on CUDA and its decode bench row
   `Quant/host/routed-product-of-8-experts-of-512-64-bfloat16-tokens` on the
   host, their fudge baselines pending the scheduled re-record.
+
+## D484. A renderer states the most threads a workgroup holds
+
+- **tinygrad:** `renderer/__init__.py` (`Renderer.local_max`, a bound on
+  each axis, and no bound on a workgroup's threads over all of them);
+  `codegen/opt/search.py` (`get_kernel_actions`, which bounds a candidate's
+  local threads by `BEAM_LOCAL_MAX` alone, 1024).
+- **tolk:** `Renderer.t.local_threads_max`: 1024 in `Cstyle.cuda`'s
+  renderer (CUDA and NV) and `Cstyle.hip`'s, 1024 in `Cstyle.metal`'s but
+  512 on Apple2 and Apple3, 1 in `Cstyle.clang`'s; read by
+  `Heuristic`'s columns layout (D89) and by `Search.get_kernel_actions`,
+  which bounds a candidate by the lesser of it and
+  `Setting.beam_local_max`.
+- **Differs:** the renderer states a workgroup's thread bound, which CUDA
+  ("Maximum number of threads per block"), HIP (its hardware features) and
+  Metal (its feature set tables, "Maximum threads per threadgroup") state
+  apart from each axis's. The columns layout takes it in place of the 1024
+  it held as the square of a SIMD group's 32 threads; the search drops a
+  candidate past it. `Postrange.Scheduler.apply_opt` keeps tinygrad's
+  checks and applies a local split past it, as tinygrad's case
+  `local_whole_axis_beyond_host_integers` does. On CUDA, RDNA, Mac2 and
+  Apple's GPUs from family 4 it is the 1024 both held before, so their
+  kernels are unchanged; on Apple2 and Apple3 the columns layout's workgroup
+  is 512 where it was 1024.
+- **Reason:** (b), for rune's `Lower_index.workgroup`, which sizes a
+  scatter's workgroup by the renderer: reading the x axis's `local_max`,
+  unbounded on HIP and Metal, it built workgroups of more than 1024 threads
+  there from 2^19 updates, past what either launches. The columns
+  layout reads it as D89 states, where a CDNA wave of 64 threads, squared,
+  would make workgroups of 4096.
+- **Pinned by:** the Heuristic suite's `streaming › a product's workgroups
+  hold at most a block's threads on every GPU`, gfx942 included; the Cstyle
+  suite's `a renderer states its SIMD group's threads and a workgroup's
+  most`; the Search suite's `a candidate's workgroup holds at most its
+  renderer's most threads`; rune's `Lower_index › workgroups › a scatter's
+  workgroups hold at most a block's threads on every GPU`. AMD and Metal are
+  unrun.

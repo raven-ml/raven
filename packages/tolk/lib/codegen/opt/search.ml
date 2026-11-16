@@ -223,7 +223,9 @@ let redundant actions k = function
 
 let get_kernel_actions ?max_up k =
   let max_up = Option.value max_up ~default:(setting Setting.beam_upcast_max) in
-  let max_lcl = setting Setting.beam_local_max and actions = actions () in
+  let max_lcl =
+    Int.min (setting Setting.beam_local_max) (K.ren k).local_threads_max
+  and actions = actions () in
   let act a =
     if redundant actions k a then None
     else

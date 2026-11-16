@@ -114,7 +114,10 @@ let gather d ~axis idx x =
 (* The walk's steps a launch costs: on fudge's Core Ultra 5 235 a launch takes
    about 1.1 µs and a walk 1.4 ns an update (2{^20} updates into 2 targets in
    1.44 ms); on an RTX 5000 Ada a launch about 1.8 µs and a chunk's walk
-   46 ns an update (1024 into 16 targets in 47 µs). *)
+   46 ns an update (1024 into 16 targets in 47 µs). They are fits, which no
+   renderer states: a launch's cost belongs to the driver's path to the
+   device, and CUDA and NV, whose paths differ, share one renderer. A count
+   off by half costs about one launch. *)
 let host_launch_steps = 790
 let gpu_launch_steps = 39
 
@@ -165,11 +168,11 @@ let range t e id = Ops.range ~axis_type:t (Ops.Int e) [ id ]
 
 (* [workgroup ren total] is the threads of a workgroup of [total] threads on
    [ren]'s target: the greatest power of two that leaves the renderer's
-   [local_workgroups], at most its [local_max]. *)
+   [local_workgroups], at most its [local_threads_max] and its [local_max]
+   along the one axis the threads take. *)
 let workgroup (ren : Renderer.t) total =
-  let most =
-    Int.min (List.hd ren.local_max) (Int.max 1 (total / ren.local_workgroups))
-  in
+  let bound = Int.min ren.local_threads_max (List.hd ren.local_max) in
+  let most = Int.min bound (Int.max 1 (total / ren.local_workgroups)) in
   let rec go w = if 2 * w <= most then go (2 * w) else w in
   go 1
 

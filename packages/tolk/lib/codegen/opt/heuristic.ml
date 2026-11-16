@@ -295,9 +295,8 @@ let tensor_cores ~core_threads k =
    and its reuse ranges are upcast, so that a thread holds the outputs that
    share each element it loads. *)
 
-(* The threads of a SIMD group: a CUDA warp, an AMD wave32, a Metal
-   simdgroup. *)
-let lanes = 32
+(* The threads of [k]'s SIMD group ({!Renderer.t.simd_threads}). *)
+let lanes k = (K.ren k).simd_threads
 
 (* The rows of a workgroup's SIMD groups without reuse, or of a thread's
    registers with it, where each row reuses the other operand's loads. *)
@@ -523,12 +522,12 @@ let upcast_reuse k w reuse =
            in
            if a > 1 then ignore (split k (axis g) a Opt.Upcast);
            left / a)
-         (most upcast_max) shared)
+         (most K.upcast_max) shared)
   in
   match shared with
   | [ (g, f) ] when not (Nodes.mem g (ranges w)) ->
       let f = Bigint.to_int f in
-      let passes = (f + upcast_max - 1) / upcast_max in
+      let passes = (f + K.upcast_max - 1) / K.upcast_max in
       let t = (f + passes - 1) / passes in
       let padded =
         f mod t = 0
@@ -561,7 +560,7 @@ let streamed_layout k (w, x, reuse) =
   match layout k w with
   | None -> None
   | Some (`Rows (u, a)) ->
-      let threads = pow2_dividing u lanes in
+      let threads = pow2_dividing u (lanes k) in
       if threads <= 1 then None
       else
         Option.map
@@ -577,7 +576,8 @@ let streamed_layout k (w, x, reuse) =
         | Int n -> pow2_above ((K.ren c).stream_threads * columns / max n 1)
         | Sym _ -> 1
       in
-      let across = max sector_lanes (lanes * lanes / max wanted lanes) in
+      let most = (K.ren c).local_threads_max in
+      let across = max sector_lanes (most / max wanted (lanes c)) in
       if wanted <= 1 || not (divisible_at c g (across * columns)) then None
       else Some (`Columns (g, c, across, wanted))
 
@@ -594,7 +594,7 @@ let streamed_layout k (w, x, reuse) =
 let unroll_together k x u =
   let together a t =
     let bytes = Dtype.itemsize (dtype a) in
-    let span = Bigint.of_int (lanes * bytes) in
+    let span = Bigint.of_int (lanes k * bytes) in
     match (rest_of k t, stride u (idx a)) with
     | Some r, Some step
       when axis_id r <> axis_id u
@@ -652,8 +652,8 @@ let rows_layout k (w, x, reuse) (u, a, g, threads) =
   if held then upcast_reuse k w reuse;
   ignore (try_split k (axis_of k u) threads Opt.Local);
   (match next with
-  | Some n when whole && threads < lanes ->
-      let more = pow2_dividing n (lanes / threads) in
+  | Some n when whole && threads < lanes k ->
+      let more = pow2_dividing n (lanes k / threads) in
       if more > 1 then ignore (try_split k (axis_of k n) more Opt.Local)
   | _ -> ());
   ignore (try_split k (axis_of k g) rows (if held then Opt.Upcast else Opt.Local));
@@ -669,13 +669,14 @@ let rows_layout k (w, x, reuse) (u, a, g, threads) =
 
 let columns_layout (g, k, across, wanted) =
   let first = List.hd (contracted k) in
-  (* A workgroup holds [lanes * lanes] threads. Few outputs take fewer of them
-     across, down to [sector_lanes], and more along the reduce, so that more
-     workgroups share the outputs: 512 outputs take 32 workgroups of 8 threads
-     across where they took 8 of 32. *)
+  (* A workgroup holds at most the renderer's [local_threads_max] threads. Few
+     outputs take fewer of them across, down to [sector_lanes], and more along
+     the reduce, so that more workgroups share the outputs: 512 outputs take 32
+     workgroups of 8 threads across where they took 8 of 32. *)
   ignore (split k (axis_of k g) across Opt.Local);
   ignore (split k (axis_of k g) columns Opt.Upcast);
-  let threads = pow2_dividing first (min wanted (lanes * lanes / across)) in
+  let most = (K.ren k).local_threads_max in
+  let threads = pow2_dividing first (min wanted (most / across)) in
   if threads > 1 then ignore (try_split k (axis_of k first) threads Opt.Local);
   k
 
@@ -855,7 +856,7 @@ let reused k axis =
 
 (* The threads that [n] outputs left of an axis upcast by 4 hold once doubled,
    in a power of two (as {!block} counts them). *)
-let doubled_threads n =
+let doubled_threads ~lanes n =
   let rec pow2 cap =
     if cap <= 1 || n mod cap = 0 then cap else pow2 (cap / 2)
   in
@@ -888,7 +889,9 @@ let four_first ~core_threads k =
       match (size a, size b) with
       | Some x, Some y ->
           x mod 8 = 0 && y mod 8 = 0
-          && doubled_threads (x / 4) * doubled_threads (y / 4) >= lanes
+          && doubled_threads ~lanes:(lanes k) (x / 4)
+             * doubled_threads ~lanes:(lanes k) (y / 4)
+             >= lanes k
           && Bigint.geq threads (Bigint.of_int core_threads)
       | _ -> false)
   | _ -> false
@@ -1043,7 +1046,7 @@ let block k upcasted =
   let threads axes =
     List.fold_left
       (fun n axis ->
-        n * (pow2_dividing (List.nth (K.rngs k) axis) (2 * lanes) / 2))
+        n * (pow2_dividing (List.nth (K.rngs k) axis) (2 * lanes k) / 2))
       1 axes
   in
   let outputs () = List.map (List.nth (K.rngs k)) (K.upcastable_dims k) in
@@ -1076,7 +1079,7 @@ let block k upcasted =
          &&
          let a = axis_of k ra and b = axis_of k rb in
          reused k a && reused k b && doubles a && doubles b
-         && threads [ a; b ] >= lanes ->
+         && threads [ a; b ] >= lanes k ->
       List.iter (fun r -> ignore (split k (axis_of k r) 2 Opt.Upcast)) [ ra; rb ];
       (match K.upcastable_dims ~reduce:true k with
       | [] -> ()
@@ -1119,7 +1122,7 @@ let blocked_threads k ranked greedy (ra, rb) =
           | None -> Bigint.zero
         in
         let across = if Bigint.leq (waste 16) (waste 8) then 16 else 8 in
-        let plan = [ (later, across); (earlier, lanes / across) ] in
+        let plan = [ (later, across); (earlier, lanes k / across) ] in
         let pads k =
           List.for_all
             (fun (axis, amount) ->
@@ -1133,7 +1136,7 @@ let blocked_threads k ranked greedy (ra, rb) =
 (* prioritize making expand axes local, of those every call and custom code
    reads; a blocked contraction's ({!block}) take one SIMD group *)
 let locals ?blocked k =
-  let threads = if Option.is_some blocked then lanes else workgroup_threads in
+  let threads = if Option.is_some blocked then lanes k else workgroup_threads in
   let ranking =
     List.filter_map
       (fun axis ->
@@ -1189,7 +1192,7 @@ let locals ?blocked k =
    streamed, its 32 lanes holding 2 loads each and a sum across them that a
    core takes in one step; its values, a sum of 1024, 25.2 to 26.6 us on a
    core and 14.6 to 15.3 us streamed. *)
-let summed = lanes * in_flight
+let summed k = lanes k * in_flight
 
 (* A contraction streams before a tensor core when it does at most the
    renderer's [per_byte_first] multiply-adds per byte of the buffers its
@@ -1244,7 +1247,7 @@ let early k (w, _, reuse) =
         | None -> None)
       (Some Bigint.one) (contracted k)
   in
-  match n with Some n -> Bigint.(geq n (of_int summed)) | None -> true
+  match n with Some n -> Bigint.(geq n (of_int (summed k))) | None -> true
 
 (* The streamed operand of [k]'s contraction, on a renderer with local
    indices and shared memory. A kernel where a range's bound reads an axis is
@@ -1316,7 +1319,7 @@ let hand_coded_with ~core_threads k =
     (* Past [upcast_max] a stream reads its operand in several passes, which a
        core of two stages that keeps its threads beats. *)
     let core_first (_, _, reuse) =
-      Bigint.(gt reuse (of_int upcast_max))
+      Bigint.(gt reuse (of_int K.upcast_max))
       && match Lazy.force core with Some (_, filled) -> filled | None -> false
     in
     let early_stream =

@@ -86,6 +86,10 @@ val admits : Renderer.t -> Ops.t -> bool
     the heuristic asks before it gives a core the staged tile
     ({!Heuristic.hand_coded_optimizations}). *)
 
+val warp_tile : int
+(** [warp_tile] is the rows and the columns of the outputs a warp of a staged
+    core holds at most ({!tile}). *)
+
 val tile :
   Renderer.t ->
   Ops.t ->
@@ -105,17 +109,19 @@ val tile :
     stage the core; [None] otherwise, as for a core reading gathered rows,
     whose warps the core does not yet split. [n], [m] and [k] are the sizes
     of those axes as the core leaves them, [0] when unknown, [axes] their
-    ranges, and [workgroups] the kernel's, if known. A warp holds 64 by
-    64 outputs; a workgroup takes 2 by 2 warps where [M] and [N] divide by 2,
-    one on each of the four schedulers of an NVIDIA SM since Volta, and [K]
-    is unrolled to 32 elements a trip where it divides. The stages [s] are
+    ranges, and [workgroups] the kernel's, if known. A warp holds
+    {!warp_tile} by {!warp_tile} outputs; a workgroup takes 2 by 2 warps
+    where [M] and [N] divide by 2, one on each of the four schedulers of an
+    NVIDIA SM since Volta, and [K] is unrolled to 32 elements a trip where it
+    divides. The stages [s] are
     those {!operands} copies: {!depth} of the tiles its loads copy, at their
     types, beside the stages of the kernel's earlier cores, and one where the
     tiles step through no loop or loops that are no nest, or an address
     gathers.
     While the kernel keeps fewer than [core_threads / s] threads, the warp
-    tile halves, [M] then [N], down to half of 64 a side: a pipeline overlaps
-    a warp's copies with its cores, so it needs fewer warps in flight.
+    tile halves, [M] then [N], down to half of {!warp_tile} a side: a
+    pipeline overlaps a warp's copies with its cores, so it needs fewer warps
+    in flight.
 
     Where [ren] states its compute units and the bytes a unit keeps in
     flight ({!Renderer.t.units}, {!Renderer.t.in_flight}), the core has two

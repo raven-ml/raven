@@ -1763,6 +1763,104 @@ let rounds_kernels =
       equal int 15 (kernels 512 15);
       at_least int ~than:17 (kernels 512 16))
 
+(* Workgroups *)
+
+(* The most threads a workgroup holds on every GPU target: a CUDA block's
+   1024 (the CUDA guide's "Maximum number of threads per block"), an AMD
+   workgroup's (HIP's hardware features) and an Apple threadgroup's (Metal's
+   feature set tables). *)
+let block_threads = 1024
+
+(* The GPU targets, lowered and rendered without a device or its
+   toolchain. *)
+let gpu_targets =
+  List.map
+    (fun t -> Result.get_ok (Tolk.Helpers.Target.of_string t))
+    [
+      "CUDA:CUDA:sm_89"; "METAL:METAL:Apple9"; "AMD:HIP:gfx1201";
+      "AMD:HIP:gfx942";
+    ]
+
+(* The threads of a workgroup of the kernel [ast]: the product of its local
+   ranges' sizes. *)
+let workgroup_threads ast =
+  List.fold_left
+    (fun n u ->
+      if
+        Tolk.Ops.op u = Tolk.Op.Range
+        && Tolk.Ops.axis_type u = Tolk.Ops.Axis_type.Local
+      then
+        match Tolk.Ops.vmax u with
+        | `Int m -> n * (Tolk.Bigint.to_int m + 1)
+        | _ -> failf "a local range of no constant bound"
+      else n)
+    1
+    (Tolk.Ops.toposort ~calls:Skip ast)
+
+(* A scatter of [w_k] updates into [w_n] targets on [w_target]. *)
+type workgroup_case = {
+  w_combine : K.combine;
+  w_unique : bool;
+  w_n : int;
+  w_k : int;
+  w_target : Tolk.Helpers.Target.t;
+}
+
+let pp_workgroup_case ppf c =
+  Format.fprintf ppf "%s%s of %d updates into %d on %s:%s"
+    (combine_name c.w_combine)
+    (if c.w_unique then " unique" else "")
+    c.w_k c.w_n c.w_target.device c.w_target.arch
+
+(* Updates from one to past 2^21, a power of two or a few past one: from
+   2^18 threads, the workgroups that leave a target's 256 hold more than a
+   block. *)
+let workgroup_case =
+  let open Gen in
+  let* w_combine = among [ K.Set; Add; Max ] in
+  let* w_unique = bool in
+  let* w_n = frequency [ (1, int_range 1 2); (2, int_range 3 64) ] in
+  let* e = frequency [ (1, int_range 0 17); (2, int_range 18 21) ] in
+  let* past = frequency [ (2, constant 0); (1, int_range 1 7) ] in
+  let+ w_target = among gpu_targets in
+  { w_combine; w_unique; w_n; w_k = (1 lsl e) + past; w_target }
+
+(* A scatter's kernels number their threads in workgroups of at most a
+   block's threads, whatever its updates. *)
+let scatter_workgroups =
+  prop "a scatter's workgroups hold at most a block's threads on every GPU"
+    ~count:60
+    (Gen.with_pp pp_workgroup_case workgroup_case)
+    (fun c ->
+      let idx = Nx.broadcast_to [| c.w_k |] (Nx.scalar D.Int64 0L) in
+      let updates = Nx.broadcast_to [| c.w_k |] (Nx.scalar D.Float32 1.) in
+      let into = Nx.zeros D.Float32 [| c.w_n |] in
+      let op () =
+        P.eval ~by:"t"
+          (P.Scatter
+             {
+               combine = c.w_combine;
+               unique = c.w_unique;
+               axis = 0;
+               idx;
+               updates;
+               into;
+             })
+      in
+      let most =
+        List.fold_left
+          (fun m (_, ast, _) -> max m (workgroup_threads ast))
+          1
+          (Lowered.sources ~target:c.w_target op)
+      in
+      cover "a workgroup of a block's threads" (most = block_threads);
+      cover "a workgroup of fewer threads" (most < block_threads);
+      List.iter
+        (fun (t : Tolk.Helpers.Target.t) ->
+          cover (t.device ^ " " ^ t.arch) (t = c.w_target))
+        gpu_targets;
+      at_most int ~than:block_threads most)
+
 (* Numbering *)
 
 (* A numbering of [n] rows of keys of no columns, which hold no element, so
@@ -1790,6 +1888,7 @@ let () =
        [
          group "gathers and scatters"
            [ gathers; scatters_moved; scatter_adds; unreached ];
+         group "workgroups" [ scatter_workgroups ];
          group "folds and assemblies" [ folds; assemblies ];
          group "sorts"
            [

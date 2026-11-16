@@ -2217,7 +2217,9 @@ let clang_cut ~piece ~long (target : Helpers.Target.t) =
   in
   Renderer.v ~name:"ClangRenderer"
     ~registers:(fun () -> Compiler_cpu.registers arch)
-    ~vector_lanes:clang_lanes ~has_local:false ~global_max:[ 1; 0; 0 ]
+    ~vector_lanes:clang_lanes ~has_local:false ~local_threads_max:1
+    ~simd_threads:1
+    ~global_max:[ 1; 0; 0 ]
     ~extra_matcher:
       (if String.starts_with ~prefix:"x86" arch then
          Pattern_matcher.concat
@@ -2385,8 +2387,17 @@ let metal_with compiler (target : Helpers.Target.t) =
      96 and 48-117 at 128, for one and two workgroups a member, three cold
      builds each at load 4-6. 128 members of 4 or 8 workgroups took
      6.2-6.4 s, of 3 or 6 workgroups 0.2 s, and 878 one-workgroup members
-     did not build in 4 minutes. *)
+     did not build in 4 minutes.
+
+     A threadgroup holds at most 1024 threads from Apple GPU family 4 and
+     512 on Apple2 and Apple3 ("Maximum threads per threadgroup", Metal's
+     feature set tables). A GPU of no Apple family (Mac2), which the tables
+     no longer list, keeps the 1024 every Metal renderer held. *)
+  let local_threads_max =
+    match family with Some f when f < 4 -> 512 | _ -> 1024
+  in
   Renderer.v ~name:"MetalRenderer" ~launch_members:40 ~launch_locals:false
+    ~local_threads_max
     ~core_threads:32768 ~stream_threads:16384
     ~tensor_cores:(if from 7 then Tc.metal else [])
     ~extra_matcher:metal_extra_matcher ~packed_args:true
@@ -2710,10 +2721,13 @@ let cuda_renderer ~sync compiler (target : Helpers.Target.t) =
      gpt-oss-20b's MXFP4 gate and up product at 512 tokens took 831 us with
      its codes decoded through the subnormal [2^-127], 888 with a select
      that avoids it. *)
+  (* A block holds at most 1024 threads ("Maximum number of threads per
+     block", the CUDA guide's compute capabilities). *)
   Renderer.v ~name ~half8:true ~byte_words:cuda_lang.byte_words
     ~full_rate_subnormals:true ~launch_members:64 ~launch_args:512
     ~global_max:[ 2147483647; 65535; 65535 ]
-    ~local_max:[ 1024; 1024; 64 ] ~shared_max:49152 ~async_copy ~tensor_cores
+    ~local_max:[ 1024; 1024; 64 ] ~local_threads_max:1024 ~shared_max:49152
+    ~async_copy ~tensor_cores
     ~units ~in_flight ~extra_matcher:cuda_extra_matcher
     ~code_for_op:cuda_lang.code_for_op ~native ~fma ~render ~compiler target
 
@@ -3174,9 +3188,17 @@ let hip_with compiler (target : Helpers.Target.t) =
   (* __builtin_fmaf16 is LLVM's fma of halves, V_FMA_F16 on every GPU here: "D =
      S0 * S1 + S2", fused (RDNA4 ISA). *)
   let fma dt = Dtype.mem dt Dtype.[ Float16; Float32; Float64 ] in
+  (* A wave holds 64 threads on gfx9 and 32 from gfx10, which HIP compiles
+     for by default ("AMD devices return 64 for gfx9 and 32 for gfx10 and
+     above", HIP's [warpSize]), and a workgroup at most 1024 ("Maximum number
+     of threads per block", HIP's hardware features). *)
+  let simd_threads =
+    if String.starts_with ~prefix:"gfx9" arch then 64 else 32
+  in
   (* the global limit is only really needed on gfx12, though gfx11 reports the
      same *)
   Renderer.v ~name:"HIPRenderer" ~half8:true ~shared_max:65536
+    ~local_threads_max:1024 ~simd_threads
     ~global_max:[ 2147483647; 65535; 65535 ]
     ~global_prod_max:[ 0xFFFFFFFF; 0xFFFFFFFF; 0xFFFFFFFF ]
     ~tensor_cores ~extra_matcher:(hip_extra_matcher arch)

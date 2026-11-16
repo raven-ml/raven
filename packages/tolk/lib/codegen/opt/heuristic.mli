@@ -20,8 +20,9 @@
     optimisation. Otherwise the first of these that applies decides:
 
     - {{!section-streaming}streaming}, when the reuse of the streamed operand
-      is at most 32, the contraction sums at least 256 values an output, or a
-      number not known, and does at most the renderer's
+      is at most 32, the contraction sums at least 8 values an output for
+      each thread of a SIMD group ({!Renderer.t.simd_threads}), 256 on CUDA,
+      or a number not known, and does at most the renderer's
       {!Renderer.t.per_byte_first} multiply-adds per byte of the buffers the
       streamed operand reads, or a number not known: the product of its
       output and contracted axes' sizes against the bytes of each buffer once,
@@ -71,10 +72,11 @@
         along one axis the operand does not read takes [ceil (f / 16)] passes
         instead, of as many outputs each, the axis padded where they do not
         divide it.}
-     {- [u] splits into the largest of 32, 16, 8, 4 and 2 local threads that
-        divides it, and when they take [u] whole and are fewer than 32, the
-        contracted axis of the next stride in the main access into as many
-        more as make 32 or divide it.}
+     {- [u] splits into the largest power of two of local threads, up to a
+        SIMD group's ({!Renderer.t.simd_threads}), that divides it, and when
+        they take [u] whole and are fewer, the contracted axis of the next
+        stride in the main access into as many more as make a SIMD group's
+        or divide it.}
      {- The first global axis that the streamed operand reads, the other does
         not and 4 divides, or else one both read, splits by 4: into local
         threads without reuse, into upcast lanes with it.}
@@ -82,16 +84,17 @@
         is unrolled by its largest divisor up to 8, or 4 with reuse.}
      {- Each contracted axis that no split has taken, other than [u], and
         along which the other operand is read at unit stride, is unrolled
-        whole where its values there fit one load of 16 bytes and 32 lanes,
-        stepping the other operand by its stride along [u], load across more
-        than a 128-byte line.}}
+        whole where its values there fit one load of 16 bytes and a SIMD
+        group's lanes, stepping the other operand by its stride along [u],
+        load across more than a 128-byte line.}}
 
     When that axis is a global axis, the kernel takes the columns layout: after
-    the upcast of the reuse, the axis splits into 32 local threads, fewer down
-    to 8 with few outputs, and 2 upcast lanes, and the first reduce axis into
-    the least power of two of local threads that makes 32768 threads, at most
-    what a workgroup of 1024 threads leaves beside those across the axis, or
-    the largest that divides it. It does not apply when more than 32768
+    the upcast of the reuse, the axis splits into as many local threads as a
+    workgroup's most ({!Renderer.t.local_threads_max}) over a SIMD group's,
+    32 on CUDA, fewer down to 8 with few outputs, and 2 upcast lanes, and the
+    first reduce axis into the least power of two of local threads that makes
+    32768 threads, at most what a workgroup's most leaves beside those across
+    the axis, or the largest that divides it. It does not apply when more than 32768
     outputs are left after the upcast, or when the axis does not divide by the
     local threads and lanes; 32768 threads is [sm_89]'s bound, fixed for every
     target as the tensor core's floor is.
@@ -164,12 +167,13 @@
     - On a renderer with local indices, a contraction summed in 4 bytes or
       fewer whose loop upcast two axes, each by 4 and each leaving part of
       its axis, is blocked when an operand does not index each, 2 divides
-      each, and what is left of them once halved holds a SIMD group of 32
+      each, and what is left of them once halved holds a SIMD group's
       threads in powers of two: each axis is upcast again by 2, the last
       unrollable axis is unrolled by 4 when 4 divides it, and the workgroup
-      takes at most 32 threads. Where one of the two upcasts took its axis
-      whole, the output axis that the same accesses index takes its place, as
-      the width of a projection's heads takes the heads'.
+      takes at most a SIMD group's threads. Where one of the two upcasts
+      took its axis whole, the output axis that the same accesses index
+      takes its place, as the width of a projection's heads takes the
+      heads'.
     - The last unrollable axis is unrolled whole if of size at most 32 (and
       a second one if both are at most 3), or else by 4, when at most 4
       lanes are upcast or no reduce axis is, and fewer than 64.
@@ -179,7 +183,8 @@
       size that take threads ({!Postrange.Scheduler.threadless}) become
       local: up to three axes, those some access does not index first, split
       by the first of 32 (axis [0] only), 16, 8, 4, 3 and 2 that divides them
-      while the workgroup stays within 128 threads, or 32 when blocked. A
+      while the workgroup stays within 128 threads, or a SIMD group's when
+      blocked. A
       blocked contraction keeps that split where it lays a power of two of at
       least 2 threads along the later of its two axes; else 16 or 8 threads,
       whichever pads it less, lie along the later axis and the rest along the

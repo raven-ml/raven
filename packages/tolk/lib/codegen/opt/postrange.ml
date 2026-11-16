@@ -200,6 +200,8 @@ let thread_bound slice rngs =
     List.filter (fun r -> List.exists (meets r) writes) weak
 
 module Scheduler = struct
+  let upcast_max = 16
+
   (* What the axis queries read of a kernel. The heuristic and the search ask
      them many times between two rewrites of the kernel, so they are computed
      once per kernel. *)
@@ -717,7 +719,10 @@ module Scheduler = struct
               (strf "a call or custom code reads axis %d" axis);
             if is_reduce then
               check Bigint.(leq amt (of_int 32)) "don't unroll more than 32"
-            else check Bigint.(leq amt (of_int 16)) "don't upcast more than 16"
+            else
+              check
+                Bigint.(leq amt (of_int upcast_max))
+                "don't upcast more than 16"
           end;
           let groups = target = Local && is_reduce in
           (* A group's threads meet at barriers, which threads running a loop

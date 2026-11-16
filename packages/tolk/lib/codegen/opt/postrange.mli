@@ -185,6 +185,10 @@ module Scheduler : sig
       {!Opt.Local} and [r] takes no threads ({!threadless}), or if [amount]
       does not divide [r]'s size. *)
 
+  val upcast_max : int
+  (** [upcast_max] is the most values an upcast of an axis that no reduction
+      closes takes: {!apply_opt} refuses more. *)
+
   val apply_opt : ?append_opt:bool -> t -> Opt.t -> (Ops.t list, string) result
   (** [apply_opt k opt] applies [opt] to [k], records it among [k]'s applied
       optimisations if [append_opt] (default [true]), and is [Ok] the axes it
@@ -198,8 +202,8 @@ module Scheduler : sig
       launch ({!Ops.known_at_launch}), as [j < 4 (i + 1)]'s, its axis takes no
       lanes for an upcast or no threads for a local split
       ({!section-rewriting}), a split exceeds what the renderer allows (32
-      lanes of a reduce axis or 16 of another, locals only with local indices,
-      the workgroup's shared memory),
+      lanes of a reduce axis or {!upcast_max} of another, locals only with
+      local indices, the workgroup's shared memory),
       an upcast of an axis a range's bound reads ({!read_by_bounds}) or an
       opaque operation reads ({!read_by_opaque}), a local split of an axis an
       opaque operation does not read ({!unread_by_opaque}), a local split of a

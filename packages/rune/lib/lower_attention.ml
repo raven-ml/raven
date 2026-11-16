@@ -491,17 +491,19 @@ let run_tiles ~tk ~bk ~splits ~gs len =
 (* The SIMT kernel
 
    A workgroup holds [simt_rows] rows of a group of heads, one a thread, or
-   32 for fewer rows ([rows_of]), and takes tiles of [simt_keys] keys,
-   whose scores stay in registers. The host has one row a thread, whose
-   accumulator's columns are adjacent and added a vector at a time
-   ({!simt_width}). *)
+   a SIMD group's threads' worth for fewer rows ([rows_of]), and takes tiles
+   of [simt_keys] keys, whose scores stay in registers. The host has one row
+   a thread, whose accumulator's columns are adjacent and added a vector at a
+   time ({!simt_width}). *)
 
 let simt_rows = 64
 
-(* The rows a SIMT workgroup holds for [a]: [simt_rows], or a warp's worth
-   of 32 threads for fewer rows, a decode step's one query a head, whose
-   other threads would hold no row. *)
-let rows_of a = if grouped a <= 32 then 32 else simt_rows
+(* The rows a SIMT workgroup holds for [a] on [r]: [simt_rows], or one SIMD
+   group's threads ({!Tolk.Renderer.t.simd_threads}) for fewer rows, a decode
+   step's one query a head, whose other threads would hold no row. *)
+let rows_of (r : Renderer.t) a =
+  if grouped a <= r.simd_threads then r.simd_threads else simt_rows
+
 let simt_keys = 32
 
 (* The values' columns a SIMT thread adds at a time: on the host as many as
@@ -518,12 +520,11 @@ let simt_width (r : Renderer.t) a =
     | Some { bytes; _ } -> max 1 (bytes / Dtype.itemsize (Arith.dtype a.acc))
     | None -> 1
 
-let simt ~local ~width ~splits a xs =
+let simt ~local ~bq ~width ~splits a xs =
   let x = args ~scratch:true a xs in
   let sum = Option.get x.sum in
   let acc = Arith.dtype a.acc in
   let gr = grouped a in
-  let bq = if local then rows_of a else 1 in
   let bk = simt_keys in
   let tiles_q = (gr + bq - 1) / bq in
   let rows = numel a.lead * a.hq * a.tq in
@@ -2239,6 +2240,7 @@ let lower ~device ~(renderer : Renderer.t)
                  [local_workgroups] of them, as many as leave each core
                  about as many: a decode step's 8 rows ran on 8 of fudge's
                  14 cores. *)
+              let bq = if local then rows_of renderer a else 1 in
               let splits =
                 if not local then
                   splits_for ~stream:renderer.local_workgroups
@@ -2246,14 +2248,14 @@ let lower ~device ~(renderer : Renderer.t)
                     ~threads:1 ~tiles:(ceil_div tk simt_keys)
                 else
                   splits_for ~stream:renderer.stream_threads
-                    ~workgroups:(numel lead * a.hk * ceil_div (grouped a) (rows_of a))
-                    ~threads:(rows_of a) ~tiles:(ceil_div tk simt_keys)
+                    ~workgroups:(numel lead * a.hk * ceil_div (grouped a) bq)
+                    ~threads:bq ~tiles:(ceil_div tk simt_keys)
               in
               let sum =
                 Ops.new_buffer device (max 1 (rows * splits * dv)) acc_t
               in
               launch ~raw:(splits > 1) splits
-                (simt ~local ~width:(simt_width renderer a) ~splits a)
+                (simt ~local ~bq ~width:(simt_width renderer a) ~splits a)
                 ~scratch:[ sum ]
         in
         let o =

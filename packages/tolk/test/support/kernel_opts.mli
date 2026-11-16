@@ -42,7 +42,10 @@ val renderer_of_row : (string -> string) -> Renderer.t
     [arch], [has_local], [has_shared], [shared_max] and [registers], the vector
     registers' number and bytes as [16x32] or none if empty, and the tensor
     cores of its device and architecture: {!Tc.metal} on [METAL], [Tc.cuda arch]
-    on [CUDA] and [NV], and [Tc.amd arch] on [AMD], none elsewhere. A column
+    on [CUDA] and [NV], and [Tc.amd arch] on [AMD], none elsewhere. Its
+    {!Tolk.Renderer.t.simd_threads} and {!Tolk.Renderer.t.local_threads_max}
+    are its device's and architecture's: 64 and 1024 on gfx9, 1 and 1 on
+    [CPU], and 32 and 1024 elsewhere. A column
     [per_byte_first] gives {!Tolk.Renderer.t.per_byte_first}, its default
     where the row has none or it is empty.
 

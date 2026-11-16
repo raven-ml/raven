@@ -284,6 +284,39 @@ let errors =
         (fun () -> rejects (fun () -> Cstyle.cuda (target "CUDA" "CUDA" "sm_")));
     ]
 
+(* Threads *)
+
+(* The threads of a SIMD group and the most a workgroup holds on each
+   target: a CUDA warp's 32 and a block's 1024 (the CUDA guide's "Warp size"
+   and "Maximum number of threads per block"); an AMD wave's 64 on gfx9 and
+   32 from gfx10, and a workgroup's 1024 (HIP's [warpSize] and hardware
+   features); a Metal SIMD group's 32, and a threadgroup's 1024 from Apple
+   family 4 and 512 on Apple2 and Apple3 (Metal's feature set tables), 1024
+   on Mac2, which the tables do not list, as Metal's renderer held before it
+   stated the bound; one thread on the host, which launches no
+   workgroups. *)
+let threads =
+  cases "a renderer states its SIMD group's threads and a workgroup's most"
+    ~id:(fun (device, renderer, arch, _, _) ->
+      String.concat " " [ device; renderer; arch ])
+    [
+      ("CPU", "CLANG", "x86_64,x86-64", 1, 1);
+      ("CUDA", "CUDA", "sm_89", 32, 1024);
+      ("NV", "CUDA", "sm_80", 32, 1024);
+      ("AMD", "HIP", "gfx942", 64, 1024);
+      ("AMD", "HIP", "gfx1100", 32, 1024);
+      ("AMD", "HIP", "gfx1201", 32, 1024);
+      ("METAL", "METAL", "Apple9", 32, 1024);
+      ("METAL", "METAL", "Apple4", 32, 1024);
+      ("METAL", "METAL", "Apple3", 32, 512);
+      ("METAL", "METAL", "Apple2", 32, 512);
+      ("METAL", "METAL", "Mac2", 32, 1024);
+    ]
+    (fun (device, renderer, arch, simd, most) ->
+      let r = renderer_for (target device renderer arch) in
+      equal ~msg:"SIMD group" int simd r.simd_threads;
+      equal ~msg:"workgroup" int most r.local_threads_max)
+
 (* Parentheses *)
 
 (* Five operations in a row, each on the last's result: an associative operation
@@ -2262,6 +2295,7 @@ let () =
          declarations;
          written;
          errors;
+         threads;
          parentheses;
          negation;
          grouping;

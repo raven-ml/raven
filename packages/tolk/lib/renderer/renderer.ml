@@ -275,6 +275,8 @@ type t = {
   has_shared : bool;
   global_max : int list;
   local_max : int list;
+  local_threads_max : int;
+  simd_threads : int;
   global_prod_max : int list option;
   shared_max : int;
   async_copy : bool;
@@ -304,7 +306,8 @@ let v ?(name = "Renderer") ?(suffix = "") ?(supports_float4 = true)
     ?(half8 = false) ?(byte_words = false) ?(full_rate_subnormals = false)
     ?(registers = fun () -> None) ?(vector_lanes = 1) ?(has_local = true)
     ?(has_shared = true) ?(global_max = int32_max) ?(local_max = int32_max)
-    ?global_prod_max ?(shared_max = 32768) ?(async_copy = false)
+    ?(local_threads_max = 1024) ?(simd_threads = 32) ?global_prod_max
+    ?(shared_max = 32768) ?(async_copy = false)
     ?(tensor_cores = [])
     ?(per_byte_first = 64) ?(core_threads = 16384)
     ?(stream_threads = 32768)
@@ -331,6 +334,8 @@ let v ?(name = "Renderer") ?(suffix = "") ?(supports_float4 = true)
     has_shared;
     global_max;
     local_max;
+    local_threads_max;
+    simd_threads;
     global_prod_max;
     shared_max;
     async_copy;

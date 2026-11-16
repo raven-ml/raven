@@ -62,9 +62,6 @@ let run o r =
       d
   | _ -> Bigint.one
 
-(* The most values an upcast of one axis takes (apply_opt's bound). *)
-let upcast_max = 16
-
 (* The stride of the range [r] in the index [i]: 1 for a term [r], [c] for a
    term [r * c]. *)
 let stride r i =

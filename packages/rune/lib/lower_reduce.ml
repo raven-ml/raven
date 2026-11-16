@@ -875,20 +875,14 @@ let stream_rows = 4
    takes the core from one row a group. *)
 let stream_held = 2
 
-(* A core's block holds its fewest rows while they hold [core_held] times
-   the mean, then {!warp_rows}. A group that spills past its block doubles
-   its reads, against 3-4% that a read in blocks of 48 saves over 64. A
-   model's routing crowds rows into some groups: on gpt-oss-20b's own
-   routing blocks of 48 lose to 64 from 2.4 to 2.5 times the mean, its
-   experts' products 1.2-5.8% slower at 160 to 288 tokens, where routing
-   drawn uniformly favours 48 there by 3.5%. 3 holds the crossover with a
-   margin. *)
+(* A core's block holds its fewest rows while they hold [core_held] times the
+   mean, then {!Tolk.Stage.warp_tile}. A group that spills past its block
+   doubles its reads, against 3-4% that a read in blocks of 48 saves over 64. A
+   model's routing crowds rows into some groups: on gpt-oss-20b's own routing
+   blocks of 48 lose to 64 from 2.4 to 2.5 times the mean, its experts'
+   products 1.2-5.8% slower at 160 to 288 tokens, where routing drawn uniformly
+   favours 48 there by 3.5%. 3 holds the crossover with a margin. *)
 let core_held = 3
-
-(* The rows of a staged warp's tile ({!Tolk.Stage.tile}), the most a core
-   takes in one warp. Blocks of 80 read 10-13% slower than 64 at equal reads
-   of their slices. *)
-let warp_rows = 64
 
 (* [block_rows ~core ~decoded ~n ~g] is the rows of a block of [n] rows over
    [g] groups, or [1] for each row reading its own slice, as rows share
@@ -900,13 +894,15 @@ let warp_rows = 64
    streamed, rows routed uniformly at random (4 rows a group: 1.99 ms in
    blocks of 4, 1.51 of 8, 1.60 of 64), and on the host (1.5 rows a group:
    83 ms in blocks of 4 against 106 per row; 12 rows: 273 of 8 against 306 of
-   4). *)
+   4). A block holds at least a staged warp's rows ({!Tolk.Stage.warp_tile}),
+   the most a core takes in one warp: blocks of 80 read 10-13% slower than 64
+   at equal reads of their slices. *)
 let block_rows ~core ~decoded ~n ~g =
   if n < g then 1
   else
     match Lazy.force core with
     | Some _ when decoded && stream_held * n <= stream_rows * g -> stream_rows
-    | Some c -> if core_held * n < c * g then c else max c warp_rows
+    | Some c -> if core_held * n < c * g then c else max c Tolk.Stage.warp_tile
     | None -> if n < 5 * g then 4 else if n < 16 * g then 8 else 64
 
 (* Whether a movement of [u], down to its base, expands it: a row read again

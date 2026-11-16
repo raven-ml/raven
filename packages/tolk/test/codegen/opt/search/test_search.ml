@@ -288,6 +288,57 @@ let candidate_laws =
             fewer);
     ]
 
+(* The most threads a workgroup holds: a CUDA block's 1024 (the CUDA guide's
+   "Maximum number of threads per block") and an Apple threadgroup's 512
+   before family 4 (Metal's feature set tables). *)
+let block_targets = [ ("CUDA:CUDA:sm_89", 1024); ("METAL:METAL:Apple3", 512) ]
+
+(* [out[i * 4096 + j] = x[i * 4096 + j]] over 4096 by 4096, its first axis
+   split into 256 local threads. *)
+let local_256 ren =
+  let i = Ops.range ~axis_type:Weak (Int 4096) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int 4096) [ 1 ] in
+  let at = Ops.O.((i * Ops.int 4096) + j) in
+  let x = Shape.param ~shape:[ Int (4096 * 4096) ] 1 Float32
+  and out = Shape.param ~shape:[ Int (4096 * 4096) ] 0 Float32 in
+  let st = Ops.store (Ops.index out [ at ]) (Ops.load (Ops.index x [ at ]) []) in
+  let k =
+    K.v (Ops.sink ~kernel:(Ops.kernel_info ()) [ Ops.end_ st [ i; j ] ]) ren
+  in
+  K.convert_loop_to_global k;
+  (match
+     K.apply_opt k
+       (Opt.Split { axis = 0; amount = 256; target = Local; top = false })
+   with
+  | Ok _ -> ()
+  | Error e -> failf "the split of 256 does not apply: %s" e);
+  k
+
+let threads k =
+  List.fold_left
+    (fun n a ->
+      match List.nth (K.full_shape k) a with
+      | Ops.Int m -> n * m
+      | Sym _ -> failf "a local axis of no constant size")
+    1
+    (K.axes_of k [ Warp; Local ])
+
+(* Past a bound on its local threads that exceeds the renderer's, a search's
+   candidates still hold at most a workgroup's threads, up to that most. *)
+let within_workgroup =
+  cases "a candidate's workgroup holds at most its renderer's most threads"
+    ~id:fst block_targets (fun (t, most) ->
+      let ren =
+        Cstyle.without_compiler (Result.get_ok (Helpers.Target.of_string t))
+      in
+      let acted =
+        quietly
+          ~settings:[ B (Setting.beam_local_max, 1 lsl 20) ]
+          (fun () -> Search.get_kernel_actions (local_256 ren))
+      in
+      equal int most
+        (List.fold_left (fun m (_, k) -> max m (threads k)) 0 acted))
+
 (* Opt correctness *)
 
 (* The interpreter cannot evaluate a matrix multiply-accumulate, which a tensor
@@ -1404,6 +1455,7 @@ let () =
          candidates;
          searches;
          candidate_laws;
+         within_workgroup;
          keeps_writes;
          keeps_writes_exhaustively;
          chooses_the_fastest;

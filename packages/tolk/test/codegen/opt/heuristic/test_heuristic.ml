@@ -647,8 +647,10 @@ type operand = Loaded | Divided | Relu
 
 (* [out[i, j] = sum_k x[i, k] w[j, k]] over [rows] rows of [cols] columns and
    [depth] terms, of bfloat16 operands summed in float32, as rune compiles a
-   product, [x] read as [operand] says and [w] of type [matrix]. *)
-let dense ?(operand = Loaded) ?(matrix = Dtype.Bfloat16) rows cols depth =
+   product, [x] read as [operand] says and [w] of type [matrix], laid out by
+   its rows, or by its columns, [w[k, j]], where [by_columns]. *)
+let dense ?(operand = Loaded) ?(matrix = Dtype.Bfloat16) ?(by_columns = false)
+    rows cols depth =
   let open Ops.O in
   let param slot size dt = Shape.param ~shape:[ Ops.Int size ] slot dt in
   let out = param 0 Stdlib.(rows * cols) Dtype.Bfloat16
@@ -670,7 +672,8 @@ let dense ?(operand = Loaded) ?(matrix = Dtype.Bfloat16) rows cols depth =
         let relu = Ops.bitwise_and (Ops.bitcast a Uint32) sign in
         Ops.cast (Ops.cast (Ops.bitcast relu Float32) Bfloat16) Float32
   in
-  let sum = Ops.reduce (a * ld w ((j * int depth) + k)) Add [ k ] in
+  let at = if by_columns then (k * int cols) + j else (j * int depth) + k in
+  let sum = Ops.reduce (a * ld w at) Add [ k ] in
   Ops.sink ~kernel:(Ops.kernel_info ())
     [
       Ops.end_
@@ -679,6 +682,115 @@ let dense ?(operand = Loaded) ?(matrix = Dtype.Bfloat16) rows cols depth =
            (Ops.cast sum Dtype.Bfloat16))
         [ i; j ];
     ]
+
+(* The most threads a workgroup holds on every GPU target: a CUDA block's
+   1024 (the CUDA guide's "Maximum number of threads per block"), an AMD
+   workgroup's (HIP's hardware features, CDNA's waves of 64 included) and an
+   Apple threadgroup's (Metal's feature set tables). *)
+let block_threads = 1024
+
+(* The GPU targets' own renderers, CDNA's gfx942 among them. *)
+let block_targets =
+  List.map
+    (fun t ->
+      Cstyle.without_compiler (Result.get_ok (Helpers.Target.of_string t)))
+    [
+      "CUDA:CUDA:sm_89"; "METAL:METAL:Apple9"; "AMD:HIP:gfx1201";
+      "AMD:HIP:gfx942";
+    ]
+
+(* A product of [rows] rows of [cols] columns over [depth] terms on [ren],
+   its matrix laid out by its rows or by its columns. *)
+type block_case = {
+  b_ren : Renderer.t;
+  b_by_columns : bool;
+  b_rows : int;
+  b_cols : int;
+  b_depth : int;
+}
+
+let pp_block_case ppf c =
+  Format.fprintf ppf "%d by %d over %d, by %s, on %s:%s" c.b_rows c.b_cols
+    c.b_depth
+    (if c.b_by_columns then "columns" else "rows")
+    c.b_ren.target.device c.b_ren.target.arch
+
+(* Rows of a decode step to a prefill's few dozen, and columns and terms of
+   the products that the layouts of few and of many outputs take, powers of
+   two and gpt-oss's 2880 among them. *)
+let block_case =
+  let open Gen in
+  let extent =
+    frequency
+      [
+        (2, map (fun e -> 1 lsl e) (int_range 6 12));
+        (1, of_list [ 2880; 5760; 720; 1000 ]);
+      ]
+  in
+  let* b_ren = of_list block_targets in
+  let* b_by_columns = bool in
+  let* b_rows = frequency [ (2, constant 1); (1, int_range 2 16) ] in
+  let* b_cols = extent in
+  let+ b_depth = extent in
+  { b_ren; b_by_columns; b_rows; b_cols; b_depth }
+
+(* The threads of a SIMD group: a CUDA warp's 32, an AMD wave's 64 on gfx9
+   and 32 from gfx10 (HIP's [warpSize]: "AMD devices return 64 for gfx9 and
+   32 for gfx10 and above"), and a Metal SIMD group's 32. *)
+let simd_cases =
+  [
+    ("CUDA:CUDA:sm_89", 32); ("AMD:HIP:gfx942", 64); ("AMD:HIP:gfx1201", 32);
+    ("METAL:METAL:Apple9", 32);
+  ]
+
+(* A decode step's product of one row by 512 columns over 4096 terms,
+   streamed along its matrix's rows, splits its reduce into a SIMD group's
+   threads. *)
+let rows_take_simd =
+  cases "a product streamed by its rows reduces over a SIMD group's threads"
+    ~id:fst simd_cases (fun (t, simd) ->
+      let ren =
+        Cstyle.without_compiler (Result.get_ok (Helpers.Target.of_string t))
+      in
+      let s = K.v (dense 1 512 4096) ren in
+      K.convert_loop_to_global s;
+      let o = Heuristic.hand_coded_optimizations s in
+      equal ~msg:"streams" Testable.bool true (streams o);
+      equal int simd
+        (List.fold_left
+           (fun n r -> n * Bigint.to_int (size r))
+           1
+           (ranges_at o ~reduce:true [ Local ])))
+
+(* A product's workgroups hold at most a block's threads on every GPU target,
+   whatever the threads of its SIMD groups. *)
+let within_block =
+  prop "a product's workgroups hold at most a block's threads on every GPU"
+    ~count:400
+    (Gen.with_pp pp_block_case block_case)
+    (fun c ->
+      let s =
+        K.v (dense ~by_columns:c.b_by_columns c.b_rows c.b_cols c.b_depth)
+          c.b_ren
+      in
+      K.convert_loop_to_global s;
+      let o = Heuristic.hand_coded_optimizations s in
+      let threads =
+        List.fold_left
+          (fun n r -> n * Bigint.to_int (size r))
+          1
+          (List.map (List.nth (K.rngs o)) (K.axes_of o [ Warp; Local ]))
+      in
+      let cdna = c.b_ren.target.arch = "gfx942" in
+      cover "gfx942" cdna;
+      cover "gfx942, a block's threads" (cdna && threads = block_threads);
+      cover "gfx942, by columns, streamed"
+        (cdna && c.b_by_columns && streams o);
+      cover "gfx942, by rows, streamed"
+        (cdna && (not c.b_by_columns) && streams o);
+      cover "another target, a block's threads"
+        ((not cdna) && threads = block_threads);
+      at_most int ~than:block_threads threads)
 
 (* Past 16 outputs a load, a stream reads its operand in several passes: a
    core of two stages that keeps its threads takes the kernel first, and any
@@ -2526,6 +2638,8 @@ let () =
              recorded_order;
              streams_no_call;
              one_trip_product;
+             within_block;
+             rows_take_simd;
            ];
          no_threads_beside_call;
          warps_within_runs;

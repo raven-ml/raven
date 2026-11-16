@@ -400,7 +400,7 @@ let unbudgeted_rows = 4
 
 let share_decodes k m =
   let operands = List.filter Stage.decoded (src m) in
-  let cap = if budgeted k then upcast_max else unbudgeted_rows in
+  let cap = if budgeted k then K.upcast_max else unbudgeted_rows in
   (* The outputs along [axis], of [n], that read one value of [o]. *)
   let shared axis n o =
     let r = List.nth (K.rngs k) axis in

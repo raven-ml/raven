@@ -216,6 +216,17 @@ type t = private {
       (** The greatest number of workgroups on each axis, [x], [y] and [z]. *)
   local_max : int list;
       (** The greatest number of threads of a workgroup on each axis. *)
+  local_threads_max : int;
+      (** The greatest number of threads of a workgroup over all its axes:
+          1024 on CUDA, AMD's GPUs and Apple's but Apple2's and Apple3's 512,
+          and 1 on a target that launches no workgroups. It moves
+          the order of a sum, so it is fixed per target. *)
+  simd_threads : int;
+      (** The threads of a SIMD group, which a compute unit runs one
+          instruction for at once: a CUDA warp's 32, an AMD wave's 64 on
+          gfx9 and 32 from gfx10, a Metal SIMD group's 32, and 1 on a
+          target that launches no workgroups. It moves the order of a sum,
+          so it is fixed per target. *)
   global_prod_max : int list option;
       (** If any, the greatest number of threads on each axis, workgroups times
           their threads. *)
@@ -330,6 +341,8 @@ val v :
   ?has_shared:bool ->
   ?global_max:int list ->
   ?local_max:int list ->
+  ?local_threads_max:int ->
+  ?simd_threads:int ->
   ?global_prod_max:int list ->
   ?shared_max:int ->
   ?async_copy:bool ->
@@ -360,6 +373,8 @@ val v :
       [false] and [vector_lanes] is [1];
     - [global_max] and [local_max] are [0x8FFFFFFF] on each axis, the greatest
       size a 32-bit signed index holds, and [global_prod_max] is [None];
+    - [local_threads_max] is [1024], a CUDA block's, and [simd_threads]
+      [32], a CUDA warp's;
     - [shared_max] is [32768], and [async_copy] is [false];
     - [tensor_cores] and [code_for_op] are empty, and so are the rules of
       [extra_matcher];

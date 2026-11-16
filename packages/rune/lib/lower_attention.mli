@@ -19,7 +19,7 @@
     dimensions. The kernel that folds a row's runs of keys holds one term a
     run: at most the row's tiles of keys, and the least power of two that
     reaches the target's [stream_threads] over a workgroup's threads, its
-    [local_workgroups] on the host: 256 on CUDA with 128 threads. Without a
+    [local_workgroups] on the host. Without a
     tensor core a tile's scores are computed once, then its weights multiply
     the values a few columns at a time. On a tensor core the keys'
     dimensions go in chunks of at most 128 and the values' columns in blocks

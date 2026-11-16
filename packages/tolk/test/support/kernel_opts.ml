@@ -118,8 +118,20 @@ let renderer_of_row cell =
     | "" -> None
     | n -> Some (int_of_string n)
   in
+  (* The threads of a SIMD group and the most a workgroup holds: a CUDA
+     warp's 32 and block's 1024, an AMD wave's 64 on gfx9 and 32 from gfx10
+     in a workgroup of 1024 (HIP's [warpSize] and hardware features), a
+     Metal SIMD group's 32 in a threadgroup of 1024 from Apple family 4, and
+     one thread on the host. *)
+  let simd_threads, local_threads_max =
+    match device with
+    | "CPU" -> (1, 1)
+    | "AMD" when String.starts_with ~prefix:"gfx9" arch -> (64, 1024)
+    | _ -> (32, 1024)
+  in
   Renderer.v
     ~registers:(fun () -> registers)
+    ~simd_threads ~local_threads_max
     ?per_byte_first:(optional "per_byte_first")
     ?core_threads:(optional "core_threads")
     ?stream_threads:(optional "stream_threads")
