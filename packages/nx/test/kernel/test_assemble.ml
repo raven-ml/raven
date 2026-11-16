@@ -352,7 +352,7 @@ let test_late_refusals (b : Support.backend) () =
    destination against an inaccessible page. *)
 let law_guards (b : Support.backend) (c, side) =
   let module K = (val b.kernels) in
-  cover c.form true;
+  List.iter (fun f -> cover f (c.form = f)) [ "slices"; "concatenation"; "pad" ];
   cover "at the page after" (side = Support.After);
   cover "at the page before" (side = Support.Before);
   let (D.Any dt) = c.dtype in
