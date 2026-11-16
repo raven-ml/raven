@@ -3785,315 +3785,190 @@ A divisor past its operand's width was read in its operand's type
 
 ## D163. An inlined value computes at most 360 nodes again
 
-- **tinygrad:** `schedule/rangeify.py` (`remove_bufferize`, which
-  inlines a stored value that reads at most three buffers and no reduction
-  reading a buffer, at every position and every trip it is read at) and
-  `get_kernel_graph`; `schedule/indexing.py`
-  (`run_rangeify`, which stores a value its consumers index differently, or
-  one a reduction or an elementwise operation reads past a broadcast, the
-  stores `remove_bufferize` weighs).
-- **tolk:** `Rangeify.extent`, `Rangeify.read_ranges` and
-  `Rangeify.read_copies` (the copies a read makes of a stage's value), with
-  `Rangeify.digit_of` (a range read through floor divisions and remainders);
-  `Rangeify.collapses`, `Rangeify.selected` and `Rangeify.collapsed` (a sum
-  that selects one trip, asked only where the answer changes a stage's
-  decision), and `Rangeify.storage` (a stage of no storage read in such a
-  sum), through `Simplify.load_collapse`, which
-  `Simplify.pm_load_collapse` applies; `Rangeify.reads`,
-  `Rangeify.stage_reads`, `Rangeify.reduced`, `Rangeify.stage_copies` and
-  `Rangeify.stage_bounds` (the copies of each stage);
-  `Rangeify.inline_budget` and `Rangeify.copied`;
-  `Rangeify.inlined`; `copies` and `computes` in
-  `Rangeify.remove_bufferize`; `Rangeify.destination`, which
-  `Rangeify.pm_remove_bufferize` applies to a store's destination;
-  `Rangeify.pm_cleanups` and `Rangeify.get_kernel_graph`, which counts the
-  reads before the cleanups; across kernels, `Rangeify.store_shared`,
-  `Rangeify.candidates`, `Rangeify.kept`, `Rangeify.computed_nodes`,
-  `Rangeify.union` and `Rangeify.is_kernel`.
-- **Differs:** a stage whose reads make `c` copies of its value stays stored
-  when `n * (c - 1) > 360`, the nodes inlining computes again past the copy
-  storing computes, where `n` counts the nodes of its value, its producers
-  already inlined, that its ranges reach: those an index copies, since the
-  substitution leaves the others shared. `c` sums over the stage's reads. A
-  read makes one copy at each distinct index; in a reduction it makes one
-  per trip `w` of the reduction ranges its index runs in, those a reduction
-  of the graph closes, at most its trips per element of the stage, `t / e`,
-  since a trip that computes no element again computes nothing that storing
-  saves. A running sum's windows of `w` count `w`; a sum that reads each
-  element once counts 1; a read whose index runs in no reduction range, as a
-  broadcast through an expand, a reshape or padding, counts 1, its outputs
-  each computing the value once, as an elementwise kernel does. Trips in
-  padding count: inlined there, the value's loads are gated and its
-  arithmetic runs. `e` and `t` leave out the axes the value does not vary
-  along, whose index the inlining substitutes into nothing, and take a
-  symbolic size at its largest.
-
-  A view of storage, a read whose index computes only positions, is
-  inlined at any count, as tinygrad inlines it: stored, it would copy
-  storage its readers load in place, saving no work. Positions are weak
-  integers and their comparisons, on no device. An elementwise operation, a
-  reduction or a call on a device, as a position loaded from storage,
-  or of another type computes; so does any value that is not a read, a
-  mask of positions included, and each is weighed as above. A stage a store
-  writes through is inlined whatever it costs, past the budget and past
-  tinygrad's own checks too (more than three buffers, a reduction reading
-  one): kept, it would take the stores, and the storage would hold what it
-  held. A user's materialisation is kept, and written as asked.
-  47 stores of one state into the rows of a `[2; 47; 9]` buffer read its
-  view at 47 indices, 8 copied nodes 46 times past the first, 368 in all,
-  and wrote a copy of it.
-
-  A read's copies leave out the reuse of a dropped digit. An output range of
-  constant size that each component of the index reading it reads through
-  one chain of floor divisions and remainders by positive constants, each
-  dividing the size of what it is applied to, in components that read no
-  other range, repeats the value across the outputs
-  that differ only in the digits the chains drop: those outputs read it at
-  one index. gpt-oss's experts read their decoded weights at
-  `[(r // 16); (a * 2 + b); k]` for blocks of 16 rows, and the down
-  projection at `[(r // 1024); (r % 64); k]`; a dense product whose output
-  merges its rows with its `n` columns reads the decoded matrix at
-  `[(r % n); k]` and the rows' cast at `[(r // n); k]`. The codegen splits a
-  range at a remainder by a constant dividing it (`Simplify.pm_split_ranges`)
-  and shares a quotient's repeats on a tensor core's `M` or a streamed
-  operand's reuse, so a tile of those outputs shares the value as it shares a
-  broadcast through a range the index does not name, which D77 and D106
-  weigh. That reuse, the extent of such ranges over the extent of the stage
-  axes their components index, divides `t / e`. A range that another
-  component also reads, or that a sum selecting one trip runs in, stays
-  counted; so do a window (`r // 16 + k`), a gather (a component reading a
-  buffer), a framed read `(r // L) * h + r % L` and a digit sum
-  `(r % m) + (r // m)`, which read a range twice in one component, a
-  constant that does not divide its operand (`r // 16` of 50 rows, which no
-  tile of a divisor of 50 shares whole), and a range of symbolic size, which
-  is never split. Reduction ranges keep their count:
-  the MXFP4 scales' `k // 32` counts 32. Rangeify counts without the target:
-  what a tile shares is the codegen's, and a target that shares fewer lanes
-  computes the value again more often than counted.
-  On a GPU the codegen owes that sharing, and states it: D230's bound of
-  `ceil(R / 16)` decodes a value. On the host it shares a decode over as
-  many rows as its registers hold (D92).
-
-  A sum over one range that selects one trip, where an index equals the
-  range, as a routed product's rows select their expert's matrix, counts
-  that range as the ranges its selecting conditions read besides it, from
-  which the selected index is computed: the kernel computes it at that index
-  alone (`Simplify.load_collapse`), once for each point of those, so a row
-  decodes only its own expert's weights, `p / e` times a weight for `p` rows
-  over `e` experts, where the trips count `p`. A factor over another range
-  inside the sum, `where (ids (j) = e) (v (e, d) * y (m)) 0` summed over
-  `e`, broadcasts the selected value along `m` as it would a read of `v` at
-  `ids (j)`, which counts `m` neither, and the codegen shares it as it
-  shares a broadcast; a sum with no such condition counts every range it
-  runs in. The test
-  is the collapse's own, run on the sum as its kernel holds it: reads of
-  stages whose values read no storage, as a range's positions do, are seen
-  as those values, simplified as the cleanups simplify them, since the
-  cleanups inline them before the kernel compares the range with its index.
-  Counting the work after the substitution follows Mullapudi et al. 2016,
-  §4.3: "a more accurate measure of cost because bounds analysis can
-  overestimate the actual number of values required by a consumer".
-
-  A read of a stage whose value reads no storage, in a sum the test finds
-  selecting one trip, counts that sum's own trips, as a read in a sum that
-  selects none: the test saw it as its value, which tinygrad inlines, and
-  stored, it would leave the sum comparing a load with its range, which no
-  kernel computes at one trip. A one-hot gather compares each row's index
-  with the positions of the gathered axis, `arange`, a stage of a running
-  sum whose ranges reach two of its nodes; counted at the sum's outer
-  ranges, it made `k` copies in a product's sum over `k`, past the budget
-  from `k = 182`, and was stored, so that every row multiplied every
-  expert's matrix while the decoded matrices were counted, and stored, as
-  read once a row: `Nx_quant.apply_experts` of gpt-oss-20b's gate and up
-  projection at 512 tokens on fudge's RTX 5000 Ada took 1.49 s, and takes
-  26.4-27.6 ms, against 3.14-3.23 ms through blocks of rows
-  (`Nx.map_segments`). Its reads elsewhere count as before, so such a value
-  past the budget in other reads stays stored, and the sum then runs every
-  trip.
-
-  The bound weighs work: an index copies the value into the code of each
-  output, and a window's trips run it again in each output's loop, each copy
-  past the first computing what storing computes once. Inlined, the copies
-  compound: a value whose readers are inlined at several positions in turn
-  is copied again with them, so `k` values each read at two positions are
-  `2^k` copies of the first, in one kernel. tinygrad has the same
-  exponential behaviour, and computes a value read in a window again at
-  every trip. The bound also holds the code: a copy at a distinct index adds
-  the `n` nodes a trip computes, and every read counts at least once, so the
-  code inlining adds, `n` times the indices past the first, is at most the
-  work, at most 360 nodes, under the 1024 a kernel of a thousand nodes costs
-  to compile (about 50 ms on fudge, growing faster than its nodes; XLA
-  bounds the same duplication by the copies alone, at 15,
-  `FusionNodeIndexingEvaluation::kAllowedCodeDuplication`). Several windowed
-  reads of one stage add up, as several indices do.
-
-  Across kernels, the same count applies to a value of no range, which
-  `run_rangeify` never stages: every consumer indexes it alike, so each
-  kernel that reads it computes it, once. Once the cleanups have run, the
-  kernels are known (no later pass removes a stage), and a computed value of
-  no range that `k` kernels compute is staged in one element and read by
-  each when `(k - 1) n > 360`, `n` its computed nodes. One walk, kernels
-  first, gives each node the kernels its consumers are computed in, a
-  staged value being a kernel of its own; a value is weighed where some
-  consumer is computed in fewer kernels than it, so the values below it
-  move with it. A weak value is never staged, since it takes its readers'
-  widths and has no storage of its own; below it, as below a load several
-  kernels share or a value with ranges, the consumers' fewest kernels pass
-  down, and the value under it is weighed. Its `n` is then counted again down
-  to the values kept below it, consumers first, and a value within the
-  budget is computed in its kernels after all, the values below it counting
-  those kernels too: the cost after the substitution, as Mullapudi et al.
-  2016, §4.3, decide one function for all its consumers: "Either a function
-  is inlined into all of its consumers (essentially removing the function
-  from the program DAG), or to none of its consumers", weighing "the cost
-  of inlining a function into all consumers". The walk is linear: a node's
-  kernels are counted exactly to 362, past which any computed node passes
-  the budget, and each weighing stops at the `360 / (k - 1) + 1` computed
-  nodes that decide it. A value with ranges is computed in several kernels
-  only through a range they share; it is left as it is, since storing it
-  would hold its extent alive between its kernels (RFC 0005's bound).
-
-  So a program of `N` nodes makes kernels of at most `N` nodes plus 360 for
-  each stage inlined and for each value of no range left in several
-  kernels, the reads the cleanups make aside; nodes with ranges that several
-  kernels share, which no rule bounds, aside too.
-
-  360 is placed by the cases whose stage it decides, each run with the stage
-  stored and inlined (the bound at either side of the stage's count),
-  alternating, 7 rounds of each under fudge's exclusive timing lock at a
-  1-minute load of 24 to 51 (median 29), taking the median ratio of the
-  rounds, stored over inlined; a case decides only where the two sides'
-  times do not overlap:
-  - gpt-oss-20b's decode step with Q8_0 projections, CUDA
-    (`GptOss/decode-step-Q8_0-cache-1024`): each MXFP4 block's scale, 341
-    nodes past the first copy, 24.05 ms stored against 23.80 ms inlined,
-    1.011 (1.010 to 1.014), apart: the bound is at least 341. The MXFP4-only
-    step gives 1.014 (1.001 to 1.046), overlapping.
-  - jera's `root-newton-kepler-1k/compiled`, a float64 sine read by two
-    kernels, 371 nodes: 0.47 ms stored against 0.75 ms inlined, 0.64 (0.58
-    to 1.30), overlapping in one round of high load, so it does not decide;
-    its median asks for a bound under 371.
-  - rune's `Jit/experts-mxfp4-16x4of32-256`, the decoded weights at 2 rows
-    an expert, 49 nodes: 0.91 (0.60 to 1.15); jera's
-    `root-bracket-kepler-1k/compiled`, stages of up to 60 nodes: 1.14 (0.61
-    to 2.42); `Cuda/sin-read-by-two-float64-1000`: 1.00; the compile of
-    `scan/tridiagonal-100` against 1024 nodes of copies: 1.10 (1.00 to
-    1.45): all overlapping.
-
-  360 keeps the decided case and kepler's median. Wall-clock baselines of
-  these rows on fudge are pending the scheduled re-record.
-
-  D77 and D106 weigh the other recomputation inlining makes, where the value
-  is broadcast across ranges its read's index does not run in: the ranges
-  around the read, which an index does not name, so they stay separate
-  rules.
-
-  The reads are counted once, in a walk of the graph the cleanups start
-  from, at each axis of a stage's ranges; a stage's count is the least over
-  its axes, since stages over one range share that axis. Indexing gives
-  each stage a later pass may remove ranges new to it, except on an axis
-  whose size is a range, which that range indexes: a stage with any other
-  range has one of its own, where its reads are counted alone, and the least
-  is its own count. A stage over such axes alone, as one value of each of a
-  device's lanes, shares them and pools its reads; traced with each stage's
-  own reads beside the pooled count, the Rangeify suite, rune's (its
-  multi-device programs among them) and jera's decide every stage alike, so
-  no program shows a wrong store, and hand-built graphs whose stages share
-  their only range pool. A read
-  the cleanups make is not counted, and a read through a stack is not one:
-  every stage has a device by then, so no cleanup turns it into a read of
-  the stage.
-- **Reason:** (e), `Rangeify.destination`: kept, a stage a store writes
-  through takes the stores, and the storage holds what it held. (d) the rest.
-  rune's compiled `Nx.associative_scan`, whose prefix circuit reads each
-  level's pairs and results at two or three positions: jera's tridiagonal
-  solve of 100 equations (`scan/tridiagonal-100`), three scans one of them
-  over 4-tuples, compiles cold in 1.25 CPU-s and 34.4 M words against 2.08 s
-  and 100.3 M with no budget, and at 1000 equations in 5.3 s and 45 M words
-  against 33.6 s and 780 M, 94.5 s and 1.09 G with the across-kernels store
-  off too (fudge, 2026-11-08, load 25 to 60). norn's
-  nested sampling, whose error is a running sum over 100 × 1213 negated logs
-  of uniform draws: inlined, the draw and its log ran once per window
-  element, and the kernel took 0.87 s a call against 0.18 s with the draws
-  stored. Compiled running sums over 100 × 400 values on fudge, in windows
-  of 400 before D194, took 0.59 ms stored against 1.24 ms inlined for `2x`,
-  and 0.57 ms against 1.25 ms for `x * x + x`; in windows of 16 `2x` is
-  inlined. gpt-oss-20b's decode step with Q8_0 projections on fudge's
-  RTX 5000 keeps each block's scale inlined, 1.1% faster, as above.
-  Counting a dropped digit's reuse as copies stored every decoded weight a
-  quantised product of many rows reads, which the product's tiles share
-  once inlined: on fudge's RTX 5000 Ada (load 33 to 76, interleaved, one
-  process under the timing lock per run, medians of 3 rounds, the ranges
-  apart), gpt-oss-20b's `GptOss/prefill-512` takes 0.44-0.45 s against
-  1.18-1.19 s, its `GptOss/experts-at-prefill-512` 18.5-21.8 ms against
-  47.1-47.5 ms, and MXFP4 products of 16384 by 16384 past L2, of bfloat16
-  rows (`Quant/cuda/mxfp4-product-of-16384-*`), 0.65 ms against 3.2 ms at
-  12 rows, 1.49-1.50 against 6.0 at 64 and 1.81 against 6.1-6.2 at 128. Of
-  float32 rows, which no tensor core multiplies, 64 rows take 12.5-12.6 ms
-  against 9.6-9.7, 1.3 times slower. The count is the same on fudge's RTX
-  5000 Ada and nonnormal's R9700, read from the inlined kernels' sources (1,
-  2, 1, 2 and 4 decodes a value at 16 to 256 bfloat16 rows, 16 at 64 float32
-  rows), with opposite outcomes: inlined, every bfloat16 row is faster on
-  CUDA and slower on AMD (64 rows 8.2-8.8 ms against 5.0-5.1 stored), where
-  the loss lies in the kernels the heuristic makes (256 single-wave
-  workgroups, 48 spilled registers, a byte's values loaded 2 bytes apart),
-  and a search over tolk's own optimisations finds inlined kernels faster
-  than stored ones on both (64 rows 1.15 against 3.58 ms on CUDA, 128 rows
-  3.31-3.47 against 6.57-6.68 ms on AMD): the count stands, and the codegen
-  owes its sharing (D230). One MoE layer at 512
-  tokens runs 18.6-18.8 ms against 47.4-47.9; its inlined products are
-  streamed (`Setting.mv`), and on the tensor cores, with streaming off, the
-  layer takes 4.5 ms against 79.5; D89's order by multiply-adds per byte now
-  takes them to the cores (4.66-4.68 ms). Of float32 rows, which no core
-  takes on CUDA, the general rules shared only their upcast of 4 rows and
-  decoded each value 16 times at 64 rows; streamed past a reuse of 32
-  (D230), 64 rows take 4.98-6.68 ms, under the stored decode's 9.6. On
-  the host, whose tiles then shared 4 rows of a digit, an inlined decode ran
-  about 4 times a value per 16-row block and 10 to 16 times in a dense
-  product, and lost to the stored decode; its tile now shares the rows its
-  registers hold (D92), with the scheduler kept target-free.
-  Across kernels, (d) too: ymir's aperture gradient (`aperture-104/
-  compiled-grad`) computes the transform of the aperture's centre, a value
-  of no range of about 3,000 nodes, in 18 kernels. Stored where its copies
-  pass the budget, its cold first call takes 22.7-25.9 CPU-s (the process
-  and Clang) against 31.8-36.9 s, compiling 211 programs against 196, with
-  the same bits (fudge, three interleaved rounds under the timing lock at a
-  1-minute load of 36 to 76). A chain of scalars each read by a kernel of
-  its own, as rune's chain of outputs reads it, was quadratic in its length
-  and is linear (the Rangeify suite's chain test). The row's wall-clock
+- **tinygrad:** `schedule/rangeify.py` `remove_bufferize` (inlines a stored
+  value that reads at most three buffers and no reduction reading a buffer, at
+  every position and trip it is read at) and `get_kernel_graph`;
+  `schedule/indexing.py` `run_rangeify` (stores a value its consumers index
+  differently, or one a reduction or an elementwise operation reads past a
+  broadcast: the stores `remove_bufferize` weighs).
+- **tolk:** `Rangeify.extent`, `Rangeify.read_ranges` and `Rangeify.read_copies`
+  (the copies a read makes of a stage's value), with `Rangeify.digit_of` (a
+  range read through floor divisions and remainders); `Rangeify.collapses`,
+  `Rangeify.selected` and `Rangeify.collapsed` (a sum that selects one trip,
+  asked only where the answer changes a stage's decision), and
+  `Rangeify.storage` (a stage of no storage read in such a sum), through
+  `Simplify.load_collapse`, which `Simplify.pm_load_collapse` applies;
+  `Rangeify.reads`, `Rangeify.stage_reads`, `Rangeify.reduced`,
+  `Rangeify.stage_copies` and `Rangeify.stage_bounds` (the copies of each
+  stage); `Rangeify.inline_budget` and `Rangeify.copied`; `Rangeify.inlined`;
+  `copies` and `computes` in `Rangeify.remove_bufferize`;
+  `Rangeify.destination`, which `Rangeify.pm_remove_bufferize` applies to a
+  store's destination; `Rangeify.pm_cleanups` and `Rangeify.get_kernel_graph`,
+  which counts the reads before the cleanups; across kernels,
+  `Rangeify.store_shared`, `Rangeify.candidates`, `Rangeify.kept`,
+  `Rangeify.computed_nodes`, `Rangeify.union` and `Rangeify.is_kernel`.
+- **Differs:**
+  - **The budget.** A stage whose reads make `c` copies of its value stays
+    stored when `n * (c - 1) > 360`, where `n` counts the nodes of its value,
+    its producers already inlined, that its ranges reach: those an index copies,
+    since the substitution leaves the others shared. `c` sums over the stage's
+    reads, so several windowed reads of one stage add up. A read makes one copy
+    at each distinct index; in a reduction it makes one per trip `w` of the
+    reduction ranges its index runs in, those a reduction of the graph closes,
+    at most its trips per element of the stage, `t / e`, since a trip that
+    computes no element again computes nothing that storing saves. A running
+    sum's windows of `w` count `w`; a sum that reads each element once counts 1;
+    a read whose index runs in no reduction range, as a broadcast through an
+    expand, a reshape or padding, counts 1. Trips in padding count: inlined
+    there, the value's loads are gated and its arithmetic runs. `e` and `t`
+    leave out the axes the value does not vary along, and take a symbolic size
+    at its largest. Inlined copies compound (`k` values each read at two
+    positions are `2^k` copies of the first), and tinygrad has the same
+    exponential behaviour and computes a value read in a window again at every
+    trip. Since every read counts at least once, the code inlining adds is at
+    most the work, 360 nodes.
+  - **What is weighed.** A view of storage, a read whose index computes only
+    positions, is inlined at any count, as tinygrad inlines it: stored, it would
+    copy storage its readers load in place. Positions are weak integers and
+    their comparisons, on no device. An elementwise operation, a reduction or a
+    call on a device, a position loaded from storage, or a value of another type
+    computes; so does any value that is not a read, a mask of positions
+    included, and each is weighed. A stage a store writes through is inlined
+    whatever it costs, past the budget and past tinygrad's own checks too (more
+    than three buffers, a reduction reading one). A user's materialisation is
+    kept, and written as asked.
+  - **Dropped digits.** An output range of constant size that each component of
+    the index reading it reads through one chain of floor divisions and
+    remainders by positive constants, each dividing the size of what it is
+    applied to, in components that read no other range, repeats the value across
+    the outputs that differ only in the digits the chains drop: those outputs
+    read it at one index. That reuse, the extent of such ranges over the extent
+    of the stage axes their components index, divides `t / e`; the codegen
+    splits a range at a remainder by a constant dividing it
+    (`Simplify.pm_split_ranges`) and shares a quotient's repeats on a tensor
+    core's `M` or a streamed operand's reuse, so a tile of those outputs shares
+    the value as it shares a broadcast through a range the index does not name,
+    which D77 and D106 weigh. A range that another component also reads, or that
+    a sum selecting one trip runs in, stays counted; so do a window (`r // 16 +
+    k`), a gather (a component reading a buffer), a framed read `(r // L) * h +
+    r % L` and a digit sum `(r % m) + (r // m)`, which read a range twice in one
+    component, a constant that does not divide its operand (`r // 16` of 50
+    rows), and a range of symbolic size, which is never split. Reduction ranges
+    keep their count: the MXFP4 scales' `k // 32` counts 32. Rangeify counts
+    without the target, and a target that shares fewer lanes computes the value
+    again more often than counted. On a GPU the codegen owes that sharing, and
+    states it: D230's bound of `ceil(R / 16)` decodes a value. On the host it
+    shares a decode over as many rows as its registers hold (D92).
+  - **Selections.** A sum over one range that selects one trip, where an index
+    equals the range, counts that range as the ranges its selecting conditions
+    read besides it: the kernel computes the value at that index alone
+    (`Simplify.load_collapse`), once for each point of those, so a routed row
+    decodes only its own expert's weights. A factor over another range inside
+    the sum, `where (ids (j) = e) (v (e, d) * y (m)) 0` summed over `e`,
+    broadcasts the selected value along `m`, which counts `m` neither; a sum
+    with no such condition counts every range it runs in. The test is the
+    collapse's own, run on the sum as its kernel holds it: reads of stages whose
+    values read no storage are seen as those values, simplified as the cleanups
+    simplify them. Counting the work after the substitution follows Mullapudi et
+    al. 2016, §4.3.
+  - **Positions in a selecting sum.** A read of a stage whose value reads no
+    storage, in a sum the test finds selecting one trip, counts that sum's own
+    trips, as a read in a sum that selects none: stored, it would leave the sum
+    comparing a load with its range, which no kernel computes at one trip. Its
+    reads elsewhere count as before, so such a value past the budget in other
+    reads stays stored, and the sum then runs every trip.
+  - **Across kernels.** A value of no range, which `run_rangeify` never stages,
+    is computed by each kernel that reads it. Once the cleanups have run (no
+    later pass removes a stage), a computed value of no range that `k` kernels
+    compute is staged in one element and read by each when `(k - 1) n > 360`,
+    `n` its computed nodes. One walk, kernels first, gives each node the kernels
+    its consumers are computed in, a staged value being a kernel of its own; a
+    value is weighed where some consumer is computed in fewer kernels than it,
+    so the values below it move with it. A weak value is never staged, since it
+    takes its readers' widths and has no storage of its own; below it, as below
+    a load several kernels share or a value with ranges, the consumers' fewest
+    kernels pass down, and the value under it is weighed. Its `n` is counted
+    again down to the values kept below it, consumers first, and a value within
+    the budget is computed in its kernels after all, the values below it
+    counting those kernels too: one decision for all its consumers, as Mullapudi
+    et al. 2016, §4.3. The walk is linear: a node's kernels are counted exactly
+    to 362, and each weighing stops at the `360 / (k - 1) + 1` computed nodes
+    that decide it. A value with ranges is computed in several kernels only
+    through a range they share; it is left as it is, since storing it would hold
+    its extent alive between its kernels (RFC 0005's bound).
+  - **The bound.** A program of `N` nodes makes kernels of at most `N` nodes
+    plus 360 for each stage inlined and for each value of no range left in
+    several kernels, the reads the cleanups make aside, and nodes with ranges
+    that several kernels share, which no rule bounds, aside too. D77 and D106
+    weigh the other recomputation inlining makes, across ranges a read's index
+    does not run in, so they stay separate rules.
+  - **Counting.** The reads are counted once, in a walk of the graph the
+    cleanups start from, at each axis of a stage's ranges; a stage's count is
+    the least over its axes, since stages over one range share that axis.
+    Indexing gives each stage a later pass may remove ranges new to it, except
+    on an axis whose size is a range, which that range indexes: a stage with any
+    other range has one of its own, where its reads are counted alone. A stage
+    over such axes alone, as one value of each of a device's lanes, shares them
+    and pools its reads. A read the cleanups make is not counted, and a read
+    through a stack is not one: every stage has a device by then, so no cleanup
+    turns it into a read of the stage.
+- **Reason:** (e), `Rangeify.destination`: kept, a stage a store writes through
+  takes the stores, and the storage holds what it held; 47 stores of one state
+  into the rows of a `[2; 47; 9]` buffer read its view at 47 indices, 368 nodes
+  in all, and wrote a copy of it. (d) the rest. rune's compiled
+  `Nx.associative_scan`, whose prefix circuit reads each level at two or three
+  positions: jera's `scan/tridiagonal-100` compiles cold in 1.25 CPU-s and 34.4
+  M words against 2.08 s and 100.3 M with no budget. norn's nested sampling, a
+  running sum over 100 × 1213 negated logs of uniform draws, took 0.87 s a call
+  inlined against 0.18 s stored; running sums of `2x` in windows of 400, before
+  D194, took 0.59 ms stored against 1.24 ms inlined, and in windows of 16 `2x`
+  is inlined. 360 is placed by `GptOss/decode-step-Q8_0-cache-1024`, whose MXFP4
+  block scale, 341 nodes past the first copy, runs 1.011 times as long stored as
+  inlined, apart (so the bound is at least 341), while jera's
+  `root-newton-kepler-1k/compiled`, 371 nodes, overlaps in one round of high
+  load, so it does not decide, and its median asks for a bound under 371;
+  wall-clock baselines of these rows on fudge are pending the scheduled
+  re-record. Dropped digits: counted as copies, they stored every decoded weight
+  a quantised product of many rows reads, and `GptOss/prefill-512` took
+  1.18-1.19 s against 0.44-0.45 s. The count is the same on CUDA and AMD;
+  inlined bfloat16 rows run slower on nonnormal's R9700 under the heuristic's
+  kernels (64 rows 8.2-8.8 ms against 5.0-5.1 stored), where a search over
+  tolk's optimisations finds the inlined kernels faster on both, so the count
+  stands and the codegen owes its sharing (D230); float32 rows, which no core
+  takes on CUDA, streamed (D230) take 4.98-6.68 ms at 64 rows, under the stored
+  decode's 9.6; D89's order by multiply-adds per byte takes the bfloat16
+  products of an MoE layer at 512 tokens to the tensor cores (4.66-4.68 ms a
+  layer). Positions in a selecting sum: a one-hot gather's `arange`, counted at
+  the sum's outer ranges, was stored past `k = 182`, and
+  `Nx_quant.apply_experts` of gpt-oss-20b's gate and up projection at 512 tokens
+  on fudge took 1.49 s, against 26.4-27.6 ms now. Across kernels, (d) too:
+  ymir's `aperture-104/compiled-grad` computes a value of no range of about
+  3,000 nodes in 18 kernels; stored where its copies pass the budget, its cold
+  first call takes 22.7-25.9 CPU-s against 31.8-36.9 s, with the same bits; a
+  chain of scalars each read by a kernel of its own, as rune's chain of outputs
+  reads it, was quadratic in its length and is linear. The row's wall-clock
   baseline is pending the scheduled re-record.
 - **Pinned by:** the Rangeify suite's rows of `kernel_counts.tolk` and their
-  kernel goldens: across kernels, `scalar_read_by_two` (a value of no range of
-  some forty nodes read by two kernels, computed in each),
-  `long_scalar_read_by_two` (of some four hundred, stored) and `scalar_chain`
-  (40 values of no range, each read by a kernel of its own and the next, one
-  stored); `read_at_offsets` (a value of some forty nodes read at 32 offsets,
-  stored), `windowed_chain` (in a running sum of 300, stored), `windowed_pair`
-  (in two running sums of 16, stored), `windowed_scaled` (a product in a running
-  sum of 16, its copies past the first 90 nodes, inlined),
-  `windowed_scaled_long` (a product in a running sum of 400, inlined into its
-  windows of 16), `read_by_two` (some forty nodes read by two kernels, inlined),
-  `long_read_by_two` (some four hundred, stored), `routed_product_2` (a decoded
-  matrix gathered by 2 rows an expert over 64 experts, inlined),
-  `routed_product_64` (64 rows an expert, stored) and `routed_product_wide` (16
-  rows an expert in a product's sum of 192, the gather's positions inlined),
-  `selected_scaled` (a matrix of some 160 nodes selected by a sum that
-  multiplies a factor over 4 columns inside it, read once a row, inlined),
-  `blocked_product_16` (rows in blocks of 16 reading their block's matrix of
-  some forty nodes at `r // 16`, inlined) and `dense_decoded_64` (64 rows merged
-  with a matrix's 4 columns, read at `r % 4`, inlined), `tiled_chain` (tiled 256
-  times, inlined) and `padded_pair` (read through two paddings to 1024,
-  inlined); `cost › levels each read twice make kernels that stop growing with
-  depth`; the `copies` group: `a value of 1200 nodes read at one index is
-  inlined`, `› a value read twice whose second copy is the budget is inlined`,
-  `› a value read twice whose second copy passes the budget is stored`, `› a
-  value of 600 nodes outside its ranges read twice is inlined` and `› reads of a
-  stage sharing a range are not the other's`; the `recomputation` group: `a
-  value of 1200 nodes reduced once an element is inlined`, `› a cheap value
-  reduced in windows is inlined`, `› a value reduced in windows whose work is
-  under the budget is inlined`, `› a value reduced in windows whose work passes
-  the budget is stored`, `› a value of no storage reduced in windows past the
-  budget is stored`, `› two windowed reads of a stage add up`, `› a value of
+  kernel goldens: across kernels, `scalar_read_by_two` (computed in each),
+  `long_scalar_read_by_two` (stored) and `scalar_chain` (one stored);
+  `read_at_offsets` (stored), `windowed_chain` (stored), `windowed_pair`
+  (stored), `windowed_scaled` (inlined), `windowed_scaled_long` (inlined into
+  its windows of 16), `read_by_two` (inlined), `long_read_by_two` (stored),
+  `routed_product_2` (inlined), `routed_product_64` (stored) and
+  `routed_product_wide` (the gather's positions inlined), `selected_scaled`
+  (inlined), `blocked_product_16` (read at `r // 16`, inlined) and
+  `dense_decoded_64` (read at `r % 4`, inlined), `tiled_chain` (inlined) and
+  `padded_pair` (inlined); `cost › levels each read twice make kernels that stop
+  growing with depth`; the `copies` group: `a value of 1200 nodes read at one
+  index is inlined`, `› a value read twice whose second copy is the budget is
+  inlined`, `› a value read twice whose second copy passes the budget is
+  stored`, `› a value of 600 nodes outside its ranges read twice is inlined` and
+  `› reads of a stage sharing a range are not the other's`; the `recomputation`
+  group: `a value of 1200 nodes reduced once an element is inlined`, `› a cheap
+  value reduced in windows is inlined`, `› a value reduced in windows whose work
+  is under the budget is inlined`, `› a value reduced in windows whose work
+  passes the budget is stored`, `› a value of no storage reduced in windows past
+  the budget is stored`, `› two windowed reads of a stage add up`, `› a value of
   symbolic size counts at its largest`, `› a value reduced in windows counts no
   axis it does not vary along`, `› a read counts at most the trips of its
   reductions`, `› a value reduced through padding counts the padding's trips`,
@@ -4107,20 +3982,15 @@ A divisor past its operand's width was read in its operand's type
   stores of one state write each piece's values`, up to 160 stores; `work bound
   › a stage is stored when its copies beyond the first pass the budget`, over
   values read once, twice, in windows and by routed rows; the `dropped digits`
-  group: `a dropped digit's reuse is no copy`, over quotients, remainders, a
-  middle digit and a chain inlined, and windows, a reduction range's digit, a
-  gather, frames, digit sums, a range read by two components, constants not
-  dividing and a symbolic size stored, `› a read of merged outputs decides as
-  one of them split` and `› a digit a selection runs in stays counted`;
-  `selections › a read a sum selects decides as one at the selected index`,
-  which a factor over another range inside the sum made 4 copies, stored past
-  120 nodes; `own ranges › a removable stage has a range no other stage has`;
+  group: `a dropped digit's reuse is no copy` (every case), `› a read of merged
+  outputs decides as one of them split` and `› a digit a selection runs in stays
+  counted`; `selections › a read a sum selects decides as one at the selected
+  index`; `own ranges › a removable stage has a range no other stage has`;
   rune's `Lower_reduce › work › a Rows contraction's work is one slice's over
   256 contracted` and `› a scaled float4 Rows contraction's work is one slice's
   over 256`; rune's `rune jit › classes › an associative scan over a tuple gives
   eager's bits` and `› a value stored or computed again in its readers gives
-  eager's bits`, which reads the value in blocks of rows and in a product of
-  merged rows too; on fudge, the `scan/tridiagonal-100` row of rune's compile
+  eager's bits`; on fudge, the `scan/tridiagonal-100` row of rune's compile
   bench, the `Jit/cumsum-neg-log-uniform-8x1024`,
   `Jit/experts-mxfp4-16x4of32-256` and `Cuda/sin-read-by-two-float64-1000` rows
   of its bench, jera's `root-newton-kepler-1k/compiled` and
@@ -4128,409 +3998,298 @@ A divisor past its operand's width was read in its operand's type
   `GptOss/experts-at-prefill-512`, and kaun's
   `Quant/cuda/mxfp4-product-of-16384-*-tokens` and
   `Quant/host/mxfp4-product-of-1024-*-tokens`. Across kernels, the Rangeify
-  suite's `get_kernel_graph › values that several kernels compute` (every test:
-  the budget's two sides for two and three kernels, a weak value, a value read
-  through a load the kernels share, a value cheap above a stored one, and the
-  chain of outputs whose work is linear in its length and whose kernels stop
-  growing with it), and ymir's `aperture-104/compiled-grad` row.
+  suite's `get_kernel_graph › values that several kernels compute` (every test),
+  and ymir's `aperture-104/compiled-grad` row.
 
 ## D164. Withdrawn
 
-The read of an accumulator after its loop waited on the initial store as well as
-the loop's end, since `sym` folded a store of a loaded accumulator to a bare
-`NOOP` and the loop could end holding no store, so nothing ordered the read
-after the initial store. At `uop/symbolic.py` `sym` a folded store of a load of
-its own index is `NOOP.after(index)`, and at `sym` one of an invalid value
-`NOOP.after(*x.src)`: each keeps the accumulator's index, ordered after the
-initial store, before the read, and `codegen/__init__.py` (`lower_reduce`)
-orders the read after the end alone, as `Codegen.lower_reduce` does. The
-`Codegen` suite's `an accumulator no lane adds to › is stored before it is read`
-and `› sums to zero`, and rune's `Lower_index › folds and assemblies › a fold
-wraps integers and holds its float bound`, hold.
+The read of an accumulator after its loop waited on the initial store too, since
+`sym` folded a store of a loaded accumulator to a bare `NOOP`. tinygrad's
+`uop/symbolic.py` `sym` now keeps the accumulator's index (`NOOP.after(index)`,
+`NOOP.after(*x.src)`), and `codegen/__init__.py` `lower_reduce` orders the read
+after the end alone, as `Codegen.lower_reduce` does. The `Codegen` suite's `an
+accumulator no lane adds to › is stored before it is read` and `› sums to zero`,
+and rune's `Lower_index › folds and assemblies › a fold wraps integers and holds
+its float bound`, hold.
 
 ## D165. A weak maximum's identity is its accumulator's least value
 
-- **tinygrad:** `uop/ops.py` (`identity_element`), whose `Ops.MAX` identity is
+- **tinygrad:** `uop/ops.py` `identity_element`, whose `Ops.MAX` identity is
   `dt.min`: for `weakint`, of bitsize 800 (`dtype.py` `DTypes.weakint`),
   `-2**799`.
 - **tolk:** `Ops.identity_element`.
 - **Differs:** a maximum over a weak type has as identity the least value of
-  `Dtype.strong` of the type, the width its accumulator is allocated at. In
-  tinygrad a weak integer's maximum, gated by an Invalid, takes `-2**799`:
-  `lift_reduce_gate` (`uop/symbolic.py` `lift_reduce_gate`) selects it where the
-  gate fails, and committing the selection's width (`cast_weak_srcs`,
-  `commit_int`) raises "does not fit any int". A weak maximum arises where a
-  pad's bare fill is all that remains of a committed maximum's operand.
-- **Reason:** (b). rune's compiled Fold (rune's `Lower_index.fold`) of a
-  float64 `[2; 2; 2]` by `lo [2; 2; 0]`, `hi [0; -1; -1]`,
-  `interior [1; 0; 0]` and three windows maximises the uint8 marks of each
-  element's terms; where no term reaches an element, the mark is the pad's
-  fill, a weak `0`, and compiling raised: rune's `a fold wraps integers and
-  holds its float bound` failed.
+  `Dtype.strong` of the type, the width its accumulator is allocated at. A weak
+  maximum arises where a pad's bare fill is all that remains of a committed
+  maximum's operand. In tinygrad such a maximum, gated by an Invalid, takes
+  `-2**799`, which `lift_reduce_gate` (`uop/symbolic.py` `lift_reduce_gate`)
+  selects where the gate fails, and committing the selection's width
+  (`cast_weak_srcs`, `commit_int`) raises "does not fit any int".
+- **Reason:** (b). rune's compiled Fold (rune's `Lower_index.fold`) of a float64
+  `[2; 2; 2]` by `lo [2; 2; 0]`, `hi [0; -1; -1]`, `interior [1; 0; 0]` and
+  three windows maximises the uint8 marks of each element's terms; where no term
+  reaches an element the mark is the pad's weak `0`, and compiling raised:
+  rune's `a fold wraps integers and holds its float bound` failed.
 - **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `a maximum of
   weak integers › is the greatest value it reduces`; `Tolk.Ops › data types ›
-  identities.golden`; rune's `Lower_index › folds and assemblies › a fold
-  wraps integers and holds its float bound`.
+  identities.golden`; rune's `Lower_index › folds and assemblies › a fold wraps
+  integers and holds its float bound`.
 
 ## D166. A minimum of a minimum against one value is one selection
 
-- **tinygrad:** `codegen/decomp/op.py` (`get_late_rewrite_patterns`),
-  which has no rule for a nest of selections.
+- **tinygrad:** `codegen/decomp/op.py` `get_late_rewrite_patterns`, which has no
+  rule for a nest of selections.
 - **tolk:** `Decomp_op.extreme_of`, `Decomp_op.nested_extreme`,
   `Decomp_op.unwrapped`, `Decomp_op.holds`, `Decomp_op.keeps` and
   `Decomp_op.late_patterns`.
-- **Differs:** a selection of a value and `c` by their less-than comparison,
-  a minimum or a maximum against `c`, whose value is such a selection of the
-  same kind against the same `c`, is rewritten to one selection: the inner
-  one where it picks `c` where its comparison is false, at a tie or a NaN,
-  or where the two pick alike, and otherwise `where (v < c) v c` or `where (c
-  < v) v c` of the inner one's other operand `v`, cast to the outer one's
-  type. Both are what the nest computes at every `v`, NaN and both zeros
-  included. Values are matched through the casts that keep them
-  (`Decomp_op.keeps`): a widening to a float type that holds the operand's,
-  and a narrowing of a value its type holds (`Decomp_op.holds`), a constant,
-  a selection of such values at any depth, or such a value widened. LLVM's
-  InstCombine narrows a `float32` selection of widened `float16` values to a
-  `float16` selection, which keeps every value, then folds the plain nest.
-  rune computes a `float16` minimum as a `float32` selection of widened
-  operands, narrowed back, so a nest of them reaches that fold.
+- **Differs:** a selection of a value and `c` by their less-than comparison, a
+  minimum or a maximum against `c`, whose value is such a selection of the same
+  kind against the same `c`, is rewritten to one selection: the inner one where
+  it picks `c` where its comparison is false, at a tie or a NaN, or where the
+  two pick alike, and otherwise `where (v < c) v c` or `where (c < v) v c` of
+  the inner one's other operand `v`, cast to the outer one's type. Both are what
+  the nest computes at every `v`, NaN and both zeros included. Values are
+  matched through the casts that keep them (`Decomp_op.keeps`): a widening to a
+  float type that holds the operand's, and a narrowing of a value its type holds
+  (`Decomp_op.holds`), a constant, a selection of such values at any depth, or
+  such a value widened. LLVM's InstCombine narrows a `float32` selection of
+  widened `float16` values to a `float16` selection, which keeps every value,
+  then folds the plain nest, and rune computes a `float16` minimum as a
+  `float32` selection of widened operands, narrowed back, so a nest of them
+  reaches that fold.
 - **Reason:** (b): LLVM's InstCombine (`foldSPFofSPF`) folds a minimum of a
   minimum, or a maximum of a maximum, against one constant into the inner
-  selection, though the two pick apart at a tie or a NaN: with `m = (0.0 <
-  v) ? 0.0 : v`, `(m < 0.0) ? m : 0.0` becomes `m`, `-0.0` at `v = -0.0`
-  where the selection gives `0.0`, and with `1.0` for `0.0` NaN at a NaN
-  where it gives `1.0`. It runs on every target from `-O1` in clang 19, at
-  `-O3` for amdgcn, which HIP's comgr runs, and in NVRTC 13.4, and LLVM's
-  main of 2026-10 keeps it; tinygrad on x86_64 computes these `-0.0` and NaN.
-  Under `Rune.jit`, `Nx.where (Nx.less m c) m c` of `m = Nx.minimum c x` gave
-  `-0.` where eager gives `0.`, NaN where eager gives `c`, and a reciprocal
-  of it `-inf` for `inf`: rune's `a step over donated leaves keeps the
-  values` failed. Made one selection before rendering, a single selection
-  keeps its lowering to one instruction: hiding the constant from LLVM in
-  every comparison instead cost a maximum before a 64 × 64 matmul 1.10 times
-  its time and a 4096-point FFT 1.15 times on fudge (paired). LLVM can still
-  form such a nest itself, as when it vectorises scalar minima of a vector
-  minimum's lanes; no tolk kernel is known to.
+  selection, though the two pick apart at a tie or a NaN: with `m = (0.0 < v) ?
+  0.0 : v`, `(m < 0.0) ? m : 0.0` becomes `m`, `-0.0` at `v = -0.0` where the
+  selection gives `0.0`, and with `1.0` for `0.0` NaN at a NaN where it gives
+  `1.0`. It runs on every target from `-O1` in clang 19, at `-O3` for amdgcn,
+  which HIP's comgr runs, and in NVRTC 13.4, and LLVM's main of 2026-10 keeps
+  it; tinygrad on x86_64 computes these `-0.0` and NaN. Under `Rune.jit`,
+  `Nx.where (Nx.less m c) m c` of `m = Nx.minimum c x` gave `-0.` where eager
+  gives `0.` and NaN where eager gives `c`, and a reciprocal of it `-inf` for
+  `inf`: rune's `a step over donated leaves keeps the values` failed. One
+  selection keeps its lowering to one instruction: hiding the constant from LLVM
+  in every comparison instead cost a maximum before a 64 × 64 matmul 1.10 times
+  its time on fudge. LLVM can still form such a nest itself, as when it
+  vectorises scalar minima of a vector minimum's lanes; no tolk kernel is known
+  to.
 - **Pinned by:** the `Decomp_op` suite (`test/codegen/decomp/decomp_op`):
-  `late_patterns › late_nests_cmplt.golden`, `› a nest of extremes against
-  one value keeps its values › *` and `› a nest of 16-bit extremes through
-  float32 keeps its values › *`, which also holds the rule back where a
-  narrowing rounds; rune's `rune jit › classes › a selection of a minimum
-  against its constant is exact`, at `float16` and `bfloat16` too.
+  `late_patterns › late_nests_cmplt.golden`, `› a nest of extremes against one
+  value keeps its values › *` and `› a nest of 16-bit extremes through float32
+  keeps its values › *`, which also holds the rule back where a narrowing
+  rounds; rune's `rune jit › classes › a selection of a minimum against its
+  constant is exact`, at `float16` and `bfloat16` too.
 
 ## D167. Clang's arguments: LLVM 18, 19 or 20 and Apple's Clang 17 for x86_64 without its straight-line vectorizer, a long source without its loop vectorizer, arm64 without the interleaved load combine, every kernel without loop idiom recognition
 
-- **tinygrad:** `runtime/support/compiler_cpu.py` (`ClangCompiler.compile`,
-  Clang's arguments at `-O2`, which runs LLVM's SLP and loop vectorizers).
+- **tinygrad:** `runtime/support/compiler_cpu.py` `ClangCompiler.compile`
+  (Clang's arguments at `-O2`, which runs LLVM's SLP and loop vectorizers).
 - **tolk:** `Compiler_cpu.stated_release` (the release a Clang's `-###`
   statement names, LLVM's or Apple's), `Compiler_cpu.long_source`,
-  `Compiler_cpu.compile_args`, which adds `-fno-slp-vectorize` when it is
-  LLVM 18, 19 or 20, or Apple's 17 for x86_64,
-  `-mllvm -disable-interleaved-load-combine` for arm64 and
-  `-mllvm -disable-loop-idiom-all` for every Clang,
-  `Compiler_cpu.without_loop_vectorizer`, and `Compiler_cpu.clang`
-  (its `table`, which names both commands and the length);
-  `Compiler_amd.hip`, whose code generation's options end with
-  `-mllvm -disable-loop-idiom-all`.
-- **Differs:** a Clang that states LLVM 18, 19 or 20 compiles every kernel
-  with `-fno-slp-vectorize`, after `-O2`, which would turn the vectorizer
-  back on, and so does Apple's Clang 17 for x86_64.
-  Every Clang compiles a source of more than 400 000 bytes without the loop
-  vectorizer: its compiler proper runs without `-vectorize-loops`, as the
-  driver runs it under `-fno-vectorize` (Clang 18.1.8 and 19.1.7 state the
-  same command but for that flag). Every Clang compiles for arm64 without
-  LLVM's interleaved load combine. Every Clang compiles without LLVM's loop
-  idiom recognition (`-mllvm -disable-loop-idiom-all`, which every LLVM
-  release from 12 defines), and so does comgr's code generation for AMD
-  GPUs. Otherwise every Clang, Apple's included,
-  compiles with the arguments tinygrad passes. The table of objects names
-  the command for either length, and the length (D113).
-- **Reason:** (b): rune's packed suite, `a compiled call computes eager's
-  values › a uint4 sort along the last axis of every other row and column,
-  flipped` (now `rune jit › classes › a uint4 sort along the last axis of
-  every other row and column, flipped, gives eager's codes`), failed on CI
-  runners with AVX-512 under Ubuntu 24.04's Clang
-  18.1.3 ("SmallVector unable to grow"), and passed on runners without it.
-  The kernel `r_3_2` loads 6 nibbles at clamped indices, `2 - min(i & 3, 2)`
-  or `7 - min(i & 3, 2)`, the minimum written `~max(~x, -3)`. Before the
-  vectorizer, LLVM holds four of these indices as `sext` of `2 - x` and `zext
-  nneg` of `x ^ 7`; for `x86-64-v4`, `skylake-avx512` or `znver4` the
-  vectorizer packs them into one vector, narrows it to 16 bits, and writes
-  `sext <4 x i32> ... to <4 x i16>`, invalid IR, on which X86 instruction
-  selection crashes. Clang 18.1.8 does the same; Clang 19.1.7 compiles the
-  source, and without the vectorizer so does 18. `x86-64-v3` packs nothing
-  there. Of the 6048 kernels rune's suites compile, this is the only one whose
-  IR Clang 19 rejects when Clang 18 writes it for `x86-64-v4`. D141's split of
-  6 lanes into 3 pairs was not the cure: the suite failed the same way on CI
-  after it. Rewriting the source does not hold either: writing that minimum as
-  `(-3<x)?x:-3` or `__builtin_elementwise_max`, or selecting with scalar
-  comparisons, lets this kernel compile, but each only moves what the
-  vectorizer meets, for a rendering of every kernel tinygrad also writes.
-  Disabling the vectorizer for every Clang would change the objects of 44%
-  of a sample of those kernels (265 of 604, Clang 18 for the host): it stays
-  on wherever it is correct.
-
-  Clang 19 has the same defect without the crash: rune's `Lower_reduce`
-  test `rows in blocks give eager's integers and hold their bound` failed on
-  fudge (Clang 19.1.7, Intel Core Ultra 5 235) at one seed of three, five
-  float32 products of 96 reading `0` where `0x1p-4` was expected, and so did
-  `Nx.matmul_segments` and `Nx_quant.apply_experts` under `vmap` and `jit`,
-  rows of one expert in one block of 64 at each of two batch indices. The
-  kernel `E_16_2_4` searches each slot's row by halving, four slots and two
-  batch indices a thread, its bounds selected longs and their midpoint an
-  int. For `x86-64-v3`, `x86-64-v4`, `arrowlake` or `znver4` (not
-  `x86-64-v2` or arm64's `apple-m1`), the vectorizer packs four lanes'
-  bounds, narrows them to 8 bits, and writes `trunc <4 x i8> ... to <4 x
-  i32>`, invalid IR that a release Clang does not verify and compiles into
-  garbage rows (202116109); `opt-19 -passes=verify` rejects it, and
-  `-opt-bisect-limit` names `SLPVectorizerPass` as the pass that breaks the
-  kernel. `llvm-reduce` brings it to 40 instructions of selects, truncations
-  to i32, `or`, `lshr` and `zext`. Without the vectorizer the kernel gives
-  every row. With the IR verifier on (D275), invalid IR from it is a compile
-  error naming the kernel.
-
-  Apple's Clangs state their own release, not LLVM's. Apple clang 17.0.0
-  (clang-1700.6.4.2, macOS 26.3) writes the same invalid IR for `E_16_2_4`
-  for `x86-64-v3`, `x86-64-v4` and `znver4` (`trunc nsw <4 x i8> ... to <4 x
-  i32>` for the kernel rune renders, `<2 x i8>` for the reduced one), and
-  compiles it without the vectorizer: it compiles for x86_64 on an Intel
-  Mac and for another machine's x86-64 host. For arm64 it compiles both
-  kernels, rune's `Lower_reduce` and attention cases above pass on an M1
-  Max, and of the 195 kernels of those attention cases none converts a
-  vector of 8 or 16-bit lanes to float, where Homebrew's Clang 19.1.7
-  writes `uitofp <2 x i8>` in one of them for arm64 and another for
-  `x86-64-v3`. For arm64 the vectorizer stays on: of 466 kernels of tolk's
-  heuristic suite and those rune cases, Apple Clang 17 changes 269 objects
-  without it and adds 9.5% instructions (247 691 to 271 190), up to 5
-  times in one kernel.
-
-  LLVM 19 and 20 also write valid IR of wrong values, which no verifier
-  sees: rune's attention test `jit within the bounds of eager › float32`
-  failed on the Windows runner, `lse` off by 4249261054.8, at tq 2, tk 3,
-  dk 1 under a captured mask and ALiBi, and so did its compiled gradient.
-  The host kernel converts two int64 differences of row and key, `q - 1`
-  and `q - 2`, to float32 from their 32-bit halves, `sitofp` of the high
-  half times 2^32 plus `uitofp` of the low half (`Lower_arith.odd64`).
-  For `x86-64-v3` (not `x86-64-v2`) the vectorizer packs the two low halves,
-  narrows them to 8 bits, since the high halves need only their sign, and
-  writes `uitofp <2 x i8>`: a low half of 2^32 - 1 converts to 255, and the
-  score is off by 2^32 times its slope (`-opt-bisect-limit` names
-  `SLPVectorizerPass`). Clang 18.1.3, 21.1.0, 22.1.8 and 23.1.5 compile the
-  kernel with the vectorizer; 19.1.7 and 20.1.2 compile it wrong with it and
-  right without it. With the verifier on, 20.1.2, 21.1.0, 22.1.8 and 23.1.5
-  compile `E_16_2_4` for `x86-64-v3`, which 19.1.7 rejects.
-
-  (d), the loop vectorizer: rune's test_special timed out at 60 s on Ubuntu
-  CI compiling float64 `betainccinv`'s gradients. Each is one scalar loop
-  kernel, `E_1021`, of 1.3 MB of C; the loop vectorizer weighs every width
-  against the whole body, and its time grows faster than the body (about
-  n^2.4 on 4-lane kernels). On fudge at load 40-55, Clang 19.1.7 took 19.7 s
-  on it with the vectorizer and 5.7 s without (medians of 3, interleaved),
-  and the first call 38.9 s against 13.6 s; replay, timed only loaded, was
-  1.5-5.5 ms against 4.5-22 ms for 1021 values, as D141 found 204 ms against
-  475 ms for `log_betainc`'s gradient. Of the 13 096 kernels tolk's bench,
-  rune's compile bench and rune's suites but test_special compile, the
-  longest is 136 KB and the longest with a loop 125 KB; test_special's
-  gradients of special functions run from 51 KB to 1.3 MB, and those past
-  400 KB (432 KB to 1.3 MB, 12 of 58) took Clang 4.1-29.4 s, against 0.7-1.4
-  s for those of 158-279 KB. The one other kernel past it, the compile
-  bench's `special/betainc-chain-f32` (530 KB), has no loop, and its object
-  is the same byte for byte. A `#pragma clang loop vectorize(disable)` on the
-  loop saves a third (medians of 5: 11.5 s against 17.8 s), since the pass
-  still weighs interleaving; with `interleave(disable)` it saves what the
-  flag saves (5.5 s), but the renderer would write it before each loop of a
-  source tinygrad writes without it, and the goldens with it, while the flag
-  leaves every source as it is and the table keys the objects.
-
-  (b), the interleaved load combine: rune's `Lower_reduce › work › a
-  Contracting contraction of 8 groups works in blocks` timed out at 60 s on
-  macOS CI (Apple Clang 17, LLVM 19) after D240's upcasts, where it had
-  taken 2.3-5.7 s, and ran 60-164 s. Its kernel `r_23_4_16_4_16` upcasts its
-  outputs by 16 and 4 and unrolls its 16 rows, each row loaded at an
-  index read from memory: each iteration multiplies two vectors of 1024
-  lanes put together by shuffles of 32 loaded rows. Clang 19.1.7 for
-  `apple-m1` took 293 s on it, 274 s of them in `InterleavedLoadCombinePass`
-  (`-ftime-report`), an AArch64 pass that looks for loads that shuffles put
-  together into interleaved vectors, to read them with one `ldN`; without it
-  8 s, against 5.1 s for `x86-64-v3`, which has no such pass. The kernel
-  unrolled by 4 instead (256 lanes) took 6.2 s and 0.27 s. Of the 1241
-  distinct kernels the rest of that suite compiles, rendered on fudge and
-  compiled for `apple-m1`, the objects are the same byte for byte without
-  the pass, and their compiles take the same time (40.7 s and 40.8 s in
-  all).
-
-  (b), loop idiom recognition: rune's `Nx.eigh` under `Rune.jit` of a
-  float64 matrix of 24 rows took 8.5 s to compile under Clang 23, and of 32
-  rows did not finish in minutes (SOFO's subspace solve, which runs it on
-  the host instead), against 0.3 s under Clang 19. The kernel is
-  `Lower_linalg.exponent`'s, the largest magnitude of `where(lower, a,
-  transpose a)`: a loop of 32 trips, each folding 32 lanes into a chain of
-  float maxima `(m < x) ? x : m`, each reading the last twice. From LLVM 22
-  the pass runs its CRC recogniser (`HashRecognize`) on every countable
-  loop; for an innermost loop of one block whose constant trip count is a
-  multiple of 8, it walks the operands of the loop's running selection
-  without marking those it has seen, 2^31 paths here. LLVM 23.1.5 spent
-  99.9% of 14 s in the pass at 24 lanes and did not finish at 32 in 300 s;
-  without it, 0.01 s. The 20-row kernel (20 trips) and those of 64 and 128
-  rows (chains of 4 lanes) compile in under 0.15 s. svd's exponent of its
-  triangle escapes only because its masked loads render as branches, which
-  give its loop 45 blocks: loaded unconditionally, its 24-row kernel took
-  LLVM 23.1.5 15.35 s. Upstream
-  fixed the walk on main (llvm/llvm-project#211711, #211887) after the 23
-  branch; `release/22.x` and `release/23.x` do not have it. The pass has
-  nothing to do in a kernel: under `-ffreestanding` Clang marks its
-  functions `"no-builtins"`, so LLVM offers it no `memset` or `memcpy` to
-  call, its other idioms need a loop that exits on its data, which no
-  kernel producer writes today, and no lowering renders a CRC. The objects
-  are the same byte for byte without it: of 8695 and 10 213 kernels of
-  rune's linear algebra and suites under Clang 19.1.7 for x86_64, of 8695
-  under Clang 18.1.3 and 8694 under LLVM 23.1.5, where it finishes, and of
-  1167 for arm64 and 389 for riscv64 under Clang 19.1.7. Every Clang
-  compiles without it, Apple's included, since Apple's release is not
-  LLVM's: Apple clang 17 is based mainly on LLVM 19 and Apple clang 21
-  (Xcode 26.4) on LLVM 21, with no Apple 18 to 20, and Swift's `main` builds
-  on swiftlang's `stable/23.x`, which has the walk, while the CRC recogniser's own option is an error before LLVM
-  22. A gate to LLVM 22 and 23 would differ only from LLVM 24, where a
-  future superlinear addition to the pass would show silently, as a
-  compile that never ends; the blanket option instead takes a rename of the hidden
-  option, which would fail every host compile with Clang's message at the
-  call that compiles. The item is revisited when a kernel loop exits on its
-  data (`Cstyle` renders a void range as `for (;;)`), and goes when tolk
-  supports no Clang of LLVM 22 or 23 and Apple's bases are past 23.
-
-  comgr runs the pass too, when it generates code, under the same
-  reasoning. ROCm 7.0.0's comgr, AMD's LLVM 20.0.0git, has no CRC
-  recogniser. Its pass turns a loop counting a word's bits into `s_bcnt1`,
-  and no kernel producer writes such a loop today: on nonnormal's R9700,
-  with tolk's and comgr's caches off, the 1384 code objects that rune's GPU
-  suite (three runs) and `Rune.jit` of `Nx.eigh` on float64 matrices of 8,
-  24 and 32 rows compile for gfx1201 are the same byte for byte without
-  it. A ROCm built on LLVM 22 or 23 would carry the walk, so comgr compiles
-  without the pass, from every release.
+  `Compiler_cpu.compile_args`, which adds `-fno-slp-vectorize` when it is LLVM
+  18, 19 or 20, or Apple's 17 for x86_64, `-mllvm
+  -disable-interleaved-load-combine` for arm64 and `-mllvm
+  -disable-loop-idiom-all` for every Clang,
+  `Compiler_cpu.without_loop_vectorizer`, and `Compiler_cpu.clang` (its `table`,
+  which names both commands and the length); `Compiler_amd.hip`, whose code
+  generation's options end with `-mllvm -disable-loop-idiom-all`.
+- **Differs:** a Clang that states LLVM 18, 19 or 20 compiles every kernel with
+  `-fno-slp-vectorize`, after `-O2`, which would turn the vectorizer back on,
+  and so does Apple's Clang 17 for x86_64. Every Clang compiles a source of more
+  than 400 000 bytes without the loop vectorizer: its compiler proper runs
+  without `-vectorize-loops`, as the driver runs it under `-fno-vectorize`.
+  Every Clang compiles for arm64 without LLVM's interleaved load combine. Every
+  Clang compiles without LLVM's loop idiom recognition (`-mllvm
+  -disable-loop-idiom-all`, which every LLVM release from 12 defines), and so
+  does comgr's code generation for AMD GPUs. Otherwise every Clang, Apple's
+  included, compiles with the arguments tinygrad passes. The table of objects
+  names the command for either length, and the length (D113).
+- **Reason:**
+  - (b), the straight-line vectorizer: rune's `rune jit › classes › a uint4 sort
+    along the last axis of every other row and column, flipped, gives eager's
+    codes` failed on CI runners with AVX-512 under Clang 18.1.3 ("SmallVector
+    unable to grow"): for `x86-64-v4`, `skylake-avx512` or `znver4` the
+    vectorizer packs the clamped indices of kernel `r_3_2` and writes `sext <4 x
+    i32> ... to <4 x i16>`, invalid IR, on which X86 instruction selection
+    crashes. Clang 19 has the same defect without the crash: for `x86-64-v3`,
+    `x86-64-v4`, `arrowlake` or `znver4` (not `x86-64-v2` or `apple-m1`) it
+    writes `trunc <4 x i8> ... to <4 x i32>` in the binary search `E_16_2_4` and
+    compiles garbage rows, so rune's `Lower_reduce` test `rows in blocks give
+    eager's integers and hold their bound` failed on fudge. Apple's Clangs state
+    their own release, not LLVM's: Apple clang 17 writes the same for `E_16_2_4`
+    for x86_64, on an Intel Mac or for another machine's x86-64 host, and
+    compiles both kernels for arm64, where the vectorizer stays on: without it
+    Apple Clang 17 adds 9.5% instructions over 466 kernels. LLVM 19 and 20 also
+    write valid IR of wrong values: rune's attention test `jit within the bounds
+    of eager › float32` failed on the Windows runner, `lse` off by 4249261054.8,
+    where for `x86-64-v3` the vectorizer narrows two int64 differences' low
+    halves to `uitofp <2 x i8>`; Clang 18.1.3, 21.1.0, 22.1.8 and 23.1.5 compile
+    that kernel right. D141's split of 6 lanes into 3 pairs was not the cure,
+    and rewriting the source only moves what the vectorizer meets; disabling it
+    for every Clang would change 44% of a sample of objects, so it stays on
+    wherever it is correct. With the IR verifier on (D275), invalid IR from it
+    is a compile error naming the kernel.
+  - (d), the loop vectorizer: rune's test_special timed out at 60 s on Ubuntu CI
+    compiling float64 `betainccinv`'s gradients, each one scalar loop kernel,
+    `E_1021`, of 1.3 MB of C, whose loop vectorizer time grows faster than the
+    body (about n^2.4): on fudge Clang 19.1.7 took 19.7 s on it with the
+    vectorizer and 5.7 s without, at the cost of replay, 1.5-5.5 ms with it
+    against 4.5-22 ms without, as D141 found 204 ms against 475 ms for
+    `log_betainc`'s gradient. Of the kernels tolk's bench, rune's compile bench
+    and rune's suites but test_special compile, the longest is 136 KB, and
+    test_special's gradients past 400 KB took Clang 4.1-29.4 s, against 0.7-1.4
+    s for those of 158-279 KB; the one other past 400 000 bytes,
+    `special/betainc-chain-f32` (530 KB), has no loop, and its object is the
+    same byte for byte. A `#pragma clang loop vectorize(disable)
+    interleave(disable)` saves the same, but the renderer would write it before
+    each loop of a source tinygrad writes without it, and the goldens with it,
+    while the flag leaves every source as it is and the table keys the objects.
+  - (b), the interleaved load combine: rune's `Lower_reduce › work › a
+    Contracting contraction of 8 groups works in blocks` timed out at 60 s on
+    macOS CI (Apple Clang 17, LLVM 19) after D240's upcasts: its kernel
+    `r_23_4_16_4_16`, vectors of 1024 lanes put together by shuffles of 32
+    loaded rows, took Clang 19.1.7 293 s for `apple-m1`, 274 s of them in the
+    AArch64 `InterleavedLoadCombinePass`, and 8 s without it. Of the 1241
+    distinct kernels the rest of that suite compiles for `apple-m1`, the objects
+    are the same byte for byte without the pass.
+  - (b), loop idiom recognition: rune's `Nx.eigh` under `Rune.jit` of a float64
+    matrix of 24 rows took 8.5 s to compile under Clang 23, and of 32 rows
+    (SOFO's subspace solve) did not finish in minutes, against 0.3 s under Clang
+    19. From LLVM 22 the pass's CRC recogniser (`HashRecognize`) walks the
+    operands of the running selection of `Lower_linalg.exponent`'s loop, for an
+    innermost loop of one block whose constant trip count is a multiple of 8,
+    without marking those it has seen, 2^31 paths. LLVM fixed the walk on main
+    after the 23 branch (llvm/llvm-project#211711, #211887); `release/22.x` and
+    `release/23.x` do not have it. The pass has nothing to do in a kernel: under
+    `-ffreestanding` Clang marks its functions `"no-builtins"`, so LLVM offers
+    it no `memset` or `memcpy`, its other idioms need a loop that exits on its
+    data, which no kernel producer writes today, and no lowering renders a CRC;
+    the objects of rune's linear algebra and suites are the same byte for byte
+    without it under Clang 18, 19 and LLVM 23 for x86_64, and Clang 19 for arm64
+    and riscv64. Every Clang compiles without it, Apple's included, since
+    Apple's release is not LLVM's (Apple clang 17 is based mainly on LLVM 19 and
+    Apple clang 21 on LLVM 21, and Swift's `main` builds on swiftlang's
+    `stable/23.x`, which has the walk), and the CRC recogniser's own option is
+    an error before LLVM 22. A gate to LLVM 22 and 23 would let a future
+    superlinear addition to the pass show silently, as a compile that never
+    ends, where a rename of the blanket option fails every host compile with
+    Clang's message. The item is revisited when a kernel loop exits on its data
+    (`Cstyle` renders a void range as `for (;;)`), and goes when tolk supports
+    no Clang of LLVM 22 or 23 and Apple's bases are past 23.
+  - comgr runs the pass too, under the same reasoning. ROCm 7.0.0's comgr (AMD's
+    LLVM 20.0.0git) has no CRC recogniser; its pass turns a loop counting a
+    word's bits into `s_bcnt1`, which no kernel producer writes, and the 1384
+    code objects rune's GPU suite and `Rune.jit` of `Nx.eigh` compile for
+    gfx1201 are the same byte for byte without it. A ROCm built on LLVM 22 or 23
+    would carry the walk, so comgr compiles without the pass, from every
+    release.
 - **Pinned by:** `Tolk.Compiler_cpu › features › four clamped gathers compile
   for AVX-512 on` (`x86_64,x86-64-v4`, `x86_64,skylake-avx512`,
-  `x86_64,znver4`), which compiles the indices of `r_3_2` and fails under
-  Clang 18 without the flag; `Tolk.Compiler_cpu › features › a binary
-  search of four lanes compiles for AVX2 and AVX-512 on` (`x86_64,x86-64-v3`,
-  `x86_64,x86-64-v4`, `x86_64,znver4`), over `E_16_2_4` reduced, which fails
-  under Clang 19 and Apple's Clang 17 without the flag; rune's `rune jit ›
-  classes › a uint4 sort along
-  the last axis of every other row and column, flipped, gives eager's
+  `x86_64,znver4`), over `r_3_2`'s indices, which fails under Clang 18 without
+  the flag; `Tolk.Compiler_cpu › features › a binary search of four lanes
+  compiles for AVX2 and AVX-512 on` (`x86_64,x86-64-v3`, `x86_64,x86-64-v4`,
+  `x86_64,znver4`), over `E_16_2_4` reduced, which fails under Clang 19 and
+  Apple's Clang 17 without the flag; rune's `rune jit › classes › a uint4 sort
+  along the last axis of every other row and column, flipped, gives eager's
   codes`, under Clang 18 on an x86 host with AVX-512; rune's `Lower_reduce ›
-  cases › rows of one group in a block at each batch index give eager's
-  values`, under Clang 19 on an x86 host with AVX2; rune's `rune attention
-  › jit within the bounds of eager › float32` and `› the gradient compiled
-  and in forward mode › float32`, whose first example fails under Clang 20
-  on an x86 host with AVX2. The loop vectorizer:
-  `Tolk.Compiler_cpu › features › a loop over a count it takes is packed
-  into vectors iff its source is at most 400000 bytes long:` (rows 400000 and
-  400001 among them); rune's compile bench `special/betainccinv-grad-f32`, the float32
-  gradient of test_special (914 KB), whose first call takes 3.88 and 4.48 s
-  on fudge against 6.57 and 6.66 s with the loop vectorizer (medians of 3,
-  two interleaved runs each). The interleaved load combine: `Tolk.Compiler_cpu
-  › compile time › an arm64 kernel of 1024 lanes gathered from 32 rows
-  compiles within a minute`, over that kernel's source, which times out at
-  60 s on fudge with the pass and compiles in 5.4 s without it; rune's
-  `Lower_reduce` test above, on macOS CI. Loop idiom recognition:
-  `Tolk.Compiler_cpu › features › a loop that exits on its data stays a
-  loop: idioms are off`, a population count by clearing bits, which Clang
-  19 turns into `popcnt` with the pass; `Tolk.Compiler_cpu › compile time › a host maximum of 32 float64 lanes in
-  a loop of 32 trips compiles within a minute for` (`x86_64,x86-64-v3`,
+  cases › rows of one group in a block at each batch index give eager's values`,
+  under Clang 19 on an x86 host with AVX2; rune's `rune attention › jit within
+  the bounds of eager › float32` and `› the gradient compiled and in forward
+  mode › float32`, whose first example fails under Clang 20 on an x86 host with
+  AVX2. The loop vectorizer: `Tolk.Compiler_cpu › features › a loop over a count
+  it takes is packed into vectors iff its source is at most 400000 bytes long:`
+  (rows 400000 and 400001 among them); rune's compile bench
+  `special/betainccinv-grad-f32` (914 KB), whose first call takes 3.88 s on
+  fudge against 6.57 s with the loop vectorizer. The interleaved load combine:
+  `Tolk.Compiler_cpu › compile time › an arm64 kernel of 1024 lanes gathered
+  from 32 rows compiles within a minute`, which times out at 60 s on fudge with
+  the pass; rune's `Lower_reduce` test above, on macOS CI. Loop idiom
+  recognition: `Tolk.Compiler_cpu › features › a loop that exits on its data
+  stays a loop: idioms are off`, which Clang 19 turns into `popcnt` with the
+  pass; `Tolk.Compiler_cpu › compile time › a host maximum of 32 float64 lanes
+  in a loop of 32 trips compiles within a minute for` (`x86_64,x86-64-v3`,
   `arm64,apple-m1`), over `r_32_32`'s source; rune's `Lower_linalg › eigh ›
-  compiled for 32 rows of float64 gives eager's eigenvalues`; rune's
-  compile bench `linalg/eigh-f64-32x32`. These three fail without the fix
-  only under a Clang of LLVM 22 or 23. comgr: `Tolk.Compiler_amd › comgr ›
-  a loop that exits on its data stays a loop: idioms are off`, which ROCm
-  7.0.0's comgr turns into `s_bcnt1` without the option.
+  compiled for 32 rows of float64 gives eager's eigenvalues`; rune's compile
+  bench `linalg/eigh-f64-32x32`. These three fail without the fix only under a
+  Clang of LLVM 22 or 23. comgr: `Tolk.Compiler_amd › comgr › a loop that exits
+  on its data stays a loop: idioms are off`, which ROCm 7.0.0's comgr turns into
+  `s_bcnt1` without the option.
 
 ## D168. Withdrawn
 
-The renderer listed a program's callees by a scan of its instructions, in
-place of tinygrad's toposort of the program, for 7 to 13% of render
-allocation. On fudge that gain is 2% of render words and 0.4% of compile
-instructions: it did not pay for the scan.
+The renderer listed a program's callees by a scan of its instructions, in place
+of tinygrad's toposort of the program. On fudge the gain was 2% of render words
+and 0.4% of compile instructions, which did not pay for the scan.
 
 ## D169. A scheduler reads its kernel's axes once, and keeps a flat kernel
 
-- **tinygrad:** `codegen/opt/postrange.py` (`Scheduler.__init__`, which rewrites
-  its kernel by `pm_flatten_range`), `Scheduler.rngs` (and `full_shape`,
-  properties computed at each access), `copy` (which makes a scheduler of the
-  kernel, rewriting it again), `axes_of` (which computes `reduce_ranges` and
-  `rngs`, itself computing `reduce_ranges`) and `reduceops`.
+- **tinygrad:** `codegen/opt/postrange.py` `Scheduler.__init__` (rewrites its
+  kernel by `pm_flatten_range`), `Scheduler.rngs` (and `full_shape`, properties
+  computed at each access), `copy` (makes a scheduler of the kernel, rewriting
+  it again), `axes_of` (computes `reduce_ranges` and `rngs`, itself computing
+  `reduce_ranges`) and `reduceops`.
 - **tolk:** `Postrange.Scheduler.view` (`view_of`), which `slice`, `rngs`,
-  `full_shape`, `reduce_ranges` and `reduceops` read;
-  `Postrange.Scheduler.flat` and `Postrange.Scheduler.v`.
+  `full_shape`, `reduce_ranges` and `reduceops` read; `Postrange.Scheduler.flat`
+  and `Postrange.Scheduler.v`.
 - **Differs:**
   - the kernel's slice, its reductions, the ranges they close, its axes and
-    their sizes are computed when first asked after the kernel changes, and
-    kept until it changes. tinygrad computes them at each query;
+    their sizes are computed when first asked after the kernel changes, and kept
+    until it changes. tinygrad computes them at each query;
   - a kernel whose reductions and ends each close distinct ranges, which the
-    rewrite would leave unchanged, is kept without it; any other is
-    rewritten. tinygrad rewrites every kernel, a copy's included.
+    rewrite would leave unchanged, is kept without it; any other is rewritten.
+    tinygrad rewrites every kernel, a copy's included.
 
   The kernels and the answers are the same.
-- **Reason:** (d): a beam search's rounds and the hand-coded optimisations
-  of every kernel. With a range's reduce role read from the reductions, each
-  axis query listed the kernel's slice up to five times, and each copy of a
-  scheduler rewrote its kernel. Measured on fudge by instruction counts:
-  making the candidates of `matmul`'s kernel for CUDA took 14.0M
-  instructions with the role and 6.6M with both changes (9.5M before the
-  role, whose search also had unroll actions); lowering `matmul`'s kernel
-  took 14.96M with the role, 14.57M with both, 14.31M before. With both, the
-  tolk bench's `search/actions/*` rows (the three lorenz kernels) run 25 to
-  27% faster than before the role, and `matmul/codegen` within 1%, where it
-  had taken 12% longer.
-- **Pinned by:** `Tolk.Postrange › a scheduler's axes answer as a fresh
-  copy's, whatever came before`, which interleaves optimisations, copies and
-  queries; `› the scheduler's axes after optimising are as recorded`;
-  `› Scheduler ›` `v's kernel has the ranges its reductions and ends
+- **Reason:** (d): a beam search's rounds and the hand-coded optimisations of
+  every kernel. With a range's reduce role read from the reductions, each axis
+  query listed the kernel's slice up to five times, and each copy of a scheduler
+  rewrote its kernel; with both changes the tolk bench's `search/actions/*` rows
+  run 25 to 27% faster than before the role, and `matmul/codegen` within 1%,
+  where it had taken 12% longer.
+- **Pinned by:** `Tolk.Postrange › a scheduler's axes answer as a fresh copy's,
+  whatever came before`; `› the scheduler's axes after optimising are as
+  recorded`; `› Scheduler ›` `v's kernel has the ranges its reductions and ends
   close flattened`, `v's kernel of a recorded kernel is it flattened` and `a
   copy's kernel after optimising is the kernel flattened`; the tolk bench's
-  `search/actions/*` rows on fudge, which time making a search's candidates,
-  and its `*/codegen` rows.
+  `search/actions/*` rows on fudge, and its `*/codegen` rows.
 
 ## D170. A kernel's parameters name no device
 
-- **tinygrad:** `schedule/rangeify.py` (`debuf`) gives each kernel parameter its
-  buffer's device, and `codegen/__init__.py` (`to_program_key`) keys a program
-  by `ast.key`, so each device makes its own program of one kernel. Copy
-  detection and the check that a kernel spans one device read the kernel's
-  parameters (`schedule/__init__.py` `assert_all_same_devices`,
-  `copy_kernel_to_store`, `simplify_copy_kernel`), the renderer is picked from
-  the call's device, which a call takes from its body (`engine/realize.py`
-  `_get_call_to_compile`), and the search names its parameters' device itself
-  (`codegen/opt/search.py` `_try_compile`).
+- **tinygrad:** `schedule/rangeify.py` `debuf` gives each kernel parameter its
+  buffer's device, and `codegen/__init__.py` `to_program_key` keys a program by
+  `ast.key`, so each device makes its own program of one kernel. Copy detection
+  and the check that a kernel spans one device read the kernel's parameters
+  (`schedule/__init__.py` `assert_all_same_devices`, `copy_kernel_to_store`,
+  `simplify_copy_kernel`), the renderer is picked from the call's device, which
+  a call takes from its body (`engine/realize.py` `_get_call_to_compile`), and
+  the search names its parameters' device itself (`codegen/opt/search.py`
+  `_try_compile`).
 - **tolk:** `Rangeify.debuf`; `Schedule.is_copy`, `copy_runs`,
   `assert_all_same_devices` and `copy_call`; `Codegen.program_key`
   (`Codegen.params`); `Realize.get_call_to_compile`; `Search.timed_call`;
   `Spec.program`.
-- **Differs:** a kernel's parameters name no device: the device is its
-  call's arguments', where a kernel launches (`engine/realize.py` `exec_kernel`
+- **Differs:** a kernel's parameters name no device: the device is its call's
+  arguments', where a kernel launches (`engine/realize.py` `exec_kernel`
   launches there too). Kernels of one expression on several devices of one
   target are one node, one key and one program, in memory and on disk. Copy
-  detection and the one-device check read the call's arguments, the renderer
-  is the target's of the call's first storage argument, where the engine
-  launches the kernel, and `Spec.program` refuses a
-  parameter that names a device. A search's timed call names its target's
-  device, and its caller places it on a device of the target (rune's
-  `search`). `test/gen/graph.py`
-  (`unplaced_kernels`) writes a kernel body's parameters without a device, so
-  the goldens carry this whatever tinygrad computes.
+  detection and the one-device check read the call's arguments, the renderer is
+  the target's of the call's first storage argument, where the engine launches
+  the kernel, and `Spec.program` refuses a parameter that names a device. A
+  search's timed call names its target's device, and its caller places it on a
+  device of the target (rune's `search`). `test/gen/graph.py` `unplaced_kernels`
+  writes a kernel body's parameters without a device, so the goldens carry this
+  whatever tinygrad computes.
 - **Reason:** (b): rune's compiled programs over several devices
   (`Compile.make`, `Pieces.split`) lower each device's operations on that
-  device, so a program over `n` software devices of one host makes `n` copies
-  of each kernel. With the devices in the key, a data-parallel step's first
-  call over 16 software devices compiled each kernel 16 times; with one
-  program per target, it compiles each once. A device kept in the
-  kernel and erased for the key held one fact in two places, kept equal by
-  renaming each program to its call's devices.
+  device, so with the devices in the key a data-parallel step's first call over
+  16 software devices compiled each kernel 16 times; with one program per target
+  it compiles each once. A device kept in the kernel and erased for the key
+  would hold one fact in two places.
 - **Pinned by:** `Tolk.Schedule › create_linear_with_vars › rules › one
-  expression on two devices of a target is one kernel`, `… › a kernel on
-  buffers of two devices is refused` and `copies into runs`; `Tolk.Search ›
-  a search kept for one device serves another of its target`; `Tolk.Spec ›
-  program › parameters`; rune's `Rune.jit over several devices`, `searches`
-  among them.
-
+  expression on two devices of a target is one kernel`, `… › a kernel on buffers
+  of two devices is refused` and `copies into runs`; `Tolk.Search › a search
+  kept for one device serves another of its target`; `Tolk.Spec › program ›
+  parameters`; rune's `Rune.jit over several devices`, `searches` among them.
 
 ## D171. Withdrawn
 
@@ -4568,62 +4327,48 @@ the walk of `Rangeify.fix_store_hazard`.
 
 ## D173. A schedule linked per run makes its arenas at each run
 
-- **tinygrad:** `engine/jit.py` (`CapturedJit`): the linked linear of a
-  captured schedule holds its intermediates' buffers from its first call
-  until `free_intermediates` drops it, so they outlive every run, and
-  `engine/jit.py` (`jit_lower`) places them in arenas
-  (`memory_plan_rewrite`).
+- **tinygrad:** `engine/jit.py` `CapturedJit`: the linked linear of a captured
+  schedule holds its intermediates' buffers from its first call until
+  `free_intermediates` drops it, so they outlive every run, and `engine/jit.py`
+  `jit_lower` places them in arenas (`memory_plan_rewrite`).
 - **tolk:** `Tolk_engine.link`'s `storage`, `Tolk_engine.per_run_storage`,
   `Tolk_engine.run_with`.
-- **Differs:** a schedule linked `Per_run` is planned into arenas (D41), in
-  the order by storage (D183, D185), and makes each storage node no buffer
-  is bound to before its run's first call and frees it after its last, its
-  memory coming back once the work on it is done. A run is one program of
-  rig's, which loads each image once per device. A run's submissions are
-  those of the same schedule linked `Linked`: the order by storage
-  interleaves devices, 1018 `Submit` steps for a data-parallel step over 16
-  software devices, and under rig's one point per submission they are what
-  cross-device overlap costs: grouping a device's work into fewer
-  submissions lengthens a GPU-faithful critical path. Linked `Linked`, the
-  default, its storage is the program's, as tinygrad's. A run of either
-  keeps none of the buffers it was given once it returns. In a set of a GPU
-  and a host-run device, where the plan places host work over bytes a GPU
-  copy touched, the run waits for the GPU's earlier work before it returns
+- **Differs:** a schedule linked `Per_run` is planned into arenas (D41), in the
+  order by storage (D183, D185), and makes each storage node no buffer is bound
+  to before its run's first call and frees it after its last, its memory coming
+  back once the work on it is done. A run is one program of rig's, which loads
+  each image once per device. A run's submissions are those of the same schedule
+  linked `Linked`: the order by storage interleaves devices, and under rig's one
+  point per submission they are what cross-device overlap costs, since grouping
+  a device's work into fewer submissions lengthens a GPU-faithful critical path.
+  Linked `Linked`, the default, its storage is the program's, as tinygrad's. A
+  run of either keeps none of the buffers it was given once it returns. In a set
+  of a GPU and a host-run device, where the plan places host work over bytes a
+  GPU copy touched, the run waits for the GPU's earlier work before it returns
   (D41): the plan keeps the bound and gives up that call's asynchrony.
 - **Reason:** (b): rune's compiled programs over several devices
-  (`Compile.variant`, for a split program) promise that a device holds
-  between calls only the values its caller keeps, and RFC 0005 bounds what a
-  fully sharded step holds within a call. Linked `Linked`, the programs of
-  fully sharded training over two software devices, its gathers compiled, held
-  4.75 layers on each device beside its share after a step (`rune jit ›
-  fully sharded`, d = 128): 3.75 of scratch, and one of the buffers the
-  frames kept from their last runs. Each buffer made at its first call and
-  freed after its last, as tolk did before, met the bound on software devices,
-  whose work is done when it is submitted, but not on a GPU, which reuses
-  freed memory only once its work is done while a run returns before it
-  is: on fudge's RTX 5000, eight chained products of 64 MiB, two live at
-  once, held 640 MiB at the call's return, where planned into an arena they
-  hold 320 MiB with the arguments and the result. That design was also one
-  program of rig's per stretch between makes and frees: the data-parallel
-  step over 16 software devices was 1168 programs, which linked 656 objects
-  where one program links 11. Planned
-  per run, rune's five `fully sharded` cases held 2.128, 1.692, 1.473, 4.001
-  and 2.626 layers against bounds of 2.188, 1.719, 1.484, 4.250 and 2.812,
-  as each buffer of its own did; with copies in a lane of their own, 3.068,
-  2.538, 2.273, 4.756 and 2.944, each over its bound, since two arenas made
-  for the whole run hold both lanes' peaks at once.
+  (`Compile.variant`, for a split program) promise that a device holds between
+  calls only the values its caller keeps, and RFC 0005 bounds what a fully
+  sharded step holds within a call. Linked `Linked`, fully sharded training over
+  two software devices held 4.75 layers on each device beside its share after a
+  step (`rune jit › fully sharded`, d = 128). Each buffer made at its first call
+  and freed after its last fails the bound on a GPU, which reuses freed memory
+  only once its work is done while a run returns before it is: on fudge's RTX
+  5000, eight chained products of 64 MiB, two live at once, held 640 MiB at the
+  call's return, where planned into an arena they hold 320 MiB with the
+  arguments and the result. That design also made one program of rig's per
+  stretch between makes and frees, 1168 for a data-parallel step over 16
+  software devices. Planned per run, rune's five `fully sharded` cases meet
+  their bounds; copies in a lane of their own put each over its bound, since two
+  arenas made for the whole run hold both lanes' peaks at once.
 - **Pinned by:** `Tolk_engine › runs › a schedule linked per run holds no
   storage between runs`, `› a run holds its storage whole, no less than its
-  buffers live at once` (the least budget a run fits is its plan's bytes,
-  which hold what a model of each buffer's first and last use has live at
-  once), `› a
-  schedule linked per run does the work it does linked` and `› a run keeps
-  none of the buffers it was given`; `Tolk.Memory › memory_plan_rewrite ›
-  rules › a copy's buffer and a call's of one device share bytes once their
-  lives are apart` and the plan law; rune's `fully sharded`
-  tests, whose shares are exact after a step, and `Rune.jit on a GPU ›
-  memory › a split program holds at its return at most its result and its
-  plan`.
+  buffers live at once`, `› a schedule linked per run does the work it does
+  linked` and `› a run keeps none of the buffers it was given`; `Tolk.Memory ›
+  memory_plan_rewrite › rules › a copy's buffer and a call's of one device share
+  bytes once their lives are apart` and the plan law; rune's `fully sharded`
+  tests, whose shares are exact after a step, and `Rune.jit on a GPU › memory ›
+  a split program holds at its return at most its result and its plan`.
 
 ## D174. A kernel's call bodies are functions of its own source on every target
 
@@ -4657,112 +4402,65 @@ the walk of `Rangeify.fix_store_hazard`.
 
 ## D175. The splits after a tensor core keep the target's threads in flight
 
-- **tinygrad:** `codegen/opt/heuristic.py` (`hand_coded_optimizations`,
-  without `TC_MIN_GLOBALS`: after the core, M and N are upcast and N split
-  into local threads, by the first size that divides them, whatever the
-  workgroups left; the same at `6b7b018da`).
+- **tinygrad:** `codegen/opt/heuristic.py` `hand_coded_optimizations`, without
+  `TC_MIN_GLOBALS`: after the core, M and N are upcast and N split into local
+  threads, by the first size that divides them, whatever the workgroups left;
+  the same at `6b7b018da`.
 - **tolk:** `Renderer.t.core_threads`, `Renderer.t.local_workgroups` and
   `Heuristic.tensor_cores`.
 - **Differs:** each upcast applies only while the kernel keeps at least
   `core_threads / Tc.threads` workgroups after it, the product of its global
   axes, or when that product is not known: 16384 threads, 512 workgroups of a
   CUDA or RDNA core of 32 threads and 256 of a CDNA core of 64, and on Metal
-  32768, 1024 workgroups of its core of 32. An
-  upcast leaves fewer threads to keep memory and the L2 busy (concurrency is
-  latency times throughput, Volkov, UCB/EECS-2016-143 §3.1). The local split
-  keeps the threads and leaves fewer workgroups to share among the compute
-  units, so threads do not govern it: it takes the largest of 4 and 2 that
-  divides N and leaves at least `local_workgroups` = 256 workgroups, or an
-  unknown count, where tinygrad takes the first that divides. 16384 is a
-  bound fitted to sm_89's parts, which every target takes until it fits its
-  own; Metal's 32768 is fitted to an M1 Max. Under `TC_MIN_GLOBALS` the
-  splits are tinygrad's.
-  A core whose operands are staged through shared memory takes neither
-  these splits nor their floors but a tile of its own (D262), with the
-  floor `core_threads / stages`.
-- **Reason:** (d): gpt-oss-20b on fudge's RTX 5000 Ada, its products at
-  bfloat16 widened by a cast (D29). GPU time, three interleaved rounds under
-  the timing lock, warm and from a clean, cold cache:
-  - against 100 workgroups (4096 threads on these kernels), us: the decode
-    step's keys (`stream/decode-keys`) 5.37-5.86 to 4.15 warm and 9.03 to
-    6.10 cold; a prefill's key projection, 512 by 512 over 2880
-    (`stream/key-projection`), 132.8-132.9 to 114.8 and 250.9-251.0 to
-    115.7; `matmul_half_512` 19.0-19.3 to 17.3 and 33.7-34.7 to 17.3;
-    `matmul_half_256` 6.10 both warm, 8.06 to 6.10 cold; `matmul_half_1024`
-    44.2-44.7 to 40.8-41.0 warm, 62.5-66.5 and 62.5-65.7 cold;
-    `stream/dense-bf16-64`'s core kernel 472-487 and 483-485 warm, 469-483
-    and 479-481 cold; the attention values, `stream/decode-kv` and
-    `stream/decode-router` keep their programs. End to end, wall time,
-    kaun's `GptOss/decode-step-Q8_0-cache-1024` 7.98-8.02 and 7.96-7.99 ms,
-    124,448 words a call each, and `GptOss/prefill-512` 185.0-185.9 and
-    183.0-184.0 ms;
-  - past 16384 threads the splits lose reuse: at 65536 `dense-bf16-64`'s
-    third kernel is 1.42x slower and `matmul_half_1024` 1.97x, so fudge's
-    window is (4096, 16384]. The lower edge shows from the L2 as well as
-    from memory, so it moves with SMs times clock and with bandwidth; the
-    RTX 4090 and L40 lie within 4x of fudge by both (the Ada whitepaper's
-    tables);
-  - the local split as tinygrad's, unfloored: a decode step's attention values
-    1.19x slower, the key projection 1.34x warm and 1.6-1.7x cold, the routed
-    products 1.14x, for 1-4% elsewhere. Its cost follows the warps on the
-    busiest SM, a function of the part's units: a split is harmless where it
-    does not raise them, `ceil(W / (L U)) L <= ceil(W / U)` for `W` one-warp
-    workgroups, a split `L` and `U` units, which needs `U`, a fact of the
-    part. 256 workgroups with the fall back to 2 is the floor fudge's rows
-    admit (between 1.44 and 2.56 times its 100 SMs): it takes a split by 2
-    where 512 refused every split, on fudge, three interleaved rounds, against
-    512 with D211: the key projection 88-115 to 78-96 us (its bench row 89.1
-    to 73.0 us at best), the output projection 186-195 to 169-186 us,
-    `matmul_half_512` 17.4 to 16.3 us at best, the decode step's keys
-    unchanged, the prefill 167.5-181.1 to 168.3-169.0 ms; the local split by 4
-    to 128 workgroups that cost the key projection 1.34x stays refused. At
-    2048 cubed the floor of 512 left one warp a workgroup, and 256 takes a
-    split by 4 (195-219 to 199-203 us). On parts of 24 to 142 SMs the floor
-    is a fit, not the test: unmeasured;
-  - kept from before: a decode step's attention values, 64 by 64 outputs
-    over 1024 slots, take 32 workgroups and 23.6 us where tinygrad's splits
-    leave one and 68.9 us; a prefill's router, 512 tokens by 32 experts over
-    2880, 128 workgroups where tinygrad's leave 8.
-  The band where the bound is wrong: on parts the size of an RTX 4060 (24
-  SMs, 272 GB/s) the model puts the window at about (1000, 3900] threads,
-  where 16384 may cost 1.4-2x. Unmeasured; a row on a small part is owed.
-  The floor moves the order of a sum (97-98% of the key projection's and
-  `matmul_half_512`'s outputs differ from 100 workgroups', by at most 1.2e-5
-  on values of 3.5), so it is fixed per target: a floor read from the part
-  would give two parts of one target different bits (D89's constants).
-  AMD takes the same value; its own is to measure on nonnormal's R9700,
-  which fudge lacks. Metal takes 32768, fitted on an M1 Max (Apple7, 32 GPU
-  cores); other Apple parts are unmeasured. GPU time, the median of 29 calls,
-  12 products swept from 8192 to 65536 threads under load (7.5-14 on 10
-  cores), in 6 interleaved rounds for 8 of them and 3 for the half products
-  of 1024, 2048 and 4096 and the output projection: a float32 product of
-  1024 squared runs in 268 us against 316 at 16384, which 4 ABBA rounds
-  confirm (267.6-268.5 against 314.0-317.7 us, load 14), and the other 11
-  run within noise (geomean 0.989x of 16384's). 8192 runs a half product of
-  512 by 2880 by 512 1.7x faster and the float32 one 3.2x slower. The
-  heuristic's `matmul_1000` and `scores`, whose splits 32768 changes, are
-  untimed.
-  Since staging (D262) the staged tile's rule of `core_threads / stages`
-  replaces these floors for a staged core, so `stream/key-projection` and
-  `stream/dense-bf16-64` no longer reach them (29.8 against 29.5 us, four
-  interleaved rounds, and 433-436 us both on the row's kernel as rune compiles
-  it today). gpt-oss-20b's routed experts take the
-  unstaged path and reach the floors, which refuse nothing there:
-  `GptOss/experts-at-prefill-512` 2.77 against 2.80 ms and
-  `GptOss/prefill-512` 122.0 against 121.2 ms with and without them. The row
-  that still gains is `stream/decode-keys`, 7.4 against 7.8 us without the floors, 1.05x
-  for about 15 lines.
+  32768, 1024 workgroups of its core of 32. An upcast leaves fewer threads to
+  keep memory and the L2 busy (concurrency is latency times throughput, Volkov,
+  UCB/EECS-2016-143 §3.1). The local split keeps the threads and leaves fewer
+  workgroups to share among the compute units, so threads do not govern it: it
+  takes the largest of 4 and 2 that divides N and leaves at least
+  `local_workgroups` = 256 workgroups, or an unknown count, where tinygrad takes
+  the first that divides. 16384 is a bound fitted to sm_89's parts, which every
+  target takes until it fits its own; Metal's 32768 is fitted to an M1 Max.
+  Under `TC_MIN_GLOBALS` the splits are tinygrad's. A core whose operands are
+  staged through shared memory takes neither these splits nor their floors but a
+  tile of its own (D262), with the floor `core_threads / stages`. The floors are
+  fixed per target: one read from the part would give two parts of one target
+  different bits, since the floor moves the order of a sum (D89's constants).
+- **Reason:** (d): gpt-oss-20b on fudge's RTX 5000 Ada, its products at bfloat16
+  widened by a cast (D29). Since staging (D262), `stream/key-projection` and
+  `stream/dense-bf16-64` no longer reach the floors, and the key projection's
+  numbers below are those that set them; the row that still gains is
+  `stream/decode-keys`, 7.4 against 7.8 us without the floors, 1.05x for about
+  15 lines; gpt-oss-20b's routed experts take the unstaged path and reach the
+  floors, which refuse nothing there. Past 16384 threads the splits lose reuse
+  (at 65536 `matmul_half_1024` is 1.97x slower), and the decode step's keys took
+  5.37-5.86 us at a floor of 100 workgroups (4096 threads) and 4.15 us at 16384,
+  so fudge's window is (4096, 16384]. The local split as tinygrad's, unfloored,
+  made the key projection 1.34x slower, and a decode step's attention values, 64
+  by 64 outputs over 1024 slots, take 32 workgroups and 23.6 us where tinygrad's
+  splits leave one and 68.9 us. A split is harmless where `ceil(W / (L U)) L <=
+  ceil(W / U)`, for `W` one-warp workgroups, a split `L` and `U` units, which
+  needs `U`, a fact of the part. 256 workgroups with the fall back to 2 is the
+  floor fudge's rows admit, between 1.44 and 2.56 times its 100 SMs: against 512
+  with D211 it takes a split by 2 that the key projection gains by (88-115 to
+  78-96 us). On parts of 24 to 142 SMs it is a fit, not the test: unmeasured. On
+  parts the size of an RTX 4060 (24 SMs, 272 GB/s) the model puts the window at
+  about (1000, 3900] threads, where 16384 may cost 1.4-2x: unmeasured, and a row
+  on a small part is owed. AMD takes the same value; its own is to measure on
+  nonnormal's R9700. Metal's 32768, fitted on an M1 Max (Apple7, 32 GPU cores),
+  runs a float32 product of 1024 squared in 268 us against 316 at 16384; other
+  Apple parts are unmeasured, and the heuristic's `matmul_1000` and `scores`,
+  whose splits 32768 changes, are untimed.
 - **Pinned by:** `Tolk.Heuristic`'s cases, on CUDA: `matmul_half_1024`,
   `matmul_half_512`, `matmul_half_256`, `attention_values` and
-  `matmul_half_variable` (a variable counts the workgroups), with the
-  layouts in the suite's `.tolk` files; its `the tensor
-  core's floor › the splits after a tensor core are those that leave its
-  floor of workgroups`, over every recorded core kernel, CDNA's included,
-  with the local split's floor of 256 workgroups; the `routed_run` cases of
-  D200 on CUDA, whose local split by 2 the floor of 256 admits; its `Metal's
-  renderer floors its cores at 32768 threads`, where `matmul_1000` and
-  `scores` split otherwise at 16384; the tolk bench's `stream/decode-keys` row
-  on fudge, and rune's `rune_metal` row `matmul-f32-1024` on a Mac.
+  `matmul_half_variable` (a variable counts the workgroups), with the layouts in
+  the suite's `.tolk` files; its `the tensor core's floor › the splits after a
+  tensor core are those that leave its floor of workgroups`, over every recorded
+  core kernel, CDNA's included, with the local split's floor of 256 workgroups;
+  the `routed_run` cases of D200 on CUDA, whose local split by 2 the floor of
+  256 admits; its `Metal's renderer floors its cores at 32768 threads`, where
+  `matmul_1000` and `scores` split otherwise at 16384; the tolk bench's
+  `stream/decode-keys` row on fudge, and rune's `rune_metal` row
+  `matmul-f32-1024` on a Mac.
 
 ## D176. Withdrawn
 
@@ -4771,14 +4469,13 @@ its rule, its reason and its pins.
 
 ## D177. A name bound to several values is passed by each call that reads it
 
-- **tinygrad:** `schedule/__init__.py` (`create_linear_with_vars`), which raises
-  "bind mismatch" when a schedule's kernels read one variable name bound to two
-  values, and `resolve_linear_call`, which substitutes a bound variable into its
-  kernels unbound, read by name from the run's `var_vals`; `function.py`
-  (`is_implicit_storage`, `pm_ctx`), where a function traced into a call
-  captures each variable its body reads as an argument, and
-  `schedule/__init__.py` (`pm_replace_buf`), which passes the schedule's own the
-  same way.
+- **tinygrad:** `schedule/__init__.py` `create_linear_with_vars` (raises "bind
+  mismatch" when a schedule's kernels read one name bound to two values) and
+  `resolve_linear_call` (substitutes a bound variable into its kernels
+  unbound, read by name from the run's `var_vals`); `function.py`
+  `is_implicit_storage`, `pm_ctx` (a traced function captures each variable
+  its body reads as an argument); `schedule/__init__.py` `pm_replace_buf`,
+  which passes the schedule's own the same way.
 - **tolk:** `Schedule.create_linear_with_vars` (`bound_several`, and its
   `used_vars`, which reads the kernels of loops),
   `Schedule.canonicalize_call_body` and `Schedule.pm_pass_bound`,
@@ -4786,32 +4483,33 @@ its rule, its reason and its pins.
   `Tolk_engine.var_word`, and `Realize.call_value`, through which the grid
   and split size of `Tolk_engine.launch` read a nameless scalar from its
   call's slot.
-- **Differs:** where the graph binds variables of one name to several values,
-  a kernel that reads one takes it as a nameless parameter of its range, in a
-  slot past its arguments, and its call passes the bound variable there, as a
-  loop's call passes its trip (D140). The name is not among the schedule's
-  variables, and the engine reads each bound variable apart, so each launch
-  computes with its call's value, unless a run binds the name. A kernel
-  takes such parameters in the order its body reaches them, so kernels that
-  differ in their values alone, or in the order the schedule met those
-  values, are one program. A name bound to one value is read by name, as
-  tinygrad reads it.
-
-  A call passes the variables its body binds, as the schedule passes its
-  own, by the same rule (`pm_pass_bound`), where the schedule gives each
-  call's call-local storage its slots: each becomes a nameless parameter of
-  the call in a slot past its arguments, one per value, and the call passes
-  the bound variable there. tinygrad's function does the same as it traces
-  a body into a call; tolk takes a call's body as built (`Ops.call`), so the
-  schedule does it, once, for every builder. No body the schedule splits
-  into kernels then binds a name: stores of one kernel (D137) and calls
-  run as one launch (D404) read each value from a slot of their own. A kernel
-  the body calls, such as a custom kernel whose code binds a variable,
-  reads it from the body's slots as the kernels split from the body do
-  (`Schedule.pm_pass_kernel_bound`), which resolving the scope fills
-  (`Schedule.resolve_linear_call`). A name of one value that a loop's
-  kernels read is among the schedule's variables, which tinygrad, without
-  loops in a schedule, reads from its top-level kernels alone.
+- **Differs:**
+  - Where the graph binds variables of one name to several values, a kernel
+    that reads one takes it as a nameless parameter of its range, in a slot
+    past its arguments, and its call passes the bound variable there, as a
+    loop's call passes its trip (D140). The name is not among the schedule's
+    variables, and the engine reads each bound variable apart, so each launch
+    computes with its call's value, unless a run binds the name. A kernel
+    takes such parameters in the order its body reaches them, so kernels that
+    differ in their values alone, or in the order the schedule met those
+    values, are one program. A name bound to one value is read by name, as
+    tinygrad reads it.
+  - A call passes the variables its body binds by the same rule
+    (`pm_pass_bound`), where the schedule gives each call's call-local
+    storage its slots: each becomes a nameless parameter of the call in a slot
+    past its arguments, one per value, and the call passes the bound variable
+    there. tinygrad's function does this as it
+    traces a body into a call; tolk takes a call's body as built (`Ops.call`),
+    so the schedule does it, once, for every builder. No body the schedule
+    splits into kernels then binds a name: stores of one kernel (D137) and
+    calls run as one launch (D404) read each value from a slot of their own. A
+    kernel the body calls, such as a custom kernel whose code binds a
+    variable, reads it from the body's slots as the kernels split from the
+    body do (`Schedule.pm_pass_kernel_bound`), which resolving the scope fills
+    (`Schedule.resolve_linear_call`).
+  - A name of one value that a loop's kernels read is among the schedule's
+    variables, where tinygrad, without loops in a schedule, reads from its
+    top-level kernels alone.
 - **Reason:** (b): rune's compiled programs over several devices
   (`Pieces.split`, `Compile.moving`) bind each device's window start, of a
   move or of a loop's coordinates, to a variable named by its bound, so that
@@ -4820,8 +4518,8 @@ its rule, its reason and its pins.
   (b): rune's loops (`Loop.cut`) keep the variables their steps bind in the
   loop's body, such as the start of each piece of an assembly
   (`Compile.region`), which binds one name to each piece's start; named in
-  the body, two stores or calls of a trip that one kernel joined passed the
-  name one value.
+  the body, two stores or calls
+  of a trip that one kernel joined passed the name one value.
 - **Pinned by:** `Tolk.Schedule › create_linear_with_vars › rules › two
   variables of one name bound to two values are passed by the calls that read
   them`, `› kernels that read two names bound to several values alike are one
@@ -4837,40 +4535,41 @@ its rule, its reason and its pins.
   `› a scan's custom kernel that closes over a bound variable runs as one
   with the scan's own and reads its value`, and `› custom kernels with
   variables › a custom kernel that closes over a bound variable reads its
-  value`, and the same on each GPU;
-  `Tolk_engine › link and run › one program launched on
-  several devices computes each device's window at its start` and `› kernels
-  whose sizes are one name of two values run each its own`, and the same on
-  each GPU; rune's `rune jit › jit › two assemblies of alike pieces compile`,
-  `Rune.jit over several devices › maps over a cut axis › per-device code
-  takes as many programs over 2 to 16`, `› programs › a data-parallel step
-  takes as many over 2, 4, 8 and 16`, `› loops › a step that reads its
-  coordinates gives eager's bits`.
+  value`, and the same on each GPU; `Tolk_engine › link and run › one program
+  launched on several devices computes each device's window at its start`
+  and `› kernels whose sizes are one name of two values run each its own`,
+  and the same on each GPU; rune's `rune jit › jit › two assemblies of alike
+  pieces compile`, `Rune.jit over several devices › maps over a cut axis ›
+  per-device code takes as many programs over 2 to 16`, `› programs › a
+  data-parallel step takes as many over 2, 4, 8 and 16`, `› loops › a step
+  that reads its coordinates gives eager's bits`.
 
 ## D178. A Windows host's code is compiled for Windows' calling convention
 
 - **tinygrad:** `runtime/ops_cpu.py` `CPUDevice.__init__` (the CPU's arch, its
   machine and `native`); `runtime/support/compiler_cpu.py`
-  (`ClangCompiler.compile`, which compiles for `<machine>-none-unknown-elf` on
-  every system); `renderer/cstyle.py` `base_rewrite` (an `int64` literal ends in
-  `l`), `CStyleLanguage.abi` (`""`, which `ClangRenderer` at `ClangRenderer`
-  keeps) and `CStyleLanguage.type_map` (where an `int64` is a `long`).
+  `ClangCompiler.compile` (compiles for `<machine>-none-unknown-elf` on every
+  system); `renderer/cstyle.py` `base_rewrite` (an `int64` literal ends in
+  `l`), `CStyleLanguage.abi` (`""`, which `ClangRenderer` keeps) and
+  `CStyleLanguage.type_map` (an `int64` is a `long`).
 - **tolk:** `Tolk_engine.target`, whose host arch on this machine under Windows
-  names the system after its machine, as in
-  `x86_64-windows,x86-64-v3,tune=native` (or
-  `arm64-windows,generic,tune=native`);
-  `Compiler_cpu.clang` and `Compiler_cpu.win64`; `Cstyle.clang`, whose
-  language under `x86_64-windows` names a 64-bit integer `long long`, writes
-  its literals with `ll`, and declares the kernel `sysv_abi`;
-  `Codegen.host_entry`, which declares the entry `sysv_abi` there.
+  names the system after its machine (`x86_64-windows,x86-64-v3,tune=native`,
+  `arm64-windows,generic,tune=native`); `Compiler_cpu.clang` and
+  `Compiler_cpu.win64`; `Cstyle.clang`, whose language under `x86_64-windows`
+  names a 64-bit integer `long long`, writes its literals with `ll`, and
+  declares the kernel `sysv_abi`; `Codegen.host_entry`, which declares the
+  entry `sysv_abi` there.
 - **Differs:** a host target names Windows after its machine. Under
-  `x86_64-windows` the object is compiled for
-  `x86_64-w64-windows-gnu-elf` with `-mno-stack-arg-probe` and
-  `-mno-red-zone`, so that it calls every function by Windows' convention,
-  and its kernel and entry are declared System V's. Windows is LLP64, so a 64-bit integer is a
-  `long long` and its literals end in `ll`. tinygrad compiles for no system
-  everywhere, and its CPU arch names none. Every other target renders and
-  compiles as before.
+  `x86_64-windows` the object is compiled for `x86_64-w64-windows-gnu-elf`
+  with `-mno-stack-arg-probe` and `-mno-red-zone`, so that it calls every
+  function by Windows' convention, and its kernel and entry are declared
+  System V's. Windows is LLP64, so a 64-bit integer is a `long long` and its
+  literals end in `ll`. tinygrad compiles for no system everywhere, and its
+  CPU arch names none. Every other target renders and compiles as before. The
+  system comes from the device (D95): this machine's host runs this process's
+  system. A remote Windows host's target names none, so its programs call by
+  System V, until rig states a machine's system. A program's key holds its
+  target (D113), so it holds the system.
 - **Reason:** (c). rig calls linked code by System V and takes each symbol the
   object does not define from the process, whose functions follow the
   platform's convention (`Rig.section-host_abi`, `Rig.section-host_symbols`).
@@ -4879,16 +4578,12 @@ its rule, its reason and its pins.
   bytes above its return address that Windows lets a callee use, so `CG ›
   calls in a kernel › an external function writes through its pointer
   argument` crashed on windows-2025. Clang also calls functions the source
-  does not name: `fma` and `trunc` without FMA or SSE4.1, `fminf` and
-  `fmaxf` for a half selected against a constant, half conversions without
-  F16C, `memcpy` for a large copy. Compiled for Windows, every such call
-  follows Windows' convention, as `Rig.section-host_abi` states such code.
-  rig commits a thread's stack before it runs linked code, so the code
-  probes none, and Windows may write below the stack pointer. The system comes from the device
-  (D95): this machine's host runs this process's system. A remote Windows
-  host's target names none, so its programs call by System V, until rig
-  states a machine's system. A program's key holds its target (D113), so it
-  holds the system.
+  does not name (`fma` and `trunc` without FMA or SSE4.1, `fminf` and `fmaxf`
+  for a half selected against a constant, half conversions without F16C,
+  `memcpy` for a large copy), which compiled for Windows follow Windows'
+  convention, as `Rig.section-host_abi` states such code. rig commits
+  a thread's stack before it runs linked code, so the code probes none, and
+  Windows may write below the stack pointer.
 - **Pinned by:** `Tolk.Cstyle › x86_64 Windows`: every x86_64 Clang case
   renders with no LP64 `long` and as its golden but for its 64-bit types,
   literals and the kernel's `sysv_abi`; `› the kernel is declared System
@@ -4896,17 +4591,16 @@ its rule, its reason and its pins.
   an object is compiled for Windows' triple and calls no stack probe`; and,
   on an x86_64 host, every Clang case compiled for Windows loads and every
   interpreted one that calls nothing of the process runs through rig's host
-  and writes what the interpreter computes, which a System V entry's
-  absence breaks. `Tolk_engine › target › the host compiles C for Clang at
-  its arch, tuned for its own processor, naming its system under Windows,
-  whose functions follow a convention of their own`. On windows-2025 CI, `CG › calls in a
-  kernel`.
+  and writes what the interpreter computes. `Tolk_engine › target › the host
+  compiles C for Clang at its arch, tuned for its own processor, naming its
+  system under Windows, whose functions follow a convention of their own`. On
+  windows-2025 CI, `CG › calls in a kernel`.
 
 ## D179. An index of a reshape's added leading axes is its source
 
-- **tinygrad:** `schedule/prepare.py` (`_mop_index`), whose shortcut for
-  a reshape whose added leading axes are indexed whole tinygrad 8b4d8c026
-  deleted as dead code: the index is then its source's index by nothing.
+- **tinygrad:** `schedule/prepare.py` `_mop_index`, whose shortcut for a
+  reshape whose added leading axes are indexed whole tinygrad 8b4d8c026
+  deleted as dead code.
 - **tolk:** `Prepare.mop_index`.
 - **Differs:** an index of a reshape that adds leading axes, by indices of
   those axes alone, is the reshape's source, where tinygrad makes it an index
@@ -4923,9 +4617,9 @@ its rule, its reason and its pins.
 
 ## D180. A stored value of no device lives on each device that reads it
 
-- **tinygrad:** `schedule/indexing.py` (`pm_fix_deviceless`) and
-  `run_rangeify`, which place every stage of no device on the
-  sink's device, the first device among its sources.
+- **tinygrad:** `schedule/indexing.py` `pm_fix_deviceless` and
+  `run_rangeify`, which place every stage of no device on the sink's device,
+  the first device among its sources.
 - **tolk:** `Indexing.fix_deviceless`.
 - **Differs:** a stage of no device, an arange or a table computed from
   constants that rangeify stores, takes the device of the nearest node above
@@ -4935,11 +4629,10 @@ its rule, its reason and its pins.
   lives on the sink's device. On a sink of one device the two rules agree.
 - **Reason:** (b): rune's compiled programs over several devices
   (`Compile.lower` of `Pieces.split`) schedule one sink whose kernels each
-  compute on one device. A constant table their kernels share, as the shifts
-  that unpack a sub-byte bitcast (`Compile.unpack`, `Lower_arith`'s
-  bitcast) or an `exp2` of an arange, was stored on the first device and
-  read by the others' kernels, which `Schedule` refuses, so the call
-  evaluated.
+  compute on one device. A constant table they share (the shifts that unpack
+  a sub-byte bitcast, `Compile.unpack`, `Lower_arith`'s bitcast, or an
+  `exp2` of an arange) was stored on the first device and read by the others'
+  kernels, which `Schedule` refuses, so the call evaluated.
 - **Pinned by:** `Tolk.Schedule › create_linear_with_vars › rules › a stored
   value of no device lives on each device whose kernels read it`; rune's
   `Rune.jit over several devices › values computed from constants`.
@@ -4958,30 +4651,29 @@ and an initial value is added after it (D260).
 - **tinygrad:** `schedule/prepare.py` `earliest_rewrites` (a copy stored into
   storage on its device is the store, only where the destination has buffer
   identity) and `copy_to_anon_store` (any other copy lands in storage of its
-  own); `schedule/__init__.py` (`pm_copy_kernel`, which lowers a copy kernel
-  that reads and writes both buffers at its range alone).
+  own); `schedule/__init__.py` `pm_copy_kernel` (lowers a copy kernel that
+  reads and writes both buffers at its range alone).
 - **tolk:** `Prepare.storage_run` and its use in `Prepare.earliest_rewrites`;
   `Schedule.run_start` and `Schedule.copy_runs` in
   `Schedule.pm_copy_from_store`.
 - **Differs:** a copy stored into a run of consecutive elements of storage on
-  its device that shrinks and reshapes view (`Prepare.contiguous_view`, the
-  predicate that already turns a copy of a run into a copy of a view) is the
-  store, so the copy lands in the
-  run. Its kernel then reads its source at its range and writes the
-  destination at its range plus the run's first element, and lowers to a copy
-  between views of the call's arguments, each the run it copies. tinygrad
-  copies into storage of its own and stores that into the run with a kernel,
-  so both are live at once. A copy stored into a run of a bitcast of storage
-  is a copy into a view of it (D184): the copy moves bytes, so it lands in
-  place too. A copy of one element indexes each side at its element and
-  lowers the same way. No recorded program stores a copy into a part of storage.
-- **Reason:** (b): rune's split assembly of a gathered value (RFC 0005),
-  which stores each device's piece into its run of the whole. With that
-  assembly and kernels ordered as D183 says, fully sharded training's
-  backward call of one layer at d = 512 held 2.062, 1.594 and
-  1.422 layers beside its arguments over 2, 4 and 8 software devices with each
-  piece copied apart, and 1.812, 1.531 and 1.391 landing in place, against
-  RFC 0005's bound of 1.875, 1.562 and 1.406 (`rune jit › fully sharded`).
+  its device that shrinks and reshapes view (`Prepare.contiguous_view`) is the
+  store, so the copy lands in the run. Its kernel reads its source at its
+  range and writes the destination at its range plus the run's first element,
+  and lowers to a copy between views of the call's arguments, each the run it
+  copies. tinygrad copies into storage of its own and stores that into the run
+  with a kernel, so both are live at once. A copy stored into a run of a
+  bitcast of storage is a copy into a view of it (D184): the copy moves bytes,
+  so it lands in place too. A copy of one element indexes each side at its
+  element and lowers the same way. No recorded program stores a copy into a
+  part of storage.
+- **Reason:** (b): rune's split assembly of a gathered value (RFC 0005), which
+  stores each device's piece into its run of the whole. With kernels ordered
+  as D183 says, fully sharded training's backward call of one layer at d = 512
+  holds 1.812, 1.531 and 1.391 layers beside its arguments over 2, 4 and 8
+  software devices, against RFC 0005's bound of 1.875, 1.562 and 1.406, where
+  each piece copied apart held 2.062, 1.594 and 1.422 (`rune jit › fully
+  sharded`).
 - **Pinned by:** the Schedule suite (`test/schedule/schedule`): `copies into
   runs › a copy stored into rows of storage on its device copies into them`,
   `› a copy stored into a first row copies into it`, `› a copy stored
@@ -4992,54 +4684,54 @@ and an initial value is added after it (D260).
 
 ### A store into a run of a buffer stores into a view of it (D184)
 
-- **tinygrad:** `schedule/__init__.py` (`pm_callify_ctx_collect`):
-  `contiguous_mops_to_view` makes a view of a buffer for a copy or a stage
-  of movements of it, and for a store only into a bitcast of it. A store into
-  a shrink of a buffer indexes the buffer at the shrink's offset in its
-  kernel, so each offset is a program of its own.
+- **tinygrad:** `schedule/__init__.py` `pm_callify_ctx_collect`:
+  `contiguous_mops_to_view` makes a view of a buffer for a copy or a stage of
+  movements of it, and for a store only into a bitcast of it. A store into a
+  shrink of a buffer indexes the buffer at the shrink's offset in its kernel,
+  so each offset is a program of its own.
 - **tolk:** `Schedule.view_of`, through `Schedule.pm_callify_ctx_collect`.
-- **Differs:** a store into movements or a bitcast of a buffer that select a
-  contiguous run of its elements stores into a view of that run: the kernel
-  takes the run as its buffer, and a copy stored there is a copy into it
-  (`Prepare`'s rule for a copy stored into storage on its device). Stores of
-  one shape into runs of one buffer at other offsets are one program. A store
-  into a run of a state of the buffer stores into a view of the run too: the
-  states order the store (D473), and it writes the buffer as it runs. A store
-  whose value reads the buffer in its own kernel, short of the stored states
-  of other storage, keeps indexing it, which the kernel split stages by the
-  buffer's identity. A copy or a stage of a run of a buffer that a
-  store of the call writes keeps reading the run itself, which the kernel
-  split stages: a view, a parameter of its own in the call's body that
-  nothing writes, would be read when its reader runs, in whatever state the
-  buffer then holds, and not in the state it was taken of. A run may start
-  at bound variables, whose values its call knows
-  (`Prepare.contiguous_view` checks the run at those values): a store into
-  it stores into a view at that start, whose kernel knows the start modulo
-  what the variables move it by (D54), so stores of one shape at starts of
-  other alignments are one program too. A copy or a stage of a view still
-  needs a constant start.
+- **Differs:**
+  - A store into movements or a bitcast of a buffer that select a contiguous
+    run of its elements stores into a view of that run: the kernel takes the
+    run as its buffer, and a copy stored there is a copy into it (`Prepare`'s
+    rule for a copy stored into storage on its device). Stores of one shape
+    into runs of one buffer at other offsets are one program.
+  - A store into a run of a state of the buffer stores into a view of the run
+    too: the states order the store (D473), and it writes the buffer as it
+    runs.
+  - A store whose value reads the buffer in its own kernel, short of the
+    stored states of other storage, keeps indexing it, which the kernel split
+    stages by the buffer's identity.
+  - A copy or a stage of a run of a buffer that a store of the call writes
+    keeps reading the run itself, which the kernel split stages: a view, a
+    parameter of its own that nothing writes, would be read in whatever state
+    the buffer holds when its reader runs.
+  - A run may start at bound variables, whose values its call knows
+    (`Prepare.contiguous_view` checks the run at those values): a store into
+    it stores into a view at that start, whose kernel knows the start modulo
+    what the variables move it by (D54), so stores of one shape at starts of
+    other alignments are one program too. A copy or a stage of a view still
+    needs a constant start.
+  - The program `after_part_of_older_write`, two stores into one element each
+    of one buffer, is recorded as a kernel graph alone: its linear here is one
+    launch (D404) over two one-element views, where tinygrad's indexes the
+    whole buffer in a kernel per store.
 - **Reason:** (b): rune's compiled programs over several devices
   (`Compile.assembled`) hold an assembly as a buffer filled by a store per
-  piece, each device's own piece at its device's offset. Indexed at the
-  offset, a data-parallel step over 2, 4, 8 and 16 software devices made 19,
-  31, 55 and 103 programs; through views, 11 each, and 11, 13, 13 and 13
-  once rune reads a closing's own slot from storage of its own, against
-  rune's promise that they do not grow with the devices (D170). A view at a
-  constant start keeps that start's alignment, and a closing's parts lie
-  at starts of several: a sum over an axis cut across 2, 4, 8 and 16 software
-  devices, its 2 + n wide result's parts stored at their starts, made 4, 7, 9
-  and 9 programs, and 4, 7, 7 and 7 with each device's own part stored at a
-  bound start. Indexing the whole buffer at that start instead held 3.02 MB
-  per device in fully sharded training over two devices, against the 2.29 MB
-  its bound allows and views keep. The refusal of a view of a buffer the
-  call writes is (e): `x[0:2].contiguous()` read after `x.assign(...)` in
-  one realize read the assigned `x` (tinygrad's
-  `test/runtime/test_assign.py::test_swap_slices`, an expected failure, is
-  that bug), at the cost of a stage kernel per such view.
-  The program `after_part_of_older_write`, whose two stores go into one
-  element each of one buffer, is recorded as a kernel graph alone: its linear
-  here is one launch (D404) over two one-element views of the buffer, where
-  tinygrad's indexes the whole buffer in a kernel per store.
+  piece, each at its device's offset. Indexed at the offset, a data-parallel
+  step over 2, 4, 8 and 16 software devices made 19, 31, 55 and 103 programs,
+  against rune's promise that they do not grow with the devices (D170);
+  through views, 11 each, and 11, 13, 13 and 13 once rune reads a closing's
+  own slot from storage of its own. A view at a constant start keeps that
+  start's alignment, and a closing's parts lie at starts of several: a sum
+  over an axis cut across 2, 4, 8 and 16 software devices made 4, 7, 9 and 9
+  programs, and 4, 7, 7 and 7 with each device's own part stored at a bound
+  start; indexing the whole buffer at that start held 3.02 MB per device in
+  fully sharded training over two devices, against the 2.29 MB its bound
+  allows and views keep. The refusal of a view of a buffer the call writes is (e):
+  `x[0:2].contiguous()` read after `x.assign(...)` in one realize read the
+  assigned `x` (tinygrad's `test/runtime/test_assign.py::test_swap_slices`,
+  an expected failure), at the cost of a stage kernel per such view.
 - **Pinned by:** `Tolk.Schedule › contiguous_mops_to_view › stores into runs of
   a buffer at a bound start store into views of one alignment, whatever the
   start`, `› stores of one shape into two runs of a buffer share a kernel`, `› a
@@ -5065,9 +4757,9 @@ and an initial value is added after it (D260).
 
 ### Ready kernels run by their number, and one that frees storage first
 
-- **tinygrad:** `schedule/__init__.py` (`create_schedule`'s linearize:
-  Kahn's algorithm over a FIFO `deque`, so ready kernels run in the order
-  they became ready).
+- **tinygrad:** `schedule/__init__.py` `create_schedule`'s linearize (Kahn's
+  algorithm over a FIFO `deque`, so ready kernels run in the order they became
+  ready).
 - **tolk:** `Schedule.storage_order`, the one order of `create_schedule`
   and `create_linear_with_vars`, and the storage `Schedule.schedule` sees
   written; `Memory.taken`, the storage an entry takes as the memory plan
@@ -5084,54 +4776,44 @@ and an initial value is added after it (D260).
   each of two independent chains whole, as from a sum of their results, each
   runs to its end before the other begins; where the sink lists their parts
   interleaved, the numbers interleave them too. The order is a postorder that
-  takes a node's sources in their order, and no promise of the least storage:
-  on a tree, Liu (SIAM J. Alg. Disc. Meth. 8(3), 1987, §3.3) shows the
-  postorder that takes subtrees by decreasing peak is the least, which tolk
-  does not sort for. tinygrad runs every kernel whose inputs are ready breadth
-  first: a closing slices its whole partial into every piece before any is
-  copied or summed, computes a partial gradient before the last reader of the
-  gathered weights, and starts every independent chain before any ends.
+  takes a node's sources in their order, and no promise of the least storage
+  (on a tree the least is the postorder by decreasing peak, Liu 1987, which
+  tolk does not sort for). tinygrad runs every kernel whose inputs are ready
+  breadth first: a closing slices its whole partial into every piece before
+  any is copied or summed, and every independent chain starts before any ends.
   Picking costs one pass over each ready kernel's storage, so a schedule of
   `k` kernels costs `O(k²)` at worst. Every schedule takes this order, linked
   once or made per run: one order is what `Rune.footprint` plans and what a
   run allocates.
 - **Reason:** (b): rune's fully sharded training (RFC 0005's memory bound),
-  whose split programs' storage is planned by each buffer's life (D173).
-  With the split assembly as storage and copies landing in place (D182),
-  the backward call of one layer at d = 512 held 2.625, 2.312 and 2.156
-  layers beside its arguments over 2, 4 and 8 software devices in tinygrad's
-  order, 3.625, 3.312 and 3.156 by number alone, and 1.812, 1.531 and
-  1.391 in this order, as much as with each buffer of its own, against the
-  bound of 1.875, 1.562 and 1.406 (`rune jit › fully sharded`). Ordering
-  ties by the kernel that became ready last instead makes every piece of a
-  gathered value before any is read, and holds 2,759,680 bytes against the
-  bound of 2,293,760 over two devices. And rune's compiled gradients on one
-  device, with the placement of D477: on the host, k independent chains of
-  4 remat'd blocks held 491,632, 884,848 and 1,671,280 bytes for k = 1, 2
-  and 4 in tinygrad's order and hold 458,864, 491,632 and 557,168; their
-  plain gradients 2,228,336 and 4,391,024 for k = 2 and 4, and 1,441,904
-  and 2,031,728; 8 remat'd blocks 622,704 and 589,936. The order
-  interleaves devices, so a data-parallel step over 16 software devices
-  makes 1018 `Submit` steps; preferring, among each kind of ready kernel,
-  one on the last kernel's device raised four of rune's five `fully
-  sharded` cases over their bounds. Grouping a device's work at link instead
-  keeps the bounds but lengthens a GPU-faithful critical path under rig's
-  one point per submission.
-  On a GPU, the launches of one device's work the order groups are
+  whose split programs' storage is planned by each buffer's life (D173). With
+  copies landing in place (D182), the backward call of one layer at d = 512 holds 1.812, 1.531 and 1.391 layers
+  beside its arguments over 2, 4 and 8 software devices, against the bound of
+  1.875, 1.562 and 1.406, where tinygrad's order held 2.625, 2.312 and 2.156
+  (`rune jit › fully sharded`). Ordering ties by the kernel that became ready
+  last instead makes every piece of a gathered value before any is read, and
+  holds 2,759,680 bytes against the bound of 2,293,760 over two devices. And
+  rune's compiled gradients on one device, with the placement of D477: on the
+  host, k independent chains of 4 remat'd blocks held 1,671,280 bytes for k = 4 in
+  tinygrad's order and hold 557,168. The order interleaves devices, so a
+  data-parallel step over 16 software devices makes 1018 `Submit` steps;
+  preferring, among each kind of ready kernel, one on the last kernel's
+  device raised four of rune's five `fully sharded` cases over their bounds.
+  Grouping a device's work at link instead keeps the bounds but lengthens a
+  GPU-faithful critical path under rig's one point per submission. On a GPU, the launches of one device's work the order groups are
   unmeasured on fudge.
 - **Pinned by:** the Schedule suite (`test/schedule/schedule`):
   `create_schedule › order › a kernel that frees storage runs before one
   that only makes it`, `› pieces of one value are each read before the
   next is made` and `› chains the walk reaches whole run one after the
   other`; rune's `fully sharded` tests and `rune remat › memory ›
-  independent chains are computed one at a time`. The
-  recorded schedules whose order differs carry this entry in their
-  `.tolk`.
+  independent chains are computed one at a time`. The recorded schedules
+  whose order differs carry this entry in their `.tolk`.
 
 ### A ready kernel that only frees runs before one that also makes storage (D185)
 
-- **tinygrad:** `schedule/__init__.py` (`create_schedule`'s linearize,
-  Kahn's algorithm over a FIFO `deque`).
+- **tinygrad:** `schedule/__init__.py` `create_schedule`'s linearize (Kahn's
+  algorithm over a FIFO `deque`).
 - **tolk:** `Schedule.storage_order`'s `pick`, for a schedule made per run
   (D183).
 - **Differs:** of the ready kernels that free storage (D183), one that makes
@@ -5141,13 +4823,14 @@ and an initial value is added after it (D260).
   holds at once where one that only frees does not. tinygrad has no such
   order.
 - **Reason:** (b): rune's fully sharded training (RFC 0005's memory bound),
-  whose split programs' storage is planned by each buffer's life (D173).
-  At the end of a closing, the copy of a device's own slot of the last piece
-  is the last reader of the partial and makes the slot's storage; the sum of
-  the piece before it only frees. Run first, the copy held three slots
-  beside the partial: the backward call of one layer at d = 512 held 1.938,
-  1.594 and 1.422 layers over 2, 4 and 8 software devices, and 1.812, 1.531
-  and 1.391 in this order, against the bound of 1.875, 1.562 and 1.406.
+  whose split programs' storage is planned by each buffer's life (D173). At
+  the end of a closing, the copy of a device's own slot of the last piece is
+  the last reader of the partial and makes the slot's storage, where the sum of
+  the piece before it only frees. Run first, the copy held three slots beside
+  the partial: the backward call of one layer at d = 512 held 1.938, 1.594 and
+  1.422 layers over 2, 4 and 8 software devices,
+  against this order's 1.812, 1.531 and 1.391 and the bound of 1.875, 1.562
+  and 1.406.
 - **Pinned by:** the Schedule suite (`test/schedule/schedule`):
   `create_schedule › order by storage › a kernel that only frees runs before
   one that also makes storage`.
@@ -5164,12 +4847,11 @@ into D183, which holds its rule, its reason and its pins.
 
 ## D186. The host's accumulators take half its vector registers
 
-- **tinygrad:** `codegen/opt/heuristic.py` (`hand_coded_optimizations`' upcasts
-  of output axes: by 3 or 4, of an axis that some access does not index while it
-  indexes every upcast axis, while 1024 elements remain and the kernel has fewer
-  than 32 lanes) and `hand_coded_optimizations` (the unroll of the last reduce
-  axis, whole when it is at most 32, by 4 otherwise, while the kernel has fewer
-  than 64 lanes).
+- **tinygrad:** `codegen/opt/heuristic.py` `hand_coded_optimizations` (upcasts
+  of output axes: by 3 or 4, of an axis that some access does not index while
+  it indexes every upcast axis, while 1024 elements remain and the kernel has
+  fewer than 32 lanes; the unroll of the last reduce axis, whole when it is at
+  most 32, by 4 otherwise, while the kernel has fewer than 64 lanes).
 - **tolk:** `Heuristic.held_registers` (`held`, `held_share`,
   `computed_bytes`), `Heuristic_host.fits`, `Heuristic_host.stored_contiguous`,
   `Heuristic_host.upcast_contiguous`, and `Heuristic.upcast_more`'s and
@@ -5180,14 +4862,15 @@ into D183, which holds its rule, its reason and its pins.
   with AVX-512, 32 of 16 on arm64), a reduce kernel's lanes are counted in
   registers, a register holding as many lanes of a reduce's type as fit, at
   4 bytes for a narrower type, and no more than its stores write at
-  consecutive addresses. Every reduce's accumulators, one for each output
-  lane, take at most half the registers, judged before each split: a later
-  split that nests a stored term, `(a * 4 + b) * 3 + c`, reads as lanes
-  apart afterwards, so `held_registers` can then exceed the half
-  (`r_128_16_3_4_4_3_3_400_400` on AVX2, 16 of 16). Reading through the nest
-  admits more unrolls, and one rune kernel ran 1.7 times slower. The upcasts
-  after the masked and shared ones (D92) and the
-  unroll take the budget in place of tinygrad's lane counts:
+  consecutive addresses (Clang packs a register only as wide as the stores it
+  reads, D187). Every reduce's accumulators, one for each output lane, summed
+  over the kernel with no notion of which loop is hottest, take at most half
+  the registers, judged before each split: a later split that nests a stored
+  term, `(a * 4 + b) * 3 + c`, reads as lanes apart afterwards, so
+  `held_registers` can then exceed the half (`r_128_16_3_4_4_3_3_400_400` on
+  AVX2, 16 of 16); reading through the nest admits more unrolls, and one rune
+  kernel ran 1.7 times slower. The upcasts after the masked and shared ones
+  (D92) and the unroll take the budget in place of tinygrad's lane counts:
   - the first output upcast takes the axis the stores write at unit
     stride, when every access that reads it reads it at unit stride, to a
     host vector of the accumulators' type (D188), the largest power of two
@@ -5201,63 +4884,37 @@ into D183, which holds its rule, its reason and its pins.
   - the unroll takes what fits, while the lanes upcast fill fewer registers
     than the target has, where tinygrad's take fewer than 64 lanes, 16
     registers of 4.
+
   Other devices, and a host renderer that knows no registers (riscv64's),
   upcast and unroll as tinygrad does, after D92's rows of a decoded operand,
-  at most 4. The register file is the compile target's,
-  which the compiler's cache key holds, so a program follows the
-  instruction set it is compiled for and no fact of the part it runs on.
+  at most 4. The register file is the compile target's, which the compiler's
+  cache key holds, so a program follows the instruction set it is compiled
+  for and no fact of the part it runs on.
 - **Reason:** (d): lorenz_simple's step (sofo-raven) and the host's
-  contractions. Each accumulator carried around a loop is a dependency chain:
-  Intel's optimization manual (248966-051, §15.15.1, Rule 31; Golden Cove's FMA
-  on ports 0 and 1 at latency 4) asks for latency × pipes independent chains, 8
-  vector accumulators, and Rule 38 for loop-carried values in registers before
-  invariants; BLIS (Low et al., TOMS 2016, §4.2.2-4.2.3) takes the smallest tile
-  above that floor with the contiguous axis a multiple of a register's elements,
-  as its Haswell kernels hold 6 × 16 floats in 12 of 16 registers. Clang packs a
-  register only as wide as the stores it reads (D187), so a register holds no
-  more lanes than the stores write at consecutive addresses. Timed on fudge, one
-  P-core (`taskset -c 4`, the variants interleaved under the timing lock,
-  loaded, three runs), q1-q3 against origin/main: a float32 matmul of 128³
-  (`host/matmul/heuristic`) 69.8-71.9 µs to 30.0-30.5, its float64 one 74.6-75.8
-  to 67.4-69.1, `conv` 140.2-142.2 to 82.2-83.4, `conv_half` 1147-1151 to
-  980-986, `tangent_products` 338.6-375.0 to 49.9-50.5, `paired_products`
-  85.9-86.1 and 85.5-85.6 (the same optimisations); lorenz_simple's four-sum
-  kernel (`lorenz/r_128_16_3_4_4_3_3_400_400/heuristic`) 6.87-7.02 ms to
-  6.16-6.25, its two-sum kernel 3.31-3.37 ms to 2.51-2.65; `r_32_3_2_4_3_400`,
-  `routed_blocks`, `routed_tiles` and `vecmat_decoded` keep their optimisations
-  and times, `experts_down` 0.6 to 0.5 µs, the stack and pad kernels unchanged.
-  The fill, re-timed at this render: the four-sum kernel takes 6.23-6.68 ms with
-  it and 8.01-8.40 without, the two-sum kernel 2.50-2.73 ms and 3.13-3.32. The
-  float32 matmul's unroll by 4 at 64 lanes, which tinygrad's 64 lanes refuse,
-  takes it from 50.0-50.1 µs to 34.1-36.2 (one run). D91's 32 lanes were this
-  budget at a render that filled half of each float32 register: AVX2's 8
-  registers of 4 floats.
-
-  The budget counts every reduce the same: one accumulator for each output
-  lane, summed over the kernel, with no notion of which loop is hottest. A
-  model of which reduces share the hottest loop, and which unrolled lanes
-  count, took 82 lines and changed 3 of 864 recorded kernels, none on a GPU;
-  against it, lorenz's `r_128_16_3_4_4_3_3_400_400` runs 1.27-1.37 times
-  slower and its `r_32_256_50_4_4_2_4_4` about 1.2 times faster (minima of
-  six interleaved rounds, one core, 151 samples, `lorenz/*/heuristic`). The
-  model refused to unroll one sum whole while another looped, measured at an
-  earlier render as 7.92-8.32 ms against 3.31-3.42 on the two-sum kernel; at
-  this render `r_32_256_50_4_4_2_4_4` takes that unroll and runs 15.8 ms
-  against 18.9 (one core, one run). The
-  rune host kernel that changes, a triangular solve's gradient in
-  `Jit/gaussian-process-grad-float64-8x11`, ran 14.8-16.0 µs before and 11.0
-  µs after (four interleaved rounds, 201 samples, one core); its row takes
-  72.3-83.7 µs against 76.0-86.2 (eight interleaved runs).
+  contractions. Each accumulator carried around a loop is a dependency chain,
+  and Intel's optimization manual asks for latency × pipes independent chains
+  (8 vector accumulators on Golden Cove), with loop-carried values in
+  registers before invariants. Timed on fudge, one P-core (`taskset -c 4`,
+  the variants interleaved under the timing lock, loaded, three runs), a
+  float32 matmul of 128³ (`host/matmul/heuristic`) takes 30.0-30.5 µs against
+  69.8-71.9 on origin/main, under D91's 32 lanes; the fill takes lorenz's
+  four-sum kernel (`lorenz/r_128_16_3_4_4_3_3_400_400/heuristic`) from
+  8.01-8.40 ms to 6.23-6.68. A model of which reduces share the hottest loop
+  changed 3 of 864 recorded kernels, none on a GPU; against it, lorenz's
+  `r_128_16_3_4_4_3_3_400_400` runs 1.27-1.37 times slower and its
+  `r_32_256_50_4_4_2_4_4` about 1.2 times faster.
+  D91's 32 lanes were this budget at a render that filled half of each float32
+  register.
 - **Pinned by:** the Heuristic suite: `the host's budget › on AVX2 a
   kernel's accumulators hold` (every case), `the host's budget › the register
   budget › a kernel's accumulators take at most half the registers` and
-  `› the kernels the budget is checked on have each of its shapes`, `the host's budget › on the host a larger register file never
-  holds fewer output lanes` and `› on the host a reduce of doubles over a
-  stored axis of a multiple of 32 takes half the lanes of floats, in the
-  registers floats fill`, over every recorded kernel and lorenz_simple's,
-  on files of 16 × 16, 16 × 32, 32 × 16 and 32 × 64; `the optimisations
-  chosen are tinygrad's › … › the optimised kernel`, the `cpu` (16 × 16) and
-  `avx2` (16 × 32) cases; the
+  `› the kernels the budget is checked on have each of its shapes`, `the
+  host's budget › on the host a larger register file never holds fewer output
+  lanes` and `› on the host a reduce of doubles over a stored axis of a
+  multiple of 32 takes half the lanes of floats, in the registers floats
+  fill`, over every recorded kernel and lorenz_simple's, on files of 16 × 16,
+  16 × 32, 32 × 16 and 32 × 64; `the optimisations chosen are tinygrad's › …
+  › the optimised kernel`, the `cpu` (16 × 16) and `avx2` (16 × 32) cases; the
   Compiler_cpu suite's `the vector registers, their number and bytes, of`
   (every case) and `without Clang › an x86_64 processor has SSE's 16
   registers of 16 bytes`; the tolk bench's `host/*/heuristic` and
@@ -5265,73 +4922,47 @@ into D183, which holds its rule, its reason and its pins.
 
 ## D187. The host's stores take a full vector register
 
-- **tinygrad:** `codegen/late/coalesce.py` (`memory_coalescing`'s
-  lengths: 4 or 2 elements of float32, float16, int32, uint32 and the 8-bit
-  floats, 8 of float16 under `ALLOW_HALF8`, none of the others, bytes
-  included; D261 makes
+- **tinygrad:** `codegen/late/coalesce.py` `memory_coalescing`'s lengths (4 or
+  2 elements of float32, float16, int32, uint32 and the 8-bit floats, 8 of
+  float16 under `ALLOW_HALF8`, none of the others, bytes included; D261 makes
   that 8 the renderer's, for copies into local memory).
 - **tolk:** `Coalesce.memory_coalescing`, through `Renderer.registers`.
 - **Differs:** where the renderer knows its vector registers, loads and stores
   of float64, float32, float16, int32, uint32, the 8-bit floats, int8 and
   uint8 merge into accesses of a power of two of elements up to one register:
   8 floats, 4 doubles or 32 bytes in AVX2's 32-byte registers, 4 floats, 2
-  doubles or 16 bytes on SSE and NEON. A store of
-  doubles or bytes merges so only when each value is a load, as an
-  accumulator's read is; doubles and bytes computed lane by lane are stored one
-  by one, as tinygrad stores them. A group of byte loads any of which a
-  computation reads alone is not merged, as tinygrad merges no bytes: LLVM's
-  load combine folds an or of bytes in descending addresses, from vector
-  loads, into a byte-swapped load at the address of the first byte's vector,
-  the wrong one where that byte is not its vector's first, so a compiled
-  running sum of a widening bitcast of flipped bytes read a byte off; Clang
-  merges bytes that feed one lane each itself.
-  On the CPU device a buffer is taken to start on a
-  boundary of that width (D54). Other renderers merge as tinygrad does,
-  but where the renderer writes bytes as words (D482).
+  doubles or 16 bytes on SSE and NEON. A store of doubles or bytes merges so
+  only when each value is a load, as an accumulator's read is; doubles and
+  bytes computed lane by lane are stored one by one, as tinygrad stores them.
+  A group of byte loads any of which a computation reads alone is not merged,
+  as tinygrad merges no bytes: LLVM's load combine folds an or of bytes in
+  descending addresses, from vector loads, into a byte-swapped load at the
+  address of the first byte's vector, the wrong one where that byte is not its
+  vector's first, so a compiled running sum of a widening bitcast of flipped
+  bytes read a byte off; Clang merges bytes that feed one lane each itself. On
+  the CPU device a buffer is taken to start on a boundary of that width (D54).
+  Other renderers merge as tinygrad does, but where the renderer writes bytes
+  as words (D482).
 - **Reason:** (d): the host's contractions and lorenz_simple's step. Clang's
-  straight-line vectorizer packs values into registers as wide as the stores it
-  reads them from: a float32 matmul's inner loop with its 16 stores as `float4`
-  takes 65 instructions and spills 11 values, as `float8` 31 instructions and
-  none (`clang -S` with tolk's flags), and merging the loads alone changes
-  nothing. A load as wide as a register feeds it whole: `tangent_products`
-  replays in 51.0-55.6 µs with its loads of one register against 190.5-193.5 µs
-  with loads of 16 bytes, `conv` in 84.4-90.4 µs against 109.0-110.0, and a
-  float32 selection of zero over 4M elements (`host/select_zero/heuristic`),
-  whose lanes stay as they were, in 737-834 µs against 862-953 on origin/main.
-  Cost: a kernel whose loads of a register are read lane by lane into a reduce
-  along them takes longer: `max_rows` (`host/max_rows/heuristic`) 2.8 µs to
-  3.4-3.5, its loads of 8 floats split back into the four rows it reduces,
-  gpt-oss's MXFP4 gate and up product 12.65-12.72 ms to 13.32-13.42, and
-  lorenz_simple's four-sum kernel with the beam search's 48 lanes
-  (`lorenz/r_128_16_3_4_4_3_3_400_400/searched`) 6.53-6.60 ms to 7.22-7.28,
-  where the wider stores pack accumulators past the registers; kept because the
-  gains above are larger, and the heuristic's own four-sum kernel runs in
-  6.16-6.25 ms. Merged, doubles computed lane by lane made Clang pack the
-  computations behind them: rune's float64 normal sampler
-  (`host/normal_f64/heuristic`, rune's compile bench `rng/normal-f64`), one
-  kernel of 8 lanes that hash and convert 32- and 64-bit integers, replayed
-  in 26.8-28.2 µs against 13.4-13.9 on origin/main, its Clang compile took
-  203-220 ms against 182-196 and the row 574-593 against 472-519; stored one
-  by one, it runs in 13.8-14.1 µs, and eight nested float64 sines, whose
-  lanes are a vector, in 117.9-120.8 against 115.4-118.4. Floats computed
-  lane by lane keep the merge: lorenz_simple's two-sum kernel stores them,
-  and runs 2.99-3.15 ms with it against 3.50-3.62 without. Timed as in D186.
-  Bytes: a decoded product reads its codes as bytes, and an MXFP4 code's byte
-  feeds two lanes, so its loads, one a byte, reach Clang as a vector built lane
-  by lane, which it builds with one `vpinsrb` a lane: the 1-row MXFP4 product,
-  4 of the matrix's rows by 16 values a trip, took 63 `vpinsrb` a trip, 3 once
-  the 32 bytes it reads load 8 at a time, and 534 instructions against 644.
-  Consecutive bytes that feed one lane each Clang merges itself, and GGUF's
-  MXFP4 blocks, Q4_K and Q6_K kept their kernels' loads. On fudge, one P-core,
-  interleaved, five rounds, kaun's `Quant/host/mxfp4-product-1-token` took
-  9.89-10.45 ms and takes 6.48-6.81, the gpt-oss expert product at one token
-  (`Quant/host/routed-product-1-tokens`) 43.8-44.9 ms and 32.1-33.4, and
-  bfloat16 rows of 10 and 64
-  (`Quant/host/mxfp4-product-of-1024-{10,64}-bfloat16-tokens`) 1.98-2.06 ms
-  and 1.71-1.78, 8.94-9.33 ms and 8.68-9.02; the Q8_0, Q4_K, Q6_K and GGUF
-  MXFP4 rows kept their times, and every row its 698 or 822 words a call.
-  Only the loads were measured, so bytes computed lane by lane are stored one
-  by one, as doubles are.
+  straight-line vectorizer packs values into registers as wide as the stores
+  it reads them from: a float32 matmul's inner loop with its 16 stores as
+  `float4` takes 65 instructions and spills 11 values, as `float8` 31 and
+  none, and a load as wide as a register feeds it whole: `tangent_products`
+  replays in 51.0-55.6 µs against 190.5-193.5 µs with loads of 16 bytes. Cost:
+  a kernel whose loads of a register are read lane by lane into a reduce along
+  them takes longer (`host/max_rows/heuristic` 2.8 µs to 3.4-3.5,
+  `lorenz/r_128_16_3_4_4_3_3_400_400/searched` 6.53-6.60 ms to 7.22-7.28),
+  kept because the gains are larger. Doubles computed lane by lane, merged,
+  made Clang pack the computations behind them: rune's float64 normal sampler
+  (`host/normal_f64/heuristic`, rune's compile bench `rng/normal-f64`) replayed
+  in 26.8-28.2 µs against 13.8-14.1 stored one by one. Floats computed lane by
+  lane keep the merge: lorenz_simple's two-sum kernel stores them, and runs
+  2.99-3.15 ms with it against 3.50-3.62 without. Bytes: an MXFP4 code's
+  byte feeds two lanes, so its loads reach Clang as a vector built with one
+  `vpinsrb` a lane; merged, kaun's `Quant/host/mxfp4-product-1-token` takes
+  6.48-6.81 ms against 9.89-10.45. Only the loads were measured, so bytes
+  computed lane by lane are stored one by one, as doubles are. Timed as in
+  D186.
 - **Pinned by:** `rune jit › classes › a running sum of a widening bitcast gives
   eager's bits`; the Coalesce suite's `lengths › thirty-two byte loads each read
   by a computation stay apart, on` and `› eight consecutive stores fill
@@ -5349,12 +4980,12 @@ into D183, which holds its rule, its reason and its pins.
 ## D188. A host vector spans 64 bytes
 
 - **tinygrad:** `codegen/opt/heuristic.py` `hand_coded_optimizations` (the
-  upcasts of output axes by 3 or 4), `hand_coded_optimizations` (the unroll of
-  the last reduce axis, and of a second one when both are at most 3) and
-  `hand_coded_optimizations` (the upcast by 4 of a kernel that has none).
-- **tolk:** `Heuristic_host.host_vector_bytes`, `Heuristic_host.parallel_operations`,
-  `Heuristic_host.upcast_vectors`, `Heuristic_host.upcast_contiguous` and
-  `Heuristic_host.unroll_vector`.
+  upcasts of output axes by 3 or 4; the unroll of the last reduce axis, and of
+  a second one when both are at most 3; the upcast by 4 of a kernel that has
+  none).
+- **tolk:** `Heuristic_host.host_vector_bytes`,
+  `Heuristic_host.parallel_operations`, `Heuristic_host.upcast_vectors`,
+  `Heuristic_host.upcast_contiguous` and `Heuristic_host.unroll_vector`.
 - **Differs:** on the host a group of lanes computed as one vector spans 64
   bytes of its widest type, two registers of AVX2. A kernel with no reduce
   takes, after its masked axes, one upcast of its last output axis that 2
@@ -5362,51 +4993,42 @@ into D183, which holds its rule, its reason and its pins.
   within 64 bytes of the widest type it reads, writes or computes, and again
   while they have room: 16 float32 lanes, 8 float64, 32 float16. It takes
   none when its stored values hold 5 arithmetic operations or more for each
-  of their longest chain, or when it computes a type the target emulates.
-  A reduce kernel's first upcast takes its stored axis to 64 bytes of its
-  accumulators (D186). When the last reduce axis is at most 3 and wholly
-  unrolled and the next one is larger than 3, the next is unrolled by the
-  largest power of two that divides it and keeps the unrolled lanes within
-  64 bytes of the reduce's type, if the budget holds: 8 beside a pair of
-  float32 lanes, 4 beside 3. tinygrad upcasts output axes by 3 or 4 while
-  1024 elements remain and fewer than 32 lanes, by 4 a kernel that has none,
-  and unrolls the next reduce axis only when it is at most 3 too.
-- **Reason:** (d). Elementwise kernels (RFC 0025's special functions, from
-  D141): lanes give the core independent chains while each waits on its latency,
-  and computed as vectors (D141) they compile once. Eight nested float64 sines
-  over 1024 elements replay 1.25 times as fast at 64 bytes as at 32 and as with
-  none (fudge, one P-core, two runs); 128 bytes replay a further 1.05 times at
-  1.6 times Clang's time, and Clang takes 0.34-0.45 s at 64 bytes against
-  0.35-0.54 s with no lanes. A kernel whose operations already run 5 at a time
-  gains nothing from lanes and pays for them in compile time: `lgamma`,
-  `log_betainc` and its gradients take none and compile as fast as without the
-  upcast (2.7 s and 4.9-8.9 s cold, on an M1 Max, where 5 was measured; a sine
-  is one operation when the heuristic runs, so float64 `sin` takes lanes). A
-  reduce kernel's stored axis at 64 bytes runs a float64 matmul in 70.8-73.7 µs
-  against 96.9-97.3 µs at one register and a float32 one in 30.3-33.7 against
-  37.1-37.4, the 6 × 16 floats of BLIS's Haswell kernels; on 16-byte registers,
-  SSE's and NEON's, a vector is four of them, unmeasured. From D143, nx.quant's
-  MXFP4 product reduces over a byte axis and the pair of codes each byte holds:
-  the pair alone left each iteration two decoded codes per row and its loop, its
-  scale decode and its loads outweighed them; unrolled to a vector, the dense
-  product of a checkpoint's codes ran 2.6-3.0 ms against 6.7-9.8 ms and one
-  token's routed product 11-21 ms against 37-55 ms on an M1 Max. Timed on fudge
-  as in D186: `routed_blocks` 12.7-13.4 µs, `routed_tiles` 38.5-40.2,
-  `experts_down` 0.5, the nested sines 101.6-105.7 µs and a float32 selection of
-  zero over 4M elements 737-834 µs. kaun's `Quant/host/*` rows hold the MXFP4
-  products; the tolk bench's `host/sin_nested_8/heuristic` and
-  `host/select_zero/heuristic` the elementwise kernels, and rune's compile bench
-  `trig/sin-nested-8` their compile. Whether memory-bound kernels take lanes at
-  all is open (TODO).
+  of their longest chain (a sine is one operation when the heuristic runs),
+  or when it computes a type the target emulates. A reduce kernel's first
+  upcast takes its stored axis to 64 bytes of its accumulators (D186). When
+  the last reduce axis is at most 3 and wholly unrolled and the next one is
+  larger than 3, the next is unrolled by the largest power of two that
+  divides it and keeps the unrolled lanes within 64 bytes of the reduce's
+  type, if the budget holds: 8 beside a pair of float32 lanes, 4 beside 3.
+  tinygrad upcasts output axes by 3 or 4 while 1024 elements remain and fewer
+  than 32 lanes, by 4 a kernel that has none, and unrolls the next reduce axis
+  only when it is at most 3 too. On 16-byte registers, SSE's and NEON's, a
+  vector is four of them, unmeasured. Whether memory-bound kernels take lanes
+  at all is open.
+- **Reason:** (d). Elementwise kernels (RFC 0025's special functions, D141):
+  lanes give the core independent chains while each waits on its latency, and
+  computed as vectors (D141) they compile once; eight nested float64 sines
+  over 1024 elements replay 1.25 times as fast at 64 bytes as at 32 and as
+  with none (fudge, one P-core); 128 bytes replay a further 1.05 times at 1.6
+  times Clang's time. A kernel whose operations already run 5 at a
+  time gains nothing from lanes and pays for them in compile time (`lgamma`,
+  `log_betainc` and its gradients; 5 was measured on an M1 Max). A reduce
+  kernel's stored axis at 64 bytes runs a float64 matmul in 70.8-73.7 µs
+  against 96.9-97.3 µs at one register. From D143, nx.quant's MXFP4 product
+  reduces over a byte axis and the pair of codes each byte holds; unrolled to
+  a vector, the dense product of a checkpoint's codes ran 2.6-3.0 ms against
+  6.7-9.8 ms on an M1 Max. kaun's `Quant/host/*` rows hold the MXFP4 products;
+  the tolk bench's `host/sin_nested_8/heuristic` and
+  `host/select_zero/heuristic` the elementwise kernels, and rune's compile
+  bench `trig/sin-nested-8` their compile.
 - **Pinned by:** the Heuristic suite's `the optimisations chosen are tinygrad's
   › … › the optimised kernel`: the host cases `exp_float`, `exp_double`,
   `add_half`, `add_uchar`, `cast_to_double`, `compare`, `add_24`, `add_17`,
   `wide_tree`, `long_chain` and every host case without a reduce, and
   `vecmat_decoded`, `gpt_oss_gate_up`, `routed_blocks`, `routed_tiles` and
   `experts_down`, on `cpu` and `avx2`; the tolk bench's `host/*/heuristic` rows
-  and rune's compile bench `trig/sin-nested-8` on fudge. On rune: missing (the
-  old rune's `lower_index › quantised products › a product decodes a
-  checkpoint's codes 16 at once on the host` went with its rewrite).
+  and rune's compile bench `trig/sin-nested-8` on fudge. On rune: missing for
+  a quantised product decoding a checkpoint's codes 16 at once on the host.
 
 ## D189. A sum gated on an index read at its range is not collapsed
 
@@ -5432,8 +5054,8 @@ into D183, which holds its rule, its reason and its pins.
 
 ## D190. Clang of LLVM 18 compiles for x86_64 without AVX10.1 and avx512fp16
 
-- **tinygrad:** `runtime/support/compiler_cpu.py` (`ClangCompiler`'s x86_64
-  arguments, `-march=<cpu>` and its features); `runtime/ops_cpu.py`
+- **tinygrad:** `runtime/support/compiler_cpu.py` `ClangCompiler`'s x86_64
+  arguments (`-march=<cpu>` and its features); `runtime/ops_cpu.py`
   `CPUDevice.__init__` (the CPU's arch, its machine and `native`).
 - **tolk:** `Compiler_cpu.flags` (`fixed` and `llvm18_x86_off`), which
   `Compiler_cpu.clang` and `Compiler_cpu.registers` take, with the
@@ -5445,24 +5067,21 @@ into D183, which holds its rule, its reason and its pins.
   arch enables. A Clang host's half is an `__fp16`, which computes in
   `float` on every processor (D17), so values are unchanged: only the
   instructions converting halves differ, as on a processor without AVX-512
-  FP16. Every other Clang, and every other machine,
-  takes tinygrad's arguments.
+  FP16. Every other Clang, and every other machine, takes tinygrad's
+  arguments.
 - **Reason:** (b): rune's `Lower_arith › casts give eager's values` at
   `(float16, 11)` and `rune vmap › compositions › under jit` at float16
-  failed on GitHub's ubuntu-latest under Ubuntu 24.04's Clang 18.1.3 with "clang
-  frontend command failed with exit code 139", after "invalid feature
-  combination: +avx10.1-256; will be promoted to avx10.1-512", on runners
-  whose processor states AVX10.1, and passed on others. The cast kernel
-  `E_21_230` loads a half and stores its double bits in one row and the half
-  converted to a saturated short in another; Clang 18.1.3 and 18.1.8 crash on
-  it in machine loop-invariant code motion for `sapphirerapids`,
-  `graniterapids`, `graniterapids` with `-mavx10.1-256`, `x86-64-v3` with
-  `-mavx10.1-256` and `x86-64-v4` with `-mavx512fp16`, and compile it for
-  `x86-64-v4`, `znver4` and each of these with avx512fp16 off. AVX10.1
-  implies avx512fp16, and under LLVM 18 disabling avx512fp16 or avx10.1-256
-  alone leaves it on: avx10.1-512, then avx10.1-256, then avx512fp16 must go.
-  Clang 17.0.6 and 19.1.7 compile the kernel for each of these processors,
-  so every other Clang keeps the features.
+  failed on GitHub's ubuntu-latest under Ubuntu 24.04's Clang 18.1.3 ("clang
+  frontend command failed with exit code 139") on runners whose processor
+  states AVX10.1. Clang 18.1.3 and 18.1.8 crash in machine loop-invariant
+  code motion on the cast kernel `E_21_230` for `sapphirerapids`,
+  `graniterapids`, `x86-64-v3` with `-mavx10.1-256` and `x86-64-v4` with
+  `-mavx512fp16`, and compile it for `x86-64-v4`, `znver4` and each of these
+  with avx512fp16 off. AVX10.1 implies avx512fp16,
+  and under LLVM 18 disabling avx512fp16 or avx10.1-256 alone leaves it on:
+  avx10.1-512, then avx10.1-256, then avx512fp16 must go. Clang 17.0.6 and
+  19.1.7 compile the kernel for each of these processors, so every other
+  Clang keeps the features.
 - **Pinned by:** `Tolk.Compiler_cpu › flags › under LLVM 18, x86_64 ends by
   disabling AVX10.1 and avx512fp16:` (every row), `› LLVM's own release of
   18 is LLVM 18`, `› x86_64,native takes its own arguments alone under`
@@ -5529,9 +5148,9 @@ field (D12), and `of_program` and `Tiny_elf.t` went with it.
 
 ## D194. A running operation scans chunks of 16 at every level
 
-- **tinygrad:** `mixin/op.py` (`_split_cumalu`: past 512 elements,
-  chunks of 256, the first padded before, scanned by windows, then the
-  chunks' last elements scanned by one window each).
+- **tinygrad:** `mixin/op.py` `_split_cumalu` (past 512 elements, chunks of
+  256, the first padded before, scanned by windows, then the chunks' last
+  elements scanned by one window each).
 - **tolk:** `Shape.split_cumalu` and `Shape.cumalu`.
 - **Differs:** past 16 elements an axis runs in chunks of 16 from its first
   element, and the chunks' last elements run through the same scan again,
@@ -5545,47 +5164,28 @@ field (D12), and `of_program` and `Tiny_elf.t` went with it.
   maximum's result at a NaN (`Op.Max` gives it in its operands' order): the
   running operation of a prefix of the axis is the prefix of the axis's, bit
   for bit, as nx.mli promises of `Nx.cumsum`, whose sum of `-0` terms rune
-  makes `+0`; rune computes extremes over integer keys. Padded before, an
-  element's chunk moves with the axis's length, and a float sum of a prefix
-  rounds otherwise. Padded after at the first stage, a chunk's loads are
-  gated each by its own element, and the host kernel loads them one at a
-  time: float64 over 100 × 50500 took twice as long in that stage. Each
-  element reduces a window of at most 16 elements and combines once per
-  stage, a tail's elements once more in the first, so the work is linear in
-  the axis: estimated (`Realize.estimate_uop`) at 6 operations an element
-  over 65536 float32 elements against tinygrad's 285, whose window is 256
-  elements, or the whole axis below 513. An axis of `n` elements takes about
-  `log₁₆ n` stages. Values are a reassociation of the same terms: integers,
-  booleans and extremes are unchanged, and a float sum or product of `n`
-  terms keeps rune's bound of `γ(n - 1)`.
+  makes `+0`; rune computes extremes over integer keys. Padded after at the
+  first stage, a chunk's loads would be gated each by its own element, which
+  the host kernel loads one at a time. Each element reduces a window of at
+  most 16 elements and combines once per stage, a tail's elements once more
+  in the first, so the work is linear in the axis: estimated
+  (`Realize.estimate_uop`) at 6 operations an element over 65536 float32
+  elements against tinygrad's 285, whose window is 256 elements, or the whole
+  axis below 513. An axis of `n` elements takes about `log₁₆ n` stages.
+  Values are a reassociation of the same terms: integers, booleans and
+  extremes are unchanged, and a float sum or product of `n` terms keeps
+  rune's bound of `γ(n - 1)`.
 - **Reason:** (e), the chunks aligned from element 0: a running operation's
   prefix is the prefix of the axis's, bit for bit, as `Nx.cumsum` promises;
-  padded before, a float sum of a prefix rounds otherwise. (d), the chunks of
-  16 at every level: compiled running sums, `Nx.cumsum` under `Rune.jit`, as
-  norn's nested sampling's error estimate takes, and rune's lowering of an
-  extreme's position and of segments' starts (`Lower_reduce`). The aligned
-  chunks against chunks padded before, with one window up to 32 elements
-  (fudge, five interleaved rounds, one process under the timing lock per
-  run, load 15 to 43): float64 over 100 × 50500 5.4-13.5 ms against
-  5.4-16.9 ms, 3326 words against 3322; float32 over 4096 × 32 80-127 µs
-  against 203-466 µs, and 2281 words against 1268, its three kernels
-  against one, the cost of the windows of 16 the alignment needs; float32
-  over 100 × 400 44-59 µs against 44-47 µs, 2804 words against 2281, a
-  stage more for its 25 chunks. The chunks padded before against
-  tinygrad's (three interleaved rounds, load 60 to 92): float64 over
-  100 × 50500 8.5-35.6 ms against 44.8-64.9 ms; float32 over 100 × 400
-  55-66 µs against 2.75-5.00 ms; the nested sampling estimate over
-  8 × 1024 100-200 µs against 305-465 µs. Each row allocates the same
-  words. On fudge's RTX 5000 Ada, float32 over 100 × 50500 206-220
-  µs against 736-770 µs, and over 8 × 1024, 11.5 µs against 13.0-13.4 µs
-  (three rounds, one that shared the GPU left out); over 100 × 400, three
-  stages against one kernel, 10.7 µs against 19.6-20.2 µs (two rounds
-  before, one after). The block of 16 was chosen among 8, 16, 32, 64 and
-  256 by an interleaved sweep over running sums of `2x`, three rounds of one
-  process per block size: over float64 100 × 50500, 8, 16 and 32 overlapped
-  at 6.1-13.4 ms against 11.1-19.1 at 64 and 26.3-38.4 at 256; over float32
-  64 × 64, 8 and 16 took 3-5 µs against 20-25 µs at 32 and above, which scan
-  it in one window; 16 takes one stage fewer than 8.
+  padded before, an element's chunk moves with the axis's length, and a float
+  sum of a prefix rounds otherwise. (d), the chunks of 16 at every level:
+  compiled running sums, `Nx.cumsum` under `Rune.jit`, as norn's nested
+  sampling's error estimate takes, and rune's lowering of an extreme's
+  position and of segments' starts (`Lower_reduce`). On fudge, chunks of 16
+  took float32 over 100 × 400 in 55-66 µs against tinygrad's 2.75-5.00 ms
+  (both padded before), and aligned chunks take it in 44-59 µs against
+  44-47 µs for chunks padded before with one window up to 32 elements; 16 was chosen among 8,
+  16, 32, 64 and 256, as fast as 8 and a stage fewer.
 - **Pinned by:** rune's `Lower_reduce › work › a running sum's work per term at
   most doubles from 32 to 65536 terms` and `› scans › running scans along long
   axes give eager's values`; `rune jit › classes › a running operation's prefix
@@ -5599,37 +5199,34 @@ field (D12), and `of_program` and `Tiny_elf.t` went with it.
 
 ## D195. Clang reinterprets a vector's bits by a vector cast
 
-- **tinygrad:** `renderer/cstyle.py` (`base_rewrite`'s `BITCAST`,
-  `__builtin_bit_cast(T, (S)(x))` for every value).
+- **tinygrad:** `renderer/cstyle.py` `base_rewrite`'s `BITCAST`
+  (`__builtin_bit_cast(T, (S)(x))` for every value).
 - **tolk:** `Cstyle.clang_vectors`'s bitcast rule and `Cstyle.byte_mask`.
 - **Differs:** on Clang, a bitcast between vectors, the host's lanes of
   D141, is the C cast `((T)((S)(x)))`, which reinterprets the bits of a
   vector of one size as another's, and a mask of one-byte lanes is read as
   signed chars by that cast. A bitcast with a scalar side stays
-  `__builtin_bit_cast`. Each lane holds the same bits either way: Clang
-  writes `__builtin_bit_cast` of a vector as a store and a load of a
-  temporary, and the cast as one `bitcast` instruction. Of the 339 kernels
-  of rune's compile bench, the 61 with a vector bitcast compile to the same
-  object but two, whose vectors of 3 lanes Clang pads to 4 in memory: the
-  temporary copies the padding lane, and their instructions differ in order
-  and by up to 7 of 4520.
+  `__builtin_bit_cast`. Each lane holds the same bits either way. Of the 339
+  kernels of rune's compile bench, the 61 with a vector bitcast compile to
+  the same object but two, whose vectors of 3 lanes Clang pads to 4 in
+  memory: `__builtin_bit_cast`'s temporary copies the padding lane, and
+  their instructions differ in order and by up to 7 of 4520.
 - **Reason:** (d): rune's compile bench row `special/betaincinv-grad-f64`.
-  Its one kernel, 1.0 MB of C with 2495 vector bitcasts, spent 5.2 of
-  Clang's 6.2 s of CPU in scalar replacement of aggregates, removing the
-  temporaries, and 0.08 s with casts. Clang took 6.8-11.9 s against
-  2.7-4.8 s for the same object (fudge, loaded, three interleaved pairs).
+  Clang writes `__builtin_bit_cast` of a vector as a store and a load of a
+  temporary; the row's one kernel, with 2495 vector bitcasts, spent 5.2 of
+  Clang's 6.2 s of CPU removing them, and 0.08 s with casts.
 - **Pinned by:** the Cstyle suite's `sources › by default ›
   clang_vector_bitcast` and `› clang_vector_byte_mask`, and every host golden
   with a vector bitcast; rune's compile bench row `special/betaincinv-grad-f64`,
-  whose fudge baseline the scheduled re-record records.
+  its fudge baseline pending the scheduled re-record.
 
 ## D196. A schedule's host kernels compile in one run of Clang per domain
 
-- **tinygrad:** `engine/realize.py` (`lower_and_compile`, which makes
-  each kernel's program, `to_program`, apart on its pool's workers);
-  `codegen/__init__.py` (`do_compile`) and `device.py`
-  (`Compiler.compile_cached`, one source at a time);
-  `runtime/support/compiler_cpu.py` (`ClangCompiler.compile`, a `clang`
+- **tinygrad:** `engine/realize.py` `lower_and_compile` (each kernel's
+  program, `to_program`, made apart on its pool's workers);
+  `codegen/__init__.py` `do_compile` and `device.py`
+  `Compiler.compile_cached` (one source at a time);
+  `runtime/support/compiler_cpu.py` `ClangCompiler.compile` (a `clang`
   process per source, from standard input).
 - **tolk:** `Codegen.to_programs`, which `Realize.lower_and_compile` calls
   for every kernel; `Renderer.Compiler.batch` and
@@ -5638,25 +5235,22 @@ field (D12), and `of_program` and `Tiny_elf.t` went with it.
 - **Differs:** up to `PARALLEL` workers on `Worker.map` each take the
   kernels a schedule lacks, those `Codegen.read` does not find, one at a
   time, to lower and render until none is left, then compile their sources,
-  each compiler's in one call (`Renderer.Compiler.compile_all`), which Clang
-  serves with one run of its compiler proper (`clang -cc1`, the command
+  each compiler's in one call (`Renderer.Compiler.compile_all`). Clang
+  serves it with one run of its compiler proper (`clang -cc1`, the command
   Clang states for the options with `-###`, its IR verifier on, D275), each
-  source the file `-` of a
-  directory of its own, after a line marker that names it `<stdin>`, the
-  files named in a response file. Each object is the one Clang's driver
-  makes of the source alone from standard input, so the cache keys, tables
-  and entries are unchanged. When a kernel asks for a beam search, each
-  kernel compiles alone, in order. Clang's driver runs the compiler proper
-  in its own process for one source, and starts a process for each of
-  several (`clang -c a.c b.c` costs as many starts as `clang -c` per
-  source), so only the compiler proper's own command saves the starts.
+  source the file `-` of a directory of its own, after a line marker that
+  names it `<stdin>`, the files named in a response file. Each object is the
+  one Clang's driver makes of the source alone from standard input, so the
+  cache keys, tables and entries are unchanged. When a kernel asks for a
+  beam search, each kernel compiles alone, in order. Only the compiler
+  proper's own command saves the starts: Clang's driver starts a process for
+  each of several sources (`clang -c a.c b.c` costs as many starts as
+  `clang -c` per source).
 - **Reason:** (d): rune's compile bench rows `scan/checks-48`,
   `scan/tridiagonal-100`, `devices/partials-16` and `model/schools-start`,
-  which compile 111, 52, 60 and 39 host kernels, most under 8 KB. On fudge,
-  Clang took 30 ms of wall for a kernel under 2 KB and 41 ms for one of 2-8
-  KB, and 25-33 ms for an empty source (111 runs, loaded): the start
-  dominates. checks-48's 111 kernels took 2.4-3.5 s of CPU as 111 runs and
-  0.54-0.65 s as one run of the compiler proper (three interleaved pairs).
+  which compile 111, 52, 60 and 39 host kernels, most under 8 KB, where
+  Clang's start dominates. On fudge checks-48's 111 kernels took 2.4-3.5 s of
+  CPU as 111 runs and 0.54-0.65 s as one run of the compiler proper.
 - **Pinned by:** the Compiler_cpu suite's `several sources › each object is
   the one its source compiles to alone` and `› a rejected source among
   others raises its own diagnostics`; the Renderer suite's `Compiler ›
@@ -5670,43 +5264,38 @@ field (D12), and `of_program` and `Tiny_elf.t` went with it.
 
 ## D197. A program key orders commutative index operands by the kernel's ranges
 
-- **tinygrad:** `uop/symbolic.py` `commutative` (commutative flipping, which
-  orders the two operands of a commutative index operation by `tuplize`,
-  a range's number among it); `schedule/rangeify.py`
-  (`pm_renumber_range` in `split_store`, which renumbers a kernel's ranges
-  from 0 after the symbolic rules ran over the whole graph, "so that kernel
-  deduping works"); `codegen/__init__.py` (`to_program_key`, which
-  keys a program by its kernel's `ast.key`).
+- **tinygrad:** `uop/symbolic.py` `commutative` (orders the two operands of
+  a commutative index operation by `tuplize`, a range's number among it);
+  `schedule/rangeify.py` `pm_renumber_range` in `split_store` (renumbers a
+  kernel's ranges from 0 after the symbolic rules ran over the whole graph);
+  `codegen/__init__.py` `to_program_key` (keys a program by its kernel's
+  `ast.key`).
 - **tolk:** `Codegen.params`, which `Codegen.program_key`,
   `Codegen.to_program` and `Codegen.read` read.
 - **Differs:** codegen orders the operands of each commutative index
   operation of a kernel by the kernel's own range numbers, as the symbolic
   rules order them, then keys that kernel and makes its program from it.
-  Two kernels whose ranges the whole graph numbered in different orders,
-  and which so differ only in that order, are one kernel there: one key,
-  one source, one program, which computes either. The key cannot map two
-  sources to one binary: it reads the very kernel the source is rendered
-  from, so kernels of one key render one source, and the disk cache keeps a
-  binary by its source. The schedule's kernel itself is tinygrad's.
+  Two kernels that differ only in the order the whole graph numbered their
+  ranges are one kernel: one key, one source, one program, which computes
+  either. The key cannot map two sources to one binary: it reads the very
+  kernel the source is rendered from, and the disk cache keeps a binary by
+  its source. The schedule's kernel itself is tinygrad's.
 - **Reason:** (b): rune's compiled programs over several devices
-  (`Pieces.split`) put every device's kernels in one graph, where one device's
-  scan of its tile numbered its ranges in the other order: a cumulative sum
-  over an axis cut across 2, 4, 8 and 16 software devices made 5, 7, 8 and 7
-  programs, and makes 5, 7, 7 and 7, against rune's promise that they do not
-  grow with the devices (D170).
+  (`Pieces.split`) put every device's kernels in one graph, where one
+  device's scan of its tile numbered its ranges in the other order: a
+  cumulative sum over an axis cut across 2, 4, 8 and 16 software devices made
+  5, 7, 8 and 7 programs, against rune's promise that they do not grow with
+  the devices (D170).
 - **Pinned by:** the Codegen suite: `programs are kept › kernels share a
   key where they render one source, as a sum of ranges in either order
-  does`, which compares the rendered sources and keys of both orders and of
-  another index; rune's
-  `Rune.jit over several devices › maps over a cut axis › partials give
-  eager's bits, their programs do not grow`.
+  does`; rune's `Rune.jit over several devices › maps over a cut axis ›
+  partials give eager's bits, their programs do not grow`.
 
 ## D198. A store that reads its destination is staged only where it reads it elsewhere
 
-- **tinygrad:** `schedule/indexing.py` (`realize_store_after_src`,
-  which stores the value of every store whose value reaches its
-  destination's buffer: "you don't usually have to do this for assign unless
-  there's a WAR hazard like TestAssign.test_assign_double_diamond_reduce").
+- **tinygrad:** `schedule/indexing.py` `realize_store_after_src` (stores the
+  value of every store whose value reaches its destination's buffer, for
+  hazards like `TestAssign.test_assign_double_diamond_reduce`).
 - **tolk:** no `realize_store_after_src`; `Rangeify.fix_store_hazard`
   decides within a kernel, and `Schedule.create_schedule` across kernels
   (D160).
@@ -5716,23 +5305,19 @@ field (D12), and `of_program` and `Tiny_elf.t` went with it.
   index than it writes (`fix_store_hazard`, as tinygrad); a store into a
   broadcast, which writes an element on several trips, is refused (D345).
   A value that reads its destination only at the element it writes, as an
-  optimizer step `p := p - lr * g` or a loop's carry `c := c * 2 + exp2 c`
-  does, loads each element before it stores it, a data dependency of the
-  store: one kernel. Across kernels, another kernel reading the destination's old state
-  runs before the store, or reads a copy where no order does (D160): the
-  double diamond, each store reading through a sum what the other
-  overwrites, is a cycle that one copy breaks.
-- **Reason:** (d). Kernels per optimizer step drop with bit-equal values:
-  in tinygrad, measured, an Adam step's 13 kernels to 7, an SGD step over a
-  convolution's 5 to 3, a convolution, batch norm and Adam's 30 to 18; in
-  tolk, rune's carries, which a loop's trip updates in place: NUTS on eight
-  schools (`norn` bench `nuts/schools/4`), whose doubling cascade's trip ran
-  17 kernels and runs 10, its main body's 189 and 182, and whose cold
-  compile makes 145 programs against 147, with the same bits (fudge,
-  counted). Measured on fudge in tinygrad only for the optimizer steps until
-  vega's Adam row, rune's MLP step row and tolk's `adam_mlp` rows are
-  re-recorded; the wall-clock baselines are pending the scheduled
-  re-record.
+  optimizer step `p := p - lr * g` or a loop's carry does, loads each
+  element before it stores it, a data dependency of the store: one kernel.
+  Across kernels, another kernel reading the destination's old state runs
+  before the store, or reads a copy where no order does (D160): the double
+  diamond, each store reading through a sum what the other overwrites, is a
+  cycle that one copy breaks.
+- **Reason:** (d). Kernels per step drop with bit-equal values: the norn
+  bench's `nuts/schools/4`, NUTS on eight schools, whose doubling cascade's
+  trip ran 17 kernels and runs 10 (fudge, counted); in tinygrad an Adam
+  step's 13 kernels drop to 7. The optimizer steps are measured on fudge in
+  tinygrad only until vega's Adam row, rune's MLP step row and tolk's
+  `adam_mlp` rows are re-recorded; the wall-clock baselines are pending the
+  scheduled re-record.
 - **Pinned by:** the Rangeify suite (`test/schedule/rangeify`):
   `get_kernel_graph › stores that read their destination` (`a value that reads
   its destination at the element written is one kernel`, `› a value of five
@@ -5750,13 +5335,15 @@ field (D12), and `of_program` and `Tiny_elf.t` went with it.
 
 ## D199. Withdrawn
 
-D199 fused independent calls of one domain into one kernel. A launch of bodies (D404) runs the same grouping and more without one set of optimisations for the union: 1.65 against 1.68 ms a NUTS step on CUDA, equal grouping, inside the row's spread, and equal on the host and in compile time.
+D199 fused independent calls of one domain into one kernel. A launch of bodies
+(D404) runs the same grouping and more without one set of optimisations for the
+union, as fast on CUDA, on the host and in compile time.
 
 ## D200. A tensor core's row upcast keeps a warp within a run of rows
 
-- **tinygrad:** `codegen/opt/heuristic.py` (`hand_coded_optimizations`,
-  whose tensor core upcasts the core's M range by the first of 5, 4, 3 and
-  2 that divides it).
+- **tinygrad:** `codegen/opt/heuristic.py` `hand_coded_optimizations`
+  (a tensor core upcasts the core's M range by the first of 5, 4, 3 and 2
+  that divides it).
 - **tolk:** `Heuristic.tensor_cores`, through `Heuristic.within_run` and
   `Heuristic.owner_run`.
 - **Differs:** where the operands of the core's product read its M range
@@ -5768,37 +5355,27 @@ D199 fused independent calls of one domain into one kernel. A launch of bodies (
   tinygrad's candidate stands, and where tinygrad takes none, none. The
   rule takes M alone: rows routed onto the core's N cross runs as before.
 - **Reason:** (d): a warp whose rows cross runs loads a tile of each run's
-  matrix. gpt-oss-20b's experts layer of MXFP4 matrices at bfloat16 on
-  fudge's RTX 5000 Ada, its rows in blocks of `c` of one expert (tile 16,
-  three interleaved rounds, ranges apart): at 2048 tokens and `c = 64` an
-  upcast of 5, warps of 80 rows over two blocks, takes 19.25-19.73 ms a layer
-  against 10.62-10.85 ms at 4; at 512 tokens and `c = 32` 6.60-6.64 ms at 5
-  against 4.44-4.52 ms at 2; at 128 tokens and `c = 64` 4.96-5.01 ms against
-  3.21-3.24 ms. At `c = 16` no candidate keeps a warp of 16-row tiles within
-  a block, so tinygrad's candidate stands: there its upcasts of 2 and 4 over
-  two to four blocks were 1.2 to 1.4 times faster than none; an upcast of 5
-  over blocks of 16 is not measured. rune's routed product (`Lower_reduce`)
-  now takes blocks of 64 rows, so the rule fires where the block count is a
-  multiple of 5 and leaves no other first candidate. gpt-oss-20b's experts at
-  a prefill of 536 tokens, 65 blocks and 4160 rows on the unstaged path, kaun's
-  `GptOss/experts-at-prefill-536`, take 3.02 ms a layer against 6.96 ms
-  without the rule (upcast 4 against 5), and the prefill 117 ms against 207 ms;
-  minima of four interleaved rounds with D211 and D122 withdrawn. 512 tokens, 63 blocks, already take 4 and
-  do not reach it.
+  matrix. rune's routed product (`Lower_reduce`) takes blocks of 64 rows, so
+  the rule fires where the block count is a multiple of 5: gpt-oss-20b's
+  experts at a prefill of 536 tokens (65 blocks), kaun's
+  `GptOss/experts-at-prefill-536`, take 3.02 ms a layer on fudge against
+  6.96 ms without it (upcast 4 against 5), measured with D211 and D122
+  withdrawn. At blocks of 16 rows no candidate
+  keeps a warp of 16-row tiles within a block, so tinygrad's candidate
+  stands; an upcast of 5 over blocks of 16 is not measured.
 - **Pinned by:** the Heuristic suite: the `routed_run_16`, `routed_run_32`,
   `routed_run_64` and `routed_run_128` cases on each renderer, and `a core's
   warp holds rows of one run where an upcast of the core's rows keeps it in
-  one`; on fudge, kaun's
-  `GptOss/experts-at-prefill-536` row, its baseline pending the scheduled
-  re-record.
+  one`; on fudge, kaun's `GptOss/experts-at-prefill-536` row, its baseline
+  pending the scheduled re-record.
 
 ## D201. A search's samples start from a clean, cold cache
 
-- **tinygrad:** `codegen/opt/search.py` (`_time_program` is asked to
-  clear the L2 only where the device has `invalidate_caches`, NV's) and
-  `engine/realize.py` (`time_call`, which invalidates NV's caches
-  before each sample, and elsewhere realizes a tensor of 4 MB, which the
-  search never asks for): CUDA, AMD, Metal and the host time warm.
+- **tinygrad:** `codegen/opt/search.py` `_time_program` (asked to clear the
+  L2 only where the device has `invalidate_caches`, NV's) and
+  `engine/realize.py` `time_call` (invalidates NV's caches before each
+  sample, and elsewhere realizes a tensor of 4 MB, which the search never
+  asks for): CUDA, AMD, Metal and the host time warm.
 - **tolk:** `Tolk_engine.scrub` (`device_scrub`, `scrub_kernel`,
   `cache_bytes`) and `Tolk_engine.time` (`read_scrub`); rune's
   `Compile.search`; `Rig.cache_bytes`.
@@ -5807,138 +5384,126 @@ D199 fused independent calls of one domain into one kernel. A launch of bodies (
   cache's bytes, a buffer of twice those bytes, written once, and a kernel
   that reads it. Before each sample, outside its time, the kernel reads it
   and the time waits for the read. Where the scrub does not fit in memory,
-  rune's search times warm. A read leaves clean lines, so the timed kernel finds none of its
-  buffers cached and no line to write back. On every driver that states the
-  size, CUDA, NV, AMD through amdgpu and the host; a Metal device and an
-  AMD GPU over PCI are timed warm.
+  rune's search times warm. A read leaves clean lines, so the timed kernel
+  finds none of its buffers cached and no line to write back. The drivers
+  that state the size are CUDA, NV, AMD through amdgpu and the host; a Metal
+  device and an AMD GPU over PCI are timed warm.
 - **Reason:** (c): `Search.beam_search` promises each sample from cold
   caches where the device can, and rig gives no flush on CUDA, its default
   path on fudge, while AMD's L2 is invalidated on every submission and its
-  memory-side cache is not; a read reaches every driver. Measured on fudge's
-  RTX 5000 Ada (64 MiB of L2, libcuda's figure), GPU time, three
-  interleaved rounds:
-  - warm, a search times a state a model's run rarely gives a kernel whose
-    operands other kernels evicted. On `matmul_half_1024`, six rounds at
-    width 4, the warm search chose one program each round, 43.1-44.0 us warm
-    and 65.7-66.5 cold; the cold search chose one of 44.2-44.4 and 44.9-45.0
-    us in three rounds, 50.2 and 51.0 in one, and in two, programs no faster
-    cold (67.6) or slower (84.0), where its greedy beam kept a worse first
-    level. Before this change's floor, cold searches picked programs
-    1.09-1.85x faster from memory on `matmul_half_1024` and 1.33-1.41x on a
-    prefill's key projection;
-  - a write of the cache's size leaves the cache dirty, and the beam's
-    first ranking follows the write-back: a search timed after a fill picks
-    a `matmul_half_1024` program 1.48-1.51x slower from a clean cache and
-    1.13-1.20x slower even in its own dirty state, 3 of 3 rounds;
-  - a fill of the cache's own 64 MiB left 4 of 19 rows warm in every round,
-    by where their buffers lay; 128 and 256 MiB evicted every row;
-  - the read costs about 0.25 ms a sample on fudge, 0.07-0.26 s a search.
+  memory-side cache is not; a read reaches every driver. A warm search times
+  a state a model's run rarely gives a kernel whose operands other kernels
+  evicted: on fudge's RTX 5000 Ada, before this change's floor, cold searches
+  picked programs 1.09-1.85x faster from memory on `matmul_half_1024`. A write would leave the cache
+  dirty, and a search timed after one picked a program 1.48-1.51x slower from
+  a clean cache; a fill of the cache's own 64 MiB left 4 of 19 rows warm, by
+  where their buffers lay, and 128 and 256 MiB evicted every row. The read costs about 0.25 ms a sample.
 - **Pinned by:** the Tolk_engine suite's `timing › a time with a scrub
   reads it before the run` (the host, a software device, and CUDA, NV and AMD
   where present); rig's tests of `Rig.cache_bytes`. Whether the read leaves
-  the cache cold is the timing above: on a GPU other processes share, a
-  warm sample is not reliably warm, so no test times it. A bench row of a searched program would flap with the
-  search's pick, as the rounds above do, so none holds it.
+  the cache cold no test times, since on a GPU other processes share a warm
+  sample is not reliably warm; a bench row of a searched program would flap
+  with the search's pick, so none holds it.
 
 ## D220. A loop's bound may be loaded, and no axis it reads runs as lanes or launches
 
-- **tinygrad:** `uop/spec.py` (`spec_shared`, an AFTER of a scalar or a computed
-  value, a LOAD's among them, after any dependencies, which `spec_program`
-  includes), which `codegen/__init__.py` `full_rewrite_to_sink` checks under
-  `SPEC`, 1 by default; `codegen/late/linearizer.py` (`pm_add_control_flow`,
-  which wraps a nested loop's bound in an AFTER of the range or loop end it
-  follows); `codegen/opt/postrange.py` `convert_loop_to_global`,
-  `upcastable_dims` and `apply_opt`.
+- **tinygrad:** `uop/spec.py` `spec_shared` (an AFTER of a scalar or a
+  computed value, a LOAD's among them, after any dependencies, which
+  `spec_program` includes), which `codegen/__init__.py`
+  `full_rewrite_to_sink` checks under `SPEC`, 1 by default;
+  `codegen/late/linearizer.py` `pm_add_control_flow` (wraps a nested loop's
+  bound in an AFTER of the range or loop end it follows);
+  `codegen/opt/postrange.py` `convert_loop_to_global`, `upcastable_dims` and
+  `apply_opt`.
 - **tolk:** `Spec.program`; `Postrange.Scheduler.read_by_bounds`,
   `upcastable_dims`, `apply_opt` and `convert_loop_to_global`;
   `Ops.known_at_launch`, which `Codegen.split_blocks` (D80) and
   `Renderer.Estimates.of_uops` (D191) read; `Heuristic.streams`.
-- **Differs:** a loop bounded by a load, as `j < x[i]`, compiles: a
-  program's Spec accepts an AFTER of a scalar LOAD whose dependencies are
-  ranges and loop ends, the linearizer's edges, or loads, as a lane selected
-  from loaded lanes is; a graph's Spec refuses one, as tinygrad's does. An
-  AFTER of a load and a store is refused, where tinygrad's Spec accepts an
-  AFTER of any scalar value since b63e6cef8: the linearizer orders the AFTER,
-  not the load it holds, which would read before the store. An
-  axis that a range's bound reads, through a load or not (`j < i + 1`), is
-  not upcastable, and an upcast of it is refused, where tinygrad makes the
-  bound a vector that C compilers reject: a loop has one count of trips
-  per thread. A group and a tensor core are refused on a kernel where a
-  range's bound reads an axis, since a group's barriers need every thread
-  of the workgroup to run the same trips, and the heuristic streams no
-  contraction there. A weak range whose bound reads a range or memory is
-  neither made global nor split into host blocks, where tinygrad makes it
-  global: a launch computes its counts before the kernel reads memory. The
-  estimates (D191) take the same test of a bound.
+- **Differs:**
+  - a loop bounded by a load, as `j < x[i]`, compiles: a program's Spec
+    accepts an AFTER of a scalar LOAD whose dependencies are ranges and loop
+    ends, the linearizer's edges, or loads, as a lane selected from loaded
+    lanes is; a graph's Spec refuses one, as tinygrad's does. An AFTER of a
+    load and a store is refused, where tinygrad's Spec accepts an AFTER of
+    any scalar value: the linearizer orders the AFTER, not the load it holds,
+    which would read before the store;
+  - an axis that a range's bound reads, through a load or not (`j < i + 1`),
+    is not upcastable, and an upcast of it is refused, where tinygrad makes
+    the bound a vector that C compilers reject: a loop has one count of trips
+    per thread;
+  - a group and a tensor core are refused on a kernel where a range's bound
+    reads an axis, since a group's barriers need every thread of the
+    workgroup to run the same trips, and the heuristic streams no
+    contraction there;
+  - a weak range whose bound reads a range or memory is neither made global
+    nor split into host blocks, where tinygrad makes it global: a launch
+    computes its counts before the kernel reads memory. The estimates (D191)
+    take the same test of a bound.
 - **Reason:** (c): tolk's own interface builds such a loop, since
   `Ops.range` takes any bound and `Shape.shrink` any size, a loaded one
-  included, and a graph that interface accepts must compute, where
-  without this one with a loaded or row-dependent bound fails at Spec, at
-  the C compiler or at launch.
+  included, and a graph that interface accepts must compute; without this,
+  one with a loaded or row-dependent bound fails at Spec, at the C compiler
+  or at launch.
 - **Pinned by:** the Tolk_engine suite: `loops bounded by a loaded value`,
-  on the host and each GPU present (CUDA and NV on fudge): serial and weak
-  loops and sums bounded by each row's or the first row's clamped or bare
-  count, or by their row, unoptimized, optimized and upcast (refused where
-  the bound reads the row), a weak loop of no row, a loaded bound after a
-  sibling loop, and a sum of products along the rows, which the heuristic
-  would stream. The Ops suite: `ranges › a launch knows a bound of
-  constants and variables, ...`. The Postrange suite: `loops bounded by an
-  axis`, and `axes.tolk`'s `padto_reduction_bound`. The
-  Spec suite: `verdicts.tolk`'s `an int32 load after a range`, `a range
-  bounded by a load after a range` and `a load after a store`. The Codegen
-  suite: `hand-written kernels on the host › a lane of stored lanes keeps
-  every lane's store`.
+  on the host and each GPU present (CUDA and NV on fudge), every test. The
+  Ops suite: `ranges › a launch knows a bound of constants and variables,
+  ...`. The Postrange suite: `loops bounded by an axis`, and `axes.tolk`'s
+  `padto_reduction_bound`. The Spec suite: `verdicts.tolk`'s `an int32 load
+  after a range`, `a range bounded by a load after a range` and `a load after
+  a store`. The Codegen suite: `hand-written kernels on the host › a lane of
+  stored lanes keeps every lane's store`.
 
 ## D230. A GPU kernel decodes a value R rows read at most ceil(R / 16) times
 
 - **tinygrad:** `codegen/opt/heuristic.py` `hand_coded_optimizations` (the
-  tensor cores) and `hand_coded_optimizations` (the upcasts of output axes by 3
-  or 4); it streams nothing (D89), and states no bound on how often a kernel
-  computes a value its outputs share.
+  tensor cores, and the upcasts of output axes by 3 or 4); it streams
+  nothing (D89), and states no bound on how often a kernel computes a value
+  its outputs share.
 - **tolk:** `Heuristic.stream`'s upcast of the reuse ranges and
   `Heuristic.hand_coded_with`'s late stream of a decoded operand.
 - **Differs:** rangeify inlines a decoded value that rows read at one index
   as one copy (D163), so the codegen owes the sharing that count assumes:
-  on a GPU, a decoded operand that reads every output axis but one, along
-  which its `R` outputs read it at one index, is decoded at most
-  `ceil(R / 16)` times a value where the kernel streams or takes a tensor
-  core whose upcast of those rows applies, times the lanes its core's
-  fragment holds each value in (two on RDNA3, whose `B` lanes carry an `M`
-  bit). A core whose floor (D175) refuses the upcast decodes it once a tile
-  of its rows, `ceil(R / 8)` times on Metal's core of 8, and an operand that
-  several output axes reuse takes the largest divisor of their product up
-  to 16, as before. The streamed layout upcasts such an axis of `f` outputs into
-  `ceil(f / 16)` passes of as many outputs, padding the axis where they do
-  not divide it, where it took the largest divisor of `f` up to 16: 17 rows
-  take 2 passes of 9, padded to 18, where they took 17 of 1. Past a reuse
-  of 32, where no core applies, a decoded operand streams, where it took
-  the other rules, which share only their upcast of 4 rows: 64 float32 rows
-  decoded each value 16 times, and take 4. The host shares its decodes as
-  its registers allow (D92).
-- **Reason:** (d): MXFP4 products of 16384 by 16384 on fudge's RTX 5000 Ada
-  (kaun's `Quant/cuda/mxfp4-product-of-16384-*`, three interleaved rounds
-  under the timing lock, GPU shared with other jobs): 17 bfloat16 rows
-  4.58-11.91 ms to 1.07-3.28 ms; 64 float32 rows, streamed, 14.8-20.0 ms to
-  4.98-6.68 ms (12.5-12.9 in quieter rounds before), past the stored
-  decode's 9.6; 12, 16, 32, 64, 128 and 256 bfloat16 rows unchanged within
-  noise. Larger float32 counts are not benched. nonnormal's R9700 rows are
-  pending, among them 64 float32 rows, where a model of its decode cost
-  puts 4 decodes a value at about 43 ms against 31 stored.
+  - on a GPU, a decoded operand that reads every output axis but one, along
+    which its `R` outputs read it at one index, is decoded at most
+    `ceil(R / 16)` times a value where the kernel streams or takes a tensor
+    core whose upcast of those rows applies, times the lanes its core's
+    fragment holds each value in (two on RDNA3, whose `B` lanes carry an `M`
+    bit);
+  - a core whose floor (D175) refuses the upcast decodes it once a tile of
+    its rows, `ceil(R / 8)` times on Metal's core of 8, and an operand that
+    several output axes reuse takes the largest divisor of their product up
+    to 16, as before;
+  - the streamed layout upcasts such an axis of `f` outputs into
+    `ceil(f / 16)` passes of as many outputs, padding the axis where they do
+    not divide it, where it took the largest divisor of `f` up to 16: 17
+    rows take 2 passes of 9, padded to 18, where they took 17 of 1;
+  - past a reuse of 32, where no core applies, a decoded operand streams,
+    where it took the other rules, which share only their upcast of 4 rows:
+    64 float32 rows decoded each value 16 times, and take 4.
+
+  The host shares its decodes as its registers allow (D92).
+- **Reason:** (d): MXFP4 products of 16384 by 16384 on fudge's RTX 5000 Ada,
+  kaun's `Quant/cuda/mxfp4-product-of-16384-*`: 17 bfloat16 rows 4.58-11.91
+  ms to 1.07-3.28 ms; 64 float32 rows, streamed, 14.8-20.0 ms to 4.98-6.68 ms,
+  past the stored decode's 9.6. Larger float32 counts are not benched.
+  nonnormal's R9700 rows are pending, among them 64 float32 rows, where a
+  model of its decode cost puts 4 decodes a value at about 43 ms against 31
+  stored.
 - **Pinned by:** the Heuristic suite's `a GPU kernel decodes a value R rows read
   at one index at most ceil(R / 16) times its core's copies`, over decoded
   products of 1 to 512 rows of bfloat16, half and float32 on the CUDA, RDNA3,
   RDNA4, CDNA and Metal renderers, and its `a decoded product's optimisations
-  keep its writes` (17 and 19 rows padded, 64 float32 rows streamed, evaluated);
-  kaun's `Quant/cuda/mxfp4-product-of-16384-17-bfloat16-tokens` and
-  `-64-float32-tokens`.
+  keep its writes` (17 and 19 rows padded, 64 float32 rows streamed,
+  evaluated); kaun's `Quant/cuda/mxfp4-product-of-16384-17-bfloat16-tokens`
+  and `-64-float32-tokens`.
 
 ## D235. A tensor core's lanes are a warp of its threads
 
-- **tinygrad:** `codegen/gpudims.py` (`group_gpudims`), which lays a
-  kernel's warp and local ranges on the thread axes whatever its tensor cores
-  need, and `codegen/simplify.py` (`mark_range_mod` and
-  `pm_split_ranges`), which split a local range, never a warp, by
-  its divisions, the most significant part taking the first thread axis.
+- **tinygrad:** `codegen/gpudims.py` `group_gpudims` (lays a kernel's warp
+  and local ranges on the thread axes whatever its tensor cores need), and
+  `codegen/simplify.py` `mark_range_mod` and `pm_split_ranges` (split a
+  local range, never a warp, by its divisions, the most significant part
+  taking the first thread axis).
 - **tolk:** `Gpudims.group_gpudims`, through `check_lanes`.
 - **Differs:** a kernel holding a tensor core of more than one thread raises
   `Invalid_argument` unless its first thread axis is a warp range of that many
@@ -5946,33 +5511,31 @@ D199 fused independent calls of one domain into one kernel. A launch of bodies (
   thread's index within its warp, so the kernel's own lane index must be it,
   which only a warp range on the first axis gives. tinygrad's optimiser makes
   that range; a kernel written by hand may number its lanes with a local
-  range instead. tinygrad then computes another product: a local range of 128
-  threads read as `t // 32` and `t % 32` splits into those two parts, and the
-  warp's index takes `threadIdx.x`, so the hardware's lane is not `t % 32` and
-  each lane reads another lane's elements.
+  range instead, and tinygrad then computes another product: a local range
+  of 128 threads read as `t // 32` and `t % 32` splits into those two parts,
+  the warp's index takes `threadIdx.x`, and each lane reads another lane's
+  elements.
 - **Reason:** (e).
 - **Pinned by:** `Tolk.Gpudims › group_gpudims › a tensor core's lanes › are
   refused from other ranges` and `› are a warp of its threads on the first
   thread axis`; on CUDA, `Tolk.Codegen › tensor cores written by hand › a
-  warp per product, lanes a warp range, gives each warp's exact product`,
-  whose four warps each compute their own product.
+  warp per product, lanes a warp range, gives each warp's exact product`.
 
 ## D236. A bitcast that changes a vector's lane count stays whole
 
-- **tinygrad:** `codegen/__init__.py` (`do_stack_wmma`), which replaces a tensor
-  core's operand by the stack of its lanes, and `uop/movement.py`
-  (`mop_cleanup`), which folds that stack back to the operand, so that a bitcast
+- **tinygrad:** `codegen/__init__.py` `do_stack_wmma` (replaces a tensor
+  core's operand by the stack of its lanes) and `uop/movement.py`
+  `mop_cleanup` (folds that stack back to the operand), so that a bitcast
   operand that changes the lane count, such as four words read as eight
-  bfloat16, rewrites forever ("infinite loop in graph_rewrite");
-  `renderer/cstyle.py` `CUDARenderer.string_rewrite` (CUDA's `string_rewrite`),
-  which renders a bitcast with its scalar types, so that a bitcast of a vector
-  does not compile ("no suitable conversion function from uint4 to uint").
+  bfloat16, rewrites forever; `renderer/cstyle.py`
+  `CUDARenderer.string_rewrite` (renders a bitcast with its scalar types, so
+  that a bitcast of a vector does not compile).
 - **tolk:** `Codegen.do_stack_wmma`, which keeps such a bitcast whole;
   `Cstyle`'s base rewrite renders a bitcast with each side's vector type on
   CUDA, which has no rule of its own.
 - **Differs:** a tensor core takes such a bitcast as the vector it is, and
   CUDA renders it `tg_bitcast<nv_bfloat168>((uint4)(...))`. A scalar bitcast
-  renders as before. tinygrad does not terminate on these kernels; tolk
+  renders unchanged. tinygrad does not terminate on these kernels; tolk
   computes the right product.
 - **Reason:** (e).
 - **Pinned by:** `Tolk.Codegen › tensor cores written by hand › a tensor
@@ -5984,13 +5547,13 @@ D199 fused independent calls of one domain into one kernel. A launch of bodies (
 
 ## D237. Ends of one range that reach each other run apart, each a loop
 
-- **tinygrad:** `codegen/__init__.py` (`merge_reduce_ends`), which
-  merges the ends that close the same ranges in one context, and leaves
-  every end of those ranges unmerged when one reaches another (5229d642d):
-  a copy of a tile reads, through the scores, what the copy before it
-  staged, and merged would contain itself. Unmerged, the ends share their
-  ranges, and over a loop range the linearizer refuses the kernel (an
-  assertion, `codegen/late/linearizer.py` `CFGContext.__init__`).
+- **tinygrad:** `codegen/__init__.py` `merge_reduce_ends` (merges the ends
+  that close the same ranges in one context, and leaves every end of those
+  ranges unmerged when one reaches another: a copy of a tile reads, through
+  the scores, what the copy before it staged, and merged would contain
+  itself); unmerged, the ends share their ranges, and over a loop range the
+  linearizer refuses the kernel (`codegen/late/linearizer.py`
+  `CFGContext.__init__`).
 - **tolk:** `Codegen.merge_reduce_ends`.
 - **Differs:** ends of one context that reach each other go apart, each a
   loop of its own: the later one takes cloned ranges, as an end of another
@@ -6004,15 +5567,14 @@ D199 fused independent calls of one domain into one kernel. A launch of bodies (
   reads the copy ended before it`, over upcast and loop ranges, apart and
   shared, and `› a copy that reads an end of its range along another range
   runs that end once`, whose second end takes cloned ranges as D137 gives
-  them, which tinygrad does not (its linearizer then refuses the kernel);
-  over threads, `lanes and threads › an end reading the stores of an end of
-  its threads runs after it on CUDA`.
+  them, which tinygrad does not (its linearizer then refuses the kernel); over threads, `lanes and threads › an end reading the stores of an
+  end of its threads runs after it on CUDA`.
 
 ## D238. A tensor core says whether its accumulator chains
 
-- **tinygrad:** `renderer/tc.py` (`TensorCore`), whose fragments hold
-  the fact and whose comment states that "the k bits may be permuted,
-  identically in A and B", with no function that answers it.
+- **tinygrad:** `renderer/tc.py` `TensorCore`, whose fragments hold the
+  fact and whose comment states that the k bits may be permuted, identically
+  in A and B, with no function that answers it.
 - **tolk:** `Tc.chain`, `Tc.transpose`.
 - **Differs:** `Tc.chain x y op` says whether `x`'s accumulator is `y`'s
   operand `op` without leaving its lanes, the permutation of `K` that takes,
@@ -6032,14 +5594,12 @@ D199 fused independent calls of one domain into one kernel. A launch of bodies (
 
 ## D202. A join keeps its dependencies, and holds the state under it
 
-- **tinygrad:** `uop/symbolic.py` (`symbolic`'s ordering rule): an `AFTER` keeps
-  among its dependencies only effects, ranges, ends, back edges, linears and
-  stages, and replaces any other by its sources, an `AFTER` included.
-  `x.after(y')`, where `y'` is `y` once assigned, becomes `x` after `y`'s
-  kernel, which `schedule/__init__.py` `create_schedule` reads as a state of `x`
-  that `y`'s kernel writes. The rule came with `AFTER` itself, for a kernel's
-  register initialisation (`b8a9cce78`, `d1e2c393f`), and no commit states a
-  reason for the graph of kernels.
+- **tinygrad:** `uop/symbolic.py` `symbolic`'s ordering rule: an `AFTER`
+  keeps among its dependencies only effects, ranges, ends, back edges,
+  linears and stages, and replaces any other by its sources, an `AFTER`
+  included. `x.after(y')`, where `y'` is `y` once assigned, becomes `x` after
+  `y`'s kernel, which `schedule/__init__.py` `create_schedule` reads as a
+  state of `x` that `y`'s kernel writes.
 - **tolk:** `Shape.symbolic`'s ordering rule; `Ops.is_join`;
   `Prepare.sequence`; `Schedule.value_state`, `Schedule.swap` and the waits
   of `Schedule.schedule`; `Rangeify.unjoin` and `Rangeify.handle_after`.
@@ -6071,22 +5631,21 @@ D199 fused independent calls of one domain into one kernel. A launch of bodies (
   after the readers of the state it holds`, `› two joins over one state are no
   two writes` and `› a store reading its destination through a join takes it
   once`; and the programs `read_join_of_assigned` and
-  `read_join_of_overwritten`, whose recorded schedules and linears and whose
-  values (`create_linear_with_vars › values`).
+  `read_join_of_overwritten`, their recorded schedules, linears and values
+  (`create_linear_with_vars › values`).
 
 ## D250. Two stores of one value into one storage are two states
 
-- **tinygrad:** `schedule/prepare.py` (`earliest_rewrites`, "remove
-  two STOREs that store the same thing to the same place", for
+- **tinygrad:** `schedule/prepare.py` `earliest_rewrites` (removes two
+  STOREs that store the same thing to the same place, for
   `TestSchedule.test_dedup_assign`), which rewrites `a1.after(a1.store(v))`,
   where `a1` is `buf.after(buf.store(v))`, to `a1`: the program's second state
   becomes its first. A loop of a call that writes the second state and reads
   the first then takes one state at both arguments, and its schedule passes
   the call the storage at both, so the loop would read what each trip left
-  (tinygrad renders no loop of a call, and runs none). Without the rule, the
-  loop runs after the second store and before the overwrite of the first, a
-  cycle, which tinygrad refuses ("cycle detected in assign graph",
-  `schedule/__init__.py` `create_schedule`).
+  (tinygrad renders no loop of a call, and runs none). Without the rule, the loop runs after the second
+  store and before the overwrite of the first, a cycle, which tinygrad
+  refuses (`schedule/__init__.py` `create_schedule`).
 - **tolk:** `Prepare.earliest_rewrites`, which has no such rule.
 - **Differs:** a store of the value the store before it stored into its
   storage runs, and the state it makes is a state of its own, after the one
@@ -6107,37 +5666,35 @@ D199 fused independent calls of one domain into one kernel. A launch of bodies (
 
 ## D255. A kernel whose loop's bound loads from memory is not searched
 
-- **tinygrad:** `codegen/opt/postrange.py` (`apply_opts`), which searches every
-  kernel under BEAM, timing it on `args_from_ast`'s new buffers
-  (`args_from_ast`), their contents unspecified, and each variable at the middle
-  of its bounds.
+- **tinygrad:** `codegen/opt/postrange.py` `apply_opts` (searches every
+  kernel under BEAM, timing it on `args_from_ast`'s new buffers, their
+  contents unspecified, and each variable at the middle of its bounds).
 - **tolk:** `Postrange.apply_opts` (`bound_by_memory`), `Ops.bound_loads`.
 - **Differs:** a kernel with a loop bounded by a load, as `j < x[i]` (D220),
   takes the heuristic's optimisations when a search is asked for, as
   without one. tinygrad refuses such loops.
 - **Reason:** (e), following D220: the trips such a loop runs are what
-  memory holds, which no sample the search makes knows. On unspecified
-  bytes a search timed up to 2^31 - 1 trips a thread for an `int32` bound,
-  each candidate for minutes or more, and measured whatever the memory's
-  last user left; it then keeps its choice in the disk cache keyed by the
-  kernel alone. A call's own values are not the search's: it runs while
-  the program compiles, and its choice serves every later call. Timing on
-  zero bytes gives a stated count, but usually no trips, so the search
-  would rank candidates by the kernel without its loop and keep that
-  ranking as measured. No stated count fits every bound: the middle of an
-  `int64` bound clamped at 0 is 2^62.
+  memory holds, which no sample the search makes knows. On unspecified bytes
+  a search timed up to 2^31 - 1 trips a thread for an `int32` bound, each
+  candidate for minutes or more, measured whatever the memory's last user
+  left, and kept its choice in the disk cache keyed by the kernel alone. A
+  call's own values are not the search's: it runs while the program
+  compiles, and its choice serves every later call. Zero bytes usually give
+  no trips, so the search would rank the kernel without its loop. No stated
+  count fits every bound: the middle of an `int64` bound clamped at 0 is
+  2^62.
 - **Pinned by:** `Tolk.Search on the host`: `a kernel whose loop's bound
   loads from memory is not searched, and takes the heuristic's
   optimisations`.
+
 ## D210. A GPU merges bfloat16 accesses as float16's
 
-- **tinygrad:** `codegen/late/coalesce.py` (`memory_coalescing`: a GPU
-  merges adjacent accesses of `float`, `half`, `int`, `uint` and the 8-bit
-  floats into vectors of 4 and 2, and leaves `bfloat16` scalar; the same at
-  `6b7b018da`, `memory_coalescing`); `renderer/cstyle.py`
-  (`CUDARenderer.render_kernel`, whose 2-lane `bfloat16` vector, never merged
-  there, has no constructor: it renders `make_nv_bfloat162`, which
-  `cuda_bf16.h` names `make_bfloat162`).
+- **tinygrad:** `codegen/late/coalesce.py` `memory_coalescing` (a GPU merges
+  adjacent accesses of `float`, `half`, `int`, `uint` and the 8-bit floats
+  into vectors of 4 and 2, and leaves `bfloat16` scalar; the same at
+  `6b7b018da`); `renderer/cstyle.py` `CUDARenderer.render_kernel` (its
+  2-lane `bfloat16` vector, never merged there, has no constructor: it
+  renders `make_nv_bfloat162`, which `cuda_bf16.h` names `make_bfloat162`).
 - **tolk:** `Coalesce.memory_coalescing`; `Cstyle.cuda_kernel`.
 - **Differs:** on a renderer other than the CPU device's, adjacent `bfloat16`
   accesses merge into vectors of 4 and 2 as `float16`'s do, and the CUDA
@@ -6147,18 +5704,9 @@ D199 fused independent calls of one domain into one kernel. A launch of bodies (
   CUDA kernels could not build its 2-lane vector, a defect of its own.
 - **Reason:** (d): a tensor core's `bfloat16` operands, each loaded as a
   2-byte scalar, made every bfloat16 product on fudge's RTX 5000 Ada about 1.5
-  times slower than its float16 product of the same optimisations. GPU time,
-  three interleaved rounds, before and after: 2048 cubed 480-482 to 310-325
-  us, 4096 cubed 2908-2920 to 1824-1848 us, gpt-oss-20b's query projection at
-  a 512-token prompt (512 by 4096 over 2880) 274-277 to 191-201 us, its key
-  projection (512 by 512) 124-125 to 88-110 us, its output projection (512 by
-  2880 over 4096) 243-245 to 185-199 us, a 512 by 5760 product over 2880
-  308-312 to 249-260 us, attention's values at 2048 slots (float32 weights by
-  bfloat16 values) 1060-1081 to 913-931 us; the model's 512-token prefill
-  183.0-184.9 to 176.3-176.9 ms (two rounds). One layer's experts, which
-  decode their MXFP4 weights in place, overlap (4380-4497 and 4337-4441 us),
-  and so do attention's bfloat16 scores. Metal (`bfloat2`) and AMD (an
-  `ext_vector_type` of `__bf16`) render the same merges; unmeasured, as fudge
+  times slower than its float16 product of the same optimisations: 2048
+  cubed took 480-482 us, and takes 310-325. Metal (`bfloat2`) and AMD (an
+  `ext_vector_type` of `__bf16`) render the same merges, unmeasured, as fudge
   has neither.
 - **Pinned by:** the Coalesce suite's `lengths › on a GPU, eight consecutive
   loads are two loads of four, of bfloat16` and `› on the host, bfloat16 loads
@@ -6172,78 +5720,62 @@ D199 fused independent calls of one domain into one kernel. A launch of bodies (
 ## D211. Withdrawn
 
 N took one more upcast by 2 within 160 outputs a lane, after the core's upcasts
-of M and N. Staging (D262) took the kernels it was measured on, the contraction
-rows, which no longer reach it; what it still touched was gpt-oss-20b's routed
-experts, where a warp's larger tile costs: on fudge's RTX 5000 Ada, minima of
-four interleaved rounds, one layer's experts 3.54 ms with the rule and 2.77 ms
-without, and the 512-token prefill 141.0 ms and 121.8 ms.
+of M and N. Staging (D262) took the contraction rows it was measured on, and on
+gpt-oss-20b's routed experts, what it still touched, it cost (3.54 ms a layer
+against 2.77).
 
 ## D212. A contraction on a GPU's registers holds 8 by 8 outputs a thread
 
-- **tinygrad:** `codegen/opt/heuristic.py`
-  (`hand_coded_optimizations`: the upcast loop takes each axis once, by 3 or
-  4, 3 first where both divide it, while fewer than 32 lanes are upcast; the
-  unroll needs fewer than 64; the locals stop at 128 threads; the same at
-  `6b7b018da`).
+- **tinygrad:** `codegen/opt/heuristic.py` `hand_coded_optimizations` (the
+  upcast loop takes each axis once, by 3 or 4, 3 first where both divide it,
+  while fewer than 32 lanes are upcast; the unroll needs fewer than 64; the
+  locals stop at 128 threads; the same at `6b7b018da`).
 - **tolk:** `Heuristic.four_first`, `Heuristic.block`, `Heuristic.upcast_more`,
   `Heuristic.blocked_threads`, `Heuristic.locals` and `Heuristic.general`.
-- **Differs:** on a renderer with local indices, a contraction summed in 4
-  bytes or fewer whose upcast loop took two axes, each by 4 and leaving part
-  of its axis, each unread by some operand, takes a second upcast of each by 2
-  when 2 divides both and what is left of them holds a SIMD group of 32
-  threads in powers of two; its last unrollable axis is then unrolled by 4
-  where 4 divides it, and its workgroup takes at most 32 threads. A thread
-  then holds 8 by 8 outputs, and each element it loads feeds 8 of them. Where
-  one of the two upcasts took its axis whole, the output axis that the same
-  operands of the product read takes its second upcast, whatever a load after
-  the reduce, as a bias of each head, reads. A kernel upcast past those two
-  axes' 16 lanes, as the masked upcasts take a materialised mask's axes
-  whole, is not blocked: under a mask of 2 batches of 2 heads a thread would
-  hold 256 outputs. The
-  workgroup's threads are the local loop's where it lays a power of two of
-  them, at least 2, along the later of the two axes; else 16 or 8 lie along
-  the later axis, whichever pads it less, and the rest along the other, each
-  axis padded to its threads (PADTO) where they do not divide it, unless a pad
-  is refused. Only for such a contraction, upcast by nothing before the
-  loop, where its two reused output axes would pass that guard once upcast
-  by 4 and its blocked threads, a 64th of its outputs, number at least the
-  renderer's `core_threads`, does the upcast loop take an axis by 4 before
-  3.
+- **Differs:**
+  - on a renderer with local indices, a contraction summed in 4 bytes or
+    fewer whose upcast loop took two axes, each by 4 and leaving part of its
+    axis, each unread by some operand, takes a second upcast of each by 2
+    when 2 divides both and what is left of them holds a SIMD group of 32
+    threads in powers of two; its last unrollable axis is then unrolled by 4
+    where 4 divides it, and its workgroup takes at most 32 threads. A thread
+    then holds 8 by 8 outputs, and each element it loads feeds 8 of them;
+  - where one of the two upcasts took its axis whole, the output axis that
+    the same operands of the product read takes its second upcast, whatever
+    a load after the reduce, as a bias of each head, reads;
+  - a kernel upcast past those two axes' 16 lanes, as the masked upcasts
+    take a materialised mask's axes whole, is not blocked: under a mask of 2
+    batches of 2 heads a thread would hold 256 outputs;
+  - the workgroup's threads are the local loop's where it lays a power of
+    two of them, at least 2, along the later of the two axes; else 16 or 8
+    lie along the later axis, whichever pads it less, and the rest along the
+    other, each axis padded to its threads (PADTO) where they do not divide
+    it, unless a pad is refused. PADTO refuses past four times, and the rule
+    does not choose the least pad;
+  - only for such a contraction, upcast by nothing before the loop, where
+    its two reused output axes would pass that guard once upcast by 4 and
+    its blocked threads, a 64th of its outputs, number at least the
+    renderer's `core_threads`, does the upcast loop take an axis by 4
+    before 3;
+  - a sum in 8 bytes is not blocked: 64 accumulators of 8 bytes and their
+    operands would pass a thread's 255 registers.
 - **Reason:** (d): float32 contractions on fudge's RTX 5000 Ada, which take no
   tensor core (TF32 is off), ran at 6 TFLOP/s of the part's 65 with 4 by 4
-  outputs a thread in workgroups of 128 threads. More outputs a thread cover
-  the loads' latency with fewer threads in flight (Volkov, "Better Performance
-  at Lower Occupancy", GTC 2010, slide 48: "This often can be accomplished by
-  computing multiple outputs per thread"); CUTLASS's SIMT default holds 8 by 8
-  a thread. GPU time, three interleaved rounds, against the rules before it:
-  1024 cubed 361-375 to 142-161 us, 2048 cubed 2799-2810 to 846-855 us, 4096
-  cubed 19.3-19.8 to 6.0-6.7 ms, 8 products of 512 cubed 416-433 to 119-141
-  us, attention's scores at 2048 positions 651-660 to 543-548 us; attention's
-  values (`h i j, h j d -> h i d`, float32 weights) 842-843 and 837-854 us,
-  read-bound. No reference fixes the threads of a workgroup: 32 is measured.
-  Attention's scores (`h i d, h j d -> h i j`, 8 heads of 64 at 2048
-  positions) ran faster at 64 threads (365-373 against 527-534 us, three
-  rounds on main before device facts landed), the products of 1024 to 4096 and attention's
-  values at 32; that row is the band. Metal and AMD take the same rule,
-  unmeasured, as fudge has neither. Under `--fmad=false` (D25) the unrolled
-  reduce renders a multiply and three fused multiply-adds per four products,
-  which caps these kernels below the part's peak whatever their layout.
-  4 before 3 and the padding: tinygrad's 3 first left products whose output
-  axes 3 divides at 4 by 3 outputs a thread, and blocked products whose
-  halved axis holds no power of two of threads (440 columns, 55 runs of 8)
-  took the SIMD group along the other axis. GPU kernel time on fudge,
-  minimum of 3 interleaved runs a side at load 11-36: 262144 x 440 x 1320
-  53.6 to 14.1 ms, 262144 x 256 x 768 17.7 to 4.57 ms, 262144 x 144 x 144
-  1.93 to 0.71 ms, 262144 x 440 x 440 20.6 to 4.85 ms (15-24.4 TFLOP/s,
-  against cuBLAS's 15.0, 4.51, 0.64 and 5.5 ms); products the loop laid
-  already (2048 cubed, 262144 x 256 x 1024) and products of 48 rows by
-  1024 keep their kernels. The width that takes the heads' second upcast:
-  a projection of 16384 rows by 440 into 4 heads of 110 took 331 us, 2549 at
-  4 by 4 and 859 where main's stale index doubled it; attention's scores
-  with biases that skip the heads, whose queries the same operands do not
-  read, keep 4 by 4 (138 us). The pad adds work: 440 columns to 448, 1320 to
-  1344, 432 to 448, 144 to 192 (a third), 72 to 128; PADTO refuses past four
-  times, and the rule does not choose the least.
+  outputs a thread in workgroups of 128 threads; more outputs a thread cover
+  the loads' latency with fewer threads in flight, and CUTLASS's SIMT default
+  holds 8 by 8. 2048 cubed took 2799-2810 us, and takes 846-855. No reference
+  fixes a workgroup's threads, and 32 is measured: attention's scores ran faster
+  at 64 threads, the products of 1024 to 4096 and attention's values at 32,
+  and the scores' row is the band. 4 before 3 and the padding: tinygrad's 3 first left products
+  whose output axes 3 divides at 4 by 3 outputs a thread, and blocked
+  products whose halved axis holds no power of two of threads took the SIMD
+  group along the other axis (262144 x 440 x 1320 took 53.6 ms, and takes
+  14.1). The heads' second upcast: a projection of 16384 rows by 440 into 4
+  heads of 110 took 2549 us at 4 by 4, and takes 331. Metal and AMD take the
+  same rule, unmeasured, as fudge has neither. Under `--fmad=false` (D25)
+  the unrolled reduce renders a multiply and three fused multiply-adds per
+  four products, which caps these kernels below the part's peak whatever
+  their layout.
 - **Pinned by:** `Tolk.Heuristic`'s `a contraction in registers` cases
   (`matmul`, `matmul_256` and `scores` blocked on CUDA, `matmul_256` on AMD;
   `matmul_768`, upcast by 4, and `matmul_440`, padded, blocked; `matmul_1000`,
@@ -6252,24 +5784,22 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   take their 4 heads whole, and `scores_masked`, whose masked upcasts take
   its batches and heads, not blocked, nor, at 1536 positions, taken by 4
   before 3; `heads_projection` and `heads_projection_biased`, plus a bias of
-  each head, blocked over the heads' width), with the
-  layouts in the suite's `.tolk` files; rune's
-  `test_jit_gpu` `products › a float32 matmul is within its bound of the exact
-  product` at extents of 64 and 128 summed over 13 and 52, and padded at
-  256 x 13 x 40, `a blocked product padded to its threads, plus a bias` and
-  `a projection into heads, blocked over their width, is within its bound`,
-  on the machine's first GPU; the tolk bench's `contract/f32-2048` and
-  `contract/qk-f32-2048` rows and rune's `Cuda/matmul-float32-16384x440x1320`
-  and `Cuda/matmul-float32-heads-16384x440x4x110` on fudge, their baselines
-  pending the scheduled re-record. A sum in 8
-  bytes is not blocked: 64 accumulators of 8 bytes and their operands would
-  pass a thread's 255 registers.
+  each head, blocked over the heads' width), with the layouts in the suite's
+  `.tolk` files; rune's `test_jit_gpu` `products › a float32 matmul is within
+  its bound of the exact product` at extents of 64 and 128 summed over 13 and
+  52, and padded at 256 x 13 x 40, `a blocked product padded to its threads,
+  plus a bias` and `a projection into heads, blocked over their width, is
+  within its bound`, on the machine's first GPU; the tolk bench's
+  `contract/f32-2048` and `contract/qk-f32-2048` rows and rune's
+  `Cuda/matmul-float32-16384x440x1320` and
+  `Cuda/matmul-float32-heads-16384x440x4x110` on fudge, their baselines
+  pending the scheduled re-record.
 
 ## D221. A part of a pattern that names nothing gives one naming
 
-- **tinygrad:** `uop/ops.py` (`UPat.match`, which extends its
-  result with a store for each ordering of each source pattern, so a store
-  comes back once for each way a part that names nothing matches).
+- **tinygrad:** `uop/ops.py` `UPat.match` (extends its result with a store
+  for each ordering of each source pattern, so a store comes back once for
+  each way a part that names nothing matches).
 - **tolk:** `Ops.Upat.first`, `Ops.Upat.alternatives` and so
   `Ops.Upat.match_` and `Ops.Pattern_matcher.rewrite`.
 - **Differs:** ways of matching that differ only within a part of the
@@ -6279,14 +5809,10 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   same when its function's result depends only on the naming.
 - **Reason:** (d): constant folding's rules, repeated over every source of
   an operation whose sources may each be a constant or a stack of them,
-  enumerate orderings that name nothing. On fudge, tinygrad's naming for
-  each ordering makes rune's first compile of float64 `betaincinv`'s
-  gradient (the compile bench's `special/betaincinv-grad-f64`, a process of
-  its own) allocate 216.3 M words where one naming allocates 190.2 M,
-  counted at the process's exit at `s=64M`. The tolk bench's fudge rows of
-  exact words see it: `sort/kernel_graph-fresh` allocates 576 k words
-  against 491 k, `gpt_oss_prefill/kernel_graph-fresh` 2.12 M against 1.96 M
-  and `gpt_oss_prefill/codegen-fresh` 30.4 M against 27.7 M.
+  enumerate orderings that name nothing. On fudge, a naming for each
+  ordering makes rune's first compile of float64 `betaincinv`'s gradient
+  (the compile bench's `special/betaincinv-grad-f64`) allocate 216.3 M words
+  where one naming allocates 190.2 M.
 - **Pinned by:** the Ops suite: `Pattern_matcher › a part of a pattern that
   names nothing gives one naming`; the tolk bench's `sort/kernel_graph-fresh`,
   `gpt_oss_prefill/kernel_graph-fresh` and `gpt_oss_prefill/codegen-fresh`
@@ -6294,8 +5820,8 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
 
 ## D240. The host's output upcasts take no floor of elements
 
-- **tinygrad:** `codegen/opt/heuristic.py` (`hand_coded_optimizations`'
-  upcasts of output axes while the upcastable axes hold 1024 elements).
+- **tinygrad:** `codegen/opt/heuristic.py` `hand_coded_optimizations`
+  (upcasts output axes while the upcastable axes hold 1024 elements).
 - **tolk:** `Heuristic.enough_work` and `Heuristic.upcast_more`.
 - **Differs:** on the host (a renderer that knows its vector registers,
   D186), the contiguous upcast and the upcasts by 3, 4 or 2 apply however
@@ -6306,31 +5832,22 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
 - **Reason:** (d): rune's host products of few outputs over long sums,
   gpt-oss's decode projections and lorenz_simple's step. On the host an
   upcast takes lanes that share a load and run independent chains, where a
-  launch's blocks (D80) would each repeat the load. A floor counted in the
-  split loop's iterations, at least 16 or the blocks the work fills, was
-  slower than none on every kernel it bound (fudge, loaded, both orders, all
-  cores): 64 sums of 2^15 bfloat16 values took 0.17-0.19 ms with none and
-  0.65-1.6 ms with it, the sums of 64 columns over 2^17 rows 2.6-3.5 ms and
-  5.4-9.1 ms, 8 products of 2^20 values 1.04-1.25 ms in 2 blocks against
-  1.18-1.32 in 8. Against the 1024 floor, one P-core (`taskset -c 5`):
-  gpt_oss_kv 1508-2293 µs to 89-98, lorenz's `r_32_3_2_4_3_400` 48-50 µs
-  to 25.6-26.2, `rows_m4` 8.3-8.5 µs to 3.0-3.1, `attention_values`
-  1356-2118 µs to 277-283; all cores, the column sums 17.9-20.3 ms to
-  3.1-3.4, the bfloat16 sums 0.95-1.8 ms to 0.10-0.17, the 8 products
-  2.26-3.02 ms to 2.28-2.89. Measured under load only: whether a
-  memory-bound product of few outputs loses its blocks on a quiet host is
-  for the scheduled quiet re-record. The compiler's own passes do more work
-  on the larger programs: the tolk bench's `linearize`, `render` and `warm`
-  rows of its recorded programs allocate 1.3-2.9 times the words,
-  `gpt_oss_decode/codegen` 1.7 times, `cumsum`'s rows 0.6-0.7 times.
+  launch's blocks (D80) would each repeat the load. Against the 1024 floor,
+  on one of fudge's P-cores, `gpt_oss_kv` took 1508-2293 µs, and takes 89-98.
+  A floor counted in the split loop's iterations, at least 16 or the blocks
+  the work fills, was slower than none on every kernel it bound. Measured
+  under load only: whether a memory-bound product of few outputs loses its
+  blocks on a quiet host is for the scheduled quiet re-record. The cost: the
+  compiler's own passes allocate 1.3-2.9 times the words on the tolk bench's
+  `linearize`, `render` and `warm` rows of its recorded programs.
 - **Pinned by:** the Heuristic suite's `the host's lanes › on AVX2 a
   recorded host kernel of few outputs takes its lanes` and `the
   optimisations chosen are tinygrad's › … › the optimised kernel`, the
   `cpu` and `avx2` cases, among them `matvec_tall`, `vecmat_long` and
-  `column_sums`; the tolk
-  bench's `host/gpt_oss_kv/heuristic`, `host/vecmat_1000/heuristic`,
-  `host/matvec_tall/heuristic` and `lorenz/r_32_3_2_4_3_400/heuristic`,
-  whose fudge baselines the scheduled re-record records.
+  `column_sums`; the tolk bench's `host/gpt_oss_kv/heuristic`,
+  `host/vecmat_1000/heuristic`, `host/matvec_tall/heuristic` and
+  `lorenz/r_32_3_2_4_3_400/heuristic`, their fudge baselines pending the
+  scheduled re-record.
 
 ## D241. A host conversion takes at most 64 lanes, an iteration 512
 
@@ -6350,132 +5867,59 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   unrolled ones among them; an output upcast counts too the lanes an unroll
   of the last unrollable axis would take, the axis whole when it holds at
   most 32, 4 otherwise, as tinygrad's 32 output lanes leave room below its
-  64 for the unroll.
-- **Reason:** (d): on fudge's AVX2 each row below that the bound changes takes
-  no unroll of its sum with it, and without it an unroll by 4, or
-  `conv_half`'s window of 3 whole. Without the bound (the iteration's kept),
-  one P-core, each round one process alternating the two over 151 samples,
-  minima of six rounds at load 7-21: `gpt_oss_kv` 218-228 µs against 408-429
-  (1.87-1.89 times, every round), `matmul_half` 536-558 against 582-606
-  (1.09); of four rounds at load 4-9, `batched_matmul_half` 276-288 against
-  299-311 (1.08). It costs `conv_half`, 1.27 times as fast without: 1750-1823
-  µs against 1376-1435, every round. `gpt_oss_qkv`'s times scatter (0.63-1.35
-  across rounds) and show nothing. On programs the bound does not change, in
-  the same processes, the ratio was 0.999-1.006 for `conv`, 0.996-1.004 for
-  `matmul`, and 0.96-1.02 for `vecmat_1000`, whose kernel converts nothing.
-  The lanes stand for the unroll's cost, whose cause is not measured: an
-  earlier run of `gpt_oss_kv` took 89-98 µs with no unroll, 332-336 at 32
-  lanes by 4 and 338-344 at 16 by 4, which is 64 lanes and within the bound.
-  The routed products read their block's expert as a row's quotient and keep
-  their unroll by 8, which ran 1.35 times as fast as by 2.
-
-  Clang's time, which the bound was written for, is now a smaller gain. CPU
-  seconds of the process tree for a cold compile (lowering, rendering and
-  Clang, one P-core, medians of twelve, eight for the last two) with the bound
-  against without: `conv_half` 0.070 against 0.088, `matmul_half` 0.044
-  against 0.076, `gpt_oss_kv` 0.039 against 0.064, `batched_matmul_half` 0.050
-  against 0.086, `gpt_oss_qkv` 0.040 against 0.065: 1.3-1.7 times, 18-36 ms a
-  kernel. rune's compile rows, one cold round of the whole process:
-  `products/segments-grad` 0.58 s against 0.88, `products/vecmat-bf16` 0.12
-  against 0.20. The 100 times once stated for `conv_half` was against a kernel
-  with neither the iteration's bound nor D141's vectors of 64 lanes, which
-  came later. The bound's 70 lines pay for gpt_oss_kv's 1.9 times on gpt-oss's
-  decode path, the half-precision products' 1.08 and those compile times,
-  against 1.27 times on `conv_half`, a kernel of the Heuristic suite. These
-  rows are 5 of the about 50 recorded (kernel, target) pairs it changes.
-
-  The iteration's lanes: Clang's time grows much faster than them where
-  they put together vectors from many loaded rows, 97% of it in InstCombine
-  and VectorCombine (`-ftime-report`). rune's `Lower_reduce › work › a
-  Contracting contraction of 8 groups works in blocks` builds
-  `r_23_4_16_4_16`, 16 by 4 output lanes by its 16 rows unrolled whole,
-  each row loaded at an index read from memory. Clang 19 for fudge's
-  processor (CPU time) took 5.3-5.6 s on it, and over its other upcasts and
-  unrolls 0.04-0.05 s at 64 lanes, 0.07-0.09 at 128, 0.17-0.23 at 256 and
-  0.9-1.1 at 512. It now takes 32 output lanes by its rows, 512 lanes, in
-  1.1 s; it runs as fast (22.2-22.8 µs against 22.4, one P-core) and keeps
-  its rows' loads out of its output loop, which an unroll by 4 or none
-  would load four times (73,600 estimated bytes against 153,088, past that
-  test's bound). Of the 15,220 host kernels the tolk, rune and jera suites
-  optimise, 23 change, all rune's: of the 17 past 512 lanes, a product of
-  64 output lanes summed over 32 values unrolled whole (2048 lanes) ran
-  605-629 µs and 517-533 with 16 output lanes, one over 16 values (1024)
-  700-726 and 670-719, and the rest tie; past 256 lanes the next slowest
-  compiles in 0.24 s, where 0.44 s was. The cost: the Heuristic suite's
-  `conv` on AVX2 unrolls its 3 by 3 window by 3 alone, 192 lanes against
-  576, and runs 1.12 times as long (620 µs against 554, one P-core), though
-  Clang takes 0.08 s on it at 576: the lanes stand for Clang's time only
-  as a bound. 256 lanes would hold every kernel within 0.25 s, but take
-  the routed MXFP4 decodes (`decoded_rows_*`, gpt-oss's experts) from their
-  unroll by 8 to 4, and `matmul_1000` ran 1.02-1.06 times as long there.
-  Computing a vector operation wider than 256 lanes lane by lane instead,
-  in the renderer (D141), compiled the contraction in 0.26 s but ran it in
-  25.5 µs against 21.4 and `paired_products` in 177 µs against 113.
-
-  Clang computes at most 64 lanes of a vector operation at once (D141's
-  `Renderer.vector_lanes`): an operation of more lanes is vectors of 64 and a
-  last of the rest. Of the 15,220 host kernels, 54 hold one; Clang's CPU time
-  on them falls from 5.8 s to 3.8 s in all, the contraction's from 1.06 s
-  to 0.11 s, `paired_products`' from 0.19 s to 0.06 s, and the slowest's
-  from 1.06 s to 0.19 s, none slower (two compiles each, interleaved, one
-  P-core); rune's compile bench row `products/segments-grad` takes 0.53-0.56
-  s cold against 1.45-1.46 s. Run times hold: the tolk bench's
-  `host/paired_products/heuristic` 110-119 µs against 113-120 (16 runs,
-  interleaved, one P-core), the contraction 21.5 µs against 23.2-24.2, and
-  rune's bench rows allocate the same words. Vectors of 16 cut Clang further
-  past 64 lanes (the contraction 0.07 s) but not below: on the 589 kernels of
-  17 to 64 lanes it took 19.6 s against 19.9, `conv_half` and `gpt_oss_kv`
-  ran 1.5% and 1.2% longer in each of ten interleaved pairs, and the compile
-  bench's `lanes/held-fp8-36` 1.30-1.36 times as long. A rest of one lane
-  would be computed apart, which made Clang's loop strength reduction take
-  seconds (D141): the last 65 lanes are vectors of 33 and 32. In the tolk
-  bench's stages, the split makes `gpt_oss_decode/codegen` allocate 0.7%
-  more words, building the vectors of 64 for operations whose lanes later
-  fold apart (its instructions are the same), and `adam_mlp`'s linearize,
-  render and warm 4.5-6% fewer. `conv` holds no vector that wide, so its
-  lanes are the bound's alone: at 576 it ran 529-555 µs against 596-604,
-  but a bound of 1024 took three of rune's products from 16 output lanes
-  unrolled whole to 32 lanes and no unroll, 2724-2726 µs against 2301-2310,
-  2416-2417 against 2029-2078 and 2948-3004 against 2754-2848, and another
-  to 1024 lanes, 672-685 µs against 659-669.
-
-  The iteration's bound stays since those vectors of 64 lanes held the
-  compile time.
-  Without it, of 5,240 recorded (kernel, target) pairs 4 change: `conv` on
-  AVX2 unrolls both axes of its window, 570 µs against 672, and rune's
-  contraction of 8 groups runs in the same 21.0 µs, but a float32 product of
-  64 by 128 rows over 32 values, a layer's matmul, goes from 16 output lanes
-  unrolled whole to 64 by the sum's 32, 78 µs against 62, and Clang's
-  0.33-0.5 s against 0.13-0.2; its row `Jit/grad-of-jit-mlp-float32` takes
-  215-226 µs against 201-204, and `products/segments-grad` and
-  `linalg/eigh-f64-32x32` compile 1.12 times as long, on a row users run.
+  64 for the unroll. Clang computes at most 64 lanes of a vector operation
+  at once (D141's `Renderer.vector_lanes`): an operation of more lanes is
+  vectors of 64 and a last of the rest, and the last 65 lanes are vectors of
+  33 and 32, since a rest of one lane would be computed apart, which made
+  Clang's loop strength reduction take seconds (D141).
+- **Reason:** (d), one P-core of fudge's AVX2:
+  - the conversions' bound: without it `gpt_oss_kv` takes an unroll of its
+    sum and 408-429 µs against 218-228, on gpt-oss's decode path; it costs
+    `conv_half`, a kernel of the Heuristic suite, 1.27 times. The lanes stand
+    for the unroll's cost, whose cause is not measured;
+  - the iteration's bound: Clang's time grows much faster than the lanes
+    where they put together vectors from many loaded rows. rune's
+    contraction of 8 groups (`r_23_4_16_4_16`, 16 by 4 output lanes by its
+    16 rows unrolled whole) took Clang 5.3-5.6 s, and at 512 lanes takes 1.1
+    s, runs as fast and keeps its rows' loads out of its output loop, which
+    an unroll by 4 or none would load four times, past the byte bound of
+    rune's `Lower_reduce › work › a Contracting contraction of 8 groups works
+    in blocks` (73,600 estimated bytes against 153,088). It costs the Heuristic suite's `conv`, whose window
+    unrolls by 3 alone, 1.12 times. 256 lanes would take the routed MXFP4
+    decodes (`decoded_rows_*`, gpt-oss's experts) from their unroll by 8 to
+    4; 1024 took three of rune's products from 16 output lanes unrolled whole
+    to 32 lanes and no unroll, 2724-2726 µs against 2301-2310. With the vectors of 64 the bound still stays: without it a layer's
+    float32 matmul goes to 64 by 32 lanes and rune's
+    `Jit/grad-of-jit-mlp-float32` takes 215-226 µs against 201-204;
+  - the vectors of 64: rune's compile bench row `products/segments-grad`
+    takes 0.53-0.56 s cold against 1.45-1.46 s with run times held. Vectors
+    of 16 made the compile bench's `lanes/held-fp8-36` 1.30-1.36 times as
+    long.
 - **Pinned by:** the Heuristic suite's `the host's lanes › on AVX2 a
   recorded host kernel's conversions take their lanes` and `› on the host a
   conversion computes at most 64 lanes`, over every recorded kernel and
   lorenz_simple's on four register files, and the host cases of `the
   optimisations chosen are tinygrad's`; rune's compile bench row
   `products/vecmat-bf16` and the tolk bench's `host/gpt_oss_kv/heuristic`,
-  whose fudge baselines the scheduled re-record records. The iteration: the
+  their fudge baselines pending the scheduled re-record. The iteration: the
   Heuristic suite's `the host's lanes › on the host an iteration computes at
-  most 512 lanes`, over the same kernels and
-  rune's contraction of 8 groups (`contracting_groups.graph`), `› on AVX2
-  an output upcast leaves room for the whole unroll of an axis of at most
-  32` and `› an output upcast leaves 4 lanes for the unroll of an axis past
-  32`; rune's `Lower_reduce › work › a Contracting contraction of 8 groups
-  works in blocks`; rune's compile bench row `products/segments-grad` (5.5
-  s cold before, 1.5 s after, 0.55 s with vectors of at most 64 lanes, on
-  fudge), whose baseline, with the tolk bench's `host/conv/heuristic`, the
-  scheduled re-record records. The vectors: the Heuristic suite's `the
-  host's lanes › on AVX2 a recorded host kernel's program declares vectors
-  of at most 64 lanes`, and the Codegen suite's `vectors in programs › a
-  host operation of any lanes computes vectors of at most 64 and writes what
-  its kernel writes`.
+  most 512 lanes`, over the same kernels and rune's contraction of 8 groups
+  (`contracting_groups.graph`), `› on AVX2 an output upcast leaves room for
+  the whole unroll of an axis of at most 32` and `› an output upcast leaves 4
+  lanes for the unroll of an axis past 32`; rune's `Lower_reduce › work › a
+  Contracting contraction of 8 groups works in blocks`; rune's compile bench
+  row `products/segments-grad` and the tolk bench's `host/conv/heuristic`,
+  their baselines pending the scheduled re-record. The vectors: the Heuristic
+  suite's `the host's lanes › on AVX2 a recorded host kernel's program
+  declares vectors of at most 64 lanes`, and the Codegen suite's `vectors in
+  programs › a host operation of any lanes computes vectors of at most 64 and
+  writes what its kernel writes`.
 
 ## D260. A tensor core accumulates its running sum at the reduce
 
-- **tinygrad:** `codegen/__init__.py` (`pm_wmma_add`: an add of a WMMA, of a
-  permute of one, or of a permute of a reshape of one, folds the addend into the
-  core's accumulator) and its use in `pm_expand_broadcast` and
+- **tinygrad:** `codegen/__init__.py` `pm_wmma_add` (an add of a WMMA, of a
+  permute of one, or of a permute of a reshape of one, folds the addend into
+  the core's accumulator) and its use in `pm_expand_broadcast` and
   `pm_reduce_local`.
 - **tolk:** `Codegen.lower_reduce`, with `Codegen.into_core` and
   `Codegen.core_at`.
@@ -6491,15 +5935,11 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   K summed its cores apart before adding them.
 - **Reason:** (d) and (e)'s bits: a core's sum is one sequence of the core's
   steps at any split, so a contraction's bits no longer change with its
-  opts' unroll or with shared-memory staging, which moves only operands. On
-  Ada's cores, which truncate (Khattak and Mikaitis, arXiv 2512.07004v4,
-  §4.1.2), the fold is D29's measured error: 0.497 of `Nx.contract`'s bound
-  on rune's adversarial rows at `K = 2880` and `2048`, against 0.013 to
-  0.028 unfolded; both within the bound. A core accumulating two steps a
-  trip (K unrolled by 2) beat the same kernel unfolded by 1.06 to 1.14 on
-  bfloat16 products of 512 by 512 by 2880, 512 by 4096 by 2880 and 2048
-  cubed (paired medians on fudge's RTX 5000 Ada, staged as the
-  shared-memory staging design runs them).
+  opts' unroll or with shared-memory staging. On Ada's cores, which
+  truncate, the fold's error is 0.497 of `Nx.contract`'s bound on rune's
+  adversarial rows (D29), within the bound. A core accumulating two steps a
+  trip beat the same kernel unfolded by 1.06 to 1.14 on bfloat16 products of
+  512 by 512 by 2880, 512 by 4096 by 2880 and 2048 cubed on fudge.
 - **Pinned by:** the Codegen suite, `tensor cores on CUDA › a product summed
   in float32 has the same bits whether the core takes one or two steps of K
   a trip` (fails unfolded), `tensor-core accumulators › the running sum
@@ -6509,10 +5949,9 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
 
 ## D261. 16-bit floats and bytes copied into shared memory merge to 16 bytes
 
-- **tinygrad:** `codegen/late/coalesce.py` (`memory_coalescing`: a GPU
-  merges `half` accesses into vectors of 8 under `ALLOW_HALF8`, an
-  environment setting off by default, and of 4 and 2 otherwise; it merges
-  no GPU bytes).
+- **tinygrad:** `codegen/late/coalesce.py` `memory_coalescing` (a GPU merges
+  `half` accesses into vectors of 8 under `ALLOW_HALF8`, an environment
+  setting off by default, and of 4 and 2 otherwise; it merges no GPU bytes).
 - **tolk:** `Coalesce.memory_coalescing`; `Renderer.t.half8`, set by
   `Cstyle.cuda` and `Cstyle.hip`; `Renderer.t.byte_words` and `Cstyle`'s
   `word`, CUDA's. `Setting.allow_half8` is withdrawn.
@@ -6530,39 +5969,23 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
 - **Reason:** (d): a tensor core's operands staged through shared memory
   (D262) are copied 16 bytes a thread, which PTX's `cp.async` copies in one
   instruction (D263); 8 bytes at a time they take twice the copies and no
-  asynchronous one. Elsewhere 16 bytes gained as often as they lost. Merged
-  everywhere, they changed three kernels of gpt-oss-20b's prefill of 512
-  tokens and no staged contraction (2048 cubed and the projections compile to
-  the same source either way). GPU time on fudge's RTX 5000 Ada through nsys,
-  three interleaved rounds, us a launch, 16 bytes against 8: the full
-  attention layers' product of probabilities by values (12 a prefill)
-  785-791 against 562-564, its sliding-window twin 769-772 against 798-800,
-  the router 27.8-28.0 against 28.9-29.0; kaun's `GptOss/prefill-512`
-  174.0-176.7 ms against 171.8-172.9. In the full product both forms hold
-  128 registers, and ptxas issues 6 of its loop's 12 loads at the top with
-  16-byte value loads, against 12 of 16 with 8-byte ones, the rest of the
-  probabilities' loads one at a time between the multiply-adds. Run alone,
-  with its operands moved by 0 to 3072 bytes, the 16-byte form takes
-  737-773 us and the 8-byte form 709-870: more loads in flight pay where the
-  probabilities' addresses spread over the memory's channels, as they do in
-  the prefill.
-
-  On RDNA4 the rule leaves unstaged operands alone. A lane's operand of the
+  asynchronous one. A decoded operand's codes and held scales (D262) are
+  copied the same way, one `cp.async` each, where 4 bytes take four copies
+  and no asynchronous one. Elsewhere 16 bytes gained as often as they lost:
+  merged everywhere, they made gpt-oss-20b's attention product of
+  probabilities by values 785-791 us against 562-564 on fudge. On RDNA4 the
+  rule leaves unstaged operands alone: a lane's operand of the
   16-by-16-by-16 core is two runs of four 16-bit values, eight elements
   apart, so 8 bytes is the widest contiguous load. On nonnormal's R9700
   (gfx1201), float16 and bfloat16 products of 2048 cubed, weights in either
   layout, staged and unstaged, compile to the same HIP source and the same
-  comgr instructions with every access merged to 16 bytes. RDNA3 and CDNA
-  are unmeasured. Bytes: a decoded operand's codes and held scales (D262)
-  are copied 16 bytes a thread, one `cp.async` each; merged into 4 they
-  take four copies a thread and no asynchronous one.
+  comgr instructions with every access merged to 16 bytes. RDNA3 and CDNA are unmeasured.
 - **Pinned by:** the Stage suite's `values › a staged dense MXFP4 product
   …` (its codes copied as `uint4`); the Coalesce suite's `vectors of eight
-  16-bit floats` group
-  (`the runs of eight 16-bit floats' loads and stores`, of `float16` and
-  `bfloat16`; `half_cuda`, `half8_cuda` and `accesses_cuda`, generated from
-  tinygrad with this rule); the Stage suite's `sources` (`cp.async`); kaun's
-  `GptOss/prefill-512`.
+  16-bit floats` group (`the runs of eight 16-bit floats' loads and stores`,
+  of `float16` and `bfloat16`; `half_cuda`, `half8_cuda` and
+  `accesses_cuda`, generated from tinygrad with this rule); the Stage
+  suite's `sources` (`cp.async`); kaun's `GptOss/prefill-512`.
 
 ## D262. A tensor core's operands are staged through shared memory
 
@@ -6575,284 +5998,171 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   `Heuristic.staged_tile`; `Chains`, the blocks of a sum's running sums
   that codegen and the tile both read; `Renderer.t.async_copy`, `units`
   and `in_flight`; `Setting.stage`.
-- **Differs:** after the opts, each core operand that reads global memory
-  through an index whose terms reading the workgroup's threads and lanes form
-  a dense box of strided dimensions is copied by every thread of the
-  workgroup into shared memory, 16 bytes a copy where its innermost
-  dimension is contiguous, in rows whose 16-byte chunks are permuted by an
-  XOR with the row (`line` 128 bytes of 32 banks, `copy` 16 bytes: CuTe's
-  `Swizzle` and Triton's `perPhase`, generalized to rows of any even count of
-  chunks); the core reads its fragments back through the same layout. An
-  operand the kernel computes elementwise from loads and does not decode, as
-  an attention output times the share of each head's row its sink leaves,
-  has its loads copied where each through which it reads the threads and
-  lanes has such a tile: those whose tiles step through the loops of its
-  tile of most elements, where those are the loops of each operand that is
-  a load; the others, as the per-head share while the core's loop runs
-  within a head, stay loads, and the operand computes on the copies. A
-  tile's loops are its serial ranges of more than one trip; a range of one
-  trip, as K unrolled whole leaves, is no tile's loop. Two stages where the
-  renderer copies asynchronously and they fit `shared_max`, the next trip's
-  copy issued before this trip's reads and ordered so by the slot's offset,
-  an AFTER of the trip at two trips, and the first trip's copy pinned, by
-  an AFTER of their ranges, inside every serial loop the outermost loop runs
-  in, so that each run of the loop copies it; one stage otherwise. A tile
-  whose index steps through a nest of loops copies the next trip of the
-  nest in two stages where one node closes the loops, their extents are
-  constant and it closes no other loop of more than one trip inside the
-  outermost: its trips are counted outermost first, the next trip's
-  loops being its digits in their extents, the outermost without a
-  remainder, so that the trip past the last fails the copy's gate; a tile
-  whose loops are no such nest copies in one stage. The barriers are those the implicit rules place. A
-  gated operand (PADTO's validity, or a core's selection of 0) copies 0
-  where its gate fails, its thread ranges rebuilt from the tile's
-  coordinates. A staged core takes its own tile: 2 by 2 warps of 64 by 64,
-  the warp tile halved, M then N, to 32 by 32 while the kernel keeps fewer
-  than `core_threads / stages` threads, its stages planned as
-  `Stage.operands` copies them, at the types its loads copy and beside the
-  kernel's earlier cores' stages; past that plan, where the renderer states
-  `units` and `in_flight`, the core has two stages and the kernel's
-  workgroups are known, down to the core's own tile among plans whose
-  accumulators a thread blocks (at most `Chains.held`, 320 bytes), the plan
-  whose busiest compute unit copies the fewest bytes a value of K,
-  ⌈workgroups / units⌉ workgroups at the bytes staging copies; K unrolled
-  to the least depth from 32 at which the busiest unit's copies of a trip
-  reach `in_flight`, among the depths that keep the stages and the blocks of
-  the sum's running sums where K is the sum's innermost range (`Chains`,
-  whose walk codegen's blocks are), or the deepest that keeps them; K
-  unrolled to chunks of 32 elsewhere, and never split among a
-  workgroup's warps. `in_flight` is Volkov's estimate of the bytes in flight
-  that sustain nine tenths of a peak ("Understanding Latency Hiding on
-  GPUs", UCB/EECS-2016-143, Sec. 6, printed p. 84: "about 1.3x" minimum
-  latency times peak throughput), 1.3 times a copy's least trip from memory
-  on a small grid, 0.32 us, times one SM's peak fill from one workgroup's
-  copies, 44 GB/s (fudge's `lat.cu` microbenchmark of 16-byte `cp.async`
-  copies), 18304 bytes; `units` is the RTX 5000 Ada's 100 SMs. Both are
-  fixed for sm_89 and 0 elsewhere, which keeps the plans above. No sum's
-  order follows the units: every plan the rule takes blocks its sums as the
-  plan above does, and every depth keeps the blocks, so each output sums
-  the same terms in the same order, and a part of another count runs the
-  same programs, at another speed. Its rows stay within a run of rows that read one value of an operand, a
-  warp's tiles of rows falling by one until they fit it, so that a run of
-  three tiles takes one warp, and the
-  heuristic takes it only where `Stage.admits` the kernel as the core leaves
-  it, so a core staging refuses keeps the unstaged splits. One dimension of
-  a tile may be rows gathered through a row map: a term whose only read of
-  the box's ranges is one load of global memory, whose own index's terms
-  form one dimension of the box, as a routed product's blocks read their
-  rows (`rowmap[block, r] * k + c`), or a weight read at each block's
-  expert (`owner[block] * k * n + c`). Each copy loads its row's entry and
-  copies from that row, 0 where the gate on the entry fails (a pad row),
-  and the core reads the row back at its place in the map. Such a tile
-  copies in one stage, so it is staged only where several warps read it,
-  where a local range does not move its index. A core reading gathered rows
-  keeps the unstaged splits. A decoded operand's loads (codes cast to
-  floats through integer arithmetic) are copied where the renderer copies
-  asynchronously and every copy of each is one 16-byte `cp.async`: its
-  innermost dimension contiguous in whole copies, every other term of its
-  address and its storage's start multiples of 16 bytes, its index split
-  after `Symbolic.sym`, which reads MXFP4's scale index `(32 L + i) / 32`
-  over lanes `i < 32` as the loop `L`; they copy in the stage of the core's
-  other operand. A load of such an operand whose trip's copies are not
-  so, whose one loop moves it by at most a line (128 bytes) over all its
-  trips, and whose tile over the threads, lanes and that loop is one
-  aligned run of 16-byte copies, as MXFP4's e8m0 scales, a byte a row a
-  trip, is held: copied once before the loop into shared memory, in the
-  room every core's stages leave, and read there each trip. The first
-  trip's reads wait for the held copies at the stages' first barrier. A
-  tile is held only where the operand has copied loads and each is staged.
-  A core that keeps the unstaged splits has its `K` upcast by
-  `Stage.steps`, so that each row staging copies a trip, where `K` steps
-  the row along its innermost dimension, covers a 32-byte sector, the unit
-  in which global memory is read (CUDA C++ Best Practices Guide §10.2.1):
-  MXFP4's codes at 64 values a trip, where at 32 each sector is read at two
-  trips. Q8_0's blocks of 34 bytes and GGUF's of 17 fail
-  the copy's test and stay unstaged; a target without `async_copy` (HIP,
-  Metal) stages no decoded operand. Marlin (Frantar et al., arXiv
-  2408.11743, §3.4) copies its operands "asynchronously via Ampere's
-  cp.async instruction from global (or L2) to shared memory", which vLLM's
-  `cp_async4`, copying Marlin's weights, prints as `cp.async.cg`
-  (`csrc/quantization/marlin/marlin.cuh:129-134`), and reads its scales
-  from shared memory each step; holding a tile for the whole loop is
-  tolk's. Other operands whose terms mix
-  the box's ranges with others, a computed
-  operand whose largest tile steps through another loop than an operand
-  that is a load, a core whose operands step through
-  different loops, a kernel with other shared memory, and `Setting.stage`
-  off, as the goldens compare with tinygrad, stay unstaged; a tile whose
-  address gathers copies in one stage, so that no gather reads past the
-  loop's bound.
-- **Reason:** (d): GPU time on fudge's RTX 5000 Ada, bfloat16, three
-  interleaved rounds, us, before and after: 2048 cubed 187.4-189.4 to
-  137.2-137.3, 4096 cubed 1391-1444 to 917-936, gpt-oss-20b's projections at a
-  512-token prompt, query (512 by 4096 over 2880) 163.8-165.7 to 120.1-121.7,
-  key and value (512 by 512) 77.8-79.9 to 27.5-45.1, gate and up (512 by
-  5760) 196.6-197.6 to 130.0-134.2, output (512 by 2880 over 4096)
-  167.8-170.1 to 104.4-105.5, and its experts' blocks of 64 rows, gate and up
-  (64 by 5760 over 2880) 91.3-92.2 to 29.7-39.9, down (64 by 2880) 57.2-61.4
-  to 26.5-26.6. The warp tile's halving is a fit at two stages on fudge: the
-  window lies between 5760 and 11520 threads, below the 100 SMs of fudge's
-  part, so a part of 142 SMs may leave SMs idle and one of 24 halve tiles it
-  could keep. End to end, kaun's `GptOss/prefill-512` ran 199.7-201.3 ms
-  on main and 174.3-175.6 ms staged, and `GptOss/experts-at-prefill-512`
-  4.17 and 3.81-3.83 ms (three interleaved rounds). AMD gfx1201 and Metal stage in one stage
-  of register copies with CUDA's bank constants; correct, unmeasured.
-  Gathered rows, gpt-oss-20b's MoE block of MXFP4 experts at bfloat16
-  (random weights and routing, GPU time a kernel, us, before and after):
-  gate and up at 512 tokens 1271 to 931, at 128 866 to 691; at 12 and 64
-  tokens, whose blocks of 4 and 8 rows take no core, and down, whose rows
-  are dense, unchanged; outputs bit for bit equal. A core reading gathered
-  rows keeps the unstaged splits by measurement: bfloat16 experts' gate
-  and up at 512 tokens ran 2276-2283 on the staged tile, its rows copied in
-  one stage, against 2196-2210 on main and 2205-2212 on the unstaged
-  splits; no rule from the tile's stages separates it, since a tile whose
-  outer part gathers (the bfloat16 experts' down, 1160 us) gains from the
-  staged tile. Its cause is the staged tile's registers, 222 a thread
-  against 125, which halve the warps an SM holds: it gains where the grid
-  fills its last wave and loses where it does not, 2.5% faster over 48
-  blocks of 64 rows and 3.1-3.5% slower over 63 (bfloat16 gate and up). The
-  last wave follows the card's count of SMs, which no target fact states,
-  so the unstaged splits, which lose less, stay. The sign was measured on
-  blocks of 64 rows; over blocks of 48, a warp of three tiles each, the
-  staged tile took gpt-oss's bfloat16 MoE block 2.8% less to 0.5% more at 20
-  to 128 tokens. Two stages for gathered rows ran MXFP4 gate and up slower,
-  1025-1034 against 935-958 us. Rows each warp reads alone: bfloat16
-  experts' gate and up at 64 tokens, in blocks of 8 rows whose two warps
-  split the rows, saves no load by staging them and adds a wait and two
-  barriers a trip: 2300-2310 staged against 2198-2201 on main, and
-  2199-2202 left unstaged; at 128 tokens 2052-2053 against 2063-2065.
-  AMD gfx1201 and Metal stage gathered rows in one stage of register
-  copies too; unmeasured. A run of three tiles in one warp: bfloat16
-  experts' down product in blocks of 48 rows, at 32, 64 and 128 tokens,
-  took 1069-1081 us where three warps of one tile took 1103-1116, outputs
-  bit for bit equal. A computed operand: gpt-oss-20b's attention block as
-  `Gpt_oss.attention` composes it, the L2 evicted before each call, median
-  GPU time of 8 calls, two interleaved rounds, us, before and after: the
-  output projection, whose operand is the bfloat16 of the attention output
-  times each head's share its sink leaves, 112.6 to 71.7 at 64 tokens and
-  180.2 to 133.1-134.1 at 512; with Q8_0 weights, which stay unstaged, 131.1
-  to 130.1 at 64 and 275.5-276.4 to 254.0 at 512; the other projections
-  within 1 us; the tolk bench's `stream/output-projection-64`, the same
-  kernel L2-warm, 105.4-106.0 to 58.1-58.2 over three rounds. Outputs are
-  bit for bit equal at 64 tokens and with Q8_0 weights; at 512 the staged
-  tile's 128 accumulators a thread pass 320 bytes, so its sum runs as one
-  chain (rune's numerics). End to end, kaun's `GptOss/prefill-64`, four
-  interleaved rounds, 36.52-37.12 to 36.11-36.43 ms, 0.4 to 0.7 a round;
-  `prefill-512` 59.65-60.62 against 58.63-60.18, the Q8_0 prefills and the
-  decode step within their noise; allocated words equal. A decoded operand's
-  loads: copied through registers, as Q8_0's 34-byte blocks must be, by
-  one warp and waited within the trip that copies, on the staged tile's
-  smaller grid, gpt-oss-20b's Q8_0 projections ran query, key and value
-  15-18% faster at 64 tokens but 1.09-1.19 times slower at 512, where ptxas
-  spilled at 255 registers, and the output 1.34-1.43 times slower at 64
-  (L2 evicted before each call, median of 9, two rounds), so only 16-byte
-  asynchronous copies stage one. Shared memory takes from the L1: an SM's
-  L1 and shared memory are one store of 128 KB, shared memory carved in
-  steps of 0, 8, 16, 32, 64 or 100 KB (NVIDIA Ada Tuning Guide §1.4.2.2).
-  gpt-oss-20b's MXFP4 expert kernels given 14400 bytes of dynamic shared
-  memory they do not read, their SASS the same, ran 8.3% to 28.6% slower,
-  and their scales held with the codes left as loads ran the down
-  projection at 64 tokens 19-20% slower (ptxas's 132 registers leaving 3
-  workgroups an SM, and the carve-out). With the codes copied by
-  `cp.async.cg`, which skips the L1, and the scales held, at 32 values a
-  trip, on real gpt-oss-20b weights and routing, one layer, the L2 flushed
-  before each launch (to re-measure on fudge): gate and up at 512 tokens
-  775-798 to 737-758 us, down 399-404 to 378-383, at 64 tokens gate and up
-  316-323 to 296-298 and down 158-161 to 151-155; the codes copied with the
-  scales left as loads ran gate and up and down at 512 0.0-0.4% faster and
-  at 64 8.4% and 1.3%; outputs bit for bit equal. The held copy waited at
-  its own barrier before the loop, or at the stages' first, ran within 0.6
-  points of each other; the first takes one barrier more. At 32 values a
-  trip a row of codes is 16 bytes, half a sector, and a dense MXFP4 product
-  of 5760 by 2880 (`Nx_quant.apply`, unrouted) at 64 tokens left in the L2
-  between launches ran 3% slower than unstaged: each sector read at two
-  trips, where unstaged a line of the L1 serves 8. At 64 values a trip
-  (`Stage.steps`), before and after, three interleaved rounds, us (to
-  re-measure on fudge), outputs bit for bit equal: the dense product at 64
-  tokens 69.6-73.4 to 58.4-61.4 in the L2 and 115.5-115.7 to 90.1-91.1
-  flushed, at 512 145.4-158.7 to 117.8-128.0 and 189.4-190.5 to 135.2; the
-  tolk bench's `stream/mxfp4-64` 74.2-74.9 to 63.0-67.2 and
-  `stream/mxfp4-512` 156.4-159.2 to 126.4-127.4; on the real weights and
-  routing, gate and up at 512 tokens 785-795 to 704-713, down 399-408 to
-  357-368, at 64 gate and up 315-324 to 287-293 and down 158-161 to
-  170-179, on a uniform random routing at 64 gate and up 591-592 to 573
-  and down 307-309 to 288-290. The 64-token cores take 146 registers
-  against 128, 3 workgroups an SM against 4, which takes the down
-  projection's 648 workgroups from 2 waves to 3; kaun's `GptOss/prefill-512`
-  48.24-48.71 to 45.43-45.80 ms, `prefill-512-Q8_0` 54.31-55.12 to
-  51.55-51.75, `prefill-12` 24.40-25.34 to 23.30-23.86,
-  `experts-at-prefill-32` 931-935 to 871-874 us and `-512` 1.50-1.52 to
-  1.37-1.38 ms, the decode steps equal, words equal on every row; rune's
-  `Cuda/experts-mxfp4-prompt-64x4of32-2880x5760` 350.4 to 338.9 us at
-  best, `-18x4of32` 622.3 to 598.7 and `experts-relu-mxfp4-32` 939.5 to
-  897.8. The dense product at 512 tokens takes 255 registers and spills 8
-  bytes. The nest, the spread and
-  the depth: the tolk bench on fudge, two interleaved rounds, us, before
-  and after: `stream/key-projection-64`, the key projection of 64 tokens
-  by 512 over 2880 with its operands read from memory, 39.7-39.8 to 15.7;
-  `stream/output-projection-64` 57.8-58.0 to 28.1-28.3;
-  `stream/key-projection` and `contract/bf16-512x512x2880`, L2-warm,
-  27.4-27.5 to 26.1-26.2, where an `in_flight` of 16384 bytes, one trip
-  shallower, ran 24.0-24.2: a warm operand's latency is the L2's, 11-12 KB
-  of fill in flight, and the compiler cannot see which operand is resident,
-  so the cold case, a model's weights read once a step, decides; every
-  other `contract/*` and `stream/*` row within 1.1% of before, allocated
-  words of the compile rows equal. kaun's `GptOss/prefill-64` 32.96-33.44
-  to 31.81-32.04 ms, `prefill-512` 55.88-56.94 against 55.21-56.33 and
-  `decode-step-cache-1024` 8.73-8.80 both, words a call equal. The
-  attention block's kernels apart, the L2 evicted before each call, at the
-  prototype's rule of the same kernels (to re-measure on fudge): key and
-  value 31.7-33.8 to 11.3 at 64 tokens, 32.8 to 12.3 at 128 and to
-  23.6-24.1 at 512; output 70.7-71.7 to 53.8-54.3 (heads of 64) and
-  64.5-68.6 to 50.2 (heads of 128) at 64 tokens, 132.1-133.1 to 103.4-104.5
-  and 116.7-117.8 to 96.2-96.3 at 512; the MLP's down projection at 64
-  tokens 81.3-81.9 to 71.6-71.7; outputs bit for bit equal at 24, 100 and
-  142 units. AMD and Metal state no `units` or `in_flight` and keep their
-  plans; the nest reaches their one stage unchanged, unmeasured there.
+- **Differs:**
+  - **Tiles.** After the opts, each core operand that reads global memory
+    through an index whose terms reading the workgroup's threads and lanes
+    form a dense box of strided dimensions is copied by every thread of the
+    workgroup into shared memory, 16 bytes a copy where its innermost
+    dimension is contiguous, in rows whose 16-byte chunks are permuted by an
+    XOR with the row (`line` 128 bytes of 32 banks, `copy` 16 bytes,
+    generalized to rows of any even count of chunks); the core reads its
+    fragments back through the same layout.
+  - **Computed operands.** An operand the kernel computes elementwise from
+    loads and does not decode, as an attention output times the share of
+    each head's row its sink leaves, has its loads copied where each through
+    which it reads the threads and lanes has such a tile: those whose tiles
+    step through the loops of its tile of most elements, where those are the
+    loops of each operand that is a load; the others, as the per-head share
+    while the core's loop runs within a head, stay loads, and the operand
+    computes on the copies. A tile's loops are its serial ranges of more
+    than one trip; a range of one trip, as K unrolled whole leaves, is no
+    tile's loop.
+  - **Stages.** Two stages where the renderer copies asynchronously and they
+    fit `shared_max`, the next trip's copy issued before this trip's reads
+    and ordered so by the slot's offset, an AFTER of the trip at two trips,
+    and the first trip's copy pinned, by an AFTER of their ranges, inside
+    every serial loop the outermost loop runs in, so that each run of the
+    loop copies it; one stage otherwise. A tile whose index steps through a
+    nest of loops copies the next trip of the nest in two stages where one
+    node closes the loops, their extents are constant and it closes no
+    other loop of more than one trip inside the outermost: its trips are
+    counted outermost first, the next trip's loops being its digits in their
+    extents, the outermost without a remainder, so that the trip past the
+    last fails the copy's gate; a tile whose loops are no such nest copies
+    in one stage. The barriers are those the implicit rules place. A gated
+    operand (PADTO's validity, or a core's selection of 0) copies 0 where
+    its gate fails, its thread ranges rebuilt from the tile's coordinates.
+  - **The staged tile.** A staged core takes its own tile: 2 by 2 warps of
+    64 by 64, the warp tile halved, M then N, to 32 by 32 while the kernel
+    keeps fewer than `core_threads / stages` threads, its stages planned as
+    `Stage.operands` copies them, at the types its loads copy and beside the
+    kernel's earlier cores' stages. Past that plan, where the renderer
+    states `units` and `in_flight`, the core has two stages and the kernel's
+    workgroups are known, it goes down to the core's own tile among plans
+    whose accumulators a thread blocks (at most `Chains.held`, 320 bytes):
+    the plan whose busiest compute unit copies the fewest bytes a value of
+    K, ⌈workgroups / units⌉ workgroups at the bytes staging copies. K is
+    unrolled to the least depth from 32 at which the busiest unit's copies
+    of a trip reach `in_flight`, among the depths that keep the stages and
+    the blocks of the sum's running sums where K is the sum's innermost
+    range (`Chains`, whose walk codegen's blocks are), or the deepest that
+    keeps them; K is unrolled to chunks of 32 elsewhere, and never split
+    among a workgroup's warps. `in_flight` is Volkov's estimate of the bytes
+    in flight that sustain nine tenths of a peak: 1.3 times a copy's least
+    trip from memory on a small grid, 0.32 us, times one SM's peak fill from
+    one workgroup's copies, 44 GB/s, 18304 bytes; `units` is the RTX 5000
+    Ada's 100 SMs. Both are fixed for sm_89 and 0 elsewhere, which keeps
+    the plans above. No sum's order follows the units: every plan the rule
+    takes blocks its sums as the plan above does, and every depth keeps the
+    blocks, so each output sums the same terms in the same order, and a part
+    of another count runs the same programs, at another speed. Its rows
+    stay within a run of rows that read one value of an operand, a warp's
+    tiles of rows falling by one until they fit it, so that a run of three
+    tiles takes one warp, and the heuristic takes it only where
+    `Stage.admits` the kernel as the core leaves it, so a core staging
+    refuses keeps the unstaged splits.
+  - **Gathered rows.** One dimension of a tile may be rows gathered through
+    a row map: a term whose only read of the box's ranges is one load of
+    global memory, whose own index's terms form one dimension of the box,
+    as a routed product's blocks read their rows (`rowmap[block, r] * k +
+    c`), or a weight read at each block's expert (`owner[block] * k * n +
+    c`). Each copy loads its row's entry and copies from that row, 0 where
+    the gate on the entry fails (a pad row), and the core reads the row back
+    at its place in the map. Such a tile copies in one stage, so it is
+    staged only where several warps read it, where a local range does not
+    move its index. A core reading gathered rows keeps the unstaged splits.
+  - **Decoded operands.** A decoded operand's loads (codes cast to floats
+    through integer arithmetic) are copied where the renderer copies
+    asynchronously and every copy of each is one 16-byte `cp.async`: its
+    innermost dimension contiguous in whole copies, every other term of its
+    address and its storage's start multiples of 16 bytes, its index split
+    after `Symbolic.sym`, which reads MXFP4's scale index `(32 L + i) / 32`
+    over lanes `i < 32` as the loop `L`; they copy in the stage of the
+    core's other operand. A load of such an operand whose trip's copies are
+    not so, whose one loop moves it by at most a line (128 bytes) over all
+    its trips, and whose tile over the threads, lanes and that loop is one
+    aligned run of 16-byte copies, as MXFP4's e8m0 scales, a byte a row a
+    trip, is held: copied once before the loop into shared memory, in the
+    room every core's stages leave, and read there each trip. The first
+    trip's reads wait for the held copies at the stages' first barrier. A
+    tile is held only where the operand has copied loads and each is
+    staged. A core that keeps the unstaged splits has its `K` upcast by
+    `Stage.steps`, so that each row staging copies a trip, where `K` steps
+    the row along its innermost dimension, covers a 32-byte sector, the unit
+    in which global memory is read: MXFP4's codes at 64 values a trip, where
+    at 32 each sector is read at two trips. Q8_0's blocks of 34 bytes and
+    GGUF's of 17 fail the copy's test and stay unstaged; a target without
+    `async_copy` (HIP, Metal) stages no decoded operand.
+  - **Unstaged.** Other operands whose terms mix the box's ranges with
+    others, a computed operand whose largest tile steps through another loop
+    than an operand that is a load, a core whose operands step through
+    different loops, a kernel with other shared memory, and `Setting.stage`
+    off, as the goldens compare with tinygrad, stay unstaged; a tile whose
+    address gathers copies in one stage, so that no gather reads past the
+    loop's bound.
+- **Reason:** (d), GPU time on fudge's RTX 5000 Ada unless marked:
+  - staging: kaun's `GptOss/prefill-512` 199.7-201.3 ms to 174.3-175.6 ms;
+  - the warp tile's halving is a fit at two stages on fudge: the window
+    lies between 5760 and 11520 threads, so a part of 142 SMs may leave SMs
+    idle and one of 24 halve tiles it could keep;
+  - gathered rows: MXFP4 experts' gate and up at 512 tokens 1271 to 931 us;
+    in two stages they ran slower, 1025-1034 against 935-958 us;
+  - a core reading gathered rows keeps the unstaged splits: on the staged
+    tile, its registers halving the warps an SM holds, bfloat16 experts'
+    gate and up at 512 tokens ran 2276-2283 us against 2205-2212 unstaged,
+    and the last wave that decides the sign follows the card's count of
+    SMs, which no target fact states;
+  - rows each warp reads alone save no load and add a wait and two barriers
+    a trip: 2300-2310 us staged against 2199-2202 unstaged;
+  - a run of three tiles in one warp: experts' down product in blocks of 48
+    rows 1069-1081 us against 1103-1116 for three warps of one tile;
+  - a computed operand: the tolk bench's `stream/output-projection-64`
+    105.4-106.0 to 58.1-58.2 us;
+  - a decoded operand only as 16-byte `cp.async`: copied through registers,
+    Q8_0's output projection ran 1.34-1.43 times slower at 64 tokens;
+  - held scales: with the codes copied by `cp.async.cg` and the scales
+    held, at 32 values a trip, on real gpt-oss-20b weights and routing, gate
+    and up at 512 tokens 775-798 to 737-758 us (to re-measure on fudge). A
+    tile is held only where the operand has copied loads: its scales held
+    with the codes left as loads ran the down projection at 64 tokens 19-20%
+    slower;
+  - `Stage.steps`, 64 values a trip against 32, scales held in both: the
+    tolk bench's `stream/mxfp4-64` 74.2-74.9 to 63.0-67.2 us (to re-measure
+    on fudge);
+  - the nest, the spread and the depth: `stream/key-projection-64`
+    39.7-39.8 to 15.7 us and `stream/output-projection-64` 57.8-58.0 to
+    28.1-28.3.
+    An `in_flight` one trip shallower ran L2-warm `stream/key-projection`
+    faster, but the compiler cannot see which operand is resident, so the
+    cold case, a model's weights read once a step, decides.
+
+  AMD gfx1201 and Metal stage in one stage of register copies with CUDA's
+  bank constants, gathered rows included, and state no `units` or
+  `in_flight`; correct, unmeasured.
 - **Pinned by:** the Stage suite: `values › a staged kernel computes the bits
-  of the same optimisations unstaged` (CUDA's renderer against itself
-  without shared memory, both tiles, one and two stages, padded, batched,
-  `[N; K]` operands, a refused operand), `values › a staged product of
-  gathered rows …` (MXFP4 and bfloat16 weights, 1 to 512 tokens, pad rows
-  and rows read twice in a block, MXFP4's codes staged and scales held),
-  `values › a staged dense MXFP4 product …` (1 to 512 tokens, rows of 256
-  to 2880 values, three tiles
-  where a core takes it, and codes at an offset no 16-byte copy keeps,
-  whose scales are not held), `a dense MXFP4 product's staged rows cover a
-  sector a trip` (two stages of 32 bytes a row of codes, and codes over a
-  row of 256 values copied beside held scales), `values › a staged
-  computed operand …`
-  (an output projection's operand computed from bfloat16 and float32 loads,
-  beside bfloat16 and Q8_0 weights, 12 to 512 tokens, heads of 64, whose
-  per-head scale stays a load, and of 32, whose loads all step through the
-  heads in two stages), `values › a staged core's plans at two counts of
-  units compute the same bits` (CUDA's renderer, the same at 24 units, and
-  with no units, three plans), `values › a staged core's plans under another
-  sum at any units …` (drawn units and bytes in flight against neither,
-  blocks of 64 to 512 terms, the running sums' blocks padded past a nest's
-  inner bound, and a core taking its K from the blocks with a loop inside),
-  `kernels the race checker runs › a product
-  over a nest of loops …` (two stages, against its unstaged twin), `a core under
-  another sum whose tile takes its K whole …` (two stages), `a core reading gathered rows keeps the
-  unstaged splits`, `gathered rows each warp reads alone stay unstaged`, `serial ranges › …` (exact values
-  and barriers under a loop, a weak range bounded by memory, and a range the
-  core's sum closes outside and inside its loop), `barriers › …` (every store
-  and load of an element separated by a barrier over two trips, on CUDA and on
-  HIP's RDNA3 and RDNA4, and every barrier of a kernel with `cp.async`
-  waiting for it), `races` (`compute-sanitizer`'s race checker in hazard mode on a
-  kernel of each depth, one of gathered rows, one of a computed operand,
-  one over a nest of loops, and a dense and a routed MXFP4 product whose
-  scales are held, each also exact in `kernels the race checker runs`), `stages` (`Stage.depth`),
-  `a staged core's workgroups, threads and trips`, `a staged warp holds a
-  block's rows of one matrix`, `the layout` and
+  of the same optimisations unstaged`, `values › a staged product of
+  gathered rows …`, `values › a staged dense MXFP4 product …`, `a dense
+  MXFP4 product's staged rows cover a sector a trip`, `values › a staged
+  computed operand …`, `values › a staged core's plans at two counts of
+  units compute the same bits`, `values › a staged core's plans under
+  another sum at any units …`, `kernels the race checker runs › a product
+  over a nest of loops …`, `a core under another sum whose tile takes its K
+  whole …`, `a core reading gathered rows keeps the unstaged splits`,
+  `gathered rows each warp reads alone stay unstaged`, `serial ranges › …`,
+  `barriers › …` (on CUDA and on HIP's RDNA3 and RDNA4), `races`
+  (`compute-sanitizer`'s race checker in hazard mode on a kernel of each
+  depth, one of gathered rows, one of a computed operand, one over a nest of
+  loops, and a dense and a routed MXFP4 product whose scales are held, each
+  also exact in `kernels the race checker runs`), `stages`
+  (`Stage.depth`), `a staged core's workgroups, threads and trips`, `a
+  staged warp holds a block's rows of one matrix`, `the layout` and
   `sources`; the tolk bench's `contract/bf16-*` rows, `bf16-512x4096x2880`
   and `bf16-512x512x2880` among them, `stream/output-projection-64` and
   `stream/key-projection-64`, `stream/mxfp4-64` and `stream/mxfp4-512`,
   rune's `Cuda/experts-bfloat16-64x4of32-2880x5760` and
   `-512x4of32-2880x5760` and `Cuda/experts-mxfp4-prompt-64x4of32-2880x5760`
-  and kaun's
-  `GptOss/experts-at-prefill-512`, their baselines pending the scheduled
-  re-record.
+  and kaun's `GptOss/experts-at-prefill-512`, their baselines pending the
+  scheduled re-record.
 
 ## D263. CUDA copies 16 bytes from global to shared memory asynchronously
 
@@ -6862,10 +6172,9 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   `Renderer.t.async_copy`, from sm_80.
 - **Differs:** a store into shared memory of a 16-byte load from global
   memory prints as `cp.async.cg.shared.global`, a gated load with
-  `ignore-src` where its gate fails, which copies zeros (PTX ISA
-  §9.7.10.28.3.1), and every barrier of a kernel holding one prints as
-  `cp.async.wait_all; __syncthreads()`: a thread waits only for its own
-  copies (CUDA C++ Programming Guide §4.12.1). A kernel without one renders
+  `ignore-src` where its gate fails, which copies zeros, and every barrier
+  of a kernel holding one prints as `cp.async.wait_all; __syncthreads()`,
+  since a thread waits only for its own copies. A kernel without one renders
   as tinygrad's. With at most one stage in flight, waiting for all copies
   waits for none too many, so no group is counted.
 - **Reason:** (d): the second stage of D262 overlaps the next trip's copy
@@ -6877,25 +6186,18 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
 ## D264. Withdrawn
 
 A read of 16-bit elements of an operand staged in two stages was a load marked
-`ldmatrix` or `ldmatrix.trans`, lowered after the gater to the instruction
-CUDA prints, reading a warp's 8-by-8 matrices in one instruction where it now
-reads each element narrow. It gained on staged bfloat16 contractions and
-nothing end to end. On fudge's RTX 5000 Ada, minima of four interleaved rounds
-of each commit against the one before it, its withdrawal costs 1.04-1.18x on
-`contract/bf16-*`, 1.18x and 1.22x on `gated/*` and 1.03x on
-`stream/key-projection`, while the 512-token prefill takes 122.9 ms with it
-gone and 121.9 ms with it and one layer's experts 2.79 ms and 2.80 ms. About
-350 lines for no gain on the workload it named did not pay; the loss on those
-staged rows is the stated cost.
+`ldmatrix` or `ldmatrix.trans`; it now reads each element narrow. It gained
+on staged bfloat16 contractions and nothing end to end, and the loss on those
+rows (1.04-1.18x on `contract/bf16-*` on fudge) is the stated cost.
 
 ## D265. No axis a call reads runs as lanes
 
-- **tinygrad:** `codegen/opt/postrange.py` `upcastable_dims` and `apply_opt`,
-  which upcast an axis that a call's argument reads, of a body or of code in the
-  target's language (a `CUSTOM_FUNCTION` with `fmt`); `codegen/opt/heuristic.py`
-  `hand_coded_optimizations`, whose matrix-vector layout upcasts output axes;
-  `test/runtime/test_custom_kernel.py` (`test_call_loop_mini_opts`,
-  `test_call_loop_split`, expected failures).
+- **tinygrad:** `codegen/opt/postrange.py` `upcastable_dims` and
+  `apply_opt`, which upcast an axis that a call's argument reads, of a body
+  or of code in the target's language (a `CUSTOM_FUNCTION` with `fmt`);
+  `codegen/opt/heuristic.py` `hand_coded_optimizations`, whose
+  matrix-vector layout upcasts output axes; `test/runtime/test_custom_kernel.py`
+  (`test_call_loop_mini_opts`, `test_call_loop_split`, expected failures).
 - **tolk:** `Postrange.Scheduler.read_by_opaque`, `upcastable_dims` and
   `apply_opt`; `Heuristic.streams`.
 - **Differs:** an axis that a source of a call reads, as `i` in `f(&x[i])`,
@@ -6904,41 +6206,36 @@ staged rows is the stated cost.
   it is refused, as is a tensor core in a kernel with a call; the heuristic
   streams no contraction there. tinygrad upcasts such an axis and renders
   the call with a vector where it takes one pointer or value, which C
-  compilers reject. The entry's pad, refused on such an axis, went when
-  tinygrad gated a pad's effects (18a86504f) and made code in the target's
-  language a call, an effect (b63ad7ead): a pad of an axis a call runs along
-  is refused there too. So went its expressions, which tolk kept apart as no
-  effect: an expression is a call that its reader writes inline, an effect
-  like any call, so D271 applies to it.
+  compilers reject. tinygrad gates a pad's effects (18a86504f) and makes
+  code in the target's language a call, an effect (b63ad7ead), so a pad of
+  an axis a call runs along is refused there too. An expression is a call
+  that its reader writes inline, an effect like any call, so D271 applies to
+  it.
 - **Reason:** (e): under the heuristic, `test_call_loop_mini`'s kernel and
   that code's over 16 `i` fail at the C compiler, as does
   `out[i] = __builtin_popcount(x[i])` as an expression over 16 `i` upcast by
   4 (Clang: "passing 'int4' to parameter of incompatible type 'unsigned
   int'"). An expression's text states no lanes: the target's builtins take
-  one value. Each takes one pointer or value for each source; one per lane,
-  gated on its point, would keep the upcast, for a kernel no raven library
-  builds yet.
+  one value. One call per lane, gated on its point, would keep the upcast,
+  for a kernel no raven library builds yet.
 - **Pinned by:** the Codegen suite: `calls in a kernel › a call in an
   optimised kernel runs once per element`, `effects run as often as written
   › code in the target's language in an optimised kernel runs at each
   step`. The Postrange suite: `axes a call or custom code reads`, each case
-  a call of a body, a statement and an expression, the axes it lists,
-  upcastable and not, an upcast refused on such an axis and applied on
-  another, a local split applied, and a tensor core refused. The Heuristic
-  suite: `streaming › a kernel whose call reads its output axes is not
-  streamed`.
+  a call of a body, a statement and an expression. The Heuristic suite:
+  `streaming › a kernel whose call reads its output axes is not streamed`.
 
 ## D270. A range of a typed integer splits and pads as a weak one
 
-- **tinygrad:** `uop/ops.py` (`divides`), which divides a `CONST` and no `CAST`
-  of one, though `val` (`uop/ops.py` `UOp.val`) reads a cast constant as one
-  constant; `codegen/opt/postrange.py` `Scheduler.apply_opt`, which pads only a
-  range whose bound is a `CONST`; `codegen/opt/heuristic.py`
-  `hand_coded_optimizations`, which gives threads only to such ranges and sums
-  only a `CONST` stride; `codegen/simplify.py` (`mark_range_mod`), which splits
-  only such ranges; `codegen/simplify.py` (`mark_gated`), which shrinks a range
-  only to a `CONST` guard; `codegen/late/coalesce.py` (`memory_coalescing`),
-  which reads only a `CONST` index or term as an access's offset.
+- **tinygrad:** `uop/ops.py` `divides` (divides a `CONST` and no `CAST` of
+  one, though `UOp.val` reads a cast constant as one constant);
+  `codegen/opt/postrange.py` `Scheduler.apply_opt` (pads only a range whose
+  bound is a `CONST`); `codegen/opt/heuristic.py` `hand_coded_optimizations`
+  (gives threads only to such ranges and sums only a `CONST` stride);
+  `codegen/simplify.py` `mark_range_mod` (splits only such ranges) and
+  `mark_gated` (shrinks a range only to a `CONST` guard);
+  `codegen/late/coalesce.py` `memory_coalescing` (reads only a `CONST`
+  index or term as an access's offset).
 - **tolk:** `Ops.is_literal`; `Shape.divides`; `Postrange.Scheduler.apply_opt`
   and its tensor core's tiles; `Heuristic.hand_coded_optimizations`, its
   strides, tiles and divisors; `Simplify.pm_split_ranges`;
@@ -6951,62 +6248,61 @@ staged rows is the stated cost.
   remainder as a range of the weak integer is, and a kernel indexed in
   `Int32` takes the optimisations of the same kernel in the weak integer.
   A range shrinks to a typed guard `r < c`, and accesses at typed constant
-  offsets merge into vectors, as with weak ones.
-  tinygrad refuses every split of it, and sums no typed stride.
+  offsets merge into vectors, as with weak ones. tinygrad refuses every
+  split of it, and sums no typed stride.
 - **Reason:** (e): tinygrad's heuristic raises on a kernel whose ranges are
   of `Int32`, `out[16i + j] = a[16i + j] + 1` over 64 `i` and 16 `j`: its
   checks read the bound through the cast and pass a split that `apply_opt`
-  then refuses ("16 can't divide" the bound 16 on the host, "4 can't divide"
-  it on CUDA), so the kernel does not compile. It computes no wrong value: the
-  failure is a valid kernel refused, which no setting avoids but disabling the
-  heuristic. The strides and tiles follow from the same reading: once a cast
-  constant is a constant, one read as unknown chose by the index's type, and
-  119 of the heuristic's 431 recorded cases, indexed in `Int32`, took other
-  optimisations, a matmul upcasting its rows where it upcasts its columns, a
-  routed product refusing its tensor core. A typed guard left its range
-  whole, and loads at typed constant indices loaded one element each.
+  then refuses ("16 can't divide" the bound 16 on the host, "4 can't
+  divide" it on CUDA), so a valid kernel does not compile, which no setting
+  avoids but disabling the heuristic. The strides and tiles follow from the
+  same reading: 119 of the heuristic's 431 recorded cases, indexed in
+  `Int32`, took other optimisations, as a matmul upcasting its rows where it
+  upcasts its columns, a routed product refusing its tensor core. A typed
+  guard left its range whole, and loads at typed constant indices loaded one
+  element each.
 - **Pinned by:** the Heuristic suite: `a range of a typed integer is split
   as one of the weak integer` (`Int32`, `Int64` and `Uint32`, on the host
   and on CUDA), `a kernel indexed in a typed integer is optimised as in the
-  weak one` (each recorded case). The Postrange suite: `apply_opt pads a range of a typed integer as
-  a weak one`, and the golden case `split_int32_axis`, which applies. The
-  Simplify suite: `pm_split_ranges › a range of a typed integer splits as a
-  weak one` and `pm_simplify_ranges › shrinking › a range of a typed integer
-  shrinks to its guard as a weak one`. The Coalesce suite:
-  `memory_coalescing › lengths › loads at typed offsets merge as at weak
-  ones, for`.
+  weak one` (each recorded case). The Postrange suite: `apply_opt pads a
+  range of a typed integer as a weak one`, and the golden case
+  `split_int32_axis`, which applies. The Simplify suite: `pm_split_ranges ›
+  a range of a typed integer splits as a weak one` and `pm_simplify_ranges ›
+  shrinking › a range of a typed integer shrinks to its guard as a weak
+  one`. The Coalesce suite: `memory_coalescing › lengths › loads at typed
+  offsets merge as at weak ones, for`.
 
 ## D271. No axis a call does not read takes threads
 
-- **tinygrad:** `codegen/opt/postrange.py` `convert_loop_to_global`, which makes
-  global every output range that each `STAGE` reads, and `Scheduler.apply_opt`,
-  which splits any axis into threads and takes a tensor core in a kernel with a
-  `CALL`; `codegen/opt/heuristic.py` `hand_coded_optimizations`, which ranks
-  such axes for threads; `codegen/gpudims.py` `group_gpudims`, which masks only
-  a global store, to the threads whose local indices it misses are 0.
+- **tinygrad:** `codegen/opt/postrange.py` `convert_loop_to_global`, which
+  makes global every output range that each `STAGE` reads, and
+  `Scheduler.apply_opt`, which splits any axis into threads and takes a
+  tensor core in a kernel with a `CALL`; `codegen/opt/heuristic.py`
+  `hand_coded_optimizations`, which ranks such axes for threads;
+  `codegen/gpudims.py` `group_gpudims`, which masks only a global store, to
+  the threads whose local indices it misses are 0.
 - **tolk:** `Postrange.Scheduler.opaque`, `unread_by_opaque`,
   `convert_loop_to_global` and `apply_opt`; `Heuristic.streams` and the
   heuristic's local splits.
-- **Differs:** an axis that the sources of some call, of a body or of code in
-  the target's language, do not read stays a loop: it is not made global, a local split of it (a group,
-  for a reduce axis) is refused, and the heuristic gives it no threads. A
-  tensor core, whose warp is threads along axes no call reads, is refused in
-  a kernel with a call, and the heuristic streams no contraction there.
-  tinygrad gives such an axis threads, and every thread runs the call. An
-  expression in the target's language is a call too (b63ad7ead), whose
-  reader writes it inline.
+- **Differs:** an axis that the sources of some call, of a body or of code
+  in the target's language, do not read stays a loop: it is not made
+  global, a local split of it (a group, for a reduce axis) is refused, and
+  the heuristic gives it no threads. A tensor core, whose warp is threads
+  along axes no call reads, is refused in a kernel with a call, and the
+  heuristic streams no contraction there. tinygrad gives such an axis
+  threads, and every thread runs the call. An expression in the target's
+  language is a call too (b63ad7ead), whose reader writes it inline.
 - **Reason:** (e): `n[0] += 1` by a call or by code, beside `out[i] = a[i] +
   1` over 64 `i` on CUDA, runs in each of the 16 threads the heuristic
   gives `i`, and beside a sum over 4096 `r` in each of the 16 threads of the
-  group it makes: `n` counts 16 for 1. A call can write anything, so masking
-  it to one thread of each such axis, as a global store is, would keep the
+  group it makes: `n` counts 16 for 1. A call can write anything, so masking it
+  to one thread of each such axis, as a global store is, would keep the
   threads only where no other thread reads what it writes, and drop what it
   writes to a thread's own registers in the others.
 - **Pinned by:** the Codegen suite: `calls, custom code and stores on CUDA ›
   one beside stores across threads runs once`, `› one beside a sum runs
-  once` (a call and code, counting atomically; they skip without a GPU). The
-  Postrange suite, each case a call of a body, a statement and an
-  expression: `axes a call or custom code reads ›
+  once` (they skip without a GPU). The Postrange suite, each case a call of
+  a body, a statement and an expression: `axes a call or custom code reads ›
   unread_by_opaque is the axes its sources do not read`, `›
   convert_loop_to_global gives workgroups only to an axis its sources read`,
   `› apply_opt refuses a local split of an axis its sources do not read`,
@@ -7016,9 +6312,9 @@ staged rows is the stated cost.
 
 ## D275. Clang compiles with LLVM's IR verifier on
 
-- **tinygrad:** `runtime/support/compiler_cpu.py`
-  (`ClangCompiler.compile`, Clang's driver with its defaults, which in a
-  release build pass `-disable-llvm-verifier` to the compiler proper).
+- **tinygrad:** `runtime/support/compiler_cpu.py` `ClangCompiler.compile`
+  (Clang's driver with its defaults, which in a release build pass
+  `-disable-llvm-verifier` to the compiler proper).
 - **tolk:** `Compiler_cpu.cc1`, which drops `-disable-llvm-verifier` from
   the command Clang states, and `Compiler_cpu.clang`'s `table`, which
   digests the command run (D113).
@@ -7026,38 +6322,34 @@ staged rows is the stated cost.
   IR Clang makes of the source before the optimizations, and again before
   instruction selection, and invalid IR stops the compile with a diagnostic
   that names the function, which `Renderer.Compiler.Compile_error` carries.
-  Clang's release notes put the verifier's cost at "a few percent". On
-  fudge (Clang 19.1.7, the host's arguments, cachegrind's instruction
-  counts) it costs 0.5-2.2% of a kernel's compile: 1.1% for `trig/sin`'s
-  kernel, 2.2% for a `scan/checks-48` kernel, 0.5% for a
-  `model/schools-start` kernel, 1.5% for `rng/normal-f64`'s, 1.9% for
-  `special/betainc-chain-f32`'s and 1.5% for
-  `special/betaincinv-grad-f64`'s, of 600 M to 25 G instructions. The
-  verifier after every pass (`-llvm-verify-each`) cost 6.6-36% on the same
-  kernels and names the pass, not the function; both cases below survive
-  to instruction selection, where the verifier above stops them.
+  On fudge it costs 0.5-2.2% of a kernel's compile (cachegrind's
+  instruction counts). The verifier after every pass
+  (`-llvm-verify-each`), which cost 6.6-36% and names the pass, not the
+  function, is not used: both cases below survive to instruction selection,
+  where the verifier above stops them.
 - **Reason:** (e): an optimization that writes invalid IR goes unseen by a
-  release Clang. LLVM 19's straight-line vectorizer wrote `trunc <4 x i8> ... to
-  <4 x i32>` for rune's routed rows (D167), which compiled into garbage row
-  numbers; LLVM 18's wrote `sext <4 x i32> to <4 x i16>` for `r_3_2`, which
-  crashed instruction selection. D167 turns that vectorizer off for those
-  releases and LLVM 20, whose wrong values were valid IR; other Clangs and
-  Apple's are unchecked, and with the verifier on, a defect of their passes of
-  that kind is a compile error instead of wrong values. With the verifier, Clang
-  18 rejects `r_3_2` naming it, and Clang 19 `E_16_2_4`. tinygrad's own LLVM
-  compiler verifies its input and runs the verifier after every pass
-  (`runtime/support/compiler_llvm.py` `LLVMCompiler.__init__`,
-  `LLVMCompiler.compile`).
+  release Clang. LLVM 19's straight-line vectorizer wrote `trunc <4 x i8>
+  ... to <4 x i32>` for rune's routed rows (D167), which compiled into
+  garbage row numbers; LLVM 18's wrote `sext <4 x i32> to <4 x i16>` for
+  `r_3_2`, which crashed instruction selection. D167 turns that vectorizer
+  off for those releases and LLVM 20, whose wrong values were valid IR;
+  other Clangs and Apple's are unchecked, and with the verifier on, a
+  defect of their passes of that kind is a compile error instead of wrong
+  values. With the verifier, Clang 18 rejects `r_3_2` naming it, and Clang
+  19 `E_16_2_4`. tinygrad's own LLVM compiler verifies its input and runs the
+  verifier after every pass (`runtime/support/compiler_llvm.py`
+  `LLVMCompiler.__init__`, `LLVMCompiler.compile`).
 - **Pinned by:** `Tolk.Compiler_cpu › invalid IR › a source that LLVM 19's
   straight-line vectorizer makes invalid raises Compile_error naming its
   function`, under a Clang of LLVM 19 with that vectorizer turned back on.
+
 ## D280. An effect keeps its ranges when its index folds
 
-- **tinygrad:** `codegen/__init__.py` (`full_rewrite_to_sink`, which simplifies
-  a kernel's indices and ranges with nothing holding an effect's ranges),
-  `uop/symbolic.py` `symbolic` (a value whose bounds meet folds to a constant)
-  and `uop/ops.py` `UOp._ranges`, `UOp.ranges` (a node depends on the ranges its
-  sources depend on).
+- **tinygrad:** `codegen/__init__.py` `full_rewrite_to_sink` (simplifies a
+  kernel's indices and ranges with nothing holding an effect's ranges),
+  `uop/symbolic.py` `symbolic` (a value whose bounds meet folds to a
+  constant) and `uop/ops.py` `UOp._ranges`, `UOp.ranges` (a node depends on
+  the ranges its sources depend on).
 - **tolk:** `Simplify.pin_effects`, called by
   `Codegen.full_rewrite_to_sink` after the movements are lowered, and
   `Simplify.pm_unpin_effects`, in its symbolic pass before the expander.
@@ -7072,34 +6364,28 @@ staged rows is the stated cost.
   folds (`C[r // 8]` where `r < 8`, over `r < 32`). tinygrad folds the
   index to `0`, and the effect, which no longer depends on `r`, runs once:
   it counts 1 where 0, 5 or 8 is wanted, and the store writes in a loop
-  that runs no trip (run at `6b7b018da` and at the pinned commit). An
-  `After` of ranges alone that a builder wrote goes too where the effect
-  depends on them without it, which places nothing differently:
-  `reg_placeholder_then_reduce`'s golden reads its register directly where
-  its store's value depends on the range. Not covered: an effect with no
-  index, and a rewrite after the expander. The expander drops an `After`'s
-  upcast ranges, so lanes of a range an effect reads only through the
-  `After` would run it once: such a range, if weak, breaks its promise,
-  which a store whose cells show it is refused for before any optimisation
-  (D333), and a serial one takes no lanes.
+  that runs no trip. An `After` of ranges alone that a builder wrote goes
+  too where the effect depends on them without it, which places nothing
+  differently. Not covered: an effect with no index, and a rewrite after the
+  expander. The expander drops an `After`'s upcast ranges, so lanes of a
+  range an effect reads only through the `After` would run it once: such a
+  range, if weak, breaks its promise, which a store whose cells show it is
+  refused for before any optimisation (D333), and a serial one takes no
+  lanes.
 - **Reason:** (e): an effect that runs once per step of its loops as built
   runs once, or runs in a loop of no trip.
 - **Pinned by:** the Codegen suite's `effects at an index that folds run as
-  often as written` (the counts of `C[r // 8] += 1` at 0, 5 and 8 trips, a
-  store in a loop of no trip, a variable's and a flag's, a stored value
-  that folds, a guarded quotient whose range shrinks, code in the target's
-  language, and a law over loop nests of indices that fold);
-  `reg_placeholder_then_reduce`'s goldens, and the kernels the Heuristic,
-  Postrange, Search and Simplify suites record where their passes receive
-  them, which carry the `After`s.
+  often as written`; `reg_placeholder_then_reduce`'s goldens, and the
+  kernels the Heuristic, Postrange, Search and Simplify suites record where
+  their passes receive them, which carry the `After`s.
 
 ## D285. A loop holding a barrier or a matrix instruction has a uniform bound
 
-- **tinygrad:** `codegen/__init__.py` (`full_rewrite_to_sink`),
-  which places the implicit barriers and lowers the ranges to hardware
-  indices with no check of the loops a barrier runs in;
-  `codegen/opt/postrange.py` (`apply_opts`), which runs the
-  heuristic, or BEAM, on any kernel without a `STAGE`.
+- **tinygrad:** `codegen/__init__.py` `full_rewrite_to_sink`, which places
+  the implicit barriers and lowers the ranges to hardware indices with no
+  check of the loops a barrier runs in; `codegen/opt/postrange.py`
+  `apply_opts`, which runs the heuristic, or BEAM, on any kernel without a
+  `STAGE`.
 - **tolk:** `Uniform.varying`, `Uniform.check` and its call in
   `Codegen.full_rewrite_to_sink` after `pm_implicit_barriers`;
   `Postrange.apply_opts` (`threads_fixed`).
@@ -7109,18 +6395,16 @@ staged rows is the stated cost.
   the operation and the loop, under `SPEC=0` too. Neither the heuristic nor
   a search optimises a kernel that holds, or calls a body that holds,
   workgroup or register storage, a barrier, a matrix multiply-accumulate or
-  code in the target's language; the optimisations such a kernel lists still
-  apply.
+  code in the target's language; the optimisations such a kernel lists
+  still apply.
 - **Reason:** (e): a barrier some threads skip, or reach fewer times, hangs
-  the workgroup or reads workgroup memory not yet written (CUDA C++
-  Programming Guide §7.6, PTX §9.7.15.1 `bar`; non-termination is (e)), and
-  tinygrad compiles a barrier in a loop bounded by a thread index without a
-  word. Its heuristic splits a hand-made kernel's axes into threads and
-  lanes while the kernel's workgroup and register buffers stay sized for
-  one workgroup and one thread: on CUDA, a kernel reading its neighbour's
-  staged value computed 224 of 256 values wrong, and one whose staging ran
-  in a loop of one trip per flagged workgroup got that loop's bound from
-  `threadIdx.y`, around a barrier, which once hung the GPU.
+  the workgroup or reads workgroup memory not yet written, and tinygrad
+  compiles a barrier in a loop bounded by a thread index without a word.
+  Its heuristic splits a hand-made kernel's axes into threads and lanes
+  while the kernel's workgroup and register buffers stay sized for one
+  workgroup and one thread: on CUDA, a kernel reading its neighbour's staged
+  value computed 224 of 256 values wrong, and one whose staging loop got its
+  bound from `threadIdx.y`, around a barrier, once hung the GPU.
 - **Pinned by:** `Tolk.Uniform` (`varying`, `check`); `Tolk.Postrange`'s
   `apply_opts › neither hand-optimises nor searches a kernel whose builder
   fixed its threads with` and `› applies the optimisations a kernel whose
@@ -7131,9 +6415,9 @@ staged rows is the stated cost.
 ## D300. A streamed thread loads a pair of float32 values at once
 
 - **tinygrad:** streams nothing (D89); its `codegen/opt/heuristic.py`
-  `hand_coded_optimizations` unrolls the last reduce range whole when it is at
-  most 32 and few lanes are upcast, which the stream's own unroll leaves no room
-  for.
+  `hand_coded_optimizations` unrolls the last reduce range whole when it is
+  at most 32 and few lanes are upcast, which the stream's own unroll leaves
+  no room for.
 - **tolk:** `Heuristic.stream`'s rows layout (`unroll_together`,
   `Heuristic.vector_bytes`, `Heuristic.line_bytes`).
 - **Differs:** after the lanes and the unroll of the loads in flight, each
@@ -7147,21 +6431,17 @@ staged rows is the stated cost.
   unused; unrolled, each thread loads its pair as one 8-byte vector.
   bfloat16 activations, whose 32 loads 4 bytes apart span one line, keep
   the loop. A refused split is skipped, as the in-flight unroll's is.
-- **Reason:** (d): GPU time on fudge's RTX 5000 Ada, three interleaved
-  rounds under the timing lock: gpt-oss-20b's gate and up projection,
-  float32 activations routed in blocks of 64 rows at 512 tokens (kaun's
-  `Quant/cuda/routed-product-512-tokens`), 24.4-25.9 to 12.6-12.9 ms; 64
-  float32 rows of a 16384-square MXFP4 matrix
-  (`Quant/cuda/mxfp4-product-of-16384-64-float32-tokens`), 4.8-5.0 to
-  2.7 ms; bfloat16 rows' kernels unchanged. Unrolled for bfloat16 too,
-  12 and 17 rows ran 1.1-1.15 times faster and 16 and 32 rows 1.1-1.2
-  times slower, with no spills either way, so bfloat16 keeps the loop
-  until a rule separates them. AMD and Metal take the same rule,
-  unmeasured.
+- **Reason:** (d): kaun's `Quant/cuda/routed-product-512-tokens`,
+  gpt-oss-20b's gate and up projection on float32 activations, takes
+  24.4-25.9 to 12.6-12.9 ms on fudge. Unrolled for bfloat16 too, 12 and 17
+  rows ran 1.1-1.15 times faster and 16 and 32 rows 1.1-1.2 times slower,
+  so bfloat16 keeps the loop until a rule separates them. AMD and Metal take
+  the same rule, unmeasured.
 - **Pinned by:** the Heuristic suite's `streaming › no loop is left over
   the other operand's values of one load`, over the recorded streamed
-  kernels, with the layouts in the suite's `.tolk` files (`gpt_oss_gate_up`, `gpt_oss_down`, `mxfp4_m12`,
-  `routed_blocks`, `vecmat_decoded`); kaun's
+  kernels, with the layouts in the suite's `.tolk` files
+  (`gpt_oss_gate_up`, `gpt_oss_down`, `mxfp4_m12`, `routed_blocks`,
+  `vecmat_decoded`); kaun's
   `Quant/cuda/mxfp4-product-of-16384-64-float32-tokens` and
   `Quant/cuda/routed-product-512-tokens`, whose fudge baselines (the first
   recorded before D300, the second not yet recorded) wait for the
@@ -7169,11 +6449,11 @@ staged rows is the stated cost.
 
 ## D320. The CUDA device's kernels compile to a cubin
 
-- **tinygrad:** `renderer/cstyle.py` (`CUDARenderer.__init__`), which
-  gives `NVRTCCompiler` `ptx=True` for the device `CUDA`;
-  `runtime/support/compiler_cuda.py` (`NVRTCCompiler.compile`), which
-  then returns PTX; `runtime/ops_cuda.py` (`CUDADevice.function`),
-  whose `cuModuleLoadData` translates it for the GPU.
+- **tinygrad:** `renderer/cstyle.py` `CUDARenderer.__init__` (gives
+  `NVRTCCompiler` `ptx=True` for the device `CUDA`);
+  `runtime/support/compiler_cuda.py` `NVRTCCompiler.compile` (then returns
+  PTX); `runtime/ops_cuda.py` `CUDADevice.function` (whose
+  `cuModuleLoadData` translates it for the GPU).
 - **tolk:** `Cstyle.cuda`, which makes `Compiler_cuda.nvrtc ~ptx:false` for
   every device.
 - **Differs:** NVRTC compiles the CUDA device's kernels to a cubin of the
@@ -7188,30 +6468,24 @@ staged rows is the stated cost.
   rather than the driver's, which differ where their versions do; PTX's
   semantics and `--fmad=false` fix the values either way.
 - **Reason:** (d): a later process's first call, every binary read back
-  from the disk cache and the driver's cache missing, on fudge's RTX 5000
-  Ada: a two-layer gpt-oss-20b at its own widths (vocabulary 4096), its
-  12-token prefill, 710-1050 ms with PTX against 58-131 ms with cubins (3
-  interleaved runs each), the driver translating 43 kernels; rune's
+  from the disk cache and the driver's cache missing, on fudge: rune's
   `cuda/sin-nested-8` kernel loads in 40.7 ms as PTX and 0.19 ms as a
-  cubin. With the driver's cache warm,
-  the prefill's 74 loads take 6.3 ms of CUDA's time as PTX and 4.2 ms as
-  cubins, and its call allocates 6.97 M words against 6.95 M. A cold
-  compile of `cuda/sin-nested-8`, interleaved, takes 293-408 ms with PTX
-  and 255-299 ms with cubins (medians of 5: 345 and 294 ms): the cubins
-  D78 found slower, in whole calls timed under load, were not.
+  cubin, and a two-layer gpt-oss-20b's 12-token prefill takes 710-1050 ms
+  with PTX against 58-131 ms with cubins. A cold compile is no slower with
+  cubins: the slowdown D78 found, in whole calls timed under load, did not
+  hold interleaved.
 - **Pinned by:** the Cstyle suite's `CUDA's binaries › the CUDA device's
   kernels compile to a cubin`; rune's compile bench rows
   `cuda/sin-nested-8` and `warm/cuda/sin-nested-8`, whose processes run
-  with the driver's cache off, and where PTX adds the driver's 40 ms;
-  their wall-clock baselines are missing until fudge's scheduled
-  recording of every suite.
+  with the driver's cache off; their wall-clock baselines are missing until
+  fudge's scheduled recording of every suite.
 
 ## D305. A reduce under a uniform gate runs its loop only where the gate holds
 
-- **tinygrad:** `codegen/__init__.py` (`full_rewrite_to_sink`),
-  which runs the post-optimisation symbolic pass and then the expander: a
-  reduce whose result a gate selects, or whose store a gate guards, runs
-  every trip of its loops in every workgroup, where the gate fails too.
+- **tinygrad:** `codegen/__init__.py` `full_rewrite_to_sink`, which runs the
+  post-optimisation symbolic pass and then the expander: a reduce whose
+  result a gate selects, or whose store a gate guards, runs every trip of
+  its loops in every workgroup, where the gate fails too.
 - **tolk:** `Codegen.lift_uniform_gates`, after the post-optimisation
   symbolic pass, through `Uniform.varying`; `Shape.fold_where_closure`,
   whose assumption leaves each range whole (`Ops.assuming`).
@@ -7223,45 +6497,34 @@ staged rows is the stated cost.
   only ranges the reduce runs inside. A workgroup whose clauses fail skips
   the loop and its loads; the reduce's identity it then holds is never
   read. Each arm of a selection is bounded alone. The rewrite declines when
-  no clause is uniform, when the reduce has no bounded serial loop, or when a
-  node of the reduce that computes from the loop is read outside it, as by a
-  second reduce over the loop.
-  rune's routed product (`Lower_reduce`, blocks of 64 rows of one group)
-  states a block of padding as `Invalid`, which the gated store carries.
-  A selection's condition, assumed within its arms, stops at a range: the
-  lifted bound holds the condition, and rewriting the bound inside an arm
-  would fork a second loop of the range's identity.
-- **Reason:** (d) rune's routed product, whose blocks past the groups' hold
-  only padding rows that no row reads. Measured on the kernels as they now
-  stand, minima of four interleaved rounds: kaun's
-  `GptOss/experts-at-prefill-512`, 3.29 ms without the rewrite and 2.80 ms
-  with it, and `GptOss/prefill-512` 133.5 and 121.7 ms; these end-to-end rows
-  are what earn its code. And the tolk bench's
-  `gated/bf16-2048-5-of-16-blocks-off`, a 2048-cubed bfloat16 product on a
-  staged tensor core whose gate leaves 5 of its 16 blocks of 128 rows
-  without a value, 119.5-120.0 µs to 82.8-83.5 µs, and
-  `gated/bf16-2048-all-on` 120.8-121.9 µs to 119.8-120.7 µs; fudge's RTX
-  5000 Ada, three interleaved rounds each. The rows' wall-clock baselines
-  wait for the scheduled re-record. Leaving a range whole in
-  `fold_where_closure` is part of that rewrite: tinygrad makes no bound that
-  holds a condition, and without it a lifted kernel with a load gated by the
-  loop's own clause does not compile.
-- **Pinned by:** `Tolk.Codegen`'s `reduces under a uniform gate` (values
-  equal to the reference on the host and CUDA with every block off, every
-  block on, one off and any counts; the bounded loop in the lowered
-  program and its source; two sums over one loop and a gate that varies
-  between threads keep the loop whole; a sum gated by a clause its loads are
-  gated by too, either side of it; a loop the gate of its loads bounds stays
-  one loop on every target); `Tolk.Symbolic`'s selections (`the condition is
-  not assumed in the bound of a loop in a branch`); the goldens `uniform_gate_reduce`, `uniform_gate_store`
-  and `varying_gate_reduce`; rune's `rows in blocks give eager's integers and
-  hold their bound`; the bench rows above.
+  no clause is uniform, when the reduce has no bounded serial loop, or when
+  a node of the reduce that computes from the loop is read outside it, as by
+  a second reduce over the loop. A selection's condition, assumed within its
+  arms, stops at a range: the lifted bound holds the condition, and
+  rewriting the bound inside an arm would fork a second loop of the range's
+  identity.
+- **Reason:** (d): rune's routed product (`Lower_reduce`, blocks of 64 rows
+  of one group), whose blocks past the groups' hold only padding rows, which
+  it states as `Invalid` and the gated store carries. kaun's
+  `GptOss/experts-at-prefill-512` takes 3.29 ms without the rewrite and 2.80
+  ms with it (minima of four interleaved rounds); the rows' wall-clock baselines wait for the scheduled
+  re-record. Leaving a range whole in `fold_where_closure` is part of that
+  rewrite: tinygrad makes no bound that holds a condition, and without it a
+  lifted kernel with a load gated by the loop's own clause does not compile.
+- **Pinned by:** `Tolk.Codegen`'s `reduces under a uniform gate` (on the
+  host and CUDA); `Tolk.Symbolic`'s selections (`the condition is not
+  assumed in the bound of a loop in a branch`); the goldens
+  `uniform_gate_reduce`, `uniform_gate_store` and `varying_gate_reduce`;
+  rune's `rows in blocks give eager's integers and hold their bound`;
+  kaun's `GptOss/experts-at-prefill-512` and `GptOss/prefill-512`, and the
+  tolk bench's `gated/bf16-2048-5-of-16-blocks-off` and
+  `gated/bf16-2048-all-on`.
 
 ## D315. A global store is masked by the workgroup indices it does not use
 
-- **tinygrad:** `codegen/gpudims.py` (`group_gpudims`), which masks a
-  global store to the threads whose local indices its index misses are 0,
-  and runs it in every workgroup.
+- **tinygrad:** `codegen/gpudims.py` `group_gpudims`, which masks a global
+  store to the threads whose local indices its index misses are 0, and runs
+  it in every workgroup.
 - **tolk:** `Gpudims.group_gpudims`.
 - **Differs:** a store to global memory whose index, its validity included,
   does not use a workgroup index is masked to the workgroups whose unused
@@ -7288,13 +6551,13 @@ rule, its reason and its pins.
 
 ## D330. The kernels of one marked write are unordered whichever Afters list them
 
-- **tinygrad:** `schedule/__init__.py` (`create_schedule`'s
-  write-after-read edges), which orders a kernel reading a state before the
-  other kernels of every `AFTER` over that state but the `AFTER` the read
-  was listed under (`if a is u: continue`), and raises "cycle detected in
-  assign graph" where those edges form a cycle. One kernel per store
-  (`schedule/rangeify.py` `split_store`) lists each kernel under
-  one `AFTER`, so its stores never meet the case.
+- **tinygrad:** `schedule/__init__.py` `create_schedule`'s write-after-read
+  edges, which order a kernel reading a state before the other kernels of
+  every `AFTER` over that state but the `AFTER` the read was listed under
+  (`if a is u: continue`), and raise "cycle detected in assign graph" where
+  those edges form a cycle. One kernel per store (`schedule/rangeify.py`
+  `split_store`) lists each kernel under one `AFTER`, so its stores never
+  meet the case.
 - **tolk:** `Schedule.schedule`.
 - **Differs:** a kernel reading a state runs before every other kernel of
   each write over it. A kernel of a write marked disjoint (D405) that two
@@ -7303,10 +6566,10 @@ rule, its reason and its pins.
   `q`'s write, and is ordered before none of them, as it would be listed
   under that write alone. tinygrad orders it, through its read listed under
   `p`'s write, before them. A kernel of an unmarked write has no such
-  exemption: through an argument it does not write it reads the state before
-  the write's other kernels, where tinygrad skips every read listed under the
-  write. A launch of the kernels of one write holds them apart unless the
-  write is marked disjoint (D405).
+  exemption: through an argument it does not write it reads the state
+  before the write's other kernels, where tinygrad skips every read listed
+  under the write. A launch of the kernels of one write holds them apart
+  unless the write is marked disjoint (D405).
 - **Reason:** (b): rune's split program `[a; b] - [b; a]`, two assemblies of
   the same computed pieces stored into their regions of two buffers, makes
   two kernels, each storing a column of both. Each was ordered before the
@@ -7314,10 +6577,10 @@ rule, its reason and its pins.
   store; the program was declined, and over a set without kernels it
   raises.
 - **Pinned by:** the `Tolk.Schedule` suite: `create_schedule › laws › a
-  schedule copies a state iff its kernels form a cycle`, whose writes may
-  have two kernels that two Afters list, and `create_linear_with_vars ›
-  writes › stores crossed into two buffers write both`; rune's `Jit_devices
-  › assemblies give eager's bits › crossed assemblies of computed pieces`.
+  schedule copies a state iff its kernels form a cycle`, and
+  `create_linear_with_vars › writes › stores crossed into two buffers write
+  both`; rune's `Jit_devices › assemblies give eager's bits › crossed
+  assemblies of computed pieces`.
 
 ## D331. A reduce of one trip or none, and a range of no trip, compile
 
