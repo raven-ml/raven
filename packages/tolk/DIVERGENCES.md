@@ -8502,14 +8502,15 @@ D466.
   tensor read its storage; an assign of a value another reader stores apart
   copies it: `out.assign(c)` of a contraction `c` realized with `c.sum()` is
   4 kernels, `c` realized with its sum 3.
-- **tolk:** `Rangeify.buffers`, `Rangeify.bufferize_to_store` and the
-  store rule of `Rangeify.pm_add_buffers`.
+- **tolk:** `Rangeify.buffers`, `Rangeify.bufferize_to_store`, the
+  store rule of `Rangeify.pm_add_buffers` and `Rangeify.name_held`.
 - **Differs:** a stage that an item of the graph, `AFTER(b, STORE(b, s))`,
   stores whole into `b`, in the stage's order, at its type and device, is
   stored into `b` where `b` is storage that nothing else in the graph reads
   or writes, its state after the store included, that the stage's value
   does not read, and where another item reads the stage; the store, then a
-  copy of `b` into itself, is dropped. A stage the store alone reads, as a
+  copy of `b` into itself, is dropped, and the item names the state the
+  stage's store leaves in `b`. A stage the store alone reads, as a
   maximum of a broadcast sum is once the maximum folds to the sum, keeps its
   own storage: dropped with its only reader, its store would be lost. A
   stage stored narrower than its readers read it (`Ops.widens`) keeps
@@ -8525,9 +8526,11 @@ D466.
   1.83 stored once.
 - **Pinned by:** the `Tolk.Schedule` suite's `create_linear_with_vars ›
   outputs that hold a stored value`; the Rangeify suite's `get_kernel_graph ›
-  laws › a scheduled function writes what its tensors compute, for`, its row
-  `[2], then sum 0, expand, max 0`; rune's `Rune.jit on a GPU › a reduction
-  another reads › returned too is stored once`; the row above.
+  laws › a scheduled function writes what its tensors compute`, whose
+  programs return values along the way, and its `, for` rows `[2], then
+  sum 0, expand, max 0` and `[4; 4], then sum 1, return, x - sum 0`; rune's
+  `Rune.jit on a GPU › a reduction another reads › returned too is stored
+  once`; the row above.
 
 ## D479. A reduce starved of threads groups past 2048 outputs
 

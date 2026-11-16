@@ -914,6 +914,9 @@ let buffers ~slot tsink =
     let others () = Ops.sink (List.filter (fun o -> o != item) items) in
     if
       (op b = Op.Param || op b = Op.Buffer)
+      (* A stage of storage ends that storage's writes and takes no home
+         ({!bufferize_to_store}). *)
+      && op value <> Op.After
       && (opts stage).addrspace = Dtype.Global
       && Option.equal String.equal (opts stage).device (device b)
       && max_numel stage = max_numel b
@@ -1102,6 +1105,27 @@ let pm_add_buffers =
               remove_noop_afters (m "x"));
         ]);
     ]
+
+(* An output that holds a stage loses the copy its item stored, and the item
+   is left as the bare storage, its state before any write. The sink names
+   instead the state the stage's store leaves, the one After over that
+   storage, as nothing else writes it ({!buffers}). *)
+let name_held ctx tsink =
+  let held = Tbl.create 4 in
+  Tbl.iter (fun _ b -> Tbl.replace held b ()) ctx.homes;
+  if Tbl.length held = 0 then tsink
+  else
+    let stored = Tbl.create 4 in
+    List.iter
+      (fun u ->
+        if op u = Op.After && Tbl.mem held (nth u 0) then begin
+          (* [buffers] gives a home only to storage nothing else writes. *)
+          assert (not (Tbl.mem stored (nth u 0)));
+          Tbl.replace stored (nth u 0) u
+        end)
+      (toposort ~calls:Skip tsink);
+    let name u = Option.value ~default:u (Tbl.find_opt stored u) in
+    replace tsink ~src:(List.map name (src tsink))
 
 (* Kernels *)
 
@@ -1523,9 +1547,11 @@ let get_kernel_graph tsink =
       (toposort ~calls:Skip tsink)
   in
   let slot = ref (1 + List.fold_left max (-1) slots) in
+  let held = buffers ~slot tsink in
   let tsink =
-    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(buffers ~slot tsink)
-      tsink (Before_sources pm_add_buffers)
+    name_held held
+      (graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:held tsink
+         (Before_sources pm_add_buffers))
   in
   let tsink =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() tsink

@@ -96,7 +96,14 @@ val get_kernel_graph : Ops.t -> Ops.t
      {- each stage becomes a store into new storage ({!Op.Alloc}) of its
         committed type ({!Ops.commit_dtype}), closed by an {!Op.End} over its
         ranges and read after it; a stage of storage that effects write ends
-        those writes instead. Invalid writes are dropped;
+        those writes instead. Where an item of the sink stores a stage
+        whole, in its order, type and device, into a parameter or buffer
+        that nothing else reads or writes and the stage's value does not
+        read, and another item reads the stage, the stage is stored into
+        that storage instead, unless it is stored narrower than its readers
+        read it ({!Ops.widens}); of two such items, the first in the sink's
+        order holds it. The item's copy is dropped, and the sink names the
+        state that store leaves. Invalid writes are dropped;
      }
      {- each store or end whose ranges are all closed becomes a call to a
         kernel of its own: each state of storage it reads or writes becomes a

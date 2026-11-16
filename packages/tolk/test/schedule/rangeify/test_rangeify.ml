@@ -996,7 +996,10 @@ let siblings =
    The law of scheduling end to end: a function of up to three inputs of up to
    three axes, through a few operations, materialisations among them, prepared
    and turned into a kernel graph, writes into its output what its tensor graph
-   does. It exercises Indexing, Prepare and Rangeify together. *)
+   does. A value along the way may also be returned, stored whole into an
+   output of its own while later steps go on computing from it: where
+   rangeify stores the value anyway, the output then holds it. It exercises
+   Indexing, Prepare and Rangeify together. *)
 
 type step =
   | Add_self
@@ -1014,6 +1017,7 @@ type step =
   | Expand
   | Stage
   | Read_twice
+  | Return
 
 let pp_step ppf = function
   | Add_self -> Format.fprintf ppf "x + x"
@@ -1031,6 +1035,7 @@ let pp_step ppf = function
   | Expand -> Format.fprintf ppf "expand"
   | Stage -> Format.fprintf ppf "materialise"
   | Read_twice -> Format.fprintf ppf "x + x transposed"
+  | Return -> Format.fprintf ppf "return"
 
 let step =
   Gen.(
@@ -1052,6 +1057,7 @@ let step =
         Expand;
         Stage;
         Read_twice;
+        Return;
       ])
 
 let pp_program ppf (shape, steps) =
@@ -1078,9 +1084,18 @@ let pick k = function
   | [] -> None
   | l -> Some (List.nth l (k mod List.length l))
 
+(* The first slot of the returned values' outputs, past the inputs'. *)
+let returned_slot = 10
+
+(* An output of [slot] that stores [v] whole. *)
+let output slot v =
+  let size = List.fold_left ( * ) 1 (dims v) in
+  let o = Shape.param ~device:cpu ~shape:[ Int size ] slot Float32 in
+  Ops.after o [ Ops.store (Shape.reshape o (Shape.shape v)) v ]
+
 (* The function [shape, steps] draws, and its inputs' memory. *)
 let build (shape, steps) =
-  let memory = ref [] in
+  let memory = ref [] and returned = ref [] in
   let fresh shape =
     let slot = List.length !memory + 1 in
     let size = List.fold_left ( * ) 1 shape in
@@ -1131,19 +1146,14 @@ let build (shape, steps) =
     | Stage -> Ops.v Stage ~src:[ v ]
     | Read_twice when rank = 2 && List.nth shape 0 = List.nth shape 1 ->
         Ops.O.(v + Shape.permute v [ 1; 0 ])
+    | Return ->
+        let slot = returned_slot + List.length !returned in
+        returned := output slot v :: !returned;
+        v
     | _ -> v
   in
   let value = List.fold_left apply (fresh shape) steps in
-  let size = List.fold_left ( * ) 1 (dims value) in
-  let result = Shape.param ~device:cpu ~shape:[ Int size ] 0 Float32 in
-  let sink =
-    Ops.sink
-      [
-        Ops.after result
-          [ Ops.store (Shape.reshape result (Shape.shape value)) value ];
-      ]
-  in
-  (sink, !memory)
+  (Ops.sink (output 0 value :: List.rev !returned), !memory)
 
 (* Whether two reductions of a kernel reduce over one range. *)
 let shares_a_loop kernels =
@@ -1166,11 +1176,35 @@ let shares_a_loop kernels =
         reduces)
     (calls kernels)
 
+(* Whether two kernels take a returned value's output: one writes it and
+   another reads it, so the output holds a stage. *)
+let output_read kernels =
+  let rec base a = if Ops.op a = After then base (Ops.nth a 0) else a in
+  let slots c =
+    List.filter_map
+      (fun a ->
+        match Ops.arg (base a) with
+        | Param p when p.slot >= returned_slot -> Some p.slot
+        | _ -> None)
+      (List.tl (Ops.src c))
+  in
+  let counts = Hashtbl.create 4 in
+  List.iter
+    (fun c ->
+      List.iter
+        (fun s ->
+          Hashtbl.replace counts s
+            (1 + Option.value ~default:0 (Hashtbl.find_opt counts s)))
+        (List.sort_uniq compare (slots c)))
+    (calls kernels);
+  Hashtbl.fold (fun _ n acc -> acc || n > 1) counts false
+
 let writes_what_it_computes ?(cover = fun _ _ -> ()) drawn =
   let sink, buffers = build drawn in
   let kernels = schedule sink in
   let expected = Tensors.writes ~buffers sink in
   cover "several kernels" (List.length (calls kernels) > 1);
+  cover "an output another kernel reads" (output_read kernels);
   cover "reductions that share a loop" (shares_a_loop kernels);
   cover "a value is written" (expected <> []);
   equal (list write) expected (Kernel_graphs.writes ~buffers kernels)
@@ -1179,17 +1213,22 @@ let writes_what_it_computes ?(cover = fun _ _ -> ()) drawn =
    into the value times its own validity, which reads the input at an invalid
    index where it is padding: that read is zero. A maximum of a broadcast sum
    is the sum, stored once for the broadcast and then read only by the store
-   of the output, which copies it whole. *)
+   of the output, which copies it whole. Row sums returned and read
+   broadcast are stored into their output, whose state the graph once named
+   as it was before that store. *)
 let counterexamples =
   [
     ([ 1 ], [ Pad 0; Unsqueeze 0; Pad 0; Sum 0 ]);
     ([ 2 ], [ Sum 0; Expand; Max 0 ]);
+    ([ 4; 4 ], [ Sum 1; Return; Center 0 ]);
   ]
 
 let laws =
   group "get_kernel_graph › laws"
     [
-      prop "a scheduled function writes what its tensors compute" program
+      (* About one program in ten stores a stage into its output. *)
+      prop ~count:1000 "a scheduled function writes what its tensors compute"
+        program
         (writes_what_it_computes ~cover);
       cases "a scheduled function writes what its tensors compute, for"
         ~id:(Format.asprintf "%a" pp_program)
