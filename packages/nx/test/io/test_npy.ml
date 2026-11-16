@@ -39,12 +39,15 @@ let long_case =
           Plain ))
     (Gen.int_range 0 4095)
 
-(* Values of every dtype npy holds, and one in ten a long vector. *)
+(* Values of every dtype npy holds, and one in nine a long vector. The law
+   draws 200 cases, so that it misses the long vector with probability
+   6 10^-11, and each kind of value, 1/7 of the others, with probability
+   below 10^-10. *)
 let npy_cases =
   Gen.with_pp
     (fun ppf (Case (dt, s, _, view)) ->
       Format.fprintf ppf "%a %a %a" D.pp dt pp_shape s pp_view view)
-    (Gen.frequency [ (9, case npy_dtypes); (1, long_case) ])
+    (Gen.frequency [ (8, case npy_dtypes); (1, long_case) ])
 
 let npy =
   let loads name expected () =
@@ -52,7 +55,8 @@ let npy =
   in
   group "npy"
     [
-      prop "a value saved as npy loads as itself, bit for bit" npy_cases
+      prop ~count:200 "a value saved as npy loads as itself, bit for bit"
+        npy_cases
         (fun (Case (_, s, _, _) as c) ->
           covers c;
           cover "a value of 2^17 + 3 elements" (s = [| long |]);
