@@ -17,12 +17,16 @@
     A renderer holds only facts its target fixes, never those read from a
     device's physical part, such as its compute units or cache bytes: every
     device of a target runs one program of a kernel, which computes the same
-    bits on each. A target may fix a count measured on one of its parts, as
-    [units] and [local_workgroups] do, at the cost of speed on its other
-    parts. A program is kept under its renderer's name and target
-    ({!Codegen.program_key}), so renderers of one name and target must make
-    the same programs, and a renderer made with other facts takes another
-    name. *)
+    bits on each. A target may fix a count measured on one of its parts, at
+    the cost of speed on its other parts. A count that moves the order of a
+    sum, as [core_threads], [stream_threads] and [local_workgroups] do, is
+    fixed so that every part computes the same bits; one that moves only
+    speed, as [units] does, is fixed so that every part runs the same
+    programs, which one key serves wherever they are compiled, for a device
+    of another machine or for none. A program is kept under its renderer's
+    name and target ({!Codegen.program_key}), so renderers of one name and
+    target must make the same programs, and a renderer made with other facts
+    takes another name. *)
 
 (** {1:storage Storage} *)
 
@@ -276,10 +280,12 @@ type t = private {
   units : int;
       (** The compute units over which a part of the target spreads its
           workgroups, [0] where not stated: a staged core's tile counts the
-          bytes its busiest unit copies ({!Stage.tile}). Fixed per target,
-          as [local_workgroups] is, at the count of the part measured. A
-          part of another count takes the same programs, whose sums keep
-          their order, at another speed. *)
+          bytes its busiest unit copies ({!Stage.tile}). No sum's order
+          follows it, but a program is kept under its target alone
+          ({!Codegen.program_key}), so it is fixed per target, at the count
+          of the part measured, as [local_workgroups] is: a part of another
+          count takes the same programs, whose sums keep their order, at
+          another speed. *)
   in_flight : int;
       (** The bytes of copies from memory a compute unit keeps in flight to
           fill its shared memory near its peak rate: a copy's least latency

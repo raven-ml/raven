@@ -1571,7 +1571,8 @@ val jit :
 
     A variant ({!section-compiled}) gives the same bits at every call with
     the same arguments: its kernels fix the order in which each sum combines
-    its terms. Compiled again, in this process or another, on any domain and
+    its terms. Compiled again, in this process or another, on any domain,
+    for any device of its target, whatever its compute units or caches, and
     whatever the process compiled before, it has the same kernels where the
     same version of raven and the same compiler compile it: the system's
     Clang on the host, NVRTC on NVIDIA GPUs, MTLCompiler on Apple's and comgr
