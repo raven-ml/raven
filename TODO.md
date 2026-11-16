@@ -29,10 +29,6 @@ Where it stands, with every measurement: doc/performance.md.
   elections over several indices near `stream_threads` outputs up to 3.5x;
   a split decided where the renderer is known would close the gap
   (_plans/consolidate/groupgate/adjudication.md)
-- tolk's "launches > a schedule does not depend on what the process built
-  before it" can pass its 60 s limit under load: it runs after
-  `order_independent`, whose schedule cache stays live, so its 200 full
-  collections take 10-18 s; running `order_independent` uncached fixes it
 - rune's paged attention with pages of 16 keys runs at 168 registers on
   CUDA, one workgroup an SM; its values spilled for a tile are refilled
   every tile, skipped ones included, which keeps K's copy from moving
@@ -170,8 +166,8 @@ Where it stands, with every measurement: doc/performance.md.
   10-15 s on an idle fudge. At a load of 30-60 on its 14 cores they pass
   the 60 s `WINDTRAP_TIMEOUT` (dune:53) and fail the runtest; a rerun
   passes (10.7 s at load 14). Each case compiles programs of its own
-  shapes. Where their time goes is unmeasured. tolk's launch law is the
-  tolk entry above. Found by the TARGETFACTS audit and CODEPATH design A
+  shapes. Where their time goes is unmeasured. Found by the TARGETFACTS
+  audit and CODEPATH design A
 - rune states a compiled complex contraction's part within
   `γ(β(K) + 2) Σ(|ar br| + |ai bi|)` (rune.mli:1696-1698,
   lower_reduce.mli:141-145), while `Nx.contract` and the kernel contract

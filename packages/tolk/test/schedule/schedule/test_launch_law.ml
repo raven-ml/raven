@@ -661,7 +661,13 @@ let run_linear ~base ~vars linear =
 
 (* The law *)
 
+(* Schedules made under [f] are kept neither in memory nor on disk. *)
+let uncached f = Setting.context [ B (Setting.scache, 0) ] f
+
+(* Uncached: its 1500 programs' schedules, kept in memory, would hold the
+   heap that a later law's collections walk. *)
 let order_independent seed =
+  uncached @@ fun () ->
   let r = Random.State.make [| seed |] in
   let p = gen_program r in
   let big, base = build p in
@@ -745,8 +751,6 @@ let schedule_text ~slots (linear, vars) =
 (* Whether each pair of [nodes] is ordered as [Ops.compare] orders them. *)
 let id_order nodes =
   List.concat_map (fun a -> List.map (Ops.compare a) nodes) nodes
-
-let uncached f = Setting.context [ B (Setting.scache, 0) ] f
 
 let same_program_same_schedule seed =
   let r = Random.State.make [| seed |] in
