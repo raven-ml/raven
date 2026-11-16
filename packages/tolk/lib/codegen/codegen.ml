@@ -775,13 +775,19 @@ let split ren sink (x, n, d) =
     else
       let inside = O.(at < nth x 0) in
       let zero u = const ~dtype:(dtype u) (identity_element Op.Add (dtype u)) in
-      let gate u =
+      let gate_index u =
         match op u with
         | Op.Index
-          when List.length (src u) = 2 && Nodes.mem x (ranges (nth u 1)) ->
+          when List.length (src u) = 2
+               && addrspace (nth u 0) = Some Dtype.Global
+               && Nodes.mem x (ranges (nth u 1)) ->
             let i = nth u 1 in
             let i = valid (get_idx i) O.(inside land get_valid i) in
             Some (u, replace u ~src:[ nth u 0; i ])
+        | _ -> None
+      in
+      let gate_reduce u =
+        match op u with
         | Op.Reduce when caps ren u && List.memq x (srcs u) ->
             (* A product's operands are gated, so that it stays a product
                its sum fuses. *)
@@ -794,8 +800,16 @@ let split ren sink (x, n, d) =
             Some (u, replace u ~src:(t :: srcs u))
         | _ -> None
       in
-      substitute ~calls:Skip ~pass:Once sink
-        (List.filter_map gate (toposort ~calls:Skip sink))
+      (* The loads of global memory first, then the sums over them: a sum's
+         replacement is built from its source as it stands, so gating both in
+         one pass would keep the sum's loads ungated, reading past the
+         range's end. A staged tile's shared and register buffers hold a
+         trip's tile, which a padded trip indexes inside them. *)
+      let gated f sink =
+        substitute ~calls:Skip ~pass:Once sink
+          (List.filter_map f (toposort ~calls:Skip sink))
+      in
+      gated gate_reduce (gated gate_index sink)
   in
   substitute
     ~extra_pm:(Pattern_matcher.with_ctx Simplify.pm_flatten_range)

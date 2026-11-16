@@ -117,6 +117,25 @@ let pads_odd_trips () =
   equal ~msg:"sums left in one chain" (list string) [] left;
   ignore (Codegen.full_rewrite_to_sink odd_trips_sum clang)
 
+(* The padded trips of [odd_trips_sum]'s last block read nothing: each index
+   of [A] that its blocks could take past its 1920 elements is gated, so the
+   kernel reads no memory past the buffer. *)
+let gates_padded_trips () =
+  let sink = Codegen.blocked_sums odd_trips_sum clang in
+  let is o u = Op.equal (Ops.op u) o in
+  let reads_a u =
+    is Op.Index u
+    && (match Ops.arg (Ops.nth u 0) with Param p -> p.slot = 1 | _ -> false)
+  in
+  let past u =
+    let i = Ops.nth u 1 in
+    (not (is Op.Where i))
+    && match Ops.vmax i with `Int z -> Bigint.(geq z (of_int 1920)) | _ -> true
+  in
+  let reads = List.filter reads_a (Ops.toposort ~calls:Skip sink) in
+  is_true ~msg:"reads of A" (reads <> []);
+  equal (list Uops.uop) [] (List.filter past reads)
+
 (* The golden of a case is a sink of the lowered kernel and the program, less
    its binary. *)
 let recorded row = Golden.sink (row "name" ^ ".golden")
@@ -269,6 +288,8 @@ let stages =
       group "each program is rendered as recorded" sources;
       group "every long float sum is in blocks of 256 terms"
         (test "96 lanes over 5 trips pad to blocks of 2 trips" pads_odd_trips
+        :: test "a padded block's trips read nothing past the buffer"
+             gates_padded_trips
         :: per_row ~only:compiles blocked);
       group "an emulated float8 program launches as recorded"
         (per_row ~only:d9 launches_as_tinygrad);

@@ -8631,7 +8631,8 @@ D466.
   `+0`, inside an outer one over the rest, which adds the inner sums in
   order. A range that does not fit splits at its greatest divisor that
   fills at least half the room left, else at the room, its last block's
-  trips past the range gated off (`4096` trips of 4 lanes are 64 blocks of
+  trips past the range gated off, their loads as well as their terms, so
+  that none reads past its buffer (`4096` trips of 4 lanes are 64 blocks of
   64; `16381` trips are 64 blocks of 256, the last of 253). Every reduce
   over one range splits it alike, at the least room any of them leaves, so
   siblings keep one loop. A reduce whose lanes leave no room, past 128,
@@ -8657,7 +8658,8 @@ D466.
   one running sum (terms that lose half an ulp each in it), and `Rune.jit on
   a GPU › a long sum and a weight gradient hold the blocked bound`; the
   `codegen` suite's `stages › every long float sum is in blocks of 256
-  terms`, over every kernel it lowers; the `codegen` goldens `readout_*`,
+  terms`, over every kernel it lowers, and its `› a padded block's trips
+  read nothing past the buffer`; the `codegen` goldens `readout_*`,
   `sum_all_clang`, `matvec_clang` and `linearizer_fail_1_clang`, whose
   `.tolk` hold the blocked loops.
 
