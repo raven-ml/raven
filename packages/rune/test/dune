@@ -166,7 +166,7 @@
 (test
  (name test_program)
  (modules test_program)
- (libraries nx rune windtrap))
+ (libraries nx rig rune windtrap))
 
 ; nx's special functions' derivatives, against goldens gen/special_grad.py
 ; writes from correctly rounded references. Their time is compiling long

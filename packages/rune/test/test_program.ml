@@ -229,6 +229,29 @@ let test_stable () =
   let trace () = print (Rune.program s T.tensor f (v [| 1. |], v [| 3. |])) in
   equal string (trace ()) (trace ())
 
+(* A captured array is data of its program: two traces that differ only in a
+   capture's elements print alike, on the host and on another device, while
+   the same number written into the program as a literal, or made by the
+   traced function, prints apart. *)
+module Away = (val Nx.devices [ Result.get_ok (Rig.software "rune-program") ])
+
+let captures_alike (type d) (at : d Nx.Placement.t) =
+  let x = Nx.place at (v [| 1.; 2. |]) in
+  let trace f = print (Rune.program T.tensor T.tensor f x) in
+  let captured c =
+    let c = Nx.scalar f32 c in
+    fun x -> Nx.mul x (Nx.place (Nx.beside x) c)
+  in
+  let literal c x = Nx.mul_s x c in
+  let made c x = Nx.mul x (Nx.scalar_like x c) in
+  equal ~msg:"captured" string (trace (captured 0.5)) (trace (captured 3.));
+  not_equal ~msg:"literal" string (trace (literal 0.5)) (trace (literal 3.));
+  not_equal ~msg:"made in the trace" string (trace (made 0.5)) (trace (made 3.))
+
+let test_captures_are_data () =
+  captures_alike Nx.Host.on;
+  captures_alike Away.on
+
 (* The result's structure, dtypes, shapes and placements, without computing;
    an operation on a stand-in raises. *)
 let test_eval_shape () =
@@ -260,6 +283,8 @@ let () =
              test "a custom rule carries its programs" test_custom;
              test "a linear call carries its programs" test_linear;
              test "two traces print alike" test_stable;
+             test "a capture's elements are not the program's"
+               test_captures_are_data;
              test "eval_shape" test_eval_shape;
            ];
        ])

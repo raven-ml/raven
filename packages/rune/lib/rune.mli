@@ -103,6 +103,14 @@
     its trace asked of them; a function that must act otherwise inside a map
     asks {!lane_count}.
 
+    The arrays a traced function captures are data of its program, not
+    constants: the program keeps their dtype, shape, layout and placement,
+    never their elements, so two traces that differ only in a capture's
+    elements are one program. A capture on another device is copied where the
+    program computes ({!section-compiled}). A value fixed for the life of a
+    compiled function may be captured; one that changes from call to call is
+    an argument.
+
     {b Extents.} A transformation, a {!Total.collect} or a {!Probe.collect} is
     around all code its function runs, on whichever domain that code resumes,
     including the fibers of a scheduler the function installs while they run on
