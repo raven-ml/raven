@@ -406,7 +406,9 @@ val alloc_dma :
     {{!dma}system memory} names, or if the memory it gave lies past [f]'s
     addresses ({!set_dma_bits}). Freeing memory makes room, but for memory
     past [f]'s addresses taken physically. An exception that ends the call,
-    such as an asynchronous one, leaves what it took to [f]'s give-back.
+    such as an asynchronous one, leaves what it took to [f]'s give-back, or,
+    for a function whose memory was given to another function
+    ({!Memory.bus}), to the process's exit.
 
     [Error why], naming what is missing, if the machine refuses: a privilege or
     a file system named above, or, taken physically, a 2 MiB block of [va] that

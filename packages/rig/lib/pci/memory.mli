@@ -123,7 +123,9 @@ val release : t -> unit
     no page table. With no region out, it gives back the memory a stop kept
     ({b After the GPU is given back}). Releasing [m] again does nothing but
     what an earlier release did not. While another GPU maps [m]'s GPU
-    memory, the function stays taken ({b Peers}).
+    memory, the function stays taken ({b Peers}). A GPU whose memory {!bus}
+    gave another function keeps its take until the process's exit, and with
+    it what a request an exception ended took, which the exit gives back.
 
     An exception that ends the function's release passes
     ({!Function.release}), and leaves the page tables to the next release of
@@ -201,7 +203,8 @@ val host : region -> Window.t option
     a peer's addresses ({!Page_table.val-pa_bits}). System memory lies within
     them ({!create}). Each gives back what it took before it returns [None] or
     [Error], and an exception that ends one leaves what it took to the
-    function's give-back ({b Holders}). *)
+    function's give-back ({b Holders}), or, on a GPU kept for another
+    function ({!bus}), to the process's exit. *)
 
 val alloc : ?uncached:bool -> t -> kind -> int -> (region option, string) result
 (** [alloc m k n] is [n] new bytes of kind [k]. System memory is rounded up to
