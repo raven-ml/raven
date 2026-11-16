@@ -7441,13 +7441,15 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   and `stages › … › matmul_{half,half_big,half_tile,bf16_tile,tc}_{cuda,hip}`
   and `matmul_tc_unroll_metal`; the cstyle and renderer goldens of each core.
 
-## D261. 16-bit floats copied into shared memory merge to 16 bytes
+## D261. 16-bit floats and bytes copied into shared memory merge to 16 bytes
 
 - **tinygrad:** `codegen/late/coalesce.py` (`memory_coalescing`: a GPU
   merges `half` accesses into vectors of 8 under `ALLOW_HALF8`, an
-  environment setting off by default, and of 4 and 2 otherwise).
+  environment setting off by default, and of 4 and 2 otherwise; it merges
+  no GPU bytes).
 - **tolk:** `Coalesce.memory_coalescing`; `Renderer.t.half8`, set by
-  `Cstyle.cuda` and `Cstyle.hip`. `Setting.allow_half8` is withdrawn.
+  `Cstyle.cuda` and `Cstyle.hip`; `Renderer.t.byte_words` and `Cstyle`'s
+  `word`, CUDA's. `Setting.allow_half8` is withdrawn.
 - **Differs:** on a renderer that writes vectors of eight 16-bit floats (CUDA
   and HIP; Metal's vectors hold at most four), adjacent `float16` or
   `bfloat16` accesses of a group every access of which copies from global
@@ -7455,7 +7457,10 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   store into local memory, or those stores) merge into vectors of 8, 4 and 2,
   16 bytes at most; every other access of them merges into 4 and 2, as
   float16's do in tinygrad without `ALLOW_HALF8` (bfloat16 by D210). No
-  setting changes it.
+  setting changes it. On a renderer that writes bytes as integer words
+  (CUDA), `uint8` accesses of such a group merge into 16, 4 and 2, and 16
+  bytes print as four 32-bit words (`uint4`), read and built by shifts, as
+  2 and 4 bytes print as one word.
 - **Reason:** (d): a tensor core's operands staged through shared memory
   (D262) are copied 16 bytes a thread, which PTX's `cp.async` copies in one
   instruction (D263); 8 bytes at a time they take twice the copies and no
@@ -7482,8 +7487,12 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   (gfx1201), float16 and bfloat16 products of 2048 cubed, weights in either
   layout, staged and unstaged, compile to the same HIP source and the same
   comgr instructions with every access merged to 16 bytes. RDNA3 and CDNA
-  are unmeasured.
-- **Pinned by:** the Coalesce suite's `vectors of eight 16-bit floats` group
+  are unmeasured. Bytes: a decoded operand's codes and held scales (D262)
+  are copied 16 bytes a thread, one `cp.async` each; merged into 4 they
+  take four copies a thread and no asynchronous one.
+- **Pinned by:** the Stage suite's `values › a staged dense MXFP4 product
+  …` (its codes copied as `uint4`); the Coalesce suite's `vectors of eight
+  16-bit floats` group
   (`the runs of eight 16-bit floats' loads and stores`, of `float16` and
   `bfloat16`; `half_cuda`, `half8_cuda` and `accesses_cuda`, generated from
   tinygrad with this rule); the Stage suite's `sources` (`cp.async`); kaun's
@@ -7496,7 +7505,7 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   scheduler `STAGE`, which skips the heuristic. `uop/spec.py`
   (`spec_shared`: an AFTER of a scalar or a computed value only).
 - **tolk:** `Stage.operands`, which `Codegen.full_rewrite_to_sink` runs after
-  the opts; `Stage.depth`, `Stage.layout` and `Stage.tile`;
+  the opts; `Stage.depth`, `Stage.layout`, `Stage.tile` and `Stage.steps`;
   `Heuristic.staged_tile`; `Chains`, the blocks of a sum's running sums
   that codegen and the tile both read; `Renderer.t.async_copy`, `units`
   and `in_flight`; `Setting.stage`.
@@ -7571,8 +7580,36 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   and the core reads the row back at its place in the map. Such a tile
   copies in one stage, so it is staged only where several warps read it,
   where a local range does not move its index. A core reading gathered rows
-  keeps the unstaged splits. Other operands whose terms mix
-  the box's ranges with others, a decoded operand's loads, a computed
+  keeps the unstaged splits. A decoded operand's loads (codes cast to
+  floats through integer arithmetic) are copied where the renderer copies
+  asynchronously and every copy of each is one 16-byte `cp.async`: its
+  innermost dimension contiguous in whole copies, every other term of its
+  address and its storage's start multiples of 16 bytes, its index split
+  after `Symbolic.sym`, which reads MXFP4's scale index `(32 L + i) / 32`
+  over lanes `i < 32` as the loop `L`; they copy in the stage of the core's
+  other operand. A load of such an operand whose trip's copies are not
+  so, whose one loop moves it by at most a line (128 bytes) over all its
+  trips, and whose tile over the threads, lanes and that loop is one
+  aligned run of 16-byte copies, as MXFP4's e8m0 scales, a byte a row a
+  trip, is held: copied once before the loop into shared memory, in the
+  room every core's stages leave, and read there each trip. The first
+  trip's reads wait for the held copies at the stages' first barrier. A
+  tile is held only where the operand has copied loads and each is staged.
+  A core that keeps the unstaged splits has its `K` upcast by
+  `Stage.steps`, so that each row staging copies a trip, where `K` steps
+  the row along its innermost dimension, covers a 32-byte sector, the unit
+  in which global memory is read (CUDA C++ Best Practices Guide §10.2.1):
+  MXFP4's codes at 64 values a trip, where at 32 each sector is read at two
+  trips. Q8_0's blocks of 34 bytes and GGUF's of 17 fail
+  the copy's test and stay unstaged; a target without `async_copy` (HIP,
+  Metal) stages no decoded operand. Marlin (Frantar et al., arXiv
+  2408.11743, §3.4) copies its operands "asynchronously via Ampere's
+  cp.async instruction from global (or L2) to shared memory", which vLLM's
+  `cp_async4`, copying Marlin's weights, prints as `cp.async.cg`
+  (`csrc/quantization/marlin/marlin.cuh:129-134`), and reads its scales
+  from shared memory each step; holding a tile for the whole loop is
+  tolk's. Other operands whose terms mix
+  the box's ranges with others, a computed
   operand whose largest tile steps through another loop than an operand
   that is a load, a core whose operands step through
   different loops, a kernel with other shared memory, and `Setting.stage`
@@ -7637,10 +7674,53 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   interleaved rounds, 36.52-37.12 to 36.11-36.43 ms, 0.4 to 0.7 a round;
   `prefill-512` 59.65-60.62 against 58.63-60.18, the Q8_0 prefills and the
   decode step within their noise; allocated words equal. A decoded operand's
-  loads stay unstaged by measurement: staged, gpt-oss-20b's Q8_0
-  projections ran 1.2 to 1.9 times slower, key 56.3 to 104.4-105.5 and
-  output 130.1 to 196.6-196.8 at 64 tokens, query 188.4-190.5 to 231.4-231.5
-  and output 254.0-254.2 to 315.4-316.6 at 512. The nest, the spread and
+  loads: copied through registers, as Q8_0's 34-byte blocks must be, by
+  one warp and waited within the trip that copies, on the staged tile's
+  smaller grid, gpt-oss-20b's Q8_0 projections ran query, key and value
+  15-18% faster at 64 tokens but 1.09-1.19 times slower at 512, where ptxas
+  spilled at 255 registers, and the output 1.34-1.43 times slower at 64
+  (L2 evicted before each call, median of 9, two rounds), so only 16-byte
+  asynchronous copies stage one. Shared memory takes from the L1: an SM's
+  L1 and shared memory are one store of 128 KB, shared memory carved in
+  steps of 0, 8, 16, 32, 64 or 100 KB (NVIDIA Ada Tuning Guide §1.4.2.2).
+  gpt-oss-20b's MXFP4 expert kernels given 14400 bytes of dynamic shared
+  memory they do not read, their SASS the same, ran 8.3% to 28.6% slower,
+  and their scales held with the codes left as loads ran the down
+  projection at 64 tokens 19-20% slower (ptxas's 132 registers leaving 3
+  workgroups an SM, and the carve-out). With the codes copied by
+  `cp.async.cg`, which skips the L1, and the scales held, at 32 values a
+  trip, on real gpt-oss-20b weights and routing, one layer, the L2 flushed
+  before each launch (to re-measure on fudge): gate and up at 512 tokens
+  775-798 to 737-758 us, down 399-404 to 378-383, at 64 tokens gate and up
+  316-323 to 296-298 and down 158-161 to 151-155; the codes copied with the
+  scales left as loads ran gate and up and down at 512 0.0-0.4% faster and
+  at 64 8.4% and 1.3%; outputs bit for bit equal. The held copy waited at
+  its own barrier before the loop, or at the stages' first, ran within 0.6
+  points of each other; the first takes one barrier more. At 32 values a
+  trip a row of codes is 16 bytes, half a sector, and a dense MXFP4 product
+  of 5760 by 2880 (`Nx_quant.apply`, unrouted) at 64 tokens left in the L2
+  between launches ran 3% slower than unstaged: each sector read at two
+  trips, where unstaged a line of the L1 serves 8. At 64 values a trip
+  (`Stage.steps`), before and after, three interleaved rounds, us (to
+  re-measure on fudge), outputs bit for bit equal: the dense product at 64
+  tokens 69.6-73.4 to 58.4-61.4 in the L2 and 115.5-115.7 to 90.1-91.1
+  flushed, at 512 145.4-158.7 to 117.8-128.0 and 189.4-190.5 to 135.2; the
+  tolk bench's `stream/mxfp4-64` 74.2-74.9 to 63.0-67.2 and
+  `stream/mxfp4-512` 156.4-159.2 to 126.4-127.4; on the real weights and
+  routing, gate and up at 512 tokens 785-795 to 704-713, down 399-408 to
+  357-368, at 64 gate and up 315-324 to 287-293 and down 158-161 to
+  170-179, on a uniform random routing at 64 gate and up 591-592 to 573
+  and down 307-309 to 288-290. The 64-token cores take 146 registers
+  against 128, 3 workgroups an SM against 4, which takes the down
+  projection's 648 workgroups from 2 waves to 3; kaun's `GptOss/prefill-512`
+  48.24-48.71 to 45.43-45.80 ms, `prefill-512-Q8_0` 54.31-55.12 to
+  51.55-51.75, `prefill-12` 24.40-25.34 to 23.30-23.86,
+  `experts-at-prefill-32` 931-935 to 871-874 us and `-512` 1.50-1.52 to
+  1.37-1.38 ms, the decode steps equal, words equal on every row; rune's
+  `Cuda/experts-mxfp4-prompt-64x4of32-2880x5760` 350.4 to 338.9 us at
+  best, `-18x4of32` 622.3 to 598.7 and `experts-relu-mxfp4-32` 939.5 to
+  897.8. The dense product at 512 tokens takes 255 registers and spills 8
+  bytes. The nest, the spread and
   the depth: the tolk bench on fudge, two interleaved rounds, us, before
   and after: `stream/key-projection-64`, the key projection of 64 tokens
   by 512 over 2880 with its operands read from memory, 39.7-39.8 to 15.7;
@@ -7667,8 +7747,15 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   of the same optimisations unstaged` (CUDA's renderer against itself
   without shared memory, both tiles, one and two stages, padded, batched,
   `[N; K]` operands, a refused operand), `values › a staged product of
-  gathered rows …` (MXFP4 and bfloat16 weights, 12 to 512 tokens, pad rows
-  and rows read twice in a block), `values › a staged computed operand …`
+  gathered rows …` (MXFP4 and bfloat16 weights, 1 to 512 tokens, pad rows
+  and rows read twice in a block, MXFP4's codes staged and scales held),
+  `values › a staged dense MXFP4 product …` (1 to 512 tokens, rows of 256
+  to 2880 values, three tiles
+  where a core takes it, and codes at an offset no 16-byte copy keeps,
+  whose scales are not held), `a dense MXFP4 product's staged rows cover a
+  sector a trip` (two stages of 32 bytes a row of codes, and codes over a
+  row of 256 values copied beside held scales), `values › a staged
+  computed operand …`
   (an output projection's operand computed from bfloat16 and float32 loads,
   beside bfloat16 and Q8_0 weights, 12 to 512 tokens, heads of 64, whose
   per-head scale stays a load, and of 32, whose loads all step through the
@@ -7687,14 +7774,16 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   and load of an element separated by a barrier over two trips, on CUDA and on
   HIP's RDNA3 and RDNA4, and every barrier of a kernel with `cp.async`
   waiting for it), `races` (`compute-sanitizer`'s race checker in hazard mode on a
-  kernel of each depth, one of gathered rows, one of a computed operand and
-  one over a nest of loops), `stages` (`Stage.depth`),
+  kernel of each depth, one of gathered rows, one of a computed operand,
+  one over a nest of loops, and a dense and a routed MXFP4 product whose
+  scales are held, each also exact in `kernels the race checker runs`), `stages` (`Stage.depth`),
   `a staged core's workgroups, threads and trips`, `a staged warp holds a
   block's rows of one matrix`, `the layout` and
   `sources`; the tolk bench's `contract/bf16-*` rows, `bf16-512x4096x2880`
   and `bf16-512x512x2880` among them, `stream/output-projection-64` and
-  `stream/key-projection-64`, rune's
-  `Cuda/experts-bfloat16-64x4of32-2880x5760` and `-512x4of32-2880x5760`
+  `stream/key-projection-64`, `stream/mxfp4-64` and `stream/mxfp4-512`,
+  rune's `Cuda/experts-bfloat16-64x4of32-2880x5760` and
+  `-512x4of32-2880x5760` and `Cuda/experts-mxfp4-prompt-64x4of32-2880x5760`
   and kaun's
   `GptOss/experts-at-prefill-512`, their baselines pending the scheduled
   re-record.

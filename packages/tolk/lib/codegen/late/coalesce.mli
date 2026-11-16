@@ -38,7 +38,10 @@ val memory_coalescing : Ops.t -> Renderer.t -> Ops.t
       ({!Renderer.t.half8}) and every access of the group (one operation,
       buffer, base index, gate, argument and depth) copies into local
       memory: a load of global memory whose only use is as the value of a
-      store into local memory, or that store.
+      store into local memory, or that store. Where [r] writes bytes as
+      words ({!Renderer.t.byte_words}), {!Dtype.Uint8} loads merge into [4]
+      or [2], and a group every access of which copies into local memory
+      into [16], [4] or [2].
 
     The longest length that fits is taken first. A group starts at an element
     whose count from the boundary behind the buffer's first element, a multiple

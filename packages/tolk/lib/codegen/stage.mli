@@ -75,15 +75,46 @@ val operands : Renderer.t -> Ops.t -> Ops.t
     of its tile of most elements are copied, where those are the loops of
     each operand that is a load, and the others stay loads, as a per-head
     scale stays while the core's loop runs within a head; the operand
-    computes on the copies as it did on the loads. An operand whose terms mix
-    the box's ranges with others otherwise stays unstaged, as do the cores of
-    a kernel that holds other shared memory or reduces across threads. *)
+    computes on the copies as it did on the loads.
+
+    A {!decoded} operand is staged where [ren] copies asynchronously
+    ({!Renderer.t.async_copy}) and each of its loads is copied or held. A
+    load is copied where every copy of its tile a trip is one asynchronous
+    copy of [16] bytes: its innermost dimension contiguous in whole copies,
+    and every other term of its address and its storage's start multiples of
+    [16] bytes, the index read simplified. A load whose copies a trip are not
+    so is held where its one loop moves it by at most a line of [128] bytes
+    over all its trips: its tile over the threads, the lanes and that loop,
+    one run of whole copies, is copied once before the loop into shared
+    memory, which the operand reads at each trip. A tile is held only where
+    the operand has copied loads and each is staged, so that none is left to
+    the L1 that shared memory shares an SM's store with, and in the shared
+    memory every core's stages leave. The first trip's reads wait for the
+    held copies at the barrier of the stages' first copies.
+
+    An operand whose terms mix the box's ranges with others otherwise stays
+    unstaged, as do the cores of a kernel that holds other shared memory or
+    reduces across threads. *)
 
 val admits : Renderer.t -> Ops.t -> bool
 (** [admits ren sink] is [true] iff {!operands} stages every operand of each
     tensor core of [sink] on [ren], a computed operand through the loads it
     copies, tiles permitting ({!depth}): the question
     the heuristic asks before it gives a core the staged tile
+    ({!Heuristic.hand_coded_optimizations}). *)
+
+val steps : Renderer.t -> Ops.t -> k:Ops.t -> int
+(** [steps ren sink ~k] is the least count of steps of the range [k] a trip
+    at which each row of the tiles {!operands} copies from global memory
+    covers a sector of [32] bytes, the unit in which an asynchronous copy
+    reads global memory, where [k] steps the row along its innermost
+    dimension, [k] keeps more than one trip and the cores' stages keep their
+    depth ({!depth}). It divides [k]'s extent, and is [1] where no tile
+    reads a row so, no such count exists, or [ren] copies no tile
+    asynchronously ({!Renderer.t.async_copy}).
+    A row of [16] bytes a trip, as MXFP4's codes are at [32] values a trip,
+    reads each sector at two trips. The heuristic upcasts the core's [K] by
+    it where the core keeps the unstaged splits
     ({!Heuristic.hand_coded_optimizations}). *)
 
 val warp_tile : int

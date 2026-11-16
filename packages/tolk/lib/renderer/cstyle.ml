@@ -109,10 +109,10 @@ let ( .%{} ) ctx u =
   | None ->
       invalid_arg (strf "%s is used before it is rendered" (Op.name (op u)))
 
-(* Whether a vector of [sz] elements of [dt] is one integer word
-   ({!Renderer.byte_words}). *)
+(* Whether a vector of [sz] elements of [dt] is one integer word, or for 16
+   bytes four of them ({!Renderer.byte_words}). *)
 let word l dt sz =
-  l.byte_words && Dtype.equal dt Dtype.Uint8 && (sz = 2 || sz = 4)
+  l.byte_words && Dtype.equal dt Dtype.Uint8 && (sz = 2 || sz = 4 || sz = 16)
 
 let render_dtype ?(sz = 1) ?(addrspace = Some Dtype.Alu) ?(override_ptr = false)
     l dt =
@@ -129,7 +129,9 @@ let render_dtype ?(sz = 1) ?(addrspace = Some Dtype.Alu) ?(override_ptr = false)
     | Some name -> name
     | None -> invalid_arg (strf "the language has no type %s" (Dtype.name dt))
   in
-  if word l dt sz then
+  if word l dt sz && sz = 16 then
+    prefix ^ List.assq Dtype.Uint32 l.type_map ^ "4" ^ suffix
+  else if word l dt sz then
     let w = if sz = 4 then Dtype.Uint32 else Dtype.Uint16 in
     prefix ^ List.assq w l.type_map ^ suffix
   else if sz > 1 then
@@ -169,7 +171,7 @@ let param_type l p =
 
 let render_cast ctx u v = strf "(%s)(%s)" (render_type ctx.lang u) v
 
-(* Whether the value [u] is one integer word of bytes. *)
+(* Whether the value [u] is one integer word of bytes, or four. *)
 let is_word l u = l.byte_words && word l (dtype u) (max_numel u)
 
 let render_index ctx buf idx =
@@ -177,8 +179,11 @@ let render_index ctx buf idx =
     (* lane access in C; a word's lane [i] is its bits from [8 i] *)
     match (op idx, src idx) with
     | Op.Cast, [ c ] when is Op.Const c && is_word ctx.lang buf ->
-        strf "((unsigned char)(%s>>%du))" ctx.%{buf}
-          (8 * Dtype.Value.to_int (cval c))
+        let i = Dtype.Value.to_int (cval c) in
+        if max_numel buf > 4 then
+          strf "((unsigned char)(%s.%c>>%du))" ctx.%{buf} "xyzw".[i / 4]
+            (8 * (i mod 4))
+        else strf "((unsigned char)(%s>>%du))" ctx.%{buf} (8 * i)
     | Op.Cast, [ c ] when is Op.Const c ->
         let lane = Dtype.Value.to_int (cval c) in
         if max_numel buf > ctx.lang.gep_arr_threshold then
@@ -368,7 +373,20 @@ let base_rewrite =
         (fun ctx m -> Some (render_index ctx (m "buf") (m "idx")));
       r (Upat.op ~name:"x" Op.Stack) (fun ctx m ->
           let x = m "x" and l = ctx.lang in
-          if is_word l x then
+          if is_word l x && max_numel x > 4 then
+            (* Four words, each built from its four bytes. *)
+            let t = List.assq Dtype.Uint32 l.type_map in
+            let lane i y =
+              strf "(((%s)(%s))<<%du)" t ctx.%{y} (8 * (i mod 4))
+            in
+            let word i =
+              String.concat "|"
+                (List.filteri (fun j _ -> j / 4 = i) (List.mapi lane (src x)))
+            in
+            Some
+              (strf "make_%s(%s)" (render_type l x)
+                 (String.concat "," (List.init 4 word)))
+          else if is_word l x then
             let t = render_type l x in
             let lane i y = strf "(((%s)(%s))<<%du)" t ctx.%{y} (8 * i) in
             Some (strf "((%s)(%s))" t (String.concat "|" (List.mapi lane (src x))))

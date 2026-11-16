@@ -118,6 +118,24 @@ let sm89 ?(sync = false) () =
   let t = target "CUDA" "CUDA" "sm_89" in
   if sync then Cstyle.cuda_sync t else Cstyle.without_compiler t
 
+(* The workgroups of the kernel [k] staged on sm_89, the threads of one and
+   its trips of the core's loops, as the hand-coded rules choose them. *)
+let planned ?(sync = false) k =
+  let r = sm89 ~sync () in
+  let s = Postrange.Scheduler.v k r in
+  Postrange.Scheduler.convert_loop_to_global s;
+  let o =
+    Setting.context
+      [ Setting.B (Setting.stage, true) ]
+      (fun () -> Heuristic.hand_coded_optimizations s)
+  in
+  let module K = Postrange.Scheduler in
+  let size i = match List.nth (K.full_shape o) i with Int n -> n | Sym _ -> 0 in
+  let product l = List.fold_left (fun n i -> n * size i) 1 l in
+  ( product (K.axes_of o [ Global ]),
+    product (K.axes_of o [ Warp; Local ]),
+    product (K.axes_of ~reduce:true o [ Weak; Loop ]) )
+
 (* Programs *)
 
 let says s m =
@@ -648,6 +666,19 @@ let e2m1 =
   [| 0.; 0.5; 1.; 1.5; 2.; 3.; 4.; 6.; -0.; -0.5; -1.; -1.5; -2.; -3.; -4.;
      -6. |]
 
+(* The float32 value of the E2M1 code [c], an integer, by integer arithmetic
+   as nx.quant decodes it: a sign bit, two bits of exponent [e] and one of
+   mantissa [m], the magnitude [m / 2] for [e = 0] and [(2 + m) 2^(e - 2)]
+   otherwise, as quarters. *)
+let decode_e2m1 c =
+  let open Ops.O in
+  let m = c land int 1 and e = (c lsr int 1) land int 3 in
+  let quarters =
+    Ops.where (Ops.eq e (int 0)) (m * int 2) ((m + int 2) lsl e)
+  in
+  let v = Ops.cast quarters Float32 * Ops.float ~dtype:Float32 0.25 in
+  Ops.where (Ops.eq (c lsr int 3) (int 1)) (Ops.neg v) v
+
 (* Each slot's route position, its count of real ones, and each block's
    owner: the blocks a routing of [n] positions over [g] experts takes at
    most, [m + (n - m) / 64] for [m = min n g], as rune bounds them. *)
@@ -686,8 +717,9 @@ let routed_kernel ?opts_to_apply p ~blocks =
   and owner = Shape.param ~shape:[ Ops.Int blocks ] 3 Int32
   and w = Shape.param ~shape:[ Ops.Int (p.experts * kn) ] 4 Bfloat16
   and codes = Shape.param ~shape:[ Ops.Int (p.experts * n * halves) ] 4 Uint8
-  and scales = Shape.param ~shape:[ Ops.Int (p.experts * n * scaled) ] 5 Uint8
-  and lut = Shape.param ~shape:[ Ops.Int 16 ] 6 Float32 in
+  and scales =
+    Shape.param ~shape:[ Ops.Int (p.experts * n * scaled) ] 5 Uint8
+  in
   let open Ops.O in
   let b = Ops.range ~axis_type:Weak (Int blocks) [ 0 ]
   and i = Ops.range ~axis_type:Weak (Int p.block) [ 1 ]
@@ -724,7 +756,7 @@ let routed_kernel ?opts_to_apply p ~blocks =
             Uint32
         in
         let scale = Ops.bitcast (bits lsl Ops.int ~dtype:Uint32 23) Float32 in
-        Ops.cast (Ops.index lut [ nibble ] * scale) Bfloat16
+        Ops.cast (decode_e2m1 nibble * scale) Bfloat16
   in
   let sum =
     Ops.reduce (Ops.cast av Float32 * Ops.cast bv Float32) Add [ r ]
@@ -758,7 +790,6 @@ let routed_inputs ?(small = false) p =
         [
           (4, bytes (p.experts * p.rn * p.rk / 2) 0 255);
           (5, bytes (p.experts * p.rn * p.rk / 32) 123 131);
-          (6, Array.map (fun f -> `Float f) e2m1);
         ]
   in
   ( map,
@@ -788,10 +819,13 @@ let pp_routed ppf p =
     (match p.weights with Float_weights -> "bfloat16" | Mxfp4 -> "MXFP4")
     p.tokens p.topk p.experts p.block p.rk p.rn p.rseed
 
-(* The tiles a core of [p] stages: the gathered rows of [a], and the
-   weights' tile where they are not decoded. *)
-let staged_tiles_of p =
-  match p.weights with Float_weights -> 2 | Mxfp4 -> 1
+(* Whether the CUDA source [src] copies parameter [n] into shared memory
+   asynchronously: the routed product's gathered rows are [1], its weights or
+   MXFP4's codes [4], and MXFP4's scales [5]. *)
+let copies src n =
+  List.exists
+    (fun l -> says "tg_cp_async(" l && says (Printf.sprintf "data%d_" n) l)
+    (String.split_on_char '\n' src)
 
 let gathered_bits p =
   let d, r = on_cuda () in
@@ -817,20 +851,36 @@ let gathered_bits p =
   let some f = List.exists f (List.init blocks Fun.id) in
   cover "a core" cored;
   cover "MXFP4 weights on a core" (cored && p.weights = Mxfp4);
+  let rows = copies src 1 and weights = copies src 4
+  and scales = copies src 5 in
+  cover "MXFP4 codes staged, scales held"
+    (cored && p.weights = Mxfp4 && weights && scales);
+  cover "MXFP4 weights unstaged, their scales' tile no run of whole copies"
+    (cored && p.weights = Mxfp4 && not weights);
   cover "float weights on a core" (cored && p.weights = Float_weights);
   cover "a block of real and pad rows" (some (fun b -> pads b && reals b));
   cover "a block of pad rows alone" (some (fun b -> not (reals b)));
   cover "a row read twice in a block" (some twice);
   List.iter
     (fun t -> cover (Printf.sprintf "%d tokens" t) (p.tokens = t))
-    [ 12; 64; 128; 512 ];
+    [ 1; 12; 64; 128; 512 ];
   (* Whether several warps read the rows decides which: [run_routed] and
      [alone] pin each. *)
-  cover "gathered rows staged" (cored && staged = staged_tiles_of p);
-  cover "gathered rows left unstaged" (cored && staged < staged_tiles_of p);
-  if cored then
-    mem ~msg:"the tiles staged, gathered rows among them or not" int staged
-      (List.init (staged_tiles_of p + 1) Fun.id);
+  cover "gathered rows staged" (cored && rows);
+  cover "gathered rows left unstaged" (cored && not rows);
+  (* A decoded operand is staged only where each of its loads is copied or
+     held, and its scales are held only beside its copied codes. The held
+     scales, at most [128 · 320 / 32] bytes, always fit beside the stages,
+     so MXFP4's codes are copied exactly where its scales are held: neither
+     where a workgroup's rows of scales are no run of whole 16-byte
+     copies, as 8 rows of 5 bytes over [160] values. *)
+  if cored then begin
+    if p.weights = Mxfp4 then
+      equal ~msg:"codes copied exactly where scales are held" bool weights
+        scales;
+    equal ~msg:"the tiles staged, each copied" int staged
+      (List.length (List.filter Fun.id [ rows; weights; scales ]))
+  end;
   let staged = run prg in
   let opts = applied prg in
   equal (array Dtypes.value)
@@ -849,10 +899,10 @@ let routed_law =
   let gen =
     let open Gen in
     let+ weights = of_list [ Float_weights; Mxfp4 ]
-    and+ tokens = of_list [ 12; 64; 128; 512 ]
+    and+ tokens = of_list [ 1; 12; 64; 128; 512 ]
     and+ topk = of_list [ 1; 2; 4 ]
     and+ experts = of_list [ 4; 8; 32 ]
-    and+ rk = of_list [ 64; 160; 256 ]
+    and+ rk = of_list [ 64; 160; 320 ]
     and+ rn = of_list [ 64; 128 ]
     and+ block = of_list [ 8; 64 ]
     and+ rseed = int_range 0 1_000_000 in
@@ -861,18 +911,136 @@ let routed_law =
   (* rune's blocks: 8 rows below 16 positions an expert, 64 from there. *)
   let example weights (tokens, experts) =
     let block = if tokens * 4 < 16 * experts then 8 else 64 in
-    { weights; tokens; topk = 4; experts; block; rk = 160; rn = 128;
+    { weights; tokens; topk = 4; experts; block; rk = 320; rn = 128;
       rseed = tokens }
   in
   prop ~count:8
     ~examples:
       (List.concat_map
          (fun w ->
-           List.map (example w) [ (12, 8); (64, 32); (128, 8); (512, 8) ])
-         [ Float_weights; Mxfp4 ])
+           List.map (example w)
+             [ (1, 8); (12, 8); (64, 32); (128, 8); (512, 8) ])
+         [ Float_weights; Mxfp4 ]
+      @ [
+          { weights = Mxfp4; tokens = 1; topk = 1; experts = 4; block = 64;
+            rk = 160; rn = 64; rseed = 0 };
+        ])
     "a staged product of gathered rows computes the bits of the same \
      optimisations unstaged, a pad row's outputs +0"
     (Gen.with_pp pp_routed gen) gathered_bits
+
+(* A dense decoded product
+
+   [c.(t, j) = Σ_r x.(t, r) · w.(j, r)] in float32, the products of bfloat16
+   values, for [x] of [tokens] rows of [k] and [w] MXFP4 of [n] rows of [k],
+   decoded into bfloat16 in the kernel: codes [n; k / 2], two a byte, the low
+   nibble first, [offset] bytes into their buffer, and a power of two of 8
+   bits each block of 32, scales [n; k / 32], as [Nx_quant.apply] reads a
+   packed matrix. The codes stage by copies of 16 bytes and the scales, which
+   the core's loop moves by a byte a trip, are held whole; codes at an offset
+   that no copy of 16 bytes keeps leave the operand unstaged, its scales with
+   it. *)
+
+type dense = { dtokens : int; dk : int; dn : int; offset : int }
+
+let dense_kernel ?opts_to_apply p =
+  let k = p.dk and n = p.dn and t = p.dtokens in
+  let halves = k / 2 and scaled = k / 32 in
+  let c = Shape.param ~shape:[ Ops.Int (t * n) ] 0 Float32
+  and x = Shape.param ~shape:[ Ops.Int (t * k) ] 1 Bfloat16
+  and codes = Shape.param ~shape:[ Ops.Int (p.offset + (n * halves)) ] 2 Uint8
+  and scales = Shape.param ~shape:[ Ops.Int (n * scaled) ] 3 Uint8 in
+  let open Ops.O in
+  let i = Ops.range ~axis_type:Weak (Int t) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int n) [ 1 ]
+  and r = Ops.range ~axis_type:Weak (Int k) [ 2 ] in
+  let code =
+    Ops.cast
+      (Ops.index codes [ int p.offset + (j * int halves) + (r // int 2) ])
+      Weak_int
+  in
+  let nibble = (code lsr (r % int 2 * int 4)) land int 15 in
+  let bits =
+    Ops.cast (Ops.index scales [ (j * int scaled) + (r // int 32) ]) Uint32
+  in
+  let scale = Ops.bitcast (bits lsl Ops.int ~dtype:Uint32 23) Float32 in
+  let w = Ops.cast (decode_e2m1 nibble * scale) Bfloat16 in
+  let xv = Ops.index x [ (i * int k) + r ] in
+  let sum = Ops.reduce (Ops.cast xv Float32 * Ops.cast w Float32) Add [ r ] in
+  let store = Ops.store (Ops.index c [ (i * int n) + j ]) sum in
+  Ops.sink ~kernel:(Ops.kernel_info ?opts_to_apply ())
+    [ Ops.end_ store [ i; j ] ]
+
+(* [x] of [values], or with [small] of integers from -2 to 2, codes of any
+   byte and scales from [2^-4] to [2^4] (bytes 123 to 131). *)
+let dense_inputs ?(small = false) p =
+  let st = Random.State.make [| p.dtokens |] in
+  let int x = `Int (Bigint.of_int x) in
+  let bytes n lo hi =
+    Array.init n (fun _ -> int (lo + Random.State.int st (hi - lo + 1)))
+  in
+  let x =
+    if small then
+      Array.init (p.dtokens * p.dk) (fun _ ->
+          `Float (Float.of_int (Random.State.int st 5 - 2)))
+    else values (p.dtokens + 1) (p.dtokens * p.dk)
+  in
+  [
+    (1, x);
+    (2, bytes (p.offset + (p.dn * p.dk / 2)) 0 255);
+    (3, bytes (p.dn * p.dk / 32) 123 131);
+  ]
+
+(* The tiles a core of [p] stages: [x]'s, MXFP4's codes and its scales held
+   whole, or [x]'s alone where the codes' offset keeps no copy whole. *)
+let dense_tiles p = if p.offset mod 16 = 0 then 3 else 1
+
+let pp_dense ppf p =
+  Format.fprintf ppf "%d tokens, [%d; %d], codes at %d" p.dtokens p.dn p.dk
+    p.offset
+
+let dense_bits p =
+  let d, r = on_cuda () in
+  let prg = compiled r (dense_kernel p) in
+  let run prg = List.assoc 0 (Run.on d prg (dense_inputs p)) in
+  let cored = says "mma.sync" (source prg) in
+  if p.dtokens >= 64 then equal ~msg:"a core" bool true cored;
+  let staged = List.length (locals (Ops.nth prg 1)) in
+  if cored then begin
+    equal ~msg:"the tiles staged" int (dense_tiles p) staged;
+    equal ~msg:"codes copied as words" bool (p.offset mod 16 = 0)
+      (says "tg_cp_async(((uint4*)" (source prg))
+  end;
+  cover "a core" cored;
+  cover "codes staged, scales held" (cored && staged = 3);
+  cover "codes at an offset unstaged" (cored && p.offset mod 16 <> 0);
+  cover "codes over the loop within a line" (cored && p.dk / 2 <= 128);
+  let opts = applied prg in
+  equal (array Dtypes.value)
+    (run (compiled (unstaged r) (dense_kernel ~opts_to_apply:opts p)))
+    (run prg)
+
+let dense_law =
+  let gen =
+    let open Gen in
+    let+ dtokens = of_list [ 1; 12; 64; 512 ]
+    and+ dk = of_list [ 256; 512; 2880 ]
+    and+ dn = of_list [ 128; 256 ]
+    and+ offset = of_list [ 0; 8; 16 ] in
+    { dtokens; dk; dn; offset }
+  in
+  prop ~count:8
+    ~examples:
+      (List.map
+         (fun dtokens -> { dtokens; dk = 512; dn = 128; offset = 0 })
+         [ 1; 12; 64; 512 ]
+      @ [
+          { dtokens = 64; dk = 512; dn = 128; offset = 8 };
+          { dtokens = 64; dk = 256; dn = 128; offset = 0 };
+        ])
+    "a staged dense MXFP4 product computes the bits of the same \
+     optimisations unstaged"
+    (Gen.with_pp pp_dense gen) dense_bits
 
 (* A computed operand
 
@@ -1062,20 +1230,7 @@ let slotted_kernel ~block ~blocks ~experts ~k ~n =
    2560] on sm_89, staged: its workgroups, the threads of one and the core's
    trips. *)
 let slotted_tile block =
-  let k = slotted_kernel ~block ~blocks:50 ~experts:8 ~k:2880 ~n:2560 in
-  let s = Postrange.Scheduler.v k (sm89 ()) in
-  Postrange.Scheduler.convert_loop_to_global s;
-  let o =
-    Setting.context
-      [ Setting.B (Setting.stage, true) ]
-      (fun () -> Heuristic.hand_coded_optimizations s)
-  in
-  let module K = Postrange.Scheduler in
-  let size i = match List.nth (K.full_shape o) i with Int n -> n | Sym _ -> 0 in
-  let product l = List.fold_left (fun n i -> n * size i) 1 l in
-  ( product (K.axes_of o [ Global ]),
-    product (K.axes_of o [ Warp; Local ]),
-    product (K.axes_of ~reduce:true o [ Weak; Loop ]) )
+  planned (slotted_kernel ~block ~blocks:50 ~experts:8 ~k:2880 ~n:2560)
 
 (* A block's rows read one matrix, so a staged warp holds as many of the
    core's 16-row tiles as a block has: 3 of 48 rows, 4 of 64, and one
@@ -1133,6 +1288,43 @@ let run_routed () =
   in
   equal (array Dtypes.value) expected (List.assoc 0 (Run.on d prg inputs))
 
+(* The same routed product with MXFP4 weights, of codes of any byte scaled
+   by [2^-4] to [2^4]: its sums are exact. Its codes are staged beside the
+   rows and its scales held whole, one stage of each trip's copies. *)
+let exact_mxfp4 = { exact_routed with weights = Mxfp4; rk = 320 }
+
+let run_routed_mxfp4 () =
+  let d, r = on_cuda () in
+  let p = exact_mxfp4 in
+  let prg = compiled r (routed_program p) in
+  equal ~msg:"rows, codes and scales staged" int 3
+    (List.length (locals (Ops.nth prg 1)));
+  let map, owner, inputs = routed_inputs ~small:true p in
+  let v = function `Float f -> f | `Int z -> Bigint.to_float z | _ -> 0. in
+  let a = List.assoc 1 inputs
+  and codes = List.assoc 4 inputs
+  and scales = List.assoc 5 inputs in
+  let weight e j q =
+    let row = (e * p.rn) + j in
+    let byte = int_of_float (v codes.((row * p.rk / 2) + (q / 2))) in
+    let nibble = (byte lsr (q mod 2 * 4)) land 15 in
+    let s = int_of_float (v scales.((row * p.rk / 32) + (q / 32))) in
+    Float.ldexp e2m1.(nibble) (s - 127)
+  in
+  let positions = p.tokens * p.topk in
+  let expected =
+    Array.init (Array.length map * p.rn) (fun e ->
+        let s = e / p.rn and j = e mod p.rn in
+        let o = owner.(s / p.block) in
+        let t = ref 0. in
+        if map.(s) <> positions then
+          for q = 0 to p.rk - 1 do
+            t := !t +. (v a.((map.(s) / p.topk * p.rk) + q) *. weight o j q)
+          done;
+        `Float !t)
+  in
+  equal (array Dtypes.value) expected (List.assoc 0 (Run.on d prg inputs))
+
 (* The output projection of a computed operand over 64 tokens, in heads of 32
    whose loads all step through the heads, of integers from -2 to 2 scaled by
    1 or 2: its sums are exact. *)
@@ -1175,6 +1367,37 @@ let run_computed () =
   in
   equal (array Dtypes.value) expected
     (List.assoc 0 (Run.on d prg [ (1, o); (2, kept); (3, w) ]))
+
+(* A dense MXFP4 product of 64 tokens, of integers from -2 to 2 times codes
+   scaled by [2^-4] to [2^4]: its sums are exact. Its scales are held whole
+   beside the staged codes and rows. *)
+let run_dense () =
+  let d, r = on_cuda () in
+  let p = { dtokens = 64; dk = 512; dn = 128; offset = 0 } in
+  let prg = compiled r (dense_kernel p) in
+  equal ~msg:"x, codes and scales staged" int 3
+    (List.length (locals (Ops.nth prg 1)));
+  let inputs = dense_inputs ~small:true p in
+  let v = function `Float f -> f | `Int z -> Bigint.to_float z | _ -> 0. in
+  let x = List.assoc 1 inputs
+  and codes = List.assoc 2 inputs
+  and scales = List.assoc 3 inputs in
+  let weight j q =
+    let byte = int_of_float (v codes.((j * p.dk / 2) + (q / 2))) in
+    let nibble = (byte lsr (q mod 2 * 4)) land 15 in
+    let s = int_of_float (v scales.((j * p.dk / 32) + (q / 32))) in
+    Float.ldexp e2m1.(nibble) (s - 127)
+  in
+  let expected =
+    Array.init (p.dtokens * p.dn) (fun e ->
+        let t = e / p.dn and j = e mod p.dn in
+        let s = ref 0. in
+        for q = 0 to p.dk - 1 do
+          s := !s +. (v x.((t * p.dk) + q) *. weight j q)
+        done;
+        `Float !s)
+  in
+  equal (array Dtypes.value) expected (List.assoc 0 (Run.on d prg inputs))
 
 (* Gathered rows that each warp reads alone: blocks of 8 rows, the core's
    two warps on two blocks, as gpt-oss's gate and up projection with
@@ -1326,6 +1549,9 @@ let in_two = "a product of 128 cubed in two stages of cp.async is exact"
 let in_one = "a product of 128 cubed in one stage is exact"
 let gathered = "a routed product of gathered rows is exact"
 let computed = "a product of a computed operand is exact"
+let dense = "a dense MXFP4 product, its scales held whole, is exact"
+let gathered_mxfp4 =
+  "a routed MXFP4 product of gathered rows, its scales held whole, is exact"
 let nested_loops =
   "a product over a nest of loops in two stages computes its unstaged \
    twin's bits"
@@ -1337,6 +1563,8 @@ let checked_kernels =
       test in_one (run_staged 1);
       test gathered run_routed;
       test computed run_computed;
+      test dense run_dense;
+      test gathered_mxfp4 run_routed_mxfp4;
       test nested_loops run_nest;
     ]
 
@@ -1378,6 +1606,14 @@ let races =
         "the race checker finds no hazard in a kernel staged over a nest of \
          loops"
         (racecheck nested_loops);
+      test
+        "the race checker finds no hazard in a kernel whose scales are held \
+         whole"
+        (racecheck dense);
+      test
+        "the race checker finds no hazard in a kernel of gathered rows whose \
+         scales are held whole"
+        (racecheck gathered_mxfp4);
     ]
 
 (* Serial ranges around a core
@@ -1654,21 +1890,8 @@ let stage_off () =
    and takes 96 values a trip, 30 trips. *)
 
 let tile (dt, m, k, n, sync) =
-  let r = sm89 ~sync () in
-  let p = { dt; batch = 1; m; k; n; layout = Kn; toeplitz = false } in
-  let s = Postrange.Scheduler.v (kernel p) r in
-  Postrange.Scheduler.convert_loop_to_global s;
-  let o =
-    Setting.context
-      [ Setting.B (Setting.stage, true) ]
-      (fun () -> Heuristic.hand_coded_optimizations s)
-  in
-  let module K = Postrange.Scheduler in
-  let size i = match List.nth (K.full_shape o) i with Int n -> n | Sym _ -> 0 in
-  let product l = List.fold_left (fun n i -> n * size i) 1 l in
-  ( product (K.axes_of o [ Global ]),
-    product (K.axes_of o [ Warp; Local ]),
-    product (K.axes_of ~reduce:true o [ Weak; Loop ]) )
+  planned ~sync
+    (kernel { dt; batch = 1; m; k; n; layout = Kn; toeplitz = false })
 
 let staged_tiles =
   cases "a staged core's workgroups, threads and trips"
@@ -1685,6 +1908,35 @@ let staged_tiles =
     ]
     (fun (case, expected) ->
       equal (triple int int int) expected (tile case))
+
+(* A decoded core's trips
+
+   On sm_89, which copies asynchronously, a trip of a dense MXFP4 product
+   takes 64 values, so that each row of codes a trip is a sector of 32
+   bytes: two stages of [rows · 32] bytes of codes for a workgroup's [rows]
+   rows, beside two of [x]'s 64 values of each of its tokens, and the
+   scales held whole, [rows · k / 32]. Over [5760; 2880] a workgroup takes
+   16 rows and 64 tokens at 64 tokens, 160 rows and 64 tokens at 512; over
+   [128; 256], 8 rows and 16 tokens, whose codes, 128 bytes a row over the
+   whole loop, are copied each trip all the same, beside the held scales.
+   The shared buffers' elements: *)
+
+let shared_elements p =
+  let prg = Codegen.to_program (dense_kernel p) (sm89 ()) in
+  List.sort Int.compare (List.map Shape.max_numel (locals (Ops.nth prg 1)))
+
+let decoded_trips =
+  cases "a dense MXFP4 product's staged rows cover a sector a trip"
+    ~id:(fun (p, _) -> Format.asprintf "%a" pp_dense p)
+    [
+      ( { dtokens = 64; dk = 2880; dn = 5760; offset = 0 },
+        [ 2 * 16 * 32; 16 * 90; 2 * 64 * 64 ] );
+      ( { dtokens = 512; dk = 2880; dn = 5760; offset = 0 },
+        [ 2 * 64 * 64; 2 * 160 * 32; 160 * 90 ] );
+      ( { dtokens = 64; dk = 256; dn = 128; offset = 0 },
+        [ 8 * 8; 2 * 8 * 32; 2 * 16 * 64 ] );
+    ]
+    (fun (p, expected) -> equal (list int) expected (shared_elements p))
 
 (* Sources *)
 
@@ -2102,6 +2354,7 @@ let () =
              law;
              routed_law;
              computed_law;
+             dense_law;
              heads_law;
              test
                "a staged core's plans at two counts of units compute the same \
@@ -2123,6 +2376,7 @@ let () =
             two stages and is the exact product"
            core_taken_whole;
          staged_tiles;
+         decoded_trips;
          routed_tiles;
          slotted_tiles;
          test "gathered rows each warp reads alone stay unstaged" alone;

@@ -313,13 +313,15 @@ let gpt_oss () =
 
 (* A large buffer is filled with one byte, a small normal number in every
    float type and a code of every quantised format: filling hundreds of
-   megabytes element by element would take longer than the run. An integer
+   megabytes element by element would take longer than the run. So is a
+   buffer of bytes, a quantised format's codes or scales. An integer
    buffer, an index or a position, is small and takes [cache_element]'s
    values. *)
 let large = 1 lsl 20
 
 let filled d dt n =
-  if n < large then Run.buffer d dt (Array.init n (cache_element dt n))
+  if n < large && Dtype.itemsize dt > 1 then
+    Run.buffer d dt (Array.init n (cache_element dt n))
   else
     let b = Rig.Buffer.create d (n * Dtype.itemsize dt) in
     Rig.Buffer.fill b '\x3e';
@@ -338,7 +340,7 @@ let rows_of all =
    come, read once a step: each call runs the next of several copies of the
    row's buffers, which together hold at least twice the device's last-level
    cache, so that a copy's last call has left the cache by its next. *)
-let cold = [ "key-projection-64" ]
+let cold = [ "key-projection-64"; "mxfp4-64"; "mxfp4-512" ]
 
 let gpu_rows name all =
   let case (row, kernels) =

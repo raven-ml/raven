@@ -105,8 +105,8 @@ let memory_coalescing sink (r : Renderer.t) =
     let later ((g, l) as d) ((g', l') as d') =
       if g > g' || (g = g' && l >= l') then d else d'
     in
-    (* The loads of 16-bit floats read other than as the value a store puts
-       in local memory: those copied there may merge further. *)
+    (* The loads of 16-bit floats and of bytes read other than as the value
+       a store puts in local memory: those copied there may merge further. *)
     let sixteen_bits dt = Dtype.mem dt Dtype.[ Float16; Bfloat16 ] in
     let read = Tbl.create 16 in
     let note u =
@@ -115,7 +115,11 @@ let memory_coalescing sink (r : Renderer.t) =
           let copy =
             op u = Op.Store && i = 1 && addrspace (nth u 0) = Some Dtype.Local
           in
-          if op s = Op.Load && sixteen_bits (dtype s) && not copy then
+          if
+            op s = Op.Load
+            && (sixteen_bits (dtype s) || Dtype.equal (dtype s) Dtype.Uint8)
+            && not copy
+          then
             Tbl.replace read s ())
         (src u)
     in
@@ -138,7 +142,7 @@ let memory_coalescing sink (r : Renderer.t) =
     in
     List.iter
       (fun u ->
-        if r.half8 then note u;
+        if r.half8 || r.byte_words then note u;
         read_apart u;
         let waits =
           List.fold_left
@@ -279,10 +283,21 @@ let memory_coalescing sink (r : Renderer.t) =
               let gpu_bytes =
                 key.op = Op.Load && Dtype.equal dt Dtype.Uint8 && r.byte_words
               in
+              (* Bytes copied into shared memory merge to 16 where the
+                 renderer holds them as words: one asynchronous copy, as a
+                 decoded operand's codes and held tiles take. *)
+              let byte_copy () =
+                Dtype.equal dt Dtype.Uint8 && r.byte_words
+                && List.for_all (fun (_, us) -> List.for_all copies us) offsets
+              in
               (if
-                 (Dtype.mem dt merged || gpu_bfloat16 || gpu_bytes)
+                 (Dtype.mem dt merged || gpu_bfloat16 || gpu_bytes
+                 || byte_copy ())
                  && r.supports_float4
-               then if copy () then [ 8; 4; 2 ] else [ 4; 2 ]
+               then
+                 if copy () then [ 8; 4; 2 ]
+                 else if byte_copy () then [ 16; 4; 2 ]
+                 else [ 4; 2 ]
                else [])
               @ [ 1 ]
         in

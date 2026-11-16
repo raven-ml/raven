@@ -1350,6 +1350,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- On CUDA, MXFP4 tensor-core operands are staged, codes 32 bytes a row a
+  trip (`Stage.steps`): on an RTX 5000 Ada `GptOss/prefill-512` takes 6%
+  less, a dense `Nx_quant.apply` 16-29% less, a routed 64-token down 10% more.
 - A GPU kernel outside a blocked contraction whose workgroup spans two
   output axes runs its consecutive threads along the output's unit stride
   (`Heuristic.hand_coded_optimizations`), where they stepped along the

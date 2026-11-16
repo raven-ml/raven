@@ -10,9 +10,13 @@ open Ops
    once, 32 banks of 4 bytes (CUDA C++ Programming Guide §2.3.4.2; one of
    RDNA4's two sets of 32 banks, ISA §12.1), and the widest copy, PTX's
    [cp.async], moves [copy] bytes. Each becomes a renderer's field when a
-   target measures another value. *)
+   target measures another value. An asynchronous copy, CUDA's alone, reads
+   global memory in sectors of [sector] bytes: "the data access unit is
+   32-byte regardless of whether global loads are cached in L1 or not" (CUDA
+   C++ Best Practices Guide §10.2.1). *)
 let line = 128
 let copy = 16
+let sector = 32
 
 let extent u = Dtype.Value.to_int (vmax u) + 1
 let is_inner r = List.mem (axis_type r) Axis_type.[ Warp; Local; Upcast ]
@@ -132,16 +136,17 @@ let row_load t =
    loop ranges, a gather), and the dimensions, innermost first. A term [c t]
    whose [t] reads the threads and lanes only through one load, a row of a
    row map, is a dimension of rows, outermost, its coordinate the load's.
-   [None] where a term mixes both otherwise, or the inner terms overlap. *)
-let rec split idx =
+   [None] where a term mixes both otherwise, or the inner terms overlap. A
+   range [inner] holds of counts with the threads and lanes. *)
+let rec split ?(inner = is_inner) idx =
   let classify (c, a) =
     match a with
     | None -> `Outer (c, a)
     | Some t -> (
         let rs = Nodes.to_list (ranges t) in
-        if not (reads_inner t) then `Outer (c, a)
+        if not (List.exists inner rs) then `Outer (c, a)
         else if
-          List.for_all is_inner rs && c > 0
+          List.for_all inner rs && c > 0
           && Dtype.Value.to_int (vmin t) = 0
         then if extent t > 1 then `Inner (c, t) else `Unit
         else
@@ -504,6 +509,161 @@ let elementwise u =
   Op.Set.mem (op u) Op.Set.alu
   || List.mem (op u) Op.[ Cast; Bitcast; Const; Where ]
 
+(* Decoded operands
+
+   A decoded operand's loads are copied where each copy is one asynchronous
+   copy of [copy] bytes, in the stage of the core's other operand: an MXFP4
+   operand's codes, a sector of each row a trip ({!steps}). Other copies go
+   through
+   registers. gpt-oss-20b's Q8_0 projections, whose blocks of 34 bytes admit
+   no asynchronous copy, staged so, copied by one warp and waited within the
+   trip that copies, on the staged tile's smaller grid: on an RTX 5000 Ada
+   their query, key and value ran 15-18% faster at 64 tokens but 1.09-1.19
+   times slower at 512, where ptxas spilled at 255 registers, and their
+   output ran 1.34-1.43 times slower at 64. *)
+
+(* Whether every copy of [t] is one asynchronous copy of [copy] bytes: its
+   innermost dimension contiguous in whole copies, every other term of its
+   address a multiple of a copy, in storage that starts on one. *)
+let copyable t =
+  let n = Dtype.itemsize t.dt and d0 = List.hd t.dims in
+  let whole c = c * n mod copy = 0 in
+  let starts =
+    match arg (buf_uop t.buf) with
+    | Param p -> p.align >= copy && p.phase = 0
+    | _ -> false
+  in
+  starts && n <= copy && d0.stride = 1 && whole d0.extent
+  && List.for_all (fun (c, _) -> whole c) (terms t.outer)
+  && List.for_all
+       (fun d ->
+         match d.rows with Some (c, _) -> whole c | None -> whole d.stride)
+       (List.tl t.dims)
+
+let simplified u =
+  graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u
+    (After_sources Symbolic.sym)
+
+(* The loads of global memory through which the operand [x] reads the
+   threads and lanes, if [x] computes elementwise on them. The walk stops at
+   loads and at ranges, whose bounds the operand does not compute on, and
+   leaves them out: they are the sources of the nodes it reaches. The loads
+   keep the walk's order, which the graph's structure fixes. *)
+let global_loads x =
+  let stops u = List.mem (op u) Op.[ Index; Range; Special ] in
+  let walked = toposort ~calls:Skip ~gate:(fun u -> not (stops u)) x in
+  if not (List.for_all elementwise walked) then None
+  else
+    Some
+      (List.fold_left
+         (fun acc u ->
+           if
+             Op.equal (op u) Op.Index
+             && addrspace (nth u 0) = Some Dtype.Global
+             && reads_inner u && not (List.memq u acc)
+           then u :: acc
+           else acc)
+         [] (List.concat_map src walked)
+      |> List.rev)
+
+(* Held tiles
+
+   A load whose one loop moves it by at most a line over all its trips reads
+   the same lines at every trip, which the L1 keeps for the whole loop. An
+   MXFP4 operand's scales are such a load: a byte a row a trip, 90 trips
+   over a row of 2880, a warp's 8 rows in 8 lines. Held in shared memory,
+   copied once before the loop, the same bytes are read each trip without a
+   request to the L1, a warp's 8 rows at a pitch of 90 bytes on 8 different
+   banks, as Marlin reads its scales from shared memory each step (Frantar
+   et al., "MARLIN: Mixed-Precision Auto-Regressive Parallel Inference on
+   Large Language Models", arXiv:2408.11743, §3.4). The copy reads what the
+   loop reads: it is gated by the loop's bound and is one run of whole
+   copies.
+
+   Shared memory costs more than its bytes. An SM's L1 and shared memory
+   are one store of 128 KB, shared memory carved from it in steps of 0, 8,
+   16, 32, 64 or 100 KB (NVIDIA Ada Tuning Guide §1.4.2.2), so each staged
+   byte can take L1 from the loads left there: on an RTX 5000 Ada,
+   gpt-oss-20b's MXFP4 expert kernels given 14400 bytes of shared memory
+   they do not read, their code otherwise the same, ran 8.3% to 28.6%
+   slower. A tile is therefore held only where the operand's other loads are
+   copied, and [cp.async.cg] caches those copies in the L2 alone: the
+   operand then leaves nothing on the L1. Marlin copies every operand into
+   shared memory so, "asynchronously via Ampere's cp.async instruction from
+   global (or L2) to shared memory" (§3.4), and vLLM's [cp_async4], which
+   copies its weights, is [cp.async.cg]
+   ([csrc/quantization/marlin/marlin.cuh]). On gpt-oss-20b's real weights
+   and routing at 32 values a trip, against neither copied: the scales held
+   alone ran the down projection at 64 tokens 20% slower; the codes copied
+   and the scales left as loads ran gate and up and down at 512 tokens
+   0.0-0.4% faster; both, 4.8-5.6% faster. *)
+
+(* The tile of [l] over the threads, lanes and the loop [k], if [k] moves
+   [l] by at most a line over all its trips, the tile is one run of
+   [copy]-byte copies at an address that keeps their alignment, and [l] has
+   no gate of its own. *)
+let held_tile k l =
+  match (op l, src l) with
+  | Op.Index, [ buf; idx ]
+    when addrspace buf = Some Dtype.Global && is_true (get_valid idx) -> (
+      let size = Dtype.itemsize (dtype l) in
+      let idx = get_idx (simplified idx) in
+      let inner r = is_inner r || r == k in
+      let step d =
+        List.find_map (fun (c, t) -> if t == k then Some c else None) d.parts
+      in
+      match split ~inner idx with
+      | Some (outer, [ d ]) when d.stride = 1 && d.rows = None && dense [ d ]
+        -> (
+          match step d with
+          | Some c when c * size * extent k <= line ->
+              let t =
+                {
+                  buf;
+                  dt = dtype l;
+                  outer;
+                  dims = [ d ];
+                  valid = Some O.(k < nth k 0);
+                  fields = [ (k, [ (0, c, 1, k) ]) ];
+                  loops = [];
+                  gathers = false;
+                  size = d.extent;
+                }
+              in
+              if copyable t then Some t else None
+          | _ -> None)
+      | _ -> None)
+  | _ -> None
+
+(* The loads of global memory of a decoded operand [x] through which it reads
+   the threads and lanes, each [`Copied] with its tile where every copy of
+   its tile a trip is one asynchronous copy ({!copyable}), its index
+   simplified, as [(32 L + i) / 32] over lanes [i < 32] reads the loop [L]
+   alone; else [`Held] with its held tile where it steps through one loop
+   and has one; [None] where a load is neither. A load whose trip's tile
+   copies whole is copied each trip, held or not: MXFP4's codes over a row
+   of 256 values move 128 bytes over the loop, and held whole they would
+   leave the operand no copied load. *)
+let decoded_loads ?whole all x =
+  let classify l =
+    match (op l, src l) with
+    | Op.Index, [ buf; idx ] -> (
+        let simple = replace l ~src:[ buf; simplified idx ] in
+        match staged_tile ?whole all simple with
+        | Some t when copyable t -> Some (`Copied (l, t))
+        | _ -> (
+            match loops_of (get_idx (simplified idx)) with
+            | [ k ] -> Option.map (fun t -> `Held (l, t)) (held_tile k l)
+            | _ -> None))
+    | _ -> None
+  in
+  match global_loads x with
+  | None -> None
+  | Some loads ->
+      let classes = List.map classify loads in
+      if List.exists Option.is_none classes then None
+      else Some (List.filter_map Fun.id classes)
+
 (* The loads staging copies for a core's operand [x], each with its tile: [x]
    itself where it is a load with a tile; where [x] computes elementwise on
    loads and is not decoded, the loads of global memory through which it reads
@@ -512,58 +672,45 @@ let elementwise u =
    most elements are copied, and the others stay loads: an attention output's
    per-head scale, while the core's loop runs within a head, is read once a
    trip of its own loop. The copies move the loads' values, which the operand
-   then computes on as it did, so the operand's values do not change. A decoded
-   operand stays unstaged by measurement: staged, the codes and scales of
-   gpt-oss's Q8_0 projections at 64 tokens ran 1.5 to 1.8 times slower on an
-   RTX 5000 Ada. *)
-let loads_of ?whole all x =
+   then computes on as it did, so the operand's values do not change. A
+   decoded operand's loads are copied where [async] holds, each load copied
+   or held ({!decoded_loads}), and some copied. *)
+let loads_of ~async ?whole all x =
   match staged_tile ?whole all x with
   | Some t -> Some [ (x, t) ]
+  | None when decoded x && async -> (
+      let copied =
+        List.filter_map
+          (function `Copied c -> Some c | `Held _ -> None)
+          (Option.value (decoded_loads ?whole all x) ~default:[])
+      in
+      match copied with [] -> None | _ -> Some copied)
   | None when decoded x -> None
   | None -> (
-      let stops u = List.mem (op u) Op.[ Index; Range; Special ] in
-      let walked = toposort ~calls:Skip ~gate:(fun u -> not (stops u)) x in
-      (* The walk stops at loads and at ranges, whose bounds the operand does
-         not compute on, and leaves them out: they are the sources of the
-         nodes it reaches. The loads keep the walk's order, which the
-         graph's structure fixes. *)
-      let loads =
-        List.fold_left
-          (fun acc u ->
-            if
-              Op.equal (op u) Op.Index
-              && addrspace (nth u 0) = Some Dtype.Global
-              && reads_inner u && not (List.memq u acc)
-            then u :: acc
-            else acc)
-          [] (List.concat_map src walked)
-        |> List.rev
-      in
-      let tiles = List.map (fun l -> (l, staged_tile ?whole all l)) loads in
-      if
-        loads = []
-        || (not (List.for_all elementwise walked))
-        || List.exists (fun (_, t) -> Option.is_none t) tiles
-      then None
-      else
-        let tiles = List.map (fun (l, t) -> (l, Option.get t)) tiles in
-        let largest =
-          List.fold_left
-            (fun b (_, t) -> if t.size > b.size then t else b)
-            (snd (List.hd tiles)) tiles
-        in
-        Some (List.filter (fun (_, t) -> same_loops t largest) tiles))
+      match global_loads x with
+      | None | Some [] -> None
+      | Some loads ->
+          let tiles = List.map (fun l -> (l, staged_tile ?whole all l)) loads in
+          if List.exists (fun (_, t) -> Option.is_none t) tiles then None
+          else
+            let tiles = List.map (fun (l, t) -> (l, Option.get t)) tiles in
+            let largest =
+              List.fold_left
+                (fun b (_, t) -> if t.size > b.size then t else b)
+                (snd (List.hd tiles)) tiles
+            in
+            Some (List.filter (fun (_, t) -> same_loops t largest) tiles))
 
 (* The loads of a core's [operands] that staging copies, each with its tile,
    or an operand with [None] where it stays unstaged. A computed operand's
    loads are copied only where their loops are those of each operand that is
    a load: a copy runs where the loops of its tile do. *)
-let operand_tiles ?whole all operands =
+let operand_tiles ~async ?whole all operands =
   let plain = List.filter_map (staged_tile ?whole all) operands in
   let on_plain (_, t) = List.for_all (fun p -> same_loops p t) plain in
   List.concat_map
     (fun x ->
-      match loads_of ?whole all x with
+      match loads_of ~async ?whole all x with
       | Some [ (l, t) ] when l == x -> [ (x, Some t) ]
       | Some ls when List.for_all on_plain ls ->
           List.map (fun (l, t) -> (l, Some t)) ls
@@ -767,8 +914,9 @@ let stages ~used ren all w staged ~loops sizes =
    stages: the tiles of its operands ({!operand_tiles}), its staged tiles,
    the loops they step through, the same for each, and its stages; [None]
    where it stages nothing. *)
-let staging ren all ~used w =
-  let tiles = operand_tiles all (List.filteri (fun i _ -> i < 2) (src w)) in
+let staging (ren : Renderer.t) all ~used w =
+  let operands = List.filteri (fun i _ -> i < 2) (src w) in
+  let tiles = operand_tiles ~async:ren.async_copy all operands in
   let staged = List.filter_map snd tiles in
   match List.map (fun t -> t.loops) staged with
   | loops :: rest when List.for_all (List.equal ( == ) loops) rest -> (
@@ -776,6 +924,30 @@ let staging ren all ~used w =
       | 0 -> None
       | d -> Some (tiles, staged, loops, d))
   | _ -> None
+
+(* The held tiles of a core's [operands], whose loads staging copies as
+   [tiles] gives them ({!operand_tiles}): each decoded operand's held loads
+   ({!decoded_loads}), where it has copied loads and staging copies each. An
+   operand whose loads are all held has no stage to carry it. Its loads are
+   copied only asynchronously ({!loads_of}), so no target without
+   [async_copy] holds a tile. *)
+let held_tiles all tiles operands =
+  let copied l = List.exists (fun (y, t) -> y == l && Option.is_some t) tiles in
+  List.concat_map
+    (fun x ->
+      let loads =
+        if decoded x then Option.value (decoded_loads all x) ~default:[]
+        else []
+      in
+      let held =
+        List.filter_map (function `Held h -> Some h | `Copied _ -> None) loads
+      and others =
+        List.filter_map
+          (function `Copied (l, _) -> Some l | `Held _ -> None)
+          loads
+      in
+      if others <> [] && List.for_all copied others then held else [])
+    operands
 
 let staged_bytes (_, staged, _, d) =
   d * List.fold_left (fun n t -> n + bytes t) 0 staged
@@ -792,6 +964,73 @@ let used_before ren all w =
         | None -> go used rest)
   in
   go 0 (List.filter (fun u -> Op.equal (op u) Op.Wmma) all)
+
+(* Trips of a row's sector
+
+   A copy of [copy] bytes from the L2 reads a sector of [sector], so a row
+   whose tile a trip is [copy] bytes, as MXFP4's codes are at 32 values a
+   trip, reads each sector at two trips, twice; unstaged, one line of the
+   L1 serves 8 trips. A trip of [u] steps of the loop [k] reads [u] times
+   the row of a tile whose rows abut from one step to the next: [k] moves
+   its address by its innermost dimension's extent. On an RTX 5000 Ada a
+   dense MXFP4 product of 5760 by 2880 at 64 values a trip ran 16% faster
+   at 64 tokens than unstaged with its weights in the L2, where 32 values
+   a trip ran 3% slower, and 22% faster flushed. The trip costs registers:
+   gpt-oss-20b's expert cores at 64 tokens take 146 against 128, 3
+   workgroups an SM against 4, and on a real routing their down
+   projection ran 14% slower than at 32 values a trip, their gate and up
+   2% faster; at 512 tokens both ran 5-6% faster. *)
+
+(* The bytes of each row of [t] that a step of [k] reads, where its rows
+   abut from one step of [k] to the next. *)
+let row_run k t =
+  let d0 = List.hd t.dims in
+  let by_k (c, a) =
+    match a with
+    | Some a when Op.equal (op a) Op.Range && axis_id a = axis_id k -> Some c
+    | _ -> None
+  in
+  match List.find_map by_k (terms t.outer) with
+  | Some c when d0.stride = 1 && c = d0.extent ->
+      Some (d0.extent * Dtype.itemsize t.dt)
+  | _ -> None
+
+let steps (ren : Renderer.t) sink ~k =
+  let all = toposort ~calls:Skip sink in
+  let n = extent k in
+  let cores = List.filter (fun u -> Op.equal (op u) Op.Wmma) all in
+  let reads t =
+    List.exists (fun r -> axis_id r = axis_id k) (Nodes.to_list (ranges t.outer))
+  in
+  (* The least steps at which each row a staged core's tiles read along [k]
+     covers a sector, if [k] keeps more than one trip to pipeline and the
+     stages keep their depth. *)
+  let least w =
+    match staging ren all ~used:(used_before ren all w) w with
+    | None -> 1
+    | Some (_, staged, _, d) -> (
+        let runs = List.filter_map (row_run k) staged in
+        let need =
+          List.fold_left (fun u b -> max u ((sector + b - 1) / b)) 1 runs
+        in
+        let sizes u =
+          List.map (fun t -> bytes t * if reads t then u else 1) staged
+        in
+        let used = used_before ren all w in
+        let keeps u =
+          u >= need && u < n && n mod u = 0
+          && depth ~used ren (sizes u) >= d
+        in
+        match List.find_opt keeps (List.init n (fun i -> i + 1)) with
+        | Some u -> u
+        | None -> 1)
+  in
+  if
+    (not ren.async_copy) || n <= 1
+    || Option.is_none (workgroup all)
+    || has_locals all
+  then 1
+  else List.fold_left (fun u w -> max u (least w)) 1 cores
 
 let operands (ren : Renderer.t) sink =
   let all = toposort ~calls:Skip sink in
@@ -821,88 +1060,119 @@ let operands (ren : Renderer.t) sink =
                | _ -> n)
              0 all)
       in
-      let used = ref 0 in
-      let stage w =
-        match staging ren all ~used:!used w with
-        | None -> None
-        | Some ((tiles, _, loops, d) as st) ->
-          let operands = List.filteri (fun i _ -> i < 2) (src w) in
-          used := !used + staged_bytes st;
-          let plans =
-            List.map
-              (fun (x, t) ->
-                match t with
-                | None -> (x, None)
-                | Some t ->
-                    let buf =
-                      Shape.alloc ~slot:!next_slot ~addrspace:Dtype.Local
-                        [ Int (t.size * d) ] t.dt
-                    in
-                    incr next_slot;
-                    (x, Some (stager wg ~fresh t buf)))
-              tiles
-          in
-          (* The first chunk's copies, before the reads; with two stages, the
-             next chunk's, each trip, into the slot the next trip reads: of a
-             nest, the next trip in its order. *)
-          let first, ahead, rslot =
-            match loops with
-            | outermost :: _ when d = 2 ->
-                let t, n = trip loops in
-                let next = O.(t + int 1) in
-                let within = around all w outermost in
-                let firsts =
-                  List.filter_map
-                    (fun (_, p) ->
-                      Option.map
-                        (fun st ->
-                          st.copy_to ~within ~slot:(int 0) ~at:(int 0) ())
-                        p)
-                    plans
-                and aheads =
-                  List.filter_map
-                    (fun (_, p) ->
-                      Option.map
-                        (fun st ->
-                          st.copy_to ~ahead:O.(next < n) ~slot:O.(next % int 2)
-                            ~at:next ())
-                        p)
-                    plans
-                in
-                (firsts, aheads, O.(t % int 2))
-            | _ ->
-                ( List.filter_map
-                    (fun (_, p) ->
-                      Option.map (fun st -> st.copy_to ~slot:(int 0) ()) p)
-                    plans,
-                  [],
-                  int 0 )
-          in
-          (* The reads wait for the first copies; the next chunk's copies run
-             before them, which no read waits for: the slot's offset is
-             ordered after them. *)
-          let slot = if List.is_empty ahead then rslot else after rslot ahead in
-          (* An operand reads its copies back: itself where it is a load,
-             or the loads it computes on. *)
-          let reads =
-            List.filter_map
-              (fun (x, p) ->
-                Option.map (fun st -> (x, st.read ~deps:first ~slot)) p)
-              plans
-          in
-          let srcs =
-            List.map
-              (fun x ->
-                match List.assq_opt x reads with
-                | Some read -> read
-                | None -> substitute ~calls:Skip ~pass:Once x reads)
-              operands
-          in
-          let acc = List.filteri (fun i _ -> i >= 2) (src w) in
-          Some (w, replace w ~src:(srcs @ acc))
-      in
+      (* Every core's stages first, then the held tiles in the room they
+         leave, so that a held tile never takes a stage's room. *)
       let cores = List.filter (fun u -> Op.equal (op u) Op.Wmma) all in
-      match List.filter_map stage cores with
+      let used = ref 0 in
+      let stagings =
+        List.filter_map
+          (fun w ->
+            match staging ren all ~used:!used w with
+            | None -> None
+            | Some st ->
+                used := !used + staged_bytes st;
+                Some (w, st))
+          cores
+      in
+      let stage (w, (tiles, _, loops, d)) =
+        let operands = List.filteri (fun i _ -> i < 2) (src w) in
+        let plans =
+          List.map
+            (fun (x, t) ->
+              match t with
+              | None -> (x, None)
+              | Some t ->
+                  let buf =
+                    Shape.alloc ~slot:!next_slot ~addrspace:Dtype.Local
+                      [ Int (t.size * d) ] t.dt
+                  in
+                  incr next_slot;
+                  (x, Some (stager wg ~fresh t buf)))
+            tiles
+        in
+        (* Each held tile that fits, copied once, before every loop. *)
+        let held =
+          List.filter_map
+            (fun (l, t) ->
+              if !used + bytes t > ren.shared_max then None
+              else begin
+                used := !used + bytes t;
+                let buf =
+                  Shape.alloc ~slot:!next_slot ~addrspace:Dtype.Local
+                    [ Int t.size ] t.dt
+                in
+                incr next_slot;
+                let st = stager wg ~fresh t buf in
+                Some (l, st, st.copy_to ~slot:(int 0) ())
+              end)
+            (held_tiles all tiles operands)
+        in
+        (* The first chunk's copies, before the reads; with two stages, the
+           next chunk's, each trip, into the slot the next trip reads: of a
+           nest, the next trip in its order. *)
+        let first, ahead, rslot =
+          match loops with
+          | outermost :: _ when d = 2 ->
+              let t, n = trip loops in
+              let next = O.(t + int 1) in
+              let within = around all w outermost in
+              let firsts =
+                List.filter_map
+                  (fun (_, p) ->
+                    Option.map
+                      (fun st ->
+                        st.copy_to ~within ~slot:(int 0) ~at:(int 0) ())
+                      p)
+                  plans
+              and aheads =
+                List.filter_map
+                  (fun (_, p) ->
+                    Option.map
+                      (fun st ->
+                        st.copy_to ~ahead:O.(next < n) ~slot:O.(next % int 2)
+                          ~at:next ())
+                      p)
+                  plans
+              in
+              (firsts, aheads, O.(t % int 2))
+          | _ ->
+              ( List.filter_map
+                  (fun (_, p) ->
+                    Option.map (fun st -> st.copy_to ~slot:(int 0) ()) p)
+                  plans,
+                [],
+                int 0 )
+        in
+        (* The reads wait for the first copies and the held ones together,
+           at one barrier: a held copy issued before the loop completes
+           with the first chunk's. The next chunk's copies run before
+           them, which no read waits for: the slot's offset is ordered
+           after them. *)
+        let waits = first @ List.map (fun (_, _, c) -> c) held in
+        let slot = if List.is_empty ahead then rslot else after rslot ahead in
+        (* An operand reads its copies back: itself where it is a load,
+           or the loads it computes on. *)
+        let reads =
+          List.filter_map
+            (fun (x, p) ->
+              Option.map (fun st -> (x, st.read ~deps:waits ~slot)) p)
+            plans
+          @ List.map
+              (fun (l, st, _) -> (l, st.read ~deps:waits ~slot:(int 0)))
+              held
+        in
+        let srcs =
+          List.map
+            (fun x ->
+              match List.assq_opt x reads with
+              | Some read -> read
+              | None -> substitute ~calls:Skip ~pass:Once x reads)
+            operands
+        in
+        let acc = List.filteri (fun i _ -> i >= 2) (src w) in
+        (w, replace w ~src:(srcs @ acc))
+      in
+      match List.map stage stagings with
       | [] -> sink
       | subs -> substitute ~calls:Skip ~pass:Once sink subs
 
@@ -910,7 +1180,9 @@ let admits (ren : Renderer.t) sink =
   let all = toposort ~calls:Skip sink in
   let core w =
     let tiles =
-      List.map snd (operand_tiles all (List.filteri (fun i _ -> i < 2) (src w)))
+      List.map snd
+        (operand_tiles ~async:ren.async_copy all
+           (List.filteri (fun i _ -> i < 2) (src w)))
     in
     match tiles with
     | Some t :: rest ->
@@ -1005,7 +1277,8 @@ let tile (ren : Renderer.t) ast (w : wmma) ~core_threads ~workgroups
        [K] none of their loops where a trip takes it whole, as a per-head
        scale is copied once a trip takes a head whole. *)
     let tiles whole =
-      List.filter_map snd (operand_tiles ?whole all operands)
+      List.filter_map snd
+        (operand_tiles ~async:ren.async_copy ?whole all operands)
     in
     let within = lazy (tiles None) and whole = lazy (tiles (Some rk)) in
     let staged u =

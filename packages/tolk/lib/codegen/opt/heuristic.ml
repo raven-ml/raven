@@ -242,6 +242,10 @@ let tensor_cores ~core_threads k =
                 (fun size -> split 0 size Opt.Local)
                 (List.find_opt local [ 4; 2 ]);
               unroll_beside k tk rngs.(2);
+              (* Each row staging copies a trip covers a sector
+                 ({!Stage.steps}). *)
+              let steps = Stage.steps (K.ren tk) (K.ast tk) ~k:rngs.(2) in
+              if steps > 1 then split 2 steps Opt.Upcast;
               false
             in
             if min_globals <> 0 then begin

@@ -191,9 +191,11 @@ type t = private {
           ({!Coalesce.memory_coalescing}). *)
   byte_words : bool;
       (** A vector of 2 or 4 {!Dtype.Uint8} is written as one unsigned
-          integer word, each byte read from it by a shift and built into it
-          by one, so that adjacent [Uint8] loads merge into one load of the
-          word ({!Coalesce.memory_coalescing}). *)
+          integer word, and one of 16 as four 32-bit words, each byte read
+          from them by a shift and built into them by one, so that adjacent
+          [Uint8] loads merge into one load of the words, and 16 bytes
+          copied from global into local memory into one copy
+          ({!Coalesce.memory_coalescing}). *)
   full_rate_subnormals : bool;
       (** A float multiply takes a subnormal operand unflushed, as fast as a
           normal one, so that a lowering may build an exact value through

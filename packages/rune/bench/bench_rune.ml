@@ -1930,8 +1930,10 @@ let experts_call tokens =
   }
 
 (* The same projection with MXFP4 experts, [5760; 2880] matrices of codes,
-   every block's scale 1, through [Nx_quant.apply_experts]. *)
-let experts_mxfp4_call tokens =
+   every block's scale 1, through [Nx_quant.apply_experts], each token's
+   experts [route t j] or spread over all of them. *)
+let experts_mxfp4_call ?(route = fun t j -> ((t * 7) + (j * 8)) mod 32) tokens
+    =
   {
     at =
       (fun at ->
@@ -1945,7 +1947,7 @@ let experts_mxfp4_call tokens =
         let ids =
           Nx.place at
             (Nx.init Nx.int64 [| tokens; 4 |] (fun i ->
-                 Int64.of_int (((i.(0) * 7) + (i.(1) * 8)) mod 32)))
+                 Int64.of_int (route i.(0) i.(1))))
         in
         let x =
           Nx.place at
@@ -1988,6 +1990,35 @@ let experts_few_call =
         in
         fun () -> ignore (synced (f ids x)));
   }
+
+(* The experts gpt-oss-20b's layer 10 routes the first 64 tokens of a prompt
+   to, 4 a token: 15 of its 32 experts, three of them taking 185 of the 256
+   rows, as a prompt's tokens share their experts. *)
+let prompt_route =
+  [|
+    [| 28; 9; 6; 7 |]; [| 6; 7; 19; 10 |]; [| 0; 19; 6; 25 |];
+    [| 0; 25; 19; 6 |]; [| 0; 25; 19; 6 |]; [| 25; 0; 19; 6 |];
+    [| 25; 0; 19; 6 |]; [| 25; 0; 19; 6 |]; [| 0; 6; 26; 31 |];
+    [| 0; 19; 25; 9 |]; [| 19; 25; 0; 6 |]; [| 19; 25; 0; 28 |];
+    [| 19; 25; 0; 6 |]; [| 19; 25; 0; 10 |]; [| 19; 25; 0; 3 |];
+    [| 25; 19; 0; 29 |]; [| 19; 25; 0; 7 |]; [| 25; 19; 0; 29 |];
+    [| 25; 19; 0; 29 |]; [| 25; 19; 0; 29 |]; [| 25; 19; 0; 29 |];
+    [| 25; 0; 19; 6 |]; [| 25; 19; 0; 8 |]; [| 25; 19; 0; 8 |];
+    [| 25; 0; 19; 3 |]; [| 25; 19; 0; 3 |]; [| 25; 19; 0; 3 |];
+    [| 25; 19; 0; 8 |]; [| 25; 19; 0; 3 |]; [| 25; 19; 0; 10 |];
+    [| 25; 19; 0; 8 |]; [| 25; 19; 0; 8 |]; [| 25; 19; 0; 7 |];
+    [| 25; 19; 0; 10 |]; [| 25; 19; 29; 0 |]; [| 25; 19; 0; 6 |];
+    [| 25; 19; 0; 29 |]; [| 25; 19; 0; 3 |]; [| 25; 19; 0; 7 |];
+    [| 25; 19; 0; 3 |]; [| 0; 25; 19; 6 |]; [| 25; 19; 0; 28 |];
+    [| 25; 19; 0; 7 |]; [| 25; 19; 0; 10 |]; [| 25; 19; 0; 3 |];
+    [| 19; 25; 0; 3 |]; [| 19; 25; 0; 12 |]; [| 25; 19; 0; 6 |];
+    [| 25; 19; 0; 10 |]; [| 25; 19; 0; 10 |]; [| 25; 19; 0; 29 |];
+    [| 19; 25; 0; 29 |]; [| 19; 25; 29; 0 |]; [| 19; 25; 0; 29 |];
+    [| 25; 19; 0; 29 |]; [| 25; 19; 0; 29 |]; [| 25; 19; 0; 12 |];
+    [| 25; 19; 0; 24 |]; [| 25; 19; 0; 29 |]; [| 25; 19; 0; 8 |];
+    [| 25; 19; 0; 3 |]; [| 19; 25; 0; 28 |]; [| 25; 19; 0; 8 |];
+    [| 25; 19; 0; 3 |];
+  |]
 
 (* A mixture of experts' block at a prompt of [tokens], gpt-oss-20b's MXFP4
    experts with an activation without a transcendental: each token's row
@@ -2160,6 +2191,11 @@ let gpu_rows g =
          core in blocks of 48, where blocks of 4 streamed took 248 us
          against 342. *)
       on_gpu g "experts-mxfp4-4x2of8-14336x4096" experts_few_call;
+      (* 64 tokens routed as a prompt's are, in blocks of 48: the 15
+         experts' 130 MB of codes pass the device's cache, so each call
+         reads them from memory, as a model's step does. *)
+      on_gpu g "experts-mxfp4-prompt-64x4of32-2880x5760"
+        (experts_mxfp4_call ~route:(fun t j -> prompt_route.(t).(j)) 64);
       (* 32 tokens, 4 rows an expert, on tensor cores in blocks of 48: the
          down projection's computed rows are stored in their own order, which
          its tile gathers as it stages them. *)

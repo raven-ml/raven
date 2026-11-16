@@ -79,10 +79,19 @@ Where it stands, with every measurement: doc/performance.md.
 - gpt-oss's router product takes 620-635 us at 16 tokens against 99 at
   12 (`r_2_8_16_2_2880`), 567-764 us a layer at 13-15 tokens, and 85 at
   127 against 39 at 128
-- With the bfloat16 decode and CUDA's byte words, how MXFP4 codes reach
-  a tensor core's lanes holds about 4.4 ms of gpt-oss's prefill-512
-  against vLLM, and staged Q8_0 codes ran 1.5-1.8x slower
-  (`stage.ml`'s comment) for a reason nobody has measured
+- MXFP4 codes reach a tensor core's lanes from shared memory by 16-byte
+  `cp.async.cg`, 32 bytes a row a trip, beside their held scales, which
+  took gate and up and down at 512 tokens 10% faster on real weights.
+  Q8_0 stays unstaged: copied through registers by one warp and waited in
+  its trip, on the staged tile's smaller grid, its 34-byte blocks ran the
+  output 1.34-1.43x slower at 64 tokens and query, key and value
+  1.09-1.19x at 512 (a spill at 255 registers), and query, key and value
+  15-18% faster at 64
+- At 64 tokens the MXFP4 expert cores of 64 values a trip take 146
+  registers, 3 workgroups an SM against 4 at 128: on a real routing the
+  down projection runs 10% slower than with its codes unstaged (2 waves
+  of its 648 workgroups become 3), gate and up 10% faster. A dense MXFP4
+  product at 512 tokens takes 255 registers and spills 8 bytes
 - MXFP4's float32 decode on Metal multiplies by a subnormal at scale byte
   0, which Metal may flush (MSL 4.1 §8.1); no test reaches it there
 - tolk streams a routed block of 32 rows, which `core_fits` refuses: such

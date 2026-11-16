@@ -120,7 +120,9 @@
     along [K] become adjacent. A decoded 4-bit operand splits the reduce into
     bytes and a byte's two codes, which the other operand reads at [2b + c]:
     the core takes the bytes, and the codes unrolled make one load where two
-    trips read the values two apart.
+    trips read the values two apart. The core's [K] is then upcast by
+    {!Stage.steps}, so that each row staging copies a trip covers a sector:
+    MXFP4's codes are copied 32 bytes a row a trip, 64 values.
 
     A core whose operands are staged ({!Stage.tile}) takes the staged tile
     instead of those splits and floors. Where the operands read [M] only as
