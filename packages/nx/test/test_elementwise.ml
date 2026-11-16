@@ -138,16 +138,16 @@ let agrees name ~accepted ~kind dt reference f =
     if Kernels_cases.any_nan kind then Kernels_cases.same_values (D.Any dt)
     else array int
   in
-  if accepted then begin
-    cover "computed" true;
+  if accepted then
     match reference () with
     | Some want -> equal ~msg:name bits want (f ())
     | None -> fail (name ^ ": the host's kernel declined a dtype its kind takes")
-  end
-  else begin
-    cover "raised" true;
-    names name (fun () -> ignore (f ()))
-  end
+  else names name (fun () -> ignore (f ()))
+
+(* The demands of a law that calls [agrees] once for each of [accepted]. *)
+let covers_agrees accepted =
+  cover "computed" (List.mem true accepted);
+  cover "raised" (List.mem false accepted)
 
 (* Unary *)
 
@@ -187,6 +187,7 @@ let unaries =
 
 let law_unary (s, Case a, _) =
   let dt = A.dtype a in
+  covers_agrees (List.map (fun u -> P.accepts1 (Unary u.kind) dt dt) unaries);
   List.iter
     (fun u ->
       agrees u.name
@@ -199,6 +200,7 @@ let law_unary (s, Case a, _) =
 (* [erf] takes floats alone, by its type. *)
 let law_erf (s, Case a, _) =
   let dt = A.dtype a in
+  cover "computed" (D.is D.Float dt && P.accepts1 (Unary Erf) dt dt);
   match D.kind dt with
   | D.Float ->
       agrees "erf"
@@ -206,27 +208,33 @@ let law_erf (s, Case a, _) =
         ~kind:(Support.K1 (Unary Erf)) dt
         (fun () -> reference1 (Unary Erf) dt s a)
         (fun () -> result_bits (Nx.erf (value a)))
-  | D.Signed | D.Unsigned | D.Boolean | D.Complex -> cover "computed" true
+  | D.Signed | D.Unsigned | D.Boolean | D.Complex -> ()
 
 (* [asinh], [acosh] and [atanh] compute complex numbers by their kinds, and
    floats by a composition of other kinds that test_math holds. *)
 let law_inverse_hyperbolic (s, Case a, _) =
   let dt = A.dtype a in
+  let inverses =
+    [
+      ("asinh", P.Asinh, fun x -> Nx.asinh x);
+      ("acosh", P.Acosh, fun x -> Nx.acosh x);
+      ("atanh", P.Atanh, fun x -> Nx.atanh x);
+    ]
+  in
+  covers_agrees
+    (if D.is D.Float dt then []
+     else List.map (fun (_, kind, _) -> P.accepts1 (Unary kind) dt dt) inverses);
   List.iter
     (fun (name, kind, f) ->
       match D.kind dt with
-      | D.Float -> cover "computed" true
+      | D.Float -> ()
       | _ ->
           agrees name
             ~accepted:(P.accepts1 (Unary kind) dt dt)
             ~kind:(Support.K1 (Unary kind)) dt
             (fun () -> reference1 (Unary kind) dt s a)
             (fun () -> result_bits (f (value a))))
-    [
-      ("asinh", P.Asinh, fun x -> Nx.asinh x);
-      ("acosh", P.Acosh, fun x -> Nx.acosh x);
-      ("atanh", P.Atanh, fun x -> Nx.atanh x);
-    ]
+    inverses
 
 (* Binary *)
 
@@ -265,6 +273,10 @@ let law_binary (s, Case a, rest) =
   let b = match rest with [ Case b ] -> A.expect dt (A.Any b) | _ -> a in
   cover "broadcast" (Iarray.to_array (L.shape (A.layout b)) <> s);
   cover "complex" (D.is D.Complex dt);
+  covers_agrees
+    (List.map
+       (fun (o : binary) -> P.accepts2 (P.Binary (o.kind (D.Any dt))) dt)
+       binaries);
   List.iter
     (fun (o : binary) ->
       let k = P.Binary (o.kind (D.Any dt)) in
@@ -402,6 +414,10 @@ let law_compare (s, Case a, rest) =
   let dt = A.dtype a in
   cover "complex" (D.is D.Complex dt);
   let b = match rest with [ Case b ] -> A.expect dt (A.Any b) | _ -> a in
+  cover "computed"
+    (List.exists
+       (fun (o : comparison) -> P.accepts2 (P.Compare o.kind) dt)
+       comparisons);
   List.iter
     (fun (o : comparison) ->
       let k = P.Compare o.kind in
@@ -420,6 +436,7 @@ let law_fma (s, Case a, rest) =
     | [ Case b; Case c ] -> (A.expect dt (A.Any b), A.expect dt (A.Any c))
     | _ -> (a, a)
   in
+  covers_agrees [ P.accepts3 Fma dt dt ];
   agrees "fma" ~accepted:(P.accepts3 Fma dt dt) ~kind:(Support.K3 Fma) dt
     (fun () -> reference3 Fma s a b c)
     (fun () -> result_bits (Nx.fma (value a) (value b) (value c)))
