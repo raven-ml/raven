@@ -325,7 +325,12 @@ val of_bigarray :
     waiting to collect for a bounded time, which does not grow with the
     number of arrays they claim or release. Past {!max_operands} arrays, other
     threads of the calling domain may run OCaml code while the door claims or
-    releases them. *)
+    releases them. A copy of elements the host moves, by {!transfer},
+    {!copy} or {!to_array} of elements that box, releases the domain lock
+    past 256 KiB, a quarter of a core's copy of 1 MiB, and wherever an array
+    lies over memory something other than its device holds
+    ({!Rig.Buffer.is_borrowed}), whose read may wait for storage. {!to_array}
+    of other elements and {!of_array} hold it, as they move OCaml values. *)
 
 val max_operands : int
 (** [max_operands] is [18], [nx_array.h]'s [NX_MAX_OPERANDS]: the length of

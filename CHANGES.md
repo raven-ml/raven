@@ -3122,6 +3122,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- nx.array's host copies (`Nx_array.transfer`, `copy`, and `to_array` of
+  elements that box) release the domain lock past 256 KiB and over an array
+  in borrowed memory, such as a file's mapped pages, where they held it
+  whatever the size.
 - nx.cpu releases the domain lock in any call over an operand that lies
   over memory something other than its device holds, such as a file's
   pages a load maps or a bigarray, however small the call: such a read may

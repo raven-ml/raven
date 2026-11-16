@@ -1267,14 +1267,28 @@ static void copy_run(void *ctx, const int64_t *at, int64_t len) {
   }
 }
 
+/* The bytes from which a gather releases the domain lock: a quarter of the
+   door's bound, a core's copy of 1 MiB (nx_array.h), as nx.cpu's calls
+   release, so that a strided gather up to four times a memcpy's time stays
+   within it. */
+#define GATHER_RELEASE_BYTES ((1 << 20) / 4)
+
 /* The gather: copies the elements of a[1] into a[0], operands of one dtype
-   read through the door. Answers NX_SHAPE if their shapes differ. */
+   read through the door. Answers NX_SHAPE if their shapes differ. It reads
+   C data alone, with the domain lock released where its bytes reach
+   GATHER_RELEASE_BYTES or an operand is borrowed, whose read may wait on
+   the system for any time. */
 static int gather(nx_array a[2]) {
   nx_loop l;
   int e = nx_coalesce(2, a, &l);
   if (e) return e;
+  double bytes = (double)a[1].bits / 8;
+  for (int i = 0; i < a[1].rank; i++) bytes *= (double)a[1].dim[i];
+  int release = bytes >= GATHER_RELEASE_BYTES || a[0].borrowed || a[1].borrowed;
+  if (release) caml_enter_blocking_section_no_pending();
   copy_ctx c = {a, &l};
   walk(2, &l, &c, copy_run);
+  if (release) caml_leave_blocking_section();
   return NX_OK;
 }
 
@@ -1308,6 +1322,7 @@ value nx_array_to_bigarray(value v, value out) {
   d->rank = r;
   d->flags = NX_CONTIGUOUS | NX_DISTINCT;
   d->offset = 0;
+  d->borrowed = 0;
   int64_t stride = 1;
   for (int i = r - 1; i >= 0; i--) {
     d->dim[i] = a[1].dim[i];

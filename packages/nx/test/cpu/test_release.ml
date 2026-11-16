@@ -407,6 +407,38 @@ let borrowed =
             (fun (what, releases) ->
               greater ~msg:(what ^ ": releases") int ~than:0 releases)
             (small_calls over));
+      test
+        "nx.array's host copies release over borrowed memory and past \
+         256 KiB, and hold below"
+        (fun () ->
+          let releases f =
+            f ();
+            let ~releases, ~held:_, ~cpu:_ = Nx_release_support.watch f in
+            releases
+          in
+          let small = A.of_array D.Float32 [| 64 |] (Array.make 64 1.) in
+          let ints = A.of_array D.Int64 [| 64 |] (Array.make 64 1L) in
+          let large = f32 [| 1 lsl 16 |] in
+          equal
+            (list (pair string bool))
+            [
+              ("a copy of a borrow", true);
+              ("a copy of a bigarray", true);
+              ("int64s out of a borrow", true);
+              ("a copy of 256 KiB", true);
+              ("a copy of 256 B", false);
+            ]
+            (List.map
+               (fun (what, f) -> (what, releases f > 0))
+               [
+                 ("a copy of a borrow", fun () -> ignore (A.copy (mapped small)));
+                 ( "a copy of a bigarray",
+                   fun () -> ignore (A.copy (bigarray small)) );
+                 ( "int64s out of a borrow",
+                   fun () -> ignore (A.to_array (mapped ints)) );
+                 ("a copy of 256 KiB", fun () -> ignore (A.copy large));
+                 ("a copy of 256 B", fun () -> ignore (A.copy small));
+               ]));
       test "the same calls over the host's own memory hold" (fun () ->
           equal
             (list (pair string int))
