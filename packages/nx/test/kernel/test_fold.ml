@@ -441,6 +441,39 @@ let law_load (b : Support.backend) = function
           | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r)
         [ p; long ])
 
+(* Folds a library may take past a few windows in registers: four windows
+   over four axes, and a window whose step and padding reach 2^30. *)
+let test_wide_windows (b : Support.backend) () =
+  let fold pad d shape =
+    let rs = Random.State.make [| 13 |] in
+    let xs = Option.get (loaded pad shape) in
+    let x = operand d xs (plain (Array.length xs)) (fun _ -> element d rs) in
+    let c = { shape; pad; x; views = []; load = plain (Array.length shape) } in
+    match fold_on b c with
+    | None -> failf "%s declined a fold" b.name
+    | Some y -> equal (array (same (dtype_of c.x))) (expected c) (elements y)
+  in
+  let w axis ~size ~step = { M.axis; size; step; dilation = 1 } in
+  let four =
+    {
+      Nx_kernel.lo = [| 0; 0; 0; 0 |];
+      hi = [| 0; 0; 0; 0 |];
+      interior = [| 0; 0; 0; 0 |];
+      windows = Iarray.init 4 (fun a -> w a ~size:2 ~step:1);
+    }
+  in
+  fold four (D.Any D.Float32) [| 2; 2; 2; 2 |];
+  fold four (D.Any D.Int16) [| 3; 2; 2; 3 |];
+  let far =
+    {
+      Nx_kernel.lo = [| 1 lsl 30 |];
+      hi = [| 0 |];
+      interior = [| 0 |];
+      windows = [| w 0 ~size:1 ~step:(1 lsl 30) |];
+    }
+  in
+  fold far (D.Any D.Float32) [| 1 |]
+
 (* A convolution's input gradient, large enough for the job's threads, at
    float32, int4 and bfloat16, the last two from views of the operand; then
    one padded along its batch axis, whose result starts whole on the job's
@@ -599,6 +632,8 @@ let suite (b : Support.backend) =
           prop "at every dtype, through views" cases (run (law_reference b));
           test "a convolution's gradient on the job's threads" (fun () ->
               b.around (test_threads b));
+          test "four windows, and a step past 2^30" (fun () ->
+              b.around (test_wide_windows b));
           test "long rows of narrow dtypes" (fun () ->
               b.around (test_long_rows b));
         ];
@@ -649,4 +684,6 @@ let () =
   in
   exit
     (Windtrap.run "nx_kernel.fold"
-       (List.map suite (Support.backends ()) @ [ cpu Support.cpu ] @ nv))
+       (List.map suite (Support.backends () @ Option.to_list (Support.amd ()))
+       @ [ cpu Support.cpu ]
+       @ nv))

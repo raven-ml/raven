@@ -75,20 +75,17 @@ let magnitude parts =
     !m
   end
 
-(* nx_kernel.mli's [β(n) = ⌈5 min(n, 256) / 4⌉ + ⌈n / 128⌉] for a sum in
-   blocks. *)
-let beta n = ((5 * min n 256) + 3) / 4 + ((n + 127) / 128)
-
-(* An output [xs] of [c], one value a part, is within the largest bound
-   nx_kernel.mli allows a library that adds in blocks, as nx.cpu and
-   nx.cuda do, [u|r| + (1 + u) e Σ|a||b|] of the exact [r], init and its
+(* An output [xs] of [c] on [b], one value a part, is within the largest
+   bound nx_kernel.mli allows a library that adds as [b] states, in blocks
+   or into one running sum a range ({!Support.contract_beta}),
+   [u|r| + (1 + u) e Σ|a||b|] of the exact [r], init and its
    [K] products, a complex one in modulus, [e] being [γ(β(K))] for a real
    [acc] and [√2 γ(β(2K))] for a complex one, and [u] the unit roundoff of
    [acc]'s parts. Where results underflow it may err by η
    more for each term of each part, [η] [acc]'s smallest subnormal, twice
    the most a rounding into the subnormals errs. A part whose sum is not
    finite is matched to the bits of its naive sum. *)
-let within c parts xs =
+let within (b : Support.backend) c parts xs =
   let show x = Printf.sprintf "%h" x in
   let sums = Array.map naive parts in
   if not (Array.for_all Float.is_finite sums) then
@@ -114,6 +111,7 @@ let within c parts xs =
       n *. u /. (1. -. (n *. u))
     in
     let e =
+      let beta = Support.contract_beta b in
       if complex then Float.sqrt 2. *. gamma (beta (2 * k))
       else gamma (beta k)
     in
@@ -140,22 +138,23 @@ let within c parts xs =
            err (all (fun (hi, lo, _) -> show (hi +. lo))) bound)
 
 (* The first outputs of [y] past their bound. *)
-let outside c y =
+let outside b c y =
   let _, each = outputs c in
   let g = planes c.acc y in
   let bad = ref [] in
   each (fun yi k parts ->
-      match within c parts (Array.map (fun part -> part.(k)) g) with
+      match within b c parts (Array.map (fun part -> part.(k)) g) with
       | Some why when List.length !bad < 8 ->
           bad := Format.asprintf "%a: %s" Nx_array_gen.pp_ints yi why :: !bad
       | _ -> ());
   List.rev !bad
 
-let law_bound b c =
+let law_bound ?(paths = ignore) b c =
   covers c;
+  paths c;
   match run b c with
   | None -> fail "declined"
-  | Some y -> equal (list string) [] (outside c y)
+  | Some y -> equal (list string) [] (outside b c y)
 
 (* Scales *)
 
@@ -252,7 +251,7 @@ let law_scaled (b : Support.backend) (c, sa, sb) =
   | Some y ->
       let a = Option.fold ~none:c.a ~some:(scaled c.acc c.a) sa in
       let b' = Option.fold ~none:c.b ~some:(scaled c.acc c.b) sb in
-      equal (list string) [] (outside { c with a; b = b' } y)
+      equal (list string) [] (outside b { c with a; b = b' } y)
 
 (* Segments *)
 
@@ -409,20 +408,21 @@ let law_segmented (b : Support.backend) s =
   cover "init" (Option.is_some s.sc.init);
   segmented b s
 
-(* The contracted extent past which nx.cuda holds a Contracting call's
-   indices in 8 bytes, without Nx_cuda.contract_wide_k: 2^31 - 1, the most
-   it takes. *)
+(* The contracted extent past which nx.cuda and nx.amd hold a Contracting
+   call's indices in 8 bytes, without their contract_wide_k: 2^31 - 1, the
+   most it takes. *)
 let wide_k = (1 lsl 31) - 1
 
-(* nx.cuda's Contracting call past 2^31 - 1 contracted indices holds them
-   in 8 bytes: the same law, with 8 bytes from the first index. *)
-let law_wide (b : Support.backend) s =
+(* A Contracting call past 2^31 - 1 contracted indices holds them in 8
+   bytes: the same law, with 8 bytes from the first index, which [wide]
+   sets. *)
+let law_wide ~wide (b : Support.backend) s =
   cover "complex" (is_complex s.sc.acc);
   cover "init" (Option.is_some s.sc.init);
   Fun.protect
-    ~finally:(fun () -> Nx_cuda.contract_wide_k wide_k)
+    ~finally:(fun () -> wide wide_k)
     (fun () ->
-      Nx_cuda.contract_wide_k 0;
+      wide 0;
       segmented b s)
 
 (* In place *)
@@ -568,12 +568,13 @@ let test_acc_refused (b : Support.backend) () =
 
 (* The suite *)
 
-let laws (b : Support.backend) =
+let laws ?paths ?(more = []) (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group b.name
     [
-      prop ~examples "a contraction is within its bound of the exact sum"
-        computed (run (law_bound b));
+      prop ~examples:(examples @ more)
+        "a contraction is within its bound of the exact sum" computed
+        (run (law_bound ?paths b));
       prop "a destination through a view gets a fresh one's bits"
         dst_view_case (run (law_dst_view b));
       prop "a scaled contraction is within its bound of its terms' sum"
@@ -593,11 +594,11 @@ let laws (b : Support.backend) =
           b.around (test_acc_refused b));
     ]
 
-(* nx_cuda.mli: an operand whose contracted axes do not form one run of
-   strides is copied, here [2k] float32 elements past the 64 MiB the
-   device keeps; a sum cut into ranges of k holds each range's sums of a
-   tile of outputs, here within 1 MiB. *)
-let test_loop_copy (b : Support.backend) () =
+(* nx_cuda.mli and nx_amd.mli: an operand whose contracted axes do not
+   form one run of strides is copied, here [2k] float32 elements past the
+   64 MiB the device keeps; a sum cut into ranges of k holds each range's
+   sums of a tile of outputs, here within [ranges] bytes. *)
+let test_loop_copy ~ranges (b : Support.backend) () =
   let module K = (val b.kernels) in
   let k = 1 lsl 24 and d = b.device in
   let base = A.create d D.Float32 [| 1; k; 2 |] in
@@ -607,21 +608,127 @@ let test_loop_copy (b : Support.backend) () =
   let rhs = A.create d D.Float32 [| 2; k; 1 |] in
   let dst = A.create d D.Float32 [| 1; 1 |] in
   let operand x : Nx_kernel.operand = { array = A.Any x; scale = None } in
-  Kernels_cases.loop_held b ~bound:((2 * k * 4) + (1 lsl 20)) (fun () ->
+  Kernels_cases.loop_held b
+    ~bound:((2 * k * 4) + ranges)
+    (fun () ->
       equal Elements.answer A.Done
         (K.contract ~batch:[||] ~contracting:[| (1, 0); (2, 1) |] ~segments:None
            ~acc:(D.Any D.Float32) ~dst ~init:None (operand a) (operand rhs));
       Rig.Buffer.wait (A.buffer dst) Read_write)
 
-let cuda (b : Support.backend) =
+(* What nx.cuda's and nx.amd's .mli state of their own: [wide] lowers the extent
+   past which indices take 8 bytes, and [ranges] bounds a sum's ranges' bytes, 1
+   MiB on nx.cuda, 64 ranges of a 128 x 128 float32 tile and their tickets on
+   nx.amd. *)
+let own ~lib ~wide ~ranges (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
-  group ("nx.cuda " ^ b.name)
+  group
+    (lib ^ " " ^ b.name)
     [
       prop "a Contracting call with 8-byte indices is each group's contraction"
-        k_seg_case (run (law_wide b));
+        k_seg_case
+        (run (law_wide ~wide b));
       test "contractions in a loop hold one call's copies" (fun () ->
-          b.around (test_loop_copy b));
+          b.around (test_loop_copy ~ranges b));
     ]
+
+let cuda = own ~lib:"nx.cuda" ~wide:Nx_cuda.contract_wide_k ~ranges:(1 lsl 20)
+
+let amd =
+  own ~lib:"nx.amd" ~wide:Nx_amd.contract_wide_k
+    ~ranges:((64 * 128 * 128 * 4) + (64 * 4))
+
+(* nx.amd's paths *)
+
+module K = Nx_amd.Kernels
+
+(* The launches nx.amd plans for [c], on the host: planning runs
+   nothing. *)
+let amd_launches c =
+  let y, _, _ = sizes c in
+  let (D.Any out) = c.out in
+  let dst = A.create Rig.host out (Iarray.of_array y) in
+  match
+    Nx_amd.contract_plan ~batch:(Iarray.of_array c.batch)
+      ~contracting:(Iarray.of_array c.contracting)
+      ~segments:None ~acc:c.acc ~dst
+      ~init:(Option.map (A.expect (A.dtype dst)) c.init)
+      { array = c.a; scale = None }
+      { array = c.b; scale = None }
+  with
+  | Ok (Some p) -> Array.to_list p.launches
+  | Ok None -> []
+  | Error e -> failf "planned %a" Nx_array_support.pp_answer e
+
+let word (l : Nx_amd.Plan.launch) i =
+  Int64.to_int (Bytes.get_int64_le l.words (8 * i))
+
+let gemv (l : Nx_amd.Plan.launch) =
+  match l.kernel with
+  | Contract_gemv_f32 | Contract_gemv_f64 | Contract_gemv_u32
+  | Contract_gemv_u64 ->
+      true
+  | _ -> false
+
+let load (l : Nx_amd.Plan.launch) =
+  Option.map (fun (t : K.tile) -> t.load) (K.tile l.kernel)
+
+(* Whether operand [o] of [l] (its first word) is read by rows: its free
+   axis contiguous. *)
+let by_rows l o = word l (o + K.operand_flags) land K.op_free <> 0
+
+(* The paths of nx.amd's SIMT contraction that [c] takes, by the launches
+   it plans: gemv, on a's few rows or on few columns with a and b
+   exchanged; a tile's loads of the compute type, along k or by rows, and
+   its converting loads; and a sum cut into ranges of k, whose sums
+   combine adds. *)
+let amd_paths c =
+  let ls = amd_launches c in
+  let any f = List.exists f ls in
+  let m, _ = rows_cols c in
+  let ranged l =
+    (gemv l || load l <> None)
+    && (word l K.contract_s1 > 1 || word l K.contract_s2 > 1)
+  in
+  let native l = load l = Some K.Native in
+  cover "gemv" (any gemv);
+  cover "gemv on few columns, a and b exchanged" (m > K.gemv_rows && any gemv);
+  cover "native loads" (any native);
+  cover "native loads by rows"
+    (any (fun l ->
+         native l && (by_rows l K.contract_a || by_rows l K.contract_b)));
+  cover "converting loads" (any (fun l -> load l = Some K.Convert));
+  cover "ranges of k" (any ranged)
+
+(* Cases that reach nx.amd's converting loads in every run: an a of a
+   dtype the accumulator does not hold, on a SIMT tile. The last two read
+   an operand in 16-byte chunks of 8 elements, and its end cuts a chunk:
+   a float16 a along k, whose k = 20 leaves 4 in the last k-tile, and a
+   bfloat16 b along its 12 rows, whose reads past the last row clamp to
+   it. float16 beside bfloat16 keeps them off the matrix units. A chunk
+   needs the operand's other strides to be multiples of 8. Placed dense,
+   one of them is the cut extent itself, and placed with gaps the operand
+   is compacted, so each is broadcast instead, a along its rows and b
+   along k, at stride 0. *)
+let amd_examples =
+  let plain = E.plain 2 in
+  let broadcast axis = { plain with E.broadcast = [ axis ] } in
+  List.map
+    (fun (acc, a, b, (rows, cols, con)) ->
+      make ~acc ~out:acc ([||], [| rows |], [| cols |], [| con |]) a b None 1)
+    D.
+      [
+        (Any Float32, (Any Float64, plain), (Any Float32, plain), (12, 10, 5));
+        (Any Float64, (Any Int64, plain), (Any Float64, plain), (12, 10, 5));
+        ( Any Float32,
+          (Any Float16, broadcast 0),
+          (Any Bfloat16, plain),
+          (12, 16, 20) );
+        ( Any Float32,
+          (Any Float16, plain),
+          (Any Bfloat16, broadcast 0),
+          (12, 12, 20) );
+      ]
 
 (* rig.nv *)
 
@@ -689,8 +796,13 @@ let nv_laws (first : Support.backend) (nv : Support.backend) =
         ];
     ]
 
-(* nx.cpu under each target table, then nx.cuda. *)
-let backends = Support.cpus @ Support.gpus ()
+(* nx.cpu under each target table, then nx.cuda, then nx.amd, whose bound
+   law covers its paths. *)
+let backends =
+  List.map (fun b -> laws b) (Support.cpus @ Support.gpus ())
+  @ List.map
+      (laws ~paths:amd_paths ~more:amd_examples)
+      (Option.to_list (Support.amd ()))
 
 let () =
   let nv =
@@ -700,4 +812,7 @@ let () =
   in
   exit
     (Windtrap.run "nx_kernel.contract"
-       (List.map laws backends @ List.map cuda (Support.gpus ()) @ nv))
+       (backends
+       @ List.map cuda (Support.gpus ())
+       @ List.map amd (Option.to_list (Support.amd ()))
+       @ nv))

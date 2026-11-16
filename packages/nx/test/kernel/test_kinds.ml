@@ -1558,4 +1558,4 @@ let () =
            @ test_complex_conj @ test_complex_parity @ test_complex_real_axis
            @ test_complex_identities);
        ]
-       @ List.map narrow (Support.backends ()))
+       @ List.map narrow (Support.backends () @ Option.to_list (Support.amd ())))

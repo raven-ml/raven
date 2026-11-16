@@ -1491,21 +1491,33 @@ let law_box (b : Support.backend) (Pair (x, y), box) =
           Nx_array_support.pp_answer p Nx_array_support.pp_answer q
   end
 
+(* The laws of maps that move bits, which every backend computes. *)
+let moves (b : Support.backend) =
+  let run f x = b.around (fun () -> f x) in
+  let unit f () = b.around f in
+  [
+    prop "copy is bits for bits" case
+      (run (fun c ->
+           covers c;
+           law_copy b c));
+    prop ~count:32 ~examples:large_views "copy of large views is bits for bits"
+      large
+      (run (fun c ->
+           covers_large c;
+           law_copy b c));
+    test "copy keeps NaN payloads" (unit (test_copy_nan_payloads b));
+    prop "bitcast keeps every element's bits" (same_width case)
+      (run (fun ((c, _) as x) ->
+           covers c;
+           law_bitcast b x));
+  ]
+
 let laws (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   let unit f () = b.around f in
   group b.name
-    [
-      prop "copy is bits for bits" case
-        (run (fun c ->
-             covers c;
-             law_copy b c));
-      prop ~count:32 ~examples:large_views "copy of large views is bits for bits"
-        large
-        (run (fun c ->
-             covers_large c;
-             law_copy b c));
-      test "copy keeps NaN payloads" (unit (test_copy_nan_payloads b));
+    (moves b
+    @ [
       prop "cast is the reference, element by element" (pair case)
         (run (fun ((Case a as c), D.Any d) ->
              covers c;
@@ -1533,10 +1545,6 @@ let laws (b : Support.backend) =
              if D.bits s < 8 || specials s = [] then None
              else Some (test (D.name s) (unit (test_specials b d))))
            D.all);
-      prop "bitcast keeps every element's bits" (same_width case)
-        (run (fun ((c, _) as x) ->
-             covers c;
-             law_bitcast b x));
       prop "where picks bytes and fma is nx_kinds.h's"
         (Gen.pair pairs Gen.nat)
         (run (law_map3 b));
@@ -1611,9 +1619,9 @@ let laws (b : Support.backend) =
         "complex mul, fdiv and recip are within their bounds, NaN parts NaN"
         Gen.int
         (run (law_complex_arith b));
-    ]
+      ])
 
-(* nx_cuda.mli's memory of a map too wide for a launch. *)
+(* nx_cuda.mli's and nx_amd.mli's memory of a call too wide for a launch. *)
 let memory_laws (b : Support.backend) =
   group (b.name ^ " memory")
     [
@@ -1700,4 +1708,6 @@ let () =
     (run "nx_kernel.kernels"
        (List.map laws (Support.backends ())
        @ List.map memory_laws (Support.gpus () @ Option.to_list (Support.nv ()))
-       @ nv))
+       @ nv
+       @ List.map laws (Option.to_list (Support.amd ()))
+       @ List.map memory_laws (Option.to_list (Support.amd ()))))

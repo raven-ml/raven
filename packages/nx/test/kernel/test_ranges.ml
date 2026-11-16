@@ -518,7 +518,7 @@ let () =
   in
   exit
     (Windtrap.run "nx_kernel.ranges"
-       (List.map laws (Support.backends ())
+       (List.map laws (Support.backends () @ Option.to_list (Support.amd ()))
        @ [
            cases "nx.cpu gives one thread's bits on many" ~id:fst split_cases
              test_threads;

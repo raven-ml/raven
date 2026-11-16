@@ -357,35 +357,42 @@ let test_dtypes (b : Support.backend) () =
 
 (* The suite *)
 
-let laws (b : Support.backend) =
+(* The factorisations' laws, then the spectral routines'. *)
+let factor_laws (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
-  group b.name
-    [
-      prop "svd of a matrix with NaN or an infinity is NaN alone" case
-        (run (law_svd_fails b));
-      prop "eig of a matrix with NaN or an infinity is NaN alone" case
-        (run (law_eig_fails b));
-      prop "a matrix that is not definite is NaN alone" case
-        (run (law_cholesky_fails b));
-      prop "a singular triangle is NaN alone" case (run (law_solve_fails b));
-      prop "eigh of a matrix with NaN or an infinity is NaN alone" case
-        (run (law_eigh_fails b));
-      prop "eigh reads the lower triangle and the diagonal's real parts" case
-        (run (law_eigh_reads b));
-      prop "Cholesky reads the lower triangle and the diagonal's real parts"
-        case (run (law_cholesky_reads b));
-      prop "a solve reads its triangle, and its diagonal unless unit" case
-        (run (law_solve_reads b));
-      test "a pivot failing past the first block is NaN alone" (fun () ->
-          b.around (test_cholesky_fails_late b));
-      test "LU's pivot is the scan's" (fun () -> b.around (test_pivots b));
-      test
-        "routines take floats and complex numbers alone; a call at another \
-         dtype is not Done and writes nothing outside its destinations"
-        (fun () -> b.around (test_dtypes b));
-      test "a finite matrix gives numbers in every result" (fun () ->
-          b.around (test_overflowing_modulus b));
-    ]
+  [
+    prop "a matrix that is not definite is NaN alone" case
+      (run (law_cholesky_fails b));
+    prop "a singular triangle is NaN alone" case (run (law_solve_fails b));
+    prop "Cholesky reads the lower triangle and the diagonal's real parts" case
+      (run (law_cholesky_reads b));
+    prop "a solve reads its triangle, and its diagonal unless unit" case
+      (run (law_solve_reads b));
+    test "a pivot failing past the first block is NaN alone" (fun () ->
+        b.around (test_cholesky_fails_late b));
+    test "LU's pivot is the scan's" (fun () -> b.around (test_pivots b));
+    test
+      "routines take floats and complex numbers alone; a call at another \
+       dtype is not Done and writes nothing outside its destinations"
+      (fun () -> b.around (test_dtypes b));
+  ]
+
+let spectral_laws (b : Support.backend) =
+  let run f x = b.around (fun () -> f x) in
+  [
+    prop "svd of a matrix with NaN or an infinity is NaN alone" case
+      (run (law_svd_fails b));
+    prop "eig of a matrix with NaN or an infinity is NaN alone" case
+      (run (law_eig_fails b));
+    prop "eigh of a matrix with NaN or an infinity is NaN alone" case
+      (run (law_eigh_fails b));
+    prop "eigh reads the lower triangle and the diagonal's real parts" case
+      (run (law_eigh_reads b));
+    test "a finite matrix gives numbers in every result" (fun () ->
+        b.around (test_overflowing_modulus b));
+  ]
+
+let laws (b : Support.backend) = group b.name (factor_laws b @ spectral_laws b)
 
 (* Memory of calls in a loop
 
@@ -467,4 +474,6 @@ let backends = Support.cpus @ Support.gpus ()
 let () =
   exit
     (Windtrap.run "nx_kernel.linalg"
-       (List.map laws backends @ List.map cuda (Support.gpus ())))
+       (List.map laws backends
+       @ List.map cuda (Support.gpus ())
+       @ List.map laws (Option.to_list (Support.amd ()))))

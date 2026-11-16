@@ -13,7 +13,8 @@
    on the job's, and for a line alone as in its batch; nx.cpu's bits on
    every target; empty transforms; the refusals; no byte read or written
    past the operand or the result; and the device memory nx.cuda keeps for
-   later calls. Each backend runs its own kernels on its device. *)
+   later calls. Each backend runs its own kernels on its device: nx.cpu's,
+   nx.cuda's and nx.amd's. *)
 
 open Windtrap
 open Elements
@@ -650,12 +651,14 @@ let law_bits b c =
 (* Lines past the generated cases' lengths, each a transform of three
    impulses, whose exact transform is a sum of twiddles: powers of two and
    other 7-smooth lengths, primes whose predecessor is 7-smooth or not
-   (1009, 2017; 4099, 10007, 65537), and real lines of even
+   (1009, 2017, 2161, 4051; 4099, 10007, 65537), and real lines of even
    lengths whose halves are prime or 7-smooth, each kind and width within
-   the bound, with the same bits on one thread. *)
+   the bound, with the same bits on one thread. 2161 and 4051 take
+   Rader's convolution in one of nx.amd's complex64 groups and Bluestein's
+   at complex128, whose groups hold half the points. *)
 let long_lengths =
-  [ 1009; 2017; 3125; 4096; 4099; 6561; 8192; 10007; 16384; 16807; 19683;
-    20014; 30030; 65536; 65537; 131072 ]
+  [ 1009; 2017; 2161; 3125; 4051; 4096; 4099; 6561; 8192; 10007; 16384; 16807;
+    19683; 20014; 30030; 65536; 65537; 131072 ]
 
 (* The roots e^(-2πi m/n), m < n, of a long line, made once for its
    transforms: past 4096 points in double, whose error is far below either
@@ -876,18 +879,24 @@ let streamed =
     line ~wide:false 1024 136 10;
   ]
 
-(* The same bits on the job's threads as on one, and for lines side by side,
-   each line's bits alone. *)
-let test_streamed b () =
+(* For [c]'s lines side by side along its first axis: the bits of each
+   line in the batch, the same as the lines' one after another, and as the
+   first, middle and last line's alone. *)
+let same_alone b c =
   let bits = array (pair int64 int64) in
-  List.iter
-    (fun c ->
-      let x = operand c in
-      equal bits (bits_of (run b c x)) (bits_of (run b ~one_thread:true c x)))
-    streamed;
-  let c = List.nth streamed 2 in
   let n = c.shape.(0) and lines = c.shape.(1) in
   let ys = bits_of (run b c (operand c)) in
+  let rows =
+    {
+      c with
+      shape = [| lines; n |];
+      axes = [| 1 |];
+      xs = Array.init (n * lines) (fun i -> c.xs.((i mod n * lines) + (i / n)));
+    }
+  in
+  equal bits
+    (Array.init (n * lines) (fun i -> ys.((i mod n * lines) + (i / n))))
+    (bits_of (run b rows (operand rows)));
   List.iter
     (fun l ->
       let alone =
@@ -902,6 +911,24 @@ let test_streamed b () =
         (Array.init n (fun j -> ys.((j * lines) + l)))
         (bits_of (run b alone (operand alone))))
     [ 0; lines / 2; lines - 1 ]
+
+(* The same bits on the job's threads as on one, and for lines side by side,
+   each line's bits alone. *)
+let test_streamed b () =
+  let bits = array (pair int64 int64) in
+  List.iter
+    (fun c ->
+      let x = operand c in
+      equal bits (bits_of (run b c x)) (bits_of (run b ~one_thread:true c x)))
+    streamed;
+  same_alone b (List.nth streamed 2)
+
+(* Lines past a GPU group's points, 4096 at complex64 and 2048 at
+   complex128 on nx.amd, which take several steps there: side by side,
+   one after another and alone, the same bits. *)
+let stepped = [ line ~wide:false 6561 8 31; line ~wide:true 3125 8 37 ]
+
+let test_stepped b () = List.iter (same_alone b) stepped
 
 (* Every short length *)
 
@@ -1456,7 +1483,8 @@ let suite (b : Support.backend) =
           ];
       ]
   in
-  let gpu = List.memq b (Support.gpus ()) in
+  let gpu = not (Rig.equal b.device Rig.host) in
+  let cuda = List.memq b (Support.gpus ()) in
   (* nx.cpu's bits, the same on every target. *)
   let targets =
     if gpu then []
@@ -1494,6 +1522,7 @@ let suite (b : Support.backend) =
               (run law_bits);
             test "whatever the threads, past the size the lock is released for"
               test_streamed;
+            test "whatever the batch, lines of several steps" test_stepped;
             test "whatever the home of a long line's grid" test_grid_homes;
           ]
          @ targets);
@@ -1503,14 +1532,14 @@ let suite (b : Support.backend) =
          test_misfits;
      ]
     @ guards
+    @ (if not gpu then [] else [ test "past 2^31 elements" test_past_2_31 ])
     @
-    if not gpu then []
+    if not cuda then []
     else
       [
         test "keeps at most 192 MiB of device memory for later calls"
           test_kept_plans;
         test "calls in a loop hold one call's workspace" test_loop_workspace;
-        test "past 2^31 elements" test_past_2_31;
       ])
 
 (* rig.nv *)
@@ -1573,4 +1602,6 @@ let () =
     | _ -> []
   in
   exit
-    (Windtrap.run "nx_kernel.fft" (List.map suite (Support.backends ()) @ nv))
+    (Windtrap.run "nx_kernel.fft"
+       (List.map suite (Support.backends () @ Option.to_list (Support.amd ()))
+       @ nv))

@@ -485,4 +485,6 @@ let () =
   in
   exit
     (Windtrap.run "nx_kernel.assemble"
-       (List.map laws (Support.backends ()) @ [ cpu Support.cpu ] @ nv))
+       (List.map laws (Support.backends () @ Option.to_list (Support.amd ()))
+       @ [ cpu Support.cpu ]
+       @ nv))

@@ -1,0 +1,89 @@
+; nx.amd on the machine's AMD GPU 0, skipping without one, under the lock
+; GPU tests share.
+
+(executable
+ (name test_amd)
+ (modules test_amd wmma_model)
+ (libraries
+  nx_array
+  nx_array_support
+  nx_kernel
+  nx_amd
+  nx_amd_support
+  nx_kernel_cases
+  nx_kernels_support
+  rig
+  unix
+  windtrap))
+
+; nx.amd's moves: the scatter Add's association, complex64 moves aligned to
+; 4 bytes and the workspace they hold.
+
+(executable
+ (name test_amd_moves)
+ (modules test_amd_moves)
+ (libraries
+  nx_array
+  nx_array_support
+  nx_kernel
+  nx_amd
+  nx_kernel_cases
+  nx_kernels_support
+  rig
+  windtrap))
+
+; nx.amd's sorts and numberings: nx.cpu's bits on each path and the
+; workspace they hold.
+
+(executable
+ (name test_amd_sorts)
+ (modules test_amd_sorts)
+ (libraries
+  nx_array
+  nx_array_support
+  nx_kernel
+  nx_amd
+  nx_kernel_cases
+  nx_kernels_support
+  rig
+  windtrap))
+
+; The factorisations' laws against nx_amd.mli's bounds and bits.
+
+(executable
+ (name test_amd_factor)
+ (modules test_amd_factor)
+ (libraries
+  nx_array
+  nx_array_support
+  nx_kernel
+  nx_amd
+  nx_kernel_cases
+  nx_kernels_support
+  rig
+  windtrap))
+
+; nx.amd's spectral routines against nx_amd.mli's bounds.
+
+(executable
+ (name test_amd_linalg)
+ (modules test_amd_linalg)
+ (libraries
+  nx_amd
+  nx_array
+  nx_kernel
+  nx_kernel_cases
+  nx_kernels_support
+  rig
+  windtrap))
+
+(rule
+ (alias runtest)
+ (locks %{workspace_root}/gpu)
+ (action
+  (progn
+   (run %{exe:test_amd.exe})
+   (run %{exe:test_amd_moves.exe})
+   (run %{exe:test_amd_sorts.exe})
+   (run %{exe:test_amd_factor.exe} -j 3)
+   (run %{exe:test_amd_linalg.exe} -j 3))))

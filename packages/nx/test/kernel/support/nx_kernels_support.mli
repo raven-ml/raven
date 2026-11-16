@@ -42,6 +42,13 @@ type axis =
   | R2c_last  (** An [r2c]'s last, of [n] real points. *)
   | C2r_last  (** A [c2r]'s last, of [n] real points. *)
 
+(** The type for how a library states it adds a float contraction's
+    products ({!Nx_kernel.section-bounds}). *)
+type sums =
+  | Blocks
+      (** In blocks of at most 256: nx_cpu.mli's and nx_cuda.mli's. *)
+  | Running  (** Into one running sum a range: nx_amd.mli's. *)
+
 type backend = {
   name : string;  (** The backend's name in the suite, as ["cpu/base"]. *)
   kernels : (module Nx_kernel.S);  (** Its kernels. *)
@@ -73,8 +80,16 @@ type backend = {
           associates as nx.cpu's does, in its chunks: nx.cpu's. nx_cuda.mli
           states its own association for a [Sum], [Max] or [Min] scan along
           the destination's innermost axis. *)
+  contract_sums : sums;
+      (** [contract_sums] is how it states it adds a float contraction's
+          products. *)
 }
 (** The type for kernel libraries in one configuration. *)
+
+val contract_beta : backend -> int -> int
+(** [contract_beta b n] is nx_kernel.mli's [β(n)] for a float contraction's
+    sum of [n] terms on [b]: [⌈5 min(n, 256) / 4⌉ + ⌈n / 128⌉] for
+    {!Blocks}, [2n + 1] for {!Running}. *)
 
 val cpus : backend list
 (** [cpus] is nx.cpu under each target table the host runs, base first.
@@ -98,6 +113,13 @@ val nv : unit -> backend option
     as ["cuda/nv"], where {!gpus}[ ()] has GPU 0 and rig.nv reaches it too,
     opened at the first call. Its kernels are the cubin CUDA loads, so its
     suites check that its results are CUDA's bits. *)
+
+val amd : unit -> backend option
+(** [amd ()] is nx.amd on the machine's AMD GPU 0 through Linux's amdgpu
+    driver, as ["amd"], where rig sees one, nx.amd computes on it and the
+    environment variable [NX_KERNELS] is not ["cpu"], opened at the first
+    call. Each suite but attention's, whose calls nx.amd declines, runs
+    its laws on it. Its reductions and scans associate as nx.cpu's. *)
 
 val elements : Nx_array.any -> string array
 (** [elements x] is [x]'s elements in C order of indices, each as its

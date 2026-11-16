@@ -1,8 +1,9 @@
 ; nx.kernel's suites through every kernel library the host runs. Their
-; nx.cpu groups run here, beside other suites; their nx.cuda groups, on the
-; machine's NVIDIA GPU, run below under the lock GPU tests share. Each
-; suite runs its tests in 3 processes at once, which together hold at most
-; 12 GiB of the GPU: test_fft's transform past 2^31 elements takes 8 GiB.
+; nx.cpu groups run here, beside other suites; their nx.cuda and nx.amd
+; groups, on the machine's GPUs, run below under the lock GPU tests share.
+; Each suite runs its tests in 3 processes at once, which together hold at
+; most 12 GiB of the GPU: test_fft's transform past 2^31 elements takes
+; 8 GiB.
 
 (tests
  (names
@@ -37,6 +38,7 @@
   nx_array
   nx_array_gen
   nx_array_support
+  nx_amd
   nx_cpu
   nx_cuda
   nx_kernel
@@ -76,6 +78,32 @@
     (run %{exe:test_linalg.exe} -j 3)
     (run %{exe:test_attention.exe} -j 3)
     (run %{exe:test_fft.exe} -j 3)))))
+
+; nx.amd's groups, on the machine's AMD GPU, under the same lock: the
+; suites of the families it computes.
+
+(rule
+ (alias runtest)
+ (locks %{workspace_root}/gpu)
+ (deps
+  (glob_files golden/kinds/*.golden))
+ (action
+  (setenv
+   WINDTRAP_FILTER
+   amd
+   (progn
+    (run %{exe:test_kinds.exe} -j 3)
+    (run %{exe:test_kernels.exe} -j 3)
+    (run %{exe:test_contract.exe} -j 3)
+    (run %{exe:test_reduce.exe} -j 3)
+    (run %{exe:test_index.exe} -j 3)
+    (run %{exe:test_ranges.exe} -j 3)
+    (run %{exe:test_fold.exe} -j 3)
+    (run %{exe:test_assemble.exe} -j 3)
+    (run %{exe:test_fft.exe} -j 3)
+    (run %{exe:test_sort.exe} -j 3)
+    (run %{exe:test_unique.exe} -j 3)
+    (run %{exe:test_linalg.exe} -j 3)))))
 
 ; Programs and shapes, through nx.cpu alone.
 

@@ -21,6 +21,7 @@ type attention = {
 }
 
 type axis = Complex | R2c_last | C2r_last
+type sums = Blocks | Running
 
 type backend = {
   name : string;
@@ -32,7 +33,13 @@ type backend = {
   lane_order : bool;
   transform_factor : axis -> int -> float;
   scan_order : bool;
+  contract_sums : sums;
 }
+
+let contract_beta b n =
+  match b.contract_sums with
+  | Blocks -> (((5 * min n 256) + 3) / 4) + ((n + 127) / 128)
+  | Running -> (2 * n) + 1
 
 (* nx_cpu.mli's and nx_cuda.mli's promise: every kind at every dtype of its
    domain. *)
@@ -153,6 +160,7 @@ let under target =
     lane_order = true;
     transform_factor = cpu_transform;
     scan_order = true;
+    contract_sums = Blocks;
   }
 
 let cpus = List.map under Nx_cpu.targets
@@ -179,6 +187,7 @@ let nvidia ~name open_ =
           lane_order = true;
           transform_factor = cuda_transform;
           scan_order = false;
+          contract_sums = Blocks;
         };
       ]
 
@@ -216,6 +225,38 @@ let nv =
      | _ :: _ -> List.nth_opt (nvidia ~name:"cuda/nv" nv) 0)
 
 let nv () = Lazy.force nv
+
+(* nx_amd.mli's transforms: nx_cuda.mli's bound. *)
+let amd_transform = cuda_transform
+
+(* nx.amd on GPU 0 of the machine's AMD GPUs, through Linux's amdgpu
+   driver, opened at the first call. nx_amd.mli states it computes every
+   kind at every dtype, its reductions in nx.cpu's lane order and its scans
+   in nx.cpu's chunks, and every transform; it declines every attention. *)
+let amd =
+  lazy
+    (     if Sys.getenv_opt "NX_KERNELS" = Some "cpu" then None
+     else if not (sees Rig_amd_amdgpu.count) then None
+     else
+       match Rig.open_ (Rig_amd_amdgpu.gpu 0) with
+       | Error why -> failwith ("amd: " ^ why)
+       | Ok d when not (Nx_amd.computes_on d) -> None
+       | Ok d ->
+           Some
+             {
+               name = "amd";
+               kernels = (module Nx_amd);
+               device = d;
+               computes = (fun _ _ -> true);
+               around = (fun f -> f ());
+               attention = None;
+               lane_order = true;
+               transform_factor = amd_transform;
+               scan_order = true;
+               contract_sums = Running;
+             })
+
+let amd () = Lazy.force amd
 
 (* Elements as bits *)
 

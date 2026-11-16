@@ -1676,8 +1676,14 @@ let associated ~scans =
    bits: a float or complex sum's or product's results, reduced or scanned,
    are nx.cpu's, any NaN for a NaN. *)
 let law_cpu_bits (b : Support.backend) (c : case) =
-  if b.scan_order then cover "a scan" c.scan;
-  let terms = total (shape_of c.x) / Int.max 1 (total (result_shape c)) in
+  let s = shape_of c.x in
+  if b.scan_order then begin
+    cover "a scan" c.scan;
+    cover "a scan past one chunk" (c.scan && s.(c.axes.(0)) > 4096);
+    cover "a scan along an axis not the innermost"
+      (c.scan && c.axes.(0) < Array.length s - 1)
+  end;
+  let terms = total s / Int.max 1 (total (result_shape c)) in
   cover "past one block of terms" (terms > 1024);
   cover "past 64 blocks, several groups an output"
     ((not c.scan) && terms > 64 * 1024);
@@ -1686,6 +1692,13 @@ let law_cpu_bits (b : Support.backend) (c : case) =
   equal
     (Kernels_cases.same_values (D.Any (A.dtype w)))
     (Kernels_cases.bits_of w) (Kernels_cases.bits_of g)
+
+(* Scans past one chunk, along the innermost axis and along another. *)
+let chunked_scans =
+  [
+    example ~scan:true Sum f32 [| 9000 |] [| 0 |];
+    example ~scan:true Sum f32 [| 9000; 3 |] [| 0 |];
+  ]
 
 (* So do Logsumexp's and Moments' results, reduced or scanned, and Arg's. *)
 let law_cpu_special (b : Support.backend) (c : special) =
@@ -1758,17 +1771,32 @@ let laws (b : Support.backend) =
     if b == Support.cpu || not b.lane_order then []
     else
       [
+        (* A reduction held over uint8 from a padded load asks for the most
+           LDS a launch may. *)
         prop ~count:45
+          ~examples:
+            [
+              ( Kernels_cases.
+                  {
+                    mode = Held;
+                    dt = D.Any D.Uint8;
+                    padded = true;
+                    aliased = false;
+                    seed = 0;
+                  },
+                false );
+            ]
           "a reduction or a scan too wide for a launch has nx.cpu's bits"
           (Gen.pair (Gen.with_pp Kernels_cases.pp_wide Kernels_cases.wide_cases)
              Gen.bool)
           (run (law_wide b));
         prop
           ~examples:
-            [
-              example Sum f32 [| 70_001 |] [| 0 |];
-              example Prod f64 [| 2; 66_000 |] [| 1 |];
-            ]
+            ([
+               example Sum f32 [| 70_001 |] [| 0 |];
+               example Prod f64 [| 2; 66_000 |] [| 1 |];
+             ]
+            @ if b.scan_order then chunked_scans else [])
           "float sums and products have nx.cpu's bits"
           (associated ~scans:b.scan_order)
           (run (law_cpu_bits b));
@@ -1837,6 +1865,50 @@ let nv_laws (first : Support.backend) (nv : Support.backend) =
         ];
     ]
 
+(* nx.amd *)
+
+(* nx.amd keeps nx.cpu's lane order and chunks (nx_amd.mli), so each of
+   its reductions and scans, of every monoid, dtype and view, has nx.cpu's
+   bits, any NaN for a NaN: its plain paths' Max and Min of NaN, -0, the
+   infinities and the integers' extremes among them. The examples reach
+   each plain path with such terms: rows, rows of several groups an
+   output, narrow columns, columns too tall for it, and scans in 16-byte
+   accesses past a chunk and along a stride. *)
+let amd_examples =
+  [
+    example ~specials:20 Max f32 [| 300; 64 |] [| 1 |];
+    example ~specials:20 Min f64 [| 2; 70_000 |] [| 1 |];
+    example ~specials:20 Sum (D.Any D.Bfloat16) [| 3000; 5 |] [| 0 |];
+    example ~specials:20 Max (D.Any D.Int32) [| 20_000; 3 |] [| 0 |];
+    example ~scan:true ~specials:20 Min (D.Any D.Uint32) [| 3; 9000 |] [| 1 |];
+    example ~scan:true ~specials:20 Max (D.Any D.Int64) [| 5000; 3 |] [| 0 |];
+  ]
+
+let amd_laws (amd : Support.backend) =
+  let called c (b : Support.backend) = b.around (fun () -> [| run b c |]) in
+  group "amd against nx.cpu"
+    [
+      prop ~examples:amd_examples
+        "reductions and scans of every monoid, dtype and view have nx.cpu's \
+         bits, any NaN for a NaN"
+        any_case
+        (fun c ->
+          let s = shape_of c.x and r = Array.length (shape_of c.x) in
+          let along a = Array.length c.axes = 1 && c.axes.(0) = a in
+          let (D.Any dt) = dtype_of c.x in
+          cover "a Max or Min" (c.monoid = Max || c.monoid = Min);
+          cover "a narrow float" (D.is D.Float dt && D.bits dt < 32);
+          cover "a reduction along the last axis"
+            ((not c.scan) && r > 0 && along (r - 1));
+          cover "a reduction along the first of two"
+            ((not c.scan) && r = 2 && along 0);
+          cover "a reduction along the first of two past 16 blocks"
+            ((not c.scan) && r = 2 && along 0 && s.(0) > 16 * 1024);
+          cover "a scan past one chunk" (c.scan && s.(c.axes.(0)) > 4096);
+          cover "a scan along the first of two" (c.scan && r = 2 && along 0);
+          Elements.agree Support.cpu amd (called c));
+    ]
+
 let () =
   let nv =
     match (Support.gpus (), Support.nv ()) with
@@ -1845,4 +1917,7 @@ let () =
   in
   exit
     (Windtrap.run "nx_kernel.reduce"
-       (List.map laws (Support.backends ()) @ nv))
+       (List.map laws (Support.backends ())
+       @ nv
+       @ List.map laws (Option.to_list (Support.amd ()))
+       @ List.map amd_laws (Option.to_list (Support.amd ()))))

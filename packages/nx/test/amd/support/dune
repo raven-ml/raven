@@ -1,0 +1,40 @@
+; What the AMD suite and bench share: the GPU, the harness's kernels as
+; rig's launches, calls of nx.amd's kernels, their device time, and
+; operands. nx.amd's gen.py compiles the harness to the committed
+; gfx12-generic.co, and the rule checks its stamp in every tree.
+
+(library
+ (name nx_amd_support)
+ (modules nx_amd_support)
+ (libraries
+  nx_array
+  nx_kernel
+  nx_amd
+  nx_kernels_support
+  rig
+  rig.amd.abi
+  windtrap)
+ (foreign_stubs
+  (language c)
+  (extra_deps harness.co)
+  (flags :standard -DNX_AMD_HARNESS=harness.co)
+  (names nx_amd_support_stubs)))
+
+(rule
+ (target harness.co)
+ (action
+  (progn
+   (chdir
+    %{workspace_root}
+    (run
+     %{exe:../../../lib/amd/kernels/fresh.exe}
+     %{dep:gfx12-generic.co}
+     %{dep:../../../lib/amd/kernels/gen.py}
+     %{dep:../../../lib/amd/kernels/src/kernels.h}
+     %{dep:../../../lib/amd/kernels/src/device.h}
+     %{dep:../../../lib/amd/kernels/libc/math.h}
+     %{dep:../../../lib/amd/kernels/libc/string.h}
+     %{dep:../../../lib/array/nx_dtype.h}
+     %{dep:harness.hip}
+     %{dep:staged.hip}))
+   (copy gfx12-generic.co harness.co))))

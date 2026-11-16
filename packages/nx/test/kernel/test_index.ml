@@ -69,6 +69,181 @@ let law_set_last (b : Support.backend) c =
   cover "dropped updates" dropped;
   match scatter_on b c with None -> () | Some y -> check_scatter c y
 
+(* Max and Min *)
+
+(* An element of [d] as {!Elements.element} draws it, and a quarter of an
+   integer's at one of its dtype's extremes. *)
+let extreme_element (D.Any dt as d) r =
+  let w = D.bits dt / 8 in
+  let real = D.is D.Float dt || D.is D.Complex dt || D.is D.Boolean dt in
+  if real || w = 0 || Random.State.int r 4 > 0 then element d r
+  else
+    let top = (8 * w) - 1 in
+    let lo, hi =
+      if not (D.is D.Signed dt) then (0L, -1L)
+      else if w = 8 then (Int64.min_int, Int64.max_int)
+      else
+        ( Int64.neg (Int64.shift_left 1L top),
+          Int64.pred (Int64.shift_left 1L top) )
+    in
+    int_bits d w (if Random.State.bool r then lo else hi)
+
+(* The float parts of an element of [d], none for an integer. *)
+let float_parts (D.Any dt as d) e =
+  if D.is D.Complex dt then
+    let h = String.length e / 2 in
+    let get = if h = 4 then get32 else get64 in
+    [ get e 0; get e h ]
+  else if is_narrow d then [ decode d e ]
+  else if D.is D.Float dt then
+    [ (if String.length e = 4 then get32 e 0 else get64 e 0) ]
+  else []
+
+(* Whether an integer element of [d] is at one of its dtype's extremes. *)
+let at_extreme (D.Any dt as d) e =
+  let w = D.bits dt / 8 in
+  w > 0
+  && (not (D.is D.Float dt || D.is D.Complex dt || D.is D.Boolean dt))
+  &&
+  let v = int_value d e and top = (8 * w) - 1 in
+  if not (D.is D.Signed dt) then v = 0L || int_bits d w v = String.make w '\255'
+  else if w = 8 then v = Int64.min_int || v = Int64.max_int
+  else
+    v = Int64.neg (Int64.shift_left 1L top)
+    || v = Int64.pred (Int64.shift_left 1L top)
+
+(* The regimes of an extreme scatter's targets that an order can get wrong,
+   each over a target that some update reaches. *)
+let extreme_covers c =
+  let d = dtype_of c.into in
+  let (D.Any dt) = d in
+  let ls = lands c and xs = elements c.into in
+  let reached =
+    List.filter
+      (fun (_, us) -> us <> [])
+      (List.combine (Array.to_list xs) (Array.to_list ls))
+  in
+  let any f = List.exists f reached in
+  let parts = float_parts d in
+  let complex = D.is D.Complex dt in
+  let tie (x, us) =
+    let vs = List.filter (fun e -> not (nan_of d e)) (x :: us) in
+    List.exists
+      (fun a ->
+        List.exists
+          (fun b ->
+            match (parts a, parts b) with
+            | [ ra; ia ], [ rb; ib ] ->
+                compare_floats ra rb = 0 && compare_floats ia ib <> 0
+            | _ -> false)
+          vs)
+      vs
+  in
+  let zeros (x, us) =
+    let ps = List.concat_map parts (x :: us) in
+    List.exists (fun p -> p = 0. && Float.sign_bit p) ps
+    && List.exists (fun p -> p = 0. && not (Float.sign_bit p)) ps
+  in
+  let nan_im e =
+    match parts e with
+    | [ re; im ] -> Float.is_nan im && not (Float.is_nan re)
+    | _ -> false
+  in
+  cover "complex64" (D.name dt = "complex64");
+  cover "complex128" (D.name dt = "complex128");
+  cover "a tie of real parts, imaginary parts apart" (complex && any tie);
+  cover "-0 and +0 at one target" (any zeros);
+  cover "a NaN target" (any (fun (x, _) -> nan_of d x));
+  cover "a NaN update" (any (fun (_, us) -> List.exists (nan_of d) us));
+  cover "a NaN imaginary part alone"
+    (any (fun (x, us) -> List.exists nan_im (x :: us)));
+  cover "an infinity"
+    (any (fun (x, us) ->
+         List.exists
+           (fun e -> List.exists (fun p -> Float.abs p = infinity) (parts e))
+           (x :: us)));
+  cover "an integer at its dtype's extreme"
+    (any (fun (x, us) -> List.exists (at_extreme d) (x :: us)))
+
+(* Max and Min equal the left fold of Prog.Maximum or Minimum over [x], u1,
+   …, un, computed on the host: -0 below +0, a complex number by its real
+   part then its imaginary part, a NaN where one of them is. A NaN's bits are
+   unspecified, and a complex number with a NaN part is a NaN
+   (nx_kernel.mli's reductions), so any such result stands for one. *)
+let law_extreme (b : Support.backend) c =
+  extreme_covers c;
+  match scatter_on b c with
+  | None -> ()
+  | Some y ->
+      let d = dtype_of c.into and got = elements y in
+      let fits t = function
+        | Bits w -> w = got.(t)
+        | Value w ->
+            (nan_of d w && nan_of d got.(t))
+            || Testable.equal (same d) w got.(t)
+      in
+      let hex s =
+        String.concat ""
+          (List.map
+             (fun ch -> Printf.sprintf "%02x" (Char.code ch))
+             (List.of_seq (String.to_seq s)))
+      in
+      let shown =
+        List.filter_map Fun.id
+          (List.mapi
+             (fun t w ->
+               if fits t w then None
+               else
+                 let (Bits w | Value w) = w in
+                 Some (Printf.sprintf "%d: %s, not %s" t (hex got.(t)) (hex w)))
+             (Array.to_list (scatter_expected c)))
+      in
+      equal (list string) [] (List.filteri (fun i _ -> i < 5) shown)
+
+(* One case for each regime: [ex d combine x us] scatters the updates [us]
+   all onto [into]'s first element [x], beside a second element no update
+   reaches. *)
+let extreme_examples =
+  let ex d combine x us =
+    let m = List.length us and us = Array.of_list us in
+    {
+      combine;
+      saxis = 0;
+      into = operand d [| 2 |] (plain 1) (fun _ -> x);
+      sidx = int64s [| m |] (plain 1) (fun () -> 0L);
+      updates = operand d [| m |] (plain 1) (fun k -> us.(k));
+      sviews = [];
+    }
+  in
+  let c64 re im = f32 re ^ f32 im and c128 re im = f64 re ^ f64 im in
+  let ib (D.Any dt as d) v = int_bits d (D.bits dt / 8) v in
+  let i8 = D.Any D.Int8 and u64 = D.Any D.Uint64 and i64 = D.Any D.Int64 in
+  [
+    ex (D.Any D.Complex64) Nx_kernel.Max (c64 1. 0.)
+      [ c64 1. 5.; c64 1. (-2.); c64 0. 9. ];
+    ex (D.Any D.Complex128) Nx_kernel.Min (c128 0. 1.)
+      [ c128 (-0.) 3.; c128 (-0.) 1.; c128 0. (-7.) ];
+    ex (D.Any D.Complex64) Nx_kernel.Max (c64 0. (-0.))
+      [ c64 0. 0.; c64 2. nan; c64 (-1.) 1. ];
+    ex (D.Any D.Complex128) Nx_kernel.Min (c128 nan 0.)
+      [ c128 neg_infinity 0.; c128 1. 1. ];
+    ex (D.Any D.Complex64) Nx_kernel.Min (c64 infinity 0.)
+      [ c64 neg_infinity 2.; c64 neg_infinity (-0.); c64 neg_infinity 0. ];
+    ex (D.Any D.Float32) Nx_kernel.Min (f32 0.) [ f32 (-0.); f32 0. ];
+    ex (D.Any D.Float64) Nx_kernel.Max (f64 (-0.))
+      [ f64 0.; f64 neg_infinity; f64 nan; f64 infinity ];
+    ex (D.Any D.Bfloat16) Nx_kernel.Max (encode (D.Any D.Bfloat16) (-0.))
+      [ encode (D.Any D.Bfloat16) 0.; encode (D.Any D.Bfloat16) (-1.) ];
+    ex i8 Nx_kernel.Max (ib i8 0L) [ ib i8 127L; ib i8 (-128L) ];
+    ex u64 Nx_kernel.Max (ib u64 1L) [ ib u64 (-1L); ib u64 0L ];
+    ex i64 Nx_kernel.Min (ib i64 0L)
+      [ ib i64 Int64.min_int; ib i64 Int64.max_int ];
+  ]
+
+let extremes =
+  Gen.with_pp pp_scatter
+    (scatter_gen ~combines:Nx_kernel.[ Max; Min ] ~draw:extreme_element ())
+
 (* A second run gives the same bits, any NaN for a NaN. *)
 let law_add_again (b : Support.backend) c =
   cover "shared targets" (fst (sharing c));
@@ -500,6 +675,9 @@ let laws (b : Support.backend) =
       prop ~examples:set_examples
         "a Set scatter keeps each target's last update in C order" sets
         (run (law_set_last b));
+      prop ~examples:extreme_examples
+        "a Max or Min scatter is the left fold of Prog.Maximum or Minimum"
+        extremes (run (law_extreme b));
       prop "a float Add gives the same result again" float_adds
         (run (law_add_again b));
       prop ~examples:bound_examples
@@ -558,4 +736,5 @@ let () =
     | _ -> []
   in
   exit
-    (Windtrap.run "nx_kernel.index" (List.map laws (Support.backends ()) @ nv))
+    (Windtrap.run "nx_kernel.index"
+       (List.map laws (Support.backends () @ Option.to_list (Support.amd ())) @ nv))

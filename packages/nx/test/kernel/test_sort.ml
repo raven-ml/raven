@@ -670,7 +670,7 @@ let () =
   in
   exit
     (Windtrap.run "nx_kernel.sort"
-       (List.map laws (Support.backends ())
+       (List.map laws (Support.backends () @ Option.to_list (Support.amd ()))
        @ [ cpu Support.cpu ]
        @ List.map cuda (Support.gpus ())
        @ nv))
