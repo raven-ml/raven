@@ -1,11 +1,11 @@
-# tolk D467 golden=bd8d4500fdc80bff43ceacbd463e4ea2
+# tolk D467 D487 golden=bd8d4500fdc80bff43ceacbd463e4ea2
 0 Ops.CONST dtypes.weakint [] 128
 1 Ops.PARAM dtypes.bf16 [0] ParamArg(slot=0, dtype=dtypes.bf16)
 2 Ops.RANGE dtypes.weakint [0] (AxisType.GLOBAL, 1)
 3 Ops.INDEX dtypes.bf16 [1, 2]
-4 Ops.CONST dtypes.weakint [] 99
+4 Ops.CONST dtypes.weakint [] 50
 5 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 0)
-6 Ops.CONST dtypes.weakint [] 16
+6 Ops.CONST dtypes.weakint [] 32
 7 Ops.MUL dtypes.weakint [5, 6]
 8 Ops.RANGE dtypes.weakint [6] (AxisType.LOCAL, 2)
 9 Ops.ADD dtypes.weakint [7, 8]
@@ -26,5 +26,5 @@
 24 Ops.REDUCE dtypes.bf16 [23, 5, 8] (Ops.MAX, 0)
 25 Ops.STORE dtypes.void [3, 24]
 26 Ops.END dtypes.void [25, 2]
-27 Ops.SINK dtypes.void [26] KernelInfo(name="r_128_16_99", applied_opts=(Opt(op=OptOps.PADTO, axis=1, arg=16), Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))), optimized=True)
+27 Ops.SINK dtypes.void [26] KernelInfo(name="r_128_32_50", applied_opts=(Opt(op=OptOps.PADTO, axis=1, arg=32), Opt(op=OptOps.SPLIT, axis=1, arg=(32, AxisType.LOCAL))), optimized=True)
 

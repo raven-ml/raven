@@ -24,6 +24,13 @@ Where it stands, with every measurement: doc/performance.md.
   q at 512 tokens runs at 107 TFLOP/s against cuBLAS's 135; a token count
   with no factor of 16 takes no core (q 5.9 ms at 127 tokens); weights laid
   `[K; N]` take no core, about 100x their byte bound.
+- A group beside an output axis split across keeps 16 threads across
+  (D487), which on fudge's RTX 5000 Ada leaves a band open: bfloat16 column
+  sums gain 10-40% at 32 across from 1024 columns while the input sits in
+  the L2, and from DRAM 32 across gains 6% on bfloat16 and 21% on float32 at
+  8192 columns, where float32 loses 34-41% at 1024. A rule needs the part's
+  SM count, as the target's bound with a stated band, and none is derived
+  (_plans/perf-campaign/groupwidth/skeptic.md §2)
 - Since D479 groups starved reduces, a GPU `Set` election of 16384 and
   24576 rows runs 1.4x and 1.9x slower than rune's former split, and
   elections over several indices near `stream_threads` outputs up to 3.5x;

@@ -2505,6 +2505,76 @@ let grouped_cases =
          || List.exists (fun r -> (divides_16 r || long_ r) && unit_in k r) reduce))
     gpu_cases
 
+(* A group's width
+
+   A group's thread adds its share of a reduce's [n] values, then the [t]
+   partials of its group: [n / t + t] steps, each one instruction of one SIMD
+   group while [t] is at most its threads, so doubling [t] pays where
+   [n > 2 t^2]. *)
+
+(* [out[0] = sum x_r[j]] for each length [n_r] of [lengths], over ranges of
+   their own, float32. *)
+let sums lengths =
+  let one i n =
+    let j = Ops.range ~axis_type:Weak (Int n) [ i ] in
+    let x = Shape.param ~shape:[ Int n ] (List.length lengths + i) Float32
+    and out = Shape.param ~shape:[ Int 1 ] i Float32 in
+    Ops.store
+      (Ops.index out [ Ops.int 0 ])
+      (Ops.reduce (Ops.load (Ops.index x [ j ]) []) Op.Add [ j ])
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ()) (List.mapi one lengths)
+
+(* The threads of the group of [k]'s optimised kernel. *)
+let group_threads k =
+  let o = Heuristic.hand_coded_optimizations k in
+  List.fold_left
+    (fun n r -> n * Bigint.to_int (size r))
+    1
+    (ranges_at o ~reduce:true [ Local ])
+
+(* Each case: the reduces' lengths and the group's threads on each target,
+   whose SIMD group is 32 threads but on gfx942's 64. *)
+let width_cases =
+  let on simd32 simd64 =
+    [
+      ("CUDA:CUDA:sm_89", simd32); ("METAL:METAL:Apple9", simd32);
+      ("AMD:HIP:gfx1201", simd32); ("AMD:HIP:gfx942", simd64);
+    ]
+  in
+  [
+    ([ 512 ], on 16 16);
+    ([ 544 ], on 32 32);
+    ([ 528 ], on 32 32);
+    ([ 2048 ], on 32 32);
+    ([ 2112 ], on 32 64);
+    ([ 16384 ], on 32 64);
+    ([ 128; 896 ], on 16 16);
+    ([ 512; 576 ], on 32 32);
+  ]
+
+let widths =
+  let pp_case ppf (lengths, t, _) =
+    Format.fprintf ppf "sums of %s on %s"
+      (String.concat " and " (List.map string_of_int lengths))
+      t
+  in
+  cases
+    "a lone group takes the widest power of two threads from 16 up to its SIMD \
+     group whose square is less than twice its reduces' mean length"
+    ~id:(Format.asprintf "%a" pp_case)
+    (List.concat_map
+       (fun (lengths, on) ->
+         List.map (fun (t, threads) -> (lengths, t, threads)) on)
+       width_cases)
+    (fun (lengths, t, threads) ->
+      let ren =
+        Cstyle.without_compiler (Result.get_ok (Helpers.Target.of_string t))
+      in
+      let k = K.v (sums lengths) ren in
+      K.convert_loop_to_global k;
+      equal int threads (group_threads k))
+
 let fastest_threads_coalesce =
   cases
     "a group's fastest threads read at unit stride where a load reads a reduce \
@@ -2640,6 +2710,7 @@ let () =
          starved;
          keeps_kernel_writes;
          fastest_threads_coalesce;
+         widths;
          group "streaming"
            [
              loads_once_a_tile;

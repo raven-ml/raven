@@ -150,13 +150,20 @@
     - {b Grouping}: when the upcastable axes hold at most 2048 elements, or,
       in a kernel that is not a contraction and each of whose reduces sums
       at least 256 values an output, fewer than the renderer's
-      [stream_threads], 16 local threads take consecutive indices of one of
-      the first three reduce axes, the first that splits by 16 of those a
-      load reads at unit stride, then of the others. Where no load reads the axis the group takes at
-      unit stride but one reads an output axis so, 16 threads first take
-      consecutive indices of the first such axis whose split leaves the group
-      one, and are the workgroup's fastest ([lidx0]). Consecutive threads of
-      a SIMD group then read consecutive addresses where a load allows it.
+      [stream_threads], [t] local threads take consecutive indices of one of
+      the first three reduce axes, the first that splits by [t], else the
+      first longer than 32 padded to a multiple of [t], of those a load
+      reads at unit stride, then of the others; each class of axes tries
+      [t], then its halves down to 16. [t] is 16, doubled up to the
+      renderer's {!Renderer.t.simd_threads} while the mean length of the
+      kernel's reduces exceeds [2 t²]: a thread adds its [n / t] values and
+      then the group's [t] partials, each step one instruction of its SIMD
+      group. Where no load reads the axis the group takes at unit stride but
+      one reads an output axis so, 16 threads first take consecutive indices
+      of the first such axis whose split leaves the group one, and are the
+      workgroup's fastest ([lidx0]); the group then takes 16. Consecutive
+      threads of a SIMD group then read consecutive addresses where a load
+      allows it.
     - Masked axes, those a selection's condition runs in, of size at most 7,
       are upcast whole, while their product stays at most 49.
     - While the upcastable axes hold at least 1024 elements and fewer than 32

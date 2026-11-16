@@ -8084,7 +8084,8 @@ one reads what the other left, and then they form a chain (D474).
 - **tolk:** `Heuristic.group` and `Heuristic.unroll_whole`.
 - **Differs:** of the first three reduce axes, those a load reads at unit
   stride first (D357), then the others, the group takes the first that splits
-  by 16, else the first longer than 32 padded to a multiple of 16 by `PADTO`,
+  by its threads (16, or D487's width), else the first longer than 32 padded
+  to a multiple of them by `PADTO`,
   its reduction's identity in the padded steps and its loads gated. So a
   unit-stride axis is padded rather than a strided one that 16 divides
   grouped. Axes of 32 or less are left to `unroll`, which unrolls them whole.
@@ -8869,6 +8870,34 @@ D466.
   `Cuda/attention/jit-grad-bf16-2048x40x1024-full` rows and kaun's
   `GptOss/prefill-512` row on CUDA, their baselines pending the scheduled
   re-record. AMD and Metal are untimed.
+
+## D487. A group takes a SIMD group's threads along a long reduce
+
+- **tinygrad:** `codegen/opt/heuristic.py` `hand_coded_optimizations` (a
+  group of 16).
+- **tolk:** `Heuristic.group`.
+- **Differs:** a group takes 16 threads along its reduce, doubled up to
+  `Renderer.t.simd_threads` while the mean length of the kernel's reduces,
+  each over the axes it closes, exceeds `2t²`; beside an output axis split
+  across it keeps 16. Of each class of axes, unit-stride first (D357), the
+  widest width that splits or pads one (D467) is taken. tinygrad's group is
+  16 on every target.
+- **Reason:** (d): a thread adds `n/t` terms and then `t` partials, and
+  within a SIMD group a wider group costs no issue slot, so `2t` pays past
+  `n = 2t²`. BEAM reaches the width's loads and cost in two local splits,
+  `(16, LOCAL)` then `(2, LOCAL)` or `(4, LOCAL)`, but BEAM is not tolk's
+  default, as it is not tinygrad's. On fudge's RTX 5000 Ada, rune's
+  `Cuda/top-k-64-of-1x4096` takes 320-321 us to 218.
+- **Pinned by:** the heuristic goldens `sum`, `sum_prime`,
+  `sum_strided_prime`, `sum_rows_eight`, `sum_rows_long`, `max_vocab`,
+  `vecmat_1000` and `vecmat_*_mv_0` (CUDA, AMD, Metal), and
+  `sum_cols_prime`, which keeps 16 beside an across split; stages'
+  `sum_all_{cuda,hip,metal}`; the Heuristic suite's `a lone group takes the
+  widest power of two threads from 16 up to its SIMD group whose square is
+  less than twice its reduces' mean length`; rune's
+  `Cuda/top-k-64-of-1x4096` and
+  `Cuda/scatter-16384-rows-into-donated-bf16-32768x512`. AMD and Metal are
+  unrun.
 
 ## D488. A local split or pad keeps a workgroup's threads and a sum's partials
 

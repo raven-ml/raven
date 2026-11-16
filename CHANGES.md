@@ -1373,6 +1373,11 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A GPU kernel that groups a reduce, with no output axis split across it,
+  takes 32 threads along a reduce of more than 512 values, and 64 past 2048
+  on a SIMD group of 64, where it took 16
+  (`Heuristic.hand_coded_optimizations`): on CUDA, a top-64 of 4096 values
+  and a scatter of 16384 rows take a third less time.
 - `Search.beam_search` times each candidate as the program its optimisations
   compile to: staged on CUDA, in blocks on all of the host's cores, where it
   timed them unstaged and on one core and then shipped another program.

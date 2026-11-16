@@ -722,24 +722,25 @@ let group k =
     List.filteri (fun i _ -> i < 3) (K.axes_of ~reduce:true k [ Weak ])
   in
   (* The axis the group takes, split: of the axes a load reads at unit stride,
-     then of the others, the first that splits by 16, else the first longer
-     than [unroll_whole] padded to a multiple of 16 by its reduction's
-     identity. The maximum of 128 runs of 1571, a prime, took 122 us in one
-     workgroup of 32 threads looping 1571 times, and 8 us padded to 1584 in
-     128 workgroups of 16. A pad is tried on a copy, since one whose split is
-     refused would leave the axis padded and not grouped. *)
-  let grouped k =
+     then of the others, the first that splits by the group's threads, else
+     the first longer than [unroll_whole] padded to a multiple of them by its
+     reduction's identity. The maximum of 128 runs of 1571, a prime, took 122
+     us in one workgroup of 32 threads looping 1571 times, and 8 us padded to
+     1584 in 128 workgroups of 16. A pad is tried on a copy, since one whose
+     split is refused would leave the axis padded and not grouped. Each class
+     of axes tries [widths] in turn, widest first, so a narrower group of a
+     unit-stride axis is taken before a strided axis. *)
+  let grouped ?(widths = [ group_threads ]) k =
     let first, rest = List.partition (unit k) (reduce_axes k) in
-    let split k axis = try_split k axis group_threads Opt.Local in
-    let padded k axis =
-      (match known_size (shape_at k axis) with
-        | Some n -> Bigint.(gt n (of_int unroll_whole))
-        | None -> false)
-      && Result.is_ok
-           (K.apply_opt k (Opt.Padto { axis; amount = group_threads }))
-      && split k axis
-    in
-    let among axes =
+    let among axes t =
+      let split k axis = try_split k axis t Opt.Local in
+      let padded k axis =
+        (match known_size (shape_at k axis) with
+          | Some n -> Bigint.(gt n (of_int unroll_whole))
+          | None -> false)
+        && Result.is_ok (K.apply_opt k (Opt.Padto { axis; amount = t }))
+        && split k axis
+      in
       match List.find_opt (split k) axes with
       | Some axis -> Some axis
       | None ->
@@ -748,7 +749,9 @@ let group k =
                  ignore (padded k axis);
                  axis)
     in
-    match among first with Some axis -> Some axis | None -> among rest
+    List.find_map
+      (fun axes -> List.find_map (among axes) widths)
+      [ first; rest ]
   in
   (* An output axis whose split leaves the group one, tried on a copy. *)
   let across axis =
@@ -770,10 +773,13 @@ let group k =
      ms against 0.89). *)
   let outs = prod_at k (K.upcastable_dims k) in
   let weak = K.axes_of ~reduce:true k [ Weak ] in
-  let long r =
+  (* The values a reduce sums over the axes it closes. *)
+  let length r =
     let closes axis = List.memq (List.nth (K.rngs k) axis) (List.tl (src r)) in
-    Sint.resolve ~default:false
-      Sint.(prod_at k (List.filter closes weak) >= Int group_least)
+    prod_at k (List.filter closes weak)
+  in
+  let long r =
+    Sint.resolve ~default:false Sint.(length r >= Int group_least)
   in
   let starved () =
     Sint.resolve ~default:false Sint.(outs < Int (K.ren k).stream_threads)
@@ -790,10 +796,39 @@ let group k =
       | Some axis when unit k axis -> []
       | _ -> K.axes_of ~reduce:false k [ Global; Weak ]
     in
-    (match List.find_opt across outputs with
-    | Some axis -> ignore (split k axis group_threads Opt.Local)
-    | None -> ());
-    ignore (grouped k)
+    (* A thread of a group of [t] adds its [n / t] of a reduce's [n] values,
+       then the group's [t] partials: [n / t + t] steps, each one instruction
+       of one SIMD group while [t] is at most its threads, whatever lanes are
+       idle. Doubling [t] removes [n / 2t] steps and adds [t], so it pays
+       where [n > 2 t^2]: 32 threads past 512 values, 64 past 2048 on a SIMD
+       group of 64. Past a SIMD group each further one runs the whole combine
+       again, and whether that pays depends on how many groups the part runs
+       at once. The kernel's reduces share the group's threads, each with its
+       own combine, so [n] is their mean length. Beside an output axis split
+       across, the group's 16 already fill its SIMD groups. *)
+    let widths =
+      match List.find_opt across outputs with
+      | Some axis ->
+          ignore (split k axis group_threads Opt.Local);
+          [ group_threads ]
+      | None ->
+          let reduces = K.reduceops k in
+          let total =
+            List.fold_left (fun n r -> Sint.(n + length r)) (Int 0) reduces
+          in
+          let pays t =
+            let least = 2 * t * t * List.length reduces in
+            Sint.resolve ~default:false Sint.(total > Int least)
+          in
+          let rec widen t =
+            if 2 * t <= lanes k && pays t then widen (2 * t) else t
+          in
+          let rec down t =
+            if t <= group_threads then [ t ] else t :: down (t / 2)
+          in
+          down (widen group_threads)
+    in
+    ignore (grouped ~widths k)
   end
 
 (* if there are small dims with lots of valid masks, upcast them (they might be
