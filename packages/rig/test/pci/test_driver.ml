@@ -981,6 +981,7 @@ type vendor_ref = {
   states : state array;
   mutable resets : int;
   mutable stops : int;
+  mutable unstopped : int;  (** The holds open_ made that no stop stopped. *)
 }
 
 type hold_ref = {
@@ -1081,7 +1082,8 @@ let vendor_t =
       equal ~msg:"functions taken" (list string) (held_buses v) taken)
 
 let hold_t = abstract "h"
-let vendor_ref () = { states = Array.make 2 Free; resets = 0; stops = 0 }
+let vendor_ref () =
+  { states = Array.make 2 Free; resets = 0; stops = 0; unstopped = 0 }
 
 let vendor_sys () =
   let root = Tree.make two_gpus in
@@ -1136,6 +1138,7 @@ let open_ref v start answer i =
   match start with
   | Starts ->
       v.states.(i) <- Held;
+      v.unstopped <- v.unstopped + 1;
       { v; i; answer; stopped = None }
   | Fails -> raise Driver_failed
   | Raises -> invalid_arg err_driver_bug
@@ -1195,6 +1198,7 @@ let stop_ref h =
   | None ->
       let v = h.v in
       v.stops <- v.stops + 1;
+      v.unstopped <- v.unstopped - 1;
       v.states.(h.i) <- (if h.answer = `Clean then Free else Lost);
       let s = if h.answer = `Unknown then `Unknown else `Stopped in
       h.stopped <- Some s;
@@ -1212,11 +1216,26 @@ let reset_ref v i =
 
 let reset_sys s i = Result.is_ok (Driver.reset s.g s.m i)
 
+(* The vendor's stops, counted where another domain's stop may run. A stop
+   calls the vendor's before it gives the GPU back, which stays held until
+   then (Driver.stop), so a count read meanwhile is ahead of the reference,
+   which runs the stop whole. The count is the reference's, or above it by at
+   most the holds no stop has stopped: a vendor's stop called twice exceeds
+   the bound once the reference runs its stop. *)
+let stops_running (v : vendor_ref) = function
+  | Error e -> raise e
+  | Ok n ->
+      at_least ~msg:"the vendor's stops" int ~than:v.stops n;
+      at_most ~msg:"the vendor's stops, a running stop's included" int
+        ~than:(v.stops + v.unstopped) n
+
 (* The calls on a vendor. [changes_twice] lists open_, stop and reset a
    second time, which draws twice as often the calls that move a GPU between
-   free, held and lost. Two domains contend for GPU 0 alone, so that they
-   meet. *)
-let commands ?(starts = starts) ?(changes_twice = false) index =
+   free, held and lost. [concurrent] counts the vendor's stops as another
+   domain sees them ([stops_running]). Two domains contend for GPU 0 alone,
+   so that they meet. *)
+let commands ?(starts = starts) ?(changes_twice = false) ?(concurrent = false)
+    index =
   let open_ =
     command "open_"
       (vendor_t ^-> starts @-> answer_gen @-> index @-> makes hold_t)
@@ -1227,6 +1246,12 @@ let commands ?(starts = starts) ?(changes_twice = false) index =
   in
   let reset =
     command "reset" (vendor_t ^-> index @-> returns bool) reset_ref reset_sys
+  in
+  let counted s = Atomic.get s.stops in
+  let stops =
+    if concurrent then
+      command "stops" (vendor_t ^-> judges int) stops_running counted
+    else command "stops" (vendor_t ^-> returns int) (fun v -> v.stops) counted
   in
   [
     command "vendor"
@@ -1243,10 +1268,7 @@ let commands ?(starts = starts) ?(changes_twice = false) index =
       (vendor_t ^-> returns int)
       (fun v -> v.resets)
       (fun s -> Atomic.get s.resets);
-    command "stops"
-      (vendor_t ^-> returns int)
-      (fun v -> v.stops)
-      (fun s -> Atomic.get s.stops);
+    stops;
   ]
   @ if changes_twice then [ open_; stop; reset ] else []
 
@@ -1291,7 +1313,7 @@ let serialized =
       @@ flocking two_domains_name
       @@ stateful two_domains_name ~timeout:(3. *. patience) ~domains:2
            ~count:120
-           (commands ~starts:holding (indices [ 0 ]));
+           (commands ~starts:holding ~concurrent:true (indices [ 0 ]));
       cases "opens and resets run their drivers one at a time (sampled)" ~id:fst
         others test_one_at_a_time;
       cases "a stop waits for no driver's start"
@@ -2609,6 +2631,32 @@ let test_open_while_stopping () =
   stop (require_ok r);
   equal ~msg:"resets before the next open's start" reset_before (Some 1) before
 
+(* The vendor's release runs under the hold, once the GPU's release has
+   returned: another domain's open and reset are refused meanwhile, and the GPU
+   opens once the stop returns. *)
+let test_open_while_releasing () =
+  let t = tree () in
+  let during = ref None in
+  let r, _ =
+    opened t (fun h _ ->
+        Driver.set_stop h (fun () -> `Clean);
+        Driver.set_release h (fun () ->
+            let other =
+              Domain.spawn (fun () ->
+                  let o, _ = opened t (fun h _ -> kept h) in
+                  (o, Driver.reset t.g t.m 0))
+            in
+            during := Some (Domain.join other));
+        Ok h)
+  in
+  stop (require_ok r);
+  let o, reset = require_some !during in
+  contains ~msg:"the open during the release" ~sub:"is open in this process"
+    (require_error o);
+  contains ~msg:"the reset during the release" ~sub:"is open in this process"
+    (require_error reset);
+  stop (hold t.g t.m 0)
+
 (* An open, a reset and each change from a callback inside a lock raise
    [Invalid_argument] as they start, having changed nothing: the vendor's
    reset never ran, and the GPU opens after. *)
@@ -2639,6 +2687,10 @@ let tree_holds =
         "an open from another domain while a lost GPU's stop runs is refused, \
          and the open after renews it"
         test_open_while_stopping;
+      test
+        "an open and a reset from another domain while a stop's vendor's \
+         release runs are refused, and the GPU opens after"
+        test_open_while_releasing;
       test "a start that answers Ok without a stop raises, the GPU released"
         test_no_stop;
       test "a renew whose reset raises passes it through, the GPU lost"
