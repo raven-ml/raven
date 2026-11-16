@@ -30,9 +30,12 @@
     gather's or a scatter's positions that it cannot read where they lie,
     so that the values they index keep their cuts, though a {!place} could
     have put them there ({!section-routing}). A check, passing or not,
-    moves one element of each datum to the device that checks, the first
-    that holds a flag: the element at the first false flag where one is
-    false ({!section-waiting}). A contraction asked for its
+    takes one element of each datum, the element at the first false flag
+    where one is false, by a reduction of its flags and gathers of the
+    datum, whose partial results move as above where the flags or the
+    datum are cut. It moves that element to the device that checks, the
+    first that holds a flag, where it lies elsewhere
+    ({!section-waiting}). A contraction asked for its
     sum moves nothing: its result is the devices' terms, which {!place}
     closes ({!section-contraction}). *)
 
