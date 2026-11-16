@@ -176,6 +176,7 @@ let apply (type s) c (rows : s ft list) : s ft =
 let composed =
   [
     One { fname = "rsqrt"; f1 = Nx.rsqrt };
+    One { fname = "log10"; f1 = Nx.log10 };
     One { fname = "asinh"; f1 = Nx.asinh };
     One { fname = "acosh"; f1 = Nx.acosh };
     One { fname = "atanh"; f1 = Nx.atanh };
@@ -315,6 +316,21 @@ let pairs a = Array.map (fun (c : Complex.t) -> (c.re, c.im)) (Nx.to_array a)
 let close_pairs = array (pair (float 1e-12) (float 1e-12))
 let both (a, b) = Array.append (Nx.to_array a) (Nx.to_array b)
 let two () = T.(pair tensor tensor)
+
+(* The logarithms' gradient is [1 / (x ln b)] at every non-zero [x], below
+   zero too, where the value is NaN: Nx.log's convention, which Nx.log10
+   keeps by scaling log2's on both arms of its guard. Eager and compiled. *)
+let test_logarithms () =
+  let x = v [| -1.; -10.; -0.5; 2.; 1e300 |] in
+  let at name f ln_b =
+    let want = Array.map (fun x -> 1. /. (x *. ln_b)) (Nx.to_array x) in
+    let grad x = Rune.grad' (fun x -> Nx.sum (f x)) x in
+    equal ~msg:name floats want (Nx.to_array (grad x));
+    equal ~msg:(name ^ " compiled") floats want (Nx.to_array (Rune.jit' grad x))
+  in
+  at "log" Nx.log 1.;
+  at "log2" Nx.log2 (Float.log 2.);
+  at "log10" Nx.log10 (Float.log 10.)
 
 (* hypot's gradient
 
@@ -1834,6 +1850,7 @@ let () =
              prop "reads of regions sum each element's contributions"
                reads_gen regions_law;
              test "a truncated normal's bounds" test_draws;
+             test "the logarithms' gradients below zero too" test_logarithms;
            ];
          group "interface"
            [

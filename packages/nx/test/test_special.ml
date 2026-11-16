@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* nx's special functions against correctly rounded references
+(* nx's special functions and log10 against correctly rounded references
    (golden/special/, written by gen/special.py), at the bounds nx.mli
    states per function and dtype; the narrow floats at the rule nx.mli states
    for them; the laws the functions keep; their edges. *)
@@ -162,11 +162,15 @@ let pp_args ppf args =
 
 (* [check ~bound name f] holds [f] to [bound args] at every row of [name]'s
    golden that [keep ~f32 rows] keeps, at float32 and float64, and fails
-   listing the rows that miss it, worst first, or where it keeps none. *)
-let check ?(keep = fun ~f32:_ rows -> rows) ~bound name f =
+   listing the rows that miss it, worst first, or where it keeps none. At
+   float32 the bound is [bound32]'s where it is given. *)
+let check ?(keep = fun ~f32:_ rows -> rows) ?bound32 ~bound name f =
   List.map
     (fun (short, f32) ->
       test short (fun () ->
+          let bound =
+            if f32 then Option.value bound32 ~default:bound else bound
+          in
           let rows = keep ~f32 (rows name short) in
           (* A golden without rows at this dtype holds nothing: [eval] would
              not know the function's arity. *)
@@ -396,12 +400,12 @@ let narrow3 ~bound ?scale ~settings f =
 
 type u = { u : 's. 's v -> 's v }
 
-let unary name ~bound ?scale { u } =
+let unary name ?bound32 ~bound ?scale { u } =
   let f = { f = (fun a -> u a.(0)) } in
   let scale = Option.map (fun { u } -> { f = (fun a -> u a.(0)) }) scale in
   group name
     [
-      group "against the goldens" (check ~bound name f);
+      group "against the goldens" (check ?bound32 ~bound name f);
       group "at every narrow float" (narrow ~bound ?scale f);
     ]
 
@@ -494,6 +498,36 @@ let bessel =
     [
       unary "i0e" ~bound:(everywhere (Ulps 8)) { u = Nx.i0e };
       unary "i1e" ~bound:(everywhere (Ulps 8)) { u = Nx.i1e };
+    ]
+
+(* log10, at the powers of ten and Annex F's values: [-inf] at either zero,
+   NaN below it and at NaN, [inf] at [inf]. *)
+let log10_values () =
+  let at (type s) (dt : (float, s) Nx.dtype) most =
+    let n = most + 1 in
+    let powers =
+      Array.init n (fun k -> float_of_string (Printf.sprintf "1e%d" k))
+    in
+    let got = values (Nx.log10 (Nx.create dt [| n |] powers)) in
+    equal ~msg:"10^k" (array float_exact) (Array.init n Float.of_int) got;
+    equal ~msg:"special values" (array float_exact)
+      [| neg_infinity; neg_infinity; nan; nan; nan; infinity |]
+      (values
+         (Nx.log10
+            (Nx.create dt [| 6 |]
+               [| 0.; -0.; -1.; neg_infinity; nan; infinity |])))
+  in
+  at Nx.float64 22;
+  at Nx.float32 10;
+  at Nx.float16 4;
+  at Nx.bfloat16 3
+
+let logarithm =
+  group "logarithm"
+    [
+      unary "log10" ~bound32:(everywhere (Ulps 1)) ~bound:(everywhere (Ulps 2))
+        { u = Nx.log10 };
+      test "exact at the powers of ten, and Annex F's values" log10_values;
     ]
 
 (* The incomplete gamma family. Its bounds hold for [a <= 2^20]; above, the
@@ -1519,7 +1553,7 @@ let () =
   exit
     (run "nx special"
        [
-         error_function; normal; gamma; bessel; incomplete_gamma;
+         logarithm; error_function; normal; gamma; bessel; incomplete_gamma;
          incomplete_beta; laws; gamma_laws; beta_laws; ones; gamma_edges;
          beta_edges; platforms; shapes;
        ])

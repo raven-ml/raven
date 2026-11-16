@@ -62,7 +62,13 @@
   rune_support
   threads.posix
   tolk
-  windtrap))
+  windtrap)
+ (deps log10.golden))
+
+; nx's log10 golden, beside the suite that holds Rune.jit's log10 to it.
+
+(rule
+ (copy ../../nx/test/golden/special/log10.golden log10.golden))
 
 ; A variant compiled again in processes of other histories: the test runs
 ; itself once for each.

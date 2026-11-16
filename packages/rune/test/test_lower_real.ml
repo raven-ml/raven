@@ -532,7 +532,7 @@ let transcendental =
       ("exp2", K.Exp2, (4, 4));
       ("expm1", K.Expm1, (23, 23));
       ("log", K.Log, (1, 1));
-      ("log2", K.Log2, (4, 4));
+      ("log2", K.Log2, (1, 1));
       ("log1p", K.Log1p, (5, 5));
       ("sin", K.Sin, (2, 4));
       ("cos", K.Cos, (2, 9));

@@ -441,6 +441,8 @@ All notable changes to this project will be documented in this file.
 - A dead constant that a `Rune.jit` call reads, as one its function donates
   and returns, raises naming the entry point, where it named
   `Nx.Repr.shards`.
+- Numerics states `Nx.log2` compiled on the host within 1 ulp at both
+  dtypes, tolk's bound, where it stated 4.
 - A compiled scatter on AMD and Apple GPUs launches workgroups of at most
   the target's threads (`Renderer.t.local_threads_max`), where 2^19 updates
   or more made workgroups of more than 1024 that neither launches.
@@ -3033,6 +3035,12 @@ its lock and from samples the dashboard saw arrive.
 - **Breaking:** `Nx.Repr.array` and `Nx.Repr.shards` take `~by`, the function
   the arrays are for, which their refusal of a dead or traced value names in
   place of their own: a library names the function its user called.
+- Add `Nx.log10`, exact at each power of ten the dtype holds: `log10 1000.`
+  is `3.`, which `log x / log 10` misses. It is within 1 ulp at float32,
+  measured at every float32, eagerly and under `Rune.jit` on the host; and
+  within 2 at float64, measured eagerly and, under `Rune.jit` on the host,
+  following from tolk's `log2`, within 1 ulp. The powers of ten are
+  measured.
 - Add `Nx.roundeven`, which rounds to the nearest integer with halves to the
   even one, as C's `roundeven` and the `round` of NumPy, PyTorch and the
   Array API do. `Nx.round` keeps halves away from zero, as C's `round` and

@@ -1749,6 +1749,11 @@ val log2 : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [log2 x] is the base-2 logarithm. Within 1 ulp at float32 and 2 at
     float64. *)
 
+val log10 : (float, 's, 'd) t -> (float, 's, 'd) t
+(** [log10 x] is the base-10 logarithm: [-inf] at [0.], NaN below, and [n] at
+    each [10{^n}] the dtype holds, as [log10 1000.] is [3.]. Within 1 ulp at
+    float32 and 2 at float64. *)
+
 val log1p : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [log1p x] is [log (1 + x)], accurate near [0]: [-0.] at [-0.], [-inf] at
     [-1.], NaN below. Within 1 ulp at float32 and 2 at float64. Floats. *)

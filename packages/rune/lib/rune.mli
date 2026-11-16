@@ -1620,9 +1620,13 @@ val jit :
       Nx.expm1, Nx.sinh               23       23
     v}
 
-    {!Nx.log} needs only correctly rounded division. On the host CPU, {!Nx.exp},
-    {!Nx.sin} and {!Nx.cos} are within 2 ulps at [float32], and {!Nx.pow}
-    within 2 at both dtypes. Where every operand is [±0.], [±inf] or a NaN, a
+    {!Nx.log} needs only correctly rounded division. On the host CPU,
+    {!Nx.log2} is tolk's, within 1 ulp at both dtypes, {!Nx.exp}, {!Nx.sin}
+    and {!Nx.cos} are within 2 ulps at [float32], and {!Nx.pow} within 2 at
+    both dtypes. {!Nx.log10}, which nx composes from {!Nx.log2}, is within 2
+    ulps at [float64], which follows from tolk's host [log2], within 1 ulp;
+    within 1 at [float32], measured at every [float32]; and exact at each
+    power of ten the dtype holds, measured. Where every operand is [±0.], [±inf] or a NaN, a
     function gives the value of C99 Annex F (ISO/IEC 9899, F.9), a zero's sign
     included: [sin (-0.)] is [-0.] and [log 0.] is [-inf]. {!Nx.pow} is [1.]
     where [y] is [±0.] or [x] is [1.], NaN included, and where [x] is [-1.] and

@@ -2372,6 +2372,22 @@ let hypotenuse (type w) (w : (float, w) D.t) x y =
 let hypot x y =
   float_map ~by:"Nx.hypot" [ x; y ] (fun w ins -> hypotenuse w ins.(0) ins.(1))
 
+(* [log10 2] as a head, rounded to the compute dtype, and a tail, so that the
+   product with [log2 x], one fma, adds about its own rounding to [log2]'s
+   error. Where [log2 x] is an infinity or NaN the fma would be NaN, and the
+   head alone scales it: the same value, and both arms' derivative is
+   [log10 2] times [log2]'s, [1 / (x ln 10)], below zero too. *)
+let log10_2 = 0x1.34413509f79ffp-2
+let log10_2_tail = -0x1.9dc1da994fd21p-59
+
+let log10 x =
+  float_map ~by:"Nx.log10" [ x ] (fun w ins ->
+      let h = D.of_float w log10_2 in
+      let lo = D.of_float w (log10_2 -. h +. log10_2_tail) in
+      let hi = E.const w h and lo = E.const w lo in
+      let y = E.log2 ins.(0) in
+      E.(where (finite w y) (fma y hi (y * lo)) (y * hi)))
+
 (* Past [big] a square would overflow float32: [log (2 x)] is the function to
    the format's precision there. Below [tiny], [x] is. *)
 let big = 0x1p28

@@ -2,7 +2,7 @@
 # requires-python = ">=3.11"
 # dependencies = ["mpmath==1.3.0"]
 # ///
-"""Generate nx's special-function accuracy goldens.
+"""Generate nx's special-function accuracy goldens, and log10's.
 
     uv run packages/nx/test/gen/special.py [--check] [--fresh] [--jobs N]
 
@@ -47,8 +47,8 @@ import mpmath
 from mpmath import mp, mpf
 
 import oracle
-from oracle import (F64, FORMATS, bits, correctly_rounded, hexf, neighbours, next_down, next_up, round_to,
-                    scale)
+from oracle import (F64, FORMATS, bits, correctly_rounded, hexf, neighbours, next_down, next_up, of_bits,
+                    round_to, scale)
 from special_tables import (BESSEL_SPLIT, BETA_A_SMALL, BETA_B_SMALL, BETA_BGRAT_B, BETA_BPSER_BX, BETA_BUP_X,
                             BETA_EPS, BETA_FRAC_A, BETA_FRAC_LAMBDA, BETA_LARGE, BETA_POWER_BX, BETA_POWER_X,
                             BETA_REGIONS, BETA_X_FAR, BETA_X_NEAR, DIGAMMA_FROM, ERF_NEAR_BELOW, ERF_SMALL_BELOW,
@@ -875,6 +875,46 @@ def beta_quantile_points(fmt):
     return points
 
 
+# log10: nx's composite over log2, held to its goldens as the special functions
+# are. Its points are each power of ten the format holds exactly or rounds to,
+# and the neighbours of the first 30 either way; 1 and the floats around it;
+# where log10 x lies just below a power of two, so that an ulp of log2 x is
+# four of log10 x; sweeps of the positive floats and of [1e-5, 10], where
+# tessera's backscatter lies; and drawn bits.
+
+def log10_reference(fmt, x):
+    if math.isnan(x) or x < 0:
+        return math.nan
+    if x == 0:
+        return -math.inf
+    if math.isinf(x):
+        return math.inf
+    return correctly_rounded(fmt, mpmath.log10, x)
+
+
+def log10_points(fmt):
+    rng = random.Random(f"log10 {fmt.name}")
+
+    def inside(xs):
+        return [x for x in xs if fmt.tiny <= x <= fmt.max]
+
+    with mp.workprec(POINT_PREC):
+        ten = mpf(10)
+        lo, hi = int(mpmath.floor(mpmath.log10(fmt.tiny))), int(mpmath.floor(mpmath.log10(fmt.max)))
+        powers = [round_to(fmt, ten ** k) for k in range(lo, hi + 1)]
+        near = [x for k in range(-30, 31) for x in neighbours(fmt, ten ** k, 1)]
+        steps = [mpf(2) ** -k for k in range(1, fmt.p + 1)]
+        one = neighbours(fmt, 1) + [round_to(fmt, 1 + s) for s in steps] + [round_to(fmt, 1 - s) for s in steps]
+        ratio = [round_to(fmt, ten ** (sign * mpf(2) ** k * (1 - mpf(rng.random()) / 64)))
+                 for k in range(-8, 9) for sign in (1, -1) for _ in range(8)]
+        backscatter = [round_to(fmt, ten ** mpf(rng.uniform(-5, 1))) for _ in range(256)]
+    width = 31 if fmt.p == 24 else 63
+    drawn = [of_bits(fmt, rng.getrandbits(width)) for _ in range(256)]
+    return ([math.nan, -1.0, -fmt.tiny, -fmt.max] + specials(fmt) + inside(powers) + inside(near) + one
+            + inside(ratio) + log_sweep(fmt, fmt.tiny, fmt.max, 256) + backscatter
+            + [x for x in drawn if math.isfinite(x)])
+
+
 FUNCTIONS = [
     Function("erf", ["x"], erf_reference, erf_points),
     Function("erfinv", ["x"], erfinv_reference, erfinv_points, extra=kappa),
@@ -887,6 +927,7 @@ FUNCTIONS = [
     Function("lbeta", ["a", "b"], lbeta_reference, lbeta_points),
     Function("i0e", ["x"], bessel_reference(oracle.i0e, False), bessel_points),
     Function("i1e", ["x"], bessel_reference(oracle.i1e, True), bessel_points),
+    Function("log10", ["x"], log10_reference, log10_points),
     Function("gammainc", ["a", "x"], igamma_reference(0, False), igamma_points),
     Function("gammaincc", ["a", "x"], igamma_reference(1, False), igamma_points),
     Function("log_gammainc", ["a", "x"], igamma_reference(0, True), igamma_points),

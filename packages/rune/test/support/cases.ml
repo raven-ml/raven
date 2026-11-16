@@ -407,6 +407,7 @@ let real_cases =
     unary "exp2" Nx.exp2;
     unary "log" ~values:positive Nx.log;
     unary "log2" ~values:positive Nx.log2;
+    unary "log10" ~values:positive Nx.log10;
     unary "log1p" ~values:(Uniform [ (-0.8, 3.) ]) Nx.log1p;
     unary "expm1" Nx.expm1;
     unary "sin" Nx.sin;
