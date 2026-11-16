@@ -319,9 +319,15 @@ val bound_grid : groups:int -> unit
 
     Raises [Invalid_argument] if [groups] is not positive. *)
 
-type traced = { kernel : Kernels.t; groups : int * int * int; tickets : bool }
-(** The type for a launch {!traced} saw: its kernel, its groups and whether
-    it takes tickets. *)
+type traced = {
+  kernel : Kernels.t;
+  groups : int * int * int;
+  tickets : bool;
+  shared : int;
+}
+(** The type for a launch {!traced} saw: its kernel, its groups, whether it
+    takes tickets, and the bytes of LDS it takes beside its kernel's
+    own. *)
 
 val traced : (unit -> 'a) -> 'a * traced list
 (** [traced f] is [f ()] and the launches the calling domain planned while

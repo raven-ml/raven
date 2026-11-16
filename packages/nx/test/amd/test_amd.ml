@@ -1726,6 +1726,177 @@ let law_map_grid n =
           (Plan.in_band Nx_amd.Kernels.Loop_map g))
     launches
 
+(* Plain scans: a Sum, Max or Min of one load at its carrier, the 32- and
+   64-bit integers and floats. Each slice falls into chunks of 4096 terms;
+   the shapes put runs of 32 chunks across slices, a slice's last chunk
+   short, a count of chunks that is no multiple of 32, rows that start off
+   a line (an offset of [k] elements a row), terms strided (along axis 0)
+   and a strided destination, and up to 262,147 slices. Each term is drawn
+   whole, so a chunk's results stored at another chunk's place, or a
+   chunk scanned from another's carry, change bits. *)
+type scan_layout = Rows | Offset of int | Axis0 | Strided_dst
+
+type plain_scan = {
+  m : Nx_kernel.monoid;
+  dt : D.any;
+  slices : int;
+  terms : int;
+  layout : scan_layout;
+  seed : int;
+}
+
+let chunk = 4096
+
+let pp_plain_scan ppf c =
+  let layout =
+    match c.layout with
+    | Rows -> "rows"
+    | Offset k -> strf "rows %d elements off" k
+    | Axis0 -> "along axis 0"
+    | Strided_dst -> "into a strided destination"
+  in
+  Format.fprintf ppf "%s of %a, %d slices of %d terms, %s (seed %d)"
+    (Reduce_cases.monoid_name c.m) Reduce_cases.pp_dtype c.dt c.slices c.terms
+    layout c.seed
+
+let scan_monoids : Nx_kernel.monoid list = [ Sum; Max; Min ]
+
+let pp_monoid ppf m =
+  Format.pp_print_string ppf (Reduce_cases.monoid_name m)
+
+let plain_dtypes =
+  D.[ Any Float32; Any Float64; Any Int32; Any Uint32; Any Int64; Any Uint64 ]
+
+(* [n] elements of [dt] on the host: floats finite and of full mantissas,
+   integers of random bits. *)
+let scan_terms (type v s) (dt : (v, s) D.t) n seed : A.any =
+  match dt with
+  | D.Float32 | D.Float64 -> A.Any (Reduce_cases.elements dt n ~specials:0 seed)
+  | _ ->
+      let st = Random.State.make [| seed |] in
+      let b = Rig.Buffer.of_string (random_bytes st (D.bytes dt n)) in
+      A.Any (A.v dt (Nx_array.Layout.contiguous [| n |]) b)
+
+let whole e = { M.start = 0; count = e; step = 1 }
+let moved m x = Option.get (A.move m x)
+
+(* [c]'s operand on [b], made contiguous there, then viewed, so that its
+   layout is the view's on every device. *)
+let scan_operand (b : Support.backend) c =
+  let k = match c.layout with Offset k -> k | _ -> 0 in
+  let s =
+    match c.layout with
+    | Axis0 -> [| c.terms; c.slices |]
+    | _ -> [| c.slices; c.terms + k |]
+  in
+  let (D.Any dt) = c.dt in
+  let (A.Any x) = scan_terms dt (c.slices * (c.terms + k)) c.seed in
+  let x = Support.on b (moved (M.Reshape (Iarray.of_array s)) x) in
+  if k = 0 then A.Any x
+  else
+    let cols = { M.start = k; count = c.terms; step = 1 } in
+    A.Any (moved (M.Slice [| whole c.slices; cols |]) x)
+
+let scan_axis c = match c.layout with Axis0 -> 0 | _ -> 1
+
+(* [c] by [b]'s kernels: its results' bits, as nx.cpu's elements give
+   them. *)
+let run_plain_scan (b : Support.backend) c =
+  let module K = (val b.kernels) in
+  let (A.Any x as xa) = scan_operand b c in
+  let s = Reduce_cases.shape_of xa in
+  let dst =
+    match c.layout with
+    | Strided_dst ->
+        let w = A.create b.device (A.dtype x) [| c.slices; 2 * c.terms |] in
+        let odd = { M.start = 1; count = c.terms; step = 2 } in
+        moved (M.Slice [| whole c.slices; odd |]) w
+    | _ -> A.create b.device (A.dtype x) (Iarray.of_array s)
+  in
+  let p = Reduce_cases.identity (D.Any (A.dtype x)) in
+  let r =
+    K.scan p ~axis:(scan_axis c) (Monoid c.m, 0) ~dsts:[| A.Any dst |]
+      [| Nx_kernel.Plain x |]
+  in
+  equal answer A.Done r;
+  Kernels_cases.bits_of (Support.host (A.copy dst))
+
+let plain_scan_gen =
+  let open Gen in
+  let pp_int = Format.pp_print_int in
+  let* m = of_list ~pp:pp_monoid scan_monoids in
+  let* dt = of_list ~pp:Reduce_cases.pp_dtype plain_dtypes in
+  let* layout =
+    frequency
+      [
+        (3, constant Rows);
+        (2, map (fun k -> Offset k) (of_list ~pp:pp_int [ 1; 3; 31 ]));
+        (2, constant Axis0);
+        (1, constant Strided_dst);
+      ]
+  in
+  let chunks =
+    let* k = int_range 0 40 in
+    let* tail = of_list ~pp:pp_int [ 0; 1; 31; 32; 33; 4095 ] in
+    let terms = Int.max 1 ((chunk * k) + tail) in
+    let+ slices = int_range 1 (Int.max 1 (Int.min 12 ((1 lsl 20) / terms))) in
+    (slices, terms)
+  in
+  let many =
+    let* slices = of_list ~pp:pp_int [ 65543; 131077; 262147 ] in
+    let+ terms = int_range 1 3 in
+    (slices, terms)
+  in
+  let* slices, terms = frequency [ (4, chunks); (1, many) ] in
+  let+ seed = int in
+  { m; dt; slices; terms; layout; seed }
+
+(* One case of each regime the law covers, so that every seed reaches
+   every label. *)
+let plain_scan_examples =
+  let c m dt slices terms layout = { m; dt; slices; terms; layout; seed = 3 } in
+  let i32 = D.Any D.Int32 and i64 = D.Any D.Int64 in
+  let u32 = D.Any D.Uint32 and u64 = D.Any D.Uint64 in
+  [
+    c Sum f32 3 ((11 * chunk) + 33) Rows;
+    c Sum f32 1 (33 * chunk) Rows;
+    c Sum f64 5 ((7 * chunk) + 1) (Offset 1);
+    c Max i32 40 ((2 * chunk) + 31) Axis0;
+    c Min u64 2 ((20 * chunk) + 4095) Strided_dst;
+    c Sum i64 65543 2 Rows;
+    c Min u32 131077 1 (Offset 3);
+    c Max f64 262147 3 Axis0;
+    c Sum u32 7 ((3 * chunk) + 32) (Offset 31);
+  ]
+
+let law_plain_scan c =
+  let b = amd_backend () in
+  let chunks = (c.terms + chunk - 1) / chunk in
+  let units = c.slices * chunks in
+  let (D.Any dt) = c.dt in
+  cover "32 chunks across slices" (chunks mod 32 <> 0 && units > 32);
+  cover "a slice's last chunk short" (chunks > 1 && c.terms mod chunk <> 0);
+  cover "chunks not a multiple of 32" (units mod 32 <> 0);
+  cover "65,536 slices or more" (c.slices >= 65536);
+  cover "rows off a line" (match c.layout with Offset _ -> true | _ -> false);
+  cover "strided terms" (c.layout = Axis0);
+  cover "strided terms past a chunk" (c.layout = Axis0 && chunks > 1);
+  cover "a strided destination" (c.layout = Strided_dst);
+  cover "64 bits" (D.bits dt = 64);
+  cover "32 bits" (D.bits dt = 32);
+  List.iter
+    (fun m -> cover (Reduce_cases.monoid_name m) (c.m = m))
+    scan_monoids;
+  let want = Support.cpu.around (fun () -> run_plain_scan Support.cpu c) in
+  let got, launches = Plan.traced (fun () -> run_plain_scan b c) in
+  let took =
+    List.exists
+      (fun (l : Plan.traced) -> l.kernel = Nx_amd.Kernels.Loop_plain_scan)
+      launches
+  in
+  equal ~msg:"takes loop_plain_scan" bool true took;
+  equal (Kernels_cases.same_values c.dt) want got
+
 (* Memory *)
 
 (* nx_amd.mli's memory of the loops: with bounds of 0 bytes, a call's
@@ -4593,6 +4764,10 @@ let () =
                 bits"
                (Gen.with_pp Format.pp_print_int (Gen.of_list map_grids))
                law_map_grid;
+             prop ~count:24 ~examples:plain_scan_examples
+               "plain scans have nx.cpu's bits, chunk by chunk"
+               (Gen.with_pp pp_plain_scan plain_scan_gen)
+               law_plain_scan;
            ];
          group "loops memory" memory_laws;
          group "kinds"

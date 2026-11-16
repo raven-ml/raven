@@ -49,7 +49,12 @@ let kept_most () = Atomic.get kept_bound
 type ref = { word : int; slot : int; write : bool }
 
 (* A launch {!traced} saw. *)
-type traced = { kernel : Kernels.t; groups : int * int * int; tickets : bool }
+type traced = {
+  kernel : Kernels.t;
+  groups : int * int * int;
+  tickets : bool;
+  shared : int;
+}
 
 type launch = {
   kernel : Kernels.t;
@@ -218,7 +223,7 @@ let launch b kernel ~groups ?(shared = 0) ?used words refs =
   | Some l ->
       let ticket r = r.slot = b.tickets_slot in
       let tickets = b.tickets_slot >= 0 && Array.exists ticket refs in
-      Domain.DLS.set trace (Some ({ kernel; groups; tickets } :: l)));
+      Domain.DLS.set trace (Some ({ kernel; groups; tickets; shared } :: l)));
   b.launched <- { kernel; groups; shared; words; used; refs } :: b.launched
 
 (* Past the groups the GPU holds at once, a grid that strides gains no
