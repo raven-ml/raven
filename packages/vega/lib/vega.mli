@@ -45,11 +45,14 @@
     let loss, s = step inputs targets (Nx.Ptree.donate state s)
     ]}
 
-    Hyperparameters that do not change across steps ([b1], [b2], [eps],
-    [max_norm]) are compile-time constants. Everything that does (the moments,
-    the step counter, the learning rate and the weight decay) is a tensor leaf
-    or derived from one, so the compiled program replays correctly on every
-    call, with no retracing. A rate's numbers are data ({!Schedule}), so runs
+    Hyperparameters that do not change across steps, each step's scalar
+    coefficients ([b1], [b2], [eps], [momentum], [trust_coefficient],
+    {!rmsprop_step}'s [decay], {!adan_step}'s [b3], {!adafactor_step}'s
+    [decay_rate]) and {!clip_by_global_norm}'s [max_norm], are compile-time
+    constants, so a sweep over any of them compiles once per value.
+    Everything that does (the moments, the step counter, the learning rate
+    and the weight decay) is a tensor leaf or derived from one, so the
+    compiled program replays correctly on every call, with no retracing. A rate's numbers are data ({!Schedule}), so runs
     that differ only in their rates share one program. A caller that donates
     the state ({!Nx.Ptree.donate}) lets the step write the next one into its
     memory.

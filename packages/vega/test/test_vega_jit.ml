@@ -768,26 +768,39 @@ let test_tessera_eager () =
       done)
     [ (8e-4, 0.05); (2e-3, 0.1) ]
 
-(* A TESSERA training step at two runs, --steps 200 at --lr 8e-4 and --decay
-   1e-4 and --steps 300 at --lr 2e-3 and --decay 0.05: one program. *)
-let test_one_step_program () =
+(* The program of an AdamW step [step st ~params ~grads]. *)
+let step_program step =
   let both = Nx.Ptree.pair Wb.ptree (Vega.adam_ptree Wb.ptree) in
   let x =
     let params = wb 1 in
     (params, Vega.adamw_init Wb.ptree params)
   in
+  let f (params, st) = step st ~params ~grads:(grads params) in
+  Format.asprintf "%a" Rune.pp_program (Rune.program both both f x)
+
+(* A TESSERA training step at two runs, --steps 200 at --lr 8e-4 and --decay
+   1e-4 and --steps 300 at --lr 2e-3 and --decay 0.05: one program. *)
+let test_one_step_program () =
   let program (lr, warmup, decay) steps =
     let lr = Data_sets.tessera (lr, warmup) steps in
     let weight_decay = Vega.rate decay in
-    let step (params, st) =
-      Vega.adamw_step Wb.ptree ~lr ~weight_decay st ~params
-        ~grads:(grads params)
-    in
-    Format.asprintf "%a" Rune.pp_program (Rune.program both both step x)
+    step_program (fun st -> Vega.adamw_step Wb.ptree ~lr ~weight_decay st)
   in
   equal string
     (program (8e-4, 0.05, 1e-4) 200)
     (program (2e-3, 0.1, 0.05) 300)
+
+(* A step's coefficients are constants of its program: a sweep over [b1],
+   [b2] or [eps] compiles once per value. *)
+let test_coefficients_are_constants () =
+  let program ?(b1 = 0.9) ?(b2 = 0.95) ?(eps = 1e-8) () =
+    step_program (fun st -> Vega.adamw_step Wb.ptree ~lr ~b1 ~b2 ~eps st)
+  in
+  let base = program () in
+  equal ~msg:"one value" string base (program ());
+  not_equal ~msg:"b1" string base (program ~b1:0.8 ());
+  not_equal ~msg:"b2" string base (program ~b2:0.99 ());
+  not_equal ~msg:"eps" string base (program ~eps:1e-6 ())
 
 let () =
   exit
@@ -813,5 +826,10 @@ let () =
              test "compiled at every counter" test_tessera_compiled;
              test "eager at every counter" test_tessera_eager;
              test "one step program for two runs" test_one_step_program;
+           ];
+         group "coefficients"
+           [
+             test "a sweep compiles once per value"
+               test_coefficients_are_constants;
            ];
        ])
