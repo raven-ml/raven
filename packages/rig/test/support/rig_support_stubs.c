@@ -1977,6 +1977,11 @@ value rig_test_reader_span(value v_b) {
   CAMLreturn(r);
 }
 
+/* rig_buffer_borrowed, from a [@@noalloc] external. */
+value rig_test_reader_borrowed(value v_b) {
+  return Val_bool(rig_buffer_borrowed(v_b));
+}
+
 /* rig_buffers_overlap, from a [@@noalloc] external. */
 value rig_test_reader_overlap(value v_a, value v_af, value v_an, value v_b,
                               value v_bf, value v_bn) {

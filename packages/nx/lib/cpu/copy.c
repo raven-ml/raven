@@ -632,7 +632,7 @@ static value walk_operands(value vd, value vs, int d, int s, int kind,
   if (!(e = nx_coalesce(2, a, &l))) {
     double per = kind == NX_OP1_CAST ? nx_cpu_cast_cost(s, d)
                                      : nx_cpu_kind_cost(1, kind, s, s);
-    int released = nx_cpu_release(nx_cpu_loop_cost(2, a, &l, per));
+    int released = nx_cpu_release(nx_cpu_loop_cost(2, a, &l, per), 2, a);
     walk(a, &l, per);
     nx_cpu_reacquire(released);
   }

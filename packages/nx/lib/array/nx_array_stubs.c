@@ -262,6 +262,7 @@ static inline __attribute__((always_inline)) int read_runs(
       read_layout(l, a);
       a->buffer = Field(v, ARRAY_BUFFER);
       a->alias = 0;
+      a->borrowed = rig_buffer_borrowed(a->buffer);
       w[k].lo = w[k].hi = 0;
       if (!(a->flags & NX_EMPTY)) {
         w[k].lo = Long_val(Field(l, NX_LAYOUT_LO)) * a->bits / 8;

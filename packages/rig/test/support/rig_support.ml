@@ -1091,6 +1091,9 @@ let machine m =
 module Reader = struct
   external host : Rig.Buffer.t -> int = "rig_test_reader_host"
   external bytes : Rig.Buffer.t -> int = "rig_test_reader_bytes"
+
+  external borrowed : Rig.Buffer.t -> bool = "rig_test_reader_borrowed"
+  [@@noalloc]
   external why : Rig.Buffer.t -> string option = "rig_test_reader_why"
 
   type answer = Claimed | Wait | Lost | Dead | Read_only

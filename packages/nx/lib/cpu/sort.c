@@ -664,7 +664,7 @@ value nx_cpu_sort(value vaxis, value vdescending, value vv, value vp,
   int64_t bytes = slices * s.n * (s.w + 8);
   int two_keys = dt == NX_COMPLEX64 || dt == NX_COMPLEX128;
   double cost = (two_keys ? COMPLEX_CALL_COST : CALL_COST) * (double)bytes;
-  int released = nx_cpu_release(cost);
+  int released = nx_cpu_release(cost, 3, a);
   int64_t workers = nx_cpu_threads(bytes, cost);
   /* One long slice sorts on the job's threads, a block of its items each;
      a complex128's two keys, a sub-byte slice, whose blocks would read

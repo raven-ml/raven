@@ -41,6 +41,13 @@ RIG_EXTERN void *rig_buffer_host(value b);
 /* The number of [b]'s bytes. */
 RIG_EXTERN size_t rig_buffer_bytes(value b);
 
+/* 1 if [b] lies over memory that something other than [b]'s device holds,
+   a bigarray or another device's memory, such as a host borrow of a file's
+   pages, and 0 otherwise: Rig.Buffer.is_borrowed. A read of such memory
+   may wait on the system for any time, as a read of a file's page that is
+   not in memory does. It reads [b] alone and allocates nothing. */
+RIG_EXTERN int rig_buffer_borrowed(value b);
+
 /* The stable identity span of [b]: its first byte is at [*first] in the space
    [*space]. Space 0 is this process's host memory, at host addresses.
    Any other space is one memory's, at offsets within it, and no other

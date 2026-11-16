@@ -2377,7 +2377,7 @@ static value run(const call *c, value vp, value vrs, int single, int rank,
   /* A call whose reductions and nodes cost a release's worth to check and
      price does both with the lock released, whatever its work costs. */
   int early = nr + nodes > NX_CPU_ITEMS, released = 0;
-  if (early) released = nx_cpu_release(NX_CPU_RELEASE_BYTES);
+  if (early) released = nx_cpu_release(NX_CPU_RELEASE_BYTES, n, a);
   if (rank < 0) {
     rank = a[0].rank;
     shape = a[0].dim;
@@ -2420,7 +2420,7 @@ static value run(const call *c, value vp, value vrs, int single, int rank,
     cost += call_cost(&ci, &a[nd], shape, rank, contiguous, per, &a[first[i]],
                       1 + two(rs[i]));
   }
-  if (!early) released = nx_cpu_release(cost);
+  if (!early) released = nx_cpu_release(cost, n, a);
   /* A load a destination aliases is read from a copy, since a scan reads
      its terms again after it writes their results: for its chunks'
      totals, and in a Moments scan's exact pass. The identity's one copy is

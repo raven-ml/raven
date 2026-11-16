@@ -734,6 +734,9 @@ module Reader : sig
   val bytes : Rig.Buffer.t -> int
   (** [bytes b] is [rig_buffer_bytes b]. *)
 
+  val borrowed : Rig.Buffer.t -> bool
+  (** [borrowed b] is [rig_buffer_borrowed b]. *)
+
   val why : Rig.Buffer.t -> string option
   (** [why b] is [rig_buffer_why b], [None] for [NULL]. *)
 

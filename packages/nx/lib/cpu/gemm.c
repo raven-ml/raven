@@ -1848,7 +1848,7 @@ static inline __attribute__((always_inline)) value contract_body(
   double cost = nx_gemm_call_cost(acc, order, x);
   for (int o = A; scaled && o <= B; o++)
     if (at[o] >= 0) cost += nx_gemm_decode_cost(acc, &a[at[o]]);
-  int released = nx_cpu_release(cost);
+  int released = nx_cpu_release(cost, n, a);
   scale s[2];
   uint8_t *mem[2] = {NULL, NULL};
   done = 1;

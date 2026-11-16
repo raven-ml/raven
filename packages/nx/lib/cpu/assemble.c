@@ -378,7 +378,7 @@ value nx_cpu_assemble(value vfill, value vd, value vpieces) {
   double moved = nx_cpu_elements(&a[0]) + (double)c.elements;
   double cost = moves_cost(dt, moved) + PAIR_COST * pairs +
                 PIECE_COST * (double)np;
-  int released = nx_cpu_release(cost);
+  int released = nx_cpu_release(cost, n, a);
   int64_t total = 1;
   for (int i = 0; i < r; i++) total *= shape[i];
   const int64_t *step = a[0].dim + r;
@@ -861,8 +861,9 @@ value nx_cpu_fold_pad(value vpad, value vd, value vx) {
   /* The zeros, each tap's sum of a result, and each tap's spans. */
   double taps_total = (double)taps * (double)total;
   double adds = moves_cost(dt, taps_total + (double)xn);
-  int released = nx_cpu_release((double)total * w + adds +
-                                SPAN_COST * (double)taps * (double)positions);
+  int released = nx_cpu_release(
+      (double)total * w + adds + SPAN_COST * (double)taps * (double)positions,
+      2, a);
   if (total > 0 && xn == 0) zero_run(&a[0], a[0].offset, total);
   if (total > 0 && xn > 0) {
     folder f = {.a = a, .add = add, .w = w, .r = r, .taps = taps};

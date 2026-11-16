@@ -1070,7 +1070,8 @@ static int walk_wide(const prog *j, nx_array *a, int64_t (*rows)[NX_MAX_RANK],
   }
   double per = element_price(j->s, j->nnodes, a, n);
   if (!early)
-    *released = nx_cpu_release(nx_cpu_loop_cost(v + 1, walked, &l, per));
+    *released =
+        nx_cpu_release(nx_cpu_loop_cost(v + 1, walked, &l, per), n, a);
   nx_cpu_walk(v + 1, walked, &l, most, per, wide_block, &w);
   return NX_OK;
 }
@@ -1088,14 +1089,15 @@ static int run_map(step *s, int nn, int nouts, const int32_t *outs,
   /* A program whose nodes' and operands' analysis costs a release's worth
      is analysed with the lock released, whatever its walk costs. */
   int early = nn + n > NX_CPU_ITEMS, released = 0;
-  if (early) released = nx_cpu_release(NX_CPU_RELEASE_BYTES);
+  if (early) released = nx_cpu_release(NX_CPU_RELEASE_BYTES, n, a);
   int e = setup(&j, s, nn, nouts, outs, a, n, &heap, &tabs, &most);
   nx_loop l;
   if (!e && rows != NULL)
     e = walk_wide(&j, a, rows, first, most, early, &released);
   else if (!e && !(e = nx_coalesce(j.n, a, &l))) {
     double per = element_price(s, nn, a, j.n);
-    if (!early) released = nx_cpu_release(nx_cpu_loop_cost(j.n, a, &l, per));
+    if (!early)
+      released = nx_cpu_release(nx_cpu_loop_cost(j.n, a, &l, per), n, a);
     nx_cpu_walk(j.n, a, &l, most, per, block, &j);
   }
   nx_cpu_reacquire(released);

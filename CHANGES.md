@@ -3122,6 +3122,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- nx.cpu releases the domain lock in any call over an operand that lies
+  over memory something other than its device holds, such as a file's
+  pages a load maps or a bigarray, however small the call: such a read may
+  wait for storage, which held other domains' collections for tens of ms.
 - A scalar form (`Nx.add_s`, `Nx.mul_s`, `Nx.rsub_s`, `Nx.less_s`, ...)
   builds its program on each call and keeps none between calls: an eager
   call allocates 70 words whatever call came before, in any domain, where

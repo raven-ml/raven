@@ -462,7 +462,8 @@ value nx_cpu_gather(value vaxis, value vd, value vi, value vx) {
     l.step[2][i] = i == axis ? 0 : a[2].dim[r + i];
   }
   l.rank = nx_coalesce_dims(3, r, l.extent, l.step);
-  int released = nx_cpu_release(nx_cpu_loop_cost(3, a, &l, GATHER_COST));
+  int released =
+      nx_cpu_release(nx_cpu_loop_cost(3, a, &l, GATHER_COST), 3, a);
   nx_cpu_walk(3, a, &l, GATHER_MOST, GATHER_COST, gather_block, &g);
   nx_cpu_reacquire(released);
   nx_done(3, a);
@@ -856,7 +857,7 @@ value nx_cpu_gather_ranges(value vd, value vs, value ve, value vx) {
     double bytes = (double)rows * g->cells * nx_cpu_width(dt);
     double cost = (double)g->lead * g->k * RUN_COST +
                   bytes * (g->line ? 1 : NX_CPU_STRIDED_COST);
-    int released = nx_cpu_release(cost);
+    int released = nx_cpu_release(cost, 4, a);
     int threads = nx_cpu_threads((int64_t)bytes, cost);
     int64_t units = threads > 1 ? (int64_t)threads * NX_CPU_CHUNKS : 1;
     if (units > RANGE_UNITS) units = RANGE_UNITS;
@@ -2032,7 +2033,7 @@ value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
   }
   double target = NX_CPU_STRIDED_COST * target_cost(dt);
   int released =
-      nx_cpu_release((double)total * target + updates_cost(updates));
+      nx_cpu_release((double)total * target + updates_cost(updates), 4, a);
   if (total == 0 || updates == 0) {
     copy_into(a, total);
     nx_cpu_reacquire(released);

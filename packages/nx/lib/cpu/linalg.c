@@ -1044,7 +1044,7 @@ static value run(call c, const value *arrays) {
   double cost = work_cost(factor, (double)bytes,
                           (cplx ? 4 : 1) * (double)c.matrices * flops(&c)) +
                 (double)c.matrices * matrix;
-  int released = nx_cpu_release(cost);
+  int released = nx_cpu_release(cost, n, a);
   int whole = whole_batch(&c, bytes, cost, factor, cplx);
   c.per = whole ? c.matrices : 1;
   int cores = rig_pool_cores();

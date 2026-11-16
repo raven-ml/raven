@@ -340,6 +340,37 @@ let test_borrow_back () =
     (quad (option nativeint) int (pair int int) bool)
     (coordinates m) (coordinates back)
 
+(* rig_buffer_borrowed reads in C what Rig.Buffer.is_borrowed states: of host
+   memory, a bigarray and a view of it, io memory, the host's borrow of its
+   pages and a view of that, a device's borrow of host memory, and a borrow
+   back on the io device. *)
+let test_borrowed_in_c () =
+  let io, t = open_pages () in
+  let d, _ = P.open_ "io:borrowed-in-c" in
+  let m = create io t page_bytes and h = B.create Rig.host page_bytes in
+  let ba =
+    B.of_bigarray (Bigarray.Array1.create Bigarray.char Bigarray.c_layout 64)
+  in
+  let pages = require_some (B.borrow Rig.host m) in
+  let buffers =
+    [
+      ("host memory", h);
+      ("a bigarray", ba);
+      ("a view of a bigarray", B.view ba ~first:8 ~length:8);
+      ("io memory", m);
+      ("the host's borrow of io memory", pages);
+      ("a view of that borrow", B.view pages ~first:4096 ~length:64);
+      ("a device's borrow of host memory", require_some (B.borrow d h));
+      ("a borrow back on the io device", require_some (B.borrow io pages));
+    ]
+  in
+  List.iter
+    (fun (what, b) ->
+      equal ~msg:what bool (B.is_borrowed b) (Support.Reader.borrowed b))
+    buffers;
+  equal ~msg:"borrowed among them" int 5
+    (List.length (List.filter (fun (_, b) -> B.is_borrowed b) buffers))
+
 let test_empty_host_borrow () =
   let io, t = open_pages () in
   let region = Pages.make t 0 in
@@ -605,7 +636,8 @@ let test_read_rows () =
       };
     |]
   and overlapping =
-    Array.init 10 (fun i -> B.row ~src_offset:(i * 1301) ~dst_offset:(i * 11) 64)
+    Array.init 10 (fun i ->
+        B.row ~src_offset:(i * 1301) ~dst_offset:(i * 11) 64)
   in
   equal ~msg:"rows apart, in decreasing order: (reads, bytes)"
     (pair int string)
@@ -931,6 +963,8 @@ let tests =
         test "rig_buffers_overlap of ranges at a buffer's bounds"
           test_overlap_bounds;
         test "a borrow back on the io device is its memory" test_borrow_back;
+        test "rig_buffer_borrowed answers Rig.Buffer.is_borrowed"
+          test_borrowed_in_c;
         test "an empty io borrow keeps its host address without mapping"
           test_empty_host_borrow;
         test "memory whose device maps no pages borrows nowhere, asked once"

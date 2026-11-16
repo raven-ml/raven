@@ -444,9 +444,12 @@ static inline double nx_cpu_bytes(const nx_array *a) {
    external calls nx_cpu_release with its call's cost, then runs its work,
    whose jobs each take the threads their share pays for (nx_cpu_threads),
    then nx_cpu_reacquire. The domain lock is released for the work where
-   the cost reaches NX_CPU_RELEASE_BYTES, and a held call runs its jobs on
-   the calling thread alone (job.c). The work reads no OCaml value and
-   raises nothing, held or released, so every call that passes
+   the cost reaches NX_CPU_RELEASE_BYTES, or where an operand lies over
+   memory that something other than its device holds (nx_array's
+   borrowed), such as a file's pages, whose read may wait on the system's
+   read of the file for any time, which no cost bounds. A held call runs
+   its jobs on the calling thread alone (job.c). The work reads no OCaml
+   value and raises nothing, held or released, so every call that passes
    nx_cpu_release reaches nx_cpu_reacquire. A call reads many operands
    through nx_read_each, and a long program or many reductions as
    NX_CPU_ITEM says, so that no count of them lengthens a held stretch;
@@ -529,11 +532,20 @@ extern _Thread_local int nx_cpu_held;
    nx_cpu.ml's one_thread asks: the bits are those of any threads. */
 extern _Thread_local int nx_cpu_one;
 
+/* Whether one of the [n] operands [a] lies over memory that something
+   other than its device holds (nx_array's borrowed). */
+static inline int nx_cpu_borrows(int n, const nx_array *a) {
+  for (int k = 0; k < n; k++)
+    if (a[k].borrowed) return 1;
+  return 0;
+}
+
 /* Releases the domain lock for a call's work that costs [price],
-   NX_CPU_RELEASE_BYTES or more, else marks the call held; answers
-   whether it released, for nx_cpu_reacquire. */
-static inline int nx_cpu_release(double price) {
-  nx_cpu_held = price < NX_CPU_RELEASE_BYTES;
+   NX_CPU_RELEASE_BYTES or more, or that reads one of its [n] operands [a]
+   over borrowed memory, else marks the call held; answers whether it
+   released, for nx_cpu_reacquire. */
+static inline int nx_cpu_release(double price, int n, const nx_array *a) {
+  nx_cpu_held = price < NX_CPU_RELEASE_BYTES && !nx_cpu_borrows(n, a);
   if (nx_cpu_held) return 0;
   /* The release that runs no pending signal handler: one that raised
      there would leave the door's claims held. */

@@ -66,10 +66,10 @@ value caml_rig_set_bytes(value v_b, value v_j, value v_n, value v_c) {
    A buffer is the record { mem; offset; length; generation }, its
    memory { dev; host; address; handle; alloc; lease }, its lease, the
    immediate [Unleased] or a borrow's block [Lease { count; why; ... }], its
-   allocation { owner; host; count; generation; why; entry; ... }, the
-   allocation's entry { owner; backing; bytes; access; stamps; ... } and a
-   device { index; name; machine; opened; ... }, as rig's Def module lays
-   them out. */
+   allocation { owner; host; count; generation; why; entry; token; keep;
+   ... }, the allocation's entry { owner; backing; bytes; access; stamps;
+   ... } and a device { index; name; machine; opened; ... }, as rig's Def
+   module lays them out. */
 
 enum { DEVICE_INDEX, DEVICE_NAME, DEVICE_MACHINE, DEVICE_OPENED };
 enum { BUFFER_MEM, BUFFER_OFFSET, BUFFER_LENGTH, BUFFER_GEN };
@@ -85,7 +85,11 @@ enum { LEASE_COUNT, LEASE_WHY };
 #define LEASE_END ((intnat)1 << 40)
 #define LEASE_MARK (LEASE_END / 2)
 enum { ALLOC_OWNER, ALLOC_HOST, ALLOC_COUNT, ALLOC_GEN, ALLOC_WHY,
-       ALLOC_ENTRY };
+       ALLOC_ENTRY, ALLOC_TOKEN, ALLOC_KEEP };
+
+/* The tag of an allocation's keep [Bigarray _], the caller's bigarray, its
+   second constructor with an argument, after [Heap _]. */
+#define KEEP_BIGARRAY 1
 
 /* A device's machine when it is this process's: [Here], the machine type's
    first constant constructor. */
@@ -211,6 +215,14 @@ static intnat cached_host(value b) {
 
 size_t rig_buffer_bytes(value b) {
   return (size_t)Long_val(Field(b, BUFFER_LENGTH));
+}
+
+int rig_buffer_borrowed(value b) {
+  value mem = Field(b, BUFFER_MEM);
+  value alloc = Field(mem, MEMORY_ALLOC);
+  value keep = load_field(alloc, ALLOC_KEEP);
+  return Field(mem, MEMORY_DEV) != Field(alloc, ALLOC_OWNER) ||
+         (Is_block(keep) && Tag_val(keep) == KEEP_BIGARRAY);
 }
 
 /* Memory of this process's host lies at its host address. Other memory is

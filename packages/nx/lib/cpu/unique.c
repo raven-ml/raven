@@ -760,7 +760,7 @@ value nx_cpu_unique(value vids, value vfirst, value vcounts, value vcount,
   double past = n > CACHED_ROWS ? (double)(n - CACHED_ROWS) : 0;
   double cost = (double)n * (ROW_COST + WORD_COST * (double)w) +
                 past * NX_CPU_LINE + 16.0 * m;
-  int released = nx_cpu_release(cost);
+  int released = nx_cpu_release(cost, 5, a);
   int64_t k;
   if (n == 0 || w == 0) {
     /* Every row one key. */

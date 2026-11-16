@@ -139,6 +139,10 @@ typedef struct {
      writes its bytes, so it may read it at an index only before it writes
      that index. */
   int alias;
+  /* Whether the operand lies over memory that something other than its
+     device holds, such as a file's pages a load maps
+     (rig_buffer_borrowed): a read of it may wait on the system. */
+  int borrowed;
   /* Private: the claimed buffer, a local root until nx_done, and the
      claim's answer (enum rig_claim): nx_read waits for device work on it
      unless RIG_CLAIMED. */

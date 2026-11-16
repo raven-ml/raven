@@ -24,10 +24,17 @@
     ({!Nx_array.section-kernels}). It runs its work with the domain lock
     released where nx.cpu estimates that work to take longer than that copy;
     the estimate is an upper bound of the work's time on one core of the
-    machines it was measured on. Other threads of the calling domain may
-    run OCaml code during a call. Several domains may call concurrently. The
-    pool runs one job on several threads at a time, so a released call
-    whose work takes several threads waits for any other such job to end.
+    machines it was measured on. It also runs it released, whatever the
+    estimate, where an operand lies over memory that something other than
+    its device holds ({!Rig.Buffer.is_borrowed}), such as a file's pages
+    that a load maps or a bigarray: a read of a page the system has not read
+    yet waits for storage, for any time. The release costs 9 to 150 ns
+    where no other thread of the domain waits for the lock; where one does,
+    it runs at the release, and the call resumes once that thread yields.
+    Other threads of the calling domain may run OCaml code during a call.
+    Several domains may call concurrently. The pool runs one job on several
+    threads at a time, so a released call whose work takes several threads
+    waits for any other such job to end.
 
     A kernel's result is a function of its operands' values alone, in the
     sense that neither layouts nor threads change a bit of it, but for a

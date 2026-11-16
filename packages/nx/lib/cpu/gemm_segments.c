@@ -624,7 +624,7 @@ __attribute__((noinline)) value nx_gemm_contract_segmented(
                 copied * NX_CPU_STRIDED_COST;
   for (int o = A; o <= B; o++)
     if (at[o] >= 0) cost += nx_gemm_decode_cost(acc, &a[at[o]]);
-  int released = nx_cpu_release(cost);
+  int released = nx_cpu_release(cost, n, a);
   int done = 1;
   for (int o = A; o <= B && done; o++)
     if (at[o] >= 0) {

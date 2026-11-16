@@ -214,7 +214,7 @@ static value walk_operands(int n, const nx_operand *in, nx_cpu_block_fn f,
     nx_done(n, a);
     return Val_int(e);
   }
-  int released = nx_cpu_release(nx_cpu_loop_cost(n, a, &l, per));
+  int released = nx_cpu_release(nx_cpu_loop_cost(n, a, &l, per), n, a);
   int64_t block_most = most(n, a);
   int run = f == block && l.rank == 1 && l.extent[0] <= block_most;
   for (int k = 0; k < n && run; k++) {
@@ -382,7 +382,7 @@ value nx_cpu_iota(value vaxis, value vd) {
   for (int i = axis + 1; i < a->rank; i++) inner *= a->dim[i];
   int job = a->flags & NX_CONTIGUOUS;
   double cost = (double)numel * (job ? IOTA_COST : ODOMETER_COST);
-  int released = nx_cpu_release(cost);
+  int released = nx_cpu_release(cost, 1, a);
   if (numel > 0 && job) {
     iota_job j = {(int64_t *)a->base + a->offset, numel, inner, a->dim[axis]};
     int64_t units = (numel + IOTA_UNIT - 1) / IOTA_UNIT;

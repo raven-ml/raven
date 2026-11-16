@@ -715,12 +715,14 @@ static double call_cost(int t, const nx_array *x, const nx_array *y,
   return price + plans < NX_CPU_HOLD_BYTES ? price : price + plans;
 }
 
-/* The transform [t] of [x] into [y], with the domain lock released where
-   the call's price reaches NX_CPU_RELEASE_BYTES: 0 if memory runs out. */
-static int run(int t, int inverse, const nx_array *x, const nx_array *y,
-               const int *axes, int na) {
+/* The transform [t] of [a]'s first into its second, with the domain lock
+   released where the call's price reaches NX_CPU_RELEASE_BYTES or an
+   operand is borrowed: 0 if memory runs out. */
+static int run(int t, int inverse, const nx_array *a, const int *axes,
+               int na) {
+  const nx_array *x = &a[0], *y = &a[1];
   int single = (t == C2R ? x->dtype : y->dtype) == NX_COMPLEX64, ok;
-  int released = nx_cpu_release(call_cost(t, x, y, axes, na));
+  int released = nx_cpu_release(call_cost(t, x, y, axes, na), 2, a);
   if (t == C2C)
     ok = single ? c2c_f32(x, y, axes, na, inverse)
                 : c2c_f64(x, y, axes, na, inverse);
@@ -749,7 +751,7 @@ static value transform(int t, int inverse, value vaxes, value dst, value x) {
   nx_array a[2];
   int e = nx_read(2, in, a);
   if (e) return Val_int(e);
-  int ok = run(t, inverse, &a[0], &a[1], axes, na);
+  int ok = run(t, inverse, a, axes, na);
   nx_done(2, a);
   if (!ok) caml_raise_out_of_memory();
   return Val_int(NX_OK);

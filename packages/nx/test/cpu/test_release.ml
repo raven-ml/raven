@@ -347,5 +347,73 @@ let domains =
           greater int ~msg:"releases" ~than:0 releases);
     ]
 
+(* Operands over memory that something other than the host holds: the host's
+   borrow of an io device's pages, as a load maps a file, and a bigarray. *)
+let mapped (type v s) (a : (v, s) A.t) : (v, s) A.t =
+  let io = Nx_array_support.mapped_read_only a in
+  let pages = Option.get (Rig.Buffer.borrow Rig.host (A.buffer io)) in
+  A.v (A.dtype a) (A.layout a) pages
+
+let bigarray (type v s) (a : (v, s) A.t) : (v, s) A.t =
+  let n = Rig.Buffer.length (A.buffer a) in
+  let ba = Bigarray.Array1.create Bigarray.char Bigarray.c_layout n in
+  let b = Rig.Buffer.of_bigarray ba in
+  Rig.Buffer.copy ~src:(A.buffer a) ~dst:b;
+  A.v (A.dtype a) (A.layout a) b
+
+type over = { over : 'v 's. ('v, 's) A.t -> ('v, 's) A.t }
+
+(* A gather of eight elements, a map of 64 and a sum of 64, each held far
+   under the copy over the host's own memory, released over borrowed
+   memory, whatever the operand it reads there: their count of releases. *)
+let small_calls { over } =
+  let x = A.of_array D.Float32 [| 64 |] (Array.init 64 float_of_int) in
+  let at =
+    A.of_array D.Int64 [| 8 |] (Array.init 8 (fun i -> Int64.of_int (i * 7)))
+  in
+  let calls =
+    [
+      ( "a gather",
+        fun () ->
+          done_ (Nx_cpu.gather ~axis:0 ~dst:(f32 [| 8 |]) (over at) (over x)) );
+      ( "a map",
+        fun () ->
+          done_
+            (Nx_kernels_support.map2 cpu (Binary Add) ~dst:(f32 [| 64 |])
+               (over x) x) );
+      ( "a sum",
+        fun () ->
+          reduce [| (Monoid Sum, 0) |] ~dsts:[| A.Any (f32 [||]) |] (over x) );
+    ]
+  in
+  List.map
+    (fun (what, f) ->
+      f ();
+      let ~releases, ~held:_, ~cpu:_ = Nx_release_support.watch f in
+      (what, releases))
+    calls
+
+let borrowed =
+  group "a call that reads borrowed memory releases, however small"
+    [
+      cases "over borrowed memory"
+        ~id:(fun (what, _) -> what)
+        [
+          ("a host borrow of an io device's pages", { over = mapped });
+          ("a bigarray", { over = bigarray });
+        ]
+        (fun (_, over) ->
+          List.iter
+            (fun (what, releases) ->
+              greater ~msg:(what ^ ": releases") int ~than:0 releases)
+            (small_calls over));
+      test "the same calls over the host's own memory hold" (fun () ->
+          equal
+            (list (pair string int))
+            [ ("a gather", 0); ("a map", 0); ("a sum", 0) ]
+            (small_calls { over = Fun.id }));
+    ]
+
 let () =
-  exit (Windtrap.run "nx_cpu.release" [ families; estimates; domains ])
+  exit
+    (Windtrap.run "nx_cpu.release" [ families; estimates; borrowed; domains ])

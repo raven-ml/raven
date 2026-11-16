@@ -960,7 +960,7 @@ value nx_cpu_attention(value vp, value vranges, value vscale, value vo,
               shared_mask(&c, g, loads, nl);
   double pairs1 = (double)c.tq * (double)c.tk;
   if (share) cost += pairs1 * nx_cpu_prog_cost(g);
-  int released = nx_cpu_release(cost);
+  int released = nx_cpu_release(cost, n, a);
   /* Ranges whose tables cannot be held leave every block mixed, and a
      shared table that cannot be held leaves each unit its ranges. */
   void *classes = classed ? bind_ranges(&c, rg, loads, nl) : NULL;
