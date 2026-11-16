@@ -499,8 +499,15 @@ let dst_view_case =
          (* No windows: a destination's elements are distinct. *)
          Gen.map (fun v -> (c, v)) (E.view_of ~apart:true (Array.length ys))))
 
-(* A kernel that declines writes nothing: [dst] keeps its values. *)
-let law_declined (b : Support.backend) c =
+(* A kernel that declines writes nothing: [dst] keeps its values. Every
+   kernel library declines a scale with an integer or complex
+   accumulator. *)
+let law_declined (b : Support.backend) (c, sa, sb) =
+  let scaled = Option.is_some sa || Option.is_some sb in
+  let declines = scaled && (is_integer c.acc || is_complex c.acc) in
+  cover "declined" declines;
+  cover "a scale with an integer acc" (declines && is_integer c.acc);
+  cover "a scale with a complex acc" (declines && is_complex c.acc);
   let y, _, _ = sizes c in
   let threes =
     A.Any (A.of_array D.Float64 (Iarray.of_array y) (Array.make (total y) 3.))
@@ -508,12 +515,21 @@ let law_declined (b : Support.backend) c =
   let dst = on b (cast_to c.out threes) in
   let before = planes c.out (host dst) in
   let init = Option.map (on b) c.init in
-  match contract b.kernels c ~dst (on b c.a) (on b c.b) init with
+  let scale s = scale_on b (Contract_cases.scale_of s) in
+  let sa = Option.map scale sa and sb = Option.map scale sb in
+  match contract ?sa ?sb b.kernels c ~dst (on b c.a) (on b c.b) init with
   | A.Declined ->
-      collect "declined";
       equal (array (array float_exact)) before (planes c.out (host dst))
-  | A.Done -> collect "computed"
+  | A.Done when declines -> fail "computed a scale with an integer or complex acc"
+  | A.Done -> ()
   | r -> failf "contract answered %a" Nx_array_support.pp_answer r
+
+(* Unscaled cases, which every kernel library computes, and scaled ones of
+   an integer or complex accumulator, which each declines. *)
+let decline_cases =
+  Gen.with_pp pp_scaled
+    (Gen.one_of
+       [ Gen.map (fun c -> (c, None, None)) any_case; unscalable ])
 
 (* Integers *)
 
@@ -588,7 +604,8 @@ let laws ?paths ?(more = []) (b : Support.backend) =
         scaled_case (run (law_scaled b));
       prop "a segmented contraction is each group's contraction" seg_case
         (run (law_segmented b));
-      prop "a declined contraction writes nothing" any_case
+      (* A scale with a complex acc is one case in six. *)
+      prop ~count:150 "a declined contraction writes nothing" decline_cases
         (run (law_declined b));
       prop ~examples:(examples @ in_place_examples)
         "a destination identical to init gives a fresh one's bits" computed

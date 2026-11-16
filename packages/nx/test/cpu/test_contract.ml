@@ -486,94 +486,6 @@ let test_empty b () =
 
 (* Scales *)
 
-(* How a scale's array lies: C-contiguous, stepped along its last axis, or
-   broadcast along its first. *)
-type lies = Contiguous | Stepped | Broadcast
-
-(* A scale drawn for an operand: [Exponent] codes, or [Value]s of [kind];
-   its extents; how it lies; its values from [seed], led by the specials
-   where [specials]. *)
-type spec = {
-  kind : D.any option;
-  extents : int array;
-  lies : lies;
-  specials : bool;
-  seed : int;
-}
-
-let pp_spec ppf s =
-  let kind ppf = function
-    | None -> Format.pp_print_string ppf "Exponent"
-    | Some d -> Format.fprintf ppf "Value %a" pp_dtype d
-  in
-  let lies = function
-    | Contiguous -> "contiguous"
-    | Stepped -> "stepped"
-    | Broadcast -> "broadcast"
-  in
-  Format.fprintf ppf "%a %a %s%s (seed %d)" kind s.kind pp_ints s.extents
-    (lies s.lies)
-    (if s.specials then " with specials" else "")
-    s.seed
-
-let pp_scaled ppf (c, sa, sb) =
-  let spec ppf = function
-    | None -> Format.pp_print_string ppf "none"
-    | Some s -> pp_spec ppf s
-  in
-  Format.fprintf ppf "%a@ a scale %a@ b scale %a" pp_case c spec sa spec sb
-
-(* The codes at a format's edges: the smallest scale, 1, the largest two,
-   NaN. *)
-let codes = [| 0; 127; 253; 254; 255 |]
-
-(* [s]'s scale. Codes are near 1, values as [value] draws them; with
-   [specials], led by each code of [codes] or by NaN. *)
-let scale_of s : Nx_kernel.scale =
-  let r = Random.State.make [| s.seed |] in
-  let e = s.extents and rank = Array.length s.extents in
-  let stored =
-    match s.lies with
-    | Stepped when rank > 0 ->
-        Array.mapi (fun i x -> if i = rank - 1 then 2 * x else x) e
-    | Broadcast when rank > 0 -> Array.mapi (fun i x -> if i = 0 then 1 else x) e
-    | _ -> e
-  in
-  let view (A.Any x) =
-    let move m x = Option.get (A.move m x) in
-    let step i x =
-      if i = rank - 1 then { M.start = 1; count = x; step = 2 }
-      else { M.start = 0; count = x; step = 1 }
-    in
-    match s.lies with
-    | Stepped when rank > 0 ->
-        A.Any (move (M.Slice (Iarray.of_array (Array.mapi step e))) x)
-    | Broadcast when rank > 0 -> A.Any (move (M.Broadcast (Iarray.of_array e)) x)
-    | _ -> A.Any x
-  in
-  let n = total stored in
-  match s.kind with
-  | None ->
-      let code i =
-        if s.specials && i < Array.length codes then codes.(i)
-        else if Random.State.int r 4 = 0 then
-          codes.(Random.State.int r (Array.length codes))
-        else 117 + Random.State.int r 21
-      in
-      Exponent
-        (A.expect D.Uint8
-           (view
-              (A.Any
-                 (A.of_array D.Uint8 (Iarray.of_array stored)
-                    (Array.init n code)))))
-  | Some dt ->
-      let v i = if s.specials && i = 0 then nan else value dt r in
-      let (A.Any x) =
-        let stored = Iarray.of_array stored in
-        view (cast_to dt (A.Any (A.of_array D.Float64 stored (Array.init n v))))
-      in
-      Value x
-
 let scale_extents : Nx_kernel.scale -> int array = function
   | Exponent x -> Iarray.to_array (L.shape (A.layout x))
   | Value x -> Iarray.to_array (L.shape (A.layout x))
@@ -613,48 +525,6 @@ let host_scaled acc x s =
   in
   let ys = Array.mapi scaled xs in
   (cast_to acc (A.Any (A.of_array D.Float64 (Iarray.of_array shape) ys)), !over)
-
-(* A scale for an operand of shape [s]: along each axis a ratio of 1, the
-   whole axis, or a divisor of it. *)
-let spec_for s =
-  let open Gen in
-  let axis e =
-    let ds = List.filter (fun d -> d < e && e mod d = 0) [ 2; 3; 4; 32 ] in
-    if e = 0 then of_list [ 0; 1 ]
-    else
-      frequency
-        ([ (3, constant e); (2, constant 1) ]
-        @ if ds = [] then [] else [ (3, map (fun d -> e / d) (of_list ds)) ])
-  in
-  let rec axes = function
-    | [] -> constant []
-    | e :: es ->
-        let* x = axis e in
-        let+ xs = axes es in
-        x :: xs
-  in
-  let* extents = axes (Array.to_list s) in
-  let* kind =
-    frequency
-      [
-        (1, constant None);
-        (1, map Option.some (of_list ~pp:pp_dtype D.[ Any Float32; Any Float64; Any Float16; Any Bfloat16 ]));
-      ]
-  in
-  let* lies = of_list [ Contiguous; Contiguous; Stepped; Broadcast ] in
-  let* specials = bool in
-  let+ seed = int in
-  { kind; extents = Array.of_list extents; lies; specials; seed }
-
-(* [c] with a scale on [a], on [b] or on both. *)
-let with_scales c =
-  let open Gen in
-  let* sa = spec_for (shape_of c.a) and+ sb = spec_for (shape_of c.b) in
-  let+ which = of_list [ `A; `B; `Both; `Both ] in
-  match which with
-  | `A -> (c, Some sa, None)
-  | `B -> (c, None, Some sb)
-  | `Both -> (c, Some sa, Some sb)
 
 (* Float cases of operands of any dtype, into acc or a narrow float. *)
 let scaled_cases =
@@ -1007,37 +877,6 @@ let mx_layouts =
             None, codes extents ))
         D.[ Any Float32; Any Float64 ])
     layouts
-
-(* Integer and complex cases with scales. *)
-let unscalable =
-  let open Gen in
-  with_pp pp_scaled
-    (let* acc =
-       of_list ~pp:pp_dtype
-         D.[ Any Int4; Any Int8; Any Int32; Any Int64; Any Complex64; Any Complex128 ]
-     in
-     let dts = if is_integer acc then integers else held acc in
-     let* c = case_of ~acc ~out:acc ~dts () in
-     with_scales c)
-
-(* nx.cpu declines a scale with an integer or complex acc, and writes
-   nothing. *)
-let law_unscalable b (c, sa, sb) =
-  cover "integer" (is_integer c.acc);
-  cover "complex" (is_complex c.acc);
-  let y, _, _ = sizes c in
-  let threes =
-    A.Any (A.of_array D.Float64 (Iarray.of_array y) (Array.make (total y) 3.))
-  in
-  let dst = on b (cast_to c.out threes) in
-  let before = planes c.out (host dst) in
-  let init = Option.map (on b) c.init in
-  let sa = Option.map (fun s -> scale_on b (scale_of s)) sa in
-  let sb = Option.map (fun s -> scale_on b (scale_of s)) sb in
-  match contract ?sa ?sb b.kernels c ~dst (on b c.a) (on b c.b) init with
-  | A.Declined ->
-      equal (array (array float_exact)) before (planes c.out (host dst))
-  | r -> failf "contract answered %a" Nx_array_support.pp_answer r
 
 (* A scale that does not fit its operand, a [2 × 4] by [4 × 3] product's,
    makes a call that is not Done and writes nothing outside dst: of
@@ -2374,8 +2213,6 @@ let cpu (b : Support.backend) =
       prop ~examples:(scaled_examples @ mx_layouts)
         "a scaled contraction has the bits of its operands scaled on the host"
         scaled_cases (run (law_scaled b));
-      prop "declines scales in an integer or complex accumulator" unscalable
-        (run (law_unscalable b));
       prop ~examples:mx_examples
         "a block-scaled float4 operand has the bits of its elements scaled \
          on the host"
