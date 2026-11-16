@@ -464,9 +464,12 @@ val place : 'e Placement.t -> ('v, 's, 'd) t -> ('v, 's, 'e) t
     device adds its own window, receiving that window of each other term
     of its group, a {e reduce-scatter}; it equals the closing at
     {!Placement.closed}[ (placement x)] placed at [p], bit for bit.
-    Elsewhere [x] closes at {!Placement.closed}[ (placement x)], each
-    device of a group adding a part of its window and receiving the
-    others', an {e all-reduce}, then moves to [p]. A float or complex sum
+    Elsewhere [x] closes at {!Placement.closed}[ (placement x)], an
+    {e all-reduce}, then moves to [p]. Each device of a group adds a part
+    of its window, cut along the first axis that placement leaves whole
+    and that has an element per term of the group, and receives the
+    others' parts; where no axis has one, it adds its whole window,
+    receiving that window of each other term. A float or complex sum
     of [t] terms is within [γ(t - 1, u) Σ|term|] of its terms' exact sum,
     [γ(n, u) = n u / (1 - n u)] and [u] the dtype's unit roundoff, part by
     part for a complex one, and an integer sum wraps as one addition does.
