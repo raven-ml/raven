@@ -1054,10 +1054,15 @@ let test_lstsq_rank () =
         [| q.(0); q.(1); q.(2); q.(3) *. d |])
     [ (3e-16, 1L); (6e-16, 2L) ]
 
+(* A square matrix of order 2 or more, which the indefinite case needs, is about
+   one case in six. *)
 let test_pinv =
-  prop "pinv: the Penrose conditions" (matrices ())
+  prop ~count:250 "pinv: the Penrose conditions" (matrices ())
     (fun (Case (dt, s, re, im)) ->
       cover_shapes s;
+      let n = s.(Array.length s - 1) in
+      let square = n = s.(Array.length s - 2) in
+      cover "indefinite" (square && n >= 2);
       let a = conditioned (value dt s re im) in
       let p = Nx.pinv a in
       let ap = Nx.matmul a p and pa = Nx.matmul p a in
@@ -1065,12 +1070,10 @@ let test_pinv =
       near ~scale:10. ~msg:"p a p" (Nx.matmul pa p) p;
       near ~scale:10. ~msg:"(a p)ᴴ" (adj ap) ap;
       near ~scale:10. ~msg:"(p a)ᴴ" (adj pa) pa;
-      let n = s.(Array.length s - 1) in
-      if n = s.(Array.length s - 2) then begin
+      if square then begin
         let h = definite a in
         near ~scale:10. ~msg:"hermitian" (Nx.pinv ~hermitian:true h) (Nx.pinv h);
         (* q diag w qᴴ with eigenvalues 1, -2, 3, …: Hermitian, indefinite. *)
-        cover "indefinite" (n >= 2);
         let q, _ = Nx.qr a in
         let w = Array.init n (fun i -> Float.of_int (if i mod 2 = 0 then i + 1 else -(i + 1))) in
         let w = Nx.cast dt (Nx.create Nx.float64 [| n |] w) in
