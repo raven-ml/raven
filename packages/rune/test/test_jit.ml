@@ -3383,11 +3383,23 @@ type deferred_case = { off : bool; xs : float array; scanned : bool }
 
 let deferred_cases =
   let open Gen in
-  let value = of_list [ 1.; 2.; 0.; -0.; 2.5; 4.; 5.; -1.; Float.nan ] in
-  (let* n = of_list [ 0; 1; 2; 4 ] in
-   let+ xs = array ~size:(constant n) value
-   and+ off = bool
-   and+ scanned = if n >= 2 then bool else constant false in
+  let passing = [ 1.; 2.; 0.; -0.; 2.5 ] in
+  let failing = [ 4.; 5.; -1.; Float.nan ] in
+  let any =
+    let* n = of_list [ 0; 1; 2; 4 ] in
+    array ~size:(constant n) (of_list (passing @ failing))
+  in
+  (* Elements that pass, then one that fails: [any] fails at its last element
+     alone in one case in 14. *)
+  let last =
+    let* n = of_list [ 1; 3 ] in
+    let+ xs = array ~size:(constant n) (of_list passing)
+    and+ x = of_list failing in
+    Array.append xs [| x |]
+  in
+  (let* xs = frequency [ (3, any); (1, last) ] in
+   let n = Array.length xs in
+   let+ off = bool and+ scanned = if n >= 2 then bool else constant false in
    { off; xs; scanned })
   |> with_pp (fun ppf c ->
       Format.fprintf ppf "%s%s [%s]"
