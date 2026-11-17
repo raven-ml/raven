@@ -171,8 +171,10 @@ val lse_only :
     dimensions of [dt], its values of no column, has no output and no value
     cotangent columns, and where [bits] gives the [lse] bits of the same
     call over values of [dims] columns, and from an [l̄se] cotangent alone
-    the query's and keys' cotangents of that call with [ō = 0]. It is the
-    names of the kernels it compiles. *)
+    the query's and keys' cotangents of that call with [ō = 0]. Where not
+    [bits], the call at its shape holds rune's bound ({!law} and
+    {!grad_law}). It is the names of the kernels the lse-only call
+    compiles. *)
 
 val apart : (module Nx.Devices) -> Nx.Dtype.any -> unit
 (** [apart s dt] checks that a compiled call returning one attention's [o]

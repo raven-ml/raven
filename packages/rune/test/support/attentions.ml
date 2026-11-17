@@ -1062,7 +1062,8 @@ let same_tiles r dt ~rows ~dims =
    output is its [lse] alone. Where the full call takes the same tiles and
    runs, [same], its [lse] and its gradient in the query and keys from an
    [l̄se] cotangent alone are the full call's bits with [ō = 0]: the full
-   call adds exact zeros for its values' columns. *)
+   call adds exact zeros for its values' columns. Elsewhere they hold rune's
+   bound. *)
 let lse_only (module S : Nx.Devices) ~bits:same ~rows ~dims dtype =
   let (F dt) = float_dtype dtype in
   let c = base dtype in
@@ -1096,6 +1097,27 @@ let lse_only (module S : Nx.Devices) ~bits:same ~rows ~dims dtype =
           equal ~msg:"the keys' cotangent" bits (host bk) (host bk0)
         end)
   in
+  (* Where the tiles differ, the bits may: the lse-only call at its shape,
+     unmasked, holds rune's bound, its lse and its gradient from an [l̄se]
+     cotangent alone, which the gradient law takes at seed 1. *)
+  if not same then begin
+    let lse_only =
+      {
+        c with
+        lead = rows;
+        hq = 4;
+        hk = 4;
+        tq = 256;
+        tk = 256;
+        dk = dims;
+        dv = 0;
+        mask = Unmasked;
+        seed = 1;
+      }
+    in
+    law ~composed:true (module S) lse_only;
+    grad_law ~composed:true (module S) ~vmap:false lse_only
+  end;
   List.map (fun (k : Tolk.Realize.kernel) -> k.name) ks
 
 (* A call returning one attention's [o] twice, and transposed, returns
