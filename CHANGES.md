@@ -1476,6 +1476,12 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A value read where it is broadcast stays stored when computing it takes at
+  least the elementwise operations of tolk's float32 exponential, as rune's
+  compiled `Nx.exp`, `Nx.sigmoid`, `Nx.sin` and `Nx.log` do, except at a
+  read in a sum that selects one trip (`Rangeify.get_kernel_graph`). Since
+  rune compiles them to nx's sequence, gpt-oss's decode computed its MoE
+  activation again in each of the down projection's 720 workgroups.
 - A GPU product whose operand is decoded from integer codes, such as MXFP4,
   takes a tensor core of its types past 16 rows, the rows padded to the
   core's tile, where it streamed the codes in a pass per 16 rows

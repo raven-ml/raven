@@ -799,6 +799,62 @@ let limit =
           writes sink);
     ]
 
+(* Broadcast exponentials
+
+   A value read where it is broadcast and whose computing runs a transcendental
+   function stays stored, whether the function is an operation or spelled in
+   elementwise operations, as a compiler that restates a library's exponential
+   emits it: inlined, each element of the ranges it does not vary along would
+   compute it again. [broadcast v] multiplies the vector [v] of 4 elements
+   into each of the 4 rows of a matrix, and [vecmat v] by a matrix of 16 rows,
+   each of whose outputs reads all of [v]. *)
+
+let row v = Shape.reshape v (ints [ 1; 4 ])
+let broadcast v = stores Ops.O.(input 5 * Shape.expand (row v) (ints [ 4; 4 ]))
+
+let vecmat v =
+  let m = input ~shape:[ 16; 4 ] 5 in
+  stores (Shape.rop Ops.O.(m * Shape.expand (row v) (ints [ 16; 4 ])) Add [ 1 ])
+
+let spelled () = Transcendental.xexp2 (input ~shape:[ 4 ] 1)
+
+(* [products n] is [n] products of a vector by itself: [n] operations. *)
+let products n =
+  let x = input ~shape:[ 4 ] 1 in
+  let rec go v n = if n = 0 then v else go Ops.O.(v * x) (n - 1) in
+  go x n
+
+let broadcast_exponentials =
+  group "get_kernel_graph › broadcast exponentials"
+    [
+      test "an exponential of elementwise operations broadcast stays stored"
+        (fun () ->
+          let sink = broadcast (spelled ()) in
+          equal int 2 (kernels_of sink);
+          writes sink);
+      test "an exponential of elementwise operations every output reads stays \
+            stored" (fun () ->
+          let sink = vecmat (spelled ()) in
+          equal int 2 (kernels_of sink);
+          writes sink);
+      test "a value of an exponential's work broadcast stays stored"
+        (fun () ->
+          let sink = broadcast (products (Rangeify.transcendental_work ())) in
+          equal int 2 (kernels_of sink);
+          writes sink);
+      test "a value one operation under an exponential's work broadcast is \
+            inlined" (fun () ->
+          let n = Rangeify.transcendental_work () - 1 in
+          let sink = broadcast (products n) in
+          equal int 1 (kernels_of sink);
+          writes sink);
+      test "a cheap value broadcast is inlined" (fun () ->
+          let x = input ~shape:[ 4 ] 1 in
+          let sink = broadcast Ops.O.((x * x) + x) in
+          equal int 1 (kernels_of sink);
+          writes sink);
+    ]
+
 (* Gathers read where broadcast
 
    A value whose gathers are broadcast, and would compute more elements inlined
@@ -2055,6 +2111,62 @@ let kernels_scaled ~experts ~rows ~width form v =
     (Rangeify.get_kernel_graph
        (Ops.sink [ Ops.after o [ Ops.end_ store [ r; m ] ] ]))
 
+(* A spelled exponential of [experts] matrices of 2 by 4, staged as a value read
+   where it is broadcast, that one store reads through a sum selecting each
+   row's expert ({!kernels_routed}'s product) and another reads broadcast
+   along [m] of 2: the selecting sum's read is left to the budget, which
+   inlines it, and the broadcast read keeps the stage stored. [broadcast]
+   says whether the second store is in the graph. *)
+let kernels_selected ~broadcast:with_broadcast =
+  let experts = 2 and rows = 2 in
+  let n = experts * rows in
+  let opts = { removable with keep = Broadcast } in
+  let s =
+    let e = loop experts 0 and j = loop 2 1 and k = loop 4 2 in
+    let at = Ops.O.((e * int 8) + (j * int 4) + k) in
+    Ops.bufferize ~opts
+      (Transcendental.xexp2 (Ops.index source [ at ]))
+      [ e; j; k ]
+  in
+  let routed =
+    let o = Shape.param ~device:cpu ~shape:[ Int (2 * n) ] 0 Float32 in
+    let ids = Shape.param ~device:cpu ~shape:[ Int n ] 2 Int32 in
+    let x = Shape.param ~device:cpu ~shape:[ Int (4 * n) ] 3 Float32 in
+    let r = loop (2 * n) 9 and k = Ops.range ~axis_type:Weak (Int 4) [ 10 ] in
+    let e = Ops.range ~axis_type:Weak (Int experts) [ 11 ] in
+    let row = Ops.O.(r // int 2) in
+    let selected = Ops.eq (Ops.index ids [ row ]) (Ops.cast e Dtype.Int32) in
+    let read = Ops.index s [ e; Ops.O.(r % int 2); k ] in
+    let gathered =
+      Ops.reduce (Ops.where selected read (Ops.O.float 0.)) Add [ e ]
+    in
+    let product =
+      Ops.reduce Ops.O.(gathered * Ops.index x [ (row * int 4) + k ]) Add [ k ]
+    in
+    Ops.after o [ Ops.end_ (Ops.store (Ops.index o [ r ]) product) [ r ] ]
+  in
+  let broadcast =
+    let o = Shape.param ~device:cpu ~shape:[ Int (experts * 16) ] 5 Float32 in
+    let y = Shape.param ~device:cpu ~shape:[ Int 2 ] 4 Float32 in
+    let e = loop experts 13 and j = loop 2 14 and k = loop 4 15 in
+    let m = loop 2 16 in
+    let at = Ops.O.((((e * int 8) + (j * int 4) + k) * int 2) + m) in
+    let value = Ops.O.(Ops.index s [ e; j; k ] * Ops.index y [ m ]) in
+    Ops.after o
+      [ Ops.end_ (Ops.store (Ops.index o [ at ]) value) [ e; j; k; m ] ]
+  in
+  let items = if with_broadcast then [ routed; broadcast ] else [ routed ] in
+  kernels (Rangeify.get_kernel_graph (Ops.sink items))
+
+let selected_and_broadcast =
+  group "get_kernel_graph › a spelled exponential selected and broadcast"
+    [
+      test "is inlined where a selecting sum alone reads it" (fun () ->
+          equal int 1 (kernels_selected ~broadcast:false));
+      test "stays stored for its broadcast read" (fun () ->
+          equal int 3 (kernels_selected ~broadcast:true));
+    ]
+
 (* Experts, rows an expert, the width of the factor's range and a chain's
    steps, its copied nodes either side of the budget at a row's copies of its
    expert's matrix, [min 4 rows], and at those times the width. *)
@@ -2340,6 +2452,7 @@ let () =
          rules;
          shared;
          limit;
+         broadcast_exponentials;
          gathered_broadcast;
          self_reads;
          siblings;
@@ -2349,6 +2462,7 @@ let () =
          copies;
          recomputation;
          work_bound;
+         selected_and_broadcast;
          digits;
          selections;
          own_ranges;

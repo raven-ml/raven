@@ -1881,14 +1881,20 @@ the width, and devectorizes no expanded scalar into a stack; with it
   stores, and a gather's stored source that its broadcast gathers would
   compute more of inlined) and `Indexing.bufferize_and_index` (which marks
   their stages `Broadcast`); `Ops.keep`, in place of `removable`;
-  `Rangeify.remove_bufferize`, which keeps such a stage.
+  `Rangeify.remove_bufferize`, which keeps such a stage, with `Rangeify.work`,
+  `Rangeify.transcendental_work` and `Rangeify.read_selected`.
 - **Differs:** where a broadcast ends ranges below a value, its store is
   marked, and the cost check keeps it if computing it runs `EXP2`, `LOG2`,
-  `SIN` or `POW`. The cost check sees the value with its producers already
-  stored or inlined, so a value that reads a stored exponential computes none,
-  and is inlined. A marked store still loses the axes its value does not vary
-  along. A value read once per element, as a rotated query reads its rows of
-  a stored sine table, is not marked. A gather's source (D73), stored before
+  `SIN` or `POW`, or at least the work of tolk's float32 exponential
+  (`Transcendental.xexp2`, simplified, a multiply-add counting as two) in
+  elementwise operations inside the value's ranges, as rune's restatement of
+  nx's exponential, sine and logarithm spells them, except at a read in a sum
+  that selects one trip, where D163 counts its copies. The cost check sees
+  the value with its producers already stored or inlined, so a value that
+  reads a stored exponential computes none, and is inlined. A marked store still
+  loses the axes its value does not vary along. A value read once per
+  element, as a rotated query reads its rows of a stored sine table, is not
+  marked. A gather's source (D73), stored before
   ranges are assigned, is marked when its consumers broadcast it, or when a
   broadcast ends ranges above one of its gathers and the gathers, inlined,
   would compute more elements than it holds: each element a gather reads,
@@ -1905,14 +1911,31 @@ the width, and devectorizes no expanded scalar into a stack; with it
   its layers still do. On fudge's RTX 5000 Ada `GptOss/prefill-512` takes 132 ms
   against 265 ms without the rule. The prefill rows' fudge wall-time baselines
   are pending the scheduled quiet re-record. The cost is memory: a kept value
-  holds a buffer while the call runs.
+  holds a buffer while the call runs. Once rune compiled its exponentials to
+  nx's sequence, no rune graph ran the four operations, and gpt-oss's decode
+  computed its MoE activation in each of the down projection's 720
+  workgroups, 140 us a layer against a 33 us byte bound; its step at cache
+  1024 on real weights took 10.84 ms against 8.76 ms at 726e08c6cb (one
+  round each; with the work test, pending a quiet GPU). The work test is
+  the cost of one exponential, the cost this rule already keeps a value for,
+  and like the operation test it ignores the broadcast's extent. A read in a
+  selecting sum, as of `selected_scaled`'s 160 nodes, is left to D163,
+  which counts its copies at the selected index and inlines it as tinygrad
+  does. A broadcast value of that much plain arithmetic read elsewhere is
+  stored too, which no bench row runs.
 - **Pinned by:** the Rangeify suite's `swiglu_down`, `attention`,
   `exp_dead_axis` (a kept exponential of a row expanded to a matrix is stored
   as the row), `exp_cheap_consumer` (a value that reads a kept exponential is
   inlined) and `rope_decode` (a decode step's rotated query reads its gathered
   rows of a cosine table and is not stored) rows of `kernel_counts.golden` and
-  their kernel goldens, and its `get_kernel_graph › gathers read where
-  broadcast`; kaun's `GptOss/prefill-512` and `GptOss/prefill-512-Q8_0`.
+  their kernel goldens, `selected_scaled` (a heavy value a selecting sum
+  reads, inlined) of `kernel_counts.tolk`, and its `get_kernel_graph ›
+  gathers read where broadcast`, `› broadcast exponentials` and `› a spelled
+  exponential selected and broadcast`; rune's `jit ›
+  an exponential every output of a product reads is stored` and `› a routed
+  product's sigmoid is stored` (`Nx.exp`,
+  `Nx.sigmoid`, `Nx.sin` and `Nx.log` as rune compiles them, at every float
+  dtype); kaun's `GptOss/prefill-512` and `GptOss/prefill-512-Q8_0`.
 
 ## D79. A chain of one operation keeps its right operand's grouping
 
@@ -3842,7 +3865,7 @@ A divisor past its operand's width was read in its operand's type
   `Rangeify.reads`, `Rangeify.stage_reads`, `Rangeify.reduced`,
   `Rangeify.stage_copies` and `Rangeify.stage_bounds` (the copies of each
   stage); `Rangeify.inline_budget` and `Rangeify.copied`; `Rangeify.inlined`;
-  `copies` and `computes` in `Rangeify.remove_bufferize`;
+  `copies` in `Rangeify.remove_bufferize` and `Rangeify.does_work`;
   `Rangeify.destination`, which `Rangeify.pm_remove_bufferize` applies to a
   store's destination; `Rangeify.pm_cleanups` and `Rangeify.get_kernel_graph`,
   which counts the reads before the cleanups; across kernels,

@@ -374,6 +374,69 @@ let test_concatenate_launch () =
   in
   equal ~msg:"launches" int 1 (List.length launches)
 
+(* An exponential, a sigmoid, a sine or a logarithm that every output of a
+   product reads, as a vector by a matrix or a matrix's rows by each column,
+   is computed in a kernel of its own at every float dtype: inlined, each
+   output would compute it again. A square is computed in the product. *)
+let test_broadcast_exponential () =
+  let kernels f a b =
+    let jit = Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) f in
+    List.length (snd (Tolk.Realize.kernels (fun () -> ignore (jit a b))))
+  in
+  let check (type b) (dt : (float, b) Nx.dtype) =
+    let draw key s = Nx.cast dt (Nx.Rng.uniform ~key:(Nx.Rng.key key) f32 s) in
+    let m = draw 2 [| 64; 32 |] in
+    let product ~stored name map rows =
+      let x = draw 1 [| rows; 64 |] in
+      let msg = Printf.sprintf "%s, %d rows, %s" name rows (Nx.Dtype.name dt) in
+      let alone = kernels Nx.matmul x m in
+      let expected = if stored then alone + 1 else alone in
+      equal ~msg int expected (kernels (fun x m -> Nx.matmul (map x) m) x m)
+    in
+    List.iter
+      (fun rows ->
+        product ~stored:true "exp" Nx.exp rows;
+        product ~stored:true "sigmoid" Nx.sigmoid rows;
+        product ~stored:true "sin" Nx.sin rows;
+        product ~stored:true "log" Nx.log rows;
+        product ~stored:false "square" (fun x -> Nx.mul x x) rows)
+      [ 1; 8 ]
+  in
+  check f32;
+  check f64;
+  check Nx.bfloat16;
+  check Nx.float16
+
+(* A mixture of experts' activation between its routed products, a token's 4
+   rows over 8 MXFP4 experts each reading its own expert's slice, is computed
+   in a kernel of its own when it runs a sigmoid, as gpt-oss's SwiGLU does,
+   and in the second product when it is cheap: inlined, each of that
+   product's outputs would compute the sigmoid again. *)
+let test_routed_activation () =
+  let k = 64 in
+  let matrix n =
+    Nx_quant.mxfp4
+      ~scales:(Nx.full Nx.uint8 [| 8; n; k / 32 |] 127)
+      (Nx.full Nx.uint8 [| 8; n; k / 2 |] 0x5a)
+  in
+  let up = matrix (2 * k) and down = matrix k in
+  let ids = Nx.create Nx.int64 [| 1; 4 |] [| 1L; 3L; 5L; 6L |] in
+  let x =
+    Nx.cast Nx.bfloat16 (Nx.Rng.uniform ~key:(Nx.Rng.key 3) f32 [| 1; 1; k |])
+  in
+  let kernels act =
+    let block ids x =
+      let h = Nx_quant.apply_experts ~ids up x in
+      let half i = Nx.slice [ Nx.A; Nx.A; Nx.R (i * k, (i + 1) * k) ] h in
+      Nx_quant.apply_experts ~ids down (act (half 0) (half 1))
+    in
+    let jit = Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) block in
+    List.length (snd (Tolk.Realize.kernels (fun () -> ignore (jit ids x))))
+  in
+  let cheap g l = Nx.mul (Nx.clamp ~min:0. g) (Nx.add_s l 1.) in
+  let swiglu g l = Nx.mul (Nx.mul g (Nx.sigmoid g)) (Nx.add_s l 1.) in
+  equal int (kernels cheap + 1) (kernels swiglu)
+
 let test_doubled_rows () =
   List.iter
     (fun k ->
@@ -6162,6 +6225,9 @@ let () =
                test_doubled_rows;
              test "a concatenation along a later axis runs as one launch"
                test_concatenate_launch;
+             test "an exponential every output of a product reads is stored"
+               test_broadcast_exponential;
+             test "a routed product's sigmoid is stored" test_routed_activation;
              test "crossed assemblies of computed pieces compile"
                test_crossed;
              test "a loop's step assembles its carry anew" test_loop_assembly;

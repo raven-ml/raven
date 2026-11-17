@@ -128,3 +128,11 @@ val get_kernel_graph : Ops.t -> Ops.t
     graph does not have, if a kernel's value is ordered after effects with no
     storage to hold it, as a constant after a store, or if the check
     fails. *)
+
+(**/**)
+
+val transcendental_work : unit -> int
+(** [transcendental_work ()] is the work, in elementwise operations, at which
+    {!get_kernel_graph} keeps a value read where it is broadcast stored: that
+    of tolk's float32 exponential ({!Transcendental.xexp2}), simplified, a
+    multiply-add counting as two and positions as none. For the suites. *)

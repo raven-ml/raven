@@ -220,7 +220,8 @@ type axis_copies = {
    computed at one trip. A read of one
    such range leaves the test pending, with its copies either way, for the
    stage's decision to ask only where the answer changes it; a read of several
-   asks it now. *)
+   asks it now. With the copies come the ranges of the sums the read runs in
+   that may select one trip. *)
 let read_copies ~reduced ~selected ~collapses buf idx =
   let live =
     List.filter
@@ -274,13 +275,16 @@ let read_copies ~reduced ~selected ~collapses buf idx =
   in
   let sums = if sums <> [] && not (storage (nth buf 0)) then [] else sums in
   let known (c, cover) = { no = c; yes = c; sum = None; cover } in
-  match sums with
-  | [] -> known (count [])
-  | [ ((r, _) as sum) ] ->
-      let no, c0 = count [] and yes, c1 = count [ sum ] in
-      let cover = Float.max c0 c1 in
-      if no = yes then known (no, cover) else { no; yes; sum = Some r; cover }
-  | _ -> known (count (List.filter (fun (r, _) -> collapses r) sums))
+  let share =
+    match sums with
+    | [] -> known (count [])
+    | [ ((r, _) as sum) ] ->
+        let no, c0 = count [] and yes, c1 = count [ sum ] in
+        let cover = Float.max c0 c1 in
+        if no = yes then known (no, cover) else { no; yes; sum = Some r; cover }
+    | _ -> known (count (List.filter (fun (r, _) -> collapses r) sums))
+  in
+  (share, List.map fst sums)
 
 (* A range's axis: its type and identity, which name it while the cleanups
    rebuild the nodes around it. *)
@@ -469,7 +473,7 @@ let stage_reads tsink =
     (fun u ->
       if op u = Op.Index && op (nth u 0) = Op.Stage then begin
         let buf = nth u 0 in
-        let c =
+        let c, _ =
           read_copies ~reduced:(reduced reads) ~selected:(selected reads)
             ~collapses:(collapsed reads) buf u
         in
@@ -520,6 +524,16 @@ let stage_bounds reads buf =
     let lo = least_copies (fun a -> a.lo) reads buf in
     Some (copies_of lo, copies_of hi)
 
+(* Whether the read [idx] of the stage [buf] runs in a sum that selects one
+   trip ({!collapsed}), where the budget counts the value's copies at the
+   selected index ({!read_copies}). *)
+let read_selected reads buf idx =
+  let _, sums =
+    read_copies ~reduced:(reduced reads) ~selected:(selected reads)
+      ~collapses:(collapsed reads) buf idx
+  in
+  List.exists (collapsed reads) sums
+
 (* The nodes that inlining a stage may compute again: the nodes of its value
    that its ranges reach, which the inlining copies, times the copies its reads
    make beyond the one storing computes. *)
@@ -527,13 +541,54 @@ let inline_budget = 360.
 
 (* The nodes of [computed] that inlining [buf] copies: those inside its ranges,
    which the substitution of the read's indices rebuilds. *)
-let copied buf computed =
+let copied_nodes buf computed =
   let rs = List.filter (fun r -> op r = Op.Range) (List.tl (src buf)) in
   let inside x =
     let xs = ranges x in
     List.exists (fun r -> Nodes.mem r xs) rs
   in
-  List.fold_left (fun n x -> if inside x then n + 1 else n) 0 computed
+  List.filter inside computed
+
+let copied buf computed = List.length (copied_nodes buf computed)
+
+(* Whether [x] does work. Positions are weak integers and their comparisons
+   on no device; a node on a device, as a position loaded from storage, or of
+   another type does work. *)
+let does_work x =
+  let positional =
+    Option.is_none (device x)
+    && List.exists (Dtype.equal (dtype x)) Dtype.[ Weak_int; Bool ]
+  in
+  (Op.Set.mem (op x) Op.Set.elementwise || List.mem (op x) Op.[ Reduce; Call ])
+  && not positional
+
+(* The operations [nodes] compute, a multiply-add counting as its product and
+   its sum. *)
+let work nodes =
+  let add n x =
+    if not (does_work x) then n else if op x = Op.Mulacc then n + 2 else n + 1
+  in
+  List.fold_left add 0 nodes
+
+(* The work of tolk's float32 exponential ({!Transcendental.xexp2}) of a value
+   on a device, simplified as the graphs it is compared with are: the least a
+   transcendental function computes spelled in elementwise operations.
+   Computed once; domains that race compute the same count. *)
+let exp2_work = Atomic.make (-1)
+
+let transcendental_work () =
+  let n = Atomic.get exp2_work in
+  if n >= 0 then n
+  else
+    let x = param ~device:"CPU" 0 Float32 in
+    let e =
+      graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
+        (Transcendental.xexp2 x) (After_sources Shape.symbolic)
+    in
+    let reads_x u = List.memq x (toposort ~calls:Skip u) in
+    let n = work (List.filter reads_x (toposort ~calls:Skip e)) in
+    Atomic.set exp2_work n;
+    n
 
 (* A buffer stored only to be read through movements is removed: the indices of
    the read are expressed in terms of the stored value's. *)
@@ -572,11 +627,17 @@ let remove_bufferize ~reads src buf idx =
     let reduces = List.filter (fun x -> op x = Op.Reduce) computed in
     (* Inlined where it is broadcast, the value would be computed again for each
        element of the ranges it does not vary along: one whose computing runs a
-       transcendental function stays stored. Its producers are already stored
-       or inlined, so the walk sees what inlining would compute. *)
+       transcendental operation, or does at least the work of tolk's
+       exponential inside its ranges, as rune's restatement of nx's exponential
+       does, stays stored. The work test is not taken for this read where it
+       runs in a sum that selects one trip, whose copies the budget below
+       counts at the selected index. Its producers are already stored or
+       inlined, so the walk sees what inlining would compute. *)
     let recomputes =
       (opts buf).keep = Broadcast
-      && List.exists (fun x -> Op.Set.mem (op x) transcendental) computed
+      && (List.exists (fun x -> Op.Set.mem (op x) transcendental) computed
+         || work (copied_nodes buf computed) >= transcendental_work ()
+            && not (read_selected reads buf idx))
     in
     (* Read by every output of a reduction, as a matrix-vector product reads its
        vector, the value would be computed again for each output and each of its
@@ -599,19 +660,8 @@ let remove_bufferize ~reads src buf idx =
        not; the kernels of a program then grow at most linearly in it. A view
        of storage, a read whose index computes only positions, is loaded where
        it is read however many copies its reads make: stored, it would be a
-       copy of storage its readers can load in place. Positions are weak
-       integers and their comparisons on no device; a node on a device, as a
-       position loaded from storage, or of another type computes. *)
-    let computes x =
-      let positional =
-        Option.is_none (device x)
-        && List.exists (Dtype.equal (dtype x)) Dtype.[ Weak_int; Bool ]
-      in
-      (Op.Set.mem (op x) Op.Set.elementwise
-      || List.mem (op x) Op.[ Reduce; Call ])
-      && not positional
-    in
-    let view = op src = Op.Index && not (List.exists computes computed) in
+       copy of storage its readers can load in place ({!does_work}). *)
+    let view = op src = Op.Index && not (List.exists does_work computed) in
     let copies () =
       (* The copied nodes are among the computed ones, so most values are
          under the budget before their copies are counted. *)
