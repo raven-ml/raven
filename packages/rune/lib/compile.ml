@@ -280,6 +280,10 @@ type state = {
       (** Each map that may update a loop's carry in place ({!update}): the
           carry's storage, the update's last state, the carry's node and the
           assembly's pieces, by the map's node without reshapes. *)
+  mutable places : (Ops.t * Ops.t) list;
+      (** Each piece's storage that a kernel of its own writes, with the run
+          of its assembly's storage it writes instead ({!assembled}): the
+          substitution that a loop's trip and the program each make once. *)
 }
 
 let view_of st u = Ops.Tbl.replace st.views (Ops.base u) ()
@@ -1221,13 +1225,26 @@ let order s ps =
   then m :: List.filter (( <> ) m) all
   else all
 
-(* [assembled ~device ~one_gpu dt fill shape pieces] is the node of the
-   assembly of [dt] and [shape] of its visible [pieces] ({!visible}), each a
-   region and its node, its storage on [device], that storage once filled,
-   and whether the node permutes the storage ({!order}), as a program on one
-   GPU does. *)
-let assembled ~device ~one_gpu (type v s) (dt : (v, s) D.t) (fill : v) shape
-    pieces =
+(* [assembled ~device ~one_gpu ~fresh ~place dt fill shape pieces] is the
+   node of the assembly of [dt] and [shape] of its visible [pieces]
+   ({!visible}), each a region and its node, its storage on [device], that
+   storage once filled, and whether the node permutes the storage ({!order}),
+   as a program on one GPU does.
+
+   A piece whose node [fresh] gives, through reshapes and shrinks that keep
+   every element, as the storage [b] a kernel of its own writes whole, and
+   that effect [e], is placed: [e] writes its region
+   instead, which [place b] records as the run of the assembly's storage that
+   replaces [b], and [e] is listed in the storage's state in place of a
+   store. A piece is placed where its region is dense, a run of the storage,
+   not reversed, and starts on 16 bytes, in storage that is not permuted, of
+   a dtype of one part and of whole bytes; each other
+   piece is stored. A region off 16 bytes is so copied, as a kernel's
+   parameter takes storage on its boundary. The placed effects of a state
+   are listed in one {!Ops.after}, in an order where each follows those it
+   reads, since one may read another's results; then the stores, disjoint. *)
+let assembled ~device ~one_gpu ~fresh ~place (type v s) (dt : (v, s) D.t)
+    (fill : v) shape pieces =
   let s = Iarray.to_array shape in
   let pieces = List.map (fun (rs, u) -> (axes rs, u)) pieces in
   let all = List.init (Array.length s) Fun.id in
@@ -1269,6 +1286,54 @@ let assembled ~device ~one_gpu (type v s) (dt : (v, s) D.t) (fill : v) shape
   in
   let over = Option.value gaps ~default:[] @ over in
   let all = List.map fst (Option.to_list background @ over) in
+  (* The effect that writes the piece [(b, u)] into its run of [state]'s
+     storage, where it is placed. A storage is placed once: [fresh] gives
+     only a value one piece alone reads ({!read_once}). *)
+  let placed state (b, u) =
+    let first =
+      let stride = ref 1 and at = ref 0 in
+      for i = Array.length s - 1 downto 0 do
+        at := !at + (b.(i).first * !stride);
+        stride := !stride * s.(i)
+      done;
+      !at
+    in
+    let n = elements b in
+    if
+      (* [first] is in the value's C order, the storage's only where the
+         storage is not permuted: a permuted assembly's piece of one element
+         along each axis to its minor one would get another run. *)
+      permuted
+      (* One storage element per element: a dtype of two parts holds twice
+         [numel s], and its pieces are no runs of [flat]. *)
+      || parts dt <> 1
+      || (not (dense b))
+      || (not (run s b))
+      || Array.exists (fun a -> a.back) b
+      || first * D.bytes dt 1 mod alignment <> 0
+    then None
+    else
+      (* [fresh] follows reshapes and shrinks that keep every element, so
+         [storage] holds the region's elements. *)
+      match fresh u with
+      | Some (storage, e) ->
+          let flat = Shape.reshape state (ints [ numel s ]) in
+          place storage
+            (Shape.shrink flat [ Some (Ops.Int first, Ops.Int (first + n)) ]);
+          Some e
+      | _ -> None
+  in
+  (* [effects] with each after those it reads. *)
+  let in_order = function
+    | ([] | [ _ ]) as effects -> effects
+    | effects ->
+        let rank = Ops.Tbl.create 16 in
+        List.iteri
+          (fun i u -> Ops.Tbl.replace rank u i)
+          (Ops.toposort ~calls:Skip (Ops.sink effects));
+        let at u = Ops.Tbl.find rank u in
+        List.stable_sort (fun a b -> Int.compare (at a) (at b)) effects
+  in
   (* A piece's stores into [state]'s storage: reversed along the axes it runs
      backwards, its region by steps through {!stepped}. *)
   let stores state (b, u) =
@@ -1302,7 +1367,16 @@ let assembled ~device ~one_gpu (type v s) (dt : (v, s) D.t) (fill : v) shape
   let filled =
     List.fold_left
       (fun state ps ->
-        Ops.after_disjoint state (List.concat_map (stores state) ps))
+        let effects, stored =
+          List.partition_map
+            (fun p ->
+              match placed state p with
+              | Some e -> Either.Left e
+              | None -> Either.Right p)
+            ps
+        in
+        let state = Ops.after state (in_order effects) in
+        Ops.after_disjoint state (List.concat_map (stores state) stored))
       start (states over)
   in
   (whole filled, buf, filled, permuted)
@@ -1334,6 +1408,50 @@ let alone env n =
   let output (Program.V y) = slot p y = n in
   (not (Array.exists reads p.eqns))
   && List.length (List.filter output (Array.to_list p.outputs)) = 1
+
+(* Whether variable [n] is read by one equation alone and is no output, and
+   so is the variable it views where a movement, a copy or a placement makes
+   it: a stack's piece is a reshape of its value, and the value's storage, not
+   the reshape, is what the piece's placement takes. *)
+let rec read_once env n =
+  let p = env.p in
+  let reads = function
+    | Program.Op { op; _ } -> List.exists (fun (k, _) -> k = n) (repeated p op)
+    | Do { c; _ } ->
+        List.exists (fun (Program.V x) -> slot p x = n) (Program.operands c)
+  in
+  let output (Program.V y) = slot p y = n in
+  let viewed =
+    Array.find_map
+      (function
+        | Program.Op { op = Move (_, x); base; _ } when base = n ->
+            Some (var env x)
+        | Program.Op { op = Copy x; base; _ } when base = n -> Some (var env x)
+        | Program.Op { op = Place (_, x); base; _ } when base = n ->
+            Some (var env x)
+        | _ -> None)
+      p.eqns
+  in
+  n >= 0
+  && Array.fold_left (fun k e -> if reads e then k + 1 else k) 0 p.eqns = 1
+  && (not (Array.exists output p.outputs))
+  && Option.fold ~none:true ~some:(read_once env) viewed
+
+(* Whether variable [a] is loaded by a map that also loads a carry of the
+   map's own: a map that may build the next carry in the carry's storage
+   from [a]'s pieces ({!updating}), which then read the pieces as they lie. *)
+let feeds_update env a =
+  Array.exists
+    (function
+      | Program.Op { op = Map { loads; _ }; base; _ } ->
+          let var_of (l : _ Nx.Prim.load) =
+            match l with Plain x -> var env x | Padded _ -> -1
+          in
+          let vars = Array.map var_of (Iarray.to_array loads) in
+          Array.mem a vars
+          && Array.exists (fun v -> v >= 0 && v <> a && is_next env base v) vars
+      | _ -> false)
+    env.p.eqns
 
 let positional (prog : Nx_kernel.Prog.t) =
   Iarray.exists
@@ -1480,15 +1598,61 @@ let issue st cs env (type r) base (op : r Nx.Prim.t) =
             [| moving x (Iarray.to_array rs) (read x) |]
         | Assemble { dtype; shape; fill; pieces } ->
             let s = Iarray.to_array shape in
+            (* The pieces no other value reads, of an assembly that no
+               update of a carry reads piece by piece. *)
+            let once =
+              if feeds_update env base then []
+              else
+                List.filter_map
+                  (fun (_, x) ->
+                    if read_once env (var env x) then Some (read x) else None)
+                  pieces
+            in
             let pieces =
               visible s (List.map (fun (r, x) -> (r, read x)) pieces)
             in
             if (not (st.split && pieces <> [])) && selects st s pieces then
               [| Lower_index.assemble dtype fill shape pieces |]
             else
+              (* A piece no other value reads, in storage the program made,
+                 that a kernel of its own or a loop wrote whole, the one
+                 state of that storage: a loop's carry, stored before the
+                 loop, has two. *)
+              let states = Ops.Tbl.create 8 in
+              List.iter
+                (fun n ->
+                  if Ops.op n = Tolk.Op.After then
+                    let b = Ops.nth n 0 in
+                    Ops.Tbl.replace states b
+                      (1 + Option.value (Ops.Tbl.find_opt states b) ~default:0))
+                (Ops.toposort ~calls:Skip (Ops.sink once));
+              let rec fresh u =
+                match Ops.op u with
+                | Tolk.Op.Reshape -> fresh (Ops.nth u 0)
+                | Tolk.Op.Shrink
+                  when Shape.max_numel u = Shape.max_numel (Ops.nth u 0) ->
+                    fresh (Ops.nth u 0)
+                | Tolk.Op.After -> (
+                    match Ops.src u with
+                    | [ b; e ]
+                      when Ops.op b = Tolk.Op.Buffer
+                           && Ops.Tbl.find_opt states b = Some 1
+                           && List.mem (Ops.op e)
+                                Tolk.Op.[ Call; End; Backedge ]
+                           (* [b] is replaced wherever it appears: storage
+                              an argument, a capture or another view names is
+                              read through every such name. *)
+                           && (not (Ops.Tbl.mem st.views b))
+                           && not (List.mem_assq b st.bound) ->
+                        Some (b, e)
+                    | _ -> None)
+                | _ -> None
+              in
+              let fresh u = if List.memq u once then fresh u else None in
+              let place b run = st.places <- (b, run) :: st.places in
               let y, buf, filled, permuted =
-                assembled ~device ~one_gpu:(not (host || st.split)) dtype
-                  fill shape pieces
+                assembled ~device ~one_gpu:(not (host || st.split)) ~fresh
+                  ~place dtype fill shape pieces
               in
               (* A result takes the storage as its own, but for a dtype
                  narrower than a byte, whose result packs the storage's byte
@@ -2238,6 +2402,9 @@ and outputs st cs ~reach env args =
    reads. *)
 and repeat ?(into = [||]) st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip
     =
+  (* The places the trip records are its own, substituted in its sink. *)
+  let outer = st.places in
+  st.places <- [];
   let device = st.device in
   let count = ref 0 in
   let next () =
@@ -2560,6 +2727,12 @@ and repeat ?(into = [||]) st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip
     if !taken = [] then sink
     else Ops.substitute ~calls:Skip ~pass:Once sink !taken
   in
+  let sink =
+    match st.places with
+    | [] -> sink
+    | l -> Ops.substitute ~calls:Skip ~pass:Once sink l
+  in
+  st.places <- outer;
   let body =
     Ops.substitute ~calls:Skip ~pass:Fixed_point
       (Loop.cut ~hoist ~host:(fun d -> List.mem d st.hosts) ~own next args
@@ -2696,6 +2869,7 @@ let lower ~name ~rigs ~split ~uploads (p : Program.t) (forms : form array)
       views = Ops.Tbl.create 8;
       dsts = Ops.Tbl.create 4;
       updates = Ops.Tbl.create 4;
+      places = [];
     }
   in
   let env = env_of ~split:st.split ~donated p in
@@ -2819,10 +2993,19 @@ let lower ~name ~rigs ~split ~uploads (p : Program.t) (forms : form array)
     let scattered = scattered_out in
     let lent = lend ~donated ~computed ~reaches ~scattered ~fits in
     let placed = placing lent in
+    (* The donated storage results take, and the runs of assemblies their
+       pieces' kernels write, themselves in that storage. *)
+    let pairs =
+      let lent = List.map snd placed in
+      let into u =
+        if lent = [] then u else Ops.substitute ~calls:Skip ~pass:Once u lent
+      in
+      lent @ List.map (fun (b, run) -> (b, into run)) st.places
+    in
     let sub u =
-      match placed with
+      match pairs with
       | [] -> u
-      | l -> Ops.substitute ~calls:Skip ~pass:Once u (List.map snd l)
+      | l -> Ops.substitute ~calls:Skip ~pass:Once u l
     in
     let nodes =
       Array.mapi

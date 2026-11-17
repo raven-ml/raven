@@ -1113,6 +1113,51 @@ let apart (module S : Nx.Devices) dtype =
   equal ~msg:"the second and the transposed share memory" Testable.bool false
     (shared b t)
 
+(* A call stacking two attentions' [o] along [axis]: along the first, each
+   attention's kernel writes its row of the stack, so the call compiles
+   attention's kernels alone; along any, the stack holds the bits of each
+   attention compiled on its own, a stack a GPU stores permuted copied. *)
+let stacked ?(axis = 0) (module S : Nx.Devices) dtype =
+  let (F dt) = float_dtype dtype in
+  let c = base dtype in
+  let shape = [| 2; 4; 64; 64 |] in
+  let place salt = Nx.place S.on (Nx.cast dt (draw c salt shape)) in
+  let q = place 1 and q' = place 4 and k = place 2 and v = place 3 in
+  let attend q k v =
+    fst (Nx.attention ~acc:Nx.float32 ~kv:(Dense { k; v }) q)
+  in
+  let host x = Nx.to_array (Nx.cast Nx.float32 (Nx.place Nx.Host.on x)) in
+  let one =
+    Rune.jit Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor) attend
+  in
+  let pair =
+    Rune.jit
+      Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+      (fun a b -> Nx.stack ~axis [ a; b ])
+  in
+  let expected = host (pair (one q k v) (one q' k v)) in
+  let two =
+    Rune.jit
+      Nx.Ptree.(triple tensor tensor tensor @-> tensor @-> returns tensor)
+      (fun (q, k, v) q' -> Nx.stack ~axis [ attend q k v; attend q' k v ])
+  in
+  let r = ref None in
+  let (), ks =
+    Tolk.Realize.kernels (fun () ->
+        let y = two (q, k, v) q' in
+        Nx.sync y;
+        r := Some y)
+  in
+  if axis = 0 then
+    equal ~msg:"the call's other kernels"
+      Testable.(list string)
+      []
+      (List.filter
+         (fun n -> not (String.starts_with ~prefix:"attention" n))
+         (List.map (fun (k : Tolk.Realize.kernel) -> k.name) ks));
+  equal ~msg:"the bits" (Testable.array Testable.float_exact) expected
+    (host (Option.get !r))
+
 (* One attention returned twice, each result taking the memory of a donated
    argument it does not read: the kernel writes the first there, the second
    is a copy of it in the other's memory, and both give the undonated call's

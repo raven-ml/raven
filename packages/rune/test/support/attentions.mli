@@ -157,6 +157,13 @@ val apart : (module Nx.Devices) -> Nx.Dtype.any -> unit
     twice, and transposed, on [s]'s devices, returns three arrays of [o]'s
     elements, no two sharing memory. *)
 
+val stacked : ?axis:int -> (module Nx.Devices) -> Nx.Dtype.any -> unit
+(** [stacked ~axis s dt] checks that a compiled call stacking two attentions'
+    [o] over [dt] on [s]'s devices along [axis] (default [0]) gives the bits
+    of each attention compiled on its own, and, along the first axis,
+    compiles only kernels of attention's own, each writing its row of the
+    stack. *)
+
 val donated_twice : (module Nx.Devices) -> Nx.Dtype.any -> unit
 (** [donated_twice s dt] checks that a compiled call returning one attention
     over [dt] on [s]'s devices twice, each result taking the memory of a

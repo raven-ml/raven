@@ -522,6 +522,13 @@ All notable changes to this project will be documented in this file.
 - Numerics states a compiled complex `Nx.mul`, `Nx.div` and `Nx.recip` exact
   on the host and NVIDIA GPUs, eager's bits: they computed nx's sequence
   already.
+- A compiled assembly, as `Nx.stack` and `Nx.concatenate` make, writes a
+  piece that a kernel of its own or a loop computes where it lies in the
+  assembly, where one more kernel copied it there: the gradient of eight
+  remat'd blocks read as rows of two stacks holds 1,376,256 bytes on the
+  host, from 1,409,152, below separate arrays' 1,378,048, and two
+  attentions over [2; 4; 64; 64] float32 stacked hold 395,264, from
+  526,368. A piece whose region starts off 16 bytes is still copied.
 - A compiled `Nx.pow` gives eager's bits on the host and NVIDIA GPUs, so
   its float32 bound on the host is nx's 4 ulps, where it stated 2.
 - Numerics states a compiled `Nx.erf` exact, eager's bits, where it stated

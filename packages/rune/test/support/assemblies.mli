@@ -42,3 +42,8 @@ val law : (module Nx.Devices) -> t -> unit
     complex and by steps or backwards among them, dense pieces among
     elements no piece holds, the value read flipped, and complex and sub-byte
     dtypes. *)
+
+val packed_rows : (module Nx.Devices) -> unit
+(** [packed_rows s] checks that a compiled call on [s]'s devices stacking two
+    loops' rows of sixteen four-bit integers, which each loop writes in place
+    in the stack, gives eager's values. *)

@@ -7218,8 +7218,10 @@ into D342, which holds its rule, its reason and its pins.
   no error, and a constant reached a kernel as no storage; with the
   specification checks off, a row off its parameter's boundary reached
   the call, whose vector accesses assume the boundary. A row a loop
-  moves along is what rune's loops pass, and its kernels write new
-  storage or a state of it, so no raven library makes a refused call.
+  moves along is what rune's loops pass, and a run of an assembly's
+  storage what its assemblies give the kernels of their pieces, each on
+  16 bytes; its kernels write new storage, a state of it or such a run,
+  so no raven library makes a refused call.
 - **Pinned by:** the Prepare suite's `prepare_rangeify › calls compiled on
   their own`; the Tolk_engine suite's `calls of views` (by a kernel and a
   precompiled call; `› a call writes through a run of storage wherever it

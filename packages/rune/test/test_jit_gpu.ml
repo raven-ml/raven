@@ -3175,6 +3175,8 @@ let () =
                "an assembly compiles to eager's bits"
                (Gen.with_pp Assemblies.pp Assemblies.gen)
                assembly;
+             test "a stack of loops' four-bit rows of sixteen gives eager's"
+               (fun () -> Assemblies.packed_rows (snd (on_gpu ())));
            ];
          group "kinds"
            (List.concat_map ported
@@ -3392,6 +3394,13 @@ let () =
              test "results are written into a donated argument they do not read"
                (fun () ->
                  Attentions.donated (snd (on_gpu ()))
+                   (Nx.Dtype.Any Nx.bfloat16));
+             test "results stacked are written by their kernels" (fun () ->
+                 Attentions.stacked (snd (on_gpu ()))
+                   (Nx.Dtype.Any Nx.bfloat16));
+             test "results stacked along a last axis keep their bits"
+               (fun () ->
+                 Attentions.stacked ~axis:4 (snd (on_gpu ()))
                    (Nx.Dtype.Any Nx.bfloat16));
              test "results returned twice into two donated arguments are apart"
                (fun () ->

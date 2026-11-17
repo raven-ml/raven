@@ -373,3 +373,27 @@ let law (module S : Nx.Devices)
   let y = Nx.place Nx.Host.on y in
   equal ~msg:"compiled" Testable.int 0 (Rune.evaluations () - before);
   equal codes_t eager (raw y)
+
+(* A stack of two loops' rows of sixteen four-bit integers: each loop writes
+   its rows of the stack, the loop's rows and the stack both the unpacked
+   container, and the stack holds eager's values. *)
+let packed_rows (module S : Nx.Devices) =
+  let rows =
+    Nx.reshape [| 2; 16 |]
+      (Nx.concatenate ~axis:0
+         [ Nx.arange Nx.int32 (-8) 8 1; Nx.arange Nx.int32 (-8) 8 1 ])
+  in
+  let f x =
+    let ys k =
+      snd
+        (Rune.scan Nx.Ptree.unit Nx.Ptree.tensor Nx.Ptree.tensor
+           (fun () r -> ((), Nx.add (Nx.mul r r) (Nx.full_like r k)))
+           ~init:() x)
+    in
+    Nx.stack [ ys 1; ys 2 ]
+  in
+  let x = Nx.cast Nx.int4 rows in
+  let ints y = Nx.to_array (Nx.cast Nx.int32 (Nx.place Nx.Host.on y)) in
+  let expected = ints (f x) in
+  let y = Rune.jit Nx.Ptree.(tensor @-> returns tensor) f (Nx.place S.on x) in
+  equal ~msg:"the stack" Testable.(array int32) expected (ints y)

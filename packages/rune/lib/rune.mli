@@ -1419,6 +1419,12 @@ val jit :
     covering piece, where one holds every element, then its pieces, each
     computed once and written to exactly its elements, those whose regions do
     not meet together, a piece over an earlier one's elements after them.
+    A piece that a kernel of its own or a loop computes into storage of its
+    own, that nothing else reads, whose region is a run of the assembly's
+    storage, not reversed, starting on 16 bytes, is computed there by that
+    kernel, in an assembly stored unpermuted, of a dtype of one part, that
+    no update of a loop's carry reads piece by piece; every other piece, a
+    region off 16 bytes among them, is copied there.
     Where the pieces do not hold every element once, the fill is written to
     the elements no piece holds, beside the pieces, or, where a piece lies by
     steps, to every element before them. A program on one GPU stores a stack

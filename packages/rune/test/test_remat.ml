@@ -481,14 +481,13 @@ let test_summed_step () =
 
 (* The stacks read by rows against separate arrays: each row's gradient is
    its region of the stack's, so the gradient alone holds no more over the
-   stacks, with or without remats. Under remats that does not hold yet: an
-   array apart is the storage the remat's call wrote, where a stack stores
-   that storage into its region, until such a call writes into the stack's
-   region itself. Until then the stack holds more, by one weight at most. A
-   step that sums it in its carry over [k] chunks adds each row's gradient
-   into its region of the carry, in the carry's storage, so it holds no more
-   either, with or without remats: under remats each row's add runs once its
-   row is computed, the carry being storage its trip is given. *)
+   stacks, with or without remats. Under remats an array apart is the storage
+   the remat's call wrote, and a stack's row the region of it the call
+   writes instead, so it holds no more under remats either. A step that sums
+   it in its carry over [k] chunks adds each row's gradient into its region
+   of the carry, in the carry's storage, so it holds no more either, with or
+   without remats: under remats each row's add runs once its row is
+   computed, the carry being storage its trip is given. *)
 let test_stacked_step () =
   let pd = T.(list (pair tensor tensor)) and pt = T.(pair tensor tensor) in
   let apart =
@@ -524,14 +523,8 @@ let test_stacked_step () =
           (fun (ws, a) -> Rune.grad pt (fun ws -> loss remat (rows ws) a) ws)
           (ws, a)
       in
-      let msg = Printf.sprintf "the gradient, remats %b" remat in
-      if not remat then no_more msg ~apart:x ~stacked:y
-      else begin
-        let weight = Rig.allocation Rig.host (4 * dim * hidden) in
-        let bytes = Printf.sprintf "%s: %d bytes stacked, %d apart" msg y x in
-        less ~msg:bytes int ~than:y x;
-        less ~msg:bytes int ~than:(x + weight + 1) y
-      end)
+      no_more (Printf.sprintf "the gradient, remats %b" remat) ~apart:x
+        ~stacked:y)
     [ false; true ];
   let chunks k a = Nx.reshape [| k; batch / k; dim |] a in
   let f_apart remat k (ws, a) =
@@ -573,6 +566,65 @@ let test_stacked_step () =
         ~stacked:y)
     (List.map (fun k -> (false, k)) [ 2; 4; 8 ]
     @ List.map (fun k -> (true, k)) [ 1; 2; 4; 8 ])
+
+(* Assemblies of the gradients of remat'd functions, each the storage of a
+   remat's backward call, with eager's bits: a stack of rows of eight, which
+   the calls write in place; a concatenation of three and four, whose second
+   starts 12 bytes in, and one along a later axis, whose pieces are no runs,
+   both copied; a gradient stacked twice and two gradients each in two
+   stacks, each piece a reshape a stack reads once of a value read twice,
+   all copied; a scan whose trip stacks two, written in the trip's place;
+   and a stack that takes a donated argument's memory, written there. *)
+let test_placed_pieces () =
+  let f = rm (fun x -> Nx.mul (Nx.sin x) x) in
+  let dg x = Rune.grad' (fun x -> Nx.sum (f x)) x in
+  let check msg g x =
+    equal ~msg bits_t (bits (g x)) (bits (Rune.jit' g x))
+  in
+  let x n = Nx.Rng.normal ~key:(Nx.Rng.key 9) f32 [| 2; n |] in
+  let row i x = Nx.get [ i ] x in
+  check "rows of eight"
+    (fun x -> Nx.stack [ dg (row 0 x); dg (row 1 x) ])
+    (x 8);
+  let first n x = Nx.slice [ Nx.R (0, n) ] x in
+  check "three and four"
+    (fun x ->
+      Nx.concatenate ~axis:0 [ dg (first 3 (row 0 x)); dg (first 4 (row 1 x)) ])
+    (x 8);
+  check "along a later axis"
+    (fun x -> Nx.concatenate ~axis:1 [ dg x; dg (Nx.neg x) ])
+    (x 4);
+  check "one gradient twice"
+    (fun x ->
+      let y = dg (row 0 x) in
+      Nx.stack [ y; y ])
+    (x 8);
+  let pair = T.(tensor @-> returns (pair tensor tensor)) in
+  let crossed x =
+    let y = dg (row 0 x) and z = dg (row 1 x) in
+    (Nx.stack [ y; z ], Nx.stack [ z; y ])
+  in
+  let a, b = crossed (x 8) and a', b' = Rune.jit pair crossed (x 8) in
+  equal ~msg:"two gradients in two stacks" bits_t (bits a) (bits a');
+  equal ~msg:"two gradients in two stacks, the second" bits_t (bits b)
+    (bits b');
+  check "a trip's stack"
+    (fun x ->
+      let xs =
+        Nx.reshape [| 2; 2; 8 |] (Nx.concatenate ~axis:0 [ x; Nx.neg x ])
+      in
+      snd
+        (Rune.scan T.unit T.tensor T.tensor
+           (fun () x -> ((), Nx.stack [ dg (row 0 x); dg (row 1 x) ]))
+           ~init:() xs))
+    (x 8);
+  let stacked x = Nx.stack [ dg (row 0 x); dg (row 1 x) ] in
+  let two = T.(tensor @-> tensor @-> returns tensor) in
+  let g = Rune.jit two (fun x _ -> stacked x) in
+  let expected = bits (stacked (x 8)) in
+  let w = Nx.copy (Nx.zeros f32 [| 2; 8 |]) in
+  equal ~msg:"into a donated argument" bits_t expected
+    (bits (g (x 8) (Nx.donate w)))
 
 (* Donation *)
 
@@ -956,6 +1008,8 @@ let () =
                test_step_gradient;
              test "a step that sums a gradient in its carry plans each trip"
                test_summed_step;
+             test "a stack's rows are its pieces' kernels' storage, or copies"
+               test_placed_pieces;
              test "stacks read by rows hold what separate arrays hold"
                test_stacked_step;
              test "a result takes a donated argument after the backward pass"

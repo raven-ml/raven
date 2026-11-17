@@ -726,6 +726,9 @@ let () =
              test "returned twice are apart" (fun () ->
                  Rune_support.Attentions.apart (module Nx.Host)
                    (Nx.Dtype.Any Nx.float32));
+             test "stacked are written by their kernels" (fun () ->
+                 Rune_support.Attentions.stacked (module Nx.Host)
+                   (Nx.Dtype.Any Nx.float32));
              test "returned twice into two donated arguments are apart"
                (fun () ->
                  Rune_support.Attentions.donated_twice (module Nx.Host)

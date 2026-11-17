@@ -6137,6 +6137,8 @@ let () =
                "an assembly on the host compiles to eager's bits"
                (Gen.with_pp Assemblies.pp Assemblies.gen)
                (Assemblies.law (module Nx.Host));
+             test "a stack of loops' four-bit rows of sixteen gives eager's"
+               (fun () -> Assemblies.packed_rows (module Nx.Host));
              test "a stack of computing rows holds its result alone"
                test_stack_memory;
              test "one view over its background holds no storage"
