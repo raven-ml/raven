@@ -926,10 +926,31 @@ let reads_gen =
     Windows (size, step)
   in
   let scale = of_list [ 0x1p53; 1.; -0x1p53; -0.; 0.; 3.; -2. ] in
+  let read n = pair (one_of [ slice n; windows ]) scale in
   let any =
     let* n = int_range 0 6 in
-    let read = pair (one_of [ slice n; windows ]) scale in
-    let+ reads = list ~size:(int_range 1 4) read in
+    let+ reads = list ~size:(int_range 1 4) (read n) in
+    { n; reads }
+  in
+  (* Among others, one of the reads [any] draws least often: of two elements or
+     more by a negative step, in one case in 15, or of windows that share
+     elements, in one in 9. *)
+  let rare =
+    let* n = int_range 3 6 in
+    let reversed =
+      let* step = of_list [ -1; -2 ] in
+      let* count = int_range 2 (((n - 1) / -step) + 1) in
+      let+ start = int_range ((count - 1) * -step) (n - 1) in
+      Slice (start, count, step)
+    in
+    let shared =
+      let* size = int_range 2 (Int.min 3 (n - 1)) in
+      let+ step = int_range 1 (Int.min (size - 1) (n - size)) in
+      Windows (size, step)
+    in
+    let* one = pair (one_of [ reversed; shared ]) scale
+    and+ others = list ~size:(int_range 0 3) (read n) in
+    let+ reads = permutation (one :: others) in
     { n; reads }
   in
   (* A [-0.] read of the last element, which the transpose meets after two
@@ -941,7 +962,7 @@ let reads_gen =
     let one = (Slice (n - 1, 1, 1), -0.) in
     { n; reads = [ one; (Slice (0, c1, 1), k1); (Slice (1, c2, 1), k2) ] }
   in
-  with_pp pp_reads (frequency [ (3, any); (1, after_overlap) ])
+  with_pp pp_reads (frequency [ (3, any); (1, after_overlap); (2, rare) ])
 
 (* The elements a read reaches, an element once each time, and whether it
    reads windows that share elements. *)
