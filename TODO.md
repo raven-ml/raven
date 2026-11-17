@@ -5,6 +5,23 @@ Where it stands, with every measurement: doc/performance.md.
 
 ## tolk
 
+- A decoded product past 16 rows takes a core (D230), but `Heuristic.core_fits`
+  and `core_rows`, which rune reads, still count every pad: rune's `partial`
+  keeps the flat form for Q8_0-like products of 17-32 rows and past 32 where
+  the heuristic would take the core, and a decoded routed slice's `core_rows`
+  stays 48 where 32 would do. Proposal: both take `~decoded`; `core_rows`'
+  change waits for SPLITCOUNT's count (_plans/perf-campaign/rowdecode/)
+- A decoded operand of 12-16 rows streams in one pass, but a core probably
+  wins there too (kaun: 559-706 us streamed at 12 and 16 rows against cores
+  of 424-492 at 17-64); it reaches gpt-oss Q8_0 prefill 12
+  (_plans/perf-campaign/rowdecode/design-a.md)
+- The unstaged decoded core at 17-32 rows runs 1.33x BEAM's: BEAM's own opts
+  on that core take 334 us against 393-417, from K depth against
+  `in_flight` (256 workgroups x 4 KB over 100 SMs); with `stream/mxfp4-64`
+  (BEAM 2x) it belongs to the core tile (_plans/perf-campaign/rowdecode/design-b.md)
+- Metal's simdgroup matrices share the ALUs, so a padded decoded core's
+  extra multiply-adds (17 rows to 24) may cost there; D230's rule is
+  unmeasured on Metal and AMD
 - One binary per source (D485) shares nothing on a GPU between kernels over
   buffers of two sizes: cstyle names each parameter after its buffer's size
   (`data0_4096`), so the compiled texts differ. The compiled text should
