@@ -2005,15 +2005,31 @@ let test_narrowed_exact () =
         (bits (Nx.stack (List.rev ls')))
         (bits (host ls)))
 
+(* The K of [d]'s tensor core of bfloat16 products summed in float32. *)
+let bfloat16_core_k d =
+  let takes (c : Tolk.Tc.t) =
+    Tolk.Dtype.(equal c.Tolk.Tc.dtype_in Bfloat16 && equal c.dtype_out Float32)
+  in
+  let cores = (Tolk_engine.renderer d).Tolk.Renderer.tensor_cores in
+  match List.find_opt takes cores with
+  | None -> skip ~reason:"no bfloat16 tensor core" ()
+  | Some c ->
+      let _, _, k = Tolk.Tc.dims c in
+      k
+
 (* A sum a tensor core pads computes the bits of its operands with zeros
-   appended after their producers: [contract (f x) w] summed over 440 terms,
-   which m16n8k16 pads to 448, against the same contraction over
-   [concat [f x; 0]] and [concat [w; 0]] of 448 terms, which it takes as they
+   appended after their producers: [contract (f x) w] summed over 436 terms,
+   which the core pads to [k'], the next multiple of its K (448 for CUDA's
+   m16n8k16, 440 for Metal's 8 by 8 by 8), against the same contraction over
+   [concat [f x; 0]] and [concat [w; 0]] of [k'] terms, which it takes as they
    are. [f x = bfloat16 (2 log x + 1)] is [-inf] at [0], so a padded step that
    multiplied [f 0] by [0] would sum a NaN. *)
 let test_padded_appended () =
-  let _, (module S) = on_gpu () in
-  let rows, k, k', n = (256, 440, 448, 440) in
+  let d, (module S) = on_gpu () in
+  let rows, k, n = (256, 436, 440) in
+  let core_k = bfloat16_core_k d in
+  let k' = (k + core_k - 1) / core_k * core_k in
+  if k' = k then skip ~reason:"the core's K divides 436" ();
   let p = Nx.Pattern.v "n i, i o -> n o | i" in
   let x = Nx.add_s (Nx.abs (value ~seed:1 [| rows; k |])) 0.5
   and w = Nx.cast Nx.bfloat16 (value ~seed:2 [| k; n |]) in
