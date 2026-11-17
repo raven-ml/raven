@@ -8669,10 +8669,10 @@ D466.
   terms`, over every kernel it lowers, and its `› a padded block's trips
   read nothing past the buffer`, `› a padded trip reads nothing past a held
   tile of scales` (shared memory, on sm_89) and `› a padded trip reads
-  nothing past a host's decoded panel` (registers); the `codegen` goldens
-  `readout_*`,
-  `sum_all_clang`, `matvec_clang` and `linearizer_fail_1_clang`, whose
-  `.tolk` hold the blocked loops.
+  nothing past a host's decoded panel` (registers); the Stage suite's `a
+  staged core's padded trips read no global memory`, over a staged core's
+  copies; the `codegen` goldens `readout_*`, `sum_all_clang`, `matvec_clang`
+  and `linearizer_fail_1_clang`, whose `.tolk` hold the blocked loops.
 
 ## D481. A stage the buffer limit kept is inlined into readers stored as they are
 

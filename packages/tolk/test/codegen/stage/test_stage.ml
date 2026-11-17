@@ -1229,6 +1229,59 @@ let routed_tiles =
   cases "a core reading gathered rows keeps the unstaged splits"
     ~id:(Printf.sprintf "%d tokens") [ 12; 64; 128; 512 ] routed_splits
 
+(* A routed MXFP4 product over [K = 320] at 128 tokens on sm_89 copies its
+   rows and codes and steps its core through 5 trips of 64, which its sums
+   take in blocks of 4, the second padded: its trips past the fifth read no
+   global memory. At the last trip of the kernel's loops, the eighth, each
+   index of global memory that reads a loop is invalid. *)
+let padded_trips () =
+  let p =
+    { weights = Mxfp4; tokens = 128; topk = 4; experts = 8; block = 64;
+      rk = 320; rn = 128; rseed = 0 }
+  in
+  let sink = Codegen.blocked_sums (routed_program p) (sm89 ()) in
+  let nodes = Ops.toposort ~calls:Skip sink in
+  let loop u =
+    is Range u && List.mem (Ops.axis_type u) Ops.Axis_type.[ Weak; Loop ]
+  in
+  let loops = List.filter loop nodes in
+  let last r = (r, Shape.const_like r (`Int (Dtype.Value.to_z (Ops.vmax r)))) in
+  let reads_loops u =
+    is Index u
+    && Ops.addrspace (Ops.nth u 0) = Some Dtype.Global
+    && List.exists (fun r -> Ops.Nodes.mem r (Ops.ranges (Ops.nth u 1))) loops
+  in
+  let reads = List.filter reads_loops nodes in
+  let slot u =
+    match Ops.arg (Ops.nth u 0) with Param p -> Some p.slot | _ -> None
+  in
+  let slots us = List.sort_uniq Int.compare (List.filter_map slot us) in
+  let copied =
+    List.filter
+      (fun u ->
+        is Store u
+        && Ops.addrspace (Ops.nth (Ops.nth u 0) 0) = Some Dtype.Local)
+      nodes
+    |> List.concat_map (fun u ->
+           List.filter reads_loops (Ops.toposort ~calls:Skip (Ops.nth u 1)))
+  in
+  equal ~msg:"the loops' trips" (list int) [ 2; 4 ]
+    (List.sort Int.compare
+       (List.map (fun r -> Dtype.Value.to_int (Ops.vmax r) + 1) loops));
+  equal ~msg:"buffers read in the loops" (list int) [ 1; 4 ] (slots reads);
+  equal ~msg:"buffers copied in the loops" (list int) [ 1; 4 ] (slots copied);
+  (* A vector index's gate selects its lanes' indices or their invalid
+     lanes. *)
+  let at_last u =
+    let i = Ops.nth u 1 in
+    (not (is Where i))
+    || Shape.resolve
+         (Ops.substitute ~calls:Skip ~pass:Once (Ops.nth i 0)
+            (List.map last loops))
+  in
+  equal ~msg:"indices read at the last trip" (list Uops.uop) []
+    (List.filter at_last reads)
+
 (* Rows already in their slots, as a routed layer's second product reads the
    first's outputs: slot [σ] of [blocks] blocks of [block] rows reads row [σ]
    of [a] and the bfloat16 [K; N] matrix of its block's expert,
@@ -2402,6 +2455,8 @@ let () =
          staged_tiles;
          decoded_trips;
          routed_tiles;
+         test "a staged core's padded trips read no global memory"
+           padded_trips;
          slotted_tiles;
          test "gathered rows each warp reads alone stay unstaged" alone;
          sources;
