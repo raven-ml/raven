@@ -6701,43 +6701,52 @@ let half_casts =
    to odd keeps. Lanes cover the conversions a compiler packs into vectors. *)
 
 let long_casts =
-  let integers l =
-    Array.of_list (List.map (fun s -> `Int (Bigint.of_string s)) l)
-  in
+  (* Each integer and its float32, rounded once by hand: [m * 2^e] for the
+     24-bit [m] nearest [x / 2^e], ties to the even [m]. *)
   let longs =
     [
       ( Dtype.Int64,
-        integers
-          [
-            "9007199791611905";
-            "-9007199791611905";
-            "1152921573326323713";
-            "9007201133789184";
-            "9007200865353728";
-            "9223371761976868863";
-            "9223372036854775807";
-            "-9223372036854775808";
-          ] );
+        [
+          ("9007199791611905", 0x1.000002p53);
+          ("-9007199791611905", -0x1.000002p53);
+          ("1152921573326323713", 0x1.000002p60);
+          ("9007201133789184", 0x1.000004p53);
+          ("9007200865353728", 0x1.000004p53);
+          ("9223371761976868863", 0x1.fffffep62);
+          ("9223372036854775807", 0x1p63);
+          ("-9223372036854775808", -0x1p63);
+        ] );
       ( Dtype.Uint64,
-        integers
-          [
-            "18446744073709551615";
-            "9223372586610589697";
-            "9007199791611905";
-            "9223373961000124416";
-            "18446743523953737727";
-            "9223372036854775808";
-            "9007199791611904";
-            "1";
-          ] );
+        [
+          ("18446744073709551615", 0x1p64);
+          ("9223372586610589697", 0x1.000002p63);
+          ("9007199791611905", 0x1.000002p53);
+          ("9223373961000124416", 0x1.000004p63);
+          ("18446743523953737727", 0x1.fffffep63);
+          ("9223372036854775808", 0x1p63);
+          ("9007199791611904", 0x1p53);
+          ("1", 1.);
+        ] );
     ]
+  in
+  let rounds_once lanes (from, rows) =
+    let values =
+      Array.of_list (List.map (fun (s, _) -> `Int (Bigint.of_string s)) rows)
+    in
+    let n = Array.length values in
+    let prg =
+      Codegen.to_program (cast_to ~lanes Float32 from n) (Lazy.force host)
+    in
+    equal (array Dtypes.value)
+      (Array.of_list (List.map (fun (_, f) -> `Float f) rows))
+      (List.assoc 0 (Run.on_host prg [ (1, values) ]))
   in
   cases "a 64-bit integer rounds once to float32 on the host"
     ~id:(fun (lanes, (dt, _)) ->
       Printf.sprintf "%s in %d lanes" (Dtype.name dt) lanes)
     (List.concat_map (fun lanes -> List.map (fun l -> (lanes, l)) longs)
        [ 1; 2; 4; 8 ])
-    (fun (lanes, from) -> rounds_once ~lanes Float32 from)
+    (fun (lanes, from) -> rounds_once lanes from)
 
 (* Selections between bfloat16 vectors *)
 

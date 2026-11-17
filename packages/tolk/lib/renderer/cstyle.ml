@@ -2059,12 +2059,17 @@ let bit_loads dts =
    double rounded once.
 
    A 64-bit integer cast to float32 goes through a double rounded to odd too.
-   LLVM's vectorizers pack the scalar casts, and the AArch64 backends of Apple
-   clang 17 and of LLVM 18 and 19 convert the vector to doubles rounded to
-   nearest ([ucvtf.2d]), then narrow those ([fcvtn]): two roundings, which
-   take 2^53 + 2^29 + 1 to 2^53, where one takes it to 2^53 + 2^30. Whether a
-   loop is packed is the compiler's choice, so every such cast whose bounds
-   pass 2^53, past which a double is not exact, is rewritten. *)
+   LLVM IR's [sitofp] and [uitofp] round once: "If the value cannot be
+   exactly represented, it is rounded using the default rounding mode" (LLVM
+   Language Reference, 'sitofp .. to' Instruction, Semantics), which is to
+   nearest. The AArch64 backends of Apple clang 17 and of LLVM 18 and 19
+   miscompile the packed conversion that LLVM's vectorizers make of the
+   scalar casts: doubles rounded to nearest ([ucvtf.2d]), then narrowed
+   ([fcvtn]), two roundings, which take 2^53 + 2^29 + 1 to 2^53, where one
+   takes it to 2^53 + 2^30. Whether a loop is packed is the compiler's
+   choice, so every such cast is rewritten whose bounds pass 2^53. Within
+   2^53, as a 32-bit integer always is, the double is exact, so even that
+   lowering rounds once. *)
 let clang_extra_matcher =
   let exact_in_double x =
     let limit = Bigint.shift_left Bigint.one 53 in

@@ -9265,15 +9265,22 @@ D466.
 - **Differs:** a cast of an `Int64` or `Uint64` whose bounds pass `2^53` to
   `Float32` converts to a double rounded to odd, then to float32. Within
   `2^53` the cast stays C's.
-- **Reason:** (e). LLVM's vectorizers pack the scalar casts of an upcast
-  kernel, and the AArch64 backends of Apple clang 17 and of LLVM 18 and 19
-  lower the packed conversion to doubles rounded to nearest, then narrow
-  them: two roundings. `2^53 + 2^29 + 1` becomes `2^53`, where one rounding
-  gives `2^53 + 2^30`. LLVM 21 to 23 convert each lane once. The rewrite
-  holds whatever the compiler, since a compiler's packing and lowering are
-  its own choice, and the kernel's source does not depend on which Clang
-  compiles it. Cost: about twenty operations a lane in place of one,
-  unmeasured; rune's bench row `Jit › cast-int64-float32-1M` times it.
+- **Reason:** (e). LLVM IR's `sitofp` and `uitofp` round once: "If the
+  value cannot be exactly represented, it is rounded using the default
+  rounding mode" (LLVM Language Reference, `sitofp .. to` and `uitofp ..
+  to` Instructions, Semantics), and the default environment assumes "the
+  round-to-nearest rounding mode" (Floating-Point Environment). LLVM's
+  vectorizers pack the scalar casts of an upcast kernel, and the AArch64
+  backends of Apple clang 17 and of LLVM 18 and 19 miscompile the packed
+  conversion: doubles rounded to nearest, then narrowed, two roundings.
+  `2^53 + 2^29 + 1` becomes `2^53`, where one rounding gives `2^53 + 2^30`.
+  LLVM 21 to 23 convert each lane once. The rewrite holds whatever the
+  compiler, since whether a loop is packed is the compiler's choice, and
+  the kernel's source does not depend on which Clang compiles it. Within
+  `2^53`, as every 32-bit integer is, the double is exact and even the
+  miscompiled lowering rounds once, so those casts stay C's. Cost: about
+  twenty operations a lane in place of one, unmeasured; rune's bench row
+  `Jit › cast-int64-float32-1M` times it.
 - **Pinned by:** `Tolk.Codegen › a 64-bit integer rounds once to float32 on
   the host`, in 1, 2, 4 and 8 lanes; rune's `Lower_arith › casts of bounded
   64-bit integers give eager's values` and `rune jit › jit › an integer

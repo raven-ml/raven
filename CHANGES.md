@@ -1492,11 +1492,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
-- A host kernel's cast of an `int64` or `uint64` to `float32` rounds once.
-  Apple clang 17 and LLVM 18 and 19 convert packed lanes on arm64 through
-  a double, so `2^53 + 2^29 + 1` became `2^53` under `Rune.jit` where eager
-  gives `2^53 + 2^30`. Past `2^53` the cast now goes through a double
-  rounded to odd (`Decomp_dtype.narrow`).
+- A compiled host cast of an `int64` or `uint64` to `float32` rounds once:
+  under Apple clang 17 and LLVM 18 and 19 on arm64, `Rune.jit` rounded
+  `2^53 + 2^29 + 1` twice, to `2^53`.
 - A sum of matrix products of factors decoded from integer codes, as a Q8_0
   matrix's, of 17 to 32 rows that a GPU core takes runs each product in a
   kernel of its own, where they shared one and no core took them
