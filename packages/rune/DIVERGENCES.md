@@ -517,10 +517,12 @@ rounded sum; a stated bound) and its reason. A rounded sum's bound is
     with a NaN part as a NaN. The comparisons compare each part as IEEE 754
     does, `-0.` equal to `0.`; `Maximum` and `Minimum` take `-0.` below
     `0.`.
-  - `Mul` is the textbook product, each part one fma over the other product.
-    `Fdiv` is Smith's algorithm, a dividend whose parts are below the least
-    normal over `u` scaled by `2^25` or `2^54` first and the quotient back.
-    `Recip` is `(1 + 0i) / z`.
+  - `Mul`, `Fdiv` and `Recip` are `nx_kinds_complex.h`'s `nx_mul`,
+    `nx_fdiv` and `nx_recip` operation for operation. `Mul` is the textbook
+    product, each part one fma over the other product. `Fdiv` is Smith's
+    algorithm, a dividend whose parts are below the least normal over `u`
+    scaled by `2^25` or `2^54` first and the quotient back. `Recip` is
+    `(1 + 0i) / z`.
   - `Exp` and `Exp2` multiply `cis y` by `2^(hi + lo)` split at the nearest
     integer `k`, `2^k` applied last, so that a part overflows only with the
     result. `Log` is `log |z| + i atan2 (y, x)`, `log |z|` by `log1p` of
@@ -536,13 +538,17 @@ rounded sum; a stated bound) and its reason. A rounded sum's bound is
   - A cast from a complex number reads its real part; one into it sets the
     imaginary part to `+0.`. A `complex64`'s bits are its real part's in the
     low word.
-- **nx:** `prog.mli`, Domains and Results, Complex numbers.
-- **Class:** exact for `Neg`, `Add`, `Sub`, `Maximum`, `Minimum` and the
-  comparisons; stated bound: `lower_complex.mli`'s normwise table for the
-  others.
+- **nx:** `prog.mli`, Domains and Results, Complex numbers;
+  `nx_kinds_complex.h`.
+- **Class:** exact for `Neg`, `Add`, `Sub`, `Maximum`, `Minimum`, the
+  comparisons, `Mul`, `Fdiv` and `Recip`; stated bound:
+  `lower_complex.mli`'s normwise table for the others.
 - **Reason:** (b).
-- **Pinned by:** `Lower_complex › special values › *`, `Lower_complex ›
-  bounds › *`, each over every kind at `complex64` and `complex128`;
+- **Pinned by:** `Lower_complex › kinds › cmul gives eager's bits`, `› cmul
+  of a constant gives eager's bits`, the same for `cdiv` and `crecip`, on
+  the host; `Jit_gpu › complex kinds › *` on a GPU; `Lower_complex ›
+  special values › *` and `Lower_complex › bounds › *` over every other
+  kind at `complex64` and `complex128`;
   `Lower_arith › exact unary kinds give eager's bits`, `› exact binary kinds,
   comparisons, where and fma give eager's bits`, `› casts into complex128 give
   eager's values in both parts`.

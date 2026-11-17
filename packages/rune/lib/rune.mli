@@ -1635,9 +1635,13 @@ val jit :
     functions there. A function nx composes from these, such as {!Nx.asinh}
     or {!Nx.softmax}, computes as nx composes it.
 
-    {b Complex functions.} A result [z'] of exact value [z] holds a {e normwise}
-    bound [c] in the sense that [|z' - z| / |z| <= c u], to first order, for the
-    operand [x + iy] and the exponent [w]:
+    {b Complex functions.} {!Nx.mul}, {!Nx.div} and {!Nx.recip} compute nx's
+    own sequence of operations for them, so they are exact on a device that
+    keeps subnormals, rounds division correctly and rounds a fused
+    multiply-add once, as the host CPU and NVIDIA GPUs do. On every device, a
+    result [z'] of exact value [z] holds a {e normwise} bound [c] in the sense
+    that [|z' - z| / |z| <= c u], to first order, for the operand [x + iy] and
+    the exponent [w]:
 
     {v
       function                                      c
@@ -1668,8 +1672,9 @@ val jit :
     of [±1], [±i] and [(±1 ± i) / √2], and {!Nx.recip} the sorts of
     [(1 + 0i) / z] by Smith's division, which divides by the divisor's larger
     part. Zeros' signs are unspecified, and so is an infinity's sign that comes
-    from a NaN part or that Annex G leaves open. {!Nx.mul}, {!Nx.div} and
-    {!Nx.pow} are unspecified at an infinite part. {!Nx.exp2} at [x = +inf] may
+    from a NaN part or that Annex G leaves open. {!Nx.pow} is unspecified at
+    an infinite part, and so are {!Nx.mul} and {!Nx.div} on a device where
+    they are not exact. {!Nx.exp2} at [x = +inf] may
     give an infinite part the wrong sign where [y ln 2] lies within a relative
     [2u] of a non-zero multiple of [π/2].
 

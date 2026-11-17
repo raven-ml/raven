@@ -479,6 +479,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Numerics states a compiled complex `Nx.mul`, `Nx.div` and `Nx.recip` exact
+  on the host and NVIDIA GPUs, eager's bits: they computed nx's sequence
+  already.
 - A compiled `Nx.pow` gives eager's bits on the host and NVIDIA GPUs, so
   its float32 bound on the host is nx's 4 ulps, where it stated 2.
 - Numerics states a compiled `Nx.erf` exact, eager's bits, where it stated

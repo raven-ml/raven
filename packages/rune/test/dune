@@ -191,13 +191,14 @@
  (modules test_lower_real)
  (libraries nx nx_array nx_kernel rune rune_support lowered windtrap))
 
-; The complex kinds compiled by Rune.jit, against goldens gen/lower_complex.py
-; writes from correctly rounded references.
+; The complex kinds compiled by Rune.jit, against nx's eager kernels, and
+; those not yet nx's sequence against goldens gen/lower_complex.py writes from
+; correctly rounded references.
 
 (test
  (name test_lower_complex)
  (modules test_lower_complex)
- (libraries nx nx_array nx_kernel rune windtrap)
+ (libraries nx nx_array nx_kernel rune rune_support windtrap)
  (deps
   (glob_files golden/lower_complex/*.golden)))
 

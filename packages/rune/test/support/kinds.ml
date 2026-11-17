@@ -69,12 +69,31 @@ type f2 = {
     's 'd. (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t;
 }
 
-type fn = One of f1 | Two of f2 * (bool -> int64 array Windtrap.Gen.t)
+type c1 = { c1 : 's 'd. (Complex.t, 's, 'd) Nx.t -> (Complex.t, 's, 'd) Nx.t }
+
+type c2 = {
+  c2 :
+    's 'd.
+    (Complex.t, 's, 'd) Nx.t ->
+    (Complex.t, 's, 'd) Nx.t ->
+    (Complex.t, 's, 'd) Nx.t;
+}
+
+(* A complex kind's element holds its operands' parts, each real part then its
+   imaginary part, as codes of the part type: float32 for complex64, float64 for
+   complex128. Its pairs draw whole elements. *)
+type fn =
+  | One of f1
+  | Two of f2 * (bool -> int64 array Windtrap.Gen.t)
+  | Cone of c1 * (bool -> int64 array Windtrap.Gen.t)
+  | Ctwo of c2 * (bool -> int64 array Windtrap.Gen.t)
 
 type kind = {
   name : string;
   fn : fn;
-  specs : (spec * spec) array;  (** Per operand, at float32 and float64. *)
+  specs : (spec * spec) array;
+      (** Per operand, or per part of a complex kind's operands, at float32 and
+          float64. *)
   covers : (string * (bool -> float array -> bool)) list;
   fixed : bool -> int64 array list;
   generic : bool;  (** Whether the law covers the special values. *)
@@ -99,7 +118,38 @@ let annex_pairs wide =
     (fun a -> List.map (fun b -> [| code wide a; code wide b |]) vs)
     vs
 
+(* Annex G's parts: the zeros, ones and infinities of both signs, 2, 1/2 and
+   NaNs of both signs. *)
+let annex_parts =
+  [ 0.; -0.; 1.; -1.; 2.; 0.5; Float.infinity; Float.neg_infinity ]
+  @ [ Float.nan; -.Float.nan ]
+
+(* Every part of an element one of Annex G's parts, each of the 10 alike. *)
+let annex_g wide parts =
+  Gen.(
+    let part = of_list (List.map (code wide) annex_parts) in
+    map Array.of_list (list ~size:(constant parts) part))
+
+(* Every complex number of two of Annex G's parts, for a kind of one operand; of
+   two operands, every pair of numbers whose parts are among the zeros, the
+   ones, the infinities and a NaN. *)
+let annex_numbers parts wide =
+  let vs =
+    if parts = 2 then annex_parts
+    else [ 0.; -0.; 1.; -1.; Float.infinity; Float.neg_infinity; Float.nan ]
+  in
+  let rec tuples n =
+    if n = 0 then [ [] ]
+    else
+      List.concat_map (fun t -> List.map (fun v -> v :: t) vs) (tuples (n - 1))
+  in
+  List.map (fun t -> Array.of_list (List.map (code wide) t)) (tuples parts)
+
 let arity k = Array.length k.specs
+
+let is_complex k =
+  match k.fn with Cone _ | Ctwo _ -> true | One _ | Two _ -> false
+
 let spec_of wide k i = pick wide k.specs.(i)
 
 (* Trigonometric kinds: nx_kinds.h's switch to Payne and Hanek's reduction, 2^15
@@ -807,6 +857,889 @@ let log1p =
       ];
   }
 
+(* Complex kinds
+
+   Each kind's specs give its parts' draws, its pairs whole elements: the
+   switches of nx_kinds_complex.h's function and the operands that overflow or
+   underflow its naive formula. Its covers read an element's parts. A kind's
+   example opens with every number of Annex G's parts (two operands: every pair
+   of numbers of its zeros, ones, infinities and a NaN).
+
+   Rates. An element's parts are drawn each as {!operand} draws one in 3 of 6
+   elements, all of Annex G's parts in 1 of 6, and as the kind's pairs in 2 of
+   6, each pair's class weighted 1 in 2 to 1 in 8 and a divisor's own class 1 in
+   6 of its pairs'. Measured over 12 drawn cases of each complex kind, 49152
+   elements per dtype, each cover below and each of Annex G's classes is reached
+   by at least 5.6 elements in 1000, the least two infinite parts (csin,
+   float32), then 7.3 (csign's both parts zero): a block of 4096 misses it with
+   probability below 1e-10. A fault that 0.1% of the drawn elements reach, of
+   which at least 7/8 are fresh draws, escapes 12 cases of 4096 with probability
+   below 1e-18. *)
+
+let least wide = pick wide (0x1p-126, Float.min_float)
+let greatest wide = pick wide (0x1.fffffep127, Float.max_float)
+let finite_all e = Array.for_all Float.is_finite e
+
+(* A code of either sign, of magnitude [2^e m] with [m] uniform in [1, 2). *)
+let scaled wide e =
+  Gen.(
+    let+ m = float_range 1. 2. and+ neg = bool in
+    let v = Float.ldexp m e in
+    code wide (if neg then -.v else v))
+
+(* A code of either sign and uniform value in [-r, r]. *)
+let uniform wide r = Gen.map (code wide) (Gen.float_range (-.r) r)
+
+(* The distance in ranks between the magnitudes of two finite parts. *)
+let ranks wide a b =
+  let m v = Int64.logand (code wide v) (Int64.lognot (sign wide)) in
+  Int64.abs (Int64.sub (m a) (m b))
+
+(* log |x + iy| of finite parts, which no rounding overflows. *)
+let log_mod x y =
+  let a = Float.max (Float.abs x) (Float.abs y)
+  and b = Float.min (Float.abs x) (Float.abs y) in
+  if a = 0. then Float.neg_infinity
+  else Float.log a +. (0.5 *. Float.log1p (b /. a *. (b /. a)))
+
+let complex1 name f specs pairs covers =
+  {
+    name;
+    fn = Cone (f, pairs);
+    specs;
+    covers;
+    fixed = annex_numbers 2;
+    generic = true;
+  }
+
+let complex2 name f specs pairs covers =
+  {
+    name;
+    fn = Ctwo (f, pairs);
+    specs;
+    covers;
+    fixed = annex_numbers 4;
+    generic = true;
+  }
+
+let parts2 s = [| s; s |]
+
+(* Products: parts whose products cancel, a = (x, y) times (y, x) or (x, -y);
+   and parts of exponents [ea] and [eb] whose product passes the greatest finite
+   or lands below the least normal, the other parts uniform. *)
+
+let mul_pairs wide =
+  let open Gen in
+  let c = code wide in
+  let top = pick wide (127, 1023) and low = pick wide (-149, -1074) in
+  let cancel =
+    let+ x = float_range (-4.) 4. and+ y = float_range (-4.) 4. and+ b = bool in
+    let x = value wide (c x) and y = value wide (c y) in
+    if b then [| c x; c y; c y; c x |] else [| c x; c y; c x; c (-.y) |]
+  in
+  let extreme =
+    let near_top = int_range (top - 1) (top + 1)
+    and near_low = int_range (low - 1) (low + 22) in
+    let* t = frequency [ (1, near_top); (1, near_low) ] in
+    let* ea = int_range ((t / 2) - 20) ((t / 2) + 20) in
+    let* a = scaled wide ea and+ b = scaled wide (t - ea) in
+    let+ u = uniform wide 4. and+ v = uniform wide 4. and+ at = int_range 0 3 in
+    (* the extreme product at ar br, ai bi, ar bi or ai br *)
+    match at with
+    | 0 -> [| a; u; b; v |]
+    | 1 -> [| u; a; v; b |]
+    | 2 -> [| a; u; v; b |]
+    | _ -> [| u; a; b; v |]
+  in
+  frequency [ (1, cancel); (1, extreme) ]
+
+let products e =
+  [ e.(0) *. e.(2); e.(1) *. e.(3); e.(0) *. e.(3); e.(1) *. e.(2) ]
+
+let cmul =
+  let s w =
+    spec
+      [
+        1.;
+        0.5;
+        3.;
+        pick w (0x1p64, 0x1p512);
+        pick w (0x1p-64, 0x1p-512);
+        pick w (0x1p-75, 0x1p-537);
+      ]
+      [ 1.; 1e3 ]
+  in
+  let sp = (s false, s true) in
+  complex2 "cmul" { c2 = Nx.mul } [| sp; sp; sp; sp |] mul_pairs
+    [
+      ( "a product of finite parts past the greatest finite",
+        fun w e ->
+          finite_all e
+          && List.exists (fun p -> Float.abs p > greatest w) (products e) );
+      ( "a subnormal product of parts",
+        fun w e ->
+          List.exists (fun p -> p <> 0. && Float.abs p < least w) (products e)
+      );
+      ( "a part whose two products cancel, not zero",
+        fun _ e ->
+          finite_all e
+          && e.(0) <> 0.
+          && e.(1) <> 0.
+          && (Float.abs (e.(0) *. e.(2)) = Float.abs (e.(1) *. e.(3))
+             || Float.abs (e.(0) *. e.(3)) = Float.abs (e.(1) *. e.(2))) );
+    ]
+
+(* Quotients: nx_fdiv's switch to scaling a dividend whose parts are below
+   TINY_DIVIDEND, 2^-102 or 2^-969, and Smith's switch where the divisor's parts
+   have equal magnitudes; divisors of zero, subnormal or huge parts, and
+   quotients that overflow or underflow. *)
+
+let tiny_dividend = (0x1p-102, 0x1p-969)
+
+(* A divisor's parts: equal magnitudes, or a rank apart; zeros; subnormals; near
+   the greatest finite; uniform. *)
+let divisor wide =
+  let open Gen in
+  let finite = pick wide (0x7F7FFFFFL, 0x7FEFFFFFFFFFFFFFL) in
+  let signed c =
+    let+ neg = bool in
+    if neg then Int64.logor c (sign wide) else c
+  in
+  let equal =
+    let* m = int64_range 1L (Int64.pred finite) and+ d = int_range (-1) 1 in
+    let* re = signed m and+ im = signed (Int64.add m (Int64.of_int d)) in
+    let+ swap = bool in
+    if swap then [| im; re |] else [| re; im |]
+  in
+  let zero =
+    let+ re = signed 0L and+ im = signed 0L in
+    [| re; im |]
+  in
+  let sub =
+    let* a = int64_range 1L (mmask wide) and+ b = int64_range 0L (mmask wide) in
+    let+ re = signed a and+ im = signed b in
+    [| re; im |]
+  in
+  let huge =
+    let top = pick wide (127, 1023) in
+    let+ re = scaled wide top and+ im = scaled wide (top - 1) in
+    [| re; im |]
+  in
+  let any =
+    let+ re = uniform wide 4. and+ im = uniform wide 4. in
+    [| re; im |]
+  in
+  frequency [ (2, equal); (1, zero); (1, sub); (1, huge); (1, any) ]
+
+let div_pairs wide =
+  let open Gen in
+  let tiny_top = code wide (pick wide tiny_dividend) in
+  let signed g =
+    let+ c = g and+ neg = bool in
+    if neg then Int64.logor c (sign wide) else c
+  in
+  let tiny =
+    let* re = signed (int64_range 0L tiny_top)
+    and+ im = signed (int64_range 0L tiny_top)
+    and+ e = int_range (-40) 0 in
+    let+ br = scaled wide e and+ bi = uniform wide (Float.ldexp 1. e) in
+    [| re; im; br; bi |]
+  in
+  let any =
+    let+ a = uniform wide 4. and+ b = uniform wide 4. and+ d = divisor wide in
+    [| a; b; d.(0); d.(1) |]
+  in
+  let top = pick wide (127, 1023) and low = pick wide (-126, -1022) in
+  let over =
+    let* e = int_range (top - 4) top and+ f = int_range (low - 20) (-4) in
+    let+ a = scaled wide e and+ b = uniform wide 1. and+ d = scaled wide f in
+    [| a; b; d; d |]
+  in
+  let under =
+    let* e = int_range (low - 20) (low + 4) and+ f = int_range (top - 20) top in
+    let+ a = scaled wide e and+ b = scaled wide e and+ d = scaled wide f in
+    [| a; b; d; d |]
+  in
+  frequency [ (2, tiny); (2, any); (1, over); (1, under) ]
+
+let divisor_covers j =
+  let b e = (e.(j), e.(j + 1)) in
+  [
+    ( "a divisor of parts of equal magnitude, not zero",
+      fun _ e ->
+        let x, y = b e in
+        Float.is_finite x && x <> 0. && Float.abs x = Float.abs y );
+    ( "a divisor of parts a rank apart",
+      fun w e ->
+        let x, y = b e in
+        Float.is_finite x && Float.is_finite y && ranks w x y = 1L );
+    ( "a zero divisor",
+      fun _ e ->
+        let x, y = b e in
+        x = 0. && y = 0. );
+    ( "a divisor whose larger part is subnormal",
+      fun w e ->
+        let x, y = b e in
+        let m = Float.max (Float.abs x) (Float.abs y) in
+        m > 0. && m < least w );
+  ]
+
+let dividend_spec w =
+  spec
+    [ pick w tiny_dividend; 1.; 3.; 0.5; pick w (0x1p100, 0x1p900) ]
+    [ 1.; 1e3 ]
+
+let divisor_spec w =
+  spec [ 1.; 3.; 0.5; least w; pick w (0x1p-100, 0x1p-900) ] [ 1.; 1e3 ]
+
+let cdiv =
+  let tiny w = pick w tiny_dividend in
+  complex2 "cdiv" { c2 = Nx.div }
+    [|
+      (dividend_spec false, dividend_spec true);
+      (dividend_spec false, dividend_spec true);
+      (divisor_spec false, divisor_spec true);
+      (divisor_spec false, divisor_spec true);
+    |]
+    div_pairs
+    ([
+       ( "a dividend of parts below the scaling's switch, not zero",
+         fun w e ->
+           Float.abs e.(0) < tiny w
+           && Float.abs e.(1) < tiny w
+           && (e.(0) <> 0. || e.(1) <> 0.) );
+       ( "a dividend part within 3 ranks of the scaling's switch",
+         fun w e -> ranks w e.(0) (tiny w) <= 3L || ranks w e.(1) (tiny w) <= 3L
+       );
+       ( "a quotient past the greatest finite",
+         fun w e ->
+           finite_all e
+           && log_mod e.(0) e.(1) -. log_mod e.(2) e.(3)
+              > Float.log (greatest w) );
+       ( "a quotient below the least normal, not zero",
+         fun w e ->
+           finite_all e
+           && (e.(0) <> 0. || e.(1) <> 0.)
+           && log_mod e.(0) e.(1) -. log_mod e.(2) e.(3) < Float.log (least w)
+       );
+     ]
+    @ divisor_covers 2)
+
+let crecip =
+  complex1 "crecip" { c1 = Nx.recip }
+    (parts2 (divisor_spec false, divisor_spec true))
+    divisor
+    (( "a reciprocal past the greatest finite",
+       fun w e ->
+         finite_all e
+         && (e.(0) <> 0. || e.(1) <> 0.)
+         && -.log_mod e.(0) e.(1) > Float.log (greatest w) )
+    :: divisor_covers 0)
+
+(* Numbers of one operand, drawn as pairs of codes [x; y]. *)
+
+let number gx gy =
+  Gen.(
+    let+ x = gx and+ y = gy in
+    [| x; y |])
+
+let zero wide = Gen.map (fun neg -> if neg then sign wide else 0L) Gen.bool
+
+(* A code of either sign of magnitude uniform in [lo, hi]. *)
+let between wide lo hi =
+  Gen.(
+    let+ v = float_range lo hi and+ neg = bool in
+    code wide (if neg then -.v else v))
+
+(* A code of either sign within 3 ranks of [p]. *)
+let around wide p =
+  Gen.(
+    let+ d = int_range (-3) 3 and+ neg = bool in
+    let c = Int64.add (code wide p) (Int64.of_int d) in
+    if neg then Int64.logor c (sign wide) else c)
+
+(* A code of either sign whose magnitude is [2^e m] for [e] in [lo, hi]. *)
+let binade wide lo hi =
+  Gen.(
+    let* e = int_range lo hi in
+    scaled wide e)
+
+(* The numbers on the real axis beyond [lo], each side of the cut: [y] a zero of
+   either sign. *)
+let on_cut wide lo hi = number (between wide lo hi) (zero wide)
+
+(* [x + iy] read in the coordinates a kind turns it to: [(x, y)] itself, or
+   [(-y, x)] for the circular kinds of the hyperbolic ones, [(y, -x)] for asinh
+   of asin. *)
+type turn = Plain | Circular | Asinh
+
+let coords t e =
+  match t with
+  | Plain -> (e.(0), e.(1))
+  | Circular -> (-.e.(1), e.(0))
+  | Asinh -> (e.(1), -.e.(0))
+
+(* The codes of [x + iy] from the coordinates [(a, b)] a kind reads. *)
+let uncoords wide t c =
+  let neg v = Int64.logxor v (sign wide) in
+  match t with
+  | Plain -> c
+  | Circular -> [| c.(1); neg c.(0) |]
+  | Asinh -> [| neg c.(1); c.(0) |]
+
+let turned wide t g = Gen.map (uncoords wide t) g
+
+(* Covers on a kind's coordinates. *)
+let on t covers =
+  List.map (fun (l, f) -> (l, fun w e -> f w (coords t e))) covers
+
+(* Specs on a kind's coordinates: the parts' specs of [x + iy]. *)
+let specs_of t (sa, sb) =
+  match t with Plain -> [| sa; sb |] | Circular | Asinh -> [| sb; sa |]
+
+(* Roots and signs: nx_sqrt_raw's switches at an infinite or a zero part and x's
+   sign, its scaling by an even power of two, x near -|z| where y / 2t takes
+   over; nx_sign_raw's scaling and its hypot near overflow and underflow. *)
+
+let root_spec w =
+  spec
+    [
+      1.;
+      4.;
+      0.5;
+      2.;
+      least w;
+      pick w (0x1p64, 0x1p512);
+      pick w (0x1p-64, 0x1p-512);
+      pick w (0x1p100, 0x1p1000);
+    ]
+    [ 4.; 1e30 ]
+
+let extreme_parts wide =
+  let top = pick wide (127, 1023) and low = pick wide (-149, -1074) in
+  Gen.frequency
+    [
+      (1, number (binade wide (top - 10) top) (binade wide (top - 40) top));
+      (1, number (binade wide low (low + 30)) (binade wide low (low + 60)));
+      (1, number (binade wide (top - 10) top) (binade wide low (low + 30)));
+    ]
+
+let sqrt_pairs wide =
+  let top = pick wide (127, 1023) in
+  Gen.frequency
+    [
+      (2, on_cut wide 0. 1e3);
+      (1, number (between wide 0. 1e3) (zero wide));
+      (* x near -|z|: y / 2t is the larger part *)
+      ( 2,
+        number
+          (Gen.map (fun c -> Int64.logor c (sign wide)) (between wide 1. 1e3))
+          (binade wide (-60) (-10)) );
+      (2, extreme_parts wide);
+      (1, number (binade wide (top - 2) top) (binade wide (top - 2) top));
+    ]
+
+let csqrt =
+  let sp = (root_spec false, root_spec true) in
+  complex1 "csqrt" { c1 = Nx.sqrt } (parts2 sp) sqrt_pairs
+    [
+      ( "on the cut, y = +0, x negative",
+        fun _ e -> e.(0) < 0. && e.(1) = 0. && not (Float.sign_bit e.(1)) );
+      ( "on the cut, y = -0, x negative",
+        fun _ e -> e.(0) < 0. && e.(1) = 0. && Float.sign_bit e.(1) );
+      ("y = 0, x positive", fun _ e -> e.(0) > 0. && e.(1) = 0.);
+      ( "x negative, |y| below 2^-10 |x|, not zero",
+        fun _ e ->
+          e.(0) < 0.
+          && e.(1) <> 0.
+          && Float.abs e.(1) < Float.abs e.(0) *. 0x1p-10 );
+      ( "a finite part past 2^-10 the greatest finite",
+        fun w e ->
+          finite_all e
+          && Float.max (Float.abs e.(0)) (Float.abs e.(1))
+             > greatest w *. 0x1p-10 );
+      ( "both parts below 2^30 the least normal, not zero",
+        fun w e ->
+          (e.(0) <> 0. || e.(1) <> 0.)
+          && Float.abs e.(0) < least w *. 0x1p30
+          && Float.abs e.(1) < least w *. 0x1p30 );
+    ]
+
+let sign_pairs wide =
+  Gen.frequency
+    [ (3, extreme_parts wide); (1, number (uniform wide 4.) (uniform wide 4.)) ]
+
+let csign =
+  let sp = (root_spec false, root_spec true) in
+  let rt w = Float.sqrt (greatest w) and lt w = Float.sqrt (least w) in
+  complex1 "csign" { c1 = Nx.sign } (parts2 sp) sign_pairs
+    [
+      ("both parts zero", fun _ e -> e.(0) = 0. && e.(1) = 0.);
+      ( "a finite part past the square root of the greatest finite",
+        fun w e ->
+          finite_all e && Float.max (Float.abs e.(0)) (Float.abs e.(1)) > rt w
+      );
+      ( "parts below the square root of the least normal, not zero",
+        fun w e ->
+          (e.(0) <> 0. || e.(1) <> 0.)
+          && Float.abs e.(0) < lt w
+          && Float.abs e.(1) < lt w );
+      ( "finite parts more than 2^30 apart, not zero",
+        fun _ e ->
+          finite_all e
+          && e.(0) <> 0.
+          && e.(1) <> 0.
+          && (Float.abs e.(0) > 0x1p30 *. Float.abs e.(1)
+             || Float.abs e.(1) > 0x1p30 *. Float.abs e.(0)) );
+    ]
+
+(* Logarithms: nx_log_abs's switch where the larger part a is in [1/2, 2] and
+   the smaller b not zero, the unit circle where a^2 + b^2 - 1 cancels, b / a
+   underflowing; atan2's cut on the negative real axis; nx_log2_raw's axes. *)
+
+let log_spec w =
+  spec
+    [
+      0.5;
+      2.;
+      1.;
+      0.6;
+      0.8;
+      least w;
+      pick w (1e30, 1e300);
+      pick w (0x1p-30, 0x1p-60);
+    ]
+    [ 2.; 1e4 ]
+
+(* Within a few ranks of the unit circle: (cos t, sin t) rounded, of any
+   signs. *)
+let unit_circle wide =
+  Gen.(
+    let+ t = float_range 0. (Float.pi /. 2.)
+    and+ sx = bool
+    and+ sy = bool
+    and+ d = int_range (-2) 2 in
+    let s b v = if b then -.v else v in
+    [|
+      Int64.add (code wide (s sx (Float.cos t))) (Int64.of_int d);
+      code wide (s sy (Float.sin t));
+    |])
+
+let log_pairs wide =
+  Gen.frequency
+    [
+      (3, unit_circle wide);
+      (1, on_cut wide 0. 1e3);
+      (1, number (zero wide) (between wide 0. 1e3));
+      (1, number (between wide 0. 1e3) (zero wide));
+      (1, number (around wide 0.5) (binade wide (-40) (-2)));
+      (1, number (around wide 2.) (binade wide (-40) (-2)));
+      (1, number (between wide 1. 2.) (binade wide (-60) (-20)));
+      (1, extreme_parts wide);
+    ]
+
+let log_covers =
+  let a e = Float.max (Float.abs e.(0)) (Float.abs e.(1))
+  and b e = Float.min (Float.abs e.(0)) (Float.abs e.(1)) in
+  let near w x v = ranks w x v <= 3L in
+  [
+    ( "the larger part in [1/2, 2], the smaller not zero",
+      fun _ e -> a e >= 0.5 && a e <= 2. && b e <> 0. );
+    ( "the larger part within 3 ranks of 1/2 or 2, the smaller not zero",
+      fun w e -> b e <> 0. && (near w (a e) 0.5 || near w (a e) 2.) );
+    ( "within 2^-20 of the unit circle, off the axes",
+      fun _ e ->
+        b e <> 0.
+        && Float.abs ((e.(0) *. e.(0)) +. (e.(1) *. e.(1)) -. 1.) < 0x1p-20 );
+    ( "the smaller part below 2^-20 the larger, not zero",
+      fun _ e -> b e <> 0. && Float.is_finite (a e) && b e < a e *. 0x1p-20 );
+    ( "on the cut, y = +0",
+      fun _ e -> e.(0) < 0. && e.(1) = 0. && not (Float.sign_bit e.(1)) );
+    ( "on the cut, y = -0",
+      fun _ e -> e.(0) < 0. && e.(1) = 0. && Float.sign_bit e.(1) );
+    ( "x = 0, y finite, not zero",
+      fun _ e -> e.(0) = 0. && e.(1) <> 0. && Float.is_finite e.(1) );
+    ( "y = 0, x finite, not zero",
+      fun _ e -> e.(1) = 0. && e.(0) <> 0. && Float.is_finite e.(0) );
+  ]
+
+let clog =
+  let sp = (log_spec false, log_spec true) in
+  complex1 "clog" { c1 = Nx.log } (parts2 sp) log_pairs log_covers
+
+let clog2 =
+  let sp = (log_spec false, log_spec true) in
+  complex1 "clog2" { c1 = Nx.log2 } (parts2 sp) log_pairs log_covers
+
+(* Exponentials: nx_exp_raw's switches at y = 0, a non-finite part, x past
+   EXP_NEAR, 86 or 708, to the clamp CEXP_HI, 194 or 1456, where exp_times
+   scales cos y and sin y, and the trigonometric kinds' switch in y;
+   nx_exp2_raw's at y ln2 past that switch, read from 2 ln2 / pi, and its clamps
+   CEXP2_HI, 280 or 2101, and EXP2_LO. *)
+
+let exp_near = (86., 708.)
+let cexp_hi = (194., 1456.)
+let cexp2_hi = (280., 2101.)
+let ln2 = 0.6931471805599453
+
+let phase_spec w =
+  let big = pick w trig_big in
+  spec
+    ([ 0.; 1.; big; 2. *. big; pick w trig_tiny ]
+    @ List.map (fun k -> k *. half_pi) [ 1.; 2.; 3.; 355. ])
+    [ Float.pi; pick w (1e5, 1e9) ]
+
+let exp_spec w =
+  spec
+    [
+      pick w exp_near;
+      pick w cexp_hi;
+      pick w (88.72284, 709.782712893384);
+      pick w (103.97208, 745.1332191019411);
+      pick w (87.33655, 708.3964185322641);
+      pick w (104., 746.);
+      1.;
+      half_ln2;
+    ]
+    [ 1.; pick w (300., 2000.) ]
+
+(* y where cos y or sin y is small: within a rank of a multiple of pi/2. *)
+let near_axis wide =
+  Gen.(
+    let+ k = int_range 1 1000 and+ d = int_range (-1) 1 and+ neg = bool in
+    let c =
+      Int64.add (code wide (Float.of_int k *. half_pi)) (Int64.of_int d)
+    in
+    if neg then Int64.logor c (sign wide) else c)
+
+let exp_pairs wide =
+  let near = pick wide exp_near and hi = pick wide cexp_hi in
+  Gen.frequency
+    [
+      (2, number (between wide near hi) (uniform wide Float.pi));
+      (1, number (around wide near) (uniform wide Float.pi));
+      (1, number (between wide hi (2. *. hi)) (uniform wide Float.pi));
+      (1, number (between wide 80. hi) (near_axis wide));
+      (1, number (uniform wide 4.) (between wide 1. (pick wide (1e5, 1e9))));
+      (1, number (uniform wide 4.) (zero wide));
+    ]
+
+let exp_covers =
+  let near w = pick w exp_near and hi w = pick w cexp_hi in
+  let t w e = Float.abs e.(1) >= pick w trig_big && Float.is_finite e.(1) in
+  [
+    ( "x past the near range, to the clamp",
+      fun w e -> e.(0) > near w && e.(0) <= hi w );
+    ( "x within 3 ranks of the near range's end",
+      fun w e -> ranks w e.(0) (near w) <= 3L && e.(0) > 0. );
+    ( "x past the clamp, finite",
+      fun w e -> e.(0) > hi w && Float.is_finite e.(0) );
+    ( "e^x subnormal",
+      fun w e ->
+        e.(0) < pick w (-87.34, -708.4) && e.(0) > pick w (-103.97, -745.13) );
+    ( "x past 80, |cos y| or |sin y| below 2^-10",
+      fun w e ->
+        e.(0) > 80.
+        && e.(0) <= hi w
+        && Float.abs (Float.cos e.(1) *. Float.sin e.(1)) < 0x1p-10 );
+    ("y past the trigonometric switch, finite", t);
+    ("y = 0, x finite", fun _ e -> e.(1) = 0. && Float.is_finite e.(0));
+  ]
+
+let cexp =
+  complex1 "cexp" { c1 = Nx.exp }
+    [| (exp_spec false, exp_spec true); (phase_spec false, phase_spec true) |]
+    exp_pairs exp_covers
+
+let exp2_spec w =
+  spec
+    [
+      pick w cexp2_hi;
+      pick w (128., 1024.);
+      pick w (129., 1025.);
+      pick w (150., 1075.);
+      pick w (151., 1076.);
+      pick w (126., 1022.);
+      0.5;
+      1.;
+    ]
+    [ 1.; pick w (400., 3000.) ]
+
+(* y whose phase y ln2 lies past or near the trigonometric switch. *)
+let exp2_phase_spec w =
+  let s = pick w trig_big /. ln2 in
+  spec
+    [ s; 2. *. s; 1.; 0.; half_pi /. ln2; 355. *. half_pi /. ln2 ]
+    [ 4.; pick w (1e6, 1e10) ]
+
+let exp2_pairs wide =
+  let hi = pick wide cexp2_hi and s = pick wide trig_big /. ln2 in
+  Gen.frequency
+    [
+      (2, number (uniform wide 4.) (between wide (s *. 0.999) (s *. 1.001)));
+      (1, number (uniform wide 4.) (between wide s (pick wide (1e30, 1e300))));
+      (1, number (between wide (hi *. 0.5) (hi *. 1.5)) (uniform wide 4.));
+      (1, number (between wide 100. 2000.) (uniform wide 4.));
+      (1, number (uniform wide 4.) (zero wide));
+    ]
+
+let cexp2 =
+  let hi w = pick w cexp2_hi and s w = pick w trig_big /. ln2 in
+  complex1 "cexp2" { c1 = Nx.exp2 }
+    [|
+      (exp2_spec false, exp2_spec true);
+      (exp2_phase_spec false, exp2_phase_spec true);
+    |]
+    exp2_pairs
+    [
+      ( "y ln2 past the trigonometric switch, finite",
+        fun w e -> Float.abs e.(1) >= s w && Float.is_finite e.(1) );
+      ( "y ln2 within 2^-12 of the switch",
+        fun w e -> Float.abs ((Float.abs e.(1) /. s w) -. 1.) < 0x1p-12 );
+      ( "x past the clamp, finite",
+        fun w e -> e.(0) > hi w && Float.is_finite e.(0) );
+      ( "x below the low clamp, finite",
+        fun w e -> e.(0) < pick w (-151., -1076.) && Float.is_finite e.(0) );
+      ( "2^x subnormal",
+        fun w e ->
+          e.(0) < pick w (-126., -1022.) && e.(0) > pick w (-150., -1075.) );
+      ("y = 0, x finite", fun _ e -> e.(1) = 0. && Float.is_finite e.(0));
+    ]
+
+(* Powers: nx_pow_raw's switches at w = 0, z on the positive real axis with w
+   real, w real or imaginary, log z's cut, and results past the greatest finite
+   or below the least normal. *)
+
+let pow_pairs wide =
+  let open Gen in
+  let any = uniform wide 4. in
+  let z = number any any and w = number any any in
+  let cat a b =
+    let+ a = a and+ b = b in
+    Array.append a b
+  in
+  let positive = number (between wide 0. 8.) (zero wide) in
+  let real = number any (zero wide) and imag = number (zero wide) any in
+  frequency
+    [
+      (1, cat z (number (zero wide) (zero wide)));
+      (1, cat positive real);
+      (1, cat z real);
+      (1, cat z imag);
+      (1, cat (on_cut wide 0. 8.) w);
+      (1, cat (number (zero wide) (zero wide)) w);
+      (* |w log z| large: the result overflows or underflows *)
+      ( 2,
+        cat
+          (number (between wide 1e3 1e6) any)
+          (number (between wide 10. 60.) any) );
+    ]
+
+let cpow =
+  let zs w = spec [ 1.; 2.; 0.5; pick w (1e30, 1e300); least w ] [ 4.; 1e3 ] in
+  let ws w = spec [ 1.; 2.; 0.5; 3.; pick w (130., 1030.) ] [ 4.; 200. ] in
+  let wlog e =
+    let l =
+      { Complex.re = log_mod e.(0) e.(1); im = Float.atan2 e.(1) e.(0) }
+    in
+    Complex.mul { Complex.re = e.(2); im = e.(3) } l
+  in
+  complex2 "cpow" { c2 = Nx.pow }
+    [|
+      (zs false, zs true);
+      (zs false, zs true);
+      (ws false, ws true);
+      (ws false, ws true);
+    |]
+    pow_pairs
+    [
+      ("w = 0", fun _ e -> e.(2) = 0. && e.(3) = 0.);
+      ( "z on the positive real axis, w real",
+        fun _ e -> e.(0) > 0. && e.(1) = 0. && e.(3) = 0. );
+      ( "w real, not zero, z off the positive real axis",
+        fun _ e -> e.(3) = 0. && e.(2) <> 0. && (e.(1) <> 0. || e.(0) < 0.) );
+      ("w imaginary, not zero", fun _ e -> e.(2) = 0. && e.(3) <> 0.);
+      ("w of two non-zero parts", fun _ e -> e.(2) <> 0. && e.(3) <> 0.);
+      ( "z = 0, w not zero",
+        fun _ e -> e.(0) = 0. && e.(1) = 0. && (e.(2) <> 0. || e.(3) <> 0.) );
+      ( "z on the cut, y = ±0",
+        fun _ e -> e.(0) < 0. && e.(1) = 0. && (e.(2) <> 0. || e.(3) <> 0.) );
+      ( "a result past the greatest finite",
+        fun w e ->
+          finite_all e && e.(0) <> 0. && (wlog e).re > Float.log (greatest w) );
+      ( "a result below the least normal, not zero",
+        fun w e ->
+          finite_all e && e.(0) <> 0. && (wlog e).re < Float.log (least w) );
+    ]
+
+(* Hyperbolic and circular kinds, on the hyperbolic coordinates (x, y): sinh and
+   cosh's switch at HYP_BIG, 12 or 22, past which exp_times scales cos y and sin
+   y, its clamp CEXP_HI, the overflow of e^|x| / 2, y = 0, the trigonometric
+   switch in y; tanh's at HYP_BIG and tan y's poles. sin, cos and tan read sinh,
+   cosh and tanh at iz. *)
+
+let hyp_big = (12., 22.)
+
+let hyp_spec w =
+  spec
+    [
+      pick w hyp_big;
+      pick w cexp_hi;
+      pick w (89.41599, 710.4758600739439);
+      1.;
+      half_ln2;
+      0x1p-30;
+      6.;
+    ]
+    [ 2.; pick w (200., 1600.) ]
+
+let hyp_pairs t wide =
+  let big = pick wide hyp_big and hi = pick wide cexp_hi in
+  turned wide t
+    (Gen.frequency
+       [
+         (1, number (around wide big) (uniform wide Float.pi));
+         (2, number (between wide big hi) (uniform wide Float.pi));
+         (1, number (between wide hi (2. *. hi)) (uniform wide Float.pi));
+         (1, number (between wide 0. hi) (near_axis wide));
+         (1, number (uniform wide 4.) (between wide 1. (pick wide (1e5, 1e9))));
+         (1, number (uniform wide 4.) (zero wide));
+       ])
+
+let hyp_covers =
+  let big w = pick w hyp_big and hi w = pick w cexp_hi in
+  let ax (x, _) = Float.abs x in
+  [
+    ("|x| past HYP_BIG, to the clamp", fun w c -> ax c > big w && ax c <= hi w);
+    ("|x| within 3 ranks of HYP_BIG", fun w (x, _) -> ranks w x (big w) <= 3L);
+    ( "|x| past the clamp, finite",
+      fun w (x, _) -> Float.abs x > hi w && Float.is_finite x );
+    ( "|x| past the overflow of e^|x| / 2, to the clamp",
+      fun w c -> ax c > pick w (89.416, 710.476) && ax c <= hi w );
+    ( "|x| past HYP_BIG, |cos y| or |sin y| below 2^-10",
+      fun w (x, y) ->
+        Float.abs x > big w
+        && Float.abs x <= hi w
+        && Float.abs (Float.cos y *. Float.sin y) < 0x1p-10 );
+    ( "y past the trigonometric switch, finite",
+      fun w (_, y) -> Float.abs y >= pick w trig_big && Float.is_finite y );
+    ("y = 0, x finite", fun _ (x, y) -> y = 0. && Float.is_finite x);
+  ]
+
+let hyperbolic name f t =
+  let sp = (hyp_spec false, hyp_spec true)
+  and pp = (phase_spec false, phase_spec true) in
+  complex1 name f (specs_of t (sp, pp)) (hyp_pairs t) (on t hyp_covers)
+
+let tanh_pairs t wide =
+  let big = pick wide hyp_big in
+  turned wide t
+    (Gen.frequency
+       [
+         (1, number (around wide big) (uniform wide Float.pi));
+         (1, number (between wide big 50.) (uniform wide Float.pi));
+         (2, number (uniform wide 4.) (near_axis wide));
+         (1, number (uniform wide 4.) (between wide 1. (pick wide (1e5, 1e9))));
+         (1, number (uniform wide 4.) (zero wide));
+       ])
+
+let tanh_covers =
+  let big w = pick w hyp_big in
+  [
+    ( "|x| past HYP_BIG, finite",
+      fun w (x, _) -> Float.abs x > big w && Float.is_finite x );
+    ("|x| within 3 ranks of HYP_BIG", fun w (x, _) -> ranks w x (big w) <= 3L);
+    ( "|x| at most HYP_BIG, |cos y| below 2^-10",
+      fun w (x, y) -> Float.abs x <= big w && Float.abs (Float.cos y) < 0x1p-10
+    );
+    ( "y past the trigonometric switch, finite",
+      fun w (_, y) -> Float.abs y >= pick w trig_big && Float.is_finite y );
+    ("y = 0, x finite", fun _ (x, y) -> y = 0. && Float.is_finite x);
+  ]
+
+let tanh_spec w =
+  spec [ pick w hyp_big; 1.; 0.5; 2.; 0x1p-30; pick w (9.5, 19.5) ] [ 2.; 50. ]
+
+let tanh_kind name f t =
+  let sp = (tanh_spec false, tanh_spec true)
+  and pp = (phase_spec false, phase_spec true) in
+  complex1 name f (specs_of t (sp, pp)) (tanh_pairs t) (on t tanh_covers)
+
+let csinh = hyperbolic "csinh" { c1 = Nx.sinh } Plain
+let ccosh = hyperbolic "ccosh" { c1 = Nx.cosh } Plain
+let csin = hyperbolic "csin" { c1 = Nx.sin } Circular
+let ccos = hyperbolic "ccos" { c1 = Nx.cos } Circular
+let ctanh = tanh_kind "ctanh" { c1 = Nx.tanh } Plain
+let ctan = tanh_kind "ctan" { c1 = Nx.tan } Circular
+
+(* Inverse kinds, on the coordinates of asin, acos or atanh: asin and acos's
+   switch at ASIN_BIG, 2^13 or 2^28, the real axis within [-1, 1], the cuts
+   beyond ±1 on either side, the branch points; atanh's at ATANH_BIG, 2^62 or
+   2^510, x = 0, |x| = 1, its cuts. atan reads atanh at iz, asinh asin at -iz,
+   and acosh acos at x + i|y|. *)
+
+let asin_big = (0x1p13, 0x1p28)
+let atanh_big = (0x1p62, 0x1p510)
+
+let inv_spec big w =
+  spec [ 1.; 0.5; 2.; pick w big; 0.; pick w (0x1p-30, 0x1p-60) ] [ 2.; 1e4 ]
+
+let inv_pairs big t wide =
+  let b = pick wide big in
+  turned wide t
+    (Gen.frequency
+       [
+         (2, on_cut wide 1. 1e3);
+         (1, number (between wide 0. 1.) (zero wide));
+         (1, number (around wide 1.) (binade wide (-60) (-10)));
+         (1, number (around wide b) (uniform wide 4.));
+         (1, number (uniform wide 4.) (around wide b));
+         (1, number (between wide b (b *. 1e3)) (between wide 0. (b *. 1e3)));
+         (1, number (zero wide) (uniform wide 4.));
+       ])
+
+let inv_covers big =
+  let b w = pick w big in
+  let pos v = not (Float.sign_bit v) in
+  [
+    ( "a part past the far switch, finite",
+      fun w (x, y) ->
+        Float.is_finite x && Float.is_finite y
+        && (Float.abs x > b w || Float.abs y > b w) );
+    ( "a part within 3 ranks of the far switch",
+      fun w (x, y) -> ranks w x (b w) <= 3L || ranks w y (b w) <= 3L );
+    ( "on the real axis within [-1, 1]",
+      fun _ (x, y) -> y = 0. && Float.abs x <= 1. );
+    ( "on a cut, y = +0",
+      fun _ (x, y) -> Float.abs x > 1. && Float.is_finite x && y = 0. && pos y
+    );
+    ( "on a cut, y = -0",
+      fun _ (x, y) ->
+        Float.abs x > 1. && Float.is_finite x && y = 0. && not (pos y) );
+    ( "within 2^-20 of ±1, y not zero",
+      fun _ (x, y) -> Float.abs (Float.abs x -. 1.) < 0x1p-20 && y <> 0. );
+    ( "|x| = 1, y not zero",
+      fun _ (x, y) -> Float.abs x = 1. && y <> 0. && Float.is_finite y );
+    ("x = 0, y finite", fun _ (x, y) -> x = 0. && Float.is_finite y);
+  ]
+
+let inverse name f big t =
+  let sp = (inv_spec big false, inv_spec big true) in
+  complex1 name f
+    (specs_of t (sp, sp))
+    (inv_pairs big t)
+    (on t (inv_covers big))
+
+let casin = inverse "casin" { c1 = Nx.asin } asin_big Plain
+let cacos = inverse "cacos" { c1 = Nx.acos } asin_big Plain
+let casinh = inverse "casinh" { c1 = Nx.asinh } asin_big Asinh
+let catanh = inverse "catanh" { c1 = Nx.atanh } atanh_big Plain
+let catan = inverse "catan" { c1 = Nx.atan } atanh_big Circular
+
+(* acosh reads acos at x + i|y|: the cuts are below 1, y's sign naming the
+   side. *)
+let cacosh = inverse "cacosh" { c1 = Nx.acosh } asin_big Plain
+
 (* Cases *)
 
 type case = { f32 : int64 array array; f64 : int64 array array }
@@ -867,6 +1800,8 @@ let element wide k =
   match k.fn with
   | One _ -> alone
   | Two (_, pairs) -> Gen.frequency [ (3, alone); (2, pairs wide) ]
+  | Cone (_, pairs) | Ctwo (_, pairs) ->
+      Gen.frequency [ (3, alone); (1, annex_g wide (arity k)); (2, pairs wide) ]
 
 let gen k =
   let block wide = Gen.array ~size:(Gen.constant n) (element wide k) in
@@ -919,7 +1854,8 @@ let example k =
    computes it at the dtype. *)
 let clamped k ~lo ~hi covers =
   match k.fn with
-  | Two _ -> invalid_arg "Kinds.clamped: a kind of two operands"
+  | Two _ | Cone _ | Ctwo _ ->
+      invalid_arg "Kinds.clamped: a kind of two operands or complex"
   | One { f1 } ->
       let clamp x =
         let c v = Nx.full_like x v in
@@ -1015,20 +1951,22 @@ let codes64 y = Nx.to_array (Nx.bitcast Nx.int64 y)
 let column es j = Array.map (fun e -> e.(j)) es
 
 (* The elements where compiled and eager differ, at most eight, then their
-   count. *)
+   count. A result is its parts' codes: one for a float, two for a complex
+   number, each NaN part equal to any NaN. *)
 let misses k wide es ~eager ~compiled =
   let out = ref [] and count = ref 0 in
+  let codes r = String.concat ", " (Array.to_list (Array.map (show wide) r)) in
   Array.iteri
     (fun i e ->
-      if not (same wide eager.(i) compiled.(i)) then begin
+      if not (Array.for_all2 (same wide) eager.(i) compiled.(i)) then begin
         incr count;
         if !count <= 8 then
           out :=
             Printf.sprintf "%s(%s) at %s: eager %s, compiled %s" k.name
-              (String.concat ", " (Array.to_list (Array.map (show wide) e)))
+              (codes e)
               (if wide then "float64" else "float32")
-              (show wide eager.(i))
-              (show wide compiled.(i))
+              (codes eager.(i))
+              (codes compiled.(i))
             :: !out
       end)
     es;
@@ -1037,18 +1975,77 @@ let misses k wide es ~eager ~compiled =
     List.rev !out
     @ [ Printf.sprintf "%d of %d elements differ" !count (Array.length es) ]
 
+let ones cs = Array.map (fun c -> [| c |]) cs
+
+(* A complex kind's operands, each of two columns of parts, and its result's
+   parts. *)
+let ccompiled (type c d) (module S : Nx.Devices with type d = d) k
+    (xs : (Complex.t, c, Nx.host) Nx.t list) =
+  let before = Rune.evaluations () in
+  let on x = Nx.place S.on x in
+  let y =
+    match (k.fn, xs) with
+    | Cone ({ c1 }, _), [ x ] ->
+        Rune.jit Nx.Ptree.(tensor @-> returns tensor) c1 (on x)
+    | Ctwo ({ c2 }, _), [ x; y ] ->
+        Rune.jit
+          Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+          c2 (on x) (on y)
+    | _ -> invalid_arg "Kinds: operands of another arity"
+  in
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+  Nx.place Nx.Host.on y
+
+let ceager k xs =
+  match (k.fn, xs) with
+  | Cone ({ c1 }, _), [ x ] -> c1 x
+  | Ctwo ({ c2 }, _), [ x; y ] -> c2 x y
+  | _ -> invalid_arg "Kinds: operands of another arity"
+
+let crun (type d) (module S : Nx.Devices with type d = d) k wide es =
+  let col = column es in
+  let ops = arity k / 2 in
+  let pair a b = Array.map2 (fun r i -> [| r; i |]) a b in
+  if wide then
+    let xs =
+      List.init ops (fun j ->
+          Nx.complex Nx.complex128
+            ~re:(tensor64 (col (2 * j)))
+            ~im:(tensor64 (col ((2 * j) + 1))))
+    in
+    let parts y =
+      pair (codes64 (Nx.real Nx.float64 y)) (codes64 (Nx.imag Nx.float64 y))
+    in
+    misses k wide es
+      ~eager:(parts (ceager k xs))
+      ~compiled:(parts (ccompiled (module S) k xs))
+  else
+    let xs =
+      List.init ops (fun j ->
+          Nx.complex Nx.complex64
+            ~re:(tensor32 (col (2 * j)))
+            ~im:(tensor32 (col ((2 * j) + 1))))
+    in
+    let parts y =
+      pair (codes32 (Nx.real Nx.float32 y)) (codes32 (Nx.imag Nx.float32 y))
+    in
+    misses k wide es
+      ~eager:(parts (ceager k xs))
+      ~compiled:(parts (ccompiled (module S) k xs))
+
 let run (type d) (module S : Nx.Devices with type d = d) k wide es =
   let cols = List.init (arity k) (column es) in
-  if wide then
+  if is_complex k then crun (module S) k wide es
+  else if wide then
     let xs = List.map tensor64 cols in
     misses k wide es
-      ~eager:(codes64 (eager k xs))
-      ~compiled:(codes64 (compiled (module S) k xs))
+      ~eager:(ones (codes64 (eager k xs)))
+      ~compiled:(ones (codes64 (compiled (module S) k xs)))
   else
     let xs = List.map tensor32 cols in
     misses k wide es
-      ~eager:(codes32 (eager k xs))
-      ~compiled:(codes32 (compiled (module S) k xs))
+      ~eager:(ones (codes32 (eager k xs)))
+      ~compiled:(ones (codes32 (compiled (module S) k xs)))
 
 (* Classes of an operand every kind's law covers. *)
 let generic =
@@ -1075,12 +2072,37 @@ let generic =
     ("a greatest finite magnitude", any greatest);
   ]
 
+(* Classes of a complex operand, a pair of parts, every complex kind's law
+   covers: Annex G's special values lie where a part is infinite or a NaN. *)
+let generic_complex =
+  let any p _ e =
+    let rec go j =
+      j + 1 < Array.length e && (p e.(j) e.(j + 1) || go (j + 2))
+    in
+    go 0
+  in
+  let inf v = Float.abs v = Float.infinity and fin = Float.is_finite in
+  let both p q x y = (p x && q y) || (q x && p y) in
+  [
+    ("an infinite part beside a NaN", any (both inf Float.is_nan));
+    ("two infinite parts", any (fun x y -> inf x && inf y));
+    ("an infinite part beside a finite one", any (both inf fin));
+    ("a NaN part beside a finite one", any (both Float.is_nan fin));
+    ("two NaN parts", any (fun x y -> Float.is_nan x && Float.is_nan y));
+    ("an infinite part beside a zero", any (both inf (fun v -> v = 0.)));
+  ]
+
 let covers k wide es =
   let vs = Array.map (Array.map (value wide)) es in
   let dt = if wide then "float64: " else "float32: " in
+  let generic =
+    if not k.generic then []
+    else if is_complex k then generic @ generic_complex
+    else generic
+  in
   List.iter
     (fun (label, f) -> cover (dt ^ label) (Array.exists (f wide) vs))
-    ((if k.generic then generic else []) @ k.covers)
+    (generic @ k.covers)
 
 let law (type d) (module S : Nx.Devices with type d = d) ~f64 k c =
   covers k false c.f32;
@@ -1144,6 +2166,7 @@ let numbers k bits =
       ]
 
 let narrow (type d) (module S : Nx.Devices with type d = d) k =
+  if is_complex k then invalid_arg "Kinds.narrow: a complex kind";
   let check (Narrow (label, dt, bits)) =
     let xs = List.map (narrow_codes dt bits) (numbers k bits) in
     let floats y = Nx.to_array (Nx.cast Nx.float64 y) in
@@ -1202,17 +2225,30 @@ let constants wide s =
     (edges wide)
   @ around @ [ Float.nan ]
 
+(* The tuples of constants, one per operand or part: the first's every constant,
+   the [j]th's from its [3j]th at a stride of [6j + 1], so that the columns pair
+   differently. *)
+let tuples wide k =
+  let cs =
+    List.init (arity k) (fun i ->
+        Array.of_list (constants wide (spec_of wide k i)))
+  in
+  List.init
+    (Array.length (List.hd cs))
+    (fun i ->
+      List.mapi
+        (fun j c -> c.(((i * ((6 * j) + 1)) + (3 * j)) mod Array.length c))
+        cs)
+
+let mismatch k wide vs ~eager ~compiled =
+  Printf.sprintf "%s(%s) folded at %s: eager %s, compiled %s" k.name
+    (String.concat ", " (List.map (Printf.sprintf "%h") vs))
+    (if wide then "float64" else "float32")
+    eager compiled
+
 let folded_at (type s d) (module S : Nx.Devices with type d = d) k
     (dt : (float, s) Nx.dtype) wide =
-  let cs = List.init (arity k) (fun i -> constants wide (spec_of wide k i)) in
-  let tuples =
-    match cs with
-    | [ a ] -> List.map (fun v -> [ v ]) a
-    | [ a; b ] ->
-        let b = Array.of_list b in
-        List.mapi (fun i v -> [ v; b.(((7 * i) + 3) mod Array.length b) ]) a
-    | _ -> invalid_arg "Kinds: operands of another arity"
-  in
+  let tuples = tuples wide k in
   let at x vs =
     let full v = Nx.full_like x v in
     let y =
@@ -1236,17 +2272,73 @@ let folded_at (type s d) (module S : Nx.Devices with type d = d) k
          if same wide (code e.(i)) (code c.(i)) then []
          else
            [
-             Printf.sprintf "%s(%s) folded at %s: eager %h, compiled %h" k.name
-               (String.concat ", " (List.map (Printf.sprintf "%h") vs))
-               (if wide then "float64" else "float32")
-               e.(i) c.(i);
+             mismatch k wide vs
+               ~eager:(Printf.sprintf "%h" e.(i))
+               ~compiled:(Printf.sprintf "%h" c.(i));
            ])
+       tuples)
+
+(* A complex kind's constants: its parts' tuples, then every number of Annex G's
+   parts, or for two operands each number of the zeros, ones, infinities and a
+   NaN beside two others, so that one compile folds 98. The kind reads constants
+   alone, which the compiler may fold; its result is then selected by a
+   comparison of [x] with itself, which keeps its bits, so that the function
+   reads [x]. *)
+let cfolded_at (type c d) (module S : Nx.Devices with type d = d) k
+    (dt : (Complex.t, c) Nx.dtype) wide =
+  let number t = List.map (value wide) (Array.to_list t) in
+  let annex =
+    if arity k = 2 then List.map number (annex_numbers 2 wide)
+    else
+      (* each of 49 numbers beside two others, so that a compile folds 98 *)
+      let vs = [ 0.; -0.; 1.; -1.; Float.infinity; Float.neg_infinity ] in
+      let vs = vs @ [ Float.nan ] in
+      let zs =
+        Array.of_list
+          (List.concat_map (fun re -> List.map (fun im -> [ re; im ]) vs) vs)
+      in
+      List.concat_map
+        (fun s -> List.init 49 (fun i -> zs.(i) @ zs.(((s * i) + 3) mod 49)))
+        [ 7; 11 ]
+  in
+  let tuples = tuples wide k @ annex in
+  let at x vs =
+    let full re im = Nx.full_like x { Complex.re; im } in
+    let y =
+      match (k.fn, vs) with
+      | Cone ({ c1 }, _), [ a; b ] -> c1 (full a b)
+      | Ctwo ({ c2 }, _), [ a; b; c; d ] -> c2 (full a b) (full c d)
+      | _ -> invalid_arg "Kinds: operands of another arity"
+    in
+    Nx.where (Nx.equal x x) y x
+  in
+  let f x = Nx.concatenate ~axis:0 (List.map (at x) tuples) in
+  let x = Nx.full dt [| 1 |] Complex.one in
+  let e = Nx.to_array (f x) in
+  let before = Rune.evaluations () in
+  let c = Nx.to_array (Nx.place Nx.Host.on (Rune.jit' f (Nx.place S.on x))) in
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+  let code v = code wide v in
+  let show (z : Complex.t) = Printf.sprintf "(%h, %h)" z.re z.im in
+  List.concat
+    (List.mapi
+       (fun i vs ->
+         let e = e.(i) and c = c.(i) in
+         if
+           same wide (code e.re) (code c.re)
+           && same wide (code e.im) (code c.im)
+         then []
+         else [ mismatch k wide vs ~eager:(show e) ~compiled:(show c) ])
        tuples)
 
 let folded (type d) (module S : Nx.Devices with type d = d) ~f64 k =
   let bad =
-    folded_at (module S) k Nx.float32 false
-    @ if f64 then folded_at (module S) k Nx.float64 true else []
+    if is_complex k then
+      cfolded_at (module S) k Nx.complex64 false
+      @ if f64 then cfolded_at (module S) k Nx.complex128 true else []
+    else
+      folded_at (module S) k Nx.float32 false
+      @ if f64 then folded_at (module S) k Nx.float64 true else []
   in
   equal (list string) [] bad
 

@@ -19,16 +19,24 @@
     [Minimum] and the comparisons follow the order {!Nx_kernel.Prog} states.
     Each is exact ({!Lower_real}).
 
+    [Mul], [Fdiv] and [Recip] compute the sequence of operations nx's kernel
+    header, [nx_kinds_complex.h], gives them, each fused multiply-add a
+    {!Lower_bits.mulacc}: [Mul] is the textbook product, each part one fused
+    multiply-add over the other product; [Fdiv] is Smith's algorithm, which
+    divides by the divisor's larger part, over a dividend scaled by [2{^25}] or
+    [2{^54}] where its parts are below the least normal over [u]; [Recip] is
+    [(1 + 0i) / z] by [Fdiv]. On a target that keeps subnormals, rounds
+    division correctly and rounds a fused multiply-add once, they give the bits
+    nx's kernels give, a NaN part as nx's NaN rule allows: they are exact.
+
     {1:bounded Other kinds}
 
-    [Fdiv] is Smith's algorithm, which divides by the divisor's larger part,
-    over a dividend scaled by [2{^25}] or [2{^54}] where its parts are below
-    the least normal over [u], and [Recip] is [(1 + 0i) / z] by [Fdiv]. The
-    transcendental kinds are the principal values of C99 7.3 (ISO/IEC 9899),
+    The transcendental kinds are the principal values of C99 7.3 (ISO/IEC 9899),
     each part's sign choosing the side of a branch cut as there. [Sign] is [z / |z|]. [Exp] overflows only
     where its result does.
 
-    Each holds a {e normwise} bound, in the sense that a result [z'] of exact
+    On every target, [Mul], [Fdiv], [Recip] and the transcendental kinds each
+    hold a {e normwise} bound, in the sense that a result [z'] of exact
     value [z] has [|z' - z| / |z|] at most the table's multiple of [u], to first
     order. The bounds are derived from {!Lower_real}'s, an error of [n] ulps
     there being one of at most [(2n + 1) u]:
@@ -68,8 +76,9 @@
     [Sign] gives the direction of the infinite parts, one of the eight [±1],
     [±i] and [(±1 ± i) / √2], and [Recip] the sorts of [(1 + 0i) / z] as [Fdiv]
     computes it. Zeros' signs are unspecified, and so is an infinity's sign that
-    comes from a NaN part or that Annex G leaves open. A result of [Mul], [Fdiv]
-    or [Pow] at an operand with an infinite part is unspecified.
+    comes from a NaN part or that Annex G leaves open. A result of [Pow] at an
+    operand with an infinite part is unspecified, and so is one of [Mul] and
+    [Fdiv] on a target where they are not exact.
 
     At [x + iy] with [x = +∞] and [y] finite, [Exp2]'s infinite parts take the
     signs of the cosine and sine of its phase [y ln2] rounded to the parts'

@@ -2985,6 +2985,26 @@ let clamped_law k =
 
 let clamped = Kinds.[ clamped_exp; clamped_log ]
 
+(* Complex kinds of nx's sequence give eager's bits on an NVIDIA GPU, a
+   complex128 element checked where its kernels have float64, as the float
+   kinds above. *)
+let complex_ported k =
+  let name = Kinds.name k in
+  [
+    prop ~count:12
+      ~examples:[ Kinds.example k ]
+      (name ^ " gives eager's bits")
+      (Kinds.gen k)
+      (fun c ->
+        let f64, s = keeps () in
+        Kinds.law s ~f64 k c);
+    test (name ^ " of a constant gives eager's bits") (fun () ->
+        let f64, s = keeps () in
+        Kinds.folded s ~f64 k);
+  ]
+
+let complex_kinds = Kinds.[ cmul; cdiv; crecip ]
+
 (* Multiply-adds of narrow floats: fma at a float narrower than float32,
    compiled on the GPU, is its exact value rounded once, as Exact's integers
    round it. Where the GPU flushes float32's subnormals, rune.mli lets an
@@ -3099,6 +3119,7 @@ let () =
                   tanh; asin; acos; atan; atan2; erf; pow; mod_;
                 ]);
          group "clamped operands" (List.map clamped_law clamped);
+         group "complex kinds" (List.concat_map complex_ported complex_kinds);
          group "exp"
            [
              prop ~count:24 "exp within 9 ulps at float32 where it flushes"

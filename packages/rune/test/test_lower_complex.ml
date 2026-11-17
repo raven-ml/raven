@@ -3,15 +3,18 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The complex kinds that are not exact, at complex64 and complex128, as maps of
-   one kind compiled by Rune.jit, which must compile them whole: no call is
-   evaluated. Each holds its normwise bound (rune.mli, Numerics) of the exact
-   value at the points of golden/lower_complex, which gen/lower_complex.py
-   writes from mpmath, each part correctly rounded with its remainder. At an
-   operand with an infinite or a NaN part, each gives what lower_complex.mli's
-   special values state, the sorts of nx's eager complex128 kind. *)
+(* The complex kinds at complex64 and complex128, as maps of one kind compiled
+   by Rune.jit, which must compile them whole: no call is evaluated. A kind
+   compiled to nx's own sequence gives eager's bits (Kinds), over drawn operands
+   and of a constant inside the compiled function. Each other kind holds its
+   normwise bound (rune.mli, Numerics) of the exact value at the points of
+   golden/lower_complex, which gen/lower_complex.py writes from mpmath, each
+   part correctly rounded with its remainder. At an operand with an infinite or
+   a NaN part, each gives what lower_complex.mli's special values state, the
+   sorts of nx's eager complex128 kind. *)
 
 open Windtrap
+module Kinds = Rune_support.Kinds
 module D = Nx_array.Dtype
 module K = Nx_kernel.Prog
 module P = Nx.Prim
@@ -208,23 +211,6 @@ let binary ?(domain = anywhere) name k bound =
 
 let tiny w v = v <> 0. && Float.abs v < least w
 
-(* Mul computes each part as a fused multiply-add over the other product, so its
-   bound holds where no product of parts is subnormal. *)
-let products_normal w (e : Complex.t array) =
-  let x = e.(0) and y = e.(1) in
-  not
-    (List.exists (tiny w)
-       [ x.re *. y.re; x.im *. y.im; x.re *. y.im; x.im *. y.re ])
-
-(* Smith's division holds its bound where its operands' parts are below half the
-   greatest float and the divisor's larger part is normal. *)
-let smith w (e : Complex.t array) =
-  let h = greatest w /. 2. and d = e.(Array.length e - 1) in
-  Array.for_all
-    (fun (z : Complex.t) -> Float.abs z.re < h && Float.abs z.im < h)
-    e
-  && Float.max (Float.abs d.re) (Float.abs d.im) >= least w
-
 (* pow holds its bound where |w| |log z| is below the greatest float. *)
 let products w (e : Complex.t array) =
   Complex.norm e.(1) *. Complex.norm (Complex.log e.(0)) < greatest w
@@ -238,7 +224,6 @@ let wlog (e : Complex.t array) =
 let unaries =
   K.
     [
-      unary "recip" Recip (fixed 4.) ~domain:smith;
       unary "sign" Sign (fixed 3.);
       unary "sqrt" Sqrt (fixed 3.);
       unary "exp" Exp (fixed 31.);
@@ -260,12 +245,7 @@ let unaries =
     ]
 
 let binaries =
-  K.
-    [
-      binary "mul" Mul (fixed 2.) ~domain:products_normal;
-      binary "fdiv" Fdiv (fixed 4.) ~domain:smith;
-      binary "pow" Pow (fun _ e -> 31. +. (20. *. wlog e)) ~domain:products;
-    ]
+  K.[ binary "pow" Pow (fun _ e -> 31. +. (20. *. wlog e)) ~domain:products ]
 
 (* Meeting the bounds *)
 
@@ -435,10 +415,29 @@ let accurate k =
   test (k.name ^ " within its bound") (fun () ->
       failures k.name (at D.Complex64 false @ at D.Complex128 true))
 
+(* Kinds of nx's sequence
+
+   Each gives eager's bits over drawn operands (Kinds) and of a constant inside
+   the compiled function. *)
+let ported k =
+  let name = Kinds.name k in
+  [
+    prop ~count:12
+      ~examples:[ Kinds.example k ]
+      (name ^ " gives eager's bits")
+      (Kinds.gen k)
+      (Kinds.law (module Nx.Host) ~f64:true k);
+    test (name ^ " of a constant gives eager's bits") (fun () ->
+        Kinds.folded (module Nx.Host) ~f64:true k);
+  ]
+
+let kinds = Kinds.[ cmul; cdiv; crecip ]
+
 let () =
   exit
     (run "Lower_complex"
        [
+         group "kinds" (List.concat_map ported kinds);
          group "special values" (List.map law (unaries @ binaries));
          group "bounds" (List.map accurate (unaries @ binaries));
        ])
