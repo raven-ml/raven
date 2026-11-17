@@ -136,6 +136,124 @@ let gates_padded_trips () =
   is_true ~msg:"reads of A" (reads <> []);
   equal (list Uops.uop) [] (List.filter past reads)
 
+(* Each index of [sink]'s blocked sums into any buffer that its index's bounds
+   could take past the buffer's elements: a padded trip's index into a held
+   tile or a decoded panel too, which holds the range's real trips alone. An
+   index over a split range, whose trip is [o * d + b] for the blocks [o] and
+   the block [b] of [d] trips, must be gated by the condition [o * d + b < n]
+   that drops the padded trips' terms; any other gated index reads nothing
+   past its buffer. A block's identity is its range's with [256], the most
+   terms of a running sum, after it. *)
+let past_reads ast ren =
+  let sink = Codegen.blocked_sums ast ren in
+  let nodes = Ops.toposort ~calls:Skip sink in
+  let is o u = Op.equal (Ops.op u) o in
+  (* Each block of a split range, with the condition that drops its sums'
+     padded terms. *)
+  let blocks =
+    let ranges = List.filter (is Op.Range) nodes in
+    let inside o b =
+      let at = Ops.O.((o * Ops.nth b 0) + b) in
+      let cut w =
+        is Op.Where w
+        && Dtype.is_float (Ops.dtype w)
+        && is Op.Cmplt (Ops.nth w 0)
+        && Ops.equal (Ops.nth (Ops.nth w 0) 0) at
+      in
+      Option.map (fun w -> Ops.nth w 0) (List.find_opt cut nodes)
+    in
+    List.filter_map
+      (fun b ->
+        match List.rev (Ops.axis_id b) with
+        | 256 :: id ->
+            let id = List.rev id in
+            List.find_opt (fun o -> Ops.axis_id o = id) ranges
+            |> Option.map (fun o -> (b, inside o b))
+        | _ -> None)
+      ranges
+  in
+  let rec conjuncts c =
+    if is Op.And c then List.concat_map conjuncts (Ops.src c) else [ c ]
+  in
+  let past u =
+    let i = Ops.nth u 1 in
+    let over =
+      List.filter (fun (b, _) -> Ops.Nodes.mem b (Ops.ranges i)) blocks
+    in
+    if is Op.Where i then
+      not
+        (List.for_all
+           (function
+             | _, Some c -> List.memq c (conjuncts (Ops.nth i 0))
+             | _, None -> false)
+           over)
+    else
+      over <> []
+      ||
+      match Ops.vmax i with
+      | `Int z -> Bigint.(geq z (of_int (Shape.max_numel (Ops.nth u 0))))
+      | _ -> true
+  in
+  let indexes =
+    List.filter (fun u -> is Op.Index u && List.length (Ops.src u) = 2) nodes
+  in
+  is_true ~msg:"indexes" (indexes <> []);
+  is_true ~msg:"split ranges" (blocks <> []);
+  is_true ~msg:"padded terms gated"
+    (List.for_all (fun (_, c) -> Option.is_some c) blocks);
+  equal (list Uops.uop) [] (List.filter past indexes)
+
+(* A dense MXFP4 product, Stage's [dense_kernel]: [t] rows of bfloat16 by [n]
+   rows of [k] codes, two a byte, with an e8m0 scale per 32. *)
+let mxfp4_product ~t ~k ~n =
+  let decode c =
+    let open Ops.O in
+    let m = c land int 1 and e = (c lsr int 1) land int 3 in
+    let quarters =
+      Ops.where (Ops.eq e (int 0)) (m * int 2) ((m + int 2) lsl e)
+    in
+    let v = Ops.cast quarters Float32 * Ops.float ~dtype:Float32 0.25 in
+    Ops.where (Ops.eq (c lsr int 3) (int 1)) (Ops.neg v) v
+  in
+  let halves = k / 2 and scaled = k / 32 in
+  let c = Shape.param ~shape:[ Ops.Int (t * n) ] 0 Float32
+  and x = Shape.param ~shape:[ Ops.Int (t * k) ] 1 Bfloat16
+  and codes = Shape.param ~shape:[ Ops.Int (n * halves) ] 2 Uint8
+  and scales = Shape.param ~shape:[ Ops.Int (n * scaled) ] 3 Uint8 in
+  let open Ops.O in
+  let i = Ops.range ~axis_type:Weak (Int t) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int n) [ 1 ]
+  and r = Ops.range ~axis_type:Weak (Int k) [ 2 ] in
+  let code =
+    Ops.cast (Ops.index codes [ (j * int halves) + (r // int 2) ]) Weak_int
+  in
+  let nibble = (code lsr (r % int 2 * int 4)) land int 15 in
+  let bits =
+    Ops.cast (Ops.index scales [ (j * int scaled) + (r // int 32) ]) Uint32
+  in
+  let scale = Ops.bitcast (bits lsl Ops.int ~dtype:Uint32 23) Float32 in
+  let w = Ops.cast (decode nibble * scale) Bfloat16 in
+  let sum =
+    Ops.reduce
+      (Ops.cast (Ops.index x [ (i * int k) + r ]) Float32 * Ops.cast w Float32)
+      Add [ r ]
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index c [ (i * int n) + j ]) sum) [ i; j ] ]
+
+(* On sm_89 the product at K = 704 holds its scales whole in shared memory,
+   176 bytes, and pads its 22 trips of 32 to blocks: a padded trip's scale
+   would be bytes 176-177. *)
+let gates_held_tile () =
+  past_reads
+    (mxfp4_product ~t:64 ~k:704 ~n:128)
+    (renderer_for (target "CUDA" "CUDA" "sm_89"))
+
+(* On the host the product at K = 3104 decodes a panel of 4 rows of codes into
+   a register buffer of 12416 floats, which a padded trip would read to 13311:
+   past a C array. *)
+let gates_host_panel () = past_reads (mxfp4_product ~t:64 ~k:3104 ~n:128) clang
+
 (* The golden of a case is a sink of the lowered kernel and the program, less
    its binary. *)
 let recorded row = Golden.sink (row "name" ^ ".golden")
@@ -290,6 +408,10 @@ let stages =
         (test "96 lanes over 5 trips pad to blocks of 2 trips" pads_odd_trips
         :: test "a padded block's trips read nothing past the buffer"
              gates_padded_trips
+        :: test "a padded trip reads nothing past a held tile of scales"
+             gates_held_tile
+        :: test "a padded trip reads nothing past a host's decoded panel"
+             gates_host_panel
         :: per_row ~only:compiles blocked);
       group "an emulated float8 program launches as recorded"
         (per_row ~only:d9 launches_as_tinygrad);

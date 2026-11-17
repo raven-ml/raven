@@ -776,40 +776,38 @@ let split ren sink (x, n, d) =
       let inside = O.(at < nth x 0) in
       let zero u = const ~dtype:(dtype u) (identity_element Op.Add (dtype u)) in
       let gate_index u =
-        match op u with
-        | Op.Index
-          when List.length (src u) = 2
-               && addrspace (nth u 0) = Some Dtype.Global
-               && Nodes.mem x (ranges (nth u 1)) ->
-            let i = nth u 1 in
-            let i = valid (get_idx i) O.(inside land get_valid i) in
-            Some (u, replace u ~src:[ nth u 0; i ])
-        | _ -> None
+        if List.length (src u) = 2 && Nodes.mem x (ranges (nth u 1)) then
+          let i = nth u 1 in
+          let i = valid (get_idx i) O.(inside land get_valid i) in
+          Some (replace u ~src:[ nth u 0; i ])
+        else None
       in
       let gate_reduce u =
-        match op u with
-        | Op.Reduce when caps ren u && List.memq x (srcs u) ->
-            (* A product's operands are gated, so that it stays a product
-               its sum fuses. *)
-            let t = nth u 0 in
-            let t =
-              let gated a = where inside a (zero a) in
-              if is Op.Mul t then replace t ~src:(List.map gated (src t))
-              else gated t
-            in
-            Some (u, replace u ~src:(t :: srcs u))
-        | _ -> None
+        if caps ren u && List.memq x (srcs u) then
+          (* A product's operands are gated, so that it stays a product
+             its sum fuses. *)
+          let t = nth u 0 in
+          let t =
+            let gated a = where inside a (zero a) in
+            if is Op.Mul t then replace t ~src:(List.map gated (src t))
+            else gated t
+          in
+          Some (replace u ~src:(t :: srcs u))
+        else None
       in
-      (* The loads of global memory first, then the sums over them: a sum's
-         replacement is built from its source as it stands, so gating both in
-         one pass would keep the sum's loads ungated, reading past the
-         range's end. A staged tile's shared and register buffers hold a
-         trip's tile, which a padded trip indexes inside them. *)
-      let gated f sink =
-        substitute ~calls:Skip ~pass:Once sink
-          (List.filter_map f (toposort ~calls:Skip sink))
-      in
-      gated gate_reduce (gated gate_index sink)
+      (* Every index over the range is gated, in any memory, and each sum
+         over it after its sources: rewritten bottom-up, a sum is built from
+         its gated loads, and a buffer that a trip writes and reads takes one
+         gated index for both. *)
+      graph_rewrite ~calls:Skip ~pass:Once ~ctx:() sink
+        (After_sources
+           (pm (fun () ->
+                [
+                  rule (Upat.op Op.Index ~name:"u") (fun m ->
+                      gate_index (m "u"));
+                  rule (Upat.op Op.Reduce ~name:"u") (fun m ->
+                      gate_reduce (m "u"));
+                ])))
   in
   substitute
     ~extra_pm:(Pattern_matcher.with_ctx Simplify.pm_flatten_range)

@@ -1427,7 +1427,9 @@ its lock and from samples the dashboard saw arrive.
   either raises from `Postrange.apply_opts`.
 - A float sum nested in blocks of 256 terms whose range no block divides,
   as a float32 contraction over 1571 terms on CUDA, no longer reads past
-  its buffers in the padded trips of its last block (`Codegen`'s blocks).
+  its buffers in the padded trips of its last block (`Codegen`'s blocks),
+  global, shared or register: a held tile of MXFP4 scales on CUDA and a
+  decoded panel on the host included.
 - A tensor core pads the extents its tile does not divide by default
   (`TC_OPT` defaults to 2), where the core's padding adds at most a fifth of
   the product's work, and a staged core pads N to its tile beside that
