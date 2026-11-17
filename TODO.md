@@ -5,6 +5,12 @@ Where it stands, with every measurement: doc/performance.md.
 
 ## tolk
 
+- Two ledger parts have no reason left and await a decision to keep or
+  revert the rule: D167's LLVM 20 gate (its only case, an attention
+  kernel converting int64 halves, is gone; fudge has no Clang 20 to
+  re-check) and D151's (b) part (rune negates and takes `abs` of float16
+  on the bits, `Lower_bits.negated`, so it writes no float negation of
+  halves) (_plans/tolk-campaign/speedaudit/report.md)
 - One binary per source (D485) shares nothing on a GPU between kernels over
   buffers of two sizes: cstyle names each parameter after its buffer's size
   (`data0_4096`), so the compiled texts differ. The compiled text should
