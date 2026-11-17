@@ -19,13 +19,14 @@
     dimensions. The kernel that folds a row's runs of keys holds one term a
     run: at most the row's tiles of keys, and the least power of two that
     reaches the target's [stream_threads] over a workgroup's threads, its
-    [local_workgroups] on the host. Without a
-    tensor core a tile's scores are computed once, then its weights multiply
-    the values a few columns at a time. On a tensor core the keys'
-    dimensions go in chunks of at most 128 and the values' columns in blocks
-    of at most 128, a block a workgroup, which computes the tile's scores for
-    itself; the weights stay in the registers of the product they chain
-    into, and so do the block's sums.
+    [local_workgroups] on the host. On a tensor core, and for float32 and
+    float64 on a GPU's FFMA micro-tile, the keys' dimensions go in chunks of
+    at most 128 and the values' columns in blocks of at most 128, a block a
+    workgroup, which computes the tile's scores for itself; the weights stay
+    in the registers of the product they chain into where the core chains
+    its accumulator, and otherwise go through workgroup memory, and the
+    block's sums stay in registers. Elsewhere a tile's scores are computed
+    once, then its weights multiply the values a few columns at a time.
 
     {b Numerics.} Scores, their maxima and sums, the weights and [lse] compute
     in the accumulator, in base 2: each score is multiplied by [log₂ e] and
