@@ -499,10 +499,7 @@ All notable changes to this project will be documented in this file.
   device that rounds division and the square root correctly and an fma
   once, where nothing computed is subnormal. `Nx.exp2` reduces its phase
   `y ln 2` from the bits of `2 ln 2 / pi`. `Nx.pow` at `z = 1 ± 0i` and
-  `w = NaN ± 0i` is `1 ± 0i`, as the float pow at `x = 1`; at an operand
-  with an infinite or NaN part, a result `+0 ± 0i` on an NVIDIA GPU, or of
-  a call whose constants are folded, may differ from the host's in its
-  zero's sign, which nx takes at some of these operands from a NaN.
+  `w = NaN ± 0i` is `1 ± 0i`, as the float pow at `x = 1`.
 - A compiled complex `Nx.log` and `Nx.log2` give eager's bits on the host
   and NVIDIA GPUs; `Nx.log2` multiplied by `1/ln 2` rounded and differed
   in the last bits. Elsewhere they hold nx's 4u, where rune stated 18u and
@@ -3198,6 +3195,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- Complex `Nx.pow` is `+0 + 0i` where `w log z` is `-inf` plus a NaN
+  imaginary part, as at `0 ** inf` and `(inf + NaN i) ** -2`, on every
+  target. Its zero imaginary part took that NaN's sign, which each target
+  sets its own way, so kernel libraries and targets disagreed on it.
 - `Nx_io.load_npy_rows path ~row ~rows` reads windows of an npy file's rows,
   `rows.(j)` from `row.(j)`, joined along axis 0 into memory of its own. It
   reads their byte ranges at once in one copy, never through a mapping, so a

@@ -306,7 +306,10 @@ NX_INLINE NX_CT NX_Z(nx_sqrt_raw)(NX_T x, NX_T y) {
 
 /* z^w = e^(w log z): w real or imaginary multiplies log z part by part, so
    that a zero part of w meets no infinite part of log z. 1 for w = 0, and
-   the part type's pow on the positive real axis. */
+   the part type's pow on the positive real axis. A NaN imaginary part of
+   w log z is NX_NAN, so that where the real part is -inf the result is
+   +0 + i0: nx_exp_raw copies y's sign into that zero, and each target signs
+   a NaN it computes its own way. */
 NX_INLINE NX_CT NX_Z(nx_pow_raw)(NX_CT z, NX_CT w) {
   if (w.re == 0 && w.im == 0) return NX_MK(NX_ONE, 0);
   if (z.im == 0 && w.im == 0 && z.re > 0)
@@ -323,6 +326,7 @@ NX_INLINE NX_CT NX_Z(nx_pow_raw)(NX_CT z, NX_CT w) {
     pr = NX_FMA(w.re, l.re, -(w.im * l.im));
     pi = NX_FMA(w.re, l.im, w.im * l.re);
   }
+  pi = pi != pi ? NX_NAN : pi;
   return NX_Z(nx_exp_raw)(pr, pi);
 }
 

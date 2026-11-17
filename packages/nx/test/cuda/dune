@@ -48,6 +48,19 @@
   rig
   windtrap))
 
+; nx.cuda's kinds as nx_cuda.mli states them: nx.cpu's bits at every float
+; and complex dtype, through CUDA.
+
+(executable
+ (name test_cuda_kinds)
+ (modules test_cuda_kinds)
+ (libraries
+  nx_array
+  nx_kernel_cases
+  nx_kernels_support
+  rig
+  windtrap))
+
 ; nx's operations on a set of nx.cuda's kernels.
 
 (executable
@@ -72,5 +85,6 @@
     (run %{exe:test_cuda.exe} -j 3))
    (run %{exe:test_cuda_linalg.exe} -j 3)
    (run %{exe:test_cuda_moves.exe} -j 3)
+   (run %{exe:test_cuda_kinds.exe} -j 3)
    (run %{exe:test_cuda_nx.exe})
    (run %{exe:test_cuda_place.exe}))))

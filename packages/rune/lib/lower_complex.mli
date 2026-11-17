@@ -61,13 +61,8 @@
 
     On a target that keeps subnormals, rounds division and the square root
     correctly and rounds a fused multiply-add once, they give the bits nx's
-    kernels give, a NaN part as nx's NaN rule allows: they are exact.
-    Exactness has one exception: at an operand with an infinite or NaN part,
-    where nx's [Pow] gives [+0 ± 0i], a kernel on an NVIDIA GPU, or one whose
-    constants tolk folds, may give the zero imaginary part the opposite sign
-    to nx's on the host: nx takes that sign, at some of these operands, from
-    a NaN it computes in [w log z], whose sign the target or the compiler
-    sets. On a target that rounds division and the square root correctly and
+    kernels give, a NaN part as nx's NaN rule allows: they are exact. On a
+    target that rounds division and the square root correctly and
     rounds a fused multiply-add once, each but [Mul], [Fdiv] and [Recip] is
     within the normwise bound nx states for it where no value computed for it
     is subnormal: [3u] for [Sqrt] and [Sign], [4u] for [Log], [Log2], [Exp]

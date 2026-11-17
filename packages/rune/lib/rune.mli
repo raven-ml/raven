@@ -1643,12 +1643,7 @@ val jit :
     circular and hyperbolic functions and their inverses compute nx's own
     sequence of operations for them, so they are exact on a device that keeps
     subnormals, rounds division and the square root correctly and rounds a
-    fused multiply-add once, as the host CPU and NVIDIA GPUs do. Exactness
-    has one exception: at an operand with an infinite or NaN part, where nx's
-    {!Nx.pow} gives [+0 ± 0i], a call on an NVIDIA GPU, or one whose constants
-    the compiler folds, may give the zero imaginary part the opposite sign to
-    eager on the host: nx takes that sign, at some of these operands, from a
-    NaN it computes, whose sign the device or the compiler sets. On a device
+    fused multiply-add once, as the host CPU and NVIDIA GPUs do. On a device
     that rounds division and the square root correctly and rounds a fused
     multiply-add once, each of them but {!Nx.mul}, {!Nx.div} and {!Nx.recip}
     holds the bound its [Nx] doc states where no value computed for it is

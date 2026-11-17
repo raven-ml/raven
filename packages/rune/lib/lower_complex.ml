@@ -278,7 +278,10 @@ let sqrt_raw x y =
 
 (* nx_pow_raw: z^w = e^(w log z). w real or imaginary multiplies log z part by
    part, so that a zero part of w meets no infinite part of log z; 1 for w = 0,
-   and the part type's pow on the positive real axis. *)
+   and the part type's pow on the positive real axis. A NaN imaginary part of
+   w log z is [nan], of clear sign, so that where the real part is -inf the
+   result is +0 + i0, whatever sign the target or the folder gives a NaN it
+   computes. *)
 let pow_raw (zr, zi) (wr, wi) =
   let lr, li = log_raw zr zi in
   let real = eq wi (zero wi) and imaginary = eq wr (zero wr) in
@@ -290,6 +293,7 @@ let pow_raw (zr, zi) (wr, wi) =
   let pi =
     first [ (real, wr *: li); (imaginary, wi *: lr) ] (mulacc wr li (wi *: lr))
   in
+  let pi = where (is_nan pi) (nan pi) pi in
   cases
     [
       (real &&: imaginary, (one zr, zero zr));

@@ -238,6 +238,56 @@ let test_spot_values () =
   equal (float 1e-15) (Float.log (2. +. Float.sqrt 3.)) a.re;
   equal (float 1e-15) (Float.pi /. 2.) a.im
 
+(* nx_kinds_complex.h's pow takes a NaN imaginary part of [w log z] as the
+   NaN of positive sign, so that where the real part is [-inf] the result is
+   [+0 + i0], whatever sign the target gives a NaN it computes. Each pair
+   reaches that case: an infinite part of [w] times a zero part of
+   [log z], infinite products of opposite signs summed, or a NaN part of
+   [z] beside an infinite one. nx.cuda's suite holds every kind to these
+   bits. *)
+let inf = Float.infinity
+let nan = Float.nan
+let neg_nan = Float.neg Float.nan
+
+let vanishing_powers =
+  [
+    ("(0 + 0i)^(inf + 0i)", (0., 0.), (inf, 0.));
+    ("(0 - 0i)^(inf + 0i)", (0., -0.), (inf, 0.));
+    ("(0.5 + 0i)^(inf + i)", (0.5, 0.), (inf, 1.));
+    ("(0 + i)^(0 + inf i)", (0., 1.), (0., inf));
+    ("(inf + i)^(-inf + 0i)", (inf, 1.), (Float.neg_infinity, 0.));
+    ("(0.5 + 0.5i)^(inf + inf i)", (0.5, 0.5), (inf, inf));
+    ("(inf + NaN i)^(-2 + 0i)", (inf, nan), (-2., 0.));
+    ("(inf - NaN i)^(-2 + 0i)", (inf, neg_nan), (-2., 0.));
+    ("(NaN + inf i)^(-1 + 0i)", (nan, inf), (-1., 0.));
+    ("(-NaN + inf i)^(-1 + 0i)", (neg_nan, inf), (-1., 0.));
+  ]
+
+(* One element of [dt] whose parts have the bits of [re] and [im] rounded to
+   the parts' format, a NaN's sign kept. *)
+let element (type s) (dt : (Complex.t, s) D.t) (re, im) :
+    (Complex.t, s, Nx.host) Nx.t =
+  match dt with
+  | D.Complex64 ->
+      let part v =
+        Nx.bitcast Nx.float32
+          (Nx.create Nx.int32 [| 1 |] [| Int32.bits_of_float v |])
+      in
+      Nx.complex dt ~re:(part re) ~im:(part im)
+  | D.Complex128 ->
+      let part v =
+        Nx.bitcast Nx.float64
+          (Nx.create Nx.int64 [| 1 |] [| Int64.bits_of_float v |])
+      in
+      Nx.complex dt ~re:(part re) ~im:(part im)
+
+(* The parts at complex64, then at complex128. *)
+let test_vanishing_power (_, z, w) =
+  let at (type s) (dt : (Complex.t, s) D.t) =
+    parts_of (Nx.pow (element dt z) (element dt w))
+  in
+  equal floats [ 0.; 0.; 0.; 0. ] (at D.Complex64 @ at D.Complex128)
+
 let () =
   exit
     (run "nx complex"
@@ -262,5 +312,8 @@ let () =
              prop "rsqrt is recip of sqrt" complexes law_rsqrt;
              test "abs declines, naming magnitude" test_abs_declines;
              test "exp, sqrt, log, rsqrt and asinh at C99's values" test_spot_values;
+             cases "pow is +0 + i0 where w log z is -inf + i NaN"
+               ~id:(fun (name, _, _) -> name)
+               vanishing_powers test_vanishing_power;
            ];
        ])

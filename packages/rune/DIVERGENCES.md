@@ -554,14 +554,6 @@ rounded sum; a stated bound) and its reason. A rounded sum's bound is
     (`float32`) or `2^28` (`float64`). `Atanh` is Kahan's, `x = 1` apart
     and `Re (1/z) + i pi/2` past `ATANH_BIG`. `Atan` turns `Atanh` by `i`,
     and `Asinh` and `Acosh` turn `Asin` and `Acos`.
-  - Exactness has one exception: at an operand with an infinite or NaN
-    part, where nx's complex `Pow` gives `+0 ± 0i`, a call on an NVIDIA GPU,
-    or one whose constants the compiler folds, may give the zero imaginary
-    part the opposite sign to eager on the host. At some of these operands
-    `w log z` has a NaN imaginary part and `nx_exp_raw`'s `copysign (0, y)`
-    copies its sign, which the target or the compiler sets: x86 keeps a
-    propagated NaN's sign and sets a generated one's, CUDA's `float32`
-    clears it, and so does a NaN the compiler generates when it folds.
   - A cast from a complex number reads its real part; one into it sets the
     imaginary part to `+0.`. A `complex64`'s bits are its real part's in the
     low word.
