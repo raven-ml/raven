@@ -1,4 +1,4 @@
-# tolk D60 D146 D170 D220 golden=5fed48522271a6dc48608be37ecf3610
+# tolk D60 D146 D170 D220 D350 golden=5fed48522271a6dc48608be37ecf3610
 case	shared	tensor	program	full	kernel_graph
 a sink of a load	True	True	True	True	True
 a sink with kernel info	True	True	True	True	True
@@ -205,7 +205,7 @@ a reshape by a float shape	None	None	False	False	None
 an expand	None	True	False	True	None
 a pad	None	True	False	True	None
 a pad by a shorter end	None	False	False	False	None
-a shrink	None	True	False	True	False
+a shrink	None	True	False	True	True
 a permute	None	True	False	True	None
 a flip	None	True	False	True	None
 a reduce	None	True	None	True	None
@@ -230,9 +230,9 @@ a program of a parameter	None	None	None	None	None
 a program of a global buffer after a store	None	None	None	None	None
 a sum under a constant	True	True	False	True	None
 an int32 constant	True	True	True	True	True
-a shrink of a parameter by cast constants	None	True	True	True	False
+a shrink of a parameter by cast constants	None	True	True	True	True
 a shrink of a bitcast parameter by cast constants	None	True	True	True	False
-a shrink of a parameter by a variable	None	True	False	True	False
+a shrink of a parameter by a variable	None	True	False	True	True
 a shrink of a load by cast constants	None	True	False	True	False
 an if on an index	None	None	True	True	None
 an if on a cast	None	None	True	True	None

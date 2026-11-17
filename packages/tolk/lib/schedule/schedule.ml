@@ -310,9 +310,12 @@ let copy_before_overwrites sink hazards =
    runs in one. *)
 let scheduled rk =
   (* A call's argument is the storage it reads, or a view of it that moves with
-     the loops the call runs in. *)
+     the loops the call runs in, or a run of it ({!Shape.run_of_storage}). *)
   let rec argument s =
-    if Op.Set.mem (op s) Op.Set.movement && moves_with_loop s then replace s ~src:(argument (nth s 0) :: List.tl (src s))
+    if
+      Op.Set.mem (op s) Op.Set.movement
+      && (moves_with_loop s || Shape.run_of_storage s)
+    then replace s ~src:(argument (nth s 0) :: List.tl (src s))
     else buf_uop (unwrap_src s)
   in
   let call k =

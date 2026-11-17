@@ -3212,6 +3212,18 @@ let rec view_start u =
    view when the view is contiguous, which scheduling decides
    ([Schedule.contiguous_mops_to_view]), and storage of its own otherwise: its
    phase is what the two agree on. *)
+(* A shrink of storage whose axes of one element come first, its one partial
+   axis next, and whole axes after. *)
+let run_of_storage s =
+  let rec run = function
+    | (e, _) :: rest when Sint.equal e (Ops.Int 1) -> run rest
+    | _ :: rest -> List.for_all (fun (e, f) -> Sint.equal e f) rest
+    | [] -> true
+  in
+  op s = Op.Shrink
+  && has_buffer_identity ~after_ok:true (nth s 0)
+  && run (List.combine (shape s) (shape (nth s 0)))
+
 let rec storage_phase u =
   let rec whole v =
     match (op v, src v) with

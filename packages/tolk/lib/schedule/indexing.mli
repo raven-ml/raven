@@ -87,9 +87,8 @@ val run_rangeify : Ops.t -> Ops.t
     closes it. A node is stored whole when it is a {!Op.Store}, an argument
     of a call compiled on its own (a kernel given as code, or a precompiled
     call) that the call reads and that is neither storage, a state of it, a
-    call's result, a load, a scalar of a precompiled call, nor a row of
-    storage that loops ({!Ops.Axis_type.Loop}) move along (an {!Op.Shrink}
-    whose elements on each trip are a run), or a gathered source that is not
+    call's result, a load, a scalar of a precompiled call, nor a run of
+    storage ({!Shape.run_of_storage}), or a gathered source that is not
     storage. A
     value stored into a destination it reads is not: within a kernel,
     {!Rangeify.get_kernel_graph} stages a value that

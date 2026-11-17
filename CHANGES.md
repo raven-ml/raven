@@ -1475,6 +1475,11 @@ its lock and from samples the dashboard saw arrive.
   "__global__" does not apply here`): on CUDA, `Rune.jit` failed to compile
   the gradient of a bfloat16 `Nx.attention` over values of no column whose
   keys it splits and combines.
+- A call compiled on its own, a kernel given as code or a precompiled call,
+  takes a run of storage as it is, through any movements, wherever it starts
+  on its parameter's boundary, where it took a run from the first element
+  and a loop's row: a call writing `a[4:8]` writes it in place where it was
+  refused, and a kernel reading it reads no copy.
 - A first call that compiles its kernels takes less: a kernel's devectorizing
   rewrite moves each lane's index through a movement once
   (`Codegen.full_rewrite_to_sink`, `Indexing.apply_movement_op ~memo`).

@@ -93,10 +93,11 @@ val prepare_rangeify : Ops.t -> Ops.t
           along;
         - {!Op.Detach} and {!Op.Contiguous_backward} are their source;
         - a call compiled on its own, a kernel given as code or a precompiled
-          call, takes as an argument that is a run of storage's elements, or
-          of a state of it, from the first, of the storage's type, the
-          storage or the state ({!contiguous_view}), which the call writes
-          through; storage or a state of it that the call only reads, outside
+          call, takes an argument that is a run of storage's elements, or of
+          a state of it, of the storage's type, through any movements
+          ({!contiguous_view}), as one shrink of the storage
+          ({!Shape.run_of_storage}), which the call reads and writes in
+          place; storage or a state of it that the call only reads, outside
           loops, that starts elsewhere than its parameter assumes
           ({!Shape.storage_phase}), and that the call does not write through
           another argument ({!Shape.reads_storage_written}), is stored into new

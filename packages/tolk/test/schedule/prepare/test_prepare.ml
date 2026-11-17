@@ -948,9 +948,9 @@ let broadcast_stores =
 (* Calls compiled on their own
 
    A kernel given as code, or a precompiled call, takes flat storage at each
-   argument: a run of storage from its first element is passed as the
-   storage, which the call then writes through. Each call copies four floats
-   from its second argument into its first. *)
+   argument: a run of storage is passed as it is, wherever it starts, and the
+   call then writes through it. Each call copies four floats from its second
+   argument into its first. *)
 
 let copy_kernel ps =
   let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
@@ -987,25 +987,24 @@ let calls_on_their_own =
   in
   group "prepare_rangeify › calls compiled on their own"
     [
-      test "a run of storage from its first element is passed as the storage"
-        (fun () ->
+      test "a run of storage is passed as it is, wherever it starts" (fun () ->
+          let later = Shape.shrink a [ Some (Ops.Int 4, Ops.Int 8) ] in
           each (fun ~msg make ->
               let passed v = first_args (prepare (make [ v; y ])) in
-              equal ~msg (list uop) [ a ] (passed first_four);
-              equal ~msg (list uop) [ a ] (passed first_row)));
-      test "a state of such a run is passed as the state of the storage"
-        (fun () ->
+              equal ~msg (list uop) [ first_four ] (passed first_four);
+              equal ~msg (list uop) [ first_row ] (passed first_row);
+              equal ~msg (list uop) [ later ] (passed later)));
+      test "a state of such a run is passed as the run of the state" (fun () ->
           let k = Ops.store first_four y in
           each (fun ~msg make ->
               let arg = Ops.after first_four [ k ] in
               match first_args (prepare (make [ arg; y ])) with
-              | [ u ] -> equal ~msg uop (Ops.after a [ k ]) u
+              | [ u ] ->
+                  equal ~msg uop
+                    (Shape.shrink (Ops.after a [ k ])
+                       [ Some (Ops.Int 0, Ops.Int 4) ])
+                    u
               | us -> failf "%s: %d calls" msg (List.length us)));
-      test "a run at another element is passed as it is" (fun () ->
-          let later = Shape.shrink a [ Some (Ops.Int 4, Ops.Int 8) ] in
-          each (fun ~msg make ->
-              equal ~msg (list uop) [ later ]
-                (first_args (prepare (make [ later; y ])))));
     ]
 
 let earliest =

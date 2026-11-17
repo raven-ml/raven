@@ -364,14 +364,29 @@ let ranges_from_zero u =
       equal ~msg:"range ids" (list int) (List.init (List.length ids) Fun.id) ids)
     (calls u)
 
-let arguments_are_storage u =
+(* Storage, or a run of it where the call is one compiled on its own: a
+   kernel of the program [name] gave as code, which takes the run where it
+   starts. A kernel the graph made indexes its storage itself. *)
+let arguments_are_storage name u =
+  let named c =
+    match Ops.arg (Ops.nth c 0) with Kernel k -> Some k.name | _ -> None
+  in
+  let given =
+    List.filter_map
+      (fun n -> if Ops.op n = Call then named n else None)
+      (Ops.toposort ~calls:Skip (program name))
+  in
   List.iter
     (fun c ->
+      let own =
+        match named c with Some k -> List.mem k given | None -> true
+      in
       List.iter
         (fun a ->
           match (Ops.op a, storage_of a) with
           | (Param | Buffer | Alloc | After), Some _ -> ()
           | _ when Ops.op a = Param -> ()
+          | _ when own && Shape.run_of_storage a -> ()
           | op, _ -> failf "a call's argument is a %a" Op.pp op)
         (List.tl (Ops.src c)))
     (calls u)
@@ -414,7 +429,7 @@ let structure =
            kernel_graph_law name "numbers each kernel's ranges from 0"
              ranges_from_zero;
            kernel_graph_law name "passes storage to its kernels"
-             arguments_are_storage;
+             (arguments_are_storage name);
            kernel_graph_law name "makes storage of committed types"
              strong_storage;
            kernel_graph_law name "reads each storage it makes after writing it"

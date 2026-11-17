@@ -585,11 +585,13 @@ let kernel_graph : t =
         (fun e ->
           let r = nth e 1 in
           (op r = Op.Range && loop r) || op r = Op.Const);
-      (* A call in a loop reads a view of storage that moves with the loop's
-         ranges, its bounds weak integer arithmetic on them. *)
+      (* A call reads a run of storage, or in a loop a view of storage that
+         moves with the loop's ranges, its bounds weak integer arithmetic on
+         them. *)
       check (pat [ Op.Shrink ] ~allow_any_len:true ~name:"v") "v" (fun v ->
-          let rs = Nodes.to_list (ranges v) in
-          rs <> [] && List.for_all loop rs);
+          match Nodes.to_list (ranges v) with
+          | [] -> Shape.run_of_storage v
+          | rs -> List.for_all loop rs);
       check
         (pat [ Op.Add; Op.Mul ] ~dtype:[ Dtype.Weak_int ] ~name:"x")
         "x"

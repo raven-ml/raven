@@ -1,4 +1,4 @@
-# tolk D163 golden=529a98aa36867ba2410d2052b5fd3dfb
+# tolk D163 D350 golden=529a98aa36867ba2410d2052b5fd3dfb
 program	kernels
 add	1
 sum	1
@@ -128,7 +128,7 @@ crossed_pairs	3
 sum_kept_broadcast	2
 mean_kept_broadcast	2
 unit_axis_staged	1
-custom_kernel_of_views	3
+custom_kernel_of_views	2
 custom_kernel_permuted	2
 custom_kernel_in_place	1
 precompiled_function	1

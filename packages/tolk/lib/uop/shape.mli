@@ -435,6 +435,15 @@ val param_like : ?name:string -> Ops.t -> int -> Ops.t
 
     Raises [Invalid_argument] if the phase does not fit [u]'s type. *)
 
+val run_of_storage : Ops.t -> bool
+(** [run_of_storage s] is whether [s] is a run of storage's elements, wherever
+    it starts: an {!Op.Shrink} of storage, or of a state of it, whose axes of
+    one element come first, its one partial axis next and whole axes after.
+    Where loops move it along, it is such a run on each trip. A call compiled
+    on its own takes such an argument as it is, written or read
+    ({!Indexing.run_rangeify}), and the kernel graph keeps it as the call's
+    argument. *)
+
 val storage_phase : Ops.t -> int * int
 (** [storage_phase u] is the alignment and phase [(align, phase)]
     ({!Ops.type-param_arg}) of the storage [u] views: its storage's, moved by
@@ -570,9 +579,9 @@ val custom_kernel : Ops.t list -> (Ops.t list -> Ops.t) -> Ops.t list
     ordered after it: an argument it only reads is itself. The placeholder of the [i]th
     argument takes slot [i]: a variable's is the variable, unbound, and any
     other's is a buffer of its shape ({!placeholder_like}). An argument the
-    kernel writes is storage, a run of its elements from the first, or a
-    row a loop moves along, on a 16-byte boundary as its placeholder
-    assumes, and so is one a loop moves along that it reads: scheduling
+    kernel writes is storage or a run of its elements, a row a loop moves
+    along among them, on a 16-byte boundary as its placeholder assumes, and
+    so is one a loop moves along that it reads: scheduling
     refuses any other, which the kernel would write a copy of or access off
     its boundary ({!Indexing.run_rangeify}). *)
 

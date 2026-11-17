@@ -88,44 +88,29 @@ let loops s =
     (fun r -> Axis_type.equal (axis_type r) Axis_type.Loop)
     (Nodes.to_list (ranges s))
 
-(* A shrink of storage that loops move along, a run of its elements on each
-   trip: its axes of one element come first, its one partial axis next, and
-   whole axes after. *)
-let loop_row s =
-  let run extents fulls =
-    let rec go = function
-      | (e, _) :: rest when Sint.equal e (Int 1) -> go rest
-      | _ :: rest -> List.for_all (fun (e, f) -> Sint.equal e f) rest
-      | [] -> true
-    in
-    go (List.combine extents fulls)
-  in
-  op s = Op.Shrink
-  && has_buffer_identity ~after_ok:true (nth s 0)
-  && loops s
-  && run (shape s) (shape (nth s 0))
+let rec strip_reshape s =
+  if op s = Op.Reshape then strip_reshape (nth s 0) else s
 
 let pp_start ppf (align, phase) =
   if phase = 0 then Format.fprintf ppf "on a %d-byte boundary" align
   else Format.fprintf ppf "%d bytes past a %d-byte boundary" phase align
 
-let rec strip_reshape s =
-  if op s = Op.Reshape then strip_reshape (nth s 0) else s
-
 (* Whether the argument [a] of the call [c] is one [c] takes as it is:
-   storage or a state of it, a row loops move along, a call's result or a load,
-   and a scalar of a precompiled call. *)
+   storage or a state of it, a run of storage ({!Shape.run_of_storage}), a
+   call's result or a load, and a scalar of a precompiled call. A run through
+   other movements is one shrink of the storage by then: preparing the graph
+   makes it one ({!Prepare.prepare_rangeify}). *)
 let passed c a =
   let precompiled = match arg c with Call i -> i.precompile | _ -> false in
   has_buffer_identity ~after_ok:true a
   || op a = Op.Load
   || op a = Op.Call
   || (precompiled && addrspace a = Some Dtype.Alu && shape a = [])
-  || loop_row a
+  || Shape.run_of_storage a
 
 (* A call compiled on its own, a kernel given as code or a precompiled call,
-   takes flat storage at each argument: storage or a state of it, a row loops
-   move along, a call's result or a load, and a scalar of a precompiled call are
+   takes flat storage at each argument: storage or a state of it, a run of
+   storage, a call's result or a load, and a scalar of a precompiled call are
    passed as they are, where they start as their parameter assumes
    ({!Ops.type-param_arg}). Any other argument is stored whole first, so the
    call reads a copy of it; one the call writes, or may write where its body
@@ -176,8 +161,8 @@ let realize_custom_kernel_srcs ctx c =
         off_start "the call cannot take it as it is, and would write a copy"
       else if written i then
         refuse i a
-          "which is neither storage, a run of its elements from the first, nor \
-           a row a loop moves along: the write would land in a copy"
+          "which is neither storage nor a run of its elements: the write \
+           would land in a copy"
       else if not (reads_storage s) then
         refuse i a "a constant: store it into storage first"
       else if loops s && passed then

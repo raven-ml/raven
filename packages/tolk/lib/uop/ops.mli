@@ -1118,9 +1118,10 @@ val call :
     [false]). The call has the type and the shape of [body]. Given one state
     of storage at an argument [body] writes ({!Shape.written_params}) and at
     another, it reads that state at the other as it was before the call, as
-    [memmove] reads its source. A call compiled on its own takes storage, a
-    run of its elements from the first, and a row a loop moves along as they
-    are, and reads a copy of most other arguments, made once before a loop
+    [memmove] reads its source. A call compiled on its own takes storage and a
+    run of its elements as they are, wherever the run starts, where that start
+    fits its parameter ({!Shape.fits_start}), a row a loop moves along among
+    them, and reads a copy of most other arguments, made once before a loop
     around the call; scheduling refuses one it would copy where the call writes
     it, and a constant ({!Indexing.run_rangeify}). In a loop, an argument the
     call only reads that reads a state the loop writes, or a later one, is

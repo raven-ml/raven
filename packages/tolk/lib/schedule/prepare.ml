@@ -624,17 +624,23 @@ let rec views_storage a =
   has_buffer_identity ~after_ok:true a
   || (Op.Set.mem (op a) viewing && views_storage (nth a 0))
 
-(* The storage whose elements, from the first, [a] is a run of, of [a]'s
-   type, if any: the call writes through it. *)
-let run_from_start a =
-  if has_buffer_identity ~after_ok:true a || not (views_storage a) then None
+(* [a] as one shrink of storage, or of a state of it, where its elements are
+   a run of the storage's, of its type ({!contiguous_view}), through any
+   movements: the form a call takes as it is ({!Shape.run_of_storage}). *)
+let as_run a =
+  if
+    has_buffer_identity ~after_ok:true a
+    || (op a = Op.Shrink && has_buffer_identity ~after_ok:true (nth a 0))
+    || not (views_storage a)
+  then a
   else
     match contiguous_view a with
-    | Some (b, Int 0)
+    | Some (b, first)
       when has_buffer_identity ~after_ok:true b
            && Dtype.equal (dtype b) (dtype a) ->
-        Some b
-    | _ -> None
+        let run = shrink (flatten b) [ Some (first, Sint.(first + numel a)) ] in
+        reshape run (shape a)
+    | _ -> a
 
 (* Whether [u] moves with a serial loop: a range it varies with is one. *)
 let moves_with_loop u =
@@ -669,8 +675,8 @@ let copy_off_start c i a =
   | _ -> a
 
 (* A call compiled on its own takes flat storage at each argument
-   ({!Indexing.run_rangeify}): a run of storage from its first element is passed
-   as the storage, and storage it only reads off its parameter's start is
+   ({!Indexing.run_rangeify}): a run of storage through movements is one
+   shrink of it, and storage it only reads off its parameter's start is
    copied. *)
 let call_storage c =
   if is_inline_call c || not (Op.Set.mem (op (body c)) compiled_on_its_own) then
@@ -680,7 +686,7 @@ let call_storage c =
     let args' =
       List.mapi
         (fun i a ->
-          copy_off_start c i (Option.value (run_from_start a) ~default:a))
+          copy_off_start c i (as_run a))
         args
     in
     if List.for_all2 ( == ) args args' then None

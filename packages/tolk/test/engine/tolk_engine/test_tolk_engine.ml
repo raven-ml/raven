@@ -5837,7 +5837,6 @@ let calls_of_views =
   in
   let unwritable =
     [
-      ("a run at an offset", at_offset);
       ("a run off 16 bytes", off_boundary);
       ("every other element", every_other);
       ("a transpose", transposed);
@@ -6124,6 +6123,86 @@ let calls_of_views =
             (fun (call, make) ->
               writes ~msg:(call ^ ", its first four") make first_four written;
               writes ~msg:(call ^ ", its first row") make first_row written)
+            copies);
+      test "a call writes through a run of storage wherever it starts"
+        (fun () ->
+          (* Twelve floats, written at the run of four from element [lo]:
+             the first, the middle and the last, each on a 16-byte
+             boundary. *)
+          List.iter
+            (fun (call, (make : copy)) ->
+              List.iter
+                (fun lo ->
+                  let a = Ops.new_buffer "CPU" 12 Float32
+                  and y = Ops.new_buffer "CPU" 4 Float32 in
+                  let run =
+                    Shape.shrink a [ Some (Ops.Int lo, Ops.Int (lo + 4)) ]
+                  in
+                  let sink = Ops.sink [ Ops.after a [ make [ run; y ] ] ] in
+                  let init = Array.init 12 Float.of_int in
+                  let expected =
+                    Array.mapi
+                      (fun i x ->
+                        if i >= lo && i < lo + 4 then y_values.(i - lo) else x)
+                      init
+                  in
+                  run_copy ~into:a ~init ~from:y y_values sink
+                  |> equal
+                       ~msg:(Printf.sprintf "%s, from element %d" call lo)
+                       values (floats expected))
+                [ 0; 4; 8 ])
+            copies);
+      test "a call writes through a run of a run of storage" (fun () ->
+          (* The elements 4 to 8 of the run from element 4 of twelve: the run
+             from element 8, a run's run. *)
+          List.iter
+            (fun (call, (make : copy)) ->
+              let a = Ops.new_buffer "CPU" 12 Float32
+              and y = Ops.new_buffer "CPU" 4 Float32 in
+              let outer = Shape.shrink a [ Some (Ops.Int 4, Ops.Int 12) ] in
+              let run = Shape.shrink outer [ Some (Ops.Int 4, Ops.Int 8) ] in
+              let sink = Ops.sink [ Ops.after a [ make [ run; y ] ] ] in
+              let init = Array.init 12 Float.of_int in
+              let expected =
+                Array.mapi
+                  (fun i x -> if i >= 8 then y_values.(i - 8) else x)
+                  init
+              in
+              run_copy ~into:a ~init ~from:y y_values sink
+              |> equal ~msg:call values (floats expected))
+            copies);
+      test "a call writes through a row of a reshaped run of storage"
+        (fun () ->
+          (* The first row of elements [lo] to [lo + 8] of twelve, seen as
+             two rows of four: a run of the storage from element [lo],
+             through a reshape, which no shrink of a shrink folds. *)
+          List.iter
+            (fun (call, (make : copy)) ->
+              List.iter
+                (fun lo ->
+                  let a = Ops.new_buffer "CPU" 12 Float32
+                  and y = Ops.new_buffer "CPU" 4 Float32 in
+                  let inner =
+                    Shape.shrink a [ Some (Ops.Int lo, Ops.Int (lo + 8)) ]
+                  in
+                  let run =
+                    Shape.shrink
+                      (Shape.reshape inner (dims [ 2; 4 ]))
+                      [ Some (Ops.Int 0, Ops.Int 1); None ]
+                  in
+                  let sink = Ops.sink [ Ops.after a [ make [ run; y ] ] ] in
+                  let init = Array.init 12 Float.of_int in
+                  let expected =
+                    Array.mapi
+                      (fun i x ->
+                        if i >= lo && i < lo + 4 then y_values.(i - lo) else x)
+                      init
+                  in
+                  run_copy ~into:a ~init ~from:y y_values sink
+                  |> equal
+                       ~msg:(Printf.sprintf "%s, from element %d" call lo)
+                       values (floats expected))
+                [ 0; 4 ])
             copies);
       test "a second kernel writes through the first's state of a run"
         (fun () ->

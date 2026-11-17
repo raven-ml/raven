@@ -1519,9 +1519,9 @@ renderer.
   end).
 - **tolk:** `Prepare.pm_loop_calls`, `Prepare.check_loop`,
   `Rangeify.loop_range`, `Rangeify.pm_no_views` (which keeps a view that moves
-  with a loop's range) and `Rangeify.split_store`; `Schedule.create_schedule`
-  (`loops`, `argument` and the kept end); `Spec.loop`, `Spec.loop_bound` and
-  `Spec.kernel_graph`.
+  with a loop's range, and a run of storage, D350) and
+  `Rangeify.split_store`; `Schedule.create_schedule` (`loops`, `argument` and
+  the kept end); `Spec.loop`, `Spec.loop_bound` and `Spec.kernel_graph`.
 - **Differs:** an end of a precompiled call over loop ranges
   (`Axis_type.Loop`), `AFTER(buf, END(CALL(fn, args), r))`, is an effect of
   the kernel graph and no kernel.
@@ -7175,22 +7175,28 @@ into D342, which holds its rule, its reason and its pins.
   lowered precompiled body); `uop/ops.py` (`UOp.custom_kernel`, whose results
   are each argument ordered after the call); `uop/ops.py`
   (`call_with_outputs`, which makes a precompiled call's arguments
-  contiguous).
+  contiguous); `schedule/rangeify.py` `pm_no_views` (strips every view of
+  storage); `uop/spec.py` `spec_kernel_graph` (no shrink).
 - **tolk:** `Prepare.prepare_rangeify` (`call_storage`, among its earliest
-  rewrites); `Indexing.realize_custom_kernel_srcs`, for a precompiled call's
-  lowered body too; `Spec.tensor`, which leaves a call's arguments to it.
+  rewrites, which makes a run through any movements one shrink);
+  `Indexing.realize_custom_kernel_srcs`, for a precompiled call's lowered
+  body too; `Shape.run_of_storage`; `Rangeify.pm_no_views` and
+  `Schedule.scheduled`, which keep a run as the call's argument;
+  `Spec.tensor`, which leaves a call's arguments to it, and
+  `Spec.kernel_graph`, which accepts the run, its bounds constants or
+  variables outside loops.
 - **Differs:** for a call compiled on its own, a kernel given as code or a
-  precompiled call, preparing a tensor graph passes an argument that is a
-  run of storage's elements, or of a state of it, from the first, of the
-  storage's type, as the storage or the state. Indexing then passes
-  storage, a state of it, a call's result, a load, a scalar of a
-  precompiled call and a shrink of storage that loops move along, whose
-  elements on each trip are a run, as they are, and stores any other
-  argument whole. It raises `Invalid_argument` where the call writes such an
-  argument (`Shape.written_params`, every argument where the body does not
-  show its writes), and where it reads a constant or another value that
-  loops move along. An argument passed as it is must start where its
-  parameter assumes (D54, `Shape.storage_phase`): one that does not is
+  precompiled call, indexing passes storage, a state of it, a call's
+  result, a load, a scalar of a precompiled call and a run of storage (a
+  shrink of storage, or of a state of it, whose elements are a run, on each
+  trip where loops move it along), wherever the run starts, as they are,
+  and stores any other argument whole. The run stays the call's argument
+  in the kernel graph and the schedule, and the engine places it at its
+  start. It raises `Invalid_argument` where the call
+  writes such an argument (`Shape.written_params`, every argument where the
+  body does not show its writes), and where it reads a constant or another
+  value that loops move along. An argument passed as it is must start where
+  its parameter assumes (D54, `Shape.storage_phase`): one that does not is
   stored whole, storage the call only reads outside loops by preparing the
   graph (`copy_off_start`), and it raises, naming both starts, where the
   call writes it, where loops move it, and where the parameter assumes a
@@ -7199,13 +7205,15 @@ into D342, which holds its rule, its reason and its pins.
   copies and refusals are reached; the kernel graph's still checks them.
   tinygrad stores any such argument whole and the kernel writes the copy: a
   kernel copying four floats into `a[2:6]`, `a[::2]`, the first four of
-  `a`'s transpose or a broadcast of `a[0:1]` leaves `a` and the call's result
-  all zeros. It passes a constant as it is, where the kernel expects
-  storage. tinygrad's precompiled functions copy every argument first
+  `a`'s transpose or a broadcast of `a[0:1]` leaves `a` and the call's
+  result all zeros, and a kernel reading `a[4:8]` reads a copy of it, one
+  more kernel (`custom_kernel_of_views`: 2 kernels, against tinygrad's 3).
+  It passes a constant as it is, where the kernel expects storage.
+  tinygrad's precompiled functions copy every argument first
   (`call_with_outputs`), so they write a copy; tolk's `Ops.call
   ~precompile:true` takes its arguments as a kernel's call does, writing
-  through storage, a run from the first element and a loop's row, which
-  rune's loops update in place.
+  through storage and a run of it, a loop's row among them, which rune's
+  loops update in place.
 - **Reason:** (e): the write landed in a copy, or at other elements, with
   no error, and a constant reached a kernel as no storage; with the
   specification checks off, a row off its parameter's boundary reached
@@ -7214,9 +7222,12 @@ into D342, which holds its rule, its reason and its pins.
   storage or a state of it, so no raven library makes a refused call.
 - **Pinned by:** the Prepare suite's `prepare_rangeify › calls compiled on
   their own`; the Tolk_engine suite's `calls of views` (by a kernel and a
-  precompiled call; the refusals of a loop's column and of rows off 16 bytes
-  with the specification checks on); the Spec suite's `tensor › arguments
-  against their parameters`.
+  precompiled call; `› a call writes through a run of storage wherever it
+  starts`; the refusals of a loop's column and of rows off 16 bytes with the
+  specification checks on); the Spec suite's `tensor › arguments against
+  their parameters` and its `verdicts` recording, a shrink of storage
+  in the kernel graph; the Rangeify suite's `custom_kernel_of_views`
+  recordings.
 
 ## D356. A run's binding of a name holds over the value a call binds it to
 

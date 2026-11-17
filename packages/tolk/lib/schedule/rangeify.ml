@@ -794,7 +794,8 @@ let loop_range r = Axis_type.equal (axis_type r) Axis_type.Loop
 
 (* The kernel graph is what runs: it has no views, and a value's storage is the
    storage. A view that moves with a range is what a call in that range reads on
-   each trip, and stays. *)
+   each trip, and stays, as does a run of storage ({!Shape.run_of_storage}),
+   which a call takes where it starts. *)
 let pm_no_views =
   Pattern_matcher.v
     (fun () -> [
@@ -811,7 +812,10 @@ let pm_no_views =
            ())
         (fun m ->
           let v = m "v" in
-          if List.exists loop_range (Nodes.to_list (ranges v)) then None
+          if
+            List.exists loop_range (Nodes.to_list (ranges v))
+            || Shape.run_of_storage v
+          then None
           else Some (nth v 0));
     ])
 
