@@ -4920,13 +4920,12 @@ val associative_scan :
 
     A key is the generator's whole state: every draw is a function of its
     key, dtype, shape and parameters, the same bits on every kernel library
-    and at every placement, but {!Rng.dirichlet}'s, whose row sum is a float
-    {!sum}. [Rune]'s Numerics section states what a program compiled by
-    [Rune.jit] draws. Fresh draws come from fresh keys, by {!Rng.split} or
-    {!Rng.fold_in}. A key is spent once it is used: its own draws, its
-    {!Rng.split} keys, its {!Rng.fold_in} keys and the keys of a scope
-    rooted at it all come from one stream of blocks under it, so using a key
-    two of these ways can repeat bits. A scope lets one key stand for a
+    and at every placement. [Rune]'s Numerics section states what a program
+    compiled by [Rune.jit] draws. Fresh draws come from fresh keys, by
+    {!Rng.split} or {!Rng.fold_in}. A key is spent once it is used: its own
+    draws, its {!Rng.split} keys, its {!Rng.fold_in} keys and the keys of a
+    scope rooted at it all come from one stream of blocks under it, so using
+    a key two of these ways can repeat bits. A scope lets one key stand for a
     region: a sampler called without [~key] takes the scope's next key. A
     scope may instead refuse such draws ({!Rng.refusing}), so that a region
     draws only from keys it is given.
@@ -5323,20 +5322,11 @@ module Rng : sig
       axis, one draw per row: the {!gamma} draws of [a] from the same key, each
       row divided by its sum. The quotient is formed from the draws'
       logarithms, so that a row of concentrations so small that its gamma draws
-      underflow keeps their ratios: each row sums to 1 and has an element of at
-      least [1 / n], [n] its length, up to rounding. It inherits {!gamma}'s
-      rounds.
-
-      A row's sum is a float {!sum}, which adds its terms in the kernel
-      library's order, and at a placement that cuts the last axis combines
-      the windows' partial sums ({!section-reductions}). So an element may
-      differ between kernel libraries, and from the draw whose rows lie
-      whole on a device. Before the rounding to the dtype, two such draws
-      are within [(2γ(n - 1) + 2u) m] of each other, [m] the larger of the
-      two, [u] the unit roundoff of the dtype the draw computes at
-      ([float32] for a narrower float) and [γ] as
-      {!Nx_kernel.section-bounds} defines it. Where [m] is subnormal they
-      may differ by that dtype's least subnormal more.
+      underflow keeps their ratios. Each element lies in [[0, 1]]. Before
+      the rounding to the dtype, a row of [n] elements sums to 1 within [4u]
+      and its greatest element is at least [(1 - 8u) / n]. Here [u] is
+      [2{^-53}] for [float64] and [2{^-24}] for every other dtype, all of
+      which draw at [float32]. It inherits {!gamma}'s rounds.
 
       Raises [Invalid_argument] if [a] has no axis, or an element of [a] is
       outside [(0, inf)]. *)
@@ -5450,6 +5440,22 @@ module Rng : sig
       Raises [Invalid_argument] inside {!refusing}, and inside a scope at a
       key that is traced or lies off the host, whose keys are not host
       keys. *)
+
+  (**/**)
+
+  val dirichlet_width :
+    int -> ?key:'d key -> (float, 's, 'd) t -> (float, 's, 'd) t
+  (** [dirichlet_width w a] is {!dirichlet} [a] with each row's sum added
+      from its terms' fixed-point digits of [w] bits, its {e limbs}. At
+      [w = 62 - ⌈log₂ n⌉], for rows of [n] elements, it is {!dirichlet} [a]
+      bit for bit. A narrower [w] takes more limbs, so that a test reaches
+      the limb counts of rows too long to draw. The draw keeps
+      {!dirichlet}'s bounds.
+
+      Raises [Invalid_argument] as {!dirichlet} does, and unless [9 <= w <=
+      62 - ⌈log₂ n⌉]. *)
+
+  (**/**)
 end
 
 (** {1:printing Printing} *)

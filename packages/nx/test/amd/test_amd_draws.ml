@@ -6,9 +6,8 @@
 (* nx on a set whose kernels are nx.amd's, on the machine's AMD GPU 0: every
    draw of Nx.Rng has the host's bits (Nx_rng_support). A draw is a program
    of kinds, which nx.amd computes by nx_kinds.h's functions, and of integer
-   arithmetic; a dirichlet row, whole on the one GPU, sums in lane order,
-   nx.cpu's (nx_amd.mli). Every test skips where rig sees no AMD GPU that
-   nx.amd computes on. *)
+   arithmetic, a dirichlet row's sum among it. Every test skips where rig
+   sees no AMD GPU that nx.amd computes on. *)
 
 open Windtrap
 
@@ -27,7 +26,7 @@ let draws s =
       | None -> skip ~reason:"no AMD GPU that nx.amd computes on" ()
       | Some set ->
           Nx_rng_support.(
-            law (placed set) ~rows:Bits
+            law (placed set)
               ~dtypes:[ Float16; Bfloat16; Float32; Float64 ]
               ~shapes:[ Zero; One; Block; Row ] s c))
 

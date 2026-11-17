@@ -136,6 +136,9 @@ val truncated_normal :
 val dirichlet :
   ?key:'d key -> (float, 's, 'd) Value.t -> (float, 's, 'd) Value.t
 
+val dirichlet_width :
+  int -> ?key:'d key -> (float, 's, 'd) Value.t -> (float, 's, 'd) Value.t
+
 val categorical :
   ?key:'d key ->
   ?axis:int ->

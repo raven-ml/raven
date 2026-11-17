@@ -1500,27 +1500,36 @@ let truncated_normal ?key lower upper =
 
 (* Reductions along a draw's last axis *)
 
-(* [x] reduced along the last axis of [shape], its program's output folded by
-   [monoid] in [c], kept as an axis of 1. *)
-let along_last ~by shape prog monoid c loads =
-  let r = Array.length shape in
+(* The reductions [rs] of [prog]'s outputs along the last axis of [shape],
+   over [loads] broadcast to it, in one loop. *)
+let reduce_last ~by shape prog rs loads =
   let loads =
     Iarray.init (Array.length loads) (fun i ->
         let (Value.Any x) = loads.(i) in
         Value.Plain (Eval.broadcast ~by shape x))
   in
+  Eval.eval ~by
+    (Value.Reduce
+       {
+         layout = Nx_array.Layout.contiguous (Iarray.of_array shape);
+         axes = [| Array.length shape - 1 |];
+         prog;
+         reductions = rs;
+         loads;
+       })
+
+(* [shape] with its last axis kept as an axis of 1. *)
+let kept shape =
+  let r = Array.length shape in
+  Array.mapi (fun a e -> if a = r - 1 then 1 else e) shape
+
+(* [x] reduced along the last axis of [shape], its program's output folded by
+   [monoid] in [c], kept as an axis of 1. *)
+let along_last ~by shape prog monoid c loads =
   let x, () =
-    Eval.eval ~by
-      (Value.Reduce
-         {
-           layout = Nx_array.Layout.contiguous (Iarray.of_array shape);
-           axes = [| r - 1 |];
-           prog;
-           reductions = Value.[ Monoid (monoid, 0, c) ];
-           loads;
-         })
+    reduce_last ~by shape prog Value.[ Monoid (monoid, 0, c) ] loads
   in
-  Eval.reshape ~by (Array.mapi (fun a e -> if a = r - 1 then 1 else e) shape) x
+  Eval.reshape ~by (kept shape) x
 
 (* Dirichlet *)
 
@@ -1528,13 +1537,108 @@ let along_last ~by shape prog monoid c loads =
    q_j / a_j)] ({!log_gamma}), and [q_j / a_j] overflows to [-inf] at a tiny
    concentration, so the logarithms are scaled by [s], the least of 1 and the
    row's concentrations: [z_j = s la_j + (s / a_j) q_j] is finite, since [s /
-   a_j <= 1], and [log G_j = z_j / s]. The draw is then [e_j / Σ e] for [e_j =
-   exp ((z_j - max z) / s)], each at most 1 and one of them 1, so that no row is
-   NaN or all zero. *)
+   a_j <= 1], and [log G_j = z_j / s]. The draw is then [e_j / d] for [e_j =
+   exp ((z_j - max z) / s)], one of them exactly 1 and each at most [1 + 4u],
+   [u] the carrier's unit roundoff (Exp's two ulps), and [d] their row's sum,
+   so that no row is NaN or all zero.
+
+   [d] is added in integers, which no order of addition changes, so that it
+   has one value on every kernel library, at every placement and compiled. For
+   a row of [n], each [e_j] is cut into [L] limbs of [w = 62 - ⌈log₂ n⌉] bits,
+   limb [k] the [k]th [w]-bit digit of [e_j] as a fixed-point number, the first
+   holding its integer part too: [x = e_j 2^w], [h = floor x], then [x - h]
+   scaled again, each exact in the carrier. Each limb is summed over the row as
+   uint64. The first sum is below [n 2^(w + 1) <= 2^63], since [e_j < 2], and
+   the others below [n 2^w <= 2^62], so none wraps, up to the most elements
+   an array holds, [2^53], where [w] is 9. The sums are carried from the last,
+   so that each but the first is below [2^w], each carried sum being at most
+   the first's bound or [n 2^w], then cast to the carrier and added from the
+   last, each scaled by [2^-w]: [d0], a function of the integer sums alone.
+
+   [L = ⌈(p + ⌈log₂ n⌉ + 2) / w⌉], [p] the carrier's precision, so that the
+   digits below the last limb weigh less than [n 2^-Lw <= u / 4] of the
+   row's sum: one limb for float32 rows up to 2^18 elements and float64 ones
+   up to 8, two for float32 rows up to 2^32 and float64 ones up to 2^23. The
+   row's greatest [e_j] is 1, so the sum of the cut terms [R] is at least 1
+   and within [u / 4] of the row's sum [E]. The carried tail below the first
+   limb is below 1 in its units, so its [L - 1] casts and additions move [d0]
+   by less than [((1 + u)^(L-1) - 1) 2^-w] of [R], and [d0 = R (1 + θ)] with
+   [|θ| <= 2u] plus that and [u²]. Each quotient rounds once, by [u] where
+   normal and half the least subnormal elsewhere, so a row's elements sum to
+   1 within [(1 + u/4)(1 + u) / (1 - θ) - 1]. That is at most [3.28u] at
+   every [n] up to [2^53] elements and every width from 9 to the row's own,
+   a finite set of cases evaluated in exact rationals; [4u] is the bound
+   stated. The greatest element, [1 / d0] rounded, is at least
+   [(1 - 8u) / n], since [d0 <= E (1 + θ)] and [E <= n (1 + 4u)].
+
+   The [e_j] are computed once, into an array the sums and the quotients
+   read. Recomputed in each, eager nx.cuda took 7% to 21% longer on one row
+   of 65,536 with two limbs; compiled, the two are one program, which
+   computes [e_j] in each kernel. *)
 let dirichlet_programs = programs ()
 
-let dirichlet ?key a =
-  let by = "Nx.Rng.dirichlet" in
+(* The width rows of [2^53] elements take, the most an array holds, and so
+   the least any row takes. *)
+let least_width = 9
+
+(* [⌈log₂ n⌉] for [n >= 1], the bit length of [n - 1]. *)
+let log2_ceil n =
+  let rec bits b v = if v = 0 then b else bits (b + 1) (v lsr 1) in
+  bits 0 (n - 1)
+
+type 'd u64 = (int64, D.uint64_elt, 'd) Value.t
+
+(* Reductions of a program's outputs [k] to [l - 1] summed as uint64 and of
+   output [l] summed in [c], with their results listed. *)
+type ('d, 's) sums =
+  | Sums :
+      ('d, 'r) Value.reductions * ('r -> 'd u64 list * (float, 's, 'd) Value.t)
+      -> ('d, 's) sums
+
+let rec sums : type d s. int -> int -> (float, s) D.t -> (d, s) sums =
+ fun k l c ->
+  if k = l then
+    Sums (Value.[ Monoid (Nx_kernel.Sum, l, c) ], fun (fs, ()) -> ([], fs))
+  else
+    let (Sums (rs, read)) = sums (k + 1) l c in
+    let read (h, r) =
+      let hs, fs = read r in
+      (h :: hs, fs)
+    in
+    Sums (Value.(Monoid (Nx_kernel.Sum, k, D.Uint64) :: rs), read)
+
+(* [e]'s first [l] limbs of [w] bits, as uint64. *)
+let limbs ~lit w l e =
+  let up = lit (Float.ldexp 1. w) in
+  let rec go k x =
+    if k = l then []
+    else
+      let h = E.floor x in
+      E.cast D.Uint64 h :: go (k + 1) E.((x - h) * up)
+  in
+  go 0 E.(e * up)
+
+(* [d0] in [c] from the sums of the first limb, [first], and of the others,
+   [rest]: carried from the last, then added from the last. *)
+let divisor ~lit c w first rest =
+  let base = u64 (Int64.shift_left 1L w) in
+  let low = u64 (Int64.pred (Int64.shift_left 1L w)) in
+  let down = lit (Float.ldexp 1. (-w)) in
+  let plus q s = match q with None -> s | Some q -> E.(s + q) in
+  (* [s] a limb's sum, [q] the carry into it, [a] the limbs below it in its
+     units. *)
+  let step s (q, a) =
+    let s = plus q s in
+    let digit = E.(cast c (s land low)) in
+    let a = match a with None -> digit | Some a -> E.(digit + (a * down)) in
+    (Some E.(s / base), Some a)
+  in
+  let q, a = List.fold_right step rest (None, None) in
+  let first = E.cast c (plus q first) in
+  let d = match a with None -> first | Some a -> E.(first + (a * down)) in
+  E.(d * down)
+
+let dirichlet_by ~by ~width ?key a =
   let a = Donate.read ~by a in
   let s = Prim.shape a in
   let r = Array.length s in
@@ -1544,6 +1648,12 @@ let dirichlet ?key a =
   let dt = Prim.dtype a in
   let (Carrier { c; p; lit }) = carrier dt in
   let shape = drawn_shape ~by ~params:true (source_batch key) s in
+  let g = log2_ceil (max 1 shape.(Array.length shape - 1)) in
+  let w = Option.value width ~default:(62 - g) in
+  if w < least_width || w > 62 - g then
+    invalid_argf "%s: limbs of %d bits, outside [%d, %d] for rows of %d" by w
+      least_width (62 - g) shape.(Array.length shape - 1);
+  let l = (p + g + 2 + w - 1) / w in
   if s.(r - 1) = 0 then
     (* No element: zeros where [a] lies, whole on each of its devices. *)
     let at = Devices.uncut (Prim.placement a) in
@@ -1566,23 +1676,50 @@ let dirichlet ?key a =
     let top =
       along_last ~by shape (Prim.identity c) Nx_kernel.Max c [| Value.Any z |]
     in
-    let ins : D.any iarray = [| D.Any c; D.Any c; D.Any c |] in
-    let e = E.(exp ((input 0 c - input 1 c) / input 2 c)) in
-    let loads = [| Value.Any z; Value.Any top; Value.Any least |] in
-    let sum =
-      along_last ~by shape
-        (P.of_exprs ~ins [| E.any e |])
-        Nx_kernel.Sum c loads
+    let terms =
+      let e = E.(exp ((input 0 c - input 1 c) / input 2 c)) in
+      map dispatched ~by shape
+        (P.of_exprs ~ins:[| D.Any c; D.Any c; D.Any c |] [| E.any e |])
+        c
+        (Array.map
+           (fun (Value.Any x) -> Value.Any (Eval.broadcast ~by shape x))
+           [| Value.Any z; Value.Any top; Value.Any least |])
     in
-    let out = rounded dt E.(e / input 3 c) in
+    let e = E.input 0 c in
+    let (Sums (rs, read)) = sums 0 l c in
+    let outs = List.map E.any (limbs ~lit w l e) @ [ E.any e ] in
+    let prog = P.of_exprs ~ins:[| D.Any c |] (Iarray.of_list outs) in
+    let hs, fs = read (reduce_last ~by shape prog rs [| Value.Any terms |]) in
+    let d0 =
+      divisor ~lit c w (E.input 1 D.Uint64)
+        (List.init (l - 1) (fun k -> E.input (2 + k) D.Uint64))
+    in
+    (* Integers carry no derivative. [zero_of fs], [fs] the row's float sum
+       of the [e_j] from the same loop, is [+0], since [fs] is finite; a
+       differentiation that tracks [fs] gives it the float sum's tangent,
+       which so becomes the divisor's. *)
+    let float_sum = 1 + l in
+    let d = E.(d0 + Special.zero_of (input float_sum c)) in
+    let out = rounded dt E.(e / d) in
+    let row x =
+      Value.Any (Eval.broadcast ~by shape (Eval.reshape ~by (kept shape) x))
+    in
     let loads =
-      Array.map
-        (fun (Value.Any x) -> Value.Any (Eval.broadcast ~by shape x))
-        (Array.append loads [| Value.Any sum |])
+      Array.concat
+        [ [| Value.Any terms |]; Array.of_list (List.map row hs); [| row fs |] ]
+    in
+    let ins =
+      Array.concat
+        [ [| D.Any c |]; Array.make l (D.Any D.Uint64); [| D.Any c |] ]
     in
     map dispatched ~by shape
-      (P.of_exprs ~ins:[| D.Any c; D.Any c; D.Any c; D.Any c |] [| E.any out |])
+      (P.of_exprs ~ins:(Iarray.of_array ins) [| E.any out |])
       dt loads
+
+let dirichlet ?key a = dirichlet_by ~by:"Nx.Rng.dirichlet" ~width:None ?key a
+
+let dirichlet_width w ?key a =
+  dirichlet_by ~by:"Nx.Rng.dirichlet_width" ~width:(Some w) ?key a
 
 (* Categorical *)
 

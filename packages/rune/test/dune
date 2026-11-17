@@ -207,12 +207,13 @@
  (modules test_composed)
  (libraries nx rune rune_support windtrap))
 
-; Nx.Rng's draws compiled by Rune.jit on the host, against nx's eager draws.
+; Nx.Rng's draws compiled by Rune.jit on the host, whole and over software
+; devices, against nx's eager draws.
 
 (test
  (name test_draws)
  (modules test_draws)
- (libraries nx nx_rng_support rune rune_support windtrap))
+ (libraries nx nx_rng_support nx_support rune rune_support windtrap))
 
 ; A program compiled first in its process runs in a process of its own: the
 ; storage its lowering makes is numbered from the process's start.

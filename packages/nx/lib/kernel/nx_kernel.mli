@@ -191,9 +191,10 @@ type reduction =
           sum of [-0] terms is [+0]. [Monoid Prod] multiplies them from the
           first, never by [1], which would change a complex term's signed
           zeros or make NaN parts from its infinite ones, and an empty
-          product is [1]. Integers wrap. [Monoid Max] and [Monoid Min] are
-          {!Prog.Maximum} and {!Prog.Minimum} of the terms, which put [-0]
-          below [+0] and are any and all on booleans. *)
+          product is [1]. Integers wrap, so an integer sum or product has
+          the same bits in any order of its terms. [Monoid Max] and
+          [Monoid Min] are {!Prog.Maximum} and {!Prog.Minimum} of the terms,
+          which put [-0] below [+0] and are any and all on booleans. *)
   | Logsumexp
       (** [Logsumexp] is [m + log Σ exp (x - m)], [m] the terms' maximum. It
           is [-∞] for no term or terms all [-∞], [+∞] where a term is [+∞]

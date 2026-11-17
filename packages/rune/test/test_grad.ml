@@ -1071,6 +1071,194 @@ let test_draws () =
     (Nx.to_array (snd (Rune.jvp' from (Nx.copy bound) t)))
     (Nx.to_array (snd (Rune.jvp' from bound t)))
 
+(* Dirichlet draws
+
+   A dirichlet draw is its gamma draws' row ratios, [x_j = G_j / Σ G], from
+   the same key, whose rounds it shares, so in its concentrations its tangent
+   is [x_j (δ_j - Σ_k x_k δ_k)], [δ_j = G'_j / G_j] the logarithmic tangent of
+   gamma draw [j], and a row's tangents sum to zero. The reference is formed
+   in float64 from the gamma draws and their tangents at the draw's dtype.
+
+   The tolerances, [u] the dtype's unit roundoff and [γ(k) = k u / (1 - k
+   u)] as rune.mli's Reductions section defines it. The draw computes [x'_j
+   = e'_j / d - x_j fs' / d], [e'_j = x_j d (δ_j - δ_t)] the tangent of term
+   [j], [t] the row's greatest, and [fs' = Σ e'_k] a float sum, which errs by
+   up to [γ(n - 1) Σ |e'_k|] in any order of addition, so by
+   [γ(n - 1) x_j S], [S = Σ_k x_k |δ_k - δ_t|], in [x'_j]. Each [e'_j] and
+   [δ_j] also rounds its own terms, of the scale [Q = max_k |δ_k| + |s'/s|
+   max_k |log G_k|], the logarithms' scale [s] the least of 1 and the row's
+   concentrations and [s'] its tangent. [32u Q x_j] is a chosen allowance
+   for those roundings, which [Q] need not bound term by term: measured over
+   300 cases, an element erred by at most [1.8u max_k |δ_k|]. So element
+   [j] is held within [x_j (γ(n - 1) S + 32u Q)] and a row's sum of
+   tangents within the sum of these.
+
+   The gradient pairs with a tangent as the cotangent [w] pairs with the
+   tangent's image. The forward side errs by [Σ_j |w_j| x_j (γ(n - 1) S +
+   32u Q)]. The reverse pass adds float sums over the row: [W = Σ_k w_k
+   x_k], whose error moves the pairing by [γ(n - 1) S Σ_k |w_k| x_k]; and
+   the cotangents of the row's greatest [z_t], of [s] through the quotient
+   [(z_j - z_t) / s] and of [s] through [z_j = s log G_j], sums of terms
+   [x_j (w_j - W)] times [1], [log G_j - log G_t] and [log G_j], over [s],
+   which cancel exactly. They err by [γ(n - 1)] of their terms' magnitude
+   and meet the tangents [z'_t = s' log G_t + s δ_t] and [s'], so by
+   [γ(n - 1) Σ_j x_j |w_j - W| (|δ_t| + |s'/s| (|log G_t| + |log G_j -
+   log G_t| + |log G_j|))] at most, below [8 γ(n - 1) Q Σ_j |w_j| x_j]
+   since [Σ_j x_j |w_j - W| <= 2 Σ_j x_j |w_j|]. With the reverse pass's
+   own roundings as the forward one's, the pairings agree within
+   [2 Σ_j |w_j| x_j (γ(n - 1) (S + 4Q) + 32u Q)]. *)
+type dirichlet_case = { dkey : int; wide : bool; len : int; seed : int }
+
+let dirichlet_gen =
+  let open Gen in
+  let pp ppf c =
+    Format.fprintf ppf "key %d, %s, rows of %d, seed %d" c.dkey
+      (if c.wide then "float64" else "float32")
+      c.len c.seed
+  in
+  with_pp pp
+    (let+ dkey = int
+     and+ wide = bool
+     and+ len = of_list [ 1; 2; 8; 1025 ]
+     and+ seed = int in
+     { dkey; wide; len; seed })
+
+let dirichlet_law_at (type s) (dt : (float, s) Nx.dtype) u c =
+  let key = Nx.Rng.key c.dkey in
+  let st = Random.State.make [| c.seed |] in
+  let rows = 3 in
+  let size = rows * c.len in
+  let s = [| rows; c.len |] in
+  let a =
+    Nx.create dt s
+      (Array.init size (fun _ -> 0.5 +. Random.State.float st 19.5))
+  in
+  let t = Nx.create dt s (spread (Random.State.float st 6.) size) in
+  let w = Nx.create dt s (spread (Random.State.float st 6.) size) in
+  let draw a = Nx.Rng.dirichlet ~key a in
+  let wide x = Nx.to_array (Nx.cast f64 x) in
+  let bits x = Array.map Int64.bits_of_float x in
+  let x, dx = Rune.jvp' draw a t in
+  equal ~msg:"primal" (array int64) (bits (wide (draw a))) (bits (wide x));
+  let g, dg = Rune.jvp' (fun a -> Nx.Rng.gamma ~key a) a t in
+  let x = wide x and dx = wide dx and g = wide g and dg = wide dg in
+  let delta = Array.mapi (fun i gi -> dg.(i) /. gi) g in
+  let row r = Array.init c.len (fun j -> (r * c.len) + j) in
+  let fold r f = Array.fold_left (fun m i -> f m i) 0. (row r) in
+  let mean r = fold r (fun m i -> m +. (x.(i) *. delta.(i))) in
+  let top r =
+    Array.fold_left (fun t i -> if x.(i) > x.(t) then i else t) (r * c.len)
+      (row r)
+  in
+  let as_ = wide a and ts = wide t in
+  (* [s'/s] for row [r]: [s] is its least concentration where that is below
+     1, which every row here has unless all are, else 1. *)
+  let scale_tangent r =
+    let m =
+      Array.fold_left
+        (fun m i -> if as_.(i) < as_.(m) then i else m)
+        (r * c.len) (row r)
+    in
+    if as_.(m) < 1. then ts.(m) /. as_.(m) else 0.
+  in
+  let gamma_ k = Float.of_int k *. u /. (1. -. (Float.of_int k *. u)) in
+  (* [(S, Q)] for row [r]. *)
+  let per r =
+    let dt = delta.(top r) in
+    let s = fold r (fun m i -> m +. (x.(i) *. Float.abs (delta.(i) -. dt))) in
+    let q =
+      fold r (fun m i -> Float.max m (Float.abs delta.(i)))
+      +. Float.abs (scale_tangent r)
+         *. fold r (fun m i -> Float.max m (Float.abs (log g.(i))))
+    in
+    (s, q)
+  in
+  let sq = Array.init rows per in
+  let g = gamma_ (c.len - 1) in
+  (* [γ(n - 1) S + 32u Q] for row [r], an element's tangent's allowance. *)
+  let per = Array.map (fun (s, q) -> (g *. s) +. (32. *. u *. q)) sq in
+  (* [γ(n - 1) (S + 4Q) + 32u Q] for row [r], the pairing's. *)
+  let paired =
+    Array.map (fun (s, q) -> (g *. (s +. (4. *. q))) +. (32. *. u *. q)) sq
+  in
+  let within ~msg y =
+    for r = 0 to rows - 1 do
+      let p = per.(r) in
+      Array.iter
+        (fun i ->
+          let want = x.(i) *. (delta.(i) -. mean r) in
+          at_most ~msg float_exact ~than:(x.(i) *. p)
+            (Float.abs (y.(i) -. want)))
+        (row r);
+      at_most
+        ~msg:(msg ^ ": a row's tangents' sum")
+        float_exact
+        ~than:(fold r (fun m i -> m +. (x.(i) *. p)))
+        (Float.abs (fold r (fun m i -> m +. y.(i))))
+    done
+  in
+  within ~msg:"eager" dx;
+  let compiled =
+    Rune.jit
+      T.(tensor @-> returns (pair tensor tensor))
+      (fun a -> Rune.jvp' draw a t)
+  in
+  let cx, cdx = compiled a in
+  equal ~msg:"compiled primal" (array int64) (bits x) (bits (wide cx));
+  within ~msg:"compiled" (wide cdx);
+  let loss a = Nx.sum (Nx.mul w (draw a)) in
+  let ws = wide w in
+  let allowed =
+    2.
+    *. Array.fold_left ( +. ) 0.
+         (Array.init size (fun i ->
+              Float.abs ws.(i) *. x.(i) *. paired.(i / c.len)))
+  in
+  let pairs ~msg gr =
+    let lhs = ref 0. and rhs = ref 0. in
+    Array.iteri
+      (fun i gi ->
+        lhs := !lhs +. (gi *. ts.(i));
+        rhs := !rhs +. (ws.(i) *. dx.(i)))
+      gr;
+    at_most ~msg float_exact ~than:allowed (Float.abs (!lhs -. !rhs))
+  in
+  pairs ~msg:"gradient" (wide (Rune.grad' loss a));
+  pairs ~msg:"compiled gradient"
+    (wide (Rune.jit T.(tensor @-> returns tensor) (Rune.grad' loss) a))
+
+let dirichlet_law c =
+  cover "float32" (not c.wide);
+  cover "float64" c.wide;
+  cover "a row of one" (c.len = 1);
+  cover "a row of two" (c.len = 2);
+  cover "a row past a tile of 1024 terms" (c.len > 1024);
+  if c.wide then dirichlet_law_at f64 0x1p-53 c
+  else dirichlet_law_at Nx.float32 0x1p-24 c
+
+(* At fixed keys and concentrations, away from the edges where a gamma draw
+   takes another round, the gradient of a weighted sum of a draw agrees with
+   central differences, eager and compiled. *)
+let test_dirichlet_differences () =
+  List.iter
+    (fun (k, conc) ->
+      let key = Nx.Rng.key k and n = Array.length conc in
+      let a = Nx.create f64 [| 1; n |] conc in
+      let w = Nx.create f64 [| 1; n |] (spread 0.4 n) in
+      let loss a = Nx.sum (Nx.mul w (Nx.Rng.dirichlet ~key a)) in
+      let msg = Printf.sprintf "key %d" k in
+      equal ~msg (result unit string) (Ok ())
+        (Rune.check_grads T.tensor loss a);
+      equal ~msg:(msg ^ ", compiled") (result unit string) (Ok ())
+        (Rune.check_grads T.tensor
+           (Rune.jit T.(tensor @-> returns tensor) loss)
+           a))
+    [
+      (3, [| 0.7; 2.; 5.; 1.3 |]);
+      (11, [| 4.; 0.9; 12.; 3.5; 1.1; 7.; 2.2; 6. |]);
+      (29, [| 1.5; 9. |]);
+    ]
+
 (* Interface *)
 
 (* An integer parameter's gradient, and an unused one's, are zero. *)
@@ -1871,6 +2059,10 @@ let () =
              prop "reads of regions sum each element's contributions"
                reads_gen regions_law;
              test "a truncated normal's bounds" test_draws;
+             prop "a dirichlet draw's tangents and gradient in its \
+                   concentrations" dirichlet_gen dirichlet_law;
+             test "a dirichlet draw's gradient against differences"
+               test_dirichlet_differences;
              test "the logarithms' gradients below zero too" test_logarithms;
            ];
          group "interface"

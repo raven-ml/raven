@@ -47,8 +47,8 @@ at its own width.
   raises, never other elements.
 - A new operation's result placement and its routing error follow
   `nx.mli`'s Routing section. A random draw has the same bits on every
-  kernel library and at every placement, but `Rng.dirichlet`'s, whose row
-  sum is a float sum.
+  kernel library and at every placement. A float fold in a sampler breaks
+  this.
 
 ## Skip
 

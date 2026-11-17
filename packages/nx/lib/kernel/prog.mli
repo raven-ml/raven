@@ -148,9 +148,10 @@ type op1 =
           with NaNs, which follows the NaN rule
           ({!Nx_array.Dtype.section-stores}): its sign and payload are
           unspecified, and it is signalling only where the operand is. An
-          integer stores as its exact value rounded once to a float format,
-          modulo the width to an integer dtype, and as [x <> 0] to a
-          boolean. A boolean stores as [0] or [1].
+          integer stores into a float format as its exact value, rounded once
+          and ties to even as {!Nx_array.Dtype.section-stores} rounds a
+          finite float, into an integer dtype modulo the width, and as
+          [x <> 0] into a boolean. A boolean stores as [0] or [1].
           Into a complex dtype, these rules give the real part and the imaginary
           part is [0.]. A complex number stores part by part into a complex
           dtype, as [true] into a boolean if either part is non-zero, and by its

@@ -6,7 +6,8 @@
 (* Reductions and scans through every kernel library the host runs, with
    operands and results on its device: a float or complex sum or product,
    reduced, scanned or from a carry, within its bound of the exact one, a
-   NaN or an infinity where its terms make one; the special values of
+   NaN or an infinity where its terms make one; an integer sum or product
+   its terms' wrapped in any order; the special values of
    Logsumexp, Moments and Arg, reduced and scanned; a scan of a prefix the
    prefix of the scan; an exact scan from a carry the scan it continues;
    and nothing written where declined. *)
@@ -420,6 +421,44 @@ let law_bound (b : Support.backend) (c : case) =
           | _ -> ())
         vs;
       equal (list string) [] (List.rev !bad)
+
+(* Integer sums and products, reduced and scanned. *)
+let integers =
+  Gen.with_pp pp_case
+    (case_of ~monoids:[ Sum; Prod ]
+       D.
+         [
+           Any Int8;
+           Any Uint8;
+           Any Int16;
+           Any Uint16;
+           Any Int32;
+           Any Uint32;
+           Any Int64;
+           Any Uint64;
+         ])
+
+(* An integer sum or product wraps, so it has the bits of its terms folded
+   in any order, here in C order, a scan's result those of the terms up to
+   it. *)
+let law_wrap (b : Support.backend) (c : case) =
+  let f, id = op (dtype_of c.x) c.monoid in
+  let scan ts =
+    let acc = ref id in
+    Array.map
+      (fun t ->
+        acc := f !acc t;
+        want_of !acc)
+      ts
+  in
+  let want =
+    results c (terms c.x) ~fill:Some_nan
+      ~reduce:(fun o -> want_of (Array.fold_left f id o))
+      ~scan
+  in
+  cover "a scan" c.scan;
+  cover "a product" (c.monoid = Prod);
+  equal (list string) [] (differ want (run b c))
 
 (* The first [m] elements along axis [a] of [x]. *)
 let prefix a m (A.Any x) =
@@ -1755,6 +1794,8 @@ let laws (b : Support.backend) =
         bounded (run (law_bound b));
       prop ~examples:scan_examples "a scan of a prefix is the prefix of the scan"
         scans (run (law_prefix b));
+      prop "an integer sum or product wraps, in any order of its terms"
+        integers (run (law_wrap b));
       prop ~count:300 ~examples:special_examples
         "Logsumexp, Moments and Arg give the special values their terms make"
         special_case (run (law_special b));

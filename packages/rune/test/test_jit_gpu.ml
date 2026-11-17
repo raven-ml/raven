@@ -3041,25 +3041,79 @@ let composed =
     ]
 
 (* Nx.Rng's draws compiled on an NVIDIA GPU give the host's eager draws from
-   the same key, bit for bit, but for dirichlet's row sum (Draws), a float64
-   draw where the GPU's kernels have float64. Each float type is a test of its
-   own, at the zero-size shape and the block, one kernel each; the host's
-   suite draws the narrow floats, one element and one long row. *)
+   the same key, bit for bit (Draws), a float64 draw where the GPU's kernels
+   have float64. Each float type a sampler draws at is a test of its own, at
+   the zero-size shape and the block, one kernel each; the host's suite draws
+   the narrow floats, one element and one long row. *)
 let draws k =
   let module R = Nx_rng_support in
   let shapes = R.[ Zero; Block ] in
+  let at d = List.mem d (R.dtypes k) in
+  (if not (at R.Float32) then []
+   else
+     [
+       prop ~timeout:cold ~count:4
+         (R.name k ^ " at float32 compiles to eager's draws")
+         (R.gen k)
+         (fun c ->
+           Draws.law (snd (keeps ())) ~dtypes:R.[ Float32 ] ~shapes k c);
+     ])
+  @
+  if not (at R.Float64) then []
+  else
+    [
+      prop ~timeout:cold ~count:4
+        (R.name k ^ " at float64 compiles to eager's draws")
+        (R.gen k)
+        (fun c ->
+          let f64, s = keeps () in
+          if not f64 then skip ~reason:"the GPU's kernels have no float64" ();
+          Draws.law s ~dtypes:R.[ Float64 ] ~shapes k c);
+    ]
+
+(* dirichlet's rows above take one limb, so its carries and reassembly
+   compile on the GPU through Nx.Rng.dirichlet_width: rows of 8 and one row
+   of 1025 at limbs of 9 and 21 bits take 2 to 8 limbs, float32 4 and 2, 5
+   and 2, float64 7 and 3, 8 and 4. Each gives the host's eager draw at its
+   width, bit for bit. *)
+let limbs_at (module S : Nx.Devices) (type s) (dt : (float, s) Nx.dtype) seed
+    =
+  List.iter
+    (fun (shape, w) ->
+      let st = Random.State.make [| seed; w |] in
+      let n = Array.fold_left ( * ) 1 shape in
+      let a =
+        Nx.create dt shape
+          (Array.init n (fun _ -> Float.exp (Random.State.float st 8. -. 6.)))
+      in
+      let key = Nx.Rng.key seed in
+      let host = Nx.Rng.dirichlet_width w ~key a in
+      let gpu =
+        Rune.jit
+          Nx.Ptree.(Nx.Rng.ptree @-> tensor @-> returns tensor)
+          (fun key a -> Nx.Rng.dirichlet_width w ~key a)
+          (Nx.Rng.place S.on key) (Nx.place S.on a)
+      in
+      let bits x =
+        Array.map Int64.bits_of_float
+          (Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on x)))
+      in
+      equal
+        ~msg:(Printf.sprintf "%s %d bits" (Nx.Dtype.name dt) w)
+        (array int64) (bits host) (bits gpu))
+    [ ([| 4; 8 |], 9); ([| 4; 8 |], 21); ([| 1; 1025 |], 9); ([| 1; 1025 |], 21) ]
+
+let narrow_limbs =
   [
-    prop ~timeout:cold ~count:4
-      (R.name k ^ " at float32 compiles to eager's draws")
-      (R.gen k)
-      (fun c -> Draws.law (snd (keeps ())) ~dtypes:R.[ Float32 ] ~shapes k c);
-    prop ~timeout:cold ~count:4
-      (R.name k ^ " at float64 compiles to eager's draws")
-      (R.gen k)
-      (fun c ->
+    prop ~timeout:cold ~count:3
+      "dirichlet at float32 with 2 to 5 limbs compiles to eager's draws"
+      Gen.int (fun seed -> limbs_at (snd (keeps ())) Nx.float32 seed);
+    prop ~timeout:cold ~count:3
+      "dirichlet at float64 with 3 to 8 limbs compiles to eager's draws"
+      Gen.int (fun seed ->
         let f64, s = keeps () in
         if not f64 then skip ~reason:"the GPU's kernels have no float64" ();
-        Draws.law s ~dtypes:R.[ Float64 ] ~shapes k c);
+        limbs_at s Nx.float64 seed);
   ]
 
 let complex_kinds =
@@ -3188,7 +3242,8 @@ let () =
          group "clamped operands" (List.map clamped_law clamped);
          group "complex kinds" (List.concat_map complex_ported complex_kinds);
          group "composed functions" (List.concat_map composed_law composed);
-         group "draws" (List.concat_map draws Nx_rng_support.samplers);
+         group "draws"
+           (List.concat_map draws Nx_rng_support.samplers @ narrow_limbs);
          group "exp"
            [
              prop ~count:24 "exp within 9 ulps at float32 where it flushes"

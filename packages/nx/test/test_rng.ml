@@ -14,6 +14,7 @@ module Rng = Nx.Rng
 let m = Nx_support.memory
 
 module S2 = (val Nx.devices [ m 0; m 1 ])
+module S4 = (val Nx.devices [ m 0; m 1; m 2; m 3 ])
 module Count = (val Nx.devices ~kernels:(module Nx_support.Counting) [ m 3 ])
 
 let message f =
@@ -746,25 +747,72 @@ let probabilities =
       map (fun e -> Float.ldexp 1. e) (int_range (-60) (-1));
     ]
 
-(* Rows of 14 float32 concentrations whose draw cut along its rows leaves a
-   subnormal quotient one least subnormal from the whole draw's, which the
-   relative bound alone does not allow. *)
-let subnormal_rows =
-  let cs = Array.make 160 0.05 in
-  List.iter
-    (fun (i, c) -> cs.(i) <- c)
-    [
-      (29, 1.9388349197655539);
-      (30, 1.4004315930939701);
-      (31, 2.443240131355171);
-      (33, 2.);
-      (34, 1.8744564585852426);
-      (37, 5.);
-      (38, 1.1510571488397816);
-      (40, 5.);
-    ];
-  let k = Rng.of_tensor (host_of Nx.int32 [| 2 |] [| 31951l; 220l |]) in
-  (k, F Nx.float32, 14, cs)
+(* Dirichlet rows
+
+   A case draws rows of 1, 2, a drawn length in [3, 40] and one past nx.cuda's
+   and nx.amd's tile of 1024 terms, four rows of each: tiny concentrations,
+   log-uniform from the dtype's least positive value to 0.05, whose gamma
+   draws fall so far below their row's largest that quotients underflow to
+   zero; ordinary ones in [0.05, 5]; a dominant one, the row's first, beside
+   concentrations 2^-63 of it, or 2^-17 at float16, whose range holds no more;
+   and equal ones, log-uniform in [1, 2^20], or [1, 2^3] at float16, whose
+   terms lie near each other. *)
+let longest = 1500
+
+(* The uniform draws a case's rows come from, from a seed so that a failing
+   case shrinks to few values. *)
+let dirichlet_cases_of dts =
+  Gen.(
+    let+ k = keys
+    and+ dt = of_list ~pp:pp_dtype dts
+    and+ m = int_range 3 40
+    and+ l = int_range 1025 longest
+    and+ seed = int in
+    let st = Random.State.make [| seed |] in
+    let us =
+      Array.init ((4 * longest) + 1) (fun _ -> Random.State.float st 1.)
+    in
+    (k, dt, [ 1; 2; m; l ], us))
+
+let dirichlet_cases =
+  dirichlet_cases_of
+    [ F Nx.float16; F Nx.bfloat16; F Nx.float32; F Nx.float64 ]
+
+(* The four rows of [len] at [dt], from the uniform draws [us]. *)
+let dirichlet_rows (type s) (dt : (float, s) A.Dtype.t) len us =
+  let f = A.Dtype.float_format dt in
+  let top, rest, most =
+    if f.max_finite > 0x1p80 then (0x1p80, 0x1p17, 20.)
+    else (0x1p15, 0x1p-2, 3.)
+  in
+  let tiny = log (f.min_normal *. f.epsilon) in
+  let equal = Float.pow 2. (us.(4 * longest) *. most) in
+  let conc i =
+    let u = us.(i) in
+    match i / len with
+    | 0 -> exp (tiny +. (u *. (log 0.05 -. tiny)))
+    | 1 -> 0.05 +. (4.95 *. u)
+    | 2 -> if i mod len = 0 then top else rest *. (0.5 +. u)
+    | _ -> equal
+  in
+  host_of dt [| 4; len |] (Array.init (4 * len) conc)
+
+(* [Σ xs - 1] by Neumaier's sum, which keeps each addition's error: within
+   [2u] of it plus [n u²] of [Σ |x|], far below the bounds it is held to. *)
+let sum_less_one xs =
+  let hi = ref (-1.) and lo = ref 0. in
+  Array.iter
+    (fun x ->
+      let t = !hi +. x in
+      let e =
+        if Float.abs !hi >= Float.abs x then !hi -. t +. x else x -. t +. !hi
+      in
+      hi := t;
+      lo := !lo +. e)
+    xs;
+  !hi +. !lo
+
+let float_bits xs = Array.map Int64.bits_of_float xs
 
 let draws =
   group "draws"
@@ -824,48 +872,49 @@ let draws =
           let x = Rng.bernoulli ~key:(Rng.place S2.on k) (Nx.place at p) in
           equal bool true (Nx.Placement.equal at (Nx.placement x));
           equal (array bool) (read (Rng.bernoulli ~key:k p)) (read x));
-      (* A dirichlet row's sum is a float sum, which a placement that cuts the
-         row combines from the windows' partial sums. Where rows lie whole the
-         draw keeps its bits. Where they are cut an element is within the
-         bound nx.mli states (Nx_rng_support.bound): (2γ(n - 1) + 2u) m of the
-         whole draw's at the dtype it computes at, m the larger of the two,
-         the least subnormal more where m is subnormal, then a narrow float's
-         rounding. Half the concentrations lie in [0.01, 0.05], whose gamma
-         draws fall below e^-87 and e^-104 of their row's largest often enough
-         that some cases of every run hold subnormal and zero quotients. *)
-      prop ~examples:[ subnormal_rows ]
-        "dirichlet keeps its bits where rows lie whole, and its bound where \
-         they are cut"
-        (Gen.quad keys
-           (Gen.of_list ~pp:pp_dtype
-              [ F Nx.float16; F Nx.bfloat16; F Nx.float32; F Nx.float64 ])
-           (Gen.int_range 2 40)
-           (Gen.array ~size:(Gen.constant 160)
-              (Gen.frequency
-                 [
-                   (1, Gen.float_range 0.01 0.05); (1, Gen.float_range 0.05 5.);
-                 ])))
-        (fun (k, F dt, len, cs) ->
-          let a = host_of dt [| 4; len |] (Array.sub cs 0 (4 * len)) in
-          let draw p =
-            read (Rng.dirichlet ~key:(Rng.place S2.on k) (Nx.place p a))
-          in
-          let whole = read (Rng.dirichlet ~key:k a) in
+      (* Its integer row sums are the same in any order of addition, so the
+         draw is the same over devices, its rows whole on each, split between
+         them, cut along the last axis, or cut over one axis of a mesh and
+         copied along the other. The tiny rows of 1025 terms and more hold a
+         zero quotient in most cases, and a subnormal one in at least 56% of
+         the cases drawn at float32 (bfloat16, the least, in 113 of 200
+         seeds), three quarters of the cases: every run of 100 meets both
+         but with probability below 1e-20. float64's subnormal quotients, in
+         about 10% of its cases, are not claimed. *)
+      prop "dirichlet has the host's bits at every placement"
+        dirichlet_cases (fun (k, F dt, lens, us) ->
           let f = A.Dtype.float_format dt in
-          let subnormal w = w > 0. && w < f.min_normal in
-          cover "a row longer than 2" (len > 2);
+          let zero = ref false and subnormal = ref false in
+          let at (type d) (whole : d Nx.Placement.t) (p : d Nx.Placement.t) a
+              =
+            read (Rng.dirichlet ~key:(Rng.place whole k) (Nx.place p a))
+          in
+          let mesh = Nx.Mesh.v S4.v [ ("x", 2); ("y", 2) ] in
+          List.iter
+            (fun len ->
+              let a = dirichlet_rows dt len us in
+              let whole = read (Rng.dirichlet ~key:k a) in
+              if Array.exists (fun w -> w = 0.) whole then zero := true;
+              if Array.exists (fun w -> w > 0. && w < f.min_normal) whole then
+                subnormal := true;
+              List.iter
+                (fun (name, draw) ->
+                  equal
+                    ~msg:(Printf.sprintf "rows of %d, %s" len name)
+                    (array int64) (float_bits whole)
+                    (float_bits (draw a)))
+                [
+                  ("whole on each device", at S2.on S2.on);
+                  ("split between devices", at S2.on (S2.split ~axis:0));
+                  ("cut along the last axis", at S2.on (S2.split ~axis:1));
+                  ( "cut over a mesh axis and copied along the other",
+                    at S4.on (Nx.Placement.mesh mesh [ (1, [ "x" ]) ]) );
+                ])
+            lens;
           cover "a float narrower than float32" (f.fraction_bits < 23);
-          cover "a subnormal quotient" (Array.exists subnormal whole);
-          cover "a zero quotient" (Array.exists (fun w -> w = 0.) whole);
-          equal ~msg:"rows whole" (array float_exact) whole
-            (draw (S2.split ~axis:0));
-          Array.iteri
-            (fun i c ->
-              let w = whole.(i) in
-              at_most float_exact
-                ~than:(Nx_rng_support.bound dt ~n:len w c)
-                (Float.abs (c -. w)))
-            (draw (S2.split ~axis:1)));
+          cover "a zero quotient" !zero;
+          cover "a subnormal quotient at a dtype drawn at float32"
+            (f.fraction_bits < 52 && !subnormal));
       prop "a batch of keys draws each key's draw"
         (Gen.triple keys (Gen.int_range 1 4) shapes)
         (fun (k, n, s) ->
@@ -2060,9 +2109,6 @@ let intervals =
       (-40., -38.);
     ]
 
-(* A row of [k] concentrations, [x] each. *)
-let rows dt k x = host_of dt [| n; k |] (Array.make (n * k) x)
-
 (* [xs] as rows of [k]. *)
 let rows_of k xs =
   Array.init (Array.length xs / k) (fun i -> Array.sub xs (i * k) k)
@@ -2305,28 +2351,101 @@ let others =
               worst := Float.max !worst (Float.abs (x -. want) /. bound))
             xs;
           at_most float_exact ~than:1. !worst);
-      prop "dirichlet rows sum to 1, each with an element of at least 1 / k"
-        (Gen.triple keys wide
-           (Gen.pair (Gen.int_range 1 5)
-              (params [ Least; V 1e-30; V 0.01; V 0.5; V 1.; V 30.; V 1e6 ])))
-        (fun (key, F dt, (k, a)) ->
-          let a = at dt a in
-          let eps = (A.Dtype.float_format dt).epsilon in
-          let xs = read (Rng.dirichlet ~key (rows dt k a)) in
-          Array.iter
-            (fun row ->
-              let sum = Array.fold_left ( +. ) 0. row in
-              let top = Array.fold_left Float.max 0. row in
+      (* nx.mli's bound, before the rounding to the dtype: a row sums to 1
+         within 4u, [u] the unit roundoff of the dtype the draw computes at,
+         and its greatest element is at least (1 - 8u) / n. A narrower float
+         rounds each element once more, by at most its unit roundoff of the
+         rounded value, or half its least subnormal. *)
+      prop
+        "a dirichlet row's elements lie in [0, 1] and sum to 1 within 4u, the \
+         greatest at least (1 - 8u) / n"
+        dirichlet_cases (fun (k, F dt, lens, us) ->
+          let f = A.Dtype.float_format dt in
+          let narrow = f.fraction_bits < 23 in
+          let u = if f.fraction_bits = 52 then 0x1p-53 else 0x1p-24 in
+          let r x =
+            if narrow then
+              Float.max (f.epsilon /. 2. *. x) (f.min_normal *. f.epsilon /. 2.)
+            else 0.
+          in
+          cover "a float narrower than float32" narrow;
+          List.iter
+            (fun len ->
+              let xs = read (Rng.dirichlet ~key:k (dirichlet_rows dt len us)) in
               Array.iter
-                (fun x -> if not (x >= 0. && x <= 1.) then failf "element %h" x)
-                row;
-              at_most float_exact
-                ~than:(Float.of_int (k + 2) *. eps)
-                (Float.abs (sum -. 1.));
-              at_least float_exact
-                ~than:((1. -. (4. *. eps)) /. Float.of_int k)
-                top)
-            (rows_of k xs));
+                (fun row ->
+                  Array.iter
+                    (fun x ->
+                      if not (x >= 0. && x <= 1.) then failf "element %h" x)
+                    row;
+                  let slack = Array.fold_left (fun a x -> a +. r x) 0. row in
+                  at_most float_exact
+                    ~than:((4. *. u) +. slack)
+                    (Float.abs (sum_less_one row));
+                  let least = (1. -. (8. *. u)) /. Float.of_int len in
+                  at_least float_exact
+                    ~than:(least *. (1. -. (f.epsilon /. 2.)))
+                    (Array.fold_left Float.max 0. row))
+                (rows_of len xs))
+            lens);
+      (* At limbs from 9 bits to a row's own width, a row takes from one limb
+         (rows of 1 and 2 at their own width) to 8 (rows past 1024 at 9
+         bits, float64), as rows too long to draw do. Each width keeps the
+         draw's bits where its rows are cut and its bounds, and at the row's
+         own width it is dirichlet's draw. At another, its divisor and the
+         one at the row's own width are each within [2u + u/4] of the row's
+         sum and a little more, and each quotient rounds by [u], or half the
+         least subnormal: so the two draws are within [7u] of the larger of
+         each pair of elements, and one least subnormal more. *)
+      prop "dirichlet at narrower limbs keeps its bits, its bounds and its draw"
+        (dirichlet_cases_of [ F Nx.float32; F Nx.float64 ])
+        (fun (k, F dt, lens, us) ->
+          let f = A.Dtype.float_format dt in
+          let u = f.epsilon /. 2. and eta = f.min_normal *. f.epsilon in
+          List.iter
+            (fun len ->
+              let a = dirichlet_rows dt len us in
+              let own = read (Rng.dirichlet ~key:k a) in
+              (* A row's own width, [62 - ⌈log₂ n⌉]. *)
+              let rec bits v = if v = 0 then 0 else 1 + bits (v lsr 1) in
+              let most = 62 - bits (len - 1) in
+              List.iter
+                (fun w ->
+                  let msg = Printf.sprintf "rows of %d at %d bits" len w in
+                  let x = read (Rng.dirichlet_width w ~key:k a) in
+                  let cut =
+                    Rng.dirichlet_width w ~key:(Rng.place S2.on k)
+                      (Nx.place (S2.split ~axis:1) a)
+                  in
+                  equal ~msg (array int64) (float_bits x)
+                    (float_bits (read cut));
+                  Array.iter
+                    (fun row ->
+                      Array.iter
+                        (fun x ->
+                          if not (x >= 0. && x <= 1.) then
+                            failf "%s: element %h" msg x)
+                        row;
+                      at_most ~msg float_exact ~than:(4. *. u)
+                        (Float.abs (sum_less_one row));
+                      at_least ~msg float_exact
+                        ~than:((1. -. (8. *. u)) /. Float.of_int len)
+                        (Array.fold_left Float.max 0. row))
+                    (rows_of len x);
+                  if w = most then
+                    equal ~msg:(msg ^ ", the row's own")
+                      (array int64) (float_bits own) (float_bits x)
+                  else
+                    Array.iteri
+                      (fun i y ->
+                        at_most ~msg float_exact
+                          ~than:((7. *. u *. Float.max x.(i) y) +. eta)
+                          (Float.abs (x.(i) -. y)))
+                      own)
+                (List.filter (fun w -> w <= most) [ 9; 10; 13; 21; most ]))
+            lens;
+          cover "float32" (f.fraction_bits = 23);
+          cover "float64" (f.fraction_bits = 52));
       (* Component i of Dirichlet(a) has mean a_i / s and variance a_i (s - a_i)
          / (s^2 (s + 1)), s the concentrations' sum. *)
       prop ~count:few "dirichlet: each component's mean"
@@ -2488,6 +2607,18 @@ let others =
             (fun () ->
               Rng.dirichlet (host_of Nx.float64 [| 1; 2 |] [| 1.; 0. |])),
             "Nx.Rng.dirichlet: a at [0; 1] is 0, not in (0, inf)" );
+          ( "dirichlet_width below 9 bits",
+            (fun () ->
+              Rng.dirichlet_width 8
+                (host_of Nx.float64 [| 1; 2 |] [| 1.; 2. |])),
+            "Nx.Rng.dirichlet_width: limbs of 8 bits, outside [9, 61] for \
+             rows of 2" );
+          ( "dirichlet_width past a row's own",
+            (fun () ->
+              Rng.dirichlet_width 60
+                (host_of Nx.float64 [| 1; 5 |] [| 1.; 2.; 3.; 4.; 5. |])),
+            "Nx.Rng.dirichlet_width: limbs of 60 bits, outside [9, 59] for \
+             rows of 5" );
         ]
         (fun (_, f, want) ->
           equal string want (message (fun () -> ignore (f ()))));
@@ -3630,21 +3761,33 @@ let permute_group =
             (Float.abs (f -. 0.5)));
     ]
 
-(* Every draw on a set of software devices, whole on each, has the host's
-   bits (Nx_rng_support), as on the GPUs' sets of nx's suites for their
-   kernel libraries. *)
+(* Every draw on a set of software devices has the host's bits
+   (Nx_rng_support), as on the GPUs' sets of nx's suites for their kernel
+   libraries: its key and arguments whole on each device, its arguments cut
+   along their last axis, and cut over one axis of a mesh and copied along
+   the other. *)
 let on_a_set =
+  let mesh = Nx.Mesh.v S4.v [ ("x", 2); ("y", 2) ] in
+  let last r = max 0 (r - 1) in
+  let laws where r =
+    List.map
+      (fun s ->
+        prop ~count:10
+          (Nx_rng_support.name s ^ " has the host's bits, " ^ where)
+          (Nx_rng_support.gen s)
+          Nx_rng_support.(
+            law r
+              ~dtypes:[ Float16; Bfloat16; Float32; Float64 ]
+              ~shapes:[ Zero; One; Block; Row ] s))
+      Nx_rng_support.samplers
+  in
   group "on another set"
-    (List.map
-       (fun s ->
-         prop ~count:10
-           (Nx_rng_support.name s ^ " has the host's bits")
-           (Nx_rng_support.gen s)
-           Nx_rng_support.(
-             law (placed (module S2)) ~rows:Bits
-               ~dtypes:[ Float16; Bfloat16; Float32; Float64 ]
-               ~shapes:[ Zero; One; Block; Row ] s))
-       Nx_rng_support.samplers)
+    (laws "whole on each device" (Nx_rng_support.placed (module S2))
+    @ laws "cut along the last axis"
+        (Nx_rng_support.at S2.on (fun r -> S2.split ~axis:(last r)))
+    @ laws "cut over a mesh axis"
+        (Nx_rng_support.at S4.on (fun r ->
+             Nx.Placement.mesh mesh [ (last r, [ "x" ]) ])))
 
 let () =
   exit

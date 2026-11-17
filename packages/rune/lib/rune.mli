@@ -244,7 +244,9 @@
     [Nx.softplus], smooth, has its derivative [Nx.sigmoid] everywhere, [1/2]
     at [0.]. [Nx.softmax] and [Nx.log_softmax] shift each lane by its
     greatest element, on which their values do not depend, and pass no
-    tangent through it.
+    tangent through it. [Nx.Rng.dirichlet]'s derivative in its
+    concentrations is that of its gamma draws divided by their row's sum,
+    so a row's tangents sum to zero.
 
     {b Factorisations.} The tangents of [Nx.cholesky], [Nx.lu], [Nx.qr],
     [Nx.svd], [Nx.eigh] and [Nx.eig] are the derivatives of the factors nx
@@ -1681,23 +1683,19 @@ val jit :
     [y ln 2] lies within a relative [2u] of a non-zero multiple of [π/2].
 
     {b Random draws.} A draw of {!Nx.Rng} computes the generator's integer
-    arithmetic, casts, and the real and special functions above, a rejection
-    sampler's rounds each computed and the first accepted selected. So it is
-    exact on a faithful device, except {!Nx.Rng.dirichlet}, which divides
-    each row by its sum, a reduction whose terms the compiler adds in its own
-    order. Before the rounding to the dtype, an element of a row of [n] is
-    within [(2γ(n - 1) + 2u) m] of eager's, [m] the larger of the two and
-    [u] the unit roundoff of the dtype the draw computes at. Where [m] is
-    subnormal they may differ by that dtype's least subnormal more.
+    arithmetic, casts, integer reductions, and the real and special functions
+    above, a rejection sampler's rounds each computed and the first accepted
+    selected. So every draw is exact on a faithful device.
 
-    {b Reductions.} A float reduction, scan, contraction or scatter by [Add]
-    computes in its {e accumulator}, the one its [Nx] function states:
-    [float32] for a narrower float and the dtype otherwise, as
-    {!Nx.contract}'s, and [u] is the accumulator's. It combines terms in an
-    order the compiler chooses and rounds once into its dtype, which adds its
-    own error. Barring overflow and underflow, a result of [n] terms is
-    within this bound of the exact one, [β = β(n)] as
-    {!Nx_kernel.section-bounds} defines it:
+    {b Reductions.} An integer reduction, scan or contraction wraps and is
+    exact, whatever order the compiler combines its terms in. A float
+    reduction, scan, contraction or scatter by [Add] computes in its
+    {e accumulator}, the one its [Nx] function states: [float32] for a
+    narrower float and the dtype otherwise, as {!Nx.contract}'s, and [u] is
+    the accumulator's. It combines terms in an order the compiler chooses
+    and rounds once into its dtype, which adds its own error. Barring
+    overflow and underflow, a result of [n] terms is within this bound of
+    the exact one, [β = β(n)] as {!Nx_kernel.section-bounds} defines it:
 
     {v
       function             bound

@@ -13,10 +13,11 @@ let compiled f =
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   Nx.place Nx.Host.on y
 
-(* A draw from a host key and host arguments compiled on [S], its key and
-   arguments placed whole on each of [S]'s devices. *)
-let runner (module S : Nx.Devices) =
-  let key k = Nx.Rng.place S.on k and on x = Nx.place S.on x in
+(* A draw from a host key and host arguments compiled with its key at
+   [whole] and each argument at [cut] of its rank. *)
+let at whole cut =
+  let key k = Nx.Rng.place whole k in
+  let on x = Nx.place (cut (Array.length (Nx.shape x))) x in
   R.
     {
       run0 =
@@ -37,5 +38,5 @@ let runner (module S : Nx.Devices) =
                 f2 (key k) (on x) (on y)));
     }
 
-let law s ~dtypes ~shapes k c =
-  R.law (runner s) ~rows:Bound ~dtypes ~shapes k c
+let law (module S : Nx.Devices) ~dtypes ~shapes k c =
+  R.law (at S.on (fun _ -> S.on)) ~dtypes ~shapes k c

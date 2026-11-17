@@ -6,8 +6,8 @@
 (* nx on a set whose kernels are nx.cuda's, on GPU 0 through CUDA: every
    draw of Nx.Rng has the host's bits (Nx_rng_support). A draw is a program
    of kinds, which nx.cuda computes by nx_kinds.h's functions, and of integer
-   arithmetic; a dirichlet row, whole on the one GPU, sums in lane order,
-   nx.cpu's (nx_cuda.mli). Every test skips where CUDA sees no GPU. *)
+   arithmetic, a dirichlet row's sum among it. Every test skips where CUDA
+   sees no GPU. *)
 
 open Windtrap
 
@@ -26,7 +26,7 @@ let draws s =
       | None -> skip ~reason:"CUDA sees no GPU" ()
       | Some set ->
           Nx_rng_support.(
-            law (placed set) ~rows:Bits
+            law (placed set)
               ~dtypes:[ Float16; Bfloat16; Float32; Float64 ]
               ~shapes:[ Zero; One; Block; Row ] s c))
 

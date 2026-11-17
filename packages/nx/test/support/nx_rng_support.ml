@@ -52,45 +52,6 @@ let codes (type v r) (y : (v, r, Nx.host) Nx.t) : int64 array =
   | Bool -> Array.map (fun b -> if b then 1L else 0L) (Nx.to_array y)
   | _ -> invalid_arg "Nx_rng_support: a draw of another dtype"
 
-(* The float of code [c] at [d]. *)
-let value_of (F dt) c =
-  match Nx.Dtype.float_format dt with
-  | { fraction_bits = 52; _ } -> Int64.float_of_bits c
-  | { fraction_bits = 23; _ } -> Int32.float_of_bits (Int64.to_int32 c)
-  | _ ->
-      let x = Nx.create Nx.int16 [| 1 |] [| Int64.to_int c |] in
-      (Nx.to_array (Nx.cast Nx.float64 (Nx.bitcast dt x))).(0)
-
-(* dirichlet's bound *)
-
-(* γ(k) at unit roundoff [u]. *)
-let gamma_ k u = float_of_int k *. u /. (1. -. (float_of_int k *. u))
-
-(* nx.mli's bound between two dirichlet draws [x] and [y] of rows of [n] at
-   [dt]. The quotients are computed at float32, or float64 for float64, where
-   they are within (2γ(n - 1) + 2u) m of each other, [m] the larger, and that
-   dtype's least subnormal more where [m] is subnormal. A narrower [dt] then
-   rounds each once, which moves a quotient by at most [r v], [v] its rounded
-   value: [dt]'s unit roundoff times [v], or half [dt]'s least subnormal where
-   that is more. So [m] is at most [t + r t], [t] the larger rounded value. *)
-let bound (type s) (dt : (float, s) Nx.dtype) ~n x y =
-  let d = F dt in
-  let f = format d in
-  let wide = f.fraction_bits >= 23 in
-  let at =
-    format (if f.fraction_bits = 52 then F Nx.float64 else F Nx.float32)
-  in
-  let u = at.epsilon /. 2. in
-  let rel = (2. *. gamma_ (n - 1) u) +. (2. *. u) in
-  let r v =
-    if wide then 0. else Float.max (f.epsilon /. 2. *. v) (least d /. 2.)
-  in
-  let x = Float.abs x and y = Float.abs y in
-  let t = Float.max x y in
-  let m = t +. r t in
-  let under = if m < at.min_normal then at.min_normal *. at.epsilon else 0. in
-  (rel *. m) +. under +. r x +. r y
-
 (* Parameters
 
    An element of a parameter is one of its bounds at the dtype, a value that
@@ -300,14 +261,16 @@ type runner = {
     ('w, 'r, Nx.host) Nx.t;
 }
 
-let placed (module S : Nx.Devices) =
-  let on x = Nx.place S.on x and back y = Nx.place Nx.Host.on y in
-  let key k = Nx.Rng.place S.on k in
+let at whole cut =
+  let on x = Nx.place (cut (Array.length (Nx.shape x))) x in
+  let back y = Nx.place Nx.Host.on y and key k = Nx.Rng.place whole k in
   {
     run0 = (fun { f0 } k -> back (f0 (key k)));
     run1 = (fun { f1 } k x -> back (f1 (key k) (on x)));
     run2 = (fun { f2 } k x y -> back (f2 (key k) (on x) (on y)));
   }
+
+let placed (module S : Nx.Devices) = at S.on (fun _ -> S.on)
 
 (* Draws *)
 
@@ -330,49 +293,34 @@ let shape_name = function
   | Block -> Printf.sprintf "%d elements" n
   | Row -> Printf.sprintf "one row of %d" n
 
-(* How a draw compares with the host's: bit for bit, or for a dirichlet draw of
-   rows of [k] at [d] as the law's [rows] says. *)
-type check = Exact | Rows of int * fdt
+type pair = { label : string; eager : int64 array; subject : int64 array }
 
-type pair = {
-  label : string;
-  eager : int64 array;
-  subject : int64 array;
-  check : check;
-}
-
+(* A sampler's [dtypes] are those it draws at, an integer sampler's widths. *)
 type sampler = {
   name : string;
   gen : case Gen.t;
   covers : (string * (case -> bool)) list;
   rows : bool;
+  dtypes : dtype list;
   pairs : runner -> at -> case -> pair list;
 }
 
 let name s = s.name
+let dtypes s = s.dtypes
+let floats = [ Float16; Bfloat16; Float32; Float64 ]
 let key c = Nx.Rng.key c.seed
 
-let p0 r label f c check =
+let p0 r label f c =
   let k = key c in
-  { label; eager = codes (f.f0 k); subject = codes (r.run0 f k); check }
+  { label; eager = codes (f.f0 k); subject = codes (r.run0 f k) }
 
-let p1 r label f c x check =
+let p1 r label f c x =
   let k = key c in
-  {
-    label;
-    eager = codes (f.f1 k x);
-    subject = codes (r.run1 f k x);
-    check;
-  }
+  { label; eager = codes (f.f1 k x); subject = codes (r.run1 f k x) }
 
-let p2 r label f c x y check =
+let p2 r label f c x y =
   let k = key c in
-  {
-    label;
-    eager = codes (f.f2 k x y);
-    subject = codes (r.run2 f k x y);
-    check;
-  }
+  { label; eager = codes (f.f2 k x y); subject = codes (r.run2 f k x y) }
 
 let label (F dt) shape =
   Printf.sprintf "%s at %s" (Nx.Dtype.name dt) (shape_name shape)
@@ -410,10 +358,10 @@ let shaped name g =
     each at (fun (F dt as d) shape ->
         let sh = [| elements shape |] in
         let f0 k = g.at (Nx.Rng.placement k) ~key:k dt sh in
-        p0 r (label d shape) { f0 } c Exact)
+        p0 r (label d shape) { f0 } c)
   in
   let gen = Gen.map (fun seed -> { seed; cols = [||]; ints = [||] }) Gen.int in
-  { name; gen; covers = []; rows = false; pairs }
+  { name; gen; covers = []; rows = false; dtypes = floats; pairs }
 
 let uniform = shaped "uniform" { at = Nx.Rng.uniform_at }
 let normal = shaped "normal" { at = Nx.Rng.normal_at }
@@ -425,18 +373,32 @@ let bits =
     integer at Float32 (fun shape ->
         let sh = [| elements shape |] in
         let f0 k = Nx.Rng.bits_at (Nx.Rng.placement k) ~key:k sh in
-        p0 r (shape_name shape) { f0 } c Exact)
+        p0 r (shape_name shape) { f0 } c)
   in
-  { name = "bits"; gen = ints_only; covers = []; rows = false; pairs }
+  {
+    name = "bits";
+    gen = ints_only;
+    covers = [];
+    rows = false;
+    dtypes = [ Float32 ];
+    pairs;
+  }
 
 let permutation =
   let pairs r at c =
     integer at Float64 (fun shape ->
         let m = elements shape in
         let f0 k = Nx.Rng.permutation_at (Nx.Rng.placement k) ~key:k m in
-        p0 r (shape_name shape) { f0 } c Exact)
+        p0 r (shape_name shape) { f0 } c)
   in
-  { name = "permutation"; gen = ints_only; covers = []; rows = false; pairs }
+  {
+    name = "permutation";
+    gen = ints_only;
+    covers = [];
+    rows = false;
+    dtypes = [ Float64 ];
+    pairs;
+  }
 
 (* A key split into one key at the zero-size shape, two at one element and a
    block's at the block, its words int32. *)
@@ -445,9 +407,16 @@ let split_batch =
     integer at Float32 (fun shape ->
         let m = match shape with Zero -> 1 | One -> 2 | Block | Row -> n in
         let f0 k = Nx.Rng.to_tensor (Nx.Rng.split_batch ~n:m k) in
-        p0 r (Printf.sprintf "%d keys" m) { f0 } c Exact)
+        p0 r (Printf.sprintf "%d keys" m) { f0 } c)
   in
-  { name = "split_batch"; gen = ints_only; covers = []; rows = false; pairs }
+  {
+    name = "split_batch";
+    gen = ints_only;
+    covers = [];
+    rows = false;
+    dtypes = [ Float32 ];
+    pairs;
+  }
 
 (* permute's images of [0, n) at the block, of an index of each bound at one
    element, of none at the zero-size shape. *)
@@ -468,9 +437,16 @@ let permute =
         let size = if shape = Block then n else 1 in
         let i = if shape = One then Nx.zeros Nx.int64 [| 1 |] else i in
         let f1 k i = Nx.Rng.permute ~key:k ~n:size i in
-        p1 r (shape_name shape) { f1 } c i Exact)
+        p1 r (shape_name shape) { f1 } c i)
   in
-  { name = "permute"; gen; covers = []; rows = false; pairs }
+  {
+    name = "permute";
+    gen;
+    covers = [];
+    rows = false;
+    dtypes = [ Float64 ];
+    pairs;
+  }
 
 (* A key folded with indices: int64's extremes, 0 and -1, then drawn. Its
    words are int32. *)
@@ -486,9 +462,16 @@ let fold_in_tensor =
         let m = elements shape in
         let i = Nx.create Nx.int64 [| m |] (Array.sub c.ints.(0) 0 m) in
         let f1 k i = Nx.Rng.to_tensor (Nx.Rng.fold_in_tensor k i) in
-        p1 r (shape_name shape) { f1 } c i Exact)
+        p1 r (shape_name shape) { f1 } c i)
   in
-  { name = "fold_in_tensor"; gen; covers = []; rows = false; pairs }
+  {
+    name = "fold_in_tensor";
+    gen;
+    covers = [];
+    rows = false;
+    dtypes = [ Float32 ];
+    pairs;
+  }
 
 (* randint between [low] and [high] at int32 and int64, its pairs opening with
    the whole of int32, the least ranges at both ends and around 0. *)
@@ -535,12 +518,19 @@ let randint =
     let f2 k low high = Nx.Rng.randint ~key:k ~low high in
     integer at Float32 (fun shape ->
         let l, h = bounds Nx.int32 Int64.to_int32 c shape in
-        p2 r ("int32 at " ^ shape_name shape) { f2 } c l h Exact)
+        p2 r ("int32 at " ^ shape_name shape) { f2 } c l h)
     @ integer at Float64 (fun shape ->
         let l, h = bounds Nx.int64 Fun.id c shape in
-        p2 r ("int64 at " ^ shape_name shape) { f2 } c l h Exact)
+        p2 r ("int64 at " ^ shape_name shape) { f2 } c l h)
   in
-  { name = "randint"; gen; covers = []; rows = false; pairs }
+  {
+    name = "randint";
+    gen;
+    covers = [];
+    rows = false;
+    dtypes = [ Float32; Float64 ];
+    pairs;
+  }
 
 (* Samplers of float parameters *)
 
@@ -549,13 +539,14 @@ let bernoulli =
     each at (fun (F dt as d) shape ->
         let p = column probability dt c 0 (elements shape) in
         let f1 k p = Nx.Rng.bernoulli ~key:k p in
-        p1 r (label d shape) { f1 } c p Exact)
+        p1 r (label d shape) { f1 } c p)
   in
   {
     name = "bernoulli";
     gen = seeded (columns [ probability ]);
     covers = [ ("p at 0, 1 and the greatest float below 1", fun _ -> true) ];
     rows = false;
+    dtypes = floats;
     pairs;
   }
 
@@ -564,7 +555,7 @@ let gamma =
     each at (fun (F dt as d) shape ->
         let a = column positive dt c 0 (elements shape) in
         let f1 k a = Nx.Rng.gamma ~key:k a in
-        p1 r (label d shape) { f1 } c a Exact)
+        p1 r (label d shape) { f1 } c a)
   in
   {
     name = "gamma";
@@ -576,6 +567,7 @@ let gamma =
           fun c -> count conc_region (values c 0) >= 800 );
       ];
     rows = false;
+    dtypes = floats;
     pairs;
   }
 
@@ -585,7 +577,7 @@ let beta =
         let m = elements shape in
         let a = column positive dt c 0 m and b = column positive dt c 1 m in
         let f2 k a b = Nx.Rng.beta ~key:k a b in
-        p2 r (label d shape) { f2 } c a b Exact)
+        p2 r (label d shape) { f2 } c a b)
   in
   {
     name = "beta";
@@ -597,6 +589,7 @@ let beta =
           fun c -> count conc_region (values c 0) >= 800 );
       ];
     rows = false;
+    dtypes = floats;
     pairs;
   }
 
@@ -605,7 +598,7 @@ let von_mises =
     each at (fun (F dt as d) shape ->
         let k = column non_negative dt c 0 (elements shape) in
         let f1 key k = Nx.Rng.von_mises ~key k in
-        p1 r (label d shape) { f1 } c k Exact)
+        p1 r (label d shape) { f1 } c k)
   in
   {
     name = "von_mises";
@@ -617,6 +610,7 @@ let von_mises =
           fun c -> count kappa_region (values c 0) >= 100 );
       ];
     rows = false;
+    dtypes = floats;
     pairs;
   }
 
@@ -626,7 +620,7 @@ let truncated_normal =
         let m = elements shape in
         let lo = column lower dt c 0 m and hi = column upper dt c 1 m in
         let f2 k lo hi = Nx.Rng.truncated_normal ~key:k lo hi in
-        p2 r (label d shape) { f2 } c lo hi Exact)
+        p2 r (label d shape) { f2 } c lo hi)
   in
   {
     name = "truncated_normal";
@@ -643,6 +637,7 @@ let truncated_normal =
             go 0 );
       ];
     rows = false;
+    dtypes = floats;
     pairs;
   }
 
@@ -651,7 +646,7 @@ let poisson =
     each at (fun (F dt as d) shape ->
         let x = column rate dt c 0 (elements shape) in
         let f1 k x = Nx.Rng.poisson ~key:k x in
-        p1 r (label d shape) { f1 } c x Exact)
+        p1 r (label d shape) { f1 } c x)
   in
   {
     name = "poisson";
@@ -663,6 +658,7 @@ let poisson =
           fun c -> count rate_region (values c 0) >= 200 );
       ];
     rows = false;
+    dtypes = floats;
     pairs;
   }
 
@@ -701,7 +697,7 @@ let binomial =
             (Array.map Int64.to_int32 (Array.sub c.ints.(0) 0 m))
         in
         let f2 k t p = Nx.Rng.binomial ~key:k t p in
-        p2 r (label d shape) { f2 } c t p Exact)
+        p2 r (label d shape) { f2 } c t p)
   in
   {
     name = "binomial";
@@ -713,6 +709,7 @@ let binomial =
           fun c -> mean_region c >= 200 );
       ];
     rows = false;
+    dtypes = floats;
     pairs;
   }
 
@@ -737,7 +734,7 @@ let dirichlet =
         let s = row_shape shape in
         let a = Nx.reshape s (column positive dt c 0 (numel s)) in
         let f1 k a = Nx.Rng.dirichlet ~key:k a in
-        p1 r (label d shape) { f1 } c a (Rows (s.(1), d)))
+        p1 r (label d shape) { f1 } c a)
   in
   {
     name = "dirichlet";
@@ -749,6 +746,7 @@ let dirichlet =
           fun c -> count conc_region (values c 0) >= 800 );
       ];
     rows = true;
+    dtypes = floats;
     pairs;
   }
 
@@ -770,13 +768,14 @@ let categorical =
         let xs = Array.init (numel s) (fun i -> resolve logit d c.cols.(0).(i)) in
         let l = Nx.reshape s (tensor dt (finite_rows s.(1) xs)) in
         let f1 k l = Nx.Rng.categorical ~key:k l in
-        p1 r (label d shape) { f1 } c l Exact)
+        p1 r (label d shape) { f1 } c l)
   in
   {
     name = "categorical";
     gen = seeded (columns [ logit ]);
     covers = [ ("logits of -inf and the greatest floats", fun _ -> true) ];
     rows = true;
+    dtypes = floats;
     pairs;
   }
 
@@ -811,19 +810,8 @@ let gen s = Gen.with_pp (pp_case s.name) s.gen
 
 (* Laws *)
 
-type compare = Bits | Bound
-
-let same rows p e c =
-  Int64.equal e c
-  ||
-  match (p.check, rows) with
-  | Exact, _ | Rows _, Bits -> false
-  | Rows (k, (F dt as d)), Bound ->
-      let x = value_of d e and y = value_of d c in
-      Float.abs (x -. y) <= bound dt ~n:k x y
-
 (* The elements where the two draws differ, at most four, then their count. *)
-let misses rows p =
+let misses p =
   let ne = Array.length p.eager and nc = Array.length p.subject in
   if ne <> nc then
     [ Printf.sprintf "%s: %d elements on the host, %d here" p.label ne nc ]
@@ -832,7 +820,7 @@ let misses rows p =
     Array.iteri
       (fun i e ->
         let c = p.subject.(i) in
-        if not (same rows p e c) then begin
+        if not (Int64.equal e c) then begin
           incr k;
           if !k <= 4 then
             bad :=
@@ -847,11 +835,11 @@ let misses rows p =
 
 let dtype_name d = match fdt d with F dt -> Nx.Dtype.name dt
 
-let law r ~rows ~dtypes ~shapes s c =
+let law r ~dtypes ~shapes s c =
   let at = { dtypes; shapes } in
   List.iter (fun d -> cover (dtype_name d) true) dtypes;
   List.iter
     (fun shape -> cover (shape_name shape) true)
     (if s.rows then shapes else flat at);
   List.iter (fun (label, f) -> cover label (f c)) s.covers;
-  equal (list string) [] (List.concat_map (misses rows) (s.pairs r at c))
+  equal (list string) [] (List.concat_map misses (s.pairs r at c))

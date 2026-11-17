@@ -1266,6 +1266,8 @@ let constant (type w) (x : (float, w) E.t) : (float, w) E.t =
   if D.bits dt = 64 then E.bitcast dt (E.bitcast D.Int64 x)
   else E.bitcast dt (E.bitcast D.Int32 x)
 
+let zero_of x = E.(x - constant x)
+
 (* The root [h] of [F (t + h)] to fifth order, from [F]'s Taylor series at [t]
    inverted in Newton's step [d = -F / F']: [h = d - c2 d^2 + (2 c2^2 - c3)
    d^3 + (5 c2 (c3 - c2^2) - c4) d^4], [c_k = F^(k) / (k! F')]. [F]'s slope

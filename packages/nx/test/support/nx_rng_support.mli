@@ -7,10 +7,9 @@
     which nx's suites and rune's share.
 
     nx.mli's Random numbers section states every draw the same bits on every
-    kernel library and at every placement, but {!Nx.Rng.dirichlet}'s, whose
-    row sum is a float {!Nx.sum}, and bounds two dirichlet draws ({!bound}).
-    A {!runner} says how a draw is computed: eagerly on a set ({!placed}), or
-    compiled, as rune's suites do. Each case draws from a drawn key, a block
+    kernel library and at every placement. A {!runner} says how a draw is
+    computed: eagerly at a placement ({!placed}, {!at}), or compiled, as
+    rune's suites do. Each case draws from a drawn key, a block
     of 2048 elements whose parameters open with their bounds and then draw
     densely where a rejection sampler rejects, and those parameters' first
     element or none. *)
@@ -76,6 +75,11 @@ val placed : (module Nx.Devices) -> runner
 (** [placed set] draws eagerly on [set], its key and arguments placed whole
     on each of [set]'s devices. *)
 
+val at : 'd Nx.Placement.t -> (int -> 'd Nx.Placement.t) -> runner
+(** [at whole cut] draws eagerly with its key at [whole] and each argument
+    of rank [r] at [cut r], such as one that cuts the argument's last
+    axis. *)
+
 (** {1:laws Laws} *)
 
 type dtype =
@@ -86,35 +90,27 @@ type dtype =
       (** The type for a float sampler's dtypes. An integer sampler draws its
           32-bit dtype with [Float32] and its 64-bit one with [Float64]. *)
 
+val dtypes : sampler -> dtype list
+(** [dtypes s] is the dtypes [s] draws at: all four for a float sampler, an
+    integer sampler's widths for one. A law at another dtype draws nothing
+    there. *)
+
 type shape =
   | Zero  (** No element. *)
   | One  (** One element, or a row sampler's one row of one. *)
   | Block  (** The block, or a row sampler's rows of 8. *)
   | Row  (** A row sampler's block as one row; a flat sampler skips it. *)
 
-type compare =
-  | Bits  (** A dirichlet draw has the host's bits. *)
-  | Bound  (** A dirichlet draw is within {!bound} of the host's. *)
-
-val bound : (float, 's) Nx.dtype -> n:int -> float -> float -> float
-(** [bound dt ~n x y] is the most two {!Nx.Rng.dirichlet} draws [x] and [y]
-    at [dt], of rows of [n], may differ by as nx.mli states it: within
-    [(2γ(n - 1) + 2u) m] at the dtype they compute at, [m] the larger, and
-    that dtype's least subnormal more where [m] is subnormal, then for a
-    dtype narrower than [float32] the rounding of each to [dt]. *)
-
 val law :
   runner ->
-  rows:compare ->
   dtypes:dtype list ->
   shapes:shape list ->
   sampler ->
   case ->
   unit
-(** [law r ~rows ~dtypes ~shapes s c] asserts that each draw of [c] at
-    [dtypes] and [shapes], computed by [r], has the bits of the draw computed
-    eagerly on the host from the same key and arguments, any two NaNs equal,
-    but a dirichlet draw as [rows] says.
+(** [law r ~dtypes ~shapes s c] asserts that each draw of [c] at [dtypes]
+    and [shapes], computed by [r], has the bits of the draw computed eagerly
+    on the host from the same key and arguments, any two NaNs equal.
 
     It covers each dtype and shape it draws, each parameter's bounds and, for
     a rejection sampler, enough parameters where a round rejects that some

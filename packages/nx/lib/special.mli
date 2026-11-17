@@ -56,6 +56,12 @@ val ndtri_mass : 'w e -> 'w e -> 'w e
     logarithm [log_q] of the nearer tail's mass [1/2 - |d|], finite, which keeps
     the tails' digits where that mass underflows. *)
 
+(** {1:zeros Zeros} *)
+
+val zero_of : 'w e -> 'w e
+(** [zero_of x] is [x] less [x] read through its bits, as an integer of
+    its width and back: [+0] for a finite [x], a NaN otherwise. *)
+
 (** {1:constants Constants}
 
     Each constant is the double nearest its value, written out, so that it has
