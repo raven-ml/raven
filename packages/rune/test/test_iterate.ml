@@ -113,7 +113,8 @@ let any_cases =
   let open Gen in
   (let* s = Operand.shape in
    let* trips = int_range 0 3 in
-   let* max = of_list [ trips; trips + 2; trips - 1 ] in
+   (* [-1] too: [trips - 1] is negative in one case in 12. *)
+   let* max = of_list [ trips; trips + 2; trips - 1; -1 ] in
    let* g = gen ~rank:(Array.length s) in
    let* c = Operand.draw s in
    let+ (D.Any dt) = of_list D.all in
