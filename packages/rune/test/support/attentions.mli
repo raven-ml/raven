@@ -157,5 +157,6 @@ val donated : (module Nx.Devices) -> Nx.Dtype.any -> unit
 (** [donated s dt] checks that a compiled call of attention over [dt] on [s]'s
     devices whose result takes the memory of a donated argument it does not
     read compiles only kernels of attention's own, holds the result's bytes
-    less than the undonated call, writes the result in the argument's memory
-    and gives the undonated call's bits. *)
+    less than the undonated call, gives the undonated call's bits and, where
+    the host computes on the device ({!Rig.runs_on_host}), writes the result
+    in the argument's memory. *)

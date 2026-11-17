@@ -3053,6 +3053,8 @@ let () =
            ];
          test "a long sum and a weight gradient hold the blocked bound"
            blocked_sums;
+         test "a loop's carry takes a donated argument's memory" (fun () ->
+             Donations.carry (snd (on_gpu ())));
          group "running operations"
            [
              prop ~count:4 ~examples:Prefixes.examples
@@ -3254,6 +3256,10 @@ let () =
              test "results are written into a donated argument they do not read"
                (fun () ->
                  Attentions.donated (snd (on_gpu ()))
+                   (Nx.Dtype.Any Nx.bfloat16));
+             test "results returned twice into two donated arguments are apart"
+               (fun () ->
+                 Attentions.donated_twice (snd (on_gpu ()))
                    (Nx.Dtype.Any Nx.bfloat16));
              test "forward mode of a summed loss holds its bound" attention_jvp;
              prop ~count:4 ~examples:Paged_attentions.examples

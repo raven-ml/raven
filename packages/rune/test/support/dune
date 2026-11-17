@@ -28,7 +28,8 @@
   int_casts
   assemblies
   unreached
-  row_sets)
+  row_sets
+  donations)
  (libraries nx nx_array nx_kernel nx_quant nx_support rig rune tolk windtrap))
 
 ; rig's test agent, beside the suite that starts it through Remote_job.

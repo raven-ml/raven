@@ -1088,7 +1088,7 @@ let donated_twice (module S : Nx.Devices) dtype =
   let host x = Nx.to_array (Nx.cast Nx.float32 (Nx.place Nx.Host.on x)) in
   let e, _ = Rune.jit s f ((q, k, v), (place 4, place 5)) in
   let expected = host e in
-  let w0 = Nx.copy (place 4) and w1 = Nx.copy (place 5) in
+  let w0 = Donations.owned (place 4) and w1 = Donations.owned (place 5) in
   let y0, y1 = Rune.jit s f ((q, k, v), (Nx.donate w0, Nx.donate w1)) in
   let bits = Testable.array Testable.float_exact in
   equal ~msg:"the first" bits expected (host y0);
@@ -1100,7 +1100,10 @@ let donated_twice (module S : Nx.Devices) dtype =
 (* A call of attention whose result takes the memory of a donated argument it
    does not read: attention's kernel writes the result there, so the call
    compiles attention's kernels alone, holds no storage of the result's
-   beside the argument's, and gives the undonated call's bits. *)
+   beside the argument's, and gives the undonated call's bits. Where the host
+   computes on the device, the result is the argument's memory: a read of the
+   argument's memory there, unlike a {!Nx.Repr.array} of it, leaves it
+   unshared, so that it can still be donated. *)
 let donated (module S : Nx.Devices) dtype =
   let (F dt) = float_dtype dtype in
   let c = base dtype in
@@ -1113,23 +1116,26 @@ let donated (module S : Nx.Devices) dtype =
   let f ((q, k, v), _) =
     fst (Nx.attention ~acc:Nx.float32 ~kv:(Dense { k; v }) q)
   in
-  let memory y = Nx.Repr.read ~by:"test" y Nx_array.buffer in
   let host x = Nx.to_array (Nx.cast Nx.float32 (Nx.place Nx.Host.on x)) in
   let expected = host (Rune.jit s f ((q, k, v), place 4)) in
-  (* Memory of its own: a cast to the dtype it has shares its operand's. *)
-  let w = Nx.copy (place 4) in
-  let rig = Rig.Buffer.device (memory w) in
+  let w = Donations.owned (place 4) in
+  let rig =
+    let a = Option.get (Nx.Repr.array ~by:"test" q) in
+    Rig.Buffer.device (Nx_array.buffer a)
+  in
+  let memory y = Nx.Repr.read ~by:"test" y Nx_array.buffer in
+  let bytes = Nx.Dtype.bytes dt (Nx.numel w) in
   let footprint x =
     List.map (fun (r, b) -> (Rig.name r, b)) (Rune.footprint s f x)
   in
-  let o = Rig.allocation rig (Rig.Buffer.length (memory w)) in
+  let o = Rig.allocation rig bytes in
   equal ~msg:"the footprint"
     Testable.(list (pair string int))
     (List.map
        (fun (r, b) -> (r, if r = Rig.name rig then b - o else b))
        (footprint ((q, k, v), place 4)))
     (footprint ((q, k, v), Nx.donate (place 4)));
-  let before = memory w in
+  let before = if Rig.runs_on_host rig then Some (memory w) else None in
   let r = ref None in
   let (), ks =
     Tolk.Realize.kernels (fun () ->
@@ -1144,6 +1150,9 @@ let donated (module S : Nx.Devices) dtype =
        (fun n -> not (String.starts_with ~prefix:"attention" n))
        (List.map (fun (k : Tolk.Realize.kernel) -> k.name) ks));
   let r = Option.get !r in
-  equal ~msg:"in the argument's memory" Testable.bool true
-    (Rig.Buffer.overlaps before (memory r));
+  Option.iter
+    (fun before ->
+      equal ~msg:"in the argument's memory" Testable.bool true
+        (Rig.Buffer.overlaps before (memory r)))
+    before;
   equal ~msg:"the bits" (Testable.array Testable.float_exact) expected (host r)
