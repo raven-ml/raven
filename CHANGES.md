@@ -1476,6 +1476,12 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A GPU product whose operand is decoded from integer codes, such as MXFP4,
+  takes a tensor core of its types past 16 rows, the rows padded to the
+  core's tile, where it streamed the codes in a pass per 16 rows
+  (`Heuristic.hand_coded_optimizations`), and on CUDA decodes each value once.
+  On an RTX 5000 Ada, 17 and 32 bfloat16 rows by an MXFP4 matrix of 16384
+  by 16384 take 393 and 416 us, where they took 936 us and 1.38 ms.
 - A CUDA or HIP kernel declares the type of every parameter it names, read
   or not. A 16-bit or 8-bit float buffer whose store no thread reaches left
   its type undeclared, and NVRTC rejected the kernel (`attribute

@@ -28,8 +28,9 @@
       output and contracted axes' sizes against the bytes of each buffer once,
       unknown when a size is symbolic or the operand reads a buffer that is
       not a parameter. A reuse past 16 streams only when no tensor core of
-      two stages ({!Stage.tile}) keeps its threads, since the operand is then
-      read in several passes;
+      two stages ({!Stage.tile}) keeps its threads, and no tensor core takes
+      a decoded operand ({!Stage.decoded}), since the operand is then read in
+      several passes;
     - a {{!section-cores}tensor core}, when the setting {!Setting.use_tc} is
       positive, on any number of reduce axes: the core takes one of them, and
       the others stay loops around it, unless an unstaged core's operand
@@ -108,9 +109,13 @@
     does not divide, each padded step multiplying zeros, and is taken only
     while the extents padded hold at most 6/5 of the work of the extents
     themselves; a staged core's pad of N to its tile ({!Stage.tile}) comes
-    beside that bound. Its [M] and [N] axes are upcast by the first of 5, 4,
-    3 and 2 that divides them, and [N] splits locally by the largest of 4
-    and 2 that divides it and leaves at least 256 workgroups. Each upcast
+    beside that bound, as does a pad of [N] or [M] past 16 that a decoded
+    operand does not read: its outputs share each value the operand decodes,
+    and only a pad's own bound, at most four times the axis
+    ({!Postrange.Scheduler.apply_opt}), holds it. Its [M] and [N] axes are
+    upcast by the first of 5, 4, 3 and 2 that divides them, and [N] splits
+    locally by the largest of 4 and 2 that divides it and leaves at least 256
+    workgroups. Each upcast
     applies only when it leaves at least [16384 / t] workgroups, [t] the
     threads of the core, a workgroup's, and each split when the count is not
     known. The floors move the order of a sum, so they are one for every
@@ -281,8 +286,12 @@ val core_fits :
     its [K] and [rows] and [outputs] along its [M] and [N], in either role:
     padded to multiples of them within the bound on padding's work that the
     heuristic's cores keep ({!Setting.tc_opt} [2]), or, below that level,
-    where they divide them. A caller that writes a contraction asks it to
-    choose a form for the layout the kernel will take. *)
+    where they divide them. Every pad counts against that bound, a decoded
+    operand's rows' too, which the heuristic's cores do not count
+    ({!section-cores}), so a decoded product of rows past the reuse that
+    streams first can take a core that [core_fits] refuses. A caller that
+    writes a contraction asks it to choose a form for the layout the kernel
+    will take. *)
 
 val core_rows :
   Renderer.t ->

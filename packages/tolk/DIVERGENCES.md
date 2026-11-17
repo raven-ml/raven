@@ -2150,7 +2150,8 @@ Withdrawn: multi-device is out of scope, see README.
     parts of two stages, from sm_80, take the rule unmeasured, and AMD and
     Metal, of one stage, keep streaming. Past `R = 32` a core takes it where
     one applies, and the other rules where none does. A decoded operand
-    streams at any reuse (D230);
+    takes a core past `R = 16` where one applies, and streams at any reuse
+    where none does (D230);
   - the layout: `W`'s main access is the one with a range of unit stride
     whose terms of contracted ranges span the most bytes. When that range `u`
     is contracted (rows): `W`'s reuse axes are upcast, each by its share of
@@ -5522,47 +5523,37 @@ union, as fast on CUDA, on the host and in compile time.
 
 ## D230. A GPU kernel decodes a value R rows read at most ceil(R / 16) times
 
-- **tinygrad:** `codegen/opt/heuristic.py` `hand_coded_optimizations` (the
-  tensor cores, and the upcasts of output axes by 3 or 4); it streams
-  nothing (D89), and states no bound on how often a kernel computes a value
-  its outputs share.
-- **tolk:** `Heuristic.stream`'s upcast of the reuse ranges and
-  `Heuristic.hand_coded_with`'s late stream of a decoded operand.
-- **Differs:** rangeify inlines a decoded value that rows read at one index
-  as one copy (D163), so the codegen owes the sharing that count assumes:
-  - on a GPU, a decoded operand that reads every output axis but one, along
-    which its `R` outputs read it at one index, is decoded at most
-    `ceil(R / 16)` times a value where the kernel streams or takes a tensor
-    core whose upcast of those rows applies, times the lanes its core's
-    fragment holds each value in (two on RDNA3, whose `B` lanes carry an `M`
-    bit);
-  - a core whose floor (D175) refuses the upcast decodes it once a tile of
-    its rows, `ceil(R / 8)` times on Metal's core of 8, and an operand that
-    several output axes reuse takes the largest divisor of their product up
-    to 16, as before;
-  - the streamed layout upcasts such an axis of `f` outputs into
-    `ceil(f / 16)` passes of as many outputs, padding the axis where they do
-    not divide it, where it took the largest divisor of `f` up to 16: 17
-    rows take 2 passes of 9, padded to 18, where they took 17 of 1;
-  - past a reuse of 32, where no core applies, a decoded operand streams,
-    where it took the other rules, which share only their upcast of 4 rows:
-    64 float32 rows decoded each value 16 times, and take 4.
+- **tinygrad:** `codegen/opt/heuristic.py` `hand_coded_optimizations`
+  (tensor cores at `TC_OPT` 0, upcasts of output axes by 3 or 4) and
+  `codegen/opt/postrange.py` `_apply_tc_opt` (a core pads only at level 2);
+  it streams nothing (D89) and states no bound on how often a kernel decodes
+  a value its outputs share.
+- **tolk:** `Heuristic.stream`'s upcast of the reuse ranges,
+  `Heuristic.hand_coded_with`'s `core_first` and late stream, and
+  `Heuristic.padded_within`.
+- **Differs:** on a GPU, a decoded operand (D163) whose `R` outputs along one
+  axis read it at one index:
+  - up to `upcast_max` (16) rows streams in one pass;
+  - past it, takes a tensor core of its types before a stream. The core's pad
+    of the axis the operand does not read is not counted against D491's 6/5,
+    only PADTO's bound; pads of its own axes and of K are;
+  - with no such core, streams in `ceil(R / 16)` passes at any reuse, the
+    axis padded where they do not divide it.
 
-  The host shares its decodes as its registers allow (D92).
-- **Reason:** (d): MXFP4 products of 16384 by 16384 on fudge's RTX 5000 Ada,
-  kaun's `Quant/cuda/mxfp4-product-of-16384-*`: 17 bfloat16 rows 4.58-11.91
-  ms to 1.07-3.28 ms; 64 float32 rows, streamed, 14.8-20.0 ms to 4.98-6.68 ms,
-  past the stored decode's 9.6. Larger float32 counts are not benched.
-  nonnormal's R9700 rows are pending, among them 64 float32 rows, where a
-  model of its decode cost puts 4 decodes a value at about 43 ms against 31
-  stored.
-- **Pinned by:** the Heuristic suite's `a GPU kernel decodes a value R rows read
-  at one index at most ceil(R / 16) times its core's copies`, over decoded
-  products of 1 to 512 rows of bfloat16, half and float32 on the CUDA, RDNA3,
-  RDNA4, CDNA and Metal renderers, and its `a decoded product's optimisations
-  keep its writes` (17 and 19 rows padded, 64 float32 rows streamed,
-  evaluated); kaun's `Quant/cuda/mxfp4-product-of-16384-17-bfloat16-tokens`
-  and `-64-float32-tokens`.
+  A core decodes a value once a tile of its rows where its floor (D175)
+  refuses their upcast, and once in each lane its fragment holds it (two on
+  RDNA3). The host shares its decodes as its registers allow (D92).
+- **Reason:** (d): each pass decodes and reads the operand again, and a
+  padded core decodes it once; on fudge, MXFP4 products of 17 and 32
+  bfloat16 rows run on the core at under half the stream's time, which
+  tinygrad's heuristic exceeds 60-fold.
+- **Pinned by:** the Heuristic suite's `a GPU kernel decodes a value R rows
+  read at one index at most ceil(R / 16) times its core's copies` (1 to 512
+  rows of bfloat16, half and float32 on the CUDA, RDNA3, RDNA4, CDNA and
+  Metal renderers) and `a decoded product's optimisations keep its writes`
+  (17 and 19 rows on a core, 64 float32 rows streamed); kaun's
+  `Quant/cuda/mxfp4-product-of-16384-{17,32}-bfloat16-tokens` and
+  `-64-float32-tokens`.
 
 ## D235. A tensor core's lanes are a warp of its threads
 
@@ -9081,7 +9072,8 @@ D466.
   the core tinygrad's default takes, on the same axis. A padded core is taken
   only where its padded extents hold at most 6/5 of the work of the kernel's
   own (`core_waste`), and `core_fits` and `core_rows`, which rune asks for
-  the form of a contraction, read the same bound in place of divisibility
+  the form of a contraction, read the same bound, counting the pad of a
+  decoded operand's rows that D230 leaves out, in place of divisibility
   (at `TC_OPT` 0 or 1 the bound is 1, divisibility). An extent the kernel
   holds as a range of one trip is no axis, and a core that would pad it is
   refused, where tinygrad's lookup of the axis raises. At level 2, a staged

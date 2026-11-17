@@ -2348,6 +2348,7 @@ let decode_bound =
         (List.exists (function Opt.Padto _ -> true | _ -> false)
            (K.applied_opts o));
       cover "a core's fragment held twice" (copies = 2);
+      cover "a core past 16 rows" (cored && rows > 16 && rows <= 32);
       at_most int
         ~msg:
           (Format.asprintf "%d %s on %s: %a" rows dtype gpu
@@ -2469,9 +2470,13 @@ let host_decodes_monotone =
       cover "as many" (fewer = more);
       at_most int ~than:more fewer)
 
-(* Rows padded into passes and float32 rows streamed compute what the kernel
-   computes: small decoded products, which the suite evaluates, on each GPU
-   renderer but on a tensor core, whose product it cannot evaluate. *)
+(* Small decoded products, which the suite evaluates: past 16 rows the rows
+   of a decoded operand take a tensor core of its types on each GPU renderer,
+   padded to its tile, and 64 float32 rows stream where no core takes them.
+   The interpreter cannot evaluate a core's instruction, so the kernel is
+   evaluated with the core laid out without it ({!Setting.use_tc} [2]), on
+   the same axis and level: the rows' pad and an unstaged core's splits are
+   evaluated, a staged core's tile is not. *)
 let decoded_writes =
   let rows =
     List.concat_map
@@ -2482,34 +2487,39 @@ let decoded_writes =
         "decoded_small_64_float";
       ]
   in
+  let core opts =
+    List.find_map
+      (function
+        | Opt.Tc { axis; tc_select; tc_opt; _ } ->
+            Some (Opt.Tc { axis; tc_select; tc_opt; use_tc = 1 })
+        | _ -> None)
+      opts
+  in
   cases "a decoded product's optimisations keep its writes"
     ~id:(fun (name, (gpu, _)) -> name ^ " on " ^ gpu)
     rows
     (fun (name, (_, ren)) ->
       let ren = Lazy.force ren in
-      let s = K.v (kernel name) ren in
-      K.convert_loop_to_global s;
-      let applied = K.applied_opts (Heuristic.hand_coded_optimizations s) in
-      let padded =
-        List.exists (function Opt.Padto _ -> true | _ -> false) applied
+      let chosen use_tc =
+        let s = K.v (kernel name) ren in
+        K.convert_loop_to_global s;
+        Setting.context
+          [ Setting.B (Setting.use_tc, use_tc) ]
+          (fun () -> K.applied_opts (Heuristic.hand_coded_optimizations s))
       in
-      (* 17 and 19 rows take 2 passes of 9 and 10, padded *)
+      let applied = core (chosen 1) in
       if name <> "decoded_small_64_float" then
-        equal Testable.bool ~msg:"rows padded" true padded;
+        equal Testable.bool ~msg:"rows on a core" true (applied <> None);
+      equal (option Kernel_opts.opt) ~msg:"the core laid out alike" applied
+        (core (chosen 2));
       let o =
         Setting.context
-          [ Setting.B (Setting.no_color, true) ]
+          [ Setting.B (Setting.no_color, true); B (Setting.use_tc, 2) ]
           (fun () ->
             Postrange.apply_opts ~hand_coded:Heuristic.hand_coded_optimizations
               (kernel name) ren)
       in
-      let cored =
-        List.exists
-          (fun u -> Ops.op u = Op.Wmma)
-          (Ops.toposort ~calls:Skip o)
-      in
-      if not cored then
-        equal (list Kernel_opts.write) (writes (kernel name)) (writes o))
+      equal (list Kernel_opts.write) (writes (kernel name)) (writes o))
 
 (* Grouping *)
 

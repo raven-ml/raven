@@ -118,6 +118,60 @@ let unroll_beside k tk own =
         (fun r -> if List.exists (fun a -> beside core a r) loads then unroll r)
         reduces
 
+(* Contractions *)
+
+(* The accesses [u] computes from, outside the reductions it reads. *)
+let accesses u =
+  List.filter
+    (fun x -> op x = Op.Index)
+    (toposort ~calls:Skip ~gate:(fun x -> op x <> Op.Reduce) u)
+
+(* Whether [u] reads a reduction that runs in a range of [over]: a sum over
+   [over] would compute it again at each of its trips. A reduction that runs
+   in none is a value of the outputs alone, as a row's expert that a
+   reduction over the experts finds. *)
+let reduces_in over u =
+  List.exists
+    (fun x ->
+      op x = Op.Reduce && List.exists (fun c -> Nodes.mem c (ranges x)) over)
+    (Nodes.to_list (backward_slice_with_self ~calls:Skip u))
+
+(* [k]'s contraction: its first reduction that sums a product of two
+   computations of accesses, neither reading a reduction that runs in a
+   range the sum closes, over at least one of [k]'s weak axes, and the ranges
+   it closes in the order of [k]'s axes. A reduction an operand reads, such as
+   a row's expert, comes before it. *)
+let contraction k =
+  let sums_product r =
+    (match arg r with Reduce { op = Op.Add; _ } -> true | _ -> false)
+    && op (nth r 0) = Op.Mul
+  in
+  List.find_map
+    (fun r ->
+      if not (sums_product r) then None
+      else
+        let m = nth r 0 in
+        let over =
+          List.filter
+            (fun u -> List.memq u (List.tl (src r)))
+            (ranges_of ~reduce:true k [ Weak ])
+        in
+        let operand o = accesses o <> [] && not (reduces_in over o) in
+        if over <> [] && operand (nth m 0) && operand (nth m 1) then
+          Some (m, over)
+        else None)
+    (K.reduceops k)
+
+let contracted k =
+  match contraction k with Some (_, over) -> over | None -> []
+
+(* The operands of [k]'s contraction decoded from integers
+   ({!Stage.decoded}). *)
+let decoded_operands k =
+  match contraction k with
+  | Some (m, _) -> List.filter Stage.decoded [ nth m 0; nth m 1 ]
+  | None -> []
+
 (* Padded tensor cores
 
    A core multiplies tiles of its [N], [M] and [K]. An extent its tile does not
@@ -127,9 +181,12 @@ let unroll_beside k tk own =
    TOMS, §5.1.1). The padding is work the core does for no output: a core
    takes a product whose padded volume is at most [core_waste] times its
    own; a staged core's pad of N to its tile ({!Stage.tile}) is not
-   counted. The bound is chosen, not fitted. On an RTX 5000 Ada, bfloat16
-   products of 65536 rows by K by 512, whose float32 output bounds their
-   time, took 0.97-0.98 of the unpadded kernel's time at K = 72 to 20, 1.11
+   counted, nor a pad of N or M past [upcast_max] that a decoded operand
+   does not read: its outputs share each value the operand decodes, so the
+   pad adds no decode and no byte of the operand, and only {!Opt.Padto}'s
+   own bound holds it. The bound is chosen, not fitted. On an RTX 5000 Ada,
+   bfloat16 products of 65536 rows by K by 512, whose float32 output bounds
+   their time, took 0.97-0.98 of the unpadded kernel's time at K = 72 to 20, 1.11
    to 1.6 times the work, and gpt-oss-20b's query projection at 68 and 100
    tokens, its M padded 1.18 and 1.12 times, a fifth and a tenth. A padded
    core can still lose: with an exp after it, K = 72 padded to 80 ran 1.22
@@ -157,16 +214,37 @@ let core_of tk =
 
 (* Whether the core of [tk], [k] with the core applied on the axes [rngs] (its
    N, M and K as it leaves them), takes their extents in [k] ({!core_takes}).
-   [TC=2], which lays out a core's shape without its instruction, is not
-   bounded. *)
+   An extent of N or M past [upcast_max] that [k]'s decoded operand does not
+   read counts as its pad: 17 rows by an MXFP4 matrix pad to 32 on CUDA's
+   core and decode each value once, where a stream of 2 passes decodes it
+   twice. [TC=2], which lays out a core's shape without its instruction, is
+   not bounded. *)
 let padded_within k tk rngs =
+  let axis i =
+    List.find_opt (fun r -> axis_id r = axis_id rngs.(i)) (K.rngs k)
+  in
   let extent i =
-    match List.find_opt (fun r -> axis_id r = axis_id rngs.(i)) (K.rngs k) with
+    match axis i with
     | Some r -> Option.map Bigint.to_int (known_size (Sym (nth r 0)))
     | None -> None
   in
+  let decoded = decoded_operands k in
+  (* Each decoded operand's values are shared along the axis, which none
+     reads. *)
+  let shares i =
+    match (axis i, extent i) with
+    | Some r, Some e ->
+        decoded <> [] && e > K.upcast_max
+        && List.for_all (fun w -> not (Nodes.mem r (ranges w))) decoded
+    | _ -> false
+  in
+  let up x d = (x + d - 1) / d * d in
   match (core_of tk, extent 0, extent 1, extent 2) with
-  | Some w, Some a, Some b, Some c -> core_takes w.dims (a, b, c)
+  | Some w, Some a, Some b, Some c ->
+      let n, m, _ = w.dims in
+      let a = if shares 0 then up a n else a in
+      let b = if shares 1 then up b m else b in
+      core_takes w.dims (a, b, c)
   | _ -> true
 
 (* The staged core's splits ({!Stage.tile}), applied to [tk], [k] with the core
@@ -401,7 +479,9 @@ let line_bytes = 128
    the time follows the passes, 519 us for 16 rows forced to 2 passes and 540
    for 32 rows in 2. More rows a thread do not help: 32 rows in one pass take
    607 us. A core of two stages that keeps its threads takes such a kernel
-   first ([core_first]), at 32 rows 425 us against 540. A gate of [upcast_max]
+   first ([core_first]), at 32 rows 425 us against 540, and so does any core
+   of a decoded operand, which decodes each value once where its upcast holds
+   the rows. A gate of [upcast_max]
    would give the others a slower layout: 24 rows take 524 us streamed and 827
    on an unstaged core, 28 rows 526 and 1693 on the general rules, and
    gpt-oss's 512-token prefill's router, whose operand no core stages, 45 and
@@ -450,51 +530,6 @@ let reuse k o =
   Option.map
     (List.fold_left (fun r (_, f) -> Bigint.mul r f) Bigint.one)
     (reuse_ranges k o)
-
-(* The accesses [u] computes from, outside the reductions it reads. *)
-let accesses u =
-  List.filter
-    (fun x -> op x = Op.Index)
-    (toposort ~calls:Skip ~gate:(fun x -> op x <> Op.Reduce) u)
-
-(* Whether [u] reads a reduction that runs in a range of [over]: a sum over
-   [over] would compute it again at each of its trips. A reduction that runs
-   in none is a value of the outputs alone, as a row's expert that a
-   reduction over the experts finds. *)
-let reduces_in over u =
-  List.exists
-    (fun x ->
-      op x = Op.Reduce && List.exists (fun c -> Nodes.mem c (ranges x)) over)
-    (Nodes.to_list (backward_slice_with_self ~calls:Skip u))
-
-(* [k]'s contraction: its first reduction that sums a product of two
-   computations of accesses, neither reading a reduction that runs in a
-   range the sum closes, over at least one of [k]'s weak axes, and the ranges
-   it closes in the order of [k]'s axes. A reduction an operand reads, such as
-   a row's expert, comes before it. *)
-let contraction k =
-  let sums_product r =
-    (match arg r with Reduce { op = Op.Add; _ } -> true | _ -> false)
-    && op (nth r 0) = Op.Mul
-  in
-  List.find_map
-    (fun r ->
-      if not (sums_product r) then None
-      else
-        let m = nth r 0 in
-        let over =
-          List.filter
-            (fun u -> List.memq u (List.tl (src r)))
-            (ranges_of ~reduce:true k [ Weak ])
-        in
-        let operand o = accesses o <> [] && not (reduces_in over o) in
-        if over <> [] && operand (nth m 0) && operand (nth m 1) then
-          Some (m, over)
-        else None)
-    (K.reduceops k)
-
-let contracted k =
-  match contraction k with Some (_, over) -> over | None -> []
 
 (* The terms of [a]'s index that are ranges: those of unit stride. *)
 let units a = List.filter (fun t -> op t = Op.Range) (split_uop (idx a) Op.Add)
@@ -1444,19 +1479,24 @@ let hand_coded_with ~core_threads k =
     let streamed_as () = Option.map (stream k) (Lazy.force layout) in
     let core = lazy (tensor_cores ~core_threads k) in
     (* Past [upcast_max] a stream reads its operand in several passes, which a
-       core of two stages that keeps its threads beats. *)
-    let core_first (_, _, reuse) =
+       core of two stages that keeps its threads beats, and any core of a
+       decoded operand, which decodes each value once where its upcast holds
+       the rows. *)
+    let core_first (w, _, reuse) =
       Bigint.(gt reuse (of_int K.upcast_max))
-      && match Lazy.force core with Some (_, filled) -> filled | None -> false
+      &&
+      match Lazy.force core with
+      | Some (_, filled) -> filled || Stage.decoded w
+      | None -> false
     in
     let early_stream =
       match s with
       | Some s when early k s && not (core_first s) -> streamed_as ()
       | _ -> None
     in
-    (* Past [stream_first] a decoded operand streams too: the other rules share
-       only their upcast of 4 rows, and decode each value in every other tile,
-       16 times at 64 rows. *)
+    (* Past [stream_first] a decoded operand that no core takes streams too:
+       the other rules share only their upcast of 4 rows, and decode each
+       value in every other tile, 16 times at 64 rows. *)
     let late () =
       match s with
       | Some (w, _, reuse)
