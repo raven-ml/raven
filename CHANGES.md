@@ -1488,6 +1488,10 @@ its lock and from samples the dashboard saw arrive.
   (`Heuristic.hand_coded_optimizations`), and on CUDA decodes each value once.
   On an RTX 5000 Ada, 17 and 32 bfloat16 rows by an MXFP4 matrix of 16384
   by 16384 take 393 and 416 us, where they took 936 us and 1.38 ms.
+- A call in a loop's body that makes storage of one element joins an
+  earlier launch as at the top level, where the loop rule counted it as a
+  256-byte block: jera's ODE suite's loop bodies dispatch 774 launches as
+  for CUDA, from 832, with no byte of any measured footprint moved.
 - A CUDA or HIP kernel declares the type of every parameter it names, read
   or not. A 16-bit or 8-bit float buffer whose store no thread reaches left
   its type undeclared, and NVRTC rejected the kernel (`attribute

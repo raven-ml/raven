@@ -2630,10 +2630,11 @@ let add_one =
     args.(read_slot) <- read;
     Ops.replace call ~src:(Ops.body call :: Array.to_list args)
 
-(* [chained_calls n] is a schedule of [n] calls, as {!two_chains} schedules them
-   unmerged: call [j] adds one to the element call [j - 2] writes. *)
-let chained_calls n =
-  let bufs = Array.init (n + 2) (fun _ -> Ops.new_buffer cpu 1 Float32) in
+(* [chained_calls ~size n] is a schedule of [n] calls, as {!two_chains}
+   schedules them unmerged, on storage of [size] elements, one by default:
+   call [j] adds one to the element call [j - 2] writes. *)
+let chained_calls ?(size = 1) n =
+  let bufs = Array.init (n + 2) (fun _ -> Ops.new_buffer cpu size Float32) in
   Ops.v Op.Linear
     ~src:(List.init n (fun j -> add_one ~read:bufs.(j) ~write:bufs.(j + 2)))
 
@@ -3105,6 +3106,60 @@ let merged_calls =
           equal int ~msg:"the trip's peak where t lives" 5 (calls ~later:false);
           (* A later, larger buffer raises the peak: [u] fits beside [t]. *)
           equal int ~msg:"under a later, higher peak" 6 (calls ~later:true));
+      (* Two chains of calls of one element in a loop's body, interleaved,
+         run a call of each chain a launch: storage of one element does not
+         weigh, as at the top level. Storage of two elements weighs a block. *)
+      test "a loop's calls of one element run as one launch a step"
+        (fun () ->
+          let launches size =
+            List.length (in_loop ~held:[] (Ops.src (chained_calls ~size 6)))
+          in
+          equal int ~msg:"one element" 3 (launches 1);
+          equal int ~msg:"two elements" 6 (launches 2));
+      (* Calls of one element in a loop's body that write, read and overwrite
+         storage of one element: each runs in a launch after those of every
+         call it waits for, so no launch holds a call that writes what
+         another of it takes. *)
+      test
+        "a loop's calls of one element run after the calls whose element \
+         they read or overwrite" (fun () ->
+          let buf n = Ops.new_buffer cpu n Float32 in
+          let x = buf 1 and y = buf 1 and o = buf 1 in
+          let t = buf 1 and u = buf 1 and v = buf 1 and w = buf 1 in
+          let pairs =
+            [ (x, t); (y, w); (t, u); (y, t); (t, v); (u, o); (w, o); (v, w) ]
+          in
+          let calls =
+            List.map (fun (read, write) -> add_one ~read ~write) pairs
+          in
+          let entries = in_loop ~held:[ x; y; o ] calls in
+          let step c =
+            let members e =
+              if Shape.is_launch (Ops.body e) then Shape.launch_members e
+              else [ e ]
+            in
+            let rec go k = function
+              | [] -> failf "a call in no launch"
+              | e :: rest ->
+                  if List.exists (Ops.equal c) (members e) then k
+                  else go (k + 1) rest
+            in
+            go 0 entries
+          in
+          let steps = List.map step calls in
+          List.iteri
+            (fun i (ri, wi) ->
+              List.iteri
+                (fun j (rj, wj) ->
+                  let waits = wi == rj || wi == wj || wj == ri in
+                  if i < j && waits then
+                    less int
+                      ~msg:(Printf.sprintf "call %d before call %d" i j)
+                      ~than:(List.nth steps j) (List.nth steps i))
+                pairs)
+            pairs;
+          less int ~msg:"some calls join" ~than:(List.length calls)
+            (List.length entries));
       (* Independent calls of a loop's body, each making storage of several
          elements that a later call reads, run as two launches: the trip's
          peak is where all four live. *)

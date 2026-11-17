@@ -183,8 +183,9 @@ val create_linear_with_vars :
       writes. In a loop's body a call joins the earliest launch at whose
       start no step up to it would hold more bytes of the body's own storage
       ({!Memory.bytes}), from each buffer's first use to its last, than the
-      body held at its peak before any call joined: storage that is [held]
-      or that entries outside the body take does not count. A member is a
+      body held at its peak before any call joined: storage that is [held],
+      that entries outside the body take, or that holds one element does not
+      count. A member is a
       call of a kernel whose ranges have constant sizes and whose storage
       lies on one device that is no disk.
       Limits of the target ({!Realize.lower_and_compile}) split a launch

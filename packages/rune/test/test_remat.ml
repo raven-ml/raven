@@ -479,6 +479,48 @@ let test_summed_step () =
         int ~than:(whole + 1) recomputed)
     [ 1; 2; 4 ]
 
+(* A scan over chunks of 2048 rows whose carry sums the loss and the
+   weights' gradients of four remat'd residual layers, 256 to 1024 to 256:
+   each trip holds its own storage, which a launch in the trip's body makes
+   no earlier than the trip's peak allows, so at 2 and 4 trips the scan holds
+   what it holds at 2, within the bound tolk's DIVERGENCES D404 states. *)
+let test_deep_scan () =
+  let layers = 4 and dim = 256 and hidden = 1024 and n = 2048 in
+  let w k r c =
+    Nx.mul_s (Nx.Rng.normal ~key:(Nx.Rng.key k) f32 [| r; c |]) 0.02
+  in
+  let ws =
+    List.init layers (fun i ->
+        (w (2 * i) dim hidden, w ((2 * i) + 1) hidden dim))
+  in
+  let pd = T.(list (pair tensor tensor)) in
+  let loss ws x =
+    Nx.sum (List.fold_left (fun a w -> rm (block w) a) x ws)
+  in
+  let f (ws, xs) =
+    let step (l, sums) x =
+      let v, gs = Rune.value_and_grad pd (fun ws -> loss ws x) ws in
+      let add (s1, s2) (g1, g2) = (Nx.add s1 g1, Nx.add s2 g2) in
+      ((Nx.add l v, List.map2 add sums gs), ())
+    in
+    let zeros (w1, w2) = (Nx.zeros_like w1, Nx.zeros_like w2) in
+    fst
+      (Rune.scan T.(pair tensor pd) T.tensor T.unit step
+         ~init:(Nx.scalar f32 0., List.map zeros ws)
+         xs)
+  in
+  let on_host (r, _) = Rig.equal r Rig.host in
+  let bytes g =
+    let xs = Nx.Rng.normal ~key:(Nx.Rng.key 99) f32 [| g; n; dim |] in
+    snd
+      (List.find on_host
+         (Rune.footprint T.(pair pd tensor @-> returns (pair tensor pd)) f
+            (ws, xs)))
+  in
+  let two = bytes 2 in
+  less ~msg:(Printf.sprintf "2 trips: %d bytes" two) int ~than:39_845_909 two;
+  equal ~msg:"4 trips, as 2" int two (bytes 4)
+
 (* The stacks read by rows against separate arrays: each row's gradient is
    its region of the stack's, so the gradient alone holds no more over the
    stacks, with or without remats. Under remats an array apart is the storage
@@ -1008,6 +1050,10 @@ let () =
                test_step_gradient;
              test "a step that sums a gradient in its carry plans each trip"
                test_summed_step;
+             test
+               "a scan of a remat'd chain holds a trip's storage at any number \
+                of trips"
+               test_deep_scan;
              test "a stack's rows are its pieces' kernels' storage, or copies"
                test_placed_pieces;
              test "stacks read by rows hold what separate arrays hold"

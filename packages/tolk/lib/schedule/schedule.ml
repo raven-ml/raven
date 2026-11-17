@@ -1884,10 +1884,10 @@ let transform_to_call big_sink =
    trip, the most a step holds for the whole loop ({!Memory}). There a call
    joins the earliest group at whose start no step up to the call would hold
    more of the body's own storage than the trip's peak: a launch costs the
-   trip no byte. A buffer of one element counts as a block of the arena, so
-   a body of small storage at its peak runs its calls apart. Storage the
-   schedule gives, or that entries outside the body take, lives through
-   every trip and does not count.
+   trip no byte. A buffer of one element does not count, as at the top level:
+   a scalar's block of the arena moved up is what a launch of calls of one
+   element costs. Storage the schedule gives, or that entries outside the
+   body take, lives through every trip and does not count.
 
    Target limits are no part of this: every subset of a launch is a launch, and
    {!Realize.lower_and_compile} splits one its target cannot run. *)
@@ -2073,7 +2073,8 @@ let launched_entries ~facts ~held ?fixed entries =
     List.iter
       (fun b ->
         match Tbl.find_opt uses b with
-        | Some us when List.for_all (fun u -> u >= i) us ->
+        | Some us
+          when List.for_all (fun u -> u >= i) us && Shape.max_numel b > 1 ->
             let d = Option.get (device b) in
             let k = Option.value (Hashtbl.find_opt made d) ~default:0 in
             Hashtbl.replace made d (k + Memory.bytes b)

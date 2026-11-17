@@ -7521,7 +7521,8 @@ reason and its pins.
     the earliest launch at whose start no step up to it would hold more of
     the body's own storage (`Memory.bytes`, each buffer from its first use to
     its last) than the body's peak before any call joined, storage that the
-    schedule is given or that entries outside the body take not counting. The
+    schedule is given, that entries outside the body take or that holds one
+    element not counting, as at the top level. The
     check counts what the call makes and leaves out what it frees by moving
     up. A capturer passes the storage it holds (`create_linear_with_vars
     ~held`); without it the call's arguments are held, which for
@@ -7571,19 +7572,32 @@ reason and its pins.
   loop's body, (b) and (d): rune's remat'd scan steps and NUTS. A remat's
   recompute reads only its step's arguments, so a call that joins any earlier
   launch makes its values at the trip's first launch, where the forward
-  pass's live: four remat'd layers under `value_and_grad` in a scan held
-  87,032,852 bytes at 2 to 4 trips against 40,894,468 at one, and hold
-  41,944,084, the live bytes at the trip's peak unchanged and the rest the
-  placement's (D477). The first use
-  as the bound in loops too ran NUTS's loop bodies as 105 dispatches a
-  transition against 31, 1.6 ms a step against 1.03 on fudge's RTX 5000 Ada.
-  The cost: the loop rule allows no byte above the trip's peak and counts a
-  buffer of one element as a block of 256 bytes, so a loop body of small
-  storage loses launches: two chains of 1000 scalar additions in a loop's
-  body stay 1000 dispatches where main ran 500 (the top level's one-element
-  exception keeps 500 there), and jera's suites' loop bodies take more (686
-  against 619 in test_ode). On the host a launch costs nothing at run time,
-  so this matters for jera on a GPU only, which no row measures.
+  pass's live, and the remat saves nothing in a loop of two trips or more.
+  A scan over chunks of 2048 rows whose carry sums the loss and the
+  weights' gradients of four remat'd residual layers, 256 to 1024 to 256,
+  holds 39,845,908 bytes at 2 and 4 trips on the host, against 58,721,300
+  without remats (`rune remat › memory › a scan of a remat'd chain holds a
+  trip's storage at any number of trips`). The first use as the bound in
+  loops too ran NUTS's loop bodies as 105 dispatches a transition against
+  31, counted out of the schedule's launches before the order of D183's
+  loop clause, 1.6 ms a step against 1.03 on fudge's RTX 5000 Ada.
+  The cost: the loop rule allows no byte above the trip's peak. A buffer of
+  one element does not count, as at the top level (two chains of scalar
+  additions in a loop's body run a call of each chain a launch). Counted on
+  the host after `Realize.split_launch` with CUDA's caps, jera's loop bodies
+  dispatch, against counting one element as a block of 256 bytes: test_ode
+  774 against 832 (614 against 669 before the split), test_root 53 and
+  test_sde 330 against the same, NUTS's transition 35 against the same (25
+  out of the schedule's launches, before the split); the top levels and
+  every byte of the remat probes and of rune's per-trip bounds are
+  unchanged. Joining the device's latest group alone, past the conflict,
+  dispatches more on test_ode (951), test_sde (354) and NUTS (40), one
+  fewer on test_root (52), and holds more: test_remat's `memory › stacks
+  read by rows hold what separate arrays hold`, two chunks without remats,
+  1,998,996 bytes stacked against 1,853,204 apart. Small storage of
+  several elements still runs apart; on the host a launch costs nothing at
+  run time, so the rest matters for jera on a GPU only, which no row
+  measures.
 - **Pinned by:** `Tolk.Launch_law` (`test/schedule/schedule`,
   `test_launch_law.ml`): `launches › a schedule's launches write what its graph
   states, in either order of their members` and `› a write marked disjoint runs
@@ -7610,8 +7624,11 @@ reason and its pins.
   loop's body joins an earlier launch only where no step holds more than the
   trip's peak` and `› a loop's independent calls run as few launches`, the
   first failing with no bound and with the first use as the bound, the second
-  with the first use; rune's `rune remat › memory › a step that sums a
-  gradient in its carry plans each trip`.
+  with the first use, `› a loop's calls of one element run as one launch a
+  step` and `› a loop's calls of one element run after the calls whose
+  element they read or overwrite`; rune's `rune remat › memory › a step that
+  sums a gradient in its carry plans each trip` and `› a scan of a remat'd
+  chain holds a trip's storage at any number of trips`.
 
 ## D405. A write marked disjoint is exempt on its state
 
