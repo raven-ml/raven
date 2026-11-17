@@ -6,10 +6,7 @@
 (* The complex kinds at complex64 and complex128, compiled by Rune.jit, which
    must compile them whole: no call is evaluated. Each is compiled to nx's own
    sequence and gives eager's bits (Kinds), over drawn operands and of a
-   constant inside the compiled function. tolk's folding gives a NaN it
-   generates a clear sign bit, where the host's arithmetic sets it, so a folded
-   pow may give a zero part the other sign where it copies one (Kinds.law's
-   nan_signs). *)
+   constant inside the compiled function. *)
 
 open Windtrap
 module Kinds = Rune_support.Kinds
@@ -23,7 +20,7 @@ let ported k =
       (Kinds.gen k)
       (Kinds.law (module Nx.Host) ~f64:true k);
     test (name ^ " of a constant gives eager's bits") (fun () ->
-        Kinds.folded ~nan_signs:true (module Nx.Host) ~f64:true k);
+        Kinds.folded (module Nx.Host) ~f64:true k);
   ]
 
 let kinds =
