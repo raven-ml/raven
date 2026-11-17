@@ -37,7 +37,8 @@ val pm_simplify_valid : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [pm_simplify_valid] simplifies each boolean conjunction with
     {!simplify_valid}, and the weak integer value of each gate knowing its
     condition holds ({!uop_given_valid}, without [try_simplex]) when it involves
-    no {!Op.Index}. *)
+    no {!Op.Index} and no {!Op.Load}: a load in the value runs whatever the
+    condition, so it keeps its own gate. *)
 
 val pm_drop_and_clauses : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [pm_drop_and_clauses] drops from each gate's condition the clauses that run

@@ -3260,21 +3260,29 @@ driver signals its own (D146).
 
 - **tinygrad:** `codegen/late/coalesce.py` `simplify_valid_load`, which
   simplifies a gated index with `uop/symbolic.py` `uop_given_valid` down into
-  the loads the index reads.
-- **tolk:** `Coalesce.simplify_valid_load`.
+  the loads the index reads; `uop/symbolic.py` `gated_given_valid`, which
+  refuses an index that reaches an `INDEX`.
+- **tolk:** `Coalesce.simplify_valid_load`, `Symbolic.gated_given_valid`.
 - **Differs:** each load in the index stands as a variable of its bounds while
   the gate simplifies the arithmetic around it, and is put back after, so a
   load keeps its own index and gate. Substituting into it would drop a gate
   the outer gate implies, such as a pad's, and the load, which runs whatever
-  the outer gate, would read outside its buffer. tinygrad's own
-  `gated_given_valid` (`uop/symbolic.py` `gated_given_valid`) refuses an index
-  that loads for the same reason.
+  the outer gate, would read outside its buffer. `gated_given_valid` refuses
+  an index that reaches a `LOAD`, where tinygrad's refuses only one that
+  reaches an `INDEX`: memory coalescing addresses a load of several elements
+  by a `SHRINK` of its buffer, with no `INDEX`. A staged core orders the slot
+  its reads take after its copies of the next trip's tiles, so the reads'
+  gate, assumed in the slot, reached the copies' loads and dropped the gate
+  that stops them at the last trip.
 - **Reason:** (b): `Nx.concatenate` of a buffer and an `Nx.take` under
   `Rune.jit`, as nested sampling's evidence does, read before the start of
-  the indices and faulted.
+  the indices and faulted; `Nx.matmul` of float32 matrices of 16384 by 440
+  and 440 by 1320 cast to bfloat16 under `Rune.jit`, tessera's widths, read
+  28 rows past its second operand on CUDA and faulted on NV.
 - **Pinned by:** the Coalesce suite (`test/codegen/late/coalesce`):
   `indexing_simplify › a gather through a pad reads its indices only inside
-  the pad`.
+  the pad`; the `codegen` suite's `stages › every access of global memory is
+  gated or within its buffer`.
 
 ## D139. Construction checks no specification
 

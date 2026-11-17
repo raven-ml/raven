@@ -254,6 +254,158 @@ let gates_held_tile () =
    past a C array. *)
 let gates_host_panel () = past_reads (mxfp4_product ~t:64 ~k:3104 ~n:128) clang
 
+(* Accesses of global memory
+
+   [c = dt (Σ_r float32 (dt a.(i, r)) * float32 (dt b.(r, j)))] of [a] of [m]
+   by [k] and [b] of [k] by [n], of [src]: as rune lowers [Nx.matmul (Nx.cast
+   dt a) (Nx.cast dt b)]. *)
+let cast_product ~src ~dt ~m ~k ~n =
+  let c = Shape.param ~shape:[ Ops.Int (m * n) ] 0 dt
+  and a = Shape.param ~shape:[ Ops.Int (m * k) ] 1 src
+  and b = Shape.param ~shape:[ Ops.Int (k * n) ] 2 src in
+  let open Ops.O in
+  let r = Ops.range ~axis_type:Weak (Int k) [ 0 ]
+  and i = Ops.range ~axis_type:Weak (Int m) [ 1 ]
+  and j = Ops.range ~axis_type:Weak (Int n) [ 2 ] in
+  let at x idx =
+    let v = Ops.index x [ idx ] in
+    Ops.cast (if Dtype.equal src dt then v else Ops.cast v dt) Float32
+  in
+  let sum =
+    Ops.reduce (at a ((i * int k) + r) * at b ((r * int n) + j)) Add [ r ]
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [
+      Ops.end_
+        (Ops.store (Ops.index c [ (i * int n) + j ]) (Ops.cast sum dt))
+        [ i; j ];
+    ]
+
+(* The value of the integer or boolean node [u] where each hardware index and
+   range is bound by [env]. *)
+let rec value_at env u =
+  match Ops.op u with
+  | Op.Const -> Ops.value u
+  | Op.Special | Op.Range -> `Int (Bigint.of_int (List.assq u env))
+  | Op.Cast | Op.After -> value_at env (Ops.nth u 0)
+  | o when Op.Set.mem o Op.Set.alu ->
+      Ops.exec_alu o (Ops.dtype u) (List.map (value_at env) (Ops.src u))
+  | o -> failf "an address computes %s" (Op.name o)
+
+let int_at env u =
+  match value_at env u with
+  | `Int z -> Bigint.to_int z
+  | _ -> failwith "an address is an integer"
+
+let holds_at env u =
+  match value_at env u with
+  | `Bool b -> b
+  | _ -> failwith "a gate is a boolean"
+
+(* The accesses of global memory of the program [prg] past their buffer where
+   their gates hold, at each trip of its loops, for each thread of the first
+   workgroup and of the last, as a GPU runs them: each instruction's first,
+   as its operation, the buffer's slot and the element. A copy into shared
+   memory accesses global memory through its load. *)
+let strays prg =
+  let instrs = Array.of_list (Ops.src (Ops.nth prg 1)) in
+  let size u = Dtype.Value.to_int (Ops.vmax u) + 1 in
+  let threads =
+    Array.fold_left
+      (fun envs u ->
+        match (Ops.op u, Ops.arg u) with
+        | Op.Special, String name ->
+            let values =
+              if name.[0] = 'l' then List.init (size u) Fun.id
+              else List.sort_uniq Int.compare [ 0; size u - 1 ]
+            in
+            List.concat_map
+              (fun env -> List.map (fun v -> (u, v) :: env) values)
+              envs
+        | _ -> envs)
+      [ [] ] instrs
+  in
+  let load u =
+    match (Ops.op u, Ops.src u) with
+    | Op.Load, [ at ] -> [ (at, None) ]
+    | Op.Load, at :: _ :: gate :: _ -> [ (at, Some gate) ]
+    | _ -> []
+  in
+  let accesses u =
+    match (Ops.op u, Ops.src u) with
+    | Op.Store, at :: v :: rest -> (at, List.nth_opt rest 0) :: load v
+    | _ -> load u
+  in
+  let past env (at, gate) =
+    let buf = Ops.nth at 0 in
+    if
+      Ops.addrspace buf <> Some Dtype.Global
+      || not (Option.fold ~none:true ~some:(holds_at env) gate)
+    then None
+    else
+      let first, count =
+        match (Ops.op at, Ops.src at) with
+        | Op.Shrink, [ _; o; n ] -> (int_at env o, int_at env n)
+        | _ -> (int_at env (Ops.nth at 1), 1)
+      in
+      if first >= 0 && first + count <= Shape.max_numel buf then None
+      else
+        let slot = match Ops.arg buf with Param p -> p.slot | _ -> -1 in
+        Some (Printf.sprintf "slot %d at element %d" slot first)
+  in
+  let found = ref [] in
+  let check u trips conds =
+    let at env =
+      let env = trips @ env in
+      if List.for_all (holds_at env) conds then
+        List.find_map (past env) (accesses u)
+      else None
+    in
+    match List.find_map at threads with
+    | Some where -> found := (Op.name (Ops.op u) ^ " of " ^ where) :: !found
+    | None -> ()
+  in
+  let closes r e =
+    Op.equal (Ops.op e) Op.End && List.memq r (List.tl (Ops.src e))
+  in
+  let rec from trips conds i stop =
+    if i < stop then
+      let u = instrs.(i) in
+      match Ops.op u with
+      | Op.Range ->
+          let close = ref (i + 1) in
+          while not (closes u instrs.(!close)) do incr close done;
+          for t = 0 to size u - 1 do
+            from ((u, t) :: trips) conds (i + 1) !close
+          done;
+          from trips conds (!close + 1) stop
+      | Op.If -> from trips (Ops.nth u 0 :: conds) (i + 1) stop
+      | Op.Endif -> from trips (List.tl conds) (i + 1) stop
+      | _ ->
+          check u trips conds;
+          from trips conds (i + 1) stop
+  in
+  from [] [] 0 (Array.length instrs);
+  List.rev !found
+
+(* On sm_89 a product over [K = 440] pads its core's [K] to 448, 14 trips of
+   32 that copy the next trip's tiles in two stages, the last trip's gated
+   off. The padded trip's reads of shared memory are gated by the trip too,
+   and their slot is ordered after those copies: the reads' gate assumed in
+   their slot, the copies of rows 448-471 of [b] would run ungated, past its
+   440 rows. A float32 [b] of 1320 columns, cast to bfloat16, is the GPU
+   lane's product, which faulted on NV; a float16 one of 1792 columns reads
+   past [b] where its float32 twin does not. *)
+let staged_cast_product ~src ~n () =
+  let k = cast_product ~src ~dt:Bfloat16 ~m:16384 ~k:440 ~n in
+  let prg =
+    Setting.context
+      [ Setting.B (Setting.stage, true) ]
+      (fun () ->
+        Codegen.linearize k (renderer_for (target "CUDA" "CUDA" "sm_89")))
+  in
+  equal (list string) [] (strays prg)
+
 (* The golden of a case is a sink of the lowered kernel and the program, less
    its binary. *)
 let recorded row = Golden.sink (row "name" ^ ".golden")
@@ -413,6 +565,13 @@ let stages =
         :: test "a padded trip reads nothing past a host's decoded panel"
              gates_host_panel
         :: per_row ~only:compiles blocked);
+      group "every access of global memory is gated or within its buffer"
+        [
+          test "a staged product of float32 cast to bfloat16 over K = 440"
+            (staged_cast_product ~src:Float32 ~n:1320);
+          test "a staged product of float16 cast to bfloat16 over K = 440"
+            (staged_cast_product ~src:Float16 ~n:1792);
+        ];
       group "an emulated float8 program launches as recorded"
         (per_row ~only:d9 launches_as_tinygrad);
       group "an optimisation that does not apply raises tinygrad's error"

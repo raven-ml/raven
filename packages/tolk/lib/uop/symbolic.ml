@@ -236,11 +236,13 @@ let pm_move_where_on_load =
     ])
 
 (* pure index math only: a LOAD in x executes even where cond is false, so its
-   INDEX valid must survive the assumption *)
+   own gate must survive the assumption. One element's load is addressed by an
+   INDEX, and a load of several, which memory coalescing makes, by a SHRINK of
+   its buffer, with no INDEX: x reaches neither. *)
 let gated_given_valid cond x i =
   if
     (not (Dtype.equal (dtype x) Dtype.Weak_int))
-    || op_in_backward_slice_with_self ~calls:Skip x [ Op.Index ]
+    || op_in_backward_slice_with_self ~calls:Skip x [ Op.Index; Op.Load ]
   then None
   else Some (where cond (uop_given_valid ~try_simplex:false cond x) i)
 
