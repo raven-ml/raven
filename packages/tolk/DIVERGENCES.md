@@ -379,11 +379,14 @@ stamps nothing (D146).
   which converts nothing, keeps a signalling one (D62).
 - **Reason:** (b). rune folds constants with `Dtype`, and nx converts eagerly
   with one rounding; an emulated kernel exists only because its target lacks
-  the type, so it must give the values a native one gives. The emulated
-  cast's rounding to odd: (e). rune hands tolk only a float32 to cast to a
-  narrow float, but without it the cast rounds twice: on the CPU with
-  `EMULATED_DTYPES=bfloat16`, the float64 `1 + 2**-8 + 2**-40` cast to
-  bfloat16 gives `0x3f80` (1.0) where `Dtype.truncate`'s one rounding gives
+  the type, so it must give the values a native one gives. The rounding to
+  odd of `Decomp_dtype.narrow`: (b). rune's `Lower_arith.store_real` narrows
+  a double or an integer to float32 with it before it encodes a narrow float,
+  so that the narrow float rounds once. The emulated cast's own rounding to
+  odd: (e). rune hands an emulated cast only a float32, but without it the
+  cast rounds twice: on the CPU with `EMULATED_DTYPES=bfloat16`, the float64
+  `1 + 2**-8 + 2**-40` cast to bfloat16 gives `0x3f80` (1.0) where
+  `Dtype.truncate`'s one rounding gives
   `0x3f81`. The 8-bit facets: (e). rune hands tolk no 8-bit float, storing
   each as `Uint8` (rune's `Lower_arith.dtype`), but without them, under
   `EMULATED_DTYPES=fp8e4m3,fp8e5m2`, an e4m3 cast of `2**-9` gives `0x00`
@@ -402,8 +405,12 @@ stamps nothing (D146).
   once`, `an fnuz format stores an underflow to negative zero as positive
   zero`; `Tolk.Decomp_dtype › NaNs › f2f narrows a quiet NaN to a quiet NaN`
   and `› an emulated cast of a quiet float32 or double NaN is a quiet NaN`;
-  `Tolk.Decomp_dtype › goldens`. The 8-bit facets: the e4m3, e5m2 and fnuz
-  cases of `Tolk.Decomp_dtype › narrow float conversions are IEEE
+  `Tolk.Decomp_dtype › goldens`; in rune, `rune jit › jit › an integer cast
+  to a float gives eager's bits` and `Rune.jit on a GPU › integers › an
+  integer cast to a float gives eager's bits`, whose ties with a bit below
+  float32's precision a cast that rounds twice gets wrong. The 8-bit facets:
+  the e4m3, e5m2 and fnuz cases of `Tolk.Decomp_dtype › narrow float
+  conversions are IEEE
   conversions › an emulated narrow float keeps its subnormals, both ways`,
   and `Tolk.Decomp_dtype › emulated narrow floats › an emulated cast of
   doubles near every <format> tie rounds once` for each 8-bit format.
@@ -1486,17 +1493,15 @@ A selection or a pad by `-0.` keeps `-0.`: tinygrad's tests for 0 take
   negative number whose reciprocal overflows to `-inf`, of magnitude below
   `2^-128` in float32 (`2^-1024` in float64, about `2^-16` in float16), gives
   `-inf`.
-- **Reason:** (b). rune lowers `Nx.log2` to tolk's `Log2` (rune's
-  `Lower_real.unary`), which the Clang renderer leaves out
-  (`Cstyle.clang_lang`), so every compiled `Nx.log2` on the host runs `xlog2`;
-  nx gives NaN for the logarithm of every negative number. rune's `Nx.log`
-  reads no `log2`.
+- **Reason:** (e). The logarithm of a negative number is NaN, where
+  tinygrad's order gives `-inf`. rune computes `Nx.log2` with nx's sequence
+  (rune's `Lower_real.log2`) and reads tolk's `Log2` only for attention's
+  `lse`, the logarithm of a positive sum (rune's `Lower_attention.lse_of`),
+  so no raven call site reaches the rule.
 - **Pinned by:** the `Transcendental` suite
   (`test/codegen/decomp/transcendental`): `special values › xlog2 of a
   negative number whose reciprocal overflows is NaN, and of -0. is -inf`, and
-  the negative float16 rows of `values.tolk` of magnitude below `2^-16`; in
-  rune, `Lower_real › transcendental › log2 within 4 ulps at float32, 4 at
-  float64`, whose golden holds negative float64 subnormals at NaN.
+  the negative float16 rows of `values.tolk` of magnitude below `2^-16`.
 
 ## D58. Withdrawn
 
@@ -1756,9 +1761,10 @@ view of any value, as `uop/ops.py` `UOp.contiguous_view` does.
     `pm_mops`, which kernels use with vector indices, is tinygrad's;
   - refused: a gather by several indices.
   The index is in range: rune clamps it and selects `0` where it was not.
-- **Reason:** (b): rune's gather lowering (`Lower_index`) emits this INDEX
-  for `Nx.take` and `Nx.take_along_axis`; D68 is withdrawn. The sharded
-  clauses are withdrawn: multi-device is out of scope, see README.
+- **Reason:** (b): rune's gather (`Lower_bits.take`, which `Lower_index.gather`
+  calls) emits this INDEX for `Nx.take` and `Nx.take_along_axis`; D68 is
+  withdrawn. The sharded clauses are withdrawn: multi-device is out of scope,
+  see README.
 - **Pinned by:** the Rangeify suite's `gathers` programs (`index_rows`,
   `index_rows_computed`, `index_read_twice`, `index_under_reduce`,
   `index_broadcast`, `index_view_source`, `index_zip`, `index_of_index`,
@@ -2980,22 +2986,21 @@ launch descriptors (D146).
     the leading part of `1/ln 2` is exact, the exponent added last with its
     rounding carried, where tinygrad's is a polynomial in `(m - 1)/(m + 1)`
     whose rounding scales into the result.
-- **Reason:** (b). rune's `exp`, `sin`, `cos` and the kinds built on them
-  compute with tolk's `exp2` and `sin`, and its `Log2` kind is tolk's `log2`
-  (rune's `Lower_real.unary`), and rune's `log` reads no `log2`. One unit off keeps rune's compositions within
-  their stated bounds, where tinygrad's float32 `xsin` near a multiple of pi
-  below 30 had no correct bit and its `xlog2` was 5 units off. On the host
-  every one of these functions is tolk's.
+- **Reason:** rune computes its kinds with nx's sequences (rune's
+  `Lower_real.unary`), reading no tolk `sin`; it reads tolk's `exp2`, which
+  is tinygrad's, and its `log2`. `xsin`: (e), since tinygrad's float32
+  `xsin` near a multiple of pi below 30 has no correct bit. `xlog2`: (b),
+  unconfirmed: rune's attention takes each row's `lse` from it (rune's
+  `Lower_attention.lse_of`) within the bound rune states, where tinygrad's
+  `xlog2` is 5 units off; no test shows the bound failing at 5 units.
 - **Pinned by:** the Transcendental suite
   (`test/codegen/decomp/transcendental`): `accuracy › accuracy.golden`
   (mpmath's correctly rounded values,
   `test/gen/codegen/decomp/transcendental.py`), and `xsin ~fast` below 30,
   within an ulp of them; `special values › sin <type> -0x0p+0 is -0x0p+0` and
   the subnormal rows; `types › <function> refuses a node of another type ›
-  half`; the graph goldens and `values.tolk`; and rune's `Lower_real ›
-  transcendental › exp within 2 ulps at float32, 9 at float64`, `› exp2
-  within 4 ulps …`, `› log2 within 4 ulps …`, `› sin within 2 ulps …` and `›
-  cos within 2 ulps …`, on the host.
+  half`; the graph goldens and `values.tolk`; and rune's `rune attention ›
+  jit within the bounds of eager`, on the host.
 
 ## D127. Withdrawn
 
@@ -3466,16 +3471,19 @@ values.
   selection between bfloat16 vectors ("Cannot select: v8bf16 =
   X86ISD::BLENDV") and truncates a gated load's merge, or a bitcast of stacked
   lanes, with compiler-rt's `__truncsfbf2`, which rig's host linker finds in no
-  library of the process. rune's bfloat16 suites failed on both x86 hosts:
-  `compiled dtypes › bfloat16, compiled, carries hold each lane's bits`, the
-  bfloat16 cases of `Rune.map_segments`' `dtypes`, `Rune.quant`'s routes in
-  blocks and `transcendental functions on the host › pow › bfloat16`.
+  library of the process. rune compiles bfloat16 selections and loads on the
+  host in `rune jit › classes ›` `a selection of a minimum against its
+  constant is exact`, `a selection of a value and a zero is exact`, `a
+  segmented contraction gives eager's values` and `experts applied give
+  eager's values` (`Nx_quant.apply_experts`), each with bfloat16 among its
+  dtypes.
 - **Pinned by:** the `Codegen` suite's `a selection between bfloat16 vectors
   takes each lane's arm` and `a gated bfloat16 load takes its alternative
   where its gate is false`, which run on the host and fail on x86 without
   AVX512-BF16 under `__bf16`. The x86 Clang goldens of
-  bfloat16 kernels (`bf16_clang`, `clang_*_bf16`). On rune: missing (the
-  cases above went with the old rune's rewrite).
+  bfloat16 kernels (`bf16_clang`, `clang_*_bf16`). On rune: the four tests
+  above, on an x86 host without AVX512-BF16; that each fails without the rule
+  is unconfirmed.
 
 ## D148. A selection keeps its guard of a conversion
 
@@ -3656,8 +3664,9 @@ rule, its reason and its pins.
 - **Reason:** nesting, (b). Clang and Metal reject a statement past 256
   bracket levels (Clang's `BracketDepth`; HIP's comgr limit is unverified on
   hardware), and rune's float64 `fmod` (rune's `Lower_real.fmod`) nests about
-  374: rune's `binary kinds, comparisons, where and fma give eager's bits`
-  (float64) and `binary › mod` failed on the host. Length, (d): compile time,
+  374: rune's `Lower_arith › exact binary kinds, comparisons, where and fma
+  give eager's bits` (float64) and `Lower_real › exact › mod` failed on the
+  host. Length, (d): compile time,
   since each reader copies and scans its operand's text; on fudge a host sum
   of 25,000 loads rendered in 15.5 s unbounded against 0.34 s bounded. The
   bound costs against holding long texts aside and writing them out once,
@@ -4144,16 +4153,15 @@ its float bound`, hold.
     their own release, not LLVM's: Apple clang 17 writes the same for `E_16_2_4`
     for x86_64, on an Intel Mac or for another machine's x86-64 host, and
     compiles both kernels for arm64, where the vectorizer stays on: without it
-    Apple Clang 17 adds 9.5% instructions over 466 kernels. LLVM 19 and 20 also
-    write valid IR of wrong values: rune's attention test `jit within the bounds
-    of eager › float32` failed on the Windows runner, `lse` off by 4249261054.8,
-    where for `x86-64-v3` the vectorizer narrows two int64 differences' low
-    halves to `uitofp <2 x i8>`; Clang 18.1.3, 21.1.0, 22.1.8 and 23.1.5 compile
-    that kernel right. D141's split of 6 lanes into 3 pairs was not the cure,
-    and rewriting the source only moves what the vectorizer meets; disabling it
-    for every Clang would change 44% of a sample of objects, so it stays on
-    wherever it is correct. With the IR verifier on (D275), invalid IR from it
-    is a compile error naming the kernel.
+    Apple Clang 17 adds 9.5% instructions over 466 kernels. LLVM 20: Reason:
+    none. Its case was an attention kernel that converted each int64's 32-bit
+    halves, which for `x86-64-v3` LLVM 19 and 20 narrowed to `uitofp <2 x
+    i8>`; rune now casts a 64-bit integer to float32 with one `Ops.cast`
+    (rune's `Lower_arith.to_float32`), and no kernel is known to meet the
+    defect under LLVM 20. Rewriting the source only moves what the vectorizer
+    meets; disabling it for every Clang would change 44% of a sample of
+    objects, so it stays on wherever it is correct. With the IR verifier on
+    (D275), invalid IR from it is a compile error naming the kernel.
   - (d), the loop vectorizer: rune's test_special timed out at 60 s on Ubuntu CI
     compiling float64 `betainccinv`'s gradients, each one scalar loop kernel,
     `E_1021`, of 1.3 MB of C, whose loop vectorizer time grows faster than the
@@ -4218,10 +4226,8 @@ its float bound`, hold.
   along the last axis of every other row and column, flipped, gives eager's
   codes`, under Clang 18 on an x86 host with AVX-512; rune's `Lower_reduce ›
   cases › rows of one group in a block at each batch index give eager's values`,
-  under Clang 19 on an x86 host with AVX2; rune's `rune attention › jit within
-  the bounds of eager › float32` and `› the gradient compiled and in forward
-  mode › float32`, whose first example fails under Clang 20 on an x86 host with
-  AVX2. The loop vectorizer: `Tolk.Compiler_cpu › features › a loop over a count
+  under Clang 19 on an x86 host with AVX2. The loop vectorizer:
+  `Tolk.Compiler_cpu › features › a loop over a count
   it takes is packed into vectors iff its source is at most 400000 bytes long:`
   (rows 400000 and 400001 among them); rune's compile bench
   `special/betainccinv-grad-f32` (914 KB), whose first call takes 3.88 s on
@@ -4565,8 +4571,8 @@ its rule, its reason and its pins.
   and `› kernels whose sizes are one name of two values run each its own`,
   and the same on each GPU; rune's `rune jit › jit › two assemblies of alike
   pieces compile`, `Rune.jit over several devices › maps over a cut axis ›
-  per-device code takes as many programs over 2 to 16`, `› programs › a
-  data-parallel step takes as many over 2, 4, 8 and 16`, `› loops › a step
+  per-device code's programs do not grow over 2 to 16`, `› programs › a
+  data-parallel step's programs do not grow over 2 to 16`, `› loops › a step
   that reads its coordinates gives eager's bits`.
 
 ## D178. A Windows host's code is compiled for Windows' calling convention
@@ -8650,9 +8656,10 @@ D466.
 - **Reason:** (e) and (b): nx's kernel contract bounds a float sum of `n`
   terms by `γ(β(n)) Σ|x|`, `β(n) = ⌈5 min(n, 256) / 4⌉ + ⌈n / 128⌉`, on
   every library (`Nx_kernel`'s error bounds), and one running sum exceeds
-  it past 324 terms. tessera's `validate --training` derives its margins
-  from that bound, and its float32 weight gradients over 16384 rows sat at
-  0.975 of the old one. A bfloat16 product of 1760 × 440 × 16384 on CUDA
+  it past 324 terms. The (b) consumer is outside this repository: tessera's
+  `validate --training` derives its margins from that bound, and its float32
+  weight gradients over 16384 rows sat at 0.975 of the old one. A bfloat16
+  product of 1760 × 440 × 16384 on CUDA
   goes from a relative error of 2.37e-5 against float64 to 2.86e-7.
 - **Pinned by:** rune's `rune jit › classes › a long sum holds the blocked
   bound` and `› a weight gradient holds the blocked bound`, which fail with
