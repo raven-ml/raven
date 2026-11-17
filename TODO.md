@@ -5,6 +5,16 @@ Where it stands, with every measurement: doc/performance.md.
 
 ## tolk
 
+- A routed tensor core over few working blocks waits on one copy's latency
+  a trip: cutting its reduce into parts in rune's `Lower_reduce.rows`
+  (float32 partials at the slots, summed in order by the existing gather)
+  runs Mixtral-like MXFP4 down at 4-96 tokens 29-40% faster on sparse
+  routings and the gate_up gradient by x 64% faster (branch `splitcount`
+  `f4a4b3e16b`, tests included). Parked on two questions: the count needs
+  tolk's plan of the uncut core (tile, staging, K depth), which reads the
+  kernel's AST, not integers rune holds; and a cut staged core loses K depth
+  in its own plan (gpt-oss +2-12%, prefill 64 +11%), whatever the divisor.
+  gpt-oss gains nothing (_plans/perf-campaign/splitcount/)
 - A decoded product past 16 rows takes a core (D230), but `Heuristic.core_fits`
   and `core_rows`, which rune reads, still count every pad: rune's `partial`
   keeps the flat form for Q8_0-like products of 17-32 rows and past 32 where
