@@ -1403,9 +1403,11 @@ val jit :
     storage of the values it computes from its first call on, so that a call
     allocates only its results. A result that a kernel of its own computes, as
     {!Nx.val-attention}'s and a scatter's are, is the storage that kernel
-    writes, once: a second result of that value is a copy, as is a result
-    that takes the memory of a donated argument it does not read
-    ({!section-donation}).
+    writes, once: a second result of that value is a copy. Where such a
+    result, or a loop's final carry, takes the memory of a donated argument
+    it does not read ({!section-donation}), it is computed there; a carry of
+    a dtype of fewer than eight bits, which the loop holds unpacked, is
+    stored there packed.
 
     An {e assembly} is a value made of pieces at regions of it, as {!Nx.stack},
     {!Nx.concatenate}, {!Nx.set} and {!Nx.pad} make one. On one device, an

@@ -3251,6 +3251,10 @@ let () =
                    dt);
              test "results returned twice are apart" (fun () ->
                  Attentions.apart (snd (on_gpu ())) (Nx.Dtype.Any Nx.bfloat16));
+             test "results are written into a donated argument they do not read"
+               (fun () ->
+                 Attentions.donated (snd (on_gpu ()))
+                   (Nx.Dtype.Any Nx.bfloat16));
              test "forward mode of a summed loss holds its bound" attention_jvp;
              prop ~count:4 ~examples:Paged_attentions.examples
                "paged keys and values give dense ones' bits"

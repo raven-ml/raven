@@ -1065,3 +1065,85 @@ let apart (module S : Nx.Devices) dtype =
     (shared a t);
   equal ~msg:"the second and the transposed share memory" Testable.bool false
     (shared b t)
+
+(* One attention returned twice, each result taking the memory of a donated
+   argument it does not read: the kernel writes the first there, the second
+   is a copy of it in the other's memory, and both give the undonated call's
+   bits, apart. *)
+let donated_twice (module S : Nx.Devices) dtype =
+  let (F dt) = float_dtype dtype in
+  let c = base dtype in
+  let shape = [| 2; 4; 64; 64 |] in
+  let place salt = Nx.place S.on (Nx.cast dt (draw c salt shape)) in
+  let q = place 1 and k = place 2 and v = place 3 in
+  let s =
+    Nx.Ptree.(
+      pair (triple tensor tensor tensor) (pair tensor tensor)
+      @-> returns (pair tensor tensor))
+  in
+  let f ((q, k, v), _) =
+    let o = fst (Nx.attention ~acc:Nx.float32 ~kv:(Dense { k; v }) q) in
+    (o, o)
+  in
+  let host x = Nx.to_array (Nx.cast Nx.float32 (Nx.place Nx.Host.on x)) in
+  let e, _ = Rune.jit s f ((q, k, v), (place 4, place 5)) in
+  let expected = host e in
+  let w0 = Nx.copy (place 4) and w1 = Nx.copy (place 5) in
+  let y0, y1 = Rune.jit s f ((q, k, v), (Nx.donate w0, Nx.donate w1)) in
+  let bits = Testable.array Testable.float_exact in
+  equal ~msg:"the first" bits expected (host y0);
+  equal ~msg:"the second" bits expected (host y1);
+  let memory y = Nx_array.buffer (Option.get (Nx.Repr.array ~by:"test" y)) in
+  equal ~msg:"apart" Testable.bool false
+    (Rig.Buffer.overlaps (memory y0) (memory y1))
+
+(* A call of attention whose result takes the memory of a donated argument it
+   does not read: attention's kernel writes the result there, so the call
+   compiles attention's kernels alone, holds no storage of the result's
+   beside the argument's, and gives the undonated call's bits. *)
+let donated (module S : Nx.Devices) dtype =
+  let (F dt) = float_dtype dtype in
+  let c = base dtype in
+  let shape = [| 2; 4; 64; 64 |] in
+  let place salt = Nx.place S.on (Nx.cast dt (draw c salt shape)) in
+  let q = place 1 and k = place 2 and v = place 3 in
+  let s =
+    Nx.Ptree.(pair (triple tensor tensor tensor) tensor @-> returns tensor)
+  in
+  let f ((q, k, v), _) =
+    fst (Nx.attention ~acc:Nx.float32 ~kv:(Dense { k; v }) q)
+  in
+  let memory y = Nx.Repr.read ~by:"test" y Nx_array.buffer in
+  let host x = Nx.to_array (Nx.cast Nx.float32 (Nx.place Nx.Host.on x)) in
+  let expected = host (Rune.jit s f ((q, k, v), place 4)) in
+  (* Memory of its own: a cast to the dtype it has shares its operand's. *)
+  let w = Nx.copy (place 4) in
+  let rig = Rig.Buffer.device (memory w) in
+  let footprint x =
+    List.map (fun (r, b) -> (Rig.name r, b)) (Rune.footprint s f x)
+  in
+  let o = Rig.allocation rig (Rig.Buffer.length (memory w)) in
+  equal ~msg:"the footprint"
+    Testable.(list (pair string int))
+    (List.map
+       (fun (r, b) -> (r, if r = Rig.name rig then b - o else b))
+       (footprint ((q, k, v), place 4)))
+    (footprint ((q, k, v), Nx.donate (place 4)));
+  let before = memory w in
+  let r = ref None in
+  let (), ks =
+    Tolk.Realize.kernels (fun () ->
+        let y = Rune.jit s f ((q, k, v), Nx.donate w) in
+        Nx.sync y;
+        r := Some y)
+  in
+  equal ~msg:"the call's other kernels"
+    Testable.(list string)
+    []
+    (List.filter
+       (fun n -> not (String.starts_with ~prefix:"attention" n))
+       (List.map (fun (k : Tolk.Realize.kernel) -> k.name) ks));
+  let r = Option.get !r in
+  equal ~msg:"in the argument's memory" Testable.bool true
+    (Rig.Buffer.overlaps before (memory r));
+  equal ~msg:"the bits" (Testable.array Testable.float_exact) expected (host r)

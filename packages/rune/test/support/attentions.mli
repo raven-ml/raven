@@ -146,3 +146,16 @@ val apart : (module Nx.Devices) -> Nx.Dtype.any -> unit
 (** [apart s dt] checks that a compiled call returning one attention's [o]
     twice, and transposed, on [s]'s devices, returns three arrays of [o]'s
     elements, no two sharing memory. *)
+
+val donated_twice : (module Nx.Devices) -> Nx.Dtype.any -> unit
+(** [donated_twice s dt] checks that a compiled call returning one attention
+    over [dt] on [s]'s devices twice, each result taking the memory of a
+    donated argument it does not read, gives the undonated call's bits in
+    both, apart. *)
+
+val donated : (module Nx.Devices) -> Nx.Dtype.any -> unit
+(** [donated s dt] checks that a compiled call of attention over [dt] on [s]'s
+    devices whose result takes the memory of a donated argument it does not
+    read compiles only kernels of attention's own, holds the result's bytes
+    less than the undonated call, writes the result in the argument's memory
+    and gives the undonated call's bits. *)

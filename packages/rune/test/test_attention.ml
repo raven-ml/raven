@@ -719,6 +719,14 @@ let () =
              test "returned twice are apart" (fun () ->
                  Rune_support.Attentions.apart (module Nx.Host)
                    (Nx.Dtype.Any Nx.float32));
+             test "returned twice into two donated arguments are apart"
+               (fun () ->
+                 Rune_support.Attentions.donated_twice (module Nx.Host)
+                   (Nx.Dtype.Any Nx.float32));
+             test "are written into a donated argument they do not read"
+               (fun () ->
+                 Rune_support.Attentions.donated (module Nx.Host)
+                   (Nx.Dtype.Any Nx.float32));
            ];
          group "the derivative's tiles"
            [ test "hold whole steps of each tensor core" tile_steps ];

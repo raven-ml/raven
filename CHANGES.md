@@ -501,6 +501,11 @@ All notable changes to this project will be documented in this file.
   read as rows of two stacks hold 1,441,924 bytes on the host over one
   chunk, from 1,638,532, 1,032,340 over 2, from 1,294,484, and 667,796
   over 8, from 893,076, as separate arrays do.
+- A `Rune.jit` result that takes the memory of a donated argument it does
+  not read is computed there by the kernel or the loop that computes it,
+  as `Nx.attention`'s is or a `scan`'s final carry, where one more kernel
+  copied it over the argument: attention over [2; 4; 64; 64] float32 holds
+  133,120 bytes on the host, from 264,192.
 - A `Rune.jit` function reads what it captures at the trace and keeps it, as
   `rune.mli` states: one that reads a capture and then donates it computes as
   eagerly instead of raising, and a capture its caller donates after a call

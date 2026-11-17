@@ -2490,6 +2490,46 @@ let test_met_again () =
         (returned (fresh [| 10.; 20. |]))
         (fresh [| 1.; 2. |]))
 
+(* A loop's final carry that takes the memory of a donated argument it does
+   not read is computed there, or, of four bits, which the loop holds
+   unpacked, stored there packed: either way the undonated call's values in
+   the argument's memory, and a float carry holds no storage beside it. *)
+let test_carry_lending () =
+  let s = T.(pair tensor tensor @-> returns tensor) in
+  let scan step init xs =
+    fst (Rune.scan T.tensor T.tensor T.unit step ~init xs)
+  in
+  let xs = Nx.Rng.normal ~key:(Nx.Rng.key 4) f32 [| 4; 64; 64 |] in
+  let f (xs, _) =
+    let step c x = (Nx.add (Nx.mul_s c 0.5) x, ()) in
+    scan step (Nx.zeros f32 [| 64; 64 |]) xs
+  in
+  let w () = Nx.copy (Nx.Rng.normal ~key:(Nx.Rng.key 5) f32 [| 64; 64 |]) in
+  let host (r, b) = if Rig.equal r Rig.host then b else 0 in
+  let footprint x =
+    List.fold_left (fun n p -> n + host p) 0 (Rune.footprint s f x)
+  in
+  let bytes = Rig.allocation Rig.host (4 * 64 * 64) in
+  at_most ~msg:"the float carry's footprint" int
+    ~than:(footprint (xs, w ()) - bytes)
+    (footprint (xs, Nx.donate (w ())));
+  let g = Rune.jit s f in
+  let expected = bits (g (xs, w ())) in
+  let took, y = in_place (fun w -> g (xs, w)) (w ()) in
+  equal ~msg:"the float carry" bits_t expected (bits y);
+  equal ~msg:"the float carry: in place" bool true took;
+  let i4 = Nx.int4 in
+  let ys = Nx.cast i4 (Nx.mul_s (Nx.ones Nx.int32 [| 4; 64; 64 |]) 3l) in
+  let f (ys, _) =
+    scan (fun c y -> (Nx.maximum c y, ())) (Nx.zeros i4 [| 64; 64 |]) ys
+  in
+  let w () = Nx.copy (Nx.cast i4 (Nx.ones Nx.int32 [| 64; 64 |])) in
+  let g = Rune.jit T.(pair tensor tensor @-> returns tensor) f in
+  let expected = Nx.to_array (g (ys, w ())) in
+  let took, y = in_place (fun w -> g (ys, w)) (w ()) in
+  equal ~msg:"the four-bit carry" (array int) expected (Nx.to_array y);
+  equal ~msg:"the four-bit carry: in place" bool true took
+
 let test_lending () =
   let xs = [| 1.; -0.; 2.5; Float.infinity |] in
   let check ~msg ~lent f =
@@ -6200,6 +6240,8 @@ let () =
                test_donated_after_call;
              test "a donated capture met again raises" test_met_again;
              test "a result takes a donated argument's memory" test_lending;
+             test "a loop's carry takes a donated argument's memory"
+               test_carry_lending;
              test "a shared donor lends nothing" test_shared;
              test "an evaluated program consumes its donations"
                test_evaluated_donation;

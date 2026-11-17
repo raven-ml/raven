@@ -2755,11 +2755,38 @@ let lower ~name ~rigs ~split ~uploads (p : Program.t) (forms : form array)
     let (F g) = form p.outputs.(j) in
     read_back dt (shape_of g) s
   in
-  (* Each result of a scatter that takes argument [k]'s storage, and the
-     substitution that makes the scatter combine there: its buffer becomes
-     [k]'s, and where its target is the argument itself, which [k]'s storage
-     holds already, so does the node that stored the target there. A scatter
-     combines into one argument's storage at most. *)
+  (* The storage [u] names a state of, through reshapes. *)
+  let rec storage u =
+    match Ops.op u with
+    | Tolk.Op.Reshape | Tolk.Op.After -> storage (Ops.nth u 0)
+    | Tolk.Op.Buffer -> Some u
+    | _ -> None
+  in
+  let given b =
+    Array.exists (Option.fold ~none:false ~some:(( == ) b)) params
+    || List.mem_assq b st.bound
+  in
+  (* Whether the storage [b] the program made holds a result of [f] as
+     {!store} would. *)
+  let holds (F f) b =
+    (not (given b))
+    && (not (packed f.dtype))
+    && Tolk.Dtype.equal (Ops.dtype b) (tdtype f.dtype)
+    && Shape.max_numel b = numel (shape_of f) * parts f.dtype
+    && Ops.device b = Some (device_at st f.placement)
+  in
+  (* Each result that takes argument [k]'s storage where its kernel writes it,
+     and the substitution that makes the kernel write there. A scatter's
+     buffer becomes [k]'s, and where its target is the argument itself, which
+     [k]'s storage holds already, so does the node that stored the target
+     there; a scatter combines into one argument's storage at most. A result
+     in storage the program made, as a kernel of its own or a loop's carry
+     writes, takes [k]'s storage for that storage, one result per storage.
+     Such a result reads no argument it is lent: {!lend}'s third pass lends
+     one only an argument nothing reads, and a result its first two passes
+     lend, which reads the argument at its own index, is a scatter's, above,
+     or a store its kernel fuses. Were it a kernel's storage, the kernel would
+     read the argument it writes as it was, as a call does. *)
   let placing lent =
     let seen = Ops.Tbl.create 4 in
     List.filter_map
@@ -2768,14 +2795,23 @@ let lower ~name ~rigs ~split ~uploads (p : Program.t) (forms : form array)
         let k = lent.(j) and v = var env y in
         if k < 0 || v < 0 || v = p.params.(k) then None
         else
-          match Ops.Tbl.find_opt st.dsts (unshaped (node st env y)) with
+          let u = node st env y in
+          match Ops.Tbl.find_opt st.dsts (unshaped u) with
           | Some d when not (Ops.Tbl.mem seen d.buf) ->
               Ops.Tbl.replace seen d.buf ();
               let arg = Option.get env.nodes.(p.params.(k)) in
               let same = unshaped d.into == unshaped arg in
               let held = if same then d.filled else d.buf in
               Some (j, (held, buffer k))
-          | _ -> None)
+          | Some _ -> None
+          | None -> (
+              match storage u with
+              | Some b
+                when holds (form p.outputs.(j)) b && not (Ops.Tbl.mem seen b)
+                ->
+                  Ops.Tbl.replace seen b ();
+                  Some (j, (b, buffer k))
+              | _ -> None))
       (List.init (Array.length p.outputs) Fun.id)
   in
   let rec settle refused =
@@ -2802,7 +2838,7 @@ let lower ~name ~rigs ~split ~uploads (p : Program.t) (forms : form array)
         (fun (c : made) -> List.map sub (c.first :: List.map snd c.data))
         cs.made
     in
-    (* A scatter combining in its argument's storage has stored over it. *)
+    (* A kernel writing in its argument's storage has stored over it. *)
     let store j k u =
       if List.mem_assoc j placed then Ops.base u else store_over j k u
     in
@@ -2825,27 +2861,9 @@ let lower ~name ~rigs ~split ~uploads (p : Program.t) (forms : form array)
      over its fill of the target and a switch's branch over the carries of
      the one before. *)
   let taken = Ops.Tbl.create 4 in
-  let rec storage u =
-    match Ops.op u with
-    | Tolk.Op.Reshape | Tolk.Op.After -> storage (Ops.nth u 0)
-    | Tolk.Op.Buffer -> Some u
-    | _ -> None
-  in
-  let given b =
-    Array.exists (Option.fold ~none:false ~some:(( == ) b)) params
-    || List.mem_assq b st.bound
-  in
-  let own (F f) u =
-    let n = numel (shape_of f) in
-    let device = device_at st f.placement in
-    let holds b =
-      (not (packed f.dtype))
-      && Tolk.Dtype.equal (Ops.dtype b) (tdtype f.dtype)
-      && Shape.max_numel b = n * parts f.dtype
-      && Ops.device b = Some device
-    in
+  let own f u =
     match storage u with
-    | Some b when holds b && not (given b || Ops.Tbl.mem taken b) -> Some b
+    | Some b when holds f b && not (Ops.Tbl.mem taken b) -> Some b
     | _ -> None
   in
   let stored (F f) u =
