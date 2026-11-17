@@ -281,16 +281,18 @@ value caml_rig_metal_free(value v_d, value v_buffer) {
 
 /* Images */
 
-/* The metallib [v_b], which makes no pipeline: [("", library, names)],
-   or [(why, 0, [||])] if Metal loads no library of [v_b] or one of its
-   functions is no compute kernel. Loading compiles nothing for the GPU. */
-value caml_rig_metal_image(value v_d, value v_b) {
-  CAMLparam2(v_d, v_b);
+/* The metallib of [v_b]'s bytes from [v_at], which makes no pipeline:
+   [("", library, names)], or [(why, 0, [||])] if Metal loads no library of
+   them or one of its functions is no compute kernel. Loading compiles
+   nothing for the GPU. */
+value caml_rig_metal_image(value v_d, value v_b, value v_at) {
+  CAMLparam3(v_d, v_b, v_at);
   CAMLlocal3(names, why, lib);
   id<MTLDevice> device = Run_val(v_d)->device;
+  size_t at = (size_t)Long_val(v_at);
   dispatch_data_t data =
-      dispatch_data_create(String_val(v_b), caml_string_length(v_b), NULL,
-                           DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+      dispatch_data_create(String_val(v_b) + at, caml_string_length(v_b) - at,
+                           NULL, DISPATCH_DATA_DESTRUCTOR_DEFAULT);
   char text[512] = "";
   @autoreleasepool {
     NSError *error = nil;
@@ -335,14 +337,15 @@ static int64_t params_of(MTLComputePipelineReflection *reflection) {
   return 0;
 }
 
-/* A pipeline Metal builds while its caller goes on: Metal's handler and the
-   image's slot each hold a reference, and the last to drop it frees the
-   build, with its pipeline. The handler stores the pipeline, retained and
-   counted, or Metal's reason, then sets [answered] under [mutex] and wakes
-   every waiter: the answer is a level, which no wait consumes. Nothing
-   writes the fields after it, so a reader that saw [answered] under [mutex]
-   reads them without it. An entry retains the pipeline in an entry of its
-   own, which the build's last drop never frees. */
+/* A pipeline Metal builds while its caller goes on. The image's slot holds
+   a reference, and Metal's handlers another, which a specialisation's
+   handler passes to the pipeline's; the last to drop one frees the build,
+   with its pipeline. The answer stores the pipeline, retained and counted,
+   or the reason, then sets [answered] under [mutex] and wakes every waiter:
+   the answer is a level, which no wait consumes. Nothing writes the fields
+   after it, so a reader that saw [answered] under [mutex] reads them
+   without it. An entry retains the pipeline in an entry of its own, which
+   the build's last drop never frees. */
 struct build {
   _Atomic int refs;
   pthread_mutex_t mutex;
@@ -385,60 +388,195 @@ static void drop(struct build *b) {
   free(b);
 }
 
-/* Starts Metal's asynchronous build of the pipeline of the function [v_f]
-   of the library [v_lib], one an indirect command buffer may run too. The
+/* Stores [b]'s answer, the pipeline [p], retained and counted, with
+   [params] bytes of parameters, or for nil the refusal [why], and wakes every
+   waiter; then drops the reference of Metal's handlers and leaves
+   [answering]. */
+static void answer(struct build *b, id<MTLComputePipelineState> p,
+                   int64_t params, const char *why) {
+  pthread_mutex_lock(&b->mutex);
+  if (p != nil) {
+    b->pipeline = [p retain];
+    b->params = params;
+    atomic_fetch_add(&rig_metal_pipelines, 1);
+  } else
+    snprintf(b->why, sizeof b->why, "%s", why);
+  b->answered = 1;
+  pthread_cond_broadcast(&b->answer);
+  pthread_mutex_unlock(&b->mutex);
+  drop(b);
+  dispatch_group_leave(answering());
+}
+
+static const char *reason(NSError *error) {
+  return error.localizedDescription.UTF8String ?: "no reason given";
+}
+
+/* Starts Metal's asynchronous build of [fn]'s pipeline on [device], one an
+   indirect command buffer may run too, whose handler answers [b]. It runs
+   inside an autorelease pool. */
+static void build(id<MTLFunction> fn, id<MTLDevice> device, struct build *b) {
+  MTLComputePipelineDescriptor *desc =
+      [[[MTLComputePipelineDescriptor alloc] init] autorelease];
+  if (desc == nil) {
+    answer(b, nil, 0, "the host has no memory for a pipeline descriptor");
+    return;
+  }
+  desc.computeFunction = fn;
+  desc.supportIndirectCommandBuffers = YES;
+  [device newComputePipelineStateWithDescriptor:desc
+                                        options:MTLPipelineOptionBindingInfo
+                              completionHandler:^(
+                                  id<MTLComputePipelineState> p,
+                                  MTLComputePipelineReflection *reflection,
+                                  NSError *error) {
+                                pass_gate();
+                                if (p != nil)
+                                  answer(b, p, params_of(reflection), "");
+                                else
+                                  answer(b, nil, 0, reason(error));
+                              }];
+}
+
+/* The values the [n] words [v] give [fn]'s function constants: 0 if [fn]
+   declares none, 1 with [*values] made, or -1 with the refusal in [why].
+   Word [k] is constant [k]'s value at the type [fn] declares, a signed one
+   in two's complement. A constant past the words takes its default, unless
+   it is required: Metal would then make a pipeline that stores nothing. A
+   word its type cannot hold is refused, since Metal would truncate it, and
+   so is a word for a type the words do not carry. */
+static int specialise(id<MTLFunction> fn, const uint32_t *v, uint32_t n,
+                      MTLFunctionConstantValues **values, char *why,
+                      size_t len) {
+  NSDictionary<NSString *, MTLFunctionConstant *> *cs =
+      fn.functionConstantsDictionary;
+  if (cs.count == 0) return 0;
+  MTLFunctionConstantValues *vs =
+      [[[MTLFunctionConstantValues alloc] init] autorelease];
+  if (vs == nil) {
+    snprintf(why, len, "the host has no memory for constant values");
+    return -1;
+  }
+  for (MTLFunctionConstant *c in cs.allValues) {
+    NSUInteger k = c.index;
+    const char *name = c.name.UTF8String;
+    if (k >= n && !c.required) continue;
+    if (k >= n) {
+      snprintf(why, len,
+               "its required constant %s (%lu) is past the image's %u %s", name,
+               (unsigned long)k, n, n == 1 ? "value" : "values");
+      return -1;
+    }
+    uint32_t w = v[k];
+    int32_t s = (int32_t)w;
+    union {
+      uint8_t u8;
+      int8_t i8;
+      uint16_t u16;
+      int16_t i16;
+      uint32_t u32;
+      int32_t i32;
+    } x;
+    int fits = 1;
+    switch (c.type) {
+      case MTLDataTypeBool:
+        fits = w <= 1;
+        x.u8 = (uint8_t)w;
+        break;
+      case MTLDataTypeChar:
+        fits = s >= INT8_MIN && s <= INT8_MAX;
+        x.i8 = (int8_t)s;
+        break;
+      case MTLDataTypeUChar:
+        fits = w <= UINT8_MAX;
+        x.u8 = (uint8_t)w;
+        break;
+      case MTLDataTypeShort:
+        fits = s >= INT16_MIN && s <= INT16_MAX;
+        x.i16 = (int16_t)s;
+        break;
+      case MTLDataTypeUShort:
+        fits = w <= UINT16_MAX;
+        x.u16 = (uint16_t)w;
+        break;
+      case MTLDataTypeInt:
+        x.i32 = s;
+        break;
+      case MTLDataTypeUInt:
+        x.u32 = w;
+        break;
+      default:
+        snprintf(why, len,
+                 "its constant %s (%lu) is of a type the image's values do "
+                 "not carry",
+                 name, (unsigned long)k);
+        return -1;
+    }
+    if (!fits) {
+      snprintf(why, len,
+               "the value %u lies outside the type of its constant %s (%lu)", w,
+               name, (unsigned long)k);
+      return -1;
+    }
+    [vs setConstantValue:&x type:c.type atIndex:k];
+  }
+  *values = vs;
+  return 1;
+}
+
+/* Starts the build of the pipeline of the function [v_f] of the library
+   [v_lib], specialised by the little-endian 32-bit words of [v_values]. A
+   function that declares constants is specialised by Metal's asynchronous
+   call, whose handler starts the pipeline's build, so the start waits for
+   neither; one the words refuse is answered with the refusal at once. The
    result is the build as an int, or 0, having started nothing, if the host
    has no memory for it. It allocates nothing on the OCaml heap and releases
    the runtime while Metal takes the request. */
-value caml_rig_metal_start(value v_lib, value v_f) {
+value caml_rig_metal_start(value v_lib, value v_f, value v_values) {
   id<MTLLibrary> library = Object_val(v_lib);
+  uint32_t n = (uint32_t)(caml_string_length(v_values) / 4);
   char *f = strdup(String_val(v_f));
+  uint32_t *v = n > 0 ? malloc(4 * (size_t)n) : NULL;
   struct build *b = calloc(1, sizeof *b);
-  if (f == NULL || b == NULL) {
-    free(f);
-    free(b);
+  if (f == NULL || b == NULL || (n > 0 && v == NULL)) {
+    free(f), free(v), free(b);
     return Val_long(0);
   }
+  const unsigned char *bytes = (const unsigned char *)String_val(v_values);
+  for (uint32_t k = 0; k < n; k++)
+    v[k] = (uint32_t)bytes[4 * k] | (uint32_t)bytes[4 * k + 1] << 8 |
+           (uint32_t)bytes[4 * k + 2] << 16 | (uint32_t)bytes[4 * k + 3] << 24;
   atomic_init(&b->refs, 2);
   pthread_mutex_init(&b->mutex, NULL);
   pthread_cond_init(&b->answer, NULL);
-  dispatch_group_t group = answering();
-  dispatch_group_enter(group);
+  dispatch_group_enter(answering());
   caml_enter_blocking_section_no_pending();
   @autoreleasepool {
-    MTLComputePipelineDescriptor *desc =
-        [[[MTLComputePipelineDescriptor alloc] init] autorelease];
-    desc.computeFunction = [[library
-        newFunctionWithName:[NSString stringWithUTF8String:f]] autorelease];
-    desc.supportIndirectCommandBuffers = YES;
-    [library.device
-        newComputePipelineStateWithDescriptor:desc
-                                      options:MTLPipelineOptionBindingInfo
-                            completionHandler:^(
-                                id<MTLComputePipelineState> p,
-                                MTLComputePipelineReflection *reflection,
-                                NSError *error) {
-                              pass_gate();
-                              int64_t params =
-                                  p != nil ? params_of(reflection) : 0;
-                              pthread_mutex_lock(&b->mutex);
-                              if (p != nil) {
-                                b->pipeline = [p retain];
-                                b->params = params;
-                                atomic_fetch_add(&rig_metal_pipelines, 1);
-                              } else
-                                snprintf(b->why, sizeof b->why, "%s",
-                                         error.localizedDescription.UTF8String
-                                             ?: "no reason given");
-                              b->answered = 1;
-                              pthread_cond_broadcast(&b->answer);
-                              pthread_mutex_unlock(&b->mutex);
-                              drop(b);
-                              dispatch_group_leave(group);
-                            }];
+    NSString *name = [NSString stringWithUTF8String:f];
+    id<MTLFunction> fn = [[library newFunctionWithName:name] autorelease];
+    MTLFunctionConstantValues *values = nil;
+    char why[sizeof b->why] = "";
+    int k = fn != nil ? specialise(fn, v, n, &values, why, sizeof why) : 0;
+    if (k < 0)
+      answer(b, nil, 0, why);
+    else if (k == 0)
+      build(fn, library.device, b);
+    else
+      [library newFunctionWithName:name
+                    constantValues:values
+                 completionHandler:^(id<MTLFunction> g, NSError *error) {
+                   @autoreleasepool {
+                     if (g != nil)
+                       build(g, g.device, b);
+                     else {
+                       pass_gate();
+                       answer(b, nil, 0, reason(error));
+                     }
+                   }
+                 }];
   }
   caml_leave_blocking_section();
-  free(f);
+  free(f), free(v);
   return Val_long((intnat)b);
 }
 
@@ -744,8 +882,8 @@ NO_METAL2(caml_rig_metal_alloc)
 NO_METAL3(caml_rig_metal_map_host)
 NO_METAL2(caml_rig_metal_free)
 NO_METAL1(caml_rig_metal_release)
-NO_METAL2(caml_rig_metal_image)
-NO_METAL2(caml_rig_metal_start)
+NO_METAL3(caml_rig_metal_image)
+NO_METAL3(caml_rig_metal_start)
 NO_METAL2(caml_rig_metal_wait)
 NO_METAL1(caml_rig_metal_take)
 NO_METAL1(caml_rig_metal_settle)

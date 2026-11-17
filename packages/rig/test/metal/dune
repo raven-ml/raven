@@ -10,6 +10,7 @@
   rig_metal
   rig_metal_abi
   rig_metal_support
+  rig_program
   rig_support
   threads.posix
   windtrap)

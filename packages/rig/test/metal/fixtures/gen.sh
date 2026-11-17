@@ -26,6 +26,11 @@ fixture() {
   need metal 32023.864
   need metallib 32023.864
   case $1 in
+  constants.metallib)
+    for u in constants narrow; do
+      xcrun -sdk macosx metal -c "$u.metal" -o "$tmp/$u.air"
+    done
+    xcrun -sdk macosx metallib "$tmp/constants.air" "$tmp/narrow.air" -o "$1" ;;
   *.metallib) name=${1%.metallib}
     xcrun -sdk macosx metal -c "$name.metal" -o "$tmp/$name.air"
     xcrun -sdk macosx metallib "$tmp/$name.air" -o "$1" ;;
@@ -34,5 +39,6 @@ fixture() {
 }
 
 [ $# -gt 0 ] || set -- \
-  fill.metallib launch.metallib threadgroup.metallib vertex.metallib
+  constants.metallib fill.metallib launch.metallib threadgroup.metallib \
+  vertex.metallib
 for f in "$@"; do fixture "$f"; done

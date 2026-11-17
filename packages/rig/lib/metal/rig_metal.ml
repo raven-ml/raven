@@ -29,10 +29,10 @@ external free_buffer : int -> nativeint -> unit = "caml_rig_metal_free"
 
 external release : int -> unit = "caml_rig_metal_release" [@@noalloc]
 
-external load : int -> string -> string * nativeint * string array
+external load : int -> string -> int -> string * nativeint * string array
   = "caml_rig_metal_image"
 
-external start : nativeint -> string -> int = "caml_rig_metal_start"
+external start : nativeint -> string -> string -> int = "caml_rig_metal_start"
 external wait_build : int -> int -> bool = "caml_rig_metal_wait"
 external take_build : int -> int = "caml_rig_metal_take"
 external entry_code : nativeint -> int = "caml_rig_metal_entry_code" [@@noalloc]
@@ -185,9 +185,12 @@ type tables = {
    the unload: after its entry took the pipeline, or with Metal's refusal,
    which every later [entry] raises again. A [prepare] starts a build holding
    [guard], so calls for one function from several domains make one pipeline.
-   [tables] and [device_guard] are its device's, which guards [unloaded]. *)
+   [values] are the words of its header, 4 bytes each, which specialise each
+   build. [tables] and [device_guard] are its device's, which guards
+   [unloaded]. *)
 and image = {
   library : nativeint;
+  values : string;
   names : string array;
   entries : Rig_edge.entry array;
   builds : int array;
@@ -486,8 +489,32 @@ let capacity _ = None
 
 (* Images *)
 
-let image d b =
-  match load d.self b with
+(* A specialised metallib starts with [magic], then a count [n] and [n]
+   values, each a little-endian 32-bit word, then the metallib. *)
+let magic = "RMSC"
+
+let values n = if n = 1 then "1 value" else strf "%d values" n
+
+(* [Ok (values, at)], the bytes of [b]'s values and where its metallib
+   starts, or [Error why] for a header that breaks the format. *)
+let header b =
+  let len = String.length b in
+  if not (String.starts_with ~prefix:magic b) then Ok ("", 0)
+  else if len < 8 then Error "the specialised metallib ends inside its count"
+  else
+    let n = Int32.to_int (String.get_int32_le b 4) land 0xffff_ffff in
+    let at = 8 + (4 * n) in
+    if at > len then
+      Error
+        (strf "the specialised metallib's %s pass its %d bytes" (values n) len)
+    else if at = len then
+      Error
+        (strf "no metallib follows the specialised metallib's %s" (values n))
+    else Ok (String.sub b 8 (4 * n), at)
+
+(* The metallib of [b] from [at], specialised by [values]. *)
+let library d b (values, at) =
+  match load d.self b at with
   | "", library, names ->
       let entries = Array.make (Array.length names) none in
       let builds = Array.make (Array.length names) 0 in
@@ -497,6 +524,7 @@ let image d b =
         (Rig_edge.Loaded
            {
              library;
+             values;
              names;
              entries;
              builds;
@@ -506,6 +534,8 @@ let image d b =
              unloaded = false;
            })
   | why, _, _ -> Error why
+
+let image d b = Result.bind (header b) (library d b)
 
 (* The index of [f] in [names] from [k], or [-1]. *)
 let rec index names f k =
@@ -541,7 +571,7 @@ let started (i : image) f still_ms =
   let k = index i.names f 0 in
   if k < 0 || i.entries.(k).code <> 0 then 0
   else begin
-    if i.builds.(k) = 0 then i.builds.(k) <- start i.library f;
+    if i.builds.(k) = 0 then i.builds.(k) <- start i.library f i.values;
     if i.builds.(k) = 0 && still_ms > 0 then raise Out_of_memory;
     i.builds.(k)
   end
@@ -610,7 +640,7 @@ let entry_held (i : image) f =
             release made;
             reraise x)
     | exception Failure why ->
-        invalid_argf "Rig_metal.entry: Metal makes no pipeline of %S: %s" f why
+        invalid_argf "Rig_metal.entry: no pipeline of %S: %s" f why
 
 (* Holds [i.guard], taken without a closure, in [locked]'s form. *)
 let entry (i : image) f =

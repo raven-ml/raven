@@ -1910,7 +1910,7 @@ let beyond_limits () =
   let refused () =
     raises_match
       (Exn.invalid_arg
-         ~sub:"Rig_metal.entry: Metal makes no pipeline of \"wide\": ")
+         ~sub:"Rig_metal.entry: no pipeline of \"wide\": ")
       (fun () -> S.entry i "wide")
   in
   refused ();
@@ -2006,7 +2006,7 @@ let small_image =
 let small_functions =
   Gen.of_list ~pp:Format.pp_print_string [ "small"; "wide"; "none" ]
 
-let refusal = "Rig_metal.entry: Metal makes no pipeline of \"wide\": "
+let refusal = "Rig_metal.entry: no pipeline of \"wide\": "
 
 let entry_model m = function
   | "small" ->
@@ -2226,6 +2226,367 @@ let images =
       test "an entry's parameters are its buffer 0's struct" entry_params;
     ]
 
+(* Specialised images
+
+   A specialised metallib is the bytes "RMSC", a count, that many
+   little-endian 32-bit words, then a metallib (rig_metal.mli's Code
+   section). The kernels of the fixture [constants] write their constants'
+   values, and each case compares them with the values the words give at
+   the types the kernel declares (constants.metal, narrow.metal). *)
+
+module G = Rig_program
+
+let constants = S.fixture ~dir:"fixtures" "constants"
+
+(* The specialised metallib of [lib] whose values are the words [ws]. *)
+let specialised ?(lib = constants) ws =
+  let b = Buffer.create (8 + (4 * List.length ws) + String.length lib) in
+  Buffer.add_string b "RMSC";
+  Buffer.add_int32_le b (Int32.of_int (List.length ws));
+  List.iter (fun w -> Buffer.add_int32_le b (Int32.of_int w)) ws;
+  Buffer.add_string b lib;
+  Buffer.contents b
+
+let load_on d binary =
+  require_ok ~pp:Format.pp_print_string (Rig.Image.load d binary)
+
+(* The signed 32-bit words of [b]'s first [n]. *)
+let signed b n =
+  let s = contents b in
+  List.init n (fun i -> Int32.to_int (String.get_int32_le s (4 * i)))
+
+(* [f] of [image] run once over one thread, writing into [out]. *)
+let run_once d image f out =
+  let s = Sub.make d [| launch image f ~params:8 [ Sub.write 0 ~at:0 ] |] in
+  let run = Sub.take s in
+  set_grid run (Sub.block s 0) one;
+  run_wait run [| out |]
+
+(* The first [n] words [f] of [binary] writes, or the reason of the
+   refusal, which every resolve raises again. *)
+let written d binary f n =
+  let image = load_on d binary in
+  match Rig.Image.resolve image f with
+  | exception Invalid_argument why ->
+      raises (Invalid_argument why) (fun () -> Rig.Image.resolve image f);
+      Error why
+  | _ ->
+      let out = zeroed d 32 in
+      run_once d image f out;
+      Ok (signed out n)
+
+type spec = {
+  f : string;
+  words : int list option; (* [None] for the metallib alone *)
+  expect : (int list, string) result;
+}
+
+let pp_words = Format.(pp_print_list ~pp_sep:pp_print_space pp_print_int)
+
+let spec_id { f; words; _ } =
+  match words with
+  | None -> f ^ " of the metallib alone"
+  | Some ws -> Format.asprintf "%s of [%a]" f pp_words ws
+
+let refusal_prefix f = strf "Rig_metal.entry: no pipeline of %S: " f
+
+(* Words for constants 0 to 8 of [typed], from 3 on [ws]. *)
+let typed ws = Some ([ 0; 0; 0 ] @ ws)
+
+let out_of_range f w c k ws =
+  {
+    f;
+    words = ws;
+    expect =
+      Error
+        (refusal_prefix f
+        ^ strf "the value %d lies outside the type of its constant %s (%d)" w c
+            k);
+  }
+
+let specs =
+  [
+    { f = "pair"; words = Some [ 5; 9 ]; expect = Ok [ 5; 9 ] };
+    { f = "pair"; words = Some [ 0xffff_ffff; 0 ]; expect = Ok [ -1; 0 ] };
+    { f = "pair"; words = Some [ 5; 9; 1 ]; expect = Ok [ 5; 9 ] };
+    {
+      f = "pair";
+      words = Some [ 5 ];
+      expect =
+        Error
+          (refusal_prefix "pair"
+          ^ "its required constant b (1) is past the image's 1 value");
+    };
+    { f = "fixed"; words = None; expect = Ok [ 42 ] };
+    { f = "fixed"; words = Some [ 1; 2; 3; 4 ]; expect = Ok [ 42 ] };
+    { f = "optional"; words = None; expect = Ok [ 7 ] };
+    { f = "optional"; words = Some [ 5; 9 ]; expect = Ok [ 7 ] };
+    { f = "optional"; words = Some [ 5; 9; 3 ]; expect = Ok [ 3 ] };
+    { f = "narrow"; words = Some [ 5; 9 ]; expect = Ok [ 5 ] };
+    { f = "narrow"; words = Some [ 0xffff_8000 ]; expect = Ok [ -32768 ] };
+    { f = "pair"; words = Some [ 40000; 9 ]; expect = Ok [ 40000; 9 ] };
+    out_of_range "narrow" 40000 "s" 0 (Some [ 40000; 9 ]);
+    {
+      f = "typed";
+      words = typed [ 1; 0xffff_ff80; 255; 0xffff_8000; 65535; 0x8000_0000 ];
+      expect = Ok [ 1; -128; 255; -32768; 65535; -0x8000_0000 ];
+    };
+    {
+      f = "typed";
+      words = typed [ 0; 127; 0; 32767; 0; 0x7fff_ffff ];
+      expect = Ok [ 0; 127; 0; 32767; 0; 0x7fff_ffff ];
+    };
+    out_of_range "typed" 2 "t_bool" 3 (typed [ 2; 0; 0; 0; 0; 0 ]);
+    out_of_range "typed" 128 "t_char" 4 (typed [ 0; 128; 0; 0; 0; 0 ]);
+    out_of_range "typed" 0xffff_ff7f "t_char" 4
+      (typed [ 0; 0xffff_ff7f; 0; 0; 0; 0 ]);
+    out_of_range "typed" 256 "t_uchar" 5 (typed [ 0; 0; 256; 0; 0; 0 ]);
+    out_of_range "typed" 32768 "t_short" 6 (typed [ 0; 0; 0; 32768; 0; 0 ]);
+    out_of_range "typed" 0xffff_7fff "t_short" 6
+      (typed [ 0; 0; 0; 0xffff_7fff; 0; 0 ]);
+    out_of_range "typed" 65536 "t_ushort" 7 (typed [ 0; 0; 0; 0; 65536; 0 ]);
+    {
+      f = "real";
+      words = typed [ 0; 0; 0; 0; 0; 0 ];
+      expect = Ok [ Int32.to_int (Int32.bits_of_float 1.5) ];
+    };
+    {
+      f = "real";
+      words = typed [ 0; 0; 0; 0; 0; 0; 0 ];
+      expect =
+        Error
+          (refusal_prefix "real"
+          ^ "its constant f (9) is of a type the image's values do not carry");
+    };
+  ]
+
+let specialises { f; words; expect } =
+  let t = dev () in
+  let binary =
+    match words with None -> constants | Some ws -> specialised ws
+  in
+  let n = match expect with Ok ws -> List.length ws | Error _ -> 0 in
+  equal
+    (result (list int) string)
+    expect (written t.d binary f n)
+
+(* A function whose required constant has no value is refused, whatever the
+   image gives the others: the metallib alone, or a header of no words. *)
+let required_missing () =
+  let t = dev () in
+  let missing binary =
+    match written t.d binary "pair" 2 with
+    | Ok ws -> failf "made a pipeline, which wrote %a" pp_words ws
+    | Error why ->
+        equal string ~msg:"the reason's start" (refusal_prefix "pair")
+          (String.sub why 0 (String.length (refusal_prefix "pair")));
+        why
+  in
+  let required n = strf "is past the image's %d values" n in
+  let ends why s =
+    equal string s (String.sub why (String.length why - String.length s)
+                      (String.length s))
+  in
+  ends (missing constants) (required 0);
+  ends (missing (specialised [])) (required 0)
+
+(* A header that breaks the format is the load's error, and a metallib that
+   follows a header loads as Metal loads it. *)
+let malformed () =
+  let t = dev () in
+  let le32 w =
+    let b = Bytes.create 4 in
+    Bytes.set_int32_le b 0 (Int32.of_int w);
+    Bytes.to_string b
+  in
+  let load b =
+    match Rig_metal.image t.g b with
+    | Ok (Rig_edge.Loaded i) ->
+        Rig_metal.unload t.g i;
+        Ok ()
+    | Ok (Place _) -> Error "Metal asked to place its code"
+    | Error why -> Error why
+  in
+  let refused msg b why =
+    equal ~msg (result unit string) (Error why) (load b)
+  in
+  let short = "the specialised metallib ends inside its count" in
+  refused "the magic alone" "RMSC" short;
+  refused "half a count" "RMSC\001\000" short;
+  refused "a value short" ("RMSC" ^ le32 2 ^ le32 5)
+    "the specialised metallib's 2 values pass its 12 bytes";
+  refused "the most values"
+    ("RMSC" ^ le32 0xffff_ffff ^ constants)
+    (strf "the specialised metallib's %d values pass its %d bytes" 0xffff_ffff
+       (8 + String.length constants));
+  refused "no metallib" ("RMSC" ^ le32 1 ^ le32 5)
+    "no metallib follows the specialised metallib's 1 value";
+  equal ~msg:"no values" (result unit string) (Ok ())
+    (load (specialised []));
+  match load (specialised [ 5 ] ~lib:"no metallib") with
+  | Ok () -> fail "bytes that are no metallib loaded"
+  | Error why ->
+      let prefix = "loading the image: " in
+      equal string ~msg:"bytes that are no metallib" prefix
+        (String.sub why 0 (min (String.length why) (String.length prefix)))
+
+(* Collects what is unreachable, then makes a call on [d] that unloads the
+   images it finds collected, whose work is done. *)
+let drain d =
+  Gc.full_major ();
+  Gc.full_major ();
+  ignore (B.create d 0 : B.t)
+
+(* Metal's answer to a specialised build waits behind the gate, after the
+   specialisation: a prepare finds it unanswered while the gate holds it, an
+   unload meanwhile returns at once, and the pipeline, once answered, is
+   released; settling waits for it. *)
+let chained_unstored () =
+  let t = dev () in
+  let loaded () =
+    match require_ok (Rig_metal.image t.g (specialised [ 3; 4 ])) with
+    | Rig_edge.Loaded i -> i
+    | Place _ -> failf "Metal asked to place its code"
+  in
+  drain t.d;
+  Rig_metal.settle ();
+  let before = Rig_metal.pipelines () in
+  Rig_metal.hold_builds true;
+  Fun.protect ~finally:(fun () -> Rig_metal.hold_builds false) (fun () ->
+      let i = loaded () in
+      equal bool ~msg:"answered while held" false
+        (Rig_metal.prepare i "pair" ~still_ms:100);
+      equal int ~msg:"prepared" 1 (Rig_metal.held i);
+      Rig_metal.unload t.g i;
+      equal int ~msg:"while held" before (Rig_metal.pipelines ()));
+  Rig_metal.settle ();
+  equal int ~msg:"once answered" before (Rig_metal.pipelines ());
+  let i = loaded () in
+  S.answered i "pair";
+  equal int ~msg:"an entry's" (before + 1) (Rig_metal.pipelines ());
+  ignore (found (Rig_metal.entry i "pair")).code;
+  Rig_metal.unload t.g i;
+  equal int ~msg:"unloaded" before (Rig_metal.pipelines ())
+
+let keys = 8
+
+(* Images of one metallib under [keys] headers each compute with their own
+   constants, and each releases its pipeline once unreachable. *)
+let released_keys () =
+  let t = dev () in
+  drain t.d;
+  Rig_metal.settle ();
+  let before = Rig_metal.pipelines () in
+  let key k () =
+    equal
+      (result (list int) string)
+      ~msg:(strf "key %d" k)
+      (Ok [ k; 100 + k ])
+      (written t.d (specialised [ k; 100 + k ]) "pair" 2)
+  in
+  for k = 1 to keys do
+    key k ()
+  done;
+  drain t.d;
+  Rig_metal.settle ();
+  equal int ~msg:"pipelines once collected" before (Rig_metal.pipelines ())
+
+(* A kept submission over a specialised image keeps it, so it runs with the
+   image's constants after its other references went, and releases the
+   pipeline once unreachable itself. *)
+let kept_submission () =
+  let t = dev () in
+  drain t.d;
+  Rig_metal.settle ();
+  let before = Rig_metal.pipelines () in
+  let make () =
+    let image = load_on t.d (specialised [ 21; 22 ]) in
+    Sub.make t.d [| launch image "pair" ~params:8 [ Sub.write 0 ~at:0 ] |]
+  in
+  let runs () =
+    let s = make () in
+    drain t.d;
+    for round = 1 to 2 do
+      let out = zeroed t.d 32 in
+      let run = Sub.take s in
+      set_grid run (Sub.block s 0) one;
+      run_wait run [| out |];
+      equal (list int) ~msg:(strf "round %d" round) [ 21; 22 ] (signed out 2)
+    done;
+    equal int ~msg:"pipelines while kept" (before + 1) (Rig_metal.pipelines ())
+  in
+  runs ();
+  drain t.d;
+  Rig_metal.settle ();
+  equal int ~msg:"pipelines once collected" before (Rig_metal.pipelines ())
+
+(* A program over a specialised image, through the bytes of its description
+   that an agent receives, loads and runs with the image's constants. *)
+let program_bytes () =
+  let t = dev () in
+  let fixed n = { G.add = n; terms = [||] } in
+  let pair =
+    G.Launch
+      {
+        image = 0;
+        name = "pair";
+        label = "pair";
+        params = String.make 8 '\000';
+        scalars = [||];
+        refs = [| { G.slot = 0; at = 0; use = Write } |];
+        groups = (fixed 1, fixed 1, fixed 1);
+        threads = (fixed 1, fixed 1, fixed 1);
+        shared = fixed 0;
+      }
+  in
+  let description =
+    {
+      G.devices = [| Rig.arch t.d |];
+      ints = 0;
+      memory = [||];
+      images = [| { G.device = 0; binary = specialised [ 31; 32 ] } |];
+      inputs = [| { G.device = 0; bytes = 32 } |];
+      steps =
+        [|
+          G.Submit { device = 0; slots = [| G.Input 0 |]; parts = [| pair |] };
+        |];
+    }
+  in
+  let received =
+    require_ok ~pp:Format.pp_print_string
+      (G.of_string (G.to_string description))
+  in
+  let p =
+    require_ok ~pp:Format.pp_print_string (G.load received [| t.d |])
+  in
+  let out = zeroed t.d 32 in
+  ignore (G.run p { inputs = [| out |]; ints = [||] } : Rig.Point.t array);
+  B.wait out Read;
+  equal (list int) [ 31; 32 ] (signed out 2)
+
+let specialised_images =
+  group ~timeout:60. "specialised images"
+    [
+      cases ~id:spec_id "a function computes with the values its header gives"
+        specs specialises;
+      test "a function without a required constant's value is refused"
+        required_missing;
+      test "a header that breaks the format is an error" malformed;
+      test
+        "a specialised build answers behind the gate, and an unload before \
+         releases its pipeline once answered"
+        chained_unstored;
+      test
+        "each key's image computes with its constants and releases its \
+         pipeline"
+        released_keys;
+      test "a kept submission keeps its specialised image" kept_submission;
+      test
+        "a program over a specialised image, through its bytes, runs with \
+         its constants"
+        program_bytes;
+    ]
+
 (* Timeline and loss *)
 
 (* A loss that finds work running stops the device, the work runs to its end,
@@ -2391,6 +2752,7 @@ let () =
          memory;
          file_tests;
          images;
+         specialised_images;
          timeline;
          interrupts;
          opening;

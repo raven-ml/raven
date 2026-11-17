@@ -315,10 +315,12 @@ val capability : t -> Rig_metal_abi.t
 
 (** {1:code Code}
 
-    {!val-image} loads a metallib as a Metal library, and leaves compiling
-    its functions to {!prepare}. The result is [Ok (Loaded i)],
-    or [Error] with the reason if Metal cannot load the bytes as a library,
-    or if one of its functions is not a compute kernel.
+    {!val-image} loads a metallib, or a specialised metallib
+    ({!section-specialised}), as a Metal library, and leaves compiling its
+    functions to {!prepare}. The result is [Ok (Loaded i)], or [Error] with
+    the reason if a specialised metallib's header breaks its format, if
+    Metal cannot load the bytes as a library, or if one of its functions is
+    not a compute kernel.
 
     {!prepare} starts Metal's asynchronous compile of a function into a
     pipeline ([MTLComputePipelineState]) that indirect command buffers may
@@ -326,9 +328,13 @@ val capability : t -> Rig_metal_abi.t
     milliseconds for Metal's answer, with the thread's signals unblocked as
     in {!sleep}. Metal compiles in its own processes, several pipelines at
     once. It is [true] once Metal answered, with a pipeline or a refusal, and
-    for a function that has an entry or is none of the image's. A start the
-    host has no memory for raises [Out_of_memory] at a positive [still_ms],
-    and is [true] at [0], having started nothing. A prepare or an entry
+    for a function that has an entry or is none of the image's. The start
+    asks Metal for the function constants the function declares, a call
+    that waits. A function that declares some is first specialised by
+    Metal's asynchronous call, at the image's values, and its compile starts
+    once Metal answers, so the start waits for neither. A start the host has
+    no memory for raises [Out_of_memory] at a positive [still_ms], and is
+    [true] at [0], having started nothing. A prepare or an entry
     waits while another domain's prepare starts a compile of the same image.
     Calls for one function from several domains concurrently make one
     pipeline.
@@ -344,16 +350,49 @@ val capability : t -> Rig_metal_abi.t
     where buffer 0 points to another type, such as words, whose length the
     function does not state. {!entry} raises [Invalid_argument] with Metal's
     reason if Metal made no pipeline of the function, such as for a function
-    that needs more threadgroup memory than the GPU family has. The refusal
-    is kept: every later entry raises it, until the metallib is loaded
-    again. An entry of a function that no prepare found answered raises
+    that needs more threadgroup memory than the GPU family has, and with the
+    reason of a refusal of the image's values ({!section-specialised}).
+    The refusal is kept: every later entry raises it, until the metallib is
+    loaded again. An entry of a function that no prepare found answered raises
     [Invalid_argument].
 
     {!unload} releases the library, the pipelines {!prepare} started and the
     launches {!entry} made of them. It waits for no compile: a pipeline Metal
     has not answered is released once made. An indirect command buffer that
     records one of these pipelines keeps it until its own release
-    ({!Rig_metal_abi.type-icb}). *)
+    ({!Rig_metal_abi.type-icb}).
+
+    {2:specialised Specialised metallibs}
+
+    A specialised metallib is the bytes ["RMSC"], a count [n], [n] values,
+    then a metallib, where [n] and each value are unsigned 32-bit integers
+    in little-endian order. Value [k] is the value of function constant [k]
+    of each function of the image that declares it, at the type that
+    function declares, so two functions may read one value at two types.
+    The types are [bool], [char], [uchar], [short], [ushort], [int] and
+    [uint], a signed type's value in two's complement: [0xffffff80] is
+    [-128] for a [char]. A function ignores the values of constants it does
+    not declare, so a function that declares none runs as from the metallib
+    alone. A metallib without the header has no values.
+
+    {!val-image} is [Error] if the bytes end inside the count, if the
+    values pass the bytes, or if no byte follows them. A function's entry
+    is refused if:
+    {ul
+    {- it declares a required constant at index [n] or above, which Metal
+       may compile into a pipeline that stores nothing;}
+    {- a value lies outside its constant's type, such as [2] for a [bool]
+       or [0x8000] for a [short], which Metal would truncate;}
+    {- a constant of another type, such as [float], has a value.}}
+    A constant that has no value and is not required takes the value the
+    function gives it where [is_function_constant_defined] is false.
+
+    The images of one metallib under different headers are images of their
+    own: each compiles its pipelines and releases them with its library at
+    its unload, which rig makes once the image is collected
+    ({!Rig.Image.load}). An image's code counts no bytes in a budget, so
+    images a program drops prompt no collection: until the collector
+    reaches them they keep their pipelines. *)
 
 (** {1:failure Failure and stopping}
 
@@ -413,8 +452,11 @@ val capability : t -> Rig_metal_abi.t
       [recommendedMaxWorkingSetSize], [maxBufferLength], [supportsFamily:],
       [maxThreadsPerThreadgroup], [maxThreadgroupMemoryLength]),
       [MTLBuffer.h] ([gpuAddress], [contents]), [MTLLibrary.h]
-      ([newLibraryWithData:error:], [functionNames], [newFunctionWithName:]),
-      [MTLFunction.h] ([functionType]), [MTLComputePipeline.h]
+      ([newLibraryWithData:error:], [functionNames], [newFunctionWithName:],
+      [newFunctionWithName:constantValues:completionHandler:],
+      [functionType], [functionConstantsDictionary], [MTLFunctionConstant]),
+      [MTLFunctionConstantValues.h] ([setConstantValue:type:atIndex:]),
+      [MTLComputePipeline.h]
       ([supportIndirectCommandBuffers], [maxTotalThreadsPerThreadgroup],
       [staticThreadgroupMemoryLength]), [MTLDevice.h]
       ([newComputePipelineStateWithDescriptor:options:completionHandler:]),
@@ -426,6 +468,10 @@ val capability : t -> Rig_metal_abi.t
     - {{:https://developer.apple.com/library/archive/documentation/3DDrawing/Conceptual/MTLBestPracticesGuide/Pipelines.html}
        Metal Best Practices Guide, Pipelines}: "Building these pipelines
       asynchronously maximizes performance and parallelism."
+    - {{:https://developer.apple.com/documentation/metal/mtllibrary/makefunction(name:)}
+       makeFunction(name:)}: of a function with function constants, "you can
+      only use the returned instance to query the [functionConstants]
+      property".
     - {{:https://developer.apple.com/documentation/metal/simplifying-gpu-resource-management-with-residency-sets}
        Simplifying GPU resource management with residency sets}: a set added to
       a queue keeps its committed allocations resident for every command buffer
