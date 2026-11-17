@@ -11,7 +11,7 @@
     [x + iy], and [w] is the second operand of a binary kind. Each kind is
     composed from {!Lower_real}'s float kinds, and [u] is the unit roundoff
     ({!Lower_real}) of the parts' type. The kinds and bounds here are the
-    complex rows of {!Rune.section-numerics}.
+    complex functions of {!Rune.section-numerics}.
 
     {1:exact Exact kinds}
 
@@ -51,6 +51,13 @@
       [s = sinh x] and [c = cosh x], and past that switch [1] and
       [4 sin y cos y e{^-2|x|}]. [Sin], [Cos] and [Tan] are [Sinh], [Cosh]
       and [Tanh] at [iz], turned by [-i] but for [Cos].
+    - [Asin] and [Acos] are Kahan's, from [√(1 - z)] and [√(1 + z)], with
+      their leading terms at infinity past [2{^13}] ([float32]) or [2{^28}]
+      ([float64]) and the float [asin] and [acos] on the real axis within
+      [\[-1, 1\]]. [Atanh] is Kahan's, with [x = 1] apart and [Re(1/z) + iπ/2]
+      past [2{^62}] or [2{^510}]. [Atan] is [Atanh] at [iz] turned by [-i],
+      [Asinh] [Asin] at [-iz] turned by [i], and [Acosh] [Acos] at [x + i|y|]
+      turned by [i] above the real axis and conjugated below.
 
     On a target that keeps subnormals, rounds division and the square root
     correctly and rounds a fused multiply-add once, they give the bits nx's
@@ -64,44 +71,35 @@
     rounds a fused multiply-add once, each but [Mul], [Fdiv] and [Recip] is
     within the normwise bound nx states for it where no value computed for it
     is subnormal: [3u] for [Sqrt] and [Sign], [4u] for [Log], [Log2], [Exp]
-    and [Exp2], [6u] for the circular and hyperbolic kinds, and
-    [(3 + 3 |w log z|) u] for [Pow]; on another target no bound is stated for
-    them.
-
-    {1:bounded Other kinds}
+    and [Exp2], [5u] for the inverse circular and hyperbolic kinds, [6u] for
+    the circular and hyperbolic kinds, and [(3 + 3 |w log z|) u] for [Pow];
+    on another target no bound is stated for them.
 
     The transcendental kinds are the principal values of C99 7.3 (ISO/IEC
     9899), each part's sign choosing the side of a branch cut as there.
 
-    On every target, [Mul], [Fdiv], [Recip] and the transcendental kinds below
-    each hold a {e normwise} bound, in the sense that a result [z'] of exact
-    value [z] has [|z' - z| / |z|] at most the table's multiple of [u], to first
-    order. The bounds are derived from {!Lower_real}'s, an error of [n] ulps
-    there being one of at most [(2n + 1) u]:
+    {1:bounded Bounds on every target}
 
-    {v
-      mul                                      2
-      fdiv, recip                              4
-      atan, atanh, acos, acosh                21
-      asin, asinh                             23
-    v}
-
-    A bound holds where every part of the operands is finite, the result's
-    modulus is a normal float and no value computed for it, a part of it
-    included, is subnormal. [Fdiv] and [Recip] also need the operands' parts
-    below half the greatest float and the divisor's larger part normal. There,
-    the result has no NaN part.
+    On every target, [Mul] holds a {e normwise} bound of [2u], in the sense
+    that a result [z'] of exact value [z] has [|z' - z| / |z| <= 2u] to first
+    order, and [Fdiv] and [Recip] one of [4u]. A bound holds where every part
+    of the operands is finite, the result's modulus is a normal float and no
+    value computed for it, a part of it included, is subnormal; for [Fdiv] and
+    [Recip], where the operands' parts are below half the greatest float and
+    the divisor's larger part is normal. There, the result has no NaN part.
 
     {1:special Special values}
 
-    A part's {e sort} is whether it is a NaN, an infinity, a zero or another
-    number. An operand with a NaN part and none infinite gives a result with a
-    NaN part, except [z{^w}] at a [w] whose parts are zeros, which is [1], and
-    at [z = 1 ± 0i] with [w]'s imaginary part zero, which is [1 ± 0i] as the
-    float [pow] gives [1] at [x = 1]. At an operand with an infinite part, each
-    part of a unary kind's result has the sort of that part of the value C99
-    Annex G (G.6) gives, as nx's kinds do, and an infinite part has Annex G's
-    sign. There, where no part is a NaN,
+    These hold on every target, on a target that flushes subnormals where no
+    part of an operand is subnormal, and for [Exp2] at an infinite [x] where
+    [|y ln 2|] is not subnormal either. A part's {e sort} is whether it is a
+    NaN, an infinity, a zero or another number. An operand with a NaN part and
+    none infinite gives a result with a NaN part, except [z{^w}] at a [w] whose
+    parts are zeros, which is [1], and at [z = 1 ± 0i] with [w]'s imaginary
+    part zero, which is [1 ± 0i] as the float [pow] gives [1] at [x = 1]. At
+    an operand with an infinite part, each part of a unary kind's result has the
+    sort of that part of the value C99 Annex G (G.6) gives, as nx's kinds do,
+    and an infinite part has Annex G's sign. There, where no part is a NaN,
     [Sign] gives the direction of the infinite parts, one of the eight [±1],
     [±i] and [(±1 ± i) / √2], and [Recip] the sorts of [(1 + 0i) / z] as [Fdiv]
     computes it. Zeros' signs are unspecified, and so is an infinity's sign that

@@ -507,11 +507,14 @@ rounded sum; a stated bound) and its reason. A rounded sum's bound is
 
 - **Reference:** none: tinygrad has no complex dtype (`dtype.py:186`).
 - **Raven:** `lower_complex.ml` (`unary`, `binary`, `compare`, `mul`, `fdiv`,
-  `smith`, `sign_raw`, `sqrt_raw`, `exp_raw`, `exp2_raw`, `log_abs`,
-  `pow_raw`, `sinh_raw`, `cosh_raw`, `tanh_raw`, `asin_raw`, `acos_raw`,
-  `atanh_raw`); `lower_arith.ml` (`parts`, `of_parts`, `cast_parts`, `raw`).
+  `smith`, `sign_raw`, `sqrt_raw`, `exp_raw`, `exp_times`, `exp2_raw`,
+  `log_abs`, `log2_raw`, `pow_raw`, `sinh_raw`, `cosh_raw`, `tanh_raw`,
+  `asin_raw`, `acos_raw`, `atanh_raw`, `unsignalled`); `lower_real.ml`
+  (`rem_ln2`, `cos_near`); `lower_arith.ml` (`parts`, `of_parts`,
+  `cast_parts`, `raw`).
 - **No source:** a number is a pair of float nodes, its real part first, each
-  kind a composition of `Lower_real`'s kinds.
+  kind a composition of `Lower_real`'s kinds in `nx_kinds_complex.h`'s
+  sequence.
   - `Neg`, `Add` and `Sub` act on each part. `Maximum`, `Minimum` and the
     comparisons order by real part, then imaginary part, and treat a number
     with a NaN part as a NaN. The comparisons compare each part as IEEE 754
@@ -539,6 +542,18 @@ rounded sum; a stated bound) and its reason. A rounded sum's bound is
     table beside `2/pi`'s. `Pow` is `e^(w log z)`; a real or imaginary `w`
     multiplies `log z`'s parts alone, `z^0` is 1, and the positive real axis
     takes the float `pow`.
+  - `Sinh`, `Cosh`, `Tanh`, `Sin`, `Cos` and `Tan` are `nx_sinh`, `nx_cosh`,
+    `nx_tanh`, `nx_sin`, `nx_cos` and `nx_tan` likewise: the hyperbolic
+    kinds take their real parts' `sinh` and `cosh` and, past `HYP_BIG`,
+    `e^|x| / 2` as `Exp` takes `e^x`; `Tanh` is Kahan's. The circular kinds
+    turn the hyperbolic ones by `i`.
+  - `Asin`, `Acos`, `Atanh`, `Atan`, `Asinh` and `Acosh` are `nx_asin`,
+    `nx_acos`, `nx_atanh`, `nx_atan`, `nx_asinh` and `nx_acosh` likewise.
+    `Asin` and `Acos` are Kahan's from `sqrt (1 - z)` and `sqrt (1 + z)`,
+    with their leading terms at infinity past `ASIN_BIG`, `2^13`
+    (`float32`) or `2^28` (`float64`). `Atanh` is Kahan's, `x = 1` apart
+    and `Re (1/z) + i pi/2` past `ATANH_BIG`. `Atan` turns `Atanh` by `i`,
+    and `Asinh` and `Acosh` turn `Asin` and `Acos`.
   - Exactness has one exception: at an operand with an infinite or NaN
     part, where nx's complex `Pow` gives `+0 ± 0i`, a call on an NVIDIA GPU,
     or one whose constants the compiler folds, may give the zero imaginary
@@ -547,36 +562,21 @@ rounded sum; a stated bound) and its reason. A rounded sum's bound is
     copies its sign, which the target or the compiler sets: x86 keeps a
     propagated NaN's sign and sets a generated one's, CUDA's `float32`
     clears it, and so does a NaN the compiler generates when it folds.
-  - `Sinh`, `Cosh`, `Tanh`, `Sin`, `Cos` and `Tan` are `nx_sinh`, `nx_cosh`,
-    `nx_tanh`, `nx_sin`, `nx_cos` and `nx_tan` likewise: the hyperbolic
-    kinds take their real parts' `sinh` and `cosh` and, past `HYP_BIG`,
-    `e^|x| / 2` as `Exp` takes `e^x`; `Tanh` is Kahan's. The circular kinds
-    turn the hyperbolic ones by `i`.
-  - `Asin` and `Acos` are Kahan's from `sqrt (1 - z)` and `sqrt (1 + z)`,
-    with their leading terms at infinity past `2^13` (`float32`) or `2^28`
-    (`float64`). `Atanh` is Kahan's. `Atan` turns `Atanh` by `i`, and
-    `Asinh` and `Acosh` turn `Asin` and `Acos`.
   - A cast from a complex number reads its real part; one into it sets the
     imaginary part to `+0.`. A `complex64`'s bits are its real part's in the
     low word.
 - **nx:** `prog.mli`, Domains and Results, Complex numbers;
   `nx_kinds_complex.h`.
-- **Class:** exact for `Neg`, `Add`, `Sub`, `Maximum`, `Minimum`, the
-  comparisons, `Mul`, `Fdiv`, `Recip`, `Sqrt`, `Sign`, `Log`, `Log2`,
-  `Exp`, `Exp2`, `Pow`, `Sinh`, `Cosh`, `Tanh`, `Sin`, `Cos` and `Tan`;
-  stated bound: `lower_complex.mli`'s normwise table for the others.
+- **Class:** exact.
 - **Reason:** (b).
 - **Pinned by:** `Lower_complex › kinds › cmul gives eager's bits`, `› cmul
-  of a constant gives eager's bits`, the same for `cdiv`, `crecip`, `csqrt`,
-  `csign`, `clog`, `clog2`, `cexp`, `cexp2`, `cpow`, `csinh`, `ccosh`,
-  `ctanh`, `csin`, `ccos` and `ctan`, and `Lower_complex › a NaN part and
-  no infinite one give a NaN part, but pow's exceptions › *`, on the host;
-  `Jit_gpu › complex kinds › *` on a GPU; `Lower_complex ›
-  special values › *` and `Lower_complex › bounds › *` over every other
-  kind at `complex64` and `complex128`;
-  `Lower_arith › exact unary kinds give eager's bits`, `› exact binary kinds,
-  comparisons, where and fma give eager's bits`, `› casts into complex128 give
-  eager's values in both parts`.
+  of a constant gives eager's bits` and the same for every other complex
+  kind with an algorithm, and `Lower_complex › a NaN part and no infinite
+  one give a NaN part, but pow's exceptions › *`, on the host; `Jit_gpu ›
+  complex kinds › *` on a GPU; `Lower_arith › exact unary kinds give
+  eager's bits`, `› exact binary kinds, comparisons, where and fma give
+  eager's bits`, `› casts into complex128 give eager's values in both
+  parts`.
 
 ### A27. A narrow float's fma rounds its exact value once
 

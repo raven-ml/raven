@@ -3011,7 +3011,8 @@ let complex_kinds =
   Kinds.
     [
       cmul; cdiv; crecip; csqrt; csign; clog; clog2; cexp; cexp2; cpow; csinh;
-      ccosh; ctanh; csin; ccos; ctan;
+      ccosh; ctanh; csin; ccos; ctan; casin; cacos; catan; casinh; cacosh;
+      catanh;
     ]
 
 (* Multiply-adds of narrow floats: fma at a float narrower than float32,

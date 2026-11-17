@@ -479,6 +479,14 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled complex `Nx.asin`, `Nx.acos`, `Nx.atan`, `Nx.asinh`,
+  `Nx.acosh` and `Nx.atanh` give eager's bits on the host and NVIDIA GPUs.
+  Elsewhere they hold nx's 5u, where rune stated 21u and 23u for every
+  device, now only on a device that rounds division and the square root
+  correctly and an fma once, where nothing computed is subnormal. On a
+  device that flushes subnormals, rune.mli states complex special values
+  only where no operand part is subnormal, and for `Nx.exp2` at an infinite
+  `x` only where `|y ln 2|` is not subnormal.
 - A compiled complex `Nx.sin`, `Nx.cos`, `Nx.tan`, `Nx.sinh`, `Nx.cosh` and
   `Nx.tanh` give eager's bits on the host and NVIDIA GPUs. Elsewhere they
   hold nx's 6u, where rune stated 57u to 73u for every device, now only on

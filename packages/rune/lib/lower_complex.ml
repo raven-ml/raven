@@ -3,12 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Each kind composes Lower_real's float kinds over pairs of nodes. A kind of
-   nx's sequence restates nx_kinds_complex.h's function operation for
-   operation, as Lower_real does nx_kinds_real.h's, and names it; when the
-   header changes, it changes with it. Each other kind takes a form that
-   cancels nowhere and overflows only where its result does, its bound in
-   [lower_complex.mli] derived to first order from Lower_real's. *)
+(* Each kind composes Lower_real's float kinds over pairs of nodes and restates
+   nx_kinds_complex.h's function operation for operation, as Lower_real does
+   nx_kinds_real.h's, and names it; when the header changes, it changes with
+   it. *)
 
 open Tolk
 open Lower_bits
@@ -44,12 +42,15 @@ let inf x = num x Float.infinity
 (* nx_kinds.h's macros of the same names, at float32 then float64, their text
    copied: ln2 rounded's remainder; exp's near range; the clamps past which
    e^x c and 2^x c overflow for every finite non-zero c; where sinh and cosh
-   are e^|x|/2. *)
+   are e^|x|/2, asin and acos their terms at infinity, and atanh is past its
+   overflow guard. *)
 let ln2_low = (-0x1.05c610p-29, 0x1.abc9e3b39803fp-56)
 let exp_near = (86.0, 708.0)
 let cexp_hi = (194.0, 1456.0)
 let cexp2_hi = (280.0, 2101.0)
 let hyp_big = (12.0, 22.0)
+let asin_big = (0x1p13, 0x1p28)
+let atanh_big = (0x1p62, 0x1p510)
 
 (* Float kinds *)
 
@@ -62,6 +63,8 @@ let pow = R.binary Pow
 let sin = R.unary Sin
 let cos = R.unary Cos
 let tan = R.unary Tan
+let asin = R.unary Asin
+let acos = R.unary Acos
 let atan = R.unary Atan
 let sinh = R.unary Sinh
 let cosh = R.unary Cosh
@@ -73,7 +76,6 @@ let atan2 = R.binary Atan2
 let larger a b = where (gt a b) a b
 let smaller a b = where (gt a b) b a
 let neg_int k = Ops.sub (int k 0) k
-let infinite x = eq (magnitude x) (inf x)
 
 (* nx_finite: [|x|] below infinity, false at a NaN. *)
 let finite x = lt (magnitude x) (inf x)
@@ -150,15 +152,14 @@ let log_abs x y =
     ]
     far
 
-(* asinh t, odd: log1p(a + a^2 / (1 + sqrt(1 + a^2))) of a = |t|; past 2^p,
-   where a^2 + 1 rounds to a^2, log a + ln2. *)
+(* nx_asinh_part: asinh t, odd: log1p(a + a^2 / (1 + sqrt(1 + a^2))) of
+   a = |t|, and log a + ln2 past ASIN_BIG, where a^2 + 1 rounds to a^2. *)
 let asinh_part t =
   let a = magnitude t in
   let a2 = a *: a in
   let near = log1p (a +: (a2 /: (one a +: Ops.sqrt (one a +: a2)))) in
-  let far = log a +: R.con a R.ln2 in
-  R.copysign (where (lt a (num a (R.pick a (0x1p24, 0x1p53)))) near far) t
-
+  let far = log a +: R.con a R.ln2_hi +: R.con a R.ln2_lo in
+  R.copysign (where (lt a (R.con a asin_big)) near far) t
 
 (* nx_exp_times: e^x c, for x past EXP_NEAR up to the clamp CEXP_HI: with
    x/2 = k ln2 + r and m = e^r, (m c) m 2^2k, so that neither e^x nor its
@@ -387,57 +388,84 @@ let tanh_raw x y =
 (* Inverse kinds
 
    asin and acos (Kahan, 1987), from A = sqrt(1 - z) and B = sqrt(1 + z): asin z
-   = atan(x / Re(A B)) + i asinh(Im(conj(A) B)) and acos z = 2 atan(Re A / Re B)
-   + i asinh(Im(conj(B) A)). Past asin_far, where A B can overflow before the
-   result, asin z is atan2(x, y) + i (log |z| + ln2) in the first quadrant, its
-   leading terms at infinity, whose next are below the unit roundoff. *)
+   = atan(x / Re(A B)) + i asinh(Im(conj(A) B)) and acos z = 2 atan(Re A / Re
+   B) + i asinh(Im(conj(B) A)). Past ASIN_BIG, asin z is atan2(x, y) + i (log|z|
+   + ln2) in the first quadrant, its leading terms at infinity. On the real
+   axis within [-1, 1], the part type's asin and acos. The C returns a NaN case
+   unflipped, before the parts take x's and y's signs. *)
 
-let asin_far = (0x1p13, 0x1p28)
+(* log |z| + ln2, of ln2 in two parts *)
+let far_log ax ay = log_abs ax ay +: R.con ax R.ln2_hi +: R.con ax R.ln2_lo
 
-let far_parts x y =
-  let ax = magnitude x and ay = magnitude y in
-  let far = gt ax (R.con x asin_far) ||: gt ay (R.con x asin_far) in
-  (far, atan2 ax ay, log_abs ax ay +: R.con x R.ln2)
-
+(* nx_asin_raw *)
 let asin_raw x y =
-  let ar, ai = sqrt_raw (one x -: x) (negated y) in
-  let br, bi = sqrt_raw (one x +: x) y in
-  let far, fr, fi = far_parts x y in
-  ( where far (R.flip fr x) (atan (x /: det ar br ai bi)),
-    where far (R.flip fi y) (asinh_part (det ar bi ai br)) )
+  let ax = magnitude x and ay = magnitude y in
+  let big = gt ax (R.con x asin_big) ||: gt ay (R.con x asin_big) in
+  let ar, ai = sqrt_raw (one x -: ax) (negated ay) in
+  let br, bi = sqrt_raw (one x +: ax) ay in
+  let signed (re, im) = (R.flip re x, R.flip im y) in
+  cases
+    [
+      (big, signed (atan2 ax ay, far_log ax ay));
+      (is_nan ax ||: is_nan ay, (where (eq x (zero x)) x (nan x), nan x));
+      (eq ay (zero y) &&: le ax (one x), signed (asin ax, zero x));
+    ]
+    (signed (atan (ax /: det ar br ai bi), asinh_part (det ar bi ai br)))
 
+(* nx_acos_raw *)
 let acos_raw x y =
-  let ar, ai = sqrt_raw (one x -: x) (negated y) in
-  let br, bi = sqrt_raw (one x +: x) y in
-  let far, _, fi = far_parts x y in
-  ( where far (atan2 (magnitude y) x) (num x 2. *: atan (ar /: br)),
-    where far (negated (R.flip fi y)) (asinh_part (det br ai bi ar)) )
+  let ax = magnitude x and ay = magnitude y in
+  let big = gt ax (R.con x asin_big) ||: gt ay (R.con x asin_big) in
+  let ar, ai = sqrt_raw (one x -: x) (negated ay) in
+  let br, bi = sqrt_raw (one x +: x) ay in
+  let signed (re, im) = (re, R.flip im y) in
+  cases
+    [
+      (big, signed (atan2 ay x, negated (far_log ax ay)));
+      ( is_nan ax ||: is_nan ay,
+        (where (eq x (zero x)) (R.con x R.pio2_hi) (nan x), nan x) );
+      (eq ay (zero y) &&: le ax (one x), signed (acos x, num x (-0.)));
+    ]
+    (signed (num x 2. *: atan (ar /: br), asinh_part (det br ai bi ar)))
 
-(* atanh z in the first quadrant (Kahan, 1987): log1p(4x / ((1 - x)^2 + y^2)) /
-   4 + i atan2(y, ((1 - x)(1 + x) - y^2) / 2) / 2, with x = 1 and y < 1 apart,
-   where the real part is log((4 + y^2)^(1/4) / sqrt y), so that y^2 cannot
-   underflow there. The parts' signs are x's and y's. *)
+(* nx_atanh_raw: atanh z in the first quadrant (Kahan, 1987):
+   log1p(4x / ((1 - x)^2 + y^2)) / 4 + i atan2(2y, (1 - x)(1 + x) - y^2) / 2,
+   with x = 1 apart, where the real part is log((4 + y^2)^(1/4) / sqrt y);
+   past ATANH_BIG, Re(1/z) + i pi/2. On the imaginary axis, i atan y. *)
 let atanh_raw x y =
   let ax = magnitude x and ay = magnitude y in
-  let u = one x -: ax in
-  let re = num x 0.25 *: log1p (num x 4. *: (ax /: mulacc u u (ay *: ay))) in
+  let pio2 = R.con x R.pio2_hi in
+  let m = larger ax ay in
+  let xs = ax /: m and ys = ay /: m in
+  let far = xs /: mulacc xs xs (ys *: ys) /: m in
   let unit_re =
     log (Ops.sqrt (Ops.sqrt (mulacc ay ay (num x 4.))) /: Ops.sqrt ay)
   in
-  let re = where (eq ax (one x) &&: lt ay (one y)) unit_re re in
-  let d = half x *: mulacc (negated ay) ay (u *: (one x +: ax)) in
-  let im = half x *: atan2 ay d in
-  (* G.6.2.3: 0 + i pi/2 where a part is infinite, i NaN where y is NaN *)
-  let far = infinite x ||: infinite y in
-  let re = where far (zero x) re in
-  let im = where (far &&: not_ (is_nan y)) (num x (Float.pi /. 2.)) im in
-  (R.flip re x, R.flip im y)
+  let unit_im = half x *: (pio2 +: atan (half x *: ay) +: R.con x R.pio2_lo) in
+  let u = one x -: ax in
+  let near_re = num x 0.25 *: log1p (num x 4. *: ax /: mulacc u u (ay *: ay)) in
+  let near_im =
+    half x *: atan2 (ay +: ay) (mulacc (negated ay) ay (u *: (one x +: ax)))
+  in
+  let signed (re, im) = (R.flip re x, R.flip im y) in
+  cases
+    [
+      ( eq ax (inf x) ||: eq ay (inf y),
+        signed (zero x, where (is_nan ay) (nan x) pio2) );
+      (eq ax (zero x), signed (zero x, atan ay));
+      (is_nan ax ||: is_nan ay, nans x);
+      (eq ax (one x) &&: eq ay (zero y), signed (inf x, zero x));
+      ( gt ax (R.con x atanh_big) ||: gt ay (R.con x atanh_big),
+        signed (far, pio2) );
+      (eq ax (one x), signed (unit_re, unit_im));
+    ]
+    (signed (near_re, near_im))
 
 (* Arithmetic
 
-   Mul is the textbook product, each part one fused multiply-add over the other
-   product; Fdiv is Smith's algorithm (1962), the divisor's smaller part divided
-   by its larger. *)
+   nx_mul is the textbook product, each part one fused multiply-add over the
+   other product; nx_fdiv is Smith's algorithm (1962), the divisor's smaller
+   part divided by its larger. *)
 
 let mul (ar, ai) (br, bi) =
   let ii = ai *: bi and ir = ai *: br in
@@ -488,7 +516,8 @@ let extreme gives_b ((ar, ai) as a) ((br, bi) as b) =
    The trigonometric kinds are the hyperbolic ones turned by i: sin z = -i
    sinh(iz), cos z = cosh(iz), tan z = -i tanh(iz) and atan z = -i atanh(iz),
    where iz = -y + ix and -i(a + ib) = b - ia; asinh turns asin back, and acosh
-   turns acos. *)
+   turns acos: nx_kinds_complex.h's kinds, each transcendental one making its
+   operands' NaN parts quiet first (nx_unsignalled). *)
 
 let turn (re, im) = (im, negated re)
 
@@ -508,21 +537,25 @@ let unary (k : Nx_kernel.Prog.unary) ((x, y) as z) =
   | Sinh -> sinh_raw (unsignalled x) (unsignalled y)
   | Cosh -> cosh_raw (unsignalled x) (unsignalled y)
   | Tanh -> tanh_raw (unsignalled x) (unsignalled y)
-  | Asin -> asin_raw x y
-  | Acos -> acos_raw x y
-  | Atanh -> atanh_raw x y
+  | Asin -> asin_raw (unsignalled x) (unsignalled y)
+  | Acos -> acos_raw (unsignalled x) (unsignalled y)
+  | Atanh -> atanh_raw (unsignalled x) (unsignalled y)
   | Sin -> turn (sinh_raw (negated (unsignalled y)) (unsignalled x))
   | Cos -> cosh_raw (negated (unsignalled y)) (unsignalled x)
   | Tan -> turn (tanh_raw (negated (unsignalled y)) (unsignalled x))
-  | Atan -> turn (atanh_raw (negated y) x)
+  | Atan -> turn (atanh_raw (negated (unsignalled y)) (unsignalled x))
   | Asinh ->
       (* asinh z = i asin(-iz), -iz = y - ix and i(a + ib) = -b + ia *)
-      let vr, vi = asin_raw y (negated x) in
+      let vr, vi = asin_raw (unsignalled y) (negated (unsignalled x)) in
       (negated vi, vr)
   | Acosh ->
-      (* i acos z above the real axis, and its conjugate below *)
+      (* i acos z above the real axis, where Im(acos z) <= 0 makes the real
+         part non-negative, and its conjugate below; a NaN imaginary part
+         beside a finite real one is no direction, NaN as Annex G's
+         cacosh(x + iNaN) *)
+      let x = unsignalled x and y = unsignalled y in
       let vr, vi = acos_raw x (magnitude y) in
-      (negated vi, R.flip vr y)
+      cases [ (is_nan y &&: finite x, nans x) ] (negated vi, R.flip vr y)
   | Abs -> refuse "Abs"
   | Log1p -> refuse "Log1p"
   | Expm1 -> refuse "Expm1"

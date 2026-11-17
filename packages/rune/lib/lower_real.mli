@@ -151,6 +151,12 @@ val ln2_hi : float * float
 val ln2_lo : float * float
 (** [ln2_lo] is ln 2 less {!ln2_hi}, rounded: [LN2_LO]. *)
 
+val pio2_hi : float * float
+(** [pio2_hi] is π/2's head: [nx_kinds.h]'s [PIO2_HI]. *)
+
+val pio2_lo : float * float
+(** [pio2_lo] is π/2 less {!pio2_hi}, rounded: [PIO2_LO]. *)
+
 val exp2_lo : float * float
 (** [exp2_lo] is [nx_kinds.h]'s [EXP2_LO], the clamp below which [2{^x}]
     rounds to [0]. *)
