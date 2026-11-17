@@ -97,12 +97,25 @@ val example : kind -> case
 
 (** {1:laws Laws} *)
 
-val law : (module Nx.Devices) -> f64:bool -> kind -> case -> unit
+val law :
+  ?nan_signs:bool -> (module Nx.Devices) -> f64:bool -> kind -> case -> unit
 (** [law s ~f64 k c] checks that [k] of [c]'s elements compiled on [s]'s first
     device, with no call evaluated, gives the bits of [k] computed eagerly on
     the host, a NaN equal to any NaN, part by part for a complex kind. The
     [float64] elements are checked only with [f64]. It covers each class of
-    operand [k]'s switches tell apart and each special value. *)
+    operand [k]'s switches tell apart and each special value.
+
+    With [~nan_signs:true] (default [false]), for a target whose NaNs' signs
+    differ from the host's, or a compile that folds constants, one difference is
+    taken: complex [pow], at any operand with an infinite or NaN part, of
+    eager result [+0 ± 0i], may give the zero imaginary part the other sign.
+    That is wider than its cause, which lies within it: at some of those
+    operands nx's sequence gives that part the sign of a NaN it computes
+    ([w log z]'s imaginary part, which [nx_exp_raw]'s [copysign(0, y)] reads),
+    and a target sets that sign: x86 keeps a propagated NaN's and sets a
+    generated one's, CUDA's [float32] clears it, and so does a NaN the compiler
+    generates when it folds. The host's run-time law holds those signs
+    strictly. *)
 
 val narrow : (module Nx.Devices) -> kind -> unit
 (** [narrow s k] checks the law of {!law} for [k] at [float16], [bfloat16],
@@ -112,11 +125,11 @@ val narrow : (module Nx.Devices) -> kind -> unit
 
     Raises [Invalid_argument] for a complex kind. *)
 
-val folded : (module Nx.Devices) -> f64:bool -> kind -> unit
+val folded : ?nan_signs:bool -> (module Nx.Devices) -> f64:bool -> kind -> unit
 (** [folded s ~f64 k] checks that [k] of a constant inside a compiled function,
     which the compiler may compute while it compiles, gives eager's bits at each
     switch point of [k], its neighbours and the special values, as {!law}
     states, at [float32] and, with [f64], [float64]; for a complex kind, at
     tuples of its parts' constants and Annex G's numbers (for two operands, each
     number of zeros, ones, infinities and a NaN beside two others), at
-    [complex64] and, with [f64], [complex128]. *)
+    [complex64] and, with [f64], [complex128]. [nan_signs] is {!law}'s. *)

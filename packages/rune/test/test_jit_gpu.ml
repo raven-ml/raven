@@ -2987,7 +2987,11 @@ let clamped = Kinds.[ clamped_exp; clamped_log ]
 
 (* Complex kinds of nx's sequence give eager's bits on an NVIDIA GPU, a
    complex128 element checked where its kernels have float64, as the float
-   kinds above. *)
+   kinds above. A float32 NaN the GPU computes has its sign bit clear where
+   the host's may have it set, and nx's complex pow, at an operand with an
+   infinite or NaN part, may copy that sign into the zero imaginary part of a
+   result +0 ± 0i: there the law takes that zero of either sign
+   (Kinds.law's nan_signs). *)
 let complex_ported k =
   let name = Kinds.name k in
   [
@@ -2997,13 +3001,14 @@ let complex_ported k =
       (Kinds.gen k)
       (fun c ->
         let f64, s = keeps () in
-        Kinds.law s ~f64 k c);
+        Kinds.law ~nan_signs:true s ~f64 k c);
     test (name ^ " of a constant gives eager's bits") (fun () ->
         let f64, s = keeps () in
-        Kinds.folded s ~f64 k);
+        Kinds.folded ~nan_signs:true s ~f64 k);
   ]
 
-let complex_kinds = Kinds.[ cmul; cdiv; crecip; csqrt; csign; clog; clog2 ]
+let complex_kinds =
+  Kinds.[ cmul; cdiv; crecip; csqrt; csign; clog; clog2; cexp; cexp2; cpow ]
 
 (* Multiply-adds of narrow floats: fma at a float narrower than float32,
    compiled on the GPU, is its exact value rounded once, as Exact's integers

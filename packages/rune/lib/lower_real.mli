@@ -88,6 +88,10 @@ val sin_near : Ops.t -> Ops.t
     Waite's reduction alone, for a caller whose argument is bounded below the
     switch. Elsewhere its value is unspecified. *)
 
+val cos_near : Ops.t -> Ops.t
+(** [cos_near x] is {!unary}[ Cos x] where {!sin_near} is [Sin]'s:
+    [nx_kinds_real.h]'s [nx_cos_near]. *)
+
 (** {1:helpers Building blocks of the complex kinds}
 
     These values build {!Lower_complex}'s kinds on nodes of one float type,
@@ -143,6 +147,54 @@ val ilogb : Ops.t -> Ops.t
 val two_sum : Ops.t -> Ops.t -> Ops.t * Ops.t
 (** [two_sum a b] is [(hi, lo)], [hi] the rounded sum and [a + b = hi + lo]
     exactly. [a + b] must not overflow. *)
+
+val ln2_hi : float * float
+(** [ln2_hi] is ln 2's head, few enough bits that its product by the
+    reductions' [k] is exact: [nx_kinds.h]'s [LN2_HI]. *)
+
+val ln2_lo : float * float
+(** [ln2_lo] is ln 2 less {!ln2_hi}, rounded: [LN2_LO]. *)
+
+val exp2_lo : float * float
+(** [exp2_lo] is [nx_kinds.h]'s [EXP2_LO], the clamp below which [2{^x}]
+    rounds to [0]. *)
+
+val shifter : Ops.t -> Ops.t
+(** [shifter x] is [NX_SHIFT], [1.5 × 2{^p - 1}] for [p] the type's fraction
+    bits, of [x]'s type and shape: adding it rounds a float below
+    [2{^p - 2}] to the nearest integer. *)
+
+val nearest : Ops.t -> Ops.t * Ops.t
+(** [nearest t] is [nx_nearest]: from [t = v + ]{!shifter}, the integer
+    nearest [v] as a float and as an [int32] node. *)
+
+val exp_reduce : Ops.t -> Ops.t * Ops.t * Ops.t
+(** [exp_reduce x] is [nx_exp_reduce]: [(r, rc, k)] with [x = k ln 2 + r],
+    [k] the [int32] integer nearest [x / ln 2] and [rc] [r]'s rounding
+    error. *)
+
+val exp_q : Ops.t -> Ops.t
+(** [exp_q r] is [nx_exp_q]: [Q(r)] with [expm1 r = r + r{^2} Q(r)]. *)
+
+val exp2_poly : Ops.t -> Ops.t
+(** [exp2_poly r] is [nx_exp2_poly]: [2{^r}] for [|r| <= 1/2]. *)
+
+val trig_big : Ops.t -> Ops.t
+(** [trig_big x] is [nx_trig_big]: whether [|x|] is finite and at or past
+    the switch to Payne and Hanek's reduction. *)
+
+val rem_ln2 : Ops.t -> Ops.t * Ops.t * Ops.t
+(** [rem_ln2 y] is [nx_rem_pio2_big] of [nx_two_ln2_over_pi]: [y ln 2] as
+    [q π/2 + hi + lo], [(hi, lo, q)] with [q] a [uint32] node, from the bits
+    of [2 ln 2 / π]. [|y|] must be finite and past the switch {!trig_big}
+    tests. *)
+
+val sin_at : Ops.t -> Ops.t * Ops.t * Ops.t -> Ops.t
+(** [sin_at x r] is [nx_sin_at]: the sine of [x] from its reduction [r], as
+    {!rem_ln2} gives one. *)
+
+val cos_at : Ops.t -> Ops.t * Ops.t * Ops.t -> Ops.t
+(** [cos_at x r] is [nx_cos_at], as {!sin_at}. *)
 
 val exp_parts : Ops.t -> Ops.t * Ops.t
 (** [exp_parts x] is [(hi, lo)] with [x / ln 2 = hi + lo] to twice the type's

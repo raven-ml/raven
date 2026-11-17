@@ -6,12 +6,15 @@
 (* The complex kinds at complex64 and complex128, as maps of one kind compiled
    by Rune.jit, which must compile them whole: no call is evaluated. A kind
    compiled to nx's own sequence gives eager's bits (Kinds), over drawn operands
-   and of a constant inside the compiled function. Each other kind holds its
-   normwise bound (rune.mli, Numerics) of the exact value at the points of
-   golden/lower_complex, which gen/lower_complex.py writes from mpmath, each
-   part correctly rounded with its remainder. At an operand with an infinite or
-   a NaN part, each gives what lower_complex.mli's special values state, the
-   sorts of nx's eager complex128 kind. *)
+   and of a constant inside the compiled function; tolk's folding gives a NaN it
+   generates a clear sign bit, where the host's arithmetic sets it, so a folded
+   pow may give a zero part the other sign where it copies one (Kinds.law's
+   nan_signs). Every function holds rune.mli's rule for a NaN part, from the
+   spec. Each other kind holds its normwise bound (rune.mli, Numerics) of the
+   exact value at the points of golden/lower_complex, which gen/lower_complex.py
+   writes from mpmath, each part correctly rounded with its remainder. At an
+   operand with an infinite or a NaN part, each gives what lower_complex.mli's
+   special values state, the sorts of nx's eager complex128 kind. *)
 
 open Windtrap
 module Kinds = Rune_support.Kinds
@@ -169,30 +172,13 @@ let sorts (open_re, open_im) (z : Complex.t) =
   in
   (c open_re z.re, c open_im z.im)
 
-(* How close, in [u] relative to the phase, [y ln2] must lie to a non-zero
-   multiple of [π/2] for a rounded phase to change a sign: [2u] for the lowered
-   phase, as much for the reference's, and under [4u] for this test's own. *)
-let phase_margin = 8.
-
-(* Whether [exp2 (x + iy)], at [x = +∞] and a finite [y], may take its parts'
-   signs from a phase rounded across a multiple of [π/2]. *)
-let crossed wide (z : Complex.t) =
-  let t = z.im *. Float.log 2. and q = Float.pi /. 2. in
-  let k = Float.round (t /. q) in
-  z.re = Float.infinity && Float.is_finite z.im && k <> 0.
-  && Float.abs (t -. (k *. q)) <= phase_margin *. u wide *. Float.abs t
-
 (* The parts of [k]'s value at [z] whose infinity's sign Annex G leaves open, as
-   Prog's Results section lists them, sin and cos through sinh and cosh at [iz],
-   and those exp2's rounded phase gives. *)
-let open_signs wide k (z : Complex.t) =
+   Prog's Results section lists them, sin and cos through sinh and cosh at
+   [iz]. *)
+let open_signs k (z : Complex.t) =
   let inf v = Float.abs v = Float.infinity in
   let wild v = not (Float.is_finite v) in
   match k.name with
-  | "exp" -> (z.re = Float.infinity && wild z.im, false)
-  | "exp2" ->
-      let c = crossed wide z in
-      ((z.re = Float.infinity && wild z.im) || c, c)
   | "sinh" -> (inf z.re && wild z.im, false)
   | "cosh" | "cos" -> (inf z.re && inf z.im, false)
   | "sin" -> (false, inf z.im && wild z.re)
@@ -205,26 +191,12 @@ let anywhere _ _ = true
 let unary ?(domain = anywhere) name k bound =
   { name; node = Op1 (Unary k, D.Any D.Complex64, 0); arity = 1; bound; domain }
 
-let binary ?(domain = anywhere) name k bound =
-  { name; node = Op2 (Binary k, 0, 1); arity = 2; bound; domain }
-
 let tiny w v = v <> 0. && Float.abs v < least w
-
-(* pow holds its bound where |w| |log z| is below the greatest float. *)
-let products w (e : Complex.t array) =
-  Complex.norm e.(1) *. Complex.norm (Complex.log e.(0)) < greatest w
-
-(* |w log z|, which pow's bound grows with. *)
-let wlog (e : Complex.t array) =
-  let p = Complex.norm (Complex.mul e.(1) (Complex.log e.(0))) in
-  if Float.is_nan p then 0. else p
 
 (* Each kind's bound (rune.mli, Numerics). *)
 let unaries =
   K.
     [
-      unary "exp" Exp (fixed 31.);
-      unary "exp2" Exp2 (fun _ e -> 30. +. (1.4 *. Float.abs e.(0).im));
       unary "sin" Sin (fixed 67.);
       unary "cos" Cos (fixed 57.);
       unary "tan" Tan (fixed 73.);
@@ -238,9 +210,6 @@ let unaries =
       unary "acosh" Acosh (fixed 21.);
       unary "atanh" Atanh (fixed 21.);
     ]
-
-let binaries =
-  K.[ binary "pow" Pow (fun _ e -> 31. +. (20. *. wlog e)) ~domain:products ]
 
 (* Meeting the bounds *)
 
@@ -273,16 +242,13 @@ let within wide tol (((rh, _), (ih, _)) as r) (got : Complex.t) =
 (* Whether [got] meets nx's value [r] at operands [e] with a part not finite:
    where a unary kind's operand has an infinite part, each part's sort as [r]'s,
    the signs {!open_signs} leaves open excepted; where an operand has a NaN part
-   and none an infinite one, a NaN part, but [1] for [z^w] at a [w] of zero
-   parts. *)
-let special wide k e (r : Complex.t) (got : Complex.t) =
+   and none an infinite one, a NaN part. *)
+let special k e (r : Complex.t) (got : Complex.t) =
   if k.arity = 1 && has_inf e.(0) then
-    let signs = open_signs wide k e.(0) in
+    let signs = open_signs k e.(0) in
     sorts signs got = sorts signs r
   else if Array.exists has_nan e && not (Array.exists has_inf e) then
-    if k.name = "pow" && zero e.(1).re && zero e.(1).im then
-      got.re = 1. && got.im = 0.
-    else has_nan got
+    has_nan got
   else true
 
 let failures name rows =
@@ -330,7 +296,7 @@ let law k =
         else Nx.to_array (c64 (operands D.Complex64 es))
       in
       let check i e =
-        if Array.for_all finite e || special wide k e r.(i) got.(i) then None
+        if Array.for_all finite e || special k e r.(i) got.(i) then None
         else Some (describe wide k.name (show true r.(i)) e got.(i) nan 0.)
       in
       let cover_some label f = cover label (Array.exists f es) in
@@ -413,16 +379,126 @@ let ported k =
       (Kinds.gen k)
       (Kinds.law (module Nx.Host) ~f64:true k);
     test (name ^ " of a constant gives eager's bits") (fun () ->
-        Kinds.folded (module Nx.Host) ~f64:true k);
+        Kinds.folded ~nan_signs:true (module Nx.Host) ~f64:true k);
   ]
 
-let kinds = Kinds.[ cmul; cdiv; crecip; csqrt; csign; clog; clog2 ]
+let kinds =
+  Kinds.[ cmul; cdiv; crecip; csqrt; csign; clog; clog2; cexp; cexp2; cpow ]
+
+(* NaN parts
+
+   rune.mli's rule, from the spec: an operand with a NaN part and none infinite
+   gives a result with a NaN part, but z^w is 1 at w = 0, and 1 ± 0i at z = 1 ±
+   0i with w's imaginary part zero, where the float pow is 1 at x = 1. Each
+   function compiled on the host at complex64 and complex128, over numbers of
+   the parts NaN, -NaN, ±0, ±1 and 2 with a NaN part among the operands. *)
+
+type fn =
+  | F1 of { f1 : 's 'd. (Complex.t, 's, 'd) Nx.t -> (Complex.t, 's, 'd) Nx.t }
+  | F2 of {
+      f2 :
+        's 'd.
+        (Complex.t, 's, 'd) Nx.t ->
+        (Complex.t, 's, 'd) Nx.t ->
+        (Complex.t, 's, 'd) Nx.t;
+    }
+
+let fns =
+  [
+    ("mul", F2 { f2 = Nx.mul });
+    ("div", F2 { f2 = Nx.div });
+    ("pow", F2 { f2 = Nx.pow });
+    ("recip", F1 { f1 = Nx.recip });
+    ("sqrt", F1 { f1 = Nx.sqrt });
+    ("sign", F1 { f1 = Nx.sign });
+    ("log", F1 { f1 = Nx.log });
+    ("log2", F1 { f1 = Nx.log2 });
+    ("exp", F1 { f1 = Nx.exp });
+    ("exp2", F1 { f1 = Nx.exp2 });
+    ("sinh", F1 { f1 = Nx.sinh });
+    ("cosh", F1 { f1 = Nx.cosh });
+    ("tanh", F1 { f1 = Nx.tanh });
+    ("sin", F1 { f1 = Nx.sin });
+    ("cos", F1 { f1 = Nx.cos });
+    ("tan", F1 { f1 = Nx.tan });
+    ("asin", F1 { f1 = Nx.asin });
+    ("acos", F1 { f1 = Nx.acos });
+    ("atan", F1 { f1 = Nx.atan });
+    ("asinh", F1 { f1 = Nx.asinh });
+    ("acosh", F1 { f1 = Nx.acosh });
+    ("atanh", F1 { f1 = Nx.atanh });
+  ]
+
+let numbers =
+  let ps = [ Float.nan; -.Float.nan; 0.; -0.; 1.; -1.; 2. ] in
+  List.concat_map (fun re -> List.map (fun im -> { Complex.re; im }) ps) ps
+
+let has_nan (z : Complex.t) = Float.is_nan z.re || Float.is_nan z.im
+
+(* The rule's value at operands [zs]: [`One] where it is 1 + ±0i, else a NaN
+   part. *)
+let expected name zs =
+  match (name, zs) with
+  | "pow", [ _; (w : Complex.t) ] when w.re = 0. && w.im = 0. -> `One
+  | "pow", [ (z : Complex.t); (w : Complex.t) ]
+    when z.re = 1. && z.im = 0. && w.im = 0. ->
+      `One
+  | _ -> `Nan
+
+let nan_parts (name, f) =
+  let tuples =
+    match f with
+    | F1 _ -> List.map (fun z -> [ z ]) numbers
+    | F2 _ ->
+        List.concat_map (fun z -> List.map (fun w -> [ z; w ]) numbers) numbers
+  in
+  let tuples = List.filter (List.exists has_nan) tuples in
+  let at (type s) (dt : (Complex.t, s) Nx.dtype) =
+    let col j =
+      Nx.create dt
+        [| List.length tuples |]
+        (Array.of_list (List.map (fun t -> List.nth t j) tuples))
+    in
+    let before = Rune.evaluations () in
+    let y =
+      match f with
+      | F1 { f1 } -> Rune.jit Nx.Ptree.(tensor @-> returns tensor) f1 (col 0)
+      | F2 { f2 } ->
+          Rune.jit
+            Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+            f2 (col 0) (col 1)
+    in
+    equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+    let show (z : Complex.t) = Printf.sprintf "(%h, %h)" z.re z.im in
+    List.concat
+      (List.mapi
+         (fun i (r : Complex.t) ->
+           let zs = List.nth tuples i in
+           let ok =
+             match expected name zs with
+             | `One -> r.re = 1. && r.im = 0.
+             | `Nan -> has_nan r
+           in
+           if ok then []
+           else
+             [
+               Printf.sprintf "%s(%s) at %s = %s" name
+                 (String.concat ", " (List.map show zs))
+                 (Nx.Dtype.name dt) (show r);
+             ])
+         (Array.to_list (Nx.to_array y)))
+  in
+  equal (list string) [] (at Nx.complex64 @ at Nx.complex128)
 
 let () =
   exit
     (run "Lower_complex"
        [
          group "kinds" (List.concat_map ported kinds);
-         group "special values" (List.map law (unaries @ binaries));
-         group "bounds" (List.map accurate (unaries @ binaries));
+         Windtrap.cases ~id:fst
+           "a NaN part and no infinite one give a NaN part, but pow's \
+            exceptions"
+           fns nan_parts;
+         group "special values" (List.map law unaries);
+         group "bounds" (List.map accurate unaries);
        ])

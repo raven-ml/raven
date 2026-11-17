@@ -479,6 +479,17 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled complex `Nx.exp`, `Nx.exp2` and `Nx.pow` give eager's bits on
+  the host and NVIDIA GPUs. Elsewhere they hold nx's bounds, 4u for exp
+  and exp2 where rune stated 31u and `30 + 1.4 |y|` u for every device,
+  `3 + 3 |w log z|` where it stated `31 + 20 |w log z|`, now only on a
+  device that rounds division and the square root correctly and an fma
+  once, where nothing computed is subnormal. `Nx.exp2` reduces its phase
+  `y ln 2` from the bits of `2 ln 2 / pi`. `Nx.pow` at `z = 1 ± 0i` and
+  `w = NaN ± 0i` is `1 ± 0i`, as the float pow at `x = 1`; at an operand
+  with an infinite or NaN part, a result `+0 ± 0i` on an NVIDIA GPU, or of
+  a call whose constants are folded, may differ from the host's in its
+  zero's sign, which nx takes at some of these operands from a NaN.
 - A compiled complex `Nx.log` and `Nx.log2` give eager's bits on the host
   and NVIDIA GPUs; `Nx.log2` multiplied by `1/ln 2` rounded and differed
   in the last bits. Elsewhere they hold nx's 4u, where rune stated 18u and

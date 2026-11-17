@@ -184,7 +184,7 @@
   (glob_files golden/special_grad/*.golden)))
 
 ; The float kinds compiled by Rune.jit, against nx's eager kernels, and the
-; near sine against the full one, lowered and run on the host.
+; near sine and cosine against the full ones, lowered and run on the host.
 
 (test
  (name test_lower_real)

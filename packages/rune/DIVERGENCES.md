@@ -531,10 +531,22 @@ rounded sum; a stated bound) and its reason. A rounded sum's bound is
     `log |z| + i atan2 (y, x)`, `log |z|` by `log1p` of exact products near
     the unit circle; `Log2` is `Log` times `1/ln 2` in two parts, the float
     `log2` of the modulus on the axes.
-  - `Exp` and `Exp2` multiply `cis y` by `2^(hi + lo)` split at the nearest
-    integer `k`, `2^k` applied last, so that a part overflows only with the
-    result. `Pow` is `e^(w log z)`; a real `w` multiplies `log z`'s parts
-    alone, and `z^0` is 1.
+  - `Exp`, `Exp2` and `Pow` are `nx_exp`, `nx_exp2` and `nx_pow` likewise.
+    `Exp` is `e^x cis y`, `e^x` past `EXP_NEAR` taken in two halves around
+    each product so that a part overflows only with the result. `Exp2` is
+    `2^x cis (y ln 2)`, the phase in two parts below the trigonometric
+    switch and reduced from the bits of `2 ln 2 / pi` past it, a second
+    table beside `2/pi`'s. `Pow` is `e^(w log z)`; a real or imaginary `w`
+    multiplies `log z`'s parts alone, `z^0` is 1, and the positive real axis
+    takes the float `pow`.
+  - Exactness has one exception: at an operand with an infinite or NaN
+    part, where nx's complex `Pow` gives `+0 ± 0i`, a call on an NVIDIA GPU,
+    or one whose constants the compiler folds, may give the zero imaginary
+    part the opposite sign to eager on the host. At some of these operands
+    `w log z` has a NaN imaginary part and `nx_exp_raw`'s `copysign (0, y)`
+    copies its sign, which the target or the compiler sets: x86 keeps a
+    propagated NaN's sign and sets a generated one's, CUDA's `float32`
+    clears it, and so does a NaN the compiler generates when it folds.
   - The hyperbolic kinds take their real parts' `sinh` and `cosh` and, past
     `hyp_far`, the polar form; `Tanh` is Kahan's. `Asin` and `Acos` are
     Kahan's from `sqrt (1 - z)` and `sqrt (1 + z)`, with their leading terms
@@ -547,14 +559,15 @@ rounded sum; a stated bound) and its reason. A rounded sum's bound is
 - **nx:** `prog.mli`, Domains and Results, Complex numbers;
   `nx_kinds_complex.h`.
 - **Class:** exact for `Neg`, `Add`, `Sub`, `Maximum`, `Minimum`, the
-  comparisons, `Mul`, `Fdiv`, `Recip`, `Sqrt`, `Sign`, `Log` and `Log2`;
-  stated bound:
+  comparisons, `Mul`, `Fdiv`, `Recip`, `Sqrt`, `Sign`, `Log`, `Log2`,
+  `Exp`, `Exp2` and `Pow`; stated bound:
   `lower_complex.mli`'s normwise table for the others.
 - **Reason:** (b).
 - **Pinned by:** `Lower_complex › kinds › cmul gives eager's bits`, `› cmul
   of a constant gives eager's bits`, the same for `cdiv`, `crecip`, `csqrt`,
-  `csign`, `clog` and `clog2`, on
-  the host; `Jit_gpu › complex kinds › *` on a GPU; `Lower_complex ›
+  `csign`, `clog`, `clog2`, `cexp`, `cexp2` and `cpow`, and `Lower_complex
+  › a NaN part and no infinite one give a NaN part, but pow's exceptions ›
+  *`, on the host; `Jit_gpu › complex kinds › *` on a GPU; `Lower_complex ›
   special values › *` and `Lower_complex › bounds › *` over every other
   kind at `complex64` and `complex128`;
   `Lower_arith › exact unary kinds give eager's bits`, `› exact binary kinds,

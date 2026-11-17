@@ -1636,17 +1636,22 @@ val jit :
     or {!Nx.softmax}, computes as nx composes it.
 
     {b Complex functions.} {!Nx.mul}, {!Nx.div}, {!Nx.recip}, {!Nx.sqrt},
-    {!Nx.sign}, {!Nx.log} and {!Nx.log2} compute nx's own sequence of
-    operations for them, so they are exact on a device that keeps
-    subnormals, rounds division and the square root correctly and rounds a
-    fused multiply-add once, as the host CPU and NVIDIA GPUs do. On a device
-    that rounds division and the square root correctly and rounds a fused
-    multiply-add once, each of them but {!Nx.mul}, {!Nx.div} and {!Nx.recip}
-    holds the bound its [Nx] doc states where no value computed for it is
-    subnormal; on another device rune states no bound for them. On every
-    device, a result [z'] of exact value [z] of another function holds a
-    {e normwise} bound [c] in the sense that [|z' - z| / |z| <= c u], to first
-    order, for the operand [x + iy] and the exponent [w]:
+    {!Nx.sign}, {!Nx.log}, {!Nx.log2}, {!Nx.exp}, {!Nx.exp2} and {!Nx.pow}
+    compute nx's own sequence of operations for them, so they are exact on a
+    device that keeps subnormals, rounds division and the square root
+    correctly and rounds a fused multiply-add once, as the host CPU and NVIDIA
+    GPUs do. Exactness has one exception: at an operand with an infinite or
+    NaN part, where nx's {!Nx.pow} gives [+0 ± 0i], a call on an NVIDIA GPU,
+    or one whose constants the compiler folds, may give the zero imaginary
+    part the opposite sign to eager on the host: nx takes that sign, at some
+    of these operands, from a NaN it computes, whose sign the device or the
+    compiler sets. On a device that rounds division and the square root
+    correctly and rounds a fused multiply-add once, each of them but
+    {!Nx.mul}, {!Nx.div} and {!Nx.recip} holds the bound its [Nx] doc states
+    where no value computed for it is subnormal; on another device rune
+    states no bound for them. On every device, a result [z'] of exact value
+    [z] of another function holds a {e normwise} bound [c] in the sense that
+    [|z' - z| / |z| <= c u], to first order, for the operand [x + iy]:
 
     {v
       function                                      c
@@ -1654,31 +1659,29 @@ val jit :
       Nx.div, Nx.recip                              4
       Nx.atan, Nx.atanh, Nx.acos, Nx.acosh         21
       Nx.asin, Nx.asinh                            23
-      Nx.exp                                       31
       Nx.cos, Nx.cosh                              57
       Nx.sin, Nx.sinh                              67
       Nx.tan, Nx.tanh                              73
-      Nx.exp2                            30 + 1.4 |y|
-      Nx.pow z w                    31 + 20 |w log z|
     v}
 
     A bound holds where the operands' parts are finite, the result's modulus is
     normal and no value computed for it, a part of it included, is subnormal.
     {!Nx.div} and {!Nx.recip} also need the parts below half the greatest float
-    and the divisor's larger part normal, and {!Nx.pow} needs [|w| |log z|]
-    below the greatest float. A NaN part and no infinite one give a NaN part,
-    except [z{^w}] at [w = 0], which is [1]. At an infinite part, each part of a
-    transcendental function's result is a NaN, an infinity, a zero or finite as
-    Annex G (G.6) gives it, an infinite part with Annex G's sign. There, where
-    no part is a NaN, {!Nx.sign} gives the direction of the infinite parts, one
-    of [±1], [±i] and [(±1 ± i) / √2], and {!Nx.recip} the sorts of
-    [(1 + 0i) / z] by Smith's division, which divides by the divisor's larger
-    part. Zeros' signs are unspecified, and so is an infinity's sign that comes
-    from a NaN part or that Annex G leaves open. {!Nx.pow} is unspecified at
-    an infinite part, and so are {!Nx.mul} and {!Nx.div} on a device where
-    they are not exact. {!Nx.exp2} at [x = +inf] may
-    give an infinite part the wrong sign where [y ln 2] lies within a relative
-    [2u] of a non-zero multiple of [π/2].
+    and the divisor's larger part normal. A NaN part and no infinite one give a
+    NaN part, except [z{^w}] at [w = 0], which is [1], and at [z = 1 ± 0i] with
+    [w]'s imaginary part zero, which is [1 ± 0i], as the float {!Nx.pow} is
+    [1.] at [x = 1.]. At an infinite part, each part of a transcendental
+    function's result is a NaN, an infinity, a zero or finite as Annex G (G.6)
+    gives it, an infinite part with Annex G's sign. There, where no part is a
+    NaN, {!Nx.sign} gives the direction of the infinite parts, one of [±1],
+    [±i] and [(±1 ± i) / √2], and {!Nx.recip} the sorts of [(1 + 0i) / z] by
+    Smith's division, which divides by the divisor's larger part. Zeros' signs
+    are unspecified, and so is an infinity's sign that comes from a NaN part
+    or that Annex G leaves open. On a device where they are not exact,
+    {!Nx.mul}, {!Nx.div} and {!Nx.pow} are unspecified at an infinite part,
+    and {!Nx.exp2} at [x = +inf] may give an infinite part the wrong sign
+    where [y ln 2] lies within a relative [2u] of a non-zero multiple of
+    [π/2].
 
     {b Reductions.} A float reduction, scan, contraction or scatter by [Add]
     computes in its {e accumulator}, the one its [Nx] function states:

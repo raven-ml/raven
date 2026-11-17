@@ -379,11 +379,12 @@ let clamped_law k =
     (Kinds.gen k)
     (Kinds.law (module Nx.Host) ~f64:true k)
 
-(* Near sine
+(* Near forms
 
-   Lower_real.sin_near, nx_sin_near, gives the full sine's bits wherever |x|
-   is below the switch to Payne and Hanek's reduction, 2^15 or 2^28, or is
-   not finite, at float32 and float64. Each dtype's block draws a uniform
+   Lower_real.sin_near and cos_near, nx_sin_near and nx_cos_near, give the
+   full sine's and cosine's bits wherever |x| is below the switch to Payne and
+   Hanek's reduction, 2^15 or 2^28, or is not finite, at float32 and float64.
+   Each dtype's block draws a uniform
    code below the switch of either sign (3 in 6), a multiple of pi/2 below it
    stepped up to 2 ranks (2 in 6), or one of 7 special codes (1 in 6): the
    zeros, the infinities, a NaN, the least subnormal and the float just below
@@ -442,9 +443,9 @@ let near_run wide f cs =
     let code v = Int64.of_int32 (Int32.bits_of_float v) in
     Array.map (fun v -> Int64.logand (code v) 0xFFFFFFFFL) (Lowered.map f x)
 
-let near_misses wide cs =
-  let near = near_run wide Rune.Lower_real.sin_near cs in
-  let full = near_run wide (Rune.Lower_real.unary Sin) cs in
+let near_misses (name, near, full) wide cs =
+  let near = near_run wide near cs in
+  let full = near_run wide (Rune.Lower_real.unary full) cs in
   let nan c = Float.is_nan (near_value wide c) in
   let out = ref [] in
   Array.iteri
@@ -453,8 +454,8 @@ let near_misses wide cs =
       if (not (Int64.equal a b || (nan a && nan b))) && List.length !out < 8
       then
         out :=
-          Printf.sprintf "sin_near(%h) = %#Lx, sin = %#Lx" (near_value wide c) a
-            b
+          Printf.sprintf "%s_near(%h) = %#Lx, %s = %#Lx" name
+            (near_value wide c) a name b
           :: !out)
     cs;
   List.rev !out
@@ -477,8 +478,9 @@ let near_covers wide cs =
   cover (dt ^ "a NaN") (any Float.is_nan);
   cover (dt ^ "an infinity") (any (fun x -> Float.abs x = Float.infinity))
 
-let near_law =
-  prop ~count:12 "sin_near gives sin's bits below the switch"
+let near_law ((name, _, _) as k) =
+  prop ~count:12
+    (name ^ "_near gives " ^ name ^ "'s bits below the switch")
     (Gen.with_pp
        (fun ppf _ ->
          Format.pp_print_string ppf "4096 float32 and float64 codes")
@@ -486,7 +488,13 @@ let near_law =
     (fun (c32, c64) ->
       near_covers false c32;
       near_covers true c64;
-      equal (list string) [] (near_misses false c32 @ near_misses true c64))
+      equal (list string) [] (near_misses k false c32 @ near_misses k true c64))
+
+let nears =
+  [
+    ("sin", Rune.Lower_real.sin_near, K.Sin);
+    ("cos", Rune.Lower_real.cos_near, K.Cos);
+  ]
 
 let () =
   exit
@@ -495,5 +503,5 @@ let () =
          group "exact" (List.map law (unary @ binary @ compare @ [ fma ]));
          group "kinds" (List.concat_map ported kinds);
          group "clamped operands" (List.map clamped_law clamped);
-         group "near sine" [ near_law ];
+         group "near forms" (List.map near_law nears);
        ])

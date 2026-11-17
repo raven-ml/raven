@@ -376,7 +376,7 @@ let tanh_small = (0.625, 0.625)
 let tanh_hi = (9.5, 19.5)
 
 (* nx_exp_q_f32 and nx_exp_q_f64, from the leading coefficient. *)
-let exp_q =
+let exp_q_coeffs =
   ( [
       0x1.6ac6e2p-10;
       0x1.123ddcp-7;
@@ -456,8 +456,12 @@ let exp_reduce x =
   let r = mulacc m (con x ln2_lo) rh in
   (r, mulacc m (con x ln2_lo) (rh -: r), k)
 
+(* nx_exp_q and nx_exp2_poly *)
+let exp_q r = horner r (pick r exp_q_coeffs)
+let exp2_poly r = horner r (pick r exp2_p)
+
 (* expm1 r = r + r^2 Q(r), and r^2 Q(r) + c. *)
-let poly_q r c = mulacc (r *: r) (horner r (pick r exp_q)) c
+let poly_q r c = mulacc (r *: r) (exp_q r) c
 
 (* nx_exp: x clamped to the range past which e^x rounds to 0 or
    overflows. *)
@@ -611,12 +615,26 @@ let two_over_pi_words =
     0x9AF4361DL;
   |]
 
-(* nx_bits_at for [n] runs of 32 bits of 2/pi from bits [g], [g + 32] and so
-   on, as uint64s: words [w] to [w + n], [w = g >> 5] of [nb] bits, are moved
-   into place by one selection per bit of [w], as a barrel shifter does, since
-   a node cannot index a table. *)
-let window g n nb =
-  let t = two_over_pi_words in
+(* nx_two_ln2_over_pi: the bits of 2 ln2 / pi after the point, behind one zero
+   word, for the complex exp2's phase. *)
+let two_ln2_over_pi_words =
+  [|
+    0x00000000L; 0x70F7263DL; 0xFA5A6EECL; 0xB608582EL; 0x55FEF3DDL;
+    0x8E13BECDL; 0x1D495C36L; 0x1D72013AL; 0xEA9F8FCAL; 0x76E866FCL;
+    0x9B48BE48L; 0x15F5CB6FL; 0xD8BEE211L; 0x0394DB30L; 0x20D6EB52L;
+    0x30FFA9AEL; 0x90CBC735L; 0x51358CEDL; 0x67C0DB3CL; 0x490D15BDL;
+    0xD91A29F5L; 0x682402AFL; 0x5E8F9C23L; 0xBFF15CBCL; 0x71F05FEDL;
+    0xFE0BB062L; 0x2A8C8F67L; 0x7309C45AL; 0x7502282AL; 0xEAD0C243L;
+    0x5C5527BBL; 0x759F345EL; 0x2D0628E8L; 0xB1A563A2L; 0x53E62918L;
+    0xEA5FFDABL; 0xEAC0D479L; 0xCFEDB1B6L; 0xFC78B439L; 0xA333A25FL;
+    0xDC77BE31L;
+  |]
+
+(* nx_bits_at for [n] runs of 32 bits of table [t]'s number from bits [g],
+   [g + 32] and so on, as uint64s: words [w] to [w + n], [w = g >> 5] of [nb]
+   bits, are moved into place by one selection per bit of [w], as a barrel
+   shifter does, since a node cannot index a table. *)
+let window t g n nb =
   let w = shr g 5 in
   let sh = Ops.cast (band g (int g 31)) Uint64 in
   let at m = u64 g (if m < Array.length t then t.(m) else 0L) in
@@ -649,15 +667,15 @@ let big_bits x =
   let big = bits_of x (pick x pio2_big) in
   where (lt ix big) big ix
 
-(* nx_rem_pio2_big_f32, of nx_two_over_pi *)
-let rem_big32 x =
+(* nx_rem_pio2_big_f32 of table [t] *)
+let rem_big32 t x =
   let ix = big_bits x in
   let e = Ops.cast (shr ix 23) Int32 in
   let e = Ops.sub e (int e 150) in
   let m =
     Ops.cast (bor (band ix (word ix 0x007FFFFFL)) (word ix 0x00800000L)) Uint64
   in
-  let w = window (Ops.add e (int e 30)) 3 3 in
+  let w = window t (Ops.add e (int e 30)) 3 3 in
   let a0 = m *: w.(2) and a1 = m *: w.(1) and a2 = m *: w.(0) in
   let low u = band u (u64 u 0xFFFFFFFFL) in
   let t1 = Ops.add (shr a0 32) a1 in
@@ -680,15 +698,15 @@ let rem_big32 x =
   let hi = ph +: pl in
   signed_rem x (hi, pl -: (hi -: ph)) q
 
-(* nx_rem_pio2_big_f64, of nx_two_over_pi *)
-let rem_big64 x =
+(* nx_rem_pio2_big_f64 of table [t] *)
+let rem_big64 t x =
   let ix = big_bits x in
   let e = Ops.cast (shr ix 52) Int32 in
   let e = Ops.sub e (int e 1075) in
   let m =
     bor (band ix (word ix 0x000FFFFFFFFFFFFFL)) (word ix 0x0010000000000000L)
   in
-  let win = window (Ops.add e (int e 30)) 6 5 in
+  let win = window t (Ops.add e (int e 30)) 6 5 in
   let w = Array.init 6 (fun j -> win.(5 - j)) in
   let low u = band u (u64 u 0xFFFFFFFFL) in
   let ml = low m and mh = shr m 32 in
@@ -730,10 +748,16 @@ let trig_big x =
   Ops.logical_not (lt a (bits_of x (pick x pio2_big)))
   &&: lt a (word a (pick x inf_bits))
 
+let rem_big t x = if wide x then rem_big64 t x else rem_big32 t x
+
+(* nx_rem_pio2_big of nx_two_ln2_over_pi: y ln2 reduced by pi/2, for finite
+   |y| past the switch. *)
+let rem_ln2 y = rem_big two_ln2_over_pi_words y
+
 (* The C's branch in nx_sin, nx_cos and nx_tan. *)
 let rem x =
   let big = trig_big x in
-  let bh, bl, bq = if wide x then rem_big64 x else rem_big32 x in
+  let bh, bl, bq = rem_big two_over_pi_words x in
   let nh, nl, nq = rem_cw x in
   (where big bh nh, where big bl nl, where big bq nq)
 
@@ -778,11 +802,15 @@ let sin x = sin_at x (rem x)
 let sin_near x = sin_at x (rem_cw x)
 
 (* nx_cos_at *)
-let cos x =
-  let hi, lo, q = rem x in
+let cos_at x (hi, lo, q) =
   let sh, sl = sin_kernel hi lo and ch, cl = cos_kernel hi lo in
   let y = flip2 (where (odd q) (sh +: sl) (ch +: cl)) (Ops.add q (u32 q 1)) in
   where (is_nan x) x y
+
+let cos x = cos_at x (rem x)
+
+(* nx_cos_near *)
+let cos_near x = cos_at x (rem_cw x)
 
 (* nx_tan_at: -cos / sin in odd quadrants, sin / cos in even. *)
 let tan x =

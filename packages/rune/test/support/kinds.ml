@@ -81,12 +81,14 @@ type c2 = {
 
 (* A complex kind's element holds its operands' parts, each real part then its
    imaginary part, as codes of the part type: float32 for complex64, float64 for
-   complex128. Its pairs draw whole elements. *)
+   complex128. Its pairs draw whole elements. A kind of two complex operands
+   says at which elements nx's sequence may give a zero imaginary part the sign
+   of a NaN it computes, which a target sets. *)
 type fn =
   | One of f1
   | Two of f2 * (bool -> int64 array Windtrap.Gen.t)
   | Cone of c1 * (bool -> int64 array Windtrap.Gen.t)
-  | Ctwo of c2 * (bool -> int64 array Windtrap.Gen.t)
+  | Ctwo of c2 * (bool -> int64 array Windtrap.Gen.t) * (float array -> bool)
 
 type kind = {
   name : string;
@@ -912,10 +914,10 @@ let complex1 name f specs pairs covers =
     generic = true;
   }
 
-let complex2 name f specs pairs covers =
+let complex2 ?(nan_zero = fun _ -> false) name f specs pairs covers =
   {
     name;
-    fn = Ctwo (f, pairs);
+    fn = Ctwo (f, pairs, nan_zero);
     specs;
     covers;
     fixed = annex_numbers 4;
@@ -1508,7 +1510,12 @@ let cexp2 =
 
 (* Powers: nx_pow_raw's switches at w = 0, z on the positive real axis with w
    real, w real or imaginary, log z's cut, and results past the greatest finite
-   or below the least normal. *)
+   or below the least normal. Where an operand part is infinite or a NaN, the
+   imaginary part of w log z may be a NaN that nx_exp_raw's copysign(0, y)
+   copies into the result's imaginary part, beside a real part of +0: x86 keeps
+   a propagated NaN's sign and sets a generated one's, CUDA's float32 clears it,
+   and so does a NaN the compiler generates when it folds. cpow's [nan_zero]
+   takes every such operand, wider than those. *)
 
 let pow_pairs wide =
   let open Gen in
@@ -1544,7 +1551,8 @@ let cpow =
     in
     Complex.mul { Complex.re = e.(2); im = e.(3) } l
   in
-  complex2 "cpow" { c2 = Nx.pow }
+  let nan_zero e = not (finite_all e) in
+  complex2 ~nan_zero "cpow" { c2 = Nx.pow }
     [|
       (zs false, zs true);
       (zs false, zs true);
@@ -1800,7 +1808,7 @@ let element wide k =
   match k.fn with
   | One _ -> alone
   | Two (_, pairs) -> Gen.frequency [ (3, alone); (2, pairs wide) ]
-  | Cone (_, pairs) | Ctwo (_, pairs) ->
+  | Cone (_, pairs) | Ctwo (_, pairs, _) ->
       Gen.frequency [ (3, alone); (1, annex_g wide (arity k)); (2, pairs wide) ]
 
 let gen k =
@@ -1950,15 +1958,32 @@ let tensor64 cs =
 let codes64 y = Nx.to_array (Nx.bitcast Nx.int64 y)
 let column es j = Array.map (fun e -> e.(j)) es
 
+(* Whether a complex result [c] is eager's [r] but for the sign of a zero
+   imaginary part beside a real part of +0 in both: a NaN's sign that
+   nx_exp_raw's copysign(0, y) copies, where [signless] holds. *)
+let nan_signed ~signless wide r c =
+  let zero v = value wide v = 0. in
+  signless
+  && Array.length r = 2
+  && Int64.equal r.(0) 0L
+  && Int64.equal c.(0) 0L
+  && zero r.(1)
+  && zero c.(1)
+
 (* The elements where compiled and eager differ, at most eight, then their
    count. A result is its parts' codes: one for a float, two for a complex
    number, each NaN part equal to any NaN. *)
-let misses k wide es ~eager ~compiled =
+let misses ?(signless = fun _ -> false) k wide es ~eager ~compiled =
   let out = ref [] and count = ref 0 in
   let codes r = String.concat ", " (Array.to_list (Array.map (show wide) r)) in
   Array.iteri
     (fun i e ->
-      if not (Array.for_all2 (same wide) eager.(i) compiled.(i)) then begin
+      let r = eager.(i) and c = compiled.(i) in
+      if
+        not
+          (Array.for_all2 (same wide) r c
+          || nan_signed ~signless:(signless e) wide r c)
+      then begin
         incr count;
         if !count <= 8 then
           out :=
@@ -1987,7 +2012,7 @@ let ccompiled (type c d) (module S : Nx.Devices with type d = d) k
     match (k.fn, xs) with
     | Cone ({ c1 }, _), [ x ] ->
         Rune.jit Nx.Ptree.(tensor @-> returns tensor) c1 (on x)
-    | Ctwo ({ c2 }, _), [ x; y ] ->
+    | Ctwo ({ c2 }, _, _), [ x; y ] ->
         Rune.jit
           Nx.Ptree.(tensor @-> tensor @-> returns tensor)
           c2 (on x) (on y)
@@ -1999,13 +2024,21 @@ let ccompiled (type c d) (module S : Nx.Devices with type d = d) k
 let ceager k xs =
   match (k.fn, xs) with
   | Cone ({ c1 }, _), [ x ] -> c1 x
-  | Ctwo ({ c2 }, _), [ x; y ] -> c2 x y
+  | Ctwo ({ c2 }, _, _), [ x; y ] -> c2 x y
   | _ -> invalid_arg "Kinds: operands of another arity"
 
-let crun (type d) (module S : Nx.Devices with type d = d) k wide es =
+(* With [nan_signs], whether [k] at the operand parts [e] may copy a NaN's sign
+   into a zero imaginary part ({!nan_signed}). *)
+let signless ~nan_signs k wide e =
+  match k.fn with
+  | Ctwo (_, _, nan_zero) -> nan_signs && nan_zero (Array.map (value wide) e)
+  | One _ | Two _ | Cone _ -> false
+
+let crun (type d) (module S : Nx.Devices with type d = d) ~nan_signs k wide es =
   let col = column es in
   let ops = arity k / 2 in
   let pair a b = Array.map2 (fun r i -> [| r; i |]) a b in
+  let misses = misses ~signless:(signless ~nan_signs k wide) in
   if wide then
     let xs =
       List.init ops (fun j ->
@@ -2033,9 +2066,9 @@ let crun (type d) (module S : Nx.Devices with type d = d) k wide es =
       ~eager:(parts (ceager k xs))
       ~compiled:(parts (ccompiled (module S) k xs))
 
-let run (type d) (module S : Nx.Devices with type d = d) k wide es =
+let run (type d) (module S : Nx.Devices with type d = d) ~nan_signs k wide es =
   let cols = List.init (arity k) (column es) in
-  if is_complex k then crun (module S) k wide es
+  if is_complex k then crun (module S) ~nan_signs k wide es
   else if wide then
     let xs = List.map tensor64 cols in
     misses k wide es
@@ -2104,16 +2137,17 @@ let covers k wide es =
     (fun (label, f) -> cover (dt ^ label) (Array.exists (f wide) vs))
     (generic @ k.covers)
 
-let law (type d) (module S : Nx.Devices with type d = d) ~f64 k c =
+let law (type d) ?(nan_signs = false) (module S : Nx.Devices with type d = d)
+    ~f64 k c =
   covers k false c.f32;
   if f64 then covers k true c.f64;
   let bad =
-    run (module S) k false c.f32
-    @ if f64 then run (module S) k true c.f64 else []
+    run (module S) ~nan_signs k false c.f32
+    @ if f64 then run (module S) ~nan_signs k true c.f64 else []
   in
   equal (list string) [] bad
 
-let law (module S : Nx.Devices) = law (module S)
+let law ?nan_signs (module S : Nx.Devices) = law ?nan_signs (module S)
 
 (* Narrow floats *)
 
@@ -2284,7 +2318,7 @@ let folded_at (type s d) (module S : Nx.Devices with type d = d) k
    alone, which the compiler may fold; its result is then selected by a
    comparison of [x] with itself, which keeps its bits, so that the function
    reads [x]. *)
-let cfolded_at (type c d) (module S : Nx.Devices with type d = d) k
+let cfolded_at (type c d) (module S : Nx.Devices with type d = d) ~nan_signs k
     (dt : (Complex.t, c) Nx.dtype) wide =
   let number t = List.map (value wide) (Array.to_list t) in
   let annex =
@@ -2307,7 +2341,7 @@ let cfolded_at (type c d) (module S : Nx.Devices with type d = d) k
     let y =
       match (k.fn, vs) with
       | Cone ({ c1 }, _), [ a; b ] -> c1 (full a b)
-      | Ctwo ({ c2 }, _), [ a; b; c; d ] -> c2 (full a b) (full c d)
+      | Ctwo ({ c2 }, _, _), [ a; b; c; d ] -> c2 (full a b) (full c d)
       | _ -> invalid_arg "Kinds: operands of another arity"
     in
     Nx.where (Nx.equal x x) y x
@@ -2320,26 +2354,33 @@ let cfolded_at (type c d) (module S : Nx.Devices with type d = d) k
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   let code v = code wide v in
   let show (z : Complex.t) = Printf.sprintf "(%h, %h)" z.re z.im in
+  let signless vs =
+    signless ~nan_signs k wide (Array.of_list (List.map code vs))
+  in
   List.concat
     (List.mapi
        (fun i vs ->
          let e = e.(i) and c = c.(i) in
+         let r = [| code e.re; code e.im |]
+         and d = [| code c.re; code c.im |] in
          if
-           same wide (code e.re) (code c.re)
-           && same wide (code e.im) (code c.im)
+           Array.for_all2 (same wide) r d
+           || nan_signed ~signless:(signless vs) wide r d
          then []
          else [ mismatch k wide vs ~eager:(show e) ~compiled:(show c) ])
        tuples)
 
-let folded (type d) (module S : Nx.Devices with type d = d) ~f64 k =
+let folded (type d) ?(nan_signs = false) (module S : Nx.Devices with type d = d)
+    ~f64 k =
   let bad =
     if is_complex k then
-      cfolded_at (module S) k Nx.complex64 false
-      @ if f64 then cfolded_at (module S) k Nx.complex128 true else []
+      cfolded_at (module S) ~nan_signs k Nx.complex64 false
+      @
+      if f64 then cfolded_at (module S) ~nan_signs k Nx.complex128 true else []
     else
       folded_at (module S) k Nx.float32 false
       @ if f64 then folded_at (module S) k Nx.float64 true else []
   in
   equal (list string) [] bad
 
-let folded (module S : Nx.Devices) = folded (module S)
+let folded ?nan_signs (module S : Nx.Devices) = folded ?nan_signs (module S)

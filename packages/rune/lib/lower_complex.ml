@@ -41,10 +41,13 @@ let one x = num x 1.
 let half x = num x 0.5
 let inf x = num x Float.infinity
 
-(* Clamps past which e^x c and 2^x c overflow for every finite non-zero c, and
-   underflow for every c of magnitude at most 1. *)
-let cexp_hi = (194., 1456.)
-let cexp2_hi = (280., 2101.)
+(* nx_kinds.h's macros of the same names, at float32 then float64, their text
+   copied: ln2 rounded's remainder; exp's near range; the clamps past which
+   e^x c and 2^x c overflow for every finite non-zero c. *)
+let ln2_low = (-0x1.05c610p-29, 0x1.abc9e3b39803fp-56)
+let exp_near = (86.0, 708.0)
+let cexp_hi = (194.0, 1456.0)
+let cexp2_hi = (280.0, 2101.0)
 
 (* Float kinds *)
 
@@ -52,6 +55,8 @@ let log = R.unary Log
 let log2 = R.unary Log2
 let log1p = R.unary Log1p
 let exp = R.unary Exp
+let exp2 = R.unary Exp2
+let pow = R.binary Pow
 let sin = R.unary Sin
 let cos = R.unary Cos
 let tan = R.unary Tan
@@ -74,7 +79,6 @@ let wild x = not_ (lt (magnitude x) (inf x))
 
 (* nx_finite: [|x|] below infinity, false at a NaN. *)
 let finite x = lt (magnitude x) (inf x)
-
 let nans x = (nan x, nan x)
 
 (* Branches
@@ -170,22 +174,74 @@ let polar (hi, lo) c s =
    underflows. *)
 let exp_parts x = R.exp_parts (clamp x (R.con x cexp_hi))
 
+(* nx_exp_times: e^x c, for x past EXP_NEAR up to the clamp CEXP_HI: with
+   x/2 = k ln2 + r and m = e^r, (m c) m 2^2k, so that neither e^x nor its
+   product with a small c overflows first. [shift] halves the result [shift]
+   times. Of an x at or below EXP_NEAR, or not finite, its value is garbage,
+   which no caller selects. *)
+let exp_times x c shift =
+  let h = where (lt x (R.con x cexp_hi)) x (R.con x cexp_hi) *: half x in
+  let r, _, k = R.exp_reduce h in
+  let m = one x +: mulacc (r *: r) (R.exp_q r) r in
+  ldexp (m *: c *: m) (Ops.sub (Ops.mul k (int k 2)) (int k shift))
+
 (* Exponentials and logarithms *)
 
-(* C99 G.6.3.1's values of e^z, and 2^z's, where y is infinite or NaN and x
-   infinite: 0 at x = -inf, inf + i NaN at x = +inf. *)
-let unbounded x y (re, im) =
-  let low = eq x (negated (inf x)) &&: wild y in
-  let high = eq x (inf x) &&: wild y in
-  (where low (zero x) (where high x re), where low (zero y) im)
+(* nx_exp_raw's returns at a NaN x and a y not finite, y not 0: C99 G.6.3.1's
+   values. *)
+let exp_unbounded x y =
+  cases
+    [
+      (is_nan x, nans x);
+      (eq x (inf x) &&: not_ (finite y), (x, nan x));
+      ( eq x (negated (inf x)) &&: not_ (finite y),
+        (zero x, R.copysign (zero y) y) );
+    ]
+    (nans x)
 
-(* e^z = e^x cis y. *)
-let exp_raw x y = unbounded x y (polar (exp_parts x) (cos y) (sin y))
+(* nx_exp_raw: e^z = e^x cis y. *)
+let exp_raw x y =
+  let c = cos y and s = sin y in
+  let e = exp x in
+  let m = where (gt x (zero x)) x (zero x) in
+  cases
+    [
+      (eq y (zero y), (e, y));
+      (is_nan x ||: not_ (finite y), exp_unbounded x y);
+      (eq (magnitude x) (inf x), (m *: c, m *: s));
+      (le x (R.con x exp_near), (e *: c, e *: s));
+    ]
+    (exp_times x c 0, exp_times x s 0)
 
-(* 2^z = 2^x cis(y ln2). *)
+(* nx_exp2_raw: 2^z = 2^x cis(y ln2), 2^x as 2^k m, k the integer nearest x.
+   Below the trigonometric kinds' switch, the phase y ln2 is p + t, ln2 in two
+   parts and t the rounding error of p, and cis p turns by cis t; there the C's
+   cos and sin of p and t take Cody and Waite's reduction alone, as the near
+   forms do. Past it, y ln2 is reduced by pi/2 from the bits of 2 ln2 / pi. On
+   the elements below the switch, that reduction reads y clamped to the switch,
+   within the table, and its value is not selected; on those past it, the near
+   forms' values are not. *)
 let exp2_raw x y =
-  let t = y *: R.con y R.ln2 in
-  unbounded x y (polar (clamp x (R.con x cexp2_hi), zero x) (cos t) (sin t))
+  let p = y *: R.con y R.ln2 in
+  let r = R.rem_ln2 y in
+  let t = mulacc y (R.con y ln2_low) (mulacc y (R.con y R.ln2) (negated p)) in
+  let cp = R.cos_near p and sp = R.sin_near p in
+  let ct = R.cos_near t and st = R.sin_near t in
+  let big = R.trig_big p in
+  let c = where big (R.cos_at p r) (det cp ct sp st) in
+  let s = where big (R.sin_at p r) (det sp ct (negated cp) st) in
+  let m = where (gt x (zero x)) x (zero x) in
+  let v = where (lt x (R.con x cexp2_hi)) x (R.con x cexp2_hi) in
+  let v = where (gt v (R.con x R.exp2_lo)) v (R.con x R.exp2_lo) in
+  let kf, k = R.nearest (v +: R.shifter x) in
+  let e = R.exp2_poly (v -: kf) in
+  cases
+    [
+      (eq y (zero y), (exp2 x, y));
+      (is_nan x ||: not_ (finite y), exp_unbounded x y);
+      (not_ (finite x), (m *: c, m *: s));
+    ]
+    (ldexp (e *: c) k, ldexp (e *: s) k)
 
 (* nx_log_raw: log z = log |z| + i arg z, arg z = atan2(y, x) with its special
    values. *)
@@ -233,16 +289,26 @@ let sqrt_raw x y =
     ]
     (where pos t u, where pos (R.copysign u y) (R.copysign t y))
 
-(* z^w = e^(w log z). A real w multiplies log z's parts alone, so that a zero
-   part meets no infinite one; z^0 is 1. *)
+(* nx_pow_raw: z^w = e^(w log z). w real or imaginary multiplies log z part by
+   part, so that a zero part of w meets no infinite part of log z; 1 for w = 0,
+   and the part type's pow on the positive real axis. *)
 let pow_raw (zr, zi) (wr, wi) =
   let lr, li = log_raw zr zi in
-  let real = eq wi (zero wi) in
-  let pr = where real (wr *: lr) (mulacc wr lr (negated (wi *: li))) in
-  let pi = where real (wr *: li) (mulacc wr li (wi *: lr)) in
-  let er, ei = exp_raw pr pi in
-  let unit = real &&: eq wr (zero wr) in
-  (where unit (one zr) er, where unit (zero zr) ei)
+  let real = eq wi (zero wi) and imaginary = eq wr (zero wr) in
+  let pr =
+    first
+      [ (real, wr *: lr); (imaginary, negated (wi *: li)) ]
+      (mulacc wr lr (negated (wi *: li)))
+  in
+  let pi =
+    first [ (real, wr *: li); (imaginary, wi *: lr) ] (mulacc wr li (wi *: lr))
+  in
+  cases
+    [
+      (real &&: imaginary, (one zr, zero zr));
+      (eq zi (zero zi) &&: real &&: gt zr (zero zr), (pow zr wr, R.flip zi wr));
+    ]
+    (exp_raw pr pi)
 
 (* nx_sign_raw: z / |z|, z scaled by a power of two first so that |z| is no
    subnormal; z itself at 0, and at an infinity its direction among the eight
@@ -432,8 +498,8 @@ let unary (k : Nx_kernel.Prog.unary) ((x, y) as z) =
   | Recip -> fdiv (one x, zero x) z
   | Sign -> sign_raw (unsignalled x) (unsignalled y)
   | Sqrt -> sqrt_raw (unsignalled x) (unsignalled y)
-  | Exp -> exp_raw x y
-  | Exp2 -> exp2_raw x y
+  | Exp -> exp_raw (unsignalled x) (unsignalled y)
+  | Exp2 -> exp2_raw (unsignalled x) (unsignalled y)
   | Log -> log_raw (unsignalled x) (unsignalled y)
   | Log2 -> log2_raw (unsignalled x) (unsignalled y)
   | Sinh -> sinh_raw x y
@@ -468,7 +534,9 @@ let binary (k : Nx_kernel.Prog.binary) ((ar, ai) as a) ((br, bi) as b) =
   | Add | Sub -> (R.binary k ar br, R.binary k ai bi)
   | Mul -> mul a b
   | Fdiv -> fdiv a b
-  | Pow -> pow_raw a b
+  | Pow ->
+      let u (re, im) = (unsignalled re, unsignalled im) in
+      pow_raw (u a) (u b)
   | Maximum -> extreme precedes a b
   | Minimum -> extreme (fun a b -> precedes b a) a b
   | Idiv | Mod | Atan2 | And | Or | Xor | Threefry ->
