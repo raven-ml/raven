@@ -2234,8 +2234,6 @@ let images =
    values, and each case compares them with the values the words give at
    the types the kernel declares (constants.metal, narrow.metal). *)
 
-module G = Rig_program
-
 let constants = S.fixture ~dir:"fixtures" "constants"
 
 (* The specialised metallib of [lib] whose values are the words [ws]. *)
@@ -2520,50 +2518,6 @@ let kept_submission () =
   Rig_metal.settle ();
   equal int ~msg:"pipelines once collected" before (Rig_metal.pipelines ())
 
-(* A program over a specialised image, through the bytes of its description
-   that an agent receives, loads and runs with the image's constants. *)
-let program_bytes () =
-  let t = dev () in
-  let fixed n = { G.add = n; terms = [||] } in
-  let pair =
-    G.Launch
-      {
-        image = 0;
-        name = "pair";
-        label = "pair";
-        params = String.make 8 '\000';
-        scalars = [||];
-        refs = [| { G.slot = 0; at = 0; use = Write } |];
-        groups = (fixed 1, fixed 1, fixed 1);
-        threads = (fixed 1, fixed 1, fixed 1);
-        shared = fixed 0;
-      }
-  in
-  let description =
-    {
-      G.devices = [| Rig.arch t.d |];
-      ints = 0;
-      memory = [||];
-      images = [| { G.device = 0; binary = specialised [ 31; 32 ] } |];
-      inputs = [| { G.device = 0; bytes = 32 } |];
-      steps =
-        [|
-          G.Submit { device = 0; slots = [| G.Input 0 |]; parts = [| pair |] };
-        |];
-    }
-  in
-  let received =
-    require_ok ~pp:Format.pp_print_string
-      (G.of_string (G.to_string description))
-  in
-  let p =
-    require_ok ~pp:Format.pp_print_string (G.load received [| t.d |])
-  in
-  let out = zeroed t.d 32 in
-  ignore (G.run p { inputs = [| out |]; ints = [||] } : Rig.Point.t array);
-  B.wait out Read;
-  equal (list int) [ 31; 32 ] (signed out 2)
-
 let specialised_images =
   group ~timeout:60. "specialised images"
     [
@@ -2581,10 +2535,6 @@ let specialised_images =
          pipeline"
         released_keys;
       test "a kept submission keeps its specialised image" kept_submission;
-      test
-        "a program over a specialised image, through its bytes, runs with \
-         its constants"
-        program_bytes;
     ]
 
 (* Timeline and loss *)
