@@ -130,6 +130,14 @@ let faulty () =
   opened := d :: !opened;
   Ok [ d ]
 
+(* The machine's Metal GPU, an error off a Mac or without one. *)
+let metal () =
+  Result.map
+    (fun d ->
+      opened := d :: !opened;
+      [ d ])
+    (Rig.open_ (Rig_metal.gpu 0))
+
 let kinds =
   [
     ("MEM", mem);
@@ -140,6 +148,7 @@ let kinds =
     ("HIDDEN", hidden);
     ("MAPLESS", mapless);
     ("UNTIMED", untimed);
+    ("METAL", metal);
     ("NONE", fun () -> Error "no such hardware");
     ("RAISE", fun () -> failwith "the opener raised");
     ( "COLLECT",

@@ -25,7 +25,8 @@
   remote_job
   watchdog
   test_rig_remote_rail
-  test_rig_remote_dial)
+  test_rig_remote_dial
+  test_rig_remote_metal)
  (deps
   support/agent.exe
   support/controller.exe
@@ -73,6 +74,25 @@
   rig_amd_support
   rig_nv_abi
   rig_nv_support
+  threads.posix
+  unix
+  windtrap))
+
+; test_rig_remote_metal loads specialised metallibs on an agent's Metal GPU.
+
+(test
+ (name test_rig_remote_metal)
+ (modules test_rig_remote_metal)
+ (locks %{workspace_root}/gpu)
+ (deps
+  support/agent.exe
+  ../metal/fixtures/constants.metallib)
+ (libraries
+  rig
+  rig_metal_support
+  rig_program
+  rig_remote
+  rig_remote_job
   threads.posix
   unix
   windtrap))
