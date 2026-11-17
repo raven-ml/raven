@@ -628,6 +628,7 @@ let jit_rows () =
   let x1m = between f64 13 (-1.) 1. [| 1_000_000 |] in
   let dirichlet_key = Nx.Rng.key 3 in
   let concentrations = host (Nx.full f32 [| 4096; 8 |] 2.) in
+  let longs = positions (1 lsl 20) max_int in
   [
     warm "add-1-hit"
       (fun () -> Rune.jit (pair_fn ()) Nx.add)
@@ -817,6 +818,11 @@ let jit_rows () =
     warm "tanh-float32-64K"
       (fun () -> Rune.jit' Nx.tanh)
       (fun f -> synced (f angles));
+    (* 2^20 int64s below 2^62 cast to float32: the host converts each through
+       a double rounded to odd, so that it rounds once. *)
+    warm "cast-int64-float32-1M"
+      (fun () -> Rune.jit' (Nx.cast f32))
+      (fun f -> synced (f longs));
     (* 2^20 normal draws from a key argument: a Box-Muller transform, whose sine
        and cosine read an angle its uniform bounds below 2 pi. *)
     warm "normal-float32-1M"

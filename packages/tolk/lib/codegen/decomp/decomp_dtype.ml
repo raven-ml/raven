@@ -422,45 +422,50 @@ let rne v s =
   and half = shr v (s - 1) in
   O.(q + (half land int 1 land ((v land low <> int 0) lor (q land int 1))))
 
-(* [x] as a float32 rounded to odd: towards zero, with the last bit set if bits
-   were dropped. A narrow float rounded to nearest from it is [x] rounded to
-   nearest once. Only a source more precise than a float32 needs it, and an
-   integer whose bounds lie within 2^24 is exact in one. The conversion to
-   float32 need only land on one of the two float32s around [x], as C11
-   6.3.1.4p2 and 6.3.1.5p1 promise: its exact conversion back says which.
-   An integer that lands on the power of two past its type's range cannot
-   be cast back, and rounded up. *)
+(* [x] as a float32 or a double rounded to odd: towards zero, with the last bit
+   set if bits were dropped. A float of at least two bits less precision
+   rounded to nearest from it is [x] rounded to nearest once. Only a source
+   more precise than [to_] needs it, and an integer whose bounds lie within
+   2^p, [p] being [to_]'s precision, is exact in one. The conversion to [to_]
+   need only land on one of the two values around [x], as C11 6.3.1.4p2 and
+   6.3.1.5p1 promise: its exact conversion back says which. An integer that
+   lands on the power of two past its type's range cannot be cast back, and
+   rounded up. *)
 let narrow x to_ =
   let src = dtype x in
+  let more_precise =
+    match to_ with
+    | Dtype.Float32 ->
+        Dtype.mem src Dtype.[ Float64; Int32; Uint32; Int64; Uint64 ]
+    | Float64 -> is_long src
+    | _ -> false
+  in
+  let precision () = 1 + snd (Dtype.finfo to_) in
   let exact () =
-    let limit = Bigint.shift_left Bigint.one 24 in
+    let limit = Bigint.shift_left Bigint.one (precision ()) in
     Dtype.is_int src
     && Dtype.Value.(`Int (Bigint.neg limit) <= vmin x && vmax x <= `Int limit)
   in
-  if
-    (not
-       (Dtype.equal to_ Float32
-       && Dtype.mem src Dtype.[ Float64; Int32; Uint32; Int64; Uint64 ]))
-    || exact ()
-  then cast x to_
+  if (not more_precise) || exact () then cast x to_
   else
-    let y = cast x Float32 in
+    let word = f2f_dt to_ in
+    let y = cast x to_ in
     let or_top, back =
       if Dtype.is_float src then (Fun.id, cast y src)
       else
         let k = Dtype.bitsize src - if Dtype.is_unsigned src then 0 else 1 in
         let edge = Float.ldexp 1. k in
         let top = O.(float edge <= y) in
-        let below = float (edge -. Float.ldexp 1. (k - 24)) in
+        let below = float (edge -. Float.ldexp 1. (k - precision ())) in
         ((fun c -> O.(top lor c)), cast (where top below y) src)
     in
     let zero = const_like x (`Int Bigint.zero) in
     let away =
       or_top O.((x < back) land (zero < x) lor ((back < x) land (x < zero)))
     in
-    let bits = bitcast y Uint32 in
+    let bits = bitcast y word in
     let truncated = where away O.(bits - int 1) bits in
-    bitcast O.(truncated lor cast (or_top (back <> x)) Uint32) Float32
+    bitcast O.(truncated lor cast (or_top (back <> x)) word) to_
 
 let rec f2f ?(sat = true) v fr to_ =
   let is_narrow dt = Dtype.mem dt Dtype.(Float16 :: Bfloat16 :: fp8s) in

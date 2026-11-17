@@ -2056,8 +2056,20 @@ let bit_loads dts =
 (* LLVM legalizes a double to half cast on CPUs without native support (such as
    x86 without AVX512-FP16) into a compiler-rt libcall, so the cast goes through
    a float32, which the double reaches rounded to odd: the half is then the
-   double rounded once. *)
+   double rounded once.
+
+   A 64-bit integer cast to float32 goes through a double rounded to odd too.
+   LLVM's vectorizers pack the scalar casts, and the AArch64 backends of Apple
+   clang 17 and of LLVM 18 and 19 convert the vector to doubles rounded to
+   nearest ([ucvtf.2d]), then narrow those ([fcvtn]): two roundings, which
+   take 2^53 + 2^29 + 1 to 2^53, where one takes it to 2^53 + 2^30. Whether a
+   loop is packed is the compiler's choice, so every such cast whose bounds
+   pass 2^53, past which a double is not exact, is rewritten. *)
 let clang_extra_matcher =
+  let exact_in_double x =
+    let limit = Bigint.shift_left Bigint.one 53 in
+    Dtype.Value.(`Int (Bigint.neg limit) <= vmin x && vmax x <= `Int limit)
+  in
   Pattern_matcher.concat
     [
       pm_narrow_uint;
@@ -2070,6 +2082,16 @@ let clang_extra_matcher =
             (fun m ->
               Some
                 (cast (Decomp_dtype.narrow (m "x") Dtype.Float32) Dtype.Float16));
+          rule
+            (Upat.cast
+               (Upat.var ~dtype:Dtype.[ Int64; Uint64 ] "x")
+               Dtype.Float32)
+            (fun m ->
+              let x = m "x" in
+              if exact_in_double x then None
+              else
+                Some
+                  (cast (Decomp_dtype.narrow x Dtype.Float64) Dtype.Float32));
         ]);
       create_non_native_float_pats [ Dtype.Bfloat16 ];
       pm_manual_bf16_cast;

@@ -9255,3 +9255,26 @@ D466.
   `q8_0_partial_{cuda,amd,metal}` (`q8_0_partial_*.tolk`, `cases.tolk`),
   the tensor core floor's stated splits, tolk's bench row
   `stream/q8_0-core-64` and kaun's gpt-oss row `prefill 512, Q8_0`.
+
+## D494. A 64-bit integer cast to float32 on the host rounds once
+
+- **tinygrad:** `renderer/cstyle.py` `ClangRenderer.extra_matcher`, which
+  leaves the cast to C: `(float)x`.
+- **tolk:** `Cstyle.clang_extra_matcher`, through `Decomp_dtype.narrow` at
+  `Float64`.
+- **Differs:** a cast of an `Int64` or `Uint64` whose bounds pass `2^53` to
+  `Float32` converts to a double rounded to odd, then to float32. Within
+  `2^53` the cast stays C's.
+- **Reason:** (e). LLVM's vectorizers pack the scalar casts of an upcast
+  kernel, and the AArch64 backends of Apple clang 17 and of LLVM 18 and 19
+  lower the packed conversion to doubles rounded to nearest, then narrow
+  them: two roundings. `2^53 + 2^29 + 1` becomes `2^53`, where one rounding
+  gives `2^53 + 2^30`. LLVM 21 to 23 convert each lane once. The rewrite
+  holds whatever the compiler, since a compiler's packing and lowering are
+  its own choice, and the kernel's source does not depend on which Clang
+  compiles it. Cost: about twenty operations a lane in place of one,
+  unmeasured; rune's bench row `Jit › cast-int64-float32-1M` times it.
+- **Pinned by:** `Tolk.Codegen › a 64-bit integer rounds once to float32 on
+  the host`, in 1, 2, 4 and 8 lanes; rune's `Lower_arith › casts of bounded
+  64-bit integers give eager's values` and `rune jit › jit › an integer
+  cast to a float gives eager's bits`, under Apple clang 17.

@@ -52,16 +52,18 @@ val f2f : ?sat:bool -> Ops.t -> Dtype.t -> Dtype.t -> Ops.t
     and the other a narrower float. *)
 
 val narrow : Ops.t -> Dtype.t -> Ops.t
-(** [narrow x dt] is [x] cast to [dt], but for a {!Dtype.Float32} from a
-    {!Dtype.Float64} or an integer of 32 or 64 bits whose bounds
-    ({!Ops.vmin}, {!Ops.vmax}) do not lie within [2{^24}], more precise than a
-    float32: then it is [x] rounded to odd, towards zero with the last bit set
-    if bits were dropped, so that a narrow float rounded to nearest from it is
-    [x] rounded to nearest once.
+(** [narrow x dt] is [x] cast to [dt], but where [x] is more precise than
+    [dt]: a {!Dtype.Float32} from a {!Dtype.Float64} or an integer of 32 or
+    64 bits whose bounds ({!Ops.vmin}, {!Ops.vmax}) do not lie within
+    [2{^24}], or a {!Dtype.Float64} from an integer of 64 bits whose bounds do
+    not lie within [2{^53}]. Then it is [x] rounded to odd, towards zero with
+    the last bit set if bits were dropped, so that a float of at least two bits
+    less precision rounded to nearest from it is [x] rounded to nearest once:
+    a narrow float from a float32, a float32 from a double.
 
-    It needs only that the target's conversion to {!Dtype.Float32} lands on
-    one of the two float32 values around [x], as C11 6.3.1.4p2 and 6.3.1.5p1
-    promise; not that it rounds to nearest. *)
+    It needs only that the target's conversion to [dt] lands on one of the two
+    values of [dt] around [x], as C11 6.3.1.4p2 and 6.3.1.5p1 promise; not
+    that it rounds to nearest. *)
 
 (** {1:passes Passes} *)
 

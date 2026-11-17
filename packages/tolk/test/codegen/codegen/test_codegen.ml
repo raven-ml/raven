@@ -6690,6 +6690,55 @@ let half_casts =
     [ 1; 4; 8 ]
     (fun lanes -> rounds_once ~lanes Float16 (Float64, doubles))
 
+(* Casts of 64-bit integers to float32
+
+   A cast to float32 from a 64-bit integer rounds once, from the exact value,
+   where a cast through a double rounds twice: 2^53 + 2^29 + 1 is 2^53 + 2^30
+   once, and 2^53 through the double 2^53 + 2^29, a tie that rounds to even.
+   2^63 - 2^38 - 1 is 2^63 - 2^39 once, and 2^63 through a double. Some rows
+   round alike either way: ties, 2^53 + 3 * 2^29 to the even 2^53 + 2^31, and
+   2^53 + 2^30 + 3 * 2^28, which is 2^53 + 2^31, not the 2^53 + 2^30 a rounding
+   to odd keeps. Lanes cover the conversions a compiler packs into vectors. *)
+
+let long_casts =
+  let integers l =
+    Array.of_list (List.map (fun s -> `Int (Bigint.of_string s)) l)
+  in
+  let longs =
+    [
+      ( Dtype.Int64,
+        integers
+          [
+            "9007199791611905";
+            "-9007199791611905";
+            "1152921573326323713";
+            "9007201133789184";
+            "9007200865353728";
+            "9223371761976868863";
+            "9223372036854775807";
+            "-9223372036854775808";
+          ] );
+      ( Dtype.Uint64,
+        integers
+          [
+            "18446744073709551615";
+            "9223372586610589697";
+            "9007199791611905";
+            "9223373961000124416";
+            "18446743523953737727";
+            "9223372036854775808";
+            "9007199791611904";
+            "1";
+          ] );
+    ]
+  in
+  cases "a 64-bit integer rounds once to float32 on the host"
+    ~id:(fun (lanes, (dt, _)) ->
+      Printf.sprintf "%s in %d lanes" (Dtype.name dt) lanes)
+    (List.concat_map (fun lanes -> List.map (fun l -> (lanes, l)) longs)
+       [ 1; 2; 4; 8 ])
+    (fun (lanes, from) -> rounds_once ~lanes Float32 from)
+
 (* Selections between bfloat16 vectors *)
 
 (* The kernel that stores into slot 0, of bfloat16, element [i] of slot 2 where
@@ -10515,6 +10564,7 @@ let () =
            lanes;
            bfloat16_casts;
            half_casts;
+           long_casts;
            test "a selection between bfloat16 vectors takes each lane's arm"
              selects_bfloat16_lanes;
            test
