@@ -3562,18 +3562,24 @@ supports Windows: `Cstyle.clang_lang` keeps the empty `abi` and plain
   changes nothing.
 - **Reason:** (b). The renderer writes vectors wider than 256 bits (D141), and
   Clang 18 segfaults splitting a negation, absolute value or copysign of more
-  than 16 halves for an AVX-512 processor that prefers 256-bit vectors, as
-  `Rune.jit` writes for float16 `Nx.neg`, `Nx.abs` and minima: rune's
-  `Rune.jit programs › computes eager's values within the stated rounding`
-  crashed Ubuntu 24.04's Clang 18.1.3 under `-march=native` on CI, with or
-  without AVX512-FP16. Clang 17 and Clang 19 and later compile them without
-  the mark. LLVM folds every other rendering of the negation back into the
-  same one. tinygrad computes each lane apart and writes no such vector.
+  than 16 halves for an AVX-512 processor that prefers 256-bit vectors.
+  `Rune.jit` writes float16 `Nx.neg` and `Nx.abs` on the bits, the sign bit
+  flipped or cleared (`Lower_bits.negated`, `Lower_bits.magnitude`), and LLVM
+  folds both back into a negation and an absolute value of halves: on fudge
+  the kernel `E_2_16_2` that `Rune.jit` compiles for either over 64 halves,
+  vectors of 32, crashes Ubuntu 24.04's Clang 18.1.3 and LLVM's 18.1.8 in X86
+  instruction selection for `skylake-avx512`, `icelake-server` and
+  `sapphirerapids` without the mark, and compiles with it. Clang 17 and
+  Clang 19 and later compile them without the mark. LLVM folds every other
+  rendering of the negation back into the same one. tinygrad computes each
+  lane apart and writes no such vector.
 - **Pinned by:** `Tolk.Compiler_cpu › features › a kernel over more than 16
   halves compiles for AVX-512`, which renders `half_neg`, `half_abs`,
-  `half_copysign` and `half_min` (32 lanes each) for `skylake-avx512`,
-  `icelake-server` and `sapphirerapids` and fails under `CC` naming Clang 18
-  without the mark; the x86 Clang goldens, whose kernels carry it. On rune:
+  `half_copysign` and `half_min` (32 lanes each), and `› a sign bit of more
+  than 16 halves compiles for AVX-512`, which renders 32 halves' sign bit
+  flipped and cleared as rune writes them, both for `skylake-avx512`,
+  `icelake-server` and `sapphirerapids`, and failing under `CC` naming Clang
+  18 without the mark; the x86 Clang goldens, whose kernels carry it. On rune:
   missing (the old rune's `Rune.jit programs › computes eager's values within
   the stated rounding`, whose examples held the program found, went with its
   rewrite).
@@ -4153,12 +4159,21 @@ its float bound`, hold.
     their own release, not LLVM's: Apple clang 17 writes the same for `E_16_2_4`
     for x86_64, on an Intel Mac or for another machine's x86-64 host, and
     compiles both kernels for arm64, where the vectorizer stays on: without it
-    Apple Clang 17 adds 9.5% instructions over 466 kernels. LLVM 20: Reason:
-    none. Its case was an attention kernel that converted each int64's 32-bit
+    Apple Clang 17 adds 9.5% instructions over 466 kernels. LLVM 20, (e): its
+    straight-line vectorizer narrows a signed lane that it converts to float as
+    unsigned to too few bits, which computes wrong values, so tinygrad's
+    arguments miscompile such a source: llvm/llvm-project#129244, a regression
+    of LLVM 19, fixed on main by e1e20c07e4 (2025-02-28), which 21.1.0 holds
+    and release/20.x never took, so every LLVM 20 through 20.1.8 has it. On
+    fudge the issue's reproducer returns 3 under Clang 19.1.7 at `-O2` and 0
+    with `-fno-slp-vectorize`, and under Clang 18.1.3 and LLVM 23.1.5. Its case
+    here was an attention kernel under ALiBi that converted each int64's 32-bit
     halves, which for `x86-64-v3` LLVM 19 and 20 narrowed to `uitofp <2 x
-    i8>`; rune now casts a 64-bit integer to float32 with one `Ops.cast`
-    (rune's `Lower_arith.to_float32`), and no kernel is known to meet the
-    defect under LLVM 20. Rewriting the source only moves what the vectorizer
+    i8>`. rune now casts a 64-bit integer to float32 with one `Ops.cast`
+    (rune's `Lower_arith.to_float32`), and rune's attention suite passes under
+    Clang 19.1.7 with the vectorizer on, so no raven kernel is known to meet
+    the defect; the gate holds a cited miscompile of a release Clang that
+    distributions still ship. Rewriting the source only moves what the vectorizer
     meets; disabling it for every Clang would change 44% of a sample of
     objects, so it stays on wherever it is correct. With the IR verifier on
     (D275), invalid IR from it is a compile error naming the kernel.
@@ -4226,7 +4241,8 @@ its float bound`, hold.
   along the last axis of every other row and column, flipped, gives eager's
   codes`, under Clang 18 on an x86 host with AVX-512; rune's `Lower_reduce ›
   cases › rows of one group in a block at each batch index give eager's values`,
-  under Clang 19 on an x86 host with AVX2. The loop vectorizer:
+  under Clang 19 on an x86 host with AVX2. LLVM 20: missing (no raven kernel
+  meets the defect, and fudge has no Clang 20). The loop vectorizer:
   `Tolk.Compiler_cpu › features › a loop over a count
   it takes is packed into vectors iff its source is at most 400000 bytes long:`
   (rows 400000 and 400001 among them); rune's compile bench

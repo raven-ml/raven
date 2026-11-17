@@ -404,11 +404,10 @@ let flags ~version arch =
    wrote [trunc <4 x i8> to <4 x i32>], which a Clang without its IR verifier
    compiles into wrong values: rune's routed rows read garbage row numbers, and
    with it ([cc1]) the compile fails. LLVM 19 and 20 also narrow lanes into
-   valid IR of wrong values: for rune's attention under ALiBi on a processor
-   with AVX2, they packed two int64 differences of rows and keys converted to
-   float, narrowed the unsigned low halves to 8 bits and wrote [uitofp <2 x
-   i8>], so that a low half of 2^32 - 1 converted to 255 and a score was off
-   by 2^32 times its slope. LLVM 18, 21 and 22 compile the kernel. Apple's
+   valid IR of wrong values: a signed lane that is converted to float as
+   unsigned can be narrowed to too few bits (LLVM issue 129244, fixed in
+   LLVM 21). Two int64 halves converted this way became
+   [uitofp <2 x i8>], so that a low half of 2^32 - 1 converted to 255. Apple's
    Clang 17 writes the binary search's invalid IR for x86_64 too, and neither
    kernel's defect for arm64, where without the vectorizer its objects of 466
    kernels of tolk's and rune's tests hold 9.5% more instructions.

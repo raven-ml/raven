@@ -625,6 +625,28 @@ let source prg =
   | String src -> src
   | _ -> invalid_arg "a program's third source is its source"
 
+(* The program of out[i] = in[i] with its bits combined by [op] with [mask],
+   over 32 halves as one vector of 32 lanes, for [arch]. *)
+let sign_bits ~arch op mask =
+  let n = 32 in
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
+  let at slot = Ops.index (Shape.placeholder ~slot [ n ] Dtype.Float16) [ i ] in
+  let bits = Ops.bitcast (at 1) Dtype.Uint16 in
+  let value =
+    Ops.bitcast (op bits (Shape.const_like bits (`Int (Bigint.of_int mask))))
+      Dtype.Float16
+  in
+  let split amount =
+    Opt.Split { axis = 0; amount; target = Upcast; top = false }
+  in
+  let opts = [ split 16; split 2 ] in
+  let sink =
+    Ops.sink
+      ~kernel:(Ops.kernel_info ~name:"sign_bits" ~opts_to_apply:opts ())
+      [ Ops.end_ (Ops.store (at 0) value) [ i ] ]
+  in
+  Codegen.to_program sink (Cstyle.clang (target arch))
+
 let muladd a b c = Ops.alu a Op.Mulacc [ b; c ]
 
 (* Whether a line of [text] holds the instruction [i] and a word that
@@ -788,6 +810,28 @@ let features =
         (fun (arch, name) ->
           is_relocatable_elf64 ~machine:(elf_machine "x86_64")
             (compile arch (rendered arch name)));
+      (* LLVM folds flipping or clearing the sign bit of halves' bits into a
+         negation or an absolute value, on which Clang 18 crashed the same
+         way. *)
+      cases "a sign bit of more than 16 halves compiles for AVX-512"
+        ~id:(fun (arch, (name, _)) -> arch ^ " " ^ name)
+        (List.concat_map
+           (fun arch ->
+             List.map
+               (fun op -> (arch, op))
+               [
+                 ("flipped", (Ops.bitwise_xor, 0x8000));
+                 ("cleared", (Ops.bitwise_and, 0x7fff));
+               ])
+           [
+             "x86_64,skylake-avx512";
+             "x86_64,icelake-server";
+             "x86_64,sapphirerapids";
+           ])
+        (fun (arch, (_, (op, mask))) ->
+          let prg = sign_bits ~arch op mask in
+          is_relocatable_elf64 ~machine:(elf_machine "x86_64")
+            (compile arch (source prg)));
       (* LLVM 18's straight-line vectorizer narrowed the four indices into
          invalid IR for these processors, and Clang 18 crashed on it. *)
       cases "four clamped gathers compile for AVX-512 on" ~id:Fun.id
