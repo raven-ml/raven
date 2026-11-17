@@ -1370,10 +1370,11 @@ let pp_written ppf c =
     (Format.pp_print_list ~pp_sep:Format.pp_print_space Format.pp_print_float)
     (Array.to_list c.qs)
 
-(* No value, one, or several, so that every run draws each. *)
+(* No value, one, or several, each in a third of the cases, so that every run
+   draws each. *)
 let few g =
   let open Gen in
-  let* n = frequency [ (1, constant 0); (1, constant 1); (2, int_range 2 9) ] in
+  let* n = one_of [ constant 0; constant 1; int_range 2 9 ] in
   list ~size:(constant n) g
 
 let written_cases ~cuts =
