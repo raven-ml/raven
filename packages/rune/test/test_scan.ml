@@ -719,6 +719,15 @@ let pp_case ppf (Case c) =
     Nx.pp_dtype c.dt Operand.pp_shape c.s c.n pp c.g pp c.k pp c.h pp_where
     c.at.(0) pp_where c.at.(1) pp_where c.at.(2) pp_where c.at.(3)
 
+(* An operand of [-0.] at every element, in a case of its own: a drawn operand's
+   [-0.], one value in 40, reaches the second orders' leaves in about one case
+   in 12. *)
+let negative_zeros s =
+  let zero (o : Operand.t) =
+    { o with values = Array.map (fun _ -> Operand.F (-0.)) o.values }
+  in
+  Gen.map zero (Operand.draw s)
+
 let rule_cases =
   let open Gen in
   (let* s = Operand.shape in
@@ -726,7 +735,7 @@ let rule_cases =
    let rank = Array.length s in
    let* g = gen ~rank and+ k = gen ~rank and+ h = gen ~rank in
    let rows = Array.append [| n |] s in
-   let* c0 = Operand.draw s
+   let* c0 = frequency [ (2, Operand.draw s); (1, negative_zeros s) ]
    and+ c1 = Operand.draw s
    and+ xs = Operand.draw rows in
    let* w = Operand.draw s in
