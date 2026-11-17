@@ -5,6 +5,14 @@ Where it stands, with every measurement: doc/performance.md.
 
 ## tolk
 
+- A dense MXFP4 core never reaches `Stage.tile`: MXFP4's byte of two
+  codes is still a loop at its entry (`unroll_beside` runs only in
+  `unstaged ()`), so `admits` refuses. Staging it runs `stream/mxfp4-64`
+  in 29.7 us against 60 (BEAM's 29.8; branch `coretiles` `07eb7efd13`).
+  Parked: choosing staged against unstaged by the busiest unit's carried
+  bytes needs the unroll before the first ask (reaching every bf16 staged
+  row) and plans that block their sums alike, or the choice moves a sum's
+  order with `units` (_plans/perf-campaign/coretiles/adjudication.md)
 - D357's inner-end group split loses to tinygrad's top split on the
   bfloat16 argmax and max over 201088 values (0.67-0.77x, same axis, threads
   and registers; about 3 us a decode step) and, through `across`, on
@@ -154,7 +162,10 @@ Where it stands, with every measurement: doc/performance.md.
   registers, 3 workgroups an SM against 4 at 128: on a real routing the
   down projection runs 10% slower than with its codes unstaged (2 waves
   of its 648 workgroups become 3), gate and up 10% faster. A dense MXFP4
-  product at 512 tokens takes 255 registers and spills 8 bytes
+  product at 512 tokens takes 255 registers and spills 8 bytes. Four an SM
+  needs both R <= 128 and S <= 24576 (K 64 takes 25664 B), and no count
+  before ptxas separates where K 64 pays (512 tokens) from where it costs
+  (_plans/perf-campaign/coretiles/)
 - MXFP4's float32 decode on Metal multiplies by a subnormal at scale byte
   0, which Metal may flush (MSL 4.1 §8.1); no test reaches it there
 - tolk streams a routed block of 32 rows, which `core_fits` refuses: such
