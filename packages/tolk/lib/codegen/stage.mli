@@ -70,12 +70,18 @@ val operands : Renderer.t -> Ops.t -> Ops.t
     not move the operand's index. A gate on such an
     operand, its index's validity or a selection of [0], copies [0] where it
     fails. An operand computed elementwise from loads of global memory, and
-    not {!decoded}, is staged where each of its loads that reads the threads
-    and lanes reads such a box. The loads whose tiles step through the loops
-    of its tile of most elements are copied, where those are the loops of
-    each operand that is a load, and the others stay loads, as a per-head
-    scale stays while the core's loop runs within a head; the operand
-    computes on the copies as it did on the loads.
+    not {!decoded}, is staged where some of its loads that read the threads
+    and lanes read such a box, and each that reads none reads fewer of the
+    threads' and lanes' elements than the box of most elements. The loads
+    whose tiles step through the loops of its tile of most elements are
+    copied, where those are the loops of each operand that is a load, and the
+    others stay loads, as a per-head scale stays while the core's loop runs
+    within a head, and as a norm's scale and shift stay beside its normalised
+    rows where their gate over a padded axis reads lanes their own box does
+    not hold; the operand computes on the copies as it did on the loads. Rows
+    gathered through a map of row indices, which hold no box and read at
+    least as many of the threads' and lanes' elements as the map's, keep
+    their operand unstaged.
 
     A {!decoded} operand is staged where [ren] copies asynchronously
     ({!Renderer.t.async_copy}) and each of its loads is copied or held. A

@@ -664,17 +664,30 @@ let decoded_loads ?whole all x =
       if List.exists Option.is_none classes then None
       else Some (List.filter_map Fun.id classes)
 
+(* The elements of the threads and lanes [l] reads: the product of the
+   extents of the inner ranges it reads. *)
+let inner_elements l =
+  List.fold_left
+    (fun n r -> if is_inner r then n * extent r else n)
+    1
+    (Nodes.to_list (ranges l))
+
 (* The loads staging copies for a core's operand [x], each with its tile: [x]
    itself where it is a load with a tile; where [x] computes elementwise on
    loads and is not decoded, the loads of global memory through which it reads
-   the threads and lanes, if each has a tile; [None] otherwise. Of a computed
-   operand's loads, those whose tiles step through the loops of its tile of
-   most elements are copied, and the others stay loads: an attention output's
-   per-head scale, while the core's loop runs within a head, is read once a
-   trip of its own loop. The copies move the loads' values, which the operand
-   then computes on as it did, so the operand's values do not change. A
-   decoded operand's loads are copied where [async] holds, each load copied
-   or held ({!decoded_loads}), and some copied. *)
+   the threads and lanes, where some have a tile and each that has none reads
+   fewer of the threads' and lanes' elements than the tile of most elements;
+   [None] otherwise. Of a computed operand's loads, those whose tiles step
+   through the loops of its tile of most elements are copied, and the others
+   stay loads: an attention output's per-head scale, while the core's loop
+   runs within a head, is read once a trip of its own loop, and a norm's
+   scale and shift beside its normalised rows, whose gate over a padded axis
+   no tile of theirs holds, at each trip. The copies move the loads' values,
+   which the operand then computes on as it did, so the operand's values do
+   not change. A load with no tile that reads as many elements as the
+   largest tile, as rows gathered through a copied map of row indices are,
+   keeps the operand unstaged. A decoded operand's loads are copied where [async] holds, each
+   load copied or held ({!decoded_loads}), and some copied. *)
 let loads_of ~async ?whole all x =
   match staged_tile ?whole all x with
   | Some t -> Some [ (x, t) ]
@@ -689,17 +702,27 @@ let loads_of ~async ?whole all x =
   | None -> (
       match global_loads x with
       | None | Some [] -> None
-      | Some loads ->
-          let tiles = List.map (fun l -> (l, staged_tile ?whole all l)) loads in
-          if List.exists (fun (_, t) -> Option.is_none t) tiles then None
-          else
-            let tiles = List.map (fun (l, t) -> (l, Option.get t)) tiles in
-            let largest =
-              List.fold_left
-                (fun b (_, t) -> if t.size > b.size then t else b)
-                (snd (List.hd tiles)) tiles
-            in
-            Some (List.filter (fun (_, t) -> same_loops t largest) tiles))
+      | Some loads -> (
+          let tiled, untiled =
+            List.partition_map
+              (fun l ->
+                match staged_tile ?whole all l with
+                | Some t -> Either.Left (l, t)
+                | None -> Either.Right l)
+              loads
+          in
+          match tiled with
+          | [] -> None
+          | (_, t) :: _ ->
+              let largest =
+                List.fold_left
+                  (fun b (_, t) -> if t.size > b.size then t else b)
+                  t tiled
+              in
+              if
+                List.for_all (fun l -> inner_elements l < largest.size) untiled
+              then Some (List.filter (fun (_, t) -> same_loops t largest) tiled)
+              else None))
 
 (* The loads of a core's [operands] that staging copies, each with its tile,
    or an operand with [None] where it stays unstaged. A computed operand's

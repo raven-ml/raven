@@ -642,8 +642,13 @@ let applies =
 (* What a product reads of [x]: its element, the element divided by one of
    [i]'s, or ReLU of the element as nx computes it on a bfloat16, its bits
    through an integer, the sign selected, and rounded to a bfloat16 again,
-   as a feed-forward layer's second product reads its hidden values. *)
-type operand = Loaded | Divided | Relu
+   as a feed-forward layer's second product reads its hidden values; or a
+   norm's affine output, the bfloat16 of [x·γ + β] for float32 [x], [γ] and
+   [β], with [γ] and [β] along the sum, [x[i, k] γ[k] + β[k]], as a
+   projection reads a LayerNorm's output ([Affine]), or along the rows,
+   [x[k, i] γ[i] + β[i]], as the projection's weight gradient reads it
+   ([Affine_rows]). *)
+type operand = Loaded | Divided | Relu | Affine | Affine_rows
 
 (* [out[i, j] = sum_k x[i, k] w[j, k]] over [rows] rows of [cols] columns and
    [depth] terms, of bfloat16 operands summed in float32, as rune compiles a
@@ -653,18 +658,34 @@ let dense ?(operand = Loaded) ?(matrix = Dtype.Bfloat16) ?(by_columns = false)
     rows cols depth =
   let open Ops.O in
   let param slot size dt = Shape.param ~shape:[ Ops.Int size ] slot dt in
+  let affine = operand = Affine || operand = Affine_rows in
   let out = param 0 Stdlib.(rows * cols) Dtype.Bfloat16
-  and x = param 1 Stdlib.(rows * depth) Dtype.Bfloat16
+  and x =
+    param 1 Stdlib.(rows * depth)
+      (if affine then Dtype.Float32 else Dtype.Bfloat16)
   and w = param 2 Stdlib.(cols * depth) matrix
-  and norm = param 3 rows Dtype.Float32 in
+  and norm = param 3 rows Dtype.Float32
+  and gamma = param 4 (if operand = Affine then depth else rows) Dtype.Float32
+  and beta = param 5 (if operand = Affine then depth else rows) Dtype.Float32 in
   let i = Ops.range ~axis_type:Weak (Ops.Int rows) [ 1 ]
   and j = Ops.range ~axis_type:Weak (Ops.Int cols) [ 2 ]
   and k = Ops.range ~axis_type:Weak (Ops.Int depth) [ 0 ] in
   let ld p at = Ops.cast (Ops.index p [ at ]) Dtype.Float32 in
-  let a = ld x ((i * int depth) + k) in
+  let a =
+    if operand = Affine_rows then Ops.index x [ (k * int rows) + i ]
+    else if affine then Ops.index x [ (i * int depth) + k ]
+    else ld x ((i * int depth) + k)
+  in
+  let affine at =
+    Ops.cast
+      (Ops.cast ((a * Ops.index gamma [ at ]) + Ops.index beta [ at ]) Bfloat16)
+      Float32
+  in
   let a =
     match operand with
     | Loaded -> a
+    | Affine -> affine k
+    | Affine_rows -> affine i
     | Divided -> a / Ops.index norm [ i ]
     | Relu ->
         let u32 n = Ops.int ~dtype:Uint32 n in
@@ -864,6 +885,54 @@ let relu_product =
       let o = Heuristic.hand_coded_optimizations s in
       equal Testable.bool false (streams o);
       equal Testable.bool cored (List.exists core (K.applied_opts o)))
+
+(* A norm's affine output read by a projection over 440 terms, as a
+   LayerNorm hands it a model's 440 features, takes the staged core: K pads
+   to 448, and [γ] and [β], whose gate over the padded sum no box of the
+   threads and lanes holds, stay loads beside [x]'s copied tile, which holds
+   more of the threads' and lanes' elements. So does the weight gradient's
+   read of it, the sum over 68608 tokens, [γ] and [β] along its rows. Each
+   takes more than a warp a workgroup, and its program copies [x]. *)
+let affine_staged =
+  let sm_89 =
+    Renderer.with_compiler
+      (Renderer.Compiler.v Fun.id)
+      (Cstyle.without_compiler
+         { Helpers.Target.device = "CUDA"; renderer = "CUDA"; arch = "sm_89";
+           interface = ""; indices = "" })
+  in
+  let copies dt prg =
+    List.exists
+      (fun u ->
+        (Op.equal (Ops.op u) Op.Alloc || Op.equal (Ops.op u) Op.Buffer)
+        && Ops.addrspace u = Some Dtype.Local
+        && Dtype.equal (Ops.dtype u) dt)
+      (Ops.toposort ~calls:Skip (Ops.nth prg 1))
+  in
+  let core = function Opt.Tc _ -> true | _ -> false in
+  cases "a product of a norm's affine output takes a staged core"
+    ~id:(fun (name, _, _, _, _) -> name)
+    [
+      ("along the sum", Affine, 68608, 440, 440);
+      ("along the rows", Affine_rows, 440, 440, 68608);
+    ]
+    (fun (_, operand, rows, cols, depth) ->
+      let s = K.v (dense ~operand rows cols depth) sm_89 in
+      K.convert_loop_to_global s;
+      let o = Heuristic.hand_coded_optimizations s in
+      let threads =
+        List.fold_left
+          (fun n r -> n * Bigint.to_int (size r))
+          1
+          (List.map (List.nth (K.rngs o)) (K.axes_of o [ Warp; Local ]))
+      in
+      equal ~msg:"a core" Testable.bool true
+        (List.exists core (K.applied_opts o));
+      equal ~msg:"staged" Testable.bool true (Stage.admits sm_89 (K.ast o));
+      greater ~msg:"threads" int ~than:32 threads;
+      equal ~msg:"x copied" Testable.bool true
+        (copies Dtype.Float32
+           (Codegen.to_program (dense ~operand rows cols depth) sm_89)))
 
 (* A core pads the extents its tile does not divide, by [TC_OPT=2], the
    default, while the padding adds at most [Heuristic]'s bound to the work:
@@ -1196,6 +1265,108 @@ let recorded_order =
       in
       equal Testable.bool streamed (streams o);
       equal Testable.bool (not streamed) cored)
+
+(* A computed operand's loads with no tile of their own. [a] is a norm's
+   affine output over [depth] terms, [bf16(x[i, k] γ[k] + β[k])], times a
+   per-row [s[i]] where [scaled]; [b] reads [w[j, k]], or computes on a
+   Toeplitz [t[j + k]], whose threads' and lanes' terms overlap so that it
+   has no tile: times [w[j, k]] ([`Toeplitz_w]), reading as many of the
+   threads' and lanes' elements as [w]'s tile, or times [2] ([`Toeplitz]),
+   with no tiled load at all. Neither operand is a load, so no plain
+   operand's loops hold the computed ones back. *)
+let untiled_kernel ~scaled b rows cols depth =
+  let open Ops.O in
+  let param slot size dt = Shape.param ~shape:[ Ops.Int size ] slot dt in
+  let out = param 0 Stdlib.(rows * cols) Dtype.Bfloat16
+  and x = param 1 Stdlib.(rows * depth) Dtype.Float32
+  and w = param 2 Stdlib.(cols * depth) Dtype.Bfloat16
+  and gamma = param 3 depth Dtype.Float32
+  and beta = param 4 depth Dtype.Float32
+  and scale = param 5 rows Dtype.Float32
+  and t = param 6 Stdlib.(cols + depth) Dtype.Bfloat16 in
+  let i = Ops.range ~axis_type:Weak (Ops.Int rows) [ 1 ]
+  and j = Ops.range ~axis_type:Weak (Ops.Int cols) [ 2 ]
+  and k = Ops.range ~axis_type:Weak (Ops.Int depth) [ 0 ] in
+  let ld p at = Ops.cast (Ops.index p [ at ]) Dtype.Float32 in
+  let bf16 v = Ops.cast (Ops.cast v Dtype.Bfloat16) Dtype.Float32 in
+  let affine =
+    (Ops.index x [ (i * int depth) + k ] * Ops.index gamma [ k ])
+    + Ops.index beta [ k ]
+  in
+  let a = bf16 (if scaled then affine * Ops.index scale [ i ] else affine) in
+  let wjk = ld w ((j * int depth) + k) in
+  let b =
+    match b with
+    | `W -> wjk
+    | `Toeplitz_w -> bf16 (ld t (j + k) * wjk)
+    | `Toeplitz -> bf16 (ld t (j + k) * Ops.float 2.)
+  in
+  let sum = Ops.reduce (a * b) Add [ k ] in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [
+      Ops.end_
+        (Ops.store
+           (Ops.index out [ (i * int cols) + j ])
+           (Ops.cast sum Dtype.Bfloat16))
+        [ i; j ];
+    ]
+
+(* An untiled load stays a load only where it reads fewer of the threads'
+   and lanes' elements than the operand's largest copied tile: a norm's
+   [γ] and [β] beside [x]'s tile do, also where a per-row scale's smaller
+   tile is copied with it; a Toeplitz operand as large as [w]'s tile does
+   not, nor one beside no tile, and their kernels keep the unstaged
+   splits. *)
+let untiled_loads =
+  let sm_89 =
+    Cstyle.without_compiler
+      { Helpers.Target.device = "CUDA"; renderer = "CUDA"; arch = "sm_89";
+        interface = ""; indices = "" }
+  in
+  cases "a computed operand's untiled loads stay loads only where fewer"
+    ~id:(fun (name, _, _, _, _) -> name)
+    [
+      ("a norm's output beside a smaller per-row tile", true, `W, 440, true);
+      ("a Toeplitz operand as large as its tile", false, `Toeplitz_w, 64, false);
+      ("a Toeplitz operand of no tile", false, `Toeplitz, 64, false);
+    ]
+    (fun (_, scaled, b, depth, staged) ->
+      let s = K.v (untiled_kernel ~scaled b 4096 512 depth) sm_89 in
+      K.convert_loop_to_global s;
+      let o = Heuristic.hand_coded_optimizations s in
+      equal ~msg:"a core" Testable.bool true
+        (List.exists (function Opt.Tc _ -> true | _ -> false)
+           (K.applied_opts o));
+      equal ~msg:"staged" Testable.bool staged (Stage.admits sm_89 (K.ast o)))
+
+(* gpt-oss's prefill products read their rows of bfloat16 values gathered
+   through a map of row indices. Under the core's splits the map's tile, 16
+   rows a workgroup, holds fewer of the threads' and lanes' elements than the
+   rows the operand reads through it, which no box holds there: the operand
+   is not staged on that tile, and the core keeps the splits it takes with
+   staging off. *)
+let prefill_unstaged =
+  let sm_89 =
+    Cstyle.without_compiler
+      { Helpers.Target.device = "CUDA"; renderer = "CUDA"; arch = "sm_89";
+        interface = ""; indices = "" }
+  in
+  let opt = Testable.make ~pp:Opt.pp ~equal:Opt.equal in
+  cases "a recorded prefill's gathered rows keep the unstaged splits"
+    ~id:(fun (name, _, _) -> name)
+    (List.filter
+       (fun (name, _, _) -> String.starts_with ~prefix:"prefill" name)
+       recorded_kernels)
+    (fun (_, k, _) ->
+      let s = handed (Lazy.force k) sm_89 in
+      let chosen staged =
+        Setting.context
+          [ Setting.B (Setting.stage, staged) ]
+          (fun () -> Heuristic.hand_coded_optimizations s)
+      in
+      let o = chosen true in
+      equal ~msg:"admits" Testable.bool false (Stage.admits sm_89 (K.ast o));
+      equal (list opt) (K.applied_opts (chosen false)) (K.applied_opts o))
 
 (* The host's budget *)
 
@@ -2799,11 +2970,14 @@ let () =
              passes_or_core;
              passes_unstaged;
              relu_product;
+             affine_staged;
              padded_cores;
              one_tile_of_n;
              per_byte_bounds;
              per_byte_order;
              recorded_order;
+             prefill_unstaged;
+             untiled_loads;
              streams_no_call;
              one_trip_product;
              within_block;

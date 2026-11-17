@@ -1476,6 +1476,22 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A tensor core whose operand is computed from loads, as a projection reads
+  a LayerNorm's `bf16(x̂·γ + β)`, is staged where a load the operand reads
+  has no tile of its own but reads fewer of the threads' and lanes' elements
+  than its largest copied tile: the normalised rows are copied and the scale
+  and shift stay loads (`Stage.operands`, `Stage.admits`). At 440 features,
+  whose sum pads to 448, the projection and its weight gradient took the
+  unstaged core of one warp a workgroup. Their bits move within the
+  contraction's bound, as the staged tile's splits replace the unstaged
+  ones. On an RTX 5000 Ada the forward projection over 68608 tokens takes
+  0.585 ms against 0.708 and its weight gradient 0.654 against 0.785
+  (0.81-0.87 times main at 45056 and 68608 tokens), and a feed-forward
+  layer's affine product 0.94 times. With matrix products kept apart
+  (above), tessera's medium distillation step, measured at tessera
+  2031061dec with one clean round a side, went from 1.64-1.75 s to
+  0.98-0.99 s a step, its kernel time from 1556 to 915 ms, against
+  PyTorch's 891-915 ms, and its footprint from 8.83 to 8.63 GB.
 - A value read where it is broadcast stays stored when computing it takes at
   least the elementwise operations of tolk's float32 exponential, as rune's
   compiled `Nx.exp`, `Nx.sigmoid`, `Nx.sin` and `Nx.log` do, except at a

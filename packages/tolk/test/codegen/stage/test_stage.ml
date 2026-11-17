@@ -10,9 +10,14 @@ let is o u = Op.equal (Ops.op u) o
    lowers a contraction of narrow floats. [b] is stored as [k] rows of [n]
    ([K; N]) or as [n] rows of [k] ([N; K]). A Toeplitz [a] reads row [i] from
    element [i] on, [a.(i, r) = t.(i + r)]: its threads' and lanes' terms
-   overlap, which staging refuses. *)
+   overlap, which staging refuses. An affine [a] is computed, as a norm's
+   output is, from float32 [x] of [m] by [k] and float32 [γ] and [β] of [k]:
+   [a.(i, r)] is the 16-bit float of [x.(i, r) · γ.(r) + β.(r)], whose
+   [γ] and [β] the sum's padded trips read through their own gates, [β]
+   nonzero. *)
 
 type layout = Kn | Nk
+type form = Plain | Toeplitz | Affine
 
 type product = {
   dt : Dtype.t;
@@ -21,15 +26,19 @@ type product = {
   k : int;
   n : int;
   layout : layout;
-  toeplitz : bool;
+  form : form;
 }
 
-let a_size p = p.batch * if p.toeplitz then p.m + p.k else p.m * p.k
+let a_size p = p.batch * if p.form = Toeplitz then p.m + p.k else p.m * p.k
 
 let kernel ?opts_to_apply p =
   let c = Shape.param ~shape:[ Ops.Int (p.batch * p.m * p.n) ] 0 Float32
-  and a = Shape.param ~shape:[ Ops.Int (a_size p) ] 1 p.dt
-  and b = Shape.param ~shape:[ Ops.Int (p.batch * p.k * p.n) ] 2 p.dt in
+  and a =
+    Shape.param ~shape:[ Ops.Int (a_size p) ] 1
+      (if p.form = Affine then Float32 else p.dt)
+  and b = Shape.param ~shape:[ Ops.Int (p.batch * p.k * p.n) ] 2 p.dt
+  and gamma = Shape.param ~shape:[ Ops.Int p.k ] 3 Float32
+  and beta = Shape.param ~shape:[ Ops.Int p.k ] 4 Float32 in
   let rows = p.m + p.k and mk = p.m * p.k and kn = p.k * p.n
   and mn = p.m * p.n in
   let open Ops.O in
@@ -39,14 +48,23 @@ let kernel ?opts_to_apply p =
   and r = Ops.range ~axis_type:Weak (Int p.k) [ 3 ] in
   let at x idx = Ops.cast (Ops.index x [ idx ]) Float32 in
   let ai =
-    if p.toeplitz then (z * int rows) + i + r
+    if p.form = Toeplitz then (z * int rows) + i + r
     else (z * int mk) + (i * int p.k) + r
   and bi =
     match p.layout with
     | Kn -> (z * int kn) + (r * int p.n) + j
     | Nk -> (z * int kn) + (j * int p.k) + r
   in
-  let sum = Ops.reduce (at a ai * at b bi) Add [ r ] in
+  let av =
+    match p.form with
+    | Affine ->
+        let affine =
+          (Ops.index a [ ai ] * Ops.index gamma [ r ]) + Ops.index beta [ r ]
+        in
+        Ops.cast (Ops.cast affine p.dt) Float32
+    | Plain | Toeplitz -> at a ai
+  in
+  let sum = Ops.reduce (av * at b bi) Add [ r ] in
   let store =
     Ops.store (Ops.index c [ (z * int mn) + (i * int p.n) + j ]) sum
   in
@@ -190,7 +208,10 @@ let products =
         (1, constant `N);
       ]
   and+ layout = of_list [ Kn; Nk ]
-  and+ toeplitz = frequency [ (5, constant false); (1, constant true) ] in
+  and+ form =
+    frequency
+      [ (4, constant Plain); (1, constant Toeplitz); (1, constant Affine) ]
+  in
   (* One axis padded, within the heuristic's 6/5 of the work: M and K to the
      core's 16, at most 32 / 28 times, or N by 8 columns, which the core's 8
      divides and the staged tile pads to its 64. *)
@@ -201,11 +222,14 @@ let products =
     | `N when n >= 32 -> (m, k, n - 8)
     | _ -> (m, k, n)
   in
-  { dt; batch; m; k; n; layout; toeplitz }
+  { dt; batch; m; k; n; layout; form }
 
 let pp_product ppf p =
   Format.fprintf ppf "%a%s [%d; %d] by %s [%d; %d], %d times" Dtype.pp p.dt
-    (if p.toeplitz then " toeplitz" else "")
+    (match p.form with
+     | Plain -> ""
+     | Toeplitz -> " toeplitz"
+     | Affine -> " affine")
     p.m p.k
     (match p.layout with Kn -> "[K; N]" | Nk -> "[N; K]")
     p.k p.n p.batch
@@ -219,11 +243,19 @@ let same_bits ((p, staged_tile, depth, seed) as _case) =
   let staged = if depth = 2 then r else one_stage r in
   let opts = chosen ~staged:staged_tile p r in
   let k = kernel ~opts_to_apply:opts p in
+  let nonzero = function `Float 0. -> `Float 1. | v -> v in
   let inputs =
     [
       (1, values seed (a_size p));
       (2, values (seed + 1) (p.batch * p.k * p.n));
     ]
+    @
+    if p.form = Affine then
+      [
+        (3, values (seed + 2) p.k);
+        (4, Array.map nonzero (values (seed + 3) p.k));
+      ]
+    else []
   in
   let run r = List.assoc 0 (Run.on d (compiled r k) inputs) in
   let prg = compiled staged k in
@@ -244,6 +276,8 @@ let same_bits ((p, staged_tile, depth, seed) as _case) =
   cover "the unstaged tile, staged" (shared && not staged_tile);
   cover "batched" (shared && p.batch > 1);
   cover "an [N; K] operand" (shared && p.layout = Nk);
+  cover "an affine operand staged over a padded K, β nonzero"
+    (cored && operands >= 2 && p.form = Affine && p.k mod 16 <> 0);
   equal (array Dtypes.value) (run (unstaged r)) (run staged)
 
 let law =
@@ -251,20 +285,23 @@ let law =
     ~examples:
       [
         ( { dt = Bfloat16; batch = 1; m = 128; k = 64; n = 128; layout = Kn;
-            toeplitz = false },
+            form = Plain },
           true, 2, 1 );
         ( { dt = Float16; batch = 2; m = 62; k = 56; n = 32; layout = Nk;
-            toeplitz = false },
+            form = Plain },
           true, 1, 2 );
         ( { dt = Bfloat16; batch = 1; m = 128; k = 64; n = 120; layout = Kn;
-            toeplitz = false },
+            form = Plain },
           true, 2, 5 );
         ( { dt = Bfloat16; batch = 1; m = 64; k = 64; n = 64; layout = Kn;
-            toeplitz = true },
+            form = Toeplitz },
           false, 2, 3 );
         ( { dt = Float16; batch = 1; m = 96; k = 160; n = 64; layout = Kn;
-            toeplitz = false },
+            form = Plain },
           false, 2, 4 );
+        ( { dt = Bfloat16; batch = 1; m = 128; k = 56; n = 128; layout = Nk;
+            form = Affine },
+          true, 2, 6 );
       ]
     "a staged kernel computes the bits of the same optimisations unstaged"
     (Gen.with_pp
@@ -287,7 +324,7 @@ let spread_bits () =
   let d, r = on_cuda () in
   let p =
     { dt = Bfloat16; batch = 1; m = 64; k = 2880; n = 512; layout = Nk;
-      toeplitz = false }
+      form = Plain }
   in
   let fewer = rebuilt ~name:(r.name ^ " of 24 units") ~units:24 r
   and unstated =
@@ -456,20 +493,20 @@ let barriers =
     ~examples:
       [
         ( { dt = Bfloat16; batch = 1; m = 128; k = 64; n = 128; layout = Kn;
-            toeplitz = false },
+            form = Plain },
           Cuda 2 );
         ( { dt = Float16; batch = 1; m = 64; k = 256; n = 64; layout = Nk;
-            toeplitz = false },
+            form = Plain },
           Cuda 1 );
         ( { dt = Float16; batch = 1; m = 64; k = 128; n = 64; layout = Kn;
-            toeplitz = false },
+            form = Plain },
           Hip "gfx1100" );
         ( { dt = Bfloat16; batch = 1; m = 128; k = 64; n = 128; layout = Nk;
-            toeplitz = false },
+            form = Plain },
           Hip "gfx1201" );
         (* N one tile of RDNA4's core, 16 columns: no pad of N *)
         ( { dt = Float16; batch = 1; m = 28; k = 248; n = 16; layout = Kn;
-            toeplitz = false },
+            form = Plain },
           Hip "gfx1201" );
       ]
     "a staged kernel separates each store into shared memory and each load of \
@@ -1321,7 +1358,7 @@ let slotted_tiles =
 
 let cube =
   { dt = Bfloat16; batch = 1; m = 128; k = 128; n = 128; layout = Kn;
-    toeplitz = false }
+    form = Plain }
 
 (* A product of 128 cubed in [depth] stages is the exact product. *)
 let run_staged depth () =
@@ -1968,7 +2005,7 @@ let stage_off () =
 
 let tile (dt, m, k, n, sync) =
   planned ~sync
-    (kernel { dt; batch = 1; m; k; n; layout = Kn; toeplitz = false })
+    (kernel { dt; batch = 1; m; k; n; layout = Kn; form = Plain })
 
 let staged_tiles =
   cases "a staged core's workgroups, threads and trips"
@@ -2028,12 +2065,12 @@ let sources =
       test "a bfloat16 product of 2048 cubed" (fun () ->
           rendered
             { dt = Bfloat16; batch = 1; m = 2048; k = 2048; n = 2048;
-              layout = Kn; toeplitz = false }
+              layout = Kn; form = Plain }
             "packages/tolk/test/codegen/stage/bf16_2048.cu");
       test "a float16 product whose core pads M and K" (fun () ->
           rendered
             { dt = Float16; batch = 1; m = 62; k = 56; n = 64; layout = Kn;
-              toeplitz = false }
+              form = Plain }
             "packages/tolk/test/codegen/stage/f16_padded.cu");
     ]
 
