@@ -724,9 +724,9 @@ All notable changes to this project will be documented in this file.
   the default's contractions compute it, faster unmasked.
 - `Rune.jit` computes the gradient of an `Nx.attention` over values of no
   column, a call kept for its `lse`, on the same kernels, with no kernel for
-  the values' cotangent: its query's and keys' cotangents are the bits of
-  the call over values with a zero `o` cotangent, where they took the
-  default's contractions.
+  the values' cotangent, where it took the default's contractions. Its
+  query's and keys' cotangents are the bits of the call over values with a
+  zero `o` cotangent where both take the same tiles.
 - `Rune.jit` compiles `Nx.top_k` of few elements, with keys of at most 32 bits,
   to two kernels where a sorting network took one per stage: 2 launches
   against 20 for gpt-oss's router over 32 experts.

@@ -52,9 +52,14 @@
     no sum split across workgroups. Past 64 dimensions of keys or values,
     [k̄] and [v̄] take a kernel each, four kernels in all, which compute
     eight products a tile of pairs: [S], [dP] and [q̄] for [q̄], [S], [dP] and
-    [k̄] for [k̄], and [S] and [v̄] for [v̄]. A call over values of no column, whose
-    output is its [lse], takes no [v̄] kernel and no [dP]: [q̄] and [k̄] are
-    those of the same call over values with [ō = 0]. Each product runs on the tensor
+    [k̄] for [k̄], and [S] and [v̄] for [v̄]. A call over values of no column,
+    whose output is its [lse], takes no [v̄] kernel and no [dP]. Its [lse],
+    [q̄] and [k̄] are the bits of the same call over values with [ō = 0]
+    where both calls' tiles hold as many keys, in as many runs, and their
+    derivatives' tiles as many keys and rows. A tile's keys share workgroup
+    memory with their values' block, so values of more columns may take
+    fewer keys a tile, and then the bits may differ; both calls hold the
+    bound rune's Numerics section states. Each product runs on the tensor
     core, the weights and the scores' cotangents rounded once to the
     operands' dtype; each sum adds in a fixed order of the shapes and the
     target. To 160 dimensions each operand's dimensions are one block; past
@@ -99,6 +104,20 @@ val linear :
     [None], and the derivative computes as its default. *)
 
 (**/**)
+
+val forward_tiles :
+  Renderer.t ->
+  Nx_array.Dtype.any ->
+  q:int array ->
+  k:int array ->
+  dv:int ->
+  (int * int) option
+(** [forward_tiles r dt ~q ~k ~dv] is [(keys, runs)] of {!lower}'s kernel on
+    [r]'s tensor core for dense queries and keys of [dt] shaped [q] and [k],
+    [[lead…; heads; rows; dims]], values of [dv] columns and a float32
+    accumulator: the keys a tile holds and the runs each row's keys split
+    into. It is [None] where the call takes no core, whose tiles hold 32 keys
+    and whose runs do not depend on [dv]. *)
 
 val derivative_tile : Tc.t -> wide:bool -> int
 (** [derivative_tile tc ~wide] is the keys or rows a tile of {!linear}'s

@@ -2198,6 +2198,19 @@ val attention_tile : Tolk.Tc.t -> wide:bool -> int
 (** [attention_tile tc ~wide] is the keys or rows a tile of attention's
     derivative kernels holds on the tensor core [tc], for the suites. *)
 
+val attention_tiles :
+  Tolk.Renderer.t ->
+  Nx.Dtype.any ->
+  q:int array ->
+  k:int array ->
+  dv:int ->
+  (int * int) option
+(** [attention_tiles r dt ~q ~k ~dv] is the keys a tile of a compiled
+    {!Nx.val-attention} holds on [r]'s tensor core and the runs each row's
+    keys split into, for dense queries and keys of [dt] shaped [q] and [k]
+    and values of [dv] columns, accumulated in float32; [None] where it takes
+    no core, for the suites. *)
+
 val derivations : unit -> int
 (** [derivations ()] is the number of programs that transformations of compiled
     calls derived on the calling domain, for the suites. *)

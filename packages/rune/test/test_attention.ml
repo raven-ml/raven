@@ -715,13 +715,15 @@ let () =
            [ test "the derivative reads no key or value there" test_past_length ];
          group "results"
            [
+             (* The host takes no tensor core: its tiles hold 32 keys at any
+                number of value columns. *)
              test
                "of values of no column are the full call's lse and gradient \
                 bits"
                (fun () ->
                  ignore
-                   (Rune_support.Attentions.lse_only (module Nx.Host) ~rows:2
-                      ~dims:110 (Nx.Dtype.Any Nx.float32)));
+                   (Rune_support.Attentions.lse_only (module Nx.Host)
+                      ~bits:true ~rows:2 ~dims:110 (Nx.Dtype.Any Nx.float32)));
              test "are the storage the kernels wrote" (fun () ->
                  Rune_support.Attentions.uncopied (module Nx.Host) ~grad:false
                    (Nx.Dtype.Any Nx.float32));

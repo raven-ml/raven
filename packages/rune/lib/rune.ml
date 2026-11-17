@@ -1418,6 +1418,7 @@ module Lower_real = Lower_real
 module Loop = Loop
 
 let attention_tile = Lower_attention.derivative_tile
+let attention_tiles = Lower_attention.forward_tiles
 
 let derivations = Program.derivations
 let evaluations = Compile.evaluations

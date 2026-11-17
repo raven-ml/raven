@@ -154,14 +154,25 @@ val uncopied :
     values of [o] and [lse], compile only kernels of attention's own:
     each result is the storage its kernel wrote, uncopied. *)
 
+val same_tiles :
+  Tolk.Renderer.t -> Nx.Dtype.any -> rows:int -> dims:int -> bool
+(** [same_tiles r dt ~rows ~dims] is [true] iff on [r] the call {!lse_only}
+    makes takes the tiles of the same call over values of [dims] columns. *)
+
 val lse_only :
-  (module Nx.Devices) -> rows:int -> dims:int -> Nx.Dtype.any -> string list
-(** [lse_only s ~rows ~dims dt] checks that a compiled call of attention over
-    [rows] batches of 4 heads of 256 rows of [dims] dimensions of [dt], its
-    values of no column, gives the [lse] bits of the same call over values of
-    [dims] columns, and from an [l̄se] cotangent alone the query's and keys'
-    cotangents of that call with [ō = 0], and is the names of the kernels it
-    compiles. *)
+  (module Nx.Devices) ->
+  bits:bool ->
+  rows:int ->
+  dims:int ->
+  Nx.Dtype.any ->
+  string list
+(** [lse_only s ~bits ~rows ~dims dt] checks that a compiled call of
+    attention over [rows] batches of 4 heads of 256 rows of [dims]
+    dimensions of [dt], its values of no column, has no output and no value
+    cotangent columns, and where [bits] gives the [lse] bits of the same
+    call over values of [dims] columns, and from an [l̄se] cotangent alone
+    the query's and keys' cotangents of that call with [ō = 0]. It is the
+    names of the kernels it compiles. *)
 
 val apart : (module Nx.Devices) -> Nx.Dtype.any -> unit
 (** [apart s dt] checks that a compiled call returning one attention's [o]

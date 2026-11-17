@@ -1048,12 +1048,22 @@ let uncopied ?(dims = 64) (module S : Nx.Devices) ~grad dtype =
            Nx.sync b;
            Nx.sync d))
 
+(* Whether, on [r], an lse-only call of [rows] batches of 4 heads of 256
+   rows of [dims] dimensions of [dt] takes the tiles of the same call over
+   values of [dims] columns: as many keys a tile, in as many runs. Its
+   derivative's tiles are the same call's, since they grow past 64
+   dimensions of keys or values and its keys have [dims]. *)
+let same_tiles r dt ~rows ~dims =
+  let shape = [| rows; 4; 256; dims |] in
+  let tiles dv = Rune.attention_tiles r dt ~q:shape ~k:shape ~dv in
+  tiles dims = tiles 0
+
 (* An lse-only call: attention over values of no column, as a call whose
    output is its [lse] alone. Where the full call takes the same tiles and
-   splits, its [lse] and its gradient in the query and keys from an [l̄se]
-   cotangent alone are the full call's bits with [ō = 0]: the full call adds
-   exact zeros for its values' columns. *)
-let lse_only (module S : Nx.Devices) ~rows ~dims dtype =
+   runs, [same], its [lse] and its gradient in the query and keys from an
+   [l̄se] cotangent alone are the full call's bits with [ō = 0]: the full
+   call adds exact zeros for its values' columns. *)
+let lse_only (module S : Nx.Devices) ~bits:same ~rows ~dims dtype =
   let (F dt) = float_dtype dtype in
   let c = base dtype in
   let shape = [| rows; 4; 256; dims |] in
@@ -1080,9 +1090,11 @@ let lse_only (module S : Nx.Devices) ~rows ~dims dtype =
         let bits = Testable.(array float_exact) in
         equal ~msg:"no output columns" Testable.int 0 (Nx.numel o0);
         equal ~msg:"no value cotangent columns" Testable.int 0 (Nx.numel bv0);
-        equal ~msg:"lse" bits (host lse) (host lse0);
-        equal ~msg:"the query's cotangent" bits (host bq) (host bq0);
-        equal ~msg:"the keys' cotangent" bits (host bk) (host bk0))
+        if same then begin
+          equal ~msg:"lse" bits (host lse) (host lse0);
+          equal ~msg:"the query's cotangent" bits (host bq) (host bq0);
+          equal ~msg:"the keys' cotangent" bits (host bk) (host bk0)
+        end)
   in
   List.map (fun (k : Tolk.Realize.kernel) -> k.name) ks
 

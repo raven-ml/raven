@@ -1466,8 +1466,10 @@ let combine ~local ~width ~splits a xs =
       Ops.sink ~kernel [ Ops.end_ (Ops.group stores) ranges ]
   | _ -> invalid_arg "Lower_attention: the combine kernel's arguments"
 
-(* [plan renderer a] is the tensor-core kernel's shape for [a] on
-   [renderer]'s target, if it takes one: a narrow float accumulated in
+(* [plan_of renderer ~vt ~acc ~heads ~grouped ~tk ~dk ~dv] is the tensor-core
+   kernel's shape on [renderer]'s target for [heads] key heads of [grouped]
+   rows over [tk] keys of [dk] dimensions and values of [dv] columns, if it
+   takes one, and [plan renderer a] that of [a]: a narrow float accumulated in
    float32 on the first core of its products that chains as {!core} needs,
    as it is or transposed. It holds [warps]
    of 8 while the launch keeps the renderer's [local_workgroups] workgroups,
@@ -1486,8 +1488,8 @@ let combine ~local ~width ~splits a xs =
    the same session. At 110 dimensions over 64 rows the kernel spills with tiles of 64
    keys, 255 MB of local loads at 4096 batches, and takes the time it took
    with 32. *)
-let plan (r : Renderer.t) a =
-  let vt = Arith.dtype a.vt in
+let plan_of (r : Renderer.t) ~vt ~acc ~heads ~grouped ~tk ~dk ~dv =
+  let vt = Arith.dtype vt in
   let chains (tc : Tc.t) =
     match Tc.chain tc tc A with Some ch -> ch.same_lines | None -> false
   in
@@ -1506,16 +1508,16 @@ let plan (r : Renderer.t) a =
   match List.find_map named r.tensor_cores with
   | Some (tc, transposed)
     when narrow && r.has_local && r.has_shared
-         && Dtype.equal (Arith.dtype a.acc) Float32 ->
+         && Dtype.equal (Arith.dtype acc) Float32 ->
       let n, m, k = Tc.dims tc in
-      let kdims = split ~most:stage_dims ~step:k a.dk in
-      let vdims = split ~most:stage_dims ~step:n a.dv in
+      let kdims = split ~most:stage_dims ~step:k dk in
+      let vdims = split ~most:stage_dims ~step:n dv in
       let workgroups warps =
-        numel a.lead * a.hk * ceil_div (grouped a) (warps * m) * fst vdims
+        heads * ceil_div grouped (warps * m) * fst vdims
       in
       let warps = if workgroups 8 >= r.local_workgroups then 8 else 4 in
       (* Few rows take fewer warps: a decode step's one query of each head. *)
-      let warps = min warps (ceil_div (grouped a) m) in
+      let warps = min warps (ceil_div grouped m) in
       (* What {!core} declares in workgroup memory: a tile's rows of keys and
          values and a byte a key for their table checks, and beside them the
          rows' maxima and sums, [bq · sharers] floats each, and the vote's
@@ -1534,10 +1536,23 @@ let plan (r : Renderer.t) a =
       let keys = if fits 64 then 64 else 32 in
       let splits =
         splits_for ~stream:r.stream_threads ~workgroups:(workgroups warps)
-          ~threads ~tiles:(ceil_div a.tk keys)
+          ~threads ~tiles:(ceil_div tk keys)
       in
       Some { tc; transposed; warps; keys; splits; kdims; vdims }
   | _ -> None
+
+let plan r a =
+  plan_of r ~vt:a.vt ~acc:a.acc ~heads:(numel a.lead * a.hk)
+    ~grouped:(grouped a) ~tk:a.tk ~dk:a.dk ~dv:a.dv
+
+let forward_tiles r vt ~q ~k ~dv =
+  let n = Array.length q in
+  let hq = q.(n - 3) and hk = k.(n - 3) in
+  let groups = if hk = 0 then 1 else hq / hk in
+  let heads = numel (Array.sub q 0 (n - 3)) * hk in
+  plan_of r ~vt ~acc:(D.Any D.Float32) ~heads ~grouped:(q.(n - 2) * groups)
+    ~tk:k.(n - 2) ~dk:q.(n - 1) ~dv
+  |> Option.map (fun c -> (c.keys, c.splits))
 
 (* The derivative's kernels
 

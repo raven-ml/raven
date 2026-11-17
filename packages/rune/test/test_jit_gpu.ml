@@ -3514,15 +3514,24 @@ let () =
                (fun dims ->
                  Attentions.uncopied ~dims (snd (on_gpu ())) ~grad:true
                    (Nx.Dtype.Any Nx.bfloat16));
+             (* The full call's bits where it takes the lse-only call's
+                tiles. Its values share workgroup memory with its keys:
+                Metal's 32 KB hold tiles of 64 keys at 160 dimensions, two
+                blocks of 80, and 32 at 110, where the lse-only call's
+                hold 64. *)
              Windtrap.cases
                "an lse-only call's gradient takes attention's kernels, no \
-                values' launch, and the full call's bits"
+                values' launch, and the full call's bits where it takes its \
+                tiles"
                ~id:string_of_int [ 110; 160 ]
                (fun dims ->
-                 let ks =
-                   Attentions.lse_only (snd (on_gpu ())) ~rows:176 ~dims
-                     (Nx.Dtype.Any Nx.bfloat16)
+                 let d, s = on_gpu () in
+                 let dt = Nx.Dtype.Any Nx.bfloat16 in
+                 let bits =
+                   Attentions.same_tiles (Tolk_engine.renderer d) dt ~rows:176
+                     ~dims
                  in
+                 let ks = Attentions.lse_only s ~bits ~rows:176 ~dims dt in
                  let own = String.starts_with ~prefix:"attention" in
                  equal ~msg:"other kernels" Testable.(list string) []
                    (List.filter (fun n -> not (own n)) ks);
