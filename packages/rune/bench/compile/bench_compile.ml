@@ -45,6 +45,10 @@ let input ?(n = 1024) lo hi =
 
 let compile f x = ignore (Sys.opaque_identity (Rune.jit' f x))
 
+(* [n] host complex128 values whose parts lie in [[lo, hi)]. *)
+let complex_input ?(n = 1024) lo hi =
+  Nx.complex Nx.complex128 ~re:(input ~n lo hi) ~im:(input ~n lo hi)
+
 (* A synthetic program of [ops] operations shaped as a special function:
    regions selected by [where] over a parameter and a variable that broadcast
    against each other, each region a chain whose intermediates fan out into
@@ -603,6 +607,11 @@ let cases =
         compile
           (fun x -> List.fold_left (fun x _ -> Nx.sin x) x (List.init 8 Fun.id))
           (input (-10.) 10.) );
+    (* A complex128 power, z^z: nx's complex logarithm and exponential with
+       their special values as selections, the phase's large reduction among
+       them. *)
+    ( "complex/pow-c128",
+      fun () -> compile (fun z -> Nx.pow z z) (complex_input (-4.) 4.) );
     ("scan/tridiagonal-100", tridiagonal);
     ("model/schools-start", schools);
     ("scan/checks-48", checked_scan);
