@@ -103,11 +103,11 @@ val writes :
 
     A store [Store (Index (storage, index), value)], or
     [Store (Index (storage, index), value, gate)], writes once for each binding
-    of the ranges it runs inside ({!Tolk.Ops.ranges}): the ranges are taken in
-    the order of the store's {!Tolk.Ops.toposort}, each counting from [0] below
-    its end, evaluated where the ranges before it are bound, and are bound by
-    {!name} on top of [vars]. At a binding, [index], [value] and [gate] are
-    evaluated as {!eval} evaluates them, and the store writes
+    of the ranges it runs inside ({!Tolk.Ops.val-ranges}): the ranges are taken
+    in the order of the store's {!Tolk.Ops.toposort}, each counting from [0]
+    below its end, evaluated where the ranges before it are bound, and are
+    bound by {!name} on top of [vars]. At a binding, [index], [value] and
+    [gate] are evaluated as {!eval} evaluates them, and the store writes
     [(slot, index, value)] where [index] is an integer, [value] is not
     [`Invalid] and [gate] is [true]; an [`Invalid] index or value, or a gate
     that fails, writes nothing. Ranges a store does not run inside, such as
