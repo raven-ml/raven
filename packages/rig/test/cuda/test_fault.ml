@@ -33,16 +33,10 @@ let sticky name f =
    watched host buffer and write the word. Value 3, of no parts, submitted after
    the fault through rig, makes no CUDA call; the wait for it commits and meets
    the fault, which loses the device, and its close stops it. An image loaded
-   before the fault, with one kernel entered, serves the calls that need one
-   after it. *)
+   before the fault serves the calls that need one after it. *)
 let faults () =
   let ({ S.d; g } as t) = S.open_ () in
   let image = S.loaded (require_ok (C.image g (S.fixture "kernels.ptx"))) in
-  let empty =
-    match C.entry image "empty" with
-    | Entry e -> e.code
-    | Absent | No_memory _ -> fail "no entry of empty"
-  in
   let page = H.pages H.page in
   let watched = B.create ~memory:Pinned d 64 and src = B.create d 64 in
   let zeros = String.make 64 '\000' in
@@ -68,9 +62,6 @@ let faults () =
   sticky "entry" (fun () -> ignore (C.entry image "double_index"));
   if (C.facts g).maps_host then
     sticky "map_host" (fun () -> ignore (C.map_host g page 64));
-  (match (C.capability g).graph [| S.kernel empty 0 0 |] with
-  | Ok _ -> fail "a graph after the fault"
-  | Error why -> contains ~msg:"graph" ~sub:"CUDA_ERROR_ILLEGAL_ADDRESS" why);
   sticky "unload" (fun () -> C.unload g image);
   H.free_pages page H.page;
   equal int ~msg:"the word after the fault" 0 (H.get64 (host (C.facts g).word));

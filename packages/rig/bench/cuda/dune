@@ -5,7 +5,6 @@
   rig
   rig_bench
   rig_cuda
-  rig_cuda_abi
   rig_cuda_support
   rig_edge
   rig_gpu_support

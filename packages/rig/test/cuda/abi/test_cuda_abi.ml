@@ -18,8 +18,7 @@ let with_device capability f =
 
 let launch_kernel = 0x7f00_1000n
 let symbol = function "cuLaunchKernel" -> Some launch_kernel | _ -> None
-let graph _ = Error "no graphs here"
-let record = { Cuda.symbol; graph }
+let record = { Cuda.symbol }
 
 let test_found () =
   with_device (Cuda.declare record) @@ fun d ->

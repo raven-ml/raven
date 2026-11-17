@@ -5,26 +5,24 @@
 
 (* Any domain may call any function, as the interface states. The loader, the
    table of GPUs and the page-lock registry are the process's, each behind a
-   mutex of its own; a device's C state is written only by [submit] and [stop],
-   which their caller serialises, and freed by the stop. A word of the
-   device's own goes back when rig frees it, after the stop. Compiled code
-   calls a device's graph maker beside every other call, so native
-   construction and [stop] exclude each other under the device's [guard].
-   Memory, modules and graphs are the GPU's primary context's, which the
-   process keeps: their calls take the context, so they also serve after the
-   device's C state is gone.
+   mutex of its own; a device's C state is written by the C functions, which
+   rig serialises under the device's turn, by [grow], [unload] and [image],
+   which reach its chains under its C mutex, and by [stop], which runs with no
+   other call in flight and frees it. A word of the device's own goes back
+   when rig frees it, after the stop. Memory and modules are the GPU's primary
+   context's, which the process keeps: their calls take the context, so they
+   also serve after the device's C state is gone.
 
    Every lock is a [Mutex.t] that [protect] holds, counted among the locks its
    thread holds (rig_hold in rig_edge.h). No section takes a second lock, so
    locks never nest. A function that a caller outside rig makes and that may
-   take a lock, [count], an opener's [make] and a graph call, runs inside
-   [guarded].
+   take a lock, [count] and an opener's [make], runs inside [guarded].
 
    The locks are held across calls of the CUDA driver that may wait for the
-   GPU: the library's load, a host range's registration, a function's
-   lookup, a graph's construction. Each must see its table or its device
-   whole, and the driver gives no way to end such a call early, so a call of
-   rig's from a callback during one raises. *)
+   GPU: the library's load, a host range's registration, a function's lookup.
+   Each must see its table or its device whole, and the driver gives no way to
+   end such a call early, so a call of rig's from a callback during one
+   raises. *)
 
 let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
@@ -144,20 +142,18 @@ external failed : int -> int = "caml_rig_cuda_failed"
    error to every call, and [refused] raises it. *)
 let refused step self x = match failed self with 0 -> x | e -> fault step e
 
-(* A collected graph's destruction, by the process that made it. *)
-type graph_cleanup = { pid : int; dispose : unit -> unit }
-
 (* A GPU's holder: [unheld]; [taken], while a device of it is open or being
    opened; or the C edge, negated, of a device stopped while its work still
-   ran. [first] keeps its primary context. Its pending graph destruction
-   survives close and is drained only by that GPU's later blocking calls. *)
+   ran. [first] keeps its primary context. [placeholder] is the module and
+   function of its chains' placeholder kernel, once loaded, which the process
+   keeps. *)
 type gpus = {
   devices : int array;
   buses : string list;
   held : int Atomic.t array;
   first : int option array;
   reached : int list Atomic.t array;
-  pending : graph_cleanup list Atomic.t array;
+  placeholders : (int * int) option Atomic.t array;
 }
 
 let unheld = 0
@@ -222,7 +218,7 @@ let discover () =
           held = each unheld;
           first;
           reached = each [];
-          pending = each [];
+          placeholders = each None;
         })
 
 (* Loads the library and finds its GPUs at the first call that needs them, until
@@ -286,8 +282,6 @@ type image = {
   m : int;
   lock : Mutex.t;
   mutable entries : (string * Rig_edge.entry) list; [@atomic]
-  (* twice the references, plus one after unload *)
-  mutable graphs : int; [@atomic]
   params_bound : int; (* its device's [params_bound] *)
 }
 
@@ -297,12 +291,9 @@ type t = {
   gpu : int; (* its GPU's number *)
   device : int; (* its CUdevice *)
   reached : int list Atomic.t; (* its GPU's [reached] *)
+  placeholder : (int * int) option Atomic.t; (* its GPU's [placeholder] *)
   facts : region Rig_edge.facts;
   held : int Atomic.t;
-  images : image list Atomic.t; (* loaded, whose functions a graph may run *)
-  pending : graph_cleanup list Atomic.t;
-  guard : Mutex.t; (* held by a graph call and by stop *)
-  stopped : bool Atomic.t; (* stop began *)
   cap : Rig_cuda_abi.t;
   params_bound : int; (* the most parameter bytes of a kernel it launches *)
 }
@@ -338,147 +329,6 @@ let driver () =
 let find_symbol name =
   if String.contains name '\000' then None
   else match symbol name with 0 -> None | a -> Some (Nativeint.of_int a)
-
-(* Graphs *)
-
-external make_graph :
-  int ->
-  int array ->
-  int array ->
-  string array ->
-  int * nativeint * nativeint * nativeint array = "caml_rig_cuda_graph"
-
-external release_graph : int -> nativeint -> nativeint -> unit
-  = "caml_rig_cuda_graph_release"
-
-external process : unit -> int = "caml_rig_cuda_process" [@@noalloc]
-
-let rec push pending jobs =
-  let before = Atomic.get pending in
-  if not (Atomic.compare_and_set pending before (List.rev_append jobs before))
-  then push pending jobs
-
-let rec dispose pending = function
-  | [] -> ()
-  | job :: jobs when job.pid <> process () -> dispose pending jobs
-  | job :: rest as jobs -> (
-      match job.dispose () with
-      | () -> dispose pending rest
-      | exception e ->
-          push pending jobs;
-          raise e)
-
-(* Runs the queued cleanups. A drainer takes them all at once, so another never
-   waits for one running. An exception at an OCaml poll puts the cleanup it
-   interrupted back with those after it, owned by this GPU; a cleanup resumes
-   where it stopped. A child forgets its parent's. *)
-let drain pending =
-  match Atomic.get pending with
-  | [] -> ()
-  | _ -> dispose pending (Atomic.exchange pending [])
-
-(* CUDA takes each size as a 32-bit unsigned integer. *)
-let size_max = 0xffff_ffff
-
-(* The grid, block and shared memory sizes of kernel [i], checked. *)
-let sizes i (k : Rig_cuda_abi.kernel) =
-  let gx, gy, gz = k.grid and bx, by, bz = k.block in
-  let within lo x = lo <= x && x <= size_max in
-  if not (List.for_all (within 1) [ gx; gy; gz; bx; by; bz ]) then
-    invalid_argf
-      "Rig_cuda_abi.graph: kernel %d has grid %dx%dx%d and block %dx%dx%d, \
-       expected each from 1 to %d"
-      i gx gy gz bx by bz size_max;
-  if not (within 0 k.shared) then
-    invalid_argf
-      "Rig_cuda_abi.graph: kernel %d has %d bytes of shared memory, expected 0 \
-       to %d"
-      i k.shared size_max;
-  [| gx; gy; gz; bx; by; bz; k.shared |]
-
-(* The image whose entry gave [f], while it is available to new graphs. *)
-let image_of images f =
-  let gave (i : image) =
-    List.exists (fun (_, (e : Rig_edge.entry)) -> e.code = f) i.entries
-  in
-  List.find_opt gave (Atomic.get images)
-
-let unloading = 1
-let graph_ref = 2
-
-let rec keep_image (m : image) =
-  let n = m.graphs in
-  n land unloading = 0
-  && (Atomic.Loc.compare_and_set [%atomic.loc m.graphs] n (n + graph_ref)
-     || keep_image m)
-
-let release_image (m : image) =
-  let n = Atomic.Loc.fetch_and_add [%atomic.loc m.graphs] (-graph_ref) in
-  if n = unloading + graph_ref then
-    ignore (unload_module m.context m.m : int)
-
-let graph context guard stopped images pending
-    (ks : Rig_cuda_abi.kernel array) =
-  guarded "Rig_cuda_abi.graph" @@ fun () ->
-  let sizes = Array.concat (Array.to_list (Array.mapi sizes ks)) in
-  protect guard @@ fun () ->
-  drain pending;
-  if Atomic.get stopped then Error "making the graph: the device was stopped"
-  else begin
-    let refuse i =
-      invalid_argf
-        "Rig_cuda_abi.graph: kernel %d's function is of no image the device \
-         loaded"
-        i
-    in
-    let owners =
-      Array.mapi
-        (fun i (k : Rig_cuda_abi.kernel) ->
-          match image_of images k.func with Some m -> m | None -> refuse i)
-        ks
-    in
-    let funcs = Array.map (fun (k : Rig_cuda_abi.kernel) -> k.func) ks in
-    let args = Array.map (fun (k : Rig_cuda_abi.kernel) -> k.args) ks in
-    let left = ref 0 in
-    let release_images () =
-      while !left > 0 do
-        let i = !left - 1 in
-        release_image owners.(i);
-        left := i
-      done
-    in
-    let empty = (0, Nativeint.zero, Nativeint.zero, [||]) in
-    let native = ref empty in
-    let dispose () =
-      if !native != empty then begin
-        let _, handle, source, _ = !native in
-        release_graph context handle source;
-        native := empty
-      end;
-      release_images ()
-    in
-    let pid = process () in
-    let job = { pid; dispose } in
-    let collect () = if pid = process () then push pending [ job ] in
-    (* This job owns every acquired reference, including failed construction.
-       The ABI constructor transfers it to the graph on success. *)
-    match
-      for i = 0 to Array.length owners - 1 do
-        if not (keep_image owners.(i)) then refuse i;
-        left := i + 1
-      done;
-      let (s, _, _, _ as made) = make_graph context funcs sizes args in
-      if s = 0 then native := made;
-      made
-    with
-    | exception e ->
-        collect ();
-        raise e
-    | s, _, _, _ when s <> 0 ->
-        collect ();
-        Error ("making the graph: " ^ error s)
-    | _, handle, _, nodes -> Ok (Rig_cuda_abi.graph ~handle ~nodes ~collect)
-  end
 
 (* Takes a GPU's [held] for a new device: unheld, or held by a stopped device
    whose work has since ended, by completing or by a fault. A GPU has one
@@ -612,7 +462,6 @@ let open_ ~word i =
       (if n = 0 then "no such GPU; CUDA sees none"
        else strf "no such GPU; CUDA sees %d" n)
   else
-    let () = drain g.pending.(i) in
     let d = g.devices.(i) in
     match
       let a = attribute d in
@@ -671,11 +520,7 @@ let open_ ~word i =
                   if major >= large_params_major then large_params
                   else small_params
                 in
-                let images = Atomic.make [] in
-                let pending = g.pending.(i) in
-                let guard = Mutex.create () and stopped = Atomic.make false in
-                let graph = graph context guard stopped images pending in
-                let cap = { Rig_cuda_abi.symbol = find_symbol; graph } in
+                let cap = { Rig_cuda_abi.symbol = find_symbol } in
                 let facts =
                   {
                     Rig_edge.arch;
@@ -708,12 +553,9 @@ let open_ ~word i =
                     gpu = i;
                     device = d;
                     reached;
+                    placeholder = g.placeholders.(i);
                     facts;
                     held;
-                    images;
-                    pending;
-                    guard;
-                    stopped;
                     cap;
                     params_bound;
                   }
@@ -1036,12 +878,57 @@ external entry_params : int -> int = "caml_rig_cuda_params" [@@noalloc]
 external entry_threads : int -> int = "caml_rig_cuda_threads" [@@noalloc]
 external forget : int -> unit = "caml_rig_cuda_forget" [@@noalloc]
 
-let rec update a f =
-  let x = Atomic.get a in
-  if not (Atomic.compare_and_set a x (f x)) then update a f
+external give_placeholder : int -> int -> int -> unit
+  = "caml_rig_cuda_placeholder"
 
+(* The kernel a chain's nodes are made from and return to, which does nothing:
+   PTX that CUDA compiles for every GPU a device opens. *)
+let placeholder_name = "rig_chain_placeholder"
+
+let placeholder_ptx =
+  String.concat "\n"
+    [
+      ".version 7.0";
+      ".target sm_50";
+      ".address_size 64";
+      strf ".visible .entry %s() { ret; }" placeholder_name;
+      "";
+    ]
+
+(* Loads the placeholder of [g]'s GPU, unless the process holds it, and gives
+   it to [g]'s chains: [Ok ()], or [Error status] with CUDA's refusal. A
+   module's load waits for the context's queued work, so the GPU's images
+   load it, where a load already waits: a growth runs inside a submit,
+   whose earlier work may wait on a word that only the caller's later work
+   raises. Two loads that race keep one placeholder, and the other module
+   goes. *)
+let rec placeholder g =
+  match Atomic.get g.placeholder with
+  | Some (m, f) ->
+      give_placeholder g.self m f;
+      Ok ()
+  | None -> (
+      match load_module g.self placeholder_ptx with
+      | m when m < 0 -> Error (-m)
+      | m -> (
+          match make_entry g.context m placeholder_name with
+          | p when p < 0 ->
+              ignore (unload_module g.context m : int);
+              Error (-p)
+          | p ->
+              let f = entry_code p in
+              forget p;
+              if not (Atomic.compare_and_set g.placeholder None (Some (m, f)))
+              then ignore (unload_module g.context m : int);
+              placeholder g))
+
+(* A placeholder CUDA refuses while the context stands, for lack of memory or
+   of the driver's PTX compiler, leaves [g] without chains, and the next image
+   tries again: chains only speed runs up, and a cubin needs no compiler. *)
 let image g bin =
-  drain g.pending;
+  (match placeholder g with
+  | Ok () -> ()
+  | Error _ -> refused "loading the chains' placeholder kernel" g.self ());
   match load_module g.self bin with
   | m when m >= 0 ->
       let i =
@@ -1051,15 +938,13 @@ let image g bin =
           m;
           lock = Mutex.create ();
           entries = [];
-          graphs = 0;
           params_bound = g.params_bound;
         }
       in
-      update g.images (List.cons i);
       Ok (Rig_edge.Loaded i)
   | s ->
-      let step = "loading the image" in
-      refused step g.self (Error (strf "%s: %s" step (error (-s))))
+      refused "loading the image" g.self
+        (Error (strf "loading the image: %s" (error (-s))))
 
 let entry (m : image) f =
   if String.contains f '\000' then Rig_edge.Absent
@@ -1089,17 +974,19 @@ let entry (m : image) f =
             Entry e
         | _ -> refused (strf "finding kernel %S" f) m.owner Rig_edge.Absent)
 
+external repoint : int -> int -> int = "caml_rig_cuda_repoint"
+
+(* The nodes of [g]'s chains that may hold [m]'s functions return to the
+   placeholder before the module goes, so that no chain names an unloaded
+   function. A module CUDA could not repoint stays loaded. *)
 let unload g (m : image) =
-  drain g.pending;
-  update g.images (List.filter (fun i -> i != m));
-  let unloaded =
-    if Atomic.Loc.fetch_and_add [%atomic.loc m.graphs] unloading = 0 then
-      unload_module g.context m.m
-    else 0
-  in
+  let repointed = repoint g.self m.m in
+  let unloaded = if repointed = 0 then unload_module g.context m.m else 0 in
   List.iter
     (fun (_, (e : Rig_edge.entry)) -> forget (Nativeint.to_int e.launch))
     m.entries;
+  if repointed <> 0 then
+    fault "returning a chain's nodes to the placeholder" repointed;
   if unloaded <> 0 then fault "unloading the image" unloaded
 
 (* Timeline *)
@@ -1136,13 +1023,27 @@ let sleep g ~seen ~still_ms =
 (* Loss *)
 
 let stop g ~fault:_ =
-  protect g.guard @@ fun () ->
-  Atomic.set g.stopped true;
   let stopped = stop_device g.self in
   Atomic.set g.held (if stopped then unheld else -g.self)
 
-(* Its room never answers RIG_GROW. *)
-let grow _ = Rig_edge.Grown
+(* Replay *)
+
+external grow_chains : int -> int = "caml_rig_cuda_grow"
+external replays_c : int -> int * int = "caml_rig_cuda_replays"
+external made_c : int -> int = "caml_rig_cuda_made" [@@noalloc]
+
+(* CUDA takes a graph's device memory in chunks of 2 MiB (measured on an RTX
+   5000 Ada), the most one chain's growth asks of the device. *)
+let chunk = 2 * 1024 * 1024
+
+let grow g =
+  match grow_chains g.self with
+  | 0 -> Rig_edge.Grown
+  | s when s = cuda_error_out_of_memory -> Short chunk
+  | s -> fault "making a chain of kernels" s
+
+let replays g = replays_c g.self
+let made g = made_c g.self
 
 (* The load placed every function, and an entry makes nothing slow. *)
 let prepare _ _ ~still_ms:_ = true

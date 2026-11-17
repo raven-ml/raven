@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*/
 
 // The kernels of launches, whose parameters a launch's block holds: ids and
-// twice for the conformance suite's launch laws, copy for its work, rotate
-// for the CUDA suite.
+// twice for the conformance suite's launch laws, copy for its work, rotate,
+// mark, marks and page for the CUDA suite.
 // A thread's index k is g * T + t: g its group's index in the grid, x
 // fastest, t its index in its group, x fastest, and T the threads of a
 // group.
@@ -15,6 +15,9 @@
 .address_size 64
 
 .extern .shared .align 16 .b8 dyn[];
+
+// The count of mark's launches since marks last read it.
+.global .align 4 .u32 marked;
 
 // Stores (u32)a + b * k + (u32)f into the 32-bit word k at out, f rounded
 // toward zero.
@@ -149,5 +152,39 @@ DONE:
   mul.wide.u32 %rd7, %r16, 4;
   add.u64 %rd8, %rd1, %rd7;
   st.u32 [%rd8], %r17;
+  ret;
+}
+
+// Adds 1 to marked: a kernel of no parameters.
+.visible .entry mark()
+{
+  red.global.add.u32 [marked], 1;
+  ret;
+}
+
+// Stores marked into the 32-bit word at out, then sets it to 0.
+.visible .entry marks(.param .u64 out)
+{
+  .reg .u32 %r1;
+  .reg .u64 %rd1;
+  ld.param.u64 %rd1, [out];
+  ld.global.u32 %r1, [marked];
+  st.global.u32 [marked], 0;
+  st.u32 [%rd1], %r1;
+  ret;
+}
+
+// Stores the 32-bit words at bytes 8 and 4,092 of its 4,096 bytes of
+// parameters, the most PTX for sm_50 takes, into words 0 and 1 at out, its
+// first 8.
+.visible .entry page(.param .u64 out, .param .align 4 .b8 w[4088])
+{
+  .reg .u32 %r<3>;
+  .reg .u64 %rd1;
+  ld.param.u64 %rd1, [out];
+  ld.param.u32 %r1, [w];
+  ld.param.u32 %r2, [w+4084];
+  st.u32 [%rd1], %r1;
+  st.u32 [%rd1+4], %r2;
   ret;
 }

@@ -21,6 +21,7 @@
 
 #define _GNU_SOURCE
 
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -84,7 +85,7 @@ typedef void *CUgraph;
 typedef void *CUgraphNode;
 typedef void *CUgraphExec;
 
-/* CUDA_KERNEL_NODE_PARAMS_v2. */
+/* CUDA_KERNEL_NODE_PARAMS_v3. */
 typedef struct {
   CUfunction func;
   unsigned int grid[3], block[3], shared;
@@ -92,6 +93,20 @@ typedef struct {
   void *kern;
   CUcontext context;
 } kernel_node;
+
+/* CUgraphNodeParams: the node's type, then its parameters in a union of 232
+   bytes, of which a kernel node's use [kernel]. Every byte unused is 0. */
+typedef struct {
+  int type;
+  int reserved0[3];
+  union {
+    long long reserved1[29];
+    kernel_node kernel;
+  } u;
+  long long reserved2;
+} node_params;
+
+_Static_assert(sizeof(node_params) == 256, "CUgraphNodeParams is 256 bytes");
 
 /* CUDA_MEMCPY2D_v2: a box of [Height] rows of [WidthInBytes] bytes, each
    side at its address with its pitch. rig's sides are unified addresses,
@@ -131,9 +146,13 @@ enum {
   CUDA_ERROR_OUT_OF_MEMORY = 2,
   CUDA_ERROR_NOT_READY = 600,
   CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED = 712,
+  CUDA_ERROR_NOT_SUPPORTED = 801,
   CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK = 0,
   CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES = 1,
   CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES = 8,
+  CU_FUNC_ATTRIBUTE_CLUSTER_SIZE_MUST_BE_SET = 10,
+  CU_FUNC_ATTRIBUTE_REQUIRED_CLUSTER_WIDTH = 11,
+  CU_GRAPH_NODE_TYPE_KERNEL = 0,
   CU_DEVICE_ATTRIBUTE_MAX_BLOCK_DIM_X = 2, /* then Y and Z */
   CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_X = 5,  /* then Y and Z */
   CU_DEVICE_ATTRIBUTE_MAX_PITCH = 11,
@@ -215,9 +234,11 @@ enum {
                      unsigned int, unsigned int, unsigned int, unsigned int,   \
                      CUstream, void **, void **))                              \
   X(cuGraphCreate, (CUgraph *, unsigned int))                                  \
-  X(cuGraphAddKernelNode_v2, (CUgraphNode *, CUgraph, const CUgraphNode *,     \
-                              size_t, const kernel_node *))                    \
+  X(cuGraphAddNode,                                                            \
+    (CUgraphNode *, CUgraph, const CUgraphNode *, size_t, node_params *))      \
   X(cuGraphInstantiateWithFlags, (CUgraphExec *, CUgraph, unsigned long long)) \
+  X(cuGraphExecNodeSetParams, (CUgraphExec, CUgraphNode, node_params *))       \
+  X(cuGraphLaunch, (CUgraphExec, CUstream))                                    \
   X(cuGraphExecDestroy, (CUgraphExec))                                         \
   X(cuGraphDestroy, (CUgraph))                                                 \
   X(cuGetErrorName, (CUresult, const char **))                                 \
@@ -419,6 +440,44 @@ struct stamp {
   uint64_t *times;
 };
 
+/* Replay
+
+   A submission's runs of launches play through chains: graphs of n kernel
+   nodes, each after the one before, one of each length n from 2 to CHAIN
+   for a device. A chain is made from the placeholder kernel, which does
+   nothing, at the first submit that needs its length: rig_cuda_room
+   answers RIG_GROW, and caml_rig_cuda_grow makes it outside the turn. A
+   device that holds no placeholder plays every piece plain.
+
+   A run is a sequence of consecutive launches, cut before a launch that
+   starts after a part of COPY:0 that COMPUTE:0 has not yet waited for
+   ([across]). A run of one launches plain. A longer one is cut into the
+   fewest pieces of at most CHAIN launches, of lengths that differ by at
+   most one ([piece]); each piece updates every node of the chain of its
+   length to its launches, then launches the chain, one call for its
+   kernels:
+
+     parts    L1 ... L40   C   L41 L42 L43     (L a launch, C a copy)
+     pieces   [20]  [20]   C   [    3    ]
+
+   [held] is the module of each node's function, NULL where unknown: an
+   unload points the nodes of its module, and the unknown ones, back at the
+   placeholder before CUDA unloads the module. A chain keeps its graph,
+   whose nodes its updates name, until it is destroyed. */
+
+#define CHAIN 32
+
+struct chain {
+  CUgraph graph;
+  CUgraphExec exec;
+  CUgraphNode nodes[CHAIN];
+  CUmodule held[CHAIN];
+};
+
+/* The chain of a length CUDA refused to make, for a reason other than
+   memory or a failed context: the pieces of that length launch plain. */
+static struct chain unmade;
+
 /* A device: its context, its two streams and the events that order them, and
    its timeline word: the word rig gave its open, in rig's array, which every
    context reaches registered ([register_words]), or, on a GPU that registers no
@@ -427,7 +486,7 @@ struct stamp {
    address and [word_at] the address CUDA's work writes. A value ends on one
    stream, after its work on both; a value that starts on the other stream waits
    for that end. It lives from the open to the stop. The context is the GPU's
-   primary context, which the process keeps: memory, modules and graphs are the
+   primary context, which the process keeps: memory and modules are the
    context's, and outlive the device. */
 struct device {
   CUdevice device;
@@ -458,6 +517,17 @@ struct device {
   int flush;           /* the last foreign wait flushes remote writes */
   int failed;
   char failure[256];
+  /* Replay: the chains by length, which room installs from [handed], where
+     grow leaves what it made; the placeholder kernel and its module; and
+     the pieces played through a chain, the launches sent plain and the
+     chains made. [mutex] guards [chains], [handed] and the placeholder,
+     holds a chain's nodes for the updates of a submit or an unload, and is
+     held through a grow's makes. */
+  pthread_mutex_t mutex;
+  struct chain *chains[CHAIN + 1], *handed[CHAIN + 1];
+  CUfunction placeholder;
+  CUmodule placeholder_module;
+  _Atomic uint64_t pieces, plain, made;
 };
 
 /* A device's edge, kept for the process: its word, the last value its
@@ -709,7 +779,7 @@ value caml_rig_cuda_open(value v_device, value v_word, value v_own) {
   struct device *d = calloc(1, sizeof *d);
   struct edge *e = calloc(1, sizeof *e);
   int flush = 0;
-  if (d == NULL || e == NULL) {
+  if (d == NULL || e == NULL || pthread_mutex_init(&d->mutex, NULL) != 0) {
     free(d);
     free(e);
     caml_raise_out_of_memory();
@@ -726,7 +796,11 @@ value caml_rig_cuda_open(value v_device, value v_word, value v_own) {
     if (s != CUDA_SUCCESS && !d->keeps)
       p_cuDevicePrimaryCtxRelease_v2(d->device);
   }
-  if (s != CUDA_SUCCESS) free(d), free(e);
+  if (s != CUDA_SUCCESS) {
+    pthread_mutex_destroy(&d->mutex);
+    free(d);
+    free(e);
+  }
   caml_leave_blocking_section();
   if (s != CUDA_SUCCESS) return Val_long(-s);
   d->flush = flush != 0;
@@ -956,13 +1030,18 @@ value caml_rig_cuda_load_module(value v_self, value v_image) {
   CAMLreturn(answer(s, (intnat)m));
 }
 
-/* What a launch of a function reads: the function, the most threads a
-   group of it has, and the most dynamic shared memory a group of it
-   takes, which load_module set; and the bytes of its parameters. */
+/* What a launch of a function reads: the function and its module, the
+   most threads a group of it has, and the most dynamic shared memory a
+   group of it takes, which load_module set; the bytes of its parameters;
+   and whether it launches plain, never through a chain: one that needs
+   clusters, which CUDA checks only at a launch, or whose update CUDA
+   refused ([play]). The submits write [plain] under the turn. */
 struct function {
   CUfunction f;
+  CUmodule module;
   unsigned int threads, shared;
   size_t params;
+  int plain;
 };
 
 /* The end of [f]'s last parameter into [*end]. cuFuncGetParamInfo answers
@@ -978,6 +1057,18 @@ static CUresult params_end(CUfunction f, size_t *end) {
   return s == CUDA_ERROR_INVALID_VALUE ? CUDA_SUCCESS : s;
 }
 
+/* Whether [f] needs clusters: a cluster size set at each launch, or one of
+   its own. A query CUDA refuses counts as a need. */
+static int clustered(CUfunction f) {
+  int must = 0, width = 0;
+  CUresult s = p_cuFuncGetAttribute(
+      &must, CU_FUNC_ATTRIBUTE_CLUSTER_SIZE_MUST_BE_SET, f);
+  if (s == CUDA_SUCCESS)
+    s = p_cuFuncGetAttribute(&width, CU_FUNC_ATTRIBUTE_REQUIRED_CLUSTER_WIDTH,
+                             f);
+  return s != CUDA_SUCCESS || must != 0 || width > 0;
+}
+
 static CUresult find(struct function *fn, CUmodule m, const char *name) {
   int threads = 0, shared = 0;
   CUresult s = p_cuModuleGetFunction(&fn->f, m, name);
@@ -988,8 +1079,10 @@ static CUresult find(struct function *fn, CUmodule m, const char *name) {
     s = p_cuFuncGetAttribute(
         &shared, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, fn->f);
   if (s == CUDA_SUCCESS) s = params_end(fn->f, &fn->params);
+  fn->module = m;
   fn->threads = (unsigned int)threads;
   fn->shared = (unsigned int)shared;
+  fn->plain = s == CUDA_SUCCESS && clustered(fn->f);
   return s;
 }
 
@@ -1035,143 +1128,6 @@ value caml_rig_cuda_unload(value v_context, value v_module) {
   return Val_int(s);
 }
 
-/* Graphs */
-
-value caml_rig_cuda_process(value unit) {
-  (void)unit;
-  return Val_long(getpid());
-}
-
-/* Destroys a graph in the context [c], which outlives the device that made
-   the graph. */
-static void release_graph(CUcontext c, CUgraphExec exec, CUgraph graph) {
-  if (push(c) == CUDA_SUCCESS) {
-    if (exec != NULL) p_cuGraphExecDestroy(exec);
-    if (graph != NULL) p_cuGraphDestroy(graph);
-    pop(CUDA_SUCCESS);
-  }
-}
-
-/* A graph of [n] kernels: their functions, their sizes (grid x y z, block
-   x y z and shared memory bytes, seven per kernel) and their argument
-   blocks, [n] blocks back to back whose lengths [lengths] gives. */
-struct kernels {
-  int n;
-  CUfunction *funcs;
-  unsigned int *sizes;
-  char *args;
-  size_t *lengths;
-};
-
-/* Makes the graph of [k] as a chain, each kernel after the one before, and
-   instantiates it: [*graph], [*exec] and [nodes], or CUDA's status and
-   nothing. CUDA copies each node's arguments as it adds it. */
-static CUresult make_graph(const struct kernels *k, CUgraph *graph,
-                           CUgraphExec *exec, CUgraphNode *nodes) {
-  CUresult s = p_cuGraphCreate(graph, 0);
-  char *args = k->args;
-  for (int i = 0; i < k->n && s == CUDA_SUCCESS; i++) {
-    size_t length = k->lengths[i];
-    void *extra[] = {CU_LAUNCH_PARAM_BUFFER_POINTER, args,
-                     CU_LAUNCH_PARAM_BUFFER_SIZE, &length, CU_LAUNCH_PARAM_END};
-    const unsigned int *z = k->sizes + 7 * i;
-    kernel_node p = {k->funcs[i], {z[0], z[1], z[2]}, {z[3], z[4], z[5]}, z[6],
-                     NULL, length > 0 ? extra : NULL, NULL, NULL};
-    const CUgraphNode *before = i > 0 ? &nodes[i - 1] : NULL;
-    s = p_cuGraphAddKernelNode_v2(&nodes[i], *graph, before, i > 0, &p);
-    args += length;
-  }
-  if (s == CUDA_SUCCESS) s = p_cuGraphInstantiateWithFlags(exec, *graph, 0);
-  if (s != CUDA_SUCCESS && *graph != NULL) {
-    p_cuGraphDestroy(*graph);
-    *graph = NULL;
-  }
-  return s;
-}
-
-/* The graph of the kernels [v_funcs], [v_sizes] (seven per kernel, each
-   checked to fit 32 bits) and [v_args] in the context [v_context], as
-   [(0, exec, graph, nodes)], or [(status, 0, 0, [||])] with CUDA's status.
-   Releases the runtime: CUDA instantiates the graph. */
-value caml_rig_cuda_graph(value v_context, value v_funcs, value v_sizes,
-                          value v_args) {
-  CAMLparam4(v_context, v_funcs, v_sizes, v_args);
-  CAMLlocal3(r, v_nodes, x);
-  CUcontext c = Context_val(v_context);
-  int n = (int)Wosize_val(v_funcs);
-  /* Every OCaml allocation precedes native ownership. On success only the
-     preallocated nativeint payloads are filled. */
-  r = caml_alloc_tuple(4);
-  for (int i = 0; i < 4; i++) Store_field(r, i, Val_unit);
-  x = caml_copy_nativeint(0);
-  Store_field(r, 1, x);
-  x = caml_copy_nativeint(0);
-  Store_field(r, 2, x);
-  v_nodes = caml_alloc(n, 0);
-  for (int i = 0; i < n; i++) Store_field(v_nodes, i, Val_unit);
-  Store_field(r, 3, v_nodes);
-  for (int i = 0; i < n; i++) {
-    x = caml_copy_nativeint(0);
-    Store_field(v_nodes, i, x);
-  }
-  size_t total = 0;
-  for (int i = 0; i < n; i++) total += caml_string_length(Field(v_args, i));
-  struct kernels k = {n, calloc(n + 1, sizeof(CUfunction)),
-                      calloc(7 * n + 1, sizeof(unsigned int)),
-                      malloc(total + 1), calloc(n + 1, sizeof(size_t))};
-  CUgraphNode *nodes = calloc(n + 1, sizeof(CUgraphNode));
-  if (k.funcs == NULL || k.sizes == NULL || k.args == NULL ||
-      k.lengths == NULL || nodes == NULL) {
-    free(k.funcs), free(k.sizes), free(k.args), free(k.lengths), free(nodes);
-    caml_raise_out_of_memory();
-  }
-  char *at = k.args;
-  for (int i = 0; i < n; i++) {
-    value a = Field(v_args, i);
-    k.funcs[i] = (CUfunction)Long_val(Field(v_funcs, i));
-    k.lengths[i] = caml_string_length(a);
-    memcpy(at, String_val(a), k.lengths[i]);
-    at += k.lengths[i];
-  }
-  for (int i = 0; i < 7 * n; i++)
-    k.sizes[i] = (unsigned int)Long_val(Field(v_sizes, i));
-  CUgraph graph = NULL;
-  CUgraphExec exec = NULL;
-  CUresult s;
-  RELEASED({
-    IN_CONTEXT(s, c, make_graph(&k, &graph, &exec, nodes));
-    if (s != CUDA_SUCCESS) release_graph(c, exec, graph);
-  });
-  free(k.funcs), free(k.sizes), free(k.args), free(k.lengths);
-  Store_field(r, 0, Val_int(s));
-  if (s == CUDA_SUCCESS) {
-    Nativeint_val(Field(r, 1)) = (intnat)exec;
-    Nativeint_val(Field(r, 2)) = (intnat)graph;
-    for (int i = 0; i < n; i++)
-      Nativeint_val(Field(v_nodes, i)) = (intnat)nodes[i];
-  } else {
-    Store_field(r, 3, Atom(0));
-  }
-  free(nodes);
-  CAMLreturn(r);
-}
-
-/* Destroys the executable [v_exec] and the graph [v_graph] in the context
-   [v_context]. CUDA's answers are dropped: after a fault or a stop the
-   context remains, and its error is the only answer. Releases the
-   runtime. */
-value caml_rig_cuda_graph_release(value v_context, value v_exec,
-                                  value v_graph) {
-  CAMLparam3(v_context, v_exec, v_graph);
-  CUcontext c = Context_val(v_context);
-  CUgraphExec exec = (CUgraphExec)Nativeint_val(v_exec);
-  CUgraph graph = (CUgraph)Nativeint_val(v_graph);
-  caml_enter_blocking_section_no_pending();
-  release_graph(c, exec, graph);
-  caml_leave_blocking_section();
-  CAMLreturn(Val_unit);
-}
-
 /* A stream's error, or success while its work runs. */
 static CUresult query(CUstream q) {
   CUresult s = p_cuStreamQuery(q);
@@ -1194,6 +1150,7 @@ struct submission {
   int waited;
   int both;
   int unrecorded[2];
+  int seen[2]; /* stream q waited for the other's parts before seen[q] */
   const char *step;  /* the step that failed; NULL: ordering the streams */
   uint64_t bytes;    /* the bytes of the last copy */
   struct stamp *stamp; /* NULL unless the value is timed */
@@ -1275,24 +1232,57 @@ static CUresult follow(struct submission *s, int q) {
   return p_cuStreamWaitEvent(d->streams[q], d->done[o], 0);
 }
 
-/* Launches the function of the launch [p] on [stream] over the grid of its
+/* Adds one to the count [n], which only the turn's holder writes. */
+static void count(_Atomic uint64_t *n) {
+  atomic_store_explicit(n, atomic_load_explicit(n, memory_order_relaxed) + 1,
+                        memory_order_relaxed);
+}
+
+/* An [extra] list of cuLaunchKernel's keys, which passes the parameters as
+   one buffer, and that buffer's size. */
+struct extra {
+  void *keys[5];
+  size_t size;
+};
+
+/* The kernel node of the launch [p]: its function over the grid of its
    block, with its parameters placed in the block's place and each ref's
-   word raised by its slot's address: CUDA copies the parameters at the
-   call. CUDA refuses a buffer of another size than the function's
-   parameters, so the launch's bytes past them, which rig allows, are left
-   out. */
-static CUresult launch(const struct submission *s, CUstream stream,
-                       const struct rig_part *p) {
+   word raised by its slot's address. CUDA copies the parameters at the
+   launch or the update that is given them. CUDA refuses a buffer of
+   another size than the function's parameters, so the launch's bytes past
+   them, which rig allows, are left out. [x] holds the node's [extra]. */
+static kernel_node node_of(const struct submission *s, const struct rig_part *p,
+                           struct extra *x) {
   const struct function *fn = p->launch.launch;
   const struct rig_block *b = (const void *)(s->args + p->launch.args.block);
   uint8_t *params = rig_place(&p->launch.args, s->args);
-  size_t size = fn->params;
-  void *extra[] = {CU_LAUNCH_PARAM_BUFFER_POINTER, params,
-                   CU_LAUNCH_PARAM_BUFFER_SIZE, &size, CU_LAUNCH_PARAM_END};
   rig_params(params, &p->launch.args, s->args, s->slots);
-  return p_cuLaunchKernel(fn->f, b->groups[0], b->groups[1], b->groups[2],
-                          b->threads[0], b->threads[1], b->threads[2],
-                          b->shared, stream, NULL, size > 0 ? extra : NULL);
+  x->size = fn->params;
+  x->keys[0] = CU_LAUNCH_PARAM_BUFFER_POINTER;
+  x->keys[1] = params;
+  x->keys[2] = CU_LAUNCH_PARAM_BUFFER_SIZE;
+  x->keys[3] = &x->size;
+  x->keys[4] = CU_LAUNCH_PARAM_END;
+  kernel_node k = {fn->f,
+                   {b->groups[0], b->groups[1], b->groups[2]},
+                   {b->threads[0], b->threads[1], b->threads[2]},
+                   b->shared,
+                   NULL,
+                   x->size > 0 ? x->keys : NULL,
+                   NULL,
+                   NULL};
+  return k;
+}
+
+/* Launches the launch [p] plain, on [stream], with cuLaunchKernel. */
+static CUresult launch(const struct submission *s, CUstream stream,
+                       const struct rig_part *p) {
+  struct extra x;
+  kernel_node k = node_of(s, p, &x);
+  count(&s->d->plain);
+  return p_cuLaunchKernel(k.func, k.grid[0], k.grid[1], k.grid[2], k.block[0],
+                          k.block[1], k.block[2], k.shared, stream, NULL,
+                          k.extra);
 }
 
 /* Enqueues the copy part [p] on [stream]. A run, and a box whose rows lie
@@ -1346,11 +1336,139 @@ static CUresult work(struct submission *s, CUstream stream,
   }
 }
 
+/* Runs and pieces (Replay) */
+
+/* The steps of a chain's play a failure names. */
+static const char updating[] = "updating a chain of kernels",
+                  replaying[] = "launching a chain of kernels";
+
+/* Whether the part [p] is a launch that may play through a chain. */
+static int chained(const struct rig_part *p) {
+  return p->kind == RIG_LAUNCH &&
+         !((const struct function *)p->launch.launch)->plain;
+}
+
+/* Whether part [i] of [p] starts after a part of the other stream that its
+   stream has not waited for: one at or past [seen], the part at which its
+   stream last waited for all the other stream's work before it. */
+static int across(const struct rig_part *p, int i, int seen) {
+  for (int k = 0; k < p[i].nafter; k++) {
+    int a = p[i].after[k];
+    if (a >= seen && p[a].queue != p[i].queue) return 1;
+  }
+  return 0;
+}
+
+/* The end of the run of [p]'s [n] parts that starts at the chained launch
+   [i], once COMPUTE:0 waited for COPY:0's parts before [seen]: the first
+   part after it that is no chained launch or that starts after a part of
+   COPY:0 at or past [seen]. */
+static int run_end(const struct rig_part *p, int n, int i, int seen) {
+  int j = i + 1;
+  while (j < n && chained(&p[j]) && !across(p, j, seen)) j++;
+  return j;
+}
+
+/* The length of the first piece of a run of [left] launches. A run of
+   L > CHAIN launches takes m = ceil(L / CHAIN) pieces of floor(L / m) or
+   ceil(L / m) launches; the first takes ceil(L / m), which leaves m - 1
+   pieces' worth that the same rule splits the same way: 33 is 17 + 16, 65
+   is 22 + 22 + 21. */
+static int piece(int left) {
+  int pieces = (left + CHAIN - 1) / CHAIN;
+  return (left + pieces - 1) / pieces;
+}
+
+/* Points node [i] of [c] at [k], recording its module [m]. */
+static CUresult set_node(struct chain *c, int i, const kernel_node *k,
+                         CUmodule m) {
+  node_params n;
+  memset(&n, 0, sizeof n);
+  n.type = CU_GRAPH_NODE_TYPE_KERNEL;
+  n.u.kernel = *k;
+  CUresult e = p_cuGraphExecNodeSetParams(c->exec, c->nodes[i], &n);
+  c->held[i] = e == CUDA_SUCCESS ? m : NULL;
+  return e;
+}
+
+/* Plays the [k] launches [p] through [c], the chain of their length: it
+   updates every node under the mutex, then launches [c] on COMPUTE:0 with
+   the mutex released, since cuGraphLaunch blocks while the stream is full.
+   An update CUDA refuses (CUDA_ERROR_INVALID_VALUE or
+   CUDA_ERROR_NOT_SUPPORTED) marks its function plain, sets [*refused] and
+   leaves [c] unlaunched; the caller then launches the piece plain, where
+   another error of the function meets it again. Any other error is the
+   context's. */
+static CUresult play(struct submission *s, struct chain *c,
+                     const struct rig_part *p, int k, int *refused) {
+  struct device *d = s->d;
+  CUresult e = CUDA_SUCCESS;
+  *refused = 0;
+  pthread_mutex_lock(&d->mutex);
+  for (int i = 0; i < k && e == CUDA_SUCCESS; i++) {
+    const struct function *fn = p[i].launch.launch;
+    struct extra x;
+    kernel_node node = node_of(s, &p[i], &x);
+    e = set_node(c, i, &node, fn->module);
+    if (e == CUDA_ERROR_INVALID_VALUE || e == CUDA_ERROR_NOT_SUPPORTED) {
+      ((struct function *)fn)->plain = 1;
+      *refused = 1;
+    }
+  }
+  pthread_mutex_unlock(&d->mutex);
+  if (*refused) return CUDA_SUCCESS;
+  if (e != CUDA_SUCCESS) return in_step(s, updating, e);
+  e = in_step(s, replaying, p_cuGraphLaunch(c->exec, d->streams[0]));
+  if (e == CUDA_SUCCESS) count(&d->pieces);
+  return e;
+}
+
+/* Enqueues on COMPUTE:0, once [order] placed the first, the run of
+   chained launches of [p] from [i] to [end]: each piece through the
+   chain of its length, or plain for a run of one or a length with no chain
+   made. After a refused update the rest of the run launches plain. */
+static CUresult play_run(struct submission *s, const struct rig_part *p,
+                         int i, int end) {
+  struct device *d = s->d;
+  CUresult e = CUDA_SUCCESS;
+  int refused = 0;
+  while (i < end && e == CUDA_SUCCESS) {
+    int k = refused ? end - i : piece(end - i);
+    struct chain *c = refused || k == 1 ? NULL : d->chains[k];
+    int played = 0;
+    if (c != NULL && c != &unmade) {
+      e = play(s, c, &p[i], k, &refused);
+      played = e == CUDA_SUCCESS && !refused;
+    }
+    for (int j = i; !played && j < i + k && e == CUDA_SUCCESS; j++)
+      e = in_step(s, launching, launch(s, d->streams[0], &p[j]));
+    i += k;
+  }
+  s->unrecorded[0] = 1;
+  return e;
+}
+
+/* Enters the submission on the stream [q] of part [i] of [p], then, if the
+   part starts after a part of the other stream that [q] has not waited
+   for, makes [q] wait for all the other stream's work so far. */
+static CUresult order(struct submission *s, const struct rig_part *p, int i) {
+  int q = p[i].queue;
+  CUresult e = enter(s, q);
+  if (e != CUDA_SUCCESS || !across(p, i, s->seen[q])) return e;
+  e = follow(s, q);
+  if (e == CUDA_SUCCESS) s->seen[q] = i;
+  return e;
+}
+
 /* Enqueues the parts in array order, and ends [v] on the stream of the
    last part (on the last value's stream for none) once both streams' work
-   is done. A part that names a part of the other stream waits for all the
-   work queued there before it, a superset of the parts it names: the order
-   costs one event per stream and no look ahead. */
+   is done. A part that names a part of the other stream its stream has not
+   waited for waits for all the work queued there before it, a superset of
+   the parts it names that also covers each later part naming only those:
+   after one copy on COPY:0, only the first launch that names it waits.
+   The order costs one event per stream and no look ahead. A run of
+   launches is cut before a launch that waits, so that the wait precedes
+   the piece that holds it and no earlier launch waits for COPY:0. */
 static CUresult run(struct submission *s, uint64_t v, const struct rig_part *p,
                     int n) {
   struct device *d = s->d;
@@ -1361,17 +1479,22 @@ static CUresult run(struct submission *s, uint64_t v, const struct rig_part *p,
   s->both = last[0] >= 0 && last[1] >= 0;
   if (last[1 - d->tail] >= 0)
     e = p_cuEventRecord(d->ended, d->streams[d->tail]);
-  for (int i = 0; i < n && e == CUDA_SUCCESS; i++) {
-    int q = p[i].queue, across = 0;
-    e = enter(s, q);
-    for (int k = 0; k < p[i].nafter; k++)
-      across |= p[p[i].after[k]].queue != q;
-    if (e == CUDA_SUCCESS && across) e = follow(s, q);
-    if (e == CUDA_SUCCESS) e = work(s, d->streams[q], &p[i], v);
+  for (int i = 0; i < n && e == CUDA_SUCCESS;) {
+    int q = p[i].queue;
+    e = order(s, p, i);
+    if (e != CUDA_SUCCESS) break;
+    if (chained(&p[i])) {
+      int end = run_end(p, n, i, s->seen[0]);
+      e = play_run(s, p, i, end);
+      i = end;
+      continue;
+    }
+    e = work(s, d->streams[q], &p[i], v);
     s->unrecorded[q] = 1;
+    i++;
   }
   if (e == CUDA_SUCCESS) e = enter(s, r);
-  if (e == CUDA_SUCCESS && last[o] >= 0) e = follow(s, r);
+  if (e == CUDA_SUCCESS && last[o] >= s->seen[r]) e = follow(s, r);
   if (e == CUDA_SUCCESS) d->tail = r;
   return e;
 }
@@ -1501,11 +1624,53 @@ static int runs(const struct device *d, const struct rig_part *p,
   return threads <= fn->threads && b->shared <= fn->shared;
 }
 
+/* The lengths of the pieces of [p]'s [n] parts with no chain in [d], as
+   bit n for length n, as rig_cuda_submit cuts them. */
+static uint64_t unchained(const struct device *d, const struct rig_part *p,
+                          int n) {
+  uint64_t missing = 0;
+  int seen[2] = {0, 0};
+  for (int i = 0; i < n;) {
+    int q = p[i].queue;
+    if (across(p, i, seen[q])) seen[q] = i;
+    if (!chained(&p[i])) {
+      i++;
+      continue;
+    }
+    int end = run_end(p, n, i, seen[0]);
+    while (i < end) {
+      int k = piece(end - i);
+      if (k > 1 && d->chains[k] == NULL) missing |= UINT64_C(1) << k;
+      i += k;
+    }
+  }
+  return missing;
+}
+
+/* Moves the chains grow handed into [d]'s, under the mutex: whether [d]
+   holds the placeholder that grow makes chains from. */
+static int install(struct device *d) {
+  pthread_mutex_lock(&d->mutex);
+  int placed = d->placeholder != NULL;
+  for (int k = 2; k <= CHAIN; k++) {
+    if (d->chains[k] != NULL || d->handed[k] == NULL) continue;
+    d->chains[k] = d->handed[k];
+    d->handed[k] = NULL;
+  }
+  pthread_mutex_unlock(&d->mutex);
+  return placed;
+}
+
+/* The lengths of chains the last room of the calling thread that answered
+   RIG_GROW found missing, which caml_rig_cuda_grow makes: rig calls grow
+   on that thread before the thread's next room. */
+static _Thread_local uint64_t asked;
+
 int rig_cuda_room(void *self, int nwaits, const struct rig_part *p, int n,
                   void *scratch, const uint8_t *args) {
   (void)nwaits;
   (void)scratch;
-  const struct device *d = ((struct edge *)self)->d;
+  struct device *d = ((struct edge *)self)->d;
   for (int i = 0; i < n; i++) {
     if (p[i].queue < 0 || p[i].queue > 1) return RIG_NEVER;
     switch (p[i].kind) {
@@ -1519,7 +1684,10 @@ int rig_cuda_room(void *self, int nwaits, const struct rig_part *p, int n,
       return RIG_NEVER;
     }
   }
-  return RIG_FITS;
+  /* A device without the placeholder plays its pieces plain. */
+  if (unchained(d, p, n) == 0 || !install(d)) return RIG_FITS;
+  asked = unchained(d, p, n);
+  return asked == 0 ? RIG_FITS : RIG_GROW;
 }
 
 int rig_cuda_submit(void *self, uint64_t v, const struct rig_wait *waits,
@@ -1656,6 +1824,195 @@ value caml_rig_cuda_failed(value v_self) {
   return Val_int(s);
 }
 
+/* Chains (Replay) */
+
+/* The placeholder's node: the kernel that does nothing, over one thread of
+   one group, with no parameters. */
+static kernel_node placeholder_node(const struct device *d) {
+  kernel_node k = {d->placeholder, {1, 1, 1}, {1, 1, 1}, 0,
+                   NULL,           NULL,      NULL,      NULL};
+  return k;
+}
+
+/* Makes [c], a chain of [n] nodes of the placeholder [k] of the module [m],
+   each after the one before, and instantiates it, or makes nothing and
+   answers CUDA's error. */
+static CUresult make_chain(struct chain *c, int n, const kernel_node *k,
+                           CUmodule m) {
+  CUresult s = p_cuGraphCreate(&c->graph, 0);
+  for (int i = 0; i < n && s == CUDA_SUCCESS; i++) {
+    node_params p;
+    memset(&p, 0, sizeof p);
+    p.type = CU_GRAPH_NODE_TYPE_KERNEL;
+    p.u.kernel = *k;
+    s = p_cuGraphAddNode(&c->nodes[i], c->graph,
+                         i > 0 ? &c->nodes[i - 1] : NULL, i > 0, &p);
+    c->held[i] = m;
+  }
+  if (s == CUDA_SUCCESS)
+    s = p_cuGraphInstantiateWithFlags(&c->exec, c->graph, 0);
+  if (s != CUDA_SUCCESS && c->graph != NULL) p_cuGraphDestroy(c->graph);
+  return s;
+}
+
+/* Destroys [c], made or handed, unless it is [unmade]. CUDA frees a chain
+   whose launches still run once they end. */
+static void drop(struct chain *c) {
+  if (c == NULL || c == &unmade) return;
+  p_cuGraphExecDestroy(c->exec);
+  p_cuGraphDestroy(c->graph);
+  free(c);
+}
+
+/* Destroys [d]'s chains, made and handed, in its context, made current. */
+static void unchain(struct device *d) {
+  for (int k = 2; k <= CHAIN; k++) {
+    drop(d->chains[k]);
+    drop(d->handed[k]);
+    d->chains[k] = d->handed[k] = NULL;
+  }
+}
+
+/* Whether [d] holds or was handed the chain of length [n], under the
+   mutex. */
+static int has_chain(const struct device *d, int n) {
+  return d->chains[n] != NULL || d->handed[n] != NULL;
+}
+
+/* Makes [d]'s chain of length [n] from the placeholder's node [k] and
+   hands it to the next room, under the mutex: CUDA's status, as [grow]
+   answers. A chain CUDA refuses to make while the context stands is handed
+   as [unmade]. */
+static CUresult hand(struct device *d, int n, const kernel_node *k) {
+  struct chain *c = calloc(1, sizeof *c);
+  if (c == NULL) return CUDA_ERROR_OUT_OF_MEMORY;
+  CUresult s = make_chain(c, n, k, d->placeholder_module);
+  if (s != CUDA_SUCCESS) {
+    free(c);
+    if (s == CUDA_ERROR_OUT_OF_MEMORY) return s;
+    CUresult failed = streams_failed(d);
+    if (failed != CUDA_SUCCESS) return failed;
+    c = &unmade;
+  }
+  if (c != &unmade)
+    atomic_fetch_add_explicit(&d->made, 1, memory_order_relaxed);
+  d->handed[n] = c;
+  return CUDA_SUCCESS;
+}
+
+/* Makes the chain of each length of [want], as bit n for length n, that
+   [d] neither holds nor was handed, in [d]'s context, made current. It
+   holds the mutex throughout, so that no two grows make one length; a play,
+   an install, an unload or a placeholder's gift that meets it waits for
+   its makes. A make that succeeds or hands [unmade] happens once a length
+   in the device's life; one refused for lack of memory hands nothing, so
+   each later grow of its length, at every round and submit while memory
+   stays short, makes it again under the mutex. Answers
+   CUDA_ERROR_OUT_OF_MEMORY if the GPU or the host had no memory for one,
+   the context's error if it failed, or CUDA_SUCCESS; what it made before
+   stays handed.
+
+   On an RTX 5000 Ada under the 615 driver, a make took 6 us for 2 nodes to
+   115 us for 32. The 31 chains held 6.7 MiB of the GPU's memory and 4.5
+   MiB of the host's as made, and a node's first update to 4,096 bytes of
+   parameters added 8 to 12 KB of host memory. An update cost the host 95
+   to 107 ns a node at up to 256 bytes, 330 ns at 4,096, and 270 to 478 ns
+   with a change of function, and added 0.14 to 0.41 us a node to the
+   chain's time on the GPU. */
+static CUresult grow(struct device *d, uint64_t want) {
+  CUresult s = CUDA_SUCCESS;
+  pthread_mutex_lock(&d->mutex);
+  kernel_node k = placeholder_node(d);
+  for (int n = 2; n <= CHAIN && s == CUDA_SUCCESS; n++)
+    if ((want & (UINT64_C(1) << n)) && !has_chain(d, n)) s = hand(d, n, &k);
+  pthread_mutex_unlock(&d->mutex);
+  return s;
+}
+
+/* Makes the chains the last room of the calling thread found missing
+   ([asked]): CUDA's status, as [grow] answers. Releases the runtime: CUDA
+   instantiates the graphs. */
+value caml_rig_cuda_grow(value v_self) {
+  struct device *d = Device_val(v_self);
+  uint64_t want = asked;
+  CUresult s;
+  RELEASED(IN_CONTEXT(s, d->context, grow(d, want)));
+  return Val_int(s);
+}
+
+/* Points every node of [d]'s chains whose function may be of [m], that of
+   [m] or an unknown one, back at the placeholder, in [d]'s context, made
+   current, under the mutex. */
+static CUresult repoint(struct device *d, CUmodule m) {
+  kernel_node k = placeholder_node(d);
+  CUresult s = CUDA_SUCCESS;
+  pthread_mutex_lock(&d->mutex);
+  for (int n = 2; n <= CHAIN && s == CUDA_SUCCESS; n++) {
+    struct chain *c = d->chains[n];
+    if (c == NULL || c == &unmade) continue;
+    for (int i = 0; i < n && s == CUDA_SUCCESS; i++)
+      if (c->held[i] == m || c->held[i] == NULL)
+        s = set_node(c, i, &k, d->placeholder_module);
+  }
+  pthread_mutex_unlock(&d->mutex);
+  return s;
+}
+
+/* Points every node of [v_self]'s chains that may hold a function of the
+   module [v_module] back at the placeholder ([repoint]): CUDA's status, or
+   [0] once stopped, its chains gone. rig unloads a module only once no
+   work that runs it can run, so no update of a submit is pending between
+   its node's update and its chain's launch. Releases the runtime. */
+value caml_rig_cuda_repoint(value v_self, value v_module) {
+  struct device *d = Device_val(v_self);
+  CUmodule m = (CUmodule)Long_val(v_module);
+  CUresult s;
+  if (d == NULL) return Val_int(0);
+  RELEASED(IN_CONTEXT(s, d->context, repoint(d, m)));
+  return Val_int(s);
+}
+
+/* Gives [v_self]'s device the placeholder kernel [v_function] of the module
+   [v_module], which the process keeps. Releases the runtime: the mutex may
+   be held through another thread's grow. */
+value caml_rig_cuda_placeholder(value v_self, value v_module,
+                                value v_function) {
+  struct device *d = Device_val(v_self);
+  CUmodule m = (CUmodule)Long_val(v_module);
+  CUfunction f = (CUfunction)Long_val(v_function);
+  caml_enter_blocking_section_no_pending();
+  pthread_mutex_lock(&d->mutex);
+  d->placeholder_module = m;
+  d->placeholder = f;
+  pthread_mutex_unlock(&d->mutex);
+  caml_leave_blocking_section();
+  return Val_unit;
+}
+
+/* The chains [v_self]'s grows made since it opened; [0] once stopped. */
+value caml_rig_cuda_made(value v_self) {
+  struct device *d = Device_val(v_self);
+  if (d == NULL) return Val_long(0);
+  return Val_long(atomic_load_explicit(&d->made, memory_order_relaxed));
+}
+
+/* The pieces [v_self]'s submits played through a chain and the launches
+   they sent plain, since it opened; [(0, 0)] once stopped. */
+value caml_rig_cuda_replays(value v_self) {
+  CAMLparam1(v_self);
+  CAMLlocal1(r);
+  struct device *d = Device_val(v_self);
+  uint64_t pieces = 0, plain = 0;
+  if (d != NULL) {
+    pieces = atomic_load_explicit(&d->pieces, memory_order_relaxed);
+    plain = atomic_load_explicit(&d->plain, memory_order_relaxed);
+  }
+  r = caml_alloc_tuple(2);
+  Store_field(r, 0, Val_long(pieces));
+  Store_field(r, 1, Val_long(plain));
+  CAMLreturn(r);
+}
+
 /* Whether the word of [e]'s device holds the last value. */
 static int reached(const struct edge *e) {
   uint64_t w = atomic_load_explicit(e->word, memory_order_acquire);
@@ -1676,11 +2033,12 @@ static int reached(const struct edge *e) {
    wrote it, so the word reaches it once the work ends; and each stream
    records its [done] event behind its work, which the edge takes, so a
    later [caml_rig_cuda_ended] finds the work's end or its fault once the
-   streams are gone. The streams and the other events are then destroyed:
-   CUDA frees them once their work ends. If CUDA records no event, [d]
-   stays whole in the edge, unstopped. */
+   streams are gone. The chains, the streams and the other events are
+   destroyed: CUDA frees them once their work ends. If CUDA records no
+   event, [d] stays in the edge, unstopped, but for its chains. */
 static int stop_in(struct edge *e, struct device *d) {
   int stopped = reached(e), running = 0;
+  unchain(d);
   for (int q = 0; q < 2 && !stopped; q++) {
     CUresult s = p_cuStreamQuery(d->streams[q]);
     if (s == CUDA_ERROR_NOT_READY) running = 1;
@@ -1701,6 +2059,7 @@ static int stop_in(struct edge *e, struct device *d) {
     }
   }
   destroy(d);
+  pthread_mutex_destroy(&d->mutex);
   free(d);
   return stopped;
 }

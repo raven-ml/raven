@@ -199,14 +199,12 @@ let one_launch arch binary =
    [kernel] submits the part [kernel] makes over three buffers and waits every
    [drain]. The replay rows run [depth] copies of a step over [slots]
    parameters, each run waiting for its copy's last run: with no part, and with
-   the part [kernel] makes, a launch of the vendor's smallest kernel. With
-   [graph], the graph row does the same with the part [graph] makes, the launch
-   of a recorded step of 64 such kernels. The time rows run the program of one
-   launch of [ids] of the binary [launch] gives and wait for it, or time it:
-   their difference is what a time of the step costs. Each case opens its GPU
-   in its own worker with [opened], so that no process forks after a vendor
-   library started. *)
-let gpu_rows ?graph v ~opened ~kernel ~launch =
+   the part [kernel] makes, a launch of the vendor's smallest kernel. The time
+   rows run the program of one launch of [ids] of the binary [launch] gives
+   and wait for it, or time it: their difference is what a time of the step
+   costs. Each case opens its GPU in its own worker with [opened], so that no
+   process forks after a vendor library started. *)
+let gpu_rows v ~opened ~kernel ~launch =
   let rig () =
     let g, _ = opened () in
     (g, Sub.take (Sub.make g [||]), ref 0)
@@ -446,13 +444,11 @@ let gpu_rows ?graph v ~opened ~kernel ~launch =
         row "time-1" program (fun (p, f) -> Rig_program.time p f);
       ];
     Thumper.group (strf "replay/%s" v)
-      ([
-         row "params-24" replaying run;
-         row "pipelined-100" replaying pipelined;
-         row "kernel-pipelined-100" (part_replaying kernel) pipelined;
-       ]
-      @ Option.fold graph ~none:[] ~some:(fun g ->
-          [ row "graph-pipelined-100" (part_replaying g) pipelined ]));
+      [
+        row "params-24" replaying run;
+        row "pipelined-100" replaying pipelined;
+        row "kernel-pipelined-100" (part_replaying kernel) pipelined;
+      ];
   ]
 
 (* Kernels: each vendor's smallest, as the work of one part of the first compute
@@ -494,24 +490,6 @@ let cuda_kernel _ d =
     Sub.launch (Option.get (Rig.Image.resolve image "empty")) ~params:16
   in
   work launch ignore
-
-(* A graph of 64 [empty] kernels over one thread each, made through the device's
-   capability, launched by one part. *)
-let cuda_graph g d =
-  let module S = Rig_cuda_support in
-  S.bind g;
-  let image, kernels = S.kernels ~dir:(fixtures "cuda") g in
-  let k = S.kernel (kernels "empty") 0 0 in
-  let gr =
-    match (Rig_cuda.capability g).graph (Array.make 64 k) with
-    | Ok gr -> gr
-    | Error why -> failwith why
-  in
-  let f = S.graph_launch gr [||] in
-  {
-    work = S.part d f;
-    keep = (fun () -> ignore (Sys.opaque_identity (image, gr, f)));
-  }
 
 (* [empty] over one thread as a launch, loaded by rig. *)
 let nv_kernel _ d =
@@ -557,7 +535,7 @@ let gpus =
       (if Rig_cuda_support.present () then
          gpu_rows "cuda"
            ~opened:(fixture (module Rig_cuda_support))
-           ~kernel:cuda_kernel ~graph:cuda_graph
+           ~kernel:cuda_kernel
            ~launch:(launch "cuda" "launch.ptx")
        else []);
       (if Rig_nv_support.present () then

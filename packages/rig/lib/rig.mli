@@ -2354,7 +2354,7 @@ module Submission : sig
       them afterwards.
 
       [keep] is a value the work uses beyond memory, such as the driver
-      objects that a graph or an indirect command buffer made. The
+      objects that an indirect command buffer made. The
       submission keeps it reachable while it is reachable. Once the
       submission is collected, [keep] goes as {!Rig.section-reclaim} states,
       or, on a lost [d] and in a child of [fork], as {!Rig.section-stops}

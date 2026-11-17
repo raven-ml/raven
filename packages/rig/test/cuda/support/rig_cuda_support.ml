@@ -14,6 +14,7 @@ external unregister : int -> unit = "rig_cuda_test_unregister"
 external free_memory : unit -> int = "rig_cuda_test_free_memory"
 external loaded_c : nativeint -> int * int = "rig_cuda_test_loaded"
 external context_flags : unit -> int = "rig_cuda_test_context_flags"
+external limit_shared : int -> int -> unit = "rig_cuda_test_limit_shared"
 external set_context_flags : int -> unit = "rig_cuda_test_set_context_flags"
 
 let functions_loaded f = loaded_c (Nativeint.of_int f)
@@ -38,8 +39,7 @@ let bind g =
          "cuMemHostRegister_v2";
          "cuMemHostUnregister";
          "cuMemGetInfo_v2";
-         "cuGraphExecKernelNodeSetParams_v2";
-         "cuGraphLaunch";
+         "cuFuncSetAttribute";
          "cuFuncIsLoaded";
          "cuFuncGetModule";
          "cuModuleGetFunctionCount";
@@ -159,39 +159,6 @@ external submit_c :
 let submit_edge g ~v parts =
   let part (queue, f) = (queue, f.fn, parameters f) in
   submit_c (Rig_cuda.facts g).edge v (Array.of_list (List.map part parts))
-
-let kernel ?(grid = 1) ?(block = 1) func a b =
-  let args = Bytes.create 16 in
-  Bytes.set_int64_le args 0 (Int64.of_int a);
-  Bytes.set_int64_le args 8 (Int64.of_int b);
-  {
-    Rig_cuda_abi.func;
-    grid = (grid, 1, 1);
-    block = (block, 1, 1);
-    shared = 0;
-    args = Bytes.to_string args;
-  }
-
-external graph_arg :
-  nativeint -> nativeint array -> int array -> int array -> string array -> arg
-  = "rig_cuda_test_graph"
-
-external graph_fill : unit -> nativeint = "rig_cuda_test_graph_fill"
-
-let graph_launch (g : Rig_cuda_abi.graph) updates =
-  let node (i, _) = g.nodes.(i) in
-  let func (_, (k : Rig_cuda_abi.kernel)) = k.func in
-  let sizes (_, (k : Rig_cuda_abi.kernel)) =
-    let gx, gy, gz = k.grid and bx, by, bz = k.block in
-    [| gx; gy; gz; bx; by; bz; k.shared |]
-  in
-  let args (_, (k : Rig_cuda_abi.kernel)) = k.args in
-  let sizes = Array.concat (Array.to_list (Array.map sizes updates)) in
-  let arg =
-    graph_arg g.handle (Array.map node updates) (Array.map func updates) sizes
-      (Array.map args updates)
-  in
-  { fn = graph_fill (); arg; state = Some Read; keep = Kept g }
 
 (* Kernels *)
 

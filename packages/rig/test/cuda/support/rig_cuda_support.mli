@@ -15,7 +15,7 @@ val bind : Rig_cuda.t -> unit
 (** [bind g] makes the CUDA functions of [g]'s capability those {!attribute},
     {!current}, {!locked}, {!register}, {!unregister}, {!read_gpu},
     {!write_gpu}, {!free_memory}, {!functions_loaded}, {!context_flags},
-    {!set_context_flags}, {!stall}, {!context} and {!graph_launch} call.
+    {!set_context_flags}, {!limit_shared}, {!stall} and {!context} call.
     {!open_} binds them. *)
 
 val attribute : int -> int
@@ -30,6 +30,11 @@ val set_context_flags : int -> unit
 (** [set_context_flags f] sets the flags of CUDA's device [0]'s primary context
     to [f] ([cuDevicePrimaryCtxSetFlags]), as another library would, after a
     {!with_}. The flags are the process's. *)
+
+val limit_shared : int -> int -> unit
+(** [limit_shared f n] sets the most dynamic shared memory a launch of the
+    function [f], an entry's [CUfunction], may take to [n] bytes
+    ([cuFuncSetAttribute]), behind its device's back, after a {!with_}. *)
 
 val current : unit -> nativeint
 (** [current ()] is the calling thread's current CUDA context, [0n] for none,
@@ -107,17 +112,6 @@ val submit_edge : Rig_cuda.t -> v:int -> (int * fill) list -> string option
     or [Some why] for a failure. [g] is a device opened outside rig, so that
     no other call runs meanwhile. *)
 
-val kernel : ?grid:int -> ?block:int -> int -> int -> int -> Rig_cuda_abi.kernel
-(** [kernel ~grid ~block f a b] is a launch of the kernel [f] over [grid] blocks
-    (defaults to [1]) of [block] threads (defaults to [1]) with the 64-bit
-    parameters [a] and [b] as its argument block, no shared memory. *)
-
-val graph_launch :
-  Rig_cuda_abi.graph -> (int * Rig_cuda_abi.kernel) array -> fill
-(** [graph_launch g us] updates node [i] of [g] to the kernel [k] for each
-    [(i, k)] of [us], in order, then launches [g], through the device's
-    capability. Each argument block holds at most 64 bytes. *)
-
 (** {1:kernels Kernels} *)
 
 val launch : t -> string -> int -> int -> Rig_gpu_support.work
@@ -139,7 +133,13 @@ val fixture : ?dir:string -> string -> string
     [i] at [out], [i] a thread's index in the grid, the value of the next thread
     of its group (of the first for the last): [k + 3j + 7g] for [j] that
     thread's index and [g] its group's, through the group's dynamic shared
-    memory of at least 4 bytes a thread. *)
+    memory of at least 4 bytes a thread; [mark], of no parameters, which adds
+    1 to a count the image holds; [marks out], which stores that count into
+    the 32-bit word at [out] and sets it to [0]; and [page out], of 4,096
+    bytes of parameters, which stores its 32-bit words at bytes 8 and 4,092
+    into words 0 and 1 at [out]. ["wide.ptx"] holds the conformance suite's
+    [wide] and [widest out], of 32,764 bytes of parameters, which stores its
+    words at bytes 8, 16,384 and 32,760 into words 0 to 2 at [out]. *)
 
 val loaded : (Rig_cuda.region, Rig_cuda.image) Rig_edge.code -> Rig_cuda.image
 (** [loaded i] is the image of {!Rig_cuda.image}'s answer [i].

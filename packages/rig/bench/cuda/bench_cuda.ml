@@ -42,11 +42,6 @@ let dev () =
 (* A run of the prepared submission of [parts] on [t]. *)
 let prepare t parts = Rig.Submission.(take (make t.d parts))
 
-let prepare_fill t f =
-  let run, buffers = Rig_gpu_support.prepare t.d [ S.part t.d f ] in
-  assert (Array.length buffers = 0);
-  run
-
 let submit t run =
   let p = Rig.submit run ~buffers:[||] in
   t.last <- p;
@@ -59,16 +54,16 @@ let run t s =
   wait t
 
 let row name setup f = Thumper.bench_with_setup ~setup name f
-let empty g = snd (S.kernels ~dir:fixtures g) "empty"
 
-(* [n] launches of [empty] over one thread, as parts of COMPUTE:0 loaded by rig,
-   their blocks stored in [t]'s run. *)
-let launches t n =
+(* [n] launches of [kernel] of kernels.ptx (defaults to [empty]) over one
+   thread, as parts of COMPUTE:0 loaded by rig, their blocks stored in [t]'s
+   run, their parameters left 0. *)
+let launches ?(kernel = "empty") t n =
   let module Sub = Rig.Submission in
   let bin = S.fixture ~dir:fixtures "kernels.ptx" in
   let image = get (Rig.Image.load t.d bin) in
   let launch =
-    Sub.launch (Option.get (Rig.Image.resolve image "empty")) ~params:16
+    Sub.launch (Option.get (Rig.Image.resolve image kernel)) ~params:16
   in
   let run = prepare t (Array.make n launch) in
   for i = 0 to n - 1 do
@@ -102,54 +97,34 @@ let release_rows =
           wait t);
     ]
 
-let kernels f n = Array.make n (S.kernel f 0 0)
-
-(* A graph of [n] empty kernels, made through the capability, launched by a fill
-   that updates no node or, [updated], every node's first argument to the run's
-   parity: two prepared submissions, one per parity, alternate. *)
-let graphing ?(updated = false) n () =
-  let t = dev () in
-  let f = empty t.g in
-  let gr = get ((C.capability t.g).graph (kernels f n)) in
-  let updates a =
-    if updated then Array.init n (fun j -> (j, S.kernel f a 0)) else [||]
-  in
-  let prepared a = prepare_fill t (S.graph_launch gr (updates a)) in
-  (t, prepared 0, prepared 1)
-
+(* [n] launches as parts of one submission. A run of one launches plain; a
+   longer one plays through chains of at most 32 nodes, so 31, 32 and 33 show
+   the cut, 33 as 17 and 16, and 64 two full chains. [4096-parts] shows what
+   the driver's ordering costs per part of a large submission. [interleaved-8]
+   alternates two submissions of 8 launches of different functions, [empty]
+   and [double_index], which every update of the chain of 8 changes. *)
 let launch_rows =
-  (* [n] launches as parts of one submission: [4096-parts] shows what the
-     driver's ordering costs per part of a large submission. *)
   let launching n () =
     let t = dev () in
     (t, launches t n)
   in
-  let graph_launching (t, even, odd) =
-    run t (if t.v land 1 = 0 then even else odd)
-  in
-  Thumper.group "launch"
-    [
-      row "1" (launching 1) (fun (t, s) -> run t s);
-      row "64" (launching 64) (fun (t, s) -> run t s);
-      row "4096-parts" (launching 4096) (fun (t, s) -> run t s);
-      row "submits-64" (launching 1) (fun (t, s) ->
-          for _ = 1 to 64 do
-            submit t s
-          done;
-          wait t);
-      row "graph-1" (graphing 1) graph_launching;
-      row "graph-64" (graphing 64) graph_launching;
-      row "graph-64-updated" (graphing ~updated:true 64) graph_launching;
-    ]
-
-(* The maker of a graph of 64 empty kernels and its release: link-time work. *)
-let graph_rows =
-  let making () =
+  let interleaving () =
     let t = dev () in
-    ((C.capability t.g).graph, kernels (empty t.g) 64)
+    (t, launches t 8, launches ~kernel:"double_index" t 8)
   in
-  Thumper.group "graph"
-    [ row "make-64" making (fun (graph, ks) -> ignore (get (graph ks))) ]
+  let launch n = row (string_of_int n) (launching n) (fun (t, s) -> run t s) in
+  Thumper.group "launch"
+    (List.map launch [ 1; 2; 8; 31; 32; 33; 64 ]
+    @ [
+        row "4096-parts" (launching 4096) (fun (t, s) -> run t s);
+        row "submits-64" (launching 1) (fun (t, s) ->
+            for _ = 1 to 64 do
+              submit t s
+            done;
+            wait t);
+        row "interleaved-8" interleaving (fun (t, even, odd) ->
+            run t (if t.v land 1 = 0 then even else odd));
+      ])
 
 let copy_rows =
   let n = 256 * mib in
@@ -204,10 +179,18 @@ let image_rows =
 
 (* An open of the GPU's device through rig and its close: the device's
    streams, its events and its first measure of the GPU's clock against the
-   host's. *)
+   host's. [first-32] adds an image's load and the device's first submit of
+   32 launches, which makes the chain of 32: a device keeps its chains, so
+   only a device of its own submits a length first in every call. *)
 let open_rows =
   Thumper.group "open"
-    [ row "close" (fun () -> ()) (fun () -> S.close (S.open_ ())) ]
+    [
+      row "close" (fun () -> ()) (fun () -> S.close (S.open_ ()));
+      row "first-32" (fun () -> ()) (fun () ->
+          let t = dev () in
+          run t (launches t 32);
+          Rig.close t.d);
+    ]
 
 let () =
   if Sys.file_exists "/dev/nvidiactl" then
@@ -216,7 +199,6 @@ let () =
          [
            release_rows;
            launch_rows;
-           graph_rows;
            copy_rows;
            alloc_rows;
            map_host_rows;

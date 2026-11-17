@@ -98,6 +98,28 @@ let search () =
     | "Darwin" -> Some ([ "libcuda.dylib" ], "DYLD_LIBRARY_PATH")
     | _ -> None
 
+(* The process's environment, [var] set to [v]. *)
+let with_var var v =
+  Unix.environment ()
+  |> Array.to_list
+  |> List.filter (fun e -> not (String.starts_with ~prefix:(var ^ "=") e))
+  |> List.cons (var ^ "=" ^ v)
+  |> Array.of_list
+
+(* The test's executable run with the argument [arg] in the environment
+   [env]: its exit code and what it printed. *)
+let child arg env =
+  let exe = Sys.executable_name in
+  let r, w = Unix.pipe ~cloexec:true () in
+  let pid =
+    Unix.create_process_env exe [| exe; arg |] env Unix.stdin w Unix.stderr
+  in
+  Unix.close w;
+  let out = In_channel.input_all (Unix.in_channel_of_descr r) in
+  Unix.close r;
+  let _, status = Unix.waitpid [] pid in
+  ((match status with WEXITED c -> c | _ -> -1), out)
+
 (* count and make in a process whose search path finds no CUDA library that
    loads, whatever the machine installed: each is an error naming the
    library. *)
@@ -119,26 +141,9 @@ let test_unloadable () =
   let path =
     match Sys.getenv_opt var with Some p -> dir ^ ":" ^ p | None -> dir
   in
-  let env =
-    Unix.environment ()
-    |> Array.to_list
-    |> List.filter (fun e -> not (String.starts_with ~prefix:(var ^ "=") e))
-    |> List.cons (var ^ "=" ^ path)
-    |> Array.of_list
-  in
-  let exe = Sys.executable_name in
-  let r, w = Unix.pipe ~cloexec:true () in
-  let pid =
-    Unix.create_process_env exe [| exe; unloadable |] env Unix.stdin w
-      Unix.stderr
-  in
-  Unix.close w;
-  let out = In_channel.input_all (Unix.in_channel_of_descr r) in
-  Unix.close r;
-  let _, status = Unix.waitpid [] pid in
+  let code, out = child unloadable (with_var var path) in
   List.iter (fun n -> Sys.remove (Filename.concat dir n)) names;
   Sys.rmdir dir;
-  let code = match status with WEXITED c -> c | _ -> -1 in
   equal ~msg:"the child's exit code" int 0 code;
   match String.split_on_char '\n' out with
   | [ count; why ] ->
@@ -274,13 +279,12 @@ let symbols () =
   let symbol = (C.capability g).symbol in
   let found n = Option.is_some (symbol n) in
   equal (list bool)
-    [ true; true; true; true; false; false ]
+    [ true; true; true; false; false ]
     (List.map found
        [
          "cuLaunchKernel";
          "cuMemcpyAsync";
          "cuLaunchHostFunc";
-         "cuGraphLaunch";
          "cuNoSuchFunction";
          "cuLaunchKernel\000";
        ])
@@ -621,20 +625,24 @@ module Run = Rig.Submission.Run
 
 let launch_image = Rig_gpu_support.loader (fun () -> S.fixture "launch.ptx")
 
-(* A launch of [kernel] of fixtures/launch.ptx on [d], of [params] bytes of
-   parameters whose first 8 point into the run's one buffer, a write, over
-   [groups] of [threads] with [shared] bytes of dynamic shared memory: a run
-   of its submission holding its block. *)
-let launching ?(kernel = "ids") ?(params = 24) d ~groups:(gx, gy, gz)
-    ~threads:(tx, ty, tz) ~shared =
+(* [count] launches (defaults to 1) of [kernel] of fixtures/launch.ptx on
+   [d], each of [params] bytes of parameters whose first 8 point into the
+   run's one buffer, a write, over [groups] of [threads] with [shared] bytes
+   of dynamic shared memory: a run of their submission holding their
+   blocks. *)
+let launching ?(kernel = "ids") ?(params = 24) ?(count = 1) d
+    ~groups:(gx, gy, gz) ~threads:(tx, ty, tz) ~shared =
   let refs = [| Sub.write 0 ~at:0 |] in
   let fn = require_some (Rig.Image.resolve (launch_image d) kernel) in
-  let s = Sub.make d [| Sub.launch ~refs fn ~params |] in
+  let part _ = Sub.launch ~refs fn ~params in
+  let s = Sub.make d (Array.init count part) in
   let run = Sub.take s in
-  let b = Sub.block s 0 in
-  Run.groups run b gx gy gz;
-  Run.threads run b tx ty tz;
-  Run.shared run b shared;
+  for i = 0 to count - 1 do
+    let b = Sub.block s i in
+    Run.groups run b gx gy gz;
+    Run.threads run b tx ty tz;
+    Run.shared run b shared
+  done;
   run
 
 let submitted run buffers = Rig.submit run ~buffers
@@ -708,30 +716,37 @@ let largest_shared_memory () =
         (words out 256))
     [ last ((48 * 1024) + 4); last (64 * 1024); last largest; (largest, 0) ]
 
-(* A cached launch submitted with a warm run, its block stored anew each time
-   through every setter, allocates nothing. *)
-let no_allocation () =
-  S.with_ @@ fun { d; _ } ->
-  let run = launching d ~groups:(1, 1, 1) ~threads:(32, 1, 1) ~shared:0 in
+(* A cached submission of [count] launches submitted with a warm run, their
+   blocks stored anew each time through every setter, allocates nothing: one
+   launch runs plain, and two play through a chain. *)
+let no_allocation count () =
+  S.with_ @@ fun { d; g } ->
+  let run =
+    launching ~count d ~groups:(1, 1, 1) ~threads:(32, 1, 1) ~shared:0
+  in
   Run.release run;
   let buffers = [| B.create d 4096 |] in
-  let b = Sub.block (Run.submission run) 0 in
+  let s = Run.submission run in
+  let blocks = Array.init count (Sub.block s) in
   (* [float64] stores first, where [int64] then stores [a]. *)
   let once i =
-    if Sub.take (Sub.Run.submission run) != run then
-      fail "the run is taken";
-    Run.groups run b 1 1 1;
-    Run.threads run b 32 1 1;
-    Run.shared run b 0;
-    Run.int64 run b 0 0L;
-    Run.float64 run b 8 2.5;
-    Run.int64 run b 8 (Int64.of_int i);
-    Run.int32 run b 16 3;
-    Run.float32 run b 20 1.5;
+    if Sub.take s != run then fail "the run is taken";
+    for j = 0 to count - 1 do
+      let b = blocks.(j) in
+      Run.groups run b 1 1 1;
+      Run.threads run b 32 1 1;
+      Run.shared run b 0;
+      Run.int64 run b 0 0L;
+      Run.float64 run b 8 2.5;
+      Run.int64 run b 8 (Int64.of_int i);
+      Run.int32 run b 16 3;
+      Run.float32 run b 20 1.5
+    done;
     Sys.opaque_identity (submitted run buffers)
   in
   Rig.Point.wait (once 0);
   let last = ref (once 1) in
+  let pieces, plain = C.replays g in
   let bytes =
     Rig_support.allocated_bytes (fun () ->
         for i = 2 to 100 do
@@ -739,7 +754,11 @@ let no_allocation () =
         done)
   in
   Rig.Point.wait !last;
-  equal int ~msg:"bytes of 99 launches" 0 bytes
+  equal int ~msg:(strf "bytes of 99 submits of %d launches" count) 0 bytes;
+  let played = if count = 1 then (0, 99) else (99, 0) in
+  equal (pair int int) ~msg:"pieces and plain launches" played
+    (let p, l = C.replays g in
+     (p - pieces, l - plain))
 
 let launches =
   group ~timeout:120. "launches"
@@ -747,7 +766,8 @@ let launches =
       test "launches the GPU cannot run are refused" refused_launches;
       test "a launch takes shared memory past 48 KiB, up to the largest"
         largest_shared_memory;
-      test "a cached launch allocates nothing" no_allocation;
+      test "a cached launch allocates nothing" (no_allocation 1);
+      test "a cached run of two launches allocates nothing" (no_allocation 2);
     ]
 
 (* Timeline and loss *)
@@ -1112,311 +1132,455 @@ let timeline =
         own_word_after_running;
     ]
 
-(* Graphs *)
+(* Replay *)
 
-let graph g ks = (C.capability g).graph ks
-let stopped_graph = "making the graph: the device was stopped"
+let kernels_image = Rig_gpu_support.loader (fun () -> S.fixture "kernels.ptx")
 
-(* A 64-bit word of pinned memory, zeroed. *)
-let counter g =
-  let r = require_some (C.alloc g Pinned 8) in
-  H.set64 (host r) 0;
-  r
+(* [f ()], and the pieces and plain launches of [g]'s submits meanwhile. *)
+let replaying g f =
+  let pieces, plain = C.replays g in
+  let r = f () in
+  let pieces', plain' = C.replays g in
+  (r, (pieces' - pieces, plain' - plain))
 
-(* [launch t gr us] submits a fill that updates [gr]'s nodes [us] and launches
-   it, and is its value. *)
-let launch (t : S.t) gr us =
-  S.submit_work t [ S.part t.d (S.graph_launch gr us) ]
+(* The pieces and plain launches of a run of [n] launches, as rig_cuda.mli's
+   Replay section cuts it, summed over [runs]. *)
+let cut runs =
+  let count n = if n = 1 then (0, 1) else ((n + 31) / 32, 0) in
+  List.fold_left
+    (fun (p, l) n ->
+      let p', l' = count n in
+      (p + p', l + l'))
+    (0, 0)
+    (List.filter (fun n -> n > 0) runs)
 
-(* The steps [first], [first + 1], ... of [n] nodes on the word [out]. *)
-let steps step out ~first n =
-  Array.init n (fun j -> S.kernel step (address out) (first + j))
+(* A launch of [fn] of [params] bytes over [groups] of [threads] with
+   [shared] bytes of dynamic shared memory, its first 8 bytes a write of
+   the buffer [slot] unless [slot] is negative, its other bytes as [store]
+   stores them. *)
+type launch = {
+  fn : Rig.Image.func;
+  params : int;
+  slot : int;
+  groups : int * int * int;
+  threads : int * int * int;
+  shared : int;
+  store : Run.t -> Sub.block -> unit;
+}
 
-let chain n =
-  S.with_ @@ fun ({ g; _ } as t) ->
-  let m, kernel = S.kernels g in
-  let out = counter g in
-  let gr = require_ok (graph g (steps (kernel "step") out ~first:0 n)) in
-  equal int ~msg:"its nodes" n (Array.length gr.nodes);
-  Rig.Point.wait (launch t gr [||]);
-  equal int ~msg:"the word" n (H.get64 (host out));
-  C.unload g m;
-  C.free g out
+let launch ?(slot = 0) ?(groups = (1, 1, 1)) ?(threads = (1, 1, 1))
+    ?(shared = 0) ?(store = fun _ _ -> ()) fn ~params =
+  { fn; params; slot; groups; threads; shared; store }
 
-let prepared_graph () =
-  S.with_ @@ fun ({ g; _ } as t) ->
-  let m, kernel = S.kernels g in
-  let out = counter g in
-  let weak = Weak.create 1 in
-  let[@inline never] made () =
-    let gr = require_ok (graph g (steps (kernel "step") out ~first:0 2)) in
-    Weak.set weak 0 (Some gr);
-    Rig_gpu_support.prepare t.d
-      [ S.part t.d (S.graph_launch gr [||]) ]
+(* A run of a submission of [ls] on [d], their blocks stored. *)
+let run_of d ls =
+  let part l =
+    let refs = if l.slot < 0 then [||] else [| Sub.write l.slot ~at:0 |] in
+    Sub.launch ~refs l.fn ~params:l.params
   in
-  let run, buffers = made () in
-  (* Collection and draining also release an unreachable fill's hold. *)
-  for round = 1 to 4 do
-    Gc.full_major ();
-    ignore (Rig.Buffer.create t.d 0);
-    equal bool
-      ~msg:(strf "the submission keeps its graph after collection %d" round)
-      true (Weak.check weak 0)
+  let s = Sub.make d (Array.of_list (List.map part ls)) in
+  let run = Sub.take s in
+  List.iteri
+    (fun i l ->
+      let b = Sub.block s i in
+      let gx, gy, gz = l.groups and tx, ty, tz = l.threads in
+      Run.groups run b gx gy gz;
+      Run.threads run b tx ty tz;
+      Run.shared run b l.shared;
+      l.store run b)
+    ls;
+  run
+
+let func image name = require_some (Rig.Image.resolve image name)
+
+(* [ids] over one thread, storing [v] into word [j] of its buffer, the
+   offset its ref holds. *)
+let store_id d j v =
+  launch (func (launch_image d) "ids") ~params:24 ~store:(fun run b ->
+      Run.int64 run b 0 (Int64.of_int (4 * j));
+      Run.int64 run b 8 (Int64.of_int v);
+      Run.int32 run b 16 0;
+      Run.float32 run b 20 0.)
+
+(* A chain's node runs the bounds a plain launch runs, updated from the
+   placeholder's launch of one thread with no parameters or shared memory:
+   each case plays a piece of a length no earlier case played, so that
+   every update starts from the placeholder. A grid of 2{^31} - 1 groups
+   along x is left out, as it takes 2 s. *)
+let placeholder_bounds () =
+  S.with_ @@ fun ({ d; g } as t) ->
+  let fn = func (launch_image d) in
+  let pinned n = B.create ~memory:Pinned d n in
+  let played msg ls buffers =
+    let run = run_of d ls in
+    let (), counts =
+      replaying g (fun () -> Rig.Point.wait (submitted run buffers))
+    in
+    equal (pair int int) ~msg:(msg ^ ": pieces and plain launches") (1, 0)
+      counts
+  in
+  (* [mark] takes no parameters. *)
+  let marks = Array.init 2 (fun _ -> pinned 4) in
+  let mark = launch (fn "mark") ~params:0 ~slot:(-1) in
+  let count slot = launch (fn "marks") ~params:8 ~slot in
+  played "no parameters" [ count 0; mark; mark; mark; count 1 ] marks;
+  equal int ~msg:"marks" 3 (H.get32 (H.at marks.(1)));
+  (* Each launch [j] stores its words [10j + 1] and on into its own buffer. *)
+  let wide msg ~name ~params ats ls =
+    let words_of = List.length ats in
+    let outs = Array.init (List.length ls) (fun _ -> pinned (4 * words_of)) in
+    let each j f =
+      launch f ~params ~slot:j ~store:(fun run b ->
+          List.iteri (fun k at -> Run.int32 run b at ((10 * j) + k + 1)) ats)
+    in
+    played msg (List.mapi each ls) outs;
+    Array.iteri
+      (fun j out ->
+        equal (array int)
+          ~msg:(strf "%s %d's words" name j)
+          (Array.init (List.length ats) (fun k -> (10 * j) + k + 1))
+          (words out (List.length ats)))
+      outs
+  in
+  wide "4,096 bytes of parameters" ~name:"page" ~params:4096 [ 8; 4092 ]
+    [ fn "page"; fn "page" ];
+  (match S.wide_binary t with
+  | None -> ()
+  | Some binary ->
+      let widest = func (require_ok (Rig.Image.load d binary)) "widest" in
+      wide "32,764 bytes of parameters" ~name:"widest" ~params:32764
+        [ 8; 16384; 32760 ] [ widest; widest; widest ]);
+  (* [rotate] at 1 KiB, the largest, 48 KiB and a word, and the largest. *)
+  let largest = S.attribute largest_shared in
+  let shared = [ 1024; largest; (48 * 1024) + 4; largest ] in
+  let outs = Array.init 4 (fun _ -> pinned (4 * 256)) in
+  let rotate j shared =
+    launch (fn "rotate") ~params:16 ~slot:j ~threads:(256, 1, 1) ~shared
+      ~store:(fun run b ->
+        Run.int32 run b 8 (5 + j);
+        Run.int32 run b 12 0)
+  in
+  played "dynamic shared memory" (List.mapi rotate shared) outs;
+  Array.iteri
+    (fun j out ->
+      equal (array int)
+        ~msg:(strf "rotate %d's words" j)
+        (Array.init 256 (fun i -> 5 + j + (3 * ((i + 1) mod 256))))
+        (words out 256))
+    outs;
+  (* [ids] over 65535 groups along each axis, and 1024 threads along x and
+     y, each storing [j + (j + 1)k] into word [k] of one buffer. *)
+  let n = 65535 * 1024 in
+  let big = B.create d (4 * n) in
+  let shapes =
+    [
+      ((1, 1, 65535), (1024, 1, 1));
+      ((65535, 1, 1), (1, 1024, 1));
+      ((1, 65535, 1), (1024, 1, 1));
+      ((65535, 1, 1), (1024, 1, 1));
+      ((1, 1, 65535), (16, 64, 1));
+      ((1, 65535, 1), (1, 1024, 1));
+    ]
+  in
+  let ids j (groups, threads) =
+    launch (fn "ids") ~params:24 ~groups ~threads ~store:(fun run b ->
+        Run.int64 run b 8 (Int64.of_int j);
+        Run.int32 run b 16 (j + 1);
+        Run.float32 run b 20 0.)
+  in
+  played "the largest grids" (List.mapi ids shapes) [| big |];
+  let s = Sub.make ~fixed:[ (big, Read) ] d [||] in
+  let at k = Nativeint.of_int (Sub.address s big + (4 * k)) in
+  let word k = String.get_int32_le (S.read_gpu (at k) 4) 0 in
+  List.iter
+    (fun k ->
+      equal int32 ~msg:(strf "word %d" k)
+        (Int32.of_int (5 + (6 * k)))
+        (word k))
+    [ 0; 1; n / 2; n - 1 ]
+
+(* An update CUDA refuses runs its piece plain. No image of a function whose
+   launches CUDA runs and whose updates it refuses, such as one that
+   launches kernels from the GPU, loads without CUDA's linker, so the
+   refusal comes from a bound: [rotate]'s largest shared memory, lowered
+   behind rig's back below the 1 KiB a run of two takes, which CUDA then
+   refuses at the first update and at the plain launch that follows it. *)
+let refused_update () =
+  S.with_ @@ fun { d; g } ->
+  let fn = func (launch_image d) "rotate" in
+  let rotate =
+    launch fn ~params:16 ~threads:(256, 1, 1) ~shared:1024 ~store:(fun run b ->
+        Run.int32 run b 8 5;
+        Run.int32 run b 12 0)
+  in
+  let out = B.create ~memory:Pinned d (4 * 256) in
+  let run = run_of d [ rotate; rotate ] in
+  let (), counts =
+    replaying g (fun () -> Rig.Point.wait (submitted run [| out |]))
+  in
+  equal (pair int int) ~msg:"pieces and plain launches before" (1, 0) counts;
+  S.limit_shared (Rig.Image.entry fn) 512;
+  let run = Sub.take (Run.submission run) in
+  let why, counts =
+    replaying g (fun () -> lost (fun () -> submitted run [| out |]))
+  in
+  starts_with ~prefix:"launching a kernel: CUDA_ERROR_INVALID_VALUE" why;
+  equal (pair int int) ~msg:"pieces and plain launches after" (0, 1) counts
+
+(* The order law. A copy that follows nothing runs on COPY:0, then come [a]
+   steps of a counter, then, if [across], [twice] of the copy's last words,
+   which follows the copy, then [b] steps: the counter counts every step and
+   [twice] reads the words the copy wrote. Unless [named], the steps name no
+   buffer and step a counter the driver allocated, out of rig's sight: they
+   follow nothing, run on COMPUTE:0 in their order, and play as rig_cuda.mli
+   cuts them, [a] then [1 + b] launches with [twice] and [a + b] without.
+   [named] steps name a buffer, which may share memory with the copy, so
+   each follows it; the first launch's wait covers the others, which play
+   with it as one run. The copy is large, so that a [twice] that did not
+   wait reads words of the case before. *)
+let copied = 1 lsl 20
+let tail = 256
+let twice_c = 7
+let order_buffers = ref None
+let order_cases = ref 0
+
+let order_law (named, a, across, b) =
+  S.with_shared @@ fun ({ d; g } as t) ->
+  let src, dst, out, stepped =
+    match !order_buffers with
+    | Some (d', buffers) when d' == d -> buffers
+    | Some _ | None ->
+        let pinned n = B.create ~memory:Pinned d n in
+        let buffers =
+          ( pinned (4 * copied),
+            pinned (4 * copied),
+            pinned (4 * tail),
+            pinned 8 )
+        in
+        order_buffers := Some (d, buffers);
+        buffers
+  in
+  let counter = require_some (C.alloc g Pinned 8) in
+  incr order_cases;
+  let first = 1000 * !order_cases in
+  for j = 0 to tail - 1 do
+    H.set32 (H.at src + (4 * (copied - tail + j))) (first + j)
   done;
-  Rig.Point.wait (Rig.submit run ~buffers);
-  equal int ~msg:"both kernels ran" 2 (H.get64 (host out));
-  C.unload g m;
-  C.free g out
-
-let collected_image () =
-  S.with_ @@ fun ({ g; _ } as t) ->
-  let out = counter g in
-  let weak = Weak.create 1 in
-  let[@inline never] make () =
-    let image = require_ok (Rig.Image.load t.d (S.fixture "kernels.ptx")) in
-    Weak.set weak 0 (Some image);
-    let fn = require_some (Rig.Image.resolve image "step") in
-    let step = Rig.Image.entry fn in
-    require_ok (graph g [| S.kernel step (address out) 0 |])
+  H.set64 (host counter) 0;
+  H.set64 (H.at stepped) 0;
+  let step i =
+    if not named then S.launch t "step" (address counter) i
+    else
+      Rig_gpu_support.launching (kernels_image d) "step" ~params:16
+        [| (stepped, Rig.Read_write, 0) |]
+        (fun run b -> Run.int64 run b 8 (Int64.of_int i))
   in
-  let gr = make () in
-  for round = 1 to 4 do
+  let twice =
+    Rig_gpu_support.launching (launch_image d) "twice" ~params:20 ~threads:tail
+      [| (out, Rig.Read_write, 0); (dst, Rig.Read, 8) |]
+      (fun run b ->
+        Run.int64 run b 8 (Int64.of_int (4 * (copied - tail)));
+        Run.int32 run b 16 twice_c)
+  in
+  let copy =
+    Rig_gpu_support.work Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
+  in
+  let works =
+    (copy :: List.init a step)
+    @ (if across then [ twice ] else [])
+    @ List.init b (fun i -> step (a + i))
+  in
+  let twices = if across then 1 else 0 in
+  let runs =
+    if named then [ a + twices + b ]
+    else if across then [ a; 1 + b ]
+    else [ a + b ]
+  in
+  cover "a cut before a launch after COPY:0" ((not named) && across && a > 0);
+  cover "a launch after COPY:0 an earlier launch's wait covers"
+    (named && across && a > 0);
+  cover "a run of more than 32 launches" (List.exists (fun n -> n > 32) runs);
+  cover "a run of 33 launches" (List.mem 33 runs);
+  cover "a run of one launch" (List.mem 1 runs);
+  let (), counts =
+    replaying g (fun () -> Rig.Point.wait (S.submit_work t works))
+  in
+  let steps = H.get64 (if named then H.at stepped else host counter) in
+  C.free g counter;
+  equal int ~msg:"steps" (a + b) steps;
+  if across then
+    equal (array int) ~msg:"twice's words"
+      (Array.init tail (fun j -> (2 * (first + j)) + twice_c))
+      (words out tail);
+  equal (pair int int) ~msg:"pieces and plain launches" (cut runs) counts
+
+let run_length =
+  Gen.frequency
+    [
+      (2, Gen.of_list ~pp:Format.pp_print_int [ 0; 1; 2; 31; 32; 33; 64; 65 ]);
+      (1, Gen.int_range 0 70);
+    ]
+
+let order_case =
+  Gen.with_pp
+    (fun ppf (named, a, across, b) ->
+      Format.fprintf ppf "(%b, %d, %b, %d)" named a across b)
+    (Gen.quad Gen.bool run_length Gen.bool run_length)
+
+(* An image unloads while a chain's nodes hold its function: the memory of
+   its 256 MiB global returns, and the chain then plays another image's
+   launches. *)
+let unload_chained () =
+  S.with_ @@ fun { d; g } ->
+  let before = S.free_memory () in
+  let[@inline never] play () =
+    let image = require_ok (Rig.Image.load d (S.fixture "global.ptx")) in
+    let touch = launch (func image "touch") ~params:16 ~slot:(-1) in
+    let run = run_of d [ touch; touch ] in
+    let (), counts =
+      replaying g (fun () -> Rig.Point.wait (submitted run [||]))
+    in
+    equal (pair int int) ~msg:"touch's pieces and plain launches" (1, 0) counts;
+    at_most int ~msg:"loaded" ~than:(before - (global / 2)) (S.free_memory ())
+  in
+  play ();
+  for _ = 1 to 4 do
     Gc.full_major ();
-    ignore (Rig.Buffer.create t.d 0);
-    equal bool
-      ~msg:(strf "image collected after round %d" round)
-      false (Weak.check weak 0)
+    ignore (B.create d 0)
   done;
-  Rig.Point.wait (launch t gr [||]);
-  equal int ~msg:"the graph kept its kernel loaded" 1 (H.get64 (host out));
-  C.free g out
-
-let collected_together () =
-  S.with_ @@ fun ({ g; _ } as t) ->
-  let images = Weak.create 1 and graphs = Weak.create 1 in
-  let[@inline never] make () =
-    let image = require_ok (Rig.Image.load t.d (S.fixture "kernels.ptx")) in
-    let fn = require_some (Rig.Image.resolve image "empty") in
-    let empty = Rig.Image.entry fn in
-    let gr = require_ok (graph g [| S.kernel empty 0 0 |]) in
-    Weak.set images 0 (Some image);
-    Weak.set graphs 0 (Some gr)
+  at_least int ~msg:"unloaded" ~than:(before - (global / 2)) (S.free_memory ());
+  let out = B.create ~memory:Pinned d 8 in
+  let run = run_of d [ store_id d 0 1; store_id d 1 2 ] in
+  let (), counts =
+    replaying g (fun () -> Rig.Point.wait (submitted run [| out |]))
   in
-  make ();
-  for round = 1 to 4 do
-    Gc.full_major ();
-    ignore (Rig.Buffer.create t.d 0);
-    ignore (require_ok (graph g [||]));
-    equal bool
-      ~msg:(strf "image collected after round %d" round)
-      false (Weak.check images 0);
-    equal bool
-      ~msg:(strf "graph collected after round %d" round)
-      false (Weak.check graphs 0)
+  equal (pair int int) ~msg:"ids' pieces and plain launches" (1, 0) counts;
+  equal (array int) ~msg:"ids' words" [| 1; 2 |] (words out 2)
+
+(* Spins until [flag] is set, failing if [what] has not come within 10 s. *)
+let await flag what =
+  let t0 = Rig.Profile.now () in
+  while not (Atomic.get flag) do
+    if Rig.Profile.now () - t0 > 10 * second then
+      failf "no %s within 10 s" what;
+    Domain.cpu_relax ()
   done
 
-let collection_does_not_wait () =
-  S.with_ @@ fun ({ g; _ } as t) ->
-  if S.attribute watchdog <> 0 then
-    skip ~reason:"a display watchdog ends long kernels" ();
-  let flag = require_some (C.alloc g Pinned 8) in
-  let[@inline never] make () =
-    let m, kernel = S.kernels g in
-    let gr = require_ok (graph g [| S.kernel (kernel "empty") 0 0 |]) in
-    C.unload g m;
-    ref (Some gr)
+(* Two submits that need one new length make its chain once. [a]'s grow
+   waits until [b]'s has handed the chain, and [b]'s grow returns only once
+   [a]'s submit has: [a]'s grow makes nothing, its room installs the chain
+   [b]'s grow made, and its piece plays through it before [b]'s room finds
+   the chain installed. Each submit plays one piece of its own launches. *)
+let one_growth () =
+  let grows = Atomic.make 0 in
+  let a_grows = Atomic.make false and handed = Atomic.make false in
+  let a_returned = Atomic.make false in
+  let module Driver = struct
+    include C
+
+    let grow g =
+      match Atomic.fetch_and_add grows 1 with
+      | 0 ->
+          Atomic.set a_grows true;
+          await handed "chain handed by b's grow";
+          C.grow g
+      | 1 ->
+          let grown = C.grow g in
+          Atomic.set handed true;
+          await a_returned "return of a's submit";
+          grown
+      | _ -> C.grow g
+  end in
+  let ({ S.d; g } as t) = S.open_as (module Driver) in
+  Fun.protect ~finally:(fun () -> S.close t) @@ fun () ->
+  let n = 5 in
+  ignore (launch_image d);
+  let base = C.replays g and made = C.made g in
+  let since (p, l) = (p - fst base, l - snd base) in
+  let play first out =
+    let run = run_of d (List.init n (fun j -> store_id d j (first + j))) in
+    let p = submitted run [| out |] in
+    Rig.Point.wait p
   in
-  let gr = make () in
-  Fun.protect
-    ~finally:(fun () -> H.set64 (host flag) 1)
-    (fun () ->
-      let p = spin t flag in
-      gr := None;
-      Gc.full_major ();
-      ignore (Sys.opaque_identity gr);
-      equal int ~msg:"collection returned while the GPU waits"
-        (Rig.Point.value p - 1)
-        (C.signaled g);
-      H.set64 (host flag) 1;
-      Rig.Point.wait p;
-      ignore (require_ok (graph g [||])));
-  C.free g flag
-
-let arguments () =
-  S.with_ @@ fun ({ g; _ } as t) ->
-  let m, kernel = S.kernels g in
-  let out = require_some (C.alloc g Pinned 256) in
-  H.write (host out) (String.make 256 '\000');
-  let k = S.kernel (kernel "double_index") ~block:64 (address out) 37 in
-  let gr = require_ok (graph g [| k |]) in
-  Rig.Point.wait (launch t gr [||]);
-  equal (list int) ~msg:"words 0 to 39"
-    (List.init 40 (fun i -> if i < 37 then 2 * i else 0))
-    (List.init 40 (fun i -> H.get32 (host out + (4 * i))));
-  C.unload g m;
-  C.free g out
-
-(* Runs in flight, each on one of two words and updating every node first: each
-   word counts its runs' steps only if every launch ran the parameters of its
-   own fill, and none of a later fill. *)
-let width = 8
-
-let updates schedule =
-  S.with_ @@ fun ({ g; _ } as t) ->
-  let m, kernel = S.kernels g in
-  let step = kernel "step" in
-  let outs = [| counter g; counter g |] in
-  let gr = require_ok (graph g (steps step outs.(0) ~first:0 width)) in
-  let runs = [| 0; 0 |] in
-  let last = ref None in
-  List.iteri
-    (fun r b ->
-      cover "a run on the other word than the run before"
-        (r > 0 && b <> List.nth schedule (r - 1));
-      cover "a run on the same word as the run before"
-        (r > 0 && b = List.nth schedule (r - 1));
-      let ks = steps step outs.(b) ~first:(runs.(b) * width) width in
-      runs.(b) <- runs.(b) + 1;
-      last := Some (launch t gr (Array.mapi (fun j k -> (j, k)) ks)))
-    schedule;
-  Option.iter Rig.Point.wait !last;
-  equal (list int) ~msg:"each word's steps"
-    (List.map (fun n -> n * width) (Array.to_list runs))
-    (List.map (fun r -> H.get64 (host r)) (Array.to_list outs));
-  C.unload g m;
-  Array.iter (C.free g) outs
-
-let refusals () =
-  S.with_ @@ fun { g; _ } ->
-  let m, kernel = S.kernels g in
-  let step = kernel "step" in
-  let k = S.kernel step 0 0 in
-  let invalid ks = raises_match Exn.invalid_arg (fun () -> graph g ks) in
-  invalid [| { k with grid = (0, 1, 1) } |];
-  invalid [| { k with grid = (1, 1, 1 lsl 32) } |];
-  invalid [| { k with block = (1, 0, 1) } |];
-  invalid [| { k with shared = -1 } |];
-  invalid [| { k with shared = 1 lsl 32 } |];
-  invalid [| k; { k with func = step + 1 } |];
-  let e = require_error (graph g [| { k with shared = (1 lsl 32) - 1 } |]) in
-  starts_with ~prefix:"making the graph: CUDA_ERROR_" e;
-  let empty = require_ok (graph g [||]) in
-  equal int ~msg:"an empty graph's nodes" 0 (Array.length empty.nodes);
-  C.unload g m;
-  invalid [| k |]
-
-(* Collection after close queues destruction for the next open of the GPU. *)
-let collected_after_stop () =
-  let weak = Weak.create 1 in
-  let[@inline never] make () =
-    S.with_ @@ fun ({ g; _ } as t) ->
-    let m = load_global t in
-    let touch = (found (C.entry m "touch")).code in
-    let gr = require_ok (graph g [| S.kernel touch 0 0 |]) in
-    Rig.Point.wait (launch t gr [||]);
-    C.unload g m;
-    S.close t;
-    Weak.set weak 0 (Some gr)
+  let out_a = B.create ~memory:Pinned d (4 * n) in
+  let out_b = B.create ~memory:Pinned d (4 * n) in
+  let a =
+    Domain.spawn (fun () ->
+        Fun.protect ~finally:(fun () -> Atomic.set a_returned true)
+        @@ fun () ->
+        play 1 out_a;
+        since (C.replays g))
   in
-  let collect () =
-    for round = 1 to 4 do
-      Gc.full_major ();
-      ignore (Rig.Buffer.create Rig.host 0);
-      if round = 4 then
-        equal bool ~msg:"the stopped graph was collected" false
-          (Weak.check weak 0)
-    done
-  in
-  let reopen () =
-    S.with_ (fun { g; _ } -> ignore (require_ok (graph g [||])))
-  in
-  make ();
-  collect ();
-  reopen ();
-  let before = S.free_memory () in
-  make ();
-  collect ();
-  at_most int ~msg:"collected module awaits reopening"
-    ~than:(before - (global / 2))
-    (S.free_memory ());
-  reopen ();
-  at_least int ~msg:"reopening reclaimed the module"
-    ~than:(before - (global / 2))
-    (S.free_memory ())
+  await a_grows "grow of a's submit";
+  play 101 out_b;
+  let after_a = Domain.join a in
+  equal int ~msg:"grows" 2 (Atomic.get grows);
+  equal int ~msg:"chains made" 1 (C.made g - made);
+  equal (pair int int) ~msg:"pieces and plain launches as a's submit returned"
+    (1, 0) after_a;
+  equal (pair int int) ~msg:"pieces and plain launches of both" (2, 0)
+    (since (C.replays g));
+  equal (array int) ~msg:"a's words" (Array.init n (fun j -> 1 + j))
+    (words out_a n);
+  equal (array int) ~msg:"b's words" (Array.init n (fun j -> 101 + j))
+    (words out_b n)
 
-let after_stop () =
-  S.with_ @@ fun ({ g; _ } as t) ->
-  let _, kernel = S.kernels g in
-  let k = S.kernel (kernel "empty") 0 0 in
-  S.close t;
-  equal (result pass string) ~msg:"after the stop" (Error stopped_graph)
-    (Result.map ignore (graph g [| k |]))
+(* The test's executable, run with [jitless] where CUDA compiles no PTX,
+   prints what loading fixtures/kernels.ptx on GPU 0 answers, then the
+   counter of two [step]s of fixtures/kernels.cubin in one submit, and the
+   device's pieces and plain launches. *)
+let jitless = "--jitless"
 
-(* Graph calls on another domain while the device stops: each answers as made
-   before the stop or after it. The GPU has one device at a time, so the calls
-   are checked against the only orders a stop allows: graphs made, then the
-   stop's answer, and nothing else, such as CUDA's error for a kernel unloaded
-   under the call. *)
-let beside_stop () =
-  S.with_ @@ fun ({ g; _ } as t) ->
-  let _, kernel = S.kernels g in
-  let ks = Array.init 64 (fun i -> S.kernel (kernel "step") 0 i) in
-  let made = Atomic.make 0 in
-  let rec make () =
-    match graph g ks with
-    | Ok _ ->
-        Atomic.incr made;
-        make ()
-    | Error e -> e
-  in
-  let maker = Domain.spawn make in
-  while Atomic.get made = 0 do
-    Domain.cpu_relax ()
-  done;
-  S.close t;
-  let after = Result.map ignore (graph g ks) in
-  equal string ~msg:"the other domain's last answer" stopped_graph
-    (Domain.join maker);
-  equal (result pass string) ~msg:"after the stop" (Error stopped_graph) after
+let print_jitless () =
+  let ({ S.d; g } as t) = S.open_ () in
+  Fun.protect ~finally:(fun () -> S.close t) @@ fun () ->
+  (match Rig.Image.load d (S.fixture "kernels.ptx") with
+  | Ok _ -> print_endline "loaded"
+  | Error why -> print_endline why);
+  match Rig.Image.load d (S.fixture "kernels.cubin") with
+  | Error why -> print_string why
+  | Ok image ->
+      let counter = B.create ~memory:Pinned d 8 in
+      H.set64 (H.at counter) 0;
+      let step i =
+        Rig_gpu_support.launching image "step" ~params:16
+          [| (counter, Rig.Read_write, 0) |]
+          (fun run b -> Run.int64 run b 8 (Int64.of_int i))
+      in
+      Rig.Point.wait (S.submit_work t [ step 0; step 1 ]);
+      let pieces, plain = C.replays g in
+      Printf.printf "%d %d %d\n%!" (H.get64 (H.at counter)) pieces plain
 
-(* A graph call inside a lock of its thread's, as from a callback inside one,
-   raises naming it, having made nothing; one after makes the graph. *)
-let graph_inside_lock () =
-  S.with_ @@ fun { g; _ } ->
-  let made =
-    Rig_support.inside_lock @@ fun () ->
-    match graph g [||] with
-    | _ -> "made"
-    | exception Invalid_argument why
-      when String.starts_with ~prefix:"Rig_cuda_abi.graph: called from" why ->
-        "refused"
-  in
-  equal ~msg:"inside the lock" string "refused" made;
-  ignore (require_ok (graph g [||]))
+(* A GPU whose driver compiles no PTX, as under CUDA_DISABLE_PTX_JIT=1 in a
+   process of its own, has no placeholder: a cubin loads all the same, and
+   its run of two launches plays plain. *)
+let without_placeholder () =
+  let arch = S.with_ (fun { g; _ } -> (C.facts g).arch) in
+  if arch <> "sm_89" then
+    skip ~reason:"fixtures/kernels.cubin is compiled for sm_89" ();
+  let code, out = child jitless (with_var "CUDA_DISABLE_PTX_JIT" "1") in
+  equal ~msg:"the child's exit code" int 0 code;
+  match String.split_on_char '\n' out with
+  | [ ptx; ran; "" ] ->
+      contains ~msg:"kernels.ptx's load"
+        ~sub:"loading the image: CUDA_ERROR_JIT_COMPILATION_DISABLED" ptx;
+      equal string ~msg:"the counter, pieces and plain launches" "2 0 2" ran
+  | _ -> failf "the child printed %S" out
 
-let graphs =
-  group ~timeout:60. "graphs"
+let replay =
+  group ~timeout:120. "replay"
     [
-      cases "chain"
-        ~id:(strf "a chain of %d kernels runs each after the one before")
-        [ 0; 1; 17; 64 ] chain;
-      test "a prepared fill keeps its graph" prepared_graph;
-      test "a graph keeps a collected image's code" collected_image;
-      test "a graph and its image can be collected together" collected_together;
-      test "graph collection never waits for unrelated work"
-        collection_does_not_wait;
-      test "a kernel reads its argument block" arguments;
-      prop ~count:30
-        "a launch runs the updates of its own fill, none of a later one"
-        (Gen.list ~size:(Gen.int_range 1 40) (Gen.int_range 0 1))
-        updates;
-      test "refuses what it cannot record" refusals;
-      test "a collected graph is reclaimed after its device stopped"
-        collected_after_stop;
-      test "a graph call after the stop answers the stop" after_stop;
-      test "graph calls beside a stop answer as before or after it" beside_stop;
-      test "a graph call inside a lock of its thread's raises naming it"
-        graph_inside_lock;
+      test "a chain's node runs the bounds of a launch from the placeholder"
+        placeholder_bounds;
+      test "an update CUDA refuses runs its piece plain" refused_update;
+      prop ~count:200
+        "runs play in order, cut at 32 and at a launch's first wait for COPY:0"
+        order_case order_law;
+      test "an image unloads while a chain holds its function" unload_chained;
+      test "two submits that need one new length make its chain once"
+        one_growth;
+      test "a GPU whose driver compiles no PTX loads a cubin and plays plain"
+        without_placeholder;
     ]
 
 (* The shared device: the stateful tests' programs use one device, opened by the
@@ -1635,6 +1799,127 @@ let registry_commands ~cover =
       Registry.free Registry.free_sys;
   ]
 
+(* Chains with launches queued *)
+
+module Chains = struct
+  type kind = Step | Set
+
+  (* A launch advances one of two counters: [Step] through kernels.ptx's
+     [step], which stores the next value only if the counter holds the
+     launch's own, [Set] through launch.ptx's [ids], which stores the
+     launch's next value. A launch that ran another launch's parameters, or
+     before the launches it follows, leaves its counter off the model's. *)
+  type launch = kind * int
+
+  let launches : launch list Gen.t =
+    let name = function Step -> "step" | Set -> "set" in
+    let pp ppf ls =
+      Format.fprintf ppf "[%s]"
+        (String.concat " "
+           (List.map (fun (k, w) -> strf "%s%d" (name k) w) ls))
+    in
+    let length =
+      Gen.frequency
+        [
+          (2, Gen.of_list ~pp:Format.pp_print_int [ 1; 2; 31; 32; 33 ]);
+          (1, Gen.int_range 1 40);
+        ]
+    in
+    let launch =
+      Gen.pair
+        (Gen.of_list ~pp:(fun ppf k -> Format.pp_print_string ppf (name k))
+           [ Step; Set ])
+        (Gen.int_range 0 1)
+    in
+    Gen.with_pp pp (Gen.list ~size:length launch)
+
+  (* The reference: each counter's value once the work submitted ends. *)
+  let make () = [| 0; 0 |]
+
+  let rec changes = function
+    | (k, _) :: ((k', _) :: _ as rest) -> k <> k' || changes rest
+    | [] | [ _ ] -> false
+
+  let submit ?(cover = fun label cond -> cover label cond) m ls =
+    let n = List.length ls in
+    cover "a run of one launch" (n = 1);
+    cover "a run of more than 32 launches" (n > 32);
+    cover "a run whose function changes" (changes ls);
+    List.iter (fun (_, w) -> m.(w) <- m.(w) + 1) ls
+
+  let read m = (m.(0), m.(1))
+
+  (* The system: submits never wait, so a submit updates chains whose
+     earlier launches are still queued. A lock orders each value's calls,
+     and two values' calls run concurrently. *)
+  type sys = {
+    t : S.t;
+    counters : B.t array;
+    values : int array;
+    lock : Mutex.t;
+    mutable last : Rig.Point.t option;
+  }
+
+  let start () =
+    let t = shared () in
+    let counter _ =
+      let b = B.create ~memory:Pinned t.d 8 in
+      H.set64 (H.at b) 0;
+      b
+    in
+    {
+      t;
+      counters = Array.init 2 counter;
+      values = [| 0; 0 |];
+      lock = Mutex.create ();
+      last = None;
+    }
+
+  let work s (kind, w) =
+    let v = s.values.(w) in
+    s.values.(w) <- v + 1;
+    let uses = [| (s.counters.(w), Rig.Read_write, 0) |] in
+    match kind with
+    | Step ->
+        Rig_gpu_support.launching (kernels_image s.t.d) "step" ~params:16 uses
+          (fun run b -> Run.int64 run b 8 (Int64.of_int v))
+    | Set ->
+        Rig_gpu_support.launching (launch_image s.t.d) "ids" ~params:24 uses
+          (fun run b ->
+            Run.int64 run b 8 (Int64.of_int (v + 1));
+            Run.int32 run b 16 0;
+            Run.float32 run b 20 0.)
+
+  let submit_sys s ls =
+    Mutex.protect s.lock (fun () ->
+        s.last <- Some (S.submit_work s.t (List.map (work s) ls)))
+
+  let wait s = Option.iter Rig.Point.wait s.last
+
+  let read_sys s =
+    Mutex.protect s.lock (fun () ->
+        wait s;
+        let value w = H.get64 (H.at s.counters.(w)) in
+        (value 0, value 1))
+
+  let release s = Mutex.protect s.lock (fun () -> wait s)
+end
+
+let chains = abstract "c" ~release:Chains.release
+
+(* On two domains a submit's covers count once per order, so the model
+   labels nothing there. *)
+let chains_commands ~cover =
+  [
+    command "start" (Gen.unit @-> makes chains) Chains.make Chains.start;
+    command "submit"
+      (chains ^-> Chains.launches @-> returns unit)
+      (Chains.submit ~cover) Chains.submit_sys;
+    command "read"
+      (chains ^-> returns (pair int int))
+      Chains.read Chains.read_sys;
+  ]
+
 let stateful =
   group ~timeout:300. "stateful"
     [
@@ -1643,11 +1928,18 @@ let stateful =
       stateful ~count:20 ~domains:2
         "map_host from two domains shares a host range both ways"
         (registry_commands ~cover:(fun _ _ -> ()));
+      stateful ~count:30 ~steps:20
+        "chains play each launch's own values with launches queued"
+        (chains_commands ~cover);
+      stateful ~count:5 ~domains:2
+        "chains from two domains play each launch's own values"
+        (chains_commands ~cover:(fun _ _ -> ()));
     ]
 
 let () =
   match Sys.argv with
   | [| _; arg |] when arg = unloadable -> print_unloadable ()
+  | [| _; arg |] when arg = jitless -> print_jitless ()
   | _ ->
       exit
         (run "rig_cuda"
@@ -1659,7 +1951,7 @@ let () =
              work;
              images;
              launches;
-             graphs;
              timeline;
+             replay;
              stateful;
            ])
