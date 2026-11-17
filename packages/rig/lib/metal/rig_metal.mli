@@ -365,13 +365,15 @@ val capability : t -> Rig_metal_abi.t
     {2:specialised Specialised metallibs}
 
     A specialised metallib is the bytes ["RMSC"], a count [n], [n] values,
-    then a metallib, where [n] and each value are unsigned 32-bit integers
-    in little-endian order. Value [k] is the value of function constant [k]
-    of each function of the image that declares it, at the type that
-    function declares, so two functions may read one value at two types.
-    The types are [bool], [char], [uchar], [short], [ushort], [int] and
-    [uint], a signed type's value in two's complement: [0xffffff80] is
-    [-128] for a [char]. A function ignores the values of constants it does
+    then a metallib. The count is an unsigned 32-bit integer and each value
+    a 32-bit word, all in little-endian order. Value [k] is the value of
+    function constant [k] of each function of the image that declares it,
+    at the type that function declares, so two functions may read one value
+    at two types. The types are [bool], [char], [uchar], [short], [ushort],
+    [int] and [uint]. [char], [short] and [int] read the word as a
+    two's-complement integer, so [0xffffff80] is [-128] for a [char] and an
+    [int] takes every word; [bool] and the unsigned types read it as an
+    unsigned integer. A function ignores the values of constants it does
     not declare, so a function that declares none runs as from the metallib
     alone. A metallib without the header has no values.
 
@@ -381,8 +383,9 @@ val capability : t -> Rig_metal_abi.t
     {ul
     {- it declares a required constant at index [n] or above, which Metal
        may compile into a pipeline that stores nothing;}
-    {- a value lies outside its constant's type, such as [2] for a [bool]
-       or [0x8000] for a [short], which Metal would truncate;}
+    {- a value lies outside its constant's type, as read, such as [2] for a
+       [bool], [0x8000] for a [short] or [0xffffffff] for a [ushort], which
+       Metal would truncate;}
     {- a constant of another type, such as [float], has a value.}}
     A constant that has no value and is not required takes the value the
     function gives it where [is_function_constant_defined] is false.
