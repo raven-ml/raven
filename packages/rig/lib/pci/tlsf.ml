@@ -60,6 +60,7 @@ type t = {
   heads : block array; (* the first free block of each class *)
   seconds : int array;
   mutable firsts : int;
+  mutable held : int; (* the bytes of the taken blocks *)
 }
 
 (* Bits *)
@@ -210,6 +211,7 @@ let create ~base length =
       heads = Array.make (levels * classes) nil;
       seconds = Array.make levels 0;
       firsts = 0;
+      held = 0;
     }
   in
   if length > 0 then begin
@@ -244,6 +246,7 @@ let take_from t ~align b req =
     insert t rest
   end;
   ab.state <- Taken;
+  t.held <- t.held + ab.size;
   got
 
 (* The first free block, in address order, that holds [req] bytes at an aligned
@@ -289,6 +292,7 @@ let free t x =
   match Tables.Address.find t.blocks (x - t.base) with
   | exception Not_found -> false
   | b when b.state = Taken ->
+      t.held <- t.held - b.size;
       let p = b.prev and n = b.next in
       let join_p = p != nil && p.state = Free in
       let join_n = n != nil && n.state = Free in
@@ -309,6 +313,8 @@ let free t x =
       if join_n then Tables.Address.remove t.blocks n.start;
       true
   | _ -> false
+
+let held t = t.held
 
 let taken t =
   Tables.Address.fold

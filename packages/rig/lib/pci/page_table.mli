@@ -160,6 +160,14 @@ val main_pool : t -> int
 (** [main_pool t] is the number of bytes of the main pool, {!val-memory} less
     the boot pool and the tables' pool. *)
 
+val main_free : t -> int
+(** [main_free t] is the bytes of the main pool in no block, in a constant
+    time: {!main_pool} less the blocks that {!palloc}, {!alloc} and tables
+    there hold, each the 4 KiB pages its request was rounded up to. Memory
+    that an alignment leaves below a block stays free. A request of the bytes
+    [main_free t] states may still be refused, as the pool's bound on each
+    request states ({!palloc}). *)
+
 (** {1:physical Physical memory} *)
 
 val palloc : ?align:int -> ?zero:bool -> ?boot:bool -> t -> int -> int option

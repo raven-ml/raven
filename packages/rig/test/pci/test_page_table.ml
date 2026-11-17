@@ -186,9 +186,13 @@ let test_main_pool =
       let t, _ = tables ~memory ~boot ~tables:kind () in
       equal ~msg:"the GPU's memory" int memory (Page_table.memory t);
       equal ~msg:"the main pool's size" int main (Page_table.main_pool t);
+      equal ~msg:"the main pool free" int main (Page_table.main_free t);
       equal ~msg:"the main pool's first block" (option hex)
         (if main = 0 then None else Some (memory - main))
-        (Page_table.palloc ~zero:false t page))
+        (Page_table.palloc ~zero:false t page);
+      equal ~msg:"the main pool less its first block" int
+        (Int.max 0 (main - page))
+        (Page_table.main_free t))
 
 let test_create_refusals =
   cases "refuses"
@@ -1374,10 +1378,15 @@ let pfree m a =
   else if owns m.main then give m.main a
   else invalid_arg "Page_table.pfree"
 
+(* The bytes of [p] in none of its blocks. *)
+let unheld p = p.hi - p.lo - sum (sizes p.live)
+
 let pools =
   abstract "t" ~invariant:(fun m (t, _) ->
       equal ~msg:"the GPU's memory" int small_memory (Page_table.memory t);
-      equal ~msg:"root" hex m.root (Page_table.root t))
+      equal ~msg:"root" hex m.root (Page_table.root t);
+      equal ~msg:"the main pool's free bytes" int (unheld m.main)
+        (Page_table.main_free t))
 
 let blocks m =
   List.filter (( <> ) m.root) (List.map fst (m.boot.live @ m.main.live))
@@ -1578,7 +1587,9 @@ let allocs =
         |> List.sort (fun a b -> compare a.va b.va)
       in
       equal ~msg:"entries" (list placed) want (pages g t);
-      equal ~msg:"flushed" int 0 g.unflushed)
+      equal ~msg:"flushed" int 0 g.unflushed;
+      equal ~msg:"the main pool's free bytes" int (unheld m.phys)
+        (Page_table.main_free t))
 
 let mapping =
   Testable.make

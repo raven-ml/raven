@@ -54,6 +54,10 @@ val free : t -> int -> bool
     was one. It is [false], changing nothing, if no block of [a] starts at [x]
     or that block is free already. It allocates nothing. *)
 
+val held : t -> int
+(** [held a] is the bytes of the blocks {!alloc} returned that are not free,
+    in a constant time. The gap below an aligned start stays free. *)
+
 val taken : t -> int
 (** [taken a] is the number of blocks {!alloc} returned that are not free, in
     a time that grows with the blocks [a] holds. *)
