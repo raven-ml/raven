@@ -107,7 +107,6 @@ external driver_version : unit -> int = "caml_rig_cuda_driver_version"
 external device_count : unit -> int = "caml_rig_cuda_count"
 external device : int -> int = "caml_rig_cuda_device"
 external attribute : int -> int -> int = "caml_rig_cuda_attribute"
-external total_memory : int -> int = "caml_rig_cuda_total_memory"
 external bus : int -> bytes -> int = "caml_rig_cuda_bus" [@@noalloc]
 
 (* From cuda.h *)
@@ -310,6 +309,7 @@ type t = {
 
 external open_device : int -> nativeint -> bool -> int = "caml_rig_cuda_open"
 external context_of : int -> int = "caml_rig_cuda_context" [@@noalloc]
+external total_of : int -> int = "caml_rig_cuda_total" [@@noalloc]
 external stop_device : int -> bool = "caml_rig_cuda_stop"
 external ended : int -> int = "caml_rig_cuda_ended"
 external unload_module : int -> int -> int = "caml_rig_cuda_unload"
@@ -622,17 +622,16 @@ let open_ ~word i =
         get (a attribute_compute_capability_major),
         get (a attribute_compute_capability_minor),
         get (a attribute_host_register_supported),
-        get (a attribute_l2_cache_size),
-        get (total_memory d) )
+        get (a attribute_l2_cache_size) )
     with
     | exception Fault why -> Error why
-    | 0, _, _, _, _, _, _ ->
+    | 0, _, _, _, _, _ ->
         Error
           (strf "the GPU lacks 64-bit stream memory operations under %s"
              (driver ()))
-    | _, 0, _, _, _, _, _ ->
+    | _, 0, _, _, _, _ ->
         Error (strf "the GPU lacks unified addressing under %s" (driver ()))
-    | _, _, major, minor, registers, l2, budget -> (
+    | _, _, major, minor, registers, l2 -> (
         let held = g.held.(i) in
         let opened = ref (-1) in
         (* An exception after the claim gives it back, stopping the device if
@@ -667,6 +666,7 @@ let open_ ~word i =
                     ~handle:(word_address self)
                 in
                 let arch = strf "sm_%d%d" major minor in
+                let budget = total_of self in
                 let params_bound =
                   if major >= large_params_major then large_params
                   else small_params
@@ -743,6 +743,15 @@ let allocated g kind n =
   match alloc_memory g.context (kind = Host) n with
   | a when a >= 0 -> Some (region g.gpu kind ~address:a ~handle:a)
   | _ -> refused (strf "allocating %d bytes" n) g.self None
+
+(* cuMemGetInfo's pair, read together in the device's context. *)
+external memory_info : int -> int array -> int = "caml_rig_cuda_memory"
+
+let capacity g =
+  let free_total = [| 0; 0 |] in
+  match memory_info g.context free_total with
+  | 0 -> Some { Rig_edge.total = free_total.(1); free = free_total.(0) }
+  | s -> fault "reading the GPU's memory" s
 
 (* CUDA maps no GPU memory for the host: [Mapped] is [None]. *)
 let alloc g (memory : Rig_edge.memory) n =
@@ -1149,6 +1158,7 @@ module Driver = struct
   let facts = facts
   let alloc = alloc
   let free = free
+  let capacity = capacity
   let locate = locate
   let peer = peer
   let map_peer = map_peer

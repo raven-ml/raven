@@ -40,6 +40,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- Add `Rig.capacity d`, a device's memory as its driver reports it at the
+  call: `Some { total; free }` on CUDA (`cuMemGetInfo`), and `None` on the
+  host, software, io, Metal and remote devices. A device's budget starts at
+  that total. **Breaking:** `Rig_edge.Driver` gains `capacity`.
+- A CUDA device's budget starts at `cuMemGetInfo`'s total, the memory of
+  its context, instead of `cuDeviceTotalMem`'s.
 - **Breaking:** `Rig_edge.Io.read` takes arrays of runs,
   `read r ~at ~dst ~len`, and raises only once no read it began still
   writes memory. A copy from io memory hands its library the rows of all

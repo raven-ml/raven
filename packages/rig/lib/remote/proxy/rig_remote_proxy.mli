@@ -78,7 +78,11 @@ val capability : t -> Rig_remote_abi.t
       | [capability]     | {!capability} ({!Rig_remote_abi.declare})         |
       | [word]           | The word [make] was given                         |
       | [bus]            | [None]                                            |
+      | [capacity]       | [None]                                            |
     }
+
+    [capacity] ({!Rig.val-capacity}) is [None]: the link carries no report
+    of the agent's device's memory.
 
     Each queue runs [Copy], and on the machine's host [Words] too. The
     link's receiving thread writes the timeline word as the agent reports

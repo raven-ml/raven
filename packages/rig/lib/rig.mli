@@ -1039,11 +1039,58 @@ val failure : unit -> string option
 val budget : t -> int
 (** [budget d] is [d]'s budget ({!section-reclaim}). It starts at [max_int]
     for {!host} and an io device, and at its driver's [budget]
-    ({!Rig_edge.type-facts}) for a driver's device. *)
+    ({!Rig_edge.type-facts}) for a driver's device: the [total] of
+    {!val-capacity} where that is [Some _]. *)
 
 val allocated : t -> int
 (** [allocated d] is the bytes that [d] holds now of the memory that counts
     in its budget ({!section-reclaim}). *)
+
+type capacity = Rig_edge.capacity = {
+  total : int;
+      (** The bytes of the device's own memory from which its driver
+          allocates, for every process and for itself. *)
+  free : int;
+      (** Of [total], the bytes the driver reports it would still give, to
+          any process, at the call. *)
+}
+(** The type for a device's memory as its driver reports it. *)
+
+val capacity : t -> capacity option
+(** [capacity d] is [Some c], [d]'s memory as [d]'s driver reports it at the
+    call, or [None] where the driver reports none: for {!host}, a {!software}
+    device and an io device, whose memory is the machine's, and for a device
+    whose driver states no free memory, such as a Metal device. A driver's
+    module states where its two numbers come from and what its [free] leaves
+    out.
+
+    [c.total] does not change while [d] is open, and {!budget} starts at it.
+    [0 <= c.free <= c.total], and [c.free] counts as held every byte this
+    process holds on [d], its cache included ({!section-reclaim}). It differs
+    from {!budget}, which bounds this process alone.
+
+    [c.free] is the driver's own figure, not the room of one allocation. It
+    is what the driver would still give, to this process or another, as it
+    reports it at the call; other processes change it at any time, and no
+    driver narrows it to this process's use on a device that others share.
+    It errs high where a driver leaves memory that other processes hold out
+    of it or an allocator cannot place a request whole, and low where a
+    driver counts allocations in larger units than it admits them in, as
+    each driver's module states. So an allocation of [c.free] bytes or fewer
+    may still raise {!Out_of_memory}, and one of more may succeed.
+
+    A program that checks that [n] more bytes fit on [d], such as a compiled
+    step's footprint, returns the cache first:
+    {[
+      Rig.free_cache d;
+      let room = Rig.budget d - Rig.allocated d in
+      let room =
+        match Rig.capacity d with Some c -> min room c.free | None -> room
+      in
+      n <= room
+    ]}
+
+    Raises {!Lost} if [d] is a driver's device and lost. *)
 
 val charged : ?memory:Rig_edge.memory -> t -> t
 (** [charged ~memory d] is the device in whose budget a buffer of [d]'s
@@ -1258,7 +1305,7 @@ module Buffer : sig
   (** [unborrow ~why b] tries to end the borrow [b] early, and is [false],
       changing nothing, if a claim or a hold through the borrow or one of
       its views keeps it, such as a host access, a submit, a {!take} or a
-      {!free} through it on another domain, or a prepared submission that
+      {!val-free} through it on another domain, or a prepared submission that
       names it ({!val-keep}). Otherwise every buffer of the borrow,
       its views included, is dead with the reason [why] (["unborrowed"] by
       default), which {!dead} then answers, the memory and its other
@@ -1299,7 +1346,7 @@ module Buffer : sig
       bytes of one word ({!Rig.section-words}), through views of one
       allocation, a borrow and the memory it maps, or two bigarrays over
       bytes of one word. An empty buffer overlaps nothing. A
-      buffer {!free} killed keeps its place, which memory made since may
+      buffer {!val-free} killed keeps its place, which memory made since may
       take. *)
 
   val share_byte : t -> t -> bool
@@ -1322,7 +1369,7 @@ module Buffer : sig
 
   val dead : t -> string option
   (** [dead b] is [Some why] if [b] is dead, where [why] is the reason its
-      memory was taken or freed with ({!take}, {!free}), or its borrow ended
+      memory was taken or freed with ({!take}, {!val-free}), or its borrow ended
       with ({!unborrow}), and [None] otherwise. A
       library that receives a buffer checks it first, so that it reports the
       error itself. *)
@@ -1505,7 +1552,7 @@ module Buffer : sig
       A copy's allocations serve the copies after it. Let [n] be the most
       allocations a staging memory has had at once. When a copy gives
       its allocations back, every allocation that no copy holds and that no
-      copy took within the last [n] takes returns as {!free} returns memory.
+      copy took within the last [n] takes returns as {!val-free} returns memory.
       Copies that run one after another, or several at a time over and over,
       keep theirs.
 
@@ -1693,7 +1740,7 @@ module Buffer : sig
   (** [keep bs] claims the memory of each of [bs] until {!release} ends the
       keep or, once the keep is unreachable, until the first call that
       moves collected memory after its collection ({!Rig.section-reclaim}).
-      No {!take} or {!free} of that memory succeeds meanwhile. A library
+      No {!take} or {!val-free} of that memory succeeds meanwhile. A library
       that holds buffers it does not own over calls, such as a linked
       program's inputs, keeps them. Each keep allocates a value that the
       collector finalises and a record in the C heap, so a claim for the
@@ -1806,7 +1853,7 @@ module Buffer : sig
       {b Warning.} The object lives only while [b] is reachable. Work that
       uses it must keep [b] reachable until the work is done, for example
       with the [keep] of its submission ({!Submission.make}), and must not
-      {!free} it.
+      {!val-free} it.
 
       Raises [Invalid_argument] if [b] is dead, or is {!host}'s or an io
       device's memory, which no driver object names. *)

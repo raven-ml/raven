@@ -140,7 +140,9 @@ type capability = Capability : 'a Type.Id.t * 'a -> capability
 
 type 'region facts = {
   arch : string;  (** The device's architecture, such as ["gfx1100"]. *)
-  budget : int;  (** The bytes of own memory the device should hold at most. *)
+  budget : int;
+      (** The bytes of own memory the device should hold at most: the
+          [total] of {!Driver.val-capacity} where the driver reports one. *)
   queues : queue list;  (** The device's queues. *)
   copy_engine : int option;
       (** [Some i] if the device's copy engine is the queue at index [i] of
@@ -335,6 +337,18 @@ type 'region facts = {
 
 (** {1:memory Memory} *)
 
+type capacity = {
+  total : int;
+      (** The bytes of the device's own memory from which its driver
+          allocates, for every process and for itself. It does not change
+          while the device is open. *)
+  free : int;
+      (** Of [total], the bytes the driver reports it would still give, to
+          any process, at the call. *)
+}
+(** The type for a device's memory as its driver reports it
+    ([Rig.capacity]). [0 <= free <= total]. *)
+
 type location = {
   address : int option;
       (** The region's address as the device's work addresses it, or [None]
@@ -462,8 +476,8 @@ type grown =
     call may have left the driver's state half changed. An
     [Invalid_argument] from [entry] loses nothing. Neither does any
     exception from {!Driver.val-facts}, {!Driver.locate} or {!Driver.peer},
-    or one other than [Fault] from {!Driver.val-prepare}, {!Driver.sleep} or
-    {!Driver.val-signaled}.
+    or one other than [Fault] from {!Driver.val-capacity},
+    {!Driver.val-prepare}, {!Driver.sleep} or {!Driver.val-signaled}.
 
     An asynchronous exception ([Rig]'s Errors section) can end any OCaml
     code of the driver, and rig calls {!Driver.val-stop},
@@ -549,6 +563,14 @@ module type Driver = sig
       mapping {!val-map_peer} or {!val-map_host} made, or [d]'s word of the
       driver's own ({!Rig_edge.type-facts}). rig frees [r] once no work of
       [d] that uses it can run, and may free it after {!val-stop}. *)
+
+  val capacity : t -> capacity option
+  (** [capacity d] is [d]'s memory as its driver reports it at the call, or
+      [None] where the driver reports none. Its [total] is [d]'s [budget]
+      fact ({!Rig_edge.type-facts}), and its [free] counts as held what rig
+      holds of [d]'s memory, cache included. It allocates nothing on the
+      device. The driver's interface states where both numbers come from
+      and what [free] leaves out. Counted. *)
 
   val locate : region -> location
   (** [locate r] is where [r] lies. *)

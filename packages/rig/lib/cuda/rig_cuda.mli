@@ -160,7 +160,7 @@ val capability : t -> Rig_cuda_abi.t
       | Fact             | Value                                            |
       |------------------|--------------------------------------------------|
       | [arch]           | ["sm_XY"], the GPU's compute capability          |
-      | [budget]         | The GPU's memory, in bytes                       |
+      | [budget]         | [cuMemGetInfo]'s total at open                   |
       | [queues]         | ["COMPUTE:0"] and ["COPY:0"]                     |
       | [copy_engine]    | [Some 1], ["COPY:0"]                             |
       | [completion]     | [Store]                                          |
@@ -174,7 +174,20 @@ val capability : t -> Rig_cuda_abi.t
       | [capability]     | {!Rig_cuda_abi.t} ({!val-capability})            |
       | [word]           | The word [make] was given, registered            |
       | [bus]            | [cuDeviceGetPCIBusId], in lowercase              |
+      | [capacity]       | [cuMemGetInfo]'s free and total                  |
     }
+
+    [capacity] ({!Rig.val-capacity}) is [cuMemGetInfo] in the device's context,
+    the [budget]'s source (CUDA Driver API, Memory Management): its total is
+    the memory available to the context, and its free "the amount of memory
+    on the device that is free according to the OS": the total less every
+    process's allocations. CUDA states that it "is not guaranteed to be able
+    to allocate all of" it, and states no granularity for an allocation.
+    Measured on an RTX 5000 Ada, the free falls in whole blocks of 2 MiB,
+    which small allocations share: 1 byte, 4 KiB and 64 KiB each take
+    2 MiB, 64 allocations of one byte take 2 MiB together, 2 MiB and one
+    byte take 4 MiB, and 16 MiB takes 16 MiB. The total there is
+    33,881,587,712 bytes, as [cuDeviceTotalMem] also states.
 
     [arch] is ["sm_89"] for compute capability 8.9. ["COMPUTE:0"] runs
     [Fill], [Copy] and [Launch], and ["COPY:0"] runs [Fill] and [Copy]. The

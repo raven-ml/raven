@@ -766,6 +766,53 @@ let test_staged_borrow (row, kind, way) =
 
 let test_host_budget () = equal int max_int (Rig.budget Rig.host)
 
+(* Capacity *)
+
+(* [d]'s capacity as (total, free). *)
+let capacity d =
+  Option.map (fun (c : Rig.capacity) -> (c.total, c.free)) (Rig.capacity d)
+
+let reported = option (pair int int)
+
+(* The host and a software device report none: their memory is the
+   machine's. *)
+let test_capacity_none () =
+  equal ~msg:"the host" reported None (capacity Rig.host);
+  let s = Result.get_ok (Rig.software "memory:capacity-software") in
+  equal ~msg:"a software device" reported None (capacity s);
+  let d, _ = P.open_ "memory:capacity-unbounded" in
+  equal ~msg:"a driver that reports none" reported None (capacity d)
+
+(* A driver's report, through a counted call: its total, and a free that its
+   buffers and cache lower and that returns once rig returns the cache. *)
+let test_capacity () =
+  let d, p =
+    P.open_ ~memory:(64 * kib) ~budget:(64 * kib) "memory:capacity"
+  in
+  equal ~msg:"the budget at open is the total" int (64 * kib) (Rig.budget d);
+  equal ~msg:"at open" reported (Some (64 * kib, 64 * kib)) (capacity d);
+  let b = B.create d (16 * kib) in
+  equal ~msg:"a buffer held" reported (Some (64 * kib, 48 * kib)) (capacity d);
+  is_true ~msg:"freed" (B.free b);
+  collect d;
+  equal ~msg:"in the cache" reported (Some (64 * kib, 48 * kib)) (capacity d);
+  Rig.free_cache d;
+  equal ~msg:"returned" reported (Some (64 * kib, 64 * kib)) (capacity d);
+  equal ~msg:"counted calls" int 4
+    (List.length (List.filter (( = ) "capacity") (P.log p)))
+
+(* A fault in the report loses the device, whose later reports raise its
+   loss without asking the driver. *)
+let test_capacity_fault () =
+  let d, p = P.open_ ~memory:(64 * kib) "memory:capacity-fault" in
+  let lost = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false in
+  P.fail_at p 1 (`Fault "no report");
+  raises_match ~msg:"the faulting report" lost (fun () -> Rig.capacity d);
+  is_some ~msg:"the device lost" (Rig.lost d);
+  raises_match ~msg:"a report once lost" lost (fun () -> Rig.capacity d);
+  equal ~msg:"asked once" int 1
+    (List.length (List.filter (( = ) "capacity") (P.log p)))
+
 (* Kinds *)
 
 (* Runs [f] with the host's budget [n], then restores it. *)
@@ -1931,6 +1978,11 @@ let tests =
         test "free_cache with no work in flight returns the cache at once"
           test_free_cache;
         test "the host's budget is max_int" test_host_budget;
+        test "the host and a software device report no capacity"
+          test_capacity_none;
+        test "a driver's capacity is its report at each call" test_capacity;
+        test "a fault in a capacity report loses the device"
+          test_capacity_fault;
         test "a host buffer holds its bytes in the budget until collected"
           test_host_held;
         test "a host allocation the C library refuses raises for the host"

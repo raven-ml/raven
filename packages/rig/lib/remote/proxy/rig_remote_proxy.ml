@@ -114,6 +114,9 @@ let alloc d memory bytes =
    [map_peer] answers with the word itself: nothing to give back. *)
 let free d = function Memory { id } -> Link.drop d.link id | Word _ -> ()
 
+(* The wire carries no report of the agent's device's memory. *)
+let capacity _ = None
+
 let locate = function
   | Memory { id } ->
       { Rig_edge.address = None; host = None; handle = Nativeint.of_int id }
@@ -226,6 +229,7 @@ module Driver = struct
   let facts = facts
   let alloc = alloc
   let free = free
+  let capacity = capacity
   let locate = locate
   let peer = peer
   let map_peer = map_peer

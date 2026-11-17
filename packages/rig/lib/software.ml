@@ -62,6 +62,9 @@ module D = struct
 
   let free _ r = if r.base <> 0 then free r.base
 
+  (* Its memory is the host's, which no driver reports. *)
+  let capacity _ = None
+
   let locate r =
     {
       Rig_edge.address = Some r.at;

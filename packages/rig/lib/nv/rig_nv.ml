@@ -600,6 +600,7 @@ let queues =
 let waits = { Rig_edge.stores = true; hosts = true }
 
 let capability (T d) = d.capability
+let capacity _ = None
 
 let facts (T d) =
   {

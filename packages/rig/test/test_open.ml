@@ -506,6 +506,7 @@ let test_io () =
   equal string "" (Rig.arch io);
   equal bool false (Rig.computes io);
   equal int max_int (Rig.budget io);
+  is_none ~msg:"capacity" (Rig.capacity io);
   equal (list bool) [ false; false ]
     [ Rig.reaches io Rig.host; Rig.reaches Rig.host io ];
   equal ~msg:"an empty buffer" int 0

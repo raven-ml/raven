@@ -480,6 +480,10 @@ let free d r =
   free_buffer d.self r.handle;
   give d.guard
 
+(* Metal states the memory it recommends a device keep allocated and what
+   the device's own resources hold, never free memory. *)
+let capacity _ = None
+
 (* Images *)
 
 let image d b =
@@ -695,6 +699,7 @@ module Driver = struct
   let facts = facts
   let alloc = alloc
   let free = free
+  let capacity = capacity
   let locate = locate
   let peer = peer
   let map_peer = map_peer

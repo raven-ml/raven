@@ -167,7 +167,6 @@ enum {
   X(cuDeviceGet, (CUdevice *, int))                                            \
   X(cuDeviceGetAttribute, (int *, int, CUdevice))                              \
   X(cuDeviceGetPCIBusId, (char *, int, CUdevice))                              \
-  X(cuDeviceTotalMem_v2, (size_t *, CUdevice))                                 \
   X(cuDeviceCanAccessPeer, (int *, CUdevice, CUdevice))                        \
   X(cuDevicePrimaryCtxRetain, (CUcontext *, CUdevice))                         \
   X(cuDevicePrimaryCtxRelease_v2, (CUdevice))                                  \
@@ -191,6 +190,7 @@ enum {
   X(cuEventElapsedTime, (float *, CUevent, CUevent))                           \
   X(cuMemAlloc_v2, (CUdeviceptr *, size_t))                                    \
   X(cuMemFree_v2, (CUdeviceptr))                                               \
+  X(cuMemGetInfo_v2, (size_t *, size_t *))                                     \
   X(cuMemHostAlloc, (void **, size_t, unsigned int))                           \
   X(cuMemFreeHost, (void *))                                                   \
   X(cuMemHostRegister_v2, (void *, size_t, unsigned int))                      \
@@ -339,12 +339,6 @@ value caml_rig_cuda_bus(value v_device, value v_id) {
   return answer(s, 0);
 }
 
-value caml_rig_cuda_total_memory(value v_device) {
-  size_t total = 0;
-  CUresult s = p_cuDeviceTotalMem_v2(&total, Int_val(v_device));
-  return answer(s, (intnat)total);
-}
-
 /* Contexts. [push c] makes [c] current on the calling thread above the
    thread's own; [pop status] restores the thread's own, and answers
    [status], or pop's failure if [status] is a success. */
@@ -455,6 +449,7 @@ struct device {
   uint64_t converted, unconverted, last_end;
   unsigned int groups[3], threads[3]; /* a launch's most along x, y, z */
   uint64_t max_pitch; /* the most bytes of a 2D copy's pitch */
+  size_t total;       /* the context's memory, cuMemGetInfo's at open */
   _Atomic uint64_t *word;
   CUdeviceptr word_at;
   uint64_t last;       /* the last value submit received */
@@ -663,10 +658,14 @@ static void fetch(void) {
     p_cuCtxSetLimit(CU_LIMIT_MAX_L2_FETCH_GRANULARITY, FETCH);
 }
 
-/* Makes [d]'s streams and events, then its word ([word_start]), then
-   widens the context's L2 fetches ([fetch]); or none of them. */
+/* Reads the context's memory, then makes [d]'s streams and events, then its
+   word ([word_start]), then widens the context's L2 fetches ([fetch]); or
+   none of them. */
 static CUresult begin(struct device *d, _Atomic uint64_t *slot, int own) {
-  CUresult s = start(d);
+  size_t avail = 0;
+  CUresult s = p_cuMemGetInfo_v2(&avail, &d->total);
+  if (s != CUDA_SUCCESS) return s;
+  s = start(d);
   if (s != CUDA_SUCCESS) return s;
   s = word_start(d, slot, own);
   if (s != CUDA_SUCCESS) destroy(d);
@@ -742,6 +741,11 @@ value caml_rig_cuda_context(value v_self) {
   return Val_long((intnat)Device_val(v_self)->context);
 }
 
+/* The bytes of memory of [v_self]'s context, as its open read them. */
+value caml_rig_cuda_total(value v_self) {
+  return Val_long((intnat)Device_val(v_self)->total);
+}
+
 /* Whether the CUdevice [v_device], of primary context [v_context],
    addresses the memory of the CUdevice [v_home], of primary context
    [v_home_context]: [1], after enabling the access; [0] if CUDA says it
@@ -792,6 +796,20 @@ value caml_rig_cuda_free(value v_context, value v_host, value v_address) {
     RELEASED(IN_CONTEXT(s, c, p_cuMemFreeHost((void *)a)));
   else
     RELEASED(IN_CONTEXT(s, c, p_cuMemFree_v2((CUdeviceptr)a)));
+  return Val_int(s);
+}
+
+/* The bytes of GPU memory CUDA reports free in the context [v_context] and
+   in all (cuMemGetInfo), stored in [v_out]'s fields 0 and 1: CUDA's status,
+   which leaves [v_out] as it was where it is not a success. */
+value caml_rig_cuda_memory(value v_context, value v_out) {
+  size_t avail = 0, total = 0;
+  CUresult s;
+  IN_CONTEXT(s, Context_val(v_context), p_cuMemGetInfo_v2(&avail, &total));
+  if (s == CUDA_SUCCESS) {
+    Field(v_out, 0) = Val_long((intnat)avail);
+    Field(v_out, 1) = Val_long((intnat)total);
+  }
   return Val_int(s);
 }
 

@@ -265,6 +265,38 @@ let facts (module G : Gpu) () =
     (fun memory -> List.iter (starts memory) [ 1; 17; 255; 4097; 1 lsl 20 ])
     (Rig_edge.[ Device; Pinned ] @ if f.mapped then [ Mapped ] else [])
 
+(* A driver's report of the device's memory, where it gives one: its total
+   starts the budget and stays, its free lies within it, and a fresh buffer
+   lowers its free by at least its bytes. The suite's GPU lock does not stop
+   another process, such as a display server, from freeing memory between
+   two reads, so a try counts only where the free is back where it started
+   once rig returns the buffer. *)
+let capacity (module G : Gpu) () =
+  G.with_ @@ fun t ->
+  match Rig.capacity t.d with
+  | None -> ()
+  | Some c ->
+      equal int ~msg:"the budget at open" c.total (Rig.budget t.d);
+      at_least int ~msg:"free" ~than:0 c.free;
+      at_most int ~msg:"free" ~than:c.total c.free;
+      let n = 16 lsl 20 in
+      let free () = require_some ~msg:"capacity" (Rig.capacity t.d) in
+      let rec try_ k =
+        let before = (free ()).free in
+        let b = B.create t.d n in
+        let held = free () in
+        is_true ~msg:"freed" (B.free b);
+        Rig.free_cache t.d;
+        let after = (free ()).free in
+        equal int ~msg:"the total" c.total held.total;
+        if before = after then
+          at_least int ~msg:"the free bytes the buffer took" ~than:n
+            (before - held.free)
+        else if k > 1 then try_ (k - 1)
+        else skip ~reason:"other processes changed the free memory" ()
+      in
+      try_ 3
+
 (* Each kind no queue of the device runs is refused by make, and no value is
    assigned. *)
 let refusals (module G : Gpu) () =
@@ -2383,6 +2415,8 @@ let laws (module G : Gpu) =
   group ~timeout:120. G.class_
     [
       test "the facts are well formed" (facts g);
+      test "a capacity report starts the budget and counts a buffer"
+        (capacity g);
       test "make refuses work no queue of the device runs"
         (refusals g);
       prop ~count:30

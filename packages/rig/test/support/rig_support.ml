@@ -411,6 +411,18 @@ module Driver = struct
     | Some why -> raise (Fault why)
     | None -> ()
 
+  (* Its memory where its [Device] memory is bounded: its budget, as a
+     driver's capacity starts the budget, and what its regions leave of it. *)
+  let capacity d =
+    ignore (counted d "capacity" : bool);
+    if d.limits Device = max_int then None
+    else
+      Some
+        {
+          Rig_edge.total = d.budget;
+          free = d.budget - protect d.lock (fun () -> holding d Device);
+        }
+
   (* A locate of a mapping waits at its mapper's locate gate while it is
      shut. *)
   let locate r =

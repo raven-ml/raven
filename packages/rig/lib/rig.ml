@@ -24,6 +24,16 @@ let cache_bytes d = d.cache_bytes
 let reaches = Dev.reaches
 let budget d = d.budget
 let allocated = Memory.allocated
+
+type capacity = Rig_edge.capacity = { total : int; free : int }
+
+let capacity d =
+  Dev.check_held "capacity";
+  match d.kind with
+  | Host | Io -> None
+  | Driver { m; h; _ } ->
+      let module D = (val m) in
+      Dev.counted d Dev.Faults D.capacity h
 let allocation = Memory.allocation
 let charged = Memory.budget_device
 let set_budget = Memory.set_budget

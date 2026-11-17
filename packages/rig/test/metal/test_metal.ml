@@ -471,9 +471,17 @@ let dropped_buffer () =
   S.close s;
   equal int ~msg:"run states after the close" 0 (Rig_metal.runs ())
 
+(* Metal states no free memory, so the device reports no capacity, and its
+   budget is Metal's recommendation. *)
+let no_capacity () =
+  S.with_ @@ fun { S.d; _ } ->
+  is_none ~msg:"capacity" (Rig.capacity d);
+  greater int ~msg:"budget" ~than:0 (Rig.budget d)
+
 let work =
   group ~timeout:60. "work"
     [
+      test "reports no capacity" no_capacity;
       prop ~count:50
         "a signaled value's submissions and every earlier one are written"
         (Gen.list ~size:(Gen.int_range 1 50) gen_submission)

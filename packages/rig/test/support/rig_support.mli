@@ -86,7 +86,10 @@ module Polled : sig
       unchecked, though its [measures] is [NULL]. Its budget is
       [budget] (defaults to 1 GiB); it holds at most [memory] bytes of [Device]
       memory and [window] bytes of [Mapped] memory (default to [max_int]);
-      [Pinned] memory is unbounded. Its word advances as [completion] says
+      [Pinned] memory is unbounded. Its [capacity] is [None] for an unbounded
+      [memory], and otherwise its total is [budget] and its free what its
+      [Device] regions leave of it, a counted call that logs ["capacity"].
+      Its word advances as [completion] says
       (defaults to [`Host]): with [`Store], as a queue's store writes it. Its
       queue waits for producers of the completions [waits_on] lists (defaults
       to none). With [answer] [`Stopped] (the default) its stop drops its

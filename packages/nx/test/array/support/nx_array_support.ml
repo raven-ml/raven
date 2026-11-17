@@ -201,6 +201,7 @@ module Driver = struct
     end
 
   let free _ r = if r.raw <> 0 then free r.raw
+  let capacity _ = None
 
   let locate r =
     {

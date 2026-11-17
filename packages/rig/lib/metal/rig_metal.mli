@@ -158,11 +158,16 @@ val capability : t -> Rig_metal_abi.t
       | [capability]     | {!Rig_metal_abi.t} ({!val-capability})         |
       | [word]           | The word [make] was given, which no work reads |
       | [bus]            | [None]                                         |
+      | [capacity]       | [None]                                         |
     }
 
     [arch] is the highest Apple GPU family the GPU supports, such as
     ["Apple7"] for an M1, else its Mac family, ["Mac2"]. [budget] is the
     memory, in bytes, that Metal recommends the device keep allocated at most.
+    [capacity] ({!Rig.val-capacity}) is [None]: Metal states no free memory.
+    [currentAllocatedSize] counts the memory of the device's own resources,
+    and [recommendedMaxWorkingSetSize] is a recommendation, not the memory's
+    size.
     The word holds an unsigned 64-bit integer in the host's byte order, and
     the device's values start after the value it holds when [make] returns.
     Its location has a host address and no device address: only the

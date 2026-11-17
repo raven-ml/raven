@@ -293,12 +293,24 @@ let declared () =
   | None -> fail "no record under the key");
   is_none ~msg:"the host" (Rig.capability Rig.host Rig_cuda_abi.key)
 
+(* The capacity is cuMemGetInfo's pair, whose total starts the budget: its
+   free lies between two reads of CUDA's around it. *)
+let capacity () =
+  S.with_ @@ fun t ->
+  let before = S.free_memory () in
+  let c = require_some (Rig.capacity t.d) in
+  let after = S.free_memory () in
+  equal int ~msg:"the budget" (Rig.budget t.d) c.total;
+  at_least int ~msg:"free" ~than:(Int.min before after) c.free;
+  at_most int ~msg:"free" ~than:(Int.max before after) c.free
+
 let facts =
   group ~timeout:60. "facts"
     [
       test "states a GPU's facts" facts;
       test "finds the functions a fill calls" symbols;
       test "rig finds its record" declared;
+      test "reports cuMemGetInfo's capacity" capacity;
     ]
 
 (* Memory *)

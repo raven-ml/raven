@@ -852,6 +852,7 @@ let facts g =
   }
 
 let capability g = g.capability
+let capacity _ = None
 
 (* [g]'s live state. rig calls nothing that uses it after stop. *)
 let live g =
