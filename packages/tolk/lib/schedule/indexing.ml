@@ -538,7 +538,51 @@ let apply_reshape in_shape out_shape urngs =
 
 let pad_valid = Pattern_matcher.concat Symbolic.[ symbolic; pm_simplify_valid ]
 
-let apply_movement_op in_shape m rngs =
+(* Memos of movements on indices: a devectorized kernel moves the same lane
+   index through the same movement of many sources, and the reshape of an index
+   is a symbolic simplification. Keys compare nodes by [==], as hash-consing
+   allows. *)
+module Moved = Hashtbl.Make (struct
+  type t = sint list * movement * Ops.t list
+
+  let equal_pair (a, b) (c, d) = equal_sint a c && equal_sint b d
+
+  let equal_movement m0 m1 =
+    match (m0, m1) with
+    | Reshape a, Reshape b | Expand a, Expand b -> equal_shape a b
+    | Pad a, Pad b | Shrink a, Shrink b -> List.equal equal_pair a b
+    | Permute a, Permute b -> List.equal Int.equal a b
+    | _ -> false
+
+  let equal (s0, m0, r0) (s1, m1, r1) =
+    equal_shape s0 s1 && equal_movement m0 m1 && List.equal ( == ) r0 r1
+
+  let hash_sint = function Int n -> Hashtbl.hash n | Sym u -> Ops.hash u
+  let hash_sints h l = List.fold_left (fun h s -> (h * 31) + hash_sint s) h l
+
+  let hash_pairs h l =
+    List.fold_left
+      (fun h (a, b) -> (((h * 31) + hash_sint a) * 31) + hash_sint b)
+      h l
+
+  let hash (s, m, r) =
+    let h =
+      match m with
+      | Reshape a -> hash_sints 1 a
+      | Expand a -> hash_sints 2 a
+      | Pad a -> hash_pairs 3 a
+      | Shrink a -> hash_pairs 4 a
+      | Permute a -> List.fold_left (fun h p -> (h * 31) + p) 5 a
+    in
+    let h = hash_sints h s in
+    Hashtbl.hash (List.fold_left (fun h u -> (h * 31) + Ops.hash u) h r)
+end)
+
+type memo = Ops.t list Moved.t
+
+let memo () = Moved.create 16
+
+let move in_shape m rngs =
   match m with
   | Shrink b ->
       List.map2
@@ -583,6 +627,18 @@ let apply_movement_op in_shape m rngs =
       src
         (substitute ~calls:Skip ~pass:Fixed_point reshaped
            (List.map (fun (r, p) -> (p, r)) sub_array))
+
+let apply_movement_op ?memo in_shape m rngs =
+  match memo with
+  | None -> move in_shape m rngs
+  | Some memo -> (
+      let key = (in_shape, m, rngs) in
+      match Moved.find_opt memo key with
+      | Some moved -> moved
+      | None ->
+          let moved = move in_shape m rngs in
+          Moved.replace memo key moved;
+          moved)
 
 (* Rangeify *)
 

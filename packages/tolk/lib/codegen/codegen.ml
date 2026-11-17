@@ -412,13 +412,45 @@ let vector_dtypes (ren : Renderer.t) =
     let emulated = Decomp_dtype.emulates ren in
     List.filter (fun dt -> not (emulated dt)) (Renderer.supported_dtypes ren)
 
+(* Whether the sizes of the movement [m] of a source of shape [s] are
+   symbolic: the nodes a moved index holds besides the index's own. *)
+let symbolic_sizes s m =
+  let sym = function Sym _ -> true | Int _ -> false in
+  List.exists sym s
+  ||
+  match m with
+  | Reshape out | Expand out -> List.exists sym out
+  | Pad b | Shrink b -> List.exists (fun (a, b) -> sym a || sym b) b
+  | Permute _ -> false
+
+(* [x]'s element at the lane [idx], the index moved through [x]'s movements to
+   the storage or value they view, as the movement rules would move it. The
+   index starts as constants, so it holds a load only once a symbolic size puts
+   one in it. Until then it moves without {!Prepare.move_index}'s search for
+   loads. *)
+let index_lane memo x idx =
+  let rec go sized x idx =
+    if
+      Op.Set.mem (op x) Op.Set.movement
+      && List.compare_lengths idx (shape x) = 0
+    then
+      let src = nth x 0 and m = marg x in
+      let sized = sized || symbolic_sizes (shape src) m in
+      let move =
+        if sized then Prepare.move_index else Indexing.apply_movement_op
+      in
+      go sized src (move ~memo (shape src) m idx)
+    else index x idx
+  in
+  go false x (List.map int idx)
+
 (* Elementwise operations, loads and stores of vectors compute each lane apart,
    except an elementwise operation on the [vectors] types of several distinct
    lanes whose sources hold them in order ([in_order]): a source of lanes
    computed apart would be put together lane by lane, and lanes that repeat
    are computed once each apart. Such an operation computes vectors of at most
    [lanes] lanes ({!vector_operation}). *)
-let do_devectorize (vectors, lanes) b =
+let do_devectorize (vectors, lanes, memo) b =
   let s = shape b in
   let invalid x = is_invalid (base x) in
   let on_vectors x = Dtype.mem (dtype x) vectors in
@@ -447,7 +479,9 @@ let do_devectorize (vectors, lanes) b =
       replace b
         ~src:
           (List.map
-             (fun x -> if invalid x then base x else index_ints x idx)
+             (fun x ->
+               if invalid x then base x
+               else index_lane memo x idx)
              (src b))
     in
     let lanes = List.map lane (product (int_shape s)) in
@@ -552,8 +586,10 @@ let pm_vector_constants =
             match src (m "x") with [ e; _ ] -> splat e | _ -> None);
       ])
 
+(* The context of devectorizing: the vector types and lanes the renderer
+   takes, and the memo of the indices moved through movements. *)
 let devectorizer2 =
-  lift Prepare.pm_mops
+  Prepare.pm_mops_in (fun (_, _, memo) -> memo)
   ++ pm
        (fun () -> [
          (* unpack broadcasting *)
@@ -583,7 +619,7 @@ let devectorizer2 =
          rule_ctx
            (Upat.op Op.Index
               ~src:[ Upat.v ~op:Op.Set.defines ~name:"b" (); Upat.var "i" ])
-           (fun (vectors, _) m ->
+           (fun (vectors, _, _) m ->
              if vectors = [] || shape (m "i") <> [] then None
              else
                Option.map
@@ -1853,7 +1889,7 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   in
   let sink =
     graph_rewrite ~calls:Skip ~pass:Fixed_point
-      ~ctx:(vector_dtypes ren, ren.vector_lanes)
+      ~ctx:(vector_dtypes ren, ren.vector_lanes, Indexing.memo ())
       sink
       (After_sources
          (Pattern_matcher.concat

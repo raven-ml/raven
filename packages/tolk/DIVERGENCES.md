@@ -180,9 +180,12 @@ a source (`uop/upat.py` `_get_clause`).
 - **tinygrad:** `engine/worker.py` (`multiprocessing` spawn workers);
   `helpers.py` (`Context` and `ContextVar`, one value per process);
   `codegen/__init__.py` (`to_program_context`, the settings a worker
-  process is started with, and `to_program_cache`, which the parent fills).
+  process is started with, and `to_program_cache`, which the parent fills);
+  `schedule/indexing.py` `apply_movement_op` (`functools.cache`).
 - **tolk:** `Worker.spawned` and `Worker.map`; `Setting.t` and
   `Setting.context`; `Codegen.to_program_cache` (`to_program`'s cache);
+  `Indexing.memo` and `Prepare.pm_mops_in`, and the memo
+  `Codegen.full_rewrite_to_sink` makes for its devectorizing rewrite;
   `Compiler_worker.call`, and the C files
   `lib/runtime/support/compiler_worker.h`, `compiler_amd_worker.c`,
   `compiler_cuda_worker.c` and `compiler_metal_worker.c`.
@@ -213,6 +216,11 @@ a source (`uop/upat.py` `_get_clause`).
     (`Decomp_op.simplifying_patterns`, `Decomp_op.late_patterns`,
     `Transcendental.patterns`), and a rule compiles on the domain that tries
     it first, or on each that tries it at once;
+  - the results of `apply_movement_op`, which tinygrad keeps in each worker
+    for its 16 tasks and in the parent, which schedules and renders a lone
+    kernel, for the process, are kept for one kernel's devectorizing rewrite,
+    in a memo its context holds; scheduling and the other callers compute
+    each movement again;
   - MTLCompiler, comgr and NVRTC compile in processes of their own, spawned
     by the compiling domains, where a tinygrad worker process loads the
     library once and compiles in it. tinygrad compiles a lone kernel in the
@@ -241,7 +249,10 @@ a source (`uop/upat.py` `_get_clause`).
   collection. A tinygrad worker process has its own settings, so a `Context`
   entered while it compiles (the construction check's `CHECK_OOB=0`) leaves
   the others alone; process-wide settings shared by compiling domains would
-  let one domain's override and restore clobber another's. MTLCompiler
+  let one domain's override and restore clobber another's. The calling domain
+  renders too and lives as long as the program, which nothing recycles, so a
+  table of movements per domain would keep its nodes for the program's life;
+  one rewrite is a scope that ends. MTLCompiler
   re-parses its options into LLVM's global registry, which is not
   thread-safe, comgr serialises a process's compiles on its own mutex, and
   NVRTC 13.3 and 13.4's assembler crashes on some valid sources, hence the
@@ -267,7 +278,8 @@ a source (`uop/upat.py` `_get_clause`).
   their own` (every test), `› a library that does not load` (every test), and `›
   a process that cannot start`; `Tolk.Compiler_amd › a library that does not
   load` (every test); `Tolk.Compiler_cuda (fork) › a forked process` (every
-  test).
+  test); `Tolk.Indexing › apply_movement_op › laws › one memo keeps the index
+  of each movement it holds`.
 
 ## D6. Devices are named, never parsed
 
@@ -1727,7 +1739,8 @@ view of any value, as `uop/ops.py` `UOp.contiguous_view` does.
   `Indexing.realize_gathered`, `Indexing.data_srcs`, `Indexing.convert_gather`
   and its rule in `Indexing.pm_apply_rangeify`, and
   `Indexing.assign_ranges`'s consumer ranges of a gather;
-  `Prepare.move_index`, `Prepare.mops` and `Prepare.pm_tensor_mops`.
+  `Prepare.move_index`, `Prepare.mops` and `Prepare.pm_tensor_mops`;
+  `Codegen.index_lane`.
 - **Differs:** an `INDEX` whose one index source has axes, `INDEX(x, L)`,
   reads `x` at the row each element of `L` holds, and its shape is `L`'s
   followed by the rest of `x`'s. The scheduler takes it as a load:
@@ -1752,7 +1765,9 @@ view of any value, as `uop/ops.py` `UOp.contiguous_view` does.
   `index_zero_fill`, `index_assign_self`) and their kernel counts,
   `gather_kernel_counts`; the Prepare suite's `gather_of_self`,
   `gather_by_self` and `gather_of_reshape`, and `pm_mops › rules › an index
-  that loads from a storage state moves with the state as it is`; rune's
+  that loads from a storage state moves with the state as it is`;
+  `Tolk.Codegen › index_lane › a window's lane is the movement rules' index,
+  with its state` (both cases); rune's
   `Lower_index` suite: `gathers and scatters › gathers give eager's bits`,
   compiled on the host.
 

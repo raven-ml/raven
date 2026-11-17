@@ -10076,6 +10076,70 @@ let hand_written =
         (writes before_empty_loop [] [ [ 8 ]; [ 0 ] ]);
     ]
 
+(* Lane indices
+
+   A lane's index starts as constants and moves through its source's
+   movements: here a window of a reshaped, permuted view, its start an integer
+   or a load from a storage state. A loaded start puts the load in the index,
+   which the reshape under the window simplifies. The state's store is gated
+   by [r % 4] where [r < 4], which only a simplification knowing the gate
+   holds reduces: rebuilt, the store would define the storage a second time.
+   Each lane of the window, through one memo, is the index the movement rules
+   make, and holds the state as it is. *)
+let lane_indices =
+  let mops u =
+    Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u
+      (After_sources Prepare.pm_mops)
+  in
+  let states u =
+    List.filter (fun u -> Ops.op u = After) (Ops.toposort ~calls:Enter u)
+  in
+  let lanes loaded =
+    let open Ops.O in
+    let buf = Ops.new_buffer ~slot:2 "CPU" 4 Int32 in
+    let r = Ops.range ~axis_type:Loop (Int 8) [ 2 ] in
+    let gated = Shape.valid (r % Ops.int 4) (r < Ops.int 4) in
+    let state =
+      Ops.after buf
+        [
+          Ops.end_
+            (Ops.store (Ops.index buf [ gated ]) (Ops.cast r Int32))
+            [ r ];
+        ]
+    in
+    let start : Ops.sint =
+      if loaded then Sym (Ops.cast (Ops.index state [ Ops.int 0 ]) Weak_int)
+      else Int 2
+    in
+    let x = Shape.param ~device:"CPU" ~shape:[ Int 8 ] 1 Float32 in
+    let viewed =
+      Shape.reshape
+        (Shape.permute (Shape.reshape x [ Int 2; Int 4 ]) [ 1; 0 ])
+        [ Int 8 ]
+    in
+    let window =
+      Shape.shrink viewed [ Some (start, Shape.Sint.(start + Int 4)) ]
+    in
+    let memo = Indexing.memo () in
+    List.iter
+      (fun k ->
+        let msg = Printf.sprintf "lane %d" k in
+        let lane = Codegen.index_lane memo window [ k ] in
+        equal Uops.uop ~msg (mops (Ops.index window [ Ops.int k ])) lane;
+        equal (list Uops.uop) ~msg
+          (if loaded then [ state ] else [])
+          (states lane))
+      [ 0; 1; 2; 3; 1 ]
+  in
+  group "index_lane"
+    [
+      cases "a window's lane is the movement rules' index, with its state"
+        ~id:(fun loaded ->
+          if loaded then "a start loaded from a storage state"
+          else "an integer start")
+        [ false; true ] lanes;
+    ]
+
 let () =
   Disk_cache.play (("breaking graph", lowers_a_breaking_graph) :: parts);
   exit
@@ -10146,4 +10210,5 @@ let () =
            hand_written;
            reduces_under_gates;
            few_trips_tests;
+           lane_indices;
          ]))

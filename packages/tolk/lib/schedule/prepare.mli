@@ -18,7 +18,7 @@ val pm_mops : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [pm_mops] moves movements towards the storage they view:
 
     - an {!Op.Index} of a movement indexes the movement's source with the
-      indices the movement maps to it ({!Indexing.apply_movement_op}). An index
+      indices the movement maps to it ({!move_index}). An index
       with fewer indices than a reshape has axes indexes its source when the
       reshape leaves the trailing axes alone;
     - a store through a selection of an index and of [0], as a padded view
@@ -30,6 +30,23 @@ val pm_mops : (unit, Ops.t) Ops.Pattern_matcher.t
       of a value ordered after effects is the index of the value ordered after
       them;
     - an {!Op.End} of a movement is the end of the movement's source. *)
+
+val move_index :
+  ?memo:Indexing.memo ->
+  Ops.sint list ->
+  Ops.movement ->
+  Ops.t list ->
+  Ops.t list
+(** [move_index ~memo in_shape m idxs] is
+    {!Indexing.apply_movement_op}[ ~memo in_shape m idxs], each load from a
+    storage state in [idxs] held as a parameter of its bounds while the index
+    moves. The state comes back as it is, where simplifying the index would
+    rebuild the stores it is ordered after. *)
+
+val pm_mops_in : ('ctx -> Indexing.memo) -> ('ctx, Ops.t) Ops.Pattern_matcher.t
+(** [pm_mops_in memo_of] is {!pm_mops}, each index moved through a movement
+    with the memo [memo_of ctx] of the rewrite's context [ctx]
+    ({!Indexing.apply_movement_op}). *)
 
 val expand_bitcast : Ops.t -> Ops.t option
 (** [expand_bitcast bc] is the {!Op.Bitcast} [bc] of a value to a type of

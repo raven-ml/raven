@@ -1373,6 +1373,11 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A first call that compiles its kernels takes less: a kernel's devectorizing
+  rewrite moves each lane's index through a movement once
+  (`Codegen.full_rewrite_to_sink`, `Indexing.apply_movement_op ~memo`).
+  gpt-oss-20b's kernels render with 14% fewer allocated words, and its cold
+  first call takes 4-5% less on an RTX 5000 Ada.
 - A GPU kernel that groups a reduce, with no output axis split across it,
   takes 32 threads along a reduce of more than 512 values, and 64 past 2048
   on a SIMD group of 64, where it took 16

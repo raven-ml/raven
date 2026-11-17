@@ -19,12 +19,19 @@ val is_gather : Ops.t -> bool
     value with axes, which reads the tensor at the row each element of the value
     names. *)
 
+type memo
+(** The type for memos of {!apply_movement_op}. A memo keeps each index it
+    was given and each result alive until the memo itself is dropped. *)
+
+val memo : unit -> memo
+(** [memo ()] is an empty memo. *)
+
 val apply_movement_op :
-  Ops.sint list -> Ops.movement -> Ops.t list -> Ops.t list
-(** [apply_movement_op in_shape m idxs] is the index, into a source of shape
-    [in_shape], of the element that the movement [m] of that source places at
-    the index [idxs]: one node per axis of the source, from one per axis of the
-    result.
+  ?memo:memo -> Ops.sint list -> Ops.movement -> Ops.t list -> Ops.t list
+(** [apply_movement_op ~memo in_shape m idxs] is the index, into a source of
+    shape [in_shape], of the element that the movement [m] of that source places
+    at the index [idxs]: one node per axis of the source, from one per axis of
+    the result.
 
     - [Shrink] adds each axis' start;
     - [Permute] puts each index back on its source axis;
@@ -40,7 +47,11 @@ val apply_movement_op :
     constant on an axis drops it: a [Reshape] to an axis of one element, an
     [Expand] that drops the leading index, a [Shrink] onto an axis of one
     element. A caller that reads through the index masks the padded values
-    itself, as {!run_rangeify} turns each [Pad] into a selection. *)
+    itself, as {!run_rangeify} turns each [Pad] into a selection.
+
+    With [memo], a result is computed once for each [in_shape], [m] and
+    [idxs], compared node by node, and read from [memo] after that. The result
+    is the same, since it depends on nothing else. *)
 
 val stack_select : Ops.t -> Ops.t list -> Ops.t
 (** [stack_select i lanes] is the lane of [lanes] at the index [i], a tree of

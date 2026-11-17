@@ -86,7 +86,7 @@ let rec walk_mop u =
    parameter of its bounds while the index moves. Rewritten in place, the load
    would have the stores its state is ordered after rebuilt, a second definition
    of the storage. *)
-let move_index in_shape m idxs =
+let move_index ?memo in_shape m idxs =
   let load u =
     op u = Op.Index && shape_opt u = Some [] && op (base (nth u 0)) = Op.After
   in
@@ -94,7 +94,7 @@ let move_index in_shape m idxs =
     List.filter load
       (toposort ~calls:Skip ~gate:(fun u -> op u <> Op.After) (sink idxs))
   with
-  | [] -> Indexing.apply_movement_op in_shape m idxs
+  | [] -> Indexing.apply_movement_op ?memo in_shape m idxs
   | loads ->
       let held =
         List.mapi
@@ -106,17 +106,17 @@ let move_index in_shape m idxs =
           loads
       in
       let moved =
-        Indexing.apply_movement_op in_shape m
+        Indexing.apply_movement_op ?memo in_shape m
           (src (substitute ~calls:Skip ~pass:Fixed_point (sink idxs) held))
       in
       src
         (substitute ~calls:Skip ~pass:Fixed_point (sink moved)
            (List.map (fun (u, p) -> (p, u)) held))
 
-let mop_index r idx =
+let mop_index ?memo r idx =
   let idxs = List.tl (src idx) and s = shape (nth r 0) in
   let n = List.length idxs in
-  if n = ndim r then Some (index (nth r 0) (move_index s (marg r) idxs))
+  if n = ndim r then Some (index (nth r 0) (move_index ?memo s (marg r) idxs))
   else if op r <> Op.Reshape then None
   else
     let rest = List.drop n (shape r) in
@@ -127,18 +127,19 @@ let mop_index r idx =
     else
       let reshape = Reshape (List.take n (shape r)) in
       let ret =
-        index (nth r 0) (move_index (List.take src_prefix s) reshape idxs)
+        index (nth r 0)
+          (move_index ?memo (List.take src_prefix s) reshape idxs)
       in
       if equal_shape (shape ret) (shape idx) then Some ret else None
 
-(* The movement rules, with [index] for an index of a movement. *)
+(* The movement rules, with [index ctx] for an index of a movement. *)
 let mops index =
   let movement = Upat.v ~op:Op.Set.movement ~name:"r" () in
   let zero = Upat.O.int 0 in
   Pattern_matcher.v
     (fun () -> [
-      rule (Upat.f movement Op.Index ~allow_any_len:true ~name:"idx") (fun m ->
-          index (m "r") (m "idx"));
+      rule_ctx (Upat.f movement Op.Index ~allow_any_len:true ~name:"idx")
+        (fun ctx m -> index ctx (m "r") (m "idx"));
       (* A store through a padded view gates the destination index, not its
          loaded value. *)
       rule
@@ -189,11 +190,16 @@ let mops index =
           Some (replace a ~src:(nth (m "r") 0 :: List.tl (src a))));
     ])
 
-let pm_mops = mops mop_index
+let pm_mops = mops (fun () r idx -> mop_index r idx)
+
+let pm_mops_in memo_of =
+  mops (fun ctx r idx -> mop_index ~memo:(memo_of ctx) r idx)
 
 (* In a tensor graph, an index with a shape is a gather's, which would multiply
    its shape if it moved through the movement: the gather is left whole. *)
-let tensor_mop r idx = if Indexing.is_gather idx then None else mop_index r idx
+let tensor_mop () r idx =
+  if Indexing.is_gather idx then None else mop_index r idx
+
 let pm_tensor_mops = mops tensor_mop
 
 (* Cleanups *)

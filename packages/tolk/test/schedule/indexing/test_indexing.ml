@@ -261,6 +261,44 @@ let kinds =
     ("reshape", `Reshape);
   ]
 
+(* One memo gives, for each of several movements of any kind, at a first call
+   and at a repeat, what no memo gives: over the result's ranges, and over its
+   first element's constant index. *)
+let memo_law moves =
+  let kind (m : Ops.movement) =
+    match m with
+    | Reshape _ -> 0
+    | Expand _ -> 1
+    | Pad _ -> 2
+    | Shrink _ -> 3
+    | Permute _ -> 4
+  in
+  cover "movements of two kinds"
+    (List.length (List.sort_uniq compare (List.map (fun (_, m) -> kind m) moves))
+    > 1);
+  let calls =
+    List.concat_map
+      (fun (in_shape, m) ->
+        let out_shape = shape_of in_shape m in
+        List.map
+          (fun idxs -> (in_shape, m, idxs))
+          [ ranges out_shape; List.map (fun _ -> Ops.int 0) out_shape ])
+      moves
+  in
+  let memo = Indexing.memo () in
+  let check msg (in_shape, m, idxs) =
+    equal (list Uops.uop) ~msg (apply in_shape m idxs)
+      (Indexing.apply_movement_op ~memo (ints in_shape) m idxs)
+  in
+  List.iter (check "first") calls;
+  List.iter (check "repeat") calls
+
+let mixed_movements =
+  Gen.(
+    list ~size:(int_range 2 6)
+      (let* _, kind = of_list kinds in
+       one kind))
+
 let movement_laws =
   group "apply_movement_op › laws"
     (List.concat_map
@@ -273,7 +311,11 @@ let movement_laws =
              (Printf.sprintf "the indices of two %ss compose" name)
              (two kind) composition_law;
          ])
-       kinds)
+       kinds
+    @ [
+        prop "one memo keeps the index of each movement it holds"
+          mixed_movements memo_law;
+      ])
 
 (* Recorded programs *)
 
