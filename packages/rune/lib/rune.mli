@@ -1625,18 +1625,22 @@ val jit :
     {!Nx.erf} and {!Nx.pow} compute nx's own sequence of operations for them,
     so they are exact on a device that keeps subnormals, rounds division and
     the square root correctly and rounds a fused multiply-add once, as the
-    host CPU and NVIDIA GPUs do, and hold the bounds their [Nx] docs state. So
-    is {!Nx.log10}, which nx composes from {!Nx.log2} and exact functions. On
-    every device, where every operand is [±0.], [±inf] or a NaN, each of
-    these functions gives the value of C99 Annex F (ISO/IEC 9899, F.9), a
-    zero's sign included: [sin (-0.)] is [-0.] and [log 0.] is [-inf];
-    {!Nx.pow} is [1.] where [y] is [±0.] or [x] is [1.], NaN included, and
-    where [x] is [-1.] and [y] is infinite. On a device that flushes
-    subnormals, {!Nx.exp} is within 9 ulps of the correctly rounded result at
-    [float32] where that result is normal, and within one ulp at [float16]
-    and [bfloat16] where it is normal; rune states nothing more for these
-    functions there. A function nx composes from these, such as {!Nx.asinh}
-    or {!Nx.softmax}, computes as nx composes it.
+    host CPU and NVIDIA GPUs do, and hold the bounds their [Nx] docs state.
+    On every device, where every operand is [±0.], [±inf] or a NaN, each of
+    them and {!Nx.log10} gives the value of C99 Annex F (ISO/IEC 9899,
+    F.9), a zero's sign included: [sin (-0.)] is [-0.] and [log 0.] is
+    [-inf]; {!Nx.pow} is [1.] where [y] is [±0.] or [x] is [1.], NaN
+    included, and where [x] is [-1.] and [y] is infinite. On a device that
+    flushes subnormals, {!Nx.exp} is within 9 ulps of the correctly rounded
+    result at [float32] where that result is normal, and within one ulp at
+    [float16] and [bfloat16] where it is normal; rune states nothing more for
+    these functions there.
+
+    Of floats, {!Nx.log10}, {!Nx.asinh}, {!Nx.acosh}, {!Nx.atanh},
+    {!Nx.rsqrt}, {!Nx.hypot} and the special functions
+    ({!Nx.section-special}), which nx composes from these and exact
+    functions, are exact where these are. Another function nx composes from
+    these, such as {!Nx.softmax}, computes as nx composes it.
 
     {b Complex functions.} {!Nx.mul}, {!Nx.div}, {!Nx.recip}, {!Nx.sqrt},
     {!Nx.sign}, {!Nx.log}, {!Nx.log2}, {!Nx.exp}, {!Nx.exp2}, {!Nx.pow}, the

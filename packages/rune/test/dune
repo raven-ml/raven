@@ -198,6 +198,14 @@
  (modules test_lower_complex)
  (libraries nx rune rune_support windtrap))
 
+; Functions nx composes from kinds, compiled by Rune.jit on the host, against
+; nx's eager kernels.
+
+(test
+ (name test_composed)
+ (modules test_composed)
+ (libraries nx rune rune_support windtrap))
+
 ; A program compiled first in its process runs in a process of its own: the
 ; storage its lowering makes is numbered from the process's start.
 

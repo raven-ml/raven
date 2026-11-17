@@ -479,6 +479,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Numerics states a compiled `Nx.asinh`, `Nx.acosh`, `Nx.atanh`, `Nx.rsqrt`
+  and `Nx.hypot` of floats and every special function (`Nx.erfc` to
+  `Nx.i1e`) eager's bits on the host and NVIDIA GPUs; it stated no bound.
 - A compiled complex `Nx.asin`, `Nx.acos`, `Nx.atan`, `Nx.asinh`,
   `Nx.acosh` and `Nx.atanh` give eager's bits on the host and NVIDIA GPUs.
   Elsewhere they hold nx's 5u, where rune stated 21u and 23u for every

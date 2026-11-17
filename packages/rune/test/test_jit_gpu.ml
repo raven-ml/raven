@@ -23,8 +23,9 @@
    attention holds its bound against a float64 reference and gives +0 for a
    sum of zeros, paged keys and values give dense ones' bits, a sum of a
    contraction's result holds its bound, a long sum and a weight gradient
-   hold the blocked bound, a kind compiled to nx's sequence gives eager's
-   bits on an NVIDIA GPU and exp holds its bound in ulps of the correctly
+   hold the blocked bound, a kind compiled to nx's sequence and a function nx
+   composes from kinds give eager's bits on an NVIDIA GPU and exp holds its
+   bound in ulps of the correctly
    rounded result on one that flushes subnormals, a range gather and its
    gradient compile to eager's bits, and an argmax or argmin over a length
    16 does not divide gives nx's position, a sum and a product their exact values, and a first k of a sort
@@ -3003,6 +3004,41 @@ let complex_ported k =
         Kinds.folded s ~f64 k);
   ]
 
+(* Over a cold disk cache NVRTC compiles the largest kernel below,
+   betaincinv's at float64, in about a minute, and it runs for seconds on an
+   RTX 5000 Ada: measured, betaincinv's test at float64 ran three cases in
+   60 s cold. Warm, each takes seconds. *)
+let cold = 240.
+
+(* Functions nx composes from kinds and exact operations give eager's bits on
+   an NVIDIA GPU, as the kinds above, each float type a test of its own. *)
+let composed_law k =
+  let name = Kinds.name k in
+  [
+    prop ~timeout:cold ~count:12
+      ~examples:[ Kinds.example k ]
+      (name ^ " at float32 gives eager's bits")
+      (Kinds.gen k)
+      (fun c -> Kinds.law (snd (keeps ())) ~f64:false k c);
+    prop ~timeout:cold ~count:12
+      ~examples:[ Kinds.example k ]
+      (name ^ " at float64 gives eager's bits")
+      (Kinds.gen k)
+      (fun c ->
+        let f64, s = keeps () in
+        if not f64 then skip ~reason:"the GPU's kernels have no float64" ();
+        Kinds.law ~f32:false s ~f64 k c);
+  ]
+
+let composed =
+  Kinds.
+    [
+      asinh; acosh; atanh; rsqrt; hypot; erfc; erfinv; ndtr; log_ndtr; ndtri;
+      lgamma; digamma; lbeta; gammainc; gammaincc; log_gammainc; log_gammaincc;
+      gammaincinv; gammainccinv; betainc; betaincc; log_betainc; log_betaincc;
+      betaincinv; betainccinv; i0e; i1e;
+    ]
+
 let complex_kinds =
   Kinds.
     [
@@ -3126,6 +3162,7 @@ let () =
                 ]);
          group "clamped operands" (List.map clamped_law clamped);
          group "complex kinds" (List.concat_map complex_ported complex_kinds);
+         group "composed functions" (List.concat_map composed_law composed);
          group "exp"
            [
              prop ~count:24 "exp within 9 ulps at float32 where it flushes"

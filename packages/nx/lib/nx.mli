@@ -1707,11 +1707,9 @@ end
 
     These bounds, and those the functions below state, hold where a set's
     kernels compute, and a set without kernels computes these functions
-    only under a compiler. [Rune.jit] computes each function that
-    [Rune]'s Numerics section lists within the bound stated there, and a
-    function nx composes from others, as {!asinh} on floats or {!lgamma},
-    by nx's formula over the compiled ones. [Rune] states no bound for
-    such a function. *)
+    only under a compiler. [Rune]'s Numerics section states what
+    [Rune.jit] computes for these functions and for those nx composes from
+    them, such as {!asinh} on floats and {!lgamma}. *)
 
 val sqrt : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [sqrt x] is the square root, NaN below [-0.], correctly rounded on

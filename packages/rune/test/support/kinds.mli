@@ -47,6 +47,41 @@ val clamped_log : kind
 (** [clamped_log] is {!log} of its operand clamped to [[1e-30, 1e4]] as
     {!clamped_exp} clamps, a NaN taking [1e4]. *)
 
+(** {1:composed Composed functions}
+
+    Functions nx composes from kinds and exact operations, at [float32] and
+    [float64]: their operands are drawn as a kind's are, from the switches
+    their formulas take and their domains' edges, and a function of several
+    operands also draws tuples from its domain. *)
+
+val asinh : kind
+val acosh : kind
+val atanh : kind
+val rsqrt : kind
+val hypot : kind
+val erfc : kind
+val erfinv : kind
+val ndtr : kind
+val log_ndtr : kind
+val ndtri : kind
+val lgamma : kind
+val digamma : kind
+val lbeta : kind
+val gammainc : kind
+val gammaincc : kind
+val log_gammainc : kind
+val log_gammaincc : kind
+val gammaincinv : kind
+val gammainccinv : kind
+val betainc : kind
+val betaincc : kind
+val log_betainc : kind
+val log_betaincc : kind
+val betaincinv : kind
+val betainccinv : kind
+val i0e : kind
+val i1e : kind
+
 (** {1:complex Complex kinds}
 
     Kinds of [complex64] and [complex128] operands, named as C99's functions.
@@ -97,12 +132,14 @@ val example : kind -> case
 
 (** {1:laws Laws} *)
 
-val law : (module Nx.Devices) -> f64:bool -> kind -> case -> unit
+val law :
+  ?f32:bool -> (module Nx.Devices) -> f64:bool -> kind -> case -> unit
 (** [law s ~f64 k c] checks that [k] of [c]'s elements compiled on [s]'s first
     device, with no call evaluated, gives the bits of [k] computed eagerly on
     the host, a NaN equal to any NaN, part by part for a complex kind. The
-    [float64] elements are checked only with [f64]. It covers each class of
-    operand [k]'s switches tell apart and each special value. *)
+    [float32] elements are checked only with [f32] (default [true]), the
+    [float64] ones only with [f64]. It covers each class of operand [k]'s
+    switches tell apart and each special value. *)
 
 val narrow : (module Nx.Devices) -> kind -> unit
 (** [narrow s k] checks the law of {!law} for [k] at [float16], [bfloat16],
@@ -110,7 +147,7 @@ val narrow : (module Nx.Devices) -> kind -> unit
     or for two operands at every pair of codes of the 8- and 4-bit floats and at
     a grid of pairs of the 16-bit ones.
 
-    Raises [Invalid_argument] for a complex kind. *)
+    Raises [Invalid_argument] for a complex kind or one of three operands. *)
 
 val folded : (module Nx.Devices) -> f64:bool -> kind -> unit
 (** [folded s ~f64 k] checks that [k] of a constant inside a compiled function,

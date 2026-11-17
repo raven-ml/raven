@@ -69,6 +69,15 @@ type f2 = {
     's 'd. (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t;
 }
 
+type f3 = {
+  f3 :
+    's 'd.
+    (float, 's, 'd) Nx.t ->
+    (float, 's, 'd) Nx.t ->
+    (float, 's, 'd) Nx.t ->
+    (float, 's, 'd) Nx.t;
+}
+
 type c1 = { c1 : 's 'd. (Complex.t, 's, 'd) Nx.t -> (Complex.t, 's, 'd) Nx.t }
 
 type c2 = {
@@ -85,6 +94,7 @@ type c2 = {
 type fn =
   | One of f1
   | Two of f2 * (bool -> int64 array Windtrap.Gen.t)
+  | Three of f3 * (bool -> int64 array Windtrap.Gen.t)
   | Cone of c1 * (bool -> int64 array Windtrap.Gen.t)
   | Ctwo of c2 * (bool -> int64 array Windtrap.Gen.t)
 
@@ -148,7 +158,7 @@ let annex_numbers parts wide =
 let arity k = Array.length k.specs
 
 let is_complex k =
-  match k.fn with Cone _ | Ctwo _ -> true | One _ | Two _ -> false
+  match k.fn with Cone _ | Ctwo _ -> true | One _ | Two _ | Three _ -> false
 
 let spec_of wide k i = pick wide k.specs.(i)
 
@@ -1759,6 +1769,244 @@ let catan = inverse "catan" { c1 = Nx.atan } atanh_big Circular
    side. *)
 let cacosh = inverse "cacosh" { c1 = Nx.acosh } asin_big Plain
 
+(* Composed functions
+
+   Functions nx composes from kinds and exact operations, one program each
+   (nx.ml, special.ml), at float32 and float64: their points are the switches
+   their formulas take where they state one (asinh's 2^28 and 2^-28, acosh's 2,
+   atanh's 1/2, hypot's least normal, the inverses' tails) and their domains'
+   edges, their ranges their domains. A function of several operands draws
+   tuples from its domain in 2 of 5 elements: concentrations and arguments
+   spread over [1e-3, 1e4] on a logarithmic scale, probabilities uniform. *)
+
+let big = 0x1p28
+let tiny = 0x1p-28
+let mag e = Float.abs e.(0)
+
+let tuple doms wide =
+  Gen.(
+    map Array.of_list
+      (List.fold_right
+         (fun g acc ->
+           let+ v = g and+ vs = acc in
+           code wide v :: vs)
+         doms (constant [])))
+
+let spread lo hi =
+  Gen.map Stdlib.exp (Gen.float_range (Stdlib.log lo) (Stdlib.log hi))
+
+let prob = Gen.float_range 0. 1.
+
+let composed1 name f points ranges covers =
+  unary name f (spec points ranges) (spec points ranges) covers
+
+let composed n name fn pts covers =
+  let s = spec (fst pts) (snd pts) in
+  {
+    name;
+    fn;
+    specs = Array.make n (s, s);
+    covers;
+    fixed = (if n = 2 then annex_pairs else none);
+    generic = true;
+  }
+
+let asinh =
+  composed1 "asinh" { f1 = Nx.asinh } [ big; tiny; 1.; 0.5 ] [ 1.; 1e4 ]
+    [
+      ("|x| below 2^-28, not zero", fun _ e -> e.(0) <> 0. && mag e < tiny);
+      ("|x| from 2^-28 below 2^28", fun _ e -> mag e >= tiny && mag e < big);
+      ("|x| from 2^28, finite", fun _ e -> mag e >= big && finite_pos (mag e));
+    ]
+
+let acosh =
+  composed1 "acosh" { f1 = Nx.acosh } [ 1.; 2.; big; 1.5 ] [ 2.; 1e4 ]
+    [
+      ("x below 1", fun _ e -> e.(0) < 1.);
+      ("x in [1, 2)", fun _ e -> e.(0) >= 1. && e.(0) < 2.);
+      ("x in [2, 2^28)", fun _ e -> e.(0) >= 2. && e.(0) < big);
+      ("x from 2^28, finite", fun _ e -> e.(0) >= big && Float.is_finite e.(0));
+    ]
+
+let atanh =
+  composed1 "atanh" { f1 = Nx.atanh } [ 0.5; 1.; tiny; 0.25 ] [ 1.; 2. ]
+    [
+      ("|x| below 2^-28, not zero", fun _ e -> e.(0) <> 0. && mag e < tiny);
+      ("|x| in [2^-28, 1/2)", fun _ e -> mag e >= tiny && mag e < 0.5);
+      ("|x| in [1/2, 1)", fun _ e -> mag e >= 0.5 && mag e < 1.);
+      ("|x| = 1", fun _ e -> mag e = 1.);
+    ]
+
+let rsqrt =
+  composed1 "rsqrt" { f1 = Nx.rsqrt } [ 1.; 4.; 0.25 ] [ 1.; 1e4 ]
+    [ ("x positive, finite", fun _ e -> finite_pos e.(0)) ]
+
+let wide_spread = spread 1e-300 1e300
+
+let hypot =
+  composed 2 "hypot"
+    (Two ({ f2 = Nx.hypot }, tuple [ wide_spread; wide_spread ]))
+    ([ 1.; 0x1p-1022; 0x1p-126; 3. ], [ 1.; 1e30 ])
+    [
+      ( "|x| = |y|, finite, not zero",
+        fun _ e -> mag e = Float.abs e.(1) && finite_pos (mag e) );
+      ( "both below the least normal, one not zero",
+        fun w e ->
+          let least = pick w (0x1p-126, 0x1p-1022) in
+          mag e < least
+          && Float.abs e.(1) < least
+          && (e.(0) <> 0. || e.(1) <> 0.) );
+    ]
+
+let erfc =
+  composed1 "erfc" { f1 = Nx.erfc }
+    [ 0.5; 1.; 2.; 4.; 10.; 26.; 27. ]
+    [ 1.; 30. ]
+    [
+      ("x below -1", fun _ e -> e.(0) < -1.);
+      ("|x| below 1", fun _ e -> mag e < 1.);
+      ("x in [1, 10]", fun _ e -> e.(0) >= 1. && e.(0) <= 10.);
+      ("x past 10, finite", fun _ e -> e.(0) > 10. && Float.is_finite e.(0));
+    ]
+
+let erfinv =
+  composed1 "erfinv" { f1 = Nx.erfinv }
+    [ 1.; 0.5; 0.9; 0.99; tiny ]
+    [ 1. ]
+    [
+      ("|p| below 1/2", fun _ e -> mag e < 0.5);
+      ("|p| in [1/2, 1)", fun _ e -> mag e >= 0.5 && mag e < 1.);
+      ("|p| = 1", fun _ e -> mag e = 1.);
+      ("|p| past 1", fun _ e -> mag e > 1.);
+    ]
+
+let ndtr =
+  composed1 "ndtr" { f1 = Nx.ndtr } [ 1.; 5.; 14.; 38.5; 0.5 ] [ 1.; 40. ]
+    [
+      ("x below -14", fun _ e -> e.(0) < -14.);
+      ("x in [-14, 0)", fun _ e -> e.(0) >= -14. && e.(0) < 0.);
+      ("x positive", fun _ e -> e.(0) > 0.);
+    ]
+
+let log_ndtr =
+  composed1 "log_ndtr" { f1 = Nx.log_ndtr }
+    [ 1.; 5.; 38.5; 1e5; 2.6e19; 1.9e154 ]
+    [ 10.; 1e5 ]
+    [
+      ("x below -38.5", fun _ e -> e.(0) < -38.5);
+      ("x in [-38.5, 5]", fun _ e -> e.(0) >= -38.5 && e.(0) <= 5.);
+      ("x past 5, finite", fun _ e -> e.(0) > 5. && Float.is_finite e.(0));
+    ]
+
+let ndtri =
+  composed1 "ndtri" { f1 = Nx.ndtri }
+    [ 0.5; 0.25; 1e-10; 1e-30; 0.75; 1. ]
+    [ 1. ]
+    [
+      ("p below 1e-10, not zero", fun _ e -> e.(0) > 0. && e.(0) < 1e-10);
+      ("p in [1e-10, 1/2]", fun _ e -> e.(0) >= 1e-10 && e.(0) <= 0.5);
+      ("p in (1/2, 1)", fun _ e -> e.(0) > 0.5 && e.(0) < 1.);
+      ("p outside [0, 1]", fun _ e -> e.(0) < 0. || e.(0) > 1.);
+    ]
+
+let gammas name f =
+  composed1 name f
+    [ 1.; 2.; 3.; 0.5; 1.4616321449683622; 8.; 1e6; 0x1p52 ]
+    [ 10.; 1e4 ]
+    [
+      ( "x negative, not an integer",
+        fun _ e ->
+          e.(0) < 0. && Float.is_finite e.(0) && not (Float.is_integer e.(0)) );
+      ("x a negative integer", fun _ e -> e.(0) < 0. && Float.is_integer e.(0));
+      ("x in (0, 3)", fun _ e -> e.(0) > 0. && e.(0) < 3.);
+      ("x past 8, finite", fun _ e -> e.(0) > 8. && Float.is_finite e.(0));
+    ]
+
+let lgamma = gammas "lgamma" { f1 = Nx.lgamma }
+let digamma = gammas "digamma" { f1 = Nx.digamma }
+let shapes = [ 1.; 0.5; 0x1p20; 0x1p-61; 1e10 ]
+
+let lbeta =
+  composed 2 "lbeta"
+    (Two ({ f2 = Nx.lbeta }, tuple [ spread 1e-3 1e10; spread 1e-3 1e10 ]))
+    (shapes, [ 10.; 1e4 ])
+    [
+      ( "both positive and finite",
+        fun _ e -> finite_pos e.(0) && finite_pos e.(1) );
+      ("a or b past 1e5", fun _ e -> e.(0) > 1e5 || e.(1) > 1e5);
+    ]
+
+let gamma_args = tuple [ spread 1e-3 1e4; spread 1e-3 1e4 ]
+
+let incomplete name f =
+  composed 2 name
+    (Two (f, gamma_args))
+    (shapes @ [ 10.; 100. ], [ 10.; 1e4 ])
+    [
+      ( "0 < x < a",
+        fun _ e -> e.(1) > 0. && e.(1) < e.(0) && Float.is_finite e.(0) );
+      ( "x > a > 0",
+        fun _ e -> e.(0) > 0. && e.(1) > e.(0) && Float.is_finite e.(1) );
+      ("a in (0, 1)", fun _ e -> e.(0) > 0. && e.(0) < 1.);
+    ]
+
+let gammainc = incomplete "gammainc" { f2 = Nx.gammainc }
+let gammaincc = incomplete "gammaincc" { f2 = Nx.gammaincc }
+let log_gammainc = incomplete "log_gammainc" { f2 = Nx.log_gammainc }
+let log_gammaincc = incomplete "log_gammaincc" { f2 = Nx.log_gammaincc }
+
+let tails =
+  [
+    ("p in (0, 1/2)", fun _ e -> e.(1) > 0. && e.(1) < 0.5);
+    ("p in (1/2, 1)", fun _ e -> e.(1) > 0.5 && e.(1) < 1.);
+    ("a in (0, 1)", fun _ e -> e.(0) > 0. && e.(0) < 1.);
+  ]
+
+let gamma_inverse name f =
+  composed 2 name
+    (Two (f, tuple [ spread 1e-3 1e4; prob ]))
+    (shapes @ [ 0.25; 0.75; 1e-10 ], [ 1.; 1e4 ])
+    tails
+
+let gammaincinv = gamma_inverse "gammaincinv" { f2 = Nx.gammaincinv }
+let gammainccinv = gamma_inverse "gammainccinv" { f2 = Nx.gammainccinv }
+let beta_args = tuple [ spread 1e-3 1e4; spread 1e-3 1e4; prob ]
+
+let beta_covers =
+  [
+    ( "x below a / (a + b)",
+      fun _ e -> e.(2) > 0. && e.(2) < e.(0) /. (e.(0) +. e.(1)) );
+    ( "x above a / (a + b)",
+      fun _ e -> e.(2) < 1. && e.(2) > e.(0) /. (e.(0) +. e.(1)) );
+    ( "a or b in (0, 1)",
+      fun _ e -> (e.(0) > 0. && e.(0) < 1.) || (e.(1) > 0. && e.(1) < 1.) );
+  ]
+
+let incomplete_beta name f =
+  composed 3 name
+    (Three (f, beta_args))
+    (shapes @ [ 0.25; 0.75; 1e-10 ], [ 1.; 1e4 ])
+    beta_covers
+
+let betainc = incomplete_beta "betainc" { f3 = Nx.betainc }
+let betaincc = incomplete_beta "betaincc" { f3 = Nx.betaincc }
+let log_betainc = incomplete_beta "log_betainc" { f3 = Nx.log_betainc }
+let log_betaincc = incomplete_beta "log_betaincc" { f3 = Nx.log_betaincc }
+let betaincinv = incomplete_beta "betaincinv" { f3 = Nx.betaincinv }
+let betainccinv = incomplete_beta "betainccinv" { f3 = Nx.betainccinv }
+
+let bessel name f =
+  composed1 name f
+    [ 8.; 500.; 714.; 92.; 1. ]
+    [ 10.; 1e3 ]
+    [
+      ("|x| below 8", fun _ e -> mag e < 8.);
+      ("|x| from 8, finite", fun _ e -> mag e >= 8. && Float.is_finite e.(0));
+    ]
+
+let i0e = bessel "i0e" { f1 = Nx.i0e }
+let i1e = bessel "i1e" { f1 = Nx.i1e }
+
 (* Cases *)
 
 type case = { f32 : int64 array array; f64 : int64 array array }
@@ -1818,7 +2066,8 @@ let element wide k =
   in
   match k.fn with
   | One _ -> alone
-  | Two (_, pairs) -> Gen.frequency [ (3, alone); (2, pairs wide) ]
+  | Two (_, pairs) | Three (_, pairs) ->
+      Gen.frequency [ (3, alone); (2, pairs wide) ]
   | Cone (_, pairs) | Ctwo (_, pairs) ->
       Gen.frequency [ (3, alone); (1, annex_g wide (arity k)); (2, pairs wide) ]
 
@@ -1873,8 +2122,8 @@ let example k =
    computes it at the dtype. *)
 let clamped k ~lo ~hi covers =
   match k.fn with
-  | Two _ | Cone _ | Ctwo _ ->
-      invalid_arg "Kinds.clamped: a kind of two operands or complex"
+  | Two _ | Three _ | Cone _ | Ctwo _ ->
+      invalid_arg "Kinds.clamped: a kind of several operands or complex"
   | One { f1 } ->
       let clamp x =
         let c v = Nx.full_like x v in
@@ -1942,6 +2191,10 @@ let compiled (type s d) (module S : Nx.Devices with type d = d) k
         Rune.jit
           Nx.Ptree.(tensor @-> tensor @-> returns tensor)
           f2 (on x) (on y)
+    | Three ({ f3 }, _), [ x; y; z ] ->
+        Rune.jit
+          Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+          f3 (on x) (on y) (on z)
     | _ -> invalid_arg "Kinds: operands of another arity"
   in
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
@@ -1951,6 +2204,7 @@ let eager k xs =
   match (k.fn, xs) with
   | One { f1 }, [ x ] -> f1 x
   | Two ({ f2 }, _), [ x; y ] -> f2 x y
+  | Three ({ f3 }, _), [ x; y; z ] -> f3 x y z
   | _ -> invalid_arg "Kinds: operands of another arity"
 
 (* A block's operands as host tensors and a result's codes. *)
@@ -2123,16 +2377,17 @@ let covers k wide es =
     (fun (label, f) -> cover (dt ^ label) (Array.exists (f wide) vs))
     (generic @ k.covers)
 
-let law (type d) (module S : Nx.Devices with type d = d) ~f64 k c =
-  covers k false c.f32;
+let law (type d) ?(f32 = true) (module S : Nx.Devices with type d = d) ~f64 k
+    c =
+  if f32 then covers k false c.f32;
   if f64 then covers k true c.f64;
   let bad =
-    run (module S) k false c.f32
+    (if f32 then run (module S) k false c.f32 else [])
     @ if f64 then run (module S) k true c.f64 else []
   in
   equal (list string) [] bad
 
-let law (module S : Nx.Devices) = law (module S)
+let law ?f32 (module S : Nx.Devices) = law ?f32 (module S)
 
 (* Narrow floats *)
 
@@ -2186,6 +2441,7 @@ let numbers k bits =
 
 let narrow (type d) (module S : Nx.Devices with type d = d) k =
   if is_complex k then invalid_arg "Kinds.narrow: a complex kind";
+  if arity k > 2 then invalid_arg "Kinds.narrow: a kind of three operands";
   let check (Narrow (label, dt, bits)) =
     let xs = List.map (narrow_codes dt bits) (numbers k bits) in
     let floats y = Nx.to_array (Nx.cast Nx.float64 y) in
@@ -2274,6 +2530,7 @@ let folded_at (type s d) (module S : Nx.Devices with type d = d) k
       match (k.fn, vs) with
       | One { f1 }, [ a ] -> f1 (full a)
       | Two ({ f2 }, _), [ a; b ] -> f2 (full a) (full b)
+      | Three ({ f3 }, _), [ a; b; c ] -> f3 (full a) (full b) (full c)
       | _ -> invalid_arg "Kinds: operands of another arity"
     in
     Nx.mul x y
