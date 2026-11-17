@@ -2109,6 +2109,140 @@ let nested_store_ends () =
   let rows = Ops.store row Ops.O.(y + float 1.) in
   computes (Ops.sink [ Ops.after b [ Ops.end_ (Ops.end_ rows [ j ]) [ i ] ] ])
 
+(* A loop's body is given its parameters for every trip, which its order reads
+   and the body does not show: one body run by a loop and called once is
+   scheduled under two keys. Its constant is one no earlier call made. *)
+let loop_body_keyed_apart () =
+  let n = 3 and k = 4 in
+  let p slot = Shape.param ~shape:[ Int k ] ~device:cpu slot Float32 in
+  let x = 1000. +. float_of_int (Atomic.fetch_and_add constants 1) in
+  let body =
+    Ops.sink
+      [
+        Ops.store (p 0) Ops.O.(p 0 + p 1);
+        Ops.store (p 2) Ops.O.(p 0 * float x);
+      ]
+  in
+  let looped =
+    let c = Ops.new_buffer cpu k Float32
+    and xs = Ops.new_buffer cpu (n * k) Float32
+    and ys = Ops.new_buffer cpu (n * k) Float32 in
+    let r = Ops.range ~axis_type:Loop (Int n) [ 100 ] in
+    let row b =
+      Shape.shrink b
+        [ Some (Sym Ops.O.(r * int k), Sym Ops.O.((r * int k) + int k)) ]
+    in
+    let e =
+      Ops.end_ (Ops.call ~precompile:true body [ c; row xs; row ys ]) [ r ]
+    in
+    Ops.sink [ Ops.after c [ e ]; Ops.after ys [ e ] ]
+  and once =
+    let c = Ops.new_buffer cpu k Float32
+    and x = Ops.new_buffer cpu k Float32
+    and y = Ops.new_buffer cpu k Float32 in
+    let call = Ops.call ~precompile:true body [ c; x; y ] in
+    Ops.sink [ Ops.after c [ call ]; Ops.after y [ call ] ]
+  in
+  with_settings ~debug:3 ~scache:1 (fun () ->
+      ignore (Schedule.create_linear_with_vars looped);
+      ignore (Schedule.create_linear_with_vars once));
+  match reports () with
+  | [ (_, v0, body0); (_, v1, _); (_, v2, body1); (_, v3, _) ] ->
+      equal (list string) ~msg:"each schedule is made"
+        [ "CACHE MISS"; "CACHE MISS"; "CACHE MISS"; "CACHE MISS" ]
+        [ v0; v1; v2; v3 ];
+      not_equal string ~msg:"the body's keys" body0 body1
+  | lines -> failf "scheduling printed %d lines" (List.length lines)
+
+(* A loop's body whose carry [c] of eight floats is given: each trip writes
+   [c] by regions, in one disjoint write, as a scan's update does, its row of
+   [xs] into the first half and the second half doubled, and stores into its
+   row of [ys] [3 a + b + 1], from the carry's old halves [a] and [b], read
+   directly or through storage of its own ([stage]). Neither store into the
+   carry makes storage, so the order would run them first: the read of what
+   they overwrite keeps them after it. *)
+let carry_read_after_region_store ~stage () =
+  let n = 3 and k = 4 in
+  let p slot size = Shape.param ~shape:[ Int size ] ~device:cpu slot Float32 in
+  let half lo = Shape.shrink (p 0 8) [ Some (Ops.Int lo, Ops.Int (lo + k)) ] in
+  let read = Ops.O.((half 0 * float 3.) + half 4) in
+  let read = if stage then Ops.contiguous read else read in
+  let body =
+    Ops.sink
+      [
+        Ops.after_disjoint (p 0 8)
+          [
+            Ops.store (half 0) (p 1 k);
+            Ops.store (half 4) Ops.O.(half 4 * float 2.);
+          ];
+        Ops.store (p 2 k) Ops.O.(read + float 1.);
+      ]
+  in
+  let c = Ops.new_buffer cpu 8 Float32
+  and xs = Ops.new_buffer cpu (n * k) Float32
+  and ys = Ops.new_buffer cpu (n * k) Float32 in
+  let r = Ops.range ~axis_type:Loop (Int n) [ 100 ] in
+  let row b =
+    Shape.shrink b
+      [ Some (Sym Ops.O.(r * int k), Sym Ops.O.((r * int k) + int k)) ]
+  in
+  let e =
+    Ops.end_ (Ops.call ~precompile:true body [ c; row xs; row ys ]) [ r ]
+  in
+  computes (Ops.sink [ Ops.after c [ e ]; Ops.after ys [ e ] ])
+
+(* A loop's body is given its parameters, and makes and frees its own storage.
+   Its kernels [a] and [c] make [t] and [u] from [y], [b] reads [t] last into
+   [z] and [d] reads [u] last into [w], the walk numbering them [a], [c],
+   [b], [d]. Once [a] has run, [b] frees [t] and makes nothing, [z] being a
+   parameter, so it runs before [c]: [t] and [u] never live at once, and each
+   call runs alone. Were [t] and [u] given too, nothing would be freed: the
+   kernels would run by their numbers, [a] and [c] together. *)
+let loop_body_frees_its_storage () =
+  let k = 64 in
+  let p slot = Shape.param ~shape:[ Int k ] ~device:cpu slot Float32 in
+  let made c =
+    let b = Ops.new_buffer cpu k Float32 in
+    Ops.after b [ Ops.store b Ops.O.(p 2 + float c) ]
+  in
+  let t = made 1. and u = made 2. in
+  let body =
+    Ops.sink
+      [
+        t;
+        u;
+        Ops.store (p 0) Ops.O.(t * float 3.);
+        Ops.store (p 1) Ops.O.(u * float 5.);
+      ]
+  in
+  let z = Ops.new_buffer cpu k Float32
+  and w = Ops.new_buffer cpu k Float32
+  and y = Ops.new_buffer cpu k Float32 in
+  let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+  let e = Ops.end_ (Ops.call ~precompile:true body [ z; w; y ]) [ r ] in
+  let big = Ops.sink [ Ops.after z [ e ]; Ops.after w [ e ] ] in
+  let linear, _ = Schedule.create_linear_with_vars ~capturing:true big in
+  let storage c =
+    List.map (fun a -> Ops.buf_uop (Ops.base a)) (Ops.src_without_body c)
+  in
+  let other c b = List.find (fun s -> s != b && s != y) (storage c) in
+  match Ops.src linear with
+  | [ e ] -> (
+      let calls = Ops.src (Ops.nth e 0) in
+      let taking b = List.find_opt (fun c -> List.memq b (storage c)) calls in
+      match (taking z, taking w) with
+      | Some b, Some d ->
+          let names =
+            [ (z, "z"); (w, "w"); (other b z, "t"); (other d w, "u") ]
+          in
+          let name c =
+            snd (List.find (fun (s, _) -> List.memq s (storage c)) names)
+          in
+          equal (list string) ~msg:"the body's calls, in order"
+            [ "t"; "z"; "u"; "w" ] (List.map name calls)
+      | _ -> fail "no call writes z or w")
+  | entries -> failf "%d entries" (List.length entries)
+
 (* Each refused at the top level and in the body of a call, precompiled or
    inlined. *)
 let refuses_loop (name, loop, message) =
@@ -2152,6 +2286,14 @@ let loops =
         renumbered_loop;
       test "a body whose loops trade numbers is the same body" renumbered_loops;
       test "a body that hits under other numbers keeps its own loops" own_loops;
+      test "a loop's body and the body called once are scheduled apart"
+        loop_body_keyed_apart;
+      test "a carry's read keeps its region's store after it"
+        (carry_read_after_region_store ~stage:false);
+      test "a carry's read through storage keeps its region's store after it"
+        (carry_read_after_region_store ~stage:true);
+      test "a loop's body makes and frees its own storage"
+        loop_body_frees_its_storage;
     ]
     @ List.map refuses_loop refused_loops
     @ [

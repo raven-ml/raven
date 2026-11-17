@@ -683,8 +683,8 @@ let bufferize_opts : Ops.bufferize_opts codec =
 (* A call that precompiles its backward pass differentiates, which tolk does
    not, so the field is written and read only as its default. *)
 let call_info : Ops.call_info codec =
-  let make name precompile () inline write : Ops.call_info =
-    { name; precompile; inline; write }
+  let make name precompile () inline loop write : Ops.call_info =
+    { name; precompile; inline; loop; write }
   in
   let get (f : Ops.call_info -> _) = f in
   let no_backward =
@@ -699,6 +699,7 @@ let call_info : Ops.call_info codec =
   |> field "precompile" ~default:false bool (get (fun c -> c.precompile))
   |> field "precompile_backward" ~default:() no_backward (fun _ -> ())
   |> field "inline" ~default:false bool (get (fun c -> c.inline))
+  |> field "loop" ~default:false bool (get (fun c -> c.loop))
   |> field "write" ~default:[] (list (pair int int)) (get (fun c -> c.write))
   |> finish
 

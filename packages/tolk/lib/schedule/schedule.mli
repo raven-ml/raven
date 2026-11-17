@@ -139,15 +139,22 @@ val create_linear_with_vars :
       bound variables, each replaced in the body by a parameter; call-local
       storage is numbered by its order in each body, so equal graphs schedule
       alike;
-    + each such call's body is scheduled ({!create_schedule}), once per body
-      when the setting {!Setting.scache} is [1] or more: a call that asks for a
-      body another domain is scheduling waits for it. From [2], the default,
-      schedules are also kept on disk ({!Helpers.Diskcache}, table
-      ["schedule_cache"]) for later processes: a schedule is read back for the
-      same body, the same values of the settings and variables that shape what
-      compilation makes ({!Setting.shaping}), and the same sources of this
-      library; a body scheduled under other values is scheduled again, in memory
-      too; an entry that does not read as a schedule is made anew and replaced;
+    + each such call's body is scheduled ({!create_schedule}). The body of a
+      call that an {!Op.End} over {!Ops.Axis_type.Loop} ranges holds is given
+      its parameters, storage of its caller's: in its order no kernel makes
+      or frees them, whatever the loop's number of trips, one included, where
+      the loop then folds and its call is inlined into its caller's schedule.
+      The body of any other call, one a back edge holds among them, counts
+      its parameters as its kernels take them. A body is scheduled once per
+      body and whether an end holds it when the setting {!Setting.scache} is
+      [1] or more: a call that asks for a body another domain is scheduling
+      waits for it. From [2], the default, schedules are also kept on disk
+      ({!Helpers.Diskcache}, table ["schedule_cache"]) for later processes: a
+      schedule is read back for the same body, held by an end or not, the same
+      values of the settings and variables that shape what compilation makes
+      ({!Setting.shaping}), and the same sources of this library; a body
+      scheduled under other values is scheduled again, in memory too; an
+      entry that does not read as a schedule is made anew and replaced;
     + the schedule's parameters are bound to the call's arguments, and each
       call-local storage to a new buffer on its device. A kernel reads a
       variable by its name, a run binding it, except where [big_sink] binds

@@ -485,9 +485,10 @@ let test_summed_step () =
    array apart is the storage the remat's call wrote, where a stack stores
    that storage into its region, until such a call writes into the stack's
    region itself. Until then the stack holds more, by one weight at most. A
-   step that sums it in its carry over [k] chunks without remats adds each
-   row's gradient into its region of the carry, in the carry's storage, so
-   it holds no more either. *)
+   step that sums it in its carry over [k] chunks adds each row's gradient
+   into its region of the carry, in the carry's storage, so it holds no more
+   either, with or without remats: under remats each row's add runs once its
+   row is computed, the carry being storage its trip is given. *)
 let test_stacked_step () =
   let pd = T.(list (pair tensor tensor)) and pt = T.(pair tensor tensor) in
   let apart =
@@ -533,9 +534,9 @@ let test_stacked_step () =
       end)
     [ false; true ];
   let chunks k a = Nx.reshape [| k; batch / k; dim |] a in
-  let f_apart k (ws, a) =
+  let f_apart remat k (ws, a) =
     let step (l, sums) x =
-      let v, gs = Rune.value_and_grad pd (fun ws -> loss false ws x) ws in
+      let v, gs = Rune.value_and_grad pd (fun ws -> loss remat ws x) ws in
       let add (s1, s2) (g1, g2) = (Nx.add s1 g1, Nx.add s2 g2) in
       ((Nx.add l v, List.map2 add sums gs), ())
     in
@@ -545,10 +546,10 @@ let test_stacked_step () =
          ~init:(Nx.scalar f32 0., List.map zeros ws)
          (chunks k a))
   in
-  let f_stacked k ((w1, w2), a) =
+  let f_stacked remat k ((w1, w2), a) =
     let step (l, (s1, s2)) x =
       let v, (g1, g2) =
-        Rune.value_and_grad pt (fun ws -> loss false (rows ws) x) (w1, w2)
+        Rune.value_and_grad pt (fun ws -> loss remat (rows ws) x) (w1, w2)
       in
       ((Nx.add l v, (Nx.add s1 g1, Nx.add s2 g2)), ())
     in
@@ -558,16 +559,20 @@ let test_stacked_step () =
          (chunks k a))
   in
   List.iter
-    (fun k ->
+    (fun (remat, k) ->
       let x =
-        bytes T.(pair pd tensor @-> returns (pair tensor pd)) (f_apart k)
-          (apart, a)
+        bytes
+          T.(pair pd tensor @-> returns (pair tensor pd))
+          (f_apart remat k) (apart, a)
       and y =
-        bytes T.(pair pt tensor @-> returns (pair tensor pt)) (f_stacked k)
-          (ws, a)
+        bytes
+          T.(pair pt tensor @-> returns (pair tensor pt))
+          (f_stacked remat k) (ws, a)
       in
-      no_more (Printf.sprintf "%d chunks" k) ~apart:x ~stacked:y)
-    [ 2; 4; 8 ]
+      no_more (Printf.sprintf "%d chunks, remats %b" k remat) ~apart:x
+        ~stacked:y)
+    (List.map (fun k -> (false, k)) [ 2; 4; 8 ]
+    @ List.map (fun k -> (true, k)) [ 1; 2; 4; 8 ])
 
 (* Donation *)
 

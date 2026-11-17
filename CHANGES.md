@@ -495,6 +495,12 @@ All notable changes to this project will be documented in this file.
 - A compiled `Nx.sin`, `Nx.cos` and `Nx.tan` compute nx's sequence where they
   used the target's sine, so give eager's bits on the host and NVIDIA GPUs;
   a first call allocates 25 times the words, NVRTC taking 2.7 times as long.
+- A compiled `scan` whose carry sums the gradients of stacked layers under
+  `Rune.remat` adds each layer's gradient into the carry once it is
+  computed, where it held each until the step's end: eight remat'd blocks
+  read as rows of two stacks hold 1,441,924 bytes on the host over one
+  chunk, from 1,638,532, 1,032,340 over 2, from 1,294,484, and 667,796
+  over 8, from 893,076, as separate arrays do.
 - A `Rune.jit` function reads what it captures at the trace and keeps it, as
   `rune.mli` states: one that reads a capture and then donates it computes as
   eagerly instead of raising, and a capture its caller donates after a call
@@ -1418,6 +1424,11 @@ its lock and from samples the dashboard saw arrive.
   on a SIMD group of 64, where it took 16
   (`Heuristic.hand_coded_optimizations`): on CUDA, a top-64 of 4096 values
   and a scatter of 16384 rows take a third less time.
+- **Breaking:** `Ops.call_info` gains `loop`, which `Schedule` sets on a call
+  that an end over loop ranges holds, a loop of one trip included. In such a
+  call's body the storage order counts no parameter as made or freed, as the
+  memory plan and the loop's launch rule already did, and a body so held and
+  one called once are scheduled apart.
 - `Search.beam_search` times each candidate as the program its optimisations
   compile to: staged on CUDA, in blocks on all of the host's cores, where it
   timed them unstaged and on one core and then shipped another program.

@@ -200,6 +200,7 @@ type call_info = {
   name : string option;
   precompile : bool;
   inline : bool;
+  loop : bool;
   write : (int * int) list;
 }
 
@@ -357,6 +358,7 @@ let equal_call_info (c0 : call_info) (c1 : call_info) =
   Option.equal String.equal c0.name c1.name
   && Bool.equal c0.precompile c1.precompile
   && Bool.equal c0.inline c1.inline
+  && Bool.equal c0.loop c1.loop
   && c0.write = c1.write
 
 let equal_arg (a0 : arg) (a1 : arg) =
@@ -404,7 +406,7 @@ let hash_arg (a : arg) =
   | Kernel k -> h (16, k.name, k.beam)
   | Program p -> h (17, p.globals, List.map hash_sint p.global_size)
   | Custom_function f -> h (20, f.name, Dtype.hash f.dtype, f.fmt)
-  | Call c -> h (18, c.name, c.precompile, c.inline, c.write)
+  | Call c -> h (18, c.name, c.precompile, c.inline, c.loop, c.write)
   | Wmma w -> h (19, w.dims, w.threads)
   | Disjoint -> h 21
 
@@ -1820,11 +1822,12 @@ let add_arg node_key b = function
       add_str b name;
       add_dtype b dtype;
       add_bool b fmt
-  | Call { name; precompile; inline; write = _ } ->
+  | Call { name; precompile; inline; loop; write = _ } ->
       Buffer.add_char b 'L';
       add_option add_str b name;
       add_bool b precompile;
-      add_bool b inline
+      add_bool b inline;
+      add_bool b loop
   | Wmma { dims = m, n, k; dtype_in; threads; upcast_axes } ->
       Buffer.add_char b 'W';
       List.iter (add_int b) [ m; n; k ];
@@ -4861,7 +4864,7 @@ let call ?name ?(precompile = false) ?(inline = false) body args =
   if Nodes.cardinal (ranges body) > 0 then
     invalid_arg "ranges leak out of the called body";
   v Op.Call ~src:(body :: args)
-    ~arg:(Call { name; precompile; inline; write = [] })
+    ~arg:(Call { name; precompile; inline; loop = false; write = [] })
 
 let is_inline_call u =
   u.op = Op.Call && (body u).op = Op.Sink

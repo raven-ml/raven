@@ -4795,7 +4795,10 @@ and an initial value is added after it (D260).
   and `create_linear_with_vars`, and the storage `Schedule.schedule` sees
   written; `Memory.taken`, the storage an entry takes as the memory plan
   counts it; `Tolk_engine.footprint`, which counts what a link of the
-  order makes.
+  order makes. `Ops.call_info`'s `loop`, which tinygrad's `CallInfo` has
+  not and `Ops.pp_arg` leaves out: set on a call that an end over loop
+  ranges holds before the schedule enters its body, and read, with
+  `schedule_key`, when the body is scheduled.
 - **Differs:** a ready kernel runs by its number, its place in the order
   `Ops.toposort` of the kernel graph meets it (each kernel after what it
   reads), so where the walk reaches a value's readers right after it, the
@@ -4803,11 +4806,14 @@ and an initial value is added after it (D260).
   last to take storage an earlier kernel made, and that on no device makes
   more than it frees, runs before the others, bytes counted unrounded. The
   storage a kernel writes lives from the first kernel that takes it to the
-  last; storage only kernels read lives throughout. Where the walk reaches
-  each of two independent chains whole, as from a sum of their results, each
-  runs to its end before the other begins; where the sink lists their parts
-  interleaved, the numbers interleave them too. The order is a postorder that
-  takes a node's sources in their order, and no promise of the least storage
+  last; storage only kernels read lives throughout, and so do the
+  parameters of a body an end over loop ranges holds, storage the body is
+  given, whatever the loop's number of trips, one included, where the loop
+  folds and the call inlines into its caller. Where the walk reaches each
+  of two independent chains whole, as from a sum of their results, each
+  runs to its end before the other begins; where the sink lists their parts interleaved, the numbers
+  interleave them too. The order is a postorder that takes a node's sources
+  in their order, and no promise of the least storage
   (on a tree the least is the postorder by decreasing peak, Liu 1987, which
   tolk does not sort for). tinygrad runs every kernel whose inputs are ready
   breadth first: a closing slices its whole partial into every piece before
@@ -4826,7 +4832,15 @@ and an initial value is added after it (D260).
   holds 2,759,680 bytes against the bound of 2,293,760 over two devices. And
   rune's compiled gradients on one device, with the placement of D477: on the
   host, k independent chains of 4 remat'd blocks held 1,671,280 bytes for k = 4 in
-  tinygrad's order and hold 557,168. The order interleaves devices, so a
+  tinygrad's order and hold 557,168. A loop body's parameters given: on the
+  host a scan summing in its carry the gradients of 8 remat'd blocks read as
+  rows of two stacks held 1,638,532, 1,294,484, 1,204,372 and 893,076 bytes
+  over 1, 2, 4 and 8 chunks, its first store into the carry making the whole
+  stack and waiting behind every remat call, and holds 1,441,924,
+  1,032,340, 811,156 and 667,796, below the 1,443,588, 1,034,004, 812,820
+  and 669,460 of separate arrays. The 1 chunk row comes from the remats'
+  loops of one trip, which fold and inline: their callers' storage is no
+  more made by a store in the inlined body. The order interleaves devices, so a
   data-parallel step over 16 software devices makes 1018 `Submit` steps;
   preferring, among each kind of ready kernel, one on the last kernel's
   device raised four of rune's five `fully sharded` cases over their bounds.
@@ -4837,9 +4851,15 @@ and an initial value is added after it (D260).
   `create_schedule › order › a kernel that frees storage runs before one
   that only makes it`, `› pieces of one value are each read before the
   next is made` and `› chains the walk reaches whole run one after the
-  other`; rune's `fully sharded` tests and `rune remat › memory ›
-  independent chains are computed one at a time`. The recorded schedules
-  whose order differs carry this entry in their `.tolk`.
+  other`; `create_linear_with_vars › loops of calls › a loop's body makes
+  and frees its own storage`, `› a loop's body and the body called once are
+  scheduled apart`, `› a carry's read keeps its region's store after it` and
+  `› a carry's read through storage keeps its region's store after it`;
+  rune's `fully sharded` tests,
+  `rune remat › memory › independent chains are computed one at a time`
+  and, for a loop body's parameters, `› stacks read by rows hold what
+  separate arrays hold`. The recorded schedules whose order differs carry
+  this entry in their `.tolk`.
 
 ### A ready kernel that only frees runs before one that also makes storage (D185)
 

@@ -308,15 +308,16 @@ let call =
     {
       draw =
         Gen.(
-          let+ (name, precompile, inline), write =
-            pair (triple (option a_string) bool bool) marks
+          let+ (name, precompile, inline), (loop, write) =
+            pair (triple (option a_string) bool bool) (pair bool marks)
           in
-          ({ name; precompile; inline; write } : Ops.call_info));
+          ({ name; precompile; inline; loop; write } : Ops.call_info));
       fields =
         [
           f "name" (Gen.option a_string) (fun c name -> { c with name });
           f "precompile" Gen.bool (fun c precompile -> { c with precompile });
           f "inline" Gen.bool (fun c inline -> { c with inline });
+          f "loop" Gen.bool (fun c loop -> { c with loop });
           f "write" marks (fun c write -> { c with write });
         ];
       node =

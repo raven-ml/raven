@@ -292,6 +292,12 @@ type call_info = {
   inline : bool;
       (** Write the call of code in the target's language into its reader,
           as an expression. *)
+  loop : bool;
+      (** An {!Op.End} over {!Axis_type.Loop} ranges holds the call when its
+          body is scheduled, one of one trip included, which then folds and
+          inlines the call. The schedule sets it and reads it alone. Its key
+          ({!key}) and its codec keep it, and its printed form ({!pp_arg}),
+          as tinygrad's, leaves it out. *)
   write : (int * int) list;
       (** The disjoint writes ({!after_disjoint}) this kernel call is a
           kernel of, each as the write's number in its schedule and the
