@@ -444,6 +444,23 @@ let heads =
 let grad_heads =
   List.filter (fun (c : Attentions.t) -> c.dtype <> Nx.Dtype.Any Nx.float64) heads
 
+(* float32 keys of one chunk of dimensions, unmasked, over 128 batches of 2
+   heads of 128 rows, which run each row's tiles in one workgroup, and
+   [wide] where accumulated in float64: the calls whose copy of [Q] tolk
+   placed once before the FFMA kernel's tiles' loop, which then read the
+   values' block as [Q] from the second tile on. *)
+let one_chunk =
+  let c = List.hd (Attentions.heads [ Nx.Dtype.Any Nx.float32 ]) in
+  List.concat_map
+    (fun d ->
+      List.map
+        (fun wide ->
+          ( { c with lead = 128; hq = 2; hk = 2; tq = 128; tk = 128; dk = d; dv = d;
+              mask = Unmasked; lengths = None },
+            wide ))
+        [ false; true ])
+    [ 36; 64 ]
+
 let head_id (c : Attentions.t) =
   let (Nx.Dtype.Any dt) = c.dtype in
   Printf.sprintf "%s dk %d dv %d" (Nx.Dtype.name dt) c.dk c.dv
@@ -3499,6 +3516,14 @@ let () =
                  if c.Attentions.dtype = Nx.Dtype.Any Nx.float64 then
                    assume (has_float64 d);
                  Attentions.law ~composed:true s c);
+             Windtrap.cases
+               "float32 keys of one chunk, unmasked, over several tiles a \
+                workgroup hold nx's bound against the composition"
+               ~id:(fun (c, wide) ->
+                 head_id c ^ if wide then " in float64" else " in float32")
+               one_chunk
+               (fun (c, wide) ->
+                 Attentions.law ~composed:true ~wide (snd (on_gpu ())) c);
              Windtrap.cases
                "their gradient holds rune's bound against the composition's"
                ~id:head_id grad_heads

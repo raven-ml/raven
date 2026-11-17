@@ -112,13 +112,15 @@ val heads : Nx.Dtype.any list -> t list
     over [1024], each under a mask of its own and with lengths, over two tiles
     of keys and of rows. Dense keys only. *)
 
-val law : ?composed:bool -> (module Nx.Devices) -> t -> unit
+val law : ?composed:bool -> ?wide:bool -> (module Nx.Devices) -> t -> unit
 (** [law s c] checks [c] compiled on [s]'s devices, and that the call is
     compiled, not evaluated. Where an element of [o] is a sum of zeros,
     every [p |v|] of the reference zero, it is [+0]. Where [composed]
     (default [false]), the reference is the softmax of [c]'s dense scores,
     masked and rewritten, times [v], in float64, of dense keys only, and
-    the law makes no demand of {!Windtrap.cover}. *)
+    the law makes no demand of {!Windtrap.cover}. Where [wide] (default
+    where [c]'s dtype is float64), the call accumulates in float64, else in
+    float32. *)
 
 val zero_sums : (module Nx.Devices) -> Nx.Dtype.any -> unit
 (** [zero_sums s dt] checks that each of 32768 rows of [dt], float32 or

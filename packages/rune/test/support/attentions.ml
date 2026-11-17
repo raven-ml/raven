@@ -562,13 +562,13 @@ let reference ~composed c ~table ~lengths ~docs ~positions ~spans ~blocks
    do not meet. *)
 let demand ~composed label cond = if not composed then cover label cond
 
-let law ?(composed = false) (module S : Nx.Devices) c =
+let law ?(composed = false) ?wide (module S : Nx.Devices) c =
   let cover = demand ~composed in
   cover "paged" (c.page <> None);
   cover "lengths" (c.lengths <> None);
   cover (mask_name c.mask) true;
   let (F dt) = float_dtype c.dtype in
-  let wide = Nx.Dtype.name dt = "float64" in
+  let wide = Option.value wide ~default:(Nx.Dtype.name dt = "float64") in
   let { q; k; v; table; lengths; docs; spans; positions; blocks; slopes; poisoned } =
     inputs c
   in

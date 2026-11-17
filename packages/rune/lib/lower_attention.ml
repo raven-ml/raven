@@ -911,7 +911,9 @@ let slot_rbar = 113
    rows of [src], row [i] where [at ~within i] gives [(ok, start)], of
    [width] elements, the [cols] from [first] on, into [dst]'s rows of
    [stride cols] elements ({!row}), eight elements a thread at a time;
-   elements past the row, or of a row not [ok], are zeros. *)
+   elements past the source's row, or of a row not [ok], are zeros, and
+   nothing is written past the row's padding, which may end before a
+   thread's eight. *)
 let stage ~tid ~threads ~n ~at ~stride src dst ~width ~first ~cols =
   let open Ops.O in
   let per = ceil_div cols 8 in
@@ -931,7 +933,12 @@ let stage ~tid ~threads ~n ~at ~stride src dst ~width ~first ~cols =
              in
              Ops.store
                (Ops.index dst
-                  [ Ops.where inside_tile ((rl * int (stride cols)) + col) Ops.invalid ])
+                  [
+                    Ops.where
+                      (inside_tile &&: (col < int (stride cols)))
+                      ((rl * int (stride cols)) + col)
+                      Ops.invalid;
+                  ])
                v)))
 
 (* A lane's product unit: a core's fragment facts, the core as the kernel
@@ -1390,7 +1397,10 @@ let core c a xs =
           Array.mapi (fun i s -> s &&: ld checks kls.(i)) seen
     in
     (* The copy of the chunk of dimensions from [first]: K's, and on FFMA
-       Q's rows beside it, read after one barrier. *)
+       Q's rows beside it, read after one barrier. Q's copy is each tile's,
+       as K's is: the block of [V] overwrites it, so a copy of one chunk,
+       whose rows the tiles share, made once before the tiles' loop would be
+       read as values from the second tile on. *)
     let chunk first =
       let staged =
         copy inside (inside x.k) (inside ks) ~width:a.dk ~first ~cols:kw
@@ -1400,7 +1410,8 @@ let core c a xs =
       | Fma ->
           Ops.group
             (staged
-            @ stage ~tid ~threads ~n:bq ~at:rows_at ~stride (inside x.q) (inside vs)
+            @ stage ~tid ~threads ~n:bq ~at:rows_at ~stride (inside x.q)
+                (Ops.after (inside vs) [ jr ])
                 ~width:a.dk ~first ~cols:kw)
     in
     (* Q's operand of the chunk from dimension [first], in [q]'s dtype, at a
@@ -1689,7 +1700,7 @@ let combine ~local ~width ~splits a xs =
    kernel declares in workgroup memory fits there. On FFMA for sm_89 that is
    64 keys at 36 float32 dimensions and 32 at 64 to 160, and 32 keys at 36
    float64 dimensions and 16 at 64 to 160, in 36 to 44.5 KB, which ptxas
-   compiles with no spill: to 156 to 244 registers at 36 to 160 dimensions,
+   compiles with no spill: to 172 to 244 registers at 36 to 160 dimensions,
    and to 254 or 255 for float32's blocks of 128 columns under a mask, a
    score program or lengths, a chunk's steps a loop.
    On fudge's RTX 5000 Ada, a bfloat16 call of 4 heads of 4096
