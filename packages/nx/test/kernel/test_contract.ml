@@ -150,9 +150,12 @@ let outside b c y =
   List.rev !bad
 
 let law_bound ?(paths = ignore) b c =
-  covers c;
+  let placed =
+    { c with a = on b c.a; b = on b c.b; init = Option.map (on b) c.init }
+  in
+  covers placed;
   paths c;
-  match run b c with
+  match run b placed with
   | None -> fail "declined"
   | Some y -> equal (list string) [] (outside b c y)
 
@@ -731,9 +734,8 @@ let amd_paths c =
    bfloat16 b along its 12 rows, whose reads past the last row clamp to
    it. float16 beside bfloat16 keeps them off the matrix units. A chunk
    needs the operand's other strides to be multiples of 8. Placed dense,
-   one of them is the cut extent itself, and placed with gaps the operand
-   is compacted, so each is broadcast instead, a along its rows and b
-   along k, at stride 0. *)
+   one of them is the cut extent itself, so each is broadcast instead, a
+   along its rows and b along k, at stride 0. *)
 let amd_examples =
   let plain = E.plain 2 in
   let broadcast axis = { plain with E.broadcast = [ axis ] } in

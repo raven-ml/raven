@@ -613,9 +613,12 @@ let law_bits b c =
   let x = operand c in
   let plain = { c with view = plain r; xs = complexes x } in
   let px = operand plain in
+  let (A.Any placed) = x in
+  let placed = Support.on b placed in
+  cover "an operand with gaps" (Support.gapped (A.layout placed));
   let bits = array (pair int64 int64) in
   let want = bits_of (run b plain px) in
-  equal bits want (bits_of (run b c x));
+  equal bits want (bits_of (run b c (A.Any placed)));
   equal bits want (bits_of (run b ~one_thread:true plain px));
   (* Each line along a single axis, alone: its bits in the batch's. *)
   let s = snd (result c) in

@@ -320,7 +320,11 @@ let law_unique (b : Support.backend) c =
   cover "dropped updates" (snd (sharing c));
   cover "every target reached"
     ((shape_of c.updates).(c.saxis) >= (shape_of c.into).(c.saxis));
-  cover "through views" (c.sviews <> []);
+  let c = scatter_placed b c in
+  let views f = List.exists (fun (A.Any x) -> f (A.layout x)) in
+  let arrays = [ c.into; c.updates; c.sidx ] in
+  cover "through views" (views (fun l -> not (L.is_contiguous l)) arrays);
+  cover "through a view with gaps" (views Support.gapped arrays);
   match (scatter_on ~unique:true b c, scatter_on b c) with
   | Some y, Some y' ->
       equal (array (same (dtype_of c.into))) (elements y') (elements y)

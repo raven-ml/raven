@@ -494,8 +494,10 @@ let threefry_pairs =
       ])
     [ 37; 80 ]
 
-let covers (Case a) =
-  let l = A.layout a in
+(* The cases of [a] by its layout on [b]'s device, where [b]'s kernels read
+   it. *)
+let covers b (Case a) =
+  let l = A.layout (on b a) in
   let n = L.numel l in
   cover "no element" (n = 0);
   cover "one element" (n = 1);
@@ -503,8 +505,8 @@ let covers (Case a) =
   cover "broadcast" (Iarray.exists (fun s -> s = 0) (L.strides l) && n > 1);
   cover "sub-byte" (D.bits (A.dtype a) < 8)
 
-let covers_large (Case a) =
-  let l = A.layout a in
+let covers_large b (Case a) =
+  let l = A.layout (on b a) in
   cover "transposed" (L.rank l = 2 && abs (L.stride l 0) < abs (L.stride l 1));
   cover "stepped" (L.rank l = 2 && L.stride l 1 = 2);
   cover "2x2 windows" (L.rank l = 4);
@@ -1211,7 +1213,7 @@ let split_map (b : Support.backend) ((Pair (x, _) as pair), seed, mode) =
 
 (* {!law_map_split} over the pair's loads read as [mode] says. *)
 let law_split ?declines b ((Pair (x, _) as p), seed, mode) =
-  covers (Case x);
+  covers b (Case x);
   cover "padded loads" (mode = Padded);
   cover "a program of hundreds of nodes" (mode = Long);
   match mode with

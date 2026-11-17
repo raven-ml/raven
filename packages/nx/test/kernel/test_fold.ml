@@ -442,7 +442,8 @@ let law_load (b : Support.backend) = function
       cover "padding read" (some && total c.shape < total xs);
       cover "a windowed load" (some && Iarray.length c.pad.windows > 0);
       cover "sub-byte" (some && D.bits dt < 8);
-      cover "a stepped operand" (some && c.load.stepped);
+      cover "a stepped operand"
+        (some && c.load.stepped && Support.gapped (A.layout a));
       cover "a reversed operand" (some && c.load.reversed <> None);
       let load = Nx_kernel.Padded { x = a; fill; pad = c.pad } in
       let es = elements (A.Any a) in

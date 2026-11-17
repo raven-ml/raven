@@ -208,7 +208,6 @@ let law (b : Support.backend) c =
   cover "a narrow float" (narrow c.dt);
   cover "no update, target or column" (c.m = 0 || c.d = 0 || c.cols = 0);
   cover "NaNs and infinities" c.specials;
-  cover "views" (viewed c);
   let rs = Random.State.make [| c.seed |] in
   let ts = if c.axis = 0 then [| c.d; c.cols |] else [| c.cols; c.d |] in
   let us = if c.axis = 0 then [| c.m; c.cols |] else [| c.cols; c.m |] in
@@ -241,6 +240,10 @@ let law (b : Support.backend) c =
       (d, d)
     else (A.create b.device (A.dtype into_a) (Iarray.of_array ts), into_a)
   in
+  let layouts = [ A.layout into_a; A.layout u; A.layout idx_a ] in
+  cover "views"
+    (viewed c && List.exists (fun l -> not (L.is_contiguous l)) layouts);
+  cover "a view with gaps" (List.exists Support.gapped layouts);
   match K.scatter Add ~unique:false ~axis:c.axis ~dst ~into:into_a idx_a u with
   | A.Done -> equal (array (same c.dt)) want (elements (A.Any dst))
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r

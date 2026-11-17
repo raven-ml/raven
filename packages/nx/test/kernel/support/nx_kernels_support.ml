@@ -193,9 +193,31 @@ let nvidia ~name open_ =
 
 (* Devices *)
 
+(* The buffer's bytes up to the end of [a]'s span move whole, so that [a]'s
+   layout, offset and gaps included, reads the copy as it read the source:
+   a stepped view stays stepped on the device. *)
 let on b a =
   if Rig.equal (Nx_array.device a) b.device then a
-  else Nx_array.to_device b.device a
+  else
+    let dt = Nx_array.dtype a and l = Nx_array.layout a in
+    let _, hi = Nx_array.Layout.span l in
+    let n = Nx_array.Dtype.bytes dt hi in
+    let bytes =
+      Nx_array.v Nx_array.Dtype.Uint8
+        (Nx_array.Layout.v ~strides:[| 1 |] [| n |])
+        (Nx_array.buffer a)
+    in
+    let moved = Nx_array.to_device b.device bytes in
+    Nx_array.v dt l (Nx_array.buffer moved)
+
+let gapped l =
+  let lo, hi = Nx_array.Layout.span l in
+  let reached = ref 1 in
+  for i = 0 to Nx_array.Layout.rank l - 1 do
+    if Nx_array.Layout.stride l i <> 0 then
+      reached := !reached * Iarray.get (Nx_array.Layout.shape l) i
+  done;
+  Nx_array.Layout.numel l > 0 && (lo > 0 || hi - lo > !reached)
 
 let host a =
   if Rig.equal (Nx_array.device a) Rig.host then a

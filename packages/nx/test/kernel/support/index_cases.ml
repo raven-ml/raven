@@ -190,6 +190,11 @@ let scatter_on (b : Support.backend) ?(in_place = false) ?(unique = false) c =
   | A.Declined -> failf "%s declined a scatter" b.name
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
+(* [c] with its arrays on [b]'s device, through their views. *)
+let scatter_placed (b : Support.backend) c =
+  let on (A.Any x) = A.Any (Support.on b x) in
+  { c with into = on c.into; updates = on c.updates; sidx = on c.sidx }
+
 (* Whether an extreme of a and b keeps a: a NaN, else the greater (lesser), a
    on a tie. *)
 let keeps combine ~nan_a ~nan_b cmp =

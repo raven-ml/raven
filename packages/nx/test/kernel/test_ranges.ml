@@ -371,13 +371,20 @@ let law_gather (b : Support.backend) c =
   cover "one-byte rows on the line path" (line && k > 0 && c.size > 0);
   cover "one-byte packed runs on the line path"
     (line && packed && n > 0 && c.size > 0);
-  cover "strided starts" (views "starts");
-  cover "a strided or broadcast source" (views "x");
-  match ranges_on b c with
+  let placed =
+    let on (A.Any x) = A.Any (Support.on b x) in
+    { c with starts = on c.starts; ends = on c.ends; x = on c.x }
+  in
+  let strided (A.Any x) = not (L.is_contiguous (A.layout x)) in
+  let gapped (A.Any x) = Support.gapped (A.layout x) in
+  cover "strided starts" (strided placed.starts);
+  cover "a strided or broadcast source" (strided placed.x);
+  cover "a source with gaps" (gapped placed.x);
+  match ranges_on b placed with
   | None -> ()
   | Some y -> (
       let idx = broadcast_cells c pos in
-      match gather_on b ~axis:a idx c.x with
+      match gather_on b ~axis:a idx placed.x with
       | None -> failf "%s computed a range gather, declined a gather" b.name
       | Some g -> equal (array string) (elements g) (elements y))
 

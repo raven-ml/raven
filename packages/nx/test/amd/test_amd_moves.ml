@@ -484,7 +484,6 @@ let law c =
   cover "a narrow float" (narrow c.dt);
   cover "no update, target or column" (c.m = 0 || c.d = 0 || c.cols = 0);
   cover "NaNs and infinities" c.specials;
-  cover "views" (viewed c);
   cover "each target at most one update" (c.dist = Perm && c.m <= c.d + 2);
   cover "every update at one target" (c.dist = One);
   cover "log-uniform positions" (c.dist = Zipf);
@@ -566,6 +565,10 @@ let law c =
       (d, d)
     else (A.create b.device (A.dtype into_a) (Iarray.of_array ts), into_a)
   in
+  let layouts = [ A.layout into_a; A.layout u; A.layout idx_a ] in
+  cover "views"
+    (viewed c && List.exists (fun l -> not (L.is_contiguous l)) layouts);
+  cover "a view with gaps" (List.exists Support.gapped layouts);
   let call () =
     done_ (K.scatter Add ~unique:false ~axis:c.axis ~dst ~into:into_a idx_a u)
   in

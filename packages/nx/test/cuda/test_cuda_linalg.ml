@@ -487,9 +487,12 @@ let law_agrees ~first b (c, (name, f)) =
   List.iter (fun (n, _) -> cover n (n = name)) routines;
   cover "an order past 64" (c.n > 64);
   cover "a batch" (count c > 1);
-  cover "laid out with gaps" (c.how = Padded && c.n > 1);
   let r, ops = f c in
-  ops.(0) <- laid_out c.how ops.(0);
+  let (A.Any x) = laid_out c.how ops.(0) in
+  let x = Support.on first x in
+  cover "laid out with gaps"
+    (c.how = Padded && c.n > 1 && Support.gapped (A.layout x));
+  ops.(0) <- A.Any x;
   agree ~first b [ (r, ops) ]
 
 (* test_large's matrices, each with the routine it takes there. *)

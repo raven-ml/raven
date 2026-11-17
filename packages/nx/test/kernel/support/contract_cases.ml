@@ -938,11 +938,15 @@ let order c =
    one rarely: an operand of a dtype [acc] does not hold, no output, one,
    no product, each order of nx_cpu.mli's rule, lane order over several
    blocks of lanes, either side of 64 outputs, an init, a complex
-   accumulator with a real operand, and each kind of view. *)
+   accumulator with a real operand, and each kind of view. [c]'s operands
+   are those the kernels read, on their device, so that a stepped view is
+   one whose gaps lie there. *)
 let covers c =
   let y, k, _ = sizes c in
   let per = per_batch c in
   let real (A.Any x) = not (is_complex (D.Any (A.dtype x))) in
+  let gapped (A.Any x) = Support.gapped (A.layout x) in
+  let operands = c.a :: c.b :: Option.to_list c.init in
   cover "an operand acc does not hold" (converted c);
   cover "no output" (total y = 0);
   cover "one output" (total y = 1);
@@ -956,9 +960,10 @@ let covers c =
   cover "init" (c.init <> None);
   cover "complex with a real operand"
     (is_complex c.acc && (real c.a || real c.b));
+  cover "stepped" (List.mem "stepped" c.views && List.exists gapped operands);
   List.iter
     (fun v -> cover v (List.mem v c.views))
-    [ "stepped"; "windowed"; "reversed"; "broadcast"; "stored apart"; "permuted" ]
+    [ "windowed"; "reversed"; "broadcast"; "stored apart"; "permuted" ]
 
 (* A scale on [b]'s device. *)
 let scale_on b : Nx_kernel.scale -> Nx_kernel.scale = function

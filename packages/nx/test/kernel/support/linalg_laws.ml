@@ -441,7 +441,6 @@ let test_huge_pivot bounds (b : Support.backend) () =
    calls before it reads any result, so that the device runs them without a
    round trip between. *)
 let law_layouts (b : Support.backend) c =
-  cover "rows further apart than their elements" (c.how = Padded && c.n > 1);
   (* The routine [r] on [ops] and on [ops'], then the check of their results
      by [f]. *)
   let pair r ops ops' f =
@@ -450,10 +449,15 @@ let law_layouts (b : Support.backend) c =
     | _ -> fun () -> ()
   in
   let same msg y z = equal ~msg same_bits (bits y) (bits z) in
-  let laid x = [| laid_out c.how x |] in
+  let on (A.Any x) = A.Any (Support.on b x) in
+  let laid x = [| on (laid_out c.how x) |] in
   let x = cholesky_operand c in
+  let laid_x = laid x in
+  let (A.Any l) = laid_x.(0) in
+  cover "rows further apart than their elements"
+    (c.how = Padded && c.n > 1 && Support.gapped (A.layout l));
   let cholesky =
-    pair (Cholesky Lower) [| x |] (laid x) (fun y z ->
+    pair (Cholesky Lower) [| x |] laid_x (fun y z ->
         same "cholesky" y.(0) z.(0))
   in
   let _, x = lu_operand c in

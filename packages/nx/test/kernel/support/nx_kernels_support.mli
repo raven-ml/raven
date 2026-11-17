@@ -138,9 +138,18 @@ val x86_64 : bool
 (** {1:devices Devices} *)
 
 val on : backend -> ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t
-(** [on b x] is [x] on [b]'s device, its layout kept where
-    {!Nx_array.to_device} keeps it: [x] itself if it lies there, a copy
-    otherwise. *)
+(** [on b x] is [x] on [b]'s device with [x]'s layout: [x] itself if it lies
+    there, otherwise [x]'s dtype and layout over a copy of its buffer's bytes
+    up to the end of its span, so that a kernel reads its offset, gaps and
+    overlaps as they lie on the source. *)
+
+val gapped : Nx_array.Layout.t -> bool
+(** [gapped l] is [true] iff [l] has an element and its buffer holds bytes
+    before or among its elements that none of them reaches: its least
+    position is past [0], or its span is longer than the product of its
+    extents along axes of nonzero stride. {!Nx_array.to_device} moves such
+    a layout's elements to other positions; {!on} keeps them where they
+    lie. *)
 
 val host : ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t
 (** [host x] is [x] where the host reads it: [x] itself on {!Rig.host}, a
