@@ -438,13 +438,31 @@ static void build(id<MTLFunction> fn, id<MTLDevice> device, struct build *b) {
                               }];
 }
 
+/* The types a word carries, with their ranges. A signed type reads the
+   word in two's complement, the others unsigned. */
+static const struct {
+  MTLDataType type;
+  int is_signed;
+  int64_t lo, hi;
+} carried[] = {
+    {MTLDataTypeBool, 0, 0, 1},
+    {MTLDataTypeChar, 1, INT8_MIN, INT8_MAX},
+    {MTLDataTypeUChar, 0, 0, UINT8_MAX},
+    {MTLDataTypeShort, 1, INT16_MIN, INT16_MAX},
+    {MTLDataTypeUShort, 0, 0, UINT16_MAX},
+    {MTLDataTypeInt, 1, INT32_MIN, INT32_MAX},
+    {MTLDataTypeUInt, 0, 0, UINT32_MAX},
+};
+
+static const size_t n_carried = sizeof carried / sizeof *carried;
+
 /* The values the [n] words [v] give [fn]'s function constants: 0 if [fn]
    declares none, 1 with [*values] made, or -1 with the refusal in [why].
-   Word [k] is constant [k]'s value at the type [fn] declares, a signed one
-   in two's complement. A constant past the words takes its default, unless
-   it is required: Metal would then make a pipeline that stores nothing. A
-   word its type cannot hold is refused, since Metal would truncate it, and
-   so is a word for a type the words do not carry. */
+   Word [k] is constant [k]'s value at the type [fn] declares. A constant
+   past the words takes its default, unless it is required: Metal would
+   then make a pipeline that stores nothing. A word its type cannot hold is
+   refused, since Metal would truncate it, and so is a word for a type the
+   words do not carry. */
 static int specialise(id<MTLFunction> fn, const uint32_t *v, uint32_t n,
                       MTLFunctionConstantValues **values, char *why,
                       size_t len) {
@@ -467,58 +485,25 @@ static int specialise(id<MTLFunction> fn, const uint32_t *v, uint32_t n,
                (unsigned long)k, n, n == 1 ? "value" : "values");
       return -1;
     }
-    uint32_t w = v[k];
-    int32_t s = (int32_t)w;
-    union {
-      uint8_t u8;
-      int8_t i8;
-      uint16_t u16;
-      int16_t i16;
-      uint32_t u32;
-      int32_t i32;
-    } x;
-    int fits = 1;
-    switch (c.type) {
-      case MTLDataTypeBool:
-        fits = w <= 1;
-        x.u8 = (uint8_t)w;
-        break;
-      case MTLDataTypeChar:
-        fits = s >= INT8_MIN && s <= INT8_MAX;
-        x.i8 = (int8_t)s;
-        break;
-      case MTLDataTypeUChar:
-        fits = w <= UINT8_MAX;
-        x.u8 = (uint8_t)w;
-        break;
-      case MTLDataTypeShort:
-        fits = s >= INT16_MIN && s <= INT16_MAX;
-        x.i16 = (int16_t)s;
-        break;
-      case MTLDataTypeUShort:
-        fits = w <= UINT16_MAX;
-        x.u16 = (uint16_t)w;
-        break;
-      case MTLDataTypeInt:
-        x.i32 = s;
-        break;
-      case MTLDataTypeUInt:
-        x.u32 = w;
-        break;
-      default:
-        snprintf(why, len,
-                 "its constant %s (%lu) is of a type the image's values do "
-                 "not carry",
-                 name, (unsigned long)k);
-        return -1;
-    }
-    if (!fits) {
+    size_t t = 0;
+    while (t < n_carried && carried[t].type != c.type) t++;
+    if (t == n_carried) {
       snprintf(why, len,
-               "the value %u lies outside the type of its constant %s (%lu)", w,
+               "its constant %s (%lu) is of a type the image's values do not "
+               "carry",
                name, (unsigned long)k);
       return -1;
     }
-    [vs setConstantValue:&x type:c.type atIndex:k];
+    int64_t x = carried[t].is_signed ? (int64_t)(int32_t)v[k] : (int64_t)v[k];
+    if (x < carried[t].lo || x > carried[t].hi) {
+      snprintf(why, len,
+               "the value %u lies outside the type of its constant %s (%lu)",
+               v[k], name, (unsigned long)k);
+      return -1;
+    }
+    /* The Mac is little-endian, so a word that its type holds starts with
+       the bytes of its value at that type. */
+    [vs setConstantValue:&v[k] type:c.type atIndex:k];
   }
   *values = vs;
   return 1;
@@ -543,10 +528,8 @@ value caml_rig_metal_start(value v_lib, value v_f, value v_values) {
     free(f), free(v), free(b);
     return Val_long(0);
   }
-  const unsigned char *bytes = (const unsigned char *)String_val(v_values);
-  for (uint32_t k = 0; k < n; k++)
-    v[k] = (uint32_t)bytes[4 * k] | (uint32_t)bytes[4 * k + 1] << 8 |
-           (uint32_t)bytes[4 * k + 2] << 16 | (uint32_t)bytes[4 * k + 3] << 24;
+  /* The words are little-endian, as the Mac is. */
+  if (n > 0) memcpy(v, String_val(v_values), 4 * (size_t)n);
   atomic_init(&b->refs, 2);
   pthread_mutex_init(&b->mutex, NULL);
   pthread_cond_init(&b->answer, NULL);
