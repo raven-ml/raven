@@ -2063,11 +2063,11 @@ let sums_product ast ren =
 
 (* The scheduler of [k]'s sink after the passes that precede optimisation,
    with the optimisations [k]'s program applied, through the hook a search
-   takes. A kernel that reaches no search never calls the hook, and fails
-   here by name. *)
+   takes. A kernel whose builder fixed its threads, or whose loop's bound
+   loads, never calls the hook, and fails here by name. *)
 let optimised (k : Tolk.Realize.kernel) =
   let chosen = ref None in
-  let replay _ s =
+  let replay s =
     List.iter
       (fun o ->
         match K.apply_opt s o with
@@ -2077,13 +2077,9 @@ let optimised (k : Tolk.Realize.kernel) =
     chosen := Some s;
     s
   in
-  let ast = k.ast and ren = k.renderer in
-  let ast =
-    match Tolk.Ops.arg ast with
-    | Kernel i -> Tolk.Ops.replace ast ~arg:(Kernel { i with beam = 1 })
-    | _ -> failf "%a is not a kernel" Tolk.Ops.pp ast
-  in
-  ignore (Tolk.Codegen.full_rewrite_to_sink ~beam:replay ast ren);
+  ignore
+    (Tolk.Postrange.apply_opts ~beam:replay ~hand_coded:Fun.id
+       (Tolk.Codegen.prepared k.ast) k.renderer);
   match !chosen with
   | Some s -> s
   | None -> failf "%s: no search was handed the kernel to replay" k.name

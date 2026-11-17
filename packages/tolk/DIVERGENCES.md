@@ -6499,7 +6499,8 @@ rows (1.04-1.18x on `contract/bf16-*` on fudge) is the stated cost.
   its loops in every workgroup, where the gate fails too.
 - **tolk:** `Codegen.lift_uniform_gates`, after the post-optimisation
   symbolic pass, through `Uniform.varying`; `Shape.fold_where_closure`,
-  whose assumption leaves each range whole (`Ops.assuming`).
+  whose assumption leaves each range whole (`Ops.assuming`);
+  `Codegen.gated_by_memory` and its use in `Codegen.apply_opts`.
 - **Differs:** a value computed by casts and arithmetic from one reduce,
   which `where (g, v, e)` selects where `g` holds (or where it fails) or a
   store through `where (g, i, Invalid)` writes, gets the reduce's outermost
@@ -6513,13 +6514,21 @@ rows (1.04-1.18x on `contract/bf16-*` on fudge) is the stated cost.
   a second reduce over the loop. A selection's condition, assumed within its
   arms, stops at a range: the lifted bound holds the condition, and
   rewriting the bound inside an arm would fork a second loop of the range's
-  identity.
+  identity. A kernel that the rewrite, taking every value as uniform before
+  the opts, would give a loop bounded by a value read from memory takes the
+  heuristic's optimisations when a search is asked for, as a kernel whose
+  loop's bound loads does (D255): the search times on storage of unspecified
+  contents, where such a gate switches the blocks off. tinygrad searches
+  every kernel. Routing data chosen for the search would make a kernel's
+  program depend on one model's data.
 - **Reason:** (d): rune's routed product (`Lower_reduce`, blocks of 64 rows
   of one group), whose blocks past the groups' hold only padding rows, which
   it states as `Invalid` and the gated store carries. kaun's
   `GptOss/experts-at-prefill-512` takes 3.29 ms without the rewrite and 2.80
   ms with it (minima of four interleaved rounds); the rows' wall-clock baselines wait for the scheduled
-  re-record. Leaving a range whole in `fold_where_closure` is part of that
+  re-record. Searched, the routed product at prefill 512 timed 6.84 us
+  against 8810 us in the model, 94% of the step's loss under BEAM. Leaving a
+  range whole in `fold_where_closure` is part of that
   rewrite: tinygrad makes no bound that holds a condition, and without it a
   lifted kernel with a load gated by the loop's own clause does not compile.
 - **Pinned by:** `Tolk.Codegen`'s `reduces under a uniform gate` (on the
@@ -6529,7 +6538,10 @@ rows (1.04-1.18x on `contract/bf16-*` on fudge) is the stated cost.
   rune's `rows in blocks give eager's integers and hold their bound`;
   kaun's `GptOss/experts-at-prefill-512` and `GptOss/prefill-512`, and the
   tolk bench's `gated/bf16-2048-5-of-16-blocks-off` and
-  `gated/bf16-2048-all-on`.
+  `gated/bf16-2048-all-on`; `Tolk.Search on the host`'s `a gate read from
+  memory › a kernel whose sum a gate read from memory selects is not
+  searched, and takes the heuristic's optimisations` and `› a kernel whose
+  sum a gate of its indices selects is searched`.
 
 ## D315. A global store is masked by the workgroup indices it does not use
 

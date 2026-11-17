@@ -44,11 +44,18 @@ val full_rewrite_to_sink :
     ({!Postrange.apply_opts}), unless its kernel information is [optimized],
     its optimisations applied already: with the optimisations its argument
     lists, or else, if its argument asks for a beam search of width [w]
-    greater than [0] and no loop's bound loads from memory, with [beam w], or
-    else with
+    greater than [0] and its time does not depend on what memory holds, with
+    [beam w], or else with
     {!Heuristic.hand_coded_optimizations} unless the setting {!Setting.noopt}
     holds. A kernel whose builder fixed its threads takes neither, and one
     that buffers values does not take the heuristic ({!Postrange.apply_opts}).
+    A kernel's time depends on what memory holds where a loop's bound reads
+    memory ({!Postrange.apply_opts}), or where lowering could run a sum's loop
+    only where a clause read from memory holds, as in
+    [where (fl[i / 64] <> 0, Σ, Invalid)]: lowering bounds the loop of a sum
+    that a selection or a gated store reads by the clauses of its condition
+    that are the same for a workgroup's threads, which the optimisations
+    decide, so every clause is counted.
     Its tensor cores' operands are then staged through shared memory
     ({!Stage.operands}), and on the host its decoded operand through a panel
     ({!Stage.decodes}), and on the host its largest output loop runs in
@@ -304,6 +311,10 @@ val blocked_sums :
     {!full_rewrite_to_sink} lowers it, up to its reductions: each float sum of
     more than 256 terms a thread nested into blocks of at most 256 terms,
     whose sums an outer reduce adds in order. *)
+
+val prepared : Ops.t -> Ops.t
+(** [prepared ast] is [ast] as {!full_rewrite_to_sink} hands it to
+    {!Postrange.apply_opts}: lowered by the passes before the optimisations. *)
 
 val unblocked : Renderer.t -> Ops.t -> Ops.t list
 (** [unblocked ren sink] is each float [Add] reduce of [sink], a

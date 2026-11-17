@@ -126,7 +126,80 @@ let loaded_trips ?beam () =
     ~kernel:(Ops.kernel_info ~name:"loaded_trips" ?beam ())
     [ Ops.end_ (Ops.store at sum) [ r; i ] ]
 
+(* [out[i, j] = Σ_k a[i, k] b[k, j]] for the rows of the blocks of 64 whose
+   flag [fl[i / 64]] holds, and no value elsewhere: a routed product, whose
+   blocks of rows routed to no expert hold padding. Code generation runs the
+   sum's loop only where the flag holds, so its trips are what the storage of
+   [fl] holds. [routed] reads [fl] at the rows' block, [~gate:`Rows] gates the
+   sum by the rows' own index instead, which no storage holds. Memory is read
+   through bare indices, as a scheduled kernel reads it. *)
+let routed ?beam ?(gate = `Flags) () =
+  let m = 128 and k = 64 and n = 16 and block = 64 in
+  let param slot size dt = Shape.param ~shape:[ Ops.Int size ] slot dt in
+  let out = param 0 (m * n) Float32
+  and a = param 1 (m * k) Float32
+  and b = param 2 (k * n) Float32
+  and fl = param 3 (m / block) Int32 in
+  let open Ops.O in
+  let ld x at = Ops.index x [ at ] in
+  let i = Ops.range ~axis_type:Weak (Int m) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int n) [ 1 ]
+  and kk = Ops.range ~axis_type:Weak (Int k) [ 2 ] in
+  let sum =
+    Ops.reduce (ld a ((i * int k) + kk) * ld b ((kk * int n) + j)) Op.Add [ kk ]
+  in
+  let on =
+    match gate with
+    | `Flags -> ld fl (i // int block) <> Ops.int ~dtype:Int32 0
+    | `Rows -> i < int Stdlib.(m / 2)
+  in
+  let v = Ops.where on sum (Shape.const_like sum `Invalid) in
+  let store = Ops.store (Ops.index out [ (i * int n) + j ]) v in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"routed" ?beam ())
+    [ Ops.end_ store [ i; j ] ]
+
 let opt_names prg = List.map (Format.asprintf "%a" Opt.pp) (applied_opts prg)
+
+(* The programs [kernel ~beam:2 ()] searched times, and its optimisations. *)
+let timed_programs kernel =
+  let measured = ref 0 in
+  let link call = Tolk_engine.link_call ~devices call in
+  let time ~vars:_ _ =
+    incr measured;
+    1.
+  in
+  let searched =
+    Setting.context
+      [ B (Setting.ignore_beam_cache, true) ]
+      (fun () ->
+        Codegen.to_program
+          ~beam:(Search.beam_search ~link ~time)
+          (kernel ~beam:2 ()) host)
+  in
+  (!measured, opt_names searched)
+
+let gated_by_memory =
+  group "a gate read from memory"
+    [
+      test
+        "a kernel whose sum a gate read from memory selects is not searched, \
+         and takes the heuristic's optimisations" (fun () ->
+          let measured, searched =
+            timed_programs (fun ~beam () -> routed ~beam ())
+          in
+          equal int ~msg:"programs timed" 0 measured;
+          let hand = opt_names (Codegen.to_program (routed ()) host) in
+          greater int ~msg:"the heuristic's optimisations" ~than:0
+            (List.length hand);
+          equal (list string) hand searched);
+      test "a kernel whose sum a gate of its indices selects is searched"
+        (fun () ->
+          let measured, _ =
+            timed_programs (fun ~beam () -> routed ~beam ~gate:`Rows ())
+          in
+          greater int ~msg:"programs timed" ~than:0 measured);
+    ]
 
 let memory_bound =
   test
@@ -159,6 +232,7 @@ let () =
        [
          scalar_arguments;
          memory_bound;
+         gated_by_memory;
          slow
          @@ cases
               "a searched kernel computes what its unoptimised kernel computes"

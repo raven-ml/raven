@@ -1439,22 +1439,6 @@ let kernel_info u =
 let check_spec spec sink =
   if setting Setting.spec <> 0 then Spec.type_verify ~calls:Skip spec sink
 
-let apply_opts ?beam sink ren =
-  let k = kernel_info sink in
-  let search s =
-    match beam with
-    | Some beam -> beam k.beam s
-    | None ->
-        invalid_arg
-          (Printf.sprintf
-             "kernel %s asks for a beam search of width %d, and no search is \
-              given"
-             k.name k.beam)
-  in
-  let beam = if k.beam >= 1 then Some search else None in
-  Postrange.apply_opts ?beam ~hand_coded:Heuristic.hand_coded_optimizations sink
-    ren
-
 (* Host programs in blocks *)
 
 (* The memory a store writes, as opposed to a register or local memory: a
@@ -1704,8 +1688,57 @@ let lift_uniform_gates sink =
     ~ctx:(lazy (Uniform.varying sink), lazy (consumers sink))
     sink (After_sources pm_lift_uniform_gates)
 
-(* [sink]'s loops simplified, then optimised. *)
-let optimised ?beam sink ren =
+(* Whether memory may bound a loop of [sink]: with every value taken as the
+   same for a workgroup's threads, as some optimisations may make a gate, the
+   lift bounds a loop by a value that reads memory, a load or an index into
+   global or workgroup storage, which a load reads once loads are explicit.
+   Such a loop's trips are what memory holds. *)
+let gated_by_memory sink =
+  let reads_memory v =
+    List.exists
+      (fun u ->
+        is Op.Load u
+        || is Op.Index u
+           && List.mem
+                (addrspace (buf_uop (nth u 0)))
+                [ Some Dtype.Global; Some Dtype.Local ])
+      (toposort ~calls:Skip v)
+  in
+  let lifted =
+    graph_rewrite ~calls:Skip ~pass:Once
+      ~ctx:(lazy (fun _ -> false), lazy (consumers sink))
+      sink (After_sources pm_lift_uniform_gates)
+  in
+  lifted != sink
+  &&
+  let before = backward_slice_with_self ~calls:Skip sink in
+  List.exists
+    (fun r ->
+      is Op.Range r && (not (Nodes.mem r before)) && reads_memory (nth r 0))
+    (toposort ~calls:Skip lifted)
+
+let apply_opts ?beam sink ren =
+  let k = kernel_info sink in
+  let search s =
+    match beam with
+    | Some beam -> beam k.beam s
+    | None ->
+        invalid_arg
+          (Printf.sprintf
+             "kernel %s asks for a beam search of width %d, and no search is \
+              given"
+             k.name k.beam)
+  in
+  (* A search times its candidates on storage of unspecified contents: a loop
+     whose trips memory holds would be timed on other trips than it runs. *)
+  let beam =
+    if k.beam >= 1 && not (gated_by_memory sink) then Some search else None
+  in
+  Postrange.apply_opts ?beam ~hand_coded:Heuristic.hand_coded_optimizations sink
+    ren
+
+(* [sink]'s loops simplified for the optimisations. *)
+let simplified sink =
   (* collapse loads reduce (indexing by a tensor) *)
   let sink = rewrite Simplify.pm_load_collapse sink in
   let sink =
@@ -1721,22 +1754,26 @@ let optimised ?beam sink ren =
       (After_sources
          (lift Simplify.pm_flatten_range ++ Simplify.pm_simplify_ranges))
   in
-  (* do postrange optimization, BEAM or hand_coded_optimizations *)
-  apply_opts ?beam sink ren
+  sink
 
-(* [ast] lowered up to its reductions, each float sum in blocks. *)
-let blocked_sums ?(optimize = true) ?beam ast ren =
+(* [ast] with its movements and value bitcasts lowered, its effects pinned. *)
+let preprocessed ast =
   if setting Setting.debug >= 5 then
     print_endline (Render.render_uir (toposort ~calls:Enter ast));
   check_spec Spec.tensor ast;
-  (* preprocess *)
   let sink =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() ast
       (Before_sources
          (Pattern_matcher.append Prepare.pm_mops pm_expand_value_bitcast))
   in
   (* effects keep their ranges until the expander *)
-  let sink = Simplify.pin_effects sink in
+  Simplify.pin_effects sink
+
+let prepared ast = simplified (preprocessed ast)
+
+(* [ast] lowered up to its reductions, each float sum in blocks. *)
+let blocked_sums ?(optimize = true) ?beam ast ren =
+  let sink = preprocessed ast in
   (* A kernel whose optimisations are applied, as a search's candidate, is
      lowered from here as the kernel they were chosen for: its program is the
      one the search times. *)
@@ -1746,7 +1783,9 @@ let blocked_sums ?(optimize = true) ?beam ast ren =
       let sink =
         match arg ast with
         | Kernel { optimized = true; _ } -> sink
-        | _ -> optimised ?beam sink ren
+        | _ ->
+            (* do postrange optimization, BEAM or hand_coded_optimizations *)
+            apply_opts ?beam (simplified sink) ren
       in
       Stage.decodes ren (Stage.operands ren sink)
   in

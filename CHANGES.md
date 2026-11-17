@@ -1361,6 +1361,9 @@ its lock and from samples the dashboard saw arrive.
   compile to: staged on CUDA, in blocks on all of the host's cores, where it
   timed them unstaged and on one core and then shipped another program.
   `Codegen.linearize` takes `~optimize`.
+- A kernel whose sum a gate read from memory selects, as a routed expert
+  product's, is not searched and takes the heuristic's optimisations: its
+  loop's trips follow routing data the search does not have.
 - `Postrange.Scheduler.apply_opt` refuses a local split, or a pad of a local
   axis, that makes a workgroup of more threads than the target launches
   (`Renderer.t.local_threads_max`), or a group adding more than 256 partials
