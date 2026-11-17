@@ -1951,6 +1951,10 @@ let core_dkdv ~(part : part) c a tr xs =
    16 past 64 dimensions, and at least a whole step of the core's [N] and [K],
    of which the kernels loop [tile / k] and [tile / n] times. Less would run
    no product and leave every cotangent zero: CDNA 4's K is 32. *)
+(* The most dimensions of keys or values the derivative's kernels take
+   ({!dplan}), each operand's dimensions one block. *)
+let derivative_dims = 160
+
 let derivative_tile tc ~wide =
   let n, _, k = Tc.dims tc in
   max (if wide then 16 else 32) (max n k)
@@ -1958,36 +1962,32 @@ let derivative_tile tc ~wide =
 (* [dplan renderer a] is the derivative's kernels' shape for [a] on
    [renderer]'s target, if it takes them: {!plan}'s core, dense keys, [o] of
    the query's dtype, no load whose cotangent is asked for, and keys and
-   values of 1 to {!stage_dims} dimensions. To 64 a warp holds its operands, its
-   accumulators and those of a tile of 32 keys or rows in registers, up to
-   250 of them on sm_89 with no spill, and two workgroups of 4 warps share a
-   compute unit. Past 64, [k̄] and [v̄] take a launch each, so that each holds
-   one sum's accumulators and [v̄]'s none of [V]'s operands, and tiles of 16.
+   values of 1 to {!derivative_dims} dimensions. To 64 a warp holds its
+   operands, its accumulators and those of a tile of 32 keys or rows in
+   registers, up to 250 of them on sm_89 with no spill, and two workgroups of
+   4 warps share a compute unit. Past 64, [k̄] and [v̄] take a launch each, so
+   that each holds one sum's accumulators and [v̄]'s none of [V]'s operands,
+   and tiles of 16.
    On fudge's RTX 5000 Ada, 8 heads of 2048 rows of 128 dimensions took 5.5
    ms in one launch and tiles of 32, which spilled, 1.3 ms so split, and 2.8
    ms in the derivative's default. Tiles of 64 at 64 dimensions spilled and
    took up to 2.1 times as long, 8 warps 1.1 to 1.25 times.
 
-   Past 128 the default computes it, faster than any layout of these
-   kernels measured. On fudge's RTX 5000 Ada, the gradient's kernels after
-   the forward's at 160, 256 and 1024 bfloat16 dimensions took 12.9, 15.7
-   and 7.6 ms in the default over 4 heads of 4096 batches of 64 rows (512
-   batches at 1024), and 2.9, 3.0 and 8.7 ms over 8 heads of 2048 rows;
-   kernels of a block of 128 of a cotangent's columns a workgroup, which
-   computed [S] and [dP] for each block, 15.2, 23.4 and 26.7 ms and 3.6, 5.6
-   and 82 ms; and kernels that summed a cotangent's chunks in device memory
-   between tiles 36.2, 56.3 and 58.2 ms and 5.8, 8.6 and 140 ms. Kernels
-   that held every dimension in registers spilled at 256 and took 7.1 ms
-   there over 8 heads of 2048 rows, against the default's 4.3. Measured
-   again on an idle GPU once results were no longer copied, the block
-   kernels took 1.14 to 1.26 times the default's time at 160 past 256 keys
-   (2.23 against 1.81 ms at 256 keys), 1.05 to 1.58 at 256 and 2.6 to 5.3 at
-   1024: each block computes [S] and [dP] again, so their cost grows with
-   the blocks. They win only at 129, where the default's products of an odd
-   width are slow (0.29 times). It trades memory for time:
-   the default stores the weights, a gradient's footprint of 64 batches of
-   4 heads of 256 bfloat16 rows going from 5.05 bytes a pair of a head at
-   128 dimensions to 12.05 at 129.
+   To 160 the kernels hold each operand's dimensions as one block. Past 160
+   the default computes it. On fudge's RTX 5000 Ada, in bfloat16 with the
+   forward's kernels first, the kernels at one block against the default
+   took 1.14 against 5.53 ms at 129 dimensions and 1.21 against 1.73-1.94
+   ms at 160, over 64 batches of 4 heads of 256 rows; 1.66-1.77 against
+   3.22-3.30 ms at 160 over 8 heads of 2048 rows, causal 1.12-1.19 against
+   2.98-3.08; 12.9-13.0 against 13.7 ms at 160 over 4096 batches of 4 heads
+   of 64 rows; and 0.87-1.62 against 1.76-1.84 ms under tessera's slots of
+   64 rows with the key bias. Their footprint is 1.4 to 17 times smaller: the default
+   stores the weights. Blocks of 128 at 160, which compute [S] and [dP] for
+   each block, took 2.38-2.46 and 3.96-4.05 ms at 256 and 2048 rows. At 256
+   dimensions neither one block nor blocks of 128 is as fast as the default
+   unmasked: 3.2-3.3 and 3.5-3.9 against 2.2-2.3 ms at 256 rows, 6.1-6.6 and
+   6.0-6.3 against 4.1 at 2048, and kernels that held every dimension in
+   registers spilled there.
 
    Elsewhere the default's contractions compute it. A page's keys sum over
    every lead index that reads the page, and a float load's cotangent has any
@@ -2012,7 +2012,8 @@ let dplan (r : Renderer.t) a ~marked =
     when Option.is_none a.paged
          && (not (Array.exists Fun.id marked))
          && Dtype.equal (Arith.dtype a.out) vt
-         && a.dk > 0 && a.dv > 0 && a.dk <= stage_dims && a.dv <= stage_dims ->
+         && a.dk > 0 && a.dv > 0 && a.dk <= derivative_dims
+         && a.dv <= derivative_dims ->
       let n, m, k = Tc.dims c.tc in
       let step = max n k in
       let wide = a.dk > 64 || a.dv > 64 in

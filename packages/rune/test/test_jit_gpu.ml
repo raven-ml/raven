@@ -3339,6 +3339,13 @@ let () =
                  Attentions.uncopied (snd (on_gpu ()))
                    ~grad:(dt = Nx.Dtype.Any Nx.bfloat16)
                    dt);
+             Windtrap.cases
+               "a gradient of 129 to 160 dimensions compiles only kernels of \
+                attention's own"
+               ~id:string_of_int [ 129; 160 ]
+               (fun dims ->
+                 Attentions.uncopied ~dims (snd (on_gpu ())) ~grad:true
+                   (Nx.Dtype.Any Nx.bfloat16));
              test "results returned twice are apart" (fun () ->
                  Attentions.apart (snd (on_gpu ())) (Nx.Dtype.Any Nx.bfloat16));
              test "results are written into a donated argument they do not read"

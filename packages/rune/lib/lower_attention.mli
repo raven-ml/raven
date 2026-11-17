@@ -55,16 +55,12 @@
     [k̄] for [k̄], and [S] and [v̄] for [v̄]. Each product runs on the tensor
     core, the weights and the scores' cotangents rounded once to the
     operands' dtype; each sum adds in a fixed order of the shapes and the
-    target. Past 128 dimensions of keys or values the derivative's default
-    computes it, as products over the stored weights: on an idle RTX 5000
-    Ada, kernels of a block of 128 columns each, which compute [S] and [dP]
-    for each block, take 1.14 to 1.26 times the default's time at 160
-    dimensions past 256 keys, 1.05 to 1.58 times at 256 and 2.6 to 5.3 at
-    1024; they win only at 129, an odd width where the default's products
-    are slow (0.29 times), and tie at 160 over 64 keys. The weights cost
-    memory: the gradient's [Rune.footprint] of 64 batches of 4 heads of
-    256 bfloat16 rows is 5.05 bytes a pair of a head at 128 dimensions and
-    12.05 at 129. *)
+    target. To 160 dimensions each operand's dimensions are one block; past
+    160 of keys or values the derivative's default computes it, as products
+    over the stored weights: on an idle RTX 5000 Ada the kernels take 0.19
+    to 0.94 of the default's time at 129 and 160 dimensions, and their
+    footprint is 1.4 to 17 times smaller, but at 256 one block or blocks of
+    128 take 1.5 to 1.6 times the default's time unmasked. *)
 
 open Tolk
 

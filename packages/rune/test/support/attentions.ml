@@ -993,10 +993,10 @@ let sizes s dtype =
    that kernel writes. A call of attention, and on a tensor core of its
    fused gradient, so compiles attention's kernels alone. *)
 
-let uncopied (module S : Nx.Devices) ~grad dtype =
+let uncopied ?(dims = 64) (module S : Nx.Devices) ~grad dtype =
   let (F dt) = float_dtype dtype in
   let c = base dtype in
-  let shape = [| 2; 4; 64; 64 |] in
+  let shape = [| 2; 4; 64; dims |] in
   let place salt = Nx.place S.on (Nx.cast dt (draw c salt shape)) in
   let q = place 1 and k = place 2 and v = place 3 and g = place 4 in
   let qkv = Nx.Ptree.(triple tensor tensor tensor) in

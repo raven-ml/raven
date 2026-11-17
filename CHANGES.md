@@ -695,8 +695,10 @@ All notable changes to this project will be documented in this file.
   per-query positions, as `Kaun.Cache_index.visible` does, skips hidden
   tiles without a vote.
 - `Rune.jit` computes `Nx.attention`'s gradient on tensor cores for keys and
-  values of up to 128 dimensions, up from 64: on an RTX 5000 Ada, 8 heads of
-  2048 bfloat16 rows of 128 take about 1.3 ms against about 2.8.
+  values of up to 160 dimensions, up from 64: on an RTX 5000 Ada, 8 heads of
+  2048 bfloat16 rows of 128 take about 1.3 ms against about 2.8, and of 160
+  1.66-1.77 ms against 3.22-3.30, with a footprint 14 times smaller. Past 160
+  the default's contractions compute it, faster unmasked.
 - `Rune.jit` compiles `Nx.top_k` of few elements, with keys of at most 32 bits,
   to two kernels where a sorting network took one per stage: 2 launches
   against 20 for gpt-oss's router over 32 experts.
