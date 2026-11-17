@@ -565,13 +565,15 @@ value caml_rig_metal_start(value v_lib, value v_f, value v_values) {
       [library newFunctionWithName:name
                     constantValues:values
                  completionHandler:^(id<MTLFunction> g, NSError *error) {
+                   /* The block retains [library], which an unload may
+                      release while Metal specialises. Metal may call it
+                      on this thread before the call returns, so it passes
+                      no gate: only the pipeline's answer waits at it. */
                    @autoreleasepool {
                      if (g != nil)
-                       build(g, g.device, b);
-                     else {
-                       pass_gate();
+                       build(g, library.device, b);
+                     else
                        answer(b, nil, 0, reason(error));
-                     }
                    }
                  }];
   }

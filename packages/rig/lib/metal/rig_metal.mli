@@ -509,7 +509,9 @@ val settle : unit -> unit
 
 (* [hold_builds true] makes Metal's answers to compiles wait, unstored,
    until [hold_builds false]: {!pipelines} counts none of them meanwhile,
-   and {!prepare} waits for them and answers [false]. *)
+   and {!prepare} waits for them and answers [false]. Metal's answer to a
+   specialisation, which it may give on the starting thread, and
+   rig_metal's own refusals do not wait. *)
 val hold_builds : bool -> unit
 
 (* [held i] is the number of [i]'s functions with an entry or a started
