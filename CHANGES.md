@@ -1474,6 +1474,12 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A float32 GPU contraction that holds 8 by 8 outputs a thread takes
+  workgroups of 128 threads, and holds them only where its threads give each
+  of the target's compute units two workgroups
+  (`Heuristic.hand_coded_optimizations`). On an RTX 5000 Ada, attention's
+  scores over 8 heads of 2048 by 64 take 654 us where they took 970, and a
+  product of 2048 by 16 by 768 takes 8.0 us where it took 11.8.
 - Two matrix products that a device's tensor core takes, by their types
   and their shape, never share a kernel (`Indexing.run_rangeify`): of a sum
   of products, as the cotangent of an input read by three projections, the
@@ -2343,7 +2349,7 @@ its lock and from samples the dashboard saw arrive.
   which Clang took 2.4-4.5 s on; it is now 38 KB and 0.2-0.3 s.
 - On a GPU without a tensor core for it, a contraction whose two upcast
   output axes are each reused holds 8 by 8 outputs a thread in a workgroup
-  of 32 threads (`Heuristic.hand_coded_optimizations`): float32 products on
+  of 128 threads (`Heuristic.hand_coded_optimizations`): float32 products on
   an RTX 5000 Ada run 2.4 to 3.3 times faster.
 - After a tensor core, N's local split takes the largest of 4 and 2 that
   leaves 256 workgroups, where it took the first that divides and kept 512:

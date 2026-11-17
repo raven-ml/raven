@@ -208,10 +208,6 @@ Where it stands, with every measurement: doc/performance.md.
   against `local_threads_max` (`postrange.ml`), so an opt path that grows
   a group or locals, BEAM's included, can emit a launch the target refuses
   (1024 threads on gfx9's wave64, 512 on Apple2/3)
-- With locals ordered innermost first outside blocked contractions,
-  `matmul-float32-heads-16384x440x4x110` runs 22% slower than with the
-  same order inside them, which moves other rune products by -7% to +8.7%
-  (_plans/perf-campaign/norms/adjudication.md)
 - `Nx.rms_norm` under a trace runs a third pass, a lane max, for its
   overflow promise: 49 kernels a gpt-oss step. The one-pass form keeps
   the bits but tolk then inlines the norm's map into q, k, v and the

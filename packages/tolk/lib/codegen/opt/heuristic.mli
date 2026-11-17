@@ -187,30 +187,32 @@
       threads, a 64th of its outputs, number at least [core_threads].
     - On a renderer with local indices, a contraction summed in 4 bytes or
       fewer whose loop upcast two axes, each by 4 and each leaving part of
-      its axis, is blocked when an operand does not index each, 2 divides
-      each, and what is left of them once halved holds a SIMD group's
-      threads in powers of two: each axis is upcast again by 2, the last
-      unrollable axis is unrolled by 4 when 4 divides it, and the workgroup
-      takes at most a SIMD group's threads. Where one of the two upcasts
-      took its axis whole, the output axis that the same accesses index
-      takes its place, as the width of a projection's heads takes the
-      heads'.
-    - The last unrollable axis is unrolled whole if of size at most 32 (and
-      a second one if both are at most 3), or else by 4, when at most 4
-      lanes are upcast or no reduce axis is, and fewer than 64.
+      its axis, where an operand does not index each, 2 divides each, and
+      what is left of them once halved holds a SIMD group's threads in
+      powers of two, has its last unrollable axis unrolled by 4 when 4
+      divides it, and by nothing otherwise. It is blocked when its threads
+      once blocked, a 64th of its outputs, number at least 256 for each of
+      the renderer's {!Renderer.t.units}, or are not known: each axis is
+      upcast again by 2. The units move no sum's order: blocked or not, its
+      reduce is unrolled alike. Where one of the two upcasts took its axis
+      whole, the output axis that the same accesses index takes its place,
+      as the width of a projection's heads takes the heads'.
+    - The last unrollable axis of any other kernel is unrolled whole if of
+      size at most 32 (and a second one if both are at most 3), or else by
+      4, when at most 4 lanes are upcast or no reduce axis is, and fewer
+      than 64.
     - If nothing is upcast, the last upcastable axis is upcast by 4 when 4
       divides it.
     - On a renderer with local indices, global and weak axes of a constant
       size that take threads ({!Postrange.Scheduler.threadless}) become
       local: up to three axes, those some access does not index first, split
       by the first of 32 (axis [0] only), 16, 8, 4, 3 and 2 that divides them
-      while the workgroup stays within 128 threads, or a SIMD group's when
-      blocked. A
-      blocked contraction keeps that split where it lays a power of two of at
-      least 2 threads along the later of its two axes; else 16 or 8 threads,
-      whichever pads it less, lie along the later axis and the rest along the
-      other, each axis padded to its threads ({!Opt.t.Padto}), unless one takes
-      no threads or a pad is refused.
+      while the workgroup stays within 128 threads. A blocked contraction
+      keeps that split where it lays a power of two of at least 2 threads
+      along the later of its two axes; else 16 or 8 threads, whichever pads
+      it less, lie along the later axis and the rest of 128 along the other,
+      each axis padded to its threads ({!Opt.t.Padto}), unless one takes no
+      threads or a pad is refused.
 
     {1:host The host}
 

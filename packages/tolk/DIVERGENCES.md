@@ -5844,62 +5844,42 @@ against 2.77).
 - **Differs:**
   - on a renderer with local indices, a contraction summed in 4 bytes or
     fewer whose upcast loop took two axes, each by 4 and leaving part of its
-    axis, each unread by some operand, takes a second upcast of each by 2
-    when 2 divides both and what is left of them holds a SIMD group of 32
-    threads in powers of two; its last unrollable axis is then unrolled by 4
-    where 4 divides it, and its workgroup takes at most 32 threads. A thread
-    then holds 8 by 8 outputs, and each element it loads feeds 8 of them;
+    axis, each unread by some operand, where 2 divides both and what is left
+    of them holds a SIMD group of threads in powers of two, unrolls its last
+    unrollable axis by 4 where 4 divides it, and by nothing otherwise;
+  - it takes a second upcast of each axis by 2, so a thread holds 8 by 8
+    outputs, where those threads number at least two workgroups of 128 on
+    each of the target's `units`, or are not known. Its workgroup takes
+    tinygrad's bound of 128 threads, in D486's order, the later axis's split
+    first as `lidx0`: the local loop's split where it lays a power of two of
+    at least 2 threads along the later axis, else 16 or 8 there, whichever pads it less, and the rest
+    along the other, each axis padded (PADTO) where they do not divide it,
+    unless a pad is refused;
   - where one of the two upcasts took its axis whole, the output axis that
-    the same operands of the product read takes its second upcast, whatever
-    a load after the reduce, as a bias of each head, reads;
+    the same operands of the product read takes its second upcast;
   - a kernel upcast past those two axes' 16 lanes, as the masked upcasts
-    take a materialised mask's axes whole, is not blocked: under a mask of 2
-    batches of 2 heads a thread would hold 256 outputs;
-  - the workgroup's threads are the local loop's where it lays a power of
-    two of them, at least 2, along the later of the two axes; else 16 or 8
-    lie along the later axis, whichever pads it less, and the rest along the
-    other, each axis padded to its threads (PADTO) where they do not divide
-    it, unless a pad is refused. PADTO refuses past four times, and the rule
-    does not choose the least pad;
-  - only for such a contraction, upcast by nothing before the loop, where
-    its two reused output axes would pass that guard once upcast by 4 and
-    its blocked threads, a 64th of its outputs, number at least the
-    renderer's `core_threads`, does the upcast loop take an axis by 4
-    before 3;
-  - a sum in 8 bytes is not blocked: 64 accumulators of 8 bytes and their
-    operands would pass a thread's 255 registers.
-- **Reason:** (d): float32 contractions on fudge's RTX 5000 Ada, which take no
-  tensor core (TF32 is off), ran at 6 TFLOP/s of the part's 65 with 4 by 4
-  outputs a thread in workgroups of 128 threads; more outputs a thread cover
-  the loads' latency with fewer threads in flight, and CUTLASS's SIMT default
-  holds 8 by 8. 2048 cubed took 2799-2810 us, and takes 846-855. No reference
-  fixes a workgroup's threads, and 32 is measured: attention's scores ran faster
-  at 64 threads, the products of 1024 to 4096 and attention's values at 32,
-  and the scores' row is the band. 4 before 3 and the padding: tinygrad's 3 first left products
-  whose output axes 3 divides at 4 by 3 outputs a thread, and blocked
-  products whose halved axis holds no power of two of threads took the SIMD
-  group along the other axis (262144 x 440 x 1320 took 53.6 ms, and takes
-  14.1). The heads' second upcast: a projection of 16384 rows by 440 into 4
-  heads of 110 took 2549 us at 4 by 4, and takes 331. Metal and AMD take the
-  same rule, unmeasured, as fudge has neither. Under `--fmad=false` (D25)
-  the unrolled reduce renders a multiply and three fused multiply-adds per
-  four products, which caps these kernels below the part's peak whatever
-  their layout.
+    take a materialised mask's axes whole, is not blocked, nor a sum in 8
+    bytes;
+  - only for such a contraction, upcast by nothing before the loop, whose
+    blocked threads, a 64th of its outputs, number at least the renderer's
+    `core_threads`, does the upcast loop take an axis by 4 before 3.
+- **Reason:** (d): at equal registers, 8 by 8 outputs a thread in workgroups
+  of 128 beat tinygrad's 4 by 4 on fudge's RTX 5000 Ada wherever each SM
+  holds two of them, which at the 255 registers a thread may take fill its
+  64K. The unroll by 4 on both sides of that floor keeps each output's sum
+  in one order whatever `units` a target states, which moves speed alone.
 - **Pinned by:** `Tolk.Heuristic`'s `a contraction in registers` cases
-  (`matmul`, `matmul_256` and `scores` blocked on CUDA, `matmul_256` on AMD;
-  `matmul_768`, upcast by 4, and `matmul_440`, padded, blocked; `matmul_1000`,
-  whose halved axes hold one thread, `matmul_48`, whose blocked threads would
-  be too few, and `scores_biased` and `scores_biased_first`, whose upcasts
-  take their 4 heads whole, and `scores_masked`, whose masked upcasts take
-  its batches and heads, not blocked, nor, at 1536 positions, taken by 4
-  before 3; `heads_projection` and `heads_projection_biased`, plus a bias of
-  each head, blocked over the heads' width), with the layouts in the suite's
-  `.tolk` files; rune's `test_jit_gpu` `products › a float32 matmul is within
-  its bound of the exact product` at extents of 64 and 128 summed over 13 and
-  52, and padded at 256 x 13 x 40, `a blocked product padded to its threads,
-  plus a bias` and `a projection into heads, blocked over their width, is
-  within its bound`, on the machine's first GPU; the tolk bench's
-  `contract/f32-2048` and `contract/qk-f32-2048` rows and rune's
+  (`matmul`, `matmul_256`, `scores`, `matmul_768`, `matmul_440`, padded,
+  and `heads_projection` and `heads_projection_biased` blocked on CUDA and
+  AMD, which state no units; on sm_89's renderer `heads_projection`
+  blocked and `matmul_768` held at 4 by 4; `matmul_1000`, `matmul_48`,
+  `scores_biased`, `scores_biased_first` and `scores_masked` not blocked),
+  with the layouts in the suite's `.tolk` files, and `a kernel's sums keep
+  their order whatever units its renderer states`; rune's `test_jit_gpu`
+  `a blocked product padded to its threads, plus a bias, is within its
+  bound` and `a projection into heads, blocked over their width, is within
+  its bound`, blocked on sm_89; the tolk bench's `contract/f32-2048` and
+  `contract/qk-f32-2048` rows and rune's
   `Cuda/matmul-float32-16384x440x1320` and
   `Cuda/matmul-float32-heads-16384x440x4x110` on fudge, their baselines
   pending the scheduled re-record.
@@ -8971,7 +8951,7 @@ D466.
   `codegen/gpudims.py` `group_gpudims` (local ranges sorted by number, the
   first `lidx0`).
 - **tolk:** `Heuristic.locals`.
-- **Differs:** outside a blocked contraction, the splits that `locals`
+- **Differs:** the splits that `locals`
   ranks are applied from the innermost axis out, so the split of the latest
   axis is numbered first and becomes `lidx0`, the first hardware thread
   index, as tinygrad's QCOM branch already does. Which axes take threads,
@@ -8986,24 +8966,18 @@ D466.
   split finds its axis by its range, since an earlier split may delete an
   axis or place a local before a weak one, where tinygrad corrects a planned
   index for deleted axes alone (`deleted_shape`). Kernels that group, stream
-  or take a tensor core keep their threads (D357, D89); an unblocked
-  contraction takes the order as a map does. Blocked contractions keep
-  ascending order, a scope and not a principle: no reference says which
-  operand's stride a blocked tile's lanes should follow, its threads' plan
-  (`blocked_threads`) was measured in that order, and the innermost-first
-  order moved rune's `Cuda/` products both ways
-  (`matmul-float32-heads-16384x440x4x110` 457 to 354 us,
-  `attention/jit-jvp-bf16-8x2048x64-full` 2.00 to 2.10-2.12 ms).
+  or take a tensor core keep their threads (D357, D89); a contraction
+  takes the order as a map does, blocked or not: blocked in workgroups of
+  128 threads (D212), rows on `lidx0` ran 2048 cubed and 4096 by 512 by
+  4096 1.7 to 1.8 times as long.
 - **Reason:** (d): gpt-oss-20b's norms and any map over rows of a wide
   output on CUDA. On fudge's RTX 5000 Ada, with bits equal, rune's
-  `Cuda/rms-norm-bfloat16-512x2880` takes 28.6 to 18.7 us. Blocked
-  contractions' kernels are unchanged.
+  `Cuda/rms-norm-bfloat16-512x2880` takes 28.6 to 18.7 us.
 - **Pinned by:** the Codegen suite's `consecutive lid.x threads of a map
   over two local axes store one run after another` (every recorded GPU map
   whose workgroup spans two axes, on Metal, CUDA and HIP); the heuristic and
   stage goldens of tinygrad's GPU renderers whose kernels take two or more
-  local splits outside a blocked contraction, as `.tolk` files headed
-  `D486`; rune's `Cuda/rms-norm-bfloat16-512x2880` and
+  local splits, as `.tolk` files headed `D486` or, blocked, `D212`; rune's `Cuda/rms-norm-bfloat16-512x2880` and
   `Cuda/attention/jit-grad-bf16-2048x40x1024-full` rows and kaun's
   `GptOss/prefill-512` row on CUDA, their baselines pending the scheduled
   re-record. AMD and Metal are untimed.

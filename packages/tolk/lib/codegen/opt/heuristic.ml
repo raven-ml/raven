@@ -1177,21 +1177,47 @@ let upcast_one k =
       if K.axes_of k [ Upcast ] = [] && divisible (shape_at k axis) 4 then
         ignore (split k axis 4 Opt.Upcast)
 
+(* The threads of a workgroup the local splits make at most. *)
+let workgroup_threads = 128
+
+(* The workgroups of [workgroup_threads] a compute unit holds at once at a
+   thread's most registers: a CUDA SM has 65536 32-bit registers and a thread
+   at most 255 (the CUDA guide's compute capabilities), allocated as 256. A
+   blocked thread's 64 accumulators and operands take 207 to 230 of them on
+   an RTX 5000 Ada. *)
+let unit_workgroups = 2
+
+(* What {!block} did to a contraction: nothing, as it does not block it
+   ([Free]); its unroll alone, as its threads would not fill the target's
+   units ([Short]); or its unroll and the second upcasts of its two axes,
+   whose ranges it gives ([Blocked]). *)
+type blocking = Free | Short | Blocked of Ops.t * Ops.t
+
 (* A contraction on a GPU, summed in 4 bytes or fewer, whose two upcast
    output axes are each reused, an operand not reading it, is blocked: each
    axis, upcast by 4, takes a second upcast by 2, so that a thread holds 8 by 8
    outputs and each element it loads feeds 8 of them, its reduce is unrolled by
-   4, and its workgroup takes one SIMD group, [lanes] threads. More outputs a
-   thread hide the loads' latency with fewer threads in flight. On an RTX 5000
-   Ada a float32 product of 2048 cubed took 2.8 ms with 4 by 4 outputs a thread
-   in workgroups of 128 threads, 0.84 ms blocked; workgroups of 64 and 128
-   threads blocked took 0.93 and 1.6 ms. An upcast that took its axis whole
-   lends its second upcast to the output axis the same operands read, the
-   other part of one axis: a projection of 16384 rows into 4 heads of 110
-   took 331 us so and 2549 at 4 by 4. Attention's scores, whose queries the
-   operands that read the heads do not all read, keep 4 by 4, and so does a
-   kernel upcast past its two axes by 4 ({!upcast_by_loop}). The ranges of the
-   two axes it doubled, if it blocked. *)
+   4, and its workgroup takes [workgroup_threads] threads ({!locals}). More
+   outputs a thread hide the loads' latency with fewer threads in flight. On
+   an RTX 5000 Ada a float32 product of 2048 cubed took 2.8 ms with 4 by 4
+   outputs a thread in workgroups of 128 threads, and takes 0.74 ms
+   blocked. An upcast
+   that took its axis whole lends its second upcast to the output axis the
+   same operands read, the other part of one axis: a projection of 16384 rows
+   into 4 heads of 110 took 331 us so and 2549 at 4 by 4. Attention's scores,
+   whose queries the operands that read the heads do not all read, keep 4 by
+   4, and so does a kernel upcast past its two axes by 4 ({!upcast_by_loop}).
+   Unbiased scores, 8 products of 2048 by 64 by 2048, took 970 us blocked in
+   workgroups of 32 threads and 654 in 128.
+
+   It blocks only where its threads give each of the target's units
+   ({!Renderer.t.units}) [unit_workgroups] workgroups; a count not known
+   blocks. With fewer, units idle that the 4 by 4 outputs of the rules after
+   it fill with 4 times the threads: a product of 2048 by 16 by 768, 24576
+   threads blocked on 100 units, took 11.8 us so and 8.0 at 4 by 4. Short
+   of them its reduce is still unrolled by 4, whatever those rules would
+   unroll: the units move the kernel's speed alone, and each output adds its
+   terms in the order it takes where they are not stated. *)
 let block k upcasted =
   let doubles axis = divisible (shape_at k axis) 2 in
   (* The threads the axes leave a workgroup once doubled. *)
@@ -1230,6 +1256,13 @@ let block k upcasted =
         | None, None -> None)
     | _ -> None
   in
+  (* Its threads are a 4th of the outputs its upcasts by 4 leave. *)
+  let filled () =
+    let least = 4 * (K.ren k).units * unit_workgroups * workgroup_threads in
+    match known_size (prod_at k (K.upcastable_dims k)) with
+    | Some n -> Bigint.geq n (Bigint.of_int least)
+    | None -> true
+  in
   match axes with
   | Some (ra, rb)
     when (K.ren k).has_local && narrow k
@@ -1238,30 +1271,31 @@ let block k upcasted =
          let a = axis_of k ra and b = axis_of k rb in
          reused k a && reused k b && doubles a && doubles b
          && threads [ a; b ] >= lanes k ->
-      List.iter (fun r -> ignore (split k (axis_of k r) 2 Opt.Upcast)) [ ra; rb ];
+      let blocked = filled () in
+      if blocked then
+        List.iter
+          (fun r -> ignore (split k (axis_of k r) 2 Opt.Upcast))
+          [ ra; rb ];
       (match K.upcastable_dims ~reduce:true k with
       | [] -> ()
       | dims ->
           let axis = last dims in
           if divisible (shape_at k axis) 4 then
             ignore (try_split k axis 4 Opt.Upcast));
-      Some (ra, rb)
-  | _ -> None
+      if blocked then Blocked (ra, rb) else Short
+  | _ -> Free
 
-(* The threads of a workgroup the local splits make at most. *)
-let workgroup_threads = 128
-
-(* The threads of a blocked contraction's SIMD group along the two axes [rs]
+(* The threads of a blocked contraction's workgroup along the two axes [rs]
    that {!block} doubled: [greedy]'s where it lays a power of two of them, at
    least 2, along the later axis; else [across] along the later axis and the
-   rest of [lanes] along the other, each axis padded to its threads, with
-   [across] 16 or 8, whichever pads the later axis less. A product of 262144
-   rows by 440 columns, 55 runs of 8 that no power of two divides, took its 32
-   threads along the rows and ran at 4.6 TFLOP/s, and padded to 448 columns at
-   17.2; 144 columns, 18 runs, ran so at 13.6-14.9 padded to 192, a third more
-   work. An axis that takes no threads, as [ranked] omits it, or a pad, which
-   refuses past four times the work, that would be refused leaves [greedy]'s.
-   *)
+   rest of [workgroup_threads] along the other, each axis padded to its
+   threads, with [across] 16 or 8, whichever pads the later axis less. In
+   workgroups of 32 threads, a product of 262144 rows by 440 columns, 55 runs
+   of 8 that no power of two divides, took its threads along the rows and ran
+   at 4.6 TFLOP/s, and padded to 448 columns at 17.2; 144 columns, 18 runs,
+   ran so at 13.6-14.9 padded to 192, a third more work. An axis that takes
+   no threads, as [ranked] omits it, or a pad, which refuses past four times
+   the work, that would be refused leaves [greedy]'s. *)
 let blocked_threads k ranked greedy (ra, rb) =
   match (rest_of k ra, rest_of k rb) with
   | Some ua, Some ub ->
@@ -1280,7 +1314,9 @@ let blocked_threads k ranked greedy (ra, rb) =
           | None -> Bigint.zero
         in
         let across = if Bigint.leq (waste 16) (waste 8) then 16 else 8 in
-        let plan = [ (later, across); (earlier, lanes k / across) ] in
+        let plan =
+          [ (later, across); (earlier, workgroup_threads / across) ]
+        in
         let pads k =
           List.for_all
             (fun (axis, amount) ->
@@ -1292,9 +1328,8 @@ let blocked_threads k ranked greedy (ra, rb) =
   | _ -> greedy
 
 (* prioritize making expand axes local, of those every call and custom code
-   reads; a blocked contraction's ({!block}) take one SIMD group *)
+   reads; a blocked contraction's ({!block}) take its plan *)
 let locals ?blocked k =
-  let threads = if Option.is_some blocked then lanes k else workgroup_threads in
   let ranking =
     List.filter_map
       (fun axis ->
@@ -1316,7 +1351,9 @@ let locals ?blocked k =
         in
         match
           List.find_opt
-            (fun x -> divisible (shape_at k axis) x && local_size * x <= threads)
+            (fun x ->
+              divisible (shape_at k axis) x
+              && local_size * x <= workgroup_threads)
             candidates
         with
         | Some sz -> to_local @ [ (axis, sz) ]
@@ -1333,14 +1370,14 @@ let locals ?blocked k =
   (* The innermost axis's split first. A new range is numbered after every
      other and the lowest-numbered local is [lidx0], whose consecutive values
      make a SIMD group, so its lanes take consecutive elements of the output's
-     unit-stride axis, as [gidx0] does. A blocked contraction's threads keep
-     the order its plan was measured in: its traffic is its operands' tiles,
-     not its output. Each split finds its range by identity, since an earlier
-     split may delete an axis or place a local before a weak one. *)
+     unit-stride axis, as [gidx0] does. A blocked contraction's too: on an
+     RTX 5000 Ada its workgroups of 128 threads with the rows on [lidx0], a
+     SIMD group of 8 rows by 4 threads across, ran products of 2048 cubed
+     and of 4096 by 512 by 4096 1.7 to 1.8 times as long. Each split finds
+     its range by identity, since an earlier split may delete an axis or
+     place a local before a weak one. *)
   let ascending (a, _) (b, _) = Int.compare a b in
-  let order =
-    if Option.is_none blocked then fun x y -> ascending y x else ascending
-  in
+  let order x y = ascending y x in
   let rngs = K.rngs k in
   List.iter
     (fun (r, local_sz) -> ignore (split k (axis_of k r) local_sz Opt.Local))
@@ -1448,10 +1485,12 @@ let general ~core_threads k =
         None
       end
       else begin
-        let blocked = block k (upcast_more ~core_threads k) in
-        unroll k;
+        let blocking = block k (upcast_more ~core_threads k) in
+        (match blocking with Free -> unroll k | Short | Blocked _ -> ());
         upcast_one k;
-        blocked
+        match blocking with
+        | Blocked (ra, rb) -> Some (ra, rb)
+        | Free | Short -> None
       end
     in
     if (K.ren k).has_local then locals ?blocked k

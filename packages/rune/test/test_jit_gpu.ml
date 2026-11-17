@@ -1712,10 +1712,12 @@ let products_gen =
     (Gen.triple (Gen.of_list narrows) shape (Gen.int_range 0 1_000_000))
 
 (* Float32 products on a GPU's registers: extents of 64 and 128 on both output
-   axes block a thread's outputs 8 by 8, and unroll a sum of 52 by 4; a sum
-   of 13 is not unrolled. 40 columns of 256 rows leave 5 runs of 8 outputs,
-   which the blocked threads take padded; 40 rows of 512 columns leave 5
-   runs of rows, and a workgroup of 16 threads. *)
+   axes hold a thread's outputs 8 by 8 on a target that states no compute
+   units, 4 by 4 on one whose units they leave short of threads, and unroll
+   a sum of 52 by 4 either way; a sum of 13 is not unrolled. Blocked, 40
+   columns of 256 rows leave 5 runs of 8 outputs, which the threads take
+   padded; 40 rows of 512 columns leave 5 runs of rows, and a workgroup of
+   16 threads. *)
 let padded_products = [ (256, 13, 40); (40, 13, 512) ]
 
 let float32_products_gen =
@@ -1777,10 +1779,12 @@ let float32_law ((_, (m, k, n), _) as c) =
   within_bound c
 
 (* A padded blocked product with a bias of each column, which its kernel adds
-   to each output: within the bound of a sum of [k + 1] terms. *)
+   to each output: within the bound of a sum of [k + 1] terms. 4096 rows by
+   440 columns leave 28160 blocked threads, two workgroups of 128 on each of
+   sm_89's 100 units. *)
 let test_padded_bias () =
   let _, (module S) = on_gpu () in
-  let m = 256 and k = 52 and n = 440 in
+  let m = 4096 and k = 52 and n = 440 in
   let draw seed s =
     let x = Nx.Rng.uniform ~key:(Nx.Rng.key seed) Nx.float32 s in
     Nx.sub_s (Nx.mul_s x 4.) 2.

@@ -46,8 +46,9 @@ val renderer_of_row : (string -> string) -> Renderer.t
     {!Tolk.Renderer.t.simd_threads} and {!Tolk.Renderer.t.local_threads_max}
     are its device's and architecture's: 64 and 1024 on gfx9, 1 and 1 on
     [CPU], and 32 and 1024 elsewhere. A column
-    [per_byte_first] gives {!Tolk.Renderer.t.per_byte_first}, its default
-    where the row has none or it is empty.
+    [per_byte_first] gives {!Tolk.Renderer.t.per_byte_first}, and a column
+    [units] {!Tolk.Renderer.t.units}, each its default where the row has none
+    or it is empty.
 
     Raises [Failure] if their number is not the row's [tensor_cores]. *)
 

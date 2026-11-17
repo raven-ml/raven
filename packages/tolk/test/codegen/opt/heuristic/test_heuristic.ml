@@ -1770,16 +1770,44 @@ let workgroup c =
         1
         (K.axes_of o [ Local ]))
 
+(* [name]'s kernel optimised on [ren]. *)
+let optimised_on ren name =
+  let k = K.v (kernel name) ren in
+  K.convert_loop_to_global k;
+  Heuristic.hand_coded_optimizations k
+
+(* sm_89's renderer, which states the 100 units of an RTX 5000 Ada. *)
+let sm_89 =
+  lazy
+    (Cstyle.without_compiler
+       {
+         Helpers.Target.device = "CUDA";
+         renderer = "CUDA";
+         arch = "sm_89";
+         interface = "";
+         indices = "";
+       })
+
 let blocks =
   group "a contraction in registers"
     [
+      (* Two workgroups of 128 threads on each of 100 units are 25600
+         threads: the heads' projection blocked keeps 28160, a product of
+         2048 by 768 would keep 24576. *)
+      cases "on sm_89 a contraction blocks where its threads give each unit \
+             two workgroups"
+        ~id:fst
+        [ ("heads_projection", 64); ("matmul_768", 16) ]
+        (fun (name, outputs) ->
+          equal int outputs
+            (lane_outputs_of (optimised_on (Lazy.force sm_89) name)));
       (* 768 columns, which 3 divides, are upcast by 4; 440 columns are 55
          runs of 8 outputs, which hold a SIMD group only padded; a projection
          into 4 heads of 110, its heads upcast whole, lends their second
          upcast to the width, padded, with or without a bias of each head,
          which the width does not read. *)
       cases "on a GPU, both upcast axes reused, a thread holds 8 by 8 outputs \
-             in a workgroup of one SIMD group"
+             in a workgroup of 128 threads"
         ~id:Fun.id
         [
           "matmul_cuda";
@@ -1796,7 +1824,7 @@ let blocks =
         (fun name ->
           let c = recorded name in
           equal ~msg:"outputs" int 64 (lane_outputs c);
-          equal ~msg:"threads" int 32 (workgroup c));
+          equal ~msg:"threads" int 128 (workgroup c));
       (* Blocked, 48 rows by 1024 columns would keep 768 threads. *)
       cases "a thread holds 4 by 3 outputs where its blocked kernel would keep \
              too few threads"
@@ -1833,6 +1861,59 @@ let blocks =
         (fun (name, outputs) ->
           equal int outputs (lane_outputs (recorded name)));
     ]
+
+(* The order of each of [o]'s sums: for each reduce, the ranges it closes,
+   each by its role and size. A loop adds its trips in turn and an upcast's
+   lanes are added together each trip, so these fix the order in which an
+   output adds its terms. *)
+let sum_order o =
+  let range r =
+    Format.asprintf "%a %a" Ops.Axis_type.pp (Ops.axis_type r) Bigint.pp_print
+      (size r)
+  in
+  List.map (fun red -> List.map range (List.tl (Ops.src red))) (K.reduceops o)
+
+(* The compute units a target states move its speed alone ([Renderer.t]'s
+   [units]): every GPU kernel of the suite sums in the order it takes where
+   its renderer states none, from one unit to more than any part has. *)
+let units_keep_order =
+  let gpu = [ "metal"; "cuda"; "amd" ] in
+  let rows =
+    List.filter
+      (fun cell -> List.mem (cell "renderer") gpu)
+      (Golden.rows "renderers.golden")
+  in
+  let with_units row n =
+    Kernel_opts.renderer_of_row (fun column ->
+        if column = "units" then string_of_int n else row column)
+  in
+  let kernels name =
+    List.sort_uniq String.compare
+      (List.filter_map
+         (fun c ->
+           if c.renderer = name && c.settings = [] && c.environment = "" then
+             Some c.kernel
+           else None)
+         recorded_cases)
+  in
+  let units = [ 1; 100; 1 lsl 20 ] in
+  let rows =
+    List.concat_map
+      (fun row ->
+        List.concat_map
+          (fun name -> List.map (fun n -> (row, name, n)) units)
+          (kernels (row "renderer")))
+      rows
+  in
+  cases "a kernel's sums keep their order whatever units its renderer states"
+    ~id:(fun (row, name, n) ->
+      Printf.sprintf "%s on %s at %d units" name (row "renderer") n)
+    rows
+    (fun (row, name, n) ->
+      equal
+        (list (list string))
+        (sum_order (optimised_on (with_units row 0) name))
+        (sum_order (optimised_on (with_units row n) name)))
 
 (* Groups past 2048 outputs *)
 
@@ -2956,6 +3037,7 @@ let () =
          core_rows_settings;
          leaves_its_argument;
          blocks;
+         units_keep_order;
          starved;
          keeps_kernel_writes;
          fastest_threads_coalesce;
