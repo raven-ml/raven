@@ -1675,6 +1675,18 @@ val jit :
     {!Nx.exp2} at [x = +inf] may give an infinite part the wrong sign where
     [y ln 2] lies within a relative [2u] of a non-zero multiple of [π/2].
 
+    {b Random draws.} A draw of {!Nx.Rng} computes nx's own sequence of
+    operations for it. That sequence is the generator's integer arithmetic,
+    casts, and the real and special functions above, a rejection sampler's
+    rounds each computed and the first accepted selected. So a compiled
+    draw gives eager's bits where those functions are exact, except
+    {!Nx.Rng.dirichlet}, which divides each row by its sum, a reduction
+    whose terms the compiler adds in its own order. Before the rounding to
+    the dtype, an element of a row of [n] is within [(2γ(n - 1) + 2u) m] of
+    eager's, [m] the larger of the two and [u] the unit roundoff of the
+    dtype the draw computes at. Where [m] is subnormal they may differ by
+    that dtype's least subnormal more.
+
     {b Reductions.} A float reduction, scan, contraction or scatter by [Add]
     computes in its {e accumulator}, the one its [Nx] function states:
     [float32] for a narrower float and the dtype otherwise, as

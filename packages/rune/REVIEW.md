@@ -23,8 +23,9 @@ Failure here is a wrong derivative; a compiled result that differs from
 eager beyond its class; a compiled call reused after something that changes
 its program, or retraced on every call; `vmap` lanes mixed, or a held lane
 that reaches another's value or derivative; a branch not taken that
-computes; a total or a probe that counts a step twice; a random stream
-that differs between eager and compiled.
+computes; a total or a probe that counts a step twice; a compiled random
+draw that differs from eager's beyond `rune.mli`'s Numerics, which allows
+only `Nx.Rng.dirichlet`'s row sum to.
 
 - A new or changed derivative rule against finite differences, at real and
   complex dtypes, composed with `vmap` and `jit`.

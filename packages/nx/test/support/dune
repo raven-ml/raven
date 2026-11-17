@@ -5,6 +5,14 @@
  (modules nx_support)
  (libraries nx nx_array nx_kernel nx_cpu nx_kernels_support rig windtrap))
 
+; Nx.Rng's draws on a set against the host's, for the suites of nx's kernel
+; libraries.
+
+(library
+ (name nx_rng_support)
+ (modules nx_rng_support)
+ (libraries nx windtrap))
+
 ; The domain lock as a thread holds it, through the runtime's hooks, and a
 ; job that occupies the pool.
 

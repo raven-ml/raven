@@ -746,6 +746,26 @@ let probabilities =
       map (fun e -> Float.ldexp 1. e) (int_range (-60) (-1));
     ]
 
+(* Rows of 14 float32 concentrations whose draw cut along its rows leaves a
+   subnormal quotient one least subnormal from the whole draw's, which the
+   relative bound alone does not allow. *)
+let subnormal_rows =
+  let cs = Array.make 160 0.05 in
+  List.iter
+    (fun (i, c) -> cs.(i) <- c)
+    [
+      (29, 1.9388349197655539);
+      (30, 1.4004315930939701);
+      (31, 2.443240131355171);
+      (33, 2.);
+      (34, 1.8744564585852426);
+      (37, 5.);
+      (38, 1.1510571488397816);
+      (40, 5.);
+    ];
+  let k = Rng.of_tensor (host_of Nx.int32 [| 2 |] [| 31951l; 220l |]) in
+  (k, F Nx.float32, 14, cs)
+
 let draws =
   group "draws"
     [
@@ -804,6 +824,48 @@ let draws =
           let x = Rng.bernoulli ~key:(Rng.place S2.on k) (Nx.place at p) in
           equal bool true (Nx.Placement.equal at (Nx.placement x));
           equal (array bool) (read (Rng.bernoulli ~key:k p)) (read x));
+      (* A dirichlet row's sum is a float sum, which a placement that cuts the
+         row combines from the windows' partial sums. Where rows lie whole the
+         draw keeps its bits. Where they are cut an element is within the
+         bound nx.mli states (Nx_rng_support.bound): (2γ(n - 1) + 2u) m of the
+         whole draw's at the dtype it computes at, m the larger of the two,
+         the least subnormal more where m is subnormal, then a narrow float's
+         rounding. Half the concentrations lie in [0.01, 0.05], whose gamma
+         draws fall below e^-87 and e^-104 of their row's largest often enough
+         that some cases of every run hold subnormal and zero quotients. *)
+      prop ~examples:[ subnormal_rows ]
+        "dirichlet keeps its bits where rows lie whole, and its bound where \
+         they are cut"
+        (Gen.quad keys
+           (Gen.of_list ~pp:pp_dtype
+              [ F Nx.float16; F Nx.bfloat16; F Nx.float32; F Nx.float64 ])
+           (Gen.int_range 2 40)
+           (Gen.array ~size:(Gen.constant 160)
+              (Gen.frequency
+                 [
+                   (1, Gen.float_range 0.01 0.05); (1, Gen.float_range 0.05 5.);
+                 ])))
+        (fun (k, F dt, len, cs) ->
+          let a = host_of dt [| 4; len |] (Array.sub cs 0 (4 * len)) in
+          let draw p =
+            read (Rng.dirichlet ~key:(Rng.place S2.on k) (Nx.place p a))
+          in
+          let whole = read (Rng.dirichlet ~key:k a) in
+          let f = A.Dtype.float_format dt in
+          let subnormal w = w > 0. && w < f.min_normal in
+          cover "a row longer than 2" (len > 2);
+          cover "a float narrower than float32" (f.fraction_bits < 23);
+          cover "a subnormal quotient" (Array.exists subnormal whole);
+          cover "a zero quotient" (Array.exists (fun w -> w = 0.) whole);
+          equal ~msg:"rows whole" (array float_exact) whole
+            (draw (S2.split ~axis:0));
+          Array.iteri
+            (fun i c ->
+              let w = whole.(i) in
+              at_most float_exact
+                ~than:(Nx_rng_support.bound dt ~n:len w c)
+                (Float.abs (c -. w)))
+            (draw (S2.split ~axis:1)));
       prop "a batch of keys draws each key's draw"
         (Gen.triple keys (Gen.int_range 1 4) shapes)
         (fun (k, n, s) ->

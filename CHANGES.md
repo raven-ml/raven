@@ -482,6 +482,11 @@ All notable changes to this project will be documented in this file.
 - Numerics states a compiled `Nx.asinh`, `Nx.acosh`, `Nx.atanh`, `Nx.rsqrt`
   and `Nx.hypot` of floats and every special function (`Nx.erfc` to
   `Nx.i1e`) eager's bits on the host and NVIDIA GPUs; it stated no bound.
+- Numerics states a compiled `Nx.Rng` draw eager's bits on the host and
+  NVIDIA GPUs, except `Nx.Rng.dirichlet`'s, whose row sum the compiler adds
+  in its own order. Before the rounding to the dtype, an element of a row of
+  `n` is within `(2γ(n - 1) + 2u) m` of eager's, `m` the larger of the two,
+  and a least subnormal more where `m` is subnormal.
 - A compiled complex `Nx.asin`, `Nx.acos`, `Nx.atan`, `Nx.asinh`,
   `Nx.acosh` and `Nx.atanh` give eager's bits on the host and NVIDIA GPUs.
   Elsewhere they hold nx's 5u, where rune stated 21u and 23u for every
@@ -3204,6 +3209,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.Rng.dirichlet` may differ between kernel libraries and at a placement
+  that cuts its rows, within the bound its doc states, since its row sum is
+  a float `Nx.sum`. `Nx.Rng` stated every draw the same at every placement.
+  Every other draw is, and has the same bits on every kernel library.
 - Complex `Nx.pow` is `+0 + 0i` where `w log z` is `-inf` plus a NaN
   imaginary part, as at `0 ** inf` and `(inf + NaN i) ** -2`, on every
   target. Its zero imaginary part took that NaN's sign, which each target

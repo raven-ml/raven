@@ -46,7 +46,9 @@ at its own width.
   handle; a handle is for one use, and a later use reads `x`'s elements or
   raises, never other elements.
 - A new operation's result placement and its routing error follow
-  `nx.mli`'s Routing section. A random draw is the same at every placement.
+  `nx.mli`'s Routing section. A random draw has the same bits on every
+  kernel library and at every placement, but `Rng.dirichlet`'s, whose row
+  sum is a float sum.
 
 ## Skip
 

@@ -1696,17 +1696,18 @@ let onto_mesh set =
 (* Keys
 
    A key's placement inside a program is its argument's, and a draw at it,
-   plus a constant at its uncut placement, gives eager's placement and bits:
-   a key whole on each device, one on device 1, and a batch of [4] cut along
-   axis 0. *)
-let key_placement set =
+   plus a constant at its uncut placement, gives eager's placement and, a
+   compiled draw being eager's (rune.mli's Numerics), its bits, from a drawn
+   key: a key whole on each device, one on device 1, and a batch of [4] cut
+   along axis 0. *)
+let key_placement seed set =
   let draw k =
     let at = Nx.Rng.placement k in
     Nx.add
       (Nx.Rng.normal_at at ~key:k f32 [| 3 |])
       (Nx.full_at (Nx.Placement.uncut at) f32 [| 3 |] 0.5)
   in
-  let root = Nx.Rng.key 11 in
+  let root = Nx.Rng.key seed in
   List.iter
     (fun (name, c, key) ->
       let k = Nx.Rng.place (at set c) key in
@@ -3068,8 +3069,9 @@ let () =
            ];
          group "keys"
            [
-             test "a key's placement in a program, and draws there" (fun () ->
-                 over 2 { law = key_placement });
+             prop ~count:8 "a key's placement in a program, and draws there"
+               Gen.int
+               (fun seed -> over 2 { law = (fun s -> key_placement seed s) });
            ];
          group "programs"
            [

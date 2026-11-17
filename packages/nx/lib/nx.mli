@@ -4919,14 +4919,17 @@ val associative_scan :
 (** Random numbers from one Threefry-2x32 generator.
 
     A key is the generator's whole state: every draw is a function of its
-    key, dtype and shape, the same at every placement. Fresh draws come from
-    fresh keys, by {!Rng.split} or {!Rng.fold_in}. A key is spent once it is
-    used: its own draws, its {!Rng.split} keys, its {!Rng.fold_in} keys and
-    the keys of a scope rooted at it all come from one stream of blocks under
-    it, so using a key two of these ways can repeat bits. A scope lets one
-    key stand for a region: a sampler called without [~key] takes the scope's
-    next key. A scope may instead refuse such draws ({!Rng.refusing}), so
-    that a region draws only from keys it is given.
+    key, dtype, shape and parameters, the same bits on every kernel library
+    and at every placement, but {!Rng.dirichlet}'s, whose row sum is a float
+    {!sum}. [Rune]'s Numerics section states what a program compiled by
+    [Rune.jit] draws. Fresh draws come from fresh keys, by {!Rng.split} or
+    {!Rng.fold_in}. A key is spent once it is used: its own draws, its
+    {!Rng.split} keys, its {!Rng.fold_in} keys and the keys of a scope
+    rooted at it all come from one stream of blocks under it, so using a key
+    two of these ways can repeat bits. A scope lets one key stand for a
+    region: a sampler called without [~key] takes the scope's next key. A
+    scope may instead refuse such draws ({!Rng.refusing}), so that a region
+    draws only from keys it is given.
 
     A key's two words lie whole on one device: a placement that cuts the
     words' axis holds no key. {!Rng.val-key} makes a host key, which
@@ -5323,6 +5326,17 @@ module Rng : sig
       underflow keeps their ratios: each row sums to 1 and has an element of at
       least [1 / n], [n] its length, up to rounding. It inherits {!gamma}'s
       rounds.
+
+      A row's sum is a float {!sum}, which adds its terms in the kernel
+      library's order, and at a placement that cuts the last axis combines
+      the windows' partial sums ({!section-reductions}). So an element may
+      differ between kernel libraries, and from the draw whose rows lie
+      whole on a device. Before the rounding to the dtype, two such draws
+      are within [(2γ(n - 1) + 2u) m] of each other, [m] the larger of the
+      two, [u] the unit roundoff of the dtype the draw computes at
+      ([float32] for a narrower float) and [γ] as
+      {!Nx_kernel.section-bounds} defines it. Where [m] is subnormal they
+      may differ by that dtype's least subnormal more.
 
       Raises [Invalid_argument] if [a] has no axis, or an element of [a] is
       outside [(0, inf)]. *)

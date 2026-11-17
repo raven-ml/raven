@@ -97,6 +97,7 @@
   nx_kernel_cases
   nx_cpu
   nx_kernels_support
+  nx_rng_support
   nx_stack_support
   nx_support
   rig

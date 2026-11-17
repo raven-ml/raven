@@ -23,9 +23,9 @@
    attention holds its bound against a float64 reference and gives +0 for a
    sum of zeros, paged keys and values give dense ones' bits, a sum of a
    contraction's result holds its bound, a long sum and a weight gradient
-   hold the blocked bound, a kind compiled to nx's sequence and a function nx
-   composes from kinds give eager's bits on an NVIDIA GPU and exp holds its
-   bound in ulps of the correctly
+   hold the blocked bound, a kind compiled to nx's sequence, a function nx
+   composes from kinds and a draw of Nx.Rng give eager's bits on an NVIDIA
+   GPU and exp holds its bound in ulps of the correctly
    rounded result on one that flushes subnormals, a range gather and its
    gradient compile to eager's bits, and an argmax or argmin over a length
    16 does not divide gives nx's position, a sum and a product their exact values, and a first k of a sort
@@ -3004,10 +3004,11 @@ let complex_ported k =
         Kinds.folded s ~f64 k);
   ]
 
-(* Over a cold disk cache NVRTC compiles the largest kernel below,
-   betaincinv's at float64, in about a minute, and it runs for seconds on an
-   RTX 5000 Ada: measured, betaincinv's test at float64 ran three cases in
-   60 s cold. Warm, each takes seconds. *)
+(* Over a cold disk cache NVRTC compiles the largest kernels below, binomial's
+   and betaincinv's at float64, and a float64 betaincinv runs for seconds on
+   an RTX 5000 Ada: measured cold, binomial's test took 131 s at float64 and
+   47 s at float32, and betaincinv's at float64 ran three cases in 60 s.
+   Warm, each takes seconds. *)
 let cold = 240.
 
 (* Functions nx composes from kinds and exact operations give eager's bits on
@@ -3038,6 +3039,28 @@ let composed =
       gammaincinv; gammainccinv; betainc; betaincc; log_betainc; log_betaincc;
       betaincinv; betainccinv; i0e; i1e;
     ]
+
+(* Nx.Rng's draws compiled on an NVIDIA GPU give the host's eager draws from
+   the same key, bit for bit, but for dirichlet's row sum (Draws), a float64
+   draw where the GPU's kernels have float64. Each float type is a test of its
+   own, at the zero-size shape and the block, one kernel each; the host's
+   suite draws the narrow floats, one element and one long row. *)
+let draws k =
+  let module R = Nx_rng_support in
+  let shapes = R.[ Zero; Block ] in
+  [
+    prop ~timeout:cold ~count:4
+      (R.name k ^ " at float32 compiles to eager's draws")
+      (R.gen k)
+      (fun c -> Draws.law (snd (keeps ())) ~dtypes:R.[ Float32 ] ~shapes k c);
+    prop ~timeout:cold ~count:4
+      (R.name k ^ " at float64 compiles to eager's draws")
+      (R.gen k)
+      (fun c ->
+        let f64, s = keeps () in
+        if not f64 then skip ~reason:"the GPU's kernels have no float64" ();
+        Draws.law s ~dtypes:R.[ Float64 ] ~shapes k c);
+  ]
 
 let complex_kinds =
   Kinds.
@@ -3163,6 +3186,7 @@ let () =
          group "clamped operands" (List.map clamped_law clamped);
          group "complex kinds" (List.concat_map complex_ported complex_kinds);
          group "composed functions" (List.concat_map composed_law composed);
+         group "draws" (List.concat_map draws Nx_rng_support.samplers);
          group "exp"
            [
              prop ~count:24 "exp within 9 ulps at float32 where it flushes"

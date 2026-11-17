@@ -19,6 +19,7 @@
   casts16
   exps
   kinds
+  draws
   mxfp4_products
   quants
   prefixes
@@ -30,7 +31,17 @@
   unreached
   row_sets
   donations)
- (libraries nx nx_array nx_kernel nx_quant nx_support rig rune tolk windtrap))
+ (libraries
+  nx
+  nx_array
+  nx_kernel
+  nx_quant
+  nx_rng_support
+  nx_support
+  rig
+  rune
+  tolk
+  windtrap))
 
 ; rig's test agent, beside the suite that starts it through Remote_job.
 

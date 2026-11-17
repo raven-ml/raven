@@ -71,7 +71,10 @@ raven exchanges `Nx.t` values and `Nx.Ptree` structures.
   a NaN's sign and payload where `Nx_kernel.Prog` leaves them unspecified:
   tests compare such NaNs as a class.
 - One Threefry generator, `Nx.Rng`. Its key is an `int32` array, so it can
-  be a structure's leaf, a jit input or a vmap axis.
+  be a structure's leaf, a jit input or a vmap axis. A draw is a program of
+  kinds: the same bits on every kernel library, at every placement and
+  under `Rune.jit` on the host and NVIDIA GPUs, but `dirichlet`'s, whose
+  row sum is a fold.
 - A value made from numbers is a host value; `_at` and `_like` forms make
   it at a placement. Code for every set makes its constants at `Nx.beside`
   of its operands, under a locally abstract set type.
