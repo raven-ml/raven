@@ -164,5 +164,6 @@ let exact = bits (Rune.jit' poly probe) = bits (poly probe)
 bit for bit: true
 ```
 
-A function such as `Nx.exp` may differ from eager's result, within the ulps
-that section's table gives it.
+The Numerics section names the other functions and draws that are exact, and
+the devices on which they are, and states the bound each other function
+holds, such as a sum, whose terms the compiler adds in an order of its own.

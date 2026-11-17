@@ -1574,14 +1574,13 @@ val jit :
 
 (** {2:numerics Numerics}
 
-    A compiled call computes each nx function to the accuracy below, so a
-    float result may differ from eager's, which each function's doc in [Nx]
-    bounds ({!Nx.section-transcendental} for the elementwise functions).
-    The {e unit roundoff} [u] of a float dtype is [2{^-24}] for [float32]
-    and [2{^-53}] for [float64], that of its parts for a complex one. An
-    {e ulp} is one rank in the order of a dtype's bit patterns, [-0.] and
-    [+0.] one rank apart, and an error of [n] ulps is a distance of [n]
-    ranks from the correctly rounded result. [γ(k)] is [k u / (1 - k u)].
+    A compiled call computes each nx function to the accuracy this section
+    states for the devices it names. The {e unit roundoff} [u] of a float
+    dtype is [2{^-24}] for [float32] and [2{^-53}] for [float64], that of
+    its parts for a complex one. An {e ulp} is one rank in the order of a
+    dtype's bit patterns, [-0.] and [+0.] one rank apart, and an error of
+    [n] ulps is a distance of [n] ranks from the correctly rounded result.
+    [γ(k)] is [k u / (1 - k u)].
     A function is {e exact} when it agrees with eager bit for bit, except
     that a NaN result may be any NaN where nx leaves which NaN unspecified
     ({!Nx.section-transcendental}).
@@ -1609,47 +1608,44 @@ val jit :
     Of the complex functions, {!Nx.neg}, {!Nx.add}, {!Nx.sub}, the extremes
     and the comparisons are exact.
 
+    {b Devices.} The real and complex functions and the draws below compute
+    nx's own sequence of operations for them, each fused multiply-add rounded
+    once and no other product contracted into a sum. A device is {e faithful}
+    when it keeps subnormal numbers and rounds division, the square root and
+    a fused multiply-add correctly, and there each of them is exact as stated
+    below. The host CPU and NVIDIA GPUs are faithful. Apple's GPUs
+    flush [float32]'s subnormals. Whether AMD's GPUs are faithful is not
+    measured. On a device that flushes subnormals, a function stated exact or
+    within a bound in this section may be inexact or break its bound where
+    an operand, a result or an intermediate is below the least normal float.
     A float narrower than [float32] computes at [float32] and rounds once, so
-    each exact real function is exact there too. On a device that flushes
-    subnormals, as Metal does at [float32], a function stated exact or within a
-    bound in this section may be inexact or break its bound where an operand, a
-    result or an intermediate is below the least normal float, the real
-    functions below hold only what they state for such a device, and the
-    complex functions' special values hold where no part of an operand is
-    below the least normal float, and for {!Nx.exp2} at an infinite [x] where
-    [|y ln 2|] is not below it either.
+    a real function exact at [float32] is exact there too.
 
     {b Real functions.} {!Nx.exp}, {!Nx.exp2}, {!Nx.expm1}, {!Nx.log},
     {!Nx.log2}, {!Nx.log1p}, {!Nx.sin}, {!Nx.cos}, {!Nx.tan}, {!Nx.asin},
     {!Nx.acos}, {!Nx.atan}, {!Nx.atan2}, {!Nx.sinh}, {!Nx.cosh}, {!Nx.tanh},
-    {!Nx.erf} and {!Nx.pow} compute nx's own sequence of operations for them,
-    so they are exact on a device that keeps subnormals, rounds division and
-    the square root correctly and rounds a fused multiply-add once, as the
-    host CPU and NVIDIA GPUs do, and hold the bounds their [Nx] docs state.
-    On every device, where every operand is [±0.], [±inf] or a NaN, each of
-    them and {!Nx.log10} gives the value of C99 Annex F (ISO/IEC 9899,
-    F.9), a zero's sign included: [sin (-0.)] is [-0.] and [log 0.] is
-    [-inf]; {!Nx.pow} is [1.] where [y] is [±0.] or [x] is [1.], NaN
-    included, and where [x] is [-1.] and [y] is infinite. On a device that
-    flushes subnormals, {!Nx.exp} is within 9 ulps of the correctly rounded
-    result at [float32] where that result is normal, and within one ulp at
-    [float16] and [bfloat16] where it is normal; rune states nothing more for
-    these functions there.
+    {!Nx.erf} and {!Nx.pow} are exact on a faithful device and hold the
+    bounds their [Nx] docs state. On every device, where every operand is
+    [±0.], [±inf] or a NaN, each of them and {!Nx.log10} gives the value of
+    C99 Annex F (ISO/IEC 9899, F.9), a zero's sign included: [sin (-0.)] is
+    [-0.] and [log 0.] is [-inf]; {!Nx.pow} is [1.] where [y] is [±0.] or [x]
+    is [1.], NaN included, and where [x] is [-1.] and [y] is infinite. On a
+    device that flushes subnormals, {!Nx.exp} is within 9 ulps of the
+    correctly rounded result at [float32] where that result is normal, and
+    within one ulp at [float16] and [bfloat16] where it is normal; rune
+    states nothing more for these functions there.
 
     Of floats, {!Nx.log10}, {!Nx.asinh}, {!Nx.acosh}, {!Nx.atanh},
     {!Nx.rsqrt}, {!Nx.hypot} and the special functions
     ({!Nx.section-special}), which nx composes from these and exact
-    functions, are exact where these are. Another function nx composes from
-    these, such as {!Nx.softmax}, computes as nx composes it.
+    functions, are exact on a faithful device. Another function nx composes
+    from these, such as {!Nx.softmax}, computes as nx composes it.
 
     {b Complex functions.} {!Nx.mul}, {!Nx.div}, {!Nx.recip}, {!Nx.sqrt},
     {!Nx.sign}, {!Nx.log}, {!Nx.log2}, {!Nx.exp}, {!Nx.exp2}, {!Nx.pow}, the
-    circular and hyperbolic functions and their inverses compute nx's own
-    sequence of operations for them, so they are exact on a device that keeps
-    subnormals, rounds division and the square root correctly and rounds a
-    fused multiply-add once, as the host CPU and NVIDIA GPUs do. On a device
-    that rounds division and the square root correctly and rounds a fused
-    multiply-add once, each of them but {!Nx.mul}, {!Nx.div} and {!Nx.recip}
+    circular and hyperbolic functions and their inverses are exact on a
+    faithful device. On a device that flushes subnormals but rounds as a
+    faithful one does, each of them but {!Nx.mul}, {!Nx.div} and {!Nx.recip}
     holds the bound its [Nx] doc states where no value computed for it is
     subnormal; on another device rune states no bound for them. On every
     device, a result [z'] of exact value [z] of {!Nx.mul} holds a
@@ -1670,22 +1666,23 @@ val jit :
     [(±1 ± i) / √2], and {!Nx.recip} the sorts of [(1 + 0i) / z] by Smith's
     division, which divides by the divisor's larger part. Zeros' signs are
     unspecified, and so is an infinity's sign that comes from a NaN part or
-    that Annex G leaves open. On a device where they are not exact, {!Nx.mul},
+    that Annex G leaves open. On a device that flushes subnormals these
+    special values hold where no part of an operand is below the least
+    normal float, and for {!Nx.exp2} at an infinite [x] where [|y ln 2|] is
+    not below it either. On a device where they are not exact, {!Nx.mul},
     {!Nx.div} and {!Nx.pow} are unspecified at an infinite part, and
     {!Nx.exp2} at [x = +inf] may give an infinite part the wrong sign where
     [y ln 2] lies within a relative [2u] of a non-zero multiple of [π/2].
 
-    {b Random draws.} A draw of {!Nx.Rng} computes nx's own sequence of
-    operations for it. That sequence is the generator's integer arithmetic,
-    casts, and the real and special functions above, a rejection sampler's
-    rounds each computed and the first accepted selected. So a compiled
-    draw gives eager's bits where those functions are exact, except
-    {!Nx.Rng.dirichlet}, which divides each row by its sum, a reduction
-    whose terms the compiler adds in its own order. Before the rounding to
-    the dtype, an element of a row of [n] is within [(2γ(n - 1) + 2u) m] of
-    eager's, [m] the larger of the two and [u] the unit roundoff of the
-    dtype the draw computes at. Where [m] is subnormal they may differ by
-    that dtype's least subnormal more.
+    {b Random draws.} A draw of {!Nx.Rng} computes the generator's integer
+    arithmetic, casts, and the real and special functions above, a rejection
+    sampler's rounds each computed and the first accepted selected. So it is
+    exact on a faithful device, except {!Nx.Rng.dirichlet}, which divides
+    each row by its sum, a reduction whose terms the compiler adds in its own
+    order. Before the rounding to the dtype, an element of a row of [n] is
+    within [(2γ(n - 1) + 2u) m] of eager's, [m] the larger of the two and
+    [u] the unit roundoff of the dtype the draw computes at. Where [m] is
+    subnormal they may differ by that dtype's least subnormal more.
 
     {b Reductions.} A float reduction, scan, contraction or scatter by [Add]
     computes in its {e accumulator}, the one its [Nx] function states:

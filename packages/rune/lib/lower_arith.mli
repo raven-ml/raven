@@ -37,12 +37,11 @@
 
     The integer and boolean kinds, the comparisons, [Where], casts and bitcasts
     are exact in {!Lower_real}'s sense, as are the float and complex kinds that
-    {!Lower_real} and {!Lower_complex} state exact. Every other float or complex
-    kind holds the bound and the special values those modules state for it. Such
-    a kind at a dtype narrower than [float32] is within one ulp ({!Lower_real})
-    of the correctly rounded result, since its [float32] error is below one ulp
-    of the dtype. For [pow] this holds wherever the result is finite in that
-    dtype. These rules are the elementwise part of {!Rune.section-numerics}. *)
+    {!Lower_real} and {!Lower_complex} state exact, on the targets they state.
+    Elsewhere a float or complex kind holds the bound and the special values
+    those modules state for it. A kind exact at [float32] is exact at a
+    narrower float, which computes in [float32] and rounds once. These rules
+    are the elementwise part of {!Rune.section-numerics}. *)
 
 open Tolk
 
