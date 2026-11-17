@@ -234,7 +234,8 @@
   test_lower_reduce
   test_lower_index
   test_lower_linalg
-  test_lower_fft)
+  test_lower_fft
+  test_lower_attention)
  (modules
   test_loop
   test_lower
@@ -242,7 +243,8 @@
   test_lower_reduce
   test_lower_index
   test_lower_linalg
-  test_lower_fft)
+  test_lower_fft
+  test_lower_attention)
  (libraries
   nx
   nx_array

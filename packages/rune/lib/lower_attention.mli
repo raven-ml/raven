@@ -19,14 +19,16 @@
     dimensions. The kernel that folds a row's runs of keys holds one term a
     run: at most the row's tiles of keys, and the least power of two that
     reaches the target's [stream_threads] over a workgroup's threads, its
-    [local_workgroups] on the host. On a tensor core, and for float32 and
-    float64 on a GPU's FFMA micro-tile, the keys' dimensions go in chunks of
-    at most 128 and the values' columns in blocks of at most 128, a block a
-    workgroup, which computes the tile's scores for itself; the weights stay
-    in the registers of the product they chain into where the core chains
-    its accumulator, and otherwise go through workgroup memory, and the
-    block's sums stay in registers. Elsewhere a tile's scores are computed
-    once, then its weights multiply the values a few columns at a time.
+    [local_workgroups] on the host. On a GPU, on a tensor core where one
+    chains its accumulator and otherwise on an FFMA micro-tile, the keys'
+    dimensions go in chunks of at most 256 bytes and the values' columns in
+    blocks of at most 512 bytes of accumulators, 128 float32 columns, a
+    block a workgroup, which computes the tile's scores for itself; the
+    weights stay in the registers of the product they chain into where the
+    core chains its accumulator, and otherwise go through workgroup memory,
+    and the block's sums stay in registers. On the host a tile's scores are
+    computed once, then its weights multiply the values a few columns at a
+    time.
 
     {b Numerics.} Scores, their maxima and sums, the weights and [lse] compute
     in the accumulator, in base 2: each score is multiplied by [log₂ e] and
@@ -36,12 +38,13 @@
     for each later tile [t'] where the maximum rose. The arguments' roundings
     sum to one rounding of [x - m], as in a two-pass softmax, and each rise
     adds an [exp2] and a product, [(2E + 1) u] for [E] the ulps of
-    {!Nx.exp2}; the sum [l] adds one rescale a tile, of 32 or 64 keys.
+    {!Nx.exp2}; the sum [l] adds one rescale a tile, of 16, 32 or 64 keys.
     Together these stay within the bound rune's {!Nx.logsumexp} states
     ({!Rune.section-numerics}) for tiles of at least 9 keys. On a tensor
     core each weight rounds once to [v]'s dtype before the value product,
-    which sums in the core's order; elsewhere each [acc] sums its products
-    in key order. Keys split into runs fold the runs' states in order, one
+    which sums in the core's order; elsewhere, on an FFMA micro-tile and on
+    the host, each [acc] sums its products in key order, each weight in the
+    accumulator. Keys split into runs fold the runs' states in order, one
     rescale and one addition more a weight. [o] is [acc / l] rounded once
     into its dtype. A tile skipped holds no visible pair; a NaN or an
     infinity at a hidden key within a row's length reaches [o] only through

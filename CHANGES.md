@@ -489,6 +489,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` computes a float32 or float64 `Nx.attention` on a GPU in tiles,
+  as it computes a 16-bit one on tensor cores, on fused multiply-adds of
+  each lane's four rows, and so a 16-bit one that no tensor core takes: one
+  accumulated in float64, or bfloat16 before NVIDIA's compute capability 8.0.
+  Each value product sums in key order, the weights in the accumulator. It
+  took a thread a row, the accumulator in device memory.
 - A compiled `Nx.top_k` past 2 of few keys, and the routing of a compiled
   `Nx.matmul_segments` or `Nx_quant.apply_experts`, take fewer kernels on a
   GPU: gpt-oss-20b's router is 10 to 13 small kernels a layer at prefill,

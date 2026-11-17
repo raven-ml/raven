@@ -435,9 +435,14 @@ let inside shape () =
 let attention_dtypes =
   Nx.Dtype.[ Any Nx.float16; Any Nx.bfloat16; Any Nx.float32; Any Nx.float64 ]
 
-(* Heads of every size, on the SIMT kernel in float32 and on the target's tensor
-   core in bfloat16. *)
-let heads = Attentions.heads Nx.Dtype.[ Any Nx.float32; Any Nx.bfloat16 ]
+(* Heads of every size, on the FFMA micro-tile in float32 and float64 and on
+   the target's tensor core in bfloat16; the gradient's in float32 and
+   bfloat16. *)
+let heads =
+  Attentions.heads Nx.Dtype.[ Any Nx.float32; Any Nx.float64; Any Nx.bfloat16 ]
+
+let grad_heads =
+  List.filter (fun (c : Attentions.t) -> c.dtype <> Nx.Dtype.Any Nx.float64) heads
 
 let head_id (c : Attentions.t) =
   let (Nx.Dtype.Any dt) = c.dtype in
@@ -3478,9 +3483,9 @@ let () =
                (Gen.with_pp Attentions.pp
                   (Gen.map mappable (Attentions.gen attention_dtypes)))
                (attention_grad ~vmap:true);
-             (* float32 on the SIMT kernel; the narrow floats on the target's
-                tensor core where it has one that chains, else on the SIMT
-                kernel. *)
+             (* float32 on the FFMA micro-tile; the narrow floats on the
+                target's tensor core where it has one that chains, else on
+                the SIMT kernel. *)
              Windtrap.cases "a sum of zeros is +0 at rows of one run of keys"
                ~id:(fun (Nx.Dtype.Any dt) -> Nx.Dtype.name dt)
                Nx.Dtype.[ Any Nx.float32; Any Nx.bfloat16; Any Nx.float16 ]
@@ -3489,10 +3494,14 @@ let () =
                "heads of 36 to 1024 dimensions hold nx's bound against the \
                 composition"
                ~id:head_id heads
-               (fun c -> Attentions.law ~composed:true (snd (on_gpu ())) c);
+               (fun c ->
+                 let d, s = on_gpu () in
+                 if c.Attentions.dtype = Nx.Dtype.Any Nx.float64 then
+                   assume (has_float64 d);
+                 Attentions.law ~composed:true s c);
              Windtrap.cases
                "their gradient holds rune's bound against the composition's"
-               ~id:head_id heads
+               ~id:head_id grad_heads
                (fun c ->
                  Attentions.grad_law ~composed:true (snd (on_gpu ()))
                    ~vmap:false c);
