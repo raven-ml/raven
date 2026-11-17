@@ -46,6 +46,11 @@ enum {
 
 #include "rig_metal_stubs.h"
 
+/* Metal reads a constant's value from the first bytes of its word, and the
+   image's words are little-endian. */
+_Static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
+               "rig_metal reads little-endian words in place");
+
 #define Device_val(v) ((struct rig_metal *)Long_val(v))
 #define Run_val(v) (Device_val(v)->run)
 #define Object_val(v) ((id)(intptr_t)Nativeint_val(v))
@@ -369,9 +374,10 @@ static dispatch_group_t answering(void) {
    and returns. No handler blocks, so one that Metal calls on the thread
    that starts a build holds that thread no longer than an open gate would.
    [held] is serial: once the gate opens, the answers run in the order the
-   handlers queued them. */
+   handlers queued them. [gate_closed] changes only under [gate_mutex], and
+   a handler that reads it open runs its answer without the lock. */
 static pthread_mutex_t gate_mutex = PTHREAD_MUTEX_INITIALIZER;
-static int gate_closed;
+static _Atomic int gate_closed;
 
 static dispatch_queue_t held(void) {
   static dispatch_queue_t queue;
@@ -384,8 +390,12 @@ static dispatch_queue_t held(void) {
 
 /* Runs [k] now, or once the gate opens if it is closed. */
 static void gated(dispatch_block_t k) {
+  if (!atomic_load(&gate_closed)) {
+    k();
+    return;
+  }
   pthread_mutex_lock(&gate_mutex);
-  int closed = gate_closed;
+  int closed = atomic_load(&gate_closed);
   if (closed) dispatch_async(held(), k);
   pthread_mutex_unlock(&gate_mutex);
   if (!closed) k();
@@ -456,20 +466,20 @@ static void build(id<MTLFunction> fn, id<MTLDevice> device, struct build *b) {
                               }];
 }
 
-/* The types a word carries, with their ranges. A signed type reads the
-   word in two's complement, the others unsigned. */
+/* The types a word carries, with their ranges. A signed type, one whose
+   range holds negatives, reads the word in two's complement, the others
+   unsigned. */
 static const struct {
   MTLDataType type;
-  int is_signed;
   int64_t lo, hi;
 } carried[] = {
-    {MTLDataTypeBool, 0, 0, 1},
-    {MTLDataTypeChar, 1, INT8_MIN, INT8_MAX},
-    {MTLDataTypeUChar, 0, 0, UINT8_MAX},
-    {MTLDataTypeShort, 1, INT16_MIN, INT16_MAX},
-    {MTLDataTypeUShort, 0, 0, UINT16_MAX},
-    {MTLDataTypeInt, 1, INT32_MIN, INT32_MAX},
-    {MTLDataTypeUInt, 0, 0, UINT32_MAX},
+    {MTLDataTypeBool, 0, 1},
+    {MTLDataTypeChar, INT8_MIN, INT8_MAX},
+    {MTLDataTypeUChar, 0, UINT8_MAX},
+    {MTLDataTypeShort, INT16_MIN, INT16_MAX},
+    {MTLDataTypeUShort, 0, UINT16_MAX},
+    {MTLDataTypeInt, INT32_MIN, INT32_MAX},
+    {MTLDataTypeUInt, 0, UINT32_MAX},
 };
 
 static const size_t n_carried = sizeof carried / sizeof *carried;
@@ -512,15 +522,13 @@ static int specialise(id<MTLFunction> fn, const uint32_t *v, uint32_t n,
                name, (unsigned long)k);
       return -1;
     }
-    int64_t x = carried[t].is_signed ? (int64_t)(int32_t)v[k] : (int64_t)v[k];
+    int64_t x = carried[t].lo < 0 ? (int64_t)(int32_t)v[k] : (int64_t)v[k];
     if (x < carried[t].lo || x > carried[t].hi) {
       snprintf(why, len,
-               "the value %u lies outside the type of its constant %s (%lu)",
-               v[k], name, (unsigned long)k);
+               "the value %lld lies outside the type of its constant %s (%lu)",
+               (long long)x, name, (unsigned long)k);
       return -1;
     }
-    /* The Mac is little-endian, so a word that its type holds starts with
-       the bytes of its value at that type. */
     [vs setConstantValue:&v[k] type:c.type atIndex:k];
   }
   *values = vs;
@@ -546,7 +554,6 @@ value caml_rig_metal_start(value v_lib, value v_f, value v_values) {
     free(f), free(v), free(b);
     return Val_long(0);
   }
-  /* The words are little-endian, as the Mac is. */
   if (n > 0) memcpy(v, String_val(v_values), 4 * (size_t)n);
   atomic_init(&b->refs, 2);
   pthread_mutex_init(&b->mutex, NULL);
@@ -662,9 +669,10 @@ value caml_rig_metal_settle(value unit) {
 value caml_rig_metal_hold(value v_held) {
   int closing = Bool_val(v_held);
   pthread_mutex_lock(&gate_mutex);
-  if (closing && !gate_closed) dispatch_suspend(held());
-  if (!closing && gate_closed) dispatch_resume(held());
-  gate_closed = closing;
+  int closed = atomic_load(&gate_closed);
+  if (closing && !closed) dispatch_suspend(held());
+  if (!closing && closed) dispatch_resume(held());
+  atomic_store(&gate_closed, closing);
   pthread_mutex_unlock(&gate_mutex);
   return Val_unit;
 }

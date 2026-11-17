@@ -2291,14 +2291,16 @@ let refusal_prefix f = strf "Rig_metal.entry: no pipeline of %S: " f
 (* Words for constants 0 to 8 of [typed], from 3 on [ws]. *)
 let typed ws = Some ([ 0; 0; 0 ] @ ws)
 
-let out_of_range f w c k ws =
+(* The refusal of [f] whose constant [c] (index [k]) reads its word as [x],
+   a value its type cannot hold. *)
+let out_of_range f x c k ws =
   {
     f;
     words = ws;
     expect =
       Error
         (refusal_prefix f
-        ^ strf "the value %d lies outside the type of its constant %s (%d)" w c
+        ^ strf "the value %d lies outside the type of its constant %s (%d)" x c
             k);
   }
 
@@ -2336,13 +2338,15 @@ let specs =
     };
     out_of_range "typed" 2 "t_bool" 3 (typed [ 2; 0; 0; 0; 0; 0 ]);
     out_of_range "typed" 128 "t_char" 4 (typed [ 0; 128; 0; 0; 0; 0 ]);
-    out_of_range "typed" 0xffff_ff7f "t_char" 4
+    out_of_range "typed" (-129) "t_char" 4
       (typed [ 0; 0xffff_ff7f; 0; 0; 0; 0 ]);
     out_of_range "typed" 256 "t_uchar" 5 (typed [ 0; 0; 256; 0; 0; 0 ]);
     out_of_range "typed" 32768 "t_short" 6 (typed [ 0; 0; 0; 32768; 0; 0 ]);
-    out_of_range "typed" 0xffff_7fff "t_short" 6
+    out_of_range "typed" (-32769) "t_short" 6
       (typed [ 0; 0; 0; 0xffff_7fff; 0; 0 ]);
     out_of_range "typed" 65536 "t_ushort" 7 (typed [ 0; 0; 0; 0; 65536; 0 ]);
+    out_of_range "typed" 0xffff_ffff "t_ushort" 7
+      (typed [ 0; 0; 0; 0; 0xffff_ffff; 0 ]);
     {
       f = "real";
       words = typed [ 0; 0; 0; 0; 0; 0 ];

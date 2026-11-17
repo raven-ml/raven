@@ -28,13 +28,14 @@
    each, so the dials in flight at once can be counted. It exits once the
    relay has passed every byte both ways, the agent's close included.
 
-   It serves twelve kinds. "MEM" is two software devices. "POLLED" is two
+   It serves thirteen kinds. "MEM" is two software devices. "POLLED" is two
    Polled devices, which launch Polled's host functions. "TIGHT" is a Polled
    device whose queue holds 3 parts. "DISK" is the io device of files.
    "HIDDEN" is a Polled device whose [Device] memory the host does not
    address. "MAPLESS" is a Polled device that maps no host memory. "UNTIMED"
    is a Polled device that times no work. "FAULTY" is a device whose
    next fallible call faults with "the agent's device faulted", which loses it.
+   "METAL" is the machine's Metal GPU, an error off a Mac or without one.
    "NONE" is an opener that fails with "no such hardware". "COLLECT" runs a full
    major collection and opens no device. "RAISE" is an opener that raises
    [Failure "the opener raised"]. "LOUD" prints "opening LOUD" and opens no
@@ -130,7 +131,6 @@ let faulty () =
   opened := d :: !opened;
   Ok [ d ]
 
-(* The machine's Metal GPU, an error off a Mac or without one. *)
 let metal () =
   Result.map
     (fun d ->
