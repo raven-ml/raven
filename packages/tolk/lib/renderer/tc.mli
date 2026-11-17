@@ -108,6 +108,22 @@ val pp : Format.formatter -> t -> unit
     [TensorCore(dtype_in=dtypes.f16, dtype_out=dtypes.f32, frag_a=(('k1',
      'm0', ...), ('k0',)), frag_b=..., frag_c=...)]. *)
 
+(** {1:products Products} *)
+
+val factor : t -> Ops.t -> Ops.t option
+(** [factor tc u] is what [tc] multiplies for a factor [u] of a product: [u]
+    at [tc]'s input type, or the narrow float that [u] widens to float32
+    where [tc] adds float32 products, since it multiplies two narrow floats
+    exactly, as float32 does. An integer widened to float32 that the input
+    type holds exactly, as a Q8_0 code in bfloat16, enters cast to that type:
+    the cast through the narrow float keeps every value. It is [None]
+    otherwise. *)
+
+val takes : t -> acc:Dtype.t -> Ops.t -> Ops.t -> bool
+(** [takes tc ~acc a b] is [true] iff [tc] computes a sum of the products of
+    [a] and [b] accumulated in [acc]: [acc] is [tc]'s output type and [tc]
+    multiplies both factors ({!factor}). *)
+
 (** {1:chaining Chaining}
 
     A product's accumulator can be the next product's operand in registers

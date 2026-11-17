@@ -16,7 +16,7 @@ let settings = function
 
 let kernel_graph name =
   Setting.context (settings name) (fun () ->
-      Rangeify.get_kernel_graph (program name))
+      Rangeify.get_kernel_graph ~cores:Cores.host (program name))
 
 (* Recorded graphs *)
 
@@ -471,7 +471,8 @@ let stores value =
       Ops.after out [ Ops.store (Shape.reshape out (Shape.shape value)) value ];
     ]
 
-let schedule sink = Rangeify.get_kernel_graph (Prepare.prepare_rangeify sink)
+let schedule sink = Rangeify.get_kernel_graph
+                      ~cores:Cores.host (Prepare.prepare_rangeify sink)
 let kernels_of sink = kernels (schedule sink)
 
 let sum_of us =
@@ -494,7 +495,7 @@ let rules =
       test "a store of storage into itself runs no kernel" (fun () ->
           equal int 0
             (kernels
-               (Rangeify.get_kernel_graph
+               (Rangeify.get_kernel_graph ~cores:Cores.host
                   (Ops.sink [ Ops.after out [ Ops.store out out ] ]))));
       test "a store of invalid values runs no kernel" (fun () ->
           let invalid =
@@ -542,7 +543,8 @@ let rules =
             (List.filter_map
                (fun n ->
                  if Ops.op n = Alloc then Some (Shape.max_numel n) else None)
-               (Ops.toposort ~calls:Enter (Rangeify.get_kernel_graph sink))));
+               (Ops.toposort ~calls:Enter (Rangeify.get_kernel_graph
+                                             ~cores:Cores.host sink))));
     ]
 
 (* Outputs that share a computation
@@ -1062,6 +1064,82 @@ let siblings =
           writes sink);
     ]
 
+(* Products a core takes
+
+   [Σ_i a_i · b_iᵀ] of three [m × k] by [n × k] matrices of [dt] on a CUDA
+   device, each product summed in float32 and rounded to [dt], as rune
+   lowers a contraction, the three added. Given sm_89's cores, bfloat16
+   products of 64 rows each take a kernel of their own, the two stored as
+   the bfloat16 their sum reads; products of 8 rows, which stream without a
+   core, float32 products, which take one only under TF32, and a schedule
+   given the host's cores keep one kernel of three sums. *)
+
+let cuda = "CUDA"
+
+let sm_89_cores =
+  let target =
+    { Helpers.Target.device = cuda; renderer = "CUDA"; arch = "sm_89";
+      interface = ""; indices = "" }
+  in
+  [ (cuda, Heuristic.cores (Cstyle.without_compiler target)) ]
+
+let sum_of_products ?(dt = Dtype.Bfloat16) m n k =
+  let matrix slot rows =
+    Shape.reshape
+      (Shape.param ~device:cuda ~shape:[ Int (rows * k) ] slot dt)
+      (ints [ rows; k ])
+  in
+  let product i =
+    let spread x shape = Shape.expand (Shape.reshape x (ints shape)) in
+    let a = spread (matrix (1 + i) m) [ m; 1; k ] (ints [ m; n; k ])
+    and b = spread (matrix (4 + i) n) [ 1; n; k ] (ints [ m; n; k ]) in
+    let p = Ops.O.(Ops.cast a Float32 * Ops.cast b Float32) in
+    Ops.cast (Shape.reshape (Shape.rop p Add [ 2 ]) (ints [ m; n ])) dt
+  in
+  let value = Ops.O.(product 0 + product 1 + product 2) in
+  let out = Shape.param ~device:cuda ~shape:[ Int (m * n) ] 0 dt in
+  Ops.sink
+    [
+      Ops.after out [ Ops.store (Shape.reshape out (Shape.shape value)) value ];
+    ]
+
+let split_graph ~cores sink =
+  Rangeify.get_kernel_graph ~cores (Prepare.prepare_rangeify sink)
+
+(* The types every kernel of [graph] stores. *)
+let stored_types graph =
+  List.sort_uniq Dtype.compare
+    (List.filter_map
+       (fun u ->
+         if Ops.op u = Store then Some (Ops.dtype (Ops.nth u 1)) else None)
+       (Ops.toposort ~calls:Enter graph))
+
+let products_apart =
+  group "get_kernel_graph › products a core takes"
+    [
+      test "bfloat16 products of 64 rows run a kernel each, stored narrow"
+        (fun () ->
+          let g = split_graph ~cores:sm_89_cores (sum_of_products 64 64 64) in
+          equal ~msg:"kernels" int 3 (kernels g);
+          let dtype = Testable.make ~pp:Dtype.pp ~equal:Dtype.equal in
+          equal ~msg:"stored types" (list dtype) [ Dtype.Bfloat16 ]
+            (stored_types g));
+      test "products of 8 rows, which take no core, share one kernel"
+        (fun () ->
+          equal int 1
+            (kernels
+               (split_graph ~cores:sm_89_cores (sum_of_products 8 64 64))));
+      test "float32 products share one kernel without TF32" (fun () ->
+          equal int 1
+            (kernels
+               (split_graph ~cores:sm_89_cores
+                  (sum_of_products ~dt:Float32 64 64 64))));
+      test "products share one kernel given the host's cores" (fun () ->
+          equal int 1
+            (kernels
+               (split_graph ~cores:Cores.host (sum_of_products 64 64 64))));
+    ]
+
 (* Generated programs
 
    The law of scheduling end to end: a function of up to three inputs of up to
@@ -1504,7 +1582,7 @@ let kernels_reading reads =
   let i = loop 16 9 in
   let store = Ops.store (Ops.index o [ i ]) (sum_of (reads i)) in
   kernels
-    (Rangeify.get_kernel_graph
+    (Rangeify.get_kernel_graph ~cores:Cores.host
        (Ops.sink [ Ops.after o [ Ops.end_ store [ i ] ] ]))
 
 (* [staged v] is [v] of [source] at [s], staged over [s] of [size] (default
@@ -1587,7 +1665,7 @@ let kernels_reducing ~width read =
   let i = loop 16 9 and k = Ops.range ~axis_type:Weak (Int width) [ 10 ] in
   let store = Ops.store (Ops.index o [ i ]) (Ops.reduce (read i k) Add [ k ]) in
   kernels
-    (Rangeify.get_kernel_graph
+    (Rangeify.get_kernel_graph ~cores:Cores.host
        (Ops.sink [ Ops.after o [ Ops.end_ store [ i ] ] ]))
 
 let windows' read = kernels_reducing ~width:16 read
@@ -1727,7 +1805,7 @@ let recomputation =
               [ i ]
           in
           let graph =
-            Rangeify.get_kernel_graph
+            Rangeify.get_kernel_graph ~cores:Cores.host
               (Ops.sink [ Ops.after o (List.init 120 store) ])
           in
           (* A permutation of the [n] positions. *)
@@ -1782,7 +1860,7 @@ let kernels_routed ~experts ~rows v =
   in
   let store = Ops.store (Ops.index o [ r ]) product in
   kernels
-    (Rangeify.get_kernel_graph
+    (Rangeify.get_kernel_graph ~cores:Cores.host
        (Ops.sink [ Ops.after o [ Ops.end_ store [ r ] ] ]))
 
 (* [routed_staged ~experts v] is [v] of [source] at [8e + 4j + k], staged over
@@ -1892,7 +1970,7 @@ let kernels_rows ~rows read =
   let k = Ops.range ~axis_type:Weak (Int 16) [ 10 ] in
   let store = Ops.store (Ops.index o [ r ]) (Ops.reduce (read r k) Add [ k ]) in
   kernels
-    (Rangeify.get_kernel_graph
+    (Rangeify.get_kernel_graph ~cores:Cores.host
        (Ops.sink [ Ops.after o [ Ops.end_ store [ r ] ] ]))
 
 (* A stage of [sizes] read at [index r k] by [kernels_rows]: [copied] nodes,
@@ -1975,7 +2053,7 @@ let kernels_out ~rows read v =
   let value = Ops.reduce (Ops.index v (read rs k)) Add [ k ] in
   let store = Ops.store (Ops.index o [ at ]) value in
   kernels
-    (Rangeify.get_kernel_graph
+    (Rangeify.get_kernel_graph ~cores:Cores.host
        (Ops.sink [ Ops.after o [ Ops.end_ store rs ] ]))
 
 (* The digit of [d] a read drops from its outputs: of [4 * d] rows read at
@@ -2108,7 +2186,7 @@ let kernels_scaled ~experts ~rows ~width form v =
   let at = Ops.O.((r * int width) + m) in
   let store = Ops.store (Ops.index o [ at ]) product in
   kernels
-    (Rangeify.get_kernel_graph
+    (Rangeify.get_kernel_graph ~cores:Cores.host
        (Ops.sink [ Ops.after o [ Ops.end_ store [ r; m ] ] ]))
 
 (* A spelled exponential of [experts] matrices of 2 by 4, staged as a value read
@@ -2156,7 +2234,7 @@ let kernels_selected ~broadcast:with_broadcast =
       [ Ops.end_ (Ops.store (Ops.index o [ at ]) value) [ e; j; k; m ] ]
   in
   let items = if with_broadcast then [ routed; broadcast ] else [ routed ] in
-  kernels (Rangeify.get_kernel_graph (Ops.sink items))
+  kernels (Rangeify.get_kernel_graph ~cores:Cores.host (Ops.sink items))
 
 let selected_and_broadcast =
   group "get_kernel_graph › a spelled exponential selected and broadcast"
@@ -2223,7 +2301,7 @@ let own_ranges =
         program
         (fun drawn ->
           let indexed =
-            Indexing.run_rangeify
+            Indexing.run_rangeify ~cores:Cores.host
               (Prepare.prepare_rangeify (two_outputs drawn))
           in
           let nodes = Ops.toposort ~calls:Skip indexed in
@@ -2456,6 +2534,7 @@ let () =
          gathered_broadcast;
          self_reads;
          siblings;
+         products_apart;
          loops;
          states;
          cost;

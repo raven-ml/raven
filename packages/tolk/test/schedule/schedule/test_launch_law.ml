@@ -677,7 +677,8 @@ let order_independent seed =
   (* Rangeify refuses some graphs of views at verification: the schedule makes
      no statement about them. *)
   let linear, vars =
-    match Schedule.create_linear_with_vars ~capturing:true big with
+    match Schedule.create_linear_with_vars
+            ~cores:Cores.host ~capturing:true big with
     | r -> r
     | exception Invalid_argument m
       when String.starts_with ~prefix:"UOp verification failed" m ->
@@ -756,7 +757,7 @@ let same_program_same_schedule seed =
   let r = Random.State.make [| seed |] in
   let p = gen_program r in
   let schedule big =
-    match Schedule.create_linear_with_vars big with
+    match Schedule.create_linear_with_vars ~cores:Cores.host big with
     | r -> r
     | exception Invalid_argument m
       when String.starts_with ~prefix:"UOp verification failed" m ->
@@ -778,7 +779,7 @@ let same_program_same_schedule seed =
   let keep q =
     let big, _ = build q in
     let scheduled =
-      match Schedule.create_linear_with_vars big with
+      match Schedule.create_linear_with_vars ~cores:Cores.host big with
       | linear, _ -> Ops.toposort ~calls:Enter linear
       | exception Invalid_argument m
         when String.starts_with ~prefix:"UOp verification failed" m ->
@@ -829,7 +830,8 @@ let listing_decides () =
       if listed_first = `Many then [ many; single ] else [ single; many ]
     in
     let linear, _ =
-      Schedule.create_linear_with_vars ~capturing:true (Ops.sink listing)
+      Schedule.create_linear_with_vars
+        ~cores:Cores.host ~capturing:true (Ops.sink listing)
     in
     count_launches linear
   in
@@ -862,7 +864,8 @@ let cat ~marked =
 let marked_columns_launch () =
   let launches ~marked =
     count_launches
-      (fst (Schedule.create_linear_with_vars ~capturing:true (cat ~marked)))
+      (fst (Schedule.create_linear_with_vars
+              ~cores:Cores.host ~capturing:true (cat ~marked)))
   in
   equal int ~msg:"marked" 1 (launches ~marked:true);
   equal int ~msg:"unmarked" 0 (launches ~marked:false)
@@ -891,7 +894,8 @@ let calls_in_turn () =
   let x1 = Ops.after x [ first ] in
   let second = Ops.call ~precompile:true (filled 2.) [ x1 ] in
   let big = Ops.sink [ Ops.after x1 [ second ] ] in
-  let linear, _ = Schedule.create_linear_with_vars ~capturing:true big in
+  let linear, _ = Schedule.create_linear_with_vars
+                    ~cores:Cores.host ~capturing:true big in
   equal int ~msg:"a launch a call" 2 (count_launches linear)
 
 (* A write of no stores states nothing of the stores before it. *)
@@ -909,7 +913,8 @@ let launches_of_cat () =
     ^ string_of_int
         (count_launches
            (fst
-              (Schedule.create_linear_with_vars ~capturing:true
+              (Schedule.create_linear_with_vars
+                 ~cores:Cores.host ~capturing:true
                  (cat ~marked:true)))))
 
 let launches_read db =
@@ -945,7 +950,8 @@ let runs_on kind seed =
   let r = Random.State.make [| seed |] in
   let p = gen_program r in
   let big, base = build ~device:kind p in
-  let linear, vars = Schedule.create_linear_with_vars ~capturing:true big in
+  let linear, vars = Schedule.create_linear_with_vars
+                       ~cores:Cores.host ~capturing:true big in
   let stores =
     List.concat_map
       (function

@@ -124,6 +124,29 @@ let pp ppf tc =
     Dtype.pp tc.dtype_in Dtype.pp tc.dtype_out pp_fragment tc.frag_a pp_fragment
     tc.frag_b pp_fragment tc.frag_c
 
+let factor tc u =
+  let widened =
+    Ops.op u = Op.Cast
+    && Dtype.is_float tc.dtype_in
+    && Dtype.itemsize tc.dtype_in < 4
+    && Dtype.equal (Ops.dtype u) Dtype.Float32
+    && Dtype.equal tc.dtype_out Dtype.Float32
+  in
+  if Dtype.equal (Ops.dtype u) tc.dtype_in then Some u
+  else if widened && Dtype.equal (Ops.dtype (Ops.nth u 0)) tc.dtype_in then
+    Some (Ops.nth u 0)
+  else if
+    widened
+    && Dtype.is_int (Ops.dtype (Ops.nth u 0))
+    && Dtype.can_lossless_cast (Ops.dtype (Ops.nth u 0)) tc.dtype_in
+  then Some (Ops.cast (Ops.nth u 0) tc.dtype_in)
+  else None
+
+let takes tc ~acc a b =
+  Dtype.equal tc.dtype_out acc
+  && Option.is_some (factor tc a)
+  && Option.is_some (factor tc b)
+
 type operand = A | B
 type chain = { k_bits : int list; same_lines : bool }
 

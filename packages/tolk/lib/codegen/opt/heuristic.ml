@@ -1517,14 +1517,7 @@ let hand_coded_with ~core_threads k =
 let hand_coded_optimizations k =
   hand_coded_with ~core_threads:(K.ren k).core_threads k
 
-(* The cores of [ren] that {!Opt.Tc} takes for a contraction of [dtype_in]
-   operands accumulated in [dtype_out], whatever its extents. *)
-let cores (ren : Renderer.t) ~dtype_in ~dtype_out =
-  let takes (tc : Tc.t) =
-    Renderer.takes_core ren tc
-    && Dtype.equal tc.dtype_in dtype_in
-    && Dtype.equal tc.dtype_out dtype_out
-  in
+let cores (ren : Renderer.t) =
   (* A selected core the target lacks is none, as {!Opt.Tc} refuses it. *)
   let cores =
     match setting Setting.tc_select with
@@ -1533,15 +1526,26 @@ let cores (ren : Renderer.t) ~dtype_in ~dtype_out =
     | _ -> []
   in
   (* [TC=2] lays out a core's shape without its instruction. *)
-  if setting Setting.use_tc = 1 then List.filter takes cores else []
+  if setting Setting.use_tc = 1 then List.filter (Renderer.takes_core ren) cores
+  else []
+
+(* The cores of [ren] that {!Opt.Tc} takes for a contraction of [dtype_in]
+   operands accumulated in [dtype_out], whatever its extents. *)
+let cores_of ren ~dtype_in ~dtype_out =
+  List.filter
+    (fun (tc : Tc.t) ->
+      Dtype.equal tc.dtype_in dtype_in && Dtype.equal tc.dtype_out dtype_out)
+    (cores ren)
+
+let core_fits_shape tc ~rows ~outputs ~block =
+  min rows outputs > stream_first
+  && (core_takes (Tc.dims tc) (outputs, rows, block)
+     || core_takes (Tc.dims tc) (rows, outputs, block))
 
 let core_fits ren ~dtype_in ~dtype_out ~rows ~outputs ~block =
-  let fits (tc : Tc.t) =
-    core_takes (Tc.dims tc) (outputs, rows, block)
-    || core_takes (Tc.dims tc) (rows, outputs, block)
-  in
-  min rows outputs > stream_first
-  && List.exists fits (cores ren ~dtype_in ~dtype_out)
+  List.exists
+    (fun tc -> core_fits_shape tc ~rows ~outputs ~block)
+    (cores_of ren ~dtype_in ~dtype_out)
 
 let core_rows ren ~dtype_in ~dtype_out ~outputs ~block =
   (* The least multiple of the core's M past [stream_first]. *)
@@ -1555,6 +1559,6 @@ let core_rows ren ~dtype_in ~dtype_out ~outputs ~block =
   List.fold_left
     (fun acc r -> Some (Option.fold ~none:r ~some:(min r) acc))
     None
-    (List.filter_map least (cores ren ~dtype_in ~dtype_out))
+    (List.filter_map least (cores_of ren ~dtype_in ~dtype_out))
 
 let held_registers = held_registers

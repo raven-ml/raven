@@ -1496,7 +1496,7 @@ let expected ?(vars = []) big storage =
       after)
 
 let schedule ?(devices = devices) big =
-  let linear, vars = Schedule.create_linear_with_vars big in
+  let linear, vars = Schedule.create_linear_with_vars ~cores:Cores.host big in
   (compile ~devices linear, vars)
 
 let linked ?(devices = devices) big =
@@ -1646,7 +1646,8 @@ let custom_kernels_of_one_name ?(devices = devices) ~n (k1, k2) () =
   in
   let (o1, s1), (o2, s2) = (out k1, out k2) in
   let big = Ops.sink [ s1; s2 ] in
-  let calls = Ops.src (fst (Schedule.create_linear_with_vars big)) in
+  let calls = Ops.src (fst (Schedule.create_linear_with_vars
+                              ~cores:Cores.host big)) in
   equal int ~msg:"kernels" (if n = 1 then 1 else 2) (List.length calls);
   let s, vars, storage = linked ~devices big in
   equal
@@ -1685,7 +1686,8 @@ let custom_kernel_beside_one_by_name ?(devices = devices) () =
       [ Ops.store o2 Ops.O.(a + Shape.reshape (Ops.cast bound Int32) [ Int 1 ]) ]
   in
   let big = Ops.sink [ s1; s2 ] in
-  let calls = Ops.src (fst (Schedule.create_linear_with_vars big)) in
+  let calls = Ops.src (fst (Schedule.create_linear_with_vars
+                              ~cores:Cores.host big)) in
   equal int ~msg:"kernels" 1 (List.length calls);
   let s, vars, storage = linked ~devices big in
   equal (list (pair string int)) ~msg:"the run's variables" [ ("k", 3) ] vars;
@@ -2088,7 +2090,7 @@ let parameterized ?(devices = devices) name =
         if Ops.op n = Buffer then Some (n, Ops.replace ~op:Param n) else None)
       (Ops.toposort ~calls:Skip big)
   in
-  let linear, vars = Schedule.create_linear_with_vars big in
+  let linear, vars = Schedule.create_linear_with_vars ~cores:Cores.host big in
   let compiled =
     compile ~devices
       (Ops.substitute ~calls:Skip ~pass:Fixed_point linear parameters)
@@ -2206,7 +2208,7 @@ let scans_with_a_carry () =
     Ops.end_ (Ops.call ~precompile:true body [ c; row xs; row ys ]) [ r ]
   in
   let linear, _ =
-    Schedule.create_linear_with_vars
+    Schedule.create_linear_with_vars ~cores:Cores.host
       (Ops.sink [ Ops.after c [ e ]; Ops.after ys [ e ] ])
   in
   let compiled = compile ~devices linear in
@@ -2253,7 +2255,7 @@ let carried ?(devices = devices) d updates =
   let r = Ops.range ~axis_type:Loop (Int n) [ 100 ] in
   let e = Ops.end_ (Ops.call ~precompile:true body cs) [ r ] in
   let linear, vars =
-    Schedule.create_linear_with_vars
+    Schedule.create_linear_with_vars ~cores:Cores.host
       (Ops.sink (List.map (fun c -> Ops.after c [ e ]) cs))
   in
   let calls = calls_in_loop linear in
@@ -2328,7 +2330,7 @@ let stores_bound_apart ?(devices = devices) d () =
   let e = Ops.end_ (Ops.call ~precompile:true body bufs) [ r ] in
   let outs = [ List.nth bufs 0; List.nth bufs 1 ] in
   let linear, vars =
-    Schedule.create_linear_with_vars
+    Schedule.create_linear_with_vars ~cores:Cores.host
       (Ops.sink (List.map (fun b -> Ops.after b [ e ]) outs))
   in
   equal int ~msg:"calls a trip" 1 (calls_in_loop linear);
@@ -2383,7 +2385,7 @@ let custom_kernel_closes_in_loop ?(devices = devices) ~closure d () =
   let e = Ops.end_ (Ops.call ~precompile:true body bufs) [ r ] in
   let outs = [ List.nth bufs 0; List.nth bufs 1 ] in
   let linear, vars =
-    Schedule.create_linear_with_vars
+    Schedule.create_linear_with_vars ~cores:Cores.host
       (Ops.sink (List.map (fun b -> Ops.after b [ e ]) outs))
   in
   equal int ~msg:"calls a trip" 1 (calls_in_loop linear);
@@ -2411,7 +2413,7 @@ let copies_into_rows () =
   in
   let value = Ops.copy_to_device (Shape.reshape src [ Int 2; Int 8 ]) "CPU:1" in
   let linear, _ =
-    Schedule.create_linear_with_vars
+    Schedule.create_linear_with_vars ~cores:Cores.host
       (Ops.sink [ Ops.after dst [ Ops.store rows value ] ])
   in
   let before = Array.init 64 (fun i -> -.Float.of_int i) in
@@ -2462,7 +2464,7 @@ let flag_loop ?(devices = devices) d (limit, max) =
     Ops.backedge (Ops.call ~precompile:true body [ c; f; row ]) ~loop:r ~cond:f
   in
   let linear, _ =
-    Schedule.create_linear_with_vars
+    Schedule.create_linear_with_vars ~cores:Cores.host
       (Ops.sink [ Ops.after c [ e ]; Ops.after f [ e ]; Ops.after ys [ e ] ])
   in
   let init, linear = flag_from d f linear in
@@ -2721,7 +2723,8 @@ let refuses_a_view_as_flag () =
                (String.split_on_char ' ' m)
       | _ -> false)
     (fun () ->
-      Schedule.create_linear_with_vars (Ops.sink [ Ops.after c [ e ] ]))
+      Schedule.create_linear_with_vars
+        ~cores:Cores.host (Ops.sink [ Ops.after c [ e ] ]))
 
 let loops_on_the_host =
   prop "a loop runs its call while its flag holds, at most its trips"
@@ -2772,7 +2775,7 @@ let trip_loop ?(devices = devices) ?limit ?(axis = 100) d n arg =
     | Some _ -> Ops.backedge call ~loop:r ~cond:f
   in
   let linear, _ =
-    Schedule.create_linear_with_vars
+    Schedule.create_linear_with_vars ~cores:Cores.host
       (Ops.sink [ Ops.after ys [ e ]; Ops.after f [ e ] ])
   in
   let init, linear = flag_from d f linear in
@@ -2906,7 +2909,8 @@ let reads_mixed_scalars ?(devices = devices) d () =
       ((y :: List.map (fun (_, v, _) -> v) scalars) @ [ x ])
   in
   let linear, _ =
-    Schedule.create_linear_with_vars (Ops.sink [ Ops.after y [ call ] ])
+    Schedule.create_linear_with_vars
+      ~cores:Cores.host (Ops.sink [ Ops.after y [ call ] ])
   in
   let compiled = compile ~devices linear in
   let on = devices d in
@@ -3322,7 +3326,8 @@ let reads_many_buffers ?(devices = devices) d () =
   let xs = List.init n (fun _ -> Ops.new_buffer d 1 Int64) in
   let call = Ops.call ~precompile:true body (y :: xs) in
   let linear, _ =
-    Schedule.create_linear_with_vars (Ops.sink [ Ops.after y [ call ] ])
+    Schedule.create_linear_with_vars
+      ~cores:Cores.host (Ops.sink [ Ops.after y [ call ] ])
   in
   let compiled = compile ~devices linear in
   let on = devices d in
@@ -3374,7 +3379,7 @@ let replays_a_scan =
       [ r' ]
   in
   let linear, _ =
-    Schedule.create_linear_with_vars
+    Schedule.create_linear_with_vars ~cores:Cores.host
       (Ops.sink
          [ Ops.after c [ scan ]; Ops.after ys [ scan ]; Ops.after zs [ rows ] ])
   in
@@ -3604,7 +3609,8 @@ let reads_what_its_loop_wrote () =
   let fixed = Shape.shrink b [ Some (Int k, Int (2 * k)) ] in
   let e = Ops.end_ (Ops.call ~precompile:true body [ moving; fixed ]) [ r ] in
   let linear, vars =
-    Schedule.create_linear_with_vars (Ops.sink [ Ops.after b [ e ] ])
+    Schedule.create_linear_with_vars
+      ~cores:Cores.host (Ops.sink [ Ops.after b [ e ] ])
   in
   let given = Array.init (4 * k) Float.of_int in
   let buffer = Run.buffer (devices d) Float32 (floats given) in
@@ -3630,7 +3636,8 @@ let reads_off_start_each_trip () =
   let fixed = Shape.shrink b [ Some (Int 6, Int 10) ] in
   let e = Ops.end_ (Ops.call ~precompile:true body [ moving; fixed ]) [ r ] in
   let linear, vars =
-    Schedule.create_linear_with_vars (Ops.sink [ Ops.after b [ e ] ])
+    Schedule.create_linear_with_vars
+      ~cores:Cores.host (Ops.sink [ Ops.after b [ e ] ])
   in
   let given = Array.init (4 * k) Float.of_int in
   let buffer = Run.buffer (devices d) Float32 (floats given) in
@@ -3669,7 +3676,7 @@ let backedge_reads_each_trip () =
   let call = Ops.call ~precompile:true body [ moving; fixed; f; r ] in
   let e = Ops.backedge call ~loop:r ~cond:f in
   let linear, vars =
-    Schedule.create_linear_with_vars
+    Schedule.create_linear_with_vars ~cores:Cores.host
       (Ops.sink [ Ops.after b [ e ]; Ops.after f [ e ] ])
   in
   let f_init, linear = flag_from d f linear in
@@ -3687,7 +3694,7 @@ let backedge_reads_each_trip () =
 
 (* The writes a schedule leaves in [bufs], each given its values. *)
 let leaves bufs sink =
-  let linear, vars = Schedule.create_linear_with_vars sink in
+  let linear, vars = Schedule.create_linear_with_vars ~cores:Cores.host sink in
   let run xs = Run.buffer (devices "CPU") Float32 (floats xs) in
   let bound = List.map (fun (b, xs) -> (b, run xs)) bufs in
   Engine.run ~vars (Engine.link ~devices ~bound (compile linear)) [||];
@@ -3749,7 +3756,8 @@ let off_start_read_no_after () =
   in
   let k = Ops.call ~precompile:true body [ y; x; x ] in
   let linear, _ =
-    Schedule.create_linear_with_vars (Ops.sink [ Ops.after y [ k ] ])
+    Schedule.create_linear_with_vars
+      ~cores:Cores.host (Ops.sink [ Ops.after y [ k ] ])
   in
   let member e =
     if Shape.is_launch (Ops.nth e 0) then Shape.launch_members e else [ e ]
@@ -3847,7 +3855,7 @@ let reads_after_run_each_trip () =
        [| 9.; 11.; 13.; 15.; 9.; 11.; 13.; 15.; 10.; 12.; 14.; 16.; 24.; 26.;
           28.; 30. |])
     (leaves1 b sink);
-  let linear, _ = Schedule.create_linear_with_vars sink in
+  let linear, _ = Schedule.create_linear_with_vars ~cores:Cores.host sink in
   equal (pair int (option int)) ~msg:"a store, then a loop of a copy and a call"
     (2, Some 2) (loop_trip linear)
 
@@ -3895,7 +3903,7 @@ let reads_after_run_backedge () =
   in
   let e = Ops.backedge call ~loop:r ~cond:f in
   let linear, vars =
-    Schedule.create_linear_with_vars
+    Schedule.create_linear_with_vars ~cores:Cores.host
       (Ops.sink [ Ops.after b1 [ e ]; Ops.after f [ e ] ])
   in
   let f_init, linear = flag_from d f linear in
@@ -3950,7 +3958,7 @@ let reads_after_run_chain () =
        [| 10.; 12.; 14.; 16.; 10.; 12.; 14.; 16.; 11.; 13.; 15.; 17.; 25.; 27.;
           29.; 31. |])
     (leaves1 b sink);
-  let linear, _ = Schedule.create_linear_with_vars sink in
+  let linear, _ = Schedule.create_linear_with_vars ~cores:Cores.host sink in
   equal (pair int (option int)) ~msg:"two stores, then a loop of a copy and a call"
     (3, Some 2) (loop_trip linear)
 
@@ -4068,7 +4076,7 @@ let loop_reads_store_target_older () =
 let two_writes sink =
   raises_match
     (Exn.invalid_arg ~sub:"two writes over one state")
-    (fun () -> Schedule.create_linear_with_vars sink)
+    (fun () -> Schedule.create_linear_with_vars ~cores:Cores.host sink)
 
 let sibling_whole_state () =
   let b = Ops.new_buffer "CPU" 16 Float32 in
@@ -4659,7 +4667,7 @@ let backedge_value_each_trip () =
   let bound = Run.buffer (devices "CPU") Float32 (floats given16) in
   let flag_buf = Run.buffer (devices "CPU") Bool [| `Bool true |] in
   let linear, vars =
-    Schedule.create_linear_with_vars
+    Schedule.create_linear_with_vars ~cores:Cores.host
       (Ops.sink [ Ops.after b [ e ]; Ops.after f [ e ] ])
   in
   Engine.run ~vars
@@ -4693,7 +4701,7 @@ let moving_stage_refused () =
   raises_match
     (Exn.invalid_arg ~sub:"moves with a loop")
     (fun () ->
-      Schedule.create_linear_with_vars
+      Schedule.create_linear_with_vars ~cores:Cores.host
         (Ops.sink [ Ops.after x2 [ Ops.end_ c [ r ] ] ]))
 
 let moving_value_refused () =
@@ -4707,7 +4715,7 @@ let moving_value_refused () =
   raises_match
     (Exn.invalid_arg ~sub:"moves with a loop")
     (fun () ->
-      Schedule.create_linear_with_vars
+      Schedule.create_linear_with_vars ~cores:Cores.host
         (Ops.sink [ Ops.after b1 [ Ops.end_ c [ r ] ] ]))
 
 (* A state over a view a loop moves, ordered after a store of other storage:
@@ -5185,7 +5193,8 @@ let loop_states_law ?(devices = devices) d =
       cover "a read of the older state"
         (List.exists (fun st -> List.exists Fun.id (older st)) steps);
       let bufs, sink = loop_of_states d sizes steps older in
-      let linear, vars = Schedule.create_linear_with_vars sink in
+      let linear, vars = Schedule.create_linear_with_vars
+                           ~cores:Cores.host sink in
       let buffers =
         Array.map (fun xs -> Run.buffer (devices d) Float32 (floats xs)) init
       in
@@ -5218,7 +5227,8 @@ let loop_reads_law ?(devices = devices) d =
       let compiled = Random.State.bool r in
       cover "an inlined call in the loop" (not compiled);
       let bufs, sink = loop_of_program ~compiled d sizes steps in
-      let linear, vars = Schedule.create_linear_with_vars sink in
+      let linear, vars = Schedule.create_linear_with_vars
+                           ~cores:Cores.host sink in
       let buffers =
         Array.map (fun xs -> Run.buffer (devices d) Float32 (floats xs)) init
       in
@@ -5284,7 +5294,8 @@ let loop_in_body_law ?(devices = devices) d =
             writes;
           equal values ~msg:"Tensors" (floats want.(j)) after)
         bufs;
-      let linear, vars = Schedule.create_linear_with_vars sink in
+      let linear, vars = Schedule.create_linear_with_vars
+                           ~cores:Cores.host sink in
       let buffers =
         Array.map (fun xs -> Run.buffer (devices d) Float32 (floats xs)) init
       in
@@ -5358,7 +5369,8 @@ let gathered_store device =
    it, and is otherwise untouched. *)
 let stores_through_a_gather ?(devices = devices) device targets () =
   let big = gathered_store device in
-  let calls = Ops.src (fst (Schedule.create_linear_with_vars big)) in
+  let calls = Ops.src (fst (Schedule.create_linear_with_vars
+                              ~cores:Cores.host big)) in
   equal ~msg:"kernels" int 1 (List.length calls);
   let s, vars, storage = linked ~devices big in
   let of_size n = List.find (fun st -> Shape.max_numel st.node = n) storage in
@@ -5407,7 +5419,8 @@ let valid_slot_store =
     "a store through a shrink whose bounds carry a validity is refused, its \
      size holding Invalid" (fun () ->
       raises_match (Exn.invalid_arg ~sub:"Invalid, which is no number")
-        (fun () -> Schedule.create_linear_with_vars (store_at_valid_slot "CPU")))
+        (fun () -> Schedule.create_linear_with_vars
+                     ~cores:Cores.host (store_at_valid_slot "CPU")))
 
 (* The law of stores through byte views: a store into float32 storage, or
    into a state of it, through its bytes viewed as another type, where the
@@ -5520,7 +5533,7 @@ let stores_through_bytes ?(devices = devices) d s =
           fun _ -> Int32.bits_of_float 2.5 )
   in
   let sink = Ops.sink [ Ops.after st [ Ops.store target value ] ] in
-  let linear, vars = Schedule.create_linear_with_vars sink in
+  let linear, vars = Schedule.create_linear_with_vars ~cores:Cores.host sink in
   let buffer =
     Run.buffer (devices d) Float32 (floats (Array.init n Float.of_int))
   in
@@ -5591,7 +5604,7 @@ let stores_through_cut_bytes ?(devices = devices) d r =
     | `Float v -> `Int (Bigint.of_int32 (Int32.bits_of_float v))
     | v -> v
   in
-  let linear, vars = Schedule.create_linear_with_vars sink in
+  let linear, vars = Schedule.create_linear_with_vars ~cores:Cores.host sink in
   let buffer = Run.buffer (devices d) Float32 (floats given) in
   Engine.run ~vars
     (Engine.link ~devices ~bound:[ (x, buffer) ] (compile ~devices linear))
@@ -5651,7 +5664,8 @@ let stores_through_bitcast_views () =
            ~buffers:
              [ (slot x, Array.copy want); (slot y, Array.map (fun v -> `Float v) ys) ]
            sink);
-      let linear, vars = Schedule.create_linear_with_vars sink in
+      let linear, vars = Schedule.create_linear_with_vars
+                           ~cores:Cores.host sink in
       let bx = Run.buffer (device "CPU") Float32 (floats given)
       and by = Run.buffer (device "CPU") Float32 (floats ys) in
       Engine.run ~vars
@@ -5716,7 +5730,7 @@ let refuses_byte_columns () =
             of its storage's bytes, which begins and ends on whole elements \
             of the storage where a bound variable places either end; these \
             bytes are no such run: store each run apart, or whole elements")
-        (fun () -> Schedule.create_linear_with_vars sink))
+        (fun () -> Schedule.create_linear_with_vars ~cores:Cores.host sink))
     [
       floats_of_columns;
       bytes_of_columns;
@@ -5761,7 +5775,7 @@ let copies : (string * copy) list =
 (* The values of [into] after a run of [sink], [into] holding [init] before
    it and [from] holding [values], placed by [at] (default as it is). *)
 let run_copy ?(at = Fun.id) ~into ~init ~from values sink =
-  let linear, _ = Schedule.create_linear_with_vars sink in
+  let linear, _ = Schedule.create_linear_with_vars ~cores:Cores.host sink in
   let out = Run.buffer host Float32 (floats init) in
   let bound =
     [ (into, out); (from, at (Run.buffer host Float32 (floats values))) ]
@@ -5833,7 +5847,7 @@ let calls_of_views =
   let refused ~msg sink =
     raises_match ~msg
       (Exn.invalid_arg ~sub:"a call writes its argument")
-      (fun () -> Schedule.create_linear_with_vars sink)
+      (fun () -> Schedule.create_linear_with_vars ~cores:Cores.host sink)
   in
   let unwritable =
     [
@@ -5984,7 +5998,7 @@ let calls_of_views =
           raises_match
             (Exn.invalid_arg ~sub:"two writes over one state")
             (fun () ->
-              Schedule.create_linear_with_vars
+              Schedule.create_linear_with_vars ~cores:Cores.host
                 (Ops.sink [ Ops.after j [ Ops.end_ c [ r ] ] ])));
       test "a loop reading a join of sibling writes is refused"
         (fun () ->
@@ -6002,7 +6016,7 @@ let calls_of_views =
           raises_match
             (Exn.invalid_arg ~sub:"two writes over one state")
             (fun () ->
-              Schedule.create_linear_with_vars
+              Schedule.create_linear_with_vars ~cores:Cores.host
                 (Ops.sink [ Ops.after j [ Ops.end_ c [ r ] ] ])));
       test "a loop reading a sibling state's run is refused"
         (fun () ->
@@ -6043,7 +6057,7 @@ let calls_of_views =
                 (Exn.invalid_arg
                    ~sub:"its argument 1, of shape (4,), a constant")
                 (fun () ->
-                  Schedule.create_linear_with_vars
+                  Schedule.create_linear_with_vars ~cores:Cores.host
                     (Ops.sink [ Ops.after d [ call [ d; three ] ] ])))
             copies);
       test "a call reads storage off its parameter's start through a copy"
@@ -6069,7 +6083,7 @@ let calls_of_views =
                      "writes its argument 0, of shape (4,), which starts 4 \
                       bytes past a 16-byte boundary, where its parameter \
                       assumes a start on a 16-byte boundary") (fun () ->
-                  Schedule.create_linear_with_vars
+                  Schedule.create_linear_with_vars ~cores:Cores.host
                     (Ops.sink [ Ops.after a [ call [ a; y ] ] ])))
             copies);
       test
@@ -6088,7 +6102,7 @@ let calls_of_views =
                  "reads its argument 1, of shape (4,), which would be stored \
                   whole on a 16-byte boundary, where its parameter assumes a \
                   start 4 bytes past a 16-byte boundary") (fun () ->
-              Schedule.create_linear_with_vars
+              Schedule.create_linear_with_vars ~cores:Cores.host
                 (Ops.sink [ Ops.after d [ call ] ])));
       test "a call reads a state of a view at its elements" (fun () ->
           List.iter
@@ -6236,7 +6250,8 @@ let calls_of_views =
           in
           raises_match
             (Exn.invalid_arg ~sub:"moves with a loop and is no row")
-            (fun () -> Schedule.create_linear_with_vars sink));
+            (fun () -> Schedule.create_linear_with_vars
+                         ~cores:Cores.host sink));
       test "a call in a loop that writes a column of storage is refused"
         (fun () ->
           List.iter
@@ -6247,7 +6262,8 @@ let calls_of_views =
                   (fun ys xs r -> [ column ys r; row r xs ])
               in
               raises_match ~msg (Exn.invalid_arg ~sub:"writes its argument 0")
-                (fun () -> Schedule.create_linear_with_vars sink))
+                (fun () -> Schedule.create_linear_with_vars
+                             ~cores:Cores.host sink))
             copies);
       test "a call in a loop that reads a column of storage is refused"
         (fun () ->
@@ -6263,7 +6279,7 @@ let calls_of_views =
                    ~sub:
                      "reads its argument 1, of shape (4, 1), which moves with \
                       a loop and is no row") (fun () ->
-                  Schedule.create_linear_with_vars sink))
+                  Schedule.create_linear_with_vars ~cores:Cores.host sink))
             copies);
       test "a call in a loop that writes rows off 16 bytes is refused"
         (fun () ->
@@ -6280,7 +6296,7 @@ let calls_of_views =
                      "writes its argument 0, of shape (4,), which starts on a \
                       4-byte boundary, where its parameter assumes a start on \
                       a 16-byte boundary") (fun () ->
-                  Schedule.create_linear_with_vars sink))
+                  Schedule.create_linear_with_vars ~cores:Cores.host sink))
             copies);
       test "a call in a loop that reads rows off 16 bytes is refused" (fun () ->
           List.iter
@@ -6296,7 +6312,7 @@ let calls_of_views =
                      "reads its argument 1, of shape (4,), which starts on a \
                       4-byte boundary, where its parameter assumes a start on \
                       a 16-byte boundary") (fun () ->
-                  Schedule.create_linear_with_vars sink))
+                  Schedule.create_linear_with_vars ~cores:Cores.host sink))
             copies);
     ]
 
@@ -6333,7 +6349,7 @@ let arange_window ?(devices = devices) device (n, start, step, dtype, first) =
   let out = Ops.new_buffer device 3 dtype' in
   let view = Shape.shrink u [ Some (Int first, Int (first + 3)) ] in
   let big = Ops.sink [ Ops.after out [ Ops.store out view ] ] in
-  let linear, _ = Schedule.create_linear_with_vars big in
+  let linear, _ = Schedule.create_linear_with_vars ~cores:Cores.host big in
   equal ~msg:"kernels" int 1 (List.length (Ops.src linear));
   List.iter
     (fun b ->
@@ -6566,7 +6582,8 @@ let refusals =
           Engine.link ~devices (Ops.int 1));
       link_refuses "a schedule whose kernels are not compiled" (fun () ->
           Engine.link ~devices
-            (fst (Schedule.create_linear_with_vars (program "add"))));
+            (fst (Schedule.create_linear_with_vars
+                    ~cores:Cores.host (program "add"))));
       link_refuses "storage bound to a buffer of another device"
         (with_bound 4 (fun _ -> floats_on "CPU:1" 16));
       link_refuses "storage bound to fewer bytes than it holds"

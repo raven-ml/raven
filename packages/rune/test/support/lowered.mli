@@ -5,14 +5,23 @@
 
 (** Operations lowered to tolk, compiled and run on the host. *)
 
-val run : ?local:bool -> (unit -> ('v, 's, 'd) Nx.t) -> 'v array
+val run :
+  ?local:bool ->
+  ?cores:(string * Tolk.Tc.t list) list ->
+  (unit -> ('v, 's, 'd) Nx.t) ->
+  'v array
 (** [run f] is the elements, in C order, of [f ()] computed by lowering each
     operation [f] applies ({!Rune.Lower.op}) into one tolk graph, compiled and
     run on the host. A value [f] did not compute is bound as storage that holds
     its elements, read through its layout where it is a view of an array's
     storage. [local] (default [true]) is the lowering's [local]: with
     [~local:false] it lowers as for a device whose work is not this process's
-    code, though the graph still runs on the host. *)
+    code, though the graph still runs on the host. [cores] are the tensor
+    cores the schedule takes each device to have
+    ({!Tolk.Schedule.create_linear_with_vars}), by default the host's own
+    ({!Tolk.Heuristic.val-cores} of its renderer): given others for ["CPU"], the
+    host's schedule keeps apart the products such cores take, though its
+    kernels run without them. *)
 
 val map : (Tolk.Ops.t -> Tolk.Ops.t) -> (float, 's, 'd) Nx.t -> float array
 (** [map f x] is the elements, in C order, of [f] applied to the node of
@@ -26,15 +35,18 @@ val work : (unit -> ('v, 's, 'd) Nx.t) -> int * int
 
     Raises [Invalid_argument] if the schedule runs calls in a loop. *)
 
-val kernels : (unit -> ('v, 's, 'd) Nx.t) -> int
-(** [kernels f] is the number of kernels of {!run}'s schedule for [f]. *)
+val kernels :
+  ?cores:(string * Tolk.Tc.t list) list -> (unit -> ('v, 's, 'd) Nx.t) -> int
+(** [kernels ~cores f] is the number of kernels of {!run}'s schedule for
+    [f], given [cores] as {!run} is. *)
 
 val sources :
   target:Tolk.Helpers.Target.t ->
   (unit -> ('v, 's, 'd) Nx.t) ->
   (string * Tolk.Ops.t * string) list
 (** [sources ~target f] is each kernel of the schedule that computes [f ()]
-    on [target]'s device, lowered as for a device whose work is not this
+    on [target]'s device, its tensor cores those of [target]'s renderer
+    ({!Tolk.Heuristic.val-cores}), lowered as for a device whose work is not this
     process's code: its name, the sink it was compiled from and the source
     [target]'s renderer writes for it, made without the target's toolchain
     ({!Tolk.Cstyle.without_compiler}), in the order the schedule calls

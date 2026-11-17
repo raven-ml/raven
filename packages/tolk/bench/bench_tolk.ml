@@ -76,7 +76,8 @@ let renderer =
 
 let graph name = Graph.of_string (List.assoc name Programs.all)
 let prepared name = Prepare.prepare_rangeify (graph name)
-let kernel_graph name = Rangeify.get_kernel_graph (prepared name)
+let kernel_graph name =
+  Rangeify.get_kernel_graph ~cores:Cores.host (prepared name)
 let schedule name = Schedule.create_schedule (kernel_graph name)
 
 (* The kernels of a schedule: the bodies of its calls, in loops or not, that are
@@ -167,7 +168,8 @@ let program name =
            "prepare" Prepare.prepare_rangeify;
          staged
            ~setup:(fun () -> prepared name)
-           "kernel_graph" Rangeify.get_kernel_graph;
+           "kernel_graph"
+           (Rangeify.get_kernel_graph ~cores:Cores.host);
          [
            bench
              ~setup:(fun () -> kernel_graph name)
@@ -578,7 +580,7 @@ let assembly d ~n ~width ~k =
    done. *)
 let scheduled d big =
   let devices _ = d in
-  let linear, vars = Schedule.create_linear_with_vars big in
+  let linear, vars = Schedule.create_linear_with_vars ~cores:Cores.host big in
   let compiled =
     Realize.compile_linear ~targets:(fun _ -> Tolk_engine.target d) linear
   in
@@ -615,7 +617,7 @@ let launch_rows d =
    before the C compiler. *)
 let launch_kernel n =
   let linear, _ =
-    Schedule.create_linear_with_vars ~capturing:true
+    Schedule.create_linear_with_vars ~cores:Cores.host ~capturing:true
       (assembly "CPU" ~n ~width:64 ~k:1)
   in
   match
@@ -658,7 +660,8 @@ let outputs =
   Thumper.group "outputs"
     [
       Thumper.bench "chain-2000" (fun () ->
-          Schedule.create_linear_with_vars ~capturing:true (chained 2000));
+          Schedule.create_linear_with_vars
+            ~cores:Cores.host ~capturing:true (chained 2000));
     ]
 
 (* [chains] orders and renders kernels of one chain, each step read once by

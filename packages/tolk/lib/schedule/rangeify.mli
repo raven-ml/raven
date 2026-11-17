@@ -12,12 +12,12 @@
     whose loops are ranges ({!Op.Range}) and whose storage is its parameters.
     The graph holds no movements: a value is its storage. *)
 
-val get_kernel_graph : Ops.t -> Ops.t
-(** [get_kernel_graph sink] is the kernel graph of the prepared tensor graph
-    [sink] ({!Prepare.prepare_rangeify}). In turn:
+val get_kernel_graph : cores:(Ops.device * Tc.t list) list -> Ops.t -> Ops.t
+(** [get_kernel_graph ~cores sink] is the kernel graph of the prepared tensor
+    graph [sink] ({!Prepare.prepare_rangeify}). In turn:
 
     {ol
-     {- ranges index the graph ({!Indexing.run_rangeify});
+     {- ranges index the graph ({!Indexing.run_rangeify}, given [cores]);
      }
      {- the graph is simplified ({!Shape.val-symbolic},
         {!Simplify.pm_reduce_simplify}), and storage that need not exist is

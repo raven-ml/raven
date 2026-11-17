@@ -1321,7 +1321,7 @@ let cache_devices =
         Ops.after out [ Ops.store out Ops.O.(x * x + float 1.) ]
       in
       let linear, _ =
-        Schedule.create_linear_with_vars
+        Schedule.create_linear_with_vars ~cores:Cores.host
           (Ops.sink [ on 0 "CPU:0"; on 1 "CPU:1" ])
       in
       let searched timing call =

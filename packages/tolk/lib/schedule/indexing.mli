@@ -60,10 +60,32 @@ val stack_select : Ops.t -> Ops.t list -> Ops.t
 
     Raises [Invalid_argument] if [lanes] is empty. *)
 
-val run_rangeify : Ops.t -> Ops.t
-(** [run_rangeify sink] is the tensor graph [sink] with its elements
-    indexed by ranges. Walking from [sink] to its leaves, each node gets the
-    ranges that index its output:
+val run_rangeify : cores:(Ops.device * Tc.t list) list -> Ops.t -> Ops.t
+(** [run_rangeify ~cores sink] is the tensor graph [sink] with its elements
+    indexed by ranges. [cores] are the tensor cores each device takes
+    ({!Heuristic.val-cores} of its renderer; a device it does not list takes
+    none).
+
+    First, two matrix products never share a kernel where a core of their
+    device takes them: sums of products into the core's output type, of
+    factors the core multiplies ({!Tc.takes}), each factor reading an axis
+    of the sum's output the other does not, neither product reading the
+    other, whose rows (the axes only one factor reads), outputs (those only
+    the other reads) and block (the axes summed) the core fits as the
+    heuristic asks before it takes one ({!Heuristic.core_fits_shape}). Of such products a stored value's kernel computes, as the
+    cotangent of an input read by several products sums them, each after
+    the first in the walk is stored whole: as the first narrowing cast its
+    one consumer reads it through, past casts and the addition of a value
+    that computes no reduction, or as itself where there is none. A core
+    computes one product a kernel, so each product then takes one. The
+    stored value is the one the kernel computed: the bits equal the fused
+    kernel's at the same optimisations, and against a schedule without the
+    split they move within the contraction's bound, since a core then sums
+    each product in its own order. A product the other reads, inside its
+    sum or not, stays.
+
+    Walking from [sink] to its leaves, each node then gets the ranges that
+    index its output:
 
     - a node that is stored whole gets new ranges, one per axis of size other
       than [1], where an axis of size [1] is indexed by [0] and an axis whose

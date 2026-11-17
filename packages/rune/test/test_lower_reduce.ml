@@ -2630,6 +2630,168 @@ let cases =
         (fun () -> contract_check batched_block);
     ]
 
+(* Sums of products
+
+   A cotangent read by several products sums them, as the input of three
+   projections takes [dY_q·W_qᵀ + dY_k·W_kᵀ + dY_v·W_vᵀ]: bfloat16 [T × d]
+   cotangents by bfloat16 [d × d] weights, each product rounded to bfloat16
+   and the three added in bfloat16. sm_89's tensor core takes bfloat16
+   products, one a kernel, so there each product runs in a kernel of its own
+   and takes the core; the host has no core, and the three share one kernel
+   there as they did. Kept apart on the host, as cores the host does not have
+   would keep them, they compute the one kernel's bits, from initial values
+   too. Products of sums of different lengths keep apart too; a product of
+   a product, products of 8 rows, which stream without a core, and float32
+   products, which sm_89's cores take only under TF32, are scheduled as
+   without cores. *)
+
+let draw dt i s = Nx.cast dt (Nx.Rng.normal ~key:(Nx.Rng.key i) Nx.float32 s)
+let pat = Nx.Pattern.v "t i, o i -> t o | i"
+
+(* [Σ_i dY_i·W_iᵀ] over three [t × d] cotangents of [dt]. *)
+let sum_of_products dt t d () =
+  let dys = List.init 3 (fun i -> draw dt (30 + i) [| t; d |])
+  and ws = List.init 3 (fun i -> draw dt (10 + i) [| d; d |]) in
+  fun () ->
+    match List.map2 (Nx.contract dt pat) dys ws with
+    | [ q; k; v ] -> Nx.add (Nx.add q k) v
+    | _ -> assert false
+
+(* [Σ_i (B_i + dY_i·W_iᵀ)]: each product from an initial value, which it
+   is stored past ({!Nx.contract}'s [init]). *)
+let sum_of_products_from dt t d () =
+  let dys = List.init 3 (fun i -> draw dt (30 + i) [| t; d |])
+  and ws = List.init 3 (fun i -> draw dt (10 + i) [| d; d |])
+  and bs = List.init 3 (fun i -> draw dt (50 + i) [| t; d |]) in
+  fun () ->
+    match
+      List.map2
+        (fun (dy, b) w -> Nx.contract ~init:b dt pat dy w)
+        (List.combine dys bs) ws
+    with
+    | [ q; k; v ] -> Nx.add (Nx.add q k) v
+    | _ -> assert false
+
+(* [x·W₁ᵀ + y·W₂ᵀ], sums of 440 and of 256 terms. *)
+let unequal_sums () =
+  let bf = Nx.bfloat16 in
+  let x = draw bf 1 [| 256; 440 |] and y = draw bf 2 [| 256; 256 |]
+  and w1 = draw bf 3 [| 128; 440 |] and w2 = draw bf 4 [| 128; 256 |] in
+  fun () -> Nx.add (Nx.contract bf pat x w1) (Nx.contract bf pat y w2)
+
+(* [(x·W₁ᵀ)·W₂ᵀ]: the second product reads the first. *)
+let product_of_product () =
+  let bf = Nx.bfloat16 in
+  let x = draw bf 1 [| 64; 40 |]
+  and w1 = draw bf 3 [| 40; 40 |] and w2 = draw bf 4 [| 40; 40 |] in
+  fun () -> Nx.contract bf pat (Nx.contract bf pat x w1) w2
+
+let sm_89 =
+  Result.get_ok (Tolk.Helpers.Target.of_string "CUDA:CUDA:sm_89")
+
+let sm_89_cores = Tolk.Heuristic.cores (Tolk.Cstyle.without_compiler sm_89)
+
+let reduces ast =
+  List.length
+    (List.filter
+       (fun u -> Tolk.Op.equal (Tolk.Ops.op u) Tolk.Op.Reduce)
+       (Tolk.Ops.toposort ~calls:Skip ast))
+
+let mentions sub s =
+  let n = String.length sub in
+  let rec go i =
+    i + n <= String.length s && (String.sub s i n = sub || go (i + 1))
+  in
+  go 0
+
+let sums_of_products =
+  group "sums of products"
+    [
+      test "on sm_89 each product of a sum of three takes a core of its own"
+        (fun () ->
+          let ks =
+            Lowered.sources ~target:sm_89
+              (sum_of_products Nx.bfloat16 4096 440 ())
+          in
+          equal ~msg:"kernels" int 3 (List.length ks);
+          List.iter
+            (fun (name, ast, src) ->
+              equal ~msg:(name ^ " reductions") int 1 (reduces ast);
+              is_true ~msg:(name ^ " takes a core") (mentions "__WMMA_" src))
+            ks);
+      test "on sm_89 products of sums of 440 and 256 terms keep apart"
+        (fun () ->
+          let ks = Lowered.sources ~target:sm_89 (unequal_sums ()) in
+          equal ~msg:"kernels" int 2 (List.length ks);
+          List.iter
+            (fun (name, _, src) ->
+              is_true ~msg:(name ^ " takes a core") (mentions "__WMMA_" src))
+            ks);
+      test "on sm_89 a product of a product keeps the kernels of no core"
+        (fun () ->
+          let f = product_of_product () in
+          let kernels () = List.length (Lowered.sources ~target:sm_89 f) in
+          equal int
+            (Tolk.Setting.context
+               [ Tolk.Setting.B (Tolk.Setting.use_tc, 0) ]
+               kernels)
+            (kernels ()));
+      test "on sm_89 products of 8 rows, which take no core, share one kernel"
+        (fun () ->
+          match
+            Lowered.sources ~target:sm_89
+              (sum_of_products Nx.bfloat16 8 440 ())
+          with
+          | [ (_, ast, _) ] -> equal ~msg:"reductions" int 3 (reduces ast)
+          | ks -> failf "%d kernels" (List.length ks));
+      test "on sm_89 float32 products, which no core takes, share one kernel"
+        (fun () ->
+          match
+            Lowered.sources ~target:sm_89
+              (sum_of_products Nx.float32 64 40 ())
+          with
+          | [ (_, ast, _) ] -> equal ~msg:"reductions" int 3 (reduces ast)
+          | ks -> failf "%d kernels" (List.length ks));
+      test "on the host the products of a sum of three share one kernel"
+        (fun () ->
+          let host =
+            Result.get_ok
+              (Tolk.Helpers.Target.of_string "CPU:CLANG:x86_64,x86-64")
+          in
+          match
+            Lowered.sources ~target:host (sum_of_products Nx.bfloat16 64 40 ())
+          with
+          | [ (_, ast, _) ] -> equal ~msg:"reductions" int 3 (reduces ast)
+          | ks -> failf "%d kernels" (List.length ks));
+      test "products kept apart on the host compute the one kernel's bits"
+        (fun () ->
+          let f = sum_of_products Nx.bfloat16 64 40 () in
+          let cores = [ ("CPU", sm_89_cores) ] in
+          equal ~msg:"kernels apart" int 3 (Lowered.kernels ~cores f);
+          equal ~msg:"kernels together" int 1 (Lowered.kernels f);
+          Tolk.Setting.context
+            [ Tolk.Setting.B (Tolk.Setting.noopt, true) ]
+            (fun () ->
+              let bits x = Array.map Int64.bits_of_float x in
+              equal (array int64)
+                (bits (Lowered.run f))
+                (bits (Lowered.run ~cores f))));
+      test
+        "products from initial values kept apart compute the one kernel's \
+         bits" (fun () ->
+          let f = sum_of_products_from Nx.bfloat16 64 40 () in
+          let cores = [ ("CPU", sm_89_cores) ] in
+          equal ~msg:"kernels apart" int 3 (Lowered.kernels ~cores f);
+          equal ~msg:"kernels together" int 1 (Lowered.kernels f);
+          Tolk.Setting.context
+            [ Tolk.Setting.B (Tolk.Setting.noopt, true) ]
+            (fun () ->
+              let bits x = Array.map Int64.bits_of_float x in
+              equal (array int64)
+                (bits (Lowered.run f))
+                (bits (Lowered.run ~cores f))));
+    ]
+
 let () =
   exit
     (run "Lower_reduce"
@@ -2658,6 +2820,7 @@ let () =
              blocked_rows;
              few_rows;
            ];
+         sums_of_products;
          work_bounds;
          cases;
        ])

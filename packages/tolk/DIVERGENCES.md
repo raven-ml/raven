@@ -3167,6 +3167,28 @@ driver signals its own (D146).
   ranges since df93a6cb8. A sum over a range its source does not read drops it
   (`pm_reduce_unparented`), so it can stop closing its group's ranges.
 
+  Matrix products that a tensor core takes never share a kernel, a group of
+  reductions or not (`Indexing.split_products`, before the stores are
+  grouped). A matrix product is an addition of products, through movements
+  and at most one cast, whose factors each read an axis of the sum's output
+  that the other does not read; a core takes it where one of its device's
+  cores (`Heuristic.cores`, which the engine passes to
+  `Schedule.create_linear_with_vars ~cores`) multiplies both factors into
+  the sum's type (`Tc.takes`, which `Postrange`'s `try_core` asks too) and
+  fits its rows, outputs and block as the heuristic asks before it takes a
+  core (`Heuristic.core_fits_shape`, which `Heuristic.core_fits` reads): a
+  sum of 32 rows or fewer, which the heuristic streams, stays grouped. Of
+  two such products a stored value's kernel computes, neither reading the
+  other, the later in the walk is stored: as the first narrowing cast its
+  one consumer reads it through, past casts and the addition of an initial
+  value that computes no reduction, or as itself where there is none. Sums
+  of different lengths are covered, a product another reads is not, and
+  there is no threshold beyond the core's own shape. The stored value is
+  the value the kernel computed: bits equal the fused kernel's at the same
+  optimisations; against main, within the contraction's bound, since a core
+  sums each product in its own order. A device with no core for the
+  products' types, as the host, keeps the grouping above.
+
   Both merge every end, a store's as a reduction's, and give fresh ranges to
   every end that closes a range an earlier end closes, so each range has one
   end; tinygrad does so only for an end at a different depth. No recorded
@@ -3182,7 +3204,12 @@ driver signals its own (D146).
   kernel of no storage, and on a set of GPUs raised. For reductions, (d):
   rune's reverse mode sums one reduction per broadcasting operation; on
   fudge, rune's `Jit/grad-broadcast-radius-float64-104x104` takes 215 us as
-  one loop against 383 us as 28.
+  one loop against 383 us as 28. For products a core takes, (d): `Postrange`'s
+  `use_wmma` takes a core for one reduction over its K, so a kernel of
+  several products runs each without one; tessera's distillation step on an
+  RTX 5000 Ada spent 596 ms of 1.55 s in the in-projection's input
+  gradient, three products of one cotangent in one SIMT kernel. Splitting
+  them is owed its GPU measurement.
 - **Pinned by:** for stores, the Rangeify suite (`test/schedule/rangeify`):
   `get_kernel_graph › outputs that share a computation` (every test, `slices
   of one product through two views run as two kernels`, `slices that also
@@ -3208,7 +3235,8 @@ driver signals its own (D146).
   its Packed suite's bit example of `a compiled call computes eager's values`;
   its Jit suite's `transformations › a compiled gradient of a parameter
   broadcast over a grid is its gradient`; and its bench row
-  `reverse/jit-of-grad-clipped-disc-float64-104x104-host`.
+  `reverse/jit-of-grad-clipped-disc-float64-104x104-host`. For products a core
+  takes, rune's Lower_reduce suite: `sums of products` (every test).
 
 ## D138. A load's index is simplified without the loads in it assuming its gate
 

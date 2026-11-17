@@ -1043,12 +1043,20 @@ type numbering = {
    on disk: [fn_key], the key of the function with its placeholders
    ([in_order]), whether a loop holds it ([loop]), which its order reads
    ({!storage_order}) and the function does not show, every setting and
-   variable that shapes what compilation makes ([Setting.shaping]), and the
-   digest of this library's sources, of which a schedule is a function. *)
-let schedule_key ~loop fn_key =
+   variable that shapes what compilation makes ([Setting.shaping]), the
+   types of each device's tensor cores ([cores]), which decide the products
+   that share no kernel, and the digest of this library's sources, of which a
+   schedule is a function. *)
+let schedule_key ~loop ~cores fn_key =
+  let core (tc : Tc.t) =
+    Dtype.name tc.dtype_in ^ ">" ^ Dtype.name tc.dtype_out
+  in
   String.concat "\n"
     ([ Source_digest.digest; fn_key; Bool.to_string loop ]
-    @ List.map (fun (k, v) -> k ^ "=" ^ v) (Setting.shaping ()))
+    @ List.map (fun (k, v) -> k ^ "=" ^ v) (Setting.shaping ())
+    @ List.map
+        (fun (d, tcs) -> d ^ " " ^ String.concat " " (List.map core tcs))
+        cores)
 
 (* [fn]'s numbering by its own order ({!numbering}): [fn] with its placeholders
    is keyed without being built, so that a hit builds no graph but what it
@@ -1083,7 +1091,7 @@ let numbered fn =
     position = (fun u -> Option.value ~default:(-1) (Tbl.find_opt rank u));
   }
 
-let lower_sink_to_linear call =
+let lower_sink_to_linear ~cores call =
   let fn = body call in
   let precompile, loop =
     match arg call with Call c -> (c.precompile, c.loop) | _ -> (false, false)
@@ -1094,7 +1102,7 @@ let lower_sink_to_linear call =
       let start = Unix.gettimeofday () in
       let numbering = numbered fn in
       let cache_key =
-        Digest.BLAKE256.string (schedule_key ~loop numbering.key)
+        Digest.BLAKE256.string (schedule_key ~loop ~cores numbering.key)
       in
       (* Whether neither memory nor disk had the schedule. *)
       let made = ref false in
@@ -1107,7 +1115,7 @@ let lower_sink_to_linear call =
           Spec.type_verify ~calls:Skip Spec.tensor fn);
         numbering.place
           (schedule ~loop ~copies:true
-             (Rangeify.get_kernel_graph (Prepare.prepare_rangeify fn)))
+             (Rangeify.get_kernel_graph ~cores (Prepare.prepare_rangeify fn)))
       in
       let read_or_make () =
         if setting Setting.scache < 2 then make ()
@@ -1153,8 +1161,8 @@ let pm_schedule =
           ]);
       after =
         Pattern_matcher.v (fun () -> [
-            rule_ctx (Upat.op Op.Call ~name:"call") (fun () m ->
-                lower_sink_to_linear (m "call"));
+            rule_ctx (Upat.op Op.Call ~name:"call") (fun cores m ->
+                lower_sink_to_linear ~cores (m "call"));
           ]);
     }
 
@@ -2295,12 +2303,12 @@ let launches ~held linear =
 
 (* Schedules *)
 
-let create_linear_with_vars ?(capturing = false) ?held big_sink =
+let create_linear_with_vars ?(capturing = false) ?held ~cores big_sink =
   let several = bound_several big_sink in
   let big_sink = transform_to_call (Prepare.sequence big_sink) in
   (* The call's sources are the values to realize. *)
   let linear_call =
-    graph_rewrite ~calls:Enter ~pass:Fixed_point ~ctx:() big_sink pm_schedule
+    graph_rewrite ~calls:Enter ~pass:Fixed_point ~ctx:cores big_sink pm_schedule
   in
   (* The linear call is resolved recursively, and its storage allocated. *)
   let linear =

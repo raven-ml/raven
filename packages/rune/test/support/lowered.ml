@@ -164,23 +164,28 @@ let lowered (type v s d) ?(direct = false) ?(local = true) ?(place = on_host)
   let dt = (Nx.Prim.form y).dtype and shape = Nx.shape y in
   (bound, u, dt, shape, numel shape * parts dt)
 
-(* The compiled schedule storing [u], of [n] elements, into [o]. *)
-let compiled u o n =
+(* The host's tensor cores, as its renderer's kernels take them. *)
+let host_cores () = [ (cpu, Heuristic.cores (Lazy.force on_host.renderer)) ]
+
+(* The compiled schedule storing [u], of [n] elements, into [o], each device
+   taking the tensor cores [cores] gives it ({!Schedule}), the host's own by
+   default. *)
+let compiled ?(cores = host_cores ()) u o n =
   let sink =
     Ops.sink [ Ops.after o [ Ops.store o (Shape.reshape u [ Ops.Int n ]) ] ]
   in
-  let linear, vars = Schedule.create_linear_with_vars sink in
+  let linear, vars = Schedule.create_linear_with_vars ~cores sink in
   let targets _ = Tolk_engine.target Rig.host in
   (Realize.compile_linear ~targets linear, vars)
 
 (* The elements of the graph [u] of [dt] and [shape], [n] nodes' elements,
    compiled and run on the host over the storage [bound]. *)
-let execute (type v s) bound u (dt : (v, s) D.t) shape n : v array =
+let execute (type v s) ?cores bound u (dt : (v, s) D.t) shape n : v array =
   let tdt = L.dtype (D.Any dt) in
   if n = 0 then [||]
   else
     let o = Ops.new_buffer cpu n tdt in
-    let compiled, vars = compiled u o n in
+    let compiled, vars = compiled ?cores u o n in
     let len = n * Dtype.itemsize tdt in
     let out = Rig.Buffer.create Rig.host len in
     let s =
@@ -193,9 +198,9 @@ let execute (type v s) bound u (dt : (v, s) D.t) shape n : v array =
     Rig.Buffer.blit_to_bytes out 0 bytes 0 len;
     decode dt shape bytes
 
-let run (type v s d) ?local (f : unit -> (v, s, d) Nx.t) : v array =
+let run (type v s d) ?local ?cores (f : unit -> (v, s, d) Nx.t) : v array =
   let bound, u, dt, shape, n = lowered ?local f in
-  execute bound u dt shape n
+  execute ?cores bound u dt shape n
 
 let map (type s d) (f : Ops.t -> Ops.t) (x : (float, s, d) Nx.t) : float array =
   let bound = ref [] in
@@ -216,10 +221,10 @@ let work (type v s d) (f : unit -> (v, s, d) Nx.t) =
       (ops + count e.ops, lds + count e.lds))
     (0, 0) (Ops.src compiled)
 
-let kernels (type v s d) (f : unit -> (v, s, d) Nx.t) =
+let kernels (type v s d) ?cores (f : unit -> (v, s, d) Nx.t) =
   let _, u, dt, _, n = lowered ~direct:true f in
   let o = Ops.new_buffer cpu (max 1 n) (L.dtype (D.Any dt)) in
-  let compiled, _ = compiled u o (max 1 n) in
+  let compiled, _ = compiled ?cores u o (max 1 n) in
   List.length
     (List.filter (fun c -> Op.equal (Ops.op c) Op.Call) (Ops.src compiled))
 
@@ -235,7 +240,11 @@ let sources (type v s d) ~(target : Helpers.Target.t)
     Ops.sink
       [ Ops.after o [ Ops.store o (Shape.reshape u [ Ops.Int (max 1 n) ]) ] ]
   in
-  let linear, _ = Schedule.create_linear_with_vars sink in
+  let linear, _ =
+    Schedule.create_linear_with_vars
+      ~cores:[ (place.device, Heuristic.cores renderer) ]
+      sink
+  in
   (* A call of a kernel's sink, rendered. *)
   let render c =
     if not (Op.equal (Ops.op c) Op.Call) then None

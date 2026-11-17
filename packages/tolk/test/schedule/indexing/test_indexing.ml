@@ -417,7 +417,7 @@ let recorded =
     (List.map
        (fun name ->
          Golden.graph (name ^ "_rangeified.golden") (fun () ->
-             Indexing.run_rangeify (program name)))
+             Indexing.run_rangeify ~cores:Cores.host (program name)))
        programs)
 
 (* What programs write
@@ -456,7 +456,8 @@ let keeps_writes name =
       let buffers = filled sink in
       equal (list write)
         (zeros (Tensors.writes ~buffers sink))
-        (zeros (Interpreter.writes ~buffers (Indexing.run_rangeify sink))))
+        (zeros (Interpreter.writes ~buffers (Indexing.run_rangeify
+                                               ~cores:Cores.host sink))))
 
 let writes =
   group "run_rangeify › writes"
@@ -524,7 +525,7 @@ let stored value =
   Ops.sink
     [ Ops.after out [ Ops.store (Shape.reshape out (Shape.shape value)) value ] ]
 
-let rangeified value = Indexing.run_rangeify (stored value)
+let rangeified value = Indexing.run_rangeify ~cores:Cores.host (stored value)
 let all op u =
   List.filter (fun n -> Ops.op n = op) (Ops.toposort ~calls:Enter u)
 
@@ -620,12 +621,14 @@ let storage =
           let value = Ops.O.(Shape.permute dest [ 1; 0 ] + Ops.float 1.) in
           equal staged_op
             [ (false, Add) ]
-            (stored_value (Indexing.run_rangeify (assign value))));
+            (stored_value (Indexing.run_rangeify
+                             ~cores:Cores.host (assign value))));
       test "a value that does not read its destination is not" (fun () ->
           let value = Ops.O.(p 1 [ 4; 4 ] + Ops.float 1.) in
           equal staged_op
             [ (false, Add) ]
-            (stored_value (Indexing.run_rangeify (assign value))));
+            (stored_value (Indexing.run_rangeify
+                             ~cores:Cores.host (assign value))));
       test "a stored store is closed by an end over its ranges" (fun () ->
           let ends = all End (rangeified (exp2 (p 1 [ 4; 3 ]))) in
           equal (list int) [ 2 ]
@@ -665,7 +668,8 @@ let scalar_indexes =
         let buffers = filled sink in
         equal (list write)
           (zeros (Tensors.writes ~buffers sink))
-          (zeros (Interpreter.writes ~buffers (Indexing.run_rangeify sink))))
+          (zeros (Interpreter.writes ~buffers (Indexing.run_rangeify
+                                                 ~cores:Cores.host sink))))
   in
   group "run_rangeify › scalar indexes"
     (writes_as_tensors "an index of a value by a constant reads that element"
@@ -686,7 +690,8 @@ let stacks =
              let sink = stored (constants n) in
              equal (list write)
                (zeros (Tensors.writes sink))
-               (zeros (Interpreter.writes (Indexing.run_rangeify sink)))))
+               (zeros (Interpreter.writes (Indexing.run_rangeify
+                                             ~cores:Cores.host sink)))))
        [ 1; 8; 9; 17; 100 ]
     @ List.map
         (fun n ->
@@ -695,7 +700,8 @@ let stacks =
                "a stack of %d constants selects the last at a negative index, \
                 in logarithmic depth"
                n) (fun () ->
-              let u = Indexing.run_rangeify (stored (constants n)) in
+              let u = Indexing.run_rangeify
+                        ~cores:Cores.host (stored (constants n)) in
               let value = Ops.nth (List.hd (all Store u)) 1 in
               let r0 = List.hd (all Range u) in
               equal Dtypes.const
@@ -786,13 +792,15 @@ let rewrites =
                   (Ops.toposort ~calls:Enter u))));
       test "a pad that gets no ranges stays a pad" (fun () ->
           let u = Ops.sink [ Shape.pad (p 1 [ 4 ]) [ Some (Int 1, Int 2) ] ] in
-          equal int 1 (count Pad (Indexing.run_rangeify u)));
+          equal int 1 (count Pad (Indexing.run_rangeify ~cores:Cores.host u)));
       test "an expand by a range ends none of its source's ranges" (fun () ->
           equal int 0
-            (count Stage (Indexing.run_rangeify (program "expand_by_range"))));
+            (count Stage (Indexing.run_rangeify
+                            ~cores:Cores.host (program "expand_by_range"))));
       test "a stored axis whose size is a range is indexed by that range"
         (fun () ->
-          let u = Indexing.run_rangeify (program "expand_by_range_stored") in
+          let u = Indexing.run_rangeify
+                    ~cores:Cores.host (program "expand_by_range_stored") in
           equal
             (list (list (list int)))
             [ [ [ 7 ]; [ 2 ] ] ]
@@ -801,7 +809,7 @@ let rewrites =
                (all Stage u)));
       test "a reduction of leading axes without ranges is refused" (fun () ->
           raises_match Exn.invalid_arg (fun () ->
-              Indexing.run_rangeify
+              Indexing.run_rangeify ~cores:Cores.host
                 (Ops.sink [ Shape.rop (p 1 [ 4; 8 ]) Add [ 1 ] ])));
     ]
 

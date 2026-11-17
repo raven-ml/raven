@@ -128,10 +128,16 @@ val numbered : Ops.t -> numbering
     left as it is. *)
 
 val create_linear_with_vars :
-  ?capturing:bool -> ?held:Ops.t list -> Ops.t -> Ops.t * (string * int) list
-(** [create_linear_with_vars ~capturing ~held big_sink] is the schedule
-    that realizes the values of [big_sink], whose results are stored into
-    buffers ({!Op.Buffer}), with the value of each variable it reads, by name:
+  ?capturing:bool ->
+  ?held:Ops.t list ->
+  cores:(Ops.device * Tc.t list) list ->
+  Ops.t ->
+  Ops.t * (string * int) list
+(** [create_linear_with_vars ~capturing ~held ~cores big_sink] is the
+    schedule that realizes the values of [big_sink], whose results are stored
+    into buffers ({!Op.Buffer}), with the value of each variable it reads, by
+    name. [cores] are the tensor cores each device's kernels take
+    ({!Rangeify.get_kernel_graph}), a device it does not list taking none:
 
     + the stores of [big_sink] become the body of a call compiled on its own,
       whose arguments are the buffers, the contiguous views of buffers that
@@ -152,7 +158,8 @@ val create_linear_with_vars :
       ({!Helpers.Diskcache}, table ["schedule_cache"]) for later processes: a
       schedule is read back for the same body, held by an end or not, the same
       values of the settings and variables that shape what compilation makes
-      ({!Setting.shaping}), and the same sources of this library; a body
+      ({!Setting.shaping}), the same types of [cores] for each device, and the
+      same sources of this library; a body
       scheduled under other values is scheduled again, in memory too; an
       entry that does not read as a schedule is made anew and replaced;
     + the schedule's parameters are bound to the call's arguments, and each

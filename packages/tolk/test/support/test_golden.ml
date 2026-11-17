@@ -101,7 +101,7 @@ let slots u =
 let schedules_apart () =
   let open Tolk in
   let big = Golden.sink "../schedule/schedule/chained_functions.golden" in
-  let linear, _ = Schedule.create_linear_with_vars big in
+  let linear, _ = Schedule.create_linear_with_vars ~cores:Cores.host big in
   let held = Ops.backward_slice_with_self ~calls:Skip big in
   let made =
     List.concat_map slots

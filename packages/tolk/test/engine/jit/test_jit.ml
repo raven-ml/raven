@@ -651,7 +651,8 @@ let capture_with_variables () =
     List.hd (Shape.custom_kernel [ out; bound "n" 5; mid ] (add_variable "n"))
   in
   let linear, _ =
-    Schedule.create_linear_with_vars ~capturing:true (Ops.sink [ out ])
+    Schedule.create_linear_with_vars
+      ~cores:Cores.host ~capturing:true (Ops.sink [ out ])
   in
   (linear, out, src)
 
@@ -713,7 +714,7 @@ let merged_custom_kernels (k1, k2) () =
     List.hd (Shape.custom_kernel [ out; bound; src ] add)
   in
   let linear, vars =
-    Schedule.create_linear_with_vars ~capturing:true
+    Schedule.create_linear_with_vars ~cores:Cores.host ~capturing:true
       (Ops.sink [ custom out1 k1; custom out2 k2 ])
   in
   equal int ~msg:"kernels" 1 (List.length (Ops.src linear));

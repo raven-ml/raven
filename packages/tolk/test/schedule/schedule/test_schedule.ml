@@ -21,7 +21,8 @@ let () =
       ( "schedule",
         fun () ->
           let linear, _ =
-            Schedule.create_linear_with_vars ~capturing:true (program "matmul")
+            Schedule.create_linear_with_vars
+              ~cores:Cores.host ~capturing:true (program "matmul")
           in
           print_string (Graph.to_string linear) );
     ]
@@ -205,13 +206,15 @@ let linears =
          let file = name ^ "_linear.golden" in
          Golden.graph file (fun () ->
              Uops.numbered_like (Golden.sink file)
-               (fst (Schedule.create_linear_with_vars (program name)))))
+               (fst (Schedule.create_linear_with_vars
+                       ~cores:Cores.host (program name)))))
        programs)
 
 let var_vals =
   Golden.cases "var_vals.golden" (fun cell ->
       let _, vals =
-        Schedule.create_linear_with_vars (program (cell "program"))
+        Schedule.create_linear_with_vars
+          ~cores:Cores.host (program (cell "program"))
       in
       let written =
         String.concat " "
@@ -354,14 +357,15 @@ let ordered =
          else Some (runs_in_order name))
        kernel_graphs)
 
-let unplanned big = fst (Schedule.create_linear_with_vars ~capturing:true big)
+let unplanned big = fst (Schedule.create_linear_with_vars
+                           ~cores:Cores.host ~capturing:true big)
 
 let computes big =
   let buffers = filled big in
   let vars =
     List.map
       (fun (n, v) -> (n, `Int (Bigint.of_int v)))
-      (snd (Schedule.create_linear_with_vars big))
+      (snd (Schedule.create_linear_with_vars ~cores:Cores.host big))
   in
   let slots = List.map (fun (_, (p : Ops.param_arg)) -> p.slot) (given big) in
   let into_given = List.filter (fun (s, _, _) -> List.mem s slots) in
@@ -404,7 +408,8 @@ let planned_later name =
   test (name ^ ": planned later, the captured schedule is the planned one")
     (fun () ->
       let big = program name in
-      let planned = fst (Schedule.create_linear_with_vars big) in
+      let planned = fst (Schedule.create_linear_with_vars
+                           ~cores:Cores.host big) in
       let captured =
         Memory.memory_plan_rewrite ~held_bufs:(buffers_of big) (unplanned big)
       in
@@ -417,11 +422,13 @@ let checked () =
   List.iter
     (fun name ->
       let big = program name in
-      let plain = fst (Schedule.create_linear_with_vars ~capturing:true big) in
+      let plain = fst (Schedule.create_linear_with_vars
+                         ~cores:Cores.host ~capturing:true big) in
       let under_spec =
         Setting.context
           [ B (Setting.spec, 1) ]
-          (fun () -> fst (Schedule.create_linear_with_vars ~capturing:true big))
+          (fun () -> fst (Schedule.create_linear_with_vars
+                            ~cores:Cores.host ~capturing:true big))
       in
       equal uop ~msg:name plain (Uops.numbered_like plain under_spec))
     programs
@@ -482,8 +489,8 @@ let report = triple int string string
 
 let schedule_twice ~scache big =
   with_settings ~debug:3 ~scache (fun () ->
-      ignore (Schedule.create_linear_with_vars big);
-      ignore (Schedule.create_linear_with_vars big));
+      ignore (Schedule.create_linear_with_vars ~cores:Cores.host big);
+      ignore (Schedule.create_linear_with_vars ~cores:Cores.host big));
   reports ()
 
 let miss_then_hit () =
@@ -500,8 +507,8 @@ let miss_then_hit () =
 
 let hit_is_the_miss () =
   let big = unique "contiguous" in
-  let miss = fst (Schedule.create_linear_with_vars big) in
-  let hit = fst (Schedule.create_linear_with_vars big) in
+  let miss = fst (Schedule.create_linear_with_vars ~cores:Cores.host big) in
+  let hit = fst (Schedule.create_linear_with_vars ~cores:Cores.host big) in
   equal uop miss (Uops.numbered_like miss hit)
 
 let uncached () =
@@ -514,8 +521,10 @@ let uncached () =
 
 let keys_differ () =
   with_settings ~debug:3 ~scache:1 (fun () ->
-      ignore (Schedule.create_linear_with_vars (unique "assign"));
-      ignore (Schedule.create_linear_with_vars (unique "assign")));
+      ignore (Schedule.create_linear_with_vars
+                ~cores:Cores.host (unique "assign"));
+      ignore (Schedule.create_linear_with_vars
+                ~cores:Cores.host (unique "assign")));
   match reports () with
   | [ (_, v0, k0); (_, v1, k1) ] ->
       equal (list string) [ "CACHE MISS"; "CACHE MISS" ] [ v0; v1 ];
@@ -524,22 +533,25 @@ let keys_differ () =
 
 let debug_one () =
   with_settings ~debug:1 ~scache:1 (fun () ->
-      ignore (Schedule.create_linear_with_vars (unique "assign"));
-      ignore (Schedule.create_linear_with_vars (unique "contiguous")));
+      ignore (Schedule.create_linear_with_vars
+                ~cores:Cores.host (unique "assign"));
+      ignore (Schedule.create_linear_with_vars
+                ~cores:Cores.host (unique "contiguous")));
   match reports () with
   | [ (n, verdict, _) ] -> equal (pair int string) (2, "CACHE MISS") (n, verdict)
   | lines -> failf "scheduling printed %d lines" (List.length lines)
 
 let quiet () =
   with_settings ~debug:0 ~scache:1 (fun () ->
-      ignore (Schedule.create_linear_with_vars (unique "contiguous")));
+      ignore (Schedule.create_linear_with_vars
+                ~cores:Cores.host (unique "contiguous")));
   equal string "" (output ())
 
 let timed () =
   let big = unique "contiguous" in
   let start = Unix.gettimeofday () in
   with_settings ~debug:1 ~scache:1 (fun () ->
-      ignore (Schedule.create_linear_with_vars big));
+      ignore (Schedule.create_linear_with_vars ~cores:Cores.host big));
   let elapsed = (Unix.gettimeofday () -. start) *. 1000. in
   match timed_reports () with
   | [ (_, ms, _, _) ] ->
@@ -563,7 +575,7 @@ let renumbered () =
   in
   let verdicts big =
     with_settings ~debug:3 ~scache:1 (fun () ->
-        ignore (Schedule.create_linear_with_vars big));
+        ignore (Schedule.create_linear_with_vars ~cores:Cores.host big));
     List.map (fun (_, verdict, _) -> verdict) (reports ())
   in
   is_true ~msg:"the first is new" (List.mem "CACHE MISS" (verdicts (in_slot 0)));
@@ -604,8 +616,9 @@ let counted_alike () =
   let second, theirs = counted g in
   let linear =
     with_settings ~debug:3 ~scache:1 (fun () ->
-        ignore (Schedule.create_linear_with_vars first);
-        fst (Schedule.create_linear_with_vars ~capturing:true second))
+        ignore (Schedule.create_linear_with_vars ~cores:Cores.host first);
+        fst (Schedule.create_linear_with_vars
+               ~cores:Cores.host ~capturing:true second))
   in
   let lines = reports () in
   let half = List.length lines / 2 in
@@ -622,7 +635,8 @@ let counted_alike () =
    hitting twice, and the program's body missing. *)
 let chained () =
   with_settings ~debug:3 ~scache:1 (fun () ->
-      ignore (Schedule.create_linear_with_vars (unique "chained_functions")));
+      ignore (Schedule.create_linear_with_vars
+                ~cores:Cores.host (unique "chained_functions")));
   match reports () with
   | [ (_, _, f); _; _; (_, _, program) ] as lines ->
       not_equal string f program;
@@ -646,8 +660,8 @@ let rebinding () =
   in
   let vals =
     with_settings ~debug:3 ~scache:1 (fun () ->
-        ignore (Schedule.create_linear_with_vars big);
-        snd (Schedule.create_linear_with_vars five))
+        ignore (Schedule.create_linear_with_vars ~cores:Cores.host big);
+        snd (Schedule.create_linear_with_vars ~cores:Cores.host five))
   in
   equal (list (pair string int)) [ ("v", 5) ] vals;
   equal (list string)
@@ -658,7 +672,8 @@ let in_domains bigs =
   List.map Domain.join
     (List.map
        (fun big ->
-         Domain.spawn (fun () -> fst (Schedule.create_linear_with_vars big)))
+         Domain.spawn (fun () -> fst (Schedule.create_linear_with_vars
+                                        ~cores:Cores.host big)))
        bigs)
 
 let one_body_at_once () =
@@ -690,7 +705,7 @@ let one_body_at_once () =
   equal ~msg:"each domain makes buffers of its own" int (List.length made)
     (List.length (List.sort_uniq compare made));
   with_settings ~debug:3 ~scache:1 (fun () ->
-      ignore (Schedule.create_linear_with_vars big));
+      ignore (Schedule.create_linear_with_vars ~cores:Cores.host big));
   match reports () with
   | [ (_, verdict, _) ] -> equal string " cache hit" verdict
   | lines -> failf "scheduling printed %d lines" (List.length lines)
@@ -717,7 +732,7 @@ let bodies_at_once () =
     (fun k (big, r) ->
       let alone =
         with_settings ~debug:0 ~scache:0 (fun () ->
-            fst (Schedule.create_linear_with_vars big))
+            fst (Schedule.create_linear_with_vars ~cores:Cores.host big))
       in
       equal uop
         ~msg:(Printf.sprintf "domain %d" k)
@@ -730,9 +745,9 @@ let bodies_at_once () =
 let separates setting () =
   let big = unique "assign" in
   with_settings ~debug:3 ~scache:1 (fun () ->
-      ignore (Schedule.create_linear_with_vars big);
+      ignore (Schedule.create_linear_with_vars ~cores:Cores.host big);
       Setting.context [ setting ] (fun () ->
-          ignore (Schedule.create_linear_with_vars big)));
+          ignore (Schedule.create_linear_with_vars ~cores:Cores.host big)));
   equal (list string)
     [ "CACHE MISS"; "CACHE MISS" ]
     (List.map (fun (_, verdict, _) -> verdict) (reports ()))
@@ -1394,7 +1409,8 @@ let views =
               ]
           in
           let linear, _ =
-            Schedule.create_linear_with_vars ~capturing:true sink
+            Schedule.create_linear_with_vars
+              ~cores:Cores.host ~capturing:true sink
           in
           (* The two stores are of one state: one launch runs them. *)
           match Ops.src linear with
@@ -1581,7 +1597,7 @@ let several_devices () =
   let input = require_some (List.find_map moved (buffers_of big)) in
   let across = Ops.substitute ~calls:Skip ~pass:Fixed_point big [ input ] in
   raises_match (Exn.invalid_arg ~sub:"same device") (fun () ->
-      Schedule.create_linear_with_vars across)
+      Schedule.create_linear_with_vars ~cores:Cores.host across)
 
 (* Rows of [values] on each of [devices], each summed against a table of no
    device, [2^j] along the row, as a rotary embedding reads its angles: the
@@ -1620,7 +1636,8 @@ let deviceless_stage () =
   let calls devices =
     List.sort compare
       (call_devices
-         (fst (Schedule.create_linear_with_vars (table_sums devices))))
+         (fst (Schedule.create_linear_with_vars
+                 ~cores:Cores.host (table_sums devices))))
   in
   equal (list (list string)) ~msg:"one device" [ [ "CPU" ]; [ "CPU" ] ]
     (calls [ "CPU" ]);
@@ -1659,7 +1676,8 @@ let variables =
         "two variables of one name bound to two values are passed by the \
          calls that read them"
         (fun () ->
-          let linear, vars = Schedule.create_linear_with_vars (rebound 7) in
+          let linear, vars = Schedule.create_linear_with_vars
+                               ~cores:Cores.host (rebound 7) in
           equal (list (pair string int)) ~msg:"no run binds v" [] vars;
           let passed call =
             List.filter_map
@@ -1683,12 +1701,14 @@ let variables =
           equal
             (list (pair string int))
             [ ("v", 4) ]
-            (snd (Schedule.create_linear_with_vars (rebound 4))));
+            (snd (Schedule.create_linear_with_vars
+                    ~cores:Cores.host (rebound 4))));
       test
         "kernels that read two names bound to several values alike are one \
          program, whatever order the schedule met the values in"
         (fun () ->
-          let linear, _ = Schedule.create_linear_with_vars (windows_at ()) in
+          let linear, _ = Schedule.create_linear_with_vars
+                            ~cores:Cores.host (windows_at ()) in
           let scalars k =
             List.filter
               (fun u -> Ops.op u = Param && Ops.addrspace u = Some Dtype.Alu)
@@ -1713,7 +1733,7 @@ let variables =
             Ops.after out [ Ops.store out Ops.O.((x * x) + float 1.) ]
           in
           let linear, _ =
-            Schedule.create_linear_with_vars
+            Schedule.create_linear_with_vars ~cores:Cores.host
               (Ops.sink [ on 0 "CPU:0"; on 1 "CPU:1" ])
           in
           match Ops.src linear with
@@ -1761,7 +1781,8 @@ let moving r a = Ops.Nodes.mem r (Ops.ranges a)
 
 let scan_linear () =
   let big, r, (c, xs, ys) = scan_loop () in
-  let linear, _ = Schedule.create_linear_with_vars ~capturing:true big in
+  let linear, _ = Schedule.create_linear_with_vars
+                    ~cores:Cores.host ~capturing:true big in
   match Ops.src linear with
   | [ e ] -> (
       equal (list string) ~msg:"a loop" [ "END" ] (ops_of [ e ]);
@@ -1797,7 +1818,7 @@ let trip_linear () =
   in
   let e = Ops.end_ (Ops.call ~precompile:true body [ trip; row ]) [ r ] in
   let linear, _ =
-    Schedule.create_linear_with_vars ~capturing:true
+    Schedule.create_linear_with_vars ~cores:Cores.host ~capturing:true
       (Ops.sink [ Ops.after ys [ e ] ])
   in
   match Ops.src linear with
@@ -1838,7 +1859,7 @@ let bound_loops_linear () =
     Ops.after ys [ Ops.end_ (Ops.call ~precompile:true body [ v; row ]) [ r ] ]
   in
   let linear, vars =
-    Schedule.create_linear_with_vars ~capturing:true
+    Schedule.create_linear_with_vars ~cores:Cores.host ~capturing:true
       (Ops.sink (List.map loop [ (100, 4); (101, 7) ]))
   in
   equal (list (pair string int)) ~msg:"no run binds v" [] vars;
@@ -1948,7 +1969,7 @@ let nested_linear () =
     Ops.end_ (Ops.call ~precompile:true outer [ c; row r (2 * k) xs ]) [ r ]
   in
   let linear, _ =
-    Schedule.create_linear_with_vars ~capturing:true
+    Schedule.create_linear_with_vars ~cores:Cores.host ~capturing:true
       (Ops.sink [ Ops.after c [ e ] ])
   in
   match Ops.src linear with
@@ -1967,7 +1988,8 @@ let renumbered_loop () =
   let verdicts axis =
     let big, _, _ = scan_loop ~axis ~n:5 () in
     with_settings ~debug:3 ~scache:1 (fun () ->
-        ignore (Schedule.create_linear_with_vars ~capturing:true big));
+        ignore (Schedule.create_linear_with_vars
+                  ~cores:Cores.host ~capturing:true big));
     List.map (fun (_, verdict, _) -> verdict) (reports ())
   in
   is_true ~msg:"the first is new" (List.mem "CACHE MISS" (verdicts 100));
@@ -2005,7 +2027,8 @@ let renumbered_loops () =
   let verdicts axes =
     with_settings ~debug:3 ~scache:1 (fun () ->
         ignore
-          (Schedule.create_linear_with_vars ~capturing:true (two_loops axes)));
+          (Schedule.create_linear_with_vars
+             ~cores:Cores.host ~capturing:true (two_loops axes)));
     List.map (fun (_, verdict, _) -> verdict) (reports ())
   in
   ignore (verdicts (7, 8));
@@ -2026,7 +2049,8 @@ let own_loops () =
   in
   let schedule loops =
     with_settings ~debug:0 ~scache:1 (fun () ->
-        fst (Schedule.create_linear_with_vars ~capturing:true (two_loops loops)))
+        fst (Schedule.create_linear_with_vars
+               ~cores:Cores.host ~capturing:true (two_loops loops)))
   in
   ignore (schedule (7, 8));
   let held = axes (schedule (13, 14)) in
@@ -2144,8 +2168,8 @@ let loop_body_keyed_apart () =
     Ops.sink [ Ops.after c [ call ]; Ops.after y [ call ] ]
   in
   with_settings ~debug:3 ~scache:1 (fun () ->
-      ignore (Schedule.create_linear_with_vars looped);
-      ignore (Schedule.create_linear_with_vars once));
+      ignore (Schedule.create_linear_with_vars ~cores:Cores.host looped);
+      ignore (Schedule.create_linear_with_vars ~cores:Cores.host once));
   match reports () with
   | [ (_, v0, body0); (_, v1, _); (_, v2, body1); (_, v3, _) ] ->
       equal (list string) ~msg:"each schedule is made"
@@ -2221,7 +2245,8 @@ let loop_body_frees_its_storage () =
   let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
   let e = Ops.end_ (Ops.call ~precompile:true body [ z; w; y ]) [ r ] in
   let big = Ops.sink [ Ops.after z [ e ]; Ops.after w [ e ] ] in
-  let linear, _ = Schedule.create_linear_with_vars ~capturing:true big in
+  let linear, _ = Schedule.create_linear_with_vars
+                    ~cores:Cores.host ~capturing:true big in
   let storage c =
     List.map (fun a -> Ops.buf_uop (Ops.base a)) (Ops.src_without_body c)
   in
@@ -2260,7 +2285,7 @@ let refuses_loop (name, loop, message) =
       List.iter
         (fun (where, sink) ->
           raises ~msg:where (Invalid_argument message) (fun () ->
-              Schedule.create_linear_with_vars (sink ())))
+              Schedule.create_linear_with_vars ~cores:Cores.host (sink ())))
         [
           ("at the top level", top);
           ("in a precompiled body", in_body true);
@@ -2474,7 +2499,7 @@ let copied_into ?(dt = Dtype.Float32) into =
     Ops.copy_to_device (Shape.reshape src (Shape.shape view)) "CPU:1"
   in
   let linear, _ =
-    Schedule.create_linear_with_vars ~capturing:true
+    Schedule.create_linear_with_vars ~cores:Cores.host ~capturing:true
       (Ops.sink [ Ops.after dst [ Ops.store view value ] ])
   in
   List.map destination (Ops.src linear)
@@ -2489,7 +2514,7 @@ let one_copied () =
   let into = Shape.shrink filled [ Some (Int 2, Int 3) ] in
   let value = Ops.copy_to_device one "CPU:1" in
   let linear, _ =
-    Schedule.create_linear_with_vars ~capturing:true
+    Schedule.create_linear_with_vars ~cores:Cores.host ~capturing:true
       (Ops.sink [ Ops.after filled [ Ops.store into value ] ])
   in
   List.map destination (Ops.src linear)
@@ -4708,7 +4733,7 @@ let siblings =
   let refused big =
     raises_match
       (Exn.invalid_arg ~sub:"two writes over one state")
-      (fun () -> Schedule.create_linear_with_vars big)
+      (fun () -> Schedule.create_linear_with_vars ~cores:Cores.host big)
   in
   group "create_linear_with_vars › two writes over one state"
     [
@@ -4737,7 +4762,7 @@ let siblings =
                 are each over it; list one over the After of the other, or \
                 list both in one After")
             (fun () ->
-              Schedule.create_linear_with_vars
+              Schedule.create_linear_with_vars ~cores:Cores.host
                 (Ops.sink
                    [
                      assign x (fl 1.);
@@ -4864,7 +4889,8 @@ let siblings =
           raises_match
             (Exn.invalid_arg ~sub:"an effect is listed over a state that needs it")
             (fun () ->
-              Schedule.create_linear_with_vars (Ops.sink [ Ops.after p [ e ] ])));
+              Schedule.create_linear_with_vars
+                ~cores:Cores.host (Ops.sink [ Ops.after p [ e ] ])));
       test "a kernel graph with two writes over one state is refused"
         (fun () ->
           raises_match

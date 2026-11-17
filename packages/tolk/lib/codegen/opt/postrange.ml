@@ -689,30 +689,6 @@ module Scheduler = struct
     | Ok old_sz -> shift_by ?top ?new_rng k rng amount target old_sz
     | Error msg -> raise_notrace (Refused msg)
 
-  (* [tc_operand tc u] is what the core [tc] multiplies for the operand [u]: [u]
-     at the core's input type, or the narrow float that [u] widens to float32
-     when the core adds float32 products, since it multiplies two narrow floats
-     exactly, as float32 does. An integer widened to float32 that [dtype_in]
-     holds exactly, as a Q8_0 code in bfloat16, enters at that type: the cast
-     through the narrow float keeps every value, and tolk's folds drop it. *)
-  let tc_operand (tc : Tc.t) u =
-    let widened =
-      op u = Op.Cast
-      && Dtype.is_float tc.dtype_in
-      && Dtype.itemsize tc.dtype_in < 4
-      && Dtype.equal (dtype u) Dtype.Float32
-      && Dtype.equal tc.dtype_out Dtype.Float32
-    in
-    if Dtype.equal (dtype u) tc.dtype_in then Some u
-    else if widened && Dtype.equal (dtype (nth u 0)) tc.dtype_in then
-      Some (nth u 0)
-    else if
-      widened
-      && Dtype.is_int (dtype (nth u 0))
-      && Dtype.can_lossless_cast (dtype (nth u 0)) tc.dtype_in
-    then Some (cast (nth u 0) tc.dtype_in)
-    else None
-
   (* Whether [u] reads the range [r] only in whole tiles of [dim]: as [r / d]
      for a multiple [d] of [dim]. A tile of [r]'s values then reads one value of
      [u], as an operand reads the axis the core's other operand runs along:
@@ -960,11 +936,7 @@ module Scheduler = struct
   and try_core k use_tc axis opt_level reduceop mul (tc : Tc.t) =
     let in0 = nth mul 0 and in1 = nth mul 1 in
     if not (Renderer.takes_core k.ren tc) then None
-    else if
-      Option.is_none (tc_operand tc in0)
-      || Option.is_none (tc_operand tc in1)
-      || not (Dtype.equal tc.dtype_out (dtype reduceop))
-    then None
+    else if not (Tc.takes tc ~acc:(dtype reduceop) in0 in1) then None
     else
       (* tensor cores have three ranges. X, Y, and REDUCE *)
       let by_id_desc rs =
@@ -1091,7 +1063,7 @@ module Scheduler = struct
        one value over a tile: its reads of the other's bits, which stay below
        the tile, are read at 0. A reads no N bit, and B no M bit. *)
     let own bit x =
-      substitute ~calls:Skip ~pass:Fixed_point (Option.get (tc_operand tc x))
+      substitute ~calls:Skip ~pass:Fixed_point (Option.get (Tc.factor tc x))
         (List.filter_map
            (fun (c, r) ->
              if bit c then Some (r, const ~dtype:(dtype r) (`Int Bigint.zero))

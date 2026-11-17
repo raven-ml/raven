@@ -1782,19 +1782,32 @@ let restored binaries linear =
     | linear -> Some linear
     | exception Exit -> None
 
+(* The devices of [sink]'s storage and copies. *)
+let devices_of sink =
+  List.sort_uniq String.compare
+    (List.filter_map
+       (fun u ->
+         match Ops.op u with
+         | Op.Buffer | Op.Alloc | Op.Copy -> Ops.device u
+         | _ -> None)
+       (Ops.toposort ~calls:Enter sink))
+
+(* Each device's tensor cores that its renderer's kernels take, which decide
+   the products its schedule keeps in kernels of their own; a device without
+   a renderer, as a disk, takes none. *)
+let cores ~targets sink =
+  List.filter_map
+    (fun d ->
+      match Device.renderer (targets d) with
+      | Ok ren -> Some (d, Heuristic.cores ren)
+      | Error _ | (exception (Invalid_argument _ | Failure _)) -> None)
+    (devices_of sink)
+
 (* What a target-independent numbering cannot name: each device's renderer,
    target and compiler, which a kernel's program is made for, or [None] if a
    device has no renderer or its compiler keeps no binaries. *)
 let device_keys ~targets sink =
-  let devices =
-    List.sort_uniq String.compare
-      (List.filter_map
-         (fun u ->
-           match Ops.op u with
-           | Op.Buffer | Op.Alloc | Op.Copy -> Ops.device u
-           | _ -> None)
-         (Ops.toposort ~calls:Enter sink))
-  in
+  let devices = devices_of sink in
   let one d =
     let t = targets d in
     match Device.renderer t with
@@ -1823,7 +1836,7 @@ let compile ?beam ?search ~devices ~held_bufs ~inputs sink =
   let make () =
     let linear, vars =
       Schedule.create_linear_with_vars ~capturing:true
-        ~held:(held_bufs @ inputs) sink
+        ~held:(held_bufs @ inputs) ~cores:(cores ~targets sink) sink
     in
     ( Jit.jit_lower ?beam ?search ~targets ~held_bufs ~inputs ~input_vars:vars
         linear,

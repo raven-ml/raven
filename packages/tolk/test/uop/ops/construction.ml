@@ -306,7 +306,7 @@ let window u lo k =
   let out = Ops.new_buffer ~slot:0 cpu k (Ops.dtype u) in
   let view = Shape.shrink u [ Some (Int lo, Int (lo + k)) ] in
   let sink = Ops.sink [ Ops.after out [ Ops.store out view ] ] in
-  let linear, _ = Schedule.create_linear_with_vars sink in
+  let linear, _ = Schedule.create_linear_with_vars ~cores:Cores.host sink in
   equal ~msg:"kernels" int 1 (List.length (Ops.src linear));
   List.iter
     (fun b ->

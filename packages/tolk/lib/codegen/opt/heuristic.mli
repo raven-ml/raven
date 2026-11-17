@@ -267,6 +267,13 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
 (** [hand_coded_optimizations k] is a copy of [k] with the optimisations these
     rules pick; [k] itself is left as it is. *)
 
+val cores : Renderer.t -> Tc.t list
+(** [cores ren] is the tensor cores of [ren] that {!Opt.Tc} takes for a
+    contraction whose types they compute ({!Tc.takes}) and whose shape they
+    fit ({!core_fits_shape}), under the core settings: none unless {!Setting.use_tc} is [1], the one
+    {!Setting.tc_select} names if any (none where [ren] lacks it), and of
+    those the ones {!Renderer.takes_core} takes. *)
+
 val core_fits :
   Renderer.t ->
   dtype_in:Dtype.t ->
@@ -279,19 +286,22 @@ val core_fits :
     contraction of [dtype_in] operands of one free axis each, of extents [rows]
     and [outputs], accumulated in [dtype_out] and summed over [block] of them
     at a time, leaves streaming ({!section-streaming}) to take a tensor core of
-    [ren]: the lesser of [rows] and [outputs] is past the reuse that streams
-    first, {!Setting.use_tc} is [1], and a core of those dtypes, the one
-    {!Setting.tc_select} names if any (none where [ren] has no such core), a
-    float32 core of CUDA only under {!Setting.allow_tf32}, takes [block] along
-    its [K] and [rows] and [outputs] along its [M] and [N], in either role:
-    padded to multiples of them within the bound on padding's work that the
-    heuristic's cores keep ({!Setting.tc_opt} [2]), or, below that level,
-    where they divide them. Every pad counts against that bound, a decoded
-    operand's rows' too, which the heuristic's cores do not count
-    ({!section-cores}), so a decoded product of rows past the reuse that
-    streams first can take a core that [core_fits] refuses. A caller that
-    writes a contraction asks it to choose a form for the layout the kernel
-    will take. *)
+    [ren]: one of {!val-cores} of those dtypes fits its shape
+    ({!core_fits_shape}). Every pad counts against the bound on padding's
+    work, a decoded operand's rows' too, which the heuristic's cores do not
+    count ({!section-cores}), so a decoded product of rows past the reuse
+    that streams first can take a core that [core_fits] refuses. A caller
+    that writes a contraction asks it to choose a form for the layout the
+    kernel will take. *)
+
+val core_fits_shape : Tc.t -> rows:int -> outputs:int -> block:int -> bool
+(** [core_fits_shape tc ~rows ~outputs ~block] is [true] iff the lesser of
+    [rows] and [outputs] is past the reuse that streams first
+    ({!section-streaming}), and [tc] takes [block] along its [K] and [rows]
+    and [outputs] along its [M] and [N], in either role: padded to multiples
+    of them within the bound on padding's work that the heuristic's cores
+    keep ({!Setting.tc_opt} [2]), or, below that level, where they divide
+    them. *)
 
 val core_rows :
   Renderer.t ->

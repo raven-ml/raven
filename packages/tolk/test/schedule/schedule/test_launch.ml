@@ -232,7 +232,7 @@ let writes_as_apart name p =
   cover "a float" (is_float p.dtype);
   cover "an integer" (not (is_float p.dtype));
   let big = sink name p in
-  let linear, vars = Schedule.create_linear_with_vars big in
+  let linear, vars = Schedule.create_linear_with_vars ~cores:Cores.host big in
   let ls = launches linear in
   (* Pieces of one kernel that reduces nothing run as one launch. *)
   let msg = Format.asprintf "launches of %a" pp_program p in
@@ -278,7 +278,7 @@ let writes_pieces name p =
   cover "past a hundred pieces" (List.length p.pieces > 100);
   let big = sink name p in
   equal (list string) ~msg:(Format.asprintf "%a" pp_program p) (assembled p)
-    (written name big (Schedule.create_linear_with_vars big))
+    (written name big (Schedule.create_linear_with_vars ~cores:Cores.host big))
 
 (* Generators *)
 
@@ -379,7 +379,7 @@ let past_five_hundred =
 (* The sources of the programs of the launches of [big]'s schedule on
    [name]. *)
 let launch_sources name big =
-  let linear, _ = Schedule.create_linear_with_vars big in
+  let linear, _ = Schedule.create_linear_with_vars ~cores:Cores.host big in
   List.filter_map
     (fun e ->
       match Ops.src e with
@@ -430,7 +430,7 @@ let out_of_line name attribute () =
    launch's source. *)
 let as_apart name p =
   let big = sink name p in
-  let linear, vars = Schedule.create_linear_with_vars big in
+  let linear, vars = Schedule.create_linear_with_vars ~cores:Cores.host big in
   equal int ~msg:"launches" 1 (List.length (launches linear));
   equal (list string)
     (written name big (apart linear, vars))
@@ -451,7 +451,7 @@ let products name () =
    runs on its own, and writes what it writes apart. *)
 let products_apart name () =
   let big = sink name (sixteen Matmul Float16) in
-  let linear, vars = Schedule.create_linear_with_vars big in
+  let linear, vars = Schedule.create_linear_with_vars ~cores:Cores.host big in
   equal int ~msg:"launches" 0 (List.length (launch_sources name big));
   equal (list string)
     (written name big (apart linear, vars))
@@ -478,7 +478,7 @@ let fewer_threads () =
 let blocks () =
   let p = pieces Float32 [ 100; 300; 37 ] in
   let big = sink "CPU" p in
-  let linear, _ = Schedule.create_linear_with_vars big in
+  let linear, _ = Schedule.create_linear_with_vars ~cores:Cores.host big in
   let ops =
     List.concat_map
       (fun e ->
@@ -540,14 +540,15 @@ let peak big linear =
    could run together. *)
 let storage_order_holds () =
   let big = made_first () in
-  let linear = fst (Schedule.create_linear_with_vars ~capturing:true big) in
+  let linear = fst (Schedule.create_linear_with_vars
+                      ~cores:Cores.host ~capturing:true big) in
   equal int ~msg:"values live at once" 1 (peak big linear)
 
 (* The launch of [sixteen kind Float32]'s program on the host, split for a
    renderer with [f]'s limits, as lengths of the launches it becomes. *)
 let split ?launch_members ?launch_args ?launch_locals kind =
   let big = sink "CPU" (sixteen kind Float32) in
-  let linear, _ = Schedule.create_linear_with_vars big in
+  let linear, _ = Schedule.create_linear_with_vars ~cores:Cores.host big in
   match launches linear with
   | [ e ] ->
       let target = Engine.target Rig.host in
@@ -586,7 +587,7 @@ let past_the_cap () =
   let n = cap + (cap / 2) in
   let p = { (pieces Float32 (List.init n (fun _ -> 1))) with width = 64 } in
   let big = sink "CUDA" p in
-  let linear, vars = Schedule.create_linear_with_vars big in
+  let linear, vars = Schedule.create_linear_with_vars ~cores:Cores.host big in
   let ran =
     List.filter
       (fun e ->
@@ -624,7 +625,7 @@ let finals big =
   let d = device "CPU" in
   let linear, vars =
     Setting.context [ B (Setting.scache, 0) ] (fun () ->
-        Schedule.create_linear_with_vars big)
+        Schedule.create_linear_with_vars ~cores:Cores.host big)
   in
   let compiled = compiled "CPU" linear in
   let bufs =

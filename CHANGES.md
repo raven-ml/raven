@@ -1476,6 +1476,31 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- Two matrix products that a device's tensor core takes, by their types
+  and their shape, never share a kernel (`Indexing.run_rangeify`): of a sum
+  of products, as the cotangent of an input read by three projections, the
+  second and later are stored, at the narrowing cast their consumer reads,
+  so each takes a core where one kernel ran all of them without. On an RTX
+  5000 Ada such a kernel took 596 ms of tessera's 1.55 s training step.
+  Bits equal the fused kernel's at the same optimisations; against the
+  previous release they move within the contraction's bound, as each
+  product's core sums in its own order. Sums of 32 rows or fewer, which
+  stream without a core, and a device with no core for the products'
+  types, as the host, schedule as before. On an RTX 5000 Ada the three
+  products of an input gradient over 68608 tokens take 1.63 ms against
+  15.2 (0.11 times), the same with its LayerNorm 6.0 against 19.4, and at
+  64 tokens 0.017 against 0.054; at 33 tokens and fewer, which keep one
+  kernel, the time is main's. With the Stage change below, tessera's medium
+  distillation step, measured at tessera 2031061dec with one clean round a
+  side, went from 1.64-1.75 s to 0.98-0.99 s a step, its kernel time from
+  1556 to 915 ms, against PyTorch's 891-915 ms, and its footprint from 8.83
+  to 8.63 GB. **Breaking:**
+  `Schedule.create_linear_with_vars`, `Rangeify.get_kernel_graph` and
+  `Indexing.run_rangeify` take `~cores`, each device's tensor cores, which
+  the engine passes from `Heuristic.cores`; a caller states them, `[]` for
+  a schedule of no cores. `Tc.factor` and `Tc.takes` state what a core
+  multiplies, `Heuristic.cores` the cores `Opt.Tc` takes, and
+  `Heuristic.core_fits_shape` the shape `core_fits` asks a core to fit.
 - `Renderer.takes_core` states which tensor cores a target's kernels may
   compute on, a float32 core of CUDA or NV only under `ALLOW_TF32`: the one
   rule `Opt.Tc` and the heuristic's choice of a core both read, where each

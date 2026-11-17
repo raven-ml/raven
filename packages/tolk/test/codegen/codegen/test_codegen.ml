@@ -6370,7 +6370,8 @@ let scheduled sink =
     | Param { slot; _ } -> slot
     | _ -> invalid_arg "an argument that is not storage"
   in
-  match Ops.src (fst (Schedule.create_linear_with_vars sink)) with
+  match Ops.src (fst (Schedule.create_linear_with_vars
+                        ~cores:Cores.host sink)) with
   | [ call ] -> (Ops.body call, List.map slot (Ops.src_without_body call))
   | calls -> Format.kasprintf invalid_arg "%d kernels" (List.length calls)
 

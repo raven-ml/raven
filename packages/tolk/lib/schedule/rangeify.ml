@@ -1568,9 +1568,9 @@ let store_shared ctx tsink =
       List.iter rebuilt nodes;
       Option.value (Tbl.find_opt image tsink) ~default:tsink
 
-let get_kernel_graph tsink =
+let get_kernel_graph ~cores tsink =
   let setting = Setting.value in
-  let tsink = Indexing.run_rangeify tsink in
+  let tsink = Indexing.run_rangeify ~cores tsink in
   (* An argument of a call that another kernel reads is indexed by that
      kernel's ranges, which would reach every value that reads the call's
      results: a stage of such a value would index its storage by them. *)

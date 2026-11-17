@@ -1180,7 +1180,216 @@ let assign_ranges rctx ~consumer_map ~ending_ranges x =
     out_rngs;
   Tbl.replace ending_ranges x (List.sort_uniq Ops.compare !ending)
 
-let run_rangeify tsink =
+(* Products that share no kernel
+
+   A matrix product is a sum of products whose factors each read an output
+   axis the other does not read, as [x·W] reads [x]'s rows and [W]'s
+   columns. A tensor core computes one product a kernel: in a kernel of
+   several, as reverse mode makes of a cotangent read by several products,
+   [dY₁·W₁ᵀ + dY₂·W₂ᵀ + dY₃·W₃ᵀ], each product runs without a core. So
+   where a core of the device takes them, its types and its shape as the
+   heuristic asks before it takes one, two products of which neither reads
+   the other never share a kernel, whatever their sums' lengths: the later
+   one in the walk is stored, at the first narrowing cast its consumer reads
+   it through past its own initial value, or as the sum itself where there
+   is none. The stored value is the one the kernel computed, and the cast
+   stores it at the width its consumer reads: the bits equal the fused
+   kernel's at the same optimisations, and against a schedule without the
+   split, where a core then takes each product in its own order, they move
+   within the contraction's bound. A product read inside another's sum is {!nested}'s to decide. The
+   decision is taken before stores share their loops, over each stored
+   value's kernel as the stores so far make it, and the values stored later
+   only split kernels further. *)
+
+(* [u] behind the movements over it. *)
+let rec behind u =
+  if Op.Set.mem (op u) Op.Set.movement then behind (nth u 0) else u
+
+(* The ranges of [idx], an index of [u]'s axes, that [u] reads: [idx] moved
+   through each movement and into the sources of each elementwise node down
+   to the nodes that are neither, or that are stored, as rangeify moves a
+   node's ranges to its sources; a constant reads none. *)
+let read_ranges rctx u idx =
+  let found = Tbl.create 8 and seen = Tbl.create 16 in
+  let rec walk u idx =
+    let at = Option.value (Tbl.find_opt seen u) ~default:[] in
+    if not (List.exists (List.equal ( == ) idx) at) then begin
+      Tbl.replace seen u (idx :: at);
+      if Op.Set.mem (op u) Op.Set.movement then
+        walk (nth u 0) (apply_movement_op (shape (nth u 0)) (marg u) idx)
+      else if
+        Op.Set.mem (op u) Op.Set.elementwise
+        && not (Tbl.mem rctx.realize_map u)
+      then List.iter (fun s -> walk s (broadcast_rngs u s idx)) (src u)
+      else if op u <> Op.Const then
+        List.iter
+          (fun r -> Tbl.replace found r ())
+          (Nodes.to_list (ranges (Ops.sink idx)))
+    end
+  in
+  walk u idx;
+  found
+
+(* Whether the reduction [r] is a matrix product that one of [cores]
+   computes: an addition of products, through movements and at most one
+   cast, whose factors each read an axis of [r]'s output that the other does
+   not, and a core that multiplies them into [r]'s type ({!Tc.takes}) fits
+   its shape as the heuristic asks before it takes one
+   ({!Heuristic.core_fits_shape}): its rows the axes only one factor reads,
+   its outputs those only the other reads, and its block the axes [r]
+   reduces, a symbolic extent counting at its largest. *)
+let core_product rctx cores r =
+  let rec product casts u idx =
+    match op u with
+    | Op.Mul -> Some (u, idx)
+    | Op.Cast when casts = 0 -> product 1 (nth u 0) idx
+    | o when Op.Set.mem o Op.Set.movement ->
+        product casts (nth u 0)
+          (apply_movement_op (shape (nth u 0)) (marg u) idx)
+    | _ -> None
+  in
+  match arg r with
+  | Reduce { op = Op.Add; num_axes } -> (
+      let x = nth r 0 in
+      let takes m tc =
+        Tc.takes tc ~acc:(dtype r) (behind (nth m 0)) (behind (nth m 1))
+      in
+      (* A range for each axis of [x], an axis of one element read at [0]:
+         the first [num_axes] are the reduced ones. Their numbers, below
+         every range's, name no range of the graph. *)
+      let axes =
+        List.mapi
+          (fun i (s : sint) ->
+            match s with
+            | Int 1 -> int 0
+            | s -> range ~axis_type:Axis_type.Weak s [ -1; i ])
+          (shape x)
+      in
+      let extent u =
+        List.fold_left2
+          (fun n a (s : sint) ->
+            if a != u then n
+            else
+              match s with
+              | Int k -> k
+              | Sym v -> Dtype.Value.to_int (vmax v) + 1)
+          1 axes (shape x)
+      in
+      match product 0 x axes with
+      | Some (m, idx) when List.exists (takes m) cores ->
+          let reduced = List.take num_axes axes in
+          let a = nth m 0 and b = nth m 1 in
+          let ra = read_ranges rctx a (broadcast_rngs m a idx)
+          and rb = read_ranges rctx b (broadcast_rngs m b idx) in
+          (* The elements of the axes [reads] reads alone. *)
+          let own reads other =
+            Tbl.fold
+              (fun r () n ->
+                if List.memq r reduced || Tbl.mem other r then n
+                else n * extent r)
+              reads 1
+          in
+          let rows = own ra rb and outputs = own rb ra in
+          let block =
+            List.fold_left (fun n u -> n * extent u) 1 reduced
+          in
+          rows > 1 && outputs > 1
+          && List.exists
+               (fun tc ->
+                 takes m tc
+                 && Heuristic.core_fits_shape tc ~rows ~outputs ~block)
+               cores
+      | _ -> false)
+  | _ -> false
+
+(* The nodes a kernel computes from [u] up, each after its sources: [u] and
+   what it reads short of storage and stored values. *)
+let computes rctx u =
+  let inside v =
+    v == u
+    || not (Tbl.mem rctx.realize_map v || Op.Set.mem (op v) always_contiguous)
+  in
+  toposort ~calls:Skip ~gate:inside u
+
+(* The nodes the kernel of the stored value [x] computes ({!computes}): a
+   store's value's, or [x]'s own. *)
+let kernel_nodes rctx x =
+  if op x <> Op.Store then computes rctx x
+  else if Tbl.mem rctx.realize_map (nth x 1) then []
+  else computes rctx (nth x 1)
+
+(* The node a product [p] is stored as: the first narrowing cast its one
+   consumer reads it through, past casts and the addition of a value that
+   computes no reduction, its initial value, or [p] itself where there is
+   none. *)
+let stored_as consumers p =
+  let rec up u =
+    match Tbl.find_opt consumers u with
+    | Some [ c ] when op c = Op.Cast ->
+        if Dtype.itemsize (dtype c) < Dtype.itemsize (dtype u) then Some c
+        else up c
+    | Some [ c ] when op c = Op.Add ->
+        let init = if nth c 0 == u then nth c 1 else nth c 0 in
+        if op_in_backward_slice_with_self ~calls:Skip init [ Op.Reduce ] then
+          None
+        else up c
+    | _ -> None
+  in
+  Option.value (up p) ~default:p
+
+let split_products rctx ~cores topo =
+  let cores_of u =
+    match device u with
+    | Some d -> Option.value (List.assoc_opt d cores) ~default:[]
+    | None -> []
+  in
+  if List.exists (fun (_, cs) -> cs <> []) cores then begin
+    let consumers = Tbl.create 256 in
+    List.iter
+      (fun c ->
+        List.iter
+          (fun x ->
+            let cs = Option.value (Tbl.find_opt consumers x) ~default:[] in
+            if not (List.memq c cs) then Tbl.replace consumers x (c :: cs))
+          (data_srcs c))
+      topo;
+    let split root =
+      let products =
+        List.filter
+          (fun u ->
+            op u = Op.Reduce
+            && match cores_of u with
+               | [] -> false
+               | cs -> core_product rctx cs u)
+          (kernel_nodes rctx root)
+      in
+      let stored = ref [] in
+      ignore
+        (List.fold_left
+           (fun kept p ->
+             let reads = computes rctx p in
+             let x = stored_as consumers p in
+             if
+               List.exists (fun k -> not (List.memq k reads)) kept
+               && not (Tbl.mem rctx.realize_map x)
+             then begin
+               realize rctx x;
+               stored := x :: !stored;
+               kept
+             end
+             else p :: kept)
+           [] products);
+      List.rev !stored
+    in
+    (* Each stored value's kernel, those this pass stores included. *)
+    let rec go = function
+      | [] -> ()
+      | x :: rest -> go (split x @ rest)
+    in
+    go (List.filter (Tbl.mem rctx.realize_map) topo)
+  end
+
+let run_rangeify ~cores tsink =
   let tsink_toposort = toposort ~calls:Skip ~gate:gate_kernel_sink tsink in
   let rctx =
     {
@@ -1198,6 +1407,7 @@ let run_rangeify tsink =
   ignore
     (graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:rctx tsink
        (After_sources pm_generate_realize_map));
+  split_products rctx ~cores tsink_toposort;
   share_loops rctx tsink_toposort;
   let consumer_map = Tbl.create 256 in
   List.iter (fun x -> Tbl.replace consumer_map x []) tsink_toposort;
