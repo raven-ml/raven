@@ -159,9 +159,12 @@ let key : mem Type.Id.t = Type.Id.make ()
 let gpus_lock = Rig_nv.Lock.create ()
 
 (* The pairs of GPUs, by number, that refused each other peer access, both
-   ways, for the life of the process: one value, so that a GPU's refusals
-   are stored with one store as it joins [gpus]. *)
-let peer_refusals : (int * int) list Atomic.t = Atomic.make []
+   ways, for the life of the process, by process as [gpus]: one value, so
+   that a GPU's refusals are stored with one store as it joins [gpus]. *)
+let peer_refusals : (int * (int * int)) list Atomic.t = Atomic.make []
+
+(* Whether GPU [i] refused GPU [j] peer access in this process. *)
+let refuses i j = List.mem (Unix.getpid (), (i, j)) (Atomic.get peer_refusals)
 
 (* [f] over a file of [g]'s the RM maps memory through: each mapping has its
    own, as the driver keeps one mapping context per file. [Ok None] if the
@@ -704,11 +707,10 @@ let map_host g a n : mem Rig_nv.memory option Rig_edge.mapping =
 let map_peer g (m : mem Rig_nv.memory) :
     mem Rig_nv.memory option Rig_edge.mapping =
   let viewed = m.data in
-  let refused = function
-    | Some u -> List.mem (g.index, u) (Atomic.get peer_refusals)
-    | None -> false
+  let refused =
+    match viewed.video with Some u -> refuses g.index u | None -> false
   in
-  if refused viewed.video then Never
+  if refused then Never
   else
     let v = { viewed with user = viewed.user } in
     let view = Rig_edge.Maps (Some (memory v)) in
@@ -933,8 +935,9 @@ let l2_bytes c subdevice =
   let* n = fb_fact c subdevice D.nv2080_ctrl_fb_info_index_l2cache_size in
   Ok (if n > 0 then Some n else None)
 
-(* The GPUs made, by bus address, under [gpus_lock]. *)
-let gpus : (string * gpu) list ref = ref []
+(* The GPUs made, by process and bus address, under [gpus_lock]: a child of
+   fork makes its own, with its own client ([Rm.client]). *)
+let gpus : ((int * string) * gpu) list ref = ref []
 
 (* Enables peer access between [g] and each of [others], the GPUs opened
    before it: the numbers of those that refuse it. *)
@@ -956,10 +959,10 @@ let refused_by g others =
 (* A GPU's first objects, which its usage reads through and an open builds on:
    its device file, registered with the client's control file, and the RM's
    device and subdevice of the GPU. Made at the GPU's first use and kept for
-   the process, by bus address, under [gpus_lock]. *)
+   the process, by process and bus address, as [gpus], under [gpus_lock]. *)
 type base = { path : string; device : int; subdevice : int }
 
-let bases : (string * base) list ref = ref []
+let bases : ((int * string) * base) list ref = ref []
 
 (* [undoing f] is [f taken], whose [taken g] records [g] to undo it: a failed
    [f], and one an exception ends, gives back what it took, last first. *)
@@ -975,7 +978,7 @@ let undoing f =
       List.iter (fun g -> g ()) !undo;
       reraise e
 
-let make_base c ~dev bus =
+let make_base c ~dev ~pid bus =
   undoing @@ fun taken ->
   let rm = Rm.rm c in
   let* cards = cards c in
@@ -1008,14 +1011,15 @@ let make_base c ~dev bus =
          (Some (params D.Nv2080_alloc.sizeof)))
   in
   let b = { path; device; subdevice } in
-  Ok (b, (bus, b) :: !bases)
+  Ok (b, ((pid, bus), b) :: !bases)
 
 (* GPU [bus]'s base, under [gpus_lock]. *)
 let base c ~dev bus =
-  match List.assoc_opt bus !bases with
+  let pid = Unix.getpid () in
+  match List.assoc_opt (pid, bus) !bases with
   | Some b -> Ok b
   | None -> (
-      match make_base c ~dev bus with
+      match make_base c ~dev ~pid bus with
       | Error _ as e -> e
       | Ok (b, bases') ->
           bases := bases';
@@ -1025,7 +1029,7 @@ let base c ~dev bus =
    under [gpus_lock], with the values [gpus] and [peer_refusals] take as it
    joins them: the refusals of [others], the GPUs opened before it. A failed
    open, and one an exception ends, gives back what it took, last first. *)
-let make_gpu c um ~dev ~index ~others bus =
+let make_gpu c um ~dev ~index ~others ~pid bus =
   let undo = ref [] in
   let taken f = undo := f :: !undo in
   let rm = Rm.rm c in
@@ -1176,10 +1180,12 @@ let make_gpu c um ~dev ~index ~others bus =
     in
     let refused = refused_by g others in
     let pairs =
-      List.concat_map (fun i -> [ (index, i); (i, index) ]) refused
+      List.concat_map
+        (fun i -> [ (pid, (index, i)); (pid, (i, index)) ])
+        refused
       @ Atomic.get peer_refusals
     in
-    Ok (g, (bus, g) :: !gpus, pairs)
+    Ok (g, ((pid, bus), g) :: !gpus, pairs)
   in
   match made () with
   | Ok _ as made -> made
@@ -1192,13 +1198,18 @@ let make_gpu c um ~dev ~index ~others bus =
 
 let gpu c u ~dev ~index bus =
   Rig_nv.Lock.protect gpus_lock @@ fun () ->
-  match List.assoc_opt bus !gpus with
+  let pid = Unix.getpid () in
+  match List.assoc_opt (pid, bus) !gpus with
   | Some g -> Ok g
   | None ->
-      let others = List.map snd !gpus in
+      let others =
+        List.filter_map
+          (fun ((p, _), g) -> if p = pid then Some g else None)
+          !gpus
+      in
       (* What the GPU joins is made inside the make, whose handler gives the
          GPU back, and nothing allocates from its return to the stores. *)
-      match make_gpu c u ~dev ~index ~others bus with
+      match make_gpu c u ~dev ~index ~others ~pid bus with
       | Error _ as e -> e
       | Ok (g, gpus', pairs) ->
           gpus := gpus';
@@ -1231,7 +1242,7 @@ let path g =
     alloc = alloc g;
     map_host = Some (map_host g);
     index = g.index;
-    reaches = (fun i -> not (List.mem (g.index, i) (Atomic.get peer_refusals)));
+    reaches = (fun i -> not (refuses g.index i));
     map_peer = map_peer g;
     free = free g;
     bus = Some g.bus;

@@ -1,9 +1,10 @@
-; test_files forks and lowers the child's file limit: an executable of its
-; own, which runs no other test.
+; test_files forks and lowers the child's file limit, and test_fork forks
+; before the process calls NVIDIA's driver: each an executable of its own,
+; which runs no other test.
 
 (tests
- (names test_nvidia test_files)
- (modules test_nvidia test_files)
+ (names test_nvidia test_files test_fork)
+ (modules test_nvidia test_files test_fork)
  (locks %{workspace_root}/gpu)
  (libraries
   rig

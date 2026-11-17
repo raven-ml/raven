@@ -278,9 +278,44 @@ let driver_version ctl root =
       | Some i -> String.sub b 0 i
       | None -> b)
 
+(* The process's client and unified memory, each with the process that made
+   it, as rig's PCI path keeps its state. A child of fork inherits its
+   parent's, which the kernel driver refuses it: the RM maps memory only for
+   the process that made the client (open-gpu-kernel-modules 615.71.09,
+   rm_create_mmap_context in src/nvidia/arch/nvalloc/unix/src/osapi.c), and
+   unified memory is tied to the address space of the process that made it
+   (kernel-open/nvidia-uvm/uvm_va_space_mm.c, its header comment). So the
+   child makes its own from files it opens itself, and calls nothing on the
+   parent's.
+
+   The child leaves open the files it inherited, as rig leaves a child its
+   parent's open files. Closing them would free nothing of the parent's: the
+   driver frees a file's clients as the file is released (nvidia_ctl_close in
+   kernel-open/nvidia/nv.c, through rm_cleanup_file_private in osapi.c), and
+   Linux releases a file at the close of its last descriptor (fput in Linux
+   6.12's fs/file_table.c), the driver having no [flush] that would run at
+   each close (nvidia_fops in nv.c, uvm_fops in kernel-open/nvidia-uvm/
+   uvm.c). While the parent holds its descriptors, closing the child's frees
+   nothing. Once the parent exits, the child's keep the parent's objects:
+   its client and GPU memory, and its address space, which the memory
+   manager's file holds (uvm_api_mm_initialize in uvm.c). The child records
+   only some of them and may have closed or reused their numbers, so it
+   closes none: they go at its exit or exec, as each is close-on-exec.
+
+   A pid names a process only while it lives, so in a fork tree whose pids
+   wrap, a descendant given the pid of an ancestor that made these takes
+   the ancestor's as its own, and the driver refuses it them; rig's PCI
+   paths key their state by pid the same way. *)
 let client_lock = Rig_nv.Lock.create ()
 let opened = ref None
 let unified_made = ref None
+
+(* The process whose reservation of the GPU's addresses the address space
+   holds, or 0, under [client_lock]. It is set before the reserve call, so
+   that a child forked at any point of a make knows its range holds its copy
+   of the parent's reservation, and set back where the reservation fails or
+   is given back. *)
+let reserver = ref 0
 
 (* [undoing f] is [f taken], whose [taken g] records [g] to undo it: a failed
    [f], and one an exception ends, gives back what it took, last first. *)
@@ -296,7 +331,7 @@ let undoing f =
       List.iter (fun g -> g ()) !undo;
       reraise e
 
-let make_client ~dev =
+let make_client ~pid ~dev =
   undoing @@ fun taken ->
   let* ctl = open_file (Filename.concat dev "nvidiactl") in
   taken (fun () -> close ctl);
@@ -324,9 +359,9 @@ let make_client ~dev =
              (String.concat ", " (List.map string_of_int D.releases)))
   in
   let c = { ctl; root; layouts; release } in
-  Ok (c, Some c)
+  Ok (c, Some (pid, c))
 
-let make_unified c ~dev =
+let make_unified c ~pid ~dev =
   undoing @@ fun taken ->
   let uvm_path = Filename.concat dev "nvidia-uvm" in
   let* uvm_fd = open_file uvm_path in
@@ -337,13 +372,26 @@ let make_unified c ~dev =
      after the call: a later reserve of a range this process still held
      would fail for good. *)
   let reserved = ref false in
-  taken (fun () -> if !reserved then unreserve low_base (top - low_base));
+  taken (fun () ->
+      if !reserved then begin
+        unreserve low_base (top - low_base);
+        reserver := 0
+      end);
+  (* A child of fork holds a copy of its parent's reservation, with the
+     parent's mappings in it, which it replaces by a reservation of its own:
+     that changes nothing in the parent. *)
+  let previous = !reserver in
+  let reserve =
+    if previous <> 0 && previous <> pid then unmap_raw else reserve_raw
+  in
+  reserver := pid;
   let* () =
-    match reserve_raw low_base (top - low_base) with
+    match reserve low_base (top - low_base) with
     | () ->
         reserved := true;
         Ok ()
     | exception Unix.Unix_error (e, _, _) ->
+        reserver := previous;
         failed "reserving the GPU's addresses" e
   in
   let u =
@@ -362,25 +410,26 @@ let make_unified c ~dev =
   let m = params M.sizeof in
   set m M.uvm_fd uvm_fd;
   (try ioctl mm D.uvm_mm_initialize m with Unix.Unix_error _ -> ());
-  Ok (u, Some u)
+  Ok (u, Some (pid, u))
 
-(* [once cell make] is the value [cell] holds, or the one [make ()] makes and
-   [cell] then holds, under [client_lock]. [make ()] is [Ok (x, Some x)], made
-   inside the make, whose handler gives [x] back, so that nothing allocates
-   from its return to the store. *)
+(* [once cell make] is the value [cell] holds for this process, or the one
+   [make ~pid] makes and [cell] then holds, under [client_lock]. [make] is
+   [Ok (x, Some (pid, x))], made inside the make, whose handler gives [x]
+   back, so that nothing allocates from its return to the store. *)
 let once cell make =
   Rig_nv.Lock.protect client_lock @@ fun () ->
+  let pid = Unix.getpid () in
   match !cell with
-  | Some x -> Ok x
-  | None -> (
-      match make () with
+  | Some (p, x) when p = pid -> Ok x
+  | _ -> (
+      match make ~pid with
       | Error _ as e -> e
       | Ok (x, kept) ->
           cell := kept;
           Ok x)
 
-let client ~dev = once opened (fun () -> make_client ~dev)
-let unified c ~dev = once unified_made (fun () -> make_unified c ~dev)
+let client ~dev = once opened (fun ~pid -> make_client ~pid ~dev)
+let unified c ~dev = once unified_made (fun ~pid -> make_unified c ~pid ~dev)
 
 (* The handles the process names objects by. A freed one is taken again
    before a new one, so the highest stays [first_handle] plus the most objects

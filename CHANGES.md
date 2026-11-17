@@ -40,6 +40,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- A child of `fork` opens an NVIDIA GPU through `Rig_nv_nvidia` after its
+  parent opened one or read `Rig_nv_nvidia.usage`: it makes its own client of
+  the kernel driver, unified memory and GPU objects, where it used its
+  parent's and the driver refused the open (`NV_ERR_INVALID_CLIENT`,
+  `NV_ERR_INSUFFICIENT_PERMISSIONS`). The parent's stay as they were.
 - Add `Rig.capacity d`, a device's memory as its driver reports it at the
   call: `Some { total; free }` on CUDA (`cuMemGetInfo`), NVIDIA's kernel
   driver (the RM's heap), AMD's kernel driver from KFD 1.9 (Linux 6.0), and

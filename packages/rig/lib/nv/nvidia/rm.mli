@@ -60,8 +60,9 @@ val client : dev:string -> (t, string) result
 (** [client ~dev] is the process's client of the RM, opened at its first call
     from the control file in the directory [dev]. Later calls return it
     whatever their [dev], since a process has one client of the machine's
-    kernel driver. It is [Error] if the kernel driver's release is none of
-    {!Defs.releases}. *)
+    kernel driver. A child of [fork] makes its own at its first call, from a
+    control file it opens, and leaves its parent's as it is. It is [Error] if
+    the kernel driver's release is none of {!Defs.releases}. *)
 
 type unified = {
   uvm : int;  (** [/dev/nvidia-uvm]. *)
@@ -74,7 +75,8 @@ val unified : t -> dev:string -> (unified, string) result
     from the files in the directory [dev]: the unified memory driver, tied to
     the process's address space, and the GPU's addresses of memory the host
     maps too, reserved in the process from 384 GiB to [2{^40}]. Later calls
-    return it, as {!client} does. *)
+    return it, and a child of [fork] makes its own, as {!client} does: its
+    reservation replaces the child's copy of its parent's. *)
 
 val handle : unit -> int
 (** [handle ()] is a handle for an object the process names itself, one no

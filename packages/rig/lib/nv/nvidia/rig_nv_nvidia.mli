@@ -39,6 +39,13 @@
       RM freed its channels ({!Rig_nv.section-faults}). The GPU may then be
       opened again.
 
+    A child of [fork] makes its own client, unified memory and GPUs' objects,
+    as its first open or {!val-usage} needs each, since the kernel driver
+    refuses it its parent's. It leaves the parent's as they are, with their
+    files open, and replaces only its own copy of the parent's reservation.
+    Those files keep the parent's client, its GPU memory and its address
+    space until the child exits or calls [exec], past the parent's exit.
+
     [Pinned] and [Mapped] memory, and the rest of the memory the device
     places in the GPU's BAR ({!Rig_nv.type-place}), lie at the same address
     for the host and the GPU. The BAR is BAR1, whose size the kernel driver
