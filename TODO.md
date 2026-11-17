@@ -5,6 +5,19 @@ Where it stands, with every measurement: doc/performance.md.
 
 ## tolk
 
+- D212's blocked contractions still lose to tinygrad's heuristic on long
+  reduces: `contract/f32-2048` 1.03 of main against off's 0.92, attention's
+  values of width 256 (`f0865e`) 1.04 against 0.86. BEAM's winners there
+  split the reduce across 64 threads in shared memory; `Heuristic.group`
+  never groups a contraction. Below D212's floor, splitting the reduce of a
+  few-output contraction runs matmul_long in 0.47 of main (design b), and
+  BEAM still runs the small suite products 2-4x faster
+  (_plans/perf-campaign/handtiles/)
+- `Heuristic.four_first` gates 4-before-3 on the fitted `core_threads`
+  (16384), D212's floor on `units x 2 x 128` (25600): products between
+  them, as the suite's matmul_768, take 4 by 4 unblocked with an unroll by
+  4 (0.69 of main, 0.66 of tinygrad's heuristic); tinygrad's own 4 by 3 for
+  them is unmeasured. Gating both on `units` would remove a fitted field
 - A dense MXFP4 core never reaches `Stage.tile`: MXFP4's byte of two
   codes is still a loop at its entry (`unroll_beside` runs only in
   `unstaged ()`), so `admits` refuses. Staging it runs `stream/mxfp4-64`
