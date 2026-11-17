@@ -664,7 +664,6 @@ let gpu g =
   { gpu with compute_units = per_bit * on / gpu.xccs }
 let memory g = g.memory
 let hive g = Gmc.hive g.gmc
-let budget g = Page_table.main_pool g.tables
 let lock g = g.hw
 let host w off = if Window.mapped w then Some (Window.address w + off) else None
 let hdp g = host g.mmio (Gmc.hdp g.gmc)

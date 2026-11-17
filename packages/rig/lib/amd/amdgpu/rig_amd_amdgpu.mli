@@ -114,6 +114,21 @@ val gpu : ?measure:Rig_amd.measure -> int -> Rig_amd.t Rig_edge.opener
     device reaches the memory of another GPU's device where the kernel
     driver's topology lists a link between the two GPUs.
 
+    {b Capacity.} The path's [budget] ({!Rig_amd.type-path}), the total of a
+    device's {!Rig.val-capacity}, is the GPU's own memory as the kernel
+    driver's topology states it: the sizes of its node's public and private
+    heaps. From KFD 1.9, Linux 6.0, the path's [available], the capacity's
+    free, is KFD's [AMDKFD_IOC_AVAILABLE_MEMORY] at each call: that memory
+    less what every process's KFD allocations, pinned memory and KFD's
+    reserve for page tables and RAS pages hold, rounded down to 2 MiB on a
+    discrete GPU and to a page on an APU that prefers GTT memory. On a
+    discrete GPU it counts each KFD allocation in whole 2 MiB, where KFD
+    admits a request against the allocations' own bytes, so it may be lower
+    than the room KFD admits a request in. It leaves out the memory that
+    graphics clients, of this process or another, hold unpinned, which makes
+    it higher. A KFD that subtracts past zero, as Linux 6.0's may, reports
+    [0]. Below KFD 1.9 the path reports none, and the capacity is [None].
+
     {b Other functions.} {!Rig_amd.val-dma} exports the buffer object a
     region lies in as a new dma-buf ({!Rig_edge.Dmabuf}), through KFD. The
     dma-buf holds the object until its last reference goes, freed or not.
@@ -232,6 +247,15 @@ val gpus_of : machine -> (string * (Rig_amd_abi.Gpu.t, string) result) list
    [root]: each die's area and its debugger area, as the kernel driver requires.
    [Error msg] as [gpu_at]. *)
 val save_area_at : string -> string -> (int, string) result
+
+(* [memory_at root bus] is the bytes of the GPU's own memory at [bus] as the
+   [amdgpu] driver describes it under the directory [root], the path's
+   [budget]. [Error msg] as [gpu_at]. *)
+val memory_at : string -> string -> (int, string) result
+
+(* [reports_free v] is [true] iff a KFD of version [v], major * 1000 + minor,
+   reports the GPU's free memory: from 1.9 on. *)
+val reports_free : int -> bool
 
 (* [wgps_of gpu ~arrays ~per_array cus] is the work-group processors of each
    shader array of [gpu], engines numbered across dies ({!Rig_amd.path}'s

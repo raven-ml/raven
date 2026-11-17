@@ -62,6 +62,12 @@ struct kfd_ioctl_destroy_queue_args {
 	__u32 pad;
 };
 
+struct kfd_ioctl_get_available_memory_args {
+	__u64 available;	/* from KFD */
+	__u32 gpu_id;		/* to KFD */
+	__u32 pad;
+};
+
 struct kfd_ioctl_get_clock_counters_args {
 	__u64 gpu_clock_counter;	/* from KFD */
 	__u64 cpu_clock_counter;	/* from KFD */
@@ -262,6 +268,9 @@ struct kfd_ioctl_runtime_enable_args {
 
 #define AMDKFD_IOC_UNMAP_MEMORY_FROM_GPU	\
 		AMDKFD_IOWR(0x19, struct kfd_ioctl_unmap_memory_from_gpu_args)
+
+#define AMDKFD_IOC_AVAILABLE_MEMORY		\
+		AMDKFD_IOWR(0x23, struct kfd_ioctl_get_available_memory_args)
 
 #define AMDKFD_IOC_EXPORT_DMABUF		\
 		AMDKFD_IOWR(0x24, struct kfd_ioctl_export_dmabuf_args)

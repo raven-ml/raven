@@ -77,6 +77,7 @@ let path_of gpu : unit A.path =
     mec = 1;
     wgps = [| [| 1 |] |];
     budget = 1 lsl 30;
+    available = None;
     cache_bytes = None;
     alloc = (fun _ _ -> unused ());
     map_host = None;
@@ -110,6 +111,39 @@ let gfx1201 : Gpu.t =
     array_units = 4;
     scratch_slots = 32;
   }
+
+(* A device's capacity is its path's budget and the free figure the path
+   reads at each call, where it reads one: on an R9700, the 34208743424
+   bytes its topology states (amdgpu's fixtures) and a free figure below
+   them. *)
+let capacity =
+  let reported p =
+    Option.map
+      (fun (c : Rig_edge.capacity) -> (c.total, c.free))
+      (A.path_capacity p)
+  in
+  let r9700 = 34208743424 in
+  group ~timeout:10. "capacity"
+    [
+      test "a path that reports no free memory gives none" (fun () ->
+          equal (option (pair int int)) None
+            (reported { (path_of gfx1201) with budget = r9700 }));
+      test "a path's budget and its free figure, read at each call"
+        (fun () ->
+          let reads = ref 0 in
+          let available () =
+            incr reads;
+            r9700 - (!reads lsl 21)
+          in
+          let available = Some available in
+          let p = { (path_of gfx1201) with budget = r9700; available } in
+          equal ~msg:"the first" (option (pair int int))
+            (Some (r9700, r9700 - (1 lsl 21)))
+            (reported p);
+          equal ~msg:"the second" (option (pair int int))
+            (Some (r9700, r9700 - (2 lsl 21)))
+            (reported p));
+    ]
 
 let counts =
   [
@@ -4284,6 +4318,7 @@ let () =
        [
          dma;
          gpus;
+         capacity;
          misuse;
          images;
          entries;

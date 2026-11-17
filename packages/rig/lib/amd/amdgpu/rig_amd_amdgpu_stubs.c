@@ -121,6 +121,17 @@ value caml_rig_amd_amdgpu_acquire_vm(value v_kfd, value v_drm, value v_gpu) {
   return Val_unit;
 }
 
+/* The bytes of GPU [v_gpu]'s memory KFD would still give the process
+   (AMDKFD_IOC_AVAILABLE_MEMORY, KFD 1.9 on). */
+value caml_rig_amd_amdgpu_available(value v_kfd, value v_gpu) {
+  struct kfd_ioctl_get_available_memory_args a = {.gpu_id = Int_val(v_gpu)};
+  check(call(Int_val(v_kfd), AMDKFD_IOC_AVAILABLE_MEMORY, &a));
+  /* Linux 6.0's KFD subtracts in unsigned arithmetic, which wraps where
+     pinned memory and the reserve pass the VRAM; later kernels clamp that
+     to 0 (amdgpu_amdkfd_gpuvm.c, __get_available_memory). */
+  return Val_long((int64_t)a.available < 0 ? 0 : (intnat)a.available);
+}
+
 value caml_rig_amd_amdgpu_runtime_enable(value v_kfd) {
   struct kfd_ioctl_runtime_enable_args a = {0};
   check(call(Int_val(v_kfd), AMDKFD_IOC_RUNTIME_ENABLE, &a));
@@ -547,6 +558,7 @@ NONE(close, value a UNUSED)
 NONE(version, value a UNUSED)
 NONE(acquire_vm, value a UNUSED, value b UNUSED, value c UNUSED)
 NONE(runtime_enable, value a UNUSED)
+NONE(available, value a UNUSED, value b UNUSED)
 NONE(alloc, value a UNUSED, value b UNUSED, value c UNUSED, value d UNUSED,
      value e UNUSED)
 NONE(free, value a UNUSED, value b UNUSED)

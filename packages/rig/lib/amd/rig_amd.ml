@@ -123,6 +123,7 @@ type 'm path = {
   mec : int;
   wgps : int array array;
   budget : int;
+  available : (unit -> int) option;
   cache_bytes : int option;
   alloc : place -> int -> 'm memory option;
   map_host : (int -> int -> 'm memory option Rig_edge.mapping) option;
@@ -194,6 +195,7 @@ let region n m = { bytes = n; mem = m }
    answer without its memory. *)
 type ops = {
   held : unit -> mem;
+  capacity : unit -> Rig_edge.capacity option;
   alloc : mem -> place -> int -> bool;
   map_host : (mem -> int -> int -> unit Rig_edge.mapping) option;
   map_peer : mem -> mem -> unit Rig_edge.mapping;
@@ -213,6 +215,11 @@ type ops = {
   stop : fault:string option -> [ `Stopped | `Unknown ];
   halted : unit -> bool;
 }
+
+(* What a device of [p] reports of the GPU's memory: the budget the path
+   gave, and the free it reports. *)
+let path_capacity (p : _ path) =
+  Option.map (fun f -> { Rig_edge.total = p.budget; free = f () }) p.available
 
 let ops (type m) (p : m path) =
   let owner = { key = p.key; free = p.free } in
@@ -242,6 +249,7 @@ let ops (type m) (p : m path) =
   in
   {
     held = (fun () -> Mem { owner; memory = None });
+    capacity = (fun () -> path_capacity p);
     alloc = (fun m k n -> fill m (fun () -> p.alloc k n));
     map_host =
       Option.map (fun f m a n -> fill_map m (fun () -> f a n)) p.map_host;
@@ -852,13 +860,14 @@ let facts g =
   }
 
 let capability g = g.capability
-let capacity _ = None
 
 (* [g]'s live state. rig calls nothing that uses it after stop. *)
 let live g =
   match g.live with
   | Some l -> l
   | None -> invalid_arg "Rig_amd: the device was stopped"
+
+let capacity g = (live g).ops.capacity ()
 
 (* Memory *)
 

@@ -236,7 +236,7 @@ val capability : t -> Rig_amd_abi.Capability.t
     {ul
     {- [arch], the GPU's processor ({!Rig_amd_abi.Gpu.processor}), such as
        ["gfx1201"];}
-    {- [budget], the bytes of the GPU's own memory;}
+    {- [budget], the bytes of the GPU's own memory, the path's [budget];}
     {- [queues], ["COMPUTE:0"], which runs [Words] and [Launch], and
        ["COPY:0"], which runs [Words] and [Copy], index [0] and [1] in C;}
     {- [copy_engine], [Some 1], ["COPY:0"];}
@@ -261,6 +261,9 @@ val capability : t -> Rig_amd_abi.Capability.t
        {!Rig_amd_abi.declare};}
     {- [word], the device's timeline word, as {b Word.} below states;}
     {- [bus], the path's [bus], the GPU's PCI function.}}
+    Its {!Rig.val-capacity} is [Some { total = budget; free = f () }] where
+    the path's [available] is [Some f], and [None] otherwise: each path's
+    interface states its sources.
 
     {b Capability.} The record holds the GPU, its clock, its compute queue's
     packets, its work-group processors that run work, and its trace buffers,
@@ -571,7 +574,16 @@ type 'm path = {
           set iff processor [w] of shader array [a] of shader engine [e] does,
           engines numbered across dies. A die whose processors the path cannot
           read has every processor of its arrays set. *)
-  budget : int;  (** The bytes of the GPU's own memory. *)
+  budget : int;
+      (** The bytes of the GPU's own memory: {!Rig.val-capacity}'s [total]
+          where [available] is [Some _]. *)
+  available : (unit -> int) option;
+      (** [Some f] where the path reports what the GPU's memory would still
+          give: [f ()] is, of [budget], the bytes it would give any process
+          at the call, {!Rig.val-capacity}'s [free], counting what the
+          device's memory holds as held. It raises {!Fault} where the path
+          cannot read it. [None] where the path reports none, and the
+          device's capacity is then [None]. *)
   cache_bytes : int option;
       (** [Some n] with [n] the bytes of the GPU's L2 and its MALL (Infinity
           Cache) together, or [None] if the path does not know the L2's. *)
@@ -851,6 +863,10 @@ val segment : t -> int
 
 val set_first_sizes :
   compute:int -> copy:int -> segment:int -> int * int * int
+
+(* [path_capacity p] is the {!Rig.val-capacity} a device of the path [p]
+   reports. *)
+val path_capacity : 'm path -> Rig_edge.capacity option
 
 (* [stale_filter g w] makes the next filter word [g] places, a drain's or a
    measured launch's, [w], in place of the one its filter wave stores. A

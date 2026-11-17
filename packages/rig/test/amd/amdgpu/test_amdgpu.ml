@@ -330,6 +330,60 @@ let facts =
             (P.gpu_at root "0000:05:00.0"));
     ]
 
+(* The GPU's memory, the path's budget and its capacity's total, is its
+   node's heaps of the GPU's own memory, public and private, and no other
+   bank (kfd_crat.h's heap types: 0 is system memory). KFD reports what is
+   free of it from version 1.9, Linux 6.0, on. The versions below are KFD's
+   in Linux 5.17 (1.6), 5.19 (1.8), 6.0 (1.11) and master (1.23), as their
+   kfd_ioctl.h states them. *)
+let memory =
+  let result_int =
+    Testable.make
+      ~pp:(fun ppf -> function
+        | Ok n -> Format.fprintf ppf "Ok %d" n
+        | Error e -> Format.fprintf ppf "Error %S" e)
+      ~equal:( = )
+  in
+  let banks =
+    let bank (path, _) =
+      String.starts_with ~prefix:(nodes ^ "1/mem_banks") path
+    in
+    List.filter (fun f -> not (bank f)) r9700_node
+    @ [
+        ( nodes ^ "1/mem_banks/0/properties",
+          "heap_type 1\nsize_in_bytes 268435456\nflags 0\n" );
+        ( nodes ^ "1/mem_banks/1/properties",
+          "heap_type 2\nsize_in_bytes 33940307968\nflags 0\n" );
+        ( nodes ^ "1/mem_banks/2/properties",
+          "heap_type 0\nsize_in_bytes 68719476736\nflags 0\n" );
+      ]
+  in
+  group ~timeout:10. "memory"
+    [
+      test "an R9700's memory is its node's private heap" (fun () ->
+          equal result_int (Ok 34208743424)
+            (P.memory_at (r9700 ()) "0000:05:00.0"));
+      test "an MI300X partition's memory is its node's public heap" (fun () ->
+          equal result_int (Ok 206141652992)
+            (P.memory_at (mi300x ()) "0000:c1:00.0"));
+      test "a GPU's memory is its public and private heaps, not system memory"
+        (fun () ->
+          let root = tree "banks" (functions r9700_functions @ banks) in
+          equal result_int (Ok 34208743424) (P.memory_at root "0000:05:00.0"));
+      cases "free memory"
+        ~id:(fun (v, reports) ->
+          strf "KFD %d.%d %s free memory" (v / 1000) (v mod 1000)
+            (if reports then "reports" else "reports no"))
+        [
+          (1006, false);
+          (1008, false);
+          (1009, true);
+          (1011, true);
+          (1023, true);
+        ]
+        (fun (v, reports) -> equal bool reports (P.reports_free v));
+    ]
+
 (* A machine read while the driver held no node of its GPU, as a driver-less
    session leaves it detached: the GPU is looked at again, found once the driver
    holds it, and kept once found. *)
@@ -576,6 +630,7 @@ let () =
        [
          numbering;
          facts;
+         memory;
          held;
          inside_lock;
          save_area;

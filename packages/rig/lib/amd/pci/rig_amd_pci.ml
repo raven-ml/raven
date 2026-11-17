@@ -332,7 +332,10 @@ let path g h fn ~index : Memory.region Amd.path =
     clock = Round_trip;
     mec = Boot.mec g;
     wgps = Boot.wgps g;
-    budget = Boot.budget g;
+    budget = protect mem (fun () -> (Memory.capacity mem.memory).total);
+    available =
+      Some
+        (fun () -> protect mem (fun () -> (Memory.capacity mem.memory).free));
     (* The discovery table's GC info states the L2 from version 1.2 and its
        MALL info the MALL per memory controller; the path reads neither. *)
     cache_bytes = None;

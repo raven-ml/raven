@@ -176,10 +176,6 @@ val memory : t -> Rig_pci.Memory.t
 val hive : t -> bool
 (** [hive g] is {!Gmc.hive}. *)
 
-val budget : t -> int
-(** [budget g] is the bytes of the GPU's memory that its page tables' main
-    pool hands out. *)
-
 val lock : t -> Rig_amd.Lock.t
 (** [lock g] is held over [g]'s register sequences and page-table edits: calls
     on {!Rig_pci.Memory} of [g]'s memory take it. *)

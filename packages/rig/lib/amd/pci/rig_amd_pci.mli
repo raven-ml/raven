@@ -142,6 +142,14 @@ val count : ?machine:Rig_pci.Machine.t -> unit -> (int, string) result
     kernel driver resets them when it takes them back, so {!reset} only
     stops such a GPU, and an open refuses one left running.
 
+    {b Capacity.} The path's [budget] ({!Rig_amd.type-path}) and
+    [available], and so a device's {!Rig.val-capacity}, are
+    {!Rig_pci.Memory.capacity} of the GPU's memory: the main pool of its page
+    tables, and what no block of that pool holds. The process is the GPU's
+    only user, so the free leaves nothing out, and it is the pool's own
+    count, read with no call to the GPU. A request of that many bytes may
+    still be refused, as the pool bounds each request.
+
     {b Other functions.} {!Rig_amd.val-dma} gives another function, such as
     a NIC that a process drives over PCI, a region's bus ranges
     ({!Rig_edge.Bus}), or the reason it cannot reach them, as

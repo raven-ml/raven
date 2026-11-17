@@ -1076,8 +1076,9 @@ val capacity : t -> capacity option
     It errs high where a driver leaves memory that other processes hold out
     of it or an allocator cannot place a request whole, and low where a
     driver counts allocations in larger units than it admits them in, as
-    each driver's module states. So an allocation of [c.free] bytes or fewer
-    may still raise {!Out_of_memory}, and one of more may succeed.
+    KFD does; each driver's module states which. So an allocation of
+    [c.free] bytes or fewer may still raise {!Out_of_memory}, and one of
+    more may succeed.
 
     A program that checks that [n] more bytes fit on [d], such as a compiled
     step's footprint, returns the cache first:

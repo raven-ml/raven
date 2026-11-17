@@ -96,6 +96,10 @@ external kfd_acquire_vm : int -> int -> int -> unit
 external kfd_runtime_enable : int -> unit
   = "caml_rig_amd_amdgpu_runtime_enable"
 
+(* [kfd_available kfd gpu] is the bytes of GPU [gpu]'s memory KFD would still
+   give the process. *)
+external kfd_available : int -> int -> int = "caml_rig_amd_amdgpu_available"
+
 (* [kfd_alloc kfd gpu va bytes m ~writable] allocates [bytes] bytes of [m] for
    GPU [gpu] at the address [va], which the GPU may write if [writable]: its
    handle and the offset to map it at. *)
@@ -666,6 +670,30 @@ let dma fd g (m : mem Amd.memory) ~fn =
     | dmabuf -> Ok (Rig_edge.Dmabuf { fd = dmabuf; offset = m.address - p.at })
     | exception Unix.Unix_error (e, _, _) ->
         Error (strf "exporting GPU memory as a dma-buf: %s" (message e))
+
+(* The GPU's memory
+
+   The budget is the topology's heaps of the GPU's own memory, which amdgpu
+   sizes as its VRAM (amdgpu_amdkfd.c, amdgpu_amdkfd_get_local_mem_info). KFD
+   reports the bytes of that memory it would still give a process from its
+   version 1.9, in Linux 6.0 (kfd_ioctl.h, "1.9 - Add available memory
+   ioctl"): the VRAM less what every process's KFD allocations hold, the
+   pinned memory and a reserve for page tables and RAS
+   (amdgpu_amdkfd_gpuvm.c, __get_available_memory), rounded down to 2 MiB on
+   a discrete GPU and to a page on an APU that prefers GTT memory
+   (kfd_chardev.c, kfd_ioctl_get_available_memory). On a discrete GPU it
+   counts each allocation in whole 2 MiB (vram_used_aligned), where KFD
+   admits a request against the allocations' bytes (vram_used,
+   amdgpu_amdkfd_reserve_mem_limit), so it may be lower than the room KFD
+   admits a request in. It leaves out the memory that other processes'
+   graphics hold unpinned. Below 1.9 the path reports none. *)
+
+let available_from = 1009
+let reports_free version = version >= available_from
+
+let free_memory fd g =
+  check "reading the GPU's free memory" (fun () ->
+      kfd_available fd g.node.gpu_id)
 
 (* Opening a GPU *)
 
@@ -1286,6 +1314,9 @@ let path d ~gpus ~index : mem Amd.path =
       wgps_of g.node.gpu ~arrays:g.node.arrays ~per_array:g.node.cu_per_array
         g.cus;
     budget = g.node.budget;
+    available =
+      (if reports_free g.version then Some (fun () -> free_memory fd g)
+       else None);
     cache_bytes = g.cache_bytes;
     alloc = alloc fd g;
     map_host = Some (map_host fd g);
@@ -1334,6 +1365,9 @@ let gpu_at root bus =
   Result.map (fun (n : Topology.node) -> n.gpu) (Topology.node root bus)
 
 let save_area_at root bus = Result.map save_bytes (Topology.node root bus)
+
+let memory_at root bus =
+  Result.map (fun (n : Topology.node) -> n.budget) (Topology.node root bus)
 let count_under ~root = Result.map List.length (buses_under ~root)
 let count () = count_under ~root:"/"
 
