@@ -61,6 +61,14 @@
   rig
   windtrap))
 
+; Nx.Rng's draws on a set of nx.cuda's kernels: the host's bits, through
+; CUDA.
+
+(executable
+ (name test_cuda_draws)
+ (modules test_cuda_draws)
+ (libraries nx nx_kernels_support nx_rng_support windtrap))
+
 ; nx's operations on a set of nx.cuda's kernels.
 
 (executable
@@ -86,5 +94,6 @@
    (run %{exe:test_cuda_linalg.exe} -j 3)
    (run %{exe:test_cuda_moves.exe} -j 3)
    (run %{exe:test_cuda_kinds.exe} -j 3)
+   (run %{exe:test_cuda_draws.exe} -j 3)
    (run %{exe:test_cuda_nx.exe})
    (run %{exe:test_cuda_place.exe}))))

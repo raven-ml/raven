@@ -48,6 +48,13 @@
   rig
   windtrap))
 
+; Nx.Rng's draws on a set of nx.amd's kernels: the host's bits.
+
+(executable
+ (name test_amd_draws)
+ (modules test_amd_draws)
+ (libraries nx nx_kernels_support nx_rng_support windtrap))
+
 ; The factorisations' laws against nx_amd.mli's bounds and bits.
 
 (executable
@@ -85,5 +92,6 @@
    (run %{exe:test_amd.exe})
    (run %{exe:test_amd_moves.exe})
    (run %{exe:test_amd_sorts.exe})
+   (run %{exe:test_amd_draws.exe} -j 3)
    (run %{exe:test_amd_factor.exe} -j 3)
    (run %{exe:test_amd_linalg.exe} -j 3))))

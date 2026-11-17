@@ -3630,6 +3630,22 @@ let permute_group =
             (Float.abs (f -. 0.5)));
     ]
 
+(* Every draw on a set of software devices, whole on each, has the host's
+   bits (Nx_rng_support), as on the GPUs' sets of nx's suites for their
+   kernel libraries. *)
+let on_a_set =
+  group "on another set"
+    (List.map
+       (fun s ->
+         prop ~count:10
+           (Nx_rng_support.name s ^ " has the host's bits")
+           (Nx_rng_support.gen s)
+           Nx_rng_support.(
+             law (placed (module S2)) ~rows:Bits
+               ~dtypes:[ Float16; Bfloat16; Float32; Float64 ]
+               ~shapes:[ Zero; One; Block; Row ] s))
+       Nx_rng_support.samplers)
+
 let () =
   exit
     (run "nx random"
@@ -3639,6 +3655,7 @@ let () =
          ptree_group;
          draws;
          placed_draws;
+         on_a_set;
          key_placement;
          distributions;
          rejection;
