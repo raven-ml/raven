@@ -405,6 +405,11 @@ val v :
 val with_compiler : Compiler.t -> t -> t
 (** [with_compiler c r] is [r] with its rendered source compiled by [c]. *)
 
+val takes_core : t -> Tc.t -> bool
+(** [takes_core r tc] is [true] iff a kernel for [r] may compute on [tc]:
+    always, but for a float32 core on CUDA or NV, which rounds its inputs to
+    TF32 and is taken only under {!Setting.allow_tf32}. *)
+
 val supported_dtypes : t -> Dtype.t list
 (** [supported_dtypes r] is the data types of {!Dtype.all}, in order, that [r]
     has natively, without {!Dtype.Float64} if {!Dtype.Int64} is emulated

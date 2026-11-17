@@ -1520,15 +1520,8 @@ let hand_coded_optimizations k =
 (* The cores of [ren] that {!Opt.Tc} takes for a contraction of [dtype_in]
    operands accumulated in [dtype_out], whatever its extents. *)
 let cores (ren : Renderer.t) ~dtype_in ~dtype_out =
-  let device = ren.target.device in
-  (* TF32 rounds float32's inputs: {!Opt.Tc} takes it only when allowed. *)
-  let tf32 (tc : Tc.t) =
-    (device = "CUDA" || device = "NV")
-    && Dtype.equal tc.dtype_in Dtype.Float32
-    && not (setting Setting.allow_tf32)
-  in
   let takes (tc : Tc.t) =
-    (not (tf32 tc))
+    Renderer.takes_core ren tc
     && Dtype.equal tc.dtype_in dtype_in
     && Dtype.equal tc.dtype_out dtype_out
   in

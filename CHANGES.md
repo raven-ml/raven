@@ -1476,6 +1476,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Renderer.takes_core` states which tensor cores a target's kernels may
+  compute on, a float32 core of CUDA or NV only under `ALLOW_TF32`: the one
+  rule `Opt.Tc` and the heuristic's choice of a core both read, where each
+  stated it.
 - A tensor core whose operand is computed from loads, as a projection reads
   a LayerNorm's `bf16(x̂·γ + β)`, is staged where a load the operand reads
   has no tile of its own but reads fewer of the threads' and lanes' elements

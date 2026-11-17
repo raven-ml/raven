@@ -959,12 +959,7 @@ module Scheduler = struct
 
   and try_core k use_tc axis opt_level reduceop mul (tc : Tc.t) =
     let in0 = nth mul 0 and in1 = nth mul 1 in
-    let device = k.ren.target.device in
-    if
-      (device = "CUDA" || device = "NV")
-      && Dtype.equal tc.dtype_in Dtype.Float32
-      && not (Setting.value Setting.allow_tf32)
-    then None
+    if not (Renderer.takes_core k.ren tc) then None
     else if
       Option.is_none (tc_operand tc in0)
       || Option.is_none (tc_operand tc in1)

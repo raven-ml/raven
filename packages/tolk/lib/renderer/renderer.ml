@@ -366,6 +366,13 @@ let emulated () =
   in
   List.map dtype (Setting.value Setting.emulated_dtypes)
 
+let takes_core r (tc : Tc.t) =
+  let device = r.target.device in
+  not
+    ((device = "CUDA" || device = "NV")
+    && Dtype.equal tc.dtype_in Dtype.Float32
+    && not (Setting.value Setting.allow_tf32))
+
 (* double can't be bitcast to anything without long support *)
 let supported_dtypes r =
   let no_double = Dtype.mem Dtype.Int64 (emulated ()) in

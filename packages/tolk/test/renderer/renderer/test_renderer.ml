@@ -1128,6 +1128,41 @@ let supported =
           rejects (fun () -> supported_under [ "nosuchtype" ] (Renderer.v cpu)));
     ]
 
+(* A float32 core rounds its inputs to TF32 on CUDA and NV, which a kernel
+   takes only under ALLOW_TF32; every other core, and a float32 core of
+   another device, it takes. *)
+let cores_taken =
+  let target device renderer arch =
+    { Helpers.Target.device; renderer; arch; interface = ""; indices = "" }
+  in
+  let f32 (tc : Tc.t) = Dtype.equal tc.dtype_in Dtype.Float32 in
+  let taken ?(allow = false) r =
+    Setting.context
+      [ Setting.B (Setting.allow_tf32, allow) ]
+      (fun () ->
+        List.map
+          (fun (tc : Tc.t) -> (f32 tc, Renderer.takes_core r tc))
+          r.Renderer.tensor_cores)
+  in
+  let sm_89 = Cstyle.without_compiler (target "CUDA" "CUDA" "sm_89") in
+  group "tensor cores taken"
+    [
+      test "CUDA takes its float32 cores only under ALLOW_TF32" (fun () ->
+          let cores = taken sm_89 in
+          is_true ~msg:"a float32 core" (List.exists fst cores);
+          List.iter
+            (fun (is_f32, taken) -> equal bool (not is_f32) taken)
+            cores;
+          List.iter
+            (fun (_, taken) -> is_true taken)
+            (taken ~allow:true sm_89));
+      test "a float32 core of another device is taken" (fun () ->
+          let r =
+            Renderer.v ~tensor_cores:Tc.cuda_sm89 (target "AMD" "HIP" "gfx1100")
+          in
+          List.iter (fun (_, taken) -> is_true taken) (taken r));
+    ]
+
 let () =
   exit
     (run "Tolk.Renderer"
@@ -1142,4 +1177,5 @@ let () =
          asserted;
          renderers;
          supported;
+         cores_taken;
        ])
