@@ -2435,10 +2435,11 @@ let drain d =
   Gc.full_major ();
   ignore (B.create d 0 : B.t)
 
-(* Metal's answer to a specialised build waits behind the gate, after the
-   specialisation: a prepare finds it unanswered while the gate holds it, an
-   unload meanwhile returns at once, and the pipeline, once answered, is
-   released; settling waits for it. *)
+(* Metal's answer to a specialisation waits behind the gate, and the build
+   it starts with it: a prepare finds the function unanswered while the gate
+   holds it, an unload before the specialisation answers returns at once,
+   and the pipeline, built once the gate opens, is released; settling waits
+   for it. *)
 let chained_unstored () =
   let t = dev () in
   let loaded () =
@@ -2527,8 +2528,8 @@ let specialised_images =
         required_missing;
       test "a header that breaks the format is an error" malformed;
       test
-        "a specialised build answers behind the gate, and an unload before \
-         releases its pipeline once answered"
+        "a specialisation answers behind the gate, and an unload before it \
+         answers releases the pipeline once built"
         chained_unstored;
       test
         "each key's image computes with its constants and releases its \

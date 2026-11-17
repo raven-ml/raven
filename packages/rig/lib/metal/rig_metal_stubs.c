@@ -364,17 +364,31 @@ static dispatch_group_t answering(void) {
   return group;
 }
 
-/* While set, handlers wait before they store their answer, so that a test
-   holds builds unanswered ([caml_rig_metal_hold]). */
+/* The gate, for rig's tests ([caml_rig_metal_hold]): while it is closed, a
+   handler queues what it answers on [held], which the gate keeps suspended,
+   and returns. No handler blocks, so one that Metal calls on the thread
+   that starts a build holds that thread no longer than an open gate would.
+   [held] is serial: once the gate opens, the answers run in the order the
+   handlers queued them. */
 static pthread_mutex_t gate_mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t gate_opened = PTHREAD_COND_INITIALIZER;
-static _Atomic int gate_closed;
+static int gate_closed;
 
-static void pass_gate(void) {
-  if (!atomic_load(&gate_closed)) return;
+static dispatch_queue_t held(void) {
+  static dispatch_queue_t queue;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    queue = dispatch_queue_create("rig_metal.held", DISPATCH_QUEUE_SERIAL);
+  });
+  return queue;
+}
+
+/* Runs [k] now, or once the gate opens if it is closed. */
+static void gated(dispatch_block_t k) {
   pthread_mutex_lock(&gate_mutex);
-  while (gate_closed) pthread_cond_wait(&gate_opened, &gate_mutex);
+  int closed = gate_closed;
+  if (closed) dispatch_async(held(), k);
   pthread_mutex_unlock(&gate_mutex);
+  if (!closed) k();
 }
 
 static void drop(struct build *b) {
@@ -430,11 +444,15 @@ static void build(id<MTLFunction> fn, id<MTLDevice> device, struct build *b) {
                                   id<MTLComputePipelineState> p,
                                   MTLComputePipelineReflection *reflection,
                                   NSError *error) {
-                                pass_gate();
-                                if (p != nil)
-                                  answer(b, p, params_of(reflection), "");
-                                else
-                                  answer(b, nil, 0, reason(error));
+                                int64_t params = params_of(reflection);
+                                gated(^{
+                                  @autoreleasepool {
+                                    if (p != nil)
+                                      answer(b, p, params, "");
+                                    else
+                                      answer(b, nil, 0, reason(error));
+                                  }
+                                });
                               }];
 }
 
@@ -553,16 +571,17 @@ value caml_rig_metal_start(value v_lib, value v_f, value v_values) {
       [library newFunctionWithName:name
                     constantValues:values
                  completionHandler:^(id<MTLFunction> g, NSError *error) {
-                   /* The block retains [library], which an unload may
-                      release while Metal specialises. Metal may call it
-                      on this thread before the call returns, so it passes
-                      no gate: only the pipeline's answer waits at it. */
-                   @autoreleasepool {
-                     if (g != nil)
-                       build(g, library.device, b);
-                     else
-                       answer(b, nil, 0, reason(error));
-                   }
+                   /* The blocks retain [library], which an unload may
+                      release while Metal specialises or the gate holds
+                      the answer. */
+                   gated(^{
+                     @autoreleasepool {
+                       if (g != nil)
+                         build(g, library.device, b);
+                       else
+                         answer(b, nil, 0, reason(error));
+                     }
+                   });
                  }];
   }
   caml_leave_blocking_section();
@@ -637,12 +656,15 @@ value caml_rig_metal_settle(value unit) {
   return Val_unit;
 }
 
-/* Holds every handler before it stores its answer while [v_held], for rig's
-   tests. */
+/* Closes the gate if [v_held], else opens it, for rig's tests. Closing
+   suspends [held] and opening resumes it, each only on a change, so the
+   suspensions stay balanced. */
 value caml_rig_metal_hold(value v_held) {
+  int closing = Bool_val(v_held);
   pthread_mutex_lock(&gate_mutex);
-  atomic_store(&gate_closed, Bool_val(v_held));
-  if (!Bool_val(v_held)) pthread_cond_broadcast(&gate_opened);
+  if (closing && !gate_closed) dispatch_suspend(held());
+  if (!closing && gate_closed) dispatch_resume(held());
+  gate_closed = closing;
   pthread_mutex_unlock(&gate_mutex);
   return Val_unit;
 }
