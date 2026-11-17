@@ -16,7 +16,9 @@ Where it stands, with every measurement: doc/performance.md.
   of one compiled text taken by two workers each run Clang or NVRTC: 5 of
   the 165 sources Clang compiles in tessera's cold distillation step at 2
   workers. One compile per distinct text needs the texts gathered before
-  the workers split them
+  the workers split them. gpt-oss's cold call compiles no text twice, and
+  its one pair of texts differing by sizes costs about 130 ms off the
+  call's chain (_plans/perf-campaign/coldcall/cause.md)
 - Dense bf16 projections on CUDA (_plans/perf-campaign/proj/, proj2/): k
   and v run 11.3 us at 64 tokens to 24 us at 512, L2 evicted
   (`stream/key-projection-64` 15.7 us), 2-4x their 5.5 us byte bound: they
@@ -111,15 +113,18 @@ Where it stands, with every measurement: doc/performance.md.
   stages need a counted `cp.async.wait_group` in the CUDA renderer
 - A gather that reads more elements than its table holds, with no
   broadcast above it, still inlines its table's computation into every
-  read
+  read: 2.2-2.4 ms against 0.7-1.1 ms stored on the host probe, no bench
+  row moved. A count of extra evaluations against D163's 360 budget stores
+  3-6x too early and prices no launch (_plans/perf-campaign/r3/)
 - tolk recomputes a cheap broadcast value along every row that reads it:
   a 3-buffer polynomial of D multiply-adds broadcast along 4096 rows takes
   11.3 ms on the host against 0.64 ms stored. `recomputes`/`copies` count
-  the reader's ranges; bounding it would also let fft-4096 drop 20 kernels
-- On gpt-oss's cold first call, rangeify's reshape substitution
-  (`Indexing`, the `apply_reshape` over placeholder ranges) allocates 8.5%
-  of the call's words on the calling domain, before the parallel render
-  wave starts
+  the reader's ranges; bounding it would also let fft-4096 drop 20 kernels,
+  which D481's stored-readers condition holds today
+- The buffer limit keeps gpt-oss's 63x64x2880 routed-rows stage stored once
+  an inlined norm map makes it read four buffers: a 23 MB gather, about
+  0.97 ms a prefill-512 step. This is what blocks the one-pass
+  `Nx.rms_norm` (D481 names it; _plans/perf-campaign/r3/audit.md)
 - AMD thread traces are not collected in a profile, and tracing through KFD
   is parked: after a GPU fault KFD runs none of the process's queues, so
   nothing can stop a running trace (one stayed on past its process's exit on
@@ -140,8 +145,9 @@ Where it stands, with every measurement: doc/performance.md.
 - `Nx.rms_norm` under a trace runs a third pass, a lane max, for its
   overflow promise: 49 kernels a gpt-oss step. The one-pass form keeps
   the bits but tolk then inlines the norm's map into q, k, v and the
-  experts (+3.5 to +7 ms a prefill), until tolk keeps stored a value a
-  contraction re-reads across output tiles
+  experts (+3.5 to +7 ms a prefill). Stored by an inline rule, it still
+  trails the three passes by 0.7-1.8 ms at prefill 512, held back by the
+  routed-rows gather below
 - D404's launch member caps, NVRTC's 64 and Metal's 40 (an M1 Max), name
   no fudge measurement: the CUDA cap needs a fudge row, as the ledger's
   header asks of a speed measured elsewhere
