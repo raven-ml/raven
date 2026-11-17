@@ -19,31 +19,40 @@
     [Minimum] and the comparisons follow the order {!Nx_kernel.Prog} states.
     Each is exact ({!Lower_real}).
 
-    [Mul], [Fdiv] and [Recip] compute the sequence of operations nx's kernel
-    header, [nx_kinds_complex.h], gives them, each fused multiply-add a
-    {!Lower_bits.mulacc}: [Mul] is the textbook product, each part one fused
-    multiply-add over the other product; [Fdiv] is Smith's algorithm, which
-    divides by the divisor's larger part, over a dividend scaled by [2{^25}] or
-    [2{^54}] where its parts are below the least normal over [u]; [Recip] is
-    [(1 + 0i) / z] by [Fdiv]. On a target that keeps subnormals, rounds
-    division correctly and rounds a fused multiply-add once, they give the bits
-    nx's kernels give, a NaN part as nx's NaN rule allows: they are exact.
+    {1:nx Kinds of nx's sequence}
+
+    [Mul], [Fdiv], [Recip], [Sqrt] and [Sign] compute the sequence of
+    operations nx's kernel header, [nx_kinds_complex.h], gives them, each fused
+    multiply-add a {!Lower_bits.mulacc}, a branch of the header a selection
+    with every side computed. A transcendental kind among them first sets the
+    quiet bit of its operand's NaN parts. [Mul] is the textbook product, each
+    part one fused multiply-add over the other product; [Fdiv] is Smith's
+    algorithm, which divides by the divisor's larger part, over a dividend
+    scaled by [2{^25}] or [2{^54}] where its parts are below the least normal
+    over [u]; [Recip] is [(1 + 0i) / z] by [Fdiv]. [Sqrt] is Kahan's, of [z]
+    scaled by an even power of two, and [Sign] is [z / |z|] of [z] scaled by a
+    power of two. On a target that keeps subnormals, rounds division and the
+    square root correctly and rounds a fused multiply-add once, they give the
+    bits nx's kernels give, a NaN part as nx's NaN rule allows: they are exact.
+    On a target that rounds division and the square root correctly and rounds a
+    fused multiply-add once, [Sqrt] and [Sign] are within the normwise bound nx
+    states for them, [3u], where no value computed for them is subnormal; on
+    another target no bound is stated for them.
 
     {1:bounded Other kinds}
 
-    The transcendental kinds are the principal values of C99 7.3 (ISO/IEC 9899),
-    each part's sign choosing the side of a branch cut as there. [Sign] is [z / |z|]. [Exp] overflows only
-    where its result does.
+    The transcendental kinds are the principal values of C99 7.3 (ISO/IEC
+    9899), each part's sign choosing the side of a branch cut as there. [Exp]
+    overflows only where its result does.
 
-    On every target, [Mul], [Fdiv], [Recip] and the transcendental kinds each
-    hold a {e normwise} bound, in the sense that a result [z'] of exact
+    On every target, [Mul], [Fdiv], [Recip] and the transcendental kinds below
+    each hold a {e normwise} bound, in the sense that a result [z'] of exact
     value [z] has [|z' - z| / |z|] at most the table's multiple of [u], to first
     order. The bounds are derived from {!Lower_real}'s, an error of [n] ulps
     there being one of at most [(2n + 1) u]:
 
     {v
       mul                                      2
-      sign, sqrt                               3
       fdiv, recip                              4
       log                                     18
       log2                                    20

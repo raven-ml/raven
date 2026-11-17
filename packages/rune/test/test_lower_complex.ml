@@ -196,7 +196,6 @@ let open_signs wide k (z : Complex.t) =
   | "sinh" -> (inf z.re && wild z.im, false)
   | "cosh" | "cos" -> (inf z.re && inf z.im, false)
   | "sin" -> (false, inf z.im && wild z.re)
-  | "sqrt" -> (false, z.re = Float.neg_infinity && Float.is_nan z.im)
   | "asin" | "acos" -> (false, inf z.re && Float.is_nan z.im)
   | "asinh" -> (Float.is_nan z.re && inf z.im, false)
   | _ -> (false, false)
@@ -224,8 +223,6 @@ let wlog (e : Complex.t array) =
 let unaries =
   K.
     [
-      unary "sign" Sign (fixed 3.);
-      unary "sqrt" Sqrt (fixed 3.);
       unary "exp" Exp (fixed 31.);
       unary "exp2" Exp2 (fun _ e -> 30. +. (1.4 *. Float.abs e.(0).im));
       unary "log" Log (fixed 18.);
@@ -275,25 +272,15 @@ let within wide tol (((rh, _), (ih, _)) as r) (got : Complex.t) =
      && (not (has_nan got))
      && Float.hypot rh ih *. (1. +. (tol *. u wide)) >= greatest wide
 
-(* The direction [Sign] gives at [z], whose infinite parts name it. *)
-let direction (z : Complex.t) =
-  let d v = if Float.abs v = Float.infinity then Float.copy_sign 1. v else 0. in
-  let x = d z.re and y = d z.im in
-  let m = Float.hypot x y in
-  ((x /. m, 0.), (y /. m, 0.))
-
 (* Whether [got] meets nx's value [r] at operands [e] with a part not finite:
    where a unary kind's operand has an infinite part, each part's sort as [r]'s,
-   the signs {!open_signs} leaves open excepted, and [Sign]'s direction where no
-   part is a NaN; where an operand has a NaN part and none an infinite one, a
-   NaN part, but [1] for [z^w] at a [w] of zero parts. *)
+   the signs {!open_signs} leaves open excepted; where an operand has a NaN part
+   and none an infinite one, a NaN part, but [1] for [z^w] at a [w] of zero
+   parts. *)
 let special wide k e (r : Complex.t) (got : Complex.t) =
   if k.arity = 1 && has_inf e.(0) then
     let signs = open_signs wide k e.(0) in
     sorts signs got = sorts signs r
-    && (k.name <> "sign"
-       || has_nan e.(0)
-       || within wide (k.bound wide e) (direction e.(0)) got)
   else if Array.exists has_nan e && not (Array.exists has_inf e) then
     if k.name = "pow" && zero e.(1).re && zero e.(1).im then
       got.re = 1. && got.im = 0.
@@ -431,7 +418,7 @@ let ported k =
         Kinds.folded (module Nx.Host) ~f64:true k);
   ]
 
-let kinds = Kinds.[ cmul; cdiv; crecip ]
+let kinds = Kinds.[ cmul; cdiv; crecip; csqrt; csign ]
 
 let () =
   exit

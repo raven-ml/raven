@@ -99,6 +99,18 @@ val pick : Ops.t -> 'a * 'a -> 'a
 val con : Ops.t -> float * float -> Ops.t
 (** [con x p] is the constant {!pick}[ x p] of [x]'s type and shape. *)
 
+val mbits : int * int
+(** [mbits] is the number of fraction bits, [23] and [52]: [nx_kinds.h]'s
+    [MBITS]. *)
+
+val of_word : Ops.t -> int64 * int64 -> Ops.t
+(** [of_word x p] is the float of [x]'s type and shape whose bits are
+    {!pick}[ x p]. *)
+
+val sqrt_half_bits : int64 * int64
+(** [sqrt_half_bits] is the bits of √½ rounded: [nx_kinds.h]'s
+    [SQRT_HALF_BITS]. *)
+
 val ln2 : float * float
 (** [ln2] is ln 2 rounded. *)
 

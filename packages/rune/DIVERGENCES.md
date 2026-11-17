@@ -523,12 +523,15 @@ rounded sum; a stated bound) and its reason. A rounded sum's bound is
     algorithm, a dividend whose parts are below the least normal over `u`
     scaled by `2^25` or `2^54` first and the quotient back. `Recip` is
     `(1 + 0i) / z`.
+  - `Sqrt` and `Sign` are `nx_kinds_complex.h`'s `nx_sqrt` and `nx_sign`
+    operation for operation, each C branch a selection and each NaN part of
+    the operand made quiet first: `Sqrt` is Kahan's, of `z` scaled by an
+    even power of two; `Sign` is `z / |z|` of `z` scaled by a power of two.
   - `Exp` and `Exp2` multiply `cis y` by `2^(hi + lo)` split at the nearest
     integer `k`, `2^k` applied last, so that a part overflows only with the
     result. `Log` is `log |z| + i atan2 (y, x)`, `log |z|` by `log1p` of
-    exact products near the unit circle. `Sqrt` is Kahan's. `Pow` is
-    `e^(w log z)`; a real `w` multiplies `log z`'s parts alone, and `z^0` is
-    1. `Sign` is `z / |z|` of `z` scaled by a power of two.
+    exact products near the unit circle. `Pow` is `e^(w log z)`; a real `w`
+    multiplies `log z`'s parts alone, and `z^0` is 1.
   - The hyperbolic kinds take their real parts' `sinh` and `cosh` and, past
     `hyp_far`, the polar form; `Tanh` is Kahan's. `Asin` and `Acos` are
     Kahan's from `sqrt (1 - z)` and `sqrt (1 + z)`, with their leading terms
@@ -541,11 +544,12 @@ rounded sum; a stated bound) and its reason. A rounded sum's bound is
 - **nx:** `prog.mli`, Domains and Results, Complex numbers;
   `nx_kinds_complex.h`.
 - **Class:** exact for `Neg`, `Add`, `Sub`, `Maximum`, `Minimum`, the
-  comparisons, `Mul`, `Fdiv` and `Recip`; stated bound:
+  comparisons, `Mul`, `Fdiv`, `Recip`, `Sqrt` and `Sign`; stated bound:
   `lower_complex.mli`'s normwise table for the others.
 - **Reason:** (b).
 - **Pinned by:** `Lower_complex › kinds › cmul gives eager's bits`, `› cmul
-  of a constant gives eager's bits`, the same for `cdiv` and `crecip`, on
+  of a constant gives eager's bits`, the same for `cdiv`, `crecip`, `csqrt`
+  and `csign`, on
   the host; `Jit_gpu › complex kinds › *` on a GPU; `Lower_complex ›
   special values › *` and `Lower_complex › bounds › *` over every other
   kind at `complex64` and `complex128`;

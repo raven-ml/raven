@@ -479,6 +479,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled complex `Nx.sqrt` and `Nx.sign` give eager's bits on the host
+  and NVIDIA GPUs, where at a NaN real part beside a zero they gave a
+  number for a part. Elsewhere they hold nx's 3u, as rune stated for every
+  device, now only on a device that rounds division and the square root
+  correctly and an fma once, where nothing computed is subnormal.
 - Numerics states a compiled complex `Nx.mul`, `Nx.div` and `Nx.recip` exact
   on the host and NVIDIA GPUs, eager's bits: they computed nx's sequence
   already.

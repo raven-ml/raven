@@ -37,6 +37,8 @@ let con x p = num x (pick x p)
 let of_bits u =
   Ops.bitcast u (if Dtype.equal (Ops.dtype u) Uint64 then Float64 else Float32)
 
+let of_word x p = of_bits (word (bits x) (pick x p))
+
 (* Operations *)
 
 let ( +: ) = Ops.add

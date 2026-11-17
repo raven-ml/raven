@@ -1635,18 +1635,21 @@ val jit :
     functions there. A function nx composes from these, such as {!Nx.asinh}
     or {!Nx.softmax}, computes as nx composes it.
 
-    {b Complex functions.} {!Nx.mul}, {!Nx.div} and {!Nx.recip} compute nx's
-    own sequence of operations for them, so they are exact on a device that
-    keeps subnormals, rounds division correctly and rounds a fused
-    multiply-add once, as the host CPU and NVIDIA GPUs do. On every device, a
-    result [z'] of exact value [z] holds a {e normwise} bound [c] in the sense
-    that [|z' - z| / |z| <= c u], to first order, for the operand [x + iy] and
-    the exponent [w]:
+    {b Complex functions.} {!Nx.mul}, {!Nx.div}, {!Nx.recip}, {!Nx.sqrt} and
+    {!Nx.sign} compute nx's own sequence of operations for them, so they are
+    exact on a device that keeps subnormals, rounds division and the square
+    root correctly and rounds a fused multiply-add once, as the host CPU and
+    NVIDIA GPUs do. On a device that rounds division and the square root
+    correctly and rounds a fused multiply-add once, {!Nx.sqrt} and {!Nx.sign}
+    hold the bound their [Nx] docs state where no value computed for them is
+    subnormal; on another device rune states no bound for them. On every
+    device, a result [z'] of exact value [z] of another function holds a
+    {e normwise} bound [c] in the sense that [|z' - z| / |z| <= c u], to first
+    order, for the operand [x + iy] and the exponent [w]:
 
     {v
       function                                      c
       Nx.mul                                        2
-      Nx.sign, Nx.sqrt                              3
       Nx.div, Nx.recip                              4
       Nx.log                                       18
       Nx.log2                                      20

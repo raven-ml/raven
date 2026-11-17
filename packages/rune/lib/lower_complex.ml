@@ -3,9 +3,12 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Each kind composes Lower_real's float kinds over pairs of nodes, in a form
-   that cancels nowhere and overflows only where its result does. The bounds
-   [lower_complex.mli] states are derived to first order from Lower_real's. *)
+(* Each kind composes Lower_real's float kinds over pairs of nodes. A kind of
+   nx's sequence restates nx_kinds_complex.h's function operation for
+   operation, as Lower_real does nx_kinds_real.h's, and names it; when the
+   header changes, it changes with it. Each other kind takes a form that
+   cancels nowhere and overflows only where its result does, its bound in
+   [lower_complex.mli] derived to first order from Lower_real's. *)
 
 open Tolk
 open Lower_bits
@@ -67,6 +70,30 @@ let infinite x = eq (magnitude x) (inf x)
 
 (* Whether [x] is infinite or NaN. *)
 let wild x = not_ (lt (magnitude x) (inf x))
+let nans x = (nan x, nan x)
+
+(* Branches
+
+   A C function's early returns are a selection of every return's value, the
+   first whose condition holds winning: [cases l d] is the value of the first
+   case of [l] whose condition holds, else [d]. Every case computes on every
+   element; a case's value on an element whose condition is false is never
+   selected, whatever it is. *)
+let rec cases l d =
+  match l with
+  | [] -> d
+  | (c, (re, im)) :: rest ->
+      let dr, di = cases rest d in
+      (where c re dr, where c im di)
+
+(* nx_unsignalled: x with its quiet bit set where it is a NaN, its sign and
+   payload kept. *)
+let unsignalled x =
+  let q = Int64.shift_left 1L (R.pick x R.mbits - 1) in
+  let qb = R.of_word x (q, q) in
+  where (is_nan x)
+    (Ops.bitcast (Ops.bitwise_or (bits x) (bits qb)) (Ops.dtype x))
+    x
 
 (* y 2^k rounded once, for k up to twice the span R.scale takes. *)
 let ldexp y k =
@@ -156,30 +183,36 @@ let log2_raw x y =
   let re, im = log_raw x y in
   (re *: R.con re R.log2e, im *: R.con im R.log2e)
 
-(* Square root (Kahan, 1987): t = sqrt((|x| + |z|) / 2) is the part of the
+(* nx_sqrt_raw (Kahan, 1987): t = sqrt((|x| + |z|) / 2) is the part of the
    larger magnitude, y / 2t the other; z is scaled by an even power of two so
-   that its larger part is in [1, 4). On the real axis, the float square root.
-   Where a part is infinite, an infinite part of the root. *)
+   that its larger part is in [1, 4), and y / 2t is taken of y itself. The
+   general case's scaling reads a finite non-zero larger part on the elements
+   it is selected for; on the others its exponent is garbage and its value
+   unread. *)
 let sqrt_raw x y =
   let ax = magnitude x and ay = magnitude y in
-  let e = R.ilogb (larger ax ay) in
+  let a = larger ax ay in
+  let e = R.ilogb a in
   let j = Ops.shr e (int e 1) in
   let m2j = Ops.mul j (int j (-2)) in
-  let sx = R.scale ax m2j and sy = R.scale ay m2j in
-  let t = R.scale (Ops.sqrt ((sx +: hypot sx sy) *: half x)) j in
+  let xs = R.scale ax m2j and ys = R.scale ay m2j in
+  let t = R.scale (Ops.sqrt ((xs +: hypot xs ys) *: half x)) j in
   let u = ay /: (t +: t) in
   let pos = ge x (zero x) in
-  let r = Ops.sqrt ax in
-  let real = (where pos r (zero x), where pos y (R.copysign r y)) in
-  let v = (where pos t u, where pos (R.copysign u y) (R.copysign t y)) in
-  let real_axis = eq y (zero y) in
-  let re = where real_axis (fst real) (fst v) in
-  let im = where real_axis (snd real) (snd v) in
-  (* G.6.4.2: inf + i y at an infinite y; an infinite x makes the real part
-     infinite at +inf, the imaginary part at -inf *)
-  let up = infinite y ||: eq x (inf x) in
-  let side = infinite y ||: eq x (negated (inf x)) in
-  (where up (inf x) re, where side (R.copysign (inf y) y) im)
+  let root = Ops.sqrt ax in
+  let y_nan = is_nan y in
+  cases
+    [
+      (eq ay (inf y), (inf x, y));
+      (is_nan x, nans x);
+      (eq x (inf x), (x, where y_nan (nan x) (R.copysign (zero x) y)));
+      ( eq x (negated (inf x)),
+        (where y_nan (nan x) (zero x), R.copysign (inf x) y) );
+      (y_nan, nans x);
+      ( eq y (zero y),
+        (where pos root (zero x), where pos y (R.copysign root y)) );
+    ]
+    (where pos t u, where pos (R.copysign u y) (R.copysign t y))
 
 (* z^w = e^(w log z). A real w multiplies log z's parts alone, so that a zero
    part meets no infinite one; z^0 is 1. *)
@@ -192,22 +225,26 @@ let pow_raw (zr, zi) (wr, wi) =
   let unit = real &&: eq wr (zero wr) in
   (where unit (one zr) er, where unit (zero zr) ei)
 
-(* sign z = z / |z|, z scaled by a power of two first so that |z| is no
-   subnormal; z itself at 0, and at an infinity without a NaN part its
-   direction among the eight a pair of parts names. *)
+(* nx_sign_raw: z / |z|, z scaled by a power of two first so that |z| is no
+   subnormal; z itself at 0, and at an infinity its direction among the eight
+   a pair of parts names. As in sqrt_raw, the scaling is garbage and unread
+   where a part is 0, infinite or NaN. *)
 let sign_raw x y =
-  let a = larger (magnitude x) (magnitude y) in
-  let k = neg_int (R.ilogb a) in
-  let sx = R.scale x k and sy = R.scale y k in
-  let h = hypot sx sy in
-  let z = eq a (zero a) in
-  let ix = infinite x and iy = infinite y in
-  let far = (ix ||: iy) &&: not_ (is_nan x ||: is_nan y) in
-  let toward v p q =
-    R.copysign (where p (where q (num v Float.(sqrt 0.5)) (one v)) (zero v)) v
-  in
-  ( where far (toward x ix iy) (where z x (sx /: h)),
-    where far (toward y iy ix) (where z y (sy /: h)) )
+  let ax = magnitude x and ay = magnitude y in
+  let ix = eq ax (inf x) and iy = eq ay (inf y) in
+  let both = R.of_word x R.sqrt_half_bits in
+  let re = where ix (where iy both (one x)) (zero x) in
+  let im = where iy (where ix both (one x)) (zero x) in
+  let k = neg_int (R.ilogb (larger ax ay)) in
+  let xs = R.scale x k and ys = R.scale y k in
+  let h = hypot xs ys in
+  cases
+    [
+      (is_nan ax ||: is_nan ay, nans x);
+      (ix ||: iy, (R.copysign re x, R.copysign im y));
+      (eq ax (zero x) &&: eq ay (zero y), (x, y));
+    ]
+    (xs /: h, ys /: h)
 
 (* Hyperbolic kinds
 
@@ -374,8 +411,8 @@ let unary (k : Nx_kernel.Prog.unary) ((x, y) as z) =
   match k with
   | Neg -> (negated x, negated y)
   | Recip -> fdiv (one x, zero x) z
-  | Sign -> sign_raw x y
-  | Sqrt -> sqrt_raw x y
+  | Sign -> sign_raw (unsignalled x) (unsignalled y)
+  | Sqrt -> sqrt_raw (unsignalled x) (unsignalled y)
   | Exp -> exp_raw x y
   | Exp2 -> exp2_raw x y
   | Log -> log_raw x y
