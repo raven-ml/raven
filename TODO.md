@@ -5,6 +5,12 @@ Where it stands, with every measurement: doc/performance.md.
 
 ## tolk
 
+- D357's inner-end group split loses to tinygrad's top split on the
+  bfloat16 argmax and max over 201088 values (0.67-0.77x, same axis, threads
+  and registers; about 3 us a decode step) and, through `across`, on
+  sum_cols_prime (0.37x: 32 threads from the top on 1571 rows padded to
+  1600). The cause of the argmax case is unmeasured
+  (_plans/perf-campaign/handtiles/)
 - A routed tensor core over few working blocks waits on one copy's latency
   a trip: cutting its reduce into parts in rune's `Lower_reduce.rows`
   (float32 partials at the slots, summed in order by the existing gather)
