@@ -528,10 +528,11 @@ static int specialise(id<MTLFunction> fn, const uint32_t *v, uint32_t n,
    [v_lib], specialised by the little-endian 32-bit words of [v_values]. A
    function that declares constants is specialised by Metal's asynchronous
    call, whose handler starts the pipeline's build, so the start waits for
-   neither; one the words refuse is answered with the refusal at once. The
-   result is the build as an int, or 0, having started nothing, if the host
-   has no memory for it. It allocates nothing on the OCaml heap and releases
-   the runtime while Metal takes the request. */
+   neither; one the words refuse, or of which Metal makes no function, is
+   answered with the refusal at once. The result is the build as an int, or
+   0, having started nothing, if the host has no memory for it. It allocates
+   nothing on the OCaml heap and releases the runtime while Metal takes the
+   request. */
 value caml_rig_metal_start(value v_lib, value v_f, value v_values) {
   id<MTLLibrary> library = Object_val(v_lib);
   uint32_t n = (uint32_t)(caml_string_length(v_values) / 4);
@@ -556,7 +557,11 @@ value caml_rig_metal_start(value v_lib, value v_f, value v_values) {
     id<MTLFunction> fn = [[library newFunctionWithName:name] autorelease];
     MTLFunctionConstantValues *values = nil;
     char why[sizeof b->why] = "";
-    int k = fn != nil ? specialise(fn, v, n, &values, why, sizeof why) : 0;
+    int k = -1;
+    if (fn == nil)
+      snprintf(why, sizeof why, "Metal made no function of the name");
+    else
+      k = specialise(fn, v, n, &values, why, sizeof why);
     if (k < 0)
       answer(b, nil, 0, why);
     else if (k == 0)
