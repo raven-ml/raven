@@ -3346,6 +3346,47 @@ let () =
                (fun dims ->
                  Attentions.uncopied ~dims (snd (on_gpu ())) ~grad:true
                    (Nx.Dtype.Any Nx.bfloat16));
+             Windtrap.cases
+               "an lse-only call's gradient takes attention's kernels, no \
+                values' launch, and the full call's bits"
+               ~id:string_of_int [ 110; 160 ]
+               (fun dims ->
+                 let ks =
+                   Attentions.lse_only (snd (on_gpu ())) ~rows:176 ~dims
+                     (Nx.Dtype.Any Nx.bfloat16)
+                 in
+                 let own = String.starts_with ~prefix:"attention" in
+                 equal ~msg:"other kernels" Testable.(list string) []
+                   (List.filter (fun n -> not (own n)) ks);
+                 equal ~msg:"the keys' launches" Testable.int 1
+                   (List.length (List.filter (String.equal "attention_dkdv") ks)));
+             (* At 64 dimensions of keys over 128 columns, the full call's
+                keys and values take a launch each and tiles of 16, the
+                lse-only call one launch and tiles of 32: its gradient's
+                bits may differ, and both hold rune's bound. *)
+             Windtrap.cases
+               "an lse-only call where the full call's tiles differ holds \
+                rune's bound"
+               ~id:head_id
+               (List.concat_map
+                  (fun (c : Attentions.t) ->
+                    if c.dk = 64 && c.dv = 0 then
+                      List.map
+                        (fun dv -> { c with dtype = Nx.Dtype.Any Nx.bfloat16; dv })
+                        [ 128; 0 ]
+                    else [])
+                  grad_examples)
+               (fun c ->
+                 Attentions.grad_law ~composed:true (snd (on_gpu ()))
+                   ~vmap:false c);
+             (* The heads' shapes, their mask and lengths, at values of no
+                column. *)
+             test "an lse-only call at the heads' shapes holds rune's bound"
+               (fun () ->
+                 let c = List.hd (Attentions.heads [ Nx.Dtype.Any Nx.bfloat16 ]) in
+                 Attentions.grad_law ~composed:true (snd (on_gpu ()))
+                   ~vmap:false
+                   { c with Attentions.dk = 64; dv = 0 });
              test "results returned twice are apart" (fun () ->
                  Attentions.apart (snd (on_gpu ())) (Nx.Dtype.Any Nx.bfloat16));
              test "results are written into a donated argument they do not read"

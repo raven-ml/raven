@@ -143,6 +143,15 @@ val uncopied :
     values of [o] and [lse], compile only kernels of attention's own:
     each result is the storage its kernel wrote, uncopied. *)
 
+val lse_only :
+  (module Nx.Devices) -> rows:int -> dims:int -> Nx.Dtype.any -> string list
+(** [lse_only s ~rows ~dims dt] checks that a compiled call of attention over
+    [rows] batches of 4 heads of 256 rows of [dims] dimensions of [dt], its
+    values of no column, gives the [lse] bits of the same call over values of
+    [dims] columns, and from an [l̄se] cotangent alone the query's and keys'
+    cotangents of that call with [ō = 0], and is the names of the kernels it
+    compiles. *)
+
 val apart : (module Nx.Devices) -> Nx.Dtype.any -> unit
 (** [apart s dt] checks that a compiled call returning one attention's [o]
     twice, and transposed, on [s]'s devices, returns three arrays of [o]'s

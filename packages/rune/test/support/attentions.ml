@@ -399,7 +399,7 @@ let dense (type a s d) (acc : (float, a) Nx.dtype) c ~lengths ~docs ~positions
       (Nx.add m (Nx.log (Nx.where empty (Nx.ones_like l) l)))
   in
   let w = Nx.exp (Nx.sub s (Nx.where empty (Nx.zeros_like lse) lse)) in
-  let o = Nx.matmul w (heads v c.dv) in
+  let o = Nx.matmul w (heads v (Nx.dim 3 v)) in
   (Nx.cast (Nx.dtype q) o, Nx.reshape [| c.lead; c.hq; c.tq |] lse)
 
 let unit_roundoff (Nx.Dtype.Any dt) =
@@ -876,22 +876,31 @@ let grad_law ?(composed = false) (module S : Nx.Devices) ~vmap c =
     wr.(i) <- big_w
     end
   done;
-  (* [Σ_i p x_i] as the reference's [v̄] of the cotangent [x]. *)
+  (* [Σ_i p x_i] as the reference's [v̄] of the cotangent [x], of values of
+     one column where [c]'s have none: the weights do not read the values. *)
+  let cols = max 1 c.dv in
   let summed x =
-    let x = Nx.create Nx.float64 [| c.lead; c.hq; c.tq; c.dv |] x in
-    Nx.to_array (List.nth (reference_grad x (Nx.zeros_like (f64 wl))) 2)
+    let x = Nx.create Nx.float64 [| c.lead; c.hq; c.tq; cols |] x in
+    let wl = Nx.zeros_like (f64 wl) in
+    if c.dv > 0 then Nx.to_array (List.nth (reference_grad x wl) 2)
+    else
+      let v1 = Nx.zeros Nx.float64 [| c.lead; c.hk; c.tk; 1 |] in
+      Nx.to_array
+        (List.nth (grad Nx.float64 ~composed ~lengths [ f64 q; f64 k; v1; x; wl ]) 2)
   in
   let k_terms =
     summed
-      (Array.init (rows * c.dv) (fun j ->
-           let i = j / max 1 c.dv in
+      (Array.init (rows * cols) (fun j ->
+           let i = j / cols in
            gd.(i) +. (gamma (n + 1) (2. *. u) *. ga.(i))))
   in
   let v_terms =
-    summed
-      (Array.init (rows * c.dv) (fun j ->
-           let i = j / max 1 c.dv in
-           (wr.(i) +. uv +. gamma (n + 1) (2. *. u)) *. Float.abs wo_a.(j)))
+    if c.dv = 0 then [||]
+    else
+      summed
+        (Array.init (rows * c.dv) (fun j ->
+             let i = j / c.dv in
+             (wr.(i) +. uv +. gamma (n + 1) (2. *. u)) *. Float.abs wo_a.(j)))
   in
   let twice x = if wide then 2. *. x else x in
   let check name refs gs bound =
@@ -913,9 +922,9 @@ let grad_law ?(composed = false) (module S : Nx.Devices) ~vmap c =
           +. (under *. Float.of_int c.tk));
       (* A key's row of [k̄] or [v̄] is the [j / d]th, its [Σ_i p x] the
          reference's column 0 there. *)
-      let row d j = j / max 1 d * max 1 c.dv in
+      let row d j = j / max 1 d * cols in
       check "k̄" rk ck (fun j ->
-          (scale *. ((if c.dv = 0 then 0. else k_terms.(row c.dk j)) +. (floor *. Float.of_int n)))
+          (scale *. (k_terms.(row c.dk j) +. (floor *. Float.of_int n)))
           +. (under *. Float.of_int n));
       check "v̄" rv cv (fun j ->
           v_terms.(j) +. ((floor +. under) *. Float.of_int n))
@@ -1031,6 +1040,44 @@ let uncopied ?(dims = 64) (module S : Nx.Devices) ~grad dtype =
            Nx.sync a;
            Nx.sync b;
            Nx.sync d))
+
+(* An lse-only call: attention over values of no column, as a call whose
+   output is its [lse] alone. Where the full call takes the same tiles and
+   splits, its [lse] and its gradient in the query and keys from an [l̄se]
+   cotangent alone are the full call's bits with [ō = 0]: the full call adds
+   exact zeros for its values' columns. *)
+let lse_only (module S : Nx.Devices) ~rows ~dims dtype =
+  let (F dt) = float_dtype dtype in
+  let c = base dtype in
+  let shape = [| rows; 4; 256; dims |] in
+  let place salt s = Nx.place S.on (Nx.cast dt (draw c salt s)) in
+  let q = place 1 shape and k = place 2 shape and v = place 3 shape in
+  let none = Nx.place S.on (Nx.zeros dt [| rows; 4; 256; 0 |]) in
+  let none0 = Nx.place S.on (Nx.zeros dt [| rows; 4; 256; 0 |]) in
+  let bl = Nx.place S.on (draw c 5 [| rows; 4; 256 |]) in
+  let bo = Nx.place S.on (Nx.zeros dt shape) in
+  let qkv = Nx.Ptree.(triple tensor tensor tensor) in
+  let two = Nx.Ptree.(pair tensor tensor) in
+  let both (q, k, v) = Nx.attention ~acc:Nx.float32 ~kv:(Dense { k; v }) q in
+  let step x g =
+    let (o, lse), back = Rune.vjp qkv two both x in
+    (o, lse, back g)
+  in
+  let three = Nx.Ptree.(triple tensor tensor qkv) in
+  let f = Rune.jit Nx.Ptree.(qkv @-> two @-> returns three) step in
+  let host x = Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on x)) in
+  let _, lse, (bq, bk, _) = f (q, k, v) (bo, bl) in
+  let (), ks =
+    Tolk.Realize.kernels (fun () ->
+        let o0, lse0, (bq0, bk0, bv0) = f (q, k, none) (none0, bl) in
+        let bits = Testable.(array float_exact) in
+        equal ~msg:"no output columns" Testable.int 0 (Nx.numel o0);
+        equal ~msg:"no value cotangent columns" Testable.int 0 (Nx.numel bv0);
+        equal ~msg:"lse" bits (host lse) (host lse0);
+        equal ~msg:"the query's cotangent" bits (host bq) (host bq0);
+        equal ~msg:"the keys' cotangent" bits (host bk) (host bk0))
+  in
+  List.map (fun (k : Tolk.Realize.kernel) -> k.name) ks
 
 (* A call returning one attention's [o] twice, and transposed, returns
    three arrays of [o]'s elements that share no memory. *)

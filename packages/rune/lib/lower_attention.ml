@@ -1630,12 +1630,18 @@ let delta_kernel a xs =
       let live = i < int rows in
       let r = Shape.placeholder ~slot:slot_m ~addrspace:Reg [ 1 ] acc in
       let init = st (Ops.after r [ gr; l ]) (int 0) (fl acc 0.) in
-      let c = range Loop (Int a.dv) 2 in
-      let r_c = Ops.after r [ init; c ] in
-      let at = (i * int a.dv) + c in
-      let term = Ops.cast (ld_gated bo at live) acc * Ops.cast (ld_gated o at live) acc in
-      let sum = Ops.end_ (st r_c (int 0) (ld r_c (int 0) + term)) [ c ] in
-      let dot = ld (Ops.after r [ sum ]) (int 0) in
+      let dot =
+        if Stdlib.(a.dv = 0) then fl acc 0.
+        else
+          let c = range Loop (Int a.dv) 2 in
+          let r_c = Ops.after r [ init; c ] in
+          let at = (i * int a.dv) + c in
+          let term =
+            Ops.cast (ld_gated bo at live) acc * Ops.cast (ld_gated o at live) acc
+          in
+          let sum = Ops.end_ (st r_c (int 0) (ld r_c (int 0) + term)) [ c ] in
+          ld (Ops.after r [ sum ]) (int 0)
+      in
       let v = dot - Ops.cast (ld_gated blse i live) acc in
       let store = Ops.store (Ops.index delta [ Ops.where live i Ops.invalid ]) v in
       let kernel = Ops.kernel_info ~name:"attention_delta" ~opts_to_apply:[] () in
@@ -1655,6 +1661,13 @@ type dcore = {
   kw : int;  (* The keys' and queries' dimensions, in whole steps of [K]. *)
   vw : int;  (* The values' and [ō]'s dimensions, in whole steps of [K]. *)
 }
+
+(* [values a ~ntiles ~ec acc f] is [f ()], [dP]'s accumulators, or zeros
+   where the values have no column: a call of [lse] alone reads no value and
+   no [ō]. *)
+let values a ~ntiles ~ec acc f =
+  if a.dv = 0 then Array.init ntiles (fun _ -> Array.make ec (fl acc 0.))
+  else f ()
 
 (* By rows: [q̄] of the rows a workgroup holds, over each tile of keys. A
    warp holds [M] rows, their [Q] and [ō] operands in registers a chunk of
@@ -1744,14 +1757,17 @@ let core_dq c a tr xs =
       in
       reader (Ops.after dst [ Ops.group staged ]) ~w
     in
-    let k_tile = tile x.k ks a.dk kw and v_tile = tile x.v vs a.dv vw in
+    let k_tile = tile x.k ks a.dk kw in
     (* S = Q Kᵀ and dP = ō Vᵀ, each tile of [N] keys an accumulator. *)
     let dots slot id w ops tile =
       dots u ~acc ~slot ~id ~inside ~at:(jr :: at) ~tiles:ntiles (1, w) ops
         (fun _ -> tile)
     in
     let s = dots slot_s 13 kw qa k_tile in
-    let dp = dots slot_dp 14 vw oa v_tile in
+    let dp =
+      values a ~ntiles ~ec:f.ec acc (fun () ->
+          dots slot_dp 14 vw oa (tile x.v vs a.dv vw))
+    in
     let rbar =
       Array.init ntiles (fun nt ->
           Array.init f.ec (fun e ->
@@ -1886,7 +1902,11 @@ let core_dkdv ~(part : part) c a tr xs =
         (fun _ -> tile)
     in
     let s = dots slot_s 13 kw ka q_tile in
-    let dp = if want_k then dots slot_dp 14 vw va o_tile else [||] in
+    let dp =
+      if want_k then
+        values a ~ntiles ~ec:f.ec acc (fun () -> dots slot_dp 14 vw va o_tile)
+      else [||]
+    in
     let weights =
       Array.init ntiles (fun nt ->
           Array.init f.ec (fun e ->
@@ -1962,7 +1982,8 @@ let derivative_tile tc ~wide =
 (* [dplan renderer a] is the derivative's kernels' shape for [a] on
    [renderer]'s target, if it takes them: {!plan}'s core, dense keys, [o] of
    the query's dtype, no load whose cotangent is asked for, and keys and
-   values of 1 to {!derivative_dims} dimensions. To 64 a warp holds its
+   values of 1 to {!derivative_dims} dimensions, values of none included (an
+   lse-only call, whose [v̄] has no element). To 64 a warp holds its
    operands, its accumulators and those of a tile of 32 keys or rows in
    registers, up to 250 of them on sm_89 with no spill, and two workgroups of
    4 warps share a compute unit. Past 64, [k̄] and [v̄] take a launch each, so
@@ -2012,8 +2033,7 @@ let dplan (r : Renderer.t) a ~marked =
     when Option.is_none a.paged
          && (not (Array.exists Fun.id marked))
          && Dtype.equal (Arith.dtype a.out) vt
-         && a.dk > 0 && a.dv > 0 && a.dk <= derivative_dims
-         && a.dv <= derivative_dims ->
+         && a.dk > 0 && a.dk <= derivative_dims && a.dv <= derivative_dims ->
       let n, m, k = Tc.dims c.tc in
       let step = max n k in
       let wide = a.dk > 64 || a.dv > 64 in
@@ -2104,6 +2124,13 @@ let arg device v =
     Ops.after b [ Ops.store b v ]
 
 let flat u = Shape.reshape u [ Ops.Int (Shape.max_numel u) ]
+
+(* [present device (dt, s, u)] is the argument of the operand [u] of [dt] and
+   shape [s]: an operand of no element, keys of no dimension or values of no
+   column, is a buffer of one the kernels never read. *)
+let present device (dt, s, u) =
+  if Array.exists (( = ) 0) s then Ops.new_buffer device 1 (Arith.dtype dt)
+  else flat (arg device u)
 
 (* [capture device dt u] is the argument of the capture [u], of the pair
    loop's shape, cut to one element along each axis it does not vary on,
@@ -2202,13 +2229,7 @@ let lower ~device ~(renderer : Renderer.t)
           fill a.acc (`Float Float.neg_infinity) lse_shape;
         |]
       else
-        (* An operand of no element, keys of no dimension or values of no
-           column, is a buffer of one the kernel never reads. *)
-        let operand x =
-          if Array.exists (( = ) 0) (Nx.shape x) then
-            Ops.new_buffer device 1 (Arith.dtype (D.Any (Nx.dtype x)))
-          else flat (arg device (node x))
-        in
+        let operand x = present device (D.Any (Nx.dtype x), Nx.shape x, node x) in
         let o = Ops.new_buffer device (max 1 (rows * dv)) (Arith.dtype a.out) in
         let lse = Ops.new_buffer device rows (Arith.dtype a.acc) in
         let inputs =
@@ -2282,7 +2303,7 @@ let linear ~device ~(renderer : Renderer.t) (spec : Attention.spec) ~transposed
   let lens = if spec.lengths then Some data.(3) else None in
   let first = 3 + Bool.to_int spec.lengths in
   let loads = Array.sub data first (n - 2 - first) in
-  let out, _, o_node = data.(n - 2) in
+  let out, _, _ = data.(n - 2) in
   let acc, _, lse_node = data.(n - 1) in
   let hk = sk.(r - 3) and tk = sk.(r - 2) in
   let dv = sv.(Array.length sv - 1) in
@@ -2315,14 +2336,14 @@ let linear ~device ~(renderer : Renderer.t) (spec : Attention.spec) ~transposed
     | Some c ->
         let rows = numel lead * hq * tq in
         let nkeys = numel lead * hk * tk in
-        let operand (_, _, u) = flat (arg device u) in
+        let operand = present device in
         let buf dt m = Ops.new_buffer device (max 1 m) (Arith.dtype dt) in
         let shaped dt s u = Shape.reshape u (Arith.dims dt s) in
         let bo = operand args.(0) and blse = operand args.(1) in
         let delta =
           List.hd
             (Shape.custom_kernel
-               [ buf acc rows; flat (arg device o_node); bo; blse ]
+               [ buf acc rows; operand data.(n - 2); bo; blse ]
                (delta_kernel a))
         in
         let call =
@@ -2338,7 +2359,15 @@ let linear ~device ~(renderer : Renderer.t) (spec : Attention.spec) ~transposed
             (core_dq c a tr)
         in
         let bk, bv =
-          if c.wide then
+          if dv = 0 then
+            (* An lse-only call: [v̄] has no element, and no launch. *)
+            let k =
+              Shape.custom_kernel
+                (buf vt (nkeys * dk) :: call)
+                (core_dkdv ~part:Keys c a tr)
+            in
+            (List.hd k, Shape.empty ~device (Arith.dims vt sv) (Arith.dtype vt))
+          else if c.wide then
             let k =
               Shape.custom_kernel
                 (buf vt (nkeys * dk) :: call)
@@ -2357,4 +2386,5 @@ let linear ~device ~(renderer : Renderer.t) (spec : Attention.spec) ~transposed
             in
             (List.nth kv 0, List.nth kv 1)
         in
-        Some [| shaped vt sq (List.hd dq); shaped vt sk bk; shaped vt sv bv |]
+        let bv = if dv = 0 then bv else shaped vt sv bv in
+        Some [| shaped vt sq (List.hd dq); shaped vt sk bk; bv |]

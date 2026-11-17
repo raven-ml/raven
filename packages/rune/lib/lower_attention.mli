@@ -52,7 +52,9 @@
     no sum split across workgroups. Past 64 dimensions of keys or values,
     [k̄] and [v̄] take a kernel each, four kernels in all, which compute
     eight products a tile of pairs: [S], [dP] and [q̄] for [q̄], [S], [dP] and
-    [k̄] for [k̄], and [S] and [v̄] for [v̄]. Each product runs on the tensor
+    [k̄] for [k̄], and [S] and [v̄] for [v̄]. A call over values of no column, whose
+    output is its [lse], takes no [v̄] kernel and no [dP]: [q̄] and [k̄] are
+    those of the same call over values with [ō = 0]. Each product runs on the tensor
     core, the weights and the scores' cotangents rounded once to the
     operands' dtype; each sum adds in a fixed order of the shapes and the
     target. To 160 dimensions each operand's dimensions are one block; past
