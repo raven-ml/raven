@@ -138,6 +138,11 @@ Where it stands, with every measurement: doc/performance.md.
 - D404's launch member caps, NVRTC's 64 and Metal's 40 (an M1 Max), name
   no fudge measurement: the CUDA cap needs a fudge row, as the ledger's
   header asks of a speed measured elsewhere
+- `Ops.bound_loads`, and so `Postrange.bound_by_memory` (D255), sees only
+  `Op.Load`, while a scheduled kernel reads memory through bare indices:
+  a loop bounded by `x[i]` in a scheduled kernel is probably still
+  searched (`Codegen.gated_by_memory` reads both). Unverified on a real
+  kernel. Found by SEARCHFIX
 - `beam_search`'s disk key names no device part, so a search timed on one
   part of a target serves every other part. rig states arch, bus and
   cache bytes but no model or unit count, so the key needs a rig fact and
