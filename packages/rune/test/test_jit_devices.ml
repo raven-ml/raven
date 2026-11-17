@@ -2056,8 +2056,11 @@ let partial_programs n =
       (name, made))
     ops
 
+(* Windows of each kind, and [x] whole, which ten generated cases miss in one
+   run in 50. *)
 let examples =
   [
+    { n = 3; shape = [| 3; 2 |]; x = On; y = Split 1 };
     { n = 2; shape = [| 4; 3 |]; x = Split 0; y = On };
     { n = 3; shape = [| 5; 2 |]; x = Split 0; y = Split 0 };
     { n = 4; shape = [| 2; 3 |]; x = Split 0; y = Device 1 };
