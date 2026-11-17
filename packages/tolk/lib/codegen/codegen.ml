@@ -1704,6 +1704,26 @@ let lift_uniform_gates sink =
     ~ctx:(lazy (Uniform.varying sink), lazy (consumers sink))
     sink (After_sources pm_lift_uniform_gates)
 
+(* [sink]'s loops simplified, then optimised. *)
+let optimised ?beam sink ren =
+  (* collapse loads reduce (indexing by a tensor) *)
+  let sink = rewrite Simplify.pm_load_collapse sink in
+  let sink =
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(Tbl.create 8) sink
+      (After_sources
+         (Simplify.pm_split_ranges ++ lift Simplify.pm_flatten_range))
+  in
+  (* symbolic (NOTE: this is a requirement for pm_simplify_ranges to be
+     correct) *)
+  let sink = rewrite (Symbolic.sym ++ Simplify.pm_flatten_range) sink in
+  let sink =
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(Tbl.create 8) sink
+      (After_sources
+         (lift Simplify.pm_flatten_range ++ Simplify.pm_simplify_ranges))
+  in
+  (* do postrange optimization, BEAM or hand_coded_optimizations *)
+  apply_opts ?beam sink ren
+
 (* [ast] lowered up to its reductions, each float sum in blocks. *)
 let blocked_sums ?(optimize = true) ?beam ast ren =
   if setting Setting.debug >= 5 then
@@ -1717,26 +1737,18 @@ let blocked_sums ?(optimize = true) ?beam ast ren =
   in
   (* effects keep their ranges until the expander *)
   let sink = Simplify.pin_effects sink in
+  (* A kernel whose optimisations are applied, as a search's candidate, is
+     lowered from here as the kernel they were chosen for: its program is the
+     one the search times. *)
   let sink =
     if not optimize then sink
     else
-      (* collapse loads reduce (indexing by a tensor) *)
-      let sink = rewrite Simplify.pm_load_collapse sink in
       let sink =
-        graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(Tbl.create 8) sink
-          (After_sources
-             (Simplify.pm_split_ranges ++ lift Simplify.pm_flatten_range))
+        match arg ast with
+        | Kernel { optimized = true; _ } -> sink
+        | _ -> optimised ?beam sink ren
       in
-      (* symbolic (NOTE: this is a requirement for pm_simplify_ranges to be
-         correct) *)
-      let sink = rewrite (Symbolic.sym ++ Simplify.pm_flatten_range) sink in
-      let sink =
-        graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(Tbl.create 8) sink
-          (After_sources
-             (lift Simplify.pm_flatten_range ++ Simplify.pm_simplify_ranges))
-      in
-      (* do postrange optimization, BEAM or hand_coded_optimizations *)
-      Stage.decodes ren (Stage.operands ren (apply_opts ?beam sink ren))
+      Stage.decodes ren (Stage.operands ren sink)
   in
   (* reduce_unparented: a REDUCE whose src folded to a CONST (e.g. x*0) has no
      parented ranges, collapse it before the expander *)
@@ -2723,9 +2735,13 @@ let launcher ren ast =
       [ group (List.rev ends) ]
   end
 
-let linearized ?beam ast (ren : Renderer.t) =
+let linearized ?beam ?optimize ast (ren : Renderer.t) =
   let ast = if Shape.is_launch ast then launcher ren ast else ast in
-  let optimize = not (kernel_of ast).optimized in
+  let optimize =
+    match optimize with
+    | Some o -> o
+    | None -> not (kernel_of ast).optimized
+  in
   let ast =
     graph_rewrite ~calls:Skip ~pass:Once
       ~ctx:{ ren; names = Hashtbl.create 8 }
@@ -2746,7 +2762,7 @@ let linearized ?beam ast (ren : Renderer.t) =
     (v Op.Program ~src:[ full_sink ] ~arg:(Program info))
     (After_sources pm_linearize)
 
-let linearize ast ren = linearized ast ren
+let linearize ?optimize ast ren = linearized ?optimize ast ren
 
 let compiled compile_source prg (ren : Renderer.t) =
   match src prg with

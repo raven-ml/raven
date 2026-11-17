@@ -66,9 +66,15 @@ let get_test_global_size input max_global_size =
 let least = List.fold_left Float.min infinity
 
 (* The program timed for [prg]: with [allow_test_size], one launching fewer
-   workgroups, and the factor that scales its times up. *)
+   workgroups, and the factor that scales its times up. A host program that
+   runs its loop in blocks counts the loop's iterations as its global size, and
+   its launch runs them all whatever that size: it launches no workgroups. *)
 let test_size ~allow_test_size ~value prg =
+  let split =
+    match arg (nth prg 0) with Kernel k -> Option.is_some k.split | _ -> false
+  in
   match arg prg with
+  | Program _ when split -> (prg, 1.)
   | Program info ->
       let infer s = sym_compile s (fun v () -> value v) () in
       let size = List.map infer info.global_size in
@@ -145,7 +151,7 @@ let try_compile (ren : Renderer.t) k =
   let st = Unix.gettimeofday () in
   match
     let ast = K.get_optimized_ast ~name_override:"test" (K.copy k) in
-    let lin = Codegen.linearize ast ren in
+    let lin = Codegen.linearize ~optimize:true ast ren in
     let uops = List.length (src (nth lin 1)) in
     let uops_max = setting Setting.beam_uops_max in
     if uops_max > 0 && uops >= uops_max then (

@@ -1927,7 +1927,8 @@ cubin again, measured with the driver's cache missing.
   `uop/ops.py` `KernelInfo` and `ProgramInfo.from_sink`; `engine/realize.py`
   `get_call_kernel_args` and `exec_kernel`.
 - **tolk:** `Codegen.split_blocks`, its place in
-  `Codegen.full_rewrite_to_sink`, `Postrange.misses`,
+  `Codegen.full_rewrite_to_sink`, which a search's candidates take (D489),
+  `Postrange.misses`,
   `Codegen.pm_number_params` and `Codegen.whole_loop`; `Ops.kernel_info`'s
   `split`; `Shape.program_info_of_sink`; `Realize.get_call_kernel_args`;
   `Tolk_engine.compute_work`, `Tolk_engine.memory_work`,
@@ -6003,7 +6004,8 @@ against 2.77).
   scheduler `STAGE`, which skips the heuristic. `uop/spec.py`
   (`spec_shared`: an AFTER of a scalar or a computed value only).
 - **tolk:** `Stage.operands`, which `Codegen.full_rewrite_to_sink` runs after
-  the opts; `Stage.depth`, `Stage.layout`, `Stage.tile` and `Stage.steps`;
+  the opts, a search's candidates' included (D489); `Stage.depth`,
+  `Stage.layout`, `Stage.tile` and `Stage.steps`;
   `Heuristic.staged_tile`; `Chains`, the blocks of a sum's running sums
   that codegen and the tile both read; `Renderer.t.async_copy`, `units`
   and `in_flight`; `Setting.stage`.
@@ -6987,7 +6989,8 @@ C's undefined behaviour.
   kernel's output loops in the order of their axes.
 - **tolk:** `Stage.decodes`, `Stage.panel`, `Stage.panel_bytes` and
   `Stage.decoded` (moved from `Heuristic`); `Codegen.full_rewrite_to_sink`,
-  which runs it after `Stage.operands`; `Setting.stage`.
+  which runs it after `Stage.operands`, on a search's candidates too (D489);
+  `Setting.stage`.
 - **Differs:** on the host (`target.device = "CPU"`), after the opts, a
   kernel where exactly one operand of its sums of products is decoded
   (D92's `decoded`), whose output loops all have constant bounds and one of at
@@ -8882,3 +8885,30 @@ D466.
   within its target's and a group's float sum within 256 partials, a pad's
   included` on sm_89, gfx90a and Apple2; the Search suite's `candidates
   that pad a local axis`.
+
+## D489. A search lowers each candidate as the compile lowers its chosen kernel
+
+- **tinygrad:** `codegen/opt/search.py` `_try_compile` (compiles
+  `get_optimized_ast`'s kernel through `get_program`, whose
+  `full_rewrite_to_sink` runs with `optimize=False`, which skips only the
+  passes before `apply_opts` and `apply_opts` itself) and `_time_program`
+  (`get_test_global_size` on every program's global size).
+- **tolk:** `Search.try_compile` (`Codegen.linearize ~optimize:true`);
+  `Codegen.blocked_sums`, where a kernel that is `optimized` skips the
+  simplification before the opts and `Postrange.apply_opts`; `Search.test_size`.
+- **Differs:** a candidate is lowered as the kernel the compile optimises is
+  lowered after `Postrange.apply_opts`, so D262's staging, D348's panels and
+  D80's blocks apply to it, and the binary timed for a kernel's
+  optimisations is the binary that runs with them. A host program in blocks
+  is timed over its whole loop: its blocks are no workgroups, and its launch
+  runs every iteration whatever its first global size.
+- **Reason:** (d), with D80, D262 and D348, whose passes change a program
+  after the opts: a search that timed its candidates without them chose among
+  other programs than those it ships. Searched unstaged, the stream kernel
+  `key-projection-64` ran 32.7 us against the heuristic's 13.3 us. No bench
+  row runs a search; the law below pins the rule.
+- **Pinned by:** `Tolk.Search`'s `a search times the program each candidate
+  compiles to and returns it` (CUDA's staged tensor cores, the host's
+  blocks) and `measuring on fewer workgroups › launches a host program's
+  blocks over its whole loop`; `searches.golden`'s host rows, which count a
+  host program's workgroups without its blocks.

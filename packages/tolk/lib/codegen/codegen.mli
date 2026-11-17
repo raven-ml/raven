@@ -41,15 +41,18 @@ val full_rewrite_to_sink :
     once per lane group.
 
     If [optimize] (default [true]), its loops are first simplified and optimised
-    ({!Postrange.apply_opts}): with the optimisations its argument lists, or
-    else, if its argument asks for a beam search of width [w] greater than [0]
-    and no loop's bound loads from memory, with [beam w], or else with
+    ({!Postrange.apply_opts}), unless its kernel information is [optimized],
+    its optimisations applied already: with the optimisations its argument
+    lists, or else, if its argument asks for a beam search of width [w]
+    greater than [0] and no loop's bound loads from memory, with [beam w], or
+    else with
     {!Heuristic.hand_coded_optimizations} unless the setting {!Setting.noopt}
     holds. A kernel whose builder fixed its threads takes neither, and one
     that buffers values does not take the heuristic ({!Postrange.apply_opts}).
     Its tensor cores' operands are then staged through shared memory
     ({!Stage.operands}), and on the host its decoded operand through a panel
-    ({!Stage.decodes}). The settings {!Setting.disable_fast_idiv}
+    ({!Stage.decodes}), and on the host its largest output loop runs in
+    blocks ({!Ops.kernel_info.split}). The settings {!Setting.disable_fast_idiv}
     and {!Setting.transcendental} choose how divisions by constants and
     transcendental functions are decomposed ({!Decomp_op.late_patterns},
     {!Transcendental.val-patterns}). When the setting {!Setting.spec} is [1] or
@@ -260,12 +263,17 @@ val pack_args : Ops.t -> Ops.t list -> Ops.t
     kernel the runtime launches ({!Ops.kernel_info.kernel}) for a renderer with
     {!Renderer.t.packed_args}. *)
 
-val linearize : Ops.t -> Renderer.t -> Ops.t
-(** [linearize ast ren] is the program of the kernel's sink [ast] for [ren] up
-    to its instructions: an {!Op.Program} whose sources are the first two of
-    {!to_program}'s, the lowered sink and the {!Op.Linear} of its instructions,
-    and whose argument is its {!Ops.program_info}. It renders, compiles and
-    keeps nothing.
+val linearize : ?optimize:bool -> Ops.t -> Renderer.t -> Ops.t
+(** [linearize ~optimize ast ren] is the program of the kernel's sink [ast] for
+    [ren] up to its instructions: an {!Op.Program} whose sources are the first
+    two of {!to_program}'s, the lowered sink ({!full_rewrite_to_sink}
+    [~optimize], [optimize] defaulting to whether [ast]'s kernel information is
+    not [optimized]) and the {!Op.Linear} of its instructions, and whose
+    argument is its {!Ops.program_info}. It renders, compiles and keeps
+    nothing. A kernel whose optimisations are applied
+    ({!Postrange.Scheduler.get_optimized_ast}), lowered with [optimize], is the
+    program {!to_program} makes of the kernel it was optimised from with those
+    optimisations: a search times that program ({!Search.beam_search}).
 
     Raises as {!to_program} does before rendering. *)
 

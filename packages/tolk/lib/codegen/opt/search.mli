@@ -94,9 +94,11 @@ val beam_search :
     limits neither a compilation nor a run: a candidate whose compilation or run
     hangs hangs the search, one more reason to run it offline.
 
-    A kernel is compiled for [k]'s renderer named ["test"]. It is first
-    linearized
-    ({!Codegen.linearize}) and dropped if it has {!Setting.beam_uops_max}
+    A kernel is compiled for [k]'s renderer named ["test"], as the compile
+    of the kernel it chooses lowers it: staged and, on the host, in blocks.
+    It is first linearized ({!Codegen.linearize} [~optimize:true]), so its
+    binary is the one that runs with its optimisations, and dropped if it has
+    {!Setting.beam_uops_max}
     instructions or more, unless that is [0] or less. It is then completed
     ({!Codegen.compile}), its binary read from or kept in its compiler's disk
     cache ({!Renderer.Compiler.compile_cached}); its program is not kept past
@@ -149,6 +151,8 @@ val beam_search :
     launching more than [65536] workgroups is timed launching fewer: of its
     global sizes, the last one greater than [16] is halved until their product
     is at most [65536], and its time is scaled up by the ratio of the products.
+    A host program whose loop runs in blocks ({!Ops.kernel_info.split})
+    launches no workgroups and is timed whole.
 
     While the setting {!Setting.cachelevel} is positive, each search keeps the
     optimisations it finds in the {!Helpers.Diskcache} table ["beam_search"],

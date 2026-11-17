@@ -1357,6 +1357,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Search.beam_search` times each candidate as the program its optimisations
+  compile to: staged on CUDA, in blocks on all of the host's cores, where it
+  timed them unstaged and on one core and then shipped another program.
+  `Codegen.linearize` takes `~optimize`.
 - `Postrange.Scheduler.apply_opt` refuses a local split, or a pad of a local
   axis, that makes a workgroup of more threads than the target launches
   (`Renderer.t.local_threads_max`), or a group adding more than 256 partials

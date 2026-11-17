@@ -77,10 +77,18 @@ let binary prg =
   | Bytes b -> b
   | _ -> failf "the program %a has no binary" Ops.pp prg
 
+(* A host program that runs its output loop in blocks counts the loop's
+   iterations as its first global size; they are no workgroups of its
+   launch. *)
 let workgroups ~vars prg =
   match Ops.arg prg with
-  | Program p ->
-      Helpers.prod (List.map (fun s -> Shape.sym_infer s vars) p.global_size)
+  | Program p -> (
+      let n =
+        Helpers.prod (List.map (fun s -> Shape.sym_infer s vars) p.global_size)
+      in
+      match (kernel_info prg).split with
+      | Some { iterations; _ } -> n / Shape.sym_infer iterations vars
+      | None -> n)
   | _ -> failf "%a is no program" Ops.pp prg
 
 (* Timings
@@ -775,6 +783,70 @@ let links_once =
       in
       equal (list Uops.uop) r.linked (List.rev sampled))
 
+(* The programs that run
+
+   A search measures a program to choose the one that runs, so the program it
+   times for a kernel's optimisations is the program a compile of the kernel
+   with those optimisations makes, staged as that compile stages it. *)
+
+let with_info f k =
+  match Ops.arg k with
+  | Kernel info -> Ops.replace k ~arg:(Kernel (f info))
+  | _ -> failf "%a is no kernel" Ops.pp k
+
+(* Whether [prg]'s kernel copies a tensor core's operands into workgroup
+   memory. *)
+let staged prg =
+  let nodes = Ops.toposort ~calls:Skip (Ops.nth prg 0) in
+  List.exists (fun u -> Ops.op u = Op.Wmma) nodes
+  && List.exists (fun u -> Ops.addrspace u = Some Dtype.Local) nodes
+
+let times_what_runs =
+  cases "a search times the program each candidate compiles to and returns it"
+    ~id:name_of
+    (List.concat_map
+       (fun k -> List.map (fun t -> (k, t)) [ "clang"; "metal"; "cuda"; "hip" ])
+       [
+         "add_small"; "sum_rows"; "variable_rows"; "symbolic"; "pad_7x7";
+         "matmul_half";
+       ])
+    (fun (name, target) ->
+      let ren = renderer target in
+      let (link, time), record =
+        sampling (fun ~vars prg _ -> drawn_time 0 ~vars prg)
+      in
+      let k = kernel name in
+      let chosen =
+        quietly (fun () ->
+            Codegen.to_program
+              ~beam:(Search.beam_search ~link ~time)
+              (with_info (fun i -> { i with beam = 2 }) k)
+              ren)
+      in
+      let compiled opts =
+        quietly (fun () ->
+            Codegen.to_program
+              (with_info (fun i -> { i with opts_to_apply = Some opts }) k)
+              ren)
+      in
+      let applied p = (kernel_info p).applied_opts in
+      let linked = (record ()).linked in
+      List.iter
+        (fun p ->
+          let msg =
+            Format.asprintf "%a" (Format.pp_print_list Opt.pp) (applied p)
+          in
+          equal ~msg string (binary (compiled (applied p))) (binary p))
+        linked;
+      let same p = List.equal Opt.equal (applied p) (applied chosen) in
+      (match List.find_opt same linked with
+      | Some p ->
+          equal ~msg:"the chosen program" string (binary p) (binary chosen)
+      | None -> failf "the chosen optimisations were never timed");
+      if name = "matmul_half" && target = "cuda" then
+        greater int ~msg:"staged candidates" ~than:0
+          (List.length (List.filter staged linked)))
+
 (* Samples drawn from [seed]: a program's base time, from a microsecond to two
    milliseconds, times up to one and a half, so that the samples of programs of
    near base times overlap. *)
@@ -1080,6 +1152,25 @@ let test_size =
                 (fun n -> n <= 65536)
                 (workgroups ~vars:c.vars c.prg))
             (calls ()));
+      test "launches a host program's blocks over its whole loop" (fun () ->
+          let timing, calls = recording (golden_time ~failing:false) in
+          ignore (search ~timing 1 (scheduled "add_large" "clang"));
+          let split c =
+            match (kernel_info c.prg).split with
+            | Some { iterations; _ } ->
+                Some
+                  ( Shape.sym_infer iterations c.vars,
+                    match Ops.arg c.prg with
+                    | Program p ->
+                        Helpers.prod
+                          (List.map (fun s -> Shape.sym_infer s c.vars)
+                             p.global_size)
+                    | _ -> failf "%a is no program" Ops.pp c.prg )
+            | None -> None
+          in
+          let splits = List.filter_map split (calls ()) in
+          greater int ~msg:"programs in blocks" ~than:0 (List.length splits);
+          List.iter (fun (n, size) -> equal int n size) splits);
       test "launches them all without allow_test_size" (fun () ->
           let timing, calls = recording (golden_time ~failing:false) in
           ignore
@@ -1480,7 +1571,7 @@ let under_environment =
                (function
                  | Renderer.Compiler.Compile_error _ -> true | _ -> false)
                (fun () ->
-                 search ~timing:constant 1 (scheduled_for ren "sum_rows")));
+                 search ~timing:constant 1 (scheduled_for ren "add_small")));
          test
            "a search prints the kernel, failures and its choice under \
             BEAM_DEBUG" (fun () ->
@@ -1610,6 +1701,7 @@ let () =
          midpoints;
          positional;
          links_once;
+         times_what_runs;
          early_stops;
          exceptions;
          raising_again_cases;
