@@ -9104,3 +9104,28 @@ D466.
   tile, and rune's `Jit_gpu › products › a sum a tensor core pads computes
   the bits of its operands with zeros appended` and `› a product whose N is
   one tile of the core gives eager's bits`.
+
+## D492. A kernel declares the type of every parameter it names
+
+- **tinygrad:** `renderer/cstyle.py` (`uops_to_dtypes`, which lists the
+  types of a kernel's values and leaves out its buffers' pointers, and
+  `CUDARenderer.render_kernel` and `HIPRenderer.render_kernel`, which
+  include `cuda_fp16.h`, `cuda_bf16.h` and `cuda_fp8.h`, or define `half`
+  and the 8-bit floats, from that list).
+- **tolk:** `Cstyle.uops_to_dtypes`, which `cuda_kernel` and `hip_kernel`
+  read.
+- **Differs:** the types a CUDA or HIP kernel declares are its values' and
+  each parameter's and buffer's element type, as one lane, whether or not
+  the kernel reads or writes it. A store whose index no thread reaches is
+  dropped and its parameter stays in the signature, where tinygrad then
+  writes a type it never declared. A kernel whose parameters' types are
+  among its values' writes tinygrad's source.
+- **Reason:** (b). rune's compiled gradient of an `Nx.attention` over values
+  of no column on CUDA runs `attention_combine` with its `o` of no column:
+  its store to `o` is dropped and its `nv_bfloat16*` parameter stays, which
+  NVRTC rejects (`attribute "__global__" does not apply here`) without
+  `cuda_bf16.h`.
+- **Pinned by:** the Cstyle suite's `parameters' types › a parameter the
+  kernel never reads or writes has its type declared` (CUDA's 16-bit and
+  8-bit floats, HIP's `half`) and `› a kernel with a parameter it never
+  reads or writes compiles` (NVRTC, where the machine has it).

@@ -1454,6 +1454,12 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A CUDA or HIP kernel declares the type of every parameter it names, read
+  or not. A 16-bit or 8-bit float buffer whose store no thread reaches left
+  its type undeclared, and NVRTC rejected the kernel (`attribute
+  "__global__" does not apply here`): on CUDA, `Rune.jit` failed to compile
+  the gradient of a bfloat16 `Nx.attention` over values of no column whose
+  keys it splits and combines.
 - A first call that compiles its kernels takes less: a kernel's devectorizing
   rewrite moves each lane's index through a movement once
   (`Codegen.full_rewrite_to_sink`, `Indexing.apply_movement_op ~memo`).

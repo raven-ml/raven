@@ -642,6 +642,77 @@ let cuda_binaries =
             (starts_with ~prefix:"\x7fELF"));
     ]
 
+(* Parameters' types
+
+   A kernel names each parameter's type in its signature, read or not, so its
+   source declares that type. A store at an index never valid is dropped and
+   its parameter stays: over 64 indices, slot 0 takes a value of [dt] where
+   the index is negative, and slot 1 a float32 at each. NVRTC reads an
+   undeclared type first in a signature as a variable's, and rejects the
+   kernel ([attribute "__global__" does not apply here]). *)
+let unwritten dt =
+  let open Ops.O in
+  let i = Ops.range ~axis_type:Global (Int 64) [ 0 ] in
+  let at slot dt i = Ops.index (Shape.param ~shape:[ Int 64 ] slot dt) [ i ] in
+  let one = Ops.float ~dtype:Float32 1. in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"unwritten" ~opts_to_apply:[] ())
+    [
+      Ops.end_
+        (Ops.group
+           [
+             Ops.store
+               (at 0 dt (Ops.where (i < int 0) i Ops.invalid))
+               (Ops.cast one dt);
+             Ops.store (at 1 Float32 i) one;
+           ])
+        [ i ];
+    ]
+
+let unwritten_source (r : Renderer.t) dt =
+  let p = Codegen.linearize (unwritten dt) r in
+  render r (Ops.src (Ops.nth p 1))
+
+let declared_types =
+  [
+    ( "CUDA bfloat16",
+      (cuda_target, Dtype.Bfloat16, "nv_bfloat16*", "#include <cuda_bf16.h>") );
+    ( "CUDA float16",
+      (cuda_target, Dtype.Float16, "half*", "#include <cuda_fp16.h>") );
+    ( "CUDA fp8e4m3",
+      (cuda_target, Dtype.Fp8e4m3, "__nv_fp8_e4m3*", "#include <cuda_fp8.h>") );
+    ( "HIP float16",
+      (hip_target, Dtype.Float16, "half*", "#define half _Float16") );
+  ]
+
+let parameter_types =
+  group "parameters' types"
+    [
+      cases "a parameter the kernel never reads or writes has its type declared"
+        ~id:fst declared_types (fun (_, (t, dt, param, line)) ->
+          let src = unwritten_source (renderer_for t) dt in
+          is_true ~msg:"the parameter is in the signature"
+            (contains src (param ^ " data0_64"));
+          satisfies ~claim:("a source that holds " ^ line) string
+            (fun src -> contains src line)
+            src);
+      slow
+      @@ cases "a kernel with a parameter it never reads or writes compiles"
+           ~id:fst
+           (List.filter
+              (fun (_, (t, _, _, _)) -> t == cuda_target)
+              declared_types)
+           (fun (_, (t, dt, _, _)) ->
+             let r = compiling t in
+             match
+               Renderer.Compiler.compile r.compiler (unwritten_source r dt)
+             with
+             | _ -> ()
+             | exception Renderer.Compiler.Compile_error why
+               when lacks_toolchain why ->
+                 skip ~reason:why ());
+    ]
+
 (* bfloat16 truncation on Metal *)
 
 (* Metal has no trunc of a bfloat: it truncates a float, so the extra matcher
@@ -2302,6 +2373,7 @@ let () =
          rendering;
          compilation;
          cuda_binaries;
+         parameter_types;
          bf16_truncation;
          bfloat16_on_amd;
          execution;

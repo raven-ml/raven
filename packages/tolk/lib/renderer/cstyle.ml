@@ -771,10 +771,16 @@ let shaped_value u =
       true
   | _ -> false
 
+(* The types a kernel's source writes, each with its lanes: its values', and
+   the element of each parameter and buffer it declares, which it names
+   whether or not it reads or writes them. *)
 let uops_to_dtypes uops =
   dedup
     (List.filter_map
-       (fun u -> if shaped_value u then Some (dtype u, max_numel u) else None)
+       (fun u ->
+         if shaped_value u then Some (dtype u, max_numel u)
+         else if is Op.Param u || is Op.Buffer u then Some (dtype u, 1)
+         else None)
        uops)
 
 (* (name, dims, dtype_in, dtype_out, upcast_sizes) *)
