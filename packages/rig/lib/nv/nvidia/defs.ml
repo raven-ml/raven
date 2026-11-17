@@ -128,7 +128,6 @@ let nv2080_ctrl_gr_info_index_sm_version = 0xc
 let nv2080_ctrl_cmd_fb_get_info_v2 = 0x20801303
 let nv2080_ctrl_fb_info_index_heap_size = 9
 let nv2080_ctrl_fb_info_index_bar1_size = 5
-let nv2080_ctrl_fb_info_index_total_ram_size = 8
 let nv2080_ctrl_fb_info_index_heap_free = 0x16
 let nv2080_ctrl_fb_info_index_l2cache_size = 0x1b
 let nv2080_ctrl_cmd_perf_get_gpumon_perfmon_util_samples_v2 = 0x20802096

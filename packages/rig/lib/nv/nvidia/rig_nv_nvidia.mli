@@ -58,6 +58,20 @@
     a lack of the RM's own memory, of GPU addresses or of the process's
     files.
 
+    The path's [budget] ({!Rig_nv.type-path}), and so the device's budget and
+    the total of its {!Rig.val-capacity}, is the RM's heap,
+    [NV2080_CTRL_FB_INFO_INDEX_HEAP_SIZE]: "the total ram size less the
+    amount of memory reserved for internal use" (open-gpu-kernel-modules,
+    [ctrl2080fb.h]). Its [available], the capacity's free, is
+    [NV2080_CTRL_FB_INFO_INDEX_HEAP_FREE], "the available amount of video
+    memory" of that heap, read at each call. Every process on the GPU
+    allocates from the heap, so the free leaves out none of their memory.
+    The RM's reserve lies outside the heap, and so outside the total.
+    Measured on an RTX 5000 Ada: [RAM_SIZE] and [TOTAL_RAM_SIZE] are both
+    34,351,349,760 bytes, nvidia-smi's [memory.total]; [HEAP_SIZE] is
+    33,881,587,712 bytes, CUDA's total for the GPU ([Rig_cuda]); and the
+    448 MiB between them is nvidia-smi's [memory.reserved].
+
     {!Rig_nv.val-dma} exports the RM object a region lies in as a new
     dma-buf ({!Rig_edge.Dmabuf}), through the GPU's file, at the region's
     offset in it. The dma-buf holds the object until its last reference
@@ -117,17 +131,14 @@ val gpu : int -> Rig_nv.t Rig_edge.opener
 (** {1:usage Usage} *)
 
 type usage = {
-  memory_total : int;  (** The GPU's memory, in bytes. *)
-  memory_free : int;
-      (** The bytes of it that the RM has free to allocate. The rest is held
-          by every process on the GPU, and by the RM and its firmware. *)
   busy : float option;
       (** How busy the GPU's graphics and compute engine was, from [0.0] to
           [100.0]: the mean of the RM's samples of it taken in the window
           {!val-usage} reads, by the GPU's own clock. [None] if the RM took none
           in that time, or takes none on this GPU. *)
 }
-(** The type for what a GPU's RM reports of its use, by every process. *)
+(** The type for what a GPU's RM reports of its use, by every process. The
+    GPU's memory is an open device's {!Rig.val-capacity}. *)
 
 val usage : window:float -> int -> (usage, string) result
 (** [usage ~window i] is GPU [i]'s usage, [busy] over the last [window]

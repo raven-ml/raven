@@ -279,6 +279,17 @@ val free : t -> region -> unit
 
     Raises [Invalid_argument] if [r] is not [m]'s or was freed. *)
 
+val capacity : t -> Rig_edge.capacity
+(** [capacity m] is the GPU's memory as [m] hands it out: [total] is the main
+    pool of [m]'s page tables ({!Page_table.main_pool}), and [free] what no
+    block of that pool holds ({!Page_table.main_free}), read from the pool's
+    own count with no call to the GPU. A driver that drives the GPU over its
+    function is the GPU's only user, so [free] leaves no memory out; a
+    request of that many bytes may still be refused, as the pool bounds each
+    request ({!Page_table.palloc}). It allocates nothing.
+
+    Raises [Invalid_argument] if the GPU's function is released. *)
+
 (** {1:others Other functions}
 
     Another PCI function of the GPU's machine, such as a network adapter,

@@ -41,9 +41,13 @@ All notable changes to this project will be documented in this file.
 ### Rig (new)
 
 - Add `Rig.capacity d`, a device's memory as its driver reports it at the
-  call: `Some { total; free }` on CUDA (`cuMemGetInfo`), and `None` on the
-  host, software, io, Metal and remote devices. A device's budget starts at
-  that total. **Breaking:** `Rig_edge.Driver` gains `capacity`.
+  call: `Some { total; free }` on CUDA (`cuMemGetInfo`), NVIDIA's kernel
+  driver (the RM's heap) and NVIDIA over PCI (`Rig_pci.Memory.capacity`),
+  and `None` on the host, software, io, Metal and remote devices. A
+  device's budget starts at that total. **Breaking:** `Rig_edge.Driver`
+  gains `capacity`, and `Rig_nv.path` gains `available`.
+- **Breaking:** `Rig_nv_nvidia.usage` keeps `busy` and drops `memory_total`
+  and `memory_free`: read an open device's `Rig.capacity`.
 - A CUDA device's budget starts at `cuMemGetInfo`'s total, the memory of
   its context, instead of `cuDeviceTotalMem`'s.
 - **Breaking:** `Rig_edge.Io.read` takes arrays of runs,

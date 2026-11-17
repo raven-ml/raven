@@ -1205,6 +1205,15 @@ let gpu c u ~dev ~index bus =
           Atomic.set peer_refusals pairs;
           Ok g
 
+(* Of the RM's heap, whose size is the budget, the bytes free: HEAP_FREE,
+   "the available amount of video memory", out of HEAP_SIZE, "the total ram
+   size less the amount of memory reserved for internal use" (ctrl2080fb.h),
+   which every process's allocations come from. *)
+let heap_free g =
+  match fb_info g.c g.subdevice D.nv2080_ctrl_fb_info_index_heap_free with
+  | Ok n -> n
+  | Error why -> raise (Rig_nv.Fault ("reading the GPU's free memory: " ^ why))
+
 let path g =
   {
     Rig_nv.key;
@@ -1214,6 +1223,7 @@ let path g =
     vaspace = g.vaspace;
     gpu = g.facts;
     budget = g.budget;
+    available = (fun () -> heap_free g);
     cache_bytes = g.cache_bytes;
     doorbell = g.doorbell + doorbell_at;
     flush = g.flush;
@@ -1312,7 +1322,7 @@ let gpu_with ~wrap i =
 
 (* Usage *)
 
-type usage = { memory_total : int; memory_free : int; busy : float option }
+type usage = { busy : float option }
 
 (* The GPU's timer, in nanoseconds since 1970 (NV2080_CTRL_CMD_TIMER_GET_TIME
    of open-gpu-kernel-modules' ctrl2080tmr.h): the clock of the utilization
@@ -1394,11 +1404,5 @@ let usage ~window i =
     let dev = Filename.concat root "dev" in
     let* c = Rm.client ~dev in
     let* b = Rig_nv.Lock.protect gpus_lock (fun () -> base c ~dev bus) in
-    let* memory_total =
-      fb_info c b.subdevice D.nv2080_ctrl_fb_info_index_total_ram_size
-    in
-    let* memory_free =
-      fb_info c b.subdevice D.nv2080_ctrl_fb_info_index_heap_free
-    in
     let* busy = busy c b.subdevice ~window in
-    Ok { memory_total; memory_free; busy }
+    Ok { busy }

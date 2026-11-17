@@ -428,9 +428,28 @@ let views_of_mapped () =
   N.free t.g v';
   N.free a src
 
+(* The process is the only user of a GPU it drives over PCI, whose
+   capacity's free is the page tables' own count: a buffer lowers it by at
+   least its pages, and once rig returns the buffer's memory it is back where
+   it was. *)
+let pci_capacity () =
+  if S.path () <> Some Pci then
+    skip ~reason:"no GPU that the process drives over PCI" ();
+  S.with_ @@ fun t ->
+  let free () = (require_some ~msg:"capacity" (Rig.capacity t.S.d)).free in
+  let before = free () in
+  let n = 64 lsl 20 in
+  let b = B.create t.S.d n in
+  at_least ~msg:"the pages it took" int ~than:n (before - free ());
+  is_true ~msg:"freed" (B.free b);
+  Rig.free_cache t.S.d;
+  equal ~msg:"returned" int before (free ())
+
 let memory =
   group ~timeout:120. "memory"
     [
+      test "over PCI, a buffer's pages leave the free memory until it goes"
+        pci_capacity;
       test "a view of memory its GPU maps lasts until its own free"
         views_of_mapped;
       test "a copy longer than the copy engine's is the identity" long_copy;

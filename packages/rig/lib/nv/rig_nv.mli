@@ -105,6 +105,7 @@ val capability : t -> Rig_nv_abi.Gpu.t
       | [capability] | {!val-capability} ({!Rig_nv_abi.declare}). |
       | [word] | The word [make] was given, mapped through the path. |
       | [bus] | The path's {!field-bus}. |
+      | [capacity] | The path's {!field-budget} and {!field-available}. |
     }
 
     The device maps the 64 KiB of rig's array of words that holds its word
@@ -553,7 +554,14 @@ type 'm path = {
   subdevice : int;  (** Its subdevice object. *)
   vaspace : int;  (** The virtual address space the device's channels use. *)
   gpu : gpu;  (** The GPU's classes and counts. *)
-  budget : int;  (** The GPU's memory its work may allocate, in bytes. *)
+  budget : int;
+      (** The bytes of the GPU's memory from which the path allocates, for
+          every process and for the RM: {!Rig.val-capacity}'s [total]. *)
+  available : unit -> int;
+      (** [available ()] is, of [budget], the bytes the path reports it would
+          still give, to any process, at the call: {!Rig.val-capacity}'s
+          [free]. It counts as held what the device's memory holds. It
+          raises {!Fault} where the path cannot read it. *)
   cache_bytes : int option;
       (** [Some n] with [n] the bytes of the GPU's L2 cache, its last level,
           as the RM states it, or [None] where the RM states none. *)

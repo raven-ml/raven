@@ -259,38 +259,35 @@ let inside_lock () =
 let usage () =
   require_ok ~msg:"usage" ~pp:Format.pp_print_string (N.usage ~window:1. 0)
 
-(* A GPU's memory holds what is free of it, and its engine is busy from 0 to
-   100 percent of the time. *)
+(* A GPU's engine is busy from 0 to 100 percent of the time. *)
 let usage_bounds () =
   if counted () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
   let u = usage () in
-  greater ~msg:"memory_total" int ~than:0 u.memory_total;
-  at_most ~msg:"memory_free" int ~than:u.memory_total u.memory_free;
-  at_least ~msg:"memory_free" int ~than:0 u.memory_free;
   Option.iter
     (fun b ->
       at_least ~msg:"busy" float_exact ~than:0. b;
       at_most ~msg:"busy" float_exact ~than:100. b)
     u.busy
 
-(* Memory a device holds is not free, and reading the usage leaves the device
-   open: its memory frees after. The GPU runs no other process's work while
-   the GPU lock is held, so nothing else frees memory in between. *)
-let usage_counts_device () =
+(* A device's capacity is the RM's heap: its total is the budget, it holds
+   what is free of it, and memory the device holds is not free. The GPU runs
+   no other process's work while the GPU lock is held, so nothing else frees
+   memory in between. *)
+let capacity_counts_device () =
   if counted () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
-  let g = require_ok (Rig_gpu_support.opened (N.gpu 0)) in
+  let d = require_ok ~pp:Format.pp_print_string (Rig.open_ (N.gpu 0)) in
+  Fun.protect ~finally:(fun () -> Rig.close d) @@ fun () ->
+  let c = require_some ~msg:"capacity" (Rig.capacity d) in
+  equal ~msg:"the budget" int (Rig.budget d) c.total;
+  at_most ~msg:"free" int ~than:c.total c.free;
+  at_least ~msg:"free" int ~than:0 c.free;
   let n = 256 lsl 20 in
-  let before = (usage ()).memory_free in
-  let r =
-    match Rig_nv.alloc g Device n with
-    | Some r -> r
-    | None -> failf "%d bytes of Device memory refused" n
-  in
-  let held = (usage ()).memory_free in
-  Rig_nv.free g r;
-  Rig_nv.stop g ~fault:None;
-  at_most ~msg:"memory_free while the device holds the memory" int
-    ~than:(before - n) held
+  let b = Rig.Buffer.create d n in
+  let held = require_some ~msg:"capacity, holding" (Rig.capacity d) in
+  equal ~msg:"the total, holding" int c.total held.total;
+  at_most ~msg:"free while the device holds the memory" int
+    ~than:(c.free - n) held.free;
+  is_true ~msg:"freed" (Rig.Buffer.free b)
 
 let () =
   exit
@@ -345,9 +342,9 @@ let () =
            [ test "40 GiB of host memory maps at once" many_maps ];
          group ~timeout:60. "usage"
            [
-             test "a GPU's free memory and load are within their bounds"
-               usage_bounds;
-             test "memory a device holds is not free" usage_counts_device;
+             test "a GPU's load is within its bounds" usage_bounds;
+             test "a device's capacity is the RM's heap, less what it holds"
+               capacity_counts_device;
              test "a negative GPU or window raises" (fun () ->
                  raises_match Exn.invalid_arg (fun () ->
                      N.usage ~window:1. (-1));

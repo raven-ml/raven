@@ -373,7 +373,9 @@ let device ~word ~on g ~gsp ~hold ~tables (c : Chip.t) =
         subdevice;
         vaspace;
         gpu;
-        budget = Page_table.main_pool tables;
+        budget = protect g (fun () -> (Memory.capacity g.memory).total);
+        available =
+          (fun () -> protect g (fun () -> (Memory.capacity g.memory).free));
         cache_bytes;
         doorbell = Window.address c.regs + doorbell_at;
         clock = Registers (Window.address c.regs);

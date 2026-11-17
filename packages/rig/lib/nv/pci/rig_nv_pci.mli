@@ -163,6 +163,14 @@ val count : ?machine:Rig_pci.Machine.t -> unit -> (int, string) result
     process or another, succeeds meanwhile. The device's facts name the
     GPU's function as [bus].
 
+    The path's [budget] ({!Rig_nv.type-path}) and [available], and so the
+    device's {!Rig.val-capacity}, are {!Rig_pci.Memory.capacity} of the
+    GPU's memory: the main pool of its page tables, and what no block of
+    that pool holds. The process is the GPU's only user, so the free leaves
+    nothing out, and it is the pool's own count, read with no call to the
+    GPU. A request of that many bytes may still be refused, as the pool
+    bounds each request.
+
     A device reads the GPU's timer registers through BAR 0
     ({!Rig_nv.Registers}), so its profiles' times drift from the host's
     clock as {!Rig_nv.section-submitting} states.

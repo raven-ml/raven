@@ -212,6 +212,7 @@ type 'm path = {
   vaspace : int;
   gpu : gpu;
   budget : int;
+  available : unit -> int;
   cache_bytes : int option;
   doorbell : int;
   flush : int option;
@@ -600,7 +601,6 @@ let queues =
 let waits = { Rig_edge.stores = true; hosts = true }
 
 let capability (T d) = d.capability
-let capacity _ = None
 
 let facts (T d) =
   {
@@ -645,6 +645,10 @@ let live d =
   match d.live with
   | Some l -> l
   | None -> invalid_arg "Rig_nv: the device was stopped"
+
+(* The path's report of the GPU's memory, out of the budget it gave. *)
+let capacity (T d) =
+  Some { Rig_edge.total = d.budget; free = (live d).path.available () }
 
 (* Local memory *)
 

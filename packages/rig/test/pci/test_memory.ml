@@ -1506,6 +1506,36 @@ let test_kind kind =
         (merge rs);
       Memory.free x.t_memory r
 
+(* The GPU's capacity is its tables' main pool and what no block of it
+   holds: GPU memory leaves the free count until its free, system memory
+   takes from it only the tables that map it, and a released GPU reports
+   none. *)
+let test_capacity () =
+  with_gpu @@ fun _ _ x ->
+  let pool () =
+    (Page_table.main_pool x.t_tables, Page_table.main_free x.t_tables)
+  in
+  let capacity () =
+    let c = Memory.capacity x.t_memory in
+    (c.total, c.free)
+  in
+  let total, before = capacity () in
+  equal ~msg:"the pool at the start" (pair int int) (pool ()) (total, before);
+  let r = given (Memory.alloc x.t_memory Gpu (64 * kib)) in
+  equal ~msg:"the pool, holding GPU memory" (pair int int) (pool ())
+    (capacity ());
+  at_least ~msg:"the GPU memory's pages" int ~than:(64 * kib)
+    (before - snd (capacity ()));
+  let h = given (Memory.alloc x.t_memory Host (64 * kib)) in
+  equal ~msg:"the pool, holding system memory" (pair int int) (pool ())
+    (capacity ());
+  Memory.free x.t_memory h;
+  Memory.free x.t_memory r;
+  equal ~msg:"given back" (pair int int) (total, before) (capacity ());
+  Memory.release x.t_memory;
+  raises_match ~msg:"released" (Exn.invalid_arg ~sub:"released") (fun () ->
+      Memory.capacity x.t_memory)
+
 (* Sizes around 4 KiB, a machine's page, 8 MiB and 2 MiB. *)
 let sizes =
   Gen.one_of
@@ -1977,6 +2007,8 @@ let placement =
       test "map_peer refuses GPUs of two spaces, naming both" test_two_spaces;
       test "create refuses a BAR the function lacks" test_no_bar;
       test "a reopened GPU is not written by its old instance" test_reopened;
+      test "the capacity is the main pool, less what its blocks hold"
+        test_capacity;
     ]
 
 (* Requests *)

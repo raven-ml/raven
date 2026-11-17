@@ -350,6 +350,13 @@ let live fn m =
       (h, tables)
   | _ -> invalid_argf "Memory.%s: %s is released" fn m.reach.bus
 
+let capacity m =
+  let _, tables = live "capacity" m in
+  {
+    Rig_edge.total = Page_table.main_pool tables;
+    free = Page_table.main_free tables;
+  }
+
 (* Gives back what [r] holds but its entries, with the GPU's [tables] while it
    is live: once the function is released the GPU may be another instance's, so
    a free gives back system memory, pins and addresses only, of which the
