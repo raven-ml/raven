@@ -10,8 +10,7 @@
    writes one and none elsewhere, so that they give eager's bits. A C branch
    is a selection, both sides computed, a side's operands made safe on the
    lanes it does not take. Each such function names the header's function it
-   follows; when the header changes, it changes with it. tolk's exp2 remains
-   in [exp2_split], which the complex kinds compose. *)
+   follows; when the header changes, it changes with it. *)
 
 open Tolk
 open Lower_bits
@@ -88,10 +87,6 @@ let pio2_hi = (0x1.921fb6p+0, 0x1.921fb54442d18p+0)
 let pio2_lo = (-0x1.777a5cp-25, 0x1.1a62633145c07p-54)
 let pi_hi = (0x1.921fb6p+1, 0x1.921fb54442d18p+1)
 let pi_lo = (-0x1.777a5cp-24, 0x1.1a62633145c07p-53)
-
-(* Where the complex kinds take the hyperbolic functions' far forms: past it,
-   e^-2|x| is below the unit roundoff of both types. *)
-let hyp_far = 20.
 
 let horner x = function
   | [] -> invalid_arg "Lower_real.horner: no coefficient"
@@ -210,26 +205,6 @@ let fmod x y =
   let sx = band (bits x) (sign_word x) in
   let r = where (lt ux uy) x (of_bits (bor (bits m) sx)) in
   where special (nan x) r
-
-(* Exponentials in two parts, of tolk's exp2, for the complex kinds *)
-
-(* 2^(hi + lo) for |lo| at most two ulps of hi: 2^hi (1 + lo ln2), whose
-   relative error (lo ln2)^2 / 2 is below 2^-30 at float32 and 2^-80 at
-   float64 where 2^hi is finite and non-zero. A positive hi takes 2^(hi - 1),
-   doubled after the product, since hi may round up to where 2^hi overflows
-   while 2^(hi + lo) does not. Where 2^hi is infinite, zero or NaN, the product
-   is NaN or 2^hi, and 2^hi is kept. *)
-let exp2_split hi lo =
-  let up = gt hi (zero hi) in
-  let y = Ops.exp2 (where up (hi -: one hi) hi) in
-  let r = mulacc y (lo *: con lo ln2) y in
-  where (is_nan r) y r *: where up (two hi) (one hi)
-
-(* x / ln2 as hi + lo: hi rounded, lo its error, exact from the fma, plus x
-   times the error of 1 / ln2 rounded. *)
-let exp_parts x =
-  let hi = x *: con x log2e in
-  (hi, mulacc x (con x log2e) (negated hi) +: (x *: con x log2e_lo))
 
 (* Logarithms
 

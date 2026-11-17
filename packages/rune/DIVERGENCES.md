@@ -547,12 +547,15 @@ rounded sum; a stated bound) and its reason. A rounded sum's bound is
     copies its sign, which the target or the compiler sets: x86 keeps a
     propagated NaN's sign and sets a generated one's, CUDA's `float32`
     clears it, and so does a NaN the compiler generates when it folds.
-  - The hyperbolic kinds take their real parts' `sinh` and `cosh` and, past
-    `hyp_far`, the polar form; `Tanh` is Kahan's. `Asin` and `Acos` are
-    Kahan's from `sqrt (1 - z)` and `sqrt (1 + z)`, with their leading terms
-    at infinity past `2^13` (`float32`) or `2^28` (`float64`). `Atanh` is
-    Kahan's. The circular kinds turn the hyperbolic ones by `i`, and `Asinh`
-    and `Acosh` turn `Asin` and `Acos`.
+  - `Sinh`, `Cosh`, `Tanh`, `Sin`, `Cos` and `Tan` are `nx_sinh`, `nx_cosh`,
+    `nx_tanh`, `nx_sin`, `nx_cos` and `nx_tan` likewise: the hyperbolic
+    kinds take their real parts' `sinh` and `cosh` and, past `HYP_BIG`,
+    `e^|x| / 2` as `Exp` takes `e^x`; `Tanh` is Kahan's. The circular kinds
+    turn the hyperbolic ones by `i`.
+  - `Asin` and `Acos` are Kahan's from `sqrt (1 - z)` and `sqrt (1 + z)`,
+    with their leading terms at infinity past `2^13` (`float32`) or `2^28`
+    (`float64`). `Atanh` is Kahan's. `Atan` turns `Atanh` by `i`, and
+    `Asinh` and `Acosh` turn `Asin` and `Acos`.
   - A cast from a complex number reads its real part; one into it sets the
     imaginary part to `+0.`. A `complex64`'s bits are its real part's in the
     low word.
@@ -560,14 +563,15 @@ rounded sum; a stated bound) and its reason. A rounded sum's bound is
   `nx_kinds_complex.h`.
 - **Class:** exact for `Neg`, `Add`, `Sub`, `Maximum`, `Minimum`, the
   comparisons, `Mul`, `Fdiv`, `Recip`, `Sqrt`, `Sign`, `Log`, `Log2`,
-  `Exp`, `Exp2` and `Pow`; stated bound:
-  `lower_complex.mli`'s normwise table for the others.
+  `Exp`, `Exp2`, `Pow`, `Sinh`, `Cosh`, `Tanh`, `Sin`, `Cos` and `Tan`;
+  stated bound: `lower_complex.mli`'s normwise table for the others.
 - **Reason:** (b).
 - **Pinned by:** `Lower_complex › kinds › cmul gives eager's bits`, `› cmul
   of a constant gives eager's bits`, the same for `cdiv`, `crecip`, `csqrt`,
-  `csign`, `clog`, `clog2`, `cexp`, `cexp2` and `cpow`, and `Lower_complex
-  › a NaN part and no infinite one give a NaN part, but pow's exceptions ›
-  *`, on the host; `Jit_gpu › complex kinds › *` on a GPU; `Lower_complex ›
+  `csign`, `clog`, `clog2`, `cexp`, `cexp2`, `cpow`, `csinh`, `ccosh`,
+  `ctanh`, `csin`, `ccos` and `ctan`, and `Lower_complex › a NaN part and
+  no infinite one give a NaN part, but pow's exceptions › *`, on the host;
+  `Jit_gpu › complex kinds › *` on a GPU; `Lower_complex ›
   special values › *` and `Lower_complex › bounds › *` over every other
   kind at `complex64` and `complex128`;
   `Lower_arith › exact unary kinds give eager's bits`, `› exact binary kinds,

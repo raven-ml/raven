@@ -125,10 +125,6 @@ val log2e_lo : float * float
 (** [log2e_lo] is 1 / ln 2 less {!log2e}, rounded: [nx_kinds.h]'s
     [LOG2E_LO]. *)
 
-val hyp_far : float
-(** [hyp_far] is the [|x|] from which [cosh] and [|sinh|] are [e{^|x|} / 2], and
-    [|tanh|] is [1], to both types' precision. *)
-
 val copysign : Ops.t -> Ops.t -> Ops.t
 (** [copysign m s] is [m] with [s]'s sign bit. *)
 
@@ -195,11 +191,3 @@ val sin_at : Ops.t -> Ops.t * Ops.t * Ops.t -> Ops.t
 
 val cos_at : Ops.t -> Ops.t * Ops.t * Ops.t -> Ops.t
 (** [cos_at x r] is [nx_cos_at], as {!sin_at}. *)
-
-val exp_parts : Ops.t -> Ops.t * Ops.t
-(** [exp_parts x] is [(hi, lo)] with [x / ln 2 = hi + lo] to twice the type's
-    precision, [hi] rounded. *)
-
-val exp2_split : Ops.t -> Ops.t -> Ops.t
-(** [exp2_split hi lo] is [2{^hi + lo}]. [|lo|] must be at most twice the gap
-    from [|hi|] to the next float above it. *)

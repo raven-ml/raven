@@ -43,11 +43,13 @@ let inf x = num x Float.infinity
 
 (* nx_kinds.h's macros of the same names, at float32 then float64, their text
    copied: ln2 rounded's remainder; exp's near range; the clamps past which
-   e^x c and 2^x c overflow for every finite non-zero c. *)
+   e^x c and 2^x c overflow for every finite non-zero c; where sinh and cosh
+   are e^|x|/2. *)
 let ln2_low = (-0x1.05c610p-29, 0x1.abc9e3b39803fp-56)
 let exp_near = (86.0, 708.0)
 let cexp_hi = (194.0, 1456.0)
 let cexp2_hi = (280.0, 2101.0)
+let hyp_big = (12.0, 22.0)
 
 (* Float kinds *)
 
@@ -63,19 +65,15 @@ let tan = R.unary Tan
 let atan = R.unary Atan
 let sinh = R.unary Sinh
 let cosh = R.unary Cosh
+let tanh = R.unary Tanh
 let atan2 = R.binary Atan2
-let round = R.unary Round
 
 (* Parts *)
 
 let larger a b = where (gt a b) a b
 let smaller a b = where (gt a b) b a
 let neg_int k = Ops.sub (int k 0) k
-let clamp x c = where (gt x c) c (where (lt x (negated c)) (negated c) x)
 let infinite x = eq (magnitude x) (inf x)
-
-(* Whether [x] is infinite or NaN. *)
-let wild x = not_ (lt (magnitude x) (inf x))
 
 (* nx_finite: [|x|] below infinity, false at a NaN. *)
 let finite x = lt (magnitude x) (inf x)
@@ -161,18 +159,6 @@ let asinh_part t =
   let far = log a +: R.con a R.ln2 in
   R.copysign (where (lt a (num a (R.pick a (0x1p24, 0x1p53)))) near far) t
 
-(* 2^(hi + lo) (c + i s), for hi an exponent clamped so that the product's scale
-   is an int32: with k the integer nearest hi, 2^(hi - k + lo), within [1/2, 2],
-   times each part, then 2^k, so that no part overflows before its product. *)
-let polar (hi, lo) c s =
-  let k = round hi in
-  let m = R.exp2_split (hi -: k) lo in
-  let k = Ops.cast k Int32 in
-  (ldexp (m *: c) k, ldexp (m *: s) k)
-
-(* x / ln2 as R.exp_parts gives it, of x clamped where e^x c over- or
-   underflows. *)
-let exp_parts x = R.exp_parts (clamp x (R.con x cexp_hi))
 
 (* nx_exp_times: e^x c, for x past EXP_NEAR up to the clamp CEXP_HI: with
    x/2 = k ln2 + r and m = e^r, (m c) m 2^2k, so that neither e^x nor its
@@ -334,52 +320,69 @@ let sign_raw x y =
 (* Hyperbolic kinds
 
    sinh z = sinh x cos y + i cosh x sin y and cosh z = cosh x cos y + i sinh x
-   sin y. Past R.hyp_far, sinh |x| and cosh |x| are e^|x| / 2 = 2^(|x| / ln2 -
-   1), taken as polar does so that a small cos y or sin y keeps the product
-   finite. *)
+   sin y. Past HYP_BIG, sinh |x| and cosh |x| are e^|x| / 2 to the type's
+   precision, taken as exp_times does so that a small cos y or sin y keeps the
+   product finite. *)
 
-let half_polar ax c s =
-  let hi, lo = exp_parts ax in
-  polar (hi -: one ax, lo) c s
-
+(* nx_sinh_raw *)
 let sinh_raw x y =
   let c = cos y and s = sin y in
   let ax = magnitude x in
-  let fr, fi = half_polar ax c s in
-  let near = lt ax (num x R.hyp_far) in
-  let re = where near (sinh x *: c) (R.flip fr x) in
-  (* G.6.2.5: x + i NaN where x is 0 or infinite and y infinite or NaN *)
-  let kept = wild y &&: (eq x (zero x) ||: infinite x) in
-  (where kept x re, where near (cosh x *: s) fi)
+  cases
+    [
+      (eq y (zero y), (sinh x, y));
+      (is_nan x, nans x);
+      ( not_ (finite y),
+        cases [ (eq x (zero x) ||: not_ (finite x), (x, nan x)) ] (nans x) );
+      (eq ax (inf x), (x *: c, ax *: s));
+      (le ax (R.con x hyp_big), (sinh x *: c, cosh x *: s));
+    ]
+    (R.flip (exp_times ax c 1) x, exp_times ax s 1)
 
+(* nx_cosh_raw *)
 let cosh_raw x y =
   let c = cos y and s = sin y in
   let ax = magnitude x in
-  let fr, fi = half_polar ax c s in
-  let near = lt ax (num x R.hyp_far) in
-  let im = where near (sinh x *: s) (R.flip fi x) in
-  (* G.6.2.4: NaN + i0 at x = 0 and inf + i NaN at an infinite x, where y is
-     infinite or NaN *)
-  let re = where near (cosh x *: c) fr in
-  ( where (wild y &&: infinite x) (inf x) re,
-    where (wild y &&: eq x (zero x)) x im )
+  let unbounded =
+    cases
+      [
+        (eq x (zero x), (nan x, R.flip x y));
+        (not_ (finite x), (inf x, nan x));
+      ]
+      (nans x)
+  in
+  cases
+    [
+      (eq y (zero y), (cosh x, R.flip y x));
+      (is_nan x, nans x);
+      (not_ (finite y), unbounded);
+      (eq ax (inf x), (ax *: c, x *: s));
+      (le ax (R.con x hyp_big), (cosh x *: c, sinh x *: s));
+    ]
+    (exp_times ax c 1, R.flip (exp_times ax s 1) x)
 
-(* tanh z (Kahan, 1987): with t = tan y, b = 1 + t^2, s = sinh x and c = cosh x,
-   (b c s + i t) / (1 + b s^2), which cancels nowhere. Past R.hyp_far, the real
-   part rounds to ±1, and the imaginary part is 4 sin y cos y e^-2|x|. *)
+(* nx_tanh_raw (Kahan, 1987): with t = tan y, b = 1 + t^2, s = sinh x and
+   c = cosh x, (b c s + i t) / (1 + b s^2), which cancels nowhere. Past
+   HYP_BIG, 1 rounds the real part, and the imaginary part is 4 sin y cos y
+   e^-2|x|. *)
 let tanh_raw x y =
   let ax = magnitude x in
+  let one_x = R.copysign (one x) x in
+  let e = exp (negated ax) in
+  let sc = sin y *: cos y in
   let t = tan y in
   let b = mulacc t t (one t) in
   let s = sinh x and c = cosh x in
   let d = mulacc (b *: s) s (one x) in
-  let far_im = num x 4. *: sin y *: cos y *: exp (num x (-2.) *: ax) in
-  (* G.6.2.6: 1 + i0 at an infinite x where y is infinite or NaN, which a
-     finite x makes NaN + i NaN *)
-  let far = ge ax (num x R.hyp_far) &&: not_ (wild y &&: not_ (infinite x)) in
-  let far_im = where (wild y) (zero y) far_im in
-  ( where far (R.copysign (one x) x) (b *: c *: s /: d),
-    where far far_im (t /: d) )
+  cases
+    [
+      (eq y (zero y), (tanh x, y));
+      (is_nan x, nans x);
+      (eq ax (inf x) &&: not_ (finite y), (one_x, R.copysign (zero y) y));
+      (not_ (finite y), nans x);
+      (gt ax (R.con x hyp_big), (one_x, num x 4. *: sc *: e *: e));
+    ]
+    (b *: c *: s /: d, t /: d)
 
 (* Inverse kinds
 
@@ -502,15 +505,15 @@ let unary (k : Nx_kernel.Prog.unary) ((x, y) as z) =
   | Exp2 -> exp2_raw (unsignalled x) (unsignalled y)
   | Log -> log_raw (unsignalled x) (unsignalled y)
   | Log2 -> log2_raw (unsignalled x) (unsignalled y)
-  | Sinh -> sinh_raw x y
-  | Cosh -> cosh_raw x y
-  | Tanh -> tanh_raw x y
+  | Sinh -> sinh_raw (unsignalled x) (unsignalled y)
+  | Cosh -> cosh_raw (unsignalled x) (unsignalled y)
+  | Tanh -> tanh_raw (unsignalled x) (unsignalled y)
   | Asin -> asin_raw x y
   | Acos -> acos_raw x y
   | Atanh -> atanh_raw x y
-  | Sin -> turn (sinh_raw (negated y) x)
-  | Cos -> cosh_raw (negated y) x
-  | Tan -> turn (tanh_raw (negated y) x)
+  | Sin -> turn (sinh_raw (negated (unsignalled y)) (unsignalled x))
+  | Cos -> cosh_raw (negated (unsignalled y)) (unsignalled x)
+  | Tan -> turn (tanh_raw (negated (unsignalled y)) (unsignalled x))
   | Atan -> turn (atanh_raw (negated y) x)
   | Asinh ->
       (* asinh z = i asin(-iz), -iz = y - ix and i(a + ib) = -b + ia *)

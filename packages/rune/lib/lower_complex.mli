@@ -44,6 +44,13 @@
       of [2 ln 2 / π] past it. [Pow] is [e{^w log z}], a real or imaginary [w]
       multiplying [log z]'s parts alone, [1] at [w = 0] and the float [pow] on
       the positive real axis.
+    - [Sinh] is [sinh x cos y + i cosh x sin y] and [Cosh]
+      [cosh x cos y + i sinh x sin y], past [|x| = 12] ([float32]) or [22]
+      ([float64]) with [e{^|x|} / 2] taken as [Exp] takes [e{^x}]. [Tanh] is
+      Kahan's, [(b c s + i t) / (1 + b s{^2})] of [t = tan y], [b = 1 + t{^2}],
+      [s = sinh x] and [c = cosh x], and past that switch [1] and
+      [4 sin y cos y e{^-2|x|}]. [Sin], [Cos] and [Tan] are [Sinh], [Cosh]
+      and [Tanh] at [iz], turned by [-i] but for [Cos].
 
     On a target that keeps subnormals, rounds division and the square root
     correctly and rounds a fused multiply-add once, they give the bits nx's
@@ -57,8 +64,9 @@
     rounds a fused multiply-add once, each but [Mul], [Fdiv] and [Recip] is
     within the normwise bound nx states for it where no value computed for it
     is subnormal: [3u] for [Sqrt] and [Sign], [4u] for [Log], [Log2], [Exp]
-    and [Exp2], and [(3 + 3 |w log z|) u] for [Pow]; on another target no
-    bound is stated for them.
+    and [Exp2], [6u] for the circular and hyperbolic kinds, and
+    [(3 + 3 |w log z|) u] for [Pow]; on another target no bound is stated for
+    them.
 
     {1:bounded Other kinds}
 
@@ -76,9 +84,6 @@
       fdiv, recip                              4
       atan, atanh, acos, acosh                21
       asin, asinh                             23
-      cos, cosh                               57
-      sin, sinh                               67
-      tan, tanh                               73
     v}
 
     A bound holds where every part of the operands is finite, the result's

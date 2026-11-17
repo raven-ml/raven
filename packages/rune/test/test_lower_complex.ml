@@ -173,15 +173,10 @@ let sorts (open_re, open_im) (z : Complex.t) =
   (c open_re z.re, c open_im z.im)
 
 (* The parts of [k]'s value at [z] whose infinity's sign Annex G leaves open, as
-   Prog's Results section lists them, sin and cos through sinh and cosh at
-   [iz]. *)
+   Prog's Results section lists them. *)
 let open_signs k (z : Complex.t) =
   let inf v = Float.abs v = Float.infinity in
-  let wild v = not (Float.is_finite v) in
   match k.name with
-  | "sinh" -> (inf z.re && wild z.im, false)
-  | "cosh" | "cos" -> (inf z.re && inf z.im, false)
-  | "sin" -> (false, inf z.im && wild z.re)
   | "asin" | "acos" -> (false, inf z.re && Float.is_nan z.im)
   | "asinh" -> (Float.is_nan z.re && inf z.im, false)
   | _ -> (false, false)
@@ -197,12 +192,6 @@ let tiny w v = v <> 0. && Float.abs v < least w
 let unaries =
   K.
     [
-      unary "sin" Sin (fixed 67.);
-      unary "cos" Cos (fixed 57.);
-      unary "tan" Tan (fixed 73.);
-      unary "sinh" Sinh (fixed 67.);
-      unary "cosh" Cosh (fixed 57.);
-      unary "tanh" Tanh (fixed 73.);
       unary "asin" Asin (fixed 23.);
       unary "acos" Acos (fixed 21.);
       unary "atan" Atan (fixed 21.);
@@ -383,7 +372,25 @@ let ported k =
   ]
 
 let kinds =
-  Kinds.[ cmul; cdiv; crecip; csqrt; csign; clog; clog2; cexp; cexp2; cpow ]
+  Kinds.
+    [
+      cmul;
+      cdiv;
+      crecip;
+      csqrt;
+      csign;
+      clog;
+      clog2;
+      cexp;
+      cexp2;
+      cpow;
+      csinh;
+      ccosh;
+      ctanh;
+      csin;
+      ccos;
+      ctan;
+    ]
 
 (* NaN parts
 

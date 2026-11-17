@@ -1636,7 +1636,8 @@ val jit :
     or {!Nx.softmax}, computes as nx composes it.
 
     {b Complex functions.} {!Nx.mul}, {!Nx.div}, {!Nx.recip}, {!Nx.sqrt},
-    {!Nx.sign}, {!Nx.log}, {!Nx.log2}, {!Nx.exp}, {!Nx.exp2} and {!Nx.pow}
+    {!Nx.sign}, {!Nx.log}, {!Nx.log2}, {!Nx.exp}, {!Nx.exp2}, {!Nx.pow},
+    {!Nx.sin}, {!Nx.cos}, {!Nx.tan}, {!Nx.sinh}, {!Nx.cosh} and {!Nx.tanh}
     compute nx's own sequence of operations for them, so they are exact on a
     device that keeps subnormals, rounds division and the square root
     correctly and rounds a fused multiply-add once, as the host CPU and NVIDIA
@@ -1659,9 +1660,6 @@ val jit :
       Nx.div, Nx.recip                              4
       Nx.atan, Nx.atanh, Nx.acos, Nx.acosh         21
       Nx.asin, Nx.asinh                            23
-      Nx.cos, Nx.cosh                              57
-      Nx.sin, Nx.sinh                              67
-      Nx.tan, Nx.tanh                              73
     v}
 
     A bound holds where the operands' parts are finite, the result's modulus is

@@ -3008,7 +3008,11 @@ let complex_ported k =
   ]
 
 let complex_kinds =
-  Kinds.[ cmul; cdiv; crecip; csqrt; csign; clog; clog2; cexp; cexp2; cpow ]
+  Kinds.
+    [
+      cmul; cdiv; crecip; csqrt; csign; clog; clog2; cexp; cexp2; cpow; csinh;
+      ccosh; ctanh; csin; ccos; ctan;
+    ]
 
 (* Multiply-adds of narrow floats: fma at a float narrower than float32,
    compiled on the GPU, is its exact value rounded once, as Exact's integers

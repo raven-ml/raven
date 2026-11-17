@@ -479,6 +479,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled complex `Nx.sin`, `Nx.cos`, `Nx.tan`, `Nx.sinh`, `Nx.cosh` and
+  `Nx.tanh` give eager's bits on the host and NVIDIA GPUs. Elsewhere they
+  hold nx's 6u, where rune stated 57u to 73u for every device, now only on
+  a device that rounds division and the square root correctly and an fma
+  once, where nothing computed is subnormal.
 - A compiled complex `Nx.exp`, `Nx.exp2` and `Nx.pow` give eager's bits on
   the host and NVIDIA GPUs. Elsewhere they hold nx's bounds, 4u for exp
   and exp2 where rune stated 31u and `30 + 1.4 |y|` u for every device,
