@@ -1599,8 +1599,8 @@ let contraction ?(extras = Plain_contraction) dts accs =
       in
       let* i = first (Array.length fa) in
       let* j = first (Array.length fb) in
-      (* Long rows leave their last group empty in half the draws. *)
-      let* empty = if long_rows then bool else constant false in
+      (* Long and few rows leave their last group empty in half the draws. *)
+      let* empty = if long_rows || few_rows then bool else constant false in
       let last = Int64.of_int (fb.(j) - 1) in
       let drop o =
         if empty then Array.map (fun x -> if x = last then -1L else x) o else o
