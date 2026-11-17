@@ -626,10 +626,20 @@ let jit_rows () =
   let prompt_ids = positions 2048 32 |> Nx.reshape [| 512; 4 |] in
   let prompt_x = between f32 53 (-1.) 1. [| 512; 1; 256 |] in
   let x1m = between f64 13 (-1.) 1. [| 1_000_000 |] in
+  let dirichlet_key = Nx.Rng.key 3 in
+  let concentrations = host (Nx.full f32 [| 4096; 8 |] 2.) in
   [
     warm "add-1-hit"
       (fun () -> Rune.jit (pair_fn ()) Nx.add)
       (fun f -> synced (f a b));
+    (* A compiled draw of rows of 8: the gamma draws, their row's greatest,
+       its integer limb sums and the quotients. *)
+    warm "dirichlet-f32-4Kx8"
+      (fun () ->
+        Rune.jit
+          Nx.Ptree.(Nx.Rng.ptree @-> tensor @-> returns tensor)
+          (fun key a -> Nx.Rng.dirichlet ~key a))
+      (fun f -> synced (f dirichlet_key concentrations));
     (* A step that calls OCaml between two additions: its program evaluated
        around the callback, each addition a compiled call. *)
     warm "callback-1-hit"

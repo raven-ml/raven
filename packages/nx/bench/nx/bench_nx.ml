@@ -530,6 +530,10 @@ let rng_rows =
           draw (Nx.Rng.normal ~key D.Float32 [| 1 |]));
       Thumper.bench_with_setup "beta-f32-1" ~setup:(keyed [| 1 |] 2.)
         (fun (key, one) -> draw (Nx.Rng.beta ~key one one));
+      (* Rows of 8, each one gamma draw per element and an integer row sum. *)
+      Thumper.bench_with_setup "dirichlet-f32-4Kx8"
+        ~setup:(keyed [| 4096; 8 |] 2.)
+        (fun (key, a) -> draw (Nx.Rng.dirichlet ~key a));
       Thumper.bench_with_setup "permute-16K-of-1.4e10"
         ~setup:(fun () -> (key (), epoch_positions ()))
         (fun (key, p) -> draw (epoch_order key p));

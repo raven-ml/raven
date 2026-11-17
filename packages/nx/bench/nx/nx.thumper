@@ -28,6 +28,7 @@
 # forced: blessed statistics/var-f32-1M statistics/std-f32-1024x1024-rows statistics/var-f32-8192x4096-rows statistics/var-bf16-8192x4096-rows statistics/var-f32-1024x1024-cols statistics/var-bf16-1M statistics/var-f64-1M-top statistics/std-f64-1M-tiny statistics/std-f32-1024x1024-rows-constant under load 37.5 on 14 cores
 # forced: blessed rng/permute-16K-of-1.4e10 under load 14.3 on 14 cores
 # pending: wall_time of io/load-tiff-1024x1024-u16-deflate-tiles, to record on a quiet machine
+# pending: wall_time of rng/dirichlet-f32-4Kx8, to record on a quiet machine
 
 attention/decode-f32-64x8x4096x64	alloc_words	exact	876
 attention/decode-f32-64x8x4096x64	wall_time	batch=1	n=20	1.364e-03	9.401e-04 9.802e-04 9.986e-04 9.990e-04 1.039e-03 1.198e-03 1.219e-03 1.260e-03 1.295e-03 1.346e-03 1.383e-03 1.600e-03 1.727e-03 2.126e-03 2.527e-03 3.246e-03 3.993e-03 3.993e-03 5.491e-03 1.163e-02
@@ -295,6 +296,7 @@ rng/bernoulli-f32-1M	alloc_words	exact	1148
 rng/beta-f32-1	alloc_words	exact	11964
 rng/beta-f32-1	wall_time	batch=1	n=20	4.219e-05	4.091e-05 4.112e-05 4.114e-05 4.117e-05 4.134e-05 4.136e-05 4.160e-05 4.167e-05 4.186e-05 4.203e-05 4.235e-05 4.239e-05 4.250e-05 4.321e-05 4.346e-05 4.360e-05 4.767e-05 4.884e-05 5.244e-05 3.547e-04
 rng/bits-1M	alloc_words	exact	446
+rng/dirichlet-f32-4Kx8	alloc_words	exact	9102
 rng/gamma-f32-64K	alloc_words	exact	7055
 rng/normal-f32-1	alloc_words	exact	494
 rng/normal-f32-1	wall_time	batch=2048	n=20	2.761e-06	2.731e-06 2.733e-06 2.735e-06 2.747e-06 2.748e-06 2.749e-06 2.749e-06 2.750e-06 2.753e-06 2.757e-06 2.764e-06 2.767e-06 2.771e-06 2.775e-06 2.776e-06 2.787e-06 2.790e-06 2.791e-06 2.821e-06 2.857e-06
