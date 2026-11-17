@@ -479,6 +479,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled complex `Nx.log` and `Nx.log2` give eager's bits on the host
+  and NVIDIA GPUs; `Nx.log2` multiplied by `1/ln 2` rounded and differed
+  in the last bits. Elsewhere they hold nx's 4u, where rune stated 18u and
+  20u for every device, now only on a device that rounds division and the
+  square root correctly and an fma once, where nothing computed is
+  subnormal.
 - A compiled complex `Nx.sqrt` and `Nx.sign` give eager's bits on the host
   and NVIDIA GPUs, where at a NaN real part beside a zero they gave a
   number for a part. Elsewhere they hold nx's 3u, as rune stated for every

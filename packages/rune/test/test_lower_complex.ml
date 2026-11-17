@@ -225,8 +225,6 @@ let unaries =
     [
       unary "exp" Exp (fixed 31.);
       unary "exp2" Exp2 (fun _ e -> 30. +. (1.4 *. Float.abs e.(0).im));
-      unary "log" Log (fixed 18.);
-      unary "log2" Log2 (fixed 20.);
       unary "sin" Sin (fixed 67.);
       unary "cos" Cos (fixed 57.);
       unary "tan" Tan (fixed 73.);
@@ -418,7 +416,7 @@ let ported k =
         Kinds.folded (module Nx.Host) ~f64:true k);
   ]
 
-let kinds = Kinds.[ cmul; cdiv; crecip; csqrt; csign ]
+let kinds = Kinds.[ cmul; cdiv; crecip; csqrt; csign; clog; clog2 ]
 
 let () =
   exit

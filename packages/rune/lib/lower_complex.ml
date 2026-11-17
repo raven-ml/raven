@@ -49,6 +49,7 @@ let cexp2_hi = (280., 2101.)
 (* Float kinds *)
 
 let log = R.unary Log
+let log2 = R.unary Log2
 let log1p = R.unary Log1p
 let exp = R.unary Exp
 let sin = R.unary Sin
@@ -70,21 +71,25 @@ let infinite x = eq (magnitude x) (inf x)
 
 (* Whether [x] is infinite or NaN. *)
 let wild x = not_ (lt (magnitude x) (inf x))
+
+(* nx_finite: [|x|] below infinity, false at a NaN. *)
+let finite x = lt (magnitude x) (inf x)
+
 let nans x = (nan x, nan x)
 
 (* Branches
 
    A C function's early returns are a selection of every return's value, the
-   first whose condition holds winning: [cases l d] is the value of the first
-   case of [l] whose condition holds, else [d]. Every case computes on every
-   element; a case's value on an element whose condition is false is never
-   selected, whatever it is. *)
-let rec cases l d =
-  match l with
-  | [] -> d
-  | (c, (re, im)) :: rest ->
-      let dr, di = cases rest d in
-      (where c re dr, where c im di)
+   first whose condition holds winning: [first l d] is the value of the first
+   case of [l] whose condition holds, else [d], and [cases] that of pairs.
+   Every case computes on every element; a case's value on an element whose
+   condition is false is never selected, whatever it is. *)
+let rec first l d =
+  match l with [] -> d | (c, v) :: rest -> where c v (first rest d)
+
+let cases l d =
+  ( first (List.map (fun (c, (re, _)) -> (c, re)) l) (fst d),
+    first (List.map (fun (c, (_, im)) -> (c, im)) l) (snd d) )
 
 (* nx_unsignalled: x with its quiet bit set where it is a NaN, its sign and
    payload kept. *)
@@ -117,11 +122,11 @@ let hypot x y =
   let h = R.scale (Ops.sqrt (mulacc sa sa (sb *: sb))) k in
   where (eq a (zero a)) a h
 
-(* log |x + iy|: of the larger part a and the smaller b, half log1p of a^2 + b^2
-   - 1 where a is near 1, from exact products (a - 1 is exact, a + 1 and each
-   product a head and a tail), so that it keeps its digits near the unit circle;
-   else log a + log1p((b/a)^2) / 2; log a where b is 0; inf where a part is,
-   NaN included. *)
+(* nx_log_abs: log |x + iy|. Of the larger part a and the smaller b, half
+   log1p of a^2 + b^2 - 1 where a is near 1, from exact products (a - 1 is
+   exact, a + 1 and each product a head and a tail), so that it keeps its
+   digits near the unit circle; else log a + log1p((b/a)^2) / 2; log a where b
+   is 0; inf where a part is, NaN where a part is NaN otherwise. *)
 let log_abs x y =
   let ax = magnitude x and ay = magnitude y in
   let a = larger ax ay and b = smaller ax ay in
@@ -134,9 +139,14 @@ let log_abs x y =
   let near = half a *: log1p d in
   let q = b /: a in
   let far = mulacc (half a) (log1p (q *: q)) (log a) in
-  let v = where (ge a (half a) &&: le a (num a 2.)) near far in
-  let v = where (eq b (zero b)) (log a) v in
-  where (infinite x ||: infinite y) (inf x) v
+  first
+    [
+      (eq ax (inf x) ||: eq ay (inf y), inf x);
+      (is_nan ax ||: is_nan ay, nan x);
+      (eq b (zero b), log a);
+      (ge a (half a) &&: le a (num a 2.), near);
+    ]
+    far
 
 (* asinh t, odd: log1p(a + a^2 / (1 + sqrt(1 + a^2))) of a = |t|; past 2^p,
    where a^2 + 1 rounds to a^2, log a + ln2. *)
@@ -177,11 +187,20 @@ let exp2_raw x y =
   let t = y *: R.con y R.ln2 in
   unbounded x y (polar (clamp x (R.con x cexp2_hi), zero x) (cos t) (sin t))
 
+(* nx_log_raw: log z = log |z| + i arg z, arg z = atan2(y, x) with its special
+   values. *)
 let log_raw x y = (log_abs x y, atan2 y x)
 
+(* nx_log2_raw: log2 z = log z / ln2, 1/ln2 as a head and a tail; on the axes,
+   the part type's log2 of the modulus. *)
 let log2_raw x y =
-  let re, im = log_raw x y in
-  (re *: R.con re R.log2e, im *: R.con im R.log2e)
+  let lr, li = log_raw x y in
+  let by_ln2 v = mulacc v (R.con v R.log2e) (v *: R.con v R.log2e_lo) in
+  let ax = magnitude x and ay = magnitude y in
+  let re = by_ln2 lr in
+  let re = where (eq y (zero y) &&: eq ax ax) (log2 ax) re in
+  let re = where (eq x (zero x) &&: finite y) (log2 ay) re in
+  (re, by_ln2 li)
 
 (* nx_sqrt_raw (Kahan, 1987): t = sqrt((|x| + |z|) / 2) is the part of the
    larger magnitude, y / 2t the other; z is scaled by an even power of two so
@@ -415,8 +434,8 @@ let unary (k : Nx_kernel.Prog.unary) ((x, y) as z) =
   | Sqrt -> sqrt_raw (unsignalled x) (unsignalled y)
   | Exp -> exp_raw x y
   | Exp2 -> exp2_raw x y
-  | Log -> log_raw x y
-  | Log2 -> log2_raw x y
+  | Log -> log_raw (unsignalled x) (unsignalled y)
+  | Log2 -> log2_raw (unsignalled x) (unsignalled y)
   | Sinh -> sinh_raw x y
   | Cosh -> cosh_raw x y
   | Tanh -> tanh_raw x y

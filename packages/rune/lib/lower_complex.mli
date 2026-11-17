@@ -21,8 +21,9 @@
 
     {1:nx Kinds of nx's sequence}
 
-    [Mul], [Fdiv], [Recip], [Sqrt] and [Sign] compute the sequence of
-    operations nx's kernel header, [nx_kinds_complex.h], gives them, each fused
+    [Mul], [Fdiv], [Recip], [Sqrt], [Sign], [Log] and [Log2] compute the
+    sequence of operations nx's kernel header, [nx_kinds_complex.h], gives
+    them, each fused
     multiply-add a {!Lower_bits.mulacc}, a branch of the header a selection
     with every side computed. A transcendental kind among them first sets the
     quiet bit of its operand's NaN parts. [Mul] is the textbook product, each
@@ -31,13 +32,17 @@
     scaled by [2{^25}] or [2{^54}] where its parts are below the least normal
     over [u]; [Recip] is [(1 + 0i) / z] by [Fdiv]. [Sqrt] is Kahan's, of [z]
     scaled by an even power of two, and [Sign] is [z / |z|] of [z] scaled by a
-    power of two. On a target that keeps subnormals, rounds division and the
-    square root correctly and rounds a fused multiply-add once, they give the
-    bits nx's kernels give, a NaN part as nx's NaN rule allows: they are exact.
-    On a target that rounds division and the square root correctly and rounds a
-    fused multiply-add once, [Sqrt] and [Sign] are within the normwise bound nx
-    states for them, [3u], where no value computed for them is subnormal; on
-    another target no bound is stated for them.
+    power of two. [Log] is [log |z| + i atan2(y, x)], [log |z|] by [log1p] of
+    exact products near the unit circle, and [Log2] is [Log] times [1/ln 2] in
+    two parts, the float [log2] of the modulus on the axes. On a target that
+    keeps subnormals, rounds division and the square root correctly and rounds
+    a fused multiply-add once, they give the bits nx's kernels give, a NaN part
+    as nx's NaN rule allows: they are exact. On a target that rounds division
+    and the square root correctly and rounds a fused multiply-add once, each
+    but [Mul], [Fdiv] and [Recip] is within the normwise bound nx states for it
+    ([3u] for [Sqrt] and [Sign], [4u] for [Log] and [Log2]) where no value
+    computed for it is subnormal; on another target no bound is stated for
+    them.
 
     {1:bounded Other kinds}
 
@@ -54,8 +59,6 @@
     {v
       mul                                      2
       fdiv, recip                              4
-      log                                     18
-      log2                                    20
       atan, atanh, acos, acosh                21
       asin, asinh                             23
       exp                                     31

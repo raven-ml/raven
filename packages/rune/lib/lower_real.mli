@@ -117,6 +117,10 @@ val ln2 : float * float
 val log2e : float * float
 (** [log2e] is 1 / ln 2 rounded. *)
 
+val log2e_lo : float * float
+(** [log2e_lo] is 1 / ln 2 less {!log2e}, rounded: [nx_kinds.h]'s
+    [LOG2E_LO]. *)
+
 val hyp_far : float
 (** [hyp_far] is the [|x|] from which [cosh] and [|sinh|] are [e{^|x|} / 2], and
     [|tanh|] is [1], to both types' precision. *)
