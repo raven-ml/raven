@@ -143,23 +143,37 @@ device without a bound on its memory a budget of `max_int`, which the glue
 records as no budget.
 
 What every process holds on a GPU, and how busy it is, comes from the
-GPU's driver. On NVIDIA's kernel driver, `Rig_nv_nvidia.usage` reads the
-GPU's memory, the bytes free of it, and how busy its compute engine was
-over a window, by the GPU's index. A program that opened GPU `i` as the
-device `d` adds them to `d`'s reading:
+GPU's driver. `Rig.capacity d` reads the device's memory and what its
+driver would still give of it, on every driver that reports them, and is
+`None` on the others, such as the host and Metal. The glue records the
+total as `memory`, and the total less that free figure as `used`, which
+errs where the driver's figure errs, as rig's interface of each driver
+states. A program reads `memory d` in place of `held d` in `monitor`:
+
+<!-- $MDX skip -->
+```ocaml
+let memory d () : Munin_sys.device =
+  match Rig.capacity d with
+  | exception Rig.Lost (_, why) -> raise (Sys_error why)
+  | None -> held d ()
+  | Some c ->
+      {
+        (held d ()) with
+        memory = Some c.total;
+        used = Some (c.total - c.free);
+      }
+```
+
+On NVIDIA's kernel driver, `Rig_nv_nvidia.usage` also reads how busy the
+GPU's compute engine was over a window, by the GPU's index. A program
+that opened GPU `i` as the device `d` adds it to `d`'s reading:
 
 <!-- $MDX skip -->
 ```ocaml
 let nvidia i d () : Munin_sys.device =
   match Rig_nv_nvidia.usage ~window:every i with
   | Error why -> raise (Sys_error why)
-  | Ok u ->
-      {
-        (held d ()) with
-        memory = Some u.memory_total;
-        used = Some (u.memory_total - u.memory_free);
-        busy = u.busy;
-      }
+  | Ok u -> { (memory d ()) with busy = u.busy }
 
 let gpu_reading i d = Munin_sys.device (Rig.name d) (nvidia i d)
 ```

@@ -1340,6 +1340,10 @@ All notable changes to this project will be documented in this file.
 
 ### Munin (new)
 
+- The monitoring guide reads a device's `memory` and `used` from
+  `Rig.capacity` on every driver that reports it, and `used` is `memory`
+  less the driver's free figure, which on NVIDIA's kernel driver no longer
+  counts the RM's reserve.
 - `History.surviving` gives a key's samples that no resume abandoned: a
   reading logged before a resume that went back below its step is left out,
   by its place in the log whatever the clocks say.

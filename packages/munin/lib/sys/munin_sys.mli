@@ -86,9 +86,10 @@ val process : unit -> unit -> (string * float) list
     the run records and a reader looks for. Each field holds one quantity
     under one key, whichever vendor made the device. rig reports
     [allocated] and [budget] of every device ([Rig.allocated],
-    [Rig.budget]), and [memory], [used] and [busy] of an NVIDIA GPU on
-    NVIDIA's kernel driver ([Rig_nv_nvidia.usage]); a field that the
-    device's library does not report stays [None]. *)
+    [Rig.budget]), [memory] and [used] of a device whose driver reports its
+    memory ([Rig.capacity]), and [busy] of an NVIDIA GPU on NVIDIA's kernel
+    driver ([Rig_nv_nvidia.usage]); a field that the device's library does
+    not report stays [None]. *)
 
 type device = {
   allocated : int option;
@@ -102,8 +103,12 @@ type device = {
           allocates, for every process and for itself, under
           [memory_bytes]. *)
   used : int option;
-      (** Of [memory], the bytes that allocations of every process and of
-          the driver hold, under [used_bytes]. *)
+      (** Of [memory], the bytes the driver reports it would not still give,
+          [memory] less what it reports it would still give, to any process,
+          under [used_bytes]. It counts this process's memory. It errs low
+          where a driver leaves memory that other processes hold out of its
+          free figure, and high where it counts allocations in larger units,
+          as rig's interface of each driver states. *)
   busy : float option;
       (** The percent of the window's time during which the device's
           compute engine ran work of any process, under [busy_pct]. It
