@@ -1521,18 +1521,18 @@ let moves (b : Support.backend) =
   [
     prop "copy is bits for bits" case
       (run (fun c ->
-           covers b c;
+           covers c;
            law_copy b c));
     prop ~count:32 ~examples:large_views "copy of large views is bits for bits"
       large
       (run (fun c ->
-           covers_large b c;
+           covers_large c;
            law_copy b c));
     test "copy keeps NaN payloads" (unit (test_copy_nan_payloads b));
     (* A bitcast outside its domain is about one case in six. *)
     prop ~count:200 "bitcast keeps every element's bits" (same_width case)
       (run (fun ((c, _) as x) ->
-           covers b c;
+           covers c;
            law_bitcast b x));
   ]
 
@@ -1544,14 +1544,14 @@ let laws (b : Support.backend) =
     @ [
       prop "cast is the reference, element by element" (pair case)
         (run (fun ((Case a as c), D.Any d) ->
-             covers b c;
+             covers c;
              cover "to the source's dtype" (D.equal (A.dtype a) d);
              law_cast b (c, D.Any d)));
       prop ~count:32
         ~examples:(List.map (fun c -> (c, D.Any D.Float64)) large_views)
         "cast of large views is the reference" (pair large)
         (run (fun (c, d) ->
-             covers_large b c;
+             covers_large c;
              law_cast b (c, d)));
       group "every code of the narrow dtypes"
         (List.map
@@ -1610,12 +1610,12 @@ let laws (b : Support.backend) =
         "an operand read at the result's own index may be the destination"
         (Gen.pair (Gen.frequency [ (9, pairs); (1, large_pairs) ]) Gen.nat)
         (run (fun ((Pair (x, _), _) as c) ->
-             covers b (Case x);
+             covers (Case x);
              law_in_place b c));
       prop "a map of several nodes may write over a load it reads"
         (Gen.pair (Gen.frequency [ (9, pairs); (1, large_pairs) ]) Gen.int)
         (run (fun ((Pair (x, _), _) as c) ->
-             covers b (Case x);
+             covers (Case x);
              law_map_over_load b c));
       prop "a result in a box of indices is computed from the operands' box"
         box_cases (run (law_box b));
@@ -1627,12 +1627,12 @@ let laws (b : Support.backend) =
         (unit (test_real_transforms b));
       prop "a kind of one operand the contract fixes gives its result" case
         (run (fun (Case x as c) ->
-             covers b c;
+             covers c;
              law_map1 ~kinds:(exact1 (D.Any (A.dtype x))) b c));
       prop ~examples:(divisor_pairs @ threefry_pairs)
         "a kind of two operands the contract fixes gives its result" pairs
         (run (fun (Pair (x, _) as p) ->
-             covers b (Case x);
+             covers (Case x);
              law_map2 ~kinds:(exact2 (D.Any (A.dtype x))) b p));
       test "float kinds at float64 are within nx_kinds.h's bounds of the goldens"
         (unit (test_f64_kinds b));
@@ -1708,7 +1708,7 @@ let nv_laws (first : Support.backend) (nv : Support.backend) =
         [
           prop ~count:200 "of maps of programs, over padded loads too"
             split_cases (fun ((Pair (x, _) as pair), seed, mode) ->
-              covers first (Case x);
+              covers (Case x);
               cover "padded loads" (mode = Padded);
               cover "a program of hundreds of nodes" (mode = Long);
               Elements.agree first nv (fun b -> split_map b (pair, seed, mode)));

@@ -789,7 +789,7 @@ let law_kind_guards (b : Support.backend) (g, side) =
    operand and the result against the page. *)
 let law_large_guards (b : Support.backend) ((Case a as c), d, side) =
   let module K = (val b.kernels) in
-  covers_large b c;
+  covers_large c;
   List.iter
     (fun (k, d) ->
       let call xs ds =
@@ -1577,7 +1577,7 @@ let cpu =
         case
         (fun c ->
           b.around (fun () ->
-              covers b c;
+              covers c;
               law_map1 b c));
       (* Every dtype refuses a kind: floats Atanh, complex numbers Erf,
          integers and booleans Exp, so that each case checks a refusal over a

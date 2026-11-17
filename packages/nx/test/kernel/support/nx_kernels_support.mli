@@ -144,12 +144,13 @@ val on : backend -> ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t
     overlaps as they lie on the source. *)
 
 val gapped : Nx_array.Layout.t -> bool
-(** [gapped l] is [true] iff [l] has an element and its buffer holds bytes
-    before or among its elements that none of them reaches: its least
-    position is past [0], or its span is longer than the product of its
-    extents along axes of nonzero stride. {!Nx_array.to_device} moves such
-    a layout's elements to other positions; {!on} keeps them where they
-    lie. *)
+(** [gapped l] is [true] iff [l] has an element and its least position is
+    past [0] or its span is longer than the product of its extents along
+    axes of nonzero stride. Such a layout's buffer holds bytes before or
+    among its elements that none of them reaches. An overlapping layout can
+    have such bytes and be [false]: shape [[3; 3]] at strides [[2; 2]].
+    {!Nx_array.to_device} moves a [gapped] layout's elements to other
+    positions; {!on} keeps them where they lie. *)
 
 val host : ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t
 (** [host x] is [x] where the host reads it: [x] itself on {!Rig.host}, a
