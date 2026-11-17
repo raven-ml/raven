@@ -2079,12 +2079,15 @@ let first_cases =
      constant { wide; rows = 4; first_layout = Plain_first; donates; split }
    else
      let+ rows = frequency [ (1, constant 0); (4, int_range 1 4) ]
+     (* Element 4 starts a run 16 or 32 bytes in, at phase [0] at either width,
+        where [int_range 1 7] is at phase [0] in about 1 draw in 4. *)
      and+ first_layout =
+       let k = frequency [ (2, int_range 1 7); (1, constant 4) ] in
        frequency
          [
            (1, constant Plain_first);
            (1, constant Transposed_first);
-           (2, map (fun k -> Offset_first k) (int_range 1 7));
+           (2, map (fun k -> Offset_first k) k);
          ]
      in
      { wide; rows; first_layout; donates; split })
