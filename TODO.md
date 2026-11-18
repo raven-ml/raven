@@ -18,15 +18,24 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - D212's blocked contractions lose to tinygrad's heuristic on long reduces
   (`contract/f32-2048` 1.03 of main against 0.92; attention values 256 wide
   1.04 against 0.86); `Heuristic.group` never groups a contraction
-- `Heuristic.four_first` gates on the fitted `core_threads` (16384) and D212
-  on `units x 256`: products between them, as matmul_768, run 4 by 4
-  unblocked. Gate both on `units`, which removes a fitted field
+- `Heuristic.four_first` still gates on the fitted `core_threads`. Gated
+  on `units`, matmul_768 takes 4 by 3 at 1.5x the time; ungated, targets
+  that state no `units` (sm_80, AMD, Metal) block small products, 1.38x by
+  an old measurement. Stating `units` on every target would let it go
+  (branch `fix-unitsgate` 3a8321ea33)
 - D357's inner-end group split loses to tinygrad's top split on the bfloat16
   argmax and max over 201088 values (0.67-0.77x, about 3 us a decode step)
   and on sum_cols_prime (0.37x)
 - A decoded operand of 12-16 rows streams in one pass where a core probably
   wins (559-706 us against 424-492 at 17-64 rows); it reaches gpt-oss's
-  Q8_0 prefill at 12 tokens (rowdecode/design-a.md)
+  Q8_0 prefill at 12 tokens. `core_fits` ignores `early`'s guards, which a
+  partial form's one-block sum never meets (rowdecode/design-a.md)
+- `Indexing.core_product` asks `core_fits` with a decoded factor as stored,
+  so a decoded product of 17-32 rows stays grouped there; `heuristic.mli`
+  (~30) says no core takes a decoded operand, but only the streamed one is
+  tested
+- `apply_opt`'s refusal of a tensor core past `local_threads_max`
+  (`postrange.ml` ~987, D488) has no test
 - cstyle names each parameter after its buffer's size (`data0_4096`), so
   kernels over buffers of two sizes compile apart under D485: name the
   parameters without sizes in the renderer
