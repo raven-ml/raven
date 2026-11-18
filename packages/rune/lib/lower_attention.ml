@@ -2677,3 +2677,47 @@ let linear ~device ~(renderer : Renderer.t) (spec : Attention.spec) ~transposed
         in
         let bv = if dv = 0 then bv else shaped vt sv bv in
         Some [| shaped vt sq (List.hd dq); shaped vt sk bk; bv |]
+
+(* The derivative's kernels from the call *)
+
+let lower_transposed ~device ~(renderer : Renderer.t)
+    (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r) (op : r Nx.Prim.t) =
+  match op with
+  | Attention { prog; scale; acc; out; q; kv = Dense { k; v }; lengths; loads } ->
+      let ys = lower ~device ~renderer node op in
+      let sq = Nx.shape q and dv = (Nx.shape v).(Array.length (Nx.shape v) - 1) in
+      let rows = Array.sub sq 0 (Array.length sq - 1) in
+      let o_shape = Array.append rows [| dv |] in
+      let operand x = (D.Any (Nx.dtype x), Nx.shape x, node x) in
+      (* Cotangents of ones, of [d] and [s]. *)
+      let ones d s =
+        let s' = List.map (fun n -> Ops.Int n) (Array.to_list s) in
+        ( d,
+          s,
+          Shape.expand
+            (Shape.reshape (Ops.const ~dtype:(Arith.dtype d) (`Float 1.))
+               (List.map (fun _ -> Ops.Int 1) s'))
+            s' )
+      in
+      let data =
+        Array.concat
+          [
+            [| operand q; operand k; operand v |];
+            Option.to_list (Option.map operand lengths) |> Array.of_list;
+            Array.map (fun (Nx.Prim.Any x) -> operand x) (Iarray.to_array loads);
+            [| (D.Any out, o_shape, ys.(0)); (D.Any acc, rows, ys.(1)) |];
+          ]
+      in
+      let spec : Attention.spec =
+        {
+          prog;
+          scale;
+          paged = false;
+          lengths = Option.is_some lengths;
+          tangents = Array.make (Iarray.length loads) false;
+        }
+      in
+      linear ~device ~renderer spec ~transposed:true data
+        [| ones (D.Any out) o_shape; ones (D.Any acc) rows |]
+  | Attention _ -> None
+  | _ -> invalid_arg ("Lower_attention.lower_transposed: " ^ Nx.Prim.name op)

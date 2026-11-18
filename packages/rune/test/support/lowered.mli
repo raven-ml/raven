@@ -51,3 +51,14 @@ val sources :
     [target]'s renderer writes for it, made without the target's toolchain
     ({!Tolk.Cstyle.without_compiler}), in the order the schedule calls
     them. *)
+
+val derivative_sources :
+  target:Tolk.Helpers.Target.t ->
+  (unit -> ('v, 's, 'd) Nx.t) ->
+  (string * Tolk.Ops.t * string) list option list
+(** [derivative_sources ~target f] is, for each [Nx.attention] [f ()]
+    computes, in turn, the kernels of its derivative's transpose that
+    {!Rune.jit} would compile on [target]'s device, at the call's own [o]
+    and [lse] and cotangents of ones, each as {!sources} gives it, or
+    [None] where the derivative takes its default, and so has no kernels of
+    attention's own ([Rune.attention_transposed]). *)

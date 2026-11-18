@@ -2211,6 +2211,19 @@ val attention_tiles :
     and values of [dv] columns, accumulated in float32; [None] where it takes
     no core, for the suites. *)
 
+val attention_transposed :
+  device:Tolk.Ops.device ->
+  renderer:Tolk.Renderer.t ->
+  ('v 's 'd. ('v, 's, 'd) Nx.t -> Tolk.Ops.t) ->
+  'r Nx.Prim.t ->
+  Tolk.Ops.t array option
+(** [attention_transposed ~device ~renderer node op] is the nodes of the
+    cotangents of an [Nx.attention]'s query, keys and values that its
+    compiled gradient computes on [renderer]'s kernels of attention's own,
+    at the call's results and cotangents of ones, each operand [x] read from
+    [node x], or [None] where it takes the derivative's default: so that the
+    suites render those kernels without a device. *)
+
 val derivations : unit -> int
 (** [derivations ()] is the number of programs that transformations of compiled
     calls derived on the calling domain, for the suites. *)

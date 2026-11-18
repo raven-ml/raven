@@ -128,4 +128,20 @@ val derivative_tile : Tc.t -> wide:bool -> int
     kernels holds on [tc], a whole number of steps of its [N] and [K]; [wide]
     for keys or values past 64 dimensions. *)
 
+val lower_transposed :
+  device:Ops.device ->
+  renderer:Renderer.t ->
+  ('v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) ->
+  'r Nx.Prim.t ->
+  Ops.t array option
+(** [lower_transposed ~device ~renderer node op] is {!linear}'s nodes of the
+    query's, keys' and values' cotangents of the [Attention] [op] at its own
+    [o] and [lse] ({!lower}), each operand [x] read from [node x], for
+    cotangents of ones of [o] and [lse], where [renderer]'s target takes
+    the derivative's kernels: the kernels a compiled gradient runs, made
+    without a device, for the suites to render on the host. [None] for
+    paged keys, and where {!linear} is.
+
+    Raises [Invalid_argument] if [op] is not an [Attention]. *)
+
 (**/**)

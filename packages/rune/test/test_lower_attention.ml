@@ -5,8 +5,9 @@
 
 (* Attention lowered for each GPU target and rendered on the host, without a
    device or its toolchain: every dtype a target has takes a kernel of a
-   product unit, and an FFMA micro-tile's products sum in K's order
-   (lower_attention.mli). *)
+   product unit, an FFMA micro-tile's products sum in K's order
+   (lower_attention.mli), and the forward's kernels and the derivative's on
+   a tensor core use workgroup memory soundly. *)
 
 open Windtrap
 module O = Tolk.Ops
@@ -139,11 +140,11 @@ let key_order (target, ds, causal, d) =
       | _ -> failf "a term not a vector's lane or an offset's scalar")
     heads
 
-(* The workgroup memory of an FFMA kernel, of 128 batches, which run each
-   row's tiles of keys in one workgroup: a loop of tiles. *)
+(* The batches of an FFMA forward the workgroup-memory laws render: 128,
+   which run each row's tiles of keys in one workgroup, a loop of tiles. *)
 let batches = 128
 
-(* The workgroup memory of an FFMA kernel
+(* The workgroup memory of a kernel of attention's own
 
    Workgroup 0's threads run its linearized program with every loop at its
    first trip: [stores target ast] is each store into workgroup memory, by
@@ -214,11 +215,12 @@ let threads specials =
     (fun ts (n, k) -> List.concat_map (fun t -> List.init k (fun i -> (n, i) :: t)) ts)
     [ [] ] locals
 
-(* An FFMA kernel's threads store into distinct addresses of workgroup memory
+(* A kernel's threads store into distinct addresses of workgroup memory
    between two barriers: a copy of a row into workgroup memory stays within
-   its row and the row's padding, whatever the padding the unit takes. *)
-let no_races (target, ds, causal, d) =
-  let ss, specials = stores target (forward ~batches ~causal target ds d) in
+   its row and the row's padding, whatever the padding the unit takes, and
+   no two threads copy one element. *)
+let no_races target ast =
+  let ss, specials = stores target ast in
   is_true ~msg:"stores into workgroup memory" (ss <> []);
   let seen = Hashtbl.create 4096 in
   List.iter
@@ -237,14 +239,16 @@ let no_races (target, ds, causal, d) =
     (threads specials)
 
 (* A kernel's workgroup buffer that the tiles' loop reads is written in that
-   loop, at each tile: the FFMA kernel's chunk of [Q] shares the values'
-   memory, which each tile writes, so a copy made once before the loop would
-   be read as values from the second tile on. *)
-let in_the_tiles_loop (target, ds, causal, d) =
-  let uops = linearized target (forward ~batches ~causal target ds d) in
+   loop, at each tile: every such buffer holds a tile's rows or keys, or
+   shares the memory of one that does, as the FFMA forward's chunk of [Q]
+   shares the values', which each tile writes, so that a copy made once
+   before the loop would be read as values from the second tile on. *)
+let in_the_tiles_loop target ast =
+  let uops = linearized target ast in
   let local u = O.addrspace u = Some Tolk.Dtype.Local in
   let tile = List.find (fun u -> O.op u = Tolk.Op.Range) uops in
-  is_true ~msg:"a loop of tiles" (Option.get (value (O.nth tile 0)) > 1);
+  is_true ~msg:"a loop of tiles"
+    (match O.vmax (O.nth tile 0) with `Int z -> Tolk.Bigint.to_int z > 1 | _ -> false);
   let inside = ref false and read = Hashtbl.create 8 and written = ref [] in
   List.iter
     (fun u ->
@@ -278,6 +282,52 @@ let ffma_cases =
       D (Nx.float32, Nx.float64); D (Nx.bfloat16, Nx.float64);
     ]
 
+(* The derivative's kernels of attention's own, [q̄]'s and [k̄]'s and [v̄]'s,
+   of a bfloat16 call accumulated in float32 of 2 batches of 2 heads of 128
+   rows and keys and values of [d] dimensions, unmasked or [causal], on
+   [target]'s tensor core, rendered as a compiled gradient takes them
+   ({!Lowered.derivative_sources}); [[]] where its derivative takes its
+   default. *)
+let derivative target ~causal d =
+  let shape = [| 2; 2; 128; d |] in
+  let f () =
+    let z () = Nx.full Nx.bfloat16 shape 0.5 in
+    let q = z () and k = z () and v = z () in
+    let mask = if causal then Some Nx.causal else None in
+    Nx.cast Nx.float32 (fst (Nx.attention ?mask ~acc:Nx.float32 ~kv:(Dense { k; v }) q))
+  in
+  match Lowered.derivative_sources ~target f with
+  | [ Some ks ] ->
+      List.filter_map
+        (fun (n, ast, _) ->
+          if String.starts_with ~prefix:"attention_d" n && n <> "attention_delta"
+          then Some (n, ast)
+          else None)
+        ks
+  | [ None ] -> []
+  | l -> failf "%d calls of attention" (List.length l)
+
+(* The derivative's rows: bfloat16 at d36 to d160, plain and causal, on each
+   GPU target whose tensor core takes them; CUDA's must. *)
+let derivative_cases =
+  List.concat_map
+    (fun t -> List.concat_map (fun d -> [ (t, false, d); (t, true, d) ]) [ 36; 64; 110; 160 ])
+    (List.filter (fun (t : Tolk.Helpers.Target.t) -> t.arch <> "sm_75") gpu_targets)
+
+let derivative_id (t, causal, d) =
+  Printf.sprintf "%s bfloat16 d%d%s" (target_id t) d (if causal then " causal" else "")
+
+(* [on_derivative law] holds [law] on each of a case's derivative kernels,
+   [q̄]'s and [k̄]'s and [v̄]'s. *)
+let on_derivative law (t, causal, d) =
+  match derivative t ~causal d with
+  | [] -> is_true ~msg:"CUDA's tensor core takes the derivative" (t != cuda)
+  | ks ->
+      is_true ~msg:"q̄'s kernel" (List.exists (fun (n, _) -> n = "attention_dq") ks);
+      is_true ~msg:"k̄'s and v̄'s kernels"
+        (List.exists (fun (n, _) -> String.starts_with ~prefix:"attention_dkdv" n) ks);
+      List.iter (fun (_, ast) -> law t ast) ks
+
 let ffma_id (t, ds, causal, d) =
   Printf.sprintf "%s %s d%d%s" (target_id t) (dtypes_id ds) d
     (if causal then " causal" else "")
@@ -308,8 +358,18 @@ let () =
                   gpu_targets)
                key_order;
              cases "stores each address of workgroup memory once between barriers"
-               ~id:ffma_id ffma_cases no_races;
+               ~id:ffma_id ffma_cases
+               (fun (t, ds, causal, d) -> no_races t (forward ~batches ~causal t ds d));
              cases "writes each buffer its tiles' loop reads in that loop"
-               ~id:ffma_id ffma_cases in_the_tiles_loop;
+               ~id:ffma_id ffma_cases
+               (fun (t, ds, causal, d) ->
+                 in_the_tiles_loop t (forward ~batches ~causal t ds d));
+           ];
+         group "the derivative's kernels on a tensor core"
+           [
+             cases "store each address of workgroup memory once between barriers"
+               ~id:derivative_id derivative_cases (on_derivative no_races);
+             cases "write each buffer their tiles' loop reads in that loop"
+               ~id:derivative_id derivative_cases (on_derivative in_the_tiles_loop);
            ];
        ])

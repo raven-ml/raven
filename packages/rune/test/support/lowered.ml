@@ -134,7 +134,8 @@ let decode (type v s) (dt : (v, s) D.t) shape (bytes : Bytes.t) : v array =
 
 (* Lowering *)
 
-let rule ~direct ~local ~place bound i ~by (type r) (op : r Nx.Prim.t) : r =
+let rule ~direct ~local ~place ?transposed bound i ~by (type r)
+    (op : r Nx.Prim.t) : r =
   let node : type v s d. (v, s, d) Nx.t -> Ops.t =
    fun x ->
     match Nx.Prim.payload i x with
@@ -142,6 +143,15 @@ let rule ~direct ~local ~place bound i ~by (type r) (op : r Nx.Prim.t) : r =
     | Some _ -> invalid_arg "Lowered: a value of another payload"
     | None -> bind ~direct ~device:place.device bound x
   in
+  (match (transposed, op) with
+  | Some found, Nx.Prim.Attention _ ->
+      found :=
+        !found
+        @ [
+            Rune.attention_transposed ~device:place.device
+              ~renderer:(Lazy.force place.renderer) node op;
+          ]
+  | _ -> ());
   let ys =
     Rune.Lower.op ~renderer:place.renderer ~device:place.device
       ~host:place.host ~local node op
@@ -150,11 +160,11 @@ let rule ~direct ~local ~place bound i ~by (type r) (op : r Nx.Prim.t) : r =
 
 (* [f ()]'s graph, the storage it binds and its result's elements. *)
 let lowered (type v s d) ?(direct = false) ?(local = true) ?(place = on_host)
-    (f : unit -> (v, s, d) Nx.t) =
+    ?transposed (f : unit -> (v, s, d) Nx.t) =
   let bound = ref [] in
   let y, u =
     Nx.Prim.interpret ~name:"Lowered" Nx.Prim.Extent
-      (fun i ~by op -> rule ~direct ~local ~place bound i ~by op)
+      (fun i ~by op -> rule ~direct ~local ~place ?transposed bound i ~by op)
       (fun i ->
         let y = f () in
         match Nx.Prim.payload i y with
@@ -228,21 +238,13 @@ let kernels (type v s d) ?cores (f : unit -> (v, s, d) Nx.t) =
   List.length
     (List.filter (fun c -> Op.equal (Ops.op c) Op.Call) (Ops.src compiled))
 
-let sources (type v s d) ~(target : Helpers.Target.t)
-    (f : unit -> (v, s, d) Nx.t) =
-  let renderer = Cstyle.without_compiler target in
-  let place =
-    { device = target.device; renderer = Lazy.from_val renderer; host = false }
-  in
-  let _, u, dt, _, n = lowered ~direct:true ~local:false ~place f in
-  let o = Ops.new_buffer place.device (max 1 n) (L.dtype (D.Any dt)) in
-  let sink =
-    Ops.sink
-      [ Ops.after o [ Ops.store o (Shape.reshape u [ Ops.Int (max 1 n) ]) ] ]
-  in
+(* Each kernel of the schedule of the stores [sink] makes on [device],
+   rendered by [renderer], whose tensor cores it takes: its name, sink and
+   source, in the order the schedule calls them. *)
+let rendered ~device renderer sink =
   let linear, _ =
     Schedule.create_linear_with_vars
-      ~cores:[ (place.device, Heuristic.cores renderer) ]
+      ~cores:[ (device, Heuristic.cores renderer) ]
       sink
   in
   (* A call of a kernel's sink, rendered. *)
@@ -260,3 +262,34 @@ let sources (type v s d) ~(target : Helpers.Target.t)
       | _ -> None
   in
   List.filter_map render (Ops.toposort ~calls:Skip linear)
+
+(* [target]'s renderer, made without its toolchain, and the place of a
+   graph lowered for its device. *)
+let off_host (target : Helpers.Target.t) =
+  let renderer = Cstyle.without_compiler target in
+  (renderer, { device = target.device; renderer = Lazy.from_val renderer; host = false })
+
+let sources (type v s d) ~(target : Helpers.Target.t)
+    (f : unit -> (v, s, d) Nx.t) =
+  let renderer, place = off_host target in
+  let _, u, dt, _, n = lowered ~direct:true ~local:false ~place f in
+  let o = Ops.new_buffer place.device (max 1 n) (L.dtype (D.Any dt)) in
+  rendered ~device:place.device renderer
+    (Ops.sink
+       [ Ops.after o [ Ops.store o (Shape.reshape u [ Ops.Int (max 1 n) ]) ] ])
+
+let derivative_sources (type v s d) ~(target : Helpers.Target.t)
+    (f : unit -> (v, s, d) Nx.t) =
+  let renderer, place = off_host target in
+  let found = ref [] in
+  let _ = lowered ~direct:true ~local:false ~place ~transposed:found f in
+  let store u =
+    let n = Shape.max_numel u in
+    let o = Ops.new_buffer place.device (max 1 n) (Ops.dtype u) in
+    Ops.after o [ Ops.store o (Shape.reshape u [ Ops.Int (max 1 n) ]) ]
+  in
+  List.map
+    (function
+      | None -> None
+      | Some us -> Some (rendered ~device:place.device renderer (Ops.sink (Array.to_list (Array.map store us)))))
+    !found

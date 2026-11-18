@@ -1419,6 +1419,7 @@ module Loop = Loop
 
 let attention_tile = Lower_attention.derivative_tile
 let attention_tiles = Lower_attention.forward_tiles
+let attention_transposed = Lower_attention.lower_transposed
 
 let derivations = Program.derivations
 let evaluations = Compile.evaluations
