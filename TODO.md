@@ -127,6 +127,11 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   over AION's 40 heads, where eager keeps none
 - `Nx.attention ~lengths` skips padded work in the forward only; its
   default derivative builds the whole pair loop
+- `Nx.softmax` states no error bound in nx.mli; its doc should bound the
+  shift, exp, sum and quotient as the transcendental section does
+- rune cannot check data inside compiled code (a token range, a length
+  past its row), so a model that validates its inputs, such as AION's
+  codecs, checks on the host and its encode cannot run under `Rune.jit`
 - No tree can check formatting: the only ocamlformat on fudge (0.29.0)
   rejects main's own files and no dev-tools lock pins the repository's
   formatter
