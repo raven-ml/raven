@@ -5613,10 +5613,12 @@ union, as fast on CUDA, on the host and in compile time.
   - with no such core, streams in `ceil(R / 16)` passes at any reuse, the
     axis padded where they do not divide it.
 
-  `core_fits` and `core_rows` under `~decoded` count a decoded operand's
-  rows as the heuristic does, past 16 where they are fewer than its outputs
-  and their pad uncounted, so that rune writes such rows of a Q8_0 matrix in
-  the partial form a core takes.
+  `core_fits` and `core_rows` take whether each factor is decoded, in the
+  product's order, and decide by the heuristic's own rules
+  (`Heuristic.first_streams`, `core_from` and `pad_shared`): a core past 16
+  where the factor that streams is decoded, the first at a tie, and the pad
+  of an extent past 16 that no decoded factor reads uncounted, so that rune
+  writes such rows of a Q8_0 matrix in the partial form a core takes.
 
   A core decodes a value once a tile of its rows where its floor (D175)
   refuses their upcast, and once in each lane its fragment holds it (two on
@@ -5629,8 +5631,11 @@ union, as fast on CUDA, on the host and in compile time.
   read at one index at most ceil(R / 16) times its core's copies` (1 to 512
   rows of bfloat16, half and float32 on the CUDA, RDNA3, RDNA4, CDNA and
   Metal renderers), `a decoded product's optimisations keep its writes`
-  (17 and 19 rows on a core, 64 float32 rows streamed) and `core_fits names
-  the decoded products the heuristic takes a core of`; rune's GPU suite's `a
+  (17 and 19 rows on a core, 64 float32 rows streamed), `core_fits names
+  the decoded products the heuristic takes a core of` and `core_fits names
+  the products of stored and decoded factors the heuristic takes a core of`
+  (both factor orders, ties, one and two decoded factors); rune's GPU
+  suite's `a
   Q8_0 product's rows take a tensor core where core_fits holds`; kaun's
   `Quant/cuda/mxfp4-product-of-16384-{17,32}-bfloat16-tokens`,
   `-64-float32-tokens` and `q8_0-product-of-16384-{17,32}-bfloat16-tokens`.
@@ -9144,9 +9149,8 @@ D466.
   the core tinygrad's default takes, on the same axis. A padded core is taken
   only where its padded extents hold at most 6/5 of the work of the kernel's
   own (`core_waste`), and `core_fits` and `core_rows`, which rune asks for
-  the form of a contraction, read the same bound, leaving out under
-  `~decoded` the pad of a decoded operand's rows as D230 does, in place of
-  divisibility
+  the form of a contraction, read the same bound, leaving out the pad that
+  D230 leaves out of a decoded factor's, in place of divisibility
   (at `TC_OPT` 0 or 1 the bound is 1, divisibility). An extent the kernel
   holds as a range of one trip is no axis, and a core that would pad it is
   refused, where tinygrad's lookup of the axis raises. At level 2, a staged

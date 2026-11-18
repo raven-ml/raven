@@ -130,8 +130,8 @@ val scan :
     [init], and rounds the sum once to [out]. An integer [acc] wraps and is
     exact. A float32 contraction of integer codes whose [Value] scale runs
     along its first contracted axes with a narrow float of a type that holds
-    every code, where {!Tolk.Heuristic.core_fits} holds of the codes as a
-    decoded operand, sums the products
+    every code, where {!Tolk.Heuristic.core_fits} holds of the product's
+    factors in its order, the codes the decoded one, sums the products
     along its last contracted axis, multiplies each partial sum by its
     block's scale, then sums the blocks: a tensor core multiplies only its
     narrow operands.
@@ -205,8 +205,9 @@ val contract :
     [c] follows the fewest rows [r] a tensor core takes of a block of stored
     slices, {!Tolk.Heuristic.core_rows} on [renderer] of the dtype both operands
     enter a core in, accumulated in [acc], [b]'s one free extent past 1 as
-    the outputs and [b]'s last contracted extent, past 0, as the block, [b]
-    asked as stored ([~decoded:false]) whether or not it is scaled. That
+    the outputs and [b]'s last contracted extent, past 0, as the block, both
+    factors asked as stored ([~decoded:(false, false)]) whether or not [b] is
+    scaled. That
     dtype is bfloat16 for
     unscaled bfloat16 rows against [float4_e2m1fn] codes of an [Exponent]
     scale into [float32], or an unscaled pair's shared dtype; for other

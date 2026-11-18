@@ -1075,9 +1075,9 @@ let rows ~renderer ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
        let outputs = List.filter (fun e -> e > 1) (List.map (List.nth sb) fb) in
        match (outputs, List.rev contracting, core_in acc a b) with
        | [ outputs ], (_, kb) :: _, Some dtype_in when List.nth sb kb > 0 ->
-           Tolk.Heuristic.core_rows (Lazy.force renderer) ~decoded:false
-             ~dtype_in ~dtype_out:(Arith.dtype acc) ~outputs
-             ~block:(List.nth sb kb)
+           Tolk.Heuristic.core_rows (Lazy.force renderer)
+             ~decoded:(false, false) ~dtype_in ~dtype_out:(Arith.dtype acc)
+             ~outputs ~block:(List.nth sb kb)
        | _ -> None)
   in
   let nb = List.length batch in
@@ -1307,8 +1307,9 @@ let partial ~renderer ~batch ~contracting ~acc ~out a b init =
         if not extent_ok then None
         else
           let block = List.nth sq inner_axis in
-          (* The free extents past 1: a core's M and N each take one range of
-             the operand that reads it and not the other's. *)
+          (* The free extents past 1 of the product's factors, in its order:
+             a core's M and N each take one range of the operand that reads
+             it and not the other's. The codes are the decoded factor. *)
           let free_of u pairs =
             let s = extents u in
             let bound = List.map pairs (batch @ contracting) in
@@ -1316,15 +1317,17 @@ let partial ~renderer ~batch ~contracting ~acc ~out a b init =
               (fun e -> e > 1)
               (List.map (List.nth s) (free (List.length s) bound))
           in
-          let rows, outputs =
+          let first, second, decoded =
             match side with
-            | `A -> (free_of other.node snd, free_of scaled.node fst)
-            | `B -> (free_of other.node fst, free_of scaled.node snd)
+            | `A ->
+                (free_of scaled.node fst, free_of other.node snd, (true, false))
+            | `B ->
+                (free_of other.node fst, free_of scaled.node snd, (false, true))
           in
           let fits =
-            match (rows, outputs) with
+            match (first, second) with
             | [ rows ], [ outputs ] when block > 0 ->
-                Tolk.Heuristic.core_fits (Lazy.force renderer) ~decoded:true
+                Tolk.Heuristic.core_fits (Lazy.force renderer) ~decoded
                   ~dtype_in:over ~dtype_out:Float32 ~rows ~outputs ~block
             | _ -> false
           in

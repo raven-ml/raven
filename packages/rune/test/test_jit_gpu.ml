@@ -2282,7 +2282,8 @@ let routed_outputs = 256
    [routed_inputs] by [outputs], {!routed_outputs} by default, its slices
    asked as stored, as Rune.Lower_reduce.contract asks of MXFP4's too. *)
 let routed_core ?(outputs = routed_outputs) ren =
-  Tolk.Heuristic.core_rows ren ~decoded:false ~dtype_in:Tolk.Dtype.Bfloat16
+  Tolk.Heuristic.core_rows ren ~decoded:(false, false)
+    ~dtype_in:Tolk.Dtype.Bfloat16
     ~dtype_out:Tolk.Dtype.Float32 ~outputs ~block:routed_inputs
 
 (* The rows of a block of a routed product's [n] rows over [g] groups on
@@ -3008,7 +3009,8 @@ let q8_0_rows_core rows =
   in
   equal ~msg:"eager's bits" bits_t (bits (Nx_quant.apply w x)) (bits y);
   let fits =
-    Tolk.Heuristic.core_fits ren ~decoded:true ~dtype_in:Tolk.Dtype.Bfloat16
+    Tolk.Heuristic.core_fits ren ~decoded:(false, true)
+      ~dtype_in:Tolk.Dtype.Bfloat16
       ~dtype_out:Tolk.Dtype.Float32 ~rows ~outputs ~block:32
   in
   let products =

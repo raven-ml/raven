@@ -206,6 +206,13 @@ let core_takes (n, m, k) (a, b, c) =
   float den *. up a n *. up b m *. up c k
   <= float num *. float a *. float b *. float c
 
+(* Whether a core's pad of an axis of [extent] is left out of its bound
+   ({!core_waste}): [decoded], the operands decoded from integers, hold one
+   at least, none of them reads the axis ([reads]), and [extent] is past
+   [upcast_max]. *)
+let pad_shared ~extent decoded ~reads =
+  decoded <> [] && extent > K.upcast_max && not (List.exists reads decoded)
+
 (* The core of [tk], [k] with a core applied, if it has its instruction. *)
 let core_of tk =
   List.find_map
@@ -234,8 +241,7 @@ let padded_within k tk rngs =
   let shares i =
     match (axis i, extent i) with
     | Some r, Some e ->
-        decoded <> [] && e > K.upcast_max
-        && List.for_all (fun w -> not (Nodes.mem r (ranges w))) decoded
+        pad_shared ~extent:e decoded ~reads:(fun w -> Nodes.mem r (ranges w))
     | _ -> false
   in
   let up x d = (x + d - 1) / d * d in
@@ -538,6 +544,11 @@ let line_bytes = 128
    bfloat16's 64 rows take 433 us on a core. *)
 let stream_first = 32
 
+(* The reuse past which a core comes before a stream of an operand
+   ([core_first]): [upcast_max] where [decoded], the operand decoded from
+   integers or the core of two stages, [stream_first] otherwise. *)
+let core_from ~decoded = if decoded then K.upcast_max else stream_first
+
 (* The largest power of two at most [cap] that divides [r]'s size. *)
 let rec pow2_dividing r cap =
   if cap <= 1 then 1
@@ -623,9 +634,16 @@ let layout k w =
             (fun g -> `Columns g)
             (List.find_opt (fun g -> List.memq g units) (ranges_of k [ Global ])))
 
+(* Whether the first of a product's two operands streams, where [c]
+   compares its reuse with the second's and [along] says which of them are
+   laid out along the reduce: the one of least reuse, and of two of equal
+   reuse the one laid out along the reduce, the first where both or neither
+   are. *)
+let first_streams c ~along:(rows_a, rows_b) =
+  c < 0 || (c = 0 && (rows_a || not rows_b))
+
 (* The streamed operand [w] of [k]'s summed product, the other operand and
-   [w]'s reuse. Of two operands of equal reuse, the one laid out along the
-   reduce. *)
+   [w]'s reuse ({!first_streams}). *)
 let streamed k =
   match contraction k with
   | Some (m, _) -> (
@@ -635,9 +653,10 @@ let streamed k =
       in
       match (reuse k a, reuse k b) with
       | Some ra, Some rb ->
-          let c = Bigint.compare ra rb in
-          if c < 0 || (c = 0 && (rows_first a || not (rows_first b))) then
-            Some (a, b, ra)
+          if
+            first_streams (Bigint.compare ra rb)
+              ~along:(rows_first a, rows_first b)
+          then Some (a, b, ra)
           else Some (b, a, rb)
       | Some ra, None -> Some (a, b, ra)
       | None, Some rb -> Some (b, a, rb)
@@ -1575,7 +1594,9 @@ let hand_coded_with ~core_threads k =
       Bigint.(gt reuse (of_int K.upcast_max))
       &&
       match Lazy.force core with
-      | Some (_, two_stages) -> two_stages || Stage.decoded w
+      | Some (_, two_stages) ->
+          let decoded = two_stages || Stage.decoded w in
+          Bigint.(gt reuse (of_int (core_from ~decoded)))
       | None -> false
     in
     let early_stream =
@@ -1626,29 +1647,39 @@ let cores_of ren ~dtype_in ~dtype_out =
       Dtype.equal tc.dtype_in dtype_in && Dtype.equal tc.dtype_out dtype_out)
     (cores ren)
 
-(* The reuse past which a core comes before a stream ([core_first]): the
-   operand of least reuse streams, and where that is a decoded operand, of
-   [outputs] read by [rows] rows fewer than [outputs], a core takes the rows
-   past [upcast_max]. At a tie the layouts pick the streamed operand, the
-   first of the product where both are laid along the reduce. *)
-let first_core ~decoded ~rows ~outputs =
-  if decoded && rows < outputs then K.upcast_max else stream_first
+(* Whether a core comes before a stream of a contraction of two factors laid
+   out along the reduce, the first of [rows] and the second of [outputs] free,
+   each decoded from integers as [decoded] says: the factor that streams
+   ({!first_streams}) comes after a core past its reuse ({!core_from}). *)
+let comes_first ~decoded:(da, db) ~rows ~outputs =
+  let first = first_streams (Int.compare outputs rows) ~along:(true, true) in
+  min rows outputs > core_from ~decoded:(if first then da else db)
 
-(* Whether a core of [dims] takes [rows] along its M or N, [outputs] along
-   the other and [block] along its K. A decoded operand's rows, which it does
-   not read, count as padded to the tile, as in {!padded_within}: they share
-   each value it decodes. *)
-let shape_takes (n, m, k) ~decoded ~rows ~outputs ~block =
-  let pad d =
-    if decoded && setting Setting.tc_opt >= 2 then (rows + d - 1) / d * d
-    else rows
+(* [rows] and [outputs] as a core's bound counts them, each a function of the
+   core's tile along it: a decoded factor's pad of the extent it does not
+   read is left out ({!pad_shared}), as in {!padded_within}, where a core
+   pads ({!Setting.tc_opt} [2]). *)
+let counted ~decoded:(da, db) ~rows ~outputs =
+  let decoded =
+    List.filter_map
+      (fun (axis, d) -> if d then Some axis else None)
+      [ (`Rows, da); (`Outputs, db) ]
   in
-  core_takes (n, m, k) (outputs, pad m, block)
-  || core_takes (n, m, k) (pad n, outputs, block)
+  let pad axis e d =
+    if
+      setting Setting.tc_opt >= 2
+      && pad_shared ~extent:e decoded ~reads:(fun f -> f = axis)
+    then (e + d - 1) / d * d
+    else e
+  in
+  (pad `Rows rows, pad `Outputs outputs)
 
 let core_fits_shape tc ~decoded ~rows ~outputs ~block =
-  min rows outputs > first_core ~decoded ~rows ~outputs
-  && shape_takes (Tc.dims tc) ~decoded ~rows ~outputs ~block
+  let n, m, k = Tc.dims tc in
+  let rows', outputs' = counted ~decoded ~rows ~outputs in
+  comes_first ~decoded ~rows ~outputs
+  && (core_takes (n, m, k) (outputs' n, rows' m, block)
+     || core_takes (n, m, k) (rows' n, outputs' m, block))
 
 let core_fits ren ~decoded ~dtype_in ~dtype_out ~rows ~outputs ~block =
   List.exists
@@ -1656,17 +1687,22 @@ let core_fits ren ~decoded ~dtype_in ~dtype_out ~rows ~outputs ~block =
     (cores_of ren ~dtype_in ~dtype_out)
 
 let core_rows ren ~decoded ~dtype_in ~dtype_out ~outputs ~block =
-  (* The least multiple of the core's M past the reuse at which a core comes
-     first. *)
+  (* The least multiple of the core's M that a core takes along M. Which
+     factor streams turns on whether the rows are fewer than the outputs, so
+     the multiples from past [upcast_max] to past [stream_first] are tried:
+     past [stream_first] a core comes first wherever it does at all. *)
   let least (tc : Tc.t) =
-    let _, m, _ = Tc.dims tc in
-    let first = if decoded then K.upcast_max else stream_first in
-    let rows = ((first / m) + 1) * m in
-    if
-      min rows outputs > first_core ~decoded ~rows ~outputs
-      && core_takes (Tc.dims tc) (outputs, rows, block)
-    then Some rows
-    else None
+    let n, m, k = Tc.dims tc in
+    let takes rows =
+      let rows', outputs' = counted ~decoded ~rows ~outputs in
+      comes_first ~decoded ~rows ~outputs
+      && core_takes (n, m, k) (outputs' n, rows' m, block)
+    in
+    let past e = ((e / m) + 1) * m in
+    let first = past K.upcast_max in
+    List.find_opt takes
+      (List.init (((past stream_first - first) / m) + 1) (fun i ->
+           first + (i * m)))
   in
   List.fold_left
     (fun acc r -> Some (Option.fold ~none:r ~some:(min r) acc))

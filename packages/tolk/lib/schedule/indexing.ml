@@ -1297,8 +1297,8 @@ let core_product rctx cores r =
           && List.exists
                (fun tc ->
                  takes m tc
-                 && Heuristic.core_fits_shape tc ~decoded:false ~rows ~outputs
-                      ~block)
+                 && Heuristic.core_fits_shape tc ~decoded:(false, false) ~rows
+                      ~outputs ~block)
                cores
       | _ -> false)
   | _ -> false

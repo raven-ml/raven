@@ -1491,8 +1491,9 @@ its lock and from samples the dashboard saw arrive.
   render, where each worker that rendered it compiled it: tessera's cold
   training step compiled 5 of its 165 sources twice at 2 workers.
 - **Breaking:** `Heuristic.core_fits`, `core_fits_shape` and `core_rows`
-  take `~decoded`, under which a decoded operand's rows take a core past 16,
-  their pad uncounted, as the heuristic's cores take them.
+  take `~decoded`, whether each factor is decoded in the product's order, and
+  name the products the heuristic's cores take: past 16 rows where the
+  factor that streams is decoded, ties and two decoded factors included.
 - A loop whose bound reads memory through a bare index, as `j < x[0]`, stays a
   loop: on a GPU target `Codegen.full_rewrite_to_sink` made it a launch
   dimension and failed verification, and a beam search timed it on storage of

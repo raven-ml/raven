@@ -73,7 +73,7 @@ val run_rangeify : cores:(Ops.device * Tc.t list) list -> Ops.t -> Ops.t
     other, whose rows (the axes only one factor reads), outputs (those only
     the other reads) and block (the axes summed) the core fits as the
     heuristic asks of stored operands before it takes one
-    ({!Heuristic.core_fits_shape}, not [decoded]). Of such products a
+    ({!Heuristic.core_fits_shape}, each factor as stored). Of such products a
     stored value's kernel computes, as the cotangent of an input read by
     several products sums them, each after the first in the walk is stored
     whole: as the first narrowing cast its
