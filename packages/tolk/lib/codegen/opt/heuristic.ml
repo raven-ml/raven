@@ -539,8 +539,16 @@ let line_bytes = 128
    on sm_89, its plan spread over the units, 32 rows of a matrix of 2048 by
    4096 take 36 us on it and 61 streamed, gpt-oss's router of 512 tokens 12
    and 25.
-   So does any core of a decoded operand, which decodes each value once where
-   its upcast holds the rows. A gate of [upcast_max] would give the others a
+   Any core of a decoded operand comes first at any reuse past 1. Past
+   [upcast_max] it decodes each value once where the stream decodes it in
+   each pass. Up to [upcast_max] both decode it once, and the stream also
+   issues each row's multiply-add of it on its lanes, where the core issues
+   them in its instruction: on an RTX 5000 Ada an MXFP4 matrix of 16384 by
+   16384 multiplies 16 bfloat16 rows in 735 us streamed and 393 on a core, a
+   Q8_0 one in 768 and 679. Such a core holds the rows within the bound on
+   its padding ([padded_within]): 12 rows, which pad CUDA's 16 by 4/3,
+   stream, and so do 7 and 8 where the core's candidates put them on M. A
+   gate of [upcast_max] would give the others a
    slower layout: gpt-oss's router of 48 tokens takes 23 us streamed and 38 on
    a core no plan stages, and 28 rows of the larger matrix 526 and 1693 on
    the general rules. Past 32 a float32 operand streamed loses to the general
@@ -550,9 +558,11 @@ let line_bytes = 128
 let stream_first = 32
 
 (* The reuse past which a core comes before a stream of an operand
-   ([core_first]): [upcast_max] where [decoded], the operand decoded from
-   integers or the core of two stages, [stream_first] otherwise. *)
-let core_from ~decoded = if decoded then K.upcast_max else stream_first
+   ([core_first]): 1 where [decoded], the operand decoded from integers,
+   [upcast_max] where [staged], the core of two stages, [stream_first]
+   otherwise. *)
+let core_from ~decoded ~staged =
+  if decoded then 1 else if staged then K.upcast_max else stream_first
 
 (* The largest power of two at most [cap] that divides [r]'s size. *)
 let rec pow2_dividing r cap =
@@ -1474,7 +1484,9 @@ let summed k = lanes k * in_flight
    cores and 7.9 ms streamed, of a 512-token prompt, 149 a byte, 3.7 and
    17.5 ms. Every target takes sm_89's 64 until its own is measured: an
    R9700's (gfx1201) lies above 149, where it streams those blocks faster
-   than its cores, and is not yet placed. *)
+   than its cores, and is not yet placed. A core of a decoded operand comes
+   first wherever it holds the rows, whatever their multiply-adds a byte
+   ([core_from]). *)
 
 (* The multiply-adds of [k]'s contraction and the bytes of the buffers its
    operand [w] reads, when their sizes are known and each is a parameter. *)
@@ -1598,16 +1610,17 @@ let hand_coded_with ~core_threads k =
     let streamed_as () = Option.map (stream k) (Lazy.force layout) in
     let core = lazy (tensor_cores ~core_threads k) in
     (* Past [upcast_max] a stream reads its operand in several passes, which a
-       core of two stages beats whatever its threads, and any core of a
-       decoded operand, which decodes each value once where its upcast holds
-       the rows. *)
+       core of two stages beats whatever its threads. A core of a decoded
+       operand comes first wherever it holds the rows ({!core_from}). *)
     let core_first (w, _, reuse) =
-      Bigint.(gt reuse (of_int K.upcast_max))
+      let decoded = Stage.decoded w in
+      let past staged = Bigint.(gt reuse (of_int (core_from ~decoded ~staged))) in
+      (* The least bound, a staged core's, is checked before the cores are
+         tried, which the stream would otherwise pay for and discard. *)
+      past true
       &&
       match Lazy.force core with
-      | Some (_, two_stages) ->
-          let decoded = two_stages || Stage.decoded w in
-          Bigint.(gt reuse (of_int (core_from ~decoded)))
+      | Some (_, staged) -> past staged
       | None -> false
     in
     let early_stream =
@@ -1664,7 +1677,8 @@ let cores_of ren ~dtype_in ~dtype_out =
    ({!first_streams}) comes after a core past its reuse ({!core_from}). *)
 let comes_first ~decoded:(da, db) ~rows ~outputs =
   let first = first_streams (Int.compare outputs rows) ~along:(true, true) in
-  min rows outputs > core_from ~decoded:(if first then da else db)
+  min rows outputs
+  > core_from ~decoded:(if first then da else db) ~staged:false
 
 (* [rows] and [outputs] as a core's bound counts them, each a function of the
    core's tile along it: a decoded factor's pad of the extent it does not
@@ -1700,8 +1714,8 @@ let core_fits ren ~decoded ~dtype_in ~dtype_out ~rows ~outputs ~block =
 let core_rows ren ~decoded ~dtype_in ~dtype_out ~outputs ~block =
   (* The least multiple of the core's M that a core takes along M. Which
      factor streams turns on whether the rows are fewer than the outputs, so
-     the multiples from past [upcast_max] to past [stream_first] are tried:
-     past [stream_first] a core comes first wherever it does at all. *)
+     the multiples up to past [stream_first] are tried: past [stream_first] a
+     core comes first wherever it does at all. *)
   let least (tc : Tc.t) =
     let n, m, k = Tc.dims tc in
     let takes rows =
@@ -1710,10 +1724,8 @@ let core_rows ren ~decoded ~dtype_in ~dtype_out ~outputs ~block =
       && core_takes (n, m, k) (outputs' n, rows' m, block)
     in
     let past e = ((e / m) + 1) * m in
-    let first = past K.upcast_max in
     List.find_opt takes
-      (List.init (((past stream_first - first) / m) + 1) (fun i ->
-           first + (i * m)))
+      (List.init (past stream_first / m) (fun i -> (i + 1) * m))
   in
   List.fold_left
     (fun acc r -> Some (Option.fold ~none:r ~some:(min r) acc))

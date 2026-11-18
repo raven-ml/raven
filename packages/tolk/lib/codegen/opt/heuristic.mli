@@ -29,9 +29,12 @@
       unknown when a size is symbolic or the operand reads a buffer that is
       not a parameter. A reuse past 16 streams only when no tensor core of
       two stages over a known count of workgroups ({!Stage.tile}) applies,
-      whatever its threads, and, where the streamed operand is decoded
-      ({!Stage.decoded}), no tensor core applies, since the streamed operand
-      is then read in several passes;
+      whatever its threads, since the streamed operand is then read in
+      several passes. Where the streamed operand is decoded
+      ({!Stage.decoded}), a reuse past 1 streams only when no tensor core
+      applies: a core decodes each value once, as a stream of up to 16 rows
+      does, and multiplies the rows in its instruction where the stream
+      multiplies each on its lanes;
     - a {{!section-cores}tensor core}, when the setting {!Setting.use_tc} is
       positive, on any number of reduce axes: the core takes one of them, and
       the others stay loops around it, unless an unstaged core's operand
@@ -43,7 +46,7 @@
 
     The streaming guards are arithmetic on the kernel's sizes and index
     terms, so a kernel that passes them takes the layout, unless a core takes
-    a reuse past 16 first, and only a tensor core is tried. On the host, a renderer that knows its vector registers
+    it first, and only a tensor core is tried. On the host, a renderer that knows its vector registers
     ({!Renderer.t.registers}) bounds the general rules with
     {{!section-budget}the budget}.
 
@@ -316,7 +319,7 @@ val core_fits_shape :
 
     A core comes first where the lesser of [rows] and [outputs], the reuse
     of the factor that streams ({!section-streaming}), is past the reuse at
-    which a core comes before streaming that factor: 16 where it is
+    which a core comes before streaming that factor: 1 where it is
     decoded, 32 otherwise. The second factor streams where [rows] are fewer
     than [outputs], the first otherwise, a tie included, as two operands
     laid out along the reduce take it. The shape alone does not decide the
@@ -330,7 +333,12 @@ val core_fits_shape :
     or, below that level, where they divide them. At level [2], an extent
     past 16 that no decoded factor reads, where one is, counts as padded to
     the tile, as the heuristic's cores leave its pad out of the bound
-    ({!section-cores}). *)
+    ({!section-cores}). Of the three candidates the cores section names, a
+    sum over two ranges puts the first factor's rows on [N] only in the
+    third, with its last reduce range along [K]: where [K] does not take
+    that range, as the two halves of an MXFP4 code byte, rows that only
+    CUDA's [N] tile of 8 holds within the bound, 7 and 8, stream where this
+    names a core. *)
 
 val core_rows :
   Renderer.t ->

@@ -2175,8 +2175,9 @@ Withdrawn: multi-device is out of scope, see README.
     measured, the other CUDA parts of two stages, from sm_80, take the rule
     unmeasured, and AMD and Metal, of one stage, keep streaming. Past
     `R = 32` a core takes it where one applies, and the other rules where
-    none does. A decoded operand takes a core past `R = 16` where one
-    applies, and streams at any reuse where none does (D230);
+    none does. A decoded operand takes a core past `R = 1` where one
+    applies, whatever its multiply-adds a byte, and streams at any reuse
+    where none does (D230);
   - the layout: `W`'s main access is the one with a range of unit stride
     whose terms of contracted ranges span the most bytes. When that range `u`
     is contracted (rows): `W`'s reuse axes are upcast, each by its share of
@@ -3192,7 +3193,7 @@ driver signals its own (D146).
   sum of 32 rows or fewer, which the heuristic streams, stays grouped. Each
   factor is asked as decoded where it converts integer codes into floats,
   as a Q8_0 matrix's, so a product whose streamed factor is decoded takes a
-  kernel of its own past 16 rows (D230). Of
+  kernel of its own where a core holds its rows (D230). Of
   two such products a stored value's kernel computes, neither reading the
   other, the later in the walk is stored: as the first narrowing cast its
   one consumer reads it through, past casts and the addition of an initial
@@ -5624,16 +5625,24 @@ union, as fast on CUDA, on the host and in compile time.
 - **Differs:** on a GPU, a decoded operand (D163) that a stream would read,
   the operand of least reuse, whose `R` outputs along one axis read it at
   one index:
-  - up to `upcast_max` (16) rows streams in one pass;
-  - past it, takes a tensor core of its types before a stream. The core's pad
-    of the axis the operand does not read is not counted against D491's 6/5,
-    only PADTO's bound; pads of its own axes and of K are;
-  - with no such core, streams in `ceil(R / 16)` passes at any reuse, the
-    axis padded where they do not divide it.
+  - past one row, takes a tensor core of its types before a stream, whatever
+    its multiply-adds a byte (D89's gate). Past `upcast_max` (16) rows the
+    core's pad of the axis the operand does not read is not counted against
+    D491's 6/5, only PADTO's bound; up to 16 it is, so 12 rows, which pad
+    CUDA's 16 by 4/3, stream, and 14-16 take the core on its M. 7-8 rows
+    fit only CUDA's N tile of 8, which the core's three candidates reach
+    over one reduce range, as Q8_0's partial form, or over two where K
+    takes the last; tinygrad's MXFP4 graph, whose last range is a code
+    byte's 2 halves, streams them where `core_fits` names a core. On
+    sm_80 and sm_89 the staged tile's pad of N falls on a range of one
+    trip, which staging refuses, so such a core runs unstaged. Pads of its
+    own axes and of K count at any reuse;
+  - with no such core, streams up to 16 rows in one pass, past them in
+    `ceil(R / 16)` passes, the axis padded where they do not divide it.
 
   `core_fits` and `core_rows` take whether each factor is decoded, in the
   product's order, and decide by the heuristic's own rules
-  (`Heuristic.first_streams`, `core_from` and `pad_shared`): a core past 16
+  (`Heuristic.first_streams`, `core_from` and `pad_shared`): a core past 1
   where the factor that streams is decoded, the first at a tie, and the pad
   of an extent past 16 that no decoded factor reads uncounted, so that rune
   writes such rows of a Q8_0 matrix in the partial form a core takes, and
@@ -5646,7 +5655,10 @@ union, as fast on CUDA, on the host and in compile time.
 - **Reason:** (d): each pass decodes and reads the operand again, and a
   padded core decodes it once; on fudge, MXFP4 products of 17 and 32
   bfloat16 rows run on the core at under half the stream's time, which
-  tinygrad's heuristic exceeds 60-fold.
+  tinygrad's heuristic exceeds 60-fold. Up to 16 rows a stream decodes once
+  too, but multiplies each row on its lanes where a core does it in one
+  instruction: 16 rows of MXFP4 and Q8_0 run 0.53 and 0.88 of the stream's
+  time on the core.
 - **Pinned by:** the Heuristic suite's `a GPU kernel decodes a value R rows
   read at one index at most ceil(R / 16) times its core's copies` (1 to 512
   rows of bfloat16, half and float32 on the CUDA, RDNA3, RDNA4, CDNA and
@@ -5657,10 +5669,16 @@ union, as fast on CUDA, on the host and in compile time.
   (both factor orders, ties, one and two decoded factors); the Rangeify
   suite's `get_kernel_graph › products a core takes`, `products of 24 rows
   by codes of 64 run a kernel each` to `products of codes of 17 by codes of
-  64 share one kernel`; rune's GPU suite's `a
+  64 share one kernel`; the Heuristic suite's `a decoded operand of up to
+  16 rows takes a core that holds them` (12 and 16 rows on five
+  renderers), `core_fits names the decoded products the heuristic takes a
+  core of` (1 to 512 rows, 7-8 on CUDA streamed where it names a core) and `a contraction streams before a core up to the
+  renderer's bound a byte` (decoded blocks of 16 on a core at bounds of
+  63 and 72); rune's GPU suite's `a
   Q8_0 product's rows take a tensor core where core_fits holds`; kaun's
-  `Quant/cuda/mxfp4-product-of-16384-{17,32}-bfloat16-tokens`,
-  `-64-float32-tokens` and `q8_0-product-of-16384-{17,32}-bfloat16-tokens`.
+  `Quant/cuda/mxfp4-product-of-16384-{7,8,12,14,16,17,32}-bfloat16-tokens`,
+  `-64-float32-tokens` and
+  `q8_0-product-of-16384-{7,8,12,14,16,17,32}-bfloat16-tokens`.
 
 ## D235. A tensor core's lanes are a warp of its threads
 

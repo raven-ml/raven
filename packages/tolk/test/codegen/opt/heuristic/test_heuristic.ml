@@ -622,7 +622,8 @@ let loads_together =
    when it sums 256 values or more and does at most 64 multiply-adds per byte
    of its streamed operand's buffers; past that reuse, with a shorter sum, or
    with blocks of rows that share their matrices past 64 a byte, the core
-   takes it. *)
+   takes it. A core takes blocks of 16 rows of a decoded matrix whatever
+   their multiply-adds a byte, as its tile holds them. *)
 let applies =
   let expect = [
     ("q8_0_blocks_cuda", true); ("gguf_mxfp4_cuda", true);
@@ -631,8 +632,8 @@ let applies =
     ("rows_m12_cuda", true); ("rows_m32_cuda", true);
     ("rows_m32_amd", true); ("shared_keys_cuda", true);
     ("routed_tiles_cuda", false); ("rows_short_cuda", false);
-    ("routed_own_cuda", true); ("routed_shared_cuda", false);
-    ("routed_at_bound_cuda", true); ("routed_past_bound_cuda", false);
+    ("routed_own_cuda", false); ("routed_shared_cuda", false);
+    ("routed_at_bound_cuda", false); ("routed_past_bound_cuda", false);
   ] in
   cases "a contraction streams up to a reuse of 32, before a tensor core"
     ~id:fst expect (fun (name, streamed) ->
@@ -1135,10 +1136,10 @@ let per_byte_bounds =
     ~id:fst renderers (fun (_, ren) ->
       equal int 64 ren.Renderer.per_byte_first)
 
-(* The order reads the renderer's bound: blocks of 16 rows over 4 experts'
-   matrices do 63.94 multiply-adds a byte of their codes, scales and owners
-   at 9 blocks and 71.03 at 10, and stream where the bound is at least
-   that. *)
+(* The order reads the renderer's bound: 32 bfloat16 rows by a matrix of 32
+   outputs over 256 values, the rows streamed, do 16 multiply-adds a byte of
+   the rows, and stream where the bound is at least that. A decoded operand
+   takes a core that holds its rows whatever the bound. *)
 let per_byte_order =
   let row =
     List.find
@@ -1150,13 +1151,14 @@ let per_byte_order =
         if column = "per_byte_first" then string_of_int bound else row column)
   in
   let rows =
-    List.concat_map
-      (fun bound ->
-        [
-          ("routed_at_bound", 63.94, bound);
-          ("routed_past_bound", 71.03, bound);
-        ])
-      [ 63; 64; 71; 72 ]
+    List.map (fun bound -> ("rows_m32", 16., bound)) [ 15; 16 ]
+    @ List.concat_map
+        (fun bound ->
+          [
+            ("routed_at_bound", Float.infinity, bound);
+            ("routed_past_bound", Float.infinity, bound);
+          ])
+        [ 63; 72 ]
   in
   cases "a contraction streams before a core up to the renderer's bound a byte"
     ~id:(fun (name, _, bound) -> Printf.sprintf "%s at %d" name bound)
@@ -2634,7 +2636,7 @@ let decoded_rows =
   List.concat_map
     (fun rows ->
       List.map (fun dtype -> (rows, dtype)) [ "bfloat16"; "half"; "float" ])
-    [ 1; 2; 12; 16; 17; 32; 64; 128; 256; 512 ]
+    [ 1; 2; 7; 8; 12; 13; 14; 16; 17; 32; 64; 128; 256; 512 ]
 
 let amd arch =
   lazy
@@ -3061,10 +3063,10 @@ let fastest_threads_coalesce =
 (* [core_fits]
 
    The form of a contraction the lowering writes depends on the core it will
-   take: past the reuse at which a core comes first, 32, or 16 rows of a
+   take: past the reuse at which a core comes first, 32, or 1 row of a
    decoded operand, a core of the operand's dtypes whose M, N and K pad the
    extents and the block within 6/5 of their work, a decoded operand's rows
-   uncounted, or divide them at TC_OPT=0. *)
+   past 16 uncounted, or divide them at TC_OPT=0. *)
 let core_fits_cases =
   let fits ?(ren = "cuda") ?(decoded = (false, false)) ?(rows = 64)
       ?(outputs = 64) ?(block = 32) ?(dtype_in = Dtype.Bfloat16) ?(dtype_out = Dtype.Float32)
@@ -3089,8 +3091,25 @@ let core_fits_cases =
       ("Metal's core takes bfloat16", (fits ~ren:"metal" (), true));
       ( "decoded rows past 16",
         (fits ~decoded:(false, true) ~rows:17 ~outputs:2880 (), true) );
-      ( "decoded rows at 16",
-        (fits ~decoded:(false, true) ~rows:16 ~outputs:2880 (), false) );
+      ( "decoded rows at 16 on M's tile",
+        (fits ~decoded:(false, true) ~rows:16 ~outputs:2880 (), true) );
+      ( "decoded rows M pads within the bound",
+        (fits ~decoded:(false, true) ~rows:14 ~outputs:2880 (), true) );
+      ( "decoded rows M pads past the bound",
+        (fits ~decoded:(false, true) ~rows:13 ~outputs:2880 (), false) );
+      ( "decoded rows at 12 pad past the bound",
+        (fits ~decoded:(false, true) ~rows:12 ~outputs:2880 (), false) );
+      ( "decoded rows at 8 on N's tile",
+        (fits ~decoded:(false, true) ~rows:8 ~outputs:2880 (), true) );
+      ( "decoded rows N pads within the bound",
+        (fits ~decoded:(false, true) ~rows:7 ~outputs:2880 (), true) );
+      ( "decoded rows N pads past the bound",
+        (fits ~decoded:(false, true) ~rows:6 ~outputs:2880 (), false) );
+      ( "decoded rows at 12 on Metal's 8-row tile",
+        ( fits ~ren:"metal" ~decoded:(false, true) ~rows:12 ~outputs:2880 (),
+          false ) );
+      ( "stored rows at 16",
+        (fits ~rows:16 ~outputs:2880 (), false) );
       ( "stored rows past 16",
         (fits ~rows:17 ~outputs:2880 (), false) );
       ( "decoded rows M pads past the bound uncounted",
@@ -3161,7 +3180,10 @@ let core_fits_settings =
 
 (* The heuristic takes a core of a decoded product where core_fits holds of
    its shape: [rows] rows by an MXFP4 matrix of 16384 outputs, summed over
-   16384 values. *)
+   16384 values. The sum runs over the code bytes and each byte's 2 halves,
+   and the one candidate that puts the rows on the core's N takes the halves
+   along K, which no core does: 7 and 8 rows, which core_fits counts on
+   CUDA's N tile of 8, stream. *)
 let core_fits_decoded =
   let rows =
     List.concat_map (fun d -> List.map (fun g -> (d, g)) gpus) decoded_rows
@@ -3188,12 +3210,46 @@ let core_fits_decoded =
       in
       cover "a core" cored;
       cover "a core of 17 to 32 rows" (cored && rows > 16 && rows <= 32);
+      cover "a core of up to 16 rows" (cored && rows <= 16);
       cover "no core" (not cored);
+      let on_n = gpu = "cuda" && dtype <> "float" && (rows = 7 || rows = 8) in
+      cover "rows on N's tile alone" on_n;
+      if on_n then equal bool ~msg:"7 and 8 rows stream" false cored;
       equal bool
         ~msg:(Printf.sprintf "%d %s on %s" rows dtype gpu)
-        cored
+        (cored || on_n)
         (Heuristic.core_fits ren ~decoded:(false, true)
            ~dtype_in:(dtype_of dtype) ~dtype_out:Dtype.Float32 ~rows ~outputs:16384 ~block:16384))
+
+(* Up to 16 rows a stream and a core each decode a value of the MXFP4 matrix
+   once, the stream multiplying it on its lanes: the rows take a core where
+   its tile holds them within the bound on its padding, 16 rows on every
+   GPU's core, and 12, which pad 16 by 4/3, stream. *)
+let decoded_cores =
+  let rows =
+    List.concat_map
+      (fun r ->
+        List.concat_map
+          (fun dtype -> List.map (fun g -> ((r, dtype), g)) gpus)
+          [ "bfloat16"; "half" ])
+      [ 12; 16 ]
+  in
+  cases "a decoded operand of up to 16 rows takes a core that holds them"
+    ~id:(fun ((rows, dtype), (gpu, _)) ->
+      Printf.sprintf "%d %s rows on %s" rows dtype gpu)
+    rows
+    (fun ((rows, dtype), (_, ren)) ->
+      let s =
+        K.v
+          (kernel (Printf.sprintf "decoded_rows_%d_%s" rows dtype))
+          (Lazy.force ren)
+      in
+      K.convert_loop_to_global s;
+      let o = Heuristic.hand_coded_optimizations s in
+      equal bool
+        ~msg:(Format.asprintf "%a" (Format.pp_print_list Opt.pp) (K.applied_opts o))
+        (rows = 16)
+        (List.exists (function Opt.Tc _ -> true | _ -> false) (K.applied_opts o)))
 
 (* [out[i, j] = sum_k a[i, k] b[j, k]] over [rows] rows, [outputs] outputs
    and [depth] terms, summed in float32: each factor [dtype] widened to
@@ -3273,6 +3329,9 @@ let factors_case =
   let rows, outputs = if swap then (larger, fewer) else (fewer, larger) in
   { gpu; dtype; decoded; by_columns; rows; outputs; depth }
 
+
+
+
 let core_fits_factors =
   prop
     "core_fits names the products of stored and decoded factors the \
@@ -3310,7 +3369,7 @@ let core_fits_factors =
 (* [core_rows]
 
    The fewest rows a core takes along its [M]: the least multiple of [M]
-   past the reuse at which a core comes first, 32, or 16 for a decoded
+   past the reuse at which a core comes first, 32, or 1 for a decoded
    operand, of a core of the operand's dtypes whose [N] and [K] pad the
    outputs and the block within the bound of core_fits. *)
 let core_rows ?(ren = "cuda") ?(decoded = (false, false)) ?(outputs = 256)
@@ -3334,17 +3393,17 @@ let core_rows_cases =
         (core_rows ~dtype_in:Dtype.Float32 (), None) );
       ("the host has no core", (core_rows ~ren:"cpu" (), None));
       ( "CUDA's 16-row tile decoded",
-        (core_rows ~decoded:(false, true) (), Some 32) );
+        (core_rows ~decoded:(false, true) (), Some 16) );
       ( "Metal's 8-row tile decoded",
-        (core_rows ~ren:"metal" ~decoded:(false, true) (), Some 24) );
-      ( "decoded outputs as many as the rows",
-        (core_rows ~decoded:(false, true) ~outputs:32 (), None) );
-      ( "decoded outputs one more than the rows",
+        (core_rows ~ren:"metal" ~decoded:(false, true) (), Some 8) );
+      ( "decoded outputs of 32",
+        (core_rows ~decoded:(false, true) ~outputs:32 (), Some 16) );
+      ( "decoded outputs N pads past the bound",
         (core_rows ~decoded:(false, true) ~outputs:33 (), None) );
-      ( "decoded outputs within the bound past the rows",
-        (core_rows ~decoded:(false, true) ~outputs:40 (), Some 32) );
-      ( "decoded outputs fewer than the rows",
-        (core_rows ~decoded:(false, true) ~outputs:24 (), None) );
+      ( "decoded outputs of 40",
+        (core_rows ~decoded:(false, true) ~outputs:40 (), Some 16) );
+      ( "decoded outputs of 24",
+        (core_rows ~decoded:(false, true) ~outputs:24 (), Some 16) );
       ( "decoded rows over more outputs",
         (core_rows ~decoded:(true, false) (), Some 48) );
       ( "decoded rows over fewer outputs past 16",
@@ -3352,7 +3411,7 @@ let core_rows_cases =
       ( "decoded rows on Metal over outputs between its multiples",
         ( core_rows ~ren:"metal" ~decoded:(true, false) ~outputs:30 (),
           Some 32 ) );
-      ("two decoded factors", (core_rows ~decoded:(true, true) (), Some 32));
+      ("two decoded factors", (core_rows ~decoded:(true, true) (), Some 16));
     ]
     (fun (_, (actual, want)) -> equal (option int) want actual)
 
@@ -3401,6 +3460,7 @@ let () =
          core_fits_cases;
          core_fits_settings;
          core_fits_decoded;
+         decoded_cores;
          core_fits_factors;
          core_rows_cases;
          core_rows_fit;

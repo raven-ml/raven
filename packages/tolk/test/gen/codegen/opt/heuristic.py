@@ -290,7 +290,7 @@ def decoded_rows(rows, dtype, n=16384, k=16384):
 # Decoded products of a dense MXFP4 matrix by rows of activations, which the Heuristic suite optimises on GPU renderers to
 # count how many threads decode each value; kernels without cases
 DECODED = {f"decoded_rows_{rows}_{name}": (lambda rows=rows, dtype=dtype: decoded_rows(rows, dtype))
-           for rows in [1, 2, 12, 16, 17, 32, 64, 128, 256, 512]
+           for rows in [1, 2, 7, 8, 12, 13, 14, 16, 17, 32, 64, 128, 256, 512]
            for name, dtype in [("bfloat16", dtypes.bfloat16), ("half", dtypes.half), ("float", dtypes.float)]}
 # the same at 32 by 128, small enough for the suite to evaluate: rows padded into passes (17, 19) and float32 rows streamed past 32
 DECODED.update({f"decoded_small_{rows}_{name}": (lambda rows=rows, dtype=dtype: decoded_rows(rows, dtype, 32, 128))

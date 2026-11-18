@@ -1507,6 +1507,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A GPU product of 16 or fewer rows by a matrix decoded from integer codes
+  (MXFP4, Q8_0) takes a tensor core where the core's tile pads the rows
+  within its bound, 14-16 on CUDA, where it streamed (`Heuristic.core_fits`).
 - A float32 product on a GPU plus a bias that one of its output axes does
   not read, as `empty(2,1024,16) @ empty(2,16,768) + empty(1024,768)`'s
   batches, is optimised as the product alone: the bias's loads made that
@@ -1533,8 +1536,9 @@ its lock and from samples the dashboard saw arrive.
   training step compiled 5 of its 165 sources twice at 2 workers.
 - **Breaking:** `Heuristic.core_fits`, `core_fits_shape` and `core_rows`
   take `~decoded`, whether each factor is decoded in the product's order, and
-  name the products the heuristic's cores take: past 16 rows where the
-  factor that streams is decoded, ties and two decoded factors included.
+  name the products the heuristic's cores take: where the factor that
+  streams is decoded and a core holds its rows, ties and two decoded factors
+  included.
 - A loop whose bound reads memory through a bare index, as `j < x[0]`, stays a
   loop: on a GPU target `Codegen.full_rewrite_to_sink` made it a launch
   dimension and failed verification, and a beam search timed it on storage of

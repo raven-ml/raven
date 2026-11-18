@@ -1065,8 +1065,8 @@ let rows ~renderer ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
   (* The fewest rows a core takes of a block of stored slices: [b]'s one free
      extent past 1 is the core's outputs, its last contracted extent the
      core's block. A decoded slice is asked as a stored one: a core takes its
-     blocks from 32 rows on CUDA, but blocks of 32 ran slower than 48 on
-     an RTX 5000 Ada, gpt-oss-20b's Q8_0 prefill 22.6-23.1 ms against
+     blocks from 16 rows on CUDA, unmeasured, and blocks of 32 ran slower
+     than 48 on an RTX 5000 Ada, gpt-oss-20b's Q8_0 prefill 22.6-23.1 ms against
      20.6-20.8 at 12 tokens and 28.4-29.4 against 27.8-28.1 at 64. *)
   let core =
     lazy

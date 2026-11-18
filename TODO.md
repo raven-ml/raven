@@ -38,10 +38,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   either): its 1571 by 64 sum runs 4 workgroups of 256 threads
   (`r_4_16_16_99`), tinygrad's 64 of 32 (`r_64_32_50`). Raw:
   ~/wt/tmp/fix-argmax
-- A decoded operand of 12-16 rows streams in one pass where a core probably
-  wins (559-706 us against 424-492 at 17-64 rows); it reaches gpt-oss's
-  Q8_0 prefill at 12 tokens. `core_fits` ignores `early`'s guards, which a
-  partial form's one-block sum never meets (rowdecode/design-a.md)
 - `apply_opt`'s refusal of a tensor core past `local_threads_max`
   (`postrange.ml` ~987, D488) has no test
 - cstyle names each parameter after its buffer's size (`data0_4096`), so

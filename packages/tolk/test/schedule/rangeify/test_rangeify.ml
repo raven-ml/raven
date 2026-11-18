@@ -1177,10 +1177,11 @@ let siblings =
    core, float32 products, which take one only under TF32, and a schedule
    given the host's cores keep one kernel of three sums. Where one factor
    is int8 codes decoded to float32, as a Q8_0 matrix's, the heuristic takes
-   a core past 16 rows where the factor that streams is decoded: the one of
-   fewer free elements, or the first at a tie. 24 rows of bfloat16 by codes
-   of 64 take a kernel each, as do codes of 24 by 24 rows and codes of 24 by
-   codes of 64; 24 stored rows, or 24 by codes of 24, keep one, as do codes
+   a core past 1 row where the factor that streams is decoded: the one of
+   fewer free elements, or the first at a tie. 16 and 24 rows of bfloat16 by
+   codes of 64 take a kernel each, as do codes of 24 by 24 rows and codes
+   of 24 by codes of 64; 12 rows by codes of 64, which the core pads past
+   its bound, 24 stored rows, or 24 by codes of 24, keep one, as do codes
    of 17 by codes of 64, whose rows the core pads past its bound. *)
 
 type factor = A | B
@@ -1241,6 +1242,16 @@ let products_apart =
           equal int 1
             (kernels
                (split_graph ~cores:sm_89_cores (sum_of_products 8 64 64))));
+      test "products of 16 rows by codes of 64 run a kernel each" (fun () ->
+          equal int 3
+            (kernels
+               (split_graph ~cores:sm_89_cores
+                  (sum_of_products ~coded:[ B ] 16 64 64))));
+      test "products of 12 rows by codes of 64 share one kernel" (fun () ->
+          equal int 1
+            (kernels
+               (split_graph ~cores:sm_89_cores
+                  (sum_of_products ~coded:[ B ] 12 64 64))));
       test "products of 24 rows by codes of 64 run a kernel each" (fun () ->
           equal int 3
             (kernels

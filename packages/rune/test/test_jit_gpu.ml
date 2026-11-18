@@ -3011,7 +3011,8 @@ let q8_0_special =
 (* A Q8_0 product of [rows] bfloat16 rows by 256 outputs over 16 blocks takes
    the partial form where {!Tolk.Heuristic.core_fits} holds of its codes as a
    decoded operand, and its kernel then takes the tensor core the form is
-   written for: a decoded operand's rows past 16 take one. Each sum is exact,
+   written for: a decoded operand's rows take one where its tile holds them,
+   16 and 17 rows on CUDA, not 12. Each sum is exact,
    so the product gives eager's bits in either form. *)
 let q8_0_rows_core rows =
   let d, (module S) = on_gpu () in
@@ -3060,7 +3061,7 @@ let q8_0_rows =
   Windtrap.cases
     "a Q8_0 product's rows take a tensor core where core_fits holds"
     ~id:(Printf.sprintf "%d rows")
-    [ 12; 16; 17; 24; 32; 33; 64 ]
+    [ 7; 8; 12; 13; 14; 16; 17; 24; 32; 33; 64 ]
     q8_0_rows_core
 
 (* Exp on a GPU that flushes float32's subnormals, where rune.mli states no

@@ -335,8 +335,9 @@ let linear make at =
    where its decoding runs: stored once, or in the product's tiles, which share
    it between the tokens they hold. The tokens are bfloat16, a model's
    activations, which a GPU's tensor cores multiply, or float32. A Q8_0
-   matrix of 16384, 285 MB, by 17 and 32 bfloat16 tokens multiplies each
-   block's partial sum by its scale on a tensor core. *)
+   matrix of 16384, 285 MB, by bfloat16 tokens multiplies each block's
+   partial sum by its scale on a tensor core where the core's tile holds the
+   tokens, and streams 12 on CUDA. *)
 
 type activations = Bfloat16 | Float32
 type weights = Mxfp4 | Q8_0
@@ -428,8 +429,9 @@ let get_ok = function Ok d -> d | Error e -> failwith e
 let gpu_many =
   List.map
     (fun n -> (Mxfp4, n, Bfloat16))
-    [ 1; 12; 16; 17; 32; 64; 128; 256; 512 ]
-  @ [ (Mxfp4, 64, Float32); (Q8_0, 17, Bfloat16); (Q8_0, 32, Bfloat16) ]
+    [ 1; 7; 8; 12; 14; 16; 17; 32; 64; 128; 256; 512 ]
+  @ [ (Mxfp4, 64, Float32) ]
+  @ List.map (fun n -> (Q8_0, n, Bfloat16)) [ 7; 8; 12; 14; 16; 17; 32 ]
 
 (* The GPU: CUDA's first, else AMD's first. *)
 let gpu =

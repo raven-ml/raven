@@ -1182,6 +1182,12 @@ codegen/opt/heuristic/decoded_rows_128_half.golden
 codegen/opt/heuristic/decoded_rows_12_bfloat16.golden
 codegen/opt/heuristic/decoded_rows_12_float.golden
 codegen/opt/heuristic/decoded_rows_12_half.golden
+codegen/opt/heuristic/decoded_rows_13_bfloat16.golden
+codegen/opt/heuristic/decoded_rows_13_float.golden
+codegen/opt/heuristic/decoded_rows_13_half.golden
+codegen/opt/heuristic/decoded_rows_14_bfloat16.golden
+codegen/opt/heuristic/decoded_rows_14_float.golden
+codegen/opt/heuristic/decoded_rows_14_half.golden
 codegen/opt/heuristic/decoded_rows_16_bfloat16.golden
 codegen/opt/heuristic/decoded_rows_16_float.golden
 codegen/opt/heuristic/decoded_rows_16_half.golden
@@ -1206,6 +1212,12 @@ codegen/opt/heuristic/decoded_rows_512_half.golden
 codegen/opt/heuristic/decoded_rows_64_bfloat16.golden
 codegen/opt/heuristic/decoded_rows_64_float.golden
 codegen/opt/heuristic/decoded_rows_64_half.golden
+codegen/opt/heuristic/decoded_rows_7_bfloat16.golden
+codegen/opt/heuristic/decoded_rows_7_float.golden
+codegen/opt/heuristic/decoded_rows_7_half.golden
+codegen/opt/heuristic/decoded_rows_8_bfloat16.golden
+codegen/opt/heuristic/decoded_rows_8_float.golden
+codegen/opt/heuristic/decoded_rows_8_half.golden
 codegen/opt/heuristic/decoded_small_17_bfloat16.golden
 codegen/opt/heuristic/decoded_small_19_half.golden
 codegen/opt/heuristic/decoded_small_64_float.golden
