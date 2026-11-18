@@ -42,9 +42,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   chain a block and the GPU idles about 2 us between chains: +0.05 ms a step
   against llama.cpp's 3 graphs a step. kaun's per-block jit decides the
   submits (decodegap2/cause.md)
-- cstyle names each parameter after its buffer's size (`data0_4096`), so
-  kernels over buffers of two sizes compile apart under D485: name the
-  parameters without sizes in the renderer
 - A bf16 product of 6-32 rows by weights laid `[K; N]` streams by its
   columns on 4 workgroups: `contract/bf16-16x64x2880` takes 47-50 us where
   BEAM's split of the reduce over 8 threads and upcast by 4 take 8-9

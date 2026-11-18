@@ -9027,13 +9027,14 @@ D466.
 ## D485. Kernels whose sources differ in their names and comments alone take one binary
 
 - **tinygrad:** `renderer/cstyle.py` (`CStyleLanguage._render`, which names
-  the kernel's function after the sink's `function_name`, and
-  `base_rewrite`'s `SPECIAL` rule, which writes a hardware index's size in a
-  comment, `/* 64 */`); `device.py` (`Compiler.compile_cached`, a binary kept
+  the kernel's function after the sink's `function_name` and each parameter
+  after its shape, `data0_4096`, and `base_rewrite`'s `SPECIAL` rule, which
+  writes a hardware index's size in a comment, `/* 64 */`); `device.py` (`Compiler.compile_cached`, a binary kept
   under its source); `runtime/ops_cuda.py` and `engine/realize.py`
   (`get_runtime`), which find the kernel in its binary by `function_name`.
-- **tolk:** `Codegen.compiled_text` and `Codegen.without_display`,
-  `Codegen.symbol`, `Codegen.host_entry`; `Tolk_engine.launch`, which runs
+- **tolk:** `Codegen.compiled_text`, `Codegen.trades` and
+  `Codegen.without_display`, `Codegen.symbol`, `Codegen.host_entry`,
+  `Cstyle.param_name`; `Tolk_engine.launch`, which runs
   `Codegen.symbol` and labels the launch with the kernel's name
   (`Rig_program.Launch`'s `label`, `Rig.Submission.launch ~label`).
 - **Differs:** the text compiled is the program's source, read as C's and
@@ -9042,20 +9043,24 @@ D466.
   kernel's name and `Codegen.symbol` traded wherever either is an
   identifier, so every binary names its kernel `Codegen.symbol`. A source
   holding a line splice or `??`, which no renderer writes, keeps its
-  comments and shares no binary. Two
+  comments and shares no binary. Each parameter's name and `tolk_argN`, `N`
+  its slot (`data0_4096` and `tolk_arg0`), trade places the same way,
+  unless the kernel's name is one of these names, when the parameters keep
+  theirs. Two
   kernels whose sources differ in those alone, as an operation's kernels
   over two extents of a split host loop do (`E_4096_4`
-  and `E_12288_4` on the host), or two GPU extents whose opts and buffers
-  agree (the launch sizes in comments), compile to one binary, kept once in
-  the compiler's table, and a link loads it once; each launch passes its own
-  sizes and bounds, as before. The program keeps the renderer's source, its
-  name and comments in it, and profiles name a launch's work after its
-  kernel. On a GPU, a parameter's name still holds its buffer's size
-  (`data0_4096`), so kernels over buffers of two sizes keep two binaries.
+  and `E_12288_4` on the host), or GPU kernels whose opts agree over two
+  extents (the launch sizes in comments) or over buffers of two sizes (the
+  parameters' names), compile to one binary, kept once in the compiler's
+  table, and a link loads it once; each launch passes its own sizes and
+  bounds, as before. The program keeps the renderer's source, with the
+  kernel's and parameters' names and the comments, and profiles name a
+  launch's work after its kernel.
 - **Reason:** (d), to re-measure on a quiet fudge: tessera's distillation
   step (nano, 64 pixels, `--device cpu-jit`, cold) makes 222 programs whose
   binaries fall from 217 to 160, its process 24.6 s to 22.5 s, its loss
-  unchanged.
+  unchanged. The parameters' trade reaches GPU kernels alone, a host
+  kernel taking its arguments as bytes, and is unmeasured.
 - **Pinned by:** the `Codegen` suite's `kernels of one source take one
   binary` (every test); the bench row is owed.
 

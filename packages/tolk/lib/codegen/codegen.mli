@@ -122,10 +122,13 @@ val to_program :
     + an {!Op.Source} of the source [ren] writes for them;
     + an {!Op.Binary} of that source compiled by [ren]'s compiler
       ({!Renderer.Compiler.compile_cached}), without what shows the kernel to
-      a reader: its comments, such as a GPU kernel's launch sizes, and its
-      name, the kernel being {!symbol} in the binary. Kernels whose sources
-      differ in those alone, as kernels of one operation over two extents may,
-      take one binary, which each launch runs over its own sizes.
+      a reader: its comments, such as a GPU kernel's launch sizes, its name,
+      the kernel being {!symbol} in the binary, and its parameters' names,
+      which show their buffers' sizes, each parameter being [tolk_argN] for
+      its slot [N] unless the kernel's name is one of these names. Kernels
+      whose sources differ in those alone, as kernels of one operation over
+      two extents or over buffers of two sizes may, take one binary, which
+      each launch runs over its own sizes.
 
     A call of a sink inside [ast] runs its body as part of the program: before
     [ast] is lowered, each such body, its own calls first, is lowered alone

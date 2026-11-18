@@ -1518,6 +1518,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- GPU kernels over buffers of different sizes, whose sources differ only in
+  their parameters' names (`data0_4096`), compile to one binary: the text
+  compiled names each parameter after its slot (`Codegen.to_program`).
 - **Breaking:** `Search.beam_search` takes `~part`, the physical part of the
   device it times on, and keeps its result under it: a search timed on one GPU
   was served to every GPU of its arch. `Tolk_engine.part` names a device's

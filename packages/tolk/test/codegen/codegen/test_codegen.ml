@@ -1377,11 +1377,13 @@ let read_waits_for_none () =
 
 (* [out[i] = 2 inp[i]] over the first [n] floats of buffers of [size],
    [n] by default, named [name], as kernels of one operation over two extents
-   are, their names after their shapes. *)
-let doubled ?size ~name n =
+   are, their names after their shapes. [inp] has [inp_size], [size] by
+   default, and the name [input], if given. *)
+let doubled ?size ?inp_size ?input ~name n =
   let size = Option.value size ~default:n in
+  let inp_size = Option.value inp_size ~default:size in
   let out = Shape.param ~shape:[ Ops.Int size ] 0 Float32
-  and inp = Shape.param ~shape:[ Ops.Int size ] 1 Float32 in
+  and inp = Shape.param ~shape:[ Ops.Int inp_size ] ?name:input 1 Float32 in
   let r = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
   let twice = Ops.O.(Ops.index inp [ r ] * Ops.float ~dtype:Float32 2.) in
   Ops.sink ~kernel:(Ops.kernel_info ~name ())
@@ -1409,6 +1411,85 @@ let gpu_extents_keep_the_binary () =
   not_equal string ~msg:"sources, which show their launch sizes"
     (source small) (source large);
   equal string ~msg:"binaries" (Uops.binary_of small) (Uops.binary_of large)
+
+(* On a GPU, a parameter's name shows its buffer's size, and is no part of
+   the binary: kernels over buffers of two sizes, or whose parameters are
+   named apart, compile once. *)
+let gpu_buffer_sizes_compile_once () =
+  let compiled = Atomic.make 0 in
+  let table =
+    Printf.sprintf "test_codegen_buffer_sizes_%.6f" (Unix.gettimeofday ())
+  in
+  let compiler =
+    Renderer.Compiler.v ~cachekey:(fun () -> table) (fun src ->
+        Atomic.incr compiled;
+        src)
+  in
+  let cuda = renderer_for ~compiler (target "CUDA" "CUDA" "sm_89") in
+  let over ?input size =
+    Codegen.to_program (doubled ~size ?input ~name:"twice" 64) cuda
+  in
+  let small = over 4096 and large = over 8192 in
+  not_equal string ~msg:"sources, which show their buffers' sizes"
+    (source small) (source large);
+  ignore (over ~input:"x" 8192);
+  equal int ~msg:"compilations" 1 (Atomic.get compiled)
+
+(* The identifiers of [text] in order, outside its comments, which the
+   renderers write as [/* */]. *)
+let identifiers text =
+  let n = String.length text in
+  let word c =
+    match c with
+    | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' -> true
+    | _ -> false
+  in
+  let at i s = i + 1 < n && text.[i] = s.[0] && text.[i + 1] = s.[1] in
+  let rec past_word i =
+    if i < n && word text.[i] then past_word (i + 1) else i
+  in
+  let rec past_comment i =
+    if i >= n || at i "*/" then i + 2 else past_comment (i + 1)
+  in
+  let rec from i acc =
+    if i >= n then List.rev acc
+    else if at i "/*" then from (past_comment (i + 2)) acc
+    else if word text.[i] then
+      let j = past_word i in
+      let w = String.sub text i (j - i) in
+      from j (match w.[0] with '0' .. '9' -> acc | _ -> w :: acc)
+    else from (i + 1) acc
+  in
+  from 0 []
+
+(* The text a GPU kernel compiles renames its source's identifiers one to
+   one, so it means what the source means, even where the kernel's name is
+   one a parameter takes there. *)
+let gpu_renaming =
+  [
+    ("buffers of 4096 floats", doubled ~size:4096 ~name:"twice" 64);
+    ( "an input named data0",
+      doubled ~size:4 ~inp_size:8 ~input:"data0" ~name:"twice" 4 );
+    ("a kernel named tolk_arg1", doubled ~name:"tolk_arg1" 64);
+  ]
+
+let renames_one_to_one (_, kernel) =
+  let cuda = renderer_for (target "CUDA" "CUDA" "sm_89") in
+  let prg = Codegen.to_program kernel cuda in
+  let shown = identifiers (source prg)
+  and compiled = identifiers (Uops.binary_of prg) in
+  equal int ~msg:"identifiers" (List.length shown) (List.length compiled);
+  let forth = Hashtbl.create 64 and back = Hashtbl.create 64 in
+  let agree tbl a b =
+    match Hashtbl.find_opt tbl a with
+    | Some b' -> equal string ~msg:("the renaming of " ^ a) b' b
+    | None -> Hashtbl.add tbl a b
+  in
+  List.iter2
+    (fun a b ->
+      agree forth a b;
+      agree back b a)
+    shown compiled
 
 (* Kernels over two extents on the host compile to one binary, which runs
    each over its own extent: the launch passes it. *)
@@ -1519,6 +1600,10 @@ let sharing =
       test "a kernel's name is no part of its binary" renaming_keeps_the_binary;
       test "a GPU kernel's launch sizes are no part of its binary"
         gpu_extents_keep_the_binary;
+      test "GPU kernels over buffers of two sizes compile once"
+        gpu_buffer_sizes_compile_once;
+      cases "a GPU kernel's compiled text renames its identifiers one to one"
+        ~id:fst gpu_renaming renames_one_to_one;
       test "host kernels over two extents run one binary"
         host_extents_share_a_binary;
       test "kernels of one source compile once" compiles_once_per_source;
@@ -1965,15 +2050,16 @@ let calls_only_its_own n () =
   is_some ~msg:"the program is split" (kernel_info (Ops.nth p 0)).split;
   equal (list string) [] (undefined_calls p)
 
-(* [renamed name src] is [src] with each [name] written [Codegen.symbol], and
-   [uncommented src] with each comment a space: [src]'s kernel is the only
-   identifier of its name, and no literal holds a comment's marks. *)
-let renamed name src =
+(* [renamed name src] is [src] with each [name] written [into],
+   [Codegen.symbol] by default, and [uncommented src] with each comment a
+   space: [src] holds [name] as an identifier alone, and no literal holds a
+   comment's marks. *)
+let renamed ?(into = Codegen.symbol) name src =
   let n = String.length name and b = Buffer.create (String.length src) in
   let rec from i =
     if i >= String.length src then ()
     else if i + n <= String.length src && String.sub src i n = name then begin
-      Buffer.add_string b Codegen.symbol;
+      Buffer.add_string b into;
       from (i + n)
     end
     else begin
@@ -2030,10 +2116,13 @@ let programs =
         (per_row ~only:on_clang ~default:sample lowers_the_same_twice);
       test
         "a device program's binary is its source compiled by the renderer's \
-         compiler, its comments dropped and its kernel named symbol" (fun () ->
+         compiler, its comments dropped, its kernel named symbol and its \
+         parameters after their slots" (fun () ->
           let p = Codegen.to_program (Lazy.force add_kernel) (metal ()) in
           equal string
-            (uncommented (renamed "E_2_32_4" (source p)))
+            (uncommented
+               (renamed "args_24" ~into:"tolk_arg0"
+                  (renamed "E_2_32_4" (source p))))
             (Uops.binary_of p));
       test "a host program's binary holds rig's host entry after the kernel"
         (fun () ->
@@ -2042,7 +2131,8 @@ let programs =
             (String.concat "\n"
                [
                  "#define tolk_kernel tolk_kernel_";
-                 renamed "E_16_16" (source p);
+                 renamed "args_40" ~into:"tolk_arg0"
+                   (renamed "E_16_16" (source p));
                  "#undef tolk_kernel";
                  "void tolk_kernel(const void *p, long long first, long long \
                   end) { unsigned char a[32] __attribute__((aligned(8))); \

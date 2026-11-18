@@ -2257,11 +2257,14 @@ let do_render (ren : Renderer.t) prg lin =
 
 (* Compiled text
 
-   A kernel's source shows its name, which reads its shape, and on a GPU its
-   launch sizes, in comments: kernels that compute alike over two extents
-   differ there alone. The text compiled leaves both out, so that such
-   kernels compile to one binary, each launch passing its own sizes: its
-   comments are dropped, and its kernel is named [symbol] in every program.
+   A kernel's source shows its name, which reads its shape, on a GPU its
+   launch sizes, in comments, and its parameters' names, which read their
+   buffers' sizes ([data0_4096]): kernels that compute alike over two
+   extents, or over buffers of two sizes, differ there alone. The text
+   compiled leaves these out, so that such kernels compile to one binary,
+   each launch passing its own sizes: its comments are dropped, its kernel
+   is named [symbol] in every program, and each parameter is named after
+   its slot ([tolk_arg0]).
 
    The source is read as the tokens of C and C++, every renderer writing a
    dialect of one, and code in the target's language passing through as it
@@ -2269,8 +2272,9 @@ let do_render (ren : Renderer.t) prg lin =
    space, as C reads it. A literal is kept as it is: a string or character
    literal, a raw string [R"d( )d"], and a number, whose digit separators
    ([1'000]) open no character literal. Every other word is an identifier or
-   a keyword, and the kernel's name and [symbol] trade places wherever
-   either is one, which renames without changing what the source means.
+   a keyword. Each of the [trades] is a pair of identifiers that trade
+   places wherever either is one, which renames without changing what the
+   source means, the pairs being apart.
 
    The reading is conservative, not C's: C joins lines at a backslash before
    a newline, which Clang allows blanks between, and reads [??/] as a
@@ -2281,7 +2285,31 @@ let do_render (ren : Renderer.t) prg lin =
    or renames text that is the name. Such kernels share no binary. *)
 let symbol = "tolk_kernel"
 
-let without_display name src =
+(* The trades of [name], a kernel's name, and of the parameters of [lin],
+   its instructions: [name] and [symbol], and each parameter's name and
+   [tolk_argN], [N] its slot. A parameter's name ends in [_] and any digits,
+   so it is never [tolk_argN]. A trade must be apart from the others, or its
+   two words would rename others' text: should the kernel's name be one of
+   the parameters' words, the parameters keep their names. *)
+let trades name lin =
+  let kernel = (name, symbol) in
+  let params =
+    List.filter_map
+      (fun u ->
+        if op u <> Op.Param then None
+        else
+          let slot = (param_arg_of u).slot in
+          Some (Cstyle.param_name u, Printf.sprintf "tolk_arg%d" slot))
+      (src lin)
+    |> List.sort_uniq Stdlib.compare
+  in
+  let words (a, b) = if String.equal a b then [ a ] else [ a; b ] in
+  let all = List.concat_map words (kernel :: params) in
+  if List.length (List.sort_uniq String.compare all) = List.length all then
+    kernel :: params
+  else [ kernel ]
+
+let without_display trades src =
   let n = String.length src and b = Buffer.create (String.length src) in
   let word = function
     | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' -> true
@@ -2345,6 +2373,13 @@ let without_display name src =
     Buffer.add_substring b src i (j - i);
     j
   in
+  (* writes the word from [i] to [j], or the word it trades places with *)
+  let rec traded i j = function
+    | [] -> ignore (copy i j)
+    | (x, y) :: _ when is x i j -> Buffer.add_string b y
+    | (x, y) :: _ when is y i j -> Buffer.add_string b x
+    | _ :: rest -> traded i j rest
+  in
   let rec from i =
     if i < n then
       match src.[i] with
@@ -2363,9 +2398,7 @@ let without_display name src =
           let j = past_word (digit c) i in
           if raw i j then from (copy i (past_raw j))
           else begin
-            if is name i j then Buffer.add_string b symbol
-            else if is symbol i j then Buffer.add_string b name
-            else ignore (copy i j);
+            traded i j trades;
             from j
           end
       | c ->
@@ -2442,11 +2475,12 @@ let host_entry ~arch prg source =
 let text source = match arg source with String s -> s | _ -> assert false
 
 (* The text [ren]'s compiler compiles for [prg]'s rendered [source]: the source
-   without its kernel's name and comments ([without_display]), on the host with
-   the entry rig calls. The source the program keeps is the renderer's. *)
+   without its kernel's and parameters' names and its comments
+   ([without_display]), on the host with the entry rig calls. The source the
+   program keeps is the renderer's. *)
 let compiled_text (ren : Renderer.t) prg source =
   let name = function_name (kernel_info (nth prg 0)) in
-  let source = without_display name (text source) in
+  let source = without_display (trades name (nth prg 1)) (text source) in
   if ren.target.device = "CPU" then host_entry ~arch:ren.target.arch prg source
   else source
 
