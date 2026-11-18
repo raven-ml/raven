@@ -11,10 +11,14 @@ All notable changes to this project will be documented in this file.
 
 - The gpt-oss example moves to `apps/gpt-oss`, the first of raven's apps:
   programs that do real work through public interfaces only, with their fast
-  tests in `@apps/runtest` and their parity runs outside it. Its probes
-  `bench.exe` and `bench_step.exe` and main's `--profile` are removed, as are
-  `Gpt_oss.from_file` and `from_pretrained`: `Gpt_oss.of_hf` reads the
-  weights `Nx_io.load_safetensors` or `Kaun_hf.load_safetensors` gives.
+  tests in `@apps/runtest`. Its validators become tests against the recorded
+  fixtures, at pinned checkpoint revisions; gpt-oss-20b's streamed comparison
+  runs when its weights are cached. `main.exe` is the chat alone: it takes
+  `--repo`, `--devices`, `--prompt`, `--count` and `--show-analysis`, and its
+  fixed-ids mode, `--q8_0`, `--dtype`, `--system`, `--reasoning` and
+  `--profile` are removed, as are the probes `bench.exe` and `bench_step.exe`,
+  `Gpt_oss.from_file`, `from_pretrained` and `dtype_of_string`, and
+  `Layer_loop.greedy`'s `~jit`.
 - **Breaking:** nx and the packages built on it require OCaml 5.5 or later;
   alpha3 required 5.2.
 - `nx-oxcaml` moves to its own repository,
