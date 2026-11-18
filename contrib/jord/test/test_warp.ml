@@ -2594,7 +2594,9 @@ let lonlat ~rows ~cols ~x ~y ?(rx = 0.) ?(cy = 0.) cx ry =
 let seam_cases =
   (* The remedy each message gives: a cut or a pad where the turn is whole
      columns, else a step restated or a cut that holds the footprint. *)
-  let cut n = Printf.sprintf "Grid.window it to its first turn, %d columns" n
+  let cut n =
+    Printf.sprintf
+      "Grid.window it to its first turn, %d columns, and slice x to them" n
   and other = "no whole number of its columns makes a turn: where its column"
   in
   let holds =

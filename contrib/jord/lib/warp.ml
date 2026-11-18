@@ -449,13 +449,14 @@ let seam_remedy (src : Grid.t) =
   let k = int_of_float n in
   if tr = 0. && Float.abs (Float.abs tc -. n) <= n *. 0x1p-50 then
     if k < src.cols then
-      strf "Grid.window it to its first turn, %d columns" k
+      strf "Grid.window it to its first turn, %d columns, and slice x to them"
+        k
     else strf "pad it to one turn, %d columns, with cells not valid" k
   else
     "no whole number of its columns makes a turn: where its column step \
      rounds (±360° / n, 0) for a whole n, state that step; otherwise \
-     Grid.window it to columns narrower than a turn that hold every \
-     footprint whole, or make dst with no cell across its west edge"
+     Grid.window it, and slice x, to columns narrower than a turn that hold \
+     every footprint whole, or make dst with no cell across its west edge"
 
 let place fn (src : Grid.t) q =
   let r, c =
