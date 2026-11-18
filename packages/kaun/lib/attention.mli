@@ -69,6 +69,7 @@ val init : key:'d Nx.Rng.key -> embed_dim:int -> ('d Nx.float32_t, 'd) t
 val apply :
   head_dim:int ->
   ?mask:('d Nx.pair -> 'd Nx.bool_t) ->
+  ?lengths:'d Nx.int64_t ->
   ?rope:'d Rope.t ->
   ?sum:bool ->
   ((float, 'b, 'd) Nx.t, 'd) t ->
@@ -84,12 +85,21 @@ val apply :
       array [b] shared by the lanes, of shape [[| seq; seq |]], is the mask
       [fun _ -> b]; one per lane, [[| batch; seq; seq |]], takes a heads axis,
       [fun _ -> Nx.reshape [| batch; 1; seq; seq |] b], since a mask's arrays
-      align on the right. A mask of padding [valid], of shape
-      [[| batch; seq |]] and [true] at real tokens, is
-      [fun p -> Nx.logical_and (Nx.causal p) valid'] for
-      [valid' = Nx.reshape [| batch; 1; 1; seq |] valid]. A query that sees
-      no key yields the output projection of zero. Without a mask every token
-      sees every token.
+      align on the right. A query that sees no key yields the output
+      projection of zero. Without a mask every token sees every token.
+    - [lengths], of the shape of [x]'s batch axes: each lane's number of
+      real tokens, which come first, the rest of the lane padding. A token
+      sees no key at or past its lane's length, and no value there is read,
+      so a NaN in the padding reaches no real token, compiled or not, and a
+      compiled call need not compute the padded keys. A padded token's
+      output is computed all the same, for the caller to ignore. The pair's
+      [len] is the lane's length, and {!Nx.causal} aligns the last query
+      with the last real key, as decoding over a cache needs: over a lane
+      padded after its real tokens, token [i] sees only the keys up to
+      [i - (seq - len)], so the first [seq - len] tokens see none and every
+      later real token too few. Causal attention over such lanes is
+      [fun p -> Nx.less_equal p.k p.q]. Without [lengths] every token is
+      real.
     - [rope], a rotary schedule: the query and key heads are rotated at
       positions [0] to [seq - 1] before the scores.
     - [sum], for the output projection as {!Linear.apply} takes it: a
@@ -105,7 +115,8 @@ val apply :
     Raises [Invalid_argument] if [x]'s dtype is a float8 or float4 format, [x]
     has fewer than 2 axes, [x]'s last axis does not have size [embed_dim],
     [head_dim] does not divide the projection widths, [kv_heads] does not
-    divide [heads], or [mask]'s results or captures do not broadcast to
+    divide [heads], [lengths] does not have the shape of [x]'s batch axes, or
+    [mask]'s results or captures do not broadcast to
     [[| batch; heads; seq; seq |]]. *)
 
 (** {1:cache Decoding with a key-value cache}
@@ -278,6 +289,7 @@ val split :
 
 val attend :
   ?mask:('d Nx.pair -> 'd Nx.bool_t) ->
+  ?lengths:'d Nx.int64_t ->
   ?scale:float ->
   ?sinks:(float, 'b, 'd) Nx.t ->
   (float, 'b, 'd) Nx.t ->
@@ -300,6 +312,9 @@ val attend :
       as {!Cache_index.mask}, takes a heads axis,
       [fun _ -> Nx.reshape [| batch; 1; n; m |] b], since a mask's arrays
       align on the right.
+    - [lengths], of shape [[| batch |]]: each lane's number of keys, as
+      {!apply} takes it. A query sees no key at or past its lane's length,
+      and no value there is read.
     - [scale], as for {!scaled_dot_product_attention}.
     - [sinks], of shape [[| heads |]]: one attention-sink logit per query head,
       as for {!scaled_dot_product_attention}.
@@ -310,8 +325,8 @@ val attend :
 
     Raises [Invalid_argument] if [q]'s dtype is a float8 or float4 format, a
     shape is not as above, [kv_heads] does not divide [heads], [d] is [0]
-    without [scale], or [mask]'s results or captures do not broadcast to
-    [[| batch; heads; n; m |]]. *)
+    without [scale], [lengths] does not have shape [[| batch |]], or [mask]'s
+    results or captures do not broadcast to [[| batch; heads; n; m |]]. *)
 
 val merge :
   ?sum:bool ->
@@ -330,6 +345,7 @@ val merge :
 
 val scaled_dot_product_attention :
   ?mask:('d Nx.pair -> 'd Nx.bool_t) ->
+  ?lengths:'d Nx.int64_t ->
   ?scale:float ->
   ?sinks:(float, 'b, 'd) Nx.t ->
   (float, 'b, 'd) Nx.t ->
@@ -364,6 +380,12 @@ val scaled_dot_product_attention :
     The function is total: a query row whose mask hides every key has zero
     weights, so its output is zero, and its gradients are zero.
 
+    [lengths], when given, is the number of keys each row sees, as
+    {!Nx.val-attention}'s [lengths]: a row sees no key at or past its length,
+    and no value there is read. It has the shape of the batch axes without
+    their last, one length for all the heads of a batch index, and is 0-d for
+    fewer than two batch axes. {!apply} states what it means for padding.
+
     [sinks], when given, are attention sinks (Xiao et al., 2023, as gpt-oss uses
     them): learned logits that take part of a query's weight and carry no value.
     [sinks] must broadcast to [[| ...; n |]], the scores without their last
@@ -382,7 +404,8 @@ val scaled_dot_product_attention :
     [q], [k] or [v] has fewer than 2 axes, [q] and [k] differ in their last
     axis, [k] and [v] differ in their second-to-last axis, the batch axes
     do not broadcast, [d] is [0] without [scale], [sinks] does not broadcast to
-    the scores without their last axis, or [mask]'s results or captures do not
+    the scores without their last axis, [lengths] does not have the shape of
+    the batch axes without their last, or [mask]'s results or captures do not
     broadcast to [[| ...; n; m |]]. *)
 
 (** {1:structure Structure} *)

@@ -172,7 +172,16 @@ let test_core_rejects_bad_shapes () =
       Attention.scaled_dot_product_attention
         (t [| 1; 0 |])
         (t [| 2; 0 |])
-        (t [| 2; 2 |]))
+        (t [| 2; 2 |]));
+  raises
+    (Invalid_argument
+       "Attention.scaled_dot_product_attention: lengths must have shape [2], \
+        the batch axes before the last") (fun () ->
+      Attention.scaled_dot_product_attention
+        ~lengths:(Nx.zeros Nx.int64 [| 3 |])
+        (t [| 2; 4; 1; 2 |])
+        (t [| 2; 4; 3; 2 |])
+        (t [| 2; 4; 3; 2 |]))
 
 let test_core_dtypes () =
   let t dt = Nx.zeros dt [| 1; 2 |] in
@@ -824,27 +833,111 @@ let test_permutation_equivariance () =
     (array (float 1e-4))
     (permute perm y) yp
 
-(* A padded query sees no key: its weights are zero, so nothing poisons a masked
-   loss. *)
-let test_padding_mask_hides_padded_keys () =
+(* Lanes padded after their real tokens: under [lengths] a NaN in the padding
+   reaches no real token, eager or compiled, and a real token's output is the
+   one it has alone. The causal rule of such lanes is [p.k <= p.q]; without a
+   mask, [lengths] alone hides the padding. *)
+let causal_within (p : Nx.host Nx.pair) = Nx.less_equal p.k p.q
+
+let test_lengths_hide_padding () =
   Nx.Rng.with_key (Nx.Rng.key 27) @@ fun () ->
   let p = Attention.init ~key:(Nx.Rng.next_key ()) ~embed_dim:4 in
-  let x = Nx.Rng.normal Nx.float32 [| 2; 3; 4 |] in
-  let valid =
-    Nx.create Nx.bool [| 2; 3 |] [| false; true; true; true; true; true |]
+  let x = Nx.Rng.normal Nx.float32 [| 2; 4; 4 |] in
+  (* Lane 0 holds 2 real tokens, lane 1 all 4. *)
+  let x = Nx.set [ I 0; R (2, 4) ] (Nx.full Nx.float32 [| 2; 4 |] nan) x in
+  let lengths = Nx.create Nx.int64 [| 2 |] [| 2L; 4L |] in
+  let f x = Attention.apply ~head_dim:2 ~mask:causal_within ~lengths p x in
+  let lane0 = [ Nx.R (0, 1); R (0, 2) ] and lane1 = [ Nx.R (1, 2) ] in
+  let real y =
+    Array.append (flat_of (Nx.slice lane0 y)) (flat_of (Nx.slice lane1 y))
   in
-  let valid = Nx.reshape [| 2; 1; 1; 3 |] valid in
-  let mask p = Nx.logical_and (Nx.causal p) valid in
-  let y = Nx.to_array (Attention.apply ~head_dim:2 ~mask p x) in
-  is_true ~msg:"every output is finite" (Array.for_all Float.is_finite y);
-  (* The real tokens of the padded row see exactly what they would alone. *)
-  let alone =
-    Attention.apply ~head_dim:2 ~mask:Nx.causal p
-      (Nx.slice [ R (0, 1); R (1, 3) ] x)
+  let alone ?mask () =
+    let at lane =
+      flat_of (Attention.apply ~head_dim:2 ?mask p (Nx.slice lane x))
+    in
+    Array.append (at lane0) (at lane1)
   in
-  equal ~msg:"real tokens ignore the padding"
-    (array (float 1e-5))
-    (Nx.to_array alone) (Array.sub y 4 8)
+  let close ~msg expected y =
+    equal ~msg (array (float 1e-5)) expected (real y)
+  in
+  let g x = Attention.apply ~head_dim:2 ~lengths p x in
+  close ~msg:"no mask, eager" (alone ()) (g x);
+  close ~msg:"no mask, compiled" (alone ()) (Rune.jit' g x);
+  let causal = alone ~mask:Nx.causal () in
+  close ~msg:"causal, eager" causal (f x);
+  close ~msg:"causal, compiled" causal (Rune.jit' f x)
+
+(* The core and [attend] read no key past a lane's length. *)
+let test_lengths_bound_the_keys () =
+  Nx.Rng.with_key (Nx.Rng.key 29) @@ fun () ->
+  let q = Nx.Rng.normal Nx.float32 [| 2; 2; 3; 4 |] in
+  let poison t =
+    Nx.set [ I 0; A; R (1, 5) ] (Nx.full Nx.float32 [| 2; 4; 4 |] nan) t
+  in
+  let k = poison (Nx.Rng.normal Nx.float32 [| 2; 2; 5; 4 |]) in
+  let v = poison (Nx.Rng.normal Nx.float32 [| 2; 2; 5; 4 |]) in
+  (* Lane 0 holds 1 key, lane 1 all 5. *)
+  let lengths = Nx.create Nx.int64 [| 2 |] [| 1L; 5L |] in
+  let expected =
+    let lane i n =
+      let keys t = Nx.slice [ R (i, i + 1); A; R (0, n) ] t in
+      flat_of
+        (Attention.scaled_dot_product_attention
+           (Nx.slice [ R (i, i + 1) ] q)
+           (keys k) (keys v))
+    in
+    Array.append (lane 0 1) (lane 1 5)
+  in
+  let core q = Attention.scaled_dot_product_attention ~lengths q k v in
+  let attend q = Attention.attend ~lengths q (Nx.Dense { k; v }) in
+  let close ~msg y = equal ~msg (array (float 1e-5)) expected (flat_of y) in
+  close ~msg:"core, eager" (core q);
+  close ~msg:"core, compiled" (Rune.jit' core q);
+  close ~msg:"attend, eager" (attend q);
+  close ~msg:"attend, compiled" (Rune.jit' attend q)
+
+(* With fewer than two batch axes, or an [x] of one lane, [lengths] is 0-d and
+   bounds every row. *)
+let test_lengths_0d () =
+  Nx.Rng.with_key (Nx.Rng.key 30) @@ fun () ->
+  let len = Nx.scalar Nx.int64 2L in
+  let poison t =
+    let s = Nx.shape t in
+    let r = Array.length s in
+    let pad = Array.copy s in
+    pad.(r - 2) <- s.(r - 2) - 2;
+    let rows = List.init (r - 2) (fun _ -> Nx.A) @ [ Nx.R (2, s.(r - 2)) ] in
+    Nx.set rows (Nx.full Nx.float32 pad nan) t
+  in
+  let keys t =
+    let r = Nx.ndim t in
+    Nx.slice (List.init (r - 2) (fun _ -> Nx.A) @ [ Nx.R (0, 2) ]) t
+  in
+  let core ~lead =
+    let q = Nx.Rng.normal Nx.float32 (Array.append lead [| 3; 4 |]) in
+    let k = poison (Nx.Rng.normal Nx.float32 (Array.append lead [| 5; 4 |])) in
+    let v = poison (Nx.Rng.normal Nx.float32 (Array.append lead [| 5; 4 |])) in
+    let expected =
+      flat_of (Attention.scaled_dot_product_attention q (keys k) (keys v))
+    in
+    let f q = Attention.scaled_dot_product_attention ~lengths:len q k v in
+    let msg = Printf.sprintf "%d batch axes" (Array.length lead) in
+    equal ~msg:(msg ^ ", eager") (array (float 1e-5)) expected (flat_of (f q));
+    equal ~msg:(msg ^ ", compiled") (array (float 1e-5)) expected
+      (flat_of (Rune.jit' f q))
+  in
+  core ~lead:[||];
+  core ~lead:[| 2 |];
+  let p = Attention.init ~key:(Nx.Rng.next_key ()) ~embed_dim:4 in
+  let x = poison (Nx.Rng.normal Nx.float32 [| 4; 4 |]) in
+  let real y = flat_of (Nx.slice [ R (0, 2) ] y) in
+  let expected =
+    flat_of (Attention.apply ~head_dim:2 p (Nx.slice [ R (0, 2) ] x))
+  in
+  let f x = Attention.apply ~head_dim:2 ~lengths:len p x in
+  equal ~msg:"apply, eager" (array (float 1e-5)) expected (real (f x));
+  equal ~msg:"apply, compiled" (array (float 1e-5)) expected
+    (real (Rune.jit' f x))
 
 (* Grouped-query attention: each key-value head serves a group of query heads.
    It must equal ordinary attention with every key-value head repeated. *)
@@ -3535,6 +3628,12 @@ let test_pieces_reject_bad_shapes () =
       Attention.attend ~sinks:(t [| 2 |])
         (t [| 1; 4; 2; 2 |])
         (Nx.Dense { k = t [| 1; 2; 2; 2 |]; v = t [| 1; 2; 2; 2 |] }));
+  raises (Invalid_argument "Attention.attend: lengths must have shape [1]")
+    (fun () ->
+      Attention.attend
+        ~lengths:(Nx.zeros Nx.int64 [||])
+        (t [| 1; 4; 2; 2 |])
+        (Nx.Dense { k = t [| 1; 2; 2; 2 |]; v = t [| 1; 2; 2; 2 |] }));
   raises
     (Invalid_argument
        "Attention.merge: y must have shape [batch; heads; seq; d]") (fun () ->
@@ -3623,6 +3722,14 @@ let test_rejects_bad_geometry () =
         (Nx.zeros Nx.float32 [| 2; 4 |]));
   raises
     (Invalid_argument
+       "Attention.apply: lengths must have shape [3], x's batch axes")
+    (fun () ->
+      Attention.apply ~head_dim:2
+        ~lengths:(Nx.zeros Nx.int64 [| 2 |])
+        p
+        (Nx.zeros Nx.float32 [| 3; 2; 4 |]));
+  raises
+    (Invalid_argument
        "Attention.apply: the key and value projections differ in width (k=4 \
         v=2)") (fun () ->
       let v =
@@ -3689,8 +3796,11 @@ let () =
                test_causal_ignores_the_future;
              test "self-attention is permutation-equivariant"
                test_permutation_equivariance;
-             test "a padding mask hides padded keys"
-               test_padding_mask_hides_padded_keys;
+             test "lengths keep the padding from real tokens"
+               test_lengths_hide_padding;
+             test "lengths bound the keys the core and attend read"
+               test_lengths_bound_the_keys;
+             test "0-d lengths bound every row" test_lengths_0d;
              test "grouped keys equal repeated keys"
                test_grouped_equals_repeated;
              test "gradients agree with finite differences" test_gradients;

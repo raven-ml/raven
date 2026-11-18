@@ -147,7 +147,21 @@ let () =
   (* [3; 4] — one weighted average of value rows per query row *)
 ```
 
-`?mask` says which keys each query may see, as `Nx.attention` takes it: Nx code over the coordinates of one query-key pair. `Nx.causal` lets query `i` see keys `j <= i`; a boolean array `b` of shape `[| seq; seq |]` is the mask `fun _ -> b`, one of `[| batch; seq; seq |]` is `fun _ -> Nx.reshape [| batch; 1; seq; seq |] b` (a mask's arrays align on the right of `[| batch; heads; seq; seq |]`), and padding composes, `fun p -> Nx.logical_and (Nx.causal p) valid` for `valid` of shape `[| batch; 1; 1; seq |]`. A query that sees no key, a padded one for instance, yields zero and never `nan`. `?rope` takes a `Rope.t` schedule, built on the host and moved beside the model with `Rope.place`, and rotates queries and keys by position.
+`?mask` says which keys each query may see, as `Nx.attention` takes it: Nx code over the coordinates of one query-key pair. `Nx.causal` lets query `i` see keys `j <= i`; a boolean array `b` of shape `[| seq; seq |]` is the mask `fun _ -> b`, one of `[| batch; seq; seq |]` is `fun _ -> Nx.reshape [| batch; 1; seq; seq |] b` (a mask's arrays align on the right of `[| batch; heads; seq; seq |]`). A query that sees no key yields zero and never `nan`. `?rope` takes a `Rope.t` schedule, built on the host and moved beside the model with `Rope.place`, and rotates queries and keys by position.
+
+Lanes of different lengths share a batch through `?lengths`, an int64 array of the batch's shape giving each lane's number of real tokens, which come first. No token sees a key at or past its lane's length and no value there is read, so a `nan` in the padding never reaches a real token, compiled or not. `Nx.causal` aligns the last query with the lane's last real key, as decoding needs; over lanes padded at the end it hides keys from real tokens, so causal attention over them is `fun p -> Nx.less_equal p.k p.q`:
+
+```ocaml
+let () =
+  Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
+  let attn = Attention.init ~key:(Nx.Rng.next_key ()) ~embed_dim:16 in
+  let x = Nx.Rng.normal Nx.float32 [| 2; 5; 16 |] in
+  (* lane 0 holds 3 real tokens, lane 1 all 5 *)
+  let lengths = Nx.create Nx.int64 [| 2 |] [| 3L; 5L |] in
+  let causal (p : _ Nx.pair) = Nx.less_equal p.k p.q in
+  let y = Attention.apply ~head_dim:4 ~mask:causal ~lengths attn x in
+  Format.printf "y: %a@." Nx.pp_shape (Nx.shape y)
+```
 
 For autoregressive decoding, `Attention.cached` runs causal self-attention of a few new tokens over a functional key-value cache. The cache (`Attention.Cache`) is a flat pool of slots with no batch axis, and a `Cache_index.t`, built on the host and moved with `Cache_index.place`, says where the call's tokens sit: each token's position and the slot holding each position of each sequence. One contiguous run per sequence (`Cache_index.rows`), paged allocation and a prefix shared by two sequences are all values of a cache index, and the layer is the same for each. Over `Cache_index.whole`, which reads and keeps nothing, the same function is plain causal attention, so a model has one forward pass for training and decoding. Positions and slots enter as tensors, so a generation step keeps fixed shapes and compiles once; compiled with `Rune.jit` on `Nx.Ptree.(tensor @-> v Cache_index.walk @-> caches @-> returns (pair tensor caches))` and called with the caches donated (`Nx.Ptree.donate`), the old caches are consumed. A prompt fed whole, in chunks or token by token gives the same outputs.
 

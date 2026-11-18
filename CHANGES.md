@@ -4262,6 +4262,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- `Attention.apply`, `attend` and `scaled_dot_product_attention` take
+  `?lengths`, each lane's number of real tokens, passed to `Nx.attention`.
+  Unlike a mask of padded keys, a NaN past a length never reaches a real
+  token under `Rune.jit`, and compiled attention need not compute there.
 - **Breaking:** `Layer_norm.t` and `Batch_norm.t` hold `beta : 'a option`,
   and `Layer_norm.make`, `Layer_norm.init` and `Batch_norm.init` take
   `?shift`, as `Linear` takes `?bias`. A norm made with `~shift:false` has
