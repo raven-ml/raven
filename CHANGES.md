@@ -4243,6 +4243,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- `Fn.elu`, the exponential linear unit. Its derivative is `alpha` at `0`
+  and finite for large inputs, where `exp x` overflows.
 - **Breaking:** `Batch_norm.apply` normalizes the last axis and loses
   `?axis`, as `Layer_norm` and `Rms_norm` do. `Kaun_datasets.mnist` and
   `cifar10` lose `?data_format` and give images channels last,

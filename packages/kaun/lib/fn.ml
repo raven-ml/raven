@@ -22,6 +22,20 @@ let leaky_relu ?(negative_slope = 0.01) x =
     x
     (Nx.mul_s x (const x negative_slope))
 
+(* The negative branch reads [x] only where it is selected, and [0] elsewhere:
+   the unselected branch's cotangent is zero, and [expm1 x]'s derivative is
+   infinite for large [x] (above about 88 at float32), so [0 * inf] would make
+   the gradient NaN. The selected value has no kink at [0], where both [where]s
+   pick the negative branch and the derivative is [alpha]. *)
+let elu ?(alpha = 1.0) x =
+  if not (alpha > 0. && Float.is_finite alpha) then
+    Printf.ksprintf invalid_arg
+      "Fn.elu: alpha must be finite and positive, got %g" alpha;
+  let zero = Nx.scalar_like x (const x 0.0) in
+  let positive = Nx.greater x zero in
+  let negative = Nx.expm1 (Nx.where positive zero x) in
+  Nx.where positive x (Nx.mul_s negative (const x alpha))
+
 let inv_sqrt2 = 0.7071067811865476
 let sqrt_2_over_pi = 0.7978845608028654
 

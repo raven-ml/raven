@@ -41,7 +41,7 @@ Stateless companions, all pure functions:
 
 | Module | Contents |
 |--------|----------|
-| `Fn` | `relu`, `leaky_relu`, `gelu`, `gelu_approx`, `silu`, `softplus`, `keep_top_k`, `keep_top_p` |
+| `Fn` | `relu`, `leaky_relu`, `elu`, `gelu`, `gelu_approx`, `silu`, `softplus`, `keep_top_k`, `keep_top_p` |
 | `Pool` | `max`, `avg` over windows of the spatial axes, channels last |
 | `Dropout` | `apply ~rate ~training` |
 | `Init` | `glorot_*`, `he_*`, `lecun_*`, `variance_scaling`, constants |

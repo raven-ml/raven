@@ -23,6 +23,20 @@ val leaky_relu : ?negative_slope:float -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
 
     [negative_slope] defaults to [0.01]. *)
 
+val elu : ?alpha:float -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
+(** [elu x] is [x] where [x > 0] and [alpha * (exp x - 1)] elsewhere,
+    computed with {!Nx.expm1}: the exponential linear unit of Clevert,
+    Unterthiner and Hochreiter, "Fast and Accurate Deep Network Learning by
+    Exponential Linear Units (ELUs)", ICLR 2016. It is [-0.] at [-0.],
+    [-alpha] at negative infinity, and NaN at NaN. Its derivative is [1] above
+    [0] and [alpha * exp x] at and below it, so [alpha] at [0], and it is NaN
+    only at NaN.
+
+    [alpha] must be finite and positive, as the definition requires, and
+    defaults to [1.].
+
+    Raises [Invalid_argument] if [alpha] is not finite and positive. *)
+
 val gelu : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 (** [gelu x] is the exact Gaussian error linear unit [x * Φ(x)], computed as
     [0.5 * x * (1 + erf(x / sqrt 2))] where [Φ] is the standard normal CDF.

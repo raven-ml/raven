@@ -36,6 +36,86 @@ let test_leaky_relu () =
   check_arr ~msg:"custom slope" [| -0.4; 2. |]
     (Fn.leaky_relu ~negative_slope:0.2 (vec [| -2.; 2. |]))
 
+(* ELU's values at [0], far above it and far below it, where [alpha * (exp x -
+   1)] is [-alpha] to the precision of every float dtype. *)
+let test_elu () =
+  let at32 = Nx.create Nx.float32 [| 3 |] [| 0.; 1e3; -1e3 |] in
+  check_arr ~eps:0. ~msg:"elu, float64" [| 0.; 1e3; -1. |]
+    (Fn.elu (vec [| 0.; 1e3; -1e3 |]));
+  check_arr ~eps:0. ~msg:"elu, float32" [| 0.; 1e3; -1. |] (Fn.elu at32);
+  check_arr ~eps:0. ~msg:"alpha 2" [| 0.; 1e3; -2. |]
+    (Fn.elu ~alpha:2. (vec [| 0.; 1e3; -1e3 |]))
+
+let test_elu_edges () =
+  let x = vec [| -0.; Float.neg_infinity; Float.nan |] in
+  let y = Nx.to_array (Fn.elu x) in
+  equal ~msg:"-0. and negative infinity, then NaN" (array float_exact)
+    [| -0.; -1.; Float.nan |] y
+
+let test_elu_rejects_alpha () =
+  let refuses alpha =
+    raises
+      (Invalid_argument
+         (Printf.sprintf "Fn.elu: alpha must be finite and positive, got %g"
+            alpha))
+      (fun () -> Fn.elu ~alpha (vec [| -0. |]))
+  in
+  List.iter refuses [ -1.; 0.; -0.; Float.infinity; Float.nan ]
+
+(* ELU against its definition, at one dtype: the value against
+   [x] or [alpha (exp x - 1)] computed in float64, and the derivative against
+   float64 finite differences of that definition. Both read [x] and [alpha]
+   rounded to the dtype, as [Fn.elu] does. The differences stay on [x]'s side
+   of [0], where the derivative jumps from [alpha] to [1], and difference
+   [alpha exp x], which has the definition's slope below [0] without the
+   cancellation against [-alpha]. *)
+let law_elu (type b) (dt : (float, b) Nx.dtype) ~rel ~abs (x, alpha) =
+  let round v = (Nx.to_array (Nx.create dt [| 1 |] [| v |])).(0) in
+  let x = round x and a = round alpha in
+  let f v = if v > 0. then v else a *. Float.expm1 v in
+  cover "x > 0" (x > 0.);
+  cover "x <= 0" (x <= 0.);
+  cover "|x| < 1e-3" (Float.abs x < 1e-3);
+  cover "exp x overflows float16" (x > 11.1);
+  let g v = if x > 0. then v else a *. Float.exp v in
+  let h = 1e-5 *. Float.max 1. (Float.abs x) in
+  let slope =
+    if Float.abs x > 2. *. h then (g (x +. h) -. g (x -. h)) /. (2. *. h)
+    else
+      (* Second-order one-sided differences. *)
+      let s = if x > 0. then 1. else -1. in
+      s
+      *. ((4. *. g (x +. (s *. h))) -. g (x +. (2. *. s *. h)) -. (3. *. g x))
+      /. (2. *. h)
+  in
+  let t = Nx.create dt [| 1 |] [| x |] in
+  let value = Nx.to_array (Fn.elu ~alpha t) in
+  let grad = Nx.to_array (Rune.grad' (fun t -> Nx.sum (Fn.elu ~alpha t)) t) in
+  equal ~msg:"value" (float_rel ~rel ~abs) (f x) value.(0);
+  equal ~msg:"derivative" (float_rel ~rel:(rel +. 1e-6) ~abs) slope grad.(0)
+
+let elu_inputs =
+  Gen.pair
+    (Gen.frequency
+       [ (3, Gen.float_range (-100.) 100.); (1, Gen.float_range (-1e-3) 1e-3) ])
+    (Gen.float_range 0.1 3.)
+
+let elu_props =
+  (* Four units in the last place of a [p]-bit significand, relative, and
+     four of its smallest subnormal, absolute: the exponential, the product
+     by [alpha] and the rounding of a narrow format's float32 result each
+     round once. *)
+  let at name dt ~p ~tiny =
+    let rel = 4. *. Float.ldexp 1. (-p) and abs = 4. *. tiny in
+    prop ("elu is its definition at " ^ name) elu_inputs (law_elu dt ~rel ~abs)
+  in
+  [
+    at "float64" Nx.float64 ~p:53 ~tiny:(Float.ldexp 1. (-1074));
+    at "float32" Nx.float32 ~p:24 ~tiny:(Float.ldexp 1. (-149));
+    at "bfloat16" Nx.bfloat16 ~p:8 ~tiny:(Float.ldexp 1. (-133));
+    at "float16" Nx.float16 ~p:11 ~tiny:(Float.ldexp 1. (-24));
+  ]
+
 let test_gelu () =
   check_arr ~msg:"gelu"
     [| 0.; 0.8413447460685429; -0.15865525393145707; 1.9544997361036416 |]
@@ -83,6 +163,18 @@ let test_grad_relu () =
 let test_grad_relu_at_zero () =
   check_arr ~msg:"relu'" [| 0.; 0.; 1. |]
     (grad_of Fn.relu (vec [| -1.; 0.; 2. |]))
+
+(* ELU's derivative: [alpha] at [0], where both sides agree for [alpha = 1]
+   and differ for [alpha = 2]; [1] at [1e3], where [exp x] overflows; and
+   [alpha * exp (-1e3) = 0] at [-1e3]. *)
+let test_grad_elu () =
+  let x = [| 0.; 1e3; -1e3 |] in
+  check_arr ~eps:0. ~msg:"elu', float64" [| 1.; 1.; 0. |]
+    (grad_of (fun x -> Fn.elu x) (vec x));
+  check_arr ~eps:0. ~msg:"elu', float32" [| 1.; 1.; 0. |]
+    (grad_of (fun x -> Fn.elu x) (Nx.create Nx.float32 [| 3 |] x));
+  check_arr ~eps:0. ~msg:"elu' with alpha 2" [| 2.; 1.; 0. |]
+    (grad_of (Fn.elu ~alpha:2.) (vec x))
 
 let test_grad_softplus () =
   let x = vec [| 0.9; -1.7; 0.; -0. |] in
@@ -241,6 +333,10 @@ let tests =
         test "relu clamps negatives to zero" test_relu;
         test "relu keeps NaN and maps -0. to 0." test_relu_nan_zero;
         test "leaky_relu scales negatives by the slope" test_leaky_relu;
+        test "elu at 0, 1e3 and -1e3" test_elu;
+        test "elu keeps -0. and NaN, and saturates at -alpha" test_elu_edges;
+        test "elu refuses an alpha that is not finite and positive"
+          test_elu_rejects_alpha;
         test "gelu matches the exact erf form" test_gelu;
         test "gelu_approx matches the tanh form" test_gelu_approx;
         test "gelu_approx stays within 2e-3 of gelu"
@@ -248,6 +344,7 @@ let tests =
         test "silu is x times sigmoid" test_silu;
         test "softplus matches log(1 + exp x)" test_softplus;
       ];
+    group "elu" elu_props;
     group "numerical stability"
       [ test "softplus does not overflow" test_softplus_saturates ];
     group "sampling masks"
@@ -265,6 +362,7 @@ let tests =
       ([
          test "relu family has piecewise-constant gradients" test_grad_relu;
          test "relu has derivative 0 at 0" test_grad_relu_at_zero;
+         test "elu has derivative alpha at 0 and no NaN" test_grad_elu;
          test "softplus has an analytic gradient" test_grad_softplus;
          test "gelu and silu have analytic gradients" test_grad_gelu_silu;
        ]
