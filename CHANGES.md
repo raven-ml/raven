@@ -1493,6 +1493,11 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A float32 product on a GPU plus a bias that one of its output axes does
+  not read, as `empty(2,1024,16) @ empty(2,16,768) + empty(1024,768)`'s
+  batches, is optimised as the product alone: the bias's loads made that
+  axis look shared by the product's, which upcast it 4 by 3 outputs a
+  thread, never blocked to 8 by 8.
 - A computed table that gathers read at more positions than it holds is
   stored as a broadcast value is, when it runs an exponential or as much
   arithmetic, or several inputs a sum reads it through: `Nx.take` with no

@@ -5900,7 +5900,8 @@ against 2.77).
 - **Differs:**
   - on a renderer with local indices, a contraction summed in 4 bytes or
     fewer whose upcast loop took two axes, each by 4 and leaving part of its
-    axis, each unread by some operand, where 2 divides both and what is left
+    axis, each unread by some operand of the product (a load after the
+    reduce, as a bias, is none), where 2 divides both and what is left
     of them holds a SIMD group of threads in powers of two, unrolls its last
     unrollable axis by 4 where 4 divides it, and by nothing otherwise;
   - it takes a second upcast of each axis by 2, so a thread holds 8 by 8
@@ -5916,7 +5917,8 @@ against 2.77).
   - a kernel upcast past those two axes' 16 lanes, as the masked upcasts
     take a materialised mask's axes whole, is not blocked, nor a sum in 8
     bytes;
-  - only for such a contraction, upcast by nothing before the loop, whose
+  - only for such a contraction, one the loop with 4 first leaves to be
+    blocked or unrolled so, upcast by nothing before the loop, whose
     blocked threads, a 64th of its outputs, number at least the renderer's
     `core_threads`, does the upcast loop take an axis by 4 before 3.
 - **Reason:** (d): at equal registers, 8 by 8 outputs a thread in workgroups
@@ -5925,11 +5927,16 @@ against 2.77).
   64K. The unroll by 4 on both sides of that floor keeps each output's sum
   in one order whatever `units` a target states, which moves speed alone.
 - **Pinned by:** `Tolk.Heuristic`'s `a contraction in registers` cases
-  (`matmul`, `matmul_256`, `scores`, `matmul_768`, `matmul_440`, padded,
-  and `heads_projection` and `heads_projection_biased` blocked on CUDA and
-  AMD, which state no units; on sm_89's renderer `heads_projection`
-  blocked and `matmul_768` held at 4 by 4; `matmul_1000`, `matmul_48`,
-  `scores_biased`, `scores_biased_first` and `scores_masked` not blocked),
+  (`matmul`, `matmul_256`, `scores`, `matmul_768`, `batched_768`,
+  `two_batches_768`, `matmul_440`, padded, and `heads_projection` and
+  `heads_projection_biased` blocked on CUDA and AMD, which state no units;
+  on sm_89's renderer `heads_projection` blocked and `matmul_768`,
+  `batched_768` and `two_batches_768` held at 4 by 4;
+  `two_batches_768_biased`, whose bias the batches do not read, optimised
+  as `two_batches_768`; `matmul_1000`, `matmul_48`,
+  `scores_biased`, `scores_biased_first`, `scores_masked` and
+  `batched_768_biased`, whose upcast loop takes its batches too, not
+  blocked),
   with the layouts in the suite's `.tolk` files, and `a kernel's sums keep
   their order whatever units its renderer states`; rune's `test_jit_gpu`
   `a blocked product padded to its threads, plus a bias, is within its

@@ -156,6 +156,13 @@ KERNELS = {
     "matmul_768": lambda: last(empty(2048, 16) @ empty(16, 768)),
     "matmul_48": lambda: last(empty(48, 64) @ empty(64, 1024)),
     "matmul_440": lambda: last(empty(256, 64) @ empty(64, 440)),
+    # batches of a product by 768 columns, 4 of 512 rows or 2 of 1024, alone and plus a bias of each output, which the batches do
+    # not read and which shares no element of the product: 2 batches, which neither 3 nor 4 divides, are upcast alike with the
+    # bias or without; 4 batches with the bias take the batches by 4 too, which leaves nothing to block
+    "batched_768": lambda: last(empty(4, 512, 16) @ empty(4, 16, 768)),
+    "batched_768_biased": lambda: last(empty(4, 512, 16) @ empty(4, 16, 768) + empty(512, 768)),
+    "two_batches_768": lambda: last(empty(2, 1024, 16) @ empty(2, 16, 768)),
+    "two_batches_768_biased": lambda: last(empty(2, 1024, 16) @ empty(2, 16, 768) + empty(1024, 768)),
     # a projection into attention's 4 heads of 110: the heads, upcast whole, lend their second upcast to the width the same
     # operands read
     "heads_projection": lambda: last((empty(16, 1, 256, 1, 64) * empty(64, 4, 110).permute(1, 2, 0).reshape(1, 4, 1, 110, 64)).sum(-1)),

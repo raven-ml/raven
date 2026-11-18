@@ -165,6 +165,11 @@ let contraction k =
 let contracted k =
   match contraction k with Some (_, over) -> over | None -> []
 
+(* The accesses of [k]'s contraction's product. A load after the reduce, as a
+   bias, shares no element of the product. *)
+let operands k =
+  match contraction k with Some (m, _) -> accesses m | None -> []
+
 (* The operands of [k]'s contraction decoded from integers
    ({!Stage.decoded}). *)
 let decoded_operands k =
@@ -1061,11 +1066,11 @@ let narrow k =
   | Some (m, _) -> Dtype.itemsize (dtype m) <= 4
   | None -> false
 
-(* Whether some operand of [k] does not read its axis [axis], so that the
-   outputs along it share that operand's loads. *)
+(* Whether some operand of [k]'s contraction does not read its axis [axis], so
+   that the outputs along it share that operand's loads. *)
 let reused k axis =
   let r = List.nth (K.rngs k) axis in
-  List.exists (fun b -> not (indexes r b)) (K.bufs k)
+  List.exists (fun b -> not (indexes r b)) (operands k)
 
 (* The threads that [n] outputs left of an axis upcast by 4 hold once doubled,
    in a power of two (as {!block} counts them). *)
@@ -1082,10 +1087,11 @@ let doubled_threads ~lanes n =
    outputs for each of its 2 batches of 2 heads, 256. *)
 let upcast_by_loop k n = holds Sint.(K.upcast_size k <= Int n)
 
-(* Whether [k]'s upcasts take an axis by 4 before 3: a narrow contraction on a
-   renderer with local indices, upcast by nothing yet, whose two output axes,
-   each unread by some operand, would pass {!block}'s guard once upcast by 4,
-   and whose blocked threads, a 64th of its outputs, number at least
+(* Whether [k]'s upcasts may take an axis by 4 before 3, before the loop runs
+   ({!general} also asks {!block} of a copy so upcast): a narrow contraction
+   on a renderer with local indices, upcast by nothing yet, whose two output
+   axes, each unread by some operand, would pass {!block}'s guard once upcast
+   by 4, and whose blocked threads, a 64th of its outputs, number at least
    [core_threads]. tinygrad takes 3 first, which leaves such a product at 4 by
    3 outputs a thread: on an RTX 5000 Ada float32 products of 163840 rows into
    432 to 1920 columns, which 3 divides, ran at 5.3-5.6 TFLOP/s so, and at
@@ -1121,9 +1127,8 @@ let four_first ~core_threads k =
    of its loop, latest first, each as the range it split, the upcast range it
    made and its amount: what a split leaves of a range keeps its axis id, and
    one that takes the whole range leaves none. *)
-let upcast_more ~core_threads k =
+let upcast_more ~four_first k =
   if budgeted k then upcast_contiguous k;
-  let four_first = four_first ~core_threads k in
   let rec loop upcasted =
     let upcasted_axis = List.map (fun (axis, _, _) -> axis) upcasted in
     if budgeted k || (enough_work k && holds Sint.(K.upcast_size k < Int 32))
@@ -1299,12 +1304,8 @@ let block k upcasted =
   let outputs () = List.map (List.nth (K.rngs k)) (K.upcastable_dims k) in
   (* For an upcast that took its range whole, the output axis besides
      [other] that the same operands read: the other part of an axis the
-     kernel splits in two, as a projection's heads and their width. Only the
-     product's loads count: a load after the reduce, as a bias of each head,
-     shares no element of the product. *)
-  let operands =
-    match contraction k with Some (m, _) -> accesses m | None -> []
-  in
+     kernel splits in two, as a projection's heads and their width. *)
+  let operands = operands k in
   let lent (_, up, _) other =
     match rest_of k up with
     | None -> None
@@ -1554,7 +1555,17 @@ let general ~core_threads k =
         None
       end
       else begin
-        let blocking = block k (upcast_more ~core_threads k) in
+        (* 4 before 3 only where {!block} then takes what the loop leaves: 4
+           batches plus a bias the batches do not read take the batches by 4
+           too, and are not blocked. *)
+        let blocks () =
+          let c = K.copy k in
+          match block c (upcast_more ~four_first:true c) with
+          | Free -> false
+          | Short | Blocked _ -> true
+        in
+        let four_first = four_first ~core_threads k && blocks () in
+        let blocking = block k (upcast_more ~four_first k) in
         (match blocking with Free -> unroll k | Short | Blocked _ -> ());
         upcast_one k;
         match blocking with
