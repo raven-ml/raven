@@ -69,8 +69,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   count the rows routed to its own groups
 - MXFP4's float32 decode on Metal multiplies by a subnormal at scale byte
   0, which Metal may flush (MSL 4.1 §8.1); no test reaches it there
-- At heads of 80 (32 heads, 2560 wide) q and k take no staged core: 85 and
-  38.9 us at 64 tokens against 51 and 11.3 at heads of 64
 - A gather that reads more elements than its table holds still inlines the
   table's computation into every read: 2.2-2.4 ms against 0.7-1.1 stored on
   the host (r3/)
