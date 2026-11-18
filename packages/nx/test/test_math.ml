@@ -6,9 +6,10 @@
 (* The float functions nx composes from the kernels' kinds: each within its
    stated ulps of the C library's at float32 and float64, over values drawn
    from bytes, its special values as stated, and a narrower float computed at
-   float32 and rounded once. roundeven is exact: at every float32, and at
-   float64 over drawn bits and halves, it is the float64 arithmetic's ties to
-   even. *)
+   float32 and rounded once. At float32, log is one of the two floats around
+   the exact value and asinh within 2 ulps, each against the C library's
+   float64 result. roundeven is exact: at every float32, and at float64 over
+   drawn bits and halves, it is the float64 arithmetic's ties to even. *)
 
 open Windtrap
 module A = Nx_array
@@ -198,6 +199,103 @@ let law_hypot (type s) (dt : (float, s) D.t) (x, y) =
   let xs = Nx.to_array x and ys = Nx.to_array y in
   within dt 3. xs (Array.map2 Float.hypot xs ys) (Nx.to_array (Nx.hypot x y))
 
+(* float32 log and asinh *)
+
+(* [e^-3] rounded to float32: its exact log lies 0.13 ulp below [-3.]. *)
+let e_minus_3 = 0x3d4bed86l
+
+(* Bit patterns of positive finite float32: subnormals, values near [1.], the
+   neighbours of [e_minus_3], values from [2^28], where asinh changes form, and
+   any. *)
+let positive_bits =
+  Gen.(
+    frequency
+      [
+        (1, int32_range 1l 0x007f_ffffl);
+        (1, int32_range 0x3f7f_0000l 0x3f81_0000l);
+        (1, int32_range (Int32.sub e_minus_3 4l) (Int32.add e_minus_3 4l));
+        (1, int32_range 0x4d80_0000l 0x7f7f_ffffl);
+        (2, int32_range 1l 0x7f7f_ffffl);
+      ])
+
+let float32_values bits =
+  let open Gen in
+  let+ bits = array ~size:(constant 64) bits in
+  Array.map Int32.float_of_bits bits
+
+let covers xs =
+  let has p = Array.exists p xs in
+  cover "a subnormal" (has (fun x -> Float.abs x < 0x1p-126));
+  cover "near 1" (has (fun x -> Float.abs (Float.abs x -. 1.) < 0x1p-7));
+  cover "e^-3 rounded" (has (fun x -> x = Int32.float_of_bits e_minus_3));
+  cover "from 2^28" (has (fun x -> Float.abs x >= 0x1p28))
+
+(* A float32's place in the order of float32 bit patterns, [-0.] just below
+   [+0.]. *)
+let rank x =
+  let b = Int32.to_int (Int32.bits_of_float x) in
+  if b >= 0 then b else -(b land 0x7fff_ffff) - 1
+
+(* [v] rounded to the nearest float32, and the ranks of the greatest float32
+   at most [v] and the least at least [v]. *)
+let round32 v = Int32.float_of_bits (Int32.bits_of_float v)
+
+let below v =
+  let f = round32 v in
+  if f > v then rank f - 1 else rank f
+
+let above v =
+  let f = round32 v in
+  if f < v then rank f + 1 else rank f
+
+(* The C library's float64 [log] and [asinh] are taken within [2^-48] of
+   the exact value, relatively: far below a float32 ulp, [2^-23] relatively. *)
+let reference f x =
+  let y = f x in
+  (y, Float.abs y *. 0x1p-48)
+
+(* Each result, of [x] and of [x] reversed, a view, lies within [ranks] of
+   [low y] to [high y] for the exact value [y]. *)
+let ranks_within ~name f libm ~low ~high xs =
+  let x = Nx.create Nx.float32 [| Array.length xs |] xs in
+  let got = Nx.to_array (f x) in
+  let reversed = Nx.to_array (f (Nx.flip x)) in
+  let n = Array.length xs in
+  Array.iteri
+    (fun i x ->
+      let y, e = reference libm x in
+      let lo = low (y -. e) and hi = high (y +. e) in
+      let check r =
+        if rank r < lo || rank r > hi then
+          failf "%s %h is %h, the C library's float64 %h" name x r y
+      in
+      check got.(i);
+      check reversed.(n - 1 - i))
+    xs
+
+(* The two floats around the exact value, or that value where it is a float:
+   only [log 1.], whose reference is exactly [0.]. *)
+let law_log xs =
+  covers xs;
+  ranks_within ~name:"log" Nx.log Stdlib.log ~low:below ~high:above xs
+
+(* Within 2 ranks of the exact value rounded to the nearest float32. *)
+let law_asinh xs =
+  covers xs;
+  ranks_within ~name:"asinh" Nx.asinh Float.asinh
+    ~low:(fun v -> rank (round32 v) - 2)
+    ~high:(fun v -> rank (round32 v) + 2)
+    xs
+
+let signed bits =
+  let open Gen in
+  let+ b = bits and+ negative = bool in
+  if negative then Int32.logor b Int32.min_int else b
+
+(* [1.], [e_minus_3], the least subnormal and the greatest float. *)
+let edge_examples =
+  [ Array.map Int32.float_of_bits [| 0x3f80_0000l; e_minus_3; 1l; 0x7f7f_ffffl |] ]
+
 (* roundeven *)
 
 (* Ties to even by the float64 arithmetic: below [2^52], [(|x| + 2^52) - 2^52]
@@ -275,7 +373,19 @@ let test_square () =
 
 let math =
   [
-    accuracy "asinh" (fun x -> Nx.asinh x) Float.asinh;
+    group "log"
+      [
+        prop ~examples:edge_examples
+          "float32 is one of the two floats around the exact value"
+          (float32_values positive_bits) law_log;
+      ];
+    group "asinh"
+      [
+        prop "float64 within 3 ulps" (drawn D.Float64 samples) (fun x ->
+            law_unary D.Float64 (fun x -> Nx.asinh x) Float.asinh x);
+        prop ~examples:edge_examples "float32 within 2 ulps"
+          (float32_values (signed positive_bits)) law_asinh;
+      ];
     accuracy "acosh" (fun x -> Nx.acosh x) Float.acosh;
     accuracy "atanh" (fun x -> Nx.atanh x) Float.atanh;
     group "rsqrt"

@@ -861,6 +861,42 @@ let test_log10 () =
   at f32 "f32" 10;
   at f64 "f64" 22
 
+(* Nx.log and Nx.asinh, compiled on the host, give eager's bits at positive
+   float32 subnormals, values near [1.], [e^-3] rounded, whose exact log lies
+   0.13 ulp below [-3.], and values from [2^28], where asinh changes form,
+   asinh also at each value negated: so they keep the float32 accuracy
+   nx.mli states for each. *)
+let e_minus_3 = 0x3d4bed86l
+
+let float32_edges =
+  let open Gen in
+  let positive =
+    frequency
+      [
+        (1, int32_range 1l 0x007f_ffffl);
+        (1, int32_range 0x3f7f_0000l 0x3f81_0000l);
+        (1, int32_range (Int32.sub e_minus_3 4l) (Int32.add e_minus_3 4l));
+        (1, int32_range 0x4d80_0000l 0x7f7f_ffffl);
+        (2, int32_range 1l 0x7f7f_ffffl);
+      ]
+  in
+  let+ bits = array ~size:(constant 64) positive in
+  Array.map Int32.float_of_bits bits
+
+let law_log_asinh xs =
+  let has p = Array.exists p xs in
+  cover "a subnormal" (has (fun x -> x < 0x1p-126));
+  cover "near 1" (has (fun x -> Float.abs (x -. 1.) < 0x1p-7));
+  cover "e^-3 rounded" (has (fun x -> x = Int32.float_of_bits e_minus_3));
+  cover "from 2^28" (has (fun x -> x >= 0x1p28));
+  let positive = v xs in
+  let signed = v (Array.append xs (Array.map Float.neg xs)) in
+  List.iter
+    (fun (msg, f, x) ->
+      let y = compiled (fun () -> bits (Rune.jit' f x)) in
+      equal ~msg (outcome_t bits_t) (Value (bits (f x))) y)
+    [ ("log", Nx.log, positive); ("asinh", Nx.asinh, signed) ]
+
 (* [Nx.where (Nx.less m c) m c] of [m = Nx.minimum c x] is [c] where [m] ties
    with [c] or is NaN, and [m] elsewhere: [0.] at [x = -0.] and [c = 0.], and
    [1.] at a NaN and [c = 1.]. *)
@@ -6173,6 +6209,9 @@ let () =
              test "special values are exact" test_specials;
              test "roundeven is exact" test_roundeven;
              test "log10 gives eager's bits" test_log10;
+             prop
+               "log and asinh give eager's bits at float32's edges"
+               float32_edges law_log_asinh;
              test "a selection of a minimum against its constant is exact"
                test_nested_minimum;
              Windtrap.cases "a selection of a value and a zero is exact"
