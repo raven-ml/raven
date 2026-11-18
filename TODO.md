@@ -101,6 +101,15 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 
 ## nx, rune
 
+- nx.cpu computes a Reduce of k reductions in k passes: `reduce_into` runs
+  once per reduction (reduce.c:2468-2484), and each pass evaluates the
+  fused program (:2457-2466) over every term again. var and std written as
+  Sum and Max reductions of one Reduce, as R6 writes them, so run 5-7 times
+  slower eagerly than main's (fudge under load: var-f32-1M 23-30 against
+  159-170 us, var-f32-8192x4096-rows 2.0 against 11.1 ms). It blocks R6
+  (branch `reductions-r6`: var, std, standardize and rms_norm on one
+  lane-scale rescue). Found by R6
+  (_plans/tessera-port/design/reductions/r6-logs/bench-abba.txt)
 - nx.array's `to_array` of unboxed elements and `of_array`
   (nx_array_stubs.c:1022, :1101) copy a whole array with the domain lock
   held, cold mapped pages included, since their walks touch OCaml arrays;
@@ -108,54 +117,47 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   release past 256 KiB or over borrowed memory, by nx_cpu's rule. Found by
   the SI-1 review
 - nx's `test_composite › together › a composite over values whole
-  together is its body` (test_composite.ml:303-327) fails about 1 run in 4
+  together is its body` (test_composite.ml:305-327) fails about 1 run in 4
   at `-j 2` on main too: it compares minor words of 100 calls, the least
   of 5 runs, and the words vary with timing under load. Found by the DD+DC
   landing
 - nx's bench rows `placed/*` and `placed/matmul-f32-256x4096x256-k-split4`
-  (bench_nx.ml:337-366; nx.thumper:260-267) record exact allocated words
+  (bench_nx.ml:337-367; nx.thumper:261-268) record exact allocated words
   that vary from run to run, so `check --quick` can fail them on an
   unchanged tree. Found by the DD+DC landing
+- Allocated words in rune and tolk programs move by several tenths of a
+  percent with GC timing: Ops hash-conses in Weak tables, and Shape and
+  Codegen memoise in ephemerons, so an exact-allocation row can fail an
+  unchanged tree. Record such rows at a fixed, larger minor heap
+  (`OCAMLRUNPARAM=s=1M`), or read only differences above about 1% as
+  real. Found by the DQ review
 - rune's attention core takes 8 warps where 8 still leave
-  `local_workgroups` workgroups, else 4 (lower_attention.ml:1516). But
-  renderer.mli:277-279 scopes that field to cores whose operands are not
-  staged, and this core shares its tiles among its warps in workgroup
-  memory. 8 against 4 was never measured. At TESSERA's shapes the core
-  takes 8 (_plans/tessera-port/design/attention2/skeptic.md:66-70), so
-  whether 4 would serve its rows better is unknown. Found by the
-  TARGETFACTS audit (_plans/consolidate/targetfacts, A3)
-- rune's attention props "every dtype" (test_attention.ml:665-669) and, on
-  the GPU, "its gradient mapped by vmap" (test_jit_gpu.ml:3098-3104) take
-  10-15 s on an idle fudge. At a load of 30-60 on its 14 cores they pass
-  the 60 s `WINDTRAP_TIMEOUT` (dune:53) and fail the runtest; a rerun
-  passes (10.7 s at load 14). Each case compiles programs of its own
-  shapes. Nearly all of it is cold compiles, one program a case: host
-  "every dtype" 10.2 s cold (9.7 s jit for 37 programs, clang about half),
-  1.9 s warm; GPU "mapped by vmap" 17.3 s cold (13.4 s jit, 36 programs),
-  3.1 s warm. A case at tq/tk 7-9 compiles in 0.1 s against 0.25-0.5 s at
-  300, so smaller shapes, where a case's comment allows, cut it. Found by
-  the TARGETFACTS audit and CODEPATH design A
+  `local_workgroups` workgroups, else 4 (lower_attention.ml:1516), though
+  renderer.mli scopes that field to cores whose operands are not staged,
+  and this core shares its tiles among its warps in workgroup memory. On
+  fudge's RTX 5000 Ada, 4 warps run masked T256 rows 21-48% faster and
+  unmasked T2048 rows 6-25% slower than 8, so a rule on workgroups alone
+  misses the key tiles a mask skips. TESSERA's packed rows are masked.
+  Found by the TARGETFACTS audit (_plans/consolidate/targetfacts, A3);
+  measured by attention2 M3, in its adjudication's amendment
+  (_plans/tessera-port/design/attention2/adjudication.md)
+- rune's attention props "every dtype" (test_attention.ml:667) and, on the
+  GPU, "its gradient mapped by vmap" (test_jit_gpu.ml:3369) take 10-15 s
+  on an idle fudge. At a load of 30-60 on its 14 cores they pass the 60 s
+  `WINDTRAP_TIMEOUT` (dune:53) and fail the runtest; a rerun passes (10.7
+  s at load 14). Nearly all of it is cold compiles, one program a case:
+  host "every dtype" 10.2 s cold (9.7 s jit for 37 programs, clang about
+  half), 1.9 s warm; GPU "mapped by vmap" 17.3 s cold (13.4 s jit, 36
+  programs), 3.1 s warm. A case at tq/tk 7-9 compiles in 0.1 s against
+  0.25-0.5 s at 300, so smaller shapes, where a case's comment allows, cut
+  it. Found by the TARGETFACTS audit and CODEPATH design A
 - rune states a compiled complex contraction's part within
-  `γ(β(K) + 2) Σ(|ar br| + |ai bi|)` (rune.mli:1696-1698,
-  lower_reduce.mli:141-145), while `Nx.contract` and the kernel contract
-  give `√2 γ(β(2K))` in modulus (nx.mli:2685-2688, nx_kernel.mli:300-303).
-  At K = 1 alone, rune's bound is larger: `γ(5)` a part against `√2 γ(4)`
-  in modulus. From K = 2 on, `β(K) + 2 ≤ β(2K)`. It matters if compiled
+  `γ(β + 2) Σ(|ar br| + |ai bi|)`, β = β(K) (rune.mli:1706-1707,
+  lower_reduce.mli:143-145), while `Nx.contract` and the kernel contract
+  give `√2 γ(β(2K))` in modulus (nx.mli:2685-2688, nx_kernel.mli:303). At
+  K = 1 alone, rune's bound is larger: `γ(5)` a part against `√2 γ(4)` in
+  modulus. From K = 2 on, `β(K) + 2 ≤ β(2K)`. It matters if compiled
   programs must hold `Nx.contract`'s bound. Found by NXBOUND
-- The fused attention backward refuses values of no column: `dplan`
-  requires `a.dv > 0` (lower_attention.ml:2015), so an `Nx.attention` call
-  over values of no column, legal by nx.mli and handled by the forward
-  (:2204-2209, :2261-2263), takes the default derivative at every head dim
-  and stores the weights. Lifting the condition takes more than it:
-  `linear`'s operands have no guard for an empty `v` or `ō`, nor for the
-  δ kernel's `o` (:2317, :2324), which all need the forward's `operand`
-  (:2206-2209), one function for both lowerings rather than a second copy;
-  `v̄`'s buffer of at least one element is reshaped to `[…; 0]` (:2318,
-  :2359), where the forward fills its `o` at `dv = 0` (:2262); and
-  `Values` launches whenever `wide` (:2340-2350). tessera's dropout
-  composition needs it for its lse-only call (attention2 R7a). Found by
-  the attention round-2 audit and skeptic
-  (_plans/tessera-port/design/attention2/skeptic.md §1)
 - `Nx.rearrange` plans for 190-252 words beyond its movements (a `b h`
   split costs 362 against 110 moved), for patterns that move nothing too.
   Found by the nx-hostcost audit
@@ -163,54 +165,57 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   44 of them the broadcast, and vega pays this for its 0-d rate and weight
   decay. Found by the nx-hostcost skeptic
 - An eager creation at a set without kernels holds its window whole on the
-  host: `Exec.created` (exec.ml:589-600) fills each window on the host,
-  then copies it, so a one-device value needs host memory of its full size
-  where the device could hold it. On fudge, `capped`'s 8 GB is below an RTX
-  5000 Ada's 32 GB. Slabs extend rig's own practice one layer up: rig moves
-  a paged copy through staging of 32 MiB allocations whatever its size
-  (rig.mli:1476-1488), and a copy through staging returns once the host's
-  transfers are done, so the host may then reuse its source
-  (rig.mli:1588-1590); a direct copy returns once queued (:1584-1587). The
-  slabs' copies are from a plain host buffer, so they go through staging.
-  So `created` would allocate the device array, then compute each slab at
-  its `Prim.offset` into one host buffer and copy it into its box
-  (rig.mli:1575-1582), with slab edges on whole bytes for dtypes under a
-  byte (nx_array.mli:212-221). The bits are the
-  same by the window law, and no second staging is needed. Where the host
-  addresses the device's memory (`share`, exec.ml:576-580) `created` could
-  instead compute straight into the device array. Owed by the DD
-  adjudication (W1); found by its audit and skeptic
+  host: `Exec.created` (exec.ml:584-600) computes each result on the host,
+  then places a copy, so a one-device value needs host memory of its full
+  size where the device could hold it. On fudge, `capped`'s 8 GB is below
+  an RTX 5000 Ada's 32 GB. Decided (nx-vocab/adjudication.md W1): slabs,
+  rig's own practice one layer up, since rig moves a plain host buffer
+  through staging allocations of 32 MiB whatever its size (rig.mli:
+  1520-1566). `created` allocates the device array, computes each slab at
+  its `Prim.offset` into one host buffer and copies it into its box
+  (rig.mli:1599-1609), with slab edges on whole bytes for dtypes under a
+  byte (nx_array.mli:212-221). The bits are the same by the window law.
+  Where the host addresses the device's memory (`share`, exec.ml:437)
+  `created` could instead compute straight into the device array. Owed by
+  the DD adjudication (W1); found by its audit and skeptic
   (_plans/tessera-port/design/nx-vocab/skeptic.md §3)
-- `Nx.log10` is a composite over `log2`, so its float64 bound follows only
-  where `log2` is within 1 ulp: under `Rune.jit` on the host, over tolk's
-  `xlog2` (transcendental.mli:16-22). Eagerly, over nx's `log2` stated at
-  2 ulps, it is measured, as are the float32 bound, at every float32, and
-  the exact powers of ten. On a device rune bounds `log2` at 4 ulps
-  (rune.mli:1610), which leaves log10 within about 6, and the powers are
-  unmeasured there. A `Log10` kind lowered over rune's `log2_parts`
-  (lower_real.ml:504), which gives log2 as two parts, would prove both on
-  every device, once a consumer needs log10 bounded there. Found by the DD
-  audit (S2)
+- `Nx.log10` states 2 ulps at float64 (nx.mli:1750-1753) and derives it
+  nowhere: it composes over `log2`, itself stated at 2 ulps there
+  (:1746-1748), and since rune compiles nx's own sequence (b1c79a2bcc;
+  rune.mli:1619-1651) a compiled log10 has eager's bits, so the 1-ulp
+  route over tolk's `xlog2` under host jit is gone. The float32 bound and
+  the exact powers of ten are measured at every float32. A `log2` given as
+  two parts would derive the float64 bound, once a consumer needs log10
+  bounded there. Found by the DD audit (S2)
 - `Nx.zeros_at` and `Nx.full_at` of a value whose bytes repeat one byte
   (zeros, all-ones integers) are maps of no loads, so on a set without
   kernels `Exec.created` fills them on the host and copies the window
   (exec.ml:584-600), though rig can set the bytes on the device
-  (`Rig.Buffer.submit_fill`, rig.mli:1648-1660) with no host memory and
-  no copy. Eager optimiser moments made at a GPU set outside a compiler
-  pay a host fill of their size and a copy of it to the device.
-  Unmeasured. Found by the DD design round (N3)
-- rune.mli:1400-1402 says that a value a compiled function captures on
+  (`Rig.Buffer.submit_fill`, rig.mli:1700) with no host memory and no
+  copy. Eager optimiser moments made at a GPU set outside a compiler pay a
+  host fill of their size and a copy of it to the device. Unmeasured.
+  Found by the DD design round (N3)
+- rune.mli:1403-1404 says that a value a compiled function captures on
   another device and places where the program computes "is copied there
   once per program". In a split program (values whole on each of several
-  devices) the capture is instead bound as it is (compile.ml:339, `Some r
+  devices) the capture is instead bound as it is (compile.ml:362, `Some r
   when st.split || …`), and its placement copies it at every call.
   Measured on two software devices: 6 float32 captures cost 48 bytes a
   call, 4,848 over 101 calls
   (_plans/tessera-port/design/jit-values/skeptic-probe/split.log). vega's
-  schedules capture their numbers, so a data-parallel step pays this for
-  each. Either upload once per device in split programs through
-  `st.uploads`, or scope the sentence to one-device programs. Found by DC's
-  skeptic
+  schedules and rates capture their numbers as 0-d arrays (b8d7630a36), so
+  a data-parallel step pays this for each. Either upload once per device
+  in split programs through `st.uploads`, or scope the sentence to
+  one-device programs. Found by DC's skeptic
+- `Nx_io.Pytorch` reads torch.save files but writes none (pytorch.mli has
+  `load` and `tensors` alone), so tessera's cram tests cannot make the .pt
+  model file that `encode`, `targets` and `distil --init` read
+  (tessera-bin/adjudication.md M9). Found by DM's skeptic
+- `Nx.check`'s doc says a failure raises "on another set at a wait on that
+  set" (nx.mli:4865-4866) and leaves out that a check no wait follows
+  never raises, which the Waiting section states. Callers that link
+  `Nx.check`, as jord's transforms and area rules do, reach its doc first.
+  Add the clause there. Found by jord batch 11's review
 
 ## vega
 
@@ -249,14 +254,25 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   whether a busy pool should make a cold copy wait rather than go serial.
   Gate: the SI-1 audit's long read beside compute (§4.4) on a quiet fudge.
   Found by the SI-1 review
-- rig.disk's read depth, 128 (rig_disk_stubs.c:517-532), was measured
+- rig.disk's read depth, 128 (rig_disk_stubs.c:517-536), was measured
   pinned to two CPUs, which ended the pixels' curve still rising:
   re-measure it unpinned on a quiet fudge (rows, and the port's ragged
-  shape at 32, 64, 128 and 256). Then bless `bench/disk`'s read rows,
-  which allocate 4 more words a copy since `Rig_edge.Io.read` takes
-  arrays of runs, and `read/cold-rows-16K` (bench_disk.ml:259), which has
-  no baseline, and run the long-read gate and the staged file-to-device
-  copy with parking workers. Found by SI-1
+  shape at 32, 64, 128 and 256), then run the long-read gate (the SI-1
+  audit's §4.4) and the staged file-to-device copy with parking workers.
+  `bench/disk`'s read rows, at 14 words a copy, and `read/cold-rows-16K`
+  are recorded (d652956bb8, on cores 0-5). Found by SI-1
+- rig.remote's proxy answers no `Rig.capacity` (rig_remote_proxy.ml:118,
+  `None` in its mli's table): the wire carries no report of the agent's
+  device's memory, so a program on a remote GPU cannot check a footprint
+  against it. Forward it as one request and answer, which bumps the
+  protocol (DF design A). Found by DF
+- rig.pool's cgroup cases and rig.disk's descriptor, model and domain
+  cases fail under windtrap `-j 2` and pass at the default `-j 1` (fudge,
+  2026-11-17): their workers share files in the test directory
+  (test_rig_disk.ml:152-165 names every file `files/f<n>` from a counter
+  each process starts at 0, and `clear` empties the directory). Give each
+  worker its own temporary root, or mark the suites sequential. Found by
+  the NV fork review
 
 ## sowilo
 
