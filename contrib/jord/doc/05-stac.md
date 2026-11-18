@@ -188,9 +188,20 @@ of most of these collections.
   them `data`. `qa_pixel`, and TM's and ETM+'s `cloud_qa`, have `cloud`,
   `cloud-shadow`, `snow-ice` and `water-mask`, `qa_radsat` has
   `saturation`, and OLI's `qa_aerosol` has `data-mask` and `water-mask`.
+- Its Landsat 7 item's `cloud_qa` states no nodata, where SR_CLOUD_QA's
+  fill is 0 (`Landsat.band`, and `Sr_cloud_qa` in the Quality bits section
+  of [`landsat.mli`](../lib/landsat.mli)), so `Band.nodata` of the
+  catalogue's band masks no DN.
 - In item `HLS.S30.T21JVF.2026306T134221.v2.0`, the identifier's stamp is
   13:42:21 and the item's `datetime` 13:51:24.358 (the Identity section of
   [`hls.mli`](../lib/hls.mli) says what the stamp is).
 
 The Copernicus Data Space Ecosystem's Sentinel-2 items state each band's
 incidence angle on its asset, which `Jord_stac` reads as the asset's view.
+They also state each reflectance band's scale, offset and nodata, 1e-4,
+-0.1 and 0 for `B04_10m`, so their bands decode with no product metadata.
+Their images are JPEG 2000, `image/jp2`, which nx.io does not read (the
+preamble of [`jord_safe.mli`](../lib/safe/jord_safe.mli)), so a program
+reads the DNs with a reader of its own. Their widths differ from a
+product's: `B04_10m` states 0.342 µm, where Sentinel-2A's product metadata
+gives B04 646 to 684 nm, 0.038 µm.
