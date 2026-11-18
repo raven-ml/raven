@@ -38,8 +38,10 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   either): its 1571 by 64 sum runs 4 workgroups of 256 threads
   (`r_4_16_16_99`), tinygrad's 64 of 32 (`r_64_32_50`). Raw:
   ~/wt/tmp/fix-argmax
-- `apply_opt`'s refusal of a tensor core past `local_threads_max`
-  (`postrange.ml` ~987, D488) has no test
+- gpt-oss's decode submits each of its 24 blocks apart, so rig replays one
+  chain a block and the GPU idles about 2 us between chains: +0.05 ms a step
+  against llama.cpp's 3 graphs a step. kaun's per-block jit decides the
+  submits (decodegap2/cause.md)
 - cstyle names each parameter after its buffer's size (`data0_4096`), so
   kernels over buffers of two sizes compile apart under D485: name the
   parameters without sizes in the renderer
