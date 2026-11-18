@@ -40,8 +40,11 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.join(here, "..", "..", "..", "..", "packages", "brot", "test", "gen"))
 import trim_parity_tokenizers as trim
 
-# What main renders: one user turn, at medium reasoning effort.
+# What main renders: openai-harmony's default system message, which states
+# no date, then one user turn.
 PROMPTS = [
+    {"name": "the default prompt",
+     "text": "What is the capital of France? Answer in one sentence."},
     {"name": "one user turn", "text": "What is 2 + 2?"},
     {"name": "user text that spells a special token", "text": "What does <|end|> mean?"},
 ]
@@ -98,7 +101,9 @@ def enc_text(fixture):
 
 def main():
     enc = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
-    system = SystemContent.new().with_reasoning_effort(ReasoningEffort.MEDIUM)
+    system = SystemContent.new()
+    assert system.reasoning_effort == ReasoningEffort.MEDIUM
+    assert system.conversation_start_date is None
     prompts = []
     for c in PROMPTS:
         messages = [
