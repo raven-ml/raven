@@ -13,7 +13,7 @@
     {[
     let make ?(w_init = Init.glorot_uniform) ~key ~inputs ~outputs () =
       w_init key ~fan_in:inputs ~fan_out:outputs Nx.float32
-        [| inputs; outputs |]
+        [| outputs; inputs |]
     ]}
 
     The key makes an initialization reproducible and lets it compile under
@@ -40,7 +40,7 @@ type ('b, 'd) t =
     [dtype] and [shape], at [key]'s placement, drawn from [key]. [fan_in] and
     [fan_out] are the number of input and output connections per unit of the
     parameter being initialized; for a dense weight of shape
-    [[| inputs; outputs |]] they are [inputs] and [outputs]. Constant
+    [[| outputs; inputs |]] they are [inputs] and [outputs]. Constant
     initializers ignore the fans; variance-scaling initializers require both to
     be positive and scale by the fans alone, independently of [shape].
 

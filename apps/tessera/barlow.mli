@@ -82,7 +82,7 @@ val load_projector : string -> (Nx.host Nx.float32_t, Nx.host) projector
     layout of a sequence [net] of linear, batch normalisation and ReLU modules:
     the modules [i] with parameters, [net.i.weight] and [net.i.bias], in the
     numeric order of [i] ([net.10] after [net.9]), are linear layers, a weight
-    [[out; in]] read transposed, each but the last followed by a batch
+    [[out; in]] read as stored, each but the last followed by a batch
     normalisation, its weight the scale and its bias the shift, all at float32.
 
     Raises [Failure] naming [file] for another sequence of modules or a missing

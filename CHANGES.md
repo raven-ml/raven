@@ -4312,6 +4312,29 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- **Breaking:** `Linear`'s weight is `[outputs; inputs]`, the layout of
+  PyTorch's and MLX's `Linear` and of the checkpoint files, where it was
+  `[inputs; outputs]`: `Linear.apply p x` is `x @ p.wᵀ + p.b`, one
+  `Nx.contract` that reads `p.w` where it lies, and `Linear.make` draws the
+  weight at `[outputs; inputs]`, so a layer made from a given key holds
+  other values. The examples' Llama and gpt-oss loaders take each
+  projection as the file stores it, with no transpose; GPT-2's file stores
+  `Conv1D` weights `[inputs; outputs]`, so its loader now transposes them,
+  a view. gpt-oss keeps its head copy in `[inputs; outputs]` memory, seen
+  through a transpose, until that layout's matrix-vector kernel is timed
+  against the file's.
+  Migration: a layer built by hand from an `[inputs; outputs]` matrix `w`
+  is `{ Linear.w = Nx.matrix_transpose w; b }`, and one built from a file's
+  `[outputs; inputs]` weight drops its `Nx.matrix_transpose`. A layer's
+  outputs are `Nx.dim 0 p.w` and its inputs `Nx.dim 1 p.w`. A placement or
+  `Nx.split` along a layer's outputs moves from axis 1 to axis 0 (a column
+  projection's cut), and one along its inputs from axis 0 to axis 1 (a row
+  projection's). A checkpoint saved before holds each weight `[inputs;
+  outputs]`: `Nx_io.Archive.to_value` refuses it, naming the shape, but a
+  square weight reads without error, transposed. Transpose each `w` of an
+  old checkpoint once and save it again, and so each optimizer moment of a
+  `w` saved beside it (`mu.….w`, `nu.….w` of `Vega.adam_ptree`), whose
+  square ones would otherwise pair silently with the wrong weights.
 - `Cache_index.resolve` computes an index's addressing, the slots its
   tokens store at and its `pages`, once: a model whose layers run as
   separate compiled programs passes the resolved index to each, and no

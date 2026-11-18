@@ -169,9 +169,10 @@ val of_hf :
   ((float, 'b, 'd) Nx.t, 'd) params
 (** [of_hf ~placement cfg dt weights] is the model of the HuggingFace GPT-2
     [weights], at [dt]. Each entry is read by its name in the file with the
-    shape [cfg] gives it. The file's weights are already [inputs × outputs];
-    each block's fused [c_attn] weight and bias are cut into the [q], [k] and
-    [v] projections with [Nx.split], which copies nothing. At the file's own
+    shape [cfg] gives it. The file stores its weights [inputs × outputs],
+    and each is transposed to [outputs × inputs], a view; each block's fused
+    [c_attn] weight and bias are cut into the [q], [k] and [v] projections,
+    which copies nothing. At the file's own
     dtype the leaves are the file's entries; at another one each leaf is cast.
     Entries the model does not use (attention mask buffers) are never read.
 

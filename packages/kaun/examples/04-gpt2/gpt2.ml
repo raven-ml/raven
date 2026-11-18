@@ -177,9 +177,10 @@ let logits cfg p h =
 (* Importing HuggingFace weights.
 
    The file names its tensors h.{i}.attn.c_attn.weight, h.{i}.mlp.c_fc.bias, ...
-   and fuses the q, k and v projections into c_attn, [n_embd; 3 * n_embd]. Its
-   weights are already [inputs; outputs], so only the fused projection is cut,
-   into three slices of [n_embd] outputs, which are views. *)
+   and fuses the q, k and v projections into c_attn, [n_embd; 3 * n_embd]. It
+   stores its weights [inputs; outputs], the transpose of [Linear]'s layout,
+   so each is transposed and the fused projection cut into three slices of
+   [n_embd] outputs, all views. *)
 
 let of_hf ~placement cfg dt weights =
   let place role ~axis x = Nx.place (placement role ~axis) x in
@@ -194,7 +195,9 @@ let of_hf ~placement cfg dt weights =
   in
   let stored ~inputs ~outputs name =
     {
-      Linear.w = float ~shape:[| inputs; outputs |] (name ^ ".weight");
+      Linear.w =
+        Nx.matrix_transpose
+          (float ~shape:[| inputs; outputs |] (name ^ ".weight"));
       b = Some (float ~shape:[| outputs |] (name ^ ".bias"));
     }
   in
@@ -202,18 +205,18 @@ let of_hf ~placement cfg dt weights =
      projection along its inputs, and its bias is added whole. *)
   let column { Linear.w; b } =
     {
-      Linear.w = place Column ~axis:1 w;
+      Linear.w = place Column ~axis:0 w;
       b = Option.map (place Column ~axis:0) b;
     }
   in
   let row { Linear.w; b } =
-    { Linear.w = place Row ~axis:0 w; b = Option.map whole b }
+    { Linear.w = place Row ~axis:1 w; b = Option.map whole b }
   in
   let block i =
     let at leaf = Printf.sprintf "h.%d.%s" i leaf in
     let fused = stored ~inputs:d ~outputs:(3 * d) (at "attn.c_attn") in
     let part j =
-      let w = Nx.slice [ A; R (j * d, (j + 1) * d) ] fused.w in
+      let w = Nx.slice [ R (j * d, (j + 1) * d) ] fused.w in
       let b = Option.map (Nx.slice [ R (j * d, (j + 1) * d) ]) fused.b in
       column { Linear.w; b }
     in

@@ -47,7 +47,7 @@ val load_heads :
   string -> int list -> (Nx.host Nx.float32_t, Nx.host) head list
 (** [load_heads file prefixes] is a head of one linear layer for each of
     [prefixes] from the npz [file], in PyTorch's layout: prefix [k]'s weight
-    [k.weight], [[d; k]], read transposed, and its bias [k.bias], [[d]], at
+    [k.weight], [[d; k]], read as stored, and its bias [k.bias], [[d]], at
     float32, every head of one [d].
 
     Raises [Failure] naming [file] and the entry if an entry is missing or of

@@ -368,7 +368,7 @@ let grouping =
 let torch_layout (p : _ Barlow.projector) =
   let linear i (l : _ Kaun.Linear.t) =
     [
-      (Printf.sprintf "net.%d.weight" i, Nx.P (Nx.matrix_transpose l.w));
+      (Printf.sprintf "net.%d.weight" i, Nx.P l.w);
       (Printf.sprintf "net.%d.bias" i, Nx.P (Option.get l.b));
     ]
   in

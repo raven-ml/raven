@@ -154,7 +154,7 @@ let check_geometry ~fn ~head_dim p =
   if head_dim <= 0 then
     Printf.ksprintf invalid_arg
       "Attention.%s: head_dim must be positive, got %d" fn head_dim;
-  let width (l : _ Linear.t) = (Nx.shape l.Linear.w).(1) in
+  let width (l : _ Linear.t) = (Nx.shape l.Linear.w).(0) in
   let qw = width p.q and kw = width p.k and vw = width p.v in
   if vw <> kw then
     Printf.ksprintf invalid_arg
@@ -177,7 +177,7 @@ let split ~head_dim l x =
   if head_dim <= 0 then
     Printf.ksprintf invalid_arg
       "Attention.split: head_dim must be positive, got %d" head_dim;
-  let width = (Nx.shape l.Linear.w).(1) in
+  let width = (Nx.shape l.Linear.w).(0) in
   if width mod head_dim <> 0 then
     Printf.ksprintf invalid_arg
       "Attention.split: head_dim %d does not divide the projection width %d"
@@ -263,7 +263,7 @@ let apply ~head_dim ?mask ?lengths ?rope ?sum p x =
   if rank < 2 then
     invalid_arg
       "Attention.apply: input must have at least sequence and feature axes";
-  let embed = (Nx.shape p.q.Linear.w).(0) in
+  let embed = (Nx.shape p.q.Linear.w).(1) in
   if shape.(rank - 1) <> embed then
     Printf.ksprintf invalid_arg
       "Attention.apply: last axis has size %d but the layer attends over %d \
@@ -350,13 +350,13 @@ end
 
 let cached ~head_dim ?rope ?sum p cache index x =
   let batch = Cache_index.batch index and seq = Cache_index.seq index in
-  let embed = (Nx.shape p.q.Linear.w).(0) in
+  let embed = (Nx.shape p.q.Linear.w).(1) in
   if Nx.shape x <> [| batch; seq; embed |] then
     Printf.ksprintf invalid_arg
       "Attention.cached: input must have shape [%d; %d; %d]" batch seq embed;
   check_dtype ~fn:"cached" (Nx.dtype x);
   check_geometry ~fn:"cached" ~head_dim p;
-  let kv_heads = (Nx.shape p.k.Linear.w).(1) / head_dim in
+  let kv_heads = (Nx.shape p.k.Linear.w).(0) / head_dim in
   (match (Nx.shape cache.Cache.keys, Nx.shape cache.Cache.values) with
   | [| n; h; d |], [| n'; h'; d' |]
     when n = n' && h = kv_heads && h' = kv_heads && d = head_dim

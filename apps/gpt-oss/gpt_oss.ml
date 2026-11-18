@@ -270,8 +270,8 @@ let config_of_json json =
 (* Importing HuggingFace weights.
 
    The file names its tensors model.layers.{i}.self_attn.q_proj.weight, ... and
-   stores every projection as [outputs; inputs], the transpose of [Linear]'s
-   layout. Its q and k weights are laid out for the rotation that pairs feature
+   stores every projection as [outputs; inputs], [Linear]'s layout. Its q and
+   k weights are laid out for the rotation that pairs feature
    i with i + head_dim / 2, which is [Rope]'s. Expert weights are either float,
    [experts; inputs; outputs] as [Moe] takes them, or packed as uint8 codes and
    exponents under the [_blocks] and [_scales] suffixes, which stay uint8:
@@ -291,8 +291,7 @@ let of_hf ?(pack = Unpacked) ~placement cfg dt weights =
     {
       Linear.w =
         place role ~axis
-          (Nx.matrix_transpose
-             (float ~shape:[| outputs; inputs |] (name ^ ".weight")));
+          (float ~shape:[| outputs; inputs |] (name ^ ".weight"));
       b = Some (whole (float ~shape:[| outputs |] (name ^ ".bias")));
     }
   in
@@ -304,11 +303,11 @@ let of_hf ?(pack = Unpacked) ~placement cfg dt weights =
       Nx_quant.quantize_q8_0
   in
   let q_dim = cfg.n_heads * cfg.head_dim in
-  (* The output projection, cut along its inputs: axis 0 of [Linear]'s
-     [inputs; outputs], axis 1 of a packed weight's [outputs; inputs]. *)
+  (* The output projection, cut along its inputs: axis 1 of [outputs;
+     inputs], float or packed. *)
   let out name =
     match pack with
-    | Unpacked -> Float (linear Row ~axis:0 ~inputs:q_dim ~outputs:cfg.dim name)
+    | Unpacked -> Float (linear Row ~axis:1 ~inputs:q_dim ~outputs:cfg.dim name)
     | Q8_0 ->
         let w = float ~shape:[| cfg.dim; q_dim |] (name ^ ".weight") in
         let b = whole (float ~shape:[| cfg.dim |] (name ^ ".bias")) in
@@ -348,7 +347,7 @@ let of_hf ?(pack = Unpacked) ~placement cfg dt weights =
     in
     let w = joined ".weight" [| cfg.dim |] and b = joined ".bias" [||] in
     match pack with
-    | Unpacked -> Float { Linear.w = Nx.matrix_transpose w; b = Some b }
+    | Unpacked -> Float { Linear.w = w; b = Some b }
     | Q8_0 -> Quant { w = quantize w; b = Some b }
   in
   let experts ~inputs ~outputs name =
@@ -430,10 +429,12 @@ let of_hf ?(pack = Unpacked) ~placement cfg dt weights =
          | Q8_0 ->
              Some (Quant { w = quantize (place Column ~axis:0 w); b = None })
          | Unpacked ->
-             (* A copy in [inputs; outputs], which tolk's bfloat16
-                matrix-vector kernel reads faster than the transposed view. *)
+             (* A copy in [inputs; outputs] memory, seen through a
+                transpose, which tolk's bfloat16 matrix-vector kernel reads
+                faster than the file's [outputs; inputs]. *)
              let w = place Column ~axis:1 (Nx.matrix_transpose w) in
-             Some (Float { Linear.w = Rune.jit' Nx.copy w; b = None }));
+             let w = Nx.matrix_transpose (Rune.jit' Nx.copy w) in
+             Some (Float { Linear.w = w; b = None }));
   }
 
 type dtype = Dtype : (float, 'b) Nx.dtype -> dtype

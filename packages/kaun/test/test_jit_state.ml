@@ -79,8 +79,8 @@ let model_init at =
   in
   let vec i n = Nx.place at (Nx.create Nx.float32 [| n |] (fill i n)) in
   {
-    Mlp.l1 = { Linear.w = mat 3 inputs hidden; b = Some (vec 4 hidden) };
-    l2 = { Linear.w = mat 5 hidden outputs; b = Some (vec 6 outputs) };
+    Mlp.l1 = { Linear.w = mat 3 hidden inputs; b = Some (vec 4 hidden) };
+    l2 = { Linear.w = mat 5 outputs hidden; b = Some (vec 6 outputs) };
   }
 
 let data_init at =

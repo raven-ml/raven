@@ -20,7 +20,7 @@ let make ?(w_init = Init.glorot_uniform) ?(bias_init = Init.zeros)
       inputs outputs;
   let keys = Nx.Rng.split key in
   let w =
-    w_init keys.(0) ~fan_in:inputs ~fan_out:outputs dtype [| inputs; outputs |]
+    w_init keys.(0) ~fan_in:inputs ~fan_out:outputs dtype [| outputs; inputs |]
   in
   let b =
     if bias then
@@ -33,18 +33,17 @@ let make ?(w_init = Init.glorot_uniform) ?(bias_init = Init.zeros)
 let init ~key ~inputs ~outputs = make ~key ~inputs ~outputs Nx.float32
 
 (* The product of an [x] of [lead + 1] axes by [w], [x]'s leading axes
-   named [x0], [x1], …: "x0 i, i o -> x0 o | i" for one. *)
+   named [x0], [x1], …: "x0 i, o i -> x0 o | i" for one. *)
 let product_of lead =
   let names = List.init lead (Printf.sprintf "x%d") in
   let side last = String.concat " " (names @ [ last ]) in
-  Nx.Pattern.v (Printf.sprintf "%s, i o -> %s | i" (side "i") (side "o"))
+  Nx.Pattern.v (Printf.sprintf "%s, o i -> %s | i" (side "i") (side "o"))
 
 (* The products of the ranks layers take most, parsed once. *)
 let products = Array.init 4 product_of
 let product lead = if lead < 4 then products.(lead) else product_of lead
 
 let apply ?sum p x =
-  match p.b with
-  | None -> Nx.matmul ?sum x p.w
-  | Some b ->
-      Nx.contract (Nx.dtype p.w) ?sum ~init:b (product (Nx.ndim x - 1)) x p.w
+  if Nx.ndim x = 0 then
+    invalid_arg "Linear.apply: x is 0-d, without an axis of inputs";
+  Nx.contract (Nx.dtype p.w) ?sum ?init:p.b (product (Nx.ndim x - 1)) x p.w

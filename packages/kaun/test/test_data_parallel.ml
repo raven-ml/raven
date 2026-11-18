@@ -75,7 +75,7 @@ let model_init at =
       };
     attn =
       { Attention.q = linear 3; k = linear 5; v = linear 7; out = linear 9 };
-    head = { Linear.w = mat 11 dim vocab; b = Some (vec 12 vocab) };
+    head = { Linear.w = mat 11 vocab dim; b = Some (vec 12 vocab) };
   }
 
 let x_init at =

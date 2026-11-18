@@ -76,7 +76,7 @@ let load_heads file prefixes =
     (fun k ->
       let w = read (Printf.sprintf "%d.weight" k) [| d; k |] in
       let b = read (Printf.sprintf "%d.bias" k) [| d |] in
-      (k, [ { Kaun.Linear.w = Nx.matrix_transpose w; b = Some b } ]))
+      (k, [ { Kaun.Linear.w = w; b = Some b } ]))
     prefixes
 
 (* Loss *)

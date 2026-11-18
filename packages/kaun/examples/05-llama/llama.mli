@@ -154,8 +154,8 @@ val of_hf :
   ((float, 'b, 'd) Nx.t, 'd) params
 (** [of_hf ~placement cfg dt weights] is the model of the HuggingFace Llama
     [weights], at [dt]. Each entry is read by its name in the file with the
-    shape [cfg] gives it, and every projection is transposed to
-    [inputs × outputs], a view. At the file's own dtype nothing is copied; at
+    shape [cfg] gives it, every projection [outputs × inputs] as the file
+    stores it. At the file's own dtype nothing is copied; at
     another one each leaf is cast.
 
     Each leaf is placed with [Nx.place (placement role ~axis)] as it is built

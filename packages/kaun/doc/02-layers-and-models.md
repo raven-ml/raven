@@ -6,9 +6,9 @@ Kaun has no layer abstraction. A layer is a plain record of tensors with an `app
 
 Every parameterized layer module follows the same shape, with `Linear` as the reference:
 
-- a parameter record with a payload hole — `('a, 'd) Linear.t` is `{ w; b }`, at tensor payloads `w : [| inputs; outputs |]` and an optional bias, on the device set `'d`;
+- a parameter record with a payload hole — `('a, 'd) Linear.t` is `{ w; b }`, at tensor payloads `w : [| outputs; inputs |]`, the layout checkpoint files store, and an optional bias, on the device set `'d`;
 - constructors — `Linear.init ~key ~inputs ~outputs` for the float32 defaults, `Linear.make` for initializer, bias, and dtype control, each drawing from `key` and placing the parameters where it lies;
-- an `apply` function — `Linear.apply p x` is `x @ p.w + p.b`, treating leading axes as batch axes;
+- an `apply` function — `Linear.apply p x` is `x @ p.wᵀ + p.b`, treating leading axes as batch axes;
 - a structure — one `walk` over the record's fields with an `Nx.Ptree.Walk` cursor, satisfying `Nx.Ptree.S`.
 
 ```ocaml

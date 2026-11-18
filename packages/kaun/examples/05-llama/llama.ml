@@ -163,8 +163,8 @@ let logits cfg p h =
 (* Importing HuggingFace weights.
 
    The file names its tensors model.layers.{i}.self_attn.q_proj.weight, ... and
-   stores every projection as [outputs; inputs], the transpose of [Linear]'s
-   layout. Its q and k weights are laid out for the rotation that pairs feature
+   stores every projection as [outputs; inputs], [Linear]'s layout. Its q and
+   k weights are laid out for the rotation that pairs feature
    i with i + head_dim / 2, which is [Rope]'s. A tied model has no lm_head
    entry. *)
 
@@ -179,10 +179,10 @@ let of_hf ~placement cfg dt weights =
   (* A column projection is cut along its outputs, a row one along its
      inputs. *)
   let linear role ~axis ~inputs ~outputs name =
-    let w = Nx.matrix_transpose (weight ~shape:[| outputs; inputs |] name) in
+    let w = weight ~shape:[| outputs; inputs |] name in
     { Linear.w = place role ~axis w; b = None }
   in
-  let column = linear Column ~axis:1 and row = linear Row ~axis:0 in
+  let column = linear Column ~axis:0 and row = linear Row ~axis:1 in
   let q_dim = cfg.n_heads * cfg.head_dim in
   let kv_dim = cfg.n_kv_heads * cfg.head_dim in
   let block i =
@@ -280,12 +280,10 @@ let of_gguf ~placement cfg dt g =
     { Rms_norm.gamma = place Whole ~axis:0 (weight ~shape:[| cfg.dim |] name) }
   in
   let linear role ~axis ?heads ~inputs ~outputs name =
-    let w =
-      Nx.matrix_transpose (weight ?heads ~shape:[| outputs; inputs |] name)
-    in
+    let w = weight ?heads ~shape:[| outputs; inputs |] name in
     { Linear.w = place role ~axis w; b = None }
   in
-  let column = linear Column ~axis:1 and row = linear Row ~axis:0 in
+  let column = linear Column ~axis:0 and row = linear Row ~axis:1 in
   let q_dim = cfg.n_heads * cfg.head_dim in
   let kv_dim = cfg.n_kv_heads * cfg.head_dim in
   let block i =

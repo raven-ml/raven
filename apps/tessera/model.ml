@@ -132,7 +132,7 @@ let walk c m =
 let reducer_of = function
   | Post_ln { reducer; _ } | Pre_ln { reducer; _ } -> reducer
 
-let dims m = Nx.dim 1 (reducer_of m.net).down.w
+let dims m = Nx.dim 0 (reducer_of m.net).down.w
 
 (* Statistics *)
 
@@ -372,7 +372,7 @@ let dropped (tk : 'd tokens) s q k v =
   Nx.cast (Nx.dtype v) (Nx.mul (Nx.cast f32 o) c)
 
 let split ~heads (p : ((float, 's, 'd) Nx.t, 'd) Kaun.Linear.t) x =
-  let b = Nx.dim 0 x and t = Nx.dim 1 x and d = Nx.dim 1 p.w in
+  let b = Nx.dim 0 x and t = Nx.dim 1 x and d = Nx.dim 0 p.w in
   Nx.swapaxes 1 2 (Nx.reshape [| b; t; heads; d / heads |] (product p x))
 
 let merge (p : ((float, 's, 'd) Nx.t, 'd) Kaun.Linear.t) o =
@@ -687,14 +687,10 @@ let get r shape name =
   try Nx_io.Archive.float ~shape f32 name r.archive
   with Failure m -> fail r.file "%s" m
 
-(* PyTorch stores a linear layer's weight as [[outputs; inputs]]: its
-   transpose is copied into C order, as [init]'s weights lie, since a compiled
-   product of a transposed view runs slower kernels. *)
+(* PyTorch stores a linear layer's weight as [[outputs; inputs]],
+   [Kaun.Linear]'s layout, in C order, as [init]'s weights lie. *)
 let linear_of r ?(bias = true) name ~inputs ~outputs =
-  let w =
-    Nx.copy
-      (Nx.matrix_transpose (get r [| outputs; inputs |] (name ^ ".weight")))
-  in
+  let w = get r [| outputs; inputs |] (name ^ ".weight") in
   let b = if bias then Some (get r [| outputs |] (name ^ ".bias")) else None in
   { Kaun.Linear.w; b }
 
@@ -710,9 +706,7 @@ let packed_layer r name ~d ~ffn =
   let b = get r [| 3 * d |] (name ^ ".self_attn.in_proj_bias") in
   let part i =
     {
-      Kaun.Linear.w =
-        Nx.copy
-          (Nx.matrix_transpose (Nx.slice [ Nx.R (i * d, (i + 1) * d); Nx.A ] w));
+      Kaun.Linear.w = Nx.copy (Nx.slice [ Nx.R (i * d, (i + 1) * d); Nx.A ] w);
       b = Some (Nx.copy (Nx.slice [ Nx.R (i * d, (i + 1) * d) ] b));
     }
   in
@@ -991,11 +985,11 @@ let arch_of m =
   in
   {
     pre_ln;
-    width = Nx.dim 1 (snd s2.embed).w;
+    width = Nx.dim 0 (snd s2.embed).w;
     heads = m.heads;
     layers = List.length s2.layers;
-    ffn = Nx.dim 1 (List.hd s2.layers).ffn1.w;
-    dims = Nx.dim 1 r.down.w;
+    ffn = Nx.dim 0 (List.hd s2.layers).ffn1.w;
+    dims = Nx.dim 0 r.down.w;
   }
 
 (* The model as a structure: this module's own {!Nx.Ptree.S}. *)

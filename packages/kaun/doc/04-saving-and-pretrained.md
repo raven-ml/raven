@@ -59,7 +59,7 @@ let () =
 A value owns the names under its prefix, `model` here, and every name when it has none. Within them, reading back is strict, and fails with `Failure`, naming the entry, before any tensor is read:
 
 - when a tensor of `like` has no entry;
-- when an entry has another dtype or shape, as in `model.l1.w: shape [8; 4] in the archive, [4; 8] in the value`;
+- when an entry has another dtype or shape, as in `model.l1.w: shape [4; 8] in the archive, [8; 4] in the value`;
 - when an entry is named by no tensor of `like`: a model of 12 blocks refuses a file of 24, since `model.blocks.12.w` names nothing.
 
 Nothing is converted: `like` states the dtype it expects, so a restart that names the wrong dtype fails instead of narrowing its state.
@@ -120,16 +120,15 @@ Weights produced elsewhere are named and laid out by their exporter's convention
 
 Both raise `Failure` naming the entry when it is missing or has another shape, so a configuration that disagrees with the file fails at import, before any computation. Bytes are never reinterpreted: only `float` converts. Block-quantised and packed weights are read with `tensor Nx.uint8`, and can sit in the same record as float tensors, since each field's type is the dtype passed for it.
 
-An importer has the outline of the function that initializes the model, with a name in the file where that one has an initializer. Here is a two-layer network whose file stores each weight as `[outputs; inputs]`, the transpose of `Linear`'s layout:
+An importer has the outline of the function that initializes the model, with a name in the file where that one has an initializer. Here is a two-layer network whose file stores each weight as `[outputs; inputs]`, `Linear`'s layout:
 
 ```ocaml
 let mlp_of_file dt weights =
   let linear ~inputs ~outputs name =
     {
       Linear.w =
-        Nx.matrix_transpose
-          (Nx_io.Archive.float ~shape:[| outputs; inputs |] dt
-             (name ^ ".weight") weights);
+        Nx_io.Archive.float ~shape:[| outputs; inputs |] dt (name ^ ".weight")
+          weights;
       b =
         Some
           (Nx_io.Archive.float ~shape:[| outputs |] dt (name ^ ".bias") weights);
@@ -155,7 +154,7 @@ let () =
   Printf.printf "%g\n" (Nx.item [ 0; 0 ] y)
 ```
 
-Each name is written at the field it fills. A rename is a different string at the field, a transpose is `Nx.matrix_transpose`, and a fused tensor is cut with `Nx.split`; both are views. Structure comes from the configuration and the dtype is an argument: at the file's own dtype every tensor is the file's entry and nothing is copied, and at another one each is cast as it is read. An importer allocates no model to start from. An importer that ties two weights binds the tensor once and uses it twice.
+Each name is written at the field it fills. A rename is a different string at the field, a weight stored `[inputs; outputs]` is read through `Nx.matrix_transpose`, and a fused tensor is cut with `Nx.split`; both are views. Structure comes from the configuration and the dtype is an argument: at the file's own dtype every tensor is the file's entry and nothing is copied, and at another one each is cast as it is read. An importer allocates no model to start from. An importer that ties two weights binds the tensor once and uses it twice.
 
 ## Placing weights on a device
 
@@ -169,8 +168,7 @@ let mlp_of_file at dt weights =
       Nx_io.Archive.float ~shape dt (name ^ leaf) weights
     in
     {
-      Linear.w =
-        place (Nx.matrix_transpose (float ~shape:[| outputs; inputs |] ".weight"));
+      Linear.w = place (float ~shape:[| outputs; inputs |] ".weight");
       b = Some (place (float ~shape:[| outputs |] ".bias"));
     }
   in
@@ -180,7 +178,7 @@ let mlp_of_file at dt weights =
   }
 ```
 
-Each leaf is read, cast if asked, transposed and placed before the next is touched, so the host holds at most one leaf's cast at a time and the model ends up as one copy, on the device. Placing on the GPU set is `mlp_of_file Gpu.on dt weights`, and keeping it on the host `mlp_of_file Nx.Host.on dt weights`. The examples' importers take the placement as a function of each leaf's role (a column or row projection, or experts) and of the axis that role's cut runs along in the leaf, so a placement that splits a model over several devices can cut each weight where it belongs. One device is `fun _ ~axis:_ -> p`. Their cache builders take the same function, with a `Kv_heads` role for the pools. Outside a compiled function, a GPU set without kernels computes nothing, so transpose and cast each leaf on the host and place its final form, or mint the set with kernels where its GPUs have them.
+Each leaf is read, cast if asked and placed before the next is touched, so the host holds at most one leaf's cast at a time and the model ends up as one copy, on the device. Placing on the GPU set is `mlp_of_file Gpu.on dt weights`, and keeping it on the host `mlp_of_file Nx.Host.on dt weights`. The examples' importers take the placement as a function of each leaf's role (a column or row projection, or experts) and of the axis that role's cut runs along in the leaf, so a placement that splits a model over several devices can cut each weight where it belongs. One device is `fun _ ~axis:_ -> p`. Their cache builders take the same function, with a `Kv_heads` role for the pools. Outside a compiled function, a GPU set without kernels computes nothing, so cast each leaf on the host and place its final form, or mint the set with kernels where its GPUs have them.
 
 ## Fetching from the Hub: kaun.hf
 
@@ -197,7 +195,7 @@ List.iter print_endline (Nx_io.Archive.names weights)
 
 ## The GPT-2 story
 
-[`examples/04-gpt2`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/04-gpt2) runs the whole pipeline: it defines GPT-2 as a record of kaun layers, loads the real weights, and generates text. Its importer is about fifty lines and differs from the two-layer one above in one way: the file stores each block's query, key and value projections as one `c_attn` tensor of shape `[n_embd; 3 * n_embd]`, where the model has three `Linear` layers. `Nx.split` cuts the fused weight and bias into three views:
+[`examples/04-gpt2`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/04-gpt2) runs the whole pipeline: it defines GPT-2 as a record of kaun layers, loads the real weights, and generates text. Its importer is about fifty lines and differs from the two-layer one above in two ways: the file stores its weights `[inputs; outputs]`, as GPT-2's `Conv1D` layers hold them, so its `linear` reads each through `Nx.matrix_transpose`; and it stores each block's query, key and value projections as one `c_attn` tensor of shape `[n_embd; 3 * n_embd]`, where the model has three `Linear` layers. `Nx.split` cuts the fused weight and bias into three views:
 
 <!-- $MDX skip -->
 ```ocaml
@@ -206,7 +204,7 @@ let q, k, v =
   match
     List.map2
       (fun w b -> { Linear.w; b = Some b })
-      (Nx.split ~axis:1 3 fused.w)
+      (Nx.split ~axis:0 3 fused.w)
       (Nx.split ~axis:0 3 (Option.get fused.b))
   with
   | [ q; k; v ] -> (q, k, v)
@@ -214,7 +212,7 @@ let q, k, v =
 in
 ```
 
-This file's weights are already `inputs × outputs`, so nothing is transposed. Entries the model does not use, such as attention mask buffers, are never read. The whole load is:
+Entries the model does not use, such as attention mask buffers, are never read. The whole load is:
 
 <!-- $MDX skip -->
 ```ocaml
@@ -222,7 +220,7 @@ let cfg = Gpt2.config_of_json (Kaun_hf.load_config "gpt2") in
 let params = Gpt2.of_hf cfg Nx.float32 (Kaun_hf.load_safetensors "gpt2")
 ```
 
-There is no per-architecture loader in the library. [`examples/05-llama`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/05-llama) imports Llama 3.2 the same way, transposing every projection, and its `--dtype` defaults to the file's `bfloat16`, so the default run casts nothing.
+There is no per-architecture loader in the library. [`examples/05-llama`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/05-llama) imports Llama 3.2 the same way, each projection as the file stores it, and its `--dtype` defaults to the file's `bfloat16`, so the default run casts nothing.
 
 ## Next steps
 

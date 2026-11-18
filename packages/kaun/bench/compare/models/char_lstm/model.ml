@@ -70,10 +70,10 @@ module Lstm = struct
   type ('a, 'd) t = {
     emb : ('a, 'd) Kaun.Embedding.t;  (** [vocab; embed] *)
     ih : ('a, 'd) Kaun.Linear.t;
-        (** [embed; 4 * hidden], the input-to-gate map *)
+        (** [4 * hidden; embed], the input-to-gate map *)
     hh : ('a, 'd) Kaun.Linear.t;
-        (** [hidden; 4 * hidden], the state-to-gate map *)
-    head : ('a, 'd) Kaun.Linear.t;  (** [hidden; vocab] *)
+        (** [4 * hidden; hidden], the state-to-gate map *)
+    head : ('a, 'd) Kaun.Linear.t;  (** [vocab; hidden] *)
   }
 
   let walk c p =
@@ -142,20 +142,19 @@ let train_step model spec inputs targets (params, opt) =
 (* Fixture
 
    The file is a PyTorch state dict, so its weights are in PyTorch's layout:
-   [outputs; inputs] for every affine map, against Kaun's [inputs; outputs].
-   Each entry is read under its PyTorch name at the shape the spec gives it and
-   transposed into the model. The token grid is int32 and is widened once to
-   int64, the type of indices. *)
+   [outputs; inputs] for every affine map, Kaun's. Each entry is read under
+   its PyTorch name at the shape the spec gives it. The token grid is int32
+   and is widened once to int64, the type of indices. *)
 
 let load_fixture spec path =
   let a = Nx_io.load_safetensors path in
   let h4 = 4 * spec.hidden in
   let weight ~shape name = Nx_io.Archive.tensor ~shape Nx.float32 name a in
-  (* An affine map stored [outputs; inputs], transposed into Kaun's layout. *)
+  (* An affine map stored [outputs; inputs]. *)
   let linear ~inputs ~outputs ~w ~b =
     let w = weight ~shape:[| outputs; inputs |] w in
     let b = weight ~shape:[| outputs |] b in
-    { Kaun.Linear.w = Nx.copy (Nx.transpose w); b = Some b }
+    { Kaun.Linear.w = w; b = Some b }
   in
   let params =
     {

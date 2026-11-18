@@ -315,7 +315,7 @@ let cosines =
             ( 1,
               [
                 {
-                  Kaun.Linear.w = Nx.create Nx.float32 [| 1; 2 |] [| 1.; 0. |];
+                  Kaun.Linear.w = Nx.create Nx.float32 [| 2; 1 |] [| 1.; 0. |];
                   b = None;
                 };
               ] );
@@ -599,7 +599,7 @@ let with_npz entries f =
   f file
 
 let heads_round_trip =
-  test "heads load from PyTorch's layout, each weight transposed" (fun () ->
+  test "heads load from PyTorch's layout" (fun () ->
       let hs = Distil.heads ~key:(Nx.Rng.key 3) ~prefixes:[ 2; 4 ] 3 in
       let flat hs =
         List.concat_map
@@ -607,7 +607,7 @@ let heads_round_trip =
             List.concat_map
               (fun (l : _ Kaun.Linear.t) ->
                 [
-                  (Printf.sprintf "%d.weight" k, Nx.matrix_transpose l.w);
+                  (Printf.sprintf "%d.weight" k, l.w);
                   (Printf.sprintf "%d.bias" k, Option.get l.b);
                 ])
               layers)

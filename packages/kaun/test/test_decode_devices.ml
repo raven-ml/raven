@@ -71,10 +71,11 @@ let model () =
   }
 
 (* The weights where tensor parallelism puts them: into the heads and the hidden
-   features by columns, out of them by rows, the rest a copy on each device. *)
+   features cut along their outputs, out of them along their inputs, the rest
+   a copy on each device. *)
 let parallel m =
   let at p (l : _ Linear.t) = { Linear.w = Nx.place p l.w; b = None } in
-  let columns = at (Four.split ~axis:1) and rows = at (Four.split ~axis:0) in
+  let columns = at (Four.split ~axis:0) and rows = at (Four.split ~axis:1) in
   let norm (n : _ Rms_norm.t) = { Rms_norm.gamma = Nx.place Four.on n.gamma } in
   let block b =
     {
@@ -263,7 +264,7 @@ let test_bfloat16 () =
     (fun i w -> gap := Float.max !gap (Float.abs (w -. four.(i))))
     one;
   expect (Printf.sprintf "largest gap %h" !gap) @@ __POS_OF__ {|
-    largest gap 0x1.4p-4
+    largest gap 0x1.9p-5
   |}
 
 (* One row projection at bfloat16: [x] of ones against a column of
@@ -279,8 +280,8 @@ let test_row_projection () =
   let l =
     {
       Linear.w =
-        Nx.place (Four.split ~axis:0)
-          (Nx.create Nx.bfloat16 [| 4; 1 |] [| 1.; tiny; tiny; tiny |]);
+        Nx.place (Four.split ~axis:1)
+          (Nx.create Nx.bfloat16 [| 1; 4 |] [| 1.; tiny; tiny; tiny |]);
       b = None;
     }
   in

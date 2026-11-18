@@ -48,7 +48,7 @@ let params ?(q8_0 = false) () =
   let host shape = Nx.mul_s (Nx.Rng.normal Nx.float32 shape) 0.1 in
   let f shape = Nx.place cpu1 (host shape) in
   let linear ?(bias = true) i o =
-    { Linear.w = f [| i; o |]; b = (if bias then Some (f [| o |]) else None) }
+    { Linear.w = f [| o; i |]; b = (if bias then Some (f [| o |]) else None) }
   in
   let projection ?(bias = true) i o =
     if not q8_0 then Gpt_oss.Float (linear ~bias i o)

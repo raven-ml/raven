@@ -191,7 +191,7 @@ let tensor x = Pt.Tensor (Nx.P (f32 x))
 let state_dict (m : (Nx.host Nx.float32_t, Nx.host) Model.t) =
   let lin name (l : (Nx.host Nx.float32_t, Nx.host) Kaun.Linear.t) =
     [
-      (name ^ ".weight", Nx.matrix_transpose l.w);
+      (name ^ ".weight", l.w);
       (name ^ ".bias", Option.get l.b);
     ]
   in
@@ -203,9 +203,7 @@ let state_dict (m : (Nx.host Nx.float32_t, Nx.host) Model.t) =
     let attn =
       match l.qk with
       | None ->
-          let t (x : (Nx.host Nx.float32_t, Nx.host) Kaun.Linear.t) =
-            Nx.matrix_transpose x.w
-          in
+          let t (x : (Nx.host Nx.float32_t, Nx.host) Kaun.Linear.t) = x.w in
           let b (x : (Nx.host Nx.float32_t, Nx.host) Kaun.Linear.t) =
             Option.get x.b
           in

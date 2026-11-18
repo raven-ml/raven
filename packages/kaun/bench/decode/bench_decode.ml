@@ -482,12 +482,12 @@ let parallel =
                     (Rig.software (Printf.sprintf "kaun-bench-tp-%d" k)))))
     in
     let linear at inputs outputs =
-      let w = own at (Nx.full Nx.float32 [| inputs; outputs |] (1. /. 64.)) in
+      let w = own at (Nx.full Nx.float32 [| outputs; inputs |] (1. /. 64.)) in
       { Linear.w; b = None }
     in
-    let gate = linear (D.split ~axis:1) dim hidden
-    and up = linear (D.split ~axis:1) dim hidden
-    and down = linear (D.split ~axis:0) hidden dim in
+    let gate = linear (D.split ~axis:0) dim hidden
+    and up = linear (D.split ~axis:0) dim hidden
+    and down = linear (D.split ~axis:1) hidden dim in
     let close x = Nx.place (Nx.Placement.closed (Nx.placement x)) x in
     let step x =
       let h = Nx.mul (Fn.silu (Linear.apply gate x)) (Linear.apply up x) in

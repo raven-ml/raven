@@ -48,7 +48,7 @@ let values_are ?msg ~tol expected t =
 let test_linear_init_shapes () =
   Nx.Rng.with_key (Nx.Rng.key 1) @@ fun () ->
   let p = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:3 ~outputs:5 in
-  shape_is ~msg:"w shape" [| 3; 5 |] p.Linear.w;
+  shape_is ~msg:"w shape" [| 5; 3 |] p.Linear.w;
   match p.Linear.b with
   | None -> fail "init should create a bias"
   | Some b -> shape_is ~msg:"b shape" [| 5 |] b
@@ -56,12 +56,12 @@ let test_linear_init_shapes () =
 let test_linear_apply_affine () =
   let p =
     {
-      Linear.w = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |];
+      Linear.w = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 3.; 2.; 4. |];
       b = Some (Nx.create Nx.float32 [| 2 |] [| 10.; 20. |]);
     }
   in
   let x = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 1.; 0.; 2. |] in
-  values_are ~msg:"x @ w + b" ~tol:1e-6 [| 14.; 26.; 16.; 28. |]
+  values_are ~msg:"x @ wᵀ + b" ~tol:1e-6 [| 14.; 26.; 16.; 28. |]
     (Linear.apply p x)
 
 let test_linear_no_bias () =
@@ -73,7 +73,7 @@ let test_linear_no_bias () =
   is_true ~msg:"no bias parameter" (p.Linear.b = None);
   let x = Nx.create Nx.float32 [| 2; 4 |] (Array.init 8 float_of_int) in
   values_are ~msg:"apply is the plain matmul" ~tol:1e-6
-    (Nx.to_array (Nx.matmul x p.Linear.w))
+    (Nx.to_array (Nx.matmul x (Nx.matrix_transpose p.Linear.w)))
     (Linear.apply p x)
 
 let test_linear_batched_apply () =
@@ -87,7 +87,7 @@ let test_linear_batched_apply () =
 let test_linear_rounds_once () =
   let p =
     {
-      Linear.w = Nx.create Nx.bfloat16 [| 2; 1 |] [| 1.; 0x1p-8 |];
+      Linear.w = Nx.create Nx.bfloat16 [| 1; 2 |] [| 1.; 0x1p-8 |];
       b = Some (Nx.create Nx.bfloat16 [| 1 |] [| 0x1p-9 |]);
     }
   in
@@ -103,11 +103,13 @@ let test_linear_float32_bits () =
   List.iter
     (fun k ->
       let x = Nx.Rng.normal Nx.float32 [| 64; k |] in
-      let w = Nx.Rng.normal Nx.float32 [| k; 40 |] in
+      let w =
+        Nx.copy (Nx.matrix_transpose (Nx.Rng.normal Nx.float32 [| k; 40 |]))
+      in
       let b = Nx.mul_s (Nx.Rng.normal Nx.float32 [| 40 |]) 10. in
       let p = { Linear.w; b = Some b } in
       values_are ~msg:(Printf.sprintf "depth %d" k) ~tol:0.
-        (Nx.to_array (Nx.add (Nx.matmul x w) b))
+        (Nx.to_array (Nx.add (Nx.matmul x (Nx.matrix_transpose w)) b))
         (Linear.apply p x))
     [ 144; 300 ]
 
@@ -163,6 +165,12 @@ let test_linear_map2_bias_mismatch () =
       Nx.Ptree.map2 (Nx.Ptree.instantiate (module Linear)) (fun _ a _ -> a) p q)
 
 let test_linear_rejects_bad_geometry () =
+  raises
+    (Invalid_argument "Linear.apply: x is 0-d, without an axis of inputs")
+    (fun () ->
+      Linear.apply
+        (Linear.init ~key:(Nx.Rng.key 0) ~inputs:1 ~outputs:1)
+        (Nx.scalar Nx.float32 1.));
   raises
     (Invalid_argument
        "Linear.make: inputs and outputs must be positive, got inputs=0 \

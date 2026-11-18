@@ -45,10 +45,11 @@ type ('a, _) t = { w : 'a; b : 'a option }
 (** The type for linear-layer parameters over payload ['a].
 
     At tensor payloads — [((float, 'b, 'd) Nx.t, 'd) t] — [w] has shape
-    [[| inputs; outputs |]] and [b], when present, shape [[| outputs |]]. [b] is
-    [None] for layers built without a bias ({!make}[ ~bias:false]); such layers
-    have no bias parameter at all, so {!walk} skips it and {!apply} performs no
-    shift. *)
+    [[| outputs; inputs |]], a row of weights for each output, as checkpoint
+    files store a dense layer's weight, and [b], when present, shape
+    [[| outputs |]]. [b] is [None] for layers built without a bias
+    ({!make}[ ~bias:false]); such layers have no bias parameter at all, so
+    {!walk} skips it and {!apply} performs no shift. *)
 
 (** {1:constructors Constructors} *)
 
@@ -62,8 +63,8 @@ val make :
   (float, 'b) Nx.dtype ->
   ((float, 'b, 'd) Nx.t, 'd) t
 (** [make ~key ~inputs ~outputs dtype] is a fresh layer mapping [inputs]
-    features to [outputs] features, drawn from [key] and lying where it lies,
-    with:
+    features to [outputs] features, its weight drawn at
+    [[| outputs; inputs |]] from [key] and lying where it lies, with:
 
     - [w_init], the weight initializer, applied with [~fan_in:inputs] and
       [~fan_out:outputs]. Defaults to {!Init.glorot_uniform}.
@@ -89,22 +90,23 @@ val apply :
   ((float, 'b, 'd) Nx.t, 'd) t ->
   (float, 'b, 'd) Nx.t ->
   (float, 'b, 'd) Nx.t
-(** [apply p x] is [x @ p.w + p.b] (the shift is omitted when [p.b] is
+(** [apply p x] is [x @ p.wᵀ + p.b] (the shift is omitted when [p.b] is
     [None]), each output [round (b + Σ x w)]: the products summed in the
     dtype's accumulator as {!Nx.contract} sums them, [b] added there, and
-    the result rounded once into the dtype. [x]'s last axis must have size
-    [inputs]; leading axes are treated as batch axes, so the result has
-    [x]'s shape with the last axis replaced by [outputs]. Differentiable
-    through Rune.
+    the result rounded once into the dtype, [p.w] read where it lies. [x]'s
+    last axis must have size [inputs]; leading axes are treated as batch
+    axes, so the result has [x]'s shape with the last axis replaced by
+    [outputs]. Differentiable through Rune.
 
     With [~sum:true], where devices cut the summed axis, [x]'s last or
-    [p.w]'s first, the result is the sum of the devices' terms, the shift
+    [p.w]'s last, the result is the sum of the devices' terms, the shift
     added once, for the caller to close with {!Nx.place}
     ({!Nx.Placement.partial}); without it, the product closes where it
     lies. Where no device cuts that axis, the result is the same either
     way.
 
-    Raises [Invalid_argument] if [x]'s last axis does not have size [inputs]. *)
+    Raises [Invalid_argument] if [x] is 0-d or its last axis does not have
+    size [inputs]. *)
 
 (** {1:structure Structure} *)
 

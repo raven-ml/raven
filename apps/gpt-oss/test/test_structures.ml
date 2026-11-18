@@ -15,7 +15,7 @@ let visits s x =
 let leaf p = p ^ ": a leaf"
 let linear p = [ leaf (p ^ ".w"); p ^ ".b: Some"; leaf (p ^ ".b") ]
 let f shape = Nx.zeros Nx.float32 shape
-let lin i o = { Linear.w = f [| i; o |]; b = Some (f [| o |]) }
+let lin i o = { Linear.w = f [| o; i |]; b = Some (f [| o |]) }
 let float_proj i o = Gpt_oss.Float (lin i o)
 
 let quant_proj _ o =

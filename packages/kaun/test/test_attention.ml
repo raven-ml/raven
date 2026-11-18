@@ -948,10 +948,10 @@ let grouped_pair dtype =
   in
   let repeat (l : _ Linear.t) =
     (* head_dim 2: kv head [h] becomes query heads [2 h] and [2 h + 1]. *)
-    let cols =
+    let rows =
       Nx.create Nx.int64 [| 8 |] [| 0L; 1L; 0L; 1L; 2L; 3L; 2L; 3L |]
     in
-    { l with Linear.w = Nx.take ~axis:1 cols l.Linear.w }
+    { l with Linear.w = Nx.take ~axis:0 rows l.Linear.w }
   in
   (p, { p with k = repeat p.k; v = repeat p.v })
 

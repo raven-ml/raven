@@ -35,13 +35,12 @@
 
    Per step it emits the loss (shortest round-trip float64 repr of the fp32
    value), wall-clock ms, and fingerprints of six designated weights in the
-   reference's in-memory layout: kaun stores linear weights [inputs; outputs]
-   like the safetensors file, while the reference fingerprints tinygrad's
-   [outputs; inputs] Linear layout, so the three Conv1D-family weights are
-   transposed (and the split q/k/v projections re-fused into c_attn) before
-   fingerprinting. [--save-weights] writes the post-training weights as a
-   drop-in replacement for the input file (same keys and layout, fused c_attn,
-   untouched h.N.attn.bias mask buffers copied from the input). *)
+   reference's in-memory layout: kaun stores linear weights [outputs;
+   inputs], as tinygrad's Linear does, so only the split q/k/v projections
+   are re-fused into c_attn before fingerprinting. [--save-weights] writes
+   the post-training weights as a drop-in replacement for the input file
+   (same keys and layout, fused c_attn, untouched h.N.attn.bias mask buffers
+   copied from the input). *)
 
 open Kaun
 
@@ -259,28 +258,28 @@ let fingerprint t =
     first8 )
 
 (* The six designated tensors, in the reference's in-memory layout (tinygrad
-   Linear [out; in]): c_attn is the q/k/v weights re-fused into the HF [768;
-   2304] matrix, then — like c_fc and c_proj — transposed from kaun's [inputs;
-   outputs] to [outputs; inputs]. The parameters live where the step left them,
-   so each tensor is read back to the host before it is combined. *)
+   Linear [out; in], kaun's): c_attn is the q/k/v weights re-fused along
+   their outputs into a [2304; 768] matrix. The parameters live where the
+   step left them, so each tensor is read back to the host before it is
+   combined. *)
 let fingerprint_tensors (p : _ Gpt2.t) =
   let host = Nx.place Nx.Host.on in
   let b0 = List.nth p.blocks 0 and b11 = List.nth p.blocks 11 in
   let c_attn =
-    Nx.concatenate ~axis:1
+    Nx.concatenate ~axis:0
       [ host b0.attn.q.w; host b0.attn.k.w; host b0.attn.v.w ]
   in
   [
     ("wte.weight", host p.wte.table);
-    ("h.0.attn.c_attn.weight", Nx.transpose c_attn);
-    ("h.0.mlp.c_fc.weight", Nx.transpose (host b0.fc.w));
-    ("h.11.attn.c_proj.weight", Nx.transpose (host b11.attn.out.w));
+    ("h.0.attn.c_attn.weight", c_attn);
+    ("h.0.mlp.c_fc.weight", host b0.fc.w);
+    ("h.11.attn.c_proj.weight", host b11.attn.out.w);
     ("ln_f.weight", host p.ln_f.gamma);
     ("wpe.weight", host p.wpe.table);
   ]
 
 (* Saving: the input file's key set and layout — fused c_attn, Conv1D weights
-   [in; out] (kaun's native layout), mask buffers copied from the input. *)
+   [in; out] (the transpose of kaun's), mask buffers copied from the input. *)
 
 let bias name = function
   | Some b -> b
@@ -292,7 +291,7 @@ let weights_of_params original (p : Nx.host Gpt2.t) =
     let key leaf = Printf.sprintf "h.%d.%s" i leaf in
     let linear leaf (l : (Nx.host Nx.float32_t, Nx.host) Linear.t) =
       [
-        tensor (key (leaf ^ ".weight")) l.w;
+        tensor (key (leaf ^ ".weight")) (Nx.matrix_transpose l.w);
         tensor (key (leaf ^ ".bias")) (bias (key leaf) l.b);
       ]
     in
@@ -300,7 +299,8 @@ let weights_of_params original (p : Nx.host Gpt2.t) =
       tensor (key "ln_1.weight") b.ln1.gamma;
       tensor (key "ln_1.bias") (bias (key "ln_1") b.ln1.beta);
       tensor (key "attn.c_attn.weight")
-        (Nx.concatenate ~axis:1 [ b.attn.q.w; b.attn.k.w; b.attn.v.w ]);
+        (Nx.matrix_transpose
+           (Nx.concatenate ~axis:0 [ b.attn.q.w; b.attn.k.w; b.attn.v.w ]));
       tensor (key "attn.c_attn.bias")
         (Nx.concatenate ~axis:0
            [

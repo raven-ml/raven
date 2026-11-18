@@ -139,7 +139,7 @@ let test_unpacked () =
       | Float l ->
           equal ~msg:(msg "weight") (array float_exact)
             (values (grouped i ".weight"))
-            (values (Nx.matrix_transpose l.w));
+            (values l.w);
           equal ~msg:(msg "bias")
             (option (array float_exact))
             (Some (values (grouped i ".bias")))

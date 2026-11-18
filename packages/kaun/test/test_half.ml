@@ -35,7 +35,10 @@ let grid n = Array.init n (fun i -> 0.25 *. float_of_int ((i mod 13) - 6))
 (* ───── cast ───── *)
 
 let linear_params () =
-  { Linear.w = mat f32 3 2 (grid 6); b = Some (vec f32 [| 0.5; -0.25 |]) }
+  {
+    Linear.w = mat f32 2 3 [| -1.5; -1.; -0.5; -1.25; -0.75; -0.25 |];
+    b = Some (vec f32 [| 0.5; -0.25 |]);
+  }
 
 let test_cast_dtypes () =
   let lin = Nx.Ptree.cast (module Linear) f16 (linear_params ()) in
@@ -175,10 +178,16 @@ let test_attention_apply_half () =
   let dim = 4 in
   let p =
     {
-      Attention.q = { Linear.w = mat f32 dim dim (grid 16); b = None };
+      Attention.q =
+        {
+          Linear.w = Nx.matrix_transpose (mat f32 dim dim (grid 16));
+          b = None;
+        };
       k =
         {
-          Linear.w = mat f32 dim dim (Array.map (fun v -> -.v) (grid 16));
+          Linear.w =
+            Nx.matrix_transpose
+              (mat f32 dim dim (Array.map (fun v -> -.v) (grid 16)));
           b = None;
         };
       v = { Linear.w = Nx.eye f32 dim; b = None };

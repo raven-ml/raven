@@ -96,7 +96,7 @@ let load_projector file =
     let name f = Printf.sprintf "net.%d.%s" i f in
     let w = entry (name "weight") and b = entry (name "bias") in
     if Nx.ndim w = 2 then
-      `Linear { Kaun.Linear.w = Nx.matrix_transpose w; b = Some b }
+      `Linear { Kaun.Linear.w = w; b = Some b }
     else `Norm { Kaun.Batch_norm.gamma = w; beta = Some b }
   in
   let rec build = function

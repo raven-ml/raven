@@ -36,7 +36,7 @@ Every other operation of `Nx.Ptree` runs this function, so they all visit the pa
 let linear = Nx.Ptree.instantiate (module Linear)
 
 let layer =
-  { Linear.w = Nx.ones Nx.float32 [| 3; 2 |]; b = Some (Nx.zeros Nx.float32 [| 2 |]) }
+  { Linear.w = Nx.ones Nx.float32 [| 2; 3 |]; b = Some (Nx.zeros Nx.float32 [| 2 |]) }
 ```
 
 `Nx.Ptree.map`, `map2` and `fold` pass every array its path. The function is polymorphic in the dtype, since the arrays of one value may have different dtypes:
@@ -69,7 +69,7 @@ let mlp = Nx.Ptree.instantiate (module Mlp)
 
 let dense ?(bias = true) inputs outputs =
   {
-    Linear.w = Nx.ones Nx.float32 [| inputs; outputs |];
+    Linear.w = Nx.ones Nx.float32 [| outputs; inputs |];
     b = (if bias then Some (Nx.zeros Nx.float32 [| outputs |]) else None);
   }
 

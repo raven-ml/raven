@@ -143,10 +143,9 @@ val of_pytorch :
     and [arch] give [latent_dim] ([d / 4]), [nhead], [num_layers],
     [dim_feedforward] and [repr_dim], the upstream defaults where absent, and a
     student's [matryoshka_dims] (["16,32,64,128"]) and [enable_qk_norm].
-    PyTorch's [[outputs; inputs]] weights are read transposed, as
-    [[inputs; outputs]] arrays of their own in C order, the layout {!init}'s
-    weights have, and a packed [in_proj] as [q], [k] and [v], each weight and
-    bias an array of its own. A compiled forward thus runs the kernels it runs
+    PyTorch's [[outputs; inputs]] weights are read as stored, in C order,
+    the layout {!init}'s weights have, and a packed [in_proj] as [q], [k]
+    and [v], each weight and bias an array of its own. A compiled forward thus runs the kernels it runs
     over {!init}'s weights.
 
     Raises [Failure] naming [name] and the tensor or field if [v] is neither, if

@@ -287,8 +287,9 @@ let test_load_missing_raises () =
 (* Importing foreign weights *)
 
 (* A GPT-2-style attention block built directly from the file's entries: the
-   fused query, key and value projection is stored [d; 3d], and the output
-   projection [outputs; inputs]. *)
+   fused query, key and value projection is stored [d; 3d], [inputs;
+   outputs], so each of its three pieces is transposed, and the output
+   projection [outputs; inputs], [Linear]'s layout. *)
 let test_import_attention () =
   let module Attention = Kaun.Attention in
   let d = 2 in
@@ -316,20 +317,23 @@ let test_import_attention () =
   in
   let linear (w, b) = { Kaun.Linear.w; b = Some b } in
   let p : (Nx.host Nx.float32_t, Nx.host) Attention.t =
-    match List.map linear fused with
+    match
+      List.map (fun (w, b) -> linear (Nx.matrix_transpose w, b)) fused
+    with
     | [ q; k; v ] ->
         let out =
           linear
-            ( Nx.matrix_transpose (float ~shape:[| d; d |] "attn.c_proj.weight"),
+            ( float ~shape:[| d; d |] "attn.c_proj.weight",
               float ~shape:[| d |] "attn.c_proj.bias" )
         in
         { q; k; v; out }
     | _ -> assert false
   in
-  equal ~msg:"q.w" (array float_exact) [| 1.0; 2.0; 7.0; 8.0 |] (to_arr p.q.w);
+  equal ~msg:"q.w transposed" (array float_exact) [| 1.0; 7.0; 2.0; 8.0 |]
+    (to_arr p.q.w);
   equal ~msg:"v.b" (array float_exact) [| 2.5; 3.5 |]
     (to_arr (Option.get p.v.b));
-  equal ~msg:"out.w transposed" (array float_exact) [| 1.0; 3.0; 2.0; 4.0 |]
+  equal ~msg:"out.w" (array float_exact) [| 1.0; 2.0; 3.0; 4.0 |]
     (to_arr p.out.w);
   raises
     (Failure
