@@ -9,7 +9,8 @@
     names, as npz, SafeTensors and GGUF files do. A name and its array are an
     {e entry}. Entries are read and written as an {!Archive.t}. A PyTorch
     checkpoint holds a Python value, whose arrays {!Pytorch.tensors} names,
-    and a TIFF file a chain of rasters, each with its tags ({!Tiff}).
+    a TIFF file a chain of rasters, each with its tags ({!Tiff}), and an
+    HDF5 file a tree of arrays named by paths ({!Hdf5}).
 
     An {e image} is a [uint8] array of shape [[|h; w; c|]], first row at the
     top, with [c] 1 for grey, 2 for grey and alpha, 3 for RGB and 4 for RGBA.
@@ -72,7 +73,10 @@
     {b Defaults.} A load blocks until it has read the file's header and the
     elements of each value it returns that is not mapped. {!Tiff.samples}
     and {!Tiff.window} block until they have read their IFD's chunks, from
-    the file {!load_tiff} opened or the partial file {!decode_tiff} read.
+    the file {!load_tiff} opened or the partial file {!decode_tiff} read,
+    and {!Hdf5.values} and {!Hdf5.window} until they have read their
+    dataset's B-tree nodes and chunks, from the file {!load_hdf5} opened or
+    the partial file {!decode_hdf5} read.
     A save blocks until
     the value's set has computed it and the new file is at its path. Domains may
     load one path concurrently. Concurrent saves to one path each write a whole
@@ -957,13 +961,191 @@ val save_tiff :
     if a tag is not a SHORT, is the save's own or is given twice, or holds
     no value or one its type does not, such as a [Float] of 0.1. *)
 
+(** {1:hdf5 HDF5}
+
+    An HDF5 file is a tree of {e groups} whose leaves are {e datasets}, each
+    an n-d array of one {e datatype}, as the HDF Group's
+    {{:https://support.hdfgroup.org/documentation/hdf5/latest/_f_m_t3.html}
+     File Format Specification 3.0} defines them. A dataset is named by its
+    {e path}, the names of the groups above it and its own, each after a
+    [/], as ["/desi/spectrum_flux"]. Its elements lie in the file in C order
+    as one block ({e contiguous}), inside its header ({e compact}), or in
+    {e chunks}, boxes of one shape that tile the array, each stored alone
+    and passed through the dataset's {e filters}. A group or a dataset also
+    holds {e attributes}, small named arrays.
+
+    A group holds {e links}, each a name and the object it leads to: a
+    {e hard link} names the object, and a {e soft link} a path to it, from
+    the root when the path starts with [/] and from the link's group
+    otherwise. An object has a path for each way of reaching it from the
+    root ([/]) along links. Paths are ordered name by name, so a path comes
+    before the paths below it, and ["/a/b"] before ["/a-"].
+
+    {!load_hdf5} reads files of superblock version 0 or 1 at byte 0, which
+    is the format libhdf5 writes by default: object headers of version 1 or
+    2, the second's checksums checked, and groups whose links lie in a
+    symbol table or in link messages in their header. It refuses, naming
+    the structure and the path of the object it is in, a later superblock,
+    a user block before the superblock, a group whose links lie in a
+    fractal heap, and an external link, which leads to another file. An
+    object is read once, at the least of its paths, also when a cycle of
+    links reaches it again. A soft link whose path leads to no object, or
+    to another soft link of a cycle, is not listed.
+
+    {!Hdf5.values} and {!Hdf5.window} read a dataset of the message
+    versions libhdf5 writes in this format (a layout of version 3, a fill
+    value of version 2, a filter pipeline of version 1), contiguous, compact
+    or chunked over a version-1 B-tree, whose datatype is:
+    {ul
+    {- fixed-point or a bitfield of 1, 2, 4 or 8 bytes whose bits all hold
+       its value, as [int8] to [uint64], a bitfield unsigned;}
+    {- IEEE floating point of 2, 4 or 8 bytes, or bfloat16, as [float16],
+       [float32], [float64] or [bfloat16];}
+    {- complex, of two such float32 or float64 parts, as [complex64] or
+       [complex128];}
+    {- an enumeration, as its base type, so a boolean that h5py writes
+       reads as [int8];}
+    {- an array, as its base type with the array's axes after the
+       dataset's;}
+    {- a fixed-length string, an opaque type or a compound type, as its
+       bytes at [uint8] with a last axis of its size, padding included.}}
+    in either byte order. Its filters may be deflate (1, a zlib stream a
+    chunk), shuffle (2), Fletcher-32 (3), whose checksum is checked, and
+    LZF (32000, {!Lz.Lzf}), at most one of deflate and LZF. A chunk whose
+    filter mask skips a filter is read without it, as libhdf5 stores a
+    chunk an optional filter did not shrink. An element never written, in
+    a chunk or a contiguous block never stored, reads as the dataset's fill
+    value, or zero bytes without one. A dataset of any other datatype, such
+    as a variable-length string or a reference, layout or filter raises
+    when it is read, naming its path and the feature, and the file's other
+    datasets still read. *)
+
+(** HDF5 datasets. *)
+module Hdf5 : sig
+  type t
+  (** The type for one dataset of an HDF5 file. It keeps the bytes it was
+      read from: the file, as a mapped value does, and {b the file must not
+      change in place while it is reachable}; or a partial file
+      ({!section-partial}), which never changes. *)
+
+  val path : t -> string
+  (** [path d] is the least of [d]'s paths. *)
+
+  val shape : t -> int array
+  (** [shape d] is [d]'s shape, from its dataspace. A scalar dataset's is
+      [[||]].
+
+      Raises [Failure] as {!values} does for a dataspace it does not read,
+      such as a null one. *)
+
+  val chunk : t -> int array option
+  (** [chunk d] is the shape of [d]'s chunks, or [None] when [d] is not
+      chunked. A window whose box is a union of chunks decodes no element
+      it does not return.
+
+      Raises [Failure] as {!values} does for a dataspace, datatype or
+      layout it does not read. *)
+
+  val attributes : t -> string list
+  (** [attributes d] is the names of [d]'s attributes, in the order its
+      header holds them.
+
+      Raises [Failure] naming [d]'s path for attributes stored outside its
+      header, in a fractal heap. *)
+
+  val attribute : t -> string -> Nx.host Nx.packed
+  (** [attribute d name] is the value of [d]'s attribute [name], at its
+      datatype's dtype as for {!values}, in memory of its own.
+
+      Raises [Failure] naming [d]'s path and [name] if [d] has no attribute
+      [name], or for a datatype or dataspace {!section-hdf5} does not
+      read. *)
+
+  val values : t -> Nx.host Nx.packed
+  (** [values d] is [d]'s array, of {!shape} followed by its datatype's
+      axes. It is a mapped value where [d] is contiguous, in the host's
+      byte order and at a multiple of its elements' alignment. Otherwise
+      each call reads the file again, into memory of its own.
+
+      For a dataset decoded from a partial file, it is {!window} of the
+      whole array, in memory of its own.
+
+      Raises [Failure] as {!section-errors} states, naming [d]'s path, for
+      a datatype, layout or filter {!section-hdf5} does not read, for a
+      chunk or contiguous block past the file's end, a chunk that does not
+      decode to its bytes or fails its checksum, as in
+      ["f.h5: /x: chunk at [8], byte 2091: filter 3 (Fletcher-32): the
+       checksum does not match the data"], and naming the first range a
+      partial file lacks. *)
+
+  val window :
+    t ->
+    start:int array ->
+    shape:int array ->
+    (Nx.host Nx.packed, (int * int) list) result
+  (** [window d ~start ~shape] is [Ok x], [x] the elements of [d] from
+      [start] along each axis for [shape] elements, followed by its
+      datatype's axes, in memory of its own; or [Error rs], [rs] the
+      ranges ({!section-partial}) a partial file lacks of the B-tree nodes
+      that index the chunks the box covers, or, once it holds them, of
+      those chunks. It reads each chunk the box covers, whole, and no
+      other; of a contiguous dataset, the run of elements of each row of
+      the box along its last axis. [x] is [Nx.slice] of {!values} over the
+      box where {!values} returns, and [window] may return where {!values}
+      raises for a chunk the box does not cover. A box of no element reads
+      nothing. A dataset {!load_hdf5} read is never [Error].
+
+      Raises [Invalid_argument] if [start] or [shape] is not of [d]'s rank
+      or the box does not lie in [d], and [Failure] as {!values} does, for
+      each chunk the box covers. *)
+
+  (** Groups. *)
+  module Group : sig
+    type t
+    (** The type for one group of an HDF5 file, which keeps the bytes it was
+        read from as a dataset does. *)
+
+    val path : t -> string
+    (** [path g] is the least of [g]'s paths, ["/"] for the root. *)
+
+    val attributes : t -> string list
+    (** [attributes g] is the names of [g]'s attributes, as
+        {!Hdf5.attributes} states for a dataset's. *)
+
+    val attribute : t -> string -> Nx.host Nx.packed
+    (** [attribute g name] is the value of [g]'s attribute [name], as
+        {!Hdf5.attribute} states for a dataset's. *)
+  end
+
+  (**/**)
+
+  (* For the tests: the checksum of version-2 object headers, Jenkins'
+     lookup3 (hashlittle) of a string from the initial value [init]
+     (default 0). *)
+
+  val lookup3 : ?init:int -> string -> int
+end
+
+val load_hdf5 : string -> Hdf5.Group.t list * Hdf5.t list
+(** [load_hdf5 path] is the groups and the datasets of the HDF5 file
+    [path], each in the order of their paths, the root group first. It
+    reads the superblock, the groups and each object's header, and no
+    element.
+
+    Raises [Failure] as {!section-errors} states, and naming the structure
+    for a file {!section-hdf5} refuses, a structure past the file's end or
+    the end of data its superblock states, a header whose checksum does not
+    match, a group B-tree that is malformed or comes back to a node, or
+    structures that take more bytes in all than the file holds. *)
+
 (** {1:partial Partial files}
 
     A {e partial file} is what a program holds of a file it reads in
     pieces, such as a remote file read by byte ranges: the file's length,
-    and its bytes at some of its offsets. {!decode_tiff} and {!Tiff.window}
-    read only the bytes a partial file holds, and return the bytes it lacks
-    as {e ranges}: [(offset, length)] pairs sorted by offset, disjoint,
+    and its bytes at some of its offsets. The {e partial readers},
+    {!decode_tiff}, {!Tiff.window}, {!decode_hdf5} and {!Hdf5.window}, read
+    only the bytes a partial file holds, and return the bytes it lacks as
+    {e ranges}: [(offset, length)] pairs sorted by offset, disjoint,
     merged where they touch, and never empty, the same list for the same
     bytes. The caller fetches the ranges, adds them, and calls again. No
     byte a partial file lacks is read as any value. How many bytes to
@@ -972,20 +1154,27 @@ val save_tiff :
 
     Two laws tie a partial file to the whole file it holds part of:
     {ul
-    {- {e Agreement.} {!decode_tiff} or {!Tiff.window} on a partial file
-       returns [Error] with ranges, or returns or raises exactly as on the
-       whole file.
+    {- {e Agreement.} A partial reader on a partial file returns [Error]
+       with ranges, or returns or raises exactly as on the whole file.
        Which of the last two it does never depends on a byte the partial
        file lacks.}
     {- {e Monotony.} Adding bytes never turns a result into [Error]: once
-       {!decode_tiff} returns IFDs, or {!Tiff.window} samples, a partial
-       file that holds more of the same file returns the same.}}
+       a partial reader returns, a partial file that holds more of the same
+       file returns the same.}}
 
-    An IFD keeps the partial file it was decoded from, and {b never reads
-    bytes added after it was decoded}. After adding bytes, decode the new
-    partial file again, which reads only bytes already held, and take the
-    IFD at the same position, which monotony keeps. A window of an IFD
-    decoded before the bytes were added returns the same [Error] again.
+    An IFD or a dataset keeps the partial file it was decoded from, and
+    {b never reads bytes added after it was decoded}. After adding bytes,
+    decode the new partial file again, which reads only bytes already
+    held, and take the IFD or dataset at the same position, which monotony
+    keeps. A window of one decoded before the bytes were added returns the
+    same [Error] again.
+
+    A partial file keeps every byte added to it. A program that reads a
+    large file in many windows, such as a pass over all its rows, holds
+    each window's bytes until it drops the partial file. It bounds its
+    memory by starting again from {!Partial.v}, adding the ranges of the
+    structures it kept from the earlier decodes, whose bytes the next
+    decode reads again, and then those the next window names.
 
     This reads a window of the first IFD of a remote TIFF file, given
     [get at n], which returns the [n] bytes of the file from byte [at]:
@@ -1028,6 +1217,18 @@ module Partial : sig
       versions of the file, and no partial file that holds both is
       consistent: start again from {!v}. *)
 end
+
+val decode_hdf5 :
+  Partial.t -> (Hdf5.Group.t list * Hdf5.t list, (int * int) list) result
+(** [decode_hdf5 p] is [Ok (gs, ds)], the groups and datasets {!load_hdf5}
+    reads from the whole file [p] holds part of, or [Error rs], [rs] the
+    ranges ({!section-partial}) [p] lacks of the structures it reads next:
+    the superblock, the groups' B-tree nodes, symbol table nodes and local
+    heaps, and the object headers. It reads no element. Each group and
+    dataset keeps [p], from which {!Hdf5.window} and {!Hdf5.values}
+    read.
+
+    Raises [Failure] starting with [p]'s name as {!load_hdf5} does. *)
 
 val decode_tiff : Partial.t -> (Tiff.t list, (int * int) list) result
 (** [decode_tiff p] is [Ok ds], [ds] the IFDs {!load_tiff} reads from the

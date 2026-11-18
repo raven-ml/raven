@@ -23,7 +23,7 @@ device sets apart.
   AMD GPUs of RDNA4 by `nx.amd`'s; arrays on device sets, each operation
   computing where its operands lie
 - I/O support: images (PNG, JPEG), TIFF, NumPy files (.npy, .npz),
-  SafeTensors and GGUF
+  SafeTensors, GGUF and HDF5 (read)
 - Integration with the Raven ecosystem: `rune`, `kaun`, `hugin`, `quill`, etc.
 
 ## Quick Start

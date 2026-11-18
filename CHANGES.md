@@ -3353,6 +3353,13 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- Add HDF5 to `Nx_io`, read-only: `load_hdf5` and `decode_hdf5` read the
+  groups and datasets of a file in libhdf5's default format, following
+  hard and soft links, and `Nx_io.Hdf5.values`, `window`, `chunk` and
+  `attribute` read a dataset, locally or by byte ranges, through deflate,
+  shuffle, Fletcher-32 and LZF. A datatype or filter it does not read
+  raises when that dataset is read, naming it; an external link raises at
+  load.
 - `Nx.extend` widens an axis by samples read under an `Nx.extension` rule:
   `` `Zero ``, `` `Replicate ``, `` `Symmetric_whole ``, `` `Symmetric_half ``,
   `` `Antisymmetric_whole `` or `` `Periodic ``, folding as often as a short

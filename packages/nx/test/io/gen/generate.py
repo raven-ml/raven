@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # /// script
-# requires-python = ">=3.11"
+# requires-python = "==3.13.*"
 # dependencies = ["numpy==2.5.4", "safetensors==0.8.0", "torch==2.15.0",
-#                 "pillow==13.0.0", "rasterio==1.5.2"]
+#                 "pillow==13.0.0", "rasterio==1.5.2", "h5py==3.16.0"]
 # ///
 """Generate nx.io's test fixtures: files other tools write.
 
@@ -27,9 +27,15 @@ have jpeg_zrl_progressive.jpg and jpeg_zrl_baseline.jpg, which decode to the
 same pixels. GDAL 3.12, which the rasterio wheel bundles with its libtiff,
 writes the tiff_*.tif files, each with a sibling .npy of the array of shape
 (h, w, c) it was given, and reads each back as that array; the tiff_*_u<n>
-files hold samples of n bits, packed (GDAL's NBITS).
+files hold samples of n bits, packed (GDAL's NBITS). h5py 3.16, with the
+libhdf5 2.0 its wheel bundles, writes the hdf5_*.h5 files in its default
+format (superblock 0, version-1 object headers, groups as symbol tables).
+Each file nx.io reads whole has a sibling .npz of every dataset h5py reads
+back, named by its path without the first /, an element of a datatype nx
+lacks as its bytes; the others hold what nx.io refuses.
 
-The fixtures are written into ../support. Pillow 13.0.0 encodes JPEG with
+The fixtures are written into ../support, under Python 3.13, for which
+every pinned package has a wheel. Pillow 13.0.0 encodes JPEG with
 the libjpeg-turbo its wheel bundles, and every fixture reproduces byte for
 byte with the pinned versions. With --check nothing is written, and the run
 fails if a fixture would change.
@@ -44,6 +50,7 @@ import io
 import os
 import pickle
 import random
+import re
 import struct
 import subprocess
 import sys
@@ -735,6 +742,369 @@ def tiff_fixtures():
             assert back.dtype == a.dtype and back.tobytes() == a.tobytes(), name
 
 
+def hdf5_fixtures():
+    import h5py
+
+    def noise(n, dtype, shape):
+        # Incompressible elements, from xorshift's bytes.
+        return xorshift(n * np.dtype(dtype).itemsize).view(dtype).reshape(shape)
+
+    def expected(name, f):
+        # Every dataset h5py reads, as nx.io reads it: a datatype nx lacks as
+        # its bytes, a trailing axis of its size.
+        out = {}
+
+        def visit(path, obj):
+            if not isinstance(obj, h5py.Dataset) or path in out:
+                return
+            a = obj[()]
+            native = obj.id.get_type().get_class() == h5py.h5t.COMPLEX
+            if a.dtype.kind in "SV" or (a.dtype.kind == "c" and not native):
+                a = np.ascontiguousarray(a).view(np.uint8).reshape(a.shape + (a.dtype.itemsize,))
+            elif a.dtype.kind == "b":
+                a = a.view(np.int8)
+            # Without the metadata h5py gives an enumeration's dtype.
+            out[path] = np.asarray(a).view(np.dtype(a.dtype.str))
+
+        f.visititems(visit)
+        np.savez(name + ".npz", **out)
+
+    def chunks_of(d):
+        return [d.id.get_chunk_info(i) for i in range(d.id.get_num_chunks())]
+
+    def chunk_ranges(name, f):
+        # Each chunk's offset in elements and its bytes in the file, a line
+        # each: path, offsets joined by commas, byte, size.
+        lines = []
+
+        def visit(path, obj):
+            if isinstance(obj, h5py.Dataset) and obj.chunks:
+                for c in chunks_of(obj):
+                    lines.append("/%s\t%s\t%d\t%d" % (path, ",".join(map(str, c.chunk_offset)),
+                                                     c.byte_offset, c.size))
+
+        f.visititems(visit)
+        with open(name + ".chunks", "w") as out:
+            out.write("".join(l + "\n" for l in lines))
+
+    def messages(path, addr, offsets=8, lengths=8):
+        # The messages of the version-1 object header at [addr], its
+        # continuation blocks' included, as (type, data) pairs, read after
+        # FMT3 IV.A.1.a and IV.A.2.q.
+        b = open(path, "rb").read()
+        count, size = struct.unpack_from("<HxxxxI", b, addr + 2)
+        blocks, out = [(addr + 16, size)], []
+        while blocks and len(out) < count:
+            at, n = blocks.pop(0)
+            i = at
+            while i + 8 <= at + n and len(out) < count:
+                kind, length = struct.unpack_from("<HH", b, i)
+                data = b[i + 8:i + 8 + length]
+                if kind == 0x10:
+                    blocks.append((int.from_bytes(data[:offsets], "little"),
+                                   int.from_bytes(data[offsets:offsets + lengths], "little")))
+                out.append((kind, data))
+                i += 8 + length
+        return out
+
+    def address(obj):
+        return h5py.h5o.get_info(obj.id).addr
+
+    import ctypes
+    import glob
+
+    def libhdf5():
+        # The libhdf5 h5py's wheel bundles, for the calls h5py does not make.
+        libs = os.path.join(os.path.dirname(h5py.__file__), "..", "h5py.libs", "libhdf5-*")
+        return ctypes.CDLL(glob.glob(libs)[0])
+
+    def earliest(name, istore=None, sym=None, sizes=None):
+        # A file in libhdf5's earliest format, with the B-tree K values and
+        # the sizes of addresses and lengths given, which h5py's File does
+        # not take: libhdf5's own calls set the K values.
+        lib = libhdf5()
+        fcpl = h5py.h5p.create(h5py.h5p.FILE_CREATE)
+        if istore is not None:
+            assert lib.H5Pset_istore_k(ctypes.c_int64(fcpl.id), ctypes.c_uint(istore)) >= 0
+        if sym is not None:
+            assert lib.H5Pset_sym_k(ctypes.c_int64(fcpl.id), ctypes.c_uint(sym[0]),
+                                    ctypes.c_uint(sym[1])) >= 0
+        if sizes is not None:
+            fcpl.set_sizes(*sizes)
+        fapl = h5py.h5p.create(h5py.h5p.FILE_ACCESS)
+        fapl.set_libver_bounds(h5py.h5f.LIBVER_EARLIEST, h5py.h5f.LIBVER_LATEST)
+        return h5py.File(h5py.h5f.create(name.encode(), h5py.h5f.ACC_TRUNC, fcpl=fcpl, fapl=fapl))
+
+    def created(f, name, tid, shape, layout=None):
+        # A dataset made through h5py's low-level calls, without the
+        # modification time libhdf5 would record, as h5py's own leave out.
+        dcpl = h5py.h5p.create(h5py.h5p.DATASET_CREATE)
+        dcpl.set_obj_track_times(False)
+        if layout is not None:
+            dcpl.set_layout(layout)
+        return h5py.h5d.create(f.id, name.encode(), tid, h5py.h5s.create_simple(shape),
+                               dcpl=dcpl)
+
+    # Layouts, groups and links.
+    with h5py.File("hdf5_layouts.h5", "w") as f:
+        # Float32 elements at an offset of a multiple of 8, then three
+        # bytes, so that the float64 elements after them lie at an offset
+        # that is not.
+        f["aligned"] = np.array([0.5, -1.0, 3.0, 1e-40], dtype="<f4")
+        assert f["aligned"].id.get_offset() % 8 == 0
+        f["u3"] = np.arange(3, dtype="u1")
+        f["f64"] = np.array([1 / 3, -0.0, np.inf, np.nan, 5e-324], dtype="<f8")
+        assert f["f64"].id.get_offset() % 8 != 0
+        f["i16le"] = np.arange(-12, 12, dtype="<i2").reshape(6, 4) * 1000
+        f["i16be"] = np.arange(-12, 12, dtype=">i2").reshape(6, 4) * 1000
+        f["f32"] = (np.arange(24, dtype="<f4") / 7).reshape(2, 3, 4)
+        f["scalar"] = np.float64(2.5)
+        f.create_dataset("empty", shape=(0, 3), dtype="<f4")
+        f.create_dataset("unwritten", shape=(5,), dtype="<f4", fillvalue=-1.5)
+        compact = created(f, "compact", h5py.h5t.STD_I32LE, (4,), h5py.h5d.COMPACT)
+        compact.write(h5py.h5s.ALL, h5py.h5s.ALL, np.array([7, -8, 9, -10], dtype="<i4"))
+        c = f.create_group("chunked")
+        c.create_dataset("edges", data=np.arange(70, dtype="<i4").reshape(7, 10), chunks=(3, 4))
+        d = c.create_dataset("fill", shape=(9,), dtype="<f4", chunks=(4,), fillvalue=2.5)
+        d[0:4] = np.arange(4, dtype="<f4")
+        d = c.create_dataset("zeros", shape=(9,), dtype="<i2", chunks=(4,))
+        d[4:8] = np.arange(1, 5, dtype="<i2")
+        c.create_dataset("rank3", data=np.arange(210, dtype="<u2").reshape(5, 6, 7),
+                         chunks=(2, 3, 4))
+        # 300 chunks of one element: a B-tree of two levels, since a node
+        # holds at most 64.
+        c.create_dataset("deep", data=(np.arange(300) % 251).astype("i1"), chunks=(1,))
+        g = f.create_group("g/h")
+        g["deep"] = np.array([[1, 2], [3, 4]], dtype="i1")
+        f["link"] = g["deep"]
+        f["soft"] = h5py.SoftLink("/g")
+        g["back"] = f["g"]
+        many = f.create_group("many")
+        for i in range(40):
+            many["d%02d" % i] = np.int16(i)
+    with h5py.File("hdf5_layouts.h5") as f:
+        expected("hdf5_layouts", f)
+        chunk_ranges("hdf5_layouts", f)
+
+    # Filters, each chunk with its filter mask.
+    with h5py.File("hdf5_filters.h5", "w") as f:
+        f.create_dataset("deflate", data=(np.arange(600, dtype="<f4") % 37).reshape(20, 30),
+                         chunks=(8, 8), compression="gzip", compression_opts=4)
+        f.create_dataset("shuffle_deflate", data=np.arange(50, dtype="<i8") * 1000003,
+                         chunks=(16,), shuffle=True, compression="gzip")
+        f.create_dataset("lzf", data=(np.arange(400, dtype="<f8") % 11).reshape(40, 10),
+                         chunks=(16, 4), compression="lzf")
+        raw = np.concatenate([np.zeros(256, "<u4"), noise(256, "<u4", (256,))])
+        d = f.create_dataset("lzf_raw", data=raw, chunks=(256,), compression="lzf")
+        # libhdf5 stores the chunk LZF does not shrink as it is, and sets its
+        # mask's bit 0.
+        assert [c.filter_mask for c in chunks_of(d)] == [0, 1]
+        f.create_dataset("fletcher", data=np.arange(30, dtype="<i2") - 15, chunks=(8,),
+                         fletcher32=True)
+        f.create_dataset("all", data=(np.arange(33 * 17, dtype=">u2") * 31).reshape(33, 17),
+                         chunks=(8, 8), shuffle=True, compression="lzf", fletcher32=True)
+        f.create_dataset("shuffle_deflate_fletcher", data=noise(100, "<f4", (10, 10)),
+                         chunks=(4, 5), shuffle=True, compression="gzip", fletcher32=True)
+    with h5py.File("hdf5_filters.h5") as f:
+        expected("hdf5_filters", f)
+        chunk_ranges("hdf5_filters", f)
+        fletcher = chunks_of(f["fletcher"])
+    # The same file with a byte of the fletcher dataset's chunk 1 flipped.
+    data = bytearray(open("hdf5_filters.h5", "rb").read())
+    data[fletcher[1].byte_offset + 3] ^= 0xFF
+    open("hdf5_fletcher_flipped.h5", "wb").write(bytes(data))
+    # The same file with each of that dataset's checksums in the byte order
+    # libhdf5 wrote before 1.6.3, each half's bytes swapped, which libhdf5
+    # still reads.
+    data = bytearray(open("hdf5_filters.h5", "rb").read())
+    for c in fletcher:
+        end = c.byte_offset + c.size
+        stored = data[end - 4:end]
+        data[end - 4:end] = bytes([stored[1], stored[0], stored[3], stored[2]])
+        assert data[end - 4:end] != stored
+    open("hdf5_fletcher_reversed.h5", "wb").write(bytes(data))
+
+    # A dataset of each datatype class nx.io reads, and attributes.
+    with h5py.File("hdf5_types.h5", "w") as f:
+        for code in ["i1", "u1", "<i2", ">i2", "<u2", "<i4", ">i4", "<u4", "<i8", ">u8"]:
+            info = np.iinfo(code)
+            name = code.lstrip("<>") + ("_be" if code[0] == ">" else "")
+            f[name] = np.array([info.min, info.max, 0, 1], dtype=code)
+        for code in ["<f2", ">f4", "<f8"]:
+            info = np.finfo(code)
+            name = code.lstrip("<>") + ("_be" if code[0] == ">" else "")
+            f[name] = np.array([info.min, info.max, -0.0, np.inf, np.nan,
+                                info.smallest_subnormal], dtype=code)
+        f["bool"] = np.array([True, False, True])
+        f.create_dataset("enum", data=np.array([1, -2, 1], dtype="<i2"),
+                         dtype=h5py.enum_dtype({"a": 1, "b": -2}, basetype="<i2"))
+        f["string"] = np.array([b"ab", b"abcde", b""], dtype="S5")
+        f["compound"] = np.array([(1, 2.5), (-3, -0.0)], dtype=[("i", "<i4"), ("x", "<f8")])
+        f["opaque"] = np.frombuffer(b"0123456789abcd", dtype="V7")
+        # numpy's complex as h5py writes it, a compound type, and libhdf5's
+        # complex class.
+        f["complex"] = np.array([1 + 2j, -0.5 - 1j], dtype="<c8")
+        c = created(f, "complex_class", h5py.h5t.COMPLEX_IEEE_F64BE, (2,))
+        c.write(h5py.h5s.ALL, h5py.h5s.ALL, np.array([1.5 - 2j, np.inf + 0j], dtype="<c16"),
+                mtype=h5py.h5t.COMPLEX_IEEE_F64LE)
+        # Array datatypes, written element by element as their base type.
+        for name, base, shape, a in [
+                ("array", h5py.h5t.IEEE_F32LE, (2, 3), np.arange(24, dtype="<f4") / 4),
+                ("array_be", h5py.h5t.STD_I16BE, (2,), np.arange(6, dtype="<i2") - 3)]:
+            n = a.size // int(np.prod(shape))
+            d = created(f, name, h5py.h5t.array_create(base, shape), (n,))
+            le = h5py.h5t.IEEE_F32LE if a.dtype == np.dtype("<f4") else h5py.h5t.STD_I16LE
+            d.write(h5py.h5s.ALL, h5py.h5s.ALL, a.reshape((n,) + shape),
+                    mtype=h5py.h5t.array_create(le, shape))
+        bits = created(f, "bitfield", h5py.h5t.STD_B16BE, (3,))
+        bits.write(h5py.h5s.ALL, h5py.h5s.ALL, np.array([1, 256, 0xABCD], dtype="<u2"),
+                   mtype=h5py.h5t.STD_B16LE)
+        a = f["f8"].attrs
+        a["scale"] = np.float64(0.25)
+        a["bands"] = np.array([3, 1, 4, 1], dtype="<i4")
+        a["unit"] = np.bytes_(b"nJy")
+        a["name"] = "flux"
+        # A name in UTF-8, which libhdf5's earliest format stores in an
+        # attribute message of version 1, as any other.
+        a["λ"] = np.float32(1.5)
+        # An attribute created with its name's encoding set to UTF-8, which
+        # libhdf5 stores in an attribute message of version 3.
+        lib = libhdf5()
+        lib.H5Acreate2.restype = ctypes.c_int64
+        lib.H5Pcreate.restype = ctypes.c_int64
+        acpl = lib.H5Pcreate(ctypes.c_int64.in_dll(lib, "H5P_CLS_ATTRIBUTE_CREATE_ID_g"))
+        assert acpl >= 0
+        assert lib.H5Pset_char_encoding(ctypes.c_int64(acpl), h5py.h5t.CSET_UTF8) >= 0
+        scalar = h5py.h5s.create(h5py.h5s.SCALAR)
+        i32 = h5py.h5t.STD_I32LE
+        target = f["i1"]
+        aid = lib.H5Acreate2(ctypes.c_int64(target.id.id), "ν".encode(), ctypes.c_int64(i32.id),
+                             ctypes.c_int64(scalar.id), ctypes.c_int64(acpl), ctypes.c_int64(0))
+        assert aid >= 0
+        value = np.array(7, dtype="<i4")
+        assert lib.H5Awrite(ctypes.c_int64(aid), ctypes.c_int64(i32.id),
+                            value.ctypes.data_as(ctypes.c_void_p)) >= 0
+        assert lib.H5Aclose(ctypes.c_int64(aid)) >= 0
+        assert lib.H5Pclose(ctypes.c_int64(acpl)) >= 0
+        f.flush()
+        assert [d[0] for k, d in messages("hdf5_types.h5", address(f["i1"])) if k == 0x0C] == [3]
+        # The attributes take the header past its first block, into
+        # continuation blocks.
+        f.flush()
+        assert any(k == 0x10 for k, _ in messages("hdf5_types.h5", address(f["f8"])))
+    with h5py.File("hdf5_types.h5") as f:
+        assert f["array"].dtype.subdtype == (np.dtype("<f4"), (2, 3))
+        expected("hdf5_types", f)
+
+    # Datasets nx.io refuses when read, beside one it reads.
+    import shutil
+    with h5py.File("hdf5_refused.h5", "w") as f:
+        f["ok"] = np.arange(3, dtype="<f4")
+        f["vlen_string"] = ["a", "bc"]
+        f.create_dataset("vlen_ints", data=np.array([np.arange(2), np.arange(3)], dtype=object),
+                         dtype=h5py.vlen_dtype("<i4"))
+        f["reference"] = np.array([f["ok"].ref], dtype=h5py.ref_dtype)
+        f["type"] = np.dtype("<f4")
+        f.create_dataset("committed", data=np.arange(2, dtype="<f4"), dtype=f["type"])
+        f.create_dataset("scaleoffset", data=np.arange(16, dtype="<i4"), chunks=(8,),
+                         scaleoffset=0)
+        f.create_dataset("external", data=np.arange(4, dtype="<i4"),
+                         external=[("hdf5_refused.bin", 0, 16)])
+        f["null"] = h5py.Empty("<f4")
+        dcpl = h5py.h5p.create(h5py.h5p.DATASET_CREATE)
+        dcpl.set_obj_track_times(False)
+        dcpl.set_chunk((4,))
+        dcpl.set_deflate(1)
+        dcpl.set_filter(32000, 1, ())
+        two = h5py.h5d.create(f.id, b"two_compressors", h5py.h5t.STD_I32LE,
+                              h5py.h5s.create_simple((8,)), dcpl=dcpl)
+        two.write(h5py.h5s.ALL, h5py.h5s.ALL, np.arange(8, dtype="<i4"))
+    os.remove("hdf5_refused.bin")
+
+    # Links: hard, soft, absolute and relative, dangling and in a cycle,
+    # in a group stored as symbol tables and in one that tracks its links'
+    # creation order, which libhdf5 stores as link messages in a version-2
+    # object header. Its npz names each dataset by the least of its paths,
+    # comparing names one by one: /a/r, a relative soft link, is less than
+    # /a/x, which is less than /a-; /0 is less than /c/e.
+    with h5py.File("hdf5_links.h5", "w") as f:
+        f.attrs["title"] = np.bytes_(b"raven")
+        a = f.create_group("a")
+        a.attrs["n"] = np.int32(3)
+        a["x"] = np.array([1, 2], dtype="i1")
+        f["a-"] = a["x"]
+        f["s"] = h5py.SoftLink("/a/x")
+        a["r"] = h5py.SoftLink("x")
+        c = f.create_group("c")
+        c["e"] = np.array([3.5], dtype="<f8")
+        f["0"] = h5py.SoftLink("/c/e")
+        f["t"] = h5py.SoftLink("/c")
+        f["dangling"] = h5py.SoftLink("/nowhere")
+        f["loop1"] = h5py.SoftLink("/loop2")
+        f["loop2"] = h5py.SoftLink("/loop1")
+        o = f.create_group("ordered", track_order=True)
+        o.attrs["k"] = np.int16(-4)
+        o["z"] = np.arange(3, dtype="<i2")
+        o["y"] = np.arange(2, dtype="<u4")
+        o["rel"] = h5py.SoftLink("sub/w")
+        o["up"] = h5py.SoftLink("/a/x")
+        o.create_group("sub")["w"] = np.float32(0.25)
+        np.savez("hdf5_links.npz", **{
+            "0": f["c/e"][()], "a/r": f["a/x"][()], "ordered/rel": f["ordered/sub/w"][()],
+            "ordered/y": f["ordered/y"][()], "ordered/z": f["ordered/z"][()]})
+    assert open("hdf5_links.h5", "rb").read().count(b"OHDR") >= 1
+
+    # Small B-tree K values, so that a group's B-tree and a chunk B-tree
+    # each hold more than one level, in superblock version 1, which states
+    # the chunk K, with addresses and lengths of 4 bytes.
+    with earliest("hdf5_small_k.h5", istore=2, sym=(2, 2), sizes=(4, 4)) as f:
+        g = f.create_group("many")
+        for i in range(40):
+            g["d%02d" % i] = np.int16(i)
+        f.create_dataset("chunked", data=np.arange(100, dtype="<i4") * 3, chunks=(2,))
+        f["contiguous"] = np.arange(6, dtype="<f8").reshape(2, 3)
+        f["contiguous"].attrs["b"] = np.uint16(9)
+    b = open("hdf5_small_k.h5", "rb").read()
+    assert b[8] == 1 and b[13] == 4 and b[14] == 4
+    for kind in (0, 1):
+        assert re.search(re.escape(b"TREE") + bytes([kind]) + b"[\x01-\xff]", b), kind
+    with h5py.File("hdf5_small_k.h5") as f:
+        expected("hdf5_small_k", f)
+        chunk_ranges("hdf5_small_k", f)
+
+    # Damaged files: a shuffle filter of elements of no byte, and chunks
+    # whose bytes pass any integer.
+    with h5py.File("hdf5_damaged.h5", "w") as f:
+        f.create_dataset("s", data=np.arange(8, dtype="<i4"), chunks=(4,), shuffle=True)
+        f.create_dataset("h", data=np.zeros((2, 2), dtype="V2048"), chunks=(2, 2))
+    data = bytearray(open("hdf5_damaged.h5", "rb").read())
+    # The shuffle filter's description in a version-1 pipeline: its name,
+    # then its one client value, the element size.
+    i = data.index(b"shuffle\x00")
+    assert data.count(b"shuffle\x00") == 1 and data[i + 8:i + 12] == struct.pack("<I", 4)
+    data[i + 8:i + 12] = struct.pack("<I", 0)
+    # The chunk dimensions of a version-3 layout message, the element's
+    # bytes last.
+    layout = re.compile(re.escape(b"\x03\x02\x03") + b".{8}" + re.escape(struct.pack("<3I", 2, 2, 2048)),
+                        re.S)
+    found = list(layout.finditer(data))
+    assert len(found) == 1
+    at = found[0].start() + 11
+    # Under 2^52 elements, as many as an array may hold, whose 2048 bytes
+    # each pass 2^62.
+    data[at:at + 8] = struct.pack("<2I", 0xFFFFFFFF, 0x100000)
+    open("hdf5_damaged.h5", "wb").write(bytes(data))
+
+    # Files nx.io refuses at load.
+    with h5py.File("hdf5_latest.h5", "w", libver="latest") as f:
+        f["x"] = np.arange(3)
+    # An external link turns its group's symbol table into link messages.
+    with h5py.File("hdf5_extlink.h5", "w") as f:
+        f.create_group("g")["e"] = h5py.ExternalLink("other.h5", "/x")
+    with h5py.File("hdf5_userblock.h5", "w", userblock_size=512) as f:
+        f["x"] = np.arange(3)
+
+
 SUPPORT = Path(__file__).resolve().parent.parent / "support"
 
 
@@ -749,6 +1119,7 @@ def generate():
     image_fixtures()
     pytorch_fixtures()
     tiff_fixtures()
+    hdf5_fixtures()
 
 
 def main():

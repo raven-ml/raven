@@ -248,11 +248,19 @@ let load_tiff path =
 
 let save_tiff = Tiff.save
 
+(* HDF5 *)
+
+module Hdf5 = Hdf5
+
+let load_hdf5 path =
+  Fail.file path @@ fun () -> Hdf5.read path (Storage.open_file path)
+
 (* Partial files *)
 
 module Partial = Partial
 
 let decode_tiff = Tiff.decode
+let decode_hdf5 = Hdf5.decode
 
 (* PyTorch *)
 

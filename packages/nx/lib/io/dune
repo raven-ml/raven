@@ -17,7 +17,8 @@
   pickle
   pytorch
   partial
-  tiff)
+  tiff
+  hdf5)
  (libraries nx nx_array rig rig.disk unix lz)
  (foreign_stubs
   (language c)
