@@ -57,8 +57,10 @@
    [launch] runs assemblies whose pieces' stores, of one state, run as one
    launch, on the host and on the first CUDA GPU: 64 alike pieces of 64 rows
    of [2^x], and 16 products of a [64; 1024] matrix and a vector, each piece
-   a reduce. [launch/lower-256] lowers, for the host, the launch of 256 alike
-   pieces up to its instructions, the compile work that grows with the
+   a reduce. [launch/cuda/compile-256] runs NVRTC, past its cache, on the
+   source of the program that 256 alike such pieces run as, alike launches
+   of CUDA's most members. [launch/lower-256] lowers, for the host, the launch of 256
+   alike pieces up to its instructions, the compile work that grows with the
    pieces. *)
 
 open Tolk
@@ -622,12 +624,50 @@ let launch_kernel n =
   | Some e -> Ops.body e
   | None -> failwith "bench: no launch"
 
+(* The source text of [prg], a program. *)
+let source prg =
+  List.find_map
+    (fun u ->
+      match (Ops.op u, Ops.arg u) with
+      | Source, String t -> Some t
+      | _ -> None)
+    (Ops.src prg)
+
+(* The longest program of the schedule of 256 alike pieces compiled for [d],
+   compiled again by [d]'s compiler past its cache: NVRTC's time grows with
+   the call sites of a launch, which [Renderer.t.launch_members] bounds, and
+   the pieces run as alike launches, one program. A process makes a program
+   once, so each call compiles the source text alone. *)
+let cold_launches d =
+  Thumper.bench_with_setup
+    ~setup:(fun () ->
+      let d = d () in
+      let linear, _ =
+        Schedule.create_linear_with_vars ~cores:Cores.host
+          (assembly "LAUNCH" ~n:256 ~width:64 ~k:1)
+      in
+      let compiled =
+        Realize.compile_linear
+          ~targets:(fun _ -> Tolk_engine.target d)
+          linear
+      in
+      let texts =
+        List.filter_map
+          (fun c -> if Ops.op c = Call then source (Ops.nth c 0) else None)
+          (Ops.src compiled)
+      in
+      let longest a b = if String.length b > String.length a then b else a in
+      ((Tolk_engine.renderer d).compiler, List.fold_left longest "" texts))
+    "compile-256"
+    (fun (compiler, text) -> Renderer.Compiler.compile compiler text)
+
 let launch () =
   Thumper.group "launch"
     [
       Thumper.group "host" (launch_rows (fun () -> Rig.host));
       Thumper.group "cuda" ~metrics:[ Thumper.Metric.wall_time ]
-        (if cuda_opens () then launch_rows cuda else []);
+        (if cuda_opens () then launch_rows cuda @ [ cold_launches cuda ]
+         else []);
       Thumper.bench_with_setup
         ~setup:(fun () -> launch_kernel 256)
         "lower-256"

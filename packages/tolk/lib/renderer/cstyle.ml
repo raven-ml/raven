@@ -2763,9 +2763,12 @@ let cuda_renderer ~sync compiler (target : Helpers.Target.t) =
   let units, in_flight =
     if ver = 89 then (sm89_units, sm89_in_flight) else (0, 0)
   in
-  (* NVRTC's time a call site of a launch falls to its least at 64 members
-     (0.064 s, 1.0 ms a member, on fudge with CUDA 13) and grows past them:
-     96 members 1.4 ms a member, 128 1.9 ms, 256 4.5 ms. *)
+  (* A launch of 64 members runs fastest, and NVRTC's time a member, least
+     at 16 to 32, grows steeply past 64. On fudge with CUDA 13, 256 alike
+     pieces run in 40, 31, 25-26, 27 and 33 us at caps of 16, 32, 64, 128
+     and 256 members, and NVRTC takes 1.8, 1.8-1.9, 2.0, 3.3 and 6.8-7.0 ms
+     a member of their launch's program (tolk's bench rows
+     [launch/cuda/compile-256] and [launch/cuda/alike-64]). *)
   (* NVRTC compiles without --ftz, and PTX's float multiplies keep
      subnormals ("By default, subnormal numbers are supported", PTX ISA
      §9.7.4.4, of half precision and bfloat16 too). On an RTX 5000 Ada,

@@ -90,8 +90,9 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - Metal's renderer emits no launch bound; its `local_threads_max` of 1024
   is a maximum a pipeline may refuse, and Mac2's AMD GPUs may run 64-wide
   SIMD groups, which `simd_threads` does not state
-- D404's launch member caps, NVRTC's 64 and Metal's 40, name no fudge
-  measurement, which the ledger's header asks of a speed measured elsewhere
+- D404's Metal launch member cap of 40 rests on an M1 Max, and no machine
+  a bench may run on holds a Metal device, so the ledger's (d) cannot be met
+  for it: admit a Mac row for Metal or mark that part "Reason: none"
 - `beam_search`'s disk key names no device part, so a search timed on one
   part serves every other part of its target; tinygrad keys by device
 - `Heuristic.reused` and `upcast_more`'s `reuses` count loads after the

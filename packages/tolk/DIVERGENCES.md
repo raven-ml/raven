@@ -7604,8 +7604,9 @@ reason and its pins.
     members of its kernel, so that every thread reaches each barrier of the
     member it runs (D285); Metal declares workgroup memory only in a kernel
     function, so there such a member runs alone (`Renderer.t.launch_locals`).
-    A launch holds at most `Renderer.t.launch_members` members (CUDA's 64 and
-    Metal's 40, the compiler's time a member rising past each) and
+    A launch holds at most `Renderer.t.launch_members` members (CUDA's 64,
+    where a launch runs fastest and past which NVRTC's time a member rises
+    steeply, and Metal's 40, past which its compiler's rises) and
     `Renderer.t.launch_args` arguments (CUDA's 512, the 4 KiB of parameters a
     kernel takes), and with `MAX_KERNEL_BUFFERS` at `n` above 0 at most `n`
     buffers. Every subset of a launch is a launch, so splitting one is always
@@ -7629,9 +7630,12 @@ reason and its pins.
 - **Reason:** (d). On CUDA a launch costs about 1.3-2 µs, so a kernel's calls
   are its cost: on fudge's RTX 5000 Ada 16 pieces concatenated along axis 1
   under `Rune.jit` run as one launch, a median 7.2 µs a call, against 29-33
-  with rune's mark removed, with the same bits. The member caps: NVRTC's time
-  a member falls to its least at 64 members and grows past them; on an M1 Max
-  Metal's time a member of one or two workgroups is least at 40 members and
+  with rune's mark removed, with the same bits. The member caps: on fudge,
+  256 alike pieces of 64 by 64 run fastest at CUDA's cap of 64, 25-26 µs a
+  call, and NVRTC's time a member grows past it, 3.3 ms at 128 against 2.0;
+  `launch/cuda/compile-256` and `launch/cuda/alike-64` pin it, their
+  baselines at the scheduled re-record. On an M1 Max, which no bench may
+  run on, Metal's time a member of one or two workgroups is least at 40 members and
   grows past them, and 878 such members did not build in 4 minutes. In a
   loop's body, (b) and (d): rune's remat'd scan steps and NUTS. A remat's
   recompute reads only its step's arguments, so a call that joins any earlier

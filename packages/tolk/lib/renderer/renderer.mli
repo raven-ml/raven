@@ -301,9 +301,9 @@ type t = private {
       (** The rewrites the target needs after every other. *)
   launch_members : int;
       (** The most members a launch's program holds ({!Shape.launch}): a
-          launch calls each member on its own, and the target's compiler
-          takes longer for each past this count. A larger launch runs as
-          several. *)
+          launch calls each member on its own, and past this count it runs
+          no faster or the target's compiler takes longer for each member. A
+          larger launch runs as several. *)
   launch_args : int;
       (** The most arguments a launch passes: on CUDA, the 4 KiB of parameters
           a kernel takes, 512 of 8 bytes. A launch of more runs as several. *)
@@ -390,10 +390,8 @@ val v :
       [16384], [stream_threads] [32768] and [local_workgroups] [256],
       [sm_89]'s, which every target takes until its own are measured;
     - [units] and [in_flight] are [0];
-    - [launch_members] is [max_int], until a target's compiler is measured:
-      the time a member NVRTC and Metal take to build a launch is least at
-      64 and 40 members, which CUDA's and Metal's renderers hold; HIP's
-      compiler is not measured;
+    - [launch_members] is [max_int]; CUDA's and Metal's renderers bound
+      it;
     - [launch_args] is [max_int];
     - [launch_locals] is [true];
     - [packed_args] is [false];
