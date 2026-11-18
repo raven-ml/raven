@@ -371,7 +371,7 @@ let read file =
   let file_len = B.length file in
   if file_len < min_header then
     Fail.failf "%d bytes is too short for a GGUF file" file_len;
-  let pages = Storage.pages file in
+  let pages = Storage.whole file in
   let header =
     Storage.read pages @@ fun bytes ->
     let c = { bytes; pos = 0 } in

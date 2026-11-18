@@ -1124,7 +1124,7 @@ let load_zip file =
   value l ~records:(fun key -> read ("data/" ^ key)) ~swap d
 
 let load_legacy file =
-  let pages = Storage.pages file in
+  let pages = Storage.whole file in
   let next pos what =
     let d = decode ~ctx:(Printf.sprintf "the %s's pickle" what) pages ~pos in
     (d, d.stop)

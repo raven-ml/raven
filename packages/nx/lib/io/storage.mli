@@ -32,9 +32,17 @@ val string : Rig.Buffer.t -> pos:int -> int -> string
 
     Raises [Failure] if they do not lie in [b]. *)
 
-val pages : Rig.Buffer.t -> Rig.Buffer.t
-(** [pages file] is [file]'s bytes on the host. They are the file's pages,
-    mapped into the host, or a copy where the system cannot map the file. *)
+val pages : Rig.Buffer.t -> first:int -> length:int -> Rig.Buffer.t
+(** [pages file ~first ~length] is the [length] bytes of [file] from byte
+    [first], on the host. They are the file's pages, mapped into the host, or
+    a copy of those bytes alone where the system cannot map the file, so a
+    read of a range of such a file reads that range.
+
+    Raises [Invalid_argument] as {!Rig.Buffer.view} does if the bytes do not
+    lie in [file]. *)
+
+val whole : Rig.Buffer.t -> Rig.Buffer.t
+(** [whole file] is [pages file] of all its bytes. *)
 
 val read : Rig.Buffer.t -> (bytes -> 'a) -> 'a
 (** [read b f] is [f] of [b]'s bytes, [b] on the host ({!Rig.Buffer.read}). *)

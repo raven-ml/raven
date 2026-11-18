@@ -29,16 +29,18 @@ let string b ~pos n =
   B.blit_to_bytes b pos s 0 n;
   Bytes.unsafe_to_string s
 
-(* The host's borrow of the file's pages, or, where the system cannot map the
-   file, a copy of its bytes. *)
-let pages file =
-  match B.borrow Rig.host file with
+(* The host's borrow of the range's pages, or, where the system cannot map
+   the file, a copy of the range's bytes alone. *)
+let pages file ~first ~length =
+  let range = B.view file ~first ~length in
+  match B.borrow Rig.host range with
   | Some h -> h
   | None ->
-      let h = B.create Rig.host (B.length file) in
-      B.copy ~src:file ~dst:h;
+      let h = B.create Rig.host length in
+      B.copy ~src:range ~dst:h;
       h
 
+let whole file = pages file ~first:0 ~length:(B.length file)
 let read b f = B.read b Bigarray.int8_unsigned f
 
 (* Loading *)

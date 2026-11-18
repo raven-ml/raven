@@ -175,7 +175,7 @@ let encode_txt ?(sep = " ") x = Txt.encode ~sep x
    may write, as an inflated npz entry's are. *)
 let load_image path =
   Fail.file path @@ fun () ->
-  Storage.read (Storage.pages (Storage.open_file path)) @@ fun src ->
+  Storage.read (Storage.whole (Storage.open_file path)) @@ fun src ->
   let h, w, c = Image.probe src in
   let write = Image.decode src in
   let pixels = Rig.Buffer.create Rig.host (h * w * c) in

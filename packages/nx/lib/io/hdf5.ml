@@ -1132,16 +1132,15 @@ let copy ~src ~origin ~dims ~e ~lo ~hi dst ~start ~shape =
         Array1.blit (src !at span) (Array1.sub dst !out span))
   end
 
-(* [with_bytes source f] is [f bytes], [bytes at n] the bytes [at] to
-   [at + n - 1] of [source], which a partial file must hold: the file's
-   pages, which the host borrows for the extent of [f], or the partial
+(* [with_bytes source ~first ~length f] is [f bytes], [bytes] the [length]
+   bytes of [source] from byte [first], which a partial file must hold:
+   their pages in the file, which the host borrows for the extent of [f], or
+   a copy of them alone where the system cannot map the file, or the partial
    file's own. *)
-let with_bytes source f =
+let with_bytes source ~first ~length f =
   match source with
-  | File b ->
-      Storage.read (Storage.pages b) (fun file ->
-          f (fun at n -> Array1.sub file at n))
-  | Part p -> f (fun at n -> Partial.bytes p ~pos:at n)
+  | File b -> Storage.read (Storage.pages b ~first ~length) f
+  | Part p -> f (Partial.bytes p ~pos:first length)
 
 (* Chunk B-trees (FMT3, III.A.1, node type 1) *)
 
@@ -1252,34 +1251,48 @@ let assemble (t : t) p ~start ~shape ~records =
               ~e ~lo:start ~hi dst ~start ~shape
         | Contiguous None ->
             fill dst ~origin:(Array.make r 0) ~dims:p.shape ~lo:start ~hi
-        | Contiguous (Some at) ->
-            with_bytes t.source (fun bytes ->
-                copy
-                  ~src:(fun i n -> bytes (at + i) n)
-                  ~origin:(Array.make r 0) ~dims:p.shape ~e ~lo:start ~hi dst
-                  ~start ~shape)
+        | Contiguous (Some at) -> (
+            let from src =
+              copy ~src ~origin:(Array.make r 0) ~dims:p.shape ~e ~lo:start ~hi
+                dst ~start ~shape
+            in
+            match t.source with
+            | Part q -> from (fun i n -> Partial.bytes q ~pos:(at + i) n)
+            | File _ ->
+                (* The box's bytes in the file, from its first element's to
+                   past its last's. *)
+                let cs = strides p.shape e in
+                let offset idx =
+                  Array.fold_left ( + ) 0
+                    (Array.mapi (fun a v -> v * cs.(a)) idx)
+                in
+                let lo = offset start in
+                let length = offset (Array.map (fun h -> h - 1) hi) + e - lo in
+                with_bytes t.source ~first:(at + lo) ~length (fun bytes ->
+                    from (fun i n -> Array1.sub bytes (i - lo) n)))
         | Chunked (_, dims) ->
             let bytes_of = Array.fold_left ( * ) e dims in
-            with_bytes t.source (fun bytes ->
-                List.iter
-                  (fun (origin, record) ->
-                    let lo = Array.map2 Int.max origin start in
-                    let top = Array.map2 (fun o d -> o + d) origin dims in
-                    let hi = Array.map2 Int.min top hi in
-                    match record with
-                    | None -> fill dst ~origin ~dims ~lo ~hi
-                    | Some c ->
-                        let chunk =
-                          try
-                            unfilter ~filters:p.filters ~mask:c.mask
-                              ~bytes:bytes_of (bytes c.at c.stored) c.stored
-                          with Failure m ->
-                            Fail.failf "chunk at %s, byte %d: %s"
-                              (Fail.pp_shape origin) c.at m
-                        in
-                        copy ~src:(Array1.sub chunk) ~origin ~dims ~e ~lo ~hi
-                          dst ~start ~shape)
-                  records));
+            List.iter
+              (fun (origin, record) ->
+                let lo = Array.map2 Int.max origin start in
+                let top = Array.map2 (fun o d -> o + d) origin dims in
+                let hi = Array.map2 Int.min top hi in
+                match record with
+                | None -> fill dst ~origin ~dims ~lo ~hi
+                | Some c ->
+                    with_bytes t.source ~first:c.at ~length:c.stored
+                    @@ fun stored ->
+                    let chunk =
+                      try
+                        unfilter ~filters:p.filters ~mask:c.mask
+                          ~bytes:bytes_of stored c.stored
+                      with Failure m ->
+                        Fail.failf "chunk at %s, byte %d: %s"
+                          (Fail.pp_shape origin) c.at m
+                    in
+                    copy ~src:(Array1.sub chunk) ~origin ~dims ~e ~lo ~hi
+                      dst ~start ~shape)
+              records);
   output p.e shape buf
 
 (* The offsets of the chunks of [dims] a box covers, in C order. *)

@@ -362,7 +362,7 @@ let validate_entries data ~central_offset entries =
   List.map (fun (record, (data, _)) -> { record; data }) located
 
 let open_in file =
-  let file = Storage.pages file in
+  let file = Storage.whole file in
   Storage.read file @@ fun data ->
   let eocd = find_eocd data in
   (* A ZIP64 end record's locator lies just before the end record. Without one,

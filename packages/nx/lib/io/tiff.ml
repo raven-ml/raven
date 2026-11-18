@@ -658,16 +658,15 @@ let contiguous p =
   && Array.for_all Fun.id
        (Array.mapi (fun k off -> off = p.offsets.(0) + (k * stride)) p.offsets)
 
-(* [with_chunks source f] is [f bytes], [bytes at n] the bytes [at] to
-   [at + n - 1] of [source], which a partial file must hold: the file's
-   pages, which the host borrows for the extent of [f], or the partial
-   file's own. *)
-let with_chunks source f =
+(* [with_chunk source at n f] is [f bytes], [bytes] the bytes [at] to
+   [at + n - 1] of [source], which a partial file must hold: their pages in
+   the file, which the host borrows for the extent of [f], or a copy of
+   them alone where the system cannot map the file, or the partial file's
+   own. *)
+let with_chunk source at n f =
   match source with
-  | File b ->
-      Storage.read (Storage.pages b) (fun file ->
-          f (fun at n -> Array1.sub file at n))
-  | Part p -> f (fun at n -> Partial.bytes p ~pos:at n)
+  | File b -> Storage.read (Storage.pages b ~first:at ~length:n) f
+  | Part p -> f (Partial.bytes p ~pos:at n)
 
 (* Along a side of [side] pixels a chunk, the [n] pixels from pixel [at]
    lie in [over side at n] chunks from chunk [first side at]. A window
@@ -698,44 +697,43 @@ let decode_window (t : t) p ~row ~col ~rows ~cols =
   let largest = if down * across = 0 then 0 else decoded p 0 in
   let buf = create largest and scratch = create crow in
   B.write out int8_unsigned (fun dst ->
-      with_chunks t.source (fun bytes ->
-          for i = 0 to (down * across) - 1 do
-            let k = chunk p ~r0 ~c0 ~across i in
-            let r, c, krows, kcols = place p k in
-            let src = bytes p.offsets.(k) p.counts.(k) in
-            (* The chunk's rows [y0 - r] to [y1 - r - 1] and columns
-               [x0 - c] to [x1 - c - 1] lie in the window. *)
-            let y0 = Int.max r row and x0 = Int.max c col in
-            let y1 = Int.min (r + krows) (row + rows)
-            and x1 = Int.min (c + kcols) (col + cols) in
-            let first = (y0 - r) * crow and n = y1 - y0 in
-            let span = (x1 - x0) * p.spp in
-            (* An uncompressed chunk of packed samples or in the host's
-               byte order is read in place; any other is decoded or copied
-               into [buf] first. *)
-            let data =
-              if p.codec <> 1 then (
-                inflate p k src buf;
-                buf)
-              else if swapped then (
-                Array1.blit
-                  (Array1.sub src first (n * crow))
-                  (Array1.sub buf first (n * crow));
-                buf)
-              else src
-            in
-            let at = ((y0 - row) * orow) + ((x0 - col) * px) in
-            if packed then
-              unpack data first crow ((x0 - c) * p.spp) dst at orow n span
-                p.bits p.bytes
-            else begin
-              if data == buf then
-                unpredict buf first scratch n (p.cols * p.spp) p.spp p.bytes
-                  p.predictor t.big;
-              copy data (first + ((x0 - c) * px)) crow dst at orow n
-                (span * p.bytes)
-            end
-          done));
+      for i = 0 to (down * across) - 1 do
+        let k = chunk p ~r0 ~c0 ~across i in
+        let r, c, krows, kcols = place p k in
+        with_chunk t.source p.offsets.(k) p.counts.(k) @@ fun src ->
+        (* The chunk's rows [y0 - r] to [y1 - r - 1] and columns
+           [x0 - c] to [x1 - c - 1] lie in the window. *)
+        let y0 = Int.max r row and x0 = Int.max c col in
+        let y1 = Int.min (r + krows) (row + rows)
+        and x1 = Int.min (c + kcols) (col + cols) in
+        let first = (y0 - r) * crow and n = y1 - y0 in
+        let span = (x1 - x0) * p.spp in
+        (* An uncompressed chunk of packed samples or in the host's
+           byte order is read in place; any other is decoded or copied
+           into [buf] first. *)
+        let data =
+          if p.codec <> 1 then (
+            inflate p k src buf;
+            buf)
+          else if swapped then (
+            Array1.blit
+              (Array1.sub src first (n * crow))
+              (Array1.sub buf first (n * crow));
+            buf)
+          else src
+        in
+        let at = ((y0 - row) * orow) + ((x0 - col) * px) in
+        if packed then
+          unpack data first crow ((x0 - c) * p.spp) dst at orow n span
+            p.bits p.bytes
+        else begin
+          if data == buf then
+            unpredict buf first scratch n (p.cols * p.spp) p.spp p.bytes
+              p.predictor t.big;
+          copy data (first + ((x0 - c) * px)) crow dst at orow n
+            (span * p.bytes)
+        end
+      done);
   let layout = L.contiguous (Iarray.of_array [| rows; cols; p.spp |]) in
   Nx.P (Nx.Repr.unsafe_of_array Nx.Host.v (A.v dt layout out))
 

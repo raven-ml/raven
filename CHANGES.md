@@ -3376,6 +3376,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- A TIFF or HDF5 window of a file the system cannot map copies the bytes it
+  reads, where it copied the whole file for each read.
 - `Nx.conv` with one input channel a group and several output channels is
   a contraction: 32 images of 28 x 28 into 8 channels take 0.15 ms on two
   fudge cores where they took 2.9, and their weight gradient under `Rune` 0.3
