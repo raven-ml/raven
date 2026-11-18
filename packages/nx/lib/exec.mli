@@ -31,10 +31,11 @@
     computes no case on the kernels' behalf and moves no data between
     devices on its own. A set without kernels raises [Invalid_argument]
     naming [by] before any kernel runs, but for a map of no loads, a
-    creation, which the host's kernels compute on the device: into its
-    memory where the host addresses it, else in slabs of at most 32 MiB
-    each copied there, so the host holds no more than a slab and its
-    staging. A draw without [~key] in a scope at a host key is one: its
+    creation, made on the device: one whose bytes are one byte repeated is
+    set there ({!Rig.Buffer.submit_fill}), and the host's kernels compute
+    any other into the device's memory where the host addresses it, else in
+    slabs of at most 32 MiB each copied there, so the host holds no more
+    than a slab and its staging. A draw without [~key] in a scope at a host key is one: its
     key's words are in its program ({!Rng.with_key}).
 
     Over devices of one architecture, a result's bits are those of the same

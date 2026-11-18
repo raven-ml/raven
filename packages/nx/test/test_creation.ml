@@ -802,6 +802,13 @@ let equal_on_host ~msg want x =
   equal ~msg (array bool) [| true |]
     (Nx.to_array (Nx.array_equal want (Nx.place Nx.Host.on x)))
 
+(* The last byte of [x]'s one array. *)
+let last_byte x =
+  let b = Nx_array.buffer (Iarray.get (Nx.Repr.shards ~by:"test" x) 0) in
+  let last = Bytes.create 1 in
+  Rig.Buffer.blit_to_bytes b (Rig.Buffer.length b - 1) last 0 1;
+  Char.code (Bytes.get last 0)
+
 (* A creation of more than a slab off the host, 32 MiB a slab, holds its
    host form's bits: slabs that cut rows of every axis, and float4 runs that
    start inside a byte and end on an odd count, whose last byte keeps its
@@ -819,10 +826,7 @@ let test_bare_slabs () =
   equal_on_host ~msg:"uniform_at float4"
     (draw (fun () -> Nx.Rng.uniform f4 s))
     y;
-  let b = Nx_array.buffer (Iarray.get (Nx.Repr.shards ~by:"test" y) 0) in
-  let last = Bytes.create 1 in
-  Rig.Buffer.blit_to_bytes b (Rig.Buffer.length b - 1) last 0 1;
-  equal ~msg:"spare bits" int 0 (Char.code (Bytes.get last 0) lsr 4)
+  equal ~msg:"spare bits" int 0 (last_byte y lsr 4)
 
 (* A creation larger than the host may hold lies on the device: off the host
    the host holds a slab and its staging, about 64 MiB, of a 128 MiB window,
@@ -839,6 +843,44 @@ let test_bare_budget () =
   let soft = Nx.Placement.device Bare.v (m 3) in
   let y = under_host_budget 0 (fun () -> Nx.arange_at soft Nx.int32 0 n 1) in
   equal_on_host ~msg:"software device" want y
+
+(* A creation whose bytes are all one byte sets them on the device, with no
+   host memory: under a host budget of no more than the host holds, each
+   holds its host form's elements, a sub-byte one's spare bits zero, and
+   float8's -0, the one byte 0x80, its own bits; while a value of other
+   bytes, computed on the host, raises: 1.5, and -0 of float32, float16 and
+   bfloat16, whose zero bytes are not all of them. *)
+let test_bare_fill () =
+  let p = Nx.Placement.device Bare.v off in
+  let made =
+    under_host_budget 0 (fun () ->
+        ( Nx.zeros_at p Nx.float32 [| 1000 |],
+          Nx.full_at p Nx.int32 [| 3; 5 |] (-1l),
+          Nx.ones_at p Nx.int8 [| 7 |],
+          Nx.full_at p Nx.int4 [| 7 |] (-3),
+          Nx.ones_at p Nx.bool [| 0 |],
+          Nx.full_at p Nx.float8_e4m3fn [| 5 |] (-0.) ))
+  in
+  let zeros, ones32, ones8, int4, empty, f8 = made in
+  same_as ~msg:"float8 -0" Nx.float8_e4m3fn
+    (Nx.place p (Nx.full Nx.float8_e4m3fn [| 5 |] (-0.)))
+    f8;
+  equal_on_host ~msg:"zeros" (Nx.zeros Nx.float32 [| 1000 |]) zeros;
+  equal_on_host ~msg:"int32 -1" (Nx.full Nx.int32 [| 3; 5 |] (-1l)) ones32;
+  equal_on_host ~msg:"int8 ones" (Nx.ones Nx.int8 [| 7 |]) ones8;
+  equal_on_host ~msg:"int4 -3" (Nx.full Nx.int4 [| 7 |] (-3)) int4;
+  equal ~msg:"int4 spare bits" int 0 (last_byte int4 lsr 4);
+  equal_on_host ~msg:"no element" (Nx.ones Nx.bool [| 0 |]) empty;
+  let raises msg dt v =
+    raises_match ~msg
+      (function Rig.Out_of_memory _ -> true | _ -> false)
+      (fun () ->
+        under_host_budget 0 (fun () -> ignore (Nx.full_at p dt [| 1000 |] v)))
+  in
+  raises "float32 1.5" Nx.float32 1.5;
+  raises "float32 -0" Nx.float32 (-0.);
+  raises "float16 -0" Nx.float16 (-0.);
+  raises "bfloat16 -0" Nx.bfloat16 (-0.)
 
 (* The operations an extent receives while [f] runs, each as its name and
    its count of operands: one of no operands computes, and the first that
@@ -1071,6 +1113,8 @@ let bare =
         test_bare_slabs;
       test "a creation larger than the host's budget lies on the device"
         test_bare_budget;
+      test "a creation of one repeated byte sets it on the device"
+        test_bare_fill;
       cases "an operation needing no element raises"
         ~id:(fun (Shortcut { name; _ }) -> name)
         shortcuts test_shortcut;

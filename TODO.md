@@ -180,14 +180,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   the exact powers of ten are measured at every float32. A `log2` given as
   two parts would derive the float64 bound, once a consumer needs log10
   bounded there. Found by the DD audit (S2)
-- `Nx.zeros_at` and `Nx.full_at` of a value whose bytes repeat one byte
-  (zeros, all-ones integers) are maps of no loads, so on a set without
-  kernels `Exec.created` fills them on the host and copies the window
-  (exec.ml:584-600), though rig can set the bytes on the device
-  (`Rig.Buffer.submit_fill`, rig.mli:1700) with no host memory and no
-  copy. Eager optimiser moments made at a GPU set outside a compiler pay a
-  host fill of their size and a copy of it to the device. Unmeasured.
-  Found by the DD design round (N3)
 - rune.mli:1403-1404 says that a value a compiled function captures on
   another device and places where the program computes "is copied there
   once per program". In a split program (values whole on each of several

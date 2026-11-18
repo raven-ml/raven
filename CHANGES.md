@@ -3345,6 +3345,12 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- An eager creation at a set without kernels whose bytes are one byte
+  repeated, such as `Nx.zeros_at`, `Nx.ones_at` of an integer, or any
+  `Nx.full_at` of a one-byte or sub-byte dtype, sets the bytes on the
+  device (`Rig.Buffer.submit_fill`), with no host memory and no copy. Eager
+  optimiser moments made at a GPU set outside a compiler no longer pay a
+  host fill of their size and its copy.
 - An eager creation at a set without kernels makes its value on the
   device. Off the host it computes slabs of at most 32 MiB on the host and
   copies each into place, where it held the whole window on the host before

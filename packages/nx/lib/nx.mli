@@ -342,7 +342,8 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
     elements come from numbers, is made on the devices of the placement the
     call names, its bits the host form's: the host computes it into a
     device's memory where it addresses it, else in slabs of at most 32 MiB
-    each copied there. Every operation other
+    each copied there, and a creation whose bytes are one byte repeated, as
+    a zero, sets them on the device. Every operation other
     than a creation raises on such a set where it makes elements, naming
     the {!place} onto a set with kernels or the compiler that would compute
     it, even where it needs no element of its operands, as

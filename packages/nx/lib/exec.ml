@@ -697,11 +697,52 @@ let slabs ~by kernels set op (dsts : A.any iarray) =
     s := e
   done
 
+(* Whether [b]'s bytes from [i] on are its first. *)
+let rec repeats b i =
+  i = String.length b || (b.[i] = b.[0] && repeats b (i + 1))
+
+(* The byte every byte of [op]'s one result holds, where [op] is a map of
+   one constant whose bits are one byte repeated, as zero and every value of
+   a byte or under one are: [Some c], [None] otherwise. *)
+let repeated : type r. r Value.prim -> char option = function
+  | Value.Map { prog; outs = [ dt ]; _ } when P.is_single prog -> (
+      match Iarray.get prog.nodes (Iarray.length prog.nodes - 1) with
+      | Const (_, b) ->
+          let bits = D.bits dt in
+          if bits < 8 then begin
+            let e = Char.code b.[0] land ((1 lsl bits) - 1) and c = ref 0 in
+            for i = 0 to (8 / bits) - 1 do
+              c := !c lor (e lsl (i * bits))
+            done;
+            Some (Char.chr !c)
+          end
+          else if repeats b 1 then Some b.[0]
+          else None
+      | _ -> None)
+  | _ -> None
+
+(* Sets [a]'s bytes to [c] where they hold whole elements, and a sub-byte
+   array's last byte to [c]'s elements there, its spare bits zero: on [a]'s
+   device, a fill dropped as nx.array drops one, since rig's stamps order
+   every later access of the memory after it. *)
+let set_bytes (A.Any a) c =
+  let b = A.buffer a and bits = D.bits (A.dtype a) in
+  let n = L.numel (A.layout a) in
+  let fill first length c =
+    let v = Rig.Buffer.view b ~first ~length in
+    ignore (Rig.Buffer.submit_fill v c : Rig.Point.t)
+  in
+  let whole = n * bits / 8 in
+  fill 0 whole c;
+  if whole < Rig.Buffer.length b then
+    fill whole 1 (Char.chr (Char.code c land ((1 lsl (n * bits mod 8)) - 1)))
+
 (* The creation [op], a map of no loads on device [p], whose set has no
    kernels: its elements come from numbers alone. Its results are made on
-   [p]'s device, and the host's kernels compute them: into their memory where
-   the host addresses it, else in {!slabs}. Its bits are the host form's, by
-   the window law. *)
+   [p]'s device. One whose bytes repeat one byte sets them there
+   ({!repeated}); otherwise the host's kernels compute them, into their
+   memory where the host addresses it, else in {!slabs}. Its bits are the
+   host form's, by the window law. *)
 let created : type r.
     by:string -> unit Devices.placement -> L.t array -> r Value.prim -> r =
  fun ~by p layouts op ->
@@ -710,15 +751,16 @@ let created : type r.
   let kernels = kernels_of ~by ~op:(Prim.name op) set in
   let r = Prim.results_at p layouts (fun k f -> alloc k f) op in
   let dsts = dsts op r in
-  if Rig.reaches Rig.host (rig_of p) then begin
-    let into k (f : _ Value.form) =
-      let a = A.expect f.dtype (Iarray.get dsts k) in
-      let a = Option.get (A.borrow Rig.host a) in
-      Value.Array { at = f.placement; a; dead = Value.Live }
-    in
-    on_device ~by kernels set (Prim.results_at host layouts into op) 0 op
-  end
-  else if L.numel layouts.(0) > 0 then slabs ~by kernels set op dsts;
+  (match repeated op with
+  | Some c -> set_bytes (Iarray.get dsts 0) c
+  | None when Rig.reaches Rig.host (rig_of p) ->
+      let into k (f : _ Value.form) =
+        let a = A.expect f.dtype (Iarray.get dsts k) in
+        let a = Option.get (A.borrow Rig.host a) in
+        Value.Array { at = f.placement; a; dead = Value.Live }
+      in
+      on_device ~by kernels set (Prim.results_at host layouts into op) 0 op
+  | None -> if L.numel layouts.(0) > 0 then slabs ~by kernels set op dsts);
   r
 
 let windows : type r d.
