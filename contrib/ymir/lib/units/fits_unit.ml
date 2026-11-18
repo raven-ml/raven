@@ -7,8 +7,6 @@
    prefixes of Table 5, products by a space, '*' or '.', division by '/',
    powers by '**', '^' or trailing digits, and a leading power of ten. *)
 
-open Ymir_units
-
 let strf = Printf.sprintf
 
 (* Vocabulary *)

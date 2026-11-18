@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** FITS unit strings: the implementation of {!Ymir_fits.Fits.Unit}. *)
+(** FITS unit strings: the implementation of {!Ymir_units.Fits_unit}. *)
 
-val vocabulary : Ymir_units.Vocabulary.t
-val parse : ?scope:string -> string -> (Ymir_units.Unit.t, string) result
-val print : Ymir_units.Unit.t -> (string, string) result
+val vocabulary : Vocabulary.t
+val parse : ?scope:string -> string -> (Unit.t, string) result
+val print : Unit.t -> (string, string) result

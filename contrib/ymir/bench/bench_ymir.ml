@@ -169,7 +169,7 @@ let observation hdus =
       text = (fun k -> Fits.Header.find Fits.Value.string k h);
     }
   in
-  let* wcs = Wcs.read ~at:Nx.Host.on Frame.icrs keywords in
+  let* wcs = Wcs.read ~at:Nx.Host.on (Transform.Sky Frame.icrs) keywords in
   let* bunit = Fits.Header.get Fits.Value.string "BUNIT" h in
   let* unit = Fits.Unit.parse bunit in
   let* pixar = Fits.Header.get Fits.Value.float "PIXAR_SR" h in

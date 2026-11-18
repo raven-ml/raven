@@ -4,9 +4,13 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- **Breaking:** `Wcs.read` takes the world it reads (`Wcs.read ~at (Sky f) kw`
+  for an image) and reads headers of any number of axes: a celestial pair with
+  linear axes such as `FREQ`, `WAVE` and `STOKES`. `Wcs.write` spells them.
 - `Grid`, `Region` and `Observation` take any number of axes. `Transform.split`
   and `Transform.both` build products, measured as their sides' product;
   `Observation.first` takes one side, as a cube's aperture spectrum.
+- `Fits.Unit` is `Ymir_units.Fits_unit`, so `Wcs` reads CUNIT with it.
 - `Direction.pairs ~within a b` cross-matches two catalogues on the host:
   every pair of rows within a closed radius, with its separation, in order.
   Nearest and reciprocal matching compose from it.

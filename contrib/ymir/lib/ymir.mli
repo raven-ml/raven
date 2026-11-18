@@ -1034,7 +1034,8 @@ module Transform : sig
       {!Unit.one}, intermediate and tangent-plane coordinates in an angle. *)
 
   (** The type for the kinds of point a transform maps: a plane's points,
-      directions in a frame, and pairs of two kinds. *)
+      directions in a frame, and pairs of two kinds.
+      {!Wcs.read} takes the kind it reads a header as. *)
   type (_, 'd) endpoint =
     | Planar : ('d plane, 'd) endpoint  (** Points in a plane. *)
     | Sky : 'f Frame.t -> (('f, 'd) Direction.t, 'd) endpoint
@@ -1959,10 +1960,55 @@ end
 
     Other systems and equinoxes are an [Error] naming what they need.
 
+    {b Axes.} A header of [n] axes, [WCSAXES] or else [NAXIS], reads as the
+    world the caller expects ({!Transform.endpoint}): [Sky f] reads a
+    celestial pair and [Planar] one linear axis, the linear axes in ascending
+    FITS order, and [Both (a, b)] reads [a]'s axes and [b]'s. A {e linear}
+    axis is any but a celestial or time axis whose CTYPE names no algorithm,
+    such as [FREQ], [WAVE], [VRAD] or [STOKES]: its world is
+    [CRVAL + CDELT · w] in CUNIT, for [w] its row of [PC · (p − CRPIX)]
+    (FITS WCS Paper I), and it reads as
+
+    {[
+    axes [| 0 |] ~origin:1 >> shift crpix
+    >> linear pc >> scale cdelt (* or: linear cd *)
+    >> inverse (shift crval)
+    ]}
+
+    CUNIT is read in FITS's unit syntax ({!Ymir_units.Fits_unit}). Absent,
+    it is the unit FITS WCS Paper III's Table 1 gives a spectral type, as
+    [Hz] for [FREQ], [m] for [WAVE] and [m s-1] for [VRAD], and 1 for any
+    other axis.
+    The spectral type, its rest frequency and its frame (SPECSYS) stay facts
+    of the header. The values hold in SPECSYS's frame strictly at the
+    reference point: where the spectral axis was sampled in another frame
+    (SSYSOBS), they hold elsewhere only to first order (FITS WCS Paper III,
+    §10.2).
+
+    Each side of [Both] reads its own axes' keywords, so a cube's celestial
+    side has the stages a header of its celestial keywords alone, renumbered,
+    gives. Where no PC or CD element joins two sides' axes, the header reads
+    as [split first >> both a b], [first] the first side's axes in tensor
+    order. Where one does, it reads as
+
+    {[
+    axes [| n - 1; ...; 0 |] ~origin:1 >> shift crpix >> linear m
+    >> split first >> both a b
+    ]}
+
+    with [m] PC, or CD with each CDELT 1 (FITS WCS Paper I, §2.1.2),
+    [first] in FITS order, and each side's stages from its CDELT on. Its
+    cells are not products, so {!Grid.measure} and {!Region} refuse them,
+    naming the linear stage.
+
     {b Scope.} The thirteen projections of {!Transform.code}, SIP and TPV are
     read. Other projections, distortion lookup tables, the fiducial offset
     [PVi_0], [PVi_m] on the longitude axis beyond [m = 1, ..., 4] outside
-    TPV, and a third WCS axis are an [Error] naming the keyword. *)
+    TPV, Paper III's spectral algorithms ([-F2W] and the other conversions,
+    [-LOG], [-TAB], [-GRI] and [-GRA]), time axes, SIP beside an element
+    between sides or a celestial pair other than axes 1 and 2, and a linear
+    axis that maps every pixel to CRVAL (CDELT 0, or its CD element 0 or
+    absent under CD) are an [Error] naming the keyword. *)
 module Wcs : sig
   type keywords = {
     float : string -> (float option, string) result;
@@ -2002,30 +2048,36 @@ module Wcs : sig
   val read :
     ?alt:char ->
     at:'d Nx.Placement.t ->
-    'f Frame.t ->
+    ('w, 'd) Transform.endpoint ->
     keywords ->
-    (('d Transform.plane, ('f, 'd) Direction.t, 'd) Transform.t, string) result
-  (** [read ~alt ~at f kw] is the map from 0-based pixel indices, in tensor
-      axis order, to directions in [f], from [kw]'s primary description or its
-      alternate [alt] (['A'] to ['Z']), its parameters at [at]. A celestial CUNIT is [deg], [arcmin],
-      [arcsec], [mas] or [rad]. It is an [Error] if [kw]'s frame is not [f],
-      as in
+    (('d Transform.plane, 'w, 'd) Transform.t, string) result
+  (** [read ~alt ~at w kw] is the map from 0-based pixel indices, in tensor
+      axis order, to the world [w], from [kw]'s primary description or its
+      alternate [alt] (['A'] to ['Z']), its parameters at [at]. A celestial
+      CUNIT is an angle in FITS's unit syntax. It is an [Error] if
+      [w] asks for more than one celestial pair, if [kw]'s axes are not the
+      ones [w] reads, as in
+      ["3 axes, 1 celestial pair and 1 linear axis; the caller expects 1
+       celestial pair"], if [kw]'s frame is not [w]'s, as in
       ["SCI: FK5 at equinox 2000.0; the caller expects icrs. Read with
        Frame.fk5_j2000."], if a keyword's value is outside what WCS allows,
       if LATPOLE is absent where it alone fixes the pole (see above), or as
-      [kw] is. Its own errors start with the header's [EXTNAME].
+      [kw] is. Its own errors start with the header's [EXTNAME] and name
+      keywords as [kw] does.
 
       Raises [Invalid_argument] if [alt] is not [' '] or ['A'] to ['Z']. *)
 
   val write :
     ?alt:char ->
     ?window:(int * int) array ->
-    ('d Transform.plane, ('f, 'd) Direction.t, 'd) Transform.t ->
+    ('d Transform.plane, 'w, 'd) Transform.t ->
     keywords ->
     (edit list, string) result
   (** [write ~alt ~window t kw] is the edits, in order, that make [kw]'s
       description [alt] spell [t], with [window], [(start, stop)] per tensor
-      axis, taking each CRPIX less its axis's start. A keyword whose value
+      axis, taking each CRPIX less its axis's start. For other than one
+      celestial pair it spells [WCSAXES] unless [NAXIS] gives it, and a
+      linear axis keeps [kw]'s CTYPE. A keyword whose value
       equals [t]'s, bit for bit, gets no edit, nor does one [kw] lacks whose
       value is its default and, for a PV term, that the stage does not list
       as stated. Keywords [t] no longer spells (CD for a PC header, CROTA,
@@ -2036,9 +2088,10 @@ module Wcs : sig
       equal.
 
       It is an [Error] naming the stage if [t] is not a list {!read} builds,
-      up to an absent PC or a scale stage on its own, or if [t]'s leaves are
-      batched or not finite.
+      up to an absent PC or a scale stage on its own, if [t]'s leaves are
+      batched or not finite, if a linear axis's unit is not one of its CTYPE
+      or no CUNIT spells it, or if one side spells CD and another PC.
 
       Raises [Invalid_argument] if [alt] is not [' '] or ['A'] to ['Z'], or
-      [window] does not have two ranges. *)
+      [window] does not have a range for each axis. *)
 end

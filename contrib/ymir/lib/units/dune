@@ -11,4 +11,5 @@
   constant
   codata_tables
   codata
-  vocabulary))
+  vocabulary
+  fits_unit))

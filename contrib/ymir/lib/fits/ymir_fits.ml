@@ -66,11 +66,7 @@ module Fits = struct
     let quantized = Image.quantized
   end
 
-  module Unit = struct
-    let vocabulary = Fits_unit.vocabulary
-    let parse = Fits_unit.parse
-    let print = Fits_unit.print
-  end
+  module Unit = Ymir_units.Fits_unit
 
   (* The scope of a data set's own symbols: the file's digest and the HDU. *)
   let scope hdu =
@@ -87,7 +83,7 @@ module Fits = struct
     | Error e -> Error e
     | Ok None -> Ok None
     | Ok (Some s) -> (
-        match Fits_unit.parse ~scope:(scope hdu) s with
+        match Unit.parse ~scope:(scope hdu) s with
         | Ok u -> Ok (Some u)
         | Error e ->
             Error

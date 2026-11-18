@@ -1075,7 +1075,7 @@ let unit ~scope name hdu =
       match c.unit_text with
       | None -> None
       | Some s -> (
-          match Fits_unit.parse ~scope s with
+          match Ymir_units.Fits_unit.parse ~scope s with
           | Ok u -> Some u
           | Error e ->
               let h = Hdu.header hdu and k = strf "TUNIT%d" c.number in

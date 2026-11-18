@@ -138,7 +138,7 @@ let keywords =
 let wcs =
   [
     test "a WCS read at the set maps pixels there" (fun () ->
-        let t = Result.get_ok (Wcs.read ~at:Pair.on Frame.icrs keywords) in
+        let t = Result.get_ok (Wcs.read ~at:Pair.on (Transform.Sky Frame.icrs) keywords) in
         let px =
           Quantity.v Unit.one
             (Nx.place (Pair.split ~axis:0)

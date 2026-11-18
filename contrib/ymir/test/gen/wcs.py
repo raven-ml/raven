@@ -15,12 +15,19 @@ BP, TPV, and TAN with PV terms as SCAMP writes TPV), with pixel
 coordinates and WCSLIB's world coordinates for them (astropy.wcs's
 all_pix2world, origin 0, which applies SIP).
 
+It also writes headers of one, three and four axes: a celestial pair with
+linear spectral and Stokes axes, the pair's axes apart, a PC or CD element
+between the pair and a spectral axis, the pair's axes apart and coupled,
+and a spectrum alone, each with the header of its celestial axes alone,
+renumbered, where it has them.
+
 Without --check the file is written; with it, nothing is written and the
 run fails if the file would change.
 """
 
 import argparse
 from pathlib import Path
+import re
 import sys
 
 import numpy as np
@@ -350,6 +357,247 @@ def case(name, frame, alt, cards, extent):
     }
 
 
+# name, frame, cards, tensor shape. Each header's linear axes are Paper
+# III's linear spectral types or STOKES.
+CUBES = [
+    (
+        "MUSE-like cube, CD with zero cross terms, AWAV in Angstrom",
+        "fk5_j2000",
+        [
+            ("CTYPE1", "RA---TAN"),
+            ("CTYPE2", "DEC--TAN"),
+            ("CTYPE3", "AWAV"),
+            ("CUNIT3", "Angstrom"),
+            ("CRPIX1", 160.5),
+            ("CRPIX2", 155.25),
+            ("CRPIX3", 1.0),
+            ("CD1_1", -5.55555555555556e-05),
+            ("CD1_2", 2.0e-07),
+            ("CD2_1", 1.5e-07),
+            ("CD2_2", 5.55555555555556e-05),
+            ("CD3_3", 1.25),
+            ("CD1_3", 0.0),
+            ("CD2_3", 0.0),
+            ("CD3_1", 0.0),
+            ("CD3_2", 0.0),
+            ("CRVAL1", 150.1163213),
+            ("CRVAL2", 2.2009078),
+            ("CRVAL3", 4749.8759765625),
+            ("RADESYS", "FK5"),
+            ("EQUINOX", 2000.0),
+        ],
+        (7, 6, 5),
+    ),
+    (
+        "radio cube, SIN, FREQ and STOKES",
+        "icrs",
+        [
+            ("WCSAXES", 4),
+            ("CTYPE1", "RA---SIN"),
+            ("CTYPE2", "DEC--SIN"),
+            ("CTYPE3", "FREQ"),
+            ("CTYPE4", "STOKES"),
+            ("CRPIX1", 129.0),
+            ("CRPIX2", 129.0),
+            ("CRPIX3", 1.0),
+            ("CRPIX4", 1.0),
+            ("CDELT1", -0.000555555555555556),
+            ("CDELT2", 0.000555555555555556),
+            ("CDELT3", 244140.625),
+            ("CDELT4", 1.0),
+            ("CUNIT3", "Hz"),
+            ("CRVAL1", 83.8221),
+            ("CRVAL2", -5.3911),
+            ("CRVAL3", 1.420405752e09),
+            ("CRVAL4", 1.0),
+            ("RESTFRQ", 1.420405752e09),
+            ("SPECSYS", "LSRK"),
+        ],
+        (2, 6, 5, 4),
+    ),
+    (
+        "RA, FREQ, DEC: the pair's axes apart",
+        "icrs",
+        [
+            ("CTYPE1", "RA---TAN"),
+            ("CTYPE2", "FREQ"),
+            ("CTYPE3", "DEC--TAN"),
+            ("CUNIT2", "GHz"),
+            ("CRPIX1", 10.5),
+            ("CRPIX2", 3.0),
+            ("CRPIX3", 8.25),
+            ("CDELT1", -0.001),
+            ("CDELT2", 0.002),
+            ("CDELT3", 0.001),
+            ("PC1_1", 0.9),
+            ("PC1_3", 0.1),
+            ("PC3_1", -0.1),
+            ("PC3_3", 0.9),
+            ("CRVAL1", 210.5),
+            ("CRVAL2", 115.27),
+            ("CRVAL3", -30.25),
+        ],
+        (6, 4, 7),
+    ),
+    (
+        "PC3_1 couples VRAD with RA",
+        "icrs",
+        [
+            ("CTYPE1", "RA---TAN"),
+            ("CTYPE2", "DEC--TAN"),
+            ("CTYPE3", "VRAD"),
+            ("CUNIT3", "km/s"),
+            ("CRPIX1", 20.0),
+            ("CRPIX2", 15.0),
+            ("CRPIX3", 4.0),
+            ("CDELT1", -0.0002),
+            ("CDELT2", 0.0002),
+            ("CDELT3", 2.5),
+            ("PC3_1", 0.004),
+            ("CRVAL1", 45.25),
+            ("CRVAL2", 60.75),
+            ("CRVAL3", -120.0),
+            ("RESTFRQ", 2.30538e11),
+        ],
+        (8, 9, 10),
+    ),
+    (
+        "RA, FREQ, DEC with PC2_1 coupling FREQ with RA",
+        "icrs",
+        [
+            ("CTYPE1", "RA---TAN"),
+            ("CTYPE2", "FREQ"),
+            ("CTYPE3", "DEC--TAN"),
+            ("CRPIX1", 10.5),
+            ("CRPIX2", 3.0),
+            ("CRPIX3", 8.25),
+            ("CDELT1", -0.001),
+            ("CDELT2", 2.0e6),
+            ("CDELT3", 0.001),
+            ("PC1_3", 0.1),
+            ("PC3_1", -0.1),
+            ("PC2_1", 0.03),
+            ("CRVAL1", 210.5),
+            ("CRVAL2", 1.1527e11),
+            ("CRVAL3", -30.25),
+        ],
+        (6, 4, 7),
+    ),
+    (
+        "CD3_1 couples AWAV with RA",
+        "icrs",
+        [
+            ("CTYPE1", "RA---TAN"),
+            ("CTYPE2", "DEC--TAN"),
+            ("CTYPE3", "AWAV"),
+            ("CUNIT3", "Angstrom"),
+            ("CRPIX1", 16.5),
+            ("CRPIX2", 15.25),
+            ("CRPIX3", 1.0),
+            ("CD1_1", -5.5e-05),
+            ("CD2_2", 5.5e-05),
+            ("CD3_3", 1.25),
+            ("CD3_1", 0.5),
+            ("CRVAL1", 150.1163213),
+            ("CRVAL2", 2.2009078),
+            ("CRVAL3", 4749.875),
+        ],
+        (5, 6, 7),
+    ),
+    (
+        "a spectrum, WAVE in nm",
+        "",
+        [
+            ("CTYPE1", "WAVE"),
+            ("CUNIT1", "nm"),
+            ("CRPIX1", 1.0),
+            ("CRVAL1", 360.0),
+            ("CDELT1", 0.1),
+        ],
+        (11,),
+    ),
+]
+
+
+AXIS_KEY = re.compile(r"^(CTYPE|CUNIT|CRPIX|CRVAL|CDELT)(\d+)$")
+MATRIX_KEY = re.compile(r"^(PC|CD)(\d+)_(\d+)$")
+
+
+def celestial_alone(cards, axes):
+    """The cards of [axes] alone, renumbered 1, 2, ..., with the others'
+    dropped and keywords of no axis kept."""
+    number = {a: k + 1 for k, a in enumerate(axes)}
+    out = [("NAXIS", len(axes))]
+    for k, v in cards:
+        if k == "WCSAXES":
+            out.append((k, len(axes)))
+            continue
+        m = AXIS_KEY.match(k)
+        if m:
+            a = int(m.group(2))
+            if a in number:
+                out.append((f"{m.group(1)}{number[a]}", v))
+            continue
+        m = MATRIX_KEY.match(k)
+        if m:
+            i, j = int(m.group(2)), int(m.group(3))
+            if i in number and j in number:
+                out.append((f"{m.group(1)}{number[i]}_{number[j]}", v))
+            continue
+        out.append((k, v))
+    return out
+
+
+def cube(name, frame, cards, shape):
+    n = len(shape)
+    h = fits.Header()
+    h["NAXIS"] = n
+    for k in range(n):
+        h[f"NAXIS{k + 1}"] = shape[n - 1 - k]
+    for k, v in cards:
+        h.append(fits.Card(k, v))
+    w = WCS(h)
+    w.wcs.set()
+    rng = np.random.default_rng(len(name))
+    edges = [np.linspace(-0.5, s - 0.5, 3) for s in shape]
+    grid = np.stack(np.meshgrid(*edges, indexing="ij"), axis=-1).reshape(-1, n)
+    inside = rng.uniform(-0.5, 1, size=(9, n)) * (np.array(shape) - 0.5)
+    pixels = np.concatenate([grid, inside])
+    world = np.stack(
+        w.all_pix2world(*[pixels[:, n - 1 - k] for k in range(n)], 0), axis=-1
+    )
+    celestial = [a + 1 for a in (w.wcs.lng, w.wcs.lat) if a >= 0]
+    linear = [a for a in range(n) if a + 1 not in celestial]
+    order = ([w.wcs.lng, w.wcs.lat] if celestial else []) + linear
+    alone = (
+        "".join(
+            c.image
+            for c in fits.Header(
+                [fits.Card(k, v) for k, v in celestial_alone(cards, sorted(celestial))]
+            ).cards
+        )
+        if celestial
+        else ""
+    )
+    text = "".join(c.image for c in h.cards)
+    return {
+        "name": name,
+        "frame": frame,
+        "header": text,
+        "alone": alone,
+        "shape": shape,
+        "celestial": sorted(celestial),
+        "units": [w.wcs.cunit[a].to_string("fits") for a in linear],
+        "pixels": pixels,
+        "world": world[:, order],
+    }
+
+
+def record_lines(text):
+    rs = [text[i : i + 80] for i in range(0, len(text), 80)]
+    return "      " + "\n      ^ ".join(f'"{r}"' for r in rs)
+
+
 def render():
     out = [
         "(*---------------------------------------------------------------------------",
@@ -380,6 +628,39 @@ def render():
         out.append("    header =")
         records = [c["header"][i : i + 80] for i in range(0, len(c["header"]), 80)]
         out.append("      " + "\n      ^ ".join(f'"{r}"' for r in records) + ";")
+        out.append(f"    pixels = {floats(c['pixels'].ravel())};")
+        out.append(f"    world = {floats(c['world'].ravel())};")
+        out.append("  };")
+    out.append("]")
+    out += [
+        "",
+        "type cube = {",
+        "  name : string;",
+        "  cube_frame : string;  (** The frame's {!Ymir.Frame.name}, if any. *)",
+        "  header : string;  (** 80-byte records, without END. *)",
+        "  alone : string;  (** The celestial axes' cards alone, renumbered. *)",
+        "  shape : int array;  (** The data's shape, in tensor order. *)",
+        "  celestial : int array;  (** The celestial pair's FITS axes. *)",
+        "  units : string array;  (** WCSLIB's CUNIT of each linear axis. *)",
+        "  pixels : float array;  (** 0-based, in tensor order. *)",
+        "  world : float array;",
+        "      (** WCSLIB's [(lon, lat)] in degrees, then each linear axis's",
+        "          value in its unit, in FITS order. *)",
+        "}",
+        "",
+        "let cubes = [",
+    ]
+    for c in (cube(*x) for x in CUBES):
+        out.append("  {")
+        out.append(f'    name = "{c["name"]}";')
+        out.append(f'    cube_frame = "{c["frame"]}";')
+        out.append("    header =")
+        out.append(record_lines(c["header"]) + ";")
+        out.append("    alone =")
+        out.append((record_lines(c["alone"]) if c["alone"] else '      ""') + ";")
+        out.append("    shape = [| " + "; ".join(str(x) for x in c["shape"]) + " |];")
+        out.append("    celestial = [| " + "; ".join(str(x) for x in c["celestial"]) + " |];")
+        out.append("    units = [| " + "; ".join(f'"{u}"' for u in c["units"]) + " |];")
         out.append(f"    pixels = {floats(c['pixels'].ravel())};")
         out.append(f"    world = {floats(c['world'].ravel())};")
         out.append("  };")

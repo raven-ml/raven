@@ -18,7 +18,6 @@
   hcompress
   quantize
   tiles
-  fits_unit
   table
   image
   files))

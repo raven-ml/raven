@@ -70,7 +70,7 @@ let observation hdus =
   let* sci = Fits.get "SCI" hdus in
   let* err = Fits.get "ERR" hdus in
   let h = Fits.header sci in
-  let* wcs = Wcs.read ~at:Nx.Host.on Frame.icrs (keywords h) in
+  let* wcs = Wcs.read ~at:Nx.Host.on (Transform.Sky Frame.icrs) (keywords h) in
   let* bunit = Fits.Header.get Fits.Value.string "BUNIT" h in
   let* unit = Fits.Unit.parse bunit in
   let* pixar = Fits.Header.get Fits.Value.float "PIXAR_SR" h in
@@ -86,7 +86,7 @@ let observation hdus =
 
 let run () =
   let* header = Fits.Header.of_string ~name:"example.head" text in
-  let* wcs = Wcs.read ~at:Nx.Host.on Frame.icrs (keywords header) in
+  let* wcs = Wcs.read ~at:Nx.Host.on (Transform.Sky Frame.icrs) (keywords header) in
   Format.printf "%a@." Transform.pp wcs;
 
   (* The image's first and last pixels, [row; column]. *)
@@ -102,7 +102,7 @@ let run () =
     lon;
 
   (* A header in another frame is an [Error] that says how to read it. *)
-  (match Wcs.read ~at:Nx.Host.on Frame.galactic (keywords header) with
+  (match Wcs.read ~at:Nx.Host.on (Transform.Sky Frame.galactic) (keywords header) with
   | Ok _ -> ()
   | Error e -> print_endline e);
 

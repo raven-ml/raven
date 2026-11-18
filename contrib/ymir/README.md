@@ -81,8 +81,9 @@ The [examples](examples/) teach each part on small synthetic data.
   photometry, differentiable in the aperture's centre and size.
 - **FITS**: `ymir.fits`'s `Fits` reads and writes headers, images (tile
   compression included), binary and ASCII tables, and `BUNIT` and `TUNIT`
-  units. `Wcs` reads a header's world coordinates as a `Transform` and
-  writes one back as keyword edits; a program composes an image's data,
+  units. `Wcs` reads a header's world coordinates, a celestial pair and
+  linear axes such as a spectral cube's, as a `Transform` and writes one
+  back as keyword edits; a program composes an image's data,
   error and world coordinates into an `Observation`.
 - **Cosmology**: `Cosmology.t` is one record of tensors for flat and curved
   ΛCDM, wCDM and w0waCDM with radiation and massive neutrinos. Expansion

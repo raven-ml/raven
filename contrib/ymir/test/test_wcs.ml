@@ -52,7 +52,7 @@ let pp_edit ppf = function
   | Remove k -> Format.fprintf ppf "remove %s" k
 
 let edits = list (Testable.make ~pp:pp_edit ~equal:( = ))
-let read ?alt f h = ok (Wcs.read ?alt ~at:Nx.Host.on f (keywords h))
+let read ?alt f h = ok (Wcs.read ?alt ~at:Nx.Host.on (Transform.Sky f) (keywords h))
 let write ?alt ?window t h = ok (Wcs.write ?alt ?window t (keywords h))
 
 (* [stages t] is [t]'s skeleton and each leaf's bits: equal for equal stages,
@@ -185,7 +185,7 @@ let set_i k v h = Fits.Header.set Fits.Value.int k v h
 let set_t k v h = Fits.Header.set Fits.Value.text k v h
 
 let errors =
-  let read_error h = require_error (Wcs.read ~at:Nx.Host.on Frame.icrs (keywords h)) in
+  let read_error h = require_error (Wcs.read ~at:Nx.Host.on (Transform.Sky Frame.icrs) (keywords h)) in
   group "Errors"
     [
       test "a frame other than the caller's names the frame to read with"
@@ -193,7 +193,7 @@ let errors =
           equal string
             "SCI: ICRS; the caller expects galactic. Read with Frame.icrs."
             (require_error
-               (Wcs.read ~at:Nx.Host.on Frame.galactic
+               (Wcs.read ~at:Nx.Host.on (Transform.Sky Frame.galactic)
                   (keywords (edit [ set_s "EXTNAME" "SCI" ])))));
       cases "unread descriptions" ~id:fst
         [
@@ -243,8 +243,8 @@ let errors =
              and LATPOLE) are read on the longitude axis",
             [ set_f "PV1_5" 1. ] );
           ("CROTA2 beside PC is ambiguous", [ set_f "CROTA2" 10. ]);
-          ( "3 axes: a celestial pair is read, and a spectral, time or other \
-             third axis is not",
+          ( "3 axes, 1 celestial pair and 1 linear axis; the caller expects 1 \
+             celestial pair",
             [ set_i "WCSAXES" 3 ] );
           ( "CTYPE1 = 'RA---TAN' and CTYPE2 = 'GLAT-TAN' are not a celestial \
              pair ymir reads",
@@ -359,4 +359,338 @@ let errors =
             (require_error (Wcs.write t (keywords Fits.Header.empty))));
     ]
 
-let () = exit (run "Wcs" [ wcslib; round_trips; errors ])
+(* N axes *)
+
+let cube_name (c : Wcs_reference.cube) = c.name
+let cube_frame (c : Wcs_reference.cube) =
+  if c.cube_frame = "" then F Frame.icrs else frame c.cube_frame
+
+(* [world c] is the world [c]'s axes read as: its celestial pair first, then
+   its linear axes in FITS order. *)
+type each = { each : 'w. ('w, Nx.host) Transform.endpoint -> unit }
+
+let with_world (c : Wcs_reference.cube) k =
+  let (F f) = cube_frame c in
+  match (Array.length c.celestial, Array.length c.shape - Array.length c.celestial) with
+  | 2, 1 -> k.each Transform.(Both (Sky f, Planar))
+  | 2, 2 -> k.each Transform.(Both (Sky f, Both (Planar, Planar)))
+  | 0, 1 -> k.each Transform.Planar
+  | _ -> invalid_arg "with_world"
+
+let read_world ?alt w h = ok (Wcs.read ?alt ~at:Nx.Host.on w (keywords h))
+
+let unit_of s = if s = "" then Unit.one else ok (Fits.Unit.parse s)
+
+(* WCSLIB's linear axes are within a few units in the last place of their
+   values. *)
+let linear_close (c : Wcs_reference.cube) k (q : (float, Nx.float64_elt, Nx.host) Nx.t Quantity.t) =
+  let n = Array.length c.shape in
+  let rows = Array.length c.pixels / n in
+  let cols = Array.length c.world / rows in
+  let column = 2 * (Array.length c.celestial / 2) + k in
+  let expected = Array.init rows (fun r -> c.world.((r * cols) + column)) in
+  equal
+    (array (float_rel ~rel:1e-13 ~abs:0.))
+    expected
+    (Nx.to_array (Quantity.value (unit_of c.units.(k)) q))
+
+let sky_close (c : Wcs_reference.cube) f d =
+  let n = Array.length c.shape in
+  let rows = Array.length c.pixels / n in
+  let cols = Array.length c.world / rows in
+  let lonlat = Array.concat (List.init rows (fun r -> [| c.world.(r * cols); c.world.((r * cols) + 1) |])) in
+  less float_exact ~than:2e-13
+    (Array.fold_left max 0. (separation d (lonlat_deg f lonlat)))
+
+let cube_points (c : Wcs_reference.cube) =
+  let n = Array.length c.shape in
+  Quantity.v Unit.one (tensor [| Array.length c.pixels / n; n |] c.pixels)
+
+let cubes_wcslib =
+  cases "WCSLIB, N axes" ~id:cube_name Wcs_reference.cubes (fun c ->
+      let h = header c.header and x = cube_points c in
+      let (F f) = cube_frame c in
+      match (Array.length c.celestial, Array.length c.shape - Array.length c.celestial) with
+      | 2, 1 ->
+          let d, l = Transform.apply (read_world Transform.(Both (Sky f, Planar)) h) x in
+          sky_close c f d;
+          linear_close c 0 l
+      | 2, 2 ->
+          let d, (l, m) =
+            Transform.apply (read_world Transform.(Both (Sky f, Both (Planar, Planar))) h) x
+          in
+          sky_close c f d;
+          linear_close c 0 l;
+          linear_close c 1 m
+      | _ -> linear_close c 0 (Transform.apply (read_world Transform.Planar h) x))
+
+(* The fixtures whose matrix joins the celestial pair to a linear axis. *)
+let coupled (c : Wcs_reference.cube) =
+  List.mem c.name
+    [
+      "PC3_1 couples VRAD with RA";
+      "RA, FREQ, DEC with PC2_1 coupling FREQ with RA";
+      "CD3_1 couples AWAV with RA";
+    ]
+
+let cubes_laws =
+  group "Laws, N axes"
+    [
+      cases "a header read needs no edit" ~id:cube_name Wcs_reference.cubes (fun c ->
+          let h = header c.header in
+          with_world c { each = (fun w -> equal edits [] (write (read_world w h) h)) });
+      cases "edits to an empty header read back as equal stages" ~id:cube_name
+        Wcs_reference.cubes (fun c ->
+          let h = header c.header in
+          with_world c
+            {
+              each =
+                (fun w ->
+                  let t = read_world w h in
+                  let e = Fits.Header.empty in
+                  equal_stages t (read_world w (apply (write t e) e)));
+            });
+      cases "a cube's celestial side agrees with the header of its celestial axes alone"
+        ~id:cube_name
+        (List.filter (fun (c : Wcs_reference.cube) -> c.celestial <> [||] && not (coupled c)) Wcs_reference.cubes)
+        (fun c ->
+          let (F f) = cube_frame c in
+          let side t =
+            let g = Grid.pixels ~at:Nx.Host.on ~shape:c.shape f64 t in
+            let sky = Grid.first g in
+            let alone =
+              Grid.pixels ~at:Nx.Host.on ~shape:(Grid.shape sky) f64
+                (read f (header c.alone))
+            in
+            equal (array bool) [| true |] (Nx.to_array (Nx.reshape [| 1 |] (Grid.agree sky alone)))
+          in
+          match Array.length c.shape with
+          | 3 -> side (read_world Transform.(Both (Sky f, Planar)) (header c.header))
+          | _ -> side (read_world Transform.(Both (Sky f, Both (Planar, Planar))) (header c.header)));
+      test "a coupled cube's cells have no measure and no region, naming the linear stage"
+        (fun () ->
+          let c = List.find coupled Wcs_reference.cubes in
+          let centre =
+            Direction.lonlat Frame.icrs ~lon:(deg (scalar 45.25)) ~lat:(deg (scalar 60.75))
+          in
+          let t = read_world Transform.(Both (Sky Frame.icrs, Planar)) (header c.header) in
+          let g = Grid.pixels ~at:Nx.Host.on ~shape:c.shape f64 t in
+          raises_match
+            (Exn.invalid_arg
+               ~sub:"Grid.measure: the cells are not products: stage 2, linear")
+            (fun () -> Grid.measure g);
+          raises_match
+            (Exn.invalid_arg
+               ~sub:"Region.weights: the cells are not products: stage 2, linear")
+            (fun () ->
+              Region.weights
+                (Region.circle
+                   Transform.(both (about centre) id >> inverse (split [| 0; 1 |]))
+                   ~radius:(Quantity.v Unit.radian (scalar 1e-3)))
+                g));
+      test "a window moves each CRPIX by its start" (fun () ->
+          let c = List.hd Wcs_reference.cubes in
+          let h = header c.header in
+          let t = read_world Transform.(Both (Sky Frame.fk5_j2000, Planar)) h in
+          let h' = apply (write ~window:[| (2, 5); (1, 4); (3, 5) |] t h) h in
+          let get k = ok (Fits.Header.get Fits.Value.float k h') in
+          let was k = ok (Fits.Header.get Fits.Value.float k h) in
+          equal (array float_exact)
+            [| was "CRPIX1" -. 3.; was "CRPIX2" -. 1.; was "CRPIX3" -. 2. |]
+            [| get "CRPIX1"; get "CRPIX2"; get "CRPIX3" |]);
+    ]
+
+let cube_errors =
+  let muse = header (List.hd Wcs_reference.cubes).header in
+  let radio = header (List.nth Wcs_reference.cubes 1).header in
+  let edit fs = List.fold_left (fun h f -> f h) muse fs in
+  let read_as world h = require_error (Wcs.read ~at:Nx.Host.on world (keywords h)) in
+  let read_error h = read_as Transform.(Both (Sky Frame.fk5_j2000, Planar)) h in
+  let linear_unit ctype cunit =
+    let h = radio |> set_s "CTYPE3" ctype |> set_s "CUNIT3" cunit in
+    let t = read_world Transform.(Both (Sky Frame.icrs, Both (Planar, Planar))) h in
+    let _, (l, _) = Transform.apply t (cube_points (List.nth Wcs_reference.cubes 1)) in
+    Unit.to_string (Quantity.unit l)
+  in
+  group "Errors, N axes"
+    [
+      cases "unread descriptions" ~id:fst
+        [
+          ( "CTYPE3 = 'WAVE-F2W': the spectral algorithm F2W is not read yet",
+            [ set_s "CTYPE3" "WAVE-F2W" ] );
+          ( "CTYPE3 = 'WAVE-LOG': the spectral algorithm LOG is not read yet",
+            [ set_s "CTYPE3" "WAVE-LOG" ] );
+          ( "CTYPE3 = 'WAVE-TAB': the spectral algorithm TAB is not read yet",
+            [ set_s "CTYPE3" "WAVE-TAB" ] );
+          ("CTYPE3 = 'TIME': a time axis is not read yet", [ set_s "CTYPE3" "TIME" ]);
+          ( "CUNIT3: \"furlong\": furlong is not a FITS unit",
+            [ set_s "CUNIT3" "furlong" ] );
+          ("CUNIT3 = 'Hz' is not a unit of 'AWAV'", [ set_s "CUNIT3" "Hz" ]);
+          ("PV3_1: a linear axis takes no parameter", [ set_f "PV3_1" 1. ]);
+          ( "CD3_3 is absent: a CD header's linear axis needs it",
+            [ Fits.Header.remove "CD3_3"; set_f "CDELT3" 1.25 ] );
+          ("CD3_3 = 0 maps every pixel to CRVAL3", [ set_f "CD3_3" 0. ]);
+        ]
+        (fun (message, fs) -> equal string message (read_error (edit fs)));
+      test "a linear axis whose CDELT is 0 maps every pixel to CRVAL" (fun () ->
+          equal string "CDELT3 = 0 maps every pixel to CRVAL3"
+            (read_as Transform.(Both (Sky Frame.icrs, Both (Planar, Planar)))
+               (set_f "CDELT3" 0. radio)));
+      test "a linear axis whose PC element is 0 maps every pixel to CRVAL"
+        (fun () ->
+          equal string "PC3_3 = 0 maps every pixel to CRVAL3"
+            (read_as Transform.(Both (Sky Frame.icrs, Both (Planar, Planar)))
+               (set_f "PC3_3" 0. radio)));
+      test "a celestial CUNIT reads in FITS's unit syntax" (fun () ->
+          let h =
+            radio |> set_s "CUNIT1" "mrad" |> set_s "CUNIT2" "mrad"
+          in
+          let t = read_world Transform.(Both (Sky Frame.icrs, Both (Planar, Planar))) h in
+          let e = Fits.Header.empty in
+          equal_stages t
+            (read_world Transform.(Both (Sky Frame.icrs, Both (Planar, Planar)))
+               (apply (write t e) e));
+          equal string (Unit.to_string Unit.(milli radian))
+            (match Fits.Header.find Fits.Value.string "CUNIT1" (apply (write t e) e) with
+             | Ok (Some s) -> Unit.to_string (ok (Fits.Unit.parse s))
+             | _ -> "absent"));
+      test "a header read as other axes than it has names both" (fun () ->
+          equal string
+            "3 axes, 1 celestial pair and 1 linear axis; the caller expects 1 \
+             celestial pair"
+            (read_as (Transform.Sky Frame.fk5_j2000) muse);
+          equal string
+            "3 axes, 1 celestial pair and 1 linear axis; the caller expects 1 \
+             celestial pair and 2 linear axes"
+            (read_as Transform.(Both (Sky Frame.fk5_j2000, Both (Planar, Planar))) muse));
+      test "a world of two celestial pairs is an error" (fun () ->
+          let two =
+            List.fold_left
+              (fun h f -> f h)
+              (set_i "WCSAXES" 4 nircam)
+              [ set_s "CTYPE3" "GLON-TAN"; set_s "CTYPE4" "GLAT-TAN" ]
+          in
+          equal string "SCI: the caller expects 2 celestial pairs; Wcs reads one"
+            (read_as
+               Transform.(Both (Sky Frame.icrs, Sky Frame.icrs))
+               (set_s "EXTNAME" "SCI" two)));
+      test "the keywords of a side's errors are the header's" (fun () ->
+          let c = List.nth Wcs_reference.cubes 2 in
+          equal string "CUNIT3 = 'm' is not a celestial unit"
+            (require_error
+               (Wcs.read ~at:Nx.Host.on Transform.(Both (Sky Frame.icrs, Planar))
+                  (keywords (set_s "CUNIT3" "m" (header c.header))))));
+      test "a linear axis's CUNIT reads in FITS's unit syntax" (fun () ->
+          let unit s = Unit.to_string (ok (Fits.Unit.parse s)) in
+          equal string (unit "km s-1") (linear_unit "VRAD" "km.s-1");
+          equal string (unit "keV") (linear_unit "ENER" "keV");
+          equal string (unit "arcsec") (linear_unit "OFFSET" "arcsec"));
+      test "SPECSYS reads as stated beside another SSYSOBS" (fun () ->
+          let h = radio |> set_s "SSYSOBS" "TOPOCENT" in
+          let t = Transform.(Both (Sky Frame.icrs, Both (Planar, Planar))) in
+          equal_stages (read_world t radio) (read_world t h));
+    ]
+
+(* Laws over drawn headers: a celestial pair at any two of three or four
+   axes, CD or PC, the pair's matrix block diagonal or rotated, beside FREQ
+   and STOKES. *)
+
+let strf = Printf.sprintf
+
+type drawn = { n : int; pair : int * int; cd : bool; rotated : bool }
+
+let pp_drawn ppf d =
+  Format.fprintf ppf "%d axes, pair (%d, %d), %s%s" d.n (fst d.pair) (snd d.pair)
+    (if d.cd then "CD" else "PC")
+    (if d.rotated then ", rotated" else "")
+
+let drawn =
+  Gen.with_pp pp_drawn
+    Gen.(
+      map
+        (fun (n, (i, j), (cd, rotated)) ->
+          let n = 3 + n in
+          let i = 1 + (i mod n) in
+          let j = 1 + (j mod (n - 1)) in
+          let j = if j >= i then j + 1 else j in
+          { n; pair = (min i j, max i j); cd; rotated })
+        (triple (int_range 0 1) (pair (int_range 0 11) (int_range 0 11)) (pair bool bool)))
+
+(* [drawn_header d] is [d]'s header, and its celestial axes' alone,
+   renumbered. *)
+let drawn_header d =
+  let a, b = d.pair in
+  let lin = List.filter (fun k -> k <> a && k <> b) (List.init d.n succ) in
+  let c = if d.rotated then 0.8 else 1. and s = if d.rotated then 0.6 else 0. in
+  let sky (a, b) =
+    [
+      set_s (strf "CTYPE%d" a) "RA---TAN"; set_s (strf "CTYPE%d" b) "DEC--TAN";
+      set_f (strf "CRPIX%d" a) 10.5; set_f (strf "CRPIX%d" b) 8.25;
+      set_f (strf "CRVAL%d" a) 210.5; set_f (strf "CRVAL%d" b) (-30.25);
+    ]
+    @
+    if d.cd then
+      [
+        set_f (strf "CD%d_%d" a a) (-1e-3 *. c); set_f (strf "CD%d_%d" a b) (1e-3 *. s);
+        set_f (strf "CD%d_%d" b a) (1e-3 *. s); set_f (strf "CD%d_%d" b b) (1e-3 *. c);
+      ]
+    else
+      [
+        set_f (strf "CDELT%d" a) (-1e-3); set_f (strf "CDELT%d" b) 1e-3;
+        set_f (strf "PC%d_%d" a a) c; set_f (strf "PC%d_%d" a b) (-.s);
+        set_f (strf "PC%d_%d" b a) s; set_f (strf "PC%d_%d" b b) c;
+      ]
+  in
+  let linear k (ctype, crval, cdelt) =
+    [ set_s (strf "CTYPE%d" k) ctype; set_f (strf "CRPIX%d" k) 1.;
+      set_f (strf "CRVAL%d" k) crval ]
+    @ if d.cd then [ set_f (strf "CD%d_%d" k k) cdelt ] else [ set_f (strf "CDELT%d" k) cdelt ]
+  in
+  let build fs n = List.fold_left (fun h f -> f h) (set_i "NAXIS" n Fits.Header.empty) fs in
+  let axes = List.combine lin (List.filteri (fun k _ -> k < List.length lin) [ ("FREQ", 1.4e9, 2.5e5); ("STOKES", 1., 1.) ]) in
+  ( build (sky (a, b) @ List.concat_map (fun (k, l) -> linear k l) axes) d.n,
+    build (sky (1, 2)) 2 )
+
+let drawn_world d k =
+  if d.n = 3 then k.each Transform.(Both (Sky Frame.icrs, Planar))
+  else k.each Transform.(Both (Sky Frame.icrs, Both (Planar, Planar)))
+
+let drawn_laws =
+  prop "a drawn header needs no edit, reads back from its edits, and its \
+        celestial side agrees with its celestial axes alone" drawn (fun d ->
+      cover "the pair's axes apart" (snd d.pair - fst d.pair > 1);
+      cover "four axes" (d.n = 4);
+      cover "CD" d.cd;
+      cover "PC" (not d.cd);
+      cover "a rotated pair" d.rotated;
+      let h, alone = drawn_header d in
+      drawn_world d
+        {
+          each =
+            (fun w ->
+              let t = read_world w h in
+              equal edits [] (write t h);
+              let e = Fits.Header.empty in
+              equal_stages t (read_world w (apply (write t e) e)));
+        };
+      let side t =
+        let g = Grid.pixels ~at:Nx.Host.on ~shape:(Array.make d.n 3) f64 t in
+        let sky = Grid.first g in
+        let own = Grid.pixels ~at:Nx.Host.on ~shape:(Grid.shape sky) f64 (read Frame.icrs alone) in
+        equal (array bool) [| true |] (Nx.to_array (Nx.reshape [| 1 |] (Grid.agree sky own)))
+      in
+      if d.n = 3 then side (read_world Transform.(Both (Sky Frame.icrs, Planar)) h)
+      else side (read_world Transform.(Both (Sky Frame.icrs, Both (Planar, Planar))) h))
+
+let () =
+  exit
+    (run "Wcs"
+       [
+         wcslib;
+         round_trips;
+         errors;
+         cubes_wcslib;
+         cubes_laws;
+         group "Drawn headers" [ drawn_laws ];
+         cube_errors;
+       ])
