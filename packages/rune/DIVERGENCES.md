@@ -938,6 +938,9 @@ rounded sum; a stated bound) and its reason. A rounded sum's bound is
     `Nx.minimum` compile.
   - `Add`: from `x`, in the carrier, each chunk's updates in C order, then
     the chunks' sums in order; integers wrap on the unsigned pattern (R2).
+  - The kernel reads updates that view storage through their view, as the
+    reference's merge reads them in its kernel. Updates that view a
+    computed value are stored first, a copy kernel the merge does not take.
 - **nx:** `nx_kernel.mli`, `scatter`: `into` where no update lands, bits
   unchanged; `Add` from `x`, its association the library's.
 - **Class:** exact for `Set`, `Max` and `Min`, a NaN result's bits as
@@ -958,7 +961,8 @@ rounded sum; a stated bound) and its reason. A rounded sum's bound is
 - **Pinned by:** `Lower_index › gathers and scatters › a scatter by Set, Max
   or Min gives eager's bits`, `› a scatter by Add wraps integers and holds its
   float bound`, `› a scatter keeps the bits of each element no update lands
-  on`; `Jit › jit › a scatter compiles to eager's values`; `Rune.jit on a GPU
+  on`; `Jit › jit › a scatter compiles to eager's values`, `› a scatter reads
+  its updates where they lie`; `Rune.jit on a GPU
   › scatters › a scatter compiles to eager's values`; `Rune.jit`'s `a scatter
   keeps the bits of each element no update lands on`, on the host and on a
   GPU.

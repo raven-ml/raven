@@ -108,6 +108,11 @@ val scatter :
     before. [dst] defaults to [Filled] by a fresh buffer that [into] is stored
     into.
 
+    The kernel reads [updates] through the movements that view them where
+    they view storage that starts where its parameter assumes, without
+    storing them first. Updates that view a computed value, or that view
+    through a pad or a symbolic movement, are stored first.
+
     Raises {!Lower_arith.Unlowered} for a boolean [Add]. *)
 
 val fold :

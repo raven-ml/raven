@@ -258,7 +258,7 @@ let carried ~dt ~w ~at ~init =
    position carries its element in registers, stored once after its walk:
    a store to memory in the walk would order each later load after it, at a
    load's latency an update. *)
-let walk ren ~host ~rows ~dt ~w ~p ~n ~q ~k ~runs ~chunks f args =
+let walk ren ~host ~rows ~dt ~w ~p ~n ~q ~k ~runs ~chunks ~ux f args =
   let len = ceil_div n runs and span = ceil_div k chunks in
   let whole = chunks * span = k in
   let regs = (not host) && len = 1 in
@@ -301,7 +301,8 @@ let walk ren ~host ~rows ~dt ~w ~p ~n ~q ~k ~runs ~chunks f args =
   let part o c = (o * int w) + int c in
   let chunked = Stdlib.(chunks > 1) in
   let us =
-    List.init w (fun c -> ld u (Ops.where run (part update c) Ops.invalid))
+    List.init w (fun c ->
+        ld u (Ops.where run (ux (part update c)) Ops.invalid))
   in
   let kernel = Ops.kernel_info ~name:"scatter" ~opts_to_apply:[] () in
   if regs then begin
@@ -446,7 +447,7 @@ let merge ren ~host ~dt ~w ~p ~m ~chunks f args =
    parts an element, into the element of [y] it lands on. Where [rows], [i]
    holds one position per row of [q] updates. No two updates that land may
    share an element: a thread neither walks nor orders its store. *)
-let push ren ~rows ~w ~p ~n ~q ~k f args =
+let push ren ~rows ~w ~p ~n ~q ~k ~ux f args =
   let idx, threads, live = lanes ren ~id:0 [ p; k; q ] in
   let a, j, b = (List.nth idx 0, List.nth idx 1, List.nth idx 2) in
   let y, i, u = match args with [ y; i; u ] -> (y, i, u) | _ -> assert false in
@@ -462,7 +463,10 @@ let push ren ~rows ~w ~p ~n ~q ~k f args =
   in
   let e = (((a * int n) + Ops.cast pos Weak_int) * int q) + b in
   let at o c = Ops.where ok ((o * int w) + int c) Ops.invalid in
-  let us = List.init w (fun c -> ld u (at update c)) in
+  let us =
+    List.init w (fun c ->
+        ld u (Ops.where ok (ux ((update * int w) + int c)) Ops.invalid))
+  in
   let olds = List.init w (fun c -> ld y (at e c)) in
   let stores = List.mapi (fun c v -> st y (at e c) v) (f olds us) in
   let kernel = Ops.kernel_info ~name:"scatter_push" ~opts_to_apply:[] () in
@@ -518,6 +522,68 @@ let election ren ~p ~n ~q ~k =
   let _, chunks = plan ~host:false ren ~p ~n ~q ~k in
   k >= elect_least && chunks = 1 && p * k * k <= elect_work
 
+(* Updates where they lie
+
+   The kernel reads its updates through the movements that view them, from
+   the storage they view, where it starts on 16 bytes as the kernel's
+   parameter assumes. Stored first as a value of their own, they would take
+   a copy kernel, a launch more on a GPU: a model that writes its cache
+   copied its keys from their rotation's storage. Updates that view a
+   computed node are stored first: whether tolk stores that node anyway is
+   its schedule's decision, and stored whole for the scatter alone it would
+   compute elements the view does not hold. Movements with a pad, whose
+   index is valid only in part, or a symbolic size or start, and storage on
+   a disk, which no kernel reads, also leave the updates stored first. *)
+
+let constant_marg u =
+  let int = function Ops.Int _ -> true | Ops.Sym _ -> false in
+  match Shape.marg u with
+  | Reshape s | Expand s -> List.for_all int s
+  | Pad _ -> false
+  | Shrink b -> List.for_all (fun (a, n) -> int a && int n) b
+  | Permute _ -> true
+
+(* [lying v] is the flat storage the elements of the flat [v] are read from
+   and the index into it of [v]'s element at an index, where [v] is a view
+   the kernel reads through. *)
+let lying v =
+  let rec peel u =
+    if not (Op.Set.mem (Ops.op u) Op.Set.movement) then (u, [])
+    else
+      let b, ms = peel (Ops.nth u 0) in
+      (b, u :: ms)
+  in
+  let b, ms = peel v in
+  let ints u = List.for_all (function Ops.Int _ -> true | _ -> false) u in
+  let aligned () =
+    let align, phase = Shape.storage_phase b in
+    align >= 16 && phase mod 16 = 0
+  in
+  if
+    ms = []
+    || (not (Ops.has_buffer_identity ~after_ok:true b))
+    || Option.is_none (Ops.device b)
+    || Ops.on_disk b
+    || (not (ints (Shape.shape b)))
+    || (not (List.for_all constant_marg ms))
+    || not (aligned ())
+  then None
+  else
+    let dims =
+      List.map (function Ops.Int d -> d | Sym _ -> 0) (Shape.shape b)
+    in
+    let move idxs m =
+      Indexing.apply_movement_op
+        (Shape.shape (Ops.nth m 0))
+        (Shape.marg m) idxs
+    in
+    let at t =
+      let idxs = List.fold_left move [ t ] ms in
+      let flat acc i d = Ops.O.((acc * int d) + i) in
+      List.fold_left2 flat (Ops.O.int 0) idxs dims
+    in
+    Some (Shape.reshape b [ Ops.Int (Shape.max_numel b) ], at)
+
 let looped ~dst ~host ~unique (ren : Renderer.t) device (D.Any dt as d)
     (c : Nx_kernel.combine) ~axis ~idx ~updates into =
   let s = extents (List.hd (Arith.parts d into)) and t = extents idx in
@@ -544,6 +610,9 @@ let looped ~dst ~host ~unique (ren : Renderer.t) device (D.Any dt as d)
     let v = Ops.contiguous (on_device v) in
     let align, phase = Shape.storage_phase v in
     if align >= 16 && phase mod 16 = 0 then v else fresh v
+  in
+  let lying v =
+    match lying v with Some l -> l | None -> (arg v, Fun.id)
   in
   let combined olds us =
     match c with
@@ -585,8 +654,8 @@ let looped ~dst ~host ~unique (ren : Renderer.t) device (D.Any dt as d)
   in
   match distinct with
   | Some i ->
-      let kernel = push ren ~rows ~w ~p ~n ~q ~k combined in
-      let u = arg (flat updates) in
+      let u, ux = lying (flat updates) in
+      let kernel = push ren ~rows ~w ~p ~n ~q ~k ~ux combined in
       let y = List.hd (Shape.custom_kernel [ y; i; u ] kernel) in
       Shape.reshape y (Arith.dims ca (Array.of_list s))
   | None ->
@@ -607,10 +676,11 @@ let looped ~dst ~host ~unique (ren : Renderer.t) device (D.Any dt as d)
       in
       let flat_updates = flat updates in
       let dt = Ops.dtype flat_updates in
+      let u, ux = lying flat_updates in
       let walk =
-        walk ren ~host ~rows ~dt ~w ~p ~n ~q ~k ~runs ~chunks combined
+        walk ren ~host ~rows ~dt ~w ~p ~n ~q ~k ~runs ~chunks ~ux combined
       in
-      let i = arg i and u = arg flat_updates in
+      let i = arg i in
       let outs =
         if chunks = 1 then Shape.custom_kernel ([ y; i; u ] @ hit) walk
         else

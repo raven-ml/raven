@@ -492,6 +492,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx.scatter` reads updates that view stored values, such as a
+  concatenation's, through their view, where it copied them first:
+  gpt-oss-20b's decode drops a kernel a layer, the copy of its rotated keys
+  before its cache write.
+
 - `Rune.jit` computes the gradient of a float32 or float64 `Nx.attention` on
   a GPU, and of a 16-bit one that no tensor core takes, with kernels of its
   own to 160 dimensions, as it computes a 16-bit one's on tensor cores:

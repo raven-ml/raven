@@ -437,6 +437,47 @@ let test_routed_activation () =
   let swiglu g l = Nx.mul (Nx.mul g (Nx.sigmoid g)) (Nx.add_s l 1.) in
   equal int (kernels cheap + 1) (kernels swiglu)
 
+(* A scatter reads its updates where they lie in storage, as a model writes
+   its cache: into a donated pool of [slots; heads; dim], the keys of one
+   token, [batch; heads; 1; dim], with their heads and token axes swapped,
+   take no kernel more than updates given in the pool's layout when they are
+   an argument, and one more, their storage's launch, when they are a
+   rotation's concatenation of two halves. At each float dtype, with eager's
+   bits. *)
+let test_scatter_in_place () =
+  let check (type b) (dt : (float, b) Nx.dtype) =
+    let draw key s = Nx.cast dt (Nx.Rng.uniform ~key:(Nx.Rng.key key) f32 s) in
+    let at = Nx.create Nx.int64 [| 1; 1; 1 |] [| 2L |] in
+    let tokens k = Nx.reshape [| 1; 2; 8 |] (Nx.swapaxes 1 2 k) in
+    let rotated k =
+      let half i = Nx.slice [ Nx.A; Nx.A; Nx.A; Nx.R (4 * i, 4 * (i + 1)) ] k in
+      tokens (Nx.concatenate ~axis:3 [ Nx.neg (half 1); half 0 ])
+    in
+    let write value pool k =
+      let indices = Nx.broadcast_to [| 1; 2; 8 |] at in
+      Nx.scatter ~axis:0 indices (value k) pool
+    in
+    let kernels value k =
+      let jit =
+        Rune.jit T.(tensor @-> tensor @-> returns tensor) (write value)
+      in
+      let pool () = Nx.zeros dt [| 4; 2; 8 |] in
+      let p, ks =
+        Tolk.Realize.kernels (fun () -> jit (Nx.donate (pool ())) k)
+      in
+      let msg = Nx.Dtype.name dt in
+      equal ~msg bits_t (bits (write value (pool ()) k)) (bits p);
+      List.length ks
+    in
+    let k = draw 1 [| 1; 2; 1; 8 |] in
+    let given = kernels Fun.id (tokens k) in
+    let msg = Nx.Dtype.name dt in
+    equal ~msg:("an argument, " ^ msg) int given (kernels tokens k);
+    equal ~msg:("a rotation, " ^ msg) int (given + 1) (kernels rotated k)
+  in
+  check f32;
+  check Nx.bfloat16
+
 let test_doubled_rows () =
   List.iter
     (fun k ->
@@ -6267,6 +6308,8 @@ let () =
              test "an exponential every output of a product reads is stored"
                test_broadcast_exponential;
              test "a routed product's sigmoid is stored" test_routed_activation;
+             test "a scatter reads its updates where they lie"
+               test_scatter_in_place;
              test "crossed assemblies of computed pieces compile"
                test_crossed;
              test "a loop's step assembles its carry anew" test_loop_assembly;
