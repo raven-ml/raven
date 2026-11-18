@@ -3350,6 +3350,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.extend` widens an axis by samples read under an `Nx.extension` rule:
+  `` `Zero ``, `` `Replicate ``, `` `Symmetric_whole ``, `` `Symmetric_half ``,
+  `` `Antisymmetric_whole `` or `` `Periodic ``, folding as often as a short
+  signal needs. It composes views and `Nx.fma`: no new backend operation.
 - `Nx.pad` raises naming its widths when their sum with an extent passes an
   `int`, where it named a negative extent or an internal slice.
 - `Nx.log` at float32 promises one of the two floats around the exact value

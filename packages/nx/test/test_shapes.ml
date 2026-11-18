@@ -5,8 +5,8 @@
 
 (* Shapes and movements through Nx: each movement against a reference that reads
    an OCaml array at mapped indices, over operands laid out plain, reversed,
-   transposed and broadcast; the round trips; the views; every dtype; the
-   refusals. *)
+   transposed and broadcast; the round trips; the views; the extensions;
+   every dtype; the refusals. *)
 
 open Windtrap
 open Nx_support
@@ -978,7 +978,433 @@ let refusals =
               Nx.split_at ~axis:1 [ -1; 1 ] x));
     ]
 
+(* Extensions: each rule against its equations, numpy's pad and scipy's
+   odd_ext (golden/extend.golden, which lists each case's source). *)
+
+let rules : Nx.extension list =
+  [
+    `Zero;
+    `Replicate;
+    `Symmetric_whole;
+    `Symmetric_half;
+    `Antisymmetric_whole;
+    `Periodic;
+  ]
+
+let rule_name : Nx.extension -> string = function
+  | `Zero -> "zero"
+  | `Replicate -> "replicate"
+  | `Symmetric_whole -> "symmetric_whole"
+  | `Symmetric_half -> "symmetric_half"
+  | `Antisymmetric_whole -> "antisymmetric_whole"
+  | `Periodic -> "periodic"
+
+(* Position [p] of the signal [f 0], …, [f (n - 1)] read under [e], by the
+   rule's equations read again outside the signal; [opp a b] is [2 a - b]
+   in the signal's arithmetic. *)
+let rec read ~zero ~opp (e : Nx.extension) n f p =
+  let again = read ~zero ~opp e n f in
+  if p >= 0 && p < n then f p
+  else if e = `Zero then zero
+  else if n = 1 then f 0
+  else if p < 0 then
+    let i = -p in
+    match e with
+    | `Zero -> zero
+    | `Replicate -> f 0
+    | `Symmetric_whole -> again i
+    | `Symmetric_half -> again (i - 1)
+    | `Antisymmetric_whole -> opp (f 0) (again i)
+    | `Periodic -> again (n - i)
+  else
+    let i = p - (n - 1) in
+    match e with
+    | `Zero -> zero
+    | `Replicate -> f (n - 1)
+    | `Symmetric_whole -> again (n - 1 - i)
+    | `Symmetric_half -> again (n - i)
+    | `Antisymmetric_whole -> opp (f (n - 1)) (again (n - 1 - i))
+    | `Periodic -> again (i - 1)
+
+let read32 = read ~zero:0l ~opp:(fun a b -> Int32.sub (Int32.mul 2l a) b)
+
+(* [o]'s value extended along [a] by [lo] and [hi] under [e], by [read32]. *)
+let extended o a e lo hi =
+  let s' = Array.copy o.s in
+  s'.(a) <- lo + o.s.(a) + hi;
+  let at_k i k =
+    let j = Array.copy i in
+    j.(a) <- k;
+    at o j
+  in
+  (s', fun i -> read32 e o.s.(a) (at_k i) (i.(a) - lo))
+
+(* The golden *)
+
+let golden = "golden/extend.golden"
+
+type golden_case = {
+  header : string;
+  dtype : D.any;
+  rule : Nx.extension;
+  shape : int array;
+  along : int;
+  lo : int;
+  hi : int;
+  gx : float array;
+  gy : float array;
+}
+
+let read_golden ic header =
+  let values () =
+    match String.split_on_char ' ' (input_line ic) with
+    | _ :: vs ->
+        Array.of_list
+          (List.filter_map
+             (fun v -> if v = "" then None else Some (float_of_string v))
+             vs)
+    | [] -> [||]
+  in
+  match String.split_on_char ' ' header with
+  | [ "case"; dt; rule; shape; along; lo; hi; _ ] ->
+      let rule = List.find (fun e -> rule_name e = rule) rules in
+      let shape =
+        Array.of_list (List.map int_of_string (String.split_on_char ',' shape))
+      in
+      let gx = values () in
+      let gy = values () in
+      {
+        header;
+        dtype = Option.get (D.of_name dt);
+        rule;
+        shape;
+        along = int_of_string along;
+        lo = int_of_string lo;
+        hi = int_of_string hi;
+        gx;
+        gy;
+      }
+  | _ -> failf "%s: a case header %S" golden header
+
+let goldens =
+  let path = Filename.concat (Filename.dirname Sys.executable_name) golden in
+  In_channel.with_open_text path (fun ic ->
+      let rec go acc =
+        match In_channel.input_line ic with
+        | None -> List.rev acc
+        | Some h -> go (read_golden ic h :: acc)
+      in
+      go [])
+
+(* A golden case on its operand laid out plain, reversed and transposed, the
+   axis spelled from the end for the transposed one, and by default for a
+   1-d operand. *)
+let law_golden g =
+  let (D.Any dt) = g.dtype in
+  let r = Array.length g.shape in
+  let w = Testable.make ~pp:(D.pp_value dt) ~equal:( = ) in
+  let s' = Array.copy g.shape in
+  s'.(g.along) <- g.lo + g.shape.(g.along) + g.hi;
+  List.iter
+    (fun l ->
+      let data = Array.map (D.of_float dt) g.gx in
+      let x = Nx.Repr.of_array Nx.Host.v (lay l dt g.shape data) in
+      let y =
+        match l with
+        | Transposed -> Nx.extend ~axis:(g.along - r) g.rule (g.lo, g.hi) x
+        | _ when r = 1 -> Nx.extend g.rule (g.lo, g.hi) x
+        | _ -> Nx.extend ~axis:g.along g.rule (g.lo, g.hi) x
+      in
+      let msg = Format.asprintf "%a" pp_layout l in
+      equal ~msg (array int) s' (Nx.shape y);
+      equal ~msg (array w) (Array.map (D.of_float dt) g.gy) (elements y))
+    [ Plain; Reversed; Transposed ]
+
+(* Float elements with every NaN alike, a NaN promising no bits. *)
+let float_bits =
+  Testable.make
+    ~pp:(fun ppf v -> Format.fprintf ppf "%h" v)
+    ~equal:(fun a b ->
+      (Float.is_nan a && Float.is_nan b)
+      || Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b))
+
+(* [2 a - b] rounded once, the antisymmetric rule's arithmetic. *)
+let opp_f a b = Float.fma 2. a (-.b)
+
+let host dt s data =
+  Nx.Repr.of_array Nx.Host.v (A.of_array dt (Iarray.of_array s) data)
+
+let extensions =
+  group "extensions"
+    [
+      cases "extend gives numpy's pad and scipy's odd_ext"
+        ~id:(fun g -> g.header)
+        goldens law_golden;
+      prop "extend reads each position by its rule's equations"
+        Gen.(
+          let* o = operand ~min_rank:1 () in
+          let* a = axis_of o in
+          let* neg = bool in
+          let* e = of_list rules in
+          let* lo = int_range 0 7 in
+          let+ hi = int_range 0 7 in
+          (o, a, neg, e, lo, hi))
+        (fun (o, a, neg, e, lo, hi) ->
+          covers o;
+          let n = o.s.(a) in
+          cover "a broadcast operand" (o.l = Broadcast && numel o.s > 1);
+          cover "one sample, widened" (n = 1 && e <> `Zero && lo + hi > 0);
+          cover "a fold past the far end" (n >= 2 && (lo > n || hi > n));
+          cover "folds twice past an end" (n = 2 && (lo > 2 * n || hi > 2 * n));
+          let y () = Nx.extend ~axis:(spell o neg a) e (lo, hi) o.x in
+          if n = 0 && e <> `Zero && lo + hi > 0 then invalid ~by:"Nx.extend" y
+          else
+            let s', f = extended o a e lo hi in
+            is s' f (y ()));
+      prop "extend's laws"
+        Gen.(
+          let* o = operand ~min_rank:1 () in
+          let* a = axis_of o in
+          let* e = of_list rules in
+          let* lo = int_range 0 7 in
+          let+ hi = int_range 0 7 in
+          (o, a, e, lo, hi))
+        (fun (o, a, e, lo, hi) ->
+          let n = o.s.(a) in
+          assume (n > 0);
+          cover "one sample" (n = 1);
+          cover "a fold past the far end" (n >= 2 && (lo > n || hi > n));
+          let ext e (lo, hi) x = Nx.extend ~axis:a e (lo, hi) x in
+          let along r = List.init a (fun _ -> Nx.A) @ [ r ] in
+          let y = ext e (lo, hi) o.x in
+          (* Slicing the samples back gives the signal. *)
+          is o.s (at o) (Nx.slice (along (R (lo, lo + n))) y);
+          (* A periodic extension indexes modulo [n]. *)
+          let positions =
+            Nx.create Nx.int64
+              [| lo + n + hi |]
+              (Array.init
+                 (lo + n + hi)
+                 (fun k -> Int64.of_int ((((k - lo) mod n) + n) mod n)))
+          in
+          equal ~msg:"periodic" (array int32)
+            (elements (Nx.take ~axis:a positions o.x))
+            (elements (ext `Periodic (lo, hi) o.x));
+          (* A symmetric extension is the periodic one of the signal and its
+             mirror, the whole-sample mirror without its end samples. *)
+          let mirror start count =
+            Nx.flip ~axes:[ a ]
+              (Nx.slice (along (R (start, start + count))) o.x)
+          in
+          let periodic_of back =
+            let p = Nx.concatenate ~axis:a [ o.x; back ] in
+            Nx.slice (along (R (0, lo + n + hi))) (ext `Periodic (lo, hi) p)
+          in
+          equal ~msg:"half" (array int32)
+            (elements (periodic_of (mirror 0 n)))
+            (elements (ext `Symmetric_half (lo, hi) o.x));
+          if n >= 2 then
+            equal ~msg:"whole" (array int32)
+              (elements (periodic_of (mirror 1 (n - 2))))
+              (elements (ext `Symmetric_whole (lo, hi) o.x)));
+      prop ~count:300 "a sample's bits depend on its position alone"
+        (Gen.with_pp
+           (fun ppf (v, e, lo, hi) ->
+             Format.fprintf ppf "%s (%d, %d) [%s]" (rule_name e) lo hi
+               (String.concat "; "
+                  (Array.to_list (Array.map string_of_float v))))
+           Gen.(
+             let* n = of_list [ 2; 3; 5 ] in
+             let* v =
+               array ~size:(constant n)
+                 (of_list [ 0.1; 0.7; -0.3; 1.9; 3.3; -2.6; 0.45 ])
+             in
+             let* e = of_list rules in
+             let* lo = int_range 0 (4 * n) in
+             let+ hi = int_range 0 (4 * n) in
+             (v, e, lo, hi)))
+        (fun (v, e, lo, hi) ->
+          let n = Array.length v in
+          cover "antisymmetric, both sides past two folds"
+            (e = `Antisymmetric_whole && lo > 2 * (n - 1) && hi > 2 * (n - 1));
+          let x = host D.Float64 [| n |] v in
+          let bits y = elements (Nx.bitcast D.Int64 y) in
+          let y = bits (Nx.extend e (lo, hi) x) in
+          let l = bits (Nx.extend e (lo, 0) x) in
+          let r = bits (Nx.extend e (0, hi) x) in
+          equal ~msg:"before" (array int64) (Array.sub l 0 lo)
+            (Array.sub y 0 lo);
+          equal ~msg:"after" (array int64) (Array.sub r n hi)
+            (Array.sub y (lo + n) hi));
+      cases "every dtype, and the antisymmetric rule on every one but booleans"
+        ~id:(fun (D.Any dt) -> D.name dt)
+        D.all
+        (fun (D.Any dt) ->
+          (* Rows whose antisymmetric extensions by two stay within [0, 4],
+             which every integer and float dtype holds. *)
+          let data = [| 2.; 3.; 2.; 1.; 2.; 2. |] in
+          let x =
+            Nx.Repr.of_array Nx.Host.v
+              (lay Transposed dt [| 2; 3 |] (Array.map (D.of_float dt) data))
+          in
+          let w = Testable.make ~pp:(D.pp_value dt) ~equal:( = ) in
+          List.iter
+            (fun e ->
+              let y () = Nx.extend e (2, 2) x in
+              if e = `Antisymmetric_whole && D.is D.Boolean dt then
+                invalid ~by:"Nx.extend" y
+              else
+                let expected =
+                  init [| 2; 7 |] (fun i ->
+                      D.of_float dt
+                        (read ~zero:0. ~opp:opp_f e 3
+                           (fun k -> data.((3 * i.(0)) + k))
+                           (i.(1) - 2)))
+                in
+                equal ~msg:(rule_name e) (array w) expected (elements (y ())))
+            rules);
+      cases "the antisymmetric rule rounds once and wraps"
+        ~id:(fun (name, _, _, _) -> name)
+        [
+          ("float64 past half the range", [| 1e308; 1.5e308 |], 1, 0);
+          ("float64 at the top", [| max_float; max_float; 0. |], 2, 2);
+          ( "signed zeros, infinities and NaN",
+            [| -0.; 0.; infinity; nan |],
+            3,
+            3 );
+          ("float64 that rounds", [| 0.1; 0.7; 0.3 |], 2, 2);
+        ]
+        (fun (_, v, lo, hi) ->
+          let n = Array.length v in
+          let x = host D.Float64 [| n |] v in
+          equal (array float_bits)
+            (Array.init
+               (lo + n + hi)
+               (fun k ->
+                 read ~zero:0. ~opp:opp_f `Antisymmetric_whole n (Array.get v)
+                   (k - lo)))
+            (elements (Nx.extend `Antisymmetric_whole (lo, hi) x)));
+      test "the antisymmetric rule on float16, int32 extremes and complex parts"
+        (fun () ->
+          (* [2 x(0)] overflows float16, [2 x(0) - x(1)] does not. *)
+          let h = host D.Float16 [| 2 |] [| 60000.; 64992. |] in
+          equal (array float_bits)
+            [| 55008.; 60000.; 64992. |]
+            (elements (Nx.extend `Antisymmetric_whole (1, 0) h));
+          let v = [| Int32.max_int; Int32.min_int; 5l |] in
+          let x = host D.Int32 [| 3 |] v in
+          equal (array int32)
+            (Array.init 7 (fun k ->
+                 read32 `Antisymmetric_whole 3 (Array.get v) (k - 2)))
+            (elements (Nx.extend `Antisymmetric_whole (2, 2) x));
+          (* Each part by one fma, the other part not read. *)
+          let z =
+            [|
+              { Complex.re = 0.1; im = -0.7 };
+              { re = 0.7; im = max_float };
+              { re = -0.3; im = 0.45 };
+            |]
+          in
+          let parts f =
+            Array.init 7 (fun k ->
+                read ~zero:0. ~opp:opp_f `Antisymmetric_whole 3
+                  (fun i -> f z.(i))
+                  (k - 2))
+          in
+          let y =
+            elements
+              (Nx.extend `Antisymmetric_whole (2, 2)
+                 (host D.Complex128 [| 3 |] z))
+          in
+          equal ~msg:"re" (array float_bits)
+            (parts (fun c -> c.Complex.re))
+            (Array.map (fun c -> c.Complex.re) y);
+          equal ~msg:"im" (array float_bits)
+            (parts (fun c -> c.Complex.im))
+            (Array.map (fun c -> c.Complex.im) y));
+      test "the antisymmetric rule on complex values of the most axes"
+        (fun () ->
+          (* A complex value's parts take an axis more: at the most axes the
+             rule raises, one fewer computes. *)
+          let r = A.Layout.max_rank in
+          let z =
+            [|
+              { Complex.re = 0.1; im = -0.7 };
+              { re = 0.7; im = 2.5 };
+              { re = -0.3; im = 0.45 };
+            |]
+          in
+          let along r a = Array.init r (fun i -> if i = a then 3 else 1) in
+          List.iter
+            (fun a ->
+              named ~by:"Nx.extend" (fun () ->
+                  ignore
+                    (Nx.extend ~axis:a `Antisymmetric_whole (1, 1)
+                       (host D.Complex128 (along r a) z))))
+            [ 0; 1; r - 1 ];
+          let part f k =
+            read ~zero:0. ~opp:opp_f `Antisymmetric_whole 3
+              (fun i -> f z.(i))
+              (k - 1)
+          in
+          let x = host D.Complex128 (along (r - 1) (r - 2)) z in
+          let y = elements (Nx.extend `Antisymmetric_whole (1, 1) x) in
+          equal ~msg:"re" (array float_bits)
+            (Array.init 5 (part (fun c -> c.Complex.re)))
+            (Array.map (fun c -> c.Complex.re) y);
+          equal ~msg:"im" (array float_bits)
+            (Array.init 5 (part (fun c -> c.Complex.im)))
+            (Array.map (fun c -> c.Complex.im) y));
+      test "copying rules keep a NaN's bits and signed zeros" (fun () ->
+          let nan = Int64.float_of_bits 0x7ff8000000000001L in
+          let x = signalling D.Float64 [| 3 |] [| nan; -0.; neg_infinity |] in
+          let bits y = elements (Nx.bitcast D.Int64 y) in
+          let v = bits x in
+          equal ~msg:"signalling" int64 0x7ff0000000000001L v.(0);
+          List.iter
+            (fun e ->
+              equal ~msg:(rule_name e) (array int64)
+                (Array.init 11 (fun k ->
+                     read ~zero:0L ~opp:(fun _ _ -> 0L) e 3 (Array.get v) (k - 4)))
+                (bits (Nx.extend e (4, 4) x)))
+            [ `Replicate; `Symmetric_whole; `Symmetric_half; `Periodic ]);
+      test "an empty signal extends only under `Zero, and is copied" (fun () ->
+          let x = Nx.zeros Nx.int32 [| 2; 0 |] in
+          equal (array int32)
+            [| 0l; 0l; 0l; 0l; 0l; 0l |]
+            (elements (Nx.extend `Zero (1, 2) x));
+          List.iter
+            (fun e ->
+              equal (array int) [| 2; 0 |] (Nx.shape (Nx.extend e (0, 0) x)))
+            rules);
+      test "extend copies" (fun () ->
+          let x = (operand_of [| 2; 3 |] Plain).x in
+          List.iter
+            (fun e ->
+              equal ~msg:(rule_name e) bool false
+                (shares x (Nx.extend e (0, 0) x));
+              equal ~msg:(rule_name e) bool false
+                (shares x (Nx.extend e (1, 2) x)))
+            rules);
+      test "extend's refusals name it" (fun () ->
+          let x = (operand_of [| 2; 3 |] Plain).x in
+          let each f = named ~by:"Nx.extend" (fun () -> ignore (f ())) in
+          each (fun () -> Nx.extend `Zero (-1, 0) x);
+          each (fun () -> Nx.extend `Periodic (0, -1) x);
+          each (fun () -> Nx.extend ~axis:2 `Zero (1, 1) x);
+          each (fun () -> Nx.extend ~axis:(-3) `Replicate (1, 1) x);
+          each (fun () -> Nx.extend `Replicate (1, 1) (Nx.scalar Nx.int32 1l));
+          List.iter
+            (fun e ->
+              if e <> `Zero then
+                each (fun () ->
+                    Nx.extend e (0, 1) (Nx.zeros Nx.int32 [| 3; 0 |])))
+            rules;
+          each (fun () ->
+              Nx.extend `Antisymmetric_whole (1, 1) (Nx.zeros Nx.bool [| 2 |])));
+    ]
+
 let () =
   exit
     (run "nx shapes"
-       [ laws; joins; properties; grids; views; dtypes; refusals ])
+       [ laws; joins; extensions; properties; grids; views; dtypes; refusals ])

@@ -1123,6 +1123,56 @@ val pad : (int * int) array -> 'v -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     Raises [Invalid_argument] if [widths] does not have one pair per axis of
     [x], a width is negative, or [v] is an [int] outside [x]'s dtype's range. *)
 
+type extension =
+  [ `Zero
+  | `Replicate
+  | `Symmetric_whole
+  | `Symmetric_half
+  | `Antisymmetric_whole
+  | `Periodic ]
+(** The type for the rules that read a signal of [n] samples [x(0)], …,
+    [x(n - 1)] at positions outside it. Its {e edge samples} are [x(0)] and
+    [x(n - 1)]. For [i ≥ 1], at the start:
+    - [`Zero] reads [x(-i) = 0].
+    - [`Replicate] reads the edge sample, [x(-i) = x(0)].
+    - [`Symmetric_whole] mirrors about the edge sample, which appears once,
+      [x(-i) = x(i)]. [abcd] reads as [dcb|abcd|cba].
+    - [`Symmetric_half] mirrors about the point half a sample past the edge
+      sample, which appears twice, [x(-i) = x(i - 1)]. [abcd] reads as
+      [cba|abcd|dcb].
+    - [`Antisymmetric_whole] is the point reflection about the edge sample,
+      [x(-i) = 2 x(0) - x(i)]. [1 2 4] reads as [-2 0|1 2 4|6 7].
+    - [`Periodic] repeats the signal, [x(-i) = x(n - i)].
+
+    The end mirrors the start. [x(n - 1 + i)] reads as [x(-i)] does in the
+    signal reversed. A position the equation reads outside [\[0, n)] is read
+    by the rule again, so a rule folds as often as a short signal needs. The
+    symmetric rules repeat every [2 (n - 1)] and [2 n] samples, and
+    [`Antisymmetric_whole] gains [2 (x(n - 1) - x(0))] every [2 (n - 1)].
+    One sample reads itself under every rule but [`Zero]. *)
+
+val extend :
+  ?axis:int -> extension -> int * int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [extend ~axis e (lo, hi) x] is [x] with [lo] samples before it and [hi]
+    after it along [axis] (default [-1]), read under [e]. The result's
+    element [k] along [axis] is [x(k - lo)], whose bits depend on [k - lo]
+    alone. [extend ~axis `Zero (lo, hi) x] is {!pad} of zero by [(lo, hi)]
+    along [axis]. A copy; where [lo] or [hi] reaches past the far end,
+    rounds of copies extend [x] by whole folds first. Every dtype, but
+    booleans under [`Antisymmetric_whole], which computes each sample as
+    one {!fma} of [2], the sample it reflects about and the sample it
+    mirrors, a complex value's parts each by one, but for a complex [x] of
+    {!Nx_array.Layout.max_rank} axes. That rounds once and wraps on
+    integers, so a sample past the first fold rounds at most once a fold.
+    It reads [axis] whole on each device where it widens it, so a
+    value cut along it raises ({!section-routing}); a cut of another axis
+    cuts the result alike.
+
+    Raises [Invalid_argument] if [axis] is not an axis of [x], [lo] or [hi]
+    is negative, [x] has no element along [axis] and [e] other than
+    [`Zero] widens it, or [e] is [`Antisymmetric_whole] and the dtype is
+    boolean, or complex with {!Nx_array.Layout.max_rank} axes. *)
+
 val roll : ?axis:int -> int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [roll ~axis k x] is [x] with its elements along [axis] shifted [k] places
     toward the end, those past it wrapping to the start; a negative [k] shifts

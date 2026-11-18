@@ -311,8 +311,13 @@ let law_placed (Case (k, s, data, w, op)) =
 (* Assemblies of cut values *)
 
 (* A concatenation with a value of the given extent along an axis, a stack
-   of two values along a new axis, or a pad by widths per axis. *)
-type assembly = Concat of int * int | Stack of int | Pad of (int * int) array
+   of two values along a new axis, a pad by widths per axis, or an extension
+   along an axis by widths before and after. *)
+type assembly =
+  | Concat of int * int
+  | Stack of int
+  | Pad of (int * int) array
+  | Extend of Nx.extension * int * int * int
 
 let pp_assembly ppf = function
   | Concat (a, e) ->
@@ -323,6 +328,17 @@ let pp_assembly ppf = function
         (String.concat "; "
            (Array.to_list
               (Array.map (fun (b, e) -> Printf.sprintf "(%d, %d)" b e) ws)))
+  | Extend (e, a, lo, hi) ->
+      let rule =
+        match e with
+        | `Zero -> "zero"
+        | `Replicate -> "replicate"
+        | `Symmetric_whole -> "whole-sample symmetric"
+        | `Symmetric_half -> "half-sample symmetric"
+        | `Antisymmetric_whole -> "antisymmetric"
+        | `Periodic -> "periodic"
+      in
+      Format.fprintf ppf "extended %s along %d by (%d, %d)" rule a lo hi
 
 (* The second operand's shape: [s], or [s] of [e] elements along [a]. *)
 let second_shape s = function
@@ -330,7 +346,7 @@ let second_shape s = function
       let s = Array.copy s in
       s.(a) <- e;
       s
-  | Stack _ | Pad _ -> s
+  | Stack _ | Pad _ | Extend _ -> s
 
 (* A value of shape [s] at [w], the assembly, its second operand's elements
    and whether that operand lies whole on each device of the first's set. *)
@@ -355,6 +371,7 @@ let assembled_case =
      let free =
        List.filter (fun a -> not (List.mem a cut)) (List.init rank Fun.id)
      in
+     let* (Kind k) = of_list kinds in
      let width = pair (int_range 0 2) (int_range 0 2) in
      let pad ws =
        Pad (Array.mapi (fun a w -> if List.mem a cut then (0, 0) else w) ws)
@@ -368,16 +385,33 @@ let assembled_case =
              (pair (of_list free) (of_list [ 0; 1; 3 ]));
          ]
      in
+     (* Every rule the dtype takes; an empty axis extends only under
+        [`Zero]. *)
+     let rules =
+       [ `Zero; `Replicate; `Symmetric_whole; `Symmetric_half; `Periodic ]
+       @ if D.is D.Boolean k.dtype then [] else [ `Antisymmetric_whole ]
+     in
+     let ext ((e, a), (lo, hi)) =
+       Extend ((if s.(a) = 0 then `Zero else e), a, lo, hi)
+     in
+     let extend =
+       if free = [] then []
+       else
+         [
+           map ext
+             (pair (pair (of_list rules) (of_list free))
+                (pair (int_range 0 4) (int_range 0 4)));
+         ]
+     in
      let* asm =
        one_of
          ([
             map (fun a -> Stack a) (int_range 0 rank);
             map pad (array ~size:(constant rank) width);
           ]
-         @ concat)
+         @ concat @ extend)
      in
      let* beside = bool in
-     let* (Kind k) = of_list kinds in
      let n = Array.fold_left ( * ) 1 s in
      let n' = Array.fold_left ( * ) 1 (second_shape s asm) in
      let* data = array ~size:(constant n) (of_list k.values) in
@@ -413,16 +447,27 @@ let law_assembled (Acase (k, s, data, w, asm, data', beside)) =
     (match asm with
     | Pad ws -> Array.exists (fun (b, e) -> b + e > 0) ws
     | _ -> false);
+  cover "an extension beside a cut"
+    (match asm with Extend (_, _, lo, hi) -> lo + hi > 0 | _ -> false);
   let fill = List.hd k.values in
   let assemble (type d) (x : (_, _, d) Nx.t) (y : (_, _, d) Nx.t) =
     match asm with
     | Concat (a, _) -> Nx.concatenate ~axis:a [ x; y ]
     | Stack a -> Nx.stack ~axis:a [ x; y ]
     | Pad ws -> Nx.pad ws fill x
+    | Extend (e, a, lo, hi) -> Nx.extend ~axis:a e (lo, hi) x
   in
   let x = signalling k.dtype s data in
   let y = signalling k.dtype (second_shape s asm) data' in
-  let expected = bytes (assemble x y) in
+  (* An assembly's bits, but an antisymmetric extension's elements with NaNs
+     as a class: it computes, and a NaN result promises no bits. *)
+  let seen r =
+    match asm with
+    | Extend (`Antisymmetric_whole, _, _, _) ->
+        Array.map (nan_blind ~parts:false k.dtype k.show) (elements r)
+    | _ -> Array.map string_of_int (bytes r)
+  in
+  let expected = seen (assemble x y) in
   (* The result's axis that axis [c] of the operands becomes. *)
   let lift c = match asm with Stack a when c >= a -> c + 1 | _ -> c in
   let at (type d) (p : d Nx.Placement.t) (q : d Nx.Placement.t) =
@@ -430,7 +475,7 @@ let law_assembled (Acase (k, s, data, w, asm, data', beside)) =
     let y = Nx.place (if beside then Nx.Placement.uncut p else p) y in
     let r = assemble (Nx.place p x) y in
     equal placed q (Nx.placement r);
-    bytes r
+    seen r
   in
   let mesh cuts = Nx.Placement.mesh mesh4 cuts in
   let cuts a b =
@@ -444,7 +489,7 @@ let law_assembled (Acase (k, s, data, w, asm, data', beside)) =
     | Cuts (a, b) -> at (cuts a b) (cuts (lift a) (lift b))
     | Minor a -> at (mesh [ (a, [ "b" ]) ]) (mesh [ (lift a, [ "b" ]) ])
   in
-  equal (array int) expected actual
+  equal (array string) expected actual
 
 (* A concatenation reads the axis it joins along whole. *)
 let test_concat_cut () =
@@ -454,6 +499,21 @@ let test_concat_cut () =
        "Nx.concatenate: operand 0 lies at split ~axis:0 [m0; m1; m2; m3] and \
         is read at on [m0; m1; m2; m3]; Nx.place (Placement.on s) x")
     (fun () -> Nx.concatenate ~axis:0 [ x; x ])
+
+(* An extension reads the axis it widens whole; one that widens nothing
+   keeps the cut. *)
+let test_extend_cut () =
+  let p = Set4.split ~axis:0 in
+  let x = Nx.place p (Nx.zeros D.Float32 [| 4; 2 |]) in
+  let placed = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal in
+  List.iter
+    (fun e ->
+      raises_match
+        (Exn.invalid_arg ~sub:"Nx.extend: ")
+        (fun () -> Nx.extend ~axis:0 e (1, 1) x);
+      equal placed p (Nx.placement (Nx.extend ~axis:0 e (0, 0) x)))
+    [ `Zero; `Replicate; `Symmetric_whole; `Symmetric_half;
+      `Antisymmetric_whole; `Periodic ]
 
 (* Reductions over cut axes *)
 
@@ -3930,6 +3990,7 @@ let placed =
          bits, cut along those axes over the same devices"
         assembled_case law_assembled;
       test "a concatenation along a cut axis reads it whole" test_concat_cut;
+      test "an extension along a cut axis reads it whole" test_extend_cut;
       prop ~count:1000
         "a gather of a value at any placement, at positions whole on each of \
          its devices, cut along axes its gathered cut leaves, or split, \

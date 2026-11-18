@@ -107,9 +107,26 @@
   windtrap)
  (deps
   (glob_files golden/special/*.golden)
+  golden/extend.golden
   golden/moments_ranges.golden
   golden/spread.golden
   golden/ceil_padding.golden))
+
+; Widths past what an array holds, for a function that allocates by its
+; widths before its result exists, under an address space of 2 GB, which
+; holds the suite: a missing check then fails within the limit instead of
+; allocating the machine's memory. Only a shell's [ulimit -v] sets the limit
+; on the child, and Windows has no [sh] and macOS no dependable [ulimit -v],
+; so the suite runs on Linux alone.
+
+(test
+ (name test_widths)
+ (modules test_widths)
+ (libraries nx windtrap)
+ (enabled_if
+  (= %{system} linux))
+ (action
+  (run sh -c "ulimit -v 2000000 && exec ./%{dep:test_widths.exe}")))
 
 ; Checks on a device of another machine, served by rig's test agent over the
 ; loopback.

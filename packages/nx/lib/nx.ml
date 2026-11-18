@@ -1214,6 +1214,141 @@ let pad widths v x =
   in
   assemble ~by (dtype x) s' v [ (rs, x) ]
 
+(* Extensions *)
+
+type extension =
+  [ `Zero
+  | `Replicate
+  | `Symmetric_whole
+  | `Symmetric_half
+  | `Antisymmetric_whole
+  | `Periodic ]
+
+(* [2 x - v] rounded once, by one fma, broadcast: a complex value's parts
+   each alone, as pairs of floats. *)
+let opposed (type v s d) ~by (x : (v, s, d) t) (v : (v, s, d) t) : (v, s, d) t =
+  let twice_less (type w r) (x : (w, r, d) t) (v : (w, r, d) t) : (w, r, d) t =
+    let two = scalar_beside ~by x (dtype x) (D.of_float (dtype x) 2.) in
+    ternary ~by Fma two x (unary ~by Neg v)
+  in
+  let parts (type p) (p : (float, p) D.t) =
+    let pairs y = Eval.bitcast ~by p y in
+    Eval.bitcast ~by (dtype x) (twice_less (pairs x) (pairs v))
+  in
+  match dtype x with
+  | D.Complex64 -> parts D.Float32
+  | D.Complex128 -> parts D.Float64
+  | _ -> twice_less x v
+
+(* [x] with [lo] samples before it along [a] and [hi] after it, each within
+   one fold of [x]: views of [x] and, for [`Antisymmetric_whole], one fma
+   a side, assembled into one copy. *)
+let fold ~by (e : extension) a (lo, hi) x =
+  let s = shape x in
+  let n = s.(a) in
+  let part start count = Eval.move ~by (Slice (region s a start count)) x in
+  let mirror start count = flip_by ~by ~axes:[ a ] (part start count) in
+  let spread k count =
+    let s' = Array.copy s in
+    s'.(a) <- count;
+    Eval.broadcast ~by s' (part k 1)
+  in
+  let sides =
+    match e with
+    | `Zero -> None
+    | `Replicate -> Some (spread 0, spread (n - 1))
+    | `Periodic -> Some ((fun c -> part (n - c) c), part 0)
+    | `Symmetric_half -> Some (mirror 0, fun c -> mirror (n - c) c)
+    | `Symmetric_whole -> Some (mirror 1, fun c -> mirror (n - 1 - c) c)
+    | `Antisymmetric_whole ->
+        Some
+          ( (fun c -> opposed ~by (part 0 1) (mirror 1 c)),
+            fun c -> opposed ~by (part (n - 1) 1) (mirror (n - 1 - c) c) )
+  in
+  let s' = Array.copy s in
+  s'.(a) <- lo + n + hi;
+  let piece start count f =
+    if count = 0 then [] else [ (region s' a start count, f count) ]
+  in
+  let pieces =
+    match sides with
+    | None -> []
+    | Some (before, after) -> piece 0 lo before @ piece (lo + n) hi after
+  in
+  assemble ~by (dtype x) s' (D.zero (dtype x)) ((region s' a lo n, x) :: pieces)
+
+(* A rule reads past the far end of a signal shorter than [lo] or [hi] by
+   reading the extended signal. Each round extends one side by a whole fold,
+   so that its end stays where the rule folds, until a last round within one
+   fold: [abc] by [`Periodic (7, 0)] is [(4, 0)] of [abc|abc]. The rounds
+   start at the same positions whatever the width, so a sample's bits, which
+   [`Antisymmetric_whole] rounds once a round, depend on its position alone.
+   Where both sides pass a fold, each takes its own rounds: a round on both
+   would mirror a signal the other side's width has grown. *)
+let rec extended ~by (e : extension) a (lo, hi) x =
+  let n = Prim.dim x a in
+  let reach =
+    match e with
+    | `Zero | `Replicate -> max_int
+    | `Symmetric_whole | `Antisymmetric_whole -> n - 1
+    | `Symmetric_half | `Periodic -> n
+  in
+  if lo <= reach && hi <= reach then fold ~by e a (lo, hi) x
+  else if lo > reach && hi > reach then (
+    let before = extended ~by e a (lo, 0) x in
+    let after = extended ~by e a (0, hi) x in
+    let part y start count =
+      Eval.move ~by (Slice (region (shape y) a start count)) y
+    in
+    let s' = Array.copy (shape x) in
+    s'.(a) <- lo + n + hi;
+    assemble ~by (dtype x) s'
+      (D.zero (dtype x))
+      [
+        (region s' a 0 lo, part before 0 lo);
+        (region s' a lo n, x);
+        (region s' a (lo + n) hi, part after n hi);
+      ])
+  else
+    let whole w = if w > reach then reach else 0 in
+    let lo' = whole lo and hi' = whole hi in
+    extended ~by e a (lo - lo', hi - hi') (fold ~by e a (lo', hi') x)
+
+let extend ?axis:(a = -1) (e : extension) (lo, hi) x =
+  let by = "Nx.extend" in
+  let a = axis ~by x a in
+  let n = Prim.dim x a in
+  if lo < 0 || hi < 0 then invalid_argf "%s: a negative width (%d, %d)" by lo hi;
+  (* The result's shape, checked before any round allocates. *)
+  if lo > max_int - n - hi then
+    invalid_argf "%s: widths (%d, %d) of %a count past an int" by lo hi pp_value
+      x;
+  let s' = Array.copy (shape x) in
+  s'.(a) <- lo + n + hi;
+  Prim.check_shape ~by (Iarray.of_array s');
+  if e = `Antisymmetric_whole && D.is D.Boolean (dtype x) then
+    invalid_argf "%s: `Antisymmetric_whole computes on numbers, not %s" by
+      (D.name (dtype x));
+  (* A complex value's parts are pairs of floats along one more axis. *)
+  if
+    e = `Antisymmetric_whole
+    && D.is D.Complex (dtype x)
+    && ndim x = Nx_array.Layout.max_rank
+  then
+    invalid_argf
+      "%s: `Antisymmetric_whole takes a complex value of at most %d axes, not \
+       %a"
+      by
+      (Nx_array.Layout.max_rank - 1)
+      pp_value x;
+  if n = 0 && e <> `Zero && (lo > 0 || hi > 0) then
+    invalid_argf "%s: %a has no sample along axis %d to read" by pp_value x a;
+  (* With no sample there is nothing to read, and one sample reads itself. *)
+  let e =
+    if n = 0 then `Zero else if n = 1 && e <> `Zero then `Replicate else e
+  in
+  extended ~by e a (lo, hi) x
+
 (* [x] with [lo.(a)] elements [v] before its axis [a] and [hi.(a)] after it, a
    negative width cutting, and [interior.(a)] elements [v] between its
    elements: [x] itself where nothing pads, cuts or spreads; [v] beside [x]
