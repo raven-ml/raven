@@ -2,8 +2,8 @@
 
 Each fixture's header, or the dune file of its directory, records its
 source and the command that made it; `esri_26910.prj`, one line of WKT
-copied unchanged, has its source in its section below. The generators are in `gen/`, run
-through `uv run` (each one's docstring says how). This file gives each
+copied unchanged, has its source in its section below. The generators are
+in `gen/`, run through `uv run` (each one's docstring says how). This file gives each
 fixture's terms. Where a term is marked unverified, the source's terms page
 could not be read when the file was written (2026-11-18), and the source
 alone is given.
@@ -142,9 +142,10 @@ gives no text without a browser. Each collection states its licence:
 repository holds none of their data and no test runs it. Its dune file
 names them: `austria_crops.geojson`, 349 field parcels near Vienna
 labelled by crop type, the example of tessera-eval
-(<https://github.com/ucam-eo/tessera-eval>), whose README states no
-source or licence for it; GeoTessera's landmask tiles, `grid_<lon>_<lat>.tiff`,
-fetched by GeoTessera (<https://github.com/ucam-eo/geotessera>) from
+(<https://github.com/ucam-eo/tessera-eval>), in that repository under its
+MIT licence, whose README names no source for the parcels; GeoTessera's
+landmask tiles, `grid_<lon>_<lat>.tiff`, fetched by GeoTessera
+(<https://github.com/ucam-eo/geotessera>) from
 <https://data.source.coop/tessera/tessera>, whose README states no
-licence for them; and rasterio's rasters of the parcels, which a script outside the
-repository writes.
+licence for them; and rasterio's rasters of the parcels, which a script
+outside the repository writes.
