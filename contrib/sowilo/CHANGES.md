@@ -5,6 +5,17 @@ All notable changes to Sowilo are documented in this file. Releases up to
 
 ## Unreleased
 
+- `resize ~interpolation:Nearest` is Pillow's `NEAREST` on its 8-bit, 32-bit
+  and float images, pixel for pixel: output pixel `i` of `n` takes the input
+  pixel `⌊(i + 1/2) s⌋` of `m`, for `s` the double nearest `m / n` and
+  `(i + 1/2) s` a running sum of doubles from `s / 2`, as Pillow sums it, and
+  its doc states the rule. A resize to one row or column took the first
+  pixel, where it takes the centre one, `⌊m/2⌋`: 3 of 7. A centre on the edge
+  between two pixels takes the pixel of those Pillow images and of OpenCV's
+  `INTER_NEAREST_EXACT`, where the float32 rounding of
+  `(i + 1/2) m / n - 1/2` chose: 2 columns to 7 give `0 0 0 0 1 1 1`.
+  Pillow's 16-bit `I;16` images take one product a pixel and differ at some
+  such centres.
 - `gaussian_blur`'s errors write sigma as the shortest decimal that reads
   back, the same text on every system: `-1000000` where they wrote `-1e+06`,
   or `-1e+006` under Windows.

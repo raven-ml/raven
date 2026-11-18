@@ -110,6 +110,16 @@ val resize :
     defaults to {!Bilinear}. Casts to float32 internally for bilinear
     interpolation.
 
+    {!Nearest} is Pillow's [NEAREST] on its 8-bit, 32-bit and float images:
+    output pixel [i] of [n] along an axis takes the input pixel
+    [⌊(i + 1/2) s⌋] of [m], the one holding its centre, for [s] the double
+    nearest [m / n] and [(i + 1/2) s] summed in doubles as [s / 2] plus [i]
+    additions of [s]. A centre on the edge between two input pixels takes the
+    pixel that sum truncates to, as those Pillow images and OpenCV's
+    [INTER_NEAREST_EXACT] do: 2 columns to 7 give [0 0 0 0 1 1 1]. Pillow's
+    16-bit [I;16] images take one product [(i + 1/2) s] a pixel instead, and
+    differ at some such centres: [0 0 0 1 1 1 1] there.
+
     Raises [Invalid_argument] if [height] or [width] is not positive. *)
 
 val crop :

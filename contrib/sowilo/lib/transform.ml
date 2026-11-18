@@ -17,15 +17,22 @@ let hw_axes rank =
 
 let float_range at size = Nx.arange_f_at at Nx.float32 0.0 (float size) 1.0
 
+(* Pillow's NEAREST: the centre [(i + 1/2) s] of output pixel [i], for [s]
+   the double [size_in / size_out], is a running sum of doubles from [s / 2],
+   truncated, as Pillow 13's ImagingScaleAffine (Geometry.c) computes it, so
+   that a centre on an edge between two pixels takes the pixel Pillow takes.
+   The clamp keeps an index in the image should rounding carry the sum to
+   [size_in], where Pillow's pixel is 0; that takes 2^26 output pixels or
+   more, since the sum errs by about [(i + 1) size_in 2^-53]. *)
 let compute_nearest_indices at ~size_in ~size_out =
-  if size_out = 1 || size_in = 1 then
-    Nx.full_at at Nx.int64 [| size_out |] Int64.zero
-  else
-    let scale = float size_in /. float size_out in
-    let coords = float_range at size_out in
-    let src = Nx.sub_s (Nx.mul_s (Nx.add_s coords 0.5) scale) 0.5 in
-    let src_clipped = Nx.clamp ~min:0.0 ~max:(float (size_in - 1)) src in
-    Nx.cast Nx.int64 (Nx.round src_clipped)
+  let s = float size_in /. float size_out in
+  let x = ref (s *. 0.5) in
+  let index _ =
+    let i = Int64.of_float !x in
+    x := !x +. s;
+    Int64.min i (Int64.of_int (size_in - 1))
+  in
+  Nx.place at (Nx.create Nx.int64 [| size_out |] (Array.init size_out index))
 
 let compute_linear_axis at ~size_in ~size_out =
   if size_out = 1 || size_in = 1 then

@@ -112,6 +112,48 @@ let test_resize_nearest () =
   check_pixel_f "nearest bottom-left" 0.3 resized [ 3; 0; 0 ];
   check_pixel_f "nearest bottom-right" 0.4 resized [ 3; 3; 0 ]
 
+(* Pillow 13.0.0's NEAREST resize, written out (ImagingScaleAffine,
+   src/libImaging/Geometry.c:908-923): a running sum of doubles from half the
+   scale, truncated. It gives Pillow's own pixel at every width 1 to 96 in and
+   out. *)
+let pillow_nearest ~size_in ~size_out =
+  let scale = Float.of_int size_in /. Float.of_int size_out in
+  let x = ref (scale *. 0.5) in
+  Array.init size_out (fun _ ->
+      let i = int_of_float !x in
+      x := !x +. scale;
+      i)
+
+(* Each output pixel takes Pillow's input pixel, exactly, edges between two
+   pixels included. Each image holds its column indices, for every width from
+   1 to 96 in and out. *)
+let test_resize_nearest_centres () =
+  for size_in = 1 to 96 do
+    let img =
+      Nx.arange_f Nx.float32 0. (Float.of_int size_in) 1.
+      |> Nx.reshape [| 1; size_in; 1 |]
+    in
+    for size_out = 1 to 96 do
+      let expected = pillow_nearest ~size_in ~size_out in
+      let got =
+        resize ~interpolation:Nearest ~height:1 ~width:size_out img
+        |> Nx.to_array |> Array.map int_of_float
+      in
+      equal
+        ~msg:(Printf.sprintf "%d columns to %d" size_in size_out)
+        (array int) expected got
+    done
+  done;
+  (* Pillow 13.0.0's own pixels where centres fall on edges. *)
+  let cols = Nx.create Nx.float32 [| 1; 2; 1 |] [| 0.; 1. |] in
+  equal ~msg:"2 columns to 7, Pillow's" (array int) [| 0; 0; 0; 0; 1; 1; 1 |]
+    (resize ~interpolation:Nearest ~height:1 ~width:7 cols
+    |> Nx.to_array |> Array.map int_of_float);
+  let rows = Nx.arange_f Nx.float32 0. 7. 1. |> Nx.reshape [| 7; 1; 1 |] in
+  check_pixel_f "7 rows to 1" 3.
+    (resize ~interpolation:Nearest ~height:1 ~width:1 rows)
+    [ 0; 0; 0 ]
+
 let test_resize_bilinear () =
   let img = Nx.create Nx.float32 [| 2; 2; 1 |] [| 0.0; 1.0; 0.0; 1.0 |] in
   let resized = resize ~height:3 ~width:3 img in
@@ -992,6 +1034,7 @@ let () =
           test "flip_batch" test_flip_batch;
           test "crop_batch" test_crop_batch;
           test "resize_nearest" test_resize_nearest;
+          test "resize_nearest_centres" test_resize_nearest_centres;
           test "resize_bilinear" test_resize_bilinear;
           test "resize_batch" test_resize_batch;
           test "resize_color_bilinear" test_resize_color_bilinear;

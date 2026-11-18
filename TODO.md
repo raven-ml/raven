@@ -270,19 +270,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   worker its own temporary root, or mark the suites sequential. Found by
   the NV fork review
 
-## sowilo
-
-- A nearest resize to one column or row picks the first, not the centre:
-  `compute_nearest_indices` (contrib/sowilo/lib/transform.ml:20-22)
-  returns index 0 when `size_out = 1`. Pillow's NEAREST and OpenCV's
-  INTER_NEAREST_EXACT, which sowilo matches at every non-tie pixel of a
-  sweep of widths 1 to 96, pick `size_in / 2`: 3 from 7 columns.
-  sowilo.mli:100 states no centre rule, and `round (y - 1/2)` equals PIL's
-  `floor y` only because `Nx.round` takes halves away from zero. State the
-  rule and compute it as `floor ((i + 1/2) scale)`, which has no tie and is
-  the same at every other index. Found by the DD skeptic
-  (_plans/tessera-port/design/nx-vocab/skeptic.md §2)
-
 ## talon, hugin, brot, munin, quill
 
 - talon needs a query optimizer, a large design of its own, and the other
