@@ -1,0 +1,14 @@
+A LibriSpeech file for nx.io's FLAC tests
+
+librispeech_7902-96594-0025.flac is the file
+test-other/7902/96594/7902-96594-0025.flac of the LibriSpeech ASR corpus,
+https://www.openslr.org/12, unchanged. The corpus's LICENSE.TXT states:
+
+  LibriSpeech (c) 2014 by Vassil Panayotov
+
+  LibriSpeech ASR corpus is licensed under a
+  Creative Commons Attribution 4.0 International License.
+
+The licence is at https://creativecommons.org/licenses/by/4.0/.
+
+MD5: d80a39b7ca66a0e7ae2a8d31d0669288

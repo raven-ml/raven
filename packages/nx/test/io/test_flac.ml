@@ -14,6 +14,13 @@ open Io_support
 module Audio = Nx_io.Audio
 
 let cut name = Filename.concat "cut" name
+let decoded path = Audio.samples (Nx_io.load_audio path)
+
+let facts a =
+  ( (Audio.rate a, Audio.length a, Audio.channels a),
+    (Audio.bits a, Audio.channel_mask a) )
+
+let facts_t = pair (triple int int int) (pair int int)
 
 (* The RFC 9639 MD5 (8.2) of samples a load returned at [bits]: each element
    shifted down to its [bits], little-endian in its bytes rounded up, the
@@ -237,6 +244,58 @@ let built_refused =
       let path = fixture ("flac_bad_" ^ name ^ ".flac") in
       fails ~naming ~path (fun () -> Audio.samples (Nx_io.load_audio path)))
 
+(* MD5 *)
+
+let stated s = String.sub s 26 16
+
+let flip_md5 s b =
+  let m = stated s in
+  with_md5 s
+    (String.mapi
+       (fun i c ->
+         if i = b / 8 then Char.chr (Char.code c lxor (1 lsl (b mod 8))) else c)
+       m)
+
+let md5 =
+  group "MD5"
+    [
+      test "a load checks the samples against STREAMINFO's MD5" (fun () ->
+          let s = read (fixture "flac_depth_16.flac") in
+          for b = 0 to 127 do
+            let path = file (flip_md5 s b) in
+            let a = Nx_io.load_audio path in
+            fails ~naming:"MD5" ~path (fun () -> Audio.samples a)
+          done);
+      test "a load that counts the rows checks the MD5" (fun () ->
+          let path = file (flip_md5 (read (fixture "flac_no_length.flac")) 0) in
+          fails ~naming:"MD5" ~path (fun () -> Nx_io.load_audio path));
+      test "an MD5 of zeros states none" (fun () ->
+          let s = read (fixture "flac_depth_16.flac") in
+          equal packed
+            (decoded (fixture "flac_depth_16.flac"))
+            (decoded (file (with_md5 s (String.make 16 '\000')))));
+    ]
+
+(* LibriSpeech *)
+
+(* A LibriSpeech file, whose source and licence support/NOTICE states, and the
+   MD5 of libsndfile's int16 reading of it, little-endian. *)
+let librispeech = fixture "librispeech_7902-96594-0025.flac"
+let librispeech_md5 = "572ee418fca9ad27597247a089821499"
+
+let speech =
+  test "a LibriSpeech file loads as libsndfile reads it" (fun () ->
+      let a = Nx_io.load_audio librispeech in
+      equal facts_t ((16000, 29120, 1), (16, 4)) (facts a);
+      let x = Nx.unpack Nx.int16 (Audio.samples a) in
+      let le = Bytes.create (2 * Nx.numel x) in
+      Array.iteri (fun i v -> Bytes.set_int16_le le (2 * i) v) (Nx.to_array x);
+      equal string librispeech_md5 (Digest.to_hex (Digest.bytes le));
+      (* Each quotient by 32768 is exact, so it gives each sample back. *)
+      let y = Nx.div_s (Nx.cast Nx.float32 x) 32768. in
+      equal (array int) (Nx.to_array x)
+        (Nx.to_array (Nx.cast Nx.int16 (Nx.mul_s y 32768.))))
+
 (* Corruption *)
 
 (* The byte of a FLAC file's first frame, after its metadata blocks. *)
@@ -254,7 +313,6 @@ let flip_bit s i b =
     s
 
 let small = read (fixture "flac_depth_16.flac")
-let decoded path = Audio.samples (Nx_io.load_audio path)
 
 let corrupted =
   group "corrupted files"
@@ -284,5 +342,7 @@ let () =
          ietf_refused;
          past_length;
          built_refused;
+         md5;
+         speech;
          corrupted;
        ])

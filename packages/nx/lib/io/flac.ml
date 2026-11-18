@@ -4,7 +4,9 @@
 
   FLAC in its native container (RFC 9639): the fLaC marker, metadata blocks,
   then frames. A load reads the metadata: STREAMINFO, the channel mask of a
-  Vorbis comment, and skips the other blocks. nx_io_flac.c decodes frames.
+  Vorbis comment, and skips the other blocks. nx_io_flac.c decodes frames and
+  adds their samples to a digest held in an OCaml bytes value, a fresh copy for
+  each decode; nx_io_md5.c holds the MD5.
   ---------------------------------------------------------------------------*)
 
 open Bigarray
@@ -13,9 +15,9 @@ module B = Rig.Buffer
 module D = Nx_array.Dtype
 module L = Nx_array.Layout
 
-(* A FLAC stream: STREAMINFO's facts, the channel mask, the byte [first] of the
-   first frame, and [stream], the facts nx_io_flac.c reads, in the order of its
-   [Fields]. *)
+(* A FLAC stream: STREAMINFO's facts and MD5, the channel mask, the byte [first]
+   of the first frame, and [stream], the facts nx_io_flac.c reads, in the order
+   of its [Fields]. *)
 type t = {
   file : B.t;
   rate : int;
@@ -24,6 +26,7 @@ type t = {
   channel_mask : int;
   max_block : int;
   length : int;
+  md5 : string;
   first : int;
   dt : D.any;
   stream : int array;
@@ -139,6 +142,7 @@ type info = {
   channels : int;
   bits : int;
   total : int;
+  md5 : string;
 }
 
 let info s =
@@ -160,6 +164,7 @@ let info s =
       channels = field 41 3 + 1;
       bits = field 36 5 + 1;
       total = field 0 36;
+      md5 = String.sub s 18 16;
     }
   in
   if i.min_block < 16 || i.max_block < i.min_block then
@@ -175,6 +180,7 @@ external decode :
   Storage.bytes ->
   int array ->
   int array ->
+  Bytes.t ->
   int ->
   Storage.bytes ->
   int ->
@@ -192,16 +198,35 @@ let length_field = 7
 let empty = Array1.create int8_unsigned c_layout 0
 let bytes n = Array1.create int8_unsigned c_layout n
 
+external md5_init : unit -> Bytes.t = "caml_nx_io_md5_init"
+external md5_final : Bytes.t -> string = "caml_nx_io_md5_final"
+
 (* A cursor at the first frame. *)
 let start t = [| t.first; 0 |]
 
-(* [run t cursor ~skip dst ~at ~rows rest] decodes as nx_io_flac.c states,
+(* [run t cursor ~md5 ~skip dst ~at ~rows rest] decodes as nx_io_flac.c states,
    naming the frame that fails. *)
-let run t cursor ~skip dst ~at ~rows rest =
+let run t cursor ~md5 ~skip dst ~at ~rows rest =
   Storage.read (Storage.whole t.file) @@ fun src ->
-  try decode src t.stream cursor skip dst at rows rest
+  try decode src t.stream cursor md5 skip dst at rows rest
   with Failure why ->
     Fail.failf "frame at row %d, byte %d: %s" cursor.(1) cursor.(0) why
+
+(* STREAMINFO states no MD5 with zeros (8.2). *)
+let unstated = String.make 16 '\000'
+
+(* A digest to feed from the first frame, or none, empty, if STREAMINFO states
+   none. *)
+let digest md5 = if md5 = unstated then Bytes.empty else md5_init ()
+
+(* [check md5 ctx] raises if the digest [ctx] of every frame differs from
+   STREAMINFO's [md5]. *)
+let check md5 ctx =
+  if Bytes.length ctx > 0 then
+    let got = md5_final ctx in
+    if got <> md5 then
+      Fail.failf "the samples' MD5 is %s, STREAMINFO states %s"
+        (Digest.to_hex got) (Digest.to_hex md5)
 
 let read file =
   let length = B.length file in
@@ -283,6 +308,7 @@ let read file =
       channel_mask;
       max_block = info.max_block;
       length = stated;
+      md5 = info.md5;
       first;
       dt;
       stream;
@@ -290,9 +316,12 @@ let read file =
   in
   if stated >= 0 then t
   else begin
-    (* Without a length, every frame is decoded to count the rows. *)
+    (* Without a length, every frame is decoded to count the rows, and checked
+       by the MD5. *)
     let cursor = start t in
-    ignore (run t cursor ~skip:0 empty ~at:0 ~rows:(-1) empty : int);
+    let md5 = digest t.md5 in
+    ignore (run t cursor ~md5 ~skip:0 empty ~at:0 ~rows:(-1) empty : int);
+    check t.md5 md5;
     let n = cursor.(1) in
     let stream = Array.copy stream in
     stream.(length_field) <- n;
@@ -304,7 +333,9 @@ let samples t =
   let stride = t.channels * D.bytes dt 1 in
   let out = B.create Rig.host (t.length * stride) in
   let rest = bytes (t.max_block * stride) in
+  let md5 = digest t.md5 in
   B.write out int8_unsigned (fun dst ->
-      ignore (run t (start t) ~skip:0 dst ~at:0 ~rows:t.length rest : int));
+      ignore (run t (start t) ~md5 ~skip:0 dst ~at:0 ~rows:t.length rest : int));
+  check t.md5 md5;
   let layout = L.contiguous (Iarray.of_array [| t.length; t.channels |]) in
   Nx.P (Nx.Repr.unsafe_of_array Nx.Host.v (A.v dt layout out))

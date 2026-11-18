@@ -1194,7 +1194,8 @@ val load_hdf5 : string -> Hdf5.Group.t list * Hdf5.t list
     rate, channels and depth stay those of STREAMINFO. Decoding checks each
     frame's CRC-8 and CRC-16, its rate, channels, depth, block and frame
     sizes and number against STREAMINFO, and each sample against its
-    depth. Bytes after the frames of STREAMINFO's length are ignored, and a
+    depth. A read that decodes every frame from the first checks
+    STREAMINFO's MD5 unless it is 0. Bytes after the frames of STREAMINFO's length are ignored, and a
     frame that runs past the length raises. A length whose samples would
     take more than 2{^16} times the bytes after the metadata, more than any
     frame decodes to, is refused before anything is allocated.
@@ -1261,7 +1262,7 @@ module Audio : sig
       Raises [Failure] as {!section-errors} states, naming the row, if a
       sample has a set bit below its valid bits, and naming the frame by its
       first row and its byte for a FLAC file that breaks RFC 9639 or a check
-      of {!section-audio}. *)
+      of {!section-audio}, and if the MD5 differs. *)
 end
 
 val load_audio : string -> Audio.t

@@ -25,5 +25,11 @@
  (libraries nx nx_array rig rig.disk unix lz)
  (foreign_stubs
   (language c)
-  (names nx_io_sync nx_io_png nx_io_jpeg nx_io_tiff nx_io_wav
-   nx_io_flac)))
+  (names
+   nx_io_sync
+   nx_io_png
+   nx_io_jpeg
+   nx_io_tiff
+   nx_io_wav
+   nx_io_flac
+   nx_io_md5)))

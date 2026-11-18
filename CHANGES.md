@@ -3376,6 +3376,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- A FLAC load checks the samples against the MD5 the file states when it
+  decodes every frame.
 - `Nx_io.load_audio` reads FLAC files, every stream RFC 9639 defines of 4 to
   32 bits and 1 to 8 channels, and refuses those it forbids, naming the
   frame; each frame's CRCs are checked, and 8-bit samples load as `int8`.

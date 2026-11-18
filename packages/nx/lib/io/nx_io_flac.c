@@ -20,7 +20,8 @@
   element of [width] bytes, and the rest of the last frame into [rest].
   Asked for no rows, it reads every frame to the stream's end, the stated
   length or, without one, the file's. It moves the cursor past the last
-  frame it read.
+  frame it read. Given a digest in progress, it adds each frame's samples
+  to it, as RFC 9639's MD5 takes them (8.2).
 
   The stubs capture each bigarray's pointer and the stream's facts before
   they release the runtime lock, and then touch only bigarray storage,
@@ -36,6 +37,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "nx_io_md5.h"
 
 #define HOST_BIG (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
 
@@ -469,14 +472,32 @@ static void store(const int64_t *x, const stream *s, int from, int n,
     }
 }
 
-/* [caml_nx_io_flac_decode src stream cursor skip dst at rows rest] decodes
-   as the preamble states, [cursor] the array [|byte; row|], [rows] -1 for
-   none, and is the rows it wrote into [rest]. It raises [Failure] with the
-   reason alone, the cursor at the frame that failed. */
+/* [hash md5 x s bs buf] adds the [bs] rows of the frame [x] to the digest
+   [md5], each sample signed, little-endian, in its depth's bytes rounded
+   up, through [buf]. */
+static void hash(unsigned char *md5, const int64_t *x, const stream *s, int bs,
+                 uint8_t *buf) {
+  int k = (s->bits + 7) / 8;
+  uint8_t *p = buf;
+  for (int i = 0; i < bs; i++)
+    for (int c = 0; c < s->channels; c++) {
+      uint64_t v = (uint64_t)x[(size_t)c * s->max_block + i];
+      for (int j = 0; j < k; j++) *p++ = (uint8_t)(v >> (8 * j));
+    }
+  nx_io_md5_update(md5, buf, (size_t)(p - buf));
+}
+
+/* [caml_nx_io_flac_decode src stream cursor md5 skip dst at rows rest]
+   decodes as the preamble states, [cursor] the array [|byte; row|], [md5]
+   a digest in progress or empty bytes, [rows] -1 for none, and is the
+   rows it wrote into [rest]. It raises [Failure] with the reason alone,
+   the cursor at the frame that failed. */
 CAMLprim value caml_nx_io_flac_decode(value vsrc, value vstream,
-                                      value vcursor, value vskip, value vdst,
-                                      value vat, value vrows, value vrest) {
+                                      value vcursor, value vmd5, value vskip,
+                                      value vdst, value vat, value vrows,
+                                      value vrest) {
   CAMLparam5(vsrc, vstream, vcursor, vdst, vrest);
+  CAMLxparam1(vmd5);
   stream s;
   stream_of(vstream, &s);
   const uint8_t *src = Caml_ba_data_val(vsrc);
@@ -486,11 +507,18 @@ CAMLprim value caml_nx_io_flac_decode(value vsrc, value vstream,
   size_t stride = (size_t)s.channels * s.width;
   int shift = 8 * s.width - s.bits;
   dst += (size_t)Long_val(vat) * stride;
-  int64_t *x = malloc((size_t)s.channels * s.max_block * sizeof(int64_t));
+  /* The digest is copied out of the OCaml heap while the lock is held. */
+  int hashing = caml_string_length(vmd5) == NX_IO_MD5_CONTEXT;
+  unsigned char md5[NX_IO_MD5_CONTEXT];
+  if (hashing) memcpy(md5, Bytes_val(vmd5), NX_IO_MD5_CONTEXT);
+  size_t samples = (size_t)s.channels * s.max_block;
+  int64_t *x = malloc(samples * sizeof(int64_t));
   crcs *t = malloc(sizeof(crcs));
-  if (!x || !t) {
+  uint8_t *message = hashing ? malloc(samples * 4) : NULL;
+  if (!x || !t || (hashing && !message)) {
     free(x);
     free(t);
+    free(message);
     caml_raise_out_of_memory();
   }
   const char *e = NULL;
@@ -519,6 +547,7 @@ CAMLprim value caml_nx_io_flac_decode(value vsrc, value vstream,
     int64_t next;
     e = frame(src, &s, t, pos, row, x, &bs, &next);
     if (e) break;
+    if (hashing) hash(md5, x, &s, bs, message);
     short_seen = bs < s.min_block;
     int from = (int)(skip < bs ? skip : bs);
     skip -= from;
@@ -536,6 +565,8 @@ CAMLprim value caml_nx_io_flac_decode(value vsrc, value vstream,
   caml_acquire_runtime_system();
   free(x);
   free(t);
+  free(message);
+  if (hashing) memcpy(Bytes_val(vmd5), md5, NX_IO_MD5_CONTEXT);
   /* The cursor names the frame that failed. */
   Store_field(vcursor, 0, Val_long(pos));
   Store_field(vcursor, 1, Val_long(row));
@@ -546,5 +577,5 @@ CAMLprim value caml_nx_io_flac_decode(value vsrc, value vstream,
 CAMLprim value caml_nx_io_flac_decode_byte(value *argv, int argn) {
   (void)argn;
   return caml_nx_io_flac_decode(argv[0], argv[1], argv[2], argv[3], argv[4],
-                                argv[5], argv[6], argv[7]);
+                                argv[5], argv[6], argv[7], argv[8]);
 }

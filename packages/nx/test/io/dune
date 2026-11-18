@@ -7,9 +7,10 @@
 ; code, each with libsndfile's reading of it as an npy file, from a generator
 ; kept outside the repository. support/flac_* are FLAC streams built from
 ; known samples, flac.tsv stating each one's samples' MD5, and streams the
-; format forbids, one fault each, from the same generators. cut/ holds byte
-; ranges of a Sentinel-2 file and cuts of the IETF FLAC test files, whose
-; sources and licences cut/NOTICE states.
+; format forbids, one fault each, from the same generators.
+; support/librispeech_* is a LibriSpeech file, whose source and licence
+; support/NOTICE states. cut/ holds byte ranges of a Sentinel-2 file and cuts
+; of the IETF FLAC test files, whose sources and licences cut/NOTICE states.
 
 (tests
  (names
