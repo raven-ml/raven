@@ -36,7 +36,10 @@
     One [centres] serves every grid in [src.crs], as products whose grid moves
     from date to date; one [p] serves every array on [src]. Each cell's result
     depends on that cell alone, so warping windows of [dst] ({!Grid.window})
-    to bound memory gives the same values.
+    to bound memory gives the same values. A rule reads [src]'s array whole
+    or a {e block} of it, the array of a rectangle of [src]'s cells from
+    cell [(row, col)], as a program reads it from a file's tiles, at the
+    whole grid's [src] ({!section-windows}).
 
     Each rule gives a cell the source's field over the cell's {e footprint},
     the part of [src]'s pixel plane it reads: {!nearest} reads the centre,

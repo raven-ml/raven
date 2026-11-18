@@ -438,7 +438,11 @@ val of_wkt : string -> (t, string) result
 
     A point with a NaN coordinate maps to NaN. Every other point must lie in
     the domain of each projection it goes through ({!section-domains}), and a
-    projected point must be the image of such a point. *)
+    projected point must be the image of such a point. Transverse
+    Mercator's domain reaches 40° of longitude from its central meridian
+    ({!section-domains_tm}), Pseudo-Mercator's 88° of latitude from the
+    equator, and Albers' conic's ({!section-domains_albers}) and the
+    sinusoid's ({!section-domains_closed}) every point. *)
 
 val transform : src:t -> dst:t -> 'd Nx.float64_t -> 'd Nx.float64_t
 (** [transform ~src ~dst p] is the points [p] of [src] in [dst], computed where
@@ -465,11 +469,7 @@ val in_domain : src:t -> dst:t -> 'd Nx.float64_t -> 'd Nx.bool_t
     Each projection's domain admits points past its boundary by twice the
     transforms' error, the most a round trip moves a point, so a point of
     the boundary passes both ways. Its inverse refuses a point that is not
-    the image of a point of the domain, to that margin. Transverse Mercator
-    ({!section-domains_tm}) reaches 40° of longitude from its central
-    meridian, Albers' conic ({!section-domains_albers}) and the sinusoid
-    ({!section-domains_closed}) every point, and Pseudo-Mercator 88° of
-    latitude from the equator. *)
+    the image of a point of the domain, to that margin. *)
 
 (** {3:domains_tm Transverse Mercator}
 
