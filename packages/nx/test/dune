@@ -108,7 +108,8 @@
  (deps
   (glob_files golden/special/*.golden)
   golden/moments_ranges.golden
-  golden/spread.golden))
+  golden/spread.golden
+  golden/ceil_padding.golden))
 
 ; Checks on a device of another machine, served by rig's test agent over the
 ; loopback.

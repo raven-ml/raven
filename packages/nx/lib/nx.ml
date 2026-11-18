@@ -6281,6 +6281,35 @@ let conv_transpose ?init ?stride ?padding ?dilation ?groups x w =
     ~interior:(Array.map (fun st -> st - 1) stride)
     ~dilation x w
 
+let ceil_padding ?stride ?dilation ~kernel_size s =
+  let by = "Nx.ceil_padding" in
+  let k = Array.length kernel_size in
+  let entries name = function
+    | None -> Array.make k 1
+    | Some a when Array.length a <> k ->
+        invalid_argf "%s: %d %s for %d kernel extents" by (Array.length a) name
+          k
+    | Some a -> a
+  in
+  let stride = entries "strides" stride in
+  let dilation = entries "dilations" dilation in
+  let s = entries "input extents" (Some s) in
+  let below name a =
+    if Array.exists (fun v -> v < 1) a then
+      invalid_argf "%s: a %s below 1 in %a" by name pp_shape a
+  in
+  below "kernel extent" kernel_size;
+  below "stride" stride;
+  below "dilation" dilation;
+  if Array.exists (fun n -> n < 0) s then
+    invalid_argf "%s: a negative extent in %a" by pp_shape s;
+  Array.init k (fun i ->
+      let n = s.(i) and st = stride.(i) in
+      let e = dilated kernel_size.(i) dilation.(i) in
+      let windows = (n + st - 1) / st in
+      let total = Stdlib.max 0 (((windows - 1) * st) + e - n) in
+      (total / 2, total - (total / 2)))
+
 (* Attention *)
 
 type ('v, 's, 'd) kv = ('v, 's, 'd) Value.kv =

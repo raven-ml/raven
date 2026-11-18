@@ -3350,6 +3350,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.ceil_padding` gives the padding under which `Nx.conv` has
+  `⌈n / stride⌉` windows along each axis, its total split with the extra
+  element after, which a model trained under such padding needs for each
+  input's extents.
 - `Nx.conv` and `Nx.conv_transpose` take `?init`, broadcast to the result's
   shape and added to the products' sum in the accumulator, so a bias at
   float16 or bfloat16 rounds once with the sum. An output without products

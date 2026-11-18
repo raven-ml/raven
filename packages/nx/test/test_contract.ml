@@ -3576,6 +3576,52 @@ module Conv = struct
     refused ~by:"Nx.conv_transpose" "the transpose, w on another device"
       (fun () -> Nx.conv_transpose (at 0 (f32 [| 1; 6; 2 |] 1.)) (at 1 w))
 
+  (* golden/ceil_padding.golden: lines "extent kernel stride dilation lo
+     hi", the padding JAX 0.12.1's lax.padtype_to_pads gives for "SAME"
+     over the dilated kernel. Each case is one axis, and a convolution
+     under the padding has the ceiling's windows. *)
+  let test_ceil_padding () =
+    let lines = In_channel.with_open_text "golden/ceil_padding.golden" In_channel.input_lines in
+    let cases =
+      List.filter_map
+        (fun l ->
+          if String.length l = 0 || l.[0] = '#' then None
+          else
+            match List.map int_of_string (String.split_on_char ' ' l) with
+            | [ n; k; s; d; lo; hi ] -> Some (n, k, s, d, (lo, hi))
+            | _ -> failwith ("golden/ceil_padding.golden: " ^ l))
+        lines
+    in
+    equal ~msg:"cases" int 792 (List.length cases);
+    List.iter
+      (fun (n, k, s, d, pads) ->
+        let msg = Printf.sprintf "extent %d, kernel %d, stride %d, dilation %d" n k s d in
+        let got =
+          Nx.ceil_padding ~stride:[| s |] ~dilation:[| d |] ~kernel_size:[| k |] [| n |]
+        in
+        equal ~msg (array (pair int int)) [| pads |] got;
+        let y =
+          Nx.conv ~stride:[| s |] ~dilation:[| d |] ~padding:got
+            (Nx.zeros Nx.float32 [| 1; n; 1 |]) (Nx.zeros Nx.float32 [| 1; k; 1 |])
+        in
+        equal ~msg:(msg ^ ", windows") int ((n + s - 1) / s) (Nx.dim 1 y))
+      cases;
+    equal ~msg:"one pair per axis" (array (pair int int)) [| (0, 1); (2, 3) |]
+      (Nx.ceil_padding ~stride:[| 2; 2 |] ~kernel_size:[| 3; 7 |] [| 56; 224 |])
+
+  let test_ceil_padding_refusals () =
+    let refused msg f = raises (Invalid_argument ("Nx.ceil_padding: " ^ msg)) f in
+    refused "1 strides for 2 kernel extents" (fun () ->
+        Nx.ceil_padding ~stride:[| 2 |] ~kernel_size:[| 3; 3 |] [| 4; 4 |]);
+    refused "1 input extents for 2 kernel extents" (fun () ->
+        Nx.ceil_padding ~kernel_size:[| 3; 3 |] [| 4 |]);
+    refused "a stride below 1 in [0]" (fun () ->
+        Nx.ceil_padding ~stride:[| 0 |] ~kernel_size:[| 3 |] [| 4 |]);
+    refused "a kernel extent below 1 in [0]" (fun () ->
+        Nx.ceil_padding ~kernel_size:[| 0 |] [| 4 |]);
+    refused "a negative extent in [-1]" (fun () ->
+        Nx.ceil_padding ~kernel_size:[| 3 |] [| -1 |])
+
   (* A [[1; 0; 1]] input at stride 3 and padding (1, 1) has one window: the
      transpose of that count has an input to find. *)
   let test_transpose_short () =
@@ -3653,6 +3699,8 @@ module Conv = struct
         test "a kernel of no tap sums no term" test_no_taps;
         test "a kernel of no tap reads its operands where they lie"
           test_no_taps_routing;
+        test "ceil_padding is lax's SAME padding" test_ceil_padding;
+        test "ceil_padding's refusals" test_ceil_padding_refusals;
         test "a dead operand names the function called" test_dead_names;
         test "holds its input padded once" test_memory;
       ]

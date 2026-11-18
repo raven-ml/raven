@@ -2885,6 +2885,25 @@ val conv_transpose :
     Raises [Invalid_argument] as {!conv}, reading [o] from [x]'s last axis, or
     if no input has a [conv] of [x]'s shape. *)
 
+val ceil_padding :
+  ?stride:int array ->
+  ?dilation:int array ->
+  kernel_size:int array ->
+  int array ->
+  (int * int) array
+(** [ceil_padding ~kernel_size s] is the padding under which {!conv} of an
+    input of spatial extents [s] has [⌈s / stride⌉] windows along each axis.
+    Along an axis of extent [n] it pads
+    [max 0 ((⌈n / stride⌉ - 1) stride + e - n)] in all, [e] the dilated
+    kernel's extent [dilation (k - 1) + 1], half of it (rounded down) before
+    and the rest after. The total depends on [n] modulo [stride], so a model
+    trained under this padding must be given it for each input's extents.
+    [stride] and [dilation] default to ones.
+
+    Raises [Invalid_argument] if [stride], [dilation] or [s] does not have
+    one entry per entry of [kernel_size], an extent of [s] is negative, or a
+    kernel extent, stride or dilation is below [1]. *)
+
 (** {2:products Other products}
 
     Products of tensors, vectors and chains of matrices, each a {!contract},
