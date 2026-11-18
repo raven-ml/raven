@@ -76,3 +76,8 @@ val find : t -> string -> pos:int -> stop:int -> (int * int) option
 (** [find t s ~pos ~stop] is the start and the end of the leftmost match of [t]
     in the bytes of [s] between [pos] and [stop], if any. The end is where a
     trailing lookahead starts. A match can be empty. *)
+
+val nullable : t -> bool
+(** [nullable t] is [true] iff [t], its lookaheads and anchors read as the
+    empty string, matches the empty string. When it is [false], no match of [t]
+    is empty; [(?=a)] is nullable, and matches empty before every [a]. *)

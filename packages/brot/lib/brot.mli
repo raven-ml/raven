@@ -1771,6 +1771,74 @@ val save_pretrained : t -> path:string -> unit
 
     Raises [Sys_error] if [path] cannot be written. *)
 
+(** {1:tiktoken tiktoken encodings}
+
+    A {e tiktoken encoding} is a byte-level BPE given by its {e ranks}, a table
+    from byte strings to distinct integers that holds every single byte, a
+    pattern that cuts text into pretokens, and its special tokens. A token's
+    rank is both its id and its merge priority. A pretoken that is a token is
+    that token. Any other starts as its bytes, and the adjacent pair whose
+    joined bytes form the token of lowest rank is joined, the leftmost of equal
+    pairs first, until no adjacent pair joins into a token.
+
+    A token of one byte or more is {e built} when this rule, run on its own
+    bytes, ends with the token. Wherever the rule joins two parts into a token,
+    they are the two parts it joins last on that token's bytes, so the rule is
+    a {!bpe} with one merge per built token, that pair, in rank order.
+
+    A {e rank file} holds one token per line, read as tiktoken reads it: a
+    carriage return or a line feed ends a line, an empty line is skipped, and a
+    line is two fields between ASCII white space, the base64 of the token's
+    bytes with its padding and the rank in decimal. A field [=] alone is the
+    empty token. Ranks may leave gaps.
+
+    The pattern is in the dialect of {!Pre_tokenizer.split_regex}. Its matches,
+    leftmost first without overlap, are the pretokens, and the text no match
+    covers is dropped, bytes that are no character included. An encoding whose
+    pattern uses possessive quantifiers or [$] is given an equivalent pattern.
+    cl100k_base's is
+    {[
+      String.concat "|"
+        [ {|'(?i:[sdmt]|ll|ve|re)|}; {|[^\r\n\p{L}\p{N}]?\p{L}+|};
+          {|\p{N}{1,3}|}; {| ?[^\s\p{L}\p{N}]+[\r\n]*|}; {|\s+(?![\s\S])|};
+          {|\s*[\r\n]|}; {|\s+(?!\S)|}; {|\s|} ]
+    ]}
+    and o200k_base's and Whisper's are read as they are written. Characters are
+    classified by Unicode 18.0.0 ({!Normalizer.replace_regex}), so text holding
+    a character assigned after the Unicode version of tiktoken's regular
+    expression engine can get other ids than tiktoken gives. *)
+
+val of_tiktoken :
+  ?specials:(string * int) list ->
+  pattern:string ->
+  string ->
+  (t, string) result
+(** [of_tiktoken ~pattern ranks] is the tokenizer of the tiktoken encoding of
+    the rank file [ranks] and the pattern [pattern]. It has the merges of the
+    built tokens, and emits a pretoken found in its vocabulary whole when some
+    token is not built.
+
+    [specials] are special tokens with their ids, each in the vocabulary at its
+    id and an added token ({!type-added_token}). Default: [[]]. Special tokens
+    numbered from the end of the ranks are added with {!add_tokens}.
+    {!vocab_size} counts tokens, which is less than the largest id plus one
+    when ids leave gaps.
+
+    On valid UTF-8 the tokenizer gives tiktoken's ids for the same ranks,
+    pattern and specials. {!encode} with [~match_special_tokens:false] is
+    tiktoken's [encode_ordinary], and with the default its [encode] with every
+    special allowed, the longer of two specials matched where one is a prefix
+    of the other. {!decode} is tiktoken's [decode] with [errors="replace"] on
+    ids that name tokens.
+
+    Errors if a line is not a token and a rank, if two lines hold the same
+    bytes or the same rank, if a rank is 2{^ 31} or more, if a byte has no
+    rank, or if a special token is a token, has a token's id, or is given while
+    some token is not built. Raises [Invalid_argument] if [pattern] is invalid,
+    unsupported or can match the empty text, or if a special token is empty, is
+    changed by {!Pre_tokenizer.val-byte_level_decode}, has an id outside
+    \[0, 2{^ 31}), or shares its text or its id with another. *)
+
 (** {1:fmt Formatting} *)
 
 val pp : Format.formatter -> t -> unit

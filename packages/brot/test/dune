@@ -22,7 +22,8 @@
   test_pretokenizers
   test_json
   test_pretoken_cache
-  test_float_text)
+  test_float_text
+  test_tiktoken)
  (modules
   test_tokenization
   test_vocab
@@ -37,11 +38,13 @@
   test_pretokenizers
   test_json
   test_pretoken_cache
-  test_float_text)
+  test_float_text
+  test_tiktoken)
  (package brot)
  (deps
   (glob_files support/parity/*)
   (glob_files support/precompiled/*)
+  (glob_files support/tiktoken/*)
   (glob_files support/unicode/*)
   (glob_files support/tokenizers/*)
   ; Downloaded by bench/download_data.sh; a missing tokenizer is skipped

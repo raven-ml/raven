@@ -59,6 +59,59 @@ WordPiece is used. The pipeline stages (normalizer, pre-tokenizer,
 post-processor, decoder) must be configured explicitly since model files
 do not include them.
 
+## Loading tiktoken encodings
+
+OpenAI's encodings, and Whisper's, ship as tiktoken rank files: one token
+per line, the base64 of its bytes and its rank. `of_tiktoken` reads one
+with its pattern and the special tokens it numbers by hand; the tiktoken
+encodings section of [`brot.mli`](../lib/brot.mli) says how the rank file,
+the pattern and the specials are read.
+
+Whisper numbers its special tokens after its ranks, so they are added with
+`add_tokens`. It encodes transcripts with no special token matched, and
+drops the timestamp tokens, the ids from `<|0.00|>` on, before it decodes:
+
+<!-- $MDX skip -->
+```ocaml
+let ranks =
+  In_channel.with_open_bin "multilingual.tiktoken" In_channel.input_all
+
+let pattern =
+  String.concat "|"
+    [ "'s"; "'t"; "'re"; "'ve"; "'m"; "'ll"; "'d"; {| ?\p{L}+|};
+      {| ?\p{N}+|}; {| ?[^\s\p{L}\p{N}]+|}; {|\s+(?!\S)|}; {|\s+|} ]
+
+(* Whisper's special tokens in the order it numbers them; [languages] is its
+   list of language codes. *)
+let specials languages =
+  [ "<|endoftext|>"; "<|startoftranscript|>" ]
+  @ List.map (Printf.sprintf "<|%s|>") languages
+  @ [ "<|translate|>"; "<|transcribe|>"; "<|startoflm|>"; "<|startofprev|>";
+      "<|nospeech|>"; "<|notimestamps|>" ]
+  @ List.init 1501 (fun i -> Printf.sprintf "<|%.2f|>" (float i *. 0.02))
+
+let tokenizer languages =
+  let t = Brot.of_tiktoken ~pattern ranks |> Result.get_ok in
+  Brot.add_tokens t (List.map Brot.added_token (specials languages))
+
+let encode t text = Brot.encode_ids t ~match_special_tokens:false text
+
+let decode t ids =
+  let timestamp_begin = Option.get (Brot.token_to_id t "<|0.00|>") in
+  let ids = List.filter (fun id -> id < timestamp_begin) (Array.to_list ids) in
+  Brot.decode t (Array.of_list ids)
+```
+
+cl100k_base and o200k_base give their specials' ids, which leave gaps, so
+they are passed as `~specials`:
+
+<!-- $MDX skip -->
+```ocaml
+let o200k ~pattern ranks =
+  Brot.of_tiktoken ~pattern ranks
+    ~specials:[ ("<|endoftext|>", 199999); ("<|endofprompt|>", 200018) ]
+```
+
 ## Building known pipelines
 
 When you need full control over the pipeline or want to understand what

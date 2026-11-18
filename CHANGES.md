@@ -4674,6 +4674,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `Brot.of_tiktoken` reads a tiktoken rank file, such as Whisper's,
+  cl100k_base's or o200k_base's, with its pattern and its special tokens at
+  their ids, and gives tiktoken's ids.
 - A BPE model gives the right ids for a vocabulary with an id of 2^21 or more
   and for a pretoken over 2^21 bytes, which packed into 21 bits and gave other
   ids silently. In BPE, WordPiece and word-level vocabularies the ids may leave

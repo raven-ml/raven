@@ -2394,6 +2394,214 @@ let export_tiktoken t ~merges_path ~vocab_path =
 
 let save_model_files ?prefix t ~folder = alg_save t.algorithm ~folder ?prefix ()
 
+(* tiktoken encodings *)
+
+let err_tiktoken fmt = Printf.ksprintf (fun s -> "Brot.of_tiktoken: " ^ s) fmt
+
+(* The fields of a rank file's lines as tiktoken's [load_tiktoken_bpe] reads
+   them: Python's [bytes.splitlines] ends a line at a carriage return, a line
+   feed or both, an empty line is skipped, and [bytes.split] cuts a line at runs
+   of ASCII white space. Cutting at every [\r] and [\n] and skipping what is
+   empty finds the same lines. *)
+let tiktoken_lines text =
+  let fields line =
+    List.fold_left
+      (fun words c -> List.concat_map (String.split_on_char c) words)
+      [ line ]
+      [ ' '; '\t'; '\x0b'; '\x0c' ]
+    |> List.filter (fun word -> word <> "")
+  in
+  List.concat
+    (List.mapi
+       (fun i line ->
+         List.filter_map
+           (fun segment ->
+             if segment = "" then None
+             else Some (i + 1, segment, fields segment))
+           (String.split_on_char '\r' line))
+       (String.split_on_char '\n' text))
+
+(* A token's bytes as tiktoken's [base64.b64decode] reads them, which needs the
+   padding whole; [=] alone is the empty token. *)
+let tiktoken_bytes field =
+  if field = "=" then Some ""
+  else if String.length field mod 4 <> 0 then None
+  else Normalizer.base64_decode field
+
+let tiktoken_rank field =
+  let digit = function '0' .. '9' -> true | _ -> false in
+  if field = "" || not (String.for_all digit field) then None
+  else
+    (* Python's [int] reads leading zeros. Past ten digits a rank is out of
+       range. *)
+    let len = String.length field in
+    let zeros = ref 0 in
+    while !zeros < len - 1 && field.[!zeros] = '0' do
+      incr zeros
+    done;
+    let digits = String.sub field !zeros (len - !zeros) in
+    Some (if String.length digits > 10 then max_int else int_of_string digits)
+
+(* The ranks of a file, each line's bytes and rank. *)
+let tiktoken_ranks text =
+  let by_bytes = Hashtbl.create 65536 and by_rank = Hashtbl.create 65536 in
+  let rec go acc = function
+    | [] -> Ok (List.rev acc, by_bytes, by_rank)
+    | (number, line, fields) :: rest -> (
+        let parsed =
+          match fields with
+          | [ token; rank ] -> (
+              match (tiktoken_bytes token, tiktoken_rank rank) with
+              | Some b, Some r -> Some (b, r)
+              | _ -> None)
+          | _ -> None
+        in
+        match parsed with
+        | None ->
+            Error
+              (err_tiktoken "line %d, %S: not a base64 token and a rank" number
+                 line)
+        | Some (_, r) when not (Id_table.in_range r) ->
+            Error (err_tiktoken "line %d: a rank of 2^31 or more" number)
+        | Some (b, r) -> (
+            match (Hashtbl.find_opt by_bytes b, Hashtbl.find_opt by_rank r) with
+            | Some (other, _), _ ->
+                Error
+                  (err_tiktoken "line %d holds the bytes of line %d" number
+                     other)
+            | _, Some other ->
+                Error
+                  (err_tiktoken "line %d holds the rank of line %d" number
+                     other)
+            | None, None ->
+                Hashtbl.replace by_bytes b (number, r);
+                Hashtbl.replace by_rank r number;
+                go ((b, r) :: acc) rest))
+  in
+  go [] (tiktoken_lines text)
+
+(* The two parts tiktoken's rule joins last on the bytes [b], when it ends with
+   [b] whole. The parts are [b]'s ranges from [starts.(k)] to [starts.(k + 1)],
+   and [pair.(k)] is the rank of parts [k] and [k + 1] joined, [max_int] for
+   none. *)
+let built ranks b =
+  let n = String.length b in
+  let starts = Array.init (n + 1) Fun.id in
+  let count = ref n in
+  let rank_at k =
+    let start = starts.(k) in
+    let joined = String.sub b start (starts.(k + 2) - start) in
+    match Hashtbl.find_opt ranks joined with
+    | Some (_, r) -> r
+    | None -> max_int
+  in
+  let pair = Array.init (max 0 (n - 1)) rank_at in
+  let last = ref None and merging = ref true in
+  while !merging do
+    let best = ref max_int and at = ref (-1) in
+    for k = 0 to !count - 2 do
+      if pair.(k) < !best then begin
+        best := pair.(k);
+        at := k
+      end
+    done;
+    if !at < 0 then merging := false
+    else begin
+      let k = !at in
+      let part i = String.sub b starts.(i) (starts.(i + 1) - starts.(i)) in
+      last := Some (part k, part (k + 1));
+      Array.blit starts (k + 2) starts (k + 1) (!count - k - 1);
+      if !count - k - 3 > 0 then
+        Array.blit pair (k + 2) pair (k + 1) (!count - k - 3);
+      decr count;
+      if k < !count - 1 then pair.(k) <- rank_at k;
+      if k > 0 then pair.(k - 1) <- rank_at (k - 1)
+    end
+  done;
+  if !count = 1 then !last else None
+
+let check_specials specials =
+  let texts = Hashtbl.create 16 and ids = Hashtbl.create 16 in
+  List.iter
+    (fun (s, id) ->
+      if s = "" then invalid_arg (err_tiktoken "an empty special token");
+      if Pre_tokenizer.byte_level_decode s <> s then
+        invalid_arg
+          (err_tiktoken "special %S is changed by byte-level decoding" s);
+      if not (Id_table.in_range id) then
+        invalid_arg (err_tiktoken "special %S: id %d outside [0, 2^31)" s id);
+      if Hashtbl.mem texts s then
+        invalid_arg (err_tiktoken "special %S given twice" s);
+      (match Hashtbl.find_opt ids id with
+      | Some other ->
+          invalid_arg (err_tiktoken "specials %S and %S share id %d" other s id)
+      | None -> ());
+      Hashtbl.replace texts s ();
+      Hashtbl.replace ids id s)
+    specials
+
+let of_tiktoken ?(specials = []) ~pattern ranks =
+  let split =
+    Pre_tokenizer.split_regex ~pattern ~behavior:`Removed ~invert:true ()
+  in
+  (match Regex.compile ~anchors:false pattern with
+  | Ok re when Regex.nullable re ->
+      invalid_arg (err_tiktoken "%S can match the empty text" pattern)
+  | _ -> ());
+  check_specials specials;
+  let ( let* ) = Result.bind in
+  let* tokens, by_bytes, by_rank = tiktoken_ranks ranks in
+  let* () =
+    match
+      List.find_opt
+        (fun b -> not (Hashtbl.mem by_bytes (String.make 1 (Char.chr b))))
+        (List.init 256 Fun.id)
+    with
+    | Some b -> Error (err_tiktoken "the byte 0x%02X has no rank" b)
+    | None -> Ok ()
+  in
+  let splits =
+    List.filter_map
+      (fun (b, r) ->
+        if String.length b < 2 then None else Some (r, b, built by_bytes b))
+      tokens
+  in
+  let unbuilt = List.find_opt (fun (_, _, split) -> split = None) splits in
+  let special_error (s, id) =
+    if Hashtbl.mem by_bytes s then Some (err_tiktoken "special %S is a token" s)
+    else if Hashtbl.mem by_rank id then
+      Some (err_tiktoken "special %S has the id of a token" s)
+    else
+      Option.map
+        (fun (_, b, _) ->
+          err_tiktoken "special %S has an id while the token %S is not built" s
+            b)
+        unbuilt
+  in
+  let* () =
+    match List.find_map special_error specials with
+    | Some e -> Error e
+    | None -> Ok ()
+  in
+  let enc = Pre_tokenizer.byte_level_encode in
+  let merges =
+    List.sort (fun (a, _, _) (b, _, _) -> Int.compare a b) splits
+    |> List.filter_map (fun (_, _, split) ->
+        Option.map (fun (l, r) -> (enc l, enc r)) split)
+  in
+  let pre =
+    Pre_tokenizer.sequence
+      [
+        split;
+        Pre_tokenizer.byte_level ~add_prefix_space:false ~use_regex:false ();
+      ]
+  in
+  Ok
+    (bpe ~pre ~decoder:Decoder.byte_level
+       ~added_tokens:(List.map (fun (s, _) -> added_token s) specials)
+       ~vocab:(List.map (fun (b, r) -> (enc b, r)) tokens @ specials)
+       ~merges ~ignore_merges:(unbuilt <> None) ())
+
 (* Formatting *)
 
 let pp ppf t =

@@ -195,6 +195,15 @@ val spaced : t -> t option
     space. Every text [n] writes holds no space, and every text [n'] writes no
     ["▁"]. *)
 
+(** {1:base64 Base64} *)
+
+val base64_decode : string -> string option
+(** [base64_decode s] is the bytes the standard base64 text [s] encodes (RFC
+    4648, section 4), as tokenizer files store a charsmap. The padding of the
+    last group may be complete, partial or absent, but no more than it needs,
+    and the bits left over in its last character must be zero; [None]
+    otherwise. *)
+
 (** {1:formatting Formatting} *)
 
 val pp : Format.formatter -> t -> unit

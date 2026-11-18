@@ -189,6 +189,10 @@ val pp : Format.formatter -> t -> unit
 
 (** {1:byte_level_decode Byte-level decoding} *)
 
+val byte_level_encode : string -> string
+(** [byte_level_encode b] spells the bytes [b] in the byte-level alphabet, one
+    character per byte. {!byte_level_decode} gives [b] back. *)
+
 val byte_level_decode : string -> string
 (** [byte_level_decode s] is the bytes the byte-level alphabet spells [s] from:
     one byte per character. A single character outside the alphabet, an

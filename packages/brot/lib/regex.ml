@@ -713,7 +713,7 @@ and single_set p =
       fail "a negative lookahead is supported over one character only"
   | _ -> char (scalar p)
 
-type t = { re : Re.re; markers : int }
+type t = { re : Re.re; markers : int; nullable : bool }
 
 let compile ?(anchors = true) pattern =
   let p = { s = pattern; i = 0; fold = false; anchors } in
@@ -725,7 +725,7 @@ let compile ?(anchors = true) pattern =
         Error "a ^ that can end a match is not supported"
       else
         let re = Re.compile node.re in
-        Ok { re; markers = Re.group_count re - 1 }
+        Ok { re; markers = Re.group_count re - 1; nullable = node.nullable }
 
 let find t s ~pos ~stop =
   match Re.exec_opt ~pos ~len:(stop - pos) t.re s with
@@ -737,3 +737,5 @@ let find t s ~pos ~stop =
         else finish (i + 1)
       in
       Some (Re.Group.start g 0, finish 1)
+
+let nullable t = t.nullable
