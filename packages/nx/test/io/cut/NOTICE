@@ -21,3 +21,23 @@ s2_b04_head.bin
 s2_b04_tile348.bin
   Bytes:  207111118 to 207117258, tile 348 of the first IFD
   MD5:    bb6c90c460ef0e9fe3057c833c453514
+
+Cuts of the FLAC decoder testbench for nx.io's FLAC tests
+
+The files ietf_*.flac are cut from the FLAC decoder testbench by Martijn
+van Beurden, the IETF CELLAR working group's FLAC test files:
+https://github.com/ietf-wg-cellar/flac-test-files, commit
+aa7b0c6cf32994c106ae517a08134c28a96ff5b2. Its LICENSE.txt states:
+
+  To the extent possible under law, the person who associated CC0 with
+  FLAC decoder testbench has waived all copyright and related or
+  neighboring rights to FLAC decoder testbench.
+
+ietf_<set>_<nn>.flac is the file of that number in subset/, uncommon/ or
+faulty/, modified: a valid file keeps its first frames unchanged, its
+STREAMINFO states their length, frame sizes and MD5, as FFmpeg decodes
+them, and its seek points within them stay; other metadata blocks are
+dropped, but for a Vorbis comment of at most 4 KiB. A file the decoder
+must refuse keeps its metadata and first frames, or its first 4 KiB, but
+for padding. ietf.tsv states each valid cut's facts and the MD5 of
+FFmpeg's samples.

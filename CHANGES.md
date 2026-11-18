@@ -3376,6 +3376,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_io.load_audio` reads FLAC files, every stream RFC 9639 defines of 4 to
+  32 bits and 1 to 8 channels, and refuses those it forbids, naming the
+  frame; each frame's CRCs are checked, and 8-bit samples load as `int8`.
 - `Nx_io.load_audio` reads WAV files, PCM of 1 to 8 bytes, float, A-law,
   μ-law and RF64: `Nx_io.Audio.samples` is the `[|n; c|]` array, each sample
   in the top bits of its dtype, beside its rate, valid bits and channel mask.

@@ -369,7 +369,8 @@ let refused =
   cases "a file a load does not read raises naming it" ~id:fst
     [
       ("a RIFX form", (wav ~id:"RIFX" pcm16 "\000\001", "RIFX"));
-      ("an Ogg stream", ("OggS\000\002" ^ String.make 30 '\000', "no WAV"));
+      ( "an Ogg stream",
+        ("OggS\000\002" ^ String.make 30 '\000', "neither a WAV nor a FLAC") );
       ("no data chunk", (riff [ chunk "fmt " pcm16 ], "no data chunk"));
       ( "fmt after data",
         (riff [ chunk "data" "\000\001"; chunk "fmt " pcm16 ], "before the fmt")

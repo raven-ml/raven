@@ -5,8 +5,11 @@
 ; each HDF5 file's datasets as h5py reads them, which gen/generate.py writes
 ; into support/. support/wav_* are WAV files libsndfile wrote and every G.711
 ; code, each with libsndfile's reading of it as an npy file, from a generator
-; kept outside the repository. cut/ holds byte ranges of a Sentinel-2 file,
-; whose source and licence cut/NOTICE states.
+; kept outside the repository. support/flac_* are FLAC streams built from
+; known samples, flac.tsv stating each one's samples' MD5, and streams the
+; format forbids, one fault each, from the same generators. cut/ holds byte
+; ranges of a Sentinel-2 file and cuts of the IETF FLAC test files, whose
+; sources and licences cut/NOTICE states.
 
 (tests
  (names
@@ -20,7 +23,8 @@
   test_pytorch
   test_tiff
   test_hdf5
-  test_wav)
+  test_wav
+  test_flac)
  (modules
   test_save
   test_archive
@@ -33,6 +37,7 @@
   test_tiff
   test_hdf5
   test_wav
+  test_flac
   io_support)
  (libraries nx nx_array nx_io nx_support rig unix lz windtrap)
  (foreign_stubs

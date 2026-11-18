@@ -1144,18 +1144,20 @@ val load_hdf5 : string -> Hdf5.Group.t list * Hdf5.t list
     An {e audio file} holds [n] samples of each of [c] channels, taken at a
     {e rate} of samples a second. Its samples load as an array of shape
     [[|n; c|]], a {e row} per instant, the channels of a row in the file's
-    order. {!load_audio} reads WAV files. A load reads the file's header and
-    keeps the file, from which {!Audio.samples} reads.
+    order. {!load_audio} reads WAV and FLAC files, recognised by their
+    contents. A load reads the file's header and keeps the file, from which
+    {!Audio.samples} reads.
 
-    {b Samples.} A sample takes [k] bytes, a WAV file's {e container}. An
-    integer sample loads at [int16] for [k] of 2, [int32] for 3 and 4 and
-    [int64] for 5 to 8, and at [k = 1] at [uint8], since a WAV file stores
-    it unsigned and offset by 128. A sample of [b] significant bits
-    ({!Audio.bits}) lies in the top [b] bits of its element, and the bits
-    below are zeros: a 24-bit sample [v] loads as the [int32] [256 * v]. So
-    an element's full scale is its dtype's, whatever the file's depth:
-    [x /. 32768.] for [int16], [x /. 2{^31}] for [int32] and
-    [(x - 128) /. 128.] for [uint8]. A float sample loads at [float32] or
+    {b Samples.} A sample takes [k] bytes: a WAV file's {e container}, or a
+    FLAC file's bit depth rounded up to whole bytes. An integer sample loads
+    at [int16] for [k] of 2, [int32] for 3 and 4 and [int64] for 5 to 8; at
+    [k = 1], at [uint8] from a WAV file, which stores it unsigned and offset
+    by 128, and at [int8] from a FLAC file, which stores it signed. A
+    sample of [b] significant bits ({!Audio.bits}) lies in the top [b] bits
+    of its element, and the bits below are zeros: a 24-bit sample [v] loads
+    as the [int32] [256 * v]. So an element's full scale is its dtype's,
+    whatever the file's depth: [x /. 32768.] for [int16], [x /. 2{^31}] for
+    [int32] and [(x - 128) /. 128.] for [uint8]. A float sample loads at [float32] or
     [float64] as stored, unclipped, of full scale 1. An A-law or μ-law
     sample loads at [int16] as the 13- or 14-bit value
     {{:https://www.itu.int/rec/T-REC-G.711-198811-I/en}ITU-T G.711}
@@ -1184,10 +1186,23 @@ val load_hdf5 : string -> Hdf5.Group.t list * Hdf5.t list
     PCM and float samples whose valid bits fill their containers of 1, 2,
     4 or 8 bytes, at an offset that is a multiple of their size.
 
+    {b FLAC.} A FLAC file is the stream of
+    {{:https://www.rfc-editor.org/rfc/rfc9639}RFC 9639} in its own
+    container: the [fLaC] marker, metadata blocks, STREAMINFO first, then
+    {e frames}, each a block of rows coded on its own. A load reads every
+    stream the RFC defines, of 4 to 32 bits and 1 to 8 channels, whose
+    rate, channels and depth stay those of STREAMINFO. Decoding checks each
+    frame's CRC-8 and CRC-16, its rate, channels, depth, block and frame
+    sizes and number against STREAMINFO, and each sample against its
+    depth. Bytes after the frames of STREAMINFO's length are ignored, and a
+    frame that runs past the length raises. A length whose samples would
+    take more than 2{^16} times the bytes after the metadata, more than any
+    frame decodes to, is refused before anything is allocated.
+
     This reads a 16 kHz mono file as [float32] amplitudes, each the exact
     quotient by 32768:
     {[
-    let a = Nx_io.load_audio "speech.wav" in
+    let a = Nx_io.load_audio "speech.flac" in
     assert (Nx_io.Audio.rate a = 16000 && Nx_io.Audio.channels a = 1);
     let x = Nx.unpack Nx.int16 (Nx_io.Audio.samples a) in
     Nx.div_s (Nx.cast Nx.float32 x) 32768.
@@ -1203,7 +1218,8 @@ module Audio : sig
 
   val rate : t -> int
   (** [rate a] is [a]'s samples a second of each channel, as the file
-      states it. *)
+      states it. It may be 0, which RFC 9639 allows for data not sampled in
+      time. *)
 
   val length : t -> int
   (** [length a] is [n], the rows of [a]'s samples. *)
@@ -1214,8 +1230,8 @@ module Audio : sig
   val bits : t -> int
   (** [bits a] is the significant bits of each of [a]'s samples, from 1 to
       the width of {!samples}'s dtype: a WAV file's valid bits, or its PCM
-      bits without them, 13 for A-law, 14 for μ-law, and the dtype's width
-      for floats. *)
+      bits without them, a FLAC file's depth, 13 for A-law, 14 for μ-law,
+      and the dtype's width for floats. *)
 
   val channel_mask : t -> int
   (** [channel_mask a] is the speakers [a]'s channels feed, as
@@ -1228,35 +1244,48 @@ module Audio : sig
       Channel [i] feeds the speaker of the [i]-th lowest set bit of bits 0
       to 17, and a channel past them none.
 
-      It is the mask the file states, a WAV file's [dwChannelMask].
-      Otherwise it is [0x4] for one channel, [0x3] for two, and 0 for more,
-      the same value as a stated 0. *)
+      It is the mask the file states, a WAV file's [dwChannelMask] or a
+      FLAC file's [WAVEFORMATEXTENSIBLE_CHANNEL_MASK] comment. Otherwise it
+      is [0x4] for one channel and [0x3] for two; for a FLAC file of three
+      to eight, the order of RFC 9639's section 9.1.3 with its surround
+      channels at the sides, [0x7], [0x33], [0x607], [0x60F], [0x70F] and
+      [0x63F]; and 0 for a WAV file of more than two, the same value as a
+      stated 0. *)
 
   val samples : t -> Nx.host Nx.packed
   (** [samples a] is [a]'s samples, of shape [[|length a; channels a|]] at
       the dtype {!section-audio} states. It is a mapped value where the
-      section says so; otherwise each call reads the file again, into
-      memory of its own.
+      section says so; otherwise each call reads or decodes the file again,
+      into memory of its own.
 
       Raises [Failure] as {!section-errors} states, naming the row, if a
-      sample has a set bit below its valid bits. *)
+      sample has a set bit below its valid bits, and naming the frame by its
+      first row and its byte for a FLAC file that breaks RFC 9639 or a check
+      of {!section-audio}. *)
 end
 
 val load_audio : string -> Audio.t
-(** [load_audio path] is the WAV file [path], recognised by its contents. It
-    reads the header and no sample.
+(** [load_audio path] is the WAV or FLAC file [path], recognised by its
+    contents. It reads the header and no sample, except that it decodes
+    every frame of a FLAC file whose STREAMINFO states no length, to count
+    its rows; such a file's frames must run to its end.
 
     Raises [Failure] as {!section-errors} states, and:
-    - if the file is no RIFF or RF64 form [WAVE], such as a RIFX file;
-    - if [fmt ] is missing, malformed, given twice or after [data], or
-      states a coding the section does not read, no channel, a container
-      its bits do not fit or valid bits of 0;
-    - if [data] is missing, ends past the file or holds part of a row,
-      such as the size [0x80000000] that arecord leaves in a file it
-      writes to a pipe and the size [0x7ffff000] that sox once left, which
-      state more bytes than such a file holds;
-    - if an RF64 file has no [ds64] chunk first, or a chunk ends past the
-      file. *)
+    - if the file is neither a RIFF or RF64 form [WAVE] nor a FLAC stream
+      with its marker, such as a RIFX, Ogg FLAC or headerless FLAC file;
+    - for a WAV file, if [fmt ] is missing, malformed, given twice or after
+      [data], or states a coding the section does not read, no channel, a
+      container its bits do not fit or valid bits of 0; if [data] is
+      missing, ends past the file or holds part of a row, such as the size
+      [0x80000000] that arecord leaves in a file it writes to a pipe and
+      the size [0x7ffff000] that sox once left, which state more bytes than
+      such a file holds; or if an RF64 file has no [ds64] chunk first, or a
+      chunk ends past the file;
+    - for a FLAC file, if STREAMINFO is missing, not first, given twice or
+      states sizes RFC 9639 forbids, if a block ends past the file or is of
+      type 127, if a seek table or a Vorbis comment is malformed or given
+      twice, if the length is refused as {!section-audio} states, or, for a
+      file without a length, as {!Audio.samples} raises. *)
 
 (** {1:partial Partial files}
 
