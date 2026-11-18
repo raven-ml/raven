@@ -203,5 +203,5 @@ They also state each reflectance band's scale, offset and nodata, 1e-4,
 Their images are JPEG 2000, `image/jp2`, which nx.io does not read (the
 preamble of [`jord_safe.mli`](../lib/safe/jord_safe.mli)), so a program
 reads the DNs with a reader of its own. Their widths differ from a
-product's: `B04_10m` states 0.342 µm, where Sentinel-2A's product metadata
-gives B04 646 to 684 nm, 0.038 µm.
+product's: `B04_10m` states 0.342 µm, where Sentinel-2B's product metadata
+gives B04 646 to 685 nm, 0.039 µm.
