@@ -1711,13 +1711,6 @@ val train_unigram :
 
 (** {1:model_files Model files} *)
 
-val export_tiktoken : t -> merges_path:string -> vocab_path:string -> unit
-(** [export_tiktoken t ~merges_path ~vocab_path] exports [t]'s BPE merges and
-    vocabulary in tiktoken-compatible format.
-
-    {b Warning.} Only BPE tokenizers are supported. Raises [Failure] for other
-    model types. *)
-
 val save_model_files : ?prefix:string -> t -> folder:string -> string list
 (** [save_model_files t ~folder] saves [t]'s underlying model files (vocabulary
     and merges) to [folder] and returns the list of created file paths.

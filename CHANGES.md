@@ -4674,6 +4674,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- **Breaking:** `Brot.export_tiktoken` is removed. It wrote the `vocab.json`
+  and `merges.txt` that `save_model_files` writes, not a tiktoken rank file,
+  and raised `Invalid_argument` where its doc said `Failure`.
 - `Brot.of_tiktoken` reads a tiktoken rank file, such as Whisper's,
   cl100k_base's or o200k_base's, with its pattern and its special tokens at
   their ids, and gives tiktoken's ids.

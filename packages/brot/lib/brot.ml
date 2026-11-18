@@ -16,7 +16,6 @@ let strf = Printf.sprintf
 let err_pair_no_post = "pair sequences require a configured post-processor"
 let err_no_pad_token = "padding requested but no pad token configured"
 let err_pad_not_in_vocab tok = strf "pad token '%s' not in vocabulary" tok
-let err_export_tiktoken = "only supported for BPE models"
 let err_infer_type = "unable to infer model type from JSON"
 
 (* Types *)
@@ -2365,32 +2364,6 @@ let save_pretrained t ~path =
   write_string_to_file
     (Filename.concat path "tokenizer.json")
     (Json_text.to_string (to_json t))
-
-let export_tiktoken t ~merges_path ~vocab_path =
-  match t.algorithm with
-  | Alg_bpe bpe ->
-      let vocab =
-        alg_vocab t.algorithm
-        |> List.sort (fun (_, id1) (_, id2) -> Int.compare id1 id2)
-      in
-      let json_str =
-        match
-          Jsont_bytesrw.encode_string ~format:Jsont.Minify Jsont.json
-            (vocab_to_json vocab)
-        with
-        | Ok s -> s
-        | Error e -> failwith ("export_tiktoken: failed to encode vocab: " ^ e)
-      in
-      write_string_to_file vocab_path json_str;
-      let oc = open_out merges_path in
-      Fun.protect
-        ~finally:(fun () -> close_out oc)
-        (fun () ->
-          output_string oc "#version: 0.2\n";
-          List.iter
-            (fun (a, b) -> Printf.fprintf oc "%s %s\n" a b)
-            (Bpe.get_merges bpe))
-  | _ -> invalid_arg err_export_tiktoken
 
 let save_model_files ?prefix t ~folder = alg_save t.algorithm ~folder ?prefix ()
 

@@ -217,12 +217,7 @@ Save a tokenizer in HuggingFace format for later use or sharing:
 Brot.save_pretrained tokenizer ~path:"./my_tokenizer"
 
 (* Save just the vocabulary and merges files *)
-let files = Brot.save_model_files tokenizer ~folder:"./model" ()
-
-(* Export BPE merges in tiktoken format *)
-Brot.export_tiktoken tokenizer
-  ~merges_path:"./tiktoken_merges.txt"
-  ~vocab_path:"./tiktoken_vocab.txt"
+let files = Brot.save_model_files tokenizer ~folder:"./model"
 ```
 
 ## Training from scratch
