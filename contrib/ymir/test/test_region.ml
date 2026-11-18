@@ -713,7 +713,60 @@ let derivatives =
             (Nx.item [] d));
     ]
 
+(* One axis *)
+
+let line n = Grid.pixels ~at:Nx.Host.on ~shape:[| n |] f64 Transform.id
+let at1 c = Transform.shift (one (Nx.create f64 [| 1 |] [| c |]))
+let interval c r = Region.circle (at1 c) ~radius:(one (Nx.scalar f64 r))
+
+let one_axis =
+  group "One axis"
+    [
+      test "a cell weighs its length inside the interval over its own" (fun () ->
+          (* [4.3 - 1.5, 4.3 + 1.5] = [2.8, 5.8] over cells [i - 0.5, i + 0.5]. *)
+          equal
+            (array (float 1e-15))
+            [| 0.; 0.; 0.; 0.7; 1.; 1.; 0.3; 0. |]
+            (Nx.to_array (Region.weights (interval 4.3 1.5) (line 8))));
+      prop "the weights of the cells add to the interval's length"
+        Gen.(pair (float_range 3. 17.) (float_range 0. 2.5))
+        (fun (c, r) ->
+          cover "within one cell" (Float.round (c -. r) = Float.round (c +. r));
+          cover "across cells" (Float.round (c -. r) < Float.round (c +. r) -. 1.);
+          equal (float 1e-12) (2. *. r) (total (Region.weights (interval c r) (line 20))));
+      test "an annulus weighs the two intervals between its radii" (fun () ->
+          let r =
+            Region.annulus (at1 4.) ~inner:(one (Nx.scalar f64 1.))
+              ~outer:(one (Nx.scalar f64 2.5))
+          in
+          equal
+            (array (float 1e-15))
+            [| 0.; 0.; 1.; 0.5; 0.; 0.5; 1.; 0.; 0. |]
+            (Nx.to_array (Region.weights r (line 9))));
+      test "a cell with a NaN corner weighs NaN" (fun () ->
+          let t = Transform.shift (one (Nx.create f64 [| 1 |] [| Float.nan |])) in
+          let g = Grid.pixels ~at:Nx.Host.on ~shape:[| 3 |] f64 t in
+          equal (array float_exact) [| Float.nan; Float.nan; Float.nan |]
+            (Nx.to_array (Region.weights (interval 0. 1.) g)));
+      test "an ellipse on one axis raises" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"needs a plane of two components")
+            (fun () ->
+              Region.weights
+                (Region.ellipse (at1 4.) ~a:(one (Nx.scalar f64 1.))
+                   ~b:(one (Nx.scalar f64 1.))
+                   ~angle:(Quantity.v Unit.degree (Nx.scalar f64 0.)))
+                (line 8)));
+      test "a grid of three axes is weighed one side at a time" (fun () ->
+          let g = Grid.pixels ~at:Nx.Host.on ~shape:[| 2; 3; 4 |] f64 Transform.id in
+          raises_match (Exn.invalid_arg ~sub:"a grid of 3 axes is weighed one side at a time")
+            (fun () ->
+              Region.weights
+                (Region.circle (Transform.shift (one (Nx.create f64 [| 3 |] [| 1.; 1.; 1. |])))
+                   ~radius:(one (Nx.scalar f64 1.)))
+                g));
+    ]
+
 let () =
   exit
     (run "Region"
-       [ photutils; shapes; laws; shape_laws; narrow; errors; derivatives ])
+       [ photutils; shapes; laws; shape_laws; narrow; errors; derivatives; one_axis ])

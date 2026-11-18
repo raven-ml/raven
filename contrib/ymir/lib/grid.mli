@@ -19,7 +19,8 @@ type ('w, 'e, 'd) t = {
   measured : int;
 }
 (** {!Ymir.Grid.t}. The window of [shape] cells starts at [start],
-    [[...; 2]], among the cells of [base]. [measured] counts [transform]'s
+    [[...; n]], among the cells of [base], for [n] axes. [measured] counts
+    [transform]'s
     first stages, those of the world the grid was built with, in which its
     measures are taken. {!map_world} appends stages and keeps [measured]. *)
 
@@ -52,14 +53,29 @@ val agree : ('w, 'e, 'd) t -> ('w, 'e, 'd) t -> 'd Nx.bool_t
 val window : start:'d Nx.int64_t -> shape:int array -> ('w, 'e, 'd) t -> ('w, 'e, 'd) t
 val around : 'w -> shape:int array -> ('w, 'e, 'd) t -> ('w, 'e, 'd) t
 val ptree : unit -> (('w, 'e, 'd) t, 'd) Nx.Ptree.t
+val first : ('a * 'b, 'e, 'd) t -> ('a, 'e, 'd) t
+val second : ('a * 'b, 'e, 'd) t -> ('b, 'e, 'd) t
+
+val factors :
+  string -> ('a * 'b, 'e, 'd) t -> ('a, 'e, 'd) t * ('b, 'e, 'd) t * int array
+(** [factors fn g] is {!first}[ g], {!second}[ g] and the axes of [g] the
+    first side holds, ascending.
+
+    Raises [Invalid_argument] as {!first} does, naming [fn]. *)
+
+val coupled : string -> ('w, 'e, 'd) t -> unit
+(** [coupled fn g] raises [Invalid_argument], naming [fn], where [g]'s
+    transform splits its points after another stage or maps both sides of a
+    split with a stage other than [both]: [g]'s cells are then not
+    products. *)
 
 val world : ('w, 'e, 'd) t -> ('w, 'd) Transform.endpoint
 (** [world g] is the endpoint of [g]'s world. *)
 
 val mapped : ('w, 'e, 'd) t -> 'd Transform.value
-(** [mapped g] is [g]'s corner lattice, [[...; h + 1; w + 1]] points for
-    [shape g] [[|h; w|]], mapped to its world by {!Transform.run_cells} with
-    two cell axes, where no point outside a domain raises. *)
+(** [mapped g] is [g]'s corner lattice, [[...; s + 1]] points for [shape g]
+    [s], mapped to its world by {!Transform.run_cells} with a cell axis for
+    each of [g]'s, where no point outside a domain raises. *)
 
 val cells : ('a, 'b, 'd) Nx.t -> int -> int -> ('a, 'b, 'd) Nx.t
 (** [cells v k c] is component [c] of each cell's corner [k], [[...; h; w]],

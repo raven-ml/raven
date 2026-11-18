@@ -13,6 +13,10 @@ open Ymir_test.Frames
 module Reference = Ymir_test.Grids_reference
 
 let f64 = Nx.float64
+
+(* [others first n] is the components below [n] that [first] does not list. *)
+let others first n =
+  Array.of_list (List.filter (fun k -> not (Array.mem k first)) (List.init n Fun.id))
 let tensor shape xs = Nx.create f64 shape xs
 let deg x = Quantity.v Unit.degree x
 let one x = Quantity.v Unit.one x
@@ -720,11 +724,98 @@ let structure =
             |});
     ]
 
+(* Products *)
+
+(* [subset n bits] is the components below [n] whose bit is set. *)
+let subset n bits =
+  Array.of_list (List.filter (fun k -> bits land (1 lsl k) <> 0) (List.init n Fun.id))
+
+let points n = one (tensor [| 3; n |] (Array.init (3 * n) (fun i -> (float_of_int i *. 1.25) -. 3.)))
+
+let products =
+  group "Products"
+    [
+      prop "split takes its components to each side and its inverse puts them back, bit for bit"
+        Gen.(pair (int_range 2 5) (int_range 0 1023))
+        (fun (n, seed) ->
+          let first = subset n ((seed mod ((1 lsl n) - 2)) + 1) in
+          let contiguous =
+            first.(Array.length first - 1) - first.(0) = Array.length first - 1
+          in
+          cover "interleaved" (not contiguous);
+          cover "one component on a side"
+            (Array.length first = 1 || Array.length first = n - 1);
+          let x = points n in
+          let t = Transform.split first in
+          let a, b = Transform.apply t x in
+          let take ks =
+            let ks = Nx.create Nx.int64 [| Array.length ks |] (Array.map Int64.of_int ks) in
+            Nx.to_array (Nx.take ~axis:(-1) ks (Quantity.value Unit.one x))
+          in
+          equal (array float_exact) (take first) (values a Unit.one);
+          equal (array float_exact) (take (others first n)) (values b Unit.one);
+          equal (array float_exact) (values x Unit.one)
+            (values (Transform.apply (Transform.inverse t) (a, b)) Unit.one));
+      test "both maps each side through its own transform" (fun () ->
+          let x = deg (Quantity.value Unit.one (points 3)) in
+          let u = Transform.shift (deg (tensor [| 2 |] [| 1.; 2. |]))
+          and v = Transform.shift (deg (tensor [| 1 |] [| 3. |])) in
+          let t = Transform.(split [| 0; 2 |] >> both u v) in
+          let a, b = Transform.apply t x in
+          let a', b' = Transform.apply (Transform.split [| 0; 2 |]) x in
+          equal (array float_exact)
+            (values (Transform.apply u a') Unit.degree)
+            (values a Unit.degree);
+          equal (array float_exact)
+            (values (Transform.apply v b') Unit.degree)
+            (values b Unit.degree);
+          equal (array float_exact) (values x Unit.degree)
+            (values (Transform.apply (Transform.inverse t) (a, b)) Unit.degree));
+      test "a split that leaves a side empty or lacks a component raises" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Transform.split") (fun () -> Transform.split [||]);
+          raises_match (Exn.invalid_arg ~sub:"Transform.split") (fun () -> Transform.split [| 1; 0 |]);
+          raises_match (Exn.invalid_arg ~sub:"split [0; 1] takes points of at least 3 components, got 2")
+            (fun () -> Transform.apply (Transform.split [| 0; 1 |]) (points 2));
+          raises_match (Exn.invalid_arg ~sub:"split [3] takes points of at least 4 components, got 3")
+            (fun () -> Transform.apply (Transform.split [| 3 |]) (points 3)));
+      test "split and its inverse keep NaN and zero-size batches" (fun () ->
+          let t = Transform.split [| 1 |] in
+          let x = one (tensor [| 2; 3 |] [| 1.; Float.nan; 3.; 4.; 5.; Float.nan |]) in
+          let a, b = Transform.apply t x in
+          equal (array float_exact) [| Float.nan; 5. |] (values a Unit.one);
+          equal (array float_exact) [| 1.; 3.; 4.; Float.nan |] (values b Unit.one);
+          equal (array float_exact) (values x Unit.one)
+            (values (Transform.apply (Transform.inverse t) (a, b)) Unit.one);
+          equal (array bool) [| false; false |] (Nx.to_array (covers t x));
+          let empty = one (tensor [| 0; 3 |] [||]) in
+          let a, b = Transform.apply t empty in
+          equal (array int) [| 0; 1 |] (Nx.shape (Quantity.value Unit.one a));
+          equal (array int) [| 0; 2 |] (Nx.shape (Quantity.value Unit.one b));
+          equal (array int) [| 0; 3 |]
+            (Nx.shape
+               (Quantity.value Unit.one (Transform.apply (Transform.inverse t) (a, b)))));
+      test "a pair is covered where both sides are" (fun () ->
+          let arc =
+            Transform.(
+              scale (deg (tensor [| 2 |] [| 1.; 1. |]))
+              >> celestial Arc Frame.icrs ~pv:no_pv
+                   ~native:(deg (tensor [| 2 |] [| 0.; 90. |]))
+                   ~crval:(deg (tensor [| 2 |] [| 10.; 20. |]))
+                   ~lonpole:(deg (scalar 180.)) ~latpole:(deg (scalar 90.)))
+          in
+          let t = Transform.(split [| 0; 1 |] >> both arc id) in
+          let x =
+            one (tensor [| 3; 3 |] [| 1.; 2.; 3.; 200.; 0.; 3.; Float.nan; 0.; 1. |])
+          in
+          equal (array bool) [| true; false; false |] (Nx.to_array (covers t x)));
+    ]
+
 let () =
   exit
     (run "Transform"
        [
          wcslib;
+         products;
          projections;
          distortions;
          rotations;

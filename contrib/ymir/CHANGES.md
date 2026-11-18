@@ -4,6 +4,9 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- `Grid`, `Region` and `Observation` take any number of axes. `Transform.split`
+  and `Transform.both` build products, measured as their sides' product;
+  `Observation.first` takes one side, as a cube's aperture spectrum.
 - `Direction.pairs ~within a b` cross-matches two catalogues on the host:
   every pair of rows within a closed radius, with its separation, in order.
   Nearest and reciprocal matching compose from it.

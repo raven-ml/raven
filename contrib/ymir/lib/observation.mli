@@ -27,6 +27,8 @@ val sub : ('w, 'e, 'd) t -> ('w, 'e, 'd) t -> ('w, 'e, 'd) t
 val scale : (float, 'e, 'd) Nx.t Ymir_units.Quantity.t -> ('w, 'e, 'd) t -> ('w, 'e, 'd) t
 val window : start:'d Nx.int64_t -> shape:int array -> ('w, 'e, 'd) t -> ('w, 'e, 'd) t
 val around : 'w -> shape:int array -> ('w, 'e, 'd) t -> ('w, 'e, 'd) t
+val first : ('a * 'b, 'e, 'd) t -> ('a, 'e, 'd) t
+val second : ('a * 'b, 'e, 'd) t -> ('b, 'e, 'd) t
 
 type ('e, 'd) integral = {
   value : (float, 'e, 'd) Nx.t Ymir_units.Quantity.t;

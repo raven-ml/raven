@@ -70,9 +70,10 @@ The [examples](examples/) teach each part on small synthetic data.
   that compose with `>>`, invert, and print back what they read: axis order,
   shift, linear maps, SIP and TPV distortions, thirteen zenithal and
   cylindrical projections, and rotations between frames.
-- **Grids, regions and observations**: `Grid` is an image's cells seen
-  through a transform, with each cell's exact area or solid angle;
-  `Grid.agree` says whether two grids are the same cells. `Region` places
+- **Grids, regions and observations**: `Grid` is an image's or a cube's
+  cells seen through a transform, with each cell's exact length, area or
+  solid angle, and a cube's as their products; `Grid.agree` says whether
+  two grids are the same cells. `Region` places
   circles, annuli, ellipses and polygons on a grid and weighs each cell by
   its exact covered fraction. `Observation` holds data with variance and
   validity; `add`, `sub` and `scale` combine observations on agreeing grids

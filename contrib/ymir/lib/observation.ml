@@ -46,18 +46,20 @@ let ends_with s suffix =
    for all cells when they are 1 or absent. *)
 let per_cell s gs = ends_with s gs
 
-let constant s =
+let constant s cells =
   let n = Array.length s in
-  (n < 1 || s.(n - 1) = 1) && (n < 2 || s.(n - 2) = 1)
+  List.for_all (fun k -> n < k || s.(n - k) = 1) (List.init cells succ)
 
 (* The unit of [g]'s measures: a steradian on the sky, the square of the plane's
    unit, which one cell's measure gives, in a plane. *)
 let measure_unit (type w e d) (g : (w, e, d) Grid.t) =
   match Grid.world g with
   | Transform.Sky _ -> Unit.steradian
-  | Transform.Planar ->
+  | _ ->
       let one =
-        Grid.window ~start:(Nx.zeros_like g.Grid.start) ~shape:[| 1; 1 |] g
+        Grid.window ~start:(Nx.zeros_like g.Grid.start)
+          ~shape:(Array.map (fun _ -> 1) g.Grid.shape)
+          g
       in
       Quantity.unit (Grid.measure one)
 
@@ -92,7 +94,7 @@ let v ?variance ?valid ?area grid data =
         let s = Nx.shape (payload a) in
         if
           Transform.broadcast s shape <> shape
-          || not (per_cell s gs || constant s)
+          || not (per_cell s gs || constant s (Array.length gs))
         then
           invalid_arg
             (Format.asprintf
@@ -172,63 +174,77 @@ let scale k o =
 
 let component = Transform.component
 
-(* [cell_index rel h w] is the cells [rel + (i, j)] as rows [[...; h; 1]] and
-   columns [[...; 1; w]], int64. *)
-let cell_index rel h w =
+(* [cell_index rel sizes] is the cells [rel + i] for each [i] below [sizes],
+   one int64 index per axis, each [[...; sizes]] with 1 on the other axes. *)
+let cell_index rel sizes =
+  let n = Array.length sizes in
   let batch = Array.sub (Nx.shape rel) 0 (Nx.ndim rel - 1) in
-  let at k = Nx.reshape (Array.append batch [| 1; 1 |]) (component rel k) in
-  let axis n = Nx.arange_at (Nx.beside rel) Nx.int64 0 n 1 in
-  ( Nx.add (at 0) (Nx.reshape [| h; 1 |] (axis h)),
-    Nx.add (at 1) (Nx.reshape [| 1; w |] (axis w)) )
+  List.init n (fun k ->
+      let at =
+        Nx.reshape (Array.append batch (Array.make n 1)) (component rel k)
+      in
+      let along = Array.init n (fun i -> if i = k then sizes.(k) else 1) in
+      let index = Nx.arange_at (Nx.beside rel) Nx.int64 0 sizes.(k) 1 in
+      Nx.add at (Nx.reshape along index))
 
-(* [gather rel h w x] is the [h × w] block of [x], [[...; H; W]], from the cell
-   [rel], [[...; 2]]: [[batch; h; w]] for the batch axes of [x] and [rel]
-   broadcast, zero beyond [x]'s cells, and where the block is within them. *)
-let gather rel h w x =
+let all_of = function
+  | [] -> invalid_arg "Observation: no axis"
+  | m :: ms -> List.fold_left Nx.logical_and m ms
+
+(* [gather rel sizes x] is the block of [sizes] cells of [x], [[...; S]], from
+   the cell [rel], [[...; n]]: [[batch; sizes]] for the batch axes of [x] and
+   [rel] broadcast, zero beyond [x]'s cells, and where the block is within
+   them. *)
+let gather rel sizes x =
   let s = Nx.shape x in
-  let nd = Array.length s in
-  let hh = s.(nd - 2) and ww = s.(nd - 1) in
-  let rows, cols = cell_index rel h w in
+  let n = Array.length sizes and nd = Array.length s in
+  let full = Array.sub s (nd - n) n in
+  let index = cell_index rel sizes in
   let inside =
-    Nx.(
-      logical_and
-        (logical_and (greater_equal_s rows 0L) (less_s rows (Int64.of_int hh)))
-        (logical_and (greater_equal_s cols 0L) (less_s cols (Int64.of_int ww))))
+    all_of
+      (List.mapi
+         (fun k i ->
+           Nx.logical_and (Nx.greater_equal_s i 0L)
+             (Nx.less_s i (Int64.of_int full.(k))))
+         index)
   in
-  let flat = Nx.add (Nx.mul_s rows (Int64.of_int ww)) cols in
+  let flat =
+    List.fold_left
+      (fun acc (k, i) -> Nx.add (Nx.mul_s acc (Int64.of_int full.(k))) i)
+      (List.hd index)
+      (List.tl (List.mapi (fun k i -> (k, i)) index))
+  in
   let flat = Nx.where inside flat (Nx.full_like flat (-1L)) in
+  let count a = Array.fold_left ( * ) 1 a in
   let batch =
     Transform.broadcast
-      (Array.sub s 0 (nd - 2))
-      (Array.sub (Nx.shape flat) 0 (Nx.ndim flat - 2))
+      (Array.sub s 0 (nd - n))
+      (Array.sub (Nx.shape flat) 0 (Nx.ndim flat - n))
   in
   let xs =
     Nx.broadcast_to
-      (Array.append batch [| hh * ww |])
-      (Nx.reshape (Array.append (Array.sub s 0 (nd - 2)) [| hh * ww |]) x)
+      (Array.append batch [| count full |])
+      (Nx.reshape (Array.append (Array.sub s 0 (nd - n)) [| count full |]) x)
   in
   let idx =
     Nx.reshape
-      (Array.append batch [| h * w |])
-      (Nx.broadcast_to (Array.append batch [| h; w |]) flat)
+      (Array.append batch [| count sizes |])
+      (Nx.broadcast_to (Array.append batch sizes) flat)
   in
   let out =
-    Nx.reshape
-      (Array.append batch [| h; w |])
-      (Nx.take_along_axis ~axis:(-1) idx xs)
+    Nx.reshape (Array.append batch sizes) (Nx.take_along_axis ~axis:(-1) idx xs)
   in
   (out, inside)
 
 let slice_window rel grid' o =
   let gs = Grid.shape o.grid in
   let s = Grid.shape grid' in
-  let h = s.(0) and w = s.(1) in
-  let take q = Quantity.map (fun x -> fst (gather rel h w x)) q in
+  let take q = Quantity.map (fun x -> fst (gather rel s x)) q in
   let area_take a = if per_cell (Nx.shape (payload a)) gs then take a else a in
   let valid =
     match o.valid with
-    | Some m -> fst (gather rel h w (Nx.cast Nx.bool m))
-    | None -> snd (gather rel h w (Nx.zeros_at (Nx.beside rel) Nx.bool gs))
+    | Some m -> fst (gather rel s (Nx.cast Nx.bool m))
+    | None -> snd (gather rel s (Nx.zeros_at (Nx.beside rel) Nx.bool gs))
   in
   {
     grid = grid';
@@ -245,6 +261,44 @@ let window ~start ~shape o =
 let around x ~shape o =
   let grid' = Grid.around x ~shape o.grid in
   slice_window (Nx.sub grid'.Grid.start o.grid.Grid.start) grid' o
+
+(* Sides *)
+
+(* [moved fn axes ~cells o] is [o] on [g], one side of its grid whose cells
+   are [o]'s on [axes], with the other side's cell axes moved before the
+   batch axes, a view. *)
+let moved fn g axes ~cells o =
+  if Option.is_some o.area then
+    invalid_arg
+      (strf "%s: an area per cell of every axis has no share on one side" fn);
+  let n = Array.length cells in
+  let others = Transform.others axes n in
+  let move x =
+    let b = Nx.ndim x - n in
+    Nx.transpose
+      ~axes:
+        (List.map (fun k -> b + k) (Array.to_list others)
+        @ List.init b Fun.id
+        @ List.map (fun k -> b + k) (Array.to_list axes))
+      x
+  in
+  {
+    grid = g;
+    data = Quantity.map move o.data;
+    variance = Option.map (Quantity.map move) o.variance;
+    valid = Option.map move o.valid;
+    area = None;
+  }
+
+let first o =
+  let a, _, axes = Grid.factors "Observation.first" o.grid in
+  moved "Observation.first" a axes ~cells:(Grid.shape o.grid) o
+
+let second o =
+  let _, b, axes = Grid.factors "Observation.second" o.grid in
+  let n = Array.length (Grid.shape o.grid) in
+  let cells = Grid.shape o.grid in
+  moved "Observation.second" b (Transform.others axes n) ~cells o
 
 (* Integrals *)
 
@@ -266,44 +320,51 @@ let per_cell_unit u =
    base, the base continues beyond it, and the region is not exactly outside it:
    the window clipped the region. *)
 let check_border outside (g : _ Grid.t) =
-  let h = g.shape.(0) and w = g.shape.(1) in
-  let rows, cols = cell_index g.start h w in
-  let b0 = Int64.of_int g.base.(0) and b1 = Int64.of_int g.base.(1) in
+  let s = g.shape and n = Array.length g.shape in
+  let cells = cell_index g.start s in
   let in_base =
-    Nx.(
-      logical_and
-        (logical_and (greater_equal_s rows 0L) (less_s rows b0))
-        (logical_and (greater_equal_s cols 0L) (less_s cols b1)))
+    all_of
+      (List.mapi
+         (fun k c ->
+           Nx.logical_and (Nx.greater_equal_s c 0L)
+             (Nx.less_s c (Int64.of_int g.base.(k))))
+         cells)
   in
-  let index n = Nx.arange_at (Nx.beside rows) Nx.int64 0 n 1 in
-  let i = Nx.reshape [| h; 1 |] (index h)
-  and j = Nx.reshape [| 1; w |] (index w) in
-  let edge at bound cond = Nx.logical_and (Nx.equal_s at bound) cond in
+  (* Cell [i] of the window on axis [k] is on its border where the base goes
+     on past it. *)
   let continues =
-    Nx.(
-      logical_or
-        (logical_or
-           (edge i 0L (greater_s rows 0L))
-           (edge i (Int64.of_int (h - 1)) (less_s rows (Int64.sub b0 1L))))
-        (logical_or
-           (edge j 0L (greater_s cols 0L))
-           (edge j (Int64.of_int (w - 1)) (less_s cols (Int64.sub b1 1L)))))
+    List.fold_left Nx.logical_or
+      (Nx.zeros_like in_base)
+      (List.mapi
+         (fun k c ->
+           let i =
+             Nx.reshape
+               (Array.init n (fun a -> if a = k then s.(k) else 1))
+               (Nx.arange_at (Nx.beside c) Nx.int64 0 s.(k) 1)
+           in
+           let edge bound cond = Nx.logical_and (Nx.equal_s i bound) cond in
+           Nx.logical_or
+             (edge 0L (Nx.greater_s c 0L))
+             (edge
+                (Int64.of_int (s.(k) - 1))
+                (Nx.less_s c (Int64.of_int (g.base.(k) - 1)))))
+         cells)
   in
   let clipped =
     Nx.logical_and (Nx.logical_and in_base continues) (Nx.logical_not outside)
   in
   Nx.check Nx.Ptree.unit (Nx.logical_not clipped) () (fun i () ->
-      let n = Array.length i in
+      let m = Array.length i in
       Invalid_argument
         (strf
-           "Observation.integrate: the region reaches the border of its %dx%d \
-            window%s at sample (%d, %d); take a larger ~shape"
-           h w
-           (if n > 2 then " " ^ Transform.index (Array.sub i 0 (n - 2)) else "")
-           i.(n - 2)
-           i.(n - 1)))
+           "Observation.integrate: the region reaches the border of its %s \
+            window%s at sample %s; take a larger ~shape"
+           (String.concat "x" (Array.to_list (Array.map string_of_int s)))
+           (if m > n then " " ^ Transform.index (Array.sub i 0 (m - n)) else "")
+           (Grid.index_text (Array.sub i (m - n) n))))
 
 let integrate r o =
+  let n = Array.length (Grid.shape o.grid) in
   let ov, own = Region.overlap r o.grid in
   check_border ov.outside o.grid;
   let valid =
@@ -329,7 +390,9 @@ let integrate r o =
   in
   let sums =
     Nx_wide.hi
-      (Nx_wide.sum ~axes:[ -3; -2 ] (Nx_wide.v (Transform.stack terms)))
+      (Nx_wide.sum
+         ~axes:(List.init n (fun k -> k - n - 1))
+         (Nx_wide.v (Transform.stack terms)))
   in
   let sum k = component sums k in
   (* The valid cells' overlap as a share of the region's own area, both in the

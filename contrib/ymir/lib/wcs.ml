@@ -753,7 +753,8 @@ let rec unbatched : type a b d. (a, b, d) Transform.t -> bool = function
         | Plane (Transform.Tpv { pv; _ }, _) -> Nx.ndim pv = 2
         | Deproject c -> scalar_celestial c
         | Project c -> scalar_celestial c
-        | Rotate _ -> true
+        | Parallel (t, u) -> unbatched t && unbatched u
+        | Rotate _ | Split _ | Join _ -> true
       in
       ok && unbatched rest
 

@@ -502,7 +502,83 @@ let arithmetic =
           equal (float_rel ~rel:1e-9 ~abs:0.) (jansky i) (jansky j));
     ]
 
+(* Products *)
+
+(* A spectral axis of [n] channels from 475 nm by 0.125 nm. *)
+let spectrum =
+  let m x = Quantity.v Unit.metre (Nx.create f64 [| 1 |] [| x |]) in
+  Transform.(
+    scale (m 1.25e-10) >> inverse (shift (m 4.75e-7)))
+
+let per_m = Unit.(brightness / metre)
+
+let products =
+  let shape = Reference.sky_shape in
+  let channels = 4 in
+  group "Products"
+    [
+      prop "a cube's aperture spectrum is each channel's aperture sum, bit for bit"
+        Gen.(of_list [ 0; 1; 2 ])
+        (fun axis ->
+          cover "the channels between the sky's axes" (axis = 1);
+          let first = Array.of_list (List.filter (( <> ) axis) [ 0; 1; 2 ]) in
+          let cube_shape = Array.make 3 channels in
+          cube_shape.(first.(0)) <- shape.(0);
+          cube_shape.(first.(1)) <- shape.(1);
+          let g = Grid.pixels ~at:Nx.Host.on ~shape:cube_shape f64 Transform.(split first >> both wcs spectrum) in
+          let data =
+            Nx.init f64 cube_shape (fun i ->
+                float_of_int (((7919 * i.(0)) + (104729 * i.(1)) + (13 * i.(2))) mod 1009)
+                /. 64.)
+          in
+          let cube = Observation.v g (Quantity.v per_m data) in
+          let r = Region.circle (Transform.about crval) ~radius:(arcsec (scalar 0.4)) in
+          let spectrum = Observation.integrate r (Observation.first cube) in
+          let slice k =
+            let index = List.init 3 (fun a -> if a = axis then Nx.I k else Nx.A) in
+            let sky = Grid.pixels ~at:Nx.Host.on ~shape f64 wcs in
+            let o = Observation.v sky (Quantity.v per_m (Nx.slice index data)) in
+            Nx.item [] (Quantity.value Unit.(jy / metre) (Observation.integrate r o).value)
+          in
+          equal (array float_exact)
+            (Array.init channels slice)
+            (Nx.to_array (Quantity.value Unit.(jy / metre) spectrum.value)));
+      test "a band's map sums each spaxel's channels in the band" (fun () ->
+          let g =
+            Grid.pixels ~at:Nx.Host.on ~shape:[| channels; 3; 2 |] f64
+              Transform.(split [| 1; 2 |] >> both wcs spectrum)
+          in
+          let data = Nx.init f64 [| channels; 3; 2 |] (fun i -> float_of_int (i.(0) + (10 * i.(1)) + (100 * i.(2)))) in
+          let cube = Observation.v g (Quantity.v per_m data) in
+          (* Channel k spans 475 nm + (k ± 1/2) 0.125 nm: channels 1 and 2
+             whole and half of channel 3 are [475.0625, 475.375] nm. *)
+          let band =
+            Region.circle
+              (Transform.shift (Quantity.v Unit.metre (Nx.create f64 [| 1 |] [| 4.7521875e-7 |])))
+              ~radius:(Quantity.v Unit.metre (Nx.scalar f64 1.5625e-10))
+          in
+          let map = Observation.integrate band (Observation.second cube) in
+          let expected =
+            Array.init 6 (fun s ->
+                let v k = float_of_int (k + (10 * (s / 2)) + (100 * (s mod 2))) in
+                1.25e-10 *. (v 1 +. v 2 +. (0.5 *. v 3)))
+          in
+          equal (array (float_rel ~rel:1e-9 ~abs:0.)) expected
+            (Nx.to_array (Quantity.value brightness map.value)));
+      test "an observation with an area has no side" (fun () ->
+          let g =
+            Grid.pixels ~at:Nx.Host.on ~shape:[| 2; 3; 3 |] f64
+              Transform.(split [| 1; 2 |] >> both wcs spectrum)
+          in
+          let o =
+            Observation.v ~area:(Quantity.v Unit.(steradian * metre) (scalar 1.)) g
+              (Quantity.v brightness (Nx.ones f64 [| 2; 3; 3 |]))
+          in
+          raises_match (Exn.invalid_arg ~sub:"Observation.first: an area")
+            (fun () -> Observation.first o));
+    ]
+
 let () =
   exit
     (run "Observation"
-       [ photutils; windows; unit_rule; validity; arithmetic; gradients ])
+       [ photutils; windows; unit_rule; validity; arithmetic; gradients; products ])

@@ -12,6 +12,10 @@ open Ymir
 open Ymir_test.Frames
 
 let f64 = Nx.float64
+
+(* [others first n] is the components below [n] that [first] does not list. *)
+let others first n =
+  Array.of_list (List.filter (fun k -> not (Array.mem k first)) (List.init n Fun.id))
 let tensor shape xs = Nx.create f64 shape xs
 let one x = Quantity.v Unit.one x
 let deg x = Quantity.v Unit.degree x
@@ -92,9 +96,9 @@ let cells =
             (Nx.shape (Quantity.value Unit.one (Grid.corners g)));
           equal (array int) [| 3; 4; 2 |]
             (Nx.shape (Quantity.value Unit.one (Grid.measure g))));
-      test "pixels refuses a shape of another rank" (fun () ->
+      test "pixels refuses a shape of no axis" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"Grid.pixels") (fun () ->
-              Grid.pixels ~at:Nx.Host.on ~shape:[| 3 |] f64 Transform.id));
+              Grid.pixels ~at:Nx.Host.on ~shape:[||] f64 Transform.id));
       prop "a window's centres are its base's at the same cells, bit for bit"
         Gen.(pair (int_range (-20) 120) (int_range (-20) 120))
         (fun (i, j) ->
@@ -350,4 +354,128 @@ let structure =
             |});
     ]
 
-let () = exit (run "Grid" [ cells; measures; around; worlds; structure ])
+(* N axes and products *)
+
+(* [indices shape] is each cell's index, row-major, as floats. *)
+let indices shape =
+  let n = Array.length shape in
+  let count = Array.fold_left ( * ) 1 shape in
+  Array.concat
+    (List.init count (fun c ->
+         let rest = ref c in
+         let idx = Array.make n 0. in
+         for k = n - 1 downto 0 do
+           idx.(k) <- float_of_int (!rest mod shape.(k));
+           rest := !rest / shape.(k)
+         done;
+         idx))
+
+let gray k = k lxor (k lsr 1)
+
+(* A spectral axis: CRVAL + CDELT · (p + 1 - CRPIX), in metres. *)
+let spectral ?(cdelt = 1.25e-10) () =
+  let m x = Quantity.v Unit.metre (tensor [| 1 |] [| x |]) in
+  Transform.(
+    axes [| 0 |] ~origin:1
+    >> shift (one (tensor [| 1 |] [| 1. |]))
+    >> scale (m cdelt)
+    >> inverse (shift (m 4.75e-7)))
+
+let n_axes =
+  group "N axes"
+    [
+      prop "centres are the cells' indices and corners lie half a cell away in Gray-code order"
+        Gen.(pair (int_range 1 4) (int_range 1 3))
+        (fun (n, size) ->
+          cover "one axis" (n = 1);
+          cover "three axes" (n = 3);
+          cover "four axes" (n = 4);
+          let shape = Array.init n (fun k -> size + (k mod 2)) in
+          let g = Grid.pixels ~at:Nx.Host.on ~shape f64 Transform.id in
+          let centres = indices shape in
+          equal (array float_exact) centres (values Unit.one (Grid.centres g));
+          let corners =
+            Array.concat
+              (List.init (Array.fold_left ( * ) 1 shape) (fun c ->
+                   Array.concat
+                     (List.init (1 lsl n) (fun k ->
+                          Array.init n (fun a ->
+                              let o = if (gray k lsr a) land 1 = 1 then 0.5 else -0.5 in
+                              centres.((c * n) + a) +. o)))))
+          in
+          equal (array float_exact) corners (values Unit.one (Grid.corners g)));
+      prop "a window's centres on three axes are its base's at the same cells, bit for bit"
+        Gen.(triple (int_range (-3) 8) (int_range (-3) 8) (int_range (-3) 8))
+        (fun (i, j, k) ->
+          cover "beyond the base" (i < 0 || j < 0 || k < 0 || i > 3 || j > 4 || k > 5);
+          let t = Transform.(split [| 1; 2 |] >> both (tan ~crpix:[| 3.; 2. |] ~scale:1e-3 (30., -20.)) (spectral ())) in
+          let g = Grid.pixels ~at:Nx.Host.on ~shape:[| 6; 7; 8 |] f64 t in
+          let start = Nx.create Nx.int64 [| 3 |] (Array.map Int64.of_int [| i; j; k |]) in
+          let w = Grid.window ~start ~shape:[| 2; 2; 3 |] g in
+          let big = Grid.window ~start:(Nx.create Nx.int64 [| 3 |] [| -3L; -3L; -3L |]) ~shape:[| 14; 14; 14 |] g in
+          let d, l = Grid.centres w and d', l' = Grid.centres big in
+          let block x = Nx.slice [ Nx.R (i + 3, i + 5); Nx.R (j + 3, j + 5); Nx.R (k + 3, k + 6) ] x in
+          equal (array float_exact) (Nx.to_array (block (Direction.xyz d'))) (Nx.to_array (Direction.xyz d));
+          equal (array float_exact)
+            (Nx.to_array (block (Quantity.value Unit.metre l')))
+            (Nx.to_array (Quantity.value Unit.metre l)));
+      test "a cell of one axis measures the length between its corners" (fun () ->
+          let g = Grid.pixels ~at:Nx.Host.on ~shape:[| 3 |] f64 (spectral ~cdelt:(-2.5e-10) ()) in
+          equal
+            (array (float_rel ~rel:1e-9 ~abs:0.))
+            [| 2.5e-10; 2.5e-10; 2.5e-10 |]
+            (values Unit.metre (Grid.measure g)));
+      prop "a product cell measures its sides' product, its sides on any of its axes"
+        Gen.(of_list [ [| 1; 2 |]; [| 0; 2 |]; [| 0; 1 |] ])
+        (fun first ->
+          cover "the sides' axes interleaved" (first = [| 0; 2 |]);
+          let sky = tan ~scale:0.01 (30., 20.) in
+          let t = Transform.(split first >> both sky (spectral ())) in
+          let shape = [| 3; 4; 5 |] in
+          let g = Grid.pixels ~at:Nx.Host.on ~shape f64 t in
+          let side ks = Array.map (fun k -> shape.(k)) ks in
+          let a = values Unit.steradian (Grid.measure (Grid.pixels ~at:Nx.Host.on ~shape:(side first) f64 sky)) in
+          let b = values Unit.metre (Grid.measure (Grid.pixels ~at:Nx.Host.on ~shape:(side (others first 3)) f64 (spectral ()))) in
+          let m = values Unit.(steradian * metre) (Grid.measure g) in
+          let expected =
+            Array.init 60 (fun c ->
+                let idx = [| c / 20; c / 5 mod 4; c mod 5 |] in
+                let pos ks = Array.fold_left (fun acc k -> (acc * shape.(k)) + idx.(k)) 0 ks in
+                a.(pos first) *. b.(pos (others first 3)))
+          in
+          equal (array float_exact) expected m);
+      test "a side of a product agrees with the side's own grid, bit for bit" (fun () ->
+          let sky = tan ~crpix:[| 1.; 2. |] ~scale:0.01 (30., 20.) in
+          let t = Transform.(split [| 0; 2 |] >> both sky (spectral ())) in
+          let g = Grid.pixels ~at:Nx.Host.on ~shape:[| 3; 4; 5 |] f64 t in
+          let own = Grid.pixels ~at:Nx.Host.on ~shape:[| 3; 5 |] f64 sky in
+          equal (array bool) [| true |] (Nx.to_array (Nx.reshape [| 1 |] (Grid.agree (Grid.first g) own)));
+          equal (array float_exact)
+            (Nx.to_array (Direction.xyz (Grid.centres own)))
+            (Nx.to_array (Direction.xyz (Grid.centres (Grid.first g))));
+          equal (array int) [| 4 |] (Grid.shape (Grid.second g)));
+      test "coupled cells have no measure and no sides, naming the stage" (fun () ->
+          let m = one (tensor [| 3; 3 |] [| 1.; 0.; 0.01; 0.; 1.; 0.; 0.; 0.; 1. |]) in
+          let t =
+            Transform.(linear m >> split [| 1; 2 |] >> both (tan ~scale:0.01 (30., 20.)) (spectral ()))
+          in
+          let g = Grid.pixels ~at:Nx.Host.on ~shape:[| 2; 2; 2 |] f64 t in
+          raises_match
+            (Exn.invalid_arg
+               ~sub:"Grid.measure: the cells are not products: stage 0, linear, maps every axis before stage 1 splits them")
+            (fun () -> Grid.measure g);
+          raises_match (Exn.invalid_arg ~sub:"Grid.first: the cells are not products") (fun () -> Grid.first g));
+      test "a product of no cells has no centres and no measures" (fun () ->
+          let t = Transform.(split [| 1; 2 |] >> both (tan ~scale:0.01 (30., 20.)) (spectral ())) in
+          let g = Grid.pixels ~at:Nx.Host.on ~shape:[| 0; 3; 2 |] f64 t in
+          let d, l = Grid.centres g in
+          equal (array int) [| 0; 3; 2; 3 |] (Nx.shape (Direction.xyz d));
+          equal (array int) [| 0; 3; 2; 1 |] (Nx.shape (Quantity.value Unit.metre l));
+          equal (array int) [| 0; 3; 2 |]
+            (Nx.shape (Quantity.value Unit.(steradian * metre) (Grid.measure g))));
+      test "cells of three axes in one plane have no measure" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Grid.measure: a cell of 3 axes")
+            (fun () -> Grid.measure (Grid.pixels ~at:Nx.Host.on ~shape:[| 2; 2; 2 |] f64 Transform.id)));
+    ]
+
+let () = exit (run "Grid" [ cells; measures; around; worlds; structure; n_axes ])

@@ -55,7 +55,9 @@ type ('f, 'd) celestial = {
 
 (* A stage maps points of one type to another. [Deproject] is a celestial
    stage's forward map, from the plane to directions, and [Project] its
-   inverse. A rotation's inverse is the rotation between its frames swapped. *)
+   inverse. A rotation's inverse is the rotation between its frames swapped.
+   [Split] is {!split}'s forward map and [Join] its inverse, [Parallel]
+   {!both}'s. *)
 type (_, _, 'd) stage =
   | Plane : 'd planar * sense -> ('d plane, 'd plane, 'd) stage
   | Deproject : ('f, 'd) celestial -> ('d plane, ('f, 'd) Direction.t, 'd) stage
@@ -63,8 +65,11 @@ type (_, _, 'd) stage =
   | Rotate :
       'a Frame.fixed Frame.t * 'b Frame.fixed Frame.t
       -> (('a Frame.fixed, 'd) Direction.t, ('b Frame.fixed, 'd) Direction.t, 'd) stage
+  | Split : int array -> ('d plane, 'd plane * 'd plane, 'd) stage
+  | Join : int array -> ('d plane * 'd plane, 'd plane, 'd) stage
+  | Parallel : ('a, 'b, 'd) t * ('c, 'e, 'd) t -> ('a * 'c, 'b * 'e, 'd) stage
 
-type (_, _, 'd) t =
+and (_, _, 'd) t =
   | Id : ('a, 'a, 'd) t
   | Stage : ('a, 'b, 'd) stage * ('b, 'c, 'd) t -> ('a, 'c, 'd) t
 
@@ -102,6 +107,9 @@ let stage_name : type a b d. (a, b, d) stage -> string = function
   | Deproject c -> strf "celestial %s" (code_name c.code)
   | Project c -> strf "inverse celestial %s" (code_name c.code)
   | Rotate (f, g) -> strf "rotation %s %s" (Frame.name f) (Frame.name g)
+  | Split _ -> "split"
+  | Join _ -> "inverse split"
+  | Parallel _ -> "both"
 
 (* Components *)
 
@@ -600,11 +608,78 @@ let project mode fn c (d : _ Direction.t) =
   ( Quantity.v Unit.radian (stack [ x; y ]),
     and_mask setup_ok ok )
 
+(* Products *)
+
+(* [others first n] is the components below [n] that [first] does not list,
+   ascending. *)
+let others first n =
+  Array.of_list
+    (List.filter (fun k -> not (Array.mem k first)) (List.init n Fun.id))
+
+let take v ks = stack (Array.to_list (Array.map (component v) ks))
+
+(* [check_split fn first n] raises unless points of [n] components hold
+   every component of [first] and leave the second side one. *)
+let check_split fn first n =
+  let k = Array.length first in
+  let least = max (k + 1) (first.(k - 1) + 1) in
+  if n < least then
+    invalid_arg
+      (Format.asprintf
+         "%s: split %a takes points of at least %d components, got %d" fn
+         pp_ints first least n)
+
+let ok_numbers mode vs =
+  match mode with
+  | Check -> None
+  | Cover ->
+      Some (List.fold_left (fun m v -> Nx.logical_and m (numbers v))
+              (numbers (List.hd vs)) (List.tl vs))
+
+(* [split_points mode fn first x] is [x]'s components [first] and the others,
+   each in [x]'s unit. *)
+let split_points mode fn first (x : 'd plane) =
+  let u = Quantity.unit x in
+  let v = Quantity.value u x in
+  let n = Nx.dim (-1) v in
+  check_split fn first n;
+  ( (Quantity.v u (take v first), Quantity.v u (take v (others first n))),
+    ok_numbers mode [ v ] )
+
+(* [join_points mode fn first (a, b)] interleaves [a] at components [first]
+   with [b] at the others, in [a]'s unit. *)
+let join_points mode fn first ((a : 'd plane), (b : 'd plane)) =
+  let u = Quantity.unit a in
+  let va = Quantity.value u a in
+  let vb =
+    if Unit.convertible (Quantity.unit b) u then Quantity.value u b
+    else
+      invalid_arg
+        (Format.asprintf "%s: inverse split joins %a to %a, which differ" fn
+           Unit.pp (Quantity.unit b) Unit.pp u)
+  in
+  let n = Nx.dim (-1) va + Nx.dim (-1) vb in
+  if Array.length first <> Nx.dim (-1) va then
+    invalid_arg
+      (Format.asprintf "%s: inverse split %a takes %d components first, got %d"
+         fn pp_ints first (Array.length first) (Nx.dim (-1) va));
+  check_split fn first n;
+  let rank = Array.make n (-1) in
+  Array.iteri (fun i k -> rank.(k) <- i) first;
+  let rest = ref (-1) in
+  let pick k =
+    if rank.(k) >= 0 then component va rank.(k)
+    else (
+      incr rest;
+      component vb !rest)
+  in
+  (Quantity.v u (stack (List.init n pick)), ok_numbers mode [ va; vb ])
+
 (* Application *)
 
 (* [stage mode fn s x] is [s] applied to [x] and, under [Cover], where [x] is in
    [s]'s domain. *)
-let stage : type a b d.
+let rec stage : type a b d.
     mode -> string -> (a, b, d) stage -> a -> b * d Nx.bool_t option =
  fun mode fn s x ->
   match s with
@@ -618,10 +693,15 @@ let stage : type a b d.
         | Cover -> Some (numbers x.Direction.xyz)
       in
       (Direction.rotate g x, ok)
+  | Split first -> split_points mode fn first x
+  | Join first -> join_points mode fn first x
+  | Parallel (t, u) ->
+      let a, b = x in
+      let a, ok = run mode fn t a and b, ok' = run mode fn u b in
+      ((a, b), and_mask ok ok')
 
-let rec run : type a b d.
-    mode -> string -> (a, b, d) t -> a -> b * d Nx.bool_t option
-    =
+and run : type a b d.
+    mode -> string -> (a, b, d) t -> a -> b * d Nx.bool_t option =
  fun mode fn t x ->
   match t with
   | Id -> (x, None)
@@ -776,19 +856,46 @@ let zenithal code (c : _ Direction.t) =
 let about c = zenithal Arc c
 let gnomonic c = zenithal Tan c
 
+let split first =
+  let k = Array.length first in
+  Array.iteri
+    (fun i p ->
+      if p < 0 || (i > 0 && p <= first.(i - 1)) then
+        invalid_arg
+          (Format.asprintf
+             "Transform.split: %a is not distinct indices, ascending" pp_ints
+             first))
+    first;
+  if k = 0 then invalid_arg "Transform.split: no component is split off";
+  one (Split (Array.copy first))
+
+let both t u = one (Parallel (t, u))
+
 (* Composition *)
 
 let rec ( >> ) : type a b c d. (a, b, d) t -> (b, c, d) t -> (a, c, d) t =
  fun t u -> match t with Id -> u | Stage (s, rest) -> Stage (s, rest >> u)
 
-let flip : type a b d. (a, b, d) stage -> (b, a, d) stage = function
+type ('a, 'd) prefix = Prefix : ('a, 'b, 'd) t -> ('a, 'd) prefix
+
+let rec prefix : type a b d. int -> (a, b, d) t -> (a, d) prefix =
+ fun n t ->
+  match t with
+  | Stage (s, rest) when n > 0 -> (
+      match prefix (n - 1) rest with Prefix p -> Prefix (Stage (s, p)))
+  | _ -> Prefix Id
+
+let rec flip : type a b d. (a, b, d) stage -> (b, a, d) stage = function
   | Plane (p, Forward) -> Plane (p, Inverse)
   | Plane (p, Inverse) -> Plane (p, Forward)
   | Deproject c -> Project c
   | Project c -> Deproject c
   | Rotate (f, g) -> Rotate (g, f)
+  | Split first -> Join first
+  | Join first -> Split first
+  | Parallel (t, u) -> Parallel (inverse t, inverse u)
 
-let rec inverse : type a b d. (a, b, d) t -> (b, a, d) t = function
+and inverse : type a b d. (a, b, d) t -> (b, a, d) t = function
   | Id -> Id
   | Stage (s, rest) -> inverse rest >> one (flip s)
 
@@ -817,16 +924,21 @@ let pp_celestial ppf c =
     (code_name c.code) Frame.pp c.frame Quantity.pp c.crval Quantity.pp
     c.lonpole
 
-let pp_stage : type a b d. Format.formatter -> (a, b, d) stage -> unit =
+let rec pp_stage : type a b d. Format.formatter -> (a, b, d) stage -> unit =
  fun ppf -> function
   | Plane (p, Forward) -> pp_planar ppf p
   | Plane (p, Inverse) -> Format.fprintf ppf "inverse (%a)" pp_planar p
   | Deproject c -> pp_celestial ppf c
   | Project c -> Format.fprintf ppf "inverse (%a)" pp_celestial c
   | Rotate (f, g) -> Format.fprintf ppf "rotation %a %a" Frame.pp f Frame.pp g
+  | Split first -> Format.fprintf ppf "split %a" pp_ints first
+  | Join first -> Format.fprintf ppf "inverse (split %a)" pp_ints first
+  | Parallel (t, u) ->
+      Format.fprintf ppf "@[<v 2>both@,(%a)@,(%a)@]" pp t pp u
 
-let pp ppf t =
-  let rec stages : type a b d. bool -> (a, b, d) t -> unit =
+and pp : type a b d. Format.formatter -> (a, b, d) t -> unit =
+ fun ppf t ->
+  let rec stages : type a b. bool -> (a, b, d) t -> unit =
    fun first -> function
      | Id -> if first then Format.pp_print_string ppf "id"
      | Stage (s, rest) ->
@@ -877,7 +989,11 @@ let walk_celestial c cel =
   let latpole = W.field c "latpole" quantity cel.latpole in
   { cel with frame; stated; pv; native; crval; lonpole; latpole }
 
-let walk_stage : type a b d.
+let rec length : type a b d. (a, b, d) t -> int = function
+  | Id -> 0
+  | Stage (_, rest) -> 1 + length rest
+
+let rec walk_stage : type a b d.
     ('x, 'y, d, d) W.cursor -> (a, b, d) stage -> (a, b, d) stage =
  fun c -> function
   | Plane (p, sense) ->
@@ -898,12 +1014,22 @@ let walk_stage : type a b d.
       let f = W.field c "from" Frame.walk f in
       let g = W.field c "to" Frame.walk g in
       Rotate (f, g)
-
-let rec length : type a b d. (a, b, d) t -> int = function
-  | Id -> 0
-  | Stage (_, rest) -> 1 + length rest
-
-let walk (type d) (c : (_, _, d, d) W.cursor) (t : (_, _, d) t) =
+  | Split first ->
+      W.case c "split";
+      W.case c "forward";
+      Split (W.field c "first" ints first)
+  | Join first ->
+      W.case c "split";
+      W.case c "inverse";
+      Join (W.field c "first" ints first)
+  | Parallel (t, u) ->
+      W.case c "both";
+      W.case c "forward";
+      let t = W.field c "first" walk t in
+      let u = W.field c "second" walk u in
+      Parallel (t, u)
+and walk : type a b d. ('x, 'y, d, d) W.cursor -> (a, b, d) t -> (a, b, d) t =
+ fun c t ->
   let rec stages : type a b. int -> (a, b, d) t -> (a, b, d) t =
    fun i -> function
      | Id -> Id
@@ -923,7 +1049,10 @@ let ptree () = Nx.Ptree.v walk
    batch axes of the transform's parameters: a parameter of batch shape [b]
    meets points of shape [b @ cells @ [n]]. *)
 
-type 'd value = P of 'd plane | D : ('f, 'd) Direction.t -> 'd value
+type 'd value =
+  | P of 'd plane
+  | D : ('f, 'd) Direction.t -> 'd value
+  | Pair of 'd value * 'd value
 
 (* [expand k core q] inserts [k] axes of 1 before [q]'s last [core] axes. *)
 let expand_tensor k core v =
@@ -967,8 +1096,21 @@ let run_cells ?(stages = max_int) ~cells t x =
    fun n t x ->
     if n = 0 then (x, None)
     else
+      let next rest (y, ok) =
+        let y, ok' = go (n - 1) rest y in
+        (y, and_mask ok ok')
+      in
       match (t, x) with
       | Id, x -> (x, None)
+      | Stage (Split first, rest), P v ->
+          let (a, b), ok = split_points Cover fn first v in
+          next rest (Pair (P a, P b), ok)
+      | Stage (Join first, rest), Pair (P a, P b) ->
+          let v, ok = join_points Cover fn first (a, b) in
+          next rest (P v, ok)
+      | Stage (Parallel (t, u), rest), Pair (a, b) ->
+          let a, ok = go max_int t a and b, ok' = go max_int u b in
+          next rest (Pair (a, b), and_mask ok ok')
       | Stage (Plane (p, sense), rest), P v ->
           let y, ok = apply_planar Cover fn (expand_planar cells p) sense v in
           let y, ok' = go (n - 1) rest (P y) in
@@ -1007,7 +1149,8 @@ let cores t =
     | Stage (Plane (p, _), rest) -> planar p @ go rest
     | Stage (Deproject _, rest) -> celestial @ go rest
     | Stage (Project _, rest) -> celestial @ go rest
-    | Stage (Rotate _, rest) -> go rest
+    | Stage ((Rotate _ | Split _ | Join _), rest) -> go rest
+    | Stage (Parallel (t, u), rest) -> go t @ go u @ go rest
   in
   go t
 
@@ -1019,6 +1162,14 @@ let cores t =
 type (_, 'd) endpoint =
   | Planar : ('d plane, 'd) endpoint
   | Sky : 'f Frame.t -> (('f, 'd) Direction.t, 'd) endpoint
+  | Both : ('a, 'd) endpoint * ('b, 'd) endpoint -> ('a * 'b, 'd) endpoint
+
+(* [halves e] is a product endpoint's two sides. Only [Both] has a pair's type,
+   but the planar type is abstract, so the compiler cannot rule it out. *)
+let halves : type a b d.
+    (a * b, d) endpoint -> (a, d) endpoint * (b, d) endpoint = function
+  | Both (a, b) -> (a, b)
+  | _ -> invalid_arg "Transform: a product's endpoint is not a pair"
 
 let rec target : type a b d. (a, d) endpoint -> (a, b, d) t -> (b, d) endpoint =
  fun e -> function
@@ -1027,27 +1178,43 @@ let rec target : type a b d. (a, d) endpoint -> (a, b, d) t -> (b, d) endpoint =
   | Stage (Deproject c, rest) -> target (Sky c.frame) rest
   | Stage (Project _, rest) -> target Planar rest
   | Stage (Rotate (_, g), rest) -> target (Sky g) rest
+  | Stage (Split _, rest) -> target (Both (Planar, Planar)) rest
+  | Stage (Join _, rest) -> target Planar rest
+  | Stage (Parallel (t, u), rest) ->
+      let a, b = halves e in
+      target (Both (target a t, target b u)) rest
 
-(* [source t e] is the endpoint [t] maps from, given the one it maps to: its
-   first stage's input. *)
-let source : type a b d. (a, b, d) t -> (b, d) endpoint -> (a, d) endpoint =
+(* [source t e] is the endpoint [t] maps from, given the one it maps to. *)
+let rec source : type a b d. (a, b, d) t -> (b, d) endpoint -> (a, d) endpoint =
  fun t e ->
   match t with
   | Id -> e
-  | Stage (Plane _, _) -> Planar
-  | Stage (Deproject _, _) -> Planar
-  | Stage (Project c, _) -> Sky c.frame
-  | Stage (Rotate (f, _), _) -> Sky f
+  | Stage (s, rest) -> (
+      match s with
+      | Plane _ -> Planar
+      | Deproject _ -> Planar
+      | Split _ -> Planar
+      | Join _ -> Both (Planar, Planar)
+      | Project c -> Sky c.frame
+      | Rotate (f, _) -> Sky f
+      | Parallel (t, u) ->
+          let a, b = halves (source rest e) in
+          Both (source t a, source u b))
 
-let value : type a d. (a, d) endpoint -> a -> d value =
- fun e x -> match e with Planar -> P x | Sky _ -> D x
+let rec value : type a d. (a, d) endpoint -> a -> d value =
+ fun e x ->
+  match e with
+  | Planar -> P x
+  | Sky _ -> D x
+  | Both (a, b) -> Pair (value a (fst x), value b (snd x))
 
-(* [map_points e f x] applies [f] to [x]'s tensor: a plane's payload or a
+(* [map_points e f x] applies [f] to [x]'s tensors: a plane's payload or a
    direction's vectors. *)
 type 'd fn = { f : 'a 'b. ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t }
 
-let map_points : type a d. (a, d) endpoint -> d fn -> a -> a =
+let rec map_points : type a d. (a, d) endpoint -> d fn -> a -> a =
  fun e fn x ->
   match e with
   | Planar -> Quantity.map fn.f x
   | Sky _ -> { x with Direction.xyz = fn.f x.Direction.xyz }
+  | Both (a, b) -> (map_points a fn (fst x), map_points b fn (snd x))

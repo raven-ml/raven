@@ -74,7 +74,8 @@ type ('f, 'd) celestial = {
 
 (** The type for stages. [Deproject] is a celestial stage's forward map, from
     the plane to directions, and [Project] its inverse. A rotation's inverse
-    is the rotation between its frames swapped. *)
+    is the rotation between its frames swapped. [Split] is {!split}'s forward
+    map and [Join] its inverse; [Parallel] is {!both}'s. *)
 type (_, _, 'd) stage =
   | Plane : 'd planar * sense -> ('d plane, 'd plane, 'd) stage
   | Deproject : ('f, 'd) celestial -> ('d plane, ('f, 'd) Direction.t, 'd) stage
@@ -82,14 +83,24 @@ type (_, _, 'd) stage =
   | Rotate :
       'a Frame.fixed Frame.t * 'b Frame.fixed Frame.t
       -> (('a Frame.fixed, 'd) Direction.t, ('b Frame.fixed, 'd) Direction.t, 'd) stage
+  | Split : int array -> ('d plane, 'd plane * 'd plane, 'd) stage
+  | Join : int array -> ('d plane * 'd plane, 'd plane, 'd) stage
+  | Parallel : ('a, 'b, 'd) t * ('c, 'e, 'd) t -> ('a * 'c, 'b * 'e, 'd) stage
 
 (** {!Ymir.Transform.t}: the stages in the order they apply. *)
-type (_, _, 'd) t =
+and (_, _, 'd) t =
   | Id : ('a, 'a, 'd) t
   | Stage : ('a, 'b, 'd) stage * ('b, 'c, 'd) t -> ('a, 'c, 'd) t
 
 val length : ('a, 'b, 'd) t -> int
 (** [length t] is the number of [t]'s stages. *)
+
+(** The type for a transform's first stages, whose last point type is
+    unknown. *)
+type ('a, 'd) prefix = Prefix : ('a, 'b, 'd) t -> ('a, 'd) prefix
+
+val prefix : int -> ('a, 'b, 'd) t -> ('a, 'd) prefix
+(** [prefix n t] is [t]'s first [n] stages, all of them if it has fewer. *)
 
 val num : float -> string
 (** [num x] is the shortest decimal that reads as [x], as {!Nx.Dtype.pp_value}
@@ -141,6 +152,9 @@ val rotation :
 
 val about : ('f, 'd) Direction.t -> (('f, 'd) Direction.t, 'd plane, 'd) t
 val gnomonic : ('f, 'd) Direction.t -> (('f, 'd) Direction.t, 'd plane, 'd) t
+val split : int array -> ('d plane, 'd plane * 'd plane, 'd) t
+val both : ('a, 'b, 'd) t -> ('c, 'e, 'd) t -> ('a * 'c, 'b * 'e, 'd) t
+
 val ( >> ) : ('a, 'b, 'd) t -> ('b, 'c, 'd) t -> ('a, 'c, 'd) t
 val inverse : ('a, 'b, 'd) t -> ('b, 'a, 'd) t
 val apply : ('a, 'b, 'd) t -> 'a -> 'b
@@ -150,15 +164,21 @@ val ptree : unit -> (('a, 'b, 'd) t, 'd) Nx.Ptree.t
 
 (** {1:cells Runs over cells} *)
 
-(** The type for points of either endpoint type: [P] on a plane, [D]
-    directions. *)
-type 'd value = P of 'd plane | D : ('f, 'd) Direction.t -> 'd value
+(** The type for points of any endpoint type: [P] on a plane, [D]
+    directions and [Pair] a product's two points. *)
+type 'd value =
+  | P of 'd plane
+  | D : ('f, 'd) Direction.t -> 'd value
+  | Pair of 'd value * 'd value
 
-(** The type for a transform's endpoints, which tell its two point types
-    apart at run time. *)
+(** {!Ymir.Transform.endpoint}. *)
 type (_, 'd) endpoint =
   | Planar : ('d plane, 'd) endpoint
   | Sky : 'f Frame.t -> (('f, 'd) Direction.t, 'd) endpoint
+  | Both : ('a, 'd) endpoint * ('b, 'd) endpoint -> ('a * 'b, 'd) endpoint
+
+val halves : ('a * 'b, 'd) endpoint -> ('a, 'd) endpoint * ('b, 'd) endpoint
+(** [halves e] is the two sides of the product endpoint [e]. *)
 
 val target : ('a, 'd) endpoint -> ('a, 'b, 'd) t -> ('b, 'd) endpoint
 (** [target e t] is the endpoint [t] maps to, for [e] the one it maps
@@ -175,8 +195,8 @@ type 'd fn = { f : 'a 'b. ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t }
 (** The type for functions on tensors of every type. *)
 
 val map_points : ('a, 'd) endpoint -> 'd fn -> 'a -> 'a
-(** [map_points e fn x] is [x] with [fn.f] applied to its tensor, a plane's
-    payload or a direction's vectors. *)
+(** [map_points e fn x] is [x] with [fn.f] applied to its tensors: a plane's
+    payload, a direction's vectors, or each side's of a pair. *)
 
 val run_cells :
   ?stages:int -> cells:int -> ('a, 'b, 'd) t -> 'd value -> 'd value * 'd Nx.bool_t option
@@ -208,6 +228,10 @@ val broadcast : int array -> int array -> int array
 (** [broadcast a b] is the shape [a] and [b] broadcast to.
 
     Raises [Invalid_argument] if they do not broadcast. *)
+
+val others : int array -> int -> int array
+(** [others first n] is the components below [n] that [first] does not list,
+    ascending: the second side of {!split}[ first]. *)
 
 val stack : ('a, 'b, 'd) Nx.t list -> ('a, 'b, 'd) Nx.t
 (** [stack vs] is [vs] broadcast together and stacked on a new last axis.

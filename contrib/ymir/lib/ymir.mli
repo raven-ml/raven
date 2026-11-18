@@ -644,7 +644,7 @@ end
         stars
     ]} *)
 module Direction : sig
-  type ('f, 'd) t
+  type (!'f, 'd) t
   (** The type for directions in frame ['f]: float64 vectors [[...; 3]], each
       read as the ray it spans. *)
 
@@ -977,9 +977,9 @@ end
 
     A transform is a list of {e stages}, each one family's parameters and a
     sense, forward or inverse. Its endpoint types say what it maps:
-    {!Transform.plane} points, [Frame.icrs Direction.t] directions. Composing
-    appends stages and inverting reverses them; no stage is ever fused, so what
-    a file stated is what a writer prints.
+    {!Transform.plane} points, [(Frame.icrs, 'd) Direction.t] directions, or
+    pairs of these. Composing appends stages and inverting reverses them; no
+    stage is ever fused, so what a file stated is what a writer prints.
 
     A FITS celestial image stored [[NAXIS2; NAXIS1]] reads as
 
@@ -992,6 +992,13 @@ end
     with {!Transform.sip} and {!Transform.tpv} present when the header has them.
     {!Transform.axes} holds raven's pixel convention (0-based centres in the
     data tensor's axis order) and FITS's (1-based, [NAXIS1] first) in one stage.
+
+    {b Products.} A point of type ['a * 'b] is a {e pair}, a point of each
+    {e side}. {!Transform.split} divides a plane point's components between
+    the two sides and {!Transform.both} maps each side through its own
+    transform. A spectral cube stored [[wavelength; y; x]] maps its pixels
+    through [split [| 1; 2 |] >> both sky spectrum]: the components [(y, x)]
+    to directions through [sky], and the wavelength's through [spectrum].
 
     {b Units.} Each planar family reads its input in the unit it states:
     {!Transform.axes} with an origin, {!Transform.sip}, {!Transform.linear} and
@@ -1025,6 +1032,15 @@ module Transform : sig
   type 'd plane = (float, Nx.float64_elt, 'd) Nx.t Quantity.t
   (** The type for points [[...; n]] in a plane. Pixel coordinates are in
       {!Unit.one}, intermediate and tangent-plane coordinates in an angle. *)
+
+  (** The type for the kinds of point a transform maps: a plane's points,
+      directions in a frame, and pairs of two kinds. *)
+  type (_, 'd) endpoint =
+    | Planar : ('d plane, 'd) endpoint  (** Points in a plane. *)
+    | Sky : 'f Frame.t -> (('f, 'd) Direction.t, 'd) endpoint
+        (** Directions in a frame. *)
+    | Both : ('a, 'd) endpoint * ('b, 'd) endpoint -> ('a * 'b, 'd) endpoint
+        (** Pairs of a point of each kind. *)
 
   (** The type for projections, by their FITS codes. Zenithal projections put
       the native pole at the plane's origin, cylindrical ones the native point
@@ -1172,6 +1188,22 @@ module Transform : sig
   val gnomonic : ('f, 'd) Direction.t -> (('f, 'd) Direction.t, 'd plane, 'd) t
   (** [gnomonic c] is the same with [Tan]: great circles map to lines. *)
 
+  val split : int array -> ('d plane, 'd plane * 'd plane, 'd) t
+  (** [split first] maps [x], [[...; n]], to the pair of its components
+      [first] and its other components, each side in ascending order and in
+      [x]'s unit. Its inverse interleaves a pair back, in the first side's
+      unit.
+
+      Raises [Invalid_argument] if [first] is empty or not distinct indices,
+      ascending. A point that would leave the second side empty, or lacks a
+      component [first] lists, raises where the stage reads it, and so does a
+      pair whose second side's unit does not convert to the first's, where
+      the inverse reads it. *)
+
+  val both : ('a, 'b, 'd) t -> ('c, 'e, 'd) t -> ('a * 'c, 'b * 'e, 'd) t
+  (** [both t u] maps [(x, y)] to [(apply t x, apply u y)]. Its inverse is
+      [both (inverse t) (inverse u)]. *)
+
   (** {1:ops Operations} *)
 
   val ( >> ) : ('a, 'b, 'd) t -> ('b, 'c, 'd) t -> ('a, 'c, 'd) t
@@ -1200,30 +1232,38 @@ module Transform : sig
   val ptree : unit -> (('a, 'b, 'd) t, 'd) Nx.Ptree.t
   (** [ptree ()] is the structure of transforms: the number of stages, then each
       stage at its index, reporting its family, its sense and its static data
-      (permutation, origin, code, frame, stated terms) and walking its
-      parameters. No float is static. *)
+      (permutation, origin, code, frame, stated terms, split components) and
+      walking its parameters, a [both] stage's two transforms in turn. No
+      float is static. *)
 end
 
 (** Cells seen through a transform.
 
-    A {e cell} is one sample's footprint, a pixel's square. A pixel grid is a
-    shape and a transform from its pixel coordinates to its {e world}, ['w]:
-    directions on the sky or points in a plane. Cell [(i, j)] has its centre at
-    pixel coordinates [(i, j)], 0-based in the data tensor's axis order, and its
-    corners at [(i ± ½, j ± ½)].
+    A {e cell} is one sample's footprint, a pixel's box. A pixel grid is a
+    shape of [n] sizes, [n] at least 1, and a transform from its pixel
+    coordinates [[...; n]] to its {e world}, ['w]: directions on the sky,
+    points in a plane, or pairs of these. Cell [i] has its centre at
+    pixel coordinates [i], 0-based in the data tensor's axis order, and its
+    corners half a cell away on each axis.
 
     A {e window} is a block of a grid's cells of static shape at a traced start,
-    [[...; 2]], possibly batched: the grid of a stamp, or of a million stamps. A
+    [[...; n]], possibly batched: the grid of a stamp, or of a million stamps. A
     window keeps its {e base}, the whole image's shape, and its transform over
     the whole image's pixel coordinates, so its cells are the base's cells.
     Cells beyond the base exist in a window, mapped through the same transform.
     The {e border} of a window is its outer ring of cells.
 
-    A cell's {e measure} is its solid angle on the sky, or its area in a plane:
-    the measure of the quadrilateral of its corners mapped to the world the
-    grid was built with, with great-circle edges on the sky. {!Grid.map_world}
-    changes the world and keeps the measures. Measures are computed in
-    float64. *)
+    A cell's {e measure} is taken in the world the grid was built with. On one
+    axis it is the length between its two corners mapped in a plane. On two
+    axes it is the solid angle on
+    the sky, or the area in a plane, of the quadrilateral of its corners
+    mapped, with great-circle edges on the sky. A grid whose transform is
+    {!Transform.split} followed only by {!Transform.both} stages has
+    {e product} cells: each is a cell of its first side's axes times one of
+    its second side's, and its measure is the product of theirs, in steradian
+    metres for a spectral cube. Other cells of three or more axes have no
+    measure. {!Grid.map_world} changes the world and keeps the measures.
+    Measures are computed in float64. *)
 module Grid : sig
   type ('w, 'e, 'd) t
   (** The type for grids of cells whose world is ['w], with measures at dtype
@@ -1243,18 +1283,19 @@ module Grid : sig
     (float, 'e) Nx.dtype ->
     ('d Transform.plane, 'w, 'd) Transform.t ->
     ('w, 'e, 'd) t
-  (** [pixels ~at ~shape dtype t] is the image of [shape] cells,
-      [[|rows; columns|]], seen through [t]: the whole image, its own base, with
-      measures at [dtype] and its window's start at [at].
+  (** [pixels ~at ~shape dtype t] is the image of [shape] cells, such as
+      [[|rows; columns|]], seen through [t]: the whole image, its own base,
+      with measures at [dtype] and its window's start at [at].
 
-      Raises [Invalid_argument] unless [shape] is two non-negative sizes. *)
+      Raises [Invalid_argument] unless [shape] is one or more non-negative
+      sizes. *)
 
   (** The type for a grid's kind. *)
   type ('w, 'e, 'd) kind =
     | Pixels : {
         base : int array;  (** The whole image's shape. *)
         shape : int array;  (** The window's shape. *)
-        start : 'd Nx.int64_t;  (** The window's first cell, [[...; 2]]. *)
+        start : 'd Nx.int64_t;  (** The window's first cell, [[...; n]]. *)
         transform : ('d Transform.plane, 'w, 'd) Transform.t;
             (** From the whole image's pixel coordinates. *)
       }
@@ -1273,14 +1314,21 @@ module Grid : sig
       Raises [Invalid_argument] as {!Transform.apply} does. *)
 
   val corners : ('w, 'e, 'd) t -> 'w
-  (** [corners g] is each cell's four corners in the world,
-      [batch @ shape g @ [4]] points, counter-clockwise in the pixel plane. *)
+  (** [corners g] is each cell's [2ⁿ] corners in the world,
+      [batch @ shape g @ [2ⁿ]] points for [n] axes. Corner [k] lies half a
+      cell above the centre on each axis [a] where bit [a] of [k]'s reflected
+      Gray code is set, and below it on the others: on two axes, the four
+      corners counter-clockwise in the pixel plane from [(i - ½, j - ½)]. *)
 
   val measure : ('w, 'e, 'd) t -> (float, 'e, 'd) Nx.t Quantity.t
   (** [measure g] is each cell's measure, [batch @ shape g]: in steradians on
       the sky, by Van Oosterom and Strackee's formula on corner differences,
-      within about 1e-9 of a 0.031″ TAN pixel's solid angle; in the plane's unit
-      squared in a plane, by the shoelace formula. *)
+      within about 1e-9 of a 0.031″ TAN pixel's solid angle; in the plane's
+      unit, or its square by the shoelace formula, in a plane; and the product
+      of its sides' measures for a product cell.
+
+      Raises [Invalid_argument] where the cells have three or more axes and
+      are not products, as {!first} does. *)
 
   val map_world : ('w, 'v, 'd) Transform.t -> ('w, 'e, 'd) t -> ('v, 'e, 'd) t
   (** [map_world t g] is [g]'s cells seen in the world [t] maps [g]'s world
@@ -1297,10 +1345,11 @@ module Grid : sig
 
   val window : start:'d Nx.int64_t -> shape:int array -> ('w, 'e, 'd) t -> ('w, 'e, 'd) t
   (** [window ~start ~shape g] is the block of [shape] cells of [g] from
-      [start], [[...; 2]] along [g]'s own axes. Its batch axes are [start]'s.
+      [start], [[...; n]] along [g]'s own [n] axes. Its batch axes are
+      [start]'s.
 
-      Raises [Invalid_argument] unless [shape] is two non-negative sizes and
-      [start]'s last axis is 2. *)
+      Raises [Invalid_argument] unless [shape] is [n] non-negative sizes and
+      [start]'s last axis is [n]. *)
 
   val around : 'w -> shape:int array -> ('w, 'e, 'd) t -> ('w, 'e, 'd) t
   (** [around x ~shape g] is the [shape] block of [g]'s base centred on the cell
@@ -1310,7 +1359,23 @@ module Grid : sig
       does not cover gets a window wholly beyond the base, and every start is
       clamped to \[[-shape], [base]\].
 
-      Raises [Invalid_argument] unless [shape] is two non-negative sizes. *)
+      Raises [Invalid_argument] unless [shape] is a size for each of [g]'s
+      axes. *)
+
+  val first : ('a * 'b, 'e, 'd) t -> ('a, 'e, 'd) t
+  (** [first g] is the grid of the first side of [g]'s product cells: [g]'s
+      axes that its split sends to that side, in [g]'s order, with their base,
+      window and dtype, seen through that side's stages. Its measures are the
+      side's.
+
+      Raises [Invalid_argument] unless [g]'s transform is {!Transform.split}
+      followed only by {!Transform.both} stages, naming the stage that maps
+      both sides together, as in
+      ["Grid.first: the cells are not products: stage 2, linear, maps every
+       axis before stage 3 splits them"]. *)
+
+  val second : ('a * 'b, 'e, 'd) t -> ('b, 'e, 'd) t
+  (** [second g] is {!first} for the second side. *)
 
   val ptree : unit -> (('w, 'e, 'd) t, 'd) Nx.Ptree.t
   (** [ptree ()] is the structure of grids: the kind, the base and window shapes
@@ -1342,8 +1407,15 @@ end
     crosses it, and exactly 0 when no corner is inside, no edge crosses it and
     no vertex is in it.
 
-    A zero size weighs 0 with zero gradient. Regions have no set algebra: the
-    fraction of a cell inside a union is no function of the two fractions. *)
+    On a grid of one axis the plane has one component. A disc of radius r is
+    the interval \[−r, r\], an annulus the two intervals between its radii,
+    and a cell's weight is the fraction of its length inside them, exactly 1
+    for a cell inside and exactly 0 for one outside. A grid of three or more
+    axes is weighed one side at a time ({!Observation.first}).
+
+    A zero size weighs 0, with zero gradient on two axes. Regions have no set
+    algebra: the fraction of a cell inside a union is no function of the two
+    fractions. *)
 module Region : sig
   type ('w, 'e, 'd) t
   (** The type for regions placed from world ['w], sized at dtype ['e]. *)
@@ -1396,7 +1468,9 @@ module Region : sig
       Raises [Invalid_argument] through {!Nx.check} where a size is negative or
       NaN, an annulus's [inner] is above its [outer], two edges of a polygon
       cross, or a cell maps to a quadrilateral that is not convex or not
-      oriented as its window's first cell. *)
+      oriented as its window's first cell, or to an interval not oriented as
+      it. Raises [Invalid_argument] if the grid has three or more axes, or one
+      axis and the region is an ellipse or a polygon. *)
 
   val ptree : unit -> (('w, 'e, 'd) t, 'd) Nx.Ptree.t
   (** [ptree ()] is the structure of regions: the shape's kind, its sizes and
@@ -1499,6 +1573,20 @@ module Observation : sig
   val around : 'w -> shape:int array -> ('w, 'e, 'd) t -> ('w, 'e, 'd) t
   (** [around x ~shape o] is [o] on [Grid.around x ~shape (grid o)], sliced as
       {!window} slices. *)
+
+  val first : ('a * 'b, 'e, 'd) t -> ('a, 'e, 'd) t
+  (** [first o] is [o] on {!Grid.first}[ (grid o)]: its data, variance and
+      validity with the second side's cell axes moved before the batch axes,
+      a view, so that an integral over the first side's cells is one per cell
+      of the second side's. The aperture spectrum of a cube is
+      [integrate r (first cube)].
+
+      Raises [Invalid_argument] as {!Grid.first} does, or if [o] has an
+      area. *)
+
+  val second : ('a * 'b, 'e, 'd) t -> ('b, 'e, 'd) t
+  (** [second o] is {!first} for the second side: a band's map of a cube is
+      [integrate band (second cube)]. *)
 
   type ('e, 'd) integral = {
     value : (float, 'e, 'd) Nx.t Quantity.t;
