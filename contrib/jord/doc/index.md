@@ -16,9 +16,19 @@ a *grid* places an array's first two axes in a system. The preambles of
 [`crs.mli`](../lib/crs.mli) and [`grid.mli`](../lib/grid.mli) define these
 terms.
 
+jord knows five datums and reads no datum grid (the Datums section of
+[`crs.mli`](../lib/crs.mli)), and has four projections, with no conformal
+conic and no polar stereographic system (its Projections section). It
+reads no JPEG 2000, so no pixels of ESA's SAFE products or of the
+Copernicus Data Space Ecosystem's Sentinel-2 assets (the preamble of
+[`jord_safe.mli`](../lib/safe/jord_safe.mli)), and its area rules are
+provisional (the Area rules section of [`warp.mli`](../lib/warp.mli)).
+[README.md](../README.md) says when to use jord.
+
 ## Install
 
-[README.md](../README.md) gives jord's status. In the raven repository,
+[README.md](../README.md) gives jord's status, and how to install it
+outside the raven repository with opam. In the repository,
 add `jord` to an executable's `libraries`, each format library it reads,
 and `nx.io`, which reads the image files. A program that goes from a
 catalogue's item to a product's band, as the preamble of

@@ -15,6 +15,41 @@ points and corners (the Gradients section of
 jord is a contrib package: it builds and tests against `main`, and has no
 API stability guarantee ([`contrib/README.md`](../README.md)).
 
+## When to use jord
+
+jord serves an OCaml program that puts Earth-observation products on grids
+of its own, such as a model's input: it reads where a product's arrays lie
+and what their DNs mean, moves the arrays onto the program's grid and masks
+their quality, in nx operations that rune can compile and differentiate.
+
+jord does not do the following. It knows five datums, WGS 84, NAD83,
+ETRS89-FIN, NZGD2000 and GDA94, each other datum taken to WGS 84 by a
+step that changes no coordinate, and reads no datum grid such as NADCON or NTv2 (the Datums
+section of [`crs.mli`](lib/crs.mli)). Its projections are transverse
+Mercator, Albers' equal-area conic, Pseudo-Mercator and the sinusoid, so
+it has no conformal conic system, such as Lambert's, and no polar
+stereographic one, such as UPS (the Projections section). It reads no
+JPEG 2000, which nx.io does not read either, so no pixels of ESA's SAFE
+products or of the Copernicus Data Space Ecosystem's Sentinel-2 assets
+(the preamble of [`jord_safe.mli`](lib/safe/jord_safe.mli)). Its area
+rules are provisional (the Area rules section of
+[`warp.mli`](lib/warp.mli)). A program that needs one of these takes it
+from another library.
+
+## Install
+
+jord is not in the opam repository yet, and it builds against raven's
+`main`. In the raven repository, an executable adds `jord` to its
+`libraries` ([the quick start](doc/index.md) lists the others it may
+need). Outside it, opam pins the repository's packages at `main` and
+installs jord with the nx it needs:
+
+<!-- $MDX skip -->
+```bash
+opam pin add -n --recursive git+https://github.com/raven-ml/raven.git#main
+opam install jord
+```
+
 ## A first program
 
 This program finds the cell of a 10 m grid that holds a point of Berlin:
