@@ -117,7 +117,10 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - nx's bench rows `placed/*` and `placed/matmul-f32-256x4096x256-k-split4`
   (bench_nx.ml:337-367; nx.thumper:261-268) record exact allocated words
   that vary from run to run, so `check --quick` can fail them on an
-  unchanged tree. Found by the DD+DC landing
+  unchanged tree: rig's `cache_room` (memory.ml:946-958) grows its per-size
+  array when a drain returns more buffers than it held, as GC timing
+  decides. Grow it at a fixed point or size it up front. Found by the DD+DC
+  landing
 - Allocated words in rune and tolk programs move by several tenths of a
   percent with GC timing: Ops hash-conses in Weak tables, and Shape and
   Codegen memoise in ephemerons, so an exact-allocation row can fail an
