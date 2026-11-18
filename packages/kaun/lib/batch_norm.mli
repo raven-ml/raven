@@ -100,7 +100,6 @@ val init :
 (** {1:applying Applying} *)
 
 val apply :
-  ?axis:int ->
   ?momentum:float ->
   ?eps:float ->
   ((float, 'b, 'd) Nx.t, 'd) t ->
@@ -112,8 +111,8 @@ val apply :
     feature and applies the affine transform:
     [y = gamma * (x - mean) / sqrt (var + eps) + beta].
 
-    Features live on [axis] (default [-1], the last axis; negative counts from
-    the end); statistics are taken over all other axes together. [axis] must
+    Features live on [x]'s last axis, the channels of {!Conv}'s layout;
+    statistics are taken over all other axes together. The last axis must
     have size [features].
 
     With [training = true], [mean] and [var] are the current batch's mean and
@@ -137,6 +136,6 @@ val apply :
     [momentum] defaults to [0.99] (per training step; unused in eval mode) and
     [eps] to [1e-5].
 
-    Raises [Invalid_argument] if [x] has fewer than 2 axes, [axis] is out of
-    bounds, the feature axis's size does not match [p], [momentum] is outside
+    Raises [Invalid_argument] if [x] has fewer than 2 axes, the last axis's
+    size does not match [p], [momentum] is outside
     \[[0];[1]\], or [eps] is not positive. *)

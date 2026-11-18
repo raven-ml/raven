@@ -34,6 +34,29 @@ let test_bn_normalizes_batch () =
   check_arr ~eps:1e-3 ~msg:"per-feature variance is 1" (Array.make 5 1.0)
     (Nx.var ~axes:[ 0 ] y)
 
+(* Images channels last, as Conv gives them: each channel is normalized
+   over the batch and both spatial axes. *)
+let test_bn_channels_last () =
+  Nx.Rng.with_key (Nx.Rng.key 2) @@ fun () ->
+  let params, stats = Batch_norm.init ~features:3 Nx.Host.on in
+  let x = Nx.Rng.normal Nx.float32 [| 4; 5; 6; 3 |] in
+  let x = Nx.add (Nx.mul x (vec [| 1.; 2.; 3. |])) (vec [| -1.; 0.; 5. |]) in
+  let y, stats' = Batch_norm.apply params stats ~training:true x in
+  let axes = [ 0; 1; 2 ] in
+  check_arr ~eps:1e-4 ~msg:"per-channel mean is 0" (Array.make 3 0.0)
+    (Nx.mean ~axes y);
+  check_arr ~eps:1e-3 ~msg:"per-channel variance is 1" (Array.make 3 1.0)
+    (Nx.var ~axes y);
+  check_arr ~msg:"running mean from the channels' means"
+    (Array.map (fun m -> 0.01 *. m) (Nx.to_array (Nx.mean ~axes x)))
+    stats'.Batch_norm.Stats.mean;
+  raises
+    (Invalid_argument
+       "Batch_norm.apply: the last axis has size 4, parameters have 3 features")
+    (fun () ->
+      Batch_norm.apply params stats ~training:true
+        (Nx.zeros Nx.float32 [| 2; 3; 4 |]))
+
 let test_bn_affine_after_normalization () =
   let params, stats = Batch_norm.init ~features:2 Nx.Host.on in
   let params = { params with Batch_norm.gamma = vec [| 2.0; 0.5 |] } in
@@ -628,6 +651,8 @@ let tests =
         test "gamma and beta apply after normalization"
           test_bn_affine_after_normalization;
         test "a constant feature maps to beta" test_bn_constant_feature;
+        test "channels last: statistics per channel over batch and space"
+          test_bn_channels_last;
         test "one step blends running stats with momentum"
           test_bn_running_stats_one_step;
         test "running stats converge to the batch statistics"

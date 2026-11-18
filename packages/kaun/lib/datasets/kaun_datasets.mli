@@ -19,7 +19,6 @@
 val mnist :
   ?fashion:bool ->
   ?normalize:bool ->
-  ?data_format:[ `NCHW | `NHWC ] ->
   unit ->
   Nx.host Nx.float32_t
   * Nx.host Nx.int64_t
@@ -32,17 +31,14 @@ val mnist :
     Labels are int64 class indices.
 
     [fashion] selects Fashion-MNIST when [true]. Defaults to [false].
-    [data_format] defaults to [`NCHW].
 
-    Tensor shapes:
-    - [`NCHW]: images [[N; 1; 28; 28]], labels [[N]]
-    - [`NHWC]: images [[N; 28; 28; 1]], labels [[N]]
+    Images are [[N; 28; 28; 1]], channels last as [Kaun.Conv] takes them,
+    and labels [[N]].
 
     Raises [Failure] on download or parsing errors. *)
 
 val cifar10 :
   ?normalize:bool ->
-  ?data_format:[ `NCHW | `NHWC ] ->
   unit ->
   Nx.host Nx.float32_t
   * Nx.host Nx.int64_t
@@ -55,10 +51,7 @@ val cifar10 :
     Labels are int64 class indices (0--9: airplane, automobile, bird, cat, deer,
     dog, frog, horse, ship, truck).
 
-    [data_format] defaults to [`NCHW].
-
-    Tensor shapes:
-    - [`NCHW]: images [[N; 3; 32; 32]], labels [[N]]
-    - [`NHWC]: images [[N; 32; 32; 3]], labels [[N]]
+    Images are [[N; 32; 32; 3]], channels last as [Kaun.Conv] takes them,
+    and labels [[N]].
 
     Raises [Failure] on download, extraction, or parsing errors. *)

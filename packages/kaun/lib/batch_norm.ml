@@ -38,7 +38,7 @@ let low_precision : type b. (float, b) Nx.dtype -> bool = function
   | Float16 | Bfloat16 | Float8_e4m3fn | Float8_e5m2 | Float4_e2m1fn -> true
   | Float32 | Float64 -> false
 
-let apply ?(axis = -1) ?(momentum = 0.99) ?(eps = 1e-5) p (stats : _ Stats.t)
+let apply ?(momentum = 0.99) ?(eps = 1e-5) p (stats : _ Stats.t)
     ~training x =
   if momentum < 0.0 || momentum > 1.0 then
     Format.kasprintf invalid_arg
@@ -54,17 +54,16 @@ let apply ?(axis = -1) ?(momentum = 0.99) ?(eps = 1e-5) p (stats : _ Stats.t)
   if ndim < 2 then
     invalid_argf "Batch_norm.apply: input must have at least 2 axes, got %d"
       ndim;
-  let axis = if axis < 0 then ndim + axis else axis in
-  if axis < 0 || axis >= ndim then
-    invalid_argf "Batch_norm.apply: axis out of bounds for a %d-d input" ndim;
+  let axis = ndim - 1 in
   let features = (Nx.shape p.gamma).(0) in
   if (Nx.shape x).(axis) <> features then
     invalid_argf
-      "Batch_norm.apply: feature axis has size %d, parameters have %d features"
+      "Batch_norm.apply: the last axis has size %d, parameters have %d \
+       features"
       (Nx.shape x).(axis)
       features;
   (* Parameters and stats are [features]-vectors; give them rank [ndim] with the
-     features on [axis] so they broadcast against [x]. *)
+     features last so they broadcast against [x]. *)
   let pshape = Array.make ndim 1 in
   pshape.(axis) <- features;
   let broadcast v = Nx.reshape pshape v in

@@ -4240,6 +4240,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- **Breaking:** `Batch_norm.apply` normalizes the last axis and loses
+  `?axis`, as `Layer_norm` and `Rms_norm` do. `Kaun_datasets.mnist` and
+  `cifar10` lose `?data_format` and give images channels last,
+  `[N; 28; 28; 1]` and `[N; 32; 32; 3]`, the layout `Conv` takes.
 - **Breaking:** `Pool.max` and `Pool.avg` pool over any number of spatial
   axes, channels last, with `(lo, hi)` padding pairs; they replace
   `max_pool2d` and `avg_pool2d`, which pooled the last two axes unpadded.
