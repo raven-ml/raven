@@ -9,6 +9,10 @@ Measurements and parked work behind these items:
 _plans/perf-campaign/todo-archive-2026-11-18.md. A path in parentheses is
 under _plans/perf-campaign/ unless it names another directory of _plans/.
 
+- A bench's quiet check reads only the host's load, so a GPU group runs,
+  and can be blessed, while another user's context holds the GPU: two
+  foreign contexts made every CUDA row read 4.2-4.8 ms a call. A check of
+  the GPU's compute apps before the GPU groups would refuse or flag it
 - The rows layout runs rows(W)/4 workgroups: the router at 64 tokens or
   fewer and the 12-token k and v take 7-24 us where a grouped reduce or BEAM
   take 5-11; bare cores at 16 rows or fewer trail BEAM's (routercore/)
@@ -108,10 +112,11 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 
 ## nx, rune
 
-- rune's `test_grad › conventions › a dirichlet draw's tangents and
-  gradient in its concentrations` takes 14 s alone and passed the 60 s
-  limit at a load of 22 during a landing; a smaller draw that keeps its
-  covers would hold it
+- rune props that take 4-14 s alone pass the 60 s limit at a load of 13-30:
+  `test_grad`'s dirichlet tangents and gradient (14 s), `test_ranges`' "a
+  compiled call has eager's bits, every dtype" (8.6 s) and `test_total`'s
+  "a map's lanes add in turn" (4.4 s). Smaller draws that keep their
+  covers would hold them
 - nx.cpu computes a Reduce of k reductions in k passes: `reduce_into` runs
   once per reduction (reduce.c:2468-2484), and each pass evaluates the
   fused program (:2457-2466) over every term again. var and std written as
