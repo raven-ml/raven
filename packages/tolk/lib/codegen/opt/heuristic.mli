@@ -135,6 +135,14 @@
     {!Stage.steps}, so that each row staging copies a trip covers a sector:
     MXFP4's codes are copied 32 bytes a row a trip, 64 values.
 
+    {b Partial forms.} A core whose operand is decoded from integers and
+    whose sum runs another reduce axis beside the core's [K], as a Q8_0
+    matrix's blocks of 32 values each scaled after its sum, is a partial
+    form: [K] is a block's values, and the other axis the blocks. Its [K],
+    where it then holds at most 32 values, as a last unrollable axis below,
+    is unrolled whole, so that a trip of the blocks takes a block. The
+    core's steps keep their order.
+
     A core whose operands are staged ({!Stage.tile}) takes the staged tile
     instead of those splits and floors, its [N] padded to the tile's where no
     tile divides it. Where the operands read [M] only as

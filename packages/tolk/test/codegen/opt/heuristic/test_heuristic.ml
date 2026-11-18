@@ -1372,6 +1372,47 @@ let prefill_unstaged =
       equal ~msg:"admits" Testable.bool false (Stage.admits sm_89 (K.ast o));
       equal (list opt) (K.applied_opts (chosen false)) (K.applied_opts o))
 
+(* Partial forms *)
+
+(* gpt-oss-20b's key projection of 64 tokens by 512 over 2880 in Q8_0, as rune
+   compiles it for CUDA: 90 blocks of 32 int8 codes, each block's sum scaled
+   by its float16 scale, a core taking a block's values. *)
+let key_projection =
+  lazy
+    (let file =
+       Filename.concat
+         (Filename.dirname Sys.executable_name)
+         "../../../../bench/stream/q8_0-core-64.0.graph"
+     in
+     Graph.of_string (In_channel.with_open_bin file In_channel.input_all))
+
+(* The trips of the loops [o]'s sums still take. *)
+let loop_trips o =
+  List.map (fun r -> Bigint.to_int (size r)) (ranges_at o ~reduce:true [ Weak ])
+
+(* A trip takes a block's values whole on every target, and the 90 blocks
+   stay a loop. *)
+let partial_trips =
+  let cuda arch =
+    Cstyle.without_compiler
+      { Helpers.Target.device = "CUDA"; renderer = "CUDA"; arch;
+        interface = ""; indices = "" }
+  in
+  cases "a partial form's trip takes its block whole"
+    ~id:fst
+    [
+      ("sm_89", (lazy (cuda "sm_89"), [ 90 ]));
+      ("sm_80", (lazy (cuda "sm_80"), [ 90 ]));
+      ("gfx1100", (lazy (renderer "amd"), [ 90 ]));
+      ("Apple9", (lazy (renderer "metal"), [ 90 ]));
+    ]
+    (fun (_, (ren, trips)) ->
+      let o =
+        Heuristic.hand_coded_optimizations
+          (handed (Lazy.force key_projection) (Lazy.force ren))
+      in
+      equal (list int) trips (loop_trips o))
+
 (* The host's budget *)
 
 (* Vector register files, as a count of registers of a number of bytes: SSE's,
@@ -2366,6 +2407,40 @@ let stated ~core_threads k tc opts =
           | Error e -> failf "%a does not apply: %s" Opt.pp split e)
       | None -> ())
     (beside_core k (Ops.axis_id rngs.(2)));
+  (* A partial form, a decoded operand's sum beside another reduce axis,
+     unrolls the core's K whole where it holds at most 32 values. Renderers
+     that state no bytes in flight take one block a trip. *)
+  let decoded =
+    match operands k with
+    | Some (a, b) -> Stage.decoded a || Stage.decoded b
+    | None -> false
+  in
+  let k_values =
+    List.find_map
+      (fun u ->
+        match Ops.arg u with
+        | Ops.Wmma { dims = _, _, kd; _ } -> Some kd
+        | _ -> None)
+      (Ops.toposort ~calls:Skip (K.ast s))
+  in
+  let upcastable () = K.upcastable_dims ~reduce:true s in
+  let k_axis () =
+    List.find_opt
+      (fun a -> Ops.axis_id (List.nth (K.rngs s) a) = Ops.axis_id rngs.(2))
+      (upcastable ())
+  in
+  (match (k_axis (), k_values) with
+  | Some axis, Some kd
+    when decoded
+         && List.length (upcastable ()) > 1
+         && Bigint.to_int (size (List.nth (K.rngs s) axis)) * kd <= 32 -> (
+      let split =
+        Opt.Split { axis; amount = 0; target = Opt.Upcast; top = false }
+      in
+      match K.apply_opt s split with
+      | Ok _ -> ()
+      | Error e -> failf "%a does not apply: %s" Opt.pp split e)
+  | _ -> ());
   K.applied_opts s
 
 (* A floor of [2^e] to [2^(e+1) - 1] threads, [e] up to 20: every power of
@@ -3063,6 +3138,7 @@ let () =
              per_byte_order;
              recorded_order;
              prefill_unstaged;
+             partial_trips;
              untiled_loads;
              streams_no_call;
              one_trip_product;

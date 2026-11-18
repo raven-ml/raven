@@ -1,4 +1,4 @@
-# tolk D89 D141 D175 D212 D450 D451 D467 D471 D479 D486 D487 D491 golden=d2d66a3ad4975aabb6a65bed34ba1dec
+# tolk D89 D141 D175 D212 D450 D451 D467 D471 D479 D486 D487 D491 D493 golden=d2d66a3ad4975aabb6a65bed34ba1dec
 case	kernel	renderer	context	opts
 add_cpu	add	cpu		(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST)),)
 add_avx2	add	avx2		(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST)),)
@@ -427,9 +427,9 @@ projection_two_axes_cuda	projection_two_axes	cuda		(Opt(op=OptOps.TC, axis=0, ar
 projection_two_axes_amd	projection_two_axes	amd		(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)
 q8_0_partial_cpu	q8_0_partial	cpu		(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=5, arg=(0, AxisType.UPCAST)))
 q8_0_partial_avx2	q8_0_partial	avx2		(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=5, arg=(0, AxisType.UPCAST)))
-q8_0_partial_metal	q8_0_partial	metal		(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)
-q8_0_partial_cuda	q8_0_partial	cuda		(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)
-q8_0_partial_amd	q8_0_partial	amd		(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)
+q8_0_partial_metal	q8_0_partial	metal		(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=4, arg=(0, AxisType.UPCAST)))
+q8_0_partial_cuda	q8_0_partial	cuda		(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=6, arg=(0, AxisType.UPCAST)))
+q8_0_partial_amd	q8_0_partial	amd		(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=7, arg=(0, AxisType.UPCAST)))
 rows_codes_cpu	rows_codes	cpu		(Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=4, arg=(4, AxisType.UPCAST)))
 rows_codes_avx2	rows_codes	avx2		(Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(8, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=4, arg=(4, AxisType.UPCAST)))
 rows_codes_metal	rows_codes	metal		(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)

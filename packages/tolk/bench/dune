@@ -114,8 +114,10 @@
 ; 2880 over 4096, with its bias and residual, whose operand the kernel computes:
 ; the bfloat16 of the attention output times the share of each head's row the
 ; sink leaves, and mxfp4-64 and mxfp4-512 a dense product of 64 and 512 tokens
-; by gpt-oss-20b's MXFP4 gate and up matrix, 5760 by 2880, unrouted, whose
-; calls read their operands from memory.
+; by gpt-oss-20b's MXFP4 gate and up matrix, 5760 by 2880, unrouted, and
+; q8_0-core-64 a prefill's key projection of 64 tokens by 512 over 2880 by
+; gpt-oss-20b's Q8_0 matrix, which a tensor core takes a block at a time,
+; whose calls read their operands from memory.
 
 (rule
  (target stream_kernels.ml)

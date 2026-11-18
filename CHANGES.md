@@ -1474,6 +1474,11 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A product of a Q8_0 matrix that takes a tensor core takes each block's
+  values in one trip, where it took two on NVIDIA's cores
+  (`Heuristic.hand_coded_optimizations`); its bits are unchanged.
+  gpt-oss-20b's Q8_0 prefill on an RTX 5000 Ada takes 18.5 ms a step at 64
+  tokens where it took 20.3, and 46.3 at 512 where it took 49.8.
 - On NVIDIA GPUs from `sm_80`, a product past 16 rows takes a staged tensor
   core of two stages first, whatever its threads: gpt-oss-20b's router at 64
   tokens runs in 7.3 µs a layer on an RTX 5000 Ada, 19.1 streamed.

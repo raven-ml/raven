@@ -9196,3 +9196,22 @@ D466.
   kernel never reads or writes has its type declared` (CUDA's 16-bit and
   8-bit floats, HIP's `half`) and `› a kernel with a parameter it never
   reads or writes compiles` (NVRTC, where the machine has it).
+
+## D493. A partial form's trip takes its block whole
+
+- **tinygrad:** `codegen/opt/heuristic.py` (`hand_coded_optimizations`: a
+  core only for one reduce axis at `TC_OPT` 0; on the path without a core,
+  a last reduce of at most 32 values unrolled whole and the loop around it
+  kept).
+- **tolk:** `Heuristic.tensor_cores` (`partial_trip`, `unroll_whole`).
+- **Rule:** an unstaged core whose operand is decoded and whose sum runs
+  another reduce axis beside its `K`, as a Q8_0 matrix's blocks, unrolls
+  `K` whole where it holds at most 32 values, as a last unrollable axis.
+- **Reason:** (d). Each trip of the blocks waits on its own loads: on
+  fudge's RTX 5000 Ada, gpt-oss-20b's Q8_0 prefill takes 18.5 ms a step at
+  64 tokens where it took 20.3, and 46.3 at 512 where it took 49.8.
+- **Pinned by:** the Heuristic suite's `streaming › a partial form's trip
+  takes its block whole` (sm_89, sm_80, gfx1100, Apple9), the cases
+  `q8_0_partial_{cuda,amd,metal}` (`q8_0_partial_*.tolk`, `cases.tolk`),
+  the tensor core floor's stated splits, tolk's bench row
+  `stream/q8_0-core-64` and kaun's gpt-oss row `prefill 512, Q8_0`.

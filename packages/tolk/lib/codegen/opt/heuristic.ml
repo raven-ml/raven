@@ -315,6 +315,46 @@ let staged_tile ~core_threads k tk rngs split =
              unstaged. *)
           if List.for_all apply opts then Some two_stages else None)
 
+(* The longest reduce axis that [unroll] unrolls whole, which no group
+   pads. *)
+let unroll_whole = 32
+
+(* Partial forms
+
+   A decoded operand whose values carry a scale a block, as Q8_0's blocks of
+   32 int8 codes and their scale, makes its product a sum over the blocks of
+   each block's scaled sum, [Σ_b d_b Σ_v x_v q_v]: a core takes a block's
+   values, and the blocks are a reduce range outside the core's [K]. Each
+   trip of the blocks waits on its own loads, so a trip takes its block's
+   values whole, as a reduce of at most [unroll_whole] values unrolls whole
+   where no core takes it. On an RTX 5000 Ada, gpt-oss-20b's query, key and
+   value projection of 64 tokens by 5120 over 2880 in Q8_0 took 131 us a
+   layer at two trips a block, and 70 at one. *)
+
+(* The trips of the range [r], if a literal states them. *)
+let trips r = Option.map Bigint.to_int (known_size (Sym (nth r 0)))
+
+(* [tk], [k] with an unstaged core applied whose [K] is the range [own] of
+   [steps] steps a trip, with its partial form's trip: [own]'s values whole
+   where they are at most [unroll_whole]. *)
+let partial_trip k tk (w : wmma) ~steps own =
+  let beside () =
+    List.filter
+      (fun a -> axis_id (List.nth (K.rngs tk) a) <> axis_id own)
+      (K.upcastable_dims ~reduce:true tk)
+  in
+  let _, _, kd = w.dims in
+  let whole () =
+    match List.find_index (fun r -> r == own) (K.rngs tk) with
+    | Some a when List.mem a (K.upcastable_dims ~reduce:true tk) -> (
+        match trips own with
+        | Some t when t * steps * kd <= unroll_whole ->
+            try_split tk a 0 Opt.Upcast
+        | _ -> false)
+    | _ -> false
+  in
+  if decoded_operands k <> [] && beside () <> [] then ignore (whole ())
+
 (* first try the tensor cores *)
 let tensor_cores ~core_threads k =
   let use_tc = setting Setting.use_tc in
@@ -393,6 +433,9 @@ let tensor_cores ~core_threads k =
              ({!Stage.steps}). *)
           let steps = Stage.steps (K.ren tk) (K.ast tk) ~k:rngs.(2) in
           if steps > 1 then split 2 steps Opt.Upcast;
+          Option.iter
+            (fun w -> partial_trip k tk w ~steps rngs.(2))
+            (core_of tk);
           false
         in
         if min_globals <> 0 then begin
@@ -812,10 +855,6 @@ let group_threads = 16
    group combines their 16 partials, so the group pays once each thread's
    share is at least the combine's 16 steps. *)
 let group_least = group_threads * group_threads
-
-(* The longest reduce axis that [unroll] unrolls whole, which no group
-   pads. *)
-let unroll_whole = 32
 
 let group k =
   let loaded k =
