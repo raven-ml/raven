@@ -54,6 +54,19 @@ val renderer : Rig.t -> Renderer.t
     when the target's renderer is not available, such as a compiler the machine
     lacks. *)
 
+val part : Rig.t -> string
+(** [part d] names [d]'s physical part as rig states it: its {!Rig.arch}, the
+    bytes of its last-level cache ({!Rig.cache_bytes}), and, for an AMD GPU,
+    the compute units that run its work. Parts of one {!target} may run a
+    program at different speeds, and a beam search keeps what it measured
+    under the part it timed on ({!Tolk.Search.beam_search}). Devices that rig
+    states alike, as the host and a {!Rig.software} device, or two GPUs of
+    one model, have one name. So do two models that rig states alike: two
+    NVIDIA GPUs of one arch and cache size, and two Metal GPUs of one family,
+    whose cache rig does not state. One GPU opened through two drivers that
+    state different facts, as an AMD GPU through its kernel driver, which
+    states its cache, and over PCI, which does not, has two names. *)
+
 (** {1:schedules Linked schedules} *)
 
 type t

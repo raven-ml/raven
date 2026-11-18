@@ -295,7 +295,7 @@ let scalar_key v =
   let p = match arg v with Param p -> p | _ -> assert false in
   match p.name with Some name -> `Name name | None -> `Slot p.slot
 
-let beam_search ~link ~time ?allow_test_size amt s =
+let beam_search ~part ~link ~time ?allow_test_size amt s =
   if amt < 1 then
     invalid_arg
       (Printf.sprintf "a beam search needs a positive width, not %d" amt);
@@ -307,9 +307,9 @@ let beam_search ~link ~time ?allow_test_size amt s =
   let beam_debug = setting Setting.beam_debug in
   let ren = K.ren s in
   (* What a search's result is a function of, but the times it measures: the
-     kernel, the search, the renderer, its compiler, what shapes compilation,
-     among which the settings that pick the candidates, and this library's
-     sources. *)
+     kernel, the search, the renderer, its compiler, the part it times on,
+     what shapes compilation, among which the settings that pick the
+     candidates, and this library's sources. *)
   let key =
     String.concat "\x00"
       ([
@@ -320,6 +320,7 @@ let beam_search ~link ~time ?allow_test_size amt s =
          ren.name;
          Helpers.Target.key ren.target;
          Option.value (Renderer.Compiler.cachekey ren.compiler) ~default:"";
+         part;
        ]
       @ List.map (fun (k, v) -> k ^ "=" ^ v) (Setting.shaping ()))
   in

@@ -6,6 +6,7 @@ open Tolk
 
 let host = Cstyle.clang (Tolk_engine.target Rig.host)
 let devices _ = Rig.host
+let part = Tolk_engine.part Rig.host
 
 let applied_opts prg =
   match Ops.arg (Ops.nth prg 0) with
@@ -49,7 +50,7 @@ let searched name =
       (fun () ->
         Codegen.to_program
           ~beam:
-            (Search.beam_search ~link ~time)
+            (Search.beam_search ~part ~link ~time)
           (with_info (fun i -> { i with beam = 2 }) k)
           host)
   in
@@ -88,7 +89,7 @@ let scalar_arguments =
           [ B (Setting.ignore_beam_cache, true) ]
           (fun () ->
             Codegen.to_program
-              ~beam:(Search.beam_search ~link ~time)
+              ~beam:(Search.beam_search ~part ~link ~time)
               ast host)
       in
       greater int ~than:0 !measured;
@@ -177,7 +178,7 @@ let timed_programs kernel =
       [ B (Setting.ignore_beam_cache, true) ]
       (fun () ->
         Codegen.to_program
-          ~beam:(Search.beam_search ~link ~time)
+          ~beam:(Search.beam_search ~part ~link ~time)
           (kernel ~beam:2 ()) host)
   in
   (!measured, opt_names searched)
@@ -222,7 +223,7 @@ let memory_bound =
           [ B (Setting.ignore_beam_cache, true) ]
           (fun () ->
             Codegen.to_program
-              ~beam:(Search.beam_search ~link ~time)
+              ~beam:(Search.beam_search ~part ~link ~time)
               (loaded_trips ~beam:2 ~read ()) host)
       in
       equal int ~msg:"programs timed" 0 !measured;

@@ -2726,8 +2726,8 @@ encodes its barriers (D146).
   tables: `Compiler_cpu.clang`'s, `Compiler_metal.table`,
   `Compiler_cuda.nvrtc`'s and `Compiler_amd.hip`'s; `C.identity`;
   `Codegen.program_key` and `Codegen.kept`; the search's settings
-  (`Setting.beam_padto` to `Setting.beam_estimate`) and `Search.beam_search`'s
-  key.
+  (`Setting.beam_padto` to `Setting.beam_estimate`), `Search.beam_search`'s
+  key and `Tolk_engine.part`.
 - **Differs:** a table also names everything besides the source that
   determines a binary:
   - for Clang, the digest of what `clang -###` states it runs for a source,
@@ -2753,8 +2753,10 @@ encodes its barriers (D146).
   programs and searches take it, and `CCACHE`, read when a binary or a
   program is compiled, decides only whether the disk keeps it. A program is
   kept on disk under its compiler's table. The beam search's key adds the
-  library's sources, the renderer, its compiler's table, and the settings
-  that shape compilation (`Setting.shaping`), among which those that pick
+  library's sources, the renderer, its compiler's table, the part of the
+  device it times on (its arch, last-level cache and an AMD GPU's compute
+  units, as rig states them: `Tolk_engine.part`), and the settings that
+  shape compilation (`Setting.shaping`), among which those that pick
   the candidates (`TC` and `BEAM_PADTO`, D114) and those the search
   declares, `BEAM_UOPS_MAX`, `BEAM_UPCAST_MAX`, `BEAM_LOCAL_MAX`,
   `BEAM_MIN_PROGRESS` and `BEAM_ESTIMATE`. `BEAM_STRICT_MODE` is not keyed:
@@ -2764,7 +2766,9 @@ encodes its barriers (D146).
   changed flag, an upgraded toolchain, another compiler of the same renderer
   name or a search under other settings with a binary or a search made for
   something else; with `CCACHE=0` two compilers that differ in their options
-  alone share programs.
+  alone share programs. Its search's key names the device kind alone, so a
+  search timed on one part answers every part and arch of that kind with what
+  was fastest on the first.
 - **Pinned by:** `Tolk.Compiler_cpu › cache`, `Tolk.Compiler_metal › cache`,
   `Tolk.Compiler_cuda › cache`, `Tolk.Compiler_amd › cache`,
   `Tolk.Renderer › Compiler › the table is asked for once, when first
@@ -2772,11 +2776,12 @@ encodes its barriers (D146).
   every time with ccache off`, `Tolk.C › identity`, `Tolk.Codegen › programs
   are kept › a program is not returned for a compiler of other options, with
   CCACHE=0`, `Tolk.Codegen › programs are kept on disk › a program is not
-  read back for a compiler of another table`, and
+  read back for a compiler of another table`,
   `Tolk.Search › a search kept under one setting measures again under
-  another`, `› a search kept under one value of a setting declared by its
-  caller measures again under another` and `› the search's settings shape
-  compilation`.
+  another`, `› a search kept for one part measures again on another`, `› a
+  search kept under one value of a setting declared by its caller measures
+  again under another` and `› the search's settings shape compilation`, and
+  `Tolk_engine › target › a software device is the host's part`.
 
 ## D114. Every environment variable is one declared setting
 

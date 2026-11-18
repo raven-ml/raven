@@ -146,9 +146,13 @@ let golden_time ~failing ~vars prg =
   let tm = List.fold_left weigh tm positions in
   tm *. (1. +. (Float.of_int (workgroups ~vars prg mod 5) /. 10.))
 
-let search ?settings ?allow_test_size ~timing:(link, time) amt k =
+(* The part of a device that the made-up timings stand for. *)
+let part = "made-up"
+
+let search ?settings ?(part = part) ?allow_test_size ~timing:(link, time) amt k
+    =
   quietly ?settings (fun () ->
-      Search.beam_search ~link ~time ?allow_test_size amt k)
+      Search.beam_search ~part ~link ~time ?allow_test_size amt k)
 
 let least = List.fold_left Float.min infinity
 
@@ -819,7 +823,7 @@ let times_what_runs =
       let chosen =
         quietly (fun () ->
             Codegen.to_program
-              ~beam:(Search.beam_search ~link ~time)
+              ~beam:(Search.beam_search ~part ~link ~time)
               (with_info (fun i -> { i with beam = 2 }) k)
               ren)
       in
@@ -1337,6 +1341,25 @@ let cache_devices =
           equal opts first (searched untimed b)
       | calls -> failf "%d calls, not 2" (List.length calls))
 
+(* Parts of one target may time a kernel differently, so a search kept for
+   one part is measured again on another. *)
+let cache_parts =
+  test "a search kept for one part measures again on another" (fun () ->
+      let cached ~part timing =
+        K.applied_opts
+          (search ~part
+             ~settings:[ B (Setting.cachelevel, 1) ]
+             ~timing 2
+             (scheduled "sum_rows" "clang"))
+      in
+      let first =
+        cached ~part:"one" (fst (recording (golden_time ~failing:false)))
+      in
+      let timing, calls = recording (golden_time ~failing:false) in
+      equal opts ~msg:"found again" first (cached ~part:"another" timing);
+      greater int ~msg:"measured again" ~than:0 (List.length (calls ()));
+      equal opts ~msg:"kept for each" first (cached ~part:"one" untimed))
+
 (* A search whose entry is damaged on disk measures again, as one never kept,
    and keeps what it finds. *)
 let cache_damaged =
@@ -1455,7 +1478,7 @@ let cache_candidates =
       Helpers.Diskcache.clear ();
       let prg =
         Codegen.to_program
-          ~beam:(Search.beam_search ~link ~time)
+          ~beam:(Search.beam_search ~part ~link ~time)
           k ren
       in
       (* The compiler returns the text it compiles, which is the key. *)
@@ -1709,6 +1732,7 @@ let () =
          width;
          cache;
          cache_devices;
+         cache_parts;
          cache_damaged;
          cache_settings;
          cache_declared;

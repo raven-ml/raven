@@ -69,6 +69,8 @@ let targets =
             (Engine.target host));
       test "a software device compiles as the host" (fun () ->
           equal target (Engine.target host) (Engine.target (device "CPU:1")));
+      test "a software device is the host's part" (fun () ->
+          equal string (Engine.part host) (Engine.part (device "CPU:1")));
       test "the disk runs no program" (fun () ->
           raises_match Exn.invalid_arg (fun () -> Engine.target Rig_disk.device));
       test

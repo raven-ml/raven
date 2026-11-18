@@ -19,7 +19,7 @@
     ({!Ops.type-kernel_info}'s [opts_to_apply]). No kernel is searched unless
     its argument asks for a width ({!Ops.type-kernel_info}'s [beam]) and its
     compiler is given the search:
-    [Codegen.to_program ~beam:(beam_search ~link ~time)].
+    [Codegen.to_program ~beam:(beam_search ~part ~link ~time)].
 
     Nothing here runs a program. The search links and times candidates with the
     functions it is given, which run them on a device. *)
@@ -66,15 +66,16 @@ val get_kernel_actions :
 (** {1:search Searching} *)
 
 val beam_search :
+  part:string ->
   link:(Ops.t -> 'linked) ->
   time:(vars:(string * int) list -> 'linked -> float) ->
   ?allow_test_size:bool ->
   int ->
   Postrange.Scheduler.t ->
   Postrange.Scheduler.t
-(** [beam_search ~link ~time ~allow_test_size amt k] is [k], or a copy of
-    it, with the optimisations that a beam search of width [amt] finds fastest.
-    [k]'s kernel is the sink that {!Postrange.apply_opts} optimises.
+(** [beam_search ~part ~link ~time ~allow_test_size amt k] is [k], or a copy
+    of it, with the optimisations that a beam search of width [amt] finds
+    fastest. [k]'s kernel is the sink that {!Postrange.apply_opts} optimises.
 
     [link call] is the call [call] ({!Op.Call}) of a compiled program of [k]'s
     kernel made ready to run on a device of [k]'s renderer's target. Its
@@ -93,6 +94,11 @@ val beam_search :
     first timed is dropped; the search raises any other exception. The search
     limits neither a compilation nor a run: a candidate whose compilation or run
     hangs hangs the search, one more reason to run it offline.
+
+    [part] names the physical part of the device that [time] measures on, such
+    as its model. Devices of one target run one program alike, but each part
+    runs it at its own speed, so what a search finds fastest on one part may
+    not be on another.
 
     A kernel is compiled for [k]'s renderer named ["test"], as the compile
     of the kernel it chooses lowers it: staged and, on the host, in blocks.
@@ -159,7 +165,7 @@ val beam_search :
     keyed by what the search is a function of but the times it measures: [k]'s
     kernel ({!Ops.key}), [amt], [allow_test_size], the name and target of [k]'s
     renderer and the table of its compiler's binaries
-    ({!Renderer.Compiler.cachekey}), the settings that shape compilation
+    ({!Renderer.Compiler.cachekey}), [part], the settings that shape compilation
     ({!Setting.shaping}), among them those that pick the candidates
     ({!Setting.use_tc} and {!Setting.beam_padto}) and how it measures and stops
     ({!Setting.beam_uops_max}, {!Setting.beam_upcast_max},
@@ -168,9 +174,9 @@ val beam_search :
     {!Setting.ignore_beam_cache} holds, a search whose key is kept compiles,
     links and times nothing, and applies the optimisations kept beyond as many
     as [k] has to a copy of [k]. A kept result is what an earlier search
-    measured fastest: another search may measure otherwise. A key whose entry
-    is damaged on disk, or cannot be read, is searched again, as one never
-    kept.
+    measured fastest on a device of [part]: another search may measure
+    otherwise. A key whose entry is damaged on disk, or cannot be read, is
+    searched again, as one never kept.
 
     When the setting {!Setting.debug} is [2] or more, the progress of the search
     is printed on standard output, and {!Setting.beam_debug} prints more.

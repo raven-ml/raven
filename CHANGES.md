@@ -492,6 +492,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A kernel searched under `beam` on one GPU is searched again on a GPU of
+  the same arch with another last-level cache size or, for AMD, another
+  number of compute units, where the first GPU's choice was reused.
+
 - A compiled `Nx.scatter` reads updates that view stored values, such as a
   concatenation's, through their view, where it copied them first:
   gpt-oss-20b's decode drops a kernel a layer, the copy of its rotated keys
@@ -1512,6 +1516,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- **Breaking:** `Search.beam_search` takes `~part`, the physical part of the
+  device it times on, and keeps its result under it: a search timed on one GPU
+  was served to every GPU of its arch. `Tolk_engine.part` names a device's
+  part by its arch, last-level cache size and an AMD GPU's compute units.
 - A GPU product of 16 or fewer rows by a matrix decoded from integer codes
   (MXFP4, Q8_0) takes a tensor core where the core's tile pads the rows
   within its bound, 14-16 on CUDA, where it streamed (`Heuristic.core_fits`).

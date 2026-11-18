@@ -57,6 +57,25 @@ let target d =
 let renderer d =
   match Device.renderer (target d) with Ok r -> r | Error why -> failwith why
 
+let part d =
+  let cache =
+    match Rig.cache_bytes d with Some n -> string_of_int n | None -> "none"
+  in
+  (* An NVIDIA GPU's multiprocessor counts are its chip's, whichever of them
+     its part enables, so they name no part. *)
+  let units =
+    match Rig.capability d Rig_amd_abi.key with
+    | Some
+        {
+          Rig_amd_abi.Capability.gpu =
+            { Rig_amd_abi.Gpu.xccs; compute_units; _ };
+          _;
+        } ->
+        [ strf "cus=%d" (xccs * compute_units) ]
+    | None -> []
+  in
+  String.concat " " (Rig.arch d :: ("cache=" ^ cache) :: units)
+
 (* Whether [d] runs copy parts: a GPU with a copy engine, or a software
    device. *)
 let copies d =

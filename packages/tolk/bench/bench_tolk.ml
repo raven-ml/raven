@@ -534,7 +534,8 @@ let searches =
           Setting.context
             [ B (Setting.ccache, false); B (Setting.ignore_beam_cache, true) ]
             (fun () ->
-              Search.beam_search ~link:Ops.body ~time:opts_time 1
+              Search.beam_search ~part:"made-up" ~link:Ops.body
+                ~time:opts_time 1
                 (Postrange.Scheduler.copy s)));
     ]
 

@@ -102,8 +102,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - D404's Metal launch member cap of 40 rests on an M1 Max, and no machine
   a bench may run on holds a Metal device, so the ledger's (d) cannot be met
   for it: admit a Mac row for Metal or mark that part "Reason: none"
-- `beam_search`'s disk key names no device part, so a search timed on one
-  part serves every other part of its target; tinygrad keys by device
 - `Heuristic.reused` and `upcast_more`'s `reuses` count loads after the
   reduce, so a bias read along an axis makes it look reused (`empty(4,512,16)
   @ empty(4,16,768) + empty(512,768)` upcasts the batch whole, unblocked)
