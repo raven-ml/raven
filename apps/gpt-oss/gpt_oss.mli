@@ -142,8 +142,10 @@ val windows :
     ({!Kaun.Cache_index.window}): the last [cfg.window] positions for a
     {!Sliding} layer, and for a {!Full} one a window wider than every position,
     which hides nothing. The two differ in their window's size alone, so one
-    compiled block serves both. Apply it to [cfg index] once per call: the
-    partial application holds both indices. *)
+    compiled block serves both. Each is resolved
+    ({!Kaun.Cache_index.resolve}), so the blocks of a kind share one
+    computation of its addressing. Apply it to [cfg index] once per call: the partial
+    application holds both indices. *)
 
 val attention :
   'd config ->

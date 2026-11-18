@@ -168,6 +168,7 @@ let test_index_whole () =
       "window: None";
       "columns: None";
       "draft: None";
+      "resolved: None";
     ]
     (visits
        (Nx.Ptree.v Cache_index.walk)
@@ -180,6 +181,7 @@ let test_index_whole () =
       "window: None";
       "columns: None";
       "draft: None";
+      "resolved: None";
     ]
     (visits
        (Nx.Ptree.v Cache_index.walk)
@@ -207,6 +209,7 @@ let test_index_tabled () =
       "window: a leaf";
       "columns: None";
       "draft: None";
+      "resolved: None";
     ]
     (visits (Nx.Ptree.v Cache_index.walk) index);
   let made =
@@ -229,6 +232,7 @@ let test_index_tabled () =
       "columns: Some";
       "columns: a leaf";
       "draft: None";
+      "resolved: None";
     ]
     (visits (Nx.Ptree.v Cache_index.walk) selected);
   equal ~msg:"a draft" (list string)
@@ -245,8 +249,55 @@ let test_index_tabled () =
       "draft: Some";
       "draft.slots: a leaf";
       "draft.sees: a leaf";
+      "resolved: None";
     ]
-    (visits (Nx.Ptree.v Cache_index.walk) (drafted made))
+    (visits (Nx.Ptree.v Cache_index.walk) (drafted made));
+  equal ~msg:"resolved under a window" (list string)
+    [
+      "tokens: case \"tabled\"";
+      "tokens.row: None";
+      "tokens.pos: a leaf";
+      "tokens.table: a leaf";
+      "tokens.blocks: length 0";
+      "every: int 1";
+      "window: Some";
+      "window: a leaf";
+      "columns: None";
+      "draft: None";
+      "resolved: Some";
+      "resolved.stores: a leaf";
+      "resolved.pages: Some";
+      "resolved.pages: a leaf";
+    ]
+    (visits
+       (Nx.Ptree.v Cache_index.walk)
+       (Cache_index.resolve
+          (Cache_index.window 2 (Cache_index.rows ~context:4 [| 2 |]))));
+  equal ~msg:"resolved with a selection" (list string)
+    [
+      "tokens: case \"tabled\"";
+      "tokens.row: Some";
+      "tokens.row: a leaf";
+      "tokens.pos: a leaf";
+      "tokens.table: a leaf";
+      "tokens.blocks: length 0";
+      "every: int 1";
+      "window: None";
+      "columns: Some";
+      "columns: a leaf";
+      "draft: None";
+      "resolved: Some";
+      "resolved.stores: a leaf";
+      "resolved.pages: None";
+    ]
+    (visits (Nx.Ptree.v Cache_index.walk) (Cache_index.resolve selected));
+  equal ~msg:"a whole index resolves to itself" (list string)
+    (visits
+       (Nx.Ptree.v Cache_index.walk)
+       (Cache_index.whole ~batch:2 ~seq:3 ()))
+    (visits
+       (Nx.Ptree.v Cache_index.walk)
+       (Cache_index.resolve (Cache_index.whole ~batch:2 ~seq:3 ())))
 
 let test_index_keys () =
   (* Everything a compiled program depends on changes what the index visits. *)
@@ -269,7 +320,13 @@ let test_index_keys () =
     (Cache_index.whole ~batch:1 ~seq:3 ())
     (Cache_index.packed ~seq:3 [| [| 3 |] |]);
   let one = Cache_index.rows ~context:4 [| 1 |] in
-  differ ~msg:"a draft" one (drafted one)
+  differ ~msg:"a draft" one (drafted one);
+  differ ~msg:"resolved" one (Cache_index.resolve one);
+  let resolved = Cache_index.resolve (Cache_index.window 2 one) in
+  differ ~msg:"a window drops the resolution" resolved
+    (Cache_index.window 3 resolved);
+  differ ~msg:"advance drops the resolution" resolved
+    (Cache_index.advance resolved)
 
 let test_index_round_trip () =
   let round_trip ~msg index =
@@ -310,7 +367,10 @@ let test_index_round_trip () =
           ~table:(int64s [| 2; 2 |] [| 0L; 1L; 2L; 3L |])
           ()));
   round_trip ~msg:"a draft" (drafted (Cache_index.rows ~context:4 [| 1 |]));
-  round_trip ~msg:"a packing" (Cache_index.packed ~seq:4 [| [| 2; 1 |] |])
+  round_trip ~msg:"a packing" (Cache_index.packed ~seq:4 [| [| 2; 1 |] |]);
+  round_trip ~msg:"resolved"
+    (Cache_index.resolve
+       (Cache_index.window 2 (Cache_index.rows ~context:4 [| 3 |])))
 
 let tests =
   [

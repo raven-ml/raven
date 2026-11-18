@@ -137,8 +137,8 @@ let merge p y =
   project p (Nx.reshape [| batch; seq; heads * d |] (Nx.swapaxes 1 2 y))
 
 let windows cfg index =
-  let sliding = Cache_index.window cfg.window index
-  and full = Cache_index.window max_int index in
+  let sliding = Cache_index.resolve (Cache_index.window cfg.window index)
+  and full = Cache_index.resolve (Cache_index.window max_int index) in
   function Sliding -> sliding | Full -> full
 
 let attention cfg b cache index x =

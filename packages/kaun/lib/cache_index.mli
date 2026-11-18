@@ -335,6 +335,25 @@ val extend :
 
     Raises [Invalid_argument] if [values] does not have that shape. *)
 
+val resolve : 'd t -> 'd t
+(** [resolve index] is [index] with its addressing computed: the slot each
+    of the call's tokens stores at and, without a selection, its {!pages}.
+    {!store}, {!extend} and {!pages} read these tensors and give what they
+    give on [index]; so do the other functions, except {!walk}, which reports
+    them. A model that compiles each layer as its own program resolves the
+    index once per call and passes it to every layer, which then computes
+    none of the addressing. Compiled, an attention under {!visible} through
+    {!pages} of a resolved index launches the attention's kernels alone.
+
+    The tensors are computed where the index lies, so an index on a set that
+    computes under [Rune.jit] alone must be resolved under it. {!window},
+    {!select}, {!draft}, {!advance} and {!val-every} to another block size
+    return an index that is not resolved. A map over a resolved index's
+    tensors ({!walk}) that changes its positions or tables must change what
+    [resolve] computed to match, or resolve the result again: the stores
+    would otherwise follow the old positions. A whole or packed index
+    addresses no pool, and [resolve] returns it unchanged. *)
+
 val store : 'd t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
 (** [store index values pool] is {!extend}'s [pool'], [pool] with [values]
     stored where the call's tokens sit, without the read. On a whole index it
@@ -385,9 +404,9 @@ val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> 'd t -> 'e t
 (** [walk c index] walks an index at [c]'s path: [Nx.Ptree.v walk] is its
     structure, for the signature of a compiled step and for {!Nx.Ptree.map} over
     its tensors. Its leaves are the index's tensors, its tables of blocks, its
-    window's size, its selection and its draft included: int64, and bool for a
-    draft's [sees]. It reports what a compiled program depends on beyond them.
-    In walk order:
+    window's size, its selection, its draft and what {!resolve} computed
+    included: int64, and bool for a draft's [sees]. It reports what a
+    compiled program depends on beyond them. In walk order:
     - [tokens] reports case ["whole"] for an index built by {!whole}, or
       ["packed"] for one built by {!packed}, then walks its positions at
       [tokens.pos]; or case ["tabled"], then whether [row] is present and, if it
@@ -400,7 +419,10 @@ val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> 'd t -> 'e t
       at [window];
     - [columns] reports whether a selection ({!select}) is present and walks it;
     - [draft] reports whether a {!draft} is present and walks its slots at
-      [draft.slots] and its [sees] at [draft.sees].
+      [draft.slots] and its [sees] at [draft.sees];
+    - [resolved] reports whether the index is {!resolve}d and, if it is,
+      walks the slots its tokens store at at [resolved.stores], then reports
+      whether it has pages and walks them at [resolved.pages].
 
     Two indices share a compiled program only if they agree on all of these
     reports; one that differs, such as one with a window and one without,

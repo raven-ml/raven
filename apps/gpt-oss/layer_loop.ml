@@ -16,9 +16,20 @@ let cached ~placement cfg (p : ((float, 'b, 'd) Nx.t, 'd) Gpt_oss.params) =
       (Gpt_oss.block cfg)
   in
   let block b c index x = f b (Nx.Ptree.donate cache c) index (Nx.donate x) in
-  let embed = Rune.jit' (Embedding.apply p.tok) in
+  (* The ids embedded and the index resolved for each layer kind, once a call:
+     the blocks read the index's addressing and compute none of it. *)
+  let embed =
+    Rune.jit
+      Nx.Ptree.(index @-> tensor @-> returns (triple tensor index index))
+      (fun index ids ->
+        let at = Gpt_oss.windows cfg index in
+        (Embedding.apply p.tok ids, at Sliding, at Full))
+  in
   fun caches index ids ->
-    let index = Gpt_oss.windows cfg (Cache_index.place placement index) in
+    let x, sliding, full =
+      embed (Cache_index.place placement index) (Nx.place placement ids)
+    in
+    let index = function Gpt_oss.Sliding -> sliding | Full -> full in
     let rec go x rev layers blocks caches =
       match (layers, blocks, caches) with
       | [], [], [] -> (x, List.rev rev)
@@ -30,7 +41,7 @@ let cached ~placement cfg (p : ((float, 'b, 'd) Nx.t, 'd) Gpt_oss.params) =
             "Layer_loop.cached: the configuration, the parameters and the \
              caches differ in their number of blocks"
     in
-    go (embed (Nx.place placement ids)) [] cfg.Gpt_oss.layers p.blocks caches
+    go x [] cfg.Gpt_oss.layers p.blocks caches
 
 let greedy ~placement cfg p =
   let head h =

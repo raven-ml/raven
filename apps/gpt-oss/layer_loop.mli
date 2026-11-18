@@ -38,9 +38,11 @@ val cached :
     where [block] and [cache] instantiate {!Gpt_oss.Block} and
     {!Kaun.Attention.Cache}: it reads its layer's weights and the index, and is
     given its layer's cache and the residual stream, both donated
-    ({!Nx.Ptree.donate}). A call places the index and the ids at [placement]
-    and windows the index once for all the layers, and donates the caches it is
-    given. The programs run
+    ({!Nx.Ptree.donate}). A call places the index and the ids at [placement],
+    and the embedding program embeds the ids and windows and resolves the
+    index once for all the layers ({!Gpt_oss.windows}), so a block program
+    computes nothing of the index's addressing. A call donates the caches it
+    is given. The programs run
     on the devices [p] is placed on ({!Gpt_oss.of_hf}[ ~placement]), whose
     leaves they read where they are, split ones included; [placement] is a copy
     on each of them. Over several devices each program compiles as over one

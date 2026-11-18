@@ -4290,6 +4290,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- `Cache_index.resolve` computes an index's addressing, the slots its
+  tokens store at and its `pages`, once: a model whose layers run as
+  separate compiled programs passes the resolved index to each, and no
+  layer recomputes it. The gpt-oss example resolves once a call.
 - `Attention.apply`, `attend` and `scaled_dot_product_attention` take
   `?lengths`, each lane's number of real tokens, passed to `Nx.attention`.
   Unlike a mask of padded keys, a NaN past a length never reaches a real

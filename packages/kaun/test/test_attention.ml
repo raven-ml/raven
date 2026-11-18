@@ -2885,6 +2885,181 @@ let law_paths_agree s =
   close ~msg:"extend under mask = cached through pages" dense
     (fst (call p c index x))
 
+(* A resolved index is the index to every function, eager and compiled,
+   under a selection too. *)
+let law_resolved s =
+  Nx.Rng.with_key (Nx.Rng.key 68) @@ fun () ->
+  cover "a draft" (s.draft <> None);
+  cover "a window" (s.window <> None);
+  cover "a hole a token may see" (sees_a_hole s);
+  let r = Cache_index.resolve s.index in
+  let ints t = Array.to_list (Nx.to_array t) in
+  equal ~msg:"pages" (list int64)
+    (ints (Option.get (Cache_index.pages s.index)))
+    (ints (Option.get (Cache_index.pages r)));
+  equal ~msg:"positions" (list int64)
+    (ints (Cache_index.positions s.index))
+    (ints (Cache_index.positions r));
+  equal ~msg:"mask" (list bool)
+    (ints (Cache_index.mask s.index))
+    (ints (Cache_index.mask r));
+  let values = Nx.Rng.normal Nx.float32 [| 2; 3; 2 |] in
+  let pool = Nx.Rng.normal Nx.float32 [| paged_slots; 2 |] in
+  let agree msg index r =
+    let seen, pool' = Cache_index.extend index values pool in
+    let seen_r, pool_r = Cache_index.extend r values pool in
+    equal ~msg:(msg ^ "extend's seen") (array float_exact) (flat seen)
+      (flat seen_r);
+    equal ~msg:(msg ^ "extend's pool") (array float_exact) (flat pool')
+      (flat pool_r);
+    equal ~msg:(msg ^ "store") (array float_exact)
+      (flat (Cache_index.store index values pool))
+      (flat (Cache_index.store r values pool))
+  in
+  agree "" s.index r;
+  if s.draft = None then begin
+    let columns = int64s [| 2; 3; 2 |] (Array.init 12 (fun i -> i mod 7)) in
+    let selected = Cache_index.select columns s.index in
+    agree "selected: " selected (Cache_index.resolve selected);
+    equal ~msg:"selected: mask" (list bool)
+      (ints (Cache_index.mask selected))
+      (ints (Cache_index.mask (Cache_index.resolve selected)))
+  end;
+  let step, compiled = Lazy.force paged_step in
+  let pool () = Nx.Rng.normal Nx.float32 [| paged_slots; 2; 2 |] in
+  let c = { Attention.Cache.keys = pool (); values = pool () } in
+  let x = Nx.Rng.normal Nx.float32 [| 2; 3; 8 |] in
+  let run f index =
+    let { x; c; _ } = f { x; index; c } in
+    (flat x, flat c.keys, flat c.values)
+  in
+  let same msg (x, k, v) (x', k', v') =
+    equal ~msg:(msg ^ ": outputs") (array float_exact) x x';
+    equal ~msg:(msg ^ ": keys") (array float_exact) k k';
+    equal ~msg:(msg ^ ": values") (array float_exact) v v'
+  in
+  same "eager" (run step s.index) (run step r);
+  same "compiled" (run compiled s.index) (run compiled r)
+
+(* [a] and [b] address alike: the same pages, stores, reads and mask. *)
+let address_alike msg a b =
+  let ints t = Array.to_list (Nx.to_array t) in
+  let shape = [| Cache_index.batch a; Cache_index.seq a; 2 |] in
+  let values = Nx.Rng.normal Nx.float32 shape in
+  let pool = Nx.Rng.normal Nx.float32 [| 12; 2 |] in
+  equal ~msg:(msg ^ ": pages") (option (list int64))
+    (Option.map ints (Cache_index.pages a))
+    (Option.map ints (Cache_index.pages b));
+  let seen, pool' = Cache_index.extend a values pool in
+  let seen_b, pool_b = Cache_index.extend b values pool in
+  equal ~msg:(msg ^ ": seen") (array float_exact) (flat seen) (flat seen_b);
+  equal ~msg:(msg ^ ": extend's pool") (array float_exact) (flat pool')
+    (flat pool_b);
+  equal ~msg:(msg ^ ": store") (array float_exact)
+    (flat (Cache_index.store a values pool))
+    (flat (Cache_index.store b values pool));
+  equal ~msg:(msg ^ ": mask") (list bool)
+    (ints (Cache_index.mask a))
+    (ints (Cache_index.mask b))
+
+(* Resolving reaches every kind of index: a row per lane, blocks, a packed
+   or whole one; and a function that makes an index from a resolved one
+   gives what it gives from the index. *)
+let test_resolved_kinds () =
+  Nx.Rng.with_key (Nx.Rng.key 69) @@ fun () ->
+  let resolved msg index =
+    address_alike msg index (Cache_index.resolve index)
+  in
+  let rows = Cache_index.rows ~every:[ 2 ] ~context:6 [| 3; 2 |] in
+  resolved "rows" rows;
+  resolved "blocks of 2" (Cache_index.every 2 rows);
+  resolved "blocks under a window"
+    (Cache_index.window 3 (Cache_index.every 2 rows));
+  resolved "a row per lane"
+    (Cache_index.window 2
+       (Cache_index.make
+          ~row:(int64s [| 3 |] [| 1; -1; 0 |])
+          ~pos:(int64s [| 3; 2 |] [| 2; 3; 0; 1; -1; 0 |])
+          ~table:(int64s [| 2; 4 |] [| 4; 5; 6; 7; 8; -1; 10; 11 |])
+          ()));
+  resolved "packed" (Cache_index.packed ~seq:3 [| [| 1; 2 |]; [| 3 |] |]);
+  resolved "whole" (Cache_index.whole ~lens:[| 2; 3 |] ~batch:2 ~seq:3 ());
+  let r = Cache_index.resolve (Cache_index.window 2 rows) in
+  let from msg f = address_alike msg (f (Cache_index.window 2 rows)) (f r) in
+  from "another window" (Cache_index.window 3);
+  from "advanced" Cache_index.advance;
+  from "in blocks" (Cache_index.every 2);
+  from "a selection"
+    (Cache_index.select (int64s [| 2; 3; 1 |] [| 0; 1; 2; 5; 0; 1 |]));
+  from "a draft" (fun index ->
+      Cache_index.draft
+        ~slots:(int64s [| 2; 1 |] [| 11; 10 |])
+        ~sees:(Nx.full Nx.bool [| 2; 1; 1 |] true)
+        (Cache_index.advance index))
+
+(* The kernels a compiled [f] launches at a call after its first, on a
+   software device. *)
+let launches f =
+  ignore (f ());
+  let _, events = Rig.Profile.take (fun () -> ignore (f ())) in
+  List.concat_map
+    (function
+      | Rig.Profile.Work { name; _ } when name <> "copies" ->
+          String.split_on_char ',' name
+      | _ -> [])
+    events
+
+(* A layer given a resolved index computes none of its addressing: a
+   compiled store launches the store alone, and an attention under
+   [visible] through [pages] launches what it launches over a table given
+   as an argument, its kernels alone. *)
+let test_resolved_launches () =
+  let device = Result.get_ok (Rig.software "kaun-test-resolve") in
+  let module D = (val Nx.devices [ device ]) in
+  let index_s = Nx.Ptree.v Cache_index.walk in
+  let index =
+    Cache_index.place D.on
+      (Cache_index.window 2
+         (Cache_index.advance (Cache_index.rows ~context:8 [| 3 |])))
+  in
+  let r =
+    Rune.jit Nx.Ptree.(index_s @-> returns index_s) Cache_index.resolve index
+  in
+  let placed t = Nx.place D.on t in
+  let values = placed (Nx.ones Nx.float32 [| 1; 1; 2; 2 |]) in
+  let pool () = placed (Nx.ones Nx.float32 [| 8; 2; 2 |]) in
+  let store =
+    Rune.jit
+      Nx.Ptree.(index_s @-> tensor @-> tensor @-> returns tensor)
+      Cache_index.store
+  in
+  equal ~msg:"a store launches one kernel" int 1
+    (List.length
+       (launches (fun () ->
+            Nx.to_array (store r values (Nx.donate (pool ()))))));
+  let q = placed (Nx.ones Nx.float32 [| 1; 4; 1; 2 |]) in
+  let paged pool = Nx.reshape [| 8; 2; 1; 2 |] pool in
+  let attend_index =
+    Rune.jit
+      Nx.Ptree.(index_s @-> tensor @-> tensor @-> tensor @-> returns tensor)
+      (fun index q k v ->
+        let table = Option.get (Cache_index.pages index) in
+        Attention.attend ~mask:(Cache_index.visible index) q
+          (Nx.Paged { k = paged k; v = paged v; table }))
+  and attend_table =
+    Rune.jit
+      Nx.Ptree.(tensor @-> tensor @-> tensor @-> tensor @-> returns tensor)
+      (fun table q k v ->
+        Attention.attend q (Nx.Paged { k = paged k; v = paged v; table }))
+  in
+  let table = Option.get (Cache_index.pages r) in
+  let k = pool () and v = pool () in
+  equal ~msg:"an attention launches its own kernels" int
+    (List.length
+       (launches (fun () -> Nx.to_array (attend_table table q k v))))
+    (List.length
+       (launches (fun () -> Nx.to_array (attend_index r q k v))))
+
 (* A hole, an unallocated column or one naming a slot outside the pool, that a
    token may see is no key: the outputs are attention over the columns the
    token sees, without the hole, from the keys {!Cache_index.extend} reads. *)
@@ -3920,6 +4095,13 @@ let () =
                "extend under mask attends as cached through pages"
                (Gen.with_pp pp_paged paged_gen)
                law_paths_agree;
+             prop ~count:100 "a resolved index is the index, eager and compiled"
+               (Gen.with_pp pp_paged paged_gen)
+               law_resolved;
+             test "a layer computes none of a resolved index's addressing"
+               test_resolved_launches;
+             test "every kind of index resolves, and what is made from it"
+               test_resolved_kinds;
              test "a hole a token may see is no key"
                test_cached_hole_is_hidden;
              test "a draft token that stores nothing is seen by no token"

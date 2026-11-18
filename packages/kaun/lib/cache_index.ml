@@ -17,21 +17,36 @@ type 'd tokens =
    which tokens of its lane each one sees, [batch; seq; seq]. *)
 type 'd draft = { slots : 'd Nx.int64_t; sees : 'd Nx.bool_t }
 
+(* A resolved index's addressing: the slot each of the call's tokens stores
+   at, [batch; seq], and its pages, [batch; context], without a
+   selection. *)
+type 'd resolved = { stores : 'd Nx.int64_t; pages : 'd Nx.int64_t option }
+
 (* [every] is how many positions a column holds: [1], or an [m] of the tokens'
    [blocks]. [window] is a scalar beside the positions. [columns] is the
-   selection, the columns each token reads: [batch; seq; k]. *)
+   selection, the columns each token reads: [batch; seq; k]. [resolved] is
+   what {!resolve} computed, for this index's fields alone: every function
+   that makes an index from another drops it. *)
 type 'd t = {
   tokens : 'd tokens;
   every : int;
   window : 'd Nx.int64_t option;
   columns : 'd Nx.int64_t option;
   draft : 'd draft option;
+  resolved : 'd resolved option;
 }
 
 let invalid fmt = Printf.ksprintf invalid_arg fmt
 
 let of_tokens tokens =
-  { tokens; every = 1; window = None; columns = None; draft = None }
+  {
+    tokens;
+    every = 1;
+    window = None;
+    columns = None;
+    draft = None;
+    resolved = None;
+  }
 
 (* Lanes are padded on the left, so the last column is every lane's last
    token. *)
@@ -155,7 +170,8 @@ let raw index =
 let window w index =
   if w <= 0 then invalid "Cache_index.window: window must be positive, got %d" w;
   let at = Nx.beside (raw index) in
-  { index with window = Some (Nx.scalar_at at Nx.int64 (Int64.of_int w)) }
+  let window = Some (Nx.scalar_at at Nx.int64 (Int64.of_int w)) in
+  { index with window; resolved = None }
 
 let batch index = Nx.dim 0 (raw index)
 let seq index = Nx.dim 1 (raw index)
@@ -168,7 +184,7 @@ let select columns index =
         (batch index) (seq index));
   if Option.is_some index.draft then
     invalid_arg "Cache_index.select: the index is a draft";
-  { index with columns = Some columns }
+  { index with columns = Some columns; resolved = None }
 
 let draft ~slots ~sees index =
   (match index.tokens with
@@ -185,7 +201,7 @@ let draft ~slots ~sees index =
     invalid "Cache_index.draft: slots must have shape [%d; %d]" batch seq;
   if Nx.shape sees <> [| batch; seq; seq |] then
     invalid "Cache_index.draft: sees must have shape [%d; %d; %d]" batch seq seq;
-  { index with draft = Some { slots; sees } }
+  { index with draft = Some { slots; sees }; resolved = None }
 
 let every m index =
   if m <= 0 then invalid "Cache_index.every: m must be positive, got %d" m;
@@ -207,7 +223,7 @@ let every m index =
     | Packed _ ->
         invalid_arg "Cache_index.every: a packed lane holds several sequences"
     | _ -> ());
-    { index with every = m }
+    { index with every = m; resolved = None }
   end
 
 (* The table the index reads: the positions', or its stride's. *)
@@ -266,6 +282,7 @@ let advance index =
         tokens = Tabled { row; pos = Nx.add_s last 1L; table; blocks };
         columns = None;
         draft = None;
+        resolved = None;
       }
 
 (* The table of each lane. *)
@@ -275,15 +292,25 @@ let lanes ~row table =
 (* Masks *)
 
 (* Whether a query at [query] sees a key at [keys]: at or before it, and under
-   [window] among its last [window]. Elementwise, so it also runs over an
-   attention's pairs ({!visible}). [query - window] wraps only when [query] is
-   below every key, which the causal test hides already, so a window wider
-   than every position hides nothing. *)
+   [window] among its last [window]. Elementwise. [query - window] wraps only
+   when [query] is below every key, which the causal test hides already, so a
+   window wider than every position hides nothing. *)
 let within ?window ~keys query =
   let causal = Nx.less_equal keys query in
   match window with
   | None -> causal
   | Some w -> Nx.logical_and causal (Nx.greater keys (Nx.sub query w))
+
+(* {!within} over an attention's pairs ({!visible}): the distance
+   [query - keys] is one expression of the pair, so a compiled attention
+   computes it per pair and stores nothing of the index beforehand, where
+   [query - window] would be stored. Positions and columns are small, so the
+   distance never wraps. *)
+let within_pair ?window ~keys query =
+  let causal = Nx.less_equal keys query in
+  match window with
+  | None -> causal
+  | Some w -> Nx.logical_and causal (Nx.less (Nx.sub query keys) w)
 
 (* [keys] broadcasts against [batch; seq; 1]: the position each key holds. *)
 let sees ?window ~keys pos =
@@ -479,10 +506,11 @@ let tabled_pages index ~row ~table ~blocks =
       Nx.concatenate ~axis:1 [ before; target index ~table ]
 
 let pages index =
-  match (index.tokens, index.columns) with
-  | Tabled { row; table; blocks; _ }, None ->
+  match (index.resolved, index.tokens, index.columns) with
+  | Some { pages; _ }, _, _ -> pages
+  | None, Tabled { row; table; blocks; _ }, None ->
       Some (tabled_pages index ~row ~table ~blocks)
-  | (Whole _ | Packed _), _ | Tabled _, Some _ -> None
+  | None, (Whole _ | Packed _), _ | None, Tabled _, Some _ -> None
 
 (* [mask] over an attention's pairs, [batch; heads; seq; context]. A program
    reads the pair's key as its column, which a compiled attention bounds over
@@ -502,7 +530,7 @@ let visible index =
          padding. Within a run, positions differ as columns do. *)
       let start = rows (start pos) and context = seq index in
       fun (p : _ Nx.pair) ->
-        let seen = within ?window ~keys:p.k p.q in
+        let seen = within_pair ?window ~keys:p.k p.q in
         wide ~context (Nx.logical_and (Nx.less_equal start p.k) seen)
   | None, _, None ->
       (* The table is not read: a hole, which {!mask} hides, shows here, and
@@ -510,7 +538,7 @@ let visible index =
       let query = rows pos and context = context index in
       let every = index.every in
       fun (p : _ Nx.pair) ->
-        wide ~context (within ?window ~keys:(stands ~every p.k) query)
+        wide ~context (within_pair ?window ~keys:(stands ~every p.k) query)
   | _ ->
       let m = mask index in
       let m = Nx.reshape [| Nx.dim 0 m; 1; Nx.dim 1 m; Nx.dim 2 m |] m in
@@ -585,13 +613,20 @@ let check ~fn index values pool =
     invalid "Cache_index.%s: values must have shape [%d; %d] then the pool's" fn
       (batch index) (seq index)
 
+(* The slot each of the call's tokens stores at, [None] on a whole or packed
+   index, which stores nothing. *)
+let slots index =
+  match (index.resolved, index.tokens) with
+  | Some { stores; _ }, _ -> Some stores
+  | None, (Whole _ | Packed _) -> None
+  | None, Tabled { row; table; blocks; _ } ->
+      Some (target index ~table:(lane_table index ~row ~table ~blocks))
+
 let store index values pool =
   check ~fn:"store" index values pool;
-  match index.tokens with
-  | Whole _ | Packed _ -> pool
-  | Tabled { row; table; blocks; _ } ->
-      let table = lane_table index ~row ~table ~blocks in
-      put ~target:(target index ~table) values pool
+  match slots index with
+  | None -> pool
+  | Some target -> put ~target values pool
 
 let extend index values pool =
   check ~fn:"extend" index values pool;
@@ -612,15 +647,21 @@ let extend index values pool =
         rows_at ~tail values token
       in
       (read_chosen index columns ~tail fetch, pool)
-  | Tabled { row; table; blocks; _ }, None ->
+  | Tabled _, None ->
       let pool = store index values pool in
-      (Nx.take ~axis:0 (tabled_pages index ~row ~table ~blocks) pool, pool)
+      (Nx.take ~axis:0 (Option.get (pages index)) pool, pool)
   | Tabled { row; table; blocks; _ }, Some columns ->
       let pool = store index values pool in
       let table = lane_table index ~row ~table ~blocks in
       (read_chosen index columns ~tail (from_pool table pool), pool)
 
 (* Structure *)
+
+let resolve index =
+  match (index.resolved, slots index) with
+  | Some _, _ | None, None -> index
+  | None, Some stores ->
+      { index with resolved = Some { stores; pages = pages index } }
 
 module Walked = struct
   let block c (m, blocks) =
@@ -651,6 +692,12 @@ module Walked = struct
     let sees = field c "sees" tensor sees in
     { slots; sees }
 
+  let resolved c { stores; pages } =
+    let open Nx.Ptree.Walk in
+    let stores = field c "stores" tensor stores in
+    let pages = field c "pages" (option tensor) pages in
+    { stores; pages }
+
   let walk c x =
     let open Nx.Ptree.Walk in
     let tokens = field c "tokens" tokens x.tokens in
@@ -658,7 +705,8 @@ module Walked = struct
     let window = field c "window" (option tensor) x.window in
     let columns = field c "columns" (option tensor) x.columns in
     let draft = field c "draft" (option draft) x.draft in
-    { tokens; every; window; columns; draft }
+    let resolved = field c "resolved" (option resolved) x.resolved in
+    { tokens; every; window; columns; draft; resolved }
 end
 
 let walk = Walked.walk
