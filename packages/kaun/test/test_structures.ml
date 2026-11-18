@@ -40,12 +40,12 @@ let test_conv () =
   let conv = Nx.Ptree.instantiate (module Conv) in
   check_layer ~msg:"conv" conv
     (Conv.make ~key:(Nx.Rng.next_key ()) ~in_channels:1 ~out_channels:2
-       ~kernel_size:(3, 3) f32)
+       ~kernel_size:[| 3; 3 |] f32)
     ~visits:[ "w: a leaf"; "b: Some"; "b: a leaf" ]
     ~names:[ "w"; "b" ];
   check_layer ~msg:"conv without bias" conv
     (Conv.make ~key:(Nx.Rng.next_key ()) ~bias:false ~in_channels:1
-       ~out_channels:2 ~kernel_size:(3, 3) f32)
+       ~out_channels:2 ~kernel_size:[| 3; 3 |] f32)
     ~visits:[ "w: a leaf"; "b: None" ] ~names:[ "w" ]
 
 let test_norms () =

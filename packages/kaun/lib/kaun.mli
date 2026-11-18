@@ -45,7 +45,7 @@ module Embedding = Embedding
 (** Token-id to dense-vector lookup tables. *)
 
 module Conv = Conv
-(** 2-D convolution layers (NCHW). *)
+(** Convolution layers over any number of spatial axes, channels last. *)
 
 module Attention = Attention
 (** Multi-head self-attention, and the pure

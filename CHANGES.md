@@ -4240,6 +4240,15 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- **Breaking:** `Conv` convolves over any number of spatial axes through
+  `Nx.conv`, channels last: `w` is `[o; k…; c / groups]`, `kernel_size` an
+  array, and `apply` takes `?stride`, `?padding` as `(lo, hi)` pairs,
+  `?dilation` and `?groups`, where it was 2-D NCHW with `` `Same ``/`` `Valid ``.
+  `make` takes `?groups` and counts fans per group. The bias joins the sum
+  before its one rounding. `` `Same `` split its padding by the input's
+  extent, so a model ported with PyTorch's fixed pads was wrong at even
+  extents under a stride; `Nx.ceil_padding` computes that split for
+  models trained with it.
 - The examples and benches, and munin's MNIST example, take rig's device
   names (`Rig_gpus.open_`): a `--jit` or `--device` flag takes one name,
   where a comma-separated list opened its first device that opened, and a

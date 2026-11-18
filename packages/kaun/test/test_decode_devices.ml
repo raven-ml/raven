@@ -349,23 +349,23 @@ let test_attention_refuses_a_cut () =
       Attention.scaled_dot_product_attention (Nx.place cut q) (Nx.place cut k)
         (Nx.place Four.on v))
 
-(* A convolution with [x] and the filters cut along their input channels:
-   the product closes, so the result is one device's within twice the
-   contraction's bound over its [K = c kh kw] products of entries in
-   [-1, 1], [γ(K + 1, 2u) K], and the bias add's rounding on either side. *)
+(* A convolution with [x] and the filters cut along their input channels,
+   channels last: the product closes, so the result is one device's within
+   twice the contraction's bound over its [K = c kh kw] products of entries
+   in [-1, 1], [γ(K + 1, 2u) K], and the bias's rounding on either side. *)
 let law_conv (c, seed) =
   cover "4 channels" (c = 4);
   cover "8 channels" (c = 8);
   let kh = 2 and kw = 3 in
-  let x = values seed [| 2; c; 5; 6 |] in
+  let x = values seed [| 2; 5; 6; c |] in
   let p =
     {
-      Conv.w = values (seed + 1) [| 3; c; kh; kw |];
+      Conv.w = values (seed + 1) [| 3; kh; kw; c |];
       b = Some (values (seed + 2) [| 3 |]);
     }
   in
   let one = Conv.apply p x in
-  let cut = Four.split ~axis:1 in
+  let cut = Four.split ~axis:3 in
   let four =
     Conv.apply
       { Conv.w = Nx.place cut p.w; b = Option.map (Nx.place Four.on) p.b }

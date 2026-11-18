@@ -19,6 +19,8 @@
  (modules
   (:standard \ test_cache_index_metal test_decode_devices))
  (package kaun)
+ (deps
+  (glob_files golden/*.npz))
  (libraries kaun rune vega nx nx.array nx.io rig windtrap unix))
 
 (tests

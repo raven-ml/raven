@@ -66,7 +66,7 @@ let test_cast_dtypes () =
     (Nx.Ptree.cast (module Batch_norm.Stats) f16 stats).mean;
   let conv =
     Conv.init ~key:(Nx.Rng.next_key ()) ~in_channels:1 ~out_channels:2
-      ~kernel_size:(2, 2)
+      ~kernel_size:[| 2; 2 |]
   in
   dtype_is ~msg:"conv w" f16 (Nx.Ptree.cast (module Conv) f16 conv).Conv.w;
   let cache =
@@ -106,11 +106,11 @@ let test_embedding_apply () =
 let test_conv_apply () =
   let p =
     {
-      Conv.w = Nx.create f32 [| 2; 1; 2; 2 |] (grid 8);
+      Conv.w = Nx.create f32 [| 2; 2; 2; 1 |] (grid 8);
       b = Some (vec f32 [| 0.25; -0.5 |]);
     }
   in
-  let x = Nx.create f32 [| 1; 1; 4; 4 |] (grid 16) in
+  let x = Nx.create f32 [| 1; 4; 4; 1 |] (grid 16) in
   close ~msg:"float16 conv" ~tol:0.02 (Conv.apply p x)
     (Conv.apply (Nx.Ptree.cast (module Conv) f16 p) (Nx.cast f16 x))
 

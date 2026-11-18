@@ -228,7 +228,9 @@ let cfg = Gpt2.config_of_json (Kaun_hf.load_config "gpt2") in
 let params = Gpt2.of_hf cfg Nx.float32 (Kaun_hf.load_safetensors "gpt2")
 ```
 
-Inside the importer a rename is the file's name at the field it fills, `Nx.matrix_transpose` fixes `nn.Linear`'s `outputs × inputs` orientation, and `Nx.split` cuts fused projections like GPT-2's `c_attn`; both are views. The file is mapped, so at its own dtype the parameters are its entries and nothing is copied. The GPT-2 importer is about fifty lines of user code; [`examples/04-gpt2`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/04-gpt2) generates text with the result.
+Inside the importer a rename is the file's name at the field it fills, `Nx.matrix_transpose` fixes `nn.Linear`'s `outputs × inputs` orientation, `Nx.moveaxis 1 (-1)` moves an `nn.Conv2d` weight's channels last, as `Conv` lays them out, and `Nx.split` cuts fused projections like GPT-2's `c_attn`; all three are views. The file is mapped, so at its own dtype the parameters are its entries and nothing is copied. The GPT-2 importer is about fifty lines of user code; [`examples/04-gpt2`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/04-gpt2) generates text with the result.
+
+A convolution's padding is `(lo, hi)` pairs. PyTorch's `padding=p` is `(p, p)` on each axis. A model trained in JAX or TensorFlow with `padding="SAME"` pads by `Nx.ceil_padding ~stride ~kernel_size` of each input's spatial extents, computed in the forward pass. Its total depends on each extent modulo the stride, so a fixed pair is right at some extents and wrong at others.
 
 ---
 

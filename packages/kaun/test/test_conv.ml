@@ -28,193 +28,222 @@ let values_are ?msg ~tol expected t =
 let image shape values = Nx.create Nx.float32 shape values
 let arange_image shape n = image shape (Array.init n float_of_int)
 
+(* Goldens
+
+   golden/conv.npz holds PyTorch's convolutions of inputs, weights and
+   biases that are multiples of 1/4, so that every sum is exact in float64
+   and each result is the exact one. Activations are channels last and
+   weights in PyTorch's layout, moved as an importer moves them. *)
+
+let golden = lazy (Nx_io.load_npz "golden/conv.npz")
+
+let entry name =
+  match Nx_io.Archive.find name (Lazy.force golden) with
+  | Some (Nx.P x) -> Nx.cast Nx.float64 x
+  | None -> failwith ("golden/conv.npz has no " ^ name)
+
+let moved name = Nx.moveaxis 1 (-1) (entry name)
+
+let exact ~msg want got =
+  equal ~msg:(msg ^ ", shape") (array int) (Nx.shape want) (Nx.shape got);
+  equal ~msg (array float_exact) (Nx.to_array want) (Nx.to_array got)
+
+(* Whisper's stem, two 3-tap convolutions, the second at stride 2, both
+   padded by one each side: at an even extent and an odd one, which split a
+   stride-dependent padding differently. *)
+let test_stem () =
+  List.iter
+    (fun t ->
+      let e = Printf.sprintf "stem%d." t in
+      let c1 = { Conv.w = moved (e ^ "w1"); b = Some (entry (e ^ "b1")) } in
+      let c2 = { Conv.w = moved (e ^ "w2"); b = Some (entry (e ^ "b2")) } in
+      let padding = [| (1, 1) |] in
+      let y1 = Conv.apply ~padding c1 (entry (e ^ "x")) in
+      exact ~msg:(Printf.sprintf "%d frames, conv1" t) (entry (e ^ "y1")) y1;
+      let y2 = Conv.apply ~stride:[| 2 |] ~padding c2 (entry (e ^ "y1")) in
+      exact ~msg:(Printf.sprintf "%d frames, conv2" t) (entry (e ^ "y2")) y2)
+    [ 3000; 3001 ]
+
+let test_grouped () =
+  let p = { Conv.w = moved "grouped.w"; b = Some (entry "grouped.b") } in
+  exact ~msg:"two groups, dilation (2, 1), stride (2, 1)" (entry "grouped.y")
+    (Conv.apply ~stride:[| 2; 1 |] ~padding:[| (1, 2); (0, 1) |]
+       ~dilation:[| 2; 1 |] ~groups:2 p (entry "grouped.x"))
+
+let test_volume () =
+  let p = { Conv.w = moved "volume.w"; b = None } in
+  exact ~msg:"3-D, stride (1, 2, 1)" (entry "volume.y")
+    (Conv.apply ~stride:[| 1; 2; 1 |]
+       ~padding:[| (1, 1); (0, 0); (1, 1) |]
+       p (entry "volume.x"))
+
 (* Conv *)
 
 let test_conv_init_shapes () =
   Nx.Rng.with_key (Nx.Rng.key 1) @@ fun () ->
   let p =
     Conv.init ~key:(Nx.Rng.next_key ()) ~in_channels:3 ~out_channels:5
-      ~kernel_size:(2, 4)
+      ~kernel_size:[| 2; 4 |]
   in
-  shape_is ~msg:"w shape" [| 5; 3; 2; 4 |] p.Conv.w;
-  match p.Conv.b with
+  shape_is ~msg:"w is [out; k...; in]" [| 5; 2; 4; 3 |] p.Conv.w;
+  (match p.Conv.b with
   | None -> fail "init should create a bias"
-  | Some b -> shape_is ~msg:"b shape" [| 5 |] b
-
-let test_conv_identity_kernel () =
-  (* A 3x3 kernel with a single centre tap and `Same padding reproduces the
-     input exactly: the zero padding only meets zero filter taps. *)
-  let p =
-    {
-      Conv.w = image [| 1; 1; 3; 3 |] [| 0.; 0.; 0.; 0.; 1.; 0.; 0.; 0.; 0. |];
-      b = None;
-    }
+  | Some b -> shape_is ~msg:"b shape" [| 5 |] b);
+  let g =
+    Conv.make ~key:(Nx.Rng.next_key ()) ~groups:2 ~in_channels:4
+      ~out_channels:6 ~kernel_size:[| 3 |] Nx.float32
   in
-  let x = arange_image [| 1; 1; 3; 4 |] 12 in
-  values_are ~msg:"identity kernel is the identity" ~tol:1e-6 (Nx.to_array x)
-    (Conv.apply ~padding:`Same p x)
+  shape_is ~msg:"grouped w is [out; k...; in / groups]" [| 6; 3; 2 |] g.Conv.w
 
 let test_conv_window_sums () =
-  (* A 2x2 kernel of ones sums each window; the bias then shifts every output of
-     its channel. *)
+  (* A 2x2 kernel of ones sums each window; the bias then shifts every output
+     of its channel. *)
   let p =
     {
-      Conv.w = image [| 1; 1; 2; 2 |] [| 1.; 1.; 1.; 1. |];
+      Conv.w = image [| 1; 2; 2; 1 |] [| 1.; 1.; 1.; 1. |];
       b = Some (image [| 1 |] [| 10. |]);
     }
   in
-  let x = arange_image [| 1; 1; 3; 3 |] 9 in
-  values_are ~msg:"window sums plus bias" ~tol:1e-6 [| 18.; 22.; 30.; 34. |]
+  let x = arange_image [| 1; 3; 3; 1 |] 9 in
+  values_are ~msg:"window sums plus bias" ~tol:0. [| 18.; 22.; 30.; 34. |]
     (Conv.apply p x)
 
-let test_conv_edge_detector_row () =
-  (* Cross-correlation with [1, -1]: y(i) = x(i) - x(i + 1), so y is the negated
-     horizontal gradient. No kernel flip. *)
-  let p = { Conv.w = image [| 1; 1; 1; 2 |] [| 1.; -1. |]; b = None } in
-  let x = image [| 1; 1; 1; 4 |] [| 1.; 3.; 6.; 10. |] in
+let test_conv_correlates () =
+  (* y(i) = x(i) - x(i + 1): the kernel is not flipped. *)
+  let p = { Conv.w = image [| 1; 2; 1 |] [| 1.; -1. |]; b = None } in
+  let x = image [| 1; 4; 1 |] [| 1.; 3.; 6.; 10. |] in
   let y = Conv.apply p x in
-  shape_is ~msg:"valid output shrinks by kw - 1" [| 1; 1; 1; 3 |] y;
-  values_are ~msg:"x(i) - x(i+1)" ~tol:1e-6 [| -2.; -3.; -4. |] y
+  shape_is ~msg:"unpadded output shrinks by k - 1" [| 1; 3; 1 |] y;
+  values_are ~msg:"x(i) - x(i+1)" ~tol:0. [| -2.; -3.; -4. |] y
 
 let test_conv_mixes_channels () =
-  (* 1x1 filters reduce convolution to a per-pixel channel mix. *)
-  let p =
-    { Conv.w = image [| 2; 2; 1; 1 |] [| 2.; 3.; 10.; 100. |]; b = None }
-  in
-  (* Channel 0 is [1; 2], channel 1 is [3; 4]. *)
-  let x = image [| 1; 2; 1; 2 |] [| 1.; 2.; 3.; 4. |] in
-  values_are ~msg:"co0 = 2*c0 + 3*c1; co1 = 10*c0 + 100*c1" ~tol:1e-6
-    [| 11.; 16.; 310.; 420. |] (Conv.apply p x)
+  (* 1x1 filters reduce convolution to a per-pixel channel mix: channels
+     last, pixel 0 is (1, 3) and pixel 1 is (2, 4). *)
+  let p = { Conv.w = image [| 2; 1; 1; 2 |] [| 2.; 3.; 10.; 100. |]; b = None } in
+  let x = image [| 1; 1; 2; 2 |] [| 1.; 3.; 2.; 4. |] in
+  values_are ~msg:"co0 = 2 c0 + 3 c1; co1 = 10 c0 + 100 c1" ~tol:0.
+    [| 11.; 310.; 16.; 420. |] (Conv.apply p x)
 
-let test_conv_stride () =
-  let p = { Conv.w = image [| 1; 1; 2; 2 |] [| 1.; 1.; 1.; 1. |]; b = None } in
-  let x = arange_image [| 1; 1; 4; 4 |] 16 in
-  let y = Conv.apply ~stride:(2, 2) p x in
-  shape_is ~msg:"stride 2 halves the output" [| 1; 1; 2; 2 |] y;
-  values_are ~msg:"disjoint window sums" ~tol:1e-6 [| 10.; 18.; 42.; 50. |] y
-
-let test_conv_shape_contracts () =
-  Nx.Rng.with_key (Nx.Rng.key 2) @@ fun () ->
-  let p =
-    Conv.init ~key:(Nx.Rng.next_key ()) ~in_channels:3 ~out_channels:4
-      ~kernel_size:(3, 3)
-  in
-  let x = Nx.zeros Nx.float32 [| 2; 3; 8; 7 |] in
-  shape_is ~msg:"valid, stride 1" [| 2; 4; 6; 5 |] (Conv.apply p x);
-  shape_is ~msg:"same, stride 1 preserves the spatial size" [| 2; 4; 8; 7 |]
-    (Conv.apply ~padding:`Same p x);
-  shape_is ~msg:"valid, stride 2" [| 2; 4; 3; 3 |]
-    (Conv.apply ~stride:(2, 2) p x);
-  shape_is ~msg:"same, stride 2 is the ceiling division" [| 2; 4; 4; 4 |]
-    (Conv.apply ~stride:(2, 2) ~padding:`Same p x)
+(* At float16 a sum of 2048 and 1 rounds to 2048: added to the bias of
+   -2048 before that rounding, as [apply] does, it gives 1, where a sum
+   rounded first would give 0. *)
+let test_conv_bias_rounds_once () =
+  let f16 s vs = Nx.cast Nx.float16 (Nx.create Nx.float32 s vs) in
+  let p = { Conv.w = f16 [| 1; 1; 2 |] [| 1.; 1. |]; b = Some (f16 [| 1 |] [| -2048. |]) } in
+  values_are ~msg:"one rounding" ~tol:0. [| 1. |]
+    (Nx.cast Nx.float32 (Conv.apply p (f16 [| 1; 1; 2 |] [| 2048.; 1. |])))
 
 let test_conv_custom_inits_and_fans () =
-  let fans = ref None in
+  let fans = ref [] in
   let w_init key ~fan_in ~fan_out dtype shape =
-    fans := Some (fan_in, fan_out);
+    fans := (fan_in, fan_out) :: !fans;
     Init.constant 2.0 key ~fan_in ~fan_out dtype shape
   in
   let p =
     Conv.make ~key:(Nx.Rng.next_key ()) ~w_init ~bias_init:(Init.constant 1.0)
-      ~in_channels:2 ~out_channels:3 ~kernel_size:(2, 2) Nx.float32
+      ~in_channels:2 ~out_channels:3 ~kernel_size:[| 2; 2 |] Nx.float32
   in
   values_are ~msg:"w_init" ~tol:0.0 (Array.make 24 2.0) p.Conv.w;
   (match p.Conv.b with
   | None -> fail "make should create a bias by default"
   | Some b -> values_are ~msg:"bias_init" ~tol:0.0 (Array.make 3 1.0) b);
-  match !fans with
-  | None -> fail "w_init was never applied"
-  | Some (fan_in, fan_out) ->
-      equal ~msg:"fan_in is in_channels * kh * kw" int 8 fan_in;
-      equal ~msg:"fan_out is out_channels * kh * kw" int 12 fan_out
+  ignore
+    (Conv.make ~key:(Nx.Rng.next_key ()) ~w_init ~groups:4 ~in_channels:8
+       ~out_channels:12 ~kernel_size:[| 3; 3 |] Nx.float32);
+  (* One output reads in_channels / groups channels of each tap; one input
+     feeds out_channels / groups outputs at each. *)
+  equal ~msg:"(fan_in, fan_out), ungrouped then four groups"
+    (list (pair int int))
+    [ (8, 12); (18, 27) ]
+    (List.rev !fans)
 
 let test_conv_no_bias () =
   Nx.Rng.with_key (Nx.Rng.key 3) @@ fun () ->
   let p =
     Conv.make ~key:(Nx.Rng.next_key ()) ~bias:false ~in_channels:2
-      ~out_channels:2 ~kernel_size:(2, 2) Nx.float32
+      ~out_channels:2 ~kernel_size:[| 2; 2 |] Nx.float32
   in
-  is_true ~msg:"no bias parameter" (p.Conv.b = None);
-  let paths = paths p in
-  equal ~msg:"paths without bias" (list string) [ "w" ] paths
+  equal ~msg:"paths without bias" (list string) [ "w" ] (paths p)
 
 let test_conv_names () =
   Nx.Rng.with_key (Nx.Rng.key 4) @@ fun () ->
   let p =
     Conv.init ~key:(Nx.Rng.next_key ()) ~in_channels:2 ~out_channels:2
-      ~kernel_size:(2, 2)
+      ~kernel_size:[| 2; 2 |]
   in
-  let paths = paths p in
-  equal ~msg:"with bias" (list string) [ "w"; "b" ] paths
+  equal ~msg:"with bias" (list string) [ "w"; "b" ] (paths p)
 
 let test_conv_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 5) @@ fun () ->
-  let x = Nx.Rng.normal Nx.float64 [| 2; 2; 4; 4 |] in
+  let x = Nx.Rng.normal Nx.float64 [| 2; 4; 4; 2 |] in
   let loss p =
     let y = Conv.apply p x in
     Nx.sum (Nx.mul y y)
   in
   let p =
     Conv.make ~key:(Nx.Rng.next_key ()) ~in_channels:2 ~out_channels:2
-      ~kernel_size:(2, 2) Nx.float64
+      ~kernel_size:[| 2; 2 |] Nx.float64
   in
   grads_ok (Rune.check_grads conv64 loss p);
-  let no_bias =
-    Conv.make ~key:(Nx.Rng.next_key ()) ~bias:false ~in_channels:2
-      ~out_channels:2 ~kernel_size:(3, 3) Nx.float64
+  let grouped =
+    Conv.make ~key:(Nx.Rng.next_key ()) ~groups:2 ~in_channels:2
+      ~out_channels:4 ~kernel_size:[| 3; 3 |] Nx.float64
   in
   let strided_loss p =
-    let y = Conv.apply ~stride:(2, 2) ~padding:`Same p x in
+    let y =
+      Conv.apply ~stride:[| 2; 2 |] ~padding:[| (1, 1); (0, 1) |] ~groups:2 p x
+    in
     Nx.sum (Nx.mul y y)
   in
-  grads_ok (Rune.check_grads conv64 strided_loss no_bias)
+  grads_ok (Rune.check_grads conv64 strided_loss grouped)
 
 let test_conv_input_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 6) @@ fun () ->
   let p =
     Conv.make ~key:(Nx.Rng.next_key ()) ~in_channels:2 ~out_channels:3
-      ~kernel_size:(2, 2) Nx.float64
+      ~kernel_size:[| 3 |] Nx.float64
   in
   let loss x =
-    let y = Conv.apply ~padding:`Same p x in
+    let y = Conv.apply ~padding:[| (1, 1) |] ~dilation:[| 2 |] p x in
     Nx.sum (Nx.mul y y)
   in
-  let x = Nx.Rng.normal Nx.float64 [| 1; 2; 3; 3 |] in
+  let x = Nx.Rng.normal Nx.float64 [| 1; 7; 2 |] in
   grads_ok (Rune.check_grads Nx.Ptree.tensor loss x)
 
 let test_conv_rejects_bad_geometry () =
+  let make ?groups ~in_channels ~out_channels kernel_size () =
+    ignore
+      (Conv.make ~key:(Nx.Rng.next_key ()) ?groups ~in_channels ~out_channels
+         ~kernel_size Nx.float32)
+  in
   raises
     (Invalid_argument
-       "Conv.make: channels and kernel size must be positive, got \
-        in_channels=0 out_channels=4 kernel_size=(3, 3)") (fun () ->
-      Conv.make ~key:(Nx.Rng.next_key ()) ~in_channels:0 ~out_channels:4
-        ~kernel_size:(3, 3) Nx.float32);
+       "Conv.make: channels and kernel extents must be positive, got \
+        in_channels=0 out_channels=4 kernel_size=[|3; 3|]")
+    (make ~in_channels:0 ~out_channels:4 [| 3; 3 |]);
   raises
     (Invalid_argument
-       "Conv.make: channels and kernel size must be positive, got \
-        in_channels=2 out_channels=2 kernel_size=(3, 0)") (fun () ->
-      Conv.make ~key:(Nx.Rng.next_key ()) ~in_channels:2 ~out_channels:2
-        ~kernel_size:(3, 0) Nx.float32)
+       "Conv.make: channels and kernel extents must be positive, got \
+        in_channels=2 out_channels=2 kernel_size=[|3; 0|]")
+    (make ~in_channels:2 ~out_channels:2 [| 3; 0 |]);
+  raises (Invalid_argument "Conv.make: kernel_size has no extent")
+    (make ~in_channels:2 ~out_channels:2 [||]);
+  raises
+    (Invalid_argument
+       "Conv.make: 3 groups do not divide in_channels=6 and out_channels=4")
+    (make ~groups:3 ~in_channels:6 ~out_channels:4 [| 3 |])
 
 let test_conv_rejects_bad_input () =
   Nx.Rng.with_key (Nx.Rng.key 7) @@ fun () ->
   let p =
     Conv.init ~key:(Nx.Rng.next_key ()) ~in_channels:2 ~out_channels:2
-      ~kernel_size:(3, 3)
+      ~kernel_size:[| 3; 3 |]
   in
-  raises
-    (Invalid_argument
-       "Conv.apply: input must be [batch; channels; height; width], got rank 3")
-    (fun () -> Conv.apply p (Nx.zeros Nx.float32 [| 2; 4; 4 |]));
-  raises
-    (Invalid_argument "Conv.apply: input has 3 channels but the layer expects 2")
-    (fun () -> Conv.apply p (Nx.zeros Nx.float32 [| 1; 3; 4; 4 |]));
-  raises (Invalid_argument "Conv.apply: stride must be positive, got (0, 1)")
-    (fun () ->
-      Conv.apply ~stride:(0, 1) p (Nx.zeros Nx.float32 [| 1; 2; 4; 4 |]));
-  raises
-    (Invalid_argument "Conv.apply: kernel (3, 3) does not fit input (2, 5)")
-    (fun () -> Conv.apply p (Nx.zeros Nx.float32 [| 1; 2; 2; 5 |]))
+  let rejects f = raises_match (Exn.invalid_arg ~sub:"Nx.conv: ") f in
+  rejects (fun () -> Conv.apply p (Nx.zeros Nx.float32 [| 4; 4; 2 |]));
+  rejects (fun () -> Conv.apply p (Nx.zeros Nx.float32 [| 1; 4; 4; 3 |]));
+  rejects (fun () ->
+      Conv.apply ~stride:[| 0; 1 |] p (Nx.zeros Nx.float32 [| 1; 4; 4; 2 |]))
 
 (* Pool *)
 
@@ -295,18 +324,22 @@ let () =
   exit
     (run "kaun conv"
        [
+         group "goldens"
+           [
+             test "Whisper's stem at 3000 and 3001 frames" test_stem;
+             test "a grouped, dilated 2-D convolution" test_grouped;
+             test "a 3-D convolution" test_volume;
+           ];
          group "conv"
            [
-             test "init produces the documented shapes" test_conv_init_shapes;
-             test "an identity kernel is the identity" test_conv_identity_kernel;
+             test "init and make produce the documented shapes"
+               test_conv_init_shapes;
              test "a kernel of ones sums each window" test_conv_window_sums;
-             test "correlates without flipping the kernel"
-               test_conv_edge_detector_row;
+             test "correlates without flipping the kernel" test_conv_correlates;
              test "1x1 filters mix channels per pixel" test_conv_mixes_channels;
-             test "stride subsamples the windows" test_conv_stride;
-             test "output shapes follow stride and padding"
-               test_conv_shape_contracts;
-             test "make respects w_init, bias_init and the conv fans"
+             test "the bias joins before the one rounding"
+               test_conv_bias_rounds_once;
+             test "make respects w_init, bias_init and the fans per group"
                test_conv_custom_inits_and_fans;
              test "bias:false drops the bias parameter" test_conv_no_bias;
              test "names follow walk order" test_conv_names;
@@ -314,8 +347,7 @@ let () =
                test_conv_gradients;
              test "input gradients agree with finite differences"
                test_conv_input_gradients;
-             test "make rejects non-positive geometry"
-               test_conv_rejects_bad_geometry;
+             test "make rejects invalid geometry" test_conv_rejects_bad_geometry;
              test "apply rejects invalid inputs" test_conv_rejects_bad_input;
            ];
          group "pooling"
