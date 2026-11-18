@@ -110,6 +110,12 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 
 ## nx, rune
 
+- gpt-oss's decode copies v (`E_16_8_4`, a stride-640 slice of the fused
+  q, k, v product) before rune's scatter writes the cache, since a custom
+  kernel's argument that views a computed node is stored apart. Removing it
+  needs a call-argument contract: tolk passing a node it stores anyway with
+  the view's index, or the scatter fusing its updates' computation (one
+  launch a block; branch `fix-kvwrite`)
 - nx measures most errors in floats from the correctly rounded value, but
   some special functions (nx.mli's "plus half of one" least subnormal and
   an absolute `kε`) measure from the exact value: a second metric. One
