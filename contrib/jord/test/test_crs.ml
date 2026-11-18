@@ -334,7 +334,15 @@ let domain =
                   take them to a system whose domain holds them, such as the \
                   zone Crs.utm_at gives")
             (fun () ->
-              Crs.transform ~src:Crs.lonlat ~dst:(utm 33 true) p));
+              Crs.transform ~src:Crs.lonlat ~dst:(utm 33 true) p);
+          (* Another transverse Mercator is offered no zone of UTM. *)
+          let nztm = Result.get_ok (Crs.of_epsg 2193) in
+          let p = Nx.create Nx.float64 [| 2 |] [| 100.; -40. |] in
+          match Crs.transform ~src:Crs.lonlat ~dst:nztm p with
+          | _ -> fail "NZTM took a point 73° from its meridian"
+          | exception Invalid_argument m ->
+              is_true ~msg:m
+                (String.ends_with ~suffix:"system whose domain holds them" m));
     ]
 
 (* ETRS89-FIN [EUREF-FIN] / TM35FIN *)

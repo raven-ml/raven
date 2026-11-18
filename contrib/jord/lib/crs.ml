@@ -160,6 +160,11 @@ let zone_projection zone north =
     ~k0:utm_scale ~false_easting:utm_false_easting
     ~false_northing:(if north then 0. else utm_false_northing_south)
 
+(* Whether a projection is a zone of UTM's. *)
+let is_zone p =
+  let is z north = p = zone_projection z north in
+  List.exists (fun z -> is z true || is z false) (List.init 60 succ)
+
 let utm ~zone ~north =
   if zone < 1 || zone > 60 then
     invalid_arg (strf "Jord.Crs.utm: zone %d is not in 1..60" zone);
@@ -1627,7 +1632,8 @@ let require ~batch c a b inside =
       in
       let zone =
         match c.projection with
-        | Some (Transverse_mercator _) -> ", such as the zone Crs.utm_at gives"
+        | Some (Transverse_mercator _ as p) when is_zone p ->
+            ", such as the zone Crs.utm_at gives"
         | _ -> ""
       in
       Invalid_argument
