@@ -97,6 +97,10 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 
 ## nx, rune
 
+- rune's `test_grad › conventions › a dirichlet draw's tangents and
+  gradient in its concentrations` takes 14 s alone and passed the 60 s
+  limit at a load of 22 during a landing; a smaller draw that keeps its
+  covers would hold it
 - nx.cpu computes a Reduce of k reductions in k passes: `reduce_into` runs
   once per reduction (reduce.c:2468-2484), and each pass evaluates the
   fused program (:2457-2466) over every term again. var and std written as
