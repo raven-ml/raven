@@ -7,7 +7,9 @@ they cover) and what a product measured there (the physical quantity, its
 special values, its acquisition). It does no I/O, so a program fetches and
 opens files with the tools it likes. [`jord.mli`](lib/jord.mli) states what
 every value does unless its doc says otherwise. The transforms, the grids'
-maps, the samplers and the decodes are nx operations, and rune
+maps, the warps that move an array from one grid to another and the
+decodes are nx operations. A warp reads the array at a point of each cell,
+by a *sampler*, or over each cell's area, by an *area rule*, and rune
 differentiates the bilinear sampler and the average area rule in their
 points and corners (the Gradients section of
 [`warp.mli`](lib/warp.mli)).

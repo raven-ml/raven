@@ -6,7 +6,8 @@ All notable changes to jord are documented in this file.
 
 - `Crs` is a datum (WGS 84, NAD83, ETRS89-FIN, NZGD2000, GDA94) and an
   optional projection (transverse Mercator, Albers, Pseudo-Mercator, the
-  sinusoid), read by `Crs.of_epsg` and `Crs.of_wkt`, each with its error.
+  sinusoid), read by `Crs.of_epsg` and `Crs.of_wkt`. `Crs.transform` maps
+  points between systems, within each method's stated error.
 - `Grid` places an array's first two axes in a system by an affine map, and
   `Polygons` holds features in GeoArrow's layout under the even-odd rule.
 - `Rasterize` gives the cells features cover, by centre, by touch, and with
@@ -25,4 +26,6 @@ All notable changes to jord are documented in this file.
   azimuth and distance from a point at an instant.
 - `jord.geotiff`, `jord.geojson`, `jord.shapefile`, `jord.stac` and
   `jord.safe` read GeoTIFF tags, GeoJSON, ESRI Shapefiles, STAC items and
-  Sentinel-2 product metadata from bytes or values.
+  Sentinel-2 product metadata from bytes or values. `jord.geotiff` also
+  makes the tags that state a grid (`Jord_geotiff.tags`), which
+  `Nx_io.save_tiff ~tags` writes.
