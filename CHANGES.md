@@ -3376,6 +3376,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_io.load_audio` reads WAV files, PCM of 1 to 8 bytes, float, A-law,
+  μ-law and RF64: `Nx_io.Audio.samples` is the `[|n; c|]` array, each sample
+  in the top bits of its dtype, beside its rate, valid bits and channel mask.
 - A TIFF or HDF5 window of a file the system cannot map copies the bytes it
   reads, where it copied the whole file for each read.
 - `Nx.conv` with one input channel a group and several output channels is

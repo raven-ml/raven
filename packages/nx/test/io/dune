@@ -3,8 +3,10 @@
 ; image's pixels as an npy file, as Pillow decodes it, or as PNG-3 states it
 ; where Pillow differs, each TIFF raster as the array GDAL was given, and
 ; each HDF5 file's datasets as h5py reads them, which gen/generate.py writes
-; into support/. cut/ holds byte ranges of a Sentinel-2 file, whose source
-; and licence cut/NOTICE states.
+; into support/. support/wav_* are WAV files libsndfile wrote and every G.711
+; code, each with libsndfile's reading of it as an npy file, from a generator
+; kept outside the repository. cut/ holds byte ranges of a Sentinel-2 file,
+; whose source and licence cut/NOTICE states.
 
 (tests
  (names
@@ -17,7 +19,8 @@
   test_image
   test_pytorch
   test_tiff
-  test_hdf5)
+  test_hdf5
+  test_wav)
  (modules
   test_save
   test_archive
@@ -29,6 +32,7 @@
   test_pytorch
   test_tiff
   test_hdf5
+  test_wav
   io_support)
  (libraries nx nx_array nx_io nx_support rig unix lz windtrap)
  (foreign_stubs

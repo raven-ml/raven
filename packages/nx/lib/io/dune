@@ -18,8 +18,10 @@
   pytorch
   partial
   tiff
-  hdf5)
+  hdf5
+  wav
+  audio)
  (libraries nx nx_array rig rig.disk unix lz)
  (foreign_stubs
   (language c)
-  (names nx_io_sync nx_io_png nx_io_jpeg nx_io_tiff)))
+  (names nx_io_sync nx_io_png nx_io_jpeg nx_io_tiff nx_io_wav)))

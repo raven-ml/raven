@@ -9,8 +9,9 @@
     names, as npz, SafeTensors and GGUF files do. A name and its array are an
     {e entry}. Entries are read and written as an {!Archive.t}. A PyTorch
     checkpoint holds a Python value, whose arrays {!Pytorch.tensors} names,
-    a TIFF file a chain of rasters, each with its tags ({!Tiff}), and an
-    HDF5 file a tree of arrays named by paths ({!Hdf5}).
+    a TIFF file a chain of rasters, each with its tags ({!Tiff}), an HDF5
+    file a tree of arrays named by paths ({!Hdf5}), and an audio file the
+    samples of a sound ({!Audio}).
 
     An {e image} is a [uint8] array of shape [[|h; w; c|]], first row at the
     top, with [c] 1 for grey, 2 for grey and alpha, 3 for RGB and 4 for RGBA.
@@ -74,10 +75,10 @@
     elements of each value it returns that is not mapped. {!Tiff.samples}
     and {!Tiff.window} block until they have read their IFD's chunks, from
     the file {!load_tiff} opened or the partial file {!decode_tiff} read,
-    and {!Hdf5.values} and {!Hdf5.window} until they have read their
-    dataset's B-tree nodes and chunks, from the file {!load_hdf5} opened or
-    the partial file {!decode_hdf5} read.
-    A save blocks until
+    {!Hdf5.values} and {!Hdf5.window} until they have read their dataset's
+    B-tree nodes and chunks, from the file {!load_hdf5} opened or the
+    partial file {!decode_hdf5} read, and {!Audio.samples} until it has read
+    its samples. A save blocks until
     the value's set has computed it and the new file is at its path. Domains may
     load one path concurrently. Concurrent saves to one path each write a whole
     file, and the last rename wins.
@@ -1137,6 +1138,125 @@ val load_hdf5 : string -> Hdf5.Group.t list * Hdf5.t list
     the end of data its superblock states, a header whose checksum does not
     match, a group B-tree that is malformed or comes back to a node, or
     structures that take more bytes in all than the file holds. *)
+
+(** {1:audio Audio}
+
+    An {e audio file} holds [n] samples of each of [c] channels, taken at a
+    {e rate} of samples a second. Its samples load as an array of shape
+    [[|n; c|]], a {e row} per instant, the channels of a row in the file's
+    order. {!load_audio} reads WAV files. A load reads the file's header and
+    keeps the file, from which {!Audio.samples} reads.
+
+    {b Samples.} A sample takes [k] bytes, a WAV file's {e container}. An
+    integer sample loads at [int16] for [k] of 2, [int32] for 3 and 4 and
+    [int64] for 5 to 8, and at [k = 1] at [uint8], since a WAV file stores
+    it unsigned and offset by 128. A sample of [b] significant bits
+    ({!Audio.bits}) lies in the top [b] bits of its element, and the bits
+    below are zeros: a 24-bit sample [v] loads as the [int32] [256 * v]. So
+    an element's full scale is its dtype's, whatever the file's depth:
+    [x /. 32768.] for [int16], [x /. 2{^31}] for [int32] and
+    [(x - 128) /. 128.] for [uint8]. A float sample loads at [float32] or
+    [float64] as stored, unclipped, of full scale 1. An A-law or μ-law
+    sample loads at [int16] as the 13- or 14-bit value
+    {{:https://www.itu.int/rec/T-REC-G.711-198811-I/en}ITU-T G.711}
+    decodes it to.
+
+    {b WAV.} A WAV file is a RIFF form [WAVE] of
+    {{:https://www.mmsp.ece.mcgill.ca/Documents/AudioFormats/WAVE/Docs/riffmci.pdf}
+     Multimedia Programming Interface and Data Specifications 1.0}:
+    chunks, each an identifier, a 32-bit size and that many bytes, with a
+    zero byte after an odd size. Its [fmt ] chunk states the coding and
+    comes before the [data] chunk, which holds the rows in order,
+    little-endian. A load reads PCM, IEEE float, A-law and μ-law data,
+    plain or as
+    {{:https://learn.microsoft.com/en-us/windows/win32/api/mmreg/ns-mmreg-waveformatextensible}
+     WAVEFORMATEXTENSIBLE}, and the RF64 files of
+    {{:https://tech.ebu.ch/docs/tech/tech3306v1_1.pdf}EBU Tech 3306},
+    whose [ds64] chunk states sizes past 4 GiB. A container is
+    [nBlockAlign / nChannels] bytes, and a plain PCM file's must be its
+    bits rounded up to bytes, as the specification states. Below a
+    sample's valid bits its container holds zeros, as the specification
+    states, and a read checks each sample whose valid bits are fewer than
+    its container's. A load skips other chunks and reads nothing after
+    [data]. A [data] size of [0xFFFFFFFF], which no valid RIFF file states
+    and a writer that cannot seek back leaves, runs to the end of the
+    file. On a little-endian host, {!Audio.samples} is a mapped value for
+    PCM and float samples whose valid bits fill their containers of 1, 2,
+    4 or 8 bytes, at an offset that is a multiple of their size.
+
+    This reads a 16 kHz mono file as [float32] amplitudes, each the exact
+    quotient by 32768:
+    {[
+    let a = Nx_io.load_audio "speech.wav" in
+    assert (Nx_io.Audio.rate a = 16000 && Nx_io.Audio.channels a = 1);
+    let x = Nx.unpack Nx.int16 (Nx_io.Audio.samples a) in
+    Nx.div_s (Nx.cast Nx.float32 x) 32768.
+    ]} *)
+
+(** Audio files. *)
+module Audio : sig
+  type t
+  (** The type for audio files. A value keeps the file it was loaded from,
+      as a mapped value does: {b the file must not change in place while it
+      is reachable}. A value is immutable and may be shared between
+      domains. *)
+
+  val rate : t -> int
+  (** [rate a] is [a]'s samples a second of each channel, as the file
+      states it. *)
+
+  val length : t -> int
+  (** [length a] is [n], the rows of [a]'s samples. *)
+
+  val channels : t -> int
+  (** [channels a] is [c], the columns of [a]'s samples. *)
+
+  val bits : t -> int
+  (** [bits a] is the significant bits of each of [a]'s samples, from 1 to
+      the width of {!samples}'s dtype: a WAV file's valid bits, or its PCM
+      bits without them, 13 for A-law, 14 for μ-law, and the dtype's width
+      for floats. *)
+
+  val channel_mask : t -> int
+  (** [channel_mask a] is the speakers [a]'s channels feed, as
+      WAVEFORMATEXTENSIBLE's channel mask states them: bit [k] for the
+      speaker of position [k], 0 front left, 1 front right, 2 front centre,
+      3 low frequency, 4 back left, 5 back right, 6 front left of centre,
+      7 front right of centre, 8 back centre, 9 side left, 10 side right,
+      11 top centre, 12 top front left, 13 top front centre, 14 top front
+      right, 15 top back left, 16 top back centre, 17 top back right.
+      Channel [i] feeds the speaker of the [i]-th lowest set bit of bits 0
+      to 17, and a channel past them none.
+
+      It is the mask the file states, a WAV file's [dwChannelMask].
+      Otherwise it is [0x4] for one channel, [0x3] for two, and 0 for more,
+      the same value as a stated 0. *)
+
+  val samples : t -> Nx.host Nx.packed
+  (** [samples a] is [a]'s samples, of shape [[|length a; channels a|]] at
+      the dtype {!section-audio} states. It is a mapped value where the
+      section says so; otherwise each call reads the file again, into
+      memory of its own.
+
+      Raises [Failure] as {!section-errors} states, naming the row, if a
+      sample has a set bit below its valid bits. *)
+end
+
+val load_audio : string -> Audio.t
+(** [load_audio path] is the WAV file [path], recognised by its contents. It
+    reads the header and no sample.
+
+    Raises [Failure] as {!section-errors} states, and:
+    - if the file is no RIFF or RF64 form [WAVE], such as a RIFX file;
+    - if [fmt ] is missing, malformed, given twice or after [data], or
+      states a coding the section does not read, no channel, a container
+      its bits do not fit or valid bits of 0;
+    - if [data] is missing, ends past the file or holds part of a row,
+      such as the size [0x80000000] that arecord leaves in a file it
+      writes to a pipe and the size [0x7ffff000] that sox once left, which
+      state more bytes than such a file holds;
+    - if an RF64 file has no [ds64] chunk first, or a chunk ends past the
+      file. *)
 
 (** {1:partial Partial files}
 

@@ -268,3 +268,10 @@ module Pytorch = Pytorch
 
 let load_pytorch path =
   Fail.file path @@ fun () -> Pytorch.load (Storage.open_file path)
+
+(* Audio *)
+
+module Audio = Audio
+
+let load_audio path =
+  Fail.file path @@ fun () -> Audio.read path (Storage.open_file path)
