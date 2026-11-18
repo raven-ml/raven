@@ -328,6 +328,247 @@ let test_conv_rejects_bad_input () =
   rejects (fun () ->
       Conv.apply ~stride:[| 0; 1 |] p (Nx.zeros Nx.float32 [| 1; 4; 4; 2 |]))
 
+(* Definitions summed directly *)
+
+(* C-order index arithmetic over flat arrays, for the definitions below. *)
+let unflat shape f =
+  let idx = Array.make (Array.length shape) 0 in
+  let r = ref f in
+  for d = Array.length shape - 1 downto 0 do
+    idx.(d) <- !r mod shape.(d);
+    r := !r / shape.(d)
+  done;
+  idx
+
+let flat shape idx =
+  let f = ref 0 in
+  Array.iteri (fun d i -> f := (!f * shape.(d)) + i) idx;
+  !f
+
+let ints a = String.concat "; " (Array.to_list (Array.map string_of_int a))
+
+let pairs a =
+  let pair (l, h) = Printf.sprintf "(%d, %d)" l h in
+  String.concat "; " (Array.to_list (Array.map pair a))
+
+(* The extent of the windows along one axis: [(d + lo + hi - e) / stride + 1]
+   for a window of extent [e], or none where the padded axis is shorter. *)
+let windows_along ~d ~lo ~hi ~e ~stride =
+  let len = d + lo + hi in
+  if len < e then 0 else ((len - e) / stride) + 1
+
+(* {!Nx.conv}'s definition: the output at [(b, p…, j)] is the sum over the
+   taps [q…] and the channels [i] of [j]'s group of
+   [x[b, p · stride + q · dilation - lo…, i]] times [w[j, q…, i]], an element
+   outside [x] reading zero, plus the bias [j]. *)
+let conv_definition ~stride ~padding ~dilation ~groups x w b =
+  let xs = Nx.shape x and ws = Nx.shape w in
+  let k = Array.length xs - 2 in
+  let o = ws.(0) and cg = ws.(k + 1) in
+  let kernel = Array.sub ws 1 k and spatial = Array.sub xs 1 k in
+  let extent d =
+    let lo, hi = padding.(d) in
+    let e = (dilation.(d) * (kernel.(d) - 1)) + 1 in
+    windows_along ~d:spatial.(d) ~lo ~hi ~e ~stride:stride.(d)
+  in
+  let out = Array.concat [ [| xs.(0) |]; Array.init k extent; [| o |] ] in
+  let xv = Nx.to_array x and wv = Nx.to_array w and bv = Nx.to_array b in
+  let taps = Array.fold_left ( * ) 1 kernel in
+  let value f =
+    let idx = unflat out f in
+    let j = idx.(k + 1) in
+    let g = j / (o / groups) in
+    let acc = ref 0. in
+    for t = 0 to taps - 1 do
+      let q = unflat kernel t in
+      let at =
+        Array.init k (fun d ->
+            let lo = fst padding.(d) in
+            (idx.(d + 1) * stride.(d)) + (q.(d) * dilation.(d)) - lo)
+      in
+      if Array.for_all2 (fun a s -> a >= 0 && a < s) at spatial then
+        for i = 0 to cg - 1 do
+          let channel = (g * cg) + i in
+          let xi =
+            flat xs (Array.concat [ [| idx.(0) |]; at; [| channel |] ])
+          in
+          let wi = flat ws (Array.concat [ [| j |]; q; [| i |] ]) in
+          acc := !acc +. (xv.(xi) *. wv.(wi))
+        done
+    done;
+    !acc +. bv.(j)
+  in
+  (out, Array.init (Array.fold_left ( * ) 1 out) value)
+
+type geometry = {
+  batch : int;
+  spatial : int array;
+  kernel : int array;
+  stride : int array;
+  dilation : int array;
+  padding : (int * int) array;
+  groups : int;
+  per_group : int * int;
+  seed : int;
+}
+
+let pp_geometry ppf g =
+  Format.fprintf ppf
+    "batch %d, spatial [|%s|], kernel [|%s|], stride [|%s|], dilation \
+     [|%s|], padding [|%s|], groups %d, (in, out) per group (%d, %d), seed %d"
+    g.batch (ints g.spatial) (ints g.kernel) (ints g.stride) (ints g.dilation)
+    (pairs g.padding) g.groups (fst g.per_group) (snd g.per_group) g.seed
+
+let geometry =
+  let open Gen in
+  let* k = int_range 1 3 in
+  let axes g = array ~size:(constant k) g in
+  let+ batch = int_range 1 2
+  and+ spatial = axes (int_range 1 5)
+  and+ kernel = axes (int_range 1 3)
+  and+ stride = axes (int_range 1 2)
+  and+ dilation = axes (int_range 1 2)
+  and+ padding = axes (pair (int_range 0 2) (int_range 0 2))
+  and+ groups = int_range 1 3
+  and+ per_group = pair (int_range 1 3) (int_range 1 2)
+  and+ seed = int_range 0 1_000_000 in
+  { batch; spatial; kernel; stride; dilation; padding; groups; per_group; seed }
+
+(* Small integers keep every sum exact in float64. *)
+let small_ints rng shape =
+  Nx.init Nx.float64 shape (fun _ -> Float.of_int (Random.State.int rng 7 - 3))
+
+let law_conv_definition g =
+  let k = Array.length g.spatial in
+  let cg, og = g.per_group in
+  cover "1 spatial axis" (k = 1);
+  cover "2 spatial axes" (k = 2);
+  cover "3 spatial axes" (k = 3);
+  cover "groups" (g.groups > 1 && cg > 1);
+  cover "depthwise" (g.groups > 1 && cg = 1);
+  cover "stride 2" (Array.mem 2 g.stride);
+  cover "dilation 2" (Array.mem 2 g.dilation);
+  cover "padding" (Array.exists (fun (l, h) -> l > 0 || h > 0) g.padding);
+  let rng = Random.State.make [| g.seed |] in
+  let c = g.groups * cg and o = g.groups * og in
+  let x = small_ints rng (Array.concat [ [| g.batch |]; g.spatial; [| c |] ]) in
+  let w = small_ints rng (Array.concat [ [| o |]; g.kernel; [| cg |] ]) in
+  let b = small_ints rng [| o |] in
+  let y =
+    Conv.apply ~stride:g.stride ~padding:g.padding ~dilation:g.dilation
+      ~groups:g.groups { Conv.w; b = Some b } x
+  in
+  let shape, expected =
+    conv_definition ~stride:g.stride ~padding:g.padding ~dilation:g.dilation
+      ~groups:g.groups x w b
+  in
+  let empty = Array.exists (fun t -> t = 0) shape in
+  cover "an empty output" empty;
+  cover ~share:0.5 "a non-empty output" (not empty);
+  shape_is ~msg:"shape" shape y;
+  values_are ~msg:"values" ~tol:0. expected y
+
+(* The [Pool] preamble's definition: the output at [(b, t…, c)] reduces
+   [x[b, t · stride + q - lo…, c]] over the window's offsets [q…], an
+   element in the padding reading [pad]. [avg] divides by the window's
+   size. *)
+let pool_definition ~reduce ~pad ~window ~stride ~padding x =
+  let xs = Nx.shape x in
+  let k = Array.length window in
+  let spatial = Array.sub xs 1 k in
+  let extent d =
+    let lo, hi = padding.(d) in
+    windows_along ~d:spatial.(d) ~lo ~hi ~e:window.(d) ~stride:stride.(d)
+  in
+  let out =
+    Array.concat [ [| xs.(0) |]; Array.init k extent; [| xs.(k + 1) |] ]
+  in
+  let xv = Nx.to_array x in
+  let taps = Array.fold_left ( * ) 1 window in
+  let value f =
+    let idx = unflat out f in
+    reduce
+      (List.init taps (fun t ->
+           let q = unflat window t in
+           let at =
+             Array.init k (fun d ->
+                 (idx.(d + 1) * stride.(d)) + q.(d) - fst padding.(d))
+           in
+           let inside = Array.for_all2 (fun a s -> a >= 0 && a < s) at spatial in
+           if not inside then pad
+           else
+             let at = Array.concat [ [| idx.(0) |]; at; [| idx.(k + 1) |] ] in
+             xv.(flat xs at)))
+  in
+  (out, Array.init (Array.fold_left ( * ) 1 out) value)
+
+type pooling = {
+  batch : int;
+  spatial : int array;
+  channels : int;
+  window : int array;
+  stride : int array option;
+  padding : (int * int) array option;
+  seed : int;
+}
+
+let pp_pooling ppf (p : pooling) =
+  let opt f = function None -> "default" | Some a -> "[|" ^ f a ^ "|]" in
+  Format.fprintf ppf
+    "batch %d, spatial [|%s|], channels %d, window [|%s|], stride %s, \
+     padding %s, seed %d"
+    p.batch (ints p.spatial) p.channels (ints p.window) (opt ints p.stride)
+    (opt pairs p.padding) p.seed
+
+let pooling =
+  let open Gen in
+  let* k = int_range 1 3 in
+  let axes g = array ~size:(constant k) g in
+  let+ batch = int_range 1 2
+  and+ spatial = axes (int_range 1 5)
+  and+ channels = int_range 1 3
+  and+ window = axes (int_range 1 3)
+  and+ stride = option (axes (int_range 1 3))
+  and+ padding = option (axes (pair (int_range 0 2) (int_range 0 2)))
+  and+ seed = int_range 0 1_000_000 in
+  ({ batch; spatial; channels; window; stride; padding; seed } : pooling)
+
+let law_pool_definition (p : pooling) =
+  let k = Array.length p.window in
+  let stride = Option.value p.stride ~default:p.window in
+  let padding = Option.value p.padding ~default:(Array.make k (0, 0)) in
+  (* [Pool] refuses an input where no window fits. *)
+  assume
+    (Array.for_all
+       (fun d ->
+         let lo, hi = padding.(d) in
+         p.spatial.(d) + lo + hi >= p.window.(d))
+       (Array.init k Fun.id));
+  cover "1 spatial axis" (k = 1);
+  cover "2 spatial axes" (k = 2);
+  cover "3 spatial axes" (k = 3);
+  cover "overlapping windows"
+    (Array.exists2 (fun s w -> s < w) stride p.window);
+  cover "padding" (Array.exists (fun (l, h) -> l > 0 || h > 0) padding);
+  let rng = Random.State.make [| p.seed |] in
+  let x =
+    small_ints rng (Array.concat [ [| p.batch |]; p.spatial; [| p.channels |] ])
+  in
+  let check ~msg ~tol ~reduce ~pad y =
+    let shape, expected =
+      pool_definition ~reduce ~pad ~window:p.window ~stride ~padding x
+    in
+    shape_is ~msg shape y;
+    values_are ~msg ~tol expected y
+  in
+  let size = Float.of_int (Array.fold_left ( * ) 1 p.window) in
+  let maximum = List.fold_left Float.max Float.neg_infinity in
+  let mean l = List.fold_left ( +. ) 0. l /. size in
+  check ~msg:"max" ~tol:0. ~reduce:maximum ~pad:Float.neg_infinity
+    (Pool.max ~window:p.window ?stride:p.stride ?padding:p.padding x);
+  check ~msg:"avg" ~tol:1e-12 ~reduce:mean ~pad:0.
+    (Pool.avg ~window:p.window ?stride:p.stride ?padding:p.padding x)
+
 (* Pool *)
 
 let test_pool_goldens () =
@@ -469,6 +710,9 @@ let () =
                test_conv_input_gradients;
              test "make rejects invalid geometry" test_conv_rejects_bad_geometry;
              test "apply rejects invalid inputs" test_conv_rejects_bad_input;
+             prop "apply is the defining sum plus the bias"
+               (Gen.with_pp pp_geometry geometry)
+               law_conv_definition;
            ];
          group "conv_transpose"
            [
@@ -491,5 +735,8 @@ let () =
                test_max_pool_gradient_routes_to_max;
              test "gradients agree with finite differences" test_pool_gradients;
              test "invalid inputs are rejected" test_pool_rejects_bad_input;
+             prop "max and avg are the window reductions"
+               (Gen.with_pp pp_pooling pooling)
+               law_pool_definition;
            ];
        ])
