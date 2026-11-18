@@ -819,8 +819,9 @@ let own_domain =
         (Exn.invalid_arg
            ~sub:
              "Jord.Warp.corners: corner [0, 0] (490000, 10008000) is outside \
-              WGS 84 / UTM zone 33N's domain; dst must lie in its system's \
-              domain")
+              WGS 84 / UTM zone 33N's domain; dst's corners must lie in its \
+              system's domain (Crs.in_domain), and around a pole dst is a \
+              geographic cap of cells narrower than 180°")
         (fun () -> Warp.corners ~at:host Crs.lonlat past))
 
 let nad83_utm zone = Result.get_ok (Crs.of_epsg (26900 + zone))
@@ -2017,8 +2018,9 @@ let too_small =
       raises_match spans (fun () -> Nx.to_array (Rune.jit' rule q));
       equal ~msg:"k = 4 suffices" (array float_exact) [| 1. |]
         (Nx.to_array (fst (Warp.average ~k:4 (unit_grid x) q x)));
-      raises_match (Exn.invalid_arg ~sub:"k = 0 is below 1") (fun () ->
-          Warp.average ~k:0 (unit_grid x) q x);
+      raises_match
+        (Exn.invalid_arg ~sub:"k = 0 is below 1; use Warp.span for k")
+        (fun () -> Warp.average ~k:0 (unit_grid x) q x);
       raises_match (Exn.invalid_arg ~sub:"k = 0 is below 1") (fun () ->
           Warp.mode ~k:0 (unit_grid x) q (Nx.cast Nx.int32 x)))
 

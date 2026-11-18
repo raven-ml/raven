@@ -1618,12 +1618,24 @@ let require ~batch c a b inside =
     Nx.Ptree.(pair tensor tensor)
     ok (a, b)
     (fun i (a, b) ->
-      let at = String.concat ", " (List.map string_of_int (Array.to_list i)) in
+      (* An unbatched point has no index, which [] would print as one. *)
+      let at =
+        if i = [||] then ""
+        else
+          strf " [%s]"
+            (String.concat ", " (List.map string_of_int (Array.to_list i)))
+      in
+      let zone =
+        match c.projection with
+        | Some (Transverse_mercator _) -> ", such as the zone Crs.utm_at gives"
+        | _ -> ""
+      in
       Invalid_argument
         (Format.asprintf
-           "Jord.Crs.transform: point [%s] (%.17g, %.17g) is outside %a's \
-            domain"
-           at (Nx.item [] a) (Nx.item [] b) pp c))
+           "Jord.Crs.transform: point%s (%.17g, %.17g) is outside %a's \
+            domain; mask such points with Crs.in_domain, or take them to a \
+            system whose domain holds them%s"
+           at (Nx.item [] a) (Nx.item [] b) pp c zone))
 
 (* Whether (offset, lat) lies within [boundary_slack] of the domain, along the
    parallel. *)

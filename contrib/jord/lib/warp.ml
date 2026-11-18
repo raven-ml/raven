@@ -90,11 +90,16 @@ let corners ~at crs (dst : Grid.t) =
         let n = String.length refused in
         try Crs.transform ~src:dst.crs ~dst:pivot c
         with Invalid_argument m when String.starts_with ~prefix:refused m ->
+          (* The refusal up to transform's remedy, which this one replaces. *)
+          let e =
+            Option.value ~default:(String.length m) (String.index_opt m ';')
+          in
           invalid_arg
             (strf
-               "Jord.Warp.corners: corner %s; dst must lie in its system's \
-                domain"
-               (String.sub m n (String.length m - n)))
+               "Jord.Warp.corners: corner %s; dst's corners must lie in its \
+                system's domain (Crs.in_domain), and around a pole dst is a \
+                geographic cap of cells narrower than 180°"
+               (String.sub m n (e - n)))
       in
       (match projection with
       | Crs.Albers _ -> ()
@@ -664,7 +669,8 @@ type ('v, 's, 'd) footprints = {
 }
 
 let footprints fn ~k ?(row = 0) ?(col = 0) ?valid (src : Grid.t) q x =
-  if k < 1 then invalid_arg (strf "%s: k = %d is below 1" fn k);
+  if k < 1 then
+    invalid_arg (strf "%s: k = %d is below 1; use Warp.span for k" fn k);
   let p = place fn src q in
   let brows, bcols, rest = block fn ~wraps:p.wraps ~row ~col ?valid src x in
   let cols = src.cols in

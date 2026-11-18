@@ -322,6 +322,19 @@ let domain =
       test "the error names the point" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"point [1]") (fun () ->
               fwd (utm 33 true) [ (15., 0.); (80., 0.) ]));
+      (* An unbatched point has no index, and the remedy names the masking
+         and, for a zone, the zone that holds the point. *)
+      test "the error gives a remedy" (fun () ->
+          let p = Nx.create Nx.float64 [| 2 |] [| 60.; 10. |] in
+          raises_match
+            (Exn.invalid_arg
+               ~sub:
+                 "Jord.Crs.transform: point (60, 10) is outside WGS 84 / UTM \
+                  zone 33N's domain; mask such points with Crs.in_domain, or \
+                  take them to a system whose domain holds them, such as the \
+                  zone Crs.utm_at gives")
+            (fun () ->
+              Crs.transform ~src:Crs.lonlat ~dst:(utm 33 true) p));
     ]
 
 (* ETRS89-FIN [EUREF-FIN] / TM35FIN *)
