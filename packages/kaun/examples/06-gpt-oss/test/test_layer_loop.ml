@@ -65,13 +65,7 @@ let params ?(q8_0 = false) () =
   let block _ =
     {
       Gpt_oss.attn_norm = norm ();
-      attn =
-        {
-          Gpt_oss.q = projection d q;
-          k = projection d kv;
-          v = projection d kv;
-          out = projection q d;
-        };
+      attn = { Gpt_oss.qkv = projection d (q + (2 * kv)); out = projection q d };
       sinks = f [| cfg.n_heads |];
       ffn_norm = norm ();
       router = linear d e;

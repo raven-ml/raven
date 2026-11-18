@@ -25,7 +25,7 @@ let quant_proj _ o =
 let block ?(proj = float_proj) weight =
   {
     Gpt_oss.attn_norm = { Rms_norm.gamma = f [| 4 |] };
-    attn = { q = proj 4 4; k = proj 4 4; v = proj 4 4; out = proj 4 4 };
+    attn = { qkv = proj 4 12; out = proj 4 4 };
     sinks = f [| 2 |];
     ffn_norm = { Rms_norm.gamma = f [| 4 |] };
     router = lin 4 2;
@@ -62,9 +62,7 @@ let block_visits ?(proj = float_proj_visits) ~at weight =
   List.concat
     [
       [ leaf (at "attn_norm.gamma") ];
-      proj (at "attn.q");
-      proj (at "attn.k");
-      proj (at "attn.v");
+      proj (at "attn.qkv");
       proj (at "attn.out");
       [ leaf (at "sinks"); leaf (at "ffn_norm.gamma") ];
       linear (at "router");
@@ -114,8 +112,8 @@ let test_block () =
     | Quant _ -> "another format"
     | Float _ -> "float"
   in
-  equal ~msg:"a cast keeps the packed projections and casts their biases"
-    string "q8_0 blocks of uint8, bias of bfloat16" (kept cast.attn.q)
+  equal ~msg:"a cast keeps the packed projections and casts their biases" string
+    "q8_0 blocks of uint8, bias of bfloat16" (kept cast.attn.qkv)
 
 let test_params () =
   let params = Nx.Ptree.instantiate (module Gpt_oss.Params) in

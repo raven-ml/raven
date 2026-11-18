@@ -4152,6 +4152,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- The gpt-oss example computes its attention's query, key and value in one
+  product, `Gpt_oss.attn`'s `qkv`, which `Gpt_oss.of_hf` joins grouped by
+  key-value head: on an RTX 5000 Ada gpt-oss-20b's 12-token prefill takes
+  3-4% less and a Q8_0 64-token prefill 7.5% less.
 - `Linear.apply` rounds `x · w + b` once, the bias added to the products'
   sum in the accumulator, where at bfloat16 and float16 it rounded the
   product and then the sum. float32 and float64 results keep their bits.

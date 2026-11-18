@@ -63,14 +63,12 @@ val project :
 (** [project p x] is [p] applied to [x], whose last axis is [p]'s inputs:
     {!Kaun.Linear.apply}, or {!Nx_quant.apply} and the bias. *)
 
-type ('a, 'd) attn = {
-  q : ('a, 'd) projection;
-  k : ('a, 'd) projection;
-  v : ('a, 'd) projection;
-  out : ('a, 'd) projection;
-}
+type ('a, 'd) attn = { qkv : ('a, 'd) projection; out : ('a, 'd) projection }
 (** The type for the attention's projections over payload ['a]: the query,
-    key, value and output. Every projection has a bias. *)
+    key and value as one product, and the output. Each has a bias. [qkv]'s
+    outputs are grouped by key-value head: for each, in order, the
+    [n_heads / n_kv_heads] query heads that read it, then its key head and
+    its value head, [head_dim] features each. *)
 
 type ('a, 'd) block = {
   attn_norm : ('a, 'd) Kaun.Rms_norm.t;
@@ -95,9 +93,9 @@ type 'd t = ('d Nx.float32_t, 'd) params
 (** The type for single-precision gpt-oss parameters on the set ['d]. *)
 
 module Block : Nx.Ptree.S with type ('a, 'd) t = ('a, 'd) block
-(** A block's structure. It walks [attn_norm], [attn]'s [q], [k], [v] and
-    [out], [sinks], [ffn_norm], [router] and [moe]. A projection reports its
-    case, ["float"], walked as {!Kaun.Linear.walk}, or ["quant"], its [w] by
+(** A block's structure. It walks [attn_norm], [attn]'s [qkv] and [out],
+    [sinks], [ffn_norm], [router] and [moe]. A projection reports its case,
+    ["float"], walked as {!Kaun.Linear.walk}, or ["quant"], its [w] by
     {!Nx_quant.walk} and its [b]; the experts' weights report theirs (see
     {!Moe.walk}):
     [Nx.Ptree.instantiate (module Block)] is what a compiled block program takes
@@ -127,8 +125,10 @@ type role =
       (** Kept whole: the token table, the norms, the router and the attention
           output's bias. *)
   | Column
-      (** Cut along its outputs: the query, key and value projections with their
-          biases, the sinks, and an untied head. *)
+      (** Cut along its outputs: the query, key and value projection with its
+          bias, the sinks, and an untied head. A cut of the projection between
+          key-value heads holds on each device the query, key and value heads
+          that attend together ({!attn}). *)
   | Row  (** Cut along its inputs: the attention's output projection. *)
   | Experts
       (** Cut along the expert axis: the expert weights, packed parts included,
@@ -263,9 +263,13 @@ val of_hf :
 (** [of_hf ~placement cfg dt weights] is the model of the HuggingFace gpt-oss
     [weights], with its float leaves at [dt]. Each entry is read by its name in
     the file with the shape [cfg] gives it. Projections are transposed to
-    [inputs × outputs], a view. Experts stored as [_blocks] and [_scales] are an
-    {!Nx_quant.mxfp4} weight over the file's bytes, whatever [dt]. At the file's
-    own dtype nothing is copied; at another one each float leaf is cast.
+    [inputs × outputs], a view. The query, key and value entries, weights and
+    biases, are placed each in the file's [[| outputs; inputs |]] and joined
+    into [qkv] where they lie, a copy compiled there. Experts stored as
+    [_blocks] and [_scales] are an {!Nx_quant.mxfp4} weight over the file's
+    bytes, whatever [dt]. At the file's own dtype nothing else is copied but an
+    unpacked untied head, where it is placed; at another one each float leaf is
+    cast.
     Under [pack], [Unpacked] by default, the attention projections and an
     untied head are stored as {!packing} says, each packed weight quantised
     where it is placed and compiled, so a set that computes under

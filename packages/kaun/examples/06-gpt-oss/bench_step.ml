@@ -108,9 +108,7 @@ let params (type b) ~on c (dt : (float, b) Nx.dtype) ~skip_tables ~q8_0 =
         Gpt_oss.attn_norm = gamma ();
         attn =
           {
-            Gpt_oss.q = projection c.dim q_dim;
-            k = projection c.dim kv;
-            v = projection c.dim kv;
+            Gpt_oss.qkv = projection c.dim (q_dim + (2 * kv));
             out = projection q_dim c.dim;
           };
         sinks = f ~scale:1.0 [| c.n_heads |];

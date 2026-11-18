@@ -32,12 +32,7 @@ type ('a, 'd) projection =
   | Float of ('a, 'd) Linear.t
   | Quant of { w : 'd Nx_quant.t; b : 'a option }
 
-type ('a, 'd) attn = {
-  q : ('a, 'd) projection;
-  k : ('a, 'd) projection;
-  v : ('a, 'd) projection;
-  out : ('a, 'd) projection;
-}
+type ('a, 'd) attn = { qkv : ('a, 'd) projection; out : ('a, 'd) projection }
 
 type ('a, 'd) block = {
   attn_norm : ('a, 'd) Rms_norm.t;
@@ -86,11 +81,9 @@ let walk_projection c =
 
 let walk_attn c a =
   let open Nx.Ptree.Walk in
-  let q = field c "q" walk_projection a.q in
-  let k = field c "k" walk_projection a.k in
-  let v = field c "v" walk_projection a.v in
+  let qkv = field c "qkv" walk_projection a.qkv in
   let out = field c "out" walk_projection a.out in
-  { q; k; v; out }
+  { qkv; out }
 
 (* Structures *)
 
@@ -122,13 +115,23 @@ end
 
 (* Attention: kaun's cached layer with sinks and YaRN's score scale, over
    projections that may be packed. [split] and [merge] are kaun's
-   Attention.split and Attention.merge over {!project}. *)
+   Attention.split and Attention.merge over {!project}, [split] of the fused
+   projection: its outputs are, for each key-value head, the [group] query
+   heads that read it, its key head and its value head (of_hf). Query head
+   [h] reads key-value head [h / group], so merging the key-value and group
+   axes orders the query heads as the checkpoint does. *)
 
-let split ~head_dim p x =
+let split cfg p x =
   let y = project p x in
   let batch = Nx.dim 0 y and seq = Nx.dim 1 y in
-  let heads = Nx.dim 2 y / head_dim in
-  Nx.swapaxes 1 2 (Nx.reshape [| batch; seq; heads; head_dim |] y)
+  let kv = cfg.n_kv_heads and d = cfg.head_dim in
+  let group = cfg.n_heads / kv in
+  let y = Nx.reshape [| batch; seq; kv; group + 2; d |] y in
+  let heads x = Nx.swapaxes 1 2 x in
+  let q = Nx.slice [ A; A; A; R (0, group) ] y in
+  ( heads (Nx.reshape [| batch; seq; cfg.n_heads; d |] q),
+    heads (Nx.slice [ A; A; A; I group ] y),
+    heads (Nx.slice [ A; A; A; I (group + 1) ] y) )
 
 let merge p y =
   let batch = Nx.dim 0 y and heads = Nx.dim 1 y in
@@ -141,10 +144,9 @@ let windows cfg index =
   function Sliding -> sliding | Full -> full
 
 let attention cfg b cache index x =
-  let head_dim = cfg.head_dim and pos = Cache_index.positions index in
-  let q = Rope.apply cfg.rope ~pos (split ~head_dim b.attn.q x) in
-  let k = Rope.apply cfg.rope ~pos (split ~head_dim b.attn.k x) in
-  let v = split ~head_dim b.attn.v x in
+  let pos = Cache_index.positions index in
+  let q, k, v = split cfg b.attn.qkv x in
+  let q = Rope.apply cfg.rope ~pos q and k = Rope.apply cfg.rope ~pos k in
   let kv, cache = Attention.Cache.extend index cache k v in
   let y =
     Attention.attend
@@ -341,7 +343,48 @@ let of_hf ?(pack = Unpacked) ~placement cfg dt weights =
             b = Some (place b_role ~axis:0 b);
           }
   in
-  let column = projection Column ~axis:1 and row = projection Row ~axis:0 in
+  let row = projection Row ~axis:0 in
+  (* The query, key and value projections as one, its outputs grouped by
+     key-value head: each one's [group] query heads, then its key head and
+     its value head. A cut along the outputs between key-value heads so holds
+     on each device the heads that attend together, as cuts of the three
+     apart do. The three are placed in the file's [outputs; inputs] and
+     joined where they are placed, compiled, so a set that computes under
+     [Rune.jit] alone joins them too; the join copies. Q8_0 quantises each
+     row of 32-value blocks alone, so the joined weight packs to the rows
+     the three would. *)
+  let group = cfg.n_heads / cfg.n_kv_heads in
+  let join =
+    let by_kv heads x =
+      let rest = Array.sub (Nx.shape x) 1 (Nx.ndim x - 1) in
+      Nx.reshape (Array.append [| cfg.n_kv_heads; heads; cfg.head_dim |] rest) x
+    in
+    Rune.jit
+      Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+      (fun q k v ->
+        let y =
+          Nx.concatenate ~axis:1 [ by_kv group q; by_kv 1 k; by_kv 1 v ]
+        in
+        let rest = Array.sub (Nx.shape y) 3 (Nx.ndim y - 3) in
+        let outputs = cfg.n_kv_heads * (group + 2) * cfg.head_dim in
+        Nx.reshape (Array.append [| outputs |] rest) y)
+  in
+  let qkv at =
+    let joined leaf rest =
+      let part name heads =
+        let shape = Array.append [| heads * cfg.head_dim |] rest in
+        place Column ~axis:0 (float ~shape (at ("self_attn." ^ name ^ leaf)))
+      in
+      join
+        (part "q_proj" cfg.n_heads)
+        (part "k_proj" cfg.n_kv_heads)
+        (part "v_proj" cfg.n_kv_heads)
+    in
+    let w = joined ".weight" [| cfg.dim |] and b = joined ".bias" [||] in
+    match pack with
+    | Unpacked -> Float { Linear.w = Nx.matrix_transpose w; b = Some b }
+    | Q8_0 -> Quant { w = quantize w; b = Some b }
+  in
   let experts ~inputs ~outputs name =
     match Nx_io.Archive.find (name ^ "_blocks") weights with
     | None ->
@@ -367,16 +410,13 @@ let of_hf ?(pack = Unpacked) ~placement cfg dt weights =
         Moe.Quant (Nx_quant.place (placement Experts ~axis:0) w)
   in
   let q_dim = cfg.n_heads * cfg.head_dim in
-  let kv_dim = cfg.n_kv_heads * cfg.head_dim in
   let block i =
     let at leaf = Printf.sprintf "model.layers.%d.%s" i leaf in
     {
       attn_norm = norm (at "input_layernorm.weight");
       attn =
         {
-          q = column ~inputs:cfg.dim ~outputs:q_dim (at "self_attn.q_proj");
-          k = column ~inputs:cfg.dim ~outputs:kv_dim (at "self_attn.k_proj");
-          v = column ~inputs:cfg.dim ~outputs:kv_dim (at "self_attn.v_proj");
+          qkv = qkv at;
           out = row ~inputs:q_dim ~outputs:cfg.dim (at "self_attn.o_proj");
         };
       sinks =
