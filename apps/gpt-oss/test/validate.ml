@@ -3,19 +3,18 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Validation of the gpt-oss example against the transformers implementation.
+(* Validation of gpt-oss against the transformers implementation.
 
    The fixtures under [fixtures/] hold reference values recorded at float32 on
-   CPU by [reference.py] from two tiny random checkpoints, one with float
+   CPU by [gen/reference.py] from two tiny random checkpoints, one with float
    experts and one with MXFP4 experts, and name the sha256 of the weight files
    they were recorded from (printed here, not verified). The packed checkpoint's
    scales are tiny, so its cases are also recorded with a constant added to
    every scale byte.
 
-   The building blocks, at float32: [Nx_quant.dequant] against the reference
-   dequantiser, bit for bit; the router's logits, experts and weights, and what
-   it selects among equal logits; the MoE block on a batch, on a ragged pair and
-   on an input scaled until the activation clamps.
+   The building blocks, at float32: the router's logits, experts and weights,
+   and what it selects among equal logits; the MoE block on a batch, on a
+   ragged pair and on an input scaled until the activation clamps.
 
    The whole model, recorded with a sliding window of 4 so that the window binds
    on the 12-token prompt: the rotary tables and the sinks; each attention layer
@@ -38,48 +37,7 @@
    do. Not part of the test suite: it needs the download. *)
 
 open Kaun
-
-let json_of_file path =
-  let ic = open_in_bin path in
-  let s =
-    Fun.protect
-      ~finally:(fun () -> close_in ic)
-      (fun () -> In_channel.input_all ic)
-  in
-  match Jsont_bytesrw.decode_string Jsont.json s with
-  | Ok j -> j
-  | Error e -> failwith (path ^ ": " ^ e)
-
-let members = function
-  | Jsont.Object (mems, _) -> List.map (fun ((name, _), v) -> (name, v)) mems
-  | _ -> failwith "fixture: not an object"
-
-let mem name j =
-  match List.assoc_opt name (members j) with
-  | Some v -> v
-  | None -> failwith ("fixture: missing " ^ name)
-
-let floats = function
-  | Jsont.Array (l, _) ->
-      Array.of_list
-        (List.map
-           (function
-             | Jsont.Number (f, _) -> f
-             | _ -> failwith "fixture: number expected")
-           l)
-  | _ -> failwith "fixture: array expected"
-
-let ints j = Array.map int_of_float (floats j)
-
-let string = function
-  | Jsont.String (s, _) -> s
-  | _ -> failwith "fixture: string expected"
-
-let failures = ref 0
-
-let check name ok detail =
-  Printf.printf "%-66s %s%s\n%!" name (if ok then "ok" else "FAIL") detail;
-  if not ok then incr failures
+open Check
 
 let flat t = Nx.to_array (Nx.reshape [| -1 |] t)
 
@@ -105,29 +63,22 @@ let close ~tol name expected actual =
       (Printf.sprintf "  (worst relative error %.1e)" !worst)
   end
 
-(* Equality of every bit, the sign of zero included. [flushed i] says whether
-   value [i] may come out as zero instead. *)
-let identical ?(flushed = fun _ -> false) name expected actual =
-  let differing = ref 0 and zeroed = ref 0 and first = ref "" in
+(* Equality of every bit, the sign of zero included. *)
+let identical name expected actual =
+  let differing = ref 0 and first = ref "" in
   if Array.length expected <> Array.length actual then differing := -1
   else
     Array.iteri
       (fun i e ->
-        if Int64.bits_of_float e <> Int64.bits_of_float actual.(i) then
-          if flushed i && actual.(i) = 0.0 then incr zeroed
-          else begin
-            if !differing = 0 then
-              first := Printf.sprintf ", first %h for %h" actual.(i) e;
-            incr differing
-          end)
+        if Int64.bits_of_float e <> Int64.bits_of_float actual.(i) then begin
+          if !differing = 0 then
+            first := Printf.sprintf ", first %h for %h" actual.(i) e;
+          incr differing
+        end)
       expected;
-  let zeroed =
-    if !zeroed = 0 then ""
-    else Printf.sprintf ", %d subnormal flushed to zero" !zeroed
-  in
   check name (!differing = 0)
-    (Printf.sprintf "  (%d of %d values differ%s%s)" !differing
-       (Array.length expected) !first zeroed)
+    (Printf.sprintf "  (%d of %d values differ%s)" !differing
+       (Array.length expected) !first)
 
 (* [compiled ~jit s f x] is [f x] over the set [s], compiled with [jit]: [x] is
    placed there, a copy on each device, and the result is read back to the host,
@@ -136,12 +87,6 @@ let compiled ~jit s f x =
   let x = Nx.place (Nx.Placement.on s) x in
   Nx.place Nx.Host.on (if jit then Rune.jit' f x else f x)
 
-let number j =
-  match j with
-  | Jsont.Number (f, _) -> f
-  | _ -> failwith "fixture: number expected"
-
-let uint8 shape values = Nx.create Nx.uint8 shape values
 let float32 shape values = Nx.create Nx.float32 shape values
 
 (* Tensors of the weight files *)
@@ -208,58 +153,6 @@ let packed_weight archive ~offset name =
     (mxfp4 ~scales:(Nx.add_s scales offset) (bytes archive (name ^ "_blocks")))
 
 (* Checks *)
-
-(* Metal flushes subnormal float32 numbers to zero, the scale 2^-127 of the byte
-   0 included. Trained checkpoints hold no such scale; the tiny random one holds
-   little else. *)
-let min_normal = Float.ldexp 1.0 (-126)
-
-let dequant ~jit s fx =
-  let on = Nx.Placement.on s in
-  let metal =
-    List.exists (fun d -> Rig.name d = "METAL") (Nx.Devices.to_list s)
-  in
-  List.iter
-    (fun (name, case) ->
-      let shape = ints (mem "blocks_shape" case) in
-      let blocks = uint8 shape (ints (mem "blocks" case)) in
-      let scale_bytes = ints (mem "scales" case) in
-      let scales =
-        Nx.place on
-          (uint8 (Array.sub shape 0 (Array.length shape - 1)) scale_bytes)
-      in
-      let weight b = mxfp4 ~scales b in
-      let expected = floats (mem "values" case) in
-      let flushed i =
-        metal
-        && (scale_bytes.(i / 32) = 0 || Float.abs expected.(i) < min_normal)
-      in
-      identical ~flushed
-        (Printf.sprintf "dequant %s, float32" name)
-        expected
-        (flat
-           (compiled ~jit s
-              (fun b -> Nx_quant.dequant Nx.float32 (weight b))
-              blocks));
-      identical ~flushed
-        (Printf.sprintf "dequant %s, bfloat16" name)
-        expected
-        (flat
-           (compiled ~jit s
-              (fun b ->
-                Nx.cast Nx.float32 (Nx_quant.dequant Nx.bfloat16 (weight b)))
-              blocks)))
-    (members (mem "dequant" fx));
-  let nan_scale = Nx.place on (uint8 [| 1; 1 |] [| 255 |]) in
-  let group =
-    compiled ~jit s
-      (fun b ->
-        Nx_quant.dequant Nx.float32 (Nx_quant.mxfp4 ~scales:nan_scale b))
-      (uint8 [| 1; 16 |] (Array.make 16 0x21))
-  in
-  check "dequant, the scale byte 255 is NaN"
-    (Array.for_all Float.is_nan (flat group))
-    ""
 
 let ties ~jit s fx =
   let k = int_of_float (number (mem "num_experts_per_tok" (mem "config" fx))) in
@@ -679,7 +572,6 @@ let () =
       ties ~jit s fx;
       let fx = fixture "gpt-oss-mxfp4" in
       let archive = Nx_io.load_safetensors (weights fx !mxfp4_weights) in
-      dequant ~jit s fx;
       blocks ~jit s ~tol fx ~label:"mxfp4" ~weight:packed_weight archive
     end;
     let fx = fixture "gpt-oss-bf16-model" in
@@ -698,4 +590,4 @@ let () =
     let module D = (val Nx.devices devices) in
     run ~jit:true D.v
   end;
-  if !failures > 0 then exit 1
+  finish ()

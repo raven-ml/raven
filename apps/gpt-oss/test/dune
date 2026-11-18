@@ -21,7 +21,7 @@
 
 (executables
  (names validate validate_stream validate_text)
- (modules validate validate_stream validate_text)
+ (modules check validate validate_stream validate_text)
  (libraries
   gpt_oss
   kaun

@@ -3,12 +3,12 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Validation of the gpt-oss example against a reference recorded one block at a
-   time, for checkpoints whose whole forward pass fits neither transformers nor
-   an eager run here: gpt-oss-20b.
+(* Validation of gpt-oss against a reference recorded one block at a time, for
+   checkpoints whose whole forward pass fits neither transformers nor an eager
+   run here: gpt-oss-20b.
 
-   A [fixtures/*-stream.json] file, written by [reference_stream.py], names its
-   repository and holds, for three prompts of 12, 43 and 167 tokens, the
+   A [fixtures/*-stream.json] file, written by [gen/reference_stream.py], names
+   its repository and holds, for three prompts of 12, 43 and 167 tokens, the
    router's experts of every token in every block, the residual stream after
    every block's attention and after the block at a few positions (its mean,
    root mean square and largest magnitude, its first features and fixed
@@ -42,56 +42,7 @@
    needs the download, 13.8 GB for gpt-oss-20b. *)
 
 open Kaun
-
-let json_of_file path =
-  let ic = open_in_bin path in
-  let s =
-    Fun.protect
-      ~finally:(fun () -> close_in ic)
-      (fun () -> In_channel.input_all ic)
-  in
-  match Jsont_bytesrw.decode_string Jsont.json s with
-  | Ok j -> j
-  | Error e -> failwith (path ^ ": " ^ e)
-
-let members = function
-  | Jsont.Object (mems, _) -> List.map (fun ((name, _), v) -> (name, v)) mems
-  | _ -> failwith "fixture: not an object"
-
-let mem name j =
-  match List.assoc_opt name (members j) with
-  | Some v -> v
-  | None -> failwith ("fixture: missing " ^ name)
-
-let find name j = List.assoc_opt name (members j)
-
-let list = function
-  | Jsont.Array (l, _) -> l
-  | _ -> failwith "fixture: array expected"
-
-let number = function
-  | Jsont.Number (f, _) -> f
-  | _ -> failwith "fixture: number expected"
-
-let string = function
-  | Jsont.String (s, _) -> s
-  | _ -> failwith "fixture: string expected"
-
-let floats j = Array.of_list (List.map number (list j))
-let ints j = Array.map int_of_float (floats j)
-let failures = ref 0
-let first_failure = ref None
-
-(* A difference that the precision explains: printed, never a failure. *)
-let note name ok detail =
-  Printf.printf "%-52s %s%s\n%!" name (if ok then "ok" else "note") detail
-
-let check name ok detail =
-  Printf.printf "%-52s %s%s\n%!" name (if ok then "ok" else "FAIL") detail;
-  if not ok then begin
-    incr failures;
-    if !first_failure = None then first_failure := Some name
-  end
+open Check
 
 (* The projection rows of the recorder, from the same generator. *)
 let signs ~rows ~dim =
@@ -425,8 +376,5 @@ let () =
     let module D = (val Nx.devices [ d ]) in
     run ~tol ~logits_tol ~exact ~on:D.on ~blocks ~only:!only fx dt
   end;
-  match !first_failure with
-  | None -> Printf.printf "all checks passed (tolerance %.0e)\n" tol
-  | Some name ->
-      Printf.printf "%d checks failed; the first: %s\n" !failures name;
-      exit 1
+  Printf.printf "tolerance %.0e\n" tol;
+  finish ()

@@ -3,10 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Validation of the text side of the gpt-oss example against the reference
-   implementations.
+(* Validation of gpt-oss's text side against the reference implementations.
 
-   [fixtures/harmony.json] is recorded by [reference_text.py] from the
+   [fixtures/harmony.json] is recorded by [gen/reference_text.py] from the
    openai-harmony package and from HuggingFace tokenizers reading the
    checkpoint's [tokenizer.json]. Three things are checked: that brot encodes a
    set of strings to the recorded ids and decodes them back, special tokens
@@ -19,59 +18,20 @@
    tokenizer file it comes from the fixture's repository (27 MB, cached). Not
    part of the test suite: it needs the download. *)
 
-let json_of_file path =
-  let text = In_channel.with_open_bin path In_channel.input_all in
-  match Jsont_bytesrw.decode_string Jsont.json text with
-  | Ok j -> j
-  | Error e -> failwith (path ^ ": " ^ e)
-
-let mem name = function
-  | Jsont.Object (mems, _) -> (
-      match List.find_opt (fun ((n, _), _) -> n = name) mems with
-      | Some (_, v) -> v
-      | None -> failwith ("fixture: missing " ^ name))
-  | _ -> failwith "fixture: not an object"
-
-let list = function
-  | Jsont.Array (l, _) -> l
-  | _ -> failwith "fixture: not an array"
-
-let string = function
-  | Jsont.String (s, _) -> s
-  | _ -> failwith "fixture: not a string"
-
-let string_option = function Jsont.Null _ -> None | j -> Some (string j)
-
-let bool = function
-  | Jsont.Bool (b, _) -> b
-  | _ -> failwith "fixture: not a boolean"
-
-let ids j =
-  let id = function
-    | Jsont.Number (f, _) -> int_of_float f
-    | _ -> failwith "fixture: not a number"
-  in
-  Array.of_list (List.map id (list j))
-
-let failures = ref 0
-let checks = ref 0
-
-let check name ok =
-  incr checks;
-  if not ok then incr failures;
-  Printf.printf "%s %s\n" (if ok then "ok  " else "FAIL") name
+open Check
 
 let check_strings tokenizer fixture =
   List.iter
     (fun case ->
-      let text = string (mem "text" case) and expected = ids (mem "ids" case) in
+      let text = string (mem "text" case) and expected = ints (mem "ids" case) in
       let name = Printf.sprintf "%S" text in
       let name =
         if String.length name <= 60 then name else String.sub name 0 57 ^ "..."
       in
       check ("encode " ^ name)
-        (Brot.encode_ids tokenizer ~add_special_tokens:false text = expected);
-      check ("decode " ^ name) (Brot.decode tokenizer expected = text))
+        (Brot.encode_ids tokenizer ~add_special_tokens:false text = expected)
+        "";
+      check ("decode " ^ name) (Brot.decode tokenizer expected = text) "")
     (list (mem "strings" fixture))
 
 let effort = function
@@ -106,7 +66,8 @@ let check_conversations harmony fixture =
       in
       check
         ("render: " ^ string (mem "name" case))
-        (rendered = ids (mem "ids" case)))
+        (rendered = ints (mem "ids" case))
+        "")
     (list (mem "conversations" fixture))
 
 (* The texts a parser gives, joined per message: a new message starts where the
@@ -139,11 +100,11 @@ let check_completions harmony fixture =
             (channel (string (mem "channel" m)), string (mem "content" m)))
           (list (mem "messages" case))
       in
-      let messages, stopped, valid = parse harmony (ids (mem "ids" case)) in
+      let messages, stopped, valid = parse harmony (ints (mem "ids" case)) in
       let name = "parse: " ^ string (mem "name" case) in
-      check (name ^ ", messages") (messages = expected);
-      check (name ^ ", stop") (stopped = bool (mem "stopped" case));
-      check (name ^ ", every text valid UTF-8") valid)
+      check (name ^ ", messages") (messages = expected) "";
+      check (name ^ ", stop") (stopped = bool (mem "stopped" case)) "";
+      check (name ^ ", every text valid UTF-8") valid "")
     (list (mem "completions" fixture))
 
 let () =
@@ -173,5 +134,4 @@ let () =
   let harmony = Harmony.of_file path in
   check_conversations harmony fixture;
   check_completions harmony fixture;
-  Printf.printf "%d checks, %d failures\n" !checks !failures;
-  if !failures > 0 then exit 1
+  finish ()

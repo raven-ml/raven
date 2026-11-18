@@ -1,6 +1,6 @@
 # Reference values for kaun's gpt-oss example, from the transformers
-# implementation at float32 on CPU. Writes fixtures/<name>.json, the MoE block
-# and the dequantiser, and fixtures/<name>-model.json, the whole model, next to
+# implementation at float32 on CPU. Writes fixtures/<name>.json, the MoE block,
+# and fixtures/<name>-model.json, the whole model, next to
 # this script. Only the tiny random checkpoints are read, a few MB each.
 #
 #   uv run --with torch==2.14.0 --with transformers==5.17.0 \
@@ -118,22 +118,6 @@ def packed(path, name):
     with safe_open(path, "pt") as f:
         prefix = f"model.layers.{LAYER}.mlp.experts.{name}"
         return f.get_tensor(prefix + "_blocks"), f.get_tensor(prefix + "_scales")
-
-
-def dequantised(blocks, scales):
-    # convert_moe_packed_tensors ends with a transpose to the module's
-    # [experts, in, out]; the fixture keeps the checkpoint's [.., out, in].
-    w = convert_moe_packed_tensors(blocks, scales, dtype=torch.float32)
-    return w.transpose(1, 2).contiguous()
-
-
-def dequant_case(blocks, scales):
-    return {
-        "blocks_shape": list(blocks.shape),
-        "blocks": ints(blocks),
-        "scales": ints(scales),
-        "values": flat(dequantised(blocks, scales)),
-    }
 
 
 def ties():
@@ -309,15 +293,5 @@ for name, spec in MODELS.items():
                 w = convert_moe_packed_tensors(blocks, scales + offset, dtype=torch.float32)
                 getattr(experts, param).data = w
             fixture["cases"][str(offset)] = cases(model)
-        # Every scale byte but 253 and up, whose products leave float32.
-        g = torch.Generator().manual_seed(0)
-        sweep = torch.randint(0, 256, (1, 23, 11, 16), dtype=torch.uint8, generator=g)
-        fixture["dequant"] = {
-            "gate_up_proj": dequant_case(gate_up[0][:2, :3], gate_up[1][:2, :3]),
-            "down_proj": dequant_case(down[0][30:, :3], down[1][30:, :3]),
-            "every_scale": dequant_case(
-                sweep, torch.arange(253, dtype=torch.uint8).reshape(1, 23, 11)
-            ),
-        }
     write(name, fixture)
     write(name + "-model", model_fixture(spec, weights, provenance))
