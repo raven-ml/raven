@@ -52,6 +52,12 @@ val sources :
     ({!Tolk.Cstyle.without_compiler}), in the order the schedule calls
     them. *)
 
+val program : target:Tolk.Helpers.Target.t -> Tolk.Ops.t -> Tolk.Ops.t option
+(** [program ~target ast] is the program {!sources} or {!derivative_sources}
+    linearized for [target] from the kernel's sink [ast] they gave, as
+    {!Tolk.Codegen.linearize} gives it, or [None] where neither gave [ast]
+    for [target]. *)
+
 val derivative_sources :
   target:Tolk.Helpers.Target.t ->
   (unit -> ('v, 's, 'd) Nx.t) ->

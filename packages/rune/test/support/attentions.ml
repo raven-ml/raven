@@ -733,15 +733,16 @@ let zero_sums (module S : Nx.Devices) dtype =
    [A <= 2 V dv + 1] and [λ] at each of its cotangent's [dv + 1] terms
    and at [ds]; unscaled, [λ] at the scaled cotangent, at [p] and [ds]
    rounded to a narrow dtype, and at the term's product and addition.
-   [q̄] and [B] add [tk g], [k̄] and [v̄] [n g], and each result [λ] for
-   its rounding. *)
+   [q̄] and [B] add [tk g], [k̄] and [v̄] [n g], and each result its dtype's
+   least normal for its rounding, which under [wide] is the query's, not
+   the accumulator's. *)
 
-let grad_law ?(composed = false) (module S : Nx.Devices) ~vmap c =
+let grad_law ?(composed = false) ?wide (module S : Nx.Devices) ~vmap c =
   let cover = demand ~composed in
   if vmap && (c.page <> None || c.lengths <> None || c.mask = Spans) then
     invalid_arg "Attentions.grad_law: a mapped case of pages, lengths or spans";
   let (F dt) = float_dtype c.dtype in
-  let wide = Nx.Dtype.name dt = "float64" in
+  let wide = Option.value wide ~default:(Nx.Dtype.name dt = "float64") in
   let u = if wide then 0x1p-53 else 0x1p-24 in
   let uq = unit_roundoff c.dtype in
   let narrow = uq > 0x1p-20 in
@@ -838,6 +839,16 @@ let grad_law ?(composed = false) (module S : Nx.Devices) ~vmap c =
   let wo_a = Nx.to_array (f64 wo) and wl_a = Nx.to_array (f64 wl) in
   let vmax = if c.positive then 1.01 else 1. in
   let least = if wide then 0x1p-1022 else 0x1p-126 in
+  (* The result's rounding floor: under [wide], that of the query's dtype,
+     the result's, rather than the accumulator's. *)
+  let result_least =
+    if not wide then least
+    else
+      match Nx.Dtype.name dt with
+      | "float64" -> 0x1p-1022
+      | "float16" -> 0x1p-14
+      | _ -> 0x1p-126
+  in
   let floor = if half then 0x1p-25 else 0. in
   let under = ((scale *. Float.of_int ((3 * c.dv) + 3) *. vmax) +. 5.) *. least in
   let uv = if narrow then uq else 0. in
@@ -917,7 +928,7 @@ let grad_law ?(composed = false) (module S : Nx.Devices) ~vmap c =
         less
           ~msg:(Printf.sprintf "%s at %d" name j)
           float_exact
-          ~than:(twice (bound j +. (uq *. Float.abs r) +. floor +. least) +. 1e-300)
+          ~than:(twice (bound j +. (uq *. Float.abs r) +. floor +. result_least) +. 1e-300)
           (Float.abs (gs.(j) -. r)))
       refs
   in

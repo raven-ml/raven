@@ -241,7 +241,16 @@ let kernels (type v s d) ?cores (f : unit -> (v, s, d) Nx.t) =
 (* Each kernel of the schedule of the stores [sink] makes on [device],
    rendered by [renderer], whose tensor cores it takes: its name, sink and
    source, in the order the schedule calls them. *)
-let rendered ~device renderer sink =
+(* Each kernel's program, by its target and sink, as {!rendered} linearized
+   it. *)
+let programs = Hashtbl.create 64
+
+let program ~(target : Helpers.Target.t) ast =
+  List.find_map
+    (fun (a, p) -> if a == ast then Some p else None)
+    (Hashtbl.find_all programs (target.device, target.renderer, target.arch, Ops.hash ast))
+
+let rendered ~(target : Helpers.Target.t) ~device renderer sink =
   let linear, _ =
     Schedule.create_linear_with_vars
       ~cores:[ (device, Heuristic.cores renderer) ]
@@ -255,6 +264,9 @@ let rendered ~device renderer sink =
       match (Ops.op ast, Ops.arg ast) with
       | Op.Sink, Kernel _ ->
           let p = Codegen.linearize ast renderer in
+          Hashtbl.add programs
+            (target.device, target.renderer, target.arch, Ops.hash ast)
+            (ast, p);
           let name =
             match Ops.arg (Ops.nth p 0) with Kernel k -> k.name | _ -> ""
           in
@@ -274,7 +286,7 @@ let sources (type v s d) ~(target : Helpers.Target.t)
   let renderer, place = off_host target in
   let _, u, dt, _, n = lowered ~direct:true ~local:false ~place f in
   let o = Ops.new_buffer place.device (max 1 n) (L.dtype (D.Any dt)) in
-  rendered ~device:place.device renderer
+  rendered ~target ~device:place.device renderer
     (Ops.sink
        [ Ops.after o [ Ops.store o (Shape.reshape u [ Ops.Int (max 1 n) ]) ] ])
 
@@ -294,6 +306,6 @@ let derivative_sources (type v s d) ~(target : Helpers.Target.t)
   in
   List.map
     (Option.map (fun us ->
-         rendered ~device:place.device renderer
+         rendered ~target ~device:place.device renderer
            (Ops.sink (List.filter_map store (Array.to_list us)))))
     !found

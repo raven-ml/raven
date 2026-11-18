@@ -130,14 +130,17 @@ val zero_sums : (module Nx.Devices) -> Nx.Dtype.any -> unit
     others' [-0]. With so many rows, every target runs each row's keys in
     one kernel, which no combine of key splits follows. *)
 
-val grad_law : ?composed:bool -> (module Nx.Devices) -> vmap:bool -> t -> unit
+val grad_law :
+  ?composed:bool -> ?wide:bool -> (module Nx.Devices) -> vmap:bool -> t -> unit
 (** [grad_law s ~vmap c] checks the gradient in the query, keys and values of
     a loss over [c]'s [o] and [lse], compiled on [s]'s devices, against the
     host's eager float64 gradient within the bound rune.mli's numerics
     compose, and that the call is compiled. Where [vmap], the compiled
     gradient is that of each lead index, mapped by {!Rune.vmap}.
 
-    Where [composed], the reference is {!law}'s composition's.
+    Where [composed], the reference is {!law}'s composition's. Where [wide]
+    (default where [c]'s dtype is float64), the call accumulates in
+    float64, else in float32.
 
     Raises [Invalid_argument] if [vmap] and [c] has pages, lengths or a
     [Spans] mask, whose arrays vary along the lead axes. *)

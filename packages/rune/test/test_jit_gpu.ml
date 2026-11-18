@@ -3529,15 +3529,32 @@ let () =
                  if c.Attentions.dtype = Nx.Dtype.Any Nx.float64 then
                    assume (has_float64 d);
                  Attentions.grad_law ~composed:true s ~vmap:false c);
+             (* float32 and bfloat16 accumulated in float64, on the FFMA
+                kernels: their operands are not in the accumulator's
+                dtype. *)
+             Windtrap.cases
+               "their gradient accumulated in float64 holds rune's bound \
+                against the composition's"
+               ~id:head_id
+               (List.filter
+                  (fun (c : Attentions.t) ->
+                    c.dtype <> Nx.Dtype.Any Nx.float64 && c.dk <= 160 && c.dv <= 160)
+                  heads)
+               (fun c ->
+                 let d, s = on_gpu () in
+                 assume (has_float64 d);
+                 Attentions.grad_law ~composed:true ~wide:true s ~vmap:false c);
              Windtrap.cases
                "the gradient of float32 keys of one chunk, unmasked, over \
                 several tiles a workgroup holds rune's bound against the \
                 composition's"
-               ~id:(fun (c, _) -> head_id c)
-               (List.filter (fun (_, wide) -> not wide) one_chunk)
-               (fun (c, _) ->
-                 Attentions.grad_law ~composed:true (snd (on_gpu ()))
-                   ~vmap:false c);
+               ~id:(fun (c, wide) ->
+                 head_id c ^ if wide then " in float64" else " in float32")
+               one_chunk
+               (fun (c, wide) ->
+                 let d, s = on_gpu () in
+                 if wide then assume (has_float64 d);
+                 Attentions.grad_law ~composed:true ~wide s ~vmap:false c);
              Windtrap.cases "a kernel's instructions do not grow with its head"
                ~id:(fun (Nx.Dtype.Any dt) -> Nx.Dtype.name dt)
                Nx.Dtype.[ Any Nx.float32; Any Nx.bfloat16 ]
