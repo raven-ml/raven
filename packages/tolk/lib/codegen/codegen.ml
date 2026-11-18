@@ -3003,6 +3003,10 @@ let read ast ren =
 (* A kernel's program up to its source, to be compiled. *)
 type pending = { ren : Renderer.t; key : string; prg : Ops.t; source : string }
 
+(* A text a worker of [to_programs] took to compile: its lock is held while
+   it is compiled, and [lib] is its binary once made. *)
+type text = { lock : Mutex.t; mutable lib : string option }
+
 let to_programs ?beam kernels =
   let seen = Hashtbl.create 64 in
   let fresh (ast, ren) =
@@ -3029,19 +3033,71 @@ let to_programs ?beam kernels =
      starts its toolchain once for them. A worker that starts once the
      kernels are taken does nothing. *)
   let kernels = Array.of_list kernels and next = Atomic.make 0 in
+  (* Kernels of two keys can render one text, as two that differ in their
+     names alone. Each text is compiled by the first worker to reach its
+     compile, which takes it and holds its lock until the compile ends;
+     another that renders it waits on that lock for its binary. A worker
+     compiles every text it took before it waits, so a text waited for is
+     being compiled, whatever the order the workers run in. A waiter that
+     finds no binary, the taker's compile having raised, compiles the text
+     itself. *)
+  let lock = Mutex.create () and taken = ref [] in
+  let texts c =
+    match List.assq_opt c !taken with
+    | Some t -> t
+    | None ->
+        let t = Hashtbl.create 16 in
+        taken := (c, t) :: !taken;
+        t
+  in
+  (* A text is locked and kept in [mine] before the table shows it, so that
+     its taker unlocks every text another worker can wait on, whatever
+     raises, Ctrl-C's [Sys.Break] included. *)
+  let claim c ks mine =
+    let t = texts c in
+    List.iter
+      (fun k ->
+        if not (Hashtbl.mem t k.source) then begin
+          let text = { lock = Mutex.create (); lib = None } in
+          Mutex.lock text.lock;
+          mine := (k.source, text) :: !mine;
+          Hashtbl.replace t k.source text
+        end)
+      ks
+  in
+  let compile_taken c ks =
+    let mine = ref [] in
+    Fun.protect
+      ~finally:(fun () -> List.iter (fun (_, t) -> Mutex.unlock t.lock) !mine)
+      (fun () ->
+        Mutex.protect lock (fun () -> claim c ks mine);
+        let mine = !mine in
+        let libs = Renderer.Compiler.compile_all c (List.map fst mine) in
+        List.iter2 (fun (_, t) lib -> t.lib <- Some lib) mine libs)
+  in
+  let binary c k =
+    let text = Mutex.protect lock (fun () -> Hashtbl.find (texts c) k.source) in
+    Mutex.protect text.lock (fun () ->
+        match text.lib with
+        | Some lib -> lib
+        | None ->
+            let lib = Renderer.Compiler.compile_cached c k.source in
+            text.lib <- Some lib;
+            lib)
+  in
   let compile mine =
     let compilers =
-      List.fold_left
-        (fun cs k ->
-          if List.memq k.ren.compiler cs then cs else k.ren.compiler :: cs)
-        [] mine
+      List.rev
+        (List.fold_left
+           (fun cs k ->
+             if List.memq k.ren.compiler cs then cs else k.ren.compiler :: cs)
+           [] mine)
     in
+    let by c = List.filter (fun k -> k.ren.compiler == c) mine in
+    List.iter (fun c -> compile_taken c (by c)) compilers;
     List.concat_map
-      (fun c ->
-        let ks = List.filter (fun k -> k.ren.compiler == c) mine in
-        List.combine ks
-          (Renderer.Compiler.compile_all c (List.map (fun k -> k.source) ks)))
-      (List.rev compilers)
+      (fun c -> List.map (fun k -> (k, binary c k)) (by c))
+      compilers
   in
   let work _ =
     let rec take mine =

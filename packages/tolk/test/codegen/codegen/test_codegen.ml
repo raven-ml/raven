@@ -897,6 +897,106 @@ let compiles_in_one_call () =
   let _, _, calls = made_together ~parallel:1 5 in
   equal (list int) [ 5 ] calls
 
+(* [r] rendering with [render]. *)
+let rendering_with render (r : Renderer.t) =
+  Renderer.v ~name:r.name ~suffix:r.suffix ~supports_float4:r.supports_float4
+    ~half8:r.half8 ~byte_words:r.byte_words
+    ~full_rate_subnormals:r.full_rate_subnormals ~registers:r.registers
+    ~vector_lanes:r.vector_lanes ~has_local:r.has_local
+    ~has_shared:r.has_shared ~global_max:r.global_max ~local_max:r.local_max
+    ~local_threads_max:r.local_threads_max ~simd_threads:r.simd_threads
+    ?global_prod_max:r.global_prod_max ~shared_max:r.shared_max
+    ~async_copy:r.async_copy ~tensor_cores:r.tensor_cores
+    ~per_byte_first:r.per_byte_first ~core_threads:r.core_threads
+    ~stream_threads:r.stream_threads ~local_workgroups:r.local_workgroups
+    ~units:r.units ~in_flight:r.in_flight ~extra_matcher:r.extra_matcher
+    ~launch_members:r.launch_members ~launch_args:r.launch_args
+    ~launch_locals:r.launch_locals ~packed_args:r.packed_args
+    ~code_for_op:r.code_for_op ~native:r.native ~fma:r.fma ~render
+    ~compiler:r.compiler r.target
+
+(* Two kernels that differ in their names alone, which have two keys and one
+   compiled text, for a renderer whose compiler is [compile], and the call of
+   to_programs that makes them on two domains. Each render waits until both
+   kernels are being rendered, so that each of two workers takes one; a
+   deadline keeps a lone domain from waiting for ever, and the call then fails
+   on the domains that rendered. *)
+let one_text_twice compile =
+  let compiler = Renderer.Compiler.batch compile in
+  let base = renderer_for ~compiler clang_target in
+  let started = Atomic.make 0 and domains = ref [] and lock = Mutex.create () in
+  let render uops =
+    Atomic.incr started;
+    Mutex.protect lock (fun () ->
+        domains := (Domain.self () :> int) :: !domains);
+    let deadline = Unix.gettimeofday () +. 10. in
+    while Atomic.get started < 2 && Unix.gettimeofday () < deadline do
+      Unix.sleepf 0.001
+    done;
+    base.render uops
+  in
+  let r = rendering_with render base in
+  let value = Float.of_int (Atomic.fetch_and_add fresh 1) in
+  let named name =
+    let out = Shape.param ~shape:[ Int 16 ] 0 Float32 in
+    let i = Ops.range ~axis_type:Weak (Int 16) [ 0 ] in
+    let store =
+      Ops.store (Ops.index out [ i ]) (Ops.float ~dtype:Float32 value)
+    in
+    Ops.sink ~kernel:(Ops.kernel_info ~name ()) [ Ops.end_ store [ i ] ]
+  in
+  let a = named "a" and b = named "b" in
+  not_equal string ~msg:"keys" (Codegen.program_key a r)
+    (Codegen.program_key b r);
+  let make () =
+    let made =
+      match
+        Setting.context
+          [ B (Setting.parallel, 2) ]
+          (fun () -> Codegen.to_programs [ (a, r); (b, r) ])
+      with
+      | () -> Ok ()
+      | exception e -> Error e
+    in
+    equal int ~msg:"domains that rendered" 2
+      (List.length (List.sort_uniq Int.compare !domains));
+    match made with Ok () -> () | Error e -> raise e
+  in
+  (r, a, b, make)
+
+let compiles_shared_text_once () =
+  let compiled = ref [] and lock = Mutex.create () in
+  let r, a, b, make =
+    one_text_twice (fun srcs ->
+        Mutex.protect lock (fun () -> compiled := srcs @ !compiled);
+        srcs)
+  in
+  make ();
+  equal int ~msg:"sources compiled" 1 (List.length !compiled);
+  let made name k =
+    match Codegen.read k r with
+    | Some p ->
+        equal string ~msg:(name ^ "'s binary") (List.hd !compiled)
+          (Uops.binary_of p);
+        p
+    | None -> fail (name ^ " has no program")
+  in
+  not_equal string ~msg:"the programs' sources"
+    (source (made "a" a))
+    (source (made "b" b))
+
+(* A rejected text: the worker that waits for the other's compile finds no
+   binary and compiles the text itself, which raises. *)
+let shared_text_raises () =
+  let calls = Atomic.make 0 in
+  let _, _, _, make =
+    one_text_twice (fun _ ->
+        Atomic.incr calls;
+        raise (Renderer.Compiler.Compile_error "rejected"))
+  in
+  raises (Renderer.Compiler.Compile_error "rejected") make;
+  equal int ~msg:"compiles" 2 (Atomic.get calls)
+
 (* Workers' compiles of six kernels, the fourth's source rejected until the
    test accepts it: the first call raises, and the next makes every program
    the first did not keep. *)
@@ -1296,6 +1396,10 @@ let caching =
         compiles_together;
       test "to_programs on one domain compiles every source in one call"
         compiles_in_one_call;
+      test "to_programs compiles once a text two domains render"
+        compiles_shared_text_once;
+      test "to_programs raises for a text two domains render that is rejected"
+        shared_text_raises;
       test "to_programs after a call that raised makes the rest"
         remakes_after_raise;
       test "a program made under one setting is not returned under another"

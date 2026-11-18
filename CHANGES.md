@@ -1482,6 +1482,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Codegen.to_programs` compiles once a text that kernels of several keys
+  render, where each worker that rendered it compiled it: tessera's cold
+  training step compiled 5 of its 165 sources twice at 2 workers.
 - **Breaking:** `Heuristic.core_fits`, `core_fits_shape` and `core_rows`
   take `~decoded`, under which a decoded operand's rows take a core past 16,
   their pad uncounted, as the heuristic's cores take them.

@@ -220,10 +220,14 @@ val to_programs :
     left, then compiles its sources, each compiler's by one call of
     {!Renderer.Compiler.compile_all}, so that a compiler that compiles several
     sources in one run of its toolchain ({!Renderer.Compiler.batch}) starts it
-    once per worker. When a kernel asks for a beam search, whose timings
-    concurrent compiles would disturb, each kernel is made in turn, in order,
-    by {!to_program}. A kernel another domain is making at once may be made
-    twice, and the first made is kept.
+    once per worker. Kernels of several keys can make one compiled text, as
+    two that differ in their names alone: the text is compiled once, by the
+    first worker to reach its compile, and another worker that renders it
+    waits for that compile, and compiles it itself if that compile raised.
+    When a kernel asks for a beam search, whose timings concurrent compiles
+    would disturb, each kernel is made in turn, in order, by {!to_program}.
+    A kernel another domain is making at once may be made twice, and the
+    first made is kept.
 
     Raises what {!to_program} raises. A call that raises may have kept some
     of the programs, in memory or on disk, and a later call makes the

@@ -5359,8 +5359,11 @@ field (D12), and `of_program` and `Tiny_elf.t` went with it.
 - **Differs:** up to `PARALLEL` workers on `Worker.map` each take the
   kernels a schedule lacks, those `Codegen.read` does not find, one at a
   time, to lower and render until none is left, then compile their sources,
-  each compiler's in one call (`Renderer.Compiler.compile_all`). Clang
-  serves it with one run of its compiler proper (`clang -cc1`, the command
+  each compiler's in one call (`Renderer.Compiler.compile_all`). A text
+  two workers render, from kernels of two keys, is compiled by the first to
+  reach its compile, and the other waits for its binary, compiling the text
+  itself if that compile raised; tinygrad's workers each compile it unless
+  the disk cache holds it when they look. Clang serves it with one run of its compiler proper (`clang -cc1`, the command
   Clang states for the options with `-###`, its IR verifier on, D275), each
   source the file `-` of a directory of its own, after a line marker that
   names it `<stdin>`, the files named in a response file. Each object is the
@@ -5374,7 +5377,11 @@ field (D12), and `of_program` and `Tiny_elf.t` went with it.
   `scan/tridiagonal-100`, `devices/partials-16` and `model/schools-start`,
   which compile 111, 52, 60 and 39 host kernels, most under 8 KB, where
   Clang's start dominates. On fudge checks-48's 111 kernels took 2.4-3.5 s of
-  CPU as 111 runs and 0.54-0.65 s as one run of the compiler proper.
+  CPU as 111 runs and 0.54-0.65 s as one run of the compiler proper. A text
+  compiled once across workers: (d), its time to measure on fudge, with no
+  bench row yet: tessera's cold training step compiled 5 of its 165 sources
+  twice at 2 workers, each a compile that makes a binary already being
+  made.
 - **Pinned by:** the Compiler_cpu suite's `several sources › each object is
   the one its source compiles to alone` and `› a rejected source among
   others raises its own diagnostics`; the Renderer suite's `Compiler ›
@@ -5383,8 +5390,10 @@ field (D12), and `of_program` and `Tiny_elf.t` went with it.
   compile_all raises for the first source the toolchain rejects` and `›
   compile_cached behaves as a table of binaries`; the Codegen suite's
   `programs are kept › to_programs makes each kernel's program, compiled in
-  at most a list per domain` and `› to_programs on one domain compiles every
-  source in one call`; rune's compile bench rows above.
+  at most a list per domain`, `› to_programs on one domain compiles every
+  source in one call`, `› to_programs compiles once a text two domains
+  render` and `› to_programs raises for a text two domains render that is
+  rejected`; rune's compile bench rows above.
 
 ## D197. A program key orders commutative index operands by the kernel's ranges
 

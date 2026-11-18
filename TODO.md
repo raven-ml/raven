@@ -39,9 +39,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - cstyle names each parameter after its buffer's size (`data0_4096`), so
   kernels over buffers of two sizes compile apart under D485: name the
   parameters without sizes in the renderer
-- `Codegen.to_programs` compiles each worker's sources apart, so a text two
-  workers take compiles twice (5 of 165 in tessera's cold step): gather
-  the texts before the workers split them (coldcall/cause.md)
 - A dense bf16 product whose weights are laid `[K; N]` takes no tensor core
   and runs about 100x its byte bound (proj/)
 - A staged core pads N to its tile (D491) but not M: q at 100 tokens (M
