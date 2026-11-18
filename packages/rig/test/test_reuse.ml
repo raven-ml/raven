@@ -15,8 +15,11 @@ module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
-let submit ?(buffers = [||]) ?waits s =
-  Rig.submit ?waits (Sub.take s) ~buffers
+let submit ?(buffers = [||]) ?(args = [||]) ?waits s =
+  Rig.submit ?waits s ~buffers ~args
+
+(* The values of a submission's one fill, which reads none. *)
+let one = Support.zeros 1
 
 let timeout = 120.
 
@@ -119,7 +122,8 @@ let cycle_locked ~reached w =
   let d, p = Atomic.get w.current in
   let write () =
     let bd = require_some (B.borrow d w.b) in
-    submit (Sub.make d [| Support.touching [| Sub.write |] |]) ~buffers:[| bd |]
+    let s = Sub.make d [| Support.touching [| Sub.write |] |] in
+    submit ~args:one s ~buffers:[| bd |]
   in
   let q, poisoned =
     match write () with
@@ -204,7 +208,7 @@ let consume_system w =
   let waits = Array.of_list (List.map fst (Atomic.get w.points)) in
   let read () =
     let s = Sub.make w.consumer [| Support.touching [| Sub.read |] |] in
-    Rig.Point.wait (submit s ~waits ~buffers:[| w.b |])
+    Rig.Point.wait (submit ~args:one s ~waits ~buffers:[| w.b |])
   in
   match read () with
   | () -> `Ok
@@ -232,7 +236,7 @@ let use_system w =
     | None -> false
     | Some bd ->
         let s = Sub.make d [| Support.touching [| Sub.read |] |] in
-        Rig.Point.wait (submit s ~buffers:[| bd |]);
+        Rig.Point.wait (submit ~args:one s ~buffers:[| bd |]);
         true
   with
   | true -> `Ok
@@ -460,7 +464,7 @@ let test_mappings_released () =
 let cache_used d =
   let b = B.create d 64 in
   let s = Sub.make d [| Support.touching [| Sub.write |] |] in
-  Rig.Point.wait (submit s ~buffers:[| b |])
+  Rig.Point.wait (submit ~args:one s ~buffers:[| b |])
 [@@inline never]
 
 (* A submit that waits on a later device of a slot gives back its device's

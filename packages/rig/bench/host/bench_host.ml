@@ -66,23 +66,30 @@ let load_rows =
       Thumper.bench "floor-lookup" lookup;
     ]
 
-(* A run of a submission of one launch of [image]'s [f] on [device] (defaults
-   to the host) over [groups] groups of [threads] threads, with [params] bytes
-   that [set] stores. *)
-let launch ?(device = Rig.host) ?(refs = [||]) ?(params = 0)
-    ?(set = fun _ _ -> ()) image f ~groups ~threads =
+(* A submission of one launch of [image]'s [f] on [device] (defaults to the
+   host) and its values: [groups] groups of [threads] threads, with [params]
+   bytes that [set] writes. *)
+let launch ?(device = Rig.host) ?(refs = [||]) ?(params = 0) ?(set = ignore)
+    image f ~groups ~threads =
   let fn = Option.get (Rig.Image.resolve image f) in
   let s = Sub.make device [| Sub.launch ~refs fn ~params |] in
-  let run = Sub.take s and k = Sub.block s 0 in
-  Sub.Run.groups run k groups 1 1;
-  Sub.Run.threads run k threads 1 1;
-  set run k;
-  run
+  let b = Bytes.make params '\000' in
+  set b;
+  let args =
+    Sub.
+      {
+        groups = (groups, 1, 1);
+        threads = (threads, 1, 1);
+        shared = 0;
+        params = b;
+      }
+  in
+  (s, [| args |])
 
-let submit run buffers () =
-  ignore (Rig.submit run ~buffers : Rig.Point.t)
+let submit (s, args) buffers () =
+  ignore (Rig.submit s ~buffers ~args : Rig.Point.t)
 
-(* A run of one launch of empty.c on a software device, opened in the
+(* A submission of one launch of empty.c on a software device, opened in the
    measuring worker: a device opened before the fork is lost in it. *)
 let software_empty () =
   let d = Result.get_ok (Rig.software "bench-software") in
@@ -98,7 +105,7 @@ let launch_rows =
     [
       Thumper.bench "empty" (submit one [||]);
       Thumper.bench_with_setup "software-empty" ~setup:software_empty
-        (fun run -> submit run [||] ());
+        (fun l -> submit l [||] ());
       Thumper.bench "workers-empty" (submit all [||]);
       Thumper.bench "floor-release-acquire" release_acquire;
       Thumper.bench "floor-pool-job" (fun () ->
@@ -113,7 +120,7 @@ let scale_rows =
   let buffers = [| B.of_bigarray x |] in
   let scale ~groups =
     launch image "scale" ~refs:Sub.[| write 0 ~at:0 |] ~params:16
-      ~set:(fun run k -> Sub.Run.int64 run k 8 (Int64.of_int n))
+      ~set:(fun b -> Bytes.set_int64_le b 8 (Int64.of_int n))
       ~groups
       ~threads:((n + groups - 1) / groups)
   in

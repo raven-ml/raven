@@ -27,20 +27,20 @@ let claim_wait b a =
       claim_release b;
       raise e
 
-let submit ?(buffers = [||]) ?waits s =
-  Rig.submit ?waits (Rig.Submission.take s) ~buffers
+let submit ?(buffers = [||]) ?(args = [||]) ?waits s =
+  Rig.submit ?waits s ~buffers ~args
 
 let write d m =
   let s =
     Rig.Submission.make d [| Rig_support.touching [| Rig.Submission.write |] |]
   in
-  ignore (submit s ~buffers:[| m |])
+  ignore (submit ~args:(Rig_support.zeros 1) s ~buffers:[| m |])
 
 let read d m =
   let s =
     Rig.Submission.make d [| Rig_support.touching [| Rig.Submission.read |] |]
   in
-  ignore (submit s ~buffers:[| m |])
+  ignore (submit ~args:(Rig_support.zeros 1) s ~buffers:[| m |])
 
 let lost = function Rig.Lost _ -> true | _ -> false
 let lost_by d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
@@ -526,10 +526,11 @@ let test_taker_submits () =
     Sub.make ~fixed:[ (b', Rig.Read_write) ] d
       [| Sub.fill Rig_support.poke ~params:16 |]
   in
-  let run = Sub.take s in
-  Sub.Run.int64 run (Sub.block s 0) 0 (Int64.of_int (Sub.address s b'));
-  Sub.Run.int64 run (Sub.block s 0) 8 42L;
-  Rig.Point.wait (Rig.submit run ~buffers:[||]);
+  let params = Bytes.create 16 in
+  Bytes.set_int64_le params 0 (Int64.of_int (Sub.address s b'));
+  Bytes.set_int64_le params 8 42L;
+  let args = [| { Rig_support.zero with params } |] in
+  Rig.Point.wait (Rig.submit s ~buffers:[||] ~args);
   equal ~msg:"the word the work stored" int 42
     (B.read b' Bigarray.int64 (fun a -> Int64.to_int a.{0}))
 
@@ -619,10 +620,7 @@ let test_dead_claims () =
    the slot. *)
 let test_closed_slot_claim () =
   let d, _ = P.open_ "claim:closed" in
-  let p =
-    Rig.submit (Rig.Submission.take (Rig.Submission.make d [||]))
-      ~buffers:[||]
-  in
+  let p = Rig.submit (Rig.Submission.make d [||]) ~buffers:[||] ~args:[||] in
   Rig.Point.wait p;
   let b = B.create d 0 in
   Rig.close d;
@@ -1301,11 +1299,12 @@ let test_submit_take (name, kind) () =
   let src = B.create d 8 and dst = B.create d 8 in
   Rig_support.store (R.host src) 42;
   Rig_support.store (R.host dst) 0;
-  let run, buffers =
+  let s, buffers, args =
     match kind with
     | `Copy ->
-        ( Sub.take (Sub.make d [| Sub.(copy ~src:(Slot 0) ~dst:(Slot 1)) |]),
-          [| src; dst |] )
+        ( Sub.make d [| Sub.(copy ~src:(Slot 0) ~dst:(Slot 1)) |],
+          [| src; dst |],
+          [||] )
     | `Fixed ->
         let s =
           Sub.make
@@ -1313,23 +1312,21 @@ let test_submit_take (name, kind) () =
             d
             [| Sub.fill Rig_support.carry ~params:24 |]
         in
-        let run = Sub.take s and block = Sub.block s 0 in
-        Sub.Run.int64 run block 0 (Int64.of_int (Sub.address s dst));
-        Sub.Run.int64 run block 8 (Int64.of_int (Sub.address s src));
-        Sub.Run.int64 run block 16 8L;
-        (* The submit runs on another domain. *)
-        Sub.Run.release run;
-        (run, [||])
+        let params = Bytes.create 24 in
+        Bytes.set_int64_le params 0 (Int64.of_int (Sub.address s dst));
+        Bytes.set_int64_le params 8 (Int64.of_int (Sub.address s src));
+        Bytes.set_int64_le params 16 8L;
+        (s, [||], [| { Rig_support.zero with params } |])
   in
-  (* A submission keeps its fixed memory for its life, and claims a run's
-     buffers only while a submit runs. *)
+  (* A submission keeps its fixed memory for its life, and claims a submit's
+     buffers only while the submit runs. *)
   if kind = `Fixed then
     equal ~msg:"the source once the submission is made" bool true
       (claimed src);
   let point = submit (Sub.make producer [||]) in
   P.gate pp;
   let waiting =
-    Domain.spawn (fun () -> Rig.submit run ~waits:[| point |] ~buffers)
+    Domain.spawn (fun () -> Rig.submit s ~waits:[| point |] ~buffers ~args)
   in
   let took = ref false in
   Fun.protect
@@ -1351,7 +1348,7 @@ let test_submit_take (name, kind) () =
   equal ~msg:"the submitted work completed" int 0 (P.queued p);
   equal ~msg:"the source after hand-over" bool (kind = `Copy) (takes src)
 
-(* A submit refused for a run's buffer releases every claim it took on the
+(* A submit refused for one of its buffers releases every claim it took on the
    others, each buffer passed in two slots. *)
 let test_run_claim_refusals () =
   let module Sub = Rig.Submission in
@@ -1366,26 +1363,28 @@ let test_run_claim_refusals () =
           (takes b))
       bs
   in
+  let args = Rig_support.zeros 1 in
   let bs = buffers () in
-  ignore (submit s ~buffers:(slots bs));
+  ignore (submit s ~buffers:(slots bs) ~args);
   check bs;
   for i = 0 to 4 do
     let bs = buffers () in
     let replacement = taken ~why:"replaced" bs.(i) in
-    raises_match (dead "replaced") (fun () -> submit s ~buffers:(slots bs));
+    raises_match (dead "replaced") (fun () ->
+        submit s ~buffers:(slots bs) ~args);
     bs.(i) <- replacement;
     check bs
   done;
   ignore (P.run p)
 
-(* A submit whose wait raises releases the claims on its run's buffers. *)
+(* A submit whose wait raises releases the claims on its buffers. *)
 let test_run_wait_raises () =
   let module Sub = Rig.Submission in
   let producer, pp = P.open_ "claim:run-raises-producer" in
   let d, p = P.open_ "claim:run-raises" in
   let a = B.create d 8 and b = B.create d 8 in
   let s = Sub.make d [| Rig_support.touching (Array.make 3 Sub.read) |] in
-  let run = Sub.take s in
+  let args = Rig_support.zeros 1 in
   let point = submit (Sub.make producer [||]) in
   P.interrupt pp;
   let before =
@@ -1395,13 +1394,13 @@ let test_run_wait_raises () =
     ~finally:(fun () -> Sys.set_signal Sys.sigint before)
     (fun () ->
       raises Exit (fun () ->
-          Rig.submit run ~waits:[| point |] ~buffers:[| a; b; a |]));
+          Rig.submit s ~waits:[| point |] ~buffers:[| a; b; a |] ~args));
   let a = Rig_support.donated a and b = Rig_support.donated b in
   equal ~msg:"both claims released" (pair bool bool) (true, true)
     (Option.is_some a, Option.is_some b);
   let a = require_some a and b = require_some b in
   ignore (P.run pp);
-  ignore (Rig.submit run ~waits:[| point |] ~buffers:[| a; b; a |]);
+  ignore (Rig.submit s ~waits:[| point |] ~buffers:[| a; b; a |] ~args);
   ignore (P.run p)
 
 (* Two domains: takes of a group of two memories, in either order, against a
@@ -1821,11 +1820,11 @@ let tests =
       [
         test "fixed memory refuses a take during submit"
           (test_submit_take ("fixed", `Fixed));
-        test "a run's buffers refuse a take during submit"
+        test "a submit's buffers refuse a take during submit"
           (test_submit_take ("copy", `Copy));
-        test "a run's refused buffer releases every claim the submit took"
+        test "a submit's refused buffer releases every claim the submit took"
           test_run_claim_refusals;
-        test "an exceptional submit wait releases its run's claims"
+        test "an exceptional submit wait releases its buffers' claims"
           test_run_wait_raises;
         stateful ~domains:2
           "takes of a group and reads of its memory leave no claim behind"

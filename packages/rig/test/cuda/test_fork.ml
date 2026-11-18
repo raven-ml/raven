@@ -12,30 +12,23 @@ module S = Rig_cuda_support
 module B = Rig.Buffer
 module H = Rig_gpu_support.Host
 module Sub = Rig.Submission
-module Run = Rig.Submission.Run
 
 (* A submission of [n] launches of fixtures/launch.ptx's [ids], loaded on
-   [d] for it, its run stored and released: launch [j] runs one thread,
-   which stores [j + 1] into word [j] of the run's buffer. The submission
-   keeps the image. *)
+   [d] for it, and its values: launch [j] runs one thread, which stores
+   [j + 1] into word [j] of the submit's buffer. The submission keeps the
+   image. *)
 let[@inline never] stored d n =
   let image = require_ok (Rig.Image.load d (S.fixture "launch.ptx")) in
   let fn = Option.get (Rig.Image.resolve image "ids") in
   let refs = [| Sub.write 0 ~at:0 |] in
   let s = Sub.make d (Array.init n (fun _ -> Sub.launch ~refs fn ~params:24)) in
-  let run = Sub.take s in
-  for j = 0 to n - 1 do
-    let b = Sub.block s j in
-    Run.groups run b 1 1 1;
-    Run.threads run b 1 1 1;
-    Run.shared run b 0;
-    Run.int64 run b 0 (Int64.of_int (4 * j));
-    Run.int64 run b 8 (Int64.of_int (j + 1));
-    Run.int32 run b 16 0;
-    Run.float32 run b 20 0.
-  done;
-  Run.release run;
-  s
+  let values j =
+    let params = Bytes.make 24 '\000' in
+    Bytes.set_int64_le params 0 (Int64.of_int (4 * j));
+    Bytes.set_int64_le params 8 (Int64.of_int (j + 1));
+    Sub.{ groups = (1, 1, 1); threads = (1, 1, 1); shared = 0; params }
+  in
+  (s, Array.init n values)
 
 (* The parent plays an image's 33 launches through its chains of 17 and 16
    nodes, then forks. The child, whose device is lost, drops the image and
@@ -52,8 +45,8 @@ let inherited_chains () =
   let play msg =
     H.write (H.at out) (String.make (4 * n) '\000');
     let pieces, plain = C.replays g in
-    let run = Sub.take (Option.get !s) in
-    Rig.Point.wait (Rig.submit run ~buffers:[| out |]);
+    let sub, args = Option.get !s in
+    Rig.Point.wait (Rig.submit sub ~buffers:[| out |] ~args);
     let pieces', plain' = C.replays g in
     equal (pair int int)
       ~msg:(msg ^ ", pieces and plain launches")
@@ -93,8 +86,8 @@ let words_in_child () =
   | 0 ->
       ignore (Unix.alarm 5);
       let m = Result.get_ok (Rig.software "fork:child-memory") in
-      let run = Rig.Submission.(take (make m [||])) in
-      let p = Rig.submit run ~buffers:[||] in
+      let empty = Rig.Submission.make m [||] in
+      let p = Rig.submit empty ~buffers:[||] ~args:[||] in
       Rig.Point.wait p;
       Unix._exit
         (match Rig.lost d with

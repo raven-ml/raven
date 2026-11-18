@@ -25,33 +25,31 @@
     that they grow with them, and keeps none once it returns but the
     transforms' line plans ({!section-transforms_memory}) and the
     submissions it keeps for later calls on [d], at most 64 MiB of them as
-    it counts them: 1 KiB a call, and [32 (9 + ⌈w / 2⌉ + r)] bytes for each
-    launch of a GPU function of [w] words, at most 528, that names [r]
-    buffers, so at most 8,736 bytes and 32 a buffer. Past 64 MiB, and past
-    64 calls that launch one GPU function first, [d] drops the submissions
-    least recently used. A call of more than 64 MiB takes a submission of
-    its own, which no later call reuses. A submission also holds, left
-    out of the count and for as long as [d] keeps it, [32 (1 + ⌈w / 2⌉)]
-    bytes of each launch for each call beyond the first that ever wrote
-    it at once, so that the submissions [d] keeps hold at most [n] times
-    64 MiB, [n] the most calls ever on [d] at once. A section states where
-    a call's launches, and so its words, grow with its extents. Beside its
-    arrays, a kernel takes {e workspace}, memory on [d] for its
-    temporaries, and {e tickets}, zero 32-bit words its groups count on,
-    of the sizes its section states. It
-    keeps at most 64 MiB of workspace and 4 MiB of tickets for later calls
-    on [d], and a call that needs more takes buffers of its own, which
-    return to [d] once its work is done. A kernel whose section names
-    {e constants}, tables that depend only on a call's dtypes and extents,
-    takes them from [d]'s memory: [d] keeps the 16 most recently made, at
-    most 64 MiB of them together, for later calls, and a call that finds a
-    constant missing uploads it once nothing refuses the call and waits
-    for the upload. A constant of more than 64 MiB is uploaded for its
-    call alone and returns to [d] once the call's work is done.
-    Kept memory that a later call replaces, by a larger buffer or by its
-    own constants, returns once collected ({!Rig.section-reclaim}), since
-    another domain's call may still use it. A kernel raises
-    {!Rig.Out_of_memory} where [d] lacks that memory.
+    it counts them: 1 KiB a call, and [32 (8 + r)] bytes for each launch
+    that names [r] buffers. Past 64 MiB, and past 64 calls that launch one
+    GPU function first, [d] drops the submissions least recently used. A
+    call of more than 64 MiB takes a submission of its own, which no later
+    call reuses. A call's values, its launches' grids and words, go into
+    memory that rig keeps for the life of the process ({!Rig.submit}):
+    [32 (2 + ⌈w / 2⌉)] bytes for each launch of a GPU function of [w]
+    words, at most 8,512, in as many sets as submits were ever under way at
+    once, each as large as the largest submission it served. A section
+    states where a call's launches, and so its words, grow with its
+    extents. Beside its arrays, a kernel takes {e workspace}, memory on [d]
+    for its temporaries, and {e tickets}, zero 32-bit words its groups
+    count on, of the sizes its section states. It keeps at most 64 MiB of
+    workspace and 4 MiB of tickets for later calls on [d], and a call that
+    needs more takes buffers of its own, which return to [d] once its work
+    is done. A kernel whose section names {e constants}, tables that depend
+    only on a call's dtypes and extents, takes them from [d]'s memory: [d]
+    keeps the 16 most recently made, at most 64 MiB of them together, for
+    later calls, and a call that finds a constant missing uploads it once
+    nothing refuses the call and waits for the upload. A constant of more
+    than 64 MiB is uploaded for its call alone and returns to [d] once the
+    call's work is done. Kept memory that a later call replaces, by a
+    larger buffer or by its own constants, returns once collected
+    ({!Rig.section-reclaim}), since another domain's call may still use
+    it. A kernel raises {!Rig.Out_of_memory} where [d] lacks that memory.
 
     Each section below states, for a family of kernels, what it computes,
     how its float results associate and what bounds them, and the memory

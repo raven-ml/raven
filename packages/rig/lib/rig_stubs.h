@@ -281,10 +281,20 @@ struct rig_fixed {
 };
 
 /* An entry ref: the function value [code] that each submit writes at byte
-   [at] of the run's blocks. */
+   [at] of its call's blocks, after the values. */
 struct rig_code {
   size_t at;
   uint64_t code;
+};
+
+/* A launch or a fill of a submission, whose values each submit copies into
+   its block: its part, where its entry refs' last 8 bytes end in its
+   parameters, 0 for none, and the most threads a group of its function
+   runs, 0 for a fill or where its driver states none. */
+struct rig_sub_block {
+  int part;
+  uint32_t coded;
+  int64_t most;
 };
 
 /* A buffer of a submit: its memory's stamps, NULL while unset, and its use
@@ -320,7 +330,7 @@ void rig_buffer_side(value b, int local, struct rig_side *s);
 int rig_sides_overlap(const struct rig_side *a, const struct rig_side *b);
 
 /* A copy part of a submission: its index and, for its source and its
-   destination, the run's slot, or -1 for a buffer the submission names,
+   destination, the submit's slot, or -1 for a buffer the submission names,
    whose side is in [ends]. A fill, [fill] 1, sets its destination's bytes
    to [byte] and has no source: [src] is -1 and [ends[0]] zero. A box,
    [boxed] 1, copies the rows of [box] between its two buffers, whose
@@ -347,7 +357,7 @@ struct rig_sub {
   int *after; /* every part's [after], one after the other */
   int nfixed; /* the buffers the parts name */
   struct rig_fixed *fixed;
-  int nslots;      /* a run's buffers */
+  int nslots;      /* a submit's buffers */
   uint8_t *uses; /* per slot: how its work uses the buffer, an rig_use */
   int nrefs;
   struct rig_ref *refs; /* every launch's and fill's buffer refs, in part order */
@@ -355,26 +365,19 @@ struct rig_sub {
   struct rig_code *codes; /* every entry ref, in part order */
   int ncopies, nslotted; /* its copies, and those with a slot end */
   struct rig_copy *copies; /* every copy part, in part order */
-  size_t args;            /* where its last block ends in a run */
+  int nblocks;
+  struct rig_sub_block *blocks; /* every launch and fill, in part order */
+  size_t args; /* where its last block ends: the bytes of a call's blocks */
 };
 
-/* A run's state: free, submitting, or else the number of the thread that
-   took it (rig_thread_number). */
-enum { RUN_FREE = 0, RUN_SUBMITTING = -1 };
-
-/* A run: the blocks of one submission's launches and fills, made zeroed and
-   never grown, and its state. A run of a submission with no launch or fill
-   holds no bytes and stays free. */
-struct rig_run {
-  _Atomic intptr_t state;
-  uint64_t sub;  /* the id of its submission, which its blocks carry */
-  size_t nargs;  /* the submission's [args] */
-  uint8_t *args; /* NULL for none */
+/* A block of the submission a call served last, as its submits and its
+   driver may have left it: its start and parameter bytes, and how far into
+   its parameters a submit may have written, at most their bytes rounded up
+   to 16. */
+struct rig_mark {
+  uint64_t at;
+  uint32_t params, high;
 };
-
-/* The calling thread's number, which no other thread of the process has,
-   given at its first call: at least 1. */
-intptr_t rig_thread_number(void);
 
 /* The most bytes of a cache line among rig's hosts: Apple's arm64 cores'. */
 #define RIG_APART 128
@@ -415,12 +418,21 @@ struct rig_call {
   uint64_t *addresses; /* each slot's address, for launches' and fills' refs */
   struct rig_side *sides; /* each slot's side, for copies */
   /* The parts a submission with copies of slots hands its driver: its own,
-     with each such copy's fields set from the run's slots. */
+     with each such copy's fields set from the submit's buffers. */
   struct rig_part *parts;
   int cparts;
   /* Whether the submit times its value, and the device's time pair it took
      at the hand-over, -1 for none. */
   int timed, pair;
+  /* The blocks of the submission it served last, which each submit writes
+     from its values and the driver reads, [cargs] bytes made zero. Each
+     byte is 0 but the header, the parameters up to [high] and the place of
+     each block [marks] holds, one per block of that submission. [spare]
+     holds as many, for the next submission's. */
+  uint8_t *args;
+  size_t cargs;
+  struct rig_mark *marks, *spare;
+  int nmarks, cmarks, cspare;
 };
 
 /* Whether the work up to the point [p] is done: its device's word, as the

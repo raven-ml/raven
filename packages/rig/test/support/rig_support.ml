@@ -123,6 +123,16 @@ let carry = carry ()
 let countdown = countdown ()
 let ready = ready ()
 
+let zero =
+  {
+    Rig.Submission.groups = (0, 0, 0);
+    threads = (0, 0, 0);
+    shared = 0;
+    params = Bytes.empty;
+  }
+
+let zeros n = Array.make n zero
+
 (* The counted calls the calling thread is inside ([rig_counted] in
    [rig.h]). *)
 external counted : unit -> int = "caml_rig_counted"

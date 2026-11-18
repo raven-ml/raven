@@ -89,7 +89,7 @@ let described steps () =
   in
   { ps; go = (fun () -> ignore (G.run p frame)); n = 0 }
 
-(* The same submissions, made by hand: one per step, each run's block stored
+(* The same submissions, made by hand: one per step, each one's values made
    once. *)
 let by_hand steps () =
   let ds, ps, _ = fills steps in
@@ -107,15 +107,18 @@ let by_hand steps () =
       Sub.make ds.(d)
         [| Sub.launch ~refs:[| Sub.write 0 ~at:0 |] fills.(d) ~params:16 |]
     in
-    let run = Sub.take s and b = Sub.block s 0 in
-    Sub.Run.groups run b 1 1 1;
-    Sub.Run.threads run b 1 1 1;
-    Sub.Run.int64 run b 8 7L;
-    (run, xs.(d))
+    let params = Bytes.make 16 '\000' in
+    Bytes.set_int64_le params 8 7L;
+    let args =
+      Sub.{ groups = (1, 1, 1); threads = (1, 1, 1); shared = 0; params }
+    in
+    (s, xs.(d), [| args |])
   in
   let subs = Array.init steps sub in
   let go () =
-    Array.iter (fun (run, buffers) -> ignore (Rig.submit run ~buffers)) subs
+    Array.iter
+      (fun (s, buffers, args) -> ignore (Rig.submit s ~buffers ~args))
+      subs
   in
   { ps; go; n = 0 }
 
@@ -181,8 +184,9 @@ let copy_by_hand () =
   let d, p = polled () in
   let src = B.view (B.create d 16) ~first:0 ~length:8 in
   let s = Sub.make d [| Sub.copy ~src:(Buffer src) ~dst:(Slot 0) |] in
-  let run = Sub.take s and buffers = [| B.create d 8 |] in
-  { ps = [| p |]; go = (fun () -> ignore (Rig.submit run ~buffers)); n = 0 }
+  let buffers = [| B.create d 8 |] in
+  let go () = ignore (Rig.submit s ~buffers ~args:[||]) in
+  { ps = [| p |]; go; n = 0 }
 
 let polled_rows =
   let row name setup =
@@ -262,10 +266,16 @@ let host_submit () =
   let refs = Sub.[| write 0 ~at:0; read 1 ~at:8 |] in
   let fn = Option.get (Rig.Image.resolve image "empty") in
   let s = Sub.make Rig.host [| Sub.launch ~refs fn ~params:16 |] in
-  let run = Sub.take s and k = Sub.block s 0 in
-  Sub.Run.groups run k 1 1 1;
-  Sub.Run.threads run k 1 1 1;
-  (run, host_buffers ())
+  let args =
+    Sub.
+      {
+        groups = (1, 1, 1);
+        threads = (1, 1, 1);
+        shared = 0;
+        params = Bytes.make 16 '\000';
+      }
+  in
+  (s, host_buffers (), [| args |])
 
 let host_rows =
   Thumper.group "host"
@@ -273,7 +283,7 @@ let host_rows =
       Thumper.bench_with_setup "call" ~setup:host_step (fun (p, frame) ->
           G.run p frame);
       Thumper.bench_with_setup "floor-call" ~setup:host_submit
-        (fun (run, buffers) -> Rig.submit run ~buffers);
+        (fun (s, buffers, args) -> Rig.submit s ~buffers ~args);
     ]
 
 (* A decode step on two machines *)
@@ -327,7 +337,7 @@ type step = {
   input : Unix.file_descr;
   share : G.loaded;
   frame : G.frame;
-  subs : (Sub.Run.t * B.t array) array;
+  subs : (Sub.t * B.t array * Sub.args array) array;
   lock : Mutex.t;
   mutable last : Rig.Point.t list; (* The host's points of the last two steps. *)
 }
@@ -361,7 +371,16 @@ let stepping () =
       let fill =
         Sub.fill ~refs:[| Sub.write 0 ~at:0 |] Rig_support.bump ~params:8
       in
-      let sub () = (Sub.take (Sub.make d [| fill |]), buffers) in
+      let none =
+        Sub.
+          {
+            groups = (0, 0, 0);
+            threads = (0, 0, 0);
+            shared = 0;
+            params = Bytes.make 8 '\000';
+          }
+      in
+      let sub () = (Sub.make d [| fill |], buffers, [| none |]) in
       {
         job;
         pid;
@@ -393,7 +412,7 @@ let step s =
     v := (G.run s.share s.frame).(0)
   done;
   Array.iter
-    (fun (run, buffers) -> ignore (Rig.submit run ~buffers))
+    (fun (sub, buffers, args) -> ignore (Rig.submit sub ~buffers ~args))
     s.subs;
   Mutex.unlock s.lock;
   let v = !v in

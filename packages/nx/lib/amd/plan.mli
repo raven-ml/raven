@@ -20,8 +20,9 @@
     the work runs, and orders the work by.
 
     Calls whose launches have the same kernels and refs, whatever their
-    words' values, take runs of one submission ({!key}), so a device keeps
-    one submission for each, which a later call writes its words into. *)
+    words' values, take one submission ({!key}), so a device keeps one
+    submission for each, which a later call submits with its launches'
+    values ({!args}). *)
 
 (** {1:slots Slots} *)
 
@@ -102,7 +103,7 @@ type launch = {
       (** The parameters, {!Kernels.words}[ kernel] little-endian words. *)
   used : int;
       (** The count of the words' first ones that the kernel reads, which
-          {!write} alone stores. *)
+          alone {!args} passes. *)
   refs : ref array;
 }
 (** The type for launches. A group has {!Kernels.threads}[ kernel]
@@ -115,8 +116,7 @@ type t = private {
   tickets : int;  (** The bytes of {!Tickets} the call takes. *)
   bytes : int;
       (** The bytes a device counts for the call's submission: 1 KiB, and
-          [32 (9 + ⌈w / 2⌉ + r)] for each launch of a kernel of [w] words
-          ({!Kernels.words}) and of [r] refs. *)
+          [32 (8 + r)] for each launch of [r] refs. *)
   kept : bool;
       (** Whether a device keeps the call's submission for later calls of
           its key ({!key}): whether [bytes] are at most
@@ -257,8 +257,8 @@ val launch :
     [groups] with [shared] dynamic LDS bytes (defaults to [0]), words [w]
     of which [k] reads the first [used] (defaults to
     {!Kernels.words}[ k]), and refs [refs] to [b], after its other
-    launches. A call writes only the words read, so its cost on the host
-    follows [used].
+    launches. A call passes rig only the words read ({!args}), so its cost
+    on the host follows [used].
 
     Raises [Invalid_argument] if [shared] is negative or above
     {!shared_most}[ k], since rig would launch a group asking more LDS
@@ -361,7 +361,10 @@ val parts : Rig.Image.func array -> t -> Rig.Submission.part array
 (** [parts fs c] is the parts of [c]'s submission, [fs] holding each kernel's
     function at its {!Kernels.index}. *)
 
-val write : t -> Rig.Submission.Run.t -> Rig.Submission.t -> unit
-(** [write c r s] stores each launch's geometry and the words it reads
-    into [r]'s blocks of [s], a submission of [c]'s {!parts}. The other
-    words of a block keep what an earlier call stored. *)
+val args : t -> Rig.Submission.args array
+(** [args c] is the values of [c]'s launches, in order, as a submit of a
+    submission of [c]'s {!parts} passes them: each launch's groups, its
+    kernel's threads along x, its dynamic LDS bytes, and its first [used]
+    words, little-endian, as rig reads them. The words past them read [0].
+    A launch that reads fewer than all its words takes a copy of those it
+    reads. *)

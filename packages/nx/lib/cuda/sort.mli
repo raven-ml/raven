@@ -15,7 +15,7 @@ val sort :
   values:('v, 's) Nx_array.t ->
   positions:(int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
   ('v, 's) Nx_array.t ->
-  Bytes.t Launch.plan
+  Launch.plan
 (** [sort ~axis ~descending ~values ~positions x] plans
     {!Nx_kernel.S.sort}: one call, its state between its launches in the
     workspace. It is [Error Declined] where a launch would take more than
@@ -27,7 +27,7 @@ val unique :
   counts:(int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
   count:(int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
   (int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
-  Bytes.t Launch.plan
+  Launch.plan
 (** [unique ~ids ~first ~counts ~count keys] plans {!Nx_kernel.S.unique}:
     a sort of the rows a word, then the numbering, as one call over the
     workspace, or, for keys of more than 8 words, as several of up to 8

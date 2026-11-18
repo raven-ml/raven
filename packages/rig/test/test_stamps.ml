@@ -15,8 +15,11 @@ module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
-let submit ?(buffers = [||]) ?waits s =
-  Rig.submit ?waits (Sub.take s) ~buffers
+let submit ?(buffers = [||]) ?(args = [||]) ?waits s =
+  Rig.submit ?waits s ~buffers ~args
+
+(* The values of a submission's one fill, which reads none. *)
+let one = Support.zeros 1
 
 let timeout = 120.
 
@@ -73,7 +76,7 @@ let open_system () =
   let base =
     Array.map
       (fun (d, _) ->
-        let p = Rig.submit (Sub.take (Sub.make d [||])) ~buffers:[||] in
+        let p = Rig.submit (Sub.make d [||]) ~buffers:[||] ~args:[||] in
         Rig.Point.wait p;
         Rig.Point.value p)
       devices
@@ -91,7 +94,7 @@ let submit_system i access t =
   in
   let s = Sub.make d [| Support.touching [| use access |] |] in
   let m = require_some (B.borrow d t.m) in
-  let v = Rig.Point.value (submit s ~buffers:[| m |]) - t.base.(i) in
+  let v = Rig.Point.value (submit ~args:one s ~buffers:[| m |]) - t.base.(i) in
   (v, signaled t (other i))
 
 let assign i access r v =
@@ -218,9 +221,10 @@ let racing_writes name =
   let m = B.create x 64 in
   let my = require_some (B.borrow y m) in
   let write d b =
-    submit (Sub.make d [| Support.touching [| Sub.write |] |]) ~buffers:[| b |]
+    let s = Sub.make d [| Support.touching [| Sub.write |] |] in
+    submit ~args:one s ~buffers:[| b |]
   in
-  let first = submit (Sub.make x [| Support.touching [||] |]) in
+  let first = submit ~args:one (Sub.make x [| Support.touching [||] |]) in
   let a = Domain.spawn (fun () -> write x m) in
   Support.await "x's write blocked" (fun () -> P.blocked px = 1);
   let b = write y my in
@@ -238,7 +242,7 @@ let test_racing_submit_read () =
   let r = racing_writes "stamps:submit-read" in
   ignore (P.run r.px);
   let read = Sub.make r.x [| Support.touching [| Sub.read |] |] in
-  ignore (submit read ~buffers:[| r.m |]);
+  ignore (submit ~args:one read ~buffers:[| r.m |]);
   at_least ~msg:"y's word once x's read returned" int ~than:r.b
     (Rig.signaled r.y)
 
@@ -254,15 +258,16 @@ let test_racing_claim () =
 
 (* A replay over two run copies *)
 
-(* A linked program's run [n] uses copy [n mod 2]: it waits for the copy's
-   memory, which run [n - 2] used, writes run [n]'s arguments into it, and
-   submits the copy's prepared submission. Its fill stores [n] where the
-   arguments say, into run [n]'s output. The host goes on to the next run
-   without waiting for the output. *)
+(* A linked program's run [n] uses copy [n mod 2]: it writes run [n]'s
+   arguments into the copy's values, which run [n - 2] passed, and submits the
+   copy's prepared submission. Its fill stores [n] where the arguments say,
+   into run [n]'s output. The host goes on to the next run without waiting
+   for the output. *)
 type replay = {
   d : Rig.t;
   p : P.t;
-  runs_storage : Sub.Run.t array;  (* A run of each copy's submission. *)
+  subs : Sub.t array; (* Each copy's submission. *)
+  values : Sub.args array array; (* Each copy's values. *)
   outs : (int, B.t) Hashtbl.t;
   points : (int, int) Hashtbl.t;
   mutable runs : int;
@@ -278,14 +283,12 @@ let open_replay () =
     Printf.sprintf "stamps:replay-%d" (Atomic.fetch_and_add replays 1)
   in
   let d, p = P.open_ name in
-  let runs_storage =
-    Array.init 2 (fun _ -> Sub.take (Sub.make d [| poke |]))
-  in
-  Array.iter Sub.Run.release runs_storage;
+  let values _ = [| { Support.zero with params = Bytes.make 16 '\000' } |] in
   {
     d;
     p;
-    runs_storage;
+    subs = Array.init 2 (fun _ -> Sub.make d [| poke |]);
+    values = Array.init 2 values;
     outs = Hashtbl.create 8;
     points = Hashtbl.create 8;
     runs = 0;
@@ -293,18 +296,16 @@ let open_replay () =
 
 let run_replay t =
   let n = t.runs in
-  let run = t.runs_storage.(n mod 2) in
+  let k = n mod 2 in
   cover "a copy reused before its last run ran"
     (n >= 2 && Rig.signaled t.d < Hashtbl.find t.points (n - 2));
   let out = B.create t.d 8 in
   B.wait out Rig.Read_write;
   Support.store (Support.Reader.host out) (-1);
-  let block = Sub.block (Sub.Run.submission run) 0 in
-  if Sub.take (Sub.Run.submission run) != run then
-    fail "the run is taken";
-  Sub.Run.int64 run block 0 0L;
-  Sub.Run.int64 run block 8 (Int64.of_int n);
-  let v = Rig.Point.value (Rig.submit run ~buffers:[| out |]) in
+  let args = t.values.(k) in
+  Bytes.set_int64_le args.(0).params 0 0L;
+  Bytes.set_int64_le args.(0).params 8 (Int64.of_int n);
+  let v = Rig.Point.value (Rig.submit t.subs.(k) ~buffers:[| out |] ~args) in
   Hashtbl.replace t.outs n out;
   Hashtbl.replace t.points n v;
   t.runs <- n + 1

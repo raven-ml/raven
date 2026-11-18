@@ -23,7 +23,7 @@ val attention :
     (int64, Nx_array.Dtype.int64_elt) Nx_array.t )
   Nx_kernel.kv ->
   Nx_array.any iarray ->
-  Bytes.t Launch.plan
+  Launch.plan
 (** [attention p ~scale ~o ~lse ?lengths q kv loads] plans
     {!Nx_kernel.S.attention} of a call whose dtypes and shapes fit: maps
     into temporaries of their own, then calls of attention.cu, whose parts'

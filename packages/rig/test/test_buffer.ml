@@ -9,8 +9,11 @@ module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
-let submit ?(buffers = [||]) ?waits s =
-  Rig.submit ?waits (Sub.take s) ~buffers
+let submit ?(buffers = [||]) ?(args = [||]) ?waits s =
+  Rig.submit ?waits s ~buffers ~args
+
+(* The values of a submission's one fill, which reads none. *)
+let one = Support.zeros 1
 
 let timeout = 60.
 let memory name = Result.get_ok (Rig.software name)
@@ -636,7 +639,7 @@ let test_borrow_room_staging () =
   let n = 1 lsl 16 in
   B.copy ~src:(B.create Rig.host n) ~dst:(B.create d n);
   let s = Sub.make d [| Support.touching [| Sub.read |] |] in
-  ignore (submit s ~buffers:[| B.create d 64 |]);
+  ignore (submit ~args:one s ~buffers:[| B.create d 64 |]);
   P.fail_at p 1 (`Refuse 1);
   ignore (require_some (B.borrow d (B.create Rig.host n)));
   let maps =
@@ -683,7 +686,7 @@ let test_borrow_room () =
   (fun () ->
     let b0 = require_some (B.borrow d (B.create Rig.host n)) in
     let s = Sub.make d [| Support.touching [| Sub.read |] |] in
-    ignore (submit s ~buffers:[| b0 |]))
+    ignore (submit ~args:one s ~buffers:[| b0 |]))
     ();
   ignore (Sys.opaque_identity (B.borrow e (B.create Rig.host n)));
   ignore (Sys.opaque_identity (B.create ~memory:Pinned e n));
@@ -716,7 +719,7 @@ let test_lost_memory () =
   let on = B.create d 8 in
   let s = Rig.Submission.make d [| Support.touching [| Rig.Submission.write |] |] in
   P.fail p;
-  raises_match lost (fun () -> submit s ~buffers:[| on |]);
+  raises_match lost (fun () -> submit ~args:one s ~buffers:[| on |]);
   raises_match lost (fun () -> B.read on Bigarray.char ignore);
   raises_match lost (fun () -> B.wait on Rig.Read)
 
@@ -731,11 +734,11 @@ let test_reached () =
   let reads = Sub.make d [| Support.touching [| Sub.read |] |] in
   let writes = Sub.make d [| Support.touching [| Sub.write |] |] in
   equal ~msg:"no work" (pair bool bool) (true, true) (reached ());
-  ignore (submit reads ~buffers:[| b |]);
+  ignore (submit ~args:one reads ~buffers:[| b |]);
   equal ~msg:"a read queued" (pair bool bool) (true, false) (reached ());
   ignore (P.run p);
   equal ~msg:"the read ran" (pair bool bool) (true, true) (reached ());
-  ignore (submit writes ~buffers:[| b |]);
+  ignore (submit ~args:one writes ~buffers:[| b |]);
   equal ~msg:"a write queued" (pair bool bool) (false, false) (reached ());
   equal ~msg:"the work left queued" int 1 (P.queued p);
   ignore (P.run p);
@@ -751,7 +754,7 @@ let test_reached_lost () =
   let w = require_some (B.borrow d written)
   and r = require_some (B.borrow d read) in
   let s = Sub.make d [| Support.touching [| Sub.write; Sub.read |] |] in
-  ignore (submit s ~buffers:[| w; r |]);
+  ignore (submit ~args:one s ~buffers:[| w; r |]);
   P.fault p "the engine hung";
   raises_match ~msg:"the loss" lost (fun () -> B.create d 4096);
   raises_match ~msg:"a read of the written" lost (fun () ->
@@ -773,7 +776,7 @@ let test_wait_words () =
   let d, _ = P.open_ "buffer:wait-words" in
   let b = B.create d 64 in
   let s = Sub.make d [| Support.touching [| Sub.write |] |] in
-  ignore (submit s ~buffers:[| b |]);
+  ignore (submit ~args:one s ~buffers:[| b |]);
   B.wait b Rig.Read_write;
   equal int 0
     (Support.allocated_bytes (fun () ->
@@ -794,7 +797,7 @@ let test_reached_words () =
           ignore (Sys.opaque_identity (B.reached b Rig.Read_write))
         done)
   in
-  ignore (submit s ~buffers:[| b |]);
+  ignore (submit ~args:one s ~buffers:[| b |]);
   equal ~msg:"queued" int 0 (calls ());
   ignore (P.run p);
   equal ~msg:"done" int 0 (calls ())
@@ -806,15 +809,15 @@ let test_wait_words_transport () =
   let d, _ = P.open_ ~transport:true "buffer:wait-words-transport" in
   let b = B.create d 64 in
   let s = Sub.make d [| Support.touching [| Sub.write |] |] in
-  let p = submit s ~buffers:[| b |] in
+  let p = submit ~args:one s ~buffers:[| b |] in
   B.wait b Rig.Read_write;
-  let run = Sub.take (Sub.make (memory "buffer:wait-words-waiter") [||]) in
+  let waiter = Sub.make (memory "buffer:wait-words-waiter") [||] in
   (* Passed as an option made once: a supplied optional argument may allocate
      its [Some] at each call. *)
   let waits = Some [| p |] in
   let wait () = B.wait b Rig.Read_write in
   let submit () =
-    ignore (Rig.submit ?waits run ~buffers:[||] : Rig.Point.t)
+    ignore (Rig.submit ?waits waiter ~buffers:[||] ~args:[||] : Rig.Point.t)
   in
   let calls f =
     f ();
@@ -839,7 +842,9 @@ let test_due_words () =
   in
   let idle = drains () in
   let s = Sub.make d [| Support.touching [| Sub.write |] |] in
-  let[@inline never] queued () = ignore (submit s ~buffers:[| B.create d 64 |]) in
+  let[@inline never] queued () =
+    ignore (submit ~args:one s ~buffers:[| B.create d 64 |])
+  in
   queued ();
   Gc.full_major ();
   equal ~msg:"bytes with collected memory queued" int idle (drains ())
@@ -1135,7 +1140,7 @@ let test_mapping_released () =
   let read_borrow () =
     let h = B.create Rig.host (1 lsl 16) in
     let s = Sub.make d [| Support.touching [| Sub.read |] |] in
-    ignore (submit s ~buffers:[| require_some (B.borrow d h) |])
+    ignore (submit ~args:one s ~buffers:[| require_some (B.borrow d h) |])
   in
   read_borrow ();
   let unmaps () = count "unmap" p in
@@ -1163,7 +1168,7 @@ let test_bytes_after_unmap () =
     Gc.finalise (fun _ -> collected := true) ba;
     let h = B.of_bigarray ba in
     let s = Sub.make d [| Support.touching [| Sub.read |] |] in
-    ignore (submit s ~buffers:[| require_some (B.borrow d h) |]);
+    ignore (submit ~args:one s ~buffers:[| require_some (B.borrow d h) |]);
     ignore (P.run p))
     ();
   ignore (submit (Sub.make d [||]));
@@ -2194,15 +2199,15 @@ let test_blit_waits () =
   let d, p = P.open_ "buffer:blit-waits" in
   let h = B.of_string (String.make (1 lsl 16) 'a') in
   let on_d = require_some (B.borrow d h) in
-  ignore (submit (Sub.make d [| Support.touching [| Sub.read |] |]) ~buffers:[| on_d |]);
+  let touch access = Sub.make d [| Support.touching [| access |] |] in
+  ignore (submit ~args:one (touch Sub.read) ~buffers:[| on_d |]);
   let got = Bytes.create 4 in
   B.blit_to_bytes h 0 got 0 4;
   equal ~msg:"a read left queued" int 1 (P.queued p);
   equal ~msg:"bytes" string "aaaa" (Bytes.to_string got);
   B.blit_from_string "bbbb" 0 h 0 4;
   equal ~msg:"the read ran first" int 0 (P.queued p);
-  ignore
-    (submit (Sub.make d [| Support.touching [| Sub.write |] |]) ~buffers:[| on_d |]);
+  ignore (submit ~args:one (touch Sub.write) ~buffers:[| on_d |]);
   B.blit_to_bytes h 0 got 0 4;
   equal ~msg:"the write ran first" int 0 (P.queued p)
 
@@ -2226,7 +2231,7 @@ let test_wait_keeps (name, use) =
     Domain.spawn (fun () ->
         let b = B.create d 64 in
         let s = Sub.make d [| Support.touching [| Sub.write |] |] in
-        ignore (submit s ~buffers:[| b |]);
+        ignore (submit ~args:one s ~buffers:[| b |]);
         use b)
   in
   Support.await "the use asleep" (fun () -> P.sleepers p = 1);

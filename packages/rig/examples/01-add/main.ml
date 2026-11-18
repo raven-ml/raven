@@ -109,17 +109,19 @@ let () =
 
   (* One launch of [add]. Its 32 bytes of parameters hold refs to the
      submit's buffers 0 and 1, which it reads, and 2, which it writes, then
-     [n] at byte 24. The run holds the grid, one thread per element in
-     groups of 256. *)
+     [n] at byte 24. The submit's values give the grid, one thread per
+     element in groups of 256, and [n]; the refs' offsets read 0. *)
   let add = Option.get (Image.resolve image "add") in
   let refs = Submission.[| read 0 ~at:0; read 1 ~at:8; write 2 ~at:16 |] in
   let s = Submission.(make d [| launch ~refs add ~params:32 |]) in
-  let run = Submission.take s and k = Submission.block s 0 in
-  Submission.Run.(
-    groups run k (n / group) 1 1;
-    threads run k group 1 1;
-    int64 run k 24 (Int64.of_int n));
-  let p = submit run ~buffers:[| a; b; out |] in
+  let params = Bytes.make 32 '\000' in
+  Bytes.set_int64_le params 24 (Int64.of_int n);
+  let args =
+    Submission.
+      { groups = (n / group, 1, 1); threads = (group, 1, 1); shared = 0;
+        params }
+  in
+  let p = submit s ~buffers:[| a; b; out |] ~args:[| args |] in
   Format.eprintf "%s (%s) ran add at %a@." (name d) (arch d) Point.pp p;
 
   (* The copy back reads [out], so it follows the launch, which writes it. *)

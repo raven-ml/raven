@@ -29,8 +29,7 @@ order, steps, the lives of buffers and devices, and host code.
   `Buffer.copy`
 - A launch whose parameters hold refs to the buffers of a submit:
   `Submission.launch`, `Submission.read`, `Submission.write`
-- A launch's grid and scalar parameters in a run: `Submission.block`,
-  `Run.groups`, `Run.threads`, `Run.int64`
+- A launch's grid and scalar parameters at a submit: `Submission.args`
 - A copy back that follows the launch's write, with no wait in the program
 
 ## Key Functions
@@ -41,9 +40,8 @@ order, steps, the lives of buffers and devices, and host code.
 | `Image.load d binary`                     | `binary` loaded on `d`, or why not          |
 | `Image.resolve image f`                   | `image`'s function `f`, if it has one       |
 | `Submission.launch ~refs fn ~params`      | A part that runs `fn` over a grid           |
-| `Submission.Run.groups r b x y z`         | The grid of the launch whose block is `b`   |
-| `Submission.take s`                       | A run of `s`, the storage of its parameters |
-| `submit r ~buffers`                       | Run `r`'s submission once, return its point |
+| `Submission.{ groups; threads; ... }`     | A launch's grid and parameters at a submit  |
+| `submit s ~buffers ~args`                 | Run `s` once, return its point              |
 
 ## The kernel
 

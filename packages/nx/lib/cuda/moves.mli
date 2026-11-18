@@ -19,7 +19,7 @@ val gather :
   dst:('v, 's) Nx_array.t ->
   index ->
   ('v, 's) Nx_array.t ->
-  Bytes.t Launch.plan
+  Launch.plan
 (** [gather ~axis ~dst idx x] plans {!Nx_kernel.S.gather}: one launch. *)
 
 val gather_ranges :
@@ -27,7 +27,7 @@ val gather_ranges :
   starts:index ->
   ends:index ->
   ('v, 's) Nx_array.t ->
-  Bytes.t Launch.plan
+  Launch.plan
 (** [gather_ranges ~dst ~starts ~ends x] plans
     {!Nx_kernel.S.gather_ranges}: the runs' running maxima of their ends in
     the workspace, 24 bytes a run, then the gather. *)
@@ -36,7 +36,7 @@ val assemble :
   fill:'v ->
   dst:('v, 's) Nx_array.t ->
   (Nx_array.Move.range iarray * ('v, 's) Nx_array.t) iarray ->
-  Bytes.t Launch.plan
+  Launch.plan
 (** [assemble ~fill ~dst pieces] plans {!Nx_kernel.S.assemble}: a fill
     where the pieces may not cover [dst], then the pieces in order, a
     launch for each group of them its parameters hold. *)
@@ -45,7 +45,7 @@ val fold :
   Nx_kernel.pad ->
   dst:('v, 's) Nx_array.t ->
   ('v, 's) Nx_array.t ->
-  Bytes.t Launch.plan
+  Launch.plan
 (** [fold p ~dst x] plans {!Nx_kernel.S.fold}: one launch. *)
 
 val scatter :
@@ -56,7 +56,7 @@ val scatter :
   into:('v, 's) Nx_array.t ->
   index ->
   ('v, 's) Nx_array.t ->
-  Bytes.t Launch.plan
+  Launch.plan
 (** [scatter c ~unique ~axis ~dst ~into idx u] plans
     {!Nx_kernel.S.scatter}: a copy of [into] unless it is [dst], then one
     pass, two for [Set], or a float [Add]'s position tree in the workspace.

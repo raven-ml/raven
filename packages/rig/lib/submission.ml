@@ -57,8 +57,16 @@ type part =
 
 (* The most parameter bytes of a launch or a fill: a block of 32 bytes and
    twice its parameters rounded up to 16 ([rig_block_bytes]) within the
-   [2^32 - 1] bytes a run holds. *)
+   [2^32 - 1] bytes a submit's blocks hold. *)
 let most_params = (1 lsl 31) - 32
+
+(* C reads the fields in this order ([caml_rig_call_args]). *)
+type args = {
+  groups : int * int * int;
+  threads : int * int * int;
+  shared : int;
+  params : Bytes.t;
+}
 
 (* Refuses a part's parameters outside 0 to [most_params], and refs that share
    an [at] or whose 8 bytes end past the parameters. A ref's end is checked as
@@ -163,11 +171,11 @@ let words b =
 type c
 
 external sub_new :
-  Def.c -> int -> int -> int -> use array -> int -> int -> int -> c
+  Def.c -> int -> int -> int -> use array -> int -> int -> int -> int -> c
   = "caml_rig_sub_new_byte" "caml_rig_sub_new"
 
 external sub_launch :
-  c -> int -> int -> nativeint -> int -> slot_ref array -> int -> int
+  c -> int -> int -> nativeint -> int -> slot_ref array -> int -> unit
   = "caml_rig_sub_launch_byte" "caml_rig_sub_launch"
 
 external sub_part : c -> int -> int -> int array -> int -> unit
@@ -176,8 +184,10 @@ external sub_part : c -> int -> int -> int array -> int -> unit
 external sub_words : c -> int -> int -> int -> unit = "caml_rig_sub_words"
 
 external sub_fill :
-  c -> int -> nativeint -> int -> slot_ref array -> int -> int
+  c -> int -> nativeint -> int -> slot_ref array -> int -> unit
   = "caml_rig_sub_fill_byte" "caml_rig_sub_fill"
+
+external sub_block : c -> int -> int -> int -> unit = "caml_rig_sub_block"
 
 external sub_code : c -> int -> int -> int -> int -> unit
   = "caml_rig_sub_code"
@@ -192,8 +202,6 @@ external sub_side : c -> int -> bool -> buffer -> bool -> bool -> unit
   = "caml_rig_sub_side_byte" "caml_rig_sub_side"
 
 external sub_seal : c -> unit = "caml_rig_sub_seal"
-
-external sub_id : c -> int = "caml_rig_sub_id" [@@noalloc]
 
 external sub_fixed : c -> int -> int -> use -> unit
   = "caml_rig_sub_fixed"
@@ -233,21 +241,18 @@ external times_due : Def.c -> int = "caml_rig_times_due" [@@noalloc]
 external times_give : Def.c -> int -> unit = "caml_rig_times_give" [@@noalloc]
 external times_taken : Def.c -> int = "caml_rig_times_taken" [@@noalloc]
 
-(* A launch's or a fill's block, as the setters' C reads it: the id of its
-   submission's C form, where it starts in a run, its parameter bytes, and the
-   most threads a group of its function has, [0] for a fill or where the
-   driver states none, which [Run.threads] checks, with the launch's label
-   for its refusal. *)
-type block = int * int * int * int * string
+(* What a submit's refusals of a launch's or a fill's values read of it: its
+   parameter bytes, and a launch's label and the most threads a group of its
+   function runs, [0] where the driver states none, or a fill's part, which
+   names the fill only once a refusal is raised. *)
+type takes =
+  | Launch_block of { label : string; bytes : int; most : int }
+  | Fill_block of { part : int; bytes : int }
 
-(* What names a run's slot: refs, copies or both. A slot only copies name may
-   be this process's memory on a device of another machine, whose driver
+(* What names a submit's slot: refs, copies or both. A slot only copies name
+   may be this process's memory on a device of another machine, whose driver
    carries its bytes. *)
 type naming = Refs | Copies | Both
-
-(* A run's blocks and its state, C memory a custom block holds and frees once
-   collected ([struct rig_run] in [rig_stubs.h]). *)
-type run_c
 
 type t = {
   dev : device;
@@ -267,10 +272,10 @@ type t = {
       (** The token of the value the submission keeps, kept reachable: its
           collection lets the value go once the work is done. *)
   held : Claim.keep;
-      (** The keep of [fixed] ({!Claim.kept}), which every run reads,
+      (** The keep of [fixed] ({!Claim.kept}), which every submit reads,
           released once the submission is collected. *)
-  blocks : block array;
-      (** Each part's block, [no_block] for no launch or fill. *)
+  takes : takes array;
+      (** Its launches and fills, in the order of its parts. *)
   span : (string * string) option;
       (** The first part's queue and the launches' labels, or the first
           part's kind. [None] for no parts. *)
@@ -278,15 +283,7 @@ type t = {
       (** The labels of its launches, in the order of its parts. *)
   copies : copy array;
       (** The copy parts that read memory, in order. *)
-  runs : run list Atomic.t;
-      (** The runs [take] made, the newest first. A run joins once and never
-          leaves. *)
 }
-
-and run = { r : run_c; sub : t }
-(* C reads the custom block from field 0. *)
-
-let no_block = (0, -1, 0, 0, "")
 
 let kind_of = function
   | Words _ -> Rig_edge.Words
@@ -331,8 +328,7 @@ let owns_device_memory d b =
 let fix c k b use = sub_fixed c k (entry_of b).stamps use
 
 (* Refuses part [i]'s copy end on [d] unless its buffer is live and [d]'s,
-   or carried. A slot end's buffer only a run gives, which the submit
-   checks. *)
+   or carried. A slot end's buffer only a submit gives, which it checks. *)
 let check_end fn d i = function
   | Slot _ -> ()
   | Buffer b ->
@@ -456,7 +452,7 @@ let slot_uses fn parts =
 (* Placement and order *)
 
 (* How a part reaches memory: reading or writing a slot, whose buffer only a
-   run knows, or the bytes of a buffer it names. *)
+   submit knows, or the bytes of a buffer it names. *)
 type reach = Reads_slot | Writes_slot | Reads | Writes
 
 let writes = function Writes_slot | Writes -> true | Reads_slot | Reads -> false
@@ -846,9 +842,9 @@ let keep_token d v =
   if t == Memory.no_token then Dev.raise_lost d;
   t
 
-(* The buffers every run reads, with how the work uses each: the words and the
-   copies' buffer sides, in the order of the parts, then the fixed memory. They
-   are the C form's fixed buffers, in this order. *)
+(* The buffers every submit reads, with how the work uses each: the words and
+   the copies' buffer sides, in the order of the parts, then the fixed memory.
+   They are the C form's fixed buffers, in this order. *)
 let named_buffers fixed parts =
   let n = ref 0 and any = ref None in
   let count _ b =
@@ -882,9 +878,11 @@ let build keep ~fixed ~named:(named, named_uses) ~held d parts =
   let kept = Option.map (keep_token d) keep in
   let uses, naming = slot_uses fn parts in
   let check_buffer = Buffer.check_live fn in
-  let nrefs = ref 0 and ncodes = ref 0 in
+  let nrefs = ref 0 and ncodes = ref 0 and nblocks = ref 0 in
   let ncopies = ref 0 and nmoves = ref 0 in
-  let count_refs i refs =
+  (* Counts a launch or a fill, part [i], and its refs. *)
+  let count_block i refs =
+    incr nblocks;
     for k = 0 to Array.length refs - 1 do
       match refs.(k) with
       | Slot_ref _ -> incr nrefs
@@ -897,7 +895,7 @@ let build keep ~fixed ~named:(named, named_uses) ~held d parts =
     (fun i p ->
       match p with
       | Words w -> check_buffer w
-      | Fill f -> count_refs i f.refs
+      | Fill f -> count_block i f.refs
       | Copy { src; dst; _ } ->
           check_ends fn d i src dst;
           incr ncopies;
@@ -910,7 +908,7 @@ let build keep ~fixed ~named:(named, named_uses) ~held d parts =
           | Buffer _ | Slot _ -> ());
           incr ncopies
       | Launch l ->
-          count_refs i l.refs;
+          count_block i l.refs;
           check_launch fn d i l.fn)
     parts;
   let memory = Array.of_list fixed in
@@ -920,29 +918,33 @@ let build keep ~fixed ~named:(named, named_uses) ~held d parts =
   let nafter = Array.fold_left (fun n a -> n + Array.length a) 0 afters in
   let c =
     sub_new d.live.c (Array.length parts) nafter (Array.length named) uses
-      !nrefs !ncodes !ncopies
+      !nblocks !nrefs !ncodes !ncopies
   in
   Array.iteri (fun k b -> fix c k b named_uses.(k)) named;
-  let blocks = Array.make (Array.length parts) no_block in
+  let takes = Array.make !nblocks (Fill_block { part = 0; bytes = 0 }) in
   let copies = Array.make !nmoves { src = Slot 0; dst = Slot 0; box = None } in
   let at = ref 0 and r = ref 0 and j = ref 0 and m = ref 0 in
-  let n = ref 0 in
+  let n = ref 0 and next = ref 0 in
   let images = ref [] in
   let slot_of = function Slot k -> k | Buffer _ -> -1 in
   let copy_side ~dst = function
     | Slot _ -> ()
     | Buffer b -> sub_side c !m dst b (carried d b) (owns_device_memory d b)
   in
-  (* Each entry ref of [refs], in the block that starts at [place]. *)
-  let place_codes place refs =
+  (* Part [i], the next launch or fill, which [t] describes, with its entry
+     refs among [refs]. *)
+  let block i t most refs =
+    sub_block c !next i most;
+    takes.(!next) <- t;
     for e = 0 to Array.length refs - 1 do
       match refs.(e) with
       | Slot_ref _ -> ()
       | Entry { at; fn = f } ->
-          sub_code c !j place at f.fentry.code;
+          sub_code c !j !next at f.fentry.code;
           incr j;
           images := f.fimage :: !images
-    done
+    done;
+    incr next
   in
   Array.iteri
     (fun i p ->
@@ -952,9 +954,8 @@ let build keep ~fixed ~named:(named, named_uses) ~held d parts =
       | Words w -> sub_words c i (host_address fn w) (Buffer.length w / 4)
       | Fill f ->
           let slots = slot_refs f.refs in
-          let place = sub_fill c i f.fill f.params slots !r in
-          place_codes place f.refs;
-          blocks.(i) <- (sub_id c, place, f.params, 0, "");
+          sub_fill c i f.fill f.params slots !r;
+          block i (Fill_block { part = i; bytes = f.params }) 0 f.refs;
           r := !r + Array.length slots
       | Copy cp ->
           sub_copy c !m i (slot_of cp.src) (slot_of cp.dst);
@@ -970,10 +971,10 @@ let build keep ~fixed ~named:(named, named_uses) ~held d parts =
           incr m
       | Launch l ->
           let e = l.fn.fentry and slots = slot_refs l.refs in
-          let place = sub_launch c i e.code e.launch l.params slots !r in
-          place_codes place l.refs;
+          sub_launch c i e.code e.launch l.params slots !r;
           let most = Option.value e.threads ~default:0 in
-          blocks.(i) <- (sub_id c, place, l.params, most, l.label);
+          let t = Launch_block { label = l.label; bytes = l.params; most } in
+          block i t most l.refs;
           r := !r + Array.length slots;
           images := l.fn.fimage :: !images)
     parts;
@@ -1004,11 +1005,10 @@ let build keep ~fixed ~named:(named, named_uses) ~held d parts =
     naming;
     kept;
     held;
-    blocks;
+    takes;
     span;
     launches = Array.of_list kernels;
     copies;
-    runs = Atomic.make [];
   }
 
 (* The memory is held first, so that no free returns it while [build] reads
@@ -1024,11 +1024,6 @@ let make ?keep ?(fixed = []) d parts =
   | exception e ->
       Claim.release held;
       Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
-
-let block s i =
-  if i < 0 || i >= Array.length s.blocks || s.blocks.(i) == no_block then
-    invalid_argf "Rig.Submission.block: part %d is no launch or fill" i;
-  s.blocks.(i)
 
 (* Whether the bytes of [b] lie in those of [f]. *)
 let within b f =
@@ -1048,75 +1043,8 @@ let address s b =
   in
   find (Array.length s.fixed - s.addressable)
 
-(* Runs *)
-
-external run_new : c -> run_c = "caml_rig_run_new"
-
-(* Each setter is an external that takes the block as it is, untagged ints
-   and unboxed floats, so no argument is boxed at a call, inlined or not. *)
-module Run = struct
-  type t = run
-
-  external take : t -> bool = "caml_rig_run_take" [@@noalloc]
-  external release : t -> unit = "caml_rig_run_release" [@@noalloc]
-
-  let make s = { r = run_new s.c; sub = s }
-  let submission r = r.sub
-
-  external groups :
-    t ->
-    block ->
-    (int[@untagged]) ->
-    (int[@untagged]) ->
-    (int[@untagged]) ->
-    unit = "caml_rig_run_groups_byte" "caml_rig_run_groups"
-
-  external threads :
-    t ->
-    block ->
-    (int[@untagged]) ->
-    (int[@untagged]) ->
-    (int[@untagged]) ->
-    unit = "caml_rig_run_threads_byte" "caml_rig_run_threads"
-
-  external shared : t -> block -> (int[@untagged]) -> unit
-    = "caml_rig_run_shared_byte" "caml_rig_run_shared"
-
-  external int32 : t -> block -> (int[@untagged]) -> (int[@untagged]) -> unit
-    = "caml_rig_run_int32_byte" "caml_rig_run_int32"
-
-  external int64 :
-    t -> block -> (int[@untagged]) -> (int64[@unboxed]) -> unit
-    = "caml_rig_run_int64_byte" "caml_rig_run_int64"
-
-  external float32 : t -> block -> (int[@untagged]) -> (float[@unboxed]) -> unit
-    = "caml_rig_run_float32_byte" "caml_rig_run_float32"
-
-  external float64 : t -> block -> (int[@untagged]) -> (float[@unboxed]) -> unit
-    = "caml_rig_run_float64_byte" "caml_rig_run_float64"
-end
-
-(* Adds [r] at the head of [s]'s runs. *)
-let rec join s r =
-  let rs = Atomic.get s.runs in
-  if not (Atomic.compare_and_set s.runs rs (r :: rs)) then join s r
-
-(* The first run of [rs] the calling thread takes, else a new run of [s],
-   taken, which joins [s]'s runs. Top-level, so a take that finds a free
-   run allocates no closure. *)
-let rec take_from s = function
-  | r :: rs -> if Run.take r then r else take_from s rs
-  | [] ->
-      let r = Run.make s in
-      join s r;
-      r
-
-let take s = take_from s (Atomic.get s.runs)
-
-external call_collect : c -> call -> Run.t -> int array -> int
-  = "caml_rig_call_collect"
-
-external c_submit : c -> call -> Run.t -> int = "caml_rig_submit"
+external call_collect : c -> call -> int array -> int = "caml_rig_call_collect"
+external c_submit : c -> call -> int = "caml_rig_submit"
 
 (* In-queue waits *)
 
@@ -1346,7 +1274,7 @@ let check_owner s b =
   let o = m.alloc.owner in
   if o != s.dev && o != m.dev && Dev.is_lost o then Dev.raise_lost o
 
-(* Refuses [b], the run's buffer [k], used with [use], unless it is live, on
+(* Refuses [b], the submit's buffer [k], used with [use], unless it is live, on
    [s]'s device or carried for copies alone, and, written, admits writes; and
    hands its stamps and address to the call's slot [k], and what a copy passes
    the driver to its side [k]. *)
@@ -1406,21 +1334,21 @@ let rec wait_points s c n i =
 
 exception Never of string
 
-let rec hand_over s c run round lacked seen =
+let rec hand_over s c round lacked seen =
   let d = s.dev in
-  let r = c_submit s.c c run in
+  let r = c_submit s.c c in
   if r = Dev.Answer.ok then Point.make d.index (call_value c)
-  else if r = Dev.Answer.busy then hand_over s c run round lacked seen
+  else if r = Dev.Answer.busy then hand_over s c round lacked seen
   else if r = Dev.Answer.no_room then begin
     let at = call_no_room_at c in
     let w = Dev.word d in
     if w < at then Dev.wait d (w + 1);
-    hand_over s c run round lacked seen
+    hand_over s c round lacked seen
   end
   else if r = Dev.Answer.no_memory then raise Out_of_memory
   else if r = Dev.Answer.grow then
     let round, lacked, seen = Memory.grow_queues d ~round ~lacked ~seen in
-    hand_over s c run round lacked seen
+    hand_over s c round lacked seen
   else if r = Dev.Answer.never then
     raise
       (Never
@@ -1440,17 +1368,18 @@ let release_frame m b0 b1 b2 b3 =
   if m > 2 then Memory.claim_drop b2;
   if m > 3 then Memory.claim_drop b3
 
-(* Names the run's buffers from the [k]th on, then hands the work over. Each
-   buffer is read once from its array and stays reachable in a frame until the
-   hand-over returned: the C slots hold its stamps without a reference, and the
-   caller's array may change meanwhile. The frame holds a read claim on each
-   until then too, so that no take writes one in place while the submit
-   runs. A frame keeps four buffers, so the rooting costs a call per four. *)
-let rec go s c run buffers waits k =
+(* Names the submit's buffers from the [k]th on, then hands the work over.
+   Each buffer is read once from its array and stays reachable in a frame
+   until the hand-over returned: the C slots hold its stamps without a
+   reference, and the caller's array may change meanwhile. The frame holds a
+   read claim on each until then too, so that no take writes one in place
+   while the submit runs. A frame keeps four buffers, so the rooting costs a
+   call per four. *)
+let rec go s c buffers waits k =
   let n = Array.length s.uses in
   if k >= n then begin
-    wait_points s c (call_collect s.c c run waits) 0;
-    hand_over s c run 1 0 Memory.never_collected
+    wait_points s c (call_collect s.c c waits) 0;
+    hand_over s c 1 0 Memory.never_collected
   end
   else
     let m = min 4 (n - k) in
@@ -1481,7 +1410,7 @@ let rec go s c run buffers waits k =
       if m > 1 then name_one s c (Array.unsafe_get a (k + 1)) (k + 1) b1;
       if m > 2 then name_one s c (Array.unsafe_get a (k + 2)) (k + 2) b2;
       if m > 3 then name_one s c (Array.unsafe_get a (k + 3)) (k + 3) b3;
-      go s c run buffers waits (k + 4)
+      go s c buffers waits (k + 4)
     with
     | p ->
         release_frame m b0 b1 b2 b3;
@@ -1490,9 +1419,9 @@ let rec go s c run buffers waits k =
         release_frame !held b0 b1 b2 b3;
         raise e
 
-(* What each copy part of [s] moves, read at the submit from the run's
-   [buffers]: the devices the memory its bytes leave and reach counts in, and
-   their count. *)
+(* What each copy part of [s] moves, read at the submit from its [buffers]:
+   the devices the memory its bytes leave and reach counts in, and their
+   count. *)
 let moves_of s buffers =
   let buffer = function Slot k -> buffers.(k) | Buffer b -> b in
   Array.map
@@ -1696,26 +1625,60 @@ let taking s buffers timed =
           let moves = match ps with [] -> [||] | _ -> moves_of s buffers in
           { ps; moves; asked = Profile.now () })
 
-external submit_begin : Run.t -> c -> int = "caml_rig_submit_begin"
-external submit_end : Run.t -> call -> unit = "caml_rig_submit_end" [@@noalloc]
+external submit_begin : c -> int = "caml_rig_submit_begin"
+external submit_end : call -> unit = "caml_rig_submit_end" [@@noalloc]
 
-(* Submits [s] with its run [run]. [submit_begin] moves the run to
-   submitting and takes a call, and is the last step before the trap that
-   ends both, so in native code an exception anywhere after it, such as one
-   where the taking allocates, leaves neither held. The C submit takes a time
+external call_args : c -> call -> args array -> int = "caml_rig_call_args"
+[@@noalloc]
+
+(* Raises the refusal [r] of [args] that [call_args] answered: 4 times the
+   index of the element, or the length of [args], plus what it refuses. The
+   element is read again only to name its values. *)
+let refuse_args s args r =
+  let j = r lsr 2 in
+  if r land 3 = 0 then
+    invalid_argf "Rig.%s: args has %d elements, not %d, one per launch or fill"
+      fn j (Array.length s.takes);
+  let name, bytes, most =
+    match s.takes.(j) with
+    | Launch_block l -> (l.label, l.bytes, l.most)
+    | Fill_block f -> (Printf.sprintf "the fill of part %d" f.part, f.bytes, 0)
+  in
+  match r land 3 with
+  | 1 ->
+      invalid_argf "Rig.%s: args.(%d) has %d bytes of params, past the %d of %s"
+        fn j
+        (Bytes.length args.(j).params)
+        bytes name
+  | 2 ->
+      invalid_argf
+        "Rig.%s: args.(%d), for %s, has a size that is negative or above 2^32 \
+         - 1"
+        fn j name
+  | _ ->
+      let x, y, z = args.(j).threads in
+      invalid_argf
+        "Rig.%s: %s runs at most %d threads per group; args.(%d) sets %dx%dx%d"
+        fn name most j x y z
+
+(* Submits [s] with [buffers] and [args]. [submit_begin] takes a call, and
+   is the last step before the trap that gives it back, so in native code an
+   exception anywhere after it, such as one where the taking allocates,
+   leaves no call held. The values are copied into the call's blocks first,
+   and a refusal of them raises inside the trap. The C submit takes a time
    pair in the call that hands the work over, so a pair the trap finds was
    handed over with the work: the device may still write it, and it stays
-   with the device. The C submit reads [s]'s C form, the run's blocks, and
-   the stamps and templates they name without a reference, with the runtime
-   released: their owners stay reachable until the submit ends. A
-   submission with parts times its value while a profile is taken, and for
-   [timer]'s step ([hold]). *)
-let submit_run ?timer s run buffers waits =
-  let c = submit_begin run s.c in
-  if c = -1 then invalid_argf "Rig.%s: another thread took the run" fn;
-  if c = -2 then invalid_argf "Rig.%s: another submit is using the run" fn;
+   with the device. The C submit reads [s]'s C form, and the stamps and
+   templates it names without a reference, with the runtime released: their
+   owners stay reachable until the submit ends. A submission with parts
+   times its value while a profile is taken, and for [timer]'s step
+   ([hold]). *)
+let submit_run ?timer s buffers args waits =
+  let c = submit_begin s.c in
   let t = ref untaken in
   match
+    let r = call_args s.c c args in
+    if r >= 0 then refuse_args s args r;
     t := taking s buffers (Option.is_some timer);
     call_timed c (!t != untaken);
     (* The submission keeps its fixed and part-owned buffers, so they are live
@@ -1723,11 +1686,11 @@ let submit_run ?timer s run buffers waits =
     for i = 0 to Array.length s.fixed - 1 do
       check_owner s (Array.unsafe_get s.fixed i)
     done;
-    go s c run buffers waits 0
+    go s c buffers waits 0
   with
   | p ->
       let pair = call_pair c in
-      submit_end run c;
+      submit_end c;
       (match s.span with
       | Some span when !t != untaken -> hold s span !t p pair timer
       | _ -> ());
@@ -1736,33 +1699,18 @@ let submit_run ?timer s run buffers waits =
       ignore (Sys.opaque_identity s.images);
       ignore (Sys.opaque_identity s.kept);
       ignore (Sys.opaque_identity s.held);
-      ignore (Sys.opaque_identity run.r);
       p
   | exception e ->
-      submit_end run c;
+      submit_end c;
       raise e
 
-(* A submit that raises before [submit_begin], or anywhere, an asynchronous
-   exception included, frees the run its thread took: [Run.release] does
-   nothing to a run the thread does not hold, such as one a raising
-   [submit_run] already freed. *)
-let submit_with ?timer waits (run : Run.t) ~buffers =
-  match
-    Dev.check_held "submit";
-    let s = run.sub in
-    if Dev.is_lost s.dev then Dev.raise_lost s.dev;
-    check_count s buffers;
-    submit_run ?timer s run buffers waits
-  with
-  | p -> p
-  | exception Never why ->
-      Run.release run;
-      invalid_arg why
-  | exception e ->
-      Run.release run;
-      raise e
+let submit_with ?timer waits s ~buffers ~args =
+  Dev.check_held "submit";
+  if Dev.is_lost s.dev then Dev.raise_lost s.dev;
+  check_count s buffers;
+  try submit_run ?timer s buffers args waits with Never why -> invalid_arg why
 
-let submit ?(waits = [||]) run ~buffers = submit_with waits run ~buffers
+let submit ?(waits = [||]) s ~buffers ~args = submit_with waits s ~buffers ~args
 
 module Timer = struct
   (* By step, the timed value of its submit, or [nothing]. *)
@@ -1770,8 +1718,8 @@ module Timer = struct
 
   let make n = Array.make n nothing
 
-  let submit t i ?(waits = [||]) run ~buffers =
-    submit_with ~timer:(t, i) waits run ~buffers
+  let submit t i ?(waits = [||]) s ~buffers ~args =
+    submit_with ~timer:(t, i) waits s ~buffers ~args
 
   let drop t =
     for i = 0 to Array.length t - 1 do
@@ -1812,49 +1760,39 @@ end
 
 let time_pairs (d : device) = times_taken d.live.c
 
-(* Each device's run of one copy from slot 0 into slot 1, which [make]
-   places on its copy engine. The submission has no launch or fill, so its
-   run holds no bytes, and every domain submits it at once. *)
+(* Each device's submission of one copy from slot 0 into slot 1, which
+   [make] places on its copy engine. *)
 let copiers =
-  Dev.new_key (fun d ->
-      Run.make (make d [| copy ~src:(Slot 0) ~dst:(Slot 1) |]))
+  Dev.new_key (fun d -> make d [| copy ~src:(Slot 0) ~dst:(Slot 1) |])
 
 let run_copy d ~waits ~src ~dst =
-  let run = Dev.local copiers d in
-  try submit_run run.sub run [| src; dst |] waits
+  try submit_run (Dev.local copiers d) [| src; dst |] [||] waits
   with Never why -> invalid_arg why
 
 (* A box's geometry is part of its submission, so each call makes its own:
-   one part per box, from slot 0 into slot 1, and a run that holds no
-   bytes. *)
+   one part per box, from slot 0 into slot 1. *)
 let run_boxes d ~waits ~src ~dst boxes =
   let parts = Array.map (fun x -> box ~src:(Slot 0) ~dst:(Slot 1) x) boxes in
-  let run = Run.make (make d parts) in
-  submit_run run.sub run [| src; dst |] waits
+  submit_run (make d parts) [| src; dst |] [||] waits
 
-(* Each device's runs of one fill of slot 0, by byte: a fill's byte is part
-   of its submission, so each byte's run is made at its first fill. A run
-   holds no bytes, so every domain submits it at once. Two domains that make
-   a byte's run at once keep the first stored. *)
+(* Each device's submissions of one fill of slot 0, by byte: a fill's byte
+   is part of its submission, so each byte's is made at its first fill. Two
+   domains that make a byte's at once keep the first stored. *)
 let setters = Dev.new_key (fun _ -> Array.init 256 (fun _ -> Atomic.make None))
 
 let setter d c =
   let slot = (Dev.local setters d).(Char.code c) in
   match Atomic.get slot with
-  | Some run -> run
+  | Some s -> s
   | None ->
-      let run = Run.make (make d [| set ~dst:(Slot 0) c |]) in
-      ignore (Atomic.compare_and_set slot None (Some run) : bool);
+      let s = make d [| set ~dst:(Slot 0) c |] in
+      ignore (Atomic.compare_and_set slot None (Some s) : bool);
       Option.get (Atomic.get slot)
 
 let run_set d ~waits ~dst c =
-  let run = setter d c in
-  try submit_run run.sub run [| dst |] waits
+  try submit_run (setter d c) [| dst |] [||] waits
   with Never why -> invalid_arg why
 
-(* The host's submission of no part, whose run holds no bytes. *)
-let marks = Dev.new_key (fun d -> Run.make (make d [||]))
-
-let mark () =
-  let run = Dev.local marks Dev.host in
-  submit_run run.sub run [||] [||]
+(* The host's submission of no part. *)
+let marks = Dev.new_key (fun d -> make d [||])
+let mark () = submit_run (Dev.local marks Dev.host) [||] [||] [||]

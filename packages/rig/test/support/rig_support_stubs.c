@@ -1017,9 +1017,12 @@ static const struct rig_args *args_of(const struct rig_part *p) {
 /* Sets [*copy] to the blocks of [parts]' launches and fills up to the end
    of the last one, copied from [args] with each ref's address added, or
    NULL for parts without blocks: the caller may store into [args] once
-   the hand-over returns. Whether memory sufficed. */
-static int blocks(const struct rig_part *parts, int nparts,
-                  const uint8_t *args, const uint64_t *slots, uint8_t **copy) {
+   the hand-over returns. Each block's place in [args] (rig_place) is
+   written too, with its parameters placed as a driver places them for an
+   API that copies them at the call, so that what a driver leaves there
+   reaches rig's next submits. Whether memory sufficed. */
+static int blocks(const struct rig_part *parts, int nparts, uint8_t *args,
+                  const uint64_t *slots, uint8_t **copy) {
   size_t n = 0;
   for (int i = 0; i < nparts; i++) {
     const struct rig_args *a = args_of(&parts[i]);
@@ -1035,6 +1038,7 @@ static int blocks(const struct rig_part *parts, int nparts,
     const struct rig_args *a = args_of(&parts[i]);
     if (a == NULL) continue;
     rig_params(b + a->block + sizeof(struct rig_block), a, args, slots);
+    rig_params(rig_place(a, args), a, args, slots);
   }
   *copy = b;
   return 1;

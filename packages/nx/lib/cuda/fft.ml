@@ -84,7 +84,6 @@ module A = Nx_array
 module L = Nx_array.Layout
 module D = Nx_array.Dtype
 module K = Kernels
-module Run = Rig.Submission.Run
 
 type bigbytes =
   (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
@@ -504,13 +503,14 @@ type params =
       plan : plan;
     }
 
-(* A call's plan as it grows: its precision, its launches in reverse, the
+(* A call's plan as it grows: its precision, its launches in reverse with
+   their parameters, which {!verdict} writes into their bytes, the
    workspace's pieces they take and the buffers of the plans the cache did
    not keep. *)
 type call = {
   c : cache;
   f64 : bool;
-  mutable launches : params Launch.t list;
+  mutable launches : (params * Launch.t) list;
   mutable count : int;
   ws : Arena.t;
   mutable frees : Rig.Buffer.t list;
@@ -532,21 +532,19 @@ let refs_of i o p =
 let step_refs = K.Fft_params.(refs_of in_ out plan)
 let real_refs = K.Fft_real_params.(refs_of in_ out plan)
 
-(* Pushes a launch of [kernel] over [grid] groups of [threads] threads. *)
+(* Pushes a launch of [kernel] over [grid] groups of [threads] threads, of
+   [size] parameter bytes, zero until {!verdict} writes [params]. *)
 let push k ~kernel ~size ~refs ~grid ~threads ~shared params =
-  k.launches <-
+  let args =
     {
-      Launch.kernel;
-      size;
-      base = slots * k.count;
-      refs;
-      gx = grid;
-      gy = 1;
-      gz = 1;
-      threads;
+      Rig.Submission.groups = (grid, 1, 1);
+      threads = (threads, 1, 1);
       shared;
-      params;
+      params = Bytes.make size '\000';
     }
+  in
+  k.launches <-
+    (params, { Launch.kernel; size; base = slots * k.count; refs; args })
     :: k.launches;
   k.count <- k.count + 1
 
@@ -858,12 +856,103 @@ let c2c_axes k ~inv ~in_place axes dst x =
                src d))
     done
 
-(* The call of [k]'s launches, the buffers of their slots in order, the
-   workspace's where a side lies there. *)
-let verdict k : params Launch.plan =
+(* Parameters *)
+
+(* Writes into a launch's parameter bytes, little-endian as the GPU reads
+   them. *)
+let int64 b off v = Bytes.set_int64_le b off (Int64.of_int v)
+let int32 b off v = Bytes.set_int32_le b off (Int32.of_int v)
+let flag b = Bool.to_int b
+
+let write_side b base (s : side) =
+  let module S = K.Fft_side in
+  int64 b (base + S.ptr) s.at.byte;
+  int64 b (base + S.off) s.first;
+  int64 b (base + S.ps) s.ps;
+  int32 b (base + S.rank) (Array.length s.dim);
+  Array.iteri (fun i d -> int64 b (base + S.dim + (8 * i)) d) s.dim;
+  Array.iteri (fun i d -> int64 b (base + S.str + (8 * i)) d) s.str
+
+(* The multiplier by which fft.cu divides by [d] < 2^16: 0 for 1. *)
+let magic d = if d = 1 then 0 else ((1 lsl 32) / d) + 1
+
+let write_step b p (s : step) =
+  let module P = K.Fft_params in
+  write_side b P.in_ s.src;
+  write_side b P.out s.dst;
+  int64 b P.plan 0;
+  int64 b P.nv s.nv;
+  int64 b P.m s.m;
+  int64 b P.ns s.ns;
+  int64 b P.nsrc s.nsrc;
+  int64 b P.limit s.limit;
+  int64 b P.gts s.gts;
+  int64 b P.nh s.nh;
+  let l = s.inner.l in
+  int64 b P.tw (List.assoc l p.tw);
+  int64 b P.glo p.glo;
+  int64 b P.ghi p.ghi;
+  int64 b P.rlo p.rlo;
+  int64 b P.rhi p.rhi;
+  int64 b P.chirp p.chirp;
+  int64 b P.bspec p.bspec;
+  int64 b P.rlog p.rlog;
+  int32 b P.l l;
+  int32 b P.lld s.lld;
+  int32 b P.lst s.lst;
+  int32 b P.lp s.lp;
+  int32 b P.g s.g;
+  int32 b P.tl s.inner.tl;
+  int32 b P.lf_ld (flag s.lf_ld);
+  int32 b P.lf_st (flag s.lf_st);
+  int32 b P.ld s.ld;
+  int32 b P.st s.st;
+  int32 b P.conj_in (flag s.conj_in);
+  int32 b P.conj_out (flag s.conj_out);
+  int32 b P.chirp_in (flag s.chirp_in);
+  int32 b P.post s.post;
+  int32 b P.np (Array.length s.inner.radices);
+  int32 b P.half (flag (l mod 2 = 0));
+  int32 b P.nops (Array.length s.ops);
+  int32 b P.gshift (log2 s.g);
+  int32 b P.g_bits p.g_bits;
+  int32 b P.r_bits p.r_bits;
+  int32 b P.rader (flag s.rader);
+  Array.iteri (fun i o -> int32 b (P.ops + (4 * i)) o) s.ops;
+  let ns = ref 1 in
+  Array.iteri
+    (fun i radix ->
+      let module F = K.Fft_pass in
+      let base = P.pass + (F.size * i) in
+      int32 b (base + F.r) radix;
+      int32 b (base + F.ns) !ns;
+      int32 b (base + F.q) (l / radix);
+      int32 b (base + F.ts) (l / (!ns * radix));
+      int32 b (base + F.nsm) (magic !ns);
+      ns := !ns * radix)
+    s.inner.radices
+
+let write params b =
+  match params with
+  | Step (st, plan) -> write_step b plan st
+  | Real { src; dst; nl; h; split; plan } ->
+      let module P = K.Fft_real_params in
+      write_side b P.in_ src;
+      write_side b P.out dst;
+      int64 b P.plan 0;
+      int64 b P.nl nl;
+      int64 b P.h h;
+      int64 b P.rlo plan.rlo;
+      int64 b P.rhi plan.rhi;
+      int32 b P.r_bits plan.r_bits;
+      int32 b P.split (flag split)
+
+(* The call of [k]'s launches, their parameters written, the buffers of
+   their slots in order, the workspace's where a side lies there. *)
+let verdict k : Launch.plan =
   match k.launches with
   | [] -> Ok []
-  | l :: _ as ls ->
+  | (_, l) :: _ as ls ->
       let n = k.count in
       let launches = Array.make n l in
       let buffers = Array.make (slots * n) Launch.workspace in
@@ -871,11 +960,12 @@ let verdict k : params Launch.plan =
         match w.mem with Mem b -> b | Workspace -> Launch.workspace
       in
       List.iteri
-        (fun j (l : params Launch.t) ->
+        (fun j (p, (l : Launch.t)) ->
           let i = n - 1 - j in
+          write p l.args.params;
           launches.(i) <- l;
           let src, dst, plan =
-            match l.params with
+            match p with
             | Step (s, plan) -> (s.src, s.dst, plan)
             | Real { src; dst; plan; _ } -> (src, dst, plan)
           in
@@ -966,92 +1056,3 @@ let c2r c ~axes ~dst x =
           })
   end;
   verdict k
-
-(* Parameters *)
-
-let int64 r at off v = Run.int64 r at off (Int64.of_int v)
-let int32 r at off v = Run.int32 r at off v
-let flag b = Bool.to_int b
-
-let write_side r at base (s : side) =
-  let module S = K.Fft_side in
-  int64 r at (base + S.ptr) s.at.byte;
-  int64 r at (base + S.off) s.first;
-  int64 r at (base + S.ps) s.ps;
-  int32 r at (base + S.rank) (Array.length s.dim);
-  Array.iteri (fun i d -> int64 r at (base + S.dim + (8 * i)) d) s.dim;
-  Array.iteri (fun i d -> int64 r at (base + S.str + (8 * i)) d) s.str
-
-(* The multiplier by which fft.cu divides by [d] < 2^16: 0 for 1. *)
-let magic d = if d = 1 then 0 else ((1 lsl 32) / d) + 1
-
-let write_step r at p (s : step) =
-  let module P = K.Fft_params in
-  write_side r at P.in_ s.src;
-  write_side r at P.out s.dst;
-  int64 r at P.plan 0;
-  int64 r at P.nv s.nv;
-  int64 r at P.m s.m;
-  int64 r at P.ns s.ns;
-  int64 r at P.nsrc s.nsrc;
-  int64 r at P.limit s.limit;
-  int64 r at P.gts s.gts;
-  int64 r at P.nh s.nh;
-  let l = s.inner.l in
-  int64 r at P.tw (List.assoc l p.tw);
-  int64 r at P.glo p.glo;
-  int64 r at P.ghi p.ghi;
-  int64 r at P.rlo p.rlo;
-  int64 r at P.rhi p.rhi;
-  int64 r at P.chirp p.chirp;
-  int64 r at P.bspec p.bspec;
-  int64 r at P.rlog p.rlog;
-  int32 r at P.l l;
-  int32 r at P.lld s.lld;
-  int32 r at P.lst s.lst;
-  int32 r at P.lp s.lp;
-  int32 r at P.g s.g;
-  int32 r at P.tl s.inner.tl;
-  int32 r at P.lf_ld (flag s.lf_ld);
-  int32 r at P.lf_st (flag s.lf_st);
-  int32 r at P.ld s.ld;
-  int32 r at P.st s.st;
-  int32 r at P.conj_in (flag s.conj_in);
-  int32 r at P.conj_out (flag s.conj_out);
-  int32 r at P.chirp_in (flag s.chirp_in);
-  int32 r at P.post s.post;
-  int32 r at P.np (Array.length s.inner.radices);
-  int32 r at P.half (flag (l mod 2 = 0));
-  int32 r at P.nops (Array.length s.ops);
-  int32 r at P.gshift (log2 s.g);
-  int32 r at P.g_bits p.g_bits;
-  int32 r at P.r_bits p.r_bits;
-  int32 r at P.rader (flag s.rader);
-  Array.iteri (fun i o -> int32 r at (P.ops + (4 * i)) o) s.ops;
-  let ns = ref 1 in
-  Array.iteri
-    (fun i radix ->
-      let module F = K.Fft_pass in
-      let base = P.pass + (F.size * i) in
-      int32 r at (base + F.r) radix;
-      int32 r at (base + F.ns) !ns;
-      int32 r at (base + F.q) (l / radix);
-      int32 r at (base + F.ts) (l / (!ns * radix));
-      int32 r at (base + F.nsm) (magic !ns);
-      ns := !ns * radix)
-    s.inner.radices
-
-let write params r at =
-  match params with
-  | Step (st, plan) -> write_step r at plan st
-  | Real { src; dst; nl; h; split; plan } ->
-      let module P = K.Fft_real_params in
-      write_side r at P.in_ src;
-      write_side r at P.out dst;
-      int64 r at P.plan 0;
-      int64 r at P.nl nl;
-      int64 r at P.h h;
-      int64 r at P.rlo plan.rlo;
-      int64 r at P.rhi plan.rhi;
-      int32 r at P.r_bits plan.r_bits;
-      int32 r at P.split (flag split)

@@ -86,8 +86,8 @@ val parameters : fill -> string
 (** [parameters f] is the argument block of [f], while [f] is reachable. *)
 
 val part : Rig.t -> fill -> Rig_gpu_support.work
-(** [part d f] is [f] as work on [d], with its run parameters and private
-    state. *)
+(** [part d f] is [f] as work on [d], with its parameters, the values its
+    submits pass, and private state. *)
 
 val failing : ?bytes:int -> int -> fill
 (** [failing ~bytes code] returns [code] and enqueues nothing. Its argument

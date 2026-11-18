@@ -129,7 +129,7 @@ let numbering = Array.map (refs Numbering) kernels
 
 (* A launch of [kernel] in a call of [mode] on [groups] groups, of
    parameters [p]. *)
-let launch_of mode ?(shared = 0) kernel groups p : Bytes.t Launch.t =
+let launch_of mode ?(shared = 0) kernel groups p : Launch.t =
   let k = ord kernel in
   let refs = match mode with Sorting -> sorting | Numbering -> numbering in
   {
@@ -137,12 +137,13 @@ let launch_of mode ?(shared = 0) kernel groups p : Bytes.t Launch.t =
     size = Bytes.length p;
     base = 0;
     refs = refs.(k);
-    gx = groups;
-    gy = 1;
-    gz = 1;
-    threads = K.sort_threads;
-    shared;
-    params = p;
+    args =
+      {
+        Rig.Submission.groups = (groups, 1, 1);
+        threads = (K.sort_threads, 1, 1);
+        shared;
+        params = p;
+      };
   }
 
 let rec fill a i = function

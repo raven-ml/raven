@@ -12,8 +12,11 @@ module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
-let submit ?(buffers = [||]) ?waits s =
-  Rig.submit ?waits (Sub.take s) ~buffers
+let submit ?(buffers = [||]) ?(args = [||]) ?waits s =
+  Rig.submit ?waits s ~buffers ~args
+
+(* The values of a submission's one fill, which reads none. *)
+let one = Support.zeros 1
 
 let timeout = 60.
 let page_bytes = 1 lsl 16
@@ -460,7 +463,7 @@ let test_free () =
   (fun () ->
     let m = create io t page_bytes in
     let s = Sub.make d [| Support.touching [| Sub.read |] |] in
-    ignore (submit s ~buffers:[| require_some (B.borrow d m) |]))
+    ignore (submit ~args:one s ~buffers:[| require_some (B.borrow d m) |]))
     ();
   let drain () =
     Gc.full_major ();
@@ -523,8 +526,8 @@ let test_staged_device () =
   done;
   equal ~msg:"bytes that differ" int 0 !wrong
 
-(* No device's work reaches io memory itself, only a borrow of its pages: a run
-   refuses an io device's buffer and takes the borrow. *)
+(* No device's work reaches io memory itself, only a borrow of its pages: a
+   submit refuses an io device's buffer and takes the borrow. *)
 let test_run_borrows () =
   let io, t = open_pages () in
   let d, _ = P.open_ "io:slots" in
@@ -532,10 +535,10 @@ let test_run_borrows () =
   let s = Sub.make d [| Support.touching [| Sub.read; Sub.write |] |] in
   let own = B.create d 8 and borrowed = require_some (B.borrow d m) in
   raises_match Exn.invalid_arg (fun () ->
-      ignore (submit s ~buffers:[| m; own |]));
+      ignore (submit ~args:one s ~buffers:[| m; own |]));
   raises_match Exn.invalid_arg (fun () ->
-      ignore (submit s ~buffers:[| borrowed; m |]));
-  ignore (submit s ~buffers:[| borrowed; own |])
+      ignore (submit ~args:one s ~buffers:[| borrowed; m |]));
+  ignore (submit ~args:one s ~buffers:[| borrowed; own |])
 
 (* The minor words [f ()] allocates. *)
 let minor_words f =
@@ -789,8 +792,7 @@ let test_of_io () =
 let test_of_io_closed () =
   let m = Result.get_ok (Rig.software "io:before-closed") in
   let p =
-    Rig.submit (Rig.Submission.take (Rig.Submission.make m [||]))
-      ~buffers:[||]
+    Rig.submit (Rig.Submission.make m [||]) ~buffers:[||] ~args:[||]
   in
   Rig.Point.wait p;
   Rig.close m;
@@ -824,9 +826,9 @@ let pp_access ppf a =
 
 let access = Testable.make ~pp:pp_access ~equal:( = )
 
-(* A device's work never writes memory that admits only reads: a run that writes
-   it, a copy part into it, a run's copy into it and fixed memory written are
-   refused, and reading it is not. *)
+(* A device's work never writes memory that admits only reads: a submit that
+   writes it, a copy part into it, a submit's copy into it and fixed memory
+   written are refused, and reading it is not. *)
 let test_read_runs () =
   let io, t = open_pages () in
   let d, _ = P.open_ ~host_visible:false "io:read-runs" in
@@ -834,12 +836,12 @@ let test_read_runs () =
   let m = B.of_io io (module Pages) r ~access:Read page_bytes in
   let on_d = require_some (B.borrow d m) and own = B.create d page_bytes in
   let s = Sub.make d [| Support.touching [| Sub.read; Sub.write |] |] in
-  ignore (submit s ~buffers:[| on_d; own |]);
-  raises_match ~msg:"a run's write" Exn.invalid_arg (fun () ->
-      ignore (submit s ~buffers:[| own; on_d |]));
+  ignore (submit ~args:one s ~buffers:[| on_d; own |]);
+  raises_match ~msg:"a submit's write" Exn.invalid_arg (fun () ->
+      ignore (submit ~args:one s ~buffers:[| own; on_d |]));
   let unordered = Sub.make d [| Support.touching [| Sub.unordered |] |] in
-  raises_match ~msg:"a run's unordered use" Exn.invalid_arg (fun () ->
-      ignore (submit unordered ~buffers:[| on_d |]));
+  raises_match ~msg:"a submit's unordered use" Exn.invalid_arg (fun () ->
+      ignore (submit ~args:one unordered ~buffers:[| on_d |]));
   let copy src dst =
     Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
   in
@@ -848,7 +850,7 @@ let test_read_runs () =
       ignore (Sub.make d [| copy own on_d |]));
   let slots = Sub.make d Sub.[| copy ~src:(Slot 0) ~dst:(Slot 1) |] in
   ignore (submit slots ~buffers:[| on_d; own |]);
-  raises_match ~msg:"a run's copy into it" Exn.invalid_arg (fun () ->
+  raises_match ~msg:"a submit's copy into it" Exn.invalid_arg (fun () ->
       ignore (submit slots ~buffers:[| own; on_d |]));
   let fixed access = Sub.make ~fixed:[ (on_d, access) ] d [||] in
   ignore (fixed Rig.Read);
@@ -979,7 +981,7 @@ let tests =
         test "io memory returns once unreachable and its uses reached" test_free;
         test "a collected io memory's release costs few words"
           test_release_words;
-        test "a run refuses io memory and takes a borrow of its pages"
+        test "a submit refuses io memory and takes a borrow of its pages"
           test_run_borrows;
         test "io memory and a device's memory copy through staging, both ways"
           test_staged_device;

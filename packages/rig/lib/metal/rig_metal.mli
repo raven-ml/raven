@@ -56,19 +56,20 @@
           launch ~refs:[| read 0 ~at:0; write 1 ~at:8 |] add ~params:16)
       in
       let s = Rig.Submission.make d [| add |] in
-      let run = Rig.Submission.take s in
-      let b = Rig.Submission.block s 0 in
-      Rig.Submission.Run.groups run b (n / 256) 1 1;
-      Rig.Submission.Run.threads run b 256 1 1;
-      ignore (Rig.submit run ~buffers:[| x; y |] : Rig.Point.t);
+      let args =
+        Rig.Submission.
+          { groups = (n / 256, 1, 1); threads = (256, 1, 1); shared = 0;
+            params = Bytes.empty }
+      in
+      ignore (Rig.submit s ~buffers:[| x; y |] ~args:[| args |] : Rig.Point.t);
       Rig.Buffer.read y Bigarray.float32 (fun a ->
           Printf.printf "y[10] = %g\n" a.{10});
       Rig.close d
     ]}
     The host addresses the device's memory, so it writes [x] and [y] in
-    place, after any work on them ({!Rig.Buffer.write}). The program never
-    stores the 8 parameter bytes at [0] and [8], so they hold the offset [0],
-    and the kernel reads them as the GPU addresses of [x]'s and [y]'s first
+    place, after any work on them ({!Rig.Buffer.write}). The program gives
+    no parameter bytes, so the 8 at [0] and [8] read [0], the offset, and
+    the kernel reads them as the GPU addresses of [x]'s and [y]'s first
     bytes, [a.x] and [a.y]. [n] is a multiple of 256, the threads of a
     group. {!Rig.Buffer.read} of [y] returns once the launch has completed,
     and raises {!Rig.Lost} if its command buffer failed.

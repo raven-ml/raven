@@ -40,8 +40,8 @@ let show name b =
 
 (* The step: its constants [k] as fixed memory, a value it keeps that says
    when it is collected, one fill that reads one buffer and writes another,
-   and the run each submit uses. The constants' address goes into the run
-   once. The function it returns submits the step with the call's
+   and the values each submit passes. The constants' address goes into the
+   values once. The function it returns submits the step with the call's
    buffers. *)
 let step d =
   let k = holding d [ 1l; 10l; 100l; 1000l ] in
@@ -50,11 +50,13 @@ let step d =
   let refs = Submission.[| write 1 ~at:0; read 0 ~at:8 |] in
   let part = Submission.fill (scale ()) ~params:32 ~refs in
   let s = Submission.make ~keep:held ~fixed:[ (k, Read) ] d [| part |] in
-  let run = Submission.take s in
-  let block = Submission.block s 0 in
-  Submission.Run.int64 run block 16 (Int64.of_int (Submission.address s k));
-  Submission.Run.int64 run block 24 (Int64.of_int n);
-  fun ~src ~dst -> submit run ~buffers:[| src; dst |]
+  let params = Bytes.make 32 '\000' in
+  Bytes.set_int64_le params 16 (Int64.of_int (Submission.address s k));
+  Bytes.set_int64_le params 24 (Int64.of_int n);
+  let args =
+    Submission.{ groups = (0, 0, 0); threads = (0, 0, 0); shared = 0; params }
+  in
+  fun ~src ~dst -> submit s ~buffers:[| src; dst |] ~args:[| args |]
 
 (* Two runs of one step, each on buffers of its own. *)
 let runs d =

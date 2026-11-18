@@ -43,6 +43,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- **Breaking:** `Rig.submit` takes `~args`, one `Submission.args` of grid,
+  threads, shared bytes and little-endian `params` per launch or fill, and
+  `Submission.Run`, `take` and `block` are gone. A short `params` reads 0.
 - A job's silence bound, 10 seconds by default, is a value it is opened
   with: `Rig_remote.connect ?silence`, `RIG_REMOTE_SILENCE` for
   `Rig_remote.launched`, and `rig run --silence S`. Every process of the job
@@ -3433,6 +3436,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- An nx.amd call's submissions count `32 (8 + r)` bytes for each launch of
+  `r` buffers toward the 64 MiB a device keeps. Its launches' grids and
+  words, `32 (2 + ⌈w / 2⌉)` bytes a launch of `w` words, stay in memory that
+  rig keeps for the life of the process (`Nx_amd`).
 - Add `Nx.zoom_fft ~start ~step m x`, the transform at `m` equally spaced
   frequencies on the unit circle by Bluestein's convolution, with its chirp
   phases reduced exactly at any length and its error bound stated.

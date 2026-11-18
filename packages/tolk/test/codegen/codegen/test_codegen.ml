@@ -1995,15 +1995,23 @@ let ten_scalars () =
                 ~params:(8 + (4 * List.length scalars));
             |])
       in
-      let run = Rig.Submission.take s in
-      let b = Rig.Submission.block s 0 in
-      Rig.Submission.Run.groups run b 1 1 1;
-      Rig.Submission.Run.threads run b 1 1 1;
+      let params = Bytes.make (8 + (4 * List.length scalars)) '\000' in
       List.iteri
-        (fun i v -> Rig.Submission.Run.int32 run b (8 + (4 * i)) (value v))
+        (fun i v ->
+          Bytes.set_int32_le params (8 + (4 * i)) (Int32.of_int (value v)))
         scalars;
+      let args =
+        {
+          Rig.Submission.groups = (1, 1, 1);
+          threads = (1, 1, 1);
+          shared = 0;
+          params;
+        }
+      in
       ignore
-        (Rig.submit run ~buffers:[| Rig.Buffer.of_bigarray result |]
+        (Rig.submit s
+           ~buffers:[| Rig.Buffer.of_bigarray result |]
+           ~args:[| args |]
           : Rig.Point.t)
   | Error why -> fail why);
   equal ~msg:"1 + 2 + ... + 10" int32 55l result.{0}

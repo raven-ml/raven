@@ -4,7 +4,6 @@
   ---------------------------------------------------------------------------*)
 
 module Sub = Rig.Submission
-module Run = Rig.Submission.Run
 
 type bigbytes =
   (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
@@ -366,16 +365,13 @@ let leave_out named slots launches =
   (Array.of_list kept, Array.map renumber launches)
 
 (* The bytes a device counts for a call's submission (nx_amd.mli): 1 KiB,
-   and for each launch of [w] words and [r] refs a run's block, 32 bytes and
-   twice its parameters on 16 bytes ({!Rig.section-valid}), and
-   32 (8 + r) bytes for its part, refs and key and for rig's image, slot
-   and name of it, a name of at most {!name_bytes}. *)
+   and for each launch of [r] refs 32 (8 + r) bytes for its part, refs and
+   key and for rig's image, slot and name of it, a name of at most
+   {!name_bytes}. The blocks that hold a submit's values are rig's, which
+   keeps them whatever submissions a device keeps ({!Rig.submit}). *)
 let call_bytes = 1024
 let name_bytes = 30
-
-let launch_bytes l =
-  let w = Kernels.words l.kernel in
-  32 * (9 + ((w + 1) / 2) + Array.length l.refs)
+let launch_bytes l = 32 * (8 + Array.length l.refs)
 
 let finish b =
   if b.launched = [] then invalid_arg "Plan.finish: no launch";
@@ -482,16 +478,22 @@ let parts fs c =
         ~params:(8 * Kernels.words l.kernel))
     c.launches
 
-let write c r s =
-  let ls = c.launches in
-  for i = 0 to Array.length ls - 1 do
-    let l = ls.(i) in
-    let at = Sub.block s i in
-    let x, y, z = l.groups in
-    Run.groups r at x y z;
-    Run.threads r at (Kernels.threads l.kernel) 1 1;
-    Run.shared r at l.shared;
-    for j = 0 to l.used - 1 do
-      Run.int64 r at (8 * j) (Bytes.get_int64_le l.words (8 * j))
-    done
-  done
+(* Each kernel's threads a group, by {!Kernels.index}, made once so that a
+   launch's values take none of their own. *)
+let group_threads = Array.map (fun k -> (Kernels.threads k, 1, 1)) Kernels.all
+
+(* A launch's values: its words up to the last one its kernel reads, which
+   costs a copy of them where it reads fewer than all. *)
+let launch_args l =
+  let params =
+    if l.used = Kernels.words l.kernel then l.words
+    else Bytes.sub l.words 0 (8 * l.used)
+  in
+  {
+    Sub.groups = l.groups;
+    threads = group_threads.(Kernels.index l.kernel);
+    shared = l.shared;
+    params;
+  }
+
+let args c = Array.map launch_args c.launches

@@ -143,11 +143,12 @@ let host_rows =
       row "load-cold-256M" file (load ~cold:true);
     ]
 
-(* A copy of the step: the run of its submission it submits with, its
-   argument, and the buffers each of its runs uses: the parameters and the
+(* A copy of the step: its submission and the values it submits with, its
+   argument, and the buffers each of its submits uses: the parameters and the
    argument, read, then its output, written. *)
 type gpu_copy = {
-  grun : Sub.Run.t;
+  gsub : Sub.t;
+  gvalues : Sub.args array;
   gargs : B.t;
   gbuffers : B.t array;
 }
@@ -160,14 +161,17 @@ type gpu_replay = {
 (* A kernel's work, and the objects it keeps. *)
 type work = { work : Rig_gpu_support.work; keep : unit -> unit }
 
-(* A launch's block runs one group of one thread; a fill reads no geometry. *)
+(* A launch [part] over one group of one thread, its parameters 0. *)
 let work part keep =
-  let init s run i =
-    match Sub.block s i with
-    | b ->
-        Sub.Run.groups run b 1 1 1;
-        Sub.Run.threads run b 1 1 1
-    | exception Invalid_argument _ -> ()
+  let init _ =
+    Some
+      Sub.
+        {
+          groups = (1, 1, 1);
+          threads = (1, 1, 1);
+          shared = 0;
+          params = Bytes.empty;
+        }
   in
   { work = { (Rig_gpu_support.work part) with init }; keep }
 
@@ -214,12 +218,12 @@ let one_launch arch binary =
 let gpu_rows v ~opened ~kernel ~launch =
   let rig () =
     let g, _ = opened () in
-    (g, Sub.take (Sub.make g [||]), ref 0)
+    (g, Sub.make g [||], ref 0)
   in
   (* A device whose last value is reached. *)
   let reached () =
-    let _, run, _ = rig () in
-    let p = Rig.submit run ~buffers:[||] in
+    let _, s, _ = rig () in
+    let p = Rig.submit s ~buffers:[||] ~args:[||] in
     Rig.Point.wait p;
     p
   in
@@ -230,8 +234,8 @@ let gpu_rows v ~opened ~kernel ~launch =
     let k = kernel d g in
     let access = [| Rig.Read; Rig.Read; Rig.Read_write |] in
     let uses = Array.to_list (Array.map (fun a -> (B.create g 8, a)) access) in
-    let run, buffers = Rig_gpu_support.prepare ~fixed:uses g [ k.work ] in
-    (g, run, buffers, k.keep, ref 0)
+    let s, buffers, args = Rig_gpu_support.prepare ~fixed:uses g [ k.work ] in
+    (g, (s, args), buffers, k.keep, ref 0)
   in
   let replay g parts keep =
     let gparams = Array.init slots (fun _ -> B.create g 8) in
@@ -242,8 +246,10 @@ let gpu_rows v ~opened ~kernel ~launch =
       let gargs = B.create g 8 in
       let gbuffers = Array.concat [ gparams; [| gargs; B.create g 8 |] ] in
       let uses = Array.to_list (Array.combine gbuffers access) in
-      let grun, gbuffers = Rig_gpu_support.prepare ~fixed:uses g parts in
-      { grun; gargs; gbuffers }
+      let gsub, gbuffers, gvalues =
+        Rig_gpu_support.prepare ~fixed:uses g parts
+      in
+      { gsub; gvalues; gargs; gbuffers }
     in
     ({ gcopies = Array.init depth (fun _ -> copy ()); keep }, ref 0)
   in
@@ -264,7 +270,7 @@ let gpu_rows v ~opened ~kernel ~launch =
     let c = r.gcopies.(!n mod depth) in
     incr n;
     B.wait c.gargs Rig.Read_write;
-    Rig.submit c.grun ~buffers:c.gbuffers
+    Rig.submit c.gsub ~buffers:c.gbuffers ~args:c.gvalues
   in
   let pipelined ((r, _) as x) =
     for _ = 1 to runs - 1 do
@@ -430,14 +436,14 @@ let gpu_rows v ~opened ~kernel ~launch =
       [ row "reached" reached Rig.Point.wait ];
     Thumper.group (strf "submit/%s" v)
       [
-        row "empty" rig (fun (_, run, _) ->
-            Rig.Point.wait (Rig.submit run ~buffers:[||]));
-        row "cost" rig (fun (_, run, n) ->
-            let p = Rig.submit run ~buffers:[||] in
+        row "empty" rig (fun (_, s, _) ->
+            Rig.Point.wait (Rig.submit s ~buffers:[||] ~args:[||]));
+        row "cost" rig (fun (_, s, n) ->
+            let p = Rig.submit s ~buffers:[||] ~args:[||] in
             incr n;
             if !n mod drain = 0 then Rig.Point.wait p);
-        row "kernel" kernel_rig (fun (_, run, buffers, keep, n) ->
-            let p = Rig.submit run ~buffers in
+        row "kernel" kernel_rig (fun (_, (s, args), buffers, keep, n) ->
+            let p = Rig.submit s ~buffers ~args in
             incr n;
             if !n mod drain = 0 then begin
               Rig.Point.wait p;

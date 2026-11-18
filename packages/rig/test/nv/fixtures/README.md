@@ -4,7 +4,8 @@ Cubins for sm_89, each made from its source by `gen.sh`.
 
 - `kernels_sm89.cubin` holds the kernels of `kernels.cu`.
 - `launch_sm89.cubin` holds the kernels of `launch.cu`, which the
-  conformance and NV suites launch with their parameters in a run's block.
+  conformance and NV suites launch with their parameters in a submit's
+  values.
 - `locals_sm89.cubin` holds the forty kernels of `locals.cu`, each with
   local memory of its own size.
 - `deep_sm89.cubin` holds the kernels of `deep.cu`: `deep`, whose threads

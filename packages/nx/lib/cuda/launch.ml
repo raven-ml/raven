@@ -5,23 +5,17 @@
 
 module K = Kernels
 module Sub = Rig.Submission
-module Run = Rig.Submission.Run
 
-type 'p t = {
+type t = {
   kernel : int;
   size : int;
   base : int;
   refs : int array;
-  gx : int;
-  gy : int;
-  gz : int;
-  threads : int;
-  shared : int;
-  params : 'p;
+  args : Sub.args;
 }
 
-type 'p call = {
-  launches : 'p t array;
+type call = {
+  launches : t array;
   buffers : Rig.Buffer.t array;
   workspace : int;
   tickets : int;
@@ -29,7 +23,7 @@ type 'p call = {
   frees : Rig.Buffer.t list;
 }
 
-type 'p plan = ('p call list, Nx_array.answer) result
+type plan = (call list, Nx_array.answer) result
 
 (* Empty buffers, which allocate nothing, distinct from any other: the door
    binds the device's buffers in their place. *)
@@ -50,21 +44,7 @@ let slot_refs ~header ~reads ~writes =
   done;
   refs
 
-let bytes b r at =
-  for j = 0 to (Bytes.length b / 8) - 1 do
-    Run.int64 r at (8 * j) (Bytes.get_int64_le b (8 * j))
-  done
-
-let write w c r s =
-  let ls = c.launches in
-  for i = 0 to Array.length ls - 1 do
-    let l = ls.(i) in
-    let at = Sub.block s i in
-    Run.groups r at l.gx l.gy l.gz;
-    Run.threads r at l.threads 1 1;
-    Run.shared r at l.shared;
-    w l.params r at
-  done
+let args c = Array.map (fun l -> l.args) c.launches
 
 (* Keys: the count of launches, then each one's kernel, size, base, count of
    ref words and refs. *)

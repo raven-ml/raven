@@ -563,7 +563,7 @@ let is_padded (o : operand) = match o.access with Pad _ -> true | _ -> false
 
 (* Launches *)
 
-type launch = Bytes.t Launch.t
+type launch = Launch.t
 
 let loop_kernel = Launch.kernel "loop"
 
@@ -611,12 +611,13 @@ let launch_of (ws : words) ~reads ~nslots ~groups ~planes : launch =
     size = 8 * K.loop_words;
     base = 0;
     refs = Launch.slot_refs ~header:K.loop_header ~reads ~writes:(nslots - reads);
-    gx = groups;
-    gy = 1;
-    gz = 1;
-    threads = K.loop_threads;
-    shared = (if copied then at + (8 * ws.n) else planes);
-    params = Bytes.sub ws.b 0 (8 * ws.n);
+    args =
+      {
+        Rig.Submission.groups = (groups, 1, 1);
+        threads = (K.loop_threads, 1, 1);
+        shared = (if copied then at + (8 * ws.n) else planes);
+        params = Bytes.sub ws.b 0 (8 * ws.n);
+      };
   }
 
 (* The elements a thread holds: the most of [most] (a power of two) and
@@ -891,11 +892,11 @@ let fresh (s : stand_ins) xs =
    so that its memory returns when their work is done. *)
 let made dev (s : stand_ins) cs =
   let make cs (b, bytes) =
-    let named (c : _ Launch.call) = Array.memq b c.buffers in
+    let named (c : Launch.call) = Array.memq b c.buffers in
     match cs with
-    | (c : _ Launch.call) :: rest when List.exists named cs ->
+    | (c : Launch.call) :: rest when List.exists named cs ->
         let m = Rig.Buffer.create dev bytes in
-        let swap (c : _ Launch.call) =
+        let swap (c : Launch.call) =
           Array.iteri (fun i x -> if x == b then c.buffers.(i) <- m) c.buffers
         in
         List.iter swap cs;
@@ -1868,7 +1869,8 @@ let rec scan_call ?carry (p : P.t) ~shape ~axis ((r : Nx_kernel.reduction), k)
              ~mode:K.loop_network ~rk ~units:slices ~terms ~chunks:1 ~carry
              ~work ~groups:network_groups ~r
          in
-         let threads = l.gx * K.loop_threads in
+         let gx, _, _ = l.args.groups in
+         let threads = gx * K.loop_threads in
          let value = 4 * words carrier in
          ([ l ], 2 * levels terms * threads * 3 * value, 0))
   | None, (Monoid _ | Arg _) ->

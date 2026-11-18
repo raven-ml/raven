@@ -761,9 +761,10 @@ let encoded_words ~units ~fixed encode =
     work with
     fixed;
     init =
-      (fun s _ _ ->
+      (fun s ->
         Rig.Buffer.write b Bigarray.int32 (fun data ->
-            Array.iteri (fun i w -> data.{i} <- Int32.of_int w) (encode s)));
+            Array.iteri (fun i w -> data.{i} <- Int32.of_int w) (encode s));
+        None);
   }
 
 let kernel ?of_ t p name ~groups ~fixed args =
@@ -792,11 +793,17 @@ module Sub = Rig.Submission
 
 let launch_code = code_of launch_bin
 
+(* The values of a launch over [groups] of [threads] (each defaults to one)
+   with [shared] bytes of LDS and [params] bytes of parameters, 0. *)
+let launch_args ?(groups = (1, 1, 1)) ?(threads = (1, 1, 1)) ?(shared = 0)
+    params =
+  { Sub.groups; threads; shared; params = Bytes.make params '\000' }
+
 (* Submits one launch of [p]'s [name] over [groups] of [threads], its groups
-   taking [shared] bytes, whose block [set] stores, using each buffer of [uses]
-   with its access, and waits for it. *)
-let launch t p name ~params ~refs ~groups:(gx, gy, gz) ~threads:(tx, ty, tz)
-    ?(shared = 0) ~set ~uses () =
+   taking [shared] bytes, whose parameters [set] writes, using each buffer of
+   [uses] with its access, and waits for it. *)
+let launch t p name ~params ~refs ~groups ~threads ?(shared = 0) ~set ~uses
+    () =
   let buffers, access = Array.split (Array.of_list uses) in
   let ref_ (at, slot) =
     match access.(slot) with
@@ -806,12 +813,9 @@ let launch t p name ~params ~refs ~groups:(gx, gy, gz) ~threads:(tx, ty, tz)
   let refs = Array.of_list (List.map ref_ refs) in
   let fn = Option.get (Rig.Image.resolve p name) in
   let s = Sub.make t.d [| Sub.launch ~refs fn ~params |] in
-  let run = Sub.take s and b = Sub.block s 0 in
-  Sub.Run.groups run b gx gy gz;
-  Sub.Run.threads run b tx ty tz;
-  Sub.Run.shared run b shared;
-  set run b;
-  Rig.Point.wait (Rig.submit run ~buffers)
+  let v = launch_args ~groups ~threads ~shared params in
+  set v.Sub.params;
+  Rig.Point.wait (Rig.submit s ~buffers ~args:[| v |])
 
 (* What [p]'s [scratch] kernel stores, over a group of 64 work-items each
    storing 5 times its index through its scratch. *)
@@ -820,9 +824,7 @@ let scratch_stores t p =
   launch t p "scratch" ~params:12
     ~refs:[ (0, 0) ]
     ~groups:(1, 1, 1) ~threads:(64, 1, 1)
-    ~set:(fun run b ->
-      Sub.Run.int64 run b 0 0L;
-      Sub.Run.int32 run b 8 5)
+    ~set:(fun b -> Bytes.set_int32_le b 8 5l)
     ~uses:[ (out, Rig.Read_write) ]
     ();
   get out
@@ -855,10 +857,11 @@ let nop_words (t : S.t) n =
         work with
         fixed = [ (nop, Rig.Read) ];
         init =
-          (fun s _ _ ->
+          (fun s ->
             fill
               (words
-                 (Abi.Aql.indirect_buffer (Sub.address s nop) ~dwords:1)));
+                 (Abi.Aql.indirect_buffer (Sub.address s nop) ~dwords:1));
+            None);
       }
 
 (* An AQL compute ring grows as a new queue, with a descriptor of its own: a
@@ -890,10 +893,9 @@ let lds_launch n () =
   launch t p "lds" ~params:16
     ~refs:[ (0, 0) ]
     ~groups:(1, 1, 1) ~threads:(64, 1, 1) ~shared:(4 * n)
-    ~set:(fun run b ->
-      Sub.Run.int64 run b 0 0L;
-      Sub.Run.int32 run b 8 own;
-      Sub.Run.int32 run b 12 n)
+    ~set:(fun b ->
+      Bytes.set_int32_le b 8 (Int32.of_int own);
+      Bytes.set_int32_le b 12 (Int32.of_int n))
     ~uses:[ (out, Rig.Read_write) ]
     ();
   equal string ~msg:"out" (multiples 1 64) (get out)
@@ -914,24 +916,18 @@ let launch_segments_hw () =
           ~params:sizes.(i mod Array.length sizes))
   in
   let s = Sub.make t.d ps in
-  let run = Sub.take s in
-  let blocks = Array.init count (Sub.block s) in
-  Array.iter
-    (fun b ->
-      Sub.Run.groups run b 1 1 1;
-      Sub.Run.threads run b lanes 1 1)
-    blocks;
-  Sub.Run.release run;
+  let args =
+    Array.init count (fun i ->
+        launch_args ~threads:(lanes, 1, 1) sizes.(i mod Array.length sizes))
+  in
   let last = ref None in
   for round = 0 to rounds - 1 do
-    if Sub.take (Sub.Run.submission run) != run then
-      fail "the run is taken";
     Array.iteri
-      (fun i b ->
+      (fun i v ->
         let at = 4 * lanes * ((round * count) + i) in
-        Sub.Run.int64 run b 0 (Int64.of_int at))
-      blocks;
-    last := Some (Rig.submit run ~buffers:[| out |])
+        Bytes.set_int64_le v.Sub.params 0 (Int64.of_int at))
+      args;
+    last := Some (Rig.submit s ~buffers:[| out |] ~args)
   done;
   Rig.Point.wait (Option.get !last);
   equal string ~msg:"every launch's output"
@@ -956,15 +952,14 @@ let stores_wide t p n =
       (Array.init n (fun _ ->
            Sub.launch ~refs:[| Sub.write 0 ~at:0 |] fn ~params:16))
   in
-  let run = Sub.take s in
-  for i = 0 to n - 1 do
-    let b = Sub.block s i in
-    Sub.Run.groups run b 1 1 1;
-    Sub.Run.threads run b 1 1 1;
-    Sub.Run.int64 run b 0 (Int64.of_int (4 * i));
-    Sub.Run.int32 run b 8 (i + 1)
-  done;
-  Rig.Point.wait (Rig.submit run ~buffers:[| out |]);
+  let values i =
+    let v = launch_args 16 in
+    Bytes.set_int64_le v.Sub.params 0 (Int64.of_int (4 * i));
+    Bytes.set_int32_le v.Sub.params 8 (Int32.of_int (i + 1));
+    v
+  in
+  Rig.Point.wait
+    (Rig.submit s ~buffers:[| out |] ~args:(Array.init n values));
   get out
 
 let wide_launches n =
@@ -1255,8 +1250,8 @@ let lap_round =
 
 let lap_schedule = Gen.list ~size:(Gen.int_range 2 4) lap_round
 
-(* A submission of launches of [lap], and their blocks. *)
-type laps = { sub : Sub.t; blocks : Sub.block array }
+(* A submission of launches, and the values its submits pass. *)
+type laps = { sub : Sub.t; args : Sub.args array }
 
 (* A case's device, what its steps submit, and what they reached. *)
 type lapper = {
@@ -1264,7 +1259,7 @@ type lapper = {
   wides : laps array; (* [wides.(n - 1)] holds [n] launches *)
   joined : laps;
   four : laps; (* past half the first segment *)
-  small : Sub.t; (* one launch of [lap8] *)
+  small : laps; (* one launch of [lap8] *)
   out : Rig.Buffer.t; (* 4 windows, one per launch *)
   smalls : Rig.Buffer.t; (* [lap8]'s two words *)
   fills : Rig.Buffer.t; (* Device memory *)
@@ -1275,7 +1270,7 @@ type lapper = {
   mutable seq : int; (* the last launch's *)
   mutable bytes : int; (* the parameters launched since the phase began *)
   mutable copies : int;
-  mutable runs : Sub.Run.t list; (* each run taken *)
+  mutable passed : Sub.args array list; (* each submit's values *)
   mutable kept : bool;
   mutable slot_waited : bool;
   mutable copy_released : bool;
@@ -1313,8 +1308,10 @@ let laps ?junk (t : S.t) lap n =
     | Some b -> [ Sub.(copy ~src:(Buffer b) ~dst:(Slot 0)) ]
   in
   let sub = Sub.make t.d (Array.of_list (copy @ List.init n launch)) in
-  let first = List.length copy in
-  { sub; blocks = Array.init n (fun i -> Sub.block sub (first + i)) }
+  let values _ =
+    launch_args ~groups:(lap_groups, 1, 1) ~threads:(32, 1, 1) lap_params
+  in
+  { sub; args = Array.init n values }
 
 let lapper (t : S.t) =
   let p = image ~of_:args_code t in
@@ -1335,7 +1332,12 @@ let lapper (t : S.t) =
     wides = Array.init 3 (fun n -> laps t lap (n + 1));
     joined = laps ~junk t lap 2;
     four = laps t lap 4;
-    small = Sub.make t.d [| Sub.launch ~refs (fn "lap8") ~params:lap8_params |];
+    small =
+      {
+        sub =
+          Sub.make t.d [| Sub.launch ~refs (fn "lap8") ~params:lap8_params |];
+        args = [| launch_args ~threads:(32, 1, 1) lap8_params |];
+      };
     out;
     smalls = buffer ~memory:Pinned t 8;
     fills;
@@ -1346,7 +1348,7 @@ let lapper (t : S.t) =
     seq = 0;
     bytes = 0;
     copies = 0;
-    runs = [];
+    passed = [];
     kept = false;
     slot_waited = false;
     copy_released = false;
@@ -1354,25 +1356,22 @@ let lapper (t : S.t) =
     shared_span = false;
   }
 
-(* [s]'s run, noting whether an earlier step took it. *)
-let take x s =
-  let r = Sub.take s in
-  if List.memq r x.runs then x.kept <- true else x.runs <- r :: x.runs;
-  r
+(* Notes whether an earlier submit passed [args]. *)
+let pass x args =
+  if List.memq args x.passed then x.kept <- true
+  else x.passed <- args :: x.passed
 
 let next_seq x =
   x.seq <- x.seq + 1;
   x.seq
 
-(* Stores into block [b] of [r] a launch of [lap] that checks [seq]. *)
-let set_lap r b seq =
-  Sub.Run.groups r b lap_groups 1 1;
-  Sub.Run.threads r b 32 1 1;
-  Sub.Run.int64 r b 0 0L;
-  Sub.Run.int32 r b 8 seq;
-  Sub.Run.int32 r b 12 lap_groups;
+(* Writes into [v] the parameters of a launch of [lap] that checks [seq]. *)
+let set_lap v seq =
+  let b = v.Sub.params in
+  Bytes.set_int32_le b 8 (Int32.of_int seq);
+  Bytes.set_int32_le b 12 (Int32.of_int lap_groups);
   for i = 0 to lap_words - 1 do
-    Sub.Run.int32 r b (16 + (4 * i)) ((seq lsl 12) lor i)
+    Bytes.set_int32_le b (16 + (4 * i)) (Int32.of_int ((seq lsl 12) lor i))
   done
 
 (* A submit of launches, their windows from [from] on, and their seqs. *)
@@ -1381,20 +1380,20 @@ type submitted = { point : Rig.Point.t; from : int; seqs : int array }
 (* Submits [l] after [waits], each launch with a new seq, launch [i] storing
    into window [from + i] of [x.out]. *)
 let submit_laps ?waits ?(from = 0) x l =
-  let r = take x l.sub in
+  pass x l.args;
   let seqs =
     Array.map
-      (fun b ->
+      (fun v ->
         let seq = next_seq x in
-        set_lap r b seq;
+        set_lap v seq;
         seq)
-      l.blocks
+      l.args
   in
   x.bytes <- x.bytes + (lap_params * Array.length seqs);
   let windows =
     Array.mapi (fun i _ -> view x.out (window * (from + i)) window) seqs
   in
-  { point = Rig.submit ?waits r ~buffers:windows; from; seqs }
+  { point = Rig.submit ?waits l.sub ~buffers:windows ~args:l.args; from; seqs }
 
 (* Fails with [msg] unless each launch of [l] stored its seq in every
    group's word: else at most 8 of the words that differ. *)
@@ -1418,20 +1417,18 @@ let check_laps x msg l =
    dispatch read the line that the next one's arguments share with its own,
    before the host wrote them. *)
 let adjacent x k =
-  let b = Sub.block x.small 0 in
+  let b = x.small.args.(0).Sub.params in
   let addresses = Array.make k 0 and wrong = ref [] in
   for j = 0 to k - 1 do
-    let r = take x x.small in
+    pass x x.small.args;
     let seq = next_seq x in
-    Sub.Run.groups r b 1 1 1;
-    Sub.Run.threads r b 32 1 1;
-    Sub.Run.int64 r b 0 0L;
-    Sub.Run.int32 r b 8 seq;
+    Bytes.set_int32_le b 8 (Int32.of_int seq);
     for i = 0 to lap8_words - 1 do
-      Sub.Run.int32 r b (12 + (4 * i)) ((seq lsl 12) lor i)
+      Bytes.set_int32_le b (12 + (4 * i)) (Int32.of_int ((seq lsl 12) lor i))
     done;
     x.bytes <- x.bytes + lap8_params;
-    Rig.Point.wait (Rig.submit r ~buffers:[| x.smalls |]);
+    Rig.Point.wait
+      (Rig.submit x.small.sub ~buffers:[| x.smalls |] ~args:x.small.args);
     let got = get x.smalls in
     if u32 got 0 <> seq then
       wrong := strf "seq %d: 0x%x" seq (u32 got 0) :: !wrong;
@@ -1513,7 +1510,7 @@ let lap_prefix x =
   else begin
     let gate, gp = Rig_support.Polled.open_ "amd:lap-gate" in
     Fun.protect ~finally:(fun () -> Rig.close gate) @@ fun () ->
-    let q = Rig.submit (Sub.take (Sub.make gate [||])) ~buffers:[||] in
+    let q = Rig.submit (Sub.make gate [||]) ~buffers:[||] ~args:[||] in
     let first = submit_laps ~waits:[| q |] x one in
     let rest = List.map (fun from -> submit_laps ~from x one) [ 1; 2; 3 ] in
     cover "submits while the values before them are unreached"
@@ -1552,7 +1549,7 @@ let lap_law schedule =
   cover "a first dispatch after a copy of its submission" x.slot_waited;
   cover "a first dispatch after the copy queue's release" x.copy_released;
   cover "a copy by the copy kernel, on the compute ring" x.kernel_copied;
-  cover "a run an earlier submit used" x.kept;
+  cover "values an earlier submit passed" x.kept;
   cover "consecutive values' arguments within one aligned 256 B span"
     x.shared_span
 
@@ -2431,12 +2428,11 @@ let many_waits () =
   let close () = List.iter (fun (p, _) -> Rig.close p) producers in
   Fun.protect ~finally:close @@ fun () ->
   let point (p, _) =
-    let run = Rig.Submission.take (Rig.Submission.make p [||]) in
-    Rig.submit run ~buffers:[||]
+    Rig.submit (Rig.Submission.make p [||]) ~buffers:[||] ~args:[||]
   in
   let points = Array.of_list (List.map point producers) in
   let s = Rig.Submission.make d [||] in
-  let v = Rig.submit (Rig.Submission.take s) ~waits:points ~buffers:[||] in
+  let v = Rig.submit s ~waits:points ~buffers:[||] ~args:[||] in
   let reached = List.filter (fun (_, p) -> P.queued p = 0) producers in
   equal int ~msg:"producers reached on the host" 0 (List.length reached);
   List.iter (fun (_, p) -> ignore (P.run p)) producers;
@@ -2956,13 +2952,11 @@ let two_in_array () =
     (in_array t.g, in_array t'.g);
   let gate, gp = Rig_support.Polled.open_ "amd:gate" in
   let gated d ws =
-    let run, buffers = Rig_gpu_support.prepare d ws in
+    let s, buffers, args = Rig_gpu_support.prepare d ws in
     let q =
-      Rig.submit
-        (Rig.Submission.take (Rig.Submission.make gate [||]))
-        ~buffers:[||]
+      Rig.submit (Rig.Submission.make gate [||]) ~buffers:[||] ~args:[||]
     in
-    (q, Rig.submit ~waits:[| q |] run ~buffers)
+    (q, Rig.submit ~waits:[| q |] s ~buffers ~args)
   in
   let n = 1 lsl 20 in
   let p = pattern n 29 in
@@ -3114,7 +3108,7 @@ let vmid (t : gpu) p =
   launch t p "hw_id2" ~params:8
     ~refs:[ (0, 0) ]
     ~groups:(1, 1, 1) ~threads:(1, 1, 1)
-    ~set:(fun _ _ -> ())
+    ~set:ignore
     ~uses:[ (out, Rig.Read_write) ]
     ();
   (Int32.to_int (String.get_int32_le (get out) 0) lsr 24) land 0xf
@@ -3182,22 +3176,17 @@ let count (t : gpu) p ?vmid ~groups ~k () =
   let fill b w = Rig.Buffer.blit_from_string (padded w) 0 b 0 words_room in
   fill start (Counter.start c.gpu l ~filter_address:(at word));
   fill stop (Counter.stop c.gpu ~wgps:c.wgps l ~address:(at samples));
-  let run = Sub.take s in
-  let store i into =
-    let b = Sub.block s i in
-    Sub.Run.groups run b 1 1 1;
-    Sub.Run.threads run b 1 1 1;
-    Sub.Run.int64 run b 0 (Int64.of_int (at into))
+  let address into =
+    let v = launch_args 8 in
+    Bytes.set_int64_le v.Sub.params 0 (Int64.of_int (at into));
+    v
   in
-  if filter <> [] then begin
-    store 0 word;
-    store 4 after
-  end;
-  let b = Sub.block s (List.length filter + 1) in
-  Sub.Run.groups run b groups 1 1;
-  Sub.Run.threads run b threads 1 1;
-  Sub.Run.int32 run b 0 k;
-  Rig.Point.wait (Rig.submit run ~buffers:[||]);
+  let v = launch_args ~groups:(groups, 1, 1) ~threads:(threads, 1, 1) 8 in
+  Bytes.set_int32_le v.Sub.params 0 (Int32.of_int k);
+  let args =
+    if filter <> [] then [| address word; v; address after |] else [| v |]
+  in
+  Rig.Point.wait (Rig.submit s ~buffers:[||] ~args);
   let bytes = get samples in
   let values (c : Counter.t) =
     List.init (c.engines * c.arrays * c.wgps) (fun i ->
@@ -3309,13 +3298,9 @@ let busy n =
   | exception End_of_file -> ()
   | line when line <> "go" -> ()
   | _ ->
-      let submit s =
-        let run = Sub.take s and b = Sub.block s 0 in
-        Sub.Run.groups run b 8192 1 1;
-        Sub.Run.threads run b threads 1 1;
-        Sub.Run.int32 run b 0 20_000;
-        Rig.submit run ~buffers:[||]
-      in
+      let v = launch_args ~groups:(8192, 1, 1) ~threads:(threads, 1, 1) 8 in
+      Bytes.set_int32_le v.Sub.params 0 20_000l;
+      let submit s = Rig.submit s ~buffers:[||] ~args:[| v |] in
       let deadline = Unix.gettimeofday () +. busy_seconds in
       let first = List.map submit subs in
       let second = List.map submit subs in
@@ -3527,11 +3512,9 @@ let traced_launch () =
   let s =
     Sub.make t.d [| Sub.words b0; Sub.launch fn ~params:8; Sub.words b1 |]
   in
-  let run = Sub.take s and b = Sub.block s 1 in
-  Sub.Run.groups run b 1024 1 1;
-  Sub.Run.threads run b threads 1 1;
-  Sub.Run.int32 run b 0 1;
-  Rig.Point.wait (Rig.submit run ~buffers:[||]);
+  let v = launch_args ~groups:(1024, 1, 1) ~threads:(threads, 1, 1) 8 in
+  Bytes.set_int32_le v.Sub.params 0 1l;
+  Rig.Point.wait (Rig.submit s ~buffers:[||] ~args:[| v |]);
   for e = 0 to tr.engines - 1 do
     if Array.exists (( <> ) 0) c.wgps.(e) then begin
       let w =
@@ -3622,15 +3605,12 @@ let submit_valu (t : gpu) p launches =
     Sub.make t.d
       (Array.of_list (List.map (fun _ -> Sub.launch fn ~params:8) launches))
   in
-  let run = Sub.take s in
-  List.iteri
-    (fun i (groups, k) ->
-      let b = Sub.block s i in
-      Sub.Run.groups run b groups 1 1;
-      Sub.Run.threads run b threads 1 1;
-      Sub.Run.int32 run b 0 k)
-    launches;
-  Rig.submit run ~buffers:[||]
+  let values (groups, k) =
+    let v = launch_args ~groups:(groups, 1, 1) ~threads:(threads, 1, 1) 8 in
+    Bytes.set_int32_le v.Sub.params 0 (Int32.of_int k);
+    v
+  in
+  Rig.submit s ~buffers:[||] ~args:(Array.of_list (List.map values launches))
 
 (* The events a profile holds of [f]'s work, once it is done. *)
 let profiled f = snd (Prof.take (fun () -> Rig.Point.wait (f ())))

@@ -9,8 +9,8 @@
 
    map --> device (Rig.Local) --> Loop.map --> Plan.t --> door
    --> the submission of its key, its slots bound to the call's arrays,
-       the device's workspace and tickets and fresh buffers, a run of it
-       written --> Rig.submit --> fresh buffers freed
+       the device's workspace and tickets and fresh buffers, its launches'
+       values --> Rig.submit --> fresh buffers freed
 
    A call that finds every cache warm allocates its plan, its launches, its
    slots' buffers and the door's work, and nothing that outlives it. *)
@@ -117,8 +117,8 @@ let tickets dv need =
    its first use, in a cell for each first kernel ({!Kept}) of at most
    {!Plan.kept_count}, so that a lookup reads few keys, and at most
    {!Plan.kept_most} bytes of them in all, the least recently used dropped
-   past them. A submission keeps a run for each call that wrote it while
-   another did ({!Sub.take}). A call that is not kept ({!Plan.finish})
+   past them. Calls on several domains submit one at once, each with its
+   own values ({!Plan.args}). A call that is not kept ({!Plan.finish})
    takes a submission of its own. *)
 let submission dv (c : Plan.t) =
   if not c.kept then Sub.make dv.rig (Plan.parts dv.funcs c)
@@ -211,21 +211,15 @@ let bind_all dv (c : Plan.t) owned =
       List.iter (fun b -> ignore (Rig.Buffer.free b)) !made;
       raise e
 
-(* Writes [c] into a run of its submission and submits it with its slots'
-   buffers, then frees its own buffers, which return once that work is
-   done, also where the write or the submit raises. A write that raises
-   releases the run; a submit releases it itself. *)
+(* Submits [c]'s submission with its slots' buffers and its launches'
+   values, then frees its own buffers, which return once that work is
+   done, also where the submit raises. *)
 let issue (dv, (c : Plan.t)) =
   let s = submission dv c in
   let owned = Array.make (Array.length c.slots) false in
   let buffers = bind_all dv c owned in
   Fun.protect ~finally:(fun () -> free_owned owned buffers) @@ fun () ->
-  let r = Sub.take s in
-  match Plan.write c r s with
-  | () -> ignore (Rig.submit r ~buffers)
-  | exception e ->
-      Sub.Run.release r;
-      raise e
+  ignore (Rig.submit s ~buffers ~args:(Plan.args c))
 
 let nothing () = ()
 let dead (A.Any x) = Option.is_some (Rig.Buffer.dead (A.buffer x))

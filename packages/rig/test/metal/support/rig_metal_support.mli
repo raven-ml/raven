@@ -27,7 +27,7 @@ type fill
 
 val part : fill -> Rig_gpu_support.work
 (** [part f] is [f] as work on a Metal device’s queue, with its parameters
-    copied into the run. *)
+    the values its submits pass. *)
 
 val failing : int -> fill
 (** [failing code] returns [code] and encodes nothing. *)

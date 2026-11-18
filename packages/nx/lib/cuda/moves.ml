@@ -173,7 +173,7 @@ let groups work =
    follow the one before's, or, [apart], start a call of their own. *)
 type plan = {
   apart : bool;
-  mutable launches : Bytes.t Launch.t list;
+  mutable launches : Launch.t list;
   mutable buffers : Rig.Buffer.t array list;
   mutable count : int;
   mutable slots : int;
@@ -203,12 +203,13 @@ let launch pl (p : params) ~work =
       size = Bytes.length p.b;
       base;
       refs = refs.(p.k);
-      gx = groups work;
-      gy = 1;
-      gz = 1;
-      threads = K.move_threads;
-      shared = 0;
-      params = p.b;
+      args =
+        {
+          Rig.Submission.groups = (groups work, 1, 1);
+          threads = (K.move_threads, 1, 1);
+          shared = 0;
+          params = p.b;
+        };
     }
     :: pl.launches
 
@@ -237,7 +238,7 @@ let one_call pl =
   call pl launches buffers
 
 (* The plan as one call, or, [apart], a call a launch. *)
-let finish pl : Bytes.t Launch.plan =
+let finish pl : Launch.plan =
   match pl.launches with
   | [] -> Ok []
   | ls when pl.apart ->

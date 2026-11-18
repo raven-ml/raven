@@ -472,12 +472,13 @@ let launches g ~path ~ve ~(tp : tapes) ~loads ~scores =
       size = 8 * K.att_words;
       base = 0;
       refs;
-      gx;
-      gy;
-      gz;
-      threads = K.att_threads;
-      shared;
-      params;
+      args =
+        {
+          Rig.Submission.groups = (gx, gy, gz);
+          threads = (K.att_threads, 1, 1);
+          shared;
+          params;
+        };
     }
   in
   let main =

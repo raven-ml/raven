@@ -172,7 +172,7 @@ type work = {
   buffers : Rig.Buffer.t array;
   fixed : (Rig.Buffer.t * Rig.access) list;
   keep : kept;
-  init : Rig.Submission.t -> Rig.Submission.Run.t -> int -> unit;
+  init : Rig.Submission.t -> Rig.Submission.args option;
 }
 
 let work part =
@@ -181,7 +181,7 @@ let work part =
     buffers = [||];
     fixed = [];
     keep = Kept ();
-    init = (fun _ _ _ -> ());
+    init = (fun _ -> None);
   }
 
 let prepare ?(fixed = []) d ws =
@@ -196,13 +196,12 @@ let prepare ?(fixed = []) d ws =
   let buffers = Array.concat (List.map (fun w -> w.buffers) ws) in
   let fixed = fixed @ List.concat_map (fun w -> w.fixed) ws in
   let s = Sub.make ~keep:ws ~fixed d parts in
-  let run = Sub.take s in
-  List.iteri (fun i w -> w.init s run i) ws;
-  (run, buffers)
+  let args = Array.of_list (List.filter_map (fun w -> w.init s) ws) in
+  (s, buffers, args)
 
 (* [kernel] of [image] over [groups] of [threads], each of [uses] a buffer
    referenced at a parameter byte with an access, and [params] bytes of
-   parameters [store] stores. *)
+   parameters, 0 but what [store] writes. *)
 let launching image kernel ~params ?(groups = 1) ?(threads = 1) uses store =
   let module Sub = Rig.Submission in
   let fn =
@@ -221,11 +220,17 @@ let launching image kernel ~params ?(groups = 1) ?(threads = 1) uses store =
     in
     Sub.launch ~refs fn ~params
   in
-  let init s run i =
-    let b = Sub.block s i in
-    Sub.Run.groups run b groups 1 1;
-    Sub.Run.threads run b threads 1 1;
-    store run b
+  let init _ =
+    let b = Bytes.make params '\000' in
+    store b;
+    Some
+      Sub.
+        {
+          groups = (groups, 1, 1);
+          threads = (threads, 1, 1);
+          shared = 0;
+          params = b;
+        }
   in
   {
     part;
@@ -235,17 +240,17 @@ let launching image kernel ~params ?(groups = 1) ?(threads = 1) uses store =
     init;
   }
 
-(* Parameters from a C fixture, padded to 32-bit words. *)
-let params run block bytes =
-  let n = String.length bytes in
-  let padding = (4 - (n mod 4)) mod 4 in
-  let bytes =
-    if padding = 0 then bytes else bytes ^ String.make padding '\000'
-  in
-  for i = 0 to (String.length bytes / 4) - 1 do
-    Rig.Submission.Run.int32 run block (4 * i)
-      (Int32.to_int (String.get_int32_ne bytes (4 * i)))
-  done
+(* Parameters from a C fixture. *)
+let params b bytes = Bytes.blit_string bytes 0 b 0 (String.length bytes)
+
+let filling bytes =
+  Rig.Submission.
+    {
+      groups = (0, 0, 0);
+      threads = (0, 0, 0);
+      shared = 0;
+      params = Bytes.of_string bytes;
+    }
 
 module type S = sig
   type gpu
@@ -421,13 +426,11 @@ module Make (G : Gpu) = struct
     sharing f g
 
   let submit t ps =
-    let s = Rig.Submission.make t.d ps in
-    let run = Rig.Submission.take s in
-    Rig.submit run ~buffers:[||]
+    Rig.submit (Rig.Submission.make t.d ps) ~buffers:[||] ~args:[||]
 
   let submit_work t ws =
-    let run, buffers = prepare t.d ws in
-    Rig.submit run ~buffers
+    let s, buffers, args = prepare t.d ws in
+    Rig.submit s ~buffers ~args
 end
 
 (* Watching a driver's word *)

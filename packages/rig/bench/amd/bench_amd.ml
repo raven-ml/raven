@@ -55,13 +55,25 @@ let dev () =
   let { Rig_amd_support.d; g } = Rig_amd_support.open_ () in
   { d; g; v = 0 }
 
-(* A run of the prepared submission of [parts] on [t]. *)
-let prepare ?keep ?fixed t parts =
-  Rig.Submission.(take (make ?keep ?fixed t.d parts))
+(* The prepared submission of [parts] on [t] and the values [args] of its
+   launches (defaults to none). *)
+let prepare ?keep ?fixed ?(args = [||]) t parts =
+  (Rig.Submission.make ?keep ?fixed t.d parts, args)
 
-let submit t r =
-  let p = Rig.submit r ~buffers:[||] in
+let submit t (s, args) =
+  let p = Rig.submit s ~buffers:[||] ~args in
   t.v <- Rig.Point.value p
+
+(* The values of a launch over [groups] (defaults to [1]) groups of [threads]
+   work-items, with [params] bytes of parameters, 0. *)
+let values ?(groups = 1) ~threads params =
+  Rig.Submission.
+    {
+      groups = (groups, 1, 1);
+      threads = (threads, 1, 1);
+      shared = 0;
+      params = Bytes.make params '\000';
+    }
 
 let wait t =
   while A.signaled t.g < t.v do
@@ -225,13 +237,8 @@ let launch_rows ~mapped =
     let p, _ = load t in
     let fn = Option.get (Rig.Image.resolve p "empty") in
     let empty = Rig.Submission.launch fn ~params:0 in
-    let r = prepare t (Array.make n empty) in
-    for i = 0 to n - 1 do
-      let b = Rig.Submission.(block (Run.submission r) i) in
-      Rig.Submission.Run.groups r b 1 1 1;
-      Rig.Submission.Run.threads r b 1 1 1
-    done;
-    (t, p, r)
+    let args = Array.init n (fun _ -> values ~threads:1 0) in
+    (t, p, prepare ~args t (Array.make n empty))
   in
   (* Fixed dispatch packets, one words part per launch. *)
   let parts n () =
@@ -245,20 +252,17 @@ let launch_rows ~mapped =
     let r = prepare ~keep:p t (Array.make n (Rig.Submission.words one)) in
     (t, p, r)
   in
-  (* [double_index] over 64 work-items, its argument the address of its run's
-     buffer, which the hand-over adds to the offset the run stores. *)
+  (* [double_index] over 64 work-items, its argument the address of its
+     submit's buffer, which the hand-over adds to the offset its values hold. *)
   let params () =
     let t = dev () in
     let p, _ = load t in
     let out = B.create t.d 256 in
     let fn = Option.get (Rig.Image.resolve p "double_index") in
     let refs = Rig.Submission.[| write 0 ~at:0 |] in
-    let r = prepare t [| Rig.Submission.launch ~refs fn ~params:8 |] in
-    let b = Rig.Submission.(block (Run.submission r) 0) in
-    Rig.Submission.Run.groups r b 1 1 1;
-    Rig.Submission.Run.threads r b 64 1 1;
-    Rig.Submission.Run.int64 r b 0 0L;
-    (t, p, r, [| out |])
+    let args = [| values ~threads:64 8 |] in
+    (t, p, prepare ~args t [| Rig.Submission.launch ~refs fn ~params:8 |],
+     [| out |])
   in
   (* [double_index] over 64 work-items, its arguments in Mapped memory, which
      each step rewrites through Buffer.write, as compiled code would. *)
@@ -278,49 +282,47 @@ let launch_rows ~mapped =
         t
         [| Rig.Submission.words ws |]
     in
-    let address = Rig.Submission.(address (Run.submission s)) in
+    let address = Rig.Submission.address (fst s) in
     let bytes = encode (address args) in
     B.blit_from_string bytes 0 ws 0 (String.length bytes);
     (t, p, args, address out, s)
   in
   (* One launch of [args.cl]'s [name] over [groups] groups of 32 work-items,
      with [params] bytes of parameters, the first the address of a word per
-     group, the others as [set] stores them. *)
+     group, the others as [set] writes them. *)
   let reading name ~params ~groups set () =
     let t = dev () in
     let p = get (Rig.Image.load t.d (Lazy.force args_binary)) in
     let out = B.create t.d (4 * groups) in
     let fn = Option.get (Rig.Image.resolve p name) in
     let refs = Rig.Submission.[| write 0 ~at:0 |] in
-    let r = prepare t [| Rig.Submission.launch ~refs fn ~params |] in
-    let b = Rig.Submission.(block (Run.submission r) 0) in
-    Rig.Submission.Run.groups r b groups 1 1;
-    Rig.Submission.Run.threads r b 32 1 1;
-    Rig.Submission.Run.int64 r b 0 0L;
-    set r b;
-    (t, p, r, [| out |])
+    let v = values ~groups ~threads:32 params in
+    set v.Rig.Submission.params;
+    (t, p, prepare ~args:[| v |] t [| Rig.Submission.launch ~refs fn ~params |],
+     [| out |])
   in
   (* [lap]'s 4 KiB, which each group loads as vectors, as a kernel stages a
      block of arguments: the words it checks, so each group finds them. *)
   let lap_args =
     let seq = 1 and groups = 1024 in
-    reading "lap" ~params:4096 ~groups (fun r b ->
-        Rig.Submission.Run.int32 r b 8 seq;
-        Rig.Submission.Run.int32 r b 12 groups;
+    reading "lap" ~params:4096 ~groups (fun b ->
+        Bytes.set_int32_le b 8 (Int32.of_int seq);
+        Bytes.set_int32_le b 12 (Int32.of_int groups);
         for i = 0 to 1019 do
-          Rig.Submission.Run.int32 r b (16 + (4 * i)) ((seq lsl 12) lor i)
+          let w = (seq lsl 12) lor i in
+          Bytes.set_int32_le b (16 + (4 * i)) (Int32.of_int w)
         done)
   in
   (* [scalars]' 256 bytes, which each wave reads by scalar loads, as most
      kernels read their arguments. *)
   let scalar_args =
-    reading "scalars" ~params:256 ~groups:1024 (fun r b ->
+    reading "scalars" ~params:256 ~groups:1024 (fun b ->
         for i = 0 to 61 do
-          Rig.Submission.Run.int32 r b (8 + (4 * i)) i
+          Bytes.set_int32_le b (8 + (4 * i)) (Int32.of_int i)
         done)
   in
-  let launched (t, _, r, buffers) =
-    let p = Rig.submit r ~buffers in
+  let launched (t, _, (s, args), buffers) =
+    let p = Rig.submit s ~buffers ~args in
     t.v <- Rig.Point.value p;
     wait t
   in

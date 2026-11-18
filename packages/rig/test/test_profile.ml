@@ -10,8 +10,7 @@ module Prof = Rig.Profile
 module P = Rig_support.Polled
 module Support = Rig_support
 
-let submit ?(buffers = [||]) ?waits s =
-  Rig.submit ?waits (Sub.take s) ~buffers
+let submit ?(buffers = [||]) ?waits s = Rig.submit ?waits s ~buffers ~args:[||]
 
 let timeout = 60.
 
@@ -140,26 +139,30 @@ let test_overlapping () =
 let functions d =
   require_ok ~pp:Format.pp_print_string (Rig.Image.load d "functions")
 
-let launch ?refs ?(params = 0) image kernel =
-  Sub.launch ?refs (require_some (Rig.Image.resolve image kernel)) ~params
-let bump = Sub.fill ~refs:[| Sub.write 0 ~at:0 |] Support.bump ~params:8
+(* The values a submit here passes each launch and fill: one group of one
+   thread, and parameters that read 0. A fill reads only the parameters. *)
+let one =
+  {
+    Sub.groups = (1, 1, 1);
+    threads = (1, 1, 1);
+    shared = 0;
+    params = Bytes.empty;
+  }
 
-(* Submits [parts] on [d] with zeroed parameters and one group of one thread per
-   launch. *)
+(* Parts, each with its values, for a launch or a fill. *)
+let launch ?refs ?(params = 0) image kernel =
+  ( Sub.launch ?refs (require_some (Rig.Image.resolve image kernel)) ~params,
+    Some one )
+
+let bump =
+  (Sub.fill ~refs:[| Sub.write 0 ~at:0 |] Support.bump ~params:8, Some one)
+
+(* Submits [parts] on [d] with their values. *)
 let submit_parts ?(buffers = [||]) d parts =
   let buffers = Array.map (fun b -> require_some (B.borrow d b)) buffers in
-  let s = Sub.make d parts in
-  let run = Sub.take s in
-  (* Parameters a fresh run holds read 0; a fill's grid is never read. *)
-  Array.iteri
-    (fun i _ ->
-      match Sub.block s i with
-      | b ->
-          Sub.Run.groups run b 1 1 1;
-          Sub.Run.threads run b 1 1 1
-      | exception Invalid_argument _ -> ())
-    parts;
-  Rig.submit run ~buffers
+  let s = Sub.make d (Array.map fst parts) in
+  let args = Array.of_list (List.filter_map snd (Array.to_list parts)) in
+  Rig.submit s ~buffers ~args
 
 (* The work of [d] in [events], as [(lane, name, start, stop)]. *)
 let device_spans d events =
@@ -354,7 +357,7 @@ let test_close_interrupted () =
 let test_settle_fails () =
   let d, p = P.open_ "profile:settle-fails" in
   let host () = B.create Rig.host (1 lsl 16) in
-  let copy = Sub.copy ~src:(Slot 1) ~dst:(Slot 2) in
+  let copy = (Sub.copy ~src:(Slot 1) ~dst:(Slot 2), None) in
   P.fail_settle p;
   raises_match (lost_of d) (fun () ->
       Prof.take (fun () ->

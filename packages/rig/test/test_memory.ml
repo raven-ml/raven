@@ -12,8 +12,11 @@ module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
-let submit ?(buffers = [||]) ?waits s =
-  Rig.submit ?waits (Sub.take s) ~buffers
+let submit ?(buffers = [||]) ?(args = [||]) ?waits s =
+  Rig.submit ?waits s ~buffers ~args
+
+(* The values of a submission's one fill, which reads none. *)
+let one = Support.zeros 1
 
 let timeout = Rig_support.time 60.
 let kib = 1024
@@ -38,7 +41,7 @@ let collect d =
    waits for that work. *)
 let[@inline never] dropped_written ?memory s d n =
   let b = B.create ?memory d n in
-  ignore (Rig.submit (Sub.take s) ~buffers:[| b |]);
+  ignore (Rig.submit s ~buffers:[| b |] ~args:one);
   Support.at b
 
 let freed p at = List.exists (fun (a, _) -> a = at) (P.frees p)
@@ -296,7 +299,8 @@ let test_give_beside_stop () =
   let[@inline never] mapped () =
     let m = B.create o (4 * kib) in
     let s = Sub.make c [| Support.touching [| Sub.read |] |] in
-    Rig.Point.wait (submit s ~buffers:[| Option.get (B.borrow c m) |]);
+    let buffers = [| Option.get (B.borrow c m) |] in
+    Rig.Point.wait (submit ~args:one s ~buffers);
     (Support.at m, ref (Some m))
   in
   let at, held = mapped () in
@@ -391,7 +395,8 @@ let test_free_after_maps () =
   let[@inline never] mapped () =
     let m = B.create o (4 * kib) in
     let s = Sub.make d [| Support.touching [| Sub.read |] |] in
-    Rig.Point.wait (submit s ~buffers:[| Option.get (B.borrow d m) |]);
+    let buffers = [| Option.get (B.borrow d m) |] in
+    Rig.Point.wait (submit ~args:one s ~buffers);
     (Support.at m, ref (Some m))
   in
   let at, held = mapped () in
@@ -422,7 +427,7 @@ let test_mapper_beside_free () =
   let b, pb = P.open_ "memory:outlived-b" in
   let map d m =
     let s = Sub.make d [| Support.touching [| Sub.read |] |] in
-    Rig.Point.wait (submit s ~buffers:[| Option.get (B.borrow d m) |])
+    Rig.Point.wait (submit ~args:one s ~buffers:[| Option.get (B.borrow d m) |])
   in
   let[@inline never] mapped () =
     let m = B.create o (4 * kib) in
@@ -536,7 +541,7 @@ let test_over_budget_queued () =
   let reads = Sub.make d [| Support.touching [| Sub.read |] |] in
   let[@inline never] queued () =
     let b = B.create d 64 in
-    ignore (submit reads ~buffers:[| b |]);
+    ignore (submit ~args:one reads ~buffers:[| b |]);
     Support.at b
   in
   let at = queued () in
@@ -559,7 +564,7 @@ let queued_over_budget name =
   let reads = Sub.make d [| Support.touching [| Sub.read |] |] in
   let[@inline never] queued () =
     let b = B.create d (64 * kib) in
-    ignore (submit reads ~buffers:[| b |]);
+    ignore (submit ~args:one reads ~buffers:[| b |]);
     Support.at b
   in
   let at = queued () in
@@ -912,7 +917,8 @@ let test_growth_reclaims_pinned () =
   let at = dropped ~memory:Pinned d (64 * kib) in
   collect d;
   let s = Sub.make d (Array.make 9 (Support.touching [||])) in
-  raises_match (out_of_memory d 4096) (fun () -> submit s);
+  raises_match (out_of_memory d 4096) (fun () ->
+      submit ~args:(Support.zeros 9) s);
   equal ~msg:"its cached pinned memory freed" bool true (freed p at)
 
 (* A reclamation round waits for a device whose lock another thread holds:
@@ -1497,7 +1503,7 @@ let test_foreign_use () =
     (fun () ->
       let m = B.create a (4 * kib) in
       let s = Sub.make b [| Support.touching [| Sub.read |] |] in
-      ignore (submit s ~buffers:[| require_some (B.borrow b m) |]);
+      ignore (submit ~args:one s ~buffers:[| require_some (B.borrow b m) |]);
       Support.at m)
       ()
   in
@@ -1834,7 +1840,7 @@ let test_free () =
   let d, p = P.open_ "memory:free" in
   let s = Sub.make d [| Support.touching [| Sub.write |] |] in
   let b = B.create d (4 * kib) in
-  ignore (submit s ~buffers:[| b |]);
+  ignore (submit ~args:one s ~buffers:[| b |]);
   let at = Support.at b in
   equal ~msg:"freed" bool true (B.free b);
   equal ~msg:"its death" (option string) (Some "freed") (B.dead b);
@@ -1861,7 +1867,7 @@ let test_free_host () =
   let n = 1 lsl 20 in
   let h = B.create Rig.host n in
   let s = Sub.make d [| Support.touching [| Sub.write |] |] in
-  ignore (submit s ~buffers:[| require_some (B.borrow d h) |]);
+  ignore (submit ~args:one s ~buffers:[| require_some (B.borrow d h) |]);
   let settle () =
     Gc.full_major ();
     Gc.full_major ();

@@ -43,7 +43,7 @@ let check out expected =
    indirect command buffer; the other drivers launch the kernel. *)
 let adder device driver image a b out =
   let add = Option.get (Image.resolve image "add") in
-  let run, buffers =
+  let submission, buffers, args =
     if driver = "metal" then begin
       let cap = Option.get (capability device Rig_metal_abi.key) in
       let args = Buffer.create device 32 in
@@ -64,26 +64,30 @@ let adder device driver image a b out =
               params.{i} <- Int64.of_int (Submission.address submission buffer))
             [ a; b; out ];
           params.{3} <- Int64.of_int count);
-      let run = Submission.take submission in
-      let block = Submission.block submission 0 in
-      Submission.Run.int64 run block 0 (Int64.of_nativeint icb.handle);
-      Submission.Run.int64 run block 8 1L;
-      (run, [||])
+      let params = Bytes.create 16 in
+      Bytes.set_int64_le params 0 (Int64.of_nativeint icb.handle);
+      Bytes.set_int64_le params 8 1L;
+      let fill =
+        Submission.{ groups = (0, 0, 0); threads = (0, 0, 0); shared = 0;
+                     params }
+      in
+      (submission, [||], [| fill |])
     end
     else begin
       (* add takes the three addresses, then the count. *)
       let refs = Submission.[| read 0 ~at:0; read 1 ~at:8; write 2 ~at:16 |] in
       let part = Submission.(launch ~refs add ~params:32) in
       let submission = Submission.make device [| part |] in
-      let run = Submission.take submission in
-      let block = Submission.block submission 0 in
-      Submission.Run.groups run block 1 1 1;
-      Submission.Run.threads run block count 1 1;
-      Submission.Run.int64 run block 24 (Int64.of_int count);
-      (run, [| a; b; out |])
+      let params = Bytes.make 32 '\000' in
+      Bytes.set_int64_le params 24 (Int64.of_int count);
+      let launch =
+        Submission.{ groups = (1, 1, 1); threads = (count, 1, 1); shared = 0;
+                     params }
+      in
+      (submission, [| a; b; out |], [| launch |])
     end
   in
-  fun () -> submit run ~buffers
+  fun () -> submit submission ~buffers ~args
 
 let load_image device path =
   get (Image.load device (In_channel.with_open_bin path In_channel.input_all))

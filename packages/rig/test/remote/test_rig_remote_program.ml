@@ -943,7 +943,8 @@ let unaddressed_input () =
 
 (* A run raises at the call on threads per group, read from the frame's ints,
    past the most of its launch's function, which the agent stated at load, and
-   the job goes on: Polled's main has at most 1024 threads a group. A loop's
+   the job goes on: Polled's main has at most 1024 threads a group, and x by
+   y past it is refused whatever z is, as every submit refuses it. A loop's
    trip word changes as the run goes, so the call checks no launch that reads
    it, here in a loop of no trips. *)
 let too_many_threads () =
@@ -979,10 +980,10 @@ let too_many_threads () =
       images =
         [| { G.device = 0; binary = "functions" } |];
       inputs = [||];
-      ints = 2;
+      ints = 3;
       steps =
         [|
-          main (int_at 0, fixed 2, fixed 1);
+          main (int_at 0, fixed 2, int_at 2);
           G.Loop
             {
               trips = fixed 0;
@@ -1003,10 +1004,16 @@ let too_many_threads () =
        "Rig_program.run: main runs at most 1024 threads per group; the frame \
         sets 513x2x1") (fun () ->
       G.run p
-        { inputs = [||]; ints = [| 513; 4096 |] });
+        { inputs = [||]; ints = [| 513; 4096; 1 |] });
+  raises ~msg:"513x2x0 threads, past the most in x and y alone"
+    (Invalid_argument
+       "Rig_program.run: main runs at most 1024 threads per group; the frame \
+        sets 513x2x0") (fun () ->
+      G.run p
+        { inputs = [||]; ints = [| 513; 4096; 0 |] });
   Array.iter Rig.Point.wait
     (G.run p
-       { inputs = [||]; ints = [| 512; 0 |] });
+       { inputs = [||]; ints = [| 512; 0; 1 |] });
   equal ~msg:"the job's failure" (option string) None (Rig_remote.failed j)
 
 let () =

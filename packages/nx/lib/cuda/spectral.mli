@@ -14,19 +14,19 @@
     depend on the batch. *)
 
 val eigh :
-  w:Nx_array.any -> ?v:Nx_array.any -> Nx_array.any -> Bytes.t Launch.plan
+  w:Nx_array.any -> ?v:Nx_array.any -> Nx_array.any -> Launch.plan
 (** [eigh ~w ~v a] plans {!Nx_kernel.S.eigh}. *)
 
 val svd :
   s:Nx_array.any ->
   ?vectors:Nx_array.any * Nx_array.any ->
   Nx_array.any ->
-  Bytes.t Launch.plan
+  Launch.plan
 (** [svd ~s ~vectors:(u, vh) a] plans {!Nx_kernel.S.svd}, its factors as
     [u]'s and [vh]'s shapes state. *)
 
 val eig :
-  w:Nx_array.any -> ?v:Nx_array.any -> Nx_array.any -> Bytes.t Launch.plan
+  w:Nx_array.any -> ?v:Nx_array.any -> Nx_array.any -> Launch.plan
 (** [eig ~w ~v a] plans {!Nx_kernel.S.eig}. *)
 
 (**/**)

@@ -345,7 +345,9 @@ module Polled : sig
       Each allows 1024 threads per group and 48 KiB of shared memory, and grids
       of at most [2{^31} - 1] groups along x and 65535 along y and z. The
       driver states the threads, and the bytes of parameters of ["fill"], 16,
-      and of ["copy"], 24. *)
+      and of ["copy"], 24. Its submit writes each launch's and fill's
+      parameters, the refs' addresses added, into the block's place, as a
+      driver does that places them for a call that copies them. *)
 
   type launch = {
     groups : int * int * int;
@@ -440,6 +442,14 @@ end
 
 val noop : nativeint
 (** [noop] is a fill that returns without reading its argument. *)
+
+val zero : Rig.Submission.args
+(** [zero] is the values of a launch that runs no group, or of a fill, whose
+    parameters all read [0]. *)
+
+val zeros : int -> Rig.Submission.args array
+(** [zeros n] is [n] times {!zero}: the values of a submit of [n] launches
+    or fills that reads none. *)
 
 val touching :
   (int -> at:int -> Rig.Submission.ref) array -> Rig.Submission.part

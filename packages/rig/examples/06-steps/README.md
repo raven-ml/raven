@@ -12,16 +12,18 @@ dune exec packages/rig/examples/06-steps/main.exe
 
 A software device calls the fill on the submitting thread. A GPU's driver
 calls it from its `submit` with the queue's context, and the argument and
-the run's buffers work the same way. Fixed memory has an address known when
+the submit's buffers work the same way. Fixed memory has an address known when
 the step is made, so compiled code writes it once into parameters or
 recorded commands, which every run replays as they are.
 
 ## What You'll Learn
 
-- Fills, C work with per-run parameters and refs to the run's buffers, each
-  stating how the work uses its buffer: `Submission.read`, `Submission.write`
+- Fills, C work with per-run parameters and refs to the submit's buffers,
+  each stating how the work uses its buffer: `Submission.read`,
+  `Submission.write`
 - Fixed memory, which every run uses, named once when the step is made
-- A fixed buffer's address, written once into the run: `Submission.address`
+- A fixed buffer's address, written once into the values each submit
+  passes: `Submission.address`, `Submission.args`
 - A kept value, which lives until the step is unreachable and its work done
 - The buffers that change from run to run, passed to each submit
 
@@ -32,8 +34,7 @@ recorded commands, which every run replays as they are.
 | `Submission.fill ~refs f ~params`      | Work that is a C function                              |
 | `Submission.make ~keep ~fixed d parts` | A step's submission, its fixed memory and a kept value |
 | `Submission.address s b`               | The address of fixed memory `b`                        |
-| `Submission.take s`                    | A run, the storage of the step's parameters            |
-| `submit r ~buffers`                    | Run it once with these buffers                         |
+| `submit s ~buffers ~args`              | Run it once with these buffers and values              |
 
 ## Next Steps
 

@@ -123,17 +123,19 @@ let borrow_peer =
 let bump =
   Sub.fill ~refs:[| Sub.write 0 ~at:0 |] S.bump ~params:8
 
-let once ?(buffers = [||]) run = Rig.submit run ~buffers
+let once ?(buffers = [||]) ?(args = [||]) s = Rig.submit s ~buffers ~args
+
+(* The values of [bump]: none, as its entry ref writes the counter's
+   address. *)
+let bumps = S.zeros 1
 
 let submit =
   op "submit" (fun d ->
       let arg = B.create d 8 in
       B.write arg Bigarray.char (fun a -> Bigarray.Array1.fill a '\000');
-      let s = Sub.make d [| bump |] in
-      let run = Sub.take s and buffers = [| arg |] in
-      Sub.Run.int64 run (Sub.block s 0) 0 0L;
+      let s = Sub.make d [| bump |] and buffers = [| arg |] in
       fun _ ->
-        Rig.Point.wait (once ~buffers run);
+        Rig.Point.wait (once ~buffers ~args:bumps s);
         equal string "\001\000\000\000\000\000\000\000" (bytes arg))
 
 (* A bound on the second wait of [wait_for], far past the time its work
@@ -160,12 +162,10 @@ let wait_for =
   op "wait for" ~opener:open_stallable (fun d ->
       let arg = B.create d 8 in
       B.write arg Bigarray.char (fun a -> Bigarray.Array1.fill a '\000');
-      let s = Sub.make d [| bump |] in
-      let run = Sub.take s and buffers = [| arg |] in
-      Sub.Run.int64 run (Sub.block s 0) 0 0L;
+      let s = Sub.make d [| bump |] and buffers = [| arg |] in
       let p = driver_of d in
       fun _ ->
-        let v = once ~buffers run in
+        let v = once ~buffers ~args:bumps s in
         P.stall p 1;
         let ended = Rig.Point.wait_for ~ns:1 v in
         P.stall p 0;
@@ -288,17 +288,17 @@ let load =
           | Some _ -> ()
           | None -> fail "main is absent")
       | Error _ -> equal ~msg:"load refused" bool true (refusing failure));
-      Rig.Point.wait (once (Sub.take (Sub.make d [||]))))
+      Rig.Point.wait (once (Sub.make d [||])))
 
 let wait_transport =
   op "wait behind a transport" ~opener:(P.open_ ~transport:true) (fun d ->
-      let run = Sub.take (Sub.make d [||]) in
-      fun _ -> Rig.Point.wait (once run))
+      let s = Sub.make d [||] in
+      fun _ -> Rig.Point.wait (once s))
 
 (* Submits on [d] once a submission that keeps a value, leaving the
    submission unreachable. *)
 let[@inline never] submit_kept d =
-  Rig.Point.wait (once (Sub.take (Sub.make ~keep:(ref ()) d [||])))
+  Rig.Point.wait (once (Sub.make ~keep:(ref ()) d [||]))
 
 let keep =
   op "keep" (fun d _ ->
@@ -311,12 +311,11 @@ let keep =
 let profile =
   op "profile" (fun d ->
       let arg = B.create d 8 in
-      let s = Sub.make d [| bump |] in
-      let run = Sub.take s and buffers = [| arg |] in
-      Sub.Run.int64 run (Sub.block s 0) 0 0L;
+      let s = Sub.make d [| bump |] and buffers = [| arg |] in
       fun _ ->
         ignore
-          (Rig.Profile.take (fun () -> Rig.Point.wait (once ~buffers run))))
+          (Rig.Profile.take (fun () ->
+               Rig.Point.wait (once ~buffers ~args:bumps s))))
 
 (* A submission with a part timed outside a profile: its hand-over takes a
    time pair that the timer alone holds, and the timer's read settles it once
@@ -325,12 +324,10 @@ let profile =
 let time =
   op "time" (fun d ->
       let arg = B.create d 8 in
-      let s = Sub.make d [| bump |] in
-      let run = Sub.take s and buffers = [| arg |] in
-      Sub.Run.int64 run (Sub.block s 0) 0 0L;
+      let s = Sub.make d [| bump |] and buffers = [| arg |] in
       fun _ ->
         let t = Rig.Timer.make 1 in
-        match Rig.Timer.submit t 0 run ~buffers with
+        match Rig.Timer.submit t 0 s ~buffers ~args:bumps with
         | _ -> ignore (Rig.Timer.read t)
         | exception e ->
             Rig.Timer.drop t;

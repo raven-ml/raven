@@ -602,11 +602,11 @@ val word : int
     thread holds a lock of rig's, of a driver's or of an io library's.
 
     A call to rig that may take a lock, made inside a lock, raises
-    [Invalid_argument] as it starts, having done nothing, but for {!submit},
-    which frees its run. It raises even where it needs none of the locks its
-    thread holds, since the thread's count of its locks does not say which
-    they are. A function that takes no lock may be called from a callback at
-    any point, and never raises it: {!name}, {!equal}, {!pp}, {!arch},
+    [Invalid_argument] as it starts, having done nothing. It raises even
+    where it needs none of the locks its thread holds, since the thread's
+    count of its locks does not say which they are. A function that takes no
+    lock may be called from a callback at any point, and never raises it:
+    {!name}, {!equal}, {!pp}, {!arch},
     {!computes}, {!runs_on_host}, {!alignment}, {!cache_bytes},
     {!capability},
     {!host_of}, {!reaches}, {!submitted}, {!lost}, {!failure},
@@ -616,10 +616,10 @@ val word : int
     {!Buffer}, {!Buffer.view}, {!Buffer.reached}, {!Buffer.of_bigarray},
     {!Image.val-device}, {!Image.name}, {!Image.image}, {!Image.params},
     {!Image.threads}, {!Image.entry}, {!Submission}'s refs and parts,
-    {!Submission.val-block}, {!Submission.address}, {!Submission.Run},
-    {!Buffer.share}, {!Buffer.val-keep}, {!Buffer.release}, {!Buffer.take},
-    {!Profile} but {!Profile.take}, {!Local.new_key}, and
-    {!Local.get} of a value already made for the device. Nor do
+    {!Submission.address}, {!Buffer.share}, {!Buffer.val-keep},
+    {!Buffer.release}, {!Buffer.take}, {!Profile} but {!Profile.take},
+    {!Local.new_key}, and {!Local.get} of a value already made for the
+    device. Nor do
     {!signaled}, {!fail} and {!lose}.
     Outside a lock, a call from a callback runs as any call does.
     If the callback lets the exception escape, it ends the interrupted call as
@@ -1864,21 +1864,22 @@ end
 
     A device runs code from an {!Image} loaded on it. A {!Submission}
     describes work for one device once, and {!submit} runs it with one
-    submit's buffers and returns the point of that work on the device's
-    timeline.
+    submit's buffers and values and returns the point of that work on the
+    device's timeline.
 
     A library runs work like this:
     {ol
     {- It loads an image ({!Image.load}), resolves its functions
        ({!Image.resolve}), and makes a submission of parts that launch them
        ({!Submission.make}).}
-    {- It takes a run of the submission ({!Submission.take}), which holds
-       the launches' grids and parameters, and stores them.}
-    {- It calls {!submit} with the run and this submit's buffers, which
-       frees the run. Each later submit takes a run again, stores its
-       parameters and submits it.}
+    {- It calls {!submit} with this submit's buffers and each launch's
+       values ({!Submission.type-args}): its grid, its threads and its
+       parameters. [submit] copies them before it returns, so the library
+       may rewrite them for the next submit.}
     {- Once the submission is unreachable, its memory returns after the
-       work of its last submit is done.}}
+       work of its last submit is done, but for the blocks that hold its
+       launches' values at a submit, which rig keeps for later submits
+       ({!submit}).}}
     {!section-host_objects} has an example. *)
 
 (** {2:images Images} *)
@@ -1963,8 +1964,7 @@ module Image : sig
 
   val threads : func -> int option
   (** [threads fn] is the most threads a group of [fn] may have, or [None]
-      if its driver does not know it. {!Submission.Run.threads} refuses
-      more. *)
+      if its driver does not know it. {!submit} refuses more. *)
 
   (** {1:raw Raw function values}
 
@@ -2058,11 +2058,14 @@ end
     let add = Option.get (Rig.Image.resolve image "add") in
     let refs = Submission.[| read 0 ~at:0; read 1 ~at:8; write 2 ~at:16 |] in
     let s = Submission.(make host [| launch ~refs add ~params:32 |]) in
-    let run = Submission.take s and k = Submission.block s 0 in
-    Submission.Run.groups run k 64 1 1;
-    Submission.Run.threads run k ((n + 63) / 64) 1 1;
-    Submission.Run.int64 run k 24 (Int64.of_int n);
-    ignore (submit run ~buffers:[| x; y; z |])
+    let params = Bytes.make 32 '\000' in
+    Bytes.set_int64_le params 24 (Int64.of_int n);
+    let args =
+      Submission.
+        { groups = (64, 1, 1); threads = ((n + 63) / 64, 1, 1); shared = 0;
+          params }
+    in
+    ignore (submit s ~buffers:[| x; y; z |] ~args:[| args |])
     ]} *)
 
 (** {3:host_linking Linking}
@@ -2186,25 +2189,24 @@ end
 (** Prepared submissions.
 
     A submission is work for one device, made of {e parts}, such as copies
-    and launches. It is made once and run many times. The buffers and the
-    points to wait for change from one run to the next, so they are
-    arguments of {!submit}, and so are the launch parameters, which a
-    {!Submission.Run} holds. Any number of domains or threads submit one
-    submission concurrently, each through a run that it alone has taken
-    while it stores and submits ({!Submission.take}).
+    and launches. It is made once and submitted many times. The buffers, the
+    points to wait for and the launches' values change from one submit to
+    the next, so they are arguments of {!submit}. Any number of domains or
+    threads submit one submission concurrently, each with its own values.
 
-    A submission's {e fixed memory} is the buffers that every run uses and
-    that neither a part nor a submit names, such as an argument buffer and
-    the memory its addresses name. Each is fixed with an access, and each
-    submit orders it by that access. A buffer may be fixed in any number of
-    submissions.
+    A submission's {e fixed memory} is the buffers that every submit uses
+    and that neither a part nor a submit names, such as an argument buffer
+    and the memory its addresses name. Each is fixed with an access, and
+    each submit orders it by that access. A buffer may be fixed in any
+    number of submissions.
 
     Rule 2 of {!Rig.section-order} orders a submission's parts by the memory
     they use. A copy reads its [src] and writes its [dst], words read their
     buffer, a buffer ref uses its slot as its kind says, and every part uses
     the fixed memory with its access. Two uses may share memory where their
     buffers share a word ({!Buffer.overlaps}), or where either is a slot,
-    whose buffer only a run gives. A {!Submission.unordered} ref orders nothing.
+    whose buffer only a submit gives. A {!Submission.unordered} ref orders
+    nothing.
 
     A launch or a fill runs on the first of the device's queues that runs
     its kind ({!Rig_edge.type-facts}). Words run on the first queue that
@@ -2218,10 +2220,10 @@ end
     never freed between {!Submission.make} and a submit. A launch needs no
     [keep] for its image, since an image unloads only once the work
     submitted before the image became unreachable is done ({!Image.load}).
-    Every run reads its fixed memory and the buffers its parts name, so it
-    keeps them for its life as {!Buffer.val-keep} does: no take writes them or
-    ends them. {!Rig.section-claims} says when it claims the buffers of a
-    run. *)
+    Every submit reads its fixed memory and the buffers its parts name, so
+    it keeps them for its life as {!Buffer.val-keep} does: no take writes
+    them or ends them. {!Rig.section-claims} says when it claims the buffers
+    of a submit. *)
 module Submission : sig
   type device := t
 
@@ -2266,10 +2268,10 @@ module Submission : sig
 
   val entry : Image.func -> at:int -> ref
   (** [entry fn ~at] is a ref whose 8 bytes hold, when the work runs, the
-      value by which the device's work refers to [fn] ({!Image.entry}). rig
-      writes it over the run's bytes there. The submission keeps [fn]
-      reachable, so the work may call [fn] through it. [fn]'s image must be
-      loaded on the device. *)
+      value by which the device's work refers to [fn] ({!Image.entry}). Each
+      submit writes it over the bytes its values put there. The submission
+      keeps [fn] reachable, so the work may call [fn] through it. [fn]'s
+      image must be loaded on the device. *)
 
   (** {1:parts Parts} *)
 
@@ -2279,7 +2281,7 @@ module Submission : sig
   (** The type for the ends of a copy. *)
   type side =
     | Slot of int  (** The buffer a submit passes as this slot ({!submit}). *)
-    | Buffer of Buffer.t  (** This buffer, in every run. *)
+    | Buffer of Buffer.t  (** This buffer, in every submit. *)
 
   val copy : src:side -> dst:side -> part
   (** [copy ~src ~dst] copies [src]'s bytes into [dst]. The two buffers must
@@ -2300,15 +2302,16 @@ module Submission : sig
   val launch :
     ?refs:ref array -> ?label:string -> Image.func -> params:int -> part
   (** [launch ~refs ~label fn ~params] runs [fn] once, over the grid of groups
-      of threads that its block in the run sets ({!val-block}), with the
-      [params] bytes of parameters of that block and each of [refs]
-      (defaults to [[||]]) placed ({!type-ref}), which [launch] reads once.
-      [fn]'s image must be loaded on the device. [label] names the launch's
-      work in profiles ({!Profile.event}) and in its refusals; it defaults to
-      [fn]'s name ({!Image.name}), and tells apart launches of one function.
+      of threads that a submit's values for it set ({!type-args}), with
+      [params] bytes of parameters, which those values give, and each of
+      [refs] (defaults to [[||]]) placed ({!type-ref}), which [launch] reads
+      once. [fn]'s image must be loaded on the device. [label] names the
+      launch's work in profiles ({!Profile.event}) and in its refusals; it
+      defaults to [fn]'s name ({!Image.name}), and tells apart launches of
+      one function.
 
       Raises [Invalid_argument] if [params] is negative or above
-      [2{^31} - 32], the most one block of a run holds ({!make}), or is
+      [2{^31} - 32], the most one block holds ({!Rig.section-valid}), or is
       fewer than the bytes [fn] reads where its driver knows them
       ({!Image.params}); or if two refs share an [at], or a ref's 8 bytes
       lie past [params] or past the bytes [fn] reads. *)
@@ -2316,9 +2319,9 @@ module Submission : sig
   val fill : ?refs:ref array -> nativeint -> params:int -> part
   (** [fill ~refs f ~params] calls the C function at [f] from the driver's
       [submit] ({!Rig_edge.section-calls}) with the queue's context, the host
-      address of its argument and the work's value. The argument is a copy of
-      the [params] bytes of parameters of the fill's block in the run
-      ({!val-block}), with each of [refs] (defaults to [[||]]) placed
+      address of its argument and the work's value. The argument is the
+      [params] bytes of parameters that a submit's values for the fill give
+      ({!type-args}), with each of [refs] (defaults to [[||]]) placed
       ({!type-ref}), and is valid only during the call. The function must
       call no function of the OCaml runtime, since the driver's [submit] may
       call it with the runtime released. It returns [0], or another value for
@@ -2347,7 +2350,7 @@ module Submission : sig
     ?keep:'a -> ?fixed:(Buffer.t * access) list -> device -> part array -> t
   (** [make ~keep ~fixed d parts] is a submission of [parts] on [d]. Its
       slots are [0] to [n - 1], where [n] is one more than the highest slot
-      its buffer refs and copies name, and each run passes one buffer per
+      its buffer refs and copies name, and each submit passes one buffer per
       slot ({!submit}). One buffer may fill several slots. [fixed] (defaults
       to [[]]) is the submission's fixed memory. [make] reads [parts] once,
       and no bytes of the buffers, so a caller may write {!address}es into
@@ -2365,143 +2368,41 @@ module Submission : sig
       Raises [Invalid_argument] if the submission would not be valid
       ({!Rig.section-valid}), and {!Lost} if [d] is lost. *)
 
-  type block
-  (** The type for a launch's or a fill's block in a run of one submission
-      ({!Run}). *)
-
-  val block : t -> int -> block
-  (** [block s i] is the block of [s]'s part [i] in a run ({!Run}). A fill
-      reads nothing of its block but the parameters. The blocks of [s]'s
-      launches and fills lie one after the other, in the order of its
-      parts.
-
-      Raises [Invalid_argument] if [s] has no part [i], or it is a {!val-words}
-      or a {!copy} part. *)
-
   val address : t -> Buffer.t -> int
   (** [address s b] is the address of [b]'s first byte as the work of [s]'s
       device addresses it, where [b]'s bytes lie within a buffer of [s]'s
-      fixed memory. A caller writes it into [s]'s blocks or into memory [s]
-      fixes, such as an argument buffer or a replay's commands, before the
-      submit that reads it. An empty buffer that {!Buffer.create} made on a
-      driver's device has the address [0]. An address fits in the 62 bits of
-      an [int]'s non-negative range.
+      fixed memory. A caller writes it into a submit's [params]
+      ({!type-args}) or into memory [s] fixes, such as an argument buffer or
+      a replay's commands, before the submit that reads it. An empty buffer
+      that {!Buffer.create} made on a driver's device has the address [0].
+      An address fits in the 62 bits of an [int]'s non-negative range.
 
       Raises [Invalid_argument] if [b] is dead or handle-only memory
       ({!Buffer.section-low}), or no buffer of [s]'s fixed memory holds [b]'s
       bytes. *)
 
-  (** Runs. *)
-  module Run : sig
-    type submission := t
+  (** {1:values Values} *)
 
-    type t
-    (** The type for runs: the storage of one submission's launch and fill
-        blocks, outside the OCaml heap, for one submit at a time.
-        {!Submission.take} hands them out. *)
+  type args = {
+    groups : int * int * int;
+        (** The grid: its groups along x, y and z. *)
+    threads : int * int * int;
+        (** The threads of each group along x, y and z. *)
+    shared : int;  (** The dynamic shared memory of each group, in bytes. *)
+    params : Bytes.t;  (** The first bytes of the parameters. *)
+  }
+  (** The type for the values that one launch or fill reads at a {!submit}.
+      A fill reads only [params].
 
-    val submission : t -> submission
-    (** [submission r] is the submission whose blocks [r] holds. *)
+      [params] are the first bytes of the part's parameters as its function
+      reads them, little-endian, as {!Bytes.set_int64_le} writes them. The
+      parameters past them read [0]. At a buffer ref's [at], the 8 bytes hold
+      the offset into its buffer ({!type-ref}), read the same way; at an entry
+      ref's, the submit writes the function's value over them ({!entry}).
 
-    val release : t -> unit
-    (** [release r] frees [r], which the calling thread has taken, keeping
-        its bytes, so that a take may return it. It does nothing if the
-        thread has not taken [r]. *)
-
-    (** {1:blocks Blocks}
-
-        A launch's block holds its grid (its count of groups), the threads
-        of each group, its shared memory and its parameters. A fill's holds
-        its parameters. A run never grows. A setter stores only into a run
-        the calling thread has taken, and raises [Invalid_argument], storing
-        nothing, otherwise. It raises in particular while a submit of the
-        run is under way, such as a signal handler's store during the
-        submit's wait. A store reads the run's state once and takes no lock,
-        and no setter allocates. A setter raises [Invalid_argument] for a
-        block of another submission. *)
-
-    external groups :
-      t ->
-      block ->
-      (int[@untagged]) ->
-      (int[@untagged]) ->
-      (int[@untagged]) ->
-      unit = "caml_rig_run_groups_byte" "caml_rig_run_groups"
-    (** [groups r b x y z] sets the grid of [b] to [x] by [y] by [z] groups.
-
-        Raises [Invalid_argument] if one is negative or above [2{^32} - 1]. *)
-
-    external threads :
-      t ->
-      block ->
-      (int[@untagged]) ->
-      (int[@untagged]) ->
-      (int[@untagged]) ->
-      unit = "caml_rig_run_threads_byte" "caml_rig_run_threads"
-    (** [threads r b x y z] sets each group of [b] to [x] by [y] by [z]
-        threads.
-
-        Raises [Invalid_argument] if one is negative or above [2{^32} - 1], or
-        if [x * y * z] exceeds the most threads a group of [b]'s function may
-        have, where its driver knows it ({!Image.threads}). *)
-
-    external shared : t -> block -> (int[@untagged]) -> unit
-      = "caml_rig_run_shared_byte" "caml_rig_run_shared"
-    (** [shared r b n] sets the dynamic shared memory of each group of [b] to
-        [n] bytes.
-
-        Raises [Invalid_argument] if [n] is negative or above [2{^32} - 1]. *)
-
-    (** {2:params Parameters}
-
-        [int32 r b i v] stores [v] at byte [i] of [b]'s parameters, in the
-        host's byte order, and the others store likewise for their sizes:
-        [int32] the 32 low bits of [v], [int64] [v], [float32] [v] rounded to
-        single precision, [float64] [v]. At a buffer ref's [at], the 8 bytes
-        are the offset into its buffer ({!type-ref}). At an entry ref's, each
-        submit writes the function's value ({!Submission.entry}).
-
-        Each raises [Invalid_argument] if [i] is negative or the bytes it
-        stores end past [b]'s parameters. *)
-
-    external int32 :
-      t -> block -> (int[@untagged]) -> (int[@untagged]) -> unit
-      = "caml_rig_run_int32_byte" "caml_rig_run_int32"
-
-    external int64 :
-      t -> block -> (int[@untagged]) -> (int64[@unboxed]) -> unit
-      = "caml_rig_run_int64_byte" "caml_rig_run_int64"
-
-    external float32 :
-      t -> block -> (int[@untagged]) -> (float[@unboxed]) -> unit
-      = "caml_rig_run_float32_byte" "caml_rig_run_float32"
-
-    external float64 :
-      t -> block -> (int[@untagged]) -> (float[@unboxed]) -> unit
-      = "caml_rig_run_float64_byte" "caml_rig_run_float64"
-  end
-
-  val take : t -> Run.t
-  (** [take s] is a run of [s] that the calling thread has taken for its
-      stores and its next submit: the first of [s]'s runs that is free, or
-      else a new one, whose bytes read [0]. A take makes a run only when
-      every run it tried was taken. [s] keeps its runs for its life, and
-      [take] allocates nothing when it finds a free one. A caller that is
-      [s]'s only taker and takes one run at a time gets the same run every
-      time, which keeps its stores.
-
-      A run holds what its last taker stored, so any other caller must store
-      every byte its submit reads, or its work runs with another caller's
-      grid or parameters. {!submit} frees the run, and a caller that raises
-      before its submit must release it ({!Run.release}). A run stays taken
-      until its thread releases or submits it: one taken by a thread that
-      has ended stays taken, as does, in a child of [fork], one that another
-      thread of the parent had taken. A submission with no launch or fill
-      has one run, holding no bytes, which every take returns and any number
-      of submits use concurrently.
-
-      Raises [Stdlib.Out_of_memory] if the host has no memory for a new
-      run. *)
+      A caller that submits with the same grid again keeps its values and
+      rewrites their [params] in place between submits, which allocates
+      nothing, since {!submit} copies them before it returns. *)
 end
 
 (** {3:valid Valid submissions}
@@ -2512,19 +2413,23 @@ end
     device, but as {!Submission.copy} admits; no fixed buffer it writes admits
     only [Read]; every slot below the highest is named, and none by both an
     {!Submission.unordered} ref and an ordered use; and the blocks of its
-    launches and fills fit a run of [2{^32} - 1] bytes, each block 32 bytes and
-    twice its parameters rounded up to a multiple of 16. {!Submission.make}
-    raises for each.
+    launches and fills, which hold a submit's values, take at most
+    [2{^32} - 1] bytes, each block 32 bytes and twice its parameters rounded
+    up to a multiple of 16. {!Submission.make} raises for each.
 
-    A submit is valid when it passes one buffer per slot; no buffer its work
-    uses is dead; each buffer is on the device ({!Buffer.borrow}), but as
-    {!Submission.copy} admits; it writes through no [Read] buffer
-    ({!Buffer.val-access}); each copy's two buffers have one length and share no
-    byte; no ref names handle-only memory ({!Buffer.section-low}); and its
-    driver can run the work ({!Rig_edge.section-calls}). A driver may bound the
-    words one submission places on its queues, its own packets' included, where
-    its queues cannot grow past a size, as its interface states. {!submit}
-    raises for each. *)
+    A submit is valid when it passes one buffer per slot and one value per
+    launch or fill; no value's [params] is longer than its part's
+    parameters; each size of a launch's grid, threads and shared memory lies
+    in [0] to [2{^32} - 1], and its threads per group are at most what its
+    function runs, where its driver knows it ({!Image.threads}); no buffer
+    its work uses is dead; each buffer is on the device ({!Buffer.borrow}),
+    but as {!Submission.copy} admits; it writes through no [Read] buffer
+    ({!Buffer.val-access}); each copy's two buffers have one length and share
+    no byte; no ref names handle-only memory ({!Buffer.section-low}); and its
+    driver can run the work ({!Rig_edge.section-calls}). A driver may bound
+    the words one submission places on its queues, its own packets' included,
+    where its queues cannot grow past a size, as its interface states.
+    {!submit} raises for each. *)
 
 (** {2:submits Submitting}
 
@@ -2539,21 +2444,33 @@ end
     ({!section-domains}). *)
 
 val submit :
-  ?waits:Point.t array -> Submission.Run.t -> buffers:Buffer.t array -> Point.t
-(** [submit ~waits r ~buffers] runs the work of [r]'s submission [s]
-    ({!Submission.Run.val-submission}) once and returns its point [(d, v)],
-    where [d] is [s]'s device and [v] is one more than {!submitted}[ d]. The
-    work uses [buffers.(i)] as its slot [i] ({!Submission.make}), takes its
-    blocks from [r], and follows the points of [waits] (defaults to [[||]])
-    besides those its memory orders. [submit] reads each element of
-    [buffers] once, and a store into [r] after it returns changes nothing of
-    [v]'s work.
+  ?waits:Point.t array ->
+  Submission.t ->
+  buffers:Buffer.t array ->
+  args:Submission.args array ->
+  Point.t
+(** [submit ~waits s ~buffers ~args] runs the work of [s] once and returns
+    its point [(d, v)], where [d] is [s]'s device and [v] is one more than
+    {!submitted}[ d]. The work uses [buffers.(i)] as its slot [i]
+    ({!Submission.make}), its [j]th launch or fill, in the order of [s]'s
+    parts, reads [args.(j)], and it follows the points of [waits] (defaults
+    to [[||]]) besides those its memory orders. A submission with no launch
+    or fill takes [[||]].
 
-    [submit] uses [r] until it returns or raises, and frees it then, a
-    submit made inside a lock ({!section-domains}) included: a run the
-    calling thread has taken ({!Submission.take}), or a free one, which
-    [submit] takes itself. A run that holds no bytes it uses without taking
-    it.
+    [submit] reads each element of [buffers] and of [args] once, and checks
+    the element of [args] it read, so a store into either array from
+    another domain or a callback while [submit] runs gives it the old
+    element or the new, never one it did not check. The bytes of a [params]
+    written meanwhile are some of each. [submit] copies the values before it
+    returns, so a change to them afterwards changes nothing of [v]'s work.
+    Any number of domains submit [s] at once, each with its own [args].
+
+    [submit] copies the values into blocks that rig keeps for later submits for
+    the life of the process: as many sets as submits were ever under way at
+    once, each as large as the largest submission it served ({!section-valid}).
+    A [params] shorter than its part costs its own bytes and those an earlier
+    submit of the same blocks may have written past them, which [submit] sets
+    back to [0].
 
     [submit] blocks while [d]'s queues have no room for the work, while it
     waits for a point on the host, and where its driver's interface says it
@@ -2567,15 +2484,16 @@ val submit :
     {!section-order} states. On {!host} and a {!software} device, [v]'s
     work is done when [submit] returns.
 
-    Raises [Invalid_argument] if another thread has taken [r], another
-    submit of [r] is under way, or the submit would not be valid
-    ({!section-valid}). Raises {!Out_of_memory} if [d]'s queues must grow
-    for the work and [d] has no memory for the growth after the rounds of
-    reclamation ({!section-reclaim}). Raises {!Lost} if [d] is lost before
-    [submit] returns, if its driver fails to take the work, or if a point of
-    [waits] is a lost device's and that device never reached it. A submit
-    after [d]'s value [2]{^ 47}[ - 1], the last a point holds, loses [d]
-    with that reason and assigns nothing. *)
+    Raises [Invalid_argument] if the submit would not be valid
+    ({!section-valid}). Raises [Stdlib.Out_of_memory] if the host has no
+    memory for the submit's state, its blocks included. Raises
+    {!Out_of_memory} if [d]'s queues must grow for the work and [d] has no
+    memory for the growth after the rounds of reclamation
+    ({!section-reclaim}). Raises {!Lost} if [d] is lost before [submit]
+    returns, if its driver fails to take the work, or if a point of [waits]
+    is a lost device's and that device never reached it. A submit after
+    [d]'s value [2]{^ 47}[ - 1], the last a point holds, loses [d] with that
+    reason and assigns nothing. *)
 
 (** {1:per_device Values per device}
 
@@ -2666,10 +2584,10 @@ end
     may take the memory, the reader may use {!Buffer.wait} alone.
 
     A prepared submission keeps its fixed memory and the buffers its parts
-    name for its life ({!Submission.make}). It claims the buffers of a run
-    only while a submit runs. A take between two submits can kill one of
-    them, and the next submit with it then raises [Invalid_argument] for the
-    dead buffer. A library that holds buffers it does not own over its
+    name for its life ({!Submission.make}). It claims the buffers a submit
+    passes only while the submit runs. A take between two submits can kill
+    one of them, and the next submit with it then raises [Invalid_argument]
+    for the dead buffer. A library that holds buffers it does not own over its
     submits keeps them ({!Buffer.val-keep}) for as long as it holds them, or
     passes their memory to {!Buffer.share}.
 
@@ -2868,14 +2786,15 @@ module Timer : sig
     t ->
     int ->
     ?waits:Point.t array ->
-    Submission.Run.t ->
+    Submission.t ->
     buffers:Buffer.t array ->
+    args:Submission.args array ->
     Point.t
-  (** [submit t i ~waits r ~buffers] is {!submit}[ ~waits r ~buffers] with its
-      work timed as step [i] of [t], replacing the work [i] had, whether or
-      not a profile is being taken. A profile taken at the submit records
-      the work with the same times. A submission with no parts times
-      nothing. *)
+  (** [submit t i ~waits s ~buffers ~args] is {!submit}[ ~waits s ~buffers
+      ~args] with its work timed as step [i] of [t], replacing the work [i]
+      had, whether or not a profile is being taken. A profile taken at the
+      submit records the work with the same times. A submission with no
+      parts times nothing. *)
 
   val read : t -> int array
   (** [read t] waits for each step's work and is, for each step, the time

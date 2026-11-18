@@ -12,8 +12,11 @@ module Support = Rig_support
 let timeout = 60.
 let empty d = Sub.make d [||]
 
-let submit ?(buffers = [||]) ?waits s =
-  Rig.submit ?waits (Sub.take s) ~buffers
+let submit ?(buffers = [||]) ?(args = [||]) ?waits s =
+  Rig.submit ?waits s ~buffers ~args
+
+(* The values of a submission's one fill, which reads none. *)
+let one = Support.zeros 1
 
 let lost d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
 let count call p = List.length (List.filter (( = ) call) (P.log p))
@@ -73,7 +76,7 @@ let test_unrun_names () =
   let buffers = [| require_some (B.borrow d h) |] in
   P.fail p;
   raises_match (lost d) (fun () -> submit (empty d));
-  raises_match (lost d) (fun () -> submit s ~buffers);
+  raises_match (lost d) (fun () -> submit ~args:one s ~buffers);
   equal int (1 lsl 16) (B.read h Bigarray.char Bigarray.Array1.dim)
 
 (* A wait looks at every producer its device's queue waits on, however many
@@ -318,13 +321,14 @@ let test_others_go_on () =
   let e, _ = P.open_ "loss:kept" in
   let named = B.create e 64 in
   let s = Sub.make d [| Support.touching [| Sub.read |] |] in
-  Rig.Point.wait (submit s ~buffers:[| require_some (B.borrow d named) |]);
+  let buffers = [| require_some (B.borrow d named) |] in
+  Rig.Point.wait (submit ~args:one s ~buffers);
   P.fail p;
   raises_match (lost d) (fun () -> submit (empty d));
   B.wait named Rig.Read_write;
   let named = require_some ~msg:"a take" (Support.donated named) in
   let w = Sub.make e [| Support.touching [| Sub.write |] |] in
-  Rig.Point.wait (submit w ~buffers:[| named |]);
+  Rig.Point.wait (submit ~args:one w ~buffers:[| named |]);
   equal (option string) None (Rig.lost e)
 
 (* Other memory raises a lost device's loss for a use that waits for a point the
@@ -334,7 +338,7 @@ let test_unreached () =
   let d, p = P.open_ "loss:unreached" in
   let h = B.create Rig.host (1 lsl 16) in
   let reads = Sub.make d [| Support.touching [| Sub.read |] |] in
-  ignore (submit reads ~buffers:[| require_some (B.borrow d h) |]);
+  ignore (submit ~args:one reads ~buffers:[| require_some (B.borrow d h) |]);
   P.fail p;
   raises_match (lost d) (fun () -> submit (empty d));
   B.wait h Rig.Read;
@@ -357,12 +361,13 @@ let test_unreached_kept () =
         (e, require_some (B.borrow e h)))
   in
   let reads d = Sub.make d [| Support.touching [| Sub.read |] |] in
-  ignore (submit (reads d) ~buffers:[| require_some (B.borrow d h) |]);
+  let buffers = [| require_some (B.borrow d h) |] in
+  ignore (submit ~args:one (reads d) ~buffers);
   P.fail p;
   raises_match (lost d) (fun () -> submit (empty d));
   List.iter
     (fun (e, b) ->
-      Rig.Point.wait (submit (reads e) ~buffers:[| b |]);
+      Rig.Point.wait (submit ~args:one (reads e) ~buffers:[| b |]);
       Rig.close e)
     readers;
   raises_match (lost d) (fun () -> B.wait h Rig.Read_write)
@@ -379,11 +384,11 @@ let test_read_after_stop () =
   and written = B.create Rig.host (1 lsl 16) in
   let s = Sub.make d [| Support.touching [| Sub.read; Sub.write |] |] in
   let borrow d b = require_some (B.borrow d b) in
-  let pt = submit s ~buffers:[| borrow d read; borrow d written |] in
+  let pt = submit ~args:one s ~buffers:[| borrow d read; borrow d written |] in
   lose d p;
   let write e b =
     let s = Sub.make e [| Support.touching [| Sub.write |] |] in
-    Rig.Point.wait (submit s ~buffers:[| borrow e b |])
+    Rig.Point.wait (submit ~args:one s ~buffers:[| borrow e b |])
   in
   let check what e =
     B.fill read 'x';
@@ -414,7 +419,7 @@ let test_stop_reaches_nothing () =
   let m = B.create e 64 in
   let writes = Sub.make d [| Support.touching [| Sub.write |] |] in
   let b = require_some (B.borrow d m) in
-  let v = Rig.Point.value (submit writes ~buffers:[| b |]) in
+  let v = Rig.Point.value (submit ~args:one writes ~buffers:[| b |]) in
   P.fail p;
   raises_match (lost d) (fun () -> submit (empty d));
   Rig.close d;
@@ -452,7 +457,7 @@ let test_own_memory () =
       ( "a submit on another device",
         fun () ->
           let s = Sub.make e [| Support.touching [| Sub.read |] |] in
-          ignore (submit s ~buffers:[| b |]) );
+          ignore (submit ~args:one s ~buffers:[| b |]) );
       ("fixed memory of a submit", fun () -> ignore (submit fixed));
       ("a copy a submit runs", fun () -> ignore (submit copy));
     ];
@@ -480,7 +485,8 @@ let test_reused_after_loss () =
     (fun () ->
       let m = B.create a n in
       let s = Sub.make u [| Support.touching [| Sub.read |] |] in
-      Rig.Point.wait (submit s ~buffers:[| require_some (B.borrow u m) |]);
+      let buffers = [| require_some (B.borrow u m) |] in
+      Rig.Point.wait (submit ~args:one s ~buffers);
       Support.at m)
       ()
   in

@@ -35,9 +35,10 @@ memory that the GPU's release packet writes (`Store`), and whose `submit`
 also commits. The steps before the driver's `submit` are the same for every
 driver.
 
-1. **Checks and claims.** `Rig.submit` checks the run and its buffers, and
-   takes a read claim on every allocation the work uses, so that no take
-   writes one in place while the submit runs.
+1. **Values, checks and claims.** `Rig.submit` checks each launch's values
+   and copies them into its blocks, checks its buffers, and takes a read
+   claim on every allocation the work uses, so that no take writes one in
+   place while the submit runs.
 2. **Points to follow.** It reads the stamps of every allocation the work
    uses and collects the points the work must follow, by the rules of
    `Rig`'s Order section, with those of `~waits`, leaving out the points
@@ -50,7 +51,7 @@ driver.
    the point on the host.
 4. **Room.** In C, without running OCaml, it waits until no other call is
    submitting or committing on the device, then calls the driver's `room`
-   with the parts, the run's blocks and the submission's *scratch*,
+   with the parts, the submit's blocks and the submission's *scratch*,
    `RIG_SCRATCH` bytes per part that the driver may write during the call
    (the C functions section of [`rig_edge.mli`](../lib/edge/rig_edge.mli)).
    If the parts fit only later, it gives the device back, waits until the
@@ -58,7 +59,7 @@ driver.
    instead block in its `submit` until the work fits, as Metal's does.
 5. **The value.** It assigns *v*, one more than the device's submitted value,
    and calls the driver's `submit` with *v*, the waits, the parts and their
-   scratch, the run's blocks and the address of each of the run's buffers.
+   scratch, the submit's blocks and the address of each of its buffers.
    No OCaml code runs between the two, so the driver receives *v*'s work or
    the device is lost.
 6. **The driver's `submit`.** `Rig_amd` first decides, into the scratch,

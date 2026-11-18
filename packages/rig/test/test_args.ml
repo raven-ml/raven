@@ -6,51 +6,48 @@
 open Windtrap
 module B = Rig.Buffer
 module Sub = Rig.Submission
-module Run = Sub.Run
 module Support = Rig_support
 module P = Support.Polled
 
 let fill ?(params = 16) ?(refs = [| Sub.write 0 ~at:0 |]) fn =
   Sub.fill ~refs fn ~params
 
-let submit run buffers = Rig.submit run ~buffers
+let submit s buffers args = Rig.submit s ~buffers ~args
 let word b at = Support.load (Support.Reader.host b + at)
 
-(* Takes [run] for the stores that follow: its submission's one run, which
-   [Sub.take] returns while no other call holds it. *)
-let take run =
-  if Sub.take (Run.submission run) != run then fail "the run is taken"
+(* Writes the values of a [Support.poke] fill into [params]: its ref adds slot
+   0's address to [offset], where the fill stores [value]. *)
+let store params ~offset value =
+  Bytes.set_int64_le params 0 (Int64.of_int offset);
+  Bytes.set_int64_le params 8 (Int64.of_int value)
 
-let store run block ~offset value =
-  Run.int64 run block 0 (Int64.of_int offset);
-  Run.int64 run block 8 (Int64.of_int value)
+(* The values of a submission's one fill, with [params]. *)
+let values params = [| { Support.zero with params } |]
 
-(* The same run can serve successive hand-overs while the first still waits in a
-   queue. Both its parameter bytes and its resolved addresses belong to each
-   handed-over call. *)
+(* A submission serves successive submits while the first still waits in a
+   queue: each handed-over call holds the parameter bytes and the resolved
+   addresses of its own submit, whatever the caller writes into its values
+   after. *)
 let test_reuse () =
   let d, p = P.open_ "args:reuse" in
   let s = Sub.make d [| fill Support.poke |] in
-  let run = Sub.take s and block = Sub.block s 0 in
+  let params = Bytes.create 16 in
+  let args = values params in
   let a = B.create d 24 and b = B.create d 24 in
-  store run block ~offset:8 31;
-  ignore (submit run [| a |]);
-  take run;
-  store run block ~offset:16 47;
-  ignore (submit run [| b |]);
-  take run;
-  store run block ~offset:0 99;
-  Run.release run;
+  store params ~offset:8 31;
+  ignore (submit s [| a |] args);
+  store params ~offset:16 47;
+  ignore (submit s [| b |] args);
+  store params ~offset:0 99;
   equal int 2 (P.queued p);
   equal int 2 (P.run p);
   equal int 31 (word a 8);
   equal int 47 (word b 16);
-  (* Repeating a submit adds the address to the saved offset exactly once. *)
-  take run;
-  store run block ~offset:8 73;
-  ignore (submit run [| a |]);
+  (* Repeating a submit adds the address to the passed offset exactly once. *)
+  store params ~offset:8 73;
+  ignore (submit s [| a |] args);
   ignore (P.run p);
-  ignore (submit run [| b |]);
+  ignore (submit s [| b |] args);
   ignore (P.run p);
   equal int 73 (word a 8);
   equal int 73 (word b 8)
@@ -58,12 +55,12 @@ let test_reuse () =
 let test_synchronous () =
   let d = Result.get_ok (Rig.software "args:sync") in
   let s = Sub.make d [| fill Support.poke |] in
-  let run = Sub.take s and block = Sub.block s 0 in
+  let params = Bytes.create 16 in
   let out = B.create d 16 in
-  store run block ~offset:8 41;
-  ignore (submit run [| out |]);
+  store params ~offset:8 41;
+  ignore (submit s [| out |] (values params));
   equal int 41 (word out 8);
-  ignore (submit run [| out |]);
+  ignore (submit s [| out |] (values params));
   equal int 41 (word out 8)
 
 (* Mixed blocks distinguish their offsets even when the preceding Fill has the
@@ -86,16 +83,23 @@ let test_mixed () =
         fill Support.poke;
       |]
   in
-  let run = Sub.take s in
-  store run (Sub.block s 0) ~offset:0 17;
-  Run.int64 run (Sub.block s 0) 4088 127L;
-  let block = Sub.block s 1 in
-  Run.groups run block 1 1 1;
-  Run.threads run block 1 1 1;
-  store run block ~offset:8 29;
-  store run (Sub.block s 3) ~offset:16 43;
+  let wide = Bytes.make 4096 '\000' in
+  store wide ~offset:0 17;
+  Bytes.set_int64_le wide 4088 127L;
+  let launched = Bytes.create 16 and last = Bytes.create 16 in
+  store launched ~offset:8 29;
+  store last ~offset:16 43;
+  let one = (1, 1, 1) in
+  let args =
+    [|
+      { Support.zero with params = wide };
+      { Sub.groups = one; threads = one; shared = 0; params = launched };
+      Support.zero;
+      { Support.zero with params = last };
+    |]
+  in
   let out = B.create d 24 in
-  ignore (submit run [| out |]);
+  ignore (submit s [| out |] args);
   equal int 1 (P.run p);
   equal (list int) [ 17; 29; 43 ] (List.init 3 (fun i -> word out (i * 8)))
 
@@ -108,11 +112,11 @@ let test_wide_fill () =
       Sub.make d
         [| fill ~params:8192 ~refs:[| Sub.write 0 ~at:8184 |] Support.far |]
     in
-    let run = Sub.take s and block = Sub.block s 0 in
-    Run.int64 run block 4096 59L;
-    Run.int64 run block 8184 8L;
+    let params = Bytes.make 8192 '\000' in
+    Bytes.set_int64_le params 4096 59L;
+    Bytes.set_int64_le params 8184 8L;
     let out = B.create d 16 in
-    (out, submit run [| out |])
+    (out, submit s [| out |] (values params))
   in
   let out, _ = wide (Result.get_ok (Rig.software "args:wide-memory")) in
   equal ~msg:"the software device" int 59 (word out 8);
@@ -121,18 +125,46 @@ let test_wide_fill () =
   ignore (P.run p);
   equal ~msg:"Polled" int 59 (word out 8)
 
+(* The parameters past a submit's values read 0, also where an earlier
+   submit of the submission wrote them: [far] stores the word at its byte
+   4,096 where its last 8 bytes point, and a submit of 8 bytes stores 0 at
+   the slot's start, on a device that runs it at its submit and on one that
+   runs it later. *)
+let test_short_values () =
+  let short d run =
+    let s =
+      Sub.make d
+        [| fill ~params:8192 ~refs:[| Sub.write 0 ~at:8184 |] Support.far |]
+    in
+    let full = Bytes.make 8192 '\000' in
+    Bytes.set_int64_le full 4096 59L;
+    Bytes.set_int64_le full 8184 8L;
+    let out = B.create d 16 in
+    B.blit_from_string (String.make 16 '\xff') 0 out 0 16;
+    ignore (submit s [| out |] (values full));
+    run ();
+    equal ~msg:"the longer submit's word" int 59 (word out 8);
+    ignore (submit s [| out |] (values (Bytes.make 8 '\001')));
+    run ();
+    equal ~msg:"the word at the slot's start" int 0 (word out 0);
+    equal ~msg:"the longer submit's word, kept" int 59 (word out 8)
+  in
+  short (Result.get_ok (Rig.software "args:short-memory")) ignore;
+  let d, p = P.open_ "args:short-polled" in
+  short d (fun () -> ignore (P.run p))
+
 let test_refs () =
   let d, p = P.open_ "args:refs" in
   let refs = [| Sub.write 0 ~at:0; Sub.read 1 ~at:8 |] in
   let s = Sub.make d [| fill ~params:24 ~refs Support.carry |] in
   refs.(0) <- Sub.read 1 ~at:16;
-  let run = Sub.take s and block = Sub.block s 0 in
   let src = B.create d 24 and dst = B.create d 24 in
   Support.store (Support.Reader.host src + 8) 101;
-  Run.int64 run block 0 16L;
-  Run.int64 run block 8 8L;
-  Run.int64 run block 16 8L;
-  ignore (submit run [| dst; src |]);
+  let params = Bytes.create 24 in
+  Bytes.set_int64_le params 0 16L;
+  Bytes.set_int64_le params 8 8L;
+  Bytes.set_int64_le params 16 8L;
+  ignore (submit s [| dst; src |] (values params));
   ignore (P.run p);
   equal int 101 (word dst 16)
 
@@ -161,17 +193,25 @@ let test_refusals () =
     ];
   ignore (make 4096 [| at 0 0; at 4088 0 |]);
   let s = make 16 [| at 0 0 |] in
-  let other = make 16 [| at 0 0 |] in
   let out = B.create d 8 in
+  let one = Support.zeros 1 in
   raises_match ~msg:"too few buffers" Exn.invalid_arg (fun () ->
-      submit (Sub.take s) [||]);
+      submit s [||] one);
   raises_match ~msg:"too many buffers" Exn.invalid_arg (fun () ->
-      submit (Sub.take s) [| out; out |]);
-  equal ~msg:"a fresh run holds the blocks" int (base + 1)
-    (Rig.Point.value (submit (Sub.take s) [| out |]));
-  let run = Sub.take s in
-  raises_match ~msg:"another submission's block" Exn.invalid_arg (fun () ->
-      store run (Sub.block other 0) ~offset:0 1)
+      submit s [| out; out |] one);
+  raises
+    ~msg:"values longer than the fill's parameters"
+    (Invalid_argument
+       "Rig.submit: args.(0) has 17 bytes of params, past the 16 of the fill \
+        of part 0")
+    (fun () -> submit s [| out |] (values (Bytes.create 17)));
+  raises ~msg:"no values"
+    (Invalid_argument
+       "Rig.submit: args has 0 elements, not 1, one per launch or fill")
+    (fun () -> submit s [| out |] [||]);
+  equal ~msg:"no value assigned" int base (Rig.submitted d);
+  equal ~msg:"a submit of the right buffers and values" int (base + 1)
+    (Rig.Point.value (submit s [| out |] one))
 
 let test_handle_only () =
   let d, _ = P.open_ ~addresses:false "args:handle-only" in
@@ -184,9 +224,9 @@ let test_handle_only () =
       [| fill Support.poke |]
   in
   raises_match Exn.invalid_arg (fun () -> Sub.address s out);
-  let run = Sub.take s in
-  store run (Sub.block s 0) ~offset:0 1;
-  raises_match Exn.invalid_arg (fun () -> submit run [| out |]);
+  let params = Bytes.create 16 in
+  store params ~offset:0 1;
+  raises_match Exn.invalid_arg (fun () -> submit s [| out |] (values params));
   equal int base (Rig.submitted d)
 
 let test_address () =
@@ -237,13 +277,15 @@ let () =
   exit
   @@ run "args"
        [
-         test "Fill snapshots each run before a deferred hand-over" test_reuse;
+         test "a fill reads its own submit's values in a deferred hand-over"
+           test_reuse;
          test "synchronous Fill preserves offsets across submits"
            test_synchronous;
          test "mixed Launch and Fill blocks stay independent" test_mixed;
          test "Fill resolves distinct refs copied at make" test_refs;
          test "a fill's argument holds 8,192 bytes" test_wide_fill;
-         test "Fill refuses invalid blocks and refs" test_refusals;
+         test "a fill's parameters past its values read 0" test_short_values;
+         test "Fill refuses invalid blocks, refs and values" test_refusals;
          test "address refs refuse handle-only memory before submit"
            test_handle_only;
          test "fixed addresses follow memory identity and view bounds"

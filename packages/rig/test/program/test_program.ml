@@ -1452,12 +1452,36 @@ let breaks =
       one );
   ]
 
+(* A launch of Polled's [fill] of [threads] per group, which runs at most
+   1024. *)
+let fill_threads threads =
+  match fill ~image:0 ~groups:1 0 with
+  | Launch l -> G.Launch { l with threads }
+  | part -> part
+
 (* Descriptions a device refuses: load answers Error for each. *)
 let refusals =
   let one d = [ d ] in
   [
-    ( "a grid a run refuses",
+    ( "a grid of more than 2^32 - 1 groups",
       (fun d -> with_part (fill ~image:0 ~groups:(1 lsl 33) 0) (base d)),
+      one );
+    ( "a negative count of threads",
+      (fun d ->
+        with_part (fill_threads (fixed 1, fixed (-1), fixed 1)) (base d)),
+      one );
+    ( "threads past the most of the function",
+      (fun d ->
+        with_part (fill_threads (fixed 33, fixed 32, fixed 1)) (base d)),
+      one );
+    ( "threads past the most of the function in x and y, and none in z",
+      (fun d ->
+        with_part (fill_threads (fixed 33, fixed 32, fixed 0)) (base d)),
+      one );
+    ( "threads past the most of the function in x and y, z set by each run",
+      (fun d ->
+        let t = with_part (fill_threads (fixed 33, fixed 32, int_at 0)) in
+        { (t (base d)) with ints = 1 }),
       one );
     ( "an image its device refuses",
       (fun d ->

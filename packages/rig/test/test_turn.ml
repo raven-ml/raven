@@ -13,8 +13,11 @@ module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
-let submit ?(buffers = [||]) ?waits s =
-  Rig.submit ?waits (Sub.take s) ~buffers
+let submit ?(buffers = [||]) ?(args = [||]) ?waits s =
+  Rig.submit ?waits s ~buffers ~args
+
+(* The values of a submission's one fill, which reads none. *)
+let one = Support.zeros 1
 
 let timeout = 60.
 let lost d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
@@ -25,16 +28,11 @@ let empty d = Sub.make d [||]
 let idle () =
   (Sub.fill Support.noop ~params:0)
 
-let one_part d =
-  let s = Sub.make d [| idle () |] in
-  let run = Sub.take s in
-  Sub.Run.groups run (Sub.block s 0) 0 0 0;
-  run
-
-let point run = Rig.submit run ~buffers:[||]
+(* Submissions of one such part and of none, each with its values. *)
+let one_part d = (Sub.make d [| idle () |], Support.zeros 1)
+let no_part d = (empty d, [||])
+let point (s, args) = Rig.submit s ~buffers:[||] ~args
 let value x = Rig.Point.value (point x)
-
-let empty_run d = Sub.take (empty d)
 
 (* A thread running [f], whose outcome [join] gives. *)
 let spawn f =
@@ -61,7 +59,7 @@ let test_later_releases () =
   P.gate p;
   let waiting = spawn (fun () -> value (one_part d)) in
   Support.await "a sleep at the gate" (fun () -> P.sleepers p = 1);
-  equal int (base + 2) (value (empty_run d));
+  equal int (base + 2) (value (no_part d));
   P.open_gate p;
   equal outcome (Ok (base + 3)) (waiting ())
 
@@ -89,10 +87,8 @@ let test_never () =
   in
   let fn = require_some (Rig.Image.resolve image "main") in
   let never = Sub.make d [| Sub.launch fn ~params:0 |] in
-  let run = Sub.take never in
-  Sub.Run.groups run (Sub.block never 0) 0 0 0;
   raises_match Exn.invalid_arg (fun () ->
-      Rig.submit run ~buffers:[||]);
+      Rig.submit never ~buffers:[||] ~args:one);
   equal int base (Rig.submitted d);
   equal int (base + 1) (value (one_part d))
 
@@ -108,7 +104,7 @@ let test_turn_per_device () =
   equal int (base + 1) (value (one_part d));
   let blocked = spawn (fun () -> value (one_part d)) in
   Support.await "a blocked submit" (fun () -> P.blocked p = 1);
-  equal int (base_e + 1) (value (empty_run e));
+  equal int (base_e + 1) (value (no_part e));
   ignore (P.run p);
   equal outcome (Ok (base + 2)) (blocked ())
 
@@ -172,7 +168,8 @@ let fill m f =
 let while_held m f =
   let hold, h = two_words m in
   let holder =
-    Domain.spawn (fun () -> submit (fill m Support.waiting) ~buffers:[| hold |])
+    Domain.spawn (fun () ->
+        submit ~args:one (fill m Support.waiting) ~buffers:[| hold |])
   in
   let release () =
     Support.store h 1;
@@ -212,7 +209,7 @@ let test_memory_run_holds_submits () =
     while_held m (fun () ->
         let other, t =
           submitter (fun () ->
-              submit (fill m Support.bump) ~buffers:[| count |])
+              submit ~args:one (fill m Support.bump) ~buffers:[| count |])
         in
         Support.await "the other submit waiting" (fun () ->
             Support.waits_in_condition t);
@@ -232,7 +229,7 @@ let test_memory_waits_beside_run () =
   let m = memory "turn:memory-waits" in
   let base = Rig.submitted m in
   let count, _ = two_words m in
-  let first = submit (fill m Support.bump) ~buffers:[| count |] in
+  let first = submit ~args:one (fill m Support.bump) ~buffers:[| count |] in
   let e, _ = P.open_ "turn:memory-waits-other" in
   let during, held =
     while_held m (fun () ->
@@ -262,7 +259,7 @@ let still_works d p ~last =
   equal (option string) None (Rig.lost d);
   equal int (Rig.Point.value last) (Rig.submitted d);
   Rig.Point.wait last;
-  equal int (Rig.Point.value last + 1) (value (empty_run d));
+  equal int (Rig.Point.value last + 1) (value (no_part d));
   P.fail p;
   raises_match (lost d) (fun () -> submit (empty d));
   Rig.close d;
@@ -271,7 +268,7 @@ let still_works d p ~last =
 let test_break_in_wait () =
   let d, p = P.open_ "turn:break-wait" in
   let base = Rig.submitted d in
-  let first = point (empty_run d) in
+  let first = point (no_part d) in
   equal int (base + 1) (Rig.Point.value first);
   P.interrupt p;
   equal bool true (breaks (fun () -> Rig.Point.wait first));
@@ -279,7 +276,7 @@ let test_break_in_wait () =
 
 let test_break_in_wait_for () =
   let d, p = P.open_ "turn:break-wait-for" in
-  let first = point (empty_run d) in
+  let first = point (no_part d) in
   P.interrupt p;
   equal ~msg:"the wait" bool true
     (breaks (fun () -> Rig.Point.wait_for ~ns:1_000_000_000 first));
@@ -289,7 +286,7 @@ let test_break_in_wait_for () =
    sleep it came in. *)
 let test_break_ends_sleep () =
   let d, p = P.open_ "turn:break-ends-sleep" in
-  let first = point (empty_run d) in
+  let first = point (no_part d) in
   P.interrupt p;
   equal ~msg:"the wait" bool true (breaks (fun () -> Rig.Point.wait first));
   equal ~msg:"sleeps the signal ended" int 1 (P.broken_sleeps p);
@@ -332,7 +329,7 @@ let test_break_in_call taker () =
   let name = match taker with `Caller -> "caller" | `Other -> "other" in
   let d, p = P.open_ ("turn:break-in-call-" ^ name) in
   let base = Rig.submitted d in
-  let first = point (empty_run d) in
+  let first = point (no_part d) in
   equal int (base + 1) (Rig.Point.value first);
   let finished = ref false in
   P.before p "alloc" (fun () ->
@@ -354,7 +351,7 @@ let test_break_in_call taker () =
 let test_break_in_shielded_wait () =
   let d, p = P.open_ "turn:break-shielded" in
   let base = Rig.submitted d in
-  let first = point (empty_run d) in
+  let first = point (no_part d) in
   equal int (base + 1) (Rig.Point.value first);
   let finished = ref false in
   P.before p "alloc" (fun () ->
@@ -375,7 +372,7 @@ let test_hang_interrupted () =
   let rec from n =
     let name = Printf.sprintf "turn:hang-interrupted-%d" n in
     let d, p = P.open_ ~hang_ms:20 name in
-    let first = point (empty_run d) in
+    let first = point (no_part d) in
     P.stall p max_int;
     let wait () =
       match Rig.Point.wait first with
@@ -432,7 +429,7 @@ let test_break_after_escape () =
 let test_break_in_signaled () =
   let d, p = P.open_ ~transport:true "turn:break-signaled" in
   let base = Rig.submitted d in
-  let first = point (empty_run d) in
+  let first = point (no_part d) in
   equal int (base + 1) (Rig.Point.value first);
   P.break_word p;
   equal bool true (breaks (fun () -> Rig.Point.wait first));
@@ -467,7 +464,7 @@ let test_fault_interrupted () =
    its value is reached, the device live and nothing assigned. *)
 let test_signal_in_wait () =
   let d, p = P.open_ "turn:signal-wait" in
-  let first = point (empty_run d) in
+  let first = point (no_part d) in
   let handled = ref 0 in
   P.interrupt p;
   let before =
@@ -506,7 +503,7 @@ let test_break_waiting_for_run () =
   let m = memory "turn:break-run" in
   let base = Rig.submitted m in
   let count, c = two_words m in
-  let bump () = submit (fill m Support.bump) ~buffers:[| count |] in
+  let bump () = submit ~args:one (fill m Support.bump) ~buffers:[| count |] in
   let (broke, signalled), held =
     while_held m (fun () -> Support.interrupt_in_wait (fun () -> breaks bump))
   in
@@ -522,7 +519,7 @@ let test_break_waiting_for_run () =
 let test_break_in_close () =
   let d, p = P.open_ "turn:break-close" in
   let base = Rig.submitted d in
-  let first = point (empty_run d) in
+  let first = point (no_part d) in
   equal int (base + 1) (Rig.Point.value first);
   P.interrupt p;
   equal bool true (breaks (fun () -> Rig.close d));
@@ -608,7 +605,7 @@ let test_wait_runs_no_stop () =
   P.before p1 "stop" stop;
   P.before p2 "stop" stop;
   let z, _ = P.open_ "turn:owed-waiter" in
-  let p = point (empty_run z) and returned = Atomic.make false in
+  let p = point (no_part z) and returned = Atomic.make false in
   ignore (submit (empty x2) ~waits:[| submit (empty x1) |]);
   P.fail p1;
   raises_match (lost x1) (fun () -> submit (empty x1));

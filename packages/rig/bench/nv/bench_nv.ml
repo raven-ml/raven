@@ -47,9 +47,10 @@ type dev = S.t = { d : Rig.t; g : N.t }
 let dev = S.open_
 let alloc t kind n = Option.get (N.alloc t.g kind n)
 
-(* A run of a submission of parts on [t], which its row submits. *)
-let submission t ps = Sub.take (Sub.make t.d ps)
-let submit run = Rig.submit run ~buffers:[||]
+(* A submission of parts on [t], which its row submits, and the values [args]
+   of its launches (defaults to none). *)
+let submission ?(args = [||]) t ps = (Sub.make t.d ps, args)
+let submit (s, args) = Rig.submit s ~buffers:[||] ~args
 let run s = Rig.Point.wait (submit s)
 
 (* A host buffer of the ring entry [e], two words. *)
@@ -160,18 +161,21 @@ let release_rows =
     ]
 
 (* [count] launches of the kernel [empty] over one thread, as Launch parts of
-   one submission on [t], each block stored. *)
+   one submission on [t]. *)
 let launching t count =
   let image = get (Rig.Image.load t.d (Lazy.force cubin)) in
   let fn = Option.get (Rig.Image.resolve image "empty") in
   let work = Sub.launch fn ~params:0 in
-  let s = submission t (Array.make count work) in
-  for i = 0 to count - 1 do
-    let b = Sub.block (Sub.Run.submission s) i in
-    Sub.Run.groups s b 1 1 1;
-    Sub.Run.threads s b 1 1 1
-  done;
-  s
+  let one =
+    Sub.
+      {
+        groups = (1, 1, 1);
+        threads = (1, 1, 1);
+        shared = 0;
+        params = Bytes.empty;
+      }
+  in
+  submission ~args:(Array.make count one) t (Array.make count work)
 
 (* A run of 64 launches follows the GPU's SM clock, which moves by up to a tenth
    between and within runs and which no unprivileged process pins. Launches are
@@ -241,20 +245,23 @@ let uploading ?(count = 1) source n () =
   in
   let refs = Sub.[| write 0 ~at:0; read 1 ~at:8 |] in
   let work = Sub.launch ~refs fn ~params:20 in
-  let s = submission t (Array.append copy (Array.make count work)) in
-  for i = Array.length copy to Array.length copy + count - 1 do
-    let b = Sub.block (Sub.Run.submission s) i in
-    Sub.Run.groups s b (n / 4 / 256) 1 1;
-    Sub.Run.threads s b 256 1 1;
-    Sub.Run.int64 s b 0 0L;
-    Sub.Run.int64 s b 8 0L;
-    Sub.Run.int32 s b 16 1
-  done;
-  (src, s, [| out; input |])
+  let params = Bytes.make 20 '\000' in
+  Bytes.set_int32_le params 16 1l;
+  let twice =
+    Sub.
+      {
+        groups = (n / 4 / 256, 1, 1);
+        threads = (256, 1, 1);
+        shared = 0;
+        params;
+      }
+  in
+  let parts = Array.append copy (Array.make count work) in
+  (src, submission ~args:(Array.make count twice) t parts, [| out; input |])
 
-let upload (src, s, buffers) =
+let upload (src, (s, args), buffers) =
   B.write src Bigarray.int32 (fun a -> Bigarray.Array1.fill a 7l);
-  Rig.Point.wait (Rig.submit s ~buffers)
+  Rig.Point.wait (Rig.submit s ~buffers ~args)
 
 (* [mapped-4K] catches a regression of a write through the window, its flush
    or the launch that reads it. The [-64K-16] rows are 16 launches that read

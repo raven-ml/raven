@@ -46,9 +46,8 @@ module A = Nx_array
 module D = Nx_array.Dtype
 module L = Nx_array.Layout
 module Sub = Rig.Submission
-module Run = Rig.Submission.Run
 
-type call = Bytes.t Launch.call
+type call = Launch.call
 
 (* Dtypes *)
 
@@ -175,7 +174,7 @@ type builder = {
   mutable slots : Rig.Buffer.t list;
   mutable frees : Rig.Buffer.t list;
   mutable nslots : int;
-  mutable launches : Bytes.t Launch.t list;
+  mutable launches : Launch.t list;
   ws : Arena.t;
   mutable ticket_bytes : int;
   mutable windowed : bool;
@@ -274,12 +273,13 @@ let launch b ~kernel ?(gy = 1) ?(gz = 1) ~gx ~threads ~shared params refs =
       size = Bytes.length params;
       base = 0;
       refs = Array.of_list (List.rev !refs);
-      gx;
-      gy;
-      gz;
-      threads;
-      shared;
-      params;
+      args =
+        {
+          Sub.groups = (gx, gy, gz);
+          threads = (threads, 1, 1);
+          shared;
+          params;
+        };
     }
     :: b.launches
 
@@ -1854,7 +1854,7 @@ let finish ?(most = max_int) b =
      tickets'. *)
   let used = Array.make (n + 2) false in
   Array.iter
-    (fun (l : _ Launch.t) ->
+    (fun (l : Launch.t) ->
       for r = 0 to (Array.length l.refs / 3) - 1 do
         let s = l.refs.((3 * r) + 1) in
         used.(if s = ws_slot then n else if s = tickets_slot then n + 1 else s) <-
@@ -1879,7 +1879,7 @@ let finish ?(most = max_int) b =
   in
   (* Each launch's refs are its own, made by [launch]. *)
   Array.iter
-    (fun (l : _ Launch.t) ->
+    (fun (l : Launch.t) ->
       let refs = l.refs in
       for r = 0 to (Array.length refs / 3) - 1 do
         let s = refs.((3 * r) + 1) in

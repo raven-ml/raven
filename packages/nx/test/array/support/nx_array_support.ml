@@ -261,10 +261,10 @@ let store = store_fill ()
 
 let write b s =
   let n = String.length s in
-  let arg = Bytes.create (16 + n) in
-  Bytes.set_int64_le arg 0 0L;
-  Bytes.set_int64_le arg 8 (Int64.of_int n);
-  Bytes.blit_string s 0 arg 16 n;
+  let params = Bytes.create (16 + n) in
+  Bytes.set_int64_le params 0 0L;
+  Bytes.set_int64_le params 8 (Int64.of_int n);
+  Bytes.blit_string s 0 params 16 n;
   let work =
     Rig.Submission.fill
       ~refs:[| Rig.Submission.write 0 ~at:0 |]
@@ -272,14 +272,12 @@ let write b s =
       ~params:(4 * ((16 + n + 3) / 4))
   in
   let s = Rig.Submission.make (Rig.Buffer.device b) [| work |] in
-  let run = Rig.Submission.take s in
-  let block = Rig.Submission.block s 0 in
-  for i = 0 to ((Bytes.length arg + 3) / 4) - 1 do
-    let at = 4 * i in
-    let word = ref 0 in
-    for j = 0 to min 3 (Bytes.length arg - at - 1) do
-      word := !word lor (Char.code (Bytes.get arg (at + j)) lsl (8 * j))
-    done;
-    Rig.Submission.Run.int32 run block at !word
-  done;
-  ignore (Rig.submit run ~buffers:[| b |])
+  let args =
+    {
+      Rig.Submission.groups = (0, 0, 0);
+      threads = (0, 0, 0);
+      shared = 0;
+      params;
+    }
+  in
+  ignore (Rig.submit s ~buffers:[| b |] ~args:[| args |])

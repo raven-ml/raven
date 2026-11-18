@@ -55,20 +55,21 @@ let by_hand d image x y =
         launch "twice" twice_params [| Sub.write 1 ~at:0; Sub.read 0 ~at:8 |];
       |]
   in
-  let run = Sub.take s in
-  let store i params ~groups ~threads =
-    let b = Sub.block s i in
-    Sub.Run.groups run b groups 1 1;
-    Sub.Run.threads run b threads 1 1;
-    Sub.Run.shared run b 0;
-    for w = 0 to (String.length params / 4) - 1 do
-      Sub.Run.int32 run b (4 * w)
-        (Int32.to_int (String.get_int32_le params (4 * w)))
-    done
+  let values params ~groups ~threads =
+    {
+      Sub.groups = (groups, 1, 1);
+      threads = (threads, 1, 1);
+      shared = 0;
+      params = Bytes.of_string params;
+    }
   in
-  store 0 ids_params ~groups:4 ~threads:64;
-  store 1 twice_params ~groups:words ~threads:1;
-  ignore (Rig.submit run ~buffers:[| x; y |])
+  let args =
+    [|
+      values ids_params ~groups:4 ~threads:64;
+      values twice_params ~groups:words ~threads:1;
+    |]
+  in
+  ignore (Rig.submit s ~buffers:[| x; y |] ~args)
 
 let described d binary =
   let fixed n = { G.add = n; terms = [||] } in

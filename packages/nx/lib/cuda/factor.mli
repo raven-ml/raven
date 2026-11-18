@@ -16,7 +16,7 @@
     bits depend on the batch. *)
 
 val cholesky :
-  Nx_kernel.triangle -> dst:Nx_array.any -> Nx_array.any -> Bytes.t Launch.plan
+  Nx_kernel.triangle -> dst:Nx_array.any -> Nx_array.any -> Launch.plan
 (** [cholesky t ~dst a] plans {!Nx_kernel.S.cholesky}. *)
 
 val lu :
@@ -24,10 +24,10 @@ val lu :
   pivots:Nx_array.any ->
   perm:Nx_array.any ->
   Nx_array.any ->
-  Bytes.t Launch.plan
+  Launch.plan
 (** [lu ~lu ~pivots ~perm a] plans {!Nx_kernel.S.lu}. *)
 
-val qr : q:Nx_array.any -> r:Nx_array.any -> Nx_array.any -> Bytes.t Launch.plan
+val qr : q:Nx_array.any -> r:Nx_array.any -> Nx_array.any -> Launch.plan
 (** [qr ~q ~r a] plans {!Nx_kernel.S.qr}, its factors as [q]'s shape
     states. *)
 
@@ -38,6 +38,6 @@ val solve_triangular :
   dst:Nx_array.any ->
   Nx_array.any ->
   Nx_array.any ->
-  Bytes.t Launch.plan
+  Launch.plan
 (** [solve_triangular t ~adjoint ~unit_diagonal ~dst a b] plans
     {!Nx_kernel.S.solve_triangular}. *)

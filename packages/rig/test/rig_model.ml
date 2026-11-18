@@ -91,7 +91,7 @@ let configs =
         capacity = 2;
       } );
     (* A copy's submission is two parts: the copy and the fill that names the
-       run's slots ({!named}). *)
+       submit's slots ({!named}). *)
     (1, { polled with label = "polled-tight"; capacity = 2 });
     (1, { polled with label = "polled-transport"; transport = true });
     ( 1,
@@ -285,8 +285,8 @@ and sub = {
   held : rkept option;
 }
 
-(* Whether a submission on a device of [kind] has the run's read and write
-   slots: a GPU's copy has none, since no part of it names them. *)
+(* Whether a submission on a device of [kind] has a read and a write slot: a
+   GPU's copy has none, since no part of it names them. *)
 let slotted = function Gpu _ -> false | _ -> true
 
 type rkcell = { kw : rworld; mutable k : rkept option; mutable dropped : bool }
@@ -716,7 +716,7 @@ let take_device kind =
 let drain d =
   if not (Rig.equal d Rig.host || Rig.equal d Rig_disk.device) then
     Rig.Point.wait
-      (Rig.submit (Sub.take (Sub.make d [||])) ~buffers:[||])
+      (Rig.submit (Sub.make d [||]) ~buffers:[||] ~args:[||])
 
 let give_device s =
   match s.skind with
@@ -755,7 +755,7 @@ and sbuf = { b : B.t; m : smem }
    program's own variables change as some order of the calls says. *)
 and scell = { cell : sbuf option Atomic.t; sw : sworld; cl : smem }
 
-(* Each submit prepares its own run, including fill arguments. *)
+(* Each submit passes its own values, a fill's arguments included. *)
 type work = Copy | Fill | Launch
 type ssub = { s : Sub.t; sd : Rig.t; work : work; slotted : bool }
 type sscell = { ss : ssub option Atomic.t; ssw : sworld; scl : smem }
@@ -1630,7 +1630,7 @@ let make_ref ?keep (v : rdevv) pair sc outcome =
           pair;
         sc.sub <- Some { dev = d; copy = pair; held })
 
-(* The parts of a submission whose runs pass a read slot and a write slot: a
+(* The parts of a submission whose submits pass a read slot and a write slot: a
    copy names neither, so a fill that does nothing names them. A GPU of the
    model runs no fill: its copy has no slots ({!slotted}). *)
 let named (s : sdev) part = function
@@ -1838,26 +1838,26 @@ let submit_sys last rc wc sc =
   end;
   let w = rc.sw in
   guard w @@ fun () ->
-  (* The run's buffers are on the device: a borrow where they are not. *)
+  (* The submit's buffers are on the device: a borrow where they are not. *)
   let onto b =
     if Rig.equal (B.device b) sub.sd then b
     else Option.value (B.borrow sub.sd b) ~default:b
   in
-  let run = Sub.take sub.s in
-  (match sub.work with
-  | Copy -> ()
-  | Fill | Launch ->
-      let b = Sub.block sub.s 0 in
-      if sub.work = Launch then begin
-        Sub.Run.groups run b 1 1 1;
-        Sub.Run.threads run b 1 1 1
-      end;
-      Sub.Run.int64 run b 0 0L;
-      Sub.Run.int64 run b 8 0L;
-      let n = min (B.length r.b) (B.length wb.b) in
-      Sub.Run.int64 run b 16 (Int64.of_int n));
+  (* A copy's values are those of the fill that names its slots, if it has
+     one ({!named}). A fill or a launch, of one thread, takes the count of
+     bytes it copies; its entry refs write the two addresses. *)
+  let args =
+    match sub.work with
+    | Copy -> if sub.slotted then S.zeros 1 else [||]
+    | Fill | Launch ->
+        let params = Bytes.make 24 '\000' in
+        let n = min (B.length r.b) (B.length wb.b) in
+        Bytes.set_int64_le params 16 (Int64.of_int n);
+        let one = (1, 1, 1) in
+        [| { Sub.groups = one; threads = one; shared = 0; params } |]
+  in
   let buffers = if sub.slotted then [| onto r.b; onto wb.b |] else [||] in
-  Rig.Point.value (Rig.submit run ~buffers)
+  Rig.Point.value (Rig.submit sub.s ~buffers ~args)
 
 (* Kept values *)
 

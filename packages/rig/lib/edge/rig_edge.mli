@@ -313,7 +313,7 @@ type 'region facts = {
     which of the device's engines runs each part, so that neither
     allocates. No other call uses the scratch meanwhile, and a call finds
     what an earlier call left there. A copy part's fields may differ from
-    one call to the next, since a copy's ends may be a run's buffers
+    one call to the next, since a copy's ends may be a submit's buffers
     ([Rig.Submission.side]). A driver must decide again on each call
     what it derives from them.
 
@@ -406,7 +406,8 @@ type entry = {
           launch that gives fewer, or that places a ref past them. *)
   threads : int option;
       (** The most threads a group of the function may have, or [None] if
-          the driver does not know it. rig refuses a run that sets more. *)
+          the driver does not know it. rig refuses a submit whose values
+          set more ({!Rig.submit}). *)
 }
 (** The type for a function of an image, as a driver names it. *)
 

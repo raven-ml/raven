@@ -26,8 +26,7 @@ type gpu = {
      stamps: host words 0 to 3. *)
   page : (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t;
   mapped : Rig.Buffer.t;
-  empty : Rig.Submission.Run.t;
-      (* A run of an empty submission, which drains its work. *)
+  empty : Rig.Submission.t; (* An empty submission, which drains its work. *)
 }
 
 let sms g = g.sms
@@ -79,7 +78,7 @@ let gpu () =
       let mapped = Option.get (Rig.Buffer.borrow device host) in
       let page = Rig.Buffer.export host Bigarray.int64 in
       let harness = lazy (image device (cubin ()) (kernels ())) in
-      let empty = Rig.Submission.(take (make device [||])) in
+      let empty = Rig.Submission.make device [||] in
       let g = { device; arch; sms; harness; page; mapped; empty } in
       opened := Some g;
       g
@@ -126,13 +125,13 @@ type work =
   | Launch of image * launch
   | Copied of Rig.Buffer.t * Rig.Buffer.t
 
-(* A submission made once, its run's blocks written, submitted any number of
+(* A submission made once with its launches' values, submitted any number of
    times; [held] if its first part is a hold, whose [want] each submit
-   stores. The test's one thread is its only taker, so each take returns
-   the run its blocks were written into. *)
+   stores into the first values. *)
 type prepared = {
   sub : Rig.Submission.t;
   buffers : Rig.Buffer.t array;
+  args : Rig.Submission.args array;
   held : bool;
 }
 
@@ -170,6 +169,25 @@ let delay g =
   launch "delay" ~grid:(1, 1, 1) ~block:1
     [ A (word g 0); A (word g 1); D (0, 0); W hold_ns ]
 
+(* A launch's values: its parameters, 0 for an address's, the offset into its
+   buffer that the submit turns into an address. *)
+let args_of l =
+  let params = Bytes.make (8 * List.length l.params) '\000' in
+  List.iteri
+    (fun k -> function
+      | A _ -> ()
+      | W v -> Bytes.set_int64_le params (8 * k) (Int64.of_int v)
+      | D (u, v) ->
+          Bytes.set_int32_le params (8 * k) (Int32.of_int u);
+          Bytes.set_int32_le params ((8 * k) + 4) (Int32.of_int v))
+    l.params;
+  {
+    Rig.Submission.groups = l.grid;
+    threads = (l.block, 1, 1);
+    shared = l.shared;
+    params;
+  }
+
 (* Makes the submission of [works] in order, each on its queue, every buffer a
    launch addresses written: one slot an address. *)
 let prepare g works =
@@ -203,48 +221,28 @@ let prepare g works =
   let parts = Array.of_list (List.map part works) in
   let buffers = Array.of_list (List.rev !slots) in
   let sub = Rig.Submission.make g.device parts in
-  let blocks = Rig.Submission.take sub in
-  let block i l =
-    let b = Rig.Submission.block sub i in
-    let x, y, z = l.grid in
-    Rig.Submission.Run.groups blocks b x y z;
-    Rig.Submission.Run.threads blocks b l.block 1 1;
-    Rig.Submission.Run.shared blocks b l.shared;
-    List.iteri
-      (fun k -> function
-        | A _ -> Rig.Submission.Run.int64 blocks b (8 * k) 0L
-        | W v -> Rig.Submission.Run.int64 blocks b (8 * k) (Int64.of_int v)
-        | D (u, v) ->
-            Rig.Submission.Run.int32 blocks b (8 * k) u;
-            Rig.Submission.Run.int32 blocks b ((8 * k) + 4) v)
-      l.params
+  let launched (_, w) =
+    match w with
+    | Copied _ -> None
+    | Hold -> Some (args_of (delay g))
+    | Launch (_, l) -> Some (args_of l)
   in
-  List.iteri
-    (fun i (_, w) ->
-      match w with
-      | Copied _ -> ()
-      | Hold -> block i (delay g)
-      | Launch (_, l) -> block i l)
-    works;
-  Rig.Submission.Run.release blocks;
+  let args = Array.of_list (List.filter_map launched works) in
   let held = match works with (_, Hold) :: _ -> true | _ -> false in
-  { sub; buffers; held }
+  { sub; buffers; args; held }
 
 (* The point after [g]'s work: an empty submission follows every earlier
-   value. Its run holds no bytes, so submits share it. *)
-let drain g = Rig.submit g.empty ~buffers:[||]
+   value. *)
+let drain g = Rig.submit g.empty ~buffers:[||] ~args:[||]
 
 (* Submits [p], its hold waiting for the next {!release}, and is its point. The
    count only grows, so a hold an earlier submission queued, which the GPU has
    not run yet, stays released whatever later submissions do. *)
 let submit g p =
-  let blocks = Rig.Submission.take p.sub in
   if p.held then
-    Rig.Submission.Run.int32 blocks
-      (Rig.Submission.block p.sub 0)
-      want_at
-      (Int64.to_int g.page.{0} + 1);
-  Rig.submit blocks ~buffers:p.buffers
+    Bytes.set_int32_le p.args.(0).params want_at
+      (Int32.of_int (Int64.to_int g.page.{0} + 1));
+  Rig.submit p.sub ~buffers:p.buffers ~args:p.args
 
 let release g = g.page.{0} <- Int64.succ g.page.{0}
 

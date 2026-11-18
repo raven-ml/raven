@@ -19,14 +19,13 @@ let submits n =
     lazy
       (let d = Result.get_ok (Rig.software "bench:profile") in
        let src = Rig.Buffer.create d 64 and dst = Rig.Buffer.create d 64 in
-       Rig.Submission.(
-         take (make d [| copy ~src:(Buffer src) ~dst:(Buffer dst) |])))
+       Rig.Submission.(make d [| copy ~src:(Buffer src) ~dst:(Buffer dst) |]))
   in
   fun () ->
-    let run = Lazy.force copy in
+    let s = Lazy.force copy in
     P.take (fun () ->
         for _ = 1 to n do
-          ignore (Rig.submit run ~buffers:[||])
+          ignore (Rig.submit s ~buffers:[||] ~args:[||])
         done)
 
 let events n =

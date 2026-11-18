@@ -12,8 +12,8 @@ module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
-let submit ?(buffers = [||]) ?waits s =
-  Rig.submit ?waits (Sub.take s) ~buffers
+let submit ?(buffers = [||]) ?(args = [||]) ?waits s =
+  Rig.submit ?waits s ~buffers ~args
 
 let timeout = 60.
 let empty d = Sub.make d [||]
@@ -176,7 +176,8 @@ let test_io_used () =
   let d, p = P.open_ "fork:io-user" in
   let m = ref (Some (store io page_bytes)) in
   let s = Sub.make d [| Support.touching [| Sub.read |] |] in
-  ignore (submit s ~buffers:[| require_some (B.borrow d (Option.get !m)) |]);
+  let buffers = [| require_some (B.borrow d (Option.get !m)) |] in
+  ignore (submit s ~buffers ~args:(Support.zeros 1));
   let before = Atomic.get Store.held in
   let lines, ended =
     in_child (fun () ->
@@ -307,10 +308,7 @@ let one_part d =
   in
   s
 
-let submit_part s =
-  let run = Sub.take s in
-  Sub.Run.groups run (Sub.block s 0) 0 0 0;
-  Rig.submit run ~buffers:[||]
+let submit_part s = Rig.submit s ~buffers:[||] ~args:(Support.zeros 1)
 
 (* A thread of the parent blocked in a hand-over at the fork, holding its
    device's turn and its submission, with a profile being taken, leaves the

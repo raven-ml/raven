@@ -686,13 +686,13 @@ static void put(struct rig_device *d) {
 /* Threads */
 
 /* A number for the calling thread that no other thread of the process
-   has, given at its first call. An open records its thread's, so that a
-   call on that thread that would wait for the open, from its opener or a
-   callback inside it, raises instead. */
+   has, given at its first call: at least 1. An open records its thread's,
+   so that a call on that thread that would wait for the open, from its
+   opener or a callback inside it, raises instead. */
 static _Atomic intptr_t threads_numbered;
 static _Thread_local intptr_t thread_number;
 
-intptr_t rig_thread_number(void) {
+static intptr_t rig_thread_number(void) {
   if (thread_number == 0)
     thread_number = atomic_fetch_add(&threads_numbered, 1) + 1;
   return thread_number;
@@ -1592,23 +1592,20 @@ static int admit(struct rig_device *d, const struct rig_sub *s,
   return SUBMIT_FAILED;
 }
 
-/* Submits [s] on its device with the call [v_c] and the run [v_r]'s
-   blocks: the turn, room, the value, the hand-over and the stamps, in one
-   call that runs no OCaml. [s] and the run are read with the runtime
-   released: [Submission.submit] uses both after the call, which keeps their
-   custom blocks reachable until then. A run is an OCaml record whose field
-   0 holds its custom block. */
-value caml_rig_submit(value v_s, value v_c, value v_r) {
+/* Submits [s] on its device with the call [v_c] and its blocks: the turn,
+   room, the value, the hand-over and the stamps, in one call that runs no
+   OCaml. [s] is read with the runtime released: [Submission.submit] uses it
+   after the call, which keeps its custom block reachable until then. */
+value caml_rig_submit(value v_s, value v_c) {
   const struct rig_sub *s = *(struct rig_sub **)Data_custom_val(v_s);
   struct rig_call *c = (struct rig_call *)Long_val(v_c);
-  uint8_t *args = (*(struct rig_run **)Data_custom_val(Field(v_r, 0)))->args;
   struct rig_device *d = s->dev;
   int released;
   if (!lock_turn(d, &released)) return Val_int(SUBMIT_BUSY);
   int r = is_lost(d) ? SUBMIT_LOST : record_waits(d, c);
   if (r != SUBMIT_OK) return Val_int(give_turn(d, released, r));
   begin_turn(d);
-  r = admit(d, s, c, args);
+  r = admit(d, s, c, c->args);
   end_turn(d);
   if (r == SUBMIT_NO_ROOM || r == SUBMIT_NEVER || r == SUBMIT_GROW)
     d->nrecord -= c->nwaits;

@@ -13,7 +13,7 @@
     Its association follows the dtypes, the scales and segments given and
     the extents alone, never a layout or an alignment. *)
 
-type call = Bytes.t Launch.call
+type call = Launch.call
 (** The type for calls, one submission each. A call past one launch's
     bounds, of as many launches as its windows, is not kept: a submission
     per window count would grow with the calls made. *)
@@ -28,7 +28,7 @@ val plan :
   init:Nx_array.any option ->
   Nx_kernel.operand ->
   Nx_kernel.operand ->
-  Bytes.t Launch.plan
+  Launch.plan
 (** [plan ~batch ~contracting ~segments ~acc ~dst ~init a b] plans
     {!Nx_kernel.S.contract} of a call whose shapes fit, [init] of [dst]'s
     dtype, as at most one call. It is [Error Declined] for a scale with an

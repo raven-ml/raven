@@ -621,31 +621,26 @@ let images =
    conformance suite's; these are CUDA's limits. *)
 
 module Sub = Rig.Submission
-module Run = Rig.Submission.Run
 
 let launch_image = Rig_gpu_support.loader (fun () -> S.fixture "launch.ptx")
 
 (* [count] launches (defaults to 1) of [kernel] of fixtures/launch.ptx on
    [d], each of [params] bytes of parameters whose first 8 point into the
-   run's one buffer, a write, over [groups] of [threads] with [shared] bytes
-   of dynamic shared memory: a run of their submission holding their
-   blocks. *)
-let launching ?(kernel = "ids") ?(params = 24) ?(count = 1) d
-    ~groups:(gx, gy, gz) ~threads:(tx, ty, tz) ~shared =
+   submit's one buffer, a write, over [groups] of [threads] with [shared]
+   bytes of dynamic shared memory: their submission and its values, whose
+   parameters are 0. *)
+let launching ?(kernel = "ids") ?(params = 24) ?(count = 1) d ~groups
+    ~threads ~shared =
   let refs = [| Sub.write 0 ~at:0 |] in
   let fn = require_some (Rig.Image.resolve (launch_image d) kernel) in
   let part _ = Sub.launch ~refs fn ~params in
   let s = Sub.make d (Array.init count part) in
-  let run = Sub.take s in
-  for i = 0 to count - 1 do
-    let b = Sub.block s i in
-    Run.groups run b gx gy gz;
-    Run.threads run b tx ty tz;
-    Run.shared run b shared
-  done;
-  run
+  let values _ =
+    { Sub.groups; threads; shared; params = Bytes.make params '\000' }
+  in
+  (s, Array.init count values)
 
-let submitted run buffers = Rig.submit run ~buffers
+let submitted (s, args) buffers = Rig.submit s ~buffers ~args
 
 (* The 32-bit words [b] holds. *)
 let words b n =
@@ -669,11 +664,12 @@ let refused_launches () =
     raises_match ~msg (Exn.invalid_arg ~sub:"never fit") (fun () ->
         submitted run [| out |])
   in
-  (* More threads than the function has, which the setter refuses. *)
+  (* More threads than the function has, which submit refuses. *)
   List.iter
     (fun threads ->
+      let l = launching d ~groups:(1, 1, 1) ~threads ~shared:0 in
       raises_match (Exn.invalid_arg ~sub:"threads per group") (fun () ->
-          launching d ~groups:(1, 1, 1) ~threads ~shared:0))
+          submitted l [| out |]))
     [ (1025, 1, 1); (1024, 2, 1) ];
   refuses "no groups along x" ~groups:(0, 1, 1) ();
   refuses "no threads along z" ~threads:(1, 1, 0) ();
@@ -701,48 +697,38 @@ let largest_shared_memory () =
   let last shared = (shared, (shared / 4) - 256) in
   List.iter
     (fun (shared, first) ->
-      let run =
+      let ((_, args) as l) =
         launching ~kernel:"rotate" ~params:16 d ~groups:(1, 1, 1)
           ~threads:(256, 1, 1) ~shared
       in
-      let b = Sub.block (Run.submission run) 0 in
-      Run.int32 run b 8 5;
-      Run.int32 run b 12 first;
+      Bytes.set_int32_le args.(0).Sub.params 8 5l;
+      Bytes.set_int32_le args.(0).Sub.params 12 (Int32.of_int first);
       let out = B.create ~memory:Pinned d (4 * 256) in
-      Rig.Point.wait (submitted run [| out |]);
+      Rig.Point.wait (submitted l [| out |]);
       equal (array int)
         ~msg:(Printf.sprintf "the words of %d bytes from word %d" shared first)
         (Array.init 256 (fun t -> 5 + (3 * ((t + 1) mod 256))))
         (words out 256))
     [ last ((48 * 1024) + 4); last (64 * 1024); last largest; (largest, 0) ]
 
-(* A cached submission of [count] launches submitted with a warm run, their
-   blocks stored anew each time through every setter, allocates nothing: one
-   launch runs plain, and two play through a chain. *)
+(* A cached submission of [count] launches, their values written anew each
+   time, allocates nothing: one launch runs plain, and two play through a
+   chain. *)
 let no_allocation count () =
   S.with_ @@ fun { d; g } ->
-  let run =
+  let ((_, args) as l) =
     launching ~count d ~groups:(1, 1, 1) ~threads:(32, 1, 1) ~shared:0
   in
-  Run.release run;
   let buffers = [| B.create d 4096 |] in
-  let s = Run.submission run in
-  let blocks = Array.init count (Sub.block s) in
-  (* [float64] stores first, where [int64] then stores [a]. *)
   let once i =
-    if Sub.take s != run then fail "the run is taken";
     for j = 0 to count - 1 do
-      let b = blocks.(j) in
-      Run.groups run b 1 1 1;
-      Run.threads run b 32 1 1;
-      Run.shared run b 0;
-      Run.int64 run b 0 0L;
-      Run.float64 run b 8 2.5;
-      Run.int64 run b 8 (Int64.of_int i);
-      Run.int32 run b 16 3;
-      Run.float32 run b 20 1.5
+      let b = args.(j).Sub.params in
+      Bytes.set_int64_le b 0 0L;
+      Bytes.set_int64_le b 8 (Int64.of_int i);
+      Bytes.set_int32_le b 16 3l;
+      Bytes.set_int32_le b 20 (Int32.bits_of_float 1.5)
     done;
-    Sys.opaque_identity (submitted run buffers)
+    Sys.opaque_identity (submitted l buffers)
   in
   Rig.Point.wait (once 0);
   let last = ref (once 1) in
@@ -767,7 +753,8 @@ let launches =
       test "a launch takes shared memory past 48 KiB, up to the largest"
         largest_shared_memory;
       test "a cached launch allocates nothing" (no_allocation 1);
-      test "a cached run of two launches allocates nothing" (no_allocation 2);
+      test "a cached submission of two launches allocates nothing"
+        (no_allocation 2);
     ]
 
 (* Timeline and loss *)
@@ -1156,8 +1143,8 @@ let cut runs =
 
 (* A launch of [fn] of [params] bytes over [groups] of [threads] with
    [shared] bytes of dynamic shared memory, its first 8 bytes a write of
-   the buffer [slot] unless [slot] is negative, its other bytes as [store]
-   stores them. *)
+   the buffer [slot] unless [slot] is negative, its other bytes 0 but what
+   [store] writes. *)
 type launch = {
   fn : Rig.Image.func;
   params : int;
@@ -1165,42 +1152,40 @@ type launch = {
   groups : int * int * int;
   threads : int * int * int;
   shared : int;
-  store : Run.t -> Sub.block -> unit;
+  store : Bytes.t -> unit;
 }
 
 let launch ?(slot = 0) ?(groups = (1, 1, 1)) ?(threads = (1, 1, 1))
-    ?(shared = 0) ?(store = fun _ _ -> ()) fn ~params =
+    ?(shared = 0) ?(store = ignore) fn ~params =
   { fn; params; slot; groups; threads; shared; store }
 
-(* A run of a submission of [ls] on [d], their blocks stored. *)
+(* A submission of [ls] on [d] and its values. *)
 let run_of d ls =
   let part l =
     let refs = if l.slot < 0 then [||] else [| Sub.write l.slot ~at:0 |] in
     Sub.launch ~refs l.fn ~params:l.params
   in
   let s = Sub.make d (Array.of_list (List.map part ls)) in
-  let run = Sub.take s in
-  List.iteri
-    (fun i l ->
-      let b = Sub.block s i in
-      let gx, gy, gz = l.groups and tx, ty, tz = l.threads in
-      Run.groups run b gx gy gz;
-      Run.threads run b tx ty tz;
-      Run.shared run b l.shared;
-      l.store run b)
-    ls;
-  run
+  let values l =
+    let b = Bytes.make l.params '\000' in
+    l.store b;
+    {
+      Sub.groups = l.groups;
+      threads = l.threads;
+      shared = l.shared;
+      params = b;
+    }
+  in
+  (s, Array.of_list (List.map values ls))
 
 let func image name = require_some (Rig.Image.resolve image name)
 
 (* [ids] over one thread, storing [v] into word [j] of its buffer, the
    offset its ref holds. *)
 let store_id d j v =
-  launch (func (launch_image d) "ids") ~params:24 ~store:(fun run b ->
-      Run.int64 run b 0 (Int64.of_int (4 * j));
-      Run.int64 run b 8 (Int64.of_int v);
-      Run.int32 run b 16 0;
-      Run.float32 run b 20 0.)
+  launch (func (launch_image d) "ids") ~params:24 ~store:(fun b ->
+      Bytes.set_int64_le b 0 (Int64.of_int (4 * j));
+      Bytes.set_int64_le b 8 (Int64.of_int v))
 
 (* A chain's node runs the bounds a plain launch runs, updated from the
    placeholder's launch of one thread with no parameters or shared memory:
@@ -1230,8 +1215,11 @@ let placeholder_bounds () =
     let words_of = List.length ats in
     let outs = Array.init (List.length ls) (fun _ -> pinned (4 * words_of)) in
     let each j f =
-      launch f ~params ~slot:j ~store:(fun run b ->
-          List.iteri (fun k at -> Run.int32 run b at ((10 * j) + k + 1)) ats)
+      launch f ~params ~slot:j ~store:(fun b ->
+          List.iteri
+            (fun k at ->
+              Bytes.set_int32_le b at (Int32.of_int ((10 * j) + k + 1)))
+            ats)
     in
     played msg (List.mapi each ls) outs;
     Array.iteri
@@ -1256,9 +1244,7 @@ let placeholder_bounds () =
   let outs = Array.init 4 (fun _ -> pinned (4 * 256)) in
   let rotate j shared =
     launch (fn "rotate") ~params:16 ~slot:j ~threads:(256, 1, 1) ~shared
-      ~store:(fun run b ->
-        Run.int32 run b 8 (5 + j);
-        Run.int32 run b 12 0)
+      ~store:(fun b -> Bytes.set_int32_le b 8 (Int32.of_int (5 + j)))
   in
   played "dynamic shared memory" (List.mapi rotate shared) outs;
   Array.iteri
@@ -1283,10 +1269,9 @@ let placeholder_bounds () =
     ]
   in
   let ids j (groups, threads) =
-    launch (fn "ids") ~params:24 ~groups ~threads ~store:(fun run b ->
-        Run.int64 run b 8 (Int64.of_int j);
-        Run.int32 run b 16 (j + 1);
-        Run.float32 run b 20 0.)
+    launch (fn "ids") ~params:24 ~groups ~threads ~store:(fun b ->
+        Bytes.set_int64_le b 8 (Int64.of_int j);
+        Bytes.set_int32_le b 16 (Int32.of_int (j + 1)))
   in
   played "the largest grids" (List.mapi ids shapes) [| big |];
   let s = Sub.make ~fixed:[ (big, Read) ] d [||] in
@@ -1309,9 +1294,8 @@ let refused_update () =
   S.with_ @@ fun { d; g } ->
   let fn = func (launch_image d) "rotate" in
   let rotate =
-    launch fn ~params:16 ~threads:(256, 1, 1) ~shared:1024 ~store:(fun run b ->
-        Run.int32 run b 8 5;
-        Run.int32 run b 12 0)
+    launch fn ~params:16 ~threads:(256, 1, 1) ~shared:1024 ~store:(fun b ->
+        Bytes.set_int32_le b 8 5l)
   in
   let out = B.create ~memory:Pinned d (4 * 256) in
   let run = run_of d [ rotate; rotate ] in
@@ -1320,7 +1304,6 @@ let refused_update () =
   in
   equal (pair int int) ~msg:"pieces and plain launches before" (1, 0) counts;
   S.limit_shared (Rig.Image.entry fn) 512;
-  let run = Sub.take (Run.submission run) in
   let why, counts =
     replaying g (fun () -> lost (fun () -> submitted run [| out |]))
   in
@@ -1373,14 +1356,14 @@ let order_law (named, a, across, b) =
     else
       Rig_gpu_support.launching (kernels_image d) "step" ~params:16
         [| (stepped, Rig.Read_write, 0) |]
-        (fun run b -> Run.int64 run b 8 (Int64.of_int i))
+        (fun b -> Bytes.set_int64_le b 8 (Int64.of_int i))
   in
   let twice =
     Rig_gpu_support.launching (launch_image d) "twice" ~params:20 ~threads:tail
       [| (out, Rig.Read_write, 0); (dst, Rig.Read, 8) |]
-      (fun run b ->
-        Run.int64 run b 8 (Int64.of_int (4 * (copied - tail)));
-        Run.int32 run b 16 twice_c)
+      (fun b ->
+        Bytes.set_int64_le b 8 (Int64.of_int (4 * (copied - tail)));
+        Bytes.set_int32_le b 16 (Int32.of_int twice_c))
   in
   let copy =
     Rig_gpu_support.work Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
@@ -1545,7 +1528,7 @@ let print_jitless () =
       let step i =
         Rig_gpu_support.launching image "step" ~params:16
           [| (counter, Rig.Read_write, 0) |]
-          (fun run b -> Run.int64 run b 8 (Int64.of_int i))
+          (fun b -> Bytes.set_int64_le b 8 (Int64.of_int i))
       in
       Rig.Point.wait (S.submit_work t [ step 0; step 1 ]);
       let pieces, plain = C.replays g in
@@ -1882,13 +1865,10 @@ module Chains = struct
     match kind with
     | Step ->
         Rig_gpu_support.launching (kernels_image s.t.d) "step" ~params:16 uses
-          (fun run b -> Run.int64 run b 8 (Int64.of_int v))
+          (fun b -> Bytes.set_int64_le b 8 (Int64.of_int v))
     | Set ->
         Rig_gpu_support.launching (launch_image s.t.d) "ids" ~params:24 uses
-          (fun run b ->
-            Run.int64 run b 8 (Int64.of_int (v + 1));
-            Run.int32 run b 16 0;
-            Run.float32 run b 20 0.)
+          (fun b -> Bytes.set_int64_le b 8 (Int64.of_int (v + 1)))
 
   let submit_sys s ls =
     Mutex.protect s.lock (fun () ->

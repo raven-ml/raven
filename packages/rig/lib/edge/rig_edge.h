@@ -68,7 +68,7 @@ struct rig_wait {
 /* A part's kinds. 0 is no part: a room check answers RIG_NEVER for it. */
 enum { RIG_WORDS = 1, RIG_FILL, RIG_COPY, RIG_LAUNCH };
 
-/* A launch's or a fill's block in a run's [args]: the groups of its grid
+/* A launch's or a fill's block in a submit's [args]: the groups of its grid
    along x, y and z, the threads of a group, a group's dynamic shared memory
    in bytes, then its parameters. A fill uses only the parameters. A block
    starts on 16 bytes. Its parameters, rounded up to 16 bytes, are followed
@@ -91,9 +91,9 @@ static inline uint64_t rig_block_bytes(uint64_t params) {
   return sizeof(struct rig_block) + 2 * rig_round16(params);
 }
 
-/* A launch's or a fill's reference to a run's buffer: the 8 parameter bytes
-   at [at] hold an offset into the run's buffer [slot], to which the driver
-   adds the buffer's address. */
+/* A launch's or a fill's reference to a submit's buffer: the 8 parameter
+   bytes at [at] hold an offset into the submit's buffer [slot], to which the
+   driver adds the buffer's address. */
 struct rig_ref {
   uint32_t at, slot;
 };
@@ -131,7 +131,7 @@ struct rig_args {
      belong to this device and have memory kind Device. Views and borrows on the owning device
      preserve it. Pinned, Mapped, this process's host memory, peer borrows
      and unbacked empty buffers have 0. Every field of a copy part may
-     differ from one call to the next, since its ends may be a run's
+     differ from one call to the next, since its ends may be a submit's
      buffers. The driver runs every copy and fill, whatever its rows and
      pitches, splitting it where its engine's fields are narrower, and
      chooses how on each call;
@@ -189,7 +189,7 @@ typedef int rig_room_fn(void *self, int nwaits, const struct rig_part *parts,
 /* Encodes [parts] as the work of [v] after [waits] (rig_edge.mli, The C
    functions: [submit]). [args] holds the launches' and fills' blocks, of
    which the driver writes only their places (rig_place), and [slots] the
-   address of each of the run's [nslots] buffers, as the device's work
+   address of each of the submit's [nslots] buffers, as the device's work
    addresses it, for their refs. [times] is NULL unless rig times [v]'s
    work, for a profile or for a run's times; otherwise the driver stores at
    [times[0]] and [times[1]] the times of rig_now_ns at which [v]'s work

@@ -99,7 +99,7 @@ let parameters f =
   | None -> String.init (Bigarray.Array1.dim f.arg) (fun i -> f.arg.{i})
   | Some _ ->
       let bytes = Bytes.create 8 in
-      Bytes.set_int64_ne bytes 0 (Int64.of_int (data f.arg));
+      Bytes.set_int64_le bytes 0 (Int64.of_int (data f.arg));
       Bytes.to_string bytes
 
 let part d f =
@@ -112,9 +112,7 @@ let part d f =
   in
   let bytes = parameters f in
   let part = Rig.Submission.fill f.fn ~params:(String.length bytes) in
-  let init s run i =
-    Rig_gpu_support.params run (Rig.Submission.block s i) bytes
-  in
+  let init _ = Some (Rig_gpu_support.filling bytes) in
   {
     Rig_gpu_support.part = (fun _ -> part);
     buffers = [||];
@@ -200,9 +198,9 @@ let launches = Rig_gpu_support.loader (fun () -> Option.get (launch_binary ()))
 let launching = Rig_gpu_support.launching
 
 let launch t kernel a b =
-  launching (modules t.d) kernel ~params:16 [||] (fun run k ->
-      Rig.Submission.Run.int64 run k 0 (Int64.of_int a);
-      Rig.Submission.Run.int64 run k 8 (Int64.of_int b))
+  launching (modules t.d) kernel ~params:16 [||] (fun p ->
+      Bytes.set_int64_le p 0 (Int64.of_int a);
+      Bytes.set_int64_le p 8 (Int64.of_int b))
 
 (* Conformance *)
 
@@ -214,14 +212,13 @@ let second ~word =
 (* fixtures/launch.ptx's [copy dst src n] copies [n] 32-bit words, one a
    thread. *)
 let copy_words t ~dst ~src =
-  let module Run = Rig.Submission.Run in
   let n = Rig.Buffer.length src / 4 in
   let w =
     launching (launches t.d) "copy" ~params:20
       ~groups:((n + 255) / 256)
       ~threads:256
       [| (dst, Rig.Read_write, 0); (src, Rig.Read, 8) |]
-      (fun run k -> Run.int32 run k 16 n)
+      (fun p -> Bytes.set_int32_le p 16 (Int32.of_int n))
   in
   w
 
@@ -240,4 +237,4 @@ let spin t ~ns =
   let flag = Rig_gpu_support.arguments t.d (String.make 8 '\000') in
   launching (modules t.d) "spin" ~params:16
     [| (flag, Rig.Read, 0) |]
-    (fun run k -> Rig.Submission.Run.int64 run k 8 (Int64.of_int ns))
+    (fun p -> Bytes.set_int64_le p 8 (Int64.of_int ns))

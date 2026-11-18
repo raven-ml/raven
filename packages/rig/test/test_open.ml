@@ -7,8 +7,8 @@ open Windtrap
 module P = Rig_support.Polled
 module Support = Rig_support
 
-let submit ?(buffers = [||]) ?waits s =
-  Rig.submit ?waits (Rig.Submission.take s) ~buffers
+let submit ?(buffers = [||]) ?(args = [||]) ?waits s =
+  Rig.submit ?waits s ~buffers ~args
 
 let timeout = 60.
 let device = Testable.make ~pp:Rig.pp ~equal:Rig.equal
@@ -1450,16 +1450,17 @@ let test_open_close () =
     in
     let work d =
       match kind with
-      | Bare -> (Rig.Submission.make d [||], [||])
+      | Bare -> (Rig.Submission.make d [||], [||], [||])
       | Mapping ->
           ignore (borrows d : Rig.Buffer.t array);
-          (Rig.Submission.make d [||], [||])
-      | Reading -> (Rig.Submission.make d [| reads |], borrows d)
+          (Rig.Submission.make d [||], [||], [||])
+      | Reading ->
+          (Rig.Submission.make d [| reads |], borrows d, Support.zeros 1)
     in
-    let s, buffers = work p in
-    let a = submit s ~buffers in
-    let s, buffers = work d in
-    Rig.Point.wait (submit s ~buffers ~waits:[| a |]);
+    let s, buffers, args = work p in
+    let a = submit s ~buffers ~args in
+    let s, buffers, args = work d in
+    Rig.Point.wait (submit s ~buffers ~args ~waits:[| a |]);
     Rig.close d;
     Rig.close p;
     [ (p, pp); (d, dp) ]

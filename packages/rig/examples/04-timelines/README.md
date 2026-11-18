@@ -16,8 +16,8 @@ same calls, as in [01-add](../01-add/).
 ## What You'll Learn
 
 - Software devices: `Rig.software`
-- Submissions made once and submitted many times, each submit with a run:
-  `Submission.make`, `Submission.take`, `submit`
+- Submissions made once and submitted many times: `Submission.make`,
+  `submit`
 - Parts ordered by the memory they share
 - Points and values: `Point.pp`, `Point.reached`, `submitted`, `signaled`
 - An empty submission, whose point is reached once all earlier work has
@@ -29,8 +29,7 @@ same calls, as in [01-add](../01-add/).
 | ------------------------- | ----------------------------------------------- |
 | `software name`           | A device with a timeline, in host memory        |
 | `Submission.make d parts` | Work for `d`, made once                         |
-| `Submission.take s`       | Storage of `s`'s parameters, a submit at a time |
-| `submit r ~buffers`       | Run `r`'s submission once and return its point  |
+| `submit s ~buffers ~args` | Run `s` once and return its point               |
 | `Point.reached p`         | Whether `p`'s device has reached it             |
 
 ## Next Steps

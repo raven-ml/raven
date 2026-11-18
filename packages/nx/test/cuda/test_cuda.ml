@@ -1528,7 +1528,7 @@ let calls_keep_nothing () =
     (Weak.check weak 0)
 
 (* [packed_split] with [a] in host memory, which the GPU's submit refuses
-   once the call has written its launch. *)
+   once the call has planned its launch. *)
 let on_the_host g () =
   let a, b, init, y, _ = contract g packed_split () in
   let host = Rig.Buffer.create Rig.host (Rig.Buffer.length a.S.buffer) in
@@ -1538,9 +1538,9 @@ let on_the_host g () =
        ~contracting:[ (2, 2) ]
        ~acc:(code packed_split.acc) ())
 
-(* A call that raises from its submit releases its run, so the warm calls
+(* A call that raises from its submit keeps nothing of it, so the warm calls
    after it allocate as many words as before it. *)
-let raise_releases_the_run () =
+let after_a_raise () =
   let g = S.gpu () in
   let _, _, _, _, p = contract g packed_split () in
   let before = warm_words g ~count:64 p in
@@ -1693,7 +1693,7 @@ let driver =
     test "scratch past the GPU's memory raises" scratch_out_of_memory;
     warm_calls_bounded;
     test "a call keeps none of its arrays" calls_keep_nothing;
-    test "a call that raises releases its run" raise_releases_the_run;
+    test "a call that raises keeps nothing of its submit" after_a_raise;
     test "split sums leave their tickets zero" splits_leave_tickets_zero;
     test "a consumed buffer is refused as dead" dead_buffers_refused;
     domains_call_alike;

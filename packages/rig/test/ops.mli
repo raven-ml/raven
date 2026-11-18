@@ -53,8 +53,13 @@ val filled : int -> Rig.Buffer.t
 val collect : unit -> unit
 (** [collect ()] runs two full collections, so chains of finalisers run. *)
 
-val once : ?buffers:Rig.Buffer.t array -> Rig.Submission.Run.t -> Rig.Point.t
-(** [once ~buffers r] submits [r]. *)
+val once :
+  ?buffers:Rig.Buffer.t array ->
+  ?args:Rig.Submission.args array ->
+  Rig.Submission.t ->
+  Rig.Point.t
+(** [once ~buffers ~args s] submits [s]. [buffers] and [args] default to
+    [[||]]. *)
 
 val ops : op list
 (** [ops] are the operations on a device that walks fail. *)

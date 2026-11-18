@@ -33,7 +33,7 @@ let axpy size =
 
 (* A time of a schedule on another machine's host is its kernel's time there,
    which lies within the host's times around the call, and runs the schedule
-   once there: one submission of its run's words. *)
+   once there: one submit of its launch's values. *)
 let timed () =
   let h = host () in
   let size = 1024 in

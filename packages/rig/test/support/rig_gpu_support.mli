@@ -146,25 +146,26 @@ type work = {
   buffers : Rig.Buffer.t array;
   fixed : (Rig.Buffer.t * Rig.access) list;
   keep : kept;
-  init : Rig.Submission.t -> Rig.Submission.Run.t -> int -> unit;
+  init : Rig.Submission.t -> Rig.Submission.args option;
 }
 (** Work with its memory, retained objects, and initialization. [part base]
     is the part, its refs naming [buffers] from the slot [base] on. Its
-    submission keeps [keep], objects the work uses. [init s r i] writes the
-    parameters or fixed words of part [i] after [s] is made. *)
+    submission keeps [keep], objects the work uses. [init s] writes the
+    part's fixed words after [s] is made, and is the values its submits
+    pass, [None] for a part that is neither a launch nor a fill. *)
 
 val work : Rig.Submission.part -> work
-(** [work p] is [p] with no buffers, extra memory or initialization. *)
+(** [work p] is [p], neither a launch nor a fill, with no buffers, extra
+    memory or initialization. *)
 
 val prepare :
   ?fixed:(Rig.Buffer.t * Rig.access) list ->
   Rig.t ->
   work list ->
-  Rig.Submission.Run.t * Rig.Buffer.t array
-(** [prepare d ws] is a run of the submission that assembles [ws], their
-    slots one after the other, with its buffers. It initializes their blocks
-    and fixed memory, and the run stays taken by the calling thread. [fixed]
-    adds fixed memory. *)
+  Rig.Submission.t * Rig.Buffer.t array * Rig.Submission.args array
+(** [prepare d ws] is the submission that assembles [ws], their slots one
+    after the other, with its buffers and its launches' and fills' values.
+    It initializes their fixed memory. [fixed] adds fixed memory. *)
 
 val launching :
   Rig.Image.t ->
@@ -173,16 +174,19 @@ val launching :
   ?groups:int ->
   ?threads:int ->
   (Rig.Buffer.t * Rig.access * int) array ->
-  (Rig.Submission.Run.t -> Rig.Submission.block -> unit) ->
+  (Bytes.t -> unit) ->
   work
 (** [launching image f ~params ~groups ~threads uses store] is a launch of
     [image]'s [f] over [groups] (defaults to [1]) groups of [threads] (defaults
     to [1]) threads, each [(b, a, at)] of [uses] the buffer [b] referenced at
     the parameter byte [at] with the access [a], and its [params] bytes of
-    parameters [store] stores. *)
+    parameters, [0] but what [store] writes. *)
 
-val params : Rig.Submission.Run.t -> Rig.Submission.block -> string -> unit
-(** [params r b s] stores [s], padded to a multiple of four bytes, into [b]. *)
+val params : Bytes.t -> string -> unit
+(** [params b s] writes [s] into the first bytes of [b]. *)
+
+val filling : string -> Rig.Submission.args
+(** [filling s] is the values of a fill whose parameters are [s]. *)
 
 (** A GPU's device, opened through rig or by its driver alone. *)
 module type S = sig
@@ -256,7 +260,8 @@ module type S = sig
       test left it: it closes a device in rig, and stops one opened alone. *)
 
   val submit : t -> Rig.Submission.part array -> Rig.Point.t
-  (** [submit t ps] submits [ps] through rig on [t] and is their point. *)
+  (** [submit t ps] submits [ps], none of them a launch or a fill, through
+      rig on [t] and is their point. *)
 
   val submit_work : t -> work list -> Rig.Point.t
   (** [submit_work t ws] submits [ws]' parts through rig on [t], with their

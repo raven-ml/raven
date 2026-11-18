@@ -10,7 +10,6 @@
 open Windtrap
 module B = Rig.Buffer
 module Sub = Rig.Submission
-module Run = Sub.Run
 module S = Rig_host_support
 
 let timeout = 60.
@@ -56,14 +55,23 @@ let affine image ~n ~a ~c =
   let refs = Sub.[| write 0 ~at:0; read 1 ~at:8 |] in
   let fn = require_some (Rig.Image.resolve image "affine") in
   let s = Sub.make Rig.host [| Sub.launch ~refs fn ~params:40 |] in
-  let run = Sub.take s and k = Sub.block s 0 in
-  Run.groups run k ((n + 63) / 64) 1 1;
-  Run.threads run k 64 1 1;
-  Run.int64 run k 16 (Int64.of_int n);
-  Run.int64 run k 24 (Int64.of_int a);
-  Run.int64 run k 32 (Int64.of_int c);
+  let params = Bytes.make 40 '\000' in
+  Bytes.set_int64_le params 16 (Int64.of_int n);
+  Bytes.set_int64_le params 24 (Int64.of_int a);
+  Bytes.set_int64_le params 32 (Int64.of_int c);
+  let args =
+    Sub.
+      {
+        groups = ((n + 63) / 64, 1, 1);
+        threads = (64, 1, 1);
+        shared = 0;
+        params;
+      }
+  in
   ignore
-    (Rig.submit run ~buffers:[| B.of_bigarray out; B.of_bigarray inb |]);
+    (Rig.submit s
+       ~buffers:[| B.of_bigarray out; B.of_bigarray inb |]
+       ~args:[| args |]);
   let right = ref true in
   for i = 0 to n - 1 do
     if out.{i} <> Int64.of_int ((a * i) + c) then right := false

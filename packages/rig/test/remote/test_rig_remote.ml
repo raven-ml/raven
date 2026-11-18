@@ -791,7 +791,7 @@ let copies_law (init, ops) =
                 ~dst:(Buffer (view o.dst o.at_dst)));
           |]
       in
-      last.(d) <- Some (Rig.submit (Sub.take s) ~buffers:[||]);
+      last.(d) <- Some (Rig.submit s ~buffers:[||] ~args:[||]);
       Bytes.blit model.(index o.src) o.at_src model.(index o.dst) o.at_dst o.len)
     ops;
   Array.iter (Option.iter Rig.Point.wait) last;
@@ -850,7 +850,7 @@ let close_waits () =
   let far = far_of_string h s in
   let here = B.create Rig.host n in
   let copy = Sub.make h [| Sub.(copy ~src:(Buffer far) ~dst:(Buffer here)) |] in
-  ignore (Rig.submit (Sub.take copy) ~buffers:[||]);
+  ignore (Rig.submit copy ~buffers:[||] ~args:[||]);
   Rig_remote.close j;
   equal ~msg:"the copy's bytes" bool true (read_host here = s);
   equal exit_w (0, [ "closed" ]) (finish (List.hd agents))

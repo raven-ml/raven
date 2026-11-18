@@ -10,7 +10,6 @@
 open Windtrap
 module B = Rig.Buffer
 module Sub = Rig.Submission
-module Run = Sub.Run
 module S = Rig_host_support
 module R = Rig_support.Reader
 module P = Rig_support.Polled
@@ -32,19 +31,21 @@ type grid = { groups : int * int * int; threads : int * int * int }
 
 let one = { groups = (1, 1, 1); threads = (1, 1, 1) }
 
+(* The values of a launch over [grid], with [shared] bytes of shared memory
+   and [params] bytes of parameters, 0 but what [set] writes. *)
+let values ?(shared = 0) ?(set = ignore) ?(grid = one) params =
+  let b = Bytes.make params '\000' in
+  set b;
+  { Sub.groups = grid.groups; threads = grid.threads; shared; params = b }
+
 (* The point of one launch of [image]'s [f] on [device] (defaults to the host)
-   over [buffers], with [params] bytes of parameters that [set] stores. *)
-let launch ?(device = Rig.host) ?(refs = [||]) ?(params = 0) ?(shared = 0)
-    ?(set = fun _ _ -> ()) ?(grid = one) image f buffers =
+   over [buffers], with [params] bytes of parameters, 0 but what [set]
+   writes. *)
+let launch ?(device = Rig.host) ?(refs = [||]) ?(params = 0) ?shared ?set
+    ?grid image f buffers =
   let fn = require_some (Rig.Image.resolve image f) in
   let s = Sub.make device [| Sub.launch ~refs fn ~params |] in
-  let run = Sub.take s and k = Sub.block s 0 in
-  let gx, gy, gz = grid.groups and tx, ty, tz = grid.threads in
-  Run.groups run k gx gy gz;
-  Run.threads run k tx ty tz;
-  Run.shared run k shared;
-  set run k;
-  Rig.submit run ~buffers
+  Rig.submit s ~buffers ~args:[| values ?shared ?set ?grid params |]
 
 let words = Array.map B.of_bigarray
 
@@ -55,10 +56,10 @@ let affine = lazy (load "affine")
 (* affine.c of [image] over [n] elements of [inb] into [out], in groups of [t]
    threads. *)
 let affine_on ?device image ~n ~t ~a ~c out inb =
-  let set run k =
-    Run.int64 run k 16 (Int64.of_int n);
-    Run.int64 run k 24 (Int64.of_int a);
-    Run.int64 run k 32 (Int64.of_int c)
+  let set b =
+    Bytes.set_int64_le b 16 (Int64.of_int n);
+    Bytes.set_int64_le b 24 (Int64.of_int a);
+    Bytes.set_int64_le b 32 (Int64.of_int c)
   in
   launch ?device image "affine"
     ~refs:Sub.[| write 0 ~at:0; read 1 ~at:8 |]
@@ -92,10 +93,10 @@ let test_int64_parameter () =
   List.iter
     (fun c ->
       let inb = S.words 1 and out = S.words 1 in
-      let set run k =
-        Run.int64 run k 16 1L;
-        Run.int64 run k 24 0L;
-        Run.int64 run k 32 c
+      let set b =
+        Bytes.set_int64_le b 16 1L;
+        Bytes.set_int64_le b 24 0L;
+        Bytes.set_int64_le b 32 c
       in
       ignore
         (launch (Lazy.force affine) "affine"
@@ -121,7 +122,7 @@ let test_linked () =
     (launch (load "linked") "linked"
        ~refs:Sub.[| write 0 ~at:0; read 1 ~at:8 |]
        ~params:24
-       ~set:(fun run k -> Run.int64 run k 16 2L)
+       ~set:(fun b -> Bytes.set_int64_le b 16 2L)
        [| B.of_bigarray out; B.of_bigarray inb |]);
   equal ~msg:"cbrt 27" float_exact (Float.cbrt 27.) out.{0};
   equal ~msg:"table.(2)" float_exact 3.125 out.{1};
@@ -136,11 +137,10 @@ let test_follows () =
   let main = require_some (Rig.Image.resolve functions "main") in
   let refs = Sub.[| write 0 ~at:0 |] in
   let s = Sub.make d [| Sub.launch ~refs main ~params:8 |] in
-  let run = Sub.take s and k = Sub.block s 0 in
-  Run.groups run k 1 1 1;
-  Run.threads run k 1 1 1;
   let written =
-    Rig.submit run ~buffers:[| require_some (B.borrow d shared) |]
+    Rig.submit s
+      ~buffers:[| require_some (B.borrow d shared) |]
+      ~args:[| values 8 |]
   in
   equal ~msg:"queued before" int 1 (P.queued pd);
   let out = S.words 1 in
@@ -148,7 +148,7 @@ let test_follows () =
     (launch (Lazy.force affine) "affine"
        ~refs:Sub.[| write 0 ~at:0; read 1 ~at:8 |]
        ~params:40
-       ~set:(fun run k -> Run.int64 run k 16 1L)
+       ~set:(fun b -> Bytes.set_int64_le b 16 1L)
        [| B.of_bigarray out; shared |]);
   equal ~msg:"the Polled work it follows" bool true (Rig.Point.reached written)
 
@@ -174,7 +174,7 @@ let deep_launch groups =
     (launch (load "deep") "deep"
        ~refs:Sub.[| write 0 ~at:0 |]
        ~params:16
-       ~set:(fun run k -> Run.int64 run k 8 0L)
+       ~set:(fun b -> Bytes.set_int64_le b 8 0L)
        ~grid:{ one with groups = (groups, 1, 1) }
        (words [| out |]));
   Array.init groups (fun i -> Int64.to_int out.{i})
@@ -194,16 +194,15 @@ let test_wide () =
     (launch (load "wide") "wide"
        ~refs:Sub.[| write 0 ~at:0 |]
        ~params:8192
-       ~set:(fun run k ->
-         Run.int32 run k 4096 41;
-         Run.int32 run k 8188 43)
+       ~set:(fun b ->
+         Bytes.set_int32_le b 4096 41l;
+         Bytes.set_int32_le b 8188 43l)
        (words [| out |]));
   equal (pair int int) (41, 43)
     (Int64.(to_int (logand out.{0} 0xffff_ffffL), to_int (shift_right_logical out.{0} 32)))
 
-(* The host bounds a launch's parameters only by what a run holds: one
-   launch's block of 32 bytes and twice its parameters rounded up to 16 must
-   fit 2^32 - 1 bytes, so a launch of 2^31 - 32 bytes is made and one of
+(* The host bounds a launch's parameters only by what one block holds,
+   2^31 - 32 bytes: a launch of 2^31 - 32 bytes is made and one of
    2^31 - 31 refused. *)
 let test_run_bound () =
   let wide = require_some (Rig.Image.resolve (load "wide") "wide") in
@@ -220,7 +219,7 @@ let program_tests =
       test "an int64 parameter holds every int64" test_int64_parameter;
       test "a profile records a launch's span" test_profiled;
       test "a launch reads 8,192 bytes of parameters" test_wide;
-      test "a launch's parameters are bounded only by what a run holds"
+      test "a launch's parameters are bounded only by what one block holds"
         test_run_bound;
       test
         "a function calls the process's cbrt and its own function, and reads \
@@ -352,7 +351,7 @@ let domain_commands =
 (* waiting.c's launch over [w] and [b], spinning until w[0] is set. *)
 let waiting w ~rounds =
   launch (load "waiting") "waiting" ~refs:Sub.[| write 0 ~at:0 |] ~params:16
-    ~set:(fun run k -> Run.int64 run k 8 (Int64.of_int rounds))
+    ~set:(fun b -> Bytes.set_int64_le b 8 (Int64.of_int rounds))
     [| w |]
 
 (* Sets w[0] once w[1] is set, then whether the launch had returned. *)
@@ -409,7 +408,7 @@ let during_host_read m f =
           (launch image "waiting"
              ~refs:Sub.[| write 0 ~at:0; read 1 ~at:16 |]
              ~params:24
-             ~set:(fun run k -> Run.int64 run k 8 20_000_000_000L)
+             ~set:(fun b -> Bytes.set_int64_le b 8 20_000_000_000L)
              [| B.of_bigarray w; m |]))
   in
   Fun.protect
@@ -422,8 +421,10 @@ let during_host_read m f =
 
 (* The point of work on [d] that reads [m] and does nothing. *)
 let device_reading d m =
-  Rig.submit (Sub.take (Sub.make d [| Rig_support.touching [| Sub.read |] |]))
+  Rig.submit
+    (Sub.make d [| Rig_support.touching [| Sub.read |] |])
     ~buffers:[| require_some (B.borrow d m) |]
+    ~args:[| values 8 |]
 
 (* A device reads memory while a host launch reads it: a wait for a write
    once both submits have returned follows the device's read. *)
@@ -512,9 +513,8 @@ let test_waits_beside_launch () =
     while_held (fun _ ->
         Rig.Point.wait first;
         let after =
-          Rig.submit ~waits:[| first |]
-            (Sub.take (Sub.make d [||]))
-            ~buffers:[||]
+          Rig.submit ~waits:[| first |] (Sub.make d [||]) ~buffers:[||]
+            ~args:[||]
         in
         Rig.Point.wait after;
         (Rig.Point.reached first, Rig.signaled Rig.host))
@@ -573,10 +573,10 @@ let test_survives () =
     (launch image "affine"
        ~refs:Sub.[| write 0 ~at:0; read 1 ~at:8 |]
        ~params:40
-       ~set:(fun run k ->
-         Run.int64 run k 16 1L;
-         Run.int64 run k 24 3L;
-         Run.int64 run k 32 1L)
+       ~set:(fun b ->
+         Bytes.set_int64_le b 16 1L;
+         Bytes.set_int64_le b 24 3L;
+         Bytes.set_int64_le b 32 1L)
        (words [| out; inb |]));
   equal int64 16L out.{0};
   equal ~msg:"mapped" bool true
@@ -597,11 +597,10 @@ let test_running () =
           Sub.make Rig.host
             [| Sub.launch ~refs:Sub.[| write 0 ~at:0 |] waiting ~params:16 |]
         in
-        let run = Sub.take s and k = Sub.block s 0 in
-        Run.groups run k 1 1 1;
-        Run.threads run k 1 1 1;
-        Run.int64 run k 8 20_000_000_000L;
-        ignore (Rig.submit run ~buffers:[| B.of_bigarray w |]))
+        let set b = Bytes.set_int64_le b 8 20_000_000_000L in
+        ignore
+          (Rig.submit s ~buffers:[| B.of_bigarray w |]
+             ~args:[| values ~set 16 |]))
   in
   Rig_support.await "the launch running" (fun () -> w.{1} = 1L);
   collect ();
@@ -632,11 +631,10 @@ let test_keeps_callee () =
     (S.executable !address);
   let d =
     Domain.spawn (fun () ->
-        let run = Sub.take s and k = Sub.block s 0 in
-        Run.groups run k 1 1 1;
-        Run.threads run k 1 1 1;
-        Run.int64 run k 16 20_000_000_000L;
-        ignore (Rig.submit run ~buffers:[| B.of_bigarray w |]))
+        let set b = Bytes.set_int64_le b 16 20_000_000_000L in
+        ignore
+          (Rig.submit s ~buffers:[| B.of_bigarray w |]
+             ~args:[| values ~set 24 |]))
   in
   Rig_support.await "the callee running" (fun () -> w.{1} = 1L);
   collect ();
@@ -903,15 +901,16 @@ let test_software_parts () =
           launch ~refs:[| write 2 ~at:0; read 1 ~at:8 |] affine ~params:40;
         |]
   in
-  let run = Sub.take s and k = Sub.block s 2 in
-  Run.groups run k 1 1 1;
-  Run.threads run k 3 1 1;
-  Run.int64 run k 16 3L;
-  Run.int64 run k 24 10L;
-  Run.int64 run k 32 1L;
+  let set b =
+    Bytes.set_int64_le b 16 3L;
+    Bytes.set_int64_le b 24 10L;
+    Bytes.set_int64_le b 32 1L
+  in
+  let grid = { one with threads = (3, 1, 1) } in
+  let args = [| values 8; values ~set ~grid 40 |] in
   let src = words_on d [| 1; 2; 3 |] in
   let tmp = words_on d [| 0; 0; 0 |] and out = words_on d [| 0; 0; 0 |] in
-  let p = Rig.submit run ~buffers:[| src; tmp; out |] in
+  let p = Rig.submit s ~buffers:[| src; tmp; out |] ~args in
   equal ~msg:"reached when submit returns" bool true (Rig.Point.reached p);
   equal (array int) [| 21; 21; 31 |] (read_words out)
 

@@ -173,8 +173,8 @@ type part =
           (** Its parameters' constant bytes, a whole number of 32-bit
               words. *)
       scalars : scalar iarray;
-          (** Written over [params] into the run's block: at load for those
-              whose value is constant, and before each submit for the
+          (** Written over [params] into the launch's values: at load for
+              those whose value is constant, and before each submit for the
               others. *)
       refs : ref iarray;
       groups : value * value * value;
@@ -290,9 +290,9 @@ val load :
     machine's end of the rail [id] ({!Rig_remote_abi.type-rail}), and
     defaults to none. It loads the images and writes each [Alloc] memory's
     [init] last. A [Submit] step's submission borrows the memory the step
-    names on its device, and stores the parameters and geometry whose values
-    are constant. On another machine, [load] checks [t] here and loads it
-    through the agent ({!section-machines}).
+    names on its device, and its launches' values hold the parameters and
+    geometry whose values are constant. On another machine, [load] checks
+    [t] here and loads it through the agent ({!section-machines}).
 
     [Error why] only for what a device refuses:
     {ul
@@ -300,8 +300,10 @@ val load :
        [Launch] names, or cannot run it ({!Rig.Image.resolve}), [why]
        starting with the device's name;}
     {- a device that names memory cannot borrow it ({!Rig.Buffer.borrow});}
-    {- {!Rig.Submission.make}, a part's constructor or a run
-       ({!Rig.Submission.Run}) refuses a step, [why] naming the step;}
+    {- {!Rig.Submission.make} or a part's constructor refuses a step, or a
+       launch's grid, threads or shared memory is, from its constant sizes
+       alone, one that every {!Rig.submit} refuses ({!Rig.section-valid}),
+       [why] naming the step;}
     {- on another machine, the agent's load is [Error why].}}
 
     Raises [Invalid_argument] if [t] breaks a rule its types state, which
@@ -382,11 +384,11 @@ val run : ?waits:Rig.Point.t array -> loaded -> frame -> Rig.Point.t array
        thread that runs [p], as from a callback inside that run, or from a
        callback inside a lock ({!Rig.section-domains});}
     {- at a step, after the earlier steps ran, if a value's sum is past an
-       [int], if a scalar's width does not hold its value, if the run refuses
-       a launch's geometry or shared memory ({!Rig.Submission.Run}), if a
-       copy's or a move's offset puts its end outside its slot's buffer, if a
-       [Send]'s count is below [1], if a loop's flag lies past its input's
-       bytes, and as {!Rig.submit} and {!Rig.Buffer.submit_copy} raise.}}
+       [int], if a scalar's width does not hold its value, if a copy's or a
+       move's offset puts its end outside its slot's buffer, if a [Send]'s
+       count is below [1], if a loop's flag lies past its input's bytes, and
+       as {!Rig.submit} and {!Rig.Buffer.submit_copy} raise, for a launch's
+       geometry that the run sets among others.}}
     Raises {!Rig.Lost} as the devices raise it. *)
 
 val time : ?waits:Rig.Point.t array -> loaded -> frame -> int array
@@ -442,10 +444,12 @@ val time : ?waits:Rig.Point.t array -> loaded -> frame -> int array
     before any step. It also raises [Invalid_argument] here for a launch
     whose threads per group exceed the most its function may have
     ({!Rig.Image.threads}), where its three sizes read only words of the
-    frame's ints that no step may change, at least one size reads one, and
-    each size's sum fits an [int]. A step may change the ints where a
-    [Submit] passes [Ints] in a slot it writes or a [Move] writes [Ints], and
-    a loop changes the word [trip] it stores its trips in. The agent loads
+    frame's ints that no step may change and at least one size reads one,
+    as every {!Rig.submit} refuses them: [x] by [y] past the most whatever
+    [z] is, or the three. A size whose sum does not fit an [int] is left to
+    the agent. A step may change the ints where a [Submit] passes [Ints] in
+    a slot it writes or a [Move] writes [Ints], and a loop changes the word
+    [trip] it stores its trips in. The agent loads
     and runs the program with the two functions below, and a run they refuse
     or raise on at a step, such as any other launch with too many threads,
     fails the job ([Rig_remote]'s failure section). *)

@@ -23,7 +23,7 @@ type work = Rig_gpu_support.work = {
   buffers : B.t array;
   fixed : (B.t * Rig.access) list;
   keep : Rig_gpu_support.kept;
-  init : Sub.t -> Sub.Run.t -> int -> unit;
+  init : Sub.t -> Sub.args option;
 }
 
 let patience_ns = 10_000_000_000
@@ -86,11 +86,10 @@ let watched d n =
 (* Submits [ws] on [d], with each buffer of [uses] fixed with its access: its
    point. The parts follow each other by that memory. *)
 let submit ?waits d ws ~uses =
-  let run, buffers = Rig_gpu_support.prepare ~fixed:uses d ws in
-  Rig.submit ?waits run ~buffers
+  let s, buffers, args = Rig_gpu_support.prepare ~fixed:uses d ws in
+  Rig.submit ?waits s ~buffers ~args
 
-let empty_point d =
-  Rig.submit (Sub.take (Sub.make d [||])) ~buffers:[||]
+let empty_point d = Rig.submit (Sub.make d [||]) ~buffers:[||] ~args:[||]
 
 let copy_part ~dst src =
   Rig_gpu_support.work Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
@@ -133,9 +132,10 @@ let failing_fill d =
   B.blit_from_string ("\001" ^ String.make 7 '\000') 0 arg 0 8;
   let fixed = [ (Option.get (B.borrow d arg), Rig.Read_write) ] in
   let part = Sub.fill Rig_support.countdown ~params:8 in
-  let init s run i =
-    let host = Rig_support.Reader.host arg in
-    Sub.Run.int64 run (Sub.block s i) 0 (Int64.of_int host)
+  let init _ =
+    let p = Bytes.create 8 in
+    Bytes.set_int64_le p 0 (Int64.of_int (Rig_support.Reader.host arg));
+    Some (Rig_gpu_support.filling (Bytes.to_string p))
   in
   { part = (fun _ -> part); buffers = [||]; fixed; keep = Kept (); init }
 
@@ -163,35 +163,38 @@ let launches_on launcher t =
 
 let u32 x = x land 0xffff_ffff
 
-(* [kernel] of the launcher's binary, with [params] bytes of parameters,
-   [block] storing its block, each [(b, a, at)] of [uses] a buffer at a
-   parameter byte with its access. *)
-let launch_work image kernel ~params uses block =
-  let w = Rig_gpu_support.launching image kernel ~params uses (fun _ _ -> ()) in
-  { w with init = (fun s run i -> block run (Sub.block s i)) }
+(* [kernel] of the launcher's binary over [groups] (defaults to one) of
+   [threads] (defaults to one), with [params] bytes of parameters, 0 but what
+   [store] writes, each [(b, a, at)] of [uses] a buffer at a parameter byte
+   with its access. *)
+let launch_work image kernel ~params ?(groups = (1, 1, 1))
+    ?(threads = (1, 1, 1)) uses store =
+  let w = Rig_gpu_support.launching image kernel ~params uses ignore in
+  let init _ =
+    let p = Bytes.make params '\000' in
+    store p;
+    Some { Sub.groups; threads; shared = 0; params = p }
+  in
+  { w with init }
 
 (* [ids] over [groups] of [threads], writing [offset] bytes into [out]. *)
-let ids l ~out ~groups:(gx, gy, gz) ~threads:(tx, ty, tz) ~offset ~a ~b ~f =
-  launch_work l "ids" ~params:24
+let ids l ~out ~groups ~threads ~offset ~a ~b ~f =
+  launch_work l "ids" ~params:24 ~groups ~threads
     [| (out, Rig.Read_write, 0) |]
-    (fun run k ->
-      Sub.Run.groups run k gx gy gz;
-      Sub.Run.threads run k tx ty tz;
-      Sub.Run.int64 run k 0 (Int64.of_int offset);
-      Sub.Run.int64 run k 8 (Int64.of_int a);
-      Sub.Run.int32 run k 16 b;
-      Sub.Run.float32 run k 20 f)
+    (fun p ->
+      Bytes.set_int64_le p 0 (Int64.of_int offset);
+      Bytes.set_int64_le p 8 (Int64.of_int a);
+      Bytes.set_int32_le p 16 (Int32.of_int b);
+      Bytes.set_int32_le p 20 (Int32.bits_of_float f))
 
 (* [twice] over [n] words, [offset] bytes into [dst] and [src]. *)
 let twice l ~dst ~src n ~offset ~c =
-  launch_work l "twice" ~params:24
+  launch_work l "twice" ~params:24 ~groups:(n, 1, 1)
     [| (dst, Rig.Read_write, 0); (src, Rig.Read, 8) |]
-    (fun run k ->
-      Sub.Run.groups run k n 1 1;
-      Sub.Run.threads run k 1 1 1;
-      Sub.Run.int64 run k 0 (Int64.of_int offset);
-      Sub.Run.int64 run k 8 (Int64.of_int offset);
-      Sub.Run.int32 run k 16 c)
+    (fun p ->
+      Bytes.set_int64_le p 0 (Int64.of_int offset);
+      Bytes.set_int64_le p 8 (Int64.of_int offset);
+      Bytes.set_int32_le p 16 (Int32.of_int c))
 
 (* [n] 32-bit words, word [i] holding [f i]. *)
 let le32s n f =
@@ -1104,11 +1107,11 @@ let spans_after_idle (module G : Gpu) () =
   let src = filled ~memory:(both t.d) t.d (pattern n 6) in
   let dst = filled ~memory:(both t.d) t.d (String.make n '\000') in
   let uses = [ (src, Rig.Read); (dst, Rig.Read_write) ] in
-  let run, buffers =
+  let s, buffers, args =
     Rig_gpu_support.prepare ~fixed:uses t.d [ G.copy_words t ~dst ~src ]
   in
   let within = within t.d ~opened G.clock_error in
-  let within what = within what (fun () -> Rig.submit run ~buffers) in
+  let within what = within what (fun () -> Rig.submit s ~buffers ~args) in
   within "at open";
   Unix.sleepf idle_s;
   within "after idling";
@@ -1125,11 +1128,11 @@ let spans_after_stop (module G : Gpu) () =
   let src = filled ~memory:(both t.d) t.d (pattern n 5) in
   let dst = filled ~memory:(both t.d) t.d (String.make n '\000') in
   let uses = [ (src, Rig.Read); (dst, Rig.Read_write) ] in
-  let run, buffers =
+  let s, buffers, args =
     Rig_gpu_support.prepare ~fixed:uses t.d [ G.copy_words t ~dst ~src ]
   in
   let within = within t.d ~opened G.clock_error in
-  let within what = within what (fun () -> Rig.submit run ~buffers) in
+  let within what = within what (fun () -> Rig.submit s ~buffers ~args) in
   let spun = ref None in
   raises Exit (fun () ->
       Rig.Profile.take (fun () ->
@@ -1197,8 +1200,8 @@ let spans_across (module G : Gpu) () =
     else [| prepare [ work () ] |]
   in
   let submit i =
-    let run, buffers = subs.(i mod Array.length subs) in
-    Rig.submit run ~buffers
+    let s, buffers, args = subs.(i mod Array.length subs) in
+    Rig.submit s ~buffers ~args
   in
   let total = crossing + many in
   let (), events =
@@ -1425,13 +1428,9 @@ let largest_launches (module G : Gpu) =
     let launch i =
       launch_work l "ids" ~params:4096
         [| (out, Rig.Read_write, 0) |]
-        (fun run k ->
-          Sub.Run.groups run k 1 1 1;
-          Sub.Run.threads run k 1 1 1;
-          Sub.Run.int64 run k 0 (Int64.of_int (4 * i));
-          Sub.Run.int64 run k 8 (Int64.of_int (i + 1));
-          Sub.Run.int32 run k 16 0;
-          Sub.Run.float32 run k 20 0.)
+        (fun p ->
+          Bytes.set_int64_le p 0 (Int64.of_int (4 * i));
+          Bytes.set_int64_le p 8 (Int64.of_int (i + 1)))
     in
     Rig.Point.wait
       (submit t.d (List.init n launch) ~uses:[ (out, Rig.Read_write) ]);
@@ -1457,11 +1456,9 @@ let wider (module G : Gpu) (t : G.t) =
 let wide l ~out n =
   launch_work l "wide" ~params:n
     [| (out, Rig.Read_write, 0) |]
-    (fun run k ->
-      Sub.Run.groups run k 1 1 1;
-      Sub.Run.threads run k 1 1 1;
-      Sub.Run.int32 run k 4096 41;
-      Sub.Run.int32 run k 8188 43)
+    (fun p ->
+      Bytes.set_int32_le p 4096 41l;
+      Bytes.set_int32_le p 8188 43l)
 
 (* [wide] with 8,192 bytes of parameters runs, and its words at bytes 4,096
    and 8,188 reach the kernel. *)
@@ -1490,7 +1487,7 @@ let extra_params (module G : Gpu) =
 (* What the image states of [ids], whose parameters end at byte 24, holds: a
    launch that gives fewer bytes is refused, and so is a ref past them.
    A group of the most threads the image states runs, and one more is refused
-   by the setter. No value is assigned to a refusal. *)
+   at submit. No value is assigned to a refusal. *)
 let entry_facts (module G : Gpu) =
   let launcher = launcher (module G) in
   fun () ->
@@ -1517,14 +1514,23 @@ let entry_facts (module G : Gpu) =
           parameters ids takes")
       (fun () -> make ~params:32 [| Sub.write 0 ~at:24 |]);
     let s = make ~params:24 [| Sub.write 0 ~at:0 |] in
+    let args =
+      [|
+        {
+          Sub.groups = (1, 1, 1);
+          threads = (most + 1, 1, 1);
+          shared = 0;
+          params = Bytes.make 24 '\000';
+        };
+      |]
+    in
     raises ~msg:"one thread more"
       (Invalid_argument
          (strf
-            "Rig.Submission.Run.threads: ids runs at most %d threads per \
-             group; the block sets %dx1x1"
+            "Rig.submit: ids runs at most %d threads per group; args.(0) sets \
+             %dx1x1"
             most (most + 1)))
-      (fun () ->
-        Sub.Run.threads (Sub.take s) (Sub.block s 0) (most + 1) 1 1);
+      (fun () -> Rig.submit s ~buffers:[| B.create t.d 4 |] ~args);
     equal int ~msg:"values assigned" before (Rig.submitted t.d);
     let out = filled t.d (String.make (4 * most) '\000') in
     Rig.Point.wait
@@ -2471,8 +2477,9 @@ let laws (module G : Gpu) =
       test "a launch of no size along an axis is refused" (empty_launches g);
       test "a device runs 1024 launches of 4 KiB of parameters at once"
         (largest_launches g);
-      test "a launch gives the parameters, and a run sets at most the threads, \
-            its image states"
+      test
+        "a launch gives the parameters, and a submit sets at most the \
+         threads, its image states"
         (entry_facts g);
       test "a launch of 8,192 bytes of parameters runs" (wide_params g);
       test "a launch of 64 KiB of parameters to a kernel of 8 KiB runs"

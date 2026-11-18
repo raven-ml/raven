@@ -23,7 +23,7 @@ let fixtures = "../../test/cuda/fixtures"
 let kib = 1024
 let mib = 1024 * kib
 
-(* A device and the run its row submits with. *)
+(* A device and the point of its row's last submit. *)
 type dev = { d : Rig.t; g : C.t; mutable v : int; mutable last : Rig.Point.t }
 
 let get = function Ok x -> x | Error why -> failwith why
@@ -31,19 +31,19 @@ let get = function Ok x -> x | Error why -> failwith why
 (* The point of an empty submission on [d]: the last point a row waits for
    until it submits. *)
 let first_point d =
-  Rig.submit (Rig.Submission.take (Rig.Submission.make d [||]))
-    ~buffers:[||]
+  Rig.submit (Rig.Submission.make d [||]) ~buffers:[||] ~args:[||]
 
 (* GPU 0, opened through rig. *)
 let dev () =
   let { S.d; g } = S.open_ () in
   { d; g; v = 0; last = first_point d }
 
-(* A run of the prepared submission of [parts] on [t]. *)
-let prepare t parts = Rig.Submission.(take (make t.d parts))
+(* The prepared submission of [parts] on [t] and the values [args] of its
+   launches (defaults to none). *)
+let prepare ?(args = [||]) t parts = (Rig.Submission.make t.d parts, args)
 
-let submit t run =
-  let p = Rig.submit run ~buffers:[||] in
+let submit t (s, args) =
+  let p = Rig.submit s ~buffers:[||] ~args in
   t.last <- p;
   t.v <- Rig.Point.value p
 
@@ -66,8 +66,7 @@ let touched n =
   p
 
 (* [n] launches of [kernel] of kernels.ptx (defaults to [empty]) over one
-   thread, as parts of COMPUTE:0 loaded by rig, their blocks stored in [t]'s
-   run, their parameters left 0. *)
+   thread, as parts of COMPUTE:0 loaded by rig, their parameters left 0. *)
 let launches ?(kernel = "empty") t n =
   let module Sub = Rig.Submission in
   let bin = S.fixture ~dir:fixtures "kernels.ptx" in
@@ -75,13 +74,16 @@ let launches ?(kernel = "empty") t n =
   let launch =
     Sub.launch (Option.get (Rig.Image.resolve image kernel)) ~params:16
   in
-  let run = prepare t (Array.make n launch) in
-  for i = 0 to n - 1 do
-    let b = Sub.block (Sub.Run.submission run) i in
-    Sub.Run.groups run b 1 1 1;
-    Sub.Run.threads run b 1 1 1
-  done;
-  run
+  let one =
+    Sub.
+      {
+        groups = (1, 1, 1);
+        threads = (1, 1, 1);
+        shared = 0;
+        params = Bytes.empty;
+      }
+  in
+  prepare ~args:(Array.make n one) t (Array.make n launch)
 
 let release_rows =
   let empty () =
@@ -107,7 +109,7 @@ let release_rows =
           wait t);
     ]
 
-(* [n] launches as parts of one submission. A run of one launches plain; a
+(* [n] launches as parts of one submission. A submit of one launches plain; a
    longer one plays through chains of at most 32 nodes, so 31, 32 and 33 show
    the cut, 33 as 17 and 16, and 64 two full chains. [4096-parts] shows what
    the driver's ordering costs per part of a large submission. [interleaved-8]

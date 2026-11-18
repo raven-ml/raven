@@ -16,26 +16,24 @@
 
     Calls whose launches have the same kernels, parameter sizes and refs
     take parts of one submission ({!key}), so a device keeps one submission
-    for each, which a later call writes its parameters into. *)
+    for each, which a later call submits with its launches' values. *)
 
-type 'p t = {
+type t = {
   kernel : int;  (** The kernel's index in {!Kernels.kernels}. *)
   size : int;  (** The parameter bytes the kernel's part takes. *)
   base : int;  (** The slot [refs]' slots count from. *)
   refs : int array;
       (** Triples of a parameter's byte, a slot from [base] and [1] if the
           launch writes the slot, else [0]. *)
-  gx : int;
-  gy : int;
-  gz : int;  (** The groups along x, y and z. *)
-  threads : int;  (** The threads of a group, along x. *)
-  shared : int;  (** The dynamic shared bytes of a group. *)
-  params : 'p;  (** The parameters, which a writer stores ({!write}). *)
+  args : Rig.Submission.args;
+      (** Its groups along x, y and z, its threads along x, its dynamic
+          shared bytes, and its parameters, little-endian, as rig reads
+          them. *)
 }
-(** The type for launches of parameters ['p]. *)
+(** The type for launches. *)
 
-type 'p call = {
-  launches : 'p t array;
+type call = {
+  launches : t array;
   buffers : Rig.Buffer.t array;  (** The buffer of each slot. *)
   workspace : int;
   tickets : int;
@@ -51,7 +49,7 @@ type 'p call = {
 }
 (** The type for calls, one submission each. *)
 
-type 'p plan = ('p call list, Nx_array.answer) result
+type plan = (call list, Nx_array.answer) result
 (** The type for plans: their calls in order, none for no work, or the
     answer of a call that does not compute. *)
 
@@ -74,27 +72,18 @@ val slot_refs : header:int -> reads:int -> writes:int -> int array
     read slots then [writes] written ones, whose parameters hold slot [s]'s
     address in word [header + s]. *)
 
-val bytes : Bytes.t -> Rig.Submission.Run.t -> Rig.Submission.block -> unit
-(** [bytes b r at] stores [b], little-endian words, as the parameters of
-    [r]'s block [at]. *)
+val args : call -> Rig.Submission.args array
+(** [args c] is the values of [c]'s launches, in order, as a submit of
+    [c]'s submission passes them. *)
 
-val write :
-  ('p -> Rig.Submission.Run.t -> Rig.Submission.block -> unit) ->
-  'p call ->
-  Rig.Submission.Run.t ->
-  Rig.Submission.t ->
-  unit
-(** [write w c r s] stores each launch's geometry, and its parameters by
-    [w], into [r]'s blocks of [s], a submission of [c]'s {!parts}. *)
-
-val key : 'p call -> int array
+val key : call -> int array
 (** [key c] names [c]'s submission: equal for calls whose launches have the
     same kernels, parameter sizes and refs, in the same order. *)
 
-val matches : int array -> 'p call -> bool
+val matches : int array -> call -> bool
 (** [matches k c] is [key c = k], and allocates nothing. *)
 
-val parts : Rig.Image.t -> 'p call -> Rig.Submission.part array
+val parts : Rig.Image.t -> call -> Rig.Submission.part array
 (** [parts i c] is the parts of [c]'s submission, of [i]'s kernels.
 
     Raises [Invalid_argument] if [i] lacks one. *)

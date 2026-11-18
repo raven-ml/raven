@@ -18,7 +18,7 @@ val map :
   Nx_kernel.Prog.t ->
   dsts:Nx_array.any iarray ->
   Nx_kernel.load iarray ->
-  Bytes.t Launch.plan
+  Launch.plan
 (** [map p ~dsts loads] plans {!Nx_kernel.S.map}, a part's temporaries in
     buffers of their own. It is [Error Declined] only where a part that
     copies one load into a temporary does not fit a launch, which no load
@@ -31,7 +31,7 @@ val reduce :
   (Nx_kernel.reduction * int) iarray ->
   dsts:Nx_array.any iarray ->
   Nx_kernel.load iarray ->
-  Bytes.t Launch.plan
+  Launch.plan
 (** [reduce p ~shape ~axes rs ~dsts loads] plans {!Nx_kernel.S.reduce} of
     outputs of at least one term, each reduction in its turn. It is
     [Error Declined] as {!map} is. *)
@@ -43,7 +43,7 @@ val scan :
   Nx_kernel.reduction * int ->
   dsts:Nx_array.any iarray ->
   Nx_kernel.load iarray ->
-  Bytes.t Launch.plan
+  Launch.plan
 (** [scan ?carry p ~axis r ~dsts loads] plans {!Nx_kernel.S.scan}, and
     is [Error Declined] as {!map} is. *)
 

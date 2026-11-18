@@ -9,7 +9,7 @@
 
    map --> device (Rig.Local) --> Loop.map --> calls --> door
    --> per call: the submission of its key, its stand-ins bound to the
-       device's workspace and tickets, a run of it written --> Rig.submit
+       device's workspace and tickets, its launches' values --> Rig.submit
 
    A call that finds every cache warm allocates its plan, its launches,
    their buffers and the door's work, and nothing that outlives it. *)
@@ -112,7 +112,7 @@ let kept_subs = 64
 
 (* The submission of [c] on [d]: the one of its key, made at its first
    use, or one of its own where it is not kept. *)
-let submission dv (c : _ Launch.call) =
+let submission dv (c : Launch.call) =
   if not c.kept then Sub.make dv.rig (Launch.parts dv.image c)
   else
     let cell = dv.subs.(c.launches.(0).kernel) in
@@ -125,7 +125,7 @@ let submission dv (c : _ Launch.call) =
 (* Binds [c]'s stand-ins to the device's workspace and tickets of [c]'s
    bytes, each taken once: past [kept] bytes, a call's own, which it
    answers. *)
-let bind dv (c : _ Launch.call) =
+let bind dv (c : Launch.call) =
   let bs = c.buffers in
   let w = ref Launch.workspace and t = ref Launch.tickets in
   for i = 0 to Array.length bs - 1 do
@@ -141,35 +141,29 @@ let bind dv (c : _ Launch.call) =
   let own b need stand = if b != stand && need > kept then [ b ] else [] in
   own !w c.workspace Launch.workspace @ own !t c.tickets Launch.tickets
 
-(* Writes [c], its parameters by [w], into a run of its submission and
-   submits it, then frees the workspace and tickets of its own, which
-   return once that work is done. A write that raises releases the run. *)
-let issue_call dv w (c : _ Launch.call) =
+(* Submits [c]'s submission with its launches' values, then frees the
+   workspace and tickets of its own, which return once that work is
+   done. *)
+let issue_call dv (c : Launch.call) =
   let s = submission dv c in
   let own = bind dv c in
-  let r = Sub.take s in
-  match Launch.write w c r s with
-  | () ->
-      ignore (Rig.submit r ~buffers:c.buffers);
-      List.iter (fun b -> ignore (Rig.Buffer.free b)) own
-  | exception e ->
-      Sub.Run.release r;
-      raise e
+  ignore (Rig.submit s ~buffers:c.buffers ~args:(Launch.args c));
+  List.iter (fun b -> ignore (Rig.Buffer.free b)) own
 
 (* A call of no launch, a routine's of no element, has no work. *)
-let rec issue_list dv w = function
+let rec issue_list dv = function
   | [] -> ()
-  | (c : _ Launch.call) :: cs ->
-      if Array.length c.launches > 0 then issue_call dv w c;
-      issue_list dv w cs
+  | (c : Launch.call) :: cs ->
+      if Array.length c.launches > 0 then issue_call dv c;
+      issue_list dv cs
 
 (* The door's work of a plan's calls, in order: each one submission, which
    rig orders by the buffers they share. The buffers the plan made for its
    work then return once that work is done. *)
-let issue_plan (dv, w, cs) =
-  issue_list dv w cs;
+let issue_plan (dv, cs) =
+  issue_list dv cs;
   List.iter
-    (fun (c : _ Launch.call) ->
+    (fun (c : Launch.call) ->
       List.iter (fun b -> ignore (Rig.Buffer.free b)) c.frees)
     cs
 
@@ -200,9 +194,9 @@ let rec any_dead xs i =
   i < Iarray.length xs && (dead (Iarray.get xs i) || any_dead xs (i + 1))
 
 (* A call that refuses nothing: on [d], [plan] of its device, its calls
-   written by [w] through the door, claiming [written] and [read]. The
-   door refuses a dead buffer before the plan reads its address. *)
-let run d ~written ~read w plan =
+   submitted through the door, claiming [written] and [read]. The door
+   refuses a dead buffer before the plan reads its address. *)
+let run d ~written ~read plan =
   match device d with
   | None -> A.Declined
   | Some dv -> (
@@ -212,7 +206,7 @@ let run d ~written ~read w plan =
         match plan dv with
         | Error answer -> answer
         | Ok [] -> A.door ~written ~read nothing ()
-        | Ok cs -> A.door ~written ~read issue_plan (dv, w, cs))
+        | Ok cs -> A.door ~written ~read issue_plan (dv, cs))
 
 (* Contractions *)
 
@@ -255,7 +249,7 @@ let contract ~batch ~contracting ~segments ~acc ~dst ~init
   then A.Shape_mismatch
   else
     run (A.device dst) ~written:[| A.Any dst |]
-      ~read:(reads ~init ~segments oa ob) Launch.bytes (fun _ ->
+      ~read:(reads ~init ~segments oa ob) (fun _ ->
         Contract.plan ~batch ~contracting ~segments ~acc ~dst:(A.Any dst)
           ~init:(Option.map (fun i -> A.Any i) init)
           oa ob)
@@ -325,7 +319,7 @@ let fits ~shape loads ~want dsts =
 (* A loop or a move that refuses nothing: [plan] on [y]'s device through
    the door. *)
 let planned y ~written ~read plan =
-  run (A.device y) ~written ~read Launch.bytes plan
+  run (A.device y) ~written ~read plan
 
 let map (p : Nx_kernel.Prog.t) ~dsts loads =
   match
@@ -480,7 +474,7 @@ let sort ~axis ~descending ~values ~positions x =
   else
     match Nx_kernel.Shape.sort ~axis ~k (shape_of x) with
     | Ok s when s = vs ->
-        run (A.device values) Launch.bytes
+        run (A.device values)
           ~written:[| A.Any values; A.Any positions |] ~read:[| A.Any x |]
           (fun _ -> Sort.sort ~axis ~descending ~values ~positions x)
     | Ok _ | Error _ -> A.Shape_mismatch
@@ -497,7 +491,7 @@ let unique ~ids ~first ~counts ~count keys =
   | Ok got
     when shape_of counts = shape_of first
          && got = (shape_of ids, shape_of first, shape_of count) ->
-      run (A.device ids) Launch.bytes
+      run (A.device ids)
         ~written:[| A.Any ids; A.Any first; A.Any counts; A.Any count |]
         ~read:[| A.Any keys |] (fun _ ->
           Sort.unique ~ids ~first ~counts ~count keys)
@@ -528,8 +522,8 @@ let fold p ~dst x =
 (* A transform that refuses nothing: [plan] of [dst]'s device's plans of
    lines through the door, reading [x] and writing [dst]. *)
 let transformed ~dst x plan =
-  run (A.device dst) ~written:[| A.Any dst |] ~read:[| A.Any x |] Fft.write
-    (fun dv -> plan dv.fft)
+  run (A.device dst) ~written:[| A.Any dst |] ~read:[| A.Any x |] (fun dv ->
+      plan dv.fft)
 
 let c2c direction ~axes ~dst x =
   if not (fit (Nx_kernel.Shape.c2c ~axes (shape_of x)) (shape_of dst)) then
@@ -574,7 +568,7 @@ let full a = Nx_kernel.full_precision (A.dtype a)
    through the door. *)
 let routine ~(written : A.any iarray) ~(read : A.any iarray) plan =
   let (A.Any y) = Iarray.get written 0 in
-  run (A.device y) ~written ~read Launch.bytes plan
+  run (A.device y) ~written ~read plan
 
 (* [plan] where the dtypes are taken and [want], the shapes {!Nx_kernel.Shape}
    gives, are [got]. *)
@@ -723,8 +717,8 @@ let attention (p : Nx_kernel.Prog.t) ~scale ~o ~lse ?lengths q kv loads =
                 loads;
               ]
           in
-          run (A.device q) ~written:[| A.Any o; A.Any lse |] ~read Launch.bytes
-            (fun _ -> Attention.attention p ~scale ~o ~lse ?lengths q kv loads)
+          run (A.device q) ~written:[| A.Any o; A.Any lse |] ~read (fun _ ->
+              Attention.attention p ~scale ~o ~lse ?lengths q kv loads)
       | Ok _ | Error _ -> A.Shape_mismatch)
 
 let numbering_words = Sort.set_run_words

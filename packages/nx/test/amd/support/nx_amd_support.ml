@@ -37,7 +37,7 @@ type gpu = {
      and two words that order stamps: host words 0 to 5. *)
   page : (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t;
   mapped : Rig.Buffer.t;
-  empty : Sub.Run.t; (* A run of an empty submission, which drains. *)
+  empty : Sub.t; (* An empty submission, which drains. *)
 }
 
 let opened = ref None
@@ -62,7 +62,7 @@ let gpu () =
           clock_hz = c.clock_hz;
           page = Rig.Buffer.export host Bigarray.int64;
           mapped;
-          empty = Sub.(take (make device [||]));
+          empty = Sub.make device [||];
         }
       in
       Bigarray.Array1.fill g.page 0L;
@@ -97,11 +97,26 @@ type work =
 (* A barrier's words: none, which place nothing on the queue. *)
 let no_words = lazy (Rig.Buffer.create Rig.host 0)
 
-(* A submission made once, its run's blocks written, submitted any number of
-   times; [held] if its first part is a hold, whose [want] each submit stores.
-   The suite's one thread is its only taker, so each take returns the run its
-   blocks were written into. *)
-type prepared = { sub : Sub.t; buffers : Rig.Buffer.t array; held : bool }
+(* A submission made once with its launches' values, submitted any number of
+   times; [held] if its first part is a hold, whose [want] each submit stores
+   into the first values. *)
+type prepared = {
+  sub : Sub.t;
+  buffers : Rig.Buffer.t array;
+  args : Sub.args array;
+  held : bool;
+}
+
+(* A dispatch's values: its words, 0 for a slot's, the offset into its buffer
+   that the submit turns into an address. *)
+let args_of d =
+  let params = Bytes.make (8 * List.length d.words) '\000' in
+  List.iteri
+    (fun k w ->
+      let v = match w with A _ -> 0 | W v -> v in
+      Bytes.set_int64_le params (8 * k) (Int64.of_int v))
+    d.words;
+  { Sub.groups = d.groups; threads = (d.threads, 1, 1); shared = 0; params }
 
 (* Makes the submission of [works] in order, every buffer a dispatch addresses
    written: a slot an address. *)
@@ -124,35 +139,22 @@ let prepare ~held works =
   let parts = Array.of_list (List.map part works) in
   let buffers = Array.of_list (List.rev !slots) in
   let sub = Sub.make (device ()) parts in
-  let r = Sub.take sub in
-  let block i d =
-    let at = Sub.block sub i in
-    let x, y, z = d.groups in
-    Sub.Run.groups r at x y z;
-    Sub.Run.threads r at d.threads 1 1;
-    Sub.Run.shared r at 0;
-    List.iteri
-      (fun k w ->
-        let v = match w with A _ -> 0 | W v -> v in
-        Sub.Run.int64 r at (8 * k) (Int64.of_int v))
-      d.words
+  let launched = function
+    | Launch d -> Some (args_of d)
+    | Copied _ | Barrier -> None
   in
-  List.iteri
-    (fun i -> function Copied _ | Barrier -> () | Launch d -> block i d)
-    works;
-  Sub.Run.release r;
-  { sub; buffers; held }
+  let args = Array.of_list (List.filter_map launched works) in
+  { sub; buffers; args; held }
 
 (* The hold's [want], at byte 16 of the delay's words. *)
 let want_at = 16
 
 (* Submits [p], its hold, if it has one, waiting for [want]. *)
 let start ?want p =
-  let r = Sub.take p.sub in
   Option.iter
-    (fun w -> Sub.Run.int64 r (Sub.block p.sub 0) want_at (Int64.of_int w))
+    (fun w -> Bytes.set_int64_le p.args.(0).params want_at (Int64.of_int w))
     want;
-  Rig.submit r ~buffers:p.buffers
+  Rig.submit p.sub ~buffers:p.buffers ~args:p.args
 
 let launch kernel ~groups ~threads words =
   let p =
@@ -196,9 +198,9 @@ let submit g p =
 
 let release g = g.page.{0} <- Int64.succ g.page.{0}
 
-(* The point after [g]'s work: an empty submission follows every earlier value.
-   Its run holds no bytes, so submits share it. *)
-let drain g = Rig.submit g.empty ~buffers:[||]
+(* The point after [g]'s work: an empty submission follows every earlier
+   value. *)
+let drain g = Rig.submit g.empty ~buffers:[||] ~args:[||]
 
 (* Waits for [v] and fails with [late] if a hold ran out. *)
 let finish g v ~late =

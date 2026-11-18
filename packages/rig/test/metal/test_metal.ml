@@ -185,10 +185,10 @@ let second () =
 let pipeline t f = (found (S.entry t.fill f)).code
 
 let submit t fills =
-  let run, buffers =
+  let s, buffers, args =
     Rig_gpu_support.prepare t.d (Array.to_list (Array.map S.part fills))
   in
-  Rig.submit run ~buffers
+  Rig.submit s ~buffers ~args
 
 let wait _ p = Rig.Point.wait p
 let alloc_on g n = require_some (Rig_metal.alloc g Rig_edge.Device n)
@@ -738,7 +738,7 @@ let prepared_icb () =
     weak := S.weak b.handle;
     Rig_gpu_support.prepare t.d [ S.part (S.execute b) ]
   in
-  let run, buffers = made () in
+  let s, buffers, vs = made () in
   (* A kept value's release and the ICB's finalizer each need a collection. *)
   for round = 1 to 4 do
     Gc.full_major ();
@@ -747,8 +747,8 @@ let prepared_icb () =
       ~msg:(strf "the submission keeps its ICB after collection %d" round)
       true (S.alive !weak)
   done;
-  Rig.Point.wait (Rig.submit run ~buffers);
-  equal int ~msg:"both commands ran" 2 (H.get32 (host out));
+  Rig.Point.wait (Rig.submit s ~buffers ~args:vs);
+  equal int ~msg:"both commands ran"2 (H.get32 (host out));
   List.iter (Rig_metal.free t.g) [ out; args ]
 
 let resized () =
@@ -1048,7 +1048,6 @@ let contents b =
    computation of the kernel (launch.metal). *)
 
 module Sub = Rig.Submission
-module Run = Rig.Submission.Run
 
 let launch_image =
   Rig_gpu_support.loader (fun () -> S.fixture ~dir:"fixtures" "launch")
@@ -1064,9 +1063,9 @@ let words b =
     (String.length s / 4)
     (fun i -> Int32.to_int (String.get_int32_le s (4 * i)) land 0xffff_ffff)
 
-(* Submits [run] over [buffers], and waits for its writes. *)
-let run_wait run buffers =
-  ignore (Rig.submit run ~buffers);
+(* Submits [s] with [args] over [buffers], and waits for its writes. *)
+let run_wait s args buffers =
+  ignore (Rig.submit s ~buffers ~args);
   Array.iter (fun b -> B.wait b Read) buffers
 
 let zeroed d n =
@@ -1107,11 +1106,17 @@ let gen_grid =
     (Gen.pair (triple 4) threads)
   |> Gen.with_pp pp_grid
 
-let set_grid run b { groups = gx, gy, gz; threads = tx, ty, tz } =
-  Run.groups run b gx gy gz;
-  Run.threads run b tx ty tz
-
 let one = { groups = (1, 1, 1); threads = (1, 1, 1) }
+
+(* The values of a launch over [grid] (defaults to one thread), with [shared]
+   bytes of threadgroup memory and [params] bytes of parameters, 0. *)
+let launch_args ?(shared = 0) ?(grid = one) params =
+  {
+    Sub.groups = grid.groups;
+    threads = grid.threads;
+    shared;
+    params = Bytes.make params '\000';
+  }
 
 (* [neighbours] reads, through threadgroup memory of one word per thread, the
    index of the thread after each in its group. *)
@@ -1127,13 +1132,9 @@ let shared_law grid =
     Sub.make t.d
       [| launch image "neighbours" ~params:16 [ Sub.write 0 ~at:0 ] |]
   in
-  let run = Sub.take s in
-  let k = Sub.block s 0 in
-  set_grid run k grid;
-  Run.shared run k (4 * per);
-  Run.int64 run k 0 0L;
-  Run.int32 run k 8 7;
-  run_wait run [| out |];
+  let v = launch_args ~shared:(4 * per) ~grid 16 in
+  Bytes.set_int32_le v.Sub.params 8 7l;
+  run_wait s [| v |] [| out |];
   equal (array int)
     (Array.init n (fun i -> 7 + (((i mod per) + 1) mod per)))
     (words out)
@@ -1161,7 +1162,7 @@ let chained parts =
       buffers = [| out |];
       fixed = [];
       keep = Kept ();
-      init = (fun s run i -> set_grid run (Sub.block s i) one);
+      init = (fun _ -> Some (launch_args 8));
     }
   in
   let pairs =
@@ -1176,13 +1177,13 @@ let chained parts =
     | `Direct -> direct
     | `Icb -> icb_part
   in
-  let run, buffers =
+  let s, buffers, vs =
     Rig_gpu_support.prepare
       ~fixed:[ (out, Rig.Read_write) ]
       t.d (List.map part parts)
   in
-  set_args args ~at:0 ~out:(Sub.address (Sub.Run.submission run) out) ~c:0;
-  run_wait run buffers;
+  set_args args ~at:0 ~out:(Sub.address s out) ~c:0;
+  run_wait s vs buffers;
   equal int (List.length parts) (words out).(0);
   Rig_metal.free t.g args
 
@@ -1191,9 +1192,7 @@ let no_params () =
   let t = dev () in
   let image = launch_image t.d in
   let s = Sub.make t.d [| launch image "empty" ~params:0 [] |] in
-  let run = Sub.take s in
-  set_grid run (Sub.block s 0) one;
-  let p = Rig.submit run ~buffers:[||] in
+  let p = Rig.submit s ~buffers:[||] ~args:[| launch_args 0 |] in
   wait t p;
   equal int (Rig.Point.value p) (Rig_metal.signaled t.g)
 
@@ -1207,14 +1206,12 @@ let widest () =
     Sub.make t.d
       [| launch image "last" ~params:4096 [ Sub.write 0 ~at:4088 ] |]
   in
-  let run = Sub.take s in
-  let k = Sub.block s 0 in
-  set_grid run k one;
+  let v = launch_args 4096 in
   for w = 0 to 1021 do
-    Run.int32 run k (4 * w) (w + 1)
+    Bytes.set_int32_le v.Sub.params (4 * w) (Int32.of_int (w + 1))
   done;
-  Run.int64 run k 4088 0L;
-  run_wait run [| out |];
+  Bytes.set_int64_le v.Sub.params 4088 0L;
+  run_wait s [| v |] [| out |];
   equal int (1022 * 1023 / 2) (words out).(0)
 
 (* 4,097 bytes of parameters, a length off a multiple of 8: [last] reads its
@@ -1227,14 +1224,12 @@ let odd_length () =
     Sub.make t.d
       [| launch image "last" ~params:4097 [ Sub.write 0 ~at:4088 ] |]
   in
-  let run = Sub.take s in
-  let k = Sub.block s 0 in
-  set_grid run k one;
+  let v = launch_args 4097 in
   for w = 0 to 1021 do
-    Run.int32 run k (4 * w) (w + 1)
+    Bytes.set_int32_le v.Sub.params (4 * w) (Int32.of_int (w + 1))
   done;
-  Run.int64 run k 4088 0L;
-  run_wait run [| out |];
+  Bytes.set_int64_le v.Sub.params 4088 0L;
+  run_wait s [| v |] [| out |];
   equal int (1022 * 1023 / 2) (words out).(0)
 
 (* A fresh device, whose arena is empty, fits a launch of no parameters and
@@ -1317,13 +1312,11 @@ let aligned subs =
     let n = Array.length lengths in
     let out = zeroed t.d (8 * n) in
     let s = Sub.make t.d (Array.map where lengths) in
-    let run = Sub.take s in
-    for i = 0 to n - 1 do
-      let k = Sub.block s i in
-      set_grid run k one;
-      Run.int64 run k 0 (Int64.of_int (8 * i))
-    done;
-    run_wait run [| out |];
+    let vs = Array.map (fun l -> launch_args l) lengths in
+    Array.iteri
+      (fun i v -> Bytes.set_int64_le v.Sub.params 0 (Int64.of_int (8 * i)))
+      vs;
+    run_wait s vs [| out |];
     let w = words out in
     Array.init n (fun i -> (w.(2 * i) lor (w.((2 * i) + 1) lsl 32)) mod 256)
   in
@@ -1347,28 +1340,26 @@ let arena () =
   let values = 200 and together = 160 in
   let n = values + together in
   let out = zeroed t.d (8 * n) in
-  let set run k i =
-    set_grid run k one;
-    Run.int64 run k 0 (Int64.of_int (8 * i));
-    Run.int32 run k 4096 i;
-    Run.int32 run k 8188 (1000 + i)
+  let set v i =
+    Bytes.set_int64_le v.Sub.params 0 (Int64.of_int (8 * i));
+    Bytes.set_int32_le v.Sub.params 4096 (Int32.of_int i);
+    Bytes.set_int32_le v.Sub.params 8188 (Int32.of_int (1000 + i))
   in
   let wide = launch image "wide" ~params:8192 [ Sub.write 0 ~at:0 ] in
   let s = Sub.make t.d [| wide |] in
-  let run = Sub.take s in
-  Run.release run;
+  let args = [| launch_args 8192 |] in
   for i = 0 to values - 1 do
-    if Sub.take (Sub.Run.submission run) != run then
-      fail "the run is taken";
-    set run (Sub.block s 0) i;
-    ignore (Rig.submit run ~buffers:[| out |])
+    set args.(0) i;
+    ignore (Rig.submit s ~buffers:[| out |] ~args)
   done;
   let s = Sub.make t.d (Array.make together wide) in
-  let run = Sub.take s in
-  for j = 0 to together - 1 do
-    set run (Sub.block s j) (values + j)
-  done;
-  run_wait run [| out |];
+  let vs =
+    Array.init together (fun j ->
+        let v = launch_args 8192 in
+        set v (values + j);
+        v)
+  in
+  run_wait s vs [| out |];
   equal (array int)
     (Array.init (2 * n) (fun w -> if w mod 2 = 0 then w / 2 else 1000 + (w / 2)))
     (words out)
@@ -1431,15 +1422,15 @@ let arena_crossing () =
           launch image (kernel (first + j)) ~params [ Sub.write 0 ~at:0 ])
     in
     let s = Sub.make t.d parts in
-    let run = Sub.take s in
-    for j = 0 to count - 1 do
-      let i = first + j and k = Sub.block s j in
-      set_grid run k one;
-      Run.int64 run k 0 (Int64.of_int (8 * i));
-      Run.int32 run k 4096 i;
-      Run.int32 run k 8188 (1000 + i)
-    done;
-    Rig.submit run ~buffers:[| out |]
+    let vs =
+      Array.init count (fun j ->
+          let i = first + j and v = launch_args params in
+          Bytes.set_int64_le v.Sub.params 0 (Int64.of_int (8 * i));
+          Bytes.set_int32_le v.Sub.params 4096 (Int32.of_int i);
+          Bytes.set_int32_le v.Sub.params 8188 (Int32.of_int (1000 + i));
+          v)
+    in
+    Rig.submit s ~buffers:[| out |] ~args:vs
   in
   ignore (submit t [| gate 0 |]);
   let first = launches 0 a in
@@ -1513,10 +1504,10 @@ let growths_keep_larger () =
   equal ~msg:"the large launch after both growths" string "fits" (room large);
   Rig_metal.unload g image
 
-(* Geometry beyond a function's limits is refused, by the setter or at submit,
-   before any hand-over, and the device runs on: an empty axis of groups or
-   threads, more threads in a threadgroup than its pipeline holds along one
-   axis or in all, and threadgroup memory beyond the GPU's. *)
+(* Geometry beyond a function's limits is refused at submit, before any
+   hand-over, and the device runs on: an empty axis of groups or threads,
+   more threads in a threadgroup than its pipeline holds along one axis or
+   in all, and threadgroup memory beyond the GPU's. *)
 let refused_geometry () =
   let t = dev () in
   let image = launch_image t.d in
@@ -1526,13 +1517,9 @@ let refused_geometry () =
       [| launch image "neighbours" ~params:16 [ Sub.write 0 ~at:0 ] |]
   in
   let refused ?(shared = 4) groups threads =
-    let run = Sub.take s in
-    let k = Sub.block s 0 in
+    let args = [| launch_args ~shared ~grid:{ groups; threads } 16 |] in
     raises_match Exn.invalid_arg (fun () ->
-        set_grid run k { groups; threads };
-        Run.shared run k shared;
-        Run.int64 run k 0 0L;
-        Rig.submit run ~buffers:[| out |]);
+        Rig.submit s ~buffers:[| out |] ~args);
     equal (option string) None (Rig.lost t.d)
   in
   refused (0, 1, 1) (1, 1, 1);
@@ -1559,17 +1546,12 @@ let spans_in_order n =
         launch image "step" ~params:8 [ Sub.write 0 ~at:0 ];
       |]
   in
-  let run = Sub.take s in
-  for i = 0 to 1 do
-    let k = Sub.block s i in
-    set_grid run k one;
-    Run.int64 run k 0 0L
-  done;
+  let args = [| launch_args 8; launch_args 8 |] in
   let before = Rig.Profile.now () in
   let (), events =
     Rig.Profile.take (fun () ->
         for _ = 1 to n do
-          ignore (Rig.submit run ~buffers:[| out |])
+          ignore (Rig.submit s ~buffers:[| out |] ~args)
         done;
         B.wait out Read)
   in
@@ -1595,7 +1577,7 @@ let spans_in_order n =
        before spans)
 
 (* A warm submit of a launch allocates nothing on the OCaml heap, nor does a
-   store into its run. *)
+   write into its values. *)
 let no_allocation () =
   let t = dev () in
   let image = launch_image t.d in
@@ -1604,15 +1586,10 @@ let no_allocation () =
     Sub.make t.d
       [| launch image "step" ~params:8 [ Sub.write 0 ~at:0 ] |]
   in
-  let run = Sub.take s and buffers = [| out |] in
-  Run.release run;
-  let k = Sub.block s 0 in
+  let buffers = [| out |] and args = [| launch_args 8 |] in
   let go () =
-    if Sub.take (Sub.Run.submission run) != run then
-      fail "the run is taken";
-    set_grid run k one;
-    Run.int64 run k 0 0L;
-    ignore (Rig.submit run ~buffers)
+    Bytes.set_int64_le args.(0).Sub.params 0 0L;
+    ignore (Rig.submit s ~buffers ~args)
   in
   go ();
   B.wait out Read;
@@ -1777,11 +1754,11 @@ let bump t b =
       ~groups:((n + 255) / 256)
       ~threads:256
   in
-  let run, buffers =
+  let s, buffers, vs =
     Rig_gpu_support.prepare ~fixed:[ (b, Read_write) ] t.d [ S.part f ]
   in
-  set_args args ~at:0 ~out:(Sub.address (Sub.Run.submission run) b) ~c:n;
-  ignore (Rig.submit run ~buffers);
+  set_args args ~at:0 ~out:(Sub.address s b) ~c:n;
+  ignore (Rig.submit s ~buffers ~args:vs);
   B.wait b Read;
   Rig_metal.free t.g args
 
@@ -2256,9 +2233,7 @@ let signed b n =
 (* [f] of [image] run once over one thread, writing into [out]. *)
 let run_once d image f out =
   let s = Sub.make d [| launch image f ~params:8 [ Sub.write 0 ~at:0 ] |] in
-  let run = Sub.take s in
-  set_grid run (Sub.block s 0) one;
-  run_wait run [| out |]
+  run_wait s [| launch_args 8 |] [| out |]
 
 (* The first [n] words [f] of [binary] writes, or the reason of the
    refusal, which every resolve raises again. *)
@@ -2511,9 +2486,7 @@ let kept_submission () =
     drain t.d;
     for round = 1 to 2 do
       let out = zeroed t.d 32 in
-      let run = Sub.take s in
-      set_grid run (Sub.block s 0) one;
-      run_wait run [| out |];
+      run_wait s [| launch_args 8 |] [| out |];
       equal (list int) ~msg:(strf "round %d" round) [ 21; 22 ] (signed out 2)
     done;
     equal int ~msg:"pipelines while kept" (before + 1) (Rig_metal.pipelines ())

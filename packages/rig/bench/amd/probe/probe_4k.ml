@@ -483,34 +483,32 @@ let probe what { Rig_amd_support.d; g } =
   let src, dst = pair d in
   let copy () = B.copy ~src ~dst in
   (* A prepared submission of one copy, waited by spinning on the word. *)
-  let run =
-    Rig.Submission.(
-      take (make d [| copy ~src:(Buffer src) ~dst:(Buffer dst) |]))
+  let fixed =
+    Rig.Submission.(make d [| copy ~src:(Buffer src) ~dst:(Buffer dst) |])
   in
   let raw_spin () =
-    let p = Rig.submit run ~buffers:[||] in
+    let p = Rig.submit fixed ~buffers:[||] ~args:[||] in
     let v = Rig.Point.value p in
     spin_until (fun () -> A.signaled g >= v) (fun () -> Rig.Point.wait p)
   in
-  let raw_wait () = Rig.Point.wait (Rig.submit run ~buffers:[||]) in
+  let raw_wait () =
+    Rig.Point.wait (Rig.submit fixed ~buffers:[||] ~args:[||])
+  in
   let poll_reached () =
-    let p = Rig.submit run ~buffers:[||] in
+    let p = Rig.submit fixed ~buffers:[||] ~args:[||] in
     spin_until (fun () -> Rig.Point.reached p) (fun () -> Rig.Point.wait p)
   in
-  (* The run Buffer.copy submits: one copy from slot 0 into slot 1. *)
-  let slots =
-    Rig.Submission.(
-      take (make d [| copy ~src:(Slot 0) ~dst:(Slot 1) |]))
-  in
+  (* The submission Buffer.copy submits: one copy from slot 0 into slot 1. *)
+  let slots = Rig.Submission.(make d [| copy ~src:(Slot 0) ~dst:(Slot 1) |]) in
   let spin_point p =
     spin_until (fun () -> Rig.Point.reached p) (fun () -> Rig.Point.wait p)
   in
   let submit_slots () =
-    let p = Rig.submit slots ~buffers:[| src; dst |] in
+    let p = Rig.submit slots ~buffers:[| src; dst |] ~args:[||] in
     fun () -> spin_point p
   in
   let submit_fixed () =
-    let p = Rig.submit run ~buffers:[||] in
+    let p = Rig.submit fixed ~buffers:[||] ~args:[||] in
     fun () -> spin_point p
   in
   let host_copy =
@@ -532,15 +530,15 @@ let probe what { Rig_amd_support.d; g } =
   (* Each with its own cell for its submit's return, which Buffer.copy
      leaves 0. *)
   let watch () =
-    let direct name run buffers wait =
+    let direct name sub buffers wait =
       let s = ref 0 in
       (name, s, fun () ->
-        let p = Rig.submit run ~buffers in
+        let p = Rig.submit sub ~buffers ~args:[||] in
         s := now ();
         wait p)
     in
     watched g ~rounds:60 ~k:500
-      [ direct "fixed" run [||] spin_point;
+      [ direct "fixed" fixed [||] spin_point;
         direct "slots" slots [| src; dst |] spin_point;
         direct "slots-wait" slots [| src; dst |] Rig.Point.wait;
         ("buffer-copy", ref 0, copy) ]
@@ -561,17 +559,17 @@ let probe what { Rig_amd_support.d; g } =
     in
     let none = B.view src ~first:0 ~length:0
     and into = B.view dst ~first:0 ~length:0 in
-    let empty = Rig.Submission.(take (make d [||])) in
+    let empty = Rig.Submission.make d [||] in
     let s = ref 0 in
     let empty_pre () =
       let a = now () in
-      let p = Rig.submit empty ~buffers:[||] in
+      let p = Rig.submit empty ~buffers:[||] ~args:[||] in
       s := now () - a;
       spin_point p
     in
     time "buffer-copy no bytes" (fun () -> B.copy ~src:none ~dst:into);
     time "host-copy" host_copy;
-    let p = Rig.submit run ~buffers:[||] in
+    let p = Rig.submit fixed ~buffers:[||] ~args:[||] in
     Rig.Point.wait p;
     time "point-wait reached" (fun () -> Rig.Point.wait p);
     time "point-reached" (fun () -> ignore (Rig.Point.reached p : bool));
@@ -580,7 +578,7 @@ let probe what { Rig_amd_support.d; g } =
       (pct pres 50) (pct pres 90);
     let fixed_pre () =
       let a = now () in
-      let p = Rig.submit run ~buffers:[||] in
+      let p = Rig.submit fixed ~buffers:[||] ~args:[||] in
       s := now () - a;
       spin_point p
     in

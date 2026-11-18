@@ -865,10 +865,11 @@ let of_string s =
 
 (* Loading *)
 
-(* A launch's block, and what a run writes into it before each submit: the
-   scalars that read the ints, and its geometry where a run changes it. *)
+(* A launch whose values a run changes before each submit: its index among
+   the submit's values, the scalars that read the ints, and its geometry
+   where a run changes it. *)
 type block_run = {
-  block : Sub.block;
+  index : int;
   scalars : scalar array;
   geometry : ((value * value * value) * (value * value * value) * value) option;
 }
@@ -883,15 +884,18 @@ type moving = {
   count : int;
 }
 
-(* A step's run of its submission for one copy of the ints, and the buffers
-   it is passed: memory set at load, inputs and moving copy ends at each
-   run. *)
+(* A step's submission for one copy of the ints, the buffers it is passed,
+   memory set at load, inputs and moving copy ends at each run, and the
+   values of its launches, constant bytes set at load and the rest at each
+   run. Runs of a program take turns, and a submit copies the values, so
+   each run writes them in place. *)
 type prepared = {
-  srun : Sub.Run.t;
+  sub : Sub.t;
   buffers : B.t array;
   input_slots : (int * int) array;
       (* Each slot of the submission that holds an input, with the input. *)
   moving : moving array;
+  args : Sub.args array;
   blocks : block_run array;
 }
 
@@ -1148,16 +1152,50 @@ let is_ints = function Ints -> true | Memory _ | Input _ -> false
    them. *)
 let per_copy (s : submit) = Iarray.exists is_ints s.slots
 
-(* Stores the scalar [s] of value [v], which [s.width] holds, into the block
-   [b] of the run [r]. *)
-let store_scalar r b s v =
+(* Writes the scalar [s] of value [v], which [s.width] holds, into the
+   parameters [b], little-endian, as rig reads them. *)
+let store_scalar b s v =
   match s.width with
-  | W32 -> Sub.Run.int32 r b s.at v
-  | W64 -> Sub.Run.int64 r b s.at (Int64.of_int v)
+  | W32 -> Bytes.set_int32_le b s.at (Int32.of_int v)
+  | W64 -> Bytes.set_int64_le b s.at (Int64.of_int v)
 
-(* What load stores of [v]: its sum where it is constant, and [0] for a sum
-   each run stores. *)
+(* What load sets of [v]: its sum where it is constant, and [0] for a sum
+   each run sets. *)
 let at_load (v : value) = if is_constant v then v.add else 0
+
+(* Whether threads per group of [x] by [y] by [z], each in [0] to
+   [2^32 - 1], exceed [most], as every submit refuses them
+   ({!Rig.section-valid}): [x * y] past [most] whatever [z] is, or the
+   product of the three where [z] is known, [-1] where it is not. A [most]
+   of [0] bounds nothing, as for a function whose driver states none. The
+   products are compared a factor at a time, so none overflows: [x * y] is
+   at most [most] where it is taken. *)
+let past_most ~most x y z =
+  most > 0 && x > 0 && y > 0
+  && (y > most / x || (z >= 0 && z > most / (x * y)))
+
+(* Threads [x] by [y] by [z], [z] [-1] where it is not known. *)
+let threads_of x y z =
+  if z >= 0 then strf "%dx%dx%d" x y z else strf "%dx%d in x and y" x y
+
+(* Refuses at load the constant sizes of a launch of [fn] that every submit
+   would refuse ({!Rig.section-valid}): one outside [0] to [2^32 - 1], or
+   threads per group past [fn]'s most, where its driver knows it and [x]
+   and [y] are constant. Each submit checks the sizes a run sets. *)
+let check_sizes fn label (gx, gy, gz) (tx, ty, tz) shared =
+  let word (v : value) =
+    if is_constant v && (v.add < 0 || v.add > 0xffff_ffff) then
+      invalid_arg
+        (strf "%s has a size of %d, negative or above 2^32 - 1" label v.add)
+  in
+  List.iter word [ gx; gy; gz; tx; ty; tz; shared ];
+  let z = Option.value (known tz) ~default:(-1) in
+  match (Rig.Image.threads fn, known tx, known ty) with
+  | Some most, Some x, Some y when past_most ~most x y z ->
+      invalid_arg
+        (strf "%s runs at most %d threads per group; the launch sets %s" label
+           most (threads_of x y z))
+  | _ -> ()
 
 (* The buffer an input's slot holds until a run passes the input. *)
 let unset = B.of_string ""
@@ -1180,8 +1218,8 @@ let sub_slots (s : submit) =
   done;
   (index, !next)
 
-(* The submission of [s] for copy [k] of the ints, and its run holding the
-   words of its blocks that no run changes. *)
+(* The submission of [s] for copy [k] of the ints, with its buffers and its
+   launches' values as load knows them. *)
 let prepared p k (s : submit) =
   let d = s.device in
   let index, reffed = sub_slots s in
@@ -1234,11 +1272,17 @@ let prepared p k (s : submit) =
         | Memory v -> buffers.(j) <- view p k d v
         | Ints -> buffers.(j) <- view p k d (ints_view p.t))
     s.slots;
-  let srun = Sub.take sub in
-  let block i = function
-    | Words _ | Copy _ -> None
+  (* Each launch's values, in the order of [s]'s parts, with the constant
+     bytes, scalars and sizes set, and the launches whose values a run
+     changes. *)
+  let values = ref [] and blocks = ref [] and n = ref 0 in
+  let launch = function
+    | Words _ | Copy _ -> ()
     | Launch
         {
+          image;
+          name;
+          label;
           params;
           scalars;
           groups = (gx, gy, gz) as groups;
@@ -1246,47 +1290,46 @@ let prepared p k (s : submit) =
           shared;
           _;
         } ->
-        let b = Sub.block sub i in
-        for w = 0 to (String.length params / 4) - 1 do
-          Sub.Run.int32 srun b (4 * w)
-            (Int32.to_int (String.get_int32_le params (4 * w)))
-        done;
+        check_sizes (func p image name) label groups threads shared;
+        let b = Bytes.of_string params in
         Iarray.iter
           (fun sc ->
-            if is_constant sc.value then store_scalar srun b sc sc.value.add)
+            if is_constant sc.value then store_scalar b sc sc.value.add)
           scalars;
-        Sub.Run.groups srun b (at_load gx) (at_load gy) (at_load gz);
-        Sub.Run.threads srun b (at_load tx) (at_load ty) (at_load tz);
-        Sub.Run.shared srun b (at_load shared);
+        values :=
+          Sub.
+            {
+              groups = (at_load gx, at_load gy, at_load gz);
+              threads = (at_load tx, at_load ty, at_load tz);
+              shared = at_load shared;
+              params = b;
+            }
+          :: !values;
+        let per_run sc = not (is_constant sc.value) in
+        let scalars = List.filter per_run (Iarray.to_list scalars) in
         let geometry =
           if List.for_all is_constant [ gx; gy; gz; tx; ty; tz; shared ] then
             None
           else Some (groups, threads, shared)
         in
-        let per_run sc = not (is_constant sc.value) in
-        Some
-          {
-            block = b;
-            scalars = Array.of_list (List.filter per_run (Iarray.to_list scalars));
-            geometry;
-          }
+        if not (List.is_empty scalars && Option.is_none geometry) then
+          blocks :=
+            { index = !n; scalars = Array.of_list scalars; geometry }
+            :: !blocks;
+        incr n
   in
-  let blocks =
-    Array.of_list
-      (List.filter_map Fun.id (Iarray.to_list (Iarray.mapi block s.parts)))
-  in
-  (* Each step takes the run again to store its scalars. *)
-  Sub.Run.release srun;
+  Iarray.iter launch s.parts;
   {
-    srun;
+    sub;
     buffers;
     input_slots = Array.of_list !inputs;
     moving = Array.of_list (List.rev !moving);
-    blocks;
+    args = Array.of_list (List.rev !values);
+    blocks = Array.of_list (List.rev !blocks);
   }
 
-(* A submission [Rig.Submission.make] or a setter refuses is a defect of the
-   description. *)
+(* A submission [Rig.Submission.make] refuses, or a launch's constant size
+   every submit would refuse, is a defect of the description. *)
 let submission p i k s =
   try prepared p k s with Invalid_argument why -> refuse "step %d: %s" i why
 
@@ -1579,11 +1622,13 @@ let unpass q =
     q.buffers.(q.moving.(x).index) <- unset
   done
 
-(* Stores [q]'s scalars and geometry for copy [k] of the ints into its run,
-   which the caller took, and passes the run's buffers. *)
+(* Writes [q]'s scalars for copy [k] of the ints into its launches'
+   parameters, gives a launch whose geometry moves new values, and passes
+   the submit's buffers. A run's sizes are checked by its submit. *)
 let prepare_step p k (q : prepared) d =
   for i = 0 to Array.length q.blocks - 1 do
     let l = q.blocks.(i) in
+    let a = q.args.(l.index) in
     for j = 0 to Array.length l.scalars - 1 do
       let s = l.scalars.(j) in
       let v = sum_at p k "a parameter's value" s.value in
@@ -1592,17 +1637,16 @@ let prepare_step p k (q : prepared) d =
           "the parameter at byte %d takes %d, which 32 bits hold neither \
            signed nor unsigned"
           s.at v;
-      store_scalar q.srun l.block s v
+      store_scalar a.params s v
     done;
     match l.geometry with
     | None -> ()
     | Some ((gx, gy, gz), (tx, ty, tz), shared) ->
-        let r = q.srun and b = l.block and g = "a launch's geometry" in
-        Sub.Run.groups r b (sum_at p k g gx) (sum_at p k g gy)
-          (sum_at p k g gz);
-        Sub.Run.threads r b (sum_at p k g tx) (sum_at p k g ty)
-          (sum_at p k g tz);
-        Sub.Run.shared r b (sum_at p k g shared)
+        let g = "a launch's geometry" in
+        let groups = (sum_at p k g gx, sum_at p k g gy, sum_at p k g gz)
+        and threads = (sum_at p k g tx, sum_at p k g ty, sum_at p k g tz)
+        and shared = sum_at p k g shared in
+        q.args.(l.index) <- { a with groups; threads; shared }
   done;
   pass p q d;
   for x = 0 to Array.length q.moving - 1 do
@@ -1632,44 +1676,26 @@ let set_last (p : here) d point =
   p.last.(d) <- point;
   p.ran.(d) <- true
 
-(* The program's lock admits one run at a time, so the step's run is free
-   and is its submission's one run, which a take returns: a submit frees it
-   as it returns or raises, and a run that raises frees every step's run
-   ([release_runs]). With a [timer], a run of [time]'s, the submit is timed
-   as its [step]. *)
+(* The program's lock admits one run at a time, so the step's values are
+   this run's to write. With a [timer], a run of [time]'s, the submit is
+   timed as its [step]. *)
 let submit_step p timer k waits (spec : submit) copies step =
   let q = copies.(if Array.length copies = 2 then k else 0) in
   let d = spec.device in
-  (match
-     if Sub.take (Sub.Run.submission q.srun) != q.srun then assert false;
-     prepare_step p k q d
-   with
-  | () -> ()
-  | exception e ->
-      Sub.Run.release q.srun;
-      raise e);
+  prepare_step p k q d;
   let waits = if p.ran.(d) then None else waits in
   match
     match timer with
-    | None -> Rig.submit ?waits q.srun ~buffers:q.buffers
-    | Some t -> Rig.Timer.submit t step ?waits q.srun ~buffers:q.buffers
+    | None -> Rig.submit ?waits q.sub ~buffers:q.buffers ~args:q.args
+    | Some t ->
+        Rig.Timer.submit t step ?waits q.sub ~buffers:q.buffers ~args:q.args
   with
   | point ->
       unpass q;
       set_last p d point
   | exception e ->
       unpass q;
-      Sub.Run.release q.srun;
       raise e
-
-(* Frees each step's run that the calling thread holds, after a run that
-   raised, such as from an asynchronous exception between a step's take and
-   its submit. *)
-let rec release_runs = function
-  | Lsubmit { copies; _ } ->
-      Array.iter (fun (q : prepared) -> Sub.Run.release q.srun) copies
-  | Lmove _ | Lsend _ -> ()
-  | Lloop { body; _ } -> Array.iter release_runs body
 
 (* The [length] bytes of [slot]'s buffer from the byte [offset] sums to for
    copy [k] of the ints, as a move's end. *)
@@ -1889,7 +1915,6 @@ let run_here ~waits (p : here) (f : frame) =
       points
   | exception e ->
       unbind p;
-      Array.iter release_runs p.steps;
       Mutex.unlock p.lock;
       raise e
 
@@ -1913,7 +1938,6 @@ let time_here ~waits (p : here) (f : frame) =
   match run_steps ~waits ~timer:(Some timer) p f with
   | exception e ->
       unbind p;
-      Array.iter release_runs p.steps;
       Mutex.unlock p.lock;
       Rig.Timer.drop timer;
       raise e
@@ -1943,10 +1967,10 @@ let no_times = -1
 
 (* What a time of a program of another machine uses: the region on that
    machine's host that its agent writes the steps' times into, as
-   little-endian 64-bit integers, and the run of a submission of the run's
-   words and a copy of the region into its slot 0, the time's own memory of
-   this process. *)
-type times_there = { region : B.t; trun : Sub.Run.t }
+   little-endian 64-bit integers, and a submission of the run's words and a
+   copy of the region into its slot 0, the time's own memory of this
+   process. *)
+type times_there = { region : B.t; timed : Sub.t }
 
 (* A program loaded on another machine, which a submission on its host runs. *)
 type there = {
@@ -1957,7 +1981,7 @@ type there = {
   limits : int option array; (* What the agent stated at load ([threads]). *)
   watch : watched array;
   entry : int;
-  srun : Sub.Run.t;
+  sub : Sub.t; (* Of the run's words alone. *)
   times : times_there option;
       (* [None] for a program that has a loop, which [time] refuses, or no
          [Submit] step, whose times are all [0]. *)
@@ -1984,8 +2008,7 @@ let times_there (t : t) host words run =
   else
     let region = B.create host (8 * Iarray.length t.steps) in
     let copy = Sub.copy ~src:(Sub.Buffer region) ~dst:(Sub.Slot 0) in
-    let sub = Sub.make ~keep:run host [| Sub.words words; copy |] in
-    Some { region; trun = Sub.take sub }
+    Some { region; timed = Sub.make ~keep:run host [| Sub.words words; copy |] }
 
 (* [d]'s id on its machine, as its agent names it. *)
 let proxy_id d =
@@ -2042,7 +2065,7 @@ let load_there t devices =
                  limits;
                  watch;
                  entry;
-                 srun = Sub.take sub;
+                 sub;
                  times = times_there t host buffer run;
                  words = B.export buffer Bigarray.char;
                  lock = Mutex.create ();
@@ -2115,35 +2138,33 @@ let watched_size (f : frame) (v : value) =
   done;
   if !known then !s else -1
 
-(* Whether [n] is a size of at least 1 that a header word holds. *)
-let header_size n = n > 0 && n <= 0xffff_ffff
+(* Whether [n] is a size that a header word holds. *)
+let header_size n = n >= 0 && n <= 0xffff_ffff
 
 (* Refuses a watched launch whose threads per group, as the frame's ints set
-   them, exceed its function's most. A size outside a header word, or a word
-   the frame does not write, is left to the agent. The product is compared a
-   factor at a time, so it never overflows. A loop, so each run allocates
-   nothing here. *)
+   them, exceed its function's most, as load and every submit refuse them
+   ([past_most]). An [x] or a [y] outside a header word, or that reads a
+   word the frame does not write, is left to the agent, and so is the
+   product with such a [z]. A loop, so each run allocates nothing here. *)
 let check_threads watch (f : frame) =
   for i = 0 to Array.length watch - 1 do
     let { kernel; sizes = x, y, z; most } = watch.(i) in
     let x = watched_size f x
     and y = watched_size f y
     and z = watched_size f z in
-    if
-      header_size x && header_size y && header_size z
-      && (x > most || y > most / x || z > most / (x * y))
-    then
-      invalid "%s runs at most %d threads per group; the frame sets %dx%dx%d"
-        kernel most x y z
+    let z = if header_size z then z else -1 in
+    if header_size x && header_size y && past_most ~most x y z then
+      invalid "%s runs at most %d threads per group; the frame sets %s" kernel
+        most (threads_of x y z)
   done
 
-(* Submits [run] over [buffers], which runs [p]'s words, naming the region
+(* Submits [sub] over [buffers], which runs [p]'s words, naming the region
    [times] for the steps' times, and is its point. The words are placed on
    the host's queue when [submit] hands them over, so the next run writes
    them again once it returned. Each input is read once, checked and written:
    the agent checks again what it decodes. A borrow here asks the agent's own
    borrow, once per allocation and device. *)
-let run_words ~waits p run ~times ~buffers (f : frame) =
+let run_words ~waits p sub ~times ~buffers (f : frame) =
   check_counts p.t f;
   check_threads p.watch f;
   set_word p.words 0 p.entry;
@@ -2170,12 +2191,12 @@ let run_words ~waits p run ~times ~buffers (f : frame) =
   for i = 0 to Array.length f.ints - 1 do
     set_word p.words (at + 8 + (8 * i)) f.ints.(i)
   done;
-  Rig.submit ?waits run ~buffers
+  Rig.submit ?waits sub ~buffers ~args:[||]
 
 (* [run_words] under the lock, as [run_here] takes it. *)
-let submit_there ~waits p run ~times ~buffers (f : frame) =
+let submit_there ~waits p sub ~times ~buffers (f : frame) =
   lock p.lock;
-  match run_words ~waits p run ~times ~buffers f with
+  match run_words ~waits p sub ~times ~buffers f with
   | point ->
       Mutex.unlock p.lock;
       point
@@ -2184,7 +2205,7 @@ let submit_there ~waits p run ~times ~buffers (f : frame) =
       raise e
 
 let run_there ~waits p (f : frame) =
-  [| submit_there ~waits p p.srun ~times:no_times ~buffers:[||] f |]
+  [| submit_there ~waits p p.sub ~times:no_times ~buffers:[||] f |]
 
 (* A run of [p] whose agent writes the steps' times into [x]'s region, which
    a copy brings back into memory of this time's own. The region needs no
@@ -2194,7 +2215,7 @@ let time_times ~waits p x (f : frame) =
   let region = Nativeint.to_int (B.handle x.region) in
   let local = B.create Rig.host (8 * n) in
   let point =
-    submit_there ~waits p x.trun ~times:region ~buffers:[| local |] f
+    submit_there ~waits p x.timed ~times:region ~buffers:[| local |] f
   in
   Rig.Point.wait point;
   B.read local Bigarray.char (fun a ->

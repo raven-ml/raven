@@ -499,13 +499,11 @@ let counted =
      and+ fresh = bool in
      { launches; slack; fresh })
 
-(* nx_amd.mli: the bytes a device counts for a call, 1 KiB and
-   32 (9 + ⌈w / 2⌉ + r) a launch of [w] words and [r] refs. *)
+(* nx_amd.mli: the bytes a device counts for a call, 1 KiB and 32 (8 + r)
+   a launch of [r] refs. *)
 let stated_bytes (c : Plan.t) =
   Array.fold_left
-    (fun n (l : Plan.launch) ->
-      let w = Nx_amd.Kernels.words l.kernel in
-      n + (32 * (9 + ((w + 1) / 2) + Array.length l.refs)))
+    (fun n (l : Plan.launch) -> n + (32 * (8 + Array.length l.refs)))
     1024 c.launches
 
 (* Plan.finish counts a call's bytes as nx_amd.mli states, the launch that
@@ -517,8 +515,6 @@ let law_kept c =
   cover "fresh tickets" c.fresh;
   cover "kept tickets" (not c.fresh);
   cover "more than 256 launches" (List.length c.launches > 256);
-  cover "an odd count of words" (any (fun d -> words d mod 2 = 1));
-  cover "an even count of words" (any (fun d -> words d mod 2 = 0));
   cover "a launch of no ref" (any (fun d -> d.refs = 0));
   cover "a launch of 4 refs" (any (fun d -> d.refs = 4));
   cover "words left unread" (any (fun d -> d.used < words d));
@@ -811,7 +807,7 @@ let test_zero () =
       Plan.zero (Plan.make ()) ~slot:0 ~at:0 6)
 
 (* Plan.launch: a launch's used words lie among its kernel's, and hold
-   its refs. *)
+   its refs; Plan.args passes those words alone. *)
 let test_used () =
   let k = Nx_amd.Kernels.Loop_map in
   let all = Nx_amd.Kernels.words k in
@@ -831,7 +827,10 @@ let test_used () =
   launch ~used:all [| ref (all - 1) |];
   let call = Plan.finish b in
   equal ~msg:"used" (list int) [ 4; all ]
-    (Array.to_list (Array.map (fun (l : Plan.launch) -> l.used) call.launches))
+    (Array.to_list (Array.map (fun (l : Plan.launch) -> l.used) call.launches));
+  let length (a : Rig.Submission.args) = Bytes.length a.params in
+  equal ~msg:"params" (list int) [ 8 * 4; 8 * all ]
+    (Array.to_list (Array.map length (Plan.args call)))
 
 (* Constants *)
 

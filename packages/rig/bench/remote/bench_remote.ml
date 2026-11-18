@@ -267,9 +267,9 @@ let copy_rows =
                let src = view c.far and dst = view c.near in
                Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst)))
          in
-         (c, Sub.take (Sub.make (B.device c.far) parts)))
+         (c, Sub.make (B.device c.far) parts))
        ~teardown:(fun (c, _) -> finished c)
-       (fun (_, run) -> Rig.Point.wait (Rig.submit run ~buffers:[||]))
+       (fun (_, s) -> Rig.Point.wait (Rig.submit s ~buffers:[||] ~args:[||]))
     :: List.concat_map
          (fun n ->
            let row name f =

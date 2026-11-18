@@ -51,8 +51,7 @@ runs on any machine.
     let work =
       Submission.(make device [| copy ~src:(Buffer src) ~dst:(Buffer dst) |])
     in
-    let run = Submission.take work in
-    let done_ = submit run ~buffers:[||] in
+    let done_ = submit work ~buffers:[||] ~args:[||] in
     Point.wait done_;
     Buffer.read dst Bigarray.int32 (fun a ->
         Printf.printf "copied %ld\n" a.{0});;
@@ -77,15 +76,12 @@ Each call, in order:
   `copy_engine` fact ([`Submission.make`](../lib/rig.mli)).
 - `Submission.make device [| ... |]` prepares the parts once, as a
   *submission* that any number of submits run.
-- `Submission.take work` takes a *run* of the submission: the storage
-  that a submit's work reads its parameters from, such as a launch's grid
-  ([On a GPU](#on-a-gpu)). A copy has none, but every submit takes a run,
-  and the submit frees it for the next.
-- `submit run ~buffers:[||]` runs the run's submission once. `buffers`
+- `submit work ~buffers:[||] ~args:[||]` runs the submission once. `buffers`
   holds the buffers that change from one submit to the next, which a
-  launch's parameters and a copy's `Slot` ends name by index. This copy
-  names none. An optional `~waits` lists points of other devices the work
-  must follow.
+  launch's parameters and a copy's `Slot` ends name by index, and `args`
+  the values of each launch, such as its grid ([On a GPU](#on-a-gpu)). This
+  copy names no buffer and has no values. An optional `~waits` lists points
+  of other devices the work must follow.
 - `Point.wait done_` returns once the copy has completed. `Buffer.read`
   would wait for it too, since it follows the last write of `dst`.
 
@@ -108,11 +104,12 @@ let double d binary x n =
     Rig.Submission.(launch ~refs:[| write 0 ~at:0 |] twice ~params:8)
   in
   let s = Rig.Submission.make d [| twice |] in
-  let run = Rig.Submission.take s in
-  let b = Rig.Submission.block s 0 in
-  Rig.Submission.Run.groups run b (n / 256) 1 1;
-  Rig.Submission.Run.threads run b 256 1 1;
-  Rig.Point.wait (Rig.submit run ~buffers:[| x |])
+  let args =
+    Rig.Submission.
+      { groups = (n / 256, 1, 1); threads = (256, 1, 1); shared = 0;
+        params = Bytes.empty }
+  in
+  Rig.Point.wait (Rig.submit s ~buffers:[| x |] ~args:[| args |])
 ```
 
 The launch's 8 bytes of parameters hold one pointer. A *ref*
@@ -121,18 +118,20 @@ offset into one of the submit's buffers, its *slot*. This one,
 `write 0 ~at:0`, makes bytes 0 to 7 an offset into `buffers.(0)`, here `x`,
 which the work reads and writes, and the driver's
 `submit` adds `x`'s address to it as it encodes the work
-([Drivers](05-drivers.md#one-submission)). The run never stores the offset,
-and bytes a run never stores read 0, so `twice` gets `x`'s address.
+([Drivers](05-drivers.md#one-submission)). The parameters past the bytes a
+submit gives read 0, so `twice`, given none, gets `x`'s address.
 
 A ref states how the work uses its slot: `Submission.read`,
 `Submission.write` or `Submission.unordered`. `Submission.make` derives the
 slots from the refs and the copies' `Slot` ends, and each submit orders the
 work after earlier work on each slot's memory by that use.
 
-A *block* is the part of a run that holds one launch's grid, the threads of
-each group, and its parameters ([`Submission.block`](../lib/rig.mli)).
-`Submission.block s 0` names the block of part 0, and the two stores set its
-grid to `n / 256` groups of 256 threads.
+Each submit passes one value of `Submission.args` per launch, in the order
+of the parts ([`Submission.args`](../lib/rig.mli)): its grid, the threads of
+each group, its shared memory and the first bytes of its parameters,
+little-endian. This one runs `n / 256`
+groups of 256 threads. `submit` copies the values, so a caller may keep
+them and rewrite their `params` for the next submit.
 
 On a Mac, the binary is a metallib, compiled with
 `xcrun -sdk macosx metal -c twice.metal -o twice.air` and

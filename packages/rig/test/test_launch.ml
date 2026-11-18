@@ -6,7 +6,6 @@
 open Windtrap
 module B = Rig.Buffer
 module Sub = Rig.Submission
-module Run = Sub.Run
 module P = Rig_support.Polled
 
 let timeout = Rig_support.time 60.
@@ -20,16 +19,11 @@ let fn image f = require_some (Rig.Image.resolve image f)
 let launch ?(params = 0) ?(refs = [||]) image kernel =
   Sub.launch ~refs (fn image kernel) ~params
 
-let one run b =
-  Run.groups run b 1 1 1;
-  Run.threads run b 1 1 1
+(* The values of a launch of one group of one thread. *)
+let one ?(params = Bytes.empty) () =
+  { Sub.groups = (1, 1, 1); threads = (1, 1, 1); shared = 0; params }
 
-let submit ?(buffers = [||]) ?waits run = Rig.submit ?waits run ~buffers
-
-(* Takes [run] for the stores that follow: its submission's one run, which
-   [Sub.take] returns while no other call holds it. *)
-let take run =
-  if Sub.take (Run.submission run) != run then fail "the run is taken"
+let submit ?(buffers = [||]) ?waits s args = Rig.submit ?waits s ~buffers ~args
 
 (* Fresh Polled devices: a name opens once. *)
 let opened = Atomic.make 0
@@ -38,25 +32,30 @@ let polled ?addresses ?host_visible name =
   P.open_ ?addresses ?host_visible
     (strf "launch:%s-%d" name (Atomic.fetch_and_add opened 1))
 
-let le64 v =
-  let b = Bytes.create 8 in
-  Bytes.set_int64_le b 0 (Int64.of_int v);
-  Bytes.to_string b
+(* The bytes of the 64-bit words [vs], little-endian. *)
+let words vs =
+  let b = Bytes.create (8 * List.length vs) in
+  List.iteri (fun i v -> Bytes.set_int64_le b (8 * i) (Int64.of_int v)) vs;
+  b
+
+let le64 v = Bytes.to_string (words [ v ])
 
 let host_bytes b n =
   let s = Bytes.create n in
   B.blit_to_bytes b 0 s 0 n;
   Bytes.to_string s
 
+let params_of launches = List.map (fun (l : P.launch) -> l.params) launches
+
 (* Patching *)
 
-(* A run's buffer, used with [access]: [bytes] bytes, [first] bytes into a
+(* A submit's buffer, used with [access]: [bytes] bytes, [first] bytes into a
    buffer of Polled's own memory, or into host memory that starts a page,
    borrowed on Polled. *)
 type slot = { bytes : int; first : int; borrowed : bool; access : Rig.access }
 
-(* A ref: the parameter word [at] holds [offset] bytes into run buffer
-   [slot]. *)
+(* A ref: the parameter word [at] holds [offset] bytes into the submit's
+   buffer [slot]. *)
 type ref_case = { at : int; slot : int; offset : int }
 
 type launch_case = {
@@ -141,18 +140,14 @@ let make_slot d s =
   in
   B.view mem ~first:s.first ~length:s.bytes
 
-(* Stores [launch]'s geometry and parameters into its block [b] of [run], each
-   ref's word the offset. *)
-let store run b l =
-  let x, y, z = l.groups and tx, ty, tz = l.threads in
-  Run.groups run b x y z;
-  Run.threads run b tx ty tz;
-  Run.shared run b l.shared;
-  for k = 0 to (String.length l.params / 4) - 1 do
-    Run.int32 run b (4 * k)
-      (Int32.to_int (String.get_int32_le l.params (4 * k)))
-  done;
-  List.iter (fun r -> Run.int64 run b r.at (Int64.of_int r.offset)) l.refs
+(* The values of launch [l]: its geometry and parameters, each ref's word the
+   offset. *)
+let values l =
+  let params = Bytes.of_string l.params in
+  List.iter
+    (fun r -> Bytes.set_int64_le params r.at (Int64.of_int r.offset))
+    l.refs;
+  { Sub.groups = l.groups; threads = l.threads; shared = l.shared; params }
 
 (* What the function reads: the parameters, each ref's word the address of its
    buffer plus the offset. *)
@@ -198,22 +193,22 @@ let patch_law c =
       c.launches
   in
   (* Every slot is a ref's: a fill after the launches names each. *)
-  let named = Rig_support.touching (Array.of_list (List.mapi (fun i _ -> use i) c.slots)) in
+  let named =
+    Rig_support.touching (Array.of_list (List.mapi (fun i _ -> use i) c.slots))
+  in
   let s = Sub.make d (Array.of_list (launches @ [ named ])) in
-  let run = Sub.take s in
-  List.iteri (fun i l -> store run (Sub.block s i) l) c.launches;
+  let args =
+    Array.of_list (List.map values c.launches @ [ Rig_support.zero ])
+  in
   ignore (P.launches p);
-  let pt = submit ~buffers run in
-  (* Stores after the submit returned change nothing it handed over. *)
-  take run;
-  List.iteri
-    (fun i l ->
-      let b = Sub.block s i in
-      Run.groups run b 7 7 7;
-      for k = 0 to (String.length l.params / 4) - 1 do
-        Run.int32 run b (4 * k) 0x5a5a5a5a
-      done)
-    c.launches;
+  let pt = submit ~buffers s args in
+  (* Writes into the values once the submit returned change nothing it
+     handed over. *)
+  Array.iteri
+    (fun i (a : Sub.args) ->
+      Bytes.fill a.params 0 (Bytes.length a.params) '\x5a';
+      args.(i) <- { a with groups = (7, 7, 7) })
+    args;
   Rig.Point.wait pt;
   let expected =
     List.map
@@ -244,6 +239,179 @@ let patch_law c =
   cover "no parameter bytes" (List.exists (fun l -> l.params = "") c.launches);
   cover "two launches, their blocks adjacent" (List.length c.launches = 2)
 
+(* Short values *)
+
+(* Two submissions of 1 to 3 launches of [main] on one device, of 0 to 96
+   bytes of parameters each, and submits in turn: each of one of them, with
+   values for each launch whose [params] are the first bytes of its
+   parameters, as many as it takes or fewer. *)
+type short_case = {
+  sizes : int list array;
+  submits : (int * Sub.args list) list;
+}
+
+let pp_short ppf c =
+  let comma ppf () = Format.pp_print_char ppf ',' in
+  let pp_ints = Format.pp_print_list ~pp_sep:comma Format.pp_print_int in
+  let pp_value ppf (v : Sub.args) =
+    let x, y, z = v.groups and tx, ty, tz = v.threads in
+    Format.fprintf ppf "{%d bytes; %dx%dx%d; %dx%dx%d; %d}"
+      (Bytes.length v.params) x y z tx ty tz v.shared
+  in
+  let pp_submit ppf (k, vs) =
+    Format.fprintf ppf "%d:[%a]" k (Format.pp_print_list ~pp_sep:comma pp_value)
+      vs
+  in
+  Format.fprintf ppf "sizes [%a], [%a]; submits [%a]" pp_ints c.sizes.(0)
+    pp_ints c.sizes.(1)
+    (Format.pp_print_list ~pp_sep:Format.pp_print_space pp_submit)
+    c.submits
+
+let gen_short =
+  let open Gen in
+  let sizes =
+    list ~size:(int_range 1 3) (map (fun w -> 4 * w) (int_range 0 24))
+  in
+  let* a = sizes in
+  let* b = sizes in
+  let value n =
+    let* len =
+      frequency [ (1, constant 0); (1, constant n); (3, int_range 0 n) ]
+    in
+    let axes n = triple (int_range 1 n) (int_range 1 n) (int_range 1 n) in
+    let+ params = string_of ~size:(constant len) (char_range '\001' '\255')
+    and+ groups = axes 3
+    and+ threads = axes 4
+    and+ shared = int_range 0 64 in
+    { Sub.groups; threads; shared; params = Bytes.of_string params }
+  in
+  let values sizes =
+    List.fold_right
+      (fun n acc ->
+        let+ v = value n and+ rest = acc in
+        v :: rest)
+      sizes (constant [])
+  in
+  let submit =
+    let* k = int_range 0 1 in
+    let+ vs = values (if k = 0 then a else b) in
+    (k, vs)
+  in
+  let+ submits = list ~size:(int_range 1 6) submit in
+  { sizes = [| a; b |]; submits }
+
+let gen_short = Gen.with_pp pp_short gen_short
+let short_device = lazy (polled "short")
+let round16 n = (n + 15) land lnot 15
+
+(* Where each block of a submission of launches of [sizes] bytes of
+   parameters starts in a call's blocks: a 32-byte header, then its
+   parameters and its place, each up to a multiple of 16 bytes. *)
+let starts sizes =
+  let at = ref 0 in
+  List.map
+    (fun n ->
+      let s = !at in
+      at := s + 32 + (2 * round16 n);
+      s)
+    sizes
+
+let overlaps (a, b) (c, d) = a < d && c < b
+
+(* Each launch reads its submit's values: its geometry, and the bytes the
+   values passed, then 0 to the end of its parameters, whatever an earlier
+   submit of either submission passed and its driver wrote: Polled writes
+   each block's place. *)
+let short_law c =
+  let d, p = Lazy.force short_device in
+  let image = functions d in
+  let make sizes =
+    Sub.make d
+      (Array.of_list (List.map (fun n -> launch image "main" ~params:n) sizes))
+  in
+  let subs = Array.map make c.sizes in
+  let longest = Array.map (fun s -> Array.make (List.length s) 0) c.sizes in
+  let last = ref None in
+  ignore (P.launches p);
+  List.iter
+    (fun (k, values) ->
+      let sizes = c.sizes.(k) in
+      let length (v : Sub.args) = Bytes.length v.params in
+      let lens = List.map length values in
+      (* The bytes each launch reads as 0, past its values, and the bytes
+         the submit before, of the other submission, left other than 0: its
+         headers, and the values Polled wrote into its places. *)
+      let zeroed =
+        List.map2
+          (fun s (n, len) -> (s + 32 + len, s + 32 + n))
+          (starts sizes) (List.combine sizes lens)
+      in
+      let headers, places =
+        match !last with
+        | Some (j, last_lens) when j <> k ->
+            let at = starts c.sizes.(j) in
+            let place s n len =
+              let p = s + 32 + round16 n in
+              (p, p + len)
+            in
+            ( List.map (fun s -> (s, s + 32)) at,
+              List.map2
+                (fun s (n, len) -> place s n len)
+                at
+                (List.combine c.sizes.(j) last_lens) )
+        | _ -> ([], [])
+      in
+      let over written =
+        List.exists (fun z -> List.exists (overlaps z) written) zeroed
+      in
+      cover "a submit shorter than an earlier one of its submission"
+        (List.exists Fun.id
+           (List.mapi (fun j len -> len < longest.(k).(j)) lens));
+      cover "a submit after one of the other submission" (headers <> []);
+      cover "bytes read as 0 where the submit before had a header"
+        (over headers);
+      cover "bytes read as 0 where the driver placed the values before"
+        (over places);
+      cover "values as long as the parameters"
+        (List.exists2 (fun n len -> n = len && n > 0) sizes lens);
+      cover "no values for some parameters"
+        (List.exists2 (fun n len -> len = 0 && n > 0) sizes lens);
+      List.iteri (fun j len -> longest.(k).(j) <- max longest.(k).(j) len) lens;
+      last := Some (k, lens);
+      Rig.Point.wait (submit subs.(k) (Array.of_list values));
+      let read n (v : Sub.args) =
+        let len = Bytes.length v.params in
+        {
+          P.groups = v.groups;
+          threads = v.threads;
+          shared = v.shared;
+          params = Bytes.to_string v.params ^ String.make (n - len) '\000';
+        }
+      in
+      equal ~msg:"the launches" (list launch_t)
+        (List.map2 read sizes values)
+        (P.launches p))
+    c.submits
+
+(* An entry ref's 8 bytes hold its function's value, over the bytes the
+   values put there or past them; the launch reads its other bytes as
+   passed. *)
+let test_entry_overwrites () =
+  let d, p = polled "entry" in
+  let image = functions d in
+  let main = fn image "main" in
+  let s =
+    Sub.make d [| Sub.launch ~refs:[| Sub.entry main ~at:8 |] main ~params:16 |]
+  in
+  let expected = [ le64 7 ^ le64 (Rig.Image.entry main) ] in
+  ignore (P.launches p);
+  Rig.Point.wait (submit s [| one ~params:(words [ 7; 99 ]) () |]);
+  equal ~msg:"over the values" (list string) expected
+    (params_of (P.launches p));
+  Rig.Point.wait (submit s [| one ~params:(words [ 7 ]) () |]);
+  equal ~msg:"past the values" (list string) expected
+    (params_of (P.launches p))
+
 (* Ordering *)
 
 (* A launch that writes [b] is what a read of [b] waits for. *)
@@ -254,12 +422,10 @@ let test_write_seen () =
   let s =
     Sub.make d [| launch image "fill" ~params:16 ~refs:[| Sub.write 0 ~at:0 |] |]
   in
-  let run = Sub.take s and b = Sub.block s 0 in
-  Run.groups run b 2 2 1;
-  Run.threads run b 1 1 1;
-  Run.int64 run b 0 0L;
-  Run.int64 run b 8 100L;
-  ignore (submit ~buffers:[| out |] run);
+  let args =
+    [| { (one ~params:(words [ 0; 100 ]) ()) with groups = (2, 2, 1) } |]
+  in
+  ignore (submit ~buffers:[| out |] s args);
   B.wait out Read;
   let host = B.create Rig.host 32 in
   B.copy ~src:out ~dst:host;
@@ -288,11 +454,9 @@ let test_device_order () =
           ~refs:[| Sub.read 0 ~at:0; Sub.write 1 ~at:8 |];
       |]
   in
-  let run = Sub.take copying and blk = Sub.block copying 0 in
-  one run blk;
-  Run.int64 run blk 16 64L;
-  ignore (submit (Sub.take copy_into_b));
-  ignore (submit ~buffers:[| b; c |] run);
+  ignore (submit copy_into_b [||]);
+  let args = [| one ~params:(words [ 0; 0; 64 ]) () |] in
+  ignore (submit ~buffers:[| b; c |] copying args);
   let out = B.create Rig.host 64 in
   B.copy ~src:c ~dst:out;
   equal string ~msg:"the launch read the copy" data (host_bytes out 64);
@@ -300,14 +464,12 @@ let test_device_order () =
   let filling =
     Sub.make d [| launch image "fill" ~params:16 ~refs:[| Sub.write 0 ~at:0 |] |]
   in
-  let run = Sub.take filling and blk = Sub.block filling 0 in
-  Run.groups run blk 8 1 1;
-  Run.threads run blk 1 1 1;
-  Run.int64 run blk 0 0L;
-  Run.int64 run blk 8 7L;
-  ignore (submit ~buffers:[| b |] run);
+  let args =
+    [| { (one ~params:(words [ 0; 7 ]) ()) with groups = (8, 1, 1) } |]
+  in
+  ignore (submit ~buffers:[| b |] filling args);
   let copy_b = Sub.make d [| copy_part ~dst:c b |] in
-  ignore (submit (Sub.take copy_b));
+  ignore (submit copy_b [||]);
   B.copy ~src:c ~dst:out;
   equal string ~msg:"the copy read the launch"
     (String.concat "" (List.init 8 (fun i -> le64 (7 + i))))
@@ -334,11 +496,7 @@ let test_parts_changed () =
   Gc.full_major ();
   equal ~msg:"the part's image collected" bool false !collected;
   let out = B.create d 8 in
-  let run = Sub.take s and b = Sub.block s 0 in
-  one run b;
-  Run.int64 run b 0 0L;
-  Run.int64 run b 8 7L;
-  ignore (submit ~buffers:[| out |] run);
+  ignore (submit ~buffers:[| out |] s [| one ~params:(words [ 0; 7 ]) () |]);
   let host = B.create Rig.host 8 in
   B.copy ~src:out ~dst:host;
   equal string (le64 7) (host_bytes host 8)
@@ -353,16 +511,42 @@ let test_parts_read_once () =
   refs.(0) <- Sub.write 0 ~at:8;
   let s = Sub.make d [| part |] in
   let out = B.create d 8 in
-  let run = Sub.take s and b = Sub.block s 0 in
-  one run b;
-  Run.int64 run b 0 0L;
-  Run.int64 run b 8 7L;
   ignore (P.launches p);
-  ignore (submit ~buffers:[| out |] run);
+  ignore (submit ~buffers:[| out |] s [| one ~params:(words [ 0; 7 ]) () |]);
   ignore (P.run p);
   equal ~msg:"the ref the launch was given" (list string)
     [ le64 (Rig_support.at out) ^ le64 7 ]
-    (List.map (fun (l : P.launch) -> l.params) (P.launches p))
+    (params_of (P.launches p))
+
+(* Values rewritten from a signal handler while a submit of them waits for a
+   producer: the submit completes, and its launch reads each byte as the
+   values held it before or after. *)
+let test_rewritten_values () =
+  let producer, pp = polled "rewritten-producer" in
+  let d, p = polled "rewritten" in
+  let image = functions d in
+  let s = Sub.make d [| launch image "main" ~params:8 |] in
+  let params = Bytes.make 8 'a' in
+  let args = [| one ~params () |] in
+  let point = submit (Sub.make producer [||]) [||] in
+  let rewrote = ref false in
+  let handle _ =
+    Bytes.fill params 0 8 'b';
+    rewrote := true
+  in
+  ignore (P.launches p);
+  P.interrupt pp;
+  let before = Sys.signal Sys.sigint (Sys.Signal_handle handle) in
+  let v =
+    Fun.protect
+      ~finally:(fun () -> Sys.set_signal Sys.sigint before)
+      (fun () -> submit ~waits:[| point |] s args)
+  in
+  equal ~msg:"the handler ran" bool true !rewrote;
+  Rig.Point.wait v;
+  let neither l = String.exists (fun c -> c <> 'a' && c <> 'b') l in
+  equal ~msg:"launches reading a byte neither before nor after" (list string)
+    [] (List.filter neither (params_of (P.launches p)))
 
 (* Refusals *)
 
@@ -381,20 +565,14 @@ let test_make_refusals () =
   is_none ~msg:"no such function" (Rig.Image.resolve image "absent");
   refused ~msg:"a ref to slot 2 alone" (fun () -> make [| at 0 2 |]);
   ignore (make [| at 0 0; at 8 1 |]);
-  let s = make [||] in
-  equal int ~msg:"no value assigned" opened (Rig.submitted d);
-  refused ~msg:"the block of part 1 of 1" (fun () -> Sub.block s 1);
-  refused ~msg:"the block of part -1" (fun () -> Sub.block s (-1));
-  let copy =
-    Sub.(copy ~src:(Buffer (B.create d 8)) ~dst:(Buffer (B.create d 8)))
-  in
-  let s = Sub.make d [| copy |] in
-  refused ~msg:"the block of a copy" (fun () -> Sub.block s 0)
+  ignore (make [||]);
+  equal int ~msg:"no value assigned" opened (Rig.submitted d)
 
 (* Each constructor of a ref or a part refuses what its arguments show,
    naming itself, before a submission is made of it. Polled's fill reads 16
    bytes of parameters, and a launch's block of 32 bytes and twice its
-   parameters rounded up to 16 must fit the 2^32 - 1 bytes a run holds. *)
+   parameters rounded up to 16 must fit the 2^32 - 1 bytes a submit's blocks
+   hold. *)
 let test_constructor_refusals () =
   let d, _ = P.open_ ~host_visible:false (strf "launch:constructors") in
   let image = functions d in
@@ -452,65 +630,93 @@ let refused_submit ~msg d f =
   equal int ~msg:(msg ^ ": no value") before (Rig.submitted d);
   equal (option string) ~msg:(msg ^ ": not lost") None (Rig.lost d)
 
+(* What Polled's driver refuses of a launch's geometry and refs. *)
 let test_submit_refusals () =
   let d, _ = polled ~addresses:false ~host_visible:false "submit" in
   let image = functions d in
   let s =
     Sub.make d [| launch image "main" ~params:8 ~refs:[| Sub.read 0 ~at:0 |] |]
   in
-  let b = Sub.block s 0 in
   let buffers = [| B.create ~memory:Pinned d 8 |] in
-  refused_submit ~msg:"a run no setter stored into" d (fun () ->
-      submit ~buffers (Sub.take s));
   let geometry ?(groups = (1, 1, 1)) ?(threads = (1, 1, 1)) ?(shared = 0) () =
-    let run = Sub.take s in
-    let x, y, z = groups and tx, ty, tz = threads in
-    Run.groups run b x y z;
-    Run.threads run b tx ty tz;
-    Run.shared run b shared;
-    run
+    [| { Sub.groups; threads; shared; params = Bytes.empty } |]
   in
+  refused_submit ~msg:"values of no group" d (fun () ->
+      submit ~buffers s (Rig_support.zeros 1));
   refused_submit ~msg:"a ref to memory with no address" d (fun () ->
-      submit ~buffers:[| B.create d 8 |] (geometry ()));
+      submit ~buffers:[| B.create d 8 |] s (geometry ()));
   refused_submit ~msg:"no groups along y" d (fun () ->
-      submit ~buffers (geometry ~groups:(1, 0, 1) ()));
+      submit ~buffers s (geometry ~groups:(1, 0, 1) ()));
   refused_submit ~msg:"no threads along x" d (fun () ->
-      submit ~buffers (geometry ~threads:(0, 1, 1) ()));
+      submit ~buffers s (geometry ~threads:(0, 1, 1) ()));
   refused_submit ~msg:"65536 groups along z" d (fun () ->
-      submit ~buffers (geometry ~groups:(1, 1, 65536) ()));
+      submit ~buffers s (geometry ~groups:(1, 1, 65536) ()));
   refused_submit ~msg:"shared memory past 48 KiB" d (fun () ->
-      submit ~buffers (geometry ~shared:49153 ()));
-  let v = submit ~buffers (geometry ~threads:(1024, 1, 1) ~shared:49152 ()) in
+      submit ~buffers s (geometry ~shared:49153 ()));
+  let v = submit ~buffers s (geometry ~threads:(1024, 1, 1) ~shared:49152 ()) in
   Rig.Point.wait v
 
-let test_setter_refusals () =
-  let d, _ = polled "setters" in
-  let image = functions d in
-  let s = Sub.make d [| launch image "main" ~params:12 |] in
-  let run = Sub.take s and b = Sub.block s 0 in
-  refused ~msg:"int32 at -1" (fun () -> Run.int32 run b (-1) 0);
-  refused ~msg:"int32 at 9 of 12" (fun () -> Run.int32 run b 9 0);
-  refused ~msg:"int64 at 8 of 12" (fun () -> Run.int64 run b 8 0L);
-  refused ~msg:"float64 at max_int" (fun () -> Run.float64 run b max_int 0.);
-  refused ~msg:"float32 at 12 of 12" (fun () -> Run.float32 run b 12 0.);
-  refused ~msg:"negative groups" (fun () -> Run.groups run b 1 (-1) 1);
-  refused ~msg:"2^32 threads" (fun () -> Run.threads run b (1 lsl 32) 1 1);
-  raises ~msg:"1025 threads"
-    (Invalid_argument
-       "Rig.Submission.Run.threads: main runs at most 1024 threads per group; \
-        the block sets 5x205x1")
-    (fun () -> Run.threads run b 5 205 1);
-  raises ~msg:"threads whose product overflows 64 bits"
-    (Invalid_argument
-       "Rig.Submission.Run.threads: main runs at most 1024 threads per group; \
-        the block sets 4294967295x4294967295x2")
-    (fun () -> Run.threads run b 0xffff_ffff 0xffff_ffff 2);
-  Run.threads run b 32 32 1;
-  refused ~msg:"negative shared memory" (fun () -> Run.shared run b (-1));
-  Run.int32 run b 8 0;
-  Run.int64 run b 4 0L;
-  Run.float32 run b 8 0.;
-  Run.groups run b 0xffff_ffff 1 1
+(* The values every submit refuses, with the reason it gives: [main] takes
+   12 bytes of parameters and runs at most 1024 threads per group, and each
+   size lies in 0 to 2^32 - 1. *)
+let size_refusal =
+  "Rig.submit: args.(0), for main, has a size that is negative or above 2^32 \
+   - 1"
+
+let threads_refusal = strf "Rig.submit: main runs at most 1024 threads per \
+                            group; args.(0) sets %s"
+
+let value_refusals =
+  let v = one () in
+  [
+    ( "params past the launch's",
+      [| { v with params = Bytes.create 13 } |],
+      "Rig.submit: args.(0) has 13 bytes of params, past the 12 of main" );
+    ("negative groups", [| { v with groups = (1, -1, 1) } |], size_refusal);
+    ("2^32 groups", [| { v with groups = (1 lsl 32, 1, 1) } |], size_refusal);
+    ("2^32 threads", [| { v with threads = (1, 1, 1 lsl 32) } |], size_refusal);
+    ("negative shared memory", [| { v with shared = -1 } |], size_refusal);
+    ("1025 threads", [| { v with threads = (5, 205, 1) } |],
+      threads_refusal "5x205x1" );
+    ( "threads whose product overflows 64 bits",
+      [| { v with threads = (0xffff_ffff, 0xffff_ffff, 2) } |],
+      threads_refusal "4294967295x4294967295x2" );
+    ( "no values",
+      [||],
+      "Rig.submit: args has 0 elements, not 1, one per launch or fill" );
+    ( "two values",
+      [| v; v |],
+      "Rig.submit: args has 2 elements, not 1, one per launch or fill" );
+  ]
+
+let value_device = lazy (polled "values")
+
+let test_value_refusal (msg, args, why) =
+  let d, _ = Lazy.force value_device in
+  let s = Sub.make d [| launch (functions d) "main" ~params:12 |] in
+  let before = Rig.submitted d in
+  raises ~msg (Invalid_argument why) (fun () -> submit s args);
+  equal int ~msg:"no value" before (Rig.submitted d);
+  equal (option string) ~msg:"not lost" None (Rig.lost d)
+
+(* The values at the bounds of [value_refusals] that a submit runs. *)
+let test_value_bounds () =
+  let d, p = Lazy.force value_device in
+  let s = Sub.make d [| launch (functions d) "main" ~params:12 |] in
+  let params = Bytes.make 12 'p' in
+  let args = [| { (one ~params ()) with threads = (32, 32, 1) } |] in
+  ignore (P.launches p);
+  Rig.Point.wait (submit s args);
+  equal ~msg:"the launch" (list launch_t)
+    [
+      {
+        P.groups = (1, 1, 1);
+        threads = (32, 32, 1);
+        shared = 0;
+        params = Bytes.to_string params;
+      };
+    ]
+    (P.launches p)
 
 (* What a driver states of its functions: Polled's fill reads 16 bytes of
    parameters and its copy 24, its main states none, and each allows 1024
@@ -563,145 +769,10 @@ let test_resolve_failures () =
       | _ -> false)
     (fun () -> Rig.Image.resolve image "main")
 
-(* A setter called from a signal handler while a submit holds the run, waiting
-   for a producer, raises; the submit then completes with what was stored
-   before. *)
-let test_setter_in_use () =
-  let producer, pp = polled "in-use-producer" in
-  let d, p = polled "in-use" in
-  let image = functions d in
-  let s = Sub.make d [| launch image "main" ~params:8 |] in
-  let run = Sub.take s and b = Sub.block s 0 in
-  one run b;
-  Run.int64 run b 0 41L;
-  let point = submit (Sub.take (Sub.make producer [||])) in
-  let refused = ref None in
-  let handle _ =
-    refused :=
-      Some
-        (match Run.int64 run b 0 42L with
-        | () -> "stored"
-        | exception Invalid_argument why -> why)
-  in
-  P.interrupt pp;
-  let before = Sys.signal Sys.sigint (Sys.Signal_handle handle) in
-  let v =
-    Fun.protect
-      ~finally:(fun () -> Sys.set_signal Sys.sigint before)
-      (fun () -> submit ~waits:[| point |] run)
-  in
-  is_some ~msg:"the handler stored" !refused;
-  contains ~msg:"its refusal" ~sub:"a submit is using the run"
-    (Option.get !refused);
-  ignore (P.launches p);
-  Rig.Point.wait v;
-  equal (list string) ~msg:"the parameters run"
-    [ le64 41 ]
-    (List.map (fun (l : P.launch) -> l.params) (P.launches p))
+(* Domains *)
 
-(* A run holds the blocks of its own submission: a store into another
-   submission's block raises, storing nothing, and the run's bytes keep their
-   last store across submits. A new run's bytes read 0. *)
-let test_block_owner () =
-  let d, _ = polled "owner" in
-  let image = functions d in
-  let filling () =
-    Sub.make d [| launch image "fill" ~params:16 ~refs:[| Sub.write 0 ~at:0 |] |]
-  in
-  let s1 = filling () and s2 = filling () in
-  let b1 = Sub.block s1 0 and b2 = Sub.block s2 0 and run = Sub.take s1 in
-  let fill run =
-    let out = B.create d 8 in
-    Rig.Point.wait (submit ~buffers:[| out |] run);
-    Int64.to_int (String.get_int64_le (host_bytes out 8) 0)
-  in
-  equal bool ~msg:"its submission" true (Run.submission run == s1);
-  one run b1;
-  Run.int64 run b1 8 41L;
-  equal ~msg:"its own stores" int 41 (fill run);
-  take run;
-  raises_match ~msg:"another's block"
-    (Exn.invalid_arg ~sub:"another submission's") (fun () ->
-      Run.int64 run b2 8 42L);
-  Run.release run;
-  equal ~msg:"its last store, kept across submits" int 41 (fill run);
-  take run;
-  let fresh = Sub.take s1 in
-  Run.release run;
-  one fresh b1;
-  equal ~msg:"a new run's bytes" int 0 (fill fresh)
-
-(* A run is held by one thread at a time: [take] takes it, another thread's
-   take returns another run while it is held, [release] frees it for any
-   thread, and a release by a thread that does not hold it does nothing. A
-   store or a submit from another thread while one holds it raises, changing
-   nothing, and a submit of a free run takes it itself. *)
-let test_take () =
-  let d, p = polled "take" in
-  let opened = Rig.submitted d in
-  let image = functions d in
-  let s = Sub.make d [| launch image "main" ~params:8 |] in
-  let run = Sub.take s and b = Sub.block s 0 in
-  one run b;
-  Run.int64 run b 0 41L;
-  let other f = Domain.join (Domain.spawn f) in
-  let outcome f =
-    match f () with
-    | _ -> "done"
-    | exception Invalid_argument why -> why
-  in
-  let other_take () =
-    other (fun () ->
-        let r = Sub.take s in
-        Run.release r;
-        r == run)
-  in
-  equal ~msg:"another thread's take" bool false (other_take ());
-  (* [s] has two runs now: while both are free, two takes return both. *)
-  let freed () =
-    let a = Sub.take s in
-    let b = Sub.take s in
-    Run.release a;
-    Run.release b;
-    a == run || b == run
-  in
-  other (fun () -> Run.release run);
-  contains ~msg:"another thread's store" ~sub:"has not taken the run"
-    (other (fun () -> outcome (fun () -> Run.int64 run b 0 42L)));
-  contains ~msg:"another thread's submit" ~sub:"another thread took the run"
-    (other (fun () -> outcome (fun () -> submit run)));
-  equal ~msg:"values assigned" int opened (Rig.submitted d);
-  Run.release run;
-  equal ~msg:"another thread's take of a free run" bool true (other freed);
-  ignore (P.launches p);
-  Rig.Point.wait (other (fun () -> submit run));
-  equal (list string) ~msg:"the parameters a free run's submit ran"
-    [ le64 41 ]
-    (List.map (fun (l : P.launch) -> l.params) (P.launches p));
-  equal ~msg:"a take once the submit freed it" bool true (freed ())
-
-(* A submit that raises frees the run it was given, however early it raises:
-   one on a lost device, then another thread takes the run. *)
-let test_submit_frees () =
-  let d, p = polled "frees" in
-  let image = functions d in
-  let s = Sub.make d [| launch image "main" ~params:8 |] in
-  let run = Sub.take s and b = Sub.block s 0 in
-  one run b;
-  P.fail p;
-  let lost = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false in
-  raises_match ~msg:"a submit that loses the device" lost (fun () ->
-      submit run);
-  take run;
-  Run.int64 run b 0 41L;
-  raises_match ~msg:"a submit on the lost device" lost (fun () -> submit run);
-  equal ~msg:"another thread's take" bool true
-    (Domain.join (Domain.spawn (fun () -> Sub.take s == run)))
-
-(* A submission's runs *)
-
-(* The device and image that each pool's submission launches [fill] on, made
-   once for every case. *)
+(* The device and image that each domain test's submission launches [fill]
+   on, made once for every case. *)
 let pool_device =
   lazy
     (let d, _ = polled "pool" in
@@ -710,214 +781,87 @@ let pool_device =
 let filling_on (d, image) =
   Sub.make d [| launch image "fill" ~params:16 ~refs:[| Sub.write 0 ~at:0 |] |]
 
-(* [fill] through [run], a run of a submission of [filling_on] that the
-   calling thread has taken: stores [v] and its grid, submits, and reads back
-   the word the launch wrote. *)
-let fill_with run v =
-  let d, _ = Lazy.force pool_device in
-  let b = Sub.block (Run.submission run) 0 and out = B.create d 8 in
-  one run b;
-  Run.int64 run b 8 (Int64.of_int v);
-  Rig.Point.wait (submit ~buffers:[| out |] run);
-  Int64.to_int (String.get_int64_le (host_bytes out 8) 0)
+(* The values of [fill] that store [v]. *)
+let fill_values v = one ~params:(words [ 0; v ]) ()
 
-(* Two domains use one run, each as a library does: it takes the run, stores
-   its parameter and submits, reading the parameter back; or finds the run
-   held, a take returning another run, and does nothing. A store without a
-   take is refused, and a submit without one takes the run if it is free,
-   and reads the last parameter a use stored. Every outcome is one of an
-   order of the calls with some refusals. *)
-
-(* The model: the parameter the last use stored. *)
-type shared = { mutable stored : int }
-
-let shared_t =
-  abstract ~pp:(fun ppf r -> Format.fprintf ppf "stored %d" r.stored) "r"
-
-(* Whether [e] is a refusal of a run another call holds. *)
-let busy = function
-  | Invalid_argument why ->
-      let ends sub =
-        let n = String.length sub and m = String.length why in
-        m >= n && String.sub why (m - n) n = sub
-      in
-      List.exists ends
-        [
-          "another thread took the run";
-          "another submit is using the run";
-          "has not taken the run";
-          "a submit is using the run";
-        ]
-  | _ -> false
-
-let fill run =
+(* Submits [s], a submission of [filling_on], with [args], and reads back
+   the word its launch wrote. *)
+let fill_with s args =
   let d, _ = Lazy.force pool_device in
   let out = B.create d 8 in
-  Rig.Point.wait (submit ~buffers:[| out |] run);
+  Rig.Point.wait (submit ~buffers:[| out |] s args);
   Int64.to_int (String.get_int64_le (host_bytes out 8) 0)
 
-let block run = Sub.block (Run.submission run) 0
-
-(* A use: [Ok v] for the parameter it read back, or [Error Exit] where the
-   run was held. *)
-let use run v =
-  let r = Sub.take (Run.submission run) in
-  if r != run then begin
-    Run.release r;
-    raise Exit
-  end;
-  match Run.int64 run (block run) 8 (Int64.of_int v) with
-  | () -> fill run
-  | exception e ->
-      Run.release run;
-      raise e
-
-let shared_commands =
-  [
-    command "make"
-      (Gen.unit @-> makes shared_t)
-      (fun () -> { stored = 0 })
-      (fun () ->
-        (* Makes run in the sequential prefix, before either domain uses it. *)
-        let run = Sub.take (filling_on (Lazy.force pool_device)) in
-        one run (block run);
-        Run.release run;
-        run);
-    command "use"
-      (shared_t ^-> Gen.int_range 1 1000 @-> judges int)
-      (fun r v -> function
-        | Ok got ->
-            equal int ~msg:"the parameter it stored" v got;
-            r.stored <- v
-        | Error Exit -> ()
-        | Error e -> raise e)
-      use;
-    command "store"
-      (shared_t ^-> Gen.int_range 1 1000 @-> judges unit)
-      (fun _ _ -> function
-        | Ok () -> fail "a store into a run the thread has not taken"
-        | Error e when busy e -> ()
-        | Error e -> raise e)
-      (fun run v -> Run.int64 run (block run) 8 (Int64.of_int v));
-    command "submit"
-      (shared_t ^-> judges int)
-      (fun r -> function
-        | Ok got -> equal int ~msg:"the last stored parameter" r.stored got
-        | Error e when busy e -> ()
-        | Error e -> raise e)
-      fill;
-  ]
-
-(* One thread's takes from a submission: it holds some of the runs, has kept
-   others without releasing them, and has seen every run a take returned.
-   [take] returns a run no other take holds, and makes one only when every
-   run of the submission is held, so the runs seen are as many as were ever
-   held at once. *)
-type pool_model = { mutable held : int; mutable kept : int; mutable most : int }
-
-type pool = {
-  sub : Sub.t;
-  mutable taken : Run.t list;
-  mutable gone : Run.t list;
-  mutable seen : Run.t list;
-}
-
-let pool_t =
-  abstract
-    ~pp:(fun ppf m -> Format.fprintf ppf "held %d, kept %d" m.held m.kept)
-    "p"
-
-let pool_take p =
-  let r = Sub.take p.sub in
-  if List.memq r p.taken || List.memq r p.gone then fail "a run held already";
-  equal bool ~msg:"a run of the submission" true
-    (Run.submission r == p.sub);
-  (* A store raises unless the calling thread has taken [r]. *)
-  one r (Sub.block p.sub 0);
-  p.taken <- r :: p.taken;
-  if not (List.memq r p.seen) then p.seen <- r :: p.seen;
-  List.length p.seen
-
-let pop p =
-  match p.taken with
-  | r :: rs ->
-      p.taken <- rs;
-      r
-  | [] -> fail "no run held"
-
-let held m = m.held > 0
-
-let pool_commands =
-  [
-    command "make"
-      (Gen.unit @-> makes pool_t)
-      (fun () -> { held = 0; kept = 0; most = 0 })
-      (fun () ->
-        let sub = filling_on (Lazy.force pool_device) in
-        { sub; taken = []; gone = []; seen = [] });
-    command "take"
-      (pool_t ^-> returns int)
-      (fun m ->
-        m.held <- m.held + 1;
-        m.most <- Int.max m.most (m.held + m.kept);
-        m.most)
-      pool_take;
-    command "submit" ~pre:(fun m _ -> held m)
-      (pool_t ^-> Gen.int_range 1 1000 @-> returns int)
-      (fun m v ->
-        m.held <- m.held - 1;
-        v)
-      (fun p v -> fill_with (pop p) v);
-    command "release" ~pre:held
-      (pool_t ^-> returns unit)
-      (fun m -> m.held <- m.held - 1)
-      (fun p -> Run.release (pop p));
-    command "keep" ~pre:held
-      (pool_t ^-> returns unit)
-      (fun m ->
-        m.held <- m.held - 1;
-        m.kept <- m.kept + 1)
-      (fun p -> p.gone <- pop p :: p.gone);
-  ]
-
-(* Two domains take runs of one submission, each storing its own parameter
-   and reading it back. A run handed to both would refuse a store or a
-   submit, or read back the other's parameter. *)
+(* Two domains submit one submission, each with values of its own, and each
+   reads back its own parameter. *)
 let sub_t = abstract "s"
 
-let take_commands =
+let own_commands =
   [
     command "make"
       (Gen.unit @-> makes sub_t)
       Fun.id
       (fun () -> filling_on (Lazy.force pool_device));
-    command "use"
+    command "submit"
       (sub_t ^-> Gen.int_range 1 1000 @-> returns int)
       (fun () v -> v)
-      (fun s v ->
-        let run = Sub.take s in
-        match fill_with run v with
-        | got -> got
-        | exception e ->
-            Run.release run;
-            raise e);
+      (fun s v -> fill_with s [| fill_values v |]);
   ]
 
-(* A submission with no launch or fill has one run, which every take
-   returns. *)
-let test_take_empty () =
-  let d, _ = Lazy.force pool_device in
-  let s = Sub.(make d [| copy ~src:(Slot 0) ~dst:(Slot 1) |]) in
-  let r = Sub.take s in
-  equal bool ~msg:"a second take, the first held" true (Sub.take s == r)
+(* Two domains share one array of values, whose element a store replaces,
+   and submit one submission with it. A submit reads the element once and
+   checks what it read, so each reads back the parameter of the last store
+   before it in some order of the calls, and raises where that store put
+   values the launch refuses: more bytes than its 16. *)
+(* The model: the parameter of the last store, [None] where it put values
+   the launch refuses. *)
+type passed = { mutable stored : int option }
+type passing = { sub : Sub.t; args : Sub.args array }
 
-(* A run the host refuses *)
+let passing_t =
+  abstract
+    ~pp:(fun ppf m ->
+      match m.stored with
+      | Some v -> Format.fprintf ppf "stored %d" v
+      | None -> Format.pp_print_string ppf "refused")
+    "p"
+
+let too_long = one ~params:(Bytes.make 24 '\000') ()
+
+let passing_commands =
+  [
+    command "make"
+      (Gen.unit @-> makes passing_t)
+      (fun () -> { stored = Some 0 })
+      (fun () ->
+        let sub = filling_on (Lazy.force pool_device) in
+        { sub; args = [| fill_values 0 |] });
+    command "store"
+      (passing_t ^-> Gen.int_range 1 1000 @-> returns unit)
+      (fun m v -> m.stored <- Some v)
+      (fun t v -> t.args.(0) <- fill_values v);
+    command "spoil"
+      (passing_t ^-> returns unit)
+      (fun m -> m.stored <- None)
+      (fun t -> t.args.(0) <- too_long);
+    command "submit"
+      (passing_t ^-> judges int)
+      (fun m -> function
+        | Ok got ->
+            equal (option int) ~msg:"the last stored parameter" m.stored
+              (Some got)
+        | Error (Invalid_argument _) when m.stored = None -> ()
+        | Error e -> raise e)
+      (fun t -> fill_with t.sub t.args);
+  ]
+
+(* Blocks the host refuses *)
 
 (* A child process limits its address space to [room] bytes above what it
-   maps, and makes a run of a submission whose blocks span more than 256 MiB:
-   the make raises Out_of_memory. With the limit lifted, a run of another
-   submission serves its submit. On Linux only: the limit bounds no
-   allocation elsewhere. *)
+   maps, and submits a submission whose blocks span more than 256 MiB: the
+   submit raises Out_of_memory. With the limit lifted, a submit of another
+   submission runs. On Linux only: the limit bounds no allocation
+   elsewhere. *)
 let room = 64 lsl 20
 let spanning = 1 lsl 16
 
@@ -945,20 +889,19 @@ let grow_child () =
   let image = functions d in
   let wide = launch image "main" ~params:4096 in
   let big = Sub.make d (Array.make spanning wide) in
+  let big_args = Array.make spanning (one ()) in
   let small =
     Sub.make d [| launch image "fill" ~params:16 ~refs:[| Sub.write 0 ~at:0 |] |]
   in
   limit (mapped () + room);
   let refused =
-    match Sub.take big with
-    | _ -> "made"
+    match submit big big_args with
+    | _ -> "submitted"
     | exception Stdlib.Out_of_memory -> "Out_of_memory"
   in
   limit max_int;
-  let run = Sub.take small and b = Sub.block small 0 and out = B.create d 8 in
-  one run b;
-  Run.int64 run b 8 41L;
-  Rig.Point.wait (submit ~buffers:[| out |] run);
+  let out = B.create d 8 in
+  Rig.Point.wait (submit ~buffers:[| out |] small [| fill_values 41 |]);
   Printf.printf "%s\n%Ld\n" refused (String.get_int64_le (host_bytes out 8) 0)
 
 let test_grow_refused () =
@@ -981,45 +924,25 @@ let test_allocation () =
     Array.init 8 (fun k ->
         if k < 4 then Sub.read k ~at:(8 * k) else Sub.write k ~at:(8 * k))
   in
-  let s = Sub.make d [| launch image "main" ~params:64 ~refs |] in
+  let s = Sub.make d [| launch image "main" ~params:72 ~refs |] in
   let buffers = Array.init 8 (fun _ -> B.create d 8) in
-  let run = Sub.take s and b = Sub.block s 0 in
-  one run b;
-  let first = submit ~buffers run in
+  let params = Bytes.make 72 '\000' in
+  let args = [| one ~params () |] in
+  let first = submit ~buffers s args in
   let n = 100 in
-  equal int ~msg:"a submit of a launch" 0
-    (Rig_support.allocated_bytes (fun () ->
-         for _ = 1 to n do
-           ignore (Sys.opaque_identity (Rig.submit run ~buffers))
-         done));
-  equal int ~msg:"a take and a release" 0
-    (Rig_support.allocated_bytes (fun () ->
-         for _ = 1 to n do
-           Run.release (Sys.opaque_identity (Sub.take s))
-         done));
-  equal int ~msg:"a take, its stores and its submit" 0
-    (Rig_support.allocated_bytes (fun () ->
-         for _ = 1 to n do
-           let r = Sub.take s in
-           one r b;
-           ignore (Sys.opaque_identity (Rig.submit r ~buffers))
-         done));
-  take run;
-  let setter name f =
-    equal int ~msg:name 0
+  let allocates msg f =
+    equal int ~msg 0
       (Rig_support.allocated_bytes (fun () ->
            for i = 1 to n do
              f i
            done))
   in
-  setter "groups" (fun i -> Run.groups run b i 1 1);
-  setter "threads" (fun i -> Run.threads run b ((i land 7) + 1) 1 1);
-  setter "shared" (fun i -> Run.shared run b i);
-  setter "int32" (fun i -> Run.int32 run b 0 i);
-  setter "int64" (fun i -> Run.int64 run b 8 (Int64.of_int i));
-  setter "float32" (fun i -> Run.float32 run b 16 (float_of_int i *. 0.5));
-  setter "float64" (fun i -> Run.float64 run b 24 (float_of_int i *. 0.5));
-  let last = submit ~buffers run in
+  allocates "a submit of a launch" (fun _ ->
+      ignore (Sys.opaque_identity (Rig.submit s ~buffers ~args)));
+  allocates "a rewrite of its values in place and a submit" (fun i ->
+      Bytes.set_int64_le params 64 (Int64.of_int i);
+      ignore (Sys.opaque_identity (Rig.submit s ~buffers ~args)));
+  let last = submit ~buffers s args in
   Rig.Point.wait first;
   Rig.Point.wait last
 
@@ -1029,8 +952,14 @@ let tests =
       [
         prop
           "a launch reads each ref's word as its buffer's address plus the \
-           offset, and its other bytes as stored"
+           offset, and its geometry and other bytes as passed"
           gen_case patch_law;
+        prop
+          "a launch reads its submit's values and 0 past them, whatever an \
+           earlier submit passed or its driver wrote"
+          gen_short short_law;
+        test "an entry ref's bytes hold its function's value"
+          test_entry_overwrites;
       ];
     group ~timeout "order"
       [
@@ -1045,6 +974,8 @@ let tests =
           test_parts_changed;
         test "a launch reads its refs once, whatever changes them after"
           test_parts_read_once;
+        test "values rewritten during their submit give it some bytes of each"
+          test_rewritten_values;
       ];
     group ~timeout "refusals"
       [
@@ -1053,36 +984,30 @@ let tests =
         test "make refuses each launch its interface states" test_make_refusals;
         test "resolve raises what asking for a function raises"
           test_resolve_failures;
-        test "submit refuses a run or a block the device cannot launch"
+        test "submit refuses a launch the device cannot run"
           test_submit_refusals;
-        test "a setter refuses bytes outside its block" test_setter_refusals;
+        cases ~id:(fun (msg, _, _) -> msg)
+          "submit refuses values no launch takes, naming them" value_refusals
+          test_value_refusal;
+        test "submit runs the values at those bounds" test_value_bounds;
         test "an image states the facts its driver knows of a function"
           test_entry_facts;
-        test "a setter refuses a run a submit holds" test_setter_in_use;
-        test "a run holds the blocks of its own submission" test_block_owner;
-        test "a run is taken by one thread at a time" test_take;
-        test "a submit that raises frees its run" test_submit_frees;
-        stateful
-          "a submission's take returns a run no other holds, made only when \
-           every run is held"
-          pool_commands;
-        test "a submission with no blocks has one run for every take"
-          test_take_empty;
-        test "a run the host has no memory for raises at make"
+        test "a submit whose blocks the host has no memory for raises"
           test_grow_refused;
       ];
     group ~timeout "domains"
       [
         stateful ~domains:2
-          "uses, stores and submits on two domains take one run or refuse it"
-          shared_commands;
+          "two domains' submits of one submission each read their own values"
+          own_commands;
         stateful ~domains:2
-          "two domains' takes from one submission never share a run"
-          take_commands;
+          "a submit reads the element a store left in its values, or refuses \
+           it"
+          passing_commands;
       ];
     group ~timeout "cost"
       [
-        test "a launch's submit, its setters and a take allocate nothing"
+        test "a launch's submit and a rewrite of its values allocate nothing"
           test_allocation;
       ];
   ]

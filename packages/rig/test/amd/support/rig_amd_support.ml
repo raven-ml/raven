@@ -166,13 +166,12 @@ let launching t load name ~params uses store =
 
 (* work.cl's [copy dst src n delay] copies [n] words. *)
 let copy_words t ~dst ~src =
-  let module Run = Rig.Submission.Run in
   let w =
     launching t work "copy" ~params:24
       [| (dst, Rig.Read_write, 0); (src, Rig.Read, 8) |]
-      (fun run b ->
-        Run.int32 run b 16 (Rig.Buffer.length src / 4);
-        Run.int32 run b 20 0)
+      (fun p ->
+        Bytes.set_int32_le p 16 (Int32.of_int (Rig.Buffer.length src / 4));
+        Bytes.set_int32_le p 20 0l)
   in
   w
 
@@ -194,12 +193,11 @@ let clock_error ~since =
 (* kernels.cl's [spin flag n] sleeps [n] times 127 x 64 cycles, at most 2.1 us
    at 4 GHz, then sets its flag, a word of its own here. *)
 let spin t ~ns =
-  let module Run = Rig.Submission.Run in
   let flag = Rig_gpu_support.arguments t.d (String.make 8 '\000') in
   let w =
     launching t kernels "spin" ~params:12
       [| (flag, Rig.Read_write, 0) |]
-      (fun run b -> Run.int32 run b 8 ((ns / 2000) + 1))
+      (fun p -> Bytes.set_int32_le p 8 (Int32.of_int ((ns / 2000) + 1)))
   in
   w
 

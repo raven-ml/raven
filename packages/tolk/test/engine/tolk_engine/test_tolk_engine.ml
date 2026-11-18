@@ -1229,21 +1229,27 @@ let sums_in ?seed ~blocks m k =
             (sums_fn m k) ~params:32;
         |])
   in
-  let run = Rig.Submission.take s in
-  let block = Rig.Submission.block s 0 in
-  Rig.Submission.Run.groups run block blocks 1 1;
-  Rig.Submission.Run.threads run block ((m + blocks - 1) / blocks) 1 1;
-  Rig.Submission.Run.int32 run block 24 0;
-  Rig.Submission.Run.int32 run block 28 m;
+  let params = Bytes.make 32 '\000' in
+  Bytes.set_int32_le params 24 0l;
+  Bytes.set_int32_le params 28 (Int32.of_int m);
+  let args =
+    {
+      Rig.Submission.groups = (blocks, 1, 1);
+      threads = ((m + blocks - 1) / blocks, 1, 1);
+      shared = 0;
+      params;
+    }
+  in
   let out = Run.buffer host Float32 (floats (Array.make m 0.)) in
   ignore
-    (Rig.submit run
+    (Rig.submit s
        ~buffers:
          [|
            out;
            Run.buffer host Float32 (scattered ?seed (m * k));
            Run.buffer host Float32 (scattered ?seed k);
          |]
+       ~args:[| args |]
       : Rig.Point.t);
   Array.map
     (function `Float x -> Int64.bits_of_float x | _ -> assert false)

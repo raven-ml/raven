@@ -65,9 +65,7 @@ type fill = { fn : nativeint; arg : arg; keep : Rig_gpu_support.kept }
 let part f =
   let bytes = String.init (Bigarray.Array1.dim f.arg) (fun i -> f.arg.{i}) in
   let part = Rig.Submission.fill f.fn ~params:(String.length bytes) in
-  let init s run i =
-    Rig_gpu_support.params run (Rig.Submission.block s i) bytes
-  in
+  let init _ = Some (Rig_gpu_support.filling bytes) in
   {
     Rig_gpu_support.part = (fun _ -> part);
     buffers = [||];
@@ -142,7 +140,7 @@ let copy_words t ~dst ~src =
   let w =
     launching (images t.d) "copy" ~params:16 ~groups:(words / threads) ~threads
       [| (dst, Rig.Read_write, 0); (src, Rig.Read, 8) |]
-      (fun _ _ -> ())
+      ignore
   in
   w
 
@@ -155,12 +153,11 @@ let clock_error ~since:_ = 0
    Max: one per 10 ns leaves room for faster GPUs. *)
 
 let spin t ~ns =
-  let module Run = Rig.Submission.Run in
   let c = Int.min ((ns / 10) + 1) 0xffff_ffff in
   let out = Rig_gpu_support.arguments t.d (String.make 8 '\000') in
   let w =
     launching (images t.d) "spin" ~params:16 ~groups:1 ~threads:1
       [| (out, Rig.Read_write, 0) |]
-      (fun run k -> Run.int32 run k 8 c)
+      (fun b -> Bytes.set_int32_le b 8 (Int32.of_int c))
   in
   w

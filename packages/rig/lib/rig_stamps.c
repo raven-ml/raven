@@ -3,13 +3,12 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* Stamps, the prepared form of submissions and runs. None of these
-   stubs blocks or releases the runtime. */
+/* Stamps, the prepared form of submissions and the calls that serve their
+   submits. None of these stubs blocks or releases the runtime. */
 
 #define _GNU_SOURCE
 
-#include <inttypes.h>
-#include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -23,16 +22,14 @@
 #include "rig_stubs.h"
 
 #define Stamps_val(v) ((struct rig_stamps *)Long_val(v))
-/* A prepared submission and a run are each held by a custom block whose
-   finaliser frees it, with no OCaml, once it is collected. A run is an
-   OCaml record whose field 0 holds its custom block. A call is a pointer
-   that OCaml holds as an int. */
+/* A prepared submission is held by a custom block whose finaliser frees
+   it, with no OCaml, once it is collected. A call is a pointer that OCaml
+   holds as an int. */
 #define Sub_val(v) (*(struct rig_sub **)Data_custom_val(v))
-#define Run_block(v) (*(struct rig_run **)Data_custom_val(v))
-#define Run_val(v) Run_block(Field(v, 0))
 #define Call_val(v) ((struct rig_call *)Long_val(v))
 
-/* A run buffer's address where its memory has none: the -1 OCaml passes. */
+/* A submit buffer's address where its memory has none: the -1 OCaml
+   passes. */
 #define UNADDRESSED UINT64_MAX
 
 /* Stamps */
@@ -261,6 +258,7 @@ static void sub_free(struct rig_sub *s) {
   free(s->refs);
   free(s->codes);
   free(s->copies);
+  free(s->blocks);
   free(s);
 }
 
@@ -272,18 +270,18 @@ static struct custom_operations sub_ops = {
     custom_serialize_default,   custom_deserialize_default,
     custom_compare_ext_default, custom_fixed_length_default};
 
-/* The ids of submissions, which identify their blocks, runs and fitted
-   calls. */
+/* The ids of submissions, which identify the calls fitted to them. */
 static _Atomic uint64_t next_id = 1;
 
 /* A prepared submission on the device [v_d] of [v_nparts] parts whose
    [after] lists hold [v_nafter] indices in all, naming [v_nfixed] buffers,
-   whose runs use one buffer per access of [v_access] (an rig_use), whose
-   launches and fills hold [v_nrefs] buffer refs and [v_ncodes] entry refs
-   in all, and [v_ncopies] of whose parts are copies. */
+   whose submits use one buffer per access of [v_access] (an rig_use),
+   whose [v_nblocks] launches and fills hold [v_nrefs] buffer refs and
+   [v_ncodes] entry refs in all, and [v_ncopies] of whose parts are
+   copies. */
 value caml_rig_sub_new(value v_d, value v_nparts, value v_nafter,
-                       value v_nfixed, value v_access, value v_nrefs,
-                       value v_ncodes, value v_ncopies) {
+                       value v_nfixed, value v_access, value v_nblocks,
+                       value v_nrefs, value v_ncodes, value v_ncopies) {
   struct rig_sub *s = calloc(1, sizeof *s);
   if (s == NULL) caml_raise_out_of_memory();
   s->id = atomic_fetch_add(&next_id, 1);
@@ -304,6 +302,8 @@ value caml_rig_sub_new(value v_d, value v_nparts, value v_nafter,
   s->codes = zalloc((size_t)s->ncodes, sizeof *s->codes, &ok);
   s->ncopies = Int_val(v_ncopies);
   s->copies = zalloc((size_t)s->ncopies, sizeof *s->copies, &ok);
+  s->nblocks = Int_val(v_nblocks);
+  s->blocks = zalloc((size_t)s->nblocks, sizeof *s->blocks, &ok);
   if (!ok) {
     sub_free(s);
     caml_raise_out_of_memory();
@@ -318,7 +318,7 @@ value caml_rig_sub_new(value v_d, value v_nparts, value v_nafter,
 value caml_rig_sub_new_byte(value *argv, int argn) {
   (void)argn;
   return caml_rig_sub_new(argv[0], argv[1], argv[2], argv[3], argv[4],
-                          argv[5], argv[6], argv[7]);
+                          argv[5], argv[6], argv[7], argv[8]);
 }
 
 /* Part [v_i] on queue [v_queue], after the parts in [v_after], whose
@@ -344,9 +344,9 @@ value caml_rig_sub_words(value v_s, value v_i, value v_host, value v_n) {
   return Val_unit;
 }
 
-/* The submission's [v_k]th copy is part [v_i], from the run's slot [v_src]
-   into its slot [v_dst], each -1 for a buffer that [caml_rig_sub_side]
-   sets. */
+/* The submission's [v_k]th copy is part [v_i], from the submit's slot
+   [v_src] into its slot [v_dst], each -1 for a buffer that
+   [caml_rig_sub_side] sets. */
 value caml_rig_sub_copy(value v_s, value v_k, value v_i, value v_src,
                         value v_dst) {
   struct rig_sub *s = Sub_val(v_s);
@@ -373,7 +373,7 @@ value caml_rig_sub_box(value v_s, value v_k, value v_box) {
   return Val_unit;
 }
 
-/* The submission's [v_k]th copy is part [v_i], a fill of the run's slot
+/* The submission's [v_k]th copy is part [v_i], a fill of the submit's slot
    [v_dst], or of a buffer that [caml_rig_sub_side] sets for -1, with the
    byte [v_byte]. */
 value caml_rig_sub_set(value v_s, value v_k, value v_i, value v_dst,
@@ -464,16 +464,16 @@ value caml_rig_sub_seal(value v_s) {
 
 /* Places the parameters [a] of a launch or a fill, of [v_params] bytes
    with the refs [v_refs], stored from [v_at] on in [s]'s refs, in a block
-   after the last one's. Answers where the block starts. [v_params] is below
-   2^62, so [rig_block_bytes] does not wrap. */
-static intnat sub_args(struct rig_sub *s, struct rig_args *a, value v_params,
-                       value v_refs, value v_at) {
+   after the last one's. [v_params] is below 2^62, so [rig_block_bytes] does
+   not wrap. */
+static void sub_args(struct rig_sub *s, struct rig_args *a, value v_params,
+                     value v_refs, value v_at) {
   uint64_t start = s->args, params = (uint64_t)Long_val(v_params);
   uint64_t bytes = rig_block_bytes(params);
   if (start > UINT32_MAX || bytes > UINT32_MAX - start)
     caml_invalid_argument(
-        "Rig.Submission.make: the launches and fills take more than a run "
-        "holds");
+        "Rig.Submission.make: the blocks of the launches and fills take more "
+        "than 2^32 - 1 bytes");
   int at = Int_val(v_at), n = (int)Wosize_val(v_refs);
   for (int j = 0; j < n; j++) {
     value r = Field(v_refs, j);
@@ -485,7 +485,6 @@ static intnat sub_args(struct rig_sub *s, struct rig_args *a, value v_params,
   a->refs = n == 0 ? NULL : &s->refs[at];
   a->nrefs = n;
   s->args = start + bytes;
-  return (intnat)start;
 }
 
 /* Part [v_i] launches the function [v_code], [v_launch] with [v_params]
@@ -497,26 +496,14 @@ value caml_rig_sub_launch(value v_s, value v_i, value v_code, value v_launch,
   p->kind = RIG_LAUNCH;
   p->launch.code = (uint64_t)Long_val(v_code);
   p->launch.launch = (const void *)Nativeint_val(v_launch);
-  return Val_long(sub_args(s, &p->launch.args, v_params, v_refs, v_at));
+  sub_args(s, &p->launch.args, v_params, v_refs, v_at);
+  return Val_unit;
 }
 
 value caml_rig_sub_launch_byte(value *argv, int argn) {
   (void)argn;
   return caml_rig_sub_launch(argv[0], argv[1], argv[2], argv[3], argv[4],
                              argv[5], argv[6]);
-}
-
-/* The submission's [v_k]th entry ref writes [v_code] at byte [v_at] of the
-   parameters of the block that starts at [v_block], as [sub_args] answers
-   it. */
-value caml_rig_sub_code(value v_s, value v_k, value v_block, value v_at,
-                        value v_code) {
-  struct rig_sub *s = Sub_val(v_s);
-  s->codes[Int_val(v_k)] = (struct rig_code){
-      (size_t)Long_val(v_block) + sizeof(struct rig_block) +
-          (size_t)Long_val(v_at),
-      (uint64_t)Long_val(v_code)};
-  return Val_unit;
 }
 
 /* Part [v_i] calls the fill [v_fill] on [v_params] parameter bytes and the
@@ -527,7 +514,8 @@ value caml_rig_sub_fill(value v_s, value v_i, value v_fill, value v_params,
   struct rig_part *p = &s->parts[Int_val(v_i)];
   p->kind = RIG_FILL;
   p->fill.fn = (int (*)(void *, void *, uint64_t))Nativeint_val(v_fill);
-  return Val_long(sub_args(s, &p->fill.args, v_params, v_refs, v_at));
+  sub_args(s, &p->fill.args, v_params, v_refs, v_at);
+  return Val_unit;
 }
 
 value caml_rig_sub_fill_byte(value *argv, int argn) {
@@ -536,8 +524,35 @@ value caml_rig_sub_fill_byte(value *argv, int argn) {
                            argv[5]);
 }
 
-/* The id of the submission [v_s], which its blocks carry. */
-value caml_rig_sub_id(value v_s) { return Val_long((intnat)Sub_val(v_s)->id); }
+/* The parameters of [s]'s launch or fill [j]. */
+static const struct rig_args *block_args(const struct rig_sub *s, int j) {
+  const struct rig_part *p = &s->parts[s->blocks[j].part];
+  return p->kind == RIG_LAUNCH ? &p->launch.args : &p->fill.args;
+}
+
+/* The submission's launch or fill [v_j] is its part [v_i], which
+   [caml_rig_sub_launch] or [caml_rig_sub_fill] set, whose function runs at
+   most [v_most] threads a group, 0 for none. */
+value caml_rig_sub_block(value v_s, value v_j, value v_i, value v_most) {
+  struct rig_sub *s = Sub_val(v_s);
+  s->blocks[Int_val(v_j)] =
+      (struct rig_sub_block){Int_val(v_i), 0, (int64_t)Long_val(v_most)};
+  return Val_unit;
+}
+
+/* The submission's [v_k]th entry ref writes [v_code] at byte [v_at] of the
+   parameters of its launch or fill [v_j], which [caml_rig_sub_block] set. */
+value caml_rig_sub_code(value v_s, value v_k, value v_j, value v_at,
+                        value v_code) {
+  struct rig_sub *s = Sub_val(v_s);
+  int j = Int_val(v_j);
+  uint32_t at = (uint32_t)Long_val(v_at);
+  s->codes[Int_val(v_k)] = (struct rig_code){
+      (size_t)block_args(s, j)->block + sizeof(struct rig_block) + at,
+      (uint64_t)Long_val(v_code)};
+  if (at + 8 > s->blocks[j].coded) s->blocks[j].coded = at + 8;
+  return Val_unit;
+}
 
 /* Fixed buffer [v_k]: the stamps of a memory a part names and how the
    part uses it, an rig_use. [v_k] lies among the buffers counted at
@@ -551,55 +566,6 @@ value caml_rig_sub_fixed(value v_s, value v_k, value v_stamps, value v_use) {
   struct rig_fixed *f = &s->fixed[k];
   f->stamps = Stamps_val(v_stamps);
   f->use = (enum rig_use)Int_val(v_use);
-  return Val_unit;
-}
-
-/* Runs */
-
-static void run_finalize(value v) {
-  struct rig_run *r = Run_block(v);
-  free(r->args);
-  free(r);
-}
-
-static struct custom_operations run_ops = {
-    "rig.run",                  run_finalize,
-    custom_compare_default,     custom_hash_default,
-    custom_serialize_default,   custom_deserialize_default,
-    custom_compare_ext_default, custom_fixed_length_default};
-
-/* A run of the submission [v_s], each byte 0, taken by the calling thread
-   unless it holds no bytes. */
-value caml_rig_run_new(value v_s) {
-  const struct rig_sub *s = Sub_val(v_s);
-  struct rig_run *r = calloc(1, sizeof *r);
-  if (r == NULL) caml_raise_out_of_memory();
-  if (s->args > 0 && (r->args = calloc(s->args, 1)) == NULL) {
-    free(r);
-    caml_raise_out_of_memory();
-  }
-  r->sub = s->id;
-  r->nargs = s->args;
-  atomic_init(&r->state, s->args > 0 ? rig_thread_number() : RUN_FREE);
-  value v = caml_alloc_custom(&run_ops, sizeof(struct rig_run *), 0, 1);
-  Run_block(v) = r;
-  return v;
-}
-
-/* Takes the run [v_r] for the calling thread: whether it was free. A run
-   that holds no bytes needs no taking, and answers true. */
-value caml_rig_run_take(value v_r) {
-  struct rig_run *r = Run_val(v_r);
-  if (r->nargs == 0) return Val_true;
-  intptr_t seen = RUN_FREE;
-  return Val_bool(
-      atomic_compare_exchange_strong(&r->state, &seen, rig_thread_number()));
-}
-
-/* Frees the run [v_r] if the calling thread took it. */
-value caml_rig_run_release(value v_r) {
-  intptr_t me = rig_thread_number();
-  atomic_compare_exchange_strong(&Run_val(v_r)->state, &me, RUN_FREE);
   return Val_unit;
 }
 
@@ -619,6 +585,9 @@ static void call_free(struct rig_call *c) {
   free(c->points);
   free(c->waits);
   free(c->producers);
+  free(c->args);
+  free(c->marks);
+  free(c->spare);
   free(c);
 }
 
@@ -634,10 +603,84 @@ static int fit(void **a, int *c, int want, size_t size) {
   return 1;
 }
 
+/* [fit] for the [*c] bytes at [*a], whose count needs a size_t. */
+static int fit_bytes(uint8_t **a, size_t *c, size_t want) {
+  if (want <= *c) return 1;
+  uint8_t *p = realloc(*a, want);
+  if (p == NULL) return 0;
+  memset(p + *c, 0, want - *c);
+  *a = p;
+  *c = want;
+  return 1;
+}
+
+/* The [x]th range of the bytes that the blocks [m] may hold other than 0,
+   two per block in increasing order: its header and its parameters up to
+   its mark, then its place, as rig_block_bytes lays them out. */
+static void marked(const struct rig_mark *m, int x, uint64_t *from,
+                   uint64_t *to) {
+  const struct rig_mark *b = &m[x / 2];
+  uint64_t params = b->at + sizeof(struct rig_block);
+  if (x % 2 == 0) {
+    *from = b->at;
+    *to = params + b->high;
+  } else {
+    *from = params + rig_round16(b->params);
+    *to = *from + rig_round16(b->params);
+  }
+}
+
+/* Moves the call [c]'s marks from the submission it served last to [s]:
+   clears the marked bytes past [s]'s blocks, and marks each block of [s]
+   as far as marked bytes reach into its parameters, rounded up to 16, so
+   that its next copy clears them. Its headers and places may hold any
+   bytes. The ranges and [s]'s blocks both lie in increasing order, so one
+   walk over the ranges serves every block.
+
+   For example, in place of a block of 48 parameter bytes whose last submit
+   wrote 16, a block of 16 is marked up to byte 16, and a block of 64 up to
+   byte 64, since the old block's place lies at bytes 48 to 96 of the new
+   block's parameters. */
+static void call_switch(struct rig_call *c, const struct rig_sub *s) {
+  int n = 2 * c->nmarks, x = 0;
+  uint64_t from, to;
+  for (int j = 0; j < s->nblocks; j++) {
+    const struct rig_args *a = block_args(s, j);
+    uint64_t start = a->block + sizeof(struct rig_block);
+    uint64_t end = start + rig_round16(a->params), reach = start;
+    /* A range that ends before this block's parameters ends before every
+       later block's. */
+    for (; x < n; x++) {
+      marked(c->marks, x, &from, &to);
+      if (to > start) break;
+    }
+    for (int y = x; y < n; y++) {
+      marked(c->marks, y, &from, &to);
+      if (from >= end) break;
+      if (to > from) reach = to < end ? to : end;
+    }
+    c->spare[j] =
+        (struct rig_mark){a->block, a->params, (uint32_t)(reach - start)};
+  }
+  for (int y = n - 1; y >= 0; y--) {
+    marked(c->marks, y, &from, &to);
+    if (to <= s->args) break;
+    if (from < s->args) from = s->args;
+    memset(c->args + from, 0, to - from);
+  }
+  struct rig_mark *m = c->marks;
+  c->marks = c->spare;
+  c->spare = m;
+  int cm = c->cmarks;
+  c->cmarks = c->cspare;
+  c->cspare = cm;
+  c->nmarks = s->nblocks;
+}
+
 /* Fits the call [c] to the submission [s]: its fixed buffers, slots,
-   addresses and sides, and the parts of a submission with copies. Whether
-   memory sufficed. A call that served [s] last fits it already: its arrays
-   only grow. */
+   addresses and sides, the parts of a submission with copies, and the
+   blocks and their marks. Whether memory sufficed. A call that served [s]
+   last fits it already: its arrays only grow. */
 static int call_fit(struct rig_call *c, const struct rig_sub *s) {
   if (s->id == c->sub) return 1;
   int nslots = s->nslots;
@@ -652,6 +695,11 @@ static int call_fit(struct rig_call *c, const struct rig_sub *s) {
   if (s->nslotted > 0 &&
       !fit((void **)&c->parts, &c->cparts, s->nparts, sizeof *c->parts))
     return 0;
+  if (!fit_bytes(&c->args, &c->cargs, s->args) ||
+      !fit((void **)&c->marks, &c->cmarks, s->nblocks, sizeof *c->marks) ||
+      !fit((void **)&c->spare, &c->cspare, s->nblocks, sizeof *c->spare))
+    return 0;
+  call_switch(c, s);
   c->sub = s->id;
   c->nslots = nslots;
   return 1;
@@ -684,45 +732,83 @@ static struct rig_call *call_take(const struct rig_sub *s) {
   return NULL;
 }
 
-/* Begins a submit of [v_s] with its run [v_r]: moves the run from the
-   calling thread's taking, or from free, to submitting, and takes a free
-   call fitted to [v_s]. Answers the call, or -1 if another thread took the
-   run and -2 if another submit is using it, changing nothing. A run that
-   holds no bytes stays free, for any number of submits at once. Raises
-   Out_of_memory, the run freed, if the host has no memory for the call. */
-value caml_rig_submit_begin(value v_r, value v_s) {
-  struct rig_run *r = Run_val(v_r);
-  if (r->nargs > 0) {
-    intptr_t me = rig_thread_number();
-    intptr_t seen = atomic_load_explicit(&r->state, memory_order_relaxed);
-    /* A run the calling thread took moves only by this thread, which runs
-       no OCaml here, so a store moves it on; a free run, which another
-       thread may take meanwhile, moves by a compare-and-set. */
-    if (seen == me)
-      atomic_store_explicit(&r->state, RUN_SUBMITTING, memory_order_relaxed);
-    else if (seen != RUN_FREE ||
-             !atomic_compare_exchange_strong(&r->state, &seen, RUN_SUBMITTING))
-      return Val_long(seen == RUN_SUBMITTING ? -2 : -1);
-  }
+/* Begins a submit of [v_s]: takes a free call fitted to it. Raises
+   Out_of_memory if the host has no memory for the call. */
+value caml_rig_submit_begin(value v_s) {
   struct rig_call *c = call_take(Sub_val(v_s));
-  if (c == NULL) {
-    if (r->nargs > 0) atomic_store(&r->state, RUN_FREE);
-    caml_raise_out_of_memory();
-  }
+  if (c == NULL) caml_raise_out_of_memory();
   return Val_long((intnat)c);
 }
 
 /* Ends the submit that [caml_rig_submit_begin] began: forgets the call
-   [v_c]'s buffers and waits, gives it back, and frees the run [v_r]. */
-value caml_rig_submit_end(value v_r, value v_c) {
+   [v_c]'s buffers and waits, and gives it back. */
+value caml_rig_submit_end(value v_c) {
   struct rig_call *c = Call_val(v_c);
   for (int k = 0; k < c->nslots; k++) c->slots[k].stamps = NULL;
   c->npoints = c->nwaits = c->checks = 0;
   atomic_store_explicit(&c->taken, 0, memory_order_release);
-  struct rig_run *r = Run_val(v_r);
-  if (r->nargs > 0)
-    atomic_store_explicit(&r->state, RUN_FREE, memory_order_release);
   return Val_unit;
+}
+
+/* What [caml_rig_call_args] refuses in a submit's values. */
+enum { ARGS_COUNT, ARGS_LONG, ARGS_SIZE, ARGS_THREADS };
+
+static int header_fits(intnat v) { return v >= 0 && v <= (intnat)UINT32_MAX; }
+
+/* Copies [v_args], the values of [v_s]'s launches and fills in part order,
+   into the blocks of the call [v_c], fitted to [v_s]: a launch's grid,
+   threads and shared bytes into its header, then each element's [params],
+   its parameters past them 0. It clears only up to the block's mark, the
+   most an earlier submit may have written there, and moves the mark to
+   what this one wrote, the entry refs' bytes included, which the collect
+   writes next. Each element is read once, and a record and the length of
+   its bytes never change, so what is checked is what is copied, whatever
+   another domain or a callback stores into the array meanwhile. Answers -1,
+   or a refusal: 4 times the index of the element refused, the length of
+   [v_args] for ARGS_COUNT, plus the ARGS_ refusal. The blocks before it
+   are written, which no work reads.
+
+   A size is below 2^32, so the product of two fits 64 bits, and the third
+   multiplies a product no larger than the most, which is below 2^32 too. */
+value caml_rig_call_args(value v_s, value v_c, value v_args) {
+  const struct rig_sub *s = Sub_val(v_s);
+  struct rig_call *c = Call_val(v_c);
+  intnat n = (intnat)Wosize_val(v_args);
+  if (n != s->nblocks) return Val_long(4 * n + ARGS_COUNT);
+  for (intnat j = 0; j < n; j++) {
+    value a = Field(v_args, j), v_params = Field(a, 3);
+    const struct rig_sub_block *b = &s->blocks[j];
+    const struct rig_args *ra = block_args(s, (int)j);
+    size_t len = caml_string_length(v_params);
+    if (len > ra->params) return Val_long(4 * j + ARGS_LONG);
+    uint8_t *block = c->args + ra->block;
+    if (s->parts[b->part].kind == RIG_LAUNCH) {
+      value g = Field(a, 0), t = Field(a, 1);
+      intnat h[7] = {Long_val(Field(g, 0)), Long_val(Field(g, 1)),
+                     Long_val(Field(g, 2)), Long_val(Field(t, 0)),
+                     Long_val(Field(t, 1)), Long_val(Field(t, 2)),
+                     Long_val(Field(a, 2))};
+      for (int k = 0; k < 7; k++)
+        if (!header_fits(h[k])) return Val_long(4 * j + ARGS_SIZE);
+      uint64_t most = (uint64_t)b->most;
+      uint64_t xy = (uint64_t)h[3] * (uint64_t)h[4];
+      if (most > 0 && (xy > most || xy * (uint64_t)h[5] > most))
+        return Val_long(4 * j + ARGS_THREADS);
+      struct rig_block *head = (struct rig_block *)block;
+      for (int k = 0; k < 3; k++) {
+        head->groups[k] = (uint32_t)h[k];
+        head->threads[k] = (uint32_t)h[3 + k];
+      }
+      head->shared = (uint32_t)h[6];
+      head->unused = 0;
+    }
+    uint8_t *params = block + sizeof(struct rig_block);
+    memcpy(params, Bytes_val(v_params), len);
+    struct rig_mark *m = &c->marks[j];
+    if (m->high > len) memset(params + len, 0, m->high - len);
+    m->high = len > b->coded ? (uint32_t)len : b->coded;
+  }
+  return Val_long(-1);
 }
 
 /* Names the call's [v_k]th buffer, at [v_address] as the device's work
@@ -869,21 +955,21 @@ static _Atomic uint64_t *add_memory(struct rig_call *r, int own,
   return mine != NULL ? mine : reserve_any(st, own, base, 0);
 }
 
-/* Writes each entry ref's value into the run [v_r]'s blocks, and sets the
-   call [v_c]'s parts for its copies. Collects in [v_c] the points [v_s]'s
-   work follows, the greatest per other device, with the points of
-   [v_waits], and reserves the use words its raise stores to. Answers the
-   number of points. */
-value caml_rig_call_collect(value v_s, value v_c, value v_r, value v_waits) {
+/* Writes each entry ref's value into the call [v_c]'s blocks, after the
+   values ([caml_rig_call_args]), and sets its parts for its copies.
+   Collects in [v_c] the points [v_s]'s work follows, the greatest per other
+   device, with the points of [v_waits], and reserves the use words its
+   raise stores to. Answers the number of points. */
+value caml_rig_call_collect(value v_s, value v_c, value v_waits) {
   const struct rig_sub *s = Sub_val(v_s);
   struct rig_call *r = Call_val(v_c);
-  uint8_t *args = Run_val(v_r)->args;
+  uint8_t *args = r->args;
   int own = s->dev->index, nslots = s->nslots;
   uint64_t base = s->dev->base;
   for (int k = 0; k < s->nrefs; k++)
     if (r->addresses[s->refs[k].slot] == UNADDRESSED)
       caml_invalid_argument(
-          "Rig.submit: a ref names a run buffer whose memory has no "
+          "Rig.submit: a ref names a buffer whose memory has no "
           "address");
   if (s->nslotted > 0) set_copies(s, r);
   for (int k = 0; k < s->ncodes; k++)
@@ -966,161 +1052,4 @@ value caml_rig_call_no_room_at(value v_c) {
 
 value caml_rig_call_producer(value v_c) {
   return Val_long((intnat)Call_val(v_c)->producer);
-}
-
-/* Blocks */
-
-/* A block, as Submission.block makes it: its submission's id, where it
-   starts in a run, its parameter bytes, the most threads a group of its
-   function has or 0 for none, and the launch's label. */
-#define BLOCK_SUB(v) ((uint64_t)Long_val(Field(v, 0)))
-#define BLOCK_AT(v) ((size_t)Long_val(Field(v, 1)))
-#define BLOCK_PARAMS(v) ((size_t)Long_val(Field(v, 2)))
-#define BLOCK_MOST(v) Long_val(Field(v, 3))
-#define BLOCK_LABEL(v) String_val(Field(v, 4))
-
-/* Stores the [size] bytes at [src] at byte [at] of the run [v_r]'s block
-   [v_b]. The calling thread must have taken the run, which only it can
-   then change, so a store reads the run's state once and takes no lock.
-   Raises, storing nothing, if [at] is negative or the bytes end past the
-   block, its header's bytes and then its parameters, if the block is
-   another submission's, or if the calling thread has not taken the run,
-   such as while a submit of it is under way. */
-static void block_store(value v_r, value v_b, intnat at, const void *src,
-                        intnat size) {
-  struct rig_run *r = Run_val(v_r);
-  size_t params = BLOCK_PARAMS(v_b);
-  if (at < 0 || (size_t)(at + size) > sizeof(struct rig_block) + params)
-    caml_invalid_argument(
-        "Rig.Submission.Run: the bytes lie outside the block's parameters");
-  if (BLOCK_SUB(v_b) != r->sub)
-    caml_invalid_argument(
-        "Rig.Submission.Run: the block is another submission's");
-  intptr_t state = atomic_load_explicit(&r->state, memory_order_relaxed);
-  if (state != rig_thread_number())
-    caml_invalid_argument(
-        state == RUN_SUBMITTING
-            ? "Rig.Submission.Run: a submit is using the run"
-            : "Rig.Submission.Run: the calling thread has not taken the run");
-  memcpy(r->args + BLOCK_AT(v_b) + at, src, (size_t)size);
-}
-
-/* The parameters' byte [i], as [block_store] counts. */
-#define PARAM(i) ((intnat)sizeof(struct rig_block) + (i))
-
-/* A header field holds a uint32_t. */
-static uint32_t header_word(intnat v) {
-  if (v < 0 || v > (intnat)UINT32_MAX)
-    caml_invalid_argument(
-        "Rig.Submission.Run: a size is negative or above 2^32 - 1");
-  return (uint32_t)v;
-}
-
-static void store_axes(value v_r, value b, size_t field, intnat x, intnat y,
-                       intnat z) {
-  uint32_t a[3] = {header_word(x), header_word(y), header_word(z)};
-  block_store(v_r, b, (intnat)field, a, sizeof a);
-}
-
-value caml_rig_run_groups(value v_r, value b, intnat x, intnat y, intnat z) {
-  store_axes(v_r, b, offsetof(struct rig_block, groups), x, y, z);
-  return Val_unit;
-}
-
-value caml_rig_run_groups_byte(value v_r, value b, value x, value y,
-                               value z) {
-  return caml_rig_run_groups(v_r, b, Long_val(x), Long_val(y),
-                             Long_val(z));
-}
-
-/* Refuses [x * y * z] threads per group past the most of the block's
-   function, where it has one, leaving a size outside a header word to
-   [store_axes]'s refusal. Each size is below 2^32, so the product of two fits
-   64 bits, and the third multiplies a product no larger than the most, which
-   is below 2^32 too. */
-static void check_threads(value b, intnat x, intnat y, intnat z) {
-  intnat most = BLOCK_MOST(b);
-  if (most == 0 || x < 0 || y < 0 || z < 0 || x > (intnat)UINT32_MAX ||
-      y > (intnat)UINT32_MAX || z > (intnat)UINT32_MAX)
-    return;
-  uint64_t xy = (uint64_t)x * (uint64_t)y;
-  if (xy <= (uint64_t)most && xy * (uint64_t)z <= (uint64_t)most) return;
-  char why[256];
-  snprintf(why, sizeof why,
-           "Rig.Submission.Run.threads: %s runs at most %" PRId64
-           " threads per group; the block sets %" PRId64 "x%" PRId64
-           "x%" PRId64,
-           BLOCK_LABEL(b), (int64_t)most, (int64_t)x, (int64_t)y, (int64_t)z);
-  caml_invalid_argument(why);
-}
-
-value caml_rig_run_threads(value v_r, value b, intnat x, intnat y,
-                           intnat z) {
-  check_threads(b, x, y, z);
-  store_axes(v_r, b, offsetof(struct rig_block, threads), x, y, z);
-  return Val_unit;
-}
-
-value caml_rig_run_threads_byte(value v_r, value b, value x, value y,
-                                value z) {
-  return caml_rig_run_threads(v_r, b, Long_val(x), Long_val(y),
-                              Long_val(z));
-}
-
-value caml_rig_run_shared(value v_r, value b, intnat n) {
-  uint32_t w = header_word(n);
-  block_store(v_r, b, offsetof(struct rig_block, shared), &w, sizeof w);
-  return Val_unit;
-}
-
-value caml_rig_run_shared_byte(value v_r, value b, value n) {
-  return caml_rig_run_shared(v_r, b, Long_val(n));
-}
-
-/* A negative [i] stays negative through PARAM's sum, which [block_store]
-   refuses only below the header: refuse it here. */
-static void param_store(value v_r, value b, intnat i, const void *src,
-                        intnat size) {
-  if (i < 0)
-    caml_invalid_argument(
-        "Rig.Submission.Run: the bytes lie outside the block's parameters");
-  block_store(v_r, b, PARAM(i), src, size);
-}
-
-value caml_rig_run_int32(value v_r, value b, intnat i, intnat v) {
-  uint32_t x = (uint32_t)v;
-  param_store(v_r, b, i, &x, sizeof x);
-  return Val_unit;
-}
-
-value caml_rig_run_int32_byte(value v_r, value b, value i, value v) {
-  return caml_rig_run_int32(v_r, b, Long_val(i), Long_val(v));
-}
-
-value caml_rig_run_int64(value v_r, value b, intnat i, int64_t v) {
-  param_store(v_r, b, i, &v, sizeof v);
-  return Val_unit;
-}
-
-value caml_rig_run_int64_byte(value v_r, value b, value i, value v) {
-  return caml_rig_run_int64(v_r, b, Long_val(i), Int64_val(v));
-}
-
-value caml_rig_run_float32(value v_r, value b, intnat i, double v) {
-  float x = (float)v;
-  param_store(v_r, b, i, &x, sizeof x);
-  return Val_unit;
-}
-
-value caml_rig_run_float32_byte(value v_r, value b, value i, value v) {
-  return caml_rig_run_float32(v_r, b, Long_val(i), Double_val(v));
-}
-
-value caml_rig_run_float64(value v_r, value b, intnat i, double v) {
-  param_store(v_r, b, i, &v, sizeof v);
-  return Val_unit;
-}
-
-value caml_rig_run_float64_byte(value v_r, value b, value i, value v) {
-  return caml_rig_run_float64(v_r, b, Long_val(i), Double_val(v));
 }

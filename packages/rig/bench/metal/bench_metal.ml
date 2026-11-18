@@ -57,8 +57,7 @@ let load d =
 (* The point of an empty submission on [d]: the last point a row waits for
    until it submits. *)
 let first_point d =
-  Rig.submit (Rig.Submission.take (Rig.Submission.make d [||]))
-    ~buffers:[||]
+  Rig.submit (Rig.Submission.make d [||]) ~buffers:[||] ~args:[||]
 
 (* A device opened through rig, whose argument buffer points [step] at a word of
    its own. *)
@@ -83,30 +82,34 @@ let dev () =
   H.set64 (host args) (address (alloc t 16));
   t
 
-(* A run of the prepared submission of [parts] on [t], and its buffers. *)
-let prepare t parts = (Rig.Submission.(take (make t.d parts)), [||])
+(* The prepared submission of [parts] on [t], its buffers and its values. *)
+let prepare t parts = (Rig.Submission.make t.d parts, [||], [||])
 
 let prepare_fill t f = Rig_gpu_support.prepare t.d [ S.part f ]
 
-let submit t (run, buffers) =
-  let p = Rig.submit run ~buffers in
+let submit t (s, buffers, args) =
+  let p = Rig.submit s ~buffers ~args in
   t.last <- p;
   t.v <- Rig.Point.value p
 
+(* The values of a launch over one thread with [n] bytes of parameters, 0. *)
+let one_thread n =
+  Rig.Submission.
+    {
+      groups = (1, 1, 1);
+      threads = (1, 1, 1);
+      shared = 0;
+      params = Bytes.make n '\000';
+    }
+
 (* [step] launched [n] times in one submission, each over one thread and writing
-   [out], with its run's blocks initialized. *)
+   [out]. *)
 let launches t n =
   let module Sub = Rig.Submission in
   let fn = Option.get (Rig.Image.resolve t.image "step") in
   let step = Sub.launch ~refs:[| Sub.write 0 ~at:0 |] fn ~params:16 in
   let s = Sub.make t.d (Array.make n step) in
-  let run = Sub.take s in
-  for i = 0 to n - 1 do
-    let b = Sub.block s i in
-    Sub.Run.groups run b 1 1 1;
-    Sub.Run.threads run b 1 1 1
-  done;
-  (run, t.buffers)
+  (s, t.buffers, Array.init n (fun _ -> one_thread 16))
 
 (* [wide] launched once over one thread with [n] bytes of parameters, its
    ref writing [out]. *)
@@ -116,11 +119,7 @@ let wide t n =
   let fn = Option.get (Rig.Image.resolve image "wide") in
   let w = Sub.launch ~refs:[| Sub.write 0 ~at:0 |] fn ~params:n in
   let s = Sub.make t.d [| w |] in
-  let run = Sub.take s in
-  let b = Sub.block s 0 in
-  Sub.Run.groups run b 1 1 1;
-  Sub.Run.threads run b 1 1 1;
-  (run, t.buffers)
+  (s, t.buffers, [| one_thread n |])
 
 let wait t = Rig.Point.wait t.last
 

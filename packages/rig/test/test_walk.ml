@@ -222,15 +222,12 @@ let memory_attempt n =
   let s =
     ref (Some (Sub.make d (Array.make fills part)))
   in
-  let run = Sub.take (Option.get !s) and buffers = [| counter |] in
-  for i = 0 to fills - 1 do
-    Sub.Run.int64 run (Sub.block (Option.get !s) i) 0 0L
-  done;
-  Rig.Point.wait (once ~buffers run);
+  let args = S.zeros fills and buffers = [| counter |] in
+  Rig.Point.wait (once ~buffers ~args (Option.get !s));
   let heap, fds, signals = census () in
   S.store (S.Reader.host counter) n;
   let got =
-    outcome d (fun () -> Rig.Point.wait (once ~buffers run))
+    outcome d (fun () -> Rig.Point.wait (once ~buffers ~args (Option.get !s)))
   in
   let at = Printf.sprintf ", fill %d" n in
   equal ~msg:("outcome" ^ at) string "lost: a fill failed" got;

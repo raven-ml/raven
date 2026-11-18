@@ -68,8 +68,7 @@ let double t out =
       let ws = S.launch l k "double_index" ~blocks:4 [ address; n ] in
       Rig.Buffer.write words Bigarray.int32 (fun a ->
           Array.iteri (fun i w -> a.{i} <- Int32.of_int w) ws);
-      let run = Rig.Submission.take s in
-      Rig.Point.wait (Rig.submit run ~buffers:[||]))
+      Rig.Point.wait (Rig.submit s ~buffers:[||] ~args:[||]))
 
 (* Opens the GPU and launches the kernel over pinned memory: whether its words
    are the kernel's. *)
@@ -131,7 +130,7 @@ let fault () =
       ( "submit",
         outcome d (fun () ->
             let empty = Rig.Submission.make d [||] in
-            Rig.submit (Rig.Submission.take empty) ~buffers:[||]) );
+            Rig.submit empty ~buffers:[||] ~args:[||]) );
     ]
   in
   let lost = Rig.lost d in
