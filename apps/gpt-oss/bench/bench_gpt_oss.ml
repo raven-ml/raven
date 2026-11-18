@@ -450,9 +450,7 @@ let () =
           ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
           [ Thumper.group "GptOss" (List.map case kinds) ]
       in
-      (* Under PARALLEL=1 one domain renders and one compiler process compiles,
-         so the serial row's wall is the compile work, which the parallel row
-         does not time where it is off the longest chain of compiles. *)
+      (* The serial row compiles in one process (PARALLEL=1). *)
       let first =
         Thumper.run "gpt_oss_first"
           ~config:

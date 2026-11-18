@@ -155,9 +155,9 @@ let attention cfg b cache index x =
 
 (* Forward passes *)
 
-(* [x] closed where it lies: the experts' output, cut along their features,
-   is a sum the block asked for (Moe), which a norm reads whole. On one
-   device it is [x]. *)
+(* [x] closed where it lies. A placement that cuts the experts along their
+   axis, or the attention's output along its inputs, leaves the block's sums
+   partial; a norm reads them closed. On one device it is [x]. *)
 let close x = Nx.place (Nx.Placement.closed (Nx.placement x)) x
 
 let block cfg b cache index x =

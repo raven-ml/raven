@@ -49,8 +49,8 @@ let activation ~limit h =
 (* [linear ~sum w b ids x] is the projection [w] and bias [b] of each
    position's expert, its id in [ids], [[| s… |]], applied to its row of
    [x], [[| s'…; inputs |]]: one product whose rows the kernels group by
-   expert. A weight cut along its inputs or its experts gives, with [sum],
-   the sum of the devices' terms ({!Nx.Placement.partial}). *)
+   expert. With [sum], the devices' terms of a weight cut along its experts
+   are left a sum ({!Nx.Placement.partial}). *)
 let linear ~sum w b ids x =
   let y =
     match w with
