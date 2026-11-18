@@ -148,6 +148,10 @@ let base dtype =
     seed = 3;
   }
 
+let named dtypes s =
+  List.find_opt (fun (Nx.Dtype.Any dt) -> Nx.Dtype.name dt = s) dtypes
+  |> Option.value ~default:(List.hd dtypes)
+
 let examples dtypes =
   let b = base (List.hd dtypes) in
   let cases =
@@ -168,10 +172,7 @@ let examples dtypes =
     ]
   in
   let n = List.length dtypes in
-  let named s =
-    List.find_opt (fun (Nx.Dtype.Any dt) -> Nx.Dtype.name dt = s) dtypes
-    |> Option.value ~default:(List.hd dtypes)
-  in
+  let named = named dtypes in
   List.mapi (fun i c -> { c with dtype = List.nth dtypes (i mod n) }) cases
   @ [
       (* ALiBi at float32: a score moves by its slope times the pair's
@@ -190,14 +191,6 @@ let examples dtypes =
         tk = 200;
         mask = Positions;
       };
-      (* Keys padded to a step of a tensor core's K, values past one chunk
-         of columns. *)
-      { b with dtype = named "float16"; dk = 24; dv = 72; tq = 40; tk = 100 };
-      (* Keys and values past 64 dimensions, one side and then both: the
-         derivative's kernels of wider heads. *)
-      { b with dtype = named "bfloat16"; dk = 128; dv = 128; tq = 40; tk = 64 };
-      { b with dtype = named "float16"; dk = 96; dv = 64; tq = 20; tk = 33 };
-      { b with dtype = named "bfloat16"; dk = 64; dv = 128; tq = 20; tk = 33; mask = Unmasked };
       (* Faint weights on positive values: the weights' mass below
          float16's smallest normal outweighs the bound but for the term of
          each such weight read. *)
@@ -210,20 +203,34 @@ let examples dtypes =
         tq = 16;
         tk = 1000;
       };
-      (* Rows and keys either side of Metal's tiles of 8: a key head a
-         query head, so a tile's rows are one head's. *)
-      { b with dtype = named "float16"; hk = b.hq; tq = 7; tk = 9 };
-      { b with dtype = named "float16"; hk = b.hq; tq = 9; tk = 7 };
-      { b with dtype = named "bfloat16"; hk = b.hq; tq = 7; tk = 9 };
-      { b with dtype = named "bfloat16"; hk = b.hq; tq = 9; tk = 7 };
-      (* Tiles the mask shows whole, on a tensor core: their pairs hidden by
-         the row's length alone, by their page's entry alone, and a causal
-         window of 100 keys. *)
-      { b with dtype = named "bfloat16"; mask = Reach; seed = 4; lengths = Some [| 290 |] };
-      { b with dtype = named "float16"; mask = Reach; seed = 4; page = Some 16; holes = true; tk = 320 };
+      (* A causal window of 100 keys, whose tiles a tensor core's mask
+         shows whole. *)
       { b with dtype = named "bfloat16"; mask = Reach };
     ]
   @ List.map (fun dt -> { (base dt) with zeros = true; tq = 128; tk = 128 }) dtypes
+
+let kernel_examples dtypes =
+  let b = base (List.hd dtypes) and named = named dtypes in
+  [
+    (* Keys padded to a step of a tensor core's K, values past one chunk
+       of columns. *)
+    { b with dtype = named "float16"; dk = 24; dv = 72; tq = 40; tk = 100 };
+    (* Keys and values past 64 dimensions, one side and then both: the
+       derivative's kernels of wider heads. *)
+    { b with dtype = named "bfloat16"; dk = 128; dv = 128; tq = 40; tk = 64 };
+    { b with dtype = named "float16"; dk = 96; dv = 64; tq = 20; tk = 33 };
+    { b with dtype = named "bfloat16"; dk = 64; dv = 128; tq = 20; tk = 33; mask = Unmasked };
+    (* Rows and keys either side of Metal's tiles of 8: a key head a
+       query head, so a tile's rows are one head's. *)
+    { b with dtype = named "float16"; hk = b.hq; tq = 7; tk = 9 };
+    { b with dtype = named "float16"; hk = b.hq; tq = 9; tk = 7 };
+    { b with dtype = named "bfloat16"; hk = b.hq; tq = 7; tk = 9 };
+    { b with dtype = named "bfloat16"; hk = b.hq; tq = 9; tk = 7 };
+    (* Tiles the mask shows whole, on a tensor core: their pairs hidden by
+       the row's length alone, and by their page's entry alone. *)
+    { b with dtype = named "bfloat16"; mask = Reach; seed = 4; lengths = Some [| 290 |] };
+    { b with dtype = named "float16"; mask = Reach; seed = 4; page = Some 16; holes = true; tk = 320 };
+  ]
 
 (* Inputs *)
 

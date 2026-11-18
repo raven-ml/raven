@@ -662,6 +662,8 @@ let () =
          group "jit within nx's bound of a float64 reference"
            (let dts = Nx.Dtype.[ Any Nx.float16; Any Nx.bfloat16; Any Nx.float32; Any Nx.float64 ] in
             [
+              (* Every target's examples: those of a GPU kernel's shapes
+                 are test_jit_gpu's. *)
               prop
                 ~examples:(Rune_support.Attentions.examples dts)
                 ~count:6 "every dtype"

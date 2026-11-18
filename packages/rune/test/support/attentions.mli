@@ -83,17 +83,28 @@ val gen : Nx.Dtype.any list -> t Windtrap.Gen.t
 val examples : Nx.Dtype.any list -> t list
 (** [examples dts] is cases each draw may miss, of [dts] in turn: a decode
     step of 64 query heads over 8 key heads and 1000 keys, which splits its
-    keys, a prefill of 300 rows under each mask, zero-size shapes; then, of
-    [dts]'s bfloat16 and float16 where it has them, gpt-oss's decode step
-    under captured positions over 200 keys, keys of 24 dimensions and
-    values of 72, keys and values of 96 and 128 dimensions, 1000 faint
-    weights on positive values, which fails the
-    bound where a product drops float16's subnormal weights, and rows and
-    keys of 7 and 9 with a key head a query head, and prefills of 300 rows
-    under [Reach], whose tiles the mask shows whole hide pairs by a row's
-    length, by page entries out of range over 320 keys, or by a causal
-    window of 100 keys; and of each dtype a prefill of 128 rows of sums of
+    keys; prefills of 300 rows with no mask and rising scores, under
+    [Window] with positive values, [Documents], [Blocks] with ALiBi, [Opaque]
+    with lengths and NaN past them, and [Spans] at an odd and an even seed;
+    zero-size shapes, values of no column, 40 rows over paged keys with
+    entries out of range, and keys of 768 dimensions. Then, of [dts]'s
+    float32, bfloat16 and float16 where it has them: a float32 prefill of 300
+    rows under [Blocks] with ALiBi, whose gradients underflow; gpt-oss's
+    decode step under captured positions over 200 keys; 1000 faint weights on
+    positive values, which fails the bound where a product drops float16's
+    subnormal weights; and a prefill of 300 rows under [Reach]'s causal
+    window of 100 keys. Last, of each dtype, a prefill of 128 rows of sums of
     zeros. *)
+
+val kernel_examples : Nx.Dtype.any list -> t list
+(** [kernel_examples dts] is cases of a GPU kernel's shapes, of [dts]'s
+    bfloat16 and float16 where it has them: keys of 24 dimensions and values
+    of 72, a tensor core's step of K; keys and values of 96 and 128
+    dimensions, the derivative's kernels of wider heads; rows and keys of 7
+    and 9 with a key head a query head, either side of Metal's tiles of 8;
+    and prefills of 300 rows under [Reach], whose tiles a tensor core's mask
+    shows whole hide pairs by a row's length, or by page entries out of
+    range over 320 keys. *)
 
 val heads : Nx.Dtype.any list -> t list
 (** [heads dts] is cases of each of [dts] whose keys and values have [36], [64],

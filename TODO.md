@@ -137,16 +137,15 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   Found by the TARGETFACTS audit (_plans/consolidate/targetfacts, A3);
   measured by attention2 M3, in its adjudication's amendment
   (_plans/tessera-port/design/attention2/adjudication.md)
-- rune's attention props "every dtype" (test_attention.ml:667) and, on the
-  GPU, "its gradient mapped by vmap" (test_jit_gpu.ml:3369) take 10-15 s
-  on an idle fudge. At a load of 30-60 on its 14 cores they pass the 60 s
-  `WINDTRAP_TIMEOUT` (dune:53) and fail the runtest; a rerun passes (10.7
-  s at load 14). Nearly all of it is cold compiles, one program a case:
-  host "every dtype" 10.2 s cold (9.7 s jit for 37 programs, clang about
-  half), 1.9 s warm; GPU "mapped by vmap" 17.3 s cold (13.4 s jit, 36
-  programs), 3.1 s warm. A case at tq/tk 7-9 compiles in 0.1 s against
-  0.25-0.5 s at 300, so smaller shapes, where a case's comment allows, cut
-  it. Found by the TARGETFACTS audit and CODEPATH design A
+- rune's GPU attention prop "its gradient mapped by vmap"
+  (test_jit_gpu.ml:3381) took 17.3 s cold on an idle fudge (36 programs)
+  and passed the 60 s `WINDTRAP_TIMEOUT` (dune:53) at a load of 30-60. I-X
+  cut its examples from 32 to 28, and the host's "every dtype" from 31 to
+  21 (10.1 to 7.7 s cold at load 5; not measured at load 30). The vmap
+  prop's time on CUDA is unmeasured until the I-X GPU gate
+  (_plans/tessera-port/todo-triage/batches.md 1l): delete this entry if it
+  shows headroom, else give the prop its own `~timeout`. Found by the
+  TARGETFACTS audit and CODEPATH design A
 - rune states a compiled complex contraction's part within
   `γ(β + 2) Σ(|ar br| + |ai bi|)`, β = β(K) (rune.mli:1706-1707,
   lower_reduce.mli:143-145), while `Nx.contract` and the kernel contract

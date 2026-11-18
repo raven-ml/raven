@@ -442,17 +442,31 @@ let head_id (c : Attentions.t) =
   let (Nx.Dtype.Any dt) = c.dtype in
   Printf.sprintf "%s dk %d dv %d" (Nx.Dtype.name dt) c.dk c.dv
 
+(* The forward law's examples: every target's, and those of the kernels'
+   shapes. *)
+let attention_examples =
+  Attentions.examples attention_dtypes
+  @ Attentions.kernel_examples attention_dtypes
+
 (* The gradient law's examples: the forward's, and its bfloat16 prefill
    with lse's cotangent alone. *)
 let grad_examples =
-  let ex = Attentions.examples attention_dtypes in
-  ex @ [ { (List.nth ex 1) with seed = 1 } ]
+  attention_examples @ [ { (List.nth attention_examples 1) with seed = 1 } ]
 
 (* A case vmap maps: dense keys, no lengths, two lead indices or more, and
    no mask that captures an array along the lead axes. *)
 let mappable (c : Attentions.t) =
   let mask = if c.mask = Spans then Attentions.Positions else c.mask in
   { c with page = None; lengths = None; lead = max 2 c.lead; mask }
+
+(* The mapped gradient's examples: the gradient's but those of pages or of a
+   [Spans] mask, whose point mapping drops, mapped. *)
+let mapped_examples =
+  List.filter_map
+    (fun (c : Attentions.t) ->
+      if c.page <> None || c.mask = Attentions.Spans then None
+      else Some (mappable c))
+    grad_examples
 
 (* The prefix law on the GPU, a float64 case discarded where its kernels lack
    float64. *)
@@ -3354,8 +3368,7 @@ let () =
             add shapes of their own. *)
          group "attention"
            [
-             prop ~count:4
-               ~examples:(Attentions.examples attention_dtypes)
+             prop ~count:4 ~examples:attention_examples
                "jit holds nx's bound against a float64 reference"
                (Gen.with_pp Attentions.pp (Attentions.gen attention_dtypes))
                attention;
@@ -3364,8 +3377,7 @@ let () =
                 reference"
                (Gen.with_pp Attentions.pp (Attentions.gen attention_dtypes))
                (attention_grad ~vmap:false);
-             prop ~count:4
-               ~examples:(List.map mappable grad_examples)
+             prop ~count:4 ~examples:mapped_examples
                "its gradient mapped by vmap holds rune's bound against a \
                 float64 reference"
                (Gen.with_pp Attentions.pp
