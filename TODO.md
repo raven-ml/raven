@@ -83,9 +83,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - Metal's renderer emits no launch bound; its `local_threads_max` of 1024
   is a maximum a pipeline may refuse, and Mac2's AMD GPUs may run 64-wide
   SIMD groups, which `simd_threads` does not state
-- `apply_opt` checks a workgroup's shared memory but not its threads
-  against `local_threads_max` (`postrange.ml`), so BEAM can emit a launch
-  the target refuses (1024 threads on gfx9's wave64, 512 on Apple2/3)
 - D404's launch member caps, NVRTC's 64 and Metal's 40, name no fudge
   measurement, which the ledger's header asks of a speed measured elsewhere
 - `beam_search`'s disk key names no device part, so a search timed on one
