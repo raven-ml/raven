@@ -210,7 +210,17 @@
       upcast again by 2. The units move no sum's order: blocked or not, its
       reduce is unrolled alike. Where one of the two upcasts took its axis
       whole, the output axis that the same accesses index takes its place,
-      as the width of a projection's heads takes the heads'.
+      as the width of a projection's heads takes the heads'. Where both
+      operands of its product read the unrolled axis at unit stride, as a
+      product by the transpose of a matrix stored [[outputs; inputs]] does,
+      and so a layer's input gradient [dY Wᵀ] whatever [W]'s layout, and
+      attention's scores [q kᵀ], no output axis lies along adjacent
+      addresses, so what the unroll leaves of the axis splits, blocked or
+      not, into the first local threads, as many as read in their runs of 4
+      one sector of 32 bytes of the widest operand's row, 2 for [float32] and
+      4 for a [bfloat16] product no core takes, halved while they do not
+      divide it or leave each fewer than 16 trips; their partials are added
+      through shared memory, as a group's are.
     - The last unrollable axis of any other kernel is unrolled whole if of
       size at most 32 (and a second one if both are at most 3), or else by
       4, when at most 4 lanes are upcast or no reduce axis is, and fewer
@@ -221,12 +231,16 @@
       size that take threads ({!Postrange.Scheduler.threadless}) become
       local: up to three axes, those some access does not index first, split
       by the first of 32 (axis [0] only), 16, 8, 4, 3 and 2 that divides them
-      while the workgroup stays within 128 threads. A blocked contraction
-      keeps that split where it lays a power of two of at least 2 threads
-      along the later of its two axes; else 16 or 8 threads, whichever pads
-      it less, lie along the later axis and the rest of 128 along the other,
-      each axis padded to its threads ({!Opt.t.Padto}), unless one takes no
-      threads or a pad is refused.
+      while the workgroup stays within 128 threads, those along a reduce
+      counted. A blocked contraction keeps that split where it lays a power
+      of two of at least 2 threads along the later of its two axes; else 16
+      or 8 threads, whichever pads it less, lie along the later axis and the
+      rest of 128 along the other, each axis padded to its threads
+      ({!Opt.t.Padto}), unless one takes no threads or a pad is refused. One
+      whose reduce took threads, blocked or not, lays in their place along
+      the later axis the largest power of two whose square the lanes of a
+      SIMD group beside those threads hold, 4 beside 2 on CUDA, so that a load
+      reads as many rows of each operand.
 
     {1:host The host}
 

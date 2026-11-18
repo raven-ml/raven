@@ -1867,6 +1867,40 @@ let test_padded_bias () =
         (Float.abs (y.(i) -. z)))
     exact
 
+(* A product by the transpose of a matrix stored [n; k], [outputs; inputs]
+   as a checkpoint stores a linear layer's: both operands lie along the
+   reduce, which the kernel splits between pairs of threads, adding their
+   partials through shared memory, and its 440 columns pad to the threads
+   across them. Within the bound of a sum of [k + 1] terms. *)
+let test_transposed_product () =
+  let _, (module S) = on_gpu () in
+  let m = 4096 and k = 440 and n = 440 in
+  let draw seed s =
+    let x = Nx.Rng.uniform ~key:(Nx.Rng.key seed) Nx.float32 s in
+    Nx.sub_s (Nx.mul_s x 4.) 2.
+  in
+  let a = draw 1 [| m; k |] and w = draw 2 [| n; k |] in
+  let y =
+    Rune.jit
+      Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+      (fun a w -> Nx.matmul a (Nx.matrix_transpose w))
+      (Nx.place S.on a) (Nx.place S.on w)
+  in
+  let y = Nx.to_array (Nx.cast Nx.float64 (host y)) in
+  let d x = Nx.cast Nx.float64 x in
+  let b = Nx.matrix_transpose (d w) in
+  let exact = Nx.to_array (Nx.matmul (d a) b) in
+  let mass = Nx.to_array (Nx.matmul (Nx.abs (d a)) (Nx.abs b)) in
+  let u = 0x1p-24 in
+  Array.iteri
+    (fun i z ->
+      let e = product (k + 1) *. mass.(i) in
+      less
+        ~msg:(Printf.sprintf "[%d; %d]" (i / n) (i mod n))
+        float_exact ~than:(e +. (u *. (Float.abs z +. e)))
+        (Float.abs (y.(i) -. z)))
+    exact
+
 (* Sixteen products of [1] by [1; t; ...; t], [t = 255 2^-31] just under
    float32's [u], every value a bfloat16: rows of ones by columns of these
    terms, [32; 16] by [16; 32], extents a core takes. A sum that keeps
@@ -3417,6 +3451,10 @@ let () =
                "a blocked product padded to its threads, plus a bias, is \
                 within its bound"
                test_padded_bias;
+             test
+               "a product by a transposed matrix, its reduce split between \
+                threads, is within its bound"
+               test_transposed_product;
              test
                "a projection into heads, blocked over their width, is within \
                 its bound"

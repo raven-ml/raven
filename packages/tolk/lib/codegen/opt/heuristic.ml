@@ -1273,9 +1273,54 @@ let unit_workgroups = 2
 
 (* What {!block} did to a contraction: nothing, as it does not block it
    ([Free]); its unroll alone, as its threads would not fill the target's
-   units ([Short]); or its unroll and the second upcasts of its two axes,
-   whose ranges it gives ([Blocked]). *)
-type blocking = Free | Short | Blocked of Ops.t * Ops.t
+   units ([Short]); or its unroll and the second upcasts of its two axes
+   ([Blocked]). Both give the ranges of the two axes. *)
+type blocking = Free | Short of Ops.t * Ops.t | Blocked of Ops.t * Ops.t
+
+(* The bytes of a sector, the unit in which a GPU's first-level cache reads
+   global memory. *)
+let sector_bytes = 32
+
+(* Whether each operand of [k]'s contraction reads the range [r] at unit
+   stride: both are laid out along [r]. *)
+let along_reduce k r =
+  List.for_all (fun b -> List.memq r (units b)) (operands k)
+
+(* A contraction in registers ({!block}) whose operands are both laid out
+   along its reduce, as [x @ matrix_transpose w] reads a matrix stored as
+   [outputs; inputs], has no output axis along which adjacent lanes read
+   adjacent addresses: each lane loads 16 bytes of the reduce from rows of its
+   own, so a SIMD group's load of 16 lanes across 16 columns reads 16 lines,
+   where an operand laid out along the columns reads 4. What its unroll [r]
+   leaves of the reduce then splits into the first local threads, the fastest
+   ({!locals}), as many as read in their runs a sector of the widest
+   operand's row, 2 for float32, halved while they do not divide it or leave
+   each fewer than [split_trips] trips; the lanes they leave a SIMD group lie
+   evenly across the two output axes, 4 by 4 for float32
+   ({!blocked_threads}), so that a load reads 4 rows of each operand, a
+   sector of each. The threads add their partials through shared memory, as
+   a group's do ({!group}), a tail whose instructions a short reduce does not
+   repay: on sm_89 a float32 product summing 64 values, 8 trips once split,
+   runs 8.8% more warp instructions and 168 registers against 128, one
+   workgroup less on each unit; at 16 trips, 4.4%. Short of the units or
+   not, the split is the same, which keeps each output's order of terms. *)
+let split_trips = 16
+
+let split_reduce k r =
+  let itemsize =
+    List.fold_left (fun n b -> max n (Dtype.itemsize (dtype b))) 1 (operands k)
+  in
+  let size = size_at k (axis_of k r) in
+  let rec split t =
+    if
+      t > 1
+      && not
+           (divisible_at k r t
+           && Bigint.geq size (Bigint.of_int (t * split_trips))
+           && try_split k (axis_of k r) t Opt.Local)
+    then split (t / 2)
+  in
+  split (sector_bytes / (4 * itemsize))
 
 (* A contraction on a GPU, summed in 4 bytes or fewer, whose two upcast
    output axes are each reused, an operand not reading it, is blocked: each
@@ -1360,9 +1405,14 @@ let block k upcasted =
       | [] -> ()
       | dims ->
           let axis = last dims in
-          if divisible (shape_at k axis) 4 then
-            ignore (try_split k axis 4 Opt.Upcast));
-      if blocked then Blocked (ra, rb) else Short
+          let r = List.nth (K.rngs k) axis in
+          let along = along_reduce k r in
+          if
+            divisible (shape_at k axis) 4
+            && try_split k axis 4 Opt.Upcast
+            && along
+          then split_reduce k r);
+      if blocked then Blocked (ra, rb) else Short (ra, rb)
   | _ -> Free
 
 (* The threads of a blocked contraction's workgroup along the two axes [rs]
@@ -1375,15 +1425,20 @@ let block k upcasted =
    at 4.6 TFLOP/s, and padded to 448 columns at 17.2; 144 columns, 18 runs,
    ran so at 13.6-14.9 padded to 192, a third more work. An axis that takes
    no threads, as [ranked] omits it, or a pad, which refuses past four times
-   the work, that would be refused leaves [greedy]'s. *)
-let blocked_threads k ranked greedy (ra, rb) =
+   the work, that would be refused leaves [greedy]'s.
+
+   Where [held] threads already split the reduce ({!split_reduce}), the two
+   axes share the workgroup's other threads, and [across] is the largest
+   power of two whose square the lanes of a SIMD group beside them hold,
+   whatever [greedy] lays. *)
+let blocked_threads k ~held ranked greedy (ra, rb) =
   match (rest_of k ra, rest_of k rb) with
   | Some ua, Some ub ->
       let a0 = axis_of k ua and a1 = axis_of k ub in
       let later = max a0 a1 and earlier = min a0 a1 in
       let on axis = Option.value ~default:1 (List.assoc_opt axis greedy) in
       let pow2 n = n >= 2 && n land (n - 1) = 0 in
-      if pow2 (on later) then greedy
+      if held = 1 && pow2 (on later) then greedy
       else if not (List.mem later ranked && List.mem earlier ranked) then greedy
       else
         let waste n =
@@ -1393,9 +1448,16 @@ let blocked_threads k ranked greedy (ra, rb) =
               Bigint.sub (Bigint.mul (Bigint.cdiv s n) n) s
           | None -> Bigint.zero
         in
-        let across = if Bigint.leq (waste 16) (waste 8) then 16 else 8 in
+        let rec root p =
+          if 4 * p * p <= lanes k / held then root (2 * p) else p
+        in
+        let across =
+          if held > 1 then root 1
+          else if Bigint.leq (waste 16) (waste 8) then 16
+          else 8
+        in
         let plan =
-          [ (later, across); (earlier, workgroup_threads / across) ]
+          [ (later, across); (earlier, workgroup_threads / held / across) ]
         in
         let pads k =
           List.for_all
@@ -1410,6 +1472,12 @@ let blocked_threads k ranked greedy (ra, rb) =
 (* prioritize making expand axes local, of those every call and custom code
    reads; a blocked contraction's ({!block}) take its plan *)
 let locals ?blocked k =
+  (* The threads a split of the reduce already took ({!split_reduce}). *)
+  let held =
+    List.fold_left
+      (fun n axis -> n * Bigint.to_int (size_at k axis))
+      1 (K.axes_of k [ Local ])
+  in
   let ranking =
     List.filter_map
       (fun axis ->
@@ -1433,7 +1501,7 @@ let locals ?blocked k =
           List.find_opt
             (fun x ->
               divisible (shape_at k axis) x
-              && local_size * x <= workgroup_threads)
+              && local_size * x * held <= workgroup_threads)
             candidates
         with
         | Some sz -> to_local @ [ (axis, sz) ]
@@ -1443,7 +1511,7 @@ let locals ?blocked k =
   in
   let to_local =
     match blocked with
-    | Some rs -> blocked_threads k (List.map snd ranking) greedy rs
+    | Some rs -> blocked_threads k ~held (List.map snd ranking) greedy rs
     | None -> greedy
   in
   let first_three = List.filteri (fun i _ -> i < 3) to_local in
@@ -1574,15 +1642,18 @@ let general ~core_threads k =
           let c = K.copy k in
           match block c (upcast_more ~four_first:true c) with
           | Free -> false
-          | Short | Blocked _ -> true
+          | Short _ | Blocked _ -> true
         in
         let four_first = four_first ~core_threads k && blocks () in
         let blocking = block k (upcast_more ~four_first k) in
-        (match blocking with Free -> unroll k | Short | Blocked _ -> ());
+        (match blocking with Free -> unroll k | Short _ | Blocked _ -> ());
         upcast_one k;
+        (* A reduce split into threads lays the axes' threads as a blocked
+           contraction's, short of the units or not. *)
         match blocking with
         | Blocked (ra, rb) -> Some (ra, rb)
-        | Free | Short -> None
+        | Short (ra, rb) when K.axes_of k [ Local ] <> [] -> Some (ra, rb)
+        | Free | Short _ -> None
       end
     in
     if (K.ren k).has_local then locals ?blocked k

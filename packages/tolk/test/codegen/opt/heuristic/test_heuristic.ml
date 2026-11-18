@@ -303,9 +303,22 @@ let reuse k types o =
     (ranges_at k ~reduce:false types)
 
 (* Whether [o] streams a contraction: its threads split a contracted axis
-   without grouping from the top or a tensor core. *)
+   before any unroll of one, without grouping from the top or a tensor core.
+   A contraction in registers whose operands are both laid out along its
+   reduce splits into threads what its unroll leaves of it. A range a split
+   makes is numbered after every other, so the first made is the least. *)
 let streams o =
-  ranges_at o ~reduce:true [ Local ] <> []
+  let first types =
+    List.sort Stdlib.compare
+      (List.map Ops.axis_id (ranges_at o ~reduce:true types))
+  in
+  let before_unroll =
+    match (first [ Local ], first [ Upcast ]) with
+    | [], _ -> false
+    | _ :: _, [] -> true
+    | l :: _, u :: _ -> l < u
+  in
+  before_unroll
   && not
        (List.exists
           (function
@@ -3044,21 +3057,87 @@ let widths =
       K.convert_loop_to_global k;
       equal int threads (group_threads k))
 
+(* The extent of the lanes along which a load reads at unit stride, the run
+   each thread loads at once, or 1. *)
+let run_of o b =
+  let i = Ops.get_idx (Ops.nth b 1) in
+  List.fold_left
+    (fun n r -> if stride r i = Some Bigint.one then size r else n)
+    Bigint.one
+    (ranges_at o ~reduce:true [ Upcast ] @ ranges_at o ~reduce:false [ Upcast ])
+
 let fastest_threads_coalesce =
   cases
-    "a group's fastest threads read at unit stride where a load reads a reduce \
-     or output axis so"
+    "a group's fastest threads read consecutive runs where a load reads a \
+     reduce or output axis at unit stride"
     ~id:(fun (c, _, _) -> c.name)
     grouped_cases
     (fun (_, _, o) ->
       match fastest o with
       | None -> fail "the kernel has no threads"
       | Some r ->
-          let strides =
-            List.map (fun b -> stride r (Ops.get_idx (Ops.nth b 1))) (loads o)
+          let adjacent b =
+            stride r (Ops.get_idx (Ops.nth b 1)) = Some (run_of o b)
           in
-          mem ~msg:"the loads' strides along it" (option bigint)
-            (Some Bigint.one) strides)
+          is_true ~msg:"a load reads runs adjacent along it"
+            (List.exists adjacent (loads o)))
+
+(* A contraction in registers whose operands are both laid out along its
+   reduce, as [x @ matrix_transpose w] reads a matrix stored [outputs;
+   inputs], splits what its unroll leaves of the reduce into its fastest
+   threads, so that a SIMD group's load reads a 32-byte sector of each row,
+   in consecutive runs of 16 bytes, where each thread keeps at least 16
+   trips: a sum of 128 values splits, of 64 (matmul_256_kt) or 16 (scores)
+   does not. Its twin whose matrix is laid out along its columns keeps its
+   threads across them. Products of 256 rows by 256 are short of sm_89's
+   units, blocked on the renderers that state none. *)
+let along_reduce_threads =
+  let golden name ren = lazy (optimised_on (renderer ren) name) in
+  let sm name = lazy (optimised_on (Lazy.force sm_89) name) in
+  let reduce_thread o =
+    match fastest o with
+    | Some r -> List.memq r (ranges_at o ~reduce:true [ Local ])
+    | None -> false
+  in
+  group "a contraction laid out along its reduce"
+    [
+      cases "takes threads along it, each loading the next run, a sector a \
+             row"
+        ~id:fst
+        [
+          ("matmul_256_kt_128 on cuda", golden "matmul_256_kt_128" "cuda");
+          ("matmul_256_kt_128 on amd", golden "matmul_256_kt_128" "amd");
+          ("matmul_256_kt_128 on sm_89", sm "matmul_256_kt_128");
+        ]
+        (fun (_, o) ->
+          let o = Lazy.force o in
+          is_true ~msg:"the fastest thread splits the reduce" (reduce_thread o);
+          let r = Option.get (fastest o) in
+          List.iter
+            (fun b ->
+              let run = run_of o b in
+              equal ~msg:"the stride of the next thread" (option bigint)
+                (Some run) (stride r (Ops.get_idx (Ops.nth b 1)));
+              equal ~msg:"the bytes a load reads of a row" int 32
+                (Bigint.to_int (Bigint.mul run (size r))
+                * Dtype.itemsize (Ops.dtype b)))
+            (loads o));
+      cases "keeps its threads across the columns where its matrix lies along \
+             them, or its reduce leaves a thread fewer than 16 trips"
+        ~id:fst
+        [
+          ("matmul_256_kt on cuda", golden "matmul_256_kt" "cuda");
+          ("matmul_256_kt on sm_89", sm "matmul_256_kt");
+          ("scores on cuda", golden "scores" "cuda");
+          ("matmul_256 on cuda", golden "matmul_256" "cuda");
+          ("matmul_256 on amd", golden "matmul_256" "amd");
+          ("matmul_256 on sm_89", sm "matmul_256");
+          ("matmul_440 on cuda", golden "matmul_440" "cuda");
+        ]
+        (fun (_, o) ->
+          is_false ~msg:"the fastest thread splits the reduce"
+            (reduce_thread (Lazy.force o)));
+    ]
 
 (* [core_fits]
 
@@ -3471,6 +3550,7 @@ let () =
          starved;
          keeps_kernel_writes;
          fastest_threads_coalesce;
+         along_reduce_threads;
          widths;
          group "streaming"
            [

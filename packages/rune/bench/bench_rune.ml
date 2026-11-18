@@ -2169,6 +2169,57 @@ let gpu_rows g =
               let f = Rune.jit (pair_fn ()) Nx.matmul in
               fun () -> ignore (synced (f x w)));
         };
+      (* The same product by a matrix stored [1320; 440], [outputs; inputs]
+         as a checkpoint stores a linear layer's, read through its
+         transpose: both operands lie along the reduce. *)
+      on_gpu g "matmul-float32-transposed-16384x440x1320"
+        {
+          at =
+            (fun at ->
+              let draw i s =
+                Nx.place at (Nx.Rng.uniform ~key:(Nx.Rng.key i) f32 s)
+              in
+              let x = draw 60 [| 16384; 440 |] and w = draw 61 [| 1320; 440 |] in
+              let f =
+                Rune.jit (pair_fn ()) (fun x w ->
+                    Nx.matmul x (Nx.matrix_transpose w))
+              in
+              fun () -> ignore (synced (f x w)));
+        };
+      (* A transposed product summing 64 values, 16 runs of 4: too short a
+         reduce to split between threads (16 trips each), as attention's
+         scores at a head width of 64. *)
+      on_gpu g "matmul-float32-transposed-16384x64x1320"
+        {
+          at =
+            (fun at ->
+              let draw i s =
+                Nx.place at (Nx.Rng.uniform ~key:(Nx.Rng.key i) f32 s)
+              in
+              let x = draw 64 [| 16384; 64 |] and w = draw 65 [| 1320; 64 |] in
+              let f =
+                Rune.jit (pair_fn ()) (fun x w ->
+                    Nx.matmul x (Nx.matrix_transpose w))
+              in
+              fun () -> ignore (synced (f x w)));
+        };
+      (* The input gradient of the C-order layer above, dY Wᵀ: both
+         operands lie along the reduce, the layer's 1320 outputs. *)
+      on_gpu g "matmul-float32-input-gradient-16384x1320x440"
+        {
+          at =
+            (fun at ->
+              let draw i s =
+                Nx.place at (Nx.Rng.uniform ~key:(Nx.Rng.key i) f32 s)
+              in
+              let dy = draw 66 [| 16384; 1320 |]
+              and w = draw 61 [| 440; 1320 |] in
+              let f =
+                Rune.jit (pair_fn ()) (fun dy w ->
+                    Nx.matmul dy (Nx.matrix_transpose w))
+              in
+              fun () -> ignore (synced (f dy w)));
+        };
       (* The same product laid out by attention's 4 heads of 110, as an
          encoder's projection writes it: the heads, upcast whole, lend their
          second upcast to the width the same operands read. *)

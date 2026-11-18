@@ -156,6 +156,11 @@ KERNELS = {
     "matmul_768": lambda: last(empty(2048, 16) @ empty(16, 768)),
     "matmul_48": lambda: last(empty(48, 64) @ empty(64, 1024)),
     "matmul_440": lambda: last(empty(256, 64) @ empty(64, 440)),
+    # matmul_256 by a matrix stored [outputs; inputs], as checkpoints store a linear layer's, read through its transpose: both
+    # operands are laid out along the reduce
+    "matmul_256_kt": lambda: last(empty(256, 64) @ empty(256, 64).T),
+    # the same summing 128 inputs, long enough a sum to split between threads
+    "matmul_256_kt_128": lambda: last(empty(256, 128) @ empty(256, 128).T),
     # batches of a product by 768 columns, 4 of 512 rows or 2 of 1024, alone and plus a bias of each output, which the batches do
     # not read and which shares no element of the product: 2 batches, which neither 3 nor 4 divides, are upcast alike with the
     # bias or without; 4 batches with the bias take the batches by 4 too, which leaves nothing to block

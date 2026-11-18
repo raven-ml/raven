@@ -5914,6 +5914,8 @@ against 2.77).
   while fewer than 32 lanes are upcast; the unroll needs fewer than 64; the
   locals stop at 128 threads; the same at `6b7b018da`).
 - **tolk:** `Heuristic.four_first`, `Heuristic.block`, `Heuristic.upcast_more`,
+  `Heuristic.along_reduce`, `Heuristic.split_reduce`,
+  `Heuristic.sector_bytes`, `Heuristic.split_trips`,
   `Heuristic.blocked_threads`, `Heuristic.locals` and `Heuristic.general`.
 - **Differs:**
   - on a renderer with local indices, a contraction summed in 4 bytes or
@@ -5932,6 +5934,20 @@ against 2.77).
     unless a pad is refused;
   - where one of the two upcasts took its axis whole, the output axis that
     the same operands of the product read takes its second upcast;
+  - where both operands of the product read the unrolled axis at unit
+    stride, as a product by the transpose of a matrix stored `[outputs;
+    inputs]` does, and so every float32 input gradient `dY Wᵀ` whatever
+    `W`'s layout, attention's scores `q kᵀ` as a product, and on sm_75 a
+    bfloat16 product no core takes, what the unroll leaves of it splits,
+    blocked or not, into the first local threads (`lidx0`), as many as read
+    in their runs of 4 a 32-byte sector of the widest operand's row, 2 for
+    float32 and 4 for bfloat16, halved while they do not divide it or leave
+    each fewer than 16 trips; their partials meet through shared memory, as
+    a group's do. The later axis then takes the largest power of two of
+    threads whose square the SIMD group's other lanes hold, 4 on CUDA, and
+    the other the rest of the workgroup's 128, each padded as above, where
+    tinygrad's 16 lanes across the columns each load 16 bytes of a row of
+    their own;
   - a kernel upcast past those two axes' 16 lanes, as the masked upcasts
     take a materialised mask's axes whole, is not blocked, nor a sum in 8
     bytes;
@@ -5943,7 +5959,13 @@ against 2.77).
   of 128 beat tinygrad's 4 by 4 on fudge's RTX 5000 Ada wherever each SM
   holds two of them, which at the 255 registers a thread may take fill its
   64K. The unroll by 4 on both sides of that floor keeps each output's sum
-  in one order whatever `units` a target states, which moves speed alone.
+  in one order whatever `units` a target states, which moves speed alone,
+  and so does the split of a reduce both operands lie along. That split
+  serves TESSERA's students loaded from PyTorch's `[outputs; inputs]`
+  weights, whose products ran at 8.3-8.7 TFLOP/s against 12.8-13.9 with the
+  same weights in C order; its own gain is to measure on fudge (rune's
+  `Cuda/matmul-float32-transposed-16384x440x1320` against
+  `Cuda/matmul-float32-16384x440x1320`).
 - **Pinned by:** `Tolk.Heuristic`'s `a contraction in registers` cases
   (`matmul`, `matmul_256`, `scores`, `matmul_768`, `batched_768`,
   `two_batches_768`, `matmul_440`, padded, and `heads_projection` and
@@ -5954,14 +5976,19 @@ against 2.77).
   as `two_batches_768`; `matmul_1000`, `matmul_48`,
   `scores_biased`, `scores_biased_first`, `scores_masked` and
   `batched_768_biased`, whose upcast loop takes its batches too, not
-  blocked),
+  blocked), and `a contraction laid out along its reduce` (`matmul_256_kt_128`
+  with its reduce split, short of sm_89's units or not; `matmul_256_kt` and
+  `scores`, under 16 trips, and `matmul_256` and `matmul_440` without),
   with the layouts in the suite's `.tolk` files, and `a kernel's sums keep
   their order whatever units its renderer states`; rune's `test_jit_gpu`
   `a blocked product padded to its threads, plus a bias, is within its
   bound` and `a projection into heads, blocked over their width, is within
   its bound`, blocked on sm_89; the tolk bench's `contract/f32-2048` and
   `contract/qk-f32-2048` rows and rune's
-  `Cuda/matmul-float32-16384x440x1320` and
+  `Cuda/matmul-float32-16384x440x1320`,
+  `Cuda/matmul-float32-transposed-16384x440x1320`,
+  `Cuda/matmul-float32-transposed-16384x64x1320`,
+  `Cuda/matmul-float32-input-gradient-16384x1320x440` and
   `Cuda/matmul-float32-heads-16384x440x4x110` on fudge, their baselines
   pending the scheduled re-record.
 
