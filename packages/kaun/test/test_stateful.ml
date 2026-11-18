@@ -60,7 +60,7 @@ let test_bn_channels_last () =
 let test_bn_affine_after_normalization () =
   let params, stats = Batch_norm.init ~features:2 Nx.Host.on in
   let params = { params with Batch_norm.gamma = vec [| 2.0; 0.5 |] } in
-  let params = { params with Batch_norm.beta = vec [| 3.0; -1.0 |] } in
+  let params = { params with Batch_norm.beta = Some (vec [| 3.0; -1.0 |]) } in
   let y, _ = Batch_norm.apply params stats ~training:true (Lazy.force bn_x) in
   check_arr ~eps:1e-4 ~msg:"mean is beta" [| 3.0; -1.0 |]
     (Nx.mean ~axes:[ 0 ] y);
@@ -71,7 +71,7 @@ let test_bn_affine_after_normalization () =
    mean: its batch's mean of 1000.1 is not exact. *)
 let test_bn_constant_feature () =
   let params, stats = Batch_norm.init ~features:2 Nx.Host.on in
-  let params = { params with Batch_norm.beta = vec [| 0.5; -2.0 |] } in
+  let params = { params with Batch_norm.beta = Some (vec [| 0.5; -2.0 |]) } in
   let x =
     t32 [| 768; 2 |]
       (Array.init 1536 (fun i -> if i mod 2 = 0 then 1000.1 else 3.))
@@ -116,7 +116,7 @@ let test_bn_running_stats_converge () =
 let test_bn_eval_uses_running_stats () =
   let params, _ = Batch_norm.init ~features:2 Nx.Host.on in
   let params = { params with Batch_norm.gamma = vec [| 2.0; 1.0 |] } in
-  let params = { params with Batch_norm.beta = vec [| 0.5; 0.0 |] } in
+  let params = { params with Batch_norm.beta = Some (vec [| 0.5; 0.0 |]) } in
   let stats =
     { Batch_norm.Stats.mean = vec [| 1.0; 2.0 |]; var = vec [| 4.0; 9.0 |] }
   in
@@ -135,10 +135,43 @@ let test_bn_eval_uses_running_stats () =
   check_arr ~msg:"analytic eval output" expected (Nx.reshape [| 4 |] y);
   is_true ~msg:"eval returns the stats unchanged" (stats' == stats)
 
+(* Without a shift nothing is added: training is [Nx.standardize] scaled by
+   [gamma] to the bit, and eval the running-statistics affine without
+   [beta]. *)
+let test_bn_shift_free () =
+  let p, stats = Batch_norm.init ~shift:false ~features:2 Nx.Host.on in
+  is_none ~msg:"init ~shift:false has no shift" p.Batch_norm.beta;
+  let p = { p with Batch_norm.gamma = vec [| -2.0; 0.5 |] } in
+  let x = Lazy.force bn_x in
+  let y, _ = Batch_norm.apply p stats ~training:true x in
+  check_arr ~eps:0. ~msg:"training"
+    (Nx.to_array
+       (Nx.standardize ~axes:[ 0 ] ~eps:1e-5
+          ~scale:(Nx.reshape [| 1; 2 |] p.gamma)
+          x))
+    y;
+  let stats =
+    { Batch_norm.Stats.mean = vec [| 1.0; 2.0 |]; var = vec [| 4.0; 9.0 |] }
+  in
+  let x = t32 [| 2; 2 |] [| 3.0; 5.0; 1.0; -1.0 |] in
+  let y, _ = Batch_norm.apply p stats ~training:false x in
+  let f g m v x = g *. (x -. m) /. sqrt (v +. 1e-5) in
+  check_arr ~msg:"eval"
+    [|
+      f (-2.0) 1.0 4.0 3.0;
+      f 0.5 2.0 9.0 5.0;
+      f (-2.0) 1.0 4.0 1.0;
+      f 0.5 2.0 9.0 (-1.0);
+    |]
+    (Nx.reshape [| 4 |] y)
+
 let test_bn_grads_flow_to_params () =
   let _, stats = Batch_norm.init ~features:2 Nx.Host.on in
   let params =
-    { Batch_norm.gamma = vec [| 1.3; 0.7 |]; beta = vec [| 0.2; -0.4 |] }
+    {
+      Batch_norm.gamma = vec [| 1.3; 0.7 |];
+      beta = Some (vec [| 0.2; -0.4 |]);
+    }
   in
   let x = Lazy.force bn_x in
   let f p =
@@ -157,7 +190,7 @@ let test_bn_grads_flow_to_params () =
   is_true ~msg:"beta gradient is non-zero"
     (Array.exists
        (fun g -> Float.abs g > 1e-3)
-       (Nx.to_array grads.Batch_norm.beta))
+       (Nx.to_array (Option.get grads.Batch_norm.beta)))
 
 let test_bn_stats_saved () =
   let params, _ = Batch_norm.init ~features:2 Nx.Host.on in
@@ -659,6 +692,7 @@ let tests =
           test_bn_running_stats_converge;
         test "eval mode normalizes with the running stats"
           test_bn_eval_uses_running_stats;
+        test "without a shift, nothing is added" test_bn_shift_free;
         test "gradients flow to gamma and beta" test_bn_grads_flow_to_params;
         test "stats are saved and read back under their own field"
           test_bn_stats_saved;

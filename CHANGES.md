@@ -4262,6 +4262,11 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- **Breaking:** `Layer_norm.t` and `Batch_norm.t` hold `beta : 'a option`,
+  and `Layer_norm.make`, `Layer_norm.init` and `Batch_norm.init` take
+  `?shift`, as `Linear` takes `?bias`. A norm made with `~shift:false` has
+  no shift parameter to train, decay or save, and a checkpoint loads only
+  into a norm of its own shift.
 - `Fn.elu`, the exponential linear unit. Its derivative is `alpha` at `0`
   and finite for large inputs, where `exp x` overflows.
 - **Breaking:** `Batch_norm.apply` normalizes the last axis and loses

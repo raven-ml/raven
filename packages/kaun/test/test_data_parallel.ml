@@ -71,7 +71,7 @@ let model_init at =
     ln =
       {
         Layer_norm.gamma = Nx.ones_at at Nx.float32 [| dim |];
-        beta = vec 2 dim;
+        beta = Some (vec 2 dim);
       };
     attn =
       { Attention.q = linear 3; k = linear 5; v = linear 7; out = linear 9 };
@@ -199,7 +199,7 @@ let test_made_at_the_placement () =
   let rms = Rms_norm.init ~dim:4 cut in
   equal ~msg:"Rms_norm.gamma" placement cut (at_of rms.gamma);
   let bn, stats = Batch_norm.init ~features:4 cut in
-  equal ~msg:"Batch_norm.beta" placement cut (at_of bn.beta);
+  equal ~msg:"Batch_norm.beta" placement cut (at_of (Option.get bn.beta));
   equal ~msg:"Batch_norm.Stats.var" placement cut (at_of stats.var);
   let kv = Two.split ~axis:1 in
   let c = Attention.Cache.make ~slots:4 ~kv_heads:2 ~head_dim:2 Nx.float32 kv in

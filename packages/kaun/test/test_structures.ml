@@ -53,26 +53,65 @@ let test_norms () =
     (Nx.Ptree.instantiate (module Embedding))
     (Embedding.make ~key:(Nx.Rng.next_key ()) ~vocab:5 ~dim:2 f32)
     ~visits:(leaves [ "table" ]) ~names:[ "table" ];
-  check_layer ~msg:"layer norm"
-    (Nx.Ptree.instantiate (module Layer_norm))
+  let layer_norm = Nx.Ptree.instantiate (module Layer_norm) in
+  check_layer ~msg:"layer norm" layer_norm
     (Layer_norm.make ~dim:2 f32 Nx.Host.on)
-    ~visits:(leaves [ "gamma"; "beta" ])
+    ~visits:[ "gamma: a leaf"; "beta: Some"; "beta: a leaf" ]
     ~names:[ "gamma"; "beta" ];
+  check_layer ~msg:"layer norm without a shift" layer_norm
+    (Layer_norm.make ~shift:false ~dim:2 f32 Nx.Host.on)
+    ~visits:[ "gamma: a leaf"; "beta: None" ] ~names:[ "gamma" ];
   check_layer ~msg:"rms norm"
     (Nx.Ptree.instantiate (module Rms_norm))
     (Rms_norm.make ~dim:2 f32 Nx.Host.on)
     ~visits:(leaves [ "gamma" ]) ~names:[ "gamma" ];
+  let batch_norm = Nx.Ptree.instantiate (module Batch_norm) in
   let p, s = Batch_norm.init ~features:2 Nx.Host.on in
-  check_layer ~msg:"batch norm"
-    (Nx.Ptree.instantiate (module Batch_norm))
-    p
-    ~visits:(leaves [ "gamma"; "beta" ])
+  check_layer ~msg:"batch norm" batch_norm p
+    ~visits:[ "gamma: a leaf"; "beta: Some"; "beta: a leaf" ]
     ~names:[ "gamma"; "beta" ];
+  check_layer ~msg:"batch norm without a shift" batch_norm
+    (fst (Batch_norm.init ~shift:false ~features:2 Nx.Host.on))
+    ~visits:[ "gamma: a leaf"; "beta: None" ] ~names:[ "gamma" ];
   check_layer ~msg:"batch norm statistics"
     (Nx.Ptree.instantiate (module Batch_norm.Stats))
     s
     ~visits:(leaves [ "mean"; "var" ])
     ~names:[ "mean"; "var" ]
+
+(* A norm's checkpoint loads into a norm of its shift and refuses the other:
+   [Nx_io.Archive.to_value] raises naming an entry [like] owns that no array
+   names, or one [like] names that the file lacks. *)
+let check_shift_refused ~msg s ~shifted ~plain =
+  let save x = Nx_io.Archive.of_value ~prefix:"n" s x in
+  let load ~like a = Nx_io.Archive.to_value ~prefix:"n" s ~like a in
+  let values x = Nx.Ptree.fold s (fun _ t acc -> Nx.to_string t :: acc) x [] in
+  let like = Nx.Ptree.map s (fun _ t -> Nx.zeros_like t) plain in
+  let back = load ~like (save plain) in
+  equal ~msg:(msg ^ ": a shift-free file round-trips") (list string)
+    (visits s plain) (visits s back);
+  equal ~msg:(msg ^ ": its values") (list string) (values plain) (values back);
+  raises_match
+    ~msg:(msg ^ ": a shifted file into a shift-free layer")
+    (Exn.failure ~sub:"n.beta")
+    (fun () -> load ~like:plain (save shifted));
+  raises_match
+    ~msg:(msg ^ ": a shift-free file into a shifted layer")
+    (Exn.failure ~sub:"n.beta")
+    (fun () -> load ~like:shifted (save plain))
+
+let test_norm_checkpoints () =
+  let at = Nx.Host.on in
+  check_shift_refused ~msg:"layer norm"
+    (Nx.Ptree.instantiate (module Layer_norm))
+    ~shifted:(Layer_norm.make ~dim:2 f32 at)
+    ~plain:
+      { Layer_norm.gamma = Nx.create f32 [| 2 |] [| 0.5; -3. |]; beta = None };
+  check_shift_refused ~msg:"batch norm"
+    (Nx.Ptree.instantiate (module Batch_norm))
+    ~shifted:(fst (Batch_norm.init ~features:2 at))
+    ~plain:
+      { Batch_norm.gamma = Nx.create f32 [| 2 |] [| 2.; 0.25 |]; beta = None }
 
 let test_attention () =
   let paths = [ "q.w"; "q.b"; "k.w"; "k.b"; "v.w"; "v.b"; "out.w"; "out.b" ] in
@@ -280,6 +319,8 @@ let tests =
         test "linear" test_linear;
         test "conv" test_conv;
         test "embeddings and norms" test_norms;
+        test "a norm's checkpoint refuses another shift"
+          test_norm_checkpoints;
         test "attention and caches" test_attention;
         test "a layer casts through its walk" test_cast;
       ];

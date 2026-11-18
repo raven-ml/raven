@@ -6,7 +6,8 @@
 (** Batch normalization layers (Ioffe and Szegedy, 2015).
 
     A batch-norm layer is two structures: trainable parameters {!type:t} (the
-    affine [gamma] and [beta], differentiated and optimized like any other
+    affine [gamma] and, unless the layer is made without one, [beta],
+    differentiated and optimized like any other
     parameters) and running statistics {!Stats.t} (per-feature mean and
     variance, never differentiated, updated by every training forward). Both are
     records with payload holes; this module is the {!Nx.Ptree.S} instance of its
@@ -52,14 +53,19 @@
 
 (** {1:params Parameters} *)
 
-type ('a, _) t = { gamma : 'a; beta : 'a }
+type ('a, _) t = { gamma : 'a; beta : 'a option }
 (** The type for batch-norm parameters over payload ['a]: per-feature scale
-    [gamma] and shift [beta], at tensor payloads each of shape [[| features |]].
-*)
+    [gamma] and shift [beta], when present, at tensor payloads each of shape
+    [[| features |]]. [beta] is [None] for a layer made without a shift
+    ({!init}[ ~shift:false]): it has no shift parameter, so {!walk} skips it
+    and {!apply} adds nothing. *)
 
 val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> ('a, 'd) t -> ('b, 'e) t
-(** [walk c p] walks [p]'s parameters, [gamma] then [beta], at those paths: the
-    parameters' {!Nx.Ptree.S} instance.
+(** [walk c p] walks [p]'s parameters: [gamma] at ["gamma"], then [beta] at
+    ["beta"], reporting whether [beta] is present, so a layer with a shift and
+    one without are distinct structures, and a checkpoint of one does not load
+    into the other ([Nx_io.Archive.to_value]). It is the parameters'
+    {!Nx.Ptree.S} instance.
     [Nx.Ptree.instantiate (module Batch_norm)] is the parameters at one dtype,
     and [Nx.Ptree.cast (module Batch_norm) dtype p] converts their precision. *)
 
@@ -87,13 +93,16 @@ end
 (** {1:constructors Constructors} *)
 
 val init :
+  ?shift:bool ->
   features:int ->
   'd Nx.Placement.t ->
   ('d Nx.float32_t, 'd) t * ('d Nx.float32_t, 'd) Stats.t
 (** [init ~features at] is a fresh layer for [features]-dimensional features at
-    [at]: parameters with [gamma] all ones and [beta] all zeros, and statistics
+    [at]: parameters with [gamma] all ones and, with [shift] (defaults to
+    [true]), [beta] all zeros, and statistics
     with [mean] all zeros and [var] all ones (so an untrained layer's eval mode
-    is close to the identity of a standardized input).
+    is close to the identity of a standardized input). [~shift:false] sets
+    [beta] to [None].
 
     Raises [Invalid_argument] if [features <= 0]. *)
 
@@ -109,7 +118,8 @@ val apply :
   (float, 'b, 'd) Nx.t * ((float, 'b, 'd) Nx.t, 'd) Stats.t
 (** [apply p stats ~training x] is [(y, stats')] where [y] normalizes [x] per
     feature and applies the affine transform:
-    [y = gamma * (x - mean) / sqrt (var + eps) + beta].
+    [y = gamma * (x - mean) / sqrt (var + eps) + beta], without [+ beta] when
+    [beta] is [None].
 
     Features live on [x]'s last axis, the channels of {!Conv}'s layout;
     statistics are taken over all other axes together. The last axis must

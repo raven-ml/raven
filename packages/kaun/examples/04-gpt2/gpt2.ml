@@ -189,7 +189,7 @@ let of_hf ~placement cfg dt weights =
   let layer_norm name =
     {
       Layer_norm.gamma = whole (float ~shape:[| d |] (name ^ ".weight"));
-      beta = whole (float ~shape:[| d |] (name ^ ".bias"));
+      beta = Some (whole (float ~shape:[| d |] (name ^ ".bias")));
     }
   in
   let stored ~inputs ~outputs name =

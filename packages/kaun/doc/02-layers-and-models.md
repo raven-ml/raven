@@ -34,8 +34,8 @@ There is nothing else to a layer: `layer.w` is an ordinary tensor you can read, 
 | `Conv_transpose` | `w`, optional `b` | transposed convolution, which upsamples at a stride above one |
 | `Embedding` | `table` | token-id to row lookup (int64 ids in, floats out) |
 | `Attention` | `q`, `k`, `v`, `out` projections | multi-head self-attention, optional causal mask |
-| `Layer_norm` | `gamma`, `beta` | normalization over the last axis |
-| `Batch_norm` | `gamma`, `beta` + separate `Stats.t` | normalization over the batch, running statistics |
+| `Layer_norm` | `gamma`, optional `beta` | normalization over the last axis |
+| `Batch_norm` | `gamma`, optional `beta` + separate `Stats.t` | normalization over the batch, running statistics |
 
 Stateless companions, all pure functions:
 
@@ -153,7 +153,7 @@ For autoregressive decoding, `Attention.cached` runs causal self-attention of a 
 
 ## Stateful layers: Batch_norm
 
-`Batch_norm` is the one layer with non-parameter state. It is two structures: trainable parameters (`Batch_norm.t`, the affine `gamma` and `beta` — differentiated and optimized like any other parameters) and running statistics (`Batch_norm.Stats.t`, per-feature mean and variance — never differentiated, updated by every training forward).
+`Batch_norm` is the one layer with non-parameter state. It is two structures: trainable parameters (`Batch_norm.t`, the affine `gamma` and, unless `init ~shift:false` leaves it out, `beta` — differentiated and optimized like any other parameters) and running statistics (`Batch_norm.Stats.t`, per-feature mean and variance — never differentiated, updated by every training forward).
 
 `apply` in training mode normalizes with the current batch's statistics and returns updated running statistics; in eval mode it normalizes with the running statistics and returns them unchanged. A training step returns the updated statistics from the objective beside the loss, through `Rune.value_and_grad_aux`, which takes their structure and gives them back undifferentiated:
 

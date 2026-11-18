@@ -64,7 +64,7 @@ let model () =
   in
   let norm () =
     let { Layer_norm.gamma; beta } = Layer_norm.init ~dim:embd Nx.Host.on in
-    { Layer_norm.gamma = Nx.copy gamma; beta = Nx.copy beta }
+    { Layer_norm.gamma = Nx.copy gamma; beta = Option.map Nx.copy beta }
   in
   let linear ~inputs ~outputs =
     Linear.make ~w_init:zeros ~bias_init:zeros ~key ~inputs ~outputs Nx.float32

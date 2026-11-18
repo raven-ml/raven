@@ -24,7 +24,7 @@ let visits s x =
 
 let leaf p = p ^ ": a leaf"
 let linear p = [ leaf (p ^ ".w"); p ^ ".b: Some"; leaf (p ^ ".b") ]
-let norm p = [ leaf (p ^ ".gamma"); leaf (p ^ ".beta") ]
+let norm p = [ leaf (p ^ ".gamma"); p ^ ".beta: Some"; leaf (p ^ ".beta") ]
 
 let block i =
   let at s = Printf.sprintf "blocks.%d.%s" i s in

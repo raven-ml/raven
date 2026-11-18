@@ -127,7 +127,7 @@ let test_layer_norm_island (type b) (dt : (float, b) Nx.dtype) () =
   let p =
     {
       Layer_norm.gamma = vec f32 [| 1.0; 2.0; 0.5; 1.0 |];
-      beta = vec f32 [| 0.25; 0.0; -0.25; 0.0 |];
+      beta = Some (vec f32 [| 0.25; 0.0; -0.25; 0.0 |]);
     }
   in
   (* bfloat16 spaces by 0.5 near 100, so the offsets round on input; the
@@ -317,7 +317,7 @@ let test_batch_norm_island () =
   let p =
     {
       Batch_norm.gamma = vec f32 [| 1.5; -0.5; 2.0 |];
-      beta = vec f32 [| 0.25; 1.0; -1.0 |];
+      beta = Some (vec f32 [| 0.25; 1.0; -1.0 |]);
     }
   in
   let half = Nx.Ptree.cast (module Batch_norm) f16 p in

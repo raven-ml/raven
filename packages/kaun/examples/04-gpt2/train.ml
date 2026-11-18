@@ -298,7 +298,7 @@ let weights_of_params original (p : Nx.host Gpt2.t) =
     in
     [
       tensor (key "ln_1.weight") b.ln1.gamma;
-      tensor (key "ln_1.bias") b.ln1.beta;
+      tensor (key "ln_1.bias") (bias (key "ln_1") b.ln1.beta);
       tensor (key "attn.c_attn.weight")
         (Nx.concatenate ~axis:1 [ b.attn.q.w; b.attn.k.w; b.attn.v.w ]);
       tensor (key "attn.c_attn.bias")
@@ -312,7 +312,7 @@ let weights_of_params original (p : Nx.host Gpt2.t) =
       | Some (Nx.P mask) -> tensor (key "attn.bias") mask
       | None -> failwith (key "attn.bias" ^ ": missing from the input file"));
       tensor (key "ln_2.weight") b.ln2.gamma;
-      tensor (key "ln_2.bias") b.ln2.beta;
+      tensor (key "ln_2.bias") (bias (key "ln_2") b.ln2.beta);
     ]
     @ linear "attn.c_proj" b.attn.out
     @ linear "mlp.c_fc" b.fc @ linear "mlp.c_proj" b.proj
@@ -322,7 +322,7 @@ let weights_of_params original (p : Nx.host Gpt2.t) =
        tensor "wte.weight" p.wte.table;
        tensor "wpe.weight" p.wpe.table;
        tensor "ln_f.weight" p.ln_f.gamma;
-       tensor "ln_f.bias" p.ln_f.beta;
+       tensor "ln_f.bias" (bias "ln_f" p.ln_f.beta);
      ]
     @ List.concat (List.mapi block p.blocks))
 

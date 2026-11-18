@@ -249,9 +249,10 @@ let test_embedding_rejects_bad_geometry () =
 let test_layer_norm_init_shapes () =
   let p = Layer_norm.init ~dim:6 Nx.Host.on in
   shape_is ~msg:"gamma shape" [| 6 |] p.Layer_norm.gamma;
-  shape_is ~msg:"beta shape" [| 6 |] p.Layer_norm.beta;
+  let beta = require_some ~msg:"init has a shift" p.Layer_norm.beta in
+  shape_is ~msg:"beta shape" [| 6 |] beta;
   values_are ~msg:"gamma is ones" ~tol:0.0 (Array.make 6 1.0) p.Layer_norm.gamma;
-  values_are ~msg:"beta is zeros" ~tol:0.0 (Array.make 6 0.0) p.Layer_norm.beta;
+  values_are ~msg:"beta is zeros" ~tol:0.0 (Array.make 6 0.0) beta;
   equal ~msg:"names" (list string) [ "gamma"; "beta" ]
     (paths (Nx.Ptree.instantiate (module Layer_norm)) p)
 
@@ -261,7 +262,7 @@ let test_layer_norm_analytic () =
   let p =
     {
       Layer_norm.gamma = Nx.create Nx.float32 [| 2 |] [| 2.; 3. |];
-      beta = Nx.create Nx.float32 [| 2 |] [| 1.; -1. |];
+      beta = Some (Nx.create Nx.float32 [| 2 |] [| 1.; -1. |]);
     }
   in
   let x = Nx.create Nx.float32 [| 2; 2 |] [| 0.; 2.; 10.; 30. |] in
@@ -290,7 +291,7 @@ let test_layer_norm_constant_input () =
   let p =
     {
       Layer_norm.gamma = Nx.full Nx.float32 [| dim |] 1.5;
-      beta = Nx.create Nx.float32 [| dim |] beta;
+      beta = Some (Nx.create Nx.float32 [| dim |] beta);
     }
   in
   List.iter
@@ -313,7 +314,7 @@ let test_layer_norm_gradients () =
   let p =
     {
       Layer_norm.gamma = Nx.Rng.normal Nx.float64 [| 4 |];
-      beta = Nx.Rng.normal Nx.float64 [| 4 |];
+      beta = Some (Nx.Rng.normal Nx.float64 [| 4 |]);
     }
   in
   let x = Nx.Rng.normal Nx.float64 [| 3; 4 |] in
@@ -322,6 +323,56 @@ let test_layer_norm_gradients () =
     Nx.sum (Nx.mul y y)
   in
   grads_ok (Rune.check_grads layer_norm64 loss p)
+
+(* Without a shift, [apply] is [Nx.standardize ~scale:gamma] to the bit: no
+   added zero turns a [-0.] into [+0.]. [gamma] alternates sign, so a
+   constant lane gives both zeros. *)
+type lanes = { name : string; dim : int; xs : float array }
+
+let shift_free_rows =
+  let wide = (1 lsl 17) + 1 in
+  [
+    { name = "one feature"; dim = 1; xs = [| 3.; -2. |] };
+    { name = "two features"; dim = 2; xs = [| 0.; 2.; -1.; 7. |] };
+    { name = "constant lanes"; dim = 4; xs = Array.make 8 1000.1 };
+    { name = "a NaN"; dim = 3; xs = [| 1.; nan; 2.; 4.; 5.; 6. |] };
+    { name = "signed zeros"; dim = 2; xs = [| -0.; -0.; 0.; -0. |] };
+    {
+      name = "2^17 + 1 features";
+      dim = wide;
+      xs = Array.init wide (fun i -> Float.of_int (i mod 13));
+    };
+  ]
+
+let check_shift_free (type b) (dt : (float, b) Nx.dtype) { dim; xs; _ } =
+  let of_floats shape a = Nx.cast dt (Nx.create Nx.float64 shape a) in
+  let x = of_floats [| Array.length xs / dim; dim |] xs in
+  let sign i = if i mod 2 = 0 then -1.5 else 0.75 in
+  let gamma = of_floats [| dim |] (Array.init dim sign) in
+  let bits t = Nx.to_array (Nx.cast Nx.float64 t) in
+  equal ~msg:(Nx.Dtype.name dt) (array float_exact)
+    (bits (Nx.standardize ~eps:1e-5 ~scale:gamma x))
+    (bits (Layer_norm.apply { Layer_norm.gamma; beta = None } x))
+
+let test_layer_norm_shift_free row =
+  check_shift_free Nx.float16 row;
+  check_shift_free Nx.bfloat16 row;
+  check_shift_free Nx.float32 row;
+  check_shift_free Nx.float64 row
+
+let test_layer_norm_shift_free_gradients () =
+  Nx.Rng.with_key (Nx.Rng.key 12) @@ fun () ->
+  let p =
+    { Layer_norm.gamma = Nx.Rng.normal Nx.float64 [| 4 |]; beta = None }
+  in
+  let x = Nx.Rng.normal Nx.float64 [| 3; 4 |] in
+  let loss p =
+    let y = Layer_norm.apply p x in
+    Nx.sum (Nx.mul y y)
+  in
+  grads_ok (Rune.check_grads layer_norm64 loss p);
+  is_none ~msg:"the gradient has no shift"
+    (Rune.grad layer_norm64 loss p).Layer_norm.beta
 
 let test_layer_norm_rejects_bad_input () =
   let p = Layer_norm.init ~dim:4 Nx.Host.on in
@@ -453,6 +504,11 @@ let () =
              test "eps enters the denominator" test_layer_norm_eps;
              test "gradients agree with finite differences"
                test_layer_norm_gradients;
+             cases ~id:(fun r -> r.name)
+               "without a shift, apply is standardize scaled by gamma"
+               shift_free_rows test_layer_norm_shift_free;
+             test "without a shift, gradients have no shift"
+               test_layer_norm_shift_free_gradients;
              test "invalid inputs are rejected"
                test_layer_norm_rejects_bad_input;
            ];

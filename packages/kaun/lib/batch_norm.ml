@@ -5,12 +5,12 @@
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
-type ('a, _) t = { gamma : 'a; beta : 'a }
+type ('a, _) t = { gamma : 'a; beta : 'a option }
 
 let walk c { gamma; beta } =
   let open Nx.Ptree.Walk in
   let gamma = field c "gamma" leaf gamma in
-  let beta = field c "beta" leaf beta in
+  let beta = field c "beta" (option leaf) beta in
   { gamma; beta }
 
 module Stats = struct
@@ -23,12 +23,13 @@ module Stats = struct
     { mean; var }
 end
 
-let init ~features at =
+let init ?(shift = true) ~features at =
   if features <= 0 then
     invalid_argf "Batch_norm.init: features must be positive, got %d" features;
   let ones () = Nx.ones_at at Nx.float32 [| features |] in
   let zeros () = Nx.zeros_at at Nx.float32 [| features |] in
-  ( { gamma = ones (); beta = zeros () },
+  let beta = if shift then Some (zeros ()) else None in
+  ( { gamma = ones (); beta },
     { Stats.mean = zeros (); var = ones () } )
 
 (* Half and quarter precision floats are too coarse for eval mode's affine
@@ -68,9 +69,9 @@ let apply ?(momentum = 0.99) ?(eps = 1e-5) p (stats : _ Stats.t)
   pshape.(axis) <- features;
   let broadcast v = Nx.reshape pshape v in
   let axes = List.filter (fun i -> i <> axis) (List.init ndim Fun.id) in
-  let gamma = broadcast p.gamma and beta = broadcast p.beta in
+  let gamma = broadcast p.gamma and beta = Option.map broadcast p.beta in
   if training then
-    let y = Nx.standardize ~axes ~eps ~scale:gamma ~shift:beta x in
+    let y = Nx.standardize ~axes ~eps ~scale:gamma ?shift:beta x in
     let update old batch =
       let batch = Nx.reshape [| features |] batch in
       Nx.add (Nx.mul_s old momentum) (Nx.mul_s batch (1.0 -. momentum))
@@ -82,15 +83,17 @@ let apply ?(momentum = 0.99) ?(eps = 1e-5) p (stats : _ Stats.t)
       } )
   else
     (* [(x - mean) · rsqrt (var + eps) · gamma + beta] from the running
-       statistics. *)
+       statistics, without [+ beta] for a layer without a shift. *)
     let affine x mean var gamma beta =
       let n = Nx.mul (Nx.sub x mean) (Nx.rsqrt (Nx.add_s var eps)) in
-      Nx.add (Nx.mul n gamma) beta
+      let y = Nx.mul n gamma in
+      match beta with None -> y | Some beta -> Nx.add y beta
     in
     let mean = broadcast stats.Stats.mean and var = broadcast stats.var in
     let dt = Nx.dtype x in
     if not (low_precision dt) then (affine x mean var gamma beta, stats)
     else
       let up = Nx.cast Nx.float32 in
-      ( Nx.cast dt (affine (up x) (up mean) (up var) (up gamma) (up beta)),
+      ( Nx.cast dt
+          (affine (up x) (up mean) (up var) (up gamma) (Option.map up beta)),
         stats )

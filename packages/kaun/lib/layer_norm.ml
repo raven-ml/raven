@@ -3,24 +3,24 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type ('a, _) t = { gamma : 'a; beta : 'a }
+type ('a, _) t = { gamma : 'a; beta : 'a option }
 
 let walk c { gamma; beta } =
   let open Nx.Ptree.Walk in
   let gamma = field c "gamma" leaf gamma in
-  let beta = field c "beta" leaf beta in
+  let beta = field c "beta" (option leaf) beta in
   { gamma; beta }
 
-let make ~dim dtype at =
+let make ?(shift = true) ~dim dtype at =
   if dim <= 0 then
     Printf.ksprintf invalid_arg "Layer_norm.make: dim must be positive, got %d"
       dim;
   {
     gamma = Nx.ones_at at dtype [| dim |];
-    beta = Nx.zeros_at at dtype [| dim |];
+    beta = (if shift then Some (Nx.zeros_at at dtype [| dim |]) else None);
   }
 
-let init ~dim at = make ~dim Nx.float32 at
+let init ?shift ~dim at = make ?shift ~dim Nx.float32 at
 
 let apply ?(eps = 1e-5) { gamma; beta } x =
   if not (eps >= 0.0) then
@@ -37,4 +37,4 @@ let apply ?(eps = 1e-5) { gamma; beta } x =
        features"
       shape.(rank - 1)
       dim;
-  Nx.standardize ~eps ~scale:gamma ~shift:beta x
+  Nx.standardize ~eps ~scale:gamma ?shift:beta x
