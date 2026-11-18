@@ -20,3 +20,11 @@ val channel_mask : t -> int
 
 val samples : t -> Nx.host Nx.packed
 (** Raises [Failure] starting with the path as {!Nx_io.Audio.samples} states. *)
+
+val blocks : ?row:int -> t -> rows:int -> Nx.host Nx.packed Seq.t
+(** Raises [Invalid_argument] naming [Nx_io.Audio.blocks], and [Failure]
+    starting with the path, as {!Nx_io.Audio.blocks} states. *)
+
+val window : t -> row:int -> rows:int -> Nx.host Nx.packed
+(** Raises [Invalid_argument] naming [Nx_io.Audio.window], and [Failure]
+    starting with the path, as {!Nx_io.Audio.window} states. *)

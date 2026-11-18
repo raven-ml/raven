@@ -15,6 +15,10 @@ module B = Rig.Buffer
 module D = Nx_array.Dtype
 module L = Nx_array.Layout
 
+(* A seek point (8.5.1): the first row of the frame it names, the frame's byte
+   from the first frame's, and its rows. *)
+type point = { row : int; offset : int; rows : int }
+
 (* A FLAC stream: STREAMINFO's facts and MD5, the channel mask, the byte [first]
    of the first frame, and [stream], the facts nx_io_flac.c reads, in the order
    of its [Fields]. *)
@@ -28,6 +32,7 @@ type t = {
   length : int;
   md5 : string;
   first : int;
+  points : point array;
   dt : D.any;
   stream : int array;
 }
@@ -101,10 +106,10 @@ let channel_mask_field s =
 (* The 64-bit value that marks a placeholder point. *)
 let placeholder = -1L
 
-(* [check_points s] checks the seek table [s] (8.5.1): whole points of 18 bytes,
-   each a row, a byte and a count of rows, sorted by row, distinct, placeholders
-   last. *)
-let check_points s =
+(* The points of a seek table [s] (8.5.1), whole points of 18 bytes sorted by
+   row and distinct, but for its placeholders, which come last and are left
+   out. *)
+let points s =
   let len = String.length s in
   if len mod 18 <> 0 then
     Fail.failf "the seek table's %d bytes are not whole points of 18" len;
@@ -115,22 +120,26 @@ let check_points s =
       malformed ();
     Int64.to_int v
   in
-  let rec go i last =
-    if i < len then
-      if String.get_int64_be s i = placeholder then begin
-        for j = 1 to ((len - i) / 18) - 1 do
-          if String.get_int64_be s (i + (18 * j)) <> placeholder then
-            malformed ()
-        done
-      end
-      else begin
-        let row = u64 i in
-        ignore (u64 (i + 8) : int);
-        if row <= last then malformed ();
-        go (i + 18) row
-      end
+  let rec go i last acc =
+    if i = len then List.rev acc
+    else if String.get_int64_be s i = placeholder then begin
+      for j = 1 to ((len - i) / 18) - 1 do
+        if String.get_int64_be s (i + (18 * j)) <> placeholder then malformed ()
+      done;
+      List.rev acc
+    end
+    else
+      let p =
+        {
+          row = u64 i;
+          offset = u64 (i + 8);
+          rows = String.get_uint16_be s (i + 16);
+        }
+      in
+      if p.row <= last then malformed ();
+      go (i + 18) p.row (p :: acc)
   in
-  go 0 (-1)
+  Array.of_list (go 0 (-1) [])
 
 (* STREAMINFO's fields (8.2). *)
 type info = {
@@ -193,8 +202,11 @@ external decode :
    more is refused before anything is allocated (RFC 9639, section 11). *)
 let expansion = 1 lsl 16
 
-(* The index of the length in [stream]. *)
+(* The indexes in [stream] of the length, and of the window's length and
+   whether the file goes on past it. *)
 let length_field = 7
+let end_field = 10
+let more_field = 12
 let empty = Array1.create int8_unsigned c_layout 0
 let bytes n = Array1.create int8_unsigned c_layout n
 
@@ -204,13 +216,44 @@ external md5_final : Bytes.t -> string = "caml_nx_io_md5_final"
 (* A cursor at the first frame. *)
 let start t = [| t.first; 0 |]
 
-(* [run t cursor ~md5 ~skip dst ~at ~rows rest] decodes as nx_io_flac.c states,
-   naming the frame that fails. *)
+(* [stream_of t n ~more] is [t]'s facts for a window of [n] bytes, [more]
+   whether the file goes on past it. *)
+let stream_of t n ~more =
+  let s = Array.copy t.stream in
+  s.(end_field) <- n;
+  s.(more_field) <- Bool.to_int more;
+  s
+
+(* [run t cursor ~md5 ~skip dst ~at ~rows rest] decodes as nx_io_flac.c
+   states, naming the frame that fails. It reads the file in windows from
+   the cursor's frame: the bytes [rows] rows take at the stream's mean
+   bytes a row, with a frame and 1 KiB to spare, and twice as many each
+   time a frame runs past a window. So a read of a file the system cannot
+   map copies about the bytes of the frames it decodes. *)
 let run t cursor ~md5 ~skip dst ~at ~rows rest =
-  Storage.read (Storage.whole t.file) @@ fun src ->
-  try decode src t.stream cursor md5 skip dst at rows rest
-  with Failure why ->
-    Fail.failf "frame at row %d, byte %d: %s" cursor.(1) cursor.(0) why
+  let len = B.length t.file in
+  let per_row = ((len - t.first) / Int.max 1 t.length) + 1 in
+  let rec go ~skip ~at ~rows window =
+    let base = cursor.(0) in
+    let n = Int.min window (len - base) in
+    let c = [| 0; cursor.(1); 0; 0 |] in
+    let kept =
+      Storage.read (Storage.pages t.file ~first:base ~length:n) @@ fun src ->
+      try
+        decode src (stream_of t n ~more:(base + n < len)) c md5 skip dst at
+          rows rest
+      with Failure why ->
+        Fail.failf "frame at row %d, byte %d: %s" c.(1) (base + c.(0)) why
+    in
+    cursor.(0) <- base + c.(0);
+    cursor.(1) <- c.(1);
+    if kept >= 0 then kept
+    else
+      let rows = if rows < 0 then rows else rows - c.(2) in
+      go ~skip:c.(3) ~at:(at + c.(2)) ~rows (2 * window)
+  in
+  if rows < 0 then go ~skip ~at ~rows (len - cursor.(0))
+  else go ~skip ~at ~rows (((rows + skip + t.max_block) * per_row) + 1024)
 
 (* STREAMINFO states no MD5 with zeros (8.2). *)
 let unstated = String.make 16 '\000'
@@ -263,9 +306,11 @@ let read file =
   let channel_mask =
     Option.value channel_mask ~default:default_masks.(info.channels - 1)
   in
-  Option.iter
-    (fun b -> check_points (body b))
-    (List.find_opt (fun (k, _, _) -> k = seektable) all);
+  let points =
+    match List.find_opt (fun (k, _, _) -> k = seektable) all with
+    | Some b -> points (body b)
+    | None -> [||]
+  in
   let dt, width =
     if info.bits <= 8 then (D.Any D.Int8, 1)
     else if info.bits <= 16 then (D.Any D.Int16, 2)
@@ -297,6 +342,7 @@ let read file =
       Bool.to_int numbered_by_row;
       length;
       width;
+      0;
     |]
   in
   let t =
@@ -310,6 +356,7 @@ let read file =
       length = stated;
       md5 = info.md5;
       first;
+      points;
       dt;
       stream;
     }
@@ -328,14 +375,114 @@ let read file =
     { t with length = n; stream }
   end
 
-let samples t =
+(* Seeking *)
+
+external header : Storage.bytes -> int array -> int -> int array -> bool
+  = "caml_nx_io_flac_header"
+
+(* The most bytes a frame's header takes (RFC 9639, 9.1): 4, a coded
+   number of 7, an uncommon block size and rate of 2 each, and the
+   CRC-8. *)
+let header_bytes = 16
+
+(* The cursor of the frame a read from row [row] starts at: the last seek point
+   at or before [row] whose frame names its row and rows, or the first frame. A
+   point is a claim the frame must confirm (RFC 9639, section 11), so an
+   unconfirmed one is passed over. *)
+let seek t row =
+  let len = B.length t.file in
+  let found = [| 0; 0 |] in
+  let confirmed p =
+    p.row <= row
+    && p.offset < len - t.first
+    &&
+    let pos = t.first + p.offset in
+    let n = Int.min header_bytes (len - pos) in
+    Storage.read (Storage.pages t.file ~first:pos ~length:n) (fun src ->
+        header src (stream_of t n ~more:false) 0 found)
+    && found.(0) = p.row
+    && found.(1) = p.rows
+  in
+  let rec last i =
+    if i < 0 then start t
+    else if confirmed t.points.(i) then
+      [| t.first + t.points.(i).offset; t.points.(i).row |]
+    else last (i - 1)
+  in
+  last (Array.length t.points - 1)
+
+(* Blocks *)
+
+(* Where a pass is: the cursor at the next frame to decode, the [kept] rows at
+   the start of [rest] that the last frame decoded holds and no block has given,
+   and the digest of every frame decoded, or none, empty. A node owns its fields
+   and never writes them, so a sequence forced twice reads the same. *)
+type pass = {
+  cursor : int array;
+  rest : Storage.bytes;
+  kept : int;
+  md5 : Bytes.t;
+}
+
+let blocks t ~row ~rows =
   let (D.Any dt) = t.dt in
   let stride = t.channels * D.bytes dt 1 in
-  let out = B.create Rig.host (t.length * stride) in
-  let rest = bytes (t.max_block * stride) in
-  let md5 = digest t.md5 in
-  B.write out int8_unsigned (fun dst ->
-      ignore (run t (start t) ~md5 ~skip:0 dst ~at:0 ~rows:t.length rest : int));
-  check t.md5 md5;
-  let layout = L.contiguous (Iarray.of_array [| t.length; t.channels |]) in
-  Nx.P (Nx.Repr.unsafe_of_array Nx.Host.v (A.v dt layout out))
+  let n = t.length in
+  let layout m = L.contiguous (Iarray.of_array [| m; t.channels |]) in
+  (* The block of [m] rows from row [row], [skip] rows after the cursor. *)
+  let block ~row ~skip m p =
+    let out = B.create Rig.host (m * stride) in
+    let given = Int.min p.kept m in
+    let p =
+      B.write out int8_unsigned @@ fun dst ->
+      Array1.blit
+        (Array1.sub p.rest 0 (given * stride))
+        (Array1.sub dst 0 (given * stride));
+      if p.kept >= m then
+        {
+          p with
+          rest = Array1.sub p.rest (m * stride) ((p.kept - m) * stride);
+          kept = p.kept - m;
+        }
+      else
+        let cursor = Array.copy p.cursor and md5 = Bytes.copy p.md5 in
+        let rest = bytes (t.max_block * stride) in
+        let kept =
+          run t cursor ~md5 ~skip dst ~at:given ~rows:(m - given) rest
+        in
+        { cursor; rest; kept; md5 }
+    in
+    (* The node that gives the last block checks the digest. *)
+    if row + m = n then check t.md5 p.md5;
+    (Nx.P (Nx.Repr.unsafe_of_array Nx.Host.v (A.v dt (layout m) out)), p)
+  in
+  let rec from ~row ~skip p () =
+    if row >= n then Seq.Nil
+    else
+      let m = Int.min rows (n - row) in
+      let x, p = block ~row ~skip m p in
+      Seq.Cons (x, from ~row:(row + m) ~skip:0 p)
+  in
+  let first () =
+    if row = 0 then
+      from ~row ~skip:0
+        { cursor = start t; rest = empty; kept = 0; md5 = digest t.md5 }
+        ()
+    else
+      let cursor = seek t row in
+      from ~row
+        ~skip:(row - cursor.(1))
+        { cursor; rest = empty; kept = 0; md5 = Bytes.empty }
+        ()
+  in
+  first
+
+(* A window of no row reads nothing. *)
+let window t ~row ~rows =
+  let (D.Any dt) = t.dt in
+  let none = Nx.P (Nx.zeros dt [| 0; t.channels |]) in
+  if rows = 0 then none
+  else
+    match blocks t ~row ~rows () with Seq.Cons (x, _) -> x | Seq.Nil -> none
+
+let samples t = window t ~row:0 ~rows:t.length

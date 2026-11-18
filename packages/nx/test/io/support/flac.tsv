@@ -73,3 +73,8 @@ flac_mask_padded.flac	44100	1	16	16	0x8	d7cb8ba00819a6c6353fe9d272e5a245
 flac_mask_zero.flac	44100	2	16	16	0x0	487eccdaccfa3bc6c14171e5ce5b1458
 flac_metadata.flac	44100	2	16	32		934788c9b47f7a72a2f7e661f09a800a
 flac_no_length.flac	44100	1	16	40		a48ec3ba2723a132a268d3cfb28df072
+flac_seek.flac	44100	2	16	128		506c811ac00e86c0fb56581a56e27269
+flac_seek_wrong.flac	44100	2	16	128		506c811ac00e86c0fb56581a56e27269
+flac_seek_variable.flac	44100	1	16	142		5a38c535f7f43cf1f418c12e3bf3074a
+flac_skewed.flac	44100	2	16	32768		9fb8d94eb2219506324f14d292baf1e7
+flac_seek_dense.flac	44100	2	16	71680		eafb48d7e88f86e7d455c09d2b4c3db2

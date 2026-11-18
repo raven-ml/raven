@@ -37,3 +37,38 @@ let channel_mask t =
 let samples t =
   Fail.file t.name @@ fun () ->
   match t.format with Wav w -> Wav.samples w | Flac f -> Flac.samples f
+
+(* [named name s] is [s], each node's [Failure] naming the file. *)
+let rec named name s () =
+  match Fail.file name s with
+  | Seq.Nil -> Seq.Nil
+  | Seq.Cons (x, s) -> Seq.Cons (x, named name s)
+
+let blocks ?(row = 0) t ~rows =
+  let n = length t in
+  if rows < 1 then
+    Fail.invalid_argf "Nx_io.Audio.blocks: blocks of %d rows" rows;
+  if row < 0 || row > n then
+    Fail.invalid_argf "Nx_io.Audio.blocks: row %d is outside the %d rows" row n;
+  match t.format with
+  | Flac f -> named t.name (Flac.blocks f ~row ~rows)
+  | Wav w ->
+      (* Each block reads its rows' bytes alone. *)
+      let rec from row () =
+        if row >= n then Seq.Nil
+        else
+          let m = Int.min rows (n - row) in
+          Seq.Cons (Wav.window w ~row ~rows:m, from (row + m))
+      in
+      named t.name (from row)
+
+let window t ~row ~rows =
+  let n = length t in
+  if row < 0 || rows < 0 || row > n - rows then
+    Fail.invalid_argf
+      "Nx_io.Audio.window: %d rows from row %d lie outside the %d rows" rows row
+      n;
+  Fail.file t.name @@ fun () ->
+  match t.format with
+  | Wav w -> Wav.window w ~row ~rows
+  | Flac f -> Flac.window f ~row ~rows

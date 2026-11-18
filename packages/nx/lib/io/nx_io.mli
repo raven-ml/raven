@@ -77,8 +77,9 @@
     the file {!load_tiff} opened or the partial file {!decode_tiff} read,
     {!Hdf5.values} and {!Hdf5.window} until they have read their dataset's
     B-tree nodes and chunks, from the file {!load_hdf5} opened or the
-    partial file {!decode_hdf5} read, and {!Audio.samples} until it has read
-    its samples. A save blocks until
+    partial file {!decode_hdf5} read, and {!Audio.samples}, {!Audio.window}
+    and each block of {!Audio.blocks} until they have read their samples. A
+    save blocks until
     the value's set has computed it and the new file is at its path. Domains may
     load one path concurrently. Concurrent saves to one path each write a whole
     file, and the last rename wins.
@@ -1145,8 +1146,9 @@ val load_hdf5 : string -> Hdf5.Group.t list * Hdf5.t list
     {e rate} of samples a second. Its samples load as an array of shape
     [[|n; c|]], a {e row} per instant, the channels of a row in the file's
     order. {!load_audio} reads WAV and FLAC files, recognised by their
-    contents. A load reads the file's header and keeps the file, from which
-    {!Audio.samples} reads.
+    contents. A load reads the file's header and keeps the file;
+    {!Audio.samples}, {!Audio.window} and {!Audio.blocks} read samples from
+    it.
 
     {b Samples.} A sample takes [k] bytes: a WAV file's {e container}, or a
     FLAC file's bit depth rounded up to whole bytes. An integer sample loads
@@ -1195,10 +1197,14 @@ val load_hdf5 : string -> Hdf5.Group.t list * Hdf5.t list
     frame's CRC-8 and CRC-16, its rate, channels, depth, block and frame
     sizes and number against STREAMINFO, and each sample against its
     depth. A read that decodes every frame from the first checks
-    STREAMINFO's MD5 unless it is 0. Bytes after the frames of STREAMINFO's length are ignored, and a
-    frame that runs past the length raises. A length whose samples would
-    take more than 2{^16} times the bytes after the metadata, more than any
-    frame decodes to, is refused before anything is allocated.
+    STREAMINFO's MD5 unless it is 0. A read from row [r] decodes from the
+    last seek point at or before [r] whose frame names the point's row and
+    rows, or else from the first frame, so in a file without a seek table
+    it decodes every frame before [r]. Bytes after the frames of
+    STREAMINFO's length are ignored, and a frame that runs past the length
+    raises. A length whose samples would take more than 2{^16} times the
+    bytes after the metadata, more than any frame decodes to, is refused
+    before anything is allocated.
 
     This reads a 16 kHz mono file as [float32] amplitudes, each the exact
     quotient by 32768:
@@ -1263,6 +1269,31 @@ module Audio : sig
       sample has a set bit below its valid bits, and naming the frame by its
       first row and its byte for a FLAC file that breaks RFC 9639 or a check
       of {!section-audio}, and if the MD5 differs. *)
+
+  val blocks : ?row:int -> t -> rows:int -> Nx.host Nx.packed Seq.t
+  (** [blocks ~row a ~rows] is [a]'s samples from row [row], cut into
+      blocks of [rows] rows, the last shorter, each in memory of its own:
+      [Nx.slice [R (row, min (row + rows) n)] (samples a)] first, for [n]
+      [length a], and so on to [n]. [row] defaults to [0], and [row = n]
+      gives no block. Forcing a WAV block reads its rows' bytes and no
+      others. A FLAC block decodes from the frame the previous one ended
+      in, so a pass decodes each frame once. Blocks from row 0 check the
+      MD5 when they give the last block. The sequence may be forced again,
+      which reads again.
+
+      Raises [Invalid_argument] if [rows < 1] or [row] is not in
+      \[[0];[n]\]. Forcing a block raises as {!samples} does, for the
+      bytes it reads. *)
+
+  val window : t -> row:int -> rows:int -> Nx.host Nx.packed
+  (** [window a ~row ~rows] is rows [row] to [row + rows - 1] of [a]'s
+      samples, of shape [[|rows; channels a|]], in memory of its own. It is
+      the first block of [blocks ~row a ~rows], and for no row an empty
+      array that reads nothing. It may return where {!samples} raises, for bytes
+      it does not read.
+
+      Raises [Invalid_argument] if [row] or [rows] is negative or the
+      window ends past [length a], and [Failure] as {!blocks} does. *)
 end
 
 val load_audio : string -> Audio.t

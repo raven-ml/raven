@@ -23,6 +23,11 @@
   frame it read. Given a digest in progress, it adds each frame's samples
   to it, as RFC 9639's MD5 takes them (8.2).
 
+  A decode reads a window of the file, from the cursor's frame: [src]
+  holds its bytes, and positions count from its first. When a frame runs
+  past a window that the file goes on after, the decode stops before that
+  frame, so its caller can call again with more of the file.
+
   The stubs capture each bigarray's pointer and the stream's facts before
   they release the runtime lock, and then touch only bigarray storage,
   their locals and memory they allocated with malloc.
@@ -42,13 +47,17 @@
 
 #define HOST_BIG (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
 
+/* The reasons a frame fails that a longer window may remove. */
+static const char past_end[] = "the frame ends past the file";
+static const char header_past_end[] = "the file ends inside a frame header";
+
 /* Streams */
 
 /* A stream's facts, from STREAMINFO and its first frame: in [Fields],
    the order of the OCaml array [stream] in flac.ml. [samples] is whether a
    frame's coded number is its first row (RFC 9639, 9.1.5 and B.1), and
-   [length] is -1 when STREAMINFO states none. [end] is the file's
-   length. */
+   [length] is -1 when STREAMINFO states none. [end] is the window's
+   length, and [more] whether the file goes on past it. */
 enum Fields {
   CHANNELS,
   BITS,
@@ -62,11 +71,13 @@ enum Fields {
   SAMPLES,
   END,
   WIDTH,
+  MORE,
   FIELDS
 };
 
 typedef struct {
-  int channels, bits, rate, min_block, max_block, strategy, samples, width;
+  int channels, bits, rate, min_block, max_block, strategy, samples, width,
+      more;
   int64_t min_frame, max_frame, length, end;
 } stream;
 
@@ -83,6 +94,7 @@ static void stream_of(value v, stream *s) {
   s->samples = Int_val(Field(v, SAMPLES));
   s->end = Long_val(Field(v, END));
   s->width = Int_val(Field(v, WIDTH));
+  s->more = Int_val(Field(v, MORE));
 }
 
 /* CRCs (9.1.8, 9.3): CRC-8 of polynomial x^8 + x^2 + x + 1 and CRC-16 of
@@ -230,7 +242,7 @@ static const char *residual(reader *r, int64_t *x, int bs, int order) {
         x[i++] = (int64_t)(folded >> 1) ^ -(int64_t)(folded & 1);
       }
     }
-    if (r->over) return "the frame ends past the file";
+    if (r->over) return past_end;
   }
   return NULL;
 }
@@ -304,7 +316,7 @@ static const char *subframe(reader *r, int64_t *x, int bs, int bits) {
     }
   } else
     return "a subframe's type is reserved";
-  if (r->over) return "the frame ends past the file";
+  if (r->over) return past_end;
   if (wasted)
     for (int i = 0; i < bs; i++) x[i] = (int64_t)((uint64_t)x[i] << wasted);
   return NULL;
@@ -330,7 +342,7 @@ static const char *frame_header(const uint8_t *src, const stream *s,
                                 const crcs *t, int64_t pos, header *h) {
   const uint8_t *f = src + pos;
   int64_t avail = s->end - pos;
-  if (avail < 5) return "the file ends inside a frame header";
+  if (avail < 5) return header_past_end;
   if (f[0] != 0xFF || (f[1] & 0xFE) != 0xF8) return "no frame sync code";
   if ((f[1] & 1) != s->strategy)
     return "the blocking strategy differs from the first frame's";
@@ -353,7 +365,7 @@ static const char *frame_header(const uint8_t *src, const stream *s,
     return "a frame's coded number is malformed";
   int extra = (bs_code == 6) + 2 * (bs_code == 7) + (rate_code == 12) +
               2 * (rate_code == 13 || rate_code == 14);
-  if (avail < 4 + len + extra + 1) return "the file ends inside a frame header";
+  if (avail < 4 + len + extra + 1) return header_past_end;
   int64_t number = len == 1 ? lead : lead & (0xFF >> (len + 1));
   int i = 5;
   for (int k = 1; k < len; k++, i++) {
@@ -439,7 +451,7 @@ static const char *frame(const uint8_t *src, const stream *s, const crcs *t,
         return "a sample is past its depth";
   if (take(&r, r.n & 7)) return "a frame's padding bits are not zero";
   const uint8_t *footer = at_byte(&r);
-  if (r.over || footer + 2 > src + s->end) return "the frame ends past the file";
+  if (r.over || footer + 2 > src + s->end) return past_end;
   uint16_t stored = (uint16_t)((footer[0] << 8) | footer[1]);
   if (crc16(t, src + pos, (size_t)(footer - (src + pos))) != stored)
     return "the frame's CRC-16 differs";
@@ -488,10 +500,12 @@ static void hash(unsigned char *md5, const int64_t *x, const stream *s, int bs,
 }
 
 /* [caml_nx_io_flac_decode src stream cursor md5 skip dst at rows rest]
-   decodes as the preamble states, [cursor] the array [|byte; row|], [md5]
-   a digest in progress or empty bytes, [rows] -1 for none, and is the
-   rows it wrote into [rest]. It raises [Failure] with the reason alone,
-   the cursor at the frame that failed. */
+   decodes as the preamble states, [cursor] the array
+   [|byte; row; written; skip|], [md5] a digest in progress or empty bytes,
+   [rows] -1 for none, and is the rows it wrote into [rest], or -1 if it
+   stopped at a frame past the window. Then the cursor names that frame,
+   with the rows written and the rows still to skip. It raises [Failure]
+   with the reason alone, the cursor at the frame that failed. */
 CAMLprim value caml_nx_io_flac_decode(value vsrc, value vstream,
                                       value vcursor, value vmd5, value vskip,
                                       value vdst, value vat, value vrows,
@@ -525,13 +539,17 @@ CAMLprim value caml_nx_io_flac_decode(value vsrc, value vstream,
   int64_t kept = 0, written = 0;
   /* Without a length, a frame shorter than the shortest must be the
      last. */
-  int short_seen = 0;
+  int short_seen = 0, stopped = 0;
   caml_release_runtime_system();
   crcs_init(t);
   for (;;) {
     if (rows >= 0 && written == rows) break;
     if (s.length >= 0 && row == s.length) {
       if (rows >= 0) e = "the stream ends before the rows asked for";
+      break;
+    }
+    if (pos >= s.end && s.more) {
+      stopped = 1;
       break;
     }
     if (s.length < 0 && pos == s.end) break;
@@ -546,7 +564,11 @@ CAMLprim value caml_nx_io_flac_decode(value vsrc, value vstream,
     int bs;
     int64_t next;
     e = frame(src, &s, t, pos, row, x, &bs, &next);
-    if (e) break;
+    if (e && s.more && (e == past_end || e == header_past_end)) {
+      e = NULL;
+      stopped = 1;
+    }
+    if (e || stopped) break;
     if (hashing) hash(md5, x, &s, bs, message);
     short_seen = bs < s.min_block;
     int from = (int)(skip < bs ? skip : bs);
@@ -570,12 +592,32 @@ CAMLprim value caml_nx_io_flac_decode(value vsrc, value vstream,
   /* The cursor names the frame that failed. */
   Store_field(vcursor, 0, Val_long(pos));
   Store_field(vcursor, 1, Val_long(row));
+  Store_field(vcursor, 2, Val_long(written));
+  Store_field(vcursor, 3, Val_long(skip));
   if (e) caml_failwith(e);
-  CAMLreturn(Val_long(kept));
+  CAMLreturn(Val_long(stopped ? -1 : kept));
 }
 
 CAMLprim value caml_nx_io_flac_decode_byte(value *argv, int argn) {
   (void)argn;
   return caml_nx_io_flac_decode(argv[0], argv[1], argv[2], argv[3], argv[4],
                                 argv[5], argv[6], argv[7], argv[8]);
+}
+
+/* [caml_nx_io_flac_header src stream pos out] is whether a frame header of
+   the stream, its CRC-8 checked, lies at byte [pos], and then writes into
+   [out] its first row, as its coded number states it, and its rows. */
+CAMLprim value caml_nx_io_flac_header(value vsrc, value vstream, value vpos,
+                                      value vout) {
+  stream s;
+  stream_of(vstream, &s);
+  int64_t pos = Long_val(vpos);
+  if (pos < 0 || pos >= s.end) return Val_false;
+  crcs t;
+  crcs_init(&t);
+  header h;
+  if (frame_header(Caml_ba_data_val(vsrc), &s, &t, pos, &h)) return Val_false;
+  Store_field(vout, 0, Val_long(s.samples ? h.number : h.number * s.max_block));
+  Store_field(vout, 1, Val_long(h.bs));
+  return Val_true;
 }

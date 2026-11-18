@@ -244,6 +244,22 @@ let built_refused =
       let path = fixture ("flac_bad_" ^ name ^ ".flac") in
       fails ~naming ~path (fun () -> Audio.samples (Nx_io.load_audio path)))
 
+(* Bytes *)
+
+(* The byte of a FLAC file's first frame, after its metadata blocks. *)
+let first_frame s =
+  let rec go at =
+    let last = Char.code s.[at] land 0x80 <> 0 in
+    let n = (Char.code s.[at + 1] lsl 16) lor String.get_uint16_be s (at + 2) in
+    if last then at + 4 + n else go (at + 4 + n)
+  in
+  go 4
+
+let flip_bit s i b =
+  String.mapi
+    (fun j c -> if i = j then Char.chr (Char.code c lxor (1 lsl b)) else c)
+    s
+
 (* MD5 *)
 
 let stated s = String.sub s 26 16
@@ -296,21 +312,294 @@ let speech =
       equal (array int) (Nx.to_array x)
         (Nx.to_array (Nx.cast Nx.int16 (Nx.mul_s y 32768.))))
 
-(* Corruption *)
+(* Windows and blocks *)
 
-(* The byte of a FLAC file's first frame, after its metadata blocks. *)
-let first_frame s =
+(* Files to read in pieces: of fixed and variable block sizes, frames of 16 rows
+   to 65535, with seek points confirmed and not. *)
+let pieces =
+  [
+    fixture "flac_seek.flac";
+    fixture "flac_seek_wrong.flac";
+    fixture "flac_seek_variable.flac";
+    fixture "flac_skewed.flac";
+    fixture "flac_block_uncommon.flac";
+    fixture "flac_pre_2007.flac";
+    fixture "flac_depth_24.flac";
+    fixture "flac_no_length.flac";
+    cut "ietf_subset_03.flac";
+    cut "ietf_subset_24.flac";
+    cut "ietf_subset_48.flac";
+    cut "ietf_subset_60.flac";
+  ]
+
+(* Each file's samples, loaded once. *)
+(* Each file's rows, read from its header at start, and its samples, decoded
+   once when a test first asks, so a decoder that fails fails that test. *)
+let lengths =
+  List.map
+    (fun p -> (p, try Audio.length (Nx_io.load_audio p) with Failure _ -> 0))
+    pieces
+
+let whole =
+  let memo = Hashtbl.create 16 in
+  fun p ->
+    match Hashtbl.find_opt memo p with
+    | Some x -> x
+    | None ->
+        let x = decoded p in
+        Hashtbl.add memo p x;
+        x
+
+let slice (Nx.P x) ~row ~rows = Nx.P (Nx.slice [ Nx.R (row, row + rows) ] x)
+
+let join = function
+  | [] -> failf "no block"
+  | Nx.P x :: _ as bs ->
+      let dt = Nx.dtype x in
+      Nx.P (Nx.concatenate ~axis:0 (List.map (fun b -> Nx.unpack dt b) bs))
+
+(* A file, and a row and a count of rows in it. *)
+let piece =
+  let open Gen in
+  let* path, n =
+    of_list ~pp:(fun ppf (p, _) -> Format.pp_print_string ppf p) lengths
+  in
+  let* row =
+    frequency [ (1, constant 0); (1, constant n); (6, int_range 0 n) ]
+  in
+  let+ rows =
+    frequency
+      [
+        (1, constant 0);
+        (1, constant (n - row));
+        (1, int_range (Int.min 1 (n - row)) (Int.min 3 (n - row)));
+        (5, int_range 0 (n - row));
+      ]
+  in
+  (path, n, row, rows)
+
+let piece =
+  Gen.with_pp
+    (fun ppf (p, _, row, rows) ->
+      Format.fprintf ppf "%s, %d rows from row %d" p rows row)
+    piece
+
+let windows =
+  prop "a window is the slice of the samples it covers" piece
+    (fun (path, n, row, rows) ->
+      let x = whole path in
+      cover "from row 0" (row = 0 && rows > 0);
+      cover "no row" (rows = 0);
+      cover "to the end" (rows > 0 && row + rows = n);
+      cover "past a seek point" (row > 32 && path = fixture "flac_seek.flac");
+      cover "in the denser frames" (row > 16384 && rows > 1024);
+      equal packed (slice x ~row ~rows)
+        (Audio.window (Nx_io.load_audio path) ~row ~rows))
+
+(* Joined blocks are the samples from their first row. *)
+let joined =
+  prop "blocks joined are the samples from their row"
+    Gen.(pair piece (int_range 1 64))
+    (fun ((path, n, row, _), k) ->
+      let (Nx.P y as x) = whole path in
+      (* At most [k] blocks, and one past the end of the samples. *)
+      let rows = if k = 64 then n + 1 else Int.max 1 ((n - row) / k) in
+      cover "one row a block" (rows = 1 && row < n);
+      cover "one block" (n - row > 0 && rows >= n - row);
+      cover "from a row past 0" (row > 0 && row < n);
+      cover "no block" (row = n);
+      let bs = List.of_seq (Audio.blocks ~row (Nx_io.load_audio path) ~rows) in
+      equal int ((n - row + rows - 1) / rows) (List.length bs);
+      List.iteri
+        (fun i (Nx.P b) ->
+          let m =
+            if i = List.length bs - 1 then n - row - (i * rows) else rows
+          in
+          equal (array int) [| m; (Nx.shape y).(1) |] (Nx.shape b))
+        bs;
+      if bs <> [] then equal packed (slice x ~row ~rows:(n - row)) (join bs))
+
+(* The byte of the first seek table's type, if any. *)
+let seektable_at s =
   let rec go at =
-    let last = Char.code s.[at] land 0x80 <> 0 in
+    let h = Char.code s.[at] in
     let n = (Char.code s.[at + 1] lsl 16) lor String.get_uint16_be s (at + 2) in
-    if last then at + 4 + n else go (at + 4 + n)
+    if h land 0x7f = 3 then Some at
+    else if h land 0x80 <> 0 then None
+    else go (at + 4 + n)
   in
   go 4
 
-let flip_bit s i b =
-  String.mapi
-    (fun j c -> if i = j then Char.chr (Char.code c lxor (1 lsl b)) else c)
-    s
+(* [padded s] is [s] with its seek table a padding block. *)
+let padded s =
+  match seektable_at s with
+  | None -> failf "no seek table"
+  | Some at ->
+      String.mapi
+        (fun i c ->
+          if i = at then Char.chr (Char.code c land 0x80 lor 1) else c)
+        s
+
+let seeking =
+  group "seek points"
+    [
+      test "a seek table changes no window" (fun () ->
+          List.iter
+            (fun name ->
+              let s = read name in
+              let a = Nx_io.load_audio name
+              and b = Nx_io.load_audio (file (padded s)) in
+              let n = Audio.length a in
+              for i = 0 to 63 do
+                let row = i * n / 64 in
+                let rows = Int.min 7 (n - row) in
+                equal packed
+                  (Audio.window a ~row ~rows)
+                  (Audio.window b ~row ~rows)
+              done)
+            [
+              fixture "flac_seek.flac";
+              fixture "flac_seek_variable.flac";
+              cut "ietf_subset_48.flac";
+            ]);
+      test "a read past a confirmed seek point decodes from it" (fun () ->
+          (* Frame 0 of flac_seek.flac corrupted: a window past the point at row
+             64 does not decode it, and one before every point but row 0's does,
+             as does any window of the file without its table. *)
+          let s = read (fixture "flac_seek.flac") in
+          let bad = flip_byte s (first_frame s + 12) in
+          let a = Nx_io.load_audio (file bad) in
+          equal packed
+            (slice (decoded (fixture "flac_seek.flac")) ~row:70 ~rows:10)
+            (Audio.window a ~row:70 ~rows:10);
+          let path = file bad in
+          fails ~naming:"CRC-16" ~path (fun () ->
+              Audio.window (Nx_io.load_audio path) ~row:10 ~rows:10);
+          let path = file (padded bad) in
+          fails ~naming:"CRC-16" ~path (fun () ->
+              Audio.window (Nx_io.load_audio path) ~row:70 ~rows:10));
+      test "a read that stops while it skips rows resumes the skip" (fun () ->
+          (* flac_seek_dense.flac: 65536 rows of silence in constant frames,
+             2048 dense rows in 8 verbatim frames of 1035 bytes, then 4096 rows
+             of silence; 12232 bytes of frames for 71680 rows, so a row's mean
+             is 0 bytes, taken as 1. Seek points at rows 0, 65536 and 67584. A
+             window of 10 rows from row 67036 seeks to row 65536 and skips 1500
+             rows: its first window of the file is (10 + 1500 + 256) * 1 + 1024
+             = 2790 bytes, which holds 2 of the dense frames, so the decode
+             stops 512 rows in, with 988 rows still to skip. *)
+          let path = fixture "flac_seek_dense.flac" in
+          let row = 65536 + 1500 in
+          equal packed
+            (slice (decoded path) ~row ~rows:10)
+            (Audio.window (Nx_io.load_audio path) ~row ~rows:10));
+      test "a point its frame does not confirm is passed over" (fun () ->
+          (* flac_seek_wrong.flac's points but row 0's name no frame, the wrong
+             row, the wrong rows or a byte past the file. With frame 0
+             corrupted, every window decodes it. *)
+          let s = read (fixture "flac_seek_wrong.flac") in
+          let path = file (flip_byte s (first_frame s + 12)) in
+          List.iter
+            (fun row ->
+              fails ~naming:"CRC-16" ~path (fun () ->
+                  Audio.window (Nx_io.load_audio path) ~row ~rows:1))
+            [ 33; 65; 81; 100 ]);
+    ]
+
+let pieces_md5 =
+  group "MD5 in pieces"
+    [
+      test "blocks from row 0 check the MD5 when they give the last" (fun () ->
+          let s = read (fixture "flac_seek.flac") in
+          let path = file (flip_md5 s 3) in
+          let a = Nx_io.load_audio path in
+          let n = Audio.length a in
+          let bs = Audio.blocks a ~rows:30 in
+          (* Rows 0 to 89 are given; the block of rows 90 to 119 is not the
+             last. *)
+          List.iter ignore (List.of_seq (Seq.take 4 bs));
+          fails ~naming:"MD5" ~path (fun () -> List.of_seq bs);
+          fails ~naming:"MD5" ~path (fun () -> Audio.window a ~row:0 ~rows:n);
+          ignore (Audio.window a ~row:0 ~rows:(n - 1));
+          ignore (Audio.window a ~row:1 ~rows:(n - 1));
+          ignore (List.of_seq (Audio.blocks ~row:1 a ~rows:30)));
+      test "a tail of a pass from row 0 forced twice gives the same blocks"
+        (fun () ->
+          (* The tail's nodes carry the digest of the frames before them, which
+             the file's MD5 checks at the last block. *)
+          let a = Nx_io.load_audio (fixture "flac_seek.flac") in
+          match Audio.blocks a ~rows:30 () with
+          | Seq.Nil -> failf "no block"
+          | Seq.Cons (_, tail) ->
+              equal (list packed) (List.of_seq tail) (List.of_seq tail));
+      test "a sequence forced twice gives the same blocks" (fun () ->
+          let a = Nx_io.load_audio (cut "ietf_subset_24.flac") in
+          let bs = Audio.blocks ~row:5 a ~rows:1000 in
+          equal (list packed) (List.of_seq bs) (List.of_seq bs));
+      test "a window before a corrupted frame returns, one over it raises"
+        (fun () ->
+          let s = read (fixture "flac_seek.flac") in
+          let path = file (flip_byte s (String.length s - 1)) in
+          let a = Nx_io.load_audio path in
+          ignore (Audio.window a ~row:0 ~rows:112);
+          fails ~naming:"CRC-16" ~path (fun () ->
+              Audio.window a ~row:100 ~rows:20));
+      test "arguments outside the rows" (fun () ->
+          let a = Nx_io.load_audio (fixture "flac_seek.flac") in
+          let n = Audio.length a in
+          List.iter
+            (fun (row, rows) ->
+              invalid ~by:"Nx_io.Audio.window" (fun () ->
+                  Audio.window a ~row ~rows))
+            [ (-1, 1); (0, -1); (n, 1); (1, n) ];
+          List.iter
+            (fun (row, rows) ->
+              invalid ~by:"Nx_io.Audio.blocks" (fun () ->
+                  Audio.blocks ~row a ~rows))
+            [ (0, 0); (-1, 1); (n + 1, 1) ]);
+    ]
+
+(* Domains *)
+
+(* One file's [Audio.t] and passes of its blocks from row 0 shared between
+   domains, against its samples: a pass's reference is the blocks it has left to
+   give. The file states its MD5, so each node's digest is in play wherever it
+   is forced. *)
+let shared = fixture "flac_seek.flac"
+let audio = abstract "a"
+let pass = abstract "p"
+
+let slices rows =
+  let (Nx.P x as p) = whole shared in
+  let n = (Nx.shape x).(0) in
+  List.init
+    ((n + rows - 1) / rows)
+    (fun i -> slice p ~row:(i * rows) ~rows:(Int.min rows (n - (i * rows))))
+
+let block_rows = Gen.with_pp Format.pp_print_int (Gen.int_range 1 50)
+
+let shared_domains =
+  stateful ~domains:2 ~count:20 "a file and its passes shared between domains"
+    [
+      command "load"
+        (Gen.unit @-> makes audio)
+        (fun () -> ())
+        (fun () -> Nx_io.load_audio shared);
+      command "blocks"
+        (block_rows @-> audio ^-> makes pass)
+        (fun rows () -> slices rows)
+        (fun rows a -> Audio.blocks a ~rows);
+      command "tail"
+        (pass ^-> makes pass)
+        (function [] -> [] | _ :: t -> t)
+        (fun s -> match s () with Seq.Nil -> Seq.empty | Seq.Cons (_, t) -> t);
+      command "force" (pass ^-> returns (list packed)) Fun.id List.of_seq;
+      command "window"
+        (block_rows @-> block_rows @-> audio ^-> returns packed)
+        (fun row rows () -> slice (whole shared) ~row ~rows)
+        (fun row rows a -> Audio.window a ~row ~rows);
+    ]
+
+(* Corruption *)
 
 let small = read (fixture "flac_depth_16.flac")
 
@@ -344,5 +633,10 @@ let () =
          built_refused;
          md5;
          speech;
+         windows;
+         joined;
+         seeking;
+         pieces_md5;
+         shared_domains;
          corrupted;
        ])

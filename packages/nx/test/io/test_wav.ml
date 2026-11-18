@@ -472,6 +472,78 @@ let low_bits =
       let a = Nx_io.load_audio path in
       fails ~naming:"row 2" ~path (fun () -> Audio.samples a))
 
+(* Windows and blocks *)
+
+let pieces =
+  List.map
+    (fun name -> fixture (name ^ ".wav"))
+    [
+      "wav_sf_pcm_u8";
+      "wav_sf_pcm_24";
+      "wav_sf_double";
+      "wavex_sf_pcm24";
+      "wav_alaw";
+    ]
+
+let whole = List.map (fun p -> (p, load_one p)) pieces
+let slice (Nx.P x) ~row ~rows = Nx.P (Nx.slice [ Nx.R (row, row + rows) ] x)
+
+let piece =
+  let open Gen in
+  let* path, (Nx.P x as p) =
+    of_list ~pp:(fun ppf (p, _) -> Format.pp_print_string ppf p) whole
+  in
+  let n = (Nx.shape x).(0) in
+  let* row = int_range 0 n in
+  let+ rows = int_range 0 (n - row) and+ k = int_range 1 (n + 1) in
+  (path, p, row, rows, k)
+
+let windows =
+  prop "a window is the slice of the samples it covers" piece
+    (fun (path, x, row, rows, _) ->
+      cover "no row" (rows = 0);
+      cover "from a row past 0" (row > 0 && rows > 0);
+      let w = Audio.window (Nx_io.load_audio path) ~row ~rows in
+      equal memory Own_memory (memory_of w);
+      equal packed (slice x ~row ~rows) w)
+
+let joined =
+  prop "blocks joined are the samples from their row" piece
+    (fun (path, (Nx.P x as p), row, _, rows) ->
+      let n = (Nx.shape x).(0) in
+      cover "several blocks" (n - row > rows);
+      let bs = List.of_seq (Audio.blocks ~row (Nx_io.load_audio path) ~rows) in
+      equal int ((n - row + rows - 1) / rows) (List.length bs);
+      match bs with
+      | [] -> equal int n row
+      | bs ->
+          let dt = Nx.dtype x in
+          equal packed
+            (slice p ~row ~rows:(n - row))
+            (Nx.P (Nx.concatenate ~axis:0 (List.map (Nx.unpack dt) bs))))
+
+let read_rows =
+  test "a window reads its rows, and a set bit below the valid ones raises"
+    (fun () ->
+      (* 20 valid bits in 3 bytes, row 5 of 8 with its lowest bit set. *)
+      let data = Bytes.make (3 * 8) '\000' in
+      Bytes.set data (3 * 5) '\001';
+      let path =
+        file
+          (wav
+             (extensible ~code:1 ~channels:1 ~container:3 20)
+             (Bytes.to_string data))
+      in
+      let a = Nx_io.load_audio path in
+      ignore (Audio.window a ~row:0 ~rows:5);
+      ignore (Audio.window a ~row:6 ~rows:2);
+      fails ~naming:"row 5" ~path (fun () -> Audio.window a ~row:4 ~rows:2);
+      let bs = Audio.blocks a ~rows:3 in
+      ignore (Seq.take 1 bs |> List.of_seq);
+      fails ~naming:"row 5" ~path (fun () -> List.of_seq bs);
+      invalid ~by:"Nx_io.Audio.window" (fun () -> Audio.window a ~row:7 ~rows:2);
+      invalid ~by:"Nx_io.Audio.blocks" (fun () -> Audio.blocks a ~rows:0))
+
 (* Corruption *)
 
 let small =
@@ -504,5 +576,8 @@ let () =
          rf64_cases;
          refused;
          low_bits;
+         windows;
+         joined;
+         read_rows;
          corrupted;
        ])

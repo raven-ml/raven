@@ -3376,6 +3376,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_io.Audio.window` and `Nx_io.Audio.blocks` read an audio file's rows in
+  pieces, each frame of a FLAC pass decoded once, and starting at the seek
+  point nearest before the first row whose frame confirms it.
 - A FLAC load checks the samples against the MD5 the file states when it
   decodes every frame.
 - `Nx_io.load_audio` reads FLAC files, every stream RFC 9639 defines of 4 to
