@@ -5,6 +5,18 @@ Where it stands, with every measurement: doc/performance.md.
 
 ## tolk
 
+- Small products in the rows layout run too few workgroups: gpt-oss's
+  router at 64 tokens or fewer and at decode, and the 12-token k and v
+  projections, take 7-24 us streamed (the rows layout runs rows(W)/4
+  workgroups, 8 warps for a 32-row W) where the general rules' grouped
+  reduce and BEAM take 5-11. A few-workgroups case for the rows layout, as
+  D110 is for columns, is undesigned (_plans/perf-campaign/routercore/)
+- Bare tensor cores (`TC` with no K upcast, 180 serial K steps) take 37.9 us
+  on the router at 8, 16 and 48 rows against the stream's 16-23; at R <= 16
+  tolk's hand cores (projection 8 and 16: 59 and 70 us) trail BEAM's
+  (48.1, 49.1) (_plans/perf-campaign/routercore/design.md)
+- The Stage suite's cover "gathered rows left unstaged" (`test_stage.ml`
+  ~931) is vacuous at seed `s1:9cc4952459e7d173` on main: a flaky cover
 - D212's blocked contractions still lose to tinygrad's heuristic on long
   reduces: `contract/f32-2048` 1.03 of main against off's 0.92, attention's
   values of width 256 (`f0865e`) 1.04 against 0.86. BEAM's winners there
