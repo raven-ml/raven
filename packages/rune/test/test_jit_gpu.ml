@@ -436,13 +436,10 @@ let attention_dtypes =
   Nx.Dtype.[ Any Nx.float16; Any Nx.bfloat16; Any Nx.float32; Any Nx.float64 ]
 
 (* Heads of every size, on the FFMA micro-tile in float32 and float64 and on
-   the target's tensor core in bfloat16; the gradient's in float32 and
-   bfloat16. *)
+   the target's tensor core in bfloat16, forward and gradient: to 160
+   dimensions the gradient's kernels are attention's own on each unit. *)
 let heads =
   Attentions.heads Nx.Dtype.[ Any Nx.float32; Any Nx.float64; Any Nx.bfloat16 ]
-
-let grad_heads =
-  List.filter (fun (c : Attentions.t) -> c.dtype <> Nx.Dtype.Any Nx.float64) heads
 
 (* float32 keys of one chunk of dimensions, unmasked, over 128 batches of 2
    heads of 128 rows, which run each row's tiles in one workgroup, and
@@ -3526,8 +3523,19 @@ let () =
                  Attentions.law ~composed:true ~wide (snd (on_gpu ())) c);
              Windtrap.cases
                "their gradient holds rune's bound against the composition's"
-               ~id:head_id grad_heads
+               ~id:head_id heads
                (fun c ->
+                 let d, s = on_gpu () in
+                 if c.Attentions.dtype = Nx.Dtype.Any Nx.float64 then
+                   assume (has_float64 d);
+                 Attentions.grad_law ~composed:true s ~vmap:false c);
+             Windtrap.cases
+               "the gradient of float32 keys of one chunk, unmasked, over \
+                several tiles a workgroup holds rune's bound against the \
+                composition's"
+               ~id:(fun (c, _) -> head_id c)
+               (List.filter (fun (_, wide) -> not wide) one_chunk)
+               (fun (c, _) ->
                  Attentions.grad_law ~composed:true (snd (on_gpu ()))
                    ~vmap:false c);
              Windtrap.cases "a kernel's instructions do not grow with its head"

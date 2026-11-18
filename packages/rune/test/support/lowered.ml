@@ -283,13 +283,17 @@ let derivative_sources (type v s d) ~(target : Helpers.Target.t)
   let renderer, place = off_host target in
   let found = ref [] in
   let _ = lowered ~direct:true ~local:false ~place ~transposed:found f in
+  (* A result's store, where it has an element: an lse-only call's value
+     cotangent has none. *)
   let store u =
     let n = Shape.max_numel u in
-    let o = Ops.new_buffer place.device (max 1 n) (Ops.dtype u) in
-    Ops.after o [ Ops.store o (Shape.reshape u [ Ops.Int (max 1 n) ]) ]
+    if n = 0 then None
+    else
+      let o = Ops.new_buffer place.device n (Ops.dtype u) in
+      Some (Ops.after o [ Ops.store o (Shape.reshape u [ Ops.Int n ]) ])
   in
   List.map
-    (function
-      | None -> None
-      | Some us -> Some (rendered ~device:place.device renderer (Ops.sink (Array.to_list (Array.map store us)))))
+    (Option.map (fun us ->
+         rendered ~device:place.device renderer
+           (Ops.sink (List.filter_map store (Array.to_list us)))))
     !found

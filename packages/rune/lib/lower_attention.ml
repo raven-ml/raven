@@ -906,6 +906,8 @@ let slot_checks = 110
 let slot_dp = 111
 let slot_p = 112
 let slot_rbar = 113
+let slot_qrows = 114
+let slot_orows = 115
 
 (* [stage ~tid ~threads ~n ~at src dst ~width ~first ~cols] copies [n]
    rows of [src], row [i] where [at ~within i] gives [(ok, start)], of
@@ -1813,11 +1815,13 @@ let forward_tiles r vt ~q ~k ~dv =
      k̄  = scale Σ_i r̄ q_i               by keys, over their group's rows
      v̄  = Σ_i p ō_i
 
-   For a narrow float on a core that chains as {!core}'s, both kernels run
-   their products on it: a warp holds [M] query rows ([dq]) or [M] keys
-   ([dkdv]) and their operands in registers, the other side's tiles in
-   workgroup memory; [p] and [r̄], rounded once to the operands' dtype, are
-   the [A] operands of the products they chain into. The keys' kernel
+   Both kernels run their products on {!plan}'s unit: a warp holds [M]
+   query rows ([dq]) or [M] keys ([dkdv]), the other side's tiles in
+   workgroup memory. On a core that chains as {!core}'s, the warp's
+   operands are in registers and [p] and [r̄], rounded once to the operands'
+   dtype, are the [A] operands of the products they chain into; on FFMA its
+   operands are copied a chunk at a time beside the tiles, each tile's, and
+   [p] and [r̄] go through workgroup memory, in the accumulator. The keys' kernel
    computes [Sᵀ = K Qᵀ] and [dPᵀ = V ōᵀ], so that its accumulators chain
    along the rows it sums over. Each sum runs in a fixed order, so the bits
    are the shapes' and the target's. Tiles skip as the forward's. *)
@@ -1910,7 +1914,7 @@ let delta_kernel a xs =
 
 type dcore = {
   dtc : Tc.t;
-  dtransposed : bool;  (* Whether [dtc] is the hardware's core transposed. *)
+  dmul : mul;  (* How a step of [dtc] multiplies. *)
   qwarps : int;  (* [dq]'s warps, of [M] rows each. *)
   qkeys : int;  (* [dq]'s keys a tile. *)
   kwarps : int;  (* [dkdv]'s warps, of [M] keys each. *)
@@ -1920,7 +1924,44 @@ type dcore = {
          launch of its own, so that each has its own registers. *)
   kw : int;  (* The keys' and queries' dimensions, in whole steps of [K]. *)
   vw : int;  (* The values' and [ō]'s dimensions, in whole steps of [K]. *)
+  kc : int * int;
+      (* [kw]'s chunks ({!split}): one on a core, which holds a row operand
+         in its lanes; on FFMA, whose row operand is a chunk's dimensions of
+         four rows a lane, chunks it copies into workgroup memory. *)
+  vc : int * int;  (* [vw]'s chunks. *)
 }
+
+(* [copied_rows u ~tid ~threads ~n ~at ~stride ~inside ~pin src buf ~width
+   ~cols ~row0 first] is, on FFMA, the [A] operand ({!step_operand}) of the
+   chunk of [cols] columns from [first] of a row operand of [n] rows of
+   [src] that [at] reads ({!stage}): the chunk copied into [buf] and read at
+   a lane's rows [row0 + r]. The copy is written through the ranges [pin],
+   the tiles': the operand's rows are every tile's, so that a copy that
+   named no range of the tiles' loop could be placed once before it, and
+   the chunks of the next product, or of the next tile, would then
+   overwrite it. *)
+let copied_rows u ~tid ~threads ~n ~at ~stride ~inside ~pin src buf ~width
+    ~cols ~row0 first =
+  let staged =
+    stage ~tid ~threads ~n ~at ~stride (inside src)
+      (Ops.after (inside buf) pin)
+      ~width ~first ~cols
+  in
+  let b = Ops.after buf [ Ops.group staged ] in
+  Read
+    (fun k0 ->
+      Shape.stack
+        (List.init u.f.ea (fun e ->
+             reader ~stride b ~w:cols
+               ~row:Ops.O.(row0 + coord u.tc.frag_a Mb u.lane e)
+               ~dim:Ops.O.(k0 + coord u.tc.frag_a Kb u.lane e))))
+
+(* The chunk dots' [B] reader from a tile staged whole, at the chunk from
+   [first]: on a core the tile itself, of one chunk. *)
+let chunk_of (u : product_unit) tile first =
+  match u.mul with
+  | Wmma _ -> tile
+  | Fma -> fun ~row ~dim -> tile ~row ~dim:Ops.O.(first + dim)
 
 (* [values a ~ntiles ~ec acc f] is [f ()], [dP]'s accumulators, or zeros
    where the values have no column: a call of [lse] alone reads no value and
@@ -1953,7 +1994,7 @@ let core_dq c a tr xs =
   let gt = int Stdlib.(tiles_q - 1) - gtr in
   let warp = range Local (Int c.qwarps) 3 in
   let lane = range Warp (Int f.lanes) 4 in
-  let u = { f; tc; mul = Wmma { transposed = c.dtransposed }; lane } in
+  let u = { f; tc; mul = c.dmul; lane } in
   let tid = (warp * int f.lanes) + lane in
   let b = gh // int a.hk and kh = gh % int a.hk in
   let base = (gt * int bq) + (warp * int m_) in
@@ -1975,7 +2016,11 @@ let core_dq c a tr xs =
                  ((r.index * int width) + col)
                  (r.live &&: (col < int width)))))
   in
-  let qa = operands x.q a.dk and oa = operands d.bo a.dv in
+  (* The workgroup's row [i]: whether it is one, and its index. *)
+  let rows_at ~within i =
+    let r = row_at a ~b ~kh ((gt * int bq) + i) in
+    (within &&: r.live, r.index)
+  in
   (* Each row slot's [lse] and [δ]. *)
   let per_slot buf =
     Array.init f.slots (fun s ->
@@ -2008,6 +2053,17 @@ let core_dq c a tr xs =
       [ Stdlib.(bq * row u.mul tc.dtype_in bk) ]
       tc.dtype_in
   in
+  (* On FFMA, the chunks of the rows' [Q] and [ō]. *)
+  let qrows =
+    Shape.placeholder ~slot:slot_qrows ~addrspace:Local
+      [ Stdlib.(bq * stride (snd c.kc)) ]
+      vt
+  in
+  let orows =
+    Shape.placeholder ~slot:slot_orows ~addrspace:Local
+      [ Stdlib.(bq * stride (snd c.vc)) ]
+      vt
+  in
   let key i = (jr * int bk) + i in
   let keys_at inside ~within kl =
     let ky = key kl in
@@ -2027,15 +2083,26 @@ let core_dq c a tr xs =
       reader ~stride (Ops.after dst [ Ops.group staged ]) ~w
     in
     let k_tile = tile x.k ks a.dk kw in
-    (* S = Q Kᵀ and dP = ō Vᵀ, each tile of [N] keys an accumulator. *)
-    let dots slot id w ops tile =
-      dots u ~acc ~slot ~id ~inside ~at:(jr :: at) ~tiles:ntiles (1, w) ops
-        (fun _ -> tile)
+    (* A row operand of [width] columns of [src]: on a core loaded in the
+       lanes, on FFMA copied into [buf] a chunk of [cols] at a time. *)
+    let rows src buf width cols =
+      match u.mul with
+      | Wmma _ -> operands src width
+      | Fma ->
+          copied_rows u ~tid ~threads ~n:bq ~at:rows_at ~stride ~inside ~pin:[ jr ]
+            src buf ~width ~cols ~row0:(warp * int m_)
     in
-    let s = dots slot_s 13 kw qa k_tile in
+    (* S = Q Kᵀ and dP = ō Vᵀ, each tile of [N] keys an accumulator. *)
+    let dots slot id chunks ops tile =
+      dots u ~acc ~slot ~id ~inside ~at:(jr :: at) ~tiles:ntiles chunks ops
+        (chunk_of u tile)
+    in
+    let s = dots slot_s 13 c.kc (rows x.q qrows a.dk (snd c.kc)) k_tile in
     let dp =
       values a ~ntiles ~ec:f.ec acc (fun () ->
-          dots slot_dp 14 vw oa (tile x.v vs a.dv vw))
+          dots slot_dp 14 c.vc
+            (rows d.bo orows a.dv (snd c.vc))
+            (tile x.v vs a.dv vw))
     in
     let rbar =
       Array.init ntiles (fun nt ->
@@ -2105,7 +2172,7 @@ let core_dkdv ~(part : part) c a tr xs =
   let gt = range Global (Int tiles_k) 1 in
   let warp = range Local (Int c.kwarps) 3 in
   let lane = range Warp (Int f.lanes) 4 in
-  let u = { f; tc; mul = Wmma { transposed = c.dtransposed }; lane } in
+  let u = { f; tc; mul = c.dmul; lane } in
   let tid = (warp * int f.lanes) + lane in
   let b = gh // int a.hk and kh = gh % int a.hk in
   let k0 = gt * int bkk in
@@ -2129,7 +2196,11 @@ let core_dkdv ~(part : part) c a tr xs =
                let col = first + k0 + coord tc.frag_a Kb lane e in
                ld_gated buf ((at * int width) + col) (ok &&: (col < int width)))))
   in
-  let ka = operands x.k a.dk and va = operands x.v a.dv in
+  (* The workgroup's key [i]: whether it is read, and its row. *)
+  let keys_at ~within i =
+    let ky = k0 + i in
+    key_at a x ~inside:Fun.id ~b ~kh ~within:(within &&: (ky < len)) ky
+  in
   (* The lane's element [i] of an output of [width] columns. *)
   let elem width i =
     let e = Stdlib.(i mod f.ec) and t = Stdlib.(i / f.ec) in
@@ -2149,6 +2220,17 @@ let core_dkdv ~(part : part) c a tr xs =
   let dos =
     Shape.placeholder ~slot:slot_vs ~addrspace:Local
       [ Stdlib.(br * stride vw) ]
+      vt
+  in
+  (* On FFMA, the chunks of the keys' [K] and [V]. *)
+  let krows =
+    Shape.placeholder ~slot:slot_qrows ~addrspace:Local
+      [ Stdlib.(bkk * stride (snd c.kc)) ]
+      vt
+  in
+  let vrows =
+    Shape.placeholder ~slot:slot_orows ~addrspace:Local
+      [ Stdlib.(bkk * stride (snd c.vc)) ]
       vt
   in
   (* [p]'s and [r̄]'s tiles, where they chain through workgroup memory. *)
@@ -2176,15 +2258,25 @@ let core_dkdv ~(part : part) c a tr xs =
       reader ~stride (Ops.after dst [ Ops.group staged ]) ~w
     in
     let q_tile = tile x.q qs a.dk kw and o_tile = tile d.bo dos a.dv vw in
-    (* Sᵀ = K Qᵀ and dPᵀ = V ōᵀ, each tile of [N] rows an accumulator. *)
-    let dots slot id w ops tile =
-      dots u ~acc ~slot ~id ~inside ~at:(jr :: at) ~tiles:ntiles (1, w) ops
-        (fun _ -> tile)
+    (* A key operand of [width] columns of [src]: on a core loaded in the
+       lanes, on FFMA copied into [buf] a chunk of [cols] at a time. *)
+    let keys src buf width cols =
+      match u.mul with
+      | Wmma _ -> operands src width
+      | Fma ->
+          copied_rows u ~tid ~threads ~n:bkk ~at:keys_at ~stride ~inside ~pin:[ jr ]
+            src buf ~width ~cols ~row0:(warp * int m_)
     in
-    let s = dots slot_s 13 kw ka q_tile in
+    (* Sᵀ = K Qᵀ and dPᵀ = V ōᵀ, each tile of [N] rows an accumulator. *)
+    let dots slot id chunks ops tile =
+      dots u ~acc ~slot ~id ~inside ~at:(jr :: at) ~tiles:ntiles chunks ops
+        (chunk_of u tile)
+    in
+    let s = dots slot_s 13 c.kc (keys x.k krows a.dk (snd c.kc)) q_tile in
     let dp =
       if want_k then
-        values a ~ntiles ~ec:f.ec acc (fun () -> dots slot_dp 14 vw va o_tile)
+        values a ~ntiles ~ec:f.ec acc (fun () ->
+            dots slot_dp 14 c.vc (keys x.v vrows a.dv (snd c.vc)) o_tile)
       else [||]
     in
     let weights =
@@ -2263,12 +2355,19 @@ let core_dkdv ~(part : part) c a tr xs =
    ({!dplan}), each operand's dimensions one block. *)
 let derivative_dims = 160
 
+(* The most 32-bit registers of accumulators a lane of the derivative's FFMA
+   kernels holds: 176 leaves 79 of sm_89's 255 for the operands of a step
+   and their addresses. Its kernels accumulated in float64 at 160
+   dimensions, in tiles of 16, hold 192 and spilled 8 to 48 bytes;
+   float64's, in tiles of 8, 176 and none. *)
+let lane_accumulators = 176
+
 let derivative_tile tc ~wide =
   let n, _, k = Tc.dims tc in
   max (if wide then 16 else 32) (max n k)
 
 (* [dplan renderer a] is the derivative's kernels' shape for [a] on
-   [renderer]'s target, if it takes them: {!plan}'s tensor core, dense keys, [o] of
+   [renderer]'s target, if it takes them: {!plan}'s unit, dense keys, [o] of
    the query's dtype, no load whose cotangent is asked for, and keys and
    values of 1 to {!derivative_dims} dimensions, values of none included (an
    lse-only call, whose [v̄] has no element). To 64 a warp holds its
@@ -2305,10 +2404,11 @@ let derivative_tile tc ~wide =
    At 8 heads of 2048 bfloat16 rows of 64 on the RTX 5000 Ada, paged keys take
    3.55 ms and a differentiated capture 2.84 ms, against the kernels' 0.65 ms
    and 0.79 ms with the capture constant.
-   float32 and float64 take the default: {!plan}'s FFMA micro-tile has no
-   derivative's kernels yet, and CUDA's float32 core rounds its inputs to
-   tf32's ten mantissa bits, outside float32's bound. A SIMT backward was not
-   built: per pair it takes
+   float32 and float64, and a 16-bit query no chaining core takes, run on
+   {!plan}'s FFMA micro-tile, not on CUDA's float32 core, which rounds its
+   inputs to tf32's ten mantissa bits, outside float32's bound. Their
+   timing is pending: the bound of 160 is the tensor core's. A SIMT
+   backward was not built: per pair it takes
    two products and three sums where the forward's SIMT kernel, 1.6 ms at 8
    heads of 2048 rows of 64 on the RTX 5000 Ada, takes two products and one
    sum, against 2.7 ms for the default's five contractions. Forward mode takes
@@ -2316,30 +2416,84 @@ let derivative_tile tc ~wide =
    past 64 dimensions, were not built, and the default takes 4.0 ms at those
    shapes in bfloat16. *)
 let dplan (r : Renderer.t) a ~marked =
-  let vt = Arith.dtype a.vt in
+  let vt = Arith.dtype a.vt and acc = Arith.dtype a.acc in
   match plan r a with
-  | Some ({ mul = Wmma { transposed }; _ } as c)
+  | Some c
     when Option.is_none a.paged
          && (not (Array.exists Fun.id marked))
          && Dtype.equal (Arith.dtype a.out) vt
-         && a.dk > 0 && a.dk <= derivative_dims && a.dv <= derivative_dims ->
+         && a.dk > 0 && a.dk <= derivative_dims && a.dv <= derivative_dims -> (
       let n, m, k = Tc.dims c.tc in
       let step = max n k in
       let wide = a.dk > 64 || a.dv > 64 in
       let tile = derivative_tile c.tc ~wide in
-      let warps n = max 1 (min 4 (ceil_div n m)) in
-      Some
+      let kw = ceil_div a.dk step * step and vw = ceil_div a.dv step * step in
+      let warps rows n = max 1 (min (rows / m) (ceil_div n m)) in
+      let dcore ~warps ~tile kc vc =
         {
           dtc = c.tc;
-          dtransposed = transposed;
+          dmul = c.mul;
           qwarps = warps (grouped a);
           qkeys = tile;
           kwarps = warps a.tk;
           krows = tile;
           wide;
-          kw = ceil_div a.dk step * step;
-          vw = ceil_div a.dv step * step;
+          kw;
+          vw;
+          kc;
+          vc;
         }
+      in
+      match c.mul with
+      | Wmma _ -> Some (dcore ~warps:(warps (4 * m)) ~tile (1, kw) (1, vw))
+      | Fma ->
+          (* FFMA copies two row operands a chunk at a time beside the two
+             tiles it stages whole, so its chunks hold half the forward's
+             bytes; its tiles are the first of 32, 16 and 8 keys or rows,
+             to [tile], at which what each launch declares in workgroup
+             memory fits there (the two tiles, the two chunks, the chained
+             weights and cotangents of a tile, and the vote's [int] a
+             thread) and a lane's accumulators, of its sums and of a tile's
+             scores and their cotangents, hold at most {!lane_accumulators}
+             registers. *)
+          let isz = Dtype.itemsize and stride = row c.mul vt in
+          let chunks w = split ~most:(chunk_bytes / 2 / isz vt) ~step:k w in
+          let kc = chunks kw and vc = chunks vw in
+          let warps = warps ffma_rows in
+          let rows = ffma_rows / m * m and threads = ffma_rows / m * Tc.threads c.tc in
+          let bytes t ~chunks:nc ~chained =
+            (t * (stride kw + stride vw) * isz vt)
+            + (rows * nc * isz vt)
+            + (chained * rows * row c.mul acc t * isz acc)
+            + (threads * 4)
+          in
+          let both = stride (snd kc) + stride (snd vc) in
+          (* A launch's lane's accumulators, in 32-bit registers: [sums]
+             columns of its sums and [products] tiles of products. *)
+          let ec = 1 lsl List.length c.tc.frag_c.elements in
+          let regs t ~sums ~products =
+            ec * ((sums / n) + (products * t / n)) * isz acc / 4
+          in
+          let launches t =
+            (* q̄'s, then k̄'s and v̄'s, together or apart. *)
+            (bytes t ~chunks:both ~chained:1, regs t ~sums:kw ~products:2)
+            ::
+            (if wide then
+               [
+                 (bytes t ~chunks:both ~chained:1, regs t ~sums:kw ~products:2);
+                 (bytes t ~chunks:(stride (snd kc)) ~chained:1, regs t ~sums:vw ~products:1);
+               ]
+             else [ (bytes t ~chunks:both ~chained:2, regs t ~sums:(kw + vw) ~products:2) ])
+          in
+          let fits t =
+            t mod n = 0 && t mod k = 0
+            && List.for_all
+                 (fun (b, g) -> b <= r.shared_max && g <= lane_accumulators)
+                 (launches t)
+          in
+          Option.map
+            (fun tile -> dcore ~warps ~tile kc vc)
+            (List.find_opt (fun t -> t <= tile && fits t) [ 32; 16; 8 ]))
   | _ -> None
 
 (* Operands *)

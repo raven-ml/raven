@@ -283,18 +283,17 @@ let ffma_cases =
     ]
 
 (* The derivative's kernels of attention's own, [q̄]'s and [k̄]'s and [v̄]'s,
-   of a bfloat16 call accumulated in float32 of 2 batches of 2 heads of 128
-   rows and keys and values of [d] dimensions, unmasked or [causal], on
-   [target]'s tensor core, rendered as a compiled gradient takes them
-   ({!Lowered.derivative_sources}); [[]] where its derivative takes its
-   default. *)
-let derivative target ~causal d =
+   of a call of the pair [ds] of 2 batches of 2 heads of 128 rows and keys
+   and values of [d] dimensions, unmasked or [causal], rendered for [target]
+   as a compiled gradient takes them ({!Lowered.derivative_sources}); [[]]
+   where its derivative takes its default. *)
+let derivative target (D (dt, acc)) ~causal d =
   let shape = [| 2; 2; 128; d |] in
   let f () =
-    let z () = Nx.full Nx.bfloat16 shape 0.5 in
+    let z () = Nx.full dt shape 0.5 in
     let q = z () and k = z () and v = z () in
     let mask = if causal then Some Nx.causal else None in
-    Nx.cast Nx.float32 (fst (Nx.attention ?mask ~acc:Nx.float32 ~kv:(Dense { k; v }) q))
+    Nx.cast Nx.float32 (fst (Nx.attention ?mask ~acc ~kv:(Dense { k; v }) q))
   in
   match Lowered.derivative_sources ~target f with
   | [ Some ks ] ->
@@ -307,30 +306,53 @@ let derivative target ~causal d =
   | [ None ] -> []
   | l -> failf "%d calls of attention" (List.length l)
 
-(* The derivative's rows: bfloat16 at d36 to d160, plain and causal, on each
-   GPU target whose tensor core takes them; CUDA's must. *)
+let ffma_id (t, ds, causal, d) =
+  Printf.sprintf "%s %s d%d%s" (target_id t) (dtypes_id ds) d
+    (if causal then " causal" else "")
+
+(* The derivative's rows on a tensor core: bfloat16 at d36 to d160, plain
+   and causal, on each GPU target whose core takes them; CUDA's must. On
+   FFMA: float32, float64 and bfloat16 in float64 at d1 to d160, plain and
+   causal, on CUDA, on HIP gfx942, whose waves have 64 lanes, and in
+   float32 on Metal, which has no float64; each must take them. *)
+let both f ds = List.concat_map (fun d -> [ f false d; f true d ]) ds
+
 let derivative_cases =
   List.concat_map
-    (fun t -> List.concat_map (fun d -> [ (t, false, d); (t, true, d) ]) [ 36; 64; 110; 160 ])
+    (fun t -> both (fun causal d -> (t, D (Nx.bfloat16, Nx.float32), causal, d)) [ 36; 64; 110; 160 ])
     (List.filter (fun (t : Tolk.Helpers.Target.t) -> t.arch <> "sm_75") gpu_targets)
 
-let derivative_id (t, causal, d) =
-  Printf.sprintf "%s bfloat16 d%d%s" (target_id t) d (if causal then " causal" else "")
+let ffma_derivative_cases =
+  let target t = Result.get_ok (Tolk.Helpers.Target.of_string t) in
+  List.concat_map
+    (fun (t, pairs) ->
+      List.concat_map
+        (fun ds -> both (fun causal d -> (target t, ds, causal, d)) [ 1; 36; 64; 110; 160 ])
+        pairs)
+    [
+      ( "CUDA:CUDA:sm_89",
+        [ D (Nx.float32, Nx.float32); D (Nx.float64, Nx.float64); D (Nx.bfloat16, Nx.float64) ] );
+      ( "AMD:HIP:gfx942",
+        [ D (Nx.float32, Nx.float32); D (Nx.float64, Nx.float64); D (Nx.bfloat16, Nx.float64) ] );
+      ("METAL:METAL:Apple9", [ D (Nx.float32, Nx.float32) ]);
+    ]
+
+let derivative_id = ffma_id
 
 (* [on_derivative law] holds [law] on each of a case's derivative kernels,
    [q̄]'s and [k̄]'s and [v̄]'s. *)
-let on_derivative law (t, causal, d) =
-  match derivative t ~causal d with
-  | [] -> is_true ~msg:"CUDA's tensor core takes the derivative" (t != cuda)
+let on_derivative law (t, ds, causal, d) =
+  match derivative t ds ~causal d with
+  | [] ->
+      (* Only a tensor core's target may leave them to the default. *)
+      let (D (dt, acc)) = ds in
+      is_true ~msg:"the target takes the derivative's kernels"
+        (t != cuda && Nx.Dtype.name dt = "bfloat16" && Nx.Dtype.name acc = "float32")
   | ks ->
       is_true ~msg:"q̄'s kernel" (List.exists (fun (n, _) -> n = "attention_dq") ks);
       is_true ~msg:"k̄'s and v̄'s kernels"
         (List.exists (fun (n, _) -> String.starts_with ~prefix:"attention_dkdv" n) ks);
       List.iter (fun (_, ast) -> law t ast) ks
-
-let ffma_id (t, ds, causal, d) =
-  Printf.sprintf "%s %s d%d%s" (target_id t) (dtypes_id ds) d
-    (if causal then " causal" else "")
 
 let () =
   exit
@@ -371,5 +393,13 @@ let () =
                ~id:derivative_id derivative_cases (on_derivative no_races);
              cases "write each buffer their tiles' loop reads in that loop"
                ~id:derivative_id derivative_cases (on_derivative in_the_tiles_loop);
+           ];
+         group "the derivative's kernels on an FFMA micro-tile"
+           [
+             cases "store each address of workgroup memory once between barriers"
+               ~id:derivative_id ffma_derivative_cases (on_derivative no_races);
+             cases "write each buffer their tiles' loop reads in that loop"
+               ~id:derivative_id ffma_derivative_cases
+               (on_derivative in_the_tiles_loop);
            ];
        ])

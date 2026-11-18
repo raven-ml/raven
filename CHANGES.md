@@ -489,6 +489,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` computes the gradient of a float32 or float64 `Nx.attention` on
+  a GPU, and of a 16-bit one that no tensor core takes, with kernels of its
+  own to 160 dimensions, as it computes a 16-bit one's on tensor cores:
+  they recompute each weight from `lse` and store none, where the default
+  stored the weights of every pair.
 - `Rune.jit` computes a float32 or float64 `Nx.attention` on a GPU in tiles,
   as it computes a 16-bit one on tensor cores, on fused multiply-adds of
   each lane's four rows, and so a 16-bit one that no tensor core takes: one
