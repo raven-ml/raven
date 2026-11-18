@@ -547,7 +547,9 @@ let place fn (src : Grid.t) q =
     refuse
       (Nx.logical_and rows_meet (fold Nx.logical_or (List.map2 long a next)))
       "has an edge of 180° of longitude or more, or winds around a pole; \
-       split its cell into cells narrower than 180° that hold no pole";
+       split a geographic cell into cells narrower than 180°, and around a \
+       pole make dst a geographic cap of such cells, since no projected \
+       cell around a pole reads whole";
     (* A footprint across the west edge of a source that does not wrap is
        placed east of the edge, and reads that side alone. Where its least
        longitude, a turn east, still lies west of the source's east corner,

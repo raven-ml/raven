@@ -2580,6 +2580,52 @@ let pole_cells =
           ("footprint [10, 10] has an edge", 21, 2. *. rho);
         ])
 
+(* A projected cell that holds a pole winds around it and raises, and the
+   message names a geographic cap. A cell that meets or nears the pole
+   leaves out up to 37% of its image, at and near the pole alike, and is
+   not refused (the antimeridian section of warp.mli). The cap reads each
+   cell's share of the pole's row. *)
+let polar_grids =
+  test "a projected cell around a pole raises, and a geographic cap reads"
+    (fun () ->
+      let global =
+        north_up Crs.lonlat ~rows:180 ~cols:360 ~x:(-180.) ~y:90. 1.
+      in
+      let polar =
+        {
+          Crs.lonlat with
+          projection =
+            Some
+              (Crs.albers ~lat0:90. ~lon0:0. ~lat1:90. ~lat2:90.
+                 ~false_easting:0. ~false_northing:0.);
+        }
+      in
+      let d = 1e5 in
+      raises_match
+        (Exn.invalid_arg
+           ~sub:"around a pole make dst a geographic cap of such cells")
+        (fun () ->
+          Warp.span global
+            (corners ~src:global
+               ~dst:(north_up polar ~rows:1 ~cols:1 ~x:(-.d) ~y:d (2. *. d))));
+      (* The cap: one cell of 360° is refused, four of 90° each read a
+         quarter of the row next to the pole. *)
+      let row n =
+        Grid.v Crs.lonlat ~rows:1 ~cols:n ~origin:(-180., 90.)
+          ~row_step:(0., -1.)
+          ~col_step:(360. /. float_of_int n, 0.)
+      in
+      raises_match
+        (Exn.invalid_arg ~sub:"split it into cells narrower than 180°")
+        (fun () -> corners ~src:global ~dst:(row 1));
+      let x = Nx.init Nx.float64 [| 180; 360 |] (fun a -> float_of_int a.(1)) in
+      let q = corners ~src:global ~dst:(row 4) in
+      let v, f = Warp.average ~k:(Warp.span global q) global q x in
+      equal ~msg:"fraction" (array float_exact) [| 1.; 1.; 1.; 1. |]
+        (Nx.to_array f);
+      equal ~msg:"value" (array (float 1e-9)) [| 44.5; 134.5; 224.5; 314.5 |]
+        (Nx.to_array v))
+
 let lonlat ~rows ~cols ~x ~y ?(rx = 0.) ?(cy = 0.) cx ry =
   Grid.v Crs.lonlat ~rows ~cols ~origin:(x, y) ~row_step:(rx, ry)
     ~col_step:(cx, cy)
@@ -2935,6 +2981,7 @@ let () =
              area_refusals;
              too_small;
              pole_cells;
+             polar_grids;
              seam_cases;
              seam_message;
              remedies;

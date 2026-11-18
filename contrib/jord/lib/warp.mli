@@ -347,7 +347,10 @@ val mode :
     MODIS's 926 m cells next to the pole are such cells of the sinusoid, on
     which the mean of a smooth field errs by up to 9% of the field's range
     over the cell. A cell of Albers' conic whose edge cuts across the arc
-    that is the pole's image errs the same way. A program that needs such
+    that is the pole's image errs the same way. A cell of a polar cone, an
+    Albers cone with a standard parallel at the pole, that meets or nears
+    the pole leaves out up to 37% of its image ({!section-antimeridian}).
+    A program that needs such
     cells closer warps onto a finer [dst] and averages the fine cells of
     each cell, weighted by fraction × footprint area, which by the
     conservation law is the mean over their union
@@ -426,9 +429,28 @@ val span : Grid.t -> 'd Nx.float64_t -> int
     own edges (ESMF Reference Manual, §25.2.9).
 
     {!corners} refuses a cell with a corner 180° or more from its first,
-    but on the grids its doc exempts. An Albers cell around a pole winds,
-    and the rules raise. A program that makes its corners otherwise must
-    keep to the limit.
+    but on the grids its doc exempts. A program that makes its corners
+    otherwise must keep to the limit.
+
+    On a geographic [src] the area rules take no projected cell that holds
+    a pole: its footprint winds around it, and the rules raise. A cell that
+    meets or nears a pole its projection draws as a point, as transverse
+    Mercator, the sinusoid and an Albers cone with a standard parallel at
+    the pole do, is read without an error and short of its image, since
+    [src]'s pixel plane draws the pole as a line of cell edges that its
+    corners do not reach. A 100 km cell of the cone tangent at the north
+    pole ({!Crs.albers} with [lat1] and [lat2] 90), read from a 0.1°
+    source, whose corner nearest the pole lies δ from it along each
+    axis, leaves out 37% of its image at δ of 0 or 1 m, 24% at 10 km, 4.4%
+    at 100 km, one cell, and 0.84% at 300 km, with fraction 1; one whose
+    edge passes over the pole leaves out up to 48%. A grid around a pole is a geographic cap of
+    cells narrower than 180°, whose corners on the pole keep their
+    longitudes, such as four cells of 90° from 89° to 90°. A program that
+    joins a cap to the projected grid it stands in for reads the
+    projected cells in windows ({!Grid.window}) that leave out those
+    within three cells of the pole, and the cells around the pole from the
+    cap. The samplers read a projected grid around a pole, at its cells'
+    centres.
 
     A footprint across the west edge of a [src] that does not span 360°
     reads the side east of the edge alone. A rule raises where such a

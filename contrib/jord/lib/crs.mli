@@ -239,9 +239,11 @@ val sinusoidal :
     section's values are WGS 84's longitude and latitude, MODIS's sinusoid,
     the UTM zones and the zone that holds a point, and a system's equality
     and EPSG code. jord has no polar system, such as UPS's polar
-    stereographic, so a grid around a pole is geographic, of the sinusoid
-    or of Albers' conic, and a zone of UTM reaches a pole only within 40°
-    of longitude of its meridian ({!section-domains_tm}). *)
+    stereographic, so a grid around a pole is geographic, or, for the
+    samplers alone, of Albers' conic with the pole at its apex
+    ({!Warp.section-antimeridian} says why the area rules take no projected
+    one), and a zone of UTM reaches a pole only within 40° of longitude of
+    its meridian ({!section-domains_tm}). *)
 
 type t = { datum : datum; projection : projection option }
 (** The type for systems, longitude and latitude on [datum] where [projection]
