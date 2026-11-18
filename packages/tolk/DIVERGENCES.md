@@ -5603,8 +5603,9 @@ union, as fast on CUDA, on the host and in compile time.
   `Heuristic.hand_coded_with`'s `core_first` and late stream,
   `Heuristic.padded_within`, and `Heuristic.core_fits` and `core_rows`
   under `~decoded`.
-- **Differs:** on a GPU, a decoded operand (D163) whose `R` outputs along one
-  axis read it at one index:
+- **Differs:** on a GPU, a decoded operand (D163) that a stream would read,
+  the operand of least reuse, whose `R` outputs along one axis read it at
+  one index:
   - up to `upcast_max` (16) rows streams in one pass;
   - past it, takes a tensor core of its types before a stream. The core's pad
     of the axis the operand does not read is not counted against D491's 6/5,
