@@ -1665,19 +1665,20 @@ end
     range is the mathematical one, which rounding can leave at an end: in
     [float8_e4m3fn], [π] rounds to [3.25].
 
-    On floats the {e error} of a result is its distance in floats of the
-    dtype from the exact value rounded to the dtype: a neighbour is one
-    away, and [-0.] and [+0.] are one apart. Each function states a bound on
-    it at float32 and float64. Whatever the bound, a result is exact at the
-    special values of C99's Annex F (ISO/IEC 9899, F.10): [exp (-inf)] is
-    [+0.], [log] of [±0.] is [-inf], [sin] of an infinity is NaN and
-    [atan inf] is [π/2] rounded. Where the exact value rounds to an infinity
-    or to zero, the result is that infinity or zero, of the exact value's
-    sign: [exp 710.] is [inf] and [pow (-2.) (-1101.)] is [-0.]. Another zero
-    result has the sign Annex F gives it: [sin (-0.)] is [-0.]. A NaN operand
-    gives a NaN, but where Annex F gives a number for every value of that
-    operand: [pow nan 0.] and [pow 1. nan] are [1.]. Which NaN, its sign and
-    its payload are unspecified.
+    On floats the {e error} of a result, in {e ulps}, is its distance in
+    floats of the dtype from the exact value rounded to the dtype: a
+    neighbour is one ulp away, and [-0.] and [+0.] are one apart. Each
+    function states a bound on it at float32 and float64. Whatever the
+    bound, a result is exact at the special values of C99's Annex F
+    (ISO/IEC 9899, F.10): [exp (-inf)] is [+0.], [log] of [±0.] is [-inf],
+    [sin] of an infinity is NaN and [atan inf] is [π/2] rounded. Where the
+    exact value rounds to an infinity or to zero, the result is that
+    infinity or zero, of the exact value's sign: [exp 710.] is [inf] and
+    [pow (-2.) (-1101.)] is [-0.]. Another zero result has the sign Annex F
+    gives it: [sin (-0.)] is [-0.]. A NaN operand gives a NaN, but where
+    Annex F gives a number for every value of that operand: [pow nan 0.]
+    and [pow 1. nan] are [1.]. Which NaN, its sign and its payload are
+    unspecified.
 
     The formats narrower than 32 bits compute at float32 and round once
     ({!section-arith}). Where a bound is in ulps, their result is within one
@@ -1742,9 +1743,11 @@ val expm1 : ('v, 's, 'd) t -> ('v, 's, 'd) t
 
 val log : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [log x] is the natural logarithm: [-inf] at [0.], NaN below. Within 1
-    ulp at float32 and 2 at float64. On complex numbers it is
-    [log |x| + i angle x], its imaginary part in \[[-π], [π]\] and its
-    branch cut the negative real axis. *)
+    ulp at float32 and 2 at float64. At float32 it is the exact value where
+    that is a float, as [log 1.] is [0.], and otherwise one of the two
+    floats around the exact value, the greatest below it or the least above
+    it. On complex numbers it is [log |x| + i angle x], its imaginary part
+    in \[[-π], [π]\] and its branch cut the negative real axis. *)
 
 val log2 : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [log2 x] is the base-2 logarithm. Within 1 ulp at float32 and 2 at
@@ -1805,9 +1808,9 @@ val tanh : ('v, 's, 'd) t -> ('v, 's, 'd) t
 
 val asinh : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [asinh x] is the inverse hyperbolic sine, odd, [x] itself near [0.]: within
-    3 ulps at float32 and float64. On complex numbers its imaginary part is in
-    \[[-π/2], [π/2]\], with branch cuts on the imaginary axis beyond [-i]
-    and [i]. *)
+    2 ulps at float32 and 3 at float64. On complex numbers its imaginary part
+    is in \[[-π/2], [π/2]\], with branch cuts on the imaginary axis beyond
+    [-i] and [i]. *)
 
 val acosh : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [acosh x] is the inverse hyperbolic cosine: [0.] at [1.], NaN below [1.],

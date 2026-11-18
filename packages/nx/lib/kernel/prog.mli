@@ -239,10 +239,12 @@ val accepts3 :
     Tan, Pow                                       4         2
     v}
 
-    The float32 bounds of the kinds of one operand hold at every operand.
-    The other bounds, and the complex ones below, hold at every operand
-    measured. The special values of these kinds (C99 Annex F) and the signs
-    of their zero results are exact.
+    At float32, [Log] gives the exact value where that is a float, and
+    otherwise one of the two floats around the exact value. The float32
+    bounds of the kinds of one operand hold at every operand. The other
+    bounds, and the complex ones below, hold at every operand measured. The
+    special values of these kinds (C99 Annex F) and the signs of their zero
+    results are exact.
 
     A float kind with a NaN operand gives a NaN, but for [Pow] of a base
     [1] or an exponent [0], which Annex F makes [1]. A kind gives a NaN

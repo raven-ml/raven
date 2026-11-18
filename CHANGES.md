@@ -3350,6 +3350,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.log` at float32 promises one of the two floats around the exact value
+  (`0.` at `1.`), and `Nx_kernel.Prog`'s `Log` with it; `Nx.asinh` promises
+  2 ulps at float32, where it promised 3. nx.cpu already met both.
 - `Nx.ceil_padding` gives the padding under which `Nx.conv` has
   `⌈n / stride⌉` windows along each axis, its total split with the extra
   element after, which a model trained under such padding needs for each
