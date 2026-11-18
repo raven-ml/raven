@@ -9,9 +9,6 @@ Measurements and parked work behind these items:
 _plans/perf-campaign/todo-archive-2026-11-18.md. A path in parentheses is
 under _plans/perf-campaign/ unless it names another directory of _plans/.
 
-- The fused Q8_0 query, key and value product at 512 tokens is unstaged, and
-  its N takes an upcast of 5, the first of `core_upcasts` dividing 640
-  tiles, where 512 tiles took 4: measure 4 against 5
 - The rows layout runs rows(W)/4 workgroups: the router at 64 tokens or
   fewer and the 12-token k and v take 7-24 us where a grouped reduce or BEAM
   take 5-11; bare cores at 16 rows or fewer trail BEAM's (routercore/)
