@@ -156,7 +156,10 @@ let refusals =
         numbers" (fun () ->
       let qa = band ~kind:Bitfield ~nodata:1. () in
       raises_match
-        (Exn.invalid_arg ~sub:"read as bits; mask its fill with Band.nodata")
+        (Exn.invalid_arg
+           ~sub:
+             "read as bits; mask its fill with its product module's fill, \
+              or with Band.nodata where the module has none")
         (fun () -> Band.decode qa Nx.float32 (Nx.zeros Nx.uint16 [| 2 |]));
       let water =
         {

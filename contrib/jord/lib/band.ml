@@ -32,8 +32,9 @@ let decode b dtype x =
   | Bitfield ->
       invalid_arg
         "Jord.Band.decode: a bitfield band is read as bits; mask its fill \
-         with Band.nodata or its product module's fill, then read its flags \
-         with the product module or Nx's bitwise operations"
+         with its product module's fill, or with Band.nodata where the \
+         module has none, then read its flags with the product module or \
+         Nx's bitwise operations"
   | Classes _ ->
       invalid_arg
         "Jord.Band.decode: a classified band's codes are classes; mask its \

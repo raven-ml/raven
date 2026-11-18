@@ -113,7 +113,8 @@ val nodata : t -> ('v, 's, 'd) Nx.t -> 'd Nx.bool_t
 (** [nodata b x] is where the DNs [x] equal [b.nodata], false everywhere
     when [b] states none. It masks the fill of a [Bitfield] or [Classes]
     band, which {!decode} refuses, before the program reads its bits or
-    codes.
+    codes, where the band's product module has no [fill]
+    ({!section-bits}).
 
     Raises [Invalid_argument] if [x] holds booleans or complex numbers. *)
 
@@ -136,8 +137,13 @@ val saturated : t -> ('v, 's, 'd) Nx.t -> 'd Nx.bool_t
     flag set and as every field's highest value, and one that sets no bit or
     its fill bit alone, as SR_CLOUD_QA's 0 and QA_PIXEL's 1 do, reads as every
     other flag unset, so as free of cloud. So a program must mask fill before
-    it reads a flag or a field, by the product module's [fill] or, for a
-    band that states its [nodata], {!val-nodata}. *)
+    it reads a flag or a field. Where the layer's product module has
+    [fill], the program masks by it, since a layer's fill can be more DNs
+    than its band's [nodata]. QA_PIXEL's and SR_QA_AEROSOL's [nodata] is 1,
+    and {!Landsat.Qa_pixel.val-fill} and {!Landsat.Sr_qa_aerosol.val-fill}
+    hold wherever bit 0 is set, on DNs 3 and 65535 too, where {!val-nodata}
+    is false. {!val-nodata} masks the fill of a band whose product has no
+    module, such as one a catalogue alone states. *)
 
 (** {2:bit_dtypes Dtypes}
 
