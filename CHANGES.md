@@ -3350,6 +3350,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.pad` raises naming its widths when their sum with an extent passes an
+  `int`, where it named a negative extent or an internal slice.
 - `Nx.log` at float32 promises one of the two floats around the exact value
   (`0.` at `1.`), and `Nx_kernel.Prog`'s `Log` with it; `Nx.asinh` promises
   2 ulps at float32, where it promised 3. nx.cpu already met both.

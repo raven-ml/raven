@@ -1201,6 +1201,12 @@ let pad widths v x =
     (fun (b, e) ->
       if b < 0 || e < 0 then invalid_argf "%s: a negative width (%d, %d)" by b e)
     widths;
+  Array.iteri
+    (fun i (b, e) ->
+      if b > max_int - s.(i) - e then
+        invalid_argf "%s: widths (%d, %d) of axis %d of %a count past an int"
+          by b e i pp_value x)
+    widths;
   let s' = Array.mapi (fun i d -> fst widths.(i) + d + snd widths.(i)) s in
   let rs =
     Iarray.init (Array.length s) (fun i : Nx_array.Move.range ->

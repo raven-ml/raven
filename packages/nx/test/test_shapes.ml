@@ -888,7 +888,21 @@ let refusals =
           raises
             (Invalid_argument
                "Nx.tile: reps [2] has fewer entries than int32 [2; 3] has axes")
-            (fun () -> Nx.tile [| 2 |] x));
+            (fun () -> Nx.tile [| 2 |] x);
+          raises
+            (Invalid_argument
+               (Printf.sprintf
+                  "Nx.pad: widths (%d, 0) of axis 1 of int32 [2; 3] count past \
+                   an int"
+                  max_int))
+            (fun () -> Nx.pad [| (0, 0); (max_int, 0) |] 0l x);
+          raises
+            (Invalid_argument
+               (Printf.sprintf
+                  "Nx.pad: widths (%d, %d) of axis 0 of int32 [2; 3] count past \
+                   an int"
+                  max_int max_int))
+            (fun () -> Nx.pad [| (max_int, max_int); (0, 0) |] 0l x));
       cases "each refusal raises" ~id:fst
         [
           r "reshape, two unknown extents" (fun () -> Nx.reshape [| -1; -1 |] x);
