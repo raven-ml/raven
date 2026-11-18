@@ -7,3 +7,5 @@
 
 val parsec : Ymir_units.Unit.t
 val julian_year : Ymir_units.Unit.t
+val maggy : Ymir_units.Unit.t
+val zero_point : string -> Ymir_units.Unit.t

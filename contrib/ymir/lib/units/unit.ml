@@ -328,62 +328,73 @@ let root n u =
   if n < 1 then invalid_arg (strf "Unit.root: %d is below 1" n);
   power "Unit.root" u 1 n
 
-let decimal_named fn s =
-  let decimal_error () =
-    invalid_arg (strf "%s: %S is not a positive decimal" fn s)
-  in
+type scan_error = Not_decimal | Mantissa_past | Exponent_past of bool
+
+(* [scan_decimal s] reads [digits ["." digits] ["e" ["-"] digits]] as m 10^k. An
+   exponent past int is past the coefficient's bound of any unit. *)
+let scan_decimal s =
+  let exception Fail of scan_error in
   let len = String.length s in
   let i = ref 0 in
   let peek c = !i < len && s.[!i] = c in
-  (* [digits acc past] reads digits onto [acc] and calls [past] at the first
-     digit that takes it to 2^62 or more. *)
+  (* [digits acc past] reads digits onto [acc] and fails with [past] at the
+     first digit that takes it to 2^62 or more. *)
   let digits acc past =
     let start = !i and acc = ref acc in
     while !i < len && s.[!i] >= '0' && s.[!i] <= '9' do
       let d = Char.code s.[!i] - Char.code '0' in
-      if !acc > (max_int - d) / 10 then past ();
+      if !acc > (max_int - d) / 10 then raise (Fail past);
       acc := (!acc * 10) + d;
       incr i
     done;
-    if !i = start then decimal_error ();
+    if !i = start then raise (Fail Not_decimal);
     !acc
   in
-  let mantissa_past () =
-    invalid_arg (strf "%s: %S has a mantissa of 2^62 or more" fn s)
+  let scan () =
+    let whole = digits 0 Mantissa_past in
+    let m, frac =
+      if not (peek '.') then (whole, 0)
+      else begin
+        incr i;
+        let start = !i in
+        let m = digits whole Mantissa_past in
+        (m, !i - start)
+      end
+    in
+    let shift =
+      if not (peek 'e') then -frac
+      else begin
+        incr i;
+        let neg = peek '-' in
+        if neg then incr i;
+        let e = digits 0 (Exponent_past neg) in
+        match add_exn (Prime 2) (if neg then -e else e) (-frac) with
+        | shift -> shift
+        | exception Exponent_leaves_int _ -> raise (Fail (Exponent_past neg))
+      end
+    in
+    if !i <> len then raise (Fail Not_decimal);
+    (m, shift)
   in
-  let whole = digits 0 mantissa_past in
-  let m, frac =
-    if not (peek '.') then (whole, 0)
-    else begin
-      incr i;
-      let start = !i in
-      let m = digits whole mantissa_past in
-      (m, !i - start)
-    end
+  match scan () with r -> Ok r | exception Fail e -> Error e
+
+let decimal_named fn s =
+  let decimal_error () =
+    invalid_arg (strf "%s: %S is not a positive decimal" fn s)
   in
-  (* An exponent past int is past the coefficient's bound. *)
-  let exponent () =
-    if not (peek 'e') then -frac
-    else begin
-      incr i;
-      let neg = peek '-' in
-      if neg then incr i;
-      let past () =
-        raise (Coefficient_past (if neg then "denominator" else "numerator"))
+  match scan_decimal s with
+  | Error Not_decimal | Ok (0, _) -> decimal_error ()
+  | Error Mantissa_past ->
+      invalid_arg (strf "%s: %S has a mantissa of 2^62 or more" fn s)
+  | Error (Exponent_past neg) ->
+      let part = if neg then "denominator" else "numerator" in
+      guard fn (fun () -> raise (Coefficient_past part)) ()
+  | Ok (m, shift) ->
+      let ten =
+        if shift = 0 then [] else [ (Prime 2, shift, 1); (Prime 5, shift, 1) ]
       in
-      let e = digits 0 past in
-      match add_exn (Prime 2) (if neg then -e else e) (-frac) with
-      | shift -> shift
-      | exception Exponent_leaves_int _ -> past ()
-    end
-  in
-  let shift = guard fn exponent () in
-  if !i <> len || m = 0 then decimal_error ();
-  let ten =
-    if shift = 0 then [] else [ (Prime 2, shift, 1); (Prime 5, shift, 1) ]
-  in
-  let factors = of_factors (Prime.factor m) in
-  guard fn (fun ten -> make (merge factors ten)) ten
+      let factors = of_factors (Prime.factor m) in
+      guard fn (fun ten -> make (merge factors ten)) ten
 
 let decimal s = decimal_named "Unit.decimal" s
 

@@ -51,8 +51,16 @@ module Vocabulary = Ymir_units.Vocabulary
 
 (** Astronomy's units.
 
-    Each is an exact {!Unit.t}, built from the SI's units and the IAU's
-    definitions. *)
+    Each is an exact {!Unit.t}, built from the SI's units, the IAU's
+    definitions and the AB magnitude system of Oke & Gunn (1983, ApJ 266,
+    713).
+
+    A {e magnitude} [m] of a flux density [f] on a scale whose zero point is
+    the flux density [f₀] is Pogson's [m = −2.5 log₁₀ (f / f₀)]. The AB
+    system's zero point is one {!Units.maggy} in every band. Surveys also
+    report asinh and other magnitudes, which are other functions of a flux:
+    ymir holds the fluxes, and a caller applies the function its survey
+    defines. *)
 module Units : sig
   val parsec : Unit.t
   (** [parsec] is 648000/π {!Unit.astronomical_unit}, the distance at which one
@@ -60,6 +68,33 @@ module Units : sig
 
   val julian_year : Unit.t
   (** [julian_year] is 365.25 {!Unit.day}, 31557600 s. *)
+
+  val maggy : Unit.t
+  (** [maggy] is the flux density of AB magnitude 0, 10{^ −48.6/2.5}
+      erg s{^ −1} cm{^ −2} Hz{^ −1}: exactly 10{^ −561/25} W m{^ −2} Hz{^ −1},
+      about 3630.78 Jy. [Unit.nano maggy] is the nanomaggy in which SDSS and
+      the Legacy Surveys report fluxes. A survey's calibration may depart
+      from AB, as SDSS's does by a few percent. *)
+
+  val zero_point : string -> Unit.t
+  (** [zero_point m] is the flux density of AB magnitude [m], exactly
+      10{^ −0.4 m} {!maggy}, for the decimal [m]: an optional [-], then
+      {!Unit.decimal}'s grammar, zero allowed. Data on zero point [m] are
+      values in this unit, and a value [x] has
+      magnitude [m − 2.5 log₁₀ x]. [zero_point "22.5"] is
+      [Unit.nano maggy] and [zero_point "0"] is [maggy]. Pixels on zero
+      point 27 convert to nanomaggies with one multiply:
+
+      {[
+      let nmgy pixels =
+        Quantity.value (Unit.nano Units.maggy)
+          (Quantity.v (Units.zero_point "27") pixels)
+      ]}
+
+      Raises [Invalid_argument] if [m] is outside the grammar, if its
+      mantissa is 2{^ 62} or more, or if 0.4 m, as a reduced fraction, has a
+      numerator or denominator past [int] or gives the unit a coefficient
+      past {!Unit.section-algebra}'s bound. *)
 end
 
 (** {1:times Time scales} *)

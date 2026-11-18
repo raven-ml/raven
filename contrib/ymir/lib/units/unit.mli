@@ -10,6 +10,10 @@ type t
 val one : t
 val int : int -> t
 val decimal : string -> t
+
+type scan_error = Not_decimal | Mantissa_past | Exponent_past of bool
+
+val scan_decimal : string -> (int * int, scan_error) result
 val pi : t
 val symbol : string -> t
 val scoped : scope:string -> string -> t

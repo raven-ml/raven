@@ -4,6 +4,9 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- `Units.maggy`, the AB system's zero-magnitude flux density, held exactly as
+  10^(−561/25) W m⁻² Hz⁻¹, and `Units.zero_point m`, the unit of data on AB
+  zero point `m`: `zero_point "22.5"` is `Unit.nano maggy`.
 - A traced tensor given to `Fits.v` or `Fits.of_bytes` raises naming that
   function, where it named `Nx.Repr.read`. One given to `Fits.Image.hdu`,
   `Fits.Image.quantized` or `Fits.Table.hdu` raises when the HDU's data is

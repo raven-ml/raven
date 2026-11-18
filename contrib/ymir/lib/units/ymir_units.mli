@@ -487,6 +487,19 @@ module Unit : sig
 
   val stefan_boltzmann : t
   (** [stefan_boltzmann] is σ, 2π{^ 5}k{^ 4}/(15h{^ 3}c{^ 2}). *)
+
+  (**/**)
+
+  (* For ymir's other decimal grammars, such as [Units.zero_point]'s. *)
+
+  type scan_error = Not_decimal | Mantissa_past | Exponent_past of bool
+
+  val scan_decimal : string -> (int * int, scan_error) result
+  (** [scan_decimal s] is [Ok (m, k)] for the decimal [s] = m 10{^ k} in
+      {!decimal}'s grammar, zero allowed. Otherwise it is the reason:
+      [Not_decimal] outside the grammar, [Mantissa_past] for a mantissa of
+      2{^ 62} or more, and [Exponent_past neg] for a [k] past [int], [neg]
+      when [k] is negative. *)
 end
 
 (** Values in a unit. *)
