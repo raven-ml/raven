@@ -7,7 +7,7 @@
  (name bench_tolk)
  (modules bench_tolk programs lorenz host_kernels gpt_oss_kernels
   stream_kernels contract_kernels)
- (libraries tolk tolk.engine tolk_test tolk_run rig rig.cuda thumper unix))
+ (libraries tolk tolk.engine tolk_test tolk_run rig rig.gpus thumper unix))
 
 (executable
  (name embed)

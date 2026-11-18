@@ -1402,21 +1402,12 @@ let probe_rows () =
 
 type gpu = Cuda | Amd
 
-let open_gpu = function
-  | Cuda -> Rig.open_ (Rig_cuda.gpu 0)
-  | Amd -> Rig.open_ (Rig_amd_amdgpu.gpu 0)
+let gpu_name = function Cuda -> "CUDA" | Amd -> "AMD"
+let open_gpu g = Rig_gpus.open_ (gpu_name g)
 
-let flag = function Cuda -> "--cuda" | Amd -> "--amd"
-
-(* Whether [g] opens, asked of a fresh process: a GPU's driver must not be
-   initialized before the fork that isolates a case. *)
-let opens g =
-  let exe = Sys.executable_name in
-  let pid =
-    Unix.create_process exe [| exe; flag g |] Unix.stdin Unix.stdout
-      Unix.stderr
-  in
-  match Unix.waitpid [] pid with _, Unix.WEXITED 0 -> true | _ -> false
+(* Whether [g] opens, asked of a forked child: the workers forked to isolate
+   the cases open it as that child did. *)
+let opens g = Result.is_ok (Rig_gpus.opens (gpu_name g))
 
 (* A call made at a placement of any set, which waits for what it computes. *)
 type call = { at : 'd. 'd Nx.Placement.t -> unit -> unit }
@@ -2449,11 +2440,6 @@ let gpu_word_rows g =
 let config = Thumper.Config.(default |> deadline 60.)
 
 let () =
-  match Sys.argv with
-  | [| _; ("--cuda" | "--amd" as f) |] ->
-      let g = if f = "--cuda" then Cuda else Amd in
-      exit (if Result.is_ok (open_gpu g) then 0 else 1)
-  | _ ->
   exit
     (Thumper.run "rune" ~config
        [

@@ -106,22 +106,16 @@ let schools_nuts at =
   let k = Nx.Rng.place at (Nx.Rng.key 2) in
   fun () -> Nx.Ptree.fold sp (fun _ x () -> Nx.sync x) (step k s) ()
 
-(* Whether CUDA's first GPU opens, asked of a fresh process: a GPU's driver
-   must not be initialized before the fork that isolates a case. *)
-let cuda_opens () =
-  let exe = Sys.executable_name in
-  let pid =
-    Unix.create_process exe [| exe; "--cuda" |] Unix.stdin Unix.stdout
-      Unix.stderr
-  in
-  match Unix.waitpid [] pid with _, Unix.WEXITED 0 -> true | _ -> false
+(* Whether CUDA's first GPU opens, asked of a forked child: the workers forked
+   to isolate the cases open it as that child did. *)
+let cuda_opens () = Result.is_ok (Rig_gpus.opens "CUDA")
 
 (* A call made at a placement of any set. *)
 type call = { at : 'd. 'd Nx.Placement.t -> unit -> unit }
 
 (* [c]'s call at CUDA's first GPU. *)
 let on_cuda c =
-  match Rig.open_ (Rig_cuda.gpu 0) with
+  match Rig_gpus.open_ "CUDA" with
   | Error e -> failwith e
   | Ok gpu ->
       let module D = (val Nx.devices [ gpu ] : Nx.Devices) in
@@ -505,8 +499,6 @@ let run () =
 
 let () =
   match Array.to_list Sys.argv with
-  | [ _; "--cuda" ] ->
-      exit (if Result.is_ok (Rig.open_ (Rig_cuda.gpu 0)) then 0 else 1)
   | [ _; "--cold"; id ] -> (
       match List.assoc_opt id cold_cases with
       | Some f ->

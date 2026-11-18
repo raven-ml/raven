@@ -74,7 +74,7 @@ let () =
         })
   in
   Printf.printf "random weights built in %.1f s\n%!" building;
-  let device = Devices.first !jit in
+  let device = Result.error_to_failure (Rig_gpus.open_ !jit) in
   let module D = (val Nx.devices [ device ]) in
   (* Built on the host and placed: the set computes under [Rune.jit] alone. *)
   let router = Nx.Ptree.place (module Kaun.Linear) D.on router
@@ -93,7 +93,7 @@ let () =
   Printf.printf "second call: %.1f ms\n%!" (1e3 *. run ());
   let times = Array.init !steps (fun _ -> run ()) in
   Array.sort compare times;
-  let _, (into, out) = Devices.traffic device (fun () -> ignore (run ())) in
+  let _, (into, out) = Traffic.measure device (fun () -> ignore (run ())) in
   Printf.printf
     "%s, %d tokens per call, %d calls: min %.1f ms, median %.1f ms, max %.1f ms\n"
     !jit !tokens !steps

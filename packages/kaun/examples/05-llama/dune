@@ -8,7 +8,7 @@
 
 (executables
  (names main validate)
- (modules devices main validate)
+ (modules main validate)
  (libraries
   llama
   kaun
@@ -18,10 +18,7 @@
   brot
   nx
   rig
-  rig.metal
-  rig.cuda
-  rig.nv.nvidia
-  rig.amd.amdgpu
+  rig.gpus
   nx.io
   rune
   unix))

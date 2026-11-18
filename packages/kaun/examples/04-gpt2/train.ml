@@ -533,12 +533,16 @@ let () =
   in
   let params, records =
     if !devices = "" then
-      let module D = (val Nx.devices [ Devices.first !device ]) in
+      let d = Result.error_to_failure (Rig_gpus.open_ !device) in
+      let module D = (val Nx.devices [ d ]) in
       train ~params_at:D.on ~batch_at:D.on
     else begin
       if !compute_dtype = "float16" then
         failwith "--compute-dtype float16 does not support --devices";
-      let devs = Devices.all !devices in
+      let names = List.map String.trim (String.split_on_char ',' !devices) in
+      let devs =
+        List.map (fun n -> Result.error_to_failure (Rig_gpus.open_ n)) names
+      in
       device := String.concat "," (List.map Rig.name devs);
       (* The batch is split on axis 0; the parameters lie whole on each
          device. *)

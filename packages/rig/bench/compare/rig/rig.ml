@@ -16,12 +16,7 @@ let warmups = 3
 let samples = 5
 let idle = 0.02
 
-let open_driver = function
-  | "metal" -> get (open_ (Rig_metal.gpu 0))
-  | "cuda" -> get (open_ (Rig_cuda.gpu 0))
-  | "nv" -> get (open_ (Rig_nv_nvidia.gpu 0))
-  | "amd" -> get (open_ (Rig_amd_amdgpu.gpu 0))
-  | driver -> failwith ("unknown driver " ^ driver)
+let open_driver driver = get (Rig_gpus.open_ driver)
 
 let fill buffer value =
   let source = Buffer.create host (4 * count) in

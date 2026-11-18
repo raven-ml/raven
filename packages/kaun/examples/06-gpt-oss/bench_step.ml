@@ -182,7 +182,7 @@ let run ?device ~on c params dt ~tokens ~steps ~context =
     (1e3 *. times.(steps - 1));
   Option.iter
     (fun d ->
-      let _, (into, out) = Devices.traffic d (fun () -> timed !state) in
+      let _, (into, out) = Traffic.measure d (fun () -> timed !state) in
       Printf.printf "step copies: to device %d, from device %d\n%!" into out)
     device
 
@@ -217,6 +217,6 @@ let () =
   in
   if !jit = "" then bench Nx.Host.on
   else
-    let device = Devices.first !jit in
+    let device = Result.error_to_failure (Rig_gpus.open_ !jit) in
     let module D = (val Nx.devices [ device ]) in
     bench ~device D.on

@@ -6,7 +6,7 @@
 
 (executable
  (name bench_metal)
- (libraries nx rig rig.metal rune thumper unix))
+ (libraries nx rig rig.gpus rune thumper))
 
 (rule
  (alias bench)

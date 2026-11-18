@@ -21,7 +21,7 @@ let f16 = Nx.float16
 
 (* [m] by [k] times [k] by [n], normal values cast to [dt], on the GPU. *)
 let product (type b) (dt : (float, b) Nx.dtype) m k n () =
-  match Rig.open_ (Rig_metal.gpu 0) with
+  match Rig_gpus.open_ "METAL" with
   | Error e -> failwith e
   | Ok gpu ->
       let module D = (val Nx.devices [ gpu ] : Nx.Devices) in
@@ -53,14 +53,9 @@ let row (name, make) =
       call)
     (fun call -> call ())
 
-(* Whether the Mac's GPU opens, asked of a fresh process. *)
-let opens () =
-  let exe = Sys.executable_name in
-  let pid =
-    Unix.create_process exe [| exe; "--opens" |] Unix.stdin Unix.stdout
-      Unix.stderr
-  in
-  match Unix.waitpid [] pid with _, Unix.WEXITED 0 -> true | _ -> false
+(* Whether the Mac's GPU opens, asked of a forked child: a worker forked to
+   measure a case opens it as that child did. *)
+let opens () = Result.is_ok (Rig_gpus.opens "METAL")
 
 let config =
   Thumper.Config.(
@@ -68,8 +63,6 @@ let config =
 
 let () =
   match Array.to_list Sys.argv with
-  | [ _; "--opens" ] ->
-      exit (if Result.is_ok (Rig.open_ (Rig_metal.gpu 0)) then 0 else 1)
   | [ _; "--warm" ] ->
       if opens () then List.iter (fun (_, make) -> make () ()) cases
   | _ ->

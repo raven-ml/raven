@@ -184,23 +184,20 @@ let load ?pack placement c entries =
   Gpt_oss.of_hf ?pack ~placement:(fun _ ~axis:_ -> placement) c Nx.bfloat16
     entries
 
-(* The paths tried, in order: an NVIDIA GPU through CUDA, then through its
+(* The GPUs tried, in order: an NVIDIA GPU through CUDA, then through its
    kernel driver (NV), then an AMD GPU through its kernel driver. Hiding the
    CUDA devices ([CUDA_VISIBLE_DEVICES=]) measures the card through NV. *)
-let paths =
-  [
-    (fun () -> Rig.open_ (Rig_cuda.gpu 0));
-    (fun () -> Rig.open_ (Rig_nv_nvidia.gpu 0));
-    (fun () -> Rig.open_ (Rig_amd_amdgpu.gpu 0));
-  ]
+let names = [ "CUDA"; "NV"; "AMD" ]
 
 let first () =
   let rec go why = function
     | [] -> Error (String.concat "; " (List.rev why))
-    | open_ :: rest -> (
-        match open_ () with Ok d -> Ok d | Error e -> go (e :: why) rest)
+    | name :: rest -> (
+        match Rig_gpus.open_ name with
+        | Ok d -> Ok d
+        | Error e -> go (e :: why) rest)
   in
-  go [] paths
+  go [] names
 
 (* The GPU [0] of the first path that opens one. A set of it computes under
    [Rune.jit] alone. *)
@@ -457,19 +454,13 @@ let case kind =
 
 let opens () = Result.is_ok (first ())
 
-(* Whether a GPU opens, asked of a fresh process: the driver must not be
-   initialized before the fork that isolates a case. *)
+(* Whether a GPU opens, asked of forked children: the workers forked to
+   isolate the cases open it as they did. *)
 let opens_in_child () =
-  let exe = Sys.executable_name in
-  let pid =
-    Unix.create_process exe [| exe; "--gpu" |] Unix.stdin Unix.stdout
-      Unix.stderr
-  in
-  match Unix.waitpid [] pid with _, Unix.WEXITED 0 -> true | _ -> false
+  List.exists (fun name -> Result.is_ok (Rig_gpus.opens name)) names
 
 let () =
   match Array.to_list Sys.argv with
-  | [ _; "--gpu" ] -> exit (if opens () then 0 else 1)
   | [ _; "--first" ] ->
       let call = prepare_first () in
       print_endline "ready";

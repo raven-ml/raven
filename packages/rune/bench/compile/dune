@@ -9,9 +9,7 @@
   nx
   nx.wide
   rig
-  rig.amd.amdgpu
-  rig.cuda
-  rig.metal
+  rig.gpus
   rune
   thumper
   unix))

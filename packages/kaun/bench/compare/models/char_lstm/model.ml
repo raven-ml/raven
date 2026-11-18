@@ -188,7 +188,8 @@ let now_ms () = Unix.gettimeofday () *. 1e3
 
 let run spec ~fixture ~variant ~device ~steps =
   let params, tokens = load_fixture spec fixture in
-  let module D = (val Nx.devices [ Devices.first device ]) in
+  let d = Result.error_to_failure (Rig_gpus.open_ device) in
+  let module D = (val Nx.devices [ d ]) in
   let model = model () in
   let state = state model in
   let step =
@@ -255,7 +256,8 @@ let emit ~variant ~device ~losses ~step_ms =
    variant this process cannot run must not be reported as one it can. *)
 let device_works name =
   match
-    let module D = (val Nx.devices [ Devices.first name ]) in
+    let d = Result.error_to_failure (Rig_gpus.open_ name) in
+    let module D = (val Nx.devices [ d ]) in
     let before = Rune.evaluations () in
     Nx.sync
       (Rune.jit' (fun x -> Nx.add x x) (Nx.ones_at D.on Nx.float32 [| 4 |]));

@@ -500,7 +500,7 @@ let segments_grad () =
 (* Eight nested float64 sines of 1024 values on CUDA's first GPU: one kernel of
    some thousand lines, whose binary the GPU's driver loads. *)
 let cuda_sines () =
-  match Rig.open_ (Rig_cuda.gpu 0) with
+  match Rig_gpus.open_ "CUDA" with
   | Error e -> failwith e
   | Ok gpu ->
       let module D = (val Nx.devices [ gpu ] : Nx.Devices) in
@@ -514,7 +514,7 @@ let cuda_sines () =
    AMD's first GPU: its forward and backward passes are some 15 kernels, each
    compiled by comgr, which sets the first call's cost. *)
 let amd_step () =
-  match Rig.open_ (Rig_amd_amdgpu.gpu 0) with
+  match Rig_gpus.open_ "AMD" with
   | Error e -> failwith e
   | Ok gpu ->
       let module D = (val Nx.devices [ gpu ] : Nx.Devices) in
@@ -548,7 +548,7 @@ let amd_step () =
    their pipelines in its own processes, several at once, and keeps them in
    its own cache, on the machine's disk. *)
 let metal_sums salt () =
-  match Rig.open_ (Rig_metal.gpu 0) with
+  match Rig_gpus.open_ "METAL" with
   | Error e -> failwith e
   | Ok gpu ->
       let module D = (val Nx.devices [ gpu ] : Nx.Devices) in
@@ -572,7 +572,7 @@ let metal_sums salt () =
    device opens and the input is placed, then the call compiles one kernel,
    the process's first compile. *)
 let metal_one () =
-  match Rig.open_ (Rig_metal.gpu 0) with
+  match Rig_gpus.open_ "METAL" with
   | Error e -> failwith e
   | Ok gpu ->
       let module D = (val Nx.devices [ gpu ] : Nx.Devices) in
@@ -673,14 +673,9 @@ let warm_cases =
 let warm_only = [ "metal/sums-32-cached" ]
 
 (* Whether [gpu]'s first GPU opens, [gpu] being ["cuda"], ["amd"] or
-   ["metal"], asked of a fresh process. *)
-let opens gpu =
-  let exe = Sys.executable_name in
-  let pid =
-    Unix.create_process exe [| exe; "--opens"; gpu |] Unix.stdin Unix.stdout
-      Unix.stderr
-  in
-  match Unix.waitpid [] pid with _, Unix.WEXITED 0 -> true | _ -> false
+   ["metal"], asked of a forked child: the fresh processes that time a case
+   open it as that child did. *)
+let opens gpu = Result.is_ok (Rig_gpus.opens gpu)
 
 let rec remove path =
   if Sys.is_directory path then (
@@ -834,14 +829,6 @@ let () =
       | None ->
           prerr_endline ("bench_compile: no case " ^ id);
           exit 2)
-  | [ _; "--opens"; gpu ] ->
-      let opened =
-        match gpu with
-        | "amd" -> Result.is_ok (Rig.open_ (Rig_amd_amdgpu.gpu 0))
-        | "metal" -> Result.is_ok (Rig.open_ (Rig_metal.gpu 0))
-        | _ -> Result.is_ok (Rig.open_ (Rig_cuda.gpu 0))
-      in
-      exit (if opened then 0 else 1)
   | _ ->
       let vendors = [ "cuda"; "amd"; "metal" ] in
       let gpus = List.filter opens vendors in

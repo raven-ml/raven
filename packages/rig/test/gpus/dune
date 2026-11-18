@@ -1,5 +1,6 @@
 (test
  (name test_gpus)
+ (modules test_gpus)
  (locks %{workspace_root}/gpu)
  (libraries
   rig
@@ -14,3 +15,11 @@
   windtrap)
  (deps
   (glob_files ../../examples/01-add/kernels/add*)))
+
+; Names, on the CPU alone: no case starts a GPU's driver. test_opens_domain
+; is its own executable, since a process that spawned a domain cannot fork.
+
+(tests
+ (names test_names test_opens_domain)
+ (modules test_names test_opens_domain)
+ (libraries rig rig_gpus windtrap))

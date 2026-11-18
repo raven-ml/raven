@@ -421,7 +421,8 @@ let () =
   if !device = "" then
     run ~tol ~logits_tol ~exact ~on:Nx.Host.on ~blocks ~only:!only fx dt
   else begin
-    let module D = (val Nx.devices [ Devices.first !device ]) in
+    let d = Result.error_to_failure (Rig_gpus.open_ !device) in
+    let module D = (val Nx.devices [ d ]) in
     run ~tol ~logits_tol ~exact ~on:D.on ~blocks ~only:!only fx dt
   end;
   match !first_failure with

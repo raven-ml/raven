@@ -435,28 +435,21 @@ let gpu_many =
 (* The GPU: CUDA's first, else AMD's first. *)
 let gpu =
   lazy
-    (match Rig.open_ (Rig_cuda.gpu 0) with
+    (match Rig_gpus.open_ "CUDA" with
     | Ok d -> d
-    | Error _ -> get_ok (Rig.open_ (Rig_amd_amdgpu.gpu 0)))
+    | Error _ -> get_ok (Rig_gpus.open_ "AMD"))
 
-(* Whether a [vendor] GPU opens, asked of a fresh process: a GPU's driver must
-   not be initialized before the fork that isolates a case. *)
-let opens vendor =
-  let exe = Sys.executable_name in
-  let pid =
-    Unix.create_process exe
-      [| exe; "--" ^ vendor |]
-      Unix.stdin Unix.stdout Unix.stderr
-  in
-  match Unix.waitpid [] pid with _, Unix.WEXITED 0 -> true | _ -> false
+(* Whether a [vendor] GPU opens, asked of a forked child: the workers forked
+   to isolate the cases open it as that child did. *)
+let opens vendor = Result.is_ok (Rig_gpus.opens vendor)
 
-(* Metal's cases where its device opens, asked of a fresh process too. *)
+(* Metal's cases where its device opens, asked of a forked child too. *)
 let metal () =
   if opens "metal" then
     [
       ( "metal",
         products ~tokens:[ 1; 512 ] ~n:16384 ~many:gpu_many (fun () ->
-            Nx.devices [ get_ok (Rig.open_ (Rig_metal.gpu 0)) ]) );
+            Nx.devices [ get_ok (Rig_gpus.open_ "METAL") ]) );
     ]
   else []
 
@@ -638,12 +631,6 @@ let () =
         (gpt2 @ parallel @ experts_layer
         @ List.concat_map snd (quant ())
         @ List.concat_map snd (prefills ()))
-  | [ _; "--cuda" ] ->
-      exit (if Result.is_ok (Rig.open_ (Rig_cuda.gpu 0)) then 0 else 1)
-  | [ _; "--amd" ] ->
-      exit (if Result.is_ok (Rig.open_ (Rig_amd_amdgpu.gpu 0)) then 0 else 1)
-  | [ _; "--metal" ] ->
-      exit (if Result.is_ok (Rig.open_ (Rig_metal.gpu 0)) then 0 else 1)
   | _ ->
       (* The eager routed product takes over half a second a call, so its trial
          outlasts the default deadline. *)

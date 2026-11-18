@@ -284,18 +284,11 @@ let cache_element dt n i : Dtype.value =
   if Dtype.is_int dt then `Int (Bigint.of_int (if n = 1 then position else i))
   else element dt n i
 
-(* Whether CUDA's first GPU opens, asked of a fresh process: a GPU's driver must
-   not be initialized before the fork that isolates a case. *)
-let cuda_opens () =
-  let exe = Sys.executable_name in
-  let pid =
-    Unix.create_process exe [| exe; "--cuda" |] Unix.stdin Unix.stdout
-      Unix.stderr
-  in
-  match Unix.waitpid [] pid with _, Unix.WEXITED 0 -> true | _ -> false
+(* Whether CUDA's first GPU opens, asked of a forked child: the workers forked
+   to isolate the cases open it as that child did. *)
+let cuda_opens () = Result.is_ok (Rig_gpus.opens "CUDA")
 
-let cuda () =
-  match Rig.open_ (Rig_cuda.gpu 0) with Ok d -> d | Error e -> failwith e
+let cuda () = Result.error_to_failure (Rig_gpus.open_ "CUDA")
 
 (* Only the time is measured: a GPU buffer's release allocates when the
    collector finalises it, so a call's count depends on the collection's
@@ -723,8 +716,6 @@ let suite () =
 
 let () =
   match Array.to_list Sys.argv with
-  | [ _; "--cuda" ] ->
-      exit (if Result.is_ok (Rig.open_ (Rig_cuda.gpu 0)) then 0 else 1)
   | [ _; "--warm" ] ->
       (* Each case that compiles, once, in as few calls as a trial takes: the
          kernels its setup compiles land in tolk's disk cache, which a

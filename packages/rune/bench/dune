@@ -8,8 +8,7 @@
   nx.quant
   nx.wide
   rig
-  rig.cuda
-  rig.amd.amdgpu
+  rig.gpus
   rune
   thumper
   tolk

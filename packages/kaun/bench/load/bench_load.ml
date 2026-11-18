@@ -42,7 +42,8 @@ let () =
   in
   if !device = "" then ignore (import Nx.Host.on)
   else begin
-    let module D = (val Nx.devices [ Devices.first !device ]) in
+    let d = Result.error_to_failure (Rig_gpus.open_ !device) in
+    let module D = (val Nx.devices [ d ]) in
     let params = import D.on in
     let cfg = Llama.place_config D.on cfg in
     let ids =

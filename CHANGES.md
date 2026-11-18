@@ -40,6 +40,14 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- Add `Rig_gpus.open_ name`, which opens the device a name names: `KIND` or
+  `KIND:N`, in any case, where `KIND` is `CPU` or a path's kind (`METAL`,
+  `CUDA`, `NV`, `AMD`, `NV-PCI`, `AMD-PCI`) and `N` is a number with no
+  leading zero. `KIND:0` names `KIND`, so `CPU` and `CPU:0` are the host,
+  `CPU:N` the software device of that name, and `CUDA:1` CUDA's GPU 1.
+  Add `Rig_gpus.opens name`, whether `open_ name` succeeds in a forked
+  child, so that a program whose forked workers use a GPU starts no driver
+  first; it raises where `Unix.fork` does, after a domain and on Windows.
 - A child of `fork` opens an NVIDIA GPU through `Rig_nv_nvidia` after its
   parent opened one or read `Rig_nv_nvidia.usage`: it makes its own client of
   the kernel driver, unified memory and GPU objects, where it used its
@@ -4186,6 +4194,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- The examples and benches, and munin's MNIST example, take rig's device
+  names (`Rig_gpus.open_`): a `--jit` or `--device` flag takes one name,
+  where a comma-separated list opened its first device that opened, and a
+  `--devices` flag a comma-separated list of names.
 - The gpt-oss example computes its attention's query, key and value in one
   product, `Gpt_oss.attn`'s `qkv`, which `Gpt_oss.of_hf` joins grouped by
   key-value head: on an RTX 5000 Ada gpt-oss-20b's 12-token prefill takes

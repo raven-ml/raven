@@ -233,5 +233,9 @@ let () =
   in
   if !devices = "" then run ~jit:false Nx.Host.v
   else
-    let module D = (val Nx.devices (Devices.all !devices)) in
+    let names = List.map String.trim (String.split_on_char ',' !devices) in
+    let devices =
+      List.map (fun n -> Result.error_to_failure (Rig_gpus.open_ n)) names
+    in
+    let module D = (val Nx.devices devices) in
     run ~jit:true D.v

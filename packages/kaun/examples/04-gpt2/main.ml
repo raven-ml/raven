@@ -287,5 +287,6 @@ let () =
   in
   if !jit = "" then run ~jit:false Nx.Host.on
   else
-    let module D = (val Nx.devices [ Devices.first !jit ]) in
+    let d = Result.error_to_failure (Rig_gpus.open_ !jit) in
+    let module D = (val Nx.devices [ d ]) in
     run ~jit:true D.on

@@ -8,9 +8,7 @@
   gpt_oss
   nx
   rig
-  rig.cuda
-  rig.nv.nvidia
-  rig.amd.amdgpu
+  rig.gpus
   nx.io
   rune
   kaun

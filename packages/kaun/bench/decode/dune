@@ -3,9 +3,7 @@
  (libraries
   nx
   rig
-  rig.cuda
-  rig.metal
-  rig.amd.amdgpu
+  rig.gpus
   nx.quant
   rune
   kaun

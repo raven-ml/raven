@@ -12,4 +12,5 @@
   rig_edge
   rig_metal
   rig_nv_nvidia
-  rig_nv_pci))
+  rig_nv_pci
+  unix))

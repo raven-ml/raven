@@ -7,7 +7,7 @@
 
 (executables
  (names main train)
- (modules devices main train)
+ (modules main train)
  (libraries
   gpt2
   kaun
@@ -18,10 +18,7 @@
   brot
   nx
   rig
-  rig.metal
-  rig.cuda
-  rig.nv.nvidia
-  rig.amd.amdgpu
+  rig.gpus
   nx.array
   nx.io
   rune

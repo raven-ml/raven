@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** The GPUs of this machine.
+(** The GPUs of this machine, and its devices by name.
 
     A {e path} is one way rig reaches a vendor's GPUs, a library of its own:
     through the vendor's runtime, through its kernel driver, or through no
@@ -16,6 +16,11 @@
     ({!first}):
     {[
     let gpu = Rig_gpus.first ()
+    ]}
+    and a program that takes the device its user names opens it by its name
+    ({!section-names}):
+    {[
+    let gpu = Rig_gpus.open_ "cuda:1"
     ]} *)
 
 type gpu = private {
@@ -67,3 +72,50 @@ val first : ?firmware:string list -> unit -> (Rig.t, string) result
     lists a path only once every path before it has opened no GPU.
 
     Raises [Invalid_argument] as a path's [gpus] does. *)
+
+(** {1:names Names}
+
+    A {e name} is a device's name, as {!Rig.name} gives it: [KIND] or
+    [KIND:N], where [KIND] is ["CPU"] or a path's kind ({!paths}), in any
+    case, and [N] is a decimal number with no sign and no leading zero.
+    [KIND:0] names [KIND]. So:
+    - ["CPU"] and ["CPU:0"] name {!Rig.host}, and ["CPU:N"], for [N >= 1],
+      the software device of that name ({!Rig.software});
+    - ["CUDA"], ["cuda:0"] and ["CUDA:0"] name GPU [0] of the path of kind
+      ["CUDA"], and ["CUDA:1"] its GPU [1], in the path's order.
+
+    ["CUDA:01"], ["CUDA:"], ["CUDA:-1"], ["CPU:0:1"] and ["VULKAN"] name no
+    device. A name is plain data, so a process hands it to the children it
+    forks, where a device does not cross a fork ({!Rig.section-stops}).
+
+    A driver's library opens a device of another name, such as a GPU of a
+    driver-less path with its firmware ({!Rig_nv_pci.gpu}), with
+    {!Rig.open_}. *)
+
+val open_ : string -> (Rig.t, string) result
+(** [open_ name] is the device [name] names, opened: {!Rig.host},
+    {!Rig.software}[ name], or {!Rig.open_} of GPU [N]'s opener of its path.
+    For every device [d] it opens, [open_ (Rig.name d)] is [Ok d].
+
+    It lists no path: the opener's own [Error] says when the path has no
+    GPU [N]. Opening a GPU starts its driver in this process, so that a
+    child this process forks may not open it. A program that forks children
+    to use a GPU, such as a benchmark whose cases run in forked workers,
+    asks {!opens} instead.
+
+    [Error why] if [name] is no name, [why] listing the kinds, or with the
+    open's [Error]. Raises as {!Rig.open_} does. *)
+
+val opens : string -> (unit, string) result
+(** [opens name] is [Ok ()] if {!val-open_}[ name] succeeds in a child of
+    [Unix.fork], and [Error why] with the child's [why] otherwise. The child
+    opens the device, writes its answer on a pipe and ends with
+    [Unix._exit], running no [at_exit]. This process starts no driver, so
+    the children it forks later open the device as that child did.
+
+    [Error why] if [name] is no name, as {!val-open_} says, before any fork; if
+    the child dies, [why] says how. Raises as [Unix.fork] does: [Failure]
+    if the process has ever spawned a domain, and wherever the system has no
+    [fork], such as on Windows. A process that cannot fork calls {!val-open_}.
+    Call it before the process starts a thread: in a child of a process with
+    several threads, only async-signal-safe calls are defined. *)

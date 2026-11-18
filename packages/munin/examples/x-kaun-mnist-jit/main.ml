@@ -94,7 +94,8 @@ let () =
   (* The parameters start on the device, so the compiled step runs there and
      keeps them there. A set of GPUs computes under [Rune.jit] alone: every
      step, evaluation and metric reads its arrays there or back on the host. *)
-  let module Set = (val Nx.devices [ Devices.first !device ]) in
+  let d = Result.error_to_failure (Rig_gpus.open_ !device) in
+  let module Set = (val Nx.devices [ d ]) in
   let cnn = Nx.Ptree.instantiate (module Cnn) in
   let on x = Nx.place Set.on x in
   let params = ref (Nx.Ptree.place (module Cnn) Set.on host) in
