@@ -25,9 +25,10 @@ and what their DNs mean, moves the arrays onto the program's grid and masks
 their quality, in nx operations that rune can compile and differentiate.
 
 jord does not do the following. It knows five datums, WGS 84, NAD83,
-ETRS89-FIN, NZGD2000 and GDA94, each other datum taken to WGS 84 by a
-step that changes no coordinate, and reads no datum grid such as NADCON or NTv2 (the Datums
-section of [`crs.mli`](lib/crs.mli)). Its projections are transverse
+ETRS89-FIN, NZGD2000 and GDA94, the four besides WGS 84 each taken to it
+by a step that changes no coordinate, refuses data on any other, and
+reads no datum grid such as NADCON or NTv2 (the Datums section of
+[`crs.mli`](lib/crs.mli)). Its projections are transverse
 Mercator, Albers' equal-area conic, Pseudo-Mercator and the sinusoid, so
 it has no conformal conic system, such as Lambert's, and no polar
 stereographic one, such as UPS (the Projections section). It reads no
