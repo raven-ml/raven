@@ -1157,6 +1157,26 @@ let int_and_float_sums n =
       Ops.store (Ops.index out1 [ Ops.int 0 ]) (sum b j);
     ]
 
+(* [out[l, i, j] = sum_k a[l, i, k] * b[l, k, j]] of float16 [a] and [b]
+   summed in float32, [l] a local axis of [threads] that both read, and [i],
+   [j] and [k] of 32: a core takes [i], [j] and [k], and its threads join
+   [l]'s. *)
+let local_batched_product threads =
+  let n = 32 in
+  let l = Ops.range ~axis_type:Local (Int threads) [ 0 ]
+  and i = Ops.range ~axis_type:Weak (Int n) [ 1 ]
+  and j = Ops.range ~axis_type:Weak (Int n) [ 2 ]
+  and k = Ops.range ~axis_type:Weak (Int n) [ 3 ] in
+  let at x y = Ops.O.((((l * Ops.int n) + x) * Ops.int n) + y) in
+  let size = threads * n * n in
+  let a = Shape.param ~shape:[ Int size ] 1 Float16
+  and b = Shape.param ~shape:[ Int size ] 2 Float16
+  and out = Shape.param ~shape:[ Int size ] 0 Float32 in
+  let load x idx = Ops.cast (Ops.load (Ops.index x [ idx ]) []) Float32 in
+  let r = Ops.reduce Ops.O.(load a (at i k) * load b (at k j)) Op.Add [ k ] in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ at i j ]) r) [ l; i; j ] ]
+
 (* Steps: each is the optimisation it makes of the kernel it is given. *)
 
 (* A group of [n] threads of the first reduce axis, of the reduction of type
@@ -1206,6 +1226,8 @@ let stepped k steps =
 let workgroup_cases =
   let all r = [ (sm_89, r); (gfx90a, r); (apple2, r) ] in
   let wide r ~apple = [ (sm_89, r); (gfx90a, r); (apple2, apple) ] in
+  (* Apple2 has no tensor core. *)
+  let cored r = [ (sm_89, r); (gfx90a, r) ] in
   [
     ( "a group of 256 threads of a float sum",
       reduction 4096, [ grouped 256 ], all None );
@@ -1238,6 +1260,11 @@ let workgroup_cases =
       copy_of 4096 4096, [ across 32; across 64 ],
       wide (Some (1, threads_past 1024 2048))
         ~apple:(Some (1, threads_past 512 2048)) );
+    ( "a tensor core of 32 threads beside 32 local threads",
+      local_batched_product 32, [ (fun _ -> tc) ], cored None );
+    ( "a tensor core of 32 threads beside 64 local threads",
+      local_batched_product 64, [ (fun _ -> tc) ],
+      cored (Some (0, threads_past 1024 2048)) );
   ]
 
 let workgroups =

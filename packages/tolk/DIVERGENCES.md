@@ -9064,8 +9064,9 @@ D466.
   `local_whole_axis_beyond_host_integers` (`cases.tolk`, refused); the
   Postrange suite's `workgroups › apply_opt keeps a workgroup's threads
   within its target's and a group's float sum within 256 partials, a pad's
-  included` on sm_89, gfx90a and Apple2; the Search suite's `candidates
-  that pad a local axis`.
+  included` on sm_89, gfx90a and Apple2, a tensor core beside 32 and 64
+  local threads on sm_89 and gfx90a; the Search suite's `candidates that
+  pad a local axis`.
 
 ## D489. A search lowers each candidate as the compile lowers its chosen kernel
 
