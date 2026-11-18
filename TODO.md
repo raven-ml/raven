@@ -15,8 +15,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - The rows layout runs rows(W)/4 workgroups: the router at 64 tokens or
   fewer and the 12-token k and v take 7-24 us where a grouped reduce or BEAM
   take 5-11; bare cores at 16 rows or fewer trail BEAM's (routercore/)
-- The Stage suite's cover "gathered rows left unstaged" (`test_stage.ml`
-  ~931) is vacuous at seed `s1:9cc4952459e7d173`: a flaky cover
 - D212's blocked contractions lose to tinygrad's heuristic on long reduces
   (`contract/f32-2048` 1.03 of main against 0.92; attention values 256 wide
   1.04 against 0.86); `Heuristic.group` never groups a contraction

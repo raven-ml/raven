@@ -985,6 +985,10 @@ let routed_law =
       @ [
           { weights = Mxfp4; tokens = 1; topk = 1; experts = 4; block = 64;
             rk = 160; rn = 64; rseed = 0 };
+          (* A core over one gathered row, which it leaves unstaged: no
+             other example does, so every seed reaches the cover. *)
+          { weights = Float_weights; tokens = 1; topk = 1; experts = 4;
+            block = 64; rk = 160; rn = 64; rseed = 0 };
         ])
     "a staged product of gathered rows computes the bits of the same \
      optimisations unstaged, a pad row's outputs +0"
