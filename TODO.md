@@ -68,12 +68,19 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   as long as 8 or 16
 - Under expert-parallel placement rune's `block_rows` counts all `n` rows
   over the local `g` experts, so it sees `D` times the mean rows an expert:
-  count the rows routed to its own groups
+  count the rows routed to its own groups. The product holds no such fact
+  at compile time; nx's `Partial.contract` knows the groups, so a field of
+  `Nx_kernel.segments.Rows` would carry it: a kernel-contract change
 - MXFP4's float32 decode on Metal multiplies by a subnormal at scale byte
   0, which Metal may flush (MSL 4.1 §8.1); no test reaches it there
-- tolk recomputes a cheap broadcast value along every row that reads it
-  (11.3 ms against 0.64 stored on the host); bounding `recomputes`/`copies`
-  would also let fft-4096 drop 20 kernels
+- Whether tolk stores a computed value or recomputes it in its readers is
+  decided by D77's work bar, with no device in the rule: storing a cheap
+  value starts to pay at about 1100 extra operations an element on the
+  host and past 2286 on CUDA (r3/audit.md). A price needs a launch cost and
+  a byte rate as renderer fields and the target in the schedule's key
+- Routing ids lose their value bounds through `Lower_index.sort`'s `chosen`
+  (a reduce) and `Partial.local_ids` (a uint64 bitcast add), so no later
+  rule can read their range
 - `Nx.rms_norm` runs a third pass, a lane max, under a trace: 49 kernels a
   gpt-oss step. The one-pass form is blocked by the buffer limit, which
   stores the routed rows' 23 MB gather once the norm's map inlines (r3/)
