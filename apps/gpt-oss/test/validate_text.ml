@@ -23,7 +23,8 @@ open Check
 let check_strings tokenizer fixture =
   List.iter
     (fun case ->
-      let text = string (mem "text" case) and expected = ints (mem "ids" case) in
+      let text = string (mem "text" case) in
+      let expected = ints (mem "ids" case) in
       let name = Printf.sprintf "%S" text in
       let name =
         if String.length name <= 60 then name else String.sub name 0 57 ^ "..."

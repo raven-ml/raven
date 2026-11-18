@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* gpt-oss-20b at its own shapes on a CUDA, NV or AMD GPU, the example's model
+(* gpt-oss-20b at its own shapes on a CUDA, NV or AMD GPU, the app's model
    compiled one layer kind at a time ([Layer_loop]): a decode step and
    prefills of 512 and 12 tokens, over random weights at bfloat16 with the
    experts packed as MXFP4, a decode step with the attention projections and
@@ -20,7 +20,7 @@
    every kernel.
 
    The weights are the checkpoint's entries, named, shaped and laid out as
-   gpt-oss-20b's safetensors files hold them, read by the example's loader
+   gpt-oss-20b's safetensors files hold them, read by the app's loader
    ([Gpt_oss.of_hf]) as a user's run reads the file: the steps compile the
    kernels a user's do, over the same layouts, and the Q8_0 cases quantise
    on the GPU, compiled, as the loader does.

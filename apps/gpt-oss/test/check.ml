@@ -24,8 +24,8 @@ let find name j = decode (Jsont.mem name ~absent:None (Jsont.some Jsont.json)) j
 
 (* The members of an object, in the file's order. *)
 let members j =
-  List.rev
-    (decode (Jsont.fold_object Jsont.json (fun _ n v acc -> (n, v) :: acc) []) j)
+  let add _ name v acc = (name, v) :: acc in
+  List.rev (decode (Jsont.fold_object Jsont.json add []) j)
 
 let list j = decode (Jsont.list Jsont.json) j
 let number j = decode Jsont.number j

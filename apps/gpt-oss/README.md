@@ -45,6 +45,18 @@ dune exec ./validate_stream.exe -- fixtures/gpt-oss-20b-stream.json
 `--devices` or `--device` to compile what they check for a GPU. The fixtures
 are recorded by the scripts in `test/gen`, with `uv run`.
 
+### Last results
+
+On fudge (Intel Core Ultra 5 235, two cores, under load), on the CPU,
+at 650f321432, 2026-11-18:
+
+| Program | Checks | Worst |
+|---|---|---|
+| `validate.exe` | 93 passed | relative error 3.7e-07 on the whole model, 2.5e-05 on the rotary tables at position 4095 |
+| `validate.exe --dtype bfloat16` | 42 passed | relative error 8.1e-03 against the float32 reference |
+| `validate_text.exe` | 88 passed | rendered ids and parsed messages equal |
+| `validate_stream.exe fixtures/gpt-oss-20b-stream.json` | 228 passed | streams 8.3e-05 of their rms, logits 3.4e-06; every expert choice and argmax equal; 284 s |
+
 ## Benchmarks
 
 `dune build @apps/gpt-oss/bench/bench` times gpt-oss-20b's decode step and
