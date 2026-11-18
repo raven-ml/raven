@@ -1134,6 +1134,63 @@ let opp_f a b = Float.fma 2. a (-.b)
 let host dt s data =
   Nx.Repr.of_array Nx.Host.v (A.of_array dt (Iarray.of_array s) data)
 
+(* The rules that read one sample, which {!Nx.extension_index} takes. *)
+type copying =
+  [ `Zero | `Replicate | `Symmetric_whole | `Symmetric_half | `Periodic ]
+
+let copying : copying list =
+  [ `Zero; `Replicate; `Symmetric_whole; `Symmetric_half; `Periodic ]
+
+let positions lo n hi =
+  Nx.create Nx.int64
+    [| lo + n + hi |]
+    (Array.init (lo + n + hi) (fun k -> Int64.of_int (k - lo)))
+
+(* The sample a signal of [n] samples reads at [p] under [e], [-1] for a zero,
+   by the rules' equations. [read] steps one fold a call, so [p] first moves to
+   a position that reads the same: by whole periods, which the extension's doc
+   states, or, past an edge where every position reads alike, to the one beside
+   the edge. *)
+let index_of (e : copying) n p =
+  let near =
+    match e with
+    | (`Periodic | `Symmetric_half | `Symmetric_whole) when n > 1 ->
+        let t =
+          Int64.of_int
+            (match e with
+            | `Periodic -> n
+            | `Symmetric_half -> 2 * n
+            | _ -> 2 * (n - 1))
+        in
+        let r = Int64.rem p t in
+        if r < 0L then Int64.add r t else r
+    | _ -> Int64.max (-1L) (Int64.min p (Int64.of_int n))
+  in
+  Int64.of_int
+    (read ~zero:(-1)
+       ~opp:(fun _ _ -> assert false)
+       (e :> Nx.extension)
+       n Fun.id (Int64.to_int near))
+
+(* Positions near either edge, past several folds of a short signal, and
+   anywhere in [int64]. *)
+let position n =
+  Gen.(
+    frequency
+      [
+        (3, map Int64.of_int (int_range (-13) 12));
+        (3, map (fun d -> Int64.of_int (n + d)) (int_range (-12) 12));
+        ( 1,
+          of_list
+            [
+              Int64.min_int;
+              Int64.succ Int64.min_int;
+              Int64.pred Int64.max_int;
+              Int64.max_int;
+            ] );
+        (1, int64);
+      ])
+
 let extensions =
   group "extensions"
     [
@@ -1207,6 +1264,117 @@ let extensions =
             equal ~msg:"whole" (array int32)
               (elements (periodic_of (mirror 1 (n - 2))))
               (elements (ext `Symmetric_whole (lo, hi) o.x)));
+      prop "extension_index folds each position by its rule's equations"
+        (Gen.with_pp
+           (fun ppf (e, n, p) ->
+             Format.fprintf ppf "%s %d [%s]"
+               (rule_name (e :> Nx.extension))
+               n
+               (String.concat "; "
+                  (Array.to_list (Array.map Int64.to_string p))))
+           Gen.(
+             let* e = of_list copying in
+             let* n =
+               frequency [ (6, int_range 0 5); (1, int_range 6 (1 lsl 60)) ]
+             in
+             let+ p = array ~size:(int_range 0 8) (position n) in
+             (e, n, p)))
+        (fun (e, n, p) ->
+          let past k =
+            Int64.(
+              compare k (of_int (-2 * n)) < 0 || compare k (of_int (3 * n)) > 0)
+          in
+          cover "an empty signal" (n = 0);
+          cover "one sample" (n = 1);
+          cover "a long signal" (n > 5);
+          cover "folds past two periods" (n >= 2 && Array.exists past p);
+          cover "an int64 extreme"
+            (Array.exists (fun k -> k = Int64.min_int || k = Int64.max_int) p);
+          let y () =
+            Nx.extension_index e n (Nx.create Nx.int64 [| Array.length p |] p)
+          in
+          if n = 0 && e <> `Zero then invalid ~by:"Nx.extension_index" y
+          else
+            equal (array int64) (Array.map (index_of e n) p) (elements (y ())));
+      prop "take at extension_index reads as extend"
+        Gen.(
+          let* o = operand ~min_rank:1 () in
+          let* a = axis_of o in
+          let* e = of_list copying in
+          let* lo = int_range 0 12 in
+          let+ hi = int_range 0 12 in
+          (o, a, e, lo, hi))
+        (fun (o, a, e, lo, hi) ->
+          let n = o.s.(a) in
+          assume (n > 0 || e = `Zero);
+          covers o;
+          cover "one sample" (n = 1);
+          cover "folds past two periods" (n >= 2 && (lo > 2 * n || hi > 2 * n));
+          let y = Nx.extend ~axis:a (e :> Nx.extension) (lo, hi) o.x in
+          let t =
+            Nx.take ~axis:a (Nx.extension_index e n (positions lo n hi)) o.x
+          in
+          equal ~msg:"shape" (array int) (Nx.shape y) (Nx.shape t);
+          equal ~msg:"elements" (array int32) (elements y) (elements t));
+      prop "the antisymmetric rule reflects the whole-sample mirror's reads"
+        Gen.(
+          let* n = of_list [ 2; 3; 5 ] in
+          let* v =
+            array ~size:(constant n)
+              (of_list [ 0.1; 0.7; -0.3; 1.9; 3.3; -2.6; 0.45 ])
+          in
+          let* lo = int_range 0 (n - 1) in
+          let+ hi = int_range 0 (n - 1) in
+          (v, lo, hi))
+        (fun (v, lo, hi) ->
+          (* Within one fold, [x(-i) = 2 x(0) - x(i)] with [x(i)] the sample
+             [`Symmetric_whole] reads, and alike at the end. *)
+          let n = Array.length v in
+          let x = host D.Float64 [| n |] v in
+          let m =
+            elements
+              (Nx.take
+                 (Nx.extension_index `Symmetric_whole n (positions lo n hi))
+                 x)
+          in
+          let expected =
+            Array.init
+              (lo + n + hi)
+              (fun k ->
+                let p = k - lo in
+                if p < 0 then opp_f v.(0) m.(k)
+                else if p >= n then opp_f v.(n - 1) m.(k)
+                else v.(p))
+          in
+          equal (array float_bits) expected
+            (elements (Nx.extend `Antisymmetric_whole (lo, hi) x)));
+      test "extension_index keeps the positions' shape" (fun () ->
+          let p = [| -1L; 3L; -4L; 5L; 0L; 7L |] in
+          let y =
+            Nx.extension_index `Symmetric_half 3
+              (Nx.create Nx.int64 [| 2; 3 |] p)
+          in
+          equal ~msg:"shape" (array int) [| 2; 3 |] (Nx.shape y);
+          equal ~msg:"elements" (array int64)
+            (Array.map (index_of `Symmetric_half 3) p)
+            (elements y);
+          List.iter
+            (fun e ->
+              equal
+                ~msg:(rule_name (e :> Nx.extension))
+                (array int) [| 0; 4 |]
+                (Nx.shape
+                   (Nx.extension_index e 2 (Nx.zeros Nx.int64 [| 0; 4 |]))))
+            copying;
+          equal ~msg:"0-d" int64 1L
+            (elements
+               (Nx.extension_index `Periodic 3 (Nx.scalar Nx.int64 (-2L)))).(0));
+      test "extension_index refuses a negative length" (fun () ->
+          List.iter
+            (fun e ->
+              named ~by:"Nx.extension_index" (fun () ->
+                  ignore (Nx.extension_index e (-1) (Nx.zeros Nx.int64 [| 2 |]))))
+            copying);
       prop ~count:300 "a sample's bits depend on its position alone"
         (Gen.with_pp
            (fun ppf (v, e, lo, hi) ->

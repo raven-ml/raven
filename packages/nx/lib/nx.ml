@@ -1224,6 +1224,73 @@ type extension =
   | `Antisymmetric_whole
   | `Periodic ]
 
+(* The arithmetic a rule's index fold computes in: [int64] on the host, where
+   [extend] places its views, and [int64] arrays, for [extension_index].
+   [rem] is truncated, of the dividend's sign. *)
+type ('i, 'c) arith = {
+  less : 'i -> int64 -> 'c;
+  select : 'c -> 'i -> 'i -> 'i;
+  rem : 'i -> int64 -> 'i;
+  add : 'i -> int64 -> 'i;
+  rsub : int64 -> 'i -> 'i;
+  fill : 'i -> int64 -> 'i;
+}
+
+let host_ints =
+  {
+    less = (fun i k -> Int64.compare i k < 0);
+    select = (fun c a b -> if c then a else b);
+    rem = Int64.rem;
+    add = Int64.add;
+    rsub = Int64.sub;
+    fill = (fun _ k -> k);
+  }
+
+(* How far past an edge one fold of a signal of [n] samples reaches, a
+   rule reading the run beside the edge forward or back: a mirror's period
+   is twice it. [`Zero] and [`Replicate] never fold. *)
+let fold_length e n =
+  match e with
+  | `Zero | `Replicate -> max_int
+  | `Symmetric_whole | `Antisymmetric_whole -> n - 1
+  | `Symmetric_half | `Periodic -> n
+
+(* The rules that read one sample. *)
+type copying =
+  [ `Zero | `Replicate | `Symmetric_whole | `Symmetric_half | `Periodic ]
+
+(* The sample [e] reads at position [i] of a signal of [n] samples, or [-1]
+   where it reads zero: [extension]'s equations, solved for any [i]. [`Zero]
+   and [`Replicate] read alike all along each side. The others repeat every
+   [t] samples, the fold length [f] for [`Periodic] and [2 f] for the
+   mirrors, so [i] reads as [m = i mod t] does, and a mirror reads [m >= n]
+   reflected, as [2 f - 1 - m] for [`Symmetric_half] and [2 f - m] for
+   [`Symmetric_whole]. One sample reads itself. [n] is positive but under
+   [`Zero], and twice any [int] fits in [int64], so no step overflows at any
+   [i]. *)
+let reads (type i c) (o : (i, c) arith) e n (i : i) : i =
+  let f = Int64.of_int (fold_length e n) and n = Int64.of_int n in
+  let edges before after =
+    o.select (o.less i 0L) (o.fill i before)
+      (o.select (o.less i n) i (o.fill i after))
+  in
+  let modulo t =
+    let r = o.rem i t in
+    o.select (o.less r 0L) (o.add r t) r
+  in
+  let mirror t last =
+    let m = modulo t in
+    o.select (o.less m n) m (o.rsub last m)
+  in
+  let twice = Int64.mul 2L f in
+  match e with
+  | `Zero -> edges (-1L) (-1L)
+  | `Replicate -> edges 0L (Int64.pred n)
+  | `Symmetric_whole when n = 1L -> edges 0L 0L
+  | `Symmetric_whole -> mirror twice twice
+  | `Symmetric_half -> mirror twice (Int64.pred twice)
+  | `Periodic -> modulo f
+
 (* [2 x - v] rounded once, by one fma, broadcast: a complex value's parts
    each alone, as pairs of floats. *)
 let opposed (type v s d) ~by (x : (v, s, d) t) (v : (v, s, d) t) : (v, s, d) t =
@@ -1253,17 +1320,27 @@ let fold ~by (e : extension) a (lo, hi) x =
     s'.(a) <- count;
     Eval.broadcast ~by s' (part k 1)
   in
+  (* The [count] samples [r] reads from position [p] on, within one fold:
+     one sample spread, or a run of [x] forward or back, told apart by the
+     samples it reads at its ends. *)
+  let run r p count =
+    let at p = Int64.to_int (reads host_ints r n (Int64.of_int p)) in
+    let first = at p and last = at (p + count - 1) in
+    if first = last then spread first count
+    else if first < last then part first count
+    else mirror last count
+  in
+  let runs r = ((fun c -> run r (-c) c), fun c -> run r n c) in
   let sides =
     match e with
     | `Zero -> None
-    | `Replicate -> Some (spread 0, spread (n - 1))
-    | `Periodic -> Some ((fun c -> part (n - c) c), part 0)
-    | `Symmetric_half -> Some (mirror 0, fun c -> mirror (n - c) c)
-    | `Symmetric_whole -> Some (mirror 1, fun c -> mirror (n - 1 - c) c)
+    | (`Replicate | `Symmetric_whole | `Symmetric_half | `Periodic) as r ->
+        Some (runs r)
     | `Antisymmetric_whole ->
+        let before, after = runs `Symmetric_whole in
         Some
-          ( (fun c -> opposed ~by (part 0 1) (mirror 1 c)),
-            fun c -> opposed ~by (part (n - 1) 1) (mirror (n - 1 - c) c) )
+          ( (fun c -> opposed ~by (part 0 1) (before c)),
+            fun c -> opposed ~by (part (n - 1) 1) (after c) )
   in
   let s' = Array.copy s in
   s'.(a) <- lo + n + hi;
@@ -1287,12 +1364,7 @@ let fold ~by (e : extension) a (lo, hi) x =
    would mirror a signal the other side's width has grown. *)
 let rec extended ~by (e : extension) a (lo, hi) x =
   let n = Prim.dim x a in
-  let reach =
-    match e with
-    | `Zero | `Replicate -> max_int
-    | `Symmetric_whole | `Antisymmetric_whole -> n - 1
-    | `Symmetric_half | `Periodic -> n
-  in
+  let reach = fold_length e n in
   if lo <= reach && hi <= reach then fold ~by e a (lo, hi) x
   else if lo > reach && hi > reach then (
     let before = extended ~by e a (lo, 0) x in
@@ -1348,6 +1420,24 @@ let extend ?axis:(a = -1) (e : extension) (lo, hi) x =
     if n = 0 then `Zero else if n = 1 && e <> `Zero then `Replicate else e
   in
   extended ~by e a (lo, hi) x
+
+let extension_index e n p =
+  let by = "Nx.extension_index" in
+  let e = (e : [< copying ] :> copying) in
+  if n < 0 then invalid_argf "%s: a negative length %d" by n;
+  if n = 0 && e <> `Zero then
+    invalid_argf "%s: a signal of no sample has nothing to read but zeros" by;
+  let o =
+    {
+      less = compared ~by (Compare Less);
+      select = ternary ~by Where;
+      rem = scalar_binary ~by (Binary Mod);
+      add = scalar_binary ~by (Binary Add);
+      rsub = reversed ~by (Binary Sub);
+      fill = (fun i k -> scalar_beside ~by i D.Int64 k);
+    }
+  in
+  reads o e n p
 
 (* [x] with [lo.(a)] elements [v] before its axis [a] and [hi.(a)] after it, a
    negative width cutting, and [interior.(a)] elements [v] between its

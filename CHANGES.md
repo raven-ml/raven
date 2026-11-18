@@ -3376,6 +3376,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.extension_index e n p` is the sample `Nx.extend` reads at each
+  position of `p` under a copying rule, or `-1` for a zero, folded at any
+  `int64`, so `Nx.take` at it reads as `Nx.extend` does at positions held
+  in data.
 - `Nx_quant.apply` and `Nx_quant.apply_experts` take `?init`, as
   `Nx.contract` does: broadcast to the result's shape and added to the
   products' sum in the accumulator, so a biased packed product rounds once.

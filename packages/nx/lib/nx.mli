@@ -1173,6 +1173,23 @@ val extend :
     [`Zero] widens it, or [e] is [`Antisymmetric_whole] and the dtype is
     boolean, or complex with {!Nx_array.Layout.max_rank} axes. *)
 
+val extension_index :
+  [< `Zero | `Replicate | `Symmetric_whole | `Symmetric_half | `Periodic ] ->
+  int ->
+  'd int64_t ->
+  'd int64_t
+(** [extension_index e n p] is, at each position [p] of a signal of [n]
+    samples, the sample in [\[0, n)] that {!extend} reads there under [e], or
+    [-1] where it reads zero, so that {!take} along one axis reads as
+    {!extend} does. Positions in [\[0, n)] read themselves, and a position
+    folds as often as it needs, at any [int64]. [`Antisymmetric_whole],
+    whose reads combine two samples, has no index. A [-1] in a flat index
+    of several axes, such as [i w + j], names another sample, so a caller
+    that flattens must mask it first.
+
+    Raises [Invalid_argument] if [n] is negative, or [n] is [0] and [e] is
+    not [`Zero]. *)
+
 val roll : ?axis:int -> int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [roll ~axis k x] is [x] with its elements along [axis] shifted [k] places
     toward the end, those past it wrapping to the start; a negative [k] shifts
