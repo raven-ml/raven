@@ -3376,6 +3376,12 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_quant.apply` and `Nx_quant.apply_experts` take `?init`, as
+  `Nx.contract` does: broadcast to the result's shape and added to the
+  products' sum in the accumulator, so a biased packed product rounds once.
+  Adding the bias to the product rounded the product, then the sum. A
+  position of `apply_experts` whose id is out of range is its row of
+  `init`. gpt-oss's packed Q8_0 projections take their biases so.
 - `Nx_io.save_wav ?bits ?channel_mask path ~rate x` writes an `[|n; c|]` array
   as a WAV file that loads back as it, `~bits` its samples' significant bits,
   RF64 past 4 GiB; `int8` is refused, since WAV stores 8 bits unsigned.

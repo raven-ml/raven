@@ -15,6 +15,7 @@ module D = Nx.Dtype
 module L = Nx_array.Layout
 module P = Nx_kernel.Prog
 module T = Nx.Ptree
+module Quants = Rune_support.Quants
 module C = Nx_support.Counting
 module Count = (val Nx.devices ~kernels:(module C) [ Nx_support.memory 0 ])
 module Two = (val Nx.devices [ Nx_support.memory 1; Nx_support.memory 2 ])
@@ -560,6 +561,52 @@ let law_wide (n, k, a, b) =
         ~than:((gamma *. size.(e)) +. Float.min_float)
         (Float.abs (y -. alone.(e))))
     mapped
+
+(* Quantised weights *)
+
+(* [stacked format lanes] is a weight of [lanes] matrices of 6 rows of two
+   blocks of [format], each part stacked along a new axis 0, and lane [l]'s
+   matrix as a weight of its own. *)
+let stacked format lanes =
+  let w = Quants.weight format ~rows:(lanes * 6) ~blocks:2 in
+  let split t = Nx.reshape [| lanes; 6; Nx.dim 1 t |] t in
+  let lane l t = Nx.get [ l ] (split t) in
+  match w with
+  | Nx_quant.Q8_0 { blocks } ->
+      (Nx_quant.q8_0 (split blocks), fun l -> Nx_quant.q8_0 (lane l blocks))
+  | Nx_quant.Q6_K { blocks } ->
+      (Nx_quant.q6_k (split blocks), fun l -> Nx_quant.q6_k (lane l blocks))
+  | Nx_quant.Mxfp4 { codes; scales } ->
+      ( Nx_quant.mxfp4 ~scales:(split scales) (split codes),
+        fun l -> Nx_quant.mxfp4 ~scales:(lane l scales) (lane l codes) )
+  | _ -> invalid_arg "stacked"
+
+(* [Nx_quant.apply] mapped over the input's lanes, the weight shared, and
+   over a stack of weights, each lane's parts its own: each lane is its
+   product alone, bit for bit. *)
+let test_quantised format () =
+  let lanes = 3 in
+  let k = 2 * Quants.block_values format in
+  let x =
+    Nx.init Nx.float32 [| lanes; 2; k |] (fun i ->
+        Float.sin (Float.of_int ((i.(0) * 7) + (i.(1) * 3) + i.(2))))
+  in
+  let ws, lane = stacked format lanes in
+  let w = lane 1 in
+  equal ~msg:"lanes of the input" codes_t
+    (codes (one_by_one (Nx_quant.apply w) x))
+    (codes (Rune.vmap' (Nx_quant.apply w) x));
+  let alone =
+    Nx.stack ~axis:0
+      (List.init lanes (fun l -> Nx_quant.apply (lane l) (Nx.get [ l ] x)))
+  in
+  let mapped =
+    Rune.vmap
+      T.(v Nx_quant.walk @-> tensor @-> returns tensor)
+      (fun w x -> Nx_quant.apply w x)
+      ws x
+  in
+  equal ~msg:"lanes of the parts" codes_t (codes alone) (codes mapped)
 
 (* Compositions *)
 
@@ -1394,6 +1441,9 @@ let () =
                law_contract;
              prop "rows past nx.cpu's lane order, within the bound" wide
                law_wide;
+             test "a Q8_0 product" (test_quantised Quants.Q8_0);
+             test "a Q6_K product" (test_quantised Quants.Q6_K);
+             test "an MXFP4 product" (test_quantised Quants.Mxfp4);
            ];
          group "compositions"
            [

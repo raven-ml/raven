@@ -192,20 +192,29 @@ val dequant : (float, 'b) Nx.dtype -> 'd t -> (float, 'b, 'd) Nx.t
     once at its subtraction. A block whose float16 scale is infinite or NaN
     gives infinite or NaN values. *)
 
-val apply : ?sum:bool -> 'd t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
+val apply :
+  ?sum:bool ->
+  ?init:(float, 'b, 'd) Nx.t ->
+  'd t ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t
 (** [apply w x] is [w] applied to [x] as a linear map from [k] inputs to [n]
     outputs, summed at [acc], [float64] for a float64 [x] and [float32]
-    otherwise, which holds each value of [w] exactly, and rounded once to
-    [x]'s dtype:
+    otherwise, which holds each value of [w] exactly, [init] (default none)
+    then added to the sum there, as {!Nx.contract} adds its [init], and
+    rounded once to [x]'s dtype:
 
     {[
     Nx.cast (Nx.dtype x)
-      (Nx.matmul (Nx.cast acc x) (Nx.matrix_transpose (dequant acc w)))
+      (Nx.add (Nx.cast acc init)
+         (Nx.matmul (Nx.cast acc x) (Nx.matrix_transpose (dequant acc w))))
     ]}
 
     [w] is [[| …; n; k |]], [x] is [[| …; m; k |]] or [[| k |]], batch axes
     broadcast as {!Nx.matmul}'s, and the result is [[| …; m; n |]], or
-    [[| …; n |]] for a vector.
+    [[| …; n |]] for a vector, which [init]'s shape broadcasts to. A bias
+    [b] of [[| n |]] given as [init] rounds once with the products, where
+    [Nx.add (apply w x) b] rounds the product, then the sum.
 
     A [Q8_0] weight, and an [Mxfp4] one summed at float32, are read where
     they lie: the product decodes each block as it sums it and stores no
@@ -225,20 +234,25 @@ val apply : ?sum:bool -> 'd t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 
     Raises [Invalid_argument] if [w] is read where it lies or unpacked on a
     set whose kernels decline that contraction, if [x] is 0-d, if [x]'s last
-    axis is not [k], or if the batch axes do not broadcast. *)
+    axis is not [k], if the batch axes do not broadcast, or if [init]'s shape
+    does not broadcast to the result's. *)
 
 val apply_experts :
   ?sum:bool ->
+  ?init:(float, 'b, 'd) Nx.t ->
   ids:'d Nx.int64_t ->
   'd t ->
   (float, 'b, 'd) Nx.t ->
   (float, 'b, 'd) Nx.t
 (** [apply_experts ~ids w x] is each row of [x] through the expert its id
     names: at each position [p] of [ids], the product {!apply} defines of
-    [w]'s matrix [ids.{p}] with [p]'s row of [x], or zeros where [ids.{p}]
-    is not in [\[0, e)], whatever that row holds. [w] is [[| e; n; k |]],
-    [ids] [[| s… |]] and [x] [[| s'…; k |]], [s'…] broadcasting to [s…]; the
-    result is [[| s…; n |]].
+    [w]'s matrix [ids.{p}] with [p]'s row of [x], from [p]'s row of [init],
+    or that row of [init] where [ids.{p}] is not in [\[0, e)], whatever
+    [x]'s row holds, zeros without [init]. [w] is [[| e; n; k |]], [ids]
+    [[| s… |]] and [x] [[| s'…; k |]], [s'…] broadcasting to [s…]; the
+    result is [[| s…; n |]], which [init]'s shape broadcasts to. Each
+    expert's bias is [~init:(Nx.take ~axis:0 ids b)] for biases [b] of
+    [[| e; n |]].
 
     The positions in range are summed in one contraction, each row with
     the matrix its id names, at the dtype {!apply} sums in, within
@@ -266,8 +280,8 @@ val apply_experts :
 
     Raises [Invalid_argument] if the sum lies on a set whose kernels decline
     it, if [w] is not 3-d, if [x] does not have one axis more than [ids], if
-    [x]'s last axis is not [k], or if [x]'s leading axes do not broadcast to
-    [ids]'. *)
+    [x]'s last axis is not [k], if [x]'s leading axes do not broadcast to
+    [ids]', or if [init]'s shape does not broadcast to the result's. *)
 
 val take : axis:int -> 'd Nx.int64_t -> 'd t -> 'd t
 (** [take ~axis p w] is the rows or matrices of [w] at the positions [p] along

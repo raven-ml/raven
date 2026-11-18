@@ -61,7 +61,8 @@ val project :
   (float, 'b, 'd) Nx.t ->
   (float, 'b, 'd) Nx.t
 (** [project p x] is [p] applied to [x], whose last axis is [p]'s inputs:
-    {!Kaun.Linear.apply}, or {!Nx_quant.apply} and the bias. *)
+    {!Kaun.Linear.apply}, or {!Nx_quant.apply} from the bias, each
+    output rounded once. *)
 
 type ('a, 'd) attn = { qkv : ('a, 'd) projection; out : ('a, 'd) projection }
 (** The type for the attention's projections over payload ['a]: the query,

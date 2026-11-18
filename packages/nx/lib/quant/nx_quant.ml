@@ -377,6 +377,17 @@ let check_input ws xs =
     (if xr = 1 then [||] else Array.sub xs 0 (xr - 2))
     (Array.sub ws 0 (wr - 2))
 
+(* [init_to ~by shape i] is a product's init [i] broadcast to the result's
+   [shape], as Nx.contract broadcasts its own. *)
+let init_to ~by shape i =
+  let s = Nx.shape i in
+  match Nx.broadcast_shapes [ s; shape ] with
+  | r when r = shape -> Nx.broadcast_to shape i
+  | _ | (exception Invalid_argument _) ->
+      invalid_arg
+        (strf "%s: ~init is %s, which does not broadcast to the result's %s" by
+           (pp_shape s) (pp_shape shape))
+
 (* Whether a product with [x] sums at float64, as a float64 [x]'s does. Any
    other sums at float32, which holds every value of a format exactly. *)
 let wide (type b d) (x : (float, b, d) Nx.t) =
@@ -452,7 +463,7 @@ let stored ~wide ws w =
    that holds it, from which a unit axis of the other drops. It sums in the
    order, and gives the bits, of [x] by the decoded weight transposed:
    nx.cpu numbers the products of several contracted axes as of one. *)
-let scaled ?(sum = false) ~by ~wide x ws
+let scaled ?(sum = false) ?init ~by ~wide x ws
     (Stored { elements; inner; scales; blocks }) =
   let xs = Nx.shape x in
   let wr = Array.length ws and xr = Array.length xs in
@@ -490,6 +501,25 @@ let scaled ?(sum = false) ~by ~wide x ws
   let contracting =
     Iarray.of_list (List.init p (fun i -> (ra - p + i, rb - p + i)))
   in
+  (* The kernel's axes are the batch axes, x's free axes and row, then w's
+     free axes and column, the result's the leading axes in order, the row and
+     the column: the leading axes are named by their number, the row [l] and
+     the column [l + 1]. *)
+  let row = if xr = 1 then [] else [ l ] in
+  let kernel = both @ only x_lead @ row @ only w_lead @ [ l + 1 ] in
+  let result = List.init l Fun.id @ row @ [ l + 1 ] in
+  (* [y]'s axes, named in the order [from], in the order [into]. *)
+  let reorder ~from ~into y =
+    if from = into then y
+    else Nx.transpose ~axes:(List.map (index from) into) y
+  in
+  let init =
+    Option.map
+      (fun i ->
+        let shape = Array.concat [ lead; Array.of_list m; [| n |] ] in
+        reorder ~from:result ~into:kernel (init_to ~by shape i))
+      init
+  in
   let y =
     Nx.Prim.eval ~by
       (Contract
@@ -500,32 +530,30 @@ let scaled ?(sum = false) ~by ~wide x ws
            out = Nx.dtype x;
            a;
            b;
-           init = None;
+           init;
            a_scale = None;
            b_scale;
            segments = None;
            sum;
          })
   in
-  (* The kernel's axes are the batch axes, x's free axes and row, then w's
-     free axes and column, the result's the leading axes in order, the row and
-     the column: the leading axes are named by their number, the row [l] and
-     the column [l + 1]. *)
-  let row = if xr = 1 then [] else [ l ] in
-  let kernel = both @ only x_lead @ row @ only w_lead @ [ l + 1 ] in
-  let result = List.init l Fun.id @ row @ [ l + 1 ] in
-  if kernel = result then y
-  else Nx.transpose ~axes:(List.map (index kernel) result) y
+  reorder ~from:kernel ~into:result y
 
-let product ?sum ~by w ws x =
+(* [args] and, where there is one, the init: a product's arguments. *)
+let with_init init args =
+  match init with None -> args | Some i -> args @ [ Nx.Arg ("init", i) ]
+
+let product ?sum ?init ~by w ws x =
   let wide = wide x in
-  scaled ?sum ~by ~wide x ws (stored ~wide ws w)
+  scaled ?sum ?init ~by ~wide x ws (stored ~wide ws w)
 
-let apply ?sum w x =
+let apply ?sum ?init w x =
   let ws = shape w in
   check_input ws (Nx.shape x);
   let by = "Nx_quant.apply" in
-  composite ~by w [ Arg ("x", x) ] (fun () -> product ?sum ~by w ws x)
+  composite ~by w
+    (with_init init [ Arg ("x", x) ])
+    (fun () -> product ?sum ?init ~by w ws x)
 
 (* Quantising. Q8_0 as ggml's quantize_row_q8_0_ref stores a block of 32
    float32 values [v]: [d = amax / 127] for the block's greatest magnitude
@@ -664,7 +692,8 @@ let decoded ~wide w =
    contraction's association does not depend on its ids
    (Nx_kernel.S.contract), so a row's bits depend on the shapes, its row and
    its expert. *)
-let experts ?(sum = false) ~ids w x =
+let experts ?(sum = false) ?init ~ids w x =
+  let by = "Nx_quant.apply_experts" in
   let wide = wide x in
   let lead = Nx.shape ids in
   let p = Array.fold_left ( * ) 1 lead in
@@ -697,8 +726,14 @@ let experts ?(sum = false) ~ids w x =
   in
   let q = List.length inner in
   let contracting = Iarray.of_list (List.init q (fun i -> (1 + i, 2 + i))) in
+  let init =
+    Option.map
+      (fun i ->
+        Nx.reshape [| p; n |] (init_to ~by (Array.append lead [| n |]) i))
+      init
+  in
   let y =
-    Nx.Prim.eval ~by:"Nx_quant.apply_experts"
+    Nx.Prim.eval ~by
       (Contract
          {
            batch = Iarray.of_list [];
@@ -707,7 +742,7 @@ let experts ?(sum = false) ~ids w x =
            out = Nx.dtype x;
            a;
            b;
-           init = None;
+           init;
            a_scale = None;
            b_scale;
            segments = Some (Rows { ids; a_axis = 0; b_axis = 0 });
@@ -716,10 +751,11 @@ let experts ?(sum = false) ~ids w x =
   in
   Nx.reshape (Array.append lead [| n |]) y
 
-let apply_experts ?sum ~ids w x =
+let apply_experts ?sum ?init ~ids w x =
   check_experts (shape w) (Nx.shape ids) (Nx.shape x);
-  composite ~by:"Nx_quant.apply_experts" w [ Arg ("ids", ids); Arg ("x", x) ]
-    (fun () -> experts ?sum ~ids w x)
+  composite ~by:"Nx_quant.apply_experts" w
+    (with_init init [ Arg ("ids", ids); Arg ("x", x) ])
+    (fun () -> experts ?sum ?init ~ids w x)
 
 (* Structure *)
 

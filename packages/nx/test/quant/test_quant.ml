@@ -1058,6 +1058,17 @@ let errors =
       ( "apply over batch axes that do not broadcast",
         "broadcast",
         apply w (x [| 3; 1; 64 |]) );
+      ( "apply from an init that does not broadcast to the result",
+        "~init",
+        fun () ->
+          ignore (Nx_quant.apply ~init:(x [| 2; 4 |]) w (x [| 3; 64 |])) );
+      ( "experts from an init that does not broadcast to the result",
+        "~init",
+        fun () ->
+          ignore
+            (Nx_quant.apply_experts ~init:(x [| 3; 4 |])
+               ~ids:(Nx.zeros Nx.int64 [| 3 |])
+               w (x [| 3; 64 |])) );
       ( "experts of two axes",
         "[e; n; k]",
         experts (random_weight [| 5; 64 |]) [| 3 |] [| 3; 64 |] );
@@ -2462,6 +2473,89 @@ let structure =
           equal bool true (List.for_all2 ( == ) (parts w) (parts w')));
     ]
 
+(* Biased products *)
+
+(* [x] at [dt] by [w] from [init], as Nx.contract sums from an init over the
+   decoded weight: at float32, rounded once to [dt]. [x] has [w]'s leading
+   axes, its batch axes, or none, when they are [w]'s own free axes. *)
+let biased_product dt w x init =
+  let f32 = Nx.float32 in
+  let lead = Nx.ndim (Nx_quant.dequant f32 w) - 2 in
+  let names = String.concat " " (List.init lead (Printf.sprintf "w%d")) in
+  let xs = if Nx.ndim x = 2 then "" else names in
+  Nx.cast dt
+    (Nx.contract f32 ~init:(Nx.cast f32 init)
+       (Nx.Pattern.v
+          (Printf.sprintf "%s m k, %s n k -> %s m n | k" xs names names))
+       (Nx.cast f32 x) (Nx_quant.dequant f32 w))
+
+(* Whether [a] and [b] differ at some element: the bias added after the
+   product, rounded twice, is not the product from the bias. *)
+let differ a b = Array.exists2 ( <> ) (product_bits a) (product_bits b)
+
+(* The dtypes below the accumulator's, where a second rounding shows. *)
+let narrow =
+  let at dtype = F { dtype; round = D.of_float dtype } in
+  [ at Nx.bfloat16; at Nx.float16 ]
+
+let biased =
+  group "biased products"
+    [
+      (* With [w]'s leading axes its own, [3; 3], against an [x] of [3]
+         rows, the kernel's axes are the row, then [w]'s: a cycle of three
+         axes of one extent, which an init read in the result's order would
+         sum at the wrong outputs without a shape to refuse. *)
+      cases "apply from an init is Nx.contract's from it, rounded once"
+        ~id:(fun (f, F d, (lead, own), full) ->
+          Printf.sprintf "%s, %s, %d leading axes%s, %s init" (format_name f)
+            (D.name d.dtype) (List.length lead)
+            (if own then " of w alone" else "")
+            (if full then "a whole" else "a bias"))
+        (List.concat_map
+           (fun f ->
+             List.concat_map
+               (fun d ->
+                 List.concat_map
+                   (fun lead -> [ (f, d, lead, false); (f, d, lead, true) ])
+                   [ ([], false); ([ 2 ], false); ([ 3; 3 ], true) ])
+               narrow)
+           [ Q8_0; Mxfp4 ])
+        (fun (format, F d, (lead, own), full) ->
+          let lead = Array.of_list lead in
+          let dt = d.dtype in
+          let m = if own then 3 else 8 in
+          let w = random_weight ~format (Array.append lead [| 12; 512 |]) in
+          let xs = Array.append (if own then [||] else lead) [| m; 512 |] in
+          let x = Nx.cast dt (random_floats xs) in
+          let s = if full then Array.append lead [| m; 12 |] else [| 12 |] in
+          let init = Nx.cast dt (Nx.mul_s (random_floats s) 8.) in
+          let got = Nx_quant.apply ~init w x in
+          equal (array int64)
+            (product_bits (biased_product dt w x init))
+            (product_bits got);
+          equal ~msg:"the product, then the bias, rounds twice" bool true
+            (differ got (Nx.add (Nx_quant.apply w x) init)));
+      cases "apply_experts from an init sums each row from its own"
+        ~id:format_name [ Q8_0; Mxfp4 ] (fun format ->
+          let w, ids, x = experts_of format in
+          let bf16 = Nx.bfloat16 and f32 = Nx.float32 in
+          let x = Nx.cast bf16 x in
+          let init = Nx.cast bf16 (Nx.mul_s (random_floats [| 12; 3 |]) 8.) in
+          (* At float32 the product's sum is the accumulator's, so adding the
+             init there rounds as the kernel does; a position out of range
+             sums nothing and is its init. *)
+          let want =
+            Nx.cast bf16
+              (Nx.add
+                 (Nx_quant.apply_experts ~ids w (Nx.cast f32 x))
+                 (Nx.cast f32 init))
+          in
+          let got = Nx_quant.apply_experts ~init ~ids w x in
+          equal (array int64) (product_bits want) (product_bits got);
+          equal ~msg:"the product, then the bias, rounds twice" bool true
+            (differ got (Nx.add (Nx_quant.apply_experts ~ids w x) init)));
+    ]
+
 (* Asked for their sum, [apply] and [apply_experts] over a weight cut along
    [k], or the experts, keep it; closed, it has the bits of the product
    closed by default at float32, whose terms round nothing. *)
@@ -2499,6 +2593,7 @@ let () =
          ggml;
          quantising;
          values_and_products;
+         biased;
          file_layouts;
          errors;
          placements;

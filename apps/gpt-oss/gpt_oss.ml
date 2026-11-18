@@ -61,9 +61,7 @@ let expert_parallel s role ~axis =
 let project p x =
   match p with
   | Float l -> Linear.apply l x
-  | Quant { w; b } -> (
-      let y = Nx_quant.apply w x in
-      match b with None -> y | Some b -> Nx.add y b)
+  | Quant { w; b } -> Nx_quant.apply ?init:b w x
 
 let walk_projection c =
   let open Nx.Ptree.Walk in

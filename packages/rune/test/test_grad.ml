@@ -1360,6 +1360,59 @@ let test_contraction_fresh () =
   fresh ~msg:"in C order from offset 0"
     (Rune.grad' (fun a -> Nx.sum (Nx.contract f64 pattern a b)) a)
 
+(* The gradient through [Nx_quant.apply] of a Q8_0 or Q6_K weight, whose
+   scales are float16 values read from its bytes: in the input, the
+   cotangent by the decoded weight, its product, bit for bit; in the
+   weight, zero, as an integer array's is, its tangent stopped by the
+   bitcasts from its bytes. *)
+let test_quantised format () =
+  let n = 6 and m = 3 in
+  let w = Quants.weight format ~rows:n ~blocks:2 in
+  let k = 2 * Quants.block_values format in
+  let f32 = Nx.float32 in
+  let x = Nx.create f32 [| m; k |] (spread 0.3 (m * k)) in
+  let c = Nx.create f32 [| m; n |] (spread 1.1 (m * n)) in
+  let loss (w, x) = Nx.sum (Nx.mul c (Nx_quant.apply w x)) in
+  let params = Nx.Ptree.(pair (v Nx_quant.walk) tensor) in
+  let gw, gx = Rune.grad params loss (w, x) in
+  equal ~msg:"in the input" bits_t
+    (bits (Nx.matmul c (Nx_quant.dequant f32 w)))
+    (bits gx);
+  let zero t = Array.for_all (( = ) 0) (Nx.to_array t) in
+  match gw with
+  | Nx_quant.Q8_0 { blocks } | Nx_quant.Q6_K { blocks } ->
+      is_true ~msg:"in the weight" (zero blocks)
+  | _ -> fail "the gradient is of another format"
+
+(* An init through [Nx_quant.apply]: its gradient is the cotangent summed
+   along the rows it broadcasts over; mapped over its lanes, each lane is
+   its product alone, the lanes' rows few enough that nx.cpu sums the
+   mapped product in lane order; compiled at float32, where the products'
+   sum is already in the dtype, it is the compiled product plus the
+   init. *)
+let test_quantised_init () =
+  let n = 6 and m = 2 and lanes = 3 in
+  let w = Quants.weight Quants.Q8_0 ~rows:n ~blocks:2 in
+  let k = 2 * Quants.block_values Quants.Q8_0 in
+  let f32 = Nx.float32 in
+  let x = Nx.create f32 [| m; k |] (spread 0.3 (m * k)) in
+  let c = Nx.create f32 [| m; n |] (spread 1.1 (m * n)) in
+  let b = Nx.create f32 [| n |] (spread 2.3 n) in
+  let product b = Nx_quant.apply ~init:b w x in
+  equal ~msg:"grad" bits_t
+    (bits (Nx.sum ~axes:[ 0 ] c))
+    (bits (Rune.grad' (fun b -> Nx.sum (Nx.mul c (product b))) b));
+  let bs = Nx.create f32 [| lanes; n |] (spread 0.7 (lanes * n)) in
+  equal ~msg:"vmap" bits_t
+    (bits
+       (Nx.stack ~axis:0
+          (List.init lanes (fun l -> product (Nx.get [ l ] bs)))))
+    (bits (Rune.vmap' product bs));
+  let jit f = Rune.jit' f x in
+  equal ~msg:"jit" bits_t
+    (bits (Nx.add (jit (Nx_quant.apply w)) b))
+    (bits (jit (Nx_quant.apply ~init:b w)))
+
 let test_nesting () =
   let x = v [| 0.5; -1. |] in
   let cube y = Nx.sum (Nx.mul y (Nx.mul y y)) in
@@ -2075,6 +2128,9 @@ let () =
              test "an integer cotangent" test_int_cotangent;
              test "one array at two leaves" test_two_leaves;
              test "a gradient after a contraction" test_contraction_fresh;
+             test "through a Q8_0 product" (test_quantised Quants.Q8_0);
+             test "through a Q6_K product" (test_quantised Quants.Q6_K);
+             test "through a product from an init" test_quantised_init;
              test "nesting" test_nesting;
              test "a read reads the primal" test_read;
              test "detach" test_detach;
