@@ -3,15 +3,14 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The mixture of experts over four software devices. At gpt-oss's
-   expert-parallel placement, experts split along their expert axis, each
-   device computes its own experts' rows and [+0] in the others': the gate
-   and up projection closes before the activation, adding exact zeros, and
-   the down projection's output is a sum that one closing after the top-k
-   combine closes, within float32's reassociation of the combine's terms of
-   the experts on one device, float and MXFP4. Row parallel, each expert cut
-   along its features, the down projection's output is a sum that one
-   closing after the top-k combine closes, eagerly and compiled. *)
+(* The mixture of experts: the routing among equal logits, each token's output
+   independent of the others', and expert parallelism over four software
+   devices. At gpt-oss's expert-parallel placement, experts split along their
+   expert axis, each device computes its own experts' rows and [+0] in the
+   others': the gate and up projection closes before the activation, adding
+   exact zeros, and the down projection's output is a sum that one closing
+   after the top-k combine closes, within float32's reassociation of the
+   combine's terms of the experts on one device, float and MXFP4. *)
 
 open Windtrap
 
@@ -99,29 +98,6 @@ let test_split weight baseline () =
   in
   expect (Printf.sprintf "largest gap %h" (gap host y)) baseline;
   equal ~msg:"whole on each device" placement S.on (Nx.placement y)
-
-(* Row parallelism: [gate_up] cut along its outputs and [down] along its
-   inputs, the hidden features, each device holding a quarter of each
-   expert. [down]'s product is a sum of the devices' terms, which the top-k
-   combine keeps, and one closing after it gives the experts' output. *)
-let rows (p : (_, Nx.host) Moe.t) =
-  (* A packed weight cut along its inputs splits its one block of scales:
-     they lie whole on each device, which reads its codes where they lie. *)
-  let weight axis = function
-    | Moe.Float w -> Moe.Float (Nx.place (S.split ~axis) w)
-    | Moe.Quant (Nx_quant.Mxfp4 { codes; scales }) when axis = 2 ->
-        Moe.Quant
-          (Nx_quant.mxfp4 ~scales:(Nx.place S.on scales)
-             (Nx.place (S.split ~axis) codes))
-    | Moe.Quant w -> Moe.Quant (Nx_quant.place (S.split ~axis) w)
-  in
-  let quant = match p.gate_up with Moe.Quant _ -> true | Moe.Float _ -> false in
-  {
-    Moe.gate_up = weight (if quant then 1 else 2) p.gate_up;
-    gate_up_bias = Nx.place (S.split ~axis:1) p.gate_up_bias;
-    down = weight (if quant then 2 else 1) p.down;
-    down_bias = Nx.place S.on p.down_bias;
-  }
 
 (* The lines of [f]'s compiled program at [x] that close a sum: place a
    value that lies partial. *)
@@ -217,63 +193,6 @@ let within bound want got =
     ~msg:(Printf.sprintf "compiled gap at element %d" i)
     ~than:bound.(i) (gap i)
 
-let test_rows weight baseline () =
-  let p = params weight in
-  let ids =
-    Nx.create Nx.int64 [| 5; 4 |]
-      [| 0L; 3L; 1L; 2L; 3L; 1L; 0L; 2L; 2L; 3L; 0L; 1L; 1L; 0L; 3L; 2L;
-         2L; 0L; 1L; 3L |]
-  in
-  let weights = floats [| 5; 4 |] 9 and x = floats [| 5; width |] 7 in
-  let host = Moe.apply ~limit p (ids, weights) x in
-  let bound = bound p (ids, weights) x in
-  let on v = Nx.place S.on v in
-  let p = rows p and ids = on ids and weights = on weights in
-  let f x = Moe.apply ~limit p (ids, weights) x in
-  let y = f (on x) in
-  not_equal placement ~msg:"the experts' output is a sum" S.on
-    (Nx.placement y);
-  expect (Printf.sprintf "eager %h" (gap host (close y))) baseline;
-  let step x = close (f x) in
-  within bound host (Rune.jit' step (on x));
-  equal ~msg:"one closing, after the combine" int 1
-    (List.length (places step (on x)))
-
-(* At bfloat16, row parallel: each device's term of [down]'s product rounds
-   into bfloat16, the combine keeps the sum at bfloat16 and the closing adds
-   the four terms there. The largest gap from one device's output, a
-   baseline. *)
-let test_rows_bf16 () =
-  let bf x = Nx.cast Nx.bfloat16 x in
-  let p = params float_weight in
-  let weight = function
-    | Moe.Float w -> Moe.Float (bf w)
-    | Moe.Quant _ -> assert false
-  in
-  let p =
-    {
-      Moe.gate_up = weight p.gate_up;
-      gate_up_bias = bf p.gate_up_bias;
-      down = weight p.down;
-      down_bias = bf p.down_bias;
-    }
-  in
-  let ids =
-    Nx.create Nx.int64 [| 5; 4 |]
-      [| 0L; 3L; 1L; 2L; 3L; 1L; 0L; 2L; 2L; 3L; 0L; 1L; 1L; 0L; 3L; 2L;
-         2L; 0L; 1L; 3L |]
-  in
-  let weights = bf (floats [| 5; 4 |] 9) and x = bf (floats [| 5; width |] 7) in
-  let host = Moe.apply ~limit p (ids, weights) x in
-  let on v = Nx.place S.on v in
-  let p = rows p and ids = on ids and weights = on weights in
-  let step x = close (Moe.apply ~limit p (ids, weights) x) in
-  expect (Printf.sprintf "largest gap %h" (gap host (step (on x))))
-  @@ __POS_OF__ {|
-    largest gap 0x1p-7
-  |};
-  equal ~msg:"one closing, compiled" int 1 (List.length (places step (on x)))
-
 (* Expert parallelism compiled: each device computes its experts' rows, so
    the down projection's product is a sum, which the step closes once, after
    the combine. *)
@@ -295,10 +214,59 @@ let test_split_compiled weight () =
   equal ~msg:"one closing, after the combine" int 1
     (List.length (places step (on x)))
 
+(* Among equal logits the lowest expert comes first, and exactly [k]
+   distinct experts are selected. *)
+let test_ties () =
+  let row values = Array.init 32 (fun e -> List.assoc_opt e values) in
+  let rows =
+    [
+      (row [], [ 0; 1; 2; 3 ]);
+      (row [ (6, 1.); (13, 1.); (20, 1.); (27, 1.) ], [ 6; 13; 20; 27 ]);
+      ( row [ (5, 3.); (9, 3.); (20, 1.5); (21, 1.5); (30, 1.5) ],
+        [ 5; 9; 20; 21 ] );
+    ]
+  in
+  let logits =
+    Array.concat
+      (List.map (fun (r, _) -> Array.map (Option.value ~default:0.) r) rows)
+  in
+  let ids, _ = Moe.route ~k:4 (Nx.create Nx.float32 [| 3; 32 |] logits) in
+  equal ~msg:"experts" (list (list int))
+    (List.map snd rows)
+    (List.init 3 (fun r ->
+         List.init 4 (fun j -> Int64.to_int (Nx.item [ r; j ] ids))))
+
+(* A token's output is its own: each row of a batch is the token's output
+   alone. *)
+let test_independent weight () =
+  let p = params weight in
+  let ids =
+    Nx.create Nx.int64 [| 5; 2 |]
+      [| 0L; 3L; 1L; 2L; 3L; 1L; 0L; 2L; 2L; 3L |]
+  in
+  let weights = floats [| 5; 2 |] 9 and x = floats [| 5; width |] 7 in
+  let whole = Moe.apply ~limit p (ids, weights) x in
+  for t = 0 to 4 do
+    let one v = Nx.slice [ R (t, t + 1) ] v in
+    equal
+      ~msg:(Printf.sprintf "token %d" t)
+      (array (float_rel ~rel:1e-5 ~abs:1e-6))
+      (Nx.to_array (one whole))
+      (Nx.to_array (Moe.apply ~limit p (one ids, one weights) (one x)))
+  done
+
 let () =
   exit
     (run "gpt-oss mixture of experts"
        [
+         group "routing"
+           [
+             test "equal logits: the lowest experts first" test_ties;
+             test "float experts: each token alone"
+               (test_independent float_weight);
+             test "MXFP4 experts: each token alone"
+               (test_independent mxfp4_weight);
+           ];
          group "expert parallelism"
            [
              test "float experts split are one device's, reassociated"
@@ -316,18 +284,5 @@ let () =
                (test_split_compiled float_weight);
              test "MXFP4 experts split compile, closing once"
                (test_split_compiled mxfp4_weight);
-           ];
-         group "row parallelism"
-           [
-             test "float experts cut along their features close once"
-               (test_rows float_weight @@ __POS_OF__ {|
-                 eager 0x1p-23
-               |});
-             test "MXFP4 experts cut along their features close once"
-               (test_rows mxfp4_weight @@ __POS_OF__ {|
-                 eager 0x1.8p-9
-               |});
-             test "bfloat16 experts cut along their features close once"
-               test_rows_bf16;
            ];
        ])

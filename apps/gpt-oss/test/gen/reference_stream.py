@@ -11,7 +11,8 @@
 """Record gpt-oss's references at sizes that do not fit in memory: the
 transformers implementation at float32 on CPU, one block at a time.
 
-    uv run apps/gpt-oss/test/gen/reference_stream.py openai/gpt-oss-20b
+    uv run apps/gpt-oss/test/gen/reference_stream.py openai/gpt-oss-20b \
+      --revision 6cee5e81ee83917806bbde320786a8fb61efebee
 
 writes test/fixtures/<name>-stream.json. transformers dequantises every
 expert when it loads the model, about 42 GB for gpt-oss-20b, so this
@@ -31,15 +32,15 @@ every residual stream, every router decision and every logit with the
 streamed ones. It is the check of this recorder, for checkpoints that fit:
 
     uv run apps/gpt-oss/test/gen/reference_stream.py tiny-random/gpt-oss-mxfp4 \
-      --whole --window 4 --scale-offset 118
+      --revision 27b6ad8040614834e65239f102de94bc459f48e5 --whole --window 4 \
+      --scale-offset 118
 
 --dtype bfloat16 runs transformers at the precision the model is served at,
 experts dequantised to bfloat16 as its loader does. float32 over the same
 dequantised weights is the reference of a float32 implementation; the gap
 between the two recordings is what a bfloat16 implementation may differ by.
-On CPU it is slow: 8 minutes of processor time for gpt-oss-20b.
 """
-import argparse, hashlib, json, os, resource, sys, time
+import argparse, json, os, resource, sys, time
 import torch, transformers, safetensors, huggingface_hub
 from safetensors import safe_open
 from transformers import AutoConfig, AutoModelForCausalLM
@@ -96,24 +97,16 @@ def signs(rows, dim):
     return torch.tensor(out, dtype=torch.float64).reshape(rows, dim)
 
 
-def sha256(path):
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 24), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
 def flat(t):
     # Nine significant digits identify a float32.
     return [float(f"{v:.9g}") for v in t.detach().to(torch.float64).flatten().tolist()]
 
 
-def raven_cache(repo):
+def raven_cache(repo, revision):
     root = os.environ.get("RAVEN_CACHE_ROOT") or os.path.join(
         os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "raven"
     )
-    return os.path.join(root, "huggingface", repo.replace("/", "-"), "main")
+    return os.path.join(root, "huggingface", repo.replace("/", "-"), revision)
 
 
 class Checkpoint:
@@ -382,6 +375,7 @@ def fixture(config, streamed):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("repo")
+    ap.add_argument("--revision", required=True, help="the commit of the repository to record")
     ap.add_argument("--dir", help="a directory holding config.json and the safetensors files")
     ap.add_argument("--window", type=int, help="override the configuration's sliding window")
     ap.add_argument("--scale-offset", type=int, default=0, help="added to every MXFP4 scale byte")
@@ -393,10 +387,11 @@ def main():
     dtype = getattr(torch, args.dtype)
     started = time.time()
 
-    directory = args.dir or raven_cache(args.repo)
+    directory = args.dir or raven_cache(args.repo, args.revision)
     if not os.path.exists(os.path.join(directory, "config.json")):
         directory = huggingface_hub.snapshot_download(
-            args.repo, allow_patterns=["config.json", "*.safetensors", "*.safetensors.index.json"]
+            args.repo, revision=args.revision,
+            allow_patterns=["config.json", "*.safetensors", "*.safetensors.index.json"],
         )
     config = AutoConfig.from_pretrained(directory)
     config._attn_implementation = "eager"
@@ -414,7 +409,7 @@ def main():
 
     out = {
         "repo": args.repo,
-        "files_sha256": {f: sha256(os.path.join(directory, f)) for f in ["config.json"] + ckpt.files},
+        "revision": args.revision,
         "versions": {
             "python": sys.version.split()[0],
             "torch": torch.__version__,

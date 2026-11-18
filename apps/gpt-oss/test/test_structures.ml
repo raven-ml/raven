@@ -92,12 +92,15 @@ let test_block () =
     (visits b (block quant));
   let packed = block quant in
   let cast = Nx.Ptree.cast (module Gpt_oss.Block) Nx.bfloat16 packed in
-  is_true ~msg:"a cast keeps the packed weights"
-    (match (cast.moe.gate_up, packed.moe.gate_up) with
-    | Moe.Quant (Mxfp4 w), Moe.Quant (Mxfp4 w0) -> w.codes == w0.codes
-    | _ -> false);
-  is_true ~msg:"a cast casts the float leaves"
-    (Nx.dtype cast.sinks = Nx.bfloat16);
+  let codes = function
+    | Moe.Quant (Mxfp4 w), Moe.Quant (Mxfp4 w0) when w.codes == w0.codes ->
+        "the same codes"
+    | _ -> "other weights"
+  in
+  equal ~msg:"a cast keeps the packed weights" string "the same codes"
+    (codes (cast.moe.gate_up, packed.moe.gate_up));
+  equal ~msg:"a cast casts the float leaves" string "bfloat16"
+    (Nx.Dtype.name (Nx.dtype cast.sinks));
   let packed = block ~proj:quant_proj quant in
   equal ~msg:"packed projections" (list string)
     (block_visits ~proj:quant_proj_visits ~at:"" quant_visits)

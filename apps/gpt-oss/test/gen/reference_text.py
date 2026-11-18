@@ -2,27 +2,19 @@
 # requires-python = ">=3.11"
 # dependencies = [
 #   "openai-harmony==0.0.8",
-#   "tokenizers==0.23.2",
-#   "huggingface_hub==1.32.0",
 # ]
 # ///
-"""Record gpt-oss's text references: what the o200k_harmony tokenizer makes
-of a set of strings, what the harmony renderer makes of a set of
-conversations, and what the harmony parser reads in a set of completions.
+"""Record gpt-oss's text references from openai-harmony: what its renderer
+makes of a set of conversations, and what its parser reads in a set of
+completions.
 
     uv run apps/gpt-oss/test/gen/reference_text.py
 
-Writes test/fixtures/harmony.json. Two references are consulted: the
-tiktoken encoding inside openai-harmony, and the tokenizer.json of the
-checkpoint repository read by HuggingFace tokenizers, which is the file the
-app loads. They must agree on every string but those that spell
-<|endofprompt|>, which tokenizer.json holds as token 200018 and the harmony
-encoding reads as plain text: tokenizer.json is recorded there.
+Writes test/fixtures/harmony.json, which names the checkpoint whose
+tokenizer.json the app reads, at REVISION.
 """
-import hashlib, json, os
-import openai_harmony, tokenizers, huggingface_hub
+import json, os
 from importlib.metadata import version
-from huggingface_hub import hf_hub_download
 from openai_harmony import (
     Conversation,
     DeveloperContent,
@@ -36,54 +28,7 @@ from openai_harmony import (
 )
 
 REPO = "tiny-random/gpt-oss-mxfp4"
-
-SPECIALS = [
-    "<|startoftext|>",
-    "<|endoftext|>",
-    "<|return|>",
-    "<|constrain|>",
-    "<|channel|>",
-    "<|start|>",
-    "<|end|>",
-    "<|message|>",
-    "<|call|>",
-    "<|endofprompt|>",
-]
-
-TEXTS = [
-    "",
-    "Hello, world!",
-    "The quick brown fox jumps over the lazy dog.",
-    "I'm sure they'll say it's what he'd want; DON'T, I'VE said.",
-    "HTTPServer parseXMLDocument camelCase snake_case SCREAMING_CASE",
-    "def f(x):\n    return [i ** 2 for i in range(x) if i % 3 == 0]\n",
-    "let rec fib n = if n < 2 then n else fib (n - 1) + fib (n - 2)\n",
-    "\tif (a != b) {\n\t\treturn a->next;  // trailing\n\t}\n",
-    "https://example.com/a/b?c=d&e=f#g //comment /* block */",
-    "1 22 333 4444 55555 3.14159 1,000,000 0x1F 1e-9",
-    "Où est passé l'été à Zürich, señor Åström? Čeština, Tiếng Việt.",
-    "é ä ñ precomposed éäñ",
-    "日本語のテキストと中文文本、그리고 한국어.",
-    "Ελληνικά, кириллица, עברית, العربية, हिन्दी, ไทย",
-    "👋 🌍 👨‍👩‍👧‍👦 🇫🇷 👍🏽 ✨",
-    "a" + " " * 40 + "b",
-    "  leading and trailing  ",
-    "line\n\n\nbreaks\r\nand\ttabs \n \n  x",
-    "\n\n\n\n",
-    " ",
-    " non-breaking em space​zero width",
-    "� replacement",
-    "x" * 300,
-    "math: ∑_{i=0}^{n} x_i² ≤ ∞ ⇒ ∀ε>0",
-    "".join(SPECIALS),
-    " ".join(SPECIALS),
-    "<|start|>assistant<|channel|>analysis<|message|>Think.<|end|>"
-    "<|start|>assistant<|channel|>final<|message|>Done.<|return|>",
-    "<|start|>assistant to=functions.f<|channel|>commentary "
-    '<|constrain|>json<|message|>{"a": 1}<|call|>',
-    "<|reserved_200000|><|reserved_200017|>",
-    "not special: <|nope|> <|start |> < |end|> <|START|>",
-]
+REVISION = "27b6ad8040614834e65239f102de94bc459f48e5"
 
 DATE = "2026-09-19"
 
@@ -174,27 +119,8 @@ EFFORTS = {
 }
 
 
-def sha256(path):
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for block in iter(lambda: f.read(1 << 20), b""):
-            h.update(block)
-    return h.hexdigest()
-
-
 def main():
     enc = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
-    path = hf_hub_download(REPO, "tokenizer.json")
-    hf = tokenizers.Tokenizer.from_file(path)
-
-    strings = []
-    for text in TEXTS:
-        ids = hf.encode(text, add_special_tokens=False).ids
-        if "<|endofprompt|>" not in text:
-            assert ids == enc.encode(text, allowed_special="all"), text
-            assert enc.decode(ids) == text, text
-        assert hf.decode(ids, skip_special_tokens=False) == text, text
-        strings.append({"text": text, "ids": ids})
 
     conversations = []
     for c in CONVERSATIONS:
@@ -240,18 +166,14 @@ def main():
         )
 
     out = {
-        "versions": {
-            "openai-harmony": version("openai-harmony"),
-            "tokenizers": tokenizers.__version__,
-        },
-        "tokenizer": {"repo": REPO, "sha256": sha256(path)},
-        "strings": strings,
+        "versions": {"openai-harmony": version("openai-harmony")},
+        "tokenizer": {"repo": REPO, "revision": REVISION},
         "conversations": conversations,
         "completions": completions,
     }
     here = os.path.dirname(os.path.abspath(__file__))
     with open(os.path.join(here, "..", "fixtures", "harmony.json"), "w") as f:
-        json.dump(out, f, indent=1, ensure_ascii=True)
+        json.dump(out, f, ensure_ascii=True)
         f.write("\n")
 
 

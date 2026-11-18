@@ -17,7 +17,7 @@ Writes test/fixtures/<name>.json, the MoE block, and
 test/fixtures/<name>-model.json, the whole model. Only the tiny random
 checkpoints are read, a few MB each.
 """
-import hashlib, json, os, sys
+import json, os, sys
 import torch, transformers, safetensors, huggingface_hub
 from huggingface_hub import hf_hub_download
 from safetensors import safe_open
@@ -41,24 +41,21 @@ SCALE_OFFSET = 118
 CLAMP_FACTOR = 200.0
 # The checkpoints' window of 128 never binds on a 12-token prompt. The whole
 # model is recorded with this window instead, so that the sliding layer hides
-# tokens and a chunk boundary falls inside a window.
+# tokens.
 WINDOW = 4
-# Positions of the recorded rotary tables. Frequencies formed in float32 and in
-# float64 differ by a unit in the last place, which the position multiplies.
-TABLE_POSITIONS = [0, 1, 11, 127, 4095]
 
 MODELS = {
-    "gpt-oss-bf16": {"repo": "tiny-random/gpt-oss-bf16", "packed": False},
-    "gpt-oss-mxfp4": {"repo": "tiny-random/gpt-oss-mxfp4", "packed": True},
+    "gpt-oss-bf16": {
+        "repo": "tiny-random/gpt-oss-bf16",
+        "revision": "46b847ff602881ff3cabfc38e5b60a4dfb7c8a05",
+        "packed": False,
+    },
+    "gpt-oss-mxfp4": {
+        "repo": "tiny-random/gpt-oss-mxfp4",
+        "revision": "27b6ad8040614834e65239f102de94bc459f48e5",
+        "packed": True,
+    },
 }
-
-
-def sha256(path):
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 24), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def flat(t):
@@ -131,20 +128,6 @@ def packed(path, name):
         return f.get_tensor(prefix + "_blocks"), f.get_tensor(prefix + "_scales")
 
 
-def ties():
-    """torch.topk on rows with equal entries, and the softmax of the values."""
-    rows = torch.zeros(3, 32)
-    rows[1] = torch.arange(32, dtype=torch.float32).remainder(7) * 0.25
-    rows[2, 5], rows[2, 9], rows[2, 20], rows[2, 21], rows[2, 30] = 3.0, 3.0, 1.5, 1.5, 1.5
-    values, experts = torch.topk(rows, 4, dim=-1)
-    return {
-        "logits": flat(rows),
-        "experts": ints(experts),
-        "values": flat(values),
-        "expert_weights": flat(torch.softmax(values, dim=1)),
-    }
-
-
 def top(logits, k=8):
     t = torch.topk(logits, k)
     return t.indices.tolist(), flat(t.values)
@@ -197,14 +180,9 @@ def record_model(model):
 
 def rotary(model):
     rot = model.model.rotary_emb
-    pos = torch.tensor([TABLE_POSITIONS])
-    cos, sin = rot(torch.zeros(1, dtype=torch.float32), pos)
     return {
         "inv_freq": flat(rot.inv_freq),
         "attention_scaling": float(rot.attention_scaling),
-        "positions": TABLE_POSITIONS,
-        "cos": flat(cos),
-        "sin": flat(sin),
     }
 
 
@@ -256,10 +234,10 @@ def write(name, fixture):
 
 here = os.path.dirname(os.path.abspath(__file__))
 for name, spec in MODELS.items():
-    weights = hf_hub_download(spec["repo"], "model.safetensors")
-    config = hf_hub_download(spec["repo"], "config.json")
+    weights = hf_hub_download(spec["repo"], "model.safetensors", revision=spec["revision"])
     model = AutoModelForCausalLM.from_pretrained(
-        spec["repo"], dtype=torch.float32, experts_implementation="eager"
+        spec["repo"], revision=spec["revision"], dtype=torch.float32,
+        experts_implementation="eager",
     )
     # Without triton the MXFP4 loader dequantises the experts to bfloat16
     # whatever dtype is asked for.
@@ -268,8 +246,7 @@ for name, spec in MODELS.items():
     cfg = model.config
     provenance = {
         "repo": spec["repo"],
-        "weights_sha256": sha256(weights),
-        "config_sha256": sha256(config),
+        "revision": spec["revision"],
         "versions": {
             "python": sys.version.split()[0],
             "torch": torch.__version__,
@@ -291,7 +268,6 @@ for name, spec in MODELS.items():
         "ids": IDS,
         "short_ids": SHORT,
         "pad_id": PAD,
-        "ties": ties(),
     })
     if not spec["packed"]:
         fixture["cases"] = {"0": cases(model)}

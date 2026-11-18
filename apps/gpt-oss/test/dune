@@ -1,13 +1,33 @@
-; The fast tests, on small weights made in place.
+; The tests, in runtest. test_parity, test_harmony and test_stream compare
+; with the fixtures their recorders in gen/ wrote, downloading the tiny
+; checkpoints they were recorded from.
 
 (tests
- (names test_layer_loop test_moe test_loading test_structures)
- (modules test_layer_loop test_moe test_loading test_structures)
+ (names
+  test_structures
+  test_loading
+  test_moe
+  test_layer_loop
+  test_parity
+  test_harmony
+  test_stream)
+ (modules
+  fixture
+  test_structures
+  test_loading
+  test_moe
+  test_layer_loop
+  test_parity
+  test_harmony
+  test_stream)
+ (deps
+  (glob_files fixtures/*.json))
  (libraries
   gpt_oss
   kaun
   kaun.hf
   jsont
+  jsont.bytesrw
   rune
   nx
   nx.array
@@ -15,24 +35,3 @@
   nx.io
   nx.quant
   windtrap))
-
-; Parity with the reference implementations, against the fixtures their
-; recorders in gen/ wrote. Not in runtest: each reads a downloaded checkpoint.
-
-(executables
- (names validate validate_stream validate_text)
- (modules check validate validate_stream validate_text)
- (libraries
-  gpt_oss
-  kaun
-  kaun.hf
-  jsont
-  jsont.bytesrw
-  brot
-  nx
-  rig
-  rig.gpus
-  nx.io
-  nx.quant
-  rune
-  unix))

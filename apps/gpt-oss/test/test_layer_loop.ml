@@ -239,6 +239,67 @@ let test_one_program () =
     (lowered [ Gpt_oss.Sliding; Gpt_oss.Sliding ])
     (lowered [ Gpt_oss.Sliding; Gpt_oss.Full ])
 
+(* The logits of every position of a 12-token prompt fed to [cached] in
+   chunks of 1, 7 and 4 tokens, the last boundary inside a window. *)
+let prompt = 12
+
+let ids =
+  Nx.create Nx.int64 [| 1; prompt |]
+    (Array.init prompt (fun i -> Int64.of_int (7 * i mod 64)))
+
+let logits cfg p h = Nx.to_array (Nx.place Nx.Host.on (Gpt_oss.logits cfg p h))
+
+let chunked cfg p cached =
+  let caches =
+    Gpt_oss.cache ~placement:(fun _ ~axis:_ -> cpu1) cfg ~slots:prompt
+      Nx.float32
+  in
+  let table =
+    Nx.reshape [| 1; prompt |] (Nx.arange_at cpu1 Nx.int64 0 prompt 1)
+  in
+  let _, hs, _ =
+    List.fold_left
+      (fun (at, hs, caches) len ->
+        let pos =
+          Nx.reshape [| 1; len |] (Nx.arange_at cpu1 Nx.int64 at (at + len) 1)
+        in
+        let h, caches =
+          cached caches
+            (Cache_index.make ~pos ~table ())
+            (Nx.place cpu1 (Nx.slice [ A; R (at, at + len) ] ids))
+        in
+        (at + len, h :: hs, caches))
+      (0, [], caches) [ 1; 7; 4 ]
+  in
+  logits cfg p (Nx.concatenate ~axis:1 (List.rev hs))
+
+(* Cached in chunks, the model gives the whole prompt's logits. *)
+let test_chunked () =
+  let p = params () in
+  equal ~msg:"every position"
+    (array (float_rel ~rel:1e-4 ~abs:1e-5))
+    (logits placed_cfg p (Gpt_oss.hidden placed_cfg p (Nx.place cpu1 ids)))
+    (chunked placed_cfg p (Gpt_oss.cached placed_cfg p))
+
+(* The layer loop computes what the whole model compiled as one program
+   does. *)
+let test_one_program_equals () =
+  let cfg = { placed_cfg with Gpt_oss.layers = [ Gpt_oss.Sliding; Full ] } in
+  let p = params () in
+  let p = { p with blocks = List.filteri (fun i _ -> i < 2) p.blocks } in
+  let caches = Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache)) in
+  let whole =
+    Rune.jit
+      Nx.Ptree.(
+        caches @-> v Cache_index.walk @-> tensor
+        @-> returns (pair tensor caches))
+      (Gpt_oss.cached cfg p)
+  in
+  equal ~msg:"every position"
+    (array (float_rel ~rel:1e-5 ~abs:1e-6))
+    (chunked cfg p whole)
+    (chunked cfg p (Layer_loop.cached ~placement:cpu1 cfg p))
+
 let () =
   exit
     (run "gpt-oss layer loop"
@@ -254,5 +315,9 @@ let () =
              test "Q8_0 projections compile to the eager model's logits"
                test_q8_0;
              test "both layer kinds run one block program" test_one_program;
+             test "cached in chunks gives the whole prompt's logits"
+               test_chunked;
+             test "the layer loop computes the one-program model"
+               test_one_program_equals;
            ];
        ])
