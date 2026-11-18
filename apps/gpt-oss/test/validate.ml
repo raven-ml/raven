@@ -499,7 +499,8 @@ let models ~jit s ~dtype ~label fx path =
   in
   let (Gpt_oss.Dtype dt) = Gpt_oss.dtype_of_string dtype in
   let p =
-    Gpt_oss.from_file ~placement:(Gpt_oss.expert_parallel s) cfg dt path
+    Gpt_oss.of_hf ~placement:(Gpt_oss.expert_parallel s) cfg dt
+      (Nx_io.load_safetensors path)
   in
   rotary fx cfg;
   let placed = Gpt_oss.place_config (Nx.Placement.on s) cfg in

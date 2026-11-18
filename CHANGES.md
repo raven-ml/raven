@@ -11,7 +11,10 @@ All notable changes to this project will be documented in this file.
 
 - The gpt-oss example moves to `apps/gpt-oss`, the first of raven's apps:
   programs that do real work through public interfaces only, with their fast
-  tests in `@apps/runtest` and their parity runs outside it.
+  tests in `@apps/runtest` and their parity runs outside it. Its probes
+  `bench.exe` and `bench_step.exe` and main's `--profile` are removed, as are
+  `Gpt_oss.from_file` and `from_pretrained`: `Gpt_oss.of_hf` reads the
+  weights `Nx_io.load_safetensors` or `Kaun_hf.load_safetensors` gives.
 - **Breaking:** nx and the packages built on it require OCaml 5.5 or later;
   alpha3 required 5.2.
 - `nx-oxcaml` moves to its own repository,

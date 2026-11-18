@@ -5,7 +5,7 @@
  (name gpt_oss)
  (wrapped false)
  (modules moe gpt_oss layer_loop harmony)
- (libraries kaun kaun.hf jsont brot nx nx.io nx.quant rune))
+ (libraries kaun jsont brot nx nx.io nx.quant rune))
 
 (executable
  (name main)

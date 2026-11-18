@@ -4,7 +4,6 @@
   ---------------------------------------------------------------------------*)
 
 open Kaun
-module Hf = Kaun_hf
 
 type layer = Sliding | Full
 
@@ -220,47 +219,36 @@ let logits cfg p h =
 
 (* Configuration from HuggingFace's config.json *)
 
-let json_mem name = function
-  | Jsont.Object (mems, _) -> (
-      match Jsont.Json.find_mem name mems with
-      | Some (_, v) -> v
-      | None -> Jsont.Null ((), Jsont.Meta.none))
-  | _ -> Jsont.Null ((), Jsont.Meta.none)
-
 let config_of_json json =
-  let missing name = failwith ("gpt-oss config.json: missing " ^ name) in
-  let number_in json name =
-    match json_mem name json with Jsont.Number (f, _) -> f | _ -> missing name
+  let get ?absent name codec =
+    match Jsont.Json.decode (Jsont.mem ?absent name codec) json with
+    | Ok v -> v
+    | Error e -> failwith ("gpt-oss config.json: " ^ e)
   in
-  let number = number_in json in
-  let int name = int_of_float (number name) in
-  let head_dim = int "head_dim" in
-  let scaling = json_mem "rope_scaling" json in
-  (match (json_mem "rope_type" scaling, json_mem "truncate" scaling) with
-  | Jsont.String ("yarn", _), Jsont.Bool (false, _) -> ()
-  | _ ->
-      failwith
-        "gpt-oss config.json: rope_scaling must be yarn with truncate false");
-  let field = number_in scaling in
-  let factor = field "factor" in
+  let int name = get name Jsont.int and number name = get name Jsont.number in
+  let scaling name codec = get "rope_scaling" (Jsont.mem name codec) in
+  if
+    scaling "rope_type" Jsont.string <> "yarn"
+    || scaling "truncate" Jsont.bool
+  then
+    failwith
+      "gpt-oss config.json: rope_scaling must be yarn with truncate false";
+  let head_dim = int "head_dim" and factor = scaling "factor" Jsont.number in
   let rope =
     Rope.yarn ~theta:(number "rope_theta") ~head_dim ~factor
-      ~beta_fast:(field "beta_fast") ~beta_slow:(field "beta_slow")
-      ~original_context:
-        (int_of_float (field "original_max_position_embeddings"))
+      ~beta_fast:(scaling "beta_fast" Jsont.number)
+      ~beta_slow:(scaling "beta_slow" Jsont.number)
+      ~original_context:(scaling "original_max_position_embeddings" Jsont.int)
       ~context:(int "max_position_embeddings")
   in
   let concentration = (0.1 *. log factor) +. 1.0 in
+  let layer = function
+    | "sliding_attention" -> Sliding
+    | "full_attention" -> Full
+    | _ -> failwith "gpt-oss config.json: unknown layer type"
+  in
   let layers =
-    match json_mem "layer_types" json with
-    | Jsont.Array (kinds, _) ->
-        List.map
-          (function
-            | Jsont.String ("sliding_attention", _) -> Sliding
-            | Jsont.String ("full_attention", _) -> Full
-            | _ -> failwith "gpt-oss config.json: unknown layer type")
-          kinds
-    | _ -> missing "layer_types"
+    get "layer_types" (Jsont.list (Jsont.map ~dec:layer Jsont.string))
   in
   if List.length layers <> int "num_hidden_layers" then
     failwith "gpt-oss config.json: layer_types and num_hidden_layers disagree";
@@ -279,10 +267,7 @@ let config_of_json json =
     norm_eps = number "rms_norm_eps";
     rope;
     attention_scale = (concentration ** 2.0) /. sqrt (float_of_int head_dim);
-    tied =
-      (match json_mem "tie_word_embeddings" json with
-      | Jsont.Bool (b, _) -> b
-      | _ -> false);
+    tied = get ~absent:false "tie_word_embeddings" Jsont.bool;
   }
 
 (* Importing HuggingFace weights.
@@ -465,12 +450,12 @@ let of_hf ?(pack = Unpacked) ~placement cfg dt weights =
          | Q8_0 ->
              Some (Quant { w = quantize (place Column ~axis:0 w); b = None })
          | Unpacked ->
-             (* A copy: through the transpose, tolk's bfloat16 matrix-vector
-                kernel reads the head 3 to 4 times slower (its heuristic does
-                not see through casts). The head is copied where it is
-                placed: a host copy walks the file's pages in transposed
-                order, 4 s cold against 0.4 s. The copy is compiled, so a set
-                that computes under [Rune.jit] alone makes it too. *)
+             (* A copy in [inputs; outputs], since tolk's bfloat16
+                matrix-vector kernel reads the transposed view 3 to 4 times
+                slower. It is made after the head is placed, as a host copy
+                reads the file's pages in transposed order, ten times slower
+                cold, and compiled, so a set that computes under [Rune.jit]
+                alone makes it too. *)
              let w = place Column ~axis:1 (Nx.matrix_transpose w) in
              Some (Float { Linear.w = Rune.jit' Nx.copy w; b = None }));
   }
@@ -491,10 +476,3 @@ let stored_dtype weights =
       | Nx.Dtype.Bfloat16 -> Dtype Nx.bfloat16
       | Nx.Dtype.Float32 -> Dtype Nx.float32
       | _ -> failwith (name ^ " is not a bfloat16 or float32 entry"))
-
-let from_file ?pack ~placement cfg dt path =
-  of_hf ?pack ~placement cfg dt (Nx_io.load_safetensors path)
-
-let from_pretrained ?pack ~placement repo_id dt =
-  let cfg = config_of_json (Hf.load_config repo_id) in
-  (cfg, of_hf ?pack ~placement cfg dt (Hf.load_safetensors repo_id))

@@ -247,11 +247,7 @@ type packing =
   | Unpacked  (** Floats at the model's dtype: the checkpoint's model. *)
   | Q8_0
       (** {!Nx_quant.quantize_q8_0} of those floats, as GGUF files of gpt-oss
-          store them: 53% of a bfloat16 weight's bytes, and other numerics.
-          Fewer bytes is not a faster step everywhere: eager on nx.cpu a
-          step takes about twice as long, its products staging the int8
-          quants (a 4096 × 4096 Q8_0 matrix-vector product 3.6 ms against
-          1.3 ms dense). *)
+          store them: 53% of a bfloat16 weight's bytes, and other numerics. *)
 
 val of_hf :
   ?pack:packing ->
@@ -286,16 +282,6 @@ val of_hf :
     Raises [Failure], naming the entry, if one is missing, has another shape
     than [cfg] says, or has a dtype the leaf cannot take. *)
 
-val from_file :
-  ?pack:packing ->
-  placement:(role -> axis:int -> 'd Nx.Placement.t) ->
-  'c config ->
-  (float, 'b) Nx.dtype ->
-  string ->
-  ((float, 'b, 'd) Nx.t, 'd) params
-(** [from_file ~pack ~placement cfg dt path] is {!of_hf} on the safetensors
-    file [path]. *)
-
 type dtype =
   | Dtype : (float, 'b) Nx.dtype -> dtype
       (** A floating-point dtype chosen at run time. *)
@@ -310,13 +296,3 @@ val stored_dtype : 'd Nx_io.Archive.t -> dtype
 
     Raises [Failure] if the table is missing or is not a bfloat16 or float32
     entry. *)
-
-val from_pretrained :
-  ?pack:packing ->
-  placement:(role -> axis:int -> 'd Nx.Placement.t) ->
-  string ->
-  (float, 'b) Nx.dtype ->
-  Nx.host config * ((float, 'b, 'd) Nx.t, 'd) params
-(** [from_pretrained ~pack ~placement repo_id dt] downloads the repository's
-    configuration and weights, single-file or sharded (cached afterwards), and
-    is the model at [dt]. *)
