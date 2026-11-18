@@ -28,8 +28,8 @@ val of_file : string -> t
 (** [of_file path] is the encoding of the [tokenizer.json] at [path], the file
     gpt-oss checkpoints ship.
 
-    Raises [Failure] if the file does not hold a tokenizer or lacks one of the
-    delimiting tokens, and [Sys_error] if it cannot be read. *)
+    Raises [Failure] if the file cannot be read, does not hold a tokenizer or
+    lacks one of the delimiting tokens. *)
 
 (** {1:conversations Conversations} *)
 

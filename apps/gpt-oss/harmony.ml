@@ -8,8 +8,7 @@ type channel = Analysis | Commentary | Final
 type turn = User of string | Assistant of channel * string
 
 type t = {
-  full : Brot.t;
-  plain : Brot.t;
+  tokenizer : Brot.t;
   start : int;
   message : int;
   channel : int;
@@ -21,31 +20,16 @@ type t = {
 
 let of_file path =
   let fail msg = failwith (path ^ ": " ^ msg) in
-  let json =
-    let text = In_channel.with_open_bin path In_channel.input_all in
-    match Jsont_bytesrw.decode_string Jsont.json text with
-    | Ok json -> json
-    | Error e -> fail e
+  let tokenizer =
+    match Brot.from_file path with Ok t -> t | Error e -> fail e
   in
-  let tokenizer json =
-    match Brot.of_json json with Ok t -> t | Error e -> fail e
-  in
-  let without_added_tokens =
-    match json with
-    | Jsont.Object (mems, meta) ->
-        let keep ((name, _), _) = name <> "added_tokens" in
-        Jsont.Object (List.filter keep mems, meta)
-    | _ -> fail "not a JSON object"
-  in
-  let full = tokenizer json in
   let id token =
-    match Brot.token_to_id full token with
+    match Brot.token_to_id tokenizer token with
     | Some id -> id
     | None -> fail ("no token " ^ token)
   in
   {
-    full;
-    plain = tokenizer without_added_tokens;
+    tokenizer;
     start = id "<|start|>";
     message = id "<|message|>";
     channel = id "<|channel|>";
@@ -97,7 +81,9 @@ let drop_stale_analysis turns =
 let render t ?date ?instructions ~effort turns =
   let buf = ref [] in
   let id i = buf := i :: !buf in
-  let text s = Array.iter id (Brot.encode_ids t.plain s) in
+  let text s =
+    Array.iter id (Brot.encode_ids t.tokenizer ~match_special_tokens:false s)
+  in
   let message role ?channel content =
     id t.start;
     text role;
@@ -127,7 +113,7 @@ let render t ?date ?instructions ~effort turns =
 
 type state =
   | Header of int list option
-  | Content of channel * int list
+  | Content of channel * Brot.stream
   | Stopped
 
 type parser = { encoding : t; state : state }
@@ -137,15 +123,15 @@ let parser encoding = { encoding; state = Header None }
 let stopped p =
   match p.state with Stopped -> true | Header _ | Content _ -> false
 
-let decode t rev_ids = Brot.decode t.full (Array.of_list (List.rev rev_ids))
-
 let channel_of_header t rev_ids =
-  match String.split_on_char ' ' (String.trim (decode t rev_ids)) with
+  let name = Brot.decode t.tokenizer (Array.of_list (List.rev rev_ids)) in
+  match String.split_on_char ' ' (String.trim name) with
   | "analysis" :: _ -> Analysis
   | "commentary" :: _ -> Commentary
   | _ -> Final
 
-let replacement = "\xEF\xBF\xBD"
+let content t channel = Content (channel, Brot.decode_stream t.tokenizer)
+let text channel = function "" -> None | s -> Some (channel, s)
 
 let feed p id =
   let t = p.encoding in
@@ -157,26 +143,23 @@ let feed p id =
       let state = if stops then Stopped else Header None in
       let held =
         match p.state with
-        | Content (channel, (_ :: _ as held)) -> Some (channel, decode t held)
-        | Content (_, []) | Header _ | Stopped -> None
+        | Content (channel, s) -> text channel (Brot.decode_finish s)
+        | Header _ | Stopped -> None
       in
       ({ p with state }, held)
   | Header None ->
       let state =
         if id = t.channel then Header (Some [])
-        else if id = t.message then Content (Final, [])
+        else if id = t.message then content t Final
         else p.state
       in
       ({ p with state }, None)
   | Header (Some name) ->
       let state =
-        if id = t.message then Content (channel_of_header t name, [])
+        if id = t.message then content t (channel_of_header t name)
         else Header (Some (id :: name))
       in
       ({ p with state }, None)
-  | Content (channel, held) ->
-      let held = id :: held in
-      let text = decode t held in
-      if String.ends_with ~suffix:replacement text then
-        ({ p with state = Content (channel, held) }, None)
-      else ({ p with state = Content (channel, []) }, Some (channel, text))
+  | Content (channel, s) ->
+      let piece, s = Brot.decode_step s id in
+      ({ p with state = Content (channel, s) }, text channel piece)
