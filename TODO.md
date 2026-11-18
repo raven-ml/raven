@@ -180,18 +180,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   the exact powers of ten are measured at every float32. A `log2` given as
   two parts would derive the float64 bound, once a consumer needs log10
   bounded there. Found by the DD audit (S2)
-- rune.mli:1403-1404 says that a value a compiled function captures on
-  another device and places where the program computes "is copied there
-  once per program". In a split program (values whole on each of several
-  devices) the capture is instead bound as it is (compile.ml:362, `Some r
-  when st.split || …`), and its placement copies it at every call.
-  Measured on two software devices: 6 float32 captures cost 48 bytes a
-  call, 4,848 over 101 calls
-  (_plans/tessera-port/design/jit-values/skeptic-probe/split.log). vega's
-  schedules and rates capture their numbers as 0-d arrays (b8d7630a36), so
-  a data-parallel step pays this for each. Either upload once per device
-  in split programs through `st.uploads`, or scope the sentence to
-  one-device programs. Found by DC's skeptic
 - `Nx_io.Pytorch` reads torch.save files but writes none (pytorch.mli has
   `load` and `tensors` alone), so tessera's cram tests cannot make the .pt
   model file that `encode`, `targets` and `distil --init` read

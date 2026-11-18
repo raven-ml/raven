@@ -1694,6 +1694,42 @@ let onto_mesh set =
       let eager = outcome (fun () -> f x x) in
       equal (outcome_t bits_t) (omap bits eager) (omap bits (compiled f x x))
 
+(* Constants of the host that a step places whole on each device, as vega's
+   schedules place their numbers beside the step's counter, are copied to each
+   device once per program (rune.mli's Compiled programs): the first call
+   copies six float32s to each device, a later call none, and each call gives
+   eager's bits. *)
+let placed_constants set =
+  let devices = Nx.Devices.to_list set.s in
+  let cs = List.init 6 (fun k -> Nx.scalar f32 (float_of_int (k + 1) /. 7.)) in
+  let f step =
+    let pl = Nx.place (Nx.placement step) in
+    List.fold_left
+      (fun acc c -> Nx.add (Nx.mul acc (pl c)) (pl c))
+      (Nx.cast f32 step) cs
+  in
+  let g = Rune.jit T.(tensor @-> returns tensor) f in
+  let onto run =
+    let y, events = Rig.Profile.take run in
+    let count n = function
+      | Rig.Profile.Copy { src; dst; bytes; _ }
+        when (not (Rig.equal src dst)) && List.exists (Rig.equal dst) devices
+        ->
+          n + bytes
+      | _ -> n
+    in
+    (y, List.fold_left count 0 events)
+  in
+  let before = Rune.evaluations () in
+  List.iteri
+    (fun i expected ->
+      let step = Nx.place (at set On) (Nx.scalar Nx.int32 (Int32.of_int i)) in
+      let y, bytes = onto (fun () -> g step) in
+      equal ~msg:(Printf.sprintf "bytes copied, call %d" i) int expected bytes;
+      equal ~msg:"bits" bits_t (bits (f step)) (bits y))
+    [ 6 * 4 * List.length devices; 0; 0; 0 ];
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before)
+
 (* Keys
 
    A key's placement inside a program is its argument's, and a draw at it,
@@ -3070,6 +3106,8 @@ let () =
                (fun () -> over 2 { law = moves });
              test "a whole value placed onto a mesh" (fun () ->
                  over 4 { law = onto_mesh });
+             test "constants placed whole on each device copy once" (fun () ->
+                 over 2 { law = placed_constants });
            ];
          group "keys"
            [

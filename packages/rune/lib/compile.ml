@@ -243,7 +243,8 @@ let issued (p : Program.t) (forms : form array) =
   else decline "no value"
 
 (* A run of bytes of another device's memory, its buffer's from [first] on,
-   and its copy on the program's device. *)
+   and its copy on the device that reads it: the program's, or in a split
+   program the device of the placement that reads it. *)
 type upload = {
   src : Rig.Buffer.t;
   first : int;
@@ -265,11 +266,13 @@ type state = {
       (** Whether the program is a split one ({!Pieces}), each of its values
           on one device of its own, so that each operation computes on its
           values' device and a placement onto another device copies. *)
-  mutable captures : (value * Ops.t) list;
+  mutable captures : (value * Rig.t * Ops.t) list;
+      (** Each constant's node on a device it is read on ({!capture}). *)
   mutable bound : (Ops.t * Rig.Buffer.t) list;
   uploads : upload list ref;
       (** The runs of the constants of other devices, each with its copy on
-          this one, which every lowering of the program shares. *)
+          the device that reads it, which every lowering of the program
+          shares. *)
   views : unit Ops.Tbl.t;
       (** The nodes of the arguments and captures, without their movements:
           views of storage. *)
@@ -323,50 +326,55 @@ let bind st (A.Any a) =
     view_of st u;
     u
 
-(* The array [a] of another device copied to [st]'s, once per run of bytes in
+(* The array [a] of another device copied to [rig], once per run of bytes in
    the program, as JAX embeds a constant where its program runs: its run, into
    memory of its own, viewed as [a] views its own. Two constants over one run,
    as a compiled function and one it inlines may keep apart, share the
    copy. *)
-let uploaded st (A.Any a) =
+let uploaded st rig (A.Any a) =
   let dt = A.dtype a and l = A.layout a in
   if L.numel l = 0 then A.Any a
   else
     let first, length = run_bytes dt l and b = A.buffer a in
-    let run u = u.src == b && u.first = first && u.length = length in
+    let run u =
+      u.src == b && u.first = first && u.length = length
+      && Rig.equal (Rig.Buffer.device u.copy) rig
+    in
     let copy =
       match List.find_opt run !(st.uploads) with
       | Some u -> u.copy
       | None ->
           let src = Rig.Buffer.view b ~first ~length in
-          let copy = Rig.Buffer.create st.rig length in
+          let copy = Rig.Buffer.create rig length in
           Rig.Buffer.copy ~src ~dst:copy;
           st.uploads := { src = b; first; length; copy } :: !(st.uploads);
           copy
     in
     A.Any (A.v dt (within dt l) copy)
 
-(* The node of a constant: its one array, bound once. A constant on another
-   device, which the program places where it computes, is uploaded there
-   once per program, and its copy bound. *)
-let capture (type v s d) st (x : (v, s, d) Nx.t) =
-  match List.find_opt (fun (v, _) -> same v (V x)) st.captures with
-  | Some (_, u) -> u
+(* The node of a constant on a device it is read on: its one array, bound once
+   for each such device. That device is the program's, or in a split program
+   the one the constant lies on, or [onto], where a placement puts it whole. A
+   constant on another device is uploaded to it once per program, and its copy
+   bound. *)
+let capture (type v s d) ?onto st (x : (v, s, d) Nx.t) =
+  let arrays = Nx.Repr.shards ~by:st.name x in
+  match device_of (Nx.placement x) with
   | None ->
-      let arrays = Nx.Repr.shards ~by:st.name x in
-      if Iarray.length arrays <> 1 then
-        decline "a constant over several devices";
-      let a = A.Any (Iarray.get arrays 0) in
-      let u =
-        match device_of (Nx.placement x) with
-        | Some r when st.split || Rig.equal r st.rig -> bind st a
-        | Some _ -> bind st (uploaded st a)
-        | None ->
-            decline "a constant placed at %s, over several devices"
-              (Format.asprintf "%a" Nx.Placement.pp (Nx.placement x))
+      decline "a constant placed at %s, over several devices"
+        (Format.asprintf "%a" Nx.Placement.pp (Nx.placement x))
+  | Some r -> (
+      let at =
+        match onto with Some d -> d | None -> if st.split then r else st.rig
       in
-      st.captures <- (V x, u) :: st.captures;
-      u
+      let here (v, d, _) = same v (V x) && Rig.equal d at in
+      match List.find_opt here st.captures with
+      | Some (_, _, u) -> u
+      | None ->
+          let a = A.Any (Iarray.get arrays 0) in
+          let u = bind st (if Rig.equal r at then a else uploaded st at a) in
+          st.captures <- (V x, at, u) :: st.captures;
+          u)
 
 (* The bytes of [x], a constant result of another device than the program's,
    where a copy of them makes the result there with no kernel: one array,
@@ -1593,6 +1601,8 @@ let issue st cs env (type r) base (op : r Nx.Prim.t) =
       let step1 (r : A.Move.range) = r.step = 1 in
       let ys =
         match op with
+        | Place (q, x) when st.split && var env x < 0 ->
+            [| capture ~onto:(Pieces.rig_of q) st x |]
         | Move (Slice rs, x)
           when st.split && env.windows.(base) && Iarray.for_all step1 rs ->
             [| moving x (Iarray.to_array rs) (read x) |]
