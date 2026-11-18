@@ -2370,6 +2370,163 @@ let sources =
             |});
     ]
 
+(* Prefixes: a slice from the start reads the pages its rows need *)
+
+(* [head f b column k] is the first [k] rows of the column [column] of [b],
+   read as [f], through a slice of its source. *)
+let head f b column k =
+  Query.of_source (P.source f b)
+  |> Query.select Expr.[ keep (Sel.names [ column ]) ]
+  |> Query.slice ~offset:0 ~length:k
+  |> Query.run
+  |> Result.map (fun t -> Talon.column t column)
+
+let head_text b column k =
+  match head (Error.get_ok (P.sniff b)) b column k with
+  | Ok c -> String.concat " " (Array.to_list (nested_cells c))
+  | Error e -> error_text e
+
+(* [crc_failure ~values data] is a page of [values] values whose bytes [data]
+   fail the CRC its header states. *)
+let crc_failure ?data_page values data =
+  page ~header:[ (4, I32 0) ] ?data_page values data
+
+(* A file of one row group of 2^15 rows of tensors of 64 float64s, 16 MiB
+   that encode writes in pages of about 1 MiB, uncompressed, and its format
+   with the tensor declared. *)
+let wide_file =
+  lazy
+    (let rows = 1 lsl 15 and width = 64 in
+     let x =
+       Nx.reshape [| rows; width |]
+         (Nx.cast Nx.float64 (Nx.arange Nx.int32 0 (rows * width) 1))
+     in
+     let t = Talon.v [ ("x", Column.of_tensor x) ] in
+     let q = Query.of_table t in
+     let f =
+       P.format ~compression:Uncompressed ~row_group:rows (Query.schema q)
+     in
+     let w = Buffer.create (1 lsl 24) in
+     Error.get_ok (P.encode f q (Bytesrw.Bytes.Writer.of_buffer w));
+     let b = Rig.Buffer.of_string (Buffer.contents w) in
+     let ty = Type.Any (Type.tensor Nx.float64 [| width |]) in
+     (P.with_type "x" ty (Error.get_ok (P.sniff b)), b))
+
+let prefix_files =
+  [
+    "nested_v1_plain.parquet";
+    "nested_v1_dict.parquet";
+    "nested_v2_plain.parquet";
+    "nested_v2_dict.parquet";
+  ]
+
+let prefixes =
+  group "Prefixes"
+    [
+      test "the pages past a flat column's first rows are not decoded"
+        (fun () ->
+          let b =
+            parquet ~rows:4
+              (page 2 (int32s [ 1; 2 ]) ^ crc_failure 2 (int32s [ 3; 4 ]))
+          in
+          List.iter
+            (fun k -> Printf.printf "%d rows: %s\n" k (head_text b "x" k))
+            [ 2; 3 ];
+          expect (output ()) @@ __POS_OF__ {|
+            2 rows: 1 2
+            3 rows: row group 0: bytes 27-51: the page fails its CRC-32 checksum
+            |});
+      test "a row split across pages is read whole, and no page past it"
+        (fun () ->
+          (* Rows [1; 2], [3; 4] and [5; 6]: the second begins in the first
+             page and ends in the second, and the third ends in a page that
+             fails its CRC. *)
+          let levels rep def = prefixed (runs rep) ^ prefixed (runs def) in
+          let pages =
+            level_page ~rep:[ (1, 0); (1, 1); (1, 0) ] ~def:[ (3, 3) ] 3
+              (int32s [ 1; 2; 3 ])
+            ^ level_page ~rep:[ (1, 1); (1, 0) ] ~def:[ (2, 3) ] 2
+                (int32s [ 4; 5 ])
+            ^ crc_failure ~data_page:[ (4, I32 3) ] 1
+                (levels [ (1, 1) ] [ (1, 3) ] ^ int32s [ 6 ])
+          in
+          let b =
+            nested_parquet ~rows:3 ~elements:x_elements [ (x_path, 6, pages) ]
+          in
+          List.iter
+            (fun k -> Printf.printf "%d rows: %s\n" k (head_text b "x" k))
+            [ 1; 2; 3 ];
+          expect (output ()) @@ __POS_OF__ {|
+            1 rows: [1, 2]
+            2 rows: [1, 2] [3, 4]
+            3 rows: row group 0: bytes 88-122: column "x.list.element": the page fails its CRC-32 checksum
+            |});
+      test "a header past a nested column's first rows is not read" (fun () ->
+          let pages =
+            level_page ~rep:[ (1, 0); (1, 1); (1, 0) ] ~def:[ (3, 3) ] 3
+              (int32s [ 1; 2; 3 ])
+            ^ level_page ~rep:[ (1, 1); (1, 0) ] ~def:[ (2, 3) ] 2
+                (int32s [ 4; 5 ])
+            ^ "\x15\xff\xff\xff\xff\xff\xff\xff\xff\xff"
+          in
+          let b =
+            nested_parquet ~rows:3 ~elements:x_elements [ (x_path, 5, pages) ]
+          in
+          equal string "[1, 2] [3, 4]" (head_text b "x" 2));
+      test "a tensor's first rows read when a later row breaks its shape"
+        (fun () ->
+          (* Rows 0 to 4 of [ragged] are [image]'s, and row 5 breaks. *)
+          let f = P.with_type "ragged" (Type.Any image) (sniff tensors) in
+          let first k =
+            match head f (buffer tensors) "ragged" k with
+            | Ok c -> Ok (nested_cells c)
+            | Error e -> Error (error_text e)
+          in
+          let image_rows = nested_cells (Error.get_ok (read_as "image" image)) in
+          let cells = result (array string) string in
+          equal cells (Ok (Array.sub image_rows 0 5)) (first 5);
+          equal cells
+            (Error
+               "row group 1: column \"ragged\": row 1: a list of level 2 holds \
+                3 elements, not the shape's 4")
+            (first 6));
+      test "the first rows hold the memory of the pages they read" (fun () ->
+          (* Twice the writer's page of about 1 MiB, and one more page: the
+             row group's 16 MiB stays unread. *)
+          let f, b = Lazy.force wide_file in
+          let read () = Error.get_ok (head f b "x" 8) in
+          ignore (read ());
+          let before = Talon_held.settled () in
+          let c = read () in
+          let held = Talon_held.settled () - before in
+          equal int 8 (Column.length c);
+          less int ~than:(3 lsl 20) held);
+      prop "a slice from the start reads a file's first rows"
+        Gen.(
+          triple (of_list prefix_files) (int_range 0 9)
+            (frequency
+               [
+                 (1, constant 0);
+                 (1, of_list [ 13; 26; 39 ]);
+                 (1, int_range 41 45);
+                 (4, int_range 1 40);
+               ]))
+        (fun (file, column, k) ->
+          cover "no row" (k = 0);
+          cover "inside a row group" (k mod 13 <> 0 && k < 40);
+          cover "a row group's end" (k > 0 && k mod 13 = 0);
+          cover "past the last row" (k > 40);
+          let f = sniff file in
+          let source = P.source f (buffer file) in
+          let columns = Schema.columns (Query.schema (Query.of_source source)) in
+          let c = fst (List.nth columns (column mod List.length columns)) in
+          let all = nested_cells (read_nested file c) in
+          let want = Array.sub all 0 (min k (Array.length all)) in
+          match head f (buffer file) c k with
+          | Ok got -> equal (array string) want (nested_cells got)
+          | Error e -> failf "%s" (error_text e));
+    ]
+
 (* Decoding errors *)
 
 let decoding =
@@ -2618,5 +2775,5 @@ let () =
     (run "talon.parquet"
        [
          agreement; clocks; sniffing; formats; synthesized; nested_files;
-         tensor_columns; sources; decoding; memory; many_files_group;
+         tensor_columns; sources; prefixes; decoding; memory; many_files_group;
        ])

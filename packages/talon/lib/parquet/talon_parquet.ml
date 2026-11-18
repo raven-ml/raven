@@ -604,12 +604,11 @@ let with_scratch shared f =
 let whole rows ds =
   Talon.v ~rows (List.map (fun d -> (d.name, Lazy.force d.column)) ds)
 
-(* [part ?file shared b m g columns filters] is the row group [g] of [b] as one
-   batch of [columns], each a name, its node and its type, decoded with the
-   scratch [shared], of the rows that pass [filters], each a column, as
-   [columns] give one, and the filter on it. *)
-let part ?file shared b m g columns filters : Source.part =
-  let rows = m.Meta.row_groups.(g).rows in
+(* [part ?file shared b m g ~rows columns filters] is the first [rows] rows of
+   the row group [g] of [b] as one batch of [columns], each a name, its node
+   and its type, decoded with the scratch [shared], of the rows that pass
+   [filters], each a column, as [columns] give one, and the filter on it. *)
+let part ?file shared b m g ~rows columns filters : Source.part =
   let open_ () =
     let read = ref false in
     let next () =
@@ -621,7 +620,7 @@ let part ?file shared b m g columns filters : Source.part =
         (* Each column is decoded and built once, a filter's column being
            the request's or one of its own. *)
         let read_leaf (l : Leaf.t) ty =
-          Chunk.read ~scratch bytes m ~row_group:g l.index l ty
+          Chunk.read ~scratch ~rows bytes m ~row_group:g l.index l ty
         in
         let decode (name, node, ty) =
           match node with
@@ -703,11 +702,26 @@ let parts ?file f shared types b (r : Source.request) =
     | _ -> None
   in
   let kept g (rg : Meta.row_group) =
-    if List.for_all (passes (stats g) rg.rows) r.filters then
-      Some (part ?file shared b m g columns filters)
+    if List.for_all (passes (stats g) rg.rows) r.filters then Some (g, rg.rows)
     else None
   in
-  List.filter_map Fun.id (Array.to_list (Array.mapi kept m.row_groups))
+  let groups =
+    List.filter_map Fun.id (Array.to_list (Array.mapi kept m.row_groups))
+  in
+  (* A limit with no conjunct to apply is a prefix of the rows: the row groups
+     that hold it, the last one read in part. *)
+  let rec prefix left = function
+    | (g, n) :: gs when left > 0 -> (g, min n left) :: prefix (left - n) gs
+    | _ -> []
+  in
+  let groups =
+    match r.limit with
+    | Some n when filters = [] -> prefix n groups
+    | _ -> groups
+  in
+  List.map
+    (fun (g, rows) -> part ?file shared b m g ~rows columns filters)
+    groups
 
 (* [declared fn c] is [c]'s name and type, which a decimal must have been
    given. *)

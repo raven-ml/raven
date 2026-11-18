@@ -20,6 +20,7 @@
 # forced: blessed Talon_csv/read-mixed under load 44.6 on 14 cores
 # forced: blessed under load 38.6 on 14 cores
 # forced: blessed under load 46.2 on 14 cores
+# forced: blessed Talon_parquet/head-16-of-512-images under load 11.9 on 2 cores
 
 Talon/Filter/high_value	alloc_words	exact	12436
 Talon/Group/category_region	alloc_words	exact	6512
@@ -71,6 +72,8 @@ Talon/Window/running-std-1M	alloc_words	exact	153416
 Talon/Window/running-sum-1M	alloc_words	exact	65084
 Talon_csv/read-mixed	alloc_words	exact	507688
 Talon_parquet/filter-text	alloc_words	exact	21373
+Talon_parquet/head-16-of-512-images	alloc_words	exact	15793
+Talon_parquet/head-16-of-512-images	wall_time	batch=1	n=20	3.974e-03	3.270e-03 3.437e-03 3.461e-03 3.728e-03 3.751e-03 3.867e-03 3.892e-03 3.922e-03 3.944e-03 3.955e-03 3.993e-03 4.055e-03 4.142e-03 4.228e-03 4.394e-03 4.595e-03 4.638e-03 4.841e-03 4.904e-03 4.910e-03
 Talon_parquet/read-keys	alloc_words	exact	9858
 Talon_parquet/read-nullable	alloc_words	exact	34263
 Talon_parquet/read-text	alloc_words	exact	9669

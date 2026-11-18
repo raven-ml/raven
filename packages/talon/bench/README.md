@@ -57,6 +57,11 @@ uv run packages/talon/bench/queries/keys_data.py packages/talon/bench/data/keys.
 uv run packages/talon/bench/queries/keys_data.py --check
 ```
 
+`Talon_parquet/head-16-of-512-images` reads the first 16 rows of one row
+group of 512 images of 4 x 64 x 64 `float32`s, 32 MiB that the bench writes
+in memory with talon's writer, declared as tensors: the read needs the group's
+first page alone.
+
 `Talon_parquet/filter-text` reads `data/text.parquet` filtered by one of its
 words. `Talon_parquet/write-nullable` and `Talon_parquet/write-text` write the
 tables that `read-nullable` and `read-text` read to a sink, in the default

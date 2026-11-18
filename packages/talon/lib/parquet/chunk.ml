@@ -269,7 +269,7 @@ let check (m : Meta.file) ~row_group i (l : Leaf.t) =
 type table = {
   width : int;
   mutable bytes : (int, Bigarray.int8_unsigned_elt) Nx_array.t;
-  offsets : (int64, Bigarray.int64_elt) Nx_array.t;
+  mutable offsets : (int64, Bigarray.int64_elt) Nx_array.t;
   mutable n : int;
 }
 
@@ -343,6 +343,56 @@ let ensure t n =
         peek t.bytes (fun src ->
             A1.blit (A1.sub src 0 used) (A1.sub dst 0 used)));
     t.bytes <- a
+  end
+
+(* Growth
+
+   A read of a chunk's first rows does not know which pages hold them until
+   it has read them, so its buffers start empty and grow with each page,
+   to twice their size or the page's need, at most the whole chunk's: they
+   hold at most about twice the values of the pages read, and each value is
+   copied about once more. A whole read sizes them from the chunk at once. *)
+
+(* [grown ~full size need] is the size a buffer of [size] elements grows to
+   for [need]. *)
+let grown ~full size need = min full (max need (2 * size))
+
+(* [regrow dt a ~used n] is a host array of [n] elements of [dt] whose first
+   [used] are [a]'s. *)
+let regrow dt a ~used n =
+  let b = fresh dt n in
+  writing b (fun dst ->
+      peek a (fun src -> A1.blit (A1.sub src 0 used) (A1.sub dst 0 used)));
+  b
+
+(* [reserve_table l t ~full values] makes room in the table [t] of the leaf
+   [l] for [values] more values, of [full] at most. Byte strings' bytes grow
+   as they are written ({!ensure}). *)
+let reserve_table (l : Leaf.t) t ~full values =
+  let need = t.n + values in
+  if l.physical = Boolean then begin
+    let size = 8 * length t.bytes in
+    if size < need then begin
+      let b = zeros_for_bits (grown ~full size need) in
+      let used = (t.n + 7) / 8 in
+      writing b (fun dst ->
+          peek t.bytes (fun src ->
+              A1.blit (A1.sub src 0 used) (A1.sub dst 0 used)));
+      t.bytes <- b
+    end
+  end
+  else if t.width > 0 then begin
+    let size = length t.bytes / t.width in
+    if size < need then
+      t.bytes <-
+        regrow Nx.uint8 t.bytes ~used:(t.n * t.width)
+          (t.width * grown ~full size need)
+  end
+  else begin
+    let size = length t.offsets - 1 in
+    if size < need then
+      t.offsets <-
+        regrow Nx.int64 t.offsets ~used:(t.n + 1) (grown ~full size need + 1)
   end
 
 (* Storage *)
@@ -665,6 +715,24 @@ let level_arrays (l : Leaf.t) n =
 
 let with_n (Levels lv) n = Levels { lv with n }
 
+(* [reserve_levels l lv ~used ~full need] is [lv], the levels of the leaf [l]
+   whose first [used] entries are read, with room for [need] entries, of
+   [full] at most. *)
+let reserve_levels (l : Leaf.t) (Levels lv as levels) ~used ~full need =
+  let size = max (A1.dim lv.def) (A1.dim lv.rep) in
+  if size >= need || (l.def = 0 && l.rep = 0) then levels
+  else
+    let n = grown ~full size need in
+    let re present a =
+      if not present then a
+      else begin
+        let b = A1.create (A1.kind a) Bigarray.c_layout n in
+        A1.blit (A1.sub a 0 used) (A1.sub b 0 used);
+        b
+      end
+    in
+    Levels { lv with def = re (l.def > 0) lv.def; rep = re (l.rep > 0) lv.rep }
+
 (* [bit_width max] is the bits a level of at most [max] takes. *)
 let bit_width max =
   let rec go w = if max lsr w = 0 then w else go (w + 1) in
@@ -706,6 +774,14 @@ let structure ~row_group ~name lv s ~elem =
   let mask, offsets, slots = walk ~row_group lv s ~elem in
   (Option.map (fun m -> bits m slots) mask, Option.map value offsets, slots)
 
+(* [row_start ~row_group lv ~rep r] is the entry of [lv], a leaf's levels of
+   at most [rep] repetition, that begins row [r]: the rows are walked as a
+   node whose elements are all the entries. *)
+let row_start ~row_group lv ~rep r =
+  let rows : Leaf.slots = { rep = 0; def = 0; nonnull = 0 } in
+  let _, offsets, _ = walk ~row_group lv rows ~elem:(Some (rep, 0)) in
+  peek (Option.get offsets) (fun o -> Int64.to_int o.{r})
+
 (* Reading *)
 
 let encoding_name : Meta.encoding -> string = function
@@ -722,9 +798,12 @@ let encoding_name : Meta.encoding -> string = function
 
 let u32 b pos = Int64.to_int (le b pos 4)
 
-let read_chunk ~scratch b (m : Meta.file) ~row_group i (l : Leaf.t)
-    (Type.Any ty) =
+let read_chunk ~scratch ~rows:wanted b (m : Meta.file) ~row_group i
+    (l : Leaf.t) (Type.Any ty) =
   let rows = m.row_groups.(row_group).rows in
+  (* A read of fewer rows than the row group's stops after the page that
+     completes them, and keeps their entries alone. *)
+  let partial = wanted < rows in
   let cm = Option.get m.row_groups.(row_group).chunks.(i).meta in
   (* A flat column has one entry per row; a repeated one, [cm.values] entries,
      which the pages must add up to. *)
@@ -750,6 +829,15 @@ let read_chunk ~scratch b (m : Meta.file) ~row_group i (l : Leaf.t)
   let held_valid = ref None and held_bytes = ref None and held_idx = ref None in
   let tbl = ref None and idx = ref None and dict = ref 0 in
   let row = ref 0 and present = ref 0 in
+  (* The rows the pages read so far begin, for a repeated leaf whose read
+     stops early: entries of repetition level 0. *)
+  let starts = ref 0 in
+  (* [complete ()] is [true] once the pages read hold the first [wanted] rows
+     whole: for a repeated leaf, once the row after them has begun, since a
+     page of version 1 may end inside a row. *)
+  let complete () =
+    partial && if l.rep > 0 then !starts > wanted else !row >= wanted
+  in
   (* [chunk_table ~dictionary] is the chunk's table, made on the first page for
      the chunk's values after [dictionary] values. *)
   let chunk_table ~dictionary =
@@ -759,8 +847,10 @@ let read_chunk ~scratch b (m : Meta.file) ~row_group i (l : Leaf.t)
         let w = width l in
         if cm.values > (max_int / max 1 w) - dictionary - 1 then
           fail "the chunk's %d values do not fit in memory" cm.values;
-        let values = dictionary + cm.values in
-        let t = leaf_table l ~values ~data:cm.uncompressed_size in
+        (* A read of a prefix grows its table with its pages. *)
+        let values = dictionary + if partial then 0 else cm.values in
+        let data = if partial then 0 else cm.uncompressed_size in
+        let t = leaf_table l ~values ~data in
         tbl := Some t;
         t
   in
@@ -811,9 +901,14 @@ let read_chunk ~scratch b (m : Meta.file) ~row_group i (l : Leaf.t)
      entries of a nested leaf into [lv], and is how many hold a value. *)
   let nested_levels src rp rl dp dl values =
     let (Levels lv) = Option.get !lv in
-    if l.rep > 0 then
+    if l.rep > 0 then begin
       consumes "the repetition levels" rl
         (hybrid src rp rl (bit_width l.rep) values lv.rep !row (l.rep + 1));
+      if partial then
+        starts :=
+          !starts
+          + kernel "the repetition levels" (level_count lv.rep !row values 0)
+    end;
     if l.def = 0 then values
     else begin
       consumes "the definition levels" dl
@@ -927,30 +1022,57 @@ let read_chunk ~scratch b (m : Meta.file) ~row_group i (l : Leaf.t)
     (match ((encoding : Meta.encoding), !idx) with
     | (Plain_dictionary | Rle_dictionary), None ->
         fail "a dictionary-encoded page has no dictionary page before it"
-    | (Plain_dictionary | Rle_dictionary), Some _ ->
+    | (Plain_dictionary | Rle_dictionary), Some a ->
         if len < 1 then fail "the dictionary indices have no bit width";
-        let idx = Option.get !held_idx in
+        (* A prefix holds no claim across pages, as [reserve] says; a whole
+           read allocates no closure here. *)
         consumes "the dictionary indices" (len - 1)
-          (hybrid src (pos + 1) (len - 1) src.{pos} n idx !present !dict)
+          (match !held_idx with
+          | Some idx ->
+              hybrid src (pos + 1) (len - 1) src.{pos} n idx !present !dict
+          | None ->
+              writing a (fun idx ->
+                  hybrid src (pos + 1) (len - 1) src.{pos} n idx !present
+                    !dict))
     | _, idx ->
         let first = t.n in
         (match !held_bytes with
         | Some b -> values t b encoding src pos len n
         | None -> with_bytes t (fun b -> values t b encoding src pos len n));
         t.n <- t.n + n;
-        Option.iter
-          (fun _ ->
-            let idx = Option.get !held_idx in
+        (match (!held_idx, idx) with
+        | Some idx, _ ->
             for k = 0 to n - 1 do
               idx.{!present + k} <- Int64.of_int (first + k)
-            done)
-          idx);
+            done
+        | None, Some a ->
+            writing a (fun idx ->
+                for k = 0 to n - 1 do
+                  idx.{!present + k} <- Int64.of_int (first + k)
+                done)
+        | None, None -> ()));
     row := !row + rows;
     present := !present + n
   in
   let rows_left values =
     if values > entries - !row then
       fail "the page holds %d rows, past the row group's %d" values rows
+  in
+  (* [reserve values] makes room, in a read of a prefix, for a data page of
+     [values] entries, as Growth above says. *)
+  let reserve values =
+    if partial then begin
+      reserve_table l (chunk_table ~dictionary:0) ~full:(!dict + entries) values;
+      (match !idx with
+      | Some a when length a < !present + values ->
+          let n = grown ~full:entries (length a) (!present + values) in
+          idx := Some (regrow Nx.int64 a ~used:!present n)
+      | _ -> ());
+      lv :=
+        Option.map
+          (fun v -> reserve_levels l v ~used:!row ~full:entries (!row + values))
+          !lv
+    end
   in
   (* [header pos stop] is the page header at [pos] and where its bytes start,
      which it checks lie before [stop]. *)
@@ -992,9 +1114,10 @@ let read_chunk ~scratch b (m : Meta.file) ~row_group i (l : Leaf.t)
         with_bytes t (fun b -> plain t b src p len values);
         t.n <- values;
         dict := values;
-        idx := Some (fresh Nx.int64 entries)
+        idx := Some (fresh Nx.int64 (if partial then 0 else entries))
     | Data { values; encoding; levels = def_encoding; repetition } ->
         rows_left values;
+        reserve values;
         let src, p, len =
           decompress b data h.compressed_size h.uncompressed_size
         in
@@ -1032,6 +1155,7 @@ let read_chunk ~scratch b (m : Meta.file) ~row_group i (l : Leaf.t)
           compressed;
         } ->
         rows_left values;
+        reserve values;
         if (not l.nested) && page_rows <> values then
           fail "the page holds %d values in %d rows" values page_rows;
         let size = min h.compressed_size h.uncompressed_size in
@@ -1071,7 +1195,9 @@ let read_chunk ~scratch b (m : Meta.file) ~row_group i (l : Leaf.t)
     | Other -> ());
     page_end
   in
-  let rec rest pos stop = if pos < stop then rest (page pos stop) stop in
+  let rec rest pos stop =
+    if pos < stop && not (complete ()) then rest (page pos stop) stop
+  in
   (* [hold f] is [f ()] under write claims of the table's bytes, when its
      values are fixed-width, and of the dictionary indices. *)
   let hold f =
@@ -1093,11 +1219,13 @@ let read_chunk ~scratch b (m : Meta.file) ~row_group i (l : Leaf.t)
   (* The first page that is read makes the table, and the dictionary indices
      if it is the dictionary's: the claims are taken after it. *)
   let rec pages pos stop =
-    if pos < stop then begin
+    if pos < stop && not (complete ()) then begin
       let pos = page pos stop in
       if Option.is_none !tbl then pages pos stop
       else begin
-        if pos < stop then hold (fun () -> rest pos stop);
+        (* A prefix's buffers grow between pages, so no claim is held. *)
+        if pos < stop && not (complete ()) then
+          if partial then rest pos stop else hold (fun () -> rest pos stop);
         held_bytes := None;
         held_idx := None
       end
@@ -1105,7 +1233,8 @@ let read_chunk ~scratch b (m : Meta.file) ~row_group i (l : Leaf.t)
   in
   (* [claimed pos stop] is the entries the pages' headers add up to, without
      reading their data: nothing else bounds what a nested leaf's chunk says
-     it holds, and its levels are allocated from it. *)
+     it holds, and a whole read allocates its levels from it. A read of a
+     prefix grows them from the headers of the pages it reads alone. *)
   let rec claimed pos stop acc =
     if pos >= stop then acc
     else
@@ -1120,12 +1249,13 @@ let read_chunk ~scratch b (m : Meta.file) ~row_group i (l : Leaf.t)
   let first = first_page cm in
   let stop = first + cm.compressed_size in
   let decode () =
-    if l.nested && rows > 0 then begin
+    if l.nested && rows > 0 && not partial then begin
       let n = claimed first stop 0 in
       if n <> entries then
         fail "the pages hold %d values, and the column chunk %d" n entries
     end;
-    if l.nested then lv := Some (level_arrays l entries);
+    if l.nested then
+      lv := Some (level_arrays l (if partial then 0 else entries));
     if rows > 0 then pages first stop
   in
   (match valid with
@@ -1136,10 +1266,40 @@ let read_chunk ~scratch b (m : Meta.file) ~row_group i (l : Leaf.t)
   | None -> decode ());
   held_valid := None;
   here := None;
-  if !row <> entries then
+  let cut = complete () in
+  if (not cut) && !row <> entries then
     fail "the pages hold %d rows, and the row group %d" !row rows;
-  (* A nested leaf's values spread onto its own slots, which its levels give. *)
   let lv = Option.map (fun lv -> with_n lv !row) !lv in
+  (* A read cut short keeps the entries of its first [wanted] rows, and the
+     values among them. *)
+  let lv, rows =
+    if not cut then (lv, rows)
+    else begin
+      let lv =
+        match lv with
+        | None ->
+            present :=
+              Option.fold valid ~none:wanted ~some:(fun v ->
+                  peek v (fun b ->
+                      kernel "the definition levels" (count_bits b 0 wanted)));
+            None
+        | Some lv ->
+            let n =
+              if l.rep = 0 then wanted
+              else row_start ~row_group lv ~rep:l.rep wanted
+            in
+            let (Levels a) = lv in
+            present :=
+              if l.def = 0 then n
+              else kernel "the definition levels" (level_count a.def 0 n l.def);
+            Some (with_n lv n)
+      in
+      (* Without a dictionary, the table holds the values themselves. *)
+      if Option.is_none !idx then Option.iter (fun t -> t.n <- !present) !tbl;
+      (lv, wanted)
+    end
+  in
+  (* A nested leaf's values spread onto its own slots, which its levels give. *)
   let valid, rows =
     match lv with
     | None -> (valid, rows)
@@ -1165,10 +1325,11 @@ let read_chunk ~scratch b (m : Meta.file) ~row_group i (l : Leaf.t)
   in
   (c, lv)
 
-let read ~scratch b m ~row_group i (l : Leaf.t) ty =
+let read ~scratch ~rows b m ~row_group i (l : Leaf.t) ty =
   if l.nested then
-    named (Leaf.name l) (fun () -> read_chunk ~scratch b m ~row_group i l ty)
-  else read_chunk ~scratch b m ~row_group i l ty
+    named (Leaf.name l) (fun () ->
+        read_chunk ~scratch ~rows b m ~row_group i l ty)
+  else read_chunk ~scratch ~rows b m ~row_group i l ty
 
 let flat_coded = function
   | Coded { valid; codes; offsets; data } -> (

@@ -98,6 +98,7 @@ val scratch : unit -> scratch
 
 val read :
   scratch:scratch ->
+  rows:int ->
   Meta.bigbytes ->
   Meta.file ->
   row_group:int ->
@@ -105,11 +106,17 @@ val read :
   Leaf.t ->
   Talon.Type.any ->
   t * levels option
-(** [read ~scratch b m ~row_group i l t] decodes the chunk [i] of the row group
-    [row_group] of the file [b], whose metadata are [m], as the leaf [l] read as
-    [t], with the buffers [scratch]. The chunk has passed {!check}, and
-    [Leaf.reads_as l t] holds. It is the leaf's column over its slots ({!structure})
-    and, for a [nested] leaf, its levels.
+(** [read ~scratch ~rows b m ~row_group i l t] decodes the first [rows] rows of
+    the chunk [i] of the row group [row_group] of the file [b], whose metadata
+    are [m], as the leaf [l] read as [t], with the buffers [scratch]. The chunk
+    has passed {!check}, [Leaf.reads_as l t] holds, and [rows] is at most the
+    row group's rows, and positive unless they are none. It is the leaf's
+    column over its slots ({!structure}) and, for a [nested] leaf, its levels.
+    Fewer rows than the row group's decode the pages up to the one that
+    completes them, which for a repeated leaf is the page where the next row
+    begins, since a page of version 1 may end inside a row, and read no header
+    past it. Their buffers grow with the pages read, to at most about twice
+    their values, where a whole read sizes them from the chunk.
 
     Raises {!Meta.Error}, with the row group and the bytes of the page that
     failed, if a page header does not decode or overruns the chunk, a page fails
@@ -121,9 +128,9 @@ val read :
     not fit [t] (an integer outside a narrower type, named with its row, an
     [int96] outside the unit's range or not a whole number of it, a decimal
     outside [int64], a byte string outside a categorical's dictionary), a
-    dictionary index is out of the dictionary, the pages' rows do not add up to
-    the row group's, or the chunk's values would take more bytes than an [int]
-    counts. The message names a [nested] leaf's path. *)
+    dictionary index is out of the dictionary, the pages of a whole read do not
+    add up to the row group's rows, or the chunk's values would take more bytes
+    than an [int] counts. The message names a [nested] leaf's path. *)
 
 val structure :
   row_group:int ->

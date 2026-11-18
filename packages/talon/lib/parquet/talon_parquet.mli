@@ -197,6 +197,16 @@ val pp_format : Format.formatter -> format -> unit
     nothing of its rows, so no conjunct over a nested column prunes a row
     group.
 
+    {2:prefixes Prefixes}
+
+    A request with a limit of [n] rows and no conjunct to apply reads the
+    file's first [n] rows alone: the row groups that hold them, and of the last
+    of those, only the pages up to the one that shows where the [n]th row
+    ends. The pages past them are never read, header included, so a failure
+    in one does not fail the read. The memory the read takes and its columns
+    hold grows with the pages it reads, to at most about twice their values,
+    and never with the pages past them.
+
     {2:failure Failure}
 
     A read fails with [Error e] as {!sniff} does, if the file has no column of

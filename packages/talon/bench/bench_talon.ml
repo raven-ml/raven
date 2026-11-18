@@ -507,6 +507,32 @@ let read_flags () =
   let f, b = Lazy.force flags_bytes in
   run (Query.of_source (Talon_parquet.source f b))
 
+(* One row group of 512 images of 4 x 64 x 64 float32s, 32 MiB in Snappy
+   pages of about 1 MiB, read as tensors: the first 16 rows need its first
+   page, and a read that decoded the group would show here. *)
+let images_bytes =
+  lazy
+    (let rows = 512 and cell = [| 4; 64; 64 |] in
+     let n = Array.fold_left ( * ) rows cell in
+     let x =
+       Nx.reshape (Array.append [| rows |] cell)
+         (Nx.cast Nx.float32 (Nx.arange Nx.int32 0 n 1))
+     in
+     let q = Query.of_table (v [ ("image", Column.of_tensor x) ]) in
+     let f = Talon_parquet.format ~row_group:rows (Query.schema q) in
+     let b = Buffer.create (1 lsl 25) in
+     Error.get_ok
+       (Talon_parquet.encode f q (Bytesrw.Bytes.Writer.of_buffer b));
+     let b = Rig.Buffer.of_string (Buffer.contents b) in
+     let ty = Type.Any (Type.tensor Nx.float32 cell) in
+     let sniffed = Error.get_ok (Talon_parquet.sniff b) in
+     (Talon_parquet.with_type "image" ty sniffed, b))
+
+let head_images () =
+  let f, b = Lazy.force images_bytes in
+  run
+    Query.(of_source (Talon_parquet.source f b) |> slice ~offset:0 ~length:16)
+
 let nulls_table = lazy (read_parquet ())
 let text_table = lazy (read_text ())
 (* Regular expressions over text.parquet's words: a filter the DFA decides, with
@@ -931,6 +957,7 @@ let () =
           Thumper.bench "read-nullable" read_parquet;
           Thumper.bench "read-text" read_text;
           Thumper.bench "read-flags" read_flags;
+          Thumper.bench "head-16-of-512-images" head_images;
           Thumper.bench "filter-text" filter_text;
           Thumper.bench "read-keys" read_keys;
           Thumper.bench "write-nullable" write_nulls;

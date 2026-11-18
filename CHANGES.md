@@ -5297,6 +5297,13 @@ its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- Under `Query.slice ~offset ~length` with `offset >= 0`, or `Query.head`,
+  with no filter between, `Talon_parquet.source` and `Talon_parquet.file`
+  read the first `offset + length` rows alone: the row groups that hold them
+  and, of the last, the pages up to the end of its last row, with memory for
+  those pages only. A filter the source applies itself still reads whole row
+  groups. The first 64 rows of a row group of large images no longer decode
+  or hold the whole group.
 - `Talon_parquet.with_type` declares a column of `k` nested lists over
   numbers as `Type.tensor dt shape` of `k` dimensions, and one of `k + 1` as a
   list of such tensors; `Talon_parquet.source` and `Talon_parquet.file` then
