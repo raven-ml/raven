@@ -235,6 +235,119 @@ let position_angle a b =
   let singular = is_zero c in
   radians (wrap (Guard.atan2 singular (Nx.full_like east 0.) east north))
 
+(* Cross-matching *)
+
+(* Two rays at angle θ have unit vectors at chord 2 sin(θ/2) ≤ θ, and so within
+   min(θ, 2) in each coordinate. Cut space into cubes of side s ≥ min(r, 2),
+   keyed by ⌊x/s⌋, ⌊y/s⌋, ⌊z/s⌋: every row of [b] within r of a row of [a] lies
+   in one of the 27 cubes whose keys differ from [a]'s by at most 1 in each
+   column. Sorted by key, the three cubes of one x and y key are one range, so 9
+   ranges hold the candidates, with no pole and no wrap of longitude to treat
+   apart.
+
+   Rounding moves the bound three ways: the separation compared is within
+   1.3e-15 relative, the normalised rows within a few ulp of 1, and x/s, below
+   2^26 in magnitude, within 2^-27. [margin] covers all three. [least_side]
+   keeps s positive at r = 0, where rows at separation 0 must still meet, and
+   bounds the keys by 2^26 + 1. *)
+let margin = 1. +. 0x1p-20
+let least_side = 0x1p-26
+let neighbours = 9
+
+(* A NaN or zero row of [b] takes [excluded] as its key, past every key a cube
+   can have, so no range reaches it. *)
+let excluded = Int64.max_int
+
+let shape_text v =
+  String.concat "; " (Array.to_list (Array.map string_of_int (Nx.shape v)))
+
+(* [catalogue which d] is [d]'s vectors, [[n; 3]], and whether each row names a
+   direction: no NaN component and not zero. *)
+let catalogue which d =
+  let v = d.xyz in
+  let s = Nx.shape v in
+  if Array.length s <> 2 || s.(1) <> 3 then
+    invalid_arg
+      (strf
+         "Direction.pairs: the %s directions have shape [%s], expected [n; 3]"
+         which (shape_text v));
+  check_finite (strf "Direction.pairs: the %s direction's vector" which) v;
+  let nan = Nx.any ~axes:[ 1 ] (Nx.isnan v) in
+  (v, Nx.logical_not (Nx.logical_or nan (is_zero (components v))))
+
+(* [keys side v valid] is each row's cube, [[n; 3]], keyed from its unit vector.
+   A row that is not [valid] is keyed as (1, 1, 1). *)
+let keys side v valid =
+  let valid = Nx.reshape [| Nx.dim 0 v; 1 |] valid in
+  let s = scale (Nx.where valid v (Nx.full_like v 1.)) in
+  let u =
+    Nx.div s (Nx.sqrt (Nx.sum ~axes:[ 1 ] ~keepdims:true (Nx.square s)))
+  in
+  Nx.cast Nx.int64 (Nx.floor (Nx.div u side))
+
+(* [ranges k] is the least and greatest keys of the 9 ranges around each key of
+   [k], [[9 n; 3]] each, the ranges of key [i] at rows [9 i] to [9 i + 8]. *)
+let ranges k =
+  let n = Nx.dim 0 k in
+  let c = Nx.arange_at (Nx.beside k) Nx.int64 0 neighbours 1 in
+  let dx = Nx.sub_s (Nx.div_s c 3L) 1L and dy = Nx.sub_s (Nx.mod_s c 3L) 1L in
+  let around dz =
+    let corner = Nx.stack ~axis:1 [ dx; dy; Nx.full_like dx dz ] in
+    let k = Nx.add (Nx.reshape [| n; 1; 3 |] k) corner in
+    Nx.reshape [| neighbours * n; 3 |] k
+  in
+  (around (-1L), around 1L)
+
+(* [candidates side (va, valid_a) (vb, valid_b)] is every pair [(i, j)] of a row
+   of [va] and a row of [vb] in a cube around it, for cubes of [side]. *)
+let candidates side (va, valid_a) (vb, valid_b) =
+  let na = Nx.dim 0 va and nb = Nx.dim 0 vb in
+  let kb = keys side vb valid_b in
+  let kb =
+    Nx.where (Nx.reshape [| nb; 1 |] valid_b) kb (Nx.full_like kb excluded)
+  in
+  let order = Nx.lexsort kb in
+  let sorted = Nx.take ~axis:0 order kb in
+  let low, high = ranges (keys side va valid_a) in
+  let first = Nx.searchsorted ~side:`Left sorted low in
+  let last = Nx.searchsorted ~side:`Right sorted high in
+  let queries =
+    Nx.reshape
+      [| neighbours * na |]
+      (Nx.broadcast_to [| na; neighbours |] (Nx.reshape [| na; 1 |] valid_a))
+  in
+  let counts = Nx.where queries (Nx.sub last first) (Nx.zeros_like first) in
+  (* Candidate [c] lies in range [q = range.{c}], at rank [c - start.{q}]; the
+     range's row of [va] is [q / 9]. *)
+  let range = Nx.positions counts in
+  let start = Nx.sub (Nx.cumsum counts) counts in
+  let rank = Nx.arange_at (Nx.beside range) Nx.int64 0 (Nx.dim 0 range) 1 in
+  let at = Nx.add (Nx.take range first) (Nx.sub rank (Nx.take range start)) in
+  (Nx.div_s range (Int64.of_int neighbours), Nx.take at order)
+
+let pairs ~within a b =
+  let ((va, _) as ca) = catalogue "first" a
+  and ((vb, _) as cb) = catalogue "second" b in
+  let r = Quantity.value Unit.radian within in
+  if Nx.ndim r <> 0 then
+    invalid_arg
+      (strf "Direction.pairs: within has shape [%s], expected []" (shape_text r));
+  Nx.check Nx.Ptree.unit (Nx.greater_equal_s r 0.) () (fun _ () ->
+      Invalid_argument "Direction.pairs: the radius is negative or NaN");
+  if Nx.dim 0 va = 0 || Nx.dim 0 vb = 0 then
+    ( Nx.zeros Nx.int64 [| 0 |],
+      Nx.zeros Nx.int64 [| 0 |],
+      radians (Nx.zeros Nx.float64 [| 0 |]) )
+  else
+    let side = Nx.mul_s (Nx.maximum_s (Nx.minimum_s r 2.) least_side) margin in
+    let i, j = candidates side ca cb in
+    let rows d idx = { d with xyz = Nx.take ~axis:0 idx d.xyz } in
+    let s = Quantity.value Unit.radian (separation (rows a i) (rows b j)) in
+    let kept = Nx.positions (Nx.less_equal s r) in
+    let i = Nx.take kept i and j = Nx.take kept j and s = Nx.take kept s in
+    let o = Nx.lexsort (Nx.stack ~axis:1 [ i; j ]) in
+    (Nx.take o i, Nx.take o j, radians (Nx.take o s))
+
 (* Rotations *)
 
 (* Each output component is [fma m2 z (fma m1 y (m0 x))]: rounded the same way

@@ -14,5 +14,8 @@ with no rule of ymir's.
   nx arithmetic. The one exception is `healpix.ml`'s Legendre sums, a
   `Rune.scan` of `lmax + 2` steps, so that a compiled transform's program
   does not grow with `lmax`; rune transforms the scan as any formula.
-  Review holds this. `ymir` never depends on `ymir.fits`,
-  so a transform links no file reader; its dune file holds that.
+  `Direction.pairs` is the one function rune cannot batch, compile or
+  differentiate: the number of pairs has no bound a caller can know, so it
+  computes on the host and reads its lengths there. Review holds this.
+  `ymir` never depends on `ymir.fits`, so a transform links no file
+  reader; its dune file holds that.

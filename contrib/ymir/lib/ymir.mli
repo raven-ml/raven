@@ -9,6 +9,9 @@
     and the models built on them. Every function is a formula of nx operations,
     {!Healpix}'s Legendre sums one [Rune.scan], so it runs batched, compiled
     and differentiated under rune's transformations with no rule of its own.
+    {!Direction.pairs} is the exception. The number of pairs it finds has no
+    bound a caller can know, so it computes on the host, reads its lengths
+    there and raises under a trace.
 
     [open Ymir] brings the unit algebra of [ymir.units] ({!Unit}, {!Quantity},
     {!Constant}, {!Codata}, {!Vocabulary}) and astronomy's units ({!Units}) into
@@ -731,6 +734,64 @@ module Direction : sig
 
   val ptree : unit -> (('f, 'd) t, 'd) Nx.Ptree.t
   (** [ptree ()] is [Nx.Ptree.v walk], the structure of directions. *)
+
+  (** {2:matching Cross-matching}
+
+      A {e cross-match} pairs the rows of two catalogues of directions,
+      [[n; 3]] each, that lie within a radius of each other. Nearest
+      neighbours, one-way or reciprocal, are selections among its pairs.
+
+      {!pairs} keys [b]'s unit vectors by cubes of side at least the radius
+      and sorts them. The {e candidates} of a row of [a] are the rows of [b]
+      in the 27 cubes around it, found by 18 binary searches, and each costs
+      one {!separation}. [pairs] computes on the host and reads the numbers
+      of candidates and of pairs there, as {!Nx.positions} reads its length.
+
+      A radius [r] per row of [a] is a call at the largest radius, then the
+      filter [Nx.less_equal s (Nx.take i r)]. [reciprocal ~within a b] is,
+      for each row of [a], its nearest row of [b] if that row's nearest in
+      [a] is it, and -1 otherwise:
+
+      {[
+      (* For each of [n] rows, its partner [j] at the least separation [s],
+         the lowest on ties; Int64.max_int for a row with none. *)
+      let nearest n i j s =
+        let best = Nx.reduce_segments Min ~segments:n i s in
+        let tied = Nx.equal s (Nx.take i best) in
+        let j = Nx.where tied j (Nx.full_like j Int64.max_int) in
+        Nx.reduce_segments Min ~segments:n i j
+
+      let reciprocal ~within a b =
+        let i, j, s = Direction.pairs ~within a b in
+        let s = Quantity.value Unit.radian s in
+        let rows d = Nx.dim 0 (Direction.xyz d) in
+        let ab = nearest (rows a) i j s and ba = nearest (rows b) j i s in
+        (* Nx.take reads 0 out of range: a row without a partner must be
+           excluded before its partner's nearest is read *)
+        let has = Nx.not_equal_s ab Int64.max_int in
+        let self = Nx.arange Nx.int64 0 (rows a) 1 in
+        let mutual = Nx.logical_and has (Nx.equal (Nx.take ab ba) self) in
+        Nx.where mutual ab (Nx.full_like ab (-1L))
+      ]} *)
+
+  val pairs :
+    within:(float, Nx.float64_elt, Nx.host) Nx.t Quantity.t ->
+    ('f, Nx.host) t ->
+    ('f, Nx.host) t ->
+    Nx.host Nx.int64_t
+    * Nx.host Nx.int64_t
+    * (float, Nx.float64_elt, Nx.host) Nx.t Quantity.t
+  (** [pairs ~within a b] is [(i, j, s)]: every row [i] of [a] and row [j]
+      of [b] whose {!separation} [s] is at most the 0-d angle [within]. The
+      bound is closed, so rows at separation 0 pair at radius 0, and a
+      radius of π or more pairs every row. Pairs come in increasing [i],
+      then [j]. A NaN or zero row pairs with none. Rows are compared as
+      given: a catalogue at another epoch must first be moved to the
+      other's.
+
+      Raises [Invalid_argument] if [a] or [b] is not [[n; 3]], if [within]
+      is not a 0-d angle, through {!Nx.check} if it is negative or NaN,
+      where a row has an infinite component, and on a traced value. *)
 end
 
 (** {1:healpix HEALPix} *)

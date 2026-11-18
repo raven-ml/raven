@@ -591,6 +591,349 @@ let gradients =
           equal float_exact 0. (Nx.item [] at_zero));
     ]
 
+(* Cross-matching *)
+
+(* A cross-match case: catalogues [a] and [b] in one frame, scattered by [h]
+   around a few centres (at the poles, across longitude 0 and anywhere), with
+   rays of several norms, antipodes, NaN and zero rows, and copies; and a radius
+   of a kind, for every row or scaled per row. *)
+type radius = Zero | Tiny | Small | Large | Near_pi | Past_pi | Boundary
+
+type xmatch = {
+  frame : fixed;
+  radius : radius;
+  r : float;
+  per_row : float list option;
+  a : (float * float * float) list;
+  b : (float * float * float) list;
+}
+
+let radius_name = function
+  | Zero -> "zero"
+  | Tiny -> "tiny"
+  | Small -> "small"
+  | Large -> "large"
+  | Near_pi -> "near pi"
+  | Past_pi -> "past pi"
+  | Boundary -> "boundary"
+
+let pp_xmatch ppf c =
+  let rows ppf l =
+    Format.pp_print_list ~pp_sep:Format.pp_print_space pp_row ppf l
+  in
+  Format.fprintf ppf "@[<v>%a, %s radius %h%a@,a: @[%a@]@,b: @[%a@]@]" pp_fixed
+    c.frame (radius_name c.radius) c.r
+    (fun ppf -> function
+      | None -> ()
+      | Some f ->
+          let comma ppf () = Format.pp_print_string ppf ", " in
+          Format.fprintf ppf " times @[<h>%a@]"
+            (Format.pp_print_list ~pp_sep:comma Format.pp_print_float)
+            f)
+    c.per_row rows c.a rows c.b
+
+let unit_vector lon lat = (cos lat *. cos lon, cos lat *. sin lon, sin lat)
+let log_uniform lo hi = Gen.map (fun e -> 10. ** e) (Gen.float_range lo hi)
+
+let centre =
+  Gen.(
+    let* kind = int_range 0 2 in
+    match kind with
+    | 0 ->
+        let+ lon = float_range 0. 6.28 and+ lat = float_range (-1.5) 1.5 in
+        unit_vector lon lat
+    | 1 ->
+        let+ lon = float_range 0. 6.28
+        and+ d = float_range 0. 1e-6
+        and+ north = bool in
+        unit_vector lon (if north then (pi /. 2.) -. d else d -. (pi /. 2.))
+    | _ ->
+        let+ lon = float_range (-1e-6) 1e-6 and+ lat = float_range (-1.5) 1.5 in
+        unit_vector lon lat)
+
+(* The kind of radius, its value and the spread [h] of the rows that test it. A
+   boundary radius is the separation of planted rows, set later. *)
+let radius =
+  Gen.(
+    let* kind =
+      of_list [ Zero; Tiny; Small; Large; Near_pi; Past_pi; Boundary ]
+    in
+    let spread r = map (fun u -> r *. u) (float_range 0. 2.) in
+    match kind with
+    | Zero ->
+        let+ h = of_list [ 0.; 1e-15; 1e-12 ] in
+        (kind, 0., h)
+    | Tiny ->
+        let* r = log_uniform (-12.) (-6.) in
+        let+ h = spread r in
+        (kind, r, h)
+    | Small ->
+        let* r = log_uniform (-6.) (-2.) in
+        let+ h = spread r in
+        (kind, r, h)
+    | Large ->
+        let+ r = float_range 0.1 3. and+ h = float_range 0. 1. in
+        (kind, r, h)
+    | Near_pi ->
+        let* d = log_uniform (-9.) (-3.) in
+        let+ h = spread d in
+        (kind, pi -. d, h)
+    | Past_pi ->
+        let+ r = of_list [ pi; 3.5; 1e300; infinity ]
+        and+ h = float_range 0. 1. in
+        (kind, r, h)
+    | Boundary ->
+        let+ h = log_uniform (-8.) (-1.) in
+        (kind, 0., h))
+
+let row centres h =
+  Gen.(
+    let unit = float_range (-1.) 1. in
+    let* c, u, k =
+      triple (of_list centres) (triple unit unit unit)
+        (of_list [ 1.; 1.; 3.7; 0x1p-600; 1e10 ])
+    in
+    let (cx, cy, cz), (ux, uy, uz) = (c, u) in
+    let near s =
+      ( k *. ((s *. cx) +. (h *. ux)),
+        k *. ((s *. cy) +. (h *. uy)),
+        k *. ((s *. cz) +. (h *. uz)) )
+    in
+    frequency
+      [
+        (8, constant (near 1.));
+        (1, constant (near (-1.)));
+        (1, of_list [ (nan, k, 0.); (nan, nan, nan) ]);
+        (1, of_list [ (0., 0., 0.); (-0., 0., 0.) ]);
+      ])
+
+(* [copies rows] is up to three rows of [rows], drawn again. *)
+let copies rows =
+  if rows = [] then Gen.constant []
+  else Gen.list ~size:(Gen.int_range 0 3) (Gen.of_list rows)
+
+let xmatches =
+  Gen.with_pp pp_xmatch
+    Gen.(
+      let factors = list ~size:(constant 16) (of_list [ 0.; 0.5; 1.; 1.5 ]) in
+      let* frame, (radius, r, h), centres, per_row =
+        quad (of_list fixed) radius
+          (list ~size:(int_range 1 3) centre)
+          (option factors)
+      in
+      let size = frequency [ (1, constant 0); (6, int_range 1 10) ] in
+      let* a = list ~size (row centres h) in
+      let* b = list ~size (row centres h) in
+      let* a' = copies a in
+      let+ b' = copies (a @ b) in
+      { frame; radius; r; per_row; a = a @ a'; b = b @ b' })
+
+let rows_of f l =
+  raw f
+    (vectors (Array.of_list (List.concat_map (fun (x, y, z) -> [ x; y; z ]) l)))
+
+let names_direction (x, y, z) =
+  not
+    (Float.is_nan x || Float.is_nan y || Float.is_nan z || is_zero_row (x, y, z))
+
+(* [separations c] is every row of [c.a] against every row of [c.b], by
+   {!Direction.separation}, row-major. *)
+let separations c =
+  let na = List.length c.a and nb = List.length c.b in
+  if na = 0 || nb = 0 then [||]
+  else
+    let (F f) = c.frame in
+    let shape s d =
+      Nx.Ptree.map (Direction.ptree ()) (fun _ x -> Nx.reshape s x) d
+    in
+    let a = shape [| na; 1; 3 |] (rows_of f c.a) in
+    let b = shape [| 1; nb; 3 |] (rows_of f c.b) in
+    Nx.to_array (in_radians (Direction.separation a b))
+
+(* [radii c s] is each row of [a]'s radius. A boundary radius is the separation
+   of row [i] from row [i mod nb] of [b], or of the first rows. *)
+let radii c s =
+  let na = List.length c.a and nb = List.length c.b in
+  let at i j = if nb = 0 then 0. else s.((i * nb) + j) in
+  let finite x = if Float.is_nan x then 0. else x in
+  match (c.radius, c.per_row) with
+  | Boundary, None -> Array.make na (if na = 0 then 0. else finite (at 0 0))
+  | Boundary, Some _ -> Array.init na (fun i -> finite (at i (i mod max nb 1)))
+  | _, None -> Array.make na c.r
+  | _, Some f ->
+      (* 0 times an infinite radius is 0 *)
+      let scaled k = if k = 0. then 0. else c.r *. k in
+      Array.init na (fun i -> scaled (List.nth f i))
+
+(* [brute c s r] is every pair [(i, j)] of rows naming directions whose
+   separation is at most [r.(i)], in increasing [i], then [j]. *)
+let brute c s r =
+  let a = Array.of_list c.a and b = Array.of_list c.b in
+  let nb = Array.length b in
+  List.concat
+    (List.init (Array.length a) (fun i ->
+         List.filter
+           (fun (i, j) ->
+             names_direction a.(i)
+             && names_direction b.(j)
+             && s.((i * nb) + j) <= r.(i))
+           (List.init nb (fun j -> (i, j)))))
+
+(* [pairs_of c r] is [Direction.pairs]' triples [(i, j, s)]. Radii per row are a
+   call at the largest, then the documented filter. *)
+let pairs_of c r =
+  let (F f) = c.frame in
+  let largest = Array.fold_left Float.max c.r r in
+  let within = if c.per_row = None && r <> [||] then r.(0) else largest in
+  let i, j, s =
+    Direction.pairs
+      ~within:(radians (scalar within))
+      (rows_of f c.a) (rows_of f c.b)
+  in
+  let s = in_radians s in
+  let i, j, s =
+    if c.per_row = None then (i, j, s)
+    else
+      let rr = Nx.create Nx.float64 [| Array.length r |] r in
+      let keep = Nx.positions (Nx.less_equal s (Nx.take i rr)) in
+      (Nx.take keep i, Nx.take keep j, Nx.take keep s)
+  in
+  let ints t = Array.map Int64.to_int (Nx.to_array t) in
+  let i = ints i and j = ints j and s = Nx.to_array s in
+  List.init (Array.length i) (fun k -> (i.(k), j.(k), s.(k)))
+
+let near_pole (x, y, z) =
+  Float.abs z > (1. -. 1e-9) *. Float.sqrt ((x *. x) +. (y *. y) +. (z *. z))
+
+(* Two rows on either side of longitude 0, near it. *)
+let across_zero (x, y, _) (x', y', _) = x > 0. && x' > 0. && y *. y' < 0.
+
+(* The reciprocal rule as [Direction.pairs]'s documentation composes it. *)
+let nearest n i j s =
+  let best = Nx.reduce_segments Min ~segments:n i s in
+  let tied = Nx.equal s (Nx.take i best) in
+  let j = Nx.where tied j (Nx.full_like j Int64.max_int) in
+  Nx.reduce_segments Min ~segments:n i j
+
+let reciprocal ~within a b =
+  let i, j, s = Direction.pairs ~within a b in
+  let s = Quantity.value Unit.radian s in
+  let rows d = Nx.dim 0 (Direction.xyz d) in
+  let ab = nearest (rows a) i j s and ba = nearest (rows b) j i s in
+  let has = Nx.not_equal_s ab Int64.max_int in
+  let self = Nx.arange Nx.int64 0 (rows a) 1 in
+  let mutual = Nx.logical_and has (Nx.equal (Nx.take ab ba) self) in
+  Nx.where mutual ab (Nx.full_like ab (-1L))
+
+(* [nearest_brute n key pairs sep] is, for each of [n] rows, the partner at the
+   least separation among [pairs], the lowest on ties, or -1. *)
+let nearest_brute n pairs =
+  let best = Array.make n (-1, infinity) in
+  List.iter
+    (fun (k, partner, s) ->
+      let p, bs = best.(k) in
+      if s < bs || (s = bs && (p < 0 || partner < p)) then
+        best.(k) <- (partner, s))
+    pairs;
+  Array.map fst best
+
+let reciprocal_brute c s r =
+  let pairs = brute c s r and nb = List.length c.b in
+  let sep (i, j) = s.((i * nb) + j) in
+  let ab =
+    nearest_brute (List.length c.a)
+      (List.map (fun (i, j) -> (i, j, sep (i, j))) pairs)
+  in
+  let ba =
+    nearest_brute nb (List.map (fun (i, j) -> (j, i, sep (i, j))) pairs)
+  in
+  Array.mapi (fun i j -> if j >= 0 && ba.(j) = i then j else -1) ab
+
+let crossmatch =
+  group "pairs"
+    [
+      prop
+        "pairs are every pair within the radius, in order, with its separation"
+        ~count:300 xmatches (fun c ->
+          let s = separations c in
+          let r = radii c s in
+          let expected = brute c s r in
+          let a = Array.of_list c.a and b = Array.of_list c.b in
+          let sep (i, j) = s.((i * Array.length b) + j) in
+          let some p = List.exists p expected in
+          let valid l = List.length (List.filter names_direction l) in
+          cover "a pair at a pole" (some (fun (i, _) -> near_pole a.(i)));
+          cover "a pair across longitude 0"
+            (some (fun (i, j) -> across_zero a.(i) b.(j)));
+          cover "radius 0 with a pair" (c.radius = Zero && expected <> []);
+          cover "radius near pi, a pair outside it"
+            (c.radius = Near_pi && List.length expected < valid c.a * valid c.b);
+          cover "radius pi or more" (c.radius = Past_pi && expected <> []);
+          cover "a pair at the radius"
+            (some (fun (i, j) -> r.(i) > 0. && sep (i, j) = r.(i)));
+          cover "tied pairs"
+            (some (fun (i, j) ->
+                 some (fun (i', j') ->
+                     i' = i && j' <> j && sep (i, j') = sep (i, j))));
+          cover "a NaN row"
+            (List.exists (fun (x, _, _) -> Float.is_nan x) (c.a @ c.b));
+          cover "a zero row" (List.exists is_zero_row (c.a @ c.b));
+          cover "an empty catalogue" (c.a = [] || c.b = []);
+          cover "a frame other than ICRS" (name c.frame <> "icrs");
+          cover "radius per row" (Option.is_some c.per_row && expected <> []);
+          let expected = List.map (fun p -> (fst p, snd p, sep p)) expected in
+          equal (list (triple int int float_exact)) expected (pairs_of c r));
+      prop "the documented reciprocal rule pairs mutual nearest rows" xmatches
+        (fun c ->
+          let c = { c with per_row = None } in
+          let s = separations c in
+          let r = radii c s in
+          let (F f) = c.frame in
+          let within = radians (scalar (if r = [||] then c.r else r.(0))) in
+          let got = reciprocal ~within (rows_of f c.a) (rows_of f c.b) in
+          let expected = reciprocal_brute c s r in
+          cover "a mutual pair" (Array.exists (fun j -> j >= 0) expected);
+          cover "a one-way nearest"
+            (List.length (brute c s r)
+            > Array.length
+                (Array.of_list
+                   (List.filter (fun j -> j >= 0) (Array.to_list expected))));
+          equal (array int) expected (Array.map Int64.to_int (Nx.to_array got)));
+      test "raises on a radius that is negative, NaN, not 0-d or not an angle"
+        (fun () ->
+          let d = lonlat 1. 0.2 in
+          let one =
+            Nx.Ptree.map (Direction.ptree ())
+              (fun _ x -> Nx.reshape [| 1; 3 |] x)
+              d
+          in
+          let bad w =
+            raises_match (Exn.invalid_arg ~sub:"Direction.pairs") (fun () ->
+                Direction.pairs ~within:w one one)
+          in
+          bad (radians (scalar (-1.)));
+          bad (radians (scalar nan));
+          bad (radians (Nx.create Nx.float64 [| 2 |] [| 1.; 1. |]));
+          raises_match Exn.invalid_arg (fun () ->
+              Direction.pairs
+                ~within:(Quantity.v Unit.metre (scalar 1.))
+                one one));
+      test "raises on rows not [n; 3] and on infinite rows" (fun () ->
+          let within = radians (scalar 1.) in
+          let raises a b =
+            raises_match (Exn.invalid_arg ~sub:"Direction.pairs") (fun () ->
+                Direction.pairs ~within a b)
+          in
+          let d = lonlat 1. 0.2 in
+          raises d (icrs (vectors [| 1.; 0.; 0. |]));
+          raises
+            (icrs (vectors [| infinity; 0.; 0. |]))
+            (icrs (vectors [| 1.; 0.; 0. |]));
+          raises
+            (icrs (vectors [| 1.; 0.; 0. |]))
+            (icrs (vectors [| 0.; nan; neg_infinity |])));
+    ]
+
 (* Structure *)
 
 let structure =
@@ -635,4 +978,5 @@ let () =
          rotations;
          gradients;
          structure;
+         crossmatch;
        ])

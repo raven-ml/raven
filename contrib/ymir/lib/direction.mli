@@ -33,6 +33,14 @@ val separation :
 val position_angle :
   ('f, 'd) t -> ('f, 'd) t -> (float, Nx.float64_elt, 'd) Nx.t Ymir_units.Quantity.t
 
+val pairs :
+  within:(float, Nx.float64_elt, Nx.host) Nx.t Ymir_units.Quantity.t ->
+  ('f, Nx.host) t ->
+  ('f, Nx.host) t ->
+  Nx.host Nx.int64_t
+  * Nx.host Nx.int64_t
+  * (float, Nx.float64_elt, Nx.host) Nx.t Ymir_units.Quantity.t
+
 val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> ('f, 'd) t -> ('f, 'e) t
 val ptree : unit -> (('f, 'd) t, 'd) Nx.Ptree.t
 

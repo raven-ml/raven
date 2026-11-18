@@ -4,6 +4,9 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- `Direction.pairs ~within a b` cross-matches two catalogues on the host:
+  every pair of rows within a closed radius, with its separation, in order.
+  Nearest and reciprocal matching compose from it.
 - `Units.maggy`, the AB system's zero-magnitude flux density, held exactly as
   10^(−561/25) W m⁻² Hz⁻¹, and `Units.zero_point m`, the unit of data on AB
   zero point `m`: `zero_point "22.5"` is `Unit.nano maggy`.
