@@ -11,6 +11,23 @@ Where it stands, with every measurement: doc/performance.md.
   registers). Unpacked at 64 tokens the joined product saves 8 us a layer,
   but that trace's unchanged kernels ran 0.23 ms a step slower, unexplained
   (_plans/perf-campaign/proj3/)
+- A Q8_0 product's loop over its blocks, upcast until an SM keeps its
+  `in_flight` bytes loading, with the lanes added into the sum in block
+  order so the bits stay those of one block a trip (branch `q8proj`,
+  27c8be286e), takes tolk's `stream/q8_0-core-64` from 39 to 22.5 us on
+  fudge, but every gpt-oss Q8_0 kernel since the fused query, key and value
+  product picks one block a trip. Before it lands, the heuristic's guard and
+  codegen's in-order fold need one predicate (an outer Add or Abs over the
+  blocks upcasts by a count read from `units` with its lanes summed first),
+  its depth rule repeats `Stage.tile`'s without the innermost-range check,
+  and `in_flight` is measured on `cp.async` copies, not plain loads
+  (_plans/perf-campaign/q8proj/)
+- BEAM still beats the hand rules on gpt-oss's Q8_0 projections, measured
+  before the fused product: the output projection at 512 tokens by its tile
+  (_plans/perf-campaign/proj3/ group 3), k, v and the output at 12 tokens
+  without a core, and k and v at 64 by splitting their sums over warps,
+  which moves the sum's order. tolk's `stream/q8_0-core-64` has no fudge
+  baseline yet (_plans/perf-campaign/q8proj/)
 - Small products in the rows layout run too few workgroups: gpt-oss's
   router at 64 tokens or fewer and at decode, and the 12-token k and v
   projections, take 7-24 us streamed (the rows layout runs rows(W)/4
