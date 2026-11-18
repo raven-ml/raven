@@ -2992,14 +2992,16 @@ let fastest_threads_coalesce =
 (* [core_fits]
 
    The form of a contraction the lowering writes depends on the core it will
-   take: past the reuse that streams first, a core of the operand's dtypes
-   whose M, N and K pad the extents and the block within 6/5 of their work,
-   or divide them at TC_OPT=0. *)
+   take: past the reuse at which a core comes first, 32, or 16 rows of a
+   decoded operand, a core of the operand's dtypes whose M, N and K pad the
+   extents and the block within 6/5 of their work, a decoded operand's rows
+   uncounted, or divide them at TC_OPT=0. *)
 let core_fits_cases =
-  let fits ?(ren = "cuda") ?(rows = 64) ?(outputs = 64) ?(block = 32)
-      ?(dtype_in = Dtype.Bfloat16) ?(dtype_out = Dtype.Float32) () =
-    Heuristic.core_fits (renderer ren) ~dtype_in ~dtype_out ~rows ~outputs
-      ~block
+  let fits ?(ren = "cuda") ?(decoded = false) ?(rows = 64) ?(outputs = 64)
+      ?(block = 32) ?(dtype_in = Dtype.Bfloat16) ?(dtype_out = Dtype.Float32)
+      () =
+    Heuristic.core_fits (renderer ren) ~decoded ~dtype_in ~dtype_out ~rows
+      ~outputs ~block
   in
   cases "core_fits names the contractions a core takes" ~id:fst
     [
@@ -3016,14 +3018,35 @@ let core_fits_cases =
       ("no bfloat16 sum into bfloat16", (fits ~dtype_out:Dtype.Bfloat16 (), false));
       ("the host has no core", (fits ~ren:"cpu" (), false));
       ("Metal's core takes bfloat16", (fits ~ren:"metal" (), true));
+      ( "decoded rows past 16",
+        (fits ~decoded:true ~rows:17 ~outputs:2880 (), true) );
+      ( "decoded rows at 16",
+        (fits ~decoded:true ~rows:16 ~outputs:2880 (), false) );
+      ( "stored rows past 16",
+        (fits ~rows:17 ~outputs:2880 (), false) );
+      ( "decoded rows M pads past the bound uncounted",
+        (fits ~decoded:true ~rows:33 ~outputs:2880 (), true) );
+      ( "decoded outputs N pad past the bound",
+        (fits ~decoded:true ~rows:64 ~outputs:33 (), false) );
+      ( "decoded outputs fewer than rows at the reuse that streams",
+        (fits ~decoded:true ~rows:64 ~outputs:32 (), false) );
+      ( "decoded rows as many as the outputs past 16",
+        (fits ~decoded:true ~rows:24 ~outputs:24 (), false) );
+      ( "decoded rows as many as the outputs past 32",
+        (fits ~decoded:true ~rows:64 ~outputs:64 (), true) );
+      ( "decoded rows past 32 over fewer outputs",
+        (fits ~decoded:true ~rows:2880 ~outputs:64 (), true) );
+      ( "decoded rows on Metal's 8-row tile",
+        (fits ~ren:"metal" ~decoded:true ~rows:17 ~outputs:2880 (), true) );
     ]
     (fun (_, (actual, want)) -> equal bool want actual)
 
 let core_fits_settings =
   test "core_fits reads the core settings" (fun () ->
       let fits () =
-        Heuristic.core_fits (renderer "cuda") ~dtype_in:Dtype.Bfloat16
-          ~dtype_out:Dtype.Float32 ~rows:64 ~outputs:64 ~block:32
+        Heuristic.core_fits (renderer "cuda") ~decoded:false
+          ~dtype_in:Dtype.Bfloat16 ~dtype_out:Dtype.Float32 ~rows:64
+          ~outputs:64 ~block:32
       in
       equal bool ~msg:"cores off" false
         (Setting.context [ Setting.B (Setting.use_tc, 0) ] fits);
@@ -3033,27 +3056,74 @@ let core_fits_settings =
         Setting.context
           [ Setting.B (Setting.tc_select, n) ]
           (fun () ->
-            Heuristic.core_fits (renderer ren) ~dtype_in:Dtype.Bfloat16
-              ~dtype_out:Dtype.Float32 ~rows:64 ~outputs:64 ~block:32)
+            Heuristic.core_fits (renderer ren) ~decoded:false
+              ~dtype_in:Dtype.Bfloat16 ~dtype_out:Dtype.Float32 ~rows:64
+              ~outputs:64 ~block:32)
       in
       equal bool ~msg:"rows padded at TC_OPT=0" false
         (Setting.context
            [ Setting.B (Setting.tc_opt, 0) ]
            (fun () ->
-             Heuristic.core_fits (renderer "cuda") ~dtype_in:Dtype.Bfloat16
-               ~dtype_out:Dtype.Float32 ~rows:127 ~outputs:64 ~block:32));
+             Heuristic.core_fits (renderer "cuda") ~decoded:false
+               ~dtype_in:Dtype.Bfloat16 ~dtype_out:Dtype.Float32 ~rows:127
+               ~outputs:64 ~block:32));
+      equal bool ~msg:"decoded rows padded at TC_OPT=0" false
+        (Setting.context
+           [ Setting.B (Setting.tc_opt, 0) ]
+           (fun () ->
+             Heuristic.core_fits (renderer "cuda") ~decoded:true
+               ~dtype_in:Dtype.Bfloat16 ~dtype_out:Dtype.Float32 ~rows:17
+               ~outputs:2880 ~block:32));
       equal bool ~msg:"a selected core the host lacks" false (selected "cpu" 0);
       equal bool ~msg:"a selected core past CUDA's" false (selected "cuda" 99))
+
+(* The heuristic takes a core of a decoded product where core_fits holds of
+   its shape: [rows] rows by an MXFP4 matrix of 16384 outputs, summed over
+   16384 values. *)
+let core_fits_decoded =
+  let rows =
+    List.concat_map (fun d -> List.map (fun g -> (d, g)) gpus) decoded_rows
+  in
+  let dtype_of = function
+    | "bfloat16" -> Dtype.Bfloat16
+    | "half" -> Dtype.Float16
+    | _ -> Dtype.Float32
+  in
+  let pp ppf ((rows, dtype), (gpu, _)) =
+    Format.fprintf ppf "%d %s rows on %s" rows dtype gpu
+  in
+  prop "core_fits names the decoded products the heuristic takes a core of"
+    ~count:0 ~examples:rows (Gen.with_pp pp (Gen.of_list rows))
+    (fun ((rows, dtype), (gpu, ren)) ->
+      let ren = Lazy.force ren in
+      let s =
+        K.v (kernel (Printf.sprintf "decoded_rows_%d_%s" rows dtype)) ren
+      in
+      K.convert_loop_to_global s;
+      let o = Heuristic.hand_coded_optimizations s in
+      let cored =
+        List.exists (function Opt.Tc _ -> true | _ -> false) (K.applied_opts o)
+      in
+      cover "a core" cored;
+      cover "a core of 17 to 32 rows" (cored && rows > 16 && rows <= 32);
+      cover "no core" (not cored);
+      equal bool
+        ~msg:(Printf.sprintf "%d %s on %s" rows dtype gpu)
+        cored
+        (Heuristic.core_fits ren ~decoded:true ~dtype_in:(dtype_of dtype)
+           ~dtype_out:Dtype.Float32 ~rows ~outputs:16384 ~block:16384))
 
 (* [core_rows]
 
    The fewest rows a core takes along its [M]: the least multiple of [M]
-   past the reuse that streams first, 32, of a core of the operand's dtypes
-   whose [N] and [K] pad the outputs and the block within the bound of
-   core_fits. *)
-let core_rows ?(ren = "cuda") ?(outputs = 256) ?(block = 64)
-    ?(dtype_in = Dtype.Bfloat16) ?(dtype_out = Dtype.Float32) () =
-  Heuristic.core_rows (renderer ren) ~dtype_in ~dtype_out ~outputs ~block
+   past the reuse at which a core comes first, 32, or 16 for a decoded
+   operand, of a core of the operand's dtypes whose [N] and [K] pad the
+   outputs and the block within the bound of core_fits. *)
+let core_rows ?(ren = "cuda") ?(decoded = false) ?(outputs = 256)
+    ?(block = 64) ?(dtype_in = Dtype.Bfloat16) ?(dtype_out = Dtype.Float32) ()
+    =
+  Heuristic.core_rows (renderer ren) ~decoded ~dtype_in ~dtype_out ~outputs
+    ~block
 
 let core_rows_cases =
   cases "core_rows names the fewest rows a core takes" ~id:fst
@@ -3069,6 +3139,17 @@ let core_rows_cases =
       ( "float32 operands without TF32 allowed",
         (core_rows ~dtype_in:Dtype.Float32 (), None) );
       ("the host has no core", (core_rows ~ren:"cpu" (), None));
+      ("CUDA's 16-row tile decoded", (core_rows ~decoded:true (), Some 32));
+      ( "Metal's 8-row tile decoded",
+        (core_rows ~ren:"metal" ~decoded:true (), Some 24) );
+      ( "decoded outputs as many as the rows",
+        (core_rows ~decoded:true ~outputs:32 (), None) );
+      ( "decoded outputs one more than the rows",
+        (core_rows ~decoded:true ~outputs:33 (), None) );
+      ( "decoded outputs within the bound past the rows",
+        (core_rows ~decoded:true ~outputs:40 (), Some 32) );
+      ( "decoded outputs fewer than the rows",
+        (core_rows ~decoded:true ~outputs:24 (), None) );
     ]
     (fun (_, (actual, want)) -> equal (option int) want actual)
 
@@ -3078,24 +3159,29 @@ let core_rows_fit =
     let open Gen in
     let+ ren = of_list [ "cuda"; "amd"; "metal"; "cpu" ]
     and+ dtype_in = of_list [ Dtype.Bfloat16; Dtype.Float16; Dtype.Float32 ]
-    and+ outputs = of_list [ 8; 32; 33; 40; 48; 256; 2880 ]
+    and+ decoded = bool
+    and+ outputs = of_list [ 8; 24; 32; 33; 40; 48; 256; 2880 ]
     and+ block = of_list [ 16; 17; 32; 2880 ] in
-    (ren, dtype_in, outputs, block)
+    (ren, dtype_in, decoded, outputs, block)
   in
-  let pp ppf (ren, dt, outputs, block) =
-    Format.fprintf ppf "%s, %a, %d outputs, block %d" ren Dtype.pp dt outputs
-      block
+  let pp ppf (ren, dt, decoded, outputs, block) =
+    Format.fprintf ppf "%s, %a, %s, %d outputs, block %d" ren Dtype.pp dt
+      (if decoded then "decoded" else "stored")
+      outputs block
   in
   prop "core_fits holds of core_rows' rows" (Gen.with_pp pp gen)
-    (fun (ren, dtype_in, outputs, block) ->
+    (fun (ren, dtype_in, decoded, outputs, block) ->
       let ren = renderer ren and dtype_out = Dtype.Float32 in
-      match Heuristic.core_rows ren ~dtype_in ~dtype_out ~outputs ~block with
+      match
+        Heuristic.core_rows ren ~decoded ~dtype_in ~dtype_out ~outputs ~block
+      with
       | None -> cover "no core" true
       | Some rows ->
           cover "a core" true;
+          cover "a decoded operand's core" decoded;
           equal bool true
-            (Heuristic.core_fits ren ~dtype_in ~dtype_out ~rows ~outputs
-               ~block))
+            (Heuristic.core_fits ren ~decoded ~dtype_in ~dtype_out ~rows
+               ~outputs ~block))
 
 let core_rows_settings =
   test "core_rows reads the core settings" (fun () ->
@@ -3111,6 +3197,7 @@ let () =
          chosen;
          core_fits_cases;
          core_fits_settings;
+         core_fits_decoded;
          core_rows_cases;
          core_rows_fit;
          core_rows_settings;

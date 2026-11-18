@@ -24,9 +24,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - D357's inner-end group split loses to tinygrad's top split on the bfloat16
   argmax and max over 201088 values (0.67-0.77x, about 3 us a decode step)
   and on sum_cols_prime (0.37x)
-- `Heuristic.core_fits` and `core_rows`, which rune reads, count every pad
-  of a decoded operand, which D230 does not: rune keeps Q8_0-like products
-  of 17-32 rows flat. Both should take `~decoded` (rowdecode/)
 - A decoded operand of 12-16 rows streams in one pass where a core probably
   wins (559-706 us against 424-492 at 17-64 rows); it reaches gpt-oss's
   Q8_0 prefill at 12 tokens (rowdecode/design-a.md)

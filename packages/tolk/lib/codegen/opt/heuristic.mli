@@ -286,49 +286,55 @@ val cores : Renderer.t -> Tc.t list
 
 val core_fits :
   Renderer.t ->
+  decoded:bool ->
   dtype_in:Dtype.t ->
   dtype_out:Dtype.t ->
   rows:int ->
   outputs:int ->
   block:int ->
   bool
-(** [core_fits ren ~dtype_in ~dtype_out ~rows ~outputs ~block] is [true] iff a
-    contraction of [dtype_in] operands of one free axis each, of extents [rows]
-    and [outputs], accumulated in [dtype_out] and summed over [block] of them
-    at a time, leaves streaming ({!section-streaming}) to take a tensor core of
-    [ren]: one of {!val-cores} of those dtypes fits its shape
-    ({!core_fits_shape}). Every pad counts against the bound on padding's
-    work, a decoded operand's rows' too, which the heuristic's cores do not
-    count ({!section-cores}), so a decoded product of rows past the reuse
-    that streams first can take a core that [core_fits] refuses. A caller
-    that writes a contraction asks it to choose a form for the layout the
-    kernel will take. *)
+(** [core_fits ren ~decoded ~dtype_in ~dtype_out ~rows ~outputs ~block] is
+    [true] iff a contraction of [dtype_in] operands of one free axis each, of
+    extents [rows] and [outputs], accumulated in [dtype_out] and summed over
+    [block] of them at a time, leaves streaming ({!section-streaming}) to take
+    a tensor core of [ren]: one of {!val-cores} of those dtypes fits its shape
+    ({!core_fits_shape}). With [~decoded:true] the operand of [outputs] is
+    decoded from integers ({!Stage.decoded}). A caller that writes a
+    contraction asks it to choose a form for the layout the kernel will
+    take. *)
 
-val core_fits_shape : Tc.t -> rows:int -> outputs:int -> block:int -> bool
-(** [core_fits_shape tc ~rows ~outputs ~block] is [true] iff the lesser of
-    [rows] and [outputs] is past the reuse that streams first
-    ({!section-streaming}), and [tc] takes [block] along its [K] and [rows]
-    and [outputs] along its [M] and [N], in either role: padded to multiples
-    of them within the bound on padding's work that the heuristic's cores
-    keep ({!Setting.tc_opt} [2]), or, below that level, where they divide
-    them. *)
+val core_fits_shape :
+  Tc.t -> decoded:bool -> rows:int -> outputs:int -> block:int -> bool
+(** [core_fits_shape tc ~decoded ~rows ~outputs ~block] is [true] iff the
+    lesser of [rows] and [outputs] is past the reuse at which a core comes
+    before a stream ({!section-streaming}), and [tc] takes [block] along its
+    [K] and [rows] and [outputs] along its [M] and [N], in either role: padded
+    to multiples of them within the bound on padding's work that the
+    heuristic's cores keep ({!Setting.tc_opt} [2]), or, below that level,
+    where they divide them. That reuse is 32, or 16 where [decoded], the
+    operand of [outputs] decoded from integers, and [rows] are fewer than
+    [outputs]. With [decoded], [rows] count against the bound as padded to
+    the tile at level [2], as the heuristic's cores count a pad the decoded
+    operand does not read ({!section-cores}). *)
 
 val core_rows :
   Renderer.t ->
+  decoded:bool ->
   dtype_in:Dtype.t ->
   dtype_out:Dtype.t ->
   outputs:int ->
   block:int ->
   int option
-(** [core_rows ren ~dtype_in ~dtype_out ~outputs ~block] is the fewest rows of
-    a contraction as {!core_fits} takes it, of [outputs] outputs, that a
-    tensor core of [ren] takes with the rows along its [M]: the least multiple
-    of a core's [M] past the reuse that streams first ({!section-streaming}),
-    the least over the cores {!core_fits} would try whose [N] divides
-    [outputs]. It is [None] where no such core is tried or [outputs] is not
-    past that reuse. {!core_fits} holds of these rows. A caller that cuts rows
-    into blocks asks it for the smallest block a core takes with the rows
-    along its [M]. *)
+(** [core_rows ren ~decoded ~dtype_in ~dtype_out ~outputs ~block] is the
+    fewest rows of a contraction as {!core_fits} takes it, of [outputs]
+    outputs, that a tensor core of [ren] takes with the rows along its [M]:
+    the least multiple of a core's [M] past the reuse at which a core comes
+    before a stream ({!core_fits_shape}), the least over the cores
+    {!core_fits} would try that take [outputs] along their [N] and [block]
+    along their [K]. It is [None] where no such core is tried or none of
+    them comes first at those rows. {!core_fits} holds of these rows. A
+    caller that cuts rows into blocks asks it for the smallest block a core
+    takes with the rows along its [M]. *)
 
 val held_registers : Postrange.Scheduler.t -> Renderer.registers -> int
 (** [held_registers k file] is the registers of [file] that [k]'s reduces'

@@ -9,7 +9,8 @@
    numbering of repeated keys eager's counts, a cast between float32 and a
    16-bit float gives eager's bits at every code and tie, as does a cast of
    an integer to a float at the ties of every exponent, a product of narrow
-   floats or of MXFP4 weights holds its bound, an MXFP4 product of bfloat16
+   floats or of MXFP4 weights holds its bound, a Q8_0 product takes a tensor
+   core where Tolk.Heuristic.core_fits holds, an MXFP4 product of bfloat16
    rows decodes each code at each scale byte exactly, a routed product of
    MXFP4 or bfloat16 experts of exact sums gives eager's bits per row and in
    blocks of 48 and 64 rows and takes a tensor core and its blocks at the
@@ -2258,9 +2259,10 @@ let routed_inputs = 64
 let routed_outputs = 256
 
 (* The fewest rows a tensor core of [ren] takes of a routed product of
-   [routed_inputs] by [outputs], {!routed_outputs} by default. *)
+   [routed_inputs] by [outputs], {!routed_outputs} by default, its slices
+   asked as stored, as Rune.Lower_reduce.contract asks of MXFP4's too. *)
 let routed_core ?(outputs = routed_outputs) ren =
-  Tolk.Heuristic.core_rows ren ~dtype_in:Tolk.Dtype.Bfloat16
+  Tolk.Heuristic.core_rows ren ~decoded:false ~dtype_in:Tolk.Dtype.Bfloat16
     ~dtype_out:Tolk.Dtype.Float32 ~outputs ~block:routed_inputs
 
 (* The rows of a block of a routed product's [n] rows over [g] groups on
@@ -2724,7 +2726,8 @@ let computed_examples =
 (* Quantised products
 
    [Nx_quant.apply] by one row of [x], as a decode step multiplies each
-   projection, and by 512, as a prompt does: compiled on the GPU, eagerly and
+   projection, by 24, which a Q8_0 matrix's partial form takes on a tensor
+   core, and by 512, as a prompt does: compiled on the GPU, eagerly and
    compiled on the host, each within {!Nx.contract}'s bound of the float64
    reference product (Quants.reference). *)
 
@@ -2738,14 +2741,14 @@ let pp_quant ppf c =
 let quant_gen =
   let open Gen in
   (let+ format = of_list Quants.formats
-   and+ m = of_list [ 1; 512 ]
+   and+ m = of_list [ 1; 24; 512 ]
    and+ seed = int_range 0 1000 in
    { format; m; seed })
   |> with_pp pp_quant
 
 let quant_examples =
   List.concat_map
-    (fun format -> List.map (fun m -> { format; m; seed = 3 }) [ 1; 512 ])
+    (fun format -> List.map (fun m -> { format; m; seed = 3 }) [ 1; 24; 512 ])
     Quants.formats
 
 let quant_law c =
@@ -2948,6 +2951,60 @@ let q8_0_special =
         equal ~msg:"shape" (array int) [| 512; 64 |] (Nx.shape y);
         Array.iter (fun v -> equal ~msg:"+0" float_exact 0. v) (Nx.to_array y));
   ]
+
+(* A Q8_0 product of [rows] bfloat16 rows by 256 outputs over 16 blocks takes
+   the partial form where {!Tolk.Heuristic.core_fits} holds of its codes as a
+   decoded operand, and its kernel then takes the tensor core the form is
+   written for: a decoded operand's rows past 16 take one. Each sum is exact,
+   so the product gives eager's bits in either form. *)
+let q8_0_rows_core rows =
+  let d, (module S) = on_gpu () in
+  let ren = Tolk_engine.renderer d in
+  let outputs = 256 and blocks = 16 in
+  let high = [| 0x38; 0x3c; 0x40 |] in
+  let bytes =
+    Array.init (outputs * blocks * q8_0_block) (fun i ->
+        let blk = i / q8_0_block in
+        match i mod q8_0_block with
+        | 0 -> 0x00
+        | 1 -> high.(blk mod 3)
+        | _ -> ((((i * 7) + (blk * 3)) mod 9) - 4) land 0xff)
+  in
+  let w =
+    Nx_quant.q8_0
+      (Nx.create Nx.uint8 [| outputs; blocks * q8_0_block |] bytes)
+  in
+  let x =
+    Nx.cast Nx.bfloat16
+      (Nx.init Nx.float32 [| rows; 32 * blocks |] (fun ix ->
+           Float.of_int ((((ix.(0) * 2) + (ix.(1) * 3)) mod 5) - 2)))
+  in
+  let y, kernels =
+    Tolk.Realize.kernels (fun () ->
+        host
+          (Rune.jit'
+             (Nx_quant.apply (Nx_quant.place S.on w))
+             (Nx.place S.on x)))
+  in
+  equal ~msg:"eager's bits" bits_t (bits (Nx_quant.apply w x)) (bits y);
+  let fits =
+    Tolk.Heuristic.core_fits ren ~decoded:true ~dtype_in:Tolk.Dtype.Bfloat16
+      ~dtype_out:Tolk.Dtype.Float32 ~rows ~outputs ~block:32
+  in
+  let products =
+    List.filter
+      (fun (k : Tolk.Realize.kernel) -> sums_product k.ast k.renderer)
+      kernels
+  in
+  equal ~msg:"a product on a tensor core" bool fits
+    (List.exists on_core products)
+
+let q8_0_rows =
+  Windtrap.cases
+    "a Q8_0 product's rows take a tensor core where core_fits holds"
+    ~id:(Printf.sprintf "%d rows")
+    [ 12; 16; 17; 24; 32; 33; 64 ]
+    q8_0_rows_core
 
 (* Exp on a GPU that flushes float32's subnormals, where rune.mli states no
    kind exact: within 9 ulps at float32 where the result is normal, and every
@@ -3596,11 +3653,12 @@ let () =
          group "quantised products"
            ([
               prop ~count:10 ~examples:quant_examples
-                "one row and 512 rows hold the bound, eager and compiled"
+                "one row, 24 and 512 rows hold the bound, eager and compiled"
                 quant_gen quant_law;
             ]
            @ q8_0_special
            @ [
+               q8_0_rows;
                test "a Value scale on the first operand in the partial form"
                  partial_side_a;
                test "a core under a reduce re-reads a tile of each outer trip"

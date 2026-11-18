@@ -479,6 +479,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Nx_quant.apply` of a Q8_0 matrix by 17 to 32 bfloat16 or float16 rows on
+  a GPU, or past 32 rows padded past 6/5, takes a tensor core where it
+  streamed: 0.65 ms where it took 1.59 at 17 rows of 16384 on an RTX 5000 Ada.
 - Numerics states a compiled `Nx.asinh`, `Nx.acosh`, `Nx.atanh`, `Nx.rsqrt`
   and `Nx.hypot` of floats and every special function (`Nx.erfc` to
   `Nx.i1e`) eager's bits on the host and NVIDIA GPUs; it stated no bound.
@@ -1474,6 +1477,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- **Breaking:** `Heuristic.core_fits`, `core_fits_shape` and `core_rows`
+  take `~decoded`, under which a decoded operand's rows take a core past 16,
+  their pad uncounted, as the heuristic's cores take them.
 - A loop whose bound reads memory through a bare index, as `j < x[0]`, stays a
   loop: on a GPU target `Codegen.full_rewrite_to_sink` made it a launch
   dimension and failed verification, and a beam search timed it on storage of

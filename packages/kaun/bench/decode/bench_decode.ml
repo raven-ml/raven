@@ -335,17 +335,30 @@ let linear make at =
    at 1024. Every token reads every value of the matrix, so the speed turns on
    where its decoding runs: stored once, or in the product's tiles, which share
    it between the tokens they hold. The tokens are bfloat16, a model's
-   activations, which a GPU's tensor cores multiply, or float32. *)
+   activations, which a GPU's tensor cores multiply, or float32. A Q8_0
+   matrix of 16384, 285 MB, by 17 and 32 bfloat16 tokens multiplies each
+   block's partial sum by its scale on a tensor core. *)
 
 type activations = Bfloat16 | Float32
+type weights = Mxfp4 | Q8_0
 
-let tokens_product ~n ~tokens ~activations at =
-  let w =
-    Nx_quant.place at
-      (Nx_quant.mxfp4
-         ~scales:(Nx.copy (Nx.full Nx.uint8 [| n; n / 32 |] 127))
-         (Nx.copy (random [| n; n / 2 |])))
-  in
+let matrix ~n = function
+  | Mxfp4 ->
+      Nx_quant.mxfp4
+        ~scales:(Nx.copy (Nx.full Nx.uint8 [| n; n / 32 |] 127))
+        (Nx.copy (random [| n; n / 2 |]))
+  | Q8_0 ->
+      let scales =
+        Nx.broadcast_to [| n; n / 32; 2 |]
+          (Nx.create Nx.uint8 [| 1; 1; 2 |] one)
+      in
+      let codes = random [| n; n / 32; 32 |] in
+      Nx_quant.q8_0
+        (Nx.copy
+           (Nx.reshape [| n; -1 |] (Nx.concatenate ~axis:2 [ scales; codes ])))
+
+let tokens_product ~n ~weights ~tokens ~activations at =
+  let w = Nx_quant.place at (matrix ~n weights) in
   let call (type b) (x : (float, b, _) Nx.t) =
     let f = Rune.jit' (Nx_quant.apply w) in
     let x = own at x in
@@ -387,19 +400,23 @@ let products ~tokens ~n ~many devices =
           { at = (fun at -> linear make at) })
       formats
   @ List.map
-      (fun (tokens, activations) ->
+      (fun (weights, tokens, activations) ->
         on devices
-          (Printf.sprintf "mxfp4 product of %d, %d %s tokens" n tokens
+          (Printf.sprintf "%s product of %d, %d %s tokens"
+             (match weights with Mxfp4 -> "mxfp4" | Q8_0 -> "q8_0")
+             n tokens
              (match activations with
              | Bfloat16 -> "bfloat16"
              | Float32 -> "float32"))
-          { at = (fun at -> tokens_product ~n ~tokens ~activations at) })
+          {
+            at = (fun at -> tokens_product ~n ~weights ~tokens ~activations at);
+          })
       many
 
 let host =
   let devices () = (module Nx.Host : Nx.Devices) in
   products ~tokens:[ 1; 64 ] ~n:1024
-    ~many:[ (10, Bfloat16); (64, Bfloat16) ]
+    ~many:[ (Mxfp4, 10, Bfloat16); (Mxfp4, 64, Bfloat16) ]
     devices
   @ [
       routed_on devices ~run:Eager ~tokens:1 ", eager";
@@ -410,8 +427,10 @@ let host =
 let get_ok = function Ok d -> d | Error e -> failwith e
 
 let gpu_many =
-  List.map (fun n -> (n, Bfloat16)) [ 1; 12; 16; 17; 32; 64; 128; 256; 512 ]
-  @ [ (64, Float32) ]
+  List.map
+    (fun n -> (Mxfp4, n, Bfloat16))
+    [ 1; 12; 16; 17; 32; 64; 128; 256; 512 ]
+  @ [ (Mxfp4, 64, Float32); (Q8_0, 17, Bfloat16); (Q8_0, 32, Bfloat16) ]
 
 (* The GPU: CUDA's first, else AMD's first. *)
 let gpu =

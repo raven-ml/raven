@@ -3179,9 +3179,10 @@ driver signals its own (D146).
   cores (`Heuristic.cores`, which the engine passes to
   `Schedule.create_linear_with_vars ~cores`) multiplies both factors into
   the sum's type (`Tc.takes`, which `Postrange`'s `try_core` asks too) and
-  fits its rows, outputs and block as the heuristic asks before it takes a
-  core (`Heuristic.core_fits_shape`, which `Heuristic.core_fits` reads): a
-  sum of 32 rows or fewer, which the heuristic streams, stays grouped. Of
+  fits its rows, outputs and block as the heuristic asks of stored operands
+  before it takes a core (`Heuristic.core_fits_shape`, which
+  `Heuristic.core_fits` reads): a sum of 32 rows or fewer, which the
+  heuristic streams, stays grouped. Of
   two such products a stored value's kernel computes, neither reading the
   other, the later in the walk is stored: as the first narrowing cast its
   one consumer reads it through, past casts and the addition of an initial
@@ -5587,8 +5588,9 @@ union, as fast on CUDA, on the host and in compile time.
   it streams nothing (D89) and states no bound on how often a kernel decodes
   a value its outputs share.
 - **tolk:** `Heuristic.stream`'s upcast of the reuse ranges,
-  `Heuristic.hand_coded_with`'s `core_first` and late stream, and
-  `Heuristic.padded_within`.
+  `Heuristic.hand_coded_with`'s `core_first` and late stream,
+  `Heuristic.padded_within`, and `Heuristic.core_fits` and `core_rows`
+  under `~decoded`.
 - **Differs:** on a GPU, a decoded operand (D163) whose `R` outputs along one
   axis read it at one index:
   - up to `upcast_max` (16) rows streams in one pass;
@@ -5597,6 +5599,11 @@ union, as fast on CUDA, on the host and in compile time.
     only PADTO's bound; pads of its own axes and of K are;
   - with no such core, streams in `ceil(R / 16)` passes at any reuse, the
     axis padded where they do not divide it.
+
+  `core_fits` and `core_rows` under `~decoded` count a decoded operand's
+  rows as the heuristic does, past 16 where they are fewer than its outputs
+  and their pad uncounted, so that rune writes such rows of a Q8_0 matrix in
+  the partial form a core takes.
 
   A core decodes a value once a tile of its rows where its floor (D175)
   refuses their upcast, and once in each lane its fragment holds it (two on
@@ -5608,10 +5615,12 @@ union, as fast on CUDA, on the host and in compile time.
 - **Pinned by:** the Heuristic suite's `a GPU kernel decodes a value R rows
   read at one index at most ceil(R / 16) times its core's copies` (1 to 512
   rows of bfloat16, half and float32 on the CUDA, RDNA3, RDNA4, CDNA and
-  Metal renderers) and `a decoded product's optimisations keep its writes`
-  (17 and 19 rows on a core, 64 float32 rows streamed); kaun's
-  `Quant/cuda/mxfp4-product-of-16384-{17,32}-bfloat16-tokens` and
-  `-64-float32-tokens`.
+  Metal renderers), `a decoded product's optimisations keep its writes`
+  (17 and 19 rows on a core, 64 float32 rows streamed) and `core_fits names
+  the decoded products the heuristic takes a core of`; rune's GPU suite's `a
+  Q8_0 product's rows take a tensor core where core_fits holds`; kaun's
+  `Quant/cuda/mxfp4-product-of-16384-{17,32}-bfloat16-tokens`,
+  `-64-float32-tokens` and `q8_0-product-of-16384-{17,32}-bfloat16-tokens`.
 
 ## D235. A tensor core's lanes are a warp of its threads
 
@@ -9121,8 +9130,9 @@ D466.
   the core tinygrad's default takes, on the same axis. A padded core is taken
   only where its padded extents hold at most 6/5 of the work of the kernel's
   own (`core_waste`), and `core_fits` and `core_rows`, which rune asks for
-  the form of a contraction, read the same bound, counting the pad of a
-  decoded operand's rows that D230 leaves out, in place of divisibility
+  the form of a contraction, read the same bound, leaving out under
+  `~decoded` the pad of a decoded operand's rows as D230 does, in place of
+  divisibility
   (at `TC_OPT` 0 or 1 the bound is 1, divisibility). An extent the kernel
   holds as a range of one trip is no axis, and a core that would pad it is
   refused, where tinygrad's lookup of the axis raises. At level 2, a staged

@@ -1618,22 +1618,45 @@ let cores_of ren ~dtype_in ~dtype_out =
       Dtype.equal tc.dtype_in dtype_in && Dtype.equal tc.dtype_out dtype_out)
     (cores ren)
 
-let core_fits_shape tc ~rows ~outputs ~block =
-  min rows outputs > stream_first
-  && (core_takes (Tc.dims tc) (outputs, rows, block)
-     || core_takes (Tc.dims tc) (rows, outputs, block))
+(* The reuse past which a core comes before a stream ([core_first]): the
+   operand of least reuse streams, and where that is a decoded operand, of
+   [outputs] read by [rows] rows fewer than [outputs], a core takes the rows
+   past [upcast_max]. At a tie the layouts pick the streamed operand, the
+   first of the product where both are laid along the reduce. *)
+let first_core ~decoded ~rows ~outputs =
+  if decoded && rows < outputs then K.upcast_max else stream_first
 
-let core_fits ren ~dtype_in ~dtype_out ~rows ~outputs ~block =
+(* Whether a core of [dims] takes [rows] along its M or N, [outputs] along
+   the other and [block] along its K. A decoded operand's rows, which it does
+   not read, count as padded to the tile, as in {!padded_within}: they share
+   each value it decodes. *)
+let shape_takes (n, m, k) ~decoded ~rows ~outputs ~block =
+  let pad d =
+    if decoded && setting Setting.tc_opt >= 2 then (rows + d - 1) / d * d
+    else rows
+  in
+  core_takes (n, m, k) (outputs, pad m, block)
+  || core_takes (n, m, k) (pad n, outputs, block)
+
+let core_fits_shape tc ~decoded ~rows ~outputs ~block =
+  min rows outputs > first_core ~decoded ~rows ~outputs
+  && shape_takes (Tc.dims tc) ~decoded ~rows ~outputs ~block
+
+let core_fits ren ~decoded ~dtype_in ~dtype_out ~rows ~outputs ~block =
   List.exists
-    (fun tc -> core_fits_shape tc ~rows ~outputs ~block)
+    (fun tc -> core_fits_shape tc ~decoded ~rows ~outputs ~block)
     (cores_of ren ~dtype_in ~dtype_out)
 
-let core_rows ren ~dtype_in ~dtype_out ~outputs ~block =
-  (* The least multiple of the core's M past [stream_first]. *)
+let core_rows ren ~decoded ~dtype_in ~dtype_out ~outputs ~block =
+  (* The least multiple of the core's M past the reuse at which a core comes
+     first. *)
   let least (tc : Tc.t) =
     let _, m, _ = Tc.dims tc in
-    let rows = ((stream_first / m) + 1) * m in
-    if outputs > stream_first && core_takes (Tc.dims tc) (outputs, rows, block)
+    let first = if decoded then K.upcast_max else stream_first in
+    let rows = ((first / m) + 1) * m in
+    if
+      min rows outputs > first_core ~decoded ~rows ~outputs
+      && core_takes (Tc.dims tc) (outputs, rows, block)
     then Some rows
     else None
   in

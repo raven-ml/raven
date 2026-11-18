@@ -1234,7 +1234,7 @@ let read_ranges rctx u idx =
    computes: an addition of products, through movements and at most one
    cast, whose factors each read an axis of [r]'s output that the other does
    not, and a core that multiplies them into [r]'s type ({!Tc.takes}) fits
-   its shape as the heuristic asks before it takes one
+   its shape as the heuristic asks of stored operands before it takes one
    ({!Heuristic.core_fits_shape}): its rows the axes only one factor reads,
    its outputs those only the other reads, and its block the axes [r]
    reduces, a symbolic extent counting at its largest. *)
@@ -1297,7 +1297,8 @@ let core_product rctx cores r =
           && List.exists
                (fun tc ->
                  takes m tc
-                 && Heuristic.core_fits_shape tc ~rows ~outputs ~block)
+                 && Heuristic.core_fits_shape tc ~decoded:false ~rows ~outputs
+                      ~block)
                cores
       | _ -> false)
   | _ -> false

@@ -975,9 +975,12 @@ let rows ~renderer ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
   let shape x = extents (List.hd (Arith.parts x.dtype x.node)) in
   let sa = shape a and sb = shape b in
   let n = List.nth sa a_axis and g = List.nth sb b_axis in
-  (* The fewest rows a core takes of a block, asked as {!partial} asks: [b]'s
-     one free extent past 1 is the core's outputs, its last contracted extent
-     the core's block. *)
+  (* The fewest rows a core takes of a block of stored slices: [b]'s one free
+     extent past 1 is the core's outputs, its last contracted extent the
+     core's block. A decoded slice is asked as a stored one: a core takes its
+     blocks from 32 rows on CUDA, but blocks of 32 ran slower than 48 on
+     an RTX 5000 Ada, gpt-oss-20b's Q8_0 prefill 22.6-23.1 ms against
+     20.6-20.8 at 12 tokens and 28.4-29.4 against 27.8-28.1 at 64. *)
   let core =
     lazy
       (let bound = b_axis :: List.map snd (batch @ contracting) in
@@ -985,8 +988,9 @@ let rows ~renderer ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
        let outputs = List.filter (fun e -> e > 1) (List.map (List.nth sb) fb) in
        match (outputs, List.rev contracting, core_in acc a b) with
        | [ outputs ], (_, kb) :: _, Some dtype_in when List.nth sb kb > 0 ->
-           Tolk.Heuristic.core_rows (Lazy.force renderer) ~dtype_in
-             ~dtype_out:(Arith.dtype acc) ~outputs ~block:(List.nth sb kb)
+           Tolk.Heuristic.core_rows (Lazy.force renderer) ~decoded:false
+             ~dtype_in ~dtype_out:(Arith.dtype acc) ~outputs
+             ~block:(List.nth sb kb)
        | _ -> None)
   in
   let nb = List.length batch in
@@ -1233,8 +1237,8 @@ let partial ~renderer ~batch ~contracting ~acc ~out a b init =
           let fits =
             match (rows, outputs) with
             | [ rows ], [ outputs ] when block > 0 ->
-                Tolk.Heuristic.core_fits (Lazy.force renderer) ~dtype_in:over
-                  ~dtype_out:Float32 ~rows ~outputs ~block
+                Tolk.Heuristic.core_fits (Lazy.force renderer) ~decoded:true
+                  ~dtype_in:over ~dtype_out:Float32 ~rows ~outputs ~block
             | _ -> false
           in
           if not fits then None
