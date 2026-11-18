@@ -37,6 +37,7 @@
 #include "deflate_enc.h"
 #include "lz.h"
 #include "lz4.h"
+#include "lzf.h"
 #include "lzw.h"
 #include "snappy.h"
 #include "zstd.h"
@@ -72,6 +73,11 @@
    LZW decode reports only each 32 KiB of work, any threshold up to that
    releases at the same report. */
 #define RELEASE_LZW_DECODE (2 * 1024)
+/* LZF's vendor is untimed: liblzf decodes inside h5py's HDF5 filter, which
+   vendor_table does not link. An LZF decode, as an LZW one, reports only
+   each 32 KiB of work, so any threshold up to that releases at the same
+   report: LZ4's and Snappy's, the formats of its kind. */
+#define RELEASE_LZF_DECODE (16 * 1024)
 
 void *lz_alloc(size_t n) { return caml_stat_alloc_noexc(n); }
 
@@ -760,6 +766,10 @@ CAMLprim value lz_snappy_bound_stub(value n) {
 
 CAMLprim value lz_lzw_decode_stub(value src, value dst) {
   return simple_decode(lz_lzw_decode, RELEASE_LZW_DECODE, src, dst);
+}
+
+CAMLprim value lz_lzf_decode_stub(value src, value dst) {
+  return simple_decode(lz_lzf_decode, RELEASE_LZF_DECODE, src, dst);
 }
 
 /* Checksums. A checksum's work is its input, known before it starts: a

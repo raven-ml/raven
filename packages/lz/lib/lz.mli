@@ -1,14 +1,15 @@
 (** Lossless compression between byte bigarrays: deflate with its zlib and
-    gzip wrappers, Zstandard, LZ4, Snappy and TIFF's LZW, and CRC-32.
+    gzip wrappers, Zstandard, LZ4, Snappy, TIFF's LZW and LZF, and
+    CRC-32.
 
     Every buffer is a {!bigbytes}, a byte bigarray, whose bytes the
     collector never moves. A {e stream} is the bytes that encode one input,
     its {e decoded bytes}, in one format. A gzip stream holds one or more
     {e members}, and a Zstandard or LZ4 stream one or more {e frames},
-    which below are members too. An LZ4 or Snappy {e block} is a stream of
-    its own. A {e match} encodes decoded bytes as a copy of earlier decoded
-    bytes of its member, at most the {e window size} back, and those
-    earlier bytes are the member's {e window}. An encoder's {e level} sets
+    which below are members too. An LZ4, Snappy or LZF {e block} is a
+    stream of its own. A {e match} encodes decoded bytes as a copy of
+    earlier decoded bytes of its member, at most the {e window size} back,
+    and those earlier bytes are the member's {e window}. An encoder's {e level} sets
     how long it searches for matches.
 
     A {e whole-buffer} call is given all of its input
@@ -94,9 +95,9 @@
     Zstandard encoder step also the bytes of its window it moves to make
     room for new input, over 4 MiB at levels 9 to 12. The threshold is
     8 KiB, except 4 KiB when deflate, zlib or gzip encodes, 16 KiB when
-    LZ4 or Snappy decodes and 2 KiB when LZW decodes. So a short call holds the lock whatever the
-    size of its input and destination, and a long one releases it
-    whatever the size of its input: a decode of a few KiB that writes
+    LZ4, Snappy or LZF decodes and 2 KiB when LZW decodes. So a short call
+    holds the lock whatever the size of its input and destination, and a
+    long one releases it whatever the size of its input: a decode of a few KiB that writes
     megabytes releases it, and a step on a few bytes that writes a few
     hundred holds it, unless it moves a Zstandard window. While the lock
     is released, another thread of the domain may take it, and the call
@@ -104,11 +105,12 @@
 
     A call checks its work between the units it works in: a format's
     blocks and members, and each 32 KiB of a decode's output, or of an LZW
-    decode's input and output. An LZ4 or Snappy decode also checks before
-    it copies 32 KiB or more, and releases the lock before the copy when
-    the copy would bring its work to the threshold. A call may thus go on for one unit past its
-    threshold before it releases the lock, and a call whose last unit
-    takes it past the threshold holds the lock to its end. *)
+    or LZF decode's input and output. An LZ4 or Snappy decode also checks
+    before it copies 32 KiB or more, and releases the lock before the copy
+    when the copy would bring its work to the threshold. A call may thus
+    go on for one unit past its threshold before it releases the lock, and
+    a call whose last unit takes it past the threshold holds the lock to
+    its end. *)
 
 type bigbytes =
   (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
@@ -152,7 +154,7 @@ type why =
     ["preset dictionary"] for deflate, zlib and gzip; for Zstandard,
     phrases that name the RFC 8878 field at fault, such as
     ["Window_Size above the decoder's limit"]; and lz's own for LZ4,
-    Snappy and LZW, such as ["incorrect block checksum"]. A message is a
+    Snappy, LZW and LZF, such as ["incorrect block checksum"]. A message is a
     constant string and holds no byte of the input. Messages are for
     printing and may change in a later version, so a program must not
     parse them. *)
@@ -183,9 +185,9 @@ type progress = { consumed : int; produced : int }
     deflate, zlib or LZW stream ends at an exact byte, and [consumed]
     counts up to and including the byte that holds its last bit, so
     whatever follows the stream begins at [consumed]. Every other format
-    is read to the end of [src], members one after another and an LZ4 or
-    Snappy block, which has no end mark, whole, and [consumed] is [src]'s
-    length. *)
+    is read to the end of [src], members one after another and an LZ4,
+    Snappy or LZF block, which has no end mark, whole, and [consumed] is
+    [src]'s length. *)
 
 (** {2:encoding Encoding}
 
@@ -333,7 +335,7 @@ end
 (** {1:formats Formats}
 
     Each format's module has the whole-buffer calls ({!section-whole}),
-    LZW's [decode] alone, and for deflate, zlib, gzip and Zstandard a
+    LZW's and LZF's [decode] alone, and for deflate, zlib, gzip and Zstandard a
     [decoder] and an [encoder] ({!section-steps}). Its [encode],
     [encode_string] and [encoder] take a [?level] where the format has
     levels. Its preamble lists what a decode refuses, each item [Malformed]
@@ -682,6 +684,27 @@ end
 module Lzw : sig
   val decode : bigbytes -> bigbytes -> (progress, error) result
   (** [decode src dst] decodes the LZW stream at [src]'s start
+      ({!section-decoding}). *)
+end
+
+(** LZF blocks, decoded whole. LZF has no written specification, and its
+    format is what liblzf's decoder reads
+    ({{:http://software.schmorp.de/pkg/liblzf.html}liblzf}, [lzf_d.c]). A
+    block is a series of elements, each beginning with a control byte [c],
+    and has no end mark. An element whose [c] is below 32 is a literal run
+    of the next [c + 1] bytes. Any other is a match of [(c lsr 5) + 2]
+    bytes, plus the next byte when [c lsr 5] is 7, copied from
+    [((c land 31) lsl 8 lor b) + 1] bytes back, where [b] is the byte after.
+    HDF5 files store chunks in LZF through h5py's filter 32000.
+
+    A decode refuses a match that reaches before the block's start, at its
+    control byte. A block whose input ends inside an element, or is empty,
+    is [Truncated]. Output past [dst]'s end is [Too_long] at the control
+    byte of the element that asks for it, also when the input ends inside
+    that element's literal run. *)
+module Lzf : sig
+  val decode : bigbytes -> bigbytes -> (progress, error) result
+  (** [decode src dst] decodes the LZF block at [src]'s start
       ({!section-decoding}). *)
 end
 

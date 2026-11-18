@@ -270,6 +270,16 @@ let blocks =
           let dst = Lz_support.create n in
           equal int ~msg:"releases" k
             (count (fun () -> ok_produced n (Lz.Lzw.decode src dst))));
+      (* An LZF block reports after each 32 KiB of input and output: 16
+         KiB of text compresses to less than 16 KiB. *)
+      cases "an LZF block of text"
+        ~id:(fun (n, _) -> Printf.sprintf "decoding %d bytes" n)
+        [ (16 * kib, 0); (mib, 1) ]
+        (fun (n, k) ->
+          let src = Lz_support.of_string (Lz_support.lzf (text n)) in
+          let dst = Lz_support.create n in
+          equal int ~msg:"releases" k
+            (count (fun () -> ok_produced n (Lz.Lzf.decode src dst))));
       test "an LZW stream of ClearCodes past the threshold releases" (fun () ->
           (* 30,000 ClearCodes of 9 bits, 33,750 bytes past 32 KiB of
              input, write nothing. *)

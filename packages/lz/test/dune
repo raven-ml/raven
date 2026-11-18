@@ -11,6 +11,7 @@
   test_lz4
   test_snappy
   test_lzw
+  test_lzf
   test_checksum
   test_step
   test_hostile

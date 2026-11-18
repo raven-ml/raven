@@ -16,6 +16,7 @@
    lz4
    snappy
    lzw
+   lzf
    zstd_dec_fse
    zstd_dec_lit
    zstd_dec_seq

@@ -316,6 +316,13 @@ module Lzw = struct
     = "lz_lzw_decode_stub"
 end
 
+(* LZF *)
+
+module Lzf = struct
+  external decode : bigbytes -> bigbytes -> (progress, error) result
+    = "lz_lzf_decode_stub"
+end
+
 (* Checksums *)
 
 (* From this many bytes a checksum of a bigarray releases the runtime lock:

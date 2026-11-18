@@ -224,6 +224,30 @@ val lzw_pack : (int * int) list -> string
 val lzw : string -> string
 (** [lzw s] is [lzw_pack (lzw_codes s)]. *)
 
+(** {1 LZF}
+
+    lz has no LZF encoder: the suites encode with this one, written from
+    the elements {!Lz.Lzf} states. *)
+
+type lzf =
+  | Literal of string  (** A literal run of 1 to 32 bytes. *)
+  | Copy of { distance : int; length : int }
+      (** A match of 3 to 264 bytes from 1 to 8192 bytes back. *)
+
+val lzf_pack : lzf list -> string
+(** [lzf_pack es] is the bytes of the elements [es], in order.
+
+    Raises [Invalid_argument] if an element is outside its range. *)
+
+val lzf_elements : string -> lzf list
+(** [lzf_elements s] parses [s] greedily: at each byte, the longest match
+    with the last earlier position of the same three bytes, at most 8192
+    back, or the byte joins a literal run. A run of [s]'s one byte gives
+    matches that overlap their output. *)
+
+val lzf : string -> string
+(** [lzf s] is [lzf_pack (lzf_elements s)]. *)
+
 (** {1 Testables} *)
 
 val why : Lz.why Windtrap.testable

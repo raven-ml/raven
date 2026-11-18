@@ -304,6 +304,83 @@ let lzw_pack codes =
 
 let lzw s = lzw_pack (lzw_codes s)
 
+(* LZF *)
+
+type lzf = Literal of string | Copy of { distance : int; length : int }
+
+let lzf_window = 8192
+let lzf_longest = 264
+
+let lzf_pack es =
+  let b = Buffer.create 64 in
+  List.iter
+    (function
+      | Literal l ->
+          let n = String.length l in
+          if n < 1 || n > 32 then
+            invalid_arg (Printf.sprintf "Lz_support.lzf_pack: literal %d" n);
+          Buffer.add_char b (Char.chr (n - 1));
+          Buffer.add_string b l
+      | Copy { distance; length } ->
+          if distance < 1 || distance > lzf_window || length < 3
+             || length > lzf_longest
+          then
+            invalid_arg
+              (Printf.sprintf "Lz_support.lzf_pack: copy %d, %d" distance
+                 length);
+          let d = distance - 1 and l = length - 2 in
+          if l < 7 then Buffer.add_char b (Char.chr ((l lsl 5) lor (d lsr 8)))
+          else begin
+            Buffer.add_char b (Char.chr ((7 lsl 5) lor (d lsr 8)));
+            Buffer.add_char b (Char.chr (l - 7))
+          end;
+          Buffer.add_char b (Char.chr (d land 0xff)))
+    es;
+  Buffer.contents b
+
+let lzf_elements s =
+  let n = String.length s in
+  let last = Hashtbl.create 1024 in
+  let out = ref [] and lit = Buffer.create 32 in
+  let flush () =
+    if Buffer.length lit > 0 then begin
+      out := Literal (Buffer.contents lit) :: !out;
+      Buffer.clear lit
+    end
+  in
+  let key i = String.sub s i 3 in
+  let i = ref 0 in
+  while !i < n do
+    let candidate =
+      if !i + 3 > n then None
+      else
+        match Hashtbl.find_opt last (key !i) with
+        | Some j when !i - j <= lzf_window -> Some j
+        | _ -> None
+    in
+    match candidate with
+    | Some j ->
+        let l = ref 0 in
+        while !i + !l < n && !l < lzf_longest && s.[j + !l] = s.[!i + !l] do
+          incr l
+        done;
+        flush ();
+        out := Copy { distance = !i - j; length = !l } :: !out;
+        for k = !i to Int.min (n - 3) (!i + !l - 1) do
+          Hashtbl.replace last (key k) k
+        done;
+        i := !i + !l
+    | None ->
+        if !i + 3 <= n then Hashtbl.replace last (key !i) !i;
+        Buffer.add_char lit s.[!i];
+        if Buffer.length lit = 32 then flush ();
+        incr i
+  done;
+  flush ();
+  List.rev !out
+
+let lzf s = lzf_pack (lzf_elements s)
+
 (* Bounds *)
 
 let has_bound bound n =

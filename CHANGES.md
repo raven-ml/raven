@@ -3336,6 +3336,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Lz (new)
 
+- Add `Lz.Lzf.decode`, LZF as liblzf's decoder reads it, the compression
+  of h5py's HDF5 filter 32000. A match before the block's start is
+  `Malformed`.
 - Add `Lz.Lzw.decode`, TIFF 6.0's LZW: codes of 9 to 12 bits, most
   significant bit first, widened one entry before the encoder widens.
   Streams of codes least significant bit first are `Unsupported`.
