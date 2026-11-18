@@ -93,16 +93,26 @@ val pixel : Grid.t -> 'd Nx.float64_t -> 'd Nx.float64_t
 
     A sampler reads an array [x] on a grid [src] at pixel points [p] of
     [src], [[...; 2]]. It gives values of [p]'s batch shape followed by
-    [x]'s other axes, and a mask of that shape, the same along [x]'s other
-    axes, that holds where the cell containing the point, [(⌊row⌋, ⌊col⌋)],
-    lies in [src] and [valid] holds there. Where the mask is false the value
-    is 0, and a NaN point's mask is false. [valid] holds one value per cell
-    ({!section-valid}), and without it every cell has data. [x] and [valid]
-    may be the block of [src]'s cells from cell [(row, col)], 0 by default,
-    such as {!window} gives, while [p] stays the whole grid's
-    ({!section-windows}). A program must join masks of one rank, since a
-    [[r; c]] mask and a [[r; c; 1]] one broadcast to another shape when
-    joined, without an error where [r = c], [r = 1] or [c = 1].
+    [x]'s other axes, and a mask of the values' shape, which keeps [x]'s
+    other axes and is the same along them, that holds where the cell
+    containing the point, [(⌊row⌋, ⌊col⌋)], lies in [src] and [valid] holds
+    there. Where the mask is false the value is 0, and a NaN point's mask is
+    false. [valid] holds one value per cell ({!section-valid}), and without
+    it every cell has data. [x] and [valid] may be the block of [src]'s
+    cells from cell [(row, col)], 0 by default, such as {!window} gives,
+    while [p] stays the whole grid's ({!section-windows}).
+
+    A program must join masks of one shape, since a [[r; c]] mask and a
+    [[r; c; 1]] one broadcast to another shape when joined, without an error
+    where [r = c], [r = 1] or [c = 1]. So the mask of bands stacked
+    [[h; w; 4]] is reduced over its band axis before it joins the mask of a
+    layer of [[h; w]], such as a scene classification:
+
+    {[
+      let bands, ok = Warp.bilinear ~valid src p bands in
+      let scl, seen = Warp.nearest src' p' scl in
+      let ok = Nx.logical_and (Nx.all ~axes:[ 2 ] ok) seen
+    ]}
 
     A geographic [src]'s {e turn} is the step of its pixel points that adds
     360° to their longitude, found by the inverse of [src]'s map. [src]
