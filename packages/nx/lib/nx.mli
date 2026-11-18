@@ -339,8 +339,10 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
     of NVIDIA GPUs of [sm_89], and [~kernels:(module Nx_amd)], from
     [nx.amd], a set of AMD GPUs of RDNA4.
     On a set without kernels, a creation ({!section-creation}), a value whose
-    elements come from numbers, is made on the host and placed at the
-    placement the call names as {!place} places it. Every operation other
+    elements come from numbers, is made on the devices of the placement the
+    call names, its bits the host form's: the host computes it into a
+    device's memory where it addresses it, else in slabs of at most 32 MiB
+    each copied there. Every operation other
     than a creation raises on such a set where it makes elements, naming
     the {!place} onto a set with kernels or the compiler that would compute
     it, even where it needs no element of its operands, as
@@ -540,8 +542,8 @@ val composite : by:string -> 'd arg list -> (unit -> 'a) -> 'a
     devices where the shape has no axis the placement cuts. A
     creation holds its elements from the call on.
 
-    On a set without kernels, a creation is made on the host and placed
-    where the call names ({!val-devices}).
+    On a set without kernels, a creation is made on the devices of the
+    placement the call names, with its host form's bits ({!val-devices}).
 
     An [_at] form raises as its host form does, and raises
     [Invalid_argument] naming itself where its placement cuts an axis the
@@ -5071,7 +5073,8 @@ module Rng : sig
       draws on the host, and its [_at] form at the placement it is given,
       each device computing its window: [placement (uniform_at p dt s)] is
       [p]. On a set without kernels, a draw without [~key] is a creation,
-      the host draw placed there ({!Nx.val-devices}), and a draw from a
+      made on the devices there with the host draw's bits
+      ({!Nx.val-devices}), and a draw from a
       [~key] there reads the key, a computation, and raises as one, naming
       {!with_key} where the sampler has no array parameter. An
       [_at] form raises as its host form does, and raises
@@ -5667,7 +5670,8 @@ end
     operations. An operation no interpretation reaches computes now on its
     operands' set's kernels, and raises if the set has none, but a check of
     one flag that has bytes ([Check]) and a [Map] of no loads, a creation,
-    which the host computes and copies where it lies ({!val-devices}).
+    which is made on the devices where it lies with the host form's bits
+    ({!val-devices}).
 
     An interpretation's rule receives each operation whole, a [Map] of
     several nodes or outputs included, and gives it its whole meaning,

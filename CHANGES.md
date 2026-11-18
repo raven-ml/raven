@@ -3345,6 +3345,14 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- An eager creation at a set without kernels makes its value on the
+  device. Off the host it computes slabs of at most 32 MiB on the host and
+  copies each into place, where it held the whole window on the host before
+  one copy, so a creation larger than host memory, or than a process's
+  memory limit, fits where the device holds it. On a device whose
+  memory the host addresses, such as a software device, the host computes
+  straight into the device's memory, which counts in that device's budget
+  and no longer in the host's.
 - nx.cpu reads a `Reduce`'s operand once for all its reductions whose
   outputs' units are laid out alike: each unit of outputs runs every
   reduction in turn, the later ones reading its terms from the caches, and

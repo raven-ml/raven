@@ -778,6 +778,68 @@ let law_bare ((name, p), (D.Any dt, s)) =
     same_as ~msg:"scalar_like" dt scalar (Nx.scalar_like zeros one)
   end
 
+(* eye_at, which reads its coordinates, at every dtype and at [Bare]'s
+   placements, is its host form placed there, at odd extents among them. *)
+let law_bare_eye ((name, p), (D.Any dt, (n, (m, k)))) =
+  cover "an odd count of elements" (n * m mod 2 = 1);
+  cover "a sub-byte dtype" (D.bits dt < 8);
+  same_as ~msg:name dt
+    (Nx.place p (Nx.eye ~m ~k dt n))
+    (Nx.eye_at ~m ~k p dt n)
+
+let mib = 1 lsl 20
+
+(* [f ()] with the host's budget at what it holds now plus [extra] bytes. *)
+let under_host_budget extra f =
+  Gc.full_major ();
+  Rig.free_cache Rig.host;
+  let budget = Rig.budget Rig.host in
+  Rig.set_budget Rig.host (Rig.allocated Rig.host + extra);
+  Fun.protect ~finally:(fun () -> Rig.set_budget Rig.host budget) f
+
+(* [x], off the host, holds [want]'s elements: compared on the host. *)
+let equal_on_host ~msg want x =
+  equal ~msg (array bool) [| true |]
+    (Nx.to_array (Nx.array_equal want (Nx.place Nx.Host.on x)))
+
+(* A creation of more than a slab off the host, 32 MiB a slab, holds its
+   host form's bits: slabs that cut rows of every axis, and float4 runs that
+   start inside a byte and end on an odd count, whose last byte keeps its
+   spare bits zero. *)
+let test_bare_slabs () =
+  let p = Nx.Placement.device Bare.v off in
+  let key = Nx.Rng.key 7 in
+  let draw f = Nx.Rng.with_key key f in
+  let s = [| 2; 5; 1_000_001 |] in
+  equal_on_host ~msg:"bits_at int32"
+    (draw (fun () -> Nx.Rng.bits s))
+    (draw (fun () -> Nx.Rng.bits_at p s));
+  let f4 = Nx.float4_e2m1fn and s = [| 3; 5; 7_000_001 |] in
+  let y = draw (fun () -> Nx.Rng.uniform_at p f4 s) in
+  equal_on_host ~msg:"uniform_at float4"
+    (draw (fun () -> Nx.Rng.uniform f4 s))
+    y;
+  let b = Nx_array.buffer (Iarray.get (Nx.Repr.shards ~by:"test" y) 0) in
+  let last = Bytes.create 1 in
+  Rig.Buffer.blit_to_bytes b (Rig.Buffer.length b - 1) last 0 1;
+  equal ~msg:"spare bits" int 0 (Char.code (Bytes.get last 0) lsr 4)
+
+(* A creation larger than the host may hold lies on the device: off the host
+   the host holds a slab and its staging, about 64 MiB, of a 128 MiB window,
+   and on a software device, whose memory the host addresses, none. *)
+let test_bare_budget () =
+  let n = 128 * mib / 4 in
+  let want = Nx.arange Nx.int32 0 n 1 in
+  let off_host = Nx.Placement.device Bare.v off in
+  let y =
+    under_host_budget (100 * mib) (fun () ->
+        Nx.arange_at off_host Nx.int32 0 n 1)
+  in
+  equal_on_host ~msg:"off the host" want y;
+  let soft = Nx.Placement.device Bare.v (m 3) in
+  let y = under_host_budget 0 (fun () -> Nx.arange_at soft Nx.int32 0 n 1) in
+  equal_on_host ~msg:"software device" want y
+
 (* The operations an extent receives while [f] runs, each as its name and
    its count of operands: one of no operands computes, and the first that
    reads an operand ends [f]. *)
@@ -992,6 +1054,23 @@ let bare =
           ]
         (Gen.pair bare_gen (Gen.pair dtype shape))
         law_bare;
+      prop "eye_at is its host form placed"
+        ~examples:
+          [
+            (("off the host", Nx.Placement.device Bare.v off),
+              (D.Any D.Int4, (3, (5, 1))));
+            (("split ~axis:1", Bare.split ~axis:1),
+              (D.Any D.Float4_e2m1fn, (1, (7, 0))));
+          ]
+        (Gen.pair bare_gen
+           (Gen.pair dtype
+              (Gen.pair (Gen.int_range 0 5)
+                 (Gen.pair (Gen.int_range 0 9) (Gen.int_range (-3) 3)))))
+        law_bare_eye;
+      test "a creation of many slabs holds its host form's bits"
+        test_bare_slabs;
+      test "a creation larger than the host's budget lies on the device"
+        test_bare_budget;
       cases "an operation needing no element raises"
         ~id:(fun (Shortcut { name; _ }) -> name)
         shortcuts test_shortcut;

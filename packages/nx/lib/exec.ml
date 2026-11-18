@@ -581,23 +581,145 @@ let placed_one (type v s d e) (at : d Devices.placement) (a : (v, s) A.t)
 
 (* Creations *)
 
+(* The bytes of host memory a creation off the host computes at once: rig's
+   staging allocation, through which its copy to the device passes
+   ([half_bytes], rig's copy.ml, which rig does not export; rig.mli states
+   staging "in allocations of 32 MiB"). A copy of at most that holds one
+   allocation, so the host holds a slab and one allocation. *)
+let slab = 32 * 1024 * 1024
+
+(* [f box q n] for each box of the elements [s] to [e] of shape [shape] in C
+   order, in order: [box] fixes the axes before one, takes a run of that
+   axis's rows, and all of every later axis, and holds the [n] elements from
+   [q]. A run of elements is so at most two boxes an axis. *)
+let each_box shape s e f =
+  let r = Array.length shape in
+  if r = 0 then (if s < e then f [||] s 1)
+  else begin
+    let inner = Array.make r 1 in
+    for a = r - 2 downto 0 do
+      inner.(a) <- inner.(a + 1) * shape.(a + 1)
+    done;
+    let q = ref s in
+    while !q < e do
+      (* The first axis whose row starts at [q] and ends by [e]. *)
+      let a = ref 0 in
+      while !q mod inner.(!a) <> 0 || !q + inner.(!a) > e do
+        incr a
+      done;
+      let a = !a in
+      let index t = !q / inner.(t) mod shape.(t) in
+      let c = Int.min (shape.(a) - index a) ((e - !q) / inner.(a)) in
+      let box =
+        Array.init r (fun t : M.range ->
+            if t < a then { start = index t; count = 1; step = 1 }
+            else if t = a then { start = index a; count = c; step = 1 }
+            else { start = 0; count = shape.(t); step = 1 })
+      in
+      f box !q (c * inner.(a));
+      q := !q + (c * inner.(a))
+    done
+  end
+
+(* The creation [op] computed by the host's [kernels] in slabs, each copied
+   into its place in [dsts], its results' arrays, C-contiguous from offset 0
+   on a device whose memory the host does not address, of a shape that has
+   elements. A slab is a run of the window's elements in C order of at most
+   {!slab} bytes of all results, which starts on a whole byte of each,
+   computed as the boxes it covers into one host array a result: the
+   window's own where it is one slab. Its copy passes through staging and
+   returns once the host has moved its bytes ({!Rig.Buffer.submit_copy}), so
+   the next slab reuses the host arrays, and the host holds a slab and its
+   staging whatever the window. *)
+let slabs ~by kernels set op (dsts : A.any iarray) =
+  let host = Devices.on Devices.host in
+  let (A.Any first) = Iarray.get dsts 0 in
+  let layout = A.layout first in
+  let n = L.numel layout in
+  let bits =
+    Iarray.fold_left (fun b (A.Any a) -> b + D.bits (A.dtype a)) 0 dsts
+  in
+  let step = Int.max 8 (slab * 8 / bits / 8 * 8) in
+  let held = if n <= step then L.shape layout else Iarray.of_list [ step ] in
+  let hosts =
+    Iarray.map
+      (fun (A.Any a) -> A.Any (A.create Rig.host (A.dtype a) held))
+      dsts
+  in
+  let shape = Iarray.to_array (L.shape layout) in
+  let s = ref 0 in
+  while !s < n do
+    let e = Int.min n (!s + step) in
+    let k = e - !s in
+    (* A reused array's spare bits past a slab's last element stay zero, as
+       the device array's do. *)
+    Iarray.iter
+      (fun (A.Any h) ->
+        let bits = D.bits (A.dtype h) in
+        if bits < 8 && k * bits mod 8 <> 0 then
+          Rig.Buffer.blit_from_string "\000" 0 (A.buffer h) (k * bits / 8) 1)
+      hosts;
+    each_box shape !s e (fun box q c ->
+        if c = n then
+          let into j (f : _ Value.form) =
+            Value.Array
+              {
+                at = f.placement;
+                a = A.expect f.dtype (Iarray.get hosts j);
+                dead = Value.Live;
+              }
+          in
+          let r = Prim.results_at host [| layout |] into op in
+          on_device ~by kernels set r 0 op
+        else
+          let op, origin = Prim.within op box in
+          let op = Prim.offset op origin in
+          let extents = Route.extents box in
+          let run = M.{ start = q - !s; count = c; step = 1 } in
+          let w = Iarray.of_list [ run ] in
+          let into j (f : _ Value.form) =
+            let (A.Any h) = Iarray.get hosts j in
+            let a = Option.get (A.move (M.Reshape extents) (slice h w)) in
+            let a = A.expect f.dtype (A.Any a) in
+            Value.Array { at = f.placement; a; dead = Value.Live }
+          in
+          let r = Prim.results_at host [| L.contiguous extents |] into op in
+          on_device ~by kernels set r 0 op);
+    Iarray.iteri
+      (fun j (A.Any h) ->
+        let (A.Any d) = Iarray.get dsts j in
+        let dt = A.dtype h in
+        let row = Rig.Buffer.row ~dst_offset:(D.bytes dt !s) (D.bytes dt k) in
+        ignore
+          (Rig.Buffer.submit_copy ~src:(A.buffer h) ~dst:(A.buffer d) [| row |]
+            : Rig.Point.t))
+      hosts;
+    s := e
+  done
+
 (* The creation [op], a map of no loads on device [p], whose set has no
-   kernels: its elements come from numbers alone. It is computed by the host's
-   kernels, then placed at [p], which holds a copy, or a borrow, which shares
-   the host's memory, where it addresses it ({!place}). Its bits are the host
-   form's. *)
+   kernels: its elements come from numbers alone. Its results are made on
+   [p]'s device, and the host's kernels compute them: into their memory where
+   the host addresses it, else in {!slabs}. Its bits are the host form's, by
+   the window law. *)
 let created : type r.
     by:string -> unit Devices.placement -> L.t array -> r Value.prim -> r =
  fun ~by p layouts op ->
   let host = Devices.on Devices.host in
   let set = Devices.set host in
-  let r = Prim.results_at host layouts (fun k f -> alloc k f) op in
-  on_device ~by (kernels_of ~by ~op:(Prim.name op) set) set r 0 op;
-  let arrays = Prim.result_arrays op r in
-  Prim.results_at p layouts
-    (fun k (f : _ Value.form) ->
-      placed_one host (A.expect f.dtype arrays.(k).(0)) p)
-    op
+  let kernels = kernels_of ~by ~op:(Prim.name op) set in
+  let r = Prim.results_at p layouts (fun k f -> alloc k f) op in
+  let dsts = dsts op r in
+  if Rig.reaches Rig.host (rig_of p) then begin
+    let into k (f : _ Value.form) =
+      let a = A.expect f.dtype (Iarray.get dsts k) in
+      let a = Option.get (A.borrow Rig.host a) in
+      Value.Array { at = f.placement; a; dead = Value.Live }
+    in
+    on_device ~by kernels set (Prim.results_at host layouts into op) 0 op
+  end
+  else if L.numel layouts.(0) > 0 then slabs ~by kernels set op dsts;
+  r
 
 let windows : type r d.
     by:string ->

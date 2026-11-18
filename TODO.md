@@ -172,21 +172,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - A 0-d operand against a leaf of rank 1 or more costs 96-100 words a call,
   44 of them the broadcast, and vega pays this for its 0-d rate and weight
   decay. Found by the nx-hostcost skeptic
-- An eager creation at a set without kernels holds its window whole on the
-  host: `Exec.created` (exec.ml:584-600) computes each result on the host,
-  then places a copy, so a one-device value needs host memory of its full
-  size where the device could hold it. On fudge, `capped`'s 8 GB is below
-  an RTX 5000 Ada's 32 GB. Decided (nx-vocab/adjudication.md W1): slabs,
-  rig's own practice one layer up, since rig moves a plain host buffer
-  through staging allocations of 32 MiB whatever its size (rig.mli:
-  1520-1566). `created` allocates the device array, computes each slab at
-  its `Prim.offset` into one host buffer and copies it into its box
-  (rig.mli:1599-1609), with slab edges on whole bytes for dtypes under a
-  byte (nx_array.mli:212-221). The bits are the same by the window law.
-  Where the host addresses the device's memory (`share`, exec.ml:437)
-  `created` could instead compute straight into the device array. Owed by
-  the DD adjudication (W1); found by its audit and skeptic
-  (_plans/tessera-port/design/nx-vocab/skeptic.md §3)
 - `Nx.log10` states 2 ulps at float64 (nx.mli:1750-1753) and derives it
   nowhere: it composes over `log2`, itself stated at 2 ulps there
   (:1746-1748), and since rune compiles nx's own sequence (b1c79a2bcc;

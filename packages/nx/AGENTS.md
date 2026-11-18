@@ -45,7 +45,8 @@ raven exchanges `Nx.t` values and `Nx.Ptree` structures.
   linear in a sum raises.
 - A set's kernels are fixed when `Nx.devices` mints it: nx.cpu for
   host-run devices, else none unless `~kernels` names a library. On a set
-  without kernels a creation is made on the host and placed; every other
+  without kernels a creation is made on its devices with the host form's
+  bits; every other
   operation that makes elements raises. After a kernel declines, nx
   raises. Nothing computes on the host in a set's place.
 - rig holds bytes; a kernel library computes. A dependency edge that adds
