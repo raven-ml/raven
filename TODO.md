@@ -112,6 +112,24 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 
 ## nx, rune
 
+- nx measures most errors in floats from the correctly rounded value, but
+  some special functions (nx.mli's "plus half of one" least subnormal and
+  an absolute `kε`) measure from the exact value: a second metric. One
+  metric, stated once
+- The exhaustive sweep of float32 `log` and `asinh` against nx_kinds.h's
+  bits on nx_cuda and nx_amd is owed before any accuracy promise names a
+  GPU
+- The depthwise branch of `Nx.conv` (one input and one output channel a
+  group) is slow under rune's gradient: about 8 ms for the weights and
+  21 ms for the input at 8x56x56x64, the loop-sized map and fold
+- Under `Rune.jit`, the weight gradient of `Nx.matmul_segments` keeps one
+  `[k; n]` partial per block (lower_reduce.ml): +0.9 GB at 1,024 rows
+  over AION's 40 heads, where eager keeps none
+- `Nx.attention ~lengths` skips padded work in the forward only; its
+  default derivative builds the whole pair loop
+- No tree can check formatting: the only ocamlformat on fudge (0.29.0)
+  rejects main's own files and no dev-tools lock pins the repository's
+  formatter
 - rune props that take 4-14 s alone pass the 60 s limit at a load of 13-30:
   `test_grad`'s dirichlet tangents and gradient (14 s), `test_ranges`' "a
   compiled call has eager's bits, every dtype" (8.6 s) and `test_total`'s
@@ -237,6 +255,9 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 
 ## talon, hugin, brot, munin, quill
 
+- talon's stored allocation baselines for its Parquet read rows have
+  drifted from main (read-nullable: 34,263 words stored, 36,671 measured
+  on main); re-record them, and find which change moved them
 - talon needs a query optimizer, a large design of its own, and the other
   optimization to match the best reference engines; 1.0 has no speed gate.
   Last measured against the faster of DuckDB 1.5.6 and Polars 1.44.2
@@ -246,3 +267,14 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   reads far fewer rows on q07, q08 and q12), scans (half the instructions
   of the five worst queries), aggregation (46% of q01), and possibly a
   segment-id reduce kernel in nx (unmeasured). Data: ~/wt/tmp/talon-data
+
+## kaun, ymir
+
+- `Kaun_datasets.cifar10` has no test: its loader takes only full
+  10,000-entry batches (about 180 MB). A `(**/**)` seam over the
+  records-to-tensor step would pin its channels-last order
+- ymir_units' odoc has an unresolved reference to `Nx.Dtype.name` in
+  `Unit.ratio`'s doc; odoc warnings are fatal in `@doc`
+- ymir's `Grid` holds two celestial axes only, a limit no standard
+  imposes; spectral axes and `-TAB` lookups need grids that are a
+  celestial pair times 1-D axes (AION campaign question B4.1)
