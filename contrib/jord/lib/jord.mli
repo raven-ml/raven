@@ -122,7 +122,8 @@ module Band = Band
     {!Modis.Qc.val-quality}, and {!Landsat.module-Qa_radsat}, whose bits are
     per band, has readers of its own. A layer's fill is its DNs where nothing
     was recorded ({!Band}), and a layer whose fill a program must mask has
-    [fill], which reads it. {!Landsat.valid_range} and {!Modis.valid_range}
+    [fill], which reads it, but for {!Landsat.module-Qa_radsat}, whose fill
+    QA_PIXEL's [fill] masks. {!Landsat.valid_range} and {!Modis.valid_range}
     give the DNs a band's guide calls valid ({!Band}). *)
 
 module Sentinel2 = Sentinel2

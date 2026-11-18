@@ -243,9 +243,11 @@ end
     guides' worked examples disagree with their tables. LSDS-1619's DN 512
     for band 9 is bit 9, where its table puts band 9 at bit 8, and
     LSDS-1618's DN 8 for band 3 is bit 3, which its table gives band 4. This
-    module follows the tables. Its band states no fill value ({!val-band}).
-    Its functions read DNs of an integer dtype bit by bit
-    ({!Band.section-bits}). *)
+    module follows the tables. Its band states no fill value ({!val-band}),
+    so {!Band.val-nodata} of it is false on every DN, and a program must
+    mask its fill with {!module-Qa_pixel.val-fill} of the same product's
+    QA_PIXEL, on the same cells. Its functions read DNs of an integer dtype
+    bit by bit ({!Band.section-bits}). *)
 module Qa_radsat : sig
   val saturated : satellite -> band -> ('v, 's, 'd) Nx.t -> 'd Nx.bool_t
   (** [saturated s b x] is where the DNs [x] state that band [b] of a
