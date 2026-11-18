@@ -103,7 +103,15 @@ let operand ?(min_rank = 0) () =
   with_pp
     (fun ppf o -> Format.fprintf ppf "%a %a" pp_layout o.l pp_ints o.s)
     (let* rank = int_range min_rank 4 in
-     let* s = array ~size:(constant rank) (int_range 0 3) in
+     (* One draw in four has one element, which a uniform draw of extents
+        gives in only 8% of draws of rank 1 to 4. *)
+     let* s =
+       frequency
+         [
+           (1, constant (Array.make rank 1));
+           (3, array ~size:(constant rank) (int_range 0 3));
+         ]
+     in
      let+ l =
        of_list ~pp:pp_layout [ Plain; Reversed; Transposed; Broadcast ]
      in
