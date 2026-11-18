@@ -2816,9 +2816,10 @@ val conv :
   ('v, 's, 'd) t ->
   ('v, 's, 'd) t
 (** [conv x w] slides the kernel [w], [[o; k…; c / groups]], over [x],
-    [[n; s…; c]], channels last, for [K] spatial axes [s…] and kernel extents
-    [k…]: the result, [[n; t…; o]], is at [(b, p…, j)] the sum over [i] and
-    the taps [q…] of [x[b, p · stride + q · dilation - lo…, i]] times
+    [[n; s…; c]], channels last, for [K] spatial axes [s…]
+    ({!section-windows}) and kernel extents [k…]: the result, [[n; t…; o]],
+    is at [(b, p…, j)] the sum over [i] and the taps [q…] of
+    [x[b, p · stride + q · dilation - lo…, i]] times
     [w[j, q…, i]], an element outside [x] reading zero. The kernel is not
     flipped. [x] is padded along each spatial axis by [padding]'s [(lo, hi)]
     (default none), a negative one cutting; [stride] and [dilation] default
@@ -2873,10 +2874,11 @@ val conv_transpose :
   ('v, 's, 'd) t ->
   ('v, 's, 'd) t
 (** [conv_transpose x w] is {!conv}'s transpose with respect to its input:
-    for the [z] of the least spatial extents whose [conv z w], under the same
-    arguments, has [x]'s shape [[n; t…; o]], it is the [[n; s…; c]] value
-    with [sum (mul (conv z w) x) = sum (mul z (conv_transpose x w))] for
-    every such [z], plus [init]: [s = (t - 1) stride + e - lo - hi], [e] as
+    for the [z] of the least spatial extents ({!section-windows}) whose
+    [conv z w], under the same arguments, has [x]'s shape [[n; t…; o]], it
+    is the [[n; s…; c]] value with
+    [sum (mul (conv z w) x) = sum (mul z (conv_transpose x w))] for every
+    such [z], plus [init]: [s = (t - 1) stride + e - lo - hi], [e] as
     {!conv} states, or [0] where that is negative or [t = 0]. It is {!conv}
     at stride one of [x] with [stride - 1] zeros between its elements, by
     [w] reversed along its spatial axes and with its channels exchanged, and
@@ -3950,11 +3952,13 @@ val weighted_histogram :
     along its last axes, or rows grouped by positions held in data. Each
     computes where its operands lie.
 
-    The {e spatial} axes are an operand's last [K] axes, and the axes before
-    them are batch axes, each computed alone. Along a spatial axis of [n]
-    elements, padded with [lo] zeros before and [hi] after, a window of [k]
-    elements with stride [s] and dilation [d] holds the padded axis' elements
-    [w s + j d], [j < k], for window [w]. There are
+    The {e spatial} axes are an operand's last [K] axes. An operation with a
+    channel axis, such as {!conv}, keeps that axis last, and its spatial axes
+    are the [K] before it. The axes before the spatial axes are batch axes,
+    each computed alone. Along a spatial axis of [n] elements, padded with
+    [lo] zeros before and [hi] after, a window of [k] elements with stride
+    [s] and dilation [d] holds the padded axis' elements [w s + j d],
+    [j < k], for window [w]. There are
     [(n + lo + hi - d (k - 1) - 1) / s + 1] windows, and none where
     [d (k - 1) + 1] exceeds [n + lo + hi]. Windows across several spatial axes
     are every combination of one window per axis, in C order, and so are
