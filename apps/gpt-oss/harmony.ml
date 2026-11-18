@@ -3,9 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type effort = Low | Medium | High
 type channel = Analysis | Commentary | Final
-type turn = User of string | Assistant of channel * string
 
 type t = {
   tokenizer : Brot.t;
@@ -41,70 +39,28 @@ let of_file path =
 
 (* Rendering *)
 
-let effort_name = function Low -> "low" | Medium -> "medium" | High -> "high"
-
-let channel_name = function
-  | Analysis -> "analysis"
-  | Commentary -> "commentary"
-  | Final -> "final"
-
-let system_text ?date effort =
-  let date =
-    match date with None -> "" | Some d -> "Current date: " ^ d ^ "\n"
-  in
+let system =
   "You are ChatGPT, a large language model trained by OpenAI.\n\
-   Knowledge cutoff: 2024-06\n" ^ date ^ "\nReasoning: " ^ effort_name effort
-  ^ "\n\n\
-     # Valid channels: analysis, commentary, final. Channel must be included \
-     for every message."
+   Knowledge cutoff: 2024-06\n\n\
+   Reasoning: medium\n\n\
+   # Valid channels: analysis, commentary, final. Channel must be included \
+   for every message."
 
-let is_final = function Assistant (Final, _) -> true | _ -> false
-let is_assistant = function Assistant _ -> true | User _ -> false
-
-(* Once a final message closes the last assistant turn, the reasoning that led
-   to the first final message is no longer shown to the model. *)
-let drop_stale_analysis turns =
-  let answered =
-    match List.find_opt is_assistant (List.rev turns) with
-    | Some last -> is_final last
-    | None -> false
-  in
-  if not answered then turns
-  else
-    let rec drop = function
-      | Assistant (Analysis, _) :: rest -> drop rest
-      | ([] | Assistant (Final, _) :: _) as rest -> rest
-      | turn :: rest -> turn :: drop rest
-    in
-    drop turns
-
-let render t ?date ?instructions ~effort turns =
+let render t prompt =
   let buf = ref [] in
   let id i = buf := i :: !buf in
   let text s =
     Array.iter id (Brot.encode_ids t.tokenizer ~match_special_tokens:false s)
   in
-  let message role ?channel content =
+  let message role content =
     id t.start;
     text role;
-    Option.iter
-      (fun c ->
-        id t.channel;
-        text (channel_name c))
-      channel;
     id t.message;
     text content;
     id t.end_
   in
-  message "system" (system_text ?date effort);
-  Option.iter
-    (fun i -> message "developer" ("# Instructions\n\n" ^ i))
-    instructions;
-  List.iter
-    (function
-      | User content -> message "user" content
-      | Assistant (channel, content) -> message "assistant" ~channel content)
-    (drop_stale_analysis turns);
+  message "system" system;
+  message "user" prompt;
   id t.start;
   text "assistant";
   Array.of_list (List.rev !buf)

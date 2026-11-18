@@ -1,6 +1,6 @@
 ; The tests, in runtest. test_parity, test_harmony and test_stream compare
-; with the fixtures their recorders in gen/ wrote, downloading the tiny
-; checkpoints they were recorded from.
+; with the fixtures their recorders in gen/ wrote, on the small checkpoints
+; gen/ wrote beside them.
 
 (tests
  (names
@@ -21,7 +21,8 @@
   test_harmony
   test_stream)
  (deps
-  (glob_files fixtures/*.json))
+  (glob_files fixtures/*.json)
+  (source_tree checkpoints))
  (libraries
   gpt_oss
   kaun

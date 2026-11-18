@@ -1,0 +1,14 @@
+Small checkpoints for gpt-oss's tests
+
+gpt-oss-bf16/ and gpt-oss-mxfp4/ hold random weights that
+test/gen/reference.py draws, with the shapes of gpt-oss's tiny test
+checkpoints.
+
+tokenizer.json is a copy of a tokenizer.json published on huggingface.co,
+cut down by test/gen/reference_text.py to the vocabulary and merges the
+tests' texts reach. Its pipeline, added tokens and identifiers are those of
+the original.
+
+  Source:    https://huggingface.co/openai/gpt-oss-20b
+  Licence:   Apache License 2.0 (LICENSE-Apache-2.0)
+  Published by OpenAI

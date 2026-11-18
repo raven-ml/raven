@@ -12,11 +12,10 @@
     [<|channel|>]: its reasoning to [analysis], asides to [commentary] and the
     answer meant for the user to [final].
 
-    {!render} builds the tokens of a conversation up to the point where the
+    {!render} builds the tokens of a prompt up to the point where the
     assistant speaks, and a {!type-parser} reads the tokens the model then
-    generates. Tools and function calls are not covered: nothing renders their
-    definitions, and a message the model addresses to a tool is read as text of
-    its channel. *)
+    generates. Tools and function calls are not covered: a message the model
+    addresses to a tool is read as text of its channel. *)
 
 (** {1:encodings Encodings} *)
 
@@ -31,43 +30,21 @@ val of_file : string -> t
     Raises [Failure] if the file cannot be read, does not hold a tokenizer or
     lacks one of the delimiting tokens. *)
 
-(** {1:conversations Conversations} *)
-
-(** The type for reasoning efforts: how much the system message asks the model
-    to write on the analysis channel before it answers. *)
-type effort = Low | Medium | High
+(** {1:prompts Prompts} *)
 
 (** The type for the assistant's channels. *)
 type channel = Analysis | Commentary | Final
 
-(** The type for the turns of a conversation: what the user said, or one message
-    of the assistant on a channel. *)
-type turn = User of string | Assistant of channel * string
+val render : t -> string -> int array
+(** [render t prompt] is the token ids of a conversation in which the user
+    says [prompt], ready for the model to continue as the assistant: a system
+    message, the user's message, then [<|start|>assistant] left open. The
+    system message states the model's identity, its knowledge cutoff, a
+    medium reasoning effort and the channels.
 
-val render :
-  t ->
-  ?date:string ->
-  ?instructions:string ->
-  effort:effort ->
-  turn list ->
-  int array
-(** [render t ~effort turns] is the token ids of the conversation [turns], ready
-    for the model to continue as the assistant: a system message, a developer
-    message if there are [instructions], the [turns] in order, then
-    [<|start|>assistant] left open.
-
-    The system message states the model's identity, its knowledge cutoff, the
-    current [date] if given (as [YYYY-MM-DD]), the reasoning [effort] and the
-    channels. The developer message carries [instructions], what a chat
-    interface calls the system prompt.
-
-    The text of a turn is encoded as plain text: a user who types [<|end|>] gets
-    the characters, never the token, so no turn can close itself or open
-    another.
-
-    Earlier reasoning is not shown again: when the last assistant message of
-    [turns] is on {!Final}, the {!Analysis} messages that come before the first
-    {!Final} one are left out, as the model was trained to expect. *)
+    [prompt] is encoded as plain text: a user who types [<|end|>] gets the
+    characters, never the token, so the prompt cannot close itself or open
+    another message. *)
 
 (** {1:parsing Parsing} *)
 

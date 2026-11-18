@@ -13,14 +13,14 @@
    stream, and the largest logits and the argmax of every position.
 
    The checkpoint is imported at the dtype it stores, which copies nothing;
-   each block runs compiled, at float32, on a one-block model whose token
-   table is the residual stream. A stream's error is in units of the
+   each block runs compiled, at float32. A stream's error is in units of the
    reference stream's root mean square at that position, and must stay below
    2e-4: float32 against float32 differs by the kernels and the order of the
    sums, compounded over the blocks. Every expert choice and argmax is equal.
 
-   The tiny checkpoint's recording runs in runtest. gpt-oss-20b's runs when
-   its 13.8 GB are in the cache at the recorded revision; see the README. *)
+   The small MXFP4 checkpoint's recording runs in runtest. gpt-oss-20b's runs
+   when its 13.8 GB are in raven's cache at the recorded revision; see the
+   README. *)
 
 open Windtrap
 open Kaun
@@ -96,39 +96,40 @@ let routing msg ~k recorded experts =
       (list int) (set recorded t) (set experts t)
   done
 
-(* The model of [fx]'s checkpoint, its one-block programs and the prompt
-   runner. *)
-let stream ?offline fx =
-  let repo, revision = repo fx in
-  let cfg =
-    Gpt_oss.config_of_json (Kaun_hf.load_config ?offline ~revision repo)
-  in
-  let weights = Kaun_hf.load_safetensors ?offline ~revision repo in
+(* The configuration and weights [fx] was recorded from: a small checkpoint,
+   or a repository read from raven's cache at its revision, never
+   downloaded. *)
+let source fx =
+  match find "checkpoint" fx with
+  | Some name -> checkpoint (to_string name)
+  | None ->
+      let repo = to_string (mem "repo" fx) in
+      let revision = to_string (mem "revision" fx) in
+      let config = Kaun_hf.load_config ~offline:true ~revision repo in
+      ( Gpt_oss.config_of_json config,
+        Kaun_hf.load_safetensors ~offline:true ~revision repo )
+
+(* The prompt runner of [fx]'s checkpoint. Each block is cast to float32 for
+   its call alone and runs compiled, one program for both layer kinds, as in
+   {!Layer_loop}. *)
+let stream fx =
+  let cfg, weights = source fx in
   let (Gpt_oss.Dtype stored) = Gpt_oss.stored_dtype weights in
-  let p =
-    Gpt_oss.of_hf ~placement:(fun _ ~axis:_ -> Nx.Host.on) cfg stored weights
-  in
+  let host _ ~axis:_ = Nx.Host.on in
+  let p = Gpt_oss.of_hf ~placement:host cfg stored weights in
   let dim = cfg.dim and k = cfg.experts_per_token and f32 = Nx.float32 in
   let signs = signs ~rows:(to_int (mem "projections" fx)) ~dim in
-  let host t = flat t in
-  (* The cast needs a table at the stored dtype; the stream replaces it. *)
-  let nothing = { Embedding.table = Nx.zeros stored [| 1; 1 |] } in
-  let one_block b x =
-    let m =
-      Nx.Ptree.cast (module Gpt_oss.Params) f32
-        { Gpt_oss.tok = nothing; blocks = [ b ]; norm = p.norm; head = None }
-    in
-    { m with tok = { Embedding.table = x } }
-  in
-  let hidden =
-    let compiled layer =
-      Rune.jit
-        Nx.Ptree.(
-          instantiate (module Gpt_oss.Params) @-> tensor @-> returns tensor)
-        (Gpt_oss.hidden { cfg with Gpt_oss.layers = [ layer ] })
-    in
-    let sliding = compiled Gpt_oss.Sliding and full = compiled Gpt_oss.Full in
-    function Gpt_oss.Sliding -> sliding | Full -> full
+  let compiled =
+    Rune.jit
+      Nx.Ptree.(
+        instantiate (module Gpt_oss.Block)
+        @-> v Cache_index.walk @-> tensor @-> returns tensor)
+      (fun b index x ->
+        let cache =
+          Attention.Cache.make ~slots:0 ~kv_heads:cfg.n_kv_heads
+            ~head_dim:cfg.head_dim f32 (Nx.placement x)
+        in
+        fst (Gpt_oss.block cfg b cache index x))
   in
   fun recorded () ->
     let ids = ints (mem "ids" recorded) in
@@ -150,45 +151,40 @@ let stream ?offline fx =
         (Nx.cast f32
            (Nx.reshape [| tokens; dim |] (Embedding.apply p.tok ids_t)))
     in
-    within "embedding" (summaries (mem "embedded" recorded) (host !x));
-    let rows = Nx.reshape [| 1; tokens |] (Nx.arange Nx.int64 0 tokens 1) in
-    let index = Cache_index.whole ~batch:1 ~seq:tokens () in
+    within "embedding" (summaries (mem "embedded" recorded) (flat !x));
+    let whole = Cache_index.whole ~batch:1 ~seq:tokens () in
+    let index = Gpt_oss.windows cfg whole in
     List.iteri
       (fun i (layer, (b, rb)) ->
         let block what = Printf.sprintf "block %d %s" i what in
-        let m = one_block b !x in
-        let b' = List.hd m.blocks in
+        let b = Nx.Ptree.cast (module Gpt_oss.Block) f32 b in
         let x3 = Nx.reshape [| 1; tokens; dim |] !x in
         let cache =
-          List.hd
-            (Gpt_oss.cache
-               ~placement:(fun _ ~axis:_ -> Nx.Host.on)
-               { cfg with layers = [ layer ] }
-               ~slots:0 f32)
+          Attention.Cache.make ~slots:0 ~kv_heads:cfg.n_kv_heads
+            ~head_dim:cfg.head_dim f32 Nx.Host.on
         in
         let attended, _ =
-          Gpt_oss.attention cfg b' cache
-            (Gpt_oss.windows cfg index layer)
-            (Rms_norm.apply ~eps:cfg.norm_eps b'.attn_norm x3)
+          Gpt_oss.attention cfg b cache (index layer)
+            (Rms_norm.apply ~eps:cfg.norm_eps b.attn_norm x3)
         in
         let middle = Nx.add x3 attended in
         within (block "after attention")
-          (summaries (mem "after_attention" rb) (host middle));
+          (summaries (mem "after_attention" rb) (flat middle));
         let experts, _ =
           Moe.route ~k
-            (Linear.apply b'.router
+            (Linear.apply b.router
                (Nx.reshape [| tokens; dim |]
-                  (Rms_norm.apply ~eps:cfg.norm_eps b'.ffn_norm middle)))
+                  (Rms_norm.apply ~eps:cfg.norm_eps b.ffn_norm middle)))
         in
         routing (block "router") ~k
           (ints (mem "experts" rb))
           (Array.map Int64.to_int (Nx.to_array (Nx.reshape [| -1 |] experts)));
-        let y = Nx.reshape [| tokens; dim |] (hidden layer m rows) in
-        let e = summaries (mem "after_block" rb) (host y) in
+        let y = Nx.reshape [| tokens; dim |] (compiled b (index layer) x3) in
+        let e = summaries (mem "after_block" rb) (flat y) in
         let e =
           match find "after_block_last" rb with
           | None -> e
-          | Some row -> Float.max e (row_error ~dim (floats row) (host y) last)
+          | Some row -> Float.max e (row_error ~dim (floats row) (flat y) last)
         in
         within (block "after experts") e;
         x := y;
@@ -198,17 +194,19 @@ let stream ?offline fx =
     let m =
       Nx.Ptree.cast (module Gpt_oss.Params) f32
         {
-          Gpt_oss.tok = (if cfg.tied then p.tok else nothing);
+          Gpt_oss.tok =
+            (if cfg.tied then p.tok
+             else { Embedding.table = Nx.zeros stored [| 1; 1 |] });
           blocks = [];
           norm = p.norm;
           head = p.head;
         }
     in
-    let normed = host (Rms_norm.apply ~eps:cfg.norm_eps m.norm !x) in
+    let normed = flat (Rms_norm.apply ~eps:cfg.norm_eps m.norm !x) in
     within "final norm"
       (Float.max (summaries (mem "normed" recorded) normed)
          (row_error ~dim (floats (mem "normed_last" recorded)) normed last));
-    let logits = host (Gpt_oss.logits cfg m !x) in
+    let logits = flat (Gpt_oss.logits cfg m !x) in
     let vocab = Array.length logits / tokens in
     List.iteri
       (fun t (ids, values) ->
@@ -234,9 +232,9 @@ let stream ?offline fx =
       (ints (mem "argmax_per_position" recorded))
       (Array.init tokens argmax)
 
-let prompts ?offline ?(skip = fun () -> ()) name =
+let prompts ?(skip = fun () -> ()) name =
   let fx = load name in
-  let run = lazy (stream ?offline fx) in
+  let run = lazy (stream fx) in
   List.map
     (fun (prompt, recorded) ->
       test ~timeout:3600. prompt (fun () ->
@@ -246,7 +244,9 @@ let prompts ?offline ?(skip = fun () -> ()) name =
 
 (* gpt-oss-20b is read from the cache only, never downloaded here. *)
 let in_cache name () =
-  let repo, revision = repo (load name) in
+  let fx = load name in
+  let repo = to_string (mem "repo" fx) in
+  let revision = to_string (mem "revision" fx) in
   let config = Kaun_hf.cache_path ~revision ~file:"config.json" repo in
   if not (Sys.file_exists config) then
     skip ~reason:(repo ^ " is not in the cache at " ^ revision) ()
@@ -254,9 +254,8 @@ let in_cache name () =
 let () =
   run "gpt-oss streamed against transformers"
     [
-      group "tiny MXFP4" (prompts "gpt-oss-mxfp4-stream");
+      group "small MXFP4" (prompts "gpt-oss-mxfp4-stream");
       group "gpt-oss-20b"
-        (prompts ~offline:true ~skip:(in_cache "gpt-oss-20b-stream")
-           "gpt-oss-20b-stream");
+        (prompts ~skip:(in_cache "gpt-oss-20b-stream") "gpt-oss-20b-stream");
     ]
   |> exit

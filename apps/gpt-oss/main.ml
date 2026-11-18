@@ -96,7 +96,7 @@ let () =
   let harmony =
     Harmony.of_file (Kaun_hf.download_file ~file:"tokenizer.json" !repo)
   in
-  let ids = Harmony.render harmony ~effort:Medium [ User !prompt ] in
+  let ids = Harmony.render harmony !prompt in
   let on_token = printer harmony ~show_analysis:!show_analysis in
   (* At the weights' own dtype the import casts nothing. *)
   let (Gpt_oss.Dtype dt) = Gpt_oss.stored_dtype weights in

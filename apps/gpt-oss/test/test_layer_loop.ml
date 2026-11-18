@@ -65,7 +65,8 @@ let params ?(q8_0 = false) () =
   let block _ =
     {
       Gpt_oss.attn_norm = norm ();
-      attn = { Gpt_oss.qkv = projection d (q + (2 * kv)); out = projection q d };
+      attn =
+        { Gpt_oss.qkv = projection d (q + (2 * kv)); out = projection q d };
       sinks = f [| cfg.n_heads |];
       ffn_norm = norm ();
       router = linear d e;
@@ -174,7 +175,8 @@ let test_blocks claim () =
   if claim = Placed then begin
     let gamma = (List.hd p.blocks).attn_norm.gamma in
     equal ~msg:"the weights stay placed" placement cpu1 (Nx.placement gamma);
-    equal ~msg:"the weights stay readable" float_exact 1.0 (Nx.item [ 0 ] gamma);
+    equal ~msg:"the weights stay readable" float_exact 1.0
+      (Nx.item [ 0 ] gamma);
     equal ~msg:"the output is on CPU:1" placement cpu1 (Nx.placement !x)
   end
 

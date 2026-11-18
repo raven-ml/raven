@@ -4,58 +4,129 @@
 #   "torch==2.14.0",
 #   "transformers==5.17.0",
 #   "safetensors==0.8.0",
-#   "huggingface_hub==1.32.0",
 #   "accelerate==1.15.0",
 # ]
 # ///
-"""Record gpt-oss's references from the transformers implementation, at
+"""Write gpt-oss's small checkpoints and record transformers on them, at
 float32 on CPU.
 
-    uv run apps/gpt-oss/test/gen/reference.py
+    uv run --python 3.12 apps/gpt-oss/test/gen/reference.py
 
-Writes test/fixtures/<name>.json, the MoE block, and
-test/fixtures/<name>-model.json, the whole model. Only the tiny random
-checkpoints are read, a few MB each.
+Writes test/checkpoints/<name>/, a two-layer gpt-oss of random weights drawn
+from SEED, with float or MXFP4 experts, and test/fixtures/<name>.json, what
+transformers computes from it: the MoE block of layer LAYER and the whole
+model.
 """
 import json, os, sys
-import torch, transformers, safetensors, huggingface_hub
-from huggingface_hub import hf_hub_download
+import torch, transformers, safetensors
 from safetensors import safe_open
+from safetensors.torch import save_file
 from transformers import AutoModelForCausalLM
 from transformers.integrations.mxfp4 import convert_moe_packed_tensors
 
 LAYER = 0
-# Token ids are fixed and in-vocabulary: no tokenizer is involved. The ragged
-# pair is the long prompt and a shorter one, left-padded.
-IDS = [200006, 17360, 200008, 3575, 553, 17554, 162016, 11, 261, 4410, 6439, 2359]
-SHORT = [200006, 1428, 200008, 13225, 2375]
-PAD = 199999
-
-# The scales of tiny-random/gpt-oss-mxfp4 are drawn from 0..3, so its expert
-# weights are of the order of 1e-38 and the experts reduce to their biases. A
-# second set of cases adds SCALE_OFFSET to every scale byte before
-# dequantising, which puts the weights at the magnitude of trained ones.
-SCALE_OFFSET = 118
+SEED = 20261118
+# The shapes of tiny-random/gpt-oss-mxfp4, on a vocabulary of VOCAB and a
+# sliding window of 4, which hides tokens of a 12-token prompt.
+VOCAB = 1024
+DIM, HIDDEN, EXPERTS, HEADS, KV_HEADS, HEAD_DIM = 32, 64, 32, 2, 1, 32
+CONFIG = {
+    "architectures": ["GptOssForCausalLM"],
+    "model_type": "gpt_oss",
+    "attention_bias": True,
+    "attention_dropout": 0.0,
+    "experts_per_token": 4,
+    "head_dim": HEAD_DIM,
+    "hidden_act": "silu",
+    "hidden_size": DIM,
+    "initial_context_length": 4096,
+    "initializer_range": 0.02,
+    "intermediate_size": HIDDEN,
+    "layer_types": ["sliding_attention", "full_attention"],
+    "max_position_embeddings": 131072,
+    "num_attention_heads": HEADS,
+    "num_experts_per_tok": 4,
+    "num_hidden_layers": 2,
+    "num_key_value_heads": KV_HEADS,
+    "num_local_experts": EXPERTS,
+    "rms_norm_eps": 1e-05,
+    "rope_scaling": {
+        "beta_fast": 32.0,
+        "beta_slow": 1.0,
+        "factor": 32.0,
+        "original_max_position_embeddings": 4096,
+        "rope_type": "yarn",
+        "truncate": False,
+    },
+    "rope_theta": 150000,
+    "sliding_window": 4,
+    "swiglu_limit": 7.0,
+    "tie_word_embeddings": True,
+    "torch_dtype": "bfloat16",
+    "vocab_size": VOCAB,
+}
+MXFP4 = {
+    "modules_to_not_convert": [
+        "model.layers.*.self_attn",
+        "model.layers.*.mlp.router",
+        "model.embed_tokens",
+        "lm_head",
+    ],
+    "quant_method": "mxfp4",
+}
+# Token ids are fixed: no tokenizer is involved. The ragged pair is the long
+# prompt and a shorter one, left-padded.
+IDS = [6, 517, 8, 1000, 553, 704, 162, 11, 261, 441, 643, 235]
+SHORT = [6, 142, 8, 132, 237]
+PAD = 0
 # Natural activations never reach the limit of the clamped activation. The
 # "clamped" case feeds the block its recorded input times this factor.
 CLAMP_FACTOR = 200.0
-# The checkpoints' window of 128 never binds on a 12-token prompt. The whole
-# model is recorded with this window instead, so that the sliding layer hides
-# tokens.
-WINDOW = 4
 
-MODELS = {
-    "gpt-oss-bf16": {
-        "repo": "tiny-random/gpt-oss-bf16",
-        "revision": "46b847ff602881ff3cabfc38e5b60a4dfb7c8a05",
-        "packed": False,
-    },
-    "gpt-oss-mxfp4": {
-        "repo": "tiny-random/gpt-oss-mxfp4",
-        "revision": "27b6ad8040614834e65239f102de94bc459f48e5",
-        "packed": True,
-    },
-}
+MODELS = {"gpt-oss-bf16": False, "gpt-oss-mxfp4": True}
+
+
+def weights(packed, g):
+    """The checkpoint's tensors, named, shaped and stored as gpt-oss's are.
+    Packed expert scales are the bytes 118 to 121, the magnitude of trained
+    weights."""
+    def normal(*shape, scale=0.5, mean=0.0):
+        return (mean + scale * torch.randn(*shape, generator=g)).to(torch.bfloat16)
+
+    t = {"model.embed_tokens.weight": normal(VOCAB, DIM), "model.norm.weight": normal(DIM, mean=1.0)}
+    for i in range(CONFIG["num_hidden_layers"]):
+        p = f"model.layers.{i}."
+        t[p + "input_layernorm.weight"] = normal(DIM, mean=1.0)
+        t[p + "post_attention_layernorm.weight"] = normal(DIM, mean=1.0)
+        q, kv = HEADS * HEAD_DIM, KV_HEADS * HEAD_DIM
+        for name, outputs, inputs in (("q_proj", q, DIM), ("k_proj", kv, DIM), ("v_proj", kv, DIM), ("o_proj", DIM, q)):
+            t[p + f"self_attn.{name}.weight"] = normal(outputs, inputs, scale=0.2)
+            t[p + f"self_attn.{name}.bias"] = normal(outputs, scale=0.2)
+        t[p + "self_attn.sinks"] = normal(HEADS)
+        t[p + "mlp.router.weight"] = normal(EXPERTS, DIM)
+        t[p + "mlp.router.bias"] = normal(EXPERTS)
+        for name, outputs, inputs in (("gate_up_proj", 2 * HIDDEN, DIM), ("down_proj", DIM, HIDDEN)):
+            e = p + "mlp.experts." + name
+            t[e + "_bias"] = normal(EXPERTS, outputs, scale=0.2)
+            if packed:
+                t[e + "_blocks"] = torch.randint(0, 256, (EXPERTS, outputs, inputs // 32, 16), generator=g, dtype=torch.uint8)
+                t[e + "_scales"] = torch.randint(118, 122, (EXPERTS, outputs, inputs // 32), generator=g, dtype=torch.uint8)
+            else:
+                t[e] = normal(EXPERTS, inputs, outputs, scale=0.2)
+    return t
+
+
+def checkpoint(name, packed):
+    """test/checkpoints/<name>/: config.json and model.safetensors."""
+    out = os.path.join(here, "..", "checkpoints", name)
+    os.makedirs(out, exist_ok=True)
+    config = dict(CONFIG, **({"quantization_config": MXFP4} if packed else {}))
+    with open(os.path.join(out, "config.json"), "w") as f:
+        json.dump(config, f, indent=2)
+        f.write("\n")
+    g = torch.Generator().manual_seed(SEED + packed)
+    save_file(weights(packed, g), os.path.join(out, "model.safetensors"), metadata={"format": "pt"})
+    return out
 
 
 def flat(t):
@@ -122,12 +193,6 @@ def cases(model):
     return {"batch": batch, "ragged": ragged, "clamped": clamped}
 
 
-def packed(path, name):
-    with safe_open(path, "pt") as f:
-        prefix = f"model.layers.{LAYER}.mlp.experts.{name}"
-        return f.get_tensor(prefix + "_blocks"), f.get_tensor(prefix + "_scales")
-
-
 def top(logits, k=8):
     t = torch.topk(logits, k)
     return t.indices.tolist(), flat(t.values)
@@ -178,52 +243,6 @@ def record_model(model):
     }
 
 
-def rotary(model):
-    rot = model.model.rotary_emb
-    return {
-        "inv_freq": flat(rot.inv_freq),
-        "attention_scaling": float(rot.attention_scaling),
-    }
-
-
-def set_scales(model, weights, offset):
-    for i, layer in enumerate(model.model.layers):
-        with safe_open(weights, "pt") as f:
-            for param in ("gate_up_proj", "down_proj"):
-                prefix = f"model.layers.{i}.mlp.experts.{param}"
-                blocks, scales = f.get_tensor(prefix + "_blocks"), f.get_tensor(prefix + "_scales")
-                w = convert_moe_packed_tensors(blocks, scales + offset, dtype=torch.float32)
-                getattr(layer.mlp.experts, param).data = w
-
-
-def model_fixture(spec, weights, provenance):
-    model = AutoModelForCausalLM.from_pretrained(
-        spec["repo"], dtype=torch.float32, experts_implementation="eager", sliding_window=WINDOW
-    )
-    model = model.float().eval()
-    assert model.config._experts_implementation == "eager"
-    assert model.config._attn_implementation == "eager"
-    assert model.config.sliding_window == WINDOW
-    fixture = dict(provenance)
-    fixture.update(
-        {
-            "sliding_window": WINDOW,
-            "ids": IDS,
-            "short_ids": SHORT,
-            "rotary": rotary(model),
-            "sinks": {str(i): flat(l.self_attn.sinks) for i, l in enumerate(model.model.layers)},
-        }
-    )
-    if not spec["packed"]:
-        fixture["cases"] = {"0": record_model(model)}
-    else:
-        fixture["cases"] = {}
-        for offset in (0, SCALE_OFFSET):
-            set_scales(model, weights, offset)
-            fixture["cases"][str(offset)] = record_model(model)
-    return fixture
-
-
 def write(name, fixture):
     path = os.path.join(here, "..", "fixtures", name + ".json")
     with open(path, "w") as f:
@@ -232,53 +251,41 @@ def write(name, fixture):
     print("wrote", path, os.path.getsize(path), "bytes")
 
 
-here = os.path.dirname(os.path.abspath(__file__))
-for name, spec in MODELS.items():
-    weights = hf_hub_download(spec["repo"], "model.safetensors", revision=spec["revision"])
+def load(directory):
+    """transformers' model of [directory] at float32, MXFP4 experts decoded at
+    float32: without triton its loader decodes them to bfloat16."""
     model = AutoModelForCausalLM.from_pretrained(
-        spec["repo"], revision=spec["revision"], dtype=torch.float32,
-        experts_implementation="eager",
+        directory, dtype=torch.float32, experts_implementation="eager"
     )
-    # Without triton the MXFP4 loader dequantises the experts to bfloat16
-    # whatever dtype is asked for.
     model = model.float().eval()
     assert model.config._experts_implementation == "eager"
-    cfg = model.config
-    provenance = {
-        "repo": spec["repo"],
-        "revision": spec["revision"],
+    assert model.config._attn_implementation == "eager"
+    with safe_open(os.path.join(directory, "model.safetensors"), "pt") as f:
+        for i, layer in enumerate(model.model.layers):
+            for param in ("gate_up_proj", "down_proj"):
+                prefix = f"model.layers.{i}.mlp.experts.{param}"
+                if prefix + "_blocks" in f.keys():
+                    blocks, scales = f.get_tensor(prefix + "_blocks"), f.get_tensor(prefix + "_scales")
+                    w = convert_moe_packed_tensors(blocks, scales, dtype=torch.float32)
+                    getattr(layer.mlp.experts, param).data = w
+    return model
+
+
+here = os.path.dirname(os.path.abspath(__file__))
+for name, packed in MODELS.items():
+    model = load(checkpoint(name, packed))
+    fixture = {
+        "checkpoint": name,
         "versions": {
             "python": sys.version.split()[0],
             "torch": torch.__version__,
             "transformers": transformers.__version__,
             "safetensors": safetensors.__version__,
-            "huggingface_hub": huggingface_hub.__version__,
-        },
-    }
-    fixture = dict(provenance)
-    fixture.update({
-        "config": {
-            "hidden_size": cfg.hidden_size,
-            "intermediate_size": cfg.intermediate_size,
-            "num_local_experts": cfg.num_local_experts,
-            "num_experts_per_tok": cfg.num_experts_per_tok,
-            "swiglu_limit": cfg.swiglu_limit,
         },
         "layer": LAYER,
         "ids": IDS,
         "short_ids": SHORT,
-        "pad_id": PAD,
-    })
-    if not spec["packed"]:
-        fixture["cases"] = {"0": cases(model)}
-    else:
-        experts = model.model.layers[LAYER].mlp.experts
-        gate_up, down = packed(weights, "gate_up_proj"), packed(weights, "down_proj")
-        fixture["cases"] = {}
-        for offset in (0, SCALE_OFFSET):
-            for param, (blocks, scales) in (("gate_up_proj", gate_up), ("down_proj", down)):
-                w = convert_moe_packed_tensors(blocks, scales + offset, dtype=torch.float32)
-                getattr(experts, param).data = w
-            fixture["cases"][str(offset)] = cases(model)
+        "block": cases(model),
+    }
+    fixture.update(record_model(model))
     write(name, fixture)
-    write(name + "-model", model_fixture(spec, weights, provenance))

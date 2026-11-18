@@ -4,28 +4,15 @@
   ---------------------------------------------------------------------------*)
 
 (* Harmony against openai-harmony: [Harmony.render] gives the recorded ids of
-   each conversation, and a parser fed a completion's ids one at a time gives
-   the recorded messages and stops where the reference does.
-   [gen/reference_text.py] recorded the fixture. *)
+   each prompt, and a parser fed a completion's ids one at a time gives the
+   recorded messages and stops where the reference does.
+   [gen/reference_text.py] recorded the fixture and wrote the tokenizer. *)
 
 open Windtrap
 open Fixture
 
 let fx = load "harmony"
-
-let harmony =
-  lazy
-    (let source = mem "tokenizer" fx in
-     let revision = to_string (mem "revision" source) in
-     Harmony.of_file
-       (Kaun_hf.download_file ~revision ~file:"tokenizer.json"
-          (to_string (mem "repo" source))))
-
-let effort = function
-  | "low" -> Harmony.Low
-  | "medium" -> Harmony.Medium
-  | "high" -> Harmony.High
-  | s -> failwith ("fixture: effort " ^ s)
+let harmony = lazy (Harmony.of_file "checkpoints/tokenizer.json")
 
 let channel = function
   | "analysis" -> Harmony.Analysis
@@ -33,30 +20,18 @@ let channel = function
   | "final" -> Harmony.Final
   | s -> failwith ("fixture: channel " ^ s)
 
-let turn j =
-  let content = to_string (mem "content" j) in
-  match to_string (mem "role" j) with
-  | "user" -> Harmony.User content
-  | "assistant" ->
-      Harmony.Assistant (channel (to_string (mem "channel" j)), content)
-  | s -> failwith ("fixture: role " ^ s)
-
 let render case () =
   equal ~msg:"ids" (array int)
     (ints (mem "ids" case))
-    (Harmony.render (Lazy.force harmony)
-       ?date:(to_string_option (mem "date" case))
-       ?instructions:(to_string_option (mem "instructions" case))
-       ~effort:(effort (to_string (mem "effort" case)))
-       (List.map turn (to_list (mem "messages" case))))
+    (Harmony.render (Lazy.force harmony) (to_string (mem "text" case)))
 
 (* The texts a parser gives, joined per message: a new message starts where
    the channel changes. Each text is valid UTF-8 on its own, since main prints
    it as it comes. *)
 let parse case () =
+  let invalid = ref [] in
   let add messages (channel, text) =
-    equal ~msg:("valid UTF-8: " ^ String.escaped text) bool true
-      (String.is_valid_utf_8 text);
+    if not (String.is_valid_utf_8 text) then invalid := text :: !invalid;
     match messages with
     | (c, t) :: rest when c = channel -> (c, t ^ text) :: rest
     | _ -> (channel, text) :: messages
@@ -82,6 +57,7 @@ let parse case () =
   equal ~msg:"messages" (list (pair string string))
     (named (List.map message (to_list (mem "messages" case))))
     (named (List.rev messages));
+  equal ~msg:"pieces that are not valid UTF-8" (list string) [] !invalid;
   equal ~msg:"stopped" bool
     (to_bool (mem "stopped" case))
     (Harmony.stopped parser)
@@ -94,7 +70,7 @@ let cases key f =
 let () =
   run "gpt-oss harmony against openai-harmony"
     [
-      group "render" (cases "conversations" render);
+      group "render" (cases "prompts" render);
       group "parse" (cases "completions" parse);
     ]
   |> exit

@@ -11,10 +11,13 @@
 """Record gpt-oss's references at sizes that do not fit in memory: the
 transformers implementation at float32 on CPU, one block at a time.
 
-    uv run apps/gpt-oss/test/gen/reference_stream.py openai/gpt-oss-20b \
-      --revision 6cee5e81ee83917806bbde320786a8fb61efebee
+    uv run --python 3.12 apps/gpt-oss/test/gen/reference_stream.py \
+      --repo openai/gpt-oss-20b --revision 6cee5e81ee83917806bbde320786a8fb61efebee
+    uv run --python 3.12 apps/gpt-oss/test/gen/reference_stream.py \
+      --dir apps/gpt-oss/test/checkpoints/gpt-oss-mxfp4
 
-writes test/fixtures/<name>-stream.json. transformers dequantises every
+writes test/fixtures/<name>-stream.json, for a repository at a revision or
+for one of the small checkpoints reference.py writes. transformers dequantises every
 expert when it loads the model, about 42 GB for gpt-oss-20b, so this
 recorder never builds the model. It reads a block's tensors from the
 safetensors files by name, dequantises that block's MXFP4 experts with
@@ -23,17 +26,16 @@ GptOssDecoderLayer, runs the block on the residual stream of every prompt,
 records and frees it. The rotary tables, the two masks, the final norm and
 the head are transformers' too. Peak memory is one block's float32 experts,
 the dequantiser's temporaries and at the end the float32 head: 9.6 GB for
-gpt-oss-20b. The checkpoint is read from raven's hub cache, where the app's
-importer reads it, or from --dir, and is downloaded with huggingface_hub
-when neither has it.
+gpt-oss-20b. A repository is read from raven's hub cache, where the app's
+importer reads it, and is downloaded there with huggingface_hub when it is
+missing.
 
 --whole also runs transformers' whole model in this process and compares
 every residual stream, every router decision and every logit with the
 streamed ones. It is the check of this recorder, for checkpoints that fit:
 
-    uv run apps/gpt-oss/test/gen/reference_stream.py tiny-random/gpt-oss-mxfp4 \
-      --revision 27b6ad8040614834e65239f102de94bc459f48e5 --whole --window 4 \
-      --scale-offset 118
+    uv run --python 3.12 apps/gpt-oss/test/gen/reference_stream.py \
+      --dir apps/gpt-oss/test/checkpoints/gpt-oss-mxfp4 --whole
 
 --dtype bfloat16 runs transformers at the precision the model is served at,
 experts dequantised to bfloat16 as its loader does. float32 over the same
@@ -52,9 +54,9 @@ from transformers.models.gpt_oss.modeling_gpt_oss import (
     GptOssRotaryEmbedding,
 )
 
-# Token ids are fixed: no tokenizer is involved. "short" is the prompt of
-# reference.py. "medium" and "long" are English prose encoded once with the
-# checkpoint's tokenizer; "long" is longer than the sliding window of 128.
+# Token ids are fixed: no tokenizer is involved. "medium" and "long" are
+# English prose encoded once with gpt-oss's tokenizer; "long" is longer than
+# its sliding window of 128. A smaller vocabulary reads them modulo its size.
 PROMPTS = {
     "short": [200006, 17360, 200008, 3575, 553, 17554, 162016, 11, 261, 4410, 6439, 2359],
     "medium": [976, 27467, 328, 13071, 306, 495, 2359, 19749, 1753, 6602, 316, 4242, 328, 37650,
@@ -142,7 +144,7 @@ class Checkpoint:
             return torch.stack([table[i] for i in ids])
 
 
-def experts(ckpt, name, offset, dtype):
+def experts(ckpt, name, dtype):
     """One projection of every expert at [dtype], in the module's layout
     [experts, inputs, outputs]. Float checkpoints store that layout; packed
     ones are dequantised by transformers, which also transposes them."""
@@ -150,25 +152,29 @@ def experts(ckpt, name, offset, dtype):
         return ckpt.get(name).to(dtype)
     blocks, scales = ckpt.get(name + "_blocks"), ckpt.get(name + "_scales")
     return convert_moe_packed_tensors(
-        blocks, scales + offset, dtype=dtype, rows_per_chunk=1 << 20
+        blocks, scales, dtype=dtype, rows_per_chunk=1 << 20
     )
 
 
-def block(config, ckpt, i, offset, dtype):
+def block(config, ckpt, i, dtype):
     prefix = f"model.layers.{i}."
     with torch.device("meta"):
         layer = GptOssDecoderLayer(config, i)
     state = {}
     for name in layer.state_dict():
         if name in ("mlp.experts.gate_up_proj", "mlp.experts.down_proj"):
-            state[name] = experts(ckpt, prefix + name, offset, dtype)
+            state[name] = experts(ckpt, prefix + name, dtype)
         else:
             state[name] = ckpt.get(prefix + name).to(dtype)
     layer.load_state_dict(state, strict=True, assign=True)
     return layer.eval()
 
 
-def stream(config, ckpt, offset, dtype, log=lambda s: None):
+def prompts(config):
+    return {p: [i % config.vocab_size for i in ids] for p, ids in PROMPTS.items()}
+
+
+def stream(config, ckpt, dtype, log=lambda s: None):
     """The forward pass of every prompt, a block at a time. Per prompt: the
     residual stream entering block 0 and leaving every block, the stream
     between a block's attention and its experts, the router's logits and
@@ -177,9 +183,10 @@ def stream(config, ckpt, offset, dtype, log=lambda s: None):
         p: {"residual": [], "middle": [], "router_logits": [], "experts": [], "expert_weights": []}
         for p in PROMPTS
     }
+    ids_of = prompts(config)
     rotary = GptOssRotaryEmbedding(config)
     state = {}
-    for p, ids in PROMPTS.items():
+    for p, ids in ids_of.items():
         x = ckpt.rows("model.embed_tokens.weight", ids).to(dtype).unsqueeze(0)
         position_ids = torch.arange(len(ids)).unsqueeze(0)
         kwargs = dict(config=config, inputs_embeds=x, attention_mask=None, past_key_values=None)
@@ -195,7 +202,7 @@ def stream(config, ckpt, offset, dtype, log=lambda s: None):
         out[p]["residual"].append(x[0])
     for i in range(config.num_hidden_layers):
         t0 = time.time()
-        layer = block(config, ckpt, i, offset, dtype)
+        layer = block(config, ckpt, i, dtype)
         seen = {}
         hooks = [
             layer.self_attn.register_forward_hook(lambda m, a, o: seen.update(attention=o[0])),
@@ -233,7 +240,7 @@ def stream(config, ckpt, offset, dtype, log=lambda s: None):
     return out, tied
 
 
-def whole(repo, directory, config, offset, dtype):
+def whole(directory, config, dtype):
     """transformers' whole model on the same prompts, as reference.py runs it."""
     model = AutoModelForCausalLM.from_pretrained(
         directory,
@@ -255,9 +262,9 @@ def whole(repo, directory, config, offset, dtype):
         for param in ("gate_up_proj", "down_proj"):
             name = f"model.layers.{i}.mlp.experts.{param}"
             if name not in ckpt:
-                getattr(layer.mlp.experts, param).data = experts(ckpt, name, offset, dtype)
+                getattr(layer.mlp.experts, param).data = experts(ckpt, name, dtype)
     out = {}
-    for p, ids in PROMPTS.items():
+    for p, ids in prompts(config).items():
         seen = {"logits": [], "experts": []}
 
         def routed(module, args, output):
@@ -330,9 +337,10 @@ def fixture(config, streamed):
     layers = config.num_hidden_layers
     whole_blocks = {0, layers // 2, layers - 1}
     projection = signs(PROJECTIONS, config.hidden_size)
-    prompts = {}
+    recorded = {}
+    ids_of = prompts(config)
     for p, s in streamed.items():
-        n = len(PROMPTS[p])
+        n = len(ids_of[p])
         at = positions(n)
         blocks = []
         for i in range(layers):
@@ -352,8 +360,8 @@ def fixture(config, streamed):
                 b["after_block_last"] = flat(s["residual"][i + 1][-1])
             blocks.append(b)
         top = torch.topk(s["logits"], TOP, dim=-1)
-        prompts[p] = {
-            "ids": PROMPTS[p],
+        recorded[p] = {
+            "ids": ids_of[p],
             "positions": at,
             "embedded": [summary(s["residual"][0][t], projection) for t in at],
             "blocks": blocks,
@@ -368,17 +376,15 @@ def fixture(config, streamed):
         "projections": PROJECTIONS,
         "projection": "rows of +1 and -1, row-major from the generator "
         "s <- (1103515245 s + 12345) mod 2^31 started at 12345, +1 where bit 16 of s is set",
-        "prompts": prompts,
+        "prompts": recorded,
     }
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("repo")
-    ap.add_argument("--revision", required=True, help="the commit of the repository to record")
-    ap.add_argument("--dir", help="a directory holding config.json and the safetensors files")
-    ap.add_argument("--window", type=int, help="override the configuration's sliding window")
-    ap.add_argument("--scale-offset", type=int, default=0, help="added to every MXFP4 scale byte")
+    ap.add_argument("--repo", help="a repository, read at --revision")
+    ap.add_argument("--revision", help="the commit of the repository to record")
+    ap.add_argument("--dir", help="a small checkpoint: config.json and model.safetensors")
     ap.add_argument("--whole", action="store_true", help="compare with the whole model; writes nothing")
     ap.add_argument("--dtype", default="float32", choices=["float32", "bfloat16"])
     ap.add_argument("--out", help="the fixture's path; fixtures/<name>-stream.json by default")
@@ -387,6 +393,8 @@ def main():
     dtype = getattr(torch, args.dtype)
     started = time.time()
 
+    if (args.dir is None) == (args.repo is None and args.revision is None):
+        ap.error("give --dir, or --repo and --revision")
     directory = args.dir or raven_cache(args.repo, args.revision)
     if not os.path.exists(os.path.join(directory, "config.json")):
         directory = huggingface_hub.snapshot_download(
@@ -396,20 +404,17 @@ def main():
     config = AutoConfig.from_pretrained(directory)
     config._attn_implementation = "eager"
     config._experts_implementation = "eager"
-    if args.window is not None:
-        config.sliding_window = args.window
     ckpt = Checkpoint(directory)
 
-    streamed, tied = stream(
-        config, ckpt, args.scale_offset, dtype, log=lambda s: print(s, flush=True)
-    )
+    streamed, tied = stream(config, ckpt, dtype, log=lambda s: print(s, flush=True))
     if args.whole:
-        worst = compare(streamed, whole(args.repo, directory, config, args.scale_offset, dtype))
+        worst = compare(streamed, whole(directory, config, dtype))
         sys.exit(0 if worst < 1e-6 else 1)
 
+    name = os.path.basename(os.path.normpath(args.dir)) if args.dir else args.repo.split("/")[-1]
+    source = {"checkpoint": name} if args.dir else {"repo": args.repo, "revision": args.revision}
     out = {
-        "repo": args.repo,
-        "revision": args.revision,
+        **source,
         "versions": {
             "python": sys.version.split()[0],
             "torch": torch.__version__,
@@ -420,12 +425,11 @@ def main():
         "dtype": args.dtype,
         "threads": THREADS,
         "sliding_window": config.sliding_window,
-        "scale_offset": args.scale_offset,
         "tied": tied,
     }
     out.update(fixture(config, streamed))
     here = os.path.dirname(os.path.abspath(__file__))
-    path = args.out or os.path.join(here, "..", "fixtures", args.repo.split("/")[-1] + "-stream.json")
+    path = args.out or os.path.join(here, "..", "fixtures", name + "-stream.json")
     with open(path, "w") as f:
         json.dump(out, f)
         f.write("\n")

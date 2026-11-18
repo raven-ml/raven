@@ -2,22 +2,27 @@
 # requires-python = ">=3.11"
 # dependencies = [
 #   "openai-harmony==0.0.8",
+#   "tokenizers==0.23.1",
+#   "huggingface_hub==1.32.0",
 # ]
 # ///
-"""Record gpt-oss's text references from openai-harmony: what its renderer
-makes of a set of conversations, and what its parser reads in a set of
-completions.
+"""Record gpt-oss's text references from openai-harmony, and write the
+tokenizer they need.
 
-    uv run apps/gpt-oss/test/gen/reference_text.py
+    uv run --python 3.12 apps/gpt-oss/test/gen/reference_text.py
 
-Writes test/fixtures/harmony.json, which names the checkpoint whose
-tokenizer.json the app reads, at REVISION.
+Writes test/fixtures/harmony.json: the ids openai-harmony renders for a
+prompt, as main renders it, and the messages its parser reads in a set of
+completions. Writes test/checkpoints/tokenizer.json: gpt-oss-20b's
+tokenizer at REVISION, trimmed by brot's trim_parity_tokenizers.py to what
+those texts reach, and checks that it encodes and decodes them as the full
+file does.
 """
-import json, os
+import json, os, sys
 from importlib.metadata import version
+from huggingface_hub import hf_hub_download
 from openai_harmony import (
     Conversation,
-    DeveloperContent,
     HarmonyEncodingName,
     Message,
     ReasoningEffort,
@@ -26,71 +31,21 @@ from openai_harmony import (
     SystemContent,
     load_harmony_encoding,
 )
+from tokenizers import Tokenizer
 
-REPO = "tiny-random/gpt-oss-mxfp4"
-REVISION = "27b6ad8040614834e65239f102de94bc459f48e5"
+REPO = "openai/gpt-oss-20b"
+REVISION = "6cee5e81ee83917806bbde320786a8fb61efebee"
+here = os.path.dirname(os.path.abspath(__file__))
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.join(here, "..", "..", "..", "..", "packages", "brot", "test", "gen"))
+import trim_parity_tokenizers as trim
 
-DATE = "2026-09-19"
-
-
-def user(text):
-    return {"role": "user", "content": text}
-
-
-def assistant(channel, text):
-    return {"role": "assistant", "channel": channel, "content": text}
-
-
-CONVERSATIONS = [
-    {"name": "system only", "date": None, "effort": "medium",
-     "instructions": None, "messages": []},
-    {"name": "one user turn", "date": None, "effort": "medium",
-     "instructions": None, "messages": [user("What is 2 + 2?")]},
-    {"name": "dated", "date": DATE, "effort": "medium",
-     "instructions": None, "messages": [user("What day is it?")]},
-    {"name": "low effort", "date": DATE, "effort": "low",
-     "instructions": None, "messages": [user("Hi")]},
-    {"name": "high effort", "date": DATE, "effort": "high",
-     "instructions": None, "messages": [user("Prove it.")]},
-    {"name": "developer instructions", "date": DATE, "effort": "medium",
-     "instructions": "Answer in French.\nBe brief.",
-     "messages": [user("Où est la gare ?")]},
-    {"name": "user text that spells a special token", "date": None,
-     "effort": "medium", "instructions": None,
-     "messages": [user("What does <|end|> mean?")]},
-    {"name": "multi-turn", "date": DATE, "effort": "low",
-     "instructions": "Be terse.",
-     "messages": [
-         user("Name a prime."),
-         assistant("analysis", "Any prime will do."),
-         assistant("final", "7"),
-         user("Another, 日本語で."),
-     ]},
-    {"name": "analysis kept after the first final", "date": None,
-     "effort": "medium", "instructions": None,
-     "messages": [
-         user("a"),
-         assistant("analysis", "one"),
-         assistant("commentary", "aside"),
-         assistant("final", "A"),
-         user("b"),
-         assistant("analysis", "two"),
-         assistant("final", "B"),
-         user("c"),
-     ]},
-    {"name": "analysis kept while no final closes the turn", "date": None,
-     "effort": "medium", "instructions": None,
-     "messages": [
-         user("a"),
-         assistant("analysis", "one"),
-         assistant("final", "A"),
-         user("b"),
-         assistant("analysis", "two"),
-     ]},
+# What main renders: one user turn, at medium reasoning effort.
+PROMPTS = [
+    {"name": "one user turn", "text": "What is 2 + 2?"},
+    {"name": "user text that spells a special token", "text": "What does <|end|> mean?"},
 ]
 
-# What follows <|start|>assistant. The third has no stop token; the fourth
-# splits an emoji and a CJK character across tokens.
 COMPLETIONS = [
     {"name": "analysis then final",
      "text": "<|channel|>analysis<|message|>The user greets.<|end|>"
@@ -112,38 +67,48 @@ COMPLETIONS = [
              '<|constrain|>json<|message|>{"city": "Paris"}<|call|>'},
 ]
 
-EFFORTS = {
-    "low": ReasoningEffort.LOW,
-    "medium": ReasoningEffort.MEDIUM,
-    "high": ReasoningEffort.HIGH,
-}
+
+
+def trimmed(fixture):
+    """The full tokenizer's file cut to what [fixture]'s texts reach."""
+    full = hf_hub_download(REPO, "tokenizer.json", revision=REVISION)
+    tok = Tokenizer.from_file(full)
+    with open(full, encoding="utf-8") as f:
+        data = json.load(f)
+    added = [t["content"] for t in data["added_tokens"]]
+    ids = {t["id"] for t in data["added_tokens"]}
+    seen = set()
+    for c in fixture["prompts"]:
+        ids |= set(c["ids"])
+        seen |= trim.words(tok, c["text"], [])
+    for c in fixture["completions"]:
+        ids |= set(c["ids"])
+        seen |= trim.words(tok, tok.decode(c["ids"], skip_special_tokens=False), added)
+    seen |= trim.words(tok, enc_text(fixture), added)
+    model = data["model"]
+    trim.trim_bpe(model, {tok.id_to_token(i) for i in ids}, seen)
+    for t in data["added_tokens"]:
+        model["vocab"].setdefault(t["content"], t["id"])
+    return tok, trim.dump(data)
+
+
+def enc_text(fixture):
+    return "".join(c["rendered"] for c in fixture["prompts"])
 
 
 def main():
     enc = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
-
-    conversations = []
-    for c in CONVERSATIONS:
-        system = SystemContent.new().with_reasoning_effort(EFFORTS[c["effort"]])
-        if c["date"] is not None:
-            system = system.with_conversation_start_date(c["date"])
-        messages = [Message.from_role_and_content(Role.SYSTEM, system)]
-        if c["instructions"] is not None:
-            developer = DeveloperContent.new().with_instructions(c["instructions"])
-            messages.append(Message.from_role_and_content(Role.DEVELOPER, developer))
-        for m in c["messages"]:
-            if m["role"] == "user":
-                messages.append(Message.from_role_and_content(Role.USER, m["content"]))
-            else:
-                messages.append(
-                    Message.from_role_and_content(
-                        Role.ASSISTANT, m["content"]
-                    ).with_channel(m["channel"])
-                )
+    system = SystemContent.new().with_reasoning_effort(ReasoningEffort.MEDIUM)
+    prompts = []
+    for c in PROMPTS:
+        messages = [
+            Message.from_role_and_content(Role.SYSTEM, system),
+            Message.from_role_and_content(Role.USER, c["text"]),
+        ]
         ids = enc.render_conversation_for_completion(
             Conversation.from_messages(messages), Role.ASSISTANT
         )
-        conversations.append({**c, "ids": ids, "text": enc.decode(ids)})
+        prompts.append({**c, "ids": ids, "rendered": enc.decode(ids)})
 
     stops = set(enc.stop_tokens_for_assistant_actions())
     completions = []
@@ -168,13 +133,24 @@ def main():
     out = {
         "versions": {"openai-harmony": version("openai-harmony")},
         "tokenizer": {"repo": REPO, "revision": REVISION},
-        "conversations": conversations,
+        "prompts": prompts,
         "completions": completions,
     }
-    here = os.path.dirname(os.path.abspath(__file__))
+    full, text = trimmed(out)
+    path = os.path.join(here, "..", "checkpoints", "tokenizer.json")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+    small = Tokenizer.from_file(path)
+    for c in prompts:
+        assert small.encode(c["text"], add_special_tokens=False).ids == full.encode(
+            c["text"], add_special_tokens=False).ids, c["name"]
+    for c in completions:
+        assert small.decode(c["ids"], skip_special_tokens=False) == full.decode(
+            c["ids"], skip_special_tokens=False), c["name"]
     with open(os.path.join(here, "..", "fixtures", "harmony.json"), "w") as f:
         json.dump(out, f, ensure_ascii=True)
         f.write("\n")
+    print("wrote", path, os.path.getsize(path), "bytes")
 
 
 main()
