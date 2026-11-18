@@ -32,7 +32,7 @@ let () =
   | exception Failure msg ->
       Printf.printf "MNIST unavailable (%s); skipping.\n" msg
   | train_x, train_y, test_x, test_y ->
-      (* Flatten [N; 1; 28; 28] images for the MLP. *)
+      (* Flatten [N; 28; 28; 1] images for the MLP. *)
       let flatten x = Nx.reshape [| (Nx.shape x).(0); 28 * 28 |] x in
       let train_x = flatten train_x and test_x = flatten test_x in
       let n_train = (Nx.shape train_x).(0) in

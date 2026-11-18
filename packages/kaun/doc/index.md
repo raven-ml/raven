@@ -6,8 +6,8 @@ The glue is `Nx.Ptree`, the traversal interface from [nx](../../nx/doc/index.md)
 
 ## Features
 
-- **Layers** — `Linear`, `Conv` (2-D, NCHW), `Embedding`, `Attention` (multi-head, causal masking), `Layer_norm`, `Batch_norm` (running statistics as explicit state); each is a parameter record with `init`/`make`, `apply`, and traversals
-- **Stateless functions** — `Fn` activations (`relu`, `gelu`, `silu`, ...), `Pool` (max/avg 2-D pooling), `Dropout` with an explicit `~training` flag
+- **Layers** — `Linear`, `Conv` and `Conv_transpose` (any number of spatial axes, channels last), `Embedding`, `Attention` (multi-head, causal masking), `Layer_norm`, `Batch_norm` (running statistics as explicit state); each is a parameter record with `init`/`make`, `apply`, and traversals
+- **Stateless functions** — `Fn` activations (`relu`, `gelu`, `silu`, ...), `Pool` (max and average pooling over any number of spatial axes), `Dropout` with an explicit `~training` flag
 - **Initializers** — `Init`: Glorot/Xavier, He/Kaiming, LeCun, generic `variance_scaling`
 - **Losses** — `Loss`: MSE, MAE, Huber, `sigmoid_bce`, `softmax_cross_entropy` (dense or sparse labels), all evaluated in log space
 - **Data** — `Data.batches`/`batches2` cut in-memory tensors into a standard `Seq.t` of minibatches, in order

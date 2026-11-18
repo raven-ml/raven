@@ -36,11 +36,14 @@ module Cnn = struct
     let l2 = field c "l2" Linear.walk l2 in
     { c1; c2; l1; l2 }
 
+  (* A 3x3 filter keeps the extent under one element of padding a side. *)
+  let same = [| (1, 1); (1, 1) |]
+
   let apply p x =
-    let x = Fn.relu (Conv.apply ~padding:`Same p.c1 x) in
-    let x = Pool.max_pool2d ~kernel_size:(2, 2) x in
-    let x = Fn.relu (Conv.apply ~padding:`Same p.c2 x) in
-    let x = Pool.max_pool2d ~kernel_size:(2, 2) x in
+    let x = Fn.relu (Conv.apply ~padding:same p.c1 x) in
+    let x = Pool.max ~window:[| 2; 2 |] x in
+    let x = Fn.relu (Conv.apply ~padding:same p.c2 x) in
+    let x = Pool.max ~window:[| 2; 2 |] x in
     let x = Nx.reshape [| (Nx.shape x).(0); 32 * 7 * 7 |] x in
     Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
 end
@@ -86,10 +89,10 @@ let () =
       {
         Cnn.c1 =
           Conv.init ~key:(Nx.Rng.next_key ()) ~in_channels:1 ~out_channels:16
-            ~kernel_size:(3, 3);
+            ~kernel_size:[| 3; 3 |];
         c2 =
           Conv.init ~key:(Nx.Rng.next_key ()) ~in_channels:16 ~out_channels:32
-            ~kernel_size:(3, 3);
+            ~kernel_size:[| 3; 3 |];
         l1 =
           Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:(32 * 7 * 7)
             ~outputs:128;

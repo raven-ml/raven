@@ -30,7 +30,8 @@ There is nothing else to a layer: `layer.w` is an ordinary tensor you can read, 
 | Module | Parameters | Apply |
 |--------|-----------|-------|
 | `Linear` | `w`, optional `b` | dense map over the last axis |
-| `Conv` | `w`, optional `b` | 2-D convolution, NCHW, `` `Valid``/`` `Same`` padding |
+| `Conv` | `w`, optional `b` | convolution over any number of spatial axes, channels last, `(lo, hi)` padding pairs |
+| `Conv_transpose` | `w`, optional `b` | transposed convolution, which upsamples at a stride above one |
 | `Embedding` | `table` | token-id to row lookup (int64 ids in, floats out) |
 | `Attention` | `q`, `k`, `v`, `out` projections | multi-head self-attention, optional causal mask |
 | `Layer_norm` | `gamma`, `beta` | normalization over the last axis |
@@ -41,7 +42,7 @@ Stateless companions, all pure functions:
 | Module | Contents |
 |--------|----------|
 | `Fn` | `relu`, `leaky_relu`, `gelu`, `gelu_approx`, `silu`, `softplus`, `keep_top_k`, `keep_top_p` |
-| `Pool` | `max_pool2d`, `avg_pool2d` over the last two axes |
+| `Pool` | `max`, `avg` over windows of the spatial axes, channels last |
 | `Dropout` | `apply ~rate ~training` |
 | `Init` | `glorot_*`, `he_*`, `lecun_*`, `variance_scaling`, constants |
 
@@ -89,9 +90,9 @@ module Cnn = struct
   let apply p ~training x =
     let n = (Nx.shape x).(0) in
     Conv.apply p.c1 x |> Fn.relu
-    |> Pool.max_pool2d ~kernel_size:(2, 2)
+    |> Pool.max ~window:[| 2; 2 |]
     |> Conv.apply p.c2 |> Fn.relu
-    |> Pool.max_pool2d ~kernel_size:(2, 2)
+    |> Pool.max ~window:[| 2; 2 |]
     |> Nx.reshape [| n; 16 * 5 * 5 |]
     |> Dropout.apply ~rate:0.25 ~training
     |> Linear.apply p.fc
@@ -103,14 +104,14 @@ let () =
     {
       Cnn.c1 =
         Conv.init ~key:(Nx.Rng.next_key ()) ~in_channels:1 ~out_channels:8
-          ~kernel_size:(3, 3);
+          ~kernel_size:[| 3; 3 |];
       c2 =
         Conv.init ~key:(Nx.Rng.next_key ()) ~in_channels:8 ~out_channels:16
-          ~kernel_size:(3, 3);
+          ~kernel_size:[| 3; 3 |];
       fc = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:(16 * 5 * 5) ~outputs:10;
     }
   in
-  let x = Nx.Rng.normal Nx.float32 [| 2; 1; 28; 28 |] in
+  let x = Nx.Rng.normal Nx.float32 [| 2; 28; 28; 1 |] in
   let logits = Cnn.apply params ~training:false x in
   Format.printf "logits: %a@." Nx.pp_shape (Nx.shape logits)
   (* [2; 10] *)

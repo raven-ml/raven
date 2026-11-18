@@ -50,7 +50,7 @@ module Mlp = struct
       (Fn.relu (Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))))
 end
 
-(* CNN: two conv + max-pool blocks then a dense head, NCHW, single-channel 28x28
+(* CNN: two conv + max-pool blocks then a dense head, channels last, 28x28x1
    inputs, batch 32, float32. Spatial size shrinks 28 -conv3-> 26 -pool2-> 13
    -conv3-> 11 -pool2-> 5, so the head sees 16 * 5 * 5 features. *)
 
@@ -74,8 +74,8 @@ module Cnn = struct
 
   let apply p x =
     let open Kaun in
-    let h = Pool.max_pool2d ~kernel_size:(2, 2) (Fn.relu (Conv.apply p.c1 x)) in
-    let h = Pool.max_pool2d ~kernel_size:(2, 2) (Fn.relu (Conv.apply p.c2 h)) in
+    let h = Pool.max ~window:[| 2; 2 |] (Fn.relu (Conv.apply p.c1 x)) in
+    let h = Pool.max ~window:[| 2; 2 |] (Fn.relu (Conv.apply p.c2 h)) in
     Linear.apply p.head (Nx.reshape [| cnn_batch; -1 |] h)
 end
 
@@ -122,16 +122,16 @@ let () =
   in
 
   (* CNN: inputs, parameters, and Adam state. *)
-  let cx = Nx.Rng.normal Nx.float32 [| cnn_batch; 1; cnn_img; cnn_img |] in
+  let cx = Nx.Rng.normal Nx.float32 [| cnn_batch; cnn_img; cnn_img; 1 |] in
   let cy = one_hot cnn_batch in
   let cnn_params =
     {
       Cnn.c1 =
         Kaun.Conv.init ~key:(Nx.Rng.next_key ()) ~in_channels:1 ~out_channels:8
-          ~kernel_size:(3, 3);
+          ~kernel_size:[| 3; 3 |];
       c2 =
         Kaun.Conv.init ~key:(Nx.Rng.next_key ()) ~in_channels:8 ~out_channels:16
-          ~kernel_size:(3, 3);
+          ~kernel_size:[| 3; 3 |];
       head =
         Kaun.Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:cnn_feats
           ~outputs:d_out;

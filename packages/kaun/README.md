@@ -75,13 +75,15 @@ save, or swap.
 
 ## Features
 
-- **Layers** — `Linear`, `Conv` (2-D, NCHW), `Embedding`, `Attention`
+- **Layers** — `Linear`, `Conv` and `Conv_transpose` (any number of
+  spatial axes, channels last), `Embedding`, `Attention`
   (multi-head, causal masking, a KV cache for decoding, plus the pure
   `scaled_dot_product_attention` core), `Layer_norm`, `Batch_norm`
   (running statistics as explicit state); each is a parameter record
   with `init`/`make`, `apply`, and traversals
 - **Stateless functions** — `Fn` activations (`relu`, `gelu`, `silu`,
-  ...), `Pool` (max/avg 2-D pooling), `Dropout` with an explicit
+  ...), `Pool` (max and average pooling over any number of spatial
+  axes), `Dropout` with an explicit
   `~training` flag
 - **Initializers** — `Init`: Glorot/Xavier, He/Kaiming, LeCun, generic
   `variance_scaling`; any function of the right type is an initializer
@@ -199,8 +201,7 @@ weights, and generates text through a key-value cache.
 - Layer coverage is deliberately small: no recurrent layers; `Attention`
   covers grouped queries, rotary positions and cached decoding, and no
   sliding windows or cross-attention layer (write those from the
-  `scaled_dot_product_attention` core). `Conv` is
-  im2col-based and not tuned for large inputs.
+  `scaled_dot_product_attention` core).
 - `Batch_norm.init` builds float32 parameters (cast with
   `Nx.Ptree.cast (module Batch_norm) dt` for other precisions); `apply` is
   generic over float dtypes, like the other layers.

@@ -18,7 +18,7 @@ let test_examples = 2_000
 let lr = 3e-3
 
 (* conv(1->8) -> relu -> pool -> conv(8->16) -> relu -> pool -> dropout ->
-   linear(400->10). Images are NCHW [n; 1; 28; 28]. *)
+   linear(400->10). Images are channels last, [n; 28; 28; 1]. *)
 module Cnn = struct
   type ('a, 'd) t = {
     c1 : ('a, 'd) Conv.t;
@@ -37,18 +37,18 @@ module Cnn = struct
     let k = Nx.Rng.split ~n:3 key in
     {
       c1 =
-        Conv.init ~key:k.(0) ~in_channels:1 ~out_channels:8 ~kernel_size:(3, 3);
+        Conv.init ~key:k.(0) ~in_channels:1 ~out_channels:8 ~kernel_size:[| 3; 3 |];
       c2 =
-        Conv.init ~key:k.(1) ~in_channels:8 ~out_channels:16 ~kernel_size:(3, 3);
+        Conv.init ~key:k.(1) ~in_channels:8 ~out_channels:16 ~kernel_size:[| 3; 3 |];
       fc = Linear.init ~key:k.(2) ~inputs:(16 * 5 * 5) ~outputs:10;
     }
 
   let apply p ~training x =
     let n = (Nx.shape x).(0) in
     Conv.apply p.c1 x |> Fn.relu
-    |> Pool.max_pool2d ~kernel_size:(2, 2)
+    |> Pool.max ~window:[| 2; 2 |]
     |> Conv.apply p.c2 |> Fn.relu
-    |> Pool.max_pool2d ~kernel_size:(2, 2)
+    |> Pool.max ~window:[| 2; 2 |]
     |> Nx.reshape [| n; 16 * 5 * 5 |]
     |> Dropout.apply ~rate:0.25 ~training
     |> Linear.apply p.fc
