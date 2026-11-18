@@ -20,9 +20,20 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   that state no `units` (sm_80, AMD, Metal) block small products, 1.38x by
   an old measurement. Stating `units` on every target would let it go
   (branch `fix-unitsgate` 3a8321ea33)
-- D357's inner-end group split loses to tinygrad's top split on the bfloat16
-  argmax and max over 201088 values (0.67-0.77x, about 3 us a decode step)
-  and on sum_cols_prime (0.37x)
+- D357's inner-end group split loses to tinygrad's top split where few warps
+  run: the bfloat16 argmax and max over 201088 values (4096 threads) take
+  8.8 us against 5.1 (ncu), 0.70-0.74x by the probe, about 3 us a decode
+  step. Both read the same L2 sectors; under the top split a lane's first
+  load brings the sector of its next 15 values, so 94% of L1 sectors hit
+  against 31% and warps wait 2.3x less on memory. Elsewhere the top split
+  runs 0.89x on sum_strided_prime (256 threads) and 1.04-1.10x on sums of
+  65536-131072 threads, which it makes read 8x the L1 sectors. A gate on
+  threads would also flip sum, cumsum and vecmat_1000 (32-32000 threads),
+  which run 1.06-1.24x under the top split, by a timer tick, so no rule yet.
+  sum_cols_prime's 0.37x is `across`, not the split end (16.4 us at
+  either): its 1571 by 64 sum runs 4 workgroups of 256 threads
+  (`r_4_16_16_99`), tinygrad's 64 of 32 (`r_64_32_50`). Raw:
+  ~/wt/tmp/fix-argmax
 - A decoded operand of 12-16 rows streams in one pass where a core probably
   wins (559-706 us against 424-492 at 17-64 rows); it reaches gpt-oss's
   Q8_0 prefill at 12 tokens. `core_fits` ignores `early`'s guards, which a
