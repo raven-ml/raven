@@ -43,12 +43,13 @@ from another library.
 jord is not in the opam repository yet, and it builds against raven's
 `main`. In the raven repository, an executable adds `jord` to its
 `libraries` ([the quick start](doc/index.md) lists the others it may
-need). Outside it, opam pins the repository's packages at `main` and
-installs jord with the nx it needs:
+need). Outside it, opam pins raven's packages at `main`, and jord from
+its directory, and installs jord with the nx it needs:
 
 <!-- $MDX skip -->
 ```bash
-opam pin add -n --recursive git+https://github.com/raven-ml/raven.git#main
+opam pin add -n git+https://github.com/raven-ml/raven.git#main
+opam pin add -n jord git+https://github.com/raven-ml/raven.git#main --subpath contrib/jord
 opam install jord
 ```
 
