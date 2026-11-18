@@ -165,7 +165,8 @@ let answer : type a. agent -> a Wire.request -> (a, string) result =
             | _ :: fs -> index (i + 1) fs
           in
           Ok (index 0 fs))
-  | Wire.Open _ | Wire.Join _ | Wire.Rail _ -> Error "not served here"
+  | Wire.Open _ | Wire.Join _ | Wire.Rail _ | Wire.Capacity _ ->
+      Error "not served here"
 
 let region ag id =
   match Hashtbl.find_opt ag.memory id with

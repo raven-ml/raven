@@ -605,6 +605,35 @@ let handle_alignment () =
       equal ~msg:(Rig.name owner ^ " borrowed") bool true (borrows <> []))
     ds
 
+(* BOUNDED's bytes, as support/agent.ml makes it. *)
+let bounded_bytes = 1 lsl 20
+
+let reported d =
+  Option.map (fun (c : Rig.capacity) -> (c.total, c.free)) (Rig.capacity d)
+
+(* Another machine's device reports its agent's device's capacity, asked at
+   each call: none for a software device, and a bounded device's own, whose
+   free falls by a buffer made here. *)
+let capacity () =
+  with_job @@ fun j _ ->
+  let h = List.hd (Rig_remote.hosts j) in
+  let report = option (pair int int) in
+  List.iter (fun d -> equal ~msg:(Rig.name d) report None (reported d)) (mem h);
+  let d =
+    match Rig_remote.devices h "BOUNDED" with
+    | Ok [ d ] -> d
+    | Ok _ -> fail "BOUNDED is one device"
+    | Error why -> failf "devices: %s" why
+  in
+  equal ~msg:"its report, opened" report
+    (Some (bounded_bytes, bounded_bytes))
+    (reported d);
+  let b = B.create d 4096 in
+  equal ~msg:"its report, with a buffer" report
+    (Some (bounded_bytes, bounded_bytes - 4096))
+    (reported d);
+  ignore (Sys.opaque_identity b)
+
 let machines =
   group "machine"
     [
@@ -622,6 +651,8 @@ let machines =
         reaches;
       test "devices answers Error naming the machine, raises for no host"
         device_errors;
+      test "a device's capacity is its agent's device's, asked at each call"
+        capacity;
     ]
 
 (* Copies *)

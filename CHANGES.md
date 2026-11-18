@@ -57,9 +57,11 @@ All notable changes to this project will be documented in this file.
   call: `Some { total; free }` on CUDA (`cuMemGetInfo`), NVIDIA's kernel
   driver (the RM's heap), AMD's kernel driver from KFD 1.9 (Linux 6.0), and
   both PCI paths (`Rig_pci.Memory.capacity`), and `None` on the host,
-  software, io, Metal and remote devices. A device's budget starts at that
-  total. **Breaking:** `Rig_edge.Driver` gains `capacity`, and `Rig_nv.path`
-  and `Rig_amd.path` gain `available`.
+  software, io and Metal devices. A device of another machine reports its
+  agent's device's, asked at each call (rig.remote's protocol goes to
+  version 14). A device's budget starts at that total. **Breaking:**
+  `Rig_edge.Driver` gains `capacity`, and `Rig_nv.path` and `Rig_amd.path`
+  gain `available`.
 - **Breaking:** `Rig_nv_nvidia.usage` keeps `busy` and drops `memory_total`
   and `memory_free`: read an open device's `Rig.capacity`.
 - A CUDA device's budget starts at `cuMemGetInfo`'s total, the memory of

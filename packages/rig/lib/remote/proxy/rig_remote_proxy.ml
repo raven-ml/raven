@@ -114,8 +114,12 @@ let alloc d memory bytes =
    [map_peer] answers with the word itself: nothing to give back. *)
 let free d = function Memory { id } -> Link.drop d.link id | Word _ -> ()
 
-(* The wire carries no report of the agent's device's memory. *)
-let capacity _ = None
+(* The agent's report, asked at each call: its free changes with every
+   process's allocations there. *)
+let capacity d =
+  match request d.link (Wire.Capacity d.account.id) with
+  | Ok c -> c
+  | Error _ -> None
 
 let locate = function
   | Memory { id } ->

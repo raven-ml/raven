@@ -1036,6 +1036,7 @@ let answer : type a. state -> a Wire.request -> a =
       (* Drop removes the name; a loaded program still owns the end it uses. *)
       Gc.finalise (fun _ -> shielded (fun () -> Link.release_rail l id)) e;
       Hashtbl.replace s.objects id (Rail e)
+  | Wire.Capacity d -> Rig.capacity (device s d)
 
 (* [f] of [b]'s bytes as the host reads them in place: [b]'s own memory on
    this machine's host, a copy of them elsewhere. *)

@@ -253,11 +253,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   audit's §4.4) and the staged file-to-device copy with parking workers.
   `bench/disk`'s read rows, at 14 words a copy, and `read/cold-rows-16K`
   are recorded (d652956bb8, on cores 0-5). Found by SI-1
-- rig.remote's proxy answers no `Rig.capacity` (rig_remote_proxy.ml:118,
-  `None` in its mli's table): the wire carries no report of the agent's
-  device's memory, so a program on a remote GPU cannot check a footprint
-  against it. Forward it as one request and answer, which bumps the
-  protocol (DF design A). Found by DF
 
 ## talon, hugin, brot, munin, quill
 

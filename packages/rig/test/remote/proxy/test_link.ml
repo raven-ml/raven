@@ -252,6 +252,10 @@ let pp_account ppf (a : Wire.account) =
 
 let account = Testable.structural ~pp:pp_account
 
+let capacity =
+  Testable.structural ~pp:(fun ppf (c : Rig_edge.capacity) ->
+      Format.fprintf ppf "{total %d; free %d}" c.total c.free)
+
 (* Jobs *)
 
 (* Fails [j] if it is open, then closes it. [close] returns once each link
@@ -794,6 +798,7 @@ let same : type a b. a Wire.request -> b Wire.request -> (a, b) Type.eq option =
   | Wire.Load _, Wire.Load _ -> eq (r = r')
   | Wire.Entry _, Wire.Entry _ -> eq (r = r')
   | Wire.Rail _, Wire.Rail _ -> eq (r = r')
+  | Wire.Capacity _, Wire.Capacity _ -> eq (r = r')
   | _ -> None
 
 let pp_process ppf = function
@@ -832,6 +837,7 @@ let pp_request : type a. Format.formatter -> a Wire.request -> unit =
   | Wire.Rail { id; peer; send; receive } ->
       Format.fprintf ppf "Rail {id %d; %a; send %a; receive %a}" id pp_process
         peer pp_transfers send pp_transfers receive
+  | Wire.Capacity device -> Format.fprintf ppf "Capacity %d" device
 
 let pp_case ppf (Case (r, a, w)) =
   Format.fprintf ppf "%a -> %a" pp_request r (Testable.pp (result w string)) a
@@ -940,6 +946,14 @@ let case_g =
        and+ receive = small_array transfer
        and+ a = answer unit in
        Case (Wire.Rail { id; peer; send; receive }, a, Windtrap.unit));
+      (let+ device = id
+       and+ a =
+         answer
+           (option
+              (let+ m = id and+ n = id in
+               { Rig_edge.total = max m n; free = min m n }))
+       in
+       Case (Wire.Capacity device, a, Windtrap.option capacity));
     ]
 
 (* The agent's end answers each request with its case's answer, failing the job

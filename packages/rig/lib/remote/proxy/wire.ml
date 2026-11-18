@@ -17,7 +17,7 @@ let err_malformed = "a malformed handshake"
 (* Constants *)
 
 let magic = "rig-job\n"
-let version = 13
+let version = 14
 let min_key = 16
 let max_key = 4096
 let nonce_bytes = 32
@@ -318,6 +318,7 @@ type _ request =
       receive : Rig_remote_abi.transfer array;
     }
       -> unit request
+  | Capacity : int -> Rig_edge.capacity option request
 
 type side = Region of { id : int; offset : int } | Local
 type part =

@@ -28,12 +28,14 @@
    each, so the dials in flight at once can be counted. It exits once the
    relay has passed every byte both ways, the agent's close included.
 
-   It serves thirteen kinds. "MEM" is two software devices. "POLLED" is two
+   It serves fourteen kinds. "MEM" is two software devices. "POLLED" is two
    Polled devices, which launch Polled's host functions. "TIGHT" is a Polled
    device whose queue holds 3 parts. "DISK" is the io device of files.
    "HIDDEN" is a Polled device whose [Device] memory the host does not
    address. "MAPLESS" is a Polled device that maps no host memory. "UNTIMED"
-   is a Polled device that times no work. "FAULTY" is a device whose
+   is a Polled device that times no work. "BOUNDED" is a Polled device of
+   [bounded_bytes] bytes of [Device] memory, its budget, which reports its
+   capacity. "FAULTY" is a device whose
    next fallible call faults with "the agent's device faulted", which loses it.
    "METAL" is the machine's Metal GPU, an error off a Mac or without one.
    "NONE" is an opener that fails with "no such hardware". "COLLECT" runs a full
@@ -125,6 +127,17 @@ let untimed () =
   opened := d :: !opened;
   Ok [ d ]
 
+(* BOUNDED's bytes, which the suites state too. *)
+let bounded_bytes = 1 lsl 20
+
+let bounded () =
+  let d, _ =
+    Rig_support.Polled.open_ ~budget:bounded_bytes ~memory:bounded_bytes
+      "BOUNDED:0"
+  in
+  opened := d :: !opened;
+  Ok [ d ]
+
 let faulty () =
   let d, p = Rig_support.Polled.open_ "FAULTY:0" in
   Rig_support.Polled.fail_at p 1 (`Fault "the agent's device faulted");
@@ -148,6 +161,7 @@ let kinds =
     ("HIDDEN", hidden);
     ("MAPLESS", mapless);
     ("UNTIMED", untimed);
+    ("BOUNDED", bounded);
     ("METAL", metal);
     ("NONE", fun () -> Error "no such hardware");
     ("RAISE", fun () -> failwith "the opener raised");

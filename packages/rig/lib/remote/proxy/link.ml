@@ -187,6 +187,9 @@ let encode_request : type a. a Wire.request -> string =
       add_process b peer;
       add_array b add_transfer send;
       add_array b add_transfer receive
+  | Wire.Capacity device ->
+      add_u8 b 8;
+      add_u64 b device
 
 let decode_request r =
   let v =
@@ -225,6 +228,7 @@ let decode_request r =
         let send = array r transfer in
         let receive = array r transfer in
         Any (Wire.Rail { id; peer; send; receive })
+    | 8 -> Any (Wire.Capacity (u64 r))
     | _ -> raise Malformed
   in
   finished r v
@@ -247,9 +251,23 @@ let encode_answer : type a. a Wire.request -> a -> string =
   | Wire.Load _ -> add_array b add_int_option v
   | Wire.Entry _ -> add_int_option b v
   | Wire.Rail _ -> ()
+  | Wire.Capacity _ -> (
+      match v with
+      | None -> add_u8 b 0
+      | Some { Rig_edge.total; free } ->
+          add_u8 b 1;
+          add_u64 b total;
+          add_u64 b free)
 
 let bool r = match u8 r with 0 -> false | 1 -> true | _ -> raise Malformed
 let int_option r = if bool r then Some (u64 r) else None
+
+let capacity r =
+  if bool r then
+    let total = u64 r in
+    let free = u64 r in
+    Some { Rig_edge.total; free }
+  else None
 
 let decode_answer : type a. a Wire.request -> reader -> a =
  fun q r ->
@@ -262,6 +280,7 @@ let decode_answer : type a. a Wire.request -> reader -> a =
     | Wire.Load _ -> array r int_option
     | Wire.Entry _ -> int_option r
     | Wire.Rail _ -> ()
+    | Wire.Capacity _ -> capacity r
   in
   finished r v
 
@@ -524,6 +543,7 @@ let check_ids : type a. a Wire.request -> unit = function
   | Wire.Load { id; _ } -> check_id "request" id
   | Wire.Entry { image; _ } -> check_id "request" image
   | Wire.Rail { id; _ } -> check_id "request" id
+  | Wire.Capacity device -> check_id "request" device
   | Wire.Join _ | Wire.Open _ -> ()
 
 (* A refusal's reason, a string. *)
