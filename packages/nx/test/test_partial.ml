@@ -2165,6 +2165,34 @@ let test_closing_peaks () =
      the variance. *)
   case "var" ~p:(12 * el) ~results:(8 * el) ~share:el ~m:2 (fun () ->
       Nx.var ~axes:[ 0 ] x);
+  (* Three reductions of one loop, two sums and a maximum into bfloat16:
+     their three float32 partials at once, then each closed in turn. *)
+  let three () =
+    let module P = Nx_kernel.Prog in
+    let module E = P.E in
+    let v = E.input 0 D.Float32 in
+    let prog =
+      P.of_exprs ~ins:[| D.Any D.Float32 |]
+        [| E.any v; E.any E.(v * const D.Float32 0.5) |]
+    in
+    Nx.Prim.eval ~by:"test"
+      (Reduce
+         {
+           layout = A.Layout.contiguous [| 8; rows; cols |];
+           axes = [| 0 |];
+           prog;
+           reductions =
+             Nx.Prim.
+               [
+                 Monoid (Sum, 0, D.Bfloat16);
+                 Monoid (Sum, 1, D.Bfloat16);
+                 Monoid (Max, 0, D.Bfloat16);
+               ];
+           loads = [| Plain x |];
+         })
+  in
+  case "three reductions into bfloat16" ~p:(12 * el) ~results:(6 * el)
+    ~share:(3 * el / 2) ~m:1 three;
   (* Slots in float32, a bfloat16 result. *)
   case "scatter Add" ~p:(4 * el) ~results:(2 * el) ~share:(el / 2) ~m:2
     (fun () -> Nx.scatter ~combine:Add ~axis:0 idx updates into);
@@ -3657,6 +3685,41 @@ let moved =
     folded "a variance of 8192 terms" ~under:(4 * 8192) on4
       (ramp D.Float32 8192) Nx.var
   in
+  (* Three reductions of one loop, two sums and an integer maximum of the
+     terms' magnitude bits: each device reduces its window by the three at
+     once, [n / 4] positions, then the partials. *)
+  let three =
+    let module P = Nx_kernel.Prog in
+    let module E = P.E in
+    let x = E.input 0 D.Float32 in
+    let bits = E.(bitcast D.Int32 x land const D.Int32 0x7FFFFFFFl) in
+    let prog =
+      P.of_exprs ~ins:[| D.Any D.Float32 |]
+        [| E.any x; E.any E.(x * const D.Float32 0.5); E.any bits |]
+    in
+    let reduce x =
+      let s, (h, (b, ())) =
+        Nx.Prim.eval ~by:"test"
+          (Reduce
+             {
+               layout = A.Layout.contiguous [| 8192 |];
+               axes = [| 0 |];
+               prog;
+               reductions =
+                 Nx.Prim.
+                   [
+                     Monoid (Sum, 0, D.Float32);
+                     Monoid (Sum, 1, D.Float32);
+                     Monoid (Max, 2, D.Int32);
+                   ];
+               loads = [| Plain x |];
+             })
+      in
+      Nx.add (Nx.add s h) (Nx.cast D.Float32 b)
+    in
+    folded "three reductions of 8192 terms in one loop" ~under:(2 * 8192) on4
+      (ramp D.Float32 8192) reduce
+  in
   (* Read whole, each of four devices would contract all of the [k] terms of
      each output: [4 m n k] products. Cut, each contracts its own window of
      them, and only sums move. *)
@@ -3700,7 +3763,7 @@ let moved =
       small;
       reductions 8192;
       reductions 6000;
-      [ variance ];
+      [ variance; three ];
       List.map contraction
         [ (8, 8, 4096); (2, 2, 4096); (2, 2, 6000); (8, 8, 6000) ];
       scans 16384;

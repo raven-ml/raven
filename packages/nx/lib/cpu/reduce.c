@@ -90,6 +90,16 @@
    the loads itself: the table's products multiply and sum them in
    registers, in the lanes' order.
 
+   Several reductions. A call's reductions of one program, each of its
+   own output, kind and dtype, that lay out the same units run in one job,
+   each unit by each reduction in turn: the first reads the unit's terms
+   from memory, the others from the caches, so the call reads its operand
+   once, as a Moments unit's two passes do. A unit's results come from its
+   own terms alone, so each reduction's bits are its own alone. Logsumexp,
+   and a Moments whose outputs' blocks fall into groups, run their passes
+   alone, as do reductions whose units differ, as a wider dtype's do
+   across rows.
+
    Networks. A Logsumexp or Moments scan computes, on each slice, the
    network of nx_kernel.mli's scans section over nx_cpu.mli's states, op by
    op with the kinds' arithmetic, so that every path and thread count gives
@@ -1569,19 +1579,22 @@ static void lay_out(plan *q, task op, const int *axes, int naxes,
   plan_reduce(q, nx_coalesce_dims(3 + nl, rank, extent, step), extent, step);
 }
 
-/* A reduction's units, [cost] in all, [term] a term: each unit's blocks,
-   or each unit's groups of them then the groups combined, each group's
-   value a term. */
-static void reduce_jobs(plan *q, int64_t units, int64_t bytes, double cost,
-                        double term) {
-  if (q->groups == 1) {
-    units_job(units, bytes, cost, reduce_units, q);
-    return;
-  }
+/* Where a reduction's outputs' blocks fall into groups, each of its
+   [units]' groups combined, each group's value a [term]. */
+static void combine_groups(const plan *q, int64_t units, double term) {
+  if (q->groups == 1) return;
   int64_t values = units * q->groups * q->row;
-  units_job(units * q->groups, bytes, cost, reduce_units, q);
   units_job(units, values * q->size, (double)values * term, finish_units,
             q);
+}
+
+/* A reduction's units by [body], [cost] in all, [term] a term: each
+   unit's blocks, or each unit's groups of them then the groups
+   combined. */
+static void reduce_jobs(const plan *q, units_body body, int64_t units,
+                        int64_t bytes, double cost, double term) {
+  units_job(units * q->groups, bytes, cost, body, q);
+  combine_groups(q, units, term);
 }
 
 /* Whether [op] by [r] of [x] along the [naxes] axes [axes] fits the
@@ -1599,101 +1612,6 @@ static int checked(task op, int r, const int *axes, int naxes,
                 r == NX_CPU_ARG_MAX || r == NX_CPU_ARG_MIN;
   if (op == REDUCE && *terms == 0 && *outputs > 0 && extreme) return NX_SHAPE;
   return NX_OK;
-}
-
-/* Reduces or scans, as [op] says, [x], of [dt] or staged into it, into
-   [y] and [y1] by [r] in the dtype [dt]: a monoid into [y], [y1] being
-   [y]; Logsumexp into [y], [y1] being [y], or Arg into the extreme [y]
-   and its int64 position [y1]; or reduced, Moments into the mean [y] and
-   the variance [y1]. The destinations are of [dt],
-   but Arg's positions, and its extreme where that is of [x]'s dtype, its
-   term copied. A monoid's scan starts from the carries [cy] where they are
-   not NULL. A term costs [term] (term_cost). NX_OK, NX_SHAPE for shapes
-   that do not fit, an extreme of no term included, or -1 if host memory
-   runs out. Apart, so that the casts reduce_into runs around it take none
-   of its plan's frame. */
-static __attribute__((noinline)) int reduce_in(
-    task op, int r, int dt, const int *axes, int naxes, const nx_array *y,
-    const nx_array *y1, const nx_array *x, const nx_array *cy,
-    const fused *z, double term) {
-  int64_t terms, outputs;
-  int e = checked(op, r, axes, naxes, y, y1, x, &terms, &outputs);
-  if (e) return e;
-  _Atomic int failed = 0;
-  int stateful = r >= NX_CPU_MONOIDS, w = nx_cpu_width(dt), p = part_of(dt);
-  int arg = r == NX_CPU_ARG_MAX || r == NX_CPU_ARG_MIN;
-  const nx_cpu_stateful *st =
-      stateful ? &table.stateful[r - NX_CPU_MONOIDS][dt] : NULL;
-  plan q = {.f = stateful ? NULL : &table.monoid[r][dt],
-            .r = stateful ? &st->value : NULL,
-            .z = stateful && op == SCAN ? &st->scan : NULL,
-            .w = w,
-            .first = r == NX_MONOID_PROD && p != dt,
-            .carrier = dt,
-            .staged = x->dtype != dt,
-            .own = arg && x->dtype != dt && y->dtype == x->dtype,
-            .arg = arg,
-            .size = stateful ? (int64_t)sizeof(nx_cpu_state) : w,
-            .dst = y,
-            .dst1 = y1,
-            .src = x,
-            .fused = z,
-            .cy = cy,
-            .terms = terms,
-            .factor = {-1, -1},
-            .failed = &failed};
-  if (outputs > 0 && terms == 0 && op == REDUCE) {
-    /* The results of no term: the identity, or a state of none's. */
-    _Alignas(16) uint8_t e0[WIDEST], e1[WIDEST];
-    if (stateful) q.r->finish(&(nx_cpu_state){0}, 0, e0, e1);
-    else identity(r, dt, e0);
-    fill_dst(y, e0, w);
-    if (y1 != y) fill_dst(y1, e1, nx_cpu_width(y1->dtype));
-  }
-  if (outputs == 0 || terms == 0) return NX_OK;
-  if (!stateful) identity(r, dt, q.id);
-  int64_t bytes = terms * outputs * w;
-  double cost = (double)terms * (double)outputs * term;
-  q.threads = nx_cpu_threads(bytes, cost);
-  lay_out(&q, op, axes, naxes, y, y1, x);
-  int64_t units = q.outer * q.bands * q.chunks;
-  if (q.groups > 1)
-    q.scratch = malloc((size_t)(units * q.groups * q.row * q.size));
-  int center = op == REDUCE && stateful && st->center.block != NULL;
-  if (center) q.centers = malloc((size_t)(units * q.row) * sizeof(double));
-  if ((q.groups > 1 && q.scratch == NULL) || (center && q.centers == NULL)) {
-    free(q.scratch);
-    free(q.centers);
-    return -1;
-  }
-  if (center && r == NX_CPU_MOMENTS && q.groups == 1) {
-    q.center = &st->center;
-    units_job(units, bytes, cost, center_units, &q);
-  } else if (center) {
-    /* Logsumexp's passes, or an output's groups on several threads, whose
-       center needs them all before its value's pass: each pass reads
-       every term, half the cost. */
-    q.r = &st->center;
-    q.centering = 1;
-    reduce_jobs(&q, units, bytes, cost / 2, term / 2);
-    q.r = &st->value;
-    q.centering = 0;
-    reduce_jobs(&q, units, bytes, cost / 2, term / 2);
-  } else if (op == REDUCE) reduce_jobs(&q, units, bytes, cost, term);
-  else if (q.groups == 1) units_job(units, bytes, cost, scan_units, &q);
-  else {
-    /* The groups' totals, then their rescans from the carries: each pass
-       reads every term, half the cost. */
-    units_job(units * q.groups, bytes, cost / 2, total_units, &q);
-    units_serial(units, carries, &q);
-    if (q.row == 1)
-      units_job(units * ((q.groups + SLICES - 1) / SLICES), bytes, cost / 2,
-                rescan_quads, &q);
-    else units_job(units * q.groups, bytes, cost / 2, rescan_units, &q);
-  }
-  free(q.scratch);
-  free(q.centers);
-  return failed ? -1 : NX_OK;
 }
 
 /* A C-contiguous array of [y]'s shape in the dtype [c], in scratch at
@@ -1749,40 +1667,248 @@ static __attribute__((noinline)) void cast(const nx_array *b,
   nx_cpu_cast_loop(b, a, &l, nx_cpu_cast_cost(a->dtype, b->dtype));
 }
 
-/* As reduce_in, of [x] of any dtype in its carrier, into destinations of
-   any dtype but Arg's int64 positions: where theirs is not the carrier,
-   into carrier_copy's arrays, then rounded once into them, but Arg's
-   extreme of [x]'s dtype, which reduce_in copies from [x]. A monoid's scan
-   starts from the carries [cy], of the carrier, where they are not
-   NULL. A term costs [term]. */
-static int reduce_into(task op, int r, const int *axes, int naxes,
-                       const nx_array *y, const nx_array *y1,
-                       const nx_array *x, const nx_array *cy,
-                       const fused *z, double term) {
+/* A reduction or scan of a call as it runs beside the call's others: its
+   plan, its operand as loaded or a program's virtual one, the program's
+   output it reads, and its destinations as given and, where theirs is not
+   the carrier, their carrier copies. Its units, the bytes they touch,
+   their cost and a term's; [body] runs a unit's every pass where its
+   units can run beside other reductions' (run_all), else is NULL. [ready]
+   says it has units to run. */
+typedef struct {
+  plan q;
+  fused z;
+  nx_array x;
+  const nx_array *y[2];
+  nx_array t[2];
+  int copied[2];
+  int64_t units, bytes;
+  double cost, term;
+  units_body body;
+  int ready, joined;
+} reduction;
+
+/* Plans [d]'s [op] by [r] of [d->x], of [dt] or staged into it, into [y]
+   and [y1] in the dtype [dt]: a monoid into [y], [y1] being [y];
+   Logsumexp into [y], [y1] being [y], or Arg into the extreme [y] and its
+   int64 position [y1]; or reduced, Moments into the mean [y] and the
+   variance [y1]. The destinations are of [dt], but Arg's positions, and
+   its extreme where that is of [x]'s dtype, its term copied. A monoid's
+   scan starts from the carries [cy] where they are not NULL; a program's
+   output is read through [z] where it is not NULL. A reduction of no term
+   fills its destinations here. NX_OK, NX_SHAPE for shapes that do not
+   fit, an extreme of no term included, or -1 if host memory runs out. */
+static int plan_in(reduction *d, task op, int r, int dt, const int *axes,
+                   int naxes, const nx_array *y, const nx_array *y1,
+                   const nx_array *cy, const fused *z, _Atomic int *failed) {
+  const nx_array *x = &d->x;
+  int64_t terms, outputs;
+  int e = checked(op, r, axes, naxes, y, y1, x, &terms, &outputs);
+  if (e) return e;
+  int stateful = r >= NX_CPU_MONOIDS, w = nx_cpu_width(dt), p = part_of(dt);
+  int arg = r == NX_CPU_ARG_MAX || r == NX_CPU_ARG_MIN;
+  const nx_cpu_stateful *st =
+      stateful ? &table.stateful[r - NX_CPU_MONOIDS][dt] : NULL;
+  plan *q = &d->q;
+  *q = (plan){.f = stateful ? NULL : &table.monoid[r][dt],
+              .r = stateful ? &st->value : NULL,
+              .z = stateful && op == SCAN ? &st->scan : NULL,
+              .w = w,
+              .first = r == NX_MONOID_PROD && p != dt,
+              .carrier = dt,
+              .staged = x->dtype != dt,
+              .own = arg && x->dtype != dt && y->dtype == x->dtype,
+              .arg = arg,
+              .size = stateful ? (int64_t)sizeof(nx_cpu_state) : w,
+              .dst = y,
+              .dst1 = y1,
+              .src = x,
+              .fused = z,
+              .cy = cy,
+              .terms = terms,
+              .factor = {-1, -1},
+              .failed = failed};
+  if (outputs > 0 && terms == 0 && op == REDUCE) {
+    /* The results of no term: the identity, or a state of none's. */
+    _Alignas(16) uint8_t e0[WIDEST], e1[WIDEST];
+    if (stateful) q->r->finish(&(nx_cpu_state){0}, 0, e0, e1);
+    else identity(r, dt, e0);
+    fill_dst(y, e0, w);
+    if (y1 != y) fill_dst(y1, e1, nx_cpu_width(y1->dtype));
+  }
+  if (outputs == 0 || terms == 0) return NX_OK;
+  if (!stateful) identity(r, dt, q->id);
+  d->bytes = terms * outputs * w;
+  d->cost = (double)terms * (double)outputs * d->term;
+  q->threads = nx_cpu_threads(d->bytes, d->cost);
+  lay_out(q, op, axes, naxes, y, y1, x);
+  d->units = q->outer * q->bands * q->chunks;
+  if (q->groups > 1)
+    q->scratch = malloc((size_t)(d->units * q->groups * q->row * q->size));
+  int center = op == REDUCE && stateful && st->center.block != NULL;
+  if (center) {
+    q->center = &st->center;
+    q->centers = malloc((size_t)(d->units * q->row) * sizeof(double));
+  }
+  if ((q->groups > 1 && q->scratch == NULL) || (center && q->centers == NULL))
+    return -1;
+  /* A reduction's units, of a monoid or a state, or a Moments' whose
+     outputs' blocks fall in no groups, both its passes in turn
+     (center_units), each in one job. */
+  if (op == REDUCE && !center) d->body = reduce_units;
+  else if (op == REDUCE && r == NX_CPU_MOMENTS && q->groups == 1)
+    d->body = center_units;
+  d->ready = 1;
+  return NX_OK;
+}
+
+/* Runs the planned [d] alone: by its body; or each pass of Logsumexp, or
+   of an output's groups on several threads, whose center needs them all
+   before its value's pass, each half the cost; or a scan. */
+static void run_alone(reduction *d, task op) {
+  plan *q = &d->q;
+  int64_t units = d->units, bytes = d->bytes;
+  double cost = d->cost, term = d->term;
+  if (d->body != NULL) reduce_jobs(q, d->body, units, bytes, cost, term);
+  else if (op == REDUCE) {
+    const nx_cpu_pass *value = q->r;
+    q->r = q->center;
+    q->centering = 1;
+    reduce_jobs(q, reduce_units, units, bytes, cost / 2, term / 2);
+    q->r = value;
+    q->centering = 0;
+    reduce_jobs(q, reduce_units, units, bytes, cost / 2, term / 2);
+  } else if (q->groups == 1) units_job(units, bytes, cost, scan_units, q);
+  else {
+    /* The groups' totals, then their rescans from the carries: each pass
+       reads every term, half the cost. */
+    units_job(units * q->groups, bytes, cost / 2, total_units, q);
+    units_serial(units, carries, q);
+    if (q->row == 1)
+      units_job(units * ((q->groups + SLICES - 1) / SLICES), bytes, cost / 2,
+                rescan_quads, q);
+    else units_job(units * q->groups, bytes, cost / 2, rescan_units, q);
+  }
+}
+
+/* Whether [a] and [b] lay out the same units: unit u of each reads the
+   same terms of their operand. */
+static int same_units(const plan *a, const plan *b) {
+  int same = a->nk == b->nk && a->nr == b->nr && a->x0 == b->x0 &&
+             a->row == b->row && a->band == b->band &&
+             a->groups == b->groups && a->group == b->group;
+  for (int i = 0; same && i < a->nk; i++)
+    same = a->ke[i] == b->ke[i] && a->ks[i] == b->ks[i];
+  for (int i = 0; same && i < a->nr; i++)
+    same = a->re[i] == b->re[i] && a->rs[i] == b->rs[i];
+  return same;
+}
+
+/* The reductions [rd] that run together, [n] of them with the others,
+   and where the call fails. */
+typedef struct {
+  const reduction *rd;
+  int n;
+  _Atomic int *failed;
+} together;
+
+/* A range of units, each by every joined reduction's body in turn, the
+   first reading the unit's terms from memory and the others from the
+   caches. */
+static void together_units(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
+  const together *j = ctx;
+  work *wk = nx_cpu_take(sizeof *wk);
+  if (wk == NULL) {
+    *j->failed = 1;
+    return;
+  }
+  for (int64_t u = lo; u < hi; u++)
+    for (int i = 0; i < j->n; i++)
+      if (j->rd[i].joined) j->rd[i].body(&j->rd[i].q, wk, u, u + 1);
+  nx_cpu_give(wk);
+}
+
+/* Runs the planned [rd], [n] of them: those that have a body and the
+   units of the first such one, where they are two or more, in one job,
+   unit by unit, so that a reduction of k reductions reads its operand
+   once, whose bits are each reduction's alone, as nothing but a unit's
+   own terms reaches its results; then each one's groups combined. Every
+   other runs alone. */
+static void run_all(reduction *rd, int n, task op) {
+  int lead = -1, joined = 0;
+  for (int i = 0; i < n; i++) {
+    rd[i].joined = 0;
+    if (!rd[i].ready || rd[i].body == NULL) continue;
+    if (lead < 0) lead = i;
+    rd[i].joined = same_units(&rd[lead].q, &rd[i].q);
+    joined += rd[i].joined;
+  }
+  if (joined > 1 && !*rd[lead].q.failed) {
+    int64_t units = rd[lead].units * rd[lead].q.groups, bytes = 0;
+    double cost = 0;
+    for (int i = 0; i < n; i++)
+      if (rd[i].joined) {
+        bytes = rd[i].bytes > bytes ? rd[i].bytes : bytes;
+        cost += rd[i].cost;
+      }
+    together j = {rd, n, rd[lead].q.failed};
+    nx_cpu_job(units, bytes, cost, together_units, &j);
+    for (int i = 0; i < n; i++)
+      if (rd[i].joined) combine_groups(&rd[i].q, rd[i].units, rd[i].term);
+  } else if (joined == 1) rd[lead].joined = 0;
+  for (int i = 0; i < n; i++)
+    if (rd[i].ready && !rd[i].joined) run_alone(&rd[i], op);
+}
+
+/* Prepares [d] to run [op] by [r] (plan_in) of [x], of any dtype, in its
+   carrier, a term costing [term], into destinations of any dtype but
+   Arg's int64 positions: where theirs is not the carrier, into
+   carrier_copy's arrays, which finish rounds once into them, but Arg's
+   extreme of [x]'s dtype, which plan_in copies from [x]. A monoid's scan
+   starts from the carries [cy], of the carrier, where they are not NULL;
+   a program's output [z->k] is read through [z] where it is not NULL.
+   What it takes, finish gives back, whatever it answers. Apart, so that
+   its frame is off the stack the jobs run on. */
+static __attribute__((noinline)) int prepare(
+    reduction *d, task op, int r, const int *axes, int naxes,
+    const nx_array *y, const nx_array *y1, const nx_array *x,
+    const nx_array *cy, const fused *z, double term, _Atomic int *failed) {
+  d->q.scratch = NULL;
+  d->q.centers = NULL;
+  d->y[0] = y;
+  d->y[1] = y1;
+  d->copied[0] = d->copied[1] = 0;
+  d->x = *x;
+  d->term = term;
+  d->body = NULL;
+  d->ready = d->joined = 0;
+  if (z != NULL) d->z = *z;
   int c = nx_cpu_carrier(x->dtype);
   int arg = r == NX_CPU_ARG_MAX || r == NX_CPU_ARG_MIN;
-  const nx_array *y2[2] = {y, y1}, *d[2] = {y, y1};
-  nx_array t[2];
-  int copied[2] = {0, 0}, e = NX_OK;
-  for (int k = 0; k < 2 && e == NX_OK; k++) {
+  const nx_array *t[2] = {y, y1};
+  for (int k = 0; k < 2; k++) {
     int kept = arg && (k == 1 || y->dtype == x->dtype);
-    if (k == 1 && y1 == y) d[1] = d[0];
-    else if (!kept && y2[k]->dtype != c) {
-      if (carrier_copy(y2[k], c, &t[k])) e = -1;
-      else {
-        d[k] = &t[k];
-        copied[k] = 1;
-      }
+    if (k == 1 && y1 == y) t[1] = t[0];
+    else if (!kept && d->y[k]->dtype != c) {
+      if (carrier_copy(d->y[k], c, &d->t[k])) return -1;
+      t[k] = &d->t[k];
+      d->copied[k] = 1;
     }
   }
-  if (e == NX_OK)
-    e = reduce_in(op, r, c, axes, naxes, d[0], d[1], x, cy, z, term);
+  return plan_in(d, op, r, c, axes, naxes, t[0], t[1], cy,
+                 z != NULL ? &d->z : NULL, failed);
+}
+
+/* Rounds [d]'s carrier copies into its destinations where [e] is NX_OK,
+   and gives back what prepare took. */
+static void finish(reduction *d, int e) {
   for (int k = 0; k < 2; k++) {
-    if (!copied[k]) continue;
-    if (e == NX_OK) cast(y2[k], &t[k]);
-    nx_cpu_give(t[k].base);
+    if (!d->copied[k]) continue;
+    if (e == NX_OK) cast(d->y[k], &d->t[k]);
+    nx_cpu_give(d->t[k].base);
   }
-  return e;
+  free(d->q.scratch);
+  free(d->q.centers);
 }
 
 /* Network scans */
@@ -2273,6 +2399,73 @@ static int shaped(const nx_array *x, const nx_array *l) {
   return NX_OK;
 }
 
+/* What a call's reductions read, for reduction_of: the call, its
+   reductions' codes, outputs and first destinations, the door's arrays
+   [a], [nd] destinations then the loads, the loads as read [loads], the
+   program [g] and its terms' block [z] where it has them, its virtual
+   operand [x], the carries [cy], the loop's [shape] of [rank] axes, and
+   what term_cost takes of its terms. */
+typedef struct {
+  const call *c;
+  const int *rs, *ks, *first;
+  const nx_array *a;
+  int nd;
+  const nx_array *loads;
+  const nx_cpu_prog *g;
+  fused *z;
+  nx_array *x;
+  const nx_array *cy;
+  const int64_t *shape;
+  int rank, contiguous;
+  double per;
+} reading;
+
+/* Reduction [i]'s destinations [y] and [y1] and terms [terms], a
+   program's output [i] read through [r->z] and [r->x] in its held dtype,
+   and what a term of it costs. */
+static double reduction_of(const reading *r, int i, const nx_array **y,
+                           const nx_array **y1, const nx_array **terms) {
+  int k = r->rs[i];
+  *y = &r->a[r->first[i]];
+  *y1 = two(k) ? *y + 1 : *y;
+  *terms = &r->loads[0];
+  if (r->g != NULL) {
+    r->x->dtype = nx_cpu_prog_held(r->g, r->ks[i]);
+    r->x->bits = nx_dtype_row_of(r->x->dtype).bits;
+    r->z->k = r->ks[i];
+    *terms = r->x;
+  }
+  call ci = *r->c;
+  ci.r = k;
+  return term_cost(&ci, &r->a[r->nd], r->shape, r->rank, r->contiguous,
+                   r->per);
+}
+
+/* The [nr] reductions or scan [r] reads: each prepared, then all run
+   (run_all), then each rounded into its destinations, one's record on
+   this frame and several's on the heap. NX_OK, or -1 if host memory runs
+   out. Apart, so that a network scan's frames hold no record. */
+static __attribute__((noinline)) int reduce_all(const reading *r, int nr) {
+  reduction one, *rd = &one;
+  _Atomic int failed = 0;
+  int prepared = 0, e = NX_OK;
+  if (nr > 1 && (rd = malloc((size_t)nr * sizeof *rd)) == NULL) return -1;
+  for (int i = 0; !e && i < nr; i++) {
+    const nx_array *y, *y1, *terms;
+    double term = reduction_of(r, i, &y, &y1, &terms);
+    prepared++;
+    e = prepare(&rd[i], r->c->op, r->rs[i], r->c->axes, r->c->naxes, y, y1,
+                terms, r->cy, r->z, term, &failed);
+  }
+  if (!e) {
+    run_all(rd, prepared, r->c->op);
+    if (failed) e = -1;
+  }
+  for (int i = 0; i < prepared; i++) finish(&rd[i], e);
+  if (rd != &one) free(rd);
+  return e;
+}
+
 /* Computes [c] of the program [vp] over the loop of [rank] axes of extents
    [shape], or of its first destination's shape where [rank] is -1, its
    plain loads [vloads], by the reductions [vrs], an array of pairs of an
@@ -2287,11 +2480,12 @@ static int shaped(const nx_array *x, const nx_array *l) {
    the output's held dtype, from its copy made before the door. Each
    reduction's loop holds its one or two destinations, the virtual
    operand and the loads, whatever the count of reductions or loads,
-   which nothing bounds. The door's tables of every destination and load
-   live on the stack up to NX_MAX_OPERANDS entries and past it on the
-   heap, which a custom block owns with the program's copy; a program's
-   loops, in the block of its terms (fused), taken after the door. So the
-   identity of one load into few destinations allocates nothing. */
+   which nothing bounds, and the reductions run together (run_all). The
+   door's tables of every destination and load live on the stack up to
+   NX_MAX_OPERANDS entries and past it on the heap, which a custom block
+   owns with the program's copy; a program's loops, in the block of its
+   terms (fused), taken after the door; several reductions, on the heap.
+   So the identity of one load into few destinations allocates nothing. */
 static value run(const call *c, value vp, value vrs, int single, int rank,
                  const int64_t *shape, value vdsts, value vloads,
                  value vcarry) {
@@ -2426,10 +2620,11 @@ static value run(const call *c, value vp, value vrs, int single, int rank,
      totals, and in a Moments scan's exact pass. The identity's one copy is
      in the thread's kept scratch; a program's are on the heap, as many as
      its loads, so that the thread's kept buffers hold no more than the
-     program's loop, the reductions' two carrier copies and their work,
-     four at most. The program's loop is in the kept scratch, taken after
-     the door and given back before its end, since nothing raises in
-     between. */
+     program's loop, each reduction's two carrier copies, all held while
+     they run, and their work: four for one reduction, and past KEPT the
+     thread takes fresh ones (job.c). The program's loop is in the kept
+     scratch, taken after the door and given back before its end, since
+     nothing raises in between. */
   home h = g != NULL ? HEAP : KEPT_SCRATCH;
   nx_array identity_load, *loads = &identity_load;
   int copied = 0, oom = 0;
@@ -2465,23 +2660,13 @@ static value run(const call *c, value vp, value vrs, int single, int rank,
     }
     fuse(z, &x, index);
   }
-  for (int i = 0; !oom && !e && i < nr; i++) {
-    const nx_array *y = &a[first[i]], *y1 = two(rs[i]) ? y + 1 : y;
-    const nx_array *terms = &loads[0];
-    if (g != NULL) {
-      x.dtype = nx_cpu_prog_held(g, ks[i]);
-      x.bits = nx_dtype_row_of(x.dtype).bits;
-      z->k = ks[i];
-      terms = &x;
-    }
-    call ci = *c;
-    ci.r = rs[i];
-    double term = term_cost(&ci, &a[nd], shape, rank, contiguous, per);
-    e = c->op == NETWORK
-            ? network_into(rs[i], c->axes[0], y, y1, terms, z, term)
-            : reduce_into(c->op, rs[i], c->axes, c->naxes, y, y1, terms, cy,
-                          z, term);
-  }
+  reading r = {c, rs, ks, first, a, nd, loads, g, z, &x, cy, shape, rank,
+               contiguous, per};
+  if (!oom && !e && c->op == NETWORK) {
+    const nx_array *y, *y1, *terms;
+    double term = reduction_of(&r, 0, &y, &y1, &terms);
+    e = network_into(rs[0], c->axes[0], y, y1, terms, z, term);
+  } else if (!oom && !e) e = reduce_all(&r, nr);
   /* A program that could not have its arenas computed nothing. */
   if (!oom && !e && g != NULL && nx_cpu_prog_failed(g)) e = -1;
   /* A copy that failed left its base NULL, which free and nx_cpu_give

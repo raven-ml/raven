@@ -730,6 +730,9 @@ let reduced (type v s w q a b d) eng ~by c shape ?(then_ = fun _ _ _ y -> y)
 
 (* Reductions *)
 
+(* Reductions of any results. *)
+type 'd reductions = Reductions : ('d, 'r) Value.reductions -> 'd reductions
+
 let reduce (type d r) eng ~by (route : unit Route.t) rule layout axes prog
     (rs : (d, r) Value.reductions) (loads : d Value.load iarray) : r =
   let shape = Iarray.to_array (L.shape layout) in
@@ -775,24 +778,63 @@ let reduce (type d r) eng ~by (route : unit Route.t) rule layout axes prog
     at eng ~by ~origin (here j) op
   in
   let term o = P.dtype prog (Iarray.get prog.outs o) in
-  let one (type a) (r : (d, a) Value.reduction) : a =
+  let carrier o = Nx_kernel.carrier (term o) in
+  (* Each device's partials of every reduction but a Moments', which takes
+     passes of its own, in one loop over its window: a monoid's and a
+     logsumexp's in the carrier, an Arg's extreme and position of the term,
+     in order. *)
+  let rec locals : type q. (d, q) Value.reductions -> d reductions = function
+    | [] -> Reductions []
+    | r :: rest -> (
+        let (Reductions tail) = locals rest in
+        match r with
+        | Monoid (m, o, _) ->
+            let (D.Any c) = carrier o in
+            Reductions (Monoid (m, o, c) :: tail)
+        | Logsumexp (o, _) ->
+            let (D.Any c) = carrier o in
+            Reductions (Logsumexp (o, c) :: tail)
+        | Arg (e, o, _) ->
+            let (D.Any t) = term o in
+            Reductions (Arg (e, o, t) :: tail)
+        | Moments _ -> Reductions tail)
+  in
+  let partials =
+    let (Reductions rl) = locals rs in
+    Array.init (Array.length ks) (fun j ->
+        lazy
+          (let ys = ref [] in
+           Prim.iter_reductions
+             (fun y -> ys := Some (Value.Any y) :: !ys)
+             rl (local j prog rl);
+           Array.of_list (List.rev !ys)))
+  in
+  (* Partial [i] of device [j], which the device then holds no longer. *)
+  let partial dt i j =
+    let ys = Lazy.force partials.(j) in
+    match ys.(i) with
+    | Some y ->
+        ys.(i) <- None;
+        Prim.expect dt y
+    | None -> invalid_arg "Partial.reduce: a partial taken twice"
+  in
+  (* Reduction [r], whose partials are the [i]th of each device's. *)
+  let one (type a) i (r : (d, a) Value.reduction) : a =
     let _, o, _ = Prim.reduction r in
-    let (D.Any c) = Nx_kernel.carrier (term o) in
+    let (D.Any c) = carrier o in
     match r with
-    | Monoid (m, o, dt) ->
-        let own j = fst (local j prog Value.[ Monoid (m, o, c) ]) in
-        let s = stack eng ~by cl c out own in
+    | Monoid (m, _, dt) ->
+        let s = stack eng ~by cl c out (partial c i) in
         reduced eng ~by cl out dt (Monoid (m, 0, dt)) s
-    | Logsumexp (o, dt) ->
-        let own j = fst (local j prog Value.[ Logsumexp (o, c) ]) in
-        let s = stack eng ~by cl c out own in
+    | Logsumexp (_, dt) ->
+        let s = stack eng ~by cl c out (partial c i) in
         reduced eng ~by cl out dt (Logsumexp (0, dt)) s
     | Arg (e, o, dt) ->
         (* Each tile's extreme and its position in the whole's order,
            stacked, then the first of them in tile order. *)
         let (D.Any t) = term o in
         let pair j =
-          let (x, q), () = local j prog Value.[ Arg (e, o, t) ] in
+          let x = partial t i j and q = partial D.Int64 (i + 1) j in
           let origin = { Prim.start = Prim.starts (loop j); extents = shape } in
           let q = renumber eng ~by ~origin ax tiles.(j) whole (Value.Any q) in
           (x, Prim.expect D.Int64 q)
@@ -877,13 +919,15 @@ let reduce (type d r) eng ~by (route : unit Route.t) rule layout axes prog
         let v = closed eng ~by cl out [ D.Any dt ] stacks var in
         (mean, Prim.expect dt (List.hd v))
   in
-  let rec each : type q. (d, q) Value.reductions -> q = function
+  let rec each : type q. int -> (d, q) Value.reductions -> q =
+   fun i -> function
     | [] -> ()
     | r :: rest ->
-        let a = one r in
-        (a, each rest)
+        let a = one i r in
+        let partials = match r with Arg _ -> 2 | Moments _ -> 0 | _ -> 1 in
+        (a, each (i + partials) rest)
   in
-  each rs
+  each 0 rs
 
 (* Attention *)
 

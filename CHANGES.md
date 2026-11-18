@@ -3345,6 +3345,15 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- nx.cpu reads a `Reduce`'s operand once for all its reductions whose
+  outputs' units are laid out alike: each unit of outputs runs every
+  reduction in turn, the later ones reading its terms from the caches, and
+  each reduction keeps the bits it has alone. Two sums and an integer
+  maximum of one 8192 x 4096 float32 operand took 7.6 ms on two fudge
+  cores where they took 12.4, and the deviations' two sums of a variance
+  7.1 where they took 9.8. Over an axis cut across devices, a `Reduce`
+  runs one loop on each device for all its reductions but `Moments`, where
+  it ran one for each, and a device holds their partials at once.
 - `Nx.Rng.dirichlet` adds each row's sum in integers, so a draw has the
   same bits on every kernel library, at every placement and compiled by
   `Rune.jit`. Draws change in their last bits.

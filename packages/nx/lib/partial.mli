@@ -366,7 +366,10 @@
     one piece's sum at a time. A piece holds more than [C] only where the
     slots of one element do, or where a part of a dtype narrower than a byte on a device
     whose memory the host does not address is one piece. Its partials go
-    before the result's windows are gathered. So a float32 sum whose folded
+    before the result's windows are gathered. One loop computes a
+    [Reduce]'s partials of all its reductions but [Moments], so a device
+    holds them all at once, and each goes once its reduction's closing has
+    taken it. So a float32 sum whose folded
     axes are cut into [N] tiles, each holding terms and a slot of [r]
     bytes, and whose result of [r] bytes is whole on every device, holds
     at most [r + r ⌈e / N⌉ / e + C (1 + 1 / N)] beside the operands,
@@ -399,8 +402,9 @@
     each device receives its part of each other term, [(q - 1) / q] of its
     window of the sum where its group's [q] terms divide the cut axis.
 
-    A [Reduce] of [k] reductions runs [k] loops over each device's loads,
-    [Moments] two over its terms, laid out once where they are not a load.
+    A [Reduce] runs one loop over each device's loads for all its
+    reductions but [Moments], which runs two over its terms, laid out once
+    where they are not a load.
     A [Scan] runs one loop over each device's loads, then one map over its
     results on each device but the first, and on the first where the
     carrier is not the result's dtype. A tile cut into pieces reads each of

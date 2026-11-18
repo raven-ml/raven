@@ -195,7 +195,11 @@
     reduction or a scan of an output has the bits of the output mapped into
     an array, then reduced or scanned. [reduce] computes several such
     reductions of one loop, each one's bits alone, every destination checked
-    before any is written, any number of them. A destination identical to
+    before any is written, any number of them. It reads the loop's terms once
+    for all of them whose outputs' units are laid out alike (along a
+    contiguous axis, any; across rows, those of one value width), but a
+    [Logsumexp], whose two passes run alone, as a [Moments]' do where an
+    output's terms are many against the outputs. A destination identical to
     the operand, or to a program's load, is accepted: that operand or load
     is then read from a copy the call holds, and the results are those of
     fresh destinations. *)
