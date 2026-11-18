@@ -4240,6 +4240,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- **Breaking:** `Pool.max` and `Pool.avg` pool over any number of spatial
+  axes, channels last, with `(lo, hi)` padding pairs; they replace
+  `max_pool2d` and `avg_pool2d`, which pooled the last two axes unpadded.
+  `max` pads with the dtype's least value; `avg` counts the padding.
 - `Conv_transpose`, the transposed convolution layer over
   `Nx.conv_transpose`, channels last, `w` `[in; k…; out]`. PyTorch's
   `output_padding a` beside padding `p` is the pair `(p, p - a)`.

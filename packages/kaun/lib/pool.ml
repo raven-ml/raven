@@ -3,39 +3,57 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-let check name ~kernel_size ~stride x =
-  let kh, kw = kernel_size and sh, sw = stride in
-  if kh <= 0 || kw <= 0 then
-    Printf.ksprintf invalid_arg
-      "Pool.%s: kernel_size must be positive, got (%d, %d)" name kh kw;
-  if sh <= 0 || sw <= 0 then
-    Printf.ksprintf invalid_arg "Pool.%s: stride must be positive, got (%d, %d)"
-      name sh sw;
-  let xs = Nx.shape x in
-  let r = Array.length xs in
-  if r < 2 then
-    Printf.ksprintf invalid_arg
-      "Pool.%s: input must have at least 2 axes, got rank %d" name r;
-  let h = xs.(r - 2) and w = xs.(r - 1) in
-  if h < kh || w < kw then
-    Printf.ksprintf invalid_arg
-      "Pool.%s: kernel (%d, %d) does not fit input (%d, %d)" name kh kw h w
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
-(* The windows of the last two axes: [[...; oh; ow; kh; kw]], a view. *)
-let windows ~kernel_size:(kh, kw) ~stride:(sh, sw) x =
-  let r = Nx.ndim x in
-  x
-  |> Nx.sliding_window ~axis:(r - 2) ~window:kh ~step:sh
-  |> Nx.sliding_window ~axis:(r - 1) ~window:kw ~step:sw
+let pp_ints a =
+  "[|" ^ String.concat "; " (Array.to_list (Array.map string_of_int a)) ^ "|]"
 
-let window_axes x = [ Nx.ndim x; Nx.ndim x + 1 ]
+(* [x] padded with [fill], cut into windows: [[n; t…; c; window…]], the
+   window axes last, from views of one padded copy. *)
+let windows ~by ~window ?stride ?padding fill x =
+  let k = Array.length window in
+  if k = 0 then invalid_argf "Pool.%s: window has no extent" by;
+  let entries name default = function
+    | None -> default
+    | Some a when Array.length a <> k ->
+        invalid_argf "Pool.%s: %d %s for %d window extents" by (Array.length a)
+          name k
+    | Some a -> a
+  in
+  let stride = entries "strides" window stride in
+  let padding = entries "paddings" (Array.make k (0, 0)) padding in
+  if Array.exists (fun v -> v < 1) window then
+    invalid_argf "Pool.%s: a window extent below 1 in %s" by (pp_ints window);
+  if Array.exists (fun v -> v < 1) stride then
+    invalid_argf "Pool.%s: a stride below 1 in %s" by (pp_ints stride);
+  if Array.exists (fun (lo, hi) -> lo < 0 || hi < 0) padding then
+    invalid_argf "Pool.%s: a negative padding" by;
+  let s = Nx.shape x in
+  if Array.length s <> k + 2 then
+    invalid_argf "Pool.%s: %d window extents take an input of %d axes, got %d"
+      by k (k + 2) (Array.length s);
+  for i = 0 to k - 1 do
+    let lo, hi = padding.(i) in
+    if s.(1 + i) + lo + hi < window.(i) then
+      invalid_argf "Pool.%s: no window of %s fits the input's spatial axes %s"
+        by (pp_ints window)
+        (pp_ints (Array.sub s 1 k))
+  done;
+  let x =
+    if Array.for_all (( = ) (0, 0)) padding then x
+    else Nx.pad (Array.concat [ [| (0, 0) |]; padding; [| (0, 0) |] ]) fill x
+  in
+  let v = ref x in
+  for i = 0 to k - 1 do
+    v := Nx.sliding_window ~axis:(1 + i) ~window:window.(i) ~step:stride.(i) !v
+  done;
+  (!v, List.init k (fun i -> k + 2 + i))
 
-let max_pool2d ~kernel_size ?stride x =
-  let stride = Option.value stride ~default:kernel_size in
-  check "max_pool2d" ~kernel_size ~stride x;
-  Nx.max ~axes:(window_axes x) (windows ~kernel_size ~stride x)
+let max ~window ?stride ?padding x =
+  let fill = Nx.Dtype.min_value (Nx.dtype x) in
+  let v, axes = windows ~by:"max" ~window ?stride ?padding fill x in
+  Nx.max ~axes v
 
-let avg_pool2d ~kernel_size ?stride x =
-  let stride = Option.value stride ~default:kernel_size in
-  check "avg_pool2d" ~kernel_size ~stride x;
-  Nx.mean ~axes:(window_axes x) (windows ~kernel_size ~stride x)
+let avg ~window ?stride ?padding x =
+  let v, axes = windows ~by:"avg" ~window ?stride ?padding 0. x in
+  Nx.mean ~axes v

@@ -75,7 +75,8 @@ module Fn = Fn
 (** Activation functions ([relu], [gelu], [silu], ...) and sampling masks. *)
 
 module Pool = Pool
-(** 2-D max and average pooling. *)
+(** Max and average pooling over any number of spatial axes, channels
+    last. *)
 
 module Rope = Rope
 (** Rotary position embeddings: a frequency schedule and its rotation. *)

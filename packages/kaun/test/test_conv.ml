@@ -330,78 +330,113 @@ let test_conv_rejects_bad_input () =
 
 (* Pool *)
 
+let test_pool_goldens () =
+  exact ~msg:"3x3 max at stride 2, padded by 1" (entry "maxpool.y")
+    (Pool.max ~window:[| 3; 3 |] ~stride:[| 2; 2 |]
+       ~padding:[| (1, 1); (1, 1) |] (entry "maxpool.x"));
+  exact ~msg:"2x2 mean at stride 2, padded by 1, padding counted"
+    (entry "avgpool.y")
+    (Pool.avg ~window:[| 2; 2 |] ~stride:[| 2; 2 |]
+       ~padding:[| (1, 1); (1, 1) |] (entry "avgpool.x"));
+  exact ~msg:"3-D mean" (entry "avgpool3.y")
+    (Pool.avg ~window:[| 2; 2; 2 |] ~stride:[| 1; 2; 2 |] (entry "avgpool3.x"))
+
 let test_max_pool_analytic () =
-  let x = arange_image [| 1; 1; 4; 4 |] 16 in
-  let y = Pool.max_pool2d ~kernel_size:(2, 2) x in
-  shape_is ~msg:"stride defaults to kernel_size" [| 1; 1; 2; 2 |] y;
-  values_are ~msg:"window maxima" ~tol:0.0 [| 5.; 7.; 13.; 15. |] y
+  let x = arange_image [| 1; 4; 4; 1 |] 16 in
+  let y = Pool.max ~window:[| 2; 2 |] x in
+  shape_is ~msg:"stride defaults to the window" [| 1; 2; 2; 1 |] y;
+  values_are ~msg:"window maxima" ~tol:0.0 [| 5.; 7.; 13.; 15. |] y;
+  (* Channels last: each channel pools alone. *)
+  let x = image [| 1; 4; 2 |] [| 1.; 8.; 3.; 6.; 2.; 7.; 4.; 5. |] in
+  values_are ~msg:"two channels" ~tol:0.0 [| 3.; 8.; 4.; 7. |]
+    (Pool.max ~window:[| 2 |] x)
 
 let test_avg_pool_analytic () =
-  let x = arange_image [| 1; 1; 4; 4 |] 16 in
-  values_are ~msg:"window means" ~tol:1e-6 [| 2.5; 4.5; 10.5; 12.5 |]
-    (Pool.avg_pool2d ~kernel_size:(2, 2) x)
+  let x = arange_image [| 1; 4; 4; 1 |] 16 in
+  values_are ~msg:"window means" ~tol:0. [| 2.5; 4.5; 10.5; 12.5 |]
+    (Pool.avg ~window:[| 2; 2 |] x);
+  let x = arange_image [| 1; 3; 3; 1 |] 9 in
+  values_are ~msg:"unit stride overlaps the windows" ~tol:0.
+    [| 2.; 3.; 5.; 6. |]
+    (Pool.avg ~window:[| 2; 2 |] ~stride:[| 1; 1 |] x)
 
-let test_pool_overlapping_stride () =
-  let x = arange_image [| 1; 1; 3; 3 |] 9 in
-  values_are ~msg:"unit stride overlaps the windows" ~tol:0.0
-    [| 4.; 5.; 7.; 8. |]
-    (Pool.max_pool2d ~kernel_size:(2, 2) ~stride:(1, 1) x);
-  values_are ~msg:"unit stride window means" ~tol:1e-6 [| 2.; 3.; 5.; 6. |]
-    (Pool.avg_pool2d ~kernel_size:(2, 2) ~stride:(1, 1) x)
+(* A window in padding alone holds the dtype's least value: -inf, and
+   -448 in float8_e4m3fn, which has no infinity. A window that meets [x]
+   takes [x]'s greatest, below zero here. *)
+let test_max_pool_padding () =
+  let x = image [| 1; 2; 1 |] [| -3.; -2. |] in
+  let padding = [| (2, 1) |] in
+  values_are ~msg:"float32" ~tol:0. [| Float.neg_infinity; -3.; -2.; -2. |]
+    (Pool.max ~window:[| 2 |] ~stride:[| 1 |] ~padding x);
+  values_are ~msg:"float8_e4m3fn" ~tol:0. [| -448.; -3.; -2.; -2. |]
+    (Nx.cast Nx.float32
+       (Pool.max ~window:[| 2 |] ~stride:[| 1 |] ~padding
+          (Nx.cast Nx.float8_e4m3fn x)))
 
-let test_pool_rectangular_kernel () =
-  let x = image [| 1; 1; 1; 4 |] [| 3.; 1.; 4.; 1. |] in
-  values_are ~msg:"1x2 maxima" ~tol:0.0 [| 3.; 4. |]
-    (Pool.max_pool2d ~kernel_size:(1, 2) x);
-  values_are ~msg:"1x2 means" ~tol:1e-6 [| 2.; 2.5 |]
-    (Pool.avg_pool2d ~kernel_size:(1, 2) x)
+(* Padding counts as zeros in each mean; dividing by the mean of ones
+   leaves the mean of [x]'s elements alone. A larger [hi] keeps a last,
+   partial window. *)
+let test_avg_pool_padding () =
+  let x = image [| 1; 5; 1 |] [| 2.; 4.; 6.; 8.; 10. |] in
+  let padding = [| (0, 1) |] and window = [| 2 |] in
+  let y = Pool.avg ~window ~padding x in
+  values_are ~msg:"padding counted" ~tol:0. [| 3.; 7.; 5. |] y;
+  values_are ~msg:"x's elements alone" ~tol:0. [| 3.; 7.; 10. |]
+    (Nx.div y (Pool.avg ~window ~padding (Nx.ones_like x)));
+  shape_is ~msg:"no partial window without it" [| 1; 2; 1 |]
+    (Pool.avg ~window x)
 
-let test_pool_shape_contracts () =
-  let x = Nx.zeros Nx.float32 [| 2; 3; 5; 6 |] in
-  shape_is ~msg:"leading axes are preserved" [| 2; 3; 2; 3 |]
-    (Pool.max_pool2d ~kernel_size:(2, 2) x);
-  shape_is ~msg:"a bare image pools too" [| 2; 2 |]
-    (Pool.avg_pool2d ~kernel_size:(2, 2) (Nx.zeros Nx.float32 [| 4; 4 |]))
+let test_pool_shapes () =
+  let x = Nx.zeros Nx.float32 [| 2; 5; 6; 3 |] in
+  shape_is ~msg:"batch and channels are kept" [| 2; 2; 3; 3 |]
+    (Pool.max ~window:[| 2; 2 |] x);
+  shape_is ~msg:"1-D" [| 2; 3; 4 |]
+    (Pool.avg ~window:[| 3 |] ~stride:[| 2 |] (Nx.zeros Nx.float32 [| 2; 7; 4 |]))
 
 let test_max_pool_gradient_routes_to_max () =
-  let x = Nx.create Nx.float64 [| 1; 1; 4; 4 |] (Array.init 16 float_of_int) in
-  let loss x = Nx.sum (Pool.max_pool2d ~kernel_size:(2, 2) x) in
+  let x = Nx.create Nx.float64 [| 1; 4; 4; 1 |] (Array.init 16 float_of_int) in
+  let loss x = Nx.sum (Pool.max ~window:[| 2; 2 |] x) in
   let g = Rune.grad Nx.Ptree.tensor loss x in
   let expected = Array.make 16 0.0 in
   List.iter (fun i -> expected.(i) <- 1.0) [ 5; 7; 13; 15 ];
-  values_are ~msg:"gradient is 1 at each window maximum" ~tol:1e-12 expected g
+  values_are ~msg:"gradient is 1 at each window maximum" ~tol:0. expected g
 
 let test_pool_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 8) @@ fun () ->
-  let x = Nx.Rng.normal Nx.float64 [| 1; 2; 4; 4 |] in
+  let x = Nx.Rng.normal Nx.float64 [| 1; 4; 4; 2 |] in
   let max_loss x =
-    let y = Pool.max_pool2d ~kernel_size:(2, 2) ~stride:(1, 1) x in
+    let y =
+      Pool.max ~window:[| 3; 2 |] ~stride:[| 2; 1 |]
+        ~padding:[| (1, 1); (0, 1) |] x
+    in
     Nx.sum (Nx.mul y y)
   in
   grads_ok (Rune.check_grads Nx.Ptree.tensor max_loss x);
   let avg_loss x =
-    let y = Pool.avg_pool2d ~kernel_size:(2, 2) x in
+    let y = Pool.avg ~window:[| 2; 2 |] ~padding:[| (1, 0); (0, 1) |] x in
     Nx.sum (Nx.mul y y)
   in
   grads_ok (Rune.check_grads Nx.Ptree.tensor avg_loss x)
 
 let test_pool_rejects_bad_input () =
-  let x = Nx.zeros Nx.float32 [| 1; 1; 2; 5 |] in
+  let x = Nx.zeros Nx.float32 [| 1; 2; 5; 1 |] in
+  raises (Invalid_argument "Pool.max: window has no extent") (fun () ->
+      Pool.max ~window:[||] x);
+  raises (Invalid_argument "Pool.max: a window extent below 1 in [|0; 2|]")
+    (fun () -> Pool.max ~window:[| 0; 2 |] x);
+  raises (Invalid_argument "Pool.avg: a stride below 1 in [|1; 0|]")
+    (fun () -> Pool.avg ~window:[| 2; 2 |] ~stride:[| 1; 0 |] x);
+  raises (Invalid_argument "Pool.avg: 1 strides for 2 window extents")
+    (fun () -> Pool.avg ~window:[| 2; 2 |] ~stride:[| 1 |] x);
+  raises (Invalid_argument "Pool.max: a negative padding") (fun () ->
+      Pool.max ~window:[| 1; 1 |] ~padding:[| (0, 0); (-1, 0) |] x);
+  raises
+    (Invalid_argument "Pool.max: 2 window extents take an input of 4 axes, got 3")
+    (fun () -> Pool.max ~window:[| 1; 1 |] (Nx.zeros Nx.float32 [| 2; 5; 1 |]));
   raises
     (Invalid_argument
-       "Pool.max_pool2d: kernel_size must be positive, got (0, 2)") (fun () ->
-      Pool.max_pool2d ~kernel_size:(0, 2) x);
-  raises
-    (Invalid_argument "Pool.avg_pool2d: stride must be positive, got (1, 0)")
-    (fun () -> Pool.avg_pool2d ~kernel_size:(2, 2) ~stride:(1, 0) x);
-  raises
-    (Invalid_argument
-       "Pool.max_pool2d: input must have at least 2 axes, got rank 1")
-    (fun () ->
-      Pool.max_pool2d ~kernel_size:(1, 1) (Nx.zeros Nx.float32 [| 4 |]));
-  raises
-    (Invalid_argument "Pool.max_pool2d: kernel (3, 3) does not fit input (2, 5)")
-    (fun () -> Pool.max_pool2d ~kernel_size:(3, 3) x)
+       "Pool.max: no window of [|3; 3|] fits the input's spatial axes [|2; 5|]")
+    (fun () -> Pool.max ~window:[| 3; 3 |] x)
 
 let () =
   exit
@@ -445,14 +480,14 @@ let () =
            ];
          group "pooling"
            [
-             test "max pool takes each window maximum" test_max_pool_analytic;
-             test "avg pool takes each window mean" test_avg_pool_analytic;
-             test "stride overrides the window step"
-               test_pool_overlapping_stride;
-             test "rectangular kernels pool each axis independently"
-               test_pool_rectangular_kernel;
-             test "leading axes are preserved" test_pool_shape_contracts;
-             test "max pool routes the gradient to the maximum"
+             test "PyTorch's pools, 2-D and 3-D" test_pool_goldens;
+             test "max takes each window's greatest" test_max_pool_analytic;
+             test "avg takes each window's mean" test_avg_pool_analytic;
+             test "max pads with the dtype's least value"
+               test_max_pool_padding;
+             test "avg counts the padding" test_avg_pool_padding;
+             test "batch and channels are kept" test_pool_shapes;
+             test "max routes the gradient to the maximum"
                test_max_pool_gradient_routes_to_max;
              test "gradients agree with finite differences" test_pool_gradients;
              test "invalid inputs are rejected" test_pool_rejects_bad_input;
