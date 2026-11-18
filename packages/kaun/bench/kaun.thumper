@@ -5,8 +5,9 @@
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.2 · 64-bit · release
 # forced: blessed LayerNorm/layer-norm-8x512x512 under load 64.7 on 14 cores
+# pending: wall_time of Conv/conv-train-step, to record on a quiet machine
 
-Conv/conv-train-step	alloc_words	exact	39248
+Conv/conv-train-step	alloc_words	exact	41022
 Forward/apply	alloc_words	exact	1486
 LayerNorm/layer-norm-8x512x512	alloc_words	exact	3243
 Linear/linear-fwd	alloc_words	exact	256
