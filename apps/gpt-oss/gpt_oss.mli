@@ -42,7 +42,7 @@ type 'd config = {
   tied : bool;  (** Whether the head is the token table. *)
 }
 (** The type for gpt-oss hyperparameters, with the rotary schedule on the set
-    ['d]. The expert count and widths are read from the parameters. *)
+    ['d]. *)
 
 val place_config : 'e Nx.Placement.t -> 'd config -> 'e config
 (** [place_config at cfg] is [cfg] with its rotary schedule at [at]
@@ -89,9 +89,6 @@ type ('a, 'd) params = {
 }
 (** The type for gpt-oss parameters over payload ['a]. *)
 
-type 'd t = ('d Nx.float32_t, 'd) params
-(** The type for single-precision gpt-oss parameters on the set ['d]. *)
-
 module Block : Nx.Ptree.S with type ('a, 'd) t = ('a, 'd) block
 (** A block's structure. It walks [attn_norm], [attn]'s [qkv] and [out],
     [sinks], [ffn_norm], [router] and [moe]. A projection reports its case,
@@ -115,9 +112,7 @@ module Params : Nx.Ptree.S with type ('a, 'd) t = ('a, 'd) params
     [placement role ~axis]: [role] is the cut a tensor-parallel or
     expert-parallel placement makes in the leaf and [axis] the axis of the leaf
     that cut runs along, [0] for [Whole]. One device ignores both:
-    [fun _ ~axis:_ -> p], and the host is [fun _ ~axis:_ -> Nx.Host.on]. A
-    compiled step over several devices compiles as over one
-    ({!Rune.section-compiled}). *)
+    [fun _ ~axis:_ -> p], and the host is [fun _ ~axis:_ -> Nx.Host.on]. *)
 
 (** The type for the cuts of a tensor-parallel or expert-parallel placement. *)
 type role =
@@ -126,9 +121,7 @@ type role =
           output's bias. *)
   | Column
       (** Cut along its outputs: the query, key and value projection with its
-          bias, the sinks, and an untied head. A cut of the projection between
-          key-value heads holds on each device the query, key and value heads
-          that attend together ({!attn}). *)
+          bias, the sinks, and an untied head. *)
   | Row  (** Cut along its inputs: the attention's output projection. *)
   | Experts
       (** Cut along the expert axis: the expert weights, packed parts included,
@@ -139,11 +132,7 @@ val expert_parallel : 'd Nx.Devices.t -> role -> axis:int -> 'd Nx.Placement.t
 (** [expert_parallel s] splits the experts over [s] along their expert axis and
     keeps every other leaf, and the caches, a copy on each device: the
     [placement] of {!of_hf} and {!cache} for expert parallelism. Over one device
-    every leaf is whole there. Over several, each device multiplies the rows
-    of its own experts, the gate and up projection closes before the
-    activation and the down projection's sum once after the top-k combine,
-    within float32's reassociation of that combine's terms of one device's
-    output. *)
+    every leaf is whole there. *)
 
 (** {1:attention Attention} *)
 
@@ -209,9 +198,8 @@ val cache :
     parameters' dtype. Its structure is
     [Nx.Ptree.list (Nx.Ptree.instantiate (module Kaun.Attention.Cache))].
 
-    Each pool is made at [placement Kv_heads ~axis:1], so
-    a compiled step finds the caches where the model is from its first call, on
-    a set that computes under [Rune.jit] alone too. *)
+    Each pool is made at [placement Kv_heads ~axis:1], where a compiled step
+    finds it from its first call. *)
 
 val cached :
   'd config ->
@@ -247,7 +235,7 @@ type packing =
   | Unpacked  (** Floats at the model's dtype: the checkpoint's model. *)
   | Q8_0
       (** {!Nx_quant.quantize_q8_0} of those floats, as GGUF files of gpt-oss
-          store them: 53% of a bfloat16 weight's bytes, and other numerics. *)
+          store them. *)
 
 val of_hf :
   ?pack:packing ->
@@ -257,27 +245,14 @@ val of_hf :
   'e Nx_io.Archive.t ->
   ((float, 'b, 'd) Nx.t, 'd) params
 (** [of_hf ~placement cfg dt weights] is the model of the HuggingFace gpt-oss
-    [weights], with its float leaves at [dt]. Each entry is read by its name in
-    the file with the shape [cfg] gives it. Projections are transposed to
-    [inputs × outputs], a view. The query, key and value entries, weights and
-    biases, are placed each in the file's [[| outputs; inputs |]] and joined
-    into [qkv] where they lie, a copy compiled there. Experts stored as
-    [_blocks] and [_scales] are an {!Nx_quant.mxfp4} weight over the file's
-    bytes, whatever [dt]. At the file's own dtype nothing else is copied but an
-    unpacked untied head, where it is placed; at another one each float leaf is
-    cast.
-    Under [pack], [Unpacked] by default, the attention projections and an
-    untied head are stored as {!packing} says, each packed weight quantised
-    where it is placed and compiled, so a set that computes under
-    [Rune.jit] alone quantises too.
-
-    Each float leaf is placed with [Nx.place (placement role ~axis)] as it is
-    built (see {!role}), and each packed expert weight with
-    [Nx_quant.place (placement Experts ~axis:0)], so a function compiled where
-    the model is that captures it uploads nothing and the host holds one leaf at
-    a time. A packed projection is quantised from its float leaf placed in the
-    file's [[| outputs; inputs |]], its role's cut along the outputs at axis [0]
-    and along the inputs at axis [1].
+    [weights], each entry read by its name in the file with the shape [cfg]
+    gives it. Float leaves are at [dt], cast where the file stores another
+    dtype; experts stored as [_blocks] and [_scales] stay packed as
+    {!Nx_quant.mxfp4} weights over the file's bytes. Under [pack], [Unpacked]
+    by default, the attention projections and an untied head are stored as
+    {!packing} says. Each leaf is placed as it is built, a float leaf at
+    [placement role ~axis] (see {!role}) and a packed expert weight at
+    [placement Experts ~axis:0].
 
     Raises [Failure], naming the entry, if one is missing, has another shape
     than [cfg] says, or has a dtype the leaf cannot take. *)
@@ -285,10 +260,6 @@ val of_hf :
 type dtype =
   | Dtype : (float, 'b) Nx.dtype -> dtype
       (** A floating-point dtype chosen at run time. *)
-
-val dtype_of_string : string -> dtype
-(** [dtype_of_string s] is the dtype named ["float32"] or ["bfloat16"]. Raises
-    [Failure] on another name. *)
 
 val stored_dtype : 'd Nx_io.Archive.t -> dtype
 (** [stored_dtype weights] is the dtype [weights] stores its embedding table at,

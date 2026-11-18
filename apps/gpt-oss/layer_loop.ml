@@ -32,19 +32,12 @@ let cached ~placement cfg (p : ((float, 'b, 'd) Nx.t, 'd) Gpt_oss.params) =
     in
     go (embed (Nx.place placement ids)) [] cfg.Gpt_oss.layers p.blocks caches
 
-let greedy ~jit ~placement cfg p =
+let greedy ~placement cfg p =
   let head h =
     let last = Nx.slice [ A; I (Nx.dim 1 h - 1) ] h in
     Nx.argmax ~axis:1 (Gpt_oss.logits cfg p last)
   in
-  if not jit then fun caches index ids ->
-    let index = Cache_index.place placement index in
-    let h, caches =
-      Gpt_oss.cached cfg p caches index (Nx.place placement ids)
-    in
+  let cached = cached ~placement cfg p and head = Rune.jit' head in
+  fun caches index ids ->
+    let h, caches = cached caches index ids in
     (head h, caches)
-  else
-    let cached = cached ~placement cfg p and head = Rune.jit' head in
-    fun caches index ids ->
-      let h, caches = cached caches index ids in
-      (head h, caches)

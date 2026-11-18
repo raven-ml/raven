@@ -47,7 +47,6 @@ val cached :
     ({!Rune.section-compiled}). *)
 
 val greedy :
-  jit:bool ->
   placement:'d Nx.Placement.t ->
   'd Gpt_oss.config ->
   ((float, 'b, 'd) Nx.t, 'd) Gpt_oss.params ->
@@ -55,10 +54,7 @@ val greedy :
   'e Kaun.Cache_index.t ->
   'e Nx.int64_t ->
   'd Nx.int64_t * ((float, 'b, 'd) Nx.t, 'd) Kaun.Attention.Cache.t list
-(** [greedy ~jit ~placement cfg p caches index ids] is the most likely next
-    token of each sequence, of shape [[| batch |]], after the tokens [ids], and
-    the caches with their keys and values written. The index and the ids are
-    placed at [placement]. With [jit] it is {!cached} and a compiled head over
-    the last position; without, {!Gpt_oss.cached} run eagerly, which a set that
-    computes under [Rune.jit] alone cannot. Apply it to [cfg p] once and reuse
-    the result. *)
+(** [greedy ~placement cfg p caches index ids] is the most likely next token of
+    each sequence, of shape [[| batch |]], after the tokens [ids], and the
+    caches with their keys and values written: {!cached} and a compiled head
+    over the last position. Apply it to [cfg p] once and reuse the result. *)

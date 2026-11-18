@@ -3,36 +3,19 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* gpt-oss-20b at its own shapes on a CUDA, NV or AMD GPU, the app's model
-   compiled one layer kind at a time ([Layer_loop]): a decode step and
-   prefills of 512 and 12 tokens, over random weights at bfloat16 with the
-   experts packed as MXFP4, a decode step with the attention projections and
-   the head packed as Q8_0 too, quantised in its case's setup, and one layer's
-   experts, after its norm, at prefills of 32, 96, 512 and 536 tokens. 12,
-   32 and 96 tokens route 1.5, 4 and 12 rows an expert on average into
-   blocks of 48 for a tensor core, each block reading its expert's matrices
-   once for its rows; at 32 and 96 blocks of 4 and 8 streamed took 1.4 and
-   2.5 times as long. 536
-   tokens fill 65 blocks of 64 rows, a count 5 divides, where a warp of 5
-   tiles of rows would cross two blocks.
-   [first call 12] times a later process's first 12-token call over a warm
-   disk cache ([first_config]), and the cold rows a first call that compiles
-   every kernel.
+(* gpt-oss-20b at its own shapes on a CUDA, NV or AMD GPU, compiled one layer
+   at a time ([Layer_loop]), over random weights at bfloat16 with the experts
+   packed as MXFP4: a decode step, prefills of 512 and 12 tokens, the decode
+   step and a prefill with the attention projections and the head packed as
+   Q8_0, one layer's experts at prefills of 32, 96, 512 and 536 tokens, and a
+   later process's first 12-token call over a warm and a cold disk cache.
 
-   The weights are the checkpoint's entries, named, shaped and laid out as
-   gpt-oss-20b's safetensors files hold them, read by the app's loader
-   ([Gpt_oss.of_hf]) as a user's run reads the file: the steps compile the
-   kernels a user's do, over the same layouts, and the Q8_0 cases quantise
-   on the GPU, compiled, as the loader does.
-
-   Each step case's setup builds the 13.8 GB of entries on the host, in the
-   worker thumper forks for it, and loads them onto the GPU; a GPU's driver
-   must not be initialized before the fork. Weights built in the parent would be shared
-   with the worker copy-on-write, and AMD's driver faults the host pages it
-   maps for the GPU as writable, so the worker would copy every page: twice
-   the weights in memory, more than a 32 GB host holds. Kernels compile in
-   [--warm], a process of its own, into tolk's disk cache; a case's setup reads
-   them back. Without a CUDA, NV or AMD GPU there is nothing to measure. *)
+   The weights are entries named, shaped and laid out as gpt-oss-20b's
+   safetensors files hold them, read by [Gpt_oss.of_hf]. Each step case
+   builds them in the worker thumper forks for it, so the parent never holds
+   13.8 GB a fork would copy, and no GPU driver starts before the fork.
+   [--warm] compiles every kernel into tolk's disk cache first, in a process
+   of its own. Without such a GPU there is nothing to measure. *)
 
 open Kaun
 
@@ -64,16 +47,12 @@ let short_prompt = 12
 let routed_prompts = [ 32; 96 ]
 let blocked_prompt = 536
 
-(* Bytes drawn per array before they repeat. With all 10 GB of expert bytes
-   drawn, building the weights took 75 s on nonnormal's i9-9900K, in every
-   case's setup. *)
+(* Bytes drawn per array before they repeat, so building the weights takes
+   seconds. *)
 let period = 1 lsl 20
 
-(* Seconds of uncounted calls before a trial's samples. nonnormal's R9700
-   idles at 41 MHz; under decode steps it holds 1.7 GHz for 0.4 s, ramps to
-   3.2 GHz over 0.5 s, then creeps to 3.33 GHz by 3 s. With thumper's 0.1 s
-   default, the decode step timed the ramp: 32-34 ms against a steady
-   20.1. *)
+(* Seconds of uncounted calls before a trial's samples, so a GPU leaves its
+   idle clock first. *)
 let warmup_seconds = 3.
 
 (* Bytes in [lo, lo + span) from a linear congruential generator, the first
@@ -184,9 +163,9 @@ let load ?pack placement c entries =
   Gpt_oss.of_hf ?pack ~placement:(fun _ ~axis:_ -> placement) c Nx.bfloat16
     entries
 
-(* The GPUs tried, in order: an NVIDIA GPU through CUDA, then through its
-   kernel driver (NV), then an AMD GPU through its kernel driver. Hiding the
-   CUDA devices ([CUDA_VISIBLE_DEVICES=]) measures the card through NV. *)
+(* The GPUs tried, in order: CUDA, NV, AMD. [Rig_gpus.first] would also try
+   Metal and the PCI paths. Hiding the CUDA devices ([CUDA_VISIBLE_DEVICES=])
+   measures the card through NV. *)
 let names = [ "CUDA"; "NV"; "AMD" ]
 
 let first () =
@@ -199,8 +178,7 @@ let first () =
   in
   go [] names
 
-(* The GPU [0] of the first path that opens one. A set of it computes under
-   [Rune.jit] alone. *)
+(* The GPU [0] of the first path that opens one. *)
 let gpu () = match first () with Ok d -> d | Error e -> failwith e
 
 (* A step on the GPU warmed past its compilations: [`Decode] feeds back the
@@ -219,9 +197,7 @@ let step entries kind =
   let placement = G.on in
   let p = load ~pack placement config entries in
   let step =
-    Layer_loop.greedy ~jit:true ~placement
-      (Gpt_oss.place_config placement config)
-      p
+    Layer_loop.greedy ~placement (Gpt_oss.place_config placement config) p
   in
   let caches =
     ref
@@ -248,9 +224,7 @@ let step entries kind =
     | `Decode | `Decode_q8_0 -> ids := Nx.create Nx.int64 [| 1; 1 |] [| token |]
     | `Prefill _ | `Prefill_q8_0 _ -> ()
   in
-  (* The host entries are garbage once loaded. Collected later, by thumper
-     between its warmup and its samples, freeing them idled the GPU for
-     200 ms, which dropped it back to its idle clock. *)
+  (* The host entries are garbage once loaded. *)
   Gc.full_major ();
   call ();
   call
@@ -261,13 +235,9 @@ let step entries kind =
 let one_layer = { config with vocab_size = 1024; layers = [ Gpt_oss.Sliding ] }
 
 (* One layer's experts, [Moe.apply] of {!one_layer}'s, compiled at a prefill
-   of [prompt] tokens: random bfloat16 activations, routed by the router of
-   random logits from a fixed key, as the tensor cores multiply the MXFP4
-   weights. The experts read the block's norm of the activations, as in the
-   model: the norm's scaling is computed as the rows are gathered by expert,
-   into a buffer the first product reads in order and stages through shared
-   memory. Read from an input, the gather would fuse into that product, a
-   kernel the model never runs. *)
+   of [prompt] tokens: random bfloat16 activations, routed by random logits
+   from a fixed key. The experts read the block's norm of the activations, as
+   in the model, so the kernels are the model's. *)
 let experts prompt =
   let module G = (val Nx.devices [ gpu () ]) in
   let block = List.hd (load G.on one_layer (entries one_layer)).blocks in
@@ -289,19 +259,14 @@ let experts prompt =
         Moe.apply ~limit:config.swiglu_limit block.moe (ids, w) h)
   in
   let call () = ignore (Nx.item [ 0; 0 ] (f ids w x)) in
-  (* The host entries and the rest of the model are garbage, collected here
-     as {!step} collects its own. *)
   Gc.full_major ();
   call ();
   call
 
-(* A later process's first call: a sample has a process that holds a small
-   gpt-oss on the GPU make the 12-token call of the full model's programs over
-   a disk cache one call filled, and nothing but its own programs' reads is
-   timed. Both kinds of layer run one block program, so the two layers here
-   cost as the 24 of the model would and its zero weights take the place of
-   13.8 GB; the programs read the [dim] of the full model, on a smaller
-   vocabulary. *)
+(* A later process's first call: a process holding a two-layer gpt-oss of
+   zero weights makes the 12-token call over a disk cache one call filled.
+   Both layer kinds run the 24-layer model's one block program, at its [dim],
+   on a smaller vocabulary. *)
 let first_config =
   {
     config with
@@ -320,9 +285,7 @@ let prepare_first () =
   let placement = G.on in
   let p = load placement first_config entries in
   let step =
-    Layer_loop.greedy ~jit:true ~placement
-      (Gpt_oss.place_config placement first_config)
-      p
+    Layer_loop.greedy ~placement (Gpt_oss.place_config placement first_config) p
   in
   let caches =
     Gpt_oss.cache
@@ -372,11 +335,8 @@ let finish r =
   flush r.go;
   expect r "done"
 
-(* A trial makes a call to size its batches, up to 3 to warm up and 3 for its
-   samples, a process each, and one more to try a baseline's batch size.
-   Thumper's [--quick] and [--precise] ask for 11 and 40 samples, a process
-   each, each holding a model on the GPU: the case fails under them, and says
-   why. *)
+(* A process for each call of a trial: one to size its batches, up to 3 to
+   warm up, 3 samples and one to try a baseline's batch size. *)
 let ready_processes = 10
 
 let no_process_left =
@@ -482,9 +442,7 @@ let () =
         exit 0
       end;
       (* A trial's deadline covers its setup, which for a step builds the
-         13.8 GB of entries and loads them onto the GPU, its warmup and its
-         samples: the nine trials take 90 s together on fudge's RTX 5000
-         Ada. *)
+         13.8 GB of entries and loads them onto the GPU. *)
       let code =
         Thumper.run "gpt_oss"
           ~config:

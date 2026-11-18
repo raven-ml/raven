@@ -49,7 +49,6 @@ type ('a, 'd) params = {
   head : ('a, 'd) projection option;
 }
 
-type 'd t = ('d Nx.float32_t, 'd) params
 type role = Whole | Column | Row | Experts | Kv_heads
 
 let expert_parallel s role ~axis =
@@ -289,55 +288,39 @@ let of_hf ?(pack = Unpacked) ~placement cfg dt weights =
   let norm name =
     { Rms_norm.gamma = whole (float ~shape:[| cfg.dim |] name) }
   in
-  (* A column projection is cut along its outputs, bias included; a row
-     projection along its inputs, and its bias is added whole. *)
-  let linear role ~axis ?(bias = true) ~inputs ~outputs name =
-    let b_role = match role with Row -> Whole | role -> role in
+  (* A projection's bias is added whole, whatever cuts its weight. *)
+  let linear role ~axis ~inputs ~outputs name =
     {
       Linear.w =
         place role ~axis
           (Nx.matrix_transpose
              (float ~shape:[| outputs; inputs |] (name ^ ".weight")));
-      b =
-        (if bias then
-           Some
-             (place b_role ~axis:0
-                (float ~shape:[| outputs |] (name ^ ".bias")))
-         else None);
+      b = Some (whole (float ~shape:[| outputs |] (name ^ ".bias")));
     }
   in
-  (* A packed projection keeps the file's [outputs; inputs], so a cut along
-     the outputs is along its axis 0 and one along its inputs along its axis
-     1. It is quantised where it is placed, compiled, so a set that computes
+  (* Quantised where the weight is placed, compiled, so a set that computes
      under [Rune.jit] alone quantises too. *)
   let quantize =
     Rune.jit
       Nx.Ptree.(tensor @-> returns (v Nx_quant.walk))
       Nx_quant.quantize_q8_0
   in
-  let projection role ~axis ~inputs ~outputs name =
+  let q_dim = cfg.n_heads * cfg.head_dim in
+  (* The output projection, cut along its inputs: axis 0 of [Linear]'s
+     [inputs; outputs], axis 1 of a packed weight's [outputs; inputs]. *)
+  let out name =
     match pack with
-    | Unpacked -> Float (linear role ~axis ~inputs ~outputs name)
+    | Unpacked -> Float (linear Row ~axis:0 ~inputs:q_dim ~outputs:cfg.dim name)
     | Q8_0 ->
-        let b_role = match role with Row -> Whole | role -> role in
-        let w = float ~shape:[| outputs; inputs |] (name ^ ".weight") in
-        let b = float ~shape:[| outputs |] (name ^ ".bias") in
-        Quant
-          {
-            w = quantize (place role ~axis:(1 - axis) w);
-            b = Some (place b_role ~axis:0 b);
-          }
+        let w = float ~shape:[| cfg.dim; q_dim |] (name ^ ".weight") in
+        let b = whole (float ~shape:[| cfg.dim |] (name ^ ".bias")) in
+        Quant { w = quantize (place Row ~axis:1 w); b = Some b }
   in
-  let row = projection Row ~axis:0 in
   (* The query, key and value projections as one, its outputs grouped by
-     key-value head: each one's [group] query heads, then its key head and
-     its value head. A cut along the outputs between key-value heads so holds
-     on each device the heads that attend together, as cuts of the three
-     apart do. The three are placed in the file's [outputs; inputs] and
-     joined where they are placed, compiled, so a set that computes under
-     [Rune.jit] alone joins them too; the join copies. Q8_0 quantises each
-     row of 32-value blocks alone, so the joined weight packs to the rows
-     the three would. *)
+     key-value head: each one's [group] query heads, then its key head and its
+     value head, so a cut between key-value heads keeps the heads that attend
+     together. The three are joined where they are placed, compiled, so a set
+     that computes under [Rune.jit] alone joins them too. *)
   let group = cfg.n_heads / cfg.n_kv_heads in
   let join =
     let by_kv heads x =
@@ -394,7 +377,6 @@ let of_hf ?(pack = Unpacked) ~placement cfg dt weights =
         in
         Moe.Quant (Nx_quant.place (placement Experts ~axis:0) w)
   in
-  let q_dim = cfg.n_heads * cfg.head_dim in
   let block i =
     let at leaf = Printf.sprintf "model.layers.%d.%s" i leaf in
     {
@@ -402,7 +384,7 @@ let of_hf ?(pack = Unpacked) ~placement cfg dt weights =
       attn =
         {
           qkv = qkv at;
-          out = row ~inputs:q_dim ~outputs:cfg.dim (at "self_attn.o_proj");
+          out = out (at "self_attn.o_proj");
         };
       sinks =
         place Column ~axis:0
@@ -450,22 +432,13 @@ let of_hf ?(pack = Unpacked) ~placement cfg dt weights =
          | Q8_0 ->
              Some (Quant { w = quantize (place Column ~axis:0 w); b = None })
          | Unpacked ->
-             (* A copy in [inputs; outputs], since tolk's bfloat16
-                matrix-vector kernel reads the transposed view 3 to 4 times
-                slower. It is made after the head is placed, as a host copy
-                reads the file's pages in transposed order, ten times slower
-                cold, and compiled, so a set that computes under [Rune.jit]
-                alone makes it too. *)
+             (* A copy in [inputs; outputs], which tolk's bfloat16
+                matrix-vector kernel reads faster than the transposed view. *)
              let w = place Column ~axis:1 (Nx.matrix_transpose w) in
              Some (Float { Linear.w = Rune.jit' Nx.copy w; b = None }));
   }
 
 type dtype = Dtype : (float, 'b) Nx.dtype -> dtype
-
-let dtype_of_string = function
-  | "float32" -> Dtype Nx.float32
-  | "bfloat16" -> Dtype Nx.bfloat16
-  | d -> failwith ("--dtype must be float32 or bfloat16, got " ^ d)
 
 let stored_dtype weights =
   let name = "model.embed_tokens.weight" in

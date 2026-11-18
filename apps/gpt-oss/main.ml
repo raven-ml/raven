@@ -3,91 +3,54 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Chat with gpt-oss, greedy decoding through key-value caches. One step
-   function serves the prompt and every token after it. Without [--devices] it
-   runs eagerly on the host; with [--devices LIST] the model is placed on those
-   devices and the step compiled ({!Layer_loop.greedy}), expert-parallel over
-   several.
-
-   [--prompt TEXT] is the user's turn of a harmony conversation, [--system
-   TEXT] its instructions and [--reasoning EFFORT] how much the model thinks
-   first. The answer streams to standard output, the reasoning to standard
-   error under [--show-analysis], and timings to standard error. Without
-   [--prompt] the model continues twelve fixed token ids and prints the ids.
-
-   The default checkpoint is tiny and random: it runs every code path, and
-   what it generates is noise. *)
+(* Chat with gpt-oss: a harmony conversation decoded greedily through
+   key-value caches, eagerly on the host or compiled over [--devices]. *)
 
 open Kaun
 
-let fixed_prompt =
-  [|
-    200006L;
-    17360L;
-    200008L;
-    3575L;
-    553L;
-    17554L;
-    162016L;
-    11L;
-    261L;
-    4410L;
-    6439L;
-    2359L;
-  |]
+(* The most likely next token after [ids], and the caches with their keys and
+   values written. *)
+let greedy ~jit s cfg p =
+  let placement = Nx.Placement.on s in
+  if jit then Layer_loop.greedy ~placement cfg p
+  else fun caches index ids ->
+    let index = Cache_index.place placement index in
+    let ids = Nx.place placement ids in
+    let h, caches = Gpt_oss.cached cfg p caches index ids in
+    let last = Nx.slice [ A; I (Nx.dim 1 h - 1) ] h in
+    (Nx.argmax ~axis:1 (Gpt_oss.logits cfg p last), caches)
 
-(* [on_token] sees every generated token as it arrives and says whether to stop.
-   The step runs over the set [s], compiled with [jit], and the caches are
-   placed there as the parameters are. *)
-let generate ~jit s cfg params dt ~log ~count ~on_token prompt =
-  let step = Layer_loop.greedy ~jit ~placement:(Nx.Placement.on s) cfg params in
-  let timed caches index ids =
-    let t0 = Unix.gettimeofday () in
-    let token, caches = step caches index ids in
-    let token = Nx.item [ 0 ] token in
-    (token, caches, Unix.gettimeofday () -. t0)
-  in
+(* Decodes [prompt] and up to [count] tokens after it, giving each to
+   [on_token] until it says to stop. *)
+let decode step caches ~count ~on_token prompt =
   let n0 = Array.length prompt in
-  let context = n0 + count in
-  let index = Cache_index.rows ~context [| n0 |] in
-  let first, caches, prefill =
-    timed
-      (Gpt_oss.cache ~placement:(Gpt_oss.expert_parallel s) cfg ~slots:context
-         dt)
-      index
-      (Nx.create Nx.int64 [| 1; n0 |] prompt)
+  let next caches index ids =
+    let token, caches = step caches index ids in
+    (Nx.item [ 0 ] token, caches)
   in
-  Printf.fprintf log "prefill of %d tokens: %.3f s\n%!" n0 prefill;
-  let out = Array.make count first in
-  let times = Array.make (count - 1) 0.0 in
-  let state = ref (caches, Cache_index.advance index) and n = ref 1 in
-  let stop = ref (on_token first) in
-  while (not !stop) && !n < count do
-    let caches, index = !state in
-    let ids = Nx.create Nx.int64 [| 1; 1 |] [| out.(!n - 1) |] in
-    let token, caches, t = timed caches index ids in
-    state := (caches, Cache_index.advance index);
-    out.(!n) <- token;
-    times.(!n - 1) <- t;
-    incr n;
-    stop := on_token token
-  done;
-  if !n > 1 then begin
-    Printf.fprintf log "first step: %.3f s\n" times.(0);
-    let later = Array.sub times 1 (!n - 2) in
-    Array.sort compare later;
-    if later <> [||] then
-      Printf.fprintf log "later steps: median %.1f ms\n%!"
-        (1e3 *. later.(Array.length later / 2))
-  end;
-  Array.sub out 0 !n
-
-let today () =
-  let tm = Unix.localtime (Unix.time ()) in
-  Printf.sprintf "%04d-%02d-%02d" (tm.tm_year + 1900) (tm.tm_mon + 1) tm.tm_mday
+  let t0 = Unix.gettimeofday () in
+  let index = Cache_index.rows ~context:(n0 + count) [| n0 |] in
+  let token, caches =
+    next caches index (Nx.create Nx.int64 [| 1; n0 |] prompt)
+  in
+  let t1 = Unix.gettimeofday () in
+  let rec go n token caches index =
+    if on_token token || n = count then n
+    else
+      let index = Cache_index.advance index in
+      let token, caches =
+        next caches index (Nx.create Nx.int64 [| 1; 1 |] [| token |])
+      in
+      go (n + 1) token caches index
+  in
+  let n = go 1 token caches index in
+  let rate = float_of_int (n - 1) /. (Unix.gettimeofday () -. t1) in
+  Printf.eprintf "\nprefill of %d tokens: %.2f s; %d tokens, %.1f a second\n"
+    n0 (t1 -. t0) n rate
 
 (* Prints the answer on standard output and, if [show_analysis], everything else
-   the assistant writes on standard error, each channel on its own lines. *)
+   the assistant writes on standard error, each channel on its own lines. Says
+   whether the assistant ended its turn. *)
 let printer harmony ~show_analysis =
   let parser = ref (Harmony.parser harmony) and last = ref Harmony.Final in
   fun token ->
@@ -106,17 +69,10 @@ let printer harmony ~show_analysis =
       text;
     Harmony.stopped p
 
-let effort_of_string = function
-  | "low" -> Harmony.Low
-  | "medium" -> Harmony.Medium
-  | "high" -> Harmony.High
-  | s -> invalid_arg ("reasoning " ^ s ^ ": expected low, medium or high")
-
 let () =
-  let repo = ref "tiny-random/gpt-oss-mxfp4" in
-  let devices = ref "" and count = ref 0 and dtype = ref "" in
-  let prompt = ref "" and system = ref "" and reasoning = ref "medium" in
-  let show_analysis = ref false and q8_0 = ref false in
+  let repo = ref "tiny-random/gpt-oss-mxfp4" and devices = ref "" in
+  let prompt = ref "What is the capital of France?" and count = ref 256 in
+  let show_analysis = ref false in
   Arg.parse
     [
       ( "--repo",
@@ -124,78 +80,39 @@ let () =
         "A gpt-oss repository (default tiny-random/gpt-oss-mxfp4)" );
       ( "--devices",
         Arg.Set_string devices,
-        "Compile the step over these devices, expert-parallel over several: a \
-         device (METAL) or a comma-separated list (CPU:1,CPU:2,CPU:3,CPU:4)" );
-      ( "--dtype",
-        Arg.Set_string dtype,
-        "float32 or bfloat16 (default: the weights' own)" );
-      ( "--q8_0",
-        Arg.Set q8_0,
-        "Pack the attention projections and the head as Q8_0: fewer bytes, \
-         other numerics; eagerly on the host a step is about 2x slower" );
-      ( "--count",
-        Arg.Set_int count,
-        "Most tokens to generate (default: 16, or 256 for a prompt)" );
+        "Compile over these devices, expert-parallel over several: a device \
+         (CUDA) or a comma-separated list (CPU:1,CPU:2)" );
       ("--prompt", Arg.Set_string prompt, "What the user says");
-      ("--system", Arg.Set_string system, "Instructions for the model");
-      ("--reasoning", Arg.Set_string reasoning, "low, medium (default) or high");
+      ("--count", Arg.Set_int count, "Most tokens to generate (default 256)");
       ( "--show-analysis",
         Arg.Set show_analysis,
         "Print the model's reasoning on standard error" );
     ]
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
-    "main.exe [--repo REPO] [--devices LIST] [--dtype DT] [--q8_0] \
-     [--count N] [--prompt TEXT [--system TEXT] [--reasoning EFFORT] \
-     [--show-analysis]]";
-  let effort = effort_of_string !reasoning in
+    "main.exe [--repo REPO] [--devices LIST] [--prompt TEXT] [--count N] \
+     [--show-analysis]";
   let cfg = Gpt_oss.config_of_json (Kaun_hf.load_config !repo) in
   let weights = Kaun_hf.load_safetensors !repo in
-  (* At the weights' own dtype the import casts nothing. *)
-  let (Gpt_oss.Dtype dt) =
-    if !dtype = "" then Gpt_oss.stored_dtype weights
-    else Gpt_oss.dtype_of_string !dtype
+  let harmony =
+    Harmony.of_file (Kaun_hf.download_file ~file:"tokenizer.json" !repo)
   in
-  let count default = if !count > 0 then !count else default in
-  let log = if !prompt = "" then stdout else stderr in
+  let ids = Harmony.render harmony ~effort:Medium [ User !prompt ] in
+  let on_token = printer harmony ~show_analysis:!show_analysis in
+  (* At the weights' own dtype the import casts nothing. *)
+  let (Gpt_oss.Dtype dt) = Gpt_oss.stored_dtype weights in
   let run ~jit s =
-    let t0 = Unix.gettimeofday () in
     let placement = Gpt_oss.expert_parallel s in
-    let pack = if !q8_0 then Gpt_oss.Q8_0 else Unpacked in
-    let params = Gpt_oss.of_hf ~pack ~placement cfg dt weights in
+    let p = Gpt_oss.of_hf ~placement cfg dt weights in
     let cfg = Gpt_oss.place_config (Nx.Placement.on s) cfg in
-    Printf.fprintf log "weights imported in %.1f s\n%!"
-      (Unix.gettimeofday () -. t0);
-    if !prompt = "" then
-      let out =
-        generate ~jit s cfg params dt ~log ~count:(count 16)
-          ~on_token:(fun _ -> false)
-          fixed_prompt
-      in
-      print_endline
-        (String.concat " " (Array.to_list (Array.map Int64.to_string out)))
-    else begin
-      let harmony =
-        Harmony.of_file (Kaun_hf.download_file ~file:"tokenizer.json" !repo)
-      in
-      let instructions = if !system = "" then None else Some !system in
-      let ids =
-        Harmony.render harmony ~date:(today ()) ?instructions ~effort
-          [ User !prompt ]
-      in
-      let on_token = printer harmony ~show_analysis:!show_analysis in
-      let out =
-        generate ~jit s cfg params dt ~log ~count:(count 256) ~on_token
-          (Array.map Int64.of_int ids)
-      in
-      print_newline ();
-      Printf.eprintf "%d tokens generated\n" (Array.length out)
-    end
+    let caches =
+      Gpt_oss.cache ~placement cfg ~slots:(Array.length ids + !count) dt
+    in
+    decode (greedy ~jit s cfg p) caches ~count:!count ~on_token
+      (Array.map Int64.of_int ids)
   in
   if !devices = "" then run ~jit:false Nx.Host.v
   else
+    let open_ name = Result.error_to_failure (Rig_gpus.open_ name) in
     let names = List.map String.trim (String.split_on_char ',' !devices) in
-    let devices =
-      List.map (fun n -> Result.error_to_failure (Rig_gpus.open_ n)) names
-    in
-    let module D = (val Nx.devices devices) in
+    let module D = (val Nx.devices (List.map open_ names)) in
     run ~jit:true D.v
