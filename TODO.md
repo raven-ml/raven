@@ -33,9 +33,8 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   kernels over buffers of two sizes compile apart under D485: name the
   parameters without sizes in the renderer
 - A bf16 product of 6-32 rows by weights laid `[K; N]` streams by its
-  columns; since its reduce splits into threads it is untimed (it took 476
-  us at 16x64x2880, `contract/bf16-16x64x2880`), and it runs 4 workgroups:
-  near its byte bound only with the reduce split across workgroups
+  columns on 4 workgroups: `contract/bf16-16x64x2880` takes 47-50 us where
+  BEAM's split of the reduce over 8 threads and upcast by 4 take 8-9
 - A lone per-head projection at head size 80 (kaun's `Attention.apply`
   projects q and k apart) pads N from 80 to 128, 1.6x the core's work,
   where a warp tile of 40 columns (N upcast by 5) covers it; D491's 440 to
