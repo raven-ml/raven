@@ -1048,22 +1048,20 @@ let uncopied ?(dims = 64) (module S : Nx.Devices) ~grad dtype =
            Nx.sync b;
            Nx.sync d))
 
-(* Whether, on [r], an lse-only call of [rows] batches of 4 heads of 256
-   rows of [dims] dimensions of [dt] takes the tiles of the same call over
-   values of [dims] columns: as many keys a tile, in as many runs. Its
-   derivative's tiles are the same call's, since they grow past 64
-   dimensions of keys or values and its keys have [dims]. *)
-let same_tiles r dt ~rows ~dims =
-  let shape = [| rows; 4; 256; dims |] in
-  let tiles dv = Rune.attention_tiles r dt ~q:shape ~k:shape ~dv in
-  tiles dims = tiles 0
+(* Whether, on [r], a call over queries and keys of [dt] shaped [q] and [k]
+   takes the same tiles over values of no column and over values of as many
+   columns as its keys' dimensions: as many keys a tile, in as many runs.
+   Its derivative's tiles are the same, since they grow past 64 dimensions
+   of keys or values. *)
+let same_tiles r dt ~q ~k =
+  let tiles dv = Rune.attention_tiles r dt ~q ~k ~dv in
+  tiles q.(Array.length q - 1) = tiles 0
 
 (* An lse-only call: attention over values of no column, as a call whose
    output is its [lse] alone. Where the full call takes the same tiles and
    runs, [same], its [lse] and its gradient in the query and keys from an
    [l̄se] cotangent alone are the full call's bits with [ō = 0]: the full
-   call adds exact zeros for its values' columns. Elsewhere they hold rune's
-   bound. *)
+   call adds exact zeros for its values' columns. *)
 let lse_only (module S : Nx.Devices) ~bits:same ~rows ~dims dtype =
   let (F dt) = float_dtype dtype in
   let c = base dtype in
@@ -1097,28 +1095,35 @@ let lse_only (module S : Nx.Devices) ~bits:same ~rows ~dims dtype =
           equal ~msg:"the keys' cotangent" bits (host bk) (host bk0)
         end)
   in
-  (* Where the tiles differ, the bits may: the lse-only call at its shape,
-     unmasked, holds rune's bound, its lse and its gradient from an [l̄se]
-     cotangent alone, which the gradient law takes at seed 1. *)
-  if not same then begin
-    let lse_only =
-      {
-        c with
-        lead = rows;
-        hq = 4;
-        hk = 4;
-        tq = 256;
-        tk = 256;
-        dk = dims;
-        dv = 0;
-        mask = Unmasked;
-        seed = 1;
-      }
-    in
-    law ~composed:true (module S) lse_only;
-    grad_law ~composed:true (module S) ~vmap:false lse_only
-  end;
   List.map (fun (k : Tolk.Realize.kernel) -> k.name) ks
+
+(* {!lse_only}'s call of [rows] batches holds rune's bound: its [lse] and its
+   gradient from an [l̄se] cotangent alone, which the gradient law takes at
+   seed 1. The laws run at 2 batches, whose tiles hold as many keys as the
+   call's, checked first: the batches move its warps and runs, which can move
+   the keys a tile holds only through the workgroup memory its warps take. *)
+let lse_only_bound (module S : Nx.Devices) r dtype ~rows ~dims =
+  let c =
+    {
+      (base dtype) with
+      lead = 2;
+      hq = 4;
+      hk = 4;
+      tq = 256;
+      tk = 256;
+      dk = dims;
+      dv = 0;
+      mask = Unmasked;
+      seed = 1;
+    }
+  in
+  let keys lead =
+    let shape = [| lead; 4; 256; dims |] in
+    Option.map fst (Rune.attention_tiles r dtype ~q:shape ~k:shape ~dv:0)
+  in
+  equal ~msg:"keys a tile" Testable.(option int) (keys rows) (keys c.lead);
+  law ~composed:true (module S) c;
+  grad_law ~composed:true (module S) ~vmap:false c
 
 (* A call returning one attention's [o] twice, and transposed, returns
    three arrays of [o]'s elements that share no memory. *)

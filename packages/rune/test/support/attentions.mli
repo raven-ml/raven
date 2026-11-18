@@ -155,9 +155,11 @@ val uncopied :
     each result is the storage its kernel wrote, uncopied. *)
 
 val same_tiles :
-  Tolk.Renderer.t -> Nx.Dtype.any -> rows:int -> dims:int -> bool
-(** [same_tiles r dt ~rows ~dims] is [true] iff on [r] the call {!lse_only}
-    makes takes the tiles of the same call over values of [dims] columns. *)
+  Tolk.Renderer.t -> Nx.Dtype.any -> q:int array -> k:int array -> bool
+(** [same_tiles r dt ~q ~k] is [true] iff on [r] a compiled attention over
+    queries and keys of [dt] shaped [q] and [k], [[lead…; heads; rows;
+    dims]], takes the same tiles over values of no column and of [dims]
+    columns. *)
 
 val lse_only :
   (module Nx.Devices) ->
@@ -171,10 +173,19 @@ val lse_only :
     dimensions of [dt], its values of no column, has no output and no value
     cotangent columns, and where [bits] gives the [lse] bits of the same
     call over values of [dims] columns, and from an [l̄se] cotangent alone
-    the query's and keys' cotangents of that call with [ō = 0]. Where not
-    [bits], the call at its shape holds rune's bound ({!law} and
-    {!grad_law}). It is the names of the kernels the lse-only call
-    compiles. *)
+    the query's and keys' cotangents of that call with [ō = 0]. It is the
+    names of the kernels the lse-only call compiles. *)
+
+val lse_only_bound :
+  (module Nx.Devices) ->
+  Tolk.Renderer.t ->
+  Nx.Dtype.any ->
+  rows:int ->
+  dims:int ->
+  unit
+(** [lse_only_bound s r dt ~rows ~dims] checks that {!lse_only}'s call of
+    [rows] batches holds rune's bound ({!law} and {!grad_law}), run at 2
+    batches after checking that on [r] these take tiles of as many keys. *)
 
 val apart : (module Nx.Devices) -> Nx.Dtype.any -> unit
 (** [apart s dt] checks that a compiled call returning one attention's [o]
