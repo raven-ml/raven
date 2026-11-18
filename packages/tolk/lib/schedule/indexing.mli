@@ -72,13 +72,14 @@ val run_rangeify : cores:(Ops.device * Tc.t list) list -> Ops.t -> Ops.t
     of the sum's output the other does not, neither product reading the
     other, whose rows (the axes only one factor reads), outputs (those only
     the other reads) and block (the axes summed) the core fits as the
-    heuristic asks of stored operands before it takes one
-    ({!Heuristic.core_fits_shape}, each factor as stored). Of such products a
-    stored value's kernel computes, as the cotangent of an input read by
+    heuristic asks before it takes one ({!Heuristic.core_fits_shape}), each
+    factor in the product's order decoded where it converts integer codes
+    into floats ({!Stage.decoded}), as a Q8_0 matrix's do. Of such products
+    a stored value's kernel computes, as the cotangent of an input read by
     several products sums them, each after the first in the walk is stored
-    whole: as the first narrowing cast its
-    one consumer reads it through, past casts and the addition of a value
-    that computes no reduction, or as itself where there is none. A core
+    whole: as the first narrowing cast its one consumer reads it through,
+    past casts and the addition of a value that computes no reduction, or as
+    itself where there is none. A core
     computes one product a kernel, so each product then takes one. The
     stored value is the one the kernel computed: the bits equal the fused
     kernel's at the same optimisations, and against a schedule without the

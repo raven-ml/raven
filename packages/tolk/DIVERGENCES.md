@@ -3182,10 +3182,12 @@ driver signals its own (D146).
   cores (`Heuristic.cores`, which the engine passes to
   `Schedule.create_linear_with_vars ~cores`) multiplies both factors into
   the sum's type (`Tc.takes`, which `Postrange`'s `try_core` asks too) and
-  fits its rows, outputs and block as the heuristic asks of stored operands
-  before it takes a core (`Heuristic.core_fits_shape`, which
-  `Heuristic.core_fits` reads): a sum of 32 rows or fewer, which the
-  heuristic streams, stays grouped. Of
+  fits its rows, outputs and block as the heuristic asks before it takes a
+  core (`Heuristic.core_fits_shape`, which `Heuristic.core_fits` reads): a
+  sum of 32 rows or fewer, which the heuristic streams, stays grouped. Each
+  factor is asked as decoded where it converts integer codes into floats,
+  as a Q8_0 matrix's, so a product whose streamed factor is decoded takes a
+  kernel of its own past 16 rows (D230). Of
   two such products a stored value's kernel computes, neither reading the
   other, the later in the walk is stored: as the first narrowing cast its
   one consumer reads it through, past casts and the addition of an initial
@@ -3244,7 +3246,10 @@ driver signals its own (D146).
   its Jit suite's `transformations › a compiled gradient of a parameter
   broadcast over a grid is its gradient`; and its bench row
   `reverse/jit-of-grad-clipped-disc-float64-104x104-host`. For products a core
-  takes, rune's Lower_reduce suite: `sums of products` (every test).
+  takes, rune's Lower_reduce suite: `sums of products` (every test), and the
+  Rangeify suite's `get_kernel_graph › products a core takes` (every test,
+  `products of 24 rows by codes of 64 run a kernel each` and `products of
+  codes of 24 by codes of 64 run a kernel each` among them).
 
 ## D138. A load's index is simplified without the loads in it assuming its gate
 
@@ -5601,8 +5606,8 @@ union, as fast on CUDA, on the host and in compile time.
   a value its outputs share.
 - **tolk:** `Heuristic.stream`'s upcast of the reuse ranges,
   `Heuristic.hand_coded_with`'s `core_first` and late stream,
-  `Heuristic.padded_within`, and `Heuristic.core_fits` and `core_rows`
-  under `~decoded`.
+  `Heuristic.padded_within`, `Heuristic.core_fits` and `core_rows` under
+  `~decoded`, and `Indexing.core_product`.
 - **Differs:** on a GPU, a decoded operand (D163) that a stream would read,
   the operand of least reuse, whose `R` outputs along one axis read it at
   one index:
@@ -5618,7 +5623,9 @@ union, as fast on CUDA, on the host and in compile time.
   (`Heuristic.first_streams`, `core_from` and `pad_shared`): a core past 16
   where the factor that streams is decoded, the first at a tie, and the pad
   of an extent past 16 that no decoded factor reads uncounted, so that rune
-  writes such rows of a Q8_0 matrix in the partial form a core takes.
+  writes such rows of a Q8_0 matrix in the partial form a core takes, and
+  `Indexing` gives a product of a decoded factor a kernel of its own where
+  the core takes it (D137).
 
   A core decodes a value once a tile of its rows where its floor (D175)
   refuses their upcast, and once in each lane its fragment holds it (two on
@@ -5634,8 +5641,10 @@ union, as fast on CUDA, on the host and in compile time.
   (17 and 19 rows on a core, 64 float32 rows streamed), `core_fits names
   the decoded products the heuristic takes a core of` and `core_fits names
   the products of stored and decoded factors the heuristic takes a core of`
-  (both factor orders, ties, one and two decoded factors); rune's GPU
-  suite's `a
+  (both factor orders, ties, one and two decoded factors); the Rangeify
+  suite's `get_kernel_graph › products a core takes`, `products of 24 rows
+  by codes of 64 run a kernel each` to `products of codes of 17 by codes of
+  64 share one kernel`; rune's GPU suite's `a
   Q8_0 product's rows take a tensor core where core_fits holds`; kaun's
   `Quant/cuda/mxfp4-product-of-16384-{17,32}-bfloat16-tokens`,
   `-64-float32-tokens` and `q8_0-product-of-16384-{17,32}-bfloat16-tokens`.

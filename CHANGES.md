@@ -1482,6 +1482,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A sum of matrix products of factors decoded from integer codes, as a Q8_0
+  matrix's, of 17 to 32 rows that a GPU core takes runs each product in a
+  kernel of its own, where they shared one and no core took them
+  (`Schedule.create_linear_with_vars ~cores`).
 - A GPU product of few rows streamed along its matrix's columns, as `x @ w`
   with `w` laid out `[K; N]`, splits its reduce into as many threads as the
   workgroup's shared memory holds, where it took none when the threads it

@@ -1230,14 +1230,49 @@ let read_ranges rctx u idx =
   walk u idx;
   found
 
+(* Whether [u] converts integer codes into floats, by a cast or a bitcast
+   outside memory, as {!Stage.decoded} asks of a kernel's operand: integers
+   that memory gives (storage, a stored value, a load or a call's result),
+   through integer arithmetic alone. A variable, which the kernel reads
+   from no memory, gives no codes, nor does a cast that is stored. *)
+let decoded rctx u =
+  let variable v =
+    match arg v with Param { slot = -1; _ } -> true | _ -> false
+  in
+  let memory v =
+    op v <> Op.Const
+    && (not (variable v))
+    && (Tbl.mem rctx.realize_map v || Op.Set.mem (op v) always_contiguous)
+  in
+  let coded = Tbl.create 16 in
+  let rec codes v =
+    match Tbl.find_opt coded v with
+    | Some b -> b
+    | None ->
+        let b =
+          Dtype.is_int (dtype v) && (memory v || List.exists codes (src v))
+        in
+        Tbl.add coded v b;
+        b
+  in
+  let converts v =
+    (op v = Op.Cast || op v = Op.Bitcast)
+    && (not (memory v))
+    && Dtype.is_float (dtype v)
+    && codes (nth v 0)
+  in
+  List.exists converts
+    (toposort ~calls:Skip ~gate:(fun v -> not (memory v)) u)
+
 (* Whether the reduction [r] is a matrix product that one of [cores]
    computes: an addition of products, through movements and at most one
    cast, whose factors each read an axis of [r]'s output that the other does
    not, and a core that multiplies them into [r]'s type ({!Tc.takes}) fits
-   its shape as the heuristic asks of stored operands before it takes one
+   its shape as the heuristic asks before it takes one
    ({!Heuristic.core_fits_shape}): its rows the axes only one factor reads,
    its outputs those only the other reads, and its block the axes [r]
-   reduces, a symbolic extent counting at its largest. *)
+   reduces, a symbolic extent counting at its largest, each factor asked
+   as {!decoded} or stored. *)
 let core_product rctx cores r =
   let rec product casts u idx =
     match op u with
@@ -1290,6 +1325,7 @@ let core_product rctx cores r =
               reads 1
           in
           let rows = own ra rb and outputs = own rb ra in
+          let decoded = (decoded rctx a, decoded rctx b) in
           let block =
             List.fold_left (fun n u -> n * extent u) 1 reduced
           in
@@ -1297,8 +1333,7 @@ let core_product rctx cores r =
           && List.exists
                (fun tc ->
                  takes m tc
-                 && Heuristic.core_fits_shape tc ~decoded:(false, false) ~rows
-                      ~outputs ~block)
+                 && Heuristic.core_fits_shape tc ~decoded ~rows ~outputs ~block)
                cores
       | _ -> false)
   | _ -> false

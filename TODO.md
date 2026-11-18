@@ -30,10 +30,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   wins (559-706 us against 424-492 at 17-64 rows); it reaches gpt-oss's
   Q8_0 prefill at 12 tokens. `core_fits` ignores `early`'s guards, which a
   partial form's one-block sum never meets (rowdecode/design-a.md)
-- `Indexing.core_product` asks `core_fits` with a decoded factor as stored,
-  so a decoded product of 17-32 rows stays grouped there; `heuristic.mli`
-  (~30) says no core takes a decoded operand, but only the streamed one is
-  tested
 - `apply_opt`'s refusal of a tensor core past `local_threads_max`
   (`postrange.ml` ~987, D488) has no test
 - cstyle names each parameter after its buffer's size (`data0_4096`), so

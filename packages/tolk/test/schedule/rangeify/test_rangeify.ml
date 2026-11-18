@@ -1072,7 +1072,15 @@ let siblings =
    products of 64 rows each take a kernel of their own, the two stored as
    the bfloat16 their sum reads; products of 8 rows, which stream without a
    core, float32 products, which take one only under TF32, and a schedule
-   given the host's cores keep one kernel of three sums. *)
+   given the host's cores keep one kernel of three sums. Where one factor
+   is int8 codes decoded to float32, as a Q8_0 matrix's, the heuristic takes
+   a core past 16 rows where the factor that streams is decoded: the one of
+   fewer free elements, or the first at a tie. 24 rows of bfloat16 by codes
+   of 64 take a kernel each, as do codes of 24 by 24 rows and codes of 24 by
+   codes of 64; 24 stored rows, or 24 by codes of 24, keep one, as do codes
+   of 17 by codes of 64, whose rows the core pads past its bound. *)
+
+type factor = A | B
 
 let cuda = "CUDA"
 
@@ -1083,16 +1091,17 @@ let sm_89_cores =
   in
   [ (cuda, Heuristic.cores (Cstyle.without_compiler target)) ]
 
-let sum_of_products ?(dt = Dtype.Bfloat16) m n k =
-  let matrix slot rows =
+let sum_of_products ?(dt = Dtype.Bfloat16) ?(coded = []) m n k =
+  let matrix factor slot rows =
+    let dt = if List.mem factor coded then Dtype.Int8 else dt in
     Shape.reshape
       (Shape.param ~device:cuda ~shape:[ Int (rows * k) ] slot dt)
       (ints [ rows; k ])
   in
   let product i =
     let spread x shape = Shape.expand (Shape.reshape x (ints shape)) in
-    let a = spread (matrix (1 + i) m) [ m; 1; k ] (ints [ m; n; k ])
-    and b = spread (matrix (4 + i) n) [ 1; n; k ] (ints [ m; n; k ]) in
+    let a = spread (matrix A (1 + i) m) [ m; 1; k ] (ints [ m; n; k ])
+    and b = spread (matrix B (4 + i) n) [ 1; n; k ] (ints [ m; n; k ]) in
     let p = Ops.O.(Ops.cast a Float32 * Ops.cast b Float32) in
     Ops.cast (Shape.reshape (Shape.rop p Add [ 2 ]) (ints [ m; n ])) dt
   in
@@ -1129,6 +1138,42 @@ let products_apart =
           equal int 1
             (kernels
                (split_graph ~cores:sm_89_cores (sum_of_products 8 64 64))));
+      test "products of 24 rows by codes of 64 run a kernel each" (fun () ->
+          equal int 3
+            (kernels
+               (split_graph ~cores:sm_89_cores
+                  (sum_of_products ~coded:[ B ] 24 64 64))));
+      test "products of codes of 64 by 24 rows run a kernel each" (fun () ->
+          equal int 3
+            (kernels
+               (split_graph ~cores:sm_89_cores
+                  (sum_of_products ~coded:[ A ] 64 24 64))));
+      test "stored products of 24 rows share one kernel" (fun () ->
+          equal int 1
+            (kernels
+               (split_graph ~cores:sm_89_cores (sum_of_products 24 64 64))));
+      test "products of 24 rows by codes of 24 share one kernel" (fun () ->
+          equal int 1
+            (kernels
+               (split_graph ~cores:sm_89_cores
+                  (sum_of_products ~coded:[ B ] 24 24 64))));
+      test "products of codes of 24 by 24 rows run a kernel each" (fun () ->
+          equal int 3
+            (kernels
+               (split_graph ~cores:sm_89_cores
+                  (sum_of_products ~coded:[ A ] 24 24 64))));
+      test "products of codes of 24 by codes of 64 run a kernel each"
+        (fun () ->
+          equal int 3
+            (kernels
+               (split_graph ~cores:sm_89_cores
+                  (sum_of_products ~coded:[ A; B ] 24 64 64))));
+      test "products of codes of 17 by codes of 64 share one kernel"
+        (fun () ->
+          equal int 1
+            (kernels
+               (split_graph ~cores:sm_89_cores
+                  (sum_of_products ~coded:[ A; B ] 17 64 64))));
       test "float32 products share one kernel without TF32" (fun () ->
           equal int 1
             (kernels
