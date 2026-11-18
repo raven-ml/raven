@@ -77,6 +77,89 @@ let test_volume () =
        ~padding:[| (1, 1); (0, 0); (1, 1) |]
        p (entry "volume.x"))
 
+(* SAM 2's upscaling, a 2x2 transpose at stride 2, and a transpose that
+   PyTorch states with padding 1 and output padding 1: the pair (1, 0). *)
+let test_upscale () =
+  let p =
+    { Conv_transpose.w = moved "upscale.w"; b = Some (entry "upscale.b") }
+  in
+  exact ~msg:"k2 s2" (entry "upscale.y")
+    (Conv_transpose.apply ~stride:[| 2; 2 |] p (entry "upscale.x"))
+
+let test_output_padding () =
+  let p = { Conv_transpose.w = moved "outpad.w"; b = Some (entry "outpad.b") } in
+  exact ~msg:"k3 s2, padding (1, 1 - 1)" (entry "outpad.y")
+    (Conv_transpose.apply ~stride:[| 2 |] ~padding:[| (1, 0) |] p
+       (entry "outpad.x"))
+
+(* Conv_transpose *)
+
+let transpose64 = Nx.Ptree.instantiate (module Conv_transpose)
+
+let test_transpose_shapes () =
+  Nx.Rng.with_key (Nx.Rng.key 9) @@ fun () ->
+  let fans = ref [] in
+  let w_init key ~fan_in ~fan_out dtype shape =
+    fans := (fan_in, fan_out) :: !fans;
+    Init.glorot_uniform key ~fan_in ~fan_out dtype shape
+  in
+  let p =
+    Conv_transpose.make ~w_init ~key:(Nx.Rng.next_key ()) ~in_channels:4
+      ~out_channels:2 ~kernel_size:[| 2; 3 |] Nx.float32
+  in
+  shape_is ~msg:"w is [in; k...; out]" [| 4; 2; 3; 2 |] p.Conv_transpose.w;
+  (match p.Conv_transpose.b with
+  | None -> fail "make should create a bias"
+  | Some b -> shape_is ~msg:"b is [out]" [| 2 |] b);
+  (* One output reads in_channels at each tap; one input feeds
+     out_channels. *)
+  equal ~msg:"(fan_in, fan_out)" (list (pair int int)) [ (24, 12) ] !fans;
+  let y = Conv_transpose.apply ~stride:[| 2; 2 |] p (Nx.zeros Nx.float32 [| 1; 3; 3; 4 |]) in
+  shape_is ~msg:"(t - 1) stride + k" [| 1; 6; 7; 2 |] y;
+  let none =
+    Conv_transpose.make ~bias:false ~key:(Nx.Rng.next_key ()) ~in_channels:4
+      ~out_channels:2 ~kernel_size:[| 2 |] Nx.float32
+  in
+  equal ~msg:"paths without bias" (list string) [ "w" ]
+    (List.rev
+       (Nx.Ptree.fold
+          (Nx.Ptree.instantiate (module Conv_transpose))
+          (fun path _ acc -> Nx.Ptree.Path.to_string path :: acc)
+          none []))
+
+let test_transpose_gradients () =
+  Nx.Rng.with_key (Nx.Rng.key 10) @@ fun () ->
+  let x = Nx.Rng.normal Nx.float64 [| 2; 3; 3; 2 |] in
+  let p =
+    Conv_transpose.make ~key:(Nx.Rng.next_key ()) ~in_channels:2
+      ~out_channels:3 ~kernel_size:[| 2; 2 |] Nx.float64
+  in
+  let loss p =
+    let y = Conv_transpose.apply ~stride:[| 2; 1 |] ~padding:[| (0, 1); (1, 0) |] p x in
+    Nx.sum (Nx.mul y y)
+  in
+  grads_ok (Rune.check_grads transpose64 loss p)
+
+let test_transpose_refusals () =
+  let make ~in_channels ~out_channels kernel_size () =
+    ignore
+      (Conv_transpose.make ~key:(Nx.Rng.next_key ()) ~in_channels ~out_channels
+         ~kernel_size Nx.float32)
+  in
+  raises
+    (Invalid_argument
+       "Conv_transpose.make: channels and kernel extents must be positive, \
+        got in_channels=2 out_channels=0 kernel_size=[|2|]")
+    (make ~in_channels:2 ~out_channels:0 [| 2 |]);
+  raises (Invalid_argument "Conv_transpose.make: kernel_size has no extent")
+    (make ~in_channels:2 ~out_channels:2 [||]);
+  let p =
+    Conv_transpose.init ~key:(Nx.Rng.next_key ()) ~in_channels:2
+      ~out_channels:2 ~kernel_size:[| 2 |]
+  in
+  raises_match (Exn.invalid_arg ~sub:"Nx.conv_transpose: ") (fun () ->
+      Conv_transpose.apply p (Nx.zeros Nx.float32 [| 1; 4; 3 |]))
+
 (* Conv *)
 
 let test_conv_init_shapes () =
@@ -329,6 +412,8 @@ let () =
              test "Whisper's stem at 3000 and 3001 frames" test_stem;
              test "a grouped, dilated 2-D convolution" test_grouped;
              test "a 3-D convolution" test_volume;
+             test "SAM 2's 2x2 upscaling" test_upscale;
+             test "an output padding is a smaller hi" test_output_padding;
            ];
          group "conv"
            [
@@ -349,6 +434,14 @@ let () =
                test_conv_input_gradients;
              test "make rejects invalid geometry" test_conv_rejects_bad_geometry;
              test "apply rejects invalid inputs" test_conv_rejects_bad_input;
+           ];
+         group "conv_transpose"
+           [
+             test "make's shapes and fans, apply's extents"
+               test_transpose_shapes;
+             test "parameter gradients agree with finite differences"
+               test_transpose_gradients;
+             test "refusals" test_transpose_refusals;
            ];
          group "pooling"
            [

@@ -47,6 +47,9 @@ module Embedding = Embedding
 module Conv = Conv
 (** Convolution layers over any number of spatial axes, channels last. *)
 
+module Conv_transpose = Conv_transpose
+(** Transposed convolution layers, which upsample at a stride above one. *)
+
 module Attention = Attention
 (** Multi-head self-attention, and the pure
     {!Attention.scaled_dot_product_attention} core. *)

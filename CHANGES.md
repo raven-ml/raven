@@ -4240,6 +4240,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- `Conv_transpose`, the transposed convolution layer over
+  `Nx.conv_transpose`, channels last, `w` `[in; k…; out]`. PyTorch's
+  `output_padding a` beside padding `p` is the pair `(p, p - a)`.
 - **Breaking:** `Conv` convolves over any number of spatial axes through
   `Nx.conv`, channels last: `w` is `[o; k…; c / groups]`, `kernel_size` an
   array, and `apply` takes `?stride`, `?padding` as `(lo, hi)` pairs,

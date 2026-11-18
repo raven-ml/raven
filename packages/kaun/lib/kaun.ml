@@ -18,4 +18,5 @@ module Data = Data
 module Metric = Metric
 module Pool = Pool
 module Conv = Conv
+module Conv_transpose = Conv_transpose
 module Attention = Attention
