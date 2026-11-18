@@ -3,10 +3,10 @@
 Each fixture's header, or the dune file of its directory, records its
 source and the command that made it; `esri_26910.prj`, one line of WKT
 copied unchanged, has its source in its section below. The generators are
-in `gen/`, run through `uv run` (each one's docstring says how). This file gives each
-fixture's terms. Where a term is marked unverified, the source's terms page
-could not be read when the file was written (2026-11-18), and the source
-alone is given.
+in `gen/`, run through `uv run` (each one's docstring says how). This file
+gives each fixture's terms. Where a term is marked unverified, the source's
+terms page could not be read when the file was written (2026-11-18), and
+the source alone is given.
 
 ## Computed from jord's own inputs
 
