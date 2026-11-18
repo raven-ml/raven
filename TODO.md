@@ -39,8 +39,14 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - cstyle names each parameter after its buffer's size (`data0_4096`), so
   kernels over buffers of two sizes compile apart under D485: name the
   parameters without sizes in the renderer
-- A dense bf16 product whose weights are laid `[K; N]` takes no tensor core
-  and runs about 100x its byte bound (proj/)
+- A bf16 product of 6-32 rows by weights laid `[K; N]` streams by its
+  columns; since its reduce splits into threads it is untimed (it took 476
+  us at 16x64x2880, `contract/bf16-16x64x2880`), and it runs 4 workgroups:
+  near its byte bound only with the reduce split across workgroups
+- A lone per-head projection at head size 80 (kaun's `Attention.apply`
+  projects q and k apart) pads N from 80 to 128, 1.6x the core's work,
+  where a warp tile of 40 columns (N upcast by 5) covers it; D491's 440 to
+  448 was never measured against 5 either
 - A staged core pads N to its tile (D491) but not M: q at 100 tokens (M
   padded to 112) takes 115 us against 56 at 128. A pad of M must keep
   routed rows within a run (`in_run`)
