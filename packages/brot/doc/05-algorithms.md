@@ -16,9 +16,9 @@ a fused C kernel: the byte-level pre-tokenization pattern, the pretoken
 cache probe and the merging of short pretokens run in one pass over the
 text. Everything rare stays in OCaml — Unicode classification, pretokens
 over 15 bytes, unknown-token and byte-fallback handling, dropout, offsets —
-and bytecode and js_of_ocaml run the OCaml implementation of the whole
-path, which produces identical results and is the reference the kernel is
-tested against.
+and bytecode runs the OCaml implementation of the whole path, which
+produces identical results and is the reference the kernel is tested
+against.
 
 Constructor: `Brot.bpe`. Trainer: `Brot.train_bpe`.
 

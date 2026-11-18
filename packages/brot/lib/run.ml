@@ -28,8 +28,8 @@ type t = {
   span_stop : int array;
   marks : int array;
   opaque : int array;
-  token_table : string array;
-  len_table : int array;
+  token_table : string Id_table.t;
+  len_table : int Id_table.t;
 }
 
 (* Working out where every byte of a normalized text came from costs about as
@@ -85,7 +85,7 @@ let tokens run ~ids =
           let start = Array.unsafe_get run.span_start !span in
           let stop = Array.unsafe_get run.span_stop !span in
           result.(!at) <- String.sub frame.text start (stop - start)
-        else result.(!at) <- table.(Array.unsafe_get ids !at);
+        else result.(!at) <- Id_table.get table (Array.unsafe_get ids !at);
         incr at
       done;
       incr span
@@ -143,7 +143,7 @@ let offsets run ~ids =
             next := !next + 3
           end
           else begin
-            let len = Array.unsafe_get lens (Array.unsafe_get ids !at) in
+            let len = Id_table.get lens (Array.unsafe_get ids !at) in
             let finish =
               if !at = mark - 1 then stop else min stop (!cursor + len)
             in

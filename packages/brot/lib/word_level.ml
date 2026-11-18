@@ -6,8 +6,8 @@
 type t = {
   vocab : (string, int) Hashtbl.t;
   vocab_r : (int, string) Hashtbl.t;
-  token_table : string array;
-  len_table : int array;
+  token_table : string Id_table.t;
+  len_table : int Id_table.t;
   unk_token : string;
   unk_id : int;
 }
@@ -21,10 +21,10 @@ let create ?(vocab = []) ?(unk_token = "<unk>") () =
       Hashtbl.replace vocab_tbl token id;
       Hashtbl.replace vocab_r_tbl id token)
     vocab;
-  let max_id = List.fold_left (fun acc (_, id) -> max acc id) (-1) vocab in
-  let token_table = Array.make (max_id + 1) "" in
-  List.iter (fun (token, id) -> token_table.(id) <- token) vocab;
-  let len_table = Array.map String.length token_table in
+  let token_table = Id_table.of_vocab ~who:"Word_level.create" vocab_tbl in
+  let len_table =
+    Id_table.mapi ~absent:0 (fun _ token -> String.length token) token_table
+  in
   let unk_id =
     match Hashtbl.find_opt vocab_tbl unk_token with Some id -> id | None -> -1
   in

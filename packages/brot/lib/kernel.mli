@@ -6,8 +6,8 @@
 (** C kernels.
 
     The fused native path of loops that stay in OCaml everywhere else: bytecode
-    and js_of_ocaml run the OCaml implementations, which are the reference the
-    kernels are held to by the native-vs-bytecode dump differential. *)
+    runs the OCaml implementations, which are the reference the kernels are
+    held to by the native-vs-bytecode dump differential. *)
 
 val available : bool
 (** [available] is [true] iff the C kernels can be used: native code on a
@@ -27,7 +27,7 @@ type byte_level = {
   byte_ids : int array;  (** The 256 ids of single bytes, [-1] for none. *)
   merge_keys : int array;
       (** The merge map's open-addressing keys, [-1] empty. *)
-  merge_values : int array;  (** Packed [(rank lsl 21) lor new_id]. *)
+  merge_values : int array;  (** Packed [(rank lsl 31) lor new_id]. *)
   merge_mask : int;  (** The merge map's slot index mask. *)
   len_table : int array;  (** The bytes each id accounts for. *)
   words : Bytes.t;
@@ -57,7 +57,7 @@ type sp = {
   cache_mask : int;  (** The set index mask, [-1] when caching is off. *)
   merge_keys : int array;
       (** The merge map's open-addressing keys, [-1] empty. *)
-  merge_values : int array;  (** Packed [(rank lsl 21) lor new_id]. *)
+  merge_values : int array;  (** Packed [(rank lsl 31) lor new_id]. *)
   merge_mask : int;  (** The merge map's slot index mask. *)
   len_table : int array;  (** The bytes each id accounts for. *)
   ascii_ids : int array;  (** The 128 ids of single ASCII characters, [-1]. *)

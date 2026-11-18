@@ -4674,6 +4674,16 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- A BPE model gives the right ids for a vocabulary with an id of 2^21 or more
+  and for a pretoken over 2^21 bytes, which packed into 21 bits and gave other
+  ids silently. In BPE, WordPiece and word-level vocabularies the ids may leave
+  gaps of any size: memory follows the number of tokens, where one id near
+  2^31 allocated 16 GB. An id outside [0, 2^31), the range of `Brot.ids`,
+  raises `Invalid_argument`, where a negative one wrote outside an array, and
+  so does an added token that would be numbered past 2^31 - 1.
+- **Breaking:** `Brot.bpe` raises `Invalid_argument` where OCaml's integers
+  have fewer than 63 bits (js_of_ocaml, wasm_of_ocaml), where its merges gave
+  wrong ids.
 - Encoding scans for an added token with a single anchor byte with `memchr` in
   native code: about 5% fewer instructions on a GPT-2 pass over prose.
 - `Brot.from_model_file` numbers a `vocab.txt` by line, a blank line included.

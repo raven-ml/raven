@@ -99,8 +99,8 @@ type t = {
   added : Added_tokens.t;
   (* An identifier to its token string and to the source bytes it accounts for,
      over the model vocabulary and the added tokens together. *)
-  token_table : string array;
-  len_table : int array;
+  token_table : string Id_table.t;
+  len_table : int Id_table.t;
   bos_token : string option;
   eos_token : string option;
   pad_token : string option;
@@ -178,15 +178,15 @@ let alg_token_table = function
   | Alg_bpe m -> Bpe.token_table m
   | Alg_wordpiece m -> Wordpiece.token_table m
   | Alg_wordlevel m -> Word_level.token_table m
-  | Alg_unigram m -> Unigram.token_table m
-  | Alg_chars m -> Chars.token_table m
+  | Alg_unigram m -> Id_table.of_array ~absent:"" (Unigram.token_table m)
+  | Alg_chars m -> Id_table.of_array ~absent:"" (Chars.token_table m)
 
 let alg_len_table = function
   | Alg_bpe m -> Bpe.len_table m
   | Alg_wordpiece m -> Wordpiece.len_table m
   | Alg_wordlevel m -> Word_level.len_table m
-  | Alg_unigram m -> Unigram.len_table m
-  | Alg_chars m -> Chars.len_table m
+  | Alg_unigram m -> Id_table.of_array ~absent:0 (Unigram.len_table m)
+  | Alg_chars m -> Id_table.of_array ~absent:0 (Chars.len_table m)
 
 (* The model's span encoder for a document. A BPE model's merge buffers and
    pretoken cache are claimed once for the document rather than once per span,
@@ -274,10 +274,17 @@ let added_tokens_of algorithm tokens =
     | None -> (
         match alg_token_to_id algorithm a.content with
         | Some id -> id
-        | None -> (
-            match highest with
-            | Some id when id >= vocab_size || vocab_size = 0 -> id + 1
-            | _ -> vocab_size))
+        | None ->
+            let id =
+              match highest with
+              | Some id when id >= vocab_size || vocab_size = 0 -> id + 1
+              | _ -> vocab_size
+            in
+            if not (Id_table.in_range id) then
+              invalid_arg
+                (Printf.sprintf "added token %S would have id %d, past 2^31 - 1"
+                   a.content id);
+            id)
   in
   let tokens, _ =
     List.fold_left
@@ -330,31 +337,27 @@ let cut_of ~algorithm ~spaced = function
             { outer; rewrite = Pre_tokenizer.rewriter ~spaced rewrite; inner }
       | Pre_tokenizer.Pieces -> Pieces pre)
 
-(* An added token's identifier may lie past the model vocabulary. How many
-   source bytes it accounts for is a property of the text it matched rather than
-   of the identifier, so it reads as zero: the literal frame it stands in places
-   it by its span. *)
+(* An added token's identifier may be one the model vocabulary does not hold.
+   How many source bytes it accounts for is a property of the text it matched
+   rather than of the identifier, so it reads as zero: the literal frame it
+   stands in places it by its span. *)
 let id_tables algorithm added =
   let tokens = alg_token_table algorithm and lens = alg_len_table algorithm in
-  let size =
-    List.fold_left
-      (fun acc (tok : Added_tokens.token) -> max acc (tok.id + 1))
-      (Array.length tokens)
+  let extra =
+    List.filter
+      (fun (tok : Added_tokens.token) ->
+        alg_id_to_token algorithm tok.id = None)
       (Added_tokens.tokens added)
   in
-  if size = Array.length tokens then (tokens, lens)
-  else begin
-    let token_table = Array.make size "" in
-    Array.blit tokens 0 token_table 0 (Array.length tokens);
-    let len_table = Array.make size 0 in
-    Array.blit lens 0 len_table 0 (Array.length lens);
-    List.iter
-      (fun (tok : Added_tokens.token) ->
-        if tok.id >= Array.length tokens then
-          token_table.(tok.id) <- tok.content)
-      (Added_tokens.tokens added);
-    (token_table, len_table)
-  end
+  if extra = [] then (tokens, lens)
+  else
+    let with_extra table f =
+      Id_table.to_list table
+      @ List.map (fun (tok : Added_tokens.token) -> (tok.id, f tok)) extra
+    in
+    ( Id_table.of_list ~absent:""
+        (with_extra tokens (fun (tok : Added_tokens.token) -> tok.content)),
+      Id_table.of_list ~absent:0 (with_extra lens (fun _ -> 0)) )
 
 (* Whether a BPE model is to match raw bytes: behind a walked byte-level
    pre-tokenizer, which hands it the bytes of a pretoken rather than their

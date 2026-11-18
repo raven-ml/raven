@@ -19,6 +19,7 @@
   grapheme
   grapheme_data
   hf_number
+  id_table
   ints
   json_text
   kernel

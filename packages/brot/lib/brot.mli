@@ -881,10 +881,11 @@ type added_token = {
     ones.
 
     Token IDs are assigned automatically: a token already in the model
-    vocabulary keeps its ID, the others are numbered from the end of it. A token
-    with [special] set is skipped by {!decode} when [skip_special_tokens] is
-    [true]; one without it is an ordinary vocabulary entry that happens to be
-    matched atomically. The semantic role (pad, unk, bos, etc.) is contextual,
+    vocabulary keeps its ID, the others are numbered from the end of it. The
+    call that would number a token 2{^ 31} or more, past the [int32] values of
+    {!type-ids}, raises [Invalid_argument]. A token with [special] set is
+    skipped by {!decode} when [skip_special_tokens] is [true]; one without it
+    is an ordinary vocabulary entry that happens to be matched atomically. The semantic role (pad, unk, bos, etc.) is contextual,
     not encoded in the type. *)
 
 type pad_length = [ `Batch_longest | `Fixed of int | `To_multiple of int ]
@@ -994,7 +995,8 @@ val bpe :
   unit ->
   t
 (** [bpe ()] is a BPE (Byte Pair Encoding) tokenizer. Used by GPT-2, GPT-3,
-    RoBERTa.
+    RoBERTa. It needs 63-bit integers, and raises [Invalid_argument] where
+    OCaml's integers are smaller (js_of_ocaml, wasm_of_ocaml).
 
     - [normalizer]: text normalization. Default: none.
     - [pre]: pre-tokenization strategy. Default: none.
@@ -1015,7 +1017,10 @@ val bpe :
       the BPE model's unknown handling. It is a model parameter, never matched
       atomically in the input. Default: none.
     - [vocab]: initial vocabulary as [(token, id)] pairs. A token given twice
-      keeps only its last pair. Default: [[]].
+      keeps only its last pair. The ids may leave gaps of any size: the
+      tokenizer's memory follows the number of tokens. Raises
+      [Invalid_argument] if an id is negative or 2{^ 31} or more, past the
+      [int32] values of {!type-ids}. Default: [[]].
     - [merges]: merge rules as [(left, right)] pairs learned during training.
       Default: [[]].
     - [cache_capacity]: the most entries of a pretoken cache, rounded up to a
@@ -1070,7 +1075,8 @@ val wordpiece :
     becomes [["run"; "##ning"]]).
 
     - [vocab]: initial vocabulary as [(token, id)] pairs. A token given twice
-      keeps only its last pair. Default: [[]].
+      keeps only its last pair. The ids are as in {!bpe}'s [vocab]. Default:
+      [[]].
     - [unk_token]: token for out-of-vocabulary words. Default: ["[UNK]"].
     - [continuing_subword_prefix]: prefix for non-initial subwords. Default:
       ["##"].
@@ -1111,7 +1117,8 @@ val word_level :
     {b Note.} When [pre] is not provided, {!Pre_tokenizer.whitespace} is used by
     default.
 
-    - [vocab]: initial vocabulary as [(word, id)] pairs. Default: [[]].
+    - [vocab]: initial vocabulary as [(word, id)] pairs. The ids are as in
+      {!bpe}'s [vocab]. Default: [[]].
     - [unk_token]: token for out-of-vocabulary words. Default: ["<unk>"].
 
     Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
@@ -1225,7 +1232,10 @@ val add_tokens : t -> added_token list -> t
 
     A token [t] already holds keeps the ID it has; its flags are replaced by the
     new ones. Added tokens never enter the model's own vocabulary: to build one,
-    pass [vocab] to the constructor. *)
+    pass [vocab] to the constructor.
+
+    Raises [Invalid_argument] if a token's number would be 2{^ 31} or more
+    ({!type-added_token}). *)
 
 (** {1:accessors Accessors} *)
 
@@ -1459,9 +1469,8 @@ val encode_batch_ids :
     the difference — a pipeline with a normalizer, or one that does not split
     on spaces, encodes each text in one piece.
 
-    Identifiers are narrowed to 32 bits. No vocabulary reaches that far: an
-    identifier is an index into the token table, which holds one string per
-    token.
+    Identifiers are narrowed to 32 bits. Every id is below 2{^ 31} ({!bpe},
+    {!type-added_token}), so the narrowing changes none.
 
     The ids are gathered in buffers, one per domain encoding the batch, before
     they are copied into the result. [t] keeps them for the batches after,

@@ -20,9 +20,11 @@ type merges = (string * string) list
 module Merge_map = struct
   type t = { keys : int array; values : int array; mask : int }
 
+  (* The high half of the product folds in every bit of a key, the left id of
+     a merge's pair included. *)
   let[@inline] hash key =
     let h = key * 0x1B873593 in
-    h lxor (h lsr 16)
+    h lxor (h lsr 32)
 
   (* A key given twice keeps the value it was given last. *)
   let create entries =
@@ -70,10 +72,20 @@ module Merge_map = struct
     !acc
 end
 
-let[@inline] merge_key a b = (a lsl 21) lor b
-let[@inline] pack_merge rank new_id = (rank lsl 21) lor new_id
-let[@inline] merge_rank v = v lsr 21
-let[@inline] merge_new_id v = v land 0x1FFFFF
+(* Ids and merge ranks are below [id_limit] ([Id_table.in_range]), so two of
+   them pack into one non-negative 63-bit int, which [create] requires: a
+   merge's key packs its pair of ids, and its value its rank and the id it
+   makes, rank first so that values order by rank. The C kernels pack them
+   alike. *)
+let id_bits = 31
+let id_limit = 1 lsl id_bits
+let id_mask = id_limit - 1
+let[@inline] merge_key a b = (a lsl id_bits) lor b
+let[@inline] merge_left key = key lsr id_bits
+let[@inline] merge_right key = key land id_mask
+let[@inline] pack_merge rank new_id = (rank lsl id_bits) lor new_id
+let[@inline] merge_rank v = v lsr id_bits
+let[@inline] merge_new_id v = v land id_mask
 
 type word = {
   sym_c : int array;
@@ -85,10 +97,12 @@ type word = {
 
 (* Specialized min-heap for BPE merges using parallel arrays (no tuple allocation).
    Ordered by (rank, position) — lower rank first, then lower position. *)
-(* Min-heap with packed comparison key: (rank lsl 21) lor pos.
-   Single int comparison for sift operations, 2 arrays instead of 3. *)
+(* Min-heap with packed comparison key: (rank lsl shift) lor pos, where [shift]
+   leaves the rank the bits the model's ranks need ([pos_bits]). Single int
+   comparison for sift operations, 2 arrays instead of 3. *)
 module Merge_queue = struct
   type t = {
+    mutable shift : int;
     mutable keys : int array;
     mutable new_ids : int array;
     mutable size : int;
@@ -102,6 +116,7 @@ module Merge_queue = struct
   let create cap =
     let cap = max 16 cap in
     {
+      shift = 0;
       keys = Array.make cap 0;
       new_ids = Array.make cap 0;
       size = 0;
@@ -112,7 +127,9 @@ module Merge_queue = struct
       skip_size = 0;
     }
 
-  let[@inline] pack_key rank pos = (rank lsl 21) lor pos
+  let[@inline] pack_key t rank pos = (rank lsl t.shift) lor pos
+  let[@inline] key_rank t key = key lsr t.shift
+  let[@inline] key_pos t key = key land (max_int lsr (62 - t.shift))
 
   let sift_up t idx =
     let keys = t.keys in
@@ -173,7 +190,7 @@ module Merge_queue = struct
       t.keys <- grow t.keys;
       t.new_ids <- grow t.new_ids
     end;
-    Array.unsafe_set t.keys s (pack_key rank pos);
+    Array.unsafe_set t.keys s (pack_key t rank pos);
     Array.unsafe_set t.new_ids s new_id;
     t.size <- s + 1;
     sift_up t s
@@ -236,8 +253,12 @@ type t = {
   (* The encoder states of this model, which no other model shares. *)
   states : state Cache.states;
   vocab : vocab;
-  vocab_r : string array;
+  (* Each id's entry, [""] for an id no entry has. *)
+  tokens : string Id_table.t;
   merges : Merge_map.t;
+  (* The bits of a merge queue's key below its rank: what the ranks of
+     [merges] leave of an int's 62 non-negative bits. *)
+  pos_bits : int;
   cache_slots : int;
   (* Every vocabulary entry short enough to be keyed, tokenized once at creation
      and laid out as cache entries, so that each state seeds its own table by
@@ -272,8 +293,10 @@ type t = {
   words : Bytes.t;
   words_mask : int;
   byte_ids : int array;
-  (* How many bytes of a pretoken each id accounts for. *)
-  len_table : int array;
+  (* How many bytes of a pretoken each id accounts for. The merges and the
+     cache read its dense part alone: an id past it is recorded as it is
+     emitted, as one that accounts for other bytes is. *)
+  lens : int Id_table.t;
   (* A character is looked up in the form its position gives it: the prefix on
      every character but the first, the suffix on the last. *)
   chars : char_table;
@@ -366,7 +389,7 @@ let apply_merges model dropout word queue =
   queue.skip_size <- 0;
   while Merge_queue.pop queue do
     let pkey = queue.pop_key in
-    let pos = pkey land 0x1FFFFF in
+    let pos = Merge_queue.key_pos queue pkey in
     let new_id = queue.pop_new_id in
     if Array.unsafe_get sym_len pos > 0 then begin
       let next_pos = Array.unsafe_get sym_next pos in
@@ -396,9 +419,10 @@ let apply_merges model dropout word queue =
           end
           else begin
             for i = 0 to queue.skip_size - 1 do
+              let key = Array.unsafe_get queue.skip_keys i in
               Merge_queue.push queue
-                (Array.unsafe_get queue.skip_keys i lsr 21)
-                (Array.unsafe_get queue.skip_keys i land 0x1FFFFF)
+                (Merge_queue.key_rank queue key)
+                (Merge_queue.key_pos queue key)
                 (Array.unsafe_get queue.skip_new_ids i)
             done;
             queue.skip_size <- 0;
@@ -719,7 +743,13 @@ let run_merge model st text pos len =
   if word.size <= max_linear && not (uses_dropout model) then
     merge_linear model word st.st_rank
   else begin
+    (* A position must fit the [pos_bits] below the rank, which [m] merges
+       leave at 62 - log2 m, at least 31: only a pretoken whose symbols times
+       the model's merges pass 2^62 gets here. *)
+    if (word.size - 1) asr model.pos_bits > 0 then
+      invalid_arg "Bpe: a pretoken too long for the number of merges";
     let queue = ensure_queue_capacity st.st_queue len in
+    queue.shift <- model.pos_bits;
     st.st_queue <- queue;
     apply_merges model model.dropout word queue
   end
@@ -739,7 +769,7 @@ let build_word model st text pos len =
    for, or a byte fallback spelling out an affix all fail here and are merged
    again every time. *)
 let exact model word len =
-  let len_table = model.len_table in
+  let len_table = Id_table.dense model.lens in
   let limit = Array.length len_table in
   let ok = ref true in
   let total = ref 0 in
@@ -765,7 +795,7 @@ let kernel_tables model cache =
     merge_keys = model.merges.Merge_map.keys;
     merge_values = model.merges.Merge_map.values;
     merge_mask = model.merges.Merge_map.mask;
-    len_table = model.len_table;
+    len_table = Id_table.dense model.lens;
     words = model.words;
     words_mask = model.words_mask;
   }
@@ -791,7 +821,7 @@ let sp_kernel_tables model cache : Kernel.sp option =
           merge_keys = model.merges.Merge_map.keys;
           merge_values = model.merges.Merge_map.values;
           merge_mask = model.merges.Merge_map.mask;
-          len_table = model.len_table;
+          len_table = Id_table.dense model.lens;
           ascii_ids = model.chars.ascii;
           char_keys = model.chars.multi.Merge_map.keys;
           char_values = model.chars.multi.Merge_map.values;
@@ -911,7 +941,7 @@ let[@inline] counted st = Cache.stored st.st_cache (Kernel.added st.st_cursor)
    recorded with them, which is the same test the cache applies: a cached word
    is one that never needs recording. *)
 let emit_word model word ids ~opaque =
-  let len_table = model.len_table in
+  let len_table = Id_table.dense model.lens in
   let limit = Array.length len_table in
   for i = 0 to word.size - 1 do
     let id = Array.unsafe_get word.sym_c i in
@@ -936,8 +966,8 @@ let encode_unit_into model st ids ~opaque text ~pos ~len =
     let cache = st.st_cache in
     if len <= Cache.max_key_len then begin
       if st.st_miss == no_miss then st.st_miss <- miss model st;
-      Cache.encode cache ~len_table:model.len_table st.st_miss ids ~opaque text
-        ~pos ~len
+      Cache.encode cache ~len_table:(Id_table.dense model.lens) st.st_miss ids
+        ~opaque text ~pos ~len
     end
     else if cache.Cache.mask >= 0 && len <= long_max_len then begin
       let long = st.st_long in
@@ -1004,8 +1034,8 @@ let encode_unit_into model st ids ~opaque text ~pos ~len =
 
    On native code the walk, the cache probe and the short merge run fused in the
    C kernel ([encode_sp_kernel]); the OCaml walker below is the reference
-   bytecode and js_of_ocaml run, and everything the kernel refuses funnels back
-   through [encode_unit_into]. *)
+   bytecode runs, and everything the kernel refuses funnels back through
+   [encode_unit_into]. *)
 
 let rec marked_from marker text p k =
   k = String.length marker
@@ -1016,9 +1046,9 @@ let rec marked_from marker text p k =
 let[@inline] marked marker text p limit =
   p >= 0 && p + String.length marker <= limit && marked_from marker text p 0
 
-let sp_crossing ~marker source =
+let sp_crossing ~marker pieces =
   let m = String.length marker in
-  Array.exists
+  List.exists
     (fun piece ->
       let crossing = ref false in
       for i = 1 to String.length piece - m do
@@ -1028,7 +1058,7 @@ let sp_crossing ~marker source =
         then crossing := true
       done;
       !crossing)
-    source
+    pieces
 
 (* A token that does not stand for the bytes of its own name — the unknown
    token, a byte fallback — lends those bytes to whatever is merged from it, so
@@ -1044,21 +1074,21 @@ let sp_opaque_merge merges ~unk_id ~byte_fallback_ids =
   Merge_map.fold
     (fun key _ found ->
       found
-      || Hashtbl.mem opaque (key lsr 21)
-      || Hashtbl.mem opaque (key land 0x1FFFFF))
+      || Hashtbl.mem opaque (merge_left key)
+      || Hashtbl.mem opaque (merge_right key))
     merges false
 
 let sp_split_bytes = [ '.'; ','; '"'; ')'; ';'; ':'; '!'; '?' ]
 
-let sp_cut_tables source chars ~unk_reachable =
+let sp_cut_tables pieces chars ~unk_reachable =
   let adjacent = Array.make 65536 false in
-  Array.iter
+  List.iter
     (fun piece ->
       for i = 0 to String.length piece - 2 do
         adjacent.((Char.code (String.unsafe_get piece i) lsl 8)
                   lor Char.code (String.unsafe_get piece (i + 1))) <- true
       done)
-    source;
+    pieces;
   let punct_slot = Array.make 256 (-1) in
   let punct_safe = Array.make (8 * 256) false in
   List.iteri
@@ -1342,20 +1372,18 @@ let encode_walk_ids32 model st ~walker sink spill ~opaque text ~pos ~stop =
   Kernel.restart cur;
   go pos
 
-let len_table model = model.len_table
-let token_table model = model.vocab_r
+let len_table model = model.lens
+let token_table model = model.tokens
 let get_byte_level model = model.byte_level
 let get_spaced model = model.spaced
 let get_cache_capacity model = model.cache_slots
 let token_to_id model token = Hashtbl.find_opt model.vocab token
 
 let id_to_token model id =
-  if id < 0 || id >= Array.length model.vocab_r then None
-  else
-    let token = Array.unsafe_get model.vocab_r id in
-    (* An id that no pair holds is [""] in the table. *)
-    if token = "" && Hashtbl.find_opt model.vocab "" <> Some id then None
-    else Some token
+  let token = Id_table.get model.tokens id in
+  (* An id that no pair holds is [""] in the table. *)
+  if token = "" && Hashtbl.find_opt model.vocab "" <> Some id then None
+  else Some token
 
 let get_vocab model = Hashtbl.fold (fun k v acc -> (k, v) :: acc) model.vocab []
 let get_vocab_size model = Hashtbl.length model.vocab
@@ -1370,14 +1398,9 @@ let get_ignore_merges model = model.ignore_merges
 let get_merges model =
   Merge_map.fold
     (fun key packed acc ->
-      let a_id = key lsr 21 in
-      let b_id = key land 0x1FFFFF in
-      let rank = merge_rank packed in
-      let vr = model.vocab_r in
-      let vr_len = Array.length vr in
-      if a_id >= 0 && a_id < vr_len && b_id >= 0 && b_id < vr_len then
-        (rank, (Array.unsafe_get vr a_id, Array.unsafe_get vr b_id)) :: acc
-      else acc)
+      let a = Id_table.get model.tokens (merge_left key) in
+      let b = Id_table.get model.tokens (merge_right key) in
+      (merge_rank packed, (a, b)) :: acc)
     model.merges []
   |> List.sort (fun (r1, _) (r2, _) -> Int.compare r1 r2)
   |> List.map snd
@@ -1432,26 +1455,25 @@ let build_len_table ~source ~byte_level ~prefix ~suffix ~byte_fallback
     ~byte_fallback_ids =
   let plen = String.length prefix in
   let slen = String.length suffix in
-  let table =
-    Array.map
-      (fun s ->
-        if byte_level then String.length s
-        else
-          let n = String.length s in
-          let n =
-            if plen > 0 && String.starts_with ~prefix s then n - plen else n
-          in
-          let n =
-            if slen > 0 && String.ends_with ~suffix s then n - slen else n
-          in
-          max 0 n)
-      source
-  in
+  let fallback = Hashtbl.create 256 in
   if byte_fallback then
     Array.iter
-      (fun id -> if id >= 0 && id < Array.length table then table.(id) <- 1)
+      (fun id -> if id >= 0 then Hashtbl.replace fallback id ())
       byte_fallback_ids;
-  table
+  Id_table.mapi ~absent:0
+    (fun id s ->
+      if Hashtbl.mem fallback id then 1
+      else if byte_level then String.length s
+      else
+        let n = String.length s in
+        let n =
+          if plen > 0 && String.starts_with ~prefix s then n - plen else n
+        in
+        let n =
+          if slen > 0 && String.ends_with ~suffix s then n - slen else n
+        in
+        max 0 n)
+    source
 
 (* [Kernel.byte_level]'s whole-word table of the entries [words]: two slots an
    entry, so a probe for a word that is not there meets a free slot within a
@@ -1511,6 +1533,8 @@ let create ~vocab ~merges ?(byte_level = false) ?(spaced = false)
     ?(cache_capacity = default_cache_capacity) ?dropout ?unk_token
     ?continuing_subword_prefix ?end_of_word_suffix ?(fuse_unk = false)
     ?(byte_fallback = false) ?(ignore_merges = false) () : t =
+  if Sys.int_size < 63 then
+    invalid_arg "Bpe.create: a BPE model needs 63-bit integers";
   (* Tokenizer files spell "no prefix" and "no suffix" as [""]. *)
   let non_empty = function Some "" -> None | given -> given in
   let continuing_subword_prefix = non_empty continuing_subword_prefix in
@@ -1534,11 +1558,19 @@ let create ~vocab ~merges ?(byte_level = false) ?(spaced = false)
     invalid_arg
       "Bpe.create: spaced needs a vocabulary that holds \"\xE2\x96\x81\" and \
        no entry with a space";
-  let max_id = Hashtbl.fold (fun _ id acc -> max id acc) vocab (-1) in
-  let vocab_r = Array.make (max_id + 1) "" in
-  Hashtbl.iter (fun k v -> Array.unsafe_set vocab_r v k) vocab;
+  let tokens = Id_table.of_vocab ~who:"Bpe.create" vocab in
+  let merge_count = List.length merges in
+  if merge_count > id_limit then
+    invalid_arg "Bpe.create: more than 2^31 merges";
   let merges =
     convert_merges_to_merge_map vocab merges continuing_subword_prefix
+  in
+  let rank_bits =
+    let b = ref 0 in
+    while 1 lsl !b < merge_count do
+      incr b
+    done;
+    !b
   in
   let byte_fallback_ids = Array.make 256 (-1) in
   for i = 0 to 255 do
@@ -1554,15 +1586,18 @@ let create ~vocab ~merges ?(byte_level = false) ?(spaced = false)
      entry with every ▁ a space for a spaced one. Ids ascend so the lowest one
      wins whenever two entries share a source. *)
   let source =
-    if byte_level then Array.map Pre_tokenizer.byte_level_decode vocab_r
-    else if spaced then Array.map unmark vocab_r
-    else vocab_r
+    if byte_level then
+      Id_table.mapi ~absent:"" (fun _ s -> Pre_tokenizer.byte_level_decode s)
+        tokens
+    else if spaced then Id_table.mapi ~absent:"" (fun _ s -> unmark s) tokens
+    else tokens
   in
+  let pieces = List.map snd (Id_table.to_list source) in
   let source_vocab =
     if not (byte_level || spaced) then vocab
     else begin
-      let tbl = Hashtbl.create (Array.length source) in
-      Array.iteri
+      let tbl = Hashtbl.create (Hashtbl.length vocab) in
+      Id_table.iteri
         (fun id s ->
           if s <> "" && not (Hashtbl.mem tbl s) then Hashtbl.add tbl s id)
         source;
@@ -1606,14 +1641,14 @@ let create ~vocab ~merges ?(byte_level = false) ?(spaced = false)
       && continuing_subword_prefix = None
       && end_of_word_suffix = None
       && ((not unk_reachable) || char_id chars marker >= 0)
-      && (not (sp_crossing ~marker source))
+      && (not (sp_crossing ~marker pieces))
       && not (sp_opaque_merge merges ~unk_id ~byte_fallback_ids)
-    then Some (sp_cut_tables source chars ~unk_reachable)
+    then Some (sp_cut_tables pieces chars ~unk_reachable)
     else None
   in
   let byte_ids = Array.make 256 (-1) in
   if byte_level then
-    Array.iteri
+    Id_table.iteri
       (fun id s ->
         if String.length s = 1 then begin
           let b = Char.code (String.unsafe_get s 0) in
@@ -1624,8 +1659,9 @@ let create ~vocab ~merges ?(byte_level = false) ?(spaced = false)
     {
       states = Cache.states ();
       vocab;
-      vocab_r;
+      tokens;
       merges;
+      pos_bits = 62 - rank_bits;
       (* Dropout is drawn per occurrence, so a dropped-out model can reuse
          nothing and keeps no cache at all. *)
       cache_slots =
@@ -1648,7 +1684,7 @@ let create ~vocab ~merges ?(byte_level = false) ?(spaced = false)
       words = Bytes.empty;
       words_mask = -1;
       byte_ids;
-      len_table =
+      lens =
         build_len_table ~source ~byte_level ~prefix ~suffix ~byte_fallback
           ~byte_fallback_ids;
       chars;
@@ -1766,14 +1802,9 @@ let save model ~path ?name () =
       let merges_list =
         Merge_map.fold
           (fun key packed acc ->
-            let a_id = key lsr 21 in
-            let b_id = key land 0x1FFFFF in
-            let rank = merge_rank packed in
-            let vr = model.vocab_r in
-            let vr_len = Array.length vr in
-            if a_id >= 0 && a_id < vr_len && b_id >= 0 && b_id < vr_len then
-              (rank, Array.unsafe_get vr a_id, Array.unsafe_get vr b_id) :: acc
-            else acc)
+            let a = Id_table.get model.tokens (merge_left key) in
+            let b = Id_table.get model.tokens (merge_right key) in
+            (merge_rank packed, a, b) :: acc)
           model.merges []
         |> List.sort (fun (r1, _, _) (r2, _, _) -> compare r1 r2)
       in

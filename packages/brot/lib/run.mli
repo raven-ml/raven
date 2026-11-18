@@ -71,8 +71,8 @@ type t = {
           to — three integers each, in the order they were emitted: the index of
           the run's first id, how many ids it holds, and the bytes it stands
           for, which every id of the run covers. *)
-  token_table : string array;  (** An id to its token string. *)
-  len_table : int array;
+  token_table : string Id_table.t;  (** An id to its token string. *)
+  len_table : int Id_table.t;
       (** An id to the number of source bytes an occurrence of it accounts for
           when it is a match of its own entry. *)
 }

@@ -20,7 +20,8 @@ val create : ?vocab:(string * int) list -> ?unk_token:string -> unit -> t
     - [vocab] is the initial vocabulary as [(token, id)] pairs. Defaults to
       [[]].
     - [unk_token] is the token emitted for unknown words. Defaults to ["[UNK]"].
-*)
+
+    Raises [Invalid_argument] if an id is not {!Id_table.in_range}. *)
 
 (** {1:tokenization Tokenization} *)
 
@@ -35,15 +36,15 @@ val encode_into :
     stands for; and nothing at all when the vocabulary does not hold that
     either. *)
 
-val token_table : t -> string array
-(** [token_table t] maps an id to its token string. Owned by [t]; do not mutate.
-*)
+val token_table : t -> string Id_table.t
+(** [token_table t] maps an id to its token string, and [""] for an id no token
+    has. *)
 
-val len_table : t -> int array
+val len_table : t -> int Id_table.t
 (** [len_table t] maps an id to the byte length of its token string, which is
     what an occurrence of it accounts for when it is a match of its entry; the
     unknown token spent on a word stands for the word, which {!encode_into}
-    records. Owned by [t]; do not mutate. *)
+    records. *)
 
 (** {1:vocabulary Vocabulary} *)
 

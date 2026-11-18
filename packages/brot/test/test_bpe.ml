@@ -725,6 +725,76 @@ let test_long_word_merges () =
         (encode_ids cached word))
     [ 1; 2; 3; 7; 15; 16; 31; 32; 33; 64; 65; 200 ]
 
+(* Ids and positions. A model packs two ids, or a rank and an id, into one
+   integer, and a merge queue a rank and a position. *)
+
+let ab_vocab ~a ~b ~ab = [ ("a", a); ("b", b); ("ab", ab) ]
+
+(* Ids past 2^21, on the rank scan, on the heap and through the byte-level C
+   kernel, the left, right and merged id each. *)
+let test_large_ids () =
+  let a = (1 lsl 21) + 3 and b = (1 lsl 22) + 1 and ab = (1 lsl 23) + 7 in
+  let vocab = ab_vocab ~a ~b ~ab in
+  let merges = [ ("a", "b") ] in
+  let plain = bpe ~vocab ~merges () in
+  let walked = bpe ~pre:(Pre_tokenizer.byte_level ()) ~vocab ~merges () in
+  List.iter
+    (fun (name, tokenizer) ->
+      equal ~msg:(name ^ ", ab") (array int) [| ab |]
+        (encode_ids tokenizer "ab");
+      equal ~msg:(name ^ ", ba") (array int) [| b; a |]
+        (encode_ids tokenizer "ba"))
+    [ ("plain", plain); ("byte-level", walked) ];
+  equal ~msg:"the heap" (array int) (Array.make 40 ab)
+    (encode_ids plain (String.concat "" (List.init 40 (fun _ -> "ab"))))
+
+(* A merge at a position past 2^21 in one pretoken. *)
+let test_long_pretoken () =
+  let n = 1 lsl 21 in
+  let tokenizer =
+    bpe ~vocab:(ab_vocab ~a:0 ~b:1 ~ab:2) ~merges:[ ("a", "b") ] ()
+  in
+  let ids = encode_ids tokenizer (String.make n 'a' ^ "ab") in
+  equal ~msg:"ids" int (n + 1) (Array.length ids);
+  equal ~msg:"the last id" int 2 ids.(n);
+  equal ~msg:"every other id" int 0
+    (Array.fold_left max 0 (Array.sub ids 0 n))
+
+(* A vocabulary whose ids leave a gap costs memory for its tokens alone. Tables
+   sized by the largest id took about 470 MB here, so the bound is checked
+   before an id of 2^31 - 1 is tried. *)
+let test_sparse_ids () =
+  let top = 1 lsl 22 in
+  let before = Gc.allocated_bytes () in
+  let tokenizer =
+    bpe ~vocab:(ab_vocab ~a:0 ~b:1 ~ab:top) ~merges:[ ("a", "b") ] ()
+  in
+  let encoding = encode tokenizer "abab" in
+  let allocated = Gc.allocated_bytes () -. before in
+  less ~msg:"bytes allocated" float_exact ~than:16e6 allocated;
+  equal ~msg:"ids" (array int) [| top; top |] (Encoding.ids encoding);
+  equal ~msg:"tokens" (array string) [| "ab"; "ab" |]
+    (Encoding.tokens encoding);
+  equal ~msg:"offsets" (array (pair int int)) [| (0, 2); (2, 4) |]
+    (Encoding.offsets encoding);
+  equal ~msg:"decode" string "ab ab" (decode tokenizer [| top; top |]);
+  equal ~msg:"id_to_token" (option string) (Some "ab")
+    (id_to_token tokenizer top);
+  let top = (1 lsl 31) - 1 in
+  let tokenizer =
+    bpe ~vocab:(ab_vocab ~a:0 ~b:1 ~ab:top) ~merges:[ ("a", "b") ] ()
+  in
+  equal ~msg:"2^31 - 1" (array int) [| top |] (encode_ids tokenizer "ab")
+
+let test_id_range () =
+  List.iter
+    (fun id ->
+      raises_match
+        ~msg:(Printf.sprintf "id %d" id)
+        (Exn.invalid_arg ~sub:"2^31")
+        (fun () -> bpe ~vocab:[ ("a", 0); ("b", id) ] ()))
+    [ max_int; -1; 1 lsl 31 ]
+
 (* Training. Every expectation below was probed with the [tokenizers] wheel,
    running its [BpeTrainer] over the same corpus behind the same pre-tokenizer,
    which is what cuts the words the trainer counts. *)
@@ -1287,6 +1357,13 @@ let () =
                test_unk_flushed_by_vocab_hit;
              test "truncated UTF-8" test_truncated_utf8;
              test "words past the rank scan" test_long_word_merges;
+           ];
+         group "ids"
+           [
+             test "ids past 2^21" test_large_ids;
+             test "a merge past position 2^21" test_long_pretoken;
+             test "ids that leave a gap" test_sparse_ids;
+             test "ids outside [0, 2^31)" test_id_range;
            ];
          group "cache"
            [

@@ -1604,14 +1604,13 @@ static inline intnat emit_lanes32(int32_t *lane, uint64_t v0, uint64_t v1)
 /* The short merge — Bpe.Merge_map.find, init_word_bytes and merge_linear
    restricted to a pretoken of at most 15 bytes, on stack arrays. */
 
-/* Merge_map.hash agrees with this even though OCaml wraps the product at 63
-   bits and C at 64: the two hashes share bits 0..62, h >> 16 therefore
-   shares bits 0..46, and the mask keeps well under bit 47. */
+/* Merge_map.hash: OCaml wraps the product at 63 bits, so the product is cut
+   to 63 bits here too before its high half is folded in. */
 static inline intnat merge_find(const value *keys, const value *vals,
                                 intnat mask, intnat key)
 {
-  uint64_t h64 = (uint64_t)key * 0x1B873593ULL;
-  intnat h = (intnat)((h64 ^ (h64 >> 16)) & (uint64_t)mask);
+  uint64_t h64 = ((uint64_t)key * 0x1B873593ULL) & (UINT64_MAX >> 1);
+  intnat h = (intnat)((h64 ^ (h64 >> 32)) & (uint64_t)mask);
   value vkey = Val_long(key);
   for (;;) {
     value k = keys[h];
@@ -1623,12 +1622,17 @@ static inline intnat merge_find(const value *keys, const value *vals,
 
 #define RANK_NONE ((intnat)(((uintnat)-1) >> 1))
 
-/* Bpe.rank_of: the packed (rank << 21) | new_id, which the minimum scan
+/* Bpe.id_bits: ids and ranks are below 2^31, so a merge's key packs its pair
+   (a << 31) | b and its value (rank << 31) | new_id. */
+#define ID_BITS 31
+#define ID_MASK (((intnat)1 << ID_BITS) - 1)
+
+/* Bpe.rank_of: the packed (rank << 31) | new_id, which the minimum scan
    orders by rank and, at equal rank, by position, as HuggingFace merges. */
 static inline intnat rank_of(const value *mkeys, const value *mvals,
                              intnat mmask, intnat a, intnat b)
 {
-  intnat v = merge_find(mkeys, mvals, mmask, (a << 21) | b);
+  intnat v = merge_find(mkeys, mvals, mmask, (a << ID_BITS) | b);
   return v >= 0 ? v : RANK_NONE;
 }
 
@@ -1659,7 +1663,7 @@ static int merge_run(const value *mkeys, const value *mvals, intnat mmask,
       }
     if (bp < 0) break;
     gone = sym_next[bp];
-    sym_c[bp] = best & 0x1FFFFF; /* merge_new_id */
+    sym_c[bp] = best & ID_MASK; /* merge_new_id */
     sym_len[bp] += sym_len[gone];
     sym_next[bp] = sym_next[gone];
     sym_len[gone] = 0;

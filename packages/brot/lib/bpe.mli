@@ -24,8 +24,8 @@
     scanning the vocabulary at creation proves the cut exact, so pipelines that
     hand the model whole documents (Llama, Mistral, Gemma) encode through the
     cache and the linear merge too. On native code that walk, the cache probe
-    and the short merge run fused in the C kernel; bytecode and js_of_ocaml run
-    the OCaml walk, which is the reference the kernel is held to. *)
+    and the short merge run fused in the C kernel; bytecode runs the OCaml
+    walk, which is the reference the kernel is held to. *)
 
 type t
 (** The type for BPE models. What a model encodes to is fixed at creation.
@@ -58,7 +58,11 @@ val create :
   ?ignore_merges:bool ->
   unit ->
   t
-(** [create ~vocab ~merges ()] is a BPE model.
+(** [create ~vocab ~merges ()] is a BPE model. Its ids may leave any gaps, and
+    its memory follows the number of tokens. Raises [Invalid_argument] where
+    OCaml's integers have fewer than 63 bits (js_of_ocaml, wasm_of_ocaml), if
+    an id is not {!Id_table.in_range}, or if [merges] holds more than 2{^ 31}
+    rules. Two ids, or a rank and an id, pack into one 63-bit integer.
 
     - [byte_level], when [true], matches pretokens against the {e bytes} each
       vocabulary entry stands for rather than against the entry itself, so a
@@ -147,16 +151,16 @@ val encode_into :
     An id that stands for bytes other than the ones {!len_table} gives it — the
     unknown token for the run it covers, a fallback token merged from the text
     spelling its name — is recorded in [opaque] as three integers: its index in
-    [ids], [1], and the number of bytes it stands for.
+    [ids], [1], and the number of bytes it stands for. So is an id past the
+    dense part of {!len_table} ({!Id_table.dense}).
 
     This is the throughput path: nothing is allocated per pretoken that hits the
     cache. *)
 
 val fused : t -> bool
 (** [fused t] is [true] iff {!encode_walk} runs the fused C kernel: native code,
-    a byte-level model, no dropout. Bytecode and js_of_ocaml walk and encode in
-    OCaml through the same public API, which is the reference the kernel is held
-    to. *)
+    a byte-level model, no dropout. Bytecode walks and encodes in OCaml through
+    the same public API, which is the reference the kernel is held to. *)
 
 val encode_walk :
   t ->
@@ -228,15 +232,15 @@ val encode_walk_ids32 :
     walks the whole range and returns [stop]. Only meaningful when {!fused},
     like {!encode_walk}. *)
 
-val token_table : t -> string array
-(** [token_table t] maps an id to its token string. Owned by [t]; do not mutate.
-*)
+val token_table : t -> string Id_table.t
+(** [token_table t] maps an id to its token string, [""] for an id no token
+    has. *)
 
-val len_table : t -> int array
+val len_table : t -> int Id_table.t
 (** [len_table t] maps an id to the number of source bytes an occurrence of it
     accounts for unless {!encode_into} recorded otherwise: the bytes an entry
     stands for in a byte-level model, and the entry stripped of its affixes
-    otherwise. A byte fallback token reads [1]. Owned by [t]; do not mutate. *)
+    otherwise. A byte fallback token reads [1]. *)
 
 (** {1:vocabulary Vocabulary} *)
 

@@ -138,11 +138,11 @@ type t = {
   encoders : Pretoken_cache.encoder Pretoken_cache.states;
   cache_capacity : int;
   vocab : (string, int) Hashtbl.t;
-  vocab_r : string array;
+  tokens : string Id_table.t;
   (* How many bytes of a word an id accounts for: the entry, stripped of the
      prefix a continuation subword carries. The unknown token spent on a whole
      word is recorded as it is emitted. *)
-  len_table : int array;
+  lens : int Id_table.t;
   trie : trie;
   unk_token : string;
   unk_id : int;
@@ -153,22 +153,20 @@ type t = {
 let create ~vocab ?(unk_token = "[UNK]") ?(continuing_subword_prefix = "##")
     ?(max_input_chars_per_word = 100)
     ?(cache_capacity = Pretoken_cache.default_capacity) () =
-  let max_id = Hashtbl.fold (fun _ id acc -> max id acc) vocab (-1) in
-  let vocab_r = Array.make (max_id + 1) "" in
-  Hashtbl.iter (fun k v -> Array.unsafe_set vocab_r v k) vocab;
+  let tokens = Id_table.of_vocab ~who:"Wordpiece.create" vocab in
   if Hashtbl.length vocab > 0 && not (Hashtbl.mem vocab unk_token) then
     invalid_arg "Wordpiece.create: unk_token not in vocab";
   let prefix_len = String.length continuing_subword_prefix in
-  let len_table =
-    Array.map
-      (fun token ->
+  let lens =
+    Id_table.mapi ~absent:0
+      (fun _ token ->
         let n = String.length token in
         if
           prefix_len > 0
           && String.starts_with ~prefix:continuing_subword_prefix token
         then n - prefix_len
         else n)
-      vocab_r
+      tokens
   in
   let unk_id =
     match Hashtbl.find_opt vocab unk_token with Some id -> id | None -> -1
@@ -178,8 +176,8 @@ let create ~vocab ?(unk_token = "[UNK]") ?(continuing_subword_prefix = "##")
     encoders = Pretoken_cache.states ();
     cache_capacity;
     vocab;
-    vocab_r;
-    len_table;
+    tokens;
+    lens;
     trie;
     unk_token;
     unk_id;
@@ -288,7 +286,7 @@ let encode_into model ids ~opaque text ~pos ~len =
 let cached_encoder model =
   Pretoken_cache.cached
     (Pretoken_cache.create model.cache_capacity)
-    ~len_table:model.len_table (encode_into model)
+    ~len_table:(Id_table.dense model.lens) (encode_into model)
 
 let with_encoder model f =
   Pretoken_cache.with_state model.encoders ~make:cached_encoder
@@ -296,17 +294,15 @@ let with_encoder model f =
 
 let cache_capacity model = model.cache_capacity
 
-let token_table model = model.vocab_r
-let len_table model = model.len_table
+let token_table model = model.tokens
+let len_table model = model.lens
 let token_to_id model token = Hashtbl.find_opt model.vocab token
 
 let id_to_token model id =
-  if id < 0 || id >= Array.length model.vocab_r then None
-  else
-    let token = Array.unsafe_get model.vocab_r id in
-    (* An id that no pair holds is [""] in the table. *)
-    if token = "" && Hashtbl.find_opt model.vocab "" <> Some id then None
-    else Some token
+  let token = Id_table.get model.tokens id in
+  (* An id that no pair holds is [""] in the table. *)
+  if token = "" && Hashtbl.find_opt model.vocab "" <> Some id then None
+  else Some token
 
 let get_vocab model = Hashtbl.fold (fun k v acc -> (k, v) :: acc) model.vocab []
 let get_vocab_size model = Hashtbl.length model.vocab

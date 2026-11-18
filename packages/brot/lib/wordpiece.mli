@@ -43,7 +43,8 @@ val create :
       holds (see {!Pretoken_cache.create} and {!with_encoder}); [0] disables it.
       Defaults to {!Pretoken_cache.default_capacity}.
 
-    Raises [Invalid_argument] if [unk_token] is not in [vocab]. *)
+    Raises [Invalid_argument] if an id is not {!Id_table.in_range}, or if
+    [unk_token] is not in [vocab]. *)
 
 val from_file : vocab_file:string -> t
 (** [from_file ~vocab_file] loads a model from a BERT-style [vocab.txt] file
@@ -65,15 +66,15 @@ val encode_into :
     alone, recorded in [opaque] as three integers: its index in [ids], [1], and
     [len], the bytes of the word it stands for. *)
 
-val token_table : t -> string array
-(** [token_table t] maps an id to its token string, prefix included. Owned by
-    [t]; do not mutate. *)
+val token_table : t -> string Id_table.t
+(** [token_table t] maps an id to its token string, prefix included, and [""]
+    for an id no token has. *)
 
-val len_table : t -> int array
+val len_table : t -> int Id_table.t
 (** [len_table t] maps an id to the number of source bytes an occurrence of it
     accounts for when it is a match of its entry: the entry stripped of the
     continuation prefix. The unknown token spent on a word stands for the word,
-    which {!encode_into} records. Owned by [t]; do not mutate. *)
+    which {!encode_into} records. *)
 
 val with_encoder : t -> (Pretoken_cache.encoder -> 'a) -> 'a
 (** [with_encoder t f] is [f enc] for one of [t]'s encoders: {!encode_into}

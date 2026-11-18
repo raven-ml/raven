@@ -193,6 +193,53 @@ let test_wordpiece_given_twice () =
   let t = wordpiece ~vocab:[ ("a", 0); ("a", 2); ("[UNK]", 1) ] () in
   check_last_pair t ~unused:0 ~tokens:[ ("[UNK]", 1); ("a", 2) ]
 
+(* WordPiece and word-level models hold any ids in [0, 2^31), with memory for
+   their tokens alone, and refuse the others. An id table sized by the largest
+   id took 2^23 words or more for the sparse vocabulary below, so the bound is
+   checked there before an id of 2^31 - 1 is tried, and an added token is
+   refused the id after it. *)
+let sparse_models =
+  let models =
+    [
+      ( "wordpiece",
+        fun vocab -> wordpiece ~pre:Pre_tokenizer.whitespace ~vocab () );
+      ( "word_level",
+        fun vocab ->
+          word_level ~pre:Pre_tokenizer.whitespace ~unk_token:"[UNK]" ~vocab ()
+      );
+    ]
+  in
+  [
+    cases "sparse ids" ~id:fst models (fun (_, make) ->
+        let top = 1 lsl 23 in
+        let before = Gc.allocated_bytes () in
+        let t = make [ ("[UNK]", 0); ("a", 1); ("b", top) ] in
+        let encoding = encode t "a b" in
+        let allocated = Gc.allocated_bytes () -. before in
+        less ~msg:"bytes allocated" float_exact ~than:16e6 allocated;
+        equal ~msg:"ids" (array int) [| 1; top |] (Encoding.ids encoding);
+        equal ~msg:"tokens" (array string) [| "a"; "b" |]
+          (Encoding.tokens encoding);
+        equal ~msg:"offsets" (array (pair int int)) [| (0, 1); (2, 3) |]
+          (Encoding.offsets encoding);
+        equal ~msg:"id_to_token" (option string) (Some "b") (id_to_token t top);
+        let top = (1 lsl 31) - 1 in
+        let t = make [ ("[UNK]", 0); ("b", top) ] in
+        equal ~msg:"2^31 - 1" (option string) (Some "b") (id_to_token t top);
+        (* [b] keeps its model id, so [<x>] would be numbered 2^31. *)
+        raises_match ~msg:"an added token past 2^31 - 1"
+          (Exn.invalid_arg ~sub:"2^31")
+          (fun () -> add_tokens t (List.map added_token [ "b"; "<x>" ])));
+    cases "ids outside [0, 2^31)" ~id:fst models (fun (_, make) ->
+        List.iter
+          (fun id ->
+            raises_match
+              ~msg:(Printf.sprintf "id %d" id)
+              (Exn.invalid_arg ~sub:"2^31")
+              (fun () -> make [ ("[UNK]", 0); ("b", id) ]))
+          [ max_int; -1; 1 lsl 31 ]);
+  ]
+
 let suite =
   [
     test "create empty" test_vocab_create_empty;
@@ -212,4 +259,7 @@ let suite =
     test "a WordPiece token given twice" test_wordpiece_given_twice;
   ]
 
-let () = exit (run "Vocabulary tests" [ group "vocab" suite ])
+let () =
+  exit
+    (run "Vocabulary tests"
+       [ group "vocab" suite; group "ids" sparse_models ])
