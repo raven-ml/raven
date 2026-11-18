@@ -7602,6 +7602,41 @@ let counts_a_large_loop () =
   | Some { ops = Sym u; _ } -> failf "the operations count %a" Ops.pp u
   | None -> failf "a program has estimates"
 
+(* Loops bounded by memory
+
+   A loop's trips may be what memory holds, as [j < x[0]], read through an
+   explicit load or, as a front end writes it, a bare index. A launch computes
+   its counts of threads before the kernel runs, so such a loop stays a loop
+   of the kernel. *)
+
+let bounded_by_memory read =
+  let x = Shape.param ~shape:[ Int 1 ] 1 Uint8 in
+  let at = Ops.index x [ Ops.int 0 ] in
+  let at = match read with `Load -> Ops.load at [] | `Index -> at in
+  let j =
+    Ops.range ~axis_type:Weak ~dtype:Int32 (Sym (Ops.cast at Int32)) [ 0 ]
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [
+      Ops.end_
+        (Ops.store (Ops.index (floats 255 0) [ j ]) (Ops.float 1.))
+        [ j ];
+    ]
+
+let memory_bounds =
+  cases
+    "a loop whose bound reads memory stays a loop of a kernel on threads"
+    ~id:(function `Load -> "load" | `Index -> "index")
+    [ `Load; `Index ]
+    (fun read ->
+      let cuda = renderer_for (target "CUDA" "CUDA" "sm_89") in
+      let lowered =
+        Codegen.full_rewrite_to_sink (bounded_by_memory read) cuda
+      in
+      let uops = Ops.toposort ~calls:Enter lowered in
+      equal int ~msg:"threads" 0 (count Special uops);
+      equal int ~msg:"loops" 1 (count Range uops))
+
 let blocks =
   group "host programs in blocks"
     [
@@ -10393,6 +10428,7 @@ let () =
            divisions;
            range_shrinking;
            blocks;
+           memory_bounds;
            beam_search;
            caching;
            sharing;

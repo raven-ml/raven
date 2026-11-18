@@ -1474,6 +1474,11 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A loop whose bound reads memory through a bare index, as `j < x[0]`, stays a
+  loop: on a GPU target `Codegen.full_rewrite_to_sink` made it a launch
+  dimension and failed verification, and a beam search timed it on storage of
+  other contents. `Ops.bound_loads` counts such an index, and no longer counts
+  the effects a bound is ordered after.
 - A product of a Q8_0 matrix that takes a tensor core takes each block's
   values in one trip, where it took two on NVIDIA's cores
   (`Heuristic.hand_coded_optimizations`); its bits are unchanged.

@@ -111,14 +111,17 @@ let scalar_arguments =
 
 (* [out[r, i]] sums [j] over [j < x[i]]: a loop whose trips are what the
    storage of [x] holds. Its [rows] axis reads no bound, so a search would have
-   candidates that upcast it. *)
-let loaded_trips ?beam () =
+   candidates that upcast it. [~read:`Index] reads [x] through a bare index, as
+   a scheduled kernel reads memory, [`Load] through an explicit load. *)
+let loaded_trips ?beam ?(read = `Load) () =
   let rows = 4 and width = 64 in
   let x = Shape.placeholder ~slot:1 [ width ] Uint8
   and out = Shape.placeholder ~slot:0 [ rows * width ] Float32 in
   let r = Ops.range ~axis_type:Weak (Int rows) [ 0 ]
   and i = Ops.range ~axis_type:Weak (Int width) [ 1 ] in
-  let bound = Ops.cast (Ops.load (Ops.index x [ i ]) []) Int32 in
+  let at = Ops.index x [ i ] in
+  let at = match read with `Load -> Ops.load at [] | `Index -> at in
+  let bound = Ops.cast at Int32 in
   let j = Ops.range ~axis_type:Weak ~dtype:Int32 (Sym bound) [ 2 ] in
   let sum = Ops.reduce (Ops.cast j Float32) Op.Add [ j ] in
   let at = Ops.index out [ Ops.O.((r * Ops.int width) + i) ] in
@@ -202,10 +205,12 @@ let gated_by_memory =
     ]
 
 let memory_bound =
-  test
-    "a kernel whose loop's bound loads from memory is not searched, and takes \
-     the heuristic's optimisations"
-    (fun () ->
+  cases
+    "a kernel whose loop's bound reads memory is not searched, and takes the \
+     heuristic's optimisations"
+    ~id:(function `Load -> "load" | `Index -> "index")
+    [ `Load; `Index ]
+    (fun read ->
       let measured = ref 0 in
       let link call = Tolk_engine.link_call ~devices call in
       let time ~vars:_ _ =
@@ -218,10 +223,10 @@ let memory_bound =
           (fun () ->
             Codegen.to_program
               ~beam:(Search.beam_search ~link ~time)
-              (loaded_trips ~beam:2 ()) host)
+              (loaded_trips ~beam:2 ~read ()) host)
       in
       equal int ~msg:"programs timed" 0 !measured;
-      let hand = opt_names (Codegen.to_program (loaded_trips ()) host) in
+      let hand = opt_names (Codegen.to_program (loaded_trips ~read ()) host) in
       greater int ~msg:"the heuristic's optimisations" ~than:0
         (List.length hand);
       equal (list string) hand (opt_names searched))

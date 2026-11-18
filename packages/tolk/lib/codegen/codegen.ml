@@ -1738,20 +1738,9 @@ let lift_uniform_gates sink =
 
 (* Whether memory may bound a loop of [sink]: with every value taken as the
    same for a workgroup's threads, as some optimisations may make a gate, the
-   lift bounds a loop by a value that reads memory, a load or an index into
-   global or workgroup storage, which a load reads once loads are explicit.
-   Such a loop's trips are what memory holds. *)
+   lift bounds a loop by a value that reads memory ([Ops.bound_loads]). Such a
+   loop's trips are what memory holds. *)
 let gated_by_memory sink =
-  let reads_memory v =
-    List.exists
-      (fun u ->
-        is Op.Load u
-        || is Op.Index u
-           && List.mem
-                (addrspace (buf_uop (nth u 0)))
-                [ Some Dtype.Global; Some Dtype.Local ])
-      (toposort ~calls:Skip v)
-  in
   let lifted =
     graph_rewrite ~calls:Skip ~pass:Once
       ~ctx:(lazy (fun _ -> false), lazy (consumers sink))
@@ -1762,7 +1751,7 @@ let gated_by_memory sink =
   let before = backward_slice_with_self ~calls:Skip sink in
   List.exists
     (fun r ->
-      is Op.Range r && (not (Nodes.mem r before)) && reads_memory (nth r 0))
+      is Op.Range r && (not (Nodes.mem r before)) && bound_loads r)
     (toposort ~calls:Skip lifted)
 
 let apply_opts ?beam sink ren =

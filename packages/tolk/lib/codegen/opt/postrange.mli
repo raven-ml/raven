@@ -266,7 +266,7 @@ val apply_opts :
     unless the setting {!Setting.noopt} is set, [ast] already had optimisations
     applied, or it buffers values ({!Op.Stage}), applies [hand_coded]. A kernel
     one of whose loops, or of the loops of a body it calls, has a bound that
-    loads from memory ({!Ops.bound_loads}) is not searched: its time depends on
+    reads memory ({!Ops.bound_loads}) is not searched: its time depends on
     what memory holds, which a search's samples do not, so it takes
     [hand_coded] as without [beam]. A kernel whose builder fixed its threads is
     neither searched nor given [hand_coded]: it, or a body it calls, holds

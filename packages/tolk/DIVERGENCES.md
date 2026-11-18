@@ -5558,10 +5558,12 @@ union, as fast on CUDA, on the host and in compile time.
     reads an axis, since a group's barriers need every thread of the
     workgroup to run the same trips, and the heuristic streams no
     contraction there;
-  - a weak range whose bound reads a range or memory is neither made global
-    nor split into host blocks, where tinygrad makes it global: a launch
-    computes its counts before the kernel reads memory. The estimates (D191)
-    take the same test of a bound.
+  - a weak range whose bound reads a range or memory, through a load or a
+    bare index, as a scheduled kernel reads it, is neither made global nor
+    split into host blocks, where tinygrad makes it global: a launch computes
+    its counts before the kernel reads memory. An effect the bound is ordered
+    after is no part of it. The estimates (D191) take the same test of a
+    bound.
 - **Reason:** (c): tolk's own interface builds such a loop, since
   `Ops.range` takes any bound and `Shape.shrink` any size, a loaded one
   included, and a graph that interface accepts must compute; without this,
@@ -5574,7 +5576,8 @@ union, as fast on CUDA, on the host and in compile time.
   `padto_reduction_bound`. The Spec suite: `verdicts.tolk`'s `an int32 load
   after a range`, `a range bounded by a load after a range` and `a load after
   a store`. The Codegen suite: `hand-written kernels on the host › a lane of
-  stored lanes keeps every lane's store`.
+  stored lanes keeps every lane's store` and `a loop whose bound reads memory
+  stays a loop of a kernel on threads`.
 
 ## D230. A GPU kernel decodes a value R rows read at most ceil(R / 16) times
 
@@ -5777,14 +5780,14 @@ union, as fast on CUDA, on the host and in compile time.
   `prepare_rangeify › earliest rewrites › two equal stores into one storage
   are two states`.
 
-## D255. A kernel whose loop's bound loads from memory is not searched
+## D255. A kernel whose loop's bound reads memory is not searched
 
 - **tinygrad:** `codegen/opt/postrange.py` `apply_opts` (searches every
   kernel under BEAM, timing it on `args_from_ast`'s new buffers, their
   contents unspecified, and each variable at the middle of its bounds).
 - **tolk:** `Postrange.apply_opts` (`bound_by_memory`), `Ops.bound_loads`.
-- **Differs:** a kernel with a loop bounded by a load, as `j < x[i]` (D220),
-  takes the heuristic's optimisations when a search is asked for, as
+- **Differs:** a kernel with a loop bounded by memory, read through a load
+  or a bare index, as `j < x[i]` (D220), takes the heuristic's optimisations when a search is asked for, as
   without one. tinygrad refuses such loops.
 - **Reason:** (e), following D220: the trips such a loop runs are what
   memory holds, which no sample the search makes knows. On unspecified bytes
@@ -5797,8 +5800,8 @@ union, as fast on CUDA, on the host and in compile time.
   count fits every bound: the middle of an `int64` bound clamped at 0 is
   2^62.
 - **Pinned by:** `Tolk.Search on the host`: `a kernel whose loop's bound
-  loads from memory is not searched, and takes the heuristic's
-  optimisations`.
+  reads memory is not searched, and takes the heuristic's optimisations`,
+  through a load and an index.
 
 ## D210. A GPU merges bfloat16 accesses as float16's
 
@@ -6601,7 +6604,7 @@ rows (1.04-1.18x on `contract/bf16-*` on fudge) is the stated cost.
   identity. A kernel that the rewrite, taking every value as uniform before
   the opts, would give a loop bounded by a value read from memory takes the
   heuristic's optimisations when a search is asked for, as a kernel whose
-  loop's bound loads does (D255): the search times on storage of unspecified
+  loop's bound reads memory does (D255): the search times on storage of unspecified
   contents, where such a gate switches the blocks off. tinygrad searches
   every kernel. Routing data chosen for the search would make a kernel's
   program depend on one model's data.

@@ -1471,17 +1471,43 @@ let ranges =
           let x = Shape.param ~shape:[ Int 4 ] 0 Int32 in
           let one = Ops.int ~dtype:Int32 1 in
           let loop = Ops.end_ (Ops.store (Ops.index x [ i ]) one) [ i ] in
+          let y = Shape.param ~shape:[ Int 4 ] 1 Int32 in
+          let copy read =
+            Ops.end_
+              (Ops.store (Ops.index x [ i ]) (read (Ops.index y [ i ])))
+              [ i ]
+          in
           let bounded b = Ops.range ~axis_type:Weak (Sym b) [ 1 ] in
+          let bounded_by_index =
+            Ops.range ~axis_type:Weak
+              (Sym (Ops.cast (Ops.index x [ Ops.int 0 ]) Weak_int))
+              [ 2 ]
+          in
           List.iter
             (fun (msg, b, known) ->
               equal ~msg bool known (Ops.known_at_launch (bounded b)))
             [
               ("a variable", var "n" 0 8, true);
               ("a variable after a loop", Ops.after (var "n" 0 8) [ loop ], true);
+              ( "a variable after a loop that loads",
+                Ops.after (var "n" 0 8) [ copy (fun at -> Ops.load at []) ],
+                true );
+              ( "a variable after a loop that indexes",
+                Ops.after (var "n" 0 8) [ copy Fun.id ],
+                true );
               ("a range", Ops.O.(i + int 1), false);
               ("a range ordered after", Ops.after (Ops.int 4) [ i ], true);
+              ( "a variable ordered after a range",
+                Ops.after (var "n" 0 8) [ i ],
+                true );
+              ( "a range bounded by memory ordered after",
+                Ops.after (Ops.int 4) [ bounded_by_index ],
+                true );
               ( "a load",
                 Ops.cast (Ops.load (Ops.index x [ Ops.int 0 ]) []) Weak_int,
+                false );
+              ( "an index",
+                Ops.cast (Ops.index x [ Ops.int 0 ]) Weak_int,
                 false );
             ];
           equal bool true (Ops.known_at_launch i);

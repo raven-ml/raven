@@ -626,7 +626,10 @@ val axis_type : t -> Axis_type.t
 val bound_loads : t -> bool
 (** [bound_loads r] is [true] iff the range [r] has a bound that, its ordering
     after effects ({!Op.After}) aside, reads memory, as [j < x[i]]: how many
-    trips the loop runs is what memory holds.
+    trips the loop runs is what memory holds. A bound reads memory through a
+    load ({!Op.Load}) or through an index ({!Op.Index}) into global or
+    workgroup storage ({!Dtype.Global}, {!Dtype.Local}), as a scheduled kernel
+    reads it before its loads are explicit.
 
     Raises [Invalid_argument] if [r] is not a range. *)
 

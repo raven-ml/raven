@@ -2819,21 +2819,6 @@ let is_join u =
 let rec without_after u =
   if u.op = Op.After then without_after (first u.op u.src) else u
 
-let bound_loads r =
-  ignore (range_arg r);
-  match r.src with
-  | [ bound ] ->
-      op_in_backward_slice_with_self ~calls:Skip (without_after bound)
-        [ Op.Load ]
-  | _ -> false
-
-let known_at_launch r =
-  ignore (range_arg r);
-  match r.src with
-  | [ bound ] ->
-      Nodes.cardinal (ranges (without_after bound)) = 0 && not (bound_loads r)
-  | _ -> false
-
 let barrier u rest = v Op.Barrier ~src:(u :: rest)
 
 let ins ?src ?dtype u i =
@@ -2927,6 +2912,50 @@ and compute_addrspace u =
       | a :: rest when List.for_all (( = ) a) rest -> Some a
       | _ -> None)
   | _ -> None
+
+(* The nodes of the value [u] computes: the effects an after orders it after,
+   as the store of [after n [x[i] = y[i]]], and a call's body are no part of
+   it. *)
+let value_nodes u =
+  let seen = Tbl.create 16 in
+  let rec walk acc u =
+    if Tbl.mem seen u then acc
+    else begin
+      Tbl.replace seen u ();
+      let srcs =
+        match u.op with
+        | Op.After -> [ first u.op u.src ]
+        | Op.Call -> drop 1 u.src
+        | _ -> u.src
+      in
+      List.fold_left walk (u :: acc) srcs
+    end
+  in
+  walk [] u
+
+(* A scheduled kernel reads memory through bare indices, which become loads
+   once loads are explicit: an index into global or workgroup storage reads
+   memory as a load does. *)
+let reads_memory u =
+  u.op = Op.Load
+  || u.op = Op.Index
+     && List.mem
+          (addrspace (buf_uop (first u.op u.src)))
+          [ Some Dtype.Global; Some Dtype.Local ]
+
+let bound_loads r =
+  ignore (range_arg r);
+  match r.src with
+  | [ bound ] -> List.exists reads_memory (value_nodes bound)
+  | _ -> false
+
+let known_at_launch r =
+  ignore (range_arg r);
+  match r.src with
+  | [ bound ] ->
+      let reads u = u.op = Op.Range || reads_memory u in
+      not (List.exists reads (value_nodes bound))
+  | _ -> false
 
 let rec has_buffer_identity ?(after_ok = false) u =
   match u.op with

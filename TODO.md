@@ -88,9 +88,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   the target refuses (1024 threads on gfx9's wave64, 512 on Apple2/3)
 - D404's launch member caps, NVRTC's 64 and Metal's 40, name no fudge
   measurement, which the ledger's header asks of a speed measured elsewhere
-- `Ops.bound_loads`, and so `Postrange.bound_by_memory` (D255), sees only
-  `Op.Load`, while a scheduled kernel reads memory through bare indices:
-  such a loop is probably still searched. Unverified on a real kernel
 - `beam_search`'s disk key names no device part, so a search timed on one
   part serves every other part of its target; tinygrad keys by device
 - `Heuristic.reused` and `upcast_more`'s `reuses` count loads after the
