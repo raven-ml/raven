@@ -814,7 +814,7 @@ let within_block =
       at_most int ~than:block_threads threads)
 
 (* Past 16 outputs a load, a stream reads its operand in several passes: a
-   core of two stages that keeps its threads takes the kernel first, and any
+   core of two stages takes the kernel first, whatever its threads, and any
    other core does not. *)
 let passes_or_core =
   (* The targets' own renderers: stages depend on asynchronous copies, which
@@ -824,11 +824,13 @@ let passes_or_core =
       { Helpers.Target.device; renderer; arch; interface = ""; indices = "" }
   in
   let sm_89 = gpu "CUDA" "CUDA" "sm_89"
+  and sm_86 = gpu "CUDA" "CUDA" "sm_86"
   and gfx1201 = gpu "HIP" "AMD" "gfx1201" in
   let takes_core o =
     List.exists (function Opt.Tc _ -> true | _ -> false) (K.applied_opts o)
   in
-  cases "a contraction of several passes streams unless a filled core takes it"
+  cases
+    "a contraction of several passes streams unless a two-stage core takes it"
     ~id:(fun (name, _, _, _, _, _, _) -> name)
     [
       ("32 rows, a staged core that keeps its threads", sm_89, 32, 16384, 4096,
@@ -836,7 +838,9 @@ let passes_or_core =
       ("32 rows, a staged core that keeps them on a halved tile", sm_89, 32,
        12288, 4096, Loaded, false);
       ("32 rows, a staged core short of threads", sm_89, 32, 2048, 4096, Loaded,
-       true);
+       false);
+      ("32 rows, a staged core short of threads on a part stating no units",
+       sm_86, 32, 2048, 4096, Loaded, false);
       ("16 rows are one pass", sm_89, 16, 16384, 4096, Loaded, true);
       ("32 rows of an operand no core stages", sm_89, 32, 16384, 4096, Divided,
        true);

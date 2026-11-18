@@ -2168,13 +2168,13 @@ Withdrawn: multi-device is out of scope, see README.
     once), or a number not known, streams before the cores are tried; a
     shorter sum, or more multiply-adds a byte, tries a core first and streams
     where none applies. Past `R = 16` the operand is read in `ceil (R / 16)`
-    passes, and a core of two stages that keeps `core_threads / 2` threads
-    (`Stage.tile`) takes the kernel first: sm_89 was measured, the other CUDA
-    parts of two stages, from sm_80, take the rule unmeasured, and AMD and
-    Metal, of one stage, keep streaming. Past `R = 32` a core takes it where
-    one applies, and the other rules where none does. A decoded operand
-    takes a core past `R = 16` where one applies, and streams at any reuse
-    where none does (D230);
+    passes, and a core of two stages over a known count of workgroups
+    (`Stage.tile`) takes the kernel first, whatever its threads: sm_89 was
+    measured, the other CUDA parts of two stages, from sm_80, take the rule
+    unmeasured, and AMD and Metal, of one stage, keep streaming. Past
+    `R = 32` a core takes it where one applies, and the other rules where
+    none does. A decoded operand takes a core past `R = 16` where one
+    applies, and streams at any reuse where none does (D230);
   - the layout: `W`'s main access is the one with a range of unit stride
     whose terms of contracted ranges span the most bytes. When that range `u`
     is contracted (rows): `W`'s reuse axes are upcast, each by its share of
@@ -2236,9 +2236,12 @@ Withdrawn: multi-device is out of scope, see README.
   1.1-1.55x slower on fudge, is the cost of one program per target. The
   constant is not measured on AMD's and Metal's cores: nonnormal's R9700
   rows (`GptOss/experts-at-prefill-512`, `GptOss/prefill-512`) and Metal's
-  are pending. Past `R = 32` float32 streamed loses to the tiles from
-  `R = 64`; narrower operands take the other rules past 32 until a tolk row
-  confirms them streamed.
+  are pending. Past `R = 16` the stream reads its operand in two passes or
+  more, and on sm_89 a core of two stages, its plan spread over the units,
+  beat it on every shape measured, short of threads too; the rule reads no
+  unit count, which would move a sum's order with one. Past `R = 32` float32
+  streamed loses to the tiles from `R = 64`; narrower operands take the
+  other rules past 32 until a tolk row confirms them streamed.
 - **Pinned by:** the Heuristic suite: `the optimisations chosen are tinygrad's ›
   <environment> › the optimised kernel`, cases `matvec_*`, `vecmat_*`,
   `gpt_oss_*`, `experts_down_*`, `routed_blocks_*`, `routed_own_*`,
@@ -2248,8 +2251,9 @@ Withdrawn: multi-device is out of scope, see README.
   streamed operand's reuse outside a thread is its reuse over its tile`, `› a
   SIMD group's load of an operand streamed along the reduce reads whole
   sectors`, `› the unroll is the largest divisor of its loop up to 8, 4 with
-  reuse`, `› a contraction streams up to a reuse of 32, before a tensor core`
-  and `› a recorded contraction streams before a tensor core up to 64
+  reuse`, `› a contraction streams up to a reuse of 32, before a tensor core`,
+  `› a contraction of several passes streams unless a two-stage core takes
+  it` and `› a recorded contraction streams before a tensor core up to 64
   multiply-adds per byte of its streamed operand`, `› each renderer streams
   before a core up to 64 multiply-adds a byte` and `› a contraction streams
   before a core up to the renderer's bound a byte`, `› a product's workgroups

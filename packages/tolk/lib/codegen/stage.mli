@@ -141,9 +141,8 @@ val tile :
     ~in_run] is the optimisations of a tensor core's staged tile, splits and
     a pad ({!Opt.t.Split}, {!Opt.t.Padto}) whose [axis] is [0], [1] or [2]
     for the core's N, M and K, in the order to apply them, and whether the
-    core has two stages and the kernel keeps [core_threads / 2] threads on
-    some tile, which an unknown count of workgroups does not show, when
-    {!admits} and {!depth} stage the core; [None] otherwise, as for a core
+    core has two stages and a known count of workgroups, when {!admits} and
+    {!depth} stage the core; [None] otherwise, as for a core
     reading gathered rows, whose warps the core does not yet split. [n], [m] and [k] are the sizes
     of those axes as the core leaves them, [0] when unknown, [axes] their
     ranges, and [workgroups] the kernel's, if known. A warp holds

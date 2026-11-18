@@ -1347,12 +1347,10 @@ let tile (ren : Renderer.t) ast (w : wmma) ~core_threads ~workgroups
     | 0 -> None
     | s0 ->
         let fits (_, p) = threads p >= core_threads / s0 in
-        (* Whether the core beats a stream of several passes was measured
-           only with copies overlapping its cores, on two stages, and known
-           counts. *)
-        let filled =
-          s0 = 2 && Option.is_some workgroups && List.exists fits plans
-        in
+        (* A core of two stages comes before a stream of several passes
+           whatever its threads, which no unit count decides: the choice
+           moves a sum's order. *)
+        let two_stages = s0 = 2 && Option.is_some workgroups in
         let h0, p0 =
           match List.find_opt fits plans with
           | Some p -> p
@@ -1433,7 +1431,7 @@ let tile (ren : Renderer.t) ast (w : wmma) ~core_threads ~workgroups
             @ when_ (lm = 2) (split 1 2 Opt.Local)
             @ when_ (ln = 2) (split 0 2 Opt.Local)
             @ when_ (u > 1) (split 2 u Opt.Upcast),
-            filled )
+            two_stages )
   in
   let core =
     List.find_opt (fun u -> match arg u with Wmma w' -> w' = w | _ -> false) all

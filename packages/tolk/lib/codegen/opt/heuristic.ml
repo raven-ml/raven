@@ -249,8 +249,9 @@ let padded_within k tk rngs =
 
 (* The staged core's splits ({!Stage.tile}), applied to [tk], [k] with the core
    applied, whose core made the axes [rngs] (N, M and K), if the core is
-   staged: [split i size target] splits the axis [rngs.(i)]. Whether the kernel
-   keeps the core's threads on them, or [None] where the core is not staged. A
+   staged: [split i size target] splits the axis [rngs.(i)]. Whether the core
+   has two stages and a known count of workgroups, or [None] where the core is
+   not staged. A
    warp's rows, and a workgroup's, stay within a run of rows that read one
    value of an operand ({!within_run}). *)
 let staged_tile ~core_threads k tk rngs split =
@@ -293,7 +294,7 @@ let staged_tile ~core_threads k tk rngs split =
           ~in_run
       with
       | None -> None
-      | Some (opts, filled) ->
+      | Some (opts, two_stages) ->
           let apply = function
             | Opt.Split { axis = i; amount; target; _ } ->
                 split i amount target;
@@ -312,7 +313,7 @@ let staged_tile ~core_threads k tk rngs split =
           in
           (* A pad comes first, and one refused or on no axis leaves the core
              unstaged. *)
-          if List.for_all apply opts then Some filled else None)
+          if List.for_all apply opts then Some two_stages else None)
 
 (* first try the tensor cores *)
 let tensor_cores ~core_threads k =
@@ -406,12 +407,12 @@ let tensor_cores ~core_threads k =
           Some (tk, false)
         end
         else
-          let filled =
+          let two_stages =
             match staged_tile ~core_threads k tk rngs split with
-            | Some filled -> filled
+            | Some two_stages -> two_stages
             | None -> unstaged ()
           in
-          Some (tk, filled)
+          Some (tk, two_stages)
   in
   if use_tc > 0 then
     List.find_map (fun l -> List.find_map (core l) [ 0; 1; 2 ]) levels
@@ -471,25 +472,27 @@ let in_flight_held = 4
    group's load a line at a time. *)
 let line_bytes = 128
 
-(* The reuse at most that streams. Within one pass over the operand a streamed
-   product runs faster than a core's tiles, which leave each warp a serial
-   reduce, and than the general rules. A bfloat16 matrix of 16384 by 4096 multiplies 16 rows in
-   281 us streamed and 834 us on a core. Past [upcast_max] a thread no longer
-   holds every row, so the operand is read in [ceil (R / upcast_max)] passes:
-   the time follows the passes, 519 us for 16 rows forced to 2 passes and 540
-   for 32 rows in 2. More rows a thread do not help: 32 rows in one pass take
-   607 us. A core of two stages that keeps its threads takes such a kernel
-   first ([core_first]), at 32 rows 425 us against 540, and so does any core
-   of a decoded operand, which decodes each value once where its upcast holds
-   the rows. A gate of [upcast_max]
-   would give the others a slower layout: 24 rows take 524 us streamed and 827
-   on an unstaged core, 28 rows 526 and 1693 on the general rules, and
-   gpt-oss's 512-token prefill's router, whose operand no core stages, 45 and
-   233. Past
-   32 a float32 operand streamed loses to the general rules'
-   tiles, read once a pass where they share each load: at 64 rows 2107 to 2171
-   us against 1909 to 1987, a 1024-cube product 1054 against 398 us; bfloat16's
-   64 rows take 433 us on a core. *)
+(* The reuse at most that streams. Within one pass over the operand a stream
+   and a core each read it once, and the stream's lanes along the reduce
+   mostly run faster than a core's tiles and than the general rules: a
+   bfloat16 matrix of 2880 by 4096 multiplies 8 rows in 50 us streamed and 59
+   on a core, 16 rows in 60 and 70, though one of 16384 by 4096 multiplies 16
+   in 281 and 257. Past [upcast_max] a thread no longer holds every row, so
+   the operand is read in [ceil (R / upcast_max)] passes: the time follows the
+   passes, 519 us for 16 rows forced to 2 passes and 540 for 32 rows in 2.
+   More rows a thread do not help: 32 rows in one pass take 607 us. A core of
+   two stages takes such a kernel first ([core_first]), whatever its threads:
+   on sm_89, its plan spread over the units, 32 rows of a matrix of 2048 by
+   4096 take 36 us on it and 61 streamed, gpt-oss's router of 512 tokens 12
+   and 25.
+   So does any core of a decoded operand, which decodes each value once where
+   its upcast holds the rows. A gate of [upcast_max] would give the others a
+   slower layout: gpt-oss's router of 48 tokens takes 23 us streamed and 38 on
+   a core no plan stages, and 28 rows of the larger matrix 526 and 1693 on
+   the general rules. Past 32 a float32 operand streamed loses to the general
+   rules' tiles, read once a pass where they share each load: at 64 rows 2107
+   to 2171 us against 1909 to 1987, a 1024-cube product 1054 against 398 us;
+   bfloat16's 64 rows take 433 us on a core. *)
 let stream_first = 32
 
 (* The largest power of two at most [cap] that divides [r]'s size. *)
@@ -1518,14 +1521,14 @@ let hand_coded_with ~core_threads k =
     let streamed_as () = Option.map (stream k) (Lazy.force layout) in
     let core = lazy (tensor_cores ~core_threads k) in
     (* Past [upcast_max] a stream reads its operand in several passes, which a
-       core of two stages that keeps its threads beats, and any core of a
+       core of two stages beats whatever its threads, and any core of a
        decoded operand, which decodes each value once where its upcast holds
        the rows. *)
     let core_first (w, _, reuse) =
       Bigint.(gt reuse (of_int K.upcast_max))
       &&
       match Lazy.force core with
-      | Some (_, filled) -> filled || Stage.decoded w
+      | Some (_, two_stages) -> two_stages || Stage.decoded w
       | None -> false
     in
     let early_stream =

@@ -1474,6 +1474,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- On NVIDIA GPUs from `sm_80`, a product past 16 rows takes a staged tensor
+  core of two stages first, whatever its threads: gpt-oss-20b's router at 64
+  tokens runs in 7.3 µs a layer on an RTX 5000 Ada, 19.1 streamed.
 - A float32 GPU contraction that holds 8 by 8 outputs a thread takes
   workgroups of 128 threads, and holds them only where its threads give each
   of the target's compute units two workgroups
@@ -1859,9 +1862,6 @@ its lock and from samples the dashboard saw arrive.
 - A loop's call reads a fixed run of an `After` state it writes, or a later one,
   as each trip starts: the run raised "reads storage the call writes" in
   `Schedule`.
-- On NVIDIA GPUs from `sm_80`, a dense product of 32 rows takes a staged tensor
-  core when that core keeps its threads: a bfloat16 product of 16384 by 4096
-  runs in 425 µs on an RTX 5000 Ada, 540 streamed.
 - A host kernel of more than 20000 operations compiles as several functions,
   so that Clang's time grows about linearly in the program: 400 steps of an
   elementwise pendulum under `Rune.jit'` compile in 14 s against 308 s, and

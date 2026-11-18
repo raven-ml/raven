@@ -28,9 +28,9 @@
       output and contracted axes' sizes against the bytes of each buffer once,
       unknown when a size is symbolic or the operand reads a buffer that is
       not a parameter. A reuse past 16 streams only when no tensor core of
-      two stages ({!Stage.tile}) keeps its threads, and no tensor core takes
-      a decoded operand ({!Stage.decoded}), since the operand is then read in
-      several passes;
+      two stages over a known count of workgroups ({!Stage.tile}) applies,
+      whatever its threads, and no tensor core takes a decoded operand
+      ({!Stage.decoded}), since the operand is then read in several passes;
     - a {{!section-cores}tensor core}, when the setting {!Setting.use_tc} is
       positive, on any number of reduce axes: the core takes one of them, and
       the others stay loops around it, unless an unstaged core's operand
