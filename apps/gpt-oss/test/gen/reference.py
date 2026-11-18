@@ -1,11 +1,22 @@
-# Reference values for kaun's gpt-oss example, from the transformers
-# implementation at float32 on CPU. Writes fixtures/<name>.json, the MoE block,
-# and fixtures/<name>-model.json, the whole model, next to
-# this script. Only the tiny random checkpoints are read, a few MB each.
-#
-#   uv run --with torch==2.14.0 --with transformers==5.17.0 \
-#          --with safetensors==0.8.0 --with huggingface_hub==1.32.0 \
-#          --with accelerate==1.15.0 reference.py
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#   "torch==2.14.0",
+#   "transformers==5.17.0",
+#   "safetensors==0.8.0",
+#   "huggingface_hub==1.32.0",
+#   "accelerate==1.15.0",
+# ]
+# ///
+"""Record gpt-oss's references from the transformers implementation, at
+float32 on CPU.
+
+    uv run apps/gpt-oss/test/gen/reference.py
+
+Writes test/fixtures/<name>.json, the MoE block, and
+test/fixtures/<name>-model.json, the whole model. Only the tiny random
+checkpoints are read, a few MB each.
+"""
 import hashlib, json, os, sys
 import torch, transformers, safetensors, huggingface_hub
 from huggingface_hub import hf_hub_download

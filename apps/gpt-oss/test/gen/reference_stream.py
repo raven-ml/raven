@@ -1,34 +1,44 @@
-# Reference values for kaun's gpt-oss example at sizes that do not fit in
-# memory: the transformers implementation at float32 on CPU, one block at a
-# time. transformers dequantises every expert when it loads the model, about
-# 42 GB for gpt-oss-20b, so this recorder never builds the model. It reads a
-# block's tensors from the safetensors files by name, dequantises that block's
-# MXFP4 experts with transformers' own function, loads them into transformers'
-# own GptOssDecoderLayer, runs the block on the residual stream of every
-# prompt, records and frees it. The rotary tables, the two masks, the final
-# norm and the head are transformers' too. Peak memory is one block's float32
-# experts, the dequantiser's temporaries and at the end the float32 head: 9.6 GB
-# for gpt-oss-20b.
-#
-#   uv run --with torch==2.14.0 --with transformers==5.17.0 \
-#          --with safetensors==0.8.0 --with huggingface_hub==1.32.0 \
-#          --with accelerate==1.15.0 reference_stream.py openai/gpt-oss-20b
-#
-# writes fixtures/<name>-stream.json. The checkpoint is read from kaun's hub
-# cache, where the example's importer reads it, or from --dir, and is
-# downloaded with huggingface_hub when neither has it.
-#
-# --whole also runs transformers' whole model in this process and compares
-# every residual stream, every router decision and every logit with the
-# streamed ones. It is the check of this recorder, for checkpoints that fit:
-#
-#   ... reference_stream.py tiny-random/gpt-oss-mxfp4 --whole --window 4 --scale-offset 118
-#
-# --dtype bfloat16 runs transformers at the precision the model is served at,
-# experts dequantised to bfloat16 as its loader does. float32 over the same
-# dequantised weights is the reference of a float32 implementation; the gap
-# between the two recordings is what a bfloat16 implementation may differ by.
-# On CPU it is slow: 8 minutes of processor time for gpt-oss-20b.
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#   "torch==2.14.0",
+#   "transformers==5.17.0",
+#   "safetensors==0.8.0",
+#   "huggingface_hub==1.32.0",
+#   "accelerate==1.15.0",
+# ]
+# ///
+"""Record gpt-oss's references at sizes that do not fit in memory: the
+transformers implementation at float32 on CPU, one block at a time.
+
+    uv run apps/gpt-oss/test/gen/reference_stream.py openai/gpt-oss-20b
+
+writes test/fixtures/<name>-stream.json. transformers dequantises every
+expert when it loads the model, about 42 GB for gpt-oss-20b, so this
+recorder never builds the model. It reads a block's tensors from the
+safetensors files by name, dequantises that block's MXFP4 experts with
+transformers' own function, loads them into transformers' own
+GptOssDecoderLayer, runs the block on the residual stream of every prompt,
+records and frees it. The rotary tables, the two masks, the final norm and
+the head are transformers' too. Peak memory is one block's float32 experts,
+the dequantiser's temporaries and at the end the float32 head: 9.6 GB for
+gpt-oss-20b. The checkpoint is read from raven's hub cache, where the app's
+importer reads it, or from --dir, and is downloaded with huggingface_hub
+when neither has it.
+
+--whole also runs transformers' whole model in this process and compares
+every residual stream, every router decision and every logit with the
+streamed ones. It is the check of this recorder, for checkpoints that fit:
+
+    uv run apps/gpt-oss/test/gen/reference_stream.py tiny-random/gpt-oss-mxfp4 \
+      --whole --window 4 --scale-offset 118
+
+--dtype bfloat16 runs transformers at the precision the model is served at,
+experts dequantised to bfloat16 as its loader does. float32 over the same
+dequantised weights is the reference of a float32 implementation; the gap
+between the two recordings is what a bfloat16 implementation may differ by.
+On CPU it is slow: 8 minutes of processor time for gpt-oss-20b.
+"""
 import argparse, hashlib, json, os, resource, sys, time
 import torch, transformers, safetensors, huggingface_hub
 from safetensors import safe_open

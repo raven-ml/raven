@@ -1,17 +1,24 @@
-# Reference values for the text side of kaun's gpt-oss example: what the
-# o200k_harmony tokenizer makes of a set of strings, what the harmony renderer
-# makes of a set of conversations, and what the harmony parser reads in a set of
-# completions. Writes fixtures/harmony.json next to this script.
-#
-# Two references are consulted: the tiktoken encoding inside openai-harmony, and
-# the tokenizer.json of the checkpoint repository read by HuggingFace
-# tokenizers, which is the file the example loads. They must agree on every
-# string but those that spell <|endofprompt|>, which tokenizer.json holds as
-# token 200018 and the harmony encoding reads as plain text: tokenizer.json is
-# recorded there.
-#
-#   uv run --with openai-harmony==0.0.8 --with tokenizers==0.23.2 \
-#          --with huggingface_hub==1.32.0 reference_text.py
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#   "openai-harmony==0.0.8",
+#   "tokenizers==0.23.2",
+#   "huggingface_hub==1.32.0",
+# ]
+# ///
+"""Record gpt-oss's text references: what the o200k_harmony tokenizer makes
+of a set of strings, what the harmony renderer makes of a set of
+conversations, and what the harmony parser reads in a set of completions.
+
+    uv run apps/gpt-oss/test/gen/reference_text.py
+
+Writes test/fixtures/harmony.json. Two references are consulted: the
+tiktoken encoding inside openai-harmony, and the tokenizer.json of the
+checkpoint repository read by HuggingFace tokenizers, which is the file the
+app loads. They must agree on every string but those that spell
+<|endofprompt|>, which tokenizer.json holds as token 200018 and the harmony
+encoding reads as plain text: tokenizer.json is recorded there.
+"""
 import hashlib, json, os
 import openai_harmony, tokenizers, huggingface_hub
 from importlib.metadata import version
