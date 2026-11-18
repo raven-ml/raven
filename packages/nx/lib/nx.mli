@@ -3061,7 +3061,14 @@ type 'd pair = { q : 'd int64_t; k : 'd int64_t; len : 'd int64_t; tq : int }
 val causal : 'd pair -> 'd bool_t
 (** [causal p] holds where [p.k <= p.q + (p.len - p.tq)]: the last query row
     sees every key before the row's length, and each row before it one key
-    fewer. *)
+    fewer. It places query row [q] at position [p.q + (p.len - p.tq)], so a
+    call's rows are the last [tq] positions before the length, as when
+    decoding after a cache of earlier keys.
+
+    A lead index padded on the right, whose length counts its valid queries
+    and keys, must use the mask [p.k <= p.q] ([less_equal p.k p.q]). Under
+    [causal] its query row [q] sees only the keys up to [q - (tq - len)],
+    and its first [tq - len] query rows see none. *)
 
 val attention :
   ?scale:float ->
@@ -3099,12 +3106,19 @@ val attention :
     functions and broadcasts; another operation on them, or a read of one,
     raises naming [Nx.attention].
 
+    A sliding window of 128 keys and ALiBi's linear bias both measure from
+    the query's position as {!causal} places it:
+
     {[
-    let window p = Nx.(logical_and (causal p) (less p.q (add_s p.k 128L)))
-    let alibi slopes p s = Nx.(Infix.(s - cast float32 (p.q - p.k) * slopes))
-    (* slopes [hq; 1; 1] *)
+    let position p = Nx.(add p.q (sub_s p.len (Int64.of_int p.tq)))
+    let window p =
+      Nx.(logical_and (causal p) (less (position p) (add_s p.k 128L)))
+    let alibi slopes p s =
+      Nx.(Infix.(s - cast float32 (position p - p.k) * slopes))
+    (* slopes [hq; 1; 1], lengths [lead…] *)
     let o, lse =
-      Nx.attention ~mask:window ~score:(alibi slopes) ~acc:Nx.float32 ~kv q
+      Nx.attention ~lengths ~mask:window ~score:(alibi slopes)
+        ~acc:Nx.float32 ~kv q
     ]}
 
     [q]'s dtype is float16, bfloat16, float32 or float64, and [acc] is

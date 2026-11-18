@@ -3353,6 +3353,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.attention`'s window and ALiBi example measures from the query's
+  position, `p.q + (p.len - p.tq)`: from `p.q`, its window hid nothing when
+  decoding. `Nx.causal`'s doc states that right-padded rows need `p.k <= p.q`.
 - Add HDF5 to `Nx_io`, read-only: `load_hdf5` and `decode_hdf5` read the
   groups and datasets of a file in libhdf5's default format, following
   hard and soft links, and `Nx_io.Hdf5.values`, `window`, `chunk` and

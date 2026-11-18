@@ -855,6 +855,133 @@ let test_causal () =
     [| true; false; false; true; true; false |]
     (Nx.to_array (Nx.causal p))
 
+(* nx.mli's bounds for float32 in float32 with one-hot values, where [M] is
+   the weight and [|o|] too, at rows of [tk] keys whose scores lie within
+   [b], each within [eta], and whose [lse] lies within [r]: [o] within
+   [u{_q} + (e{^w} - 1) + γ(tk + 1, 2u) e{^w}] of each weight, relative,
+   and [lse] within [η + ε], [ε] being nx.cpu's for [tk] keys. *)
+let one_hot_bounds ~tk ~b ~eta ~r =
+  let eps = logsumexp_bound in32 tk r in
+  let w =
+    ((1. +. u32) *. ((2. *. eta) +. eps))
+    +. (((2. *. b) +. Float.log (Float.of_int tk)) *. u32)
+    +. (5. *. u32 /. (1. -. u32))
+  in
+  let o = u32 +. Float.expm1 w +. (gamma (tk + 1) (2. *. u32) *. Float.exp w) in
+  (o, eta +. eps)
+
+(* Right-padded rows under [p.k <= p.q] and under [Nx.causal], as nx.mli
+   states at [causal]: lengths 2 and 4 of four query rows, equal scores, and
+   one-hot values, so that [o] holds each row's weights. A hidden weight is
+   exactly zero. *)
+let test_right_padding () =
+  let q = f32 [| 2; 1; 4; 1 |] (Array.make 8 0.) in
+  let k = f32 [| 2; 1; 4; 1 |] (Array.make 8 0.) in
+  let v =
+    f32 [| 2; 1; 4; 4 |]
+      (Array.init 32 (fun i -> if (i / 4) mod 4 = i mod 4 then 1. else 0.))
+  in
+  let call mask =
+    fst
+      (Nx.attention ~lengths:(ints [| 2 |] [| 2; 4 |]) ~mask ~acc:Nx.float32
+         ~kv:(Nx.Dense { k; v }) q)
+  in
+  let t = 1. /. 3. and f = 0.25 in
+  let rel, _ = one_hot_bounds ~tk:4 ~b:0. ~eta:0. ~r:(Float.log 4.) in
+  let weights = array (float_rel ~rel ~abs:0.) in
+  equal ~msg:"p.k <= p.q" weights
+    [| 1.; 0.; 0.; 0.; 0.5; 0.5; 0.; 0.; 0.5; 0.5; 0.; 0.; 0.5; 0.5; 0.; 0.;
+       1.; 0.; 0.; 0.; 0.5; 0.5; 0.; 0.; t; t; t; 0.; f; f; f; f |]
+    (Nx.to_array (call (fun p -> Nx.less_equal p.Nx.k p.Nx.q)));
+  equal ~msg:"causal" weights
+    [| 0.; 0.; 0.; 0.; 0.; 0.; 0.; 0.; 1.; 0.; 0.; 0.; 0.5; 0.5; 0.; 0.;
+       1.; 0.; 0.; 0.; 0.5; 0.5; 0.; 0.; t; t; t; 0.; f; f; f; f |]
+    (Nx.to_array (call Nx.causal))
+
+(* nx.mli's window and ALiBi example *)
+
+let position p = Nx.(add p.q (sub_s p.len (Int64.of_int p.tq)))
+let window p =
+  Nx.(logical_and (causal p) (less (position p) (add_s p.k 128L)))
+let alibi slopes p s =
+  Nx.(Infix.(s - cast float32 (position p - p.k) * slopes))
+
+let example ~lengths ~kv ~slopes q =
+  let o, lse =
+    Nx.attention ~lengths ~mask:window ~score:(alibi slopes)
+      ~acc:Nx.float32 ~kv q
+  in
+  (o, lse)
+
+(* The example against its claim: query row [i] of [tq] stands at position
+   [i + len - tq], sees the keys up to it and fewer than 128 before it, and
+   each score falls by the head's slope times the key's distance from that
+   position. One-hot values make [o] the weights. Two lead indices of other
+   lengths, decoding one row, a chunk of rows and a whole sequence.
+
+   Each [q k] and ALiBi product is exact and their difference rounds once,
+   so a score [s] is within [u |s|]. Scores lie within [b = 0.75 + 127/16],
+   and [lse] within [0.75 + ln 128] of the [128] keys a row sees. The
+   bounds are then about [4.5e-5] for [o] and [6.6e-6] for [lse]; a hidden
+   weight is exactly zero. *)
+let test_window_example () =
+  let tk = 300 and hq = 2 and slope = [| 0x1p-4; 0x1p-8 |] in
+  let slopes = f32 [| hq; 1; 1 |] slope in
+  let b = 0.75 +. (127. *. slope.(0)) in
+  let o_rel, lse_abs =
+    one_hot_bounds ~tk ~b ~eta:(u32 *. b) ~r:(0.75 +. Float.log 128.)
+  in
+  let check ~tq lens =
+    let n = Array.length lens in
+    let qs = Array.init (n * hq * tq) (fun r -> Float.of_int (r mod 7) /. 8.) in
+    let ks = Array.init (n * tk) (fun j -> Float.of_int (j mod 5) /. 4.) in
+    let q = f32 [| n; hq; tq; 1 |] qs in
+    let k = f32 [| n; 1; tk; 1 |] ks in
+    let v =
+      f32 [| n; 1; tk; tk |]
+        (Array.init (n * tk * tk) (fun i ->
+             if (i / tk) mod tk = i mod tk then 1. else 0.))
+    in
+    let o, lse =
+      example ~lengths:(ints [| n |] lens) ~kv:(Nx.Dense { k; v }) ~slopes q
+    in
+    let o' = Array.make (n * hq * tq * tk) 0. in
+    let lse' = Array.make (n * hq * tq) neg_infinity in
+    for b = 0 to n - 1 do
+      for h = 0 to hq - 1 do
+        for i = 0 to tq - 1 do
+          let row = (((b * hq) + h) * tq) + i in
+          let at = i + lens.(b) - tq in
+          let seen j = j < lens.(b) && j <= at && at - j < 128 in
+          let s j =
+            (qs.(row) *. ks.((b * tk) + j))
+            -. (Float.of_int (at - j) *. slope.(h))
+          in
+          let m = ref neg_infinity in
+          for j = 0 to tk - 1 do
+            if seen j then m := Float.max !m (s j)
+          done;
+          let sum = ref 0. in
+          for j = 0 to tk - 1 do
+            if seen j then sum := !sum +. Float.exp (s j -. !m)
+          done;
+          let l = !m +. Float.log !sum in
+          lse'.(row) <- l;
+          for j = 0 to tk - 1 do
+            if seen j then o'.((row * tk) + j) <- Float.exp (s j -. l)
+          done
+        done
+      done
+    done;
+    let msg = Printf.sprintf "tq %d" tq in
+    equal ~msg:(msg ^ ": o") (array (float_rel ~rel:o_rel ~abs:0.)) o'
+      (Nx.to_array o);
+    equal ~msg:(msg ^ ": lse") (array (float lse_abs)) lse' (Nx.to_array lse)
+  in
+  check ~tq:1 [| 300; 200 |];
+  check ~tq:4 [| 250; 4 |];
+  check ~tq:300 [| 300; 300 |]
+
 (* A row whose visible scores are all [-∞] has [o = 0] and [lse = -∞], a NaN
    value at a visible key included, in either accumulator. *)
 let test_infinite_scores () =
@@ -1218,6 +1345,8 @@ let () =
          test "scores widened" test_scores_widened;
          test "no visible key" test_no_visible_key;
          test "causal" test_causal;
+         test "right padding" test_right_padding;
+         test "the window and ALiBi example" test_window_example;
          test "only infinite scores" test_infinite_scores;
          test "empty extents" test_empty_extents;
          test "a sum of zeros" test_zero;
