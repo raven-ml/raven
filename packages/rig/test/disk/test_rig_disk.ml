@@ -141,15 +141,16 @@ let poke b i c = B.write b Bigarray.char (fun a -> Bigarray.Array1.set a i c)
 
 (* Files *)
 
-(* This executable, and the directory it lies in, under _build: the suite and
-   its children write their files there, whatever directory they run from, and
-   remove them as they end. *)
+(* This executable, and the directory it lies in, under _build: each process of
+   the suite, its windtrap workers and its children, writes its files in a
+   directory of its own there, whatever directory it runs from. *)
 let exe =
   let e = Sys.executable_name in
   if Filename.is_relative e then Filename.concat (Sys.getcwd ()) e else e
 
 let root = Filename.dirname exe
-let dir = Filename.concat root "files"
+let dir = Filename.concat root (strf "files-%d" (Unix.getpid ()))
+
 let names = Atomic.make 0
 
 let clear dir =
@@ -157,9 +158,48 @@ let clear dir =
     Array.iter (fun f -> Sys.remove (Filename.concat dir f)) (Sys.readdir dir)
   else Sys.mkdir dir 0o755
 
-let removed dir =
+(* [gone n] is [true] if no process [n] runs, as signal 0 tells on POSIX
+   systems; elsewhere every process runs. *)
+let gone n =
+  match Unix.kill n 0 with
+  | () -> false
+  | exception Unix.Unix_error (ESRCH, _, _) -> true
+  | exception _ -> false
+
+(* [sweep ()] removes the directory of each process of the suite that is gone,
+   which a signal or windtrap's hard timeout ended before it removed it.
+   Another process may sweep the same directory at once. *)
+let sweep () =
+  Array.iter
+    (fun name ->
+      match Scanf.sscanf_opt name "files-%d%!" Fun.id with
+      | Some n when gone n -> (
+          let d = Filename.concat root name in
+          try
+            Array.iter
+              (fun f -> Sys.remove (Filename.concat d f))
+              (Sys.readdir d);
+            Sys.rmdir d
+          with Sys_error _ -> ())
+      | _ -> ())
+    (Sys.readdir root)
+
+(* [own_dir ()] sweeps, then makes this process's directory, which it removes
+   as it ends. windtrap starts each worker by running this executable again,
+   and the worker ends through the [at_exit] functions its start registered,
+   never past [run]; a runner that forked its workers would share the
+   directory, and these suites start none so. A fork is not the directory's
+   owner, and a child that writes no file makes none, since a signal may end
+   it. *)
+let own_dir () =
+  let owner = Unix.getpid () in
+  sweep ();
   clear dir;
-  Sys.rmdir dir
+  at_exit (fun () ->
+      if Unix.getpid () = owner then begin
+        clear dir;
+        Sys.rmdir dir
+      end)
 
 let new_path () =
   Filename.concat dir (strf "f%d" (Atomic.fetch_and_add names 1))
@@ -379,9 +419,25 @@ let device_facts () =
       Rig.budget disk,
       (Rig.computes disk, Rig.reaches disk host) )
 
+(* A process of the suite killed while it holds files leaves its directory,
+   which the next process's start removes. *)
+let test_swept () =
+  if Sys.win32 then skip ~reason:"no signal tells whether a process runs" ();
+  let ((ic, _) as held) = Unix.open_process_args exe [| exe; "hold" |] in
+  let pid = Unix.process_pid held in
+  let left = Filename.concat root (strf "files-%d" pid) in
+  equal text "holding" (input_line ic);
+  Unix.kill pid Sys.sigkill;
+  ignore (Unix.close_process held);
+  equal bool ~msg:"left by the killed process" true (Sys.file_exists left);
+  ignore (child [ "own-dir" ]);
+  equal bool ~msg:"removed by the next start" false (Sys.file_exists left)
+
 let the_disk =
   group ~timeout "the disk"
     [
+      test "a killed process's files are removed as another process starts"
+        test_swept;
       test
         "DISK has no arch and a budget of max_int, and neither computes nor \
          reaches the host's memory"
@@ -1947,12 +2003,8 @@ let without_descriptors f =
 (* Lowers this process's limit of open files, opens 8 files on the disk, takes
    every descriptor left, then opens a ninth file and reads the first again. *)
 let open_files_child () =
-  let dir = Filename.concat root "files-limit" in
-  clear dir;
-  let paths =
-    Array.init 9 (fun i ->
-        make_file ~path:(Filename.concat dir (strf "f%d" i)) (strf "f%d" i))
-  in
+  own_dir ();
+  let paths = Array.init 9 (fun i -> make_file (strf "f%d" i)) in
   limit_open_files ();
   let said = function
     | Ok f -> read (Rig_disk.buffer f)
@@ -1962,8 +2014,7 @@ let open_files_child () =
   Array.iter (fun b -> ignore (said b)) opened;
   without_descriptors (fun () ->
       Printf.printf "ninth: %s\n" (said (Rig_disk.of_file paths.(8)));
-      Printf.printf "first: %s\n" (said opened.(0)));
-  removed dir
+      Printf.printf "first: %s\n" (said opened.(0)))
 
 (* The threads of this process, from Linux's /proc/self/status. *)
 let threads () =
@@ -2107,8 +2158,18 @@ let limited_child op path =
     fds
     (Option.value ~default:"not lost" (Rig.lost disk))
 
+(* Makes this process's directory and a file in it, says so, and waits to be
+   killed. *)
+let hold_child () =
+  own_dir ();
+  ignore (make_file "held");
+  print_endline "holding";
+  ignore (In_channel.input_line stdin)
+
 let () =
   match Array.to_list Sys.argv with
+  | [ _; "own-dir" ] -> own_dir ()
+  | [ _; "hold" ] -> hold_child ()
   | [ _; "open-on"; ino ] -> open_on_child ino
   | [ _; "open-files" ] -> open_files_child ()
   | [ _; "limited"; op; path ] -> limited_child op path
@@ -2117,19 +2178,16 @@ let () =
   | [ _; "truncated-borrow"; op; kind; path ] ->
       truncated_borrow_child op kind path
   | _ ->
-      clear dir;
-      let code =
-        run "rig_disk"
-          [
-            the_disk;
-            copies;
-            borrows;
-            opening;
-            descriptors;
-            barriers;
-            models;
-            domains;
-          ]
-      in
-      removed dir;
-      exit code
+      own_dir ();
+      exit
+        (run "rig_disk"
+           [
+             the_disk;
+             copies;
+             borrows;
+             opening;
+             descriptors;
+             barriers;
+             models;
+             domains;
+           ])

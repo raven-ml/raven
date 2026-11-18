@@ -341,24 +341,16 @@ let path_trees =
     paths
 
 (* [with_files files f] is [f dir], with each (path, contents) of [files]
-   written under [dir], beside the executable in _build, and removed after. A
-   killed run leaves [dir], so it is cleared first. The native and bytecode
-   suites, which may run at once, each have their own. *)
+   written under [dir], a directory of the test's own, which the runner
+   removes as the test ends: the native and bytecode suites may run at once,
+   and windtrap's workers do. *)
 let with_files files f =
-  let dir = Sys.executable_name ^ ".cgroup" in
+  let dir = temp_dir ~prefix:"cgroup" () in
   let rec make path =
     if not (Sys.file_exists path) then (
       make (Filename.dirname path);
       Sys.mkdir path 0o755)
   in
-  let rec remove path =
-    if Sys.is_directory path then (
-      Array.iter (fun e -> remove (Filename.concat path e)) (Sys.readdir path);
-      Sys.rmdir path)
-    else Sys.remove path
-  in
-  if Sys.file_exists dir then remove dir;
-  Sys.mkdir dir 0o755;
   List.iter
     (fun (path, contents) ->
       let file = Filename.concat dir path in
@@ -366,7 +358,7 @@ let with_files files f =
       Out_channel.with_open_bin file (fun oc ->
           Out_channel.output_string oc contents))
     files;
-  Fun.protect ~finally:(fun () -> remove dir) (fun () -> f dir)
+  f dir
 
 let test_cgroup tree =
   let lines l = String.concat "" (List.map (fun s -> s ^ "\n") l) in

@@ -262,13 +262,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   device's memory, so a program on a remote GPU cannot check a footprint
   against it. Forward it as one request and answer, which bumps the
   protocol (DF design A). Found by DF
-- rig.pool's cgroup cases and rig.disk's descriptor, model and domain
-  cases fail under windtrap `-j 2` and pass at the default `-j 1` (fudge,
-  2026-11-17): their workers share files in the test directory
-  (test_rig_disk.ml:152-165 names every file `files/f<n>` from a counter
-  each process starts at 0, and `clear` empties the directory). Give each
-  worker its own temporary root, or mark the suites sequential. Found by
-  the NV fork review
 
 ## talon, hugin, brot, munin, quill
 

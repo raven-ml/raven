@@ -23,18 +23,60 @@ let max_descriptors = 64
 
 (* Files *)
 
-(* This executable's directory, under _build, holds the files, which the
-   suite removes as it ends. *)
+(* This executable's directory, under _build, holds each process's files in a
+   directory of its own, since windtrap's workers run at once. *)
 let exe =
   let e = Sys.executable_name in
   if Filename.is_relative e then Filename.concat (Sys.getcwd ()) e else e
 
-let dir = Filename.concat (Filename.dirname exe) "interrupt-files"
+let root = Filename.dirname exe
+let dir = Filename.concat root (strf "interrupt-files-%d" (Unix.getpid ()))
 
 let clear () =
   if Sys.file_exists dir then
     Array.iter (fun f -> Sys.remove (Filename.concat dir f)) (Sys.readdir dir)
   else Sys.mkdir dir 0o755
+
+(* [gone n] is [true] if no process [n] runs, as signal 0 tells on POSIX
+   systems; elsewhere every process runs. *)
+let gone n =
+  match Unix.kill n 0 with
+  | () -> false
+  | exception Unix.Unix_error (ESRCH, _, _) -> true
+  | exception _ -> false
+
+(* [sweep ()] removes the directory of each process of the suite that is gone,
+   which a signal or windtrap's hard timeout ended before it removed it.
+   Another process may sweep the same directory at once. *)
+let sweep () =
+  Array.iter
+    (fun name ->
+      match Scanf.sscanf_opt name "interrupt-files-%d%!" Fun.id with
+      | Some n when gone n -> (
+          let d = Filename.concat root name in
+          try
+            Array.iter
+              (fun f -> Sys.remove (Filename.concat d f))
+              (Sys.readdir d);
+            Sys.rmdir d
+          with Sys_error _ -> ())
+      | _ -> ())
+    (Sys.readdir root)
+
+(* A process sweeps, makes its directory as it starts and removes it as it
+   ends. windtrap starts each worker by running this executable again, and the
+   worker ends through the [at_exit] functions its start registered, never past
+   [run]; a runner that forked its workers would share the directory, and this
+   suite starts none so. A forked child is not the directory's owner. *)
+let () =
+  let owner = Unix.getpid () in
+  sweep ();
+  clear ();
+  at_exit (fun () ->
+      if Unix.getpid () = owner then begin
+        clear ();
+        Sys.rmdir dir
+      end)
 
 let path name = Filename.concat dir name
 
@@ -328,7 +370,6 @@ let test_called () =
   greater ~msg:"landings outside every lock" int ~than:0 outside
 
 let () =
-  clear ();
   let code =
     run "rig_disk.interrupt"
       [
@@ -357,6 +398,4 @@ let () =
           ];
       ]
   in
-  clear ();
-  Sys.rmdir dir;
   exit code
