@@ -2667,8 +2667,9 @@ val contract :
   ('c, 'e, 'd) t ->
   ('v, 's, 'd) t
 (** [contract dt p a b] is [round_dt (init + Σ a · b)] over [p]'s summed names,
-    for each index of [p]'s result. [sizes] gives the extents of names inside
-    groups that neither operand's shape gives alone.
+    for each index of [p]'s result, [init] (default none) broadcast to the
+    result's shape. [sizes] gives the extents of names inside groups that
+    neither operand's shape gives alone.
 
     Each operand's dtype must be exact into [dt] ({!Dtype.exact}), so
     [contract dt p a b] is [contract dt p (cast dt a) (cast dt b)]. A real
@@ -2710,7 +2711,7 @@ val contract :
     paired extents differ; a group's extents do not multiply to its axis, or
     it leaves two extents unknown; a unit axis's extent is not [1]; a name
     in [sizes] is not in [p] or is there twice, or its size is negative; or
-    [init]'s shape is not the result's. *)
+    [init]'s shape does not broadcast to the result's. *)
 
 val einsum :
   ?sizes:(string * int) list ->
@@ -2803,6 +2804,7 @@ val cross : ?axis:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     if [a] or [b] does not have 3 elements along it, or for booleans. *)
 
 val conv :
+  ?init:('v, 's, 'd) t ->
   ?stride:int array ->
   ?padding:(int * int) array ->
   ?dilation:int array ->
@@ -2820,22 +2822,27 @@ val conv :
     to ones; and [t = (s + lo + hi - e) / stride + 1], none where the padded
     axis is shorter than [e], the dilated kernel's extent
     [dilation (k - 1) + 1]. A kernel extent of [0] sums no term: [e] is [0]
-    and each element is [+0]. Under [groups]
+    and each element is [init]'s, or [+0] without [init]. Under [groups]
     (default [1]) the channels split into [groups] runs, output channels
     [g · o / groups] to [(g + 1) · o / groups - 1] reading input run [g]
     alone.
 
     Each output sums its [K] products, one per tap and channel of its group,
-    from [+0], in the dtype's carrier, as {!contract} does, and rounds
-    once: the float formats narrower than 32 bits sum at [float32]. Integers
-    wrap. Before rounding it is within [γ(β(K), u) Σ|x||w|] of the exact
-    sum, [γ], [β] and [u] as {!contract} states, with [β(m) + t - 1] in
+    from [+0], in the dtype's carrier, as {!contract} does; [init] (default
+    none), broadcast to the result's shape, is then added to that sum in
+    the carrier in one addition, as {!contract} adds its [init], and the
+    result rounds once: the float formats narrower than 32 bits sum at
+    [float32]. Integers wrap. Before rounding it is within
+    [u|r| + (1 + u) γ(β(K), u) Σ|x||w|] of the exact [r = init + Σ x·w],
+    the [u|r|] term [0] without [init], [γ], [β] and [u] as {!contract}
+    states, with [β(m) + t - 1] in
     place of [β(K)] over channels cut across devices, [m] and [t] as
     {!contract} states them. On one device it gives
     the same bits on every run of the same computation ({!section-reductions}),
     computing as follows:
     - With other than one input channel a group, [c' = c / groups], it is
-      one {!contract} of [x]'s windows with [w], batched over the groups:
+      one {!contract} of [x]'s windows with [w], from [init], batched over
+      the groups:
       an output's products are numbered [q · c' + i], [q] the tap's place
       in C order of the taps' indices and [i] the channel among the [c']
       its group reads, and summed as {!contract} sums them. [x] padded is a
@@ -2843,15 +2850,18 @@ val conv :
       view of it.
     - With one, as a depthwise convolution has, it is one reduction over
       [x]'s padded windows, never stored, of the products numbered
-      [i · Q + q], [Q] the taps, summed as {!sum} does.
+      [i · Q + q], [Q] the taps, summed as {!sum} does into the carrier, to
+      which [init] is then added.
 
     Raises [Invalid_argument] if [x] has fewer than three axes; [w] has
     another rank; [stride], [padding] or [dilation] do not have [K] entries;
     a stride or a dilation is below [1]; [groups] is below [1] or does not
-    divide [o]; [x]'s channels are not [groups] times [w]'s last extent; or
-    the dtype is a boolean. *)
+    divide [o]; [x]'s channels are not [groups] times [w]'s last extent;
+    the dtype is a boolean; or [init]'s shape does not broadcast to the
+    result's. *)
 
 val conv_transpose :
+  ?init:('v, 's, 'd) t ->
   ?stride:int array ->
   ?padding:(int * int) array ->
   ?dilation:int array ->
@@ -2863,13 +2873,14 @@ val conv_transpose :
     for the [z] of the least spatial extents whose [conv z w], under the same
     arguments, has [x]'s shape [[n; t…; o]], it is the [[n; s…; c]] value
     with [sum (mul (conv z w) x) = sum (mul z (conv_transpose x w))] for
-    every such [z]: [s = (t - 1) stride + e - lo - hi], [e] as {!conv}
-    states, or [0] where that is negative or [t = 0]. It is {!conv} at stride
-    one of [x] with [stride - 1] zeros between its elements, by [w] reversed
-    along its spatial axes and with its channels exchanged, and sums as
-    {!conv} states with [o / groups] channels a group: one {!contract} over
-    [x] spread and padded, a copy where zeros spread or pad it, or, with
-    one channel a group, one reduction that never stores it.
+    every such [z], plus [init]: [s = (t - 1) stride + e - lo - hi], [e] as
+    {!conv} states, or [0] where that is negative or [t = 0]. It is {!conv}
+    at stride one of [x] with [stride - 1] zeros between its elements, by
+    [w] reversed along its spatial axes and with its channels exchanged, and
+    sums as {!conv} states, from [init], with [o / groups] channels a group:
+    one {!contract} over [x] spread and padded, a copy where zeros spread or
+    pad it, or, with one channel a group, one reduction that never stores
+    it.
 
     Raises [Invalid_argument] as {!conv}, reading [o] from [x]'s last axis, or
     if no input has a [conv] of [x]'s shape. *)

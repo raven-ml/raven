@@ -177,6 +177,17 @@ let inverse order =
 
 let operand x = (D.name (Prim.dtype x), Prim.shape x)
 
+let init_to ~by shape init =
+  let fits =
+    match Prim.merge (Prim.shape init) shape with
+    | Ok s -> s = shape
+    | Error _ -> false
+  in
+  if not fits then
+    invalid_argf "%s: ~init is %a, which does not broadcast to the result's %a"
+      by pp_shape (Prim.shape init) pp_shape shape;
+  Eval.broadcast ~by shape init
+
 (* [pl] applied to [a] and [b]: each reshaped to its names, contracted, and
    moved into the result's layout. *)
 let run (type v s a b c e d) ~by ?sum ~acc ?init (dt : (v, s) D.t) pl
@@ -185,9 +196,7 @@ let run (type v s a b c e d) ~by ?sum ~acc ?init (dt : (v, s) D.t) pl
   let init =
     Option.map
       (fun i ->
-        if not (Prim.has_shape i pl.shape) then
-          invalid_argf "%s: ~init is %a where the result is %a" by pp_shape
-            (Prim.shape i) pp_shape pl.shape;
+        let i = init_to ~by pl.shape i in
         let i = Eval.reshape ~by pl.names i in
         if identity pl.order then i else permute ~by (inverse pl.order) i)
       init

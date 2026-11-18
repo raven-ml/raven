@@ -1032,9 +1032,10 @@ let test_shortcut_views () =
   check "pad of no element, a cut of a kept axis" f64 (S2.split ~axis:2)
     (Nx.pad widths 5. (z [| 2; 0; 5 |]))
     (Nx.pad widths 5. (split 2 (z [| 2; 0; 5 |])));
-  (* The channels, kept after a spatial axis the result changes. *)
+  (* The channels, which a convolution sums: their cut closes, as with
+     taps, though the result has as many channels. *)
   let x = z [| 1; 4; 3 |] and w = z [| 3; 0; 3 |] in
-  check "conv with no tap, cut channels" f64 (S2.split ~axis:2) (Nx.conv x w)
+  check "conv with no tap, cut channels" f64 S2.on (Nx.conv x w)
     (Nx.conv (split 2 x) (whole w));
   check "array_equal, a transposed operand" Nx.bool S2.on
     (Nx.array_equal (Nx.transpose a) (z [| 3; 3 |]))

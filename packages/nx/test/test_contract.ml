@@ -1731,7 +1731,8 @@ let errors =
             (x [| 2; 3 |])
             (x [| 3; 2 |]));
       refuses "an init of another shape"
-        "Nx.contract: ~init is [3; 2] where the result is [2; 2]" (fun () ->
+        "Nx.contract: ~init is [3; 2], which does not broadcast to the \
+         result's [2; 2]" (fun () ->
           Nx.contract Nx.float32
             ~init:(x [| 3; 2 |])
             (Nx.Pattern.v "i k, k j -> i j | k")
@@ -1786,6 +1787,14 @@ let init =
           in
           equal (array float_exact) (Array.make 64 (1. +. 0x1p-23))
             (Nx.to_array y));
+      (* A row of [init] broadcast down the result: the bits of [init]
+         given whole. *)
+      test "init broadcasts to the result's shape" (fun () ->
+          let row = host D.Float32 [| 2 |] [| 0.5; 0.25 |] in
+          let whole = Nx.copy (Nx.broadcast_to [| 2; 2 |] row) in
+          equal (array float_exact)
+            (read (Nx.contract ~init:whole Nx.float32 p (a ()) (b ())))
+            (read (Nx.contract ~init:row Nx.float32 p (a ()) (b ()))));
       test "a donated init is consumed" (fun () ->
           let c = Nx.donate (Nx.copy (c ())) in
           let y = Nx.contract ~init:c Nx.float32 p (a ()) (b ()) in
@@ -3055,8 +3064,14 @@ module Conv = struct
         (s, lo +. t +. e, mag +. Float.abs p))
       c.xs c.ws c
 
-  let conv_of c x w =
-    Nx.conv ~stride:c.stride ~padding:c.padding ~dilation:c.dilation ~groups:c.groups x w
+  let conv_of ?init c x w =
+    Nx.conv ?init ~stride:c.stride ~padding:c.padding ~dilation:c.dilation
+      ~groups:c.groups x w
+
+  (* The shape of [c]'s result. *)
+  let out_shape c =
+    let t = Array.init (Array.length c.spatial) (windows c) in
+    Array.concat [ [| c.n |]; t; [| c.groups * c.og |] ]
 
   let run (type v s) (dt : (v, s) D.t) c =
     let x = Nx.cast dt (Nx.create Nx.float64 (x_shape c) c.xs) in
@@ -3204,6 +3219,104 @@ module Conv = struct
             equal ~msg:name (list string) [] bad)
           dtypes)
 
+  (* [vs] rounded once from float64 to [dt], read back. *)
+  let rounded_to (type v s) (dt : (v, s) D.t) vs =
+    let n = Array.length vs in
+    Nx.to_array
+      (Nx.cast Nx.float64 (Nx.cast dt (Nx.create Nx.float64 [| n |] vs)))
+
+  (* Integers up to 40, held by every float dtype: a sum of up to 81 of
+     their products is exact in float32 and may lie between two float16 or
+     bfloat16 values. *)
+  let wide_case =
+    case_of (fun m ->
+        Gen.(array ~size:(constant m) (map Float.of_int (int_range (-40) 40))))
+
+  (* One window of three taps, every product [39 · 41], over one and two
+     input channels a group, and a kernel axis of no tap: sums of 4797 and
+     9594, which neither float16 nor bfloat16 holds. Drawn, each is a few
+     cases in a hundred, which some seeds never reach. *)
+  let init_examples =
+    let one ~cg ~taps =
+      let c0 =
+        { n = 1; spatial = [| 3 |]; groups = 1; cg; og = 2; taps = [| taps |];
+          stride = [| 1 |]; dilation = [| 1 |]; padding = [| (0, 0) |];
+          xs = [||]; ws = [||] }
+      in
+      { c0 with
+        xs = Array.make (numel (x_shape c0)) 39.;
+        ws = Array.make (numel (w_shape c0)) 41. }
+    in
+    [ one ~cg:1 ~taps:3; one ~cg:2 ~taps:3; one ~cg:2 ~taps:0 ]
+
+  (* With an [init] each output is [round (init + Σ x w)], rounded once
+     from the sum in float32, which holds these sums exactly. The [init]
+     cancels each sum as the dtype holds it, off by a few units, so that a
+     sum rounded before [init] joins would give the offset alone. *)
+  let law_init =
+    prop ~examples:init_examples
+      "conv from an init rounds once, at every float of 32 bits or fewer"
+      wide_case (fun c ->
+        let sums = reference c in
+        let outputs = Array.length sums > 0 in
+        cover "one input channel a group, under an output" (c.cg = 1 && outputs);
+        cover "other than one input channel a group, under an output"
+          (c.cg <> 1 && outputs);
+        cover "a kernel axis of no tap, under an output"
+          (Array.mem 0 c.taps && outputs);
+        List.iter
+          (fun (name, D.Any dt) ->
+            let round = rounded_to dt in
+            let offsets = Array.mapi (fun i _ -> Float.of_int ((i mod 7) - 3)) sums in
+            let init = round (Array.map2 ( -. ) offsets (round sums)) in
+            let want = round (Array.map2 ( +. ) init sums) in
+            let twice = round (Array.map2 ( +. ) init (round sums)) in
+            if name <> "float32" then
+              cover (name ^ ": an output two roundings miss") (want <> twice);
+            let at vs s = Nx.cast dt (Nx.create Nx.float64 s vs) in
+            let init = at init (out_shape c) in
+            let y = conv_of ~init c (at c.xs (x_shape c)) (at c.ws (w_shape c)) in
+            equal ~msg:name (array float_exact) want
+              (Nx.to_array (Nx.cast Nx.float64 y)))
+          [ ("float16", D.Any D.Float16); ("bfloat16", D.Any D.Bfloat16);
+            ("float32", D.Any D.Float32) ])
+
+  (* At float32 and float64 the sum's dtype is the accumulator's, so
+     rounding it before [init] joins changes nothing: conv from an [init]
+     has the bits of conv followed by {!Nx.add}, for an [init] of the
+     result's shape and for one broadcast to it. An output without
+     products is [init] itself, which no addition touches. *)
+  let law_add =
+    prop "conv from an init is conv then add, at float32 and float64"
+      float_case (fun c ->
+        let outputs = numel (out_shape c) > 0 in
+        let products = c.cg > 0 && not (Array.mem 0 c.taps) in
+        cover "one input channel a group, under an output" (c.cg = 1 && outputs);
+        cover "output channels past 4, over rows past 4" (chained c);
+        cover "no product, under an output" ((not products) && outputs);
+        let m = Array.length c.xs in
+        let draw n =
+          Array.init n (fun i -> if m = 0 then 0.5 else 0.75 *. c.xs.(i mod m))
+        in
+        let bits y = Array.map Int64.bits_of_float (Nx.to_array (Nx.cast Nx.float64 y)) in
+        List.iter
+          (fun (name, D.Any dt) ->
+            let at vs s = Nx.cast dt (Nx.create Nx.float64 s vs) in
+            let x = at c.xs (x_shape c) and w = at c.ws (w_shape c) in
+            let o = c.groups * c.og in
+            let whole = at (draw (numel (out_shape c))) (out_shape c) in
+            let bias = at (draw o) [| o |] in
+            let y = conv_of c x w in
+            let plus i =
+              if products then Nx.add y i
+              else Nx.copy (Nx.broadcast_to (out_shape c) i)
+            in
+            equal ~msg:(name ^ ", an init of the result's shape") (array int64)
+              (bits (plus whole)) (bits (conv_of ~init:whole c x w));
+            equal ~msg:(name ^ ", an init broadcast") (array int64)
+              (bits (plus bias)) (bits (conv_of ~init:bias c x w)))
+          [ ("float32", D.Any D.Float32); ("float64", D.Any D.Float64) ])
+
   (* The least input extent along axis [i] whose convolution has [t]
      windows, searched from the count, or [None] where no extent has. The
      count grows by at most one per element, so the search stops past
@@ -3281,6 +3394,16 @@ module Conv = struct
           equal ~msg:"float32" (array float_exact) want (at D.Float32);
           equal ~msg:"float16" (array float_exact) want (at D.Float16);
           equal ~msg:"int32" (array float_exact) want (at D.Int32);
+          (* Small integers again: from an [init], each output is its sum
+             plus [init]'s element. *)
+          let init = Nx.init Nx.float64 z_shape (fun i -> Float.of_int ((Array.fold_left ( + ) 0 i mod 3) - 1)) in
+          equal ~msg:"from an init" (array float_exact)
+            (Array.map2 ( +. ) want (Nx.to_array init))
+            (Nx.to_array
+               (Nx.cast Nx.float64
+                  (Nx.conv_transpose ~init:(Nx.cast D.Float16 init) ~stride
+                     ~padding ~dilation ~groups (Nx.cast D.Float16 g)
+                     (Nx.cast D.Float16 w))));
           let conv = Nx.conv ~stride ~padding ~dilation ~groups z w in
           let lhs = Nx.item [] (Nx.sum (Nx.mul conv g)) in
           let rhs = Nx.item [] (Nx.sum (Nx.mul z y)) in
@@ -3299,7 +3422,16 @@ module Conv = struct
     invalid (fun () -> Nx.conv ~groups:2 x w);
     invalid (fun () -> Nx.conv (Nx.zeros Nx.bool [| 1; 5; 4 |]) (Nx.zeros Nx.bool [| 2; 3; 4 |]));
     invalid (fun () -> Nx.conv_transpose x w);
-    invalid (fun () -> Nx.conv_transpose ~padding:[| (3, 3) |] (Nx.zeros Nx.float32 [| 1; 0; 2 |]) w)
+    invalid (fun () -> Nx.conv_transpose ~padding:[| (3, 3) |] (Nx.zeros Nx.float32 [| 1; 0; 2 |]) w);
+    raises_match
+      (Exn.invalid_arg
+         ~sub:"Nx.conv: ~init is [3], which does not broadcast to the result's [1; 3; 2]")
+      (fun () -> Nx.conv ~init:(Nx.zeros Nx.float32 [| 3 |]) x w);
+    raises_match
+      (Exn.invalid_arg ~sub:"Nx.conv_transpose: ~init is [2]")
+      (fun () ->
+        Nx.conv_transpose ~init:(Nx.zeros Nx.float32 [| 2 |])
+          (Nx.zeros Nx.float32 [| 1; 3; 2 |]) w)
 
   (* Three products reach one output: 2048 then 1 and 1 sum to 2048 at
      float16, but to 2050 at float32, which float16 holds. *)
@@ -3311,6 +3443,33 @@ module Conv = struct
     let channels = f16 [| 1; 1; 3 |] [| 2048.; 1.; 1. |] in
     equal (array float_exact) [| 2050. |]
       (Nx.to_array (Nx.conv_transpose channels (f16 [| 3; 1; 1 |] [| 1.; 1.; 1. |])))
+
+  (* A sum of 2048 and 1 is exact at float32 and a tie at float16, where
+     it rounds to 2048, and a bias of -2048 then leaves 1, which two
+     roundings would make 0; at bfloat16 the same of 256 and 1. On each
+     path: conv over two channels and over two taps of one channel, and
+     its transpose so. *)
+  let test_narrow_init () =
+    List.iter
+      (fun (name, D.Any dt, big) ->
+        let v s vs = Nx.cast dt (Nx.create Nx.float64 s vs) in
+        let bias = v [| 1 |] [| -.big |] in
+        let ones s = v s (Array.make (numel s) 1.) in
+        let check msg want y =
+          equal ~msg:(name ^ ", " ^ msg) (array float_exact) want
+            (Nx.to_array (Nx.cast Nx.float64 y))
+        in
+        check "two channels" [| 1. |]
+          (Nx.conv ~init:bias (v [| 1; 1; 2 |] [| big; 1. |]) (ones [| 1; 1; 2 |]));
+        check "two taps" [| 1. |]
+          (Nx.conv ~init:bias (v [| 1; 2; 1 |] [| big; 1. |]) (ones [| 1; 2; 1 |]));
+        check "the transpose, two channels" [| 1. |]
+          (Nx.conv_transpose ~init:bias (v [| 1; 1; 2 |] [| big; 1. |])
+             (ones [| 2; 1; 1 |]));
+        check "the transpose, two taps" [| 0.; 1.; 1. -. big |]
+          (Nx.conv_transpose ~init:bias (v [| 1; 2; 1 |] [| big; 1. |])
+             (ones [| 1; 2; 1 |])))
+      [ ("float16", D.Any D.Float16, 2048.); ("bfloat16", D.Any D.Bfloat16, 256.) ]
 
   let test_wrap () =
     let i8 s vs = Nx.create Nx.int8 s vs in
@@ -3361,7 +3520,61 @@ module Conv = struct
       (Nx.conv ~dilation:[| 3 |] ~padding:[| (-2, 0) |] (f32 [| 1; 1; 4 |] 1.) w);
     zeros [| 1; 5; 4 |]
       (Nx.conv_transpose ~dilation:[| 3 |] (f32 [| 1; 6; 2 |] 1.) w);
-    zeros [| 1; 5; 4 |] (Nx.conv_transpose (f32 [| 1; 6; 2 |] 1.) w)
+    zeros [| 1; 5; 4 |] (Nx.conv_transpose (f32 [| 1; 6; 2 |] 1.) w);
+    (* From an [init], each element is [init]'s: no addition touches it, so
+       a [-0] and a NaN keep their bits, as without channels to sum. *)
+    let bits y = Array.map Int64.bits_of_float (Nx.to_array (Nx.cast Nx.float64 y)) in
+    let kept msg init y =
+      let s = Nx.shape y in
+      equal ~msg (array int64) (bits (Nx.copy (Nx.broadcast_to s init))) (bits y)
+    in
+    let init = Nx.create Nx.float32 [| 2 |] [| -0.; Float.nan |] in
+    kept "no tap" init (Nx.conv ~init (f32 [| 1; 5; 4 |] 1.) w);
+    kept "no channel" init
+      (Nx.conv ~init (f32 [| 1; 5; 0 |] 1.) (f32 [| 2; 3; 0 |] 1.));
+    let init = Nx.create Nx.float32 [| 4 |] [| -0.; Float.nan; -0.; 1. |] in
+    kept "the transpose, no tap" init
+      (Nx.conv_transpose ~init (f32 [| 1; 6; 2 |] 1.) w)
+
+  (* A kernel of no tap reads every operand where it lies, as a kernel of
+     taps does: the result takes [x]'s cut of the batch, and an operand
+     alone on another device raises, [init] or not. *)
+  let test_no_taps_routing () =
+    let f32 s v = Nx.create Nx.float32 s (Array.make (numel s) v) in
+    let x = f32 [| 2; 5; 4 |] 1. and w = f32 [| 2; 0; 4 |] 1. in
+    let init = Nx.create Nx.float32 [| 2 |] [| -0.; 3. |] in
+    let split = S2.split ~axis:0 in
+    let y =
+      Nx.conv ~init:(Nx.place S2.on init) (Nx.place split x) (Nx.place S2.on w)
+    in
+    equal bool ~msg:"x's cut of the batch" true
+      (Nx.Placement.equal split (Nx.placement y));
+    equal ~msg:"init's elements" (array int64)
+      (Array.map Int64.bits_of_float
+         (Array.concat (List.init 12 (fun _ -> [| -0.; 3. |]))))
+      (Array.map Int64.bits_of_float (read y));
+    (* Channels cut with as many output channels: the cut closes, as with
+       taps, though the result has an axis of that extent there. *)
+    let xc = f32 [| 2; 5; 2 |] 1. and none = f32 [| 2; 0; 2 |] 1. in
+    let y = Nx.conv (Nx.place (S2.split ~axis:2) xc) (Nx.place S2.on none) in
+    equal bool ~msg:"x's channel cut closes" true
+      (Nx.Placement.equal S2.on (Nx.placement y));
+    let taps = f32 [| 2; 1; 2 |] 1. in
+    equal bool ~msg:"as it does with taps" true
+      (Nx.Placement.equal S2.on
+         (Nx.placement
+            (Nx.conv (Nx.place (S2.split ~axis:2) xc) (Nx.place S2.on taps))));
+    let at k v = Nx.place (Nx.Placement.device S2.v (Nx_support.memory k)) v in
+    let refused ~by msg f =
+      raises_match ~msg (Exn.invalid_arg ~sub:(by ^ ": ")) (fun () ->
+          ignore (f ()))
+    in
+    refused ~by:"Nx.conv" "w on another device" (fun () ->
+        Nx.conv (at 0 x) (at 1 w));
+    refused ~by:"Nx.conv" "init on another device" (fun () ->
+        Nx.conv ~init:(at 1 init) (at 0 x) (at 0 w));
+    refused ~by:"Nx.conv_transpose" "the transpose, w on another device"
+      (fun () -> Nx.conv_transpose (at 0 (f32 [| 1; 6; 2 |] 1.)) (at 1 w))
 
   (* A [[1; 0; 1]] input at stride 3 and padding (1, 1) has one window: the
      transpose of that count has an input to find. *)
@@ -3428,13 +3641,18 @@ module Conv = struct
         law_conv;
         law_order;
         law_bound;
+        law_init;
+        law_add;
         law_transpose;
         test "float16 sums at float32" test_narrow;
+        test "an init joins before the one rounding" test_narrow_init;
         test "integers wrap" test_wrap;
         test "conv_transpose finds an input shorter than its formula's"
           test_transpose_short;
         test "each refusal names its function" test_refusals;
         test "a kernel of no tap sums no term" test_no_taps;
+        test "a kernel of no tap reads its operands where they lie"
+          test_no_taps_routing;
         test "a dead operand names the function called" test_dead_names;
         test "holds its input padded once" test_memory;
       ]

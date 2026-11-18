@@ -741,29 +741,39 @@ let numel x =
    axis that no device cuts is sliced to its first element first, a view,
    so the work grows with the result and with a cut reduced axis's windows
    alone. The map loads that reduction broadcast to [shape]. *)
-let leaf_beside (type v s w r d) ~by (x : (w, r, d) t) (dt : (v, s) D.t)
-    shape (out : (v, s) E.t) : (v, s, d) t =
-  let layout = contiguous ~by shape in
-  let map (type a b) (y : (a, b, d) t) =
-    let prog = P.of_exprs ~ins:[| D.Any (dtype y) |] [| E.any out |] in
-    let z, () =
-      Eval.eval ~by
-        (Value.Map
-           {
-             layout;
-             prog;
-             outs = Value.[ dt ];
-             loads = [| Plain y |];
-             at = None;
-           })
-    in
-    z
+let rec leaf_beside : type v s w r d.
+    by:string -> (w, r, d) t -> (v, s) D.t -> int array -> (v, s) E.t ->
+    (v, s, d) t =
+ fun ~by x dt shape out ->
+  let (Value.Any y) = load_beside ~by x shape in
+  let prog = P.of_exprs ~ins:[| D.Any (dtype y) |] [| E.any out |] in
+  let z, () =
+    Eval.eval ~by
+      (Value.Map
+         {
+           layout = contiguous ~by shape;
+           prog;
+           outs = Value.[ dt ];
+           loads = [| Plain y |];
+           at = None;
+         })
   in
-  if Prim.has_shape x shape then map x
+  z
+
+(* [x] as a load of [shape] for a map that reads none of it: [x] itself at
+   [shape], else [leaf_beside]'s reduction broadcast to [shape]. With
+   [~keep] only those of [x]'s axes are kept, where their extents are
+   [shape]'s, and every other is reduced, so that no cut reaches the result
+   by an extent it shares with [shape] by chance. *)
+and load_beside : type w r d.
+    by:string -> ?keep:int list -> (w, r, d) t -> int array -> d Value.any =
+ fun ~by ?keep x shape ->
+  if keep = None && Prim.has_shape x shape then Value.Any x
   else
     let xs = Prim.shape x in
     let r = Array.length xs and n = Array.length shape in
-    let kept a = a < n && xs.(a) = shape.(a) in
+    let named a = match keep with None -> true | Some l -> List.mem a l in
+    let kept a = named a && a < n && xs.(a) = shape.(a) in
     let dropped = List.filter (fun a -> not (kept a)) (List.init r Fun.id) in
     let (Value.Any y) =
       if dropped = [] then Value.Any x
@@ -794,7 +804,7 @@ let leaf_beside (type v s w r d) ~by (x : (w, r, d) t) (dt : (v, s) D.t)
     let ones =
       Array.init n (fun a -> if a < r && kept a then shape.(a) else 1)
     in
-    map (Eval.broadcast ~by shape (Eval.reshape ~by ones y))
+    Value.Any (Eval.broadcast ~by shape (Eval.reshape ~by ones y))
 
 (* [v] in [dt] and [shape], computed beside [x] ({!leaf_beside}). *)
 let fill_beside ~by x dt shape v = leaf_beside ~by x dt shape (const ~by dt v)
@@ -5128,25 +5138,79 @@ let combine_patches ~output_size ~kernel_size ~stride ~dilation ~padding p =
   combine_patches_by ~by:"Nx.combine_patches" ~output_size ~kernel_size ~stride
     ~dilation ~padding p
 
+(* The result of [shape] of a convolution of [x] by [w] that sums no term:
+   [init]'s element, its bits kept, or [+0]. One map loads every operand,
+   so that it computes where they lie together and a misplaced one raises,
+   as an operation reading them would. [x] keeps its batch axis alone, the
+   one it shares with the result: a cut of another axis, of an extent the
+   result has there by chance, reaches the result through none. *)
+let no_term ~by ?init x w shape =
+  let dt = dtype x in
+  let extra, out =
+    match init with
+    | None -> ([], const ~by dt (D.zero dt))
+    | Some i -> ([ Value.Any i ], E.input 2 dt)
+  in
+  let loads =
+    load_beside ~by ~keep:[ 0 ] x shape
+    :: load_beside ~by ~keep:[] w shape
+    :: extra
+  in
+  let ins =
+    Iarray.of_list (List.map (fun (Value.Any v) -> D.Any (dtype v)) loads)
+  in
+  let y, () =
+    Eval.eval ~by
+      (Value.Map
+         {
+           layout = contiguous ~by shape;
+           prog = P.of_exprs ~ins [| E.any out |];
+           outs = Value.[ dt ];
+           loads =
+             Iarray.of_list (List.map (fun (Value.Any v) -> Value.Plain v) loads);
+           at = None;
+         })
+  in
+  y
 
-
-(* +0 of [x]'s dtype and of [shape], beside [x]: a sum over no term. *)
-let no_term ~by x shape = fill_beside ~by x (dtype x) shape (D.zero (dtype x))
+(* [windows_of]'s one reduction over [loop] of [prog]'s products into
+   [into], reshaped to [out]: [x'] through a padded load, [w] broadcast. *)
+let depthwise ~by ~loop ~axes ~prog ~pad ~out x' w into =
+  let y, () =
+    Eval.eval ~by
+      (Value.Reduce
+         {
+           layout = contiguous ~by loop;
+           axes;
+           prog;
+           reductions = Value.[ Monoid (Sum, 0, into) ];
+           loads =
+             [|
+               Padded { x = x'; fill = D.zero (dtype x'); pad };
+               Plain (Eval.broadcast ~by loop w);
+             |];
+         })
+  in
+  Eval.reshape ~by out y
 
 (* The windows of each output channel over [x], [[n; s…; c]], for [w] laid out
    as [[g; oc; ic; k…]] ([g] groups of [oc] output and [ic] input channels),
-   [interior] zeros going between [x]'s elements. A padding that cuts more
-   than an axis holds leaves it empty, with no window. A kernel axis of no
-   tap sums no term.
+   [interior] zeros going between [x]'s elements, from [init] broadcast to
+   the result. A padding that cuts more than an axis holds leaves it empty,
+   with no window. A kernel axis of no tap sums no term: the result is
+   [init]'s elements, or [+0], from a map over every operand ([no_term]).
 
    With other than one input channel a group, it is one contraction of the
    windows of [x] padded, a copy, as a view [[n; t…; g; k…; ic]], with [w]
    as [[g; oc; k…; ic]], batched over the groups, summing the taps then the
-   channels, as the kernel sums its pairs. With one, it is one reduction over
-   the loop [[n; t…; g; oc; ic; k…]] that reads [x], its channels split into
-   groups and broadcast over [oc], through a padded load whose windows
-   append the taps, and sums [ic] and the taps. *)
-let windows_of ~by ~stride ~lo ~hi ~interior ~dilation x w =
+   channels, as the kernel sums its pairs, [init] moved to the
+   contraction's result order. With one, it is one reduction over the loop
+   [[n; t…; g; oc; ic; k…]] that reads [x], its channels split into groups
+   and broadcast over [oc], through a padded load whose windows append the
+   taps, and sums [ic] and the taps: into [x]'s dtype without [init], else
+   into the carrier, to which one map adds [init] and rounds once, as a
+   contraction adds its [init]. *)
+let windows_of ~by ?init ~stride ~lo ~hi ~interior ~dilation x w =
   let dt = dtype x in
   let r = ndim x and kw = shape w in
   let k = r - 2 in
@@ -5164,7 +5228,13 @@ let windows_of ~by ~stride ~lo ~hi ~interior ~dilation x w =
           dilation.(i))
   in
   let out = Array.concat [ [| n |]; counts; [| g * oc |] ] in
-  if Array.mem 0 taps then no_term ~by x out
+  let init =
+    match init with
+    | None -> None
+    | Some i -> Some (Contraction.init_to ~by out i)
+  in
+  if Array.mem 0 taps then
+    no_term ~by ?init x w out
   else
     let hi =
       Array.init k (fun i -> Stdlib.max hi.(i) (-(extent i + lo.(i))))
@@ -5208,9 +5278,21 @@ let windows_of ~by ~stride ~lo ~hi ~interior ~dilation x w =
       let contracting =
         Iarray.init (k + 1) (fun i -> (k + 2 + i, 2 + i))
       in
+      (* [[n; t…; g; oc]] to [[g; n; t…; oc]]. *)
+      let init =
+        match init with
+        | None -> None
+        | Some i ->
+            let split = Array.concat [ [| n |]; counts; [| g; oc |] ] in
+            Some
+              (permute ~by
+                 (Array.concat
+                    [ [| k + 1 |]; Array.init (k + 1) Fun.id; [| k + 2 |] ])
+                 (Eval.reshape ~by split i))
+      in
       let y =
         Eval.contract ~by ~batch:[| (k + 1, 0) |] ~contracting
-          ~acc:(D.Any acc) dt a b None
+          ~acc:(D.Any acc) dt a b init
       in
       (* [[g; n; t…; oc]] to [[n; t…; g; oc]]. *)
       let y =
@@ -5240,22 +5322,13 @@ let windows_of ~by ~stride ~lo ~hi ~interior ~dilation x w =
       let term = E.(at acc (E.input 0 dt) * at acc (E.input 1 dt)) in
       let ins = Iarray.of_list [ D.Any dt; D.Any dt ] in
       let prog = P.of_exprs ~ins [| E.any term |] in
-      let y, () =
-        Eval.eval ~by
-          (Value.Reduce
-             {
-               layout = contiguous ~by loop;
-               axes = Iarray.init (k + 1) (fun i -> k + 3 + i);
-               prog;
-               reductions = Value.[ Monoid (Sum, 0, dt) ];
-               loads =
-                 [|
-                   Padded { x = x'; fill = D.zero dt; pad };
-                   Plain (Eval.broadcast ~by loop w);
-                 |];
-             })
-      in
-      Eval.reshape ~by out y
+      let axes = Iarray.init (k + 1) (fun i -> k + 3 + i) in
+      match init with
+      | None -> depthwise ~by ~loop ~axes ~prog ~pad ~out x' w dt
+      | Some i ->
+          let y = depthwise ~by ~loop ~axes ~prog ~pad ~out x' w acc in
+          elementwise ~by dt [ Any i; Any y ]
+            (at dt E.(at acc (operand 0 i) + operand 1 y))
 
 (* For each spatial axis, the run of values that [padding] keeps: its first
    value and its count, as the interface states them. *)
@@ -6147,7 +6220,7 @@ let by_groups ~by groups w =
   let lead = [| groups; s.(0) / groups |] in
   Eval.reshape ~by (Array.concat [ lead; Array.sub s 1 k; [| s.(k + 1) |] ]) w
 
-let conv ?stride ?padding ?dilation ?groups x w =
+let conv ?init ?stride ?padding ?dilation ?groups x w =
   let by = "Nx.conv" in
   let stride, padding, dilation, groups =
     conv_arguments ~by ?stride ?padding ?dilation ?groups x w
@@ -6159,7 +6232,7 @@ let conv ?stride ?padding ?dilation ?groups x w =
   let k = ndim x - 2 in
   (* [[g; og; k…; cg]] to [[g; og; cg; k…]]. *)
   let p = Array.concat [ [| 0; 1; k + 2 |]; Array.init k (fun i -> 2 + i) ] in
-  windows_of ~by ~stride ~lo:(Array.map fst padding)
+  windows_of ~by ?init ~stride ~lo:(Array.map fst padding)
     ~hi:(Array.map snd padding) ~interior:(Array.make k 0) ~dilation x
     (permute ~by p (by_groups ~by groups w))
 
@@ -6169,7 +6242,7 @@ let conv ?stride ?padding ?dilation ?groups x w =
    exchanged. The padding after, [e - 1 - hi] where the least input is the
    formula's, is the one that gives the least input's extent [d]: the padded
    axis is then [d + e - 1] long, which holds [d] windows. *)
-let conv_transpose ?stride ?padding ?dilation ?groups x w =
+let conv_transpose ?init ?stride ?padding ?dilation ?groups x w =
   let by = "Nx.conv_transpose" in
   let stride, padding, dilation, groups =
     conv_arguments ~by ?stride ?padding ?dilation ?groups x w
@@ -6204,7 +6277,7 @@ let conv_transpose ?stride ?padding ?dilation ?groups x w =
   let w = permute ~by p (by_groups ~by groups w) in
   let taps_axes = List.init k (fun i -> 3 + i) in
   let w = flip_by ~by ~axes:taps_axes w in
-  windows_of ~by ~stride:(Array.make k 1) ~lo ~hi
+  windows_of ~by ?init ~stride:(Array.make k 1) ~lo ~hi
     ~interior:(Array.map (fun st -> st - 1) stride)
     ~dilation x w
 

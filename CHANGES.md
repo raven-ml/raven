@@ -3350,6 +3350,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.conv` and `Nx.conv_transpose` take `?init`, broadcast to the result's
+  shape and added to the products' sum in the accumulator, so a bias at
+  float16 or bfloat16 rounds once with the sum. An output without products
+  is `init`. `Nx.contract`'s `init` broadcasts to the result's shape too.
 - An eager creation at a set without kernels whose bytes are one byte
   repeated, such as `Nx.zeros_at`, `Nx.ones_at` of an integer, or any
   `Nx.full_at` of a one-byte or sub-byte dtype, sets the bytes on the

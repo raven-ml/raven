@@ -22,6 +22,14 @@ val contract :
   ('c, 'e, 'd) Value.t ->
   ('v, 's, 'd) Value.t
 
+val init_to :
+  by:string -> int array -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
+(** [init_to ~by s init] is [init] broadcast to the shape [s] of the result
+    it starts, a view.
+
+    Raises [Invalid_argument] naming [by] if [init]'s shape does not
+    broadcast to [s]. *)
+
 val matmul :
   by:string ->
   ?sum:bool ->

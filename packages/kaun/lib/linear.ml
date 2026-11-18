@@ -47,8 +47,4 @@ let apply ?sum p x =
   match p.b with
   | None -> Nx.matmul ?sum x p.w
   | Some b ->
-      let out = Array.copy (Nx.shape x) in
-      let lead = Array.length out - 1 in
-      out.(lead) <- Nx.dim 1 p.w;
-      let init = Nx.broadcast_to out b in
-      Nx.contract (Nx.dtype p.w) ?sum ~init (product lead) x p.w
+      Nx.contract (Nx.dtype p.w) ?sum ~init:b (product (Nx.ndim x - 1)) x p.w
