@@ -114,11 +114,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   the gathers (`copy`, `to_bigarray`, `to_array` of boxed elements)
   release past 256 KiB or over borrowed memory, by nx_cpu's rule. Found by
   the SI-1 review
-- nx's `test_composite › together › a composite over values whole
-  together is its body` (test_composite.ml:305-327) fails about 1 run in 4
-  at `-j 2` on main too: it compares minor words of 100 calls, the least
-  of 5 runs, and the words vary with timing under load. Found by the DD+DC
-  landing
 - nx's bench rows `placed/*` and `placed/matmul-f32-256x4096x256-k-split4`
   (bench_nx.ml:337-367; nx.thumper:261-268) record exact allocated words
   that vary from run to run, so `check --quick` can fail them on an

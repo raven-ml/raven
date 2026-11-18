@@ -301,30 +301,33 @@ let commands =
   ]
 
 (* Over arguments whole at one placement, Nx.composite is its body: it
-   allocates no word more than the body alone, so it opens no frame. *)
+   allocates no word more than the body alone, so it opens no frame and
+   notes nothing. The body reshapes an argument, which a frame would note.
+   A computation's words depend on whether a collected buffer is back in
+   rig's cache when it allocates, which the collector's and the devices'
+   timing decide; a movement allocates no buffer. A collection beforehand
+   runs the finalisers that earlier calls left pending. *)
 let test_together () =
   let whole = Nx.place S2.on (Nx.arange Nx.int64 0 4 1) in
   let host = Nx.arange Nx.int64 0 4 1 in
   let words f =
     f ();
-    let run () =
-      let before = Gc.minor_words () in
-      for _ = 1 to 100 do
-        f ()
-      done;
-      Gc.minor_words () -. before
-    in
-    List.fold_left Float.min infinity (List.init 5 (fun _ -> run ()))
+    Gc.full_major ();
+    let before = Gc.minor_words () in
+    for _ = 1 to 10 do
+      f ()
+    done;
+    Gc.minor_words () -. before
   in
-  let body () = ignore (Sys.opaque_identity (Nx.neg whole)) in
-  let check msg args =
+  let check msg x args =
+    let body () = ignore (Sys.opaque_identity (Nx.reshape [| 2; 2 |] x)) in
     equal ~msg float_exact (words body)
       (words (fun () -> Nx.composite ~by:"t" args body))
   in
-  check "one value" [ Nx.Arg ("a", whole) ];
-  check "two at one placement" [ Nx.Arg ("a", whole); Arg ("b", whole) ];
-  check "parts" [ Nx.Parts ("w", "f", [ Nx.P whole; P whole ]) ];
-  check "on the host" [ Nx.Arg ("a", host); Arg ("b", host) ]
+  check "one value" whole [ Nx.Arg ("a", whole) ];
+  check "two at one placement" whole [ Nx.Arg ("a", whole); Arg ("b", whole) ];
+  check "parts" whole [ Nx.Parts ("w", "f", [ Nx.P whole; P whole ]) ];
+  check "on the host" host [ Nx.Arg ("a", host); Arg ("b", host) ]
 
 let () =
   exit
