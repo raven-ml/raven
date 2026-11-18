@@ -1,5 +1,5 @@
-; Outside runtest: a test run cannot hold a real model's weights or a 4 GiB
-; file.
+; Outside runtest: a test run cannot hold a real model's weights, a 4 GiB
+; file or a corpus.
 ;
 ; TESSERA's medium student (84 MB) against torch.load's reading of it. Run it
 ; with
@@ -18,6 +18,33 @@
 ; address space and no disk. Run it with
 ;   dune exec packages/nx/test/io/weights/test_zip_boundary.exe
 
+;
+; The IETF FLAC test files whole, 296 MB: every file a decoder must read
+; against the MD5 its encoder stated, every other refused. Run it with
+;   NX_IO_FLAC_TESTS=flac-test-files \
+;   dune exec packages/nx/test/io/weights/test_flac_corpus.exe
+; where flac-test-files is https://github.com/ietf-wg-cellar/flac-test-files
+; at aa7b0c6cf32994c106ae517a08134c28a96ff5b2, holding subset/, uncommon/
+; and faulty/.
+;
+; LibriSpeech files against libsndfile's int16 reading. Run it with
+;   NX_IO_LIBRISPEECH=LibriSpeech NX_IO_LIBRISPEECH_LIST=list.tsv \
+;   dune exec packages/nx/test/io/weights/test_librispeech.exe
+; where list.tsv has a header line, then for each file its path under
+; LibriSpeech, its rate, its rows and the BLAKE2b-256 of its samples as
+; little-endian int16, as soundfile reads them.
+;
+; A WAV save past 4 GiB, which writes RF64. It writes 4 GiB to disk, a WAV
+; file being no sparse file, and skips unless the directory's file system
+; has 50 GiB free past that. Run it with
+;   NX_IO_RF64_DIR=dir dune exec packages/nx/test/io/weights/test_rf64.exe
+
 (executables
- (names test_pytorch_weights test_pytorch_teacher test_zip_boundary)
- (libraries nx nx_io unix windtrap))
+ (names
+  test_pytorch_weights
+  test_pytorch_teacher
+  test_zip_boundary
+  test_flac_corpus
+  test_librispeech
+  test_rf64)
+ (libraries nx nx_array nx_io unix windtrap))
