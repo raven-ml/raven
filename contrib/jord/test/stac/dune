@@ -1,0 +1,31 @@
+; The mpc_*.json files are pages of one item from Microsoft's Planetary
+; Computer, fetched unchanged on 2026-11-11 by
+;   curl -X POST -H 'Content-Type: application/json' \
+;     -d '{"collections":["C"],"limit":1,"bbox":[13.3,52.4,13.5,52.6],"datetime":"2024-06-01T00:00:00Z/2024-06-30T00:00:00Z"}' \
+;     https://planetarycomputer.microsoft.com/api/stac/v1/search
+; with C sentinel-2-l2a, sentinel-1-rtc and landsat-c2-l2.
+; mpc_landsat_c2_l2_le07.json is a Landsat 7 item, fetched unchanged on
+; 2026-11-15 by the same command with
+;   {"collections":["landsat-c2-l2"],"limit":1,"bbox":[13.3,52.4,13.5,52.6],"datetime":"2000-06-01T00:00:00Z/2000-06-30T00:00:00Z","query":{"platform":{"eq":"landsat-7"}}}
+; mpc_hls2_s30.json is an HLS S30 item, fetched unchanged on 2026-11-16 by
+; the first command with C hls2-s30.
+; mpc_esa_worldcover.json is an ESA WorldCover item, fetched unchanged on
+; 2026-11-16 by the first command with
+;   {"collections":["esa-worldcover"],"limit":1,"bbox":[13.3,52.4,13.5,52.6]}
+; cdse_sentinel2_l2a.json is a page of one item of the Copernicus Data Space
+; Ecosystem's catalogue, fetched unchanged on 2026-11-16 by
+;   curl \
+;     'https://stac.dataspace.copernicus.eu/v1/collections/sentinel-2-l2a/items?limit=1'
+; mpc_modis_13q1.json is a MODIS item, fetched unchanged on 2026-11-16 by
+;   curl -X POST -H 'Content-Type: application/json' \
+;     -d '{"collections":["modis-13Q1-061"],"ids":["MOD13Q1.A2023241.h18v04.061.2023258004333"],"limit":1}' \
+;     https://planetarycomputer.microsoft.com/api/stac/v1/search
+; mpc_modis_09a1.json is the MOD09A1 item of the same tile and start, fetched
+; unchanged on 2026-11-16 by the same command with
+;   {"collections":["modis-09A1-061"],"ids":["MOD09A1.A2023241.h18v04.061.2023251221325"],"limit":1}
+
+(test
+ (name test_stac)
+ (libraries jord jord.stac nx jsont jsont.bytesrw windtrap)
+ (deps
+  (glob_files *.json)))

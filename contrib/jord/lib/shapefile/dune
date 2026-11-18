@@ -1,0 +1,6 @@
+; jord.shapefile: ESRI Shapefiles of polygons, from their bytes.
+
+(library
+ (name jord_shapefile)
+ (public_name jord.shapefile)
+ (libraries jord nx))

@@ -70,6 +70,9 @@ jobs:
           opam pin add toffee git+https://github.com/invariant-hq/mosaic.git#75f374107e7bae09b8e6c9fd87e2b6279c237535 --no-action
           opam pin add mosaic git+https://github.com/invariant-hq/mosaic.git#75f374107e7bae09b8e6c9fd87e2b6279c237535 --no-action
           opam install . --deps-only --with-test
+          # The root's opam files hold every dependency of the contrib
+          # packages but jord.safe's xmlm.
+          opam install xmlm
 
       # Every runtest runs under .github/memcap.sh, which caps its memory so
       # that a test that leaks is killed before the runner runs out.
@@ -219,6 +222,11 @@ jobs:
         run: |
           opam exec -- dune build --release contrib/ymir
           bash .github/memcap.sh opam exec -- dune build --release @contrib/ymir/runtest
+
+      - name: Build and test jord
+        run: |
+          opam exec -- dune build --release contrib/jord
+          bash .github/memcap.sh opam exec -- dune build --release @contrib/jord/runtest
 
       - name: Build and test tolk
         run: |

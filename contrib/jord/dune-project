@@ -1,0 +1,56 @@
+(lang dune 3.21)
+
+(name jord)
+
+(source
+ (github raven-ml/raven))
+
+(authors "Thibaut Mattio <thibaut.mattio@gmail.com>")
+
+(maintainers "Thibaut Mattio <thibaut.mattio@gmail.com>")
+
+(license ISC)
+
+(documentation "https://github.com/raven-ml/raven/tree/main/contrib/jord")
+
+(bug_reports "https://github.com/raven-ml/raven/issues")
+
+(using mdx 0.4)
+
+(version 1.0.0~alpha3)
+
+(implicit_transitive_deps false)
+
+(generate_opam_files true)
+
+(package
+ (name jord)
+ (synopsis "Earth observation for OCaml")
+ (description
+  "Earth-observation data placed on the Earth: coordinate reference systems (WGS 84, its UTM zones, ETRS89 / TM35FIN) and the transforms between them, grids, polygons and the cells they cover, warps between grids by sampling and by area, bands and what Sentinel-2, Sentinel-1, Landsat, HLS and MODIS products measure, and instants of UTC with the Sun's place at them. Readers of GeoTIFF tags, GeoJSON, ESRI Shapefiles, STAC items and Sentinel-2 product metadata take bytes or values and do no I/O.")
+ (depends
+  (ocaml
+   (>= 5.2.0))
+  dune
+  (nx
+   (>= 1.0.0~alpha3))
+  jsont
+  (xmlm
+   (>= 1.4.0))
+  ; tests
+  (rune
+   (and
+    :with-test
+    (>= 1.0.0~alpha3)))
+  (bytesrw :with-test)
+  (windtrap
+   (and
+    :with-test
+    (>= 0.3.1)))
+  (mdx :with-test)
+  (thumper
+   (and
+    :with-test
+    (>= 0.1.0))))
+ (tags
+  (earth-observation geospatial remote-sensing crs geotiff stac sentinel)))

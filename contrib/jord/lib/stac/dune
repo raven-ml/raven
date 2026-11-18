@@ -1,0 +1,7 @@
+; jord.stac: STAC items, their assets' grids and bands. Jsont is the type of
+; its input, as it is jord.geojson's.
+
+(library
+ (name jord_stac)
+ (public_name jord.stac)
+ (libraries jord nx jsont))

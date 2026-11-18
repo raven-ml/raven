@@ -1,0 +1,44 @@
+# Landsat's band-average relative spectral responses (RSR) around each
+# half-maximum crossing, from the USGS's Spectral Characteristics Viewer
+# (https://landsat.usgs.gov/spectral-characteristics-viewer: L4_TM_RSR,
+# L5_TM_RSR, L7_ETM_RSR and L8_OLI_RSR .xlsx, and
+# HANDBOOK_LandsatThermalRSRs.spectral.dat.xlsx for band 6), fetched
+# 2026-11-16, cut by
+#   uv run contrib/jord/test/gen/landsat_rsr.py
+# The derived crossings interpolate samples 1 nm apart, but 2 or 3 nm on
+# TM's and ETM+'s shortwave-infrared bands and 10 to 50 nm on their band 6.
+# The stated 50% points (test_landsat.ml's [stated]) are given to 0.001 nm
+# for OLI-2, 0.001 um for Landsat 8's TIRS and 0.01 um for TIRS-2 (10.45
+# and 11.2, whose midpoint 10.825 its file rounds to 10.83). On OLI-2's
+# responses the derivation gives its stated wavelengths within 0.11 nm.
+# Each row: satellite, band, the response's peak, then the two samples
+# (wavelength in micrometres, response) of its first rising crossing of
+# half the peak and the two of its last falling one.
+Landsat_4 Blue 1.0 0.451 0.4425 0.452 0.5142 0.517 0.5964 0.518 0.4966
+Landsat_4 Green 1.0 0.528 0.4685 0.529 0.5075 0.609 0.5215 0.61 0.4674
+Landsat_4 Red 1.0 0.624 0.4921 0.625 0.5138 0.693 0.5049 0.694 0.4333
+Landsat_4 Nir 1.0 0.775 0.4642 0.776 0.5 0.905 0.509 0.906 0.44
+Landsat_4 Swir16 0.9995 1.569 0.4826 1.571 0.5412 1.785 0.5466 1.787 0.486
+Landsat_4 Swir22 0.9996 2.096 0.4819 2.099 0.5257 2.346 0.5372 2.348 0.4844
+Landsat_5 Blue 1.0 0.452 0.4741 0.453 0.5366 0.517 0.5784 0.518 0.4813
+Landsat_5 Green 1.0 0.528 0.4999 0.529 0.5409 0.609 0.5153 0.61 0.4616
+Landsat_5 Red 1.0 0.626 0.4923 0.627 0.5132 0.693 0.5144 0.694 0.4413
+Landsat_5 Nir 1.0 0.776 0.4833 0.777 0.5259 0.904 0.5299 0.905 0.4664
+Landsat_5 Swir16 0.9997 1.567 0.4865 1.569 0.5446 1.783 0.535 1.785 0.4732
+Landsat_5 Swir22 0.9997 2.096 0.4814 2.099 0.5285 2.348 0.5288 2.35 0.4732
+Landsat_7 Blue 1.0 0.441 0.459 0.442 0.605 0.513 0.684 0.514 0.486
+Landsat_7 Green 1.0 0.519 0.472 0.52 0.552 0.6 0.574 0.601 0.473
+Landsat_7 Red 1.0 0.63 0.419 0.631 0.545 0.692 0.506 0.693 0.382
+Landsat_7 Nir 1.0 0.771 0.463 0.772 0.523 0.898 0.501 0.899 0.365
+Landsat_7 Swir16 1.0 1.547 0.499 1.549 0.558 1.747 0.547 1.749 0.462
+Landsat_7 Swir22 1.0 2.064 0.484 2.066 0.554 2.344 0.583 2.346 0.48
+Landsat_4 Lwir 1.0 10.42 0.4815 10.43 0.5262 11.73 0.5124 11.78 0.4536
+Landsat_5 Lwir 0.9989 10.44 0.4661 10.45 0.5005 12.42 0.5286 12.43 0.4957
+Landsat_7 Lwir 1.0 10.31 0.492 10.33 0.544 12.36 0.507 12.37 0.488
+Landsat_8 Coastal 1.0 0.434 0.254149 0.435 0.517821 0.45 0.745606 0.451 0.471329
+Landsat_8 Blue 1.0 0.452 0.493542 0.453 0.723971 0.512 0.534592 0.513 0.190738
+Landsat_8 Green 1.0 0.532 0.353885 0.533 0.545856 0.59 0.525304 0.591 0.345364
+Landsat_8 Red 1.0 0.635 0.299778 0.636 0.526812 0.673 0.609359 0.674 0.31635
+Landsat_8 Nir 1.0 0.85 0.403526 0.851 0.582623 0.878 0.63532 0.879 0.448364
+Landsat_8 Swir16 1.0 1.566 0.47356 1.567 0.525681 1.651 0.509946 1.652 0.451966
+Landsat_8 Swir22 1.0 2.107 0.488816 2.108 0.522458 2.294 0.502693 2.295 0.452698

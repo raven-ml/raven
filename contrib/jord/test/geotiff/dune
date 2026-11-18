@@ -1,0 +1,12 @@
+; cog_overviews.tif is a Cloud Optimized GeoTIFF of 51 x 75 bytes with three
+; overviews, written on 2026-11-16 by rasterio 1.5.2 (GDAL 3.12.2):
+;   rasterio.open("cog_overviews.tif", "w", driver="COG", width=75,
+;     height=51, count=1, dtype="uint8", crs="EPSG:32633",
+;     transform=Affine(10, 0, 500000, 0, -10, 5300000), BLOCKSIZE=16,
+;     OVERVIEW_RESAMPLING="NEAREST", COMPRESS="DEFLATE")
+; with its band (arange(51 * 75) % 251).
+
+(test
+ (name test_geotiff)
+ (libraries jord jord.geotiff nx nx.io windtrap)
+ (deps cog_overviews.tif))

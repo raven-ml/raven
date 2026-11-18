@@ -1,0 +1,27 @@
+; The guide's pages run under mdx, off under sanitize and tsan as the root
+; dune says. 06-safe.md and 07-scene.md read a product's and a tile's
+; metadata and a catalogue's item from the tests' fixtures.
+
+(mdx
+ (files *.md)
+ (package jord)
+ (enabled_if
+  (and
+   (<> %{profile} sanitize)
+   (<> %{profile} tsan)))
+ (deps
+  ../test/safe/mtd_n0510.xml
+  ../test/safe/mtd_tl_n0510.xml
+  ../test/stac/mpc_sentinel2_l2a.json
+  ../test/geotiff/cog_overviews.tif)
+ (libraries
+  jord
+  jord.geotiff
+  jord.geojson
+  jord.shapefile
+  jord.stac
+  jord.safe
+  nx
+  nx.io
+  jsont
+  jsont.bytesrw))

@@ -53,7 +53,7 @@ let manual = [ "introduction"; "installation"; "quickstart"; "coming-from-python
 let hidden = [ "raven"; "ppx_ptree"; "lz" ]
 
 (* Contrib packages and their glyphs; their one line is their synopsis. *)
-let contrib = [ ("fehu", Some "ᚠ"); ("sowilo", Some "ᛋ"); ("ymir", None) ]
+let contrib = [ ("fehu", Some "ᚠ"); ("sowilo", Some "ᛋ"); ("ymir", None); ("jord", None) ]
 
 (* The landing page's code tabs, in order, with what each library is. Each
    tab shows the first tested ocaml block of the library's doc/index.md, or

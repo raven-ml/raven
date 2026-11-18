@@ -1,0 +1,203 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<n1:Level-1C_User_Product xmlns:n1="https://psd-14.sentinel2.eo.esa.int/PSD/User_Product_Level-1C.xsd" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="https://psd-14.sentinel2.eo.esa.int/PSD/User_Product_Level-1C.xsd">
+    <n1:General_Info>
+        <Product_Info>
+            <PRODUCT_START_TIME>2024-06-29T10:20:21.024Z</PRODUCT_START_TIME>
+            <PRODUCT_STOP_TIME>2024-06-29T10:20:21.024Z</PRODUCT_STOP_TIME>
+            <PRODUCT_URI>S2A_MSIL1C_20240629T102021_N0510_R065_T33UUU_20240629T135511.SAFE</PRODUCT_URI>
+            <PROCESSING_LEVEL>Level-1C</PROCESSING_LEVEL>
+            <PRODUCT_TYPE>S2MSI1C</PRODUCT_TYPE>
+            <PROCESSING_BASELINE>05.10</PROCESSING_BASELINE>
+            <PRODUCT_DOI>https://doi.org/10.5270/S2_-742ikth</PRODUCT_DOI>
+            <GENERATION_TIME>2024-06-29T13:55:11.000000Z</GENERATION_TIME>
+            <PREVIEW_IMAGE_URL>Not applicable</PREVIEW_IMAGE_URL>
+            <PREVIEW_GEO_INFO>Not applicable</PREVIEW_GEO_INFO>
+            <Datatake datatakeIdentifier="GS2A_20240629T102021_047109_N05.10">
+      <SPACECRAFT_NAME>Sentinel-2A</SPACECRAFT_NAME>
+      <DATATAKE_TYPE>INS-NOBS</DATATAKE_TYPE>
+      <DATATAKE_SENSING_START>2024-06-29T10:20:21.024Z</DATATAKE_SENSING_START>
+      <SENSING_ORBIT_NUMBER>65</SENSING_ORBIT_NUMBER>
+      <SENSING_ORBIT_DIRECTION>DESCENDING</SENSING_ORBIT_DIRECTION>
+    </Datatake>
+<Query_Options completeSingleTile="true">
+<PRODUCT_FORMAT>SAFE_COMPACT</PRODUCT_FORMAT>
+</Query_Options>
+
+<Product_Organisation>
+    <Granule_List>
+        <Granule datastripIdentifier="S2A_OPER_MSI_L1C_DS_2APS_20240629T135511_S20240629T102556_N05.10" granuleIdentifier="S2A_OPER_MSI_L1C_TL_2APS_20240629T135511_A047109_T33UUU_N05.10" imageFormat="JPEG2000">
+        </Granule>
+    </Granule_List>
+</Product_Organisation>
+</Product_Info>
+        <Product_Image_Characteristics>
+            <Special_Values>
+                <SPECIAL_VALUE_TEXT>NODATA</SPECIAL_VALUE_TEXT>
+                <SPECIAL_VALUE_INDEX>0</SPECIAL_VALUE_INDEX>
+            </Special_Values>
+            <Special_Values>
+                <SPECIAL_VALUE_TEXT>SATURATED</SPECIAL_VALUE_TEXT>
+                <SPECIAL_VALUE_INDEX>65535</SPECIAL_VALUE_INDEX>
+            </Special_Values>
+            <Image_Display_Order>
+                <RED_CHANNEL>3</RED_CHANNEL>
+                <GREEN_CHANNEL>2</GREEN_CHANNEL>
+                <BLUE_CHANNEL>1</BLUE_CHANNEL>
+            </Image_Display_Order>
+            <QUANTIFICATION_VALUE unit="none">10000</QUANTIFICATION_VALUE>
+            <Radiometric_Offset_List>
+        <RADIO_ADD_OFFSET band_id="0">-1000</RADIO_ADD_OFFSET>
+        <RADIO_ADD_OFFSET band_id="1">-1000</RADIO_ADD_OFFSET>
+        <RADIO_ADD_OFFSET band_id="2">-1000</RADIO_ADD_OFFSET>
+        <RADIO_ADD_OFFSET band_id="3">-1000</RADIO_ADD_OFFSET>
+        <RADIO_ADD_OFFSET band_id="4">-1000</RADIO_ADD_OFFSET>
+        <RADIO_ADD_OFFSET band_id="5">-1000</RADIO_ADD_OFFSET>
+        <RADIO_ADD_OFFSET band_id="6">-1000</RADIO_ADD_OFFSET>
+        <RADIO_ADD_OFFSET band_id="7">-1000</RADIO_ADD_OFFSET>
+        <RADIO_ADD_OFFSET band_id="8">-1000</RADIO_ADD_OFFSET>
+        <RADIO_ADD_OFFSET band_id="9">-1000</RADIO_ADD_OFFSET>
+        <RADIO_ADD_OFFSET band_id="10">-1000</RADIO_ADD_OFFSET>
+        <RADIO_ADD_OFFSET band_id="11">-1000</RADIO_ADD_OFFSET>
+        <RADIO_ADD_OFFSET band_id="12">-1000</RADIO_ADD_OFFSET>
+      </Radiometric_Offset_List>
+            <Reflectance_Conversion>
+        <U>0.967744557046531</U>
+        <Solar_Irradiance_List>
+          <SOLAR_IRRADIANCE bandId="0" unit="W/m²/µm">1884.69</SOLAR_IRRADIANCE>
+          <SOLAR_IRRADIANCE bandId="1" unit="W/m²/µm">1959.66</SOLAR_IRRADIANCE>
+          <SOLAR_IRRADIANCE bandId="2" unit="W/m²/µm">1823.24</SOLAR_IRRADIANCE>
+          <SOLAR_IRRADIANCE bandId="3" unit="W/m²/µm">1512.06</SOLAR_IRRADIANCE>
+          <SOLAR_IRRADIANCE bandId="4" unit="W/m²/µm">1424.64</SOLAR_IRRADIANCE>
+          <SOLAR_IRRADIANCE bandId="5" unit="W/m²/µm">1287.61</SOLAR_IRRADIANCE>
+          <SOLAR_IRRADIANCE bandId="6" unit="W/m²/µm">1162.08</SOLAR_IRRADIANCE>
+          <SOLAR_IRRADIANCE bandId="7" unit="W/m²/µm">1041.63</SOLAR_IRRADIANCE>
+          <SOLAR_IRRADIANCE bandId="8" unit="W/m²/µm">955.32</SOLAR_IRRADIANCE>
+          <SOLAR_IRRADIANCE bandId="9" unit="W/m²/µm">812.92</SOLAR_IRRADIANCE>
+          <SOLAR_IRRADIANCE bandId="10" unit="W/m²/µm">367.15</SOLAR_IRRADIANCE>
+          <SOLAR_IRRADIANCE bandId="11" unit="W/m²/µm">245.59</SOLAR_IRRADIANCE>
+          <SOLAR_IRRADIANCE bandId="12" unit="W/m²/µm">85.25</SOLAR_IRRADIANCE>
+        </Solar_Irradiance_List>
+      </Reflectance_Conversion>
+            <Spectral_Information_List>
+        <Spectral_Information bandId="0" physicalBand="B1">
+          <RESOLUTION>60</RESOLUTION>
+          <Wavelength>
+            <MIN unit="nm">412</MIN>
+            <MAX unit="nm">456</MAX>
+            <CENTRAL unit="nm">442.7</CENTRAL>
+          </Wavelength>
+        </Spectral_Information>
+        <Spectral_Information bandId="1" physicalBand="B2">
+          <RESOLUTION>10</RESOLUTION>
+          <Wavelength>
+            <MIN unit="nm">456</MIN>
+            <MAX unit="nm">533</MAX>
+            <CENTRAL unit="nm">492.7</CENTRAL>
+          </Wavelength>
+        </Spectral_Information>
+        <Spectral_Information bandId="2" physicalBand="B3">
+          <RESOLUTION>10</RESOLUTION>
+          <Wavelength>
+            <MIN unit="nm">538</MIN>
+            <MAX unit="nm">583</MAX>
+            <CENTRAL unit="nm">559.8</CENTRAL>
+          </Wavelength>
+        </Spectral_Information>
+        <Spectral_Information bandId="3" physicalBand="B4">
+          <RESOLUTION>10</RESOLUTION>
+          <Wavelength>
+            <MIN unit="nm">646</MIN>
+            <MAX unit="nm">684</MAX>
+            <CENTRAL unit="nm">664.6</CENTRAL>
+          </Wavelength>
+        </Spectral_Information>
+        <Spectral_Information bandId="4" physicalBand="B5">
+          <RESOLUTION>20</RESOLUTION>
+          <Wavelength>
+            <MIN unit="nm">695</MIN>
+            <MAX unit="nm">714</MAX>
+            <CENTRAL unit="nm">704.1</CENTRAL>
+          </Wavelength>
+        </Spectral_Information>
+        <Spectral_Information bandId="5" physicalBand="B6">
+          <RESOLUTION>20</RESOLUTION>
+          <Wavelength>
+            <MIN unit="nm">731</MIN>
+            <MAX unit="nm">749</MAX>
+            <CENTRAL unit="nm">740.5</CENTRAL>
+          </Wavelength>
+        </Spectral_Information>
+        <Spectral_Information bandId="6" physicalBand="B7">
+          <RESOLUTION>20</RESOLUTION>
+          <Wavelength>
+            <MIN unit="nm">769</MIN>
+            <MAX unit="nm">797</MAX>
+            <CENTRAL unit="nm">782.8</CENTRAL>
+          </Wavelength>
+        </Spectral_Information>
+        <Spectral_Information bandId="7" physicalBand="B8">
+          <RESOLUTION>10</RESOLUTION>
+          <Wavelength>
+            <MIN unit="nm">760</MIN>
+            <MAX unit="nm">907</MAX>
+            <CENTRAL unit="nm">832.8</CENTRAL>
+          </Wavelength>
+        </Spectral_Information>
+        <Spectral_Information bandId="8" physicalBand="B8A">
+          <RESOLUTION>20</RESOLUTION>
+          <Wavelength>
+            <MIN unit="nm">837</MIN>
+            <MAX unit="nm">881</MAX>
+            <CENTRAL unit="nm">864.7</CENTRAL>
+          </Wavelength>
+        </Spectral_Information>
+        <Spectral_Information bandId="9" physicalBand="B9">
+          <RESOLUTION>60</RESOLUTION>
+          <Wavelength>
+            <MIN unit="nm">932</MIN>
+            <MAX unit="nm">958</MAX>
+            <CENTRAL unit="nm">945.1</CENTRAL>
+          </Wavelength>
+        </Spectral_Information>
+        <Spectral_Information bandId="10" physicalBand="B10">
+          <RESOLUTION>60</RESOLUTION>
+          <Wavelength>
+            <MIN unit="nm">1337</MIN>
+            <MAX unit="nm">1412</MAX>
+            <CENTRAL unit="nm">1373.5</CENTRAL>
+          </Wavelength>
+        </Spectral_Information>
+        <Spectral_Information bandId="11" physicalBand="B11">
+          <RESOLUTION>20</RESOLUTION>
+          <Wavelength>
+            <MIN unit="nm">1539</MIN>
+            <MAX unit="nm">1682</MAX>
+            <CENTRAL unit="nm">1613.7</CENTRAL>
+          </Wavelength>
+        </Spectral_Information>
+        <Spectral_Information bandId="12" physicalBand="B12">
+          <RESOLUTION>20</RESOLUTION>
+          <Wavelength>
+            <MIN unit="nm">2078</MIN>
+            <MAX unit="nm">2320</MAX>
+            <CENTRAL unit="nm">2202.4</CENTRAL>
+          </Wavelength>
+        </Spectral_Information>
+      </Spectral_Information_List>
+            <PHYSICAL_GAINS bandId="0">4.09619093</PHYSICAL_GAINS>
+            <PHYSICAL_GAINS bandId="1">3.75500008</PHYSICAL_GAINS>
+            <PHYSICAL_GAINS bandId="2">4.19035234</PHYSICAL_GAINS>
+            <PHYSICAL_GAINS bandId="3">4.52597665</PHYSICAL_GAINS>
+            <PHYSICAL_GAINS bandId="4">5.20906234</PHYSICAL_GAINS>
+            <PHYSICAL_GAINS bandId="5">4.87612766</PHYSICAL_GAINS>
+            <PHYSICAL_GAINS bandId="6">4.5373124</PHYSICAL_GAINS>
+            <PHYSICAL_GAINS bandId="7">6.16591285</PHYSICAL_GAINS>
+            <PHYSICAL_GAINS bandId="8">5.14117055</PHYSICAL_GAINS>
+            <PHYSICAL_GAINS bandId="9">8.54670332</PHYSICAL_GAINS>
+            <PHYSICAL_GAINS bandId="10">55.04478255</PHYSICAL_GAINS>
+            <PHYSICAL_GAINS bandId="11">35.24295348</PHYSICAL_GAINS>
+            <PHYSICAL_GAINS bandId="12">106.44964191</PHYSICAL_GAINS>
+            <REFERENCE_BAND>3</REFERENCE_BAND>
+        </Product_Image_Characteristics>
+    </n1:General_Info>
+</n1:Level-1C_User_Product>

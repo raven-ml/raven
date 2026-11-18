@@ -1,0 +1,10 @@
+; jord: arrays placed on the Earth. It links nx alone, so a
+; compiled step links no file reader; each file or document format is a
+; library of its own under lib/<format>/, which depends on jord, never the
+; reverse.
+
+(library
+ (name jord)
+ (public_name jord)
+ (private_modules wkt points dn overlap slab)
+ (libraries nx))

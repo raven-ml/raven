@@ -1,0 +1,7 @@
+; crs_probe.exe maps crs_sweep.py's sweep through Crs.transform, for its cut
+; and its judge. It needs the sweep's points, which no test run holds, so it
+; is outside runtest.
+
+(executable
+ (name crs_probe)
+ (libraries jord nx))
