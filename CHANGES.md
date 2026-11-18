@@ -3353,6 +3353,11 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.conv` with one input channel a group and several output channels is
+  a contraction: 32 images of 28 x 28 into 8 channels take 0.15 ms on two
+  fudge cores where they took 2.9, and their weight gradient under `Rune` 0.3
+  where it took 3.5. Its floats, and `Nx.conv_transpose`'s alike, change bits
+  within the same bound.
 - `Nx.attention`'s window and ALiBi example measures from the query's
   position, `p.q + (p.len - p.tq)`: from `p.q`, its window hid nothing when
   decoding. `Nx.causal`'s doc states that right-padded rows need `p.k <= p.q`.

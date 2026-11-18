@@ -188,6 +188,16 @@ let mlp_rows () =
         (synced l, synced_all mlp g));
   ]
 
+(* ConvGrad: the weight gradient of a first convolution layer's sum, 32
+   float32 images of [28; 28; 1] into 8 channels by a 3 × 3 kernel, as a
+   training step takes it. *)
+let conv_rows () =
+  let x = normal 12 [| 32; 28; 28; 1 |] and w = normal 13 [| 8; 3; 3; 1 |] in
+  [
+    Thumper.bench "conv-grad-f32-32x28x28x1-3x3-to-8" (fun () ->
+        synced (Rune.grad' (fun w -> Nx.sum (Nx.conv x w)) w));
+  ]
+
 (* PerSampleGrads: a gradient per example of a batch of 128, one map of reverse
    mode: of an elementwise loss of the example, and of the perceptron's loss of
    the example with respect to its last layer's weights. *)
@@ -2464,6 +2474,7 @@ let () =
          Thumper.group "Jit" (jit_rows () @ assembly_rows ());
          Thumper.group "WarmStart" (warm_rows ());
          Thumper.group "MlpGrad" (mlp_rows ());
+         Thumper.group "ConvGrad" (conv_rows ());
          Thumper.group "PerSampleGrads" (per_sample_rows ());
          Thumper.group "Jacobians" (jacobian_rows ());
          Thumper.group "Attention" (attention_rows () @ host_attention_rows ());

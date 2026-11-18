@@ -794,7 +794,8 @@ let contract_rows =
    RGB image's into 3 and a complex64 one's into 4; its input gradient,
    conv_transpose, and its weight gradient, a contraction over
    the padded image's windows; the depthwise convolution, one channel a
-   group; a 3 × 3 max-pool at stride 2 of the image channels first,
+   group; a first layer's, 32 images of [28; 28; 1] into 8 channels; a
+   3 × 3 max-pool at stride 2 of the image channels first,
    padded by -∞, as pad, two window views and max; and its gradient, as
    those and where: the windows holding the maximum take the output's
    gradient, folded back onto the image. *)
@@ -871,6 +872,10 @@ let conv_rows =
         ~setup:(fun () -> (image D.Float32, image D.Float32)) weight_grad;
       Thumper.bench_with_setup "depthwise-f32-8x56x56x64-3x3"
         ~setup:(conv_by D.Float32 [| 64; 3; 3; 1 |]) (conv ~groups:64);
+      Thumper.bench_with_setup "conv-f32-32x28x28x1-3x3-to-8"
+        ~setup:(fun () ->
+          (filled D.Float32 [| 32; 28; 28; 1 |] 1., filled D.Float32 [| 8; 3; 3; 1 |] 1.))
+        conv;
       Thumper.bench_with_setup "max-pool-f32-8x64x56x56-3x3s2"
         ~setup:(fun () -> filled D.Float32 [| 8; 64; 56; 56 |] 1.)
         max_pool;

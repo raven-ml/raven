@@ -5341,16 +5341,20 @@ let depthwise ~by ~loop ~axes ~prog ~pad ~out x' w into =
    with no window. A kernel axis of no tap sums no term: the result is
    [init]'s elements, or [+0], from a map over every operand ([no_term]).
 
-   With other than one input channel a group, it is one contraction of the
-   windows of [x] padded, a copy, as a view [[n; t…; g; k…; ic]], with [w]
-   as [[g; oc; k…; ic]], batched over the groups, summing the taps then the
-   channels, as the kernel sums its pairs, [init] moved to the
-   contraction's result order. With one, it is one reduction over the loop
-   [[n; t…; g; oc; ic; k…]] that reads [x], its channels split into groups
-   and broadcast over [oc], through a padded load whose windows append the
-   taps, and sums [ic] and the taps: into [x]'s dtype without [init], else
-   into the carrier, to which one map adds [init] and rounds once, as a
-   contraction adds its [init]. *)
+   Unless a group has one input and one output channel, it is one
+   contraction of the windows of [x] padded, a copy, as a view
+   [[n; t…; g; k…; ic]], with [w] as [[g; oc; k…; ic]], batched over the
+   groups, summing the taps then the channels, as the kernel sums its pairs,
+   [init] moved to the contraction's result order. With one of each, it is
+   one reduction over the loop [[n; t…; g; 1; 1; k…]] that reads [x], its
+   channels split into groups, through a padded load whose windows append
+   the taps, and sums the taps: into [x]'s dtype without [init], else into
+   the carrier, to which one map adds [init] and rounds once, as a
+   contraction adds its [init]. A reduction over [oc] channels would read
+   [x] broadcast along them: nx.cpu then sums a row of [oc] outputs at a
+   time, and a gradient maps over the whole loop. 32 images of
+   [28; 28; 1] into 8 channels took 2.9 ms that way on two fudge cores, and
+   their weight gradient 3.5, where the contraction takes 0.15 and 0.3. *)
 let windows_of ~by ?init ~stride ~lo ~hi ~interior ~dilation x w =
   let dt = dtype x in
   let r = ndim x and kw = shape w in
@@ -5390,7 +5394,7 @@ let windows_of ~by ?init ~stride ~lo ~hi ~interior ~dilation x w =
           })
     in
     let (D.Any acc) = Nx_kernel.carrier (D.Any dt) in
-    if ic <> 1 then
+    if ic <> 1 || oc <> 1 then
       let grouped = Array.concat [ [| n |]; spatial; [| g; ic |] ] in
       let x' = Eval.reshape ~by grouped x in
       let around a = Array.concat [ [| 0 |]; a; [| 0; 0 |] ] in
@@ -5443,10 +5447,8 @@ let windows_of ~by ?init ~stride ~lo ~hi ~interior ~dilation x w =
       in
       Eval.reshape ~by out y
     else
-      let grouped = Array.concat [ [| n |]; spatial; [| g; 1; ic |] ] in
+      let grouped = Array.concat [ [| n |]; spatial; [| g; 1; 1 |] ] in
       let x' = Eval.reshape ~by grouped x in
-      let wide = Array.concat [ [| n |]; spatial; [| g; oc; ic |] ] in
-      let x' = Eval.broadcast ~by wide x' in
       (* [a.(i)] along spatial axis [i], zero along the others of [x']. *)
       let spatially a =
         Iarray.init (k + 4) (fun i -> if i >= 1 && i <= k then a.(i - 1) else 0)
@@ -5459,7 +5461,7 @@ let windows_of ~by ?init ~stride ~lo ~hi ~interior ~dilation x w =
           windows = windows 1;
         }
       in
-      let loop = Array.concat [ [| n |]; counts; [| g; oc; ic |]; taps ] in
+      let loop = Array.concat [ [| n |]; counts; [| g; 1; 1 |]; taps ] in
       let term = E.(at acc (E.input 0 dt) * at acc (E.input 1 dt)) in
       let ins = Iarray.of_list [ D.Any dt; D.Any dt ] in
       let prog = P.of_exprs ~ins [| E.any term |] in

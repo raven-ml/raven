@@ -2894,18 +2894,18 @@ val conv :
     {!contract} states them. On one device it gives
     the same bits on every run of the same computation ({!section-reductions}),
     computing as follows:
-    - With other than one input channel a group, [c' = c / groups], it is
-      one {!contract} of [x]'s windows with [w], from [init], batched over
-      the groups:
+    - Unless a group has one input and one output channel,
+      [c' = c / groups], it is one {!contract} of [x]'s windows with [w],
+      from [init], batched over the groups:
       an output's products are numbered [q · c' + i], [q] the tap's place
       in C order of the taps' indices and [i] the channel among the [c']
       its group reads, and summed as {!contract} sums them. [x] padded is a
       copy of [x], or [x] itself where nothing pads it, and its windows a
       view of it.
-    - With one, as a depthwise convolution has, it is one reduction over
-      [x]'s padded windows, never stored, of the products numbered
-      [i · Q + q], [Q] the taps, summed as {!sum} does into the carrier, to
-      which [init] is then added.
+    - With one of each, as a depthwise convolution has, it is one
+      reduction over [x]'s padded windows, never stored, of the products
+      numbered [q], the tap's place, summed as {!sum} does into the
+      carrier, to which [init] is then added.
 
     Raises [Invalid_argument] if [x] has fewer than three axes; [w] has
     another rank; [stride], [padding] or [dilation] do not have [K] entries;
@@ -2932,10 +2932,10 @@ val conv_transpose :
     {!conv} states, or [0] where that is negative or [t = 0]. It is {!conv}
     at stride one of [x] with [stride - 1] zeros between its elements, by
     [w] reversed along its spatial axes and with its channels exchanged, and
-    sums as {!conv} states, from [init], with [o / groups] channels a group:
-    one {!contract} over [x] spread and padded, a copy where zeros spread or
-    pad it, or, with one channel a group, one reduction that never stores
-    it.
+    sums as {!conv} states, from [init], with [o / groups] input and
+    [c / groups] output channels a group: one {!contract} over [x] spread
+    and padded, a copy where zeros spread or pad it, or, with one of each,
+    one reduction that never stores it.
 
     Raises [Invalid_argument] as {!conv}, reading [o] from [x]'s last axis, or
     if no input has a [conv] of [x]'s shape. *)

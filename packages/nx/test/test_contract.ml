@@ -2911,9 +2911,9 @@ module Conv = struct
        let* groups = int_range 1 2 in
        let* cg = of_list [ 0; 1; 2; 9 ] in
        (* Nine output channels a group take chain order over rows past
-          four, one or two lane order; nine input channels do so in
-          conv_transpose, whose outputs they are. *)
-       let* og = of_list [ 1; 2; 9 ] in
+          four, one or two lane order, none sum nothing; nine input
+          channels do so in conv_transpose, whose outputs they are. *)
+       let* og = of_list [ 0; 1; 2; 9 ] in
        let* taps = ints k 0 3 in
        let* stride = ints k 1 3 in
        let* dilation = ints k 1 2 in
@@ -2933,7 +2933,7 @@ module Conv = struct
        let los = at0 1 los and his = at0 1 his in
        (* One case in ten makes axis 0 a padding that cuts past the axis: an
           input of 1 cropped by 1 on each side. A case of no padding or
-          shaped below undoes it, so it is 1/10 x 7/8 x 6/10 = 0.0525 of the
+          shaped below undoes it, so it is 1/10 x 7/8 x 4/10 = 0.035 of the
           cases, and drawn freely about 0.025 more. Such a case has no
           output, which most of the laws' other cases need, so the law that
           covers it draws 400 cases instead of taking a larger share. *)
@@ -2949,28 +2949,38 @@ module Conv = struct
        let* unpadded = int_range 0 7 in
        let none a = if unpadded = 0 then Array.map (fun _ -> 0) a else a in
        let los = none los and his = none his in
-       (* One case in ten each of one and of two input channels a group
-          over two groups, and of a 1x1 kernel of two channels a group,
-          each with an output: drawn freely each is about one case in
-          fifteen, which some seeds never reach. *)
+       (* One case in ten each of one input and one output channel a
+          group, depthwise, and of two input channels a group, over two
+          groups, and of a 1x1 kernel of two channels a group, each with an
+          output: drawn freely each is about one case in fifteen or fewer,
+          which some seeds never reach. *)
        let* shaped = int_range 0 9 in
        let groups, cg = match shaped with 0 -> (2, 1) | 1 | 2 -> (2, 2) | _ -> (groups, cg) in
        let taps = if shaped = 2 then Array.map (fun _ -> 1) taps else taps in
-       (* One case in ten of nine input and output channels a group, a tap
-          or more along each axis and eight windows or more along axis 0,
-          under an output, which conv and conv_transpose take in chain
-          order: drawn freely it is rare enough that some seeds never
-          reach it. *)
-       let cg, og = if shaped = 3 then (9, 9) else (cg, og) in
-       let taps = if shaped = 3 then Array.map (Int.max 1) taps else taps in
-       let n = if shaped <= 3 then Int.max 1 n else n in
+       (* One case in ten each of nine input and output channels a group,
+          of one input and nine output channels, and of one input and two
+          output channels, a tap or more along each axis and eight windows
+          or more along axis 0, under an output, which conv and
+          conv_transpose take in chain order, or lane order for two: drawn
+          freely each is rare enough that some seeds never reach it. *)
+       let cg, og =
+         match shaped with
+         | 0 -> (1, 1)
+         | 3 -> (9, 9)
+         | 4 -> (1, 9)
+         | 5 -> (1, 2)
+         | _ -> (cg, og)
+       in
+       let chain = shaped >= 3 && shaped <= 5 in
+       let taps = if chain then Array.map (Int.max 1) taps else taps in
+       let n = if shaped <= 5 then Int.max 1 n else n in
        let spatial =
-         if shaped > 3 then spatial
+         if shaped > 5 then spatial
          else
            Array.mapi
              (fun i d ->
                let least = (dilation.(i) * (taps.(i) - 1)) + 3 in
-               let windows = if shaped = 3 && i = 0 then 8 else 1 in
+               let windows = if chain && i = 0 then 8 else 1 in
                Int.max d (least + ((windows - 1) * stride.(i))))
              spatial
        in
@@ -3093,6 +3103,7 @@ module Conv = struct
         cover "output channels past 4, over rows past 4" (chained c);
         cover "two groups" (c.groups = 2);
         cover "no input channel" (c.cg = 0);
+        cover "one input channel and no output channel" (c.cg = 1 && c.og = 0);
         cover "a negative padding" (axes (fun i -> fst c.padding.(i) < 0 || snd c.padding.(i) < 0));
         cover "a padding that cuts past the axis"
           (axes (fun i -> c.spatial.(i) + fst c.padding.(i) + snd c.padding.(i) < 0));
@@ -3107,17 +3118,27 @@ module Conv = struct
         equal ~msg:"complex64" (array float_exact) (parts (complex_reference c))
           (run_complex c))
 
-  (* With other than one input channel a group, conv is the contraction of
-     its windows, stored, with [w]: [[n; t; g; q · cg + i]] against
-     [[g; o; q · cg + i]], bit for bit. *)
+  (* Unless a group has one input and one output channel, conv is the
+     contraction of its windows, stored, with [w]: [[n; t; g; q · cg + i]]
+     against [[g; o; q · cg + i]], bit for bit. With one of each it is the
+     sum over the taps of its windows times [w], stored: [[n; t; g; q]]
+     times [[g; q]], summed along [q]. *)
   let law_order =
-    prop "conv in complex64 has the bits of its windows' contraction" float_case
+    prop "conv in complex64 has the bits of its windows' contraction or sum"
+      float_case
       (fun c ->
         let k = Array.length c.spatial and cg = c.cg in
         cover "output channels past 4, over rows past 4" (chained c);
         cover "lane order over rows past 4" (cg > 1 && not (chained c) && rows c > 4);
         cover "a dilation above 1"
           (cg > 1 && Array.exists (fun d -> d > 1) c.dilation);
+        cover "one input channel, output channels past 4, over rows past 4"
+          (cg = 1
+          && chain_order ~rows:(rows c) ~columns:c.og ~depth:(numel c.taps));
+        cover "one input and two output channels, lane order over rows past 4"
+          (cg = 1 && c.og = 2 && rows c > 4);
+        cover "one input and one output channel, under an output"
+          (cg = 1 && c.og = 1 && rows c > 0);
         let xs = complex c.xs and ws = complex c.ws in
         let t = Array.init k (windows c) and q = numel c.taps in
         let shape = [| c.n; numel t; c.groups; q * cg |] in
@@ -3136,10 +3157,17 @@ module Conv = struct
         let bits y =
           Array.map Int64.bits_of_float (parts (Nx.to_array y))
         in
-        if cg <> 1 then
+        if cg <> 1 || c.og <> 1 then
           let a = Nx.create Nx.complex64 shape (Array.init (numel shape) window) in
           let b = Nx.create Nx.complex64 [| c.groups; c.og; q * cg |] ws in
           let want = Nx.contract Nx.complex64 (Nx.Pattern.v "n t g k, g o k -> n t g o | k") a b in
+          let x = Nx.create Nx.complex64 (x_shape c) xs in
+          let w = Nx.create Nx.complex64 (w_shape c) ws in
+          equal (array int64) (bits want) (bits (conv_of c x w))
+        else
+          let a = Nx.create Nx.complex64 shape (Array.init (numel shape) window) in
+          let b = Nx.create Nx.complex64 [| 1; 1; c.groups; q |] ws in
+          let want = Nx.sum ~axes:[ 3 ] (Nx.mul a b) in
           let x = Nx.create Nx.complex64 (x_shape c) xs in
           let w = Nx.create Nx.complex64 (w_shape c) ws in
           equal (array int64) (bits want) (bits (conv_of c x w)))
@@ -3232,14 +3260,15 @@ module Conv = struct
     case_of (fun m ->
         Gen.(array ~size:(constant m) (map Float.of_int (int_range (-40) 40))))
 
-  (* One window of three taps, every product [39 · 41], over one and two
-     input channels a group, and a kernel axis of no tap: sums of 4797 and
+  (* One window of three taps, every product [39 · 41], over one input
+     and one or two output channels a group, two input and two output
+     channels, and a kernel axis of no tap: sums of 4797 and
      9594, which neither float16 nor bfloat16 holds. Drawn, each is a few
      cases in a hundred, which some seeds never reach. *)
   let init_examples =
-    let one ~cg ~taps =
+    let one ~cg ~og ~taps =
       let c0 =
-        { n = 1; spatial = [| 3 |]; groups = 1; cg; og = 2; taps = [| taps |];
+        { n = 1; spatial = [| 3 |]; groups = 1; cg; og; taps = [| taps |];
           stride = [| 1 |]; dilation = [| 1 |]; padding = [| (0, 0) |];
           xs = [||]; ws = [||] }
       in
@@ -3247,7 +3276,8 @@ module Conv = struct
         xs = Array.make (numel (x_shape c0)) 39.;
         ws = Array.make (numel (w_shape c0)) 41. }
     in
-    [ one ~cg:1 ~taps:3; one ~cg:2 ~taps:3; one ~cg:2 ~taps:0 ]
+    [ one ~cg:1 ~og:1 ~taps:3; one ~cg:1 ~og:2 ~taps:3; one ~cg:2 ~og:2 ~taps:3;
+      one ~cg:2 ~og:2 ~taps:0 ]
 
   (* With an [init] each output is [round (init + Σ x w)], rounded once
      from the sum in float32, which holds these sums exactly. The [init]
@@ -3259,9 +3289,10 @@ module Conv = struct
       wide_case (fun c ->
         let sums = reference c in
         let outputs = Array.length sums > 0 in
-        cover "one input channel a group, under an output" (c.cg = 1 && outputs);
-        cover "other than one input channel a group, under an output"
-          (c.cg <> 1 && outputs);
+        cover "one input and one output channel a group, under an output"
+          (c.cg = 1 && c.og = 1 && outputs);
+        cover "other than one of each a group, under an output"
+          ((c.cg <> 1 || c.og <> 1) && outputs);
         cover "a kernel axis of no tap, under an output"
           (Array.mem 0 c.taps && outputs);
         List.iter
@@ -3291,7 +3322,8 @@ module Conv = struct
       float_case (fun c ->
         let outputs = numel (out_shape c) > 0 in
         let products = c.cg > 0 && not (Array.mem 0 c.taps) in
-        cover "one input channel a group, under an output" (c.cg = 1 && outputs);
+        cover "one input and one output channel a group, under an output"
+          (c.cg = 1 && c.og = 1 && outputs);
         cover "output channels past 4, over rows past 4" (chained c);
         cover "no product, under an output" ((not products) && outputs);
         let m = Array.length c.xs in
@@ -3408,6 +3440,80 @@ module Conv = struct
           let lhs = Nx.item [] (Nx.sum (Nx.mul conv g)) in
           let rhs = Nx.item [] (Nx.sum (Nx.mul z y)) in
           equal ~msg:"adjoint" float_exact lhs rhs)
+
+  (* conv_transpose has the bits of conv at stride one over its input
+     spread, [stride - 1] zeros between its elements, by [w] reversed along
+     its taps with its channels exchanged, padded so that the result has
+     the least input's extents: [span - lo] before and
+     [d + span - spread - (span - lo)] after, [span] the dilated kernel's
+     extent less one. In complex64, where each path's order shows. *)
+  let law_transpose_order =
+    prop "conv_transpose in complex64 has the bits of conv over its input spread"
+      float_case (fun c ->
+        let k = Array.length c.spatial and t = c.spatial in
+        let least = Array.mapi (least c) t in
+        let whole =
+          Array.for_all Option.is_some least && not (Array.mem 0 c.taps)
+        in
+        let outputs = whole && c.n > 0 && Array.for_all (fun e -> e > 0) t in
+        cover "one input and one output channel a group, under an output"
+          (outputs && c.cg = 1 && c.og = 1);
+        cover "other than one of each, under an output"
+          (outputs && (c.cg <> 1 || c.og <> 1));
+        cover "a stride above 1, under an output"
+          (outputs && Array.exists (fun e -> e > 1) c.stride);
+        if whole then begin
+          let d = Array.map Option.get least in
+          let o = c.groups * c.og and m = Array.length c.xs in
+          let vals = complex c.xs in
+          let spread i = if t.(i) = 0 then 0 else ((t.(i) - 1) * c.stride.(i)) + 1 in
+          let x_shape' = Array.concat [ [| c.n |]; t; [| o |] ] in
+          let spread_shape = Array.concat [ [| c.n |]; Array.init k spread; [| o |] ] in
+          let xv =
+            Array.init (numel x_shape') (fun j ->
+                if m = 0 then Complex.zero else vals.(j mod m))
+          in
+          let spread_v =
+            Array.init (numel spread_shape) (fun j ->
+                let idx = unravel spread_shape j in
+                let on a = idx.(1 + a) mod c.stride.(a) = 0 in
+                if not (Array.for_all on (Array.init k Fun.id)) then Complex.zero
+                else
+                  let at =
+                    Array.mapi
+                      (fun a e -> if a >= 1 && a <= k then e / c.stride.(a - 1) else e)
+                      idx
+                  in
+                  xv.(ravel x_shape' at))
+          in
+          let span i = c.dilation.(i) * (c.taps.(i) - 1) in
+          let lo = Array.init k (fun i -> span i - fst c.padding.(i)) in
+          let hi = Array.init k (fun i -> d.(i) + span i - spread i - lo.(i)) in
+          let ws = complex c.ws in
+          let w_shape' = Array.concat [ [| c.groups * c.cg |]; c.taps; [| c.og |] ] in
+          let reversed =
+            Array.init (numel w_shape') (fun j ->
+                let idx = unravel w_shape' j in
+                let g = idx.(0) / c.cg and i = idx.(0) mod c.cg in
+                let q = Array.init k (fun a -> c.taps.(a) - 1 - idx.(1 + a)) in
+                let j = idx.(k + 1) in
+                ws.(ravel (w_shape c) (Array.concat [ [| (g * c.og) + j |]; q; [| i |] ])))
+          in
+          let z s v = Nx.create Nx.complex64 s v in
+          let want =
+            Nx.conv ~padding:(Array.map2 (fun a b -> (a, b)) lo hi)
+              ~dilation:c.dilation ~groups:c.groups (z spread_shape spread_v)
+              (z w_shape' reversed)
+          in
+          let got =
+            Nx.conv_transpose ~stride:c.stride ~padding:c.padding
+              ~dilation:c.dilation ~groups:c.groups (z x_shape' xv)
+              (z (w_shape c) ws)
+          in
+          let bits y = Array.map Int64.bits_of_float (parts (Nx.to_array y)) in
+          equal ~msg:"shape" (array int) (Nx.shape want) (Nx.shape got);
+          equal (array int64) (bits want) (bits got)
+        end)
 
   let invalid f = raises_match (Exn.invalid_arg ~sub:"Nx.conv") f
 
@@ -3690,6 +3796,7 @@ module Conv = struct
         law_init;
         law_add;
         law_transpose;
+        law_transpose_order;
         test "float16 sums at float32" test_narrow;
         test "an init joins before the one rounding" test_narrow_init;
         test "integers wrap" test_wrap;

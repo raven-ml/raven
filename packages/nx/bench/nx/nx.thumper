@@ -29,6 +29,8 @@
 # forced: blessed rng/permute-16K-of-1.4e10 under load 14.3 on 14 cores
 # pending: wall_time of io/load-tiff-1024x1024-u16-deflate-tiles, to record on a quiet machine
 # pending: wall_time of rng/dirichlet-f32-4Kx8, to record on a quiet machine
+# pending: wall_time of conv/conv-f32-32x28x28x1-3x3-to-8, to record on a quiet machine
+# pending: wall_time of conv/depthwise-f32-8x56x56x64-3x3, to record on a quiet machine
 
 attention/decode-f32-64x8x4096x64	alloc_words	exact	876
 attention/decode-f32-64x8x4096x64	wall_time	batch=1	n=20	1.364e-03	9.401e-04 9.802e-04 9.986e-04 9.990e-04 1.039e-03 1.198e-03 1.219e-03 1.260e-03 1.295e-03 1.346e-03 1.383e-03 1.600e-03 1.727e-03 2.126e-03 2.527e-03 3.246e-03 3.993e-03 3.993e-03 5.491e-03 1.163e-02
@@ -98,12 +100,13 @@ contract/matmul-i8-256	alloc_words	exact	165
 contract/matmul-i8-64	alloc_words	exact	165
 conv/conv-bf16-8x56x56x64-3x3	alloc_words	exact	1197
 conv/conv-c64-4x32x32x64-3x3-to-4	alloc_words	exact	1198
+conv/conv-f32-32x28x28x1-3x3-to-8	alloc_words	exact	1201
 conv/conv-f32-8x112x112x3-3x3-to-3	alloc_words	exact	1197
 conv/conv-f32-8x56x56x64-3x3	alloc_words	exact	1197
 conv/conv-f32-8x56x56x64-3x3-to-3	alloc_words	exact	1197
 conv/conv-input-grad-f32-8x56x56x64-3x3	alloc_words	exact	1373
 conv/conv-weight-grad-f32-8x56x56x64-3x3	alloc_words	exact	642
-conv/depthwise-f32-8x56x56x64-3x3	alloc_words	exact	1628
+conv/depthwise-f32-8x56x56x64-3x3	alloc_words	exact	1574
 conv/max-pool-f32-8x64x56x56-3x3s2	alloc_words	exact	577
 conv/max-pool-grad-f32-8x64x56x56-3x3s2	alloc_words	exact	1807
 dispatch/add-1	alloc_words	exact	50
