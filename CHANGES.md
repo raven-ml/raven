@@ -1482,6 +1482,11 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A GPU product of few rows streamed along its matrix's columns, as `x @ w`
+  with `w` laid out `[K; N]`, splits its reduce into as many threads as the
+  workgroup's shared memory holds, where it took none when the threads it
+  wanted did not fit (`Heuristic.hand_coded_optimizations`): 16 rows by 64
+  columns over 2880 ran on 32 threads on CUDA, 100 times its byte bound.
 - `Codegen.to_programs` compiles once a text that kernels of several keys
   render, where each worker that rendered it compiled it: tessera's cold
   training step compiled 5 of its 165 sources twice at 2 workers.

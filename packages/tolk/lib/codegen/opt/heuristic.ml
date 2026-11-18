@@ -831,8 +831,16 @@ let columns_layout (g, k, across, wanted) =
   ignore (split k (axis_of k g) across Opt.Local);
   ignore (split k (axis_of k g) columns Opt.Upcast);
   let most = (K.ren k).local_threads_max in
-  let threads = pow2_dividing first (min wanted (most / across)) in
-  if threads > 1 then ignore (try_split k (axis_of k first) threads Opt.Local);
+  (* The threads along the reduce sum their outputs through shared memory, a
+     slot for each output of each thread: where the workgroup's memory does
+     not hold the threads wanted, half as many are tried. 16 rows by 64
+     columns over 2880 hold 32 outputs a thread, so 8 across by 64 along
+     would take 64 KiB of CUDA's 48; 8 by 32 take 32. *)
+  let rec along t =
+    if t > 1 && not (try_split k (axis_of k first) t Opt.Local) then
+      along (t / 2)
+  in
+  along (pow2_dividing first (min wanted (most / across)));
   k
 
 (* are we grouping? (requires local shape support)

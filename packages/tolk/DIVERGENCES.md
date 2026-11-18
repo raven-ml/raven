@@ -2188,8 +2188,10 @@ Withdrawn: multi-device is out of scope, see README.
     to 8, or 4 with rows held. When that range is a global axis (columns),
     after the reuse upcast it splits into 32 local threads and 2 upcast
     lanes, and the first contracted range into the threads, up to 32, that
-    make `stream_threads` threads; with more outputs than `stream_threads`
-    the kernel takes the other rules. `MV_BLOCKSIZE`, `MV_THREADS_PER_ROW`
+    make `stream_threads` threads, halved until the workgroup's shared
+    memory holds a slot for each output of each thread, which their sum
+    passes through; with more outputs than `stream_threads` the kernel takes
+    the other rules. `MV_BLOCKSIZE`, `MV_THREADS_PER_ROW`
     and `MV_ROWS_PER_THREAD` are gone;
   - few outputs (D110's part): when the outputs are too few for the columns
     layout to run `stream_threads` threads, a workgroup of the renderer's
@@ -2257,8 +2259,9 @@ Withdrawn: multi-device is out of scope, see README.
   multiply-adds per byte of its streamed operand`, `› each renderer streams
   before a core up to 64 multiply-adds a byte` and `› a contraction streams
   before a core up to the renderer's bound a byte`, `› a product's workgroups
-  hold at most a block's threads on every GPU` and `› a product streamed by
-  its rows reduces over a SIMD group's threads`; the Cstyle suite's `a
+  hold at most a block's threads on every GPU`, `› a product streamed by
+  its rows reduces over a SIMD group's threads` and `› a product streamed by
+  its columns splits its reduce into threads`; the Cstyle suite's `a
   renderer states its SIMD group's threads and a workgroup's most`; `the
   hand-coded optimisations keep a kernel's writes › small kernels ›
   experts_down_metal` (a group inside another reduce); the Postrange suite's

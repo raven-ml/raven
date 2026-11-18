@@ -783,6 +783,48 @@ let rows_take_simd =
            1
            (ranges_at o ~reduce:true [ Local ])))
 
+(* A product streamed by its matrix's columns splits its reduce into the
+   threads the columns layout wants (heuristic.mli), halved until the
+   workgroup's shared memory holds a float32 slot for each output of each
+   thread: CUDA's 48 KiB, gfx1201's 64 and Apple9's 32. The threads wanted,
+   with [across] threads over the columns and [o] outputs a thread, its rows
+   times 2 columns:
+   - 16 by 64 over 2880: 64, across 8, o 32, 1 KiB a thread along the
+     reduce;
+   - 8 by 1024 over 4096: 64, across 16, o 16, 1 KiB;
+   - 16 by 2880 over 2880: 32, across 32, o 32, 4 KiB;
+   - 12 by 128 over 8192: 128, across 8, o 24, 768 bytes.
+   On Apple9, whose [stream_threads] is 16384, 8 by 1024 over 4096 wants
+   32 threads, across 32, 2 KiB a thread.
+   16 by 64 over 2880, a dense layer of 16 tokens with its weight laid out
+   [K; N], ran on 32 threads of CUDA where its reduce took none. *)
+let columns_split =
+  let cases_of t shares =
+    List.combine
+      (List.map (fun s -> (t, s))
+         [ (16, 64, 2880); (8, 1024, 4096); (16, 2880, 2880); (12, 128, 8192) ])
+      shares
+  in
+  cases "a product streamed by its columns splits its reduce into threads"
+    ~id:(fun ((t, (m, n, k)), _) ->
+      Printf.sprintf "%s, %d by %d over %d" t m n k)
+    (cases_of "CUDA:CUDA:sm_89" [ 32; 32; 8; 64 ]
+    @ cases_of "AMD:HIP:gfx1201" [ 64; 64; 16; 64 ]
+    @ cases_of "METAL:METAL:Apple9" [ 32; 16; 8; 32 ])
+    (fun ((t, (rows, cols, depth)), threads) ->
+      let ren =
+        Cstyle.without_compiler (Result.get_ok (Helpers.Target.of_string t))
+      in
+      let s = K.v (dense ~by_columns:true rows cols depth) ren in
+      K.convert_loop_to_global s;
+      let o = Heuristic.hand_coded_optimizations s in
+      equal ~msg:"streams" Testable.bool true (streams o);
+      equal ~msg:"threads along the reduce" int threads
+        (List.fold_left
+           (fun n r -> n * Bigint.to_int (size r))
+           1
+           (ranges_at o ~reduce:true [ Local ])))
+
 (* A product's workgroups hold at most a block's threads on every GPU target,
    whatever the threads of its SIMD groups. *)
 let within_block =
@@ -3231,6 +3273,7 @@ let () =
              one_trip_product;
              within_block;
              rows_take_simd;
+             columns_split;
            ];
          no_threads_beside_call;
          warps_within_runs;

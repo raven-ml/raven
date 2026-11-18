@@ -95,7 +95,9 @@
     32 on CUDA, fewer down to 8 with few outputs, and 2 upcast lanes, and the
     first reduce axis into the least power of two of local threads that makes
     32768 threads, at most what a workgroup's most leaves beside those across
-    the axis, or the largest that divides it. It does not apply when more than 32768
+    the axis, or the largest that divides it, halved until the workgroup's
+    shared memory, through which those threads sum their outputs, holds
+    them. It does not apply when more than 32768
     outputs are left after the upcast, or when the axis does not divide by the
     local threads and lanes; 32768 threads is [sm_89]'s bound, fixed for every
     target as the tensor core's floor is.
