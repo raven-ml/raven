@@ -544,6 +544,228 @@ let read_rows =
       invalid ~by:"Nx_io.Audio.window" (fun () -> Audio.window a ~row:7 ~rows:2);
       invalid ~by:"Nx_io.Audio.blocks" (fun () -> Audio.blocks a ~rows:0))
 
+(* Saving *)
+
+(* A case to save: a dtype, rows and channels, the significant bits of an
+   integer sample, a channel mask if stated, and a view of the samples. *)
+type save = { case : case; bits : int option; mask : int option; rate : int }
+
+(* [clear dt low v] is [v] with its [low] lowest bits cleared. *)
+let clear (type v s) (dt : (v, s) D.t) low (v : v) : v =
+  match dt with
+  | D.Int32 -> Int32.(shift_left (shift_right v low) low)
+  | D.Int64 -> Int64.(shift_left (shift_right v low) low)
+  | D.Int16 -> (v asr low) lsl low
+  | D.Uint8 -> (v asr low) lsl low
+  | _ -> v
+
+let save_dtypes =
+  D.[ Any Uint8; Any Int16; Any Int32; Any Int64; Any Float32; Any Float64 ]
+
+let saves =
+  let open Gen in
+  let* (D.Any dt) =
+    of_list ~pp:(fun ppf (D.Any dt) -> D.pp ppf dt) save_dtypes
+  in
+  let* n = frequency [ (1, constant 0); (1, constant 1); (4, int_range 2 9) ] in
+  let* c = frequency [ (3, int_range 1 2); (1, int_range 3 9) ] in
+  let w = D.bytes dt 1 in
+  let* bits =
+    if D.is D.Float dt then constant None
+    else
+      frequency
+        [ (1, constant None); (2, map Option.some (int_range 1 (8 * w))) ]
+  in
+  let* mask =
+    frequency [ (2, constant None); (1, map Option.some (int_range 0 0x3ffff)) ]
+  in
+  let* rate = int_range 1 192000 in
+  let* vs = array ~size:(constant (n * c)) (element dt) in
+  let+ view = of_list [ Plain; Transposed; Broadcast ] in
+  (* An integer's bits below its top [bits] are cleared. *)
+  let vs =
+    match bits with
+    | Some b -> Array.map (clear dt ((8 * w) - b)) vs
+    | None -> vs
+  in
+  let case =
+    match view with
+    | Transposed -> Case (dt, [| c; n |], vs, Transposed)
+    | Broadcast when n > 0 -> Case (dt, [| 1; c |], Array.sub vs 0 c, Broadcast)
+    | _ -> Case (dt, [| n; c |], vs, Plain)
+  in
+  { case; bits; mask; rate }
+
+let saves =
+  Gen.with_pp
+    (fun ppf s ->
+      let (Case (dt, sh, _, v)) = s.case in
+      Format.fprintf ppf "%a %a %a, bits %s, mask %s" D.pp dt pp_shape sh
+        pp_view v
+        (Option.fold ~none:"-" ~some:string_of_int s.bits)
+        (Option.fold ~none:"-" ~some:string_of_int s.mask))
+    saves
+
+(* The samples of a case, of shape [[|n; c|]]. *)
+let samples_of s =
+  let (Case (_, sh, _, view)) = s.case in
+  let (Nx.P x) = value s.case in
+  match view with
+  | Broadcast -> Nx.P (Nx.reshape [| 2 * sh.(0); sh.(1) |] x)
+  | _ -> Nx.P x
+
+let round_trips =
+  prop "a save loads back as its samples, rate, bits and mask" saves (fun s ->
+      let (Nx.P x) = samples_of s in
+      let n, c = match Nx.shape x with [| n; c |] -> (n, c) | _ -> (0, 0) in
+      let w = D.bytes (Nx.dtype x) 1 in
+      cover "no row" (n = 0);
+      cover "more than 2 channels" (c > 2);
+      cover "fewer bits than the dtype's"
+        (Option.exists (fun b -> b < 8 * w) s.bits);
+      cover "a stated mask" (s.mask <> None);
+      cover "strided"
+        (match s.case with
+        | Case (_, _, _, Transposed) -> n > 1 && c > 1
+        | _ -> false);
+      cover "floats" (D.is D.Float (Nx.dtype x));
+      let path = temp_file ~suffix:".wav" () in
+      Nx_io.save_wav ?bits:s.bits ?channel_mask:s.mask path ~rate:s.rate x;
+      let a = Nx_io.load_audio path in
+      let mask =
+        Option.value s.mask ~default:(match c with 1 -> 4 | 2 -> 3 | _ -> 0)
+      in
+      equal facts_t
+        ((s.rate, n, c), (Option.value s.bits ~default:(8 * w), mask))
+        (facts a);
+      equal packed (Nx.P x) (Audio.samples a))
+
+let saved path = Nx_io.load_audio path
+
+let save_cases =
+  group "saving"
+    [
+      test "a save of 4- and 8-byte samples loads over the file's pages"
+        (fun () ->
+          List.iter
+            (fun (Nx.P x) ->
+              List.iter
+                (fun c ->
+                  let x = Nx.reshape [| 6 / c; c |] x in
+                  let path = temp_file ~suffix:".wav" () in
+                  Nx_io.save_wav path ~rate:8000 x;
+                  equal memory Over_file
+                    (memory_of (Audio.samples (saved path))))
+                [ 1; 2; 3 ])
+            [
+              Nx.P (Nx.create Nx.int16 [| 6 |] [| 1; 2; 3; 4; 5; 6 |]);
+              Nx.P (Nx.create Nx.int32 [| 6 |] [| 1l; 2l; 3l; 4l; 5l; 6l |]);
+              Nx.P (Nx.create Nx.float32 [| 6 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]);
+              Nx.P (Nx.create Nx.float64 [| 6 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]);
+              Nx.P (Nx.create Nx.int64 [| 6 |] [| 1L; 2L; 3L; 4L; 5L; 6L |]);
+            ]);
+      test "24 bits of int32 take 3 bytes a sample" (fun () ->
+          let x =
+            Nx.create Nx.int32 [| 2; 2 |]
+              [| 256l; -256l; 0x7fffff00l; Int32.min_int |]
+          in
+          let path = temp_file ~suffix:".wav" () in
+          Nx_io.save_wav ~bits:24 path ~rate:48000 x;
+          let s = read path in
+          equal int 12 (String.length s - String.index_from s 36 'd' - 8);
+          equal packed (Nx.P x) (Audio.samples (saved path)));
+      test "a set bit below the bits raises naming the row and leaves the file"
+        (fun () ->
+          let path = file ~suffix:".wav" "before" in
+          let x = Nx.create Nx.int32 [| 3; 1 |] [| 256l; 512l; 513l |] in
+          raises_match (Exn.invalid_arg ~sub:"Nx_io.save_wav: row 2") (fun () ->
+              Nx_io.save_wav ~bits:24 path ~rate:8000 x);
+          equal string "before" (read path));
+      test "a FLAC file saves as the WAV file that loads as it" (fun () ->
+          List.iter
+            (fun name ->
+              let a = Nx_io.load_audio name in
+              let (Nx.P x) = Audio.samples a in
+              let path = temp_file ~suffix:".wav" () in
+              Nx_io.save_wav ~bits:(Audio.bits a) path ~rate:(Audio.rate a) x;
+              let b = saved path in
+              equal facts_t (facts a) (facts b);
+              equal packed (Nx.P x) (Audio.samples b))
+            [
+              fixture "flac_depth_12.flac";
+              fixture "flac_depth_20.flac";
+              fixture "flac_depth_24.flac";
+              fixture "flac_depth_32.flac";
+              Filename.concat "cut" "ietf_subset_37.flac";
+            ]);
+      cases "a value WAV does not store raises" ~id:fst
+        [
+          ( "a vector",
+            (Nx.P (Nx.zeros Nx.int16 [| 4 |]), None, None, 8000, "1 axes") );
+          ( "no channel",
+            (Nx.P (Nx.zeros Nx.int16 [| 4; 0 |]), None, None, 8000, "no channel")
+          );
+          ( "int8",
+            (Nx.P (Nx.zeros Nx.int8 [| 4; 1 |]), None, None, 8000, "unsigned")
+          );
+          ( "bool",
+            (Nx.P (Nx.zeros Nx.bool [| 4; 1 |]), None, None, 8000, "no bool") );
+          ( "float16",
+            ( Nx.P (Nx.zeros Nx.float16 [| 4; 1 |]),
+              None,
+              None,
+              8000,
+              "no float16" ) );
+          ( "a row past 65535 bytes",
+            ( Nx.P (Nx.zeros Nx.int16 [| 1; 32768 |]),
+              None,
+              None,
+              1,
+              "65536 bytes" ) );
+          ( "a rate of 0",
+            (Nx.P (Nx.zeros Nx.int16 [| 4; 1 |]), None, None, 0, "rate of 0") );
+          ( "a rate of 2^32",
+            ( Nx.P (Nx.zeros Nx.uint8 [| 4; 1 |]),
+              None,
+              None,
+              1 lsl 32,
+              "rate of" ) );
+          ( "bytes a second of 2^32",
+            ( Nx.P (Nx.zeros Nx.int16 [| 4; 2 |]),
+              None,
+              None,
+              1 lsl 30,
+              "rate of" ) );
+          ( "0 bits",
+            (Nx.P (Nx.zeros Nx.int16 [| 4; 1 |]), Some 0, None, 8000, "0 bits")
+          );
+          ( "17 bits of int16",
+            (Nx.P (Nx.zeros Nx.int16 [| 4; 1 |]), Some 17, None, 8000, "17 bits")
+          );
+          ( "bits of floats",
+            ( Nx.P (Nx.zeros Nx.float32 [| 4; 1 |]),
+              Some 24,
+              None,
+              8000,
+              "bits is given" ) );
+          ( "a negative mask",
+            (Nx.P (Nx.zeros Nx.int16 [| 4; 1 |]), None, Some (-1), 8000, "mask")
+          );
+          ( "a mask of 33 bits",
+            ( Nx.P (Nx.zeros Nx.int16 [| 4; 1 |]),
+              None,
+              Some (1 lsl 32),
+              8000,
+              "mask" ) );
+        ]
+        (fun (_, (Nx.P x, bits, channel_mask, rate, sub)) ->
+          let path = temp_file ~suffix:".wav" () in
+          raises_match (Exn.invalid_arg ~sub:"Nx_io.save_wav: ") (fun () ->
+              Nx_io.save_wav ?bits ?channel_mask path ~rate x);
+          raises_match (Exn.invalid_arg ~sub) (fun () ->
+              Nx_io.save_wav ?bits ?channel_mask path ~rate x));
+    ]
+
 (* Corruption *)
 
 let small =
@@ -579,5 +801,7 @@ let () =
          windows;
          joined;
          read_rows;
+         round_trips;
+         save_cases;
          corrupted;
        ])

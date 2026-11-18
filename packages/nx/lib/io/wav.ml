@@ -242,6 +242,10 @@ external widen :
   Storage.bytes -> int -> Storage.bytes -> int -> int -> int -> int -> int
   = "caml_nx_io_wav_widen_byte" "caml_nx_io_wav_widen"
 
+external narrow :
+  Storage.bytes -> int -> Storage.bytes -> int -> int -> int -> int -> int
+  = "caml_nx_io_wav_narrow_byte" "caml_nx_io_wav_narrow"
+
 external g711 : Storage.bytes -> int -> Storage.bytes -> int -> bool -> unit
   = "caml_nx_io_wav_g711"
 
@@ -298,3 +302,134 @@ let samples t =
         dt (layout t t.length)
     in
     Nx.P x
+
+(* Saving *)
+
+let by = "Nx_io.save_wav"
+
+(* The coding of a dtype, and the fewest container bytes that load back at
+   it. *)
+let coding_of (type v s) (dt : (v, s) D.t) =
+  match dt with
+  | D.Uint8 -> (Pcm, 1)
+  | D.Int16 -> (Pcm, 2)
+  | D.Int32 -> (Pcm, 3)
+  | D.Int64 -> (Pcm, 5)
+  | D.Float32 -> (Ieee_float, 4)
+  | D.Float64 -> (Ieee_float, 8)
+  | D.Int8 ->
+      Fail.invalid_argf
+        "%s: WAV stores 8-bit samples unsigned, offset by 128, as uint8" by
+  | dt -> Fail.invalid_argf "%s: WAV stores no %s" by (D.name dt)
+
+let le n v = String.init n (fun i -> Char.chr ((v lsr (8 * i)) land 0xff))
+let chunk id body = id ^ le 4 (String.length body) ^ body
+
+(* [junk at k] is a JUNK chunk that puts the samples of a data chunk whose
+   header would start at byte [at] at a multiple of their [k] bytes, so that a
+   load maps them, or none where they lie there already or would not map. A
+   chunk takes 8 bytes or more, and offsets are even. *)
+let junk at k =
+  let gap = (k - ((at + 8) mod k)) mod k in
+  if (k <> 4 && k <> 8) || gap = 0 then ""
+  else chunk "JUNK" (String.make ((((gap - 8) mod k) + k) mod k) '\000')
+
+(* The rows a save converts at a time, about 1 MiB of a row's elements. *)
+let rows_at_once align = Int.max 1 ((1 lsl 20) / align)
+
+let save ?bits ?channel_mask path ~rate x =
+  let dt = Nx.dtype x in
+  let n, c =
+    match Nx.shape x with
+    | [| n; c |] -> (n, c)
+    | s ->
+        Fail.invalid_argf "%s: %d axes, a WAV file's samples have 2" by
+          (Array.length s)
+  in
+  let coding, least = coding_of dt in
+  if c = 0 then Fail.invalid_argf "%s: the samples have no channel" by;
+  let w = D.bytes dt 1 in
+  let bits =
+    match (bits, coding) with
+    | None, _ -> 8 * w
+    | Some _, Ieee_float ->
+        Fail.invalid_argf "%s: bits is given for %s samples" by (D.name dt)
+    | Some b, _ ->
+        if b < 1 || b > 8 * w then
+          Fail.invalid_argf "%s: %d bits in %s elements" by b (D.name dt);
+        b
+  in
+  let k = Int.max least ((bits + 7) / 8) in
+  let align = k * c in
+  if align > 0xffff then
+    Fail.invalid_argf "%s: a row of %d bytes, past WAV's 65535" by align;
+  if rate < 1 || rate > 0xffff_ffff || rate * align > 0xffff_ffff then
+    Fail.invalid_argf "%s: a rate of %d rows a second of %d bytes" by rate align;
+  let default = default_mask c in
+  let mask = Option.value channel_mask ~default in
+  if mask < 0 || mask > 0xffff_ffff then
+    Fail.invalid_argf "%s: the channel mask %d is not 32 bits" by mask;
+  let code = match coding with Pcm -> format_pcm | _ -> format_ieee_float in
+  let extensible =
+    c > 2 || (coding = Pcm && bits > 16) || bits <> 8 * k || mask <> default
+  in
+  let common = le 2 c ^ le 4 rate ^ le 4 (rate * align) ^ le 2 align in
+  let fmt =
+    chunk "fmt "
+      (if extensible then
+         le 2 format_extensible ^ common
+         ^ le 2 (8 * k)
+         ^ le 2 22 ^ le 2 bits ^ le 4 mask ^ le 2 code ^ subtype_tail
+       else if coding = Pcm then le 2 code ^ common ^ le 2 (8 * k)
+       else le 2 code ^ common ^ le 2 (8 * k) ^ le 2 0)
+  in
+  let data = n * align in
+  let pad = data land 1 in
+  let fact rf64 =
+    if coding = Ieee_float then
+      chunk "fact" (le 4 (if rf64 then unstated else n))
+    else ""
+  in
+  (* The chunks between WAVE and data, after the ds64 chunk [ds64]. *)
+  let body rf64 ds64 =
+    let fact = fact rf64 in
+    let at = 12 + String.length ds64 + String.length fmt + String.length fact in
+    ds64 ^ fmt ^ fact ^ junk at k
+  in
+  let plain = body false "" in
+  let riff = 4 + String.length plain + 8 + data + pad in
+  (* A size field that would reach [unstated] makes the file RF64, whose ds64
+     chunk states the sizes (EBU Tech 3306, 3.4). *)
+  let header =
+    if riff < unstated then
+      "RIFF" ^ le 4 riff ^ "WAVE" ^ plain ^ "data" ^ le 4 data
+    else
+      let ds64_bytes = 36 in
+      let size =
+        4
+        + String.length (body true (String.make ds64_bytes ' '))
+        + 8 + data + pad
+      in
+      let ds64 = chunk "ds64" (le 8 size ^ le 8 data ^ le 8 n ^ le 4 0) in
+      "RF64" ^ le 4 unstated ^ "WAVE" ^ body true ds64 ^ "data" ^ le 4 unstated
+  in
+  Storage.with_bytes ~by x @@ fun src ->
+  Save.write path @@ fun fd ->
+  Save.string fd header;
+  let step = rows_at_once align in
+  let buf = Array1.create int8_unsigned c_layout (step * align) in
+  let rec rows r =
+    if r < n then begin
+      let m = Int.min step (n - r) in
+      let bad = narrow src (r * c) buf (m * c) w k bits in
+      if bad >= 0 then
+        Fail.invalid_argf "%s: row %d: a sample has a set bit below its %d bits"
+          by
+          (r + (bad / c))
+          bits;
+      Save.bytes fd (Array1.sub buf 0 (m * align));
+      rows (r + m)
+    end
+  in
+  rows 0;
+  if pad = 1 then Save.string fd "\000"

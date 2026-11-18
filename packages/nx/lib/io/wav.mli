@@ -27,3 +27,13 @@ val window : t -> row:int -> rows:int -> Nx.host Nx.packed
 (** [window t ~row ~rows] requires the rows to lie in [t]'s.
 
     Raises [Failure] as {!Nx_io.Audio.window} states. *)
+
+val save :
+  ?bits:int ->
+  ?channel_mask:int ->
+  string ->
+  rate:int ->
+  ('v, 's, 'd) Nx.t ->
+  unit
+(** Raises [Invalid_argument] naming [Nx_io.save_wav] and [Failure] as
+    {!Nx_io.save_wav} states. *)

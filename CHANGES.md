@@ -3376,6 +3376,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_io.save_wav ?bits ?channel_mask path ~rate x` writes an `[|n; c|]` array
+  as a WAV file that loads back as it, `~bits` its samples' significant bits,
+  RF64 past 4 GiB; `int8` is refused, since WAV stores 8 bits unsigned.
 - `Nx_io.Audio.window` and `Nx_io.Audio.blocks` read an audio file's rows in
   pieces, each frame of a FLAC pass decoded once, and starting at the seek
   point nearest before the first row whose frame confirms it.

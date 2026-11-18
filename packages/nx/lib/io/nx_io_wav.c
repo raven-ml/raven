@@ -67,6 +67,42 @@ CAMLprim value caml_nx_io_wav_widen_byte(value *argv, int argn) {
                               argv[5], argv[6]);
 }
 
+/* [caml_nx_io_wav_narrow src at dst n w k bits] writes the [n] elements of
+   [w] little-endian bytes of [src] from element [at] as containers of their
+   top [k] bytes, little-endian, into [dst]. It is the index from [at] of
+   the first element with a set bit below its top [bits], whose container
+   and those after it are not written, or -1. */
+CAMLprim value caml_nx_io_wav_narrow(value vsrc, value vat, value vdst,
+                                     value vn, value vw, value vk,
+                                     value vbits) {
+  CAMLparam2(vsrc, vdst);
+  int w = Int_val(vw), k = Int_val(vk), bits = Int_val(vbits);
+  const uint8_t *src =
+      (const uint8_t *)Caml_ba_data_val(vsrc) + (size_t)Long_val(vat) * w;
+  uint8_t *dst = Caml_ba_data_val(vdst);
+  size_t n = Long_val(vn);
+  uint64_t low = bits >= 8 * w ? 0 : (UINT64_C(1) << (8 * w - bits)) - 1;
+  intnat bad = -1;
+  caml_release_runtime_system();
+  for (size_t i = 0; i < n; i++, src += w, dst += k) {
+    uint64_t v = 0;
+    for (int j = 0; j < w; j++) v |= (uint64_t)src[j] << (8 * j);
+    if (v & low) {
+      bad = (intnat)i;
+      break;
+    }
+    for (int j = 0; j < k; j++) dst[j] = (uint8_t)(v >> (8 * (w - k + j)));
+  }
+  caml_acquire_runtime_system();
+  CAMLreturn(Val_long(bad));
+}
+
+CAMLprim value caml_nx_io_wav_narrow_byte(value *argv, int argn) {
+  (void)argn;
+  return caml_nx_io_wav_narrow(argv[0], argv[1], argv[2], argv[3], argv[4],
+                               argv[5], argv[6]);
+}
+
 /* G.711's A-law code [c] as a 13-bit value times 8: its bits inverted at
    even positions, segment [s] and mantissa [m] give [(2 * m + 33) << (s - 1)]
    for [s > 0] and [2 * m + 1] for [s = 0], so the largest is 4032 * 8. */

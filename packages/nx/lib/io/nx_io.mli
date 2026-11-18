@@ -1319,6 +1319,40 @@ val load_audio : string -> Audio.t
       twice, if the length is refused as {!section-audio} states, or, for a
       file without a length, as {!Audio.samples} raises. *)
 
+val save_wav :
+  ?bits:int ->
+  ?channel_mask:int ->
+  string ->
+  rate:int ->
+  ('v, 's, 'd) Nx.t ->
+  unit
+(** [save_wav path ~rate x] writes [x], of shape [[|n; c|]], to [path] as a
+    WAV file of [c] channels at [rate], which {!load_audio} reads back as
+    [x], [rate], [bits] and [channel_mask]. [uint8], [int16], [int32] and
+    [int64] are written as PCM, [float32] and [float64] as IEEE float.
+    - [bits] is the significant bits of an integer sample, the top ones of
+      its element, whose others must be zero. The container is the fewest
+      bytes that hold [bits] and load back at [x]'s dtype, so [~bits:24]
+      writes an [int32] in three bytes. Defaults to the dtype's width.
+    - [channel_mask] defaults to {!Audio.channel_mask}'s for a WAV file of
+      [c] channels that states none.
+
+    The [fmt ] chunk is WAVEFORMATEXTENSIBLE for more than two channels,
+    PCM of more than 16 bits, [bits] other than its container's or a mask
+    other than the default, and plain otherwise, with a [fact] chunk for
+    floats. A [JUNK] chunk before [data] puts containers of 4 or 8 bytes at
+    a multiple of their size, so a load maps them. The file is RF64 when a
+    32-bit size would reach [0xFFFFFFFF], and RIFF otherwise.
+
+    Raises [Invalid_argument] if [x] does not have two axes, has no channel
+    or a row of more than 65535 bytes, if WAV does not store its dtype,
+    [int8] among them, since WAV stores 8-bit samples unsigned, if [rate]
+    is not in \[[1];[2{^32} - 1]\] or its bytes a second are not below
+    [2{^32}], if [bits] is not in \[[1]; width\] or is given for floats, or
+    if [channel_mask] is negative or not below [2{^32}]; and, naming the
+    row, if a sample has a set bit below [bits], leaving [path] as it
+    was. *)
+
 (** {1:partial Partial files}
 
     A {e partial file} is what a program holds of a file it reads in

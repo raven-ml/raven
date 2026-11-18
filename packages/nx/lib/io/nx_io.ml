@@ -275,3 +275,5 @@ module Audio = Audio
 
 let load_audio path =
   Fail.file path @@ fun () -> Audio.read path (Storage.open_file path)
+
+let save_wav = Wav.save
