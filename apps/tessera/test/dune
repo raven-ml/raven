@@ -1,0 +1,92 @@
+(tests
+ (names
+  test_pixels
+  test_batch
+  test_model
+  test_embedding
+  test_train
+  test_eval
+  test_barlow
+  test_parity)
+ (modules :standard \ test_stac test_recipe test_tile parity)
+ (libraries
+  tessera
+  support
+  nx
+  nx.array
+  rig
+  nx.io
+  nx.ragged
+  kaun
+  rune
+  vega
+  jord
+  jord.geotiff
+  windtrap)
+ (deps
+  (glob_files upstream/tiny/*)))
+
+; test_parity checks a random student and teacher, a distillation step and a
+; pretraining group against TESSERA's own code on upstream/tiny, which
+; gen/tiny.py records. The released models run
+; under the alias parity, outside runtest, against the fixtures gen/release.py
+; records: TESSERA_WEIGHTS=DIR TESSERA_FIXTURES=DIR dune build
+; @apps/tessera/test/parity. Without them it checks nothing.
+
+(executable
+ (name parity)
+ (modules parity)
+ (libraries tessera nx nx.io rune))
+
+(rule
+ (alias parity)
+ (action
+  (run %{exe:parity.exe})))
+
+; test_stac.exe runs Stac's requests through http/curl.exe, on recorded
+; answers and generated files.
+
+(test
+ (name test_stac)
+ (modules test_stac)
+ (libraries
+  tessera
+  jord
+  jord.geotiff
+  jord.stac
+  nx
+  nx.io
+  jsont
+  jsont.bytesrw
+  unix
+  windtrap)
+ (deps
+  http/curl.exe
+  (glob_files http/*.http)))
+
+; test_recipe.exe compares Sentinel2's and Sentinel1's rules with TESSERA's
+; own functions. upstream/l1.npz holds their inputs and results, cut on
+; 2026-11-11 from tessera e368539f (tessera_preprocessing's process_scl,
+; smart_mosaic, amplitude_to_db, analyze_coverage) and rasterio 1.5.2's merge
+; on GDAL 3.12.2, numpy 2.5.4.
+
+(test
+ (name test_recipe)
+ (modules test_recipe)
+ (libraries tessera jord.stac nx nx.io jsont jsont.bytesrw windtrap)
+ (deps
+  (glob_files upstream/*.npz)))
+
+; test_tile.exe checks Tile's files, and Tile.concat against TESSERA's
+; stackers: upstream/l2/stacked holds the files that s2_stack and s1_stack,
+; built from tessera e368539f's rust_for_s{2,1}_stacking with cargo
+; --release (rust 1.101 nightly; s1's crates resolved on 2026-11-11), wrote
+; from the days in upstream/l2/days.npz.
+
+(test
+ (name test_tile)
+ (modules test_tile)
+ (libraries tessera jord jord.geotiff nx nx.io windtrap)
+ (deps
+  upstream/l2/days.npz
+  (glob_files upstream/l2/stacked/*.npy)))

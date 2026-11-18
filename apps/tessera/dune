@@ -1,0 +1,43 @@
+; The library tessera: tiles, pixels and batches, the models, encoding,
+; distillation and the probe, and the Planetary Computer client preprocess
+; reads with. main.exe is its command line.
+
+(library
+ (name tessera)
+ (modules :standard \ main)
+ (private_modules flat fetch item)
+ (libraries
+  nx
+  nx.array
+  nx.io
+  nx.ragged
+  kaun
+  rune
+  vega
+  jera
+  jord
+  jord.geotiff
+  jord.stac
+  jord.safe
+  jsont
+  jsont.bytesrw
+  unix))
+
+(executable
+ (name main)
+ (modules main)
+ (libraries
+  tessera
+  jord
+  jord.geojson
+  jord.stac
+  kaun.hf
+  nx
+  nx.io
+  nx.ragged
+  rig.gpus
+  rune
+  vega
+  jsont
+  jsont.bytesrw
+  unix))

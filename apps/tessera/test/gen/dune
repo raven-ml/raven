@@ -1,0 +1,7 @@
+; Recorders of the parity fixtures, outside runtest: tiny.py and release.py
+; run TESSERA's own code (uv run), and masks.exe writes raven's dropout
+; masks for tiny.py to feed it.
+
+(executable
+ (name masks)
+ (libraries tessera support nx nx.io))

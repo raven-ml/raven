@@ -1,0 +1,6 @@
+; Synthetic pixels, and the step test_parity checks against upstream/tiny.
+
+(library
+ (name support)
+ (wrapped false)
+ (libraries tessera nx nx.ragged windtrap))

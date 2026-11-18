@@ -1,0 +1,13 @@
+; curl.exe stands in for curl in test_stac.exe, answering from a directory
+; with no network. The *.http files are curl -i's output for requests to
+; Microsoft's Planetary Computer, fetched unchanged on 2026-11-11 by
+;   curl -sS -i -X POST -H 'Content-Type: application/json' --data-binary \
+;     '{"collections":["sentinel-1-rtc"],"bbox":[13.3,52.4,13.5,52.6],"datetime":"2024-06-26T00:00:00Z/2024-06-26T23:59:59Z","limit":1}' \
+;     https://planetarycomputer.microsoft.com/api/stac/v1/search
+; (s1_page1.http), the same with page 1's next body (s1_page2.http), and
+;   curl -sS -i https://planetarycomputer.microsoft.com/api/sas/v1/token/sentinel1euwestrtc/sentinel1-grd-rtc
+; (token.http), its token's sig= value replaced by REDACTED and its
+; content-length changed to match.
+
+(executable
+ (name curl))

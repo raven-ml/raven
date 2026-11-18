@@ -1,0 +1,12 @@
+HTTP/2 200 
+date: Wed, 11 Nov 2026 21:40:24 GMT
+content-type: application/json; charset=utf-8
+content-length: 362
+strict-transport-security: max-age=31536000; includeSubDomains
+request-context: appId=cid-v1:75161b1b-6883-4b66-9410-715040c44427
+x-azure-ref: 20261111T214024Z-184d8c9dcf7ptw5rhC1LON98w00000002bzg000000004u07
+x-cache: CONFIG_NOCACHE
+x-content-type-options: nosniff
+accept-ranges: bytes
+
+{"msft:expiry":"2026-11-11T22:25:24Z","token":"st=2026-11-10T21%3A40%3A24Z\u0026se=2026-11-11T22%3A25%3A24Z\u0026sp=rl\u0026sv=2025-07-05\u0026sr=c\u0026skoid=9c8ff44a-6a2c-4dfb-b298-1c9212f64d9a\u0026sktid=72f988bf-86f1-41af-91ab-2d7cd011db47\u0026skt=2026-11-11T20%3A44%3A31Z\u0026ske=2026-11-18T20%3A44%3A31Z\u0026sks=b\u0026skv=2025-07-05\u0026sig=REDACTED"}
