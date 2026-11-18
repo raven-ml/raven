@@ -1,0 +1,23 @@
+; The model and the chat format are a library, which main, the tests and the
+; bench link.
+
+(library
+ (name gpt_oss)
+ (wrapped false)
+ (modules moe gpt_oss layer_loop harmony)
+ (libraries kaun kaun.hf jsont jsont.bytesrw brot nx nx.io nx.quant rune))
+
+(executables
+ (names main bench bench_step)
+ (modules traffic main bench bench_step)
+ (libraries
+  gpt_oss
+  kaun
+  kaun.hf
+  nx
+  rig
+  rig.gpus
+  nx.io
+  nx.quant
+  rune
+  unix))

@@ -9,6 +9,9 @@ All notable changes to this project will be documented in this file.
 
 ### General
 
+- The gpt-oss example moves to `apps/gpt-oss`, the first of raven's apps:
+  programs that do real work through public interfaces only, with their fast
+  tests in `@apps/runtest` and their parity runs outside it.
 - **Breaking:** nx and the packages built on it require OCaml 5.5 or later;
   alpha3 required 5.2.
 - `nx-oxcaml` moves to its own repository,

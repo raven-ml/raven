@@ -243,7 +243,7 @@ def main():
         "completions": completions,
     }
     here = os.path.dirname(os.path.abspath(__file__))
-    with open(os.path.join(here, "fixtures", "harmony.json"), "w") as f:
+    with open(os.path.join(here, "..", "fixtures", "harmony.json"), "w") as f:
         json.dump(out, f, indent=1, ensure_ascii=True)
         f.write("\n")
 

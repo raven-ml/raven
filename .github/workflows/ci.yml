@@ -188,6 +188,11 @@ jobs:
           opam exec -- dune build --release packages/kaun
           bash .github/memcap.sh opam exec -- dune build --release @packages/kaun/runtest
 
+      - name: Build and test apps
+        run: |
+          opam exec -- dune build --release apps
+          bash .github/memcap.sh opam exec -- dune build --release @apps/runtest
+
       - name: Build and test vega
         run: |
           opam exec -- dune build --release packages/vega

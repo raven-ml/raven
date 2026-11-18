@@ -420,7 +420,7 @@ def main():
     }
     out.update(fixture(config, streamed))
     here = os.path.dirname(os.path.abspath(__file__))
-    path = args.out or os.path.join(here, "fixtures", args.repo.split("/")[-1] + "-stream.json")
+    path = args.out or os.path.join(here, "..", "fixtures", args.repo.split("/")[-1] + "-stream.json")
     with open(path, "w") as f:
         json.dump(out, f)
         f.write("\n")

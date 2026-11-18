@@ -188,6 +188,11 @@ weights, and generates text through a key-value cache.
   weights (Llama 3.2 1B, TinyLlama 1.1B, and TinyLlama's Q8_0, Q6_K and
   Q4_K_M GGUF files) against the reference implementation block by block, at
   float32 or half precision, eagerly or compiled
+- [`06-neural-ode`](examples/06-neural-ode) — a neural ODE: an MLP as the
+  field of a jera solve, trained through the adaptive solver
+
+A mixture-of-experts model, OpenAI's gpt-oss, is an app:
+[`apps/gpt-oss`](../../apps/gpt-oss).
 
 ## Scope and Limitations
 

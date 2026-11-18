@@ -252,7 +252,7 @@ def model_fixture(spec, weights, provenance):
 
 
 def write(name, fixture):
-    path = os.path.join(here, "fixtures", name + ".json")
+    path = os.path.join(here, "..", "fixtures", name + ".json")
     with open(path, "w") as f:
         json.dump(fixture, f)
         f.write("\n")

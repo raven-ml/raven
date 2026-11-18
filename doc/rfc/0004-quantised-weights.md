@@ -42,7 +42,7 @@ the dense bfloat16 products are: a bfloat16 product accumulates at float32, so
 its reduce source is a cast, and tolk's matrix-vector heuristic, which
 matches tinygrad's line for line, declines. The form moves 450 MB per layer
 where 53 MB of packed bytes are needed. The example materialises the decoded
-rows on purpose (`packages/kaun/examples/06-gpt-oss/moe.ml`): with the decode
+rows on purpose (`apps/gpt-oss/moe.ml`): with the decode
 inside the product the heuristic declines too, and the step was four times
 slower. Today's step is about eleven times its 11 ms bandwidth floor.
 

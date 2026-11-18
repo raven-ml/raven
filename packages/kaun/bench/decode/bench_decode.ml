@@ -17,9 +17,8 @@
    columns, as a decode loop that buckets its width does: they time the width a
    step reads, apart from the slots it holds, which cost nothing.
 
-   gpt-oss-20b's own decode step and prefill are measured by the example's
-   suite, examples/06-gpt-oss/bench; the routed products below guard its
-   kernels.
+   gpt-oss-20b's own decode step and prefill are measured by its app's
+   suite, apps/gpt-oss/bench; the routed products below guard its kernels.
 
    The cases compile in their setups. [--warm] runs each case's setup and one
    call in a process of its own, which fills tolk's disk cache: the cases then

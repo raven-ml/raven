@@ -1,0 +1,38 @@
+; The fast tests, on small weights made in place.
+
+(tests
+ (names test_layer_loop test_moe test_loading test_structures)
+ (modules test_layer_loop test_moe test_loading test_structures)
+ (libraries
+  gpt_oss
+  kaun
+  kaun.hf
+  jsont
+  rune
+  nx
+  nx.array
+  rig
+  nx.io
+  nx.quant
+  windtrap))
+
+; Parity with the reference implementations, against the fixtures their
+; recorders in gen/ wrote. Not in runtest: each reads a downloaded checkpoint.
+
+(executables
+ (names validate validate_stream validate_text)
+ (modules validate validate_stream validate_text)
+ (libraries
+  gpt_oss
+  kaun
+  kaun.hf
+  jsont
+  jsont.bytesrw
+  brot
+  nx
+  rig
+  rig.gpus
+  nx.io
+  nx.quant
+  rune
+  unix))

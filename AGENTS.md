@@ -41,13 +41,14 @@ Breaking one causes real damage.
 | `packages/rig` | devices: Metal, CUDA, NVIDIA and AMD GPUs through their kernel drivers or over PCI, files and remote machines; the order of work across them |
 | `packages/rune` | autodiff, vmap, loops and compilation over nx. Departures from the semantics it follows are recorded in `packages/rune/DIVERGENCES.md` |
 | `packages/tolk` | the compiler, a port of tinygrad. Departures from tinygrad are recorded in `packages/tolk/DIVERGENCES.md` |
-| `packages/kaun` | layers, losses and data batching over nx structures. Models live in `examples/`, never in the library |
+| `packages/kaun` | layers, losses and data batching over nx structures. Models live in `examples/` and `apps/`, never in the library |
 | `packages/vega` | optimizers as values |
 | `packages/jera` | numerical methods: quadrature, interpolation, differential equations, splittings |
 | `packages/norn` | probabilistic inference over structures: distributions, bijectors, samplers, diagnostics; the model language is `norn.model` |
 | `packages/lz` | compression between bigarrays: deflate, zlib, gzip, Zstandard, LZ4, Snappy and CRC-32, in raven's own C kernels; `lz.bytesrw` filters |
 | `packages/talon`, `hugin`, `brot`, `quill`, `munin` | dataframes, plotting, tokenizers, notebooks, run monitoring |
 | `packages/ppx_ptree` | derives a structure's `walk` from its type, for users; no raven library depends on it |
+| `apps/` | programs that use raven for real work, through public interfaces only: gpt-oss. Their rules are `apps/README.md`'s |
 | `contrib/` | fehu, sowilo, ymir, jord: own `dune-project`, own `CHANGES.md`, public core libraries, and OCaml libraries only as `contrib/README.md` allows |
 
 A package's main library lives at `lib/`, each sub-library at

@@ -1903,7 +1903,7 @@ the width, and devectorizes no expanded scalar into a stack; with it
   does. tinygrad's cost check counts
   buffers and reductions only, so its consumer computes the value again for
   every element of the ranges it does not vary along.
-- **Reason:** (d): gpt-oss-20b (`kaun/examples/06-gpt-oss`), where inlining
+- **Reason:** (d): gpt-oss-20b (`apps/gpt-oss`), where inlining
   computes a SwiGLU's sigmoid once per output column of the down projection and
   a RoPE's sines and cosines once per head. Since rune lowers `Nx.attention` to
   kernels of its own, gpt-oss's attention no longer meets this rule; the rest of
@@ -2230,7 +2230,7 @@ Withdrawn: multi-device is out of scope, see README.
     gather fused into the streamed product, its rows gathered again in each
     workgroup, costs 1.3x on CUDA, which the order does not weigh: an open
     cost.
-- **Reason:** (d): gpt-oss-20b (`kaun/examples/06-gpt-oss`) on CUDA, and
+- **Reason:** (d): gpt-oss-20b (`apps/gpt-oss`) on CUDA, and
   nx.quant's products (`Nx_quant.apply`, `Nx.map_segments` over it)
   compiled by rune, whose streamed operand tinygrad's layout reads from
   memory more than it multiplies. On fudge's RTX 5000 Ada, tolk's bench
@@ -8039,7 +8039,7 @@ a view names its storage again (D426).
   compiler that names no toolchain, keeps nothing, and neither does one
   collected by `Realize.kernels`, since a hit makes no program to report.
 - **Reason:** (d) gpt-oss's first call of 12 tokens in a later process
-  (`kaun/examples/06-gpt-oss`'s bench, `GptOss/first-call-12`). The schedule
+  (`apps/gpt-oss`'s bench, `GptOss/first-call-12`). The schedule
   and program tables serve the kernels but still run the passes around them
   on every process start. On fudge, over the 24-block graph, the process's
   CPU time for the first call falls from 84.5 ms to 45.7 ms, and its

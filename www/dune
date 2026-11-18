@@ -19,7 +19,7 @@
   (glob_files_rec ../contrib/*.md)
   (glob_files_rec ../contrib/*.mli)
   (glob_files_rec ../contrib/dune)
-  ../packages/kaun/examples/06-gpt-oss/gpt_oss.ml
+  ../apps/gpt-oss/gpt_oss.ml
   (source_tree pages)
   (source_tree static)
   (alias_rec ../doc-json))

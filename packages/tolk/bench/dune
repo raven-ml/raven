@@ -87,7 +87,7 @@
    (run %{exe:embed.exe} %{graphs}))))
 
 ; The gpt-oss kernels are kernel graphs of gpt-oss-20b's step at bfloat16 as
-; rune compiles it for CUDA (examples/06-gpt-oss), without optimisations: a
+; rune compiles it for CUDA (apps/gpt-oss), without optimisations: a
 ; decode step's attention values and a prefill's router.
 
 (rule
