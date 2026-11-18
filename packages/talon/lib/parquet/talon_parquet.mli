@@ -78,7 +78,15 @@
     - an [int96] column as a wall-clock [datetime] of any unit. Its values
       must be whole numbers of the unit;
     - a {{!nested}nested column} as a list of what its element reads as, or a
-      record of the same field names in order, each reading as its field does.
+      record of the same field names in order, each reading as its field does;
+    - a nested column of [k] lists over values of a number type or [bool] as a
+      [tensor] of [k] dimensions over the dtype that holds them, [bool] or
+      [bit] for [bool] ({!Talon.Column.of_tensor}), such as
+      [list<list<list<float>>>] as [tensor float32 [|4; 160; 160|]], and so,
+      below a list, a column of [k + 1] lists as a list of such tensors. Each
+      row that is not null holds [shape.(0)] lists, each holding [shape.(1)],
+      down to [shape.(k - 1)] values, with no null below the row, and its
+      tensor holds the values in that order. A null row is a null tensor.
 
     Values that break these rules fail when the column is read.
 
@@ -198,7 +206,11 @@ val pp_format : Format.formatter -> format -> unit
     layout refuses ({!Talon.Column.of_layout}) names the column and the row of
     the row group. A failure in a nested column names the column or, for a
     leaf, its dotted path such as [tags.list.element], and a value's position
-    among the leaf's values stands for its row. *)
+    among the leaf's values stands for its row. A row that breaks a tensor's
+    shape names the column, the row of the row group and the level of the
+    lists: [0] for the tensor's outermost list, a row's own list or, in a list
+    of tensors, the outer list's element, and [k] for the values of [k] lists.
+    Of several rows that break it, the earliest is named. *)
 
 val source : format -> Rig.Buffer.t -> Talon.Source.t
 (** [source f b] is the source, named [parquet], of the rows of the Parquet
@@ -241,7 +253,9 @@ val file : ?format:format -> string -> (Talon.Source.t, Talon.Error.t) result
     - a [datetime] writes as [TIMESTAMP] of its unit, an instant with
       [isAdjustedToUTC] [true] and a wall clock with [false];
     - a [list] writes as a [LIST] group, a [record] as a group of its fields,
-      and a [tensor] as nested lists, one per dimension, row-major.
+      and a [tensor] as nested lists, one per dimension, row-major, which
+      {!with_type} reads back as the same tensor ({{!alternatives}Alternative
+      types}).
 
     A type without a Parquet type of its own reads back as another: a
     [categorical] as a [string], a [clock] or [datetime] of seconds as the same

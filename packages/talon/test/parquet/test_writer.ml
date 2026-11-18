@@ -624,13 +624,68 @@ let ticks_written =
   let got = Column.to_tensor Nx.int64 (Talon.column t "d") in
   equal (array int64) xs (Nx.to_array got)
 
+(* Tensors
+
+   A tensor writes as nested lists, which a declaration reads back as the same
+   tensor, alone or as a list's element. *)
+
+let tensor_makers =
+  let maker dt =
+    (Format.asprintf "%a" Nx.Dtype.pp dt, fun s -> any (Type.tensor dt s))
+  in
+  [|
+    maker Nx.float16;
+    maker Nx.float32;
+    maker Nx.float64;
+    maker Nx.int8;
+    maker Nx.int16;
+    maker Nx.int32;
+    maker Nx.int64;
+    maker Nx.uint8;
+    maker Nx.uint16;
+    maker Nx.uint32;
+    maker Nx.uint64;
+    maker Nx.bool;
+    maker Nx.bit;
+  |]
+
+let tensor_case =
+  let open Gen in
+  let* maker = int_range 0 (Array.length tensor_makers - 1) in
+  let* rank = int_range 1 3 in
+  let* shape = array ~size:(int_range rank rank) (int_range 0 3) in
+  let* listed = bool in
+  let name, make = tensor_makers.(maker) in
+  let (Type.Any t) = make shape in
+  let (Type.Any t) = if listed then any (Type.list t) else any t in
+  let* vs = G.options t in
+  let+ row_group = int_range 1 45 in
+  (name, shape, G.Sample (t, vs), row_group)
+
+let tensor_round_trip =
+  prop ~count:500 "a tensor reads back with its type declared" tensor_case
+    (fun (dtype, shape, G.Sample (ty, vs), row_group) ->
+      Array.iter (fun (d, _) -> cover d (d = dtype)) tensor_makers;
+      cover "a zero extent" (Array.mem 0 shape);
+      cover "a cell of one element" (Array.for_all (( = ) 1) shape);
+      cover "three dimensions" (Array.length shape = 3);
+      cover "a null row" (Array.mem None vs);
+      cover "a list of tensors" (match ty with List _ -> true | _ -> false);
+      cover "several row groups" (row_group < Array.length vs);
+      let t = Talon.v [ ("a", Column.of_options ty vs) ] in
+      let declared b = P.with_type "a" (any ty) (Error.get_ok (P.sniff b)) in
+      equal table_w t (read_with declared (encode ~row_group t)))
+
 let () =
   exit
   @@ run "talon.parquet.writer"
     [
       group "durations" [ duration_refused; ticks_written ];
       group "round trips"
-        [ round_trip; types_written; deterministic; nested_round_trip ];
+        [
+          round_trip; types_written; deterministic; nested_round_trip;
+          tensor_round_trip;
+        ];
       group "values"
         [
           test "float bits survive" float_bits;

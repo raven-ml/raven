@@ -426,6 +426,21 @@ let reads_as l (Type.Any t) =
       || l.physical = Int96
          && match t with Datetime { clock = Local; _ } -> true | _ -> false)
 
+let scalar dt =
+  match Column.of_tensor (Nx.zeros dt [| 0 |]) with
+  | c -> Some (Column.type_ c)
+  | exception Invalid_argument _ -> None
+
+(* [tensor_element dt shape] is the type of one list of a tensor of [shape]
+   over [dt]: a tensor of the shape's other dimensions, or [dt]'s scalar type.
+   A column of [k] lists reads as a tensor of [k] dimensions through it. *)
+let tensor_element dt shape =
+  let n = Iarray.length shape in
+  if n = 1 then scalar dt
+  else
+    let rest = Array.sub (Iarray.to_array shape) 1 (n - 1) in
+    Some (Type.Any (Type.tensor dt rest))
+
 let rec scales_agree format file (Type.Any t as ty) =
   let scale = function
     | Prim { annotation = Some (Decimal { scale; _ }); _ } -> Some scale
@@ -434,6 +449,10 @@ let rec scales_agree format file (Type.Any t as ty) =
   match (format, file, t) with
   | List { element = a; _ }, List { element = b; _ }, List e ->
       scales_agree a b (Any e)
+  | List { element = a; _ }, List { element = b; _ }, Tensor (dt, shape) -> (
+      match tensor_element dt shape with
+      | Some e -> scales_agree a b e
+      | None -> true)
   | Struct { fields = a; _ }, Struct { fields = b; _ }, Record ts
     when List.compare_lengths a b = 0 && List.compare_lengths a ts = 0 ->
       List.for_all2 Fun.id
@@ -458,6 +477,10 @@ let rec node_reads_as node (Type.Any t) =
   match (node, t) with
   | Prim l, _ -> reads_as l (Any t)
   | List { element; _ }, List e -> node_reads_as element (Any e)
+  | List { element; _ }, Tensor (dt, shape) -> (
+      match tensor_element dt shape with
+      | Some e -> node_reads_as element e
+      | None -> false)
   | Struct { fields; _ }, Record ts ->
       List.compare_lengths fields ts = 0
       && List.for_all2

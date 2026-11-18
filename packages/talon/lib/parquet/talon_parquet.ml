@@ -348,6 +348,140 @@ let decoded ~row_group name ty (chunk : Chunk.t) =
     column = lazy (column ~row_group name ty chunk);
   }
 
+(* Tensors
+
+   A tensor of [k] dimensions reads from [k] nested lists over one leaf: level
+   [j < k] is the lists of dimension [j], level [k] the values. Each level is
+   walked from the leaf's levels and checked on its own, and a failing slot's
+   row comes from the levels alone, so the earliest failing row is found
+   whatever the levels above it hold. Once every row holds the shape, the
+   leaf's values are the cells in row-major order, which only null rows
+   spread. *)
+
+(* [row_of ~row_group ~name lv (rep, def) i] is the row of the row group that
+   holds the slot [i] of a node whose slots open at the levels [rep] and [def],
+   the rows being a node of no repetition whose elements are those slots. *)
+let row_of ~row_group ~name lv (rep, def) i =
+  let rows : Leaf.slots = { rep = 0; def = 0; nonnull = 0 } in
+  let _, offsets, n =
+    Chunk.structure ~row_group ~name lv rows ~elem:(Some (rep, def))
+  in
+  let o = Nx.to_array (Option.get offsets) in
+  let r = ref 0 in
+  while !r + 1 < n && Int64.to_int o.(!r + 1) <= i do
+    incr r
+  done;
+  !r
+
+(* [first b] is the first position where [b] is true. *)
+let first b =
+  let at = Nx.positions b in
+  if Nx.dim 0 at = 0 then None else Some (Int64.to_int (Nx.item [ 0 ] at))
+
+(* [nulls v] is where the validity [v] marks a null. *)
+let nulls v = Option.map (fun v -> Nx.logical_not (Nx.cast Nx.bool v)) v
+
+(* [cells dt shape ~valid ~rows x] is the [rows] cells of [shape] that the
+   values [x] of the rows [valid] marks hold in row-major order, zero in the
+   others. *)
+let cells (type a b) (dt : (a, b) Nx.dtype) shape ~valid ~rows (Nx.P x) :
+    (a, b, Nx.host) Nx.t =
+  let x =
+    if Nx.Dtype.equal (Nx.dtype x) dt then Nx.unpack dt (Nx.P x)
+    else Nx.cast dt x
+  in
+  let present =
+    match valid with
+    | None -> rows
+    | Some v -> Int64.to_int (Nx.item [] (Nx.sum (Nx.cast Nx.int64 v)))
+  in
+  let x = Nx.reshape (Array.append [| present |] shape) x in
+  match valid with
+  | Some v when present < rows ->
+      let v = Nx.cast Nx.bool v in
+      let at = Nx.sub_s (Nx.cumsum (Nx.cast Nx.int64 v)) 1L in
+      (* A null row takes the zero cell after the values. *)
+      let pad = Nx.full Nx.int64 [| rows |] (Int64.of_int present) in
+      let padded =
+        Nx.concatenate ~axis:0 [ x; Nx.zeros dt (Array.append [| 1 |] shape) ]
+      in
+      Nx.take ~axis:0 (Nx.where v at pad) padded
+  | _ -> x
+
+(* [tensor ~row_group ~name read node dt shape] is the layout of the tensor
+   column of [shape] over [dt] that the lists of [node] hold, and the levels of
+   its leaf, which [read] decodes. *)
+let tensor ~row_group ~name read node dt shape =
+  let k = Iarray.length shape in
+  let rec descend j node acc =
+    match node with
+    | Leaf.List { slots; elem_rep; elem_def; element } when j < k ->
+        descend (j + 1) element ((slots, (elem_rep, elem_def)) :: acc)
+    | Leaf.Prim l when j = k -> (l, List.rev acc)
+    | _ -> assert false
+  in
+  let leaf, lists = descend 0 node [] in
+  let c, lv = read leaf (Option.get (Leaf.scalar dt)) in
+  let lv = Option.get lv in
+  let failures = ref [] in
+  let check opens level bad why =
+    Option.iter
+      (fun i -> failures := (opens, level, i, why) :: !failures)
+      (Option.bind bad first)
+  in
+  let walk j ((s : Leaf.slots), elem) =
+    let validity, offsets, n =
+      Chunk.structure ~row_group ~name lv s ~elem:(Some elem)
+    in
+    let o = Option.get offsets in
+    let lengths =
+      Nx.sub (Nx.slice [ Nx.R (1, n + 1) ] o) (Nx.slice [ Nx.R (0, n) ] o)
+    in
+    let extent = Iarray.get shape j in
+    let wrong = Nx.not_equal_s lengths (Int64.of_int extent) in
+    let opens = (s.rep, s.def) in
+    (* A null list holds no elements: a null row is a null tensor, and a null
+       below a row fails as a null. *)
+    let wrong =
+      match validity with
+      | Some v -> Nx.logical_and wrong (Nx.cast Nx.bool v)
+      | None -> wrong
+    in
+    if j > 0 then
+      check opens j (nulls validity) (fun _ ->
+          Printf.sprintf "a list of level %d is null" j);
+    check opens j (Some wrong) (fun i ->
+        Printf.sprintf
+          "a list of level %d holds %Ld elements, not the shape's %d" j
+          (Nx.item [ i ] lengths) extent);
+    (validity, n)
+  in
+  let walked = List.mapi walk lists in
+  let values =
+    match Chunk.flat c with
+    | Fixed { valid; values } ->
+        check
+          (snd (List.nth lists (k - 1)))
+          k (nulls valid)
+          (fun _ -> "a value of the tensor is null");
+        values
+    | Varsize _ | Coded _ -> assert false
+  in
+  let failed =
+    List.map
+      (fun (opens, level, i, why) ->
+        (row_of ~row_group ~name lv opens i, level, why i))
+      !failures
+  in
+  (match List.sort compare failed with
+  | (row, _, why) :: _ ->
+      Meta.fail ~row_group "column %S: row %d: %s" name row why
+  | [] -> ());
+  let validity, rows = List.hd walked in
+  let shape = Iarray.to_array shape in
+  let values = cells dt shape ~valid:validity ~rows values in
+  (Column.Fixed { validity; values = Nx.P values }, lv)
+
 (* Nested columns *)
 
 (* [assemble ~row_group ~rows read name node ty] is the column [name] of type
@@ -395,6 +529,9 @@ let assemble ~row_group ~rows read name node any =
         in
         let offsets = Option.get offsets in
         (layout any (Varsize { validity; offsets; child }), lv)
+    | Leaf.List _, Type.Tensor (dt, shape) ->
+        let l, lv = tensor ~row_group ~name read node dt shape in
+        (layout any l, lv)
     | _ -> assert false
   in
   let c, _ = go node any in

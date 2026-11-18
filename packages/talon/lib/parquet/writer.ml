@@ -98,9 +98,9 @@ let primitive (Type.Any t) : (Meta.physical * int * Meta.logical option) option
   | Duration _ -> assert false
 
 let element_type dt =
-  match Column.of_tensor (Nx.zeros dt [| 0 |]) with
-  | c -> Column.type_ c
-  | exception Invalid_argument _ ->
+  match Leaf.scalar dt with
+  | Some t -> t
+  | None ->
       invalid_arg
         (Format.asprintf
            "Talon_parquet.format: a tensor of %a elements has no Parquet type"

@@ -1078,7 +1078,18 @@ let scalars (Nx.P x) =
 let is_bytes c =
   match Column.type_ c with Type.Any (String | Binary) -> true | _ -> false
 
-(* [nested_cells c] is the rows of [c], as gen/nested.py renders pyarrow's. *)
+(* [nested_lists shape xs] is the cell [xs] of [shape], in row-major order, as
+   the nested lists it reads from. *)
+let rec nested_lists shape xs =
+  match shape with
+  | [] -> xs.(0)
+  | d :: rest ->
+      let n = if d = 0 then 0 else Array.length xs / d in
+      let item k = nested_lists rest (Array.sub xs (k * n) n) in
+      "[" ^ String.concat ", " (List.init d item) ^ "]"
+
+(* [nested_cells c] is the rows of [c], as gen/nested.py renders pyarrow's, a
+   tensor as the nested lists it reads from. *)
 let rec nested_cells c =
   let masked validity cs =
     match validity with
@@ -1086,9 +1097,16 @@ let rec nested_cells c =
     | Some v ->
         Array.map2 (fun ok s -> if ok then s else "null") (Nx.to_array v) cs
   in
-  match Column.layout c with
-  | Fixed { validity; values } -> masked validity (scalars values)
-  | Varsize { validity; offsets; child } when is_bytes c ->
+  match (Column.type_ c, Column.layout c) with
+  | Type.Any (Tensor (_, shape)), Fixed { validity; values } ->
+      let xs = scalars values in
+      let size = Iarray.fold_left ( * ) 1 shape in
+      let row i =
+        nested_lists (Iarray.to_list shape) (Array.sub xs (i * size) size)
+      in
+      masked validity (Array.init (Column.length c) row)
+  | _, Fixed { validity; values } -> masked validity (scalars values)
+  | _, Varsize { validity; offsets; child } when is_bytes c ->
       let o = Nx.to_array offsets in
       let d = Nx.to_array (Column.to_tensor Nx.uint8 child) in
       let cell i =
@@ -1096,7 +1114,7 @@ let rec nested_cells c =
         quote (String.init (last - first) (fun k -> Char.chr d.(first + k)))
       in
       masked validity (Array.init (Array.length o - 1) cell)
-  | Varsize { validity; offsets; child } ->
+  | _, Varsize { validity; offsets; child } ->
       let o = Array.map Int64.to_int (Nx.to_array offsets) in
       let items = nested_cells child in
       let row i =
@@ -1104,7 +1122,7 @@ let rec nested_cells c =
         "[" ^ String.concat ", " (Array.to_list its) ^ "]"
       in
       masked validity (Array.init (Array.length o - 1) row)
-  | Children { validity; length; fields } ->
+  | _, Children { validity; length; fields } ->
       let fs = List.map (fun (n, c) -> (n, nested_cells c)) fields in
       let row i =
         let field (n, cs) = n ^ ": " ^ cs.(i) in
@@ -1352,6 +1370,132 @@ let nested_files =
           match read_from (Error.get_ok (P.sniff b)) b "x" with
           | Error e -> failf "%s" (error_text e)
           | Ok c -> equal int 1 (Column.null_count c));
+    ]
+
+(* Tensor columns, in the file gen/tensors.py writes *)
+
+let tensors = "tensors.parquet"
+
+(* [cell i b y x] is the value gen/tensors.py writes at cell (b, y, x) of row
+   [i]. *)
+let cell i b y x = Float.of_int ((i * 100) + (b * 12) + (y * 4) + x)
+
+(* [image_cells i (bands, height, width)] is the cells of row [i] of that
+   shape, in row-major order. *)
+let image_cells i (bands, height, width) =
+  Array.init (bands * height * width) (fun k ->
+      cell i (k / (height * width)) (k / width mod height) (k mod width))
+
+let image = Type.tensor Nx.float32 [| 2; 3; 4 |]
+
+let read_as column ty =
+  read (P.with_type column (Type.Any ty) (sniff tensors)) tensors column
+
+(* [fixed c] is the validity and the values of the column [c] of one value
+   per row, flattened. *)
+let fixed c =
+  match Column.layout c with
+  | Fixed { validity; values = Nx.P x } ->
+      let valid =
+        match validity with
+        | None -> Array.make (Column.length c) true
+        | Some v -> Nx.to_array (Nx.cast Nx.bool v)
+      in
+      (valid, Nx.to_array (Nx.cast Nx.float64 (Nx.reshape [| -1 |] x)))
+  | _ -> failwith "not one value per row"
+
+let tensor_columns =
+  group "Tensor columns"
+    [
+      test "three list levels read as a tensor of the stated shape" (fun () ->
+          let c = Error.get_ok (read_as "image" image) in
+          let valid, values = fixed c in
+          equal (array bool) (Array.init 8 (fun i -> i <> 2)) valid;
+          let size = 2 * 3 * 4 in
+          List.iter
+            (fun i ->
+              equal ~msg:(Printf.sprintf "row %d" i) (array float_exact)
+                (image_cells i (2, 3, 4))
+                (Array.sub values (i * size) size))
+            [ 0; 1; 3; 4; 5; 6; 7 ]);
+      test "four list levels read as a list of tensors" (fun () ->
+          let ty = Type.list (Type.tensor Nx.float32 [| 3; 4 |]) in
+          let c = Error.get_ok (read_as "bands" ty) in
+          match Column.layout c with
+          | Varsize { validity; offsets; child } ->
+              equal (array bool)
+                (Array.init 8 (fun i -> i <> 4))
+                (Nx.to_array (Nx.cast Nx.bool (Option.get validity)));
+              let bands i = if i = 4 then 0 else i mod 3 in
+              let starts = Array.make 9 0 in
+              for i = 0 to 7 do
+                starts.(i + 1) <- starts.(i) + bands i
+              done;
+              equal (array int) starts
+                (Array.map Int64.to_int (Nx.to_array offsets));
+              let want =
+                Array.concat
+                  (List.init 8 (fun i -> image_cells i (bands i, 3, 4)))
+              in
+              equal (array float_exact) want (snd (fixed child))
+          | _ -> fail "not a list");
+      cases "a row that breaks the shape fails, naming it"
+        ~id:(fun (column, _) -> column)
+        [
+          ( "ragged",
+            "row group 1: column \"ragged\": row 1: a list of level 2 holds 3 \
+             elements, not the shape's 4" );
+          ( "wide",
+            "row group 1: column \"wide\": row 2: a list of level 2 holds 5 \
+             elements, not the shape's 4" );
+          ( "null_list",
+            "row group 0: column \"null_list\": row 1: a list of level 1 is \
+             null" );
+          ( "null_value",
+            "row group 1: column \"null_value\": row 3: a value of the tensor \
+             is null" );
+          ( "bands",
+            "row group 0: column \"bands\": row 0: a list of level 0 holds 0 \
+             elements, not the shape's 2" );
+          (* Row 1 fails at level 2 and row 3 at level 0: the earlier row is
+             named. *)
+          ( "order",
+            "row group 0: column \"order\": row 1: a list of level 2 holds 3 \
+             elements, not the shape's 4" );
+        ]
+        (fun (column, want) ->
+          match read_as column image with
+          | Ok _ -> failf "column %S read" column
+          | Error e -> equal string want (error_text e));
+      test "lists of two levels read as tensors" (fun () ->
+          let ints ty file column =
+            let f = P.with_type column (Type.Any ty) (sniff file) in
+            match read f file column with
+            | Ok c -> Ok (nested_cells c)
+            | Error e -> Error (error_text e)
+          in
+          let cells = result (array string) string in
+          equal cells
+            (Ok [| "[[1, 2], [3, 4]]" |])
+            (ints
+               (Type.tensor Nx.int32 [| 2; 2 |])
+               "old_list_structure.parquet" "a");
+          equal cells
+            (Error
+               "row group 0: column \"Int32_list\": row 1: a list of level 0 \
+                holds 0 elements, not the shape's 4")
+            (ints
+               (Type.tensor Nx.int32 [| 4 |])
+               "repeated_primitive_no_list.parquet" "Int32_list"));
+      test "a tensor of another rank or dtype is refused" (fun () ->
+          let refused ty =
+            raises_match
+              (function Invalid_argument _ -> true | _ -> false)
+              (fun () -> P.with_type "image" (Type.Any ty) (sniff tensors))
+          in
+          refused (Type.tensor Nx.float32 [| 6; 4 |]);
+          refused (Type.tensor Nx.float32 [| 2; 3; 4; 1 |]);
+          refused (Type.tensor Nx.float64 [| 2; 3; 4 |]));
     ]
 
 (* Sources *)
@@ -2474,5 +2618,5 @@ let () =
     (run "talon.parquet"
        [
          agreement; clocks; sniffing; formats; synthesized; nested_files;
-         sources; decoding; memory; many_files_group;
+         tensor_columns; sources; decoding; memory; many_files_group;
        ])

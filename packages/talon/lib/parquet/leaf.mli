@@ -97,6 +97,15 @@ val reads_as : t -> Talon.Type.any -> bool
     wall-clock datetime of any unit when [l] is an [int96], or, for a
     decimal, [float64], and [int64] up to 18 digits. *)
 
+val scalar : ('a, 'b) Nx.dtype -> Talon.Type.any option
+(** [scalar dt] is the type of the column {!Talon.Column.of_tensor} makes of a
+    1-D tensor of [dt], or [None] for a dtype that no scalar type stores. *)
+
+val tensor_element : ('a, 'b) Nx.dtype -> int iarray -> Talon.Type.any option
+(** [tensor_element dt shape] is the type of a list's element when the list is
+    a tensor of [shape] over [dt]: a tensor of [shape]'s dimensions after the
+    first, or [scalar dt] for one dimension. *)
+
 val scales_agree : node -> node -> Talon.Type.any -> bool
 (** [scales_agree format file t] is [false] iff a leaf of [format], read as
     [t] from the node [file], would be an [int64] of another decimal scale
@@ -108,8 +117,9 @@ val default_node : node -> Talon.Type.any option
 
 val node_reads_as : node -> Talon.Type.any -> bool
 (** [node_reads_as n t] is [true] iff [n] reads as [t]: a leaf as {!reads_as}
-    says, a list as a list of what its element reads as, and a record as a
-    record of the same field names in order, each reading as its field does. *)
+    says, a list as a list of what its element reads as, or as a tensor whose
+    {!tensor_element} its element reads as, and a record as a record of the
+    same field names in order, each reading as its field does. *)
 
 (** {1:fmt Formatting} *)
 

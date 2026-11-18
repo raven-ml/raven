@@ -5297,6 +5297,12 @@ its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Talon_parquet.with_type` declares a column of `k` nested lists over
+  numbers as `Type.tensor dt shape` of `k` dimensions, and one of `k + 1` as a
+  list of such tensors; `Talon_parquet.source` and `Talon_parquet.file` then
+  read it as one. Each row is checked against the shape, and the first that
+  breaks it fails the read, naming its row group, row and list level. A tensor
+  `Talon_parquet.encode` wrote now reads back as a tensor.
 - `Column.of_tensor`, `Column.of_ragged` and `Column.of_layout` given a dead
   tensor raise naming themselves, where they named `Nx.Repr.array`.
 - `Column.of_layout`'s refusal of the offsets of `string` or `binary` names
