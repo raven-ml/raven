@@ -704,14 +704,26 @@ let block_bound ~n ~g c =
 (* Routing
 
    Blocks of [c] indices of one group, each group's indices in order from its
-   first block, routed by counting: a one-hot of the ids, its running sum
-   along the indices, each index's rank in its group, the groups' counts and
-   the exclusive scan of their blocks. Each index takes a {e slot} of the
-   [S = B c] slots, [c] a block, its group's first block's first slot plus
-   its rank. Each slot finds its index by a binary search of its group's
-   running count for its rank, in [⌈log2 (n + 1)⌉] gathers, not a scatter,
-   which tolk runs on one thread. The arrays a product reads are stored, so
-   that its operands' indices read no reduce. *)
+   first block, routed by counting: each index's rank in its group, the
+   groups' counts and each group's first block, the blocks of the groups
+   before it. Each index takes a {e slot} of the [S = B c] slots, [c] a
+   block, its group's first block's first slot plus its rank. A slot's index
+   is a gather, not a scatter, which tolk runs on one thread. The arrays a
+   product reads are stored, so that its operands' indices read no reduce.
+
+   Each form below is one kernel's comparisons in place of a scan's or a
+   search's kernels, each a launch, while its comparisons are within
+   {!budget}:
+   - a group's first block, the sum of the blocks of the groups before it,
+     [g²] terms a batch index, in place of a scan's stages;
+   - an index's rank, the indices of its group before it, [n²] comparisons,
+     and a slot's index, the one whose slot it is, [S n]. Past the budget,
+     a one-hot of the ids' running sum along the indices gives the ranks and,
+     at its last index, the counts, and each slot finds its index by a binary
+     search of its group's running count for its rank, in [⌈log2 (n + 1)⌉]
+     gathers.
+
+   Both forms give the same integers. *)
 
 type route = {
   blocks : int;  (** [B]. *)
@@ -719,9 +731,23 @@ type route = {
   row : Ops.t;  (** [Bs; S]: each slot's index, [n] for a slot of none. *)
   owner : Ops.t;  (** [Bs; B]: each block's group, [0] for a block of none. *)
   start : Ops.t;  (** [Bs; g]: each group's first block. *)
-  spans : Ops.t;  (** [Bs; g]: each group's count of blocks. *)
+  spans : Ops.t;  (** [Bs; g]: each group's count of blocks, unstored. *)
   count : Ops.t;  (** [Bs; g]: each group's count of indices. *)
+  used : Ops.t;  (** [Bs]: the blocks the groups take, unstored. *)
 }
+
+(* Comparisons in place of launches: [comparisons] bounds those that pay for
+   the launches they save on one unit, from a sort's first [k] on the host;
+   a target of [units] units spreads one kernel's comparisons over them. No
+   sum's order follows it: both forms of each choice compute the same
+   integers. *)
+let comparisons = 1 lsl 16
+let budget (r : Renderer.t) = comparisons * max 1 r.units
+
+(* [within budget es] is whether the product of the extents [es] is at most
+   [budget], by division, so that the product cannot overflow. *)
+let within budget es =
+  List.mem 0 es || List.fold_left (fun b e -> b / e) budget es >= 1
 
 (* [per_block u bs blocks c] is [u], [Bs; B], at each slot's block,
    [Bs; S]: [u.{σ / c}]. *)
@@ -755,29 +781,74 @@ let first_above cum ~n ~g e t =
   let rec bits k = if 1 lsl k > n then k else bits (k + 1) in
   go (bits 0) (int t 0) (int t n)
 
-let route o ~g ~c =
+let route ~budget o ~g ~c =
   let s = extents o in
   let nb = List.length s - 1 in
   let bs = List.filteri (fun i _ -> i < nb) s and n = List.nth s nb in
   let blocks = block_bound ~n ~g c in
+  let last = blocks * c in
   let wide = bs @ [ n; g ] in
   let up = List.init (nb + 1) Fun.id in
+  let lead = List.init nb Fun.id in
   let hot =
     Ops.eq (lay o up wide) (lay (Shape.arange ~dtype:Int64 g) [ nb + 1 ] wide)
   in
   let one = Ops.cast hot Int64 in
-  let cum = Ops.contiguous (Shape.cumalu one nb Op.Add) in
-  let rank = Ops.sub cum (int cum 1) in
-  let rank = Shape.rop (Ops.where hot rank (int rank 0)) Op.Add [ nb + 1 ] in
-  let count = Ops.contiguous (Shape.rop one Op.Add [ nb ]) in
+  let compared = within budget (bs @ [ last; n ]) in
+  let cum = if compared then None else Some (Shape.cumalu one nb Op.Add) in
+  let cum = Option.map Ops.contiguous cum in
+  let rank =
+    match cum with
+    | None ->
+        (* Over [Bs; n; n'], the indices [r'] before [r] of its id. *)
+        let pairs = bs @ [ n; n ] in
+        let id = lay o up pairs and id' = lay o (lead @ [ nb + 1 ]) pairs in
+        let at a = lay (Shape.arange ~dtype:Int64 n) [ a ] pairs in
+        let earlier =
+          Ops.bitwise_and (Ops.lt (at (nb + 1)) (at nb)) (Ops.eq id' id)
+        in
+        Shape.rop (Ops.cast earlier Int64) Op.Add [ nb + 1 ]
+    | Some cum ->
+        let rank = Ops.sub cum (int cum 1) in
+        Shape.rop (Ops.where hot rank (int rank 0)) Op.Add [ nb + 1 ]
+  in
+  (* The running count exists only past the budget, so over at least one
+     index: its last row is the counts. *)
+  let count =
+    match cum with
+    | Some cum ->
+        let row = Some (Ops.Int (n - 1), Ops.Int n) in
+        let cut = List.init (nb + 2) (fun i -> if i = nb then row else None) in
+        Shape.reshape (Shape.shrink cum cut) (dims (bs @ [ g ]))
+    | None -> Ops.contiguous (Shape.rop one Op.Add [ nb ])
+  in
   let spans = Ops.add count (int count (c - 1)) in
   let spans = Ops.div ~rounding:`Trunc spans (int spans c) in
-  let start = Ops.sub (Shape.cumalu spans nb Op.Add) spans in
-  let spans = Ops.contiguous spans and start = Ops.contiguous start in
-  let keep = List.init nb Fun.id @ [ nb + 1 ] in
+  let start =
+    if within budget (bs @ [ g; g ]) then
+      (* Over [Bs; g; g'], the spans of the groups [e'] before [e]. *)
+      let pairs = bs @ [ g; g ] in
+      let at a = lay (Shape.arange ~dtype:Int64 g) [ a ] pairs in
+      let other = lay spans (lead @ [ nb + 1 ]) pairs in
+      let before = Ops.lt (at (nb + 1)) (at nb) in
+      Shape.rop (Ops.where before other (int other 0)) Op.Add [ nb + 1 ]
+    else Ops.sub (Shape.cumalu spans nb Op.Add) spans
+  in
+  let start = Ops.contiguous start in
+  (* An exclusive scan's last element plus its last term is the total. *)
+  let used =
+    if g = 0 then Shape.rop spans Op.Add [ nb ]
+    else
+      let final u =
+        let at = Some (Ops.Int (g - 1), Ops.Int g) in
+        let cut = List.init (nb + 1) (fun i -> if i = nb then at else None) in
+        Shape.reshape (Shape.shrink u cut) (dims bs)
+      in
+      Ops.add (final start) (final spans)
+  in
+  let keep = lead @ [ nb + 1 ] in
   let first = lay start keep wide in
   let first = Shape.rop (Ops.where hot first (int first 0)) Op.Add [ nb + 1 ] in
-  let last = blocks * c in
   let slot = Ops.add (Ops.mul first (int first c)) rank in
   let slot = Ops.contiguous (Ops.where (in_range o g) slot (int slot last)) in
   (* Whether block [β] is group [e]'s, [Bs; g; B]. *)
@@ -791,15 +862,31 @@ let route o ~g ~c =
   let e = lay (Shape.arange ~dtype:Int64 g) [ nb ] target in
   let owner = Shape.rop (Ops.where mine e (int e 0)) Op.Add [ nb ] in
   let owner = Ops.contiguous owner in
-  (* Each slot's group, its rank in it, and its index where the rank is
-     below the group's count. *)
-  let e = per_block owner bs blocks c in
-  let sigma = lay (Shape.arange ~dtype:Int64 last) [ nb ] (bs @ [ last ]) in
-  let t = Ops.sub sigma (Ops.mul (owned start e) (int sigma c)) in
-  let cum = Shape.reshape cum (dims (bs @ [ n * g ])) in
-  let r = first_above cum ~n ~g e t in
-  let row = Ops.where (Ops.lt t (owned count e)) r (int r n) in
-  { blocks; slot; row = Ops.contiguous row; owner; start; spans; count }
+  let row =
+    match cum with
+    | None ->
+        (* Over [Bs; S; n], the greatest [n - r] of an index [r] at slot
+           [σ], [0] where none is. *)
+        let pairs = bs @ [ last; n ] in
+        let at = lay slot (lead @ [ nb + 1 ]) pairs in
+        let sigma = lay (Shape.arange ~dtype:Int64 last) [ nb ] pairs in
+        let r = lay (Shape.arange ~dtype:Int64 n) [ nb + 1 ] pairs in
+        let back = Ops.sub (int r n) r in
+        let back = Ops.where (Ops.eq at sigma) back (int back 0) in
+        let most = Shape.rop back Op.Max [ nb + 1 ] in
+        Ops.sub (int most n) most
+    | Some cum ->
+        (* Each slot's group, its rank in it, and its index where the rank
+           is below the group's count. *)
+        let e = per_block owner bs blocks c in
+        let slots = bs @ [ last ] in
+        let sigma = lay (Shape.arange ~dtype:Int64 last) [ nb ] slots in
+        let t = Ops.sub sigma (Ops.mul (owned start e) (int sigma c)) in
+        let cum = Shape.reshape cum (dims (bs @ [ n * g ])) in
+        let r = first_above cum ~n ~g e t in
+        Ops.where (Ops.lt t (owned count e)) r (int r n)
+  in
+  { blocks; slot; row = Ops.contiguous row; owner; start; spans; count; used }
 
 (* [spread p xs sides axis] is the positions [p], [Bs; m], laid over the
    extents [xs] with [axis]'s replaced by [m]: [p]'s batch axes at [sides],
@@ -1024,7 +1111,7 @@ let rows ~renderer ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
       let r = sum ~batch:pairs ~contracting ~acc ~out a' b' laid in
       move ~src:nb ~dst:j r
     else
-      let r = route o ~g ~c in
+      let r = route ~budget:(budget (Lazy.force renderer)) o ~g ~c in
       let blocks = r.blocks in
       (* On blocks a core takes, [a]'s computed rows are stored in their own
          order and the core's tile gathers them ({!stored}). With the slots
@@ -1064,10 +1151,9 @@ let rows ~renderer ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
       (* The groups take the first blocks, each at least one row: a block past
          them holds only padding, whose slots no row reads, so it holds no value
          and its products need not run. *)
-      let used = Shape.rop r.spans Op.Add [ nb ] in
       let s = extents (List.hd (Arith.parts out y)) in
       let beta = lay (Shape.arange ~dtype:Int64 blocks) [ j ] s in
-      let held = Ops.lt beta (lay used r_sides s) in
+      let held = Ops.lt beta (lay r.used r_sides s) in
       (* No row reads a slot of no index either: on a core's blocks its store
          is skipped, the slot's row [n]. A streamed block's guarded store
          took gpt-oss-20b's gate and up projection 20 µs more at 12 tokens,
@@ -1107,11 +1193,12 @@ let rows ~renderer ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
    would follow the other groups' counts, which place the group's first
    block and first index. Blocks of [n] indices give each group that holds
    an index one block, its own, at one place. *)
-let blocked ~batch ~contracting ~acc ~out a b init o ~groups:g ~pair ~c =
+let blocked ~budget ~batch ~contracting ~acc ~out a b init o ~groups:g ~pair
+    ~c =
   let ka, kb = List.nth contracting pair in
   let n = Bits.extent (List.hd a) ka in
   let nb = List.length batch in
-  let r = route o ~g ~c in
+  let r = route ~budget o ~g ~c in
   let blocks = r.blocks in
   let ms = extents r.row in
   let bs = List.filteri (fun i _ -> i < nb) ms in
@@ -1309,4 +1396,6 @@ let contract ~renderer ~batch ~contracting ~segments ~acc ~out a b init =
       let a, b = entered () in
       let n = Bits.extent (List.hd a) (fst (List.nth contracting pair)) in
       let c = block_size ~n ~g:groups in
-      blocked ~batch ~contracting ~acc ~out a b init ids ~groups ~pair ~c)
+      let budget = budget (Lazy.force renderer) in
+      blocked ~budget ~batch ~contracting ~acc ~out a b init ids ~groups ~pair
+        ~c)

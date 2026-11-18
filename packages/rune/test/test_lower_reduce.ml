@@ -1454,12 +1454,14 @@ let pp_contraction ppf c =
 
 (* [Long] segments a contracting pair of 24 to 40 indices into 3 or 4 groups,
    which the lowering cuts into blocks, the first of up to two pairs.
-   [Long_rows] segments [a]'s first free axis, of 48 to 140 rows, by [b]'s
-   first, of 1 or 2 groups, which the lowering routes into blocks of 64
-   rows. [Few_rows] segments it by 2 to 6 groups, with fewer rows than
-   groups, 1 to 5 rows a group or 5 to 16 in a third of the draws each. Both
-   contract a first pair of 6 to 12, so that a slice holds as many elements
-   as there are groups, which routing needs. *)
+   [Long_rows] segments [a]'s first free axis, of 48 to 140 rows or 260 to
+   300 in a third of the draws, by [b]'s first, of 1 or 2 groups, which the
+   lowering routes into blocks of 64 rows by comparisons or, past the host's
+   budget of them, as the longer always are, by a search. [Few_rows] segments
+   it by 2 to 6 groups, with fewer rows than groups, 1 to 5 rows a group or 5
+   to 16 in a third of the draws each. Both contract a first pair of 6 to 12,
+   so that a slice holds as many elements as there are groups, which routing
+   needs. *)
 type extras =
   | Plain_contraction
   | Scaled
@@ -1534,7 +1536,15 @@ let contraction ?(extras = Plain_contraction) dts accs =
     else count lo hi
   in
   let* fa =
-    if long_rows then leading (if crowded then 72 else 48) 140
+    if long_rows then
+      let* lo, hi =
+        frequency
+          [
+            (2, constant ((if crowded then 72 else 48), 140));
+            (1, constant (260, 300));
+          ]
+      in
+      leading lo hi
     else if few_rows then
       let g = fb.(0) in
       let* lo, hi =
@@ -2115,7 +2125,24 @@ let blocked_examples =
       init = Some (Array.make 6 0x80000000L);
     }
   in
-  [ one; two; none ]
+  (* 400 indices in 3 groups, a quarter in none: past the host's budget of
+     comparisons, the indices route by the running count's search. *)
+  let long =
+    {
+      one with
+      ek = [| 400 |];
+      araws = ones 800;
+      braws = ones 400;
+      seg =
+        Some
+          (Contracting
+             ( 0,
+               3,
+               Array.init 400 (fun r ->
+                   if r mod 4 = 3 then -1L else Int64.of_int (r mod 3)) ));
+    }
+  in
+  [ one; two; none; long ]
 
 let blocked_contractions =
   prop ~count:16 ~examples:blocked_examples
@@ -2164,6 +2191,43 @@ let batched_block =
    first free axis: its contracted and other free extents. *)
 let slice c g = numel c.ek * (numel c.fb / max 1 g)
 
+(* Whether [Rows] of [n] rows over [g] groups in blocks of 64 at each of [bs]
+   batch indices route by comparisons: their [S n] comparisons a batch
+   index, [S] slots, within the host's budget of [2^16]. *)
+let compared ~bs ~n g =
+  let m = min n g in
+  let slots = (m + ((n - m) / 64)) * 64 in
+  bs * slots * n <= 1 lsl 16
+
+(* 300 rows over 257 groups, each row's slice of 257: the groups' first
+   blocks pass the host's budget of [g²] comparisons, [2^16], and come from
+   a scan. Every seventh row is in no group, the others spread over the
+   groups, some empty. *)
+let many_groups =
+  let c = List.hd (empty (D.Any D.Float32)) in
+  let g = 257 in
+  {
+    c with
+    ek = [||];
+    fa = [| 300 |];
+    fb = [| g; g |];
+    ra = [| F 0 |];
+    rb = [| F 0; F 1 |];
+    araws =
+      Array.init 300 (fun r ->
+          if r mod 2 = 0 then 0x3e800000L else 0xbf800000L);
+    braws =
+      Array.init (g * g) (fun i ->
+          Int64.of_int (0x3f800000 + ((i mod 5) lsl 20)));
+    seg =
+      Some
+        (Rows
+           ( 0,
+             0,
+             Array.init 300 (fun r ->
+                 if r mod 7 = 0 then -1L else Int64.of_int (r * 31 mod 200)) ));
+  }
+
 (* Rows of 24 a group or more, which the lowering routes into blocks of 64:
    groups past a block's rows, empty groups and rows in no group. *)
 let blocked_rows =
@@ -2179,7 +2243,12 @@ let blocked_rows =
       in
       let any f = List.exists f os in
       let groups = List.init g Fun.id in
-      cover "rows in blocks of 64" (n >= 16 * g && g <= slice c g);
+      let blocked = n >= 16 * g && g <= slice c g in
+      cover "rows in blocks of 64" blocked;
+      cover "rows routed by comparisons"
+        (blocked && compared ~bs:(numel c.eb) ~n g);
+      cover "rows routed by the running count's search"
+        (blocked && not (compared ~bs:(numel c.eb) ~n g));
       cover "a group past a block's rows"
         (any (fun o -> List.exists (fun e -> count o e > 64) groups));
       cover "an empty group"
@@ -2573,6 +2642,20 @@ let work_bounds =
             (Lowered.kernels (fun () -> rows_op ~n:64 ~k:4 ~j:4 32)));
       test "a Rows contraction in blocks works as its slots' at 8 groups"
         (blocked ~k:16 8);
+      (* 256 rows of one group make [S n = 2^16] comparisons, the host's
+         budget, and route by them; 257 pass it and take the running count's
+         stages and the search. 300 rows over 256 groups sum the groups'
+         first blocks in one reduce of [g² = 2^16] terms; over 257 they take
+         a scan's stages. *)
+      test "routed rows compare within the budget, past it they search"
+        (fun () ->
+          let kernels n g =
+            Lowered.kernels (fun () -> rows_op ~n ~k:16 ~j:17 g)
+          in
+          equal int 6 (kernels 256 1);
+          equal int 9 (kernels 257 1);
+          equal int 10 (kernels 300 256);
+          equal int 12 (kernels 300 257));
       (* The routing does not depend on [k]: the work added by a deeper
          contraction is the products', which pad blocks of 8 rows at 8 rows
          a group to under twice the rows, [n + 7 g]. *)
@@ -2628,6 +2711,8 @@ let cases =
       test "a running variance that overflows is +∞" moments_overflow;
       test "rows of one group in a block at each batch index give eager's values"
         (fun () -> contract_check batched_block);
+      test "rows over 257 groups give eager's values" (fun () ->
+          contract_check many_groups);
     ]
 
 (* Sums of products

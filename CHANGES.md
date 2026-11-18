@@ -479,6 +479,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx.top_k` past 2 of few keys, and the routing of a compiled
+  `Nx.matmul_segments` or `Nx_quant.apply_experts`, take fewer kernels on a
+  GPU: gpt-oss-20b's router is 10 to 13 small kernels a layer at prefill,
+  from 17 to 20.
+
 - `Nx_quant.apply` of a Q8_0 matrix by 17 to 32 bfloat16 or float16 rows on
   a GPU, or past 32 rows padded past 6/5, takes a tensor core where it
   streamed: 0.65 ms where it took 1.59 at 17 rows of 16384 on an RTX 5000 Ada.

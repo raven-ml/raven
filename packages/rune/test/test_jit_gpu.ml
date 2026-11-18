@@ -583,11 +583,12 @@ let folds n =
 (* Top k
 
    A first [k] of a sort keeps keys of at most 32 bits by one of three paths:
-   comparing every pair of keys where the whole array's [k n²] comparisons are
-   at most [selection_comparisons], else [k] rounds where [k] is at most the
-   network's [s(s+1)/2] compare steps for [n <= 2^s], else the network, as wider
-   keys always do. The draws reach each path, at slices of 17 to 40 keys and
-   enough rows to pass the selection's bound. *)
+   ranking every key where [k] exceeds 2 or the rounds' steps and the whole
+   array's [n (n + k)] comparisons are within the GPU's budget, [2^16] times
+   its units, else [k] rounds where [k] is at most the network's [s(s+1)/2]
+   compare steps for [n <= 2^s], else the network, as wider keys always do.
+   The draws reach each path, at slices of 17 to 40 keys and enough rows to
+   pass the budget. *)
 
 type top = {
   t_dt : Nx.Dtype.any;
@@ -621,7 +622,19 @@ let narrow_keys =
     ]
 
 let wide_keys = Nx.Dtype.[ Any Nx.float64; Any Nx.int64; Any Nx.complex64 ]
-let selection_comparisons = 1 lsl 16
+
+(* The first GPU's budget of comparisons, the host's where there is none. *)
+let budget =
+  lazy
+    (let units =
+       match Lazy.force gpu with
+       | None -> 0
+       | Some (d, _) -> (
+           match Tolk_engine.renderer d with
+           | r -> r.Tolk.Renderer.units
+           | exception Failure _ -> 0)
+     in
+     (1 lsl 16) * max 1 units)
 
 let rec bit_length n = if n = 0 then 0 else 1 + bit_length (n lsr 1)
 
@@ -636,9 +649,12 @@ let path c =
   let n = c.t_shape.(c.t_axis) and size = Operand.numel c.t_shape in
   if c.t_k = 0 || n <= 1 || size = 0 then Trivial
   else if List.mem c.t_dt wide_keys then Wide
-  else if c.t_k * n * size <= selection_comparisons then Selection
-  else if c.t_k <= steps n then Rounds
-  else Past_steps
+  else
+    let rounds = c.t_k <= steps n in
+    if (c.t_k > 2 || not rounds) && size * (n + c.t_k) <= Lazy.force budget
+    then Selection
+    else if rounds then Rounds
+    else Past_steps
 
 (* [laid ~rows n] is a shape of at least [rows] slices of [n] and the slices'
    axis: the last, the first, or the middle of three. *)
@@ -652,8 +668,8 @@ let laid ~rows n =
       map (fun a -> ([| a; n; (rows + a - 1) / a |], 1)) (int_range 2 4);
     ]
 
-(* The rows that put a first [k] of [n] past the selection's bound. *)
-let past_selection ~k n = (selection_comparisons / (k * n * n)) + 1
+(* The rows that put a first [k] of [n] past the budget. *)
+let past_selection ~k n = (Lazy.force budget / (n * (n + k))) + 1
 
 let top_gen =
   let open Gen in
@@ -724,6 +740,10 @@ let top_examples =
       example (Any Nx.float32) [| 512; 32 |] 1 4;
       example (Any Nx.bfloat16) [| 4; 20; 60 |] 1 3;
       example (Any Nx.int8) [| 70; 10 |] 1 10;
+      (* 40000 rows of a first 10 of 10 make 8·10^6 comparisons, past the
+         budget of every target of at most 122 units, sm_89's 100 among
+         them: k = n by rounds. *)
+      example (Any Nx.int8) [| 40000; 10 |] 1 10;
       example (Any Nx.int32) [| 8; 32 |] 1 16;
       example (Any Nx.float64) [| 3; 9 |] 1 3;
       example (Any Nx.complex64) [| 6; 2 |] 0 2;

@@ -138,25 +138,28 @@ val assemble :
     values and computes only its background. *)
 
 val sort :
+  budget:int ->
   Nx_array.Dtype.any ->
   axis:int ->
   descending:bool ->
   k:int option ->
   Ops.t ->
   Ops.t * Ops.t
-(** [sort d ~axis ~descending ~k x] is the elements of [x], a value of [d],
-    sorted stably along [axis], then their [int64] positions, as
+(** [sort ~budget d ~axis ~descending ~k x] is the elements of [x], a value
+    of [d], sorted stably along [axis], then their [int64] positions, as
     {!Nx_kernel.S.sort} states; with [Some k], the first [k] of each slice.
     Each slice sorts by a bitonic network over its keys packed above their
     positions, one pass per 32 bits of key: [O(n log² n)] work and about
     [log² n / 2] kernels a pass for [n] elements, two passes for a 64-bit
-    dtype or [complex64], four for [complex128]. A first [k] of keys of at most
-    32 bits, when the whole array's [k n²] comparisons are few, compares every
-    pair instead: two kernels for its positions. Otherwise, with [k] at most
-    the network's [s(s+1)/2] compare steps, [s] the least with [n <= 2{^s}],
-    it takes [k] rounds, each the least key past the last round's: [O(k n)]
-    work and a kernel a round for its positions, two where tolk splits a long
-    slice's reduction.
+    dtype or [complex64], four for [complex128]. With [k] at most the
+    network's [s(s+1)/2] compare steps, [s] the least with [n <= 2{^s}], a
+    first [k] of keys of at most 32 bits takes [k] rounds, each the least key
+    past the last round's: [O(k n)] work and a kernel a round for its
+    positions, two where tolk splits a long slice's reduction. Where [k]
+    exceeds 2 or those steps, and the whole array's [n (n + k)] comparisons
+    are at most [budget] ({!Lower_reduce.budget}), it ranks each key by the
+    keys that precede it instead, then finds the first [k] ranks: two
+    kernels for its positions.
 
     Raises {!Lower_arith.Unlowered} for an axis of more than [2{^31}]
     elements. *)

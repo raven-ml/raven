@@ -321,7 +321,9 @@ let op ?dst ~renderer ~device ~host ~local
       [| Lower_index.assemble dtype fill shape pieces |]
   | Sort { axis; descending; k; x } ->
       let values, positions =
-        Lower_index.sort (D.Any (Nx.dtype x)) ~axis ~descending ~k (node x)
+        let budget = Reduce.budget (Lazy.force renderer) in
+        Lower_index.sort ~budget (D.Any (Nx.dtype x)) ~axis ~descending ~k
+          (node x)
       in
       [| values; positions |]
   | Unique { size; keys } ->

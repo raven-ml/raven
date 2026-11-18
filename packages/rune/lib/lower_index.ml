@@ -925,39 +925,40 @@ let ranked axis h =
   Ops.bitwise_and sorted (int h ((1 lsl low) - 1))
 
 (* A sort's first [k] of a few keys need not sort: the position of the [r]th
-   is the one exactly [r] keys precede. Comparing every pair of keys is one
-   kernel of [k·n²] comparisons, in place of a network's kernels, one per stage
-   and each a launch. [selection_comparisons] bounds the comparisons of the
-   whole array: past it the comparisons outweigh the launches they save, and
-   [rounds] or the network take the first [k]. It divides so that a shape's
-   product cannot overflow. *)
+   is the one exactly [r] keys precede. Each key's rank, the count of keys
+   that precede it, is one reduce of [n] comparisons an output, stored, and
+   the first [k] ranks' positions a second of [k n] a row: two kernels, in
+   place of a network's, one per stage, or [k] rounds, each a launch. Two
+   rounds take as few, so a first [k] past 2, or past the rounds below,
+   takes the ranks while the [n (n + k)] comparisons of a row over the rows
+   are within the budget ({!Lower_reduce.budget}). It divides so that a
+   shape's product cannot overflow. *)
 
-let selection_comparisons = 1 lsl 16
-
-let selecting ~k s axis =
+let selecting ~budget ~k s axis =
   let n = List.nth s axis in
-  k <= selection_comparisons / n / n / (numel s / n)
+  n + k <= budget / (numel s / n) / n
 
-(* [selected axis k h] is the int64 positions of the [k] leading keys of the
+(* [chosen axis k h] is the int64 positions of the [k] leading keys of the
    sort of [h], in sort order, as [ranked] would give them. *)
-let selected axis k h =
+let chosen axis k h =
   let s = extents h in
   let before = List.take axis s and after = List.drop (axis + 1) s in
   let n = List.nth s axis in
-  let keys = Ops.contiguous (packed axis h) in
-  (* Axes [axis], [axis+1], [axis+2] are [r], [i], [j]: the output, the key
-     ranked, and the key compared with it. *)
-  let space = before @ [ k; n; n ] @ after in
-  let along i j =
-    let extent on = if on then n else 1 in
-    let laid = before @ [ 1; extent i; extent j ] @ after in
+  let keys = packed axis h in
+  (* Axes [axis] and [axis+1] are [i] and [j]: the key ranked, and the key
+     compared with it. *)
+  let space = before @ [ n; n ] @ after in
+  let along i =
+    let laid = before @ (if i then [ n; 1 ] else [ 1; n ]) @ after in
     Shape.expand (Shape.reshape keys (dims laid)) (dims space)
   in
-  let precedes =
-    Ops.cast (Ops.lt (along false true) (along true false)) Int64
-  in
-  let rank = Shape.rop precedes Op.Add [ axis + 2 ] in
+  let precedes = Ops.cast (Ops.lt (along false) (along true)) Int64 in
+  let rank = Ops.contiguous (Shape.rop precedes Op.Add [ axis + 1 ]) in
+  (* Axes [axis] and [axis+1] are [r] and [i]: the output, and the key whose
+     rank it matches. *)
   let line = before @ [ k; n ] @ after in
+  let rank = Shape.reshape rank (dims (before @ [ 1; n ] @ after)) in
+  let rank = Shape.expand rank (dims line) in
   let at c e = laid line c (Shape.arange ~dtype:Int64 e) in
   let picked =
     Ops.where (Ops.eq rank (at axis k)) (at (axis + 1) n) (zeros Int64 line)
@@ -1017,7 +1018,7 @@ let keys (D.Any dt as d) ~descending u =
   in
   List.concat_map split ks
 
-(* Past the selection's bound a first [k] still need not sort: the [r]th of the
+(* Past the ranks' bound a first [k] still need not sort: the [r]th of the
    packed keys, which are distinct, is the least above the one before it, a
    reduction over the slice. [k] rounds are [k·n] comparisons and [k] kernels,
    where the network makes a pass of [n] and a kernel at each of its [s(s+1)/2]
@@ -1054,7 +1055,7 @@ let rounds axis k h =
   let m = Shape.cat ~axis (List.hd ms) (List.tl ms) in
   Ops.bitwise_and (Ops.sub (most m) m) (int m ((1 lsl low) - 1))
 
-let sort d ~axis ~descending ~k x =
+let sort ~budget d ~axis ~descending ~k x =
   let s = extents (List.hd (Arith.parts d x)) in
   let n = List.nth s axis in
   if n > 1 lsl 31 then unlowered "a Sort of more than 2^31 elements";
@@ -1083,8 +1084,11 @@ let sort d ~axis ~descending ~k x =
             (ranked axis least) rest
     in
     match (k, ks) with
-    | Some k, [ h ] when k > 0 && selecting ~k s axis ->
-        let positions = selected axis k h in
+    | Some k, [ h ]
+      when k > 0
+           && (k > 2 || not (rounding ~k n))
+           && selecting ~budget ~k s axis ->
+        let positions = chosen axis k h in
         (gathered positions, positions)
     | Some k, [ h ] when k > 0 && rounding ~k n ->
         let positions = rounds axis k h in
@@ -1130,7 +1134,8 @@ let unique ~host ren device ~size keys =
       Ops.bitcast (Shape.reshape c [ Ops.Int n ]) Uint64
     in
     let positions u =
-      snd (sort (D.Any D.Uint64) ~axis:0 ~descending:false ~k:None u)
+      let budget = Lower_reduce.budget ren in
+      snd (sort ~budget (D.Any D.Uint64) ~axis:0 ~descending:false ~k:None u)
     in
     let rec from j p =
       if j < 0 then p

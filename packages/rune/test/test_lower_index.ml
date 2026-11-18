@@ -1552,7 +1552,7 @@ let pp_sort ppf c =
 (* A sort's slices are at most 4 elements long, or 9 to 17 a quarter of the
    time, so that the network has 4 or 5 stages. One sort in five instead has
    240 to 300 slices of 17 to 33, so that a first k of any of them compares
-   more than [2^16] pairs, past the selection. *)
+   more than [2^16] pairs, past the ranks' budget. *)
 let sort_case =
   let open Gen in
   let* d = all_dtypes in
@@ -1646,15 +1646,16 @@ let sort_examples =
   empty
   :: long (D.Any D.Float32) [| 2; 17 |] 1
   :: long (D.Any D.Float16) [| 17; 256 |] 0
-  :: { (long (D.Any D.Int8) [| 70; 10 |] 1) with o_k = Some 10 }
+  :: { (long (D.Any D.Int8) [| 400; 10 |] 1) with o_k = Some 10 }
   :: { (long (D.Any D.Int64) [| 9; 2 |] 0) with o_descending = true }
   :: List.mapi each D.all
 
-(* A first k of keys of at most 32 bits compares every pair where the whole
-   array's [k n²] comparisons are at most [selection_comparisons], else takes
-   [k] rounds where [k] is at most the network's [s(s+1)/2] compare steps for
-   [n <= 2^s]. [first c] is the path [c] takes, if either. *)
-let selection_comparisons = 1 lsl 16
+(* A first k of keys of at most 32 bits ranks the keys where [k] exceeds 2
+   or the network's [s(s+1)/2] compare steps for [n <= 2^s], and the whole
+   array's [n (n + k)] comparisons are within the host's budget, [2^16].
+   Otherwise it takes [k] rounds where [k] is at most those steps. [first c]
+   is the path [c] takes, if either. *)
+let budget = 1 lsl 16
 
 let first c =
   let n = c.o_shape.(c.o_axis) and size = numel c.o_shape in
@@ -1666,8 +1667,10 @@ let first c =
   let s = bits (n - 1) in
   match c.o_k with
   | Some k when k > 0 && n > 1 && size > 0 && not wide ->
-      if k * n * size <= selection_comparisons then Some `Selection
-      else if k <= s * (s + 1) / 2 then Some `Rounds
+      let rounds = k <= s * (s + 1) / 2 in
+      if (k > 2 || not rounds) && size * (n + k) <= budget then
+        Some `Selection
+      else if rounds then Some `Rounds
       else None
   | _ -> None
 
@@ -1689,7 +1692,11 @@ let sorts =
         (List.mem c.o_dt
            D.[ Any Float64; Any Int64; Any Uint64; Any Complex64 ]);
       cover "complex128" (c.o_dt = D.Any D.Complex128);
-      cover "a first k by selection" (first c = Some `Selection);
+      cover "a first k by ranks" (first c = Some `Selection);
+      cover "a first k by ranks over equal elements"
+        (first c = Some `Selection && ties c);
+      cover "k = n by ranks"
+        (first c = Some `Selection && c.o_k = Some c.o_shape.(c.o_axis));
       cover "a first k by rounds" (first c = Some `Rounds);
       cover "k = n by rounds"
         (first c = Some `Rounds && c.o_k = Some c.o_shape.(c.o_axis));
@@ -1704,8 +1711,9 @@ let sorts =
         (Nx.to_array (snd (op ())))
         (Lowered.run (fun () -> snd (op ()))))
 
-(* A first k of a few 32-bit keys compares them in one kernel beside the one
-   that packs its keys, each a launch, where a network has one per stage. *)
+(* A first k of a few 32-bit keys ranks them in one kernel and finds the
+   first k ranks in a second, each a launch, where a network has one per
+   stage. *)
 let selection_kernels =
   test "a first k of 32 keys is two kernels" (fun () ->
       let x = Nx.zeros D.Float32 [| 32 |] in
@@ -1716,21 +1724,26 @@ let selection_kernels =
       in
       equal int 2 (Lowered.kernels ids))
 
-(* The bound counts the comparisons of the whole array: 16 rows of 32 keys reach
-   [2^16] with a first 4, and 17 rows pass it. *)
+(* The bound counts the comparisons of the whole array, [n (n + k)] a row:
+   56 rows of 32 keys with a first 4 make 64512, within the host's [2^16], and
+   57 rows pass it. A first 1 or 2 takes as many rounds, as few launches, at
+   any rows. *)
 let selection_bound =
-  let kernels rows =
+  let kernels rows k =
     let x = Nx.broadcast_to [| rows; 32 |] (Nx.scalar D.Float32 0.) in
     Lowered.kernels (fun () ->
         snd
           (P.eval ~by:"t"
-             (P.Sort { axis = 1; descending = true; k = Some 4; x })))
+             (P.Sort { axis = 1; descending = true; k = Some k; x })))
   in
   test "a first k selects up to its bound of comparisons" (fun () ->
-      equal int 2 (kernels 16);
-      at_least int ~than:3 (kernels 17))
+      equal int 2 (kernels 56 4);
+      equal int 4 (kernels 57 4);
+      equal int 1 (kernels 1 1);
+      equal int 2 (kernels 1 2);
+      equal int 2 (kernels 1 3))
 
-(* A selection's comparisons overflow an OCaml integer past [2^62]: a first k of
+(* The ranks' comparisons overflow an OCaml integer past [2^62]: a first k of
    that many keeps the network, whose kernels stay few enough to schedule. *)
 let selection_wide =
   test "a first k whose comparisons overflow keeps the network" (fun () ->
@@ -1742,7 +1755,7 @@ let selection_wide =
       in
       at_least int ~than:3 (Lowered.kernels ids))
 
-(* Past the selection's bound a first k of 32-bit keys takes a round per
+(* Past the ranks' bound a first k of 32-bit keys takes a round per
    element kept, each one kernel whatever the number of rows, up to the
    network's 15 compare steps for 32 keys; past them it keeps the network, a
    kernel per step. *)
@@ -1754,10 +1767,10 @@ let rounds_kernels =
           (P.eval ~by:"t"
              (P.Sort { axis = 1; descending = true; k = Some k; x })))
   in
-  test "a first k past the selection's bound is k kernels at any rows"
+  test "a first k past the ranks' bound is k kernels at any rows"
     (fun () ->
       equal int 1 (kernels 512 1);
-      equal int 4 (kernels 17 4);
+      equal int 4 (kernels 57 4);
       equal int 4 (kernels 512 4);
       equal int 4 (kernels (1 lsl 47) 4);
       equal int 15 (kernels 512 15);

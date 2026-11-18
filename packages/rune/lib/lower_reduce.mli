@@ -162,6 +162,12 @@ type operand = {
   scale : scale option;
 }
 
+val budget : Tolk.Renderer.t -> int
+(** [budget r] is the comparisons a kernel on [r]'s target makes in place of
+    the launches of a scan, a search or rounds that compute the same
+    integers: [2{^16}] times [r]'s units, or [2{^16}] where it states
+    none. *)
+
 val contract :
   renderer:Tolk.Renderer.t Lazy.t ->
   batch:(int * int) iarray ->
@@ -190,11 +196,11 @@ val contract :
     its own group's slice of [b] alone. Where [n < g], or [g] is [0] or more
     than a slice's elements, each row loads its slice at its id, the
     products of the contraction of one slice, in one kernel. Otherwise it
-    routes the rows by counting, in work [n g] and [S ⌈log2 (n + 1)⌉], into
-    [S = B c] slots of blocks of [c] rows of one group,
-    [B = m + ⌊(n - m) / c⌋] for [m = min n g]: each block loads its group's
-    slice, the rows enter at their slots, and each row reads its slot's
-    stored output.
+    routes the rows by counting, in work [n g] and [S ⌈log2 (n + 1)⌉] or,
+    within {!budget}, [n² + S n], into [S = B c] slots of blocks of [c]
+    rows of one group, [B = m + ⌊(n - m) / c⌋] for [m = min n g]: each block
+    loads its group's slice, the rows enter at their slots, and each row
+    reads its slot's stored output.
 
     [c] follows the fewest rows [r] a tensor core takes of a block of stored
     slices, {!Tolk.Heuristic.core_rows} on [renderer] of the dtype both operands

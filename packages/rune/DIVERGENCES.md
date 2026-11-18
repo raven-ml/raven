@@ -673,8 +673,8 @@ rounded sum; a stated bound) and its reason. A rounded sum's bound is
 - **Reference:** `mixin/op.py:936` (`sort`: a bitonic network of the values,
   each position recovered by matching equal values and their counts), `:988`
   (`argsort`).
-- **Raven:** `lower_index.ml` (`bitonic`, `ranked`, `selected`, `rounds`,
-  `rounding`, `key`, `keys`, `sort`).
+- **Raven:** `lower_index.ml` (`bitonic`, `ranked`, `selecting`, `chosen`,
+  `rounds`, `rounding`, `key`, `keys`, `sort`), `lower_reduce.ml` (`budget`).
 - **Differs:** tinygrad's network sorts order keys, each the unsigned integer
   of its width with R3's ordering, every NaN the greatest, complemented for a
   descending sort, packed in an `int64` above its position. Packed integers
@@ -683,31 +683,32 @@ rounded sum; a stated bound) and its reason. A rounded sum's bound is
   significant first. The sorted values are the operand's elements at those
   positions, read by I3's gather. tinygrad's recovery never matches a NaN, and
   its network compares floats. A sort that keeps the first `k` of one 32-bit
-  key each, up to `selection_comparisons` comparisons, compares every pair of
-  packed keys in one kernel instead of running the network, which is a launch
-  per stage. Past them, with `k` at most the network's `s(s+1)/2` compare
-  steps for `n <= 2^s`, it takes `k` reductions, each the least packed key
-  above the last: `k` kernels of `n` comparisons a slice (tinygrad's `topk`,
-  `mixin/op.py:999`, sorts then keeps `k`).
+  key each ranks every packed key by the keys that precede it, stored, then
+  reads the positions of the first `k` ranks: two kernels, in place of the
+  network's launch per stage. It does so where `k` exceeds 2 or the rounds'
+  steps below and a row's `n (n + k)` comparisons over the rows are within
+  `Lower_reduce.budget`, `2^16` times the target's units. Elsewhere, with `k`
+  at most the network's `s(s+1)/2` compare steps for `n <= 2^s`, it takes `k`
+  reductions, each the least packed key above the last: `k` kernels of `n`
+  comparisons a slice (tinygrad's `topk`, `mixin/op.py:999`, sorts then keeps
+  `k`).
 - **nx:** `nx_kernel.mli`, `sort`: stable, `-0` below `+0` and every NaN above
   `+inf`, reversed when descending, bits unchanged.
 - **Class:** exact.
-- **Reason:** (b) for the packed keys. (d) for the selection and the rounds,
-  by gpt-oss's router, the first 4 of 32 logits a token: `Cuda/top-k-4-of-1x32`
-  (the selection), `Cuda/top-k-4-of-512x32` and `Jit/top-k-4-of-512x32` (the
+- **Reason:** (b) for the packed keys. (d) for the ranks and the rounds: two
+  launches in place of `k`, each rank a reduce as long as a round's. By
+  gpt-oss's router, the first 4 of 32 logits a token: `Cuda/top-k-4-of-1x32`
+  and `Cuda/top-k-4-of-512x32` (the ranks), `Jit/top-k-4-of-512x32` (the
   rounds) in `rune.thumper`, and `GptOss/decode-step-cache-1024` and
   `GptOss/prefill-512` in `gpt_oss.thumper`; the `rune.thumper` rows'
-  baselines wait for the next scheduled re-record. On an RTX 5000 Ada, in
-  one MoE layer, the router at 512 tokens is 4 kernels, 6.3-6.5 µs of kernel
-  time, where the network was 20 and 23.3 µs; at one token the selection
-  keeps its 2 kernels, 4.35 µs, where rounds would be 4 and 4.5 µs. Rounds
-  lose to the network where few rows hold long slices: over one row of 4096
-  they take 1.5 times the network's kernel time at `k = 16` and 3.2 times at
-  `k = 64` on that GPU, the second timed by `Cuda/top-k-64-of-1x4096`.
+  baselines wait for the next scheduled re-record. Rounds lose to the
+  network where few rows hold long slices: over one row of 4096 on an RTX
+  5000 Ada they take 1.5 times the network's kernel time at `k = 16` and 3.2
+  times at `k = 64`, the second timed by `Cuda/top-k-64-of-1x4096`.
 - **Pinned by:** `Lower_index › sorts › sorts give eager's values and
-  positions`, for the selection `a first k of 32 keys is two kernels` and `a
+  positions`, for the ranks `a first k of 32 keys is two kernels` and `a
   first k selects up to its bound of comparisons`, for the rounds `a first k
-  past the selection's bound is k kernels at any rows`, and on a GPU `Rune.jit
+  past the ranks' bound is k kernels at any rows`, and on a GPU `Rune.jit
   on a GPU › top k › a first k compiles to eager's values and positions`.
 
 ### R6. Complex reductions, scans and contractions by parts
@@ -1130,14 +1131,19 @@ rounded sum; a stated bound) and its reason. A rounded sum's bound is
   `mixin/op.py:1064`, is a one-hot `where` summed over the axis, which
   `codegen/simplify.py:122` (`pm_reduce_load_collapse`, under
   `pm_load_collapse`, `:157`) rewrites into a load at the index.
-- **Raven:** `lower_reduce.ml` (`route`, `rows`, `block_rows`, `blocked`,
-  `block_size`), `lower_bits.ml` (`take`).
+- **Raven:** `lower_reduce.ml` (`route`, `budget`, `within`, `rows`,
+  `block_rows`, `blocked`, `block_size`), `lower_bits.ml` (`take`).
 - **Differs:** every read is a load at its index by `take`, never a one-hot
   sum. A `Rows` contraction of `n` rows over `g` groups reads `b` at each
   row's id, clamped into `[0, g - 1]`, where `n < g` or `g` passes a
-  slice's elements. Otherwise it routes the rows by counting (a one-hot of the ids, its running sum, each
-  group's count and the scan of its blocks, each slot's row by a binary
-  search of its group's running count) into blocks of rows of one group:
+  slice's elements. Otherwise it routes the rows by counting (each row's
+  rank in its group, each group's count, its first block, the blocks of the
+  groups before it, and each slot's row) into blocks of rows of one group.
+  Each group's first block is one sum of `g²` terms a batch index where
+  those are within `Lower_reduce.budget`, else a scan of the blocks; the
+  ranks and the slots' rows are `n²` and `S n` comparisons where those are
+  within it, else a one-hot of the ids' running sum and a binary search of
+  a group's running count. A block's rows number,
   where a tensor core takes a block (`Tolk.Heuristic.core_rows`, its fewest
   rows `r`), `r` while 3 times the mean rows a group stays under `r`, then
   64, a scaled operand's as a stored one's; elsewhere 4 below 5 rows a
@@ -1162,7 +1168,10 @@ rounded sum; a stated bound) and its reason. A rounded sum's bound is
   floats, its association one of those the bound allows and a function of
   the shapes, the dtypes, the target's tensor cores and the group's own
   count, a zero result's sign open.
-- **Reason:** (b).
+- **Reason:** (b). (d) for the comparisons in place of the scan and the
+  search, which compute the same integers in fewer launches, by gpt-oss's
+  routing: `Cuda/experts-bfloat16-{12,64,512}x4of32-2880x5760` in
+  `rune.thumper` and `GptOss/prefill-512` in `gpt_oss.thumper`.
 - **Pinned by:** `Lower_reduce › contractions › segmented contractions give
   eager's integers and hold their bound`, `› contracting pairs in blocks give
   eager's integers and hold their bound`, `› rows in blocks give eager's
@@ -1173,9 +1182,10 @@ rounded sum; a stated bound) and its reason. A rounded sum's bound is
   fewer rows than groups is one kernel`, `› Rows of more groups than a
   slice's elements are one kernel`, `› a Rows contraction of 8 rows a
   group pads under its rows`, `› a Rows contraction in blocks works as its
-  slots' at 8 groups`, `› a Contracting contraction of 8
-  groups works in blocks`, `Jit › classes › a segmented contraction gives
-  eager's values`, `› a segmented contraction's gradients give eager's
+  slots' at 8 groups`, `› routed rows compare within the budget, past it
+  they search`, `› a Contracting contraction of 8 groups works in blocks`,
+  `Lower_reduce › cases › rows over 257 groups give eager's values`, `Jit ›
+  classes › a segmented contraction gives eager's values`, `› a segmented contraction's gradients give eager's
   values`, `› a group's weight gradient keeps its bits whatever the other
   groups' counts`, `› experts applied give eager's values`, `Rune.jit on
   a GPU › products › a routed product of exact sums gives eager's bits`,
