@@ -45,7 +45,6 @@
     A model chooses which pixels it masks, from which bits, classes or
     confidences, and which DNs outside a valid range it keeps. *)
 
-
 type class_ = {
   value : int;  (** The code. *)
   name : string option;

@@ -445,10 +445,10 @@ val span : Grid.t -> 'd Nx.float64_t -> int
     are not [valid], and [src] then spans 360°. Where it is not, and the
     column step is a rounding of (360° / n, 0) for a whole n, or of
     (-360° / n, 0) for columns that run west, as 1° printed 0.9999999° is,
-    the program states that step. Otherwise no whole number of [src]'s cells makes a turn,
-    and no rule reads across its seam: the program cuts [src] to columns
-    narrower than a turn that hold every footprint whole, or makes [dst]
-    with no cell across [src]'s west edge. *)
+    the program states that step. Otherwise no whole number of [src]'s
+    cells makes a turn, and no rule reads across its seam: the program cuts
+    [src] to columns narrower than a turn that hold every footprint whole,
+    or makes [dst] with no cell across [src]'s west edge. *)
 
 (** {3:average_laws The average's laws}
 
