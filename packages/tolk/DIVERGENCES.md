@@ -1878,8 +1878,8 @@ the width, and devectorizes no expanded scalar into a stack; with it
   that store again when its value reads at most three buffers and no
   reduction reads a buffer).
 - **tolk:** `Indexing.assign_ranges` (which records the values a broadcast
-  stores, and a gather's stored source that its broadcast gathers would
-  compute more of inlined) and `Indexing.bufferize_and_index` (which marks
+  stores, and a gather's stored source that its gathers would compute more
+  of inlined) and `Indexing.bufferize_and_index` (which marks
   their stages `Broadcast`); `Ops.keep`, in place of `removable`;
   `Rangeify.remove_bufferize`, which keeps such a stage, with `Rangeify.work`,
   `Rangeify.transcendental_work` and `Rangeify.read_selected`.
@@ -1895,13 +1895,12 @@ the width, and devectorizes no expanded scalar into a stack; with it
   loses the axes its value does not vary along. A value read once per
   element, as a rotated query reads its rows of a stored sine table, is not
   marked. A gather's source (D73), stored before
-  ranges are assigned, is marked when its consumers broadcast it, or when a
-  broadcast ends ranges above one of its gathers and the gathers, inlined,
-  would compute more elements than it holds: each element a gather reads,
-  once for each trip of the ranges that end above it, that work at its least
-  and the elements held at their most. Gathers that no broadcast reads stay
-  unmarked. `Indexing.assign_ranges` carries the ranges that end above each
-  node, as tinygrad's `ending_ranges` does. tinygrad's cost check counts
+  ranges are assigned, is marked when its consumers broadcast it, or when its
+  gathers, inlined, would compute more elements than it holds: each element a
+  gather reads, once for each trip of the ranges that end above it, that work
+  at its least and the elements held at their most. `Indexing.assign_ranges`
+  carries the ranges that end above each node, as tinygrad's `ending_ranges`
+  does. tinygrad's cost check counts
   buffers and reductions only, so its consumer computes the value again for
   every element of the ranges it does not vary along.
 - **Reason:** (d): gpt-oss-20b (`kaun/examples/06-gpt-oss`), where inlining
@@ -1922,7 +1921,9 @@ the width, and devectorizes no expanded scalar into a stack; with it
   selecting sum, as of `selected_scaled`'s 160 nodes, is left to D163,
   which counts its copies at the selected index and inlines it as tinygrad
   does. A broadcast value of that much plain arithmetic read elsewhere is
-  stored too, which no bench row runs.
+  stored too, which no bench row runs. A table its gathers read again is
+  the same case: on fudge's host a table of 64 rows read at 4096 takes
+  0.8-1.2 ms stored against 2.8-3.2 ms inlined.
 - **Pinned by:** the Rangeify suite's `swiglu_down`, `attention`,
   `exp_dead_axis` (a kept exponential of a row expanded to a matrix is stored
   as the row), `exp_cheap_consumer` (a value that reads a kept exponential is
@@ -1930,8 +1931,9 @@ the width, and devectorizes no expanded scalar into a stack; with it
   rows of a cosine table and is not stored) rows of `kernel_counts.golden` and
   their kernel goldens, `selected_scaled` (a heavy value a selecting sum
   reads, inlined) of `kernel_counts.tolk`, and its `get_kernel_graph ›
-  gathers read where broadcast`, `› broadcast exponentials` and `› a spelled
-  exponential selected and broadcast`; rune's `jit ›
+  gathers read where broadcast`, `› gathers that read more than their table
+  holds`, `› broadcast exponentials` and `› a spelled exponential selected
+  and broadcast`; rune's `jit ›
   an exponential every output of a product reads is stored` and `› a routed
   product's sigmoid is stored` (`Nx.exp`,
   `Nx.sigmoid`, `Nx.sin` and `Nx.log` as rune compiles them, at every float
@@ -2647,7 +2649,9 @@ scalar, for rune's staged scan, which now replaces it by zeros in the step
   value stored for consumers that read it at different indices, as the
   query, key and value projections read one normalised activation, is
   marked broadcast when they broadcast it, as D77 marks a value that a
-  broadcast ends.
+  broadcast ends. So is a gather's source that its gathers read at more
+  positions than it holds (D77): a sum of such reads through its reduced
+  ranges alone keeps a source of several buffers stored.
 - **Reason:** (d): gpt-oss-20b's decode on CUDA, whose every projection
   computed the normalised activation again for each of its outputs. On
   fudge, gpt-oss's bench row `GptOss/decode-step-cache-1024` takes 10.2 ms
@@ -2655,8 +2659,9 @@ scalar, for rune's staged scan, which now replaces it by zeros in the step
 - **Pinned by:** the Rangeify suite's `normed_vecmat` (a normalised vector
   read by a product), `normed_vecmats` (by two products, stored once) and
   `normed_matmul` (a normalised matrix, inlined) rows of
-  `kernel_counts.golden` and their kernel goldens, and `variable_read_twice`
-  (a value two full reductions read, inlined).
+  `kernel_counts.golden` and their kernel goldens, `variable_read_twice`
+  (a value two full reductions read, inlined), and its `get_kernel_graph ›
+  gathers that read more than their table holds`.
 
 ## D107. Withdrawn
 

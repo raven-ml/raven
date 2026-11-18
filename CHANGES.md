@@ -1493,6 +1493,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A computed table that gathers read at more positions than it holds is
+  stored as a broadcast value is, when it runs an exponential or as much
+  arithmetic, or several inputs a sum reads it through: `Nx.take` with no
+  broadcast above it computed such a table again at every read.
 - A compiled host cast of an `int64` or `uint64` to `float32` rounds once:
   under Apple clang 17 and LLVM 18 and 19 on arm64, `Rune.jit` rounded
   `2^53 + 2^29 + 1` twice, to `2^53`.

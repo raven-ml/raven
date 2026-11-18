@@ -256,12 +256,13 @@ type keep =
       (** Drop the axes its value does not vary along, and inline it back
           where that costs little. *)
   | Broadcast
-      (** As {!Removable}, for a value read where it is broadcast: it is not
-          inlined back where computing it runs a transcendental operation or,
-          at a read outside a sum that selects one trip, does at least the
-          work of tolk's float32 exponential inside its ranges, which its
-          readers would do again for each element of the ranges it does not
-          vary along, nor where it reads more than three buffers. *)
+      (** As {!Removable}, for a value its readers would compute again for
+          some of its elements: one read where it is broadcast, or a
+          gather's source its gathers read at more positions than it holds.
+          It is not inlined back where computing it runs a transcendental
+          operation or, at a read outside a sum that selects one trip, does
+          at least the work of tolk's float32 exponential inside its ranges,
+          nor where it reads more than three buffers. *)
   | Whole
       (** Nothing: a value the user materialises is stored as it is. *)
   | Argument

@@ -918,6 +918,109 @@ let gathered_broadcast =
           writes sink);
     ]
 
+(* Gathers that read more than their table holds
+
+   A value whose gathers, with no broadcast above them, read more elements than
+   it holds computes some elements again inlined, as a broadcast value does:
+   one whose computing runs a transcendental function or an exponential's work
+   stays stored, and so does one of several storages that a reduction reads
+   through its reduced ranges alone. [at ~slot ~reads n] is [reads] positions
+   loaded from the storage of [slot] and clamped into [0, n). [taken ~reads v]
+   reads [reads] elements of [v] at such positions and adds an input to each;
+   [taken_twice ~reads v] adds two such gathers of [v]; [summed ~reads v] sums
+   one into a scalar. *)
+
+let at ~slot ~reads n =
+  let i32 n = Ops.const ~dtype:Int32 (`Int (Bigint.of_int n)) in
+  Ops.cast
+    (Ops.maximum
+       (Ops.minimum
+          (Shape.param ~device:cpu ~shape:[ Int reads ] slot Int32)
+          (i32 (n - 1)))
+       (i32 0))
+    Weak_int
+
+let length v =
+  match Shape.shape v with [ Ops.Int n ] -> n | _ -> fail "a vector"
+
+let store_reads ~reads value =
+  let o = Shape.param ~device:cpu ~shape:[ Int reads ] 0 Float32 in
+  Ops.sink [ Ops.after o [ Ops.store o value ] ]
+
+let taken ~reads v =
+  let g = Ops.index v [ at ~slot:7 ~reads (length v) ] in
+  store_reads ~reads Ops.O.(g + input ~shape:[ reads ] 6)
+
+let taken_twice ~reads v =
+  let g slot = Ops.index v [ at ~slot ~reads (length v) ] in
+  store_reads ~reads Ops.O.(g 7 + g 8)
+
+let summed ~reads v =
+  let g = Ops.index v [ at ~slot:7 ~reads (length v) ] in
+  store_reads ~reads:1 (Shape.reshape (Shape.rop g Add [ 0 ]) (ints [ 1 ]))
+
+let gathered_again =
+  group "get_kernel_graph › gathers that read more than their table holds"
+    [
+      test "a gathered exponential read at more positions than it holds stays \
+            stored" (fun () ->
+          let sink = taken ~reads:16 (Ops.exp2 (input ~shape:[ 2 ] 1)) in
+          equal int 2 (kernels_of sink);
+          writes sink);
+      test
+        "a gathered value of an exponential's work read at more positions \
+         than it holds stays stored" (fun () ->
+          let v = products (Rangeify.transcendental_work ()) in
+          let sink = taken ~reads:16 v in
+          equal int 2 (kernels_of sink);
+          writes sink);
+      test
+        "a gathered exponential read at one position more than it holds stays \
+         stored" (fun () ->
+          let sink = taken ~reads:5 (Ops.exp2 (input ~shape:[ 4 ] 1)) in
+          equal int 2 (kernels_of sink);
+          writes sink);
+      test
+        "a gathered exponential read at as many positions as it holds is \
+         computed where it is read" (fun () ->
+          let sink = taken ~reads:4 (Ops.exp2 (input ~shape:[ 4 ] 1)) in
+          equal int 1 (kernels_of sink);
+          writes sink);
+      test
+        "a gathered exponential read at fewer positions than it holds is \
+         computed where it is read" (fun () ->
+          let sink = taken ~reads:2 (Ops.exp2 (input ~shape:[ 16 ] 1)) in
+          equal int 1 (kernels_of sink);
+          writes sink);
+      test
+        "an exponential two gathers read at more positions together than it \
+         holds stays stored" (fun () ->
+          let sink = taken_twice ~reads:3 (Ops.exp2 (input ~shape:[ 4 ] 1)) in
+          equal int 2 (kernels_of sink);
+          writes sink);
+      test
+        "a cheap gathered value read at more positions than it holds is \
+         computed where it is read" (fun () ->
+          let x = input ~shape:[ 4 ] 1 in
+          let sink = taken ~reads:16 Ops.O.((x * x) + x) in
+          equal int 1 (kernels_of sink);
+          writes sink);
+      test
+        "a cheap gathered value of two storages a sum reads at more positions \
+         than it holds stays stored" (fun () ->
+          let v = Ops.O.(input ~shape:[ 4 ] 1 + input ~shape:[ 4 ] 2) in
+          let sink = summed ~reads:16 v in
+          equal int 2 (kernels_of sink);
+          writes sink);
+      test
+        "a cheap gathered value of one storage a sum reads at more positions \
+         than it holds is computed where it is read" (fun () ->
+          let x = input ~shape:[ 4 ] 1 in
+          let sink = summed ~reads:16 Ops.O.((x * x) + x) in
+          equal int 1 (kernels_of sink);
+          writes sink);
+    ]
+
 (* Stores that read their destination
 
    A store whose value reads its destination only at the element it writes,
@@ -2577,6 +2680,7 @@ let () =
          limit;
          broadcast_exponentials;
          gathered_broadcast;
+         gathered_again;
          self_reads;
          siblings;
          products_apart;

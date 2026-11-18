@@ -28,8 +28,9 @@ type ctx = {
   realize_map : unit Tbl.t;  (* The nodes stored whole. *)
   non_removable : unit Tbl.t;
   broadcast : unit Tbl.t;
-      (* The values stored because a broadcast reads them, or a reduction
-         reduces over them ({!nested}): their stores are kept. *)
+      (* The values stored because a broadcast reads them, their gathers
+         read more elements than they hold, or a reduction reduces over them
+         ({!nested}): their stores are kept. *)
   range_map : (t list * t list) Tbl.t;
       (* Each node's ranges: those that index its sources, then its output. *)
   mutable range_idx : int;
@@ -1088,14 +1089,12 @@ let assign_ranges rctx ~consumer_map ~ending_ranges x =
   let out_rngs =
     if Tbl.mem rctx.realize_map x then begin
       (* A value stored already, as a gather's source is, is read where it is
-         broadcast when its consumers broadcast it, or when a broadcast ends
-         ranges above one of its gathers and the gathers, inlined, would
-         compute more elements than it holds: each element a gather reads,
-         again at each trip of the ranges that end above it. A few rows of a
-         larger table broadcast along a few rows stay unmarked, and so do
-         gathers no broadcast reads, as before ranges were counted. The work
-         inlined counts at its least and the elements held at their most, so
-         a symbolic size leans toward inlining. *)
+         broadcast when its consumers broadcast it, or when its gathers,
+         inlined, would compute more elements than it holds: each element a
+         gather reads, again at each trip of the ranges that end above it. A
+         few rows of a larger table broadcast along a few rows stay unmarked.
+         The work inlined counts at its least and the elements held at their
+         most, so a symbolic size leans toward inlining. *)
       let gathers =
         List.filter (fun c -> is_gather c && nth c 0 == x) consumers
       in
@@ -1105,9 +1104,7 @@ let assign_ranges rctx ~consumer_map ~ending_ranges x =
           0. gathers
       in
       if
-        broadcast_ending_ranges
-        || List.exists (fun c -> ended_above c <> []) gathers
-           && computed_inlined > float_of_int (max_numel x)
+        broadcast_ending_ranges || computed_inlined > float_of_int (max_numel x)
       then Tbl.replace rctx.broadcast x ();
       ending := [];
       Some (loops_of rctx x)

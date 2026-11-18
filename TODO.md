@@ -71,9 +71,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   count the rows routed to its own groups
 - MXFP4's float32 decode on Metal multiplies by a subnormal at scale byte
   0, which Metal may flush (MSL 4.1 §8.1); no test reaches it there
-- A gather that reads more elements than its table holds still inlines the
-  table's computation into every read: 2.2-2.4 ms against 0.7-1.1 stored on
-  the host (r3/)
 - tolk recomputes a cheap broadcast value along every row that reads it
   (11.3 ms against 0.64 stored on the host); bounding `recomputes`/`copies`
   would also let fft-4096 drop 20 kernels

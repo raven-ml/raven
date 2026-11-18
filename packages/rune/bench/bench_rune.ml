@@ -589,6 +589,7 @@ let jit_rows () =
   let zs = host (Nx.cast Nx.complex64 xs) in
   let m = Nx.reshape [| 64; 64 |] xs in
   let pm = between f32 36 (-1.) 1. [| 64; 64 |] in
+  let exp_rows = positions 4096 64 in
   let table = between f32 37 (-1.) 1. [| 4096; 64 |]
   and tokens = positions 1024 4096 in
   let sa =
@@ -695,6 +696,12 @@ let jit_rows () =
     warm "gather-4096"
       (fun () -> Rune.jit (pair_fn ()) (fun p x -> Nx.take p x))
       (fun f -> synced (f ps xs));
+    (* 4096 rows of a table of 64 exponentials: each is computed once,
+       where computed at each row read it would be 64 times. *)
+    warm "take-4096-of-exp-64x64"
+      (fun () ->
+        Rune.jit (pair_fn ()) (fun p t -> Nx.take ~axis:0 p (Nx.exp t)))
+      (fun f -> synced (f exp_rows pm));
     warm "scatter-1024x16"
       (fun () ->
         Rune.jit

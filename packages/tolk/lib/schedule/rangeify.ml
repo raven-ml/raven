@@ -626,13 +626,14 @@ let remove_bufferize ~reads src buf idx =
     let computed = toposort ~calls:Skip ~gate:red_gate src in
     let reduces = List.filter (fun x -> op x = Op.Reduce) computed in
     (* Inlined where it is broadcast, the value would be computed again for each
-       element of the ranges it does not vary along: one whose computing runs a
-       transcendental operation, or does at least the work of tolk's
-       exponential inside its ranges, as rune's restatement of nx's exponential
-       does, stays stored. The work test is not taken for this read where it
-       runs in a sum that selects one trip, whose copies the budget below
-       counts at the selected index. Its producers are already stored or
-       inlined, so the walk sees what inlining would compute. *)
+       element of the ranges it does not vary along, and read by gathers at
+       more positions than it holds, again for some elements: one whose
+       computing runs a transcendental operation, or does at least the work of
+       tolk's exponential inside its ranges, as rune's restatement of nx's
+       exponential does, stays stored. The work test is not taken for this
+       read where it runs in a sum that selects one trip, whose copies the
+       budget below counts at the selected index. Its producers are already
+       stored or inlined, so the walk sees what inlining would compute. *)
     let recomputes =
       (opts buf).keep = Broadcast
       && (List.exists (fun x -> Op.Set.mem (op x) transcendental) computed
@@ -684,7 +685,8 @@ let remove_bufferize ~reads src buf idx =
        that the buffers it brings could change. A reader that is a stage to
        decide could be pushed past the limit by them and stored in its place,
        once for each reader. A [Broadcast] stage is computed again along the
-       ranges its index does not count, and stays stored. *)
+       ranges its index does not count, or at the positions its gathers read
+       again, and stays stored. *)
     let limited =
       Tbl.length accessed > 3
       && not
