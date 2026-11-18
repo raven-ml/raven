@@ -4866,8 +4866,9 @@ val check :
     {!Ptree.unit} and [()].
 
     It is a {{!section-waiting}check}: on the host it raises at the call, and on
-    another set at a wait on that set. It computes on [ok]'s set. What [fail]
-    raises passes on, there, with the backtrace of its raise.
+    another set at a wait on that set, so a check there that no wait follows
+    never raises. It computes on [ok]'s set. What [fail] raises passes on,
+    there, with the backtrace of its raise.
 
     [s]'s walk must rebuild [data] with each array replaced by a 0-d one, as
     [fail]'s [d] is built; a walk that checks its arrays' shapes, as {!Rng.walk}

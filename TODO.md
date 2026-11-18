@@ -196,11 +196,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   `load` and `tensors` alone), so tessera's cram tests cannot make the .pt
   model file that `encode`, `targets` and `distil --init` read
   (tessera-bin/adjudication.md M9). Found by DM's skeptic
-- `Nx.check`'s doc says a failure raises "on another set at a wait on that
-  set" (nx.mli:4865-4866) and leaves out that a check no wait follows
-  never raises, which the Waiting section states. Callers that link
-  `Nx.check`, as jord's transforms and area rules do, reach its doc first.
-  Add the clause there. Found by jord batch 11's review
 
 ## vega
 
