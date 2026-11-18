@@ -1,7 +1,8 @@
 # Test data
 
 Each fixture's header, or the dune file of its directory, records its
-source and the command that made it. The generators are in `gen/`, run
+source and the command that made it; `esri_26910.prj`, one line of WKT
+copied unchanged, has its source in its section below. The generators are in `gen/`, run
 through `uv run` (each one's docstring says how). This file gives each
 fixture's terms. Where a term is marked unverified, the source's terms page
 could not be read when the file was written (2026-11-18), and the source
@@ -17,9 +18,14 @@ no third party's data.
 
 ## tm_coords.dat
 
-- Source: Karney's transverse Mercator test set, TMcoords.dat
-  (GeographicLib), <https://zenodo.org/records/32470>.
-- Terms: CC0 1.0.
+- Source: Karney's transverse Mercator test set, TMcoords.dat, cut from
+  GeographicLib's copy,
+  <https://sourceforge.net/projects/geographiclib/files/testdata/TMcoords.dat.gz>,
+  as the file's header records. Uncompressed it has the md5
+  91b817eae34aef3cd8d67b5a4e8e798f of the file Karney published as
+  "Test data for the transverse Mercator projection",
+  <https://zenodo.org/records/32470>.
+- Terms: CC0 1.0, as the Zenodo record states.
 
 ## wkt.dat, and lib/crs.ml's parameters
 
@@ -35,9 +41,11 @@ no third party's data.
 
 ## esri_26910.prj
 
-- Source: Esri's Projection Engine WKT for wkid 26910, from its published
-  lists.
-- Terms: unverified.
+- Source: the `wkt` of wkid 26910 in Esri's Projection Engine list,
+  `json/pe_list_projcs.json` of
+  <https://github.com/Esri/projection-engine-db-doc>, unchanged (version
+  `6.13(3.0.1)` of the entry), fetched on 2026-11-18.
+- Terms: Apache License 2.0, the repository's `license.txt`.
 
 ## areas.dat
 
@@ -117,3 +125,26 @@ gives no text without a browser. Each collection states its licence:
   JPL's Solar System Dynamics site asks that its data be cited as "NASA/JPL
   Solar System Dynamics. Data retrieved on 2026-11-16", with the page's
   title and <https://ssd.jpl.nasa.gov> (<https://ssd.jpl.nasa.gov/about/>).
+
+## gen/crs_values.py, and test_crs.ml's tables
+
+- Source: `crs_values.py` prints the values `test_crs.ml` holds in its
+  tables, exact ones by mpmath and Python's Fractions, and PROJ's
+  transforms through pyproj (`proj_datums` and `proj_albers`).
+  `crs_sweep.py` and `crs_probe.ml` compare jord's transforms with PROJ's
+  on a sweep of points that no test holds.
+- Terms: PROJ is under the MIT licence
+  (<https://proj.org/en/stable/about.html>, "License").
+
+## rasterio/
+
+`rasterio/parity.exe` reads files that live outside the repository, so the
+repository holds none of their data and no test runs it. Its dune file
+names them: `austria_crops.geojson`, 349 field parcels near Vienna
+labelled by crop type, the example of tessera-eval
+(<https://github.com/ucam-eo/tessera-eval>), whose README states no
+source or licence for it; GeoTessera's landmask tiles, `grid_<lon>_<lat>.tiff`,
+fetched by GeoTessera (<https://github.com/ucam-eo/geotessera>) from
+<https://data.source.coop/tessera/tessera>, whose README states no
+licence for them; and rasterio's rasters of the parcels, which a script outside the
+repository writes.
