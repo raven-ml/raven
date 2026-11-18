@@ -191,6 +191,36 @@ let storing () =
   Sub.Run.release run;
   (t, run, b)
 
+(* One submission of a compiled decode block, each call storing its 4
+   moving scalars, as rig.program's run of a step does: a take, 4 stores and
+   a submit. Its 31 launches have the parameter bytes of gpt-oss's decode
+   block: the 30 launches tolk lowers it to on the Mac's Metal, 936 bytes,
+   and one more at their mean rounded to whole words, 32 bytes, since CUDA's
+   block has 31. *)
+let block_params =
+  [|
+    16; 40; 24; 40; 32; 48; 48; 16; 16; 24; 24; 32; 64; 32; 24; 24; 40; 16; 24;
+    40; 32; 16; 16; 48; 16; 40; 24; 32; 40; 48; 32;
+  |]
+
+let moving = 4
+
+let blocking () =
+  let t = dev () in
+  let image = Result.get_ok (Rig.Image.load t.d "functions") in
+  let fn = Option.get (Rig.Image.resolve image "main") in
+  let parts = Array.map (fun params -> Sub.launch fn ~params) block_params in
+  let s = Sub.make t.d parts in
+  let run = Sub.take s in
+  let blocks = Array.init (Array.length block_params) (Sub.block s) in
+  Array.iter
+    (fun b ->
+      Sub.Run.groups run b 1 1 1;
+      Sub.Run.threads run b 1 1 1)
+    blocks;
+  Sub.Run.release run;
+  (t, run, blocks)
+
 (* A library's call on a submission of two launches, through a run the
    submission hands out: its two launches' parameters stored, then a submit,
    the run released if a store raises. Once warm, a call allocates
@@ -314,6 +344,13 @@ let submit_rows =
           take run;
           for k = 0 to stores - 1 do
             Sub.Run.int32 run b (4 * k) k
+          done;
+          ignore (submit run);
+          drained t);
+      row "block-31" blocking (fun (t, run, blocks) ->
+          take run;
+          for k = 0 to moving - 1 do
+            Sub.Run.int32 run blocks.(k) (block_params.(k) - 4) t.n
           done;
           ignore (submit run);
           drained t);
@@ -801,6 +838,21 @@ let memory_floor_rows =
   in
   let blit (src, dst) = Bigarray.Array1.blit src dst in
   let chars2 n () = (written_chars n, chars n) in
+  (* A copy of [block-31]'s values into their blocks: 1,960 bytes from one
+     buffer per launch, a 32-byte header and the parameters each, at the
+     offsets of rig's block layout, a header and twice the parameters
+     rounded up to 16 bytes apart. *)
+  let blocks () =
+    let srcs = Array.map (fun p -> Bytes.make (32 + p) 'w') block_params in
+    let at = Array.make (Array.length block_params) 0 in
+    for k = 1 to Array.length at - 1 do
+      let p = block_params.(k - 1) in
+      at.(k) <- at.(k - 1) + 32 + (2 * ((p + 15) land -16))
+    done;
+    let last = Array.length at - 1 in
+    let bytes = at.(last) + Bytes.length srcs.(last) in
+    (srcs, at, Bytes.create bytes)
+  in
   [
     Thumper.bench "bigarray-create-16" (fun () -> chars 16);
     Thumper.bench "bigarray-create-1M" (fun () -> chars mib);
@@ -815,6 +867,11 @@ let memory_floor_rows =
         ignore (Atomic.compare_and_set a 0 1);
         ignore (Atomic.compare_and_set a 1 0));
     row "memcpy-4K" (chars2 (4 * kib)) blit;
+    row "memcpy-block-31" blocks (fun (srcs, at, dst) ->
+        for k = 0 to Array.length srcs - 1 do
+          let src = Array.unsafe_get srcs k in
+          Bytes.blit src 0 dst (Array.unsafe_get at k) (Bytes.length src)
+        done);
     row "memcpy-4M"
       (fun () -> (written_chars large_bytes, chars large_bytes))
       blit;
