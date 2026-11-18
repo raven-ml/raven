@@ -5,6 +5,12 @@ Where it stands, with every measurement: doc/performance.md.
 
 ## tolk
 
+- gpt-oss's fused query, key and value product in Q8_0 at 512 tokens (N
+  5120, K 2880) takes 357 us a layer against 348 for the three products it
+  replaced: the heuristic picks another tile at N 5120 (grid 32x8, 236
+  registers). Unpacked at 64 tokens the joined product saves 8 us a layer,
+  but that trace's unchanged kernels ran 0.23 ms a step slower, unexplained
+  (_plans/perf-campaign/proj3/)
 - Small products in the rows layout run too few workgroups: gpt-oss's
   router at 64 tokens or fewer and at decode, and the 12-token k and v
   projections, take 7-24 us streamed (the rows layout runs rows(W)/4
