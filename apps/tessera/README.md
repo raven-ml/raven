@@ -85,3 +85,5 @@ counts are the tile's. Rows are seconds per call.
 them alike. `bench/whole.sh` times what a suite cannot hold: `main.exe
 encode` and TESSERA's `infer_v2.py` on the whole tile, each a new process,
 with the released students, and a first tile over an empty kernel cache.
+`bench/roles.py` splits an encoding's device time into products, attention
+and the rest, on both sides.
