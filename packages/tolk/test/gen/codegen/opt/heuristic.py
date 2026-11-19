@@ -163,7 +163,7 @@ KERNELS = {
     "matmul_256_kt_128": lambda: last(empty(256, 128) @ empty(256, 128).T),
     # batches of a product by 768 columns, 4 of 512 rows or 2 of 1024, alone and plus a bias of each output, which the batches do
     # not read and which shares no element of the product: 2 batches, which neither 3 nor 4 divides, are upcast alike with the
-    # bias or without; 4 batches with the bias take the batches by 4 too, which leaves nothing to block
+    # bias or without; with 4 batches, upcasts that count the bias's loads take the batches by 4 too
     "batched_768": lambda: last(empty(4, 512, 16) @ empty(4, 16, 768)),
     "batched_768_biased": lambda: last(empty(4, 512, 16) @ empty(4, 16, 768) + empty(512, 768)),
     "two_batches_768": lambda: last(empty(2, 1024, 16) @ empty(2, 16, 768)),
@@ -182,10 +182,11 @@ KERNELS = {
     "scores_masked_1536": lambda: last(empty(2, 2, 1536, 1536, dtype=dtypes.bool)
                                        .where(empty(2, 2, 1536, 16) @ empty(2, 2, 16, 1536), float("-inf"))),
     # attention's scores per head plus a bias of each key and two of each query that no head reads, as a key bias and the
-    # bounds of the visible keys: the upcasts take the keys by 4, then the 4 heads whole, which leaves no axis of heads to block
+    # bounds of the visible keys: upcasts that count the biases' loads take the keys by 4, then the 4 heads whole
     "scores_biased": lambda: last(empty(64, 256, 4, 16).permute(0, 2, 1, 3) @ empty(64, 256, 4, 16).permute(0, 2, 3, 1)
                                   + empty(64, 1, 1, 256) + empty(64, 1, 256, 1) * empty(64, 1, 256, 1)),
-    # the same with a second bias of each key: the heads, now read by fewer buffers than the keys, are upcast first, whole
+    # the same with a second bias of each key: counting the biases' loads, the heads, now read by fewer buffers than the keys,
+    # are upcast first, whole
     "scores_biased_first": lambda: last(empty(64, 256, 4, 16).permute(0, 2, 1, 3) @ empty(64, 256, 4, 16).permute(0, 2, 3, 1)
                                         + empty(64, 1, 1, 256) + empty(64, 1, 1, 256)
                                         + empty(64, 1, 256, 1) * empty(64, 1, 256, 1)),

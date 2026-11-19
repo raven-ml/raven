@@ -1518,6 +1518,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A float32 contraction on a GPU plus a bias its batches or heads do not read
+  is optimised as without it: attention's scores of 32 heads at 1024
+  positions plus a mask take 306 us on an RTX 5000 Ada, from 535.
 - GPU kernels over buffers of different sizes, whose sources differ only in
   their parameters' names (`data0_4096`), compile to one binary: the text
   compiled names each parameter after its slot (`Codegen.to_program`).

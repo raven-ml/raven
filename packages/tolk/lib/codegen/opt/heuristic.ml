@@ -1097,11 +1097,10 @@ let doubled_threads ~lanes n =
    outputs for each of its 2 batches of 2 heads, 256. *)
 let upcast_by_loop k n = holds Sint.(K.upcast_size k <= Int n)
 
-(* Whether [k]'s upcasts may take an axis by 4 before 3, before the loop runs
-   ({!general} also asks {!block} of a copy so upcast): a narrow contraction
-   on a renderer with local indices, upcast by nothing yet, whose two output
-   axes, each unread by some operand, would pass {!block}'s guard once upcast
-   by 4, and whose blocked threads, a 64th of its outputs, number at least
+(* Whether [k]'s upcasts take an axis by 4 before 3: a narrow contraction on a
+   renderer with local indices, upcast by nothing yet, whose two output axes,
+   each unread by some operand, would pass {!block}'s guard once upcast by 4,
+   and whose blocked threads, a 64th of its outputs, number at least
    [core_threads]. tinygrad takes 3 first, which leaves such a product at 4 by
    3 outputs a thread: on an RTX 5000 Ada float32 products of 163840 rows into
    432 to 1920 columns, which 3 divides, ran at 5.3-5.6 TFLOP/s so, and at
@@ -1143,6 +1142,23 @@ let upcast_more ~four_first k =
     let upcasted_axis = List.map (fun (axis, _, _) -> axis) upcasted in
     if budgeted k || (enough_work k && holds Sint.(K.upcast_size k < Int 32))
     then begin
+      (* On a GPU, in a kernel that reduces, the loads worth sharing among
+         an upcast's lanes are those a reduce repeats: a load whose index
+         reads no reduce range, as a bias after a product, is read once an
+         output and offers no axis it does not read. A store stays: one
+         whose index is a bare range offers it, as a sum of each row's
+         values upcasts its rows. *)
+      let sharers =
+        match ranges_of ~reduce:true k [] with
+        | [] -> K.bufs k
+        | _ when not (K.ren k).has_local -> K.bufs k
+        | reduces ->
+            let stored = stored_addresses k in
+            List.filter
+              (fun b ->
+                List.memq b stored || List.exists (fun r -> reads r b) reduces)
+              (K.bufs k)
+      in
       let choice ~fill axis upcast_amount =
         (* if we haven't upcasted it, it mods, and buffer has stride 0 on axis
            while having no stride 0 in the upcasted axis already; a fill asks
@@ -1165,7 +1181,7 @@ let upcast_more ~four_first k =
           List.mem axis upcasted_axis
           || (not (divisible (shape_at k axis) upcast_amount))
           || (not (fits ~upcast:(axis, upcast_amount) k))
-          || not (List.exists reuses bufs)
+          || not (List.exists reuses sharers)
         then None
         else
           let stride c =
@@ -1635,16 +1651,7 @@ let general ~core_threads k =
         None
       end
       else begin
-        (* 4 before 3 only where {!block} then takes what the loop leaves: 4
-           batches plus a bias the batches do not read take the batches by 4
-           too, and are not blocked. *)
-        let blocks () =
-          let c = K.copy k in
-          match block c (upcast_more ~four_first:true c) with
-          | Free -> false
-          | Short _ | Blocked _ -> true
-        in
-        let four_first = four_first ~core_threads k && blocks () in
+        let four_first = four_first ~core_threads k in
         let blocking = block k (upcast_more ~four_first k) in
         (match blocking with Free -> unroll k | Short _ | Blocked _ -> ());
         upcast_one k;

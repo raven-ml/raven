@@ -45,8 +45,9 @@
 
    [contract] runs, on the first CUDA GPU, dense contractions as rune compiles
    them, with the hand-coded optimisations, each summed in float32: products
-   of bfloat16 on tensor cores, of float32 in registers, and of 16 bfloat16
-   rows by a matrix of 2880 rows of 64 columns, streamed along its columns.
+   of bfloat16 on tensor cores, of float32 in registers, alone or plus a bias
+   that their batches or heads do not read, and of 16 bfloat16 rows by a
+   matrix of 2880 rows of 64 columns, streamed along its columns.
    Without a CUDA GPU the group is empty.
 
    [gated] runs, on the first CUDA GPU, a 2048-cubed bfloat16 product stored

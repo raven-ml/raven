@@ -5956,8 +5956,7 @@ against 2.77).
   - a kernel upcast past those two axes' 16 lanes, as the masked upcasts
     take a materialised mask's axes whole, is not blocked, nor a sum in 8
     bytes;
-  - only for such a contraction, one the loop with 4 first leaves to be
-    blocked or unrolled so, upcast by nothing before the loop, whose
+  - only for such a contraction, upcast by nothing before the loop, whose
     blocked threads, a 64th of its outputs, number at least the renderer's
     `core_threads`, does the upcast loop take an axis by 4 before 3.
 - **Reason:** (d): at equal registers, 8 by 8 outputs a thread in workgroups
@@ -5973,15 +5972,14 @@ against 2.77).
   `Cuda/matmul-float32-16384x440x1320`).
 - **Pinned by:** `Tolk.Heuristic`'s `a contraction in registers` cases
   (`matmul`, `matmul_256`, `scores`, `matmul_768`, `batched_768`,
-  `two_batches_768`, `matmul_440`, padded, and `heads_projection` and
-  `heads_projection_biased` blocked on CUDA and AMD, which state no units;
-  on sm_89's renderer `heads_projection` blocked and `matmul_768`,
-  `batched_768` and `two_batches_768` held at 4 by 4;
-  `two_batches_768_biased`, whose bias the batches do not read, optimised
-  as `two_batches_768`; `matmul_1000`, `matmul_48`,
-  `scores_biased`, `scores_biased_first`, `scores_masked` and
-  `batched_768_biased`, whose upcast loop takes its batches too, not
-  blocked), and `a contraction laid out along its reduce` (`matmul_256_kt_128`
+  `two_batches_768`, `matmul_440`, padded, `heads_projection` and
+  `heads_projection_biased`, and with D495 `batched_768_biased`,
+  `scores_biased` and `scores_biased_first`, blocked on CUDA and AMD,
+  which state no units; on sm_89's renderer `heads_projection` blocked and
+  `matmul_768`, `batched_768` and `two_batches_768` held at 4 by 4;
+  `two_batches_768_biased` and `batched_768_biased`, whose bias the
+  batches do not read, optimised as without it; `matmul_1000`, `matmul_48`
+  and `scores_masked` not blocked), and `a contraction laid out along its reduce` (`matmul_256_kt_128`
   with its reduce split, short of sm_89's units or not; `matmul_256_kt` and
   `scores`, under 16 trips, and `matmul_256` and `matmul_440` without),
   with the layouts in the suite's `.tolk` files, and `a kernel's sums keep
@@ -9364,3 +9362,37 @@ D466.
   the host`, in 1, 2, 4 and 8 lanes; rune's `Lower_arith › casts of bounded
   64-bit integers give eager's values` and `rune jit › jit › an integer
   cast to a float gives eager's bits`, under Apple clang 17.
+
+## D495. A GPU's upcasts count the loads a reduce repeats
+
+- **tinygrad:** `codegen/opt/heuristic.py` `hand_coded_optimizations` (the
+  upcast loop takes an axis where some buffer of the kernel, `k.bufs`,
+  every load and store, has stride 0 on it; the same at `6b7b018da`).
+- **tolk:** `Heuristic.upcast_more`.
+- **Differs:** on a renderer with local indices, in a kernel that reduces,
+  only a store or a load that reads a reduce range offers an axis it does
+  not read. A load read once an output, as a bias or an additive mask
+  after a product, offers none: the batches or heads it does not read,
+  which both operands of the product read, are not upcast for it.
+- **Reason:** (d): upcasting an axis that a load does not read shares the
+  load among the axis's lanes. A load whose index reads a reduce range is
+  repeated at every trip, so sharing it saves a load each trip; one whose
+  index reads none, as a bias after the product or a value the reduce
+  holds fixed, is loaded once an output, so sharing it saves almost
+  nothing. Counting it took a biased product's batches by 4, which left
+  D212 nothing to block. A store stays counted: one whose index is a bare
+  range offers it, as tinygrad's count does, which keeps every kernel
+  without such a load as it was. On fudge's RTX 5000 Ada, the tolk bench's
+  `contract/scores-masked-f32` (attention's float32 scores of 32 heads at
+  1024 positions over 64, plus an additive mask) takes 306 us against 535
+  under tinygrad's count. The host keeps tinygrad's count: its gain is
+  unmeasured.
+- **Pinned by:** `Tolk.Heuristic`'s `a contraction in registers › a bias
+  the batches do not read leaves a batched product's optimisations as
+  without it` (`two_batches_768` and `batched_768` on CUDA, AMD and sm_89)
+  and `on a GPU, both upcast axes reused, a thread holds 8 by 8 outputs in
+  a workgroup of 128 threads` (`batched_768_biased`, `scores_biased` and
+  `scores_biased_first` on CUDA and AMD), with the layouts in the suite's
+  `.tolk` files headed D495; the tolk bench's `contract/scores-masked-f32`
+  and `contract/batched-biased-f32` rows on fudge, their baselines pending
+  the scheduled re-record. AMD is untimed.

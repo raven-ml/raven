@@ -1908,11 +1908,14 @@ let blocks =
         (fun (name, outputs) ->
           equal int outputs
             (lane_outputs_of (optimised_on (Lazy.force sm_89) name)));
-      (* 768 columns, which 3 divides, are upcast by 4, in batches or not;
-         440 columns are 55 runs of 8 outputs, which hold a SIMD group
-         only padded; a projection into 4 heads of 110, its heads upcast
-         whole, lends their second upcast to the width, padded, with or
-         without a bias of each head, which the width does not read. *)
+      (* 768 columns, which 3 divides, are upcast by 4, in batches or not,
+         with or without a bias the batches do not read; 440 columns are 55
+         runs of 8 outputs, which hold a SIMD group only padded; a
+         projection into 4 heads of 110, its heads upcast whole, lends their
+         second upcast to the width, padded, with or without a bias of each
+         head, which the width does not read; attention's scores plus
+         biases of each key and query, which no head reads, along the
+         queries and keys. *)
       cases "on a GPU, both upcast axes reused, a thread holds 8 by 8 outputs \
              in a workgroup of 128 threads"
         ~id:Fun.id
@@ -1924,6 +1927,8 @@ let blocks =
           "matmul_768_cuda";
           "batched_768_cuda";
           "batched_768_amd";
+          "batched_768_biased_cuda";
+          "batched_768_biased_amd";
           "two_batches_768_cuda";
           "two_batches_768_amd";
           "matmul_440_cuda";
@@ -1931,6 +1936,10 @@ let blocks =
           "heads_projection_amd";
           "heads_projection_biased_cuda";
           "heads_projection_biased_amd";
+          "scores_biased_cuda";
+          "scores_biased_amd";
+          "scores_biased_first_cuda";
+          "scores_biased_first_amd";
         ]
         (fun name ->
           let c = recorded name in
@@ -1938,22 +1947,23 @@ let blocks =
           equal ~msg:"threads" int 128 (workgroup c));
       (* A bias of each output, which the batches do not read, shares no
          element of the product: 2 batches, which the upcasts by 3 or 4 do
-         not take, are optimised as without it. *)
+         not take, and 4, which 4 divides, are optimised as without it. *)
       cases "a bias the batches do not read leaves a batched product's \
              optimisations as without it"
-        ~id:fst
-        [
-          ("cuda", lazy (renderer "cuda"));
-          ("amd", lazy (renderer "amd"));
-          ("sm_89", sm_89);
-        ]
-        (fun (_, ren) ->
+        ~id:(fun (ren, kernel, _) -> ren ^ " " ^ kernel)
+        (List.concat_map
+           (fun kernel ->
+             [
+               ("cuda", kernel, lazy (renderer "cuda"));
+               ("amd", kernel, lazy (renderer "amd"));
+               ("sm_89", kernel, sm_89);
+             ])
+           [ "two_batches_768"; "batched_768" ])
+        (fun (_, kernel, ren) ->
           let opts name =
             K.applied_opts (optimised_on (Lazy.force ren) name)
           in
-          equal (list Kernel_opts.opt)
-            (opts "two_batches_768")
-            (opts "two_batches_768_biased"));
+          equal (list Kernel_opts.opt) (opts kernel) (opts (kernel ^ "_biased")));
       (* Blocked, 48 rows by 1024 columns would keep 768 threads. *)
       cases "a thread holds 4 by 3 outputs where its blocked kernel would keep \
              too few threads"
@@ -1963,17 +1973,6 @@ let blocks =
              group"
         ~id:Fun.id
         [ "matmul_1000_cuda" ]
-        (fun name -> equal int 16 (lane_outputs (recorded name)));
-      (* The upcasts take the keys by 4, then the 4 heads whole, or the heads
-         first. *)
-      cases "a thread holds 4 by 4 outputs where an upcast takes an axis whole"
-        ~id:Fun.id
-        [
-          "scores_biased_cuda";
-          "scores_biased_amd";
-          "scores_biased_first_cuda";
-          "scores_biased_first_amd";
-        ]
         (fun name -> equal int 16 (lane_outputs (recorded name)));
       (* The masked upcasts take the mask's 2 batches of 2 heads whole, then
          the queries and the keys by 4, or by 3 at 1536 positions, which 3

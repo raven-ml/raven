@@ -132,7 +132,11 @@
 ; The contract kernels are kernel graphs of dense contractions as rune compiles
 ; them for CUDA, without optimisations, each operand widened to float32 by a
 ; cast where it is narrower: a row's kernels are [row.i], run in the order of
-; [i].
+; [i]. batched-biased-f32, 8 float32 products of 1024 cubed plus a bias of
+; each output, and scores-masked-f32, attention's float32 scores of 4 batches
+; of 8 heads at 1024 positions over 64 plus an additive mask of each query
+; and key, are recorded from tinygrad's schedule of the same programs, as the
+; Heuristic suite's kernels are: no batch or head reads the bias or the mask.
 
 (rule
  (target contract_kernels.ml)
