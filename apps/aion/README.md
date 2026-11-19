@@ -9,13 +9,13 @@ The app reads objects from the Multimodal Universe's HDF5 files, pairs them
 across surveys within 1″, and runs the released weights on the CPU.
 
 ```bash
-dune exec apps/aion/main.exe -- embed \
+dune exec apps/aion/bin/main.exe -- embed \
   --legacysurvey provabgs_desi_ls.hdf5:/legacysurvey \
   --desi provabgs_desi_ls.hdf5:/desi --rows 0:64 --out embedding.npz
-dune exec apps/aion/main.exe -- posterior \
+dune exec apps/aion/bin/main.exe -- posterior \
   --legacysurvey provabgs_desi_ls.hdf5:/legacysurvey --target tok_z \
   --inputs tok_image,tok_flux_g,tok_flux_r,tok_flux_i,tok_flux_z --out z.npz
-dune exec apps/aion/main.exe -- generate --gaia gaia-1631.hdf5 \
+dune exec apps/aion/bin/main.exe -- generate --gaia gaia-1631.hdf5 \
   --target tok_spectrum_desi --inputs tok_xp_bp,tok_xp_rp --steps 12 \
   --draws 10 --rows 0:4 --out desi.npz
 ```
@@ -34,8 +34,8 @@ dune exec apps/aion/main.exe -- generate --gaia gaia-1631.hdf5 \
   the same rows and batch size.
 
 Each writes one npz file whose `rows` entry gives each object's row in each
-source. `main.exe COMMAND --help` lists the options, and `main.ml`'s header
-the entries. An input whose value is NaN or infinite is absent for its
+source. `main.exe COMMAND --help` lists the options, and `bin/main.ml`'s
+header the entries. An input whose value is NaN or infinite is absent for its
 object. Redshift's class 1024 has no value: `posterior` gives its probability
 apart, and `generate` counts it and writes NaN.
 
@@ -92,16 +92,16 @@ from A to B.
 
 | File | What it holds |
 |---|---|
-| `modality.mli` | the 40 modalities and what each layer needs of them |
-| `hub.mli` | the Hub repositories and the revision every file is read at |
-| `scalar.mli` | the codecs of one number per object |
-| `spectrum.mli` | the spectrum codec |
-| `image.mli`, `fsq.mli` | the image codec and its quantizer |
-| `codecs.mli` | the codecs a run picks, from data to tokens and back |
-| `transformer.mli` | the encoder-decoder: embeddings and logits |
-| `roar.mli` | draws of a modality's tokens by random-order generation |
-| `survey.mli` | the Multimodal Universe's files, read as modalities, and their cross-match |
-| `main.ml` | the commands |
+| `lib/modality.mli` | the 40 modalities and what each layer needs of them |
+| `lib/hub.mli` | the Hub repositories and the revision every file is read at |
+| `lib/scalar.mli` | the codecs of one number per object |
+| `lib/spectrum.mli` | the spectrum codec |
+| `lib/image.mli`, `lib/fsq.mli` | the image codec and its quantizer |
+| `lib/codecs.mli` | the codecs a run picks, from data to tokens and back |
+| `lib/transformer.mli` | the encoder-decoder: embeddings and logits |
+| `lib/roar.mli` | draws of a modality's tokens by random-order generation |
+| `lib/survey.mli` | the Multimodal Universe's files, read as modalities, and their cross-match |
+| `bin/main.ml` | the commands |
 | `test/` | the tests, their fixtures and the parity programs |
 | `bench/` | the codecs, the transformer and a generation step on random weights |
 | `DIVERGENCES.md` | where the app computes something other than AION-1's code, and why |

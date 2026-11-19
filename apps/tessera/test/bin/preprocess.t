@@ -8,7 +8,7 @@ stand-in that answers each STAC search with no item, and no other request.
   $ export PATH="$(pwd)/bin:$PATH" FAKE_CURL_DIR="$(pwd)/fake"
   $ none='{"type":"FeatureCollection","features":[]}'
   $ for i in 0 1; do printf 'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s' ${#none} "$none" > fake/script/00$i; done
-  $ pre () { ../../main.exe preprocess --landmask tile/landmask.tiff --out d "$@"; }
+  $ pre () { ../../bin/main.exe preprocess --landmask tile/landmask.tiff --out d "$@"; }
   $ pre --days 2025-07-01,2025-07-03
   0 Sentinel-2 items (0 distinct), 0 Sentinel-1 items
   d: 0 Sentinel-2 frames, 0 ascending, 0 descending
@@ -34,11 +34,11 @@ files.
   "days":["2025-07-01","2025-07-31"]
   $ mkdir region && cp tile/landmask.tiff region/
   $ printf '\000' | dd of=region/landmask.tiff bs=1 seek=$(( $(wc -c < region/landmask.tiff) - 1 )) conv=notrunc 2> /dev/null
-  $ ../../main.exe preprocess --landmask region/landmask.tiff --days 2025-07-01,2025-07-03 --out d 2>&1 | grep -o 'holds the tile of another request\|"cells":[0-9]*'
+  $ ../../bin/main.exe preprocess --landmask region/landmask.tiff --days 2025-07-01,2025-07-03 --out d 2>&1 | grep -o 'holds the tile of another request\|"cells":[0-9]*'
   holds the tile of another request
   "cells":36
   "cells":35
   $ ./make_labelled.exe other > /dev/null
-  $ ../../main.exe preprocess --landmask tile/landmask.tiff --days 2025-07-01,2025-07-03 --out other 2>&1
+  $ ../../bin/main.exe preprocess --landmask tile/landmask.tiff --days 2025-07-01,2025-07-03 --out other 2>&1
   tessera: other holds files and no request.json: give a new directory
   [2]

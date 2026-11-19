@@ -5,7 +5,7 @@ without an observation, and each other with 8 Sentinel-2 and 5 Sentinel-1
 observations.
 
   $ ./make_labelled.exe tile
-  $ ../../main.exe corpus --tiles tile,tile --out corpus --min 1
+  $ ../../bin/main.exe corpus --tiles tile,tile --out corpus --min 1
   tile: 36 pixels, 35 kept
   tile: 36 pixels, 35 kept
   corpus: 70 pixels, shuffled
@@ -17,14 +17,14 @@ The corpus is a function of its tiles and --seed, to its files' bits.
   2650980855 696 corpus/s1_offsets.npy
   3800755872 12448 corpus/s2.npy
   2721682866 696 corpus/s2_offsets.npy
-  $ ../../main.exe corpus --tiles tile,tile --out seed1 --seed 1 > /dev/null
+  $ ../../bin/main.exe corpus --tiles tile,tile --out seed1 --seed 1 > /dev/null
   $ cmp -s corpus/s2.npy seed1/s2.npy || echo differ
   differ
 
 pretrain's views need an observation of each sensor, which --min 1 keeps.
 Its model, two steps of groups of 8 here, is the teacher.
 
-  $ ../../main.exe pretrain --corpus corpus --arch nano --projector 24,20 --pixels 8 --steps 2 --out pre > /dev/null
+  $ ../../bin/main.exe pretrain --corpus corpus --arch nano --projector 24,20 --pixels 8 --steps 2 --out pre > /dev/null
   $ cut -f 1-4 pre/log.tsv
   1	0	8	8
   2	8	8	8
@@ -32,9 +32,9 @@ Its model, two steps of groups of 8 here, is the teacher.
 targets writes the teacher's embedding of each pixel of the corpus, and
 distil trains a student toward them, two steps of 16 pixels here.
 
-  $ ../../main.exe targets --teacher pre/model.safetensors --corpus corpus --out targets.npy
+  $ ../../bin/main.exe targets --teacher pre/model.safetensors --corpus corpus --out targets.npy
   targets: 70 / 70 pixels
-  $ distil () { ../../main.exe distil --corpus corpus --targets targets.npy --arch nano --pixels 16 --out run "$@" > /dev/null; }
+  $ distil () { ../../bin/main.exe distil --corpus corpus --targets targets.npy --arch nano --pixels 16 --out run "$@" > /dev/null; }
   $ distil --steps 2
   $ cut -f 1-4 run/log.tsv
   1	0	16	16
@@ -63,7 +63,7 @@ last in the file, holds columns 0 and 1 alone: 12 pixels. The pixel with no
 observation is left out of b1, the smaller field of class b, which v1.0's
 split takes for training; b0 is tested.
 
-  $ probe () { ../../main.exe probe --landmask tile/landmask.tiff --labels tile/fields.geojson "$@" | grep -v rankme; }
+  $ probe () { ../../bin/main.exe probe --landmask tile/landmask.tiff --labels tile/fields.geojson "$@" | grep -v rankme; }
   $ probe --model run/student.safetensors --tile tile
   probe: class a: 1 fields, 12 pixels, 1 training fields of 12 pixels
   probe: class b: 2 fields, 23 pixels, 1 training fields of 11 pixels

@@ -582,7 +582,7 @@ module Sets (F : Forms) = struct
       warmup_steps + decay_steps )
 
   (* TESSERA's schedule of [--steps], [--lr] and [--warmup]
-     (dev/tessera/bin/main.ml). *)
+     (apps/tessera/bin/main.ml). *)
   let tessera (lr, warmup) steps =
     let warmup_steps =
       max 1 (Float.to_int (Float.round (warmup *. Float.of_int steps)))

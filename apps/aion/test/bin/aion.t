@@ -4,7 +4,7 @@ aion-base's weights, over Flux_g, Xp_bp, Xp_rp and Z.
 
   $ ./cache.exe ../upstream/transformer.safetensors hub/huggingface
   $ export RAVEN_CACHE_ROOT=$PWD/hub
-  $ aion () { ../../main.exe "$@"; }
+  $ aion () { ../../bin/main.exe "$@"; }
   $ ls=../mmu/legacysurvey.h5 gaia=../mmu/gaia.h5
 
 An object is a row of the first source with a reciprocal partner within 1″

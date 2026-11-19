@@ -10,9 +10,9 @@ model runs eagerly on the CPU or compiled for GPUs. Tiles are made from
 Microsoft's Planetary Computer by TESSERA's recipe.
 
 ```bash
-dune exec apps/tessera/main.exe -- preprocess --landmask grid.tiff --year 2024 --out tile
-dune exec apps/tessera/main.exe -- encode --model large --tile tile --out emb
-dune exec apps/tessera/main.exe -- probe --embedding emb --landmask grid.tiff --labels fields.geojson
+dune exec apps/tessera/bin/main.exe -- preprocess --landmask grid.tiff --year 2024 --out tile
+dune exec apps/tessera/bin/main.exe -- encode --model large --tile tile --out emb
+dune exec apps/tessera/bin/main.exe -- probe --embedding emb --landmask grid.tiff --labels fields.geojson
 ```
 
 `--model nano`, `small`, `medium`, `large` or `teacher` downloads a release
@@ -25,16 +25,16 @@ writes a model, `targets` with that model or a released teacher, then
 
 | File | What it holds |
 |---|---|
-| `tile.mli` | a tile's files: bands, masks, days, Sentinel-1 codes, its grid |
-| `sentinel2.mli`, `sentinel1.mli` | TESSERA's recipe on the Planetary Computer's products |
-| `stac.mli` | the Planetary Computer's catalogue and its files' windows |
-| `pixels.mli`, `batch.mli` | a tile's valid observations, packed for one call |
-| `model.mli` | the students and the teacher: loading, the forward pass, dropout |
-| `embedding.mli` | encoding, and GeoTessera's npy and GeoTIFF files |
-| `barlow.mli` | Barlow Twins and mixup, the projector and a pretraining step |
-| `distil.mli`, `checkpoint.mli` | Matryoshka distillation and a run's state |
-| `eval.mli` | a linear probe and RankMe |
-| `main.ml` | the commands |
+| `lib/tile.mli` | a tile's files: bands, masks, days, Sentinel-1 codes, its grid |
+| `lib/sentinel2.mli`, `lib/sentinel1.mli` | TESSERA's recipe on the Planetary Computer's products |
+| `lib/stac.mli` | the Planetary Computer's catalogue and its files' windows |
+| `lib/pixels.mli`, `lib/batch.mli` | a tile's valid observations, packed for one call |
+| `lib/model.mli` | the students and the teacher: loading, the forward pass, dropout |
+| `lib/embedding.mli` | encoding, and GeoTessera's npy and GeoTIFF files |
+| `lib/barlow.mli` | Barlow Twins and mixup, the projector and a pretraining step |
+| `lib/distil.mli`, `lib/checkpoint.mli` | Matryoshka distillation and a run's state |
+| `lib/eval.mli` | a linear probe and RankMe |
+| `bin/main.ml` | the commands |
 | `test/` | the tests, their fixtures and their recorders |
 | `bench/` | encoding and a distillation step on a real tile |
 

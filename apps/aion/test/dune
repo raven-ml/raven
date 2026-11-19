@@ -127,4 +127,4 @@
   (env_var AION_PARITY)
   (universe))
  (action
-  (run %{exe:generate_parity.exe} %{exe:../main.exe})))
+  (run %{exe:generate_parity.exe} %{exe:../bin/main.exe})))

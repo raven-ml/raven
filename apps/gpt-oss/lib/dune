@@ -6,8 +6,3 @@
  (wrapped false)
  (modules moe gpt_oss layer_loop harmony)
  (libraries kaun jsont brot nx nx.io nx.quant rune))
-
-(executable
- (name main)
- (modules main)
- (libraries gpt_oss kaun kaun.hf nx rig rig.gpus unix))

@@ -7,8 +7,8 @@ through the harmony format. The decode step runs eagerly on the host, or
 compiled over the devices `--devices` names, expert-parallel over several.
 
 ```bash
-dune exec apps/gpt-oss/main.exe -- --prompt "What is the capital of France?"
-dune exec apps/gpt-oss/main.exe -- --repo openai/gpt-oss-20b --devices CUDA \
+dune exec apps/gpt-oss/bin/main.exe -- --prompt "What is the capital of France?"
+dune exec apps/gpt-oss/bin/main.exe -- --repo openai/gpt-oss-20b --devices CUDA \
   --prompt "What is the capital of France?" --show-analysis
 ```
 
@@ -17,11 +17,11 @@ weights: it runs every path and says nothing. gpt-oss-20b is 13.8 GB.
 
 | File | |
 |---|---|
-| `gpt_oss.mli` | the model: configuration, parameters, forward passes, loading |
-| `moe.mli` | the experts: routing, the clamped SwiGLU, the routed products |
-| `layer_loop.mli` | the model compiled one block program at a time |
-| `harmony.mli` | the chat format: rendering a conversation, parsing the reply |
-| `main.ml` | the chat |
+| `lib/gpt_oss.mli` | the model: configuration, parameters, forward passes, loading |
+| `lib/moe.mli` | the experts: routing, the clamped SwiGLU, the routed products |
+| `lib/layer_loop.mli` | the model compiled one block program at a time |
+| `lib/harmony.mli` | the chat format: rendering a conversation, parsing the reply |
+| `bin/main.ml` | the chat |
 
 ## Tests
 

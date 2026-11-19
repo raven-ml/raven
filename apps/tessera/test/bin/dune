@@ -9,5 +9,5 @@
 (cram
  (deps
   make_labelled.exe
-  ../../main.exe
+  ../../bin/main.exe
   ../http/curl.exe))

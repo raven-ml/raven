@@ -4,7 +4,6 @@
 
 (library
  (name tessera)
- (modules :standard \ main)
  (private_modules flat fetch item)
  (libraries
   nx
@@ -19,25 +18,6 @@
   jord.geotiff
   jord.stac
   jord.safe
-  jsont
-  jsont.bytesrw
-  unix))
-
-(executable
- (name main)
- (modules main)
- (libraries
-  tessera
-  jord
-  jord.geojson
-  jord.stac
-  kaun.hf
-  nx
-  nx.io
-  nx.ragged
-  rig.gpus
-  rune
-  vega
   jsont
   jsont.bytesrw
   unix))

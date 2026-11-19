@@ -13,6 +13,6 @@
   cache.exe
   npz.exe
   reference.exe
-  ../../main.exe
+  ../../bin/main.exe
   ../upstream/transformer.safetensors
   (glob_files ../mmu/*.h5)))

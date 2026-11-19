@@ -1,0 +1,3 @@
+(executable
+ (name main)
+ (libraries gpt_oss kaun kaun.hf nx rig rig.gpus unix))

@@ -4,10 +4,4 @@
 
 (library
  (name aion)
- (modules :standard \ main)
  (libraries nx nx.io kaun kaun.hf ymir))
-
-(executable
- (name main)
- (modules main)
- (libraries aion nx nx.io))

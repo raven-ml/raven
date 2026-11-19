@@ -1,0 +1,17 @@
+(executable
+ (name main)
+ (libraries
+  tessera
+  jord
+  jord.geojson
+  jord.stac
+  kaun.hf
+  nx
+  nx.io
+  nx.ragged
+  rig.gpus
+  rune
+  vega
+  jsont
+  jsont.bytesrw
+  unix))
