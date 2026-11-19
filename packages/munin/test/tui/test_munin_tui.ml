@@ -2242,8 +2242,11 @@ let nav_count =
    tidy-otter while the dashboard watches, then takes the keys, and reads
    tidy-otter's glyph back in the runs pane, [●] for live. *)
 let held =
+  (* Two runs, so that j and k move the cursor off tidy-otter and back. *)
   let store =
-    lazy (Fixture.make ~child (Filename.concat home "held") Fixture.runs)
+    lazy
+      (Fixture.make ~child (Filename.concat home "held")
+         [ Fixture.tidy_otter; Fixture.amber_fox ])
   in
   let step = ref 12400 in
   let key_gen =
@@ -2602,8 +2605,12 @@ let model_name st =
   else match st.depth with 0 -> "charts" | 1 -> "strips" | _ -> "zoom"
 
 let depth_test =
+  (* One run: a session reads and draws every run of its store, and the
+     depths need one. *)
   let store =
-    lazy (Fixture.make ~child (Filename.concat home "depths") Fixture.runs)
+    lazy
+      (Fixture.make ~child (Filename.concat home "depths")
+         [ Fixture.tidy_otter ])
   in
   let dash = abstract "d" in
   let key_gen =
@@ -2733,8 +2740,11 @@ let machine_strips =
 (* The strips scroll the least that shows the cursor's strip whole, from the
    strips shown: a move to a strip shown leaves them where they are. *)
 let strips_scroll =
+  (* One run, whose strips are its own beside any other. *)
   let store =
-    lazy (Fixture.make ~child (Filename.concat home "strips") Fixture.runs)
+    lazy
+      (Fixture.make ~child (Filename.concat home "strips")
+         [ Fixture.tidy_otter ])
   in
   let move = Gen.of_list ~pp:(fun ppf k -> Format.pp_print_string ppf (if k = "j" then "down" else "up")) [ "j"; "k" ] in
   (* Twelve moves down pass the strips 20 rows show, so every case scrolls;
@@ -2933,8 +2943,10 @@ let resumed_cursor =
    more over its first strip shown, and the line of those that follow two
    with its gap. *)
 let strips_whole =
+  (* One run, whose strips are its own beside any other. *)
   let store =
-    lazy (Fixture.make ~child (Filename.concat home "whole") Fixture.runs)
+    lazy
+      (Fixture.make ~child (Filename.concat home "whole") [ Fixture.tidy_otter ])
   in
   let start = Munin_tui.Run (Some (id_of Fixture.tidy_otter)) in
   let every =
@@ -3016,10 +3028,12 @@ type phase = Idle | Reading | Again
 type path = { phase : phase; cursor : int; chosen : bool }
 
 let data_path_test =
+  (* Three runs, so that the cursor's moves meet both ends of the list. *)
+  let runs = Fixture.[ tidy_otter; amber_fox; brisk_wren ] in
   let store =
-    lazy (Fixture.make ~child (Filename.concat home "path") Fixture.runs)
+    lazy (Fixture.make ~child (Filename.concat home "path") runs)
   in
-  let last = List.length Fixture.runs - 1 in
+  let last = List.length runs - 1 in
   let path = abstract "p" in
   (* The system: the calls so far, replayed on a fresh dashboard each time,
      and the number of polls that wait after the last. *)
@@ -3401,8 +3415,11 @@ let meaning ~from word =
   | _ -> "changed"
 
 let hint_test =
+  (* Two runs, so that the keys that move the cursor change the screen. *)
   let store =
-    lazy (Fixture.make ~child (Filename.concat home "hints") Fixture.runs)
+    lazy
+      (Fixture.make ~child (Filename.concat home "hints")
+         [ Fixture.tidy_otter; Fixture.amber_fox ])
   in
   (* [session keys] is the screen after [keys], and whether the dashboard
      quit. *)
