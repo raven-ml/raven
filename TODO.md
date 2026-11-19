@@ -11,6 +11,13 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 
 - Since D485 every CUDA kernel is `tolk_kernel` in nsys and ncu, so a
   profile names no kernel; attribution falls back to launch signatures
+- f32 SIMT products run at 15-17.5 TFLOP/s where cuBLAS runs TESSERA's
+  shapes at 26-30 (no TF32, `ampere_sgemm_128x64_tn` and `128x128_tn`):
+  TESSERA large's model time is 73.4 s against PyTorch's 56.6, all of it in
+  ffn2, q/k/v and the projections. Stage k-contiguous tiles through shared
+  memory, double-buffered, for f32 SIMT products as the bf16 cores do. The
+  TESSERA campaign has it (tessera-port/gpu-lane-logs/2026-11-19/gap/,
+  tessera-port/design/kcontig-b2/)
 - thumper decides quiet from the host's load alone (`Env.load`), so GPU
   rows run and bless under another user's compute context. Needs a public
   quiet hook in thumper and a source of the device's compute processes in
