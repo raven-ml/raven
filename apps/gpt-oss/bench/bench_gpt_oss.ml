@@ -13,7 +13,7 @@
      that one run filled, and [first-token-cold/12] over an empty one.
 
    These keep the checkpoint as it is stored, MXFP4 experts and the rest at
-   bfloat16, as main.exe, vLLM and transformers run it. [decode-q8_0/512] and
+   bfloat16, as the chat, vLLM and transformers run it. [decode-q8_0/512] and
    [prefill-q8_0/512] pack the attention projections and the head as Q8_0, as
    llama.cpp's GGUF file of gpt-oss-20b stores them. The scripts beside this
    file run the same rows with each of those.

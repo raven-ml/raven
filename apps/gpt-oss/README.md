@@ -7,6 +7,11 @@ through the harmony format. The decode step runs compiled over the devices
 `--devices` names, the host by default, expert-parallel over several, or
 eagerly on the host with `--eager`.
 
+On an NVIDIA RTX 5000 Ada, raven decodes gpt-oss-20b at 123 tokens a second,
+as vLLM does, and at 163 packed as llama.cpp packs it, against llama.cpp's 169;
+it prefills 512 tokens at 12,140 a second. [PERFORMANCE.md](PERFORMANCE.md)
+has every number and how to reproduce it.
+
 ```bash
 dune exec apps/gpt-oss/bin/main.exe -- --prompt "What is the capital of France?"
 dune exec apps/gpt-oss/bin/main.exe -- --repo openai/gpt-oss-20b --devices CUDA \
@@ -65,5 +70,5 @@ cache (`--warm`). Rows are seconds per call.
 
 `llama_cpp.sh`, `vllm_offline.py` and `hf_transformers.py` in `bench/` run the
 same rows with llama.cpp, vLLM and transformers, each pinned, and print them
-alike. `bench/gpt_oss.thumper` and `bench/gpt_oss_first.thumper` hold the
-baselines.
+alike: [PERFORMANCE.md](PERFORMANCE.md) compares them.
+`bench/gpt_oss.thumper` and `bench/gpt_oss_first.thumper` hold the baselines.
