@@ -639,6 +639,14 @@ val customs : site -> bool
     custom rule or a linear call, the constructs whose derivatives depend on
     whether a tape holds the tangents. *)
 
+type sum_in_map =
+  | Shared
+      (** The running value around the map, which each lane's additions reach
+          in turn. *)
+  | Laned  (** Each lane's own, along a leading axis of the lanes. *)
+  | Same  (** Each lane's own, the same in every lane: one value. *)
+(** The type for how a map holds a sum of a construct inside it. *)
+
 type derivation =
   | Jvp of { tangents : bool array; reverse : bool }
       (** Forward mode, [tangents.(k)] whether argument [k] has a tangent;
@@ -646,13 +654,19 @@ type derivation =
           holding a custom rule or a linear call tells apart ({!customs}). Over
           the primals, then the tangents there are; to the results, the tangents
           there are, then the running values out. *)
-  | Vmap of { lanes : bool array; shared : bool array; n : int; named : bool }
+  | Vmap of {
+      lanes : bool array;
+      sums : sum_in_map array;
+      n : int;
+      named : bool;
+    }
       (** A map of [n] lanes, [lanes.(k)] whether argument [k] holds every
-          lane's along a leading axis of [n], [shared.(k)] whether total [k]'s
-          running value is one every lane shares; [named] whether the program
-          names the map. Over the arguments; to the results, each with that
-          leading axis where it has lanes, then the running values out, every
-          lane's but the shared ones. *)
+          lane's along a leading axis of [n], [sums.(k)] how the call's sum [k]
+          is held where it starts; [named] whether the program names the map.
+          Over the arguments; to the results, each with that leading axis where
+          it has lanes, then the running values out. A [Laned] sum, and a
+          [Same] one an addition gives lanes, has that axis in and out, its seed
+          broadcast along it. The flags are the results', then the sums'. *)
   | Known of { unknown : bool array; donated : bool array }
       (** The part of the program that reads no argument where [unknown] holds,
           computed at the call. Over the other arguments; to its results, the

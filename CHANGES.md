@@ -528,6 +528,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.Total.collect` inside `Rune.vmap` holds one running value, where it
+  held one per lane, when every lane adds alike (a block from `Rune.lanes`)
+  in a loop, jit, remat, switch or custom rule: `n` times less memory.
 - `Rune.vjp`, `Rune.grad` and `Rune.linear_transpose` keep constant an
   `Nx.Prim.Reduce` or `Nx.Prim.Scan` that loads only the differentiated
   argument or tangents and reads none of them. They raised that the

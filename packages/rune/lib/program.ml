@@ -98,9 +98,16 @@ let fresh_site () = Atomic.fetch_and_add sites 1
    map the site's program names, which its derived programs' forms depend
    on. *)
 
+type sum_in_map = Shared | Laned | Same
+
 type derivation =
   | Jvp of { tangents : bool array; reverse : bool }
-  | Vmap of { lanes : bool array; shared : bool array; n : int; named : bool }
+  | Vmap of {
+      lanes : bool array;
+      sums : sum_in_map array;
+      n : int;
+      named : bool;
+    }
   | Known of { unknown : bool array; donated : bool array }
   | Transpose of { linear : bool array; cts : bool array }
 
@@ -114,7 +121,7 @@ let same_derivation a b =
   match (a, b) with
   | Jvp a, Jvp b -> a.tangents = b.tangents && a.reverse = b.reverse
   | Vmap a, Vmap b ->
-      a.lanes = b.lanes && a.shared = b.shared && a.n = b.n && a.named = b.named
+      a.lanes = b.lanes && a.sums = b.sums && a.n = b.n && a.named = b.named
   | Known a, Known b -> a.unknown = b.unknown && a.donated = b.donated
   | Transpose a, Transpose b -> a.linear = b.linear && a.cts = b.cts
   | (Jvp _ | Vmap _ | Known _ | Transpose _), _ -> false
@@ -134,7 +141,7 @@ module Table = Cache.Make (struct
     let tag =
       match k.derivation with
       | Jvp { tangents; _ } -> Hashtbl.hash (0, tangents)
-      | Vmap { lanes; shared; n; _ } -> Hashtbl.hash (1, lanes, shared, n)
+      | Vmap { lanes; sums; n; _ } -> Hashtbl.hash (1, lanes, sums, n)
       | Known { unknown; donated } -> Hashtbl.hash (2, unknown, donated)
       | Transpose { linear; cts; _ } -> Hashtbl.hash (3, linear, cts)
     in

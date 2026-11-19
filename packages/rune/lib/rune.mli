@@ -925,7 +925,16 @@ val lane_count : axis -> int option
     the lanes still running; where a {!switch}'s lanes take different branches,
     the branches add one after another, the lowest index first. So with one lane
     the total equals the one the code makes without the map, and a map of no
-    lane adds nothing. *)
+    lane adds nothing.
+
+    A [collect] inside the map holds its running value once per lane only where
+    its [init] or an addition depends on the lane, a {!callback}'s result
+    included, or where the lanes run apart: an {!iterate} whose lanes stop apart,
+    a {!switch} whose lanes take different branches. Otherwise a loop, a
+    {!val-jit}, a {!val-remat}, a {!switch} or a custom rule inside the map holds
+    it once, as a loop's carry that no lane changes ({!section-loops}): a sum
+    of blocks every lane gathers with {!lanes} costs one block, whatever the
+    number of lanes. *)
 
 (** Write-only sums. *)
 module Total : sig
