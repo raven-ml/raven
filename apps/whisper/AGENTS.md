@@ -52,9 +52,11 @@ are the app's own.
   `Transcript` against upstream's `transcribe`, the loop replayed on
   upstream's attempts, the model at upstream's window states, and free
   running), which the repository does not hold, so no test runs it.
-- No Python, no weights and no data in the repository, but small goldens
-  under `test/upstream/`, each cut outside the repository by a generator its
-  `dune` stanza names.
+- No weights and no data in the repository but small goldens under
+  `test/upstream/` and one LibriSpeech file. The scripts in `test/gen/`
+  (`uv run`, pinned in each script) write every golden, and the stanza
+  reading one names its generator. The oracle `check.exe` reads stays
+  outside the repository.
 
 ## Decisions
 

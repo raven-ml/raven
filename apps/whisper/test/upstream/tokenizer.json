@@ -1,5 +1,5 @@
 {
-"generator": "_plans/whisper-port/gen/P1-impl/tok_tables.py",
+"generator": "apps/whisper/test/gen/tokenizer.py",
 "n": 1000,
 "configs": [
 {

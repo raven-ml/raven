@@ -1,8 +1,12 @@
+; The suites, in runtest, on goldens from upstream's own code at 86098128.
+; The scripts in gen/ write every golden under upstream/, each run with
+; `uv run apps/whisper/test/gen/NAME.py ARGS` from the repository's root, its
+; docstring giving ARGS.
+
 ; test_tokenizer.exe compares the tokenizers with upstream's own Tokenizer
 ; (openai/whisper 86098128, whisper/tokenizer.py) over trimmed rank tables.
-; upstream/*.tiktoken and upstream/tokenizer.json were cut on 2026-11-18 by
-;   gen/run.sh P1-impl/tok_tables.py 1000 OUT ../oracle/tokenizer/corpus.jsonl
-; in _plans/whisper-port/gen's pinned environment, outside the repository.
+; upstream/*.tiktoken and upstream/tokenizer.json are written by
+; apps/whisper/test/gen/tokenizer.py.
 
 (test
  (name test_tokenizer)
@@ -16,11 +20,9 @@
 ; (openai/whisper 86098128, whisper/model.py) on a small randomly initialised
 ; checkpoint, eager and compiled by rune. upstream/small.pt and
 ; upstream/small.npz, its inputs and upstream's outputs at float32 and
-; float64, were cut on 2026-11-18 by
-;   gen/run.sh P1-impl/small_model.py OUT
-; and upstream/heads.json, every release's alignment heads, by
-;   gen/run.sh P1-impl/heads_table.py OUT
-; in _plans/whisper-port/gen's pinned environment, outside the repository.
+; float64, are written by apps/whisper/test/gen/small_model.py, and
+; upstream/heads.json, every release's alignment heads, by
+; apps/whisper/test/gen/heads.py.
 
 (test
  (name test_model)
@@ -32,15 +34,12 @@
 ; (openai/whisper 86098128, whisper/decoding.py) over the trimmed tokenizers.
 ; upstream/options.json, upstream/filters.json, upstream/filters.npz,
 ; upstream/decode.pt, upstream/decode.npz, upstream/decode.json and
-; upstream/beam.json were cut on 2026-11-19 by
-;   gen/run.sh P2b-impl/decoding.py upstream OUT
-; and upstream/ratio.json, upstream's compression_ratio (whisper/utils.py) of
-; texts under zlib 1.3.2, by
-;   gen/run.sh P4-impl/ratio.py OUT
-; and upstream/languages.pt, upstream/languages.npz and upstream/languages.json,
+; upstream/beam.json are written by apps/whisper/test/gen/decoding.py;
+; upstream/ratio.json, upstream's compression_ratio (whisper/utils.py) of
+; texts under zlib 1.3.2, by apps/whisper/test/gen/ratio.py; and
+; upstream/languages.pt, upstream/languages.npz and upstream/languages.json,
 ; upstream's detect_language on a small multilingual model, by
-;   gen/run.sh P4-impl/languages.py upstream OUT
-; in _plans/whisper-port/gen's pinned environment, outside the repository.
+; apps/whisper/test/gen/languages.py.
 
 (test
  (name test_decoding)
@@ -63,9 +62,9 @@
 ; test_english.exe and test_wer.exe compare the normaliser with upstream's
 ; EnglishTextNormalizer (openai/whisper 86098128,
 ; whisper/normalizers/english.py) and word error rates with jiwer 4.0.0.
-; upstream/normalize.json was cut on 2026-11-19 by
-;   gen/run.sh P2-impl/normalize.py ../oracle/subset.tsv ../oracle/greedy OUT
-; in _plans/whisper-port/gen's pinned environment, outside the repository.
+; upstream/normalize.json is written by apps/whisper/test/gen/normalize.py,
+; from LibriSpeech's references and upstream's greedy decodes of them
+; (apps/whisper/test/gen/subset.py and greedy.py).
 
 (tests
  (names test_english test_wer)
@@ -76,14 +75,10 @@
 ; test_audio.exe compares the features with upstream's log_mel_spectrogram
 ; (openai/whisper 86098128, whisper/audio.py). librispeech/ holds a
 ; LibriSpeech file (CC BY 4.0, librispeech/NOTICE). upstream/audio.npz and
-; upstream/int8.flac were cut on 2026-11-19 by
-;   P3-impl/run.sh P3-impl/fixture.py librispeech/7902-96594-0025.flac OUT
-; in _plans/whisper-port/gen's pinned environment with ffmpeg 7.0.2 layered,
-; outside the repository. upstream/resample.npz, upstream's load_audio of the
-; WAV and FLAC files of other rates and channel counts beside it, which it
-; wrote, was cut on 2026-11-19 by
-;   P3-impl/run.sh P5-impl/resample.py OUT
-; in the same environment.
+; upstream/int8.flac are written by apps/whisper/test/gen/audio.py, and
+; upstream/resample.npz, upstream's load_audio of the WAV and FLAC files of
+; other rates and channel counts beside it, which it writes, by
+; apps/whisper/test/gen/resample.py.
 
 (test
  (name test_audio)
@@ -108,9 +103,8 @@
 ; test_transcript.exe compares the transcribe loop with upstream's transcribe
 ; (openai/whisper 86098128, whisper/transcribe.py) over a model whose decode
 ; returns scripted results, and transcribes with a small random model.
-; upstream/transcript.json and upstream/transcript.pt were cut on 2026-11-19 by
-;   gen/run.sh P4-impl/transcript.py upstream OUT
-; in _plans/whisper-port/gen's pinned environment, outside the repository.
+; upstream/transcript.json and upstream/transcript.pt are written by
+; apps/whisper/test/gen/transcript.py.
 
 (test
  (name test_transcript)
@@ -122,9 +116,8 @@
   upstream/gpt2-1000.tiktoken))
 
 ; test_writer.exe compares the writers with upstream's (openai/whisper
-; 86098128, whisper/utils.py). upstream/writer.json was cut on 2026-11-19 by
-;   gen/run.sh P4-impl/writer.py OUT
-; in _plans/whisper-port/gen's pinned environment, outside the repository.
+; 86098128, whisper/utils.py). upstream/writer.json is written by
+; apps/whisper/test/gen/writer.py.
 
 (test
  (name test_writer)
