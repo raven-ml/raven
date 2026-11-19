@@ -1069,6 +1069,46 @@ let lane_sums r =
        ~init:(Nx.zeros_like (Nx.get [ 0 ] r))
        r)
 
+(* A total collected inside a map of [k] lanes, to which each of a scan's 4
+   trips adds the block Gᵀ G of every lane's state G, gathered with
+   [Rune.lanes]: one [[k; k]] value, whatever the number of lanes. *)
+let blocks = Rune.Total.make ()
+
+let alike_blocks k =
+  let a = Rune.axis () in
+  let xs = Nx.reshape [| 4; k |] (floats (4 * k)) in
+  let lane d =
+    let (h, _), g =
+      Rune.Total.collect blocks
+        ~init:(host (Nx.zeros f32 [| k; k |]))
+        (fun () ->
+          Rune.scan'
+            (fun h x ->
+              let h = Nx.tanh (Nx.add (Nx.mul h d) x) in
+              let gh = Rune.lanes a h in
+              Rune.Total.add blocks (Nx.matmul (Nx.transpose gh) gh);
+              (h, h))
+            ~init:(Nx.zeros_like d) xs)
+    in
+    Nx.add (Nx.sum h) (Nx.sum (Nx.matmul g (Nx.reshape [| k; 1 |] d)))
+  in
+  Rune.vmap' ~axis:a lane
+
+(* A total collected inside a map of 64 lanes, to which a remat adds each
+   lane's row: a sum that starts as one value and takes the lanes its additions
+   give it. *)
+let own = Rune.Total.make ()
+
+let lane_own r =
+  snd
+    (Rune.Total.collect own ~init:(host (Nx.zeros f32 [| 16 |])) (fun () ->
+         Rune.remat
+           Nx.Ptree.(tensor @-> returns tensor)
+           (fun r ->
+             Rune.Total.add own r;
+             Nx.sum r)
+           r))
+
 let total_rows () =
   let rows = Nx.reshape [| 64; 16 |] (floats (64 * 16)) in
   let around f =
@@ -1077,12 +1117,19 @@ let total_rows () =
          ~init:(host (Nx.scalar f32 0.))
          (fun () -> ignore (synced (f rows))))
   in
+  let k = 256 in
+  let ds = Nx.reshape [| k; k |] (floats (k * k)) in
   [
     Thumper.bench "vmap-scan-64-lanes-eager" (fun () ->
         synced (around (Rune.vmap' lane_sums)));
     warm "vmap-scan-64-lanes-replay"
       (fun () -> Rune.jit' (Rune.vmap' lane_sums))
       (fun g -> synced (around g));
+    Thumper.bench "vmap-remat-own-total-64-lanes-eager" (fun () ->
+        synced (Rune.vmap' lane_own rows));
+    warm "vmap-scan-alike-total-256-lanes-replay"
+      (fun () -> Rune.jit' (alike_blocks k))
+      (fun g -> synced (g ds));
   ]
 
 (* Roots: the gradient of a scan whose step holds a root, x² = a + r for each
