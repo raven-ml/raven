@@ -106,6 +106,16 @@ val open_ : string -> (Rig.t, string) result
     [Error why] if [name] is no name, [why] listing the kinds, or with the
     open's [Error]. Raises as {!Rig.open_} does. *)
 
+val open_all : string -> (Rig.t list, string) result
+(** [open_all names] is the devices [names] names, separated by commas, in
+    order, each opened by {!val-open_} as {!String.trim} leaves it: a
+    program's list of devices, as a user writes it, such as ["cuda"] or
+    ["CPU:1,CPU:2"]. A program mints a set over them ([Nx.devices]).
+
+    [Error why] with {!val-open_}'s [why] for the first name that opens
+    nothing, an empty one included, or naming two names of one device, such
+    as ["cpu"] and ["CPU:0"]. The devices opened before it stay open. *)
+
 val opens : string -> (unit, string) result
 (** [opens name] is [Ok ()] if {!val-open_}[ name] succeeds in a child of
     [Unix.fork], and [Error why] with the child's [why] otherwise. The child

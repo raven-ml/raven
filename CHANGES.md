@@ -43,6 +43,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- Add `Rig_gpus.open_all names`, the devices a comma list of names names,
+  each opened as `open_` opens it, in order, blanks around a name ignored:
+  the list a program's user writes, to mint one set over with `Nx.devices`.
+  It refuses the first name that opens nothing, and two names of one device.
 - **Breaking:** `Rig.submit` takes `~args`, one `Submission.args` of grid,
   threads, shared bytes and little-endian `params` per launch or fill, and
   `Submission.Run`, `take` and `block` are gone. A short `params` reads 0.

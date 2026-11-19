@@ -61,6 +61,22 @@ let refused s =
   equal ~msg:"opens" (result unit string) (Error (no_name s))
     (Rig_gpus.opens s)
 
+let open_all () =
+  let names = result (list string) string in
+  let open_all s = Result.map (List.map Rig.name) (Rig_gpus.open_all s) in
+  equal ~msg:"one name" names (Ok [ "CPU" ]) (open_all "cpu");
+  equal ~msg:"in order, blanks trimmed" names
+    (Ok [ "CPU:3"; "CPU"; "CPU:2" ])
+    (open_all "CPU:3, cpu ,cPu:2");
+  equal ~msg:"the first that opens nothing" names (Error (no_name "VULKAN"))
+    (open_all "CPU:2,VULKAN,HOST");
+  equal ~msg:"an empty name" names (Error (no_name ""))
+    (open_all "CPU:2,,CPU:3");
+  equal ~msg:"no name" names (Error (no_name "")) (open_all "");
+  equal ~msg:"two names of one device" names
+    (Error "\"cpu\" and \"CPU:0\" name one device, CPU")
+    (open_all "cpu,CPU:2,CPU:0")
+
 let opens_cpu () =
   List.iter
     (fun n -> equal ~msg:n (result unit string) (Ok ()) (Rig_gpus.opens n))
@@ -88,6 +104,11 @@ let () =
              cases "a string that names no device is refused, naming the kinds"
                ~id:(Printf.sprintf "%S")
                not_names refused;
+           ];
+         group "open_all"
+           [
+             test "a comma list opens each name, refusing the first bad one"
+               open_all;
            ];
          group "opens"
            [

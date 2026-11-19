@@ -111,6 +111,21 @@ let open_ name =
   | Ok (Cpu k) -> Rig.software (strf "CPU:%d" k)
   | Ok (Gpu (w, i)) -> w.open_gpu i
 
+let open_all names =
+  let rec go opened = function
+    | [] -> Ok (List.rev_map snd opened)
+    | name :: rest -> (
+        match open_ name with
+        | Error _ as e -> e
+        | Ok d -> (
+            match List.find_opt (fun (_, o) -> Rig.equal d o) opened with
+            | Some (other, _) ->
+                Error
+                  (strf "%S and %S name one device, %s" other name (Rig.name d))
+            | None -> go ((name, d) :: opened) rest))
+  in
+  go [] (List.map String.trim (String.split_on_char ',' names))
+
 (* The child writes ['o'], or ['e'] and its refusal, then leaves without
    running this process's exit, whatever its open or its write raised: an
    answer it could not write reads as its exit. *)
