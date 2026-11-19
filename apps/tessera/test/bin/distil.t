@@ -57,6 +57,16 @@ holds, to --steps; a run without --resume refuses an output holding one.
   tessera: run holds a run: --resume it, or write to another --out
   [2]
 
+A step computes on 256 pixels at most at once: it cuts more into groups of
+equal size, here two of 150.
+
+  $ distil --steps 1 --pixels 300 --out big
+  $ cut -f 1-4 big/log.tsv
+  1	0	300	300
+  $ distil --pixels 0 --out none 2>&1
+  tessera: --pixels 0: 1 or more
+  [2]
+
 probe labels each pixel by the field that holds its centre. Column 2's
 centres lie in fields b0 and b1, whose edges field a's crosses, so field a,
 last in the file, holds columns 0 and 1 alone: 12 pixels. The pixel with no

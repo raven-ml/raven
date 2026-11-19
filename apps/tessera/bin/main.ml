@@ -379,12 +379,10 @@ let train (type d) (t : d target) ~out ~resume ~steps ~key ~model_file
   go st position first;
   close_out log
 
-let run_options ~steps ~groups ~pixels ~seed ~device ~bf16 ~resume =
+let run_options ~steps ~seed ~device ~bf16 ~resume =
   [
     ("--device", Arg.Set_string device, device_doc);
     ("--steps", Arg.Set_int steps, "N steps (default 1000)");
-    ("--groups", Arg.Set_int groups, "G groups a step (default 1)");
-    ("--pixels", Arg.Set_int pixels, "N pixels a group (default 2048)");
     ("--seed", Arg.Set_int seed, "N the run's key (default 0)");
     ("--bf16", Arg.Set bf16, " compute the products in bfloat16");
     ("--resume", Arg.Set resume, " continue the run in OUT to --steps");
@@ -409,8 +407,10 @@ let pretrain () =
          Arg.Set_string widths,
          "W,... the projector's widths after the model's (default six of \
           16384, v1.0's)" );
+       ("--groups", Arg.Set_int groups, "G groups a step (default 1)");
+       ("--pixels", Arg.Set_int pixels, "N pixels a group (default 2048)");
      ]
-    @ run_options ~steps ~groups ~pixels ~seed ~device ~bf16 ~resume);
+    @ run_options ~steps ~seed ~device ~bf16 ~resume);
   let dir = required "--corpus" !corpus and out = required "--out" !out in
   let arch = arch ~teacher:true (required "--arch" !arch_) in
   let widths =
@@ -490,12 +490,20 @@ let pretrain () =
 
 (* distil *)
 
+(* The most pixels a distillation step computes on at once. Its loss is a sum
+   over pixels, so a step cuts its pixels into groups and sums their gradients
+   (Distil.step), and holds what one group's backward reads: about 28 MB a
+   pixel for the medium student in float32 on a 2024 Sentinel tile, where one
+   group of 2048 pixels asked 58 GB of a 32 GB GPU (2026-11-19). Groups of 256
+   also ran a step faster than groups of 512 or 1024 there. *)
+let group_pixels = 256
+
 let distil () =
   let corpus = ref ""
   and targets = ref ""
   and out = ref ""
   and arch_ = ref "" in
-  let device = ref "cpu" and steps = ref 1000 and groups = ref 1 in
+  let device = ref "cpu" and steps = ref 1000 in
   let pixels = ref 2048 and seed = ref 0 and bf16 = ref false in
   let resume = ref false in
   parse "distil --corpus DIR --targets FILE --arch A --out DIR [OPTION...]"
@@ -506,13 +514,21 @@ let distil () =
          Arg.Set_string arch_,
          "A the student: nano, small, medium or large" );
        ("--out", Arg.Set_string out, "DIR the run's state, log and student");
+       ( "--pixels",
+         Arg.Set_int pixels,
+         Printf.sprintf "N pixels a step, %d a group at most (default 2048)"
+           group_pixels );
      ]
-    @ run_options ~steps ~groups ~pixels ~seed ~device ~bf16 ~resume);
+    @ run_options ~steps ~seed ~device ~bf16 ~resume);
   let dir = required "--corpus" !corpus in
   let targets_file = required "--targets" !targets in
   let out = required "--out" !out in
   let arch = arch ~teacher:false (required "--arch" !arch_) in
-  let resume = !resume and steps = !steps and groups = !groups in
+  if !pixels < 1 then fail "--pixels %d: 1 or more" !pixels;
+  let resume = !resume and steps = !steps in
+  (* The fewest groups of equal size that hold the step's pixels, which hold
+     fewer than one more a group where they do not divide them. *)
+  let groups = (!pixels + group_pixels - 1) / group_pixels in
   check_out ~out ~resume;
   let px = Pixels.load dir in
   let n = Pixels.length px in
@@ -528,7 +544,9 @@ let distil () =
   let heads =
     Distil.heads ~key:(Nx.Rng.fold_in key head_site) ~prefixes:m.prefixes d
   in
-  let shape = Distil.shape ~pixels:!pixels ~slots:32 px in
+  let shape =
+    Distil.shape ~pixels:((!pixels + groups - 1) / groups) ~slots:32 px
+  in
   let r = Distil.v2_recipe in
   on !device
     {
