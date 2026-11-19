@@ -697,6 +697,8 @@ let jit_rows () =
   let experts_x = between f32 52 (-1.) 1. [| 16; 1; 256 |] in
   let prompt_ids = positions 2048 32 |> Nx.reshape [| 512; 4 |] in
   let prompt_x = between f32 53 (-1.) 1. [| 512; 1; 256 |] in
+  let linear_x = between f32 63 (-1.) 1. [| 3328; 440 |]
+  and linear_w = between f32 64 (-1.) 1. [| 1792; 440 |] in
   let x1m = between f64 13 (-1.) 1. [| 1_000_000 |] in
   let dirichlet_key = Nx.Rng.key 3 in
   let concentrations = host (Nx.full f32 [| 4096; 8 |] 2.) in
@@ -825,6 +827,14 @@ let jit_rows () =
     warm "matmul-64"
       (fun () -> Rune.jit (pair_fn ()) Nx.matmul)
       (fun f -> synced (f m m));
+    (* A linear layer's product as Kaun.Linear computes it, its weight stored
+       [out; in]: 3328 rows of 440 inputs to 1792 outputs, TESSERA's medium
+       student's feed-forward layer. *)
+    warm "linear-float32-3328x440-to-1792"
+      (fun () ->
+        let pattern = Nx.Pattern.v "x i, o i -> x o | i" in
+        Rune.jit (pair_fn ()) (fun x w -> Nx.contract Nx.float32 pattern x w))
+      (fun f -> synced (f linear_x linear_w));
     (* A mixture of experts' product, 16 tokens of 4 ids each through 32
        MXFP4 experts of 256 by 256, compiled: each row contracts with its own
        expert's matrix alone. *)
