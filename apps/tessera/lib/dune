@@ -4,10 +4,9 @@
 
 (library
  (name tessera)
- (private_modules flat fetch grads item)
+ (private_modules fetch grads item)
  (libraries
   nx
-  nx.array
   nx.io
   nx.ragged
   kaun

@@ -14,29 +14,35 @@ let s1_bands = 2
 
 (* Gathering *)
 
+(* An array of [n] elements of kind [k], each [v]. *)
+let filled k n v =
+  let b = Bigarray.Array1.create k Bigarray.c_layout n in
+  Bigarray.Array1.fill b v;
+  b
+
 (* Offsets of rows whose lengths are [count]. *)
 let offsets count =
   let n = Bigarray.Array1.dim count in
-  let o = Flat.create Bigarray.int64 (n + 1) 0L in
+  let o = filled Bigarray.int64 (n + 1) 0L in
   for p = 0 to n - 1 do
     let next = Int64.(add o.{p} (of_int count.{p})) in
     o.{p + 1} <- next
   done;
   o
 
-let ragged dt cells count values =
+let ragged cells count values =
   let n = Bigarray.Array1.dim count in
   let o = offsets count in
   let total = Int64.to_int o.{n} in
-  let offsets = Flat.wrap Nx.int64 [| n + 1 |] o in
-  Nx_ragged.v ~offsets (Flat.wrap dt [| total; cells |] values)
+  let offsets = Nx.Host.wrap [| n + 1 |] o in
+  Nx_ragged.v ~offsets (Nx.Host.wrap [| total; cells |] values)
 
 (* Sentinel-2: a pass to count each pixel's masked frames, then one over the
    frames in order, each valid one appended to its pixel's row. *)
 let s2 ~t ~n (bands : Nx.host Nx.int16_t) (mask : Nx.host Nx.uint8_t)
     (days : Nx.host Nx.uint16_t) =
-  let count = Flat.create Bigarray.int n 0 in
-  Flat.read mask (fun m ->
+  let count = filled Bigarray.int n 0 in
+  Nx.Host.read mask (fun m ->
       for i = 0 to (t * n) - 1 do
         if m.{i} <> 0 then
           let p = i mod n in
@@ -45,11 +51,11 @@ let s2 ~t ~n (bands : Nx.host Nx.int16_t) (mask : Nx.host Nx.uint8_t)
   let o = offsets count in
   let cells = s2_bands + 1 in
   let total = Int64.to_int o.{n} in
-  let v = Flat.create Bigarray.int16_signed (total * cells) 0 in
+  let v = filled Bigarray.int16_signed (total * cells) 0 in
   let next = Array.init n (fun p -> Int64.to_int o.{p}) in
-  Flat.read bands (fun b ->
-      Flat.read mask (fun m ->
-          Flat.read days (fun d ->
+  Nx.Host.read bands (fun b ->
+      Nx.Host.read mask (fun m ->
+          Nx.Host.read days (fun d ->
               for f = 0 to t - 1 do
                 for p = 0 to n - 1 do
                   let i = (f * n) + p in
@@ -63,17 +69,17 @@ let s2 ~t ~n (bands : Nx.host Nx.int16_t) (mask : Nx.host Nx.uint8_t)
                   end
                 done
               done)));
-  ragged Nx.int16 cells count v
+  ragged cells count v
 
 (* Sentinel-1: the same over the ascending frames, then the descending ones. *)
 let s1 ~n (orbits : (Nx.host Nx.int16_t * Nx.host Nx.int16_t * int) list) =
-  let count = Flat.create Bigarray.int n 0 in
-  let valid (b : (int, Nx.int16_signed_elt) Flat.t) i =
+  let count = filled Bigarray.int n 0 in
+  let valid b i =
     b.{2 * i} <> 0 || b.{(2 * i) + 1} <> 0
   in
   List.iter
     (fun (x, _, _) ->
-      Flat.read x (fun b ->
+      Nx.Host.read x (fun b ->
           for i = 0 to (Nx.dim 0 x * n) - 1 do
             if valid b i then
               let p = i mod n in
@@ -83,12 +89,12 @@ let s1 ~n (orbits : (Nx.host Nx.int16_t * Nx.host Nx.int16_t * int) list) =
   let o = offsets count in
   let cells = s1_bands + 2 in
   let total = Int64.to_int o.{n} in
-  let v = Flat.create Bigarray.int16_signed (total * cells) 0 in
+  let v = filled Bigarray.int16_signed (total * cells) 0 in
   let next = Array.init n (fun p -> Int64.to_int o.{p}) in
   List.iter
     (fun (x, days, orbit) ->
-      Flat.read x (fun b ->
-          Flat.read days (fun d ->
+      Nx.Host.read x (fun b ->
+          Nx.Host.read days (fun d ->
               for f = 0 to Nx.dim 0 x - 1 do
                 for p = 0 to n - 1 do
                   let i = (f * n) + p in
@@ -103,7 +109,7 @@ let s1 ~n (orbits : (Nx.host Nx.int16_t * Nx.host Nx.int16_t * int) list) =
                 done
               done)))
     orbits;
-  ragged Nx.int16 cells count v
+  ragged cells count v
 
 let of_tile (tile : Tile.t) =
   let t = Nx.dim 0 tile.bands and h, w = Tile.shape tile in
@@ -255,7 +261,7 @@ let s1_bytes = 2 * (s1_bands + 2)
 
 (* A host copy of [x]'s elements. *)
 let copy x =
-  Flat.read x (fun b ->
+  Nx.Host.read x (fun b ->
       let c =
         Bigarray.Array1.create (Bigarray.Array1.kind b) Bigarray.c_layout
           (Bigarray.Array1.dim b)
@@ -341,13 +347,12 @@ let shuffle ~key ~bytes dir parts =
     Nx_ragged.values (Nx_ragged.take ~indices all)
   in
   if not (Sys.file_exists dir) then Sys.mkdir dir 0o755;
-  let write (type s) name (sensor : s t_sensor) cells
-      (l : (int64, Bigarray.int64_elt) Flat.t array) =
-    let o = Flat.create Bigarray.int64 (n + 1) 0L in
+  let write (type s) name (sensor : s t_sensor) cells l =
+    let o = filled Bigarray.int64 (n + 1) 0L in
     for q = 0 to n - 1 do
       o.{q + 1} <- Int64.add o.{q} l.(src_part.(q)).{src_row.(q)}
     done;
-    Nx_io.save_npy (offsets_file dir name) (Flat.wrap Nx.int64 [| n + 1 |] o);
+    Nx_io.save_npy (offsets_file dir name) (Nx.Host.wrap [| n + 1 |] o);
     Nx_io.save_npy_concat (file dir name) sensor.dtype [| cells |]
       (Seq.map (block sensor) (List.to_seq buckets))
   in
@@ -362,9 +367,7 @@ let shuffle ~key ~bytes dir parts =
 let draw_rows (type s) keys ~length (r : (int, s, Nx.host) Nx_ragged.t) =
   let n = Nx_ragged.length r in
   let counts = Nx.reshape [| n; 1 |] (Nx_ragged.lengths r) in
-  let keys =
-    Nx.Rng.of_tensor (Nx.reshape [| n; 1; 2 |] (Nx.Rng.to_tensor keys))
-  in
+  let keys = Nx.Rng.reshape [| n; 1 |] keys in
   let index =
     Nx.Rng.randint ~key:keys (Nx.broadcast_to [| n; length |] counts)
   in
