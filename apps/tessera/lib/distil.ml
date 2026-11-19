@@ -213,39 +213,29 @@ let v2_recipe = { lr = 8e-4; warmup = 0.05; weight_decay = 1e-4; clip = 1.0 }
 (* AdamW's second moment's decay in v2's distillation (App. J, Table 9). *)
 let b2 = 0.95
 
-(* The gradients of the groups summed in a scan, then the update: vega has no
-   step over stacked micro-batches (a gap of vega's), so this one and
-   Barlow.step write it. *)
 let step ~compute ~dropout ~lr ~weight_decay ?decays ~clip
     ((gs : ((float, 't, 'd) Nx.t, 'd) group), (st : ('d Nx.float32_t, 'd) state))
     =
   let p = Nx.Ptree.instantiate (module Params) in
   let params = { net = st.model.net; heads = st.heads } in
-  let one = Nx.full_at (Nx.beside gs.batch.pixel) f32 [||] 1. in
-  let trip (total, sum) (g : ((float, 't, 'd) Nx.t, 'd) group) =
-    let objective q =
+  let group_loss (g : ((float, 't, 'd) Nx.t, 'd) group) q =
+    let l =
       loss ~dropout ~keys:g.keys st.model
         (Nx.Ptree.cast (module Params) compute q)
         g.batch ~targets:g.targets
     in
-    let l, grads = Rune.value_and_grad p objective params in
-    ((Nx.add total l, Nx.Ptree.axpy p one grads sum), ())
+    (l, l)
   in
-  let zeros = Nx.Ptree.map p (fun _ x -> Nx.zeros_like x) params in
-  let zero = Nx.scalar_like one 0. in
-  let (total, sum), () =
-    Rune.scan
-      Nx.Ptree.(pair tensor p)
-      (Nx.Ptree.instantiate (module Group))
-      Nx.Ptree.unit trip ~init:(zero, zeros) gs
+  let sum, losses =
+    Grads.sum p (Nx.Ptree.instantiate (module Group)) group_loss params gs
   in
   (* A step of no filled place divides by 1: its gradient is zero. *)
   let filled = Nx.sum (Nx.cast f32 (Nx.greater_equal_s gs.batch.pixel 0L)) in
-  let n = Nx.maximum filled one in
+  let n = Nx.maximum filled (Nx.scalar_like filled 1.) in
   let grads = Nx.Ptree.scale p (Nx.recip n) sum in
   let grads = Vega.clip_by_global_norm p ~max_norm:clip grads in
   let params, opt =
     Vega.adamw_step p ~lr ~b2 ~weight_decay ?decays st.opt ~params ~grads
   in
-  ( Nx.div total n,
+  ( Nx.div (Nx.sum losses) n,
     { model = { st.model with net = params.net }; heads = params.heads; opt } )

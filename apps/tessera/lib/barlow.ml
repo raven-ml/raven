@@ -364,33 +364,20 @@ let step ~compute w ~dropout ~lr ~weight_decay ?(decays = decays) ~clip
     ((gs : ('d Nx.float32_t, 'd) group), (st : ('d Nx.float32_t, 'd) state)) =
   let p = Nx.Ptree.instantiate (module Params) in
   let params = { net = st.model.net; projector = st.projector } in
-  let one = Nx.full_at (Nx.beside gs.alpha) f32 [||] 1. in
-  (* A group's terms as one array [[3]], summed over the groups. *)
-  let trip (total, sum) (g : ('d Nx.float32_t, 'd) group) =
-    let f q =
-      let t =
-        group_terms ~dropout st.model
-          (Nx.Ptree.cast (module Params) compute q)
-          g
-      in
-      (objective w t, Nx.stack [ t.on_diagonal; t.off_diagonal; t.mixup ])
+  (* A group's objective, and its terms as one array [[3]]. *)
+  let group_objective (g : ('d Nx.float32_t, 'd) group) q =
+    let t =
+      group_terms ~dropout st.model (Nx.Ptree.cast (module Params) compute q) g
     in
-    let _, grads, t = Rune.value_and_grad_aux p Nx.Ptree.tensor f params in
-    ((Nx.add total t, Nx.Ptree.axpy p one grads sum), ())
+    (objective w t, Nx.stack [ t.on_diagonal; t.off_diagonal; t.mixup ])
   in
-  let zeros = Nx.Ptree.map p (fun _ x -> Nx.zeros_like x) params in
-  let (total, sum), () =
-    Rune.scan
-      Nx.Ptree.(pair tensor p)
-      (Nx.Ptree.instantiate (module Group))
-      Nx.Ptree.unit trip
-      ~init:(Nx.zeros_at (Nx.beside gs.alpha) f32 [| 3 |], zeros)
-      gs
+  let sum, terms =
+    Grads.sum p (Nx.Ptree.instantiate (module Group)) group_objective params gs
   in
   let n = Float.of_int (Nx.dim 0 gs.alpha) in
-  let mean = Nx.div_s total n in
+  let mean = Nx.div_s (Nx.sum ~axes:[ 0 ] terms) n in
   let term i = Nx.get [ i ] mean in
-  let grads = Nx.Ptree.scale p (Nx.scalar_like one (1. /. n)) sum in
+  let grads = Nx.Ptree.scale p (Nx.scalar_like mean (1. /. n)) sum in
   let grads = Vega.clip_by_global_norm p ~max_norm:clip grads in
   let params, opt =
     Vega.adamw_step p ~lr ~weight_decay ~decays st.opt ~params ~grads
