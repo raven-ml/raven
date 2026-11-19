@@ -114,7 +114,8 @@ val stages_product : Renderer.t -> Ops.t -> bool
     products of [sink] that a thread computes in its registers, a
     multiplication a sum of [Add] reduces, and every such product it stages
     takes two stages ({!depth}). It stages one where [ren] copies
-    asynchronously ({!Renderer.t.async_copy}), neither operand is
+    asynchronously ({!Renderer.t.async_copy}), the kernel holds no other
+    shared memory and reduces across no threads, neither operand is
     {!decoded}, and each tile it copies reads the sum's lanes in its
     innermost dimension, contiguous, while every other dimension of the
     tile moves first with a thread: adjacent threads read adjacent rows,
@@ -128,22 +129,24 @@ val stages_product : Renderer.t -> Ops.t -> bool
     the tiles take whole, so each output adds the same terms in the same
     order as the loop unstaged. *)
 
+type product_tile = {
+  threads : int * int;  (** The workgroup's threads along M and along N. *)
+  outputs : int;  (** A thread's outputs along each of M and N. *)
+  run : int;  (** The values of K a thread unrolls: a copy's. *)
+}
+(** The shape of a staged product's tile ({!stages_product}). *)
+
 val product_tile :
-  Renderer.t ->
-  itemsize:int ->
-  sizes:int * int * int ->
-  short:bool ->
-  Opt.t list option
-(** [product_tile ren ~itemsize ~sizes:(n, m, k) ~short] is the optimisations
-    of a staged product's tile ({!stages_product}), splits and pads whose
-    [axis] is [0], [1] or [2] for its N, M and K, in the order to apply
-    them, for a product of operands of [itemsize] bytes laid out along K;
-    [None] where [ren] copies no tile in two stages, or [k] holds fewer than
-    two runs of a copy of [16] bytes or does not divide into them.
-    A workgroup takes 16 threads along M and 8 along N, the threads splitting
-    each axis first so that they take its adjacent rows, and a thread holds 8
-    by 8 outputs, 4 by 4 where [short], each axis padded to the tile where it
-    does not divide it, and K is unrolled by a copy's run. *)
+  Renderer.t -> itemsize:int -> k:int -> short:bool -> product_tile option
+(** [product_tile ren ~itemsize ~k ~short] is the tile of a staged product
+    ({!stages_product}) of operands of [itemsize] bytes laid out along K, of
+    [k] values; [None] where [ren] copies no tile in two stages, or [k] holds
+    fewer than two runs of a copy of [16] bytes or does not divide into them.
+    A workgroup takes 16 threads along M and 8 along N, a thread holds 8 by 8
+    outputs, 4 by 4 where [short], and K is unrolled by a copy's run. Each
+    output axis splits into its threads first, so that they take its
+    adjacent rows, then its outputs, and is padded to their product where
+    that does not divide it. *)
 
 val steps : Renderer.t -> Ops.t -> k:Ops.t -> int
 (** [steps ren sink ~k] is the least count of steps of the range [k] a trip

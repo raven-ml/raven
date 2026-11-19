@@ -1641,54 +1641,61 @@ let stream k (s, l) =
    staging then stages it ({!Stage.stages_product}). Its operands, copied
    into shared memory, are read there 16 bytes along the reduce, where from
    the L1 a SIMD group's load reads 16 lines ({!split_reduce}). The axes
-   [block] doubles take the tile's N, the later, and M; the result is an
-   optimised copy of [k]. *)
-let staged_product ~core_threads k =
-  let probe = K.copy k in
+   [block] doubles take the tile's N, the later, and M. [k] is the kernel as
+   [block] found it, and [blocking] what [block] did to its twin. The tile
+   optimises [k] in place: [Some k] where staging takes it, [None] otherwise,
+   [k] then part-optimised. *)
+let staged_product blocking k =
   let taken =
-    match
-      block probe (upcast_more ~four_first:(four_first ~core_threads k) probe)
-    with
+    match blocking with
     | Blocked (ra, rb) -> Some (false, ra, rb)
     | Short (ra, rb) -> Some (true, ra, rb)
     | Free -> None
   in
-  let by_id s id = List.find_opt (fun u -> axis_id u = id) (K.rngs s) in
   let itemsize =
     List.fold_left (fun n b -> max n (Dtype.itemsize (dtype b))) 1 (operands k)
   in
   match (taken, K.upcastable_dims ~reduce:true k) with
   | Some (short, ra, rb), (_ :: _ as dims) when K.axes_of k [ Upcast ] = [] -> (
-      let rngs = K.rngs k in
-      let r = List.nth rngs (last dims) in
-      match (by_id k (axis_id ra), by_id k (axis_id rb)) with
+      let r = List.nth (K.rngs k) (last dims) in
+      match (rest_of k ra, rest_of k rb) with
       | Some a, Some b when along_reduce k r -> (
-          let n, m =
-            if index_of a rngs > index_of b rngs then (a, b) else (b, a)
-          in
-          let ids = [| axis_id n; axis_id m; axis_id r |] in
-          let size u = Bigint.to_int (size_at k (index_of u rngs)) in
-          let s = K.copy k in
-          let apply o =
-            match by_id s ids.(Opt.axis o) with
-            | None -> false
-            | Some u -> (
-                let axis = index_of u (K.rngs s) in
-                let o =
-                  match o with
-                  | Opt.Split x -> Opt.Split { x with axis }
-                  | Opt.Padto x -> Opt.Padto { x with axis }
-                  | o -> o
-                in
-                Result.is_ok (K.apply_opt s o))
-          in
-          let sizes = (size n, size m, size r) in
-          match Stage.product_tile (K.ren k) ~itemsize ~sizes ~short with
-          | Some opts
-            when List.for_all apply opts
-                 && Stage.stages_product (K.ren s) (K.ast s) ->
-              Some s
-          | _ -> None)
+          let n, m = if axis_of k a > axis_of k b then (a, b) else (b, a) in
+          let size x = Bigint.to_int (size_at k (axis_of k x)) in
+          match Stage.product_tile (K.ren k) ~itemsize ~k:(size r) ~short with
+          | None -> None
+          | Some { Stage.threads = (tm, tn); outputs = u; run } ->
+              (* Each optimisation finds its axis by identity, which what a
+                 split leaves of a range keeps: the axes move as they split. *)
+              let on x opt =
+                match
+                  List.find_index (fun y -> axis_id y = axis_id x) (K.rngs k)
+                with
+                | Some axis -> Result.is_ok (K.apply_opt k (opt axis))
+                | None -> false
+              in
+              let pad x t =
+                size x mod t = 0
+                || on x (fun axis -> Opt.Padto { axis; amount = t })
+              in
+              let split x amount target =
+                on x (fun axis ->
+                    Opt.Split { axis; amount; target; top = false })
+              in
+              (* Staging reads the operands' tiles off the kernel the splits
+                 leave, so whether it takes them is known only once they
+                 are applied. *)
+              if
+                pad n (tn * u)
+                && pad m (tm * u)
+                && split n tn Opt.Local
+                && split m tm Opt.Local
+                && split n u Opt.Upcast
+                && split m u Opt.Upcast
+                && split r run Opt.Upcast
+                && Stage.stages_product (K.ren k) (K.ast k)
+              then Some k
+              else None)
       | _ -> None)
   | _ -> None
 
@@ -1703,32 +1710,31 @@ let general ~core_threads k =
   if K.group_for_reduces k <> 0 then k
   else begin
     upcast_masked k;
-    let staged =
-      if (K.ren k).async_copy then staged_product ~core_threads k else None
-    in
-    match staged with
-    | Some s -> s
-    | None ->
-        let blocked =
-          if host_elementwise k then begin
-            upcast_vectors k;
-            None
-          end
-          else begin
-            let four_first = four_first ~core_threads k in
-            let blocking = block k (upcast_more ~four_first k) in
-            (match blocking with Free -> unroll k | Short _ | Blocked _ -> ());
-            upcast_one k;
-            (* A reduce split into threads lays the axes' threads as a
-               blocked contraction's, short of the units or not. *)
+    if host_elementwise k then begin
+      upcast_vectors k;
+      if (K.ren k).has_local then locals k;
+      k
+    end
+    else
+      (* The kernel before [block], for a staged product's tile. *)
+      let unblocked = if (K.ren k).async_copy then Some (K.copy k) else None in
+      let four_first = four_first ~core_threads k in
+      let blocking = block k (upcast_more ~four_first k) in
+      match Option.bind unblocked (staged_product blocking) with
+      | Some s -> s
+      | None ->
+          (match blocking with Free -> unroll k | Short _ | Blocked _ -> ());
+          upcast_one k;
+          (* A reduce split into threads lays the axes' threads as a blocked
+             contraction's, short of the units or not. *)
+          let blocked =
             match blocking with
             | Blocked (ra, rb) -> Some (ra, rb)
             | Short (ra, rb) when K.axes_of k [ Local ] <> [] -> Some (ra, rb)
             | Free | Short _ -> None
-          end
-        in
-        if (K.ren k).has_local then locals ?blocked k;
-        k
+          in
+          if (K.ren k).has_local then locals ?blocked k;
+          k
   end
 
 let hand_coded_with ~core_threads k =

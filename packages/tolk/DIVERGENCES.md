@@ -5967,15 +5967,14 @@ against 2.77).
     bfloat16 product no core takes, on a renderer that copies nothing
     asynchronously (on one that does, D497's staged tile takes it), what the
     unroll leaves of it splits, blocked or not, into the first local threads
-    (`lidx0`), as many as read
-    in their runs of 4 a 32-byte sector of the widest operand's row, 2 for
-    float32 and 4 for bfloat16, halved while they do not divide it or leave
-    each fewer than 16 trips; their partials meet through shared memory, as
-    a group's do. The later axis then takes the largest power of two of
-    threads whose square the SIMD group's other lanes hold, 4 on CUDA, and
-    the other the rest of the workgroup's 128, each padded as above, where
-    tinygrad's 16 lanes across the columns each load 16 bytes of a row of
-    their own;
+    (`lidx0`), as many as read in their runs of 4 a 32-byte sector of the
+    widest operand's row, 2 for float32 and 4 for bfloat16, halved while
+    they do not divide it or leave each fewer than 16 trips; their partials
+    meet through shared memory, as a group's do. The later axis then takes
+    the largest power of two of threads whose square the SIMD group's other
+    lanes hold, 4 on CUDA, and the other the rest of the workgroup's 128,
+    each padded as above, where tinygrad's 16 lanes across the columns each
+    load 16 bytes of a row of their own;
   - a kernel upcast past those two axes' 16 lanes, as the masked upcasts
     take a materialised mask's axes whole, is not blocked, nor a sum in 8
     bytes;

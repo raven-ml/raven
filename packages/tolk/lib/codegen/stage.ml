@@ -22,9 +22,11 @@ let extent u = Dtype.Value.to_int (vmax u) + 1
 
 (* A staged product in registers takes several steps of its loop a trip
    ({!deepen}): a loop of those steps, inside the trips, is part of the trip's
-   tile as the lanes are. Its identity is its loop's followed by [step], which
-   orders it inside the blocks a sum's running sums split that loop into
-   ({!Chains}, whose blocks follow with [Chains.chain]). *)
+   tile as the lanes are. It has its loop's axis type, so only its identity
+   can mark it, as {!Codegen} marks the blocks of running sums it splits a
+   loop into: those take the loop's identity followed by [Chains.chain], the
+   steps take it followed by [step], one more, and so nest inside both the
+   trips and the blocks. *)
 let step = Chains.chain + 1
 
 let is_step r =
@@ -702,8 +704,9 @@ let inner_elements l =
    which the operand then computes on as it did, so the operand's values do
    not change. A load with no tile that reads as many elements as the
    largest tile, as rows gathered through a copied map of row indices are,
-   keeps the operand unstaged. A decoded operand's loads are copied where [async] holds, each
-   load copied or held ({!decoded_loads}), and some copied. *)
+   keeps the operand unstaged. A decoded operand's loads are copied where
+   [async] holds, each load copied or held ({!decoded_loads}), and some
+   copied. *)
 let loads_of ~async ?whole all x =
   match staged_tile ?whole all x with
   | Some t -> Some [ (x, t) ]
@@ -1035,8 +1038,10 @@ let interleaved summed t =
       && List.for_all threaded rest
   | [] -> false
 
-(* The products in registers of [all] whose operands staging copies, where
-   [ren] copies asynchronously. *)
+(* The products in registers of [all] whose operands staging copies: none
+   but in a workgroup that holds no other shared memory and reduces across
+   no threads, on a renderer that stages a tile in two, which only an
+   asynchronous copy does ({!depth}). *)
 let staged_products (ren : Renderer.t) all =
   let staged (m, summed) =
     let tiles = operand_tiles ~async:true all (src m) in
@@ -1046,8 +1051,12 @@ let staged_products (ren : Renderer.t) all =
          (function _, Some t -> interleaved summed t | _, None -> false)
          tiles
   in
-  if not ren.async_copy then []
-  else List.map fst (List.filter staged (products all))
+  if
+    Option.is_some (workgroup all)
+    && (not (has_locals all))
+    && depth ren [ copy ] = 2
+  then List.map fst (List.filter staged (products all))
+  else []
 
 (* The cores of [all] whose operands staging copies: its tensor cores and its
    staged products in registers. *)
@@ -1105,7 +1114,9 @@ let steps (ren : Renderer.t) sink ~k =
   let n = extent k in
   let cores = List.filter (fun u -> Op.equal (op u) Op.Wmma) all in
   let reads t =
-    List.exists (fun r -> axis_id r = axis_id k) (Nodes.to_list (ranges t.outer))
+    List.exists
+      (fun r -> axis_id r = axis_id k)
+      (Nodes.to_list (ranges t.outer))
   in
   (* The least steps at which each row a staged core's tiles read along [k]
      covers a sector, if [k] keeps more than one trip to pipeline and the
@@ -1153,19 +1164,18 @@ let steps (ren : Renderer.t) sink ~k =
    1792 in 1.45 ms at 4 values a trip and 0.96 ms at 20 (design/smem-gemm). *)
 
 let trip_steps (ren : Renderer.t) ~bytes ~lanes n =
-  let fits s = 2 * s * bytes <= ren.shared_max in
   let keeps s =
     n mod s = 0
     && n / s >= 2
-    && s * lanes <= chunk
-    && fits s
+    && 2 * s * bytes <= ren.shared_max
     && n / s mod Chains.block ~lanes:(s * lanes) (n / s) = 0
   in
-  List.find_opt keeps (List.init (max 0 (chunk / max 1 lanes)) (fun i -> (chunk / lanes) - i))
+  let most = chunk / lanes in
+  List.find_opt keeps (List.init most (fun i -> most - i))
 
-(* [sink] with the loop of each staged product in registers read in trips of
-   several steps ({!trip_steps}), the steps a loop inside the trips that the
-   tiles take whole. *)
+(* [sink] with the loop of each staged product in registers
+   ({!staged_products}) read in trips of several steps ({!trip_steps}), the
+   steps a loop inside the trips that the tiles take whole. *)
 let deepen (ren : Renderer.t) sink =
   let all = toposort ~calls:Skip sink in
   let plan m =
@@ -1189,7 +1199,10 @@ let deepen (ren : Renderer.t) sink =
   in
   List.fold_left
     (fun sink (x, n, s) ->
-      let o = replace x ~src:[ Shape.const_like (nth x 0) (`Int (Bigint.of_int (n / s))) ] in
+      let o =
+        replace x
+          ~src:[ Shape.const_like (nth x 0) (`Int (Bigint.of_int (n / s))) ]
+      in
       let b =
         range ~axis_type:(axis_type x) ~dtype:(dtype x) (Int s)
           (axis_id x @ [ step ])
@@ -1201,13 +1214,7 @@ let deepen (ren : Renderer.t) sink =
     sink splits
 
 let operands (ren : Renderer.t) sink =
-  let sink =
-    let all = toposort ~calls:Skip sink in
-    match workgroup all with
-    | Some _ when depth ren [ copy ] = 2 && not (has_locals all) ->
-        deepen ren sink
-    | _ -> sink
-  in
+  let sink = deepen ren sink in
   let all = toposort ~calls:Skip sink in
   match workgroup all with
   | None -> sink
@@ -1598,10 +1605,6 @@ let stages_product (ren : Renderer.t) sink =
   let staged p =
     Option.is_some (staging ren all ~used:(used_before ren all p) p)
   in
-  Option.is_some (workgroup all)
-  && (not (has_locals all))
-  && depth ren [ copy ] = 2
-  &&
   match staged_products ren all with
   | [] -> false
   | ps -> List.for_all staged ps
@@ -1615,33 +1618,14 @@ let stages_product (ren : Renderer.t) sink =
    16384 rows by weights stored [outputs; inputs] ran so at 23.9-30.1 TFLOP/s,
    against 15.4-18.5 split across threads ({!Heuristic}), and cuBLAS's SIMT
    kernels' 23-31. *)
-let product_threads = (16, 8)
-let product_lanes = 8
+type product_tile = { threads : int * int; outputs : int; run : int }
 
-let product_tile (ren : Renderer.t) ~itemsize ~sizes:(n, m, k) ~short =
-  let tm, tn = product_threads in
-  let u = if short then product_lanes / 2 else product_lanes in
-  let v = copy / itemsize in
+let product_tile (ren : Renderer.t) ~itemsize ~k ~short =
+  let run = copy / itemsize in
   if
-    itemsize <= copy && n > 0 && m > 0 && k mod v = 0 && k / v >= 2
+    itemsize <= copy && k mod run = 0 && k / run >= 2
     && depth ren [ copy ] = 2
-  then
-    let pad axis e t =
-      if e mod t = 0 then [] else [ Opt.Padto { axis; amount = t } ]
-    in
-    let split axis amount target =
-      Opt.Split { axis; amount; target; top = false }
-    in
-    Some
-      (pad 0 n (tn * u)
-      @ pad 1 m (tm * u)
-      @ [
-          split 0 tn Opt.Local;
-          split 1 tm Opt.Local;
-          split 0 u Opt.Upcast;
-          split 1 u Opt.Upcast;
-          split 2 v Opt.Upcast;
-        ])
+  then Some { threads = (16, 8); outputs = (if short then 4 else 8); run }
   else None
 
 (* Decoded panels on the host *)
