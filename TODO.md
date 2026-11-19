@@ -9,6 +9,9 @@ Measurements and parked work behind these items:
 _plans/perf-campaign/todo-archive-2026-11-18.md. A path in parentheses is
 under _plans/perf-campaign/ unless it names another directory of _plans/.
 
+- Values rangeify stores for readers that index them apart never share a
+  kernel (D137 groups only the graph's stores): a dirichlet draw's jvp runs
+  30 kernels against its forward's 8, 28.5 s cold in test_grad (drawfuse)
 - Since D485 every CUDA kernel is `tolk_kernel` in nsys and ncu, so a
   profile names no kernel; attribution falls back to launch signatures
 - f32 SIMT products run at 15-17.5 TFLOP/s where cuBLAS runs TESSERA's
@@ -101,9 +104,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 
 ## nx, rune
 
-- A compiled jvp or gradient of a dirichlet draw lowers to 24-48 kernels:
-  the gamma draw's rejection rounds and Box-Muller pairs stay apart, so
-  test_grad's dirichlet law spends 11 s compiling (15.7 s alone)
 - gpt-oss's decode copies v (`E_16_8_4`, a stride-640 slice of the fused
   q, k, v product) before rune's scatter writes the cache, since a custom
   kernel's argument that views a computed node is stored apart. Removing it
