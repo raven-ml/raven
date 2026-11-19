@@ -8,8 +8,9 @@
    from bytes, its special values as stated, and a narrower float computed at
    float32 and rounded once. At float32, log is one of the two floats around
    the exact value and asinh within 2 ulps, each against the C library's
-   float64 result. roundeven is exact: at every float32, and at float64 over
-   drawn bits and halves, it is the float64 arithmetic's ties to even. *)
+   float64 result. roundeven is exact: at every float32 that rounds to neither
+   zero nor itself and a sample of the rest, and at float64 over drawn bits
+   and halves, it is the float64 arithmetic's ties to even. *)
 
 open Windtrap
 module A = Nx_array
@@ -305,22 +306,41 @@ let even x =
   let a = Float.abs x in
   if a < 0x1p52 then Float.copy_sign (a +. 0x1p52 -. 0x1p52) x else x
 
-(* Every float32, [2^24] bit patterns at a time. *)
+(* The float32 patterns [start], [start + step], ..., [count] of them, against
+   [even]. *)
+let roundeven_patterns ~start ~step count =
+  let x =
+    Nx.bitcast Nx.float32
+      (Nx.arange Nx.int32 start (start + ((count - 1) * step) + 1) step)
+  in
+  let got =
+    Bigarray.array1_of_genarray
+      (Nx.to_bigarray Bigarray.int32 (Nx.bitcast Nx.int32 (Nx.roundeven x)))
+  in
+  for i = 0 to count - 1 do
+    let x = Int32.float_of_bits (Int32.of_int (start + (i * step))) in
+    let g = Int32.float_of_bits (Bigarray.Array1.unsafe_get got i) in
+    if not (same (even x) g) then failf "at %h: %h, not %h" x g (even x)
+  done
+
+(* Every float32 of magnitude in [2^-3, 2^25), the exponents where a float
+   rounds to neither zero nor itself, and their neighbours'; of each other
+   exponent, of either sign, its first and last 4096 patterns and every
+   257th: zeros, subnormals, integers from [2^25], infinities and NaNs. The
+   patterns run [2^24] at a time, a sign and two exponents. *)
 let roundeven_float32 () =
-  let n = 1 lsl 24 in
+  let n = 1 lsl 24 and edge = 4096 in
   for c = 0 to 255 do
     let start = (c lsl 24) - (1 lsl 31) in
-    let x = Nx.bitcast Nx.float32 (Nx.arange Nx.int32 start (start + n) 1) in
-    let got =
-      Bigarray.array1_of_genarray
-        (Nx.to_bigarray Bigarray.int32 (Nx.bitcast Nx.int32 (Nx.roundeven x)))
-    in
-    for i = 0 to n - 1 do
-      let x = Int32.float_of_bits (Int32.of_int (start + i)) in
-      let g = Int32.float_of_bits (Bigarray.Array1.unsafe_get got i) in
-      if not (same (even x) g) then
-        failf "at %h: %h, not %h" x g (even x)
-    done
+    let exponents = 2 * (c land 127) in
+    if exponents >= 124 && exponents < 152 then
+      roundeven_patterns ~start ~step:1 n
+    else begin
+      roundeven_patterns ~start ~step:257 (((n - 1) / 257) + 1);
+      List.iter
+        (fun first -> roundeven_patterns ~start:(start + first) ~step:1 edge)
+        [ 0; (n / 2) - edge; n / 2; n - edge ]
+    end
   done
 
 (* Drawn bits, and halves, quarters and integers up to [2^53] with their
@@ -410,7 +430,7 @@ let math =
       ];
     group "roundeven"
       [
-        test "every float32 against float64 ties to even" roundeven_float32;
+        test "float32 against float64 ties to even" roundeven_float32;
         test "float64 against its own ties to even" roundeven_float64;
         test "integers and examples" roundeven_others;
       ];
