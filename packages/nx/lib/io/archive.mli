@@ -23,10 +23,10 @@ val names : 'd t -> string list
 val find : string -> 'd t -> 'd Nx.packed option
 
 val tensor :
-  shape:int array -> ('v, 's) Nx.dtype -> string -> 'd t -> ('v, 's, 'd) Nx.t
+  ?shape:int array -> ('v, 's) Nx.dtype -> string -> 'd t -> ('v, 's, 'd) Nx.t
 
 val float :
-  shape:int array ->
+  ?shape:int array ->
   (float, 's) Nx.dtype ->
   string ->
   'd t ->

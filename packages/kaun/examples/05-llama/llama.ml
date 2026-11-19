@@ -234,15 +234,6 @@ let unpair ~heads w =
        (Nx.transpose ~axes:[ 0; 2; 1; 3 ]
           (Nx.reshape [| heads; half; 2; cols |] w)))
 
-(* A block format's entry, its bytes at uint8. *)
-let gguf_bytes name entries : Nx.host Nx.uint8_t =
-  match Nx_io.Archive.find name entries with
-  | None -> failwith (name ^ ": no entry in the archive")
-  | Some (Nx.P t) -> (
-      match Nx.dtype t with
-      | Nx.Dtype.Uint8 -> t
-      | _ -> failwith (name ^ ": a block format's entry is not uint8"))
-
 let shape_string s =
   String.concat "; " (Array.to_list (Array.map string_of_int s))
 
@@ -257,8 +248,10 @@ let gguf_float g ?heads ~shape dt name =
       (Printf.sprintf "%s: shape [%s] in the file, [%s] expected" name
          (shape_string info.shape) (shape_string shape));
   let rows w = match heads with None -> w | Some heads -> unpair ~heads w in
+  (* A block format's entry is its bytes at uint8. *)
   let blocks quant =
-    Nx_quant.dequant dt (quant (rows (gguf_bytes name entries)))
+    let bytes = Nx_io.Archive.tensor Nx.uint8 name entries in
+    Nx_quant.dequant dt (quant (rows bytes))
   in
   match info.dtype with
   | F32 | F16 | BF16 | F64 -> rows (Nx_io.Archive.float ~shape dt name entries)

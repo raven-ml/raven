@@ -421,6 +421,15 @@ let projector_files =
              ("Tessera.Barlow.load_projector: " ^ file
             ^ ": not a projector of linear and batch-norm layers"))
           (fun () -> Barlow.load_projector file));
+    test "a projector missing a bias is refused, naming the entry" (fun () ->
+        let p = Barlow.projector ~key:(Nx.Rng.key 5) [ 4; 5; 3 ] in
+        let entries =
+          List.filter (fun (name, _) -> name <> "net.0.bias") (torch_layout p)
+        in
+        with_npz entries @@ fun file ->
+        raises
+          (Failure "Nx_io.Archive.float: net.0.bias: no entry in the archive")
+          (fun () -> Barlow.load_projector file));
   ]
 
 (* Schedules *)

@@ -77,11 +77,7 @@ let project p e =
 let load_projector file =
   let a = Nx_io.load_npz file in
   let fail m = failwith ("Tessera.Barlow.load_projector: " ^ file ^ ": " ^ m) in
-  let entry name =
-    match Nx_io.Archive.find name a with
-    | None -> fail ("no entry " ^ name)
-    | Some (Nx.P x) -> Nx_io.Archive.float ~shape:(Nx.shape x) f32 name a
-  in
+  let entry name = Nx_io.Archive.float f32 name a in
   (* The modules with parameters, in order; ReLUs have none. *)
   let modules =
     List.filter_map

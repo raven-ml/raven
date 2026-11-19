@@ -85,8 +85,9 @@ val load_projector : string -> (Nx.host Nx.float32_t, Nx.host) projector
     [[out; in]] read as stored, each but the last followed by a batch
     normalisation, its weight the scale and its bias the shift, all at float32.
 
-    Raises [Failure] naming [file] for another sequence of modules or a missing
-    bias, and as {!Nx_io.load_npz} does. *)
+    Raises [Failure] naming [file] for another sequence of modules. Raises
+    [Failure] as {!Nx_io.Archive.float} does for a missing bias, and as
+    {!Nx_io.load_npz} does. *)
 
 val project :
   ((float, 's, 'd) Nx.t, 'd) projector -> 'd Nx.float32_t -> 'd Nx.float32_t

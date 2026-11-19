@@ -548,6 +548,74 @@ let entries =
           equal (array float_exact) [| 3. |] (Nx.to_array b'));
     ]
 
+(* Reads without a shape *)
+
+let float_any = List.map (fun (F dt) -> D.Any dt) float_dtypes
+
+let float_dtype = Gen.of_list ~pp:(fun ppf (F dt) -> D.pp ppf dt) float_dtypes
+
+(* Without [~shape], a read takes the shape the archive stores: [tensor] is the
+   entry as stored, and [float] the entry, or its cast when the dtypes differ,
+   over drawn values of no element, 0-d and broadcast among others. *)
+let unshaped =
+  group "reads without a shape"
+    [
+      prop "tensor is the entry as stored, at its own shape"
+        (case safetensors_dtypes) (fun c ->
+          Io_support.covers c;
+          let x = value c in
+          let (Nx.P v) = x in
+          let a = Archive.of_list [ ("w", x) ] in
+          equal packed x (Nx.P (Archive.tensor (Nx.dtype v) "w" a)));
+      prop "float is the entry at dt, cast when the dtypes differ"
+        (Gen.pair (case float_any) float_dtype)
+        (fun ((Case (src, s, vs, view) as c), F dt) ->
+          cover "no element" (Array.mem 0 s);
+          cover "0-d" (s = [||] && view <> Broadcast);
+          cover "broadcast" (view = Broadcast);
+          cover "NaN" (has_nan src vs);
+          let x = value c in
+          let (Nx.P v) = x in
+          cover "the entry's dtype" (D.equal (Nx.dtype v) dt);
+          let expected =
+            if D.equal (Nx.dtype v) dt then x else Nx.P (Nx.cast dt v)
+          in
+          let a = Archive.of_list [ ("w", x) ] in
+          equal packed expected (Nx.P (Archive.float dt "w" a)));
+      cases "a read refuses, naming the entry, as with a shape" ~id:fst
+        (let a =
+           Archive.of_list
+             [
+               ("w", Nx.P (vec Nx.float16 [| 1.5; -2. |]));
+               ("count", Nx.P (vec Nx.int32 [| 7l |]));
+             ]
+         in
+         [
+           ( "tensor of a missing entry",
+             ( Failure "Nx_io.Archive.tensor: x: no entry in the archive",
+               fun () -> Nx.P (Archive.tensor Nx.float16 "x" a) ) );
+           ( "tensor at another dtype",
+             ( Failure
+                 "Nx_io.Archive.tensor: w: float16 in the archive, float32 \
+                  asked for",
+               fun () -> Nx.P (Archive.tensor Nx.float32 "w" a) ) );
+           ( "float of a missing entry",
+             ( Failure "Nx_io.Archive.float: x: no entry in the archive",
+               fun () -> Nx.P (Archive.float Nx.float32 "x" a) ) );
+           ( "float of an integer entry",
+             ( Failure
+                 "Nx_io.Archive.float: count: int32 in the archive, not \
+                  float16, bfloat16, float32 or float64",
+               fun () -> Nx.P (Archive.float Nx.float32 "count" a) ) );
+           ( "float to a dtype outside the four",
+             ( Invalid_argument
+                 "Nx_io.Archive.float: float8_e4m3fn is not float16, \
+                  bfloat16, float32 or float64",
+               fun () -> Nx.P (Archive.float Nx.float8_e4m3fn "w" a) ) );
+         ])
+        (fun (_, (e, f)) -> raises e (fun () -> ignore (f ())));
+    ]
+
 (* Imports *)
 
 module Read = Set.Make (String)
@@ -682,6 +750,10 @@ let imports =
           ("tensor", read "a");
           ( "float",
             fun a -> ignore (Archive.float ~shape:[| 1 |] Nx.float64 "a" a) );
+          ( "tensor without a shape",
+            fun a -> ignore (Archive.tensor Nx.float32 "a" a) );
+          ( "float without a shape",
+            fun a -> ignore (Archive.float Nx.float64 "a" a) );
           ( "to_value",
             fun a ->
               ignore
@@ -741,4 +813,4 @@ let imports =
     ]
 
 let () =
-  exit (run "nx.io archives" [ values; ownership; entries; imports ])
+  exit (run "nx.io archives" [ values; ownership; entries; unshaped; imports ])

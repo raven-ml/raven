@@ -614,11 +614,10 @@ let heads_round_trip =
         (arrays hs) (arrays back))
 
 let heads_missing =
-  test "heads refuse an npz without a prefix's entry, naming both" (fun () ->
+  test "heads refuse an npz without a prefix's entry, naming it" (fun () ->
       let w = Nx.zeros Nx.float32 [| 3; 2 |] in
       with_npz [ ("2.weight", Nx.P w) ] @@ fun file ->
-      raises
-        (Failure ("Tessera.Distil.load_heads: " ^ file ^ ": no entry 2.bias"))
+      raises (Failure "Nx_io.Archive.float: 2.bias: no entry in the archive")
         (fun () -> Distil.load_heads file [ 2 ]))
 
 let positions =

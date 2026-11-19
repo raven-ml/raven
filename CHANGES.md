@@ -3470,6 +3470,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_io.Archive.tensor` and `Nx_io.Archive.float` take `~shape` as optional:
+  without it, an entry is read at the shape the file stores, still checked by
+  dtype, and a missing entry still raises `Failure` naming it.
 - `Nx_io.save_safetensors ~metadata` writes a SafeTensors file's string
   metadata, such as a model's configuration, and
   `Nx_io.load_safetensors_metadata` reads it back from the header alone.

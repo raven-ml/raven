@@ -50,8 +50,9 @@ val load_heads :
     [k.weight], [[d; k]], read as stored, and its bias [k.bias], [[d]], at
     float32, every head of one [d].
 
-    Raises [Failure] naming [file] and the entry if an entry is missing or of
-    another shape, [d] the first prefix's, and as {!Nx_io.load_npz} does. *)
+    Raises [Failure] naming [file] and the entry if an entry is of another
+    shape, [d] the first prefix's. Raises [Failure] as {!Nx_io.Archive.float}
+    does for a missing entry, and as {!Nx_io.load_npz} does. *)
 
 (** {1:loss Loss} *)
 

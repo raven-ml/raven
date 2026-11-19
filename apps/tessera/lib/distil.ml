@@ -41,17 +41,11 @@ let heads ~key ?(hidden = []) ~prefixes d =
       (k, layers 0 widths))
     prefixes
 
-(* An npz's entry [name] at float32, on the host. *)
-let entry fn file a name =
-  match Nx_io.Archive.find name a with
-  | None -> failwith (Printf.sprintf "Tessera.%s: %s: no entry %s" fn file name)
-  | Some (Nx.P x) -> Nx_io.Archive.float ~shape:(Nx.shape x) Nx.float32 name a
-
 let dims s = String.concat "; " (Array.to_list (Array.map string_of_int s))
 
 let load_heads file prefixes =
   let a = Nx_io.load_npz file in
-  let entry = entry "Distil.load_heads" file a in
+  let entry name = Nx_io.Archive.float Nx.float32 name a in
   let fail name x need =
     failwith
       (Printf.sprintf "Tessera.Distil.load_heads: %s: %s [%s], [%s] expected"

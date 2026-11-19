@@ -77,11 +77,11 @@ let check_shape ~fn name ~shape x =
       (Fail.pp_shape (Nx.shape x))
       (Fail.pp_shape shape)
 
-let tensor (type v s d) ~shape (dt : (v, s) D.t) name (t : d t) : (v, s, d) Nx.t
+let tensor (type v s d) ?shape (dt : (v, s) D.t) name (t : d t) : (v, s, d) Nx.t
     =
   let fn = "tensor" in
   let (Nx.P x) = entry ~fn name t in
-  check_shape ~fn name ~shape x;
+  Option.iter (fun shape -> check_shape ~fn name ~shape x) shape;
   match D.equal_witness (Nx.dtype x) dt with
   | Some Type.Equal -> x
   | None ->
@@ -95,7 +95,7 @@ let convertible (type v s) (dt : (v, s) D.t) =
   | D.Float16 | D.Bfloat16 | D.Float32 | D.Float64 -> true
   | _ -> false
 
-let float (type s d) ~shape (dt : (float, s) D.t) name (t : d t) :
+let float (type s d) ?shape (dt : (float, s) D.t) name (t : d t) :
     (float, s, d) Nx.t =
   let fn = "float" in
   if not (convertible dt) then
@@ -103,7 +103,7 @@ let float (type s d) ~shape (dt : (float, s) D.t) name (t : d t) :
       "Nx_io.Archive.%s: %s is not float16, bfloat16, float32 or float64" fn
       (D.name dt);
   let (Nx.P x) = entry ~fn name t in
-  check_shape ~fn name ~shape x;
+  Option.iter (fun shape -> check_shape ~fn name ~shape x) shape;
   match D.equal_witness (Nx.dtype x) dt with
   | Some Type.Equal -> x
   | None when convertible (Nx.dtype x) -> Nx.cast dt x

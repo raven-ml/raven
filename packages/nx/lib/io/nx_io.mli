@@ -120,8 +120,8 @@
     ]}
 
     Code that reads a file another program wrote, an {e importer}, asks for each
-    entry by name, shape and dtype with {!Archive.tensor} and {!Archive.float},
-    and rearranges it with nx:
+    entry by name and dtype with {!Archive.tensor} and {!Archive.float}, and by
+    shape where it knows one, and rearranges it with nx:
 
     {[
     let linear a ~inputs ~outputs name =
@@ -162,29 +162,31 @@ module Archive : sig
   (** [find name a] is [a]'s entry [name], if any. *)
 
   val tensor :
-    shape:int array -> ('v, 's) Nx.dtype -> string -> 'd t -> ('v, 's, 'd) Nx.t
-  (** [tensor ~shape dt name a] is [a]'s entry [name], as stored.
+    ?shape:int array -> ('v, 's) Nx.dtype -> string -> 'd t -> ('v, 's, 'd) Nx.t
+  (** [tensor ~shape dt name a] is [a]'s entry [name], as stored. Without
+      [shape], the entry is read at the shape [a] stores.
 
-      Raises [Failure] naming the entry if [a] has no entry [name], or if its
-      shape is not [shape] or its dtype is not [dt], as in
+      Raises [Failure] naming the entry if [a] has no entry [name], if [shape]
+      is given and its shape is not [shape], or if its dtype is not [dt], as in
       ["Nx_io.Archive.tensor: h.0.w: shape [3] in the archive, [2; 3] asked
        for"]. *)
 
   val float :
-    shape:int array ->
+    ?shape:int array ->
     (float, 's) Nx.dtype ->
     string ->
     'd t ->
     (float, 's, 'd) Nx.t
-  (** [float ~shape dt name a] is [a]'s entry [name] at [dt]. It is the entry as
-      stored when its dtype is [dt], and otherwise its cast ({!Nx.cast}), which
-      allocates and reads every element. It converts between float16, bfloat16,
-      float32 and float64. Each call that casts makes a new value, so an
-      importer calls [float] once for two tied weights.
+  (** [float ~shape dt name a] is [a]'s entry [name] at [dt]. Without [shape],
+      the entry is read at the shape [a] stores. It is the entry as stored when
+      its dtype is [dt], and otherwise its cast ({!Nx.cast}), which allocates
+      and reads every element. It converts between float16, bfloat16, float32
+      and float64. Each call that casts makes a new value, so an importer calls
+      [float] once for two tied weights.
 
       Raises [Invalid_argument] if [dt] is not one of the four. Raises [Failure]
-      naming the entry if [a] has no entry [name], if its shape is not [shape],
-      or if its dtype is not one of the four. *)
+      naming the entry if [a] has no entry [name], if [shape] is given and its
+      shape is not [shape], or if its dtype is not one of the four. *)
 
   val import : ?unread:(string -> bool) -> ('d t -> 'a) -> 'd t -> 'a
   (** [import ~unread f a] is [f a'], where [a'] holds [a]'s entries and
