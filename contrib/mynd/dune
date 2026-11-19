@@ -1,0 +1,27 @@
+; Since dune language 3.21 the dev profile compiles with the compiler's
+; default warnings, which leave unused values, opens and fields unreported.
+; Keep dune's stricter development set. An odoc warning is an error in every
+; profile.
+;
+; mynd is a project of its own, so the workspace root's env does not reach it.
+; WINDTRAP_TIMEOUT bounds each test that sets no ~timeout, so a hung test
+; cannot block a shared watch server. CACHEDB and XDG_CACHE_HOME put tolk's
+; disk cache, and the files tolk caches beside it, in a directory cache of
+; each action's working directory, inside _build: a test run reads no entry a
+; user's run wrote and writes none to the user's cache.
+
+(env
+ (dev
+  (flags
+   (:standard %{dune-warnings}))
+  (odoc (warnings fatal))
+  (env-vars
+   (WINDTRAP_TIMEOUT 60)
+   (CACHEDB cache)
+   (XDG_CACHE_HOME cache)))
+ (_
+  (odoc (warnings fatal))
+  (env-vars
+   (WINDTRAP_TIMEOUT 60)
+   (CACHEDB cache)
+   (XDG_CACHE_HOME cache))))

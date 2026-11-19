@@ -238,6 +238,11 @@ jobs:
           opam exec -- dune build --release contrib/alda
           bash .github/memcap.sh opam exec -- dune build --release @contrib/alda/runtest
 
+      - name: Build and test mynd
+        run: |
+          opam exec -- dune build --release contrib/mynd
+          bash .github/memcap.sh opam exec -- dune build --release @contrib/mynd/runtest
+
       - name: Build and test tolk
         run: |
           opam exec -- dune build --release packages/tolk

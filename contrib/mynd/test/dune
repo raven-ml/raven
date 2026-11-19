@@ -1,0 +1,15 @@
+; golden/*.npz hold the results of torch, torchvision, pycocotools and
+; scipy that the tests compare with.
+
+(tests
+ (names
+  test_values
+  test_sample
+  test_resize
+  test_annot
+  test_components
+  test_nms)
+ (package mynd)
+ (libraries mynd nx nx.io rune windtrap)
+ (deps
+  (glob_files golden/*.npz)))

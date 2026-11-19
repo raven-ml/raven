@@ -1,0 +1,6 @@
+; mynd: images, positions in them and their annotations, over nx.
+
+(library
+ (name mynd)
+ (public_name mynd)
+ (libraries nx rune))

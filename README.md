@@ -75,6 +75,7 @@ Packages in [`contrib/`](contrib/) build against every change to the core and re
 |     | [**ymir**](contrib/ymir/)             | Astropy   | Astronomy: units, frames, FITS, photometry, cosmology |
 |     | [**jord**](contrib/jord/)             | rasterio  | Earth observation: systems, grids, warps, products    |
 |     | [**alda**](contrib/alda/)             | SciPy     | Signals: windows, spectra, filters, resampling        |
+|     | [**mynd**](contrib/mynd/)             | Pillow    | Images: values, sampling, resizing, boxes, masks      |
 
 ## Getting started
 
