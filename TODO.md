@@ -104,9 +104,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - A compiled jvp or gradient of a dirichlet draw lowers to 24-48 kernels:
   the gamma draw's rejection rounds and Box-Muller pairs stay apart, so
   test_grad's dirichlet law spends 11 s compiling (15.7 s alone)
-- Host result buffers fault fresh pages unevenly between calls: attention's
-  eager lengths derivative in order takes 16.9k minor faults a call against
-  7.0k before its join, and runs 12% slower though it writes 15% less
 - gpt-oss's decode copies v (`E_16_8_4`, a stride-640 slice of the fused
   q, k, v product) before rune's scatter writes the cache, since a custom
   kernel's argument that views a computed node is stored apart. Removing it
@@ -215,6 +212,9 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 
 ## rig
 
+- rig's host cache (rig_heap.c) misses 46-50 buffers a call of attention's
+  eager lengths gradient (peak-minus-live bound at its floor, exact sizes),
+  and glibc unmaps them: 1.5 us a fault, up to 55 ms a call (hostfaults/)
 - gpt-oss decode runs 26 CUDA chains, one a submit; the 32 cap binds only
   at prefill. 24 boundaries of 0.8 us and a 23 us host gap before the
   first layer cost 42-76 us of 6.12 ms (perf-campaign/chaincap/cause.md)
