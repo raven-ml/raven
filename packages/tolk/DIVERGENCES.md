@@ -1920,7 +1920,8 @@ the width, and devectorizes no expanded scalar into a stack; with it
   and like the operation test it ignores the broadcast's extent. A read in a
   selecting sum, as of `selected_scaled`'s 160 nodes, is left to D163,
   which counts its copies at the selected index and inlines it as tinygrad
-  does. A broadcast value of that much plain arithmetic read elsewhere is
+  does, unless an enclosing sum reads it again at outputs (D106). A
+  broadcast value of that much plain arithmetic read elsewhere is
   stored too, which no bench row runs. A table its gathers read again is
   the same case: on fudge's host a table of 64 rows read at 4096 takes
   0.8-1.2 ms stored against 2.8-3.2 ms inlined.
@@ -1930,8 +1931,9 @@ the width, and devectorizes no expanded scalar into a stack; with it
   inlined) and `rope_decode` (a decode step's rotated query reads its gathered
   rows of a cosine table and is not stored) rows of `kernel_counts.golden` and
   their kernel goldens, `selected_scaled` (a heavy value a selecting sum
-  reads, inlined) of `kernel_counts.tolk`, and its `get_kernel_graph ›
-  gathers read where broadcast`, `› gathers that read more than their table
+  reads, which this rule leaves to D163; D106 stores it) of
+  `kernel_counts.tolk`, and its `get_kernel_graph › gathers read where
+  broadcast`, `› gathers that read more than their table
   holds`, `› broadcast exponentials` and `› a spelled exponential selected
   and broadcast`; rune's `jit ›
   an exponential every output of a product reads is stored` and `› a routed
@@ -2631,38 +2633,55 @@ scalar, for rune's staged scan, which now replaces it by zeros in the step
   values on a GPU: missing (the old rune's `Rune.quant › gpus › CUDA › on
   CUDA, a prompt's routes in blocks are eager's` went with its rewrite).
 
-## D106. A value every output of a reduction reads stays stored
+## D106. A value a reduction reads again at its outputs stays stored
 
 - **tinygrad:** `schedule/rangeify.py` (`remove_bufferize`, which
   inlines a stored value that reads at most three buffers and no reduction
   reading a buffer, whoever reads it) and `schedule/indexing.py`
   (`run_rangeify`, which stores a value its consumers read at different
   indices without marking it broadcast).
-- **tolk:** `Rangeify.remove_bufferize`'s `read_by_every_output`, with
-  `Rangeify.reduced` (a range a reduction of the graph closes), and
-  `Indexing.assign_ranges`, which marks such a value `Broadcast` when its
-  consumers broadcast it.
-- **Differs:** a stored value that is broadcast, read only through the
-  reduce ranges of its consumer, those its reductions close, and reads more
-  than one buffer stays stored: its consumer is a reduction every output of
-  which reads it, as a matrix-vector product reads its vector. A value read
-  through an output range, as a matrix's rows are, is inlined as before. A
-  value stored for consumers that read it at different indices, as the
-  query, key and value projections read one normalised activation, is
-  marked broadcast when they broadcast it, as D77 marks a value that a
+- **tolk:** `Rangeify.remove_bufferize`'s `read_by_every_output` and
+  `reread`, with `Rangeify.reduced`, `Rangeify.mark_across` (through
+  `reread_across` and `data_reads`), `Rangeify.read_bytes` and
+  `Rangeify.held_bytes`, and `Indexing.assign_ranges`, which marks such a
+  value `Broadcast` when its consumers broadcast it.
+- **Differs:** a stored value that is broadcast and reads more than one
+  buffer stays stored when a reduction reads it on its data path (not as
+  a load's position or a selection's condition) along a range it sums,
+  not one whose sum selects one trip, and the reduction's outputs run
+  along a range the read does not: each output along it, as a product's
+  output columns, would compute the value again. A read inside a sum that
+  selects one trip counts where an enclosing sum reads it so. It must do
+  work and hold no more bytes than it reads. A read in the value of such a
+  stage, one neither kept whole nor running a reduction of storage, counts
+  too where its index runs over at least as many points as the stage it
+  reads holds: inlined, that stage is read again with it. A value whose
+  elements times the work of each are within 360 operations, the budget
+  that bounds an inlining's copies in nodes, is inlined, since storing costs a launch the schedule does not
+  price and computing it again adds no more to each output than an
+  inlining may. A value read only through the reduce ranges of its consumer
+  stays stored without these gates, as a matrix-vector product reads its
+  vector. A value stored for consumers that read it at different indices,
+  as the query, key and value projections read one normalised activation,
+  is marked broadcast when they broadcast it, as D77 marks a value that a
   broadcast ends. So is a gather's source that its gathers read at more
   positions than it holds (D77): a sum of such reads through its reduced
   ranges alone keeps a source of several buffers stored.
-- **Reason:** (d): gpt-oss-20b's decode on CUDA, whose every projection
-  computed the normalised activation again for each of its outputs. On
-  fudge, gpt-oss's bench row `GptOss/decode-step-cache-1024` takes 10.2 ms
-  against 11.2-11.3 ms without the rule.
+- **Reason:** (d): gpt-oss-20b on CUDA, whose projections computed the
+  normalised activation again at each output, and whose experts' gathered
+  rows, given the activation's buffers, were stored in its place. On
+  fudge, `GptOss/decode-step-cache-1024` took 10.2 ms against 11.2-11.3 ms
+  without the rule for a value every output reads.
 - **Pinned by:** the Rangeify suite's `normed_vecmat` (a normalised vector
-  read by a product), `normed_vecmats` (by two products, stored once) and
-  `normed_matmul` (a normalised matrix, inlined) rows of
-  `kernel_counts.golden` and their kernel goldens, `variable_read_twice`
-  (a value two full reductions read, inlined), and its `get_kernel_graph ›
-  gathers that read more than their table holds`.
+  read by a product), `normed_vecmats` (by two products, stored once),
+  `normed_matmul` (a normalised matrix, stored), `selected_scaled`
+  (stored), `rope_decode`, `gather_rotary` and `prefix_sum_broadcast`
+  (values within the budget, inlined) rows of `kernel_counts.golden` and
+  their kernel goldens, `variable_read_twice`
+  (a value two full reductions read, inlined), its `get_kernel_graph ›
+  gathers that read more than their table holds` and `get_kernel_graph ›
+  values a reduction reads again`, and rune's `rune norms › compiled, one
+  pass over x before its map`.
 
 ## D107. Withdrawn
 
@@ -4080,7 +4099,8 @@ A divisor past its operand's width was read in its operand's type
   its windows of 16), `read_by_two` (inlined), `long_read_by_two` (stored),
   `routed_product_2` (inlined), `routed_product_64` (stored) and
   `routed_product_wide` (the gather's positions inlined), `selected_scaled`
-  (inlined), `blocked_product_16` (read at `r // 16`, inlined) and
+  (stored by D106, which an enclosing sum's outputs decide),
+  `blocked_product_16` (read at `r // 16`, inlined) and
   `dense_decoded_64` (read at `r % 4`, inlined), `tiled_chain` (inlined) and
   `padded_pair` (inlined); `cost › levels each read twice make kernels that stop
   growing with depth`; the `copies` group: `a value of 1200 nodes read at one

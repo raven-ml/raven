@@ -356,13 +356,16 @@ let stored_readers tsink =
    closes, with the reduction, [selections] the ranges each reduction's sum
    is computed at when it selects one trip, and [collapsed] whether it does,
    each once asked. [stored] tells, by an axis of their ranges, whether the
-   readers of the stages are stored as they are ({!stored_readers}). *)
+   readers of the stages are stored as they are ({!stored_readers}).
+   [across] holds the axes of the ranges of the stages that a reduction reads
+   again at outputs their reads do not count ({!stage_reads}). *)
 type reads = {
   by_axis : (Axis_type.t * int list, axis_copies) Hashtbl.t;
   reduce_axes : (Axis_type.t * int list, Ops.t) Hashtbl.t;
   selections : (Axis_type.t * int list, Ops.t list) Hashtbl.t;
   collapsed : (Axis_type.t * int list, bool) Hashtbl.t;
   stored : Axis_type.t * int list -> bool;
+  across : (Axis_type.t * int list, unit) Hashtbl.t;
 }
 
 (* Whether the range [r] is one a reduction of the graph [reads] was taken from
@@ -419,6 +422,111 @@ let collapsed reads r =
       Hashtbl.replace reads.collapsed k c;
       c
 
+(* The reads of stages on the data path of [root]: not those that compute a
+   load's position or a selection's condition, which are computed once a
+   position however many outputs read [root]. The walk stops at stages and at
+   storage after its writes, whose values other kernels compute. *)
+let data_reads root =
+  let seen = Tbl.create 64 and found = ref [] in
+  let rec visit x =
+    if not (Tbl.mem seen x) then begin
+      Tbl.replace seen x ();
+      match op x with
+      | Op.Index when op (nth x 0) = Op.Stage -> found := x :: !found
+      | Op.Index -> visit (nth x 0)
+      | Op.Stage | Op.After -> ()
+      | Op.Where -> List.iter visit (List.tl (src x))
+      | _ -> List.iter visit (src_without_body x)
+    end
+  in
+  visit root;
+  !found
+
+(* The ranges of the stage [b]. *)
+let stage_ranges b = List.filter (fun r -> op r = Op.Range) (List.tl (src b))
+
+(* Whether the read [u] of a stage, in the value of the reduction [red] and
+   on its data path, is read again at outputs its index does not count: it
+   runs along a range [red] closes, whose sum does not select one trip, and
+   [red]'s outputs run along a range [u] does not. A product's tiles along
+   its output columns read its rows so: each tile computes them again. *)
+let reread_across reads red u =
+  let read = read_ranges (List.tl (src u)) in
+  let closed = List.tl (src red) in
+  List.exists (fun r -> List.memq r closed && not (collapsed reads r)) read
+  && Nodes.fold
+       (fun o found -> found || (op o = Op.Range && not (List.memq o read)))
+       (ranges red) false
+
+(* Whether the value [v] runs a reduction that reads storage: such a stage
+   stays stored ({!remove_bufferize}), so the reads in its value run at its
+   own elements, however often it is read. The walk stops at stages and at
+   storage after its writes. *)
+let reduces_storage v =
+  let inside x = x == v || not (List.mem (op x) Op.[ Stage; After ]) in
+  List.exists
+    (fun x ->
+      op x = Op.Reduce
+      && op_in_backward_slice_with_self ~calls:Skip (nth x 0)
+           Op.[ Param; Stage; After ])
+    (toposort ~calls:Skip ~gate:inside v)
+
+(* The axes of the stages a reduction reads again at outputs their reads do
+   not count ({!reread_across}), into [across]. Once such a stage is inlined,
+   a read in its value is read again with it, as the stage it reads is
+   inlined in turn: so is each stage read on the data path of the value of a
+   marked stage that may be inlined (one kept whole or reducing storage
+   stays stored, so its reads run once), through an index that runs over at
+   least as many points as the stage holds, as a read of every element does.
+   A read of fewer points, as of a row of a running count, reads only those
+   again. *)
+let mark_across reads nodes =
+  let mark b =
+    List.iter
+      (fun r -> Hashtbl.replace reads.across (axis r) ())
+      (stage_ranges b)
+  in
+  let marked b =
+    let rs = stage_ranges b in
+    rs <> [] && List.for_all (fun r -> Hashtbl.mem reads.across (axis r)) rs
+  in
+  List.iter
+    (fun red ->
+      if op red = Op.Reduce then
+        List.iter
+          (fun u -> if reread_across reads red u then mark (nth u 0))
+          (data_reads (nth red 0)))
+    nodes;
+  let stages =
+    List.filter
+      (fun c ->
+        op c = Op.Stage
+        && (not (kept_whole c))
+        && not (reduces_storage (nth c 0)))
+      nodes
+  in
+  let whole u b =
+    extent (read_ranges (List.tl (src u))) >= extent (stage_ranges b)
+  in
+  let rec spread () =
+    let grew = ref false in
+    List.iter
+      (fun c ->
+        if marked c then
+          List.iter
+            (fun u ->
+              let b = nth u 0 in
+              if b != c && stage_ranges b <> [] && (not (marked b)) && whole u b
+              then begin
+                mark b;
+                grew := true
+              end)
+            (data_reads (nth c 0)))
+      stages;
+    if !grew then spread ()
+  in
+  spread ()
+
 (* The reads of the stages of [tsink]. A read through a stack is not counted: by
    now every stage has a device, so the cleanups never turn it into a read of
    the stage. *)
@@ -467,8 +575,10 @@ let stage_reads tsink =
       selections = Hashtbl.create 16;
       collapsed = Hashtbl.create 16;
       stored = stored_readers tsink;
+      across = Hashtbl.create 16;
     }
   in
+  mark_across reads nodes;
   List.iter
     (fun u ->
       if op u = Op.Index && op (nth u 0) = Op.Stage then begin
@@ -536,7 +646,9 @@ let read_selected reads buf idx =
 
 (* The nodes that inlining a stage may compute again: the nodes of its value
    that its ranges reach, which the inlining copies, times the copies its reads
-   make beyond the one storing computes. *)
+   make beyond the one storing computes. Taken as operations, it also bounds
+   what computing a value again at each output of a reduction may add
+   ({!remove_bufferize}'s [reread]). *)
 let inline_budget = 360.
 
 (* The nodes of [computed] that inlining [buf] copies: those inside its ranges,
@@ -589,6 +701,45 @@ let transcendental_work () =
     let n = work (List.filter reads_x (toposort ~calls:Skip e)) in
     Atomic.set exp2_work n;
     n
+
+(* Whether a reduction reads the stage [buf] again at outputs its reads do
+   not count ({!mark_across}). *)
+let read_across reads buf =
+  let rs = stage_ranges buf in
+  rs <> [] && List.for_all (fun r -> Hashtbl.mem reads.across (axis r)) rs
+
+(* The bytes the loads among [computed] read from storage: of each buffer, the
+   most points one of its loads runs over, at most its size, at its type. A
+   lower bound where loads read disjoint parts. *)
+let read_bytes computed =
+  let per = Tbl.create 8 in
+  let load x =
+    let b = nth x 0 in
+    let b = if op b = Op.After then buf_uop b else b in
+    let storage =
+      match op b with
+      | Op.Param | Op.Buffer -> true
+      | Op.Stage -> (opts b).addrspace = Dtype.Global
+      | _ -> false
+    in
+    if storage then
+      let n = extent (read_ranges (List.tl (src x))) in
+      let n = Float.min n (float_of_int (max_numel b)) in
+      let bytes = n *. float_of_int (Dtype.itemsize (dtype b)) in
+      let old = Option.value (Tbl.find_opt per b) ~default:0. in
+      Tbl.replace per b (Float.max old bytes)
+  in
+  List.iter (fun x -> if op x = Op.Index then load x) computed;
+  Tbl.fold (fun _ b n -> n +. b) per 0.
+
+(* The bytes the stage [buf] of the value [v] holds, at the type it is stored
+   at: a widening's narrow source ({!bufferize_to_store}). *)
+let held_bytes buf v =
+  let dt =
+    if (not (kept_whole buf)) && widens v then commit_dtype (nth v 0)
+    else commit_dtype buf
+  in
+  extent (stage_ranges buf) *. float_of_int (Dtype.itemsize dt)
 
 (* A buffer stored only to be read through movements is removed: the indices of
    the read are expressed in terms of the stored value's. *)
@@ -663,6 +814,26 @@ let remove_bufferize ~reads src buf idx =
        it is read however many copies its reads make: stored, it would be a
        copy of storage its readers can load in place ({!does_work}). *)
     let view = op src = Op.Index && not (List.exists does_work computed) in
+    (* Read in a reduction again at outputs its index does not count, as a
+       product's tiles along its output columns read its rows, the value would
+       be computed again at each such tile and each of its buffers loaded
+       again; stored, a tile loads one buffer. One that reads more than one
+       buffer, does work and holds no more bytes than it reads stays stored, at
+       every read: inlined at one, it would bring its buffers to the
+       reductions that read the stages it reads. Storing costs a launch, which
+       the schedule does not price: one whose whole work, its elements times
+       the work of each, is within the budget below is inlined, since computing
+       it again adds to each output of its reader no more than an inlining
+       may add, as a decode step's rotated query. *)
+    let reread =
+      (opts buf).keep = Broadcast
+      && Tbl.length accessed > 1
+      && (not view) && read_across reads buf
+      && held_bytes buf src <= read_bytes computed
+      && extent (stage_ranges buf)
+         *. float_of_int (work (copied_nodes buf computed))
+         > inline_budget
+    in
     let copies () =
       (* The copied nodes are among the computed ones, so most values are
          under the budget before their copies are counted. *)
@@ -697,7 +868,7 @@ let remove_bufferize ~reads src buf idx =
                 (List.tl (Ops.src buf)))
     in
     if
-      limited || recomputes || read_by_every_output
+      limited || recomputes || read_by_every_output || reread
       || ((not view) && copies ())
     then None
     else

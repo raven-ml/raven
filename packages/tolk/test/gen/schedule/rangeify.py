@@ -288,7 +288,7 @@ PROGRAMS = {
     "exp_cheap_consumer": lambda: (lambda p: (p[:, None] * empty(8, 4)).sum(0) + ((p + 1)[:, None] * empty(8, 4)).sum(0))(
         empty(8).exp()),
     # a normalised vector read by every output of a product, alone and by two products, which store it once, and a
-    # normalised matrix, which a product's outputs read by rows and which stays inlined
+    # normalised matrix, which a product's outputs read by rows
     "normed_vecmat": lambda: (empty(1, 64) / empty(1, 1) * empty(64)) @ empty(64, 32),
     "normed_vecmats": lambda: (lambda h: Tensor.cat(h @ empty(64, 32), h @ empty(64, 16), dim=1))(
         empty(1, 64) / empty(1, 1) * empty(64)),

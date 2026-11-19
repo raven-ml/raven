@@ -2675,6 +2675,97 @@ let shared_scalars =
           at_most int ~than:shallow deep);
     ]
 
+(* Values a reduction reads again
+
+   A value of more than one storage that a reduction reads along a range it
+   sums, at outputs its read does not count, as a product's output columns
+   read the rows of its left operand, stays stored: inlined, each output
+   would compute it again. [scaled rows k] is a [rows] by [k] matrix times
+   its rows' sums of squares, as a normalisation's map reads its input and
+   each row's scale; [gain] multiplies it by a third storage. [product rows k
+   n v] stores [v] times a [k] by [n] matrix. *)
+
+let scaled ?(gain = false) rows k =
+  let x = input ~shape:[ rows; k ] 1 in
+  let ss = Shape.rop Ops.O.(x * x) Add [ 1 ] in
+  let ss = Shape.reshape ss (ints [ rows; 1 ]) in
+  let y = Ops.O.(x * Shape.expand ss (ints [ rows; k ])) in
+  if not gain then y
+  else
+    let g = Shape.expand (input ~shape:[ 1; k ] 4) (ints [ rows; k ]) in
+    Ops.O.(y * g)
+
+(* [v] times a [k] by [n] matrix, stored, and with [max] also the greatest
+   of each of [v]'s columns, a second reader at other indices that makes [v]
+   a stage of its own. *)
+let product ?(max = false) rows k n v =
+  let w = input ~shape:[ 1; k; n ] 2 in
+  let vs =
+    Shape.expand (Shape.reshape v (ints [ rows; k; 1 ])) (ints [ rows; k; n ])
+  in
+  let w = Shape.expand w (ints [ rows; k; n ]) in
+  let p = Shape.rop Ops.O.(vs * w) Add [ 1 ] in
+  let store slot v =
+    let size = Shape.max_numel v in
+    let o = Shape.param ~device:cpu ~shape:[ Int size ] slot Float32 in
+    Ops.after o [ Ops.store (Shape.reshape o (Shape.shape v)) v ]
+  in
+  let m = Shape.rop (Shape.permute v [ 1; 0 ]) Max [ 1 ] in
+  Ops.sink (store 0 p :: (if max then [ store 5 m ] else []))
+
+(* The rows of the [rows] by [k] matrix [v] at [g] positions loaded from
+   storage and clamped into range, as a mixture of experts gathers the rows
+   each expert takes. *)
+let gathered_rows ~rows ~k g v =
+  let ids = Shape.param ~device:cpu ~shape:[ Int g ] 3 Int32 in
+  let i32 n = Ops.const ~dtype:Int32 (`Int (Bigint.of_int n)) in
+  let id =
+    Ops.cast (Ops.maximum (Ops.minimum ids (i32 (rows - 1))) (i32 0)) Weak_int
+  in
+  let row = Shape.expand (Shape.reshape id (ints [ g; 1 ])) (ints [ g; k ]) in
+  let col =
+    Shape.expand
+      (Shape.reshape (Shape.arange ~dtype:Weak_int k) (ints [ 1; k ]))
+      (ints [ g; k ])
+  in
+  let at = Shape.reshape Ops.O.((row * int k) + col) (ints [ g * k ]) in
+  let flat = Shape.reshape v (ints [ rows * k ]) in
+  Shape.reshape (Ops.index flat [ at ]) (ints [ g; k ])
+
+let allocs u =
+  List.filter_map
+    (fun n -> if Ops.op n = Alloc then Some (Shape.max_numel n) else None)
+    (Ops.toposort ~calls:Enter u)
+
+let reread =
+  group "get_kernel_graph › values a reduction reads again"
+    [
+      test "a scaled matrix a product's columns read stays stored" (fun () ->
+          List.iter
+            (fun rows ->
+              equal ~msg:(Printf.sprintf "%d rows" rows) int 3
+                (kernels_of (product rows 2880 5120 (scaled rows 2880))))
+            [ 12; 64; 512 ]);
+      test "a scaled matrix a product reads is written as its tensors write it"
+        (fun () -> writes (product 4 8 4 (scaled 4 8)));
+      (* The map's work is one product an element: computing its [2 k]
+         elements again is within the budget up to [k = 180]. *)
+      test "a scaled matrix whose work is the budget is inlined" (fun () ->
+          equal int 2 (kernels_of (product 2 180 16 (scaled 2 180))));
+      test "a scaled matrix of work past the budget stays stored" (fun () ->
+          equal int 3 (kernels_of (product 2 181 16 (scaled 2 181))));
+      (* Inlined into the gathered rows, the scaled matrix would bring them
+         its three storages and the positions' to read again, and the buffer
+         limit would store the rows, four times the matrix. *)
+      test "a scaled matrix whose gathered rows a product reads stays stored"
+        (fun () ->
+          let rows = 512 and k = 2880 and g = 2048 in
+          let v = gathered_rows ~rows ~k g (scaled ~gain:true rows k) in
+          let graph = schedule (product ~max:true g k 64 v) in
+          equal (list int) [ rows; rows * k ]
+            (List.sort compare (allocs graph)));
+    ]
+
 let () =
   exit
     (run "Tolk.Rangeify"
@@ -2707,4 +2798,5 @@ let () =
          own_ranges;
          dead_reads;
          shared_scalars;
+         reread;
        ])

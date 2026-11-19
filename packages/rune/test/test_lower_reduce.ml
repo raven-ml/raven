@@ -2643,8 +2643,9 @@ let work_bounds =
       test "a Rows contraction in blocks works as its slots' at 8 groups"
         (blocked ~k:16 8);
       (* 256 rows of one group make [S n = 2^16] comparisons, the host's
-         budget, and route by them; 257 pass it and take the running count's
-         stages and the search. 300 rows over 256 groups sum the groups'
+         budget, and route by them, the routed rows stored, since each of the
+         product's columns reads them again; 257 pass it and take the running
+         count's stages and the search. 300 rows over 256 groups sum the groups'
          first blocks in one reduce of [g² = 2^16] terms; over 257 they take
          a scan's stages. *)
       test "routed rows compare within the budget, past it they search"
@@ -2652,10 +2653,8 @@ let work_bounds =
           let kernels n g =
             Lowered.kernels (fun () -> rows_op ~n ~k:16 ~j:17 g)
           in
-          equal int 6 (kernels 256 1);
-          equal int 9 (kernels 257 1);
-          equal int 10 (kernels 300 256);
-          equal int 12 (kernels 300 257));
+          equal (list int) [ 7; 9; 10; 12 ]
+            [ kernels 256 1; kernels 257 1; kernels 300 256; kernels 300 257 ]);
       (* The routing does not depend on [k]: the work added by a deeper
          contraction is the products', which pad blocks of 8 rows at 8 rows
          a group to under twice the rows, [n + 7 g]. *)

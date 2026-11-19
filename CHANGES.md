@@ -1526,6 +1526,13 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A computed value of several inputs that a reduction reads again at its
+  outputs, as a product's output columns read its rows, stays stored: a
+  normalised activation before a prompt's projections is computed once,
+  where each output tile computed it again. So is a value such a stage reads
+  at as many points as it holds, as the activation a mixture of experts
+  gathers rows of, where the gathered rows were stored, four times larger
+  (D106).
 - A float32 contraction on a GPU plus a bias its batches or heads do not read
   is optimised as without it: attention's scores of 32 heads at 1024
   positions plus a mask take 306 us on an RTX 5000 Ada, from 535.

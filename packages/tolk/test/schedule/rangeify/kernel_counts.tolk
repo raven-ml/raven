@@ -1,4 +1,4 @@
-# tolk D163 D350 golden=529a98aa36867ba2410d2052b5fd3dfb
+# tolk D163 D350 D106 golden=529a98aa36867ba2410d2052b5fd3dfb
 program	kernels
 add	1
 sum	1
@@ -25,7 +25,7 @@ exp_dead_axis	2
 exp_cheap_consumer	2
 normed_vecmat	2
 normed_vecmats	2
-normed_matmul	1
+normed_matmul	2
 rope_decode	3
 gather_broadcast	2
 gather_read_twice	1
@@ -112,7 +112,7 @@ scalar_chain	41
 routed_product_2	1
 routed_product_64	2
 routed_product_wide	1
-selected_scaled	1
+selected_scaled	2
 blocked_product_16	1
 dense_decoded_64	1
 tiled_chain	1
