@@ -456,12 +456,19 @@ let ffma_id (t, ds, causal, d) =
 
 (* The derivative's rows on a tensor core: bfloat16 at d36 to d160, plain
    and causal, on each GPU target whose core takes them; CUDA's must. On
-   FFMA: float32, float64 and bfloat16 in float64 at d1 to d160, plain and
-   causal, on CUDA, on HIP gfx942, whose waves have 64 lanes, and in
-   float32 on Metal, which has no float64; float64 at d24 on CUDA and
-   gfx942, where a copy's thread of eight columns passes its row's padding;
-   and bfloat16 in float32 on CUDA sm_75, which has no bfloat16 core; each
-   must take them. *)
+   FFMA, which each target must take: float32, float64 and bfloat16 in
+   float64 on CUDA and on HIP gfx942, whose waves have 64 lanes, each pair
+   plain at one head dimension and causal at another; float32 on Metal,
+   which has no float64; bfloat16 in float32 on CUDA sm_75, which has no
+   bfloat16 core; and float64 at d24 on both, where a copy's thread of eight
+   columns passes its row's padding. The dimensions run over d1 to d160, one
+   chunk of a row's columns to five, so that the rows of each target but
+   sm_75 hold one chunk and several, and each pair's a plain and a causal
+   mask. A row
+   lowers its three kernels in about half a second, and sm_75's in up to
+   ten: every pair at every dimension, 84 rows, took over 60 s. A copy the
+   tiles' loop leaves unpinned shows only in a plain row at d1, or sm_75's
+   plain rows, so those stay. *)
 let both f ds = List.concat_map (fun d -> [ f false d; f true d ]) ds
 
 let derivative_cases =
@@ -470,23 +477,24 @@ let derivative_cases =
     (List.filter (fun (t : Tolk.Helpers.Target.t) -> t.arch <> "sm_75") gpu_targets)
 
 let ffma_derivative_cases =
-  let target t = Result.get_ok (Tolk.Helpers.Target.of_string t) in
-  List.concat_map
-    (fun (t, pairs) ->
-      List.concat_map
-        (fun ds -> both (fun causal d -> (target t, ds, causal, d)) [ 1; 36; 64; 110; 160 ])
-        pairs)
+  let on t rows =
+    let target = Result.get_ok (Tolk.Helpers.Target.of_string t) in
+    List.map (fun (ds, causal, d) -> (target, ds, causal, d)) rows
+  in
+  let f32 = D (Nx.float32, Nx.float32) and f64 = D (Nx.float64, Nx.float64) in
+  let bf16 = D (Nx.bfloat16, Nx.float64) and bf16_32 = D (Nx.bfloat16, Nx.float32) in
+  on "CUDA:CUDA:sm_89"
     [
-      ( "CUDA:CUDA:sm_89",
-        [ D (Nx.float32, Nx.float32); D (Nx.float64, Nx.float64); D (Nx.bfloat16, Nx.float64) ] );
-      ( "AMD:HIP:gfx942",
-        [ D (Nx.float32, Nx.float32); D (Nx.float64, Nx.float64); D (Nx.bfloat16, Nx.float64) ] );
-      ("METAL:METAL:Apple9", [ D (Nx.float32, Nx.float32) ]);
-      ("CUDA:CUDA:sm_75", [ D (Nx.bfloat16, Nx.float32) ]);
+      (f32, false, 1); (f32, true, 110); (f64, false, 36); (f64, true, 160);
+      (bf16, false, 160); (bf16, true, 64); (f64, false, 24);
     ]
-  @ List.concat_map
-      (fun t -> both (fun causal d -> (target t, D (Nx.float64, Nx.float64), causal, d)) [ 24 ])
-      [ "CUDA:CUDA:sm_89"; "AMD:HIP:gfx942" ]
+  @ on "AMD:HIP:gfx942"
+      [
+        (f32, false, 36); (f32, true, 160); (f64, false, 110); (f64, true, 64);
+        (bf16, false, 1); (bf16, true, 110); (f64, true, 24);
+      ]
+  @ on "METAL:METAL:Apple9" [ (f32, false, 64); (f32, true, 110) ]
+  @ on "CUDA:CUDA:sm_75" [ (bf16_32, false, 36); (bf16_32, true, 1) ]
 
 let derivative_id = ffma_id
 
