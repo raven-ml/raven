@@ -1306,10 +1306,24 @@ value caml_rig_remote_link_job(value vns) {
   return caml_copy_nativeint((intnat)j);
 }
 
-/* Sets the job's silence bound to [ns], for its links' next waits. Does
-   not release the runtime. */
+/* Sets the job's silence bound to [ns] and wakes each link's sending
+   thread, whose wait for its next beat was a tenth of the old bound: a
+   bound that shrinks, as an agent's at its join, would otherwise leave
+   that wait to run out, up to a second at the default, and the peer would
+   find the link silent first. Releases the runtime. */
 value caml_rig_remote_link_job_silence(value vj, value vns) {
-  atomic_store(&Job_val(vj)->bound_ns, Int64_val(vns));
+  struct rig_remote_job *j = Job_val(vj);
+  atomic_store(&j->bound_ns, Int64_val(vns));
+  if (rig_remote_forked(j)) return Val_unit;
+  caml_release_runtime_system();
+  pthread_mutex_lock(&j->mu);
+  for (struct rig_remote_link *l = j->links; l != NULL; l = l->next) {
+    pthread_mutex_lock(&l->mu);
+    pthread_cond_signal(&l->wake);
+    pthread_mutex_unlock(&l->mu);
+  }
+  pthread_mutex_unlock(&j->mu);
+  caml_acquire_runtime_system();
   return Val_unit;
 }
 

@@ -114,9 +114,10 @@ val default_silence : float
     seconds. *)
 
 val set_silence : job -> float -> unit
-(** [set_silence j s] makes [s] seconds [j]'s silence bound, from each of
-    its links' next wait on: an agent's job takes its controller's at its
-    join, the job having been made at the controller's handshake.
+(** [set_silence j s] makes [s] seconds [j]'s silence bound: each of its
+    links beats within a tenth of [s] of its last send from then on. An
+    agent's job takes its controller's at its join, the job having been
+    made at the controller's handshake.
 
     Raises [Invalid_argument] as {!val-job} does for [s]. *)
 

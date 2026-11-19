@@ -106,3 +106,12 @@ run from seeing its children end.
   $ ./support/sig.exe ignore CHLD rig run --on a,b -- ./support/ctl.exe copy
   attempt 1
   copied 1
+
+A job quiet for longer than its silence bound goes on: each agent beats at
+a tenth of the bound it takes at its join.
+
+  $ fresh
+  $ rig run --silence 0.5 --on a,b,c -- ./support/ctl.exe exec 'sleep 1'
+  attempt 1
+  copied 2
+  $ gone
