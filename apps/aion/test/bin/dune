@@ -1,0 +1,18 @@
+; aion.t runs main.exe's commands end to end on the synthetic survey files
+; of ../mmu, with a Hub cache that cache.exe writes: the narrow transformer of
+; ../upstream/transformer.safetensors as aion-base's weights, and made-up
+; codebooks for its scalar modalities. npz.exe prints what the commands
+; write, and reference.exe computes a posterior directly from the library.
+
+(executables
+ (names cache npz reference)
+ (libraries aion nx nx.io kaun.hf))
+
+(cram
+ (deps
+  cache.exe
+  npz.exe
+  reference.exe
+  ../../main.exe
+  ../upstream/transformer.safetensors
+  (glob_files ../mmu/*.h5)))

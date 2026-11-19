@@ -1,0 +1,18 @@
+# thumper baseline v1
+# suite: aion
+
+# machine: 83e4f30ba5340e6b
+# host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.2 · 64-bit · release
+# forced: blessed under load 14.8 on 2 cores
+
+cpu/decode-273	alloc_words	exact	383346
+cpu/decode-273	wall_time	batch=1	n=11	4.065e-01	4.038e-01 4.040e-01 4.040e-01 4.042e-01 4.052e-01 4.065e-01 4.089e-01 4.094e-01 4.118e-01 4.238e-01 4.268e-01
+cpu/encode	alloc_words	exact	206102
+cpu/encode	wall_time	batch=1	n=11	5.187e-01	5.148e-01 5.150e-01 5.155e-01 5.169e-01 5.174e-01 5.187e-01 5.191e-01 5.192e-01 5.210e-01 5.223e-01 5.291e-01
+cpu/image-encode	alloc_words	exact	138328
+cpu/image-encode	wall_time	batch=1	n=11	2.858e-01	2.801e-01 2.820e-01 2.822e-01 2.832e-01 2.854e-01 2.858e-01 2.860e-01 2.861e-01 2.870e-01 2.895e-01 2.917e-01
+cpu/roar-step	alloc_words	exact	593060
+cpu/roar-step	wall_time	batch=1	n=11	6.210e-01	6.099e-01 6.132e-01 6.150e-01 6.162e-01 6.198e-01 6.210e-01 6.221e-01 6.228e-01 6.304e-01 6.319e-01 6.320e-01
+cpu/spectrum-encode	alloc_words	exact	330853
+cpu/spectrum-encode	wall_time	batch=1	n=11	1.651e-01	1.634e-01 1.638e-01 1.640e-01 1.648e-01 1.648e-01 1.651e-01 1.651e-01 1.664e-01 1.675e-01 1.679e-01 1.691e-01

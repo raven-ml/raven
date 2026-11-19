@@ -1,0 +1,13 @@
+; The library aion: AION-1's codecs, its transformer, random-order
+; generation and the Multimodal Universe's files. main.exe is its command
+; line.
+
+(library
+ (name aion)
+ (modules :standard \ main)
+ (libraries nx nx.io kaun kaun.hf ymir))
+
+(executable
+ (name main)
+ (modules main)
+ (libraries aion nx nx.io))

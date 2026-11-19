@@ -1,0 +1,196 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+(* The scalar codecs against upstream's goldens (tests/test_data at
+   db7fba6df53b) and against the exact transforms of their codebooks.
+
+   upstream/edges.safetensors holds every scalar codec's codebooks, under its
+   directory's name; upstream/goldens.safetensors upstream's inputs, tokens and
+   decoded values, whole but for the Gaia XP ones. Of those it keeps the rows
+   where a token may flip or is the first or the last (the rule is in the
+   generator the dune file names). What covers what:
+
+   - tokens: every case of the token checks that the whole goldens reach is in
+   the kept rows;
+
+   - decoded values: every edge of every codebook is decoded and checked against
+   the exact inverse transform, which covers every token any golden holds; the
+   goldens add agreement with upstream's own values.
+
+   The whole XP goldens add 1.8 MB and nothing the above misses, so the check of
+   every row runs outside the repository.
+
+   Tolerances are nx.mli's float32 bounds, in floats from the exact value
+   rounded ({!Bounds}): [log] 1, [exp] 2, [asinh] and [sinh] 3, each applied to
+   the input it is given. Upstream's float32 functions are held to the same
+   bounds: its goldens' [exp] lands up to 2 floats from the rounded value
+   (FLUX_Z row 81, FLUX_W2 row 216), beyond the 1 float a faithful library
+   gives. A check that assumed faithful libraries on both sides would allow 1
+   ulp (log) and 3 ulp (asinh twice) for tokens, and 2 ulp (exp) and (2 + κ₂(1 +
+   κ₁))u (sinh twice) for decoding. nx states wider bounds, and the checks here
+   take nx's, so they are no tighter than what nx promises. *)
+
+open Windtrap
+open Aion
+
+let edges = Nx_io.load_safetensors "upstream/edges.safetensors"
+let goldens = Nx_io.load_safetensors "upstream/goldens.safetensors"
+
+let entry name a =
+  match Nx_io.Archive.find name a with
+  | Some p -> p
+  | None -> failwith ("no entry " ^ name)
+
+let codec m =
+  Scalar.v (Scalar.transform_of m)
+    (Nx.unpack Nx.float32 (entry (Scalar.directory m) edges))
+
+let golden m part = entry (Scalar.directory m ^ "." ^ part) goldens
+let ints (Nx.P x) = Nx.to_array (Nx.cast Nx.int64 x) |> Array.map Int64.to_int
+
+(* The edge of token [k] for the [i]th value of a golden, of channel [i mod
+   c]. *)
+let edge t i k =
+  let e = Scalar.edges t in
+  Nx.item [ i mod Nx.dim 0 e; k ] e
+
+(* Where a float32 transform of [x] may land, [log] within [log] floats and
+   [asinh] within [asinh]. *)
+let forward ~log ~asinh tr x =
+  match tr with
+  | Scalar.Identity -> (x, x)
+  | Log m -> Bounds.around log (Float.log (Float.max x (Bounds.f32 m)))
+  | Asinh_asinh ->
+      Bounds.through asinh Float.asinh (Bounds.around asinh (Float.asinh x))
+
+(* Where a float32 inverse transform of the edge [e] may land, [exp] within
+   [exp] floats and [sinh] within [sinh]. *)
+let inverse ~exp ~sinh tr e =
+  match tr with
+  | Scalar.Identity -> (e, e)
+  | Log _ -> Bounds.around exp (Float.exp e)
+  | Asinh_asinh ->
+      Bounds.through sinh Float.sinh (Bounds.around sinh (Float.sinh e))
+
+(* nx.mli's bounds. *)
+let nx_forward = forward ~log:1 ~asinh:3
+let nx_inverse = inverse ~exp:2 ~sinh:3
+let id m = Scalar.directory m
+
+(* Tokens: a token is upstream's. Under a transform that rounds, it may instead
+   move across one distinct edge value [v] that lies where nx's transform may
+   land. Each other difference is listed as (index, upstream's token,
+   raven's). *)
+let tokens =
+  cases "tokens are upstream's but where rounding crosses an edge" ~id
+    Modality.scalars (fun m ->
+      let t = codec m and tr = Scalar.transform_of m in
+      let x = Nx.unpack Nx.float32 (golden m "input") in
+      let xs = Nx.to_array x in
+      let want = ints (golden m "encoded") in
+      let got = ints (Nx.P (Scalar.encode t x)) in
+      let refuted = ref [] in
+      Array.iteri
+        (fun i w ->
+          let g = got.(i) in
+          if g <> w then begin
+            let lo = Int.min g w and hi = Int.max g w in
+            let v = edge t i lo in
+            let one = ref true in
+            for k = lo to hi - 1 do
+              if not (Float.equal (edge t i k) v) then one := false
+            done;
+            let rounds = tr <> Scalar.Identity in
+            if not (rounds && !one && Bounds.inside (nx_forward tr xs.(i)) v)
+            then refuted := (i, w, g) :: !refuted
+          end)
+        want;
+      equal (list (triple int int int)) [] (List.rev !refuted))
+
+(* Decoding every edge: token [k] decodes to the inverse transform of its edge
+   within nx's bounds, bit for bit under the identity. Each other value is
+   listed as (channel, token, value). *)
+let every_edge =
+  cases "every token decodes within nx's bound of its edge's inverse" ~id
+    Modality.scalars (fun m ->
+      let t = codec m and tr = Scalar.transform_of m in
+      let e = Scalar.edges t in
+      let c = Nx.dim 0 e and n = Nx.dim 1 e in
+      let k = Nx.init Nx.int64 [| n; c |] (fun i -> Int64.of_int i.(0)) in
+      let d = Nx.to_array (Scalar.decode t k) in
+      let refuted = ref [] in
+      for k = 0 to n - 1 do
+        for ch = 0 to c - 1 do
+          let v = Nx.item [ ch; k ] e and got = d.((k * c) + ch) in
+          let ok =
+            if Float.is_nan v then Float.is_nan got
+            else if tr = Scalar.Identity then Float.equal v got
+            else Bounds.inside (nx_inverse tr v) got
+          in
+          if not ok then refuted := (ch, k, got) :: !refuted
+        done
+      done;
+      equal (list (triple int int float_exact)) [] (List.rev !refuted))
+
+(* Decoding the goldens: upstream's tokens decode to upstream's values, bit for
+   bit under the identity; otherwise raven's value lies within nx's bound of the
+   exact inverse, and so does upstream's. Each other value is listed as (index,
+   upstream's, raven's). *)
+let values =
+  cases "upstream's tokens decode to upstream's values" ~id Modality.scalars
+    (fun m ->
+      let t = codec m and tr = Scalar.transform_of m in
+      let (Nx.P k) = golden m "encoded" in
+      let k = Nx.cast Nx.int64 k in
+      let ks = Nx.to_array k in
+      let want = Nx.to_array (Nx.unpack Nx.float32 (golden m "decoded")) in
+      let got = Nx.to_array (Scalar.decode t k) in
+      if tr = Scalar.Identity then equal (array float_exact) want got
+      else begin
+        let refuted = ref [] in
+        Array.iteri
+          (fun i w ->
+            let e = edge t i (Int64.to_int ks.(i)) in
+            let bound = nx_inverse tr e in
+            if not (Bounds.inside bound got.(i) && Bounds.inside bound w) then
+              refuted := (i, w, got.(i)) :: !refuted)
+          want;
+        equal (list (triple int float_exact float_exact)) [] (List.rev !refuted)
+      end)
+
+(* The log codebooks whose lowest edge is the clamp's logarithm: their training
+   sample reached the clamp. *)
+let at_clamp =
+  Modality.
+    [ Flux_g; Flux_r; Flux_i; Flux_w1; Flux_w2; Flux_w3; Flux_w4; Shape_r ]
+
+let logs =
+  List.filter
+    (fun m -> match Scalar.transform_of m with Log _ -> true | _ -> false)
+    Modality.scalars
+
+(* A clamped input takes the bin its codebook built for the clamp: every edge
+   within nx's bound of the clamp's exact logarithm is nx's float32 logarithm of
+   the clamp, bit for bit, and so is the lowest edge of the codebooks whose
+   sample reached the clamp, where a clamped input takes token 0. *)
+let clamp =
+  cases "edges at the log clamp are nx's log of it" ~id logs (fun m ->
+      let t = codec m in
+      let floor = match Scalar.transform_of m with Log f -> f | _ -> nan in
+      let c =
+        Nx.item [] (Nx.log (Nx.clamp ~min:floor (Nx.scalar Nx.float32 0.)))
+      in
+      let near = nx_forward (Log floor) 0. in
+      let e = Nx.to_array (Scalar.edges t) in
+      Array.iter (fun v -> if Bounds.inside near v then equal float_exact c v) e;
+      if List.mem m at_clamp then begin
+        equal float_exact c e.(0);
+        let zero = Nx.create Nx.float32 [| 1 |] [| 0. |] in
+        equal (array int) [| 0 |] (ints (Nx.P (Scalar.encode t zero)))
+      end)
+
+let () =
+  exit
+    (run "aion.parity" [ group "scalar" [ tokens; every_edge; values; clamp ] ])

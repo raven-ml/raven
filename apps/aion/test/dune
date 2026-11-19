@@ -1,0 +1,130 @@
+; The laws on synthetic codebooks and small random networks, the codecs and
+; the transformer against narrow upstream networks, and Survey on synthetic
+; survey files. The fixtures are recorded by the scripts in gen/ (uv run, from
+; apps/aion), with AION-1's code at db7fba6d and torch 2.14.1 on the CPU; each
+; file's metadata names its script, and torch's version and upstream's commit
+; where torch wrote it.
+;
+; - upstream/edges.safetensors and goldens.safetensors, the scalar codecs'
+;   codebooks (aion-base at 40541618, codecs/NAME/model.safetensors) and
+;   upstream's goldens (tests/test_data, through gen/goldens.py):
+;     uv run test/gen/scalars.py CODECS GOLDENS test/upstream
+; - upstream/spectrum_*.safetensors, a few-channel spectrum codec, its outputs
+;   and their rounding ensemble: uv run test/gen/spectrum.py test/upstream
+; - upstream/image_*.safetensors, a narrow image codec, its outputs and their
+;   rounding ensembles: uv run test/gen/image.py test/upstream
+; - upstream/transformer*.safetensors, a narrow AION with random weights, its
+;   outputs and their rounding ensemble:
+;     uv run test/gen/transformer.py test/upstream
+; - upstream/roar_golden.safetensors, a random-order step on that network and
+;   its rounding ensemble: uv run test/gen/roar.py test/upstream
+; - mmu/*, synthetic Multimodal Universe files and the values Survey must read
+;   from them: uv run test/gen/surveys.py test/mmu
+
+(tests
+ (names
+  test_hub
+  test_modality
+  test_scalar
+  test_spectrum
+  test_fsq
+  test_image
+  test_codecs
+  test_survey
+  test_parity
+  test_transformer
+  test_roar)
+ (modules
+  :standard
+  \
+  spectrum_parity
+  image_parity
+  transformer_parity
+  roar_parity
+  mmu_parity
+  generate_parity)
+ (libraries aion aion_support nx nx.io kaun.hf rig rune windtrap ymir)
+ (deps
+  (glob_files upstream/*.safetensors)
+  (glob_files mmu/*)))
+
+; AION-1's released weights against upstream's code run outside runtest, since
+; they read the weights and recorded runs: the codecs, the transformer,
+; random-order generation, Survey's tokens of real rows, and main.exe's
+; generate. Each program's header says what it checks. They run under the
+; alias parity, one at a time, on the directory AION_PARITY names, laid out as
+; the README's Tests section says:
+;   AION_PARITY=DIR dune build @apps/aion/test/parity
+; Without it, or with an input missing, they fail. The transformer's and
+; roar's programs report without gating.
+
+(executables
+ (names
+  spectrum_parity
+  image_parity
+  transformer_parity
+  roar_parity
+  mmu_parity
+  generate_parity)
+ (modules
+  spectrum_parity
+  image_parity
+  transformer_parity
+  roar_parity
+  mmu_parity
+  generate_parity)
+ (libraries aion aion_support nx nx.io unix))
+
+(rule
+ (alias parity)
+ (locks %{workspace_root}/aion-parity)
+ (deps
+  (env_var AION_PARITY)
+  (universe))
+ (action
+  (run %{exe:spectrum_parity.exe})))
+
+(rule
+ (alias parity)
+ (locks %{workspace_root}/aion-parity)
+ (deps
+  (env_var AION_PARITY)
+  (universe))
+ (action
+  (run %{exe:image_parity.exe})))
+
+(rule
+ (alias parity)
+ (locks %{workspace_root}/aion-parity)
+ (deps
+  (env_var AION_PARITY)
+  (universe))
+ (action
+  (run %{exe:transformer_parity.exe})))
+
+(rule
+ (alias parity)
+ (locks %{workspace_root}/aion-parity)
+ (deps
+  (env_var AION_PARITY)
+  (universe))
+ (action
+  (run %{exe:roar_parity.exe} check)))
+
+(rule
+ (alias parity)
+ (locks %{workspace_root}/aion-parity)
+ (deps
+  (env_var AION_PARITY)
+  (universe))
+ (action
+  (run %{exe:mmu_parity.exe})))
+
+(rule
+ (alias parity)
+ (locks %{workspace_root}/aion-parity)
+ (deps
+  (env_var AION_PARITY)
+  (universe))
+ (action
+  (run %{exe:generate_parity.exe} %{exe:../main.exe})))
