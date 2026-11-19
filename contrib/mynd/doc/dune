@@ -1,5 +1,5 @@
 (mdx
- (files colour.md filters.md)
+ (files colour.md filters.md edges.md morphology.md)
  (package mynd)
  (enabled_if
   (and

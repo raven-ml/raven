@@ -127,3 +127,53 @@ The guide pages under `doc/` explain mynd alone.
 - torchvision's `GaussianBlur` samples the Gaussian divided by its sum, as
   `gaussian_blur` does, with `kernel_size = 2 radius + 1`, and draws its
   deviation uniformly from `(0.1, 2)` by default.
+- mynd's gradient strengths are in values per pixel on images in
+  `[0, 1]`. Another library's strength is a multiple of mynd's:
+
+| Library | Its strength in mynd's units |
+|---|---|
+| scipy `ndimage.sobel`, scikit-image raw Sobel | 8 × |
+| OpenCV `Sobel` of aperture `k` = 3, 5, 7 on uint8 codes | `2^(2k − 3) · 255` ×, so 8, 128 and 2048 times 255 |
+| OpenCV `Scharr` on uint8 codes | 32 · 255 × |
+| kornia `canny` (raw Sobel, L2, `eps = 1e-6` under the root) | 8 × the input's full scale; a flat pixel reads `1.25e-4` |
+
+- OpenCV's `Canny` takes thresholds in the raw units of its aperture (its
+  `/16` at aperture 7 cancels its own Sobel scale), uses L1 strength
+  `|gx| + |gy|` unless `L2gradient` (no factor converts L1), applies no
+  blur, thins by 45° sectors with index-order ties, and reads its Sobel
+  under `BORDER_REPLICATE` with strength 0 outside. Apertures 5 and 7 are
+  one or two `¼ ½ ¼` blurs then `Sobel`, times 128 and 2048.
+- scikit-image's `canny` at its defaults uses thresholds `0.1` and `0.2`
+  of raw Sobel on the `[0, 1]` image whatever the dtype; given thresholds
+  are divided by the dtype's maximum first; `use_quantiles` takes
+  quantiles of the strength over every pixel. Its blur is `mode='constant'`
+  divided by the blur of ones (plus float64's epsilon), radius
+  `⌊4σ + ½⌋`; Sobel under `reflect` (`Symmetric_half`); the border ring is
+  never an edge; thresholds compare with `>=`; it keeps both pixels of a
+  tie. test_edges composes it exactly.
+- MATLAB's thresholds are fractions of a strength its page leaves
+  undefined; a scalar sets low to `0.4 ·` high.
+- OpenCV's `Canny` replicates, where its filters default to
+  `BORDER_REFLECT_101`.
+- OpenCV `erode fp` is `erode fp`. OpenCV `dilate fp` reads erosion's taps:
+  it is `dilate (reflect_pad fp)`, `reflect_pad` flipping `fp` and putting
+  a row or column of `false` before each even axis. A footprint with a
+  `true` tap in the first row or column of an even axis, a full rectangle
+  included, is asymmetric about tap `k / 2`, so OpenCV's dilation by
+  `np.ones((2, 2))` differs from mynd's by a pixel. Its `MORPH_OPEN` of
+  such a footprint is no opening; do not reflect the footprint in mynd's
+  opening.
+- scikit-image 1.x anchors an even axis one tap earlier (`pad_front`, a
+  row of `false` before it): `erosion fp` is `erode (pad_front fp)`,
+  `dilation fp` is `dilate (reflect_pad (pad_front fp))`, with
+  `mode="ignore"`. scipy's `grey_dilation` and kornia's dilation are
+  mynd's under the reduction's identity outside.
+- Other border rules equal mynd's left-out taps for some footprints:
+  `nearest` when each row and column of taps is one run through the
+  origin's row or column; `reflect` when also each run's ends `a ≤ 0 ≤ b`
+  have `|a + b| ≤ 1`; `mirror` when each run is centred.
+- scipy's `binary_fill_holes` is `not (reconstruct c ~marker:frame
+  (not m))` with `c` its structure's connectivity (test_components).
+- SAM 2's mask post-processing labels with 8-connectivity, removes
+  components and fills background components of area `<=` its limit, the
+  latter touching the border included, both from the same mask.
