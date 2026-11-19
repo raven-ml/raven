@@ -20,6 +20,7 @@
   (glob_files_rec ../contrib/*.mli)
   (glob_files_rec ../contrib/dune)
   ../apps/gpt-oss/lib/gpt_oss.ml
+  (glob_files_rec ../apps/*.md)
   (source_tree pages)
   (source_tree static)
   (alias_rec ../doc-json))

@@ -531,3 +531,49 @@ html:not(.js) .hero-split{align-items:flex-start}
 .inuse-list li{display:flex;flex-direction:column;gap:2px;padding:6px 0}
 .inuse-list .small{font-size:15px}
 .testimonial .quote-long{font-size:clamp(20px,1.9vw,24px);line-height:1.45;letter-spacing:-.01em}
+/* Figures for posts: a post's Markdown carries them as raw HTML, and these
+   rules give them the site's look. Append to www/static/style.css, after
+   the .md rules. They reuse .bars, .bar, .code and .label as they are. */
+
+.md figure{margin:8px 0}
+.md figcaption,.md .figcap{font-family:var(--mono);font-size:12.5px;line-height:1.6;color:var(--dim)}
+.md figure > figcaption:last-child{margin-top:12px}
+.bar .fill{display:block}
+
+/* The numbers the post is about, each against its baseline. */
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-top:1px solid var(--line-2);border-bottom:1px solid var(--line-2)}
+.kpis > div{display:flex;flex-direction:column;gap:8px;padding:22px 18px 22px 0}
+.kpis > div + div{padding-left:18px;border-left:1px solid var(--line-2)}
+.kpis b{font-size:34px;line-height:1;letter-spacing:-.03em;font-weight:500;color:var(--text-0);font-variant-numeric:tabular-nums}
+.kpis b small{margin-left:4px;font-size:15px;letter-spacing:0;font-weight:400;color:var(--text-3)}
+.kpis span{font-size:14px;line-height:1.45;color:var(--text-3)}
+
+/* A bar chart: a legend, groups of bars, a caption. */
+.chart .legend{display:flex;flex-wrap:wrap;gap:8px 24px;margin-bottom:8px;font-family:var(--mono);font-size:12px;color:var(--text-3)}
+.chart .legend span{display:flex;align-items:center;gap:8px}
+.chart .legend i{width:12px;height:12px;border-radius:3px}
+.bars-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:2px 12px;font-size:15px;color:var(--text-0)}
+.bars-head .caption{color:var(--text-3)}
+
+/* Two stacks side by side: what each needs to run. */
+.versus{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);border:1px solid var(--line-2);border-radius:var(--r-md);overflow:hidden}
+.versus > div{display:flex;flex-direction:column;gap:14px;padding:22px 24px 24px}
+.versus > div + div{border-left:1px solid var(--line-2);background:var(--surface)}
+.versus > div + div .label{color:var(--raven)}
+.versus ol{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px;font-family:var(--mono);font-size:13px;line-height:1.5;color:var(--text-1)}
+.versus li{display:flex;justify-content:space-between;gap:16px}
+.versus li span:last-child{color:var(--text-3);white-space:nowrap}
+.versus .total{display:flex;justify-content:space-between;align-items:baseline;margin:auto 0 0;padding-top:14px;border-top:1px solid var(--line-2);font-size:14px;color:var(--text-3)}
+.versus .total b{font-size:24px;font-weight:500;letter-spacing:-.02em;color:var(--text-0)}
+.versus figcaption{grid-column:1 / -1;padding:12px 24px;border-top:1px solid var(--line-2)}
+
+/* A draft's gaps; a published post has none. */
+mark.todo{background:var(--amber-ring);color:var(--amber);font-family:var(--mono);font-size:.85em;padding:1px 6px;border-radius:var(--r-sm)}
+
+@media (max-width:899px){
+  .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .kpis > div:nth-child(3){padding-left:0;border-left:0}
+  .kpis > div:nth-child(n+3){border-top:1px solid var(--line-2)}
+  .versus{grid-template-columns:minmax(0,1fr)}
+  .versus > div + div{border-left:0;border-top:1px solid var(--line-2)}
+}

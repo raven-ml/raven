@@ -76,7 +76,7 @@ let site_url ~root ~docs ~posts path =
       | "docs/performance.md" -> Some "/performance/"
       | "docs/support-raven.md" -> Some "/sponsor/"
       | "docs/blog/index.md" -> Some "/blog/"
-      | _ when String.starts_with ~prefix:"docs/assets/" path -> Some ("/assets/" ^ after "docs/assets/")
+      | _ when String.starts_with ~prefix:"docs/assets/" path && Sys.file_exists (root / path) -> Some ("/assets/" ^ after "docs/assets/")
       | _ when Filename.check_suffix path ".mli" -> (
           (* An interface: its module's page in the API reference. *)
           match String.split_on_char '/' path with
@@ -123,6 +123,7 @@ let build ~root ~site ~out =
       (fun i (p : Repo.post) ->
         let older = List.nth_opt posts (i + 1) and newer = if i = 0 then None else List.nth_opt posts (i - 1) in
         let html, md = Post.page env ~layout:blog ~prev:older ~next:newer p in
+        let html = Page.fill { Page.file = "docs/blog/" ^ p.slug ^ ".md"; sources = []; html } (Slots.fill ~root) in
         write (out / "blog" / p.slug / "index.html") html;
         ("docs/blog/" ^ p.slug ^ ".md", md))
       posts

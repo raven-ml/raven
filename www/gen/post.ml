@@ -14,9 +14,22 @@ let month_year date =
   let m = int_of_string (String.sub date 5 2) in
   months.(m - 1) ^ " " ^ String.sub date 0 4
 
-(* Minutes at 230 words a minute, at least one. *)
-let minutes text =
-  let words = List.length (List.filter (( <> ) "") (String.split_on_char ' ' (String.map (function '\n' | '\t' -> ' ' | c -> c) text))) in
+(* Minutes to read [html]'s text at 230 words a minute, at least one. Tags
+   count as spaces, so a figure's markup adds no words. *)
+let minutes html =
+  let text = Buffer.create (String.length html) in
+  let in_tag = ref false in
+  String.iter
+    (fun c ->
+      match c with
+      | '<' -> in_tag := true
+      | '>' when !in_tag ->
+          in_tag := false;
+          Buffer.add_char text ' '
+      | '\n' | '\t' -> Buffer.add_char text ' '
+      | c -> if not !in_tag then Buffer.add_char text c)
+    html;
+  let words = List.length (List.filter (( <> ) "") (String.split_on_char ' ' (Buffer.contents text))) in
   max 1 ((words + 229) / 230)
 
 (* A post's page, and what [Markdown.render] found in it. Its code has no
