@@ -618,10 +618,14 @@ let harmonics =
                  (Format.asprintf "%a" Rune.pp_program p))
           in
           equal int (size 4) (size 64));
-      test "compiled at nside 128, lmax 256, as eagerly within 1e-14" (fun () ->
-          let h = ring 128 in
+      (* Degrees to 256 over the rings of nside 32: near the poles λ_mm
+         falls below 2^-600 from about order 115 and below float64's range past
+         200, so the exponent steps run, and the rings' lengths hold every
+         prime to 31. *)
+      test "compiled at nside 32, lmax 256, as eagerly within 1e-14" (fun () ->
+          let h = ring 32 in
           let f =
-            Nx.sin (Nx.mul_s (Nx.arange_f Nx.float64 0. 196608. 1.) 0.37)
+            Nx.sin (Nx.mul_s (Nx.arange_f Nx.float64 0. 12288. 1.) 0.37)
           in
           let analyse f = Healpix.analysis h ~lmax:256 ~iterations:0 f in
           at_most float_exact ~than:1e-14
