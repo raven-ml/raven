@@ -369,11 +369,13 @@ let stack = function
 
 (* Shapes *)
 
-(* perf_500's typical pixel has 40 Sentinel-2 and 64 Sentinel-1 tokens. *)
+(* A typical pixel of a year's tile, measured on a 500 × 500 one, has 40
+   Sentinel-2 and 64 Sentinel-1 tokens. *)
 let typical_s2 = 40
 let typical_s1 = 64
+let typical_slots = 32
 
-let typical ~pixels ~slots =
-  let width = max_bin in
+let typical ~pixels =
+  let width = max_bin and slots = typical_slots in
   let rows tokens = max 1 (((pixels * tokens) + width - 1) / width) in
   { pixels; s2_rows = rows typical_s2; s1_rows = rows typical_s1; slots; width }

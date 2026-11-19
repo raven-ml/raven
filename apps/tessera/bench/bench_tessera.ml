@@ -100,7 +100,7 @@ let batches shape px =
 let encode name ~n ~batch ~bf16 arch =
   let make (type d) (t : d target) =
     let f = forward t ~bf16 arch in
-    let shape = Batch.typical ~pixels:batch ~slots:32 in
+    let shape = Batch.typical ~pixels:batch in
     let bs, held = batches shape (sample n) in
     Printf.eprintf "%s/%s: %d pixels a call\n%!" device name held;
     let run b = ignore (Nx.place Nx.Host.on (f (Batch.place t.at b))) in

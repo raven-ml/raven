@@ -65,10 +65,10 @@ type shape = {
 }
 (** The type for the static shape of a batch. *)
 
-val typical : pixels:int -> slots:int -> shape
-(** [typical ~pixels ~slots] is the shape of [pixels] pixels, at most [slots] a
-    row, whose rows of [256] tokens hold [40] Sentinel-2 and [64] Sentinel-1
-    tokens a pixel, the typical counts of a tile. A batch of [pixels] whose
+val typical : pixels:int -> shape
+(** [typical ~pixels] is the shape of [pixels] pixels, at most [32] a row,
+    whose rows of [256] tokens hold [40] Sentinel-2 and [64] Sentinel-1 tokens
+    a pixel, the typical counts of a tile. A batch of [pixels] whose
     pixels hold more stops before its pixels are full. *)
 
 type 'd rows = {

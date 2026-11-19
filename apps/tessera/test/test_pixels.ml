@@ -229,7 +229,7 @@ let batch_bytes (b : _ Batch.t) =
 (* The first batch a step packs of [px]'s pixels. *)
 let first_batch px =
   let px, counts = Batch.expand px (Batch.v2_counts px) in
-  fst (Batch.pack (Batch.typical ~pixels:16 ~slots:4) px counts ~from:0)
+  fst (Batch.pack (Batch.typical ~pixels:16) px counts ~from:0)
 
 (* A read by ranges of [indices] of the corpus of [spec], against the mapped
    take of them. *)

@@ -54,9 +54,7 @@ let check ~fixtures ~tile name m ~jit =
     else Model.apply m
   in
   let pixels = if name = "teacher" then 512 else 4096 in
-  let e =
-    Embedding.encode ~shape:(Batch.typical ~pixels ~slots:32) Nx.Host.on f px
-  in
+  let e = Embedding.encode ~shape:(Batch.typical ~pixels) Nx.Host.on f px in
   let file f =
     Filename.concat fixtures (Printf.sprintf "emb/%s/%s%s.npy" tile name f)
   in

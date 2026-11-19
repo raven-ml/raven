@@ -167,7 +167,7 @@ let encode () =
     if !geotiff = "" then None
     else Some (landmask (h, w) ?place:t.place !geotiff)
   in
-  let shape = Batch.typical ~pixels:!pixels ~slots:32 in
+  let shape = Batch.typical ~pixels:!pixels in
   let (module D) = devices !device in
   let t = { at = D.on; jit = not !eager } in
   let e = Embedding.encode ~shape t.at (forward t ~bf16:!bf16 m) px in
@@ -248,7 +248,7 @@ let targets () =
   let out = required "--out" !out in
   let px = Pixels.load (required "--corpus" !corpus) in
   let m = model (required "--teacher" !teacher) in
-  let shape = Batch.typical ~pixels:!pixels ~slots:32 in
+  let shape = Batch.typical ~pixels:!pixels in
   let n = Pixels.length px and chunk = 8192 in
   let (module D) = devices !device in
   let t = { at = D.on; jit = not !eager } in
@@ -658,7 +658,7 @@ let probe () =
       let t = Tile.load (required "--tile" !tile) in
       let px, hw = Pixels.of_tile t in
       let grid = landmask hw ?place:t.place landmask_file in
-      let shape = Batch.typical ~pixels:!pixels ~slots:32 in
+      let shape = Batch.typical ~pixels:!pixels in
       let (module D) = devices !device in
       let t = { at = D.on; jit = not !eager } in
       let e = Embedding.encode ~shape t.at (forward t ~bf16:false m) px in

@@ -29,7 +29,7 @@ let close ~tol e r =
 let embed m =
   let px, _ = Pixels.of_tile (Tile.load dir) in
   Embedding.encode
-    ~shape:(Batch.typical ~pixels:8 ~slots:4)
+    ~shape:(Batch.typical ~pixels:8)
     Nx.Host.on (Model.apply m) px
 
 let student = lazy (Model.load (file "student.pt"))
