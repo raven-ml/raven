@@ -177,6 +177,7 @@ let composed =
   [
     One { fname = "rsqrt"; f1 = Nx.rsqrt };
     One { fname = "log10"; f1 = Nx.log10 };
+    One { fname = "sinc"; f1 = Nx.sinc };
     One { fname = "asinh"; f1 = Nx.asinh };
     One { fname = "acosh"; f1 = Nx.acosh };
     One { fname = "atanh"; f1 = Nx.atanh };
@@ -331,6 +332,92 @@ let test_logarithms () =
   at "log" Nx.log 1.;
   at "log2" Nx.log2 (Float.log 2.);
   at "log10" Nx.log10 (Float.log 10.)
+
+(* sinc's derivatives
+
+   Below [|x| = ¼] sinc is its Taylor series in [x²], whose coefficients
+   [sinc_series] gives, and its derivatives at and near [0] are the series': at
+   [0] the odd ones are [0], the second is [-π²/3] and the fourth [π⁴/5].
+   Elsewhere the first is [(cos (πx) - sinc x) / x], which is [(-1)ⁿ / n] at an
+   integer [n]. *)
+
+(* The coefficient of [x²ᵏ], [(-1)ᵏ π²ᵏ / (2k + 1)!]. *)
+let sinc_series k =
+  let c = ref 1. in
+  for j = 1 to k do
+    c := -. !c *. Float.pi *. Float.pi /. Float.of_int (2 * j * ((2 * j) + 1))
+  done;
+  !c
+
+(* The first derivative: the series' to [x²⁴] below [¼], where the next term is
+   under 2⁻⁶⁰, and the closed form above. *)
+let sinc_d1 x =
+  if Float.abs x < 0.25 then begin
+    let d = ref 0. in
+    for k = 12 downto 1 do
+      d := (!d *. x *. x) +. (Float.of_int (2 * k) *. sinc_series k)
+    done;
+    !d *. x
+  end
+  else
+    let p = Float.pi *. x in
+    (Float.cos p -. (Float.sin p /. p)) /. x
+
+let sinc_gen =
+  let open Gen in
+  frequency
+    [
+      (3, float_range (-8.) 8.);
+      (1, constant 0.);
+      (1, map (fun e -> Float.ldexp 1. (-e)) (int_range 1 60));
+      (1, map (fun e -> -.Float.ldexp 1. (-e)) (int_range 1 60));
+      (1, map Float.of_int (int_range (-6) 6));
+      ( 1,
+        let+ n = int_range (-6) 6 and+ e = int_range 4 30 in
+        Float.of_int n +. Float.ldexp 1. (-e) );
+    ]
+
+(* At float32 the derivative is within [2⁻²¹] of the exact one, a few ulps of
+   its scale, where the quotient's would be off by [6.5e-4] near [0]; at float64
+   within [2⁻⁴⁸]. *)
+let sinc_law x =
+  cover "at 0" (x = 0.);
+  cover "below 1/4, not 0" (x <> 0. && Float.abs x < 0.25);
+  cover "at an integer but 0" (x <> 0. && Float.is_integer x);
+  let at (type s) (dt : (float, s) Nx.dtype) tol =
+    let x = Nx.Dtype.of_float dt x in
+    let g =
+      Rune.grad' (fun x -> Nx.sum (Nx.sinc x)) (Nx.create dt [| 1 |] [| x |])
+    in
+    let want = sinc_d1 x in
+    equal ~msg:(Nx.Dtype.name dt) (float tol) want
+      (Nx.item [ 0 ] (Nx.cast f64 g))
+  in
+  at f64 0x1p-48;
+  at Nx.float32 0x1p-21
+
+let test_sinc_at_zero () =
+  let derivative f x = Rune.grad' (fun x -> Nx.sum (f x)) x in
+  let check (type s) (dt : (float, s) Nx.dtype) rel =
+    let d1 = derivative Nx.sinc in
+    let d2 = derivative d1 in
+    let d3 = derivative d2 in
+    let d4 = derivative d3 in
+    let at d =
+      Nx.item [ 0 ] (Nx.cast f64 (d (Nx.create dt [| 1 |] [| 0. |])))
+    in
+    let name = Nx.Dtype.name dt in
+    equal ~msg:(name ^ " first") float_exact 0. (Float.abs (at d1));
+    equal ~msg:(name ^ " second") (float_rel ~rel ~abs:0.)
+      (2. *. sinc_series 1)
+      (at d2);
+    equal ~msg:(name ^ " third") float_exact 0. (Float.abs (at d3));
+    equal ~msg:(name ^ " fourth") (float_rel ~rel ~abs:0.)
+      (24. *. sinc_series 2)
+      (at d4)
+  in
+  check f64 1e-15;
+  check Nx.float32 1e-6
 
 (* hypot's gradient
 
@@ -2578,6 +2665,9 @@ let () =
              test "a dirichlet draw's gradient against differences"
                test_dirichlet_differences;
              test "the logarithms' gradients below zero too" test_logarithms;
+             prop "sinc's derivative, near 0 and at integers too" sinc_gen
+               sinc_law;
+             test "sinc's derivatives at 0 are its series'" test_sinc_at_zero;
            ];
          group "interface"
            [

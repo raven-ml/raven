@@ -3494,6 +3494,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- New `Nx.sinc`, `sin (πx) / (πx)`: a polynomial below `|x| = ¼`, so its
+  derivatives at and near `0` are accurate, and exactly `0` at every nonzero
+  integer.
 - `Nx.attention` on nx.cpu sums each block of 64 keys' value products
   apart, then adds them to the rescaled accumulator, where it chained them
   over every key: a float32 row of 1500 keys errs about 5 times less, and
