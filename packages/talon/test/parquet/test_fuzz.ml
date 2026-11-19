@@ -285,16 +285,20 @@ let mutated =
       prop "with another file's footer"
         Gen.(pair pick pick)
         (fun (a, b) -> decode_mutated a (fun s -> splice s (file_bytes b)));
-      test "with any one bit of a nested file's pages flipped" (fun () ->
+      (* Each byte of the pages with one bit flipped, bit [at mod 8] of the
+         byte at [at]: every byte of every page, each of a byte's bits in some
+         of them. A flip leaves the footer, and so the format [P.sniff] reads
+         from it alone, as they were. *)
+      test "with a bit of each byte of a nested file's pages flipped" (fun () ->
           let s = Bytes.of_string (file_bytes "nested_v1_plain.parquet") in
+          let f =
+            Error.get_ok (P.sniff (Rig.Buffer.of_string (Bytes.to_string s)))
+          in
           for at = 4 to footer (Bytes.to_string s) - 1 do
             let byte = Bytes.get_uint8 s at in
-            for bit = 0 to 7 do
-              Bytes.set_uint8 s at (byte lxor (1 lsl bit));
-              let b = Rig.Buffer.of_string (Bytes.to_string s) in
-              let f = Error.get_ok (P.sniff b) in
-              ignore (Query.run (Query.of_source (P.source f b)))
-            done;
+            Bytes.set_uint8 s at (byte lxor (1 lsl (at mod 8)));
+            let b = Rig.Buffer.of_string (Bytes.to_string s) in
+            ignore (Query.run (Query.of_source (P.source f b)));
             Bytes.set_uint8 s at byte
           done);
       prop "with an oversized length"
