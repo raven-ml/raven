@@ -295,15 +295,15 @@ static void row_scores(const float *q, int r, const float *k, int64_t ks,
 #endif
 
 /* The ranges of unit [u]'s first [nb] blocks into [lo] and [hi], its
-   mask's least and greatest over each block's pairs: every block mixed
-   where the ranges cannot run. */
+   mask's least and greatest over each block's pairs, in one run of the
+   ranges' program: every block mixed where the ranges cannot run. */
 static void ranges_of(const att *c, uint8_t *lo, uint8_t *hi, int64_t u,
                       int64_t nb) {
   int64_t p = u * c->blocks;
+  uint8_t *out[2] = {lo, hi};
   memset(lo, 0, (size_t)nb);
   memset(hi, 1, (size_t)nb);
-  nx_cpu_prog_terms(c->ranges, &c->rpl, 0, p, 1, nb, nb, 1, lo);
-  nx_cpu_prog_terms(c->ranges, &c->rpl, 1, p, 1, nb, nb, 1, hi);
+  nx_cpu_prog_each(c->ranges, &c->rpl, out, p, 1, nb, nb, 1);
   if (nx_cpu_prog_failed(c->ranges)) {
     memset(lo, 0, (size_t)nb);
     memset(hi, 1, (size_t)nb);
@@ -953,7 +953,7 @@ value nx_cpu_attention(value vp, value vranges, value vscale, value vo,
                 nx_cpu_prog_out(rg, 0) == NX_BOOL &&
                 nx_cpu_prog_out(rg, 1) == NX_BOOL;
   if (classed)
-    cost += 2 * (double)units * (double)c.blocks * nx_cpu_prog_cost(rg);
+    cost += (double)units * (double)c.blocks * nx_cpu_prog_cost(rg);
   /* A mask every lead index and head share is classed once per tile and
      block, at most its pairs at one lead index and head run. */
   int share = g != NULL && c.mask && units > c.tiles && c.blocks > 0 &&

@@ -1617,7 +1617,10 @@ let law_programmed (b : Support.backend) c =
 (* Several reductions of one program *)
 
 (* Loops as [programmed]'s, of zero to five elements an axis among the
-   small ones, reduced, and rows of planes reduced across a kept axis. *)
+   small ones, reduced; rows of planes reduced across a kept axis; columns
+   of up to three blocks of terms reduced across rows, in pairs too; and as
+   many rows of more than eight blocks as a call's units need for a block
+   group each. *)
 let several =
   let open Gen in
   let small = array ~size:(int_range 1 4) (int_range 0 5) in
@@ -1638,6 +1641,21 @@ let several =
     let+ n = of_list ~pp:Format.pp_print_int [ 3; 64; 1025 ] in
     ([| p; k; n |], [| 0; 2 |])
   in
+  let columns =
+    let* r = int_range 17 2100 in
+    let+ k = of_list ~pp:Format.pp_print_int [ 2; 64; 129; 300 ] in
+    ([| r; k |], [| 0 |])
+  in
+  (* Pairs of columns, as many as a call's units need for all of an
+     output's blocks each. *)
+  let paired =
+    let+ n = int_range 1025 3000 in
+    ([| 64; n; 2 |], [| 1 |])
+  in
+  let grouped =
+    let+ n = int_range 8193 9000 in
+    ([| 64; n |], [| 1 |])
+  in
   let drawn =
     let* shape = frequency [ (3, small); (3, rows); (2, long) ] in
     let r = Array.length shape in
@@ -1649,8 +1667,29 @@ let several =
     in
     (shape, axes)
   in
-  let* shape, axes = frequency [ (7, drawn); (1, parted) ] in
-  let* dts = array ~size:(int_range 1 3) (of_list ~pp:pp_dtype narrows) in
+  (* Columns of complex loads half the time, whose products start their
+     lanes from their first terms. *)
+  let plain g =
+    let+ x = g in
+    (x, false)
+  in
+  let complex_columns =
+    let* x = columns in
+    let+ c = bool in
+    (x, c)
+  in
+  let* (shape, axes), complex =
+    frequency
+      [
+        (7, plain drawn);
+        (1, plain parted);
+        (1, complex_columns);
+        (1, plain paired);
+        (3, plain grouped);
+      ]
+  in
+  let dtypes = if complex then complexes else narrows in
+  let* dts = array ~size:(int_range 1 3) (of_list ~pp:pp_dtype dtypes) in
   let* padded = bool in
   let* long = frequency [ (2, constant false); (1, constant true) ] in
   let+ seed = int in
@@ -1743,6 +1782,42 @@ let law_several (b : Support.backend) c =
   cover "those of a narrow float output" (shared && Array.exists narrow rs);
   cover "those with an Arg" (shared && Array.exists arg rs);
   cover "those along axes a kept one parts" (shared && gap);
+  let moments = function
+    | (Nx_kernel.Moments | Logsumexp), _ -> true
+    | _ -> false
+  in
+  let monoid = function Nx_kernel.Monoid _, _ -> true | _ -> false in
+  let count f = List.length (List.filter f (Array.to_list rs)) in
+  let outputs =
+    List.fold_left
+      (fun n a -> if Array.mem a c.axes then n else n * c.shape.(a))
+      1 (List.init rank Fun.id)
+  in
+  let with_moments =
+    count (fun r -> one_pass r || moments r) > 1
+    && Array.exists moments rs
+    && Array.mem (rank - 1) c.axes
+    && terms > 16
+  in
+  cover
+    "a Moments or a Logsumexp with a monoid, an Arg, a Moments or a \
+     Logsumexp along the innermost axis"
+    with_moments;
+  cover "those over units of a group of more than eight blocks"
+    (with_moments && terms > 8 * 1024 && outputs >= 64);
+  let across =
+    count monoid > 1
+    && (not (Array.mem (rank - 1) c.axes))
+    && c.shape.(rank - 1) > 1
+  in
+  cover "two monoids across rows, past a lane of terms" (across && terms > 16);
+  cover "those past a block of terms" (across && terms > 1024);
+  cover "those over units of a group of more than one block"
+    (across && terms > 1024 && outputs >= 64);
+  cover "those across rows of a narrow float output"
+    (across && terms > 16 && Array.exists narrow rs);
+  cover "two monoids of outputs of a lane of terms or fewer"
+    (count monoid > 1 && terms > 0 && terms <= 16 && outputs > 0);
   cover "an output reduced twice" (Array.exists twice outs);
   cover "padded loads" c.padded;
   Array.iteri

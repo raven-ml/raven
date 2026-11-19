@@ -198,14 +198,18 @@
     before any is written, any number of them. It reads the loop's terms once
     for all of them whose outputs' units are laid out alike (along a
     contiguous axis, any; across rows, those of one value width), but a
-    [Logsumexp], whose two passes run alone, as a [Moments]' do where an
-    output's terms are many against the outputs. Where several [Monoid]s
-    and [Arg]s reduce a program's outputs along the loop's innermost axes,
-    each output of more than a lane of terms, it runs the program once a
-    term for all of them. A destination identical to
-    the operand, or to a program's load, is accepted: that operand or load
-    is then read from a copy the call holds, and the results are those of
-    fresh destinations. *)
+    [Logsumexp], whose two passes run alone but where it shares a program's
+    terms as below, as a [Moments]' do where an output's terms are many
+    against the outputs. Where several reductions read a program's
+    outputs, it runs the program once a term for all of these: [Monoid]s,
+    [Arg]s, and [Moments] and [Logsumexp]s whose passes run in turn, along
+    the loop's innermost axes, each output of more than a lane of terms, a
+    [Moments]' or a [Logsumexp]'s second pass running it again over an
+    output's terms past what the caches hold; [Monoid]s across rows; and
+    [Monoid]s of outputs of a lane of terms or fewer, but complex
+    products. A destination identical to the operand, or to a program's
+    load, is accepted: that operand or load is then read from a copy the
+    call holds, and the results are those of fresh destinations. *)
 
 (** {2:sums Sums and products}
 

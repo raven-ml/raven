@@ -3424,6 +3424,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.standardize`, `Nx.rms_norm` and other `Reduce`s of several reductions of
+  one program compute faster on nx.cpu across rows, over outputs of 16 terms or
+  fewer, and with `Moments` or `Logsumexp`: the program runs once a term for
+  them all. The bits are unchanged.
 - A `Reduce` of a program over leading axes, as a depthwise convolution's
   kernel gradient, runs about 10x faster on nx.cpu through a padded or
   strided load: its rows follow the loads' steps. The bits are unchanged.
